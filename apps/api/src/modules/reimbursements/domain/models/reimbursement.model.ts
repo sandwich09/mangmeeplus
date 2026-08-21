@@ -17,6 +17,7 @@ import type {
   ReimbursementApproverMode,
   ReimbursementDuplicatePolicy,
   ReimbursementPolicyStatus,
+  ReimbursementPolicySnapshotV1,
 } from '@watchdog-bms/contracts';
 
 export type ReimbursementPolicyRecord = {
@@ -49,6 +50,8 @@ export type ReimbursementApprovalStepRecord = {
   sequenceNo: number;
   approverUserId?: string;
   approverRoleSnapshot?: string;
+  /** Frozen assignees at submit. Undefined is the legacy role-based fallback. */
+  assignedApproverUserIds?: string[];
   status: ReimbursementApprovalStepStatus;
   assignedAt: Date;
   decidedAt?: Date;
@@ -168,6 +171,7 @@ export type ReimbursementRequestRecord = {
   primaryAttachmentId?: string;
   missingReceiptReason?: string;
   approvalSnapshotHash?: string;
+  approvalPolicySnapshotJson?: ReimbursementPolicySnapshotV1;
   paymentTotalAmount: string;
   outstandingAmount: string;
   idempotencyKey?: string;

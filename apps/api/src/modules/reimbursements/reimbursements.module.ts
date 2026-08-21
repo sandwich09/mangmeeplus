@@ -74,6 +74,6 @@ import { ReimbursementWriteQuiesceGuard } from './presentation/http/reimbursemen
     SignClaimFormUseCase,
     LinkSignedClaimFormCopyUseCase,
   ],
-  exports: [PrismaReimbursementRepository, ReimbursementProjectionReconcilerService, GetReimbursementAiSummaryUseCase, GetReimbursementDetailUseCase, ListApprovalQueueUseCase],
+  exports: [PrismaReimbursementRepository, ReimbursementProjectionReconcilerService, ListReimbursementApproverOptionsUseCase, GetReimbursementAiSummaryUseCase, GetReimbursementDetailUseCase, ListApprovalQueueUseCase],
 })
 export class ReimbursementsModule {}

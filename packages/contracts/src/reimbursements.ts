@@ -81,6 +81,26 @@ export type ReimbursementApproverRoleOption = {
   unavailableReason?: 'MISSING_CAPABILITY' | 'NO_ACTIVE_HOLDERS' | 'OWNER_RECOVERY_NOT_READY';
 };
 
+export type ReimbursementPolicySnapshotV1 = {
+  schemaVersion: 1;
+  policyId: string | 'default';
+  policyVersion: string;
+  approvalRequiredFromAmount: string;
+  requiresApproval: boolean;
+  route: null | {
+    mode: 'MANAGER_ROLE' | 'OWNER_ROLE' | 'CUSTOM_ROLE';
+    roleKey: string;
+    effectiveTaskRole: string;
+    ownerFallbackUsedAtSubmission: boolean;
+  };
+  allowSelfApproval: boolean;
+  requireReceipt: boolean;
+  allowMissingReceiptWithReason: boolean;
+  duplicatePolicy: ReimbursementDuplicatePolicy;
+  financeReviewRequired: boolean;
+  slaHours?: number;
+};
+
 // ---- Policy ----
 
 export type ReimbursementPolicySummary = {
@@ -105,12 +125,9 @@ export type ReimbursementPolicySummary = {
 };
 
 export type UpdateReimbursementPolicyInput = {
-  currency?: string;
-  approvalThresholdAmount?: string;
+  expectedUpdatedAt?: string;
   approvalRequiredFromAmount?: string;
-  approverMode?: ReimbursementApproverMode;
-  defaultApproverUserId?: string | null;
-  defaultApproverRole?: string | null;
+  defaultApproverRole?: string;
   allowSelfApproval?: boolean;
   requireReceipt?: boolean;
   allowMissingReceiptWithReason?: boolean;
@@ -282,6 +299,15 @@ export type ReimbursementRequestDetail = ReimbursementRequestSummary & {
   primaryAttachmentId?: string;
   primaryAttachmentFileName?: string;
   approvalSnapshotHash?: string;
+  /**
+   * Task-scoped authority resolved by the server for the current actor. A person
+   * frozen onto the pending step keeps these actions after a later role change;
+   * clients must not infer them from the current role or the selected tab.
+   */
+  approvalActions?: {
+    canApprove: boolean;
+    canReject: boolean;
+  };
   /**
    * Hash of the claim as it stands NOW, acknowledged when signing the form.
    * Distinct from `approvalSnapshotHash`, which is frozen at submit time.

@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaReimbursementRepository } from '../../../reimbursements/infrastructure/prisma-reimbursement.repository';
 import { ageHours, isSlaRisk } from '../../../reimbursements/domain/logic/reimbursement.logic';
-import { effectivePolicy } from '../../../reimbursements/domain/reimbursement.constants';
+import { effectivePolicy, effectivePolicyForRequest, parseReimbursementPolicySnapshot } from '../../../reimbursements/domain/reimbursement.constants';
+import { ListReimbursementApproverOptionsUseCase } from '../../../reimbursements/application/use-cases/reimbursement-policy.use-case';
 import { PrismaCrmRepository } from '../../../crm/infrastructure/prisma-crm.repository';
 import { effectiveFollowUpStatus } from '../../../crm/domain/logic/crm.logic';
 import { PrismaBankingRepository } from '../../../banking/infrastructure/prisma-banking.repository';
@@ -9,6 +10,7 @@ import { GetCitCalendarUseCase } from '../../../tax/application/use-cases/get-ci
 import { GetStockReportUseCase } from '../../../inventory/application/use-cases/movement-query.use-cases';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import { systemWorkerContext } from '../../../auth/domain/logic/system-worker-context';
+import type { ReimbursementRequestRecord } from '../../../reimbursements/domain/models/reimbursement.model';
 
 export type ScanCandidate = {
   sourceType: string;
@@ -26,6 +28,10 @@ function systemCtx(companyId: string): RequestContext {
   });
 }
 
+function currentApprovalStep(request: ReimbursementRequestRecord) {
+  return request.approvalSteps?.find((step) => step.id === request.currentApprovalStepId);
+}
+
 // One adapter per scannable template key. Each returns the current candidate items for a
 // company — the caller (RunWorkflowScanUseCase) evaluates each rule's own condition against
 // every candidate's payload, so thresholds stay admin-configurable rather than hardcoded here.
@@ -37,6 +43,7 @@ export class WorkflowScanCandidatesProvider {
     private readonly bankingRepo: PrismaBankingRepository,
     private readonly citCalendar: GetCitCalendarUseCase,
     private readonly stockReport: GetStockReportUseCase,
+    private readonly approverRoutes: ListReimbursementApproverOptionsUseCase,
   ) {}
 
   async forTemplate(templateKey: string, companyId: string, now: Date): Promise<ScanCandidate[]> {
@@ -68,14 +75,67 @@ export class WorkflowScanCandidatesProvider {
   }
 
   private async approvalSlaBreach(companyId: string, now: Date): Promise<ScanCandidate[]> {
-    const policy = effectivePolicy(await this.reimbursementRepo.findPolicy(companyId, null));
+    const currentPolicy = effectivePolicy(await this.reimbursementRepo.findPolicy(companyId, null));
     const rows = await this.reimbursementRepo.listRequests({ companyId, status: 'PENDING_APPROVAL' });
-    return rows.map((r) => {
+    const inputs = rows.map((request) => {
+      const requestPolicy = effectivePolicyForRequest(request, currentPolicy);
+      return {
+        roleKey: requestPolicy.defaultApproverRole ?? 'MANAGER',
+        ...(request.branchId && { branchId: request.branchId }),
+        requesterUserId: request.requesterUserId,
+        allowSelfApproval: requestPolicy.allowSelfApproval,
+      };
+    });
+    const frozenIdsByBranch = new Map<string, string[]>();
+    for (const request of rows) {
+      const key = request.branchId ?? '';
+      frozenIdsByBranch.set(key, [
+        ...(frozenIdsByBranch.get(key) ?? []),
+        ...(currentApprovalStep(request)?.assignedApproverUserIds ?? []),
+      ]);
+    }
+    const activeFrozenByBranch = new Map(await Promise.all(
+      [...frozenIdsByBranch].map(async ([key, userIds]) => [
+        key,
+        await this.reimbursementRepo.findActiveApproverUserIds(companyId, userIds, key || undefined),
+      ] as const),
+    ));
+    const ownerRecipients = await this.approverRoutes.resolveOwnerRecipientUserIds(companyId, inputs);
+    const legacyIndexes = rows.flatMap((request, index) => (
+      currentApprovalStep(request)?.assignedApproverUserIds === undefined ? [index] : []
+    ));
+    const legacyRoutes = await this.approverRoutes.resolveSubmissionRoutesBestEffort(
+      companyId,
+      legacyIndexes.map((index) => inputs[index]!),
+    );
+    const legacyRouteByIndex = new Map(legacyIndexes.map((index, routeIndex) => [index, legacyRoutes[routeIndex]!]));
+    return rows.map((r, index) => {
+      const policy = effectivePolicyForRequest(r, currentPolicy);
+      const step = currentApprovalStep(r);
+      const activeFrozenAssignees = activeFrozenByBranch.get(r.branchId ?? '') ?? new Set<string>();
+      const frozenRecipients = step?.assignedApproverUserIds?.filter((userId) => activeFrozenAssignees.has(userId));
+      const legacyRoute = legacyRouteByIndex.get(index);
+      const recipients = frozenRecipients === undefined
+        ? legacyRoute?.recipientUserIds ?? []
+        : frozenRecipients.length > 0 ? frozenRecipients : ownerRecipients[index]!;
+      const snapshot = parseReimbursementPolicySnapshot(r.approvalPolicySnapshotJson);
+      const taskRole = frozenRecipients === undefined
+        ? legacyRoute?.effectiveTaskRole ?? step?.approverRoleSnapshot ?? inputs[index]!.roleKey
+        : frozenRecipients.length > 0
+          ? snapshot?.route?.effectiveTaskRole ?? step?.approverRoleSnapshot ?? inputs[index]!.roleKey
+          : 'OWNER';
       const age = r.submittedAt ? ageHours(r.submittedAt, now) : 0;
       return {
         sourceType: 'reimbursement_request',
         sourceId: r.id,
-        payload: { requestId: r.id, requestNo: r.requestNo, ageHours: age, slaRisk: isSlaRisk(age, policy.slaHours), amount: r.amount, currency: r.currency },
+        payload: {
+          requestId: r.id, requestNo: r.requestNo, ageHours: age,
+          slaRisk: isSlaRisk(age, policy.slaHours), amount: r.amount, currency: r.currency,
+          approverRecipientUserIds: recipients,
+          approverTaskUserId: recipients[0],
+          ownerRecipientUserIds: ownerRecipients[index],
+          approverTaskRole: taskRole,
+        },
       };
     });
   }

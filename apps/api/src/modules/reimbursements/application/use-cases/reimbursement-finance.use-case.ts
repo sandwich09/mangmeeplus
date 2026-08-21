@@ -16,7 +16,7 @@ import { ReserveDocumentNumberUseCase } from '../../../data-model-core/applicati
 import { CommitDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/commit-document-number.use-case';
 import { CancelDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/cancel-document-number.use-case';
 import { toRequestSummary, toRequestDetail } from '../dto/reimbursement.mapper';
-import { effectivePolicy } from '../../domain/reimbursement.constants';
+import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
 import { ReimbursementProjectionOrchestratorService } from '../services/reimbursement-projection-orchestrator.service';
 import { assertReimbursementBranchInScope } from './reimbursement-branch-scope';
 import {
@@ -159,7 +159,7 @@ export class FinanceReviewReimbursementUseCase {
           metadataJson: { decision: input.decision, retry: true, projectionPending: true },
         });
       }
-      const policy = effectivePolicy(await this.repo.findPolicy(ctx.companyId, null));
+      const policy = effectivePolicyForRequest(decision.request, effectivePolicy(await this.repo.findPolicy(ctx.companyId, null)));
       await this.projections.execute(ctx, decision.request, {
         kind: 'FINANCE',
         actorUserId: ctx.userId,
@@ -330,7 +330,7 @@ export class RecordReimbursementPaymentUseCase {
     // repeats the same proof under the payment lock to close the race.
     await this.repo.assertClaimPaymentReady(ctx.companyId, id);
 
-    const policy = effectivePolicy(await this.repo.findPolicy(ctx.companyId, null));
+    const policy = effectivePolicyForRequest(req, effectivePolicy(await this.repo.findPolicy(ctx.companyId, null)));
     const openDuplicates = await this.repo.listOpenDuplicateCandidates(ctx.companyId, id);
     const duplicateBlocking = policy.duplicatePolicy === 'BLOCK_PAYMENT' && openDuplicates.length > 0;
 

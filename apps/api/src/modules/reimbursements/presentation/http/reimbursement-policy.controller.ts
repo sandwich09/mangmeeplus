@@ -2,9 +2,10 @@ import { Controller, Get, Put, Body, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { RequireAnyPermission, RequirePermissions } from '../../../../common/security/permissions.decorator';
 import { ReqCtx } from '../../../auth/presentation/request-context.decorator';
-import type { RequestContext, UpdateReimbursementPolicyInput } from '@watchdog-bms/contracts';
+import type { RequestContext } from '@watchdog-bms/contracts';
 import { GetReimbursementPolicyUseCase, ListReimbursementApproverOptionsUseCase, UpdateReimbursementPolicyUseCase } from '../../application/use-cases/reimbursement-policy.use-case';
 import { ReimbursementWriteQuiesceGuard } from './reimbursement-write-quiesce.guard';
+import { UpdateReimbursementPolicyDto } from './reimbursement.dtos';
 
 @ApiTags('reimbursements')
 @UseGuards(ReimbursementWriteQuiesceGuard)
@@ -33,7 +34,7 @@ export class ReimbursementPolicyController {
   @Put()
   @RequirePermissions('reimbursement.policy.manage')
   @ApiOperation({ summary: 'Update reimbursement policy settings' })
-  update(@ReqCtx() ctx: RequestContext, @Body() body: UpdateReimbursementPolicyInput) {
+  update(@ReqCtx() ctx: RequestContext, @Body() body: UpdateReimbursementPolicyDto) {
     return this.updatePolicy.execute(ctx, body);
   }
 }

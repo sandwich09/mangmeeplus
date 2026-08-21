@@ -37,6 +37,15 @@ function snapshot(overrides: Partial<ReimbursementClaimFormSnapshot> = {}): Reim
 }
 
 describe('reimbursement claim form', () => {
+  it('states when policy skipped human approval instead of implying a missing signer', () => {
+    const base = snapshot();
+    const artifact = renderReimbursementClaimFormSvg(snapshot({
+      approvalDecisionNote: 'ไม่ต้องอนุมัติตามนโยบาย',
+      signers: { ...base.signers, approver: null },
+    })).toString('utf8');
+    assert.match(artifact, /การอนุมัติ — ไม่ต้องอนุมัติตามนโยบาย/);
+  });
+
   it('renders Thai baht text without losing satang', () => {
     assert.equal(thaiBahtText('0'), 'ศูนย์บาทถ้วน');
     assert.equal(thaiBahtText('1250.5000'), 'หนึ่งพันสองร้อยห้าสิบบาทห้าสิบสตางค์');

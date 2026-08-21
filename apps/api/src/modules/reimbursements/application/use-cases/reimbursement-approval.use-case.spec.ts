@@ -10,6 +10,18 @@ import { ReimbursementEvidenceService } from '../services/reimbursement-evidence
 
 const noopAudit = { log: async () => undefined } as any;
 const noopOutbox = { append: async () => undefined } as any;
+const readyApproverRoutes = {
+  resolveNamedSubmissionRoute: async () => null,
+  resolveSubmissionRoute: async ({ roleKey }: any) => ({
+    responsibilityRole: roleKey, effectiveTaskRole: roleKey,
+    recipientUserIds: ['approver-1'], ownerRecipientUserIds: ['owner-1'], ownerFallbackUsed: false,
+  }),
+} as any;
+const noopSubmitProjections = { execute: async () => undefined } as any;
+
+function submitUseCase(repo: any, audit: any, outbox: any, evidence: any) {
+  return new SubmitReimbursementUseCase(repo, audit, outbox, evidence, readyApproverRoutes, noopSubmitProjections);
+}
 
 function approveUC(repo: any, projections: any = { execute: async () => undefined }, audit: any = noopAudit) {
   return new ApproveReimbursementUseCase(repo, audit, projections);
@@ -88,6 +100,24 @@ describe('ApproveReimbursementUseCase', () => {
   it('rejects when missing approve permission', async () => {
     const uc = approveUC(fakeRepo(baseRequest()));
     await assert.rejects(() => uc.execute(ctx({ permissions: [] }), 'rb-1'), /permission/i);
+  });
+
+  it('lets an active frozen assignee finish after a later role and permission change', async () => {
+    const req = baseRequest({
+      approvalSteps: [{ ...baseRequest().approvalSteps[0], assignedApproverUserIds: ['approver-1'] }],
+    });
+    const detail = await approveUC(fakeRepo(req)).execute(ctx({ roles: ['STAFF'], permissions: [] }), 'rb-1');
+    assert.equal(detail.status, 'FINANCE_REVIEW');
+  });
+
+  it('does not widen a live frozen assignment to an unrelated permission holder', async () => {
+    const req = baseRequest({
+      approvalSteps: [{ ...baseRequest().approvalSteps[0], assignedApproverUserIds: ['assigned-1'] }],
+    });
+    await assert.rejects(
+      () => approveUC(fakeRepo(req)).execute(ctx({ roles: ['OWNER'], permissions: ['reimbursement.approve'] }), 'rb-1'),
+      /not_eligible_approver/,
+    );
   });
 
   it('blocks a non-assigned approver', async () => {
@@ -297,6 +327,7 @@ function draftRequest(overrides: Partial<any> = {}) {
 
 function requestRepo(initial?: any, claimedElsewhere: any[] = []) {
   let request = initial;
+  const events: any[] = [];
   const repo = {
     findPolicy: async () => null,
     getUserDisplayName: async () => 'Somchai',
@@ -328,14 +359,18 @@ function requestRepo(initial?: any, claimedElsewhere: any[] = []) {
       return request;
     },
     findDuplicateCandidates: async () => [],
-    submitDraftAtomic: async ({ expectedUpdatedAt, request: data }: any) => {
+    submitDraftAtomic: async ({ expectedUpdatedAt, request: data, approvalStep, onSubmittedPersisted }: any) => {
       assert.equal(expectedUpdatedAt, request.updatedAt);
-      const step = { id: 'step-1' };
+      const step = approvalStep ? { id: 'step-1' } : undefined;
       const documentNumber = { id: 'num-1', documentNumber: 'RB-202601-000001' };
       Object.assign(request, data, {
         requestNo: documentNumber.documentNumber,
-        currentApprovalStepId: step.id,
+        currentApprovalStepId: step?.id ?? null,
         updatedAt: new Date(request.updatedAt.getTime() + 1),
+      });
+      await onSubmittedPersisted(fakeTx(events), {
+        step, documentNumber, documentNumberReused: false,
+        supersededDuplicateCandidateCount: 0, supersededApprovalStepCount: 0,
       });
       return {
         step,
@@ -346,7 +381,7 @@ function requestRepo(initial?: any, claimedElsewhere: any[] = []) {
       };
     },
   } as any;
-  return { repo, get request() { return request; } };
+  return { repo, events, get request() { return request; } };
 }
 
 describe('Reimbursement request evidence validation', () => {
@@ -371,7 +406,7 @@ describe('Reimbursement request evidence validation', () => {
 
     it(`rejects ${name} attachment at submit`, async () => {
       const state = requestRepo(draftRequest({ lines: [lineRecord({ attachmentId: 'att-1' })] }));
-      const uc = new SubmitReimbursementUseCase(state.repo, noopAudit, noopOutbox, evidenceService(record));
+      const uc = submitUseCase(state.repo, noopAudit, noopOutbox, evidenceService(record));
       await assert.rejects(() => uc.execute(requesterCtx(), 'rb-1'), /invalid_primary_attachment/);
     });
   }
@@ -385,7 +420,7 @@ describe('Reimbursement request evidence validation', () => {
 
     it(`rejects ${name} expense at submit`, async () => {
       const state = requestRepo(draftRequest({ lines: [lineRecord({ linkedExpenseId: 'exp-1' })] }));
-      const uc = new SubmitReimbursementUseCase(state.repo, noopAudit, noopOutbox, evidenceService(null, record));
+      const uc = submitUseCase(state.repo, noopAudit, noopOutbox, evidenceService(null, record));
       await assert.rejects(() => uc.execute(requesterCtx(), 'rb-1'), /invalid_linked_expense/);
     });
   }
@@ -411,14 +446,14 @@ describe('Reimbursement request evidence validation', () => {
     const created = await create.execute(requesterCtx(), { ...requestInput, lines: [inputLine({ attachmentId: 'att-1' })] });
     const events: any[] = [];
     const outbox = { append: async (...args: any[]) => { events.push(args); } } as any;
-    const submit = new SubmitReimbursementUseCase(state.repo, noopAudit, outbox, evidence);
+    const submit = submitUseCase(state.repo, noopAudit, outbox, evidence);
     const detail = await submit.execute(requesterCtx(), created.id);
     assert.equal(detail.status, 'PENDING_APPROVAL');
     assert.equal(detail.lines[0]?.attachmentFileName, 'receipt.pdf');
     // The reimbursement_pending_approval workflow template's default condition
     // matches on requestId in the event data — without it, enabled rules never fire.
-    const submitted = events.find((e) => e[0] === 'reimbursement.request_submitted');
-    assert.equal(submitted?.[3].data.requestId, created.id);
+    const submitted = state.events.find((event) => event.eventType === 'reimbursement.request_submitted');
+    assert.equal(submitted?.payloadJson.data.requestId, created.id);
   });
 
   it('finance submits on the requester\'s behalf with the REQUESTER\'s attachment', async () => {
@@ -427,7 +462,7 @@ describe('Reimbursement request evidence validation', () => {
     const create = new CreateReimbursementDraftUseCase(state.repo, noopAudit, evidence);
     const created = await create.execute(requesterCtx(), { ...requestInput, lines: [inputLine({ attachmentId: 'att-1' })] });
     const financeCtx = ctx({ userId: 'finance-1', roles: ['FINANCE'], permissions: ['reimbursement.submit', 'reimbursement.finance_review'] });
-    const submit = new SubmitReimbursementUseCase(state.repo, noopAudit, noopOutbox, evidence);
+    const submit = submitUseCase(state.repo, noopAudit, noopOutbox, evidence);
     const detail = await submit.execute(financeCtx, created.id);
     assert.equal(detail.status, 'PENDING_APPROVAL');
   });
@@ -451,7 +486,7 @@ describe('Reimbursement request evidence validation', () => {
     const created = await create.execute(requesterCtx(), { ...requestInput, lines: [inputLine({ attachmentId: 'att-1' })] });
     const update = new UpdateReimbursementDraftUseCase(state.repo, noopAudit, evidence);
     await update.execute(requesterCtx(), created.id, { lines: [inputLine({ attachmentId: null })] });
-    const submit = new SubmitReimbursementUseCase(state.repo, noopAudit, noopOutbox, evidence);
+    const submit = submitUseCase(state.repo, noopAudit, noopOutbox, evidence);
     await assert.rejects(
       () => submit.execute(requesterCtx(), created.id),
       (error: any) => error?.status === 422 && /missing_receipt/.test(error.message),
@@ -539,6 +574,25 @@ describe('ListApprovalQueueUseCase self-approval (audit H-18)', () => {
       findActiveApproverUserIds: async (_c: string, ids: string[]) => new Set(ids),
     } as any;
   }
+
+  it('keeps frozen work in the assignee queue after their role permissions are removed', async () => {
+    const assigned = baseRequest({
+      approvalSteps: [{ ...baseRequest().approvalSteps[0], assignedApproverUserIds: ['approver-1'] }],
+    });
+    const items = await new ListApprovalQueueUseCase(queueRepo(assigned)).execute(ctx({ roles: ['STAFF'], permissions: [] }));
+    assert.equal(items.length, 1);
+  });
+
+  it('keeps a frozen self-task visible when a later role change removes its exemption', async () => {
+    const assignedWhileManager = baseRequest({
+      requesterUserId: 'approver-1',
+      approvalSteps: [{ ...baseRequest().approvalSteps[0], assignedApproverUserIds: ['approver-1'] }],
+    });
+    const items = await new ListApprovalQueueUseCase(queueRepo(assignedWhileManager)).execute(ctx({
+      roles: ['STAFF'], permissions: [],
+    }));
+    assert.equal(items.length, 1);
+  });
 
   it('hides a claim from the person who filed it while self-approval is blocked', async () => {
     // A role outside the H-17 exemption: eligible to approve this step, refused by maker-checker.

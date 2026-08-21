@@ -179,9 +179,12 @@ export class ExecuteWorkflowActionUseCase {
     const recipientPayloadKeys = Array.isArray(cfg['recipientPayloadKeys'])
       ? (cfg['recipientPayloadKeys'] as unknown[]).filter((key): key is string => typeof key === 'string')
       : [];
-    const payloadRecipientUserIds = recipientPayloadKeys
-      .map((key) => context.payload[key])
-      .filter((value): value is string => typeof value === 'string' && value.length > 0);
+    const payloadRecipientUserIds = recipientPayloadKeys.flatMap((key) => {
+      const value = context.payload[key];
+      if (typeof value === 'string' && value.length > 0) return [value];
+      if (Array.isArray(value)) return value.filter((id): id is string => typeof id === 'string' && id.length > 0);
+      return [];
+    });
     // excludeRecipientPayloadKeys names payload fields (string or string[]) holding
     // user ids that must never receive this notification — e.g. the submitter and
     // recorded approvers of a dual-approval vendor bill.
@@ -247,7 +250,16 @@ export class ExecuteWorkflowActionUseCase {
 
     const titleTemplate = typeof cfg['titleTemplate'] === 'string' ? cfg['titleTemplate'] : `${context.ruleName}${isApprovalReview ? ' — Approval review' : ''}`;
     const title = renderTemplate(titleTemplate, context.payload);
-    const assigneeRole = typeof cfg['assigneeRole'] === 'string' ? cfg['assigneeRole'] : undefined;
+    const assigneeUserPayloadKey = typeof cfg['assigneeUserPayloadKey'] === 'string' ? cfg['assigneeUserPayloadKey'] : undefined;
+    const payloadAssigneeUser = assigneeUserPayloadKey ? context.payload[assigneeUserPayloadKey] : undefined;
+    const assigneeUserId = typeof payloadAssigneeUser === 'string' && payloadAssigneeUser.length > 0
+      ? payloadAssigneeUser
+      : undefined;
+    const assigneeRolePayloadKey = typeof cfg['assigneeRolePayloadKey'] === 'string' ? cfg['assigneeRolePayloadKey'] : undefined;
+    const payloadAssigneeRole = assigneeRolePayloadKey ? context.payload[assigneeRolePayloadKey] : undefined;
+    const assigneeRole = typeof payloadAssigneeRole === 'string' && payloadAssigneeRole.length > 0
+      ? payloadAssigneeRole
+      : typeof cfg['assigneeRole'] === 'string' ? cfg['assigneeRole'] : undefined;
     const priority = typeof cfg['priority'] === 'string' ? cfg['priority'] : 'NORMAL';
     const webPath = resolveDeepLink(actionRun.actionKey, cfg, context);
 
@@ -260,7 +272,10 @@ export class ExecuteWorkflowActionUseCase {
       sourceId: context.sourceId,
       title: isApprovalReview ? `[Approval review] ${title}` : title,
       description: isApprovalReview ? 'Workflow-created approval-review task. Completing this task does not approve the source record.' : undefined,
-      assigneeRole,
+      assigneeUserId,
+      // A person snapshot is exact authority. Keeping the old role as a second assignee would
+      // expose the reminder to later role holders even though the reimbursement API refuses them.
+      assigneeRole: assigneeUserId ? undefined : assigneeRole,
       priority,
       webDeepLink: webPath,
     });

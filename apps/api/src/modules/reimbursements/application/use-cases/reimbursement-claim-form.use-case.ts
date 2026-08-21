@@ -5,6 +5,7 @@ import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../../data-mo
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import type { ReimbursementClaimSignatureRecord, ReimbursementRequestRecord } from '../../domain/models/reimbursement.model';
 import { isLineEvidenced, byLineNo } from '../../domain/logic/reimbursement.logic';
+import { parseReimbursementPolicySnapshot } from '../../domain/reimbursement.constants';
 import {
   renderReimbursementClaimFormSvg,
   type ClaimFormSigner,
@@ -57,6 +58,7 @@ export class PreviewReimbursementClaimFormUseCase {
     const financeReviewed = req.financeReviewStatus === 'APPROVED_FOR_PAYMENT' && !!req.financeReviewedAt
       ? req.financeReviewedByUserId
       : undefined;
+    const policySnapshot = parseReimbursementPolicySnapshot(req.approvalPolicySnapshotJson);
 
     const [company, names, signatureImages] = await Promise.all([
       this.repo.getClaimFormCompanyContext(companyId, req.branchId ?? null),
@@ -93,6 +95,7 @@ export class PreviewReimbursementClaimFormUseCase {
       })),
       hasReceiptEvidence: lines.some(isLineEvidenced),
       missingReceiptReason: req.missingReceiptReason ?? null,
+      approvalDecisionNote: policySnapshot?.requiresApproval === false ? 'ไม่ต้องอนุมัติตามนโยบาย' : null,
       signers: {
         requester: req.submittedAt
           ? {

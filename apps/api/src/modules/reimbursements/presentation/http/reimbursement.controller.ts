@@ -97,8 +97,10 @@ export class ReimbursementController {
   // ---- Static routes (declared before :requestId) ----
 
   @Get('approval-queue')
-  @RequireAnyPermission('reimbursement.approve', 'reimbursement.reject')
-  @ApiOperation({ summary: 'List reimbursement approval queue' })
+  // The pending-step snapshot is the real capability. `account.session.read` keeps the global
+  // deny-by-default guard explicit while the use case narrows the result to this exact assignee.
+  @RequirePermissions('account.session.read')
+  @ApiOperation({ summary: 'List reimbursement approval queue (current permission or frozen assignment)' })
   listApprovalQueue(@ReqCtx() ctx: RequestContext) {
     return this.approvalQueue.execute(ctx);
   }
@@ -154,8 +156,8 @@ export class ReimbursementController {
   }
 
   @Get(':requestId')
-  @RequireAnyPermission('reimbursement.read', 'reimbursement.read_related', 'reimbursement.read_own')
-  @ApiOperation({ summary: 'Get reimbursement detail' })
+  @RequirePermissions('account.session.read')
+  @ApiOperation({ summary: 'Get reimbursement detail (read permission or exact frozen approval assignment)' })
   get(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string) {
     return this.getDetail.execute(ctx, requestId);
   }
@@ -194,17 +196,17 @@ export class ReimbursementController {
   // ---- Approval ----
 
   @Post(':requestId/approve')
-  @RequirePermissions('reimbursement.approve')
+  @RequirePermissions('account.session.read')
   @HttpCode(200)
-  @ApiOperation({ summary: 'Approve reimbursement request' })
+  @ApiOperation({ summary: 'Approve reimbursement request (current permission or frozen assignment)' })
   approveRequest(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string, @Body() body: ApproveReimbursementInput) {
     return this.withAttachmentFileName(ctx, this.approve.execute(ctx, requestId, body?.comment, body?.approvalSnapshotHash));
   }
 
   @Post(':requestId/reject')
-  @RequirePermissions('reimbursement.reject')
+  @RequirePermissions('account.session.read')
   @HttpCode(200)
-  @ApiOperation({ summary: 'Reject reimbursement request' })
+  @ApiOperation({ summary: 'Reject reimbursement request (current permission or frozen assignment)' })
   rejectRequest(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string, @Body() body: RejectReimbursementInput) {
     return this.withAttachmentFileName(ctx, this.reject.execute(ctx, requestId, body?.reason));
   }
