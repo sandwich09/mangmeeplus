@@ -6,7 +6,9 @@ import { AuditAction } from '../../../audit/domain/models/audit-action';
 import { EMPLOYEE_PROFILE_INCLUDE, toEmployeeSummary } from '../dto/employee-access.mapper';
 import {
   ALL_BRANCH_ROLE_KEYS,
+  HR_ASSIGNABLE_ROLE_KEYS,
   NON_ASSIGNABLE_ROLE_KEYS,
+  OPERATIONAL_ROLE_ASSIGN_PERMISSION,
   hashIdentityNumber,
   identityLast4,
   normalizeIdentityNumber,
@@ -43,26 +45,33 @@ export class UpdateEmployeeUseCase {
       if (!cmd.roleIds.length) throw new ForbiddenException('At least one role is required.');
       const targetRoles = await this.prisma.client.membershipRole.findMany({
         where: { membershipId: existing.membershipId },
-        select: { roleId: true, role: { select: { key: true } } },
+        select: { roleId: true, role: { select: { key: true, isSystem: true } } },
       });
       if (targetRoles.some((mr) => NON_ASSIGNABLE_ROLE_KEYS.includes(mr.role.key))) {
-        throw new ForbiddenException('OWNER and SYSTEM_ADMIN role assignments cannot be changed here.');
+        throw new ForbiddenException('Owner and platform role assignments cannot be changed through employee management.');
       }
       previousRoleIds = targetRoles.map((mr) => mr.roleId);
       const roleChanged = cmd.roleIds.some((id) => !previousRoleIds.includes(id))
         || previousRoleIds.some((id) => !cmd.roleIds!.includes(id));
       if (roleChanged) {
+        if (cmd.requesterPermissions.includes(OPERATIONAL_ROLE_ASSIGN_PERMISSION)
+          && !cmd.requesterPermissions.includes('access.role.manage')
+          && targetRoles.some((mr) => mr.role.isSystem !== true || !HR_ASSIGNABLE_ROLE_KEYS.some((key) => key === mr.role.key))) {
+          const reason = 'HR cannot change employees who currently hold a privileged, financial, audit, HR, or custom role.';
+          await this.auditDeniedRoleGrant(cmd, existing.userId, reason);
+          throw new ForbiddenException(reason);
+        }
         if (existing.userId === cmd.requestingUserId) {
           await this.auditDeniedRoleGrant(cmd, existing.userId, 'Users cannot change their own role assignment.');
           throw new ForbiddenException('Users cannot change their own role assignment.');
         }
         const candidates = await this.prisma.client.role.findMany({
           where: { id: { in: cmd.roleIds }, status: 'ACTIVE', OR: [{ scopeKey: 'system' }, { scopeKey: cmd.companyId }] },
-          select: { id: true, key: true, permissions: { select: { permission: { select: { key: true } } } } },
+          select: { id: true, key: true, isSystem: true, permissions: { select: { permission: { select: { key: true } } } } },
         });
         if (candidates.length !== cmd.roleIds.length) throw new ForbiddenException('One or more roles are invalid.');
         const violation = roleGrantViolation(
-          candidates.map((role) => ({ key: role.key, permissionKeys: role.permissions.map((rp) => rp.permission.key) })),
+          candidates.map((role) => ({ key: role.key, isSystem: role.isSystem, permissionKeys: role.permissions.map((rp) => rp.permission.key) })),
           cmd.requesterPermissions,
           cmd.requesterEntitlementDeniedPermissions,
           cmd.requesterRoles?.includes('OWNER'),
@@ -184,6 +193,7 @@ export class UpdateEmployeeUseCase {
         data: {
           displayName: cmd.displayName,
           titlePrefix: cmd.titlePrefix,
+          jobTitle: cmd.jobTitle === undefined ? undefined : cmd.jobTitle?.trim() || null,
           legalName: cmd.legalName,
           firstName: cmd.firstName,
           lastName: cmd.lastName,

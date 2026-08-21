@@ -237,7 +237,7 @@ export function PermissionMatrixPrototypePage({ companyId }: { companyId: string
           </div>
           <h1 className="mt-7 text-3xl font-extrabold leading-tight text-gray-900">สิทธิ์การใช้งาน</h1>
           <p className="mt-3 text-base font-medium text-gray-500">
-            กำหนดว่าแต่ละตำแหน่งทำอะไรได้บ้าง — ดู/สร้าง/แก้ไข/ลบ/อนุมัติ
+            กำหนดว่าแต่ละบทบาททำอะไรได้บ้าง — ดู/สร้าง/แก้ไข/ลบ/อนุมัติ
           </p>
         </div>
         <MangmeeBranchChip label={t('branch.scope.company_wide', locale)} />
@@ -248,7 +248,7 @@ export function PermissionMatrixPrototypePage({ companyId }: { companyId: string
       <div className="grid gap-5 xl:grid-cols-[300px_minmax(0,1fr)]">
         <MangmeeCard className="p-4">
           <div className="flex flex-wrap items-center justify-between px-2">
-            <h2 className="text-sm font-bold text-gray-500">ตำแหน่งทั้งหมด</h2>
+            <h2 className="text-sm font-bold text-gray-500">บทบาททั้งหมด</h2>
             <button
               type="button"
               className="inline-flex h-11 items-center gap-1 rounded-lg border border-gray-200 px-2 text-xs sm:h-8 font-bold text-gray-600 hover:border-brand-200 hover:bg-brand-25 disabled:opacity-50"
@@ -302,7 +302,7 @@ export function PermissionMatrixPrototypePage({ companyId }: { companyId: string
           <div className="space-y-3">
             {selectedRole.isSystem && roleEditable && (
               <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900">
-                ตำแหน่งมาตรฐาน — เมื่อบันทึก ระบบจะสร้างสำเนาสำหรับบริษัทของคุณ พนักงาน {staffCounts[selectedRole.id] ?? 0} คนที่อยู่ตำแหน่งนี้จะย้ายมาอัตโนมัติ · บริษัทอื่นไม่ได้รับผลกระทบ
+                บทบาทมาตรฐาน — เมื่อบันทึก ระบบจะสร้างสำเนาสำหรับบริษัทของคุณ พนักงาน {staffCounts[selectedRole.id] ?? 0} คนที่ใช้บทบาทนี้จะย้ายมาอัตโนมัติ · บริษัทอื่นไม่ได้รับผลกระทบ
               </div>
             )}
             <RoleBuilder
@@ -345,7 +345,7 @@ export function PermissionMatrixPrototypePage({ companyId }: { companyId: string
               ) : (
                 <div className="inline-flex shrink-0 items-center gap-2 text-sm font-medium text-gray-400">
                   <LockIcon className="h-4 w-4" />
-                  ตำแหน่งนี้ระบบดูแลให้ แก้ไขไม่ได้
+                  บทบาทนี้ระบบดูแลให้ แก้ไขไม่ได้
                 </div>
               )}
             </div>

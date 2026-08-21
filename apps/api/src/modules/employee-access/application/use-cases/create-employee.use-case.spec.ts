@@ -441,6 +441,7 @@ describe('CreateEmployeeUseCase', () => {
       firstName: 'Somchai',
       lastName: 'Jaidee',
       nickname: 'มีน',
+      jobTitle: '  เจ้าหน้าที่ฝ่ายขาย  ',
       dateOfBirth: '1998-09-28',
       addressLine: '45/1 Sukhumvit Soi 1',
       postalCode: '10110',
@@ -450,6 +451,7 @@ describe('CreateEmployeeUseCase', () => {
     assert.equal(state.profiles[0].firstName, 'Somchai');
     assert.equal(state.profiles[0].lastName, 'Jaidee');
     assert.equal(state.profiles[0].nickname, 'มีน');
+    assert.equal(state.profiles[0].jobTitle, 'เจ้าหน้าที่ฝ่ายขาย');
     assert.equal(state.profiles[0].dateOfBirth.toISOString().slice(0, 10), '1998-09-28');
     assert.equal(state.profiles[0].addressLine, '45/1 Sukhumvit Soi 1');
     assert.equal(state.profiles[0].postalCode, '10110');
@@ -481,5 +483,17 @@ describe('CreateEmployeeUseCase title prefix', () => {
     const { useCase, state } = makeUseCase();
     await useCase.execute(baseCommand);
     assert.equal(state.profiles[0].titlePrefix, undefined);
+  });
+});
+
+describe('CreateEmployeeUseCase job title', () => {
+  it('updates a descriptive job title without changing the assigned role', async () => {
+    const { useCase, state } = makeUseCase();
+    await useCase.execute({ ...baseCommand, jobTitle: 'พนักงานขาย' });
+    await useCase.execute({ ...baseCommand, jobTitle: 'หัวหน้าฝ่ายขาย' });
+
+    assert.equal(state.profiles.length, 1);
+    assert.equal(state.profiles[0].jobTitle, 'หัวหน้าฝ่ายขาย');
+    assert.deepEqual(state.membershipRoles.map((row) => row.roleId), ['role-sales']);
   });
 });
