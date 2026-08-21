@@ -50,10 +50,11 @@ describe('user guide shortcuts', () => {
     assert.ok(!hrefs.some((href) => href.includes('tab=policy')));
   });
 
-  // Policy is OWNER/ADMIN only in the hub, so holding the permission alone must not offer the tab.
-  it('does not offer the policy tab to a permission holder outside owner/admin roles', () => {
+  // Role names are descriptive only: a custom role with the exact permission must receive the
+  // same guide shortcut as OWNER/ADMIN, matching the real hub and API guard.
+  it('offers the policy tab to any role that holds policy.manage', () => {
     const guide = buildReimbursementGuide('co', ['reimbursement.read_own', 'reimbursement.policy.manage'], ['FINANCE']);
-    assert.ok(!links(guide).some((href) => href.includes('tab=policy')));
+    assert.ok(links(guide).some((href) => href.includes('tab=policy')));
   });
 
   it('drops every shortcut when the session holds no reimbursement permission', () => {

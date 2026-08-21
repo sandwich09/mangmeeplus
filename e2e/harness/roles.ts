@@ -115,12 +115,15 @@ const ALL = ALL_ROLES;
 export const MENUS: MenuSpec[] = [
   { key: 'dashboard',   th: 'แดชบอร์ด',              en: 'Dashboard',                 path: 'dashboard',              visibleTo: ALL },
   { key: 'booking',     th: 'การจองออนไลน์',          en: 'Online Booking',            path: 'bookings',               visibleTo: ['OWNER', 'ADMIN', 'MANAGER', 'SALES'] },
-  { key: 'salesdoc',    th: 'เอกสารขายและรับชำระ',     en: 'Sales Documents',           path: 'sales-documents',        visibleTo: ['OWNER', 'COMPANY_VIEW', 'MANAGER', 'FINANCE', 'ACCOUNTANT'] },
+  // Every company role receives accounting.document.read_related, so the row is universally
+  // reachable while the API still limits each session to documents related to that person.
+  { key: 'salesdoc',    th: 'เอกสารขายและรับชำระ',     en: 'Sales Documents',           path: 'sales-documents',        visibleTo: ALL },
   { key: 'crmsettings', th: 'สินค้าและบริการ',         en: 'Products & Services',       path: 'settings/crm-catalog',   visibleTo: ['OWNER', 'ADMIN', 'MANAGER', 'SALES', 'INVENTORY', 'FINANCE', 'ACCOUNTANT', 'MARKETING'] },
   { key: 'expenses',    th: 'ค่าใช้จ่ายและใบเสร็จ',     en: 'Expenses & Receipts',       path: 'expenses',               visibleTo: ALL },
-  { key: 'journal',     th: 'สมุดรายวัน',             en: 'Journal',                   path: 'journal',                visibleTo: ['OWNER', 'COMPANY_VIEW', 'FINANCE', 'ACCOUNTANT'] },
+  // Accounting screens are intentionally presentation-hidden in this launch, even for holders.
+  { key: 'journal',     th: 'สมุดรายวัน',             en: 'Journal',                   path: 'journal',                visibleTo: [] },
   { key: 'reports',     th: 'รายงานการเงิน',          en: 'Financial Reports',         path: 'reports',                visibleTo: ALL },
-  { key: 'closing',     th: 'ปิดงวด',                 en: 'Period Closing',            path: 'period-closing',         visibleTo: ['OWNER', 'COMPANY_VIEW', 'MANAGER', 'FINANCE', 'ACCOUNTANT'] },
+  { key: 'closing',     th: 'ปิดงวด',                 en: 'Period Closing',            path: 'period-closing',         visibleTo: [] },
   // The roles parent renders when ANY child survives its per-child registry key and points at
   // the first visible child. COMPANY_VIEW holds only access.role.read — no child, no parent.
   // SALES reaches it through นโยบายส่วนลด (crm.customer.update); MANAGER through
@@ -145,14 +148,15 @@ export type SubMenuSpec = MenuSpec & { parent: string; routeGuard: 'own' | 'pare
 export const SUB_MENUS: SubMenuSpec[] = [
   // ค่าใช้จ่ายและใบเสร็จ — 7 children (the catalogue lists 6; ลายเซ็นของฉัน is the 7th)
   { parent: 'expenses', routeGuard: 'parent', key: 'expenses.list',       th: 'รายการค่าใช้จ่าย',        en: 'Expenses',        path: 'expenses',            visibleTo: ALL },
-  { parent: 'expenses', routeGuard: 'parent', key: 'expenses.upload',     th: 'อัปโหลดใบเสร็จ',          en: 'Upload receipt',  path: 'expenses/upload',     visibleTo: ['OWNER', 'ADMIN', 'SALES', 'INVENTORY', 'FINANCE', 'STAFF'] },
-  { parent: 'expenses', routeGuard: 'parent', key: 'expenses.manual',     th: 'บันทึกด้วยมือ',           en: 'Manual entry',    path: 'expenses/manual',     visibleTo: ['OWNER', 'ADMIN', 'SALES', 'INVENTORY', 'FINANCE', 'STAFF'] },
+  { parent: 'expenses', routeGuard: 'parent', key: 'expenses.upload',     th: 'อัปโหลดใบเสร็จ',          en: 'Upload receipt',  path: 'expenses/upload',     visibleTo: ['OWNER', 'ADMIN', 'SALES', 'INVENTORY', 'FINANCE', 'ACCOUNTANT', 'MARKETING', 'STAFF'] },
+  { parent: 'expenses', routeGuard: 'parent', key: 'expenses.manual',     th: 'บันทึกด้วยมือ',           en: 'Manual entry',    path: 'expenses/manual',     visibleTo: ['OWNER', 'ADMIN', 'SALES', 'INVENTORY', 'FINANCE', 'ACCOUNTANT', 'MARKETING', 'STAFF'] },
   { parent: 'expenses', routeGuard: 'parent', key: 'expenses.categories', th: 'หมวดหมู่',                en: 'Categories',      path: 'expenses/categories', visibleTo: ['OWNER', 'ADMIN', 'FINANCE'] },
   // "ลายเซ็นของฉัน" (owner decision 2026-08-20, superseding the 2026-08-05 park): a signature is a
   // personal asset, so the entry belongs to whoever performs either signing act, plus the
   // housekeeping holder. Roles granting expense.review / expense.confirm / expense.signature.manage.
-  { parent: 'expenses', routeGuard: 'parent', key: 'expenses.signatures', th: 'ลายเซ็นของฉัน',           en: 'My signature',    path: 'expenses/signatures', visibleTo: ['OWNER', 'ADMIN', 'MANAGER', 'FINANCE'] },
-  { parent: 'expenses', routeGuard: 'own',    key: 'expenses.substitute', th: 'ตั้งค่าใบรับรองแทนใบเสร็จ', en: 'Substitute receipt', path: 'settings/substitute-receipt', visibleTo: ['OWNER', 'ADMIN'] },
+  { parent: 'expenses', routeGuard: 'parent', key: 'expenses.signatures', th: 'ลายเซ็นของฉัน',           en: 'My signature',    path: 'expenses/signatures', visibleTo: ['OWNER', 'ADMIN', 'MANAGER', 'SALES', 'INVENTORY', 'FINANCE', 'ACCOUNTANT', 'MARKETING', 'STAFF'] },
+  { parent: 'expenses', routeGuard: 'parent', key: 'expenses.substitute_receipts', th: 'ใบรับรองแทนใบเสร็จ', en: 'Substitute receipts', path: 'expenses/substitute-receipts', visibleTo: ALL },
+  { parent: 'expenses', routeGuard: 'own',    key: 'expenses.substitute', th: 'ตั้งค่าใบรับรองแทนใบเสร็จ', en: 'Substitute receipt settings', path: 'settings/substitute-receipt', visibleTo: ['OWNER', 'ADMIN'] },
   { parent: 'expenses', routeGuard: 'parent', key: 'expenses.evidence',   th: 'หลักฐานทางบัญชี',         en: 'Accounting evidence', path: 'expenses/evidence', visibleTo: ['OWNER', 'COMPANY_VIEW', 'ADMIN', 'MANAGER', 'FINANCE', 'ACCOUNTANT'] },
 
   // พนักงานและสิทธิ์ — visibility mirrors route-permissions.ts (the single web registry):
@@ -195,8 +199,12 @@ type Page = import('@playwright/test').Page;
 
 /** The sidebar renders more modules than this catalogue covers (inbox, tax, reimbursements…),
  *  so assert per-menu presence/absence — never set equality against the whole nav. */
-function navLabel(page: Page, label: string) {
-  return page.locator('aside nav').getByText(label, { exact: true });
+function topLevelNavLabel(page: Page, label: string) {
+  return page.locator('aside nav .menu-item').getByText(label, { exact: true });
+}
+
+function subMenuLabel(page: Page, label: string) {
+  return page.locator('aside nav .menu-dropdown-item').getByText(label, { exact: true });
 }
 
 /**
@@ -207,7 +215,7 @@ export async function expectSidebarMatchesRole(page: Page, role: RoleKey): Promi
   for (const spec of MENUS) {
     const shouldSee = spec.visibleTo.includes(role);
     await expect(
-      navLabel(page, spec.th),
+      topLevelNavLabel(page, spec.th),
       `${role} ${shouldSee ? 'should see' : 'must NOT see'} sidebar menu "${spec.th}"`,
     ).toHaveCount(shouldSee ? 1 : 0);
   }
@@ -221,7 +229,7 @@ export async function expectSidebarMatchesRole(page: Page, role: RoleKey): Promi
 export async function expectSubMenuMatchesRole(page: Page, role: RoleKey, parentKey: string): Promise<void> {
   const parent = menu(parentKey);
   if (!parent.visibleTo.includes(role)) {
-    await expect(navLabel(page, parent.th), `${role} must not see parent "${parent.th}"`).toHaveCount(0);
+    await expect(topLevelNavLabel(page, parent.th), `${role} must not see parent "${parent.th}"`).toHaveCount(0);
     return;
   }
   await expectSubmenuExpanded(page, parent.th);
@@ -231,7 +239,7 @@ export async function expectSubMenuMatchesRole(page: Page, role: RoleKey, parent
     // drawer still reports a bounding box, so toBeVisible() passes even when it is hidden.
     // Presence/absence is what the matrix is about; drawer state is asserted separately.
     await expect(
-      navLabel(page, child.th),
+      subMenuLabel(page, child.th),
       `${role} ${shouldSee ? 'should see' : 'must NOT see'} sub-menu "${child.th}"`,
     ).toHaveCount(shouldSee ? 1 : 0);
   }

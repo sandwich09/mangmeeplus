@@ -1,6 +1,6 @@
 # Agent Memory: Reimbursement Policy Correctness and Role Routing
 
-Status: Combined spec + implementation plan complete; Phase C1 correction/post-payment recovery implemented, reviewed, and ready for PR (2026-08-21). Role-routing Release A/B remains preflight-gated.
+Status: Phase C1 and Phase C2 permission composition/multi-role UI implemented and locally verified on PR branch (2026-08-21). Role-routing Release A/B remains preflight-gated.
 
 Owner: thawatchai.
 
@@ -12,6 +12,8 @@ Scope:
 - Preserve existing pending steps, null-snapshot requests, named-user routes, and admin-owned workflow rules.
 - Close finance NEEDS_INFO, existing-draft edit, payment-void UI, signature/signed-copy invalidation, and
   explicit post-void cancel gaps as independent Phase C1.
+- Close role-name authorization gates, action/permission mismatches, active-screen single-role replacement,
+  and review-only accounting preset drift as independent Phase C2.
 
 Decisions:
 - New UI/new route writes choose one role only; there is no mode, person picker, or free-text role.
@@ -34,6 +36,16 @@ Decisions:
 - Phase C1 reuses the current finance-review command, payment true reversal, cancellation saga, request
   number reuse, and create form. It adds no permission key, dependency, package script, or one-click
   browser chain for void+cancel.
+- Effective permissions, not role names, authorize reimbursement tabs/actions. Role keys still govern
+  approval responsibility and existing branch/self/state/snapshot/CAS boundaries.
+- Members may hold multiple roles; employee UI saves the complete `roleIds[]` and effective access is
+  the union. The final role cannot be removed.
+- `pack.reimbursement.review` grants read/related/finance-review/export only. It is included in
+  `tpl.x.accounting` and deliberately excludes payment record/void and duplicate resolution.
+- Permission composition is system-wide, not reimbursement-specific: the same role union drives expense
+  creation, evidence upload, substitute-receipt review/confirmation, reimbursement, navigation, routes,
+  employee summaries, and user-guide shortcuts. Supporting reads widen only to the matching action and
+  retain tenant/ownership/related-record scope; they never become a company directory/read grant.
 
 Open questions:
 - None in product semantics. Phase 0 data preflight may reveal duplicate company policies requiring authorized business selection before migration.
@@ -67,9 +79,48 @@ Verification:
   with `scrollWidth === innerWidth`, and zero browser console errors. No correction/void/cancel mutation
   was submitted during this check, so the three mutation E2E journeys remain open.
 - Existing unrelated dirty changes were observed and not edited.
+- Phase C2 source evidence confirmed backend multi-role storage/union, role-fork editing, all-branch
+  enforcement, and permission-checked reimbursement APIs already existed; gaps were in active web
+  pickers, role-name tab gating, action-level UI gating, and preset composition.
+- Employee/role flow review additionally found and closed read-only create/edit controls, direct employee
+  route permission mismatches, update-only DRAFT activation, stale selection after role creation, and
+  stale system-role id after a company fork.
+- A second employee/role contract pass found action-without-read dead ends: employee create/update and
+  role-manage permissions could pass the mutation check but fail supporting role/address/catalog reads.
+  Supporting read endpoints now accept the equivalent action permission with OR guards; the role page
+  deliberately skips company employee-list loading unless `access.employee.read` is present.
+- Owner expanded the rule beyond reimbursement to expense creation and substitute receipts. The audit
+  found that `expense.create` could not reopen the draft it had just made, `expense.confirm` could list
+  substitute approvals but not load their detail/history/PDF, and expense self/review packs omitted
+  `attachment.create` while their UI offered evidence upload. These seams are now aligned without
+  giving a creator company-wide expense read; its supporting read is creator-owned only.
+- Phase C2 focused evidence: reimbursement/role-picker web tests 65/65; employee create/update/role
+  management tests 78/78; permission/template registry tests 102/102. The STAFF fork test proves finance
+  review is added, payment/void/duplicate rights are absent, and this company's membership moves to the
+  fork.
+- Local Postgres was migrated through all 146 migrations, then seed and permission synchronization
+  completed (345 permissions, 13 system roles, 1,449 grants, 11 QA accounts). Local API/web and MinIO
+  were used for real browser flows; no cloud environment was touched.
+- In-app browser evidence with seed OWNER confirmed the composed-role screen and a Finance + Accountant
+  employee summary: both role names persist, effective capabilities are displayed as a union, and the
+  all-branch rule remains explicit.
+- Playwright browser evidence passed 46/46 in one run across the ten seeded personas, sidebar/direct-route
+  matrix, expense create/edit/cancel/confirm/upload, reimbursement create/submit/approve/finance/pay,
+  employee create/edit/multi-role, and role create/edit flows. SET-08E creates an isolated Staff + custom
+  expense/reimbursement reviewer, completes its temporary-password journey, logs in as that employee,
+  creates an expense draft, opens substitute-receipt work, sees related + finance reimbursement tabs,
+  and proves approval/policy/payment rights remain absent.
+- The complete Chromium workspace run finished with 158 passed, 80 project/feature-contract skips, and
+  zero failures across every registered desktop feature suite. It exposed three
+  stale journal UI expectations: the screens are intentionally closed by `ACCOUNTING_UI_HIDDEN`, but the
+  tests still expected them to render. The harness now asserts the launch-time dashboard redirect and
+  automatically re-enables the three journal journeys when the feature flag opens.
+- Final focused API tests passed 179/179; the complete registered web suite passed 1,040/1,040 after a
+  stale role-name assertion in the user-guide contract was corrected to `reimbursement.policy.manage`.
+  API, web, and contracts typechecks passed; `git diff --check` passed.
 
 Next:
-- Commit only Phase C1 scoped files, push `codex/reimbursement-role-correction-void`, and open a PR to
-  `develop`; keep unrelated LINE worktree files uncommitted.
+- Review the final scoped diff, commit only task files, and update PR 216 on
+  `codex/reimbursement-role-correction-void`; keep unrelated LINE/master-checklist files uncommitted.
 - Execute Phase 0 read-only preflight. Do not create/apply the partial unique index until duplicate NULL-branch policies are proven absent or explicitly resolved.
 - Then implement and accept Release A before combining any Release B API/UI/template switch.

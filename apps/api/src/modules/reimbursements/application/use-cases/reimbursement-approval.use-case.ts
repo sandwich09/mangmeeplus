@@ -94,7 +94,9 @@ export class ListApprovalQueueUseCase {
   constructor(private readonly repo: PrismaReimbursementRepository) {}
 
   async execute(ctx: RequestContext): Promise<ReimbursementApprovalQueueItem[]> {
-    if (!ctx.permissions.includes('reimbursement.approve')) throw new ForbiddenException('Missing permission: reimbursement.approve');
+    if (!ctx.permissions.some((permission) => permission === 'reimbursement.approve' || permission === 'reimbursement.reject')) {
+      throw new ForbiddenException('Missing permission to decide reimbursements');
+    }
     const policy = effectivePolicy(await this.repo.findPolicy(ctx.companyId, null));
     const rows = await this.repo.listRequests({
       companyId: ctx.companyId,

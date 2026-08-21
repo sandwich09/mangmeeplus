@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   paymentReferenceRequired, validatePaymentForm, validateRequestForm, sumLineAmounts, summariseQueue,
-  matchesSearch, formatMoney, parseHubTab, visibleHubTabs, errorMessage, errorText,
+  matchesSearch, formatMoney, parseHubTab, visibleHubTabs, reimbursementListScope, errorMessage, errorText,
   isStaleApprovalError, diffApprovalFields, collectReceiptUploadResults, mergeDraftLineEvidence,
 } from './reimbursements.logic';
 
@@ -238,18 +238,18 @@ describe('visibleHubTabs', () => {
   it('shows ตั้งค่านโยบาย to an admin with policy.manage', () => {
     assert.deepEqual(visibleHubTabs(['reimbursement.policy.manage'], ['ADMIN']), ['policy']);
   });
-  it('hides ตั้งค่านโยบาย from a custom role while preserving its other permitted tabs', () => {
+  it('shows ตั้งค่านโยบาย to any role that holds policy.manage', () => {
     assert.deepEqual(
       visibleHubTabs(
         ['reimbursement.read_own', 'reimbursement.finance_review', 'reimbursement.policy.manage'],
         ['FINANCE'],
       ),
-      ['mine', 'finance'],
+      ['mine', 'finance', 'policy'],
     );
   });
-  it('hides ตั้งค่านโยบาย when roles are empty or omitted', () => {
-    assert.deepEqual(visibleHubTabs(['reimbursement.policy.manage'], []), []);
-    assert.deepEqual(visibleHubTabs(['reimbursement.policy.manage']), []);
+  it('does not require a hard-coded role name for policy.manage', () => {
+    assert.deepEqual(visibleHubTabs(['reimbursement.policy.manage'], []), ['policy']);
+    assert.deepEqual(visibleHubTabs(['reimbursement.policy.manage']), ['policy']);
   });
   it('still requires policy.manage from an owner', () => {
     assert.deepEqual(visibleHubTabs(['reimbursement.read_own'], ['OWNER']), ['mine']);
@@ -260,17 +260,30 @@ describe('visibleHubTabs', () => {
   it('hides ตั้งค่านโยบาย from a manager who only approves', () => {
     assert.deepEqual(visibleHubTabs(['reimbursement.read_own', 'reimbursement.approve']), ['mine', 'approvals']);
   });
+  it('shows the decision queue to a reject-only custom role', () => {
+    assert.deepEqual(visibleHubTabs(['reimbursement.reject']), ['approvals']);
+  });
   it('requires policy.manage for ตั้งค่านโยบาย — read alone is not enough', () => {
     assert.deepEqual(visibleHubTabs(['reimbursement.policy.manage'], ['OWNER']), ['policy']);
-    // FINANCE holds policy.read but not .manage: the settings tab is OWNER/ADMIN only.
+    // FINANCE holds policy.read but not .manage, so it still cannot edit policy.
     assert.deepEqual(
       visibleHubTabs(['reimbursement.read_own', 'reimbursement.finance_review', 'reimbursement.policy.read'], ['FINANCE']),
       ['mine', 'finance'],
     );
   });
-  it('shows nothing without a hub permission (company-wide read alone has no dedicated tab)', () => {
+  it('shows nothing without a hub permission and accepts company-wide read', () => {
     assert.deepEqual(visibleHubTabs([]), []);
-    assert.deepEqual(visibleHubTabs(['reimbursement.read', 'expense.read']), []);
+    assert.deepEqual(visibleHubTabs(['reimbursement.read', 'expense.read']), ['mine']);
+  });
+});
+
+describe('reimbursementListScope', () => {
+  it('uses company-wide scope for reimbursement.read', () => {
+    assert.equal(reimbursementListScope(['reimbursement.read', 'reimbursement.read_related']), undefined);
+  });
+  it('uses related before own and falls back to own', () => {
+    assert.equal(reimbursementListScope(['reimbursement.read_related', 'reimbursement.read_own']), 'related');
+    assert.equal(reimbursementListScope(['reimbursement.read_own']), 'own');
   });
 });
 

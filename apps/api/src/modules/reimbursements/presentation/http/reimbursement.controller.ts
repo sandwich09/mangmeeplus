@@ -97,7 +97,7 @@ export class ReimbursementController {
   // ---- Static routes (declared before :requestId) ----
 
   @Get('approval-queue')
-  @RequirePermissions('reimbursement.approve')
+  @RequireAnyPermission('reimbursement.approve', 'reimbursement.reject')
   @ApiOperation({ summary: 'List reimbursement approval queue' })
   listApprovalQueue(@ReqCtx() ctx: RequestContext) {
     return this.approvalQueue.execute(ctx);

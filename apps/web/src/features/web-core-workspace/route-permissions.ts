@@ -13,7 +13,7 @@ export const ROUTE_PERMISSION_RULES: readonly RoutePermissionRule[] = [
   { path: '/settings/notifications', anyOf: ['notification.preference.manage'] },
   { path: '/settings/notification-rules', anyOf: ['notification.rule.manage'] },
   { path: '/settings/access-overview', anyOf: ['access.employee.read'] },
-  { path: '/settings/employees', anyOf: ['access.employee.read'] },
+  { path: '/settings/employees', anyOf: ['access.employee.read', 'access.employee.create', 'access.employee.update'] },
   { path: '/settings/branches', anyOf: ['company.branch.read', 'company.branch.manage'] },
   {
     path: '/settings/accounting-tax-setup',

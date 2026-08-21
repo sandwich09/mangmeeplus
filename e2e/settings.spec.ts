@@ -1,9 +1,20 @@
 import { test, expect } from './harness/fixtures';
 import { gotoCompany, json, unique } from './harness/e2e-utils';
+import {
+  API_BASE_URL,
+  WEB_BASE_URL,
+  apiHeaders,
+  ensureBrowserLegalAcceptance,
+} from './harness/auth';
 
-type Role = { id: string; key: string; name: string; status: string; isSystem?: boolean };
+type Role = { id: string; key: string; name: string; status: string; isSystem?: boolean; permissionKeys: string[] };
 type Employee = { id: string; displayName: string; roles?: Role[] };
-type CreateEmployeeResult = { employeeId: string; username: string };
+type CreateEmployeeResult = {
+  employeeId: string;
+  username: string;
+  temporaryPassword: string;
+  mustChangePassword: boolean;
+};
 type Branch = { id: string; code: string; name: string };
 type BranchPage = { items: Branch[] };
 type AccessMatrix = {
@@ -74,8 +85,10 @@ test.describe('SET — settings', () => {
     await authedPage.getByLabel(/^เบอร์โทรศัพท์/).fill(`08${suffix.slice(-8)}`);
     await authedPage.getByRole('button', { name: /^ถัดไป/ }).click();
 
-    await authedPage.getByRole('button', { name: 'Accountant', exact: true }).click();
-    await authedPage.getByRole('button', { name: 'บันทึกแบบร่าง' }).click();
+    await authedPage.getByRole('button', { name: /Accountant/ }).click();
+    await authedPage.getByRole('button', { name: /Finance/ }).click();
+    await authedPage.getByLabel(/^ตำแหน่งงาน/).fill('เจ้าหน้าที่บัญชีและการเงิน');
+    await authedPage.getByRole('button', { name: /^ถัดไป/ }).click();
     await expect(authedPage.getByText(username).first()).toBeVisible();
     await expect(authedPage.getByAltText('LINE link QR')).toHaveCount(0);
     await authedPage.getByRole('button', { name: 'เสร็จสิ้น' }).click();
@@ -86,13 +99,46 @@ test.describe('SET — settings', () => {
     await expect(authedPage).toHaveURL(new RegExp(`/companies/${companyId}/settings/access-overview$`));
 
     const employees = await json<Employee[]>(await api.get(`companies/${companyId}/settings/employees`));
-    expect(employees.some((item) => item.displayName.includes(firstName) && item.displayName.includes(lastName))).toBe(true);
+    const created = employees.find((item) => item.displayName.includes(firstName) && item.displayName.includes(lastName));
+    expect(created).toBeTruthy();
+    expect(created!.roles.map((role) => role.key).sort()).toEqual(['ACCOUNTANT', 'FINANCE']);
   });
 
   test('SET-04 @p1 roles page renders system roles and grants', async ({ authedPage, companyId }) => {
     await gotoCompany(authedPage, companyId, '/settings/roles');
     await expect(authedPage.getByRole('heading', { name: /สิทธิ์การใช้งาน|Permissions/i })).toBeVisible();
     await expect(authedPage.getByText(/บทบาทและสิทธิ์|OWNER|ADMIN|Role/i).first()).toBeVisible();
+  });
+
+  test('SET-04A @p1 creates and edits one role with capabilities from multiple features', async ({ authedPage, api, companyId }) => {
+    const roleName = unique('E2E composed role');
+    await gotoCompany(authedPage, companyId, '/settings/permissions');
+    await authedPage.getByRole('button', { name: 'เพิ่ม', exact: true }).click();
+    await authedPage.locator('form input[required]').fill(roleName);
+    await authedPage.getByRole('checkbox', { name: /บันทึกค่าใช้จ่ายของฉัน/ }).check();
+    await authedPage.getByRole('button', { name: 'บันทึก', exact: true }).click();
+    await expect(authedPage.getByText('สร้างบทบาทเรียบร้อยแล้ว')).toBeVisible();
+
+    let roles = await json<Role[]>(await api.get(`companies/${companyId}/settings/roles`));
+    let created = roles.find((role) => role.name === roleName);
+    expect(created).toBeTruthy();
+    expect(created!.permissionKeys).toEqual(expect.arrayContaining(['expense.create', 'expense.receipt.upload', 'attachment.create']));
+
+    await authedPage.getByRole('button', { name: new RegExp(roleName) }).click();
+    await authedPage.getByRole('button', { name: 'แก้ไข', exact: true }).click();
+    await authedPage.getByRole('checkbox', { name: /ตรวจสอบการเบิก/ }).check();
+    await authedPage.getByRole('button', { name: 'บันทึก', exact: true }).click();
+    await expect(authedPage.getByText('บันทึกบทบาทเรียบร้อยแล้ว')).toBeVisible();
+
+    roles = await json<Role[]>(await api.get(`companies/${companyId}/settings/roles`));
+    created = roles.find((role) => role.name === roleName);
+    expect(created!.permissionKeys).toEqual(expect.arrayContaining([
+      'expense.create',
+      'attachment.create',
+      'reimbursement.read',
+      'reimbursement.finance_review',
+    ]));
+    expect(created!.permissionKeys).not.toContain('reimbursement.payment.record');
   });
 
   test('SET-05 @p1 permissions matrix renders', async ({ authedPage, companyId }) => {
@@ -206,10 +252,133 @@ test.describe('SET — settings', () => {
 
     await gotoCompany(authedPage, companyId, '/settings/access-overview');
     const summary = authedPage.getByTestId('access-permission-summary');
-    await expect(summary).toContainText(`สิทธิ์มาจากตำแหน่ง ${assignedRoles.map((role) => role.name).join(', ')}`);
-    await expect(summary).toContainText('ระบบรวมสิทธิ์จากทุกตำแหน่ง');
+    await expect(summary).toContainText(`สิทธิ์มาจากบทบาท ${assignedRoles.map((role) => role.name).join(', ')}`);
+    await expect(summary).toContainText('ระบบรวมสิทธิ์จากทุกบทบาท');
     await expect(summary.getByText(`ใช้งานได้ ${expectedMenuIds.length} เมนู`)).toBeVisible();
     await expect(summary.locator(`[data-menu-id="${complementaryMenuId}"]`)).toBeVisible();
+  });
+
+  test('SET-08D @p1 edits an active employee to hold multiple roles and persists their union', async ({ authedPage, api, companyId }) => {
+    const roles = await json<Role[]>(await api.get(`companies/${companyId}/settings/roles`));
+    const staff = roles.find((role) => role.key === 'STAFF')!;
+    const suffix = Date.now().toString();
+    const displayName = unique('E2E multi-role employee');
+    const created = await json<CreateEmployeeResult>(await api.post(`companies/${companyId}/settings/employees`, {
+      data: {
+        displayName,
+        legalName: displayName,
+        username: `e2e.multi.${suffix}`,
+        dateOfBirth: '1990-01-01',
+        identityType: 'PASSPORT',
+        identityNumber: `MULTI${suffix}`,
+        phoneNumber: `09${suffix.slice(-8)}`,
+        roleIds: [staff.id],
+      },
+    }));
+    await api.post(`companies/${companyId}/settings/employees/${created.employeeId}/complete`, { data: {} });
+
+    await gotoCompany(authedPage, companyId, '/settings/access-overview');
+    await authedPage.getByLabel('ค้นหาพนักงาน').fill(displayName);
+    await authedPage.getByRole('button', { name: new RegExp(displayName) }).click();
+    await authedPage.locator('button[aria-haspopup="listbox"]').click();
+    await authedPage.getByRole('option', { name: 'Accountant', exact: true }).click();
+    await expect(authedPage.getByText('บันทึกบทบาทพนักงานแล้ว')).toBeVisible();
+
+    const employees = await json<Employee[]>(await api.get(`companies/${companyId}/settings/employees`));
+    const updated = employees.find((employee) => employee.id === created.employeeId)!;
+    expect(updated.roles.map((role) => role.key).sort()).toEqual(['ACCOUNTANT', 'STAFF']);
+    await expect(authedPage.getByText('ระบบจะรวมสิทธิ์จากทุกบทบาท')).toBeVisible();
+  });
+
+  test('SET-08E @p1 an isolated multi-role employee gets the permission union in real feature pages', async ({ api, browser, request, companyId }) => {
+    const roles = await json<Role[]>(await api.get(`companies/${companyId}/settings/roles`));
+    const staff = roles.find((role) => role.key === 'STAFF');
+    expect(staff, 'seed must include STAFF').toBeTruthy();
+
+    const customRole = await json<Role>(await api.post(`companies/${companyId}/settings/roles`, {
+      data: {
+        name: unique('E2E cross-feature reviewer'),
+        capabilityPackKeys: ['pack.expense.review', 'pack.reimbursement.review'],
+      },
+    }));
+    const suffix = Date.now().toString();
+    const created = await json<CreateEmployeeResult>(await api.post(`companies/${companyId}/settings/employees`, {
+      data: {
+        displayName: unique('E2E permission union'),
+        legalName: 'E2E Permission Union',
+        username: `e2e.permission.union.${suffix}`,
+        dateOfBirth: '1990-01-01',
+        identityType: 'PASSPORT',
+        identityNumber: `UNION${suffix}`,
+        phoneNumber: `06${suffix.slice(-8)}`,
+        roleIds: [staff!.id, customRole.id],
+      },
+    }));
+    expect(created.mustChangePassword).toBe(true);
+    expect(created.temporaryPassword).toBeTruthy();
+    await json(await api.post(`companies/${companyId}/settings/employees/${created.employeeId}/complete`, { data: {} }));
+
+    const firstLogin = await request.post(`${API_BASE_URL}/auth/password/login`, {
+      data: { username: created.username, password: created.temporaryPassword },
+    });
+    expect(firstLogin.ok(), await firstLogin.text()).toBe(true);
+    const { accessToken } = await firstLogin.json() as { accessToken: string };
+    const permanentPassword = `Union@${suffix}Aa`;
+    const changed = await request.post(`${API_BASE_URL}/auth/password/change`, {
+      headers: apiHeaders(accessToken, companyId),
+      data: { currentPassword: created.temporaryPassword, newPassword: permanentPassword },
+    });
+    expect(changed.ok(), await changed.text()).toBe(true);
+
+    const verifiedLogin = await request.post(`${API_BASE_URL}/auth/password/login`, {
+      data: { username: created.username, password: permanentPassword },
+    });
+    expect(verifiedLogin.ok(), await verifiedLogin.text()).toBe(true);
+    const verifiedToken = (await verifiedLogin.json() as { accessToken: string }).accessToken;
+    const meResponse = await request.get(`${API_BASE_URL}/auth/me`, {
+      headers: apiHeaders(verifiedToken, companyId),
+    });
+    expect(meResponse.ok(), await meResponse.text()).toBe(true);
+    const me = await meResponse.json() as { roles: string[]; permissions: string[] };
+    expect(me.roles).toEqual(expect.arrayContaining(['STAFF', customRole.key]));
+    expect(me.permissions).toEqual(expect.arrayContaining([
+      'expense.create',
+      'expense.review',
+      'reimbursement.submit',
+      'reimbursement.finance_review',
+    ]));
+    expect(me.permissions).not.toContain('reimbursement.payment.record');
+
+    const context = await browser.newContext({ baseURL: WEB_BASE_URL });
+    try {
+      const browserLogin = await context.request.post(`${WEB_BASE_URL}/api/auth/login`, {
+        data: { username: created.username, password: permanentPassword, remember: true },
+      });
+      expect(browserLogin.ok(), await browserLogin.text()).toBe(true);
+      expect((await browserLogin.json() as { passwordChangeRequired?: boolean }).passwordChangeRequired).toBe(false);
+      await ensureBrowserLegalAcceptance(context, companyId);
+      const page = await context.newPage();
+
+      await gotoCompany(page, companyId, '/expenses/manual');
+      await expect(page.getByRole('heading', { name: 'บันทึกค่าใช้จ่ายด้วยมือ' })).toBeVisible();
+      await page.getByLabel('รายละเอียดค่าใช้จ่าย').fill(unique('E2E union expense'));
+      await page.getByLabel('ราคาต่อหน่วย').fill('123.45');
+      await page.getByRole('button', { name: 'บันทึกฉบับร่าง' }).click();
+      await expect(page).toHaveURL(new RegExp(`/companies/${companyId}/expenses/[^/?]+$`));
+      await expect(page.getByRole('heading', { name: /ฉบับร่าง/ })).toBeVisible();
+
+      await gotoCompany(page, companyId, '/expenses/substitute-receipts');
+      await expect(page.getByRole('heading', { name: 'ใบรับรองแทนใบเสร็จรับเงิน' })).toBeVisible();
+      await expect(page.getByRole('link', { name: '+ สร้างใบรับรองฉบับใหม่' })).toBeVisible();
+
+      await gotoCompany(page, companyId, '/reimbursements');
+      await expect(page.getByRole('button', { name: 'รายการที่เกี่ยวข้อง' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'คิวการเงิน' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'คิวอนุมัติ' })).toHaveCount(0);
+      await expect(page.getByRole('button', { name: 'ตั้งค่านโยบาย' })).toHaveCount(0);
+    } finally {
+      await context.close();
+    }
   });
 
   test('SET-08C @p1 branch failure stays scoped and does not hide a valid permission summary', async ({ authedPage, companyId }) => {

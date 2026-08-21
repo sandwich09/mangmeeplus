@@ -567,6 +567,15 @@ describe('ListApprovalQueueUseCase self-approval (audit H-18)', () => {
     assert.equal(items.length, 1);
   });
 
+  it('lets a reject-only decision maker load the same queue without granting approve', async () => {
+    const theirs = baseRequest({ requesterUserId: 'staff-1' });
+    const items = await new ListApprovalQueueUseCase(queueRepo(theirs)).execute(ctx({
+      permissions: ['reimbursement.reject'],
+    }));
+
+    assert.equal(items.length, 1);
+  });
+
   // The company can turn self-approval on, and then the claim is genuinely approvable — the filter
   // reads the same policy field the approve gate does, so the two cannot come to disagree.
   it('shows the filer their own claim once the policy allows self-approval', async () => {

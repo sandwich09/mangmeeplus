@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Param, Patch, Post, Req } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
-import { RequirePermissions } from '../../../../common/security/permissions.decorator';
+import { RequireAnyPermission, RequirePermissions } from '../../../../common/security/permissions.decorator';
 import { trustedPublicApiBase } from '../../../../common/http/public-api-base';
 import { ReqCtx } from '../../../auth/presentation/request-context.decorator';
 import type { RequestContext } from '@watchdog-bms/contracts';
@@ -37,7 +37,7 @@ export class EmployeeController {
   }
 
   @Get(':employeeId')
-  @RequirePermissions('access.employee.read')
+  @RequireAnyPermission('access.employee.read', 'access.employee.update')
   @ApiOperation({ summary: 'Get employee access profile detail' })
   get(@ReqCtx() ctx: RequestContext, @Param('employeeId') employeeId: string) {
     return this.getEmployee.execute(ctx.companyId, employeeId);

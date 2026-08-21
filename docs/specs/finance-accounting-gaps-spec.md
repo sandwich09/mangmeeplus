@@ -51,8 +51,9 @@ Preset นี้ถึงมือผู้ใช้จริงแล้ว —
 ### การแก้
 
 1. **`FINANCE_PACKS` เพิ่ม:** `pack.billing.view`, `pack.payment.view`, `pack.bank.view`, `pack.procurement.view`, `pack.expense.view`, `pack.tax.view`, `pack.cash.view`
-2. **`pack.reimbursement.finance` เพิ่ม `'reimbursement.read'` ในตัว pack เอง** (`capability-pack.registry.ts:262-267`) — เหตุผล: ไม่มี `pack.reimbursement.view` และใช้ `pack.reimbursement.approve` แทนไม่ได้เพราะจะแถม `reimbursement.approve` มาด้วย ซึ่งทำลายการแยกด่าน MANAGER-อนุมัติ / FINANCE-จ่าย
-3. **`tpl.x.accounting` เพิ่ม:** `pack.ledger.view`, `pack.tax.view`
+2. **`pack.reimbursement.finance` มี `'reimbursement.read'` ในตัว pack เอง** — ใช้สำหรับผู้ตรวจและจ่ายครบวงจร โดยไม่พ่วง `reimbursement.approve`
+3. **เพิ่ม `pack.reimbursement.review`** สำหรับดู/ตรวจการเงิน/ส่งออกโดยไม่ให้ payment record/void หรือ duplicate resolution และเพิ่ม pack นี้ใน `tpl.x.accounting`; จึงประกอบสิทธิ์ให้ ACCOUNTANT, STAFF หรือ custom role ได้โดยไม่ over-grant
+4. **`tpl.x.accounting` เพิ่ม:** `pack.ledger.view`, `pack.tax.view`
 
 ข้อควรระวัง: pack `.view` ทุกตัวเป็น read-only อยู่แล้ว (ยืนยันจาก registry) — การเพิ่มต้องไม่พาสิทธิ์เขียนติดมา
 

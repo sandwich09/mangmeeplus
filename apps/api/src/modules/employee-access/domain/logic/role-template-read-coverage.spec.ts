@@ -74,6 +74,23 @@ describe('role-template read coverage (GAP-01)', () => {
     assert.ok(new Set(compiledKeys('tpl.x.accounting')).has('expense.read_own'), 'tpl.x.accounting should hold expense.read_own');
   });
 
+  it('tpl.x.accounting can review reimbursements without gaining payment authority', () => {
+    const held = new Set(compiledKeys('tpl.x.accounting'));
+    for (const key of ['reimbursement.read', 'reimbursement.read_own', 'reimbursement.read_related', 'reimbursement.finance_review', 'reimbursement.export']) {
+      assert.ok(held.has(key), `tpl.x.accounting should hold ${key}`);
+    }
+    for (const key of ['reimbursement.payment.record', 'reimbursement.payment.void', 'reimbursement.duplicate.resolve']) {
+      assert.ok(!held.has(key), `tpl.x.accounting must not hold ${key}`);
+    }
+  });
+
+  it('expense capture and review packs include the attachment authority their screens invoke', () => {
+    for (const pack of ['pack.expense.self', 'pack.expense.review']) {
+      const held = new Set(compileRole({ capabilityPackKeys: [pack], entitledFeatureKeys: null, granterPermissionKeys: null }).permissionKeys);
+      assert.ok(held.has('attachment.create'), `${pack} cannot upload its expense evidence`);
+    }
+  });
+
   it('tpl.x.finance does not widen into approve/post/close privileges', () => {
     const held = new Set(compiledKeys('tpl.x.finance'));
     for (const k of ['reimbursement.approve', 'journal.entry.post', 'ledger.period.close', 'expense.signature.approve']) {

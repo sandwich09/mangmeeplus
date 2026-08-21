@@ -2,7 +2,7 @@
 
 ## 1. Status and Authority
 
-- Status: **Implementation-ready after the data preflight in §14 passes**
+- Status: **Permission-composition amendment implemented; role-routing Release A/B remains implementation-ready after the data preflight in §14 passes**
 - Date: 2026-08-21
 - Latest owner decision: policy administrators choose one role, not a person or internal routing mode.
 - Parent: [[specs/reimbursement-approval-spec|Reimbursement and Approval Spec]] (item 14)
@@ -66,6 +66,14 @@ For every submitted claim, the system must then produce one consistent answer ac
 | E20 | Current self-approval policy exempts OWNER/ADMIN/MANAGER even when the toggle is off. | `reimbursement.logic.ts:247-275` | Copy and request-specific recipient filtering must reflect the real rule. |
 | E21 | E2E spreads GET output into PUT and restores it the same way. | `e2e/reimbursements.spec.ts:43-50` | Strict DTOs and legacy preservation require writable-only fixtures. |
 | E22 | Existing columns already support role/mode/user and role snapshot. | `schema.prisma:5195-5220,5337-5361` | Routing itself needs no new role/step column. |
+| E23 | Employee create/update contracts and API already accept `roleIds[]` and union effective permissions, but both active employee screens submitted only the first role. | employee-access contracts/use cases; active employee pages | Adding a role was not safely representable and saving could silently drop other assignments. |
+| E24 | Policy-tab visibility was additionally narrowed to the literal role names OWNER/ADMIN even though the API authorizes `reimbursement.policy.manage`. | reimbursement web logic; policy controller/use case | STAFF/custom roles granted the permission still could not use it. |
+| E25 | Approval and finance queues displayed reject, duplicate resolution, and payment actions without checking their distinct permissions. | reimbursement queue/drawer actions | Composed roles could see actions that deterministically returned 403. |
+| E26 | The accounting preset lacked reimbursement review while the only reusable finance pack also granted payment/void/duplicate authority. | capability-pack, role-template, and permission registries | Small companies could not compose review-only work without over-granting payment authority. |
+| E27 | The role page route required `access.role.manage`, but its supporting role/matrix/catalog APIs required separate read keys; a system-role fork also returns a new id that the page ignored. | permission route/page; role, permission, and access-catalog controllers; update-role use case | A composed manage-only role could pass the route then get partial 403s, and a successful STAFF/system-role fork could jump to an unrelated role after reload. |
+| E28 | The employee wizard route required employee read, while create/update/complete are separate permissions; its role/address/detail reads did not accept the action permissions, and completing an edited DRAFT requires create authority. | employee route/page; employee, role, and access-catalog controllers | A composed creator/editor could hold the mutation right but not finish the screen; DRAFT activation could also predictably return 403. |
+| E29 | The same action-without-supporting-read gap existed outside reimbursement: `expense.create` could save then fail opening its own draft, `expense.confirm` could see a substitute-receipt approval row but not load its detail/history/artifact, and expense capture/review packs omitted the attachment authority their visible upload controls invoke. | expense controller/use cases, substitute-receipt hub/wizard, capability packs | Custom STAFF/accounting/finance roles could enter the advertised flow and dead-end after a successful write or before approval. |
+| E30 | The registered reimbursement guide test still encoded an OWNER/ADMIN role-name restriction for policy even after the hub/API became permission-driven. | user-guide content contract test | Secondary navigation/help could contradict the executable permission model unless it reuses the same tab resolver. |
 
 ## 4. System Design Decisions
 
@@ -187,6 +195,17 @@ All eligible holders of the selected role can see the same claim. The first vali
 ### D12 — Legacy reads perform zero writes
 
 Named user, DIRECT_MANAGER, contradictory mode/role, unknown role, unavailable role, duplicate company-policy rows, and missing policy snapshot are classified without mutation.
+
+### D13 — Authorization is permission-driven and composable
+
+- Role keys describe responsibility/routing; effective permissions authorize product actions.
+- Every live web tab and action mirrors the exact permission enforced by its API and must not add a role-name allowlist.
+- Sidebar, route guards, employee summaries, and user-guide shortcuts reuse the same effective-permission
+  facts as their destination; help/navigation must not reintroduce a role-name restriction.
+- A member may hold multiple roles. Effective permissions are the union of those roles; removing one role removes only its contribution.
+- The same capability works whether granted through OWNER, ACCOUNTANT, STAFF, a forked system role, a custom role, or multiple roles.
+- Tenant, active membership, branch scope, selected approval route, self-approval, state, snapshot/hash, and CAS checks remain mandatory.
+- Sensitive capabilities stay separable: finance review does not imply payment record/void or duplicate resolution.
 
 ## 5. UX Contract
 

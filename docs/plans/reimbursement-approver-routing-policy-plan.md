@@ -443,6 +443,49 @@ This phase implements spec §18 without bypassing the role-routing Release A/B p
 - Spec §18 acceptance criteria are evidenced; role-routing phases remain governed by their own preflight
   and Release A/B exits.
 
+## Phase C2 — Permission Composition and Multi-Role UI (independent implementation slice)
+
+### Goal
+
+Make reimbursement actions follow effective permissions rather than literal role names, and expose the backend's existing multi-role union safely in the two live employee screens.
+
+### Tasks
+
+- [x] Remove the OWNER/ADMIN role-name gate from the policy tab; require only `reimbursement.policy.manage`.
+- [x] Let `reimbursement.read` open the related-items tab and request company-wide scope.
+- [x] Gate approve, reject, finance review, duplicate resolution, payment record, and drawer actions by their exact permissions.
+- [x] Keep finance correction available to a review-only role while disabling duplicate clearance without `reimbursement.duplicate.resolve`.
+- [x] Change add/edit employee and individual-permissions screens from one `roleId` to `roleIds[]`; preserve all current roles and prevent removing the final role.
+- [x] Apply protected-role and all-branch rules across every selected role.
+- [x] Add narrow `pack.reimbursement.review` to `tpl.x.accounting`; do not grant payment, void, or duplicate resolution.
+- [x] Gate employee create/edit routes by their exact permissions and make update-only DRAFT editing stop before create-only activation.
+- [x] Gate role create/edit/disable controls by `access.role.manage`; select the created role and the new company-fork id after save/reload.
+- [x] Let employee create/update and role-manage permissions load only their required supporting catalogs via equivalent-authority OR guards; do not broaden company employee-list read.
+- [x] Apply the same composition rule to expense capture and substitute receipts: creator reopens only its own draft, confirmer loads approval context, false create/upload actions are hidden, and capture/review packs include attachment upload authority.
+- [x] Add focused helper/registry tests for arbitrary permission sets and multi-role pinning.
+
+### Verification
+
+- Web reimbursement and role-picker tests.
+- Employee-access capability/template/permission-registry tests.
+- Employee/role controller metadata and workspace route/navigation contract tests.
+- Expense creator ownership, substitute approver journey, and capability-pack completeness tests.
+- Web/API/contracts typechecks and scoped diff review.
+- Local browser/E2E evidence: create Finance + Accountant employee through the four-step UI; add a
+  second role through the active employee editor; create/edit one role from expense + reimbursement
+  packs; log in as an isolated Staff + custom reviewer; create an expense draft, open substitute-
+  receipt work, and verify reimbursement related/finance tabs while approval/policy/payment authority
+  stays absent. Run the seeded ten-persona sidebar/route matrix and the expense, reimbursement, role,
+  and employee suites together. Evidence: targeted permission journeys passed 46/46; the full Chromium
+  workspace run passed 158 tests with 80 project/feature-contract skips and zero failures.
+
+### Exit
+
+- A role name is never required for a reimbursement action when the effective permission, route, branch, member, and state guards pass.
+- Adding a second role does not replace the first; removing one does not remove unrelated rights.
+- UI does not offer actions that the current permission set must reject.
+- Expense creation and substitute-receipt approval remain executable for a custom role composed from the corresponding capability, without granting unrelated company employee or payment authority.
+
 ## Phase 10 — UAT and Production
 
 No cloud action is authorized by this planning task.

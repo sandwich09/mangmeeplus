@@ -40,7 +40,7 @@ import {
 } from '../expenses/ExpensesUi';
 import {
   validatePaymentForm, sumLineAmounts, summariseQueue, matchesSearch, pageBounds,
-  formatMoney, parseHubTab, visibleHubTabs, errorText, isStaleApprovalError, diffApprovalFields,
+  formatMoney, parseHubTab, visibleHubTabs, reimbursementListScope, errorText, isStaleApprovalError, diffApprovalFields,
   type ApprovalFieldDiff, type HubTab,
 } from './reimbursements.logic';
 import { todayCivilDate } from '@watchdog-bms/contracts';
@@ -540,7 +540,7 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
     );
   }
 
-  const queueProps = { companyId, refreshKey, onOpenDetail: openDetail };
+  const queueProps = { companyId, refreshKey, onOpenDetail: openDetail, permissions };
   return (
     <MangmeePage
       eyebrow="การเบิกจ่าย"
@@ -559,7 +559,6 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
       {tab === 'mine' && <MyRequests
         {...queueProps}
         userId={userId}
-        permissions={permissions}
         canCreate={permissions.includes('reimbursement.create')}
         onRequestCancel={id => void openDetail(id, 'cancel')}
       />}
@@ -738,7 +737,7 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
   );
 }
 
-type QueueProps = { companyId: string; refreshKey: number; onOpenDetail: (id: string) => void };
+type QueueProps = { companyId: string; refreshKey: number; onOpenDetail: (id: string) => void; permissions: readonly string[] };
 
 // ── My Requests ───────────────────────────────────────────────────────────────
 function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, canCreate, onRequestCancel }: QueueProps & {
@@ -759,7 +758,7 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const scope = permissions.includes('reimbursement.read_related') ? 'related' : 'own';
+      const scope = reimbursementListScope(permissions);
       const r = await listReimbursements(companyId, { scope });
       setData(r.items ?? []);
     }
@@ -993,15 +992,19 @@ function DetailDrawer({ companyId, detail, context, userId, permissions, busy, e
   const lines: any[] = detail.lines ?? [];
   const { canEditDraft, canSubmit, canCancel, canReopen } = reimbursementOwnActions(detail, userId, permissions);
   const canApprove = context === 'approvals' && permissions.includes('reimbursement.approve') && detail.status === 'PENDING_APPROVAL';
-  const canFinanceApprove = context === 'finance' && permissions.includes('reimbursement.finance_review') && detail.status === 'FINANCE_REVIEW';
-  const canRequestCorrection = canFinanceApprove && detail.financeReviewStatus !== 'APPROVED_FOR_PAYMENT';
+  const canReject = context === 'approvals' && permissions.includes('reimbursement.reject') && detail.status === 'PENDING_APPROVAL';
+  const canFinanceReview = context === 'finance' && permissions.includes('reimbursement.finance_review') && detail.status === 'FINANCE_REVIEW';
+  const duplicateResolutionBlocked = detail.duplicateStatus === 'POSSIBLE_DUPLICATE'
+    && !permissions.includes('reimbursement.duplicate.resolve');
+  const canFinanceApprove = canFinanceReview && !duplicateResolutionBlocked;
+  const canRequestCorrection = canFinanceReview && detail.financeReviewStatus !== 'APPROVED_FOR_PAYMENT';
   const canPay = context === 'finance' && permissions.includes('reimbursement.payment.record') && detail.status === 'READY_FOR_PAYMENT';
   const signatures: any[] = detail.signatures ?? [];
   const signedCopies: any[] = detail.signedCopies ?? [];
   const signableRoles = eligibleSignatureRoles(detail, userId);
   const canAttachSignedCopy = canUploadSignedCopy(detail, userId, permissions);
   const submitReadiness = reimbursementSubmitReadiness(detail);
-  const showActions = canEditDraft || canSubmit || canCancel || canReopen || canApprove || canFinanceApprove || canPay;
+  const showActions = canEditDraft || canSubmit || canCancel || canReopen || canApprove || canReject || canFinanceReview || canPay;
   const footerButtons = detail.requestNo || showActions ? (
     <>
       {/* No requestNo, no document: drafts and claims cancelled out of DRAFT never got one. */}
@@ -1011,8 +1014,8 @@ function DetailDrawer({ companyId, detail, context, userId, permissions, busy, e
       {canCancel && <button className={ghostClass} disabled={busy} onClick={onRequestCancel}>ยกเลิกคำขอ</button>}
       {canReopen && <button className={btnClass} disabled={busy} onClick={onReopen}>{busy ? 'กำลังดำเนินการ...' : 'แก้ไขและยื่นใหม่'}</button>}
       {canApprove && <button className={successBtn} style={successBtnStyle} disabled={busy} onClick={onApprove}>อนุมัติ</button>}
-      {canApprove && <button className={dangerClass} disabled={busy} onClick={onRequestReject}>ปฏิเสธ</button>}
-      {canFinanceApprove && <button className={successBtn} style={successBtnStyle} disabled={busy} onClick={onFinanceApprove}>{financeActionLabel(detail)}</button>}
+      {canReject && <button className={dangerClass} disabled={busy} onClick={onRequestReject}>ปฏิเสธ</button>}
+      {canFinanceReview && <button className={successBtn} style={successBtnStyle} disabled={busy || duplicateResolutionBlocked} title={duplicateResolutionBlocked ? 'รายการนี้อาจซ้ำ ต้องให้ผู้มีสิทธิ์แก้รายการซ้ำตรวจสอบ' : undefined} onClick={onFinanceApprove}>{financeActionLabel(detail)}</button>}
       {canRequestCorrection && <button className={ghostClass} disabled={busy} onClick={onRequestCorrection}>ส่งกลับให้แก้ไข</button>}
       {canPay && <button className={btnClass} disabled={busy} onClick={onRecordPayment}>บันทึกจ่าย</button>}
     </>
@@ -1224,7 +1227,7 @@ function Row({ k, v }: { k: string; v: any }) {
 }
 
 // ── Approval Queue ────────────────────────────────────────────────────────────
-function ApprovalQueue({ companyId, refreshKey, onOpenDetail }: QueueProps) {
+function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: QueueProps) {
   const toast = useToast();
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1344,8 +1347,8 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail }: QueueProps) {
                               onClick={e => { e.stopPropagation(); onOpenDetail(r.id); }}>
                               <span className="[&>svg]:h-4 [&>svg]:w-4">{ICON.eye}</span>
                             </button>
-                            <button className={cx(successBtn, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} style={successBtnStyle} disabled={busy === r.id} onClick={e => { e.stopPropagation(); approveRow(r); }}>อนุมัติ</button>
-                            <button className={cx(dangerClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} disabled={busy === r.id} onClick={e => { e.stopPropagation(); setRejectFor(r); }}>ปฏิเสธ</button>
+                            {permissions.includes('reimbursement.approve') && <button className={cx(successBtn, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} style={successBtnStyle} disabled={busy === r.id} onClick={e => { e.stopPropagation(); approveRow(r); }}>อนุมัติ</button>}
+                            {permissions.includes('reimbursement.reject') && <button className={cx(dangerClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} disabled={busy === r.id} onClick={e => { e.stopPropagation(); setRejectFor(r); }}>ปฏิเสธ</button>}
                           </div>
                         </td>
                       </tr>
@@ -1372,8 +1375,8 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail }: QueueProps) {
                   <div className="mt-3 text-right text-lg font-bold tabular-nums text-gray-900">{formatMoney(r.amount)} {r.currency}</div>
                   <div className="mt-4 space-y-2 border-t border-gray-100 pt-3">
                     <Link href={`?tab=approvals&focus=${encodeURIComponent(r.id)}`} className={cx(ghostClass, 'min-h-11 w-full')} data-testid="reimbursements-approvals-card">ดูรายละเอียด</Link>
-                    <button className={cx(successBtn, 'min-h-11 w-full')} style={successBtnStyle} disabled={busy === r.id} onClick={() => approveRow(r)}>อนุมัติ</button>
-                    <button className={cx(dangerClass, 'min-h-11 w-full')} disabled={busy === r.id} onClick={() => setRejectFor(r)}>ปฏิเสธ</button>
+                    {permissions.includes('reimbursement.approve') && <button className={cx(successBtn, 'min-h-11 w-full')} style={successBtnStyle} disabled={busy === r.id} onClick={() => approveRow(r)}>อนุมัติ</button>}
+                    {permissions.includes('reimbursement.reject') && <button className={cx(dangerClass, 'min-h-11 w-full')} disabled={busy === r.id} onClick={() => setRejectFor(r)}>ปฏิเสธ</button>}
                   </div>
                 </MangmeeCard>
               ))}
@@ -1435,7 +1438,7 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail }: QueueProps) {
 }
 
 // ── Finance Queue ─────────────────────────────────────────────────────────────
-function FinanceQueue({ companyId, refreshKey, onOpenDetail, onRecordPayment }: QueueProps & { onRecordPayment: (request: any) => void }) {
+function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onRecordPayment }: QueueProps & { onRecordPayment: (request: any) => void }) {
   const toast = useToast();
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1545,8 +1548,8 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, onRecordPayment }: 
                               onClick={e => { e.stopPropagation(); onOpenDetail(r.id); }}>
                               <span className="[&>svg]:h-4 [&>svg]:w-4">{ICON.eye}</span>
                             </button>
-                            {r.status === 'FINANCE_REVIEW' && <button className={cx(successBtn, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} style={successBtnStyle} disabled={busy === r.id} onClick={e => { e.stopPropagation(); action(r.id, () => financeReviewReimbursement(companyId, r.id, { decision: 'APPROVED_FOR_PAYMENT', resolveDuplicate: r.hasDuplicateBlocker, duplicateResolutionReason: r.hasDuplicateBlocker ? 'ตรวจสอบแล้วไม่ซ้ำ' : undefined }), r.financeReviewStatus === 'APPROVED_FOR_PAYMENT' ? 'ดำเนินการคำขอจ่ายต่อเรียบร้อยแล้ว' : 'อนุมัติจ่ายเรียบร้อยแล้ว'); }}>{financeActionLabel(r)}</button>}
-                            {(r.status === 'READY_FOR_PAYMENT') && <button className={cx(btnClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} disabled={busy === r.id} onClick={e => { e.stopPropagation(); onRecordPayment(r); }}>บันทึกจ่าย</button>}
+                            {r.status === 'FINANCE_REVIEW' && <button className={cx(successBtn, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} style={successBtnStyle} disabled={busy === r.id || (r.hasDuplicateBlocker && !permissions.includes('reimbursement.duplicate.resolve'))} title={r.hasDuplicateBlocker && !permissions.includes('reimbursement.duplicate.resolve') ? 'รายการนี้อาจซ้ำ ต้องให้ผู้มีสิทธิ์แก้รายการซ้ำตรวจสอบ' : undefined} onClick={e => { e.stopPropagation(); action(r.id, () => financeReviewReimbursement(companyId, r.id, { decision: 'APPROVED_FOR_PAYMENT', resolveDuplicate: r.hasDuplicateBlocker, duplicateResolutionReason: r.hasDuplicateBlocker ? 'ตรวจสอบแล้วไม่ซ้ำ' : undefined }), r.financeReviewStatus === 'APPROVED_FOR_PAYMENT' ? 'ดำเนินการคำขอจ่ายต่อเรียบร้อยแล้ว' : 'อนุมัติจ่ายเรียบร้อยแล้ว'); }}>{financeActionLabel(r)}</button>}
+                            {(r.status === 'READY_FOR_PAYMENT' && permissions.includes('reimbursement.payment.record')) && <button className={cx(btnClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} disabled={busy === r.id} onClick={e => { e.stopPropagation(); onRecordPayment(r); }}>บันทึกจ่าย</button>}
                           </div>
                         </td>
                       </tr>
@@ -1573,8 +1576,8 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, onRecordPayment }: 
                   <div className="mt-3 text-right text-lg font-bold tabular-nums text-gray-900">{formatMoney(r.outstandingAmount)} / {formatMoney(r.amount)} {r.currency}</div>
                   <div className="mt-4 space-y-2 border-t border-gray-100 pt-3">
                     <Link href={`?tab=finance&focus=${encodeURIComponent(r.id)}`} className={cx(ghostClass, 'min-h-11 w-full')} data-testid="reimbursements-finance-card">ดูรายละเอียด</Link>
-                    {r.status === 'FINANCE_REVIEW' && <button className={cx(successBtn, 'min-h-11 w-full')} style={successBtnStyle} disabled={busy === r.id} onClick={() => action(r.id, () => financeReviewReimbursement(companyId, r.id, { decision: 'APPROVED_FOR_PAYMENT', resolveDuplicate: r.hasDuplicateBlocker, duplicateResolutionReason: r.hasDuplicateBlocker ? 'ตรวจสอบแล้วไม่ซ้ำ' : undefined }), r.financeReviewStatus === 'APPROVED_FOR_PAYMENT' ? 'ดำเนินการคำขอจ่ายต่อเรียบร้อยแล้ว' : 'อนุมัติจ่ายเรียบร้อยแล้ว')}>{financeActionLabel(r)}</button>}
-                    {r.status === 'READY_FOR_PAYMENT' && <button className={cx(btnClass, 'min-h-11 w-full')} disabled={busy === r.id} onClick={() => onRecordPayment(r)}>บันทึกจ่าย</button>}
+                    {r.status === 'FINANCE_REVIEW' && <button className={cx(successBtn, 'min-h-11 w-full')} style={successBtnStyle} disabled={busy === r.id || (r.hasDuplicateBlocker && !permissions.includes('reimbursement.duplicate.resolve'))} title={r.hasDuplicateBlocker && !permissions.includes('reimbursement.duplicate.resolve') ? 'รายการนี้อาจซ้ำ ต้องให้ผู้มีสิทธิ์แก้รายการซ้ำตรวจสอบ' : undefined} onClick={() => action(r.id, () => financeReviewReimbursement(companyId, r.id, { decision: 'APPROVED_FOR_PAYMENT', resolveDuplicate: r.hasDuplicateBlocker, duplicateResolutionReason: r.hasDuplicateBlocker ? 'ตรวจสอบแล้วไม่ซ้ำ' : undefined }), r.financeReviewStatus === 'APPROVED_FOR_PAYMENT' ? 'ดำเนินการคำขอจ่ายต่อเรียบร้อยแล้ว' : 'อนุมัติจ่ายเรียบร้อยแล้ว')}>{financeActionLabel(r)}</button>}
+                    {r.status === 'READY_FOR_PAYMENT' && permissions.includes('reimbursement.payment.record') && <button className={cx(btnClass, 'min-h-11 w-full')} disabled={busy === r.id} onClick={() => onRecordPayment(r)}>บันทึกจ่าย</button>}
                   </div>
                 </MangmeeCard>
               ))}

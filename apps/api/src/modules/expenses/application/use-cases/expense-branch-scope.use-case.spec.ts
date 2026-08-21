@@ -142,6 +142,22 @@ describe('GetExpenseUseCase branch scope', () => {
     const r = await new GetExpenseUseCase(repo).execute(ctx(['b1'], ['expense.read_own']), 'exp-1');
     assert.equal(r.id, 'exp-1');
   });
+
+  it('lets a creator reopen only the draft they created', async () => {
+    const ownRepo = { findByIdWithRelations: async () => record('b1') } as any;
+    assert.equal((await new GetExpenseUseCase(ownRepo).execute(ctx(['b1'], ['expense.create']), 'exp-1')).id, 'exp-1');
+
+    const otherRepo = { findByIdWithRelations: async () => ({ ...record('b1'), createdByUserId: 'other-user' }) } as any;
+    await assert.rejects(
+      () => new GetExpenseUseCase(otherRepo).execute(ctx(['b1'], ['expense.create']), 'exp-1'),
+      /Access denied/,
+    );
+  });
+
+  it('lets an expense confirmer read the branch-scoped record needed for the decision', async () => {
+    const repo = { findByIdWithRelations: async () => ({ ...record('b1'), createdByUserId: 'other-user' }) } as any;
+    assert.equal((await new GetExpenseUseCase(repo).execute(ctx(['b1'], ['expense.confirm']), 'exp-1')).id, 'exp-1');
+  });
 });
 
 describe('UpdateExpenseDraftUseCase branch scope', () => {
