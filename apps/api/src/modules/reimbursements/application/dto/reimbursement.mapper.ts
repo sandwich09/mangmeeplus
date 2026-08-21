@@ -27,7 +27,7 @@ export function toPolicySummary(p: ReimbursementPolicyRecord): ReimbursementPoli
     companyId: p.companyId,
     branchId: p.branchId,
     currency: p.currency,
-    approvalThresholdAmount: p.approvalThresholdAmount,
+    approvalThresholdAmount: p.approvalRequiredFromAmount,
     approvalRequiredFromAmount: p.approvalRequiredFromAmount,
     approverMode: p.approverMode,
     defaultApproverUserId: p.defaultApproverUserId,

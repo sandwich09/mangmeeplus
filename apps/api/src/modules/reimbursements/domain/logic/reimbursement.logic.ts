@@ -10,6 +10,7 @@ import type {
   ReimbursementPaymentMethod,
   ReimbursementPaymentSourceRef,
   ReimbursementReceiptRequirementStatus,
+  ReimbursementPolicySnapshotV1,
 } from '@watchdog-bms/contracts';
 
 // ---- Money helpers ----
@@ -148,6 +149,7 @@ export type ApprovalSnapshotFields = {
   reason: string;
   primaryAttachmentId?: string | null;
   lines?: readonly ReimbursementLineFields[];
+  approvalPolicySnapshotJson?: ReimbursementPolicySnapshotV1;
 };
 
 export type LegacyV1FallbackSnapshotFields = ApprovalSnapshotFields & {
@@ -192,6 +194,9 @@ export function computeLegacySnapshotHashV1(fields: ApprovalSnapshotFields): str
 export function computeSnapshotHash(fields: ApprovalSnapshotFields): string {
   const canonical = [
     ...snapshotHeaderParts(fields),
+    ...(fields.approvalPolicySnapshotJson
+      ? [`policy:${stableJson(fields.approvalPolicySnapshotJson)}`]
+      : []),
     ...byLineNo(fields.lines ?? []).map((line) => [
       line.lineNo,
       d(line.amount).toFixed(4),
@@ -204,6 +209,17 @@ export function computeSnapshotHash(fields: ApprovalSnapshotFields): string {
     ].join('~')),
   ];
   return snapshotDigest(canonical);
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
 }
 
 /**
@@ -499,4 +515,22 @@ export function redactPayload(payload: Record<string, unknown>): Record<string, 
 export function matchesApproverRole(snapshot: string | null | undefined, roles: string[]): boolean {
   if (!snapshot) return false;
   return roles.includes(snapshot) || roles.includes('OWNER');
+}
+
+export type FrozenApprovalAuthority = 'ASSIGNED' | 'FALLBACK' | 'DENIED';
+
+/**
+ * A non-null assignment snapshot is the authority for that step. Role edits after submission do
+ * not remove an active assignee; only when every frozen assignee has left/been disabled may the
+ * recorded role/OWNER recovery rule take over. Undefined is an old step and keeps legacy routing.
+ */
+export function frozenApprovalAuthority(
+  assignedUserIds: readonly string[] | undefined,
+  activeUserIds: ReadonlySet<string>,
+  actorUserId: string,
+): FrozenApprovalAuthority {
+  if (assignedUserIds === undefined) return 'FALLBACK';
+  const activeAssigned = assignedUserIds.filter((userId) => activeUserIds.has(userId));
+  if (activeAssigned.length === 0) return 'FALLBACK';
+  return activeAssigned.includes(actorUserId) ? 'ASSIGNED' : 'DENIED';
 }

@@ -10,7 +10,7 @@ import type { DictionaryKey, SupportedLocale } from '@/common/i18n/workspace-dic
 import { employeeFullName } from '@watchdog-bms/contracts';
 import type {
   CapabilityPackView, RiskLevel, RolePreviewResult, RoleTemplate,
-  CompanyAccessMatrixRow, EffectiveAccessView, EffectivePermission,
+  CompanyAccessMatrixRow, EffectiveAccessView,
 } from '@watchdog-bms/contracts';
 import {
   listEmployees, createEmployee, updateEmployee, setEmployeeStatus,
@@ -57,9 +57,9 @@ const RISK_STYLE: Record<RiskLevel, string> = {
   CRITICAL: 'bg-red-50 text-red-700 border-red-200',
 };
 const DROP_REASON_LABEL: Record<string, string> = {
-  not_entitled: 'แพ็กเกจบริษัทยังไม่เปิดฟีเจอร์นี้',
-  above_granter_scope: 'เกินสิทธิ์ที่คุณมี (มอบให้ไม่ได้)',
-  unknown: 'ไม่รู้จักสิทธิ์นี้',
+  not_entitled: 'บริษัทนี้ยังใช้งานรายการนี้ไม่ได้',
+  above_granter_scope: 'คุณยังไม่มีสิทธิ์เพิ่มรายการนี้',
+  unknown: 'รายการนี้ไม่พร้อมใช้งาน',
 };
 export function RiskBadge({ risk }: { risk: RiskLevel }) {
   if (risk === 'LOW' || risk === 'MEDIUM') return null; // only flag HIGH/CRITICAL to keep the UI calm
@@ -112,13 +112,13 @@ const ROLE_NAME_TO_KEY: Record<string, string> = {
   'auditor (readonly)': 'AUDITOR_READONLY',
 };
 
-function roleDisplayName(roleOrKey: any, locale: SupportedLocale) {
+export function roleDisplayName(roleOrKey: any, locale: SupportedLocale) {
   const rawKey = typeof roleOrKey === 'string' ? roleOrKey : roleOrKey?.key;
   const rawName = typeof roleOrKey === 'string' ? roleOrKey : roleOrKey?.name;
   const normalizedName = String(rawName ?? '').trim().toLowerCase();
   const key = String(rawKey ?? ROLE_NAME_TO_KEY[normalizedName] ?? '').trim().toUpperCase();
   const dictKey = ROLE_LABEL_KEYS[key];
-  return dictKey ? t(dictKey, locale) : (rawName || rawKey || '');
+  return dictKey ? t(dictKey, locale) : (rawName || 'บทบาทที่กำหนดเอง');
 }
 
 export const panelClass = 'rounded-lg border border-gray-200 bg-white shadow-[0_1px_3px_rgba(16,24,40,.06)]';
@@ -218,7 +218,7 @@ export function EmployeeAccessWorkspacePage({ companyId, initialTab = 'employees
   const tabs: { key: Tab; label: string; href: string; icon: ReactNode; desc: string }[] = [
     { key: 'employees', label: 'พนักงาน', href: `/companies/${companyId}/settings/employees`, icon: <UserIcon className="h-4 w-4" />, desc: 'สร้างบัญชีและจัดการสถานะพนักงาน' },
     { key: 'roles', label: 'บทบาทและสิทธิ์', href: `/companies/${companyId}/settings/roles`, icon: <LockIcon className="h-4 w-4" />, desc: 'กำหนดความสามารถตามบทบาท' },
-    { key: 'matrix', label: 'ภาพรวมสิทธิ์', href: `/companies/${companyId}/settings/access-overview`, icon: <TableIcon className="h-4 w-4" />, desc: 'ดู effective access ของทุกคน' },
+    { key: 'matrix', label: 'ภาพรวมสิทธิ์', href: `/companies/${companyId}/settings/access-overview`, icon: <TableIcon className="h-4 w-4" />, desc: 'ดูว่าแต่ละคนทำอะไรได้บ้าง' },
   ];
   return (
     <div className="min-h-[calc(100dvh-var(--app-header-h))] bg-[#f7faf8]">
@@ -230,11 +230,11 @@ export function EmployeeAccessWorkspacePage({ companyId, initialTab = 'employees
               ตั้งค่าระบบ
             </div>
             <h1 className="text-2xl font-extrabold text-gray-900 sm:text-3xl">สิทธิ์การใช้งาน</h1>
-            <p className="mt-1 text-sm text-gray-500">จัดการพนักงาน บทบาท และภาพรวมสิทธิ์จาก backend จริงของระบบ</p>
+            <p className="mt-1 text-sm text-gray-500">จัดการพนักงาน บทบาท และภาพรวมสิทธิ์ในที่เดียว</p>
           </div>
           <div className="hidden rounded-lg border border-gray-200 bg-white px-4 py-3 text-right shadow-sm sm:block">
-            <div className="text-xs font-medium text-gray-400">ขอบเขตบริษัท</div>
-            <div className="mt-0.5 text-sm font-semibold text-gray-800">{companyId}</div>
+            <div className="text-xs font-medium text-gray-400">ขอบเขตการใช้งาน</div>
+            <div className="mt-0.5 text-sm font-semibold text-gray-800">ทั้งบริษัท</div>
           </div>
         </div>
 
@@ -320,7 +320,7 @@ function EmployeesView({ companyId }: { companyId: string }) {
       setRoles(assignableRoles(rolesResult.value));
     } else {
       setRoles([]);
-      setRoleCatalogWarning('โหลดรายการบทบาทไม่สำเร็จ จึงยังเพิ่มพนักงานใหม่หรือเปลี่ยน role assignment ไม่ได้ แต่ยังแก้ชื่อ/เบอร์ของรายการเดิมได้');
+      setRoleCatalogWarning('โหลดรายการบทบาทไม่สำเร็จ จึงยังเพิ่มพนักงานใหม่หรือเปลี่ยนบทบาทไม่ได้ แต่ยังแก้ชื่อและเบอร์โทรของรายการเดิมได้');
     }
 
     setLoading(false);
@@ -526,7 +526,7 @@ function CreateEmployeeForm({ companyId, roles, onCancel, onCreated }: { company
         </div>
         <div className={`${mutedPanelClass} p-4`}>
         <SectionTitle title="บทบาทและการเข้าใช้งาน">
-          เลือก role ที่พนักงานจะได้รับในบริษัทนี้
+          เลือกบทบาทที่พนักงานจะได้รับในบริษัทนี้
         </SectionTitle>
         <div className="mt-4 flex flex-wrap gap-2">
           {roles.map((r) => (
@@ -538,7 +538,7 @@ function CreateEmployeeForm({ companyId, roles, onCancel, onCreated }: { company
               {roleDisplayName(r, locale)}
             </label>
           ))}
-          {roles.length === 0 && <div className="text-sm text-gray-400">ยังไม่มี role ที่ assign ได้</div>}
+          {roles.length === 0 && <div className="text-sm text-gray-400">ยังไม่มีบทบาทที่เลือกได้</div>}
         </div>
         <div className="mt-4 rounded-lg border border-dashed border-brand-200 bg-white p-3 text-xs leading-5 text-gray-500">
           หลังสร้าง ระบบจะแสดงชื่อผู้ใช้ รหัสผ่านวันเดือนปีเกิด และ QR เชื่อม LINE สำหรับส่งต่อให้พนักงาน
@@ -624,7 +624,7 @@ function EmployeeDetailPanel({ companyId, employee, roles, onChanged, onHandoff,
         </div>
         <div className={`${panelClass} p-4`}>
           <SectionTitle title="บทบาท">
-            เลือก role ที่กำหนดสิทธิ์ของพนักงานคนนี้
+            เลือกบทบาทที่กำหนดว่าพนักงานคนนี้ทำอะไรได้บ้าง
           </SectionTitle>
           <div className="mt-4 flex flex-wrap gap-2">
             {roles.map((r) => (
@@ -729,6 +729,7 @@ function RolesView({ companyId }: { companyId: string }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [smartRolesWarning, setSmartRolesWarning] = useState<string | null>(null);
+  const [roleOptionsAvailable, setRoleOptionsAvailable] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
 
@@ -762,20 +763,22 @@ function RolesView({ companyId }: { companyId: string }) {
     const smartWarnings: string[] = [];
     if (packsResult.status === 'fulfilled') {
       setPackModules(packsResult.value.modules);
+      setRoleOptionsAvailable(true);
     } else {
       setPackModules([]);
-      smartWarnings.push('capability packs');
+      setRoleOptionsAvailable(false);
+      smartWarnings.push('ตัวเลือกงาน');
     }
 
     if (templatesResult.status === 'fulfilled') {
       setTemplates(templatesResult.value);
     } else {
       setTemplates([]);
-      smartWarnings.push('job presets');
+      smartWarnings.push('บทบาทแนะนำ');
     }
 
     if (smartWarnings.length > 0) {
-      setSmartRolesWarning(`โหลด ${smartWarnings.join(' และ ')} ไม่สำเร็จ ระบบจะ fallback เป็นการจัดการสิทธิ์แบบรายคีย์`);
+      setSmartRolesWarning(`โหลด${smartWarnings.join('และ')}ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง`);
     }
 
     setError(nextError);
@@ -785,12 +788,7 @@ function RolesView({ companyId }: { companyId: string }) {
   useEffect(() => { void reload(); }, [reload]);
 
   const allPacks = useMemo(() => packModules.flatMap((m) => m.packs), [packModules]);
-  const grouped = useMemo(
-    () => catalog.reduce<Record<string, any[]>>((acc, p) => { (acc[p.module] ??= []).push(p); return acc; }, {}),
-    [catalog],
-  );
-  const smartRolesReady = packModules.length > 0 || templates.length > 0;
-  const canEditRoles = catalog.length > 0;
+  const canEditRoles = catalog.length > 0 && roleOptionsAvailable;
 
   if (loading) return <LoadingState label="กำลังโหลด..." />;
 
@@ -802,12 +800,12 @@ function RolesView({ companyId }: { companyId: string }) {
       )}
       <div className="grid gap-3 md:grid-cols-3">
         <StatTile icon={<LockIcon className="h-5 w-5" />} label="บทบาททั้งหมด" value={String(roles.length)} />
-        <StatTile icon={<BoltIcon className="h-5 w-5" />} label="ชุดความสามารถ" value={String(allPacks.filter((p) => !p.isCore).length)} tone="blue" />
-        <StatTile icon={<TableIcon className="h-5 w-5" />} label="คีย์สิทธิ์" value={String(catalog.length)} tone="gold" />
+        <StatTile icon={<BoltIcon className="h-5 w-5" />} label="งานที่เลือกได้" value={String(allPacks.filter((p) => !p.isCore && !p.locked && p.grantableByCurrentUser).length)} tone="blue" />
+        <StatTile icon={<TableIcon className="h-5 w-5" />} label="บทบาทที่กำหนดเอง" value={String(roles.filter((role) => !role.isSystem).length)} tone="gold" />
       </div>
       <div className={`${panelClass} flex flex-wrap items-center justify-between gap-3 p-4`}>
         <SectionTitle eyebrow="บทบาทตามความสามารถ" title="บทบาทและสิทธิ์">
-          กำหนด role จาก capability packs แล้วให้ backend compile เป็น permission keys จริง
+          เลือกงานที่คนในบทบาทนี้ทำได้ ระบบจะจัดสิทธิ์ที่จำเป็นให้เอง
         </SectionTitle>
         <button className={showCreate ? ghostClass : btnClass} disabled={!canEditRoles} onClick={() => setShowCreate((v) => !v)}>
           {showCreate ? 'ยกเลิก' : <><PlusIcon className="h-4 w-4" /> เพิ่มบทบาท</>}
@@ -816,7 +814,7 @@ function RolesView({ companyId }: { companyId: string }) {
 
       {showCreate && canEditRoles && (
         <RoleBuilder
-          companyId={companyId} grouped={grouped} packModules={packModules} allPacks={allPacks} templates={templates} smartRolesReady={smartRolesReady}
+          companyId={companyId} packModules={packModules} allPacks={allPacks} templates={templates} roleOptionsAvailable={roleOptionsAvailable}
           onCancel={() => setShowCreate(false)}
           onSubmit={async (body) => { await createRole(companyId, body); toast.success('สร้างบทบาทแล้ว'); setShowCreate(false); void reload(); }}
         />
@@ -856,17 +854,13 @@ function RolesView({ companyId }: { companyId: string }) {
                       {p.nameTh}<RiskBadge risk={p.riskLevel} />
                     </span>
                   ))}
-                  <span className="text-[11px] text-gray-400">· {role.permissionKeys.length} สิทธิ์</span>
                 </div>
               ) : (
-                <div className="flex flex-wrap gap-1">
-                  {role.permissionKeys.slice(0, 8).map((k: string) => <span key={k} className="rounded-full bg-gray-50 border border-gray-200 px-2.5 py-1 text-[11px] text-gray-500">{k}</span>)}
-                  {role.permissionKeys.length > 8 && <span className="text-[11px] text-gray-400">+{role.permissionKeys.length - 8} เพิ่มเติม</span>}
-                </div>
+                <div className="text-xs text-gray-500">ตั้งค่าสิทธิ์ตามบทบาทนี้แล้ว</div>
               )}
               {editingRoleId === role.id && canEditRoles && (
                 <RoleBuilder
-                  companyId={companyId} grouped={grouped} packModules={packModules} allPacks={allPacks} templates={templates} smartRolesReady={smartRolesReady}
+                  companyId={companyId} packModules={packModules} allPacks={allPacks} templates={templates} roleOptionsAvailable={roleOptionsAvailable}
                   initial={role}
                   onCancel={() => setEditingRoleId(null)}
                   onSubmit={async (body) => { await updateRole(companyId, role.id, body); toast.success('บันทึกบทบาทแล้ว'); setEditingRoleId(null); void reload(); }}
@@ -880,97 +874,94 @@ function RolesView({ companyId }: { companyId: string }) {
   );
 }
 
-// Guided role builder: job preset → capability packs → (advanced raw keys) → live "will be able to…" preview.
-export function RoleBuilder({ companyId, grouped, packModules, allPacks, templates, smartRolesReady, initial, onCancel, onSubmit }: {
+// Guided role builder: job template → plain-language work options → live preview.
+export function RoleBuilder({ companyId, packModules, allPacks, templates, roleOptionsAvailable, initial, onCancel, onSubmit }: {
   companyId: string;
-  grouped: Record<string, any[]>;
   packModules: Array<{ module: string; packs: CapabilityPackView[] }>;
   allPacks: CapabilityPackView[];
   templates: RoleTemplate[];
-  smartRolesReady: boolean;
+  roleOptionsAvailable: boolean;
   initial?: any;
   onCancel: () => void;
   onSubmit: (body: any) => Promise<void>;
 }) {
   const locale = useWorkspaceLocale();
   const coreKeys = useMemo(() => new Set(allPacks.filter((p) => p.isCore).flatMap((p) => p.permissionKeys)), [allPacks]);
+  const availablePackKeys = useMemo(
+    () => new Set(allPacks.filter((p) => !p.isCore && !p.locked && p.grantableByCurrentUser).map((p) => p.key)),
+    [allPacks],
+  );
 
   const [name, setName] = useState(initial?.name ?? '');
   const [description, setDescription] = useState(initial?.description ?? '');
-  // Round-trip an edited role: packs it already fully covers become toggles; leftover keys become advanced.
+  // Round-trip an edited role: visible packs become toggles; unmatched keys stay preserved but hidden.
   const initSelected = useMemo(
-    () => (initial ? coveredPacks(initial.permissionKeys, allPacks).map((p) => p.key) : []),
-    [initial, allPacks],
+    () => (initial ? coveredPacks(initial.permissionKeys, allPacks).filter((p) => availablePackKeys.has(p.key)).map((p) => p.key) : []),
+    [initial, allPacks, availablePackKeys],
   );
   const [selectedPacks, setSelectedPacks] = useState<string[]>(initSelected);
-  const initAdvanced = useMemo(() => {
+  const initPreserved = useMemo(() => {
     if (!initial) return [] as string[];
     const covered = new Set([...coreKeys, ...allPacks.filter((p) => initSelected.includes(p.key)).flatMap((p) => p.permissionKeys)]);
     return (initial.permissionKeys as string[]).filter((k) => !covered.has(k));
   }, [initial, initSelected, allPacks, coreKeys]);
-  const [advancedKeys, setAdvancedKeys] = useState<string[]>(initAdvanced);
-  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [preservedKeys, setPreservedKeys] = useState<string[]>(initPreserved);
   const [preview, setPreview] = useState<RolePreviewResult | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const packCoveredKeys = useMemo(
-    () => new Set([...coreKeys, ...allPacks.filter((p) => selectedPacks.includes(p.key)).flatMap((p) => p.permissionKeys)]),
-    [coreKeys, allPacks, selectedPacks],
-  );
-
   const togglePack = (key: string) =>
     setSelectedPacks((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
-  const toggleAdvanced = (key: string) =>
-    setAdvancedKeys((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
   const applyPreset = (tpl: RoleTemplate) => {
     // Expand the preset into pack toggles client-side; the compiled keys are identical to sending the
     // template key, but this keeps deselecting a preset pack working (the API unions template packs).
     // Skip packs this company can't enable (not entitled) or this user can't grant — the preview would
     // only drop them anyway.
-    const usable = new Set(allPacks.filter((p) => !p.locked && p.grantableByCurrentUser).map((p) => p.key));
-    setSelectedPacks(tpl.capabilityPackKeys.filter((k) => usable.has(k)));
-    setAdvancedKeys([]);
+    setSelectedPacks(tpl.capabilityPackKeys);
+    setPreservedKeys([]);
     if (!name) setName(tpl.nameTh);
   };
 
   // Debounced live preview whenever the selection changes.
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    if (!smartRolesReady) { setPreview(null); setPreviewing(false); return; }
-    if (selectedPacks.length === 0 && advancedKeys.length === 0) { setPreview(null); return; }
+    if (!roleOptionsAvailable) { setPreview(null); setPreviewing(false); return; }
+    if (selectedPacks.length === 0 && preservedKeys.length === 0) { setPreview(null); return; }
     if (debounceRef.current) clearTimeout(debounceRef.current);
     setPreviewing(true);
     debounceRef.current = setTimeout(() => {
-      previewRole(companyId, { capabilityPackKeys: selectedPacks, permissionKeys: advancedKeys, roleId: initial?.id })
+      previewRole(companyId, { capabilityPackKeys: selectedPacks, permissionKeys: preservedKeys, roleId: initial?.id })
         .then(setPreview)
         .catch(() => setPreview(null))
         .finally(() => setPreviewing(false));
     }, 350);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [companyId, selectedPacks, advancedKeys, initial?.id, smartRolesReady]);
+  }, [companyId, selectedPacks, preservedKeys, initial?.id, roleOptionsAvailable]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (selectedPacks.length === 0 && advancedKeys.length === 0) { setError('กรุณาเลือกความสามารถอย่างน้อย 1 รายการ'); return; }
+    if (!roleOptionsAvailable) { setError('ยังโหลดตัวเลือกไม่ได้ กรุณายกเลิกแล้วลองใหม่อีกครั้ง'); return; }
+    if (selectedPacks.length === 0 && preservedKeys.length === 0) { setError('กรุณาเลือกงานอย่างน้อย 1 รายการ'); return; }
     setSaving(true); setError(null);
-    try { await onSubmit({ name: trimmed(name), description: trimmed(description) || undefined, capabilityPackKeys: selectedPacks, permissionKeys: advancedKeys }); }
+    try { await onSubmit({ name: trimmed(name), description: trimmed(description) || undefined, capabilityPackKeys: selectedPacks, permissionKeys: preservedKeys }); }
     catch (e2) { setError(localizedErrorMessage(e2, locale, { fallback: 'error.save_failed' })); }
     finally { setSaving(false); }
   };
 
   const byIndustry = useMemo(() => {
     const map = new Map<string, RoleTemplate[]>();
-    for (const t of templates) { const k = t.industryTag ?? 'crosscutting'; map.set(k, [...(map.get(k) ?? []), t]); }
+    for (const t of templates.filter((tpl) => tpl.capabilityPackKeys.every((key) => availablePackKeys.has(key)))) {
+      const k = t.industryTag ?? 'crosscutting'; map.set(k, [...(map.get(k) ?? []), t]);
+    }
     return [...map.entries()];
-  }, [templates]);
+  }, [templates, availablePackKeys]);
 
   return (
     <form onSubmit={submit} className={`${panelClass} overflow-hidden lg:col-span-2`}>
       <div className="border-b border-gray-100 bg-linear-to-r from-brand-25 to-white px-5 py-4">
         <SectionTitle eyebrow={initial ? 'แก้ไขบทบาท' : 'บทบาทใหม่'} title={initial ? 'แก้ไขบทบาท' : 'เพิ่มบทบาท'}>
-          เลือก preset และ capability packs แล้วดู preview ก่อนบันทึก
+          เลือกหน้าที่และงานที่ทำได้ ระบบจะจัดสิทธิ์ที่จำเป็นให้เอง
         </SectionTitle>
       </div>
       <div className="space-y-5 p-5">
@@ -990,13 +981,13 @@ export function RoleBuilder({ companyId, grouped, packModules, allPacks, templat
         {/* Left: guided selection */}
         <div className="space-y-4">
           {/* Step 1 — Job preset */}
-          {smartRolesReady && templates.length > 0 && (
+          {roleOptionsAvailable && byIndustry.length > 0 && (
             <div>
-              <div className="mb-2 text-xs font-bold text-gray-600">1. เริ่มจากชุดบทบาทตามงาน</div>
+              <div className="mb-2 text-xs font-bold text-gray-600">1. เลือกบทบาทตั้งต้น (ไม่บังคับ)</div>
               <div className={`${mutedPanelClass} space-y-3 p-3`}>
                 {byIndustry.map(([industry, tpls]) => (
                   <div key={industry}>
-                    <div className="mb-1 text-[11px] font-semibold uppercase text-gray-400">{INDUSTRY_LABEL[industry] ?? industry}</div>
+                    <div className="mb-1 text-[11px] font-semibold uppercase text-gray-400">{INDUSTRY_LABEL[industry] ?? 'งานทั่วไป'}</div>
                     <div className="flex flex-wrap gap-1.5">
                       {tpls.map((t) => (
                         <button type="button" key={t.key} onClick={() => applyPreset(t)} title={t.description}
@@ -1012,31 +1003,28 @@ export function RoleBuilder({ companyId, grouped, packModules, allPacks, templat
           )}
 
           {/* Step 2 — Capability packs */}
-          {smartRolesReady && (
+          {roleOptionsAvailable && (
             <div>
-              <div className="mb-2 text-xs font-bold text-gray-600">2. ความสามารถ</div>
+              <div className="mb-2 text-xs font-bold text-gray-600">{byIndustry.length > 0 ? '2. เลือกงานที่ทำได้' : 'เลือกงานที่ทำได้'}</div>
               <div className={`${mutedPanelClass} max-h-96 space-y-3 overflow-y-auto p-3`}>
                 {packModules.map(({ module, packs }) => {
-                  const shown = packs.filter((p) => !p.isCore);
+                  const shown = packs.filter((p) => availablePackKeys.has(p.key));
                   if (shown.length === 0) return null;
                   return (
                     <div key={module}>
-                      <div className="mb-1 text-[11px] font-semibold uppercase text-gray-400">{MODULE_LABEL[module] ?? module}</div>
+                      <div className="mb-1 text-[11px] font-semibold uppercase text-gray-400">{MODULE_LABEL[module] ?? 'งานอื่น ๆ'}</div>
                       <div className="space-y-1.5">
                         {shown.map((p) => {
                           const checked = selectedPacks.includes(p.key);
-                          const blocked = (p.locked || !p.grantableByCurrentUser) && !checked;
-                          const reason = p.locked ? p.lockReason : !p.grantableByCurrentUser ? 'เกินสิทธิ์ที่คุณมี — มอบให้ไม่ได้' : undefined;
                           return (
-                            <label key={p.key} className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-xs ${blocked ? 'border-gray-100 bg-gray-50 opacity-60' : checked ? 'border-brand-200 bg-brand-50' : 'border-gray-200 bg-white hover:border-brand-300'}`}>
-                              <input type="checkbox" className="mt-0.5" checked={checked} disabled={blocked} onChange={() => togglePack(p.key)} />
+                            <label key={p.key} className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-xs ${checked ? 'border-brand-200 bg-brand-50' : 'border-gray-200 bg-white hover:border-brand-300'}`}>
+                              <input type="checkbox" className="mt-0.5" checked={checked} onChange={() => togglePack(p.key)} />
                               <span className="min-w-0 flex-1">
                                 <span className="flex items-center gap-1.5">
                                   <span className="font-medium text-gray-800">{p.nameTh}</span>
                                   <RiskBadge risk={p.riskLevel} />
                                 </span>
                                 <span className="block text-[11px] text-gray-500">{p.description}</span>
-                                {blocked && reason && <span className="block text-[11px] text-amber-700">ล็อก: {reason}</span>}
                               </span>
                             </label>
                           );
@@ -1046,58 +1034,35 @@ export function RoleBuilder({ companyId, grouped, packModules, allPacks, templat
                   );
                 })}
               </div>
-              <p className="mt-1 text-[11px] text-gray-400">รวมสิทธิ์พื้นฐาน (เข้าสู่ระบบ, แดชบอร์ด, แจ้งเตือน) ให้อัตโนมัติทุกบทบาท</p>
+              {availablePackKeys.size === 0 && (
+                <div className="rounded-lg border border-gray-200 bg-white px-3 py-4 text-sm text-gray-500">
+                  บริษัทนี้ยังไม่มีงานเพิ่มเติมที่เปิดให้กำหนด
+                </div>
+              )}
+              <p className="mt-1 text-[11px] text-gray-400">ทุกบทบาทเข้าสู่ระบบ ดูหน้าหลัก และรับการแจ้งเตือนได้โดยอัตโนมัติ</p>
             </div>
           )}
 
-          {/* Step 3 — Advanced raw keys */}
-          <div>
-            {smartRolesReady ? (
-              <button type="button" className="text-xs font-semibold text-brand-700 underline" onClick={() => setShowAdvanced((v) => !v)}>
-                {showAdvanced ? 'ซ่อนสิทธิ์ขั้นสูง' : '3. สิทธิ์ขั้นสูง (รายคีย์ สำหรับผู้เชี่ยวชาญ)'}
-              </button>
-            ) : (
-              <div className="text-xs font-semibold text-gray-600">กำหนดสิทธิ์แบบรายคีย์</div>
-            )}
-            {(showAdvanced || !smartRolesReady) && (
-              <div className={`${mutedPanelClass} mt-2 max-h-72 space-y-3 overflow-y-auto p-3`}>
-                {Object.entries(grouped).map(([module, items]) => (
-                  <div key={module}>
-                    <div className="mb-1 text-xs font-semibold uppercase text-gray-400">{MODULE_LABEL[module] ?? module}</div>
-                    <div className="flex flex-wrap gap-2">
-                      {items.map((p) => {
-                        const covered = packCoveredKeys.has(p.key);
-                        return (
-                          <label key={p.key} className={cx(
-                            'flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs',
-                            covered ? 'border-brand-100 bg-brand-50 text-brand-700' : 'border-gray-200 bg-white text-gray-600',
-                          )} title={covered ? 'รวมจากแพ็กแล้ว' : p.description}>
-                            <input type="checkbox" checked={covered || advancedKeys.includes(p.key)} disabled={covered} onChange={() => toggleAdvanced(p.key)} />
-                            {p.key}
-                          </label>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          {!roleOptionsAvailable && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-800">
+              ยังโหลดตัวเลือกสำหรับกำหนดบทบาทไม่ได้ กรุณายกเลิกแล้วลองใหม่อีกครั้ง
+            </div>
+          )}
         </div>
 
         {/* Right: live preview */}
         <div className="space-y-3 rounded-lg border border-brand-100 bg-brand-50/70 p-4">
           <div className="flex flex-wrap items-center justify-between">
-            <div className="text-sm font-bold text-gray-800">ตัวอย่างสิทธิ์จริง</div>
+            <div className="text-sm font-bold text-gray-800">สรุปว่างานนี้ทำอะไรได้บ้าง</div>
             {previewing && <span className="text-[11px] text-gray-400">กำลังคำนวณ...</span>}
           </div>
-          {!smartRolesReady && <p className="text-xs text-gray-500">smart roles ใช้งานไม่ได้ในขณะนี้ จึงยังไม่มี live preview จาก capability packs</p>}
-          {!preview && !previewing && smartRolesReady && <p className="text-xs text-gray-400">เลือกความสามารถเพื่อดูตัวอย่าง</p>}
+          {!roleOptionsAvailable && <p className="text-xs text-gray-500">ยังแสดงตัวอย่างไม่ได้ กรุณาลองใหม่อีกครั้ง</p>}
+          {!preview && !previewing && roleOptionsAvailable && <p className="text-xs text-gray-400">เลือกงานเพื่อดูตัวอย่าง</p>}
           {preview && (
             <>
-              <div className="text-[11px] text-gray-500">{preview.permissionCount} สิทธิ์ · {preview.capabilities.length} ความสามารถ</div>
+              <div className="text-[11px] text-gray-500">{preview.capabilities.length} กลุ่มงาน</div>
               <div className="flex flex-wrap gap-1">
-                {preview.capabilities.length === 0 && <span className="text-xs text-gray-400">ยังไม่มีความสามารถที่ครบชุด</span>}
+                {preview.capabilities.length === 0 && <span className="text-xs text-gray-400">ยังไม่มีกลุ่มงานที่เลือก</span>}
                 {preview.capabilities.map((c) => (
                   <span key={c.packKey} className="inline-flex items-center gap-1 rounded bg-white border border-brand-100 px-2 py-0.5 text-[11px] text-brand-700">
                     {c.nameTh}<RiskBadge risk={c.riskLevel} />
@@ -1112,10 +1077,10 @@ export function RoleBuilder({ companyId, grouped, packModules, allPacks, templat
               )}
               {preview.droppedKeys.length > 0 && (
                 <div className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-800">
-                  <div className="font-medium">บางสิทธิ์ถูกตัดออก:</div>
+                  <div className="font-medium">บางรายการไม่สามารถเพิ่มได้:</div>
                   <ul className="list-disc pl-4">
                     {[...new Set(preview.droppedKeys.map((d) => d.reason))].map((r) => (
-                      <li key={r}>{DROP_REASON_LABEL[r] ?? r} ({preview.droppedKeys.filter((d) => d.reason === r).length})</li>
+                      <li key={r}>{DROP_REASON_LABEL[r] ?? 'รายการนี้ไม่พร้อมใช้งาน'} ({preview.droppedKeys.filter((d) => d.reason === r).length})</li>
                     ))}
                   </ul>
                 </div>
@@ -1127,7 +1092,7 @@ export function RoleBuilder({ companyId, grouped, packModules, allPacks, templat
 
       <div className="flex flex-wrap justify-end gap-2 border-t border-gray-100 pt-4">
         <button type="button" className={ghostClass} onClick={onCancel}>ยกเลิก</button>
-        <button type="submit" className={btnClass} disabled={saving}>{saving ? 'กำลังบันทึก...' : 'บันทึก'}</button>
+        <button type="submit" className={btnClass} disabled={saving || !roleOptionsAvailable}>{saving ? 'กำลังบันทึก...' : 'บันทึก'}</button>
       </div>
       </div>
     </form>
@@ -1157,9 +1122,9 @@ function MatrixView({ companyId }: { companyId: string }) {
   return (
     <div className="space-y-5">
       <div className="grid gap-3 md:grid-cols-3">
-        <StatTile icon={<GroupIcon className="h-5 w-5" />} label="พนักงานใน matrix" value={String(rows.length)} />
+        <StatTile icon={<GroupIcon className="h-5 w-5" />} label="พนักงานทั้งหมด" value={String(rows.length)} />
         <StatTile icon={<BoltIcon className="h-5 w-5" />} label="สิทธิ์เสี่ยงสูง" value={String(highRiskTotal)} tone={highRiskTotal > 0 ? 'gold' : 'gray'} />
-        <StatTile icon={<TableIcon className="h-5 w-5" />} label="มุมมอง" value="สิทธิ์จริง" tone="blue" />
+        <StatTile icon={<TableIcon className="h-5 w-5" />} label="ข้อมูลที่แสดง" value="ตามการใช้งานจริง" tone="blue" />
       </div>
       <div className={`${panelClass} p-4`}>
         <SectionTitle eyebrow="ภาพรวมการเข้าถึง" title="ภาพรวมสิทธิ์">
@@ -1195,7 +1160,6 @@ function MatrixRow({ companyId, row, open, onToggle }: {
   const locale = useWorkspaceLocale();
   const [detail, setDetail] = useState<EffectiveAccessView | null>(null);
   const [error, setError] = useState<unknown>(null);
-  const [showKeys, setShowKeys] = useState(false);
 
   useEffect(() => {
     if (open && !detail) {
@@ -1233,7 +1197,7 @@ function MatrixRow({ companyId, row, open, onToggle }: {
             {detail == null && error == null && <div className="text-xs text-gray-400">กำลังโหลด...</div>}
             {detail && (
               <div className={`${panelClass} space-y-3 p-4`}>
-                <div className="text-sm font-bold text-gray-800">ทำอะไรได้บ้าง ({detail.capabilities.length} ความสามารถ · {detail.permissionCount} สิทธิ์)</div>
+                <div className="text-sm font-bold text-gray-800">ทำอะไรได้บ้าง ({detail.capabilities.length} กลุ่มงาน)</div>
                 <div className="flex flex-wrap gap-1">
                   {detail.capabilities.length === 0 && <span className="text-[11px] text-gray-400">สิทธิ์พื้นฐานเท่านั้น (เข้าสู่ระบบ, แดชบอร์ด, แจ้งเตือน)</span>}
                   {detail.capabilities.map((c) => (
@@ -1242,25 +1206,6 @@ function MatrixRow({ companyId, row, open, onToggle }: {
                     </span>
                   ))}
                 </div>
-                <button type="button" className="text-[11px] font-semibold text-brand-700 underline" onClick={() => setShowKeys((v) => !v)}>
-                  {showKeys ? 'ซ่อนสิทธิ์รายคีย์' : `สิทธิ์รายคีย์ทั้งหมด (${detail.permissionCount}) — สำหรับผู้เชี่ยวชาญ`}
-                </button>
-                {showKeys && (
-                  <div className="space-y-2">
-                    {Object.entries(detail.permissions.reduce<Record<string, EffectivePermission[]>>(
-                      (acc, p) => { (acc[p.module] ??= []).push(p); return acc; }, {},
-                    )).map(([module, items]) => (
-                      <div key={module}>
-                        <div className="mb-1 text-[11px] font-semibold uppercase text-gray-400">{MODULE_LABEL[module] ?? module}</div>
-                        <div className="flex flex-wrap gap-1">
-                          {items.map((p) => (
-                            <span key={p.key} className="rounded bg-white border border-gray-200 px-2 py-0.5 text-[11px] text-gray-500" title={p.description}>{p.key}</span>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
               </div>
             )}
           </td>

@@ -42,11 +42,11 @@ Business value: removes the #1 blocker to giving employees their own accounts (u
 ## 6. Business Journey
 
 1. **Trigger:** owner/admin opens Settings > Roles and clicks "Add role" (or "Add employee" and needs a role).
-2. **Main user action:** choose a starting point — **Job preset** (e.g. แคชเชียร์), **blank**, then toggle **capability packs** in plain language (progressive disclosure: advanced raw-key grid available but collapsed).
-3. **System response:** live preview compiles selected packs (+ any advanced keys) into effective permissions, filters by company feature entitlement and by the granter's own effective permissions, and renders "This person will be able to: …" grouped by area, flagging high-risk capabilities.
+2. **Main user action:** choose a starting point — **Job preset** (e.g. แคชเชียร์), **blank**, then toggle plain-language work capabilities. Raw permission keys are never exposed in the company-facing UI.
+3. **System response:** live preview compiles selected packs plus any preserved legacy keys into effective permissions, filters by company feature entitlement and by the granter's own effective permissions, and renders "This person will be able to: …" grouped by area, flagging high-risk capabilities.
 4. **Review/approval:** owner/admin confirms; system creates/updates a company custom `Role` with the compiled `permissionKeys` and records which packs were selected (for round-trip editing). Audited.
 5. **Completion state:** role appears in the list with a human-readable capability summary; assignable to employees via the existing 10C flow.
-6. **Exception path:** a pack referencing a non-entitled feature shows as locked and its keys are excluded; an admin selecting a pack beyond their own permissions sees it disabled with a reason; empty/entitlement-filtered result blocks save with a clear message.
+6. **Exception path:** packs and presets that the company cannot use or the current user cannot grant are omitted from the selector, not shown as locked. If the plain-language options cannot be loaded, role mutation is unavailable with a generic Thai retry message; the UI never falls back to raw keys or exposes feature/permission identifiers.
 
 ## 7. Business Rules
 
@@ -54,7 +54,9 @@ Business value: removes the #1 blocker to giving employees their own accounts (u
 - **Packs are author-time only.** The runtime authorization path is unchanged; roles still carry `permissionKeys`.
 - **System roles are read-only** in the builder (existing 10C `isSystem` guard). Presets can be *applied* to spawn a new editable company role, never to mutate a system role.
 - **`OWNER`/`SYSTEM_ADMIN` remain non-assignable** and are never producible by any pack/preset (existing `NON_ASSIGNABLE_ROLE_KEYS`).
-- **Feature entitlement is enforced here for the first time** (closes the 10C deferred item): a pack with a `featureEntitlementKey` the company lacks is hidden/locked and its keys are dropped from compilation.
+- **Feature entitlement is enforced here for the first time** (closes the 10C deferred item): a pack with a `featureEntitlementKey` the company lacks is hidden and its keys are dropped from compilation.
+- **Company-facing access UI speaks only in business terms.** It must not render permission keys, entitlement keys, English/internal lock reasons, or implementation terms such as capability pack/preset/backend compilation.
+- **Hidden does not mean deleted.** When editing an existing role, raw or legacy permission keys not represented by visible capability packs remain in the update payload unless the user selects a preset that intentionally replaces the role definition. This prevents a harmless edit from silently revoking access.
 - **Every role create/update via packs is audited** with the selected pack keys and the resolved permission-key delta (never secrets).
 - **Effective-access matrix** shows only company-scoped, masked data; it never reveals platform `system.*` grants or sensitive identifiers.
 
@@ -160,7 +162,7 @@ POST /companies/:companyId/settings/roles/preview
 - Permission: access.role.read
 - Body: { capabilityPackKeys?: string[]; permissionKeys?: string[]; roleTemplateKey?: string }
 - Returns RolePreviewResult (compiled EffectiveAccessView) WITHOUT persisting
-- Applies entitlement + granter-scope filtering; marks dropped/locked keys with reasons
+- Applies entitlement + granter-scope filtering; returns machine-readable dropped reasons for audit/validation while the company UI uses generic business-language copy
 - Idempotent, no writes
 
 POST /companies/:companyId/settings/roles           (EXTEND existing 10C endpoint)
@@ -194,8 +196,8 @@ Error cases: missing permission `403`; system-role edit `403`; unknown pack/temp
 - **Main screen:** role list gains a human-readable capability summary chip row per role ("ขายได้ • เห็นสต๊อก • รับชำระเงิน").
 - **Guided builder (create/edit role):**
   - Step 1 — **Start from:** Job preset picker (grouped by industry tag) | Blank.
-  - Step 2 — **Capability packs:** toggles grouped by area (ขาย, บิล/เอกสาร, สต๊อก, การเงิน, ภาษี, บัญชี, จัดซื้อ, ค่าใช้จ่าย, เบิกจ่าย, คน/สิทธิ์, ระบบ). Each toggle shows Thai name + one-line description + a risk badge (สูง/วิกฤติ). Non-entitled packs render locked with reason; packs beyond the granter's own permissions render disabled with reason.
-  - Step 3 — **Advanced (collapsed):** the existing raw permission-key grid grouped by module, for power users; stays in sync with pack toggles.
+  - Step 2 — **งานที่ทำได้:** toggles grouped by business area (ขาย, บิล/เอกสาร, สต๊อก, การเงิน, ภาษี, บัญชี, จัดซื้อ, ค่าใช้จ่าย, เบิกจ่าย, คน/สิทธิ์, ระบบ). Each toggle shows Thai name + one-line description + a risk badge (สูง/วิกฤติ). Non-entitled and above-granter-scope items are omitted.
+  - There is no company-facing advanced/raw-key step. Existing unmatched keys are preserved invisibly during ordinary edits.
   - **Live preview panel:** "คนนี้จะทำอะไรได้บ้าง" — effective capabilities grouped by area, high-risk items flagged, count of permissions, and a "what changed" delta on edit.
 - **Who-can-do-what matrix (Settings > Roles > ภาพรวมสิทธิ์):** table of active employees × capability areas with role chips; drill into one person's EffectiveAccessView.
 - **Loading/cover loader:** builder and matrix show skeletons; preview debounced.
@@ -212,27 +214,29 @@ Error cases: missing permission `403`; system-role edit `403`; unknown pack/temp
 - Admin edits a role that contains keys above the admin's own permissions (e.g. created by owner) → admin can keep existing keys but cannot add new above-scope packs; removing is always allowed.
 - Preset references a pack later removed from the registry → unknown pack keys are ignored on apply with a surfaced warning.
 - Two admins edit the same role concurrently → last-write-wins on `RolePermission`/`RoleCapabilityPack`; audit records both.
-- Legacy `admin.user.*`/`admin.role.*` keys appear in the advanced grid? → excluded from packs and hidden by default (documented legacy), never produced by presets.
-- Role built entirely from packs then edited only in the advanced grid → `RoleCapabilityPack` may not fully round-trip; builder shows "custom (edited beyond packs)" and preserves raw keys as source of truth.
+- Legacy `admin.user.*`/`admin.role.*` keys are never shown in company-facing UI; they remain excluded from packs and are preserved server-side when an existing role is edited.
+- A role containing keys beyond known packs may not fully round-trip as capability chips; the builder preserves those keys as source of truth without exposing them.
 
 ## 14. Acceptance Criteria
 
-- [ ] An owner creates a working role by picking a job preset in under a minute without opening the raw permission grid.
+- [ ] An owner creates a working role by picking a job preset in under a minute without seeing raw permission or feature keys anywhere in the journey.
 - [ ] Capability-pack toggles compile to exactly the documented permission keys (Appendix A), verified by test.
 - [ ] Live preview shows correct effective capabilities and flags high-risk items before save.
-- [ ] Feature-entitlement filtering hides/locks non-entitled packs and drops their keys from compilation (first real enforcement).
+- [ ] Feature-entitlement and grant-scope filtering omit unavailable packs and presets and drop their keys from compilation (first real enforcement).
 - [ ] An admin cannot grant a pack exceeding their own effective permissions; owner can.
 - [ ] System roles remain read-only; `OWNER`/`SYSTEM_ADMIN` are never producible; last-owner protection intact.
 - [ ] Who-can-do-what matrix renders every active employee's effective capabilities, masked, permission-gated by `access.effective.read`.
 - [ ] Role create/update audits selected pack keys + permission-key delta without secrets.
 - [ ] Backward compatible: existing item 10C roles/grants/employees keep working unchanged.
+- [ ] Editing a legacy/custom role preserves hidden unmatched keys unless the user intentionally applies a replacement preset.
+- [ ] Catalog/option load failure blocks role mutation with a human Thai retry state; no raw-key fallback is rendered.
 
 ## 15. Test Cases
 
 - **Unit:** pack→keys expansion for every pack; preset→packs→keys; max-riskLevel derivation; entitlement filter; granter-scope intersection; delta computation.
 - **Integration:** `POST /roles` from preset creates Role+RolePermission+RoleCapabilityPack in one tx; `PATCH` recompiles; `preview` never writes; matrix pagination.
 - **Permission:** each endpoint returns `403` without its key; system-role edit `403`; effective matrix hidden without `access.effective.read`.
-- **UI:** builder toggles ↔ advanced grid sync; locked-pack rendering; preview delta; readonly system role; forbidden/empty states.
+- **UI:** only entitled/grantable work options render; technical identifiers and advanced grid are absent; preview delta; readonly system role; option-load/forbidden/empty states.
 - **Edge:** non-entitled-after-grant flag; admin above-scope block; unknown pack key ignored; concurrent edit last-write-wins.
 - **Regression:** 10C role create/disable, protected-role 403, employee create/assign still pass.
 
@@ -240,7 +244,7 @@ Error cases: missing permission `403`; system-role edit `403`; unknown pack/temp
 
 - Persist company-authored presets in Phase 1 (`RoleTemplate` table) or defer to a later phase and ship system presets only? (Lean: system presets code-seeded now; company-authored `POST/PATCH` optional, table added only if pulled in.)
 - Exact `CompanyFeatureEntitlement` shape to key packs against — confirm in Phase 0 discovery against the 10A implementation.
-- Should the advanced raw-key grid stay visible to Admin, or Owner-only, to keep the surface simple?
+- Resolved 2026-08-21: no company role sees the advanced raw-key grid. Platform/internal tooling, if later required, must be a separate permission-gated surface and is outside this phase.
 
 ---
 

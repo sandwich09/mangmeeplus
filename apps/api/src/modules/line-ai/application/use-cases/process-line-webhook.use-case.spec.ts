@@ -445,6 +445,23 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(legalChecks[0]?.companyId, 'company-2');
   });
 
+  it('preflight rechecks legal access against a durable receipt company snapshot', async () => {
+    const { prisma } = makePrisma({
+      memberships: [{ companyId: 'company-1' }, { companyId: 'company-2' }],
+      lineCompanyContext: { companyId: 'company-2' },
+    });
+    const { useCase, legalChecks } = makeUseCase(prisma, { legalAcceptanceRequired: true });
+
+    const result = await useCase.preflightLegalAcceptance({
+      lineUserId: 'line-user-secret',
+      messagingChannelId: 'msg-channel-1',
+      companyIdAtAcceptance: 'company-1',
+    });
+
+    assert.deepEqual(result, { status: 'required', companyId: 'company-1' });
+    assert.equal(legalChecks[0]?.companyId, 'company-1');
+  });
+
   // PDPA objection route (M-05 register §3.1): an opted-out user's turn must stop before
   // any model/gateway involvement, on both the text and the media entry paths.
   it('refuses text turns for an opted-out user before any gateway involvement', async () => {

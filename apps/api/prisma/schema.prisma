@@ -5257,6 +5257,7 @@ model ReimbursementRequest {
   primaryAttachmentId          String?
   missingReceiptReason         String?
   approvalSnapshotHash         String?
+  approvalPolicySnapshotJson   Json?
   paymentTotalAmount           Decimal                               @default(0) @db.Decimal(18, 4)
   outstandingAmount            Decimal                               @default(0) @db.Decimal(18, 4)
   idempotencyKey               String?
@@ -5341,6 +5342,7 @@ model ReimbursementApprovalStep {
   sequenceNo             Int
   approverUserId         String?
   approverRoleSnapshot   String?
+  assignedApproverUserIdsJson Json?
   status                 ReimbursementApprovalStepStatus @default(PENDING)
   assignedAt             DateTime                        @default(now())
   decidedAt              DateTime?

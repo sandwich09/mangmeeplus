@@ -17,7 +17,6 @@ export class ListCapabilityPacksUseCase {
       return {
         ...pack,
         locked,
-        lockReason: locked ? `Feature "${pack.featureEntitlementKey}" is not enabled for this company` : undefined,
         grantableByCurrentUser: isOwner || pack.permissionKeys.every((k) => granter.has(k)),
       };
     });

@@ -9,7 +9,7 @@ import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimb
 import { MaterializeClaimExpensesService } from './materialize-claim-expenses.service';
 
 export type ReimbursementProjectionDecision = {
-  kind: 'MANAGER' | 'FINANCE';
+  kind: 'MANAGER' | 'FINANCE' | 'POLICY';
   actorUserId: string;
   approvalStepId?: string;
   allowMissingReceiptWithReason: boolean;

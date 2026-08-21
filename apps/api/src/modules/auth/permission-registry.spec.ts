@@ -6,6 +6,7 @@ import { AccessCatalogController } from '../employee-access/presentation/http/ac
 import { EmployeeController } from '../employee-access/presentation/http/employee.controller';
 import { PermissionController } from '../employee-access/presentation/http/permission.controller';
 import { RoleController } from '../employee-access/presentation/http/role.controller';
+import { ReimbursementPolicyController } from '../reimbursements/presentation/http/reimbursement-policy.controller';
 
 function requiredAny(target: object, method: string): string[] {
   return Reflect.getMetadata(REQUIRED_ANY_PERMISSIONS_KEY, (target as Record<string, object>)[method]);
@@ -31,6 +32,12 @@ describe('permission-registry', () => {
     assert.deepEqual(requiredAny(AccessCatalogController.prototype, 'templates'), ['access.role_template.read', 'access.role.manage']);
     assert.deepEqual(requiredAny(AccessCatalogController.prototype, 'accessMatrix'), ['access.role.read', 'access.role.manage']);
     assert.deepEqual(requiredAny(PermissionController.prototype, 'list'), ['access.permission.read', 'access.role.manage']);
+  });
+
+  it('lets reimbursement policy managers load the settings they are allowed to update', () => {
+    assert.deepEqual(requiredAny(ReimbursementPolicyController.prototype, 'get'), [
+      'reimbursement.policy.read', 'reimbursement.policy.manage',
+    ]);
   });
 
   it('has no duplicate permission keys', () => {

@@ -56,6 +56,8 @@ export type ReimbursementClaimFormSnapshot = {
   hasReceiptEvidence: boolean;
   /** Printed under the checklist when the claim was waived instead of evidenced. */
   missingReceiptReason: string | null;
+  /** Printed when policy legitimately skipped the human approval step. */
+  approvalDecisionNote?: string | null;
   /**
    * null = the step has not happened, so the form prints a blank ruled line for
    * wet ink instead of inventing a signer.
@@ -190,7 +192,7 @@ export function renderReimbursementClaimFormSvg(snapshot: ReimbursementClaimForm
     ${waiverLines.length ? multilineText(52, waiverY, waiverLines, 20) : ''}
     <text x="45" y="${reasonTitleY}" font-weight="700">เหตุผลในการเบิก</text>
     ${multilineText(52, reasonY, reasonLines, 22)}
-    <text x="45" y="${signaturesTop - 30}" font-weight="700">การอนุมัติ</text>
+    <text x="45" y="${signaturesTop - 30}" font-weight="700">การอนุมัติ${snapshot.approvalDecisionNote ? ` — ${xml(snapshot.approvalDecisionNote)}` : ''}</text>
     ${signatures}
   </g>
 </svg>`;

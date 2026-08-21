@@ -93,13 +93,16 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
   it('resolves the reimbursement deep link from the template path, for both the notification and the sibling task', async () => {
     const pendingApproval = WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === 'reimbursement_pending_approval')!;
     const [notifyAction, taskAction] = pendingApproval.defaultActionJson;
-    const payload = { requestId: 'rb_1', requestNo: 'RB-202601-000001', eventType: 'reimbursement.request_submitted' };
+    const payload = {
+      requestId: 'rb_1', requestNo: 'RB-202601-000001', eventType: 'reimbursement.request_submitted',
+      approverRecipientUserIds: ['u_manager'], approverTaskUserId: 'u_manager', approverTaskRole: 'ACCOUNTANT',
+    };
     const reimbursementContext: any = {
       companyId: 'co_1', ruleName: 'Reimbursement pending approval',
       sourceModule: 'reimbursements', sourceType: 'reimbursement_request', sourceId: 'rb_1',
       payload, siblingActions: pendingApproval.defaultActionJson,
     };
-    repo.findUserIdsByRoles = mock.fn(async () => ['u_manager']);
+    repo.findUserIdsByRoles = mock.fn(async () => []);
     repo.findTaskByActionRunId = mock.fn(async () => null);
     repo.createTask = mock.fn(async (data: any) => ({ id: 'task_1', ...data }));
 
@@ -113,14 +116,11 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
     await make().execute({ ...actionRun(taskAction!.configJson), actionKey: taskAction!.actionKey, actionType: 'CREATE_APPROVAL_REVIEW_REQUEST' }, reimbursementContext);
     const created = (repo.createTask.mock.calls[0] as any).arguments[0];
     assert.equal(created.webDeepLink, '/companies/co_1/reimbursements?tab=approvals&focus=rb_1');
+    assert.equal(created.assigneeUserId, 'u_manager');
+    assert.equal(created.assigneeRole, undefined, 'a later ACCOUNTANT must not inherit this frozen task');
   });
 
-  /**
-   * Audit H-18: the pending-approval alert reached the person who filed the claim, inviting them to
-   * a button that answers self_approval_denied. The filer is excluded through the payload, and the
-   * payload only carries requesterUserId while the policy forbids self-approval.
-   */
-  describe('pending-approval alert never invites the filer (audit H-18)', () => {
+  describe('pending-approval alert follows the frozen recipients', () => {
     const pendingApproval = () => WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === 'reimbursement_pending_approval')!;
     const runNotify = (payload: Record<string, unknown>) => {
       const [notifyAction] = pendingApproval().defaultActionJson;
@@ -132,27 +132,13 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
       } as any);
     };
 
-    it('drops the filer while still alerting the other approvers', async () => {
+    it('does not re-evaluate the requester after submission resolved an exact self-approval route', async () => {
       repo.findUserIdsByPermissions = mock.fn(async () => []);
-      repo.findUserIdsByRoles = mock.fn(async () => ['u_manager', 'u_owner']);
+      repo.findUserIdsByRoles = mock.fn(async () => []);
 
-      await runNotify({ requesterUserId: 'u_owner' });
+      await runNotify({ requesterUserId: 'u_owner', approverRecipientUserIds: ['u_manager', 'u_owner'] });
 
-      assert.deepEqual((notify.execute.mock.calls[0] as any).arguments[0].recipientUserIds, ['u_manager']);
-    });
-
-    // The owner-only company: the sole approver is the filer. Retrying that to exhaustion would
-    // dead-letter an action on every claim and make a working configuration look broken.
-    it('skips silently when the filer was the only recipient, instead of failing', async () => {
-      repo.findUserIdsByPermissions = mock.fn(async () => []);
-      repo.findUserIdsByRoles = mock.fn(async () => ['u_owner']);
-
-      await runNotify({ requesterUserId: 'u_owner' });
-
-      assert.equal(notify.execute.mock.callCount(), 0, 'nobody is notified');
-      const finalUpdate = (repo.updateActionRun.mock.calls.at(-1) as any).arguments[1];
-      assert.equal(finalUpdate.status, 'SUCCEEDED', 'a skip is a completed action, not a failure');
-      assert.deepEqual(finalUpdate.resultJson, { skipped: true, reason: 'all_recipients_excluded' });
+      assert.deepEqual((notify.execute.mock.calls[0] as any).arguments[0].recipientUserIds, ['u_manager', 'u_owner']);
     });
 
     // Nothing resolving AT ALL still means the roles name people who do not exist — a later
@@ -160,20 +146,18 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
     it('still fails when no recipient resolved in the first place', async () => {
       repo.findUserIdsByPermissions = mock.fn(async () => []);
       repo.findUserIdsByRoles = mock.fn(async () => []);
-      await runNotify({ requesterUserId: 'u_owner' });
+      await runNotify({ requesterUserId: 'u_owner', approverRecipientUserIds: [] });
 
       assert.equal(notify.execute.mock.callCount(), 0);
       const finalUpdate = (repo.updateActionRun.mock.calls.at(-1) as any).arguments[1];
       assert.equal(finalUpdate.status, 'FAILED_RETRYABLE');
     });
 
-    // A company that allows self-approval never puts requesterUserId in the payload, so the filer
-    // keeps their alert — one rule, expressed once, where the policy is known.
-    it('keeps notifying the filer when the payload carries no requester to exclude', async () => {
+    it('notifies a sole frozen self-approver because that decision was already validated at submit', async () => {
       repo.findUserIdsByPermissions = mock.fn(async () => []);
-      repo.findUserIdsByRoles = mock.fn(async () => ['u_owner']);
+      repo.findUserIdsByRoles = mock.fn(async () => []);
 
-      await runNotify({});
+      await runNotify({ requesterUserId: 'u_owner', approverRecipientUserIds: ['u_owner'] });
 
       assert.deepEqual((notify.execute.mock.calls[0] as any).arguments[0].recipientUserIds, ['u_owner']);
     });
@@ -188,7 +172,10 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
     await make().execute(actionRun(ready.defaultActionJson[0]!.configJson), {
       companyId: 'co_1', ruleName: 'Reimbursement ready for payment', sourceModule: 'reimbursements',
       sourceType: 'reimbursement_request', sourceId: 'rb_1',
-      payload: { requestId: 'rb_1', requestNo: 'RB-202608-00021', amount: '250', currency: 'THB' },
+      payload: {
+        requestId: 'rb_1', requestNo: 'RB-202608-00021', amount: '250', currency: 'THB',
+        approverRecipientUserIds: ['u_manager'],
+      },
       siblingActions: [],
     } as any);
 
@@ -200,16 +187,21 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
   it('keeps the sibling-borrowed title but not the body on the pending-approval alert', async () => {
     const pendingApproval = WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === 'reimbursement_pending_approval')!;
     const [notifyAction] = pendingApproval.defaultActionJson;
-    repo.findUserIdsByRoles = mock.fn(async () => ['u_manager']);
+    repo.findUserIdsByRoles = mock.fn(async () => []);
+    repo.findUserIdsByPermissions = mock.fn(async () => []);
     await make().execute({ ...actionRun(notifyAction!.configJson), actionKey: notifyAction!.actionKey }, {
       companyId: 'co_1', ruleName: 'Reimbursement pending approval', sourceModule: 'reimbursements',
       sourceType: 'reimbursement_request', sourceId: 'rb_1',
-      payload: { requestId: 'rb_1', requestNo: 'RB-202608-00021', amount: '250', currency: 'THB' },
+      payload: {
+        requestId: 'rb_1', requestNo: 'RB-202608-00021', amount: '250', currency: 'THB',
+        approverRecipientUserIds: ['u_manager'],
+      },
       siblingActions: pendingApproval.defaultActionJson,
     } as any);
 
     const sent = (notify.execute.mock.calls[0] as any).arguments[0];
-    assert.deepEqual((repo.findUserIdsByRoles.mock.calls[0] as any).arguments[1], ['MANAGER', 'OWNER']);
+    assert.deepEqual((repo.findUserIdsByRoles.mock.calls[0] as any).arguments[1], []);
+    assert.deepEqual(sent.recipientUserIds, ['u_manager']);
     assert.equal(sent.title, 'อนุมัติเบิกจ่าย: RB-202608-00021');
     assert.equal(sent.body, 'ยอด 250 THB · รออนุมัติจากคุณ');
   });

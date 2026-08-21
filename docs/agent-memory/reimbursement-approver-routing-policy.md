@@ -1,6 +1,6 @@
 # Agent Memory: Reimbursement Policy Correctness and Role Routing
 
-Status: Phase C1 and Phase C2 permission composition/multi-role UI implemented and locally verified on PR branch (2026-08-21). Role-routing Release A/B remains preflight-gated.
+Status: Phase C1/C2 and the threshold/status/policy-snapshot/exact-assignee/workflow/concurrency reimbursement-policy correction are implemented and locally verified on the PR branch (2026-08-22). Final regression review and PR handoff are in progress; no UAT/Production deployment is claimed.
 
 Owner: thawatchai.
 
@@ -26,13 +26,15 @@ Decisions:
 - `approvalRequiredFromAmount` is the sole executable threshold; amount equal or above requires approval.
 - Below threshold skips the approval step: finance on → FINANCE_REVIEW; finance off → durable APPROVED/POLICY projection → READY_FOR_PAYMENT.
 - INACTIVE blocks new submit before mutation; drafts and in-flight approvals/finance/payments continue.
-- New submissions store versioned `approvalPolicySnapshotJson`; business facts are frozen while current permission/member/branch facts remain authoritative.
+- New submissions store versioned `approvalPolicySnapshotJson` plus exact recipient ids on the approval step. An active frozen assignee retains that exact task after a role/permission change; active membership and branch remain dynamic, and all-inactive opens recorded role/OWNER recovery.
+- Queue/detail/approve/reject routes declare baseline `account.session.read` metadata to satisfy the global deny-by-default guard. Normal reimbursement permission or exact frozen-step assignment remains the business gate, and approve/reject repeat it transactionally.
+- Notification goes to every frozen recipient. The single-assignee workflow helper task is pinned to one exact frozen recipient by user id; payload/static role is legacy fallback only. A later holder of the old role never inherits that reminder or approval task.
 - Existing null-snapshot requests keep legacy behavior; no historical snapshot is guessed.
 - Policy CAS uses `expectedUpdatedAt`; a raw partial unique index enforces one NULL-branch company policy.
 - Duplicate company-policy rows block migration until authorized remediation selects a canonical row.
 - Existing named-user/contradictory policies are classified. Omitted role preserves them; a save is allowed when the route is actionable or the policy is being deactivated. Unsafe ACTIVE routes must be corrected explicitly. Pending steps never change.
 - Rollout requires Release A additive schema/runner/projection expansion before Release B API/UI/template switch; rollback B targets accepted A.
-- One additive Prisma migration is required: nullable snapshot JSON, partial unique index, and synchronization of the dead threshold alias. No new dependency, permission key/grant, or package script.
+- One additive Prisma migration is required: nullable request policy snapshot JSON, nullable step assignment snapshot JSON, partial unique index, and synchronization of the dead threshold alias. No new dependency, permission key/grant, or package script.
 - Phase C1 reuses the current finance-review command, payment true reversal, cancellation saga, request
   number reuse, and create form. It adds no permission key, dependency, package script, or one-click
   browser chain for void+cancel.
@@ -118,9 +120,60 @@ Verification:
 - Final focused API tests passed 179/179; the complete registered web suite passed 1,040/1,040 after a
   stale role-name assertion in the user-guide contract was corrected to `reimbursement.policy.manage`.
   API, web, and contracts typechecks passed; `git diff --check` passed.
+- Multi-role display follow-up closed the remaining list/detail mismatch: employee rows no longer read
+  only `roles[0]`; all held roles are stacked on the same right-aligned axis. Web typecheck and SET-08B
+  passed, and a local 390 px browser check showed Finance + Accountant consistently in the row and
+  detail with `scrollWidth === innerWidth === 390`.
+- Reimbursement policy role-picker follow-up closed the free-text role key: the page consumes a
+  manage-only catalog, shows human role labels without approver counts, and sends the role only when
+  the route was explicitly edited. The API recomputes entitlement/holder/branch readiness at save,
+  canonicalizes MANAGER/OWNER/custom mode, and clears a stale named user. Focused role readiness/save
+  tests passed 7/7, permission-registry tests 34/34, and reimbursement-guide tests 7/7; contracts, API, and web typechecks passed. Local browser evidence proved OWNER select →
+  save → reopen, then restored MANAGER, at desktop and 390 px. The local read-only policy uniqueness
+  preflight returned zero duplicate company-level policies.
+- Picker wording follow-up removed all visible approver headcounts because they looked like an approval
+  quorum. The dropdown now shows role names only; the only steady-state helper explains the
+  one-decision/first-result rule.
+- Pre-implementation review found the remaining end-to-end gaps are executable, not speculative:
+  submit does not revalidate request-specific role/branch/self readiness; workflow notification/task/SLA
+  still routes statically to MANAGER/OWNER; threshold is audit-only; submitted work reloads mutable policy
+  facts; policy writes lack CAS/NULL-branch uniqueness; and CI catches the two new picker errors outside
+  the shared Thai map. The spec and plan now include these findings and preserve the no-holder-count UX.
+- Release A/B local implementation added the nullable request policy snapshot and approval-step assignee
+  snapshot, synchronized threshold alias, partial central-policy uniqueness, strict DTO/parser, policy
+  CAS, transactional audit/outbox, ACTIVE/threshold state paths, POLICY projection/reconciliation,
+  exact routing at submit, frozen queue/decision/SLA behavior, and dynamic notification/task payloads.
+- Local PostgreSQL applied migration `20260821190000_reimbursement_policy_runtime_correctness`; Prisma
+  reports all migrations applied. The partial unique index and both nullable JSONB columns were read
+  back from the real catalog.
+- Targeted API reimbursement/policy/workflow tests passed after the exact-assignment changes; the
+  post-review focused approval/request/workflow run passed 76/76. Full API regression and
+  contracts/API/web typechecks also passed after the final branch/notification/outbox fixes.
+- In-app browser local evidence as seed OWNER confirmed the real dropdown wording, no count helper,
+  threshold/finance outcome preview, and values `แอดมิน`, `ผู้จัดการ`, `เจ้าของกิจการ` only. Screenshot:
+  `/Users/thawatchai/.codex/visualizations/2026/08/21/01a022c1-6b71-7721-a597-7bb03856c7d2/reimbursement-policy-role-dropdown-local-focused.png`.
+- Browser-assisted HTTP snapshot flow created `RB-202608-00078` under the MANAGER policy and verified the
+  step froze the exact eligible user ids. After changing `qa.manager` from MANAGER to STAFF, the first
+  HTTP run exposed a real integration bug: routes without permission metadata were rejected before the
+  use-case snapshot gate (`Permission metadata is required`). Baseline session route metadata fixed it.
+  The changed-role session then received queue 200 with exactly the target row, detail 200 with both
+  decision actions true, and approve 200 to FINANCE_REVIEW; the step records
+  `decisionByUserId=seed-qa-user-manager`. The QA membership was restored to MANAGER afterward.
+- Web navigation now keeps ordinary approval-tab visibility permission-driven and probes the server only
+  for sessions without approve/reject. A non-empty exact-assignment queue adds the tab for that company;
+  a zero-row response exposes nothing, and completing the last frozen task does not erase the success
+  state during the current page session. Final full web regression passed: 1,047 tests, 0 failures.
+- The workspace route gate now admits `account.session.read` only to the reimbursement hub root so an
+  exact task deep link survives removal of all reimbursement permissions. It does not add a sidebar row
+  or open nested reimbursement paths; the hub still requires the server-confirmed frozen queue.
+- Final semantic review also made active-assignee recovery branch-aware, removed a second requester
+  exclusion that suppressed valid self-approval notifications, sorted frozen recipient ids for a
+  deterministic helper-task owner, and keyed submit/outbox events by submission epoch so a correction
+  resubmitted under the same policy is not deduplicated away.
+- Prisma schema validation and migration status passed with all 147 migrations applied. A separate
+  drift diagnostic reports only pre-existing, unrelated differences in DataRightsCase, ExpenseRecord,
+  LegalDocumentActionRecord, and RemoteRelease tables/indexes; it reports no reimbursement object.
 
 Next:
-- Review the final scoped diff, commit only task files, and update PR 216 on
-  `codex/reimbursement-role-correction-void`; keep unrelated LINE/master-checklist files uncommitted.
-- Execute Phase 0 read-only preflight. Do not create/apply the partial unique index until duplicate NULL-branch policies are proven absent or explicitly resolved.
-- Then implement and accept Release A before combining any Release B API/UI/template switch.
+- Keep the two unrelated untracked LINE advisor docs untouched.
+- Commit and push only the reimbursement-policy change set to the existing PR; record CI outcome. UAT/Production remains a separately authorized phase.

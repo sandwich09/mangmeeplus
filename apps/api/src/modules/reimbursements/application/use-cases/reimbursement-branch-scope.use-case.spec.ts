@@ -36,6 +36,7 @@ const sequence = { execute: async () => ({ id: 'seq-1', documentNumber: 'RBPAY-2
 const projections = { execute: async () => undefined } as any;
 const evidence = { validate: async () => undefined } as any;
 const voidExpense = { executeForReimbursement: async () => undefined } as any;
+const approverRoutes = { resolveSubmissionRoute: async () => assert.fail('branch guard must run before routing') } as any;
 
 /** Restricted to branch-1. The claim in every case below lives in branch-2. */
 function scopedTo(branchIds: string[], permissions: string[]) {
@@ -112,7 +113,7 @@ const WRITES = [
     name: 'submit a draft into another branch approval chain',
     permissions: ['reimbursement.submit', 'reimbursement.finance_review'],
     claim: otherBranchClaim({ status: 'DRAFT' }),
-    run: (repo: any, ctx: any) => new SubmitReimbursementUseCase(repo, audit, outbox, evidence).execute(ctx, 'rb-1'),
+    run: (repo: any, ctx: any) => new SubmitReimbursementUseCase(repo, audit, outbox, evidence, approverRoutes, projections).execute(ctx, 'rb-1'),
   },
   {
     name: 'cancel a claim',
@@ -215,6 +216,7 @@ describe('reimbursement branch ABAC (audit H-2)', () => {
    */
   const EXEMPT = new Set([
     'GetReimbursementPolicyUseCase',
+    'ListReimbursementApproverOptionsUseCase',
     'UpdateReimbursementPolicyUseCase',
     'InitClaimSignatureUploadUseCase',
     'CompleteClaimSignatureUploadUseCase',

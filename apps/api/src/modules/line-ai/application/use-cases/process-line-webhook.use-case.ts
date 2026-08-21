@@ -100,7 +100,7 @@ export type LineTextEvent = {
   lineMessageId?: string;
   /** Chat to push into when the reply token has expired (group id in group chats). */
   pushTargetId?: string;
-  /** Internal buffer hook: settle any in-flight waiting status before the answer. */
+  /** Internal buffer hook: settle any in-flight pre-reply feedback before the answer. */
   beforeReply?: () => Promise<void>;
 };
 
@@ -115,7 +115,9 @@ export type LineReceiptUploadEvent = {
   messagingChannelId: string;
   /** Chat to push into when the reply token has expired (group id in group chats). */
   pushTargetId?: string;
-  /** Internal buffer hook: settle any in-flight waiting status before the answer. */
+  /** Resolved at durable acceptance so a later company switch cannot move this receipt. */
+  companyIdAtAcceptance?: string;
+  /** Internal buffer hook: settle any in-flight pre-reply feedback before the answer. */
   beforeReply?: () => Promise<void>;
 };
 
@@ -1354,12 +1356,14 @@ export class ProcessLineWebhookUseCase {
    * message under a fail-open decision.
    */
   async preflightLegalAcceptance(
-    event: { lineUserId: string; messagingChannelId?: string },
+    event: { lineUserId: string; messagingChannelId?: string; companyIdAtAcceptance?: string },
   ): Promise<LineLegalAcceptancePreflight> {
     const identity = await this.resolveLineIdentity(event);
     if (!identity || identity.user.status !== 'ACTIVE') return { status: 'continue' };
 
-    const resolved = await resolveCompanyForLineUser(this.prisma, identity.userId, event.lineUserId);
+    const resolved = event.companyIdAtAcceptance
+      ? { companyId: event.companyIdAtAcceptance }
+      : await resolveCompanyForLineUser(this.prisma, identity.userId, event.lineUserId);
     if (!resolved || 'needsSelection' in resolved || 'policyViolation' in resolved) {
       return { status: 'continue' };
     }
@@ -3049,7 +3053,9 @@ export class ProcessLineWebhookUseCase {
       return;
     }
 
-    const resolved = await resolveCompanyForLineUser(this.prisma, identity.userId, event.lineUserId);
+    const resolved = event.companyIdAtAcceptance
+      ? { companyId: event.companyIdAtAcceptance }
+      : await resolveCompanyForLineUser(this.prisma, identity.userId, event.lineUserId);
     if (!resolved || 'needsSelection' in resolved) {
       if (!resolved) {
         await this.deliverReply(event, RECEIPT_LINK_REPLY);

@@ -2,7 +2,7 @@ import { Injectable, ForbiddenException } from '@nestjs/common';
 import type { RequestContext, ReimbursementAiSummary } from '@watchdog-bms/contracts';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import { AuditService } from '../../../audit/application/audit.service';
-import { effectivePolicy } from '../../domain/reimbursement.constants';
+import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
 import { ageHours, isSlaRisk, d, decStr } from '../../domain/logic/reimbursement.logic';
 
 /**
@@ -21,7 +21,7 @@ export class GetReimbursementAiSummaryUseCase {
 
     const requesterUserId = canReadAll || canReadRelated ? undefined : ctx.userId;
     const relatedUserId = !canReadAll && canReadRelated ? ctx.userId : undefined;
-    const policy = effectivePolicy(await this.repo.findPolicy(ctx.companyId, null));
+    const currentPolicy = effectivePolicy(await this.repo.findPolicy(ctx.companyId, null));
     const all = await this.repo.listRequests({
       companyId: ctx.companyId,
       requesterUserId,
@@ -37,6 +37,7 @@ export class GetReimbursementAiSummaryUseCase {
 
     for (const r of all) {
       if (r.status === 'PENDING_APPROVAL') {
+        const policy = effectivePolicyForRequest(r, currentPolicy);
         pendingApproval++;
         const age = r.submittedAt ? ageHours(r.submittedAt, now) : 0;
         if (isSlaRisk(age, policy.slaHours)) overdueApproval++;

@@ -129,28 +129,18 @@ describe('LINE staff menu', () => {
     assert.deepEqual(buildCompanyPickerMessage([]), { type: 'text', text: 'ไม่พบบริษัทที่ใช้งานได้ในขณะนี้' });
   });
 
-  it('builds a safe receipt card with native camera actions and an optional image', () => {
+  it('builds a safe receipt card whose only upload affordances are native camera actions', () => {
     const receipt = buildReceiptCapturePrompt(context);
     assert.equal(receipt.type, 'flex');
     assert.equal(receipt.altText, 'แนบรูปใบเสร็จเข้าระบบ');
     const contents = ((receipt.contents as any).body.contents as any[]);
     assert.equal(contents[0]?.text, 'แนบรูปใบเสร็จเข้าระบบ');
-    assert.match(contents[1]?.text, /^แนบรูปใบเสร็จ/);
-    assert.equal(contents[1]?.text.includes('ถ่าย'), false);
+    assert.match(contents[1]?.text, /^กด “แนบรูปใบเสร็จ” หรือ “เปิดกล้อง”/);
     assert.match(contents[1]?.text, /ระบบจะบันทึกเป็นรายการรอตรวจสอบ ไม่อนุมัติหรือชำระเงินอัตโนมัติ/);
-    const image = contents.find((item) => item.type === 'image');
-    assert.equal(image?.url, 'https://app.example.com/assets/line/receipt-dropzone.png');
-    const caption = contents.find((item) => item.text === 'แตะปุ่ม "แนบรูปใบเสร็จ" ด้านล่าง');
-    assert.deepEqual(caption, { type: 'text', text: 'แตะปุ่ม "แนบรูปใบเสร็จ" ด้านล่าง', align: 'center', size: 'xs', weight: 'bold', color: '#12B76A', margin: 'sm' });
+    assert.equal(contents.some((item) => item.type === 'image'), false, 'no decorative fake drop-zone');
     assert.deepEqual(receipt.quickReply?.items.slice(0, 2).map((item) => item.action.type), ['cameraRoll', 'camera']);
     const firstLabel = receipt.quickReply?.items[0]?.action.label;
     assert.equal(firstLabel, '🖼 แนบรูปใบเสร็จ');
-    assert.equal(caption.text, `แตะปุ่ม "${firstLabel.replace('🖼 ', '')}" ด้านล่าง`);
-
-    const withoutImage = buildReceiptCapturePrompt({ ...context, webBaseUrl: undefined });
-    const withoutImageContents = ((withoutImage as { contents: any }).contents.body.contents as any[]);
-    assert.equal(withoutImageContents.some((item) => item.type === 'image'), false);
-    assert.equal(withoutImageContents.some((item) => item.text === caption.text), true);
   });
 
   it('builds the exact public contact card and safe actions', () => {

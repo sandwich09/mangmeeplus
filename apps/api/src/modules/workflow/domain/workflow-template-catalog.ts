@@ -130,19 +130,7 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
         actionType: 'SEND_NOTIFICATION',
         configJson: {
           triggerKey: 'workflow.reimbursement_pending_approval',
-          // OWNER too: matchesApproverRole treats an owner as an approver for every claim, so an
-          // owner-only company (no MANAGER membership) resolved zero recipients and notified nobody.
-          // The sibling approval-review TASK stays MANAGER-assigned — that is a worklist, not an alert.
-          recipientRoles: ['MANAGER', 'OWNER'],
-          // Audit H-18: the filer used to be invited to approve their own claim, landing on a
-          // button that answers self_approval_denied. The submit payload only carries
-          // requesterUserId while the policy forbids self-approval, so a company that allows it
-          // keeps notifying the filer — one rule, expressed once, at the point that knows it.
-          excludeRecipientPayloadKeys: ['requesterUserId'],
-          // An owner-only company has nobody left to tell once the filer is excluded, and that is
-          // correct rather than a failure. Opt-in: the dual-approval vendor bill wants the opposite,
-          // where nobody left means the company genuinely lacks a second approver.
-          skipWhenAllRecipientsExcluded: true,
+          recipientPayloadKeys: ['approverRecipientUserIds'],
           severity: 'action',
           // Title comes from the sibling task template; the body must carry the numbers instead of
           // repeating it (the live notification showed the same line twice).
@@ -150,7 +138,7 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
           deepLinkPathTemplate: reimbursementHubLink('approvals'),
         },
       },
-      { actionKey: 'create_approval_task', actionType: 'CREATE_APPROVAL_REVIEW_REQUEST', configJson: { titleTemplate: 'อนุมัติเบิกจ่าย: {{requestNo}}', priority: 'HIGH', assigneeRole: 'MANAGER' } },
+      { actionKey: 'create_approval_task', actionType: 'CREATE_APPROVAL_REVIEW_REQUEST', configJson: { titleTemplate: 'อนุมัติเบิกจ่าย: {{requestNo}}', priority: 'HIGH', assigneeUserPayloadKey: 'approverTaskUserId', assigneeRolePayloadKey: 'approverTaskRole' } },
     ],
     requiredPermissions: ['reimbursement.approve'],
     requiredSourceModules: ['reimbursements'],
@@ -167,8 +155,8 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
     triggerType: 'SLA_SCAN',
     defaultConditionJson: { field: 'slaRisk', op: 'EQ', value: true },
     defaultActionJson: [
-      { actionKey: 'escalate_sla', actionType: 'SEND_NOTIFICATION', configJson: { triggerKey: 'workflow.approval_sla_breach', recipientRoles: ['OWNER', 'MANAGER'], severity: 'critical' } },
-      { actionKey: 'create_escalation_task', actionType: 'CREATE_WORKFLOW_TASK', configJson: { titleTemplate: 'อนุมัติเกิน SLA: {{requestNo}}', priority: 'CRITICAL', assigneeRole: 'MANAGER' } },
+      { actionKey: 'escalate_sla', actionType: 'SEND_NOTIFICATION', configJson: { triggerKey: 'workflow.approval_sla_breach', recipientPayloadKeys: ['approverRecipientUserIds', 'ownerRecipientUserIds'], severity: 'critical' } },
+      { actionKey: 'create_escalation_task', actionType: 'CREATE_WORKFLOW_TASK', configJson: { titleTemplate: 'อนุมัติเกิน SLA: {{requestNo}}', priority: 'CRITICAL', assigneeUserPayloadKey: 'approverTaskUserId', assigneeRolePayloadKey: 'approverTaskRole' } },
     ],
     requiredPermissions: ['reimbursement.approve'],
     requiredSourceModules: ['reimbursements'],

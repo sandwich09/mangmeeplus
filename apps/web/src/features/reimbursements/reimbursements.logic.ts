@@ -199,6 +199,13 @@ export function visibleHubTabs(permissions: readonly string[], _roles: readonly 
   return HUB_TABS.filter((tab) => HUB_TAB_PERMISSIONS[tab].some((key) => permissions.includes(key)));
 }
 
+/** Add the approval tab only after the server confirms this user has a frozen task. */
+export function withAssignedApprovalTab(tabs: readonly HubTab[], hasAssignedTask: boolean): HubTab[] {
+  if (!hasAssignedTask || tabs.includes('approvals')) return [...tabs];
+  const visible = new Set<HubTab>([...tabs, 'approvals']);
+  return HUB_TABS.filter((tab) => visible.has(tab));
+}
+
 /** Prefer the broadest list scope granted to the session; the API remains the final authority. */
 export function reimbursementListScope(permissions: readonly string[]): 'related' | 'own' | undefined {
   if (permissions.includes('reimbursement.read')) return undefined;

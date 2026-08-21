@@ -24,8 +24,9 @@ import type {
 import {
   REIMBURSEMENT_ATTACHMENT_TARGET_TYPE,
   REIMBURSEMENT_SIGNED_COPY_PURPOSE,
+  parseReimbursementPolicySnapshot,
 } from '../domain/reimbursement.constants';
-import { effectivePolicy } from '../domain/reimbursement.constants';
+import { effectivePolicy, effectivePolicyForRequest } from '../domain/reimbursement.constants';
 import {
   buildPaymentSourceRef,
   computeSnapshotHash,
@@ -36,6 +37,7 @@ import {
   isExactLegacyV1FallbackSnapshot,
   isSelfApproval,
   matchesApproverRole,
+  frozenApprovalAuthority,
   validatePaymentRecording,
 } from '../domain/logic/reimbursement.logic';
 import { exclusiveEndOfDay } from '@watchdog-bms/contracts';
@@ -45,6 +47,31 @@ function dec(v: unknown): string {
 }
 function opt<T>(v: T | null | undefined): T | undefined {
   return v == null ? undefined : v;
+}
+function stringArrayOpt(value: unknown): string[] | undefined {
+  if (value == null) return undefined;
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
+    throw new Error('invalid_reimbursement_approval_assignment_snapshot');
+  }
+  return [...new Set(value)];
+}
+
+function activeApproverMembershipWhere(
+  companyId: string,
+  userIds: string[],
+  branchId?: string | null,
+): Prisma.CompanyMembershipWhereInput {
+  return {
+    companyId,
+    userId: { in: [...new Set(userIds)] },
+    status: 'ACTIVE',
+    user: { status: 'ACTIVE' },
+    ...(branchId ? { OR: [
+      { branchScopeMode: 'ALL_BRANCHES' },
+      { branchScopeMode: 'DEFAULT_BRANCH_ONLY', defaultBranchId: branchId },
+      { branchScopeMode: 'SELECTED_BRANCHES', branchScopes: { some: { branchId } } },
+    ] } : {}),
+  };
 }
 
 export type ListRequestsWhere = {
@@ -173,18 +200,13 @@ export class PrismaReimbursementRepository {
    * "Can still act" is membership-level, not user-level: an ACTIVE person who has been removed from
    * THIS company must not keep approving its claims.
    */
-  async findActiveApproverUserIds(companyId: string, userIds: string[]): Promise<Set<string>> {
+  async findActiveApproverUserIds(companyId: string, userIds: string[], branchId?: string | null): Promise<Set<string>> {
     const ids = [...new Set(userIds.filter((id) => !!id))];
     if (ids.length === 0) return new Set();
     const rows = await this.prisma.client.companyMembership.findMany({
-      where: {
-        companyId,
-        userId: { in: ids },
-        status: 'ACTIVE',
-        // A suspended or disabled login cannot approve even while the membership row still says
-        // ACTIVE — both have to hold for the assignment to still mean something.
-        user: { status: 'ACTIVE' },
-      },
+      // Branch responsibility remains dynamic even though the exact person is frozen. If every
+      // assignee loses this branch, the recorded role/OWNER recovery path must be able to open.
+      where: activeApproverMembershipWhere(companyId, ids, branchId),
       select: { userId: true },
     });
     return new Set(rows.map((row) => row.userId));
@@ -209,10 +231,13 @@ export class PrismaReimbursementRepository {
   // ---- Policy ----
 
   async findPolicy(companyId: string, branchId?: string | null): Promise<ReimbursementPolicyRecord | null> {
-    const row = await this.prisma.client.reimbursementPolicy.findFirst({
+    const rows = await this.prisma.client.reimbursementPolicy.findMany({
       where: { companyId, branchId: branchId ?? null },
+      orderBy: { createdAt: 'asc' },
+      take: 2,
     });
-    return row ? this.toPolicy(row) : null;
+    if (rows.length > 1) throw new ConflictException('duplicate_company_policy');
+    return rows[0] ? this.toPolicy(rows[0]) : null;
   }
 
   async upsertPolicy(
@@ -220,19 +245,46 @@ export class PrismaReimbursementRepository {
     branchId: string | null,
     data: Record<string, unknown>,
     userId: string,
+    expectedUpdatedAt?: Date,
+    onPersisted?: (tx: any, before: ReimbursementPolicyRecord | null, after: ReimbursementPolicyRecord) => Promise<void>,
   ): Promise<ReimbursementPolicyRecord> {
-    const existing = await this.prisma.client.reimbursementPolicy.findFirst({ where: { companyId, branchId } });
-    if (existing) {
-      const row = await this.prisma.client.reimbursementPolicy.update({
-        where: { id: existing.id },
-        data: { ...data, updatedByUserId: userId },
+    const client = this.prisma.client as any;
+    try {
+      return await client.$transaction(async (tx: any) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${branchId ?? 'company'}:reimbursement-policy`}))`;
+        const rows = await tx.reimbursementPolicy.findMany({
+          where: { companyId, branchId }, orderBy: { createdAt: 'asc' }, take: 2,
+        });
+        if (rows.length > 1) throw new ConflictException('duplicate_company_policy');
+        const existing = rows[0];
+        let row: any;
+        if (existing) {
+          if (!expectedUpdatedAt || existing.updatedAt.getTime() !== expectedUpdatedAt.getTime()) {
+            throw new ConflictException('reimbursement_policy_changed');
+          }
+          const changed = await tx.reimbursementPolicy.updateMany({
+            where: { id: existing.id, companyId, branchId, updatedAt: expectedUpdatedAt },
+            data: { ...data, updatedByUserId: userId, updatedAt: this.nextVersion(expectedUpdatedAt) },
+          });
+          if (changed.count !== 1) throw new ConflictException('reimbursement_policy_changed');
+          row = await tx.reimbursementPolicy.findFirstOrThrow({ where: { id: existing.id, companyId } });
+        } else {
+          if (expectedUpdatedAt) throw new ConflictException('reimbursement_policy_changed');
+          row = await tx.reimbursementPolicy.create({
+            data: { companyId, branchId, ...data, createdByUserId: userId },
+          });
+        }
+        const before = existing ? this.toPolicy(existing) : null;
+        const after = this.toPolicy(row);
+        await onPersisted?.(tx, before, after);
+        return after;
       });
-      return this.toPolicy(row);
+    } catch (error) {
+      if ((error as { code?: string })?.code === 'P2002') {
+        throw new ConflictException('reimbursement_policy_changed');
+      }
+      throw error;
     }
-    const row = await this.prisma.client.reimbursementPolicy.create({
-      data: { companyId, branchId, ...data, createdByUserId: userId },
-    });
-    return this.toPolicy(row);
   }
 
   // ---- Request ----
@@ -303,10 +355,11 @@ export class PrismaReimbursementRepository {
     companyId: string;
     requestId: string;
     expectedUpdatedAt: Date;
-    approvalStep: {
+    approvalStep?: {
       sequenceNo: number;
       approverUserId?: string;
       approverRoleSnapshot?: string;
+      assignedApproverUserIdsJson?: string[];
       requestSnapshotHash: string;
     };
     duplicateCandidates: ReimbursementDuplicateCandidateWriteData[];
@@ -319,8 +372,15 @@ export class PrismaReimbursementRepository {
       reservedByUserId: string;
     };
     request: Record<string, unknown>;
+    onSubmittedPersisted?: (tx: any, result: {
+      step?: ReimbursementApprovalStepRecord;
+      documentNumber: ReservedDocumentNumberRecord;
+      documentNumberReused: boolean;
+      supersededDuplicateCandidateCount: number;
+      supersededApprovalStepCount: number;
+    }) => Promise<void>;
   }): Promise<{
-    step: ReimbursementApprovalStepRecord;
+    step?: ReimbursementApprovalStepRecord;
     documentNumber: ReservedDocumentNumberRecord;
     documentNumberReused: boolean;
     supersededDuplicateCandidateCount: number;
@@ -380,13 +440,15 @@ export class PrismaReimbursementRepository {
           })),
         });
       }
-      const step = await tx.reimbursementApprovalStep.create({
-        data: {
-          companyId: data.companyId,
-          reimbursementRequestId: data.requestId,
-          ...data.approvalStep,
-        },
-      });
+      const step = data.approvalStep
+        ? await tx.reimbursementApprovalStep.create({
+          data: {
+            companyId: data.companyId,
+            reimbursementRequestId: data.requestId,
+            ...data.approvalStep,
+          },
+        })
+        : undefined;
       const changed = await tx.reimbursementRequest.updateMany({
         where: {
           id: data.requestId,
@@ -397,7 +459,7 @@ export class PrismaReimbursementRepository {
         data: {
           ...data.request,
           requestNo: reserved.documentNumber,
-          currentApprovalStepId: step.id,
+          currentApprovalStepId: step?.id ?? null,
           updatedAt: this.nextVersion(data.expectedUpdatedAt),
         },
       });
@@ -410,8 +472,15 @@ export class PrismaReimbursementRepository {
           ownerType: 'reimbursement_request',
           ownerId: data.requestId,
         });
+      await data.onSubmittedPersisted?.(tx, {
+        step: step ? this.toStep(step) : undefined,
+        documentNumber,
+        documentNumberReused,
+        supersededDuplicateCandidateCount: supersededCandidates.count,
+        supersededApprovalStepCount: supersededApprovalSteps.count,
+      });
       return {
-        step: this.toStep(step),
+        step: step ? this.toStep(step) : undefined,
         documentNumber,
         documentNumberReused,
         supersededDuplicateCandidateCount: supersededCandidates.count,
@@ -622,10 +691,18 @@ export class PrismaReimbursementRepository {
   private async assertApproverEligibility(
     tx: any,
     companyId: string,
-    step: { approverUserId?: string | null; approverRoleSnapshot?: string | null },
+    step: { approverUserId?: string | null; approverRoleSnapshot?: string | null; assignedApproverUserIdsJson?: unknown },
     actorUserId: string,
     actorRoles: string[],
-  ): Promise<void> {
+    branchId?: string | null,
+  ): Promise<boolean> {
+    const frozenAssignees = stringArrayOpt(step.assignedApproverUserIdsJson);
+    if (frozenAssignees) {
+      const activeAssignees = await this.activeApproverUserIds(tx, companyId, frozenAssignees, branchId);
+      const frozenAuthority = frozenApprovalAuthority(frozenAssignees, activeAssignees, actorUserId);
+      if (frozenAuthority === 'ASSIGNED') return true;
+      if (frozenAuthority === 'DENIED') throw new ForbiddenException('not_assigned_approver');
+    }
     // Audit H-20: a step naming a person used to be exact-match forever, so disabling that member
     // froze the request with no reassign route and no OWNER fallback. The assignment now only binds
     // while the person can still act for this company; after that the step falls back to the role
@@ -633,21 +710,31 @@ export class PrismaReimbursementRepository {
     //
     // Read through `tx`: the eligibility decision and the status update it guards have to see the
     // same snapshot, or a member disabled mid-transaction could still be treated as assigned.
-    if (step.approverUserId && await this.canActAsApprover(tx, companyId, step.approverUserId)) {
+    if (step.approverUserId && await this.canActAsApprover(tx, companyId, step.approverUserId, branchId)) {
       if (step.approverUserId !== actorUserId) throw new ForbiddenException('not_assigned_approver');
-      return;
+      return true;
     }
     // Same predicate as the use-case gate: a role-routed step is approvable by that role or by the
     // OWNER; only a step naming a specific person who can still act stays exact-match.
     if (!matchesApproverRole(step.approverRoleSnapshot, actorRoles)) {
       throw new ForbiddenException('not_eligible_approver_role');
     }
+    return false;
+  }
+
+  private async activeApproverUserIds(tx: any, companyId: string, userIds: string[], branchId?: string | null): Promise<Set<string>> {
+    if (userIds.length === 0) return new Set();
+    const rows = await tx.companyMembership.findMany({
+      where: activeApproverMembershipWhere(companyId, userIds, branchId),
+      select: { userId: true },
+    });
+    return new Set(rows.map((row: { userId: string }) => row.userId));
   }
 
   /** Membership-level, not user-level: an ACTIVE person removed from THIS company cannot approve. */
-  private async canActAsApprover(tx: any, companyId: string, userId: string): Promise<boolean> {
+  private async canActAsApprover(tx: any, companyId: string, userId: string, branchId?: string | null): Promise<boolean> {
     const membership = await tx.companyMembership.findFirst({
-      where: { companyId, userId, status: 'ACTIVE', user: { status: 'ACTIVE' } },
+      where: activeApproverMembershipWhere(companyId, [userId], branchId),
       select: { id: true },
     });
     return Boolean(membership);
@@ -719,6 +806,7 @@ export class PrismaReimbursementRepository {
       reason: request.reason,
       primaryAttachmentId: request.primaryAttachmentId,
       lines: request.lines,
+      approvalPolicySnapshotJson: request.approvalPolicySnapshotJson,
     });
     const legacyV1Compatible = isExactLegacyV1FallbackSnapshot({
       requestId: request.id,
@@ -819,9 +907,6 @@ export class PrismaReimbursementRepository {
 
       const request = this.toRequest(row);
       this.assertDecisionBranch(request.branchId, data.scopes);
-      if (isSelfApproval(request.requesterUserId, data.actorUserId, data.allowSelfApproval, data.actorRoles)) {
-        throw new ForbiddenException('self_approval_denied');
-      }
       const storedHash = this.assertApprovalSnapshot(request, data.expectedApprovalSnapshotHash);
       if (!request.currentApprovalStepId) throw new ConflictException('stale_approval_snapshot');
       const step = await tx.reimbursementApprovalStep.findFirst({
@@ -832,7 +917,10 @@ export class PrismaReimbursementRepository {
         },
       });
       if (!step || step.requestSnapshotHash !== storedHash) throw new ConflictException('stale_approval_snapshot');
-      await this.assertApproverEligibility(tx, data.companyId, step, data.actorUserId, data.actorRoles);
+      const assignedBySnapshot = await this.assertApproverEligibility(tx, data.companyId, step, data.actorUserId, data.actorRoles, request.branchId);
+      if (!assignedBySnapshot && isSelfApproval(request.requesterUserId, data.actorUserId, data.allowSelfApproval, data.actorRoles)) {
+        throw new ForbiddenException('self_approval_denied');
+      }
 
       if (step.status === 'APPROVED') {
         if (data.financeReviewRequired
@@ -1020,6 +1108,7 @@ export class PrismaReimbursementRepository {
             currentApproverUserId: null,
             currentApprovalStepId: null,
             approvalSnapshotHash: null,
+            approvalPolicySnapshotJson: null,
             paymentStatus: 'NOT_PAYABLE',
             duplicateStatus: 'NOT_CHECKED',
             postingStatus: 'not_required',
@@ -1061,7 +1150,7 @@ export class PrismaReimbursementRepository {
   async prepareClaimProjections(data: {
     companyId: string;
     requestId: string;
-    decisionKind: 'MANAGER' | 'FINANCE';
+    decisionKind: 'MANAGER' | 'FINANCE' | 'POLICY';
     decisionActorUserId: string;
     approvalStepId?: string;
     scopes: { branchIds?: string[] };
@@ -1095,10 +1184,18 @@ export class PrismaReimbursementRepository {
         if (!step || step.requestSnapshotHash !== request.approvalSnapshotHash) {
           throw new ConflictException('reimbursement_projection_decision_changed');
         }
-      } else if (request.status !== 'FINANCE_REVIEW'
-        || request.financeReviewStatus !== 'APPROVED_FOR_PAYMENT'
-        || request.financeReviewedByUserId !== data.decisionActorUserId) {
-        throw new ConflictException('reimbursement_projection_decision_changed');
+      } else if (data.decisionKind === 'FINANCE') {
+        if (request.status !== 'FINANCE_REVIEW'
+          || request.financeReviewStatus !== 'APPROVED_FOR_PAYMENT'
+          || request.financeReviewedByUserId !== data.decisionActorUserId) {
+          throw new ConflictException('reimbursement_projection_decision_changed');
+        }
+      } else {
+        const snapshot = parseReimbursementPolicySnapshot(request.approvalPolicySnapshotJson);
+        if (request.status !== 'APPROVED' || request.currentApprovalStepId
+          || !snapshot || snapshot.requiresApproval || snapshot.financeReviewRequired) {
+          throw new ConflictException('reimbursement_projection_decision_changed');
+        }
       }
 
       const lines = request.lines ?? [];
@@ -1229,11 +1326,11 @@ export class PrismaReimbursementRepository {
 
   async listPendingProjectionIntents(limit = 100): Promise<Array<{
     request: ReimbursementRequestRecord;
-    kind: 'MANAGER' | 'FINANCE';
+    kind: 'MANAGER' | 'FINANCE' | 'POLICY';
     actorUserId: string;
     approvalStepId?: string;
   }>> {
-    const [managerRows, financeRows] = await Promise.all([
+    const [managerRows, financeRows, policyRows] = await Promise.all([
       (this.prisma.client as any).reimbursementRequest.findMany({
         where: { status: 'PENDING_APPROVAL', currentApprovalStepId: { not: null }, cancellationPendingAt: null },
         include: {
@@ -1254,10 +1351,16 @@ export class PrismaReimbursementRepository {
         orderBy: { updatedAt: 'asc' },
         take: limit,
       }),
+      (this.prisma.client as any).reimbursementRequest.findMany({
+        where: { status: 'APPROVED', currentApprovalStepId: null, cancellationPendingAt: null },
+        include: { lines: { orderBy: { lineNo: 'asc' } } },
+        orderBy: { updatedAt: 'asc' },
+        take: limit,
+      }),
     ]);
     const intents: Array<{
       request: ReimbursementRequestRecord;
-      kind: 'MANAGER' | 'FINANCE';
+      kind: 'MANAGER' | 'FINANCE' | 'POLICY';
       actorUserId: string;
       approvalStepId?: string;
     }> = [];
@@ -1272,6 +1375,13 @@ export class PrismaReimbursementRepository {
       const request = this.toRequest(row);
       if (request.financeReviewedByUserId) {
         intents.push({ request, kind: 'FINANCE', actorUserId: request.financeReviewedByUserId });
+      }
+    }
+    for (const row of policyRows) {
+      const request = this.toRequest(row);
+      const snapshot = parseReimbursementPolicySnapshot(request.approvalPolicySnapshotJson);
+      if (snapshot && !snapshot.requiresApproval && !snapshot.financeReviewRequired) {
+        intents.push({ request, kind: 'POLICY', actorUserId: request.submittedByUserId ?? request.requesterUserId });
       }
     }
     return intents.sort((a, b) => a.request.updatedAt.getTime() - b.request.updatedAt.getTime()).slice(0, limit);
@@ -1395,6 +1505,60 @@ export class PrismaReimbursementRepository {
     });
   }
 
+  async completePolicyProjectionAtomic(data: {
+    companyId: string;
+    requestId: string;
+    actorUserId: string;
+    scopes: { branchIds?: string[] };
+    systemReconcile?: boolean;
+    expectedBranchId?: string;
+    completedAt: Date;
+    onReadyPersisted: (tx: any) => Promise<void>;
+  }): Promise<ReimbursementRequestRecord> {
+    const client = this.prisma.client as any;
+    return client.$transaction(async (tx: any) => {
+      await this.lockRequest(tx, data.companyId, data.requestId);
+      const row = await tx.reimbursementRequest.findFirst({
+        where: { id: data.requestId, companyId: data.companyId },
+        include: { lines: { orderBy: { lineNo: 'asc' } } },
+      });
+      if (!row) throw new NotFoundException('Reimbursement request not found');
+      if (row.status === 'READY_FOR_PAYMENT') return this.toRequest(row);
+      const request = this.toRequest(row);
+      const snapshot = parseReimbursementPolicySnapshot(request.approvalPolicySnapshotJson);
+      if (request.status !== 'APPROVED' || request.currentApprovalStepId
+        || !snapshot || snapshot.requiresApproval || snapshot.financeReviewRequired) {
+        throw new ConflictException('reimbursement_projection_decision_changed');
+      }
+      this.assertDecisionBranch(request.branchId, data.scopes, data.systemReconcile, data.expectedBranchId);
+      const readiness = await this.assertClaimProjectionsReady(tx, request);
+      const changed = await tx.reimbursementRequest.updateMany({
+        where: {
+          id: data.requestId,
+          companyId: data.companyId,
+          status: 'APPROVED',
+          currentApprovalStepId: null,
+          updatedAt: row.updatedAt,
+        },
+        data: {
+          status: 'READY_FOR_PAYMENT',
+          paymentStatus: 'UNPAID',
+          duplicateStatus: readiness.duplicateStatus,
+          postingStatus: readiness.postingStatus,
+          updatedByUserId: data.actorUserId,
+          updatedAt: this.nextVersion(row.updatedAt),
+        },
+      });
+      if (changed.count !== 1) throw new ConflictException('reimbursement_projection_decision_changed');
+      await data.onReadyPersisted(tx);
+      const updated = await tx.reimbursementRequest.findFirstOrThrow({
+        where: { id: data.requestId, companyId: data.companyId },
+        include: { lines: { orderBy: { lineNo: 'asc' } } },
+      });
+      return this.toRequest(updated);
+    });
+  }
+
   async completeFinanceProjectionAtomic(data: {
     companyId: string;
     requestId: string;
@@ -1480,12 +1644,6 @@ export class PrismaReimbursementRepository {
 
       const request = this.toRequest(row);
       this.assertDecisionBranch(request.branchId, data.scopes);
-      if (isSelfApproval(request.requesterUserId, data.actorUserId, data.allowSelfApproval, data.actorRoles)) {
-        throw new ForbiddenException('self_approval_denied');
-      }
-      if (request.currentApproverUserId && request.currentApproverUserId !== data.actorUserId) {
-        throw new ForbiddenException('not_assigned_approver');
-      }
       if (!request.currentApprovalStepId) throw new ConflictException('stale_approval_snapshot');
       const step = await tx.reimbursementApprovalStep.findFirst({
         where: {
@@ -1495,7 +1653,10 @@ export class PrismaReimbursementRepository {
         },
       });
       if (!step) throw new ConflictException('stale_approval_snapshot');
-      await this.assertApproverEligibility(tx, data.companyId, step, data.actorUserId, data.actorRoles);
+      const assignedBySnapshot = await this.assertApproverEligibility(tx, data.companyId, step, data.actorUserId, data.actorRoles, request.branchId);
+      if (!assignedBySnapshot && isSelfApproval(request.requesterUserId, data.actorUserId, data.allowSelfApproval, data.actorRoles)) {
+        throw new ForbiddenException('self_approval_denied');
+      }
       const changedStep = await tx.reimbursementApprovalStep.updateMany({
         where: {
           id: step.id,
@@ -1635,6 +1796,7 @@ export class PrismaReimbursementRepository {
           currentApproverUserId: null,
           currentApprovalStepId: null,
           approvalSnapshotHash: null,
+          approvalPolicySnapshotJson: null,
           financeReviewStatus: 'NOT_REQUIRED',
           financeReviewedByUserId: null,
           financeReviewedAt: null,
@@ -1692,6 +1854,7 @@ export class PrismaReimbursementRepository {
     sequenceNo: number;
     approverUserId?: string;
     approverRoleSnapshot?: string;
+    assignedApproverUserIdsJson?: string[];
     requestSnapshotHash: string;
   }): Promise<ReimbursementApprovalStepRecord> {
     const row = await this.prisma.client.reimbursementApprovalStep.create({
@@ -1701,6 +1864,7 @@ export class PrismaReimbursementRepository {
         sequenceNo: data.sequenceNo,
         approverUserId: data.approverUserId,
         approverRoleSnapshot: data.approverRoleSnapshot,
+        assignedApproverUserIdsJson: data.assignedApproverUserIdsJson,
         requestSnapshotHash: data.requestSnapshotHash,
       },
     });
@@ -1775,9 +1939,9 @@ export class PrismaReimbursementRepository {
       if (request.cancellationPendingAt) throw new ConflictException('reimbursement_cancellation_pending');
       await this.assertClaimProjectionsReady(tx, this.toRequest(request));
 
-      const policy = effectivePolicy(await tx.reimbursementPolicy.findFirst({
+      const policy = effectivePolicyForRequest(this.toRequest(request), effectivePolicy(await tx.reimbursementPolicy.findFirst({
         where: { companyId: data.companyId, branchId: null },
-      }).then((row: any) => row ? this.toPolicy(row) : null));
+      }).then((row: any) => row ? this.toPolicy(row) : null)));
       const duplicateBlocking = policy.duplicatePolicy === 'BLOCK_PAYMENT'
         && await tx.reimbursementDuplicateCandidate.count({
           where: { companyId: data.companyId, reimbursementRequestId: data.reimbursementRequestId, status: 'OPEN' },
@@ -2473,6 +2637,7 @@ export class PrismaReimbursementRepository {
       primaryAttachmentId: opt(row.primaryAttachmentId),
       missingReceiptReason: opt(row.missingReceiptReason),
       approvalSnapshotHash: opt(row.approvalSnapshotHash),
+      approvalPolicySnapshotJson: opt(row.approvalPolicySnapshotJson),
       paymentTotalAmount: dec(row.paymentTotalAmount),
       outstandingAmount: dec(row.outstandingAmount),
       idempotencyKey: opt(row.idempotencyKey),
@@ -2516,6 +2681,7 @@ export class PrismaReimbursementRepository {
       sequenceNo: row.sequenceNo,
       approverUserId: opt(row.approverUserId),
       approverRoleSnapshot: opt(row.approverRoleSnapshot),
+      assignedApproverUserIds: stringArrayOpt(row.assignedApproverUserIdsJson),
       status: row.status,
       assignedAt: row.assignedAt,
       decidedAt: opt(row.decidedAt),

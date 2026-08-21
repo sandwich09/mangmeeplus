@@ -34,12 +34,11 @@ import {
   getAccessMatrix,
   listCapabilityPacks,
   listEmployees,
-  listPermissionCatalog,
   listRoleTemplates,
   listRoles,
   updateRole,
 } from './employee-access.api';
-import { RoleBuilder, coveredPacks, ghostClass, dangerClass } from './EmployeeAccessPages';
+import { RoleBuilder, coveredPacks, ghostClass, dangerClass, roleDisplayName } from './EmployeeAccessPages';
 import { localizedErrorMessage } from '@/common/i18n/error-message.logic';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import { t } from '@/common/i18n/workspace-i18n.logic';
@@ -142,9 +141,9 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions }: 
   const [matrix, setMatrix] = useState<PermissionMatrixDto | null>(null);
   const [staffCounts, setStaffCounts] = useState<Record<string, number>>({});
   const [staffCountsAvailable, setStaffCountsAvailable] = useState(false);
-  const [catalog, setCatalog] = useState<any[]>([]);
   const [packModules, setPackModules] = useState<Array<{ module: string; packs: CapabilityPackView[] }>>([]);
   const [templates, setTemplates] = useState<RoleTemplate[]>([]);
+  const [roleOptionsAvailable, setRoleOptionsAvailable] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null);
@@ -155,11 +154,10 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions }: 
 
   const reload = useCallback(async () => {
     setError(null);
-    const [rolesR, matrixR, employeesR, catalogR, packsR, templatesR] = await Promise.allSettled([
+    const [rolesR, matrixR, employeesR, packsR, templatesR] = await Promise.allSettled([
       listRoles(companyId),
       getAccessMatrix(companyId),
       canReadEmployees ? listEmployees(companyId) : Promise.resolve([]),
-      listPermissionCatalog(companyId),
       listCapabilityPacks(companyId),
       listRoleTemplates(companyId),
     ]);
@@ -179,20 +177,21 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions }: 
       setStaffCounts(counts);
       setStaffCountsAvailable(true);
     } else setStaffCountsAvailable(false);
-    if (catalogR.status === 'fulfilled') setCatalog(catalogR.value);
-    if (packsR.status === 'fulfilled') setPackModules(packsR.value.modules);
+    if (packsR.status === 'fulfilled') {
+      setPackModules(packsR.value.modules);
+      setRoleOptionsAvailable(true);
+    } else {
+      setPackModules([]);
+      setRoleOptionsAvailable(false);
+    }
     if (templatesR.status === 'fulfilled') setTemplates(templatesR.value);
+    else setTemplates([]);
     setLoading(false);
   }, [canReadEmployees, companyId, locale, viewerPermissions]);
 
   useEffect(() => { void reload(); }, [reload]);
 
   const allPacks = useMemo(() => packModules.flatMap((m) => m.packs), [packModules]);
-  const grouped = useMemo(
-    () => catalog.reduce<Record<string, any[]>>((acc, p) => { (acc[p.module] ??= []).push(p); return acc; }, {}),
-    [catalog],
-  );
-  const smartRolesReady = packModules.length > 0 || templates.length > 0;
   const selectedRole = useMemo(
     () => roles.find((r) => r.id === selectedRoleId) ?? roles[0] ?? null,
     [roles, selectedRoleId],
@@ -241,13 +240,18 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions }: 
           </div>
           <h1 className="mt-7 text-3xl font-extrabold leading-tight text-gray-900">สิทธิ์การใช้งาน</h1>
           <p className="mt-3 text-base font-medium text-gray-500">
-            กำหนดว่าแต่ละบทบาททำอะไรได้บ้าง — ดู/สร้าง/แก้ไข/ลบ/อนุมัติ
+            เลือกบทบาท แล้วกำหนดเมนูและงานที่คนในบทบาทนี้ทำได้
           </p>
         </div>
         <MangmeeBranchChip label={t('branch.scope.company_wide', locale)} />
       </div>
 
       {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
+      {canManageRoles && !roleOptionsAvailable && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          ยังโหลดตัวเลือกสำหรับกำหนดบทบาทไม่ได้ กรุณาลองใหม่อีกครั้ง
+        </div>
+      )}
 
       <div className="grid gap-5 xl:grid-cols-[300px_minmax(0,1fr)]">
         <MangmeeCard className="p-4">
@@ -256,6 +260,7 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions }: 
             {canManageRoles && <button
               type="button"
               className="inline-flex h-11 items-center gap-1 rounded-lg border border-gray-200 px-2 text-xs sm:h-8 font-bold text-gray-600 hover:border-brand-200 hover:bg-brand-25 disabled:opacity-50"
+              disabled={!roleOptionsAvailable}
               onClick={() => setMode(mode === 'create' ? 'view' : 'create')}
             >
               <PlusIcon className="h-3.5 w-3.5" />
@@ -279,9 +284,9 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions }: 
                 >
                   <PositionGlyph isSystem={role.isSystem} tone={role.isSystem ? 'brand' : 'slate'} />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-base font-extrabold text-gray-900">{role.name}</span>
+                    <span className="block truncate text-base font-extrabold text-gray-900">{roleDisplayName(role, locale)}</span>
                     <span className="mt-1 block text-sm font-medium text-gray-500">
-                      {staffCountsAvailable ? `${staffCounts[role.id] ?? 0} คน · ` : ''}{role.effectivePermissionCount ?? role.permissionKeys.length} สิทธิ์
+                      {staffCountsAvailable ? `${staffCounts[role.id] ?? 0} คน` : role.isSystem ? 'บทบาทมาตรฐาน' : 'บทบาทที่กำหนดเอง'}
                     </span>
                   </span>
                   {role.isSystem && <LockIcon className="h-4 w-4 shrink-0 text-amber-500" />}
@@ -293,7 +298,7 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions }: 
 
         {mode === 'create' ? (
           <RoleBuilder
-            companyId={companyId} grouped={grouped} packModules={packModules} allPacks={allPacks} templates={templates} smartRolesReady={smartRolesReady}
+            companyId={companyId} packModules={packModules} allPacks={allPacks} templates={templates} roleOptionsAvailable={roleOptionsAvailable}
             onCancel={() => setMode('view')}
             onSubmit={async (body) => {
               const created = await createRole(companyId, body);
@@ -311,7 +316,7 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions }: 
               </div>
             )}
             <RoleBuilder
-              companyId={companyId} grouped={grouped} packModules={packModules} allPacks={allPacks} templates={templates} smartRolesReady={smartRolesReady}
+              companyId={companyId} packModules={packModules} allPacks={allPacks} templates={templates} roleOptionsAvailable={roleOptionsAvailable}
               initial={selectedRole}
               onCancel={() => setMode('view')}
               onSubmit={async (body) => {
@@ -327,7 +332,7 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions }: 
           <MangmeeCard className="overflow-hidden p-0">
             <div className="flex flex-col gap-3 border-b border-gray-100 p-6 lg:flex-row lg:items-start lg:justify-between">
               <div className="min-w-0 lg:max-w-[620px]">
-                <h2 className="text-xl font-extrabold text-gray-900">สิทธิ์เข้าถึงเมนู — {selectedRole.name}</h2>
+                <h2 className="text-xl font-extrabold text-gray-900">สิทธิ์เข้าถึงเมนู — {roleDisplayName(selectedRole, locale)}</h2>
                 <p className="mt-2 text-sm font-medium text-gray-500">
                   {selectedRole.description || 'ดู / สร้าง / แก้ไข / ลบ / อนุมัติ ในแต่ละเมนู — ปิด “ดู” = ซ่อนเมนูทั้งหมด'}
                 </p>

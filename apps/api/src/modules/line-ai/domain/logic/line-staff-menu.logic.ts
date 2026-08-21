@@ -254,8 +254,7 @@ export function buildStaffQueryMenu(context: StaffMenuContext): LineReplyMessage
   };
 }
 
-export function buildReceiptCapturePrompt(context: StaffMenuContext): LineReplyMessage {
-  const base = context.webBaseUrl?.replace(/\/+$/, '');
+export function buildReceiptCapturePrompt(_context: StaffMenuContext): LineReplyMessage {
   return {
     type: 'flex',
     altText: 'แนบรูปใบเสร็จเข้าระบบ',
@@ -264,9 +263,7 @@ export function buildReceiptCapturePrompt(context: StaffMenuContext): LineReplyM
       size: 'kilo',
       body: { type: 'box', layout: 'vertical', spacing: 'sm', paddingAll: '14px', contents: [
         { type: 'text', text: 'แนบรูปใบเสร็จเข้าระบบ', weight: 'bold', size: 'md', color: '#101828' },
-        { type: 'text', text: 'แนบรูปใบเสร็จให้เห็นข้อมูลครบทั้งใบ ส่งมาในแชทนี้ได้เลยค่ะ 🖼\nระบบจะบันทึกเป็นรายการรอตรวจสอบ ไม่อนุมัติหรือชำระเงินอัตโนมัติ', wrap: true, size: 'sm', color: '#667085' },
-        ...(base ? [{ type: 'image', url: `${base}/assets/line/receipt-dropzone.png`, size: 'full', aspectRatio: '260:150', aspectMode: 'fit', margin: 'md' }] : []),
-        { type: 'text', text: 'แตะปุ่ม "แนบรูปใบเสร็จ" ด้านล่าง', align: 'center', size: 'xs', weight: 'bold', color: '#12B76A', margin: 'sm' },
+        { type: 'text', text: 'กด “แนบรูปใบเสร็จ” หรือ “เปิดกล้อง” ด้านล่าง แล้วส่งภาพให้เห็นข้อมูลครบทั้งใบค่ะ 🖼\nระบบจะบันทึกเป็นรายการรอตรวจสอบ ไม่อนุมัติหรือชำระเงินอัตโนมัติ', wrap: true, size: 'sm', color: '#667085' },
       ] },
       styles: { body: { backgroundColor: '#FFFFFF' } },
     },

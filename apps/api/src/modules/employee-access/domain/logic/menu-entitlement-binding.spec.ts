@@ -121,6 +121,27 @@ describe('MENU_ENTITLEMENT_BINDINGS', () => {
 });
 
 describe('FEATURE_PACKAGE_PRESETS menu parity', () => {
+  it('starter exposes exactly the seven menus in the approved baseline', async () => {
+    const presetKeys = new Set(FEATURE_PACKAGE_PRESETS.starter.featureKeys);
+    const rows = ALL_FEATURE_ENTITLEMENT_KEYS.map((featureKey) => ({
+      featureKey,
+      enabled: presetKeys.has(featureKey),
+    }));
+    const entitled = await loadEntitledFeatureKeys(prismaWithEntitlements(rows), 'company-1');
+
+    assert.ok(entitled);
+    assert.deepEqual(
+      MENU_ENTITLEMENT_BINDINGS
+        .filter((binding) => binding.entitlementKeys.length === 0 || (
+          binding.parentFeatureKey !== null
+          && entitled.has(binding.parentFeatureKey)
+          && binding.entitlementKeys.some((key) => entitled.has(key))
+        ))
+        .map((binding) => binding.navKey),
+      ['dashboard', 'ai-suggestions', 'expenses', 'reimbursements', 'roles', 'settings', 'notifications'],
+    );
+  });
+
   for (const [presetKey, preset] of Object.entries(FEATURE_PACKAGE_PRESETS)) {
     it(`${presetKey} keeps package cards aligned with permission-gated menus`, async () => {
       const presetKeys = new Set(preset.featureKeys);

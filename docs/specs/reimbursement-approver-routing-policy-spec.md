@@ -2,7 +2,7 @@
 
 ## 1. Status and Authority
 
-- Status: **Permission-composition amendment implemented; role-routing Release A/B remains implementation-ready after the data preflight in §14 passes**
+- Status: **Implemented and locally verified on the PR branch; UAT/Production release evidence is not claimed.**
 - Date: 2026-08-21
 - Latest owner decision: policy administrators choose one role, not a person or internal routing mode.
 - Parent: [[specs/reimbursement-approval-spec|Reimbursement and Approval Spec]] (item 14)
@@ -11,6 +11,8 @@
 - Memory: `docs/agent-memory/reimbursement-approver-routing-policy.md`
 
 This spec is the source of truth for the entire reimbursement-policy correction, not only the control shown on screen. It supersedes the free-text, person-only, and role-picker-only drafts. It includes role routing, threshold behavior, policy activation, prospective policy snapshots, concurrency, workflow delivery, legacy compatibility, and data-integrity controls.
+
+Implementation note (2026-08-22): the policy screen uses the manage-only role-options endpoint and never accepts a newly typed role key. The server revalidates explicit role edits, canonicalizes MANAGER/OWNER/custom mode, clears the named user, executes the threshold/ACTIVE state, stores the policy and assignee snapshots, applies CAS and database uniqueness, and routes notification/task/SLA from the frozen submission result. Role names are shown without holder counts because users interpreted the count as an approval quorum. The implementation and migration are verified locally; deployment remains governed by §14.
 
 ## 2. Product Outcome
 
@@ -56,7 +58,7 @@ For every submitted claim, the system must then produce one consistent answer ac
 | E10 | `findPolicy()` does not filter status and `effectivePolicy()` consumes any stored row. | repository `:211-215`; `reimbursement.constants.ts:38-52` | INACTIVE has no runtime effect. |
 | E11 | Submission snapshots role/user in the step, but the request has no policy snapshot JSON even though the parent spec drafted one. | `schema.prisma:5222-5286,5337-5361`; parent spec §11 | Later policy edits can affect self-approval, finance, duplicate/payment, and SLA behavior of pending claims. |
 | E12 | Role authorization already supports snapshotted role or OWNER. | `reimbursement.logic.ts:488-502` | Role-only routing fits the current authorization model. |
-| E13 | Queue and decisions also require current permission, branch scope, self-approval, state, hash, and transactional CAS. | approval use case/repository decision methods | Policy selection must never be treated as a permission grant. |
+| E13 | Queue and decisions require current permission, branch scope, self-approval, state, hash, and transactional CAS. | approval use case/repository decision methods | Without a step-scoped exception, removing/changing an assignee's role also removes the permission needed to finish work already assigned. |
 | E14 | Company-central records are visible to every branch scope; branch-scoped records require membership coverage. | `branch.logic.ts:42-60` | Coverage must distinguish active request branches from central requests. |
 | E15 | Role catalog already resolves company override over the same system key and entitlement-filters permission counts. | `list-roles.use-case.ts:20-49` | A purpose-built routing catalog can reuse proven logic. |
 | E16 | Generic role listing requires `access.role.read`, while policy management requires `reimbursement.policy.manage`. | role controller; policy controller | Reusing the generic endpoint would broaden/couple authority. |
@@ -65,7 +67,7 @@ For every submitted claim, the system must then produce one consistent answer ac
 | E19 | Existing runner/template resync preserves admin-owned edits. | workflow template use case and sync script | Default rules can change without overwriting customer customization. |
 | E20 | Current self-approval policy exempts OWNER/ADMIN/MANAGER even when the toggle is off. | `reimbursement.logic.ts:247-275` | Copy and request-specific recipient filtering must reflect the real rule. |
 | E21 | E2E spreads GET output into PUT and restores it the same way. | `e2e/reimbursements.spec.ts:43-50` | Strict DTOs and legacy preservation require writable-only fixtures. |
-| E22 | Existing columns already support role/mode/user and role snapshot. | `schema.prisma:5195-5220,5337-5361` | Routing itself needs no new role/step column. |
+| E22 | Existing columns support role/mode/user and one named approver, but not the set of people resolved from a role at submit. | `schema.prisma:5195-5220,5337-5361` | A nullable step assignment snapshot is required to distinguish new frozen assignments from legacy dynamic-role steps. |
 | E23 | Employee create/update contracts and API already accept `roleIds[]` and union effective permissions, but both active employee screens submitted only the first role. | employee-access contracts/use cases; active employee pages | Adding a role was not safely representable and saving could silently drop other assignments. |
 | E24 | Policy-tab visibility was additionally narrowed to the literal role names OWNER/ADMIN even though the API authorizes `reimbursement.policy.manage`. | reimbursement web logic; policy controller/use case | STAFF/custom roles granted the permission still could not use it. |
 | E25 | Approval and finance queues displayed reject, duplicate resolution, and payment actions without checking their distinct permissions. | reimbursement queue/drawer actions | Composed roles could see actions that deterministically returned 403. |
@@ -74,6 +76,11 @@ For every submitted claim, the system must then produce one consistent answer ac
 | E28 | The employee wizard route required employee read, while create/update/complete are separate permissions; its role/address/detail reads did not accept the action permissions, and completing an edited DRAFT requires create authority. | employee route/page; employee, role, and access-catalog controllers | A composed creator/editor could hold the mutation right but not finish the screen; DRAFT activation could also predictably return 403. |
 | E29 | The same action-without-supporting-read gap existed outside reimbursement: `expense.create` could save then fail opening its own draft, `expense.confirm` could see a substitute-receipt approval row but not load its detail/history/artifact, and expense capture/review packs omitted the attachment authority their visible upload controls invoke. | expense controller/use cases, substitute-receipt hub/wizard, capability packs | Custom STAFF/accounting/finance roles could enter the advertised flow and dead-end after a successful write or before approval. |
 | E30 | The registered reimbursement guide test still encoded an OWNER/ADMIN role-name restriction for policy even after the hub/API became permission-driven. | user-guide content contract test | Secondary navigation/help could contradict the executable permission model unless it reuses the same tab resolver. |
+| E31 | The role-picker validates readiness on policy save but submit copies the stored role into a step without revalidating current holder, permission, branch, or requester-specific self-approval facts. | `reimbursement-request.use-case.ts:344-417` | A later membership/permission change, or a sole non-exempt holder submitting their own claim, can create pending work with no actionable routine approver. |
+| E32 | The submit event publishes `approverRole`, but pending notification/task and SLA templates still use static MANAGER/OWNER routing. | request submit outbox + workflow template catalog | ADMIN, ACCOUNTANT, STAFF, or custom-role holders may see the authorization queue but miss the notification/task while unrelated managers receive it. |
+| E33 | New role-picker error codes are translated only inside the reimbursement feature map, while the registered launch error-coverage test audits the shared map. | `api-error-coverage.spec.ts` CI run 32501884949 | The PR fails CI and another surface using the shared translator can expose raw snake_case. |
+| E34 | The earlier UX contract required holder counts even though the owner removed them after users read them as quorum. | previous §5/§15 wording versus implemented picker | Documentation could reintroduce confusing copy during a later refactor unless the no-count decision is explicit. |
+| E35 | A role-routed step stores only the role key. Queue/API/UI all require the assignee's current role-derived permission. | approval step schema, controller decorators, queue/action predicates | Changing an already-assigned employee's role steals the existing task and can strand the claim. |
 
 ## 4. System Design Decisions
 
@@ -82,12 +89,11 @@ For every submitted claim, the system must then produce one consistent answer ac
 The policy screen exposes:
 
 ```text
-บทบาทผู้อนุมัติ
+ส่งใบเบิกให้ใครอนุมัติ?
 [ ผู้จัดการ                                      ▾ ]
-พร้อมอนุมัติ 3 คน · ครบทุกสาขา
 ```
 
-The client selects one logical role key. Mode and user are server-owned. A logical key may appear as secondary admin context only when duplicate display names need disambiguation.
+The client selects one logical role key. Mode and user are server-owned. The control shows role names only: no holder count, raw key, permission key, coverage enum, or quorum-like wording. A logical key may appear as secondary admin context only when duplicate display names need disambiguation.
 
 ### D2 — Canonical server mapping
 
@@ -124,17 +130,24 @@ The web never calculates permission, entitlement, holder, branch, or fallback re
 | Workflow | Delivering payload-derived notification/task/SLA | Approve/reject authorization |
 | Finance/payment | Consuming submitted snapshot plus current security | Reloading current policy for submitted claims |
 
-### D4 — Selection does not grant authority
+### D4 — Policy selection does not grant general authority; a submitted assignment grants only that step
 
 A route says who is responsible; it does not grant permission. Every action still requires:
 
 - active tenant membership and active user;
-- current endpoint permission;
+- current endpoint permission, or an active frozen assignment to this exact approval step;
 - request branch scope;
 - snapshotted responsibility role or OWNER;
 - snapshotted self-approval policy;
 - pending state and matching request/step hash;
 - transactional version/CAS.
+
+The HTTP routes for queue, detail, approve, and reject declare the universal authenticated-company
+session permission `account.session.read` so the global deny-by-default guard remains explicit. The
+use case then narrows access to the normal reimbursement read/decision permissions or the exact active
+frozen step assignment, and the mutation transaction repeats that assignment, branch, state, hash, and
+CAS check. Omitting route metadata is invalid because the global guard rejects it before the task
+capability can run.
 
 ### D5 — Policy behavior is prospective and snapshotted
 
@@ -147,7 +160,12 @@ Every new submission stores a server-generated versioned policy snapshot. Later 
 - receipt/duplicate policy facts;
 - SLA hours.
 
-Current user/member/permission/branch status remains dynamic for security. Responsibility is frozen; authority is revalidated.
+The submit transaction also stores the exact resolved user ids on the approval step. An active frozen
+assignee may finish that exact step after a later role/permission change; this does not grant access to
+other approvals or product functions. Active user/company membership and branch scope remain dynamic.
+When every frozen assignee is inactive, has left the company, or no longer covers the request branch,
+the recorded role/OWNER recovery path becomes authoritative. Null assignment snapshot means a legacy
+step and preserves current dynamic-role behavior.
 
 ### D6 — INACTIVE means “closed for new submission”
 
@@ -177,13 +195,16 @@ Current user/member/permission/branch status remains dynamic for security. Respo
 - Approval SLA breach escalates to eligible selected-role holders plus OWNER.
 - If OWNER is the selected role, OWNER is the routine route.
 
-### D9 — Existing work is immutable from policy edits
+### D9 — Existing work is immutable from policy and role edits
 
-Policy save never updates a pending request or approval step. A role/member change may alter who currently has authority, but not the stored responsibility key or policy snapshot.
+Policy save never updates a pending request or approval step. A role/permission change does not remove an
+active frozen assignee from work already assigned; it affects submissions created after the change. Disabling
+the user or company membership activates recorded role/OWNER recovery and does not rewrite the step.
 
 ### D10 — Shared queue semantics are explicit
 
-All eligible holders of the selected role can see the same claim. The first valid transactional decision wins. Task claiming, distribution, or round-robin remains backlog.
+All actionable holders resolved at submission are frozen onto the step and can see the same claim even if
+their role later changes. The first valid transactional decision wins. Task claiming, distribution, or round-robin remains backlog.
 
 ### D11 — Policy writes use optimistic concurrency and DB uniqueness
 
@@ -198,13 +219,21 @@ Named user, DIRECT_MANAGER, contradictory mode/role, unknown role, unavailable r
 
 ### D13 — Authorization is permission-driven and composable
 
-- Role keys describe responsibility/routing; effective permissions authorize product actions.
+- Role keys describe responsibility/routing; effective permissions authorize product actions, except for the exact approval step frozen onto an active assignee.
 - Every live web tab and action mirrors the exact permission enforced by its API and must not add a role-name allowlist.
+- The approval tab is visible when the session currently has approve/reject permission. If it does not,
+  the web probes the exact-assignment-filtered queue and adds the tab only when the server confirms a
+  frozen task for that user. The confirmation is company-bound and remains visible for the page session
+  after the last task is completed so a success result is not replaced by a misleading no-access screen.
+- The workspace permits `account.session.read` to reach only the reimbursement hub root so a task or
+  notification deep link can run that exact-assignment probe after all reimbursement permissions were
+  removed. This does not add the reimbursement module to navigation and does not open nested routes.
 - Sidebar, route guards, employee summaries, and user-guide shortcuts reuse the same effective-permission
   facts as their destination; help/navigation must not reintroduce a role-name restriction.
 - A member may hold multiple roles. Effective permissions are the union of those roles; removing one role removes only its contribution.
+- Employee list rows show every held role and match the selected employee detail; badges stay right-aligned without horizontal overflow at 390 px.
 - The same capability works whether granted through OWNER, ACCOUNTANT, STAFF, a forked system role, a custom role, or multiple roles.
-- Tenant, active membership, branch scope, selected approval route, self-approval, state, snapshot/hash, and CAS checks remain mandatory.
+- Tenant, active membership, branch scope, frozen assignment/selected approval recovery route, submitted self-approval decision, state, snapshot/hash, and CAS checks remain mandatory.
 - Sensitive capabilities stay separable: finance review does not imply payment record/void or duplicate resolution.
 
 ## 5. UX Contract
@@ -218,9 +247,8 @@ Named user, DIRECT_MANAGER, contradictory mode/role, unknown role, unavailable r
 [ 1.00 ]
 ยอดต่ำกว่านี้จะข้ามผู้อนุมัติ และไปขั้นตรวจการเงินตามนโยบาย
 
-บทบาทผู้อนุมัติ
-[ ผู้ดูแลระบบ                                  ▾ ]
-พร้อมอนุมัติ 2 คน · ครบทุกสาขา
+ส่งใบเบิกให้ใครอนุมัติ?
+[ แอดมิน                                       ▾ ]
 
 ตรวจการเงินก่อนจ่าย                                 [เปิด]
 
@@ -242,12 +270,14 @@ The summary must show behavior, not enums:
 
 If finance review is off, preview ends with “ระบบตรวจความพร้อม → พร้อมจ่าย”.
 
-### 5.3 Role coverage states
+### 5.3 Role readiness states
 
-- COMPLETE: green, selected-role holder covers every active branch.
-- PARTIAL: amber, names uncovered branches; selectable only if OWNER covers each one.
-- NONE: disabled, no eligible role holder.
-- OWNER_RECOVERY_NOT_READY: disabled, selected role is partial but an uncovered branch has no eligible OWNER.
+- The picker lists selectable role names only. It does not show holder counts or internal coverage states.
+- COMPLETE is selectable.
+- PARTIAL is selectable only if OWNER covers every uncovered branch; otherwise it is omitted.
+- NONE and OWNER_RECOVERY_NOT_READY are omitted.
+- A currently stored role that becomes unsafe remains visible as disabled with the human message “บทบาทที่ตั้งไว้ยังไม่มีคนพร้อมอนุมัติ กรุณาเลือกบทบาทใหม่”.
+- The API may retain COMPLETE/PARTIAL/NONE and counts as server-side readiness facts for validation, observability, and tests; the policy UI does not render them.
 
 Company-central requests are explained as “ส่วนกลาง” and follow existing all-scope visibility.
 
@@ -327,8 +357,10 @@ All receipt, evidence, duplicate, branch, policy-status, and snapshot validation
 
 - Snapshot exact role key; no named user for new writes.
 - Resolve current selected-role recipients for the request branch.
+- Freeze those recipient user ids on the approval step; a later role/permission edit has prospective effect only.
 - If none, snapshot/use OWNER only when eligible OWNER exists.
 - If neither can act, reject before submission mutation.
+- If all frozen assignees later become inactive/leave, use recorded role/OWNER recovery; never silently widen while any frozen assignee remains active.
 - Existing named-user legacy steps retain their historical fallback behavior.
 
 ### 7.3 Finance and payment
@@ -370,6 +402,7 @@ Rules:
 - Read by queue, mutation, finance/payment, SLA, workflow payload, and projection retry.
 - Missing snapshot marks a legacy request; it follows existing behavior without guessed backfill.
 - Snapshot stores logical keys and policy facts, not employee names, permission catalogs, or recipient ids.
+- Recipient ids are stored separately on the approval step as a nullable assignment snapshot. `null` is legacy; a non-null array is fail-closed and never shown on the policy UI.
 
 ## 9. API Contract
 
@@ -448,6 +481,7 @@ type ReimbursementApprovalRoutePayload = {
   policySnapshotVersion: 1;
   approverRole: string;
   approverRecipientUserIds: string[];
+  approverTaskUserId?: string;
   approverTaskRole: string;
   approverFallbackToOwner: boolean;
   requesterUserId?: string;
@@ -458,23 +492,35 @@ Recipient ids are computed by the routing service from current role, permission,
 
 ### 10.2 Default behavior
 
-- Pending approval: notify selected-role holders and assign a shared role task.
+- Pending approval: notify every frozen recipient and assign the workflow helper task to one exact
+  frozen recipient (`approverTaskUserId`). The reimbursement queue remains available to every frozen
+  recipient, including after their role changes. A new holder of the old role does not inherit an old
+  claim. The task is only a reminder because the workflow task schema has one assignee.
+- Recipient ids are sorted before snapshot/event creation so the one helper-task assignee is stable
+  across retries. Notification does not remove the requester again: self-approval eligibility was
+  already decided while resolving the frozen route at submission.
 - Branch fallback: notify/assign OWNER only.
-- SLA breach: selected role + OWNER.
+- SLA breach: notify the active frozen recipients plus OWNER; its helper task stays pinned to an exact
+  active recipient. Switch to the recorded role/OWNER recovery only when every frozen recipient is inactive.
 - Below threshold: no approval notification/task/SLA.
 - Finance required: emit/consume `reimbursement.finance_review_requested`.
 - Custom admin-owned workflows may differ in delivery but never authorization.
 
 ### 10.3 Runner compatibility
 
-The workflow runner must first support string-array recipient payloads and payload-derived task role. Static role config remains supported.
+The workflow runner supports string-array recipient payloads, payload-derived exact task user, and
+payload-derived task role. Exact user wins when present; static/payload role remains a backward-compatible
+fallback for legacy events that have no assignment snapshot.
 
 ## 11. Concurrency and Transaction Boundaries
 
 - Options reads never reserve readiness; save/submit revalidate.
+- Submit readiness is request-specific: it applies branch scope and the real self-approval predicate. A sole non-exempt holder submitting their own claim is not counted; OWNER recovery must be actionable for that request or submit fails before mutation.
 - Policy update uses `UPDATE ... WHERE id=? AND updatedAt=?`.
 - Company-default create is fenced by a partial unique index and conflict mapping.
 - Submit writes policy snapshot, status, optional step, document number, request version, and outbox facts atomically.
+- Every submission has its own durable event-key epoch. A correction/resubmit under the same unchanged
+  policy emits a new request/finance/projection event set instead of being suppressed as a retry.
 - Queue is advisory; approve/reject transaction repeats permission, role/OWNER, branch, self, state, hash, and CAS checks.
 - Two role holders may open the same claim; only one decision commits.
 - Projection failure leaves a durable retryable status and never marks a claim READY early.
@@ -496,6 +542,7 @@ Output is tenant-anonymized for aggregate reporting and contains explicit ids on
 ### 12.2 Schema/data migration
 
 - Add nullable `ReimbursementRequest.approvalPolicySnapshotJson Json?`.
+- Add nullable `ReimbursementApprovalStep.assignedApproverUserIdsJson Json?`; existing NULL rows remain legacy dynamic-role steps.
 - Add raw partial unique index on `ReimbursementPolicy(companyId) WHERE branchId IS NULL`.
 - Synchronize `approvalThresholdAmount = approvalRequiredFromAmount` for existing policy rows.
 - Keep the deprecated column for compatibility; remove it only in a separately approved migration.
@@ -516,7 +563,7 @@ Output is tenant-anonymized for aggregate reporting and contains explicit ids on
 - Manage-only options endpoint uses `reimbursement.policy.manage`; generic role-read permission is not added.
 - Tenant is derived from request context, never body.
 - Role selection never grants or expands permission.
-- Current permission/branch/membership remains mandatory despite snapshot.
+- Current branch and active membership remain mandatory. Current permission remains mandatory except for an active assignee finishing the exact frozen step.
 - LINE and AI remain read-only and call permission-checked reimbursement use cases.
 
 ### Audit
@@ -579,7 +626,7 @@ Record exact UAT, READY, and Production run ids.
 ### Policy UX/API
 
 - [ ] Exactly one constrained role picker; no mode, person picker, or free-text role.
-- [ ] Only eligible roles are selectable; COMPLETE/PARTIAL/NONE and holder count are visible.
+- [ ] Only eligible role names are selectable; no holder count, raw key, coverage enum, or quorum-like wording is visible.
 - [ ] Unsafe PARTIAL and NONE cannot be saved.
 - [ ] Server canonicalizes mode/role and clears user on explicit role edit.
 - [ ] Runtime DTO rejects mode/user/deprecated threshold/server fields.
@@ -596,8 +643,11 @@ Record exact UAT, READY, and Production run ids.
 - [ ] INACTIVE submit produces zero durable mutation.
 - [ ] New submit atomically writes snapshot and includes it in the hash.
 - [ ] Policy edits do not change new claims already submitted.
-- [ ] Current permission/branch/member changes remain authoritative.
+- [ ] Current branch and active membership remain authoritative; current permission is required unless the actor is an active frozen assignee of that exact step.
+- [ ] Changing an assigned employee's role/permissions does not remove their existing task and affects only later submissions.
+- [ ] While any frozen assignee is active, unrelated role/OWNER holders cannot take over; recovery opens only after every frozen assignee becomes inactive.
 - [ ] Role/OWNER queue and transaction produce the same result.
+- [ ] Submit revalidates role/member/permission/branch/self facts and a sole self-ineligible holder cannot create stranded pending work.
 - [ ] Existing pending steps and legacy requests remain executable.
 - [ ] Projection failure remains retryable and not payable.
 
@@ -614,6 +664,7 @@ Record exact UAT, READY, and Production run ids.
 
 - [ ] Real-Postgres test proves partial unique index, create race, role override, entitlement, holders, and branch coverage.
 - [ ] E2E proves role save/reload → submit → correct queue/notification/task → approve/reject.
+- [ ] E2E proves ADMIN, ACCOUNTANT, STAFF/custom, multi-role, OWNER fallback, and sole-holder self-approval routing.
 - [ ] E2E proves all threshold/finance/status paths.
 - [ ] E2E proves non-routing legacy save and pending-step immutability.
 - [ ] Full registered contracts/API/web suites, typechecks, workflow tests, browser checks, and UAT pass.

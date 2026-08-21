@@ -9,12 +9,31 @@ import {
   reimbursementPeriodKey,
 } from './reimbursement-request.use-case';
 import { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
+import {
+  approverModeForRole,
+  buildReimbursementApproverRoleOptions,
+  GetReimbursementPolicyUseCase,
+  UpdateReimbursementPolicyUseCase,
+  type ApproverRoleCandidate,
+} from './reimbursement-policy.use-case';
 
 // Lane C: one claim, many lines. The header total, category and date are a
 // server-side rollup of the lines — a client never sends them.
 
 const noopAudit = { log: async () => undefined } as any;
 const noopOutbox = { append: async () => undefined } as any;
+const readyApproverRoutes = {
+  resolveNamedSubmissionRoute: async () => null,
+  resolveSubmissionRoute: async ({ roleKey }: any) => ({
+    responsibilityRole: roleKey, effectiveTaskRole: roleKey,
+    recipientUserIds: ['approver-1'], ownerRecipientUserIds: ['owner-1'], ownerFallbackUsed: false,
+  }),
+} as any;
+const noopProjections = { execute: async () => undefined } as any;
+
+function submitUseCase(repo: any, audit: any, outbox: any, evidence: any) {
+  return new SubmitReimbursementUseCase(repo, audit, outbox, evidence, readyApproverRoutes, noopProjections);
+}
 
 describe('reimbursementPeriodKey', () => {
   it('rolls the month at Bangkok midnight rather than UTC midnight', () => {
@@ -71,7 +90,10 @@ function fakeTx(rows: any[]) {
 function fakeRepo(options: RepoOptions = {}) {
   let request: any = null;
   const projections = (options.claimProjections ?? []).map((projection) => ({ status: 'CONFIRMED', ...projection }));
-  const calls = { claimQueries: [] as any[], duplicates: [] as any[], audits: [] as any[], outbox: [] as any[], voided: [] as string[] };
+  const calls = {
+    claimQueries: [] as any[], duplicates: [] as any[], audits: [] as any[], outbox: [] as any[],
+    approvalSteps: [] as any[], voided: [] as string[], projections: [] as any[],
+  };
   const repo = {
     findPolicy: async () => options.policy ?? null,
     getUserDisplayName: async () => 'Somchai',
@@ -155,16 +177,25 @@ function fakeRepo(options: RepoOptions = {}) {
     findDuplicateCandidates: async () => options.duplicateCandidates ?? [],
     createDuplicateCandidate: async (data: any) => { calls.duplicates.push(data); },
     createApprovalStep: async () => ({ id: 'step-1' }),
-    submitDraftAtomic: async ({ expectedUpdatedAt, request: data, duplicateCandidates }: any) => {
+    submitDraftAtomic: async ({ expectedUpdatedAt, request: data, duplicateCandidates, approvalStep, onSubmittedPersisted }: any) => {
       if (options.submitError) throw options.submitError;
       assert.equal(expectedUpdatedAt, request.updatedAt);
-      const step = { id: 'step-1' };
+      const step = approvalStep ? {
+        id: 'step-1', ...approvalStep,
+        assignedApproverUserIds: approvalStep.assignedApproverUserIdsJson,
+      } : undefined;
+      if (step) calls.approvalSteps.push(step);
       calls.duplicates.push(...duplicateCandidates);
       const documentNumber = { id: 'num-1', documentNumber: 'RB-202601-000001' };
       Object.assign(request, data, {
         requestNo: documentNumber.documentNumber,
-        currentApprovalStepId: step.id,
+        currentApprovalStepId: step?.id ?? null,
         updatedAt: new Date(request.updatedAt.getTime() + 1),
+      });
+      await onSubmittedPersisted(fakeTx(calls.outbox), {
+        step, documentNumber, documentNumberReused: options.documentNumberReused ?? false,
+        supersededDuplicateCandidateCount: options.supersededDuplicateCandidateCount ?? 0,
+        supersededApprovalStepCount: options.supersededApprovalStepCount ?? 0,
       });
       return {
         step,
@@ -173,6 +204,14 @@ function fakeRepo(options: RepoOptions = {}) {
         supersededDuplicateCandidateCount: options.supersededDuplicateCandidateCount ?? 0,
         supersededApprovalStepCount: options.supersededApprovalStepCount ?? 0,
       };
+    },
+    completePolicyProjectionAtomic: async (data: any) => {
+      Object.assign(request, {
+        status: 'READY_FOR_PAYMENT', financeReviewStatus: 'NOT_REQUIRED', paymentStatus: 'UNPAID',
+        postingStatus: 'pending', currentApprovalStepId: null, currentApproverUserId: null,
+      });
+      await data.onReadyPersisted(fakeTx(calls.outbox));
+      return request;
     },
   } as any;
   // Voiding a projection is what makes it safe to close the claim, so the fake really flips it.
@@ -194,7 +233,10 @@ function useCases(state: { repo: any; calls?: { audits: any[] } }) {
   return {
     create: new CreateReimbursementDraftUseCase(state.repo, audit, evidence),
     update: new UpdateReimbursementDraftUseCase(state.repo, audit, evidence),
-    submit: new SubmitReimbursementUseCase(state.repo, audit, noopOutbox, evidence),
+    submit: new SubmitReimbursementUseCase(
+      state.repo, audit, noopOutbox, evidence, readyApproverRoutes,
+      { execute: async (...args: any[]) => { (state.calls as any)?.projections?.push(args); } } as any,
+    ),
   };
 }
 
@@ -387,7 +429,12 @@ describe('ReopenRejectedReimbursementUseCase', () => {
 
 describe('SubmitReimbursementUseCase (multi-line)', () => {
   // Policy rows always carry these columns; the fakes mirror that.
-  const basePolicy = { currency: 'THB', approvalRequiredFromAmount: '1.00', approverMode: 'MANAGER_ROLE', defaultApproverRole: 'MANAGER', duplicatePolicy: 'WARN', financeReviewRequired: true };
+  const basePolicy = {
+    id: 'policy-1', updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    currency: 'THB', approvalRequiredFromAmount: '1.00', approverMode: 'MANAGER_ROLE',
+    defaultApproverRole: 'MANAGER', allowSelfApproval: false, duplicatePolicy: 'WARN',
+    financeReviewRequired: true, status: 'ACTIVE',
+  };
   const requireReceipt = { ...basePolicy, requireReceipt: true, allowMissingReceiptWithReason: true } as any;
   const noReceiptNeeded = { ...basePolicy, requireReceipt: false, allowMissingReceiptWithReason: false } as any;
   // Receipt-less rows may be submitted only with the claim-level reason: the expense projection
@@ -397,6 +444,50 @@ describe('SubmitReimbursementUseCase (multi-line)', () => {
   async function draftWith(state: any, lines: any[], extra: Record<string, unknown> = {}) {
     await useCases(state).create.execute(ctx(), { reason: 'r', lines, ...extra } as any);
   }
+
+  it('freezes exact approver recipients on a human approval step', async () => {
+    const state = fakeRepo({ policy: noReceiptNeeded });
+    await draftWith(state, [inputLine({ amount: '1.00' })], withReason);
+    await useCases(state).submit.execute(ctx(), 'rb-1');
+
+    assert.equal(state.request.status, 'PENDING_APPROVAL');
+    assert.deepEqual(state.calls.approvalSteps[0]?.assignedApproverUserIdsJson, ['approver-1']);
+  });
+
+  it('skips human approval below threshold and enters finance review when configured', async () => {
+    const state = fakeRepo({ policy: { ...noReceiptNeeded, approvalRequiredFromAmount: '100.00' } });
+    await draftWith(state, [inputLine({ amount: '99.99' })], withReason);
+    await useCases(state).submit.execute(ctx(), 'rb-1');
+
+    assert.equal(state.request.status, 'FINANCE_REVIEW');
+    assert.equal(state.request.financeReviewStatus, 'PENDING');
+    assert.equal(state.calls.approvalSteps.length, 0);
+    assert.ok(state.calls.outbox.some((event: any) => event.eventType === 'reimbursement.approval_not_required'));
+    assert.ok(state.calls.outbox.some((event: any) => event.eventType === 'reimbursement.finance_review_requested'));
+  });
+
+  it('reaches ready-for-payment through POLICY projection below threshold when finance is off', async () => {
+    const state = fakeRepo({ policy: {
+      ...noReceiptNeeded, approvalRequiredFromAmount: '100.00', financeReviewRequired: false,
+    } });
+    await draftWith(state, [inputLine({ amount: '99.99' })], withReason);
+    await useCases(state).submit.execute(ctx(), 'rb-1');
+
+    assert.equal(state.request.status, 'READY_FOR_PAYMENT');
+    assert.equal(state.calls.approvalSteps.length, 0);
+    assert.equal(state.calls.projections[0]?.[2]?.kind, 'POLICY');
+    assert.ok(state.calls.outbox.some((event: any) => event.eventType === 'reimbursement.ready_for_payment'));
+  });
+
+  it('blocks INACTIVE policy before submit mutation', async () => {
+    const state = fakeRepo({ policy: { ...noReceiptNeeded, status: 'INACTIVE' } });
+    await draftWith(state, [inputLine()], withReason);
+
+    await assert.rejects(() => useCases(state).submit.execute(ctx(), 'rb-1'), /reimbursement_policy_inactive/);
+    assert.equal(state.request.status, 'DRAFT');
+    assert.equal(state.calls.approvalSteps.length, 0);
+    assert.equal(state.calls.outbox.length, 0);
+  });
 
   it('freezes the outstanding amount to the line rollup', async () => {
     const state = fakeRepo({ policy: noReceiptNeeded });
@@ -554,5 +645,145 @@ describe('SubmitReimbursementUseCase (multi-line)', () => {
     assert.equal(state.calls.duplicates[0].candidateType, 'ATTACHMENT_CHECKSUM');
     assert.equal(state.calls.duplicates[0].candidateAttachmentId, 'att-1');
     assert.match(state.calls.duplicates[0].reason, /line 2/);
+  });
+});
+
+const approverPermissions = ['reimbursement.read', 'reimbursement.approve', 'reimbursement.reject'];
+const approverBranches = [{ id: 'b1', name: 'สำนักงานใหญ่' }, { id: 'b2', name: 'สาขาสอง' }];
+const approverHolder = (branchIds: string[]): ApproverRoleCandidate['holders'][number] => ({
+  branchScopeMode: 'SELECTED_BRANCHES', defaultBranchId: null, branchIds,
+});
+const approverRole = (
+  overrides: Partial<ApproverRoleCandidate> & Pick<ApproverRoleCandidate, 'key' | 'name'>,
+): ApproverRoleCandidate => ({
+  status: 'ACTIVE', permissionKeys: approverPermissions, holders: [], ...overrides,
+});
+
+describe('reimbursement approver role options', () => {
+  it('returns only executable routes as selectable and uses OWNER for safe branch recovery', () => {
+    const options = buildReimbursementApproverRoleOptions([
+      approverRole({ key: 'OWNER', name: 'Owner', holders: [approverHolder(['b1', 'b2'])] }),
+      approverRole({ key: 'MANAGER', name: 'Manager', holders: [approverHolder(['b1', 'b2'])] }),
+      approverRole({ key: 'ACCOUNTANT', name: 'Accountant', holders: [approverHolder(['b1'])] }),
+      approverRole({ key: 'FINANCE', name: 'Finance', holders: [] }),
+      approverRole({ key: 'STAFF', name: 'Staff', permissionKeys: ['reimbursement.read'], holders: [approverHolder(['b1', 'b2'])] }),
+      approverRole({ key: 'SYSTEM_ADMIN', name: 'System Admin', holders: [approverHolder(['b1', 'b2'])] }),
+    ], approverBranches);
+
+    assert.equal(options.find((item) => item.key === 'MANAGER')?.coverage, 'COMPLETE');
+    assert.equal(options.find((item) => item.key === 'MANAGER')?.selectable, true);
+    assert.deepEqual(options.find((item) => item.key === 'ACCOUNTANT')?.uncoveredBranchNames, ['สาขาสอง']);
+    assert.equal(options.find((item) => item.key === 'ACCOUNTANT')?.coverage, 'PARTIAL');
+    assert.equal(options.find((item) => item.key === 'ACCOUNTANT')?.selectable, true);
+    assert.equal(options.find((item) => item.key === 'FINANCE')?.unavailableReason, 'NO_ACTIVE_HOLDERS');
+    assert.equal(options.find((item) => item.key === 'STAFF')?.unavailableReason, 'MISSING_CAPABILITY');
+    assert.equal(options.some((item) => item.key === 'SYSTEM_ADMIN'), false);
+  });
+
+  it('blocks partial coverage when OWNER cannot recover the uncovered branch', () => {
+    const options = buildReimbursementApproverRoleOptions([
+      approverRole({ key: 'OWNER', name: 'Owner', holders: [approverHolder(['b1'])] }),
+      approverRole({ key: 'MANAGER', name: 'Manager', holders: [approverHolder(['b1'])] }),
+    ], approverBranches);
+    assert.equal(options.find((item) => item.key === 'MANAGER')?.selectable, false);
+    assert.equal(options.find((item) => item.key === 'MANAGER')?.unavailableReason, 'OWNER_RECOVERY_NOT_READY');
+  });
+
+  it('does not use OWNER as recovery when the role lacks approval capability', () => {
+    const options = buildReimbursementApproverRoleOptions([
+      approverRole({ key: 'OWNER', name: 'Owner', permissionKeys: ['reimbursement.read'], holders: [approverHolder(['b1', 'b2'])] }),
+      approverRole({ key: 'MANAGER', name: 'Manager', holders: [approverHolder(['b1'])] }),
+    ], approverBranches);
+    assert.equal(options.find((item) => item.key === 'MANAGER')?.selectable, false);
+    assert.equal(options.find((item) => item.key === 'MANAGER')?.unavailableReason, 'OWNER_RECOVERY_NOT_READY');
+  });
+
+  it('maps the selected role to the server-owned routing mode', () => {
+    assert.equal(approverModeForRole('MANAGER'), 'MANAGER_ROLE');
+    assert.equal(approverModeForRole('OWNER'), 'OWNER_ROLE');
+    assert.equal(approverModeForRole('ACCOUNTANT'), 'CUSTOM_ROLE');
+  });
+});
+
+describe('reimbursement policy role save', () => {
+  const policyCtx = {
+    companyId: 'co-1', userId: 'user-1', requestId: 'req-1',
+    permissions: ['reimbursement.policy.manage'],
+  } as any;
+  const option = {
+    key: 'ACCOUNTANT', name: 'Accountant', optionLabel: 'Accountant',
+    eligibleApproverCount: 1, coverage: 'COMPLETE' as const, uncoveredBranchNames: [], selectable: true,
+  };
+  const policy = (data: Record<string, unknown>) => ({
+    id: 'policy-1', companyId: 'co-1', currency: 'THB', approvalThresholdAmount: '1.00',
+    approvalRequiredFromAmount: '1.00', approverMode: 'CUSTOM_ROLE', defaultApproverRole: 'ACCOUNTANT',
+    allowSelfApproval: false, requireReceipt: true, allowMissingReceiptWithReason: false,
+    duplicatePolicy: 'WARN', financeReviewRequired: true, status: 'ACTIVE', createdByUserId: 'user-1',
+    createdAt: new Date('2026-08-21T00:00:00.000Z'), updatedAt: new Date('2026-08-21T00:00:00.000Z'),
+    ...data,
+  });
+
+  it('lets policy managers read the form they are allowed to save', async () => {
+    const useCase = new GetReimbursementPolicyUseCase({ findPolicy: async () => policy({}) } as any);
+    const result = await useCase.execute(policyCtx);
+    assert.equal(result.id, 'policy-1');
+  });
+
+  it('revalidates and canonicalizes an explicit role edit before writing', async () => {
+    let written: Record<string, unknown> | undefined;
+    const repo = {
+      findPolicy: async () => null,
+      upsertPolicy: async (_companyId: string, _branchId: null, data: Record<string, unknown>) => {
+        written = data;
+        return policy(data);
+      },
+    };
+    const useCase = new UpdateReimbursementPolicyUseCase(
+      repo as any, { log: async () => undefined } as any,
+      { load: async () => [option] } as any,
+    );
+
+    await useCase.execute(policyCtx, { defaultApproverRole: ' ACCOUNTANT ' });
+    assert.deepEqual(written, {
+      defaultApproverRole: 'ACCOUNTANT', approverMode: 'CUSTOM_ROLE', defaultApproverUserId: null,
+    });
+  });
+
+  it('rejects a stale or ineligible role without writing the policy', async () => {
+    let wrote = false;
+    const useCase = new UpdateReimbursementPolicyUseCase(
+      { findPolicy: async () => null, upsertPolicy: async () => { wrote = true; return policy({}); } } as any,
+      { log: async () => undefined } as any,
+      { load: async () => [{ ...option, selectable: false }] } as any,
+    );
+
+    await assert.rejects(useCase.execute(policyCtx, { defaultApproverRole: 'ACCOUNTANT' }), /approver_role_not_eligible/);
+    assert.equal(wrote, false);
+  });
+
+  it('persists audit and policy-updated outbox facts in the policy transaction', async () => {
+    const outboxRows: any[] = [];
+    const audits: any[] = [];
+    const saved = policy({});
+    const repo = {
+      findPolicy: async () => null,
+      upsertPolicy: async (
+        _companyId: string, _branchId: null, _data: Record<string, unknown>, _userId: string,
+        _expectedUpdatedAt: Date | undefined, onPersisted: (tx: any, before: null, after: any) => Promise<void>,
+      ) => {
+        await onPersisted({ outboxEvent: { createMany: async ({ data }: any) => { outboxRows.push(...data); } } }, null, saved);
+        return saved;
+      },
+    };
+    const useCase = new UpdateReimbursementPolicyUseCase(
+      repo as any,
+      { log: async (entry: any, tx: any) => { assert.ok(tx); audits.push(entry); } } as any,
+      { load: async () => [option] } as any,
+    );
+
+    await useCase.execute(policyCtx, { defaultApproverRole: 'ACCOUNTANT' });
+    assert.equal(audits[0]?.action, 'reimbursement.policy.update');
+    assert.equal(outboxRows[0]?.eventType, 'reimbursement.policy_updated');
+    assert.equal(outboxRows[0]?.aggregateId, 'policy-1');
   });
 });

@@ -100,17 +100,19 @@ const ROLE_COLOR_BY_KEY: Record<string, string> = {
   AUDITOR_READONLY: '#06AED4',
 };
 const FALLBACK_ROLE_COLORS = ['#7A5AF8', '#0BA5EC', '#F79009', '#12B76A', '#DD2590', '#667085'];
-function colorForRole(role: RoleSummary): string {
+type DisplayRole = Pick<RoleSummary, 'id' | 'key' | 'name'>;
+
+function colorForRole(role: DisplayRole): string {
   if (ROLE_COLOR_BY_KEY[role.key]) return ROLE_COLOR_BY_KEY[role.key]!;
   let hash = 0;
   for (const ch of role.key) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
   return FALLBACK_ROLE_COLORS[hash % FALLBACK_ROLE_COLORS.length]!;
 }
 
-function RoleBadge({ role, withCaret = false, className }: { role: RoleSummary; withCaret?: boolean; className?: string }) {
+function RoleBadge({ role, withCaret = false, className }: { role: DisplayRole; withCaret?: boolean; className?: string }) {
   const color = colorForRole(role);
   return (
-    <span className={cx('inline-flex h-7 items-center gap-1.5 rounded-full px-2.5 text-xs font-extrabold', className)} style={{ color, backgroundColor: `${color}1F` }}>
+    <span title={role.name} className={cx('inline-flex h-7 items-center gap-1.5 rounded-full px-2.5 text-xs font-extrabold', className)} style={{ color, backgroundColor: `${color}1F` }}>
       {role.name}
       {withCaret && <ChevronDownIcon className="h-3.5 w-3.5" />}
     </span>
@@ -152,8 +154,9 @@ function EmployeeAvatar({ employee, color, active, className }: { employee: Empl
   );
 }
 
-function EmployeeRow({ employee, role, selected, onSelect }: { employee: EmployeeSummary; role: RoleSummary | undefined; selected: boolean; onSelect: () => void }) {
+function EmployeeRow({ employee, roles, selected, onSelect }: { employee: EmployeeSummary; roles: DisplayRole[]; selected: boolean; onSelect: () => void }) {
   const active = employee.status === 'ACTIVE';
+  const primaryRole = roles[0];
   return (
     <button
       type="button" onClick={onSelect}
@@ -162,7 +165,7 @@ function EmployeeRow({ employee, role, selected, onSelect }: { employee: Employe
         selected ? 'border-brand-300 bg-brand-25 shadow-[inset_3px_0_0_var(--color-brand-500)]' : 'border-gray-200 bg-white hover:border-brand-100 hover:bg-gray-50',
       )}
     >
-      <EmployeeAvatar employee={employee} color={role ? colorForRole(role) : '#667085'} active={active} />
+      <EmployeeAvatar employee={employee} color={primaryRole ? colorForRole(primaryRole) : '#667085'} active={active} />
       <span className="min-w-0 flex-1">
         <span className="flex min-w-0 items-center gap-2">
           <span className="truncate text-[14px] font-extrabold text-gray-900">{employeeShortName(employee)}</span>
@@ -173,7 +176,11 @@ function EmployeeRow({ employee, role, selected, onSelect }: { employee: Employe
           {employee.branchScopeMode === 'ALL_BRANCHES' ? 'ทุกสาขา' : `${employee.branchScopeBranchIds.length} สาขา`}
         </span>
       </span>
-      {role && <RoleBadge role={role} className="max-w-28 shrink-0 truncate" />}
+      {roles.length > 0 && (
+        <span className="flex max-w-32 shrink-0 flex-col items-end gap-1">
+          {roles.map((role) => <RoleBadge key={role.id} role={role} className="max-w-full truncate" />)}
+        </span>
+      )}
     </button>
   );
 }
@@ -523,7 +530,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
             <div className="mt-5 grid max-h-[min(60vh,640px)] gap-2 overflow-y-auto pr-1 xl:max-h-[calc(100dvh-320px)]">
               {filteredEmployees.map((employee) => (
                 <EmployeeRow
-                  key={employee.id} employee={employee} role={roleById.get(employee.roles[0]?.id ?? '')}
+                  key={employee.id} employee={employee} roles={employee.roles}
                   selected={employee.id === activeUserId} onSelect={() => selectEmployee(employee.id)}
                 />
               ))}

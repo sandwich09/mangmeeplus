@@ -17,9 +17,9 @@ operator allowlist). The producer CODE and PROMPT are implemented (the intake pr
 bounded prepared-plan schema + omission gates, prompt-contract tested). Still evidence-gated, not code:
 configured-provider QUALITY (does a live model emit correct, gate-respecting plans), Phase 5 family
 ENABLEMENT (mandatory blind pairwise eval), and Phase 6 live wiring (measured latency/cost). Every flag defaults off; the running code still defaults
-`LINE_AI_BUFFER_DEBOUNCE_MS` to 2,500 ms and keeps the processing-start loading path when off. The user
+`LINE_AI_BUFFER_DEBOUNCE_MS` to 2,000 ms and keeps the processing-start loading path when off. The user
 selected 1,000 ms as the primary experiment candidate; the experiment collects concurrent 1,000/1,500/
-2,500 ms cohorts, evaluates 1,000 ms first, and uses 1,500 ms only as the predeclared conservative
+2,000 ms cohorts, evaluates 1,000 ms first, and uses 1,500 ms only as the predeclared conservative
 fallback when it independently passes every gate.
 
 ## 2. Goal
@@ -32,12 +32,12 @@ read-only/final-mutation boundary.
 The user initially proposed **1,500 ms**, then selected **1,000 ms as the primary experiment candidate**
 after design review found 1,500 ms conservative for a one-bubble message. The evaluation method is an
 A/B comparison: 1,000 ms primary candidate, 1,500 ms
-conservative candidate, and the current 2,500 ms control. The buffer still joins multi-bubble
+conservative candidate, and the current 2,000 ms control. The buffer still joins multi-bubble
 utterances and serializes replies; this is a latency adjustment, not removal of buffering.
 
 ## 3. Current Evidence
 
-- `packages/config/src/index.ts` defaults `LINE_AI_BUFFER_DEBOUNCE_MS` to 2,500 ms.
+- `packages/config/src/index.ts` defaults `LINE_AI_BUFFER_DEBOUNCE_MS` to 2,000 ms.
 - Loading starts only when a buffered batch begins processing, so the user sees no loading feedback
   during the debounce wait.
 - A normal business read first calls `line-intake-route`, then `line-turn`; the orchestrator routes the
@@ -231,7 +231,7 @@ specialized when combining them would enlarge or weaken the common text path.
 ## 10. Buffering and Waiting Feedback
 
 - `LINE_AI_BUFFER_DEBOUNCE_MS` cohorts: **1,000 ms primary**, **1,500 ms conservative**, and the
-  implemented **2,500 ms control**. An optional 750 ms fixture explores the lower boundary but is not
+  implemented **2,000 ms control**. An optional 750 ms fixture explores the lower boundary but is not
   a rollout candidate until 1,000 ms is safe.
 - `0` continues to mean serialize-only.
 - Max wait stays 8,000 ms and remains anchored to the first bubble.
@@ -241,10 +241,13 @@ specialized when combining them would enlarge or weaken the common text path.
 - Idle commands remain immediate and do not request LINE loading.
 - Loading starts best-effort after signature/legal/durable acceptance and before debounce for 1:1
   chats. It must be coalesced per chat and ordered so it can never appear after the final reply.
-- The long-wait status timer is anchored to durable acceptance, not processing start. Its delivery must
+- The long-wait status is due 5,000 ms after the last user bubble's durable acceptance, not 5,000 ms
+  after processing start. Its delivery must
   be atomically cancelled if it has not started. An already-started status delivery is ordered before
   final delivery but may not hold a ready answer indefinitely; use a bounded attempt, then proceed.
-  Because a pushed status clears LINE loading, restart loading after a successful status when useful.
+  Because a pushed status clears LINE loading, restart loading 300 ms after a successful status when
+  the final answer is not ready, then send one best-effort keepalive at 1,300 ms to cover slow device
+  delivery. Both loading calls must remain cancellable before the final answer.
 - Group chats have no loading indicator and retain a separate measurement cohort.
 - Freeze `LINE_AI_LOADING_ON_ACCEPT_ENABLED` and every flag that can affect buffering, routing, model
   calls, provider reuse, or session affinity for the full 14-day debounce experiment. A flag/config
@@ -260,12 +263,12 @@ final latency, and cost per completed intent. A candidate fails when split-turn 
 rate worsens by more than 0.5 percentage point versus control, even if its median latency is faster.
 
 Assignment is stable per `(company, chat)` using an experiment-secret HMAC; raw identifiers and the
-HMAC input/output are not logged. Collect 1,000/1,500/2,500 ms cohorts concurrently across matched
+HMAC input/output are not logged. Collect 1,000/1,500/2,000 ms cohorts concurrently across matched
 journeys for at least 14 full days and 10,000 accepted intents per cohort, or a larger
 baseline-derived, design-effect-adjusted sample needed for 80% power. Analyze at the assignment-cluster
 level with a cluster bootstrap or cluster-robust interval. Predeclare the hierarchy: evaluate 1,000 ms
 first; select it only if every absolute and non-inferiority gate passes. Otherwise consider 1,500 ms
-only if its concurrently collected, multiplicity-adjusted comparison against 2,500 ms independently
+only if its concurrently collected, multiplicity-adjusted comparison against 2,000 ms independently
 passes every gate. Use Holm-adjusted one-sided 95% bounds across the two candidate/control comparisons
 for each declared primary metric; the upper bound must stay inside its regression margin. `completed intent`
 means one durable accepted request window with one delivered final/refusal/unavailable terminal result;
@@ -331,7 +334,7 @@ It covers:
 - mutation refusal and unsupported requests;
 - capture/document route requirements bound to controlled external attachments by scenario id,
   required SHA-256, MIME allowlist, and human review;
-- 750/1,000/1,500/2,500 ms inside/equal/outside boundaries, max-wait, command, and media-caption timing;
+- 750/1,000/1,500/2,000 ms inside/equal/outside boundaries, max-wait, command, and media-caption timing;
 - caption-before-photo, multiple-media caption, photo plus business-read question, and company-command
   segmentation.
 
@@ -407,7 +410,7 @@ identifier leakage, forged prepared-plan execution, or feedback before durable a
 
 1. Baseline traces and freeze eval evidence.
 2. Loading-on-accept canary.
-3. Collect concurrent 1,000/1,500/2,500 ms cohorts; apply the predeclared 1,000-first selection gate.
+3. Collect concurrent 1,000/1,500/2,000 ms cohorts; apply the predeclared 1,000-first selection gate.
 4. Fused planner shadow; compare plans without adding user latency.
 5. Prepared simple lane 5% -> 25% -> 50% -> 100%, with full-path fallback.
 6. Deterministic response families one at a time.
@@ -418,7 +421,7 @@ Proposed independently default-off flags and rollback owners:
 
 - `LINE_AI_LOADING_ON_ACCEPT_ENABLED`: tenant canary; off restores loading at processing start.
 - `LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED`: global experiment, stable chat cohort; off restores configured
-  2,500 ms behavior.
+  2,000 ms behavior.
 - `LINE_AI_FUSED_PLAN_SHADOW_ENABLED`: tenant shadow; off stops forwarding/comparing prepared plans.
 - `LINE_AI_PREPARED_SIMPLE_READ_ENABLED`: tenant + formatter-family cohort; off restores full agentic
   execution.

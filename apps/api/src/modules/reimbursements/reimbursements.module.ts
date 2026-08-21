@@ -7,7 +7,7 @@ import { ReimbursementEvidenceService } from './application/services/reimburseme
 import { MaterializeClaimExpensesService } from './application/services/materialize-claim-expenses.service';
 import { ReimbursementProjectionOrchestratorService } from './application/services/reimbursement-projection-orchestrator.service';
 import { ReimbursementProjectionReconcilerService } from './application/services/reimbursement-projection-reconciler.service';
-import { GetReimbursementPolicyUseCase, UpdateReimbursementPolicyUseCase } from './application/use-cases/reimbursement-policy.use-case';
+import { GetReimbursementPolicyUseCase, ListReimbursementApproverOptionsUseCase, UpdateReimbursementPolicyUseCase } from './application/use-cases/reimbursement-policy.use-case';
 import {
   CreateReimbursementDraftUseCase,
   UpdateReimbursementDraftUseCase,
@@ -49,6 +49,7 @@ import { ReimbursementWriteQuiesceGuard } from './presentation/http/reimbursemen
     ReimbursementProjectionReconcilerService,
     ReimbursementWriteQuiesceGuard,
     GetReimbursementPolicyUseCase,
+    ListReimbursementApproverOptionsUseCase,
     UpdateReimbursementPolicyUseCase,
     CreateReimbursementDraftUseCase,
     UpdateReimbursementDraftUseCase,
@@ -73,6 +74,6 @@ import { ReimbursementWriteQuiesceGuard } from './presentation/http/reimbursemen
     SignClaimFormUseCase,
     LinkSignedClaimFormCopyUseCase,
   ],
-  exports: [PrismaReimbursementRepository, ReimbursementProjectionReconcilerService, GetReimbursementAiSummaryUseCase, GetReimbursementDetailUseCase, ListApprovalQueueUseCase],
+  exports: [PrismaReimbursementRepository, ReimbursementProjectionReconcilerService, ListReimbursementApproverOptionsUseCase, GetReimbursementAiSummaryUseCase, GetReimbursementDetailUseCase, ListApprovalQueueUseCase],
 })
 export class ReimbursementsModule {}

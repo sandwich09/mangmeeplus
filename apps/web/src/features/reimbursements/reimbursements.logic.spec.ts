@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   paymentReferenceRequired, validatePaymentForm, validateRequestForm, sumLineAmounts, summariseQueue,
   matchesSearch, formatMoney, parseHubTab, visibleHubTabs, reimbursementListScope, errorMessage, errorText,
-  isStaleApprovalError, diffApprovalFields, collectReceiptUploadResults, mergeDraftLineEvidence,
+  isStaleApprovalError, diffApprovalFields, collectReceiptUploadResults, mergeDraftLineEvidence, withAssignedApprovalTab,
 } from './reimbursements.logic';
 
 const line = (overrides: Record<string, unknown> = {}) => ({
@@ -274,6 +274,18 @@ describe('visibleHubTabs', () => {
   it('shows nothing without a hub permission and accepts company-wide read', () => {
     assert.deepEqual(visibleHubTabs([]), []);
     assert.deepEqual(visibleHubTabs(['reimbursement.read', 'expense.read']), ['mine']);
+  });
+});
+
+describe('withAssignedApprovalTab', () => {
+  it('adds the frozen-task queue in the canonical position after server confirmation', () => {
+    assert.deepEqual(withAssignedApprovalTab(['mine', 'finance', 'policy'], true), ['mine', 'approvals', 'finance', 'policy']);
+    assert.deepEqual(withAssignedApprovalTab([], true), ['approvals']);
+  });
+
+  it('does not expose an empty approval queue or duplicate an authorized one', () => {
+    assert.deepEqual(withAssignedApprovalTab(['mine'], false), ['mine']);
+    assert.deepEqual(withAssignedApprovalTab(['mine', 'approvals'], true), ['mine', 'approvals']);
   });
 });
 
