@@ -4,6 +4,7 @@ import {
   APPROVAL_STEP_STATUS_LABELS,
   canUploadSignedCopy,
   reimbursementOwnActions,
+  reimbursementSubmitReadiness,
   DUPLICATE_STATUS_LABELS,
   eligibleSignatureRoles,
   PAYMENT_STATUS_LABELS,
@@ -119,6 +120,27 @@ describe('reimbursementOwnActions', () => {
       reimbursementOwnActions(detail({ status: 'REJECTED' }), 'staff-1', ['reimbursement.submit']).canReopen,
       false,
     );
+  });
+});
+
+describe('reimbursementSubmitReadiness', () => {
+  it('blocks a draft that still requires a receipt with policy-specific guidance', () => {
+    const strict = reimbursementSubmitReadiness(detail({
+      status: 'DRAFT', receiptRequirementStatus: 'REQUIRED', allowMissingReceiptWithReason: false,
+    }));
+    assert.equal(strict.blocked, true);
+    assert.match(strict.message ?? '', /ต้องแนบใบเสร็จ/);
+    assert.match(strict.message ?? '', /ไม่สามารถใช้แทน/);
+
+    const reasonAllowed = reimbursementSubmitReadiness(detail({
+      status: 'DRAFT', receiptRequirementStatus: 'REQUIRED', allowMissingReceiptWithReason: true,
+    }));
+    assert.match(reasonAllowed.message ?? '', /ระบุเหตุผล/);
+  });
+
+  it('does not block an evidenced draft or a request that already left draft', () => {
+    assert.deepEqual(reimbursementSubmitReadiness(detail({ status: 'DRAFT', receiptRequirementStatus: 'ATTACHED' })), { blocked: false });
+    assert.deepEqual(reimbursementSubmitReadiness(detail({ status: 'PENDING_APPROVAL', receiptRequirementStatus: 'REQUIRED' })), { blocked: false });
   });
 });
 

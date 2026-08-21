@@ -31,7 +31,7 @@ Upload inventory:
 | Expense supporting/payment evidence | 2 | PDF/PNG/JPG/JPEG |
 | Substitute-receipt signatures | 2 | PNG/JPG/JPEG |
 | Company signature assets | 1 | PNG/JPG/JPEG |
-| Reimbursement create/detail/signed copy | 3 | PDF/PNG/JPG/JPEG |
+| Reimbursement create/detail/signed copy | 3 | Create/detail accept PDF plus PNG/JPG/JPEG/JPE/HEIC/HEIF/GIF sources and normalize images to PNG/JPEG; signed copy picker accepts PDF/PNG/JPG/JPEG |
 | Reimbursement claim signature | 1 | PNG/JPG/JPEG |
 | Accounts payable tax evidence | 1 | PDF/PNG/JPG/JPEG |
 | Trade-tax evidence | 1 | PDF/PNG/JPG/JPEG |

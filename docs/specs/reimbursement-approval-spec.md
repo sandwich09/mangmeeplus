@@ -210,6 +210,22 @@ Before implementation, inspect latest code again. Items 01 through 13 may add Pr
 - Payment void after bank reconciliation or ledger posting must call current bank/ledger policy ports when those modules exist.
 - Closed ledger period blocks payment void/correction when item 10 period policy exists.
 - Receipt evidence is required by default unless finance-level permission and missing receipt reason policy allows exception.
+- Reimbursement receipt pickers accept PDF plus JPG/JPEG, PNG, HEIC/HEIF, and GIF image sources. The web must reuse
+  the expense receipt preparation path to inspect the image container and normalize HEIC/HEIF, GIF, oversized images,
+  and browser metadata/container mismatches into a valid static JPEG before creating the upload intent. The shared
+  server attachment boundary remains PDF/PNG/JPEG and still verifies extension, declared MIME type, and magic bytes.
+- Draft creation and receipt upload are separate writes. If one receipt upload fails after the draft exists, every
+  successfully uploaded receipt must still be linked to its line, the failed line numbers must be shown, and the UI
+  must open the existing draft for correction instead of offering an action that can create a duplicate request.
+- The create action is labelled `บันทึกร่างคำขอเบิก`. While preparing or uploading images it must expose a pending
+  state. A recovery action after partial success is labelled by its actual outcome, such as `เปิดร่างเพื่อแก้ไขไฟล์`.
+- Draft submission UX must explain the effective company receipt policy before the requester submits. When an
+  unevidenced line is blocked by policy, the submit action is disabled and the detail view directs the requester to
+  attach a receipt; a missing-receipt reason must not be presented as sufficient when the company policy disallows it.
+- A claim-form signature action uses the latest `ACTIVE` company signature asset submitted by the eligible signer.
+  It must never resolve another user's signature. If the signer has no active saved signature, the web shows a modal
+  with a secondary cancel action and a primary `ไปหน้าลายเซ็น` action that navigates to the existing signature feature.
+  Existing actor/role eligibility, claim snapshot acknowledgement, attachment integrity, and audit checks still apply.
 - Attachment records must use Data Model Core attachment primitives. Do not expose object keys or permanent public URLs.
 - If item 09 expense upload exists, reuse its attachment links, duplicate detection inputs, and confirmed expense source facts where possible.
 - Item 14 may create request-local receipt links, but must not create a separate object storage abstraction.

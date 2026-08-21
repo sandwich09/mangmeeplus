@@ -16,7 +16,7 @@ export const MAX_PDF_EXTRACTION_BYTES = 4 * 1024 * 1024;
 const MAX_IMAGE_EDGE_PX = 3200;
 const MIN_IMAGE_QUALITY = 0.72;
 export const RECEIPT_UPLOAD_ACCEPT =
-  '.pdf,.png,.jpg,.jpeg,.heic,.heif,application/pdf,image/png,image/jpeg,image/heic,image/heif';
+  '.pdf,.png,.jpg,.jpeg,.jpe,.heic,.heif,.gif,application/pdf,image/png,image/jpeg,image/jpg,image/heic,image/heif,image/gif';
 
 export type UploadFileKind = 'image' | 'pdf' | 'heic' | 'unsupported';
 
@@ -47,14 +47,15 @@ export function classifyUploadFile(name: string, type: string): UploadFileKind {
   if (!mime) {
     if (extension === 'pdf') return 'pdf';
     if (extension === 'heic' || extension === 'heif') return 'heic';
-    if (['jpg', 'jpeg', 'png'].includes(extension ?? '')) return 'image';
+    if (['jpg', 'jpeg', 'jpe', 'png', 'gif'].includes(extension ?? '')) return 'image';
     return 'unsupported';
   }
   if (mime === 'application/pdf' && extension === 'pdf') return 'pdf';
   if ((mime === 'image/heic' && extension === 'heic') || (mime === 'image/heif' && extension === 'heif')) return 'heic';
   if (
-    (mime === 'image/jpeg' && (extension === 'jpg' || extension === 'jpeg'))
+    ((mime === 'image/jpeg' || mime === 'image/jpg') && (extension === 'jpg' || extension === 'jpeg' || extension === 'jpe'))
     || (mime === 'image/png' && extension === 'png')
+    || (mime === 'image/gif' && extension === 'gif')
   ) return 'image';
   return 'unsupported';
 }
@@ -93,11 +94,18 @@ async function heicToJpegFile(file: File): Promise<File> {
 export async function prepareReceiptFile(file: File): Promise<{ file: File; resized: boolean }> {
   const kind = classifyUploadFile(file.name, file.type);
   if (kind === 'unsupported') throw new Error('UNSUPPORTED_UPLOAD_FILE');
+  const extension = file.name.toLowerCase().match(/\.([^.]+)$/)?.[1];
   const inferredMimeType = attachmentMimeTypeForFileName(file.name)
-    ?? (file.name.toLowerCase().endsWith('.heic') ? 'image/heic' : 'image/heif');
-  const sourceFile = file.type
+    ?? (extension === 'jpe' ? 'image/jpeg'
+      : extension === 'gif' ? 'image/gif'
+        : extension === 'heic' ? 'image/heic' : 'image/heif');
+  const sourceMimeType = file.type === 'image/jpg' ? 'image/jpeg' : (file.type || inferredMimeType);
+  const sourceName = sourceMimeType === 'image/jpeg' && extension === 'jpe'
+    ? file.name.replace(/\.jpe$/i, '.jpg')
+    : file.name;
+  const sourceFile = sourceMimeType === file.type && sourceName === file.name
     ? file
-    : new File([file], file.name, { type: inferredMimeType, lastModified: file.lastModified });
+    : new File([file], sourceName, { type: sourceMimeType, lastModified: file.lastModified });
   // LINE Desktop can save HEIC bytes behind .jpg/image/jpeg metadata. Only preserve an image
   // byte-for-byte when its container agrees; mismatches are decoded into a real JPEG below.
   const byteKind = kind === 'image' || kind === 'heic'

@@ -173,6 +173,7 @@ const CODE_LABELS: Record<string, string> = {
   // "ยังไม่มีเลขที่เอกสาร" คือเหตุผลจริงที่พิมพ์ไม่ได้ — บอกให้ตรง ไม่ใช่แค่ว่าสถานะไม่ถูก
   claim_form_requires_submitted: 'พิมพ์แบบฟอร์มได้หลังส่งใบเบิกแล้ว เพราะใบร่างยังไม่มีเลขที่เอกสาร',
   claim_signature_role_not_eligible: 'คุณไม่ได้อยู่ในรายชื่อผู้ลงนามของใบเบิกนี้',
+  claim_saved_signature_required: 'ยังไม่มีลายเซ็นที่พร้อมใช้งาน กรุณาบันทึกและรออนุมัติลายเซ็นก่อน',
   claim_signature_must_be_png_or_jpeg_max_2mb: 'ไฟล์ลายเซ็นต้องเป็น PNG หรือ JPEG ขนาดไม่เกิน 2 MB',
   claim_signature_too_large: 'ไฟล์ลายเซ็นใหญ่เกิน 2 MB กรุณาย่อขนาดแล้วอัปโหลดใหม่',
   claim_signature_attachment_invalid: 'ไม่พบไฟล์ลายเซ็นของคุณสำหรับใบเบิกนี้ กรุณาอัปโหลดใหม่',
@@ -276,7 +277,8 @@ const CODE_LABELS: Record<string, string> = {
 
 // Several upload rejections differ only in which check caught the file; the user's next move is
 // the same, so they share one sentence rather than four near-identical ones.
-const UPLOAD_TYPE_MISMATCH = 'ไฟล์ที่อัปโหลดไม่ตรงกับชนิดไฟล์ที่ระบุ กรุณาตรวจสอบแล้วอัปโหลดไฟล์ที่ถูกต้อง';
+const UPLOAD_TYPE_MISMATCH =
+  'ไฟล์นี้มีชนิดไฟล์ไม่ตรงกับข้อมูลภายใน ระบบจึงแนบไม่ได้ กรุณาเลือกไฟล์ใหม่ หรือบันทึกเป็น PDF/JPG/PNG แล้วลองอีกครั้ง';
 const UPLOAD_QUOTA_EXCEEDED = 'มีไฟล์ที่ค้างอัปโหลดอยู่หลายรายการ กรุณาอัปโหลดให้เสร็จหรือรอสักครู่แล้วลองใหม่';
 const UPLOAD_CONTENT_REJECTED =
   'ระบบตรวจไฟล์นี้ไม่ผ่านความปลอดภัย จึงไม่รับไฟล์ กรุณาใช้ไฟล์อื่น หรือถ่ายรูป/สแกนเอกสารเป็นภาพแล้วอัปโหลดแทน';

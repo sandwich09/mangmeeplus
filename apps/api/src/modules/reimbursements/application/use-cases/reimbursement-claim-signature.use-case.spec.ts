@@ -43,10 +43,18 @@ function request(overrides: Partial<any> = {}) {
   } as any;
 }
 
-function fakeRepo(row: any | null, options: { signatureAttachment?: any; uploadAttachment?: any; signedCopies?: any[] } = {}) {
+function fakeRepo(row: any | null, options: {
+  signatureAttachment?: any;
+  savedSignatureAttachmentId?: string | null;
+  uploadAttachment?: any;
+  signedCopies?: any[];
+} = {}) {
   const calls = { upserts: [] as any[], links: [] as any[], signatureLookups: [] as any[] };
   const repo = {
     findRequestById: async (_companyId: string, _id: string, _withRelations?: boolean) => row,
+    findLatestActiveSavedSignatureAttachmentId: async () => (
+      options.savedSignatureAttachmentId === undefined ? 'att-saved' : options.savedSignatureAttachmentId
+    ),
     findClaimSignatureAttachment: async (companyId: string, attachmentId: string, userId: string, requestId: string, role: string) => {
       calls.signatureLookups.push({ companyId, attachmentId, userId, requestId, role });
       return options.signatureAttachment === undefined
@@ -142,6 +150,29 @@ describe('SignClaimFormUseCase', () => {
     assert.deepEqual(calls.signatureLookups, [
       { companyId: 'co-1', attachmentId: 'att-sig', userId: 'staff-1', requestId: 'rb-1', role: 'REQUESTER' },
     ]);
+  });
+
+  it('uses the eligible actor\'s latest active saved signature when no attachment is supplied', async () => {
+    const req = request();
+    const { repo, calls } = fakeRepo(req, { savedSignatureAttachmentId: 'att-my-active-signature' });
+    await signUseCase(repo).execute(ctx(), 'rb-1', {
+      role: 'REQUESTER', snapshotHash: claimSignatureAckHash(req),
+    });
+
+    assert.equal(calls.upserts[0].signatureAttachmentId, 'att-my-active-signature');
+    assert.equal(calls.signatureLookups[0].userId, 'staff-1');
+  });
+
+  it('returns a stable blocker when the eligible actor has no active saved signature', async () => {
+    const req = request();
+    const { repo, calls } = fakeRepo(req, { savedSignatureAttachmentId: null });
+    await assert.rejects(
+      () => signUseCase(repo).execute(ctx(), 'rb-1', {
+        role: 'REQUESTER', snapshotHash: claimSignatureAckHash(req),
+      }),
+      /claim_saved_signature_required/,
+    );
+    assert.equal(calls.upserts.length, 0);
   });
 
   it('re-signing replaces the signer\'s own row through the unique upsert', async () => {

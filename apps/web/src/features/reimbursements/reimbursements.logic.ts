@@ -91,6 +91,22 @@ export const MAX_CLAIM_LINES = 50;
 
 export type ClaimFormLine = { incurredDate: string; description: string; purpose?: string; categoryKey: string; amount: string; hasReceipt?: boolean };
 
+export function collectReceiptUploadResults(results: readonly PromiseSettledResult<string | null>[]): {
+  attachmentIds: Array<string | null>;
+  failedLineNumbers: number[];
+  firstFailure: unknown;
+} {
+  const failedLineNumbers: number[] = [];
+  let firstFailure: unknown;
+  const attachmentIds = results.map((result, index) => {
+    if (result.status === 'fulfilled') return result.value;
+    failedLineNumbers.push(index + 1);
+    firstFailure ??= result.reason;
+    return null;
+  });
+  return { attachmentIds, failedLineNumbers, firstFailure };
+}
+
 /** รวมเป็นเงิน of the rows being typed (display only — the server owns the real rollup). */
 export function sumLineAmounts(lines: readonly { amount: string }[]): number {
   return lines.reduce((sum, line) => sum + (Number(line.amount) || 0), 0);

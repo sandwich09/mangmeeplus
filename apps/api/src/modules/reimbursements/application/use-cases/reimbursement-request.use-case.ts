@@ -74,17 +74,27 @@ async function detailWithFileNames(
   companyId: string,
   req: ReimbursementRequestRecord,
 ): Promise<ReimbursementRequestDetail> {
-  const [primaryFileName, lineFileNames, displayNames, signedCopies] = await Promise.all([
+  const [primaryFileName, lineFileNames, displayNames, signedCopies, policy] = await Promise.all([
     evidence.getAttachmentFileName(companyId, req.primaryAttachmentId),
     evidence.getAttachmentFileNames(companyId, (req.lines ?? []).map((line) => line.attachmentId ?? '')),
     repo.getUserDisplayNames(companyId, detailUserIds(req)),
     repo.listSignedClaimFormCopies(companyId, req.id),
+    loadPolicy(repo, companyId),
   ]);
+  const receiptRequirementStatus = req.status === 'DRAFT'
+    ? computeReceiptRequirement({
+        requireReceipt: policy.requireReceipt,
+        allowMissingReceiptWithReason: policy.allowMissingReceiptWithReason,
+        lines: req.lines ?? [],
+        missingReceiptReason: req.missingReceiptReason,
+      }).status
+    : req.receiptRequirementStatus;
   // The ack hash is the LIVE claim, not the submit-frozen approval hash: a signer
   // acknowledges what the form prints right now.
-  return toRequestDetail(req, primaryFileName, lineFileNames, displayNames, {
+  return toRequestDetail({ ...req, receiptRequirementStatus }, primaryFileName, lineFileNames, displayNames, {
     signedCopies: toSignedCopySummaries(signedCopies),
     claimSignatureAckHash: claimSignatureAckHash(req),
+    allowMissingReceiptWithReason: policy.allowMissingReceiptWithReason,
   });
 }
 
@@ -145,7 +155,7 @@ export class CreateReimbursementDraftUseCase {
       result: 'SUCCESS', riskLevel: 'LOW',
       metadataJson: { amount: created.amount, currency: created.currency, categoryKey: created.categoryKey, lineCount: input.lines.length },
     });
-    return toRequestSummary(created);
+    return toRequestSummary(created, { allowMissingReceiptWithReason: policy.allowMissingReceiptWithReason });
   }
 }
 
@@ -169,6 +179,7 @@ export class UpdateReimbursementDraftUseCase {
     assertReimbursementBranchInScope(ctx, req.branchId);
     if (req.status !== 'DRAFT') throw new UnprocessableEntityException('Only draft requests can be edited');
 
+    const policy = await loadPolicy(this.repo, ctx.companyId);
     const data: Record<string, unknown> = { updatedByUserId: ctx.userId };
     if (input.title !== undefined) data.title = input.title;
     if (input.reason !== undefined) data.reason = input.reason;
@@ -190,12 +201,19 @@ export class UpdateReimbursementDraftUseCase {
       data.outstandingAmount = header.amount;
       lines = toLineWrites(input.lines);
     }
+    const receipt = computeReceiptRequirement({
+      requireReceipt: policy.requireReceipt,
+      allowMissingReceiptWithReason: policy.allowMissingReceiptWithReason,
+      lines: input.lines ?? req.lines ?? [],
+      missingReceiptReason: input.missingReceiptReason ?? req.missingReceiptReason,
+    });
+    data.receiptRequirementStatus = receipt.status;
     const updated = await this.repo.updateDraftRequest(ctx.companyId, id, req.updatedAt, data, lines);
     void this.audit.log({
       companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.request.update_draft',
       targetType: 'reimbursement_request', targetId: id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'LOW',
     });
-    return toRequestSummary(updated);
+    return toRequestSummary(updated, { allowMissingReceiptWithReason: policy.allowMissingReceiptWithReason });
   }
 }
 
@@ -274,19 +292,21 @@ export class ListReimbursementsUseCase {
       requesterUserId = ctx.userId;
     }
 
-    const rows = await this.repo.listRequests({
+    const [rows, policy] = await Promise.all([this.repo.listRequests({
       companyId: ctx.companyId,
       requesterUserId,
       relatedUserId,
       scopes: ctx.scopes ?? {},
       status: filter.status,
       paymentStatus: filter.paymentStatus,
-    });
+    }), loadPolicy(this.repo, ctx.companyId)]);
     const page = filter.page && filter.page > 0 ? filter.page : 1;
     const pageSize = filter.pageSize && filter.pageSize > 0 ? Math.min(filter.pageSize, 100) : 20;
     const start = (page - 1) * pageSize;
     return {
-      items: rows.slice(start, start + pageSize).map(toRequestSummary),
+      items: rows.slice(start, start + pageSize).map((row) => toRequestSummary(row, {
+        allowMissingReceiptWithReason: policy.allowMissingReceiptWithReason,
+      })),
       total: rows.length,
       page,
       pageSize,

@@ -44,7 +44,10 @@ export function toPolicySummary(p: ReimbursementPolicyRecord): ReimbursementPoli
   };
 }
 
-export function toRequestSummary(r: ReimbursementRequestRecord): ReimbursementRequestSummary {
+export function toRequestSummary(
+  r: ReimbursementRequestRecord,
+  options: { allowMissingReceiptWithReason?: boolean } = {},
+): ReimbursementRequestSummary {
   return {
     id: r.id,
     companyId: r.companyId,
@@ -64,6 +67,9 @@ export function toRequestSummary(r: ReimbursementRequestRecord): ReimbursementRe
     paymentStatus: r.paymentStatus,
     duplicateStatus: r.duplicateStatus,
     receiptRequirementStatus: r.receiptRequirementStatus,
+    ...(options.allowMissingReceiptWithReason !== undefined
+      ? { allowMissingReceiptWithReason: options.allowMissingReceiptWithReason }
+      : {}),
     postingStatus: r.postingStatus,
     paymentTotalAmount: r.paymentTotalAmount,
     outstandingAmount: r.outstandingAmount,
@@ -177,10 +183,16 @@ export function toRequestDetail(
   displayNames: Record<string, string> = {},
   // Read-path extras: they need queries the action paths do not run, and the
   // drawer re-reads GET detail after every action anyway.
-  extras: { signedCopies?: ReimbursementSignedCopySummary[]; claimSignatureAckHash?: string } = {},
+  extras: {
+    signedCopies?: ReimbursementSignedCopySummary[];
+    claimSignatureAckHash?: string;
+    allowMissingReceiptWithReason?: boolean;
+  } = {},
 ): ReimbursementRequestDetail {
   return {
-    ...toRequestSummary(r),
+    ...toRequestSummary(r, {
+      allowMissingReceiptWithReason: extras.allowMissingReceiptWithReason,
+    }),
     lines: (r.lines ?? []).map((l) => toLineSummary(l, l.attachmentId ? lineAttachmentFileNames[l.attachmentId] : undefined)),
     currentApproverUserId: r.currentApproverUserId,
     currentApprovalStepId: r.currentApprovalStepId,
