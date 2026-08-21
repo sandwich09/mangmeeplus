@@ -855,6 +855,226 @@ describe('LINE intake router – receiver-boundary capability hardening (malform
   });
 });
 
+// ── Expense-vs-reimbursement semantic intake (spec: line-ai-uat-correctness-latency §7) ─────────
+
+describe('LINE intake router – reimbursement semantic route (trusted capability)', () => {
+  const P = intakeRouterSystemPrompt({ reimbursementSemantic: true });
+  const CAP = { reimbursementSemantic: true };
+  // UAT 2026-08-21 exact phrase that the legacy router sent to expense capture at 0.97.
+  const UAT_CLAIM = 'ขอเบิกค่ารถวินมอไซต์ 60 บาท ไปพบลูกค้า';
+  const CANDIDATES_60 = { amounts: [{ span: '60 บาท', value: '60', currencyToken: 'บาท' }], dates: [] };
+  const intake = (extra: Record<string, unknown> = {}) => ({ requestId: 'r', companyId: 'c', userId: 'u', locale: 'th-TH', messageText: UAT_CLAIM, permissions: [], capabilities: CAP, ...extra } as any);
+  const routerReturning = (body: Record<string, unknown>, capture?: (input: ProviderInput) => void) => new IntentRouterAgent({
+    generateText: async (input: ProviderInput) => { capture?.(input); return { ok: true as const, text: JSON.stringify(body) }; },
+  } as any);
+
+  it('default-off carries none of the reimbursement section; the capability adds ONLY its own bytes', () => {
+    const base = intakeRouterSystemPrompt();
+    for (const m of ['REIMBURSEMENT_REQUEST_START', 'semanticOutcome', 'fundingSource', 'reimbursementHints']) {
+      assert.equal(base.includes(m), false, `default-off must not contain ${m}`);
+      assert.ok(P.includes(m), `capability build must contain ${m}`);
+    }
+    assert.equal(P.includes('Fused prepared plan'), false, 'no fused cross-bleed');
+    assert.equal(P.includes('SUBSTITUTE_RECEIPT_CONTINUATION'), false, 'no substitute cross-bleed');
+    assert.ok(P.length > base.length, 'strictly additive');
+    assert.equal(LINE_INTAKE_ROUTER_SYSTEM_PROMPT, base, 'legacy constant untouched');
+  });
+
+  it('teaches the three-way rules: strong claim, bare ambiguous เบิก, protected negatives, greeting+business where business wins', () => {
+    assert.match(P, /"REIMBURSEMENT_REQUEST_START"/);
+    assert.match(P, /ขอเบิกค่าวิน 60 บาท ไปพบลูกค้า/);
+    assert.match(P, /เบิกค่ารถวินมอไซต์ 60 บาท ไปพบลูกค้า/);
+    assert.match(P, /สำรองจ่ายค่าวินไป 60 บาท ขอเบิกคืน/);
+    assert.match(P, /สวัสดีเบิกค่าโดยสารหน่อย/);
+    assert.match(P, /business wins over the social phrase/);
+    assert.match(P, /"ค่าวินไปพบลูกค้า 60 บาท" and "ช่วยบันทึกค่าวินไปพบลูกค้า 60 บาท" stay EXPENSE_DOCUMENT_CAPTURE/);
+    for (const negative of ['ขอดูใบเบิกที่ค้าง', 'เบิกของจากสต็อก 2 กล่อง', 'ขอเบิกเงินล่วงหน้า', 'ใบสำคัญรับเงิน', 'ขอเบิกได้ไหม', 'ไม่ต้องเบิกค่าวินแล้ว']) {
+      assert.ok(P.includes(negative), `protected negative ${negative} must be named`);
+    }
+    assert.match(P, /REIMBURSEMENT_CLAIM \+ EMPLOYEE_PAID/);
+    assert.match(P, /never default it to expense capture/);
+    assert.match(P, /is NEVER this route — see REIMBURSEMENT_REQUEST_START/, 'the capture meaning is qualified under the capability');
+  });
+
+  it('parses the UAT strong claim: new intent + semantic fields + membership-guarded reimbursementHints, legacy token budget', async () => {
+    let seen: ProviderInput | undefined;
+    const router = routerReturning({
+      intent: 'REIMBURSEMENT_REQUEST_START', language: 'th', confidence: 0.93, reason: 'claim',
+      semanticOutcome: 'REIMBURSEMENT_CLAIM', fundingSource: 'EMPLOYEE_PAID',
+      reimbursementHints: { description: 'ค่ารถวินมอไซต์', businessPurpose: 'ไปพบลูกค้า', amount: '60', categoryKey: 'travel', confidence: 0.9, missingFields: ['incurredDate', 'bogus'] },
+    }, (input) => { seen = input; });
+    const plan = await router.routeIntake(intake({ valueCandidates: CANDIDATES_60 }));
+    assert.equal(seen!.systemPrompt, P, 'the capability build is the prompt actually sent');
+    assert.equal(seen!.maxTokens, 1000, 'no token budget bump for the semantic section');
+    assert.equal(seen!.cacheableContext, undefined, 'no fused catalog');
+    assert.equal(plan.status, 'ROUTED');
+    assert.equal(plan.intent, 'REIMBURSEMENT_REQUEST_START');
+    assert.equal(plan.semanticOutcome, 'REIMBURSEMENT_CLAIM');
+    assert.equal(plan.fundingSource, 'EMPLOYEE_PAID');
+    assert.deepEqual(plan.reimbursementHints, {
+      description: 'ค่ารถวินมอไซต์', businessPurpose: 'ไปพบลูกค้า', amount: '60', confidence: 0.9,
+      missingFields: ['incurredDate', 'categoryKey'],
+    });
+    assert.equal(plan.captureHints, undefined, 'a claim never carries expense capture hints');
+  });
+
+  it('a greeting-wrapped bare เบิก with no payer parses as the reimbursement room with AMBIGUOUS/UNKNOWN and no amount', async () => {
+    const router = routerReturning({
+      intent: 'REIMBURSEMENT_REQUEST_START', language: 'th', confidence: 0.8, reason: 'bare',
+      semanticOutcome: 'AMBIGUOUS', fundingSource: 'UNKNOWN',
+      reimbursementHints: { description: 'ค่าโดยสาร', missingFields: ['amount', 'fundingSource'] },
+    });
+    const plan = await router.routeIntake(intake({ messageText: 'สวัสดีเบิกค่าโดยสารหน่อย' }));
+    assert.equal(plan.intent, 'REIMBURSEMENT_REQUEST_START');
+    assert.equal(plan.semanticOutcome, 'AMBIGUOUS');
+    assert.equal(plan.fundingSource, 'UNKNOWN');
+    assert.deepEqual(plan.reimbursementHints, { description: 'ค่าโดยสาร', missingFields: ['amount', 'fundingSource'] });
+  });
+
+  it('fails closed: omitted/invalid semantic fields become AMBIGUOUS + UNKNOWN (so a capture asks instead of acting); a hint amount or date absent from valueCandidates is stripped', async () => {
+    const note = routerReturning({
+      intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.97, reason: 'note',
+      semanticOutcome: 'SOMETHING_ELSE', captureHints: { description: 'ค่าเดินทาง', businessPurpose: 'ไปพบลูกค้า', amount: '200' },
+    });
+    const plan = await note.routeIntake(intake({
+      messageText: 'ค่าเดินทาง 200 บาท วัตถุประสงค์ไปพบลูกค้า',
+      valueCandidates: { amounts: [{ span: '200 บาท', value: '200', currencyToken: 'บาท' }], dates: [] },
+    }));
+    assert.equal(plan.semanticOutcome, 'AMBIGUOUS');
+    assert.equal(plan.fundingSource, 'UNKNOWN');
+    assert.equal(plan.intent, 'CLARIFY', 'capture on fail-closed semantics is a contradiction: ask, never act');
+    assert.equal(plan.clarifyForIntent, 'EXPENSE_DOCUMENT_CAPTURE');
+    assert.equal(plan.captureHints, undefined);
+
+    const claim = routerReturning({
+      intent: 'REIMBURSEMENT_REQUEST_START', language: 'th', confidence: 0.9, semanticOutcome: 'REIMBURSEMENT_CLAIM', fundingSource: 'EMPLOYEE_PAID',
+      reimbursementHints: { amount: '600', incurredDate: '2026-08-20' },
+    });
+    const guarded = await claim.routeIntake(intake({ valueCandidates: CANDIDATES_60 }));
+    assert.deepEqual(guarded.reimbursementHints, { missingFields: ['amount', 'incurredDate'] });
+    const noCandidates = await claim.routeIntake(intake({ messageText: 'ขอเบิกค่ารถวิน ไปพบลูกค้า' }));
+    assert.deepEqual(noCandidates.reimbursementHints, { missingFields: ['amount', 'incurredDate'] }, 'no candidates ⇒ nothing is accepted');
+  });
+
+  it('an ordinary spend note keeps BUSINESS_EXPENSE + COMPANY_PAID and its capture hints through the parser', async () => {
+    const router = routerReturning({
+      intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.97, semanticOutcome: 'BUSINESS_EXPENSE', fundingSource: 'COMPANY_PAID',
+      captureHints: { description: 'ค่าวิน', businessPurpose: 'ไปพบลูกค้า', amount: '60' },
+    });
+    const plan = await router.routeIntake(intake({ messageText: 'ค่าวินไปพบลูกค้า 60 บาท', valueCandidates: CANDIDATES_60 }));
+    assert.equal(plan.intent, 'EXPENSE_DOCUMENT_CAPTURE');
+    assert.equal(plan.semanticOutcome, 'BUSINESS_EXPENSE');
+    assert.equal(plan.fundingSource, 'COMPANY_PAID');
+    assert.equal(plan.captureHints?.amount, '60');
+    assert.equal(plan.reimbursementHints, undefined, 'reimbursement hints exist only on the claim route');
+  });
+
+  it('a low-confidence claim is downgraded to CLARIFY that inherits the reimbursement route (confidence is veto-only)', async () => {
+    const router = routerReturning({
+      intent: 'REIMBURSEMENT_REQUEST_START', language: 'th', confidence: 0.4, semanticOutcome: 'AMBIGUOUS', fundingSource: 'UNKNOWN',
+      reimbursementHints: { description: 'ค่ารถ' },
+    });
+    const plan = await router.routeIntake(intake({ messageText: 'เบิกค่ารถ' }));
+    assert.equal(plan.intent, 'CLARIFY');
+    assert.equal(plan.clarifyForIntent, 'REIMBURSEMENT_REQUEST_START');
+    assert.match(plan.clarifyQuestion ?? '', /สำรองจ่าย/);
+    assert.equal(plan.reimbursementHints, undefined);
+    assert.equal(plan.semanticOutcome, 'AMBIGUOUS');
+    assert.equal(plan.fundingSource, 'UNKNOWN');
+  });
+
+  it('WITHOUT a literal-true capability the legacy prompt is sent, an un-offered claim fails closed to UNAVAILABLE, and semantic advice is dropped', async () => {
+    let seen: ProviderInput | undefined;
+    const claim = routerReturning({
+      intent: 'REIMBURSEMENT_REQUEST_START', language: 'th', confidence: 0.95, semanticOutcome: 'REIMBURSEMENT_CLAIM', fundingSource: 'EMPLOYEE_PAID',
+    }, (input) => { seen = input; });
+    for (const capabilities of [undefined, {}, { reimbursementSemantic: 'true' }, { reimbursementSemantic: 1 }, { reimbursementSemantic: false }]) {
+      const plan = await claim.routeIntake(intake({ capabilities }));
+      assert.equal(seen!.systemPrompt, intakeRouterSystemPrompt(), 'legacy prompt byte-identical');
+      assert.equal(plan.status, 'UNAVAILABLE');
+      assert.equal(plan.errorCode, 'ROUTER_JSON_PARSE_FAILED');
+      assert.equal(plan.semanticOutcome, undefined);
+      assert.equal(plan.fundingSource, undefined);
+    }
+    const legacy = routerReturning({ intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.97, semanticOutcome: 'REIMBURSEMENT_CLAIM', fundingSource: 'EMPLOYEE_PAID', captureHints: { description: 'ค่ากาแฟ', amount: '65' } });
+    const plan = await legacy.routeIntake(intake({ messageText: 'ค่ากาแฟ 65 บาท', capabilities: {}, valueCandidates: { amounts: [{ span: '65 บาท', value: '65', currencyToken: 'บาท' }], dates: [] } }));
+    assert.equal(plan.intent, 'EXPENSE_DOCUMENT_CAPTURE');
+    assert.equal(plan.semanticOutcome, undefined, 'semantic advice never rides a default-off plan');
+    assert.equal(plan.fundingSource, undefined);
+    assert.equal(plan.captureHints?.amount, '65');
+  });
+
+  it('reimbursementHints.confidence is kept only when finite and within 0..1 inclusive; anything else is omitted', async () => {
+    // Raw text, not JSON.stringify: 1e999/-1e999 are the only non-finite numbers JSON can carry (they parse to
+    // ±Infinity). NaN is not JSON-representable — JSON.stringify turns NaN/Infinity into null, covered as 'null'.
+    const hintsFor = async (confidence: string | number) => {
+      const text = `{"intent":"REIMBURSEMENT_REQUEST_START","language":"th","confidence":0.9,"semanticOutcome":"REIMBURSEMENT_CLAIM","fundingSource":"EMPLOYEE_PAID","reimbursementHints":{"description":"ค่ารถวินมอไซต์","confidence":${confidence}}}`;
+      const router = new IntentRouterAgent({ generateText: async () => ({ ok: true as const, text }) } as any);
+      return (await router.routeIntake(intake())).reimbursementHints;
+    };
+    for (const kept of [0, 0.5, 1]) assert.deepEqual(await hintsFor(kept), { description: 'ค่ารถวินมอไซต์', confidence: kept }, `${kept} is kept`);
+    for (const dropped of [-0.1, 1.1, '1e999', '-1e999', 'null', '"0.9"']) {
+      assert.deepEqual(await hintsFor(dropped), { description: 'ค่ารถวินมอไซต์' }, `${dropped} is omitted`);
+    }
+    assert.equal(JSON.stringify({ confidence: NaN }), '{"confidence":null}', 'NaN/Infinity reach the parser as null through JSON.stringify');
+  });
+
+  it('fails closed on route↔semantic contradictions: CLARIFY inheriting the ORIGINAL route, hints stripped, semantic fields preserved', async () => {
+    for (const semanticOutcome of ['BUSINESS_EXPENSE', 'REIMBURSEMENT_CLAIM', 'AMBIGUOUS'] as const) {
+      for (const fundingSource of ['COMPANY_PAID', 'EMPLOYEE_PAID', 'UNKNOWN'] as const) {
+        const label = `${semanticOutcome}+${fundingSource}`;
+        const capture = await routerReturning({
+          intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.97, semanticOutcome, fundingSource,
+          captureHints: { description: 'ค่าวิน', businessPurpose: 'ไปพบลูกค้า', amount: '60' },
+        }).routeIntake(intake({ messageText: 'ค่าวินไปพบลูกค้า 60 บาท', valueCandidates: CANDIDATES_60 }));
+        const claim = await routerReturning({
+          intent: 'REIMBURSEMENT_REQUEST_START', language: 'th', confidence: 0.95, semanticOutcome, fundingSource,
+          reimbursementHints: { description: 'ค่ารถวินมอไซต์', amount: '60' },
+        }).routeIntake(intake({ valueCandidates: CANDIDATES_60 }));
+        for (const plan of [capture, claim]) {
+          assert.equal(plan.status, 'ROUTED', label);
+          assert.equal(plan.semanticOutcome, semanticOutcome, `${label}: semantic fields are preserved`);
+          assert.equal(plan.fundingSource, fundingSource, `${label}: semantic fields are preserved`);
+        }
+        if (semanticOutcome === 'BUSINESS_EXPENSE' && fundingSource === 'COMPANY_PAID') {
+          assert.equal(capture.intent, 'EXPENSE_DOCUMENT_CAPTURE', `${label}: the only capture-compatible pair`);
+          assert.equal(capture.captureHints?.amount, '60', label);
+          assert.equal(capture.clarifyForIntent, undefined, label);
+        } else {
+          assert.equal(capture.intent, 'CLARIFY', `capture ${label} must fail closed`);
+          assert.equal(capture.clarifyForIntent, 'EXPENSE_DOCUMENT_CAPTURE', label);
+          assert.equal(capture.captureHints, undefined, label);
+          assert.match(capture.clarifyQuestion ?? '', /สำรองจ่าย/, label);
+        }
+        if (semanticOutcome === 'BUSINESS_EXPENSE' || fundingSource === 'COMPANY_PAID') {
+          assert.equal(claim.intent, 'CLARIFY', `claim ${label} must fail closed`);
+          assert.equal(claim.clarifyForIntent, 'REIMBURSEMENT_REQUEST_START', label);
+          assert.equal(claim.reimbursementHints, undefined, label);
+          assert.match(claim.clarifyQuestion ?? '', /สำรองจ่าย/, label);
+        } else {
+          assert.equal(claim.intent, 'REIMBURSEMENT_REQUEST_START', `claim ${label} stays routed (AMBIGUOUS/UNKNOWN is the ask-who-paid room)`);
+          assert.equal(claim.reimbursementHints?.amount, '60', label);
+          assert.equal(claim.clarifyForIntent, undefined, label);
+        }
+      }
+    }
+  });
+
+  it('the contradiction veto never touches read/refusal/unsupported routes, and default-off has nothing to veto', async () => {
+    for (const intent of ['BUSINESS_READ_QUESTION', 'MUTATION_REQUEST_REFUSAL', 'UNSUPPORTED'] as const) {
+      const plan = await routerReturning({ intent, language: 'th', confidence: 0.95, semanticOutcome: 'REIMBURSEMENT_CLAIM', fundingSource: 'EMPLOYEE_PAID' })
+        .routeIntake(intake({ messageText: 'ขอดูใบเบิกที่ค้าง' }));
+      assert.equal(plan.intent, intent);
+      assert.equal(plan.clarifyForIntent, undefined);
+      assert.equal(plan.semanticOutcome, 'REIMBURSEMENT_CLAIM');
+    }
+    const legacy = await routerReturning({ intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.97, captureHints: { description: 'ค่ากาแฟ', amount: '65' } })
+      .routeIntake(intake({ messageText: 'ค่ากาแฟ 65 บาท', capabilities: {}, valueCandidates: { amounts: [{ span: '65 บาท', value: '65', currencyToken: 'บาท' }], dates: [] } }));
+    assert.equal(legacy.intent, 'EXPENSE_DOCUMENT_CAPTURE', 'no semantic fields under default-off ⇒ nothing to veto');
+    assert.equal(legacy.captureHints?.amount, '65');
+  });
+});
+
 // ── Substitute-receipt semantic routing (spec: line-substitute-semantic-routing) ─────────────────
 
 describe('LINE intake router – substitute-receipt semantic route', () => {

@@ -221,6 +221,30 @@ export const apiConfigSchema = baseConfigSchema.extend({
   // webhook lifecycle — 'shadow' therefore behaves EXACTLY like 'off' and is intentionally inert (it must
   // never fake agreement). Offline provider replay measures agreement instead.
   LINE_AI_SUBSTITUTE_SEMANTIC_ROUTING_MODE: z.enum(['off', 'shadow', 'primary']).default('off'),
+  // Expense-vs-reimbursement semantic intake (uat-correctness-latency spec §7/§15). Default 'off' keeps
+  // the EXACT legacy intake prompt/parser. 'clarify_only' and 'handoff' are the ONLY modes that turn on
+  // the trusted `reimbursementSemantic` router capability (semanticOutcome, fundingSource,
+  // REIMBURSEMENT_REQUEST_START): 'clarify_only' keeps reimbursement/ambiguous text out of expense
+  // capture with no handoff CTA, 'handoff' additionally sends the permission-checked handoff card.
+  // 'shadow' is a reserved NO-GO scaffold for exactly the substitute reason above: the legacy capture
+  // path resolves the turn before a comparison could be drawn, so a safe nonblocking compare cannot run
+  // in this serverless webhook lifecycle. 'shadow' therefore behaves EXACTLY like 'off' — it grants no
+  // capability and logs nothing new — and is intentionally inert (it must never fake agreement). Offline
+  // replay of the frozen corpus against the configured provider supplies the agreement evidence instead.
+  // No mode ever creates a reimbursement record. Rollback target for every primary mode is
+  // 'clarify_only', not 'off'.
+  LINE_AI_REIMBURSEMENT_SEMANTIC_MODE: z.enum(['off', 'shadow', 'clarify_only', 'handoff']).default('off'),
+  // Exact standalone greeting lane (uat-correctness-latency spec §11.2, plan Phase 6B). Default OFF keeps
+  // the EXACT legacy path where a bare "สวัสดี" costs three model calls. On, a whole-message match against
+  // the versioned greeting allowlist answers deterministically with zero model calls — only after every
+  // security/identity/feature gate and only when the turn carries no open state at all.
+  LINE_AI_EXACT_GREETING_ENABLED: envBoolean.default(false),
+  // Terminal Flex card on a MULTI-PART reply (uat-correctness-latency spec §10.1). Default OFF is the exact
+  // legacy shape: every part of a split reply is a plain text message and only the last one carries the
+  // completion quick reply. On, the terminal part is rendered as the same Flex card a single completed
+  // reply gets — and when that terminal text is longer than a Flex body can hold, the full text still
+  // ships as text and the card is appended after it, so turning this on can never truncate a reply.
+  LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED: envBoolean.default(false),
   // Durable multi-turn expense draft collection. Default off until recorded LINE OA UAT passes.
   LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED: envBoolean.default(false),
   // Item 10F: LINE AI turn ledger on Redis Streams (ADR 0010; fail-open, default off)

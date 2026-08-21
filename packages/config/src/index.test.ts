@@ -709,6 +709,28 @@ describe('apiConfigSchema LINE AI latency/autonomy Phase-1 flags', () => {
     }
     assert.equal(apiConfigSchema.safeParse({ ...base, LINE_AI_SUBSTITUTE_SEMANTIC_ROUTING_MODE: 'canary' }).success, false);
   });
+
+  it('reimbursement semantic intake defaults off and accepts only its four modes', () => {
+    assert.equal(apiConfigSchema.parse(base).LINE_AI_REIMBURSEMENT_SEMANTIC_MODE, 'off');
+    for (const mode of ['off', 'shadow', 'clarify_only', 'handoff'] as const) {
+      assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_REIMBURSEMENT_SEMANTIC_MODE: mode }).LINE_AI_REIMBURSEMENT_SEMANTIC_MODE, mode);
+    }
+    // 'primary' is deliberately NOT a mode: the safe rollback target is clarify_only, never a bare primary.
+    assert.equal(apiConfigSchema.safeParse({ ...base, LINE_AI_REIMBURSEMENT_SEMANTIC_MODE: 'primary' }).success, false);
+    assert.equal(apiConfigSchema.safeParse({ ...base, LINE_AI_REIMBURSEMENT_SEMANTIC_MODE: 'true' }).success, false);
+  });
+
+  it('exact standalone greeting lane defaults off and opts in only on an explicit boolean', () => {
+    assert.equal(apiConfigSchema.parse(base).LINE_AI_EXACT_GREETING_ENABLED, false);
+    assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_EXACT_GREETING_ENABLED: 'true' }).LINE_AI_EXACT_GREETING_ENABLED, true);
+    assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_EXACT_GREETING_ENABLED: 'false' }).LINE_AI_EXACT_GREETING_ENABLED, false);
+  });
+
+  it('multi-part terminal Flex defaults off and opts in only on an explicit boolean', () => {
+    assert.equal(apiConfigSchema.parse(base).LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED, false);
+    assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED: 'true' }).LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED, true);
+    assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED: 'false' }).LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED, false);
+  });
 });
 
 describe('apiConfigSchema CRM AI confidence', () => {

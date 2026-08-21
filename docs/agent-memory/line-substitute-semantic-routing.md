@@ -42,20 +42,27 @@ Artifacts:
 - `docs/specs/line-substitute-semantic-routing-spec.md`
 - `docs/plans/line-substitute-semantic-routing-plan.md`
 
-Corpus: `scripts/line-ai-substitute-routing.corpus.ts` — 47 protected Thai/English rows (UAT paraphrase,
+Corpus: `scripts/line-ai-substitute-routing.corpus.ts` — 92 protected Thai/English rows (UAT paraphrase,
 start/continue/status/pause/cancel, receipt avail/unavail, ordinary expense, payment-voucher/ใบสำคัญ/
 reimbursement negatives, definition/VAT/help, negation, side-question, unrelated-expense, multiple, low
-confidence, UNAVAILABLE, denied). Non-canonical semantic starts pin write=FALSE (confirm-first, ledger
-only). The corpus integrity tests (9) are INTEGRITY-ONLY. All 47 IDs are bound into
+confidence, UNAVAILABLE, denied). Since 2026-08-21 the file is SHARED: it also carries the
+uat-correctness-latency §14.1 semantic dataset (`LINE_AI_SEMANTIC_COVERAGE_CASES`, categories
+`reimbursement_read` / `question_not_command` / `claim_negation` / `stock_withdrawal` / `advance` plus a
+`style` noise axis). Non-canonical semantic starts pin write=FALSE (confirm-first, ledger
+only). The corpus integrity tests are INTEGRITY-ONLY. All 92 IDs are bound into
 `LINE_AI_PROTECTED_EVAL_CASE_IDS` and scored by the EXISTING `run-line-ai-operator-language-eval` runner
 via a routeIntake pass (same runner, provider-evidence pending). Runner scoring is TRUTHFUL: the two
 `unavailable` (outage-only) rows are SKIPPED (a healthy provider cannot reproduce a provider-down
 UNSUPPORTED, so scoring them would spuriously fail — they remain in structural/unit coverage only);
-protected negatives are scored by `actualIntent !== SUBSTITUTE_RECEIPT_CONTINUATION` (any safe
+most protected negatives are scored by `actualIntent !== SUBSTITUTE_RECEIPT_CONTINUATION` (any safe
 non-substitute route passes, since e.g. a payment voucher may be CLARIFY or MUTATION_REQUEST_REFUSAL);
-every other provider-eligible row is scored against its pinned expected intent. The JSON report emits
-`scored`, `skippedOutageOnly`, `skippedIds`, and per-basis counts so no evidence is overstated. Runner
-load verified (fails at PROVIDER_UNAVAILABLE, i.e. parses/imports cleanly; the pass needs credentials).
+the categories whose exact route the uat-correctness-latency contract pins (`reimbursement`,
+`reimbursement_read`, `ordinary_expense`, `unrelated_expense`) are scored by that pinned intent plus any
+pinned semantic pair, and question/negation/stock/advance rows by `not_command` (never a route that
+starts or mutates); every other provider-eligible row is scored against its pinned expected intent. The
+JSON report emits `scored`, `skippedOutageOnly`, `skippedIds`, and per-basis counts so no evidence is
+overstated. Runner load verified 2026-08-20 (fails at PROVIDER_UNAVAILABLE, i.e. parses/imports cleanly;
+the pass needs credentials) — not re-run after the §14.1 expansion.
 
 Fable FINAL CONDITIONAL review — ALL fixes applied (2026-08-20, Opus 4.8, no deploy):
 - P1-1 DEFAULT-OFF PROMPT/COST: intake prompt is a capability-gated builder `intakeRouterSystemPrompt(caps)`;

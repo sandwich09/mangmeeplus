@@ -5,14 +5,14 @@ import { AuditService } from '../../../audit/application/audit.service';
 import { OutboxAppendService } from '../../../data-model-core/application/services/outbox-append.service';
 import { CreateExpenseDraftUseCase } from './expense-draft.use-case';
 import {
-  validateCaptureHints, deriveTaxEvidence, isLineTextExpenseCaptureEligible, toSourceDocumentType,
+  validateCaptureHints, deriveTaxEvidence, assessLineTextExpenseCapture, toSourceDocumentType,
   LINE_TEXT_NOTE_MISSING_RECEIPT_MARKER,
 } from '../../domain/logic/expense-document.logic';
 import { consumptionWithinTx, type ClarificationConsumption } from '../../../line-ai/application/line-ai-consumption-marker';
 import type { ExpenseRecord } from '../../domain/models/expense.model';
 import type {
-  RequestContext, LineIntakeCaptureHints, CreateExpenseCategoryInput, UpdateExpenseCategoryInput,
-  ExpenseCategorySummary,
+  RequestContext, LineIntakeCaptureHints, LineIntakeClarificationField, CreateExpenseCategoryInput,
+  UpdateExpenseCategoryInput, ExpenseCategorySummary,
 } from '@watchdog-bms/contracts';
 import { todayCivilDate } from '@watchdog-bms/contracts';
 import {
@@ -29,8 +29,15 @@ function hasPerm(ctx: RequestContext, perm: string): boolean {
   return ctx.permissions.includes(perm);
 }
 
+/** Typed incomplete result (spec §8.2). The three field lists are BOUNDED ENUM members only — never raw
+ *  conversation, values or PII — so the dispatcher can ask for exactly what is missing and never re-ask
+ *  for a field the gate already accepted. Defaults keep every legacy `new ...()` call site valid. */
 export class LineTextExpenseCaptureIncompleteError extends BadRequestException {
-  constructor() {
+  constructor(
+    readonly acceptedFields: LineIntakeClarificationField[] = [],
+    readonly missingFields: LineIntakeClarificationField[] = [],
+    readonly conflictingFields: LineIntakeClarificationField[] = [],
+  ) {
     super('LINE text expense capture requires a source-grounded expense purpose or item');
   }
 }
@@ -61,6 +68,10 @@ export class CaptureLineExpenseNoteUseCase {
       lineEventId: string;
       /** Default-off rollout gate. False preserves the proven single-turn capture behavior. */
       draftConversationEnabled?: boolean;
+      /** Phase 1B (spec §8.1): true ONLY when the route the server verified said
+       *  `BUSINESS_EXPENSE` + `COMPANY_PAID`. It is the single switch that lets a grounded
+       *  `businessPurpose` satisfy completeness; default false keeps the exact legacy gate. */
+      semanticBusinessExpenseConfirmed?: boolean;
       /** Bounded hash of the chat this was captured in — a later correction may only target
        *  records captured in the SAME chat. Hash, never the raw LINE/group id. */
       chatKeyHash?: string;
@@ -103,18 +114,26 @@ export class CaptureLineExpenseNoteUseCase {
     }
 
     const activeCategories = await this.repo.listCategories(ctx.companyId);
-    const completeCapture = isLineTextExpenseCaptureEligible(
+    const assessment = assessLineTextExpenseCapture(
       cmd.messageText,
       cmd.captureHints ?? {},
       new Map(activeCategories.map((category) => [category.id, category.name])),
       cmd.groundingTexts,
+      { semanticBusinessExpenseConfirmed: cmd.semanticBusinessExpenseConfirmed === true },
     );
     if (draftConversationEnabled && isClearlyNonExpenseDirection(cmd.messageText)) {
+      // Wrong direction, not a missing field: the generic clarification is the honest answer here.
       throw new LineTextExpenseCaptureIncompleteError();
     }
     const conversationEligible = draftConversationEnabled && isLineExpenseDraftStartEligible(cmd.messageText, cmd.captureHints);
-    if (!completeCapture && !conversationEligible) {
-      throw new LineTextExpenseCaptureIncompleteError();
+    // A conflict is zero-write on BOTH lanes (§8.3 rule 3): the draft conversation would otherwise open a
+    // draft on one of two competing amounts, which is exactly the silent pick the user must resolve. Only
+    // the semantic lane ever reports one, so without `semanticBusinessExpenseConfirmed` this condition is
+    // byte-for-byte the legacy `!eligible && !conversationEligible`.
+    if (assessment.conflictingFields.length > 0 || (!assessment.eligible && !conversationEligible)) {
+      throw new LineTextExpenseCaptureIncompleteError(
+        assessment.acceptedFields, assessment.missingFields, assessment.conflictingFields,
+      );
     }
     const validated = validateCaptureHints(cmd.captureHints ?? {}, new Set(activeCategories.map((c) => c.id)));
 

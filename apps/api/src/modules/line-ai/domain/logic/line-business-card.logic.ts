@@ -169,6 +169,42 @@ export function buildLineAssistantTextCardMessage(
   };
 }
 
+/** Reimbursement intake, step one. Who paid decides the whole flow, so this card asks exactly that and
+ *  nothing else: no link, no amounts, and no model text — the wording is owned here. */
+export function buildReimbursementPayerClarificationMessage(): LineReplyMessage {
+  const text = [
+    'รายการนี้ใครเป็นคนจ่ายคะ?',
+    '• จ่ายเงินส่วนตัวไปก่อน แล้วต้องการเบิกคืนจากบริษัท',
+    '• บริษัทเป็นผู้จ่ายเอง ไม่ต้องเบิกคืน',
+    'พิมพ์ตอบกลับได้เลยค่ะว่า “เบิกคืน” หรือ “บริษัทจ่าย”',
+  ].join('\n');
+  return {
+    type: 'flex',
+    altText: preview(text, 400),
+    contents: bubble({ title: 'น้องมั่งมีขอถามเพิ่ม', text }, undefined, '', []),
+  };
+}
+
+/** Reimbursement intake, step two. Nothing is written from LINE; the web form is the only place the
+ *  record is created, so the badge says so and the one button opens exactly that form — no query, no
+ *  hash, no prefill. An untrusted base or a company id that cannot form a tenant path leaves the card
+ *  without a button rather than with a guessed one. */
+export function buildReimbursementHandoffMessage(webBaseUrl: string | undefined, companyId: string): LineReplyMessage {
+  const text = 'น้องมั่งมียังไม่ได้สร้างรายการเบิกคืนให้นะคะ '
+    + 'กรุณาเปิดหน้าเว็บเพื่อตรวจสอบและกรอกรายละเอียดการเบิกคืนด้วยตนเอง '
+    + 'ระบบจะสร้างรายการเมื่อกดบันทึกในเว็บเท่านั้นค่ะ';
+  return {
+    type: 'flex',
+    altText: preview(text, 400),
+    contents: bubble({
+      title: 'เบิกคืนค่าใช้จ่าย',
+      badge: '📝 ยังไม่ได้สร้างรายการ',
+      text,
+      webLink: { label: 'เปิดกรอกใบเบิกคืนในเว็บ', path: `/companies/${encodeURIComponent(companyId)}/reimbursements/new` },
+    }, webBaseUrl, companyId),
+  };
+}
+
 /** Renderer only: presentation is structured by the trusted gateway; raw model Flex JSON is never accepted. */
 export function buildLineBusinessAnswerMessage(
   response: LineAiTurnResponse,

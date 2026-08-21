@@ -1,5 +1,6 @@
 import type {
-  BusinessDocumentClassification, LineAiValueCandidates, SourceDocumentType, TaxEvidenceStatus, TaxEvidenceReasonCode,
+  BusinessDocumentClassification, LineAiValueCandidates, LineIntakeClarificationField, SourceDocumentType,
+  TaxEvidenceStatus, TaxEvidenceReasonCode,
 } from '@watchdog-bms/contracts';
 import { extractValueCandidates } from '@watchdog-bms/contracts';
 
@@ -97,6 +98,7 @@ export type CaptureHintsInput = {
   amount?: string;
   vatMode?: string;
   expenseCategoryId?: string;
+  businessPurpose?: string;
   confidence?: number;
 };
 
@@ -105,6 +107,7 @@ export type ValidatedCaptureHints = {
   sourceDocumentLanguage: string | null;
   vendorName: string | null;
   description: string | null;
+  businessPurpose: string | null;
   expenseDate: string | null;
   amount: string | null;
   vatMode: 'NO_VAT' | 'VAT_INCLUDED' | 'VAT_EXCLUDED' | 'EXEMPT' | 'NEEDS_REVIEW';
@@ -177,6 +180,7 @@ export function validateCaptureHints(hints: CaptureHintsInput, activeCategoryIds
     sourceDocumentLanguage: language && language.length <= 20 ? language : null,
     vendorName: boundText(hints.vendorName),
     description: boundText(hints.description),
+    businessPurpose: boundText(hints.businessPurpose),
     expenseDate,
     amount,
     vatMode,
@@ -196,12 +200,10 @@ function samePositiveAmount(left: string, right: string): boolean {
 }
 
 /**
- * Final deterministic authority for LINE text-only draft creation.
- *
- * An intake route is advisory. The selected amount must occur in source text and the business
- * purpose must either be an active category or a bounded description copied from source text.
- * `groundingTexts` is limited to exact clarification requests resolved by this turn; ordinary
- * conversation history is never considered evidence.
+ * The PRE-SEMANTIC eligibility rule, kept verbatim. This is what default-off means: the selected amount
+ * must occur anywhere in message + resolved clarifications, and an ACTIVE CATEGORY NAME may stand in for
+ * the business purpose. Both are behaviours §8.1 deliberately removes — but only for the one route the
+ * server verified as BUSINESS_EXPENSE + COMPANY_PAID. Every other caller keeps this gate unchanged.
  */
 export function isLineTextExpenseCaptureEligible(
   messageText: string,
@@ -220,6 +222,114 @@ export function isLineTextExpenseCaptureEligible(
   if (description && comparableText(sourceText).includes(description)) return true;
   const categoryName = validated.expenseCategoryId && activeCategories.get(validated.expenseCategoryId);
   return !!categoryName && comparableText(sourceText).includes(comparableText(categoryName));
+}
+
+/** The versioned EXACT correction grammar (spec §8.3 rule 4). Whitespace is stripped before the
+ *  comparison, so `แก้ยอด เป็น 200 บาท` matches too; it is deliberately a short closed list of value
+ *  corrections and must never grow into a synonym engine for business intent. */
+const EXPLICIT_AMOUNT_CORRECTIONS = [
+  'แก้ยอดเป็น', 'แก้ยอดเงินเป็น', 'แก้ราคาเป็น', 'เปลี่ยนยอดเป็น', 'เปลี่ยนยอดเงินเป็น', 'เปลี่ยนราคาเป็น',
+];
+
+/** The whole whitespace-stripped message must BE the command. Matching the phrase anywhere inside it
+ *  reads the question `ถ้าแก้ยอดเป็น 200 บาทได้ไหม` and the refusal `ไม่แก้ยอดเป็น 200 บาท` as orders to
+ *  replace the amount — the two shapes most likely to appear right after we offer the grammar. Only a
+ *  bare number, an optional currency word, and an optional polite particle may follow the phrase. */
+const EXPLICIT_AMOUNT_CORRECTION_COMMAND = new RegExp(
+  `^(?:${EXPLICIT_AMOUNT_CORRECTIONS.join('|')})\\d[\\d,]*(?:\\.\\d+)?(?:บาท|฿)?(?:นะ)?(?:ครับผม|ครับ|คับ|ค่ะ|คะ|จ้า|จ้ะ|ฮะ)?$`,
+  'u',
+);
+
+/** NFC (not NFKC): NFKC decomposes precomposed Thai vowels and would break these literals. */
+function hasExplicitAmountCorrection(messageText: string): boolean {
+  const compact = normalizeThaiDigits(messageText.normalize('NFC')).replace(/\s+/g, '');
+  return EXPLICIT_AMOUNT_CORRECTION_COMMAND.test(compact);
+}
+
+/** Distinct positive amounts a deterministic parser can see across `segments` — this turn's message and
+ *  each resolved clarification, kept apart on purpose. The currency filter runs PER SEGMENT: inside one
+ *  segment a currency-marked candidate still beats an incidental quantity (`ค่ากาแฟ 2 แก้ว 65 บาท` is one
+ *  amount), but a `บาท` typed this turn must never silence a bare `60` from an earlier one, or the
+ *  two-amount conflict the user has to resolve would resolve itself silently. */
+function distinctSourceAmounts(...segments: string[]): number[] {
+  const values = segments.filter(Boolean).flatMap((segment) => {
+    const { amounts }: LineAiValueCandidates = extractValueCandidates(segment);
+    const monetary = amounts.filter((candidate) => candidate.currencyToken);
+    return (monetary.length > 0 ? monetary : amounts)
+      .map((candidate) => toPositiveNumber(candidate.value))
+      .filter((value): value is number => value !== null);
+  });
+  return [...new Set(values)];
+}
+
+/** Bounded, enum-only completeness verdict — it carries field NAMES, never conversation text or values. */
+export type LineTextExpenseCaptureAssessment = {
+  eligible: boolean;
+  acceptedFields: LineIntakeClarificationField[];
+  missingFields: LineIntakeClarificationField[];
+  conflictingFields: LineIntakeClarificationField[];
+};
+
+/**
+ * Final deterministic authority for LINE text-only draft creation.
+ *
+ * DEFAULT-OFF IS THE LEGACY RULE, not a softened version of the new one. Without
+ * `semanticBusinessExpenseConfirmed` — the server-verified BUSINESS_EXPENSE + COMPANY_PAID route — this
+ * delegates to {@link isLineTextExpenseCaptureEligible} unchanged and reports NO typed fields, so the
+ * dispatcher falls back to the exact previous clarification copy.
+ *
+ * Only that one verified route activates the §8.1–8.2 rules:
+ * - the model-selected amount must equal the ONE distinct amount THIS message states. Resolved
+ *   clarifications are VETO evidence only (a prior `60` beside a new `200` is a conflict the user must
+ *   resolve) — they are never positive authority for a financial write, because Redis clarification text
+ *   has no durable neutral state behind it yet;
+ * - the purpose must be a bounded `description` or `businessPurpose` copied from THIS message (the buffer
+ *   already joined a multi-bubble turn into it). An active category name is a classification, not a
+ *   purpose, and can no longer stand in for one.
+ */
+export function assessLineTextExpenseCapture(
+  messageText: string,
+  hints: CaptureHintsInput,
+  activeCategories: ReadonlyMap<string, string>,
+  groundingTexts: string[] = [],
+  options: { semanticBusinessExpenseConfirmed?: boolean } = {},
+): LineTextExpenseCaptureAssessment {
+  if (options.semanticBusinessExpenseConfirmed !== true) {
+    return {
+      eligible: isLineTextExpenseCaptureEligible(messageText, hints, activeCategories, groundingTexts),
+      acceptedFields: [], missingFields: [], conflictingFields: [],
+    };
+  }
+
+  const validated = validateCaptureHints(hints, new Set(activeCategories.keys()));
+  const acceptedFields: LineIntakeClarificationField[] = [];
+  const missingFields: LineIntakeClarificationField[] = [];
+  const conflictingFields: LineIntakeClarificationField[] = [];
+
+  // An explicit correction makes THIS message the only amount evidence, so the amount it replaces stops
+  // competing. Anything less explicit keeps both and lands in `conflictingFields` below.
+  const messageAmounts = distinctSourceAmounts(messageText);
+  const vetoCandidates = hasExplicitAmountCorrection(messageText) && messageAmounts.length === 1
+    ? messageAmounts
+    : distinctSourceAmounts(messageText, ...groundingTexts);
+  const selectedAmount = toPositiveNumber(validated.amount ?? undefined);
+  if (selectedAmount === null) missingFields.push('amount');
+  else if (vetoCandidates.length > 1) conflictingFields.push('amount');
+  else if (messageAmounts.length === 1 && messageAmounts[0] === selectedAmount) acceptedFields.push('amount');
+  else missingFields.push('amount');
+
+  const comparableMessage = comparableText(messageText);
+  const isGrounded = (value: string | null): boolean => !!value && comparableMessage.includes(comparableText(value));
+  if (isGrounded(validated.description)) acceptedFields.push('description');
+  else if (isGrounded(validated.businessPurpose)) acceptedFields.push('purpose');
+  else missingFields.push('description', 'purpose');
+
+  return {
+    eligible: missingFields.length === 0 && conflictingFields.length === 0,
+    acceptedFields,
+    missingFields,
+    conflictingFields,
+  };
 }
 
 function toPositiveNumber(value: string | undefined): number | null {

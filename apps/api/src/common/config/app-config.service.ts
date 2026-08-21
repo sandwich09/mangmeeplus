@@ -77,6 +77,12 @@ export class AppConfigService {
   get lineAiPreparedSimpleReadEnabled(): boolean { return this.config.LINE_AI_PREPARED_SIMPLE_READ_ENABLED; }
   // Substitute-receipt semantic routing mode (default 'off' = exact legacy regex-first behavior).
   get lineAiSubstituteSemanticRoutingMode(): 'off' | 'shadow' | 'primary' { return this.config.LINE_AI_SUBSTITUTE_SEMANTIC_ROUTING_MODE; }
+  // Expense-vs-reimbursement semantic intake mode (default 'off' = exact legacy intake prompt/parser).
+  get lineAiReimbursementSemanticMode(): 'off' | 'shadow' | 'clarify_only' | 'handoff' { return this.config.LINE_AI_REIMBURSEMENT_SEMANTIC_MODE; }
+  // Exact standalone greeting 0-call lane (default false = exact legacy three-call greeting path).
+  get lineAiExactGreetingEnabled(): boolean { return this.config.LINE_AI_EXACT_GREETING_ENABLED; }
+  // Terminal Flex card on a multi-part reply (default false = exact legacy all-text multi-part shape).
+  get lineAiMultipartTerminalFlexEnabled(): boolean { return this.config.LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED; }
   get lineExpenseDraftConversationEnabled(): boolean { return this.config.LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED; }
   // Item 10F: LINE AI turn ledger (Redis Streams; ADR 0010)
   get redisUrl(): string { return this.config.REDIS_URL; }

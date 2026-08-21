@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { deriveTaxEvidence, validateCaptureHints, isExpenseExtractionEligible, toSourceDocumentType } from './expense-document.logic';
+import { deriveTaxEvidence, validateCaptureHints, isExpenseExtractionEligible, toSourceDocumentType, assessLineTextExpenseCapture } from './expense-document.logic';
 import { buildAccountantIndexRow, buildAccountantIndexCsv, buildAccountantIndexXlsx, buildManifestEntry, accountingPeriod } from './expense-export.logic';
 import { ACCOUNTANT_INDEX_COLUMNS, ACCOUNTANT_INDEX_SUMMARY_COLUMNS, type ExpenseAttachmentRef } from '@watchdog-bms/contracts';
 
@@ -177,6 +177,133 @@ describe('validateCaptureHints', () => {
     assert.equal(result.vatMode, 'NEEDS_REVIEW');
     assert.equal(result.sourceDocumentType, 'NEEDS_REVIEW');
     assert.ok(result.warnings.includes('unknown_source_document_type'));
+  });
+});
+
+describe('assessLineTextExpenseCapture', () => {
+  const categories = new Map([['cat-travel', 'ค่าเดินทาง'], ['cat-meals', 'ค่าอาหาร']]);
+  const assess = (
+    messageText: string,
+    hints: Parameters<typeof assessLineTextExpenseCapture>[1],
+    groundingTexts: string[] = [],
+    semanticBusinessExpenseConfirmed = false,
+  ) => assessLineTextExpenseCapture(messageText, hints, categories, groundingTexts, { semanticBusinessExpenseConfirmed });
+
+  // The UAT message as an ordinary company-spend note. It must NOT start with `เบิก…`: a claim to be
+  // paid back is REIMBURSEMENT_REQUEST_START and leaves this route entirely, so it can never reach the
+  // BUSINESS_EXPENSE + COMPANY_PAID guard these cases exercise. The purpose the model understood lives
+  // in businessPurpose, not description.
+  const UAT_MESSAGE = 'ค่ารถวินมอไซต์ 60 บาท ไปพบลูกค้า';
+  const UAT_HINTS = { amount: '60', businessPurpose: 'ไปพบลูกค้า', expenseCategoryId: 'cat-travel' };
+
+  it('accepts a grounded businessPurpose only behind the semantic guard', () => {
+    const guarded = assess(UAT_MESSAGE, UAT_HINTS, [], true);
+    assert.equal(guarded.eligible, true);
+    assert.deepEqual(guarded.acceptedFields, ['amount', 'purpose']);
+    assert.deepEqual(guarded.missingFields, []);
+  });
+
+  it('rejects the same grounded businessPurpose when the route was not verified as company-paid business spend', () => {
+    const unguarded = assess(UAT_MESSAGE, UAT_HINTS);
+    assert.equal(unguarded.eligible, false);
+    // Default-off is the LEGACY gate, which has no field vocabulary at all: it reports no accepted,
+    // missing or conflicting field, so the dispatcher asks the exact previous generic question.
+    assert.deepEqual(unguarded.acceptedFields, []);
+    assert.deepEqual(unguarded.missingFields, []);
+    assert.deepEqual(unguarded.conflictingFields, []);
+  });
+
+  it('never lets an active category name stand in for a purpose', () => {
+    // The category name is present verbatim in the text and the id is active; §8.1 still says no.
+    const result = assess('ค่าเดินทาง 200 บาท', { amount: '200', expenseCategoryId: 'cat-travel' }, [], true);
+    assert.equal(result.eligible, false);
+    assert.deepEqual(result.missingFields, ['description', 'purpose']);
+  });
+
+  it('DEFAULT-OFF keeps the legacy category-as-purpose capture the same input is refused for when on', () => {
+    // The one behaviour §8.1 removes. Off, the active category name found verbatim in the text IS the
+    // purpose and the draft is created exactly as it always was — the new rule ships with its own flag.
+    const legacy = assess('ค่าเดินทาง 200 บาท', { amount: '200', expenseCategoryId: 'cat-travel' });
+    assert.equal(legacy.eligible, true);
+    assert.deepEqual(legacy.acceptedFields, []);
+  });
+
+  it('DEFAULT-OFF still grounds an amount in the resolved clarification, and two amounts are not a conflict', () => {
+    // Legacy searched message + grounding as ONE text and never compared amount counts. Both properties
+    // are load-bearing for turns already in flight, so neither may change while the flag is off.
+    const carried = assess('ไปพบลูกค้า', { amount: '60', description: 'ไปพบลูกค้า' }, ['ค่ารถวิน 60 บาท']);
+    assert.equal(carried.eligible, true);
+    const twoAmounts = assess('ค่าเดินทาง 200 บาท', { amount: '200', description: 'ค่าเดินทาง' }, ['ค่ารถวิน 60 บาท']);
+    assert.equal(twoAmounts.eligible, true);
+    assert.deepEqual(twoAmounts.conflictingFields, []);
+  });
+
+  it('asks for the amount instead of writing one carried only by an earlier clarification', () => {
+    // §8.1 + the Redis-authority rule: the purpose typed THIS turn is accepted, but the `60` that exists
+    // only in a prior clarification is not write authority while no durable neutral state backs it.
+    const result = assess('ไปพบลูกค้า', { amount: '60', businessPurpose: 'ไปพบลูกค้า' }, ['ค่ารถวิน 60 บาท'], true);
+    assert.equal(result.eligible, false);
+    assert.deepEqual(result.acceptedFields, ['purpose'], 'the purpose is not asked for again');
+    assert.deepEqual(result.missingFields, ['amount']);
+    assert.deepEqual(result.conflictingFields, []);
+  });
+
+  it('reports a conflict — and creates nothing — when a follow-up amount does not say it is a correction', () => {
+    const result = assess('ค่าเดินทาง 200 บาท', { amount: '200', description: 'ค่าเดินทาง' }, ['ค่ารถวิน 60 บาท'], true);
+    assert.equal(result.eligible, false);
+    assert.deepEqual(result.conflictingFields, ['amount']);
+    assert.deepEqual(result.missingFields, [], 'the purpose is grounded; only the amount is unresolved');
+  });
+
+  it('lets the exact correction grammar clear the amount conflict, and still writes nothing without a purpose in it', () => {
+    const result = assess('แก้ยอดเป็น 200 บาท', { amount: '200', description: 'ค่ารถวิน' }, ['ค่ารถวิน 60 บาท'], true);
+    assert.deepEqual(result.conflictingFields, [], 'the correction resolves which amount is meant');
+    assert.deepEqual(result.acceptedFields, ['amount']);
+    // The description it would be written under exists ONLY in the earlier clarification, so the
+    // correction is zero-write in this release too — it asks rather than reviving Redis text as authority.
+    assert.equal(result.eligible, false);
+    assert.deepEqual(result.missingFields, ['description', 'purpose']);
+  });
+
+  // The two shapes a user is most likely to type right after we offer the grammar. Neither orders the
+  // change, so both amounts must stay on the table.
+  it('treats a question about the correction grammar — and a refusal — as no correction at all', () => {
+    for (const text of ['ถ้าแก้ยอดเป็น 200 บาทได้ไหม', 'ไม่แก้ยอดเป็น 200 บาท']) {
+      const result = assess(text, { amount: '200', description: 'ค่ารถวิน' }, ['ค่ารถวิน 60 บาท'], true);
+      assert.equal(result.eligible, false, text);
+      assert.deepEqual(result.conflictingFields, ['amount'], text);
+    }
+  });
+
+  // Judged over the joined text, `บาท` on the new 200 would have filtered the bare 60 out of the
+  // candidate set — one amount left, no conflict, draft created silently at the wrong figure.
+  it('still conflicts when only the newer amount carries a currency word', () => {
+    const result = assess('ค่าเดินทาง 200 บาท', { amount: '200', description: 'ค่าเดินทาง' }, ['ค่ารถวิน 60'], true);
+    assert.equal(result.eligible, false);
+    assert.deepEqual(result.conflictingFields, ['amount']);
+    assert.deepEqual(result.missingFields, []);
+  });
+
+  it('rejects a model amount that no deterministic candidate supports', () => {
+    const result = assess('ค่ารถวิน 60 บาท ไปพบลูกค้า', { amount: '600', businessPurpose: 'ไปพบลูกค้า' }, [], true);
+    assert.equal(result.eligible, false);
+    assert.deepEqual(result.missingFields, ['amount']);
+    assert.deepEqual(result.acceptedFields, ['purpose']);
+  });
+
+  it('ignores an incidental quantity beside the one currency-marked total', () => {
+    const result = assess('ค่ากาแฟ 2 แก้ว 65 บาท', { amount: '65', description: 'ค่ากาแฟ' }, [], true);
+    assert.equal(result.eligible, true);
+    assert.deepEqual(result.conflictingFields, []);
+  });
+
+  it('a multi-bubble turn is ONE message, so both bubbles ground the write', () => {
+    // The buffer joins bubbles with a newline before the route runs, so the amount and the purpose are
+    // both "this message" — the current-turn rule bounds Redis history, not the user's own turn.
+    const result = assess('ค่าเดินทาง 200 บาท\nวัตถุประสงค์ไปพบลูกค้า',
+      { amount: '200', businessPurpose: 'ไปพบลูกค้า' }, [], true);
+    assert.equal(result.eligible, true);
+    assert.deepEqual(result.acceptedFields, ['amount', 'purpose']);
   });
 });
 
