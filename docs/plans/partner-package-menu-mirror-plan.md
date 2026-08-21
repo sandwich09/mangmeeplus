@@ -1,6 +1,6 @@
 # Plan: แพ็กเกจการใช้งาน = กระจกของเมนูบริษัท
 
-Status: READY FOR IMPLEMENTATION
+Status: IMPLEMENTED AND VERIFIED — starter-preset follow-up complete (2026-08-21)
 Spec: `docs/specs/partner-package-menu-mirror-spec.md` (อ่านก่อนเริ่ม — ตารางผูกเมนูอยู่ §5 กติกาอยู่ §3/§6/§7)
 Owner: Claude (harness engineer) → Codex (implementation)
 Scope: `packages/contracts` + `apps/api` (gate, helper, registry, bundle, backfill script) + `apps/web` (nav gate 1 จุด, logic, UI)
@@ -48,6 +48,11 @@ Scope: `packages/contracts` + `apps/api` (gate, helper, registry, bundle, backfi
     - ส่วน "การทำงานเบื้องหลัง" สำหรับ `expense_auto_post` (คง error COA readiness เดิม)
     - `fieldsLocked` ล็อกทุกอย่างเหมือนเดิม
 13. `docs/agent-memory/partner-package-menu-mirror.md` ตามเทมเพลต + บันทึกขั้นตอน deploy (backfill + permission sync)
+
+## Follow-up — สิทธิ์เริ่มต้น 2026-08-21
+
+14. ลด preset `starter` ให้เหลือ 7 เมนูตามภาพที่ owner อนุมัติ โดยคง `standard` และ `full` ไว้เท่าเดิม
+15. เพิ่ม regression check ว่ากด preset แล้วเห็น 7 เมนูตามชุดนี้ โดยไม่เปลี่ยน onboarding/default entitlement หรือ tax background behavior
 
 ## Verification protocol (harness รันซ้ำเองทั้งหมด — ไม่เชื่อรายงาน)
 

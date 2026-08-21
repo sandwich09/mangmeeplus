@@ -159,8 +159,8 @@ toggleMenu(state, binding, next) -> changes: Array<{featureKey, enabled}>
 
 | preset | ประกอบด้วย |
 |---|---|
-| `starter` เริ่มต้น | `dashboard_notifications`, `expenses`, `expenses.list`, `expenses.upload`, `expenses.manual`, `expenses.categories`, `expenses.evidence`, `expenses.substitute_receipt`, `reimbursement`, `crm`, `crm.inbox`, `crm.customers`, `product_catalog`, `line_oa`, `ai_line_assistant`, `employee_access`, `employee_access.employees`, `employee_access.roles`, `employee_access.overview`, `company_settings`, `company_settings.branches`, `company_settings.security` |
-| `standard` มาตรฐาน | ทุก key ของ starter + `sales_documents`, `thai_tax`, `double_entry_ledger`, `reports`, `crm.overview`, `crm.leads`, `crm.pipeline`, `crm.followups`, `crm.bookings`, `inventory` |
+| `starter` เริ่มต้น | `dashboard_notifications`, `expenses`, `expenses.list`, `expenses.upload`, `expenses.manual`, `expenses.categories`, `expenses.evidence`, `expenses.signatures`, `reimbursement`, `ai_line_assistant`, `employee_access`, `employee_access.employees`, `employee_access.roles`, `employee_access.overview`, `company_settings`, `company_settings.branches`, `company_settings.security` — แสดง 7 เมนู: แดชบอร์ด, AI แนะนำ, ค่าใช้จ่ายและใบเสร็จ, การเบิกจ่าย, พนักงานและสิทธิ์, ตั้งค่าบริษัท, การแจ้งเตือน |
+| `standard` มาตรฐาน | ทุก key ของ starter + `crm`, `crm.inbox`, `crm.customers`, `product_catalog`, `line_oa`, `sales_documents`, `thai_tax`, `double_entry_ledger`, `reports`, `crm.overview`, `crm.leads`, `crm.pipeline`, `crm.followups`, `crm.bookings`, `inventory` |
 | `full` ครบวงจร | ทุก key **ยกเว้น** `expense_auto_post` (ต้องผ่าน COA readiness ก่อน จึงเปิดเองเท่านั้น) |
 
 กด preset = เตรียมค่าลงสถานะที่ยังไม่บันทึก (ไม่ยิง API ทันที) แล้วผู้ใช้ปรับต่อได้
