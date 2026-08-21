@@ -14,6 +14,7 @@ import {
   LINE_AI_DEBOUNCE_COHORTS_MS,
   LINE_BUFFER_MAX_ITEMS,
   LINE_BUFFER_MAX_TEXT_CHARS,
+  LINE_MEDIA_RECEIVED_TEXT,
 } from './line-message-buffer.logic';
 import type { LineBufferItem, LineBufferTextItem, LineBufferMediaItem } from './line-message-buffer.logic';
 
@@ -79,9 +80,9 @@ describe('sortBatchItems', () => {
 });
 
 describe('nextFlushDelayMs', () => {
-  const timing = { debounceMs: 2500, maxWaitMs: 8000 };
+  const timing = { debounceMs: 2000, maxWaitMs: 8000 };
   it('uses the debounce window while max wait is far away', () => {
-    assert.equal(nextFlushDelayMs(10_000, 10_000, timing), 2500);
+    assert.equal(nextFlushDelayMs(10_000, 10_000, timing), 2000);
   });
   it('caps at the remaining max wait anchored to the FIRST item', () => {
     assert.equal(nextFlushDelayMs(10_000, 17_000, timing), 1000);
@@ -122,17 +123,22 @@ describe('capacity rules', () => {
   });
 });
 
-describe('lineWaitStatusText', () => {
-  it('selects one waiting line from the request situation', () => {
-    assert.match(lineWaitStatusText('ช่วยทำรายงานยอดขาย'), /จัดเตรียมรายงาน/);
-    assert.match(lineWaitStatusText('สรุปค่าใช้จ่ายเดือนนี้'), /สรุปข้อมูล/);
-    assert.match(lineWaitStatusText('เปรียบเทียบยอดขายสองสาขา'), /เปรียบเทียบข้อมูล/);
-    assert.match(lineWaitStatusText('ยอดรวมทั้งหมดเท่าไหร่'), /คำนวณตัวเลข/);
-    assert.match(lineWaitStatusText('วิเคราะห์แนวโน้มสินค้า'), /วิเคราะห์ข้อมูล/);
-    assert.match(lineWaitStatusText('ค้นข้อมูลเอกสารเลขที่ 123'), /ค้นข้อมูล/);
-    assert.match(lineWaitStatusText('ขอดูสถานะใบแจ้งหนี้'), /ตรวจสอบข้อมูลในระบบ/);
-    assert.match(lineWaitStatusText('เล่าเรื่องสนุกให้ฟังหน่อย'), /ขอคิดสักครู่/);
-    assert.match(lineWaitStatusText('', 'media'), /ตรวจสอบเอกสาร/);
+describe('waiting feedback microcopy', () => {
+  it('keeps the receipt acknowledgement truthful', () => {
+    assert.match(LINE_MEDIA_RECEIVED_TEXT, /ได้รับรูปแล้ว.*คุยกับน้องต่อได้เลย/);
+  });
+
+  it('selects relevant copy and varies repeated generic turns deterministically', () => {
+    assert.match(lineWaitStatusText('ขอดูบัญชีเดือนนี้', 'turn-1'), /ตรวจสอบ|เช็กข้อมูล/);
+    assert.match(lineWaitStatusText('ช่วยเปรียบเทียบยอดขาย', 'turn-2'), /เปรียบเทียบ|ความต่าง/);
+
+    const repeated = new Set(Array.from(
+      { length: 12 },
+      (_, index) => lineWaitStatusText('ขอบคุณนะ', `turn-${index}`),
+    ));
+    assert.ok(repeated.size > 1, 'repeated generic turns do not show one fixed sentence forever');
+    assert.equal(lineWaitStatusText('ขอบคุณนะ', 'same-turn'), lineWaitStatusText('ขอบคุณนะ', 'same-turn'));
+    assert.equal([...repeated].some((status) => status.includes('ขอคิดสักครู่')), false);
   });
 });
 
@@ -166,12 +172,12 @@ describe('buildLineAiApiTrace', () => {
 });
 
 describe('debounceCohortMs', () => {
-  const base = { secret: 'experiment-secret', assignmentKey: 'co-1:chat-1', configuredMs: 2_500 };
+  const base = { secret: 'experiment-secret', assignmentKey: 'co-1:chat-1', configuredMs: 2_000 };
 
   it('returns the configured debounce when the experiment is off, has no secret, or has no key', () => {
-    assert.equal(debounceCohortMs({ ...base, enabled: false }), 2_500);
-    assert.equal(debounceCohortMs({ ...base, enabled: true, secret: undefined }), 2_500);
-    assert.equal(debounceCohortMs({ ...base, enabled: true, assignmentKey: '' }), 2_500);
+    assert.equal(debounceCohortMs({ ...base, enabled: false }), 2_000);
+    assert.equal(debounceCohortMs({ ...base, enabled: true, secret: undefined }), 2_000);
+    assert.equal(debounceCohortMs({ ...base, enabled: true, assignmentKey: '' }), 2_000);
     assert.equal(debounceCohortMs({ enabled: false, secret: undefined, assignmentKey: '', configuredMs: 0 }), 0);
   });
 
@@ -188,8 +194,8 @@ describe('debounceCohortMs', () => {
   });
 
   it('depends on the secret, so a rotated secret reshuffles assignment', () => {
-    const withA = new Set(Array.from({ length: 200 }, (_, i) => debounceCohortMs({ enabled: true, secret: 'secret-a', assignmentKey: `co:${i}`, configuredMs: 2_500 })));
-    const withB = new Set(Array.from({ length: 200 }, (_, i) => debounceCohortMs({ enabled: true, secret: 'secret-b', assignmentKey: `co:${i}`, configuredMs: 2_500 })));
+    const withA = new Set(Array.from({ length: 200 }, (_, i) => debounceCohortMs({ enabled: true, secret: 'secret-a', assignmentKey: `co:${i}`, configuredMs: 2_000 })));
+    const withB = new Set(Array.from({ length: 200 }, (_, i) => debounceCohortMs({ enabled: true, secret: 'secret-b', assignmentKey: `co:${i}`, configuredMs: 2_000 })));
     // Both secrets exercise every cohort; the point is the mapping is keyed on the secret, not fixed.
     assert.equal(withA.size, LINE_AI_DEBOUNCE_COHORTS_MS.length);
     assert.equal(withB.size, LINE_AI_DEBOUNCE_COHORTS_MS.length);
@@ -198,7 +204,7 @@ describe('debounceCohortMs', () => {
   it('spreads a population of keys across all three concurrent cohorts', () => {
     const counts = new Map<number, number>();
     for (let i = 0; i < 3_000; i += 1) {
-      const ms = debounceCohortMs({ enabled: true, secret: 'experiment-secret', assignmentKey: `co-1:chat-${i}`, configuredMs: 2_500 });
+      const ms = debounceCohortMs({ enabled: true, secret: 'experiment-secret', assignmentKey: `co-1:chat-${i}`, configuredMs: 2_000 });
       counts.set(ms, (counts.get(ms) ?? 0) + 1);
     }
     for (const cohort of LINE_AI_DEBOUNCE_COHORTS_MS) {

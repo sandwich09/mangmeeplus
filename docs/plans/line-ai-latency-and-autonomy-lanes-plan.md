@@ -14,7 +14,7 @@ execute at the real orchestrator+ERP boundary. One compiled family
 (`sales.get_sales_summary::single_metric`) is real but default-off. The producer CODE + PROMPT are
 implemented (the intake prompt instructs the bounded prepared-plan schema + omission gates, prompt-contract
 tested). Still evidence-gated, not code: configured-provider QUALITY of emitted plans, Phase 5 family
-enablement (blind pairwise eval), and Phase 6 live wiring (measured latency/cost). Every new flag defaults off and the effective 2,500 ms / processing-start-
+enablement (blind pairwise eval), and Phase 6 live wiring (measured latency/cost). Every new flag defaults off and the effective 2,000 ms / processing-start-
 loading path is unchanged when off. No behavior enablement, hosted baseline/cohort/shadow, full-flow/
 provider evidence, or deployment has been performed. The user selected 1,000 ms as the primary experiment
 candidate. Live implementation state lives in [[../agent-memory/line-ai-latency-and-autonomy-lanes|the task memory]].
@@ -27,7 +27,7 @@ candidate. Live implementation state lives in [[../agent-memory/line-ai-latency-
 
 ## Objective
 
-Evaluate **1,000 ms** and **1,500 ms** buffer candidates against the 2,500 ms baseline, select the
+Evaluate **1,000 ms** and **1,500 ms** buffer candidates against the 2,000 ms baseline, select the
 smallest safe value, make 1:1 waiting feedback start after durable acceptance, and reduce eligible
 simple business reads to one Sonnet model call while preserving the current full agentic, capture,
 security, grounding, and audit paths.
@@ -61,7 +61,7 @@ Exit: hosted baseline identifies the full waterfall without raw message text or 
 - Reuse that in processing so loading cannot race after the final reply.
 - Anchor the long-wait timer to accepted time; atomically cancel before it starts, bound any started
   status attempt, order it before final, and restart loading after a successful status when useful.
-- Collect 1,000 ms, 1,500 ms, and the implemented 2,500 ms control concurrently. Keep 750 ms as an
+- Collect 1,000 ms, 1,500 ms, and the implemented 2,000 ms control concurrently. Keep 750 ms as an
   offline lower-bound fixture until 1,000 ms is safe.
 - Change the config default and buffering spec/test expectations only after the cohort decision.
 - Keep max wait 8,000 ms, command fast path, serialization, caps, and group behavior unchanged.
@@ -210,7 +210,9 @@ Exit: retain only experiments with measured latency/cost wins and no protected-j
 
 1. Trace-only baseline.
 2. Loading-on-accept 5% -> 25% -> 100%.
-3. Collect concurrent 1,000/1,500/2,500 ms cohorts and apply the predeclared 1,000-first selection.
+3. Start a fresh measurement window after the 2,000 ms default deploy; collect concurrent
+   1,000/1,500/2,000 ms cohorts and apply the predeclared 1,000-first selection. Never combine the
+   earlier 2,500 ms observations with this window.
 4. Fused-plan shadow.
 5. Prepared simple lane 5% -> 25% -> 50% -> 100% per eligible family.
 6. Deterministic formatter families individually.
@@ -227,5 +229,5 @@ the old path restored by each flag in config tests before any canary.
 - Performance/quality rollback: wrong-tool >0.5 point worse, grounded accuracy >1 point worse,
   split-turn/duplicate-answer >0.5 point worse, re-ask/fallback >10% relative worse, or
   protected-journey p95/cost >10% worse. A simple-read p95 above 8 seconds also fails even if it beats
-  the 2,500 ms control.
+  the 2,000 ms control.
 - No schema/data rollback is required by the primary plan.

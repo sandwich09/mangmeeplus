@@ -4,7 +4,7 @@
 
 Implemented and verified on 2026-07-05 (all three phases, shipped together after owner approved the 3 open questions: OA redelivery is enabled, +≤2.5 s default latency accepted, push-fallback quota accepted).
 
-Historical implementation note: the running code still defaults to 2,500 ms. The proposed follow-up
+Current implementation note: the running code defaults to 2,000 ms. The follow-up evaluation
 compares 1,000 ms and 1,500 ms candidates plus loading after durable acceptance; see
 [[plans/line-ai-latency-and-autonomy-lanes-plan|LINE AI Latency and Autonomy Lanes Plan]].
 
@@ -18,7 +18,7 @@ Implementation evidence: [[agent-memory/line-ai-message-buffering|Agent Memory: 
 ## Purpose
 
 1. Fix today's concurrency bugs: parallel processing of same-delivery events (misordered replies, context races) and webhook ack delayed behind the 15 s AI call.
-2. Add per-chat message buffering (debounce 2.5 s / max-wait 8 s) so multi-bubble utterances become one AI turn, including media + caption.
+2. Add per-chat message buffering (debounce 2.0 s / max-wait 8 s) so multi-bubble utterances become one AI turn, including media + caption.
 3. Make delayed replies deliverable (push fallback) and deploys lossless (shutdown flush).
 
 ## Phase 1 — Ack-fast + per-chat serialization
@@ -33,7 +33,7 @@ Implementation evidence: [[agent-memory/line-ai-message-buffering|Agent Memory: 
 
 ## Phase 2 — Debounce buffering + segmentation + media caption
 
-- [x] Debounce (default 2500 ms) / max-wait anchored at first bubble (default 8000 ms) / caps 20 items / 4000 chars; env via `@watchdog-bms/config` schema + `AppConfigService` getters.
+- [x] Debounce (default 2000 ms) / max-wait anchored at first bubble (default 8000 ms) / caps 20 items / 4000 chars; env via `@watchdog-bms/config` schema + `AppConfigService` getters.
 - [x] Text joined with `\n`; synthesized event carries the LAST bubble's id/token; items sorted by LINE timestamp (arrival seq tie-break).
 - [x] `executeReceiptUpload(event, captionText?)` → caption feeds `tryRouteIntake.messageText` (was hardcoded `''`); caption included in intake-turn memory previews.
 - [x] Mixed-group rules incl. `BUSINESS_READ_QUESTION`/`UNSUPPORTED` + caption → `defer_text` outcome (media log status `caption_deferred_to_text`, caller runs the text turn).
@@ -56,7 +56,7 @@ Implementation evidence: [[agent-memory/line-ai-message-buffering|Agent Memory: 
 
 ## Post-deploy checks (manual, dev OA)
 
-1. Type `ขอ` / `รายชื่อ` / `ลูกค้า` quickly → single coherent reply after ~2.5 s.
+1. Type `ขอ` / `รายชื่อ` / `ลูกค้า` quickly → single coherent reply after ~2.0 s.
 2. Send a receipt photo then `บันทึกค่าใช้จ่าย` within the window → one draft whose intake route saw the caption.
 3. `/companies` while idle → replies as fast as before.
 4. Watch logs for `line_push_fallback_used` (quota) and `LINE buffer overflow` (flood) counters.

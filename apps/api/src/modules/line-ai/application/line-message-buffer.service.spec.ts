@@ -30,12 +30,13 @@ function makeHarness(opts: {
   debounceExperimentEnabled?: boolean;
   debounceExperimentSecret?: string;
   executeImpl?: (event: any) => Promise<void>;
+  receiptImpl?: (event: any, caption?: string) => Promise<{ outcome: 'done' | 'defer_text' }>;
   receiptOutcomes?: Array<'done' | 'defer_text'>;
   replyResult?: 'ok' | 'failed_token' | 'failed_other' | 'skipped';
   pushResult?: 'ok' | 'failed_token' | 'failed_other' | 'skipped';
   eventStoreUnavailable?: boolean;
   legalAcceptanceRequired?: boolean;
-  preflightImpl?: (event: { lineUserId: string; messagingChannelId?: string }) => Promise<{ status: 'continue'; companyId?: string } | { status: 'required'; companyId: string }>;
+  preflightImpl?: (event: { lineUserId: string; messagingChannelId?: string; companyIdAtAcceptance?: string }) => Promise<{ status: 'continue'; companyId?: string } | { status: 'required'; companyId: string }>;
 } = {}) {
   const rows = new Map<string, Row>();
   const executed: any[] = [];
@@ -46,7 +47,7 @@ function makeHarness(opts: {
   const loadingCalls: string[] = [];
   const auditLogs: any[] = [];
   const serviceLogs: any[] = [];
-  const preflightCalls: Array<{ lineUserId: string; messagingChannelId?: string }> = [];
+  const preflightCalls: Array<{ lineUserId: string; messagingChannelId?: string; companyIdAtAcceptance?: string }> = [];
   let receiptCall = 0;
 
   const prisma = {
@@ -123,7 +124,7 @@ function makeHarness(opts: {
   } as any;
 
   const useCase = {
-    preflightLegalAcceptance: async (event: { lineUserId: string; messagingChannelId?: string }) => {
+    preflightLegalAcceptance: async (event: { lineUserId: string; messagingChannelId?: string; companyIdAtAcceptance?: string }) => {
       preflightCalls.push(event);
       if (opts.preflightImpl) return opts.preflightImpl(event);
       return opts.legalAcceptanceRequired
@@ -136,6 +137,7 @@ function makeHarness(opts: {
     },
     executeReceiptUpload: async (event: any, caption?: string) => {
       receipts.push({ event, caption });
+      if (opts.receiptImpl) return opts.receiptImpl(event, caption);
       const outcome = opts.receiptOutcomes?.[receiptCall] ?? 'done';
       receiptCall += 1;
       return { outcome };
@@ -450,6 +452,89 @@ describe('LineMessageBufferService – commands', () => {
 });
 
 describe('LineMessageBufferService – media and captions', () => {
+  it('keeps normal chat responsive while an uncaptioned receipt is still in OCR', async () => {
+    let releaseReceipt!: () => void;
+    const receiptGate = new Promise<void>((resolve) => { releaseReceipt = resolve; });
+    const h = makeHarness({
+      debounceMs: 0,
+      loadingEnabled: false,
+      preflightImpl: async () => ({ status: 'continue', companyId: 'company-at-acceptance' }),
+      receiptImpl: async () => {
+        await receiptGate;
+        return { outcome: 'done' };
+      },
+    });
+
+    await h.service.enqueue(mediaEnv('slow-receipt'));
+    await sleep(20);
+    assert.equal(h.receipts.length, 1);
+    assert.equal(h.receipts[0]?.event.companyIdAtAcceptance, 'company-at-acceptance');
+    assert.equal(
+      (h.rows.get('slow-receipt')?.payloadJson as any)?.item?.companyIdAtAcceptance,
+      'company-at-acceptance',
+      'orphan replay preserves the accepted tenant snapshot',
+    );
+    assert.match(h.pushes[0]?.text ?? '', /ได้รับรูปแล้ว.*คุยกับน้องต่อได้เลย/);
+
+    await h.service.enqueue(textEnv('while-ocr', 'ติดต่อเรา'));
+    await sleep(20);
+    assert.equal(h.executed.length, 1, 'later command must not wait for OCR');
+    assert.equal(h.executed[0]?.messageText, 'ติดต่อเรา');
+
+    releaseReceipt();
+    await sleep(20);
+  });
+
+  it('keeps uncaptioned receipts serial with each other', async () => {
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let call = 0;
+    const h = makeHarness({
+      debounceMs: 0,
+      receiptImpl: async () => {
+        call += 1;
+        if (call === 1) await firstGate;
+        return { outcome: 'done' };
+      },
+    });
+
+    await h.service.enqueue(mediaEnv('receipt-1'));
+    await sleep(20);
+    await h.service.enqueue(mediaEnv('receipt-2'));
+    await sleep(20);
+    assert.equal(h.receipts.length, 1, 'second OCR waits behind the first media job');
+
+    releaseFirst();
+    await sleep(30);
+    assert.deepEqual(h.receipts.map(({ event }) => event.webhookEventId), ['receipt-1', 'receipt-2']);
+  });
+
+  it('keeps captioned media on the ordered main lane', async () => {
+    let releaseReceipt!: () => void;
+    const receiptGate = new Promise<void>((resolve) => { releaseReceipt = resolve; });
+    const h = makeHarness({
+      debounceMs: 10,
+      receiptImpl: async () => {
+        await receiptGate;
+        return { outcome: 'done' };
+      },
+    });
+
+    await h.service.enqueue(mediaEnv('captioned-receipt'));
+    await h.service.enqueue(textEnv('receipt-caption', 'ค่าอาหารลูกค้า'));
+    await sleep(30);
+    assert.equal(h.receipts.length, 1);
+    assert.equal(h.receipts[0]?.caption, 'ค่าอาหารลูกค้า');
+
+    await h.service.enqueue(textEnv('after-captioned', 'ติดต่อเรา'));
+    await sleep(20);
+    assert.equal(h.executed.length, 0, 'caption context keeps strict ordering');
+
+    releaseReceipt();
+    await sleep(40);
+    assert.equal(h.executed[0]?.messageText, 'ติดต่อเรา');
+  });
+
   it('text buffered with media rides along as caption and gets no standalone turn', async () => {
     const h = makeHarness({ debounceMs: 20 });
     await h.service.enqueue(mediaEnv('img1'));
@@ -610,6 +695,29 @@ describe('LineMessageBufferService – shutdown and loading animation', () => {
     assert.equal(h.executed[0].messageText, 'ขอ\nรายชื่อลูกค้า');
   });
 
+  it('onModuleDestroy also drains media handed off after shutdown begins', async () => {
+    let releaseReceipt!: () => void;
+    const receiptGate = new Promise<void>((resolve) => { releaseReceipt = resolve; });
+    const h = makeHarness({
+      debounceMs: 60_000,
+      receiptImpl: async () => {
+        await receiptGate;
+        return { outcome: 'done' };
+      },
+    });
+    await h.service.enqueue(mediaEnv('shutdown-receipt'));
+
+    let destroyed = false;
+    const destroying = h.service.onModuleDestroy().then(() => { destroyed = true; });
+    await sleep(20);
+    assert.equal(h.receipts.length, 1);
+    assert.equal(destroyed, false, 'shutdown waits for the detached media lane');
+
+    releaseReceipt();
+    await destroying;
+    assert.equal(destroyed, true);
+  });
+
   it('starts the loading animation for 1:1 chats only', async () => {
     const h = makeHarness({ debounceMs: 10, loadingEnabled: true });
     await h.service.enqueue(textEnv('l1', 'สวัสดี', { userId: 'user-1' }));
@@ -618,9 +726,10 @@ describe('LineMessageBufferService – shutdown and loading animation', () => {
     assert.deepEqual(h.loadingCalls, ['user-1']);
   });
 
-  it('pushes one contextual status after 2 seconds and restores loading before the answer', async (t) => {
+  it('shows one varied status only after 5 seconds, then restores loading after the bubble', async (t) => {
     t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
     try {
+      t.mock.timers.setTime(0);
       let releaseTurn!: () => void;
       let completeTurn!: () => void;
       let markStarted!: () => void;
@@ -628,7 +737,8 @@ describe('LineMessageBufferService – shutdown and loading animation', () => {
       const completed = new Promise<void>((resolve) => { completeTurn = resolve; });
       const started = new Promise<void>((resolve) => { markStarted = resolve; });
       const h = makeHarness({
-        debounceMs: 0,
+        debounceMs: 2_000,
+        maxWaitMs: 8_000,
         loadingEnabled: true,
         executeImpl: async (event) => {
           markStarted();
@@ -638,19 +748,35 @@ describe('LineMessageBufferService – shutdown and loading animation', () => {
         },
       });
 
-      await h.service.enqueue(textEnv('wait-1', 'ช่วยเปรียบเทียบยอดขายสองสาขา'));
+      await h.service.enqueue(textEnv('wait-1', 'ขอดูบัญชีเดือนนี้หน่อย'));
+      assert.deepEqual(h.loadingCalls, []);
+
+      t.mock.timers.tick(1_999);
+      await settle();
+      assert.deepEqual(h.loadingCalls, [], 'debounce keeps collecting bubbles for 2 seconds');
+
+      t.mock.timers.tick(2);
+      await settle();
       await started;
       assert.deepEqual(h.loadingCalls, ['user-1']);
 
-      t.mock.timers.tick(1_999);
-      await Promise.resolve();
-      assert.equal(h.pushes.length, 0);
+      t.mock.timers.tick(2_998);
+      await settle();
+      assert.equal(h.pushes.length, 0, 'no status before 5 seconds from the user bubble');
 
       t.mock.timers.tick(1);
-      await Promise.resolve();
-      await Promise.resolve();
-      assert.match(h.pushes[0]?.text ?? '', /กำลังเปรียบเทียบข้อมูล/);
-      assert.deepEqual(h.loadingCalls, ['user-1', 'user-1']);
+      await settle();
+      assert.equal(h.pushes.length, 1);
+      assert.match(h.pushes[0]?.text ?? '', /ตรวจสอบ|เช็กข้อมูล/);
+      assert.deepEqual(h.loadingCalls, ['user-1'], 'restart does not race the status bubble');
+
+      t.mock.timers.tick(300);
+      await settle();
+      assert.deepEqual(h.loadingCalls, ['user-1', 'user-1'], 'loading returns while slow work continues');
+
+      t.mock.timers.tick(1_000);
+      await settle();
+      assert.deepEqual(h.loadingCalls, ['user-1', 'user-1', 'user-1'], 'one keepalive covers delayed device delivery');
 
       releaseTurn();
       await completed;
@@ -660,7 +786,7 @@ describe('LineMessageBufferService – shutdown and loading animation', () => {
     }
   });
 
-  it('keeps a reply completed within 2 seconds to loading only', async (t) => {
+  it('cancels waiting feedback when the real answer is ready within 5 seconds', async (t) => {
     t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
     try {
       let completeTurn!: () => void;
@@ -674,19 +800,53 @@ describe('LineMessageBufferService – shutdown and loading animation', () => {
         },
       });
 
-      await h.service.enqueue(textEnv('wait-fast', 'สวัสดี'));
+      await h.service.enqueue(textEnv('wait-fast', 'ขอบคุณนะ'));
       await completed;
-      t.mock.timers.tick(2_000);
-      await Promise.resolve();
-
-      assert.deepEqual(h.loadingCalls, ['user-1']);
+      t.mock.timers.tick(5_750);
+      await settle();
       assert.equal(h.pushes.length, 0);
+      assert.deepEqual(h.loadingCalls, ['user-1']);
     } finally {
       t.mock.timers.reset();
     }
   });
 
-  it('keeps the legacy 2s-from-processing-start wait status when loading-on-accept is off (no immediate status at a 2.5s debounce)', async (t) => {
+  it('cancels the delayed loading keepalive when the answer is ready after the first restart', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+    try {
+      let releaseTurn!: () => void;
+      let completeTurn!: () => void;
+      const gate = new Promise<void>((resolve) => { releaseTurn = resolve; });
+      const completed = new Promise<void>((resolve) => { completeTurn = resolve; });
+      const h = makeHarness({
+        debounceMs: 0,
+        loadingEnabled: true,
+        executeImpl: async (event) => {
+          await gate;
+          await event.beforeReply?.();
+          completeTurn();
+        },
+      });
+
+      await h.service.enqueue(textEnv('wait-restart-cancel', 'ช่วยตรวจข้อมูลให้หน่อย'));
+      await settle();
+      t.mock.timers.tick(5_000);
+      await settle();
+      t.mock.timers.tick(300);
+      await settle();
+      assert.deepEqual(h.loadingCalls, ['user-1', 'user-1']);
+
+      releaseTurn();
+      await completed;
+      t.mock.timers.tick(1_000);
+      await settle();
+      assert.deepEqual(h.loadingCalls, ['user-1', 'user-1'], 'final answer cancels the keepalive');
+    } finally {
+      t.mock.timers.reset();
+    }
+  });
+
+  it('anchors the 5-second status to the latest durable acceptance when LINE timestamps reorder', async (t) => {
     t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
     try {
       t.mock.timers.setTime(0);
@@ -694,88 +854,36 @@ describe('LineMessageBufferService – shutdown and loading animation', () => {
       let markStarted!: () => void;
       const gate = new Promise<void>((resolve) => { releaseTurn = resolve; });
       const started = new Promise<void>((resolve) => { markStarted = resolve; });
-      const order: string[] = [];
       const h = makeHarness({
-        debounceMs: 2_500, maxWaitMs: 60_000,
-        loadingEnabled: true, loadingOnAcceptEnabled: false, // legacy default
-        executeImpl: async (event) => { markStarted(); order.push('turn'); await gate; await event.beforeReply?.(); order.push('reply'); },
+        debounceMs: 2_000,
+        maxWaitMs: 8_000,
+        loadingEnabled: true,
+        executeImpl: async (event) => {
+          markStarted();
+          await gate;
+          await event.beforeReply?.();
+        },
       });
 
-      await h.service.enqueue(textEnv('legacy-wait', 'ช่วยเปรียบเทียบยอดขายสองสาขา'));
-      t.mock.timers.tick(2_501);   // flush the 2.5s debounce → processing starts ~2.5s after acceptance
+      // The later-accepted bubble carries an older LINE timestamp, so sorting moves it before wait-old.
+      await h.service.enqueue(textEnv('wait-old', 'ข้อความแรก', { timestamp: 200 }));
+      t.mock.timers.tick(1_000);
       await settle();
-      await started;
-      // Processing started well past 2s of durable acceptance, yet the status must NOT be immediate.
-      assert.equal(h.pushes.length, 0, 'no immediate wait status at processing start');
-      t.mock.timers.tick(1_999);   // legacy delay is 2s FROM PROCESSING START, not from acceptance
-      await settle();
-      assert.equal(h.pushes.length, 0, 'no status before the legacy 2s from processing start');
-      t.mock.timers.tick(1);
-      await settle();
-      assert.equal(h.pushes.length, 1, 'status after exactly the legacy 2s from processing start');
-      // Ordering: the status is delivered before the final answer.
-      releaseTurn();
-      await settle();
-      assert.deepEqual(order, ['turn', 'reply']);
-      assert.equal(h.pushes.length, 1, 'exactly one status, ordered before the final');
-    } finally {
-      t.mock.timers.reset();
-    }
-  });
+      await h.service.enqueue(textEnv('wait-new', 'ข้อความล่าสุด', { timestamp: 100 }));
 
-  it('re-times the wait status from durable acceptance ONLY when the accept spinner was actually shown (P2-B)', async (t) => {
-    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
-    try {
-      t.mock.timers.setTime(0);
-      let releaseTurn!: () => void; let markStarted!: () => void;
-      const gate = new Promise<void>((resolve) => { releaseTurn = resolve; });
-      const started = new Promise<void>((resolve) => { markStarted = resolve; });
-      // Accept-loading ON and ACCEPTED by LINE: the spinner has been up since durable acceptance (t=0), so
-      // when processing starts ~2.5s later the 2s window has already elapsed → the status is due at once.
-      const h = makeHarness({
-        debounceMs: 2_500, maxWaitMs: 60_000,
-        loadingEnabled: true, loadingOnAcceptEnabled: true, loadingAccepted: true,
-        executeImpl: async (event) => { markStarted(); await gate; await event.beforeReply?.(); },
-      });
-      await h.service.enqueue(textEnv('accept-retime', 'ช่วยเปรียบเทียบยอดขายสองสาขา'));
-      t.mock.timers.tick(2_501);   // flush the 2.5s debounce → processing starts
+      t.mock.timers.tick(2_001);
       await settle();
       await started;
-      t.mock.timers.tick(1);       // the re-timed status delay is 0 (already elapsed) → fires immediately
-      await settle();
-      assert.equal(h.pushes.length, 1, 'accepted accept-loading re-times the status from acceptance (immediate here)');
-      releaseTurn();
-      await settle();
-    } finally {
-      t.mock.timers.reset();
-    }
-  });
+      assert.equal(h.executed[0]?.messageText, 'ข้อความล่าสุด\nข้อความแรก');
 
-  it('a REJECTED accept-loading falls back to the legacy 2s-from-processing-start (never immediate) (P2-B)', async (t) => {
-    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
-    try {
-      t.mock.timers.setTime(0);
-      let releaseTurn!: () => void; let markStarted!: () => void;
-      const gate = new Promise<void>((resolve) => { releaseTurn = resolve; });
-      const started = new Promise<void>((resolve) => { markStarted = resolve; });
-      // Accept-loading ON but LINE REJECTED it (loadingAccepted:false): no spinner was shown, so the status
-      // must NOT collapse to immediate at a 2.5s debounce — it uses the legacy 2s FROM PROCESSING START.
-      const h = makeHarness({
-        debounceMs: 2_500, maxWaitMs: 60_000,
-        loadingEnabled: true, loadingOnAcceptEnabled: true, loadingAccepted: false,
-        executeImpl: async (event) => { markStarted(); await gate; await event.beforeReply?.(); },
-      });
-      await h.service.enqueue(textEnv('accept-reject', 'ช่วยเปรียบเทียบยอดขายสองสาขา'));
-      t.mock.timers.tick(2_501);   // flush the 2.5s debounce → processing starts
-      await settle();
-      await started;
-      assert.equal(h.pushes.length, 0, 'no immediate status even though acceptance was >2s ago (spinner was rejected)');
       t.mock.timers.tick(1_999);
       await settle();
-      assert.equal(h.pushes.length, 0, 'still nothing before the legacy 2s from processing start');
-      t.mock.timers.tick(1);
+      assert.equal(h.pushes.length, 0, 'an older sorted-last acceptance cannot trigger status early');
+
+      t.mock.timers.tick(1_000);
       await settle();
-      assert.equal(h.pushes.length, 1, 'status after exactly the legacy 2s from processing start');
+      assert.equal(h.pushes.length, 1, 'status starts 5 seconds after the latest durable acceptance');
+
       releaseTurn();
       await settle();
     } finally {
@@ -877,13 +985,13 @@ describe('LineMessageBufferService – debounce experiment cohort (latency/auton
 
   it('freezes the batch cohort at open; a later bubble resolving a DIFFERENT company does not re-assign it', async () => {
     // Precondition: the two authoritative companies map to different cohorts for this chat.
-    const co1 = debounceCohortMs({ enabled: true, secret: 'experiment-secret', assignmentKey: 'co-1:chat-frz', configuredMs: 2_500 });
-    const co2 = debounceCohortMs({ enabled: true, secret: 'experiment-secret', assignmentKey: 'co-2:chat-frz', configuredMs: 2_500 });
+    const co1 = debounceCohortMs({ enabled: true, secret: 'experiment-secret', assignmentKey: 'co-1:chat-frz', configuredMs: 2_000 });
+    const co2 = debounceCohortMs({ enabled: true, secret: 'experiment-secret', assignmentKey: 'co-2:chat-frz', configuredMs: 2_000 });
     assert.notEqual(co1, co2, 'test precondition: co-1 and co-2 resolve to different cohorts for this chat');
 
     let call = 0;
     const h = makeHarness({
-      debounceMs: 2_500, maxWaitMs: 60_000,
+      debounceMs: 2_000, maxWaitMs: 60_000,
       debounceExperimentEnabled: true, debounceExperimentSecret: 'experiment-secret',
       preflightImpl: async () => ({ status: 'continue' as const, companyId: call++ === 0 ? 'co-1' : 'co-2' }),
     });
@@ -910,7 +1018,7 @@ describe('LineMessageBufferService – debounce experiment cohort (latency/auton
 
   it('assigns the SAME cohort to two users in one group (cluster is company+chat, not per user), buffers stay isolated', async () => {
     const h = makeHarness({
-      debounceMs: 2_500, maxWaitMs: 60_000,
+      debounceMs: 2_000, maxWaitMs: 60_000,
       debounceExperimentEnabled: true, debounceExperimentSecret: 'experiment-secret',
       preflightImpl: async () => ({ status: 'continue', companyId: 'co-1' }),
     });
@@ -921,7 +1029,7 @@ describe('LineMessageBufferService – debounce experiment cohort (latency/auton
       const stateB = (h.service as any).chats.get('group-9:user-B');
       assert.ok(stateA && stateB && stateA !== stateB, 'buffers are isolated per (chat,user)');
       assert.equal(stateA.debounceMs, stateB.debounceMs, 'cohort shared across users of the same (company,chat)');
-      assert.ok([1_000, 1_500, 2_500].includes(stateA.debounceMs), 'cohort is one of the declared values');
+      assert.ok([1_000, 1_500, 2_000].includes(stateA.debounceMs), 'cohort is one of the declared values');
     } finally {
       await h.service.onModuleDestroy();
     }
