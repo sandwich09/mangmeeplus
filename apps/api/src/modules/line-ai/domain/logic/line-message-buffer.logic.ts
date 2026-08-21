@@ -13,8 +13,8 @@ export type LineBufferTextItem = {
   lineMessageId?: string;
   /** LINE event timestamp (ms) — used to heal cross-POST arrival reordering. */
   timestamp: number;
-  /** Wall-clock (ms) when durable acceptance succeeded/reclaimed. Anchors the debounce boundary,
-   *  the long-wait status timer, and the API trace to first durable acceptance (spec §10/§12). */
+  /** Wall-clock (ms) when durable acceptance succeeded/reclaimed. Anchors the debounce boundary
+   *  and the API trace to first durable acceptance (spec §10/§12). */
   acceptedAt: number;
   /** Process-local arrival sequence — tie-break for identical timestamps. */
   seq: number;
@@ -55,24 +55,44 @@ export const LINE_BUFFER_MAX_TEXT_CHARS = 4000;
 export const LINE_BUFFER_ORPHAN_REPROCESS_MS = 2 * 60 * 1000;
 /** Shutdown drain bound — must finish inside the ECS stop grace period. */
 export const LINE_BUFFER_SHUTDOWN_DRAIN_TIMEOUT_MS = 25_000;
-export const LINE_WAIT_STATUS_DELAY_MS = 2_000;
+/** Keep quick turns to native loading only; one status appears only for genuinely slow work. */
+export const LINE_WAIT_STATUS_DELAY_MS = 4_000;
+/** Let the status bubble reach the device before restoring loading; final delivery can cancel this. */
+export const LINE_LOADING_RESTART_DELAY_MS = 750;
+export const LINE_MEDIA_RECEIVED_TEXT = 'ได้รับรูปแล้วค่ะ 🧾 กำลังอ่านเอกสารอยู่ ระหว่างนี้คุยกับน้องต่อได้เลยนะคะ';
 
-const LINE_WAIT_STATUS_RULES: Array<[RegExp, string]> = [
-  [/รายงาน|report/, 'กำลังจัดเตรียมรายงานให้นะคะ...'],
-  [/สรุป|ภาพรวม|summary|brief/, 'กำลังสรุปข้อมูลให้อ่านง่ายอยู่นะคะ...'],
-  [/เปรียบเทียบ|เทียบ|ต่างกัน|versus|\bvs\.?\b/, 'กำลังเปรียบเทียบข้อมูลให้นะคะ...'],
-  [/คำนวณ|รวมทั้งหมด|ค่าเฉลี่ย|เปอร์เซ็นต์|เท่าไหร่|กี่บาท|กี่รายการ|calculate|average|percent/, 'กำลังคำนวณตัวเลขให้นะคะ...'],
-  [/วิเคราะห์|แนวโน้ม|สาเหตุ|ผิดปกติ|analyse|analyze|trend/, 'กำลังวิเคราะห์ข้อมูลให้อยู่นะคะ...'],
-  [/ค้นหา|ค้นข้อมูล|search|find|lookup/, 'กำลังค้นข้อมูลที่เกี่ยวข้องให้อยู่นะคะ...'],
-  [/ข้อมูล|ยอดขาย|ค่าใช้จ่าย|ลูกค้า|สต็อก|สินค้าคงคลัง|ภาษี|ใบแจ้งหนี้|สถานะ|รายการ|อนุมัติ/, 'กำลังตรวจสอบข้อมูลในระบบให้นะคะ...'],
+const LINE_WAIT_STATUS_RULES: Array<[RegExp, string[]]> = [
+  [/รายงาน|report/, ['กำลังจัดเตรียมรายงานให้นะคะ 📄', 'รับเรื่องแล้วค่ะ ขอรวบรวมรายงานให้ครบก่อนนะคะ ✨']],
+  [/สรุป|ภาพรวม|summary|brief/, ['กำลังสรุปข้อมูลให้อ่านง่ายอยู่นะคะ 📊', 'ขอจัดข้อมูลสำคัญให้กระชับอีกนิดนะคะ 💚']],
+  [/เปรียบเทียบ|เทียบ|ต่างกัน|versus|\bvs\.?\b/, ['กำลังเปรียบเทียบข้อมูลให้นะคะ 🔎', 'ขอเช็กความต่างให้ครบก่อนนะคะ']],
+  [/คำนวณ|รวมทั้งหมด|ค่าเฉลี่ย|เปอร์เซ็นต์|เท่าไหร่|กี่บาท|กี่รายการ|calculate|average|percent/, ['กำลังคำนวณตัวเลขให้นะคะ 🧮', 'ขอตรวจตัวเลขให้เรียบร้อยก่อนนะคะ']],
+  [/วิเคราะห์|แนวโน้ม|สาเหตุ|ผิดปกติ|analyse|analyze|trend/, ['กำลังวิเคราะห์ข้อมูลให้อยู่นะคะ 📈', 'น้องมั่งมีกำลังไล่ดูรายละเอียดให้อยู่นะคะ']],
+  [/ค้นหา|ค้นข้อมูล|search|find|lookup/, ['กำลังค้นข้อมูลที่เกี่ยวข้องให้อยู่นะคะ 🔍', 'รับเรื่องแล้วค่ะ กำลังค้นข้อมูลให้นะคะ']],
+  [/ข้อมูล|ยอดขาย|ค่าใช้จ่าย|ลูกค้า|สต็อก|สินค้าคงคลัง|ภาษี|ใบแจ้งหนี้|สถานะ|รายการ|อนุมัติ|บัญชี/, ['กำลังตรวจสอบข้อมูลในระบบให้นะคะ 💻', 'รับเรื่องแล้วค่ะ ขอเช็กข้อมูลให้ครบก่อนนะคะ']],
 ];
 
-/** One truthful waiting line selected from the request; no model call needed. */
-export function lineWaitStatusText(messageText: string, kind: 'text' | 'media' = 'text'): string {
-  if (kind === 'media') return 'ได้รับรูปแล้วค่ะ 🧾 กำลังอ่านเอกสารอยู่ ระหว่างนี้คุยกับน้องต่อได้เลยนะคะ';
+const LINE_GENERIC_WAIT_STATUSES = [
+  'น้องมั่งมีกำลังดูให้อยู่นะคะ ขอบคุณที่รอนะคะ 💚',
+  'รับเรื่องแล้วนะคะ กำลังจัดคำตอบให้ชัด ๆ อยู่ค่ะ ✨',
+  'กำลังเรียบเรียงคำตอบให้อยู่นะคะ 😊',
+  'น้องมั่งมียังอยู่นะคะ กำลังหาคำตอบที่เหมาะที่สุดให้ค่ะ 🌱',
+];
+
+function stableStatusVariant(variants: string[], seed: string): string {
+  let hash = 2_166_136_261;
+  for (const char of seed) {
+    hash ^= char.codePointAt(0) ?? 0;
+    hash = Math.imul(hash, 16_777_619);
+  }
+  return variants[(hash >>> 0) % variants.length];
+}
+
+/** One truthful, varied waiting line selected from the request; no model call needed. */
+export function lineWaitStatusText(messageText: string, turnSeed = messageText): string {
   const normalized = messageText.trim().toLowerCase();
-  return LINE_WAIT_STATUS_RULES.find(([pattern]) => pattern.test(normalized))?.[1]
-    ?? 'ขอคิดสักครู่นะคะ 😊';
+  const variants = LINE_WAIT_STATUS_RULES.find(([pattern]) => pattern.test(normalized))?.[1]
+    ?? LINE_GENERIC_WAIT_STATUSES;
+  return stableStatusVariant(variants, turnSeed);
 }
 
 export type LineBufferFlushTiming = {

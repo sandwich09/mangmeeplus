@@ -726,7 +726,7 @@ describe('LineMessageBufferService – shutdown and loading animation', () => {
     assert.deepEqual(h.loadingCalls, ['user-1']);
   });
 
-  it('pushes one contextual status after 2 seconds and restores loading before the answer', async (t) => {
+  it('shows one varied status only after 4 seconds, then restores loading after the bubble', async (t) => {
     t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
     try {
       let releaseTurn!: () => void;
@@ -746,19 +746,23 @@ describe('LineMessageBufferService – shutdown and loading animation', () => {
         },
       });
 
-      await h.service.enqueue(textEnv('wait-1', 'ช่วยเปรียบเทียบยอดขายสองสาขา'));
+      await h.service.enqueue(textEnv('wait-1', 'ขอดูบัญชีเดือนนี้หน่อย'));
       await started;
       assert.deepEqual(h.loadingCalls, ['user-1']);
 
-      t.mock.timers.tick(1_999);
-      await Promise.resolve();
-      assert.equal(h.pushes.length, 0);
+      t.mock.timers.tick(3_999);
+      await settle();
+      assert.equal(h.pushes.length, 0, 'quick answers stay on native loading only');
 
       t.mock.timers.tick(1);
-      await Promise.resolve();
-      await Promise.resolve();
-      assert.match(h.pushes[0]?.text ?? '', /กำลังเปรียบเทียบข้อมูล/);
-      assert.deepEqual(h.loadingCalls, ['user-1', 'user-1']);
+      await settle();
+      assert.equal(h.pushes.length, 1);
+      assert.match(h.pushes[0]?.text ?? '', /ตรวจสอบ|เช็กข้อมูล/);
+      assert.deepEqual(h.loadingCalls, ['user-1'], 'restart does not race the status bubble');
+
+      t.mock.timers.tick(750);
+      await settle();
+      assert.deepEqual(h.loadingCalls, ['user-1', 'user-1'], 'loading returns while slow work continues');
 
       releaseTurn();
       await completed;
@@ -768,7 +772,7 @@ describe('LineMessageBufferService – shutdown and loading animation', () => {
     }
   });
 
-  it('keeps a reply completed within 2 seconds to loading only', async (t) => {
+  it('cancels waiting feedback when the real answer is ready within 4 seconds', async (t) => {
     t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
     try {
       let completeTurn!: () => void;
@@ -782,110 +786,12 @@ describe('LineMessageBufferService – shutdown and loading animation', () => {
         },
       });
 
-      await h.service.enqueue(textEnv('wait-fast', 'สวัสดี'));
+      await h.service.enqueue(textEnv('wait-fast', 'ขอบคุณนะ'));
       await completed;
-      t.mock.timers.tick(2_000);
-      await Promise.resolve();
-
-      assert.deepEqual(h.loadingCalls, ['user-1']);
+      t.mock.timers.tick(4_750);
+      await settle();
       assert.equal(h.pushes.length, 0);
-    } finally {
-      t.mock.timers.reset();
-    }
-  });
-
-  it('keeps the legacy 2s-from-processing-start wait status when loading-on-accept is off (no immediate status at a 2.5s debounce)', async (t) => {
-    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
-    try {
-      t.mock.timers.setTime(0);
-      let releaseTurn!: () => void;
-      let markStarted!: () => void;
-      const gate = new Promise<void>((resolve) => { releaseTurn = resolve; });
-      const started = new Promise<void>((resolve) => { markStarted = resolve; });
-      const order: string[] = [];
-      const h = makeHarness({
-        debounceMs: 2_500, maxWaitMs: 60_000,
-        loadingEnabled: true, loadingOnAcceptEnabled: false, // legacy default
-        executeImpl: async (event) => { markStarted(); order.push('turn'); await gate; await event.beforeReply?.(); order.push('reply'); },
-      });
-
-      await h.service.enqueue(textEnv('legacy-wait', 'ช่วยเปรียบเทียบยอดขายสองสาขา'));
-      t.mock.timers.tick(2_501);   // flush the 2.5s debounce → processing starts ~2.5s after acceptance
-      await settle();
-      await started;
-      // Processing started well past 2s of durable acceptance, yet the status must NOT be immediate.
-      assert.equal(h.pushes.length, 0, 'no immediate wait status at processing start');
-      t.mock.timers.tick(1_999);   // legacy delay is 2s FROM PROCESSING START, not from acceptance
-      await settle();
-      assert.equal(h.pushes.length, 0, 'no status before the legacy 2s from processing start');
-      t.mock.timers.tick(1);
-      await settle();
-      assert.equal(h.pushes.length, 1, 'status after exactly the legacy 2s from processing start');
-      // Ordering: the status is delivered before the final answer.
-      releaseTurn();
-      await settle();
-      assert.deepEqual(order, ['turn', 'reply']);
-      assert.equal(h.pushes.length, 1, 'exactly one status, ordered before the final');
-    } finally {
-      t.mock.timers.reset();
-    }
-  });
-
-  it('re-times the wait status from durable acceptance ONLY when the accept spinner was actually shown (P2-B)', async (t) => {
-    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
-    try {
-      t.mock.timers.setTime(0);
-      let releaseTurn!: () => void; let markStarted!: () => void;
-      const gate = new Promise<void>((resolve) => { releaseTurn = resolve; });
-      const started = new Promise<void>((resolve) => { markStarted = resolve; });
-      // Accept-loading ON and ACCEPTED by LINE: the spinner has been up since durable acceptance (t=0), so
-      // when processing starts ~2.5s later the 2s window has already elapsed → the status is due at once.
-      const h = makeHarness({
-        debounceMs: 2_500, maxWaitMs: 60_000,
-        loadingEnabled: true, loadingOnAcceptEnabled: true, loadingAccepted: true,
-        executeImpl: async (event) => { markStarted(); await gate; await event.beforeReply?.(); },
-      });
-      await h.service.enqueue(textEnv('accept-retime', 'ช่วยเปรียบเทียบยอดขายสองสาขา'));
-      t.mock.timers.tick(2_501);   // flush the 2.5s debounce → processing starts
-      await settle();
-      await started;
-      t.mock.timers.tick(1);       // the re-timed status delay is 0 (already elapsed) → fires immediately
-      await settle();
-      assert.equal(h.pushes.length, 1, 'accepted accept-loading re-times the status from acceptance (immediate here)');
-      releaseTurn();
-      await settle();
-    } finally {
-      t.mock.timers.reset();
-    }
-  });
-
-  it('a REJECTED accept-loading falls back to the legacy 2s-from-processing-start (never immediate) (P2-B)', async (t) => {
-    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
-    try {
-      t.mock.timers.setTime(0);
-      let releaseTurn!: () => void; let markStarted!: () => void;
-      const gate = new Promise<void>((resolve) => { releaseTurn = resolve; });
-      const started = new Promise<void>((resolve) => { markStarted = resolve; });
-      // Accept-loading ON but LINE REJECTED it (loadingAccepted:false): no spinner was shown, so the status
-      // must NOT collapse to immediate at a 2.5s debounce — it uses the legacy 2s FROM PROCESSING START.
-      const h = makeHarness({
-        debounceMs: 2_500, maxWaitMs: 60_000,
-        loadingEnabled: true, loadingOnAcceptEnabled: true, loadingAccepted: false,
-        executeImpl: async (event) => { markStarted(); await gate; await event.beforeReply?.(); },
-      });
-      await h.service.enqueue(textEnv('accept-reject', 'ช่วยเปรียบเทียบยอดขายสองสาขา'));
-      t.mock.timers.tick(2_501);   // flush the 2.5s debounce → processing starts
-      await settle();
-      await started;
-      assert.equal(h.pushes.length, 0, 'no immediate status even though acceptance was >2s ago (spinner was rejected)');
-      t.mock.timers.tick(1_999);
-      await settle();
-      assert.equal(h.pushes.length, 0, 'still nothing before the legacy 2s from processing start');
-      t.mock.timers.tick(1);
-      await settle();
-      assert.equal(h.pushes.length, 1, 'status after exactly the legacy 2s from processing start');
-      releaseTurn();
-      await settle();
+      assert.deepEqual(h.loadingCalls, ['user-1']);
     } finally {
       t.mock.timers.reset();
     }

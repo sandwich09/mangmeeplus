@@ -14,6 +14,7 @@ import {
   LINE_AI_DEBOUNCE_COHORTS_MS,
   LINE_BUFFER_MAX_ITEMS,
   LINE_BUFFER_MAX_TEXT_CHARS,
+  LINE_MEDIA_RECEIVED_TEXT,
 } from './line-message-buffer.logic';
 import type { LineBufferItem, LineBufferTextItem, LineBufferMediaItem } from './line-message-buffer.logic';
 
@@ -122,17 +123,22 @@ describe('capacity rules', () => {
   });
 });
 
-describe('lineWaitStatusText', () => {
-  it('selects one waiting line from the request situation', () => {
-    assert.match(lineWaitStatusText('', 'media'), /ได้รับรูปแล้ว.*คุยกับน้องต่อได้เลย/);
-    assert.match(lineWaitStatusText('ช่วยทำรายงานยอดขาย'), /จัดเตรียมรายงาน/);
-    assert.match(lineWaitStatusText('สรุปค่าใช้จ่ายเดือนนี้'), /สรุปข้อมูล/);
-    assert.match(lineWaitStatusText('เปรียบเทียบยอดขายสองสาขา'), /เปรียบเทียบข้อมูล/);
-    assert.match(lineWaitStatusText('ยอดรวมทั้งหมดเท่าไหร่'), /คำนวณตัวเลข/);
-    assert.match(lineWaitStatusText('วิเคราะห์แนวโน้มสินค้า'), /วิเคราะห์ข้อมูล/);
-    assert.match(lineWaitStatusText('ค้นข้อมูลเอกสารเลขที่ 123'), /ค้นข้อมูล/);
-    assert.match(lineWaitStatusText('ขอดูสถานะใบแจ้งหนี้'), /ตรวจสอบข้อมูลในระบบ/);
-    assert.match(lineWaitStatusText('เล่าเรื่องสนุกให้ฟังหน่อย'), /ขอคิดสักครู่/);
+describe('waiting feedback microcopy', () => {
+  it('keeps the receipt acknowledgement truthful', () => {
+    assert.match(LINE_MEDIA_RECEIVED_TEXT, /ได้รับรูปแล้ว.*คุยกับน้องต่อได้เลย/);
+  });
+
+  it('selects relevant copy and varies repeated generic turns deterministically', () => {
+    assert.match(lineWaitStatusText('ขอดูบัญชีเดือนนี้', 'turn-1'), /ตรวจสอบ|เช็กข้อมูล/);
+    assert.match(lineWaitStatusText('ช่วยเปรียบเทียบยอดขาย', 'turn-2'), /เปรียบเทียบ|ความต่าง/);
+
+    const repeated = new Set(Array.from(
+      { length: 12 },
+      (_, index) => lineWaitStatusText('ขอบคุณนะ', `turn-${index}`),
+    ));
+    assert.ok(repeated.size > 1, 'repeated generic turns do not show one fixed sentence forever');
+    assert.equal(lineWaitStatusText('ขอบคุณนะ', 'same-turn'), lineWaitStatusText('ขอบคุณนะ', 'same-turn'));
+    assert.equal([...repeated].some((status) => status.includes('ขอคิดสักครู่')), false);
   });
 });
 

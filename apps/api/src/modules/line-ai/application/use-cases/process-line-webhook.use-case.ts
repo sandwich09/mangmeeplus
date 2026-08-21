@@ -100,7 +100,7 @@ export type LineTextEvent = {
   lineMessageId?: string;
   /** Chat to push into when the reply token has expired (group id in group chats). */
   pushTargetId?: string;
-  /** Internal buffer hook: settle any in-flight waiting status before the answer. */
+  /** Internal buffer hook: settle any in-flight pre-reply feedback before the answer. */
   beforeReply?: () => Promise<void>;
 };
 
@@ -117,7 +117,7 @@ export type LineReceiptUploadEvent = {
   pushTargetId?: string;
   /** Resolved at durable acceptance so a later company switch cannot move this receipt. */
   companyIdAtAcceptance?: string;
-  /** Internal buffer hook: settle any in-flight waiting status before the answer. */
+  /** Internal buffer hook: settle any in-flight pre-reply feedback before the answer. */
   beforeReply?: () => Promise<void>;
 };
 

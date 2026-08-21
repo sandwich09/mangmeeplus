@@ -38,6 +38,8 @@ import {
   sortBatchItems,
   LINE_BUFFER_ORPHAN_REPROCESS_MS,
   LINE_BUFFER_SHUTDOWN_DRAIN_TIMEOUT_MS,
+  LINE_LOADING_RESTART_DELAY_MS,
+  LINE_MEDIA_RECEIVED_TEXT,
   LINE_WAIT_STATUS_DELAY_MS,
 } from '../domain/logic/line-message-buffer.logic';
 import type {
@@ -318,7 +320,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
       });
       this.emitAccepted(webhookEventId);
       // Exact durable-acceptance instant: captured only once the row is committed. Threaded onward
-      // as the single anchor for the debounce boundary, wait-status timer, and API trace.
+      // as the single anchor for the debounce boundary and API trace.
       return Date.now();
     } catch {
       // Unique violation (row exists) or DB hiccup — inspect the row.
@@ -618,8 +620,6 @@ export class LineMessageBufferService implements OnModuleDestroy {
   ): Promise<void> {
     const items = sortBatchItems(batchItems);
     const groups = segmentBatch(items);
-    // The whole batch shares the first bubble's durable-acceptance instant as the wait-status anchor.
-    const firstAcceptedAt = meta?.firstAcceptedAt ?? items[0]?.acceptedAt ?? dequeuedAtMs;
     // Consume THIS batch's own accept-loading exactly once, before ANY of its groups run — so the
     // request (and its loading_accepted) is ordered strictly before every final this batch delivers,
     // and a later batch's loading can never be consumed here.
@@ -633,11 +633,11 @@ export class LineMessageBufferService implements OnModuleDestroy {
       const suppressLoading = suppressContentLoading && group.kind !== 'command';
       if (group.kind !== 'command') suppressContentLoading = false;
       if (group.kind === 'media' && group.textItems.length === 0) {
-        this.queueMediaGroup(key, state, group, firstAcceptedAt, suppressLoading, meta);
+        this.queueMediaGroup(key, state, group, suppressLoading, meta);
         continue;
       }
       try {
-        await this.dispatchGroup(state, group, firstAcceptedAt, suppressLoading);
+        await this.dispatchGroup(state, group, suppressLoading);
       } catch (err) {
         this.logger.error({ msg: 'LINE buffer group dispatch failed', error: (err as Error).message });
         await this.deliverDispatchFailure(state, group);
@@ -651,7 +651,6 @@ export class LineMessageBufferService implements OnModuleDestroy {
     key: string,
     state: ChatState,
     group: Extract<LineBatchGroup, { kind: 'media' }>,
-    firstAcceptedAt: number,
     suppressLoading: boolean,
     meta: ChatState['pendingMeta'],
   ): void {
@@ -662,7 +661,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
     }).then(async () => {
       const dequeuedAt = Date.now();
       try {
-        await this.dispatchGroup(state, group, firstAcceptedAt, suppressLoading);
+        await this.dispatchGroup(state, group, suppressLoading);
       } catch (err) {
         this.logger.error({ msg: 'LINE media lane dispatch failed', error: (err as Error).message });
         await this.deliverDispatchFailure(state, group);
@@ -795,14 +794,14 @@ export class LineMessageBufferService implements OnModuleDestroy {
 
   /** `suppressLoading` is true only for the batch's first content turn when the batch's accept-loading
    *  was already shown — it then skips the duplicate processing-start loading. */
-  private async dispatchGroup(state: ChatState, group: LineBatchGroup, firstAcceptedAt: number, suppressLoading: boolean): Promise<void> {
+  private async dispatchGroup(state: ChatState, group: LineBatchGroup, suppressLoading: boolean): Promise<void> {
     if (group.kind === 'command') {
       await this.processWebhook.execute(this.toTextEvent(state, [group.item]));
       return;
     }
 
     if (group.kind === 'text') {
-      await this.dispatchTextTurn(state, group.textItems, firstAcceptedAt, suppressLoading);
+      await this.dispatchTextTurn(state, group.textItems, suppressLoading);
       return;
     }
 
@@ -816,34 +815,33 @@ export class LineMessageBufferService implements OnModuleDestroy {
       const media = group.mediaItems[index];
       const result = await this.withWaitFeedback(
         state,
-        lineWaitStatusText('', 'media'),
+        LINE_MEDIA_RECEIVED_TEXT,
         (beforeReply) => this.processWebhook.executeReceiptUpload(
           { ...this.toMediaEvent(state, media), beforeReply },
           deferText ? '' : caption,
         ),
-        firstAcceptedAt,
         // Only the very first media turn can reuse the batch's accept-loading; later turns re-show it.
         suppressLoading && index === 0,
-        true,
+        0,
       );
       if (index === 0 && result.outcome === 'defer_text') deferText = true;
     }
     if (deferText && group.textItems.length > 0) {
-      await this.dispatchTextTurn(state, group.textItems, firstAcceptedAt, false);
+      await this.dispatchTextTurn(state, group.textItems, false);
     } else {
       await this.markBatched(group.textItems.map((item) => item.webhookEventId));
     }
   }
 
-  private async dispatchTextTurn(state: ChatState, textItems: LineBufferTextItem[], firstAcceptedAt: number, suppressLoading: boolean): Promise<void> {
+  private async dispatchTextTurn(state: ChatState, textItems: LineBufferTextItem[], suppressLoading: boolean): Promise<void> {
     const last = textItems[textItems.length - 1];
     const messageText = joinGroupText(textItems);
     await this.withWaitFeedback(
       state,
-      lineWaitStatusText(messageText),
+      lineWaitStatusText(messageText, last.webhookEventId),
       (beforeReply) => this.processWebhook.execute({ ...this.toTextEvent(state, textItems), beforeReply }),
-      firstAcceptedAt,
       suppressLoading,
+      LINE_WAIT_STATUS_DELAY_MS,
     );
     await this.markBatched(textItems.filter((item) => item !== last).map((item) => item.webhookEventId));
   }
@@ -901,17 +899,16 @@ export class LineMessageBufferService implements OnModuleDestroy {
     await this.lineReply.startLoadingAnimation(state.lineUserId).catch(() => {});
   }
 
-  /** Loading is immediate. Receipt OCR also gets immediate received feedback; other turns push one
-   * contextual status only when still running after 2 s, and final delivery waits for that push. */
+  /** Quick text turns use native loading only; genuinely slow turns get one varied status. Receipt OCR
+   *  gets an immediate acknowledgement. Final delivery settles in-flight feedback to preserve order. */
   private async withWaitFeedback<T>(
     state: ChatState,
     statusText: string,
     turn: (beforeReply: () => Promise<void>) => Promise<T>,
-    firstAcceptedAt: number,
     suppressLoading: boolean,
-    immediateStatus = false,
+    statusDelayMs: number,
   ): Promise<T> {
-    const finish = await this.startWaitFeedback(state, statusText, firstAcceptedAt, suppressLoading, immediateStatus);
+    const finish = await this.startWaitFeedback(state, statusText, suppressLoading, statusDelayMs);
     try {
       return await turn(finish);
     } finally {
@@ -919,10 +916,10 @@ export class LineMessageBufferService implements OnModuleDestroy {
     }
   }
 
-  private async startWaitFeedback(state: ChatState, statusText: string, firstAcceptedAt: number, suppressLoading: boolean, immediateStatus = false): Promise<() => Promise<void>> {
-    // Loading and wait-status are 1:1 only; a group chat never shows either.
+  private async startWaitFeedback(state: ChatState, statusText: string, suppressLoading: boolean, statusDelayMs: number): Promise<() => Promise<void>> {
+    // Loading and waiting feedback are 1:1 only; a group chat never shows either.
     if (state.chatId !== state.lineUserId) return async () => {};
-    if (!this.config.lineAiLoadingAnimationEnabled && !immediateStatus) return async () => {};
+    if (!this.config.lineAiLoadingAnimationEnabled && statusDelayMs > 0) return async () => {};
 
     // `suppressLoading` means this batch's accept-loading was actually SHOWN (LINE accepted it) and awaited
     // (in dispatchBatch) for this first content turn, and its spinner is still up — so skip the duplicate
@@ -931,44 +928,52 @@ export class LineMessageBufferService implements OnModuleDestroy {
     if (!suppressLoading) await this.startLoading(state);
     let finished = false;
     let statusDelivery: Promise<void> | null = null;
-    // Anchor the long-wait timer to WHEN THE SPINNER ACTUALLY STARTED, not to the flag. Only when the
-    // accept-loading was genuinely shown (suppressLoading) has the spinner been up since durable
-    // acceptance, so the 2 s window counts from firstAcceptedAt. In every other case the spinner (if any)
-    // was just shown at processing start, so use the exact legacy default — a fixed 2 s from now — so a
-    // large debounce (e.g. 2,500 ms) or a REJECTED accept request never collapses the wait status to
-    // immediate.
-    const statusDelay = immediateStatus
-      ? 0
-      : (suppressLoading
-        ? Math.max(0, firstAcceptedAt + LINE_WAIT_STATUS_DELAY_MS - Date.now())
-        : LINE_WAIT_STATUS_DELAY_MS);
-    let timer: NodeJS.Timeout | null = setTimeout(() => {
-      timer = null;
-      if (finished) return;
-      statusDelivery = this.sendWaitStatus(state, statusText);
-    }, statusDelay);
+    let restartDelivery: Promise<void> | null = null;
+    let restartTimer: NodeJS.Timeout | null = null;
 
-    const settle = async () => {
+    const deliverStatus = async () => {
+      const delivered = await this.sendWaitStatus(state, statusText);
+      if (!delivered || finished) return;
+      // LINE dismisses loading when an OA bubble arrives. Restart after a short delivery cushion instead
+      // of racing the push response; `settle` cancels this if the real answer becomes ready first.
+      restartTimer = setTimeout(() => {
+        restartTimer = null;
+        if (!finished) restartDelivery = this.startLoading(state);
+      }, LINE_LOADING_RESTART_DELAY_MS);
+    };
+
+    let statusTimer: NodeJS.Timeout | null = null;
+    if (statusDelayMs === 0) {
+      statusDelivery = deliverStatus();
+    } else {
+      statusTimer = setTimeout(() => {
+        statusTimer = null;
+        if (!finished) statusDelivery = deliverStatus();
+      }, statusDelayMs);
+    }
+
+    return async () => {
       if (!finished) {
         finished = true;
-        if (timer) clearTimeout(timer);
-        timer = null;
+        if (statusTimer) clearTimeout(statusTimer);
+        if (restartTimer) clearTimeout(restartTimer);
+        statusTimer = null;
+        restartTimer = null;
       }
       await statusDelivery;
+      await restartDelivery;
     };
-    return settle;
   }
 
-  private async sendWaitStatus(state: ChatState, statusText: string): Promise<void> {
+  private async sendWaitStatus(state: ChatState, text: string): Promise<boolean> {
     const result = await this.lineReply
-      .sendPush(state.chatId, [this.lineReply.buildTextMessage(statusText)])
+      .sendPush(state.chatId, [this.lineReply.buildTextMessage(text)])
       .catch(() => 'failed_other' as const);
     if (result !== 'ok') {
-      this.logger.warn({ msg: 'LINE waiting status delivery failed', result });
-      return;
+      this.logger.warn({ msg: 'LINE waiting feedback delivery failed', result });
+      return false;
     }
-    // A bot message dismisses LINE's indicator; restore it before final reply.
-    await this.startLoading(state);
+    return true;
   }
 
   /** SIGTERM (every deploy): flush all open buffers and drain in-flight work,
