@@ -69,7 +69,7 @@ describe('reimbursement policy role save', () => {
     permissions: ['reimbursement.policy.manage'],
   } as any;
   const option = {
-    key: 'ACCOUNTANT', name: 'Accountant', optionLabel: 'Accountant · 1 คนพร้อมอนุมัติ',
+    key: 'ACCOUNTANT', name: 'Accountant', optionLabel: 'Accountant · ผู้รับผิดชอบ 1 คน',
     eligibleApproverCount: 1, coverage: 'COMPLETE' as const, uncoveredBranchNames: [], selectable: true,
   };
   const policy = (data: Record<string, unknown>) => ({

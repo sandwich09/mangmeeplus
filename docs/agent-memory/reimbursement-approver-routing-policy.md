@@ -129,6 +129,9 @@ Verification:
   tests passed 7/7, permission-registry tests 34/34, and reimbursement-guide tests 7/7; contracts, API, and web typechecks passed. Local browser evidence proved OWNER select →
   save → reopen, then restored MANAGER, at desktop and 390 px. The local read-only policy uniqueness
   preflight returned zero duplicate company-level policies.
+- Picker wording follow-up removed “N คนพร้อมอนุมัติ” from each role option because it looked like an
+  approval quorum. The selected-role help now separates “ผู้รับผิดชอบ N คน” from the executable rule
+  “ใบเบิกใช้คำตัดสิน 1 คน และใช้ผลจากคนแรกที่อนุมัติหรือปฏิเสธ”.
 
 Next:
 - Review the final scoped diff, commit only reimbursement picker task files, and update the active PR;

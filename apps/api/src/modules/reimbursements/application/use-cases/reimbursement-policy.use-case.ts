@@ -70,9 +70,9 @@ export function buildReimbursementApproverRoleOptions(
           ? 'NO_ACTIVE_HOLDERS' as const
           : !ownerRecoveryReady ? 'OWNER_RECOVERY_NOT_READY' as const : undefined;
       const optionLabel = coverage === 'COMPLETE'
-        ? `${role.name} · ${holderCount} คนพร้อมอนุมัติ`
+        ? `${role.name} · ผู้รับผิดชอบ ${holderCount} คน`
         : coverage === 'PARTIAL' && selectable
-          ? `${role.name} · ${holderCount} คน · เจ้าของกิจการช่วยบางสาขา`
+          ? `${role.name} · ผู้รับผิดชอบ ${holderCount} คน · เจ้าของกิจการช่วยบางสาขา`
           : `${role.name} · ยังไม่พร้อมใช้งาน`;
       return {
         key: role.key,

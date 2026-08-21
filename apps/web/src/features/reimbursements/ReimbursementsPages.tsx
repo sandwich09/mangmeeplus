@@ -1739,13 +1739,13 @@ function PolicySettings({ companyId }: { companyId: string }) {
                 <option value="">เลือกบทบาทผู้อนุมัติ</option>
                 {selectableOptions.map((option) => (
                   <option key={option.key} value={option.key} disabled={!option.selectable}>
-                    {approverRoleName(option)} — {option.selectable ? `${option.eligibleApproverCount} คนพร้อมอนุมัติ` : 'ยังไม่พร้อมใช้งาน'}
+                    {approverRoleName(option)}{option.selectable ? '' : ' — ยังไม่พร้อมใช้งาน'}
                   </option>
                 ))}
               </ThemedSelect>
               {selectedOption?.selectable ? (
                 <p className="mt-1 text-xs text-brand-700">
-                  {selectedOption.eligibleApproverCount} คนพร้อมอนุมัติ
+                  บทบาทนี้มีผู้รับผิดชอบ {selectedOption.eligibleApproverCount} คน
                   {selectedOption.coverage === 'COMPLETE' ? ' · ครบทุกสาขา' : ' · บางสาขาเจ้าของกิจการจะช่วยอนุมัติ'}
                 </p>
               ) : readyOptions.length === 0 ? (
@@ -1757,7 +1757,7 @@ function PolicySettings({ companyId }: { companyId: string }) {
               ) : (
                 <p className="mt-1 text-xs text-gray-500">เลือกบทบาทของผู้รับผิดชอบ ไม่ต้องพิมพ์ชื่อหรือตัวแปรระบบ</p>
               )}
-              <p className="mt-1 text-xs text-gray-500">เลือกเป็นบทบาท ไม่ใช่ชื่อพนักงาน ทุกคนที่มีบทบาทและสิทธิ์นี้จะเห็นใบเบิกในคิวอนุมัติ โดยคนแรกที่ตัดสินรายการจะเป็นผู้อนุมัติ</p>
+              <p className="mt-1 text-xs text-gray-500">ใบเบิกใช้คำตัดสิน 1 คน ทุกคนที่มีบทบาทและสิทธิ์นี้จะเห็นรายการ และระบบใช้ผลจากคนแรกที่อนุมัติหรือปฏิเสธ</p>
             </div>
             <label className="flex items-start justify-between gap-4 rounded-xl border border-gray-200 px-3 py-3 transition hover:border-brand-200 sm:col-span-2">
               <span className="min-w-0">
