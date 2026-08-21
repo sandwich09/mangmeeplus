@@ -1015,7 +1015,7 @@ export class ListSubstituteReceiptHistoryUseCase {
     // returned unless one of the three clauses below passes, and the allowed path costs the same
     // two queries it always did.
     const history = await this.repo.listSubstituteEvidenceHistory(ctx.companyId, expenseId);
-    const canReview = ctx.permissions.includes('expense.review');
+    const canReadAll = ctx.permissions.includes('expense.review') || ctx.permissions.includes('expense.confirm');
     // `read_own` means "created it OR paid it" here, the same as in GetExpenseUseCase and in the
     // hub list. Reading it as "created it" alone locks out the one person the certificate is
     // waiting on: the payer is deliberately not the reviewer, and is usually not the creator
@@ -1025,7 +1025,7 @@ export class ListSubstituteReceiptHistoryUseCase {
       && (expense.createdByUserId === ctx.userId || history.some((item) => item.payerUserId === ctx.userId));
     const canReadRelated = ctx.permissions.includes('expense.read_related')
       && await this.repo.isUserRelatedToExpense(ctx.companyId, expenseId, ctx.userId, ctx.scopes ?? {});
-    if (!canReview && !canReadOwn && !canReadRelated) throw new ForbiddenException('Cannot read this substitute-receipt history.');
+    if (!canReadAll && !canReadOwn && !canReadRelated) throw new ForbiddenException('Cannot read this substitute-receipt history.');
     return history;
   }
 }

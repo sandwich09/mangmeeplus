@@ -264,13 +264,13 @@ const RAW_PACKS: RawPack[] = [
     key: 'pack.expense.self', module: 'expense', featureEntitlementKey: 'expenses',
     nameTh: 'บันทึกค่าใช้จ่ายของฉัน', nameEn: 'Capture own expenses',
     description: 'สร้างและอัปโหลดใบเสร็จค่าใช้จ่ายของตัวเอง',
-    permissionKeys: ['expense.read_own', 'expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload', 'expense.update', 'expense.ocr.request', 'expense.signature.self_manage'],
+    permissionKeys: ['expense.read_own', 'expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload', 'expense.update', 'expense.ocr.request', 'expense.signature.self_manage', 'attachment.create'],
   },
   {
     key: 'pack.expense.review', module: 'expense', featureEntitlementKey: 'expenses',
     nameTh: 'ตรวจค่าใช้จ่าย', nameEn: 'Review expenses',
     description: 'ดู/ตรวจค่าใช้จ่ายทั้งบริษัท ตรวจ AI จัดหมวด และแก้รายการซ้ำ',
-    permissionKeys: ['expense.read', 'expense.evidence.read', 'expense.read_own', 'expense.review', 'expense.ai.verify', 'expense.category.manage', 'expense.duplicate.resolve'],
+    permissionKeys: ['expense.read', 'expense.evidence.read', 'expense.read_own', 'expense.review', 'expense.ai.verify', 'expense.category.manage', 'expense.duplicate.resolve', 'attachment.create'],
   },
   {
     key: 'pack.expense.finance', module: 'expense', featureEntitlementKey: 'expenses',
@@ -291,6 +291,12 @@ const RAW_PACKS: RawPack[] = [
     nameTh: 'อนุมัติการเบิก', nameEn: 'Approve reimbursement',
     description: 'ดูและอนุมัติ/ปฏิเสธคำขอเบิก',
     permissionKeys: ['reimbursement.read', 'reimbursement.read_own', 'reimbursement.approve', 'reimbursement.reject'],
+  },
+  {
+    key: 'pack.reimbursement.review', module: 'reimbursement',
+    nameTh: 'ตรวจสอบการเบิก', nameEn: 'Review reimbursement',
+    description: 'ดู ตรวจการเงิน และส่งออกคำขอเบิก โดยไม่มีสิทธิ์บันทึกหรือยกเลิกการจ่าย',
+    permissionKeys: ['reimbursement.read', 'reimbursement.read_own', 'reimbursement.read_related', 'reimbursement.finance_review', 'reimbursement.export'],
   },
   {
     key: 'pack.reimbursement.finance', module: 'reimbursement',

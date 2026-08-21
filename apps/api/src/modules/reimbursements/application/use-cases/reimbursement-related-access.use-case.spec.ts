@@ -49,6 +49,9 @@ describe('reimbursement related-view ABAC', () => {
     assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, prototype.update), ['reimbursement.update_own_draft']);
     assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, prototype.approveRequest), ['reimbursement.approve']);
     assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, prototype.createPayment), ['reimbursement.payment.record']);
+    assert.deepEqual(Reflect.getMetadata(REQUIRED_ANY_PERMISSIONS_KEY, prototype.cancelRequest), [
+      'reimbursement.cancel_own', 'reimbursement.finance_review',
+    ]);
   });
 
   it('allows a persisted related actor and rejects an unrelated actor', async () => {

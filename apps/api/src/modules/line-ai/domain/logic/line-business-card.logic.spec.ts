@@ -1,7 +1,12 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { LineAiTurnResponse } from '@watchdog-bms/contracts';
-import { buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage } from './line-business-card.logic';
+import {
+  buildLineAssistantTextCardMessage,
+  buildLineBusinessAnswerMessage,
+  buildReimbursementHandoffMessage,
+  buildReimbursementPayerClarificationMessage,
+} from './line-business-card.logic';
 
 const response = (cards?: NonNullable<LineAiTurnResponse['presentation']>['cards']): LineAiTurnResponse => ({
   requestId: 'r1', replyText: 'fallback', sourceRefs: [], sourceLabels: [], webLinks: [],
@@ -199,5 +204,68 @@ describe('FIX-5 — a link label becomes its button, never a dangling colon line
     const { body, buttons } = card('ดาวน์โหลด: https://evil.example/d/abc');
     assert.deepEqual(buttons, []);
     assert.equal(body, 'ดาวน์โหลด: https://evil.example/d/abc');
+  });
+});
+
+describe('reimbursement intake cards — server-owned, never rendered from model text', () => {
+  const BADGE = '📝 ยังไม่ได้สร้างรายการ';
+  const bubbleOf = (message: { type: string }) => (message as any).contents;
+
+  it('asks exactly who paid — personal pay to claim back, or the company — with no link and no amounts', () => {
+    const message = buildReimbursementPayerClarificationMessage();
+    assert.equal(message.type, 'flex');
+    assert.ok(message.type === 'flex' && message.altText.length > 0);
+    const contents = bubbleOf(message);
+    assert.equal(contents.footer, undefined);
+    assert.doesNotMatch(JSON.stringify(message), /"type":"uri"|https?:\/\//u);
+    assert.equal(contents.body.contents.length, 1, 'one body row: no badge, no sources');
+    const body = contents.body.contents[0].text as string;
+    assert.match(body, /จ่ายเงินส่วนตัว.*เบิกคืน/u, 'option one: paid personally, wants it back');
+    assert.match(body, /บริษัท.*จ่ายเอง/u, 'option two: the company paid');
+    assert.doesNotMatch(body, /\d|บาท|THB/u, 'no financial fields');
+  });
+
+  it('hands off to the exact new-reimbursement page on the trusted origin and says no record exists yet', () => {
+    const message = buildReimbursementHandoffMessage('https://app.example.com/base', 'c1');
+    assert.equal(message.type, 'flex');
+    const contents = bubbleOf(message);
+    assert.equal(contents.body.contents[0].text, BADGE);
+    assert.match(contents.body.contents[1].text, /ตรวจสอบ.*กรอก/u, 'the body sends the user to review and fill in the web');
+    assert.equal(contents.footer.contents.length, 1);
+    const action = contents.footer.contents[0].action;
+    assert.equal(action.type, 'uri');
+    assert.equal(action.uri, 'https://app.example.com/companies/c1/reimbursements/new');
+    const uri = new URL(action.uri);
+    assert.equal(uri.origin, 'https://app.example.com');
+    assert.equal(uri.search, '', 'no query prefill');
+    assert.equal(uri.hash, '', 'no hash');
+  });
+
+  it('keeps the card but drops the button when the web base is missing or untrusted', () => {
+    for (const base of [undefined, '', 'not a url', 'javascript:alert(1)', 'ftp://app.example.com']) {
+      const message = buildReimbursementHandoffMessage(base, 'c1');
+      assert.equal(message.type, 'flex', String(base));
+      const contents = bubbleOf(message);
+      assert.equal(contents.footer, undefined, String(base));
+      assert.equal(contents.body.contents[0].text, BADGE, String(base));
+      assert.doesNotMatch(JSON.stringify(message), /"type":"uri"/u, String(base));
+    }
+  });
+
+  it('cannot be steered to another tenant or another page by the company id', () => {
+    const hostile = ['c1/../c2', '..', '.', 'c1/reimbursements/../../c2', 'c1\\..\\c2', 'c1%2F..%2Fc2', 'c1?x=1', 'c1#frag', 'c 1'];
+    for (const companyId of hostile) {
+      const action = bubbleOf(buildReimbursementHandoffMessage('https://app.example.com', companyId)).footer?.contents[0]?.action;
+      if (!action) continue;
+      assert.equal(action.uri, `https://app.example.com/companies/${encodeURIComponent(companyId)}/reimbursements/new`, companyId);
+      assert.equal(new URL(action.uri).search, '', companyId);
+      assert.equal(new URL(action.uri).hash, '', companyId);
+    }
+    // Traversal never gets a button at all; an odd-but-honest id gets exactly its encoded tenant path.
+    for (const traversing of ['c1/../c2', '..', '.', 'c1\\..\\c2']) {
+      assert.equal(bubbleOf(buildReimbursementHandoffMessage('https://app.example.com', traversing)).footer, undefined, traversing);
+    }
+    const spaced = bubbleOf(buildReimbursementHandoffMessage('https://app.example.com', 'c 1')).footer.contents[0].action.uri;
+    assert.equal(spaced, 'https://app.example.com/companies/c%201/reimbursements/new');
   });
 });

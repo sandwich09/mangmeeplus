@@ -1,4 +1,5 @@
 import type { LineQuickReplyItem, LineReplyMessage } from '../../infrastructure/line-reply.adapter';
+import { FEATURE_CATALOG } from '@watchdog-bms/contracts';
 
 export type StaffMenuContext = {
   displayName: string;
@@ -17,6 +18,12 @@ export type StaffMenuContext = {
 export type CompanyPickerItem = {
   companyId: string;
   companyName: string;
+};
+
+export type CompanyContextCard = {
+  companyName: string;
+  displayName: string;
+  roleLabels: string[];
 };
 
 /**
@@ -107,6 +114,80 @@ export function buildStaffMainMenu(context: StaffMenuContext): LineReplyMessage 
 
 const boundedLabel = (value: string, fallback: string) => (value.trim() || fallback).slice(0, 80);
 
+export function buildCompanyContextMessage(context: CompanyContextCard): LineReplyMessage {
+  const companyName = boundedLabel(context.companyName, 'ไม่ระบุบริษัท');
+  const displayName = boundedLabel(context.displayName, 'ผู้ใช้งาน');
+  const roleLabel = boundedLabel(context.roleLabels.filter(Boolean).join(' · '), 'พนักงาน');
+  return {
+    type: 'flex',
+    altText: `บริษัทของฉัน: ${companyName} · คุณ${displayName} · ${roleLabel}`,
+    contents: {
+      type: 'bubble', size: 'kilo',
+      body: { type: 'box', layout: 'vertical', spacing: 'md', paddingAll: '16px', contents: [
+        { type: 'text', text: 'บริษัทของฉัน', weight: 'bold', size: 'lg', color: '#101828' },
+        { type: 'text', text: `🏢 ${companyName}`, weight: 'bold', size: 'md', color: '#101828', wrap: true },
+        { type: 'text', text: `👤 คุณ${displayName}`, size: 'sm', color: '#475467', wrap: true },
+        { type: 'text', text: `💼 ${roleLabel}`, size: 'sm', color: '#475467', wrap: true },
+      ] },
+    },
+  };
+}
+
+const serviceBubble = (labels: string[], index: number, total: number): Record<string, unknown> => ({
+  type: 'bubble', size: 'kilo',
+  body: { type: 'box', layout: 'vertical', spacing: 'sm', paddingAll: '16px', contents: [
+    { type: 'text', text: 'บริการที่บริษัทของคุณเปิดใช้', weight: 'bold', size: 'md', color: '#101828', wrap: true },
+    ...(total > 1 ? [{ type: 'text', text: `หน้า ${index + 1}/${total}`, size: 'xs', color: '#667085' }] : []),
+    ...labels.map((label) => ({ type: 'text', text: `✓ ${label}`, size: 'sm', color: '#475467', wrap: true })),
+  ] },
+});
+
+export function buildServiceEntitlementMessage(entitled: ReadonlySet<string> | null): LineReplyMessage {
+  const labels = FEATURE_CATALOG
+    .filter((feature) => feature.sellable && (entitled === null || entitled.has(feature.key)))
+    .map((feature) => feature.labelTh);
+  if (labels.length === 0) {
+    return {
+      type: 'flex',
+      altText: 'บริษัทนี้ยังไม่มีบริการที่เปิดใช้งานผ่าน LINE',
+      contents: {
+        type: 'bubble', size: 'kilo',
+        body: { type: 'box', layout: 'vertical', spacing: 'sm', paddingAll: '16px', contents: [
+          { type: 'text', text: 'บริการที่บริษัทของคุณเปิดใช้', weight: 'bold', size: 'md', color: '#101828', wrap: true },
+          { type: 'text', text: 'บริษัทนี้ยังไม่มีบริการที่เปิดใช้งานผ่าน LINE', size: 'sm', color: '#667085', wrap: true },
+        ] },
+      },
+    };
+  }
+  const pages = Array.from({ length: Math.ceil(labels.length / 8) }, (_, index) => labels.slice(index * 8, index * 8 + 8));
+  const bubbles = pages.map((page, index) => serviceBubble(page, index, pages.length));
+  return {
+    type: 'flex',
+    altText: `บริการที่บริษัทของคุณเปิดใช้: ${labels.join(', ')}`.slice(0, 400),
+    contents: bubbles.length === 1 ? bubbles[0]! : { type: 'carousel', contents: bubbles },
+  };
+}
+
+export function buildContactCard(): LineReplyMessage {
+  return {
+    type: 'flex',
+    altText: 'ติดต่อมั่งมี Plus: contact@mangmeeplus.com โทร 098-256-5628',
+    contents: {
+      type: 'bubble', size: 'kilo',
+      body: { type: 'box', layout: 'vertical', spacing: 'md', paddingAll: '16px', contents: [
+        { type: 'text', text: 'ติดต่อมั่งมี Plus', weight: 'bold', size: 'lg', color: '#101828' },
+        { type: 'text', text: '✉️ contact@mangmeeplus.com', size: 'sm', color: '#475467', wrap: true },
+        { type: 'text', text: '📱 098-256-5628', weight: 'bold', size: 'md', color: '#101828' },
+      ] },
+      footer: { type: 'box', layout: 'vertical', spacing: 'sm', contents: [
+        { type: 'button', style: 'secondary', action: { type: 'clipboard', label: 'คัดลอกอีเมล', clipboardText: 'contact@mangmeeplus.com' } },
+        { type: 'button', style: 'secondary', action: { type: 'uri', label: 'โทร 098-256-5628', uri: 'tel:0982565628' } },
+        { type: 'button', style: 'primary', color: '#22C55E', action: { type: 'uri', label: 'เว็บไซต์อย่างเป็นทางการ', uri: 'https://official.mangmeeplus.com/' } },
+      ] },
+    },
+  };
+}
+
 function companyBubble(company: CompanyPickerItem, selectionNumber: number, currentCompanyId?: string): Record<string, unknown> {
   const current = company.companyId === currentCompanyId;
   return {
@@ -114,7 +195,7 @@ function companyBubble(company: CompanyPickerItem, selectionNumber: number, curr
     body: {
       type: 'box', layout: 'vertical', spacing: 'md', contents: [
         { type: 'text', text: `🏢 บริษัท ${selectionNumber}`, size: 'sm', color: '#667085' },
-        { type: 'text', text: boundedLabel(company.companyName, company.companyId), weight: 'bold', size: 'lg', color: '#101828', wrap: true },
+        { type: 'text', text: boundedLabel(company.companyName, 'ไม่ระบุบริษัท'), weight: 'bold', size: 'lg', color: '#101828', wrap: true },
         ...(current ? [{ type: 'text', text: '✓ ใช้งานอยู่', size: 'sm', color: '#16A34A', weight: 'bold' }] : []),
         ...(!current ? [{ type: 'text', text: `ตอบ ${selectionNumber} หรือกดปุ่มด้านล่าง`, size: 'sm', color: '#667085', wrap: true }] : []),
       ],
@@ -129,26 +210,27 @@ function companyBubble(company: CompanyPickerItem, selectionNumber: number, curr
   };
 }
 
-/** LINE Flex carousels allow at most 12 bubbles. Reserve the final bubble for an
- * honest overflow notice and keep the active company visible when it is beyond the cap. */
-export function buildCompanyPickerMessage(companies: CompanyPickerItem[], currentCompanyId?: string): LineReplyMessage {
+/** LINE Flex carousels allow at most 12 bubbles. Eleven company bubbles plus one navigation
+ * bubble keep every company reachable without silently dropping a name. */
+export function buildCompanyPickerMessage(companies: CompanyPickerItem[], currentCompanyId?: string, requestedPage = 1): LineReplyMessage {
   if (companies.length === 0) return { type: 'text', text: 'ไม่พบบริษัทที่ใช้งานได้ในขณะนี้' };
 
-  let visible = companies;
-  let overflow = 0;
-  if (companies.length > 12) {
-    visible = companies.slice(0, 11);
-    const current = companies.find((company) => company.companyId === currentCompanyId);
-    if (current && !visible.some((company) => company.companyId === current.companyId)) visible[10] = current;
-    overflow = companies.length - visible.length;
-  }
-
+  const current = companies.find((company) => company.companyId === currentCompanyId);
+  const ordered = current ? [current, ...companies.filter((company) => company.companyId !== current.companyId)] : companies;
+  const pageSize = companies.length > 12 ? 11 : 12;
+  const pageCount = Math.ceil(ordered.length / pageSize);
+  const page = Math.max(1, Math.min(requestedPage, pageCount));
+  const visible = ordered.slice((page - 1) * pageSize, page * pageSize);
   const bubbles = visible.map((company) => companyBubble(company, companies.findIndex((item) => item.companyId === company.companyId) + 1, currentCompanyId));
-  if (overflow > 0) bubbles.push({
+  if (pageCount > 1) bubbles.push({
     type: 'bubble',
     body: { type: 'box', layout: 'vertical', spacing: 'md', contents: [
-      { type: 'text', text: `มีอีก ${overflow} บริษัท`, weight: 'bold', size: 'lg', color: '#101828' },
-      { type: 'text', text: 'LINE แสดงได้สูงสุด 11 บริษัทในครั้งนี้ กรุณาใช้ตัวเลือกบริษัทในเว็บสำหรับรายการที่เหลือ', wrap: true, size: 'sm', color: '#667085' },
+      { type: 'text', text: `บริษัทของฉัน · หน้า ${page}/${pageCount}`, weight: 'bold', size: 'md', color: '#101828', wrap: true },
+      { type: 'text', text: `แสดง ${visible.length} จาก ${companies.length} บริษัท`, size: 'sm', color: '#667085' },
+    ] },
+    footer: { type: 'box', layout: 'vertical', spacing: 'sm', contents: [
+      ...(page > 1 ? [{ type: 'button', style: 'secondary', action: { type: 'message', label: 'หน้าก่อนหน้า', text: `/companies page ${page - 1}` } }] : []),
+      ...(page < pageCount ? [{ type: 'button', style: 'primary', color: '#22C55E', action: { type: 'message', label: 'หน้าถัดไป', text: `/companies page ${page + 1}` } }] : []),
     ] },
   });
 
@@ -292,11 +374,14 @@ export function buildPendingApprovalCard(context: StaffMenuContext, pending: Pen
   };
 }
 
-export function staffMenuCommand(text: string): 'main' | 'query' | 'approval' | 'receipt' | null {
+export function staffMenuCommand(text: string): 'main' | 'query' | 'approval' | 'receipt' | 'services' | 'contact' | 'talk' | null {
   const normalized = text.trim().replace(/[📊✅📷]/gu, '').trim();
   if (normalized === 'เมนูหลัก') return 'main';
   if (normalized === 'ถามข้อมูล') return 'query';
   if (normalized === 'รายการรออนุมัติ') return 'approval';
   if (normalized === 'ถ่ายใบเสร็จ') return 'receipt';
+  if (normalized === 'บริการของเรา') return 'services';
+  if (normalized === 'ติดต่อเรา') return 'contact';
+  if (normalized === 'คุยกับน้องมั่งมี') return 'talk';
   return null;
 }

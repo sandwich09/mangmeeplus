@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useCloseOnOutsideClick } from '@/common/hooks/use-close-on-outside-click';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import type { EmployeeCredentialHandoff, EmployeeSummary, MenuDefinition, PermissionMatrix as PermissionMatrixDto, RoleSummary } from '@watchdog-bms/contracts';
+import { ALL_BRANCH_ROLE_KEYS, type EmployeeCredentialHandoff, type EmployeeSummary, type MenuDefinition, type PermissionMatrix as PermissionMatrixDto, type RoleSummary } from '@watchdog-bms/contracts';
 import {
   BellIcon,
   CalendarIcon,
@@ -309,20 +309,26 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
     setEmployeeMenuOpen(false);
   }, [activeUserId]);
   const selectedEmployee = employees.find((e) => e.id === activeUserId) ?? null;
-  const selectedRole = selectedEmployee ? roleById.get(selectedEmployee.roles[0]?.id ?? '') : undefined;
+  const selectedRoles = selectedEmployee
+    ? selectedEmployee.roles.map((role) => roleById.get(role.id)).filter((role): role is RoleSummary => Boolean(role))
+    : [];
+  const selectedRole = selectedRoles[0];
   const selectedIsOwner = selectedEmployee?.roles.some((role) => role.key === 'OWNER') ?? false;
   const selectedIsDraft = selectedEmployee?.status === 'DRAFT';
   const selectedActive = selectedEmployee?.status === 'ACTIVE';
   // Options come from the server's own grant decision; the current role stays pinned (spec R1/R3).
-  const roleOptions = useMemo(() => assignableRoleOptions(roles, selectedRole?.id), [roles, selectedRole]);
+  const selectedRoleIds = selectedEmployee?.roles.map((role) => role.id) ?? [];
+  const roleOptions = useMemo(() => assignableRoleOptions(roles, selectedRoleIds), [roles, selectedRoleIds]);
   const rolePickerReadOnly = isRoleFieldReadOnly({
     canEditEmployee,
     isOwnerTarget: selectedIsOwner,
     isSelfTarget: isSelfEmployee(selectedEmployee, viewerUserId),
     optionCount: roleOptions.length,
-  }) || isOperationalRoleTargetReadOnly(viewerPermissions, selectedRole);
+  }) || isOperationalRoleTargetReadOnly(viewerPermissions, selectedRoles);
 
   const selectedRoleNames = selectedEmployee?.roles.map((role) => role.name).join(', ') ?? '';
+  const allBranchRoles = selectedRoles.filter((role) => ALL_BRANCH_ROLE_KEYS.includes(role.key));
+  const branchPickerLocked = allBranchRoles.length > 0;
   const accessProjection = useMemo(
     () => projectGrantedMenus(
       selectedEmployee?.roles.map((role) => role.id) ?? [],
@@ -389,12 +395,15 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
     } finally { setResetting(false); }
   }
 
-  async function changeSelectedRole(roleId: string) {
+  async function toggleSelectedRole(roleId: string) {
     if (!selectedEmployee || rolePickerReadOnly) return;
-    setRolePickerOpen(false);
+    const nextRoleIds = selectedRoleIds.includes(roleId)
+      ? (selectedRoleIds.length === 1 ? selectedRoleIds : selectedRoleIds.filter((id) => id !== roleId))
+      : [...selectedRoleIds, roleId];
+    if (nextRoleIds === selectedRoleIds) return;
     await withBusy('role', async () => {
       try {
-        await updateEmployee(companyId, selectedEmployee.id, { roleIds: [roleId] });
+        await updateEmployee(companyId, selectedEmployee.id, { roleIds: nextRoleIds });
       } catch (e) {
         // Permissions can be revoked mid-session: refetch so the picker stops offering what the
         // server now refuses (spec R10). withBusy still renders the generic forbidden message.
@@ -402,11 +411,11 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
         throw e;
       }
       await reload();
-    }, 'เปลี่ยนบทบาทพนักงานแล้ว');
+    }, 'บันทึกบทบาทพนักงานแล้ว');
   }
 
   async function toggleBranch(branchId: string) {
-    if (!selectedEmployee || selectedIsOwner || !selectedActive || !canEditEmployee) return;
+    if (!selectedEmployee || selectedIsOwner || !selectedActive || !canEditEmployee || branchPickerLocked) return;
     const exists = selectedBranchIds.includes(branchId);
     if (exists && selectedBranchIds.length === 1) return;
     const next = exists ? selectedBranchIds.filter((id) => id !== branchId) : [...selectedBranchIds, branchId];
@@ -422,7 +431,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
   }
 
   async function selectAllBranches() {
-    if (!selectedEmployee || selectedIsOwner || !selectedActive || !canEditEmployee) return;
+    if (!selectedEmployee || selectedIsOwner || !selectedActive || !canEditEmployee || branchPickerLocked) return;
     await withBusy('branch', async () => {
       await updateEmployee(companyId, selectedEmployee.id, {
         branchScopeMode: 'ALL_BRANCHES',
@@ -546,7 +555,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                 </div>
 
                 <div className="flex min-w-0 flex-wrap items-end gap-5">
-                  {selectedRole && (
+                  {selectedRoles.length > 0 && (
                     <div className="min-w-0">
                       <div className="flex min-h-5 items-center gap-2">
                         <span className="text-xs font-bold text-gray-400">บทบาทและสิทธิ์ระบบ</span>
@@ -559,7 +568,9 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                       </div>
                       <div className="relative mt-1" ref={rolePickerRef}>
                         {rolePickerReadOnly ? (
-                          <RoleBadge role={selectedRole} />
+                          <div className="flex flex-wrap gap-1.5">
+                            {selectedRoles.map((role) => <RoleBadge key={role.id} role={role} />)}
+                          </div>
                         ) : (
                           <button
                             type="button"
@@ -569,7 +580,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                             aria-haspopup="listbox"
                             aria-expanded={rolePickerOpen}
                           >
-                            <RoleBadge role={selectedRole} className="max-w-40 truncate" />
+                            <span className="max-w-52 truncate text-sm font-extrabold text-gray-700">{selectedRoleNames}</span>
                             <ChevronDownIcon className="h-4 w-4 shrink-0 text-gray-400" />
                           </button>
                         )}
@@ -577,12 +588,12 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                           <div role="listbox" className="absolute left-0 top-10 z-20 w-60 max-w-[min(15rem,80vw)] overflow-hidden rounded-xl border border-gray-200 bg-white py-1 shadow-lg">
                             {roleOptions.map((role) => (
                               <button
-                                key={role.id} type="button" role="option" aria-selected={role.id === selectedRole.id}
-                                onClick={() => void changeSelectedRole(role.id)}
-                                className={cx('flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm font-extrabold hover:bg-gray-50', role.id === selectedRole.id ? 'text-brand-700' : 'text-gray-700')}
+                                key={role.id} type="button" role="option" aria-selected={selectedRoleIds.includes(role.id)} disabled={busy}
+                                onClick={() => void toggleSelectedRole(role.id)}
+                                className={cx('flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm font-extrabold hover:bg-gray-50 disabled:opacity-60', selectedRoleIds.includes(role.id) ? 'text-brand-700' : 'text-gray-700')}
                               >
                                 <span className="min-w-0 truncate">{role.name}</span>
-                                {role.id === selectedRole.id && <CheckLineIcon className="h-4 w-4 shrink-0" />}
+                                {selectedRoleIds.includes(role.id) && <CheckLineIcon className="h-4 w-4 shrink-0" />}
                               </button>
                             ))}
                           </div>
@@ -590,7 +601,9 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                       </div>
                       {selectedIsOwner
                         ? <p className="mt-1 text-xs font-semibold text-gray-400">บทบาทเจ้าของกิจการเปลี่ยนไม่ได้</p>
-                        : isSelfEmployee(selectedEmployee, viewerUserId) && <p className="mt-1 text-xs font-semibold text-gray-400">บทบาทของตัวเองต้องให้ผู้ดูแลคนอื่นเปลี่ยนให้</p>}
+                        : isSelfEmployee(selectedEmployee, viewerUserId)
+                          ? <p className="mt-1 text-xs font-semibold text-gray-400">บทบาทของตัวเองต้องให้ผู้ดูแลคนอื่นเปลี่ยนให้</p>
+                          : <p className="mt-1 text-xs font-semibold text-gray-400">เลือกได้หลายบทบาท ระบบจะรวมสิทธิ์จากทุกบทบาท</p>}
                     </div>
                   )}
 
@@ -767,7 +780,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                 {canEditEmployee && <div className="mangmee-segmented mt-5">
                   <button
                     type="button"
-                    disabled={selectedIsOwner || !selectedActive || busy}
+                    disabled={selectedIsOwner || !selectedActive || busy || branchPickerLocked}
                     onClick={() => void selectAllBranches()}
                     aria-pressed={selectedEmployee.branchScopeMode === 'ALL_BRANCHES' && !branchPickerOpen}
                     className={cx(
@@ -779,7 +792,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                   </button>
                   <button
                     type="button"
-                    disabled={selectedIsOwner || !selectedActive || busy}
+                    disabled={selectedIsOwner || !selectedActive || busy || branchPickerLocked}
                     onClick={() => setBranchPickerOpen(true)}
                     aria-pressed={selectedEmployee.branchScopeMode === 'SELECTED_BRANCHES' || branchPickerOpen}
                     className={cx(
@@ -796,7 +809,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                     {branches.filter((branch) => canEditEmployee || selectedBranchIds.includes(branch.id)).map((branch) => {
                       const selected = selectedBranchIds.includes(branch.id);
                       const lastBranchLocked = selected && selectedBranchIds.length === 1;
-                      const otherwiseDisabled = selectedIsOwner || !selectedActive || busy;
+                      const otherwiseDisabled = selectedIsOwner || !selectedActive || busy || branchPickerLocked;
                       return canEditEmployee ? (
                         <BranchAccessChip
                           key={branch.id} label={branch.name} selected={selected}
@@ -812,6 +825,11 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                       );
                     })}
                   </div>
+                )}
+                {branchPickerLocked && (
+                  <p className="mt-3 text-sm font-semibold text-gray-400">
+                    บทบาท {allBranchRoles.map((role) => role.name).join(', ')} ต้องเห็นข้อมูลทุกสาขา จึงจำกัดสาขาไม่ได้
+                  </p>
                 )}
               </MangmeeCard>
             )}

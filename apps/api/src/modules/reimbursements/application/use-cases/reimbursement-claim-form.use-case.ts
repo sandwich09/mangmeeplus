@@ -47,7 +47,9 @@ export class PreviewReimbursementClaimFormUseCase {
     const payments = req.payments ?? [];
     const lines = req.lines ?? [];
     // Latest APPROVED step and latest non-voided payment are the ones that signed.
-    const approvedStep = [...steps].reverse().find((step) => step.status === 'APPROVED' && !!step.decidedAt);
+    const approvedStep = steps
+      .filter((step) => step.status === 'APPROVED' && !!step.decidedAt)
+      .sort((a, b) => b.decidedAt!.getTime() - a.decidedAt!.getTime())[0];
     const payment = payments
       .filter((row) => row.status === 'RECORDED')
       .sort((a, b) => a.paidAt.getTime() - b.paidAt.getTime())

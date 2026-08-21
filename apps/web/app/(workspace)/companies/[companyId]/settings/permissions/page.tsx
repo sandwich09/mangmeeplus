@@ -7,5 +7,5 @@ export default async function SettingsPermissionsPage({ params }: { params: Prom
   const session = await fetchServerSession(companyId);
   const forbidden = requireRoutePermission(session, '/settings/permissions');
   if (forbidden) return forbidden;
-  return <PermissionMatrixPrototypePage companyId={companyId} />;
+  return <PermissionMatrixPrototypePage companyId={companyId} viewerPermissions={session?.permissions ?? []} />;
 }

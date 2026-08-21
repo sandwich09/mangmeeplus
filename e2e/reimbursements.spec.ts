@@ -54,7 +54,7 @@ test.describe('REIMB — reimbursements', () => {
   test('REIMB-01 @smoke reimbursements list renders', async ({ authedPage, companyId }) => {
     await gotoCompany(authedPage, companyId, '/reimbursements');
     await expect(authedPage.getByRole('heading', { name: /การเบิกจ่ายและอนุมัติ|Reimbursements/i })).toBeVisible();
-    for (const tab of [/คำขอของฉัน|My/i, /คิวอนุมัติ|Approval/i, /คิวการเงิน|Finance/i]) {
+    for (const tab of [/รายการที่เกี่ยวข้อง|Related/i, /คิวอนุมัติ|Approval/i, /คิวการเงิน|Finance/i]) {
       await expect(authedPage.getByRole('button', { name: tab })).toBeVisible();
     }
   });

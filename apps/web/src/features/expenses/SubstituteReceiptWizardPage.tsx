@@ -504,6 +504,7 @@ export function SubstituteReceiptWizardPage({
   const branchFilter = useBranchFilter();
   const branchId = branchFilter?.branchId ?? '';
   const canReview = permissions.includes('expense.review');
+  const canUploadEvidence = canReview && permissions.includes('attachment.create');
   const canConfirm = permissions.includes('expense.confirm');
   const canCreate = permissions.includes('expense.create');
   const shouldLoadCategories = canCreate || canReview;
@@ -1066,6 +1067,7 @@ export function SubstituteReceiptWizardPage({
     picked?: File,
   ) => {
     if (!detail) throw new Error(t('expenses.substitute_wizard.expense_required', locale));
+    if (!canUploadEvidence) throw new Error(t('expenses.substitute_wizard.upload_forbidden', locale));
     const file = picked ?? (purpose === 'expense.payment.evidence' ? paymentFile : supportingFile);
     if (!file) throw new Error(t('expenses.substitute_wizard.file_required', locale));
     assertAllowedUploadFile(file);
@@ -2098,7 +2100,7 @@ export function SubstituteReceiptWizardPage({
             and an upload glyph, so a staged-but-unsent file read as done — people filled both
             panels, saw the readiness card still short one item, and had no way to tell why.
             The staged file now only survives a failed upload, which is what the button retries. */}
-        <div className="rounded-xl border border-dashed border-brand-200 bg-brand-25 p-3">
+        {canUploadEvidence ? <div className="rounded-xl border border-dashed border-brand-200 bg-brand-25 p-3">
           <ThemedFile
             file={file}
             accept={ATTACHMENT_UPLOAD_ACCEPT}
@@ -2113,7 +2115,7 @@ export function SubstituteReceiptWizardPage({
           {file && (
             <button type="button" className={cx(ghostClass, 'mt-3 w-full justify-center')} disabled={busy} onClick={() => void run(() => uploadEvidence(purpose))}>{t('expenses.substitute_wizard.add_file', locale)}</button>
           )}
-        </div>
+        </div> : <p className="rounded-xl bg-gray-50 px-3 py-2 text-xs text-gray-500">{t('expenses.substitute_wizard.upload_forbidden', locale)}</p>}
         {purpose === 'expense.payment.evidence' && paymentMethod === 'CASH' && (
           <div className="rounded-xl bg-gray-50 p-3">
             <p className="text-sm text-gray-500">{t('expenses.substitute_wizard.payment_voucher_help', locale)}</p>

@@ -87,9 +87,14 @@ export class FinanceReviewReimbursementUseCase {
     assertReimbursementBranchInScope(ctx, req.branchId);
 
     const now = new Date();
+    const note = input.note?.trim();
+    if (note && note.length > 500) throw new BadRequestException('finance_review_note_too_long');
     if (input.resolveDuplicate) {
       if (!ctx.permissions.includes('reimbursement.duplicate.resolve')) throw new ForbiddenException('Missing permission: reimbursement.duplicate.resolve');
       if (!input.duplicateResolutionReason?.trim()) throw new BadRequestException('duplicate_resolution_reason_required');
+    }
+    if (input.decision === 'NEEDS_INFO' && !note) {
+      throw new BadRequestException('finance_correction_reason_required');
     }
 
     if (input.decision === 'APPROVED_FOR_PAYMENT') {
@@ -100,7 +105,7 @@ export class FinanceReviewReimbursementUseCase {
         actorUserId: ctx.userId,
         scopes: ctx.scopes ?? {},
         reviewedAt: now,
-        note: input.note,
+        note,
         resolveRequestDuplicates: input.resolveDuplicate,
         duplicateResolutionReason: input.duplicateResolutionReason,
         onDecisionPersisted: async (tx) => {
@@ -233,7 +238,7 @@ export class FinanceReviewReimbursementUseCase {
       scopes: ctx.scopes ?? {},
       reviewedAt,
       decision,
-      note: input.note,
+      note: input.note?.trim(),
       onDecisionPersisted: async (tx) => {
         await this.audit.log({
           companyId: ctx.companyId,
@@ -246,31 +251,35 @@ export class FinanceReviewReimbursementUseCase {
           riskLevel: 'HIGH',
           metadataJson: { decision },
         }, tx);
-        await appendReimbursementOutboxWithinTx(tx, {
-          companyId: ctx.companyId,
-          eventType: 'reimbursement.finance_review_updated',
-          aggregateId: request.id,
-          eventKey: `reimbursement.finance_review_updated:reimbursement_request:${request.id}:${request.updatedAt.toISOString()}`,
-          payloadJson: {
+        const eventTypes = decision === 'NEEDS_INFO'
+          ? ['reimbursement.finance_review_updated', 'reimbursement.correction_requested']
+          : ['reimbursement.finance_review_updated'];
+        for (const eventType of eventTypes) {
+          await appendReimbursementOutboxWithinTx(tx, {
             companyId: ctx.companyId,
-            actorUserId: ctx.userId,
-            requestId: ctx.requestId,
-            aggregateType: 'reimbursement_request',
+            eventType,
             aggregateId: request.id,
-            occurredAt: reviewedAt.toISOString(),
-            // Same shape as the APPROVED_FOR_PAYMENT branch above: the finance-review workflow
-            // template matches on requestId and renders {{requestNo}}/{{amount}}, so a
-            // decision-only payload would match nothing and notify with an empty subject.
-            data: {
-              requestId: request.id,
-              requestNo: request.requestNo,
-              requesterUserId: request.requesterUserId,
-              decision,
-              amount: request.amount,
-              currency: request.currency,
+            eventKey: `${eventType}:reimbursement_request:${request.id}:${request.updatedAt.toISOString()}`,
+            payloadJson: {
+              companyId: ctx.companyId,
+              actorUserId: ctx.userId,
+              requestId: ctx.requestId,
+              aggregateType: 'reimbursement_request',
+              aggregateId: request.id,
+              occurredAt: reviewedAt.toISOString(),
+              data: {
+                requestId: request.id,
+                requestNo: request.requestNo,
+                requesterUserId: request.requesterUserId,
+                status: decision === 'NEEDS_INFO' ? 'DRAFT' : request.status,
+                decision,
+                note: input.note?.trim(),
+                amount: request.amount,
+                currency: request.currency,
+              },
             },
-          },
-        });
+          });
+        }
       },
     });
   }

@@ -71,6 +71,7 @@ export function SubstituteReceiptHubPage({
 }) {
   const locale = useWorkspaceLocale();
   const router = useRouter();
+  const canReview = permissions.includes('expense.review');
   const canApprove = permissions.includes('expense.confirm');
   const [status, setStatus] = useState<SubstituteReceiptEvidenceStatus | ''>('');
   const [yearMonth, setYearMonth] = useState('');
@@ -193,11 +194,11 @@ export function SubstituteReceiptHubPage({
       <MangmeePage
       title={t('expenses.substitute_hub.title', locale)}
       description={t('expenses.substitute_hub.description', locale)}
-      actions={(
+      actions={canReview ? (
         <Link className={btnClass} href={`/companies/${companyId}/expenses/substitute-receipts/new`}>
           {t('expenses.substitute_hub.create', locale)}
         </Link>
-      )}
+      ) : undefined}
     >
       {loading ? (
         <LoadingState label="กำลังโหลด..." />

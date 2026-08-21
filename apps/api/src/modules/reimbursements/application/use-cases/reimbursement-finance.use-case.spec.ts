@@ -89,6 +89,25 @@ function fakeRepo(req: any, opts: {
       await data.onReadyPersisted(fakeTx(outboxRows));
       return req;
     },
+    recordFinanceReviewAtomic: async (data: any) => {
+      Object.assign(req, {
+        status: data.decision === 'NEEDS_INFO' ? 'DRAFT' : req.status,
+        financeReviewStatus: data.decision,
+        financeReviewedByUserId: data.actorUserId,
+        financeReviewedAt: data.reviewedAt,
+        financeReviewNote: data.note,
+        ...(data.decision === 'NEEDS_INFO' ? {
+          approvedAt: undefined,
+          approvalSnapshotHash: undefined,
+          paymentStatus: 'NOT_PAYABLE',
+          duplicateStatus: 'NOT_CHECKED',
+          postingStatus: 'not_required',
+        } : {}),
+        updatedAt: new Date(req.updatedAt.getTime() + 1),
+      });
+      await data.onDecisionPersisted(fakeTx(outboxRows));
+      return req;
+    },
     // Lane F: the evidence export lists the uploaded signed-copy scans by id.
     listSignedClaimFormCopies: async () => (opts.signedCopies ?? []),
     listOpenDuplicateCandidates: async () => (opts.openDuplicates ? Array.from({ length: opts.openDuplicates }, (_v, i) => ({ id: `d${i}` })) : []),
@@ -318,6 +337,33 @@ describe('FinanceReviewReimbursementUseCase', () => {
       'phase 1 records that projections are pending, so a crash between phases is recoverable',
     );
   });
+
+  it('requires a reason before returning a claim for correction', async () => {
+    const req = financeReviewedRequest({ status: 'FINANCE_REVIEW', financeReviewStatus: 'PENDING' });
+    await assert.rejects(
+      () => financeUC(fakeRepo(req)).execute(ctx(['reimbursement.finance_review']), 'rb-1', { decision: 'NEEDS_INFO', note: '   ' }),
+      /finance_correction_reason_required/,
+    );
+    assert.equal(req.status, 'FINANCE_REVIEW');
+  });
+
+  it('returns NEEDS_INFO to an editable draft and emits a requester correction event', async () => {
+    const req = financeReviewedRequest({
+      status: 'FINANCE_REVIEW', financeReviewStatus: 'PENDING', approvalSnapshotHash: 'old-hash', approvedAt: new Date(),
+    });
+    const outboxRows: any[] = [];
+    await financeUC(fakeRepo(req, { outboxRows })).execute(
+      ctx(['reimbursement.finance_review']), 'rb-1', { decision: 'NEEDS_INFO', note: ' ยอดไม่ตรงกับใบเสร็จ ' },
+    );
+
+    assert.equal(req.status, 'DRAFT');
+    assert.equal(req.financeReviewStatus, 'NEEDS_INFO');
+    assert.equal(req.financeReviewNote, 'ยอดไม่ตรงกับใบเสร็จ');
+    assert.equal(req.paymentStatus, 'NOT_PAYABLE');
+    const correction = outboxRows.find(row => row.eventType === 'reimbursement.correction_requested');
+    assert.equal(correction?.payloadJson.data.requesterUserId, 'staff-1');
+    assert.equal(correction?.payloadJson.data.status, 'DRAFT');
+  });
 });
 
 describe('reimbursement.payment_recorded event payload', () => {
@@ -403,6 +449,99 @@ describe('ExportReimbursementEvidenceUseCase (multi-line)', () => {
 
     assert.deepEqual(out.signedCopyAttachmentIds, ['att-signed-2', 'att-signed-1']);
     assert.equal(JSON.stringify(out).includes('ใบเบิกเซ็นแล้ว.pdf'), false, 'file names are not part of the evidence export');
+  });
+});
+
+function correctionRepositoryHarness(input: { status?: string; recordedPayments?: number; liveProjections?: number } = {}) {
+  const expectedUpdatedAt = new Date('2026-01-03T00:00:00.000Z');
+  const request = financeReviewedRequest({
+    status: input.status ?? 'FINANCE_REVIEW',
+    financeReviewStatus: 'PENDING',
+    paymentStatus: 'UNPAID',
+    duplicateStatus: 'NO_MATCH',
+    postingStatus: 'posted',
+    approvedAt: new Date('2026-01-02T00:00:00.000Z'),
+    currentApproverUserId: 'mgr-1',
+    currentApprovalStepId: 'step-1',
+    approvalSnapshotHash: 'old-hash',
+    updatedAt: expectedUpdatedAt,
+    lines: [],
+  });
+  const deleted = { signatures: 0, signedCopies: 0 };
+  const tx: any = {
+    $executeRaw: async () => 1,
+    reimbursementPayment: { count: async () => input.recordedPayments ?? 0 },
+    expenseRecord: { count: async () => input.liveProjections ?? 0 },
+    reimbursementClaimSignature: { deleteMany: async () => { deleted.signatures += 1; return { count: 1 }; } },
+    attachmentLink: { deleteMany: async () => { deleted.signedCopies += 1; return { count: 1 }; } },
+    reimbursementRequest: {
+      findFirst: async ({ where }: any) => (request.id === where.id && request.companyId === where.companyId ? request : null),
+      updateMany: async ({ where, data }: any) => {
+        if (request.id !== where.id || request.companyId !== where.companyId || request.status !== where.status
+          || request.updatedAt.getTime() !== where.updatedAt.getTime()) return { count: 0 };
+        Object.assign(request, data);
+        return { count: 1 };
+      },
+      findFirstOrThrow: async () => ({ ...request, _count: { lines: 0 } }),
+    },
+  };
+  const client = { $transaction: async (work: (inner: any) => Promise<any>) => work(tx) };
+  return {
+    repo: new PrismaReimbursementRepository({ client } as any, {} as any),
+    request,
+    expectedUpdatedAt,
+    deleted,
+  };
+}
+
+describe('PrismaReimbursementRepository correction transitions', () => {
+  it('returns finance NEEDS_INFO to DRAFT and invalidates current-form artifacts atomically', async () => {
+    const h = correctionRepositoryHarness();
+    await h.repo.recordFinanceReviewAtomic({
+      companyId: 'co-1', requestId: 'rb-1', expectedUpdatedAt: h.expectedUpdatedAt,
+      actorUserId: 'fin-1', scopes: {}, reviewedAt: new Date('2026-01-04T00:00:00.000Z'),
+      decision: 'NEEDS_INFO', note: 'แก้ยอด', onDecisionPersisted: async () => undefined,
+    });
+
+    assert.equal(h.request.status, 'DRAFT');
+    assert.equal(h.request.submittedAt, null);
+    assert.equal(h.request.submittedByUserId, null);
+    assert.equal(h.request.approvedAt, null);
+    assert.equal(h.request.currentApprovalStepId, null);
+    assert.equal(h.request.approvalSnapshotHash, null);
+    assert.equal(h.request.paymentStatus, 'NOT_PAYABLE');
+    assert.equal(h.request.duplicateStatus, 'NOT_CHECKED');
+    assert.deepEqual(h.deleted, { signatures: 1, signedCopies: 1 });
+  });
+
+  it('refuses correction after payment or a live expense projection without invalidating artifacts', async () => {
+    for (const [options, code] of [
+      [{ recordedPayments: 1 }, 'reimbursement_correction_has_payment'],
+      [{ liveProjections: 1 }, 'reimbursement_correction_has_projection'],
+    ] as const) {
+      const h = correctionRepositoryHarness(options);
+      await assert.rejects(() => h.repo.recordFinanceReviewAtomic({
+        companyId: 'co-1', requestId: 'rb-1', expectedUpdatedAt: h.expectedUpdatedAt,
+        actorUserId: 'fin-1', scopes: {}, reviewedAt: new Date('2026-01-04T00:00:00.000Z'),
+        decision: 'NEEDS_INFO', note: 'แก้ยอด', onDecisionPersisted: async () => undefined,
+      }), new RegExp(code));
+      assert.equal(h.request.status, 'FINANCE_REVIEW');
+      assert.deepEqual(h.deleted, { signatures: 0, signedCopies: 0 });
+    }
+  });
+
+  it('reopens a rejected request under the same number and invalidates current-form artifacts', async () => {
+    const h = correctionRepositoryHarness({ status: 'REJECTED' });
+    const requestNo = h.request.requestNo;
+    await h.repo.reopenRejectedRequest('co-1', 'rb-1', h.expectedUpdatedAt, 'staff-1');
+
+    assert.equal(h.request.status, 'DRAFT');
+    assert.equal(h.request.submittedAt, null);
+    assert.equal(h.request.submittedByUserId, null);
+    assert.equal(h.request.requestNo, requestNo);
+    assert.equal(h.request.financeReviewStatus, 'NOT_REQUIRED');
+    assert.equal(h.request.approvalSnapshotHash, null);
+    assert.deepEqual(h.deleted, { signatures: 1, signedCopies: 1 });
   });
 });
 

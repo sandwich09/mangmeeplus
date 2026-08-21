@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   APPROVAL_STEP_STATUS_LABELS,
+  canVoidRecordedPayment,
   canUploadSignedCopy,
   reimbursementOwnActions,
   reimbursementSubmitReadiness,
@@ -42,8 +43,20 @@ describe('eligibleSignatureRoles', () => {
 
   it('offers nothing on a draft or without a session user', () => {
     assert.deepEqual(eligibleSignatureRoles(detail({ requestNo: undefined }), 'staff-1'), []);
+    assert.deepEqual(eligibleSignatureRoles(detail({ status: 'DRAFT' }), 'staff-1'), [], 'a corrected draft may keep its number but is still editable');
     assert.deepEqual(eligibleSignatureRoles(detail(), ''), []);
     assert.deepEqual(eligibleSignatureRoles(null, 'staff-1'), []);
+  });
+
+  it('uses the latest approved decision after a corrected request is resubmitted', () => {
+    const corrected = detail({
+      approvalSteps: [
+        { status: 'APPROVED', decisionByUserId: 'old-manager', decidedAt: '2026-07-21T00:00:00.000Z' },
+        { status: 'APPROVED', decisionByUserId: 'new-manager', decidedAt: '2026-07-25T00:00:00.000Z' },
+      ],
+    });
+    assert.deepEqual(eligibleSignatureRoles(corrected, 'old-manager'), []);
+    assert.deepEqual(eligibleSignatureRoles(corrected, 'new-manager'), ['APPROVER']);
   });
 
   it('offers nothing for steps that have not happened', () => {
@@ -77,6 +90,15 @@ describe('canUploadSignedCopy', () => {
 
   it('has nothing to attach before the claim has a document number', () => {
     assert.equal(canUploadSignedCopy(detail({ requestNo: undefined }), 'staff-1', ['reimbursement.finance_review']), false);
+    assert.equal(canUploadSignedCopy(detail({ status: 'DRAFT' }), 'staff-1', ['reimbursement.finance_review']), false);
+  });
+});
+
+describe('canVoidRecordedPayment', () => {
+  it('requires both a recorded payment and the dedicated void permission', () => {
+    assert.equal(canVoidRecordedPayment({ status: 'RECORDED' }, ['reimbursement.payment.void']), true);
+    assert.equal(canVoidRecordedPayment({ status: 'RECORDED' }, ['reimbursement.payment.record']), false);
+    assert.equal(canVoidRecordedPayment({ status: 'VOIDED' }, ['reimbursement.payment.void']), false);
   });
 });
 
@@ -118,6 +140,17 @@ describe('reimbursementOwnActions', () => {
     );
     assert.equal(
       reimbursementOwnActions(detail({ status: 'REJECTED' }), 'staff-1', ['reimbursement.submit']).canReopen,
+      false,
+    );
+  });
+
+  it('lets finance cancel an in-scope workflow state without pretending to be the requester', () => {
+    assert.equal(
+      reimbursementOwnActions(detail({ status: 'READY_FOR_PAYMENT' }), 'finance-1', ['reimbursement.finance_review']).canCancel,
+      true,
+    );
+    assert.equal(
+      reimbursementOwnActions(detail({ status: 'PAID' }), 'finance-1', ['reimbursement.finance_review']).canCancel,
       false,
     );
   });

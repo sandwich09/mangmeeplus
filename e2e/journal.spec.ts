@@ -1,8 +1,17 @@
 import { test, expect } from './harness/fixtures';
 import { expectNoClientError } from './harness/auth';
 import { gotoCompany, json, unique } from './harness/e2e-utils';
+import { ACCOUNTING_UI_HIDDEN } from '../apps/web/src/features/web-core-workspace/web-core-workspace.constants';
+
+test('JRNL-00 @smoke hidden ledger UI redirects while background posting stays enabled', async ({ authedPage, companyId }) => {
+  test.skip(!ACCOUNTING_UI_HIDDEN, 'Ledger UI is open; the journal journey below is the active contract.');
+  await gotoCompany(authedPage, companyId, '/journal');
+  await expect(authedPage).toHaveURL(new RegExp(`/companies/${companyId}/dashboard(?:\\?.*)?$`));
+});
 
 test.describe('JRNL — journal / ledger', () => {
+  test.skip(ACCOUNTING_UI_HIDDEN, 'Ledger UI is intentionally closed for this launch.');
+
   test('JRNL-01 @smoke journal page renders', async ({ authedPage, companyId }) => {
     await gotoCompany(authedPage, companyId, '/journal');
     await expect(authedPage.getByRole('heading', { name: /สมุดรายวัน|Journal/i })).toBeVisible();

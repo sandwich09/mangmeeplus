@@ -135,12 +135,13 @@ function PermissionCell({ granted, supported }: { granted: boolean; supported: b
   return <span className="inline-flex h-7 w-7 rounded-lg border border-gray-200 bg-white" aria-label="ไม่ได้เปิดสิทธิ์" />;
 }
 
-export function PermissionMatrixPrototypePage({ companyId }: { companyId: string }) {
+export function PermissionMatrixPrototypePage({ companyId, viewerPermissions }: { companyId: string; viewerPermissions: readonly string[] }) {
   const locale = useWorkspaceLocale();
   const toast = useToast();
   const [roles, setRoles] = useState<RoleSummary[]>([]);
   const [matrix, setMatrix] = useState<PermissionMatrixDto | null>(null);
   const [staffCounts, setStaffCounts] = useState<Record<string, number>>({});
+  const [staffCountsAvailable, setStaffCountsAvailable] = useState(false);
   const [catalog, setCatalog] = useState<any[]>([]);
   const [packModules, setPackModules] = useState<Array<{ module: string; packs: CapabilityPackView[] }>>([]);
   const [templates, setTemplates] = useState<RoleTemplate[]>([]);
@@ -149,13 +150,15 @@ export function PermissionMatrixPrototypePage({ companyId }: { companyId: string
   const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null);
   const [mode, setMode] = useState<'view' | 'create' | 'edit'>('view');
   const [disabling, setDisabling] = useState(false);
+  const canManageRoles = viewerPermissions.includes('access.role.manage');
+  const canReadEmployees = viewerPermissions.includes('access.employee.read');
 
   const reload = useCallback(async () => {
     setError(null);
     const [rolesR, matrixR, employeesR, catalogR, packsR, templatesR] = await Promise.allSettled([
       listRoles(companyId),
       getAccessMatrix(companyId),
-      listEmployees(companyId),
+      canReadEmployees ? listEmployees(companyId) : Promise.resolve([]),
       listPermissionCatalog(companyId),
       listCapabilityPacks(companyId),
       listRoleTemplates(companyId),
@@ -163,23 +166,24 @@ export function PermissionMatrixPrototypePage({ companyId }: { companyId: string
 
     if (rolesR.status === 'fulfilled') {
       setRoles(rolesR.value);
-      setSelectedRoleId((prev) => prev ?? rolesR.value[0]?.id ?? null);
+      setSelectedRoleId((prev) => rolesR.value.some((role) => role.id === prev) ? prev : rolesR.value[0]?.id ?? null);
     } else {
       setError(localizedErrorMessage(rolesR.reason, locale, { fallback: 'error.load_failed' }));
     }
     if (matrixR.status === 'fulfilled') setMatrix(matrixR.value);
-    if (employeesR.status === 'fulfilled') {
+    if (canReadEmployees && employeesR.status === 'fulfilled') {
       const counts: Record<string, number> = {};
       for (const emp of employeesR.value as Array<{ roles: { id: string }[] }>) {
         for (const r of emp.roles) counts[r.id] = (counts[r.id] ?? 0) + 1;
       }
       setStaffCounts(counts);
-    }
+      setStaffCountsAvailable(true);
+    } else setStaffCountsAvailable(false);
     if (catalogR.status === 'fulfilled') setCatalog(catalogR.value);
     if (packsR.status === 'fulfilled') setPackModules(packsR.value.modules);
     if (templatesR.status === 'fulfilled') setTemplates(templatesR.value);
     setLoading(false);
-  }, [companyId, locale]);
+  }, [canReadEmployees, companyId, locale, viewerPermissions]);
 
   useEffect(() => { void reload(); }, [reload]);
 
@@ -193,7 +197,7 @@ export function PermissionMatrixPrototypePage({ companyId }: { companyId: string
     () => roles.find((r) => r.id === selectedRoleId) ?? roles[0] ?? null,
     [roles, selectedRoleId],
   );
-  const roleEditable = selectedRole ? isRoleEditableByCompany(selectedRole) : false;
+  const roleEditable = Boolean(canManageRoles && selectedRole && isRoleEditableByCompany(selectedRole));
   const selectedRow = useMemo(
     () => matrix?.rows.find((r) => r.roleId === selectedRole?.id) ?? null,
     [matrix, selectedRole],
@@ -205,7 +209,7 @@ export function PermissionMatrixPrototypePage({ companyId }: { companyId: string
   const { confirm, confirmDialog } = useConfirm();
 
   const handleDisable = async (roleId: string) => {
-    if (disabling || !(await confirm('ปิดใช้งานบทบาทนี้ใช่หรือไม่?'))) return;
+    if (!canManageRoles || disabling || !(await confirm('ปิดใช้งานบทบาทนี้ใช่หรือไม่?'))) return;
     setDisabling(true);
     try {
       await disableRole(companyId, roleId);
@@ -249,14 +253,14 @@ export function PermissionMatrixPrototypePage({ companyId }: { companyId: string
         <MangmeeCard className="p-4">
           <div className="flex flex-wrap items-center justify-between px-2">
             <h2 className="text-sm font-bold text-gray-500">บทบาททั้งหมด</h2>
-            <button
+            {canManageRoles && <button
               type="button"
               className="inline-flex h-11 items-center gap-1 rounded-lg border border-gray-200 px-2 text-xs sm:h-8 font-bold text-gray-600 hover:border-brand-200 hover:bg-brand-25 disabled:opacity-50"
               onClick={() => setMode(mode === 'create' ? 'view' : 'create')}
             >
               <PlusIcon className="h-3.5 w-3.5" />
               เพิ่ม
-            </button>
+            </button>}
           </div>
           <div className="mt-4 grid gap-2">
             {roles.map((role) => {
@@ -277,7 +281,7 @@ export function PermissionMatrixPrototypePage({ companyId }: { companyId: string
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-base font-extrabold text-gray-900">{role.name}</span>
                     <span className="mt-1 block text-sm font-medium text-gray-500">
-                      {staffCounts[role.id] ?? 0} คน · {role.effectivePermissionCount ?? role.permissionKeys.length} สิทธิ์
+                      {staffCountsAvailable ? `${staffCounts[role.id] ?? 0} คน · ` : ''}{role.effectivePermissionCount ?? role.permissionKeys.length} สิทธิ์
                     </span>
                   </span>
                   {role.isSystem && <LockIcon className="h-4 w-4 shrink-0 text-amber-500" />}
@@ -292,17 +296,18 @@ export function PermissionMatrixPrototypePage({ companyId }: { companyId: string
             companyId={companyId} grouped={grouped} packModules={packModules} allPacks={allPacks} templates={templates} smartRolesReady={smartRolesReady}
             onCancel={() => setMode('view')}
             onSubmit={async (body) => {
-              await createRole(companyId, body);
+              const created = await createRole(companyId, body);
+              setSelectedRoleId(created.id);
               toast.success('สร้างบทบาทเรียบร้อยแล้ว');
               setMode('view');
-              void reload();
+              await reload();
             }}
           />
         ) : mode === 'edit' && selectedRole && roleEditable ? (
           <div className="space-y-3">
             {selectedRole.isSystem && roleEditable && (
               <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900">
-                บทบาทมาตรฐาน — เมื่อบันทึก ระบบจะสร้างสำเนาสำหรับบริษัทของคุณ พนักงาน {staffCounts[selectedRole.id] ?? 0} คนที่ใช้บทบาทนี้จะย้ายมาอัตโนมัติ · บริษัทอื่นไม่ได้รับผลกระทบ
+                บทบาทมาตรฐาน — เมื่อบันทึก ระบบจะสร้างสำเนาสำหรับบริษัทของคุณ {staffCountsAvailable ? `พนักงาน ${staffCounts[selectedRole.id] ?? 0} คน` : 'พนักงานที่ใช้บทบาทนี้'}จะย้ายมาอัตโนมัติ · บริษัทอื่นไม่ได้รับผลกระทบ
               </div>
             )}
             <RoleBuilder
@@ -310,10 +315,11 @@ export function PermissionMatrixPrototypePage({ companyId }: { companyId: string
               initial={selectedRole}
               onCancel={() => setMode('view')}
               onSubmit={async (body) => {
-                await updateRole(companyId, selectedRole.id, body);
+                const updated = await updateRole(companyId, selectedRole.id, body);
+                setSelectedRoleId(updated.id);
                 toast.success('บันทึกบทบาทเรียบร้อยแล้ว');
                 setMode('view');
-                void reload();
+                await reload();
               }}
             />
           </div>
@@ -345,7 +351,7 @@ export function PermissionMatrixPrototypePage({ companyId }: { companyId: string
               ) : (
                 <div className="inline-flex shrink-0 items-center gap-2 text-sm font-medium text-gray-400">
                   <LockIcon className="h-4 w-4" />
-                  บทบาทนี้ระบบดูแลให้ แก้ไขไม่ได้
+                  {isRoleEditableByCompany(selectedRole) ? 'คุณมีสิทธิ์ดู แต่ยังไม่มีสิทธิ์จัดการบทบาท' : 'บทบาทนี้ระบบดูแลให้ แก้ไขไม่ได้'}
                 </div>
               )}
             </div>

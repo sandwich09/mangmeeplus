@@ -14,6 +14,7 @@ type LineMessageEvent = {
   timestamp?: number;
   source?: { type?: string; userId?: string; groupId?: string; roomId?: string };
   message?: { id?: string; type?: string; text?: string; fileName?: string; fileSize?: number };
+  postback?: { data?: string };
 };
 
 type RawLineRequest = Request & { rawBody?: Buffer };
@@ -68,12 +69,25 @@ export class LineWebhookController {
     this.logger.log({ msg: 'LINE webhook received', destination: payload.destination });
 
     for (const event of payload.events ?? []) {
-      if (event.type !== 'message' || !event.replyToken || !event.source?.userId) continue;
+      if (!event.replyToken || !event.source?.userId) continue;
       const lineUserId = event.source.userId;
       const chatId = event.source.groupId ?? event.source.roomId ?? lineUserId;
       const timestamp = typeof event.timestamp === 'number' ? event.timestamp : Date.now();
       try {
-        if (event.message?.type === 'text' && event.message.text) {
+        if (event.type === 'postback' && event.postback?.data === 'action=line-rich-talk') {
+          await this.messageBuffer.enqueue({
+            chatId,
+            lineUserId,
+            messagingChannelId,
+            item: {
+              kind: 'text',
+              webhookEventId: event.webhookEventId ?? `${lineUserId}-${Date.now()}`,
+              replyToken: event.replyToken,
+              text: 'คุยกับน้องมั่งมี',
+              timestamp,
+            },
+          });
+        } else if (event.type === 'message' && event.message?.type === 'text' && event.message.text) {
           await this.messageBuffer.enqueue({
             chatId,
             lineUserId,
@@ -87,7 +101,7 @@ export class LineWebhookController {
               timestamp,
             },
           });
-        } else if ((event.message?.type === 'image' || event.message?.type === 'file') && event.message.id) {
+        } else if (event.type === 'message' && (event.message?.type === 'image' || event.message?.type === 'file') && event.message.id) {
           await this.messageBuffer.enqueue({
             chatId,
             lineUserId,

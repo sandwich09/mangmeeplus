@@ -44,10 +44,11 @@ describe('IngestWorkflowEventUseCase', () => {
     assert.equal(ruleMatchesEventType(triggerConfig ?? {}, 'reimbursement.rejected'), true);
   });
 
-  it('auto-enables exactly the six reimbursement-flow templates, each AVAILABLE and event-bound where applicable', () => {
+  it('auto-enables every reimbursement-flow template, each AVAILABLE and event-bound where applicable', () => {
     const autoKeys = WORKFLOW_TEMPLATE_CATALOG.filter((entry) => entry.autoEnable).map((entry) => entry.key).sort();
     assert.deepEqual(autoKeys, [
       'approval_sla_breach',
+      'reimbursement_correction_requester',
       'reimbursement_decision_requester',
       'reimbursement_finance_review',
       'reimbursement_payment_recorded',
@@ -61,6 +62,7 @@ describe('IngestWorkflowEventUseCase', () => {
     }
     for (const [key, eventType] of [
       ['reimbursement_pending_approval', 'reimbursement.request_submitted'],
+      ['reimbursement_correction_requester', 'reimbursement.correction_requested'],
       ['reimbursement_finance_review', 'reimbursement.finance_review_updated'],
       ['reimbursement_ready_for_payment', 'reimbursement.ready_for_payment'],
       ['reimbursement_payment_recorded', 'reimbursement.payment_recorded'],
@@ -84,6 +86,17 @@ describe('IngestWorkflowEventUseCase', () => {
     assert.equal(paid?.defaultActionJson[0]?.configJson['triggerKey'], 'workflow.reimbursement_payment_recorded');
   });
 
+  it('routes a correction request to the requester, not back to finance', () => {
+    const correction = WORKFLOW_TEMPLATE_CATALOG.find((entry) => entry.key === 'reimbursement_correction_requester');
+    const cfg = correction?.defaultActionJson[0]?.configJson ?? {};
+    assert.deepEqual(cfg['recipientPayloadKeys'], ['requesterUserId']);
+    assert.match(String(cfg['deepLinkPathTemplate']), /tab=mine/);
+    assert.equal(
+      ruleMatchesEventType(WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG['reimbursement_correction_requester'] ?? {}, 'reimbursement.correction_requested'),
+      true,
+    );
+  });
+
   // F16: an owner is an approver for every claim (matchesApproverRole), so an owner-only company
   // used to resolve zero recipients for the alert while the review task stayed manager-assigned.
   it('notifies managers AND owners about a pending approval, keeping the task manager-assigned', () => {
@@ -101,7 +114,7 @@ describe('IngestWorkflowEventUseCase', () => {
       .filter((entry) => entry.sourceModule === 'reimbursements' && entry.triggerType === 'EVENT')
       .map((entry) => ({ key: entry.key, cfg: entry.defaultActionJson.find((a) => a.actionType === 'SEND_NOTIFICATION')?.configJson ?? {} }));
 
-    assert.equal(notifications.length, 5);
+    assert.equal(notifications.length, 6);
     for (const { key, cfg } of notifications) {
       assert.equal(typeof cfg['bodyTemplate'], 'string', key);
       assert.notEqual(cfg['bodyTemplate'], cfg['titleTemplate'], key);
@@ -125,11 +138,10 @@ describe('IngestWorkflowEventUseCase', () => {
       true,
     );
 
-    // Real payloads from reimbursement-finance.use-case.ts: the desk is alerted when a claim comes
-    // back to it, never on APPROVED_FOR_PAYMENT (reimbursement_ready_for_payment owns that one).
+    // NEEDS_INFO now goes to the requester; APPROVED_FOR_PAYMENT has its own payer template.
     const now = new Date('2026-08-05T00:00:00.000Z');
     const payload = (decision: string) => ({ requestId: 'rb-1', requestNo: 'RB-202608-00021', decision, amount: '250', currency: 'THB' });
-    assert.equal(evaluateCondition(template!.defaultConditionJson, payload('NEEDS_INFO'), now).matched, true);
+    assert.equal(evaluateCondition(template!.defaultConditionJson, payload('NEEDS_INFO'), now).matched, false);
     assert.equal(evaluateCondition(template!.defaultConditionJson, payload('BLOCKED'), now).matched, true);
     assert.equal(evaluateCondition(template!.defaultConditionJson, payload('APPROVED_FOR_PAYMENT'), now).matched, false);
   });

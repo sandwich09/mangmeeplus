@@ -419,6 +419,13 @@ export class SubmitReimbursementUseCase {
         submittedByUserId: ctx.userId,
         currentApproverUserId: approverUserId,
         approvalSnapshotHash: snapshotHash,
+        // A corrected draft may carry NEEDS_INFO while the requester works. Once it is
+        // resubmitted, that decision is historical; finance starts again only after the new approval.
+        financeReviewStatus: 'NOT_REQUIRED',
+        financeReviewedByUserId: null,
+        financeReviewedAt: null,
+        financeReviewNote: null,
+        approvedAt: null,
         receiptRequirementStatus: receipt.status,
         duplicateStatus: dupResult.status,
         // Freeze the outstanding amount to the observed submitted amount.

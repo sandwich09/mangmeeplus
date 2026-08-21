@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import { RequirePermissions } from '../../../../common/security/permissions.decorator';
+import { RequireAnyPermission, RequirePermissions } from '../../../../common/security/permissions.decorator';
 import { ReqCtx } from '../../../auth/presentation/request-context.decorator';
 import type { RequestContext } from '@watchdog-bms/contracts';
 import { CreateRoleDto, RolePreviewDto, UpdateRoleDto } from './employee-access.dtos';
@@ -24,7 +24,7 @@ export class RoleController {
   ) {}
 
   @Get()
-  @RequirePermissions('access.role.read')
+  @RequireAnyPermission('access.role.read', 'access.role.manage', 'access.employee.create', 'access.employee.update')
   @ApiOperation({ summary: 'List system and company custom roles' })
   list(@ReqCtx() ctx: RequestContext) {
     return this.listRoles.execute(ctx.companyId, {
@@ -35,14 +35,14 @@ export class RoleController {
   }
 
   @Get(':roleId')
-  @RequirePermissions('access.role.read')
+  @RequireAnyPermission('access.role.read', 'access.role.manage')
   @ApiOperation({ summary: 'Get role detail with permission keys' })
   get(@ReqCtx() ctx: RequestContext, @Param('roleId') roleId: string) {
     return this.getRole.execute(ctx.companyId, roleId);
   }
 
   @Post('preview')
-  @RequirePermissions('access.role.read')
+  @RequireAnyPermission('access.role.read', 'access.role.manage')
   @ApiOperation({ summary: 'Preview effective permissions of packs/preset/keys without saving' })
   preview(@ReqCtx() ctx: RequestContext, @Body() body: RolePreviewDto) {
     return this.previewRole.execute({

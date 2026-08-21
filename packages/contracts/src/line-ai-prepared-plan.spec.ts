@@ -1,7 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { LINE_AI_PREPARED_PLAN_BOUNDS, parseLineAiPreparedPlan } from './line-ai-prepared-plan.js';
-import { asIntakeRouteIntent, asIntakeRouterCapabilities, LINE_INTAKE_ROUTE_INTENTS } from './line-ai.js';
+import {
+  asIntakeClarificationFields, asIntakeFundingSource, asIntakeRouteIntent, asIntakeRouterCapabilities, asIntakeSemanticOutcome,
+  LINE_INTAKE_FUNDING_SOURCES, LINE_INTAKE_ROUTE_INTENTS, LINE_INTAKE_SEMANTIC_OUTCOMES,
+} from './line-ai.js';
 import type { LineAiPreparedPlan } from './line-ai.js';
 
 function validIntentPlan() {
@@ -338,6 +341,44 @@ describe('parseLineAiPreparedPlan – wrapper carries NO intake provenance (it i
     const plan = parseLineAiPreparedPlan(validPlan({ intakeIntent: 'BUSINESS_READ_QUESTION' })) as Record<string, unknown> | undefined;
     assert.ok(plan, 'the rest of the wrapper still parses');
     assert.equal(plan!['intakeIntent'], undefined, 'the wrapper never carries provenance');
+  });
+});
+
+describe('semantic intake contract – explicit membership validators (uat-correctness-latency §7)', () => {
+  it('LINE_INTAKE_ROUTE_INTENTS carries REIMBURSEMENT_REQUEST_START and the validator accepts it', () => {
+    assert.ok((LINE_INTAKE_ROUTE_INTENTS as readonly string[]).includes('REIMBURSEMENT_REQUEST_START'));
+    assert.equal(asIntakeRouteIntent('REIMBURSEMENT_REQUEST_START'), 'REIMBURSEMENT_REQUEST_START');
+  });
+
+  it('semantic outcome / funding source accept only their own members (no cast, no cross-enum bleed)', () => {
+    for (const value of LINE_INTAKE_SEMANTIC_OUTCOMES) assert.equal(asIntakeSemanticOutcome(value), value);
+    for (const value of LINE_INTAKE_FUNDING_SOURCES) assert.equal(asIntakeFundingSource(value), value);
+    for (const bad of ['business_expense', 'COMPANY_PAID', '', null, undefined, 1, {}, ['AMBIGUOUS']]) {
+      assert.equal(asIntakeSemanticOutcome(bad), undefined, `outcome must reject ${JSON.stringify(bad)}`);
+    }
+    for (const bad of ['company_paid', 'AMBIGUOUS', '', null, undefined, 0, {}, ['UNKNOWN']]) {
+      assert.equal(asIntakeFundingSource(bad), undefined, `funding must reject ${JSON.stringify(bad)}`);
+    }
+  });
+
+  it('clarification fields are enum-filtered, deduplicated and bounded — raw text never survives', () => {
+    assert.deepEqual(
+      asIntakeClarificationFields(['amount', 'purpose', 'amount', 'เบิกค่าวิน 60 บาท', 7, 'fundingSource']),
+      ['amount', 'purpose', 'fundingSource'],
+    );
+    assert.deepEqual(asIntakeClarificationFields('amount'), []);
+    assert.deepEqual(asIntakeClarificationFields(undefined), []);
+  });
+
+  it('reimbursementSemantic capability activates on an own literal true only', () => {
+    assert.deepEqual(asIntakeRouterCapabilities({ reimbursementSemantic: true }), { reimbursementSemantic: true });
+    for (const bad of [1, 'true', {}, [], false, null]) {
+      assert.deepEqual(asIntakeRouterCapabilities({ reimbursementSemantic: bad }), {});
+    }
+    assert.deepEqual(
+      asIntakeRouterCapabilities({ fusedPlan: true, reimbursementSemantic: true, substituteSemantic: 'true' }),
+      { fusedPlan: true, reimbursementSemantic: true },
+    );
   });
 });
 

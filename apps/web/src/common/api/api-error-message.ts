@@ -166,6 +166,10 @@ const CODE_LABELS: Record<string, string> = {
   stale_claim_snapshot: 'ใบเบิกถูกแก้ไขหลังจากที่คุณกดดูตัวอย่าง กรุณาตรวจฉบับล่าสุดอีกครั้งก่อนลงนาม',
   stale_finance_review_snapshot: 'ใบเบิกถูกแก้ไขระหว่างตรวจสอบ กรุณาเปิดรายการใหม่แล้วลองอีกครั้ง',
   finance_approval_already_decided: 'ใบเบิกนี้ถูกอนุมัติจ่ายโดยผู้อื่นไปแล้ว กรุณาโหลดรายการใหม่',
+  finance_correction_reason_required: 'กรุณาระบุข้อมูลที่ต้องการให้ผู้เบิกแก้ไข',
+  finance_review_note_too_long: 'เหตุผลต้องไม่เกิน 500 ตัวอักษร',
+  reimbursement_correction_has_payment: 'คำขอนี้มีการจ่ายเงินแล้ว ต้องยกเลิกการจ่ายก่อนส่งกลับแก้ไข',
+  reimbursement_correction_has_projection: 'คำขอนี้สร้างรายการค่าใช้จ่ายแล้ว กรุณายกเลิกคำขอและบันทึกใหม่',
   invalid_finance_decision: 'ผลการตรวจสอบของฝ่ายการเงินไม่ถูกต้อง กรุณาเลือกใหม่',
   duplicate_resolution_reason_required: 'กรุณาระบุเหตุผลที่ยืนยันว่าไม่ใช่รายการซ้ำ',
 

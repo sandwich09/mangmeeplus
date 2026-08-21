@@ -160,6 +160,17 @@ describe('CreateEmployeeUseCase', () => {
     assert.equal(verifyPassword('28091998', state.credentials[0].passwordHash), true);
   });
 
+  it('creates every selected role assignment for a multi-role employee', async () => {
+    const { useCase, state } = makeUseCase({ roles: [
+      { id: 'role-staff', key: 'STAFF' },
+      { id: 'role-reviewer', key: 'REIMBURSEMENT_REVIEWER' },
+    ] });
+
+    await useCase.execute({ ...baseCommand, roleIds: ['role-staff', 'role-reviewer'] });
+
+    assert.deepEqual(state.membershipRoles.map((row) => row.roleId).sort(), ['role-reviewer', 'role-staff']);
+  });
+
   it('issues a single-use LINE link QR package bound to the new user', async () => {
     const { useCase, state } = makeUseCase();
     const result = await useCase.execute(baseCommand);

@@ -107,6 +107,19 @@ export function collectReceiptUploadResults(results: readonly PromiseSettledResu
   return { attachmentIds, failedLineNumbers, firstFailure };
 }
 
+/** A new receipt replaces either evidence path; otherwise an edit keeps the current evidence ids. */
+export function mergeDraftLineEvidence(
+  current: { attachmentId?: string | null; linkedExpenseId?: string | null },
+  uploadedAttachmentId?: string | null,
+): { attachmentId: string | null; linkedExpenseId: string | null } {
+  return uploadedAttachmentId
+    ? { attachmentId: uploadedAttachmentId, linkedExpenseId: null }
+    : {
+        attachmentId: current.attachmentId ?? null,
+        linkedExpenseId: current.linkedExpenseId ?? null,
+      };
+}
+
 /** รวมเป็นเงิน of the rows being typed (display only — the server owns the real rollup). */
 export function sumLineAmounts(lines: readonly { amount: string }[]): number {
   return lines.reduce((sum, line) => sum + (Number(line.amount) || 0), 0);
@@ -172,28 +185,25 @@ export type HubTab = (typeof HUB_TABS)[number];
 /**
  * A tab is offered only when the session can actually use the endpoints behind it —
  * the server enforces the same keys, this just stops offering a queue that answers 403.
- * ตั้งค่านโยบาย is a settings editor, so it needs `policy.manage` — the owner's rule is
- * OWNER+ADMIN only, and `policy.read` alone (FINANCE holds it) would show a form whose
- * save 403s.
+ * ตั้งค่านโยบาย is a settings editor, so it needs `policy.manage`; `policy.read` alone
+ * would show a form whose save 403s. Role names are routing labels, not authorization.
  */
 const HUB_TAB_PERMISSIONS: Record<HubTab, readonly string[]> = {
-  mine: ['reimbursement.read_related', 'reimbursement.read_own'],
-  approvals: ['reimbursement.approve'],
+  mine: ['reimbursement.read', 'reimbursement.read_related', 'reimbursement.read_own'],
+  approvals: ['reimbursement.approve', 'reimbursement.reject'],
   finance: ['reimbursement.finance_review'],
   policy: ['reimbursement.policy.manage'],
 };
 
-/** Roles allowed to manage company-wide reimbursement policy (UI narrowing; server checks the permission). */
-const POLICY_ROLE_KEYS = ['OWNER', 'ADMIN'] as const;
+export function visibleHubTabs(permissions: readonly string[], _roles: readonly string[] = []): HubTab[] {
+  return HUB_TABS.filter((tab) => HUB_TAB_PERMISSIONS[tab].some((key) => permissions.includes(key)));
+}
 
-export function visibleHubTabs(permissions: readonly string[], roles: readonly string[] = []): HubTab[] {
-  return HUB_TABS.filter((tab) => {
-    if (!HUB_TAB_PERMISSIONS[tab].some((key) => permissions.includes(key))) return false;
-    // ตั้งค่านโยบาย is company-wide configuration: owner/admin only, even if a custom
-    // capability pack granted the permission.
-    if (tab === 'policy') return roles.some((role) => (POLICY_ROLE_KEYS as readonly string[]).includes(role));
-    return true;
-  });
+/** Prefer the broadest list scope granted to the session; the API remains the final authority. */
+export function reimbursementListScope(permissions: readonly string[]): 'related' | 'own' | undefined {
+  if (permissions.includes('reimbursement.read')) return undefined;
+  if (permissions.includes('reimbursement.read_related')) return 'related';
+  return 'own';
 }
 
 /**

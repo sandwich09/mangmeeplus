@@ -239,6 +239,114 @@ describe('CaptureLineExpenseNoteUseCase', () => {
     assert.equal(calls.length, 0, 'the final mutation boundary creates no draft');
   });
 
+  it('accepts a grounded businessPurpose only when the route was verified as company-paid business spend', async () => {
+    const { repo } = makeRepo();
+    const creates: any[] = [];
+    const useCase = new CaptureLineExpenseNoteUseCase(repo, {
+      execute: async (_c: any, input: any) => {
+        creates.push(input);
+        return { id: 'exp-1', expenseCategoryId: null, grandTotalAmount: '60.0000', updatedAt: new Date('2026-08-18T00:00:00.000Z') };
+      },
+    } as any, audit, outbox);
+    // The exact UAT message: the purpose is in businessPurpose, and nothing else grounds it.
+    const cmd = {
+      messageText: 'ค่ารถวิน 60 บาท ไปพบลูกค้า',
+      captureHints: { amount: '60', businessPurpose: 'ไปพบลูกค้า' },
+      lineMessageId: 'msg-purpose', lineEventId: 'evt-purpose',
+    };
+
+    await useCase.execute(ctx(['expense.receipt.line_upload'], 'line'), { ...cmd, semanticBusinessExpenseConfirmed: true });
+    assert.equal(creates.length, 1);
+    assert.equal(creates[0].lines[0].unitPrice, '60.0000');
+
+    await assert.rejects(
+      () => useCase.execute(ctx(['expense.receipt.line_upload'], 'line'), {
+        ...cmd, lineMessageId: 'msg-purpose-2', lineEventId: 'evt-purpose-2',
+      }),
+      LineTextExpenseCaptureIncompleteError,
+    );
+    assert.equal(creates.length, 1, 'without the semantic guard the same purpose creates nothing');
+  });
+
+  it('reports a typed amount conflict, in enum fields only, and creates nothing on either lane', async () => {
+    const calls: any[] = [];
+    const { repo } = makeRepo();
+    const useCase = new CaptureLineExpenseNoteUseCase(repo, {
+      execute: async (...args: any[]) => { calls.push(args); return { id: 'must-not-exist' }; },
+    } as any, audit, outbox);
+
+    await assert.rejects(
+      () => useCase.execute(ctx(['expense.receipt.line_upload'], 'line'), {
+        draftConversationEnabled: true,
+        semanticBusinessExpenseConfirmed: true,
+        messageText: 'ค่าเดินทาง 200 บาท',
+        groundingTexts: ['ค่ารถวิน 60 บาท'],
+        captureHints: { amount: '200', description: 'ค่าเดินทาง' },
+        lineMessageId: 'msg-conflict', lineEventId: 'evt-conflict',
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof LineTextExpenseCaptureIncompleteError);
+        assert.deepEqual(error.conflictingFields, ['amount']);
+        assert.deepEqual(error.acceptedFields, ['description'], 'the grounded purpose is not asked for again');
+        assert.deepEqual(error.missingFields, []);
+        assert.equal(/60|200/.test(error.message), false, 'the typed error carries field names, never values or text');
+        return true;
+      },
+    );
+    assert.equal(calls.length, 0);
+  });
+
+  it('DEFAULT-OFF keeps the exact legacy gate: category-as-purpose captures, two amounts do not conflict', async () => {
+    const { repo } = makeRepo();
+    const creates: any[] = [];
+    const useCase = new CaptureLineExpenseNoteUseCase(repo, {
+      execute: async (_c: any, input: any) => {
+        creates.push(input);
+        return { id: 'exp-legacy', expenseCategoryId: 'cat-meals', grandTotalAmount: '65.0000', updatedAt: new Date('2026-08-18T00:00:00.000Z') };
+      },
+    } as any, audit, outbox);
+
+    // No description at all: only the ACTIVE category name, found verbatim in the text, makes this
+    // complete — the one legacy behaviour the semantic lane removes.
+    await useCase.execute(ctx(['expense.receipt.line_upload'], 'line'), {
+      messageText: 'ค่าอาหาร 65 บาท',
+      captureHints: { amount: '65', expenseCategoryId: 'cat-meals' },
+      lineMessageId: 'msg-legacy-1', lineEventId: 'evt-legacy-1',
+    });
+    assert.equal(creates.length, 1, 'the legacy category-purpose capture still creates its draft');
+
+    // And an amount carried by the resolved clarification beside a new one is still not a conflict off.
+    await useCase.execute(ctx(['expense.receipt.line_upload'], 'line'), {
+      messageText: 'ค่าเดินทาง 200 บาท',
+      groundingTexts: ['ค่ารถวิน 60 บาท'],
+      captureHints: { amount: '200', description: 'ค่าเดินทาง' },
+      lineMessageId: 'msg-legacy-2', lineEventId: 'evt-legacy-2',
+    });
+    assert.equal(creates.length, 2);
+  });
+
+  it('DEFAULT-OFF reports NO typed fields, so the dispatcher asks the exact previous question', async () => {
+    const { repo } = makeRepo();
+    const useCase = new CaptureLineExpenseNoteUseCase(repo, {
+      execute: async () => { throw new Error('must not create'); },
+    } as any, audit, outbox);
+
+    await assert.rejects(
+      () => useCase.execute(ctx(['expense.receipt.line_upload'], 'line'), {
+        messageText: 'ค่ารถวิน 60 บาท ไปพบลูกค้า',
+        captureHints: { amount: '60', businessPurpose: 'ไปพบลูกค้า' },
+        lineMessageId: 'msg-legacy-3', lineEventId: 'evt-legacy-3',
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof LineTextExpenseCaptureIncompleteError);
+        assert.deepEqual(error.acceptedFields, []);
+        assert.deepEqual(error.missingFields, []);
+        assert.deepEqual(error.conflictingFields, []);
+        return true;
+      },
+    );
+  });
+
   it('fails closed on a clearly non-expense direction even when model hints look complete', async () => {
     const calls: any[] = [];
     const { repo } = makeRepo();

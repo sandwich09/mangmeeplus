@@ -318,7 +318,11 @@ export const MENU_ENTITLEMENT_BINDINGS: readonly MenuEntitlementBinding[] = [
     iconKey: 'ShieldIcon',
     parentFeatureKey: 'employee_access',
     entitlementKeys: ['employee_access'],
-    gatePermissions: ['access.role.read', 'access.employee.read', 'access.effective.read'],
+    gatePermissions: [
+      'access.role.read', 'access.role.manage',
+      'access.employee.read', 'access.employee.create', 'access.employee.update',
+      'access.effective.read',
+    ],
     status: 'ready',
   },
   {

@@ -76,8 +76,8 @@ import type { BusinessDocumentClassification, LineExpenseDraftRouteContext, Line
 import { LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, asIntakeRouteIntent, extractValueCandidates, hasToolPermissions, todayCivilDate } from '@watchdog-bms/contracts';
 import { LineAiLedgerService, ledgerKey, type LedgerEntry } from '../line-ai-ledger.service';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
-import { availableApprovalSurfaceKeys, buildCompanyPickerMessage, buildPendingApprovalCard, buildReceiptCapturePrompt, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, staffMenuCommand, PENDING_APPROVAL_ITEM_LIMIT, type ApprovalSurfaceKey, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
-import { buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage } from '../../domain/logic/line-business-card.logic';
+import { availableApprovalSurfaceKeys, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, staffMenuCommand, PENDING_APPROVAL_ITEM_LIMIT, type ApprovalSurfaceKey, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
+import { buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage } from '../../domain/logic/line-business-card.logic';
 import { capabilityFollowUpReply, isDeliveredCapabilityFollowUp, isNextStepQuestionText } from '../../domain/logic/line-ai-capability-follow-up.logic';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import { LINE_BUFFER_ORPHAN_REPROCESS_MS } from '../../domain/logic/line-message-buffer.logic';
@@ -144,6 +144,7 @@ const RATE_LIMIT_REPLY = '⏳ ระบบกำลังประมวลผ�
 const RECEIPT_LINK_REPLY = '🔗 กรุณาเชื่อมต่อบัญชี มั่งมีพลัส กับ LINE ก่อนส่งบิลหรือใบเสร็จนะคะ';
 const RECEIPT_FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์อัปโหลดบิลหรือใบเสร็จผ่าน LINE ค่ะ';
 const EXPENSE_FEATURE_DISABLED_REPLY = '📋 บริษัทนี้ยังไม่ได้เปิดใช้งานระบบค่าใช้จ่ายและเอกสารค่ะ\nหากต้องการใช้ ให้เจ้าของหรือผู้ดูแลเปิดฟีเจอร์ในเว็บแอปก่อนนะคะ';
+const ASSISTANT_TALK_GREETING = 'สวัสดีค่ะ 😊 น้องมั่งมีมาแล้วนะคะ\nวันนี้มีอะไรให้น้องช่วยแบ่งเบาบ้าง บอกได้เลยค่ะ 💚';
 const COMPANY_CONTEXT_FORBIDDEN_REPLY = '🔒 ผู้ใช้หลายบริษัทต้องเป็น OWNER ของทุกบริษัทก่อนเลือกบริบทใน LINE ค่ะ';
 const SIGNATURE_FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์เก็บลายเซ็นประจำตัวผ่าน LINE ค่ะ';
 const SIGNATURE_NEED_IMAGE_REPLY = '✍️ ต้องการอัปโหลดลายเซ็นใช่ไหมคะ กรุณาส่ง "รูปลายเซ็น" เข้ามาในแชทนี้ได้เลยนะคะ\nระบบจะเก็บเป็นลายเซ็นประจำตัวของคุณ ใช้ลงนามได้ทันทีค่ะ';
@@ -163,6 +164,28 @@ const MEDIA_CLARIFY_REPLY = [
  *  receipt clarify's choice 2 has always had — the bytes stay stored, nothing is recorded. */
 const MEDIA_NOT_RECORDED_REPLY = '🖼️ รับทราบค่ะ เก็บรูปไว้เฉยๆ ไม่ได้บันทึกเป็นหลักฐานของรายการไหน';
 const TEXT_EXPENSE_CLARIFY_REPLY = '🧾 ยังไม่สร้างรายการนะคะ กรุณาระบุยอดเงินและวัตถุประสงค์หรือหมวดค่าใช้จ่ายให้ครบ เช่น “ค่าเดินทาง 200 บาท”';
+/** Field-specific clarifications (spec §8.2): a field the gate ALREADY accepted is never asked again —
+ *  that re-ask is the UAT defect where an accepted `60` was demanded a second time. */
+const TEXT_EXPENSE_AMOUNT_ONLY_REPLY = '🧾 รับรายการแล้วค่ะ ขอทราบยอดเงินด้วยนะคะ เช่น “60 บาท”';
+const TEXT_EXPENSE_PURPOSE_ONLY_REPLY = '🧾 รับยอดเงินแล้วค่ะ ขอทราบรายการหรือวัตถุประสงค์ด้วยนะคะ เช่น “ค่าวินไปพบลูกค้า”';
+const TEXT_EXPENSE_AMOUNT_CONFLICT_REPLY = '🧾 ยังไม่สร้างรายการนะคะ ตอนนี้มียอดเงินมากกว่าหนึ่งจำนวนในบทสนทนา ถ้าต้องการเปลี่ยนยอด พิมพ์ว่า “แก้ยอดเป็น … บาท” ได้เลยค่ะ';
+/** Spec §11.2: the deterministic Nong Mangmee answer to an exact standalone greeting — zero model calls. */
+const EXACT_GREETING_REPLY = 'สวัสดีค่ะ 😊 วันนี้มีอะไรให้น้องมั่งมีช่วยไหมคะ?';
+/** Reimbursement semantic intake: canonical server copy persisted/ledgered for each outcome. The Flex cards
+ *  own their own wording; these are the previews recorded before delivery. LINE never creates the record. */
+const REIMBURSEMENT_PAYER_CLARIFY_REPLY = 'รายการนี้ใครเป็นคนจ่ายคะ? ตอบกลับได้เลยว่า “เบิกคืน” หรือ “บริษัทจ่าย”';
+const REIMBURSEMENT_CLARIFY_ONLY_REPLY = '🧾 เข้าใจว่าต้องการเบิกคืนค่าใช้จ่ายที่จ่ายส่วนตัวไปก่อนค่ะ\nน้องมั่งมียังไม่ได้สร้างรายการเบิกคืนให้ และการส่งต่อไปกรอกในเว็บยังไม่เปิดใช้งานในตอนนี้ค่ะ';
+const REIMBURSEMENT_HANDOFF_REPLY = 'น้องมั่งมียังไม่ได้สร้างรายการเบิกคืนให้นะคะ กรุณาเปิดหน้าเว็บเพื่อตรวจสอบและกรอกรายละเอียดการเบิกคืนด้วยตนเอง ระบบจะสร้างรายการเมื่อกดบันทึกในเว็บเท่านั้นค่ะ';
+const REIMBURSEMENT_HANDOFF_FORBIDDEN_REPLY = '🔒 ยังไม่สามารถส่งต่อการเบิกคืนค่าใช้จ่ายผ่าน LINE สำหรับบริษัทนี้ได้ค่ะ';
+/** LINE hard limits: at most 5 messages per reply, at most 5000 characters in a text message. */
+const LINE_MAX_MESSAGES_PER_REPLY = 5;
+const LINE_TEXT_MESSAGE_MAX_CHARS = 5000;
+/** What a Flex bubble body actually keeps (`bounded(card.text, 1_200)` in line-business-card.logic). */
+const LINE_FLEX_CARD_BODY_MAX_CHARS = 1_200;
+/** Spec §10.1: when the terminal reply is longer than a Flex body holds, the FULL text ships as text and
+ *  this short server-owned card closes the turn after it. It deliberately does NOT restate or summarise
+ *  the content — a second, shorter version of a financial answer is a second claim about the money. */
+const MULTIPART_TERMINAL_FLEX_CLOSER = '✅ ส่งรายละเอียดครบแล้วค่ะ ข้อความเต็มอยู่ด้านบนนี้ค่ะ';
 /** One turn that both captured an expense and ran the substitute continuation reports both outcomes
  *  under this separator; the capture stands on its own when the continuation cannot be evaluated. */
 const SUBSTITUTE_ADDITIONAL_OUTCOME_LABEL = 'ผลคำขอเพิ่มเติม:';
@@ -353,7 +376,7 @@ function formatSignatureTicketReply(
 type LineCompanyMembership = {
   companyId: string;
   company?: { name: string; brandName?: string | null } | null;
-  roles?: Array<{ role?: { key: string } | null }>;
+  roles?: Array<{ role?: { key: string; name?: string } | null }>;
 };
 
 export async function putLineMediaUpload(
@@ -394,6 +417,36 @@ export function isCanonicalSubstituteCommand(text: string, hasOpenState: boolean
   const exactCommand = /^(ทำ|ขอ|ออก|สร้าง|เริ่ม|จัดทำ|ขอทำ|ขอออก)?\s*ใบรับรองแทนใบเสร็จ(?:รับเงิน)?\s*(ต่อ|ให้|ให้หน่อย|หน่อย|ค่ะ|ครับ)?$/u.test(t);
   const stateControl = hasOpenState && /^(พัก|พักไว้ก่อน|ยกเลิก|ยกเลิกงานนี้|ทำต่อ|ทำใบรับรองต่อ)$/u.test(t);
   return exactCommand || stateControl;
+}
+
+/**
+ * Spec §11.2 / plan Phase 6B: the VERSIONED exact standalone greeting allowlist. Membership is
+ * whole-message equality against `normalizeLineText` output (trimmed, whitespace-collapsed, lowercased) —
+ * never a substring or a regex, so “สวัสดีเบิกค่าโดยสารหน่อย” and a greeting whose second line is business
+ * text both stay on the normal semantic route (a newline collapses to a space, so it cannot match either).
+ * Adding an entry is a deliberate version bump; this lane must never grow into a synonym engine that tries
+ * to understand business language.
+ */
+const EXACT_STANDALONE_GREETINGS_V1: readonly string[] = ['สวัสดี', 'สวัสดีค่ะ', 'สวัสดีครับ'];
+
+/** NFC (not NFKC) for the same reason as the substitute matcher: NFKC decomposes precomposed Thai vowels. */
+export function isExactStandaloneGreeting(normalizedText: string): boolean {
+  return EXACT_STANDALONE_GREETINGS_V1.includes(normalizedText.normalize('NFC'));
+}
+
+/**
+ * Spec §8.2: ONE short question built from the typed incomplete result, never a fixed catch-all.
+ * Enum-driven, so the question can never echo conversation text or a financial value. A conflict wins
+ * over a missing field (an unresolved 60-vs-200 makes every other answer premature), and a legacy
+ * fieldless error still falls back to the exact previous copy.
+ */
+export function formatTextExpenseClarifyReply(error: LineTextExpenseCaptureIncompleteError): string {
+  if (error.conflictingFields.includes('amount')) return TEXT_EXPENSE_AMOUNT_CONFLICT_REPLY;
+  const needsAmount = error.missingFields.includes('amount');
+  const needsPurpose = error.missingFields.includes('description') || error.missingFields.includes('purpose');
+  if (needsAmount && !needsPurpose) return TEXT_EXPENSE_AMOUNT_ONLY_REPLY;
+  if (needsPurpose && !needsAmount) return TEXT_EXPENSE_PURPOSE_ONLY_REPLY;
+  return TEXT_EXPENSE_CLARIFY_REPLY;
 }
 
 /** Bounded affirmative confirmation to a pending substitute-start question (never a negation). */
@@ -499,7 +552,15 @@ function isOwnerMembership(membership: LineCompanyMembership): boolean {
 }
 
 function companyLabel(membership: LineCompanyMembership): string {
-  return membership.company?.brandName ?? membership.company?.name ?? membership.companyId;
+  return membership.company?.brandName ?? membership.company?.name ?? 'ไม่ระบุบริษัท';
+}
+
+function companyRoleLabels(membership: LineCompanyMembership): string[] {
+  return [...new Set((membership.roles ?? [])
+    .filter((item): item is { role: { key: string; name?: string } } => !!item.role)
+    .sort((a, b) => a.role.key.localeCompare(b.role.key))
+    .map(({ role }) => role.name?.trim())
+    .filter((name): name is string => !!name))];
 }
 
 function findCompanySelection(memberships: LineCompanyMembership[], value: string): LineCompanyMembership | undefined {
@@ -1067,6 +1128,9 @@ export class ProcessLineWebhookUseCase {
           // PRIMARY only — 'shadow' is an inert NO-GO that must stay byte-identical to 'off' (no substitute
           // capability, so the router is never even offered the semantic route it could not safely act on).
           substituteSemantic: this.config.lineAiSubstituteSemanticRoutingMode === 'primary',
+          // clarify_only/handoff only — 'shadow' is inert like 'off' (the router is never offered the route).
+          reimbursementSemantic: this.config.lineAiReimbursementSemanticMode === 'clarify_only'
+            || this.config.lineAiReimbursementSemanticMode === 'handoff',
         },
         permissions: input.permissions,
         activeCategories,
@@ -1129,11 +1193,21 @@ export class ProcessLineWebhookUseCase {
     /** Spec §13: the state badge the reply's own use case chose. Absent renders exactly as before. */
     badge?: string,
   ): Promise<void> {
-    await this.deliverRequiredMessages(event, [await this.withCompletionMenu(
+    const message = await this.timeStage(event.webhookEventId, 'render', () => this.withCompletionMenu(
       buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, companyId, badge),
       companyId,
       access,
-    )]);
+    ));
+    await this.deliverRequiredMessages(event, [message]);
+  }
+
+  /** `buildTextMessage` SLICES at LINE's 5000-character cap, so an over-long part would be delivered
+   *  silently truncated. Every producer here already bounds its parts (the expense splitter emits <= 4800),
+   *  so exceeding this is a producer bug — and losing part of a financial reply is worse than failing the
+   *  turn, which the caller already treats as an undelivered reply. */
+  private buildLosslessTextMessage(text: string): LineReplyMessage {
+    if (text.length > LINE_TEXT_MESSAGE_MAX_CHARS) throw new Error('LINE_REPLY_TEXT_PART_TOO_LONG');
+    return this.lineReply.buildTextMessage(text);
   }
 
   private async deliverCompletedReplies(
@@ -1142,13 +1216,56 @@ export class ProcessLineWebhookUseCase {
     companyId: string,
     access: { permissions: string[]; roles: string[] },
   ): Promise<void> {
-    if (texts.length === 0 || texts.length > 5) throw new Error('LINE_EXPENSE_DRAFT_REPLY_PARTS_INVALID');
-    const messages = texts.map((text) => this.lineReply.buildTextMessage(text));
-    messages[messages.length - 1] = await this.withCompletionMenu(messages[messages.length - 1]!, companyId, access);
+    if (texts.length === 0 || texts.length > LINE_MAX_MESSAGES_PER_REPLY) throw new Error('LINE_EXPENSE_DRAFT_REPLY_PARTS_INVALID');
+    const messages = await this.timeStage(event.webhookEventId, 'render', async () => {
+      const terminal = texts[texts.length - 1]!;
+      // Default-off is the legacy shape exactly: every part a text message, completion quick reply on the
+      // terminal one only.
+      if (!this.config.lineAiMultipartTerminalFlexEnabled) {
+        const parts = texts.map((text) => this.buildLosslessTextMessage(text));
+        parts[parts.length - 1] = await this.withCompletionMenu(parts[parts.length - 1]!, companyId, access);
+        return parts;
+      }
+      // Spec §10.1: earlier parts stay lossless text; the terminal part becomes the same Flex card a
+      // single completed reply gets, so a multi-part journey never ends in plain text.
+      if (Array.from(terminal).length <= LINE_FLEX_CARD_BODY_MAX_CHARS) {
+        const parts = texts.slice(0, -1).map((text) => this.buildLosslessTextMessage(text));
+        parts.push(await this.withCompletionMenu(
+          buildLineAssistantTextCardMessage(terminal, this.config.webBaseUrl, companyId),
+          companyId,
+          access,
+        ));
+        return parts;
+      }
+      // The terminal text is longer than a Flex body holds. Feeding it to the card would drop everything
+      // past the limit, so the canonical text ships INTACT as text and the card is appended after it —
+      // and only when a message slot is left. At the cap, five lossless text parts beat a card.
+      const parts = texts.map((text) => this.buildLosslessTextMessage(text));
+      if (parts.length >= LINE_MAX_MESSAGES_PER_REPLY) {
+        parts[parts.length - 1] = await this.withCompletionMenu(parts[parts.length - 1]!, companyId, access);
+        return parts;
+      }
+      parts.push(await this.withCompletionMenu(
+        buildLineAssistantTextCardMessage(MULTIPART_TERMINAL_FLEX_CLOSER, this.config.webBaseUrl, companyId),
+        companyId,
+        access,
+      ));
+      return parts;
+    });
     await this.deliverRequiredMessages(event, messages);
   }
 
+  /** The single delivery seam: every reply/push in this use case goes through here, so `line_delivery`
+   *  is timed once here rather than at one call site — and it stays the NETWORK send (plus its own
+   *  delivery bookkeeping), never the message construction, which is the separate `render` stage. */
   private async deliverMessages(
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; beforeReply?: () => Promise<void> },
+    messages: LineReplyMessage[],
+  ): Promise<LineDeliveryResult> {
+    return this.timeStage(event.webhookEventId, 'line_delivery', () => this.sendMessages(event, messages));
+  }
+
+  private async sendMessages(
     event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; beforeReply?: () => Promise<void> },
     messages: LineReplyMessage[],
   ): Promise<LineDeliveryResult> {
@@ -1268,6 +1385,20 @@ export class ProcessLineWebhookUseCase {
       return;
     }
 
+    // Public deterministic command: the verified controller and event claim already ran, but no
+    // identity, company, acceptance, permission, entitlement, or model read is needed.
+    const publicCommand = staffMenuCommand(event.messageText);
+    if (publicCommand === 'contact') {
+      await this.deliverRequiredMessages(event, [buildContactCard()]);
+      await this.updateEventLog(event.webhookEventId, 'staff_menu_contact');
+      return;
+    }
+    if (publicCommand === 'talk') {
+      await this.deliverReply(event, ASSISTANT_TALK_GREETING);
+      await this.updateEventLog(event.webhookEventId, 'staff_menu_talk');
+      return;
+    }
+
     // 3. Resolve LINE user → internal user via ExternalIdentity, scoped to the webhook's channel.
     const identity = await this.resolveLineIdentity(event);
 
@@ -1289,7 +1420,7 @@ export class ProcessLineWebhookUseCase {
     const companyCommand = parseLineCompanyCommand(event.messageText)
       ?? await this.pendingCompanySelectionCommand(event);
     if (companyCommand) {
-      await this.handleCompanyCommand(event, requestId, identity.userId, companyCommand);
+      await this.handleCompanyCommand(event, requestId, identity.userId, identity.user.displayName, companyCommand);
       return;
     }
 
@@ -1331,10 +1462,57 @@ export class ProcessLineWebhookUseCase {
       event, identity.userId, companyId, resolvedAccess.membershipId,
     )) return;
 
-    await this.recordShadowTurn(companyId);
     // Read once for the whole turn: the AI gate, the capability copy, and the gateway turn request
     // all need the same entitlement set. `null` stays the legacy fail-open sentinel.
     const entitledFeatureKeys = await loadEntitledFeatureKeys(this.prisma, companyId);
+    const menuCommand = staffMenuCommand(event.messageText);
+    const canCaptureExpense = RECEIPT_CAPTURE_PERMISSIONS
+      .some((permission) => resolvedAccess.permissions.includes(permission));
+
+    // These two cards are deterministic product entry points, not AI turns. They keep their own
+    // feature/permission gates and remain available when the model provider or AI feature is off.
+    if (menuCommand === 'services') {
+      await this.deliverRequiredMessages(event, [buildServiceEntitlementMessage(entitledFeatureKeys)]);
+      await this.updateEventLog(event.webhookEventId, 'staff_menu_services', undefined, companyId);
+      return;
+    }
+    if (menuCommand === 'receipt') {
+      const receiptFeatureEnabled = entitledFeatureKeys === null || entitledFeatureKeys.has('expenses.upload');
+      if (!receiptFeatureEnabled || !canCaptureExpense) {
+        const featureDisabled = !receiptFeatureEnabled;
+        await this.deliverReply(event, featureDisabled ? EXPENSE_FEATURE_DISABLED_REPLY : RECEIPT_FORBIDDEN_REPLY);
+        await this.audit.log({
+          companyId,
+          actorUserId: identity.userId,
+          action: 'expense.line_upload.reject',
+          targetType: 'LineWebhookEvent',
+          targetId: event.webhookEventId,
+          requestId,
+          result: 'DENIED',
+          riskLevel: 'MEDIUM',
+          metadataJson: { reason: featureDisabled ? 'feature_disabled' : 'missing_expense_receipt_line_upload', route: 'rich_menu' },
+        });
+        await this.updateEventLog(event.webhookEventId,
+          featureDisabled ? 'feature_disabled' : 'forbidden',
+          featureDisabled ? LINE_AI_ERROR_CODES.UNSUPPORTED_MODULE : LINE_AI_ERROR_CODES.FORBIDDEN,
+          companyId);
+        return;
+      }
+      await this.deliverRequiredMessages(event, [buildReceiptCapturePrompt({
+        displayName: identity.user.displayName,
+        roleLabel: resolvedAccess.roles.join(' · ') || 'พนักงาน',
+        branchScopeLabel: branchScopeFallbackLabel(resolvedAccess.scopes.branchIds),
+        permissions: resolvedAccess.permissions,
+        entitledFeatureKeys,
+        webBaseUrl: this.config.webBaseUrl,
+        companyId,
+        isOwner: resolvedAccess.roles.includes('OWNER'),
+      })]);
+      await this.updateEventLog(event.webhookEventId, 'staff_menu_receipt', undefined, companyId);
+      return;
+    }
+
+    await this.recordShadowTurn(companyId);
     if (lineAssistantDisabledFor(entitledFeatureKeys)) {
       await this.deliverReply(event, formatRefusal('feature_disabled'));
       await this.audit.log({
@@ -1353,8 +1531,6 @@ export class ProcessLineWebhookUseCase {
     }
 
     const canQuery = resolvedAccess.permissions.includes('line.ai.query');
-    const canCaptureExpense = ['expense.receipt.line_upload', 'expense.receipt.upload', 'expense.create']
-      .some((perm) => resolvedAccess.permissions.includes(perm));
     const canSubmitSignature = maySubmitSignature(resolvedAccess.permissions);
     // Phase 1 is personal-chat only. Group/room capture retains the proven single-turn path.
     const expenseDraftConversationEnabled = this.config.lineExpenseDraftConversationEnabled === true
@@ -1377,8 +1553,7 @@ export class ProcessLineWebhookUseCase {
       return;
     }
 
-    const menuCommand = staffMenuCommand(event.messageText);
-    if (menuCommand) {
+    if (menuCommand === 'main' || menuCommand === 'query' || menuCommand === 'approval') {
       const menuContext: StaffMenuContext = {
         displayName: identity.user.displayName,
         roleLabel: resolvedAccess.roles.join(' · ') || 'พนักงาน',
@@ -1395,8 +1570,7 @@ export class ProcessLineWebhookUseCase {
         ? buildStaffMainMenu(menuContext)
         : menuCommand === 'query'
           ? buildStaffQueryMenu(menuContext)
-          : menuCommand === 'approval'
-            ? buildPendingApprovalCard(menuContext, await this.loadPendingApprovals({
+          : buildPendingApprovalCard(menuContext, await this.loadPendingApprovals({
               requestId,
               authSubject: identity.userId,
               userId: identity.userId,
@@ -1406,8 +1580,7 @@ export class ProcessLineWebhookUseCase {
               permissions: resolvedAccess.permissions,
               scopes: resolvedAccess.scopes,
               authProvider: 'line',
-            }, availableApprovalSurfaceKeys(menuContext)))
-            : buildReceiptCapturePrompt(menuContext);
+            }, availableApprovalSurfaceKeys(menuContext)));
       await this.deliverRequiredMessages(event, [message]);
       await this.updateEventLog(event.webhookEventId, `staff_menu_${menuCommand}`, undefined, companyId);
       return;
@@ -1806,6 +1979,32 @@ export class ProcessLineWebhookUseCase {
       return;
     }
 
+    // Phase 6B (§11.2, budget §11.4): an exact standalone greeting is answered here with ZERO model calls —
+    // no intake router, no gateway turn, no composer. It sits at the very END of the deterministic gates on
+    // purpose: identity/company/access/legal/feature already ran, the parked picture was already resolved,
+    // the ledger and the active-draft/substitute contexts were already read. It therefore fires only for a
+    // turn carrying no state at all — no open clarification, no draft in flight, no pending media capsule,
+    // no substitute workflow and no pending substitute question. Anything else falls through untouched, so
+    // a greeting that arrives beside business text or beside open work still gets the full semantic route.
+    if (this.config.lineAiExactGreetingEnabled
+      && isExactStandaloneGreeting(normalizedText)
+      && openWaiting.length === 0
+      && activeExpenseDrafts.length === 0
+      && !mediaResumeCapsule
+      && substituteContext.workflowState === 'none'
+      && !substituteContext.hasPendingQuestion) {
+      // Ordering only: the outcome is recorded before delivery so a failed send leaves a record of what
+      // was decided. This is NOT the §8.3 durable replay — `persistIntakeTurn` is best-effort memory
+      // (it swallows its own failure) and no seam re-sends a persisted outcome on a later retry.
+      await this.persistIntakeTurn({
+        userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
+        userMessagePreview: normalizedText, replyText: EXACT_GREETING_REPLY, intent: 'UNKNOWN',
+      });
+      await this.deliverCompletedReply(event, EXACT_GREETING_REPLY, companyId, resolvedAccess);
+      await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
+      return;
+    }
+
     const aiOpenClarifications = openClarifications?.filter((item) =>
       !(substituteInterruption && item.clarifyForIntent === 'SUBSTITUTE_RECEIPT_CONTINUATION')
       && !(mediaResumeCapsule && item.pendingMedia));
@@ -1947,6 +2146,100 @@ export class ProcessLineWebhookUseCase {
     // logs nothing new — it is intentionally impossible to activate a meaningful shadow until a bounded
     // nonblocking compare exists. Offline provider replay measures agreement instead.
 
+    // Reimbursement semantic intake — a TYPED branch AFTER routePlan, gated on the same trusted mode the
+    // capability flag came from ('shadow' is inert and behaves exactly like 'off'). LINE never writes a
+    // reimbursement or an expense here: the payer question, the clarify-only acknowledgement and the web
+    // handoff are the only outcomes, and every recorded reply text is canonical server copy.
+    const reimbursementMode = this.config.lineAiReimbursementSemanticMode;
+    if (
+      (reimbursementMode === 'clarify_only' || reimbursementMode === 'handoff')
+      && routePlan.status === 'ROUTED' && routePlan.intent === 'REIMBURSEMENT_REQUEST_START'
+    ) {
+      // Exactly the reimbursement questions THIS turn answered — the model's resolved ids narrowed to the
+      // entries this user was asked for THIS intent. Consuming anything wider would silently close another
+      // intent's (or another user's) open question on the strength of an answer about who paid.
+      // A provider that reports NO id consumes nothing: the open question stays open and the next turn
+      // inherits it. A stale re-ask is the accepted cost of never closing a financial question on a guess.
+      const resolvedReimbursementIds = openWaiting
+        .filter((item) => item.clarifyForIntent === 'REIMBURSEMENT_REQUEST_START'
+          && routePlan.resolvedClarificationIds?.includes(item.id))
+        .map((item) => item.id);
+
+      // Authority is decided BEFORE the payer question, not after it: asking who paid and only then
+      // refusing spends the user's answer on a lane they were never able to reach. The gate is the web
+      // form's own — feature entitlement (legacy null = fail-open), reimbursement.create, and a branch
+      // scope that can reach at least one branch (an explicitly empty scope reaches none).
+      const handoffAllowed = (entitledFeatureKeys === null || entitledFeatureKeys.has('reimbursement'))
+        && resolvedAccess.permissions.includes('reimbursement.create')
+        && (resolvedAccess.scopes.branchIds === undefined || resolvedAccess.scopes.branchIds.length > 0);
+      if (reimbursementMode === 'handoff' && !handoffAllowed) {
+        // Canonical outcome first, then the resolved question is closed, then delivery. No CTA, no new
+        // ledger question, zero writes — a denied user is never left waiting on an answer we cannot use.
+        await this.persistIntakeTurn({
+          userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
+          userMessagePreview: normalizedText, replyText: REIMBURSEMENT_HANDOFF_FORBIDDEN_REPLY,
+          intent: 'MUTATION_REQUEST', refused: true,
+        });
+        await this.consumeClarifications(companyId, chatKey, identity.userId, openWaiting,
+          resolvedReimbursementIds, 'reimbursement_forbidden');
+        await this.deliverReply(event, REIMBURSEMENT_HANDOFF_FORBIDDEN_REPLY);
+        await this.updateEventLog(event.webhookEventId, 'forbidden', LINE_AI_ERROR_CODES.FORBIDDEN, companyId);
+        return;
+      }
+      // Fail-closed: anything short of a strong EMPLOYEE_PAID claim asks who paid before anything else.
+      if (routePlan.semanticOutcome !== 'REIMBURSEMENT_CLAIM' || routePlan.fundingSource !== 'EMPLOYEE_PAID') {
+        await this.persistIntakeTurn({
+          userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
+          userMessagePreview: normalizedText, replyText: REIMBURSEMENT_PAYER_CLARIFY_REPLY, intent: 'CLARIFY',
+        });
+        // An answer that did not settle the payer closes the question it answered and opens the NEXT one,
+        // in that order — otherwise the stale entry outlives the reply and the next message inherits it.
+        await this.consumeClarifications(companyId, chatKey, identity.userId, openWaiting,
+          resolvedReimbursementIds, 'reimbursement_payer_reclarify');
+        await this.ledger?.appendSubRequests({
+          companyId, chatKey, turnId: requestId, webhookEventId: event.webhookEventId,
+          userId: identity.userId,
+          items: [{
+            text: normalizedText, state: 'waiting_user', clarifyQuestion: REIMBURSEMENT_PAYER_CLARIFY_REPLY,
+            intent: 'CLARIFY', clarifyForIntent: 'REIMBURSEMENT_REQUEST_START',
+          }],
+        });
+        await this.deliverRequiredMessages(event, [await this.timeStage(event.webhookEventId, 'render',
+          () => this.withCompletionMenu(buildReimbursementPayerClarificationMessage(), companyId, resolvedAccess))]);
+        await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
+        return;
+      }
+      if (reimbursementMode === 'clarify_only') {
+        await this.persistIntakeTurn({
+          userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
+          userMessagePreview: normalizedText, replyText: REIMBURSEMENT_CLARIFY_ONLY_REPLY, intent: 'MUTATION_REQUEST',
+        });
+        await this.consumeClarifications(companyId, chatKey, identity.userId, openWaiting,
+          resolvedReimbursementIds, 'reimbursement_clarify_only');
+        // Server card with no CTA: the text carries no link, so the card renders no button.
+        await this.deliverRequiredMessages(event, [await this.timeStage(event.webhookEventId, 'render',
+          async () => buildLineAssistantTextCardMessage(REIMBURSEMENT_CLARIFY_ONLY_REPLY, this.config.webBaseUrl, companyId))]);
+        await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
+        return;
+      }
+      // handoff, allowed: the web form is still the only place the record is created.
+      await this.persistIntakeTurn({
+        userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
+        userMessagePreview: normalizedText, replyText: REIMBURSEMENT_HANDOFF_REPLY, intent: 'MUTATION_REQUEST',
+      });
+      await this.consumeClarifications(companyId, chatKey, identity.userId, openWaiting,
+        resolvedReimbursementIds, 'reimbursement_handoff');
+      await this.deliverRequiredMessages(event, [await this.timeStage(event.webhookEventId, 'render',
+        () => this.withCompletionMenu(buildReimbursementHandoffMessage(this.config.webBaseUrl, companyId), companyId, resolvedAccess))]);
+      await this.audit.log({
+        companyId, actorUserId: identity.userId, action: 'reimbursement.line_handoff',
+        targetType: 'LineWebhookEvent', targetId: event.webhookEventId, requestId, result: 'SUCCESS', riskLevel: 'LOW',
+        metadataJson: { semanticOutcome: routePlan.semanticOutcome, fundingSource: routePlan.fundingSource, confidence: routePlan.confidence },
+      });
+      await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
+      return;
+    }
+
     if (routePlan.status === 'ROUTED' && routePlan.intent === 'EXPENSE_DRAFT_CONTINUATION') {
       if (!expenseDraftConversationEnabled) {
         await this.deliverReply(event, TEXT_EXPENSE_CLARIFY_REPLY);
@@ -2010,7 +2303,7 @@ export class ProcessLineWebhookUseCase {
       const capturePlan = this.planConsumption(companyId, chatKey, identity.userId, openWaiting, routePlan.resolvedClarificationIds, 'evidence_capture');
       let captured: Awaited<ReturnType<CaptureLineExpenseNoteUseCase['execute']>>;
       try {
-        captured = await this.captureExpenseNote.execute(ctx, {
+        captured = await this.timeStage(event.webhookEventId, 'capture_execute', () => this.captureExpenseNote!.execute(ctx, {
           messageText: normalizedText,
           captureHints: {
             ...(routePlan.captureHints ?? {}),
@@ -2023,15 +2316,23 @@ export class ProcessLineWebhookUseCase {
           lineMessageId: event.lineMessageId ?? event.webhookEventId,
           lineEventId: event.webhookEventId,
           draftConversationEnabled: expenseDraftConversationEnabled,
+          // Phase 1B (§8.1): grounded `businessPurpose` may satisfy completeness ONLY behind the semantic
+          // primary guard. 'off'/'shadow' never sets it, so the completeness expansion cannot ship alone —
+          // and a route the server did not verify as company-paid business spend never unlocks it.
+          semanticBusinessExpenseConfirmed: (reimbursementMode === 'clarify_only' || reimbursementMode === 'handoff')
+            && routePlan.semanticOutcome === 'BUSINESS_EXPENSE' && routePlan.fundingSource === 'COMPANY_PAID',
           chatKeyHash: chatKeyHashOf(event),
           ...(capturePlan ? { consumption: capturePlan.consumption } : {}),
-        });
+        }));
       } catch (error) {
         if (!(error instanceof LineTextExpenseCaptureIncompleteError)) throw error;
-        await this.deliverReply(event, TEXT_EXPENSE_CLARIFY_REPLY);
+        // One canonical question for the fields that are actually missing — the same string is delivered,
+        // persisted and ledgered, so a later turn resolves exactly what the user was asked.
+        const clarifyReply = formatTextExpenseClarifyReply(error);
+        await this.deliverReply(event, clarifyReply);
         await this.persistIntakeTurn({
           userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
-          userMessagePreview: normalizedText, replyText: TEXT_EXPENSE_CLARIFY_REPLY, intent: 'CLARIFY',
+          userMessagePreview: normalizedText, replyText: clarifyReply, intent: 'CLARIFY',
         });
         await this.ledger?.appendSubRequests({
           companyId, chatKey, turnId: requestId, webhookEventId: event.webhookEventId,
@@ -2039,7 +2340,7 @@ export class ProcessLineWebhookUseCase {
           items: [{
             text: normalizedText,
             state: 'waiting_user',
-            clarifyQuestion: TEXT_EXPENSE_CLARIFY_REPLY,
+            clarifyQuestion: clarifyReply,
             intent: 'CLARIFY',
             clarifyForIntent: 'EXPENSE_DOCUMENT_CAPTURE',
           }],
@@ -2293,13 +2594,12 @@ export class ProcessLineWebhookUseCase {
     await this.updateEventLog(event.webhookEventId, 'response_ready', undefined, companyId);
 
     // 10. Customer-visible completion requires a confirmed LINE reply/push.
-    const fallbackText = formatLineReply(turnResponse, this.config.webBaseUrl);
-    const completionMessage = await this.withCompletionMenu(
-      buildLineBusinessAnswerMessage(turnResponse, fallbackText, this.config.webBaseUrl, companyId),
+    const completionMessage = await this.timeStage(event.webhookEventId, 'render', () => this.withCompletionMenu(
+      buildLineBusinessAnswerMessage(turnResponse, formatLineReply(turnResponse, this.config.webBaseUrl), this.config.webBaseUrl, companyId),
       companyId,
       resolvedAccess,
-    );
-    const delivery = await this.timeStage(event.webhookEventId, 'line_delivery', () => this.deliverMessages(event, [completionMessage]));
+    ));
+    const delivery = await this.deliverMessages(event, [completionMessage]);
     this.emitTurnSummary({ webhookEventId: event.webhookEventId, requestId, request: turnRequest, response: turnResponse, delivery });
     if (delivery !== 'ok') {
       await this.prisma.client.aiTurn.update({
@@ -2371,7 +2671,7 @@ export class ProcessLineWebhookUseCase {
       select: {
         companyId: true,
         company: { select: { name: true, brandName: true } },
-        roles: { select: { role: { select: { key: true } } } },
+        roles: { select: { role: { select: { key: true, name: true } } } },
       },
       orderBy: { createdAt: 'asc' },
     }) as Promise<LineCompanyMembership[]>;
@@ -2392,7 +2692,7 @@ export class ProcessLineWebhookUseCase {
     return previous && COMPANY_SELECTION_PENDING_STATUSES.has(previous.status) ? candidate : null;
   }
 
-  private async handleCompanyCommand(event: LineTextEvent, requestId: string, userId: string, command: LineCompanyCommand): Promise<void> {
+  private async handleCompanyCommand(event: LineTextEvent, requestId: string, userId: string, displayName: string, command: LineCompanyCommand): Promise<void> {
     const memberships = await this.listLineCompanies(userId);
     if (memberships.length === 0) {
       await this.deliverReply(event, UNLINKED_REPLY);
@@ -2411,18 +2711,39 @@ export class ProcessLineWebhookUseCase {
     });
 
     if (command.kind === 'list') {
-      await this.deliverRequiredMessages(event, [buildCompanyPickerMessage(
-        memberships.map((membership) => ({ companyId: membership.companyId, companyName: companyLabel(membership) })),
-        current?.companyId,
-      )]);
-      await this.updateEventLog(event.webhookEventId, 'company_context_listed', undefined, current?.companyId);
+      const currentCompanyId = memberships.length === 1 ? memberships[0]!.companyId : current?.companyId;
+      const currentMembership = memberships.find((membership) => membership.companyId === currentCompanyId);
+      if (!currentMembership) {
+        await this.deliverRequiredMessages(event, [buildCompanyPickerMessage(
+          memberships.filter(isOwnerMembership).map((membership) => ({ companyId: membership.companyId, companyName: companyLabel(membership) })),
+          undefined,
+          command.page,
+        )]);
+        await this.updateEventLog(event.webhookEventId, 'needs_company_selection', LINE_AI_ERROR_CODES.AMBIGUOUS_COMPANY);
+        return;
+      }
+      const messages: LineReplyMessage[] = [buildCompanyContextMessage({
+        companyName: companyLabel(currentMembership),
+        displayName,
+        roleLabels: companyRoleLabels(currentMembership),
+      })];
+      const ownerCompanies = memberships.filter(isOwnerMembership);
+      if (isOwnerMembership(currentMembership) && ownerCompanies.length > 1) {
+        messages.push(buildCompanyPickerMessage(
+          ownerCompanies.map((membership) => ({ companyId: membership.companyId, companyName: companyLabel(membership) })),
+          currentMembership.companyId,
+          command.page,
+        ));
+      }
+      await this.deliverRequiredMessages(event, messages);
+      await this.updateEventLog(event.webhookEventId, 'company_context_listed', undefined, currentMembership.companyId);
       return;
     }
 
     const selected = findCompanySelection(memberships, command.value);
-    if (!selected) {
+    if (!selected || !isOwnerMembership(selected)) {
       await this.deliverRequiredMessages(event, [buildCompanyPickerMessage(
-        memberships.map((membership) => ({ companyId: membership.companyId, companyName: companyLabel(membership) })),
+        memberships.filter(isOwnerMembership).map((membership) => ({ companyId: membership.companyId, companyName: companyLabel(membership) })),
         current?.companyId,
       )]);
       await this.updateEventLog(event.webhookEventId, 'company_context_selection_invalid', LINE_AI_ERROR_CODES.AMBIGUOUS_COMPANY, current?.companyId);
@@ -2450,7 +2771,12 @@ export class ProcessLineWebhookUseCase {
 
   /** Intake-routed turns (evidence capture, signature request, clarify, media mutation refusal)
    *  are remembered for multi-turn follow-ups. Drafts/requests only — never a final mutation.
-   *  Best-effort: memory persistence must never break an already-sent intake reply. */
+   *  Best-effort: memory persistence must never break an already-sent intake reply.
+   *
+   *  The two writes are wrapped in the `persistence` stage so an intake turn (greeting, reimbursement,
+   *  clarify, capture) reports the database time it actually spent — before this, only the full AI-turn
+   *  path emitted `persistence` and every intake turn looked as if it persisted nothing. Timing only:
+   *  this is still best-effort memory, NOT the durable intake replay the spec asks for. */
   private async persistIntakeTurn(input: {
     userId: string;
     companyId: string;
@@ -2461,26 +2787,28 @@ export class ProcessLineWebhookUseCase {
     refused?: boolean;
   }): Promise<void> {
     try {
-      const conversationId = `line-${input.companyId}-${input.userId}`;
-      await this.prisma.client.aiConversation.upsert({
-        where: { id: conversationId },
-        create: { id: conversationId, companyId: input.companyId, userId: input.userId, channel: 'line' },
-        update: {},
-      });
-      await this.prisma.client.aiTurn.create({
-        data: {
-          conversationId,
-          companyId: input.companyId,
-          userId: input.userId,
-          webhookEventId: input.webhookEventId,
-          userMessagePreview: input.userMessagePreview.slice(0, PREVIEW_MAX_CHARS),
-          messagePreviewHash: hashMessagePreview(input.userMessagePreview || input.webhookEventId),
-          status: input.refused ? 'REFUSED' : 'COMPLETED',
-          intent: input.intent,
-          agent: 'intake',
-          refused: input.refused ?? false,
-          replyPreview: input.replyText.slice(0, PREVIEW_MAX_CHARS),
-        },
+      await this.timeStage(input.webhookEventId, 'persistence', async () => {
+        const conversationId = `line-${input.companyId}-${input.userId}`;
+        await this.prisma.client.aiConversation.upsert({
+          where: { id: conversationId },
+          create: { id: conversationId, companyId: input.companyId, userId: input.userId, channel: 'line' },
+          update: {},
+        });
+        await this.prisma.client.aiTurn.create({
+          data: {
+            conversationId,
+            companyId: input.companyId,
+            userId: input.userId,
+            webhookEventId: input.webhookEventId,
+            userMessagePreview: input.userMessagePreview.slice(0, PREVIEW_MAX_CHARS),
+            messagePreviewHash: hashMessagePreview(input.userMessagePreview || input.webhookEventId),
+            status: input.refused ? 'REFUSED' : 'COMPLETED',
+            intent: input.intent,
+            agent: 'intake',
+            refused: input.refused ?? false,
+            replyPreview: input.replyText.slice(0, PREVIEW_MAX_CHARS),
+          },
+        });
       });
     } catch (err) {
       this.logger.warn({ msg: 'Intake turn memory persist failed', webhookEventId: input.webhookEventId, error: (err as Error).message });
@@ -2568,12 +2896,21 @@ export class ProcessLineWebhookUseCase {
 
   /**
    * Phase-0 end-to-end trace: emit ONE distinct `line.ai.stage` duration for a seam this API process
-   * actually observes (intake route, gateway turn, persistence, LINE delivery). These are the precise
-   * downstream durations; the buffer's `line.ai.api_trace` carries only ingress/buffer/queue and no
-   * lumped dispatch. Correlated by webhookEventId, no raw message text or LINE user id; guarded so
-   * telemetry can never change the turn. Runtime-owned `stageDurationsMs` stay separate on the response.
+   * actually observes (intake route, gateway turn, capture execute, render, persistence, LINE
+   * delivery). These are the precise downstream durations; the buffer's `line.ai.api_trace` carries
+   * only ingress/buffer/queue and no lumped dispatch. Correlated by webhookEventId, no raw message
+   * text or LINE user id; guarded so telemetry can never change the turn. Runtime-owned
+   * `stageDurationsMs` stay separate on the response.
+   *
+   * Spec §11.1 asks for a `reimbursement_execute` stage too. It is deliberately NOT in this union:
+   * this release creates no reimbursement — the payer question, the clarify-only acknowledgement and
+   * the web handoff are canonical server copy with no use case or mutation behind them — so emitting
+   * one would report a duration for work that never ran. It arrives with the execution it measures.
+   * `capture_execute` wraps only the real `CaptureLineExpenseNoteUseCase.execute`; `render` wraps only
+   * trusted message construction (never the network send, which stays `line_delivery`) and fires once
+   * per delivered reply.
    */
-  private async timeStage<T>(webhookEventId: string, stage: 'intake_route' | 'gateway_turn' | 'persistence' | 'line_delivery', fn: () => Promise<T>): Promise<T> {
+  private async timeStage<T>(webhookEventId: string, stage: 'intake_route' | 'gateway_turn' | 'capture_execute' | 'render' | 'persistence' | 'line_delivery', fn: () => Promise<T>): Promise<T> {
     const startedAt = Date.now();
     try {
       return await fn();
@@ -3770,7 +4107,8 @@ export class ProcessLineWebhookUseCase {
   /** R1 capture-first: create the expense draft the substitute request describes, so the
    *  continuation opens on a real target instead of dead-ending in target selection.
    *
-   *  The capture gate is deterministic and unchanged (`isLineTextExpenseCaptureEligible`): it needs
+   *  The capture gate is deterministic and unchanged (`isLineTextExpenseCaptureEligible` — this path
+   *  never sets the semantic guard): it needs
    *  an `amount` that occurs in the source text plus a `description` copied verbatim from it. No
    *  model runs on this path, so both hints are synthesized here from the amount candidate the turn
    *  already extracted and the non-vocabulary part of the message.
@@ -3798,7 +4136,7 @@ export class ProcessLineWebhookUseCase {
     });
     if (hasActiveSubstituteContinuation(openRows)) return undefined;
     try {
-      return await this.captureExpenseNote.execute(ctx, {
+      return await this.timeStage(event.webhookEventId, 'capture_execute', () => this.captureExpenseNote!.execute(ctx, {
         messageText: normalizedText,
         captureHints: { amount, description },
         lineMessageId: event.lineMessageId ?? event.webhookEventId,
@@ -3807,7 +4145,7 @@ export class ProcessLineWebhookUseCase {
         // conversation thread would ask the same user two different ones in the same reply.
         draftConversationEnabled: false,
         chatKeyHash: chatKeyHashOf(event),
-      });
+      }));
     } catch (error) {
       if (!(error instanceof LineTextExpenseCaptureIncompleteError)) throw error;
       return undefined;

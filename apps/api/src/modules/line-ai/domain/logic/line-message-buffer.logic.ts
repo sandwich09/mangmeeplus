@@ -116,7 +116,13 @@ export function fittingPrefixCount(pending: LineBufferItem[], incoming: LineBuff
  *   - `line.ai.accepted` / this trace `acceptedAtMs` → durable acceptance;
  *   - `line.ai.loading_started` / `line.ai.loading_accepted` → 1:1 loading milestones (server-side);
  *   - `line.ai.stage` (webhookEventId) → distinct API-observed stage durations: intake_route,
- *     gateway_turn, persistence, line_delivery (emitted by ProcessLineWebhookUseCase, not lumped here);
+ *     gateway_turn, capture_execute, render, persistence, line_delivery (emitted by
+ *     ProcessLineWebhookUseCase, not lumped here). `capture_execute` wraps only the real expense-capture
+ *     use case and `render` only trusted message construction, so a turn emits the stages it actually
+ *     ran; `persistence` covers the full AI turn AND the best-effort intake memory write (greeting,
+ *     reimbursement, clarify, capture), so an intake-only turn no longer reports zero database time;
+ *     spec §11.1 also names `reimbursement_execute`, which is absent on purpose while this release
+ *     creates no reimbursement (see ProcessLineWebhookUseCase.timeStage);
  *   - `line.ai.turn_summary` (webhookEventId + requestId) → intent, refused/refusalReason/errorCode,
  *     model provider + ids (from lineage/usage), model-call and tool-call counts, deliveryResult, and
  *     usage token totals. `fallbackReason` is a DISTINCT field, always null (not observable, never

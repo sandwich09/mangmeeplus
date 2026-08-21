@@ -286,7 +286,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
   const [addressLoading, setAddressLoading] = useState(false);
   const [addressLookupMessage, setAddressLookupMessage] = useState('');
   const [jobTitle, setJobTitle] = useState('');
-  const [roleId, setRoleId] = useState('');
+  const [roleIds, setRoleIds] = useState<string[]>([]);
   const [branchIds, setBranchIds] = useState<string[]>([]);
   const [defaultBranchId, setDefaultBranchId] = useState('');
   const [saving, setSaving] = useState(false);
@@ -299,6 +299,8 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
   const [errorFieldId, setErrorFieldId] = useState('');
   const isEditing = Boolean(editEmployeeId);
   const employeeActive = draftActivated || editingEmployee?.status === 'ACTIVE';
+  const canReadEmployees = viewerPermissions.includes('access.employee.read');
+  const canCompleteDraft = viewerPermissions.includes('access.employee.create');
 
   function setError(message: string, fieldId = '') {
     setErrorState(message);
@@ -314,10 +316,10 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
         editEmployeeId ? getEmployee(companyId, editEmployeeId) : Promise.resolve(null),
       ]);
       if (rolesResult.status === 'fulfilled') {
-        const currentRoleId = employeeResult.status === 'fulfilled' ? employeeResult.value?.roles[0]?.id : undefined;
-        const assignable = assignableRoleOptions(rolesResult.value, currentRoleId);
+        const currentRoleIds = employeeResult.status === 'fulfilled' ? employeeResult.value?.roles.map((role) => role.id) : undefined;
+        const assignable = assignableRoleOptions(rolesResult.value, currentRoleIds);
         setRoles(assignable);
-        setRoleId((current) => current || assignable[0]?.id || '');
+        setRoleIds((current) => current.length ? current : currentRoleIds?.length ? currentRoleIds : assignable[0] ? [assignable[0].id] : []);
       } else {
         setLoadError(localizedErrorMessage(rolesResult.reason, locale, { fallback: 'error.load_failed' }));
       }
@@ -343,7 +345,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
         setAmphoe(employee.district ?? '');
         setTambon(employee.subdistrict ?? '');
         setAddressLine(employee.addressLine ?? '');
-        setRoleId(employee.roles[0]?.id ?? '');
+        setRoleIds(employee.roles.map((role) => role.id));
         if (branchesResult.status === 'fulfilled') {
           const selectedBranchIds = employee.branchScopeMode === 'ALL_BRANCHES'
             ? branchesResult.value.map((branch) => branch.id)
@@ -407,14 +409,17 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyId, postal]);
 
-  const selectedRole = roles.find((r) => r.id === roleId);
+  const selectedRoles = roles.filter((role) => roleIds.includes(role.id));
+  const selectedRole = selectedRoles[0];
+  const selectedRoleNames = selectedRoles.map((role) => role.name).join(', ');
   // The API always rejects a self role change, so editing yourself shows the role read-only and the
   // unchanged roleIds save as a no-op (spec R4).
   const editingSelf = isSelfEmployee(editingEmployee, viewerUserId);
-  const editingProtectedRole = isOperationalRoleTargetReadOnly(viewerPermissions, selectedRole);
+  const editingProtectedRole = isOperationalRoleTargetReadOnly(viewerPermissions, selectedRoles);
   // R8: an oversight role (ADMIN, FINANCE, ACCOUNTANT, ...) must hold every branch, and the server
   // rejects anything narrower — so the picker must not offer the choice.
-  const branchPickerLocked = Boolean(selectedRole && ALL_BRANCH_ROLE_KEYS.includes(selectedRole.key));
+  const allBranchRoles = selectedRoles.filter((role) => ALL_BRANCH_ROLE_KEYS.includes(role.key));
+  const branchPickerLocked = allBranchRoles.length > 0;
 
   useEffect(() => {
     if (!branchPickerLocked || branches.length === 0) return;
@@ -474,7 +479,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
     }
     if (targetStep === 3) {
       if (!jobTitle.trim()) return { message: 'กรุณากรอกตำแหน่งงาน เช่น พนักงานขาย หรือเจ้าหน้าที่บุคคล', fieldId: 'employee-job-title' };
-      if (!roleId) return { message: 'กรุณาเลือกบทบาทและสิทธิ์ระบบ', fieldId: 'employee-role' };
+      if (roleIds.length === 0) return { message: 'กรุณาเลือกบทบาทและสิทธิ์ระบบอย่างน้อย 1 บทบาท', fieldId: 'employee-role' };
       if (branchIds.length === 0) return { message: 'กรุณาเลือกอย่างน้อย 1 สาขา', fieldId: 'employee-branches' };
       if (!defaultBranchId || !branchIds.includes(defaultBranchId)) return { message: 'กรุณาเลือกสาขาหลัก', fieldId: 'employee-default-branch' };
     }
@@ -527,7 +532,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
         province: province.trim() || (editingEmployee ? null : undefined),
         district: amphoe.trim() || (editingEmployee ? null : undefined),
         subdistrict: tambon.trim() || (editingEmployee ? null : undefined),
-        roleIds: [roleId],
+        roleIds,
       };
       const branchScope = {
         branchScopeMode: branchIds.length === branches.length ? 'ALL_BRANCHES' : 'SELECTED_BRANCHES',
@@ -609,7 +614,9 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
 
   async function finishEmployee() {
     if (employeeActive) {
-      router.push(`/companies/${companyId}/settings/access-overview`);
+      router.push(canReadEmployees
+        ? `/companies/${companyId}/settings/access-overview`
+        : `/companies/${companyId}/dashboard`);
       // The shell name comes from the server layout's session, and a shared layout survives client
       // navigation — without this a self-rename stays stale in the sidebar until a full reload.
       router.refresh();
@@ -617,6 +624,12 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
     }
     const employeeId = editingEmployee?.id ?? result?.employeeId;
     if (!employeeId) return;
+    if (!canCompleteDraft) {
+      router.push(canReadEmployees
+        ? `/companies/${companyId}/settings/access-overview`
+        : `/companies/${companyId}/dashboard`);
+      return;
+    }
     setSaving(true);
     setError('');
     try {
@@ -648,11 +661,20 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
     setError('');
   }
 
+  function toggleRole(roleId: string) {
+    setRoleIds((current) => current.includes(roleId)
+      ? (current.length === 1 ? current : current.filter((id) => id !== roleId))
+      : [...current, roleId]);
+    setError('');
+  }
+
   const nextLabel = step < 3
     ? 'ถัดไป ›'
     : step === 3
       ? (saving ? 'กำลังบันทึก...' : 'ถัดไป ›')
-      : (saving ? 'กำลังเปิดใช้งาน...' : employeeActive ? 'ไปหน้าภาพรวมสิทธิ์' : 'เสร็จสิ้น');
+      : (saving ? 'กำลังเปิดใช้งาน...' : employeeActive || !canCompleteDraft
+        ? (canReadEmployees ? 'ไปหน้าภาพรวมสิทธิ์' : 'กลับหน้าแดชบอร์ด')
+        : 'เสร็จสิ้น');
 
   return (
     <div className="mangmee-page">
@@ -679,9 +701,9 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
             </div>
             <div className="min-w-0">
               <div className="truncate text-lg font-extrabold text-gray-900">{previewName}</div>
-              {selectedRole && (
+              {selectedRoles.length > 0 && (
                 <span className="mt-1 inline-flex rounded-full px-2.5 py-1 text-xs font-extrabold" style={{ backgroundColor: `${colorForRole(selectedRole)}1F`, color: colorForRole(selectedRole) }}>
-                  บทบาท: {selectedRole.name}
+                  บทบาท: {selectedRoleNames}
                 </span>
               )}
             </div>
@@ -801,9 +823,9 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
               <div id="employee-role" tabIndex={-1} className="mb-2 text-[15px] font-semibold text-gray-700 outline-none">บทบาทและสิทธิ์ระบบ <span className="text-error-500">*</span></div>
               {editingSelf || editingProtectedRole ? (
                 <>
-                  <span className="inline-flex rounded-[9px] border border-gray-200 bg-gray-50 px-3.5 py-2 text-[14.5px] font-extrabold text-gray-500">
-                    {selectedRole?.name ?? '—'}
-                  </span>
+                  <div className="flex flex-wrap gap-2">
+                    {selectedRoles.map((role) => <span key={role.id} className="inline-flex rounded-[9px] border border-gray-200 bg-gray-50 px-3.5 py-2 text-[14.5px] font-extrabold text-gray-500">{role.name}</span>)}
+                  </div>
                   <div className="mt-2 text-sm font-medium text-gray-400">
                     {editingSelf ? 'บทบาทของตัวเองต้องให้ผู้ดูแลคนอื่นเปลี่ยนให้' : 'บทบาทระดับนี้ต้องให้เจ้าของหรือผู้ดูแลสิทธิ์เป็นผู้เปลี่ยน'}
                   </div>
@@ -811,15 +833,15 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
               ) : (
                 <div className="flex flex-wrap gap-2.5">
                   {roles.map((item) => (
-                    <button key={item.id} type="button" onClick={() => { setRoleId(item.id); setError(''); }} className={cx('rounded-[9px] border px-3.5 py-2 text-[14.5px] font-extrabold transition', roleId === item.id ? 'border-brand-300 bg-brand-25 text-brand-600' : 'border-gray-200 bg-white text-gray-600 hover:border-brand-200')}>
-                      {item.name}
+                    <button key={item.id} type="button" aria-pressed={roleIds.includes(item.id)} onClick={() => toggleRole(item.id)} className={cx('rounded-[9px] border px-3.5 py-2 text-[14.5px] font-extrabold transition', roleIds.includes(item.id) ? 'border-brand-300 bg-brand-25 text-brand-600' : 'border-gray-200 bg-white text-gray-600 hover:border-brand-200')}>
+                      {roleIds.includes(item.id) ? '✓ ' : '+ '}{item.name}
                     </button>
                   ))}
                   {roles.length === 0 && <span className="text-sm text-gray-400">ยังไม่มีบทบาทให้เลือก</span>}
                 </div>
               )}
               {errorFieldId === 'employee-role' && <div role="alert" className="mt-2 text-sm font-semibold text-error-600">{error}</div>}
-              <div className="mt-2 text-sm font-medium text-gray-400">บทบาทกำหนดเมนูและข้อมูลที่พนักงานเข้าถึงได้ โดยไม่จำเป็นต้องตรงกับชื่อตำแหน่งงาน</div>
+              <div className="mt-2 text-sm font-medium text-gray-400">เลือกได้มากกว่า 1 บทบาท ระบบจะรวมสิทธิ์จากทุกบทบาท โดยไม่จำเป็นต้องตรงกับชื่อตำแหน่งงาน</div>
 
               <div id="employee-branches" tabIndex={-1} className="mb-2 mt-[18px] text-[15px] font-semibold text-gray-700 outline-none">
                 สาขาที่สังกัด <span className="font-normal text-gray-400">(เลือกได้มากกว่า 1 สาขา)</span>
@@ -843,7 +865,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
               {errorFieldId === 'employee-branches' && <div role="alert" className="mt-2 text-sm font-semibold text-error-600">{error}</div>}
               {branchPickerLocked && (
                 <div className="mt-2 text-sm font-medium text-gray-400">
-                  บทบาท {selectedRole?.name ?? ''} ดูแลภาพรวมทั้งบริษัท จึงต้องเห็นข้อมูลทุกสาขา — จำกัดสาขาไม่ได้
+                  บทบาท {allBranchRoles.map((role) => role.name).join(', ')} ดูแลภาพรวมทั้งบริษัท จึงต้องเห็นข้อมูลทุกสาขา — จำกัดสาขาไม่ได้
                 </div>
               )}
               <label className="mt-4 block max-w-md">
@@ -877,7 +899,9 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
               )}>
                 {employeeActive
                   ? 'เปิดใช้งานพนักงานแล้ว สามารถส่งข้อมูลเข้าใช้งานและสแกน QR เชื่อม LINE ได้'
-                  : 'ข้อมูลนี้ยังเป็นแบบร่าง พนักงานจะเข้าใช้งานเว็บและเชื่อม LINE ได้หลังจากกด “เสร็จสิ้น”'}
+                  : canCompleteDraft
+                    ? 'ข้อมูลนี้ยังเป็นแบบร่าง พนักงานจะเข้าใช้งานเว็บและเชื่อม LINE ได้หลังจากกด “เสร็จสิ้น”'
+                    : 'บันทึกการแก้ไขแล้ว แต่พนักงานยังเป็นแบบร่าง ต้องให้ผู้มีสิทธิ์เพิ่มพนักงานเป็นผู้เปิดใช้งาน'}
               </div>
               {result ? <><div className="grid items-stretch gap-4 sm:grid-cols-2">
                 <div className="flex flex-col rounded-[14px] border border-gray-200 p-4">
@@ -915,7 +939,9 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
                 <div className="grid items-stretch gap-4 sm:grid-cols-2">
                   <div className="flex flex-col items-center justify-center rounded-[14px] border border-brand-100 bg-brand-25 px-5 py-6 text-center">
                     <div className="text-lg font-extrabold text-gray-900">ตรวจสอบและบันทึกข้อมูลครบแล้ว</div>
-                    <div className="mt-2 text-sm font-semibold text-gray-500">{employeeActive ? 'เชื่อม LINE ได้แล้ว หรือไปหน้าภาพรวมสิทธิ์เพื่อจัดการต่อ' : 'กด “เสร็จสิ้น” เพื่อเปิดใช้งานพนักงาน'}</div>
+                    <div className="mt-2 text-sm font-semibold text-gray-500">{employeeActive
+                      ? (canReadEmployees ? 'เชื่อม LINE ได้แล้ว หรือไปหน้าภาพรวมสิทธิ์เพื่อจัดการต่อ' : 'บันทึกข้อมูลแล้ว กลับหน้าแดชบอร์ดได้')
+                      : canCompleteDraft ? 'กด “เสร็จสิ้น” เพื่อเปิดใช้งานพนักงาน' : 'การเปิดใช้งานต้องใช้สิทธิ์เพิ่มพนักงาน'}</div>
                   </div>
                   <LineOaCard lineLink={editLineLink} enabled={employeeActive} />
                 </div>

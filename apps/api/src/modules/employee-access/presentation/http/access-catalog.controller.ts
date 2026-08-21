@@ -1,6 +1,6 @@
 import { Controller, Get, Param, Query } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import { RequirePermissions } from '../../../../common/security/permissions.decorator';
+import { RequireAnyPermission, RequirePermissions } from '../../../../common/security/permissions.decorator';
 import { ReqCtx } from '../../../auth/presentation/request-context.decorator';
 import type { RequestContext } from '@watchdog-bms/contracts';
 import { ListCapabilityPacksUseCase } from '../../application/use-cases/list-capability-packs.use-case';
@@ -21,21 +21,21 @@ export class AccessCatalogController {
   ) {}
 
   @Get('address-master')
-  @RequirePermissions('access.employee.read')
+  @RequireAnyPermission('access.employee.read', 'access.employee.create', 'access.employee.update')
   @ApiOperation({ summary: 'List Thai address master rows for a five-digit postal code' })
   addresses(@Query('postalCode') postalCode = '') {
     return this.listThaiAddresses.execute(postalCode);
   }
 
   @Get('capability-packs')
-  @RequirePermissions('access.capability_pack.read')
+  @RequireAnyPermission('access.capability_pack.read', 'access.role.manage')
   @ApiOperation({ summary: 'List capability packs grouped by module with per-company lock/grantable state' })
   packs(@ReqCtx() ctx: RequestContext) {
     return this.listCapabilityPacks.execute(ctx.companyId, ctx.permissions, ctx.roles.includes('OWNER'));
   }
 
   @Get('role-templates')
-  @RequirePermissions('access.role_template.read')
+  @RequireAnyPermission('access.role_template.read', 'access.role.manage')
   @ApiOperation({ summary: 'List job presets (role templates)' })
   templates() {
     return this.listRoleTemplates.execute();
@@ -56,7 +56,7 @@ export class AccessCatalogController {
   }
 
   @Get('access/matrix')
-  @RequirePermissions('access.role.read')
+  @RequireAnyPermission('access.role.read', 'access.role.manage')
   @ApiOperation({ summary: 'Role x menu x action permission matrix (มั่งมี Flow A projection over permission keys)' })
   accessMatrix(@ReqCtx() ctx: RequestContext) {
     return this.getAccessMatrix.execute(ctx.companyId);

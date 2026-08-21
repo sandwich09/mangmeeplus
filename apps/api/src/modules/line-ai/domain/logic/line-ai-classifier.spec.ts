@@ -75,6 +75,7 @@ describe('parseLineCompanyCommand', () => {
     assert.deepEqual(parseLineCompanyCommand('/companies'), { kind: 'list' });
     assert.deepEqual(parseLineCompanyCommand(' /company '), { kind: 'list' });
     assert.deepEqual(parseLineCompanyCommand(' เปลี่ยนบริษัท '), { kind: 'list' });
+    assert.deepEqual(parseLineCompanyCommand('/companies page 2'), { kind: 'list', page: 2 });
   });
   it('parses the select form with index or id', () => {
     assert.deepEqual(parseLineCompanyCommand('/company 2'), { kind: 'select', value: '2' });

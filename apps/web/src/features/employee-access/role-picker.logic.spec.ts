@@ -36,6 +36,10 @@ describe('assignableRoleOptions', () => {
     assert.deepEqual(assignableRoleOptions(MANAGER_VIEW, 'finance').map((r) => r.id), ['sales', 'finance']);
   });
 
+  it('pins every current role for a multi-role employee', () => {
+    assert.deepEqual(assignableRoleOptions(MANAGER_VIEW, ['manager', 'finance']).map((r) => r.id), ['sales', 'manager', 'finance']);
+  });
+
   it('never duplicates the current role or matches an empty id', () => {
     assert.deepEqual(assignableRoleOptions(MANAGER_VIEW, 'sales').map((r) => r.id), ['sales']);
     assert.deepEqual(assignableRoleOptions([role('sales', false)], '').map((r) => r.id), []);

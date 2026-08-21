@@ -1,0 +1,44 @@
+{
+  "profileId": "line-rich-menu-v2-ver1",
+  "image": {
+    "path": "apps/web/public/assets/line/mangmeeplus-line-rich-menu-v2-ver1-2500x1686.png",
+    "sha256": "4a5154a59f53bcebbbbb4f43e64b28c4d4720ab719e72cbdbc5dd610fb423180",
+    "byteSize": 797457
+  },
+  "rollbackProfileId": null,
+  "lineRichMenu": {
+    "size": {
+      "width": 2500,
+      "height": 1686
+    },
+    "selected": true,
+    "name": "MangmeePlus Ver1",
+    "chatBarText": "เมนู",
+    "areas": [
+      {
+        "bounds": { "x": 0, "y": 0, "width": 1667, "height": 843 },
+        "action": { "type": "message", "label": "บริษัทของฉัน", "text": "/companies" }
+      },
+      {
+        "bounds": { "x": 1667, "y": 0, "width": 833, "height": 843 },
+        "action": { "type": "message", "label": "ถ่ายใบเสร็จ", "text": "ถ่ายใบเสร็จ" }
+      },
+      {
+        "bounds": { "x": 0, "y": 843, "width": 625, "height": 843 },
+        "action": { "type": "postback", "label": "คุยกับน้องมั่งมี", "data": "action=line-rich-talk", "inputOption": "openKeyboard" }
+      },
+      {
+        "bounds": { "x": 625, "y": 843, "width": 625, "height": 843 },
+        "action": { "type": "message", "label": "สรุปค่าใช้จ่าย", "text": "ดูค่าใช้จ่ายเดือนนี้" }
+      },
+      {
+        "bounds": { "x": 1250, "y": 843, "width": 625, "height": 843 },
+        "action": { "type": "uri", "label": "เริ่มต้นใช้งานฟรี", "uri": "https://official.mangmeeplus.com/" }
+      },
+      {
+        "bounds": { "x": 1875, "y": 843, "width": 625, "height": 843 },
+        "action": { "type": "message", "label": "ติดต่อเรา", "text": "ติดต่อเรา" }
+      }
+    ]
+  }
+}

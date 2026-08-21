@@ -318,6 +318,15 @@ describe('buildNavItems', () => {
       ['roles.individual', 'employees'],
     );
 
+    const createOnlyItems = buildNavItems(
+      filterModulesByPermissions(WORKSPACE_MODULES, ['access.employee.create']),
+      'employee-company', 'th', {}, ['access.employee.create'],
+    );
+    assert.deepEqual(
+      createOnlyItems.find((item) => item.key === 'roles')?.subItems?.map((item) => item.key),
+      ['employees'],
+    );
+
     const editorItems = buildNavItems(
       filterModulesByPermissions(WORKSPACE_MODULES, ['access.employee.read', 'access.employee.update']),
       'employee-company', 'th', {}, ['access.employee.read', 'access.employee.update'],
@@ -680,6 +689,8 @@ describe('canAccessWorkspacePath', () => {
   it('separates employee and role settings permissions', () => {
     assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['access.employee.read'], 'abc', '/companies/abc/settings/access-overview'), true);
     assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['access.employee.read'], 'abc', '/companies/abc/settings/employees'), true);
+    assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['access.employee.create'], 'abc', '/companies/abc/settings/employees'), true);
+    assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['access.employee.update'], 'abc', '/companies/abc/settings/employees'), true);
     assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['access.role.read'], 'abc', '/companies/abc/settings/employees'), false);
     assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['access.effective.read'], 'abc', '/companies/abc/settings/access-overview'), false);
     assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['access.role.read'], 'abc', '/companies/abc/settings/permissions'), false);

@@ -2,6 +2,8 @@
 
 Active production remediation: [[specs/line-ai-production-parity-and-receipt-continuity-remediation-spec|LINE AI Production Parity and Receipt Continuity Remediation Spec]]. Its runtime-parity, stored-media, capture-authority, substitute-receipt preflight, partial-answer/resume and whole-chain release gates apply before new Production-ready claims.
 
+Target rich-menu behavior: [[specs/line-rich-menu-v2-spec|LINE Rich Menu V2 Spec]]. Its owner-approved, versioned six-action profile supersedes the older fixed-layout rich-menu label proposals in this document when V2 is implemented.
+
 ## 1. Goal
 
 Define the LINE user experience for WatchDog-BMS as an employee AI assistant, summary, and alert channel. The assistant speaks as **น้องมั่งมี**, a warm, capable female Thai coworker who can handle brief casual conversation without losing business intent.
@@ -89,7 +91,7 @@ Web is the full product surface for data viewing, approvals, accounting, tax, in
 
 ### LINE
 
-- Rich menu: Ask AI, Daily Summary, Alerts, Link Account.
+- Rich menu: follow [[specs/line-rich-menu-v2-spec|LINE Rich Menu V2 Spec]].
 - AI chat: CFO, Inventory, Sales, CRM, Tax, Marketing, and Document/Expense helper where enabled.
 - The same chat also accepts brief casual conversation and capability/help questions without a mode switch or a dedicated casual Quick Reply.
 - Completed answer: one answer is one Flex bubble; multiple completed business answers are a carousel. Safe tenant links appear as footer buttons.
@@ -168,5 +170,5 @@ Web is the full product surface for data viewing, approvals, accounting, tax, in
 
 ## 12. Open Questions
 
-- Which LINE rich menu labels should ship first?
+- [x] LINE rich-menu labels and behavior are resolved by [[specs/line-rich-menu-v2-spec|LINE Rich Menu V2 Spec]].
 - Which alert types should support simple acknowledgement in LINE?
