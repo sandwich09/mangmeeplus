@@ -24,7 +24,7 @@ import {
   listApprovalQueue, approveReimbursement, rejectReimbursement,
   listFinanceQueue, financeReviewReimbursement, recordReimbursementPayment,
   voidReimbursementPayment,
-  getReimbursementPolicy, updateReimbursementPolicy,
+  getReimbursementPolicy, listReimbursementApproverOptions, updateReimbursementPolicy,
   signReimbursementClaimForm, uploadSignedClaimFormCopy, fetchAttachmentPreviewBlob,
 } from './reimbursements.api';
 import {
@@ -43,7 +43,7 @@ import {
   formatMoney, parseHubTab, visibleHubTabs, reimbursementListScope, errorText, isStaleApprovalError, diffApprovalFields,
   type ApprovalFieldDiff, type HubTab,
 } from './reimbursements.logic';
-import { todayCivilDate } from '@watchdog-bms/contracts';
+import { todayCivilDate, type ReimbursementApproverRoleOption } from '@watchdog-bms/contracts';
 import { useToast } from '@/common/components/toast';
 
 /** Every banner in this feature goes through here, so API error codes never reach the user raw. */
@@ -58,11 +58,19 @@ const HUB_TAB_DESCRIPTIONS: Record<HubTab, string> = {
   finance: 'ตรวจสอบคำขอที่อนุมัติแล้ว และบันทึกการจ่ายเงิน',
   policy: 'กำหนดเกณฑ์การอนุมัติ ใบเสร็จ และ SLA ของการเบิกจ่ายทั้งบริษัท',
 };
-const APPROVER_MODE_LABELS: Record<string, string> = {
-  MANAGER_ROLE: 'ตามบทบาทผู้จัดการ',
-  OWNER_ROLE: 'เจ้าของกิจการ',
-  CUSTOM_ROLE: 'บทบาทที่กำหนด',
-  CUSTOM_USER: 'ผู้ใช้ที่กำหนด',
+const APPROVER_ROLE_LABELS: Record<string, string> = {
+  OWNER: 'เจ้าของกิจการ', ADMIN: 'แอดมิน', MANAGER: 'ผู้จัดการ', FINANCE: 'การเงิน',
+  ACCOUNTANT: 'บัญชี', HR: 'ฝ่ายบุคคล', SALES: 'ฝ่ายขาย', INVENTORY: 'คลังสินค้า',
+  MARKETING: 'การตลาด', STAFF: 'พนักงาน', AUDITOR_READONLY: 'ผู้ตรวจสอบ',
+};
+const STANDARD_ROLE_NAMES: Record<string, string> = {
+  OWNER: 'Owner', ADMIN: 'Admin', MANAGER: 'Manager', FINANCE: 'Finance', ACCOUNTANT: 'Accountant',
+  HR: 'HR', SALES: 'Sales', INVENTORY: 'Inventory', MARKETING: 'Marketing', STAFF: 'Staff',
+  AUDITOR_READONLY: 'Auditor (Read-only)',
+};
+const approverRoleName = (option?: Pick<ReimbursementApproverRoleOption, 'key' | 'name'>) => {
+  if (!option) return '';
+  return option.name === STANDARD_ROLE_NAMES[option.key] ? (APPROVER_ROLE_LABELS[option.key] ?? option.name) : option.name;
 };
 const shortDate = (iso?: string) => (iso ? String(iso).slice(0, 10) : '—');
 const attachmentPreviewMimeType = (fileName: string): 'application/pdf' | 'image/png' | 'image/jpeg' => (
@@ -1653,13 +1661,21 @@ function PaymentModal({ companyId, request, onClose, onDone }: { companyId: stri
 function PolicySettings({ companyId }: { companyId: string }) {
   const toast = useToast();
   const [form, setForm] = useState<any | null>(null);
+  const [approverOptions, setApproverOptions] = useState<ReimbursementApproverRoleOption[]>([]);
+  const [approverChanged, setApproverChanged] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
-    try { setForm(await getReimbursementPolicy(companyId)); }
+    try {
+      const [policy, options] = await Promise.all([
+        getReimbursementPolicy(companyId),
+        listReimbursementApproverOptions(companyId),
+      ]);
+      setForm(policy); setApproverOptions(options); setApproverChanged(false);
+    }
     catch (e) { setError(err(e)); } finally { setLoading(false); }
   }, [companyId]);
   useEffect(() => { load(); }, [load]);
@@ -1669,8 +1685,7 @@ function PolicySettings({ companyId }: { companyId: string }) {
     try {
       await updateReimbursementPolicy(companyId, {
         approvalRequiredFromAmount: form.approvalRequiredFromAmount,
-        approverMode: form.approverMode,
-        defaultApproverRole: form.defaultApproverRole,
+        ...(approverChanged && { defaultApproverRole: form.defaultApproverRole }),
         allowSelfApproval: form.allowSelfApproval,
         requireReceipt: form.requireReceipt,
         allowMissingReceiptWithReason: form.allowMissingReceiptWithReason,
@@ -1685,6 +1700,15 @@ function PolicySettings({ companyId }: { companyId: string }) {
   if (loading) return <LoadingState label="กำลังโหลด..." />;
   if (!form) return <ErrorBanner message={error ?? 'โหลดนโยบายไม่สำเร็จ'} />;
 
+  const roleBasedRoute = ['MANAGER_ROLE', 'OWNER_ROLE', 'CUSTOM_ROLE'].includes(form.approverMode);
+  const selectedOption = approverOptions.find((option) => option.key === form.defaultApproverRole);
+  const selectableOptions = approverOptions.filter((option) => option.selectable || option.key === form.defaultApproverRole);
+  const readyOptions = approverOptions.filter((option) => option.selectable);
+  const routeReady = approverChanged
+    ? Boolean(selectedOption?.selectable)
+    : !roleBasedRoute || Boolean(selectedOption?.selectable);
+  const roleLabel = approverRoleName(selectedOption);
+
   return (
     <form onSubmit={save} className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
       <div className="grid gap-4 xl:grid-cols-2">
@@ -1692,8 +1716,8 @@ function PolicySettings({ companyId }: { companyId: string }) {
           <div className="flex items-start gap-3">
             <span className="flex h-9 w-9 items-center justify-center rounded-[10px]" style={{ background: KPI.sky.bg, color: KPI.sky.color }}>{ICON.doc}</span>
             <div>
-              <h3 className="text-sm font-bold text-gray-900">เกณฑ์การอนุมัติ</h3>
-              <p className="mt-1 text-xs text-gray-500">กำหนดยอดและผู้รับผิดชอบในการอนุมัติคำขอ</p>
+              <h3 className="text-sm font-bold text-gray-900">การอนุมัติใบเบิก</h3>
+              <p className="mt-1 text-xs text-gray-500">เลือกผู้รับผิดชอบและตั้งค่าเกณฑ์การอนุมัติของบริษัท</p>
             </div>
           </div>
           <div className="mt-3 grid gap-4 sm:grid-cols-2">
@@ -1702,19 +1726,43 @@ function PolicySettings({ companyId }: { companyId: string }) {
               <input className={inputClass} type="number" step="0.01" value={form.approvalRequiredFromAmount} onChange={e => setForm((f: any) => ({ ...f, approvalRequiredFromAmount: e.target.value }))} />
             </div>
             <div>
-              <label className="mb-1.5 block text-xs font-semibold text-gray-600">โหมดผู้อนุมัติ</label>
-              <ThemedSelect className={inputClass} value={form.approverMode} onChange={e => setForm((f: any) => ({ ...f, approverMode: e.target.value }))}>
-                {Object.entries(APPROVER_MODE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              <label htmlFor="reimbursement-approver-role" className="mb-1.5 block text-xs font-semibold text-gray-600">ส่งใบเบิกให้ใครอนุมัติ?</label>
+              <ThemedSelect
+                id="reimbursement-approver-role"
+                aria-label="ส่งใบเบิกให้ใครอนุมัติ"
+                className={inputClass}
+                value={roleBasedRoute || approverChanged ? form.defaultApproverRole ?? '' : ''}
+                onChange={e => { setApproverChanged(true); setForm((f: any) => ({ ...f, defaultApproverRole: e.target.value })); }}
+                disabled={readyOptions.length === 0}
+                required={roleBasedRoute || approverChanged}
+              >
+                <option value="">เลือกบทบาทผู้อนุมัติ</option>
+                {selectableOptions.map((option) => (
+                  <option key={option.key} value={option.key} disabled={!option.selectable}>
+                    {approverRoleName(option)} — {option.selectable ? `${option.eligibleApproverCount} คนพร้อมอนุมัติ` : 'ยังไม่พร้อมใช้งาน'}
+                  </option>
+                ))}
               </ThemedSelect>
-            </div>
-            <div className="sm:col-span-2">
-              <label className="mb-1.5 block text-xs font-semibold text-gray-600">บทบาทผู้อนุมัติเริ่มต้น</label>
-              <input className={inputClass} value={form.defaultApproverRole ?? ''} onChange={e => setForm((f: any) => ({ ...f, defaultApproverRole: e.target.value }))} />
+              {selectedOption?.selectable ? (
+                <p className="mt-1 text-xs text-brand-700">
+                  {selectedOption.eligibleApproverCount} คนพร้อมอนุมัติ
+                  {selectedOption.coverage === 'COMPLETE' ? ' · ครบทุกสาขา' : ' · บางสาขาเจ้าของกิจการจะช่วยอนุมัติ'}
+                </p>
+              ) : readyOptions.length === 0 ? (
+                <p className="mt-1 text-xs text-error-600">ยังไม่มีบทบาทที่พร้อมอนุมัติ กรุณาให้ผู้ดูแลเพิ่มสิทธิ์และพนักงานในหน้าบทบาทและสิทธิ์</p>
+              ) : roleBasedRoute && form.defaultApproverRole ? (
+                <p className="mt-1 text-xs text-error-600">บทบาทที่ตั้งไว้ยังไม่มีคนพร้อมอนุมัติ กรุณาเลือกบทบาทใหม่</p>
+              ) : !roleBasedRoute && !approverChanged ? (
+                <p className="mt-1 text-xs text-warning-700">การตั้งค่าเดิมระบุผู้อนุมัติเป็นรายบุคคล หากต้องการเปลี่ยนเส้นทางให้เลือกบทบาทใหม่</p>
+              ) : (
+                <p className="mt-1 text-xs text-gray-500">เลือกบทบาทของผู้รับผิดชอบ ไม่ต้องพิมพ์ชื่อหรือตัวแปรระบบ</p>
+              )}
+              <p className="mt-1 text-xs text-gray-500">เลือกเป็นบทบาท ไม่ใช่ชื่อพนักงาน ทุกคนที่มีบทบาทและสิทธิ์นี้จะเห็นใบเบิกในคิวอนุมัติ โดยคนแรกที่ตัดสินรายการจะเป็นผู้อนุมัติ</p>
             </div>
             <label className="flex items-start justify-between gap-4 rounded-xl border border-gray-200 px-3 py-3 transition hover:border-brand-200 sm:col-span-2">
               <span className="min-w-0">
-                <span className="block text-sm font-semibold text-gray-800">อนุญาตให้อนุมัติคำขอตนเอง</span>
-                <span className="mt-0.5 block text-xs text-gray-500">ผู้อนุมัติกดอนุมัติคำขอที่ตัวเองสร้างได้</span>
+                <span className="block text-sm font-semibold text-gray-800">ให้ผู้อนุมัติอนุมัติใบเบิกของตัวเองได้</span>
+                <span className="mt-0.5 block text-xs text-gray-500">เมื่อเปิด ผู้อนุมัติที่ได้รับมอบหมายสามารถอนุมัติใบเบิกที่ตัวเองสร้างได้</span>
               </span>
               <input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0" checked={!!form.allowSelfApproval} onChange={e => setForm((f: any) => ({ ...f, allowSelfApproval: e.target.checked }))} />
             </label>
@@ -1788,8 +1836,8 @@ function PolicySettings({ companyId }: { companyId: string }) {
               <dd className="text-sm font-semibold text-gray-800">≥ {formatMoney(form.approvalRequiredFromAmount)} บาท</dd>
             </div>
             <div className="flex items-center justify-between gap-3 py-3">
-              <dt className="text-xs text-gray-500">ผู้อนุมัติ</dt>
-              <dd className="text-right text-sm font-semibold text-gray-800">{APPROVER_MODE_LABELS[form.approverMode] ?? form.approverMode}</dd>
+              <dt className="text-xs text-gray-500">ส่งให้อนุมัติ</dt>
+              <dd className="text-right text-sm font-semibold text-gray-800">{roleLabel || (!roleBasedRoute && !approverChanged ? 'ผู้อนุมัติเดิมรายบุคคล' : 'ยังไม่ได้เลือก')}</dd>
             </div>
             <div className="flex items-center justify-between gap-3 py-3">
               <dt className="text-xs text-gray-500">ใบเสร็จ</dt>
@@ -1806,7 +1854,7 @@ function PolicySettings({ companyId }: { companyId: string }) {
           </dl>
           <div className="mt-4 space-y-3">
             {error && <ErrorBanner message={error} />}
-            <button type="submit" className={cx(btnClass, 'w-full')} disabled={busy}>{busy ? 'กำลังบันทึก...' : 'บันทึกนโยบาย'}</button>
+            <button type="submit" className={cx(btnClass, 'w-full')} disabled={busy || !routeReady}>{busy ? 'กำลังบันทึก...' : 'บันทึกนโยบาย'}</button>
           </div>
         </MangmeeCard>
       </aside>

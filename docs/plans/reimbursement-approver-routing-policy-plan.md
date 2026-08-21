@@ -25,6 +25,21 @@ Make the whole policy page truthful and executable: one constrained approver rol
 - A nullable snapshot column and raw partial unique index are required; duplicate company-policy rows block migration until explicitly resolved.
 - Rollout remains expand Release A then switch Release B.
 
+## Implemented Slice — Constrained Role Picker (2026-08-21)
+
+- [x] Replace the internal mode + free-text role controls with one role dropdown.
+- [x] Load options from a manage-only endpoint; do not add `access.role.read`.
+- [x] Let `reimbursement.policy.manage` load the policy form without a separate read grant.
+- [x] Resolve system/company role overrides, entitlements, active users/memberships, branch scopes, and active branches in batched reads.
+- [x] Make only ACTIVE, non-platform roles with read+approve+reject, active holders, and safe COMPLETE/PARTIAL coverage selectable; OWNER recovery must have the same approval capability.
+- [x] Show human role names and the ready approver count; never render internal role keys as editable text.
+- [x] Revalidate an explicit role edit on save, canonicalize its server-owned mode, and clear a stale named user.
+- [x] Preserve a legacy named-person route when the role field is untouched.
+- [x] Cover complete/partial/no-holder/missing-capability/OWNER-recovery and mode mapping with focused tests.
+- [x] Verify select → save → reopen and restore through the local browser at desktop and 390 px.
+
+This is the smallest independently safe UI/write slice. The later phases remain authoritative for submission-time route revalidation, selected-role workflow notification/tasks/SLA, threshold execution, policy snapshots, policy CAS/uniqueness, and Release A/B deployment.
+
 ## Phase 0 — Read-Only Preflight and Worktree Protection
 
 ### Tasks

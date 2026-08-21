@@ -1,6 +1,6 @@
 # Agent Memory: Reimbursement Policy Correctness and Role Routing
 
-Status: Phase C1 and Phase C2 permission composition/multi-role UI implemented and locally verified on PR branch (2026-08-21). Role-routing Release A/B remains preflight-gated.
+Status: Phase C1/C2 and the constrained reimbursement role-picker/save-validation slice are implemented and locally verified on the PR branch (2026-08-21). Broader threshold/snapshot/workflow Release A/B remains preflight-gated.
 
 Owner: thawatchai.
 
@@ -122,9 +122,16 @@ Verification:
   only `roles[0]`; all held roles are stacked on the same right-aligned axis. Web typecheck and SET-08B
   passed, and a local 390 px browser check showed Finance + Accountant consistently in the row and
   detail with `scrollWidth === innerWidth === 390`.
+- Reimbursement policy role-picker follow-up closed the free-text role key: the page consumes a
+  manage-only catalog, shows human labels plus active approver counts, and sends the role only when
+  the route was explicitly edited. The API recomputes entitlement/holder/branch readiness at save,
+  canonicalizes MANAGER/OWNER/custom mode, and clears a stale named user. Focused role readiness/save
+  tests passed 7/7, permission-registry tests 34/34, and reimbursement-guide tests 7/7; contracts, API, and web typechecks passed. Local browser evidence proved OWNER select →
+  save → reopen, then restored MANAGER, at desktop and 390 px. The local read-only policy uniqueness
+  preflight returned zero duplicate company-level policies.
 
 Next:
-- Review the final scoped diff, commit only task files, and update PR 216 on
-  `codex/reimbursement-role-correction-void`; keep unrelated LINE/master-checklist files uncommitted.
+- Review the final scoped diff, commit only reimbursement picker task files, and update the active PR;
+  keep unrelated partner-package, LINE, menu-entitlement, and employee-access files uncommitted.
 - Execute Phase 0 read-only preflight. Do not create/apply the partial unique index until duplicate NULL-branch policies are proven absent or explicitly resolved.
 - Then implement and accept Release A before combining any Release B API/UI/template switch.

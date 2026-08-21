@@ -70,6 +70,17 @@ export type ReimbursementDuplicatePolicy = 'WARN' | 'BLOCK_SUBMIT' | 'BLOCK_PAYM
 
 export type ReimbursementPolicyStatus = 'ACTIVE' | 'INACTIVE';
 
+export type ReimbursementApproverRoleOption = {
+  key: string;
+  name: string;
+  optionLabel: string;
+  eligibleApproverCount: number;
+  coverage: 'COMPLETE' | 'PARTIAL' | 'NONE';
+  uncoveredBranchNames: string[];
+  selectable: boolean;
+  unavailableReason?: 'MISSING_CAPABILITY' | 'NO_ACTIVE_HOLDERS' | 'OWNER_RECOVERY_NOT_READY';
+};
+
 // ---- Policy ----
 
 export type ReimbursementPolicySummary = {

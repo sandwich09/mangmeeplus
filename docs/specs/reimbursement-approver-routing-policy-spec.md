@@ -2,7 +2,7 @@
 
 ## 1. Status and Authority
 
-- Status: **Permission-composition amendment implemented; role-routing Release A/B remains implementation-ready after the data preflight in §14 passes**
+- Status: **Permission composition and the constrained role-picker/save-validation slice are implemented; the broader threshold/snapshot/workflow Release A/B remains implementation-ready after the data preflight in §14 passes**
 - Date: 2026-08-21
 - Latest owner decision: policy administrators choose one role, not a person or internal routing mode.
 - Parent: [[specs/reimbursement-approval-spec|Reimbursement and Approval Spec]] (item 14)
@@ -11,6 +11,8 @@
 - Memory: `docs/agent-memory/reimbursement-approver-routing-policy.md`
 
 This spec is the source of truth for the entire reimbursement-policy correction, not only the control shown on screen. It supersedes the free-text, person-only, and role-picker-only drafts. It includes role routing, threshold behavior, policy activation, prospective policy snapshots, concurrency, workflow delivery, legacy compatibility, and data-integrity controls.
+
+Implementation note (2026-08-21): the policy screen now uses the manage-only role-options endpoint and never accepts a newly typed role key. The server revalidates explicit role edits, canonicalizes MANAGER/OWNER/custom mode, and clears the named user. This closes the unsafe free-text edit path only; it does not claim the remaining threshold, policy-snapshot, workflow-delivery, CAS, or migration phases are complete.
 
 ## 2. Product Outcome
 

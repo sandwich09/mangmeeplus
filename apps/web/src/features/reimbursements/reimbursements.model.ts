@@ -165,6 +165,8 @@ export function reimbursementSubmitReadiness(detail: any): { blocked: boolean; m
 
 /** Stable API error codes → Thai. Unknown codes are shown as-is (see `errorMessage`). */
 export const ERROR_CODE_LABELS: Record<string, string> = {
+  approver_role_required: 'กรุณาเลือกบทบาทที่จะรับผิดชอบอนุมัติใบเบิก',
+  approver_role_not_eligible: 'บทบาทนี้ยังไม่มีสิทธิ์หรือพนักงานที่พร้อมอนุมัติ กรุณาเลือกบทบาทอื่น',
   missing_receipt: 'ยังส่งไม่ได้ตามนโยบายใบเสร็จของบริษัท กรุณาเปิดรายละเอียดเพื่อแนบใบเสร็จหรือแก้ไขคำขอ',
   missing_receipt_reason_required: 'มีรายการที่ไม่ได้แนบใบเสร็จ ต้องระบุ "เหตุผลที่ไม่มีใบเสร็จ" ในคำขอก่อนส่งอนุมัติ',
   finance_approval_already_decided: 'คำขอนี้ถูกอนุมัติจ่ายโดยผู้ตรวจการเงินคนอื่นแล้ว ให้ผู้ที่อนุมัติเป็นผู้กด "ดำเนินการต่อ"',
