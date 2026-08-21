@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   paymentReferenceRequired, validatePaymentForm, validateRequestForm, sumLineAmounts, summariseQueue,
   matchesSearch, formatMoney, parseHubTab, visibleHubTabs, errorMessage, errorText,
-  isStaleApprovalError, diffApprovalFields,
+  isStaleApprovalError, diffApprovalFields, collectReceiptUploadResults,
 } from './reimbursements.logic';
 
 const line = (overrides: Record<string, unknown> = {}) => ({
@@ -121,6 +121,34 @@ describe('sumLineAmounts', () => {
   it('adds the typed rows and tolerates blanks', () => {
     assert.equal(sumLineAmounts([{ amount: '100.50' }, { amount: '49.5' }]), 150);
     assert.equal(sumLineAmounts([{ amount: '' }, { amount: 'abc' }]), 0);
+  });
+});
+
+describe('collectReceiptUploadResults', () => {
+  it('keeps successful attachment ids and names failed line numbers', () => {
+    const failure = new Error('bad image');
+    assert.deepEqual(collectReceiptUploadResults([
+      { status: 'fulfilled', value: 'att-1' },
+      { status: 'rejected', reason: failure },
+      { status: 'fulfilled', value: null },
+      { status: 'fulfilled', value: 'att-4' },
+    ]), {
+      attachmentIds: ['att-1', null, null, 'att-4'],
+      failedLineNumbers: [2],
+      firstFailure: failure,
+    });
+  });
+
+  it('reports every failed line while retaining the first failure for copy', () => {
+    const first = new Error('first');
+    const summary = collectReceiptUploadResults([
+      { status: 'rejected', reason: first },
+      { status: 'fulfilled', value: 'att-2' },
+      { status: 'rejected', reason: new Error('third') },
+    ]);
+    assert.deepEqual(summary.attachmentIds, [null, 'att-2', null]);
+    assert.deepEqual(summary.failedLineNumbers, [1, 3]);
+    assert.equal(summary.firstFailure, first);
   });
 });
 

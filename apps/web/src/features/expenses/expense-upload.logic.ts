@@ -16,7 +16,7 @@ export const MAX_PDF_EXTRACTION_BYTES = 4 * 1024 * 1024;
 const MAX_IMAGE_EDGE_PX = 3200;
 const MIN_IMAGE_QUALITY = 0.72;
 export const RECEIPT_UPLOAD_ACCEPT =
-  '.pdf,.png,.jpg,.jpeg,.heic,.heif,application/pdf,image/png,image/jpeg,image/heic,image/heif';
+  '.pdf,.png,.jpg,.jpeg,.jpe,.heic,.heif,.gif,application/pdf,image/png,image/jpeg,image/jpg,image/heic,image/heif,image/gif';
 export const SIGNATURE_UPLOAD_ACCEPT =
   '.png,.jpg,.jpeg,.jpe,.heic,.heif,.gif,image/png,image/jpeg,image/heic,image/heif,image/gif';
 
@@ -49,14 +49,15 @@ export function classifyUploadFile(name: string, type: string): UploadFileKind {
   if (!mime) {
     if (extension === 'pdf') return 'pdf';
     if (extension === 'heic' || extension === 'heif') return 'heic';
-    if (['jpg', 'jpeg', 'png'].includes(extension ?? '')) return 'image';
+    if (['jpg', 'jpeg', 'jpe', 'png', 'gif'].includes(extension ?? '')) return 'image';
     return 'unsupported';
   }
   if (mime === 'application/pdf' && extension === 'pdf') return 'pdf';
   if ((mime === 'image/heic' && extension === 'heic') || (mime === 'image/heif' && extension === 'heif')) return 'heic';
   if (
-    (mime === 'image/jpeg' && (extension === 'jpg' || extension === 'jpeg'))
+    ((mime === 'image/jpeg' || mime === 'image/jpg') && (extension === 'jpg' || extension === 'jpeg' || extension === 'jpe'))
     || (mime === 'image/png' && extension === 'png')
+    || (mime === 'image/gif' && extension === 'gif')
   ) return 'image';
   return 'unsupported';
 }

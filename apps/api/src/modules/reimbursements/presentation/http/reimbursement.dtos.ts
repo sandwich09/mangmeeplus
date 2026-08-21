@@ -80,7 +80,7 @@ export class CompleteClaimSignatureUploadDto {
 
 export class SignReimbursementClaimFormDto implements SignReimbursementClaimFormInput {
   @IsIn(CLAIM_SIGNATURE_ROLES) role!: ReimbursementClaimSignatureRole;
-  @IsString() @IsNotEmpty() @MaxLength(64) signatureAttachmentId!: string;
+  @IsString() @IsNotEmpty() @MaxLength(64) @IsOptional() signatureAttachmentId?: string;
   @IsString() @IsNotEmpty() @MaxLength(64) snapshotHash!: string;
 }
 

@@ -214,6 +214,8 @@ export type ReimbursementRequestSummary = {
   paymentStatus: ReimbursementPaymentStatus;
   duplicateStatus: ReimbursementDuplicateStatus;
   receiptRequirementStatus: ReimbursementReceiptRequirementStatus;
+  /** Effective policy hint for pre-submit guidance; server validation remains authoritative. */
+  allowMissingReceiptWithReason?: boolean;
   postingStatus: ReimbursementPostingStatus;
   paymentTotalAmount: string;
   outstandingAmount: string;
@@ -247,7 +249,8 @@ export type ReimbursementSignedCopySummary = {
 
 export type SignReimbursementClaimFormInput = {
   role: ReimbursementClaimSignatureRole;
-  signatureAttachmentId: string;
+  /** Legacy callers may provide a claim-scoped upload; otherwise the server resolves the signer's saved signature. */
+  signatureAttachmentId?: string;
   /** The hash the signer previewed — the server recomputes it and rejects `stale_claim_snapshot`. */
   snapshotHash: string;
 };

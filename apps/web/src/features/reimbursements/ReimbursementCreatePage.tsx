@@ -8,10 +8,10 @@ import { ThemedFile } from '@/common/components/field/ThemedFile';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { MangmeeBadge, MangmeeCard, MangmeePage, cx } from '@/common/components/mangmee';
 import { EmptyState } from '@/common/components/state/EmptyState';
-import { ATTACHMENT_UPLOAD_ACCEPT } from '@/common/files/upload-file.logic';
 import { createReimbursement, updateReimbursementDraft, uploadReceiptFile } from './reimbursements.api';
 import { ICON, ErrorBanner, inputClass, btnClass, ghostClass } from '../expenses/ExpensesUi';
-import { validateRequestForm, sumLineAmounts, formatMoney, errorText } from './reimbursements.logic';
+import { RECEIPT_UPLOAD_ACCEPT } from '../expenses/expense-upload.logic';
+import { collectReceiptUploadResults, validateRequestForm, sumLineAmounts, formatMoney, errorText } from './reimbursements.logic';
 
 const CATEGORY_OPTIONS: { value: string; label: string }[] = [
   { value: 'travel', label: 'เดินทาง' },
@@ -60,6 +60,8 @@ export function ReimbursementCreatePage({ companyId, canCreate }: { companyId: s
     if (v) { setError(v); setCollapsedLines({}); return; }
     setBusy(true);
     let createdId: string | null = null;
+    let receiptFailureMessage: string | null = null;
+    let linkedReceiptCount = 0;
     try {
       // The server computes the claim total from these rows — no total is sent.
       const lines = form.lines.map((l, i) => ({
@@ -80,15 +82,25 @@ export function ReimbursementCreatePage({ companyId, canCreate }: { companyId: s
       createdId = created.id;
       const files = form.lines.map(l => l.file);
       if (files.some(Boolean)) {
-        const attachmentIds = await Promise.all(files.map(f => (f ? uploadReceiptFile(companyId, f) : Promise.resolve(null))));
-        await updateReimbursementDraft(companyId, created.id, {
-          lines: lines.map((l, i) => ({ ...l, attachmentId: attachmentIds[i] })),
-        });
+        const results = await Promise.allSettled(files.map(f => (f ? uploadReceiptFile(companyId, f) : Promise.resolve(null))));
+        const { attachmentIds, failedLineNumbers, firstFailure } = collectReceiptUploadResults(results);
+        if (attachmentIds.some(Boolean)) {
+          await updateReimbursementDraft(companyId, created.id, {
+            lines: lines.map((l, i) => ({ ...l, attachmentId: attachmentIds[i] })),
+          });
+          linkedReceiptCount = attachmentIds.filter(Boolean).length;
+        }
+        if (failedLineNumbers.length > 0) {
+          receiptFailureMessage = `แนบไฟล์รายการที่ ${failedLineNumbers.join(', ')} ไม่สำเร็จ: ${errorText(firstFailure)}`;
+          throw new Error('receipt_upload_failed');
+        }
       }
       // Same outcome the inline form had: back to the list, where the new draft is now visible.
       router.push(hubHref);
     } catch (e) {
-      setError(createdId ? `บันทึกร่างแล้ว แต่แนบไฟล์ไม่สำเร็จ: ${errorText(e)}` : errorText(e));
+      setError(createdId
+        ? `บันทึกร่างคำขอเบิกแล้ว แต่แนบไฟล์ไม่ครบ: ${receiptFailureMessage ?? errorText(e)}${linkedReceiptCount > 0 ? ` ระบบเก็บไฟล์ที่แนบสำเร็จ ${linkedReceiptCount} รายการไว้แล้ว` : ''} กรุณาเปิดร่างและเลือกไฟล์รายการที่ยังขาดใหม่`
+        : errorText(e));
       setStrandedDraftId(createdId);
       setBusy(false);
     }
@@ -189,7 +201,8 @@ export function ReimbursementCreatePage({ companyId, canCreate }: { companyId: s
                     </div>
                     <div className="sm:col-span-2">
                       <label className="mb-1.5 block text-xs font-semibold text-gray-600">ใบเสร็จ</label>
-                      <ThemedFile aria-label="ใบเสร็จ" file={l.file} accept={ATTACHMENT_UPLOAD_ACCEPT} onChange={file => setLine(i, { file })} />
+                      <ThemedFile aria-label="ใบเสร็จ" file={l.file} accept={RECEIPT_UPLOAD_ACCEPT} onChange={file => setLine(i, { file })} />
+                      <p className="mt-1 text-xs leading-5 text-gray-400">รองรับ PDF, JPG/JPEG, PNG, HEIC/HEIF และ GIF ระบบจะแปลงรูปให้อัตโนมัติก่อนแนบ</p>
                     </div>
                   </div>
                 </div>
@@ -215,8 +228,8 @@ export function ReimbursementCreatePage({ companyId, canCreate }: { companyId: s
           {error && <ErrorBanner message={error} />}
           <div className="mt-4 space-y-2">
             {strandedDraftId
-              ? <Link href={`${hubHref}?focus=${encodeURIComponent(strandedDraftId)}`} className={cx(btnClass, 'w-full')}>เปิดร่างที่บันทึกไว้</Link>
-              : <button type="submit" className={cx(btnClass, 'w-full')} disabled={busy}>{busy ? 'กำลังบันทึก...' : 'บันทึกร่าง'}</button>}
+              ? <Link href={`${hubHref}?focus=${encodeURIComponent(strandedDraftId)}`} className={cx(btnClass, 'w-full')}>เปิดร่างเพื่อแก้ไขไฟล์</Link>
+              : <button type="submit" className={cx(btnClass, 'w-full')} disabled={busy}>{busy ? 'กำลังเตรียมไฟล์และบันทึก...' : 'บันทึกร่างคำขอเบิก'}</button>}
             <Link href={hubHref} className={cx(ghostClass, 'w-full')}>ยกเลิก</Link>
           </div>
           <p className="mt-3 text-xs leading-5 text-gray-500">ระบบจะบันทึกเป็นฉบับร่าง คุณตรวจสอบและกดส่งอนุมัติได้ภายหลัง</p>

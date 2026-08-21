@@ -2,6 +2,9 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   GENERIC_UPLOAD_ERROR_MESSAGE,
+  UPLOAD_HEIC_CONVERSION_ERROR_MESSAGE,
+  UPLOAD_IMAGE_READ_ERROR_MESSAGE,
+  UPLOAD_RECEIPT_SOURCE_UNSUPPORTED_ERROR_MESSAGE,
   UPLOAD_FILE_TYPE_MISMATCH_ERROR_MESSAGE,
   attachmentMimeTypeForFileName,
   uploadErrorMessage,
@@ -60,5 +63,15 @@ describe('web upload file policy', () => {
   it('hides other technical upload failures behind one generic message', () => {
     assert.equal(uploadErrorMessage(new Error('ECONNRESET storage.internal')), GENERIC_UPLOAD_ERROR_MESSAGE);
     assert.equal(uploadErrorMessage(new Error('รองรับเฉพาะไฟล์ PNG, JPG และ JPEG')), 'รองรับเฉพาะไฟล์ PNG, JPG และ JPEG');
+  });
+
+  it('gives actionable copy for client-side receipt preparation failures', async () => {
+    assert.equal(uploadErrorMessage(new Error('UNSUPPORTED_UPLOAD_FILE')), UPLOAD_RECEIPT_SOURCE_UNSUPPORTED_ERROR_MESSAGE);
+    assert.equal(uploadErrorMessage(new Error('HEIC_DECODE_UNSUPPORTED')), UPLOAD_HEIC_CONVERSION_ERROR_MESSAGE);
+    assert.equal(uploadErrorMessage(new Error('IMAGE_DECODE_FAILED')), UPLOAD_IMAGE_READ_ERROR_MESSAGE);
+    await assert.rejects(
+      withGenericUploadError(() => withGenericUploadError(async () => { throw new Error('IMAGE_DECODE_FAILED'); })),
+      { message: UPLOAD_IMAGE_READ_ERROR_MESSAGE },
+    );
   });
 });

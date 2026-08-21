@@ -2216,6 +2216,16 @@ export class PrismaReimbursementRepository {
     return rows.map((row) => this.toClaimSignature(row));
   }
 
+  /** Latest approved reusable signature owned by this signer; used only at sign time. */
+  async findLatestActiveSavedSignatureAttachmentId(companyId: string, actorUserId: string): Promise<string | null> {
+    const asset = await this.prisma.client.companySignatureAsset.findFirst({
+      where: { companyId, submittedByUserId: actorUserId, status: 'ACTIVE' },
+      orderBy: { createdAt: 'desc' },
+      select: { originalAttachmentId: true, derivedAttachmentId: true },
+    });
+    return asset ? (asset.derivedAttachmentId ?? asset.originalAttachmentId) : null;
+  }
+
   /** The signer's own ACTIVE signature image for this claim+role — nobody else's file can be rendered. */
   async findClaimSignatureAttachment(
     companyId: string,
@@ -2224,7 +2234,7 @@ export class PrismaReimbursementRepository {
     requestId: string,
     role: ReimbursementClaimSignatureRole,
   ): Promise<{ id: string; bucket: string; objectKey: string; objectVersionId?: string; mimeType: string; byteSize: number; checksumSha256: string | null } | null> {
-    const row = await this.prisma.client.attachmentObject.findFirst({
+    let row = await this.prisma.client.attachmentObject.findFirst({
       where: {
         id: attachmentId,
         companyId,
@@ -2234,6 +2244,30 @@ export class PrismaReimbursementRepository {
         metadataJson: { equals: { generatedFor: 'reimbursement_claim_signature', requestId, role } },
       },
     });
+    // Saved company signatures are reusable across claims. The ownership lookup is separate
+    // from current ACTIVE status so an already-signed historical form still renders after the
+    // asset is archived; signing a new form resolves only ACTIVE assets in the method above.
+    if (!row) {
+      const ownedAsset = await this.prisma.client.companySignatureAsset.findFirst({
+        where: {
+          companyId,
+          submittedByUserId: actorUserId,
+          OR: [{ originalAttachmentId: attachmentId }, { derivedAttachmentId: attachmentId }],
+        },
+        select: { id: true },
+      });
+      if (ownedAsset) {
+        row = await this.prisma.client.attachmentObject.findFirst({
+          where: {
+            id: attachmentId,
+            companyId,
+            uploadedByUserId: actorUserId,
+            status: 'ACTIVE',
+            mimeType: { in: ['image/png', 'image/jpeg'] },
+          },
+        });
+      }
+    }
     return row
       ? { id: row.id, bucket: row.bucket, objectKey: row.objectKey, objectVersionId: row.objectVersionId ?? undefined, mimeType: row.mimeType, byteSize: row.byteSize, checksumSha256: row.checksumSha256 }
       : null;

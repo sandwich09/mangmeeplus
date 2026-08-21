@@ -81,6 +81,7 @@ describe('reimbursement related-view ABAC', () => {
   it('lists only related records under the caller branch scope', async () => {
     let received: any;
     const useCase = new ListReimbursementsUseCase({
+      findPolicy: async () => null,
       listRequests: async (where: any) => { received = where; return []; },
     } as any);
     const result = await useCase.execute(ctx(), { scope: 'related' });
