@@ -1743,20 +1743,15 @@ function PolicySettings({ companyId }: { companyId: string }) {
                   </option>
                 ))}
               </ThemedSelect>
-              {selectedOption?.selectable ? (
-                <p className="mt-1 text-xs text-brand-700">
-                  บทบาทนี้มีผู้รับผิดชอบ {selectedOption.eligibleApproverCount} คน
-                  {selectedOption.coverage === 'COMPLETE' ? ' · ครบทุกสาขา' : ' · บางสาขาเจ้าของกิจการจะช่วยอนุมัติ'}
-                </p>
-              ) : readyOptions.length === 0 ? (
+              {readyOptions.length === 0 ? (
                 <p className="mt-1 text-xs text-error-600">ยังไม่มีบทบาทที่พร้อมอนุมัติ กรุณาให้ผู้ดูแลเพิ่มสิทธิ์และพนักงานในหน้าบทบาทและสิทธิ์</p>
-              ) : roleBasedRoute && form.defaultApproverRole ? (
+              ) : !selectedOption?.selectable && roleBasedRoute && form.defaultApproverRole ? (
                 <p className="mt-1 text-xs text-error-600">บทบาทที่ตั้งไว้ยังไม่มีคนพร้อมอนุมัติ กรุณาเลือกบทบาทใหม่</p>
-              ) : !roleBasedRoute && !approverChanged ? (
+              ) : !selectedOption?.selectable && !roleBasedRoute && !approverChanged ? (
                 <p className="mt-1 text-xs text-warning-700">การตั้งค่าเดิมระบุผู้อนุมัติเป็นรายบุคคล หากต้องการเปลี่ยนเส้นทางให้เลือกบทบาทใหม่</p>
-              ) : (
+              ) : !selectedOption?.selectable ? (
                 <p className="mt-1 text-xs text-gray-500">เลือกบทบาทของผู้รับผิดชอบ ไม่ต้องพิมพ์ชื่อหรือตัวแปรระบบ</p>
-              )}
+              ) : null}
               <p className="mt-1 text-xs text-gray-500">ใบเบิกใช้คำตัดสิน 1 คน ทุกคนที่มีบทบาทและสิทธิ์นี้จะเห็นรายการ และระบบใช้ผลจากคนแรกที่อนุมัติหรือปฏิเสธ</p>
             </div>
             <label className="flex items-start justify-between gap-4 rounded-xl border border-gray-200 px-3 py-3 transition hover:border-brand-200 sm:col-span-2">
