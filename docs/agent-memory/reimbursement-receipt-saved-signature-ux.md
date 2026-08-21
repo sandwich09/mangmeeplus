@@ -19,6 +19,7 @@ Verification:
 - API claim-signature use-case: 23 passed.
 - API saved-signature repository ownership: 3 passed.
 - API reimbursement request + DTO regression: 36 passed.
+- CI follow-up: related-view, saved-signature, and spec-suite coverage passed 37 tests; the full API suite passed.
 - Web reimbursement/expense model tests: 68 passed; reimbursement logic regression: 44 passed.
 - `apps/api`: `pnpm typecheck` passed.
 - `apps/web`: `pnpm typecheck` passed.
