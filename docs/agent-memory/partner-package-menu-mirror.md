@@ -1,6 +1,6 @@
 # Agent Memory: partner-package-menu-mirror
 
-Status: PHASE 2 VERIFIED — preset parity/settings-foundation follow-up complete; owner verified the normal Node 24 Turbopack build; managed-sandbox limits are recorded below
+Status: STARTER PRESET FOLLOW-UP VERIFIED (2026-08-21) — preset aligned to the approved 7-menu baseline
 Owner: Claude (harness engineer) → Codex (Phase 1 + Phase 2 implementation/verification)
 
 Scope:
@@ -26,6 +26,7 @@ Decisions:
 - บริษัท legacy ที่ไม่มี entitlement row เลยต้อง materialize fail-open snapshot ในการเขียนครั้งแรก มิฉะนั้น partial row แรกจะทำให้ key อื่นที่ absent ถูกปิดทั้งหมด
 - `expense_auto_post` แยกจากเมนู, absent = ปิด และคง client dependency guard + server COA-readiness error message เดิม
 - คง production build เป็น Turbopack ตาม repo contract; owner ยืนยัน normal Node 24.14.0 path สร้าง route table ครบและ exit 0 จึงไม่แก้ build config และไม่เปลี่ยนเป็น webpack
+- เมื่อกด preset `starter` จะได้ Dashboard + Notifications (shared key), AI แนะนำ, Expenses 6/6, Reimbursement, Employee Access 3/3 และ Company Settings 2/2 รวม 7 เมนู; `standard`/`full`, onboarding/default entitlement และ tax background behavior คงเดิม
 
 Open questions:
 - Binding order และป้าย `crm` (`ลูกค้า (CRM)`) ไม่ตรง runtime sidebar registry/dictionary ทุกจุด แม้ parity guard จะยืนยัน navKey/group/icon/gate แล้ว ต้องแก้ source-of-truth contract ก่อนจึงจะ mirror ได้ตรงตัวทั้งหมด
@@ -42,6 +43,7 @@ Artifacts:
 - `apps/web/src/features/web-core-workspace/web-core-workspace.spec.ts`
 
 Verification:
+- 2026-08-21 follow-up: contracts build PASS; API menu/preset 8/8 PASS; web system-partners logic 36/36 PASS; `git diff --check` PASS
 - `corepack pnpm --filter @watchdog-bms/contracts build` → PASS (`tsc -p tsconfig.json`, exit 0)
 - Preset guard red-before-fix → `starter/roles: card=true menu=false`, `standard/roles: card=true menu=false`; `full` ผ่าน
 - Preset guard green-after-fix → starter / standard / full ผ่านทั้งหมด (6 tests, 6 pass, exit 0)
