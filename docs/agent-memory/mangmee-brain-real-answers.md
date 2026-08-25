@@ -32,8 +32,8 @@ Verification (2026-08-25, ใน worktree; ต้อง `pnpm -C packages/contra
 
 Gaps ที่ agent รายงาน (ยังไม่แก้ — นอก scope ที่อนุมัติ):
 
-1. gateway specs ไร้ runner อีก 6 ไฟล์ — สำคัญสุด `prepared-simple-read.logic.spec.ts` (eligibility gate) และ `tool-availability.spec.ts`
-2. specs 4 ตัวรันเฉพาะ `test:line-ai-business-coverage` — ต้องยืนยันว่า CI เรียก script นี้จริง
+1. (ปิดบางส่วน 2026-08-26) orphan gateway specs: ลงทะเบียนแล้ว 5/6 (prepared-simple-read.logic 10/10, tool-availability 5/5, session-affinity 6/6, production-maintenance.middleware 2/2, crm-broadcast.agent 2/2) → suite 715/715; **`app.boot.spec.ts` ยัง fail บนเครื่อง dev**: Nest ExceptionsZone exit(1) เงียบเพราะ config validation — เครื่องที่ตั้ง `AWS_SDK_LOAD_CONFIG=1` (string) ชน `envBoolean` ใน packages/config/src/index.ts:402 ที่ไม่ coerce "1"; ใน CI env สะอาดน่าจะผ่าน แต่ลงทะเบียนแล้วจะ fail กับ dev ที่ใช้ AWS profile — ต้องเลือกวิธีแก้กับ Owner: (a) envBoolean coerce "1"/"0" หรือ (b) spec ล้าง AWS_* env ก่อน boot (pattern เดียวกับ api test:boot ที่ CI รันแยกด้วย env คุม)
+2. (ยืนยันแล้ว 2026-08-26) `test:line-ai-business-coverage` **ไม่ถูกเรียกที่ไหนเลยใน .github/** (grep exit 1) ขณะที่ CI รัน `pnpm test` recursive → specs 4 ตัว (agent-tools.parity, business-read-result-semantics, line-ai-business-query-regression, line-ai-feature-coverage) เป็น CI-orphan จริง — ตัดสินใจกับ Owner: เพิ่มเข้า scripts.test หรือเพิ่ม step ใน CI
 3. `packages/contracts` `scripts.test` ไม่รวม `line-ai-prepared-plan.spec.ts` (orphan class เดียวกัน)
 4. root `scripts/*.spec.ts` ไม่อยู่ใน runner ใด (`pnpm -r test` ไม่ลงมาที่ scripts/) — corpus 256-id assert + golden harness รันเมื่อมีคนพิมพ์คำสั่งเท่านั้น
 5. fresh worktree ต้อง build contracts+config ก่อน typecheck/corpus ไม่งั้น false failures
