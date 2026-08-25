@@ -12,7 +12,7 @@
  * deterministic assessor (`lane` says which) and the §14.3 rows are checked by the webhook/card specs
  * they name, which is why each one carries its own `evidenceStatus`.
  */
-import type { LineIntakeClarificationField } from '@watchdog-bms/contracts';
+import { LINE_AI_PREPARED_PLAN_SECURITY_EVAL_CASES, type LineIntakeClarificationField } from '@watchdog-bms/contracts';
 import { LINE_AI_SUBSTITUTE_ROUTING_CORPUS } from './line-ai-substitute-routing.corpus';
 
 export const LINE_AI_IMPLEMENTED_DEBOUNCE_MS = 2_500;
@@ -387,44 +387,10 @@ export const LINE_AI_LATENCY_AUTONOMY_EVAL_CASES: LatencyAutonomyEvalCase[] = [
   requiredPolicies: testCase.requiredPolicies ?? DEFAULT_REQUIRED_POLICIES[testCase.expectedLane],
 }));
 
-export type PreparedPlanSecurityEvalCase = {
-  id: string;
-  threat:
-    | 'permission' | 'entitlement' | 'tenant_scope' | 'branch_scope' | 'tool_scope'
-    | 'mutation' | 'delegation' | 'bounds' | 'input_shape' | 'plan_version'
-    | 'confidence' | 'subject' | 'source_honesty';
-  mutation: string;
-  expectedOutcome:
-    | 'reject_before_tool' | 'fallback_before_tool'
-    | 'explicit_empty' | 'source_unavailable' | 'honest_terminal' | 'complex_coverage';
-  expectedToolCallCount: number;
-};
-
-export const LINE_AI_PREPARED_PLAN_SECURITY_EVAL_CASES: PreparedPlanSecurityEvalCase[] = [
-  { id: 'prepared-missing-permission', threat: 'permission', mutation: 'remove requested tool permission after planning', expectedOutcome: 'fallback_before_tool', expectedToolCallCount: 0 },
-  { id: 'prepared-high-confidence-no-authority', threat: 'permission', mutation: 'set confidence to 1 after removing the requested tool permission', expectedOutcome: 'fallback_before_tool', expectedToolCallCount: 0 },
-  { id: 'prepared-feature-disabled', threat: 'entitlement', mutation: 'disable exact feature entitlement after planning', expectedOutcome: 'fallback_before_tool', expectedToolCallCount: 0 },
-  { id: 'prepared-foreign-company-input', threat: 'tenant_scope', mutation: 'inject companyId for another tenant into tool input', expectedOutcome: 'reject_before_tool', expectedToolCallCount: 0 },
-  { id: 'prepared-foreign-branch-input', threat: 'branch_scope', mutation: 'inject an unauthorized branch/location id', expectedOutcome: 'reject_before_tool', expectedToolCallCount: 0 },
-  { id: 'prepared-tool-not-required', threat: 'tool_scope', mutation: 'propose a registered tool absent from intentPlan.requiredTools', expectedOutcome: 'reject_before_tool', expectedToolCallCount: 0 },
-  { id: 'prepared-unknown-tool', threat: 'tool_scope', mutation: 'propose an unregistered tool name', expectedOutcome: 'reject_before_tool', expectedToolCallCount: 0 },
-  { id: 'prepared-forged-mutation-tool', threat: 'mutation', mutation: 'propose expense.approve as a final mutation', expectedOutcome: 'reject_before_tool', expectedToolCallCount: 0 },
-  { id: 'prepared-missing-delegation', threat: 'delegation', mutation: 'execute without actor delegation', expectedOutcome: 'fallback_before_tool', expectedToolCallCount: 0 },
-  { id: 'prepared-wrong-delegation', threat: 'delegation', mutation: 'use a delegation issued for another actor/tool', expectedOutcome: 'reject_before_tool', expectedToolCallCount: 0 },
-  { id: 'prepared-duplicate-call', threat: 'bounds', mutation: 'repeat an identical simple-read call', expectedOutcome: 'reject_before_tool', expectedToolCallCount: 0 },
-  { id: 'prepared-too-many-calls', threat: 'bounds', mutation: 'send more than one proposed call for a simple plan', expectedOutcome: 'reject_before_tool', expectedToolCallCount: 0 },
-  { id: 'prepared-too-many-input-keys', threat: 'bounds', mutation: 'exceed the maximum tool-input key count', expectedOutcome: 'reject_before_tool', expectedToolCallCount: 0 },
-  { id: 'prepared-input-too-deep', threat: 'input_shape', mutation: 'exceed the maximum plain-object nesting depth', expectedOutcome: 'reject_before_tool', expectedToolCallCount: 0 },
-  { id: 'prepared-input-oversized-string', threat: 'input_shape', mutation: 'exceed the maximum UTF-8 string bytes', expectedOutcome: 'reject_before_tool', expectedToolCallCount: 0 },
-  { id: 'prepared-input-prototype-key', threat: 'input_shape', mutation: 'include __proto__, prototype, or constructor key', expectedOutcome: 'reject_before_tool', expectedToolCallCount: 0 },
-  { id: 'prepared-unsupported-version', threat: 'plan_version', mutation: 'send a version outside the exact accepted allowlist', expectedOutcome: 'fallback_before_tool', expectedToolCallCount: 0 },
-  { id: 'prepared-low-confidence', threat: 'confidence', mutation: 'lower confidence below the simple-lane threshold', expectedOutcome: 'fallback_before_tool', expectedToolCallCount: 0 },
-  { id: 'prepared-subject-mismatch', threat: 'subject', mutation: 'pair a sales subject with an inventory-only tool', expectedOutcome: 'reject_before_tool', expectedToolCallCount: 0 },
-  { id: 'prepared-explicit-empty', threat: 'source_honesty', mutation: 'return a successful explicit-empty source result', expectedOutcome: 'explicit_empty', expectedToolCallCount: 1 },
-  { id: 'prepared-source-unavailable', threat: 'source_honesty', mutation: 'return a source-unavailable terminal result', expectedOutcome: 'source_unavailable', expectedToolCallCount: 1 },
-  { id: 'prepared-tool-failure-authoritative', threat: 'source_honesty', mutation: 'return a tool failure with an existing authoritative honest terminal response', expectedOutcome: 'honest_terminal', expectedToolCallCount: 1 },
-  { id: 'prepared-partial-result', threat: 'source_honesty', mutation: 'return facts that do not completely cover the validated planned read', expectedOutcome: 'complex_coverage', expectedToolCallCount: 1 },
-];
+// The 23 prepared-plan security/source-honesty rows now live in `@watchdog-bms/contracts` so the
+// EXECUTING gateway spec can import them from a package that ships inside the app images (spec S2-R1);
+// this root corpus re-exports them unchanged so the protected manifest below keeps its id union.
+export { LINE_AI_PREPARED_PLAN_SECURITY_EVAL_CASES, type PreparedPlanSecurityEvalCase } from '@watchdog-bms/contracts';
 
 export type DebounceEvalEvent = {
   atMs: number;

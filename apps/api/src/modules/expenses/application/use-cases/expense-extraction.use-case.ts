@@ -177,6 +177,9 @@ export class RequestReceiptExtractionUseCase {
           status: 'OCR_EXTRACTED_NEEDS_REVIEW',
           recognizedFields: response.fields,
           classification: boundedClassification(response.classification),
+          // Spec S1-R4: the resolved category suggestion, carried whether or not it was auto-filled,
+          // so the review form can offer a below-threshold one as a recommendation to accept.
+          ...(duplicateResult.categorySuggestion ? { categorySuggestion: duplicateResult.categorySuggestion } : {}),
           missingFields,
           duplicateWarning: duplicateResult.candidatesCreated > 0,
           chargeReconciliation: {

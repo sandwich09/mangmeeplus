@@ -10,6 +10,7 @@ import {
   deriveExpenseClassificationReviewState,
   expenseAiFieldProvenance,
   expenseAiSuggestion,
+  expenseAiCategorySuggestion,
   applyExpenseAiSuggestion,
   expenseRatePercent,
   expenseDocumentWhtRate,
@@ -809,5 +810,35 @@ describe('postingErrorText', () => {
   it('returns null when nothing is stored', () => {
     assert.equal(postingErrorText(null), null);
     assert.equal(postingErrorText(''), null);
+  });
+});
+
+// Spec S1-R4: the review form must be able to tell "AI picked this and the server applied it"
+// (already in `detail.expenseCategoryId`) from "AI picked this and nobody applied it" — the second
+// is what this reader carries, and it is the only source for the recommended-category option.
+describe('expenseAiCategorySuggestion', () => {
+  const suggestion = { expenseCategoryId: 'cat-meals', confidence: 0.42, categoryName: 'ค่าอาหาร' };
+
+  it('reads a below-threshold suggestion as well as an auto-filled one', () => {
+    assert.deepEqual(expenseAiCategorySuggestion({ categorySuggestion: suggestion }), suggestion);
+    assert.deepEqual(
+      expenseAiCategorySuggestion({ status: 'OCR_EXTRACTED_NEEDS_REVIEW', categorySuggestion: { ...suggestion, confidence: 0.97 } }),
+      { ...suggestion, confidence: 0.97 },
+    );
+  });
+
+  it('shows nothing rather than guessing when the summary carries no usable suggestion', () => {
+    assert.equal(expenseAiCategorySuggestion(null), null);
+    assert.equal(expenseAiCategorySuggestion({ status: 'OCR_EXTRACTED_NEEDS_REVIEW' }), null);
+    for (const categorySuggestion of [
+      'cat-meals',
+      [suggestion],
+      { ...suggestion, categoryName: '  ' },
+      { ...suggestion, expenseCategoryId: '' },
+      { ...suggestion, confidence: '0.42' },
+      { expenseCategoryId: 'cat-meals', confidence: 0.42 },
+    ]) {
+      assert.equal(expenseAiCategorySuggestion({ categorySuggestion }), null, `expected ${JSON.stringify(categorySuggestion)} to read as none`);
+    }
   });
 });

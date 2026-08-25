@@ -33,7 +33,7 @@ import {
   POSTING_STATUS_LABELS, aiGrandTotalValue, expenseAiFieldProvenance, expenseRatePercent, expenseDocumentWhtRate,
   vatRatePreset, vatRatePresetValue, expensePercentToRate, expenseRateToPercent,
   effectiveVatRateLabel, vatModeRequiresRate,
-  PAYEE_ENTITY_KIND_LABELS, AI_SUGGESTION_FIELD_LABELS, applyExpenseAiSuggestion, expenseAiSuggestion,
+  PAYEE_ENTITY_KIND_LABELS, AI_SUGGESTION_FIELD_LABELS, applyExpenseAiSuggestion, expenseAiSuggestion, expenseAiCategorySuggestion,
   formatTaxId, taxIdDigits, expenseVatSourceFromSnapshot, expenseVatSourceValidationMessage,
 } from './expenses.model';
 import type { AiReviewField, ExpenseAiSuggestion, ExpenseSummary, ExpenseDetail, ExpenseDraftReviewValues, ExpenseCategorySummary, ExpenseReviewStepKey, ExpenseCapabilities, ExpensesTab, ManualExpenseItem } from './expenses.model';
@@ -585,6 +585,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
     requestId === previewRequestRef.current && requestScope === previewScopeRef.current
   );
   const dirty = docType !== detail.sourceDocumentType || taxStatus !== detail.taxEvidenceStatus || categoryId !== (detail.expenseCategoryId ?? '');
+  const aiCategorySuggestion = expenseAiCategorySuggestion(detail.aiVerificationSummaryJson);
   // Live dirtiness for the parent's ถัดไป guard — only while the บันทึกการตรวจ button exists
   // (a read-only viewer has nothing to save and must never be blocked).
   useEffect(() => {
@@ -923,6 +924,19 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
             <option value="">{t('expenses.category_unspecified', locale)}</option>
             {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </ThemedSelect>
+          {/* Spec S1-R4: an auto-filled category arrives pre-selected in the box above; a suggestion
+              the server refused to write is offered here instead, and only a tap applies it. Only
+              `categoryId` moves, so nothing else the reviewer typed is touched. */}
+          {aiCategorySuggestion && aiCategorySuggestion.expenseCategoryId !== categoryId && isMutable && canReview && (
+            <button
+              type="button"
+              className={cx(ghostClass, 'mt-1.5 w-full justify-start text-left')}
+              disabled={busy}
+              onClick={() => setCategoryId(aiCategorySuggestion.expenseCategoryId)}
+            >
+              🤖 {t('expenses.category_ai_suggested', locale)}: {aiCategorySuggestion.categoryName} · {t('expenses.category_ai_suggested_apply', locale)}
+            </button>
+          )}
           <AiFieldMissingHint field="category" summary={detail.aiVerificationSummaryJson} />
         </div>
       </div>

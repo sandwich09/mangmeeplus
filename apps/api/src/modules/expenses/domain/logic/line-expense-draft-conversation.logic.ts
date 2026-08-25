@@ -85,7 +85,9 @@ export type LineExpenseDraftRejectedCandidate = {
 };
 
 function normalized(value: string): string {
-  return value.normalize('NFKC').replace(/\s+/gu, ' ').trim();
+  // NFC, not NFKC: NFKC decomposes สระอำ (U+0E33 → U+0E4D U+0E32) and NFC cannot recompose it,
+  // so NFKC-normalized text can never match the precomposed Thai phrase regexes in this file.
+  return value.normalize('NFC').replace(/\s+/gu, ' ').trim();
 }
 
 function bounded(value: unknown, max = MAX_TEXT): string | undefined {

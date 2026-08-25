@@ -309,6 +309,37 @@ describe('expense Tax Code confirmation guard', () => {
     });
   });
 
+  // Spec S1-R5: override telemetry on the web confirm path. `fromSuggested` separates "the reviewer
+  // replaced the AI's category" from "AI proposed nothing", which is what makes an override rate
+  // readable. Ids, a surface and a boolean only — no category names, no document content.
+  it('emits a category override event when the confirmed category is not the AI suggestion', async () => {
+    const confirmWith = async (expenseCategoryId: string | null, categorySuggestion: unknown) => {
+      const events: any[] = [];
+      const repo = {
+        findByIdWithRelations: async () => ({
+          ...readyRecord,
+          expenseCategoryId,
+          ...(categorySuggestion ? { aiVerificationSummaryJson: { categorySuggestion } } : {}),
+        }),
+        finalizeAndConfirmExpenseCas: async (input: any, finalize: any) => {
+          const finalized = await finalize({ db: {}, expense: readyRecord });
+          return { expense: { ...input, expenseNumber: 'EXP-1' }, finalized };
+        },
+      } as any;
+      const useCase = new ConfirmExpenseUseCase(repo, audit, transactionTax, ...numberServices);
+      (useCase as any).logger = { log: (entry: any) => events.push(entry) };
+      await useCase.execute(ctx(undefined, ['expense.confirm']), 'exp-1');
+      return events.filter((entry) => entry.msg === 'expense_category_overridden');
+    };
+    const suggestion = { expenseCategoryId: 'cat-meals', confidence: 0.9, categoryName: 'ค่าอาหาร' };
+    const overridden = { msg: 'expense_category_overridden', companyId: 'company-1', expenseId: 'exp-1', surface: 'web' };
+
+    assert.deepEqual(await confirmWith('cat-meals', suggestion), [], 'confirming the suggested category is not an override');
+    assert.deepEqual(await confirmWith('cat-fuel', suggestion), [{ ...overridden, fromSuggested: true }]);
+    assert.deepEqual(await confirmWith('cat-fuel', null), [{ ...overridden, fromSuggested: false }]);
+    assert.deepEqual(await confirmWith(null, suggestion), [], 'no category on the confirmed expense is not an override');
+  });
+
   it('rejects a usable tax-invoice header while its domestic Tax Code evidence is not verified', async () => {
     const unverified = {
       ...readyRecord,

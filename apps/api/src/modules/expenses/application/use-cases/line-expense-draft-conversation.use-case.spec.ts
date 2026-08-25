@@ -109,6 +109,40 @@ describe('LineExpenseDraftConversationUseCase', () => {
     assert.match(result.replyTexts.join('\n'), /ข้อมูลครบสำหรับส่งให้ผู้มีสิทธิ์ตรวจสอบ/u);
   });
 
+  // Spec S1-R5: the override signal must come from the mobile journey too, or the measured
+  // override rate quietly excludes the surface most receipts arrive on.
+  it('emits a category override event only when a stored answer replaces the AI suggestion', async () => {
+    const withFuel = async (messageText: string) => {
+      const h = harness();
+      const events: any[] = [];
+      (h.useCase as any).logger = { log: (entry: any) => events.push(entry) };
+      (h.useCase as any).repo.listCategories = async () => [
+        ...categories,
+        { id: 'cat-fuel', companyId: 'c1', name: 'ค่าน้ำมัน', accountHintKey: 'expense.fuel', defaultInputTaxCode: null, status: 'ACTIVE', sortOrder: 2 },
+      ];
+      const result = await h.useCase.execute(ctx, { chatKeyHash: 'chat', messageText });
+      return { events, result, updates: h.updates };
+    };
+
+    const accepted = await withFuel('I01-CATEGORY ตามที่แนะนำ');
+    assert.equal(accepted.result.status, 'UPDATED');
+    assert.ok(accepted.updates[0].options.transactionalAudit.metadataJson.acceptedFields.includes('I01-CATEGORY'));
+    assert.deepEqual(accepted.events, [], 'taking the suggested category is not an override');
+
+    const overridden = await withFuel('I01-CATEGORY ค่าน้ำมัน');
+    assert.equal(overridden.result.status, 'UPDATED');
+    assert.deepEqual(overridden.events, [{
+      msg: 'expense_category_overridden',
+      companyId: 'c1',
+      expenseId: 'e1',
+      surface: 'line',
+      fromSuggested: true,
+    }], 'ids and booleans only — no category name, no message text');
+
+    const unrelated = await withFuel('D-VENDOR ร้าน ABC');
+    assert.deepEqual(unrelated.events, [], 'an answer that stored no category is not an override');
+  });
+
   it('preserves policy-only missing evidence while recomputing collection questions', async () => {
     const h = harness();
     const find = (h.useCase as any).repo.findByIdWithRelations;

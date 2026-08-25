@@ -664,6 +664,30 @@ export function expenseAiSuggestion(summary: Record<string, unknown> | null): Ex
   return Object.keys(out).length > 0 ? out : null;
 }
 
+/** Spec S1-R4: the AI's expense category for the document, already resolved by the API against the
+ *  company's active catalogue. It is present whatever the confidence — below the auto-fill bar the
+ *  server wrote nothing, so the form must offer it as a recommendation the reviewer taps, never as
+ *  a pre-selected value. `detail.expenseCategoryId` remains the only applied category. */
+export type ExpenseAiCategorySuggestion = {
+  expenseCategoryId: string;
+  confidence: number;
+  categoryName: string;
+};
+
+export function expenseAiCategorySuggestion(summary: Record<string, unknown> | null): ExpenseAiCategorySuggestion | null {
+  const raw = summary?.['categorySuggestion'];
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const source = raw as Record<string, unknown>;
+  const id = source['expenseCategoryId'];
+  const confidence = source['confidence'];
+  const name = source['categoryName'];
+  return typeof id === 'string' && id.trim()
+    && typeof confidence === 'number' && Number.isFinite(confidence)
+    && typeof name === 'string' && name.trim()
+    ? { expenseCategoryId: id, confidence, categoryName: name.slice(0, 200) }
+    : null;
+}
+
 export const AI_SUGGESTION_FIELD_LABELS: Record<keyof ExpenseAiSuggestion, string> = {
   vendorName: 'ชื่อผู้ขาย',
   vendorTaxId: 'เลขประจำตัวผู้เสียภาษีผู้ขาย',
