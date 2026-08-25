@@ -1,5 +1,9 @@
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS } from '@watchdog-bms/contracts';
+import {
+  hasCheckBillSubstituteRoutingResolution,
+  isCheckBillClassification,
+  SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS,
+} from '@watchdog-bms/contracts';
 import { createHash, randomUUID } from 'node:crypto';
 import { AuditService } from '../../../audit/application/audit.service';
 import { CreateOrUpdateNotificationEventUseCase } from '../../../dashboard-notifications/application/use-cases/notification.use-cases';
@@ -154,26 +158,34 @@ export type SubstituteReceiptEligibilityIssue = { code: string; message: string 
 export function collectSubstituteReceiptEligibilityIssues(
   expense: ExpenseRecordWithRelations,
   reasonCode?: string,
+  options?: { routeCheckBill?: boolean },
 ): SubstituteReceiptEligibilityIssue[] {
   const issues: SubstituteReceiptEligibilityIssue[] = [];
+  const checkBillClassification = isCheckBillClassification(expense.aiVerificationSummaryJson);
+  const checkBillRoute = hasCheckBillSubstituteRoutingResolution(expense.aiVerificationSummaryJson)
+    || (options?.routeCheckBill === true && checkBillClassification);
+  if (options?.routeCheckBill === true && !checkBillClassification) {
+    issues.push({ code: 'check_bill_route_ineligible', message: 'เส้นทางนี้ใช้ได้เฉพาะเช็กบิลที่จ่ายแล้วแต่ร้านไม่มีใบเสร็จฉบับสุดท้ายค่ะ' });
+  }
   if (!['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(expense.status)) {
     issues.push({ code: 'expense_status_ineligible', message: `จัดทำใบรับรองแทนใบเสร็จรับเงินได้เฉพาะรายการที่ยังเป็นร่าง อยู่ระหว่างตรวจ หรือพร้อมยืนยัน (สถานะตอนนี้: ${expense.status})` });
   }
-  if (ALWAYS_INELIGIBLE_SOURCE_TYPES.has(expense.sourceDocumentType)) {
+  if (ALWAYS_INELIGIBLE_SOURCE_TYPES.has(expense.sourceDocumentType) && !checkBillRoute) {
     issues.push({ code: 'source_type_ineligible', message: 'ประเภทเอกสารต้นทางยังไม่ผ่านการตรวจ หรือไม่รองรับใบรับรองแทนใบเสร็จรับเงิน ตรวจและเลือกประเภทเอกสารในเว็บก่อนค่ะ' });
   }
   if (['RECEIPT', 'TAX_INVOICE'].includes(expense.sourceDocumentType)
     && !['RECEIPT_UNAVAILABLE', 'RECEIPT_MATERIALLY_INCOMPLETE'].includes(reasonCode ?? '')) {
     issues.push({ code: 'valid_receipt_normal_path', message: 'รายการนี้มีใบเสร็จหรือใบกำกับภาษีที่ใช้ได้อยู่แล้ว ให้ทำตามขั้นตอนปกติ ใบรับรองแทนใบเสร็จรับเงินใช้ได้เมื่อต้นฉบับหายหรือข้อมูลสำคัญไม่ครบเท่านั้น' });
   }
-  if (hasBlockingNonExpenseClassification(expense.aiVerificationSummaryJson)) {
+  if (hasBlockingNonExpenseClassification(expense.aiVerificationSummaryJson) && !checkBillRoute) {
     issues.push({ code: 'classification_ineligible', message: 'ใบเสนอราคา ใบสั่งซื้อ ใบนัดหมาย ใบจอง รูปที่ไม่ใช่ค่าใช้จ่าย หรือรูปที่อ่านไม่ออก ใช้จัดทำใบรับรองแทนใบเสร็จรับเงินไม่ได้ค่ะ' });
   }
   const classification = expense.aiVerificationSummaryJson?.['classification'];
   const rawDocumentKind = classification && typeof classification === 'object'
     ? (classification as Record<string, unknown>)['documentKind']
     : null;
-  if (typeof rawDocumentKind === 'string' && INELIGIBLE_CLASSIFICATION_KINDS.has(rawDocumentKind)) {
+  if (typeof rawDocumentKind === 'string' && INELIGIBLE_CLASSIFICATION_KINDS.has(rawDocumentKind)
+    && !(rawDocumentKind === 'ORDER_OR_CHECK_BILL' && checkBillRoute)) {
     issues.push({ code: 'document_kind_ineligible', message: 'แม้ฝ่ายบัญชีจะปรับสถานะให้แล้ว ใบเสนอราคา ใบสั่งซื้อ ใบนัดหมาย ใบจอง หรือรูปที่ไม่ใช่ค่าใช้จ่าย ก็ยังใช้จัดทำใบรับรองแทนใบเสร็จรับเงินไม่ได้ค่ะ' });
   }
   if (expense.currency !== 'THB') issues.push({ code: 'currency_not_supported', message: 'ตอนนี้ใบรับรองแทนใบเสร็จรับเงินรองรับเฉพาะรายการสกุลเงินบาท (THB)' });
@@ -190,17 +202,21 @@ export function collectSubstituteReceiptEligibilityIssues(
   if (!expense.expenseCategoryId && !expense.accountHintKey && expense.lines.some((line) => !line.expenseCategoryId && !line.accountHintKey)) {
     issues.push({ code: 'reviewed_category_required', message: 'ระบุหมวดค่าใช้จ่ายของรายการนี้' });
   }
-  if (expense.taxEvidenceStatus === 'NEEDS_REVIEW') {
+  if (expense.taxEvidenceStatus === 'NEEDS_REVIEW' && !checkBillRoute) {
     issues.push({ code: 'tax_evidence_review_required', message: 'ต้องตรวจสถานะหลักฐานภาษีของรายการนี้ให้เสร็จก่อน (ทำในเว็บ)' });
   }
-  if (expense.taxEvidenceStatus === 'USABLE_FOR_TAX') {
+  if (expense.taxEvidenceStatus === 'USABLE_FOR_TAX' && !checkBillRoute) {
     issues.push({ code: 'tax_evidence_nonclaimable', message: 'ใบรับรองแทนใบเสร็จรับเงินใช้ขอคืนภาษีซื้อไม่ได้ ให้เปลี่ยนสถานะเป็นเอกสารประกอบที่ไม่ขอคืนภาษี หรือขอใบกำกับภาษีฉบับทดแทนจากผู้ขาย' });
   }
   return issues;
 }
 
-function validateEligibility(expense: ExpenseRecordWithRelations, reasonCode?: string): void {
-  const issue = collectSubstituteReceiptEligibilityIssues(expense, reasonCode)[0];
+function validateEligibility(
+  expense: ExpenseRecordWithRelations,
+  reasonCode?: string,
+  options?: { routeCheckBill?: boolean },
+): void {
+  const issue = collectSubstituteReceiptEligibilityIssues(expense, reasonCode, options)[0];
   if (!issue) return;
   if (issue.code === 'substitute_receipt_too_many_lines' || issue.code === 'substitute_receipt_line_description_too_long') {
     throw renderabilityError(issue.code, issue.message);
@@ -413,7 +429,7 @@ export class PrepareSubstituteReceiptUseCase {
     const expense = await this.repo.findByIdWithRelations(ctx.companyId, expenseId);
     if (!expense) throw new NotFoundException(`Expense ${expenseId} not found.`);
     assertBranch(ctx, expense.branchId);
-    validateEligibility(expense, input.reasonCode);
+    validateEligibility(expense, input.reasonCode, { routeCheckBill: input.routeCheckBill === true });
     const payeeName = optionalText(input.payeeName, 'payeeName', 200)
       ?? optionalText(expense.vendorNameSnapshot, 'payeeName', 200);
     if (!payeeName) throw new BadRequestException('payeeName is required when the expense has no vendor name.');
@@ -489,6 +505,7 @@ export class PrepareSubstituteReceiptUseCase {
         payeeTaxId,
         preparedByUserId: ctx.userId,
         preparedFromChannel,
+        routeCheckBill: input.routeCheckBill === true,
         idempotencyKey,
         ...(continuationId
           ? { lineContinuation: { workflowId: continuationId, userId: ctx.userId, formRequested: input.formRequested === true } }
@@ -503,6 +520,7 @@ export class PrepareSubstituteReceiptUseCase {
           expenseId, version: evidence.version, payerUserId, evidenceCount: allIds.length, preparedFromChannel,
           // Spec §14 names `source: LINE` on the LINE-sourced row; on the web there is no source to state.
           ...(preparedFromChannel === 'LINE' ? { source: 'LINE' } : {}),
+          ...(input.routeCheckBill === true ? { route: 'PAID_CHECK_BILL_WITHOUT_FINAL_RECEIPT' } : {}),
         },
       });
       try {

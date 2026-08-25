@@ -1,7 +1,7 @@
 import { ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
-import type { ExpensePaymentMethod, LineIntakeSubstituteContext, LineSubstituteReceiptPrefill, RequestContext, SubstituteReceiptReasonCode } from '@watchdog-bms/contracts';
-import { extractValueCandidates, isAmbiguousDateCandidate } from '@watchdog-bms/contracts';
+import type { BusinessDocumentClassification, ExpensePaymentMethod, LineIntakeSubstituteContext, LineSubstituteReceiptPrefill, ReceiptOcrFieldResult, RequestContext, SubstituteReceiptReasonCode } from '@watchdog-bms/contracts';
+import { extractValueCandidates, isAmbiguousDateCandidate, isCheckBillClassification } from '@watchdog-bms/contracts';
 import type { ExpenseRecordWithRelations } from '../../domain/models/expense.model';
 import { AuditService } from '../../../audit/application/audit.service';
 import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../../data-model-core/domain/ports/attachment-storage.port';
@@ -55,7 +55,9 @@ export type LineSubstituteReceiptContinuation = {
   pendingQuestion: string | null;
   /** R13: preflight is clean and the assistant has asked whether to issue. Additive — `parseState`
    *  accepts every state written before this existed, and its absence means "no decision pending". */
-  pendingDecision?: 'ISSUE_CONFIRM';
+  pendingDecision?: 'ISSUE_CONFIRM' | 'CHECK_BILL_PAYMENT' | 'CHECK_BILL_FINAL_RECEIPT';
+  /** The user entered this continuation from a paid check bill, not from the generic candidate list. */
+  routeCheckBill?: true;
   /** R10: this chat asked for a printable form, so a photo arriving later may be the signed sheet.
    *  Written by the prepare that consumes this state and never cleared — `awaitingScan` below reads
    *  the evidence itself for the part that can still change. Additive, like `pendingDecision`. */
@@ -214,6 +216,33 @@ export function isSubstituteCancelControl(text: string): boolean {
 
 function normalizedText(value: string): string {
   return value.normalize('NFC').replace(/\s+/g, ' ').trim();
+}
+
+export const CHECK_BILL_PAYMENT_QUESTION = 'จ่ายเงินแล้วหรือยังคะ? แตะคำตอบด้านล่าง หรือพิมพ์ 1, 2, 3';
+export const CHECK_BILL_PAYMENT_CHOICES = [
+  'จ่ายแล้ว แต่ไม่ได้ใบเสร็จ',
+  'ยังไม่ได้จ่าย',
+  'มีใบเสร็จ จะส่งรูปใหม่',
+];
+
+export function checkBillPaymentChoice(text: string): 'PAID_NO_RECEIPT' | 'UNPAID' | 'FINAL_RECEIPT' | undefined {
+  const value = normalizedText(text).toLocaleLowerCase('th-TH');
+  if (/^(?:ข้อ\s*)?1$/u.test(value) || /(จ่ายแล้ว|ชำระแล้ว).*(ไม่มี|ไม่ได้รับ).*(ใบเสร็จ)/u.test(value)) return 'PAID_NO_RECEIPT';
+  if (/^(?:ข้อ\s*)?2$/u.test(value) || /(ยังไม่ได้จ่าย|ยังไม่จ่าย|ยังไม่ได้ชำระ|ค้างชำระ)/u.test(value)) return 'UNPAID';
+  if (/^(?:ข้อ\s*)?3$/u.test(value) || /(มี|ได้).*(ใบเสร็จฉบับสุดท้าย|ใบเสร็จจริง|ใบเสร็จแล้ว)/u.test(value)) return 'FINAL_RECEIPT';
+  return undefined;
+}
+
+function checkBillPaymentReply(expenseId: string, webBaseUrl: string | undefined, companyId: string): string {
+  return formatStandalone({
+    headline: [
+      '🧾 เอกสารนี้ยังไม่ใช่ใบเสร็จค่ะ',
+      'เห็นยอดที่ต้องจ่าย แต่ยังไม่เห็นหลักฐานว่าร้านรับเงินแล้ว ระบบจึงเก็บไว้เป็นร่างและยังไม่ยืนยันค่าใช้จ่าย',
+    ].join('\n'),
+    choices: CHECK_BILL_PAYMENT_CHOICES,
+    question: CHECK_BILL_PAYMENT_QUESTION,
+    webPath: absoluteLink(webBaseUrl, `/companies/${companyId}/expenses/${expenseId}`),
+  });
 }
 
 function bounded(value: string | undefined, max = MAX_VALUE_LENGTH): string | undefined {
@@ -455,12 +484,13 @@ function preflight(
   policy: { configured: boolean; approvalMode: 'OWNER_SELF' | 'DESIGNATED_APPROVERS'; approverUserIds: string[]; cashEvidencePolicy: string },
   eligibleApproverIds: Set<string>,
   payerActive: boolean,
+  routeCheckBill = false,
 ): LineSubstituteReceiptBlocker[] {
   const result: LineSubstituteReceiptBlocker[] = [];
   if (!ctx.permissions.includes('expense.review')) result.push(blocker('expense_review_forbidden', 'ไม่มีสิทธิ์ตรวจทานเพื่อจัดทำใบรับรองแทนใบเสร็จรับเงิน'));
   // B1: the category is the one eligibility issue a LINE sender can actually answer, so it is the one
   // that is offered as a question instead of a dead end — and it disappears the moment they answer it.
-  result.push(...collectSubstituteReceiptEligibilityIssues(expense, values.reasonCode)
+  result.push(...collectSubstituteReceiptEligibilityIssues(expense, values.reasonCode, { routeCheckBill })
     .filter((issue) => !(issue.code === CATEGORY_BLOCKER && values.expenseCategoryId))
     .map((issue) => blocker(issue.code, issue.message, issue.code === CATEGORY_BLOCKER)));
   if (expense.substituteReceiptEvidence && expense.substituteReceiptEvidence.status !== 'SUPERSEDED') {
@@ -715,6 +745,9 @@ export type LineSubstituteMediaContext = {
   /** A3: this chat's open work stopped at “send me your signature”, so an untitled photo is very
    *  plausibly it and the numbered question has to say so. */
   signatureRequested: boolean;
+  /** The sender chose “มีใบเสร็จฉบับสุดท้าย”; the next eligible receipt replaces the primary file
+   *  on this same expense instead of opening another expense. */
+  finalReceiptExpected?: boolean;
 };
 
 export type LineSubstituteMediaChoice =
@@ -724,6 +757,7 @@ export type LineSubstituteMediaChoice =
  *  resolved against this record, never against what the current state would ask now: the two lists
  *  differ, and reading “2” off the wrong one inverts what the sender said. */
 export type LineSubstituteMediaQuestion =
+  | { kind: 'CHECK_BILL_ACTION'; chatKeyHash: string; ocrFields?: ReceiptOcrFieldResult; classification?: BusinessDocumentClassification }
   | { kind: 'SUBSTITUTE_SCAN_CONFIRM'; chatKeyHash: string; evidenceId: string }
   | { kind: 'SUBSTITUTE_SCAN_PICK'; chatKeyHash: string; evidenceIds: string[] }
   | { kind: 'SUBSTITUTE_MEDIA_CLASS'; chatKeyHash: string; choices: LineSubstituteMediaChoice[] };
@@ -740,6 +774,14 @@ export function parseSubstituteMediaQuestion(value: unknown, chatKeyHash: string
   if (!value || typeof value !== 'object') return undefined;
   const record = value as Partial<LineSubstituteMediaQuestion> & { kind?: string; chatKeyHash?: string };
   if (record.chatKeyHash !== chatKeyHash) return undefined;
+  if (record.kind === 'CHECK_BILL_ACTION') {
+    const checkBill = record as { ocrFields?: ReceiptOcrFieldResult; classification?: BusinessDocumentClassification };
+    return {
+      kind: 'CHECK_BILL_ACTION', chatKeyHash,
+      ...(checkBill.ocrFields ? { ocrFields: checkBill.ocrFields } : {}),
+      ...(checkBill.classification ? { classification: checkBill.classification } : {}),
+    };
+  }
   if (record.kind === 'SUBSTITUTE_SCAN_CONFIRM' && typeof (record as { evidenceId?: unknown }).evidenceId === 'string') {
     return { kind: 'SUBSTITUTE_SCAN_CONFIRM', chatKeyHash, evidenceId: (record as { evidenceId: string }).evidenceId };
   }
@@ -1113,6 +1155,49 @@ export class LineSubstituteReceiptContinuationUseCase {
     @Inject(ATTACHMENT_STORAGE) private readonly storage: AttachmentStoragePort,
   ) {}
 
+  /** Starts the plain-language three-way decision immediately after LINE captures a check bill. */
+  async startFromCheckBill(ctx: RequestContext, input: {
+    expenseId: string;
+    chatKeyHash: string;
+    webBaseUrl?: string;
+  }): Promise<LineSubstituteReceiptContinuationResult> {
+    const expense = await this.repo.findByIdWithRelations(ctx.companyId, input.expenseId, undefined, ctx.scopes ?? {});
+    if (!expense) throw new NotFoundException('Check-bill expense not found.');
+    if (!ctx.permissions.includes('expense.review')) {
+      return {
+        handled: true, status: 'FORBIDDEN', expenseId: expense.id, acceptedFields: [], blockers: [],
+        replyText: formatStandalone({
+          headline: '🧾 บันทึกเช็กบิลไว้เป็นร่างแล้ว แต่บัญชีนี้ยังไม่มีสิทธิ์จัดทำใบรับรองแทนใบเสร็จค่ะ',
+          question: 'ส่งใบเสร็จฉบับสุดท้ายเข้ามา หรือให้ฝ่ายบัญชีเปิดรายการนี้เพื่อตรวจต่อได้เลยค่ะ',
+          webPath: absoluteLink(input.webBaseUrl, `/companies/${ctx.companyId}/expenses/${expense.id}`),
+        }),
+      };
+    }
+    if (!isCheckBillClassification(expense.aiVerificationSummaryJson)) {
+      throw new ConflictException('The expense is no longer classified as a check bill.');
+    }
+    const now = new Date().toISOString();
+    const state: LineSubstituteReceiptContinuation = {
+      workflowId: randomUUID(), kind: 'SUBSTITUTE_RECEIPT', companyId: ctx.companyId, userId: ctx.userId,
+      expenseId: expense.id, chatKeyHash: input.chatKeyHash, status: 'OPEN', routeCheckBill: true,
+      acceptedValues: {}, provenance: {}, resolvedFields: [], missingFields: [],
+      attachmentRefs: expense.attachments.filter((item) => item.status === 'ACTIVE').map((item) => item.id).slice(0, 20),
+      pendingQuestion: CHECK_BILL_PAYMENT_QUESTION, pendingDecision: 'CHECK_BILL_PAYMENT',
+      targetRevision: expense.updatedAt.toISOString(), lastActivityAt: now,
+    };
+    const saved = await this.repo.saveLineSubstituteContinuation({
+      companyId: ctx.companyId, expenseId: expense.id, actorUserId: ctx.userId,
+      expectedUpdatedAt: expense.updatedAt, scopes: ctx.scopes ?? {}, continuation: state as unknown as Record<string, unknown>,
+    });
+    const next = saved.continuation as unknown as LineSubstituteReceiptContinuation;
+    return {
+      handled: true, status: 'BLOCKED', expenseId: expense.id, workflowId: next.workflowId,
+      acceptedFields: [], blockers: [], pendingQuestion: CHECK_BILL_PAYMENT_QUESTION,
+      webPath: workflowLink(input.webBaseUrl, ctx.companyId, expense.id, next.workflowId),
+      replyText: checkBillPaymentReply(expense.id, input.webBaseUrl, ctx.companyId),
+    };
+  }
+
   /** R14/§11: the open substitute work an arriving photo could belong to. `undefined` means this
    *  chat has none, and the media turn must behave exactly as it did before this existed. */
   async loadOpenMediaContext(ctx: RequestContext, chatKeyHash: string): Promise<LineSubstituteMediaContext | undefined> {
@@ -1152,7 +1237,36 @@ export class LineSubstituteReceiptContinuationUseCase {
     const asked = maySubmitSignature(ctx.permissions)
       && states.some((state) => ACTIVE_STATUSES.has(state.status) && state.signatureRequested === true);
     const signatureRequested = asked && !await this.repo.findReusableSignatureAsset(ctx.companyId, ctx.userId);
-    return { expenseId, awaitingScans, signatureRequested };
+    const finalReceiptExpected = states.some((state) => ACTIVE_STATUSES.has(state.status)
+      && state.pendingDecision === 'CHECK_BILL_FINAL_RECEIPT');
+    return { expenseId, awaitingScans, signatureRequested, finalReceiptExpected };
+  }
+
+  /** Closes the check-bill question after the webhook has attached and re-read a valid final receipt. */
+  async completeCheckBillFinalReceipt(ctx: RequestContext, input: {
+    expenseId: string;
+    webBaseUrl?: string;
+  }): Promise<{ replyText: string }> {
+    const expense = await this.repo.findByIdWithRelations(ctx.companyId, input.expenseId, undefined, ctx.scopes ?? {});
+    const state = expense && stateFromMetadata(expense.sourceChannelMetadataJson);
+    if (!expense || !state || state.pendingDecision !== 'CHECK_BILL_FINAL_RECEIPT'
+      || state.userId !== ctx.userId || state.companyId !== ctx.companyId) {
+      throw new ConflictException('The check-bill final-receipt request is no longer open.');
+    }
+    await this.repo.saveLineSubstituteContinuation({
+      companyId: ctx.companyId, expenseId: expense.id, actorUserId: ctx.userId,
+      expectedUpdatedAt: expense.updatedAt, scopes: ctx.scopes ?? {},
+      continuation: {
+        ...state, status: 'CONSUMED', pendingDecision: undefined, pendingQuestion: null,
+      } as unknown as Record<string, unknown>,
+    });
+    return {
+      replyText: formatStandalone({
+        headline: '✅ รับใบเสร็จฉบับสุดท้ายไว้ในรายการเดิมแล้วค่ะ ไม่ได้สร้างรายการซ้ำ',
+        question: 'เปิดตรวจข้อมูลที่ระบบอ่านได้ แล้วกดยืนยันเมื่อข้อมูลถูกต้องค่ะ',
+        webPath: absoluteLink(input.webBaseUrl, `/companies/${ctx.companyId}/expenses/${expense.id}`),
+      }),
+    };
   }
 
   /** F8: is a substitute workflow in this chat parked at the issue decision? A signature photo filed
@@ -1278,6 +1392,7 @@ export class LineSubstituteReceiptContinuationUseCase {
       expenseId: state.expenseId,
       targetRevision: state.targetRevision,
       status: state.status as 'OPEN' | 'PAUSED',
+      ...(state.routeCheckBill ? { routeCheckBill: true as const } : {}),
       acceptedValues: state.acceptedValues,
     };
   }
@@ -1462,7 +1577,11 @@ export class LineSubstituteReceiptContinuationUseCase {
       // Authoritative ELIGIBILITY ahead of the control save too (permission already gated above): a
       // hard-ineligible expense cannot have its substitute workflow mutated from LINE. This reuses the
       // same authoritative eligibility source the accept/save path uses, so no control bypasses it.
-      const controlIssues = collectSubstituteReceiptEligibilityIssues(expense, selected.state.acceptedValues.reasonCode);
+      const controlIssues = collectSubstituteReceiptEligibilityIssues(
+        expense,
+        selected.state.acceptedValues.reasonCode,
+        { routeCheckBill: selected.state.routeCheckBill === true },
+      );
       if (controlIssues.some((issue) => INELIGIBLE_CODES.has(issue.code))) {
         return {
           handled: true, status: 'INELIGIBLE', expenseId: expense.id, workflowId: selected.state.workflowId,
@@ -1511,6 +1630,10 @@ export class LineSubstituteReceiptContinuationUseCase {
     }
 
     const categories = offeredCategories(await this.repo.listCategories(ctx.companyId));
+    if (selected.state.pendingDecision === 'CHECK_BILL_PAYMENT'
+      || selected.state.pendingDecision === 'CHECK_BILL_FINAL_RECEIPT') {
+      return this.answerCheckBillDecision(ctx, input, expense, selected.state);
+    }
     // R13: the assistant asked whether to issue, so this turn is that answer. It runs before value
     // extraction, otherwise a bare “1” would be read as a stray value instead of a choice.
     if (selected.state.pendingDecision === 'ISSUE_CONFIRM') {
@@ -1541,7 +1664,15 @@ export class LineSubstituteReceiptContinuationUseCase {
       ? policy.approverUserIds.some((id) => eligibleApprovers.some((item) => item.userId === id) && id !== acceptedValues.payerUserId)
       : eligibleApprovers.length > 0;
     const policyFacts = { configured: policy.configured, ready: policyReady, approvalMode: policy.approvalMode };
-    const blockers = preflight(ctx, expense, acceptedValues, policy, new Set(eligibleApprovers.map((item) => item.userId)), Boolean(payer));
+    const blockers = preflight(
+      ctx,
+      expense,
+      acceptedValues,
+      policy,
+      new Set(eligibleApprovers.map((item) => item.userId)),
+      Boolean(payer),
+      selected.state.routeCheckBill === true,
+    );
     const missingFields = blockers
       .filter((item) => item.collectableInLine)
       .map((item) => FIELD_BY_BLOCKER[item.code])
@@ -1661,6 +1792,104 @@ export class LineSubstituteReceiptContinuationUseCase {
         webPath,
       }),
     };
+  }
+
+  private async answerCheckBillDecision(
+    ctx: RequestContext,
+    input: {
+      messageText: string;
+      chatKeyHash: string;
+      recentCandidates: Array<{ id: string; label: string }>;
+      webBaseUrl?: string;
+      requireStartConfirmation?: boolean;
+      confirmedStart?: boolean;
+    },
+    expense: ExpenseRecordWithRelations,
+    state: LineSubstituteReceiptContinuation,
+  ): Promise<LineSubstituteReceiptContinuationResult> {
+    const choice = checkBillPaymentChoice(input.messageText);
+    const webPath = workflowLink(input.webBaseUrl, ctx.companyId, expense.id, state.workflowId);
+    if (!choice) {
+      const waitingForPhoto = state.pendingDecision === 'CHECK_BILL_FINAL_RECEIPT';
+      return {
+        handled: true, status: 'BLOCKED', expenseId: expense.id, workflowId: state.workflowId,
+        acceptedFields: [], blockers: [],
+        pendingQuestion: waitingForPhoto ? 'ส่งรูปใบเสร็จฉบับสุดท้ายเข้ามาในแชทนี้ได้เลยค่ะ' : CHECK_BILL_PAYMENT_QUESTION,
+        webPath,
+        replyText: waitingForPhoto
+          ? formatStandalone({
+              headline: '📷 รอรูปใบเสร็จฉบับสุดท้ายของรายการนี้อยู่ค่ะ',
+              question: 'ส่งรูปเข้ามาได้เลย หรือถ้าไม่มีใบเสร็จแล้ว ตอบ 1 เพื่อทำใบรับรองแทนใบเสร็จค่ะ',
+              webPath,
+            })
+          : checkBillPaymentReply(expense.id, input.webBaseUrl, ctx.companyId),
+      };
+    }
+    if (choice === 'UNPAID') {
+      await this.repo.saveLineSubstituteContinuation({
+        companyId: ctx.companyId, expenseId: expense.id, actorUserId: ctx.userId,
+        expectedUpdatedAt: expense.updatedAt, scopes: ctx.scopes ?? {},
+        continuation: {
+          ...state, status: 'CONSUMED', pendingDecision: undefined, pendingQuestion: null,
+        } as unknown as Record<string, unknown>,
+      });
+      return {
+        handled: true, status: 'PAUSED', expenseId: expense.id, workflowId: state.workflowId,
+        acceptedFields: [], blockers: [],
+        replyText: formatStandalone({
+          headline: '⏸️ เก็บรายการนี้เป็นฉบับร่างไว้แล้วค่ะ ยังไม่บันทึกว่าเป็นค่าใช้จ่ายที่จ่ายแล้ว',
+          question: 'หลังจ่ายเงิน ส่งใบเสร็จฉบับสุดท้ายเข้ามา หรือเปิดรายการนี้แล้วเลือก “จ่ายแล้ว” ได้ค่ะ',
+          webPath: absoluteLink(input.webBaseUrl, `/companies/${ctx.companyId}/expenses/${expense.id}`),
+        }),
+      };
+    }
+    if (choice === 'FINAL_RECEIPT') {
+      const saved = await this.repo.saveLineSubstituteContinuation({
+        companyId: ctx.companyId, expenseId: expense.id, actorUserId: ctx.userId,
+        expectedUpdatedAt: expense.updatedAt, scopes: ctx.scopes ?? {},
+        continuation: {
+          ...state, status: 'OPEN', pendingDecision: 'CHECK_BILL_FINAL_RECEIPT',
+          pendingQuestion: 'ส่งรูปใบเสร็จฉบับสุดท้ายเข้ามาในแชทนี้ได้เลยค่ะ',
+        } as unknown as Record<string, unknown>,
+      });
+      const next = saved.continuation as unknown as LineSubstituteReceiptContinuation;
+      return {
+        handled: true, status: 'BLOCKED', expenseId: expense.id, workflowId: next.workflowId,
+        acceptedFields: [], blockers: [], pendingQuestion: next.pendingQuestion ?? undefined, webPath,
+        replyText: formatStandalone({
+          headline: '📷 ได้เลยค่ะ ระบบจะใช้ใบเสร็จฉบับสุดท้ายแทนหลักฐานหลักในรายการเดิม',
+          question: 'ส่งรูปใบเสร็จฉบับสุดท้ายเข้ามาในแชทนี้ได้เลยค่ะ',
+          webPath,
+        }),
+      };
+    }
+    const acceptedAt = new Date().toISOString();
+    const acceptedValues: LineSubstituteReceiptValues = {
+      ...state.acceptedValues,
+      reasonCode: 'RECEIPT_UNAVAILABLE',
+      missingReceiptReason: 'ชำระแล้วแต่ร้านไม่ออกใบเสร็จฉบับสุดท้าย',
+    };
+    await this.repo.saveLineSubstituteContinuation({
+      companyId: ctx.companyId, expenseId: expense.id, actorUserId: ctx.userId,
+      expectedUpdatedAt: expense.updatedAt, scopes: ctx.scopes ?? {},
+      continuation: {
+        ...state,
+        status: 'OPEN', acceptedValues,
+        provenance: {
+          ...state.provenance,
+          reasonCode: { source: 'LINE_USER_TEXT', acceptedAt, messageHash: messageHash(input.messageText) },
+          missingReceiptReason: { source: 'LINE_USER_TEXT', acceptedAt, messageHash: messageHash(input.messageText) },
+        },
+        resolvedFields: [...new Set([...state.resolvedFields, 'reasonCode', 'missingReceiptReason'])].sort(),
+        pendingDecision: undefined, pendingQuestion: null,
+      } as unknown as Record<string, unknown>,
+    });
+    return this.execute(ctx, {
+      ...input,
+      messageText: 'ทำใบรับรองต่อ',
+      requireStartConfirmation: false,
+      confirmedStart: true,
+    });
   }
 
   /** R13 answer handling. `undefined` means "not an answer to this question, but it does carry
@@ -1852,6 +2081,7 @@ export class LineSubstituteReceiptContinuationUseCase {
         // R10: only the paper route leaves this chat waiting for a photo of a signed sheet.
         formRequested: choice === 'FORM',
         expectedExpenseUpdatedAt: state.targetRevision,
+        ...(state.routeCheckBill ? { routeCheckBill: true as const } : {}),
       });
       const webPath = absoluteLink(input.webBaseUrl, `/companies/${ctx.companyId}/expenses/substitute-receipts/${evidence.id}`);
       const amount = bahtAmount(expense);

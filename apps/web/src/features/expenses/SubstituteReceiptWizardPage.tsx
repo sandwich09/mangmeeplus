@@ -488,6 +488,8 @@ export function SubstituteReceiptWizardPage({
   permissions,
   canSelfApprove,
   initialExpenseId,
+  initialEntryMode,
+  routeCheckBill = false,
   workflowId,
   evidenceId,
 }: {
@@ -496,6 +498,8 @@ export function SubstituteReceiptWizardPage({
   permissions: string[];
   canSelfApprove: boolean;
   initialExpenseId?: string;
+  initialEntryMode?: WizardEntryMode;
+  routeCheckBill?: boolean;
   workflowId?: string;
   evidenceId?: string;
 }) {
@@ -517,6 +521,7 @@ export function SubstituteReceiptWizardPage({
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [linePrefill, setLinePrefill] = useState<LineSubstituteReceiptPrefill | null>(null);
+  const checkBillRoute = routeCheckBill || linePrefill?.routeCheckBill === true;
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const [candidates, setCandidates] = useState<ExpenseDetail[]>([]);
@@ -528,7 +533,7 @@ export function SubstituteReceiptWizardPage({
   const [categoriesLoading, setCategoriesLoading] = useState(shouldLoadCategories);
   const [categoriesError, setCategoriesError] = useState<string | null>(null);
   const [categoriesReloadKey, setCategoriesReloadKey] = useState(0);
-  const [entryMode, setEntryMode] = useState<WizardEntryMode | null>(initialExpenseId ? 'existing' : null);
+  const [entryMode, setEntryMode] = useState<WizardEntryMode | null>(initialExpenseId ? 'existing' : initialEntryMode ?? null);
   const [candidateQuery, setCandidateQuery] = useState('');
   const [candidateSort, setCandidateSort] = useState<CandidateSortKey>('date_desc');
   const [candidatePage, setCandidatePage] = useState(1);
@@ -1019,8 +1024,8 @@ export function SubstituteReceiptWizardPage({
     const renderabilityIssue = substituteReceiptRenderabilityIssue(detail);
     if (renderabilityIssue) throw new Error(renderabilityIssueMessage(renderabilityIssue, locale));
     assertExpensePrerequisites(detail);
-    const nextDocType = detail.sourceDocumentType === 'NEEDS_REVIEW' ? 'EXPENSE_NOTE_TEXT' as const : detail.sourceDocumentType;
-    const nextTaxStatus = detail.taxEvidenceStatus === 'NEEDS_REVIEW' ? 'SUPPORTING_ONLY' as const : detail.taxEvidenceStatus;
+    const nextDocType = !checkBillRoute && detail.sourceDocumentType === 'NEEDS_REVIEW' ? 'EXPENSE_NOTE_TEXT' as const : detail.sourceDocumentType;
+    const nextTaxStatus = !checkBillRoute && detail.taxEvidenceStatus === 'NEEDS_REVIEW' ? 'SUPPORTING_ONLY' as const : detail.taxEvidenceStatus;
     if (nextDocType !== detail.sourceDocumentType || nextTaxStatus !== detail.taxEvidenceStatus) {
       const disallowsTaxCode = !allowsDomesticInputTaxCode(nextDocType, nextTaxStatus);
       const currentReview = reviewValues(detail);
@@ -1132,6 +1137,7 @@ export function SubstituteReceiptWizardPage({
       paymentMethod,
       idempotencyKey: `sub-${detail.id}-${detail.updatedAt}-v${detail.substituteReceiptEvidence?.version ?? 0}`.slice(0, 128),
       expectedExpenseUpdatedAt: detail.updatedAt,
+      ...(checkBillRoute ? { routeCheckBill: true as const } : {}),
       ...(workflowId ? { continuationId: workflowId } : {}),
     });
     setReceiptEvidence(result);
@@ -1457,16 +1463,16 @@ export function SubstituteReceiptWizardPage({
       <MangmeeCard className="border-warning-200 bg-warning-50 p-4">
         <div className="flex items-start gap-3">
           <span className="mt-0.5 shrink-0 text-warning-700">{ICON.alert}</span>
-          <div className="min-w-0 space-y-2">
+          <div className="min-w-0 flex-1 space-y-2">
             <p className="text-sm font-extrabold text-warning-700">{t('expenses.substitute_wizard.prerequisite_title', locale)}</p>
             <ul className="list-disc space-y-1 pl-4 text-sm leading-6 text-warning-700">
               {blocking.map((issue) => <li key={issue}>{t(PREREQUISITE_KEYS[issue], locale)}</li>)}
             </ul>
-            <div className="flex flex-wrap items-center gap-2 pt-1">
-              <Link className={btnClass} href={`/companies/${companyId}/expenses/${encodeURIComponent(detail.id)}`}>
+            <div className="flex flex-col items-stretch gap-2 pt-1 sm:flex-row sm:items-center">
+              <Link className={cx(btnClass, 'w-full text-center sm:w-auto')} href={`/companies/${companyId}/expenses/${encodeURIComponent(detail.id)}`}>
                 {t('expenses.substitute_wizard.prerequisite_open_expense', locale)}
               </Link>
-              <p className="min-w-0 flex-1 text-xs font-medium leading-5 text-warning-700">
+              <p className="text-sm font-medium leading-6 text-warning-700 sm:min-w-0 sm:flex-1">
                 {t('expenses.substitute_wizard.prerequisite_return_hint', locale)}
               </p>
             </div>
@@ -1832,8 +1838,8 @@ export function SubstituteReceiptWizardPage({
                 }}>{t('expenses.substitute_wizard.change_expense', locale)}</button>
               )}
             </div>
-            <DetailSummary detail={detail} title={t('expenses.substitute_wizard.selected_expense', locale)} categories={categories} />
             {renderPrerequisiteCard()}
+            <DetailSummary detail={detail} title={t('expenses.substitute_wizard.selected_expense', locale)} categories={categories} />
             {selectedExpenseRenderabilityIssue && (
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warning-200 bg-warning-50 px-3 py-2">
                 <p className="text-xs font-semibold leading-5 text-warning-700">
@@ -1847,8 +1853,12 @@ export function SubstituteReceiptWizardPage({
             <MangmeeCard className="border-warning-100 bg-warning-50 p-4">
               <div className="flex items-start gap-3">
                 <span className="mt-0.5 shrink-0 text-warning-700">{ICON.alert}</span>
-                <div>
-                  <p className="text-sm font-semibold leading-relaxed text-warning-700">{t('expenses.substitute_wizard.consent_text', locale)}</p>
+                <div className="min-w-0 flex-1">
+                  <p className="text-base font-bold leading-7 text-warning-800">{t('expenses.substitute_wizard.consent_text', locale)}</p>
+                  <details className="mt-2 text-sm text-warning-700">
+                    <summary className="min-h-11 cursor-pointer py-2 font-semibold underline underline-offset-2">{t('expenses.substitute_wizard.consent_more', locale)}</summary>
+                    <p className="pb-2 leading-6">{t('expenses.substitute_wizard.consent_details', locale)}</p>
+                  </details>
                   <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-xl border border-warning-200 bg-white p-3 text-sm font-semibold text-gray-800">
                     <input className="mt-0.5 h-4 w-4 accent-[var(--color-brand-600)]" type="checkbox" required aria-required="true" checked={consent} onChange={(event) => setConsent(event.target.checked)} />
                     <span>{t('expenses.substitute_wizard.consent_confirm', locale)}<RequiredMark /></span>
