@@ -57,7 +57,7 @@
 | **B2** | wire + เปิด `LINE_AI_LOADING_ANIMATION_ENABLED` (master) + `LINE_AI_LOADING_ON_ACCEPT_ENABLED` บน UAT | loading แสดงตั้งแต่รับข้อความ ไม่รอ debounce; ordering test ผ่านแล้วในโค้ด | **เห็น "รับเรื่องแล้ว" ทันที ≤1s** |
 | **B3** | เปิด debounce cohort experiment (1,000 primary / 1,500 conservative / 2,500 control ตามที่ตัดสินแล้ว) | cohort ผ่าน fragment/re-ask/cost gates ตาม spec | **คำตอบเริ่มเร็วขึ้น ~1.5s ต่อ turn เมื่อเลือก 1,000 ms** |
 | **B4** | เปิด `LINE_AI_FUSED_PLAN_SHADOW_ENABLED` — วัดว่า provider จริงเสนอ prepared plan ถูกแค่ไหน (ไม่มีผลต่อคำตอบ) | shadow precision/recall report | ยังไม่เปลี่ยน |
-| **B5** | re-establish security suite 23 เคสให้รันจริงใน CI ก่อน แล้วเปิด `LINE_AI_PREPARED_SIMPLE_READ_ENABLED` + family แรกผ่าน blind pairwise eval (Phase 5 gate) บน UAT | 23/23 execute ใน gateway suite; eval ≥ เกณฑ์; p50/p95 lane จริง | **คำถามยอดขายแบบง่ายตอบเร็วขึ้นชัดเจน (1 model call หรือ 0)** |
+| **B5** | re-establish security suite 23 เคสให้รันจริงใน CI ก่อน แล้วเปิด `LINE_AI_PREPARED_SIMPLE_READ_ENABLED` + family แรกผ่าน blind pairwise eval (latency memory Phase 5 gate) บน UAT | 23/23 execute ใน gateway suite; eval ≥ เกณฑ์; p50/p95 lane จริง | **คำถามยอดขายแบบง่ายตอบเร็วขึ้นชัดเจน (1 model call หรือ 0)** |
 | **B6** | ขยาย compiled family ตามคำถาม top-N ที่ Owner ยืนยัน (§6.1): เงินเข้า–ออกวันนี้, สรุปรายการเดือนนี้, สรุปค่าใช้จ่าย (แต่ละ family: ตรวจ/ขยาย read tool → formatter → blind eval → allowlist) | ต่อ family: eval + hosted latency + ความถูกต้องจาก golden set | **คำถามหลักของหน้าแรกตอบเร็วและตัวเลขตรง** |
 | **B7** | Advisor Slice A ตาม advisor plan: social/persona/short-term context เท่านั้น; Slice B/C knowledge/company ยังอยู่ P23 | naturalness/persona/safety/mixed-intent/cost gates ตามแผน advisor เดิม | **คุยเรื่องทั่วไปได้เป็นธรรมชาติ** โดยไม่ปนข้อมูลบริษัท |
 
@@ -77,13 +77,13 @@
 
 | คำถาม | Read tool ที่มีอยู่วันนี้ | หมายเหตุการออกแบบ family (B6) |
 |---|---|---|
-| เงินเข้า–ออกวันนี้ | `accounting.get_summary` | ตรวจว่า summary แยกเงินเข้า/เงินออกช่วง "วันนี้" ครบหรือไม่; ถ้าไม่ครบ ขยาย read tool แบบ permission-checked (ห้ามทางลัด DB) |
-| สรุปรายการเดือนนี้ | `accounting.get_summary` | ตีความขอบเขต "รายการ" (เงินเข้า–ออก/เอกสารของเดือน) ร่วมกับ Owner ตอนออกแบบ family; answer shape น่าจะเป็น list |
-| สรุปค่าใช้จ่าย | `expense.list_recent` (รายการ), ยอดสรุป/หมวดอาจใช้ฝั่งค่าใช้จ่ายของ `accounting.get_summary` | ถ้าต้องการยอดรวม+หมวด อาจต้องเพิ่ม summary shape; งานนี้เสริมกับ 6A (แยกหมวดรายจ่าย) โดยตรง |
+| เงินเข้า–ออกวันนี้ | **ไม่มี tool เดียวที่ตอบครบ**; target = `accounting.get_cash_movement_summary` | เพิ่ม read tool แบบ permission-checked หลัง Owner+นักบัญชีลงนามนิยาม; ต้องระบุว่าเป็นรายการที่บันทึกในระบบ ไม่ใช่ยอดธนาคาร |
+| สรุปรายการเดือนนี้ | `accounting.get_summary` | ปิด G1 ที่ `byType` รวมเพียง 200 เอกสารแรกก่อน; ตีความขอบเขต "รายการ" กับ Owner ตอนทำ golden fixtures |
+| สรุปค่าใช้จ่าย | `expense.list_recent` | tool เดิมคืน totals + bounded records ตามเดือน/ช่วงวันที่; เลือก answer shape จาก response จริงและเสริมกับ 6A โดยตรง |
 
-family key ที่แน่นอน (`${tool}::${answerShape}`) ชี้ขาดตอนออกแบบ B6 ต่อ family พร้อม golden set และ blind pairwise eval ตาม Phase 5 gate; `sales.get_sales_summary::single_metric` ที่ compile แล้วยังเป็น canary ตัวแรก
+family key ที่แน่นอน (`${tool}::${answerShape}`) ชี้ขาดตอนออกแบบ B6 ต่อ family พร้อม golden set และ blind pairwise eval ตาม latency memory Phase 5 gate; `sales.get_sales_summary::single_metric` ที่ compile แล้วยังเป็น canary ตัวแรก
 
-Spec + plan ระดับ coding สร้างแล้ว (2026-08-25): [mangmee-brain-real-answers-spec](mangmee-brain-real-answers-spec.md) + [plan](../plans/mangmee-brain-real-answers-plan.md) — ข้อค้นพบเพิ่มจากโค้ดจริง: (1) `accounting.get_summary` รวมยอดจากเอกสาร 200 ใบแรกเท่านั้น ต้องแก้ก่อนเปิด family สรุปเดือน (G1) (2) เงินเข้า–ออกต้องเพิ่ม read tool ใหม่ `accounting.get_cash_movement_summary` เพราะ prepared lane ยิงได้หนึ่ง call และไม่มี tool เดิมตอบครบ (3) นิยามเงินเข้า/ออกต้องให้นักบัญชีลงนามก่อน implement
+Architecture/product spec + delivery plan v2 สร้างแล้ว (2026-08-25): [mangmee-brain-real-answers-spec](mangmee-brain-real-answers-spec.md) + [plan](../plans/mangmee-brain-real-answers-plan.md) — ครอบ contract เร็ว/ถูก/ธรรมชาติ, UX และ delivery map B0–B7 โดย reuse architecture เดิม; ข้อค้นพบเพิ่มจากโค้ดจริง: (1) `accounting.get_summary` รวมยอดจากเอกสาร 200 ใบแรกเท่านั้น ต้องแก้ก่อนเปิด family สรุปเดือน (G1) (2) เงินเข้า–ออกต้องเพิ่ม read tool ใหม่ `accounting.get_cash_movement_summary` เพราะ prepared lane ยิงได้หนึ่ง call และไม่มี tool เดิมตอบครบ (3) นิยามเงินเข้า/ออกต้องให้นักบัญชีลงนามก่อน implement
 
 Owner ต้องตัดสิน (คงเหลือ):
 

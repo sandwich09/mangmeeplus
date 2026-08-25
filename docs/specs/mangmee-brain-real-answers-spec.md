@@ -35,7 +35,7 @@ LINE webhook
        -> zero-model deterministic authority lane
        -> prepared simple-read lane: 1 tool call + compiled formatter (B5–B6)
        -> full agentic lane: permission-checked tools + grounded fallback
-       -> advisor lane: social / knowledge / company insight (B7)
+       -> advisor lane: social (B7); knowledge / company insight (P23)
   -> response validation: permission + source + asOf + risk/mutation guard
   -> one final LINE response + delivery replay/fallback
 ```
@@ -88,7 +88,7 @@ Non-goals (มี spec เดิมรองรับหรือถูกถอ
 |---|---|
 | Lane ทำงานแบบ: intake router เสนอ prepared plan (bounded) → orchestrator ตรวจ `intakeIntent === 'BUSINESS_READ_QUESTION'` จาก server-bound field → sanitizer exact-equality → ยิง specialist **หนึ่งครั้ง** → ตอบด้วย compiled formatter (0 model call เพิ่ม) | [latency memory](../agent-memory/line-ai-latency-and-autonomy-lanes.md) Phase 3–5; merge เข้า `main` แล้ว |
 | Formatter registry เป็น allowlist แบบ `${tool}::${answerShape}` — "Add one verified family at a time"; family เดียวที่ compile แล้ว: `sales.get_sales_summary::single_metric` | `apps/ai-gateway/src/modules/line-ai/agents/prepared-simple-read-formatter.ts:4,136` |
-| การเปิด family ต้องผ่าน blind pairwise eval (≥3 ratings/row, 30 paired/ภาษา-family, one-sided LB ≥0.50) — Phase 5 gate | latency memory Phase 5 |
+| การเปิด family ต้องผ่าน blind pairwise eval (≥3 ratings/row, 30 paired/ภาษา-family, one-sided LB ≥0.50) — latency memory Phase 5 gate | latency memory Phase 5 |
 | **ชุดทดสอบความปลอดภัย 23 เคสไม่มีตัวรันจริง** — corpus อยู่ `scripts/line-ai-latency-autonomy.corpus.ts` (root, ไม่ถูก copy เข้า app image); spec เดิมที่ import ข้าม boundary ทำ build พังและถูกลบ 2026-08-21 | latency memory "Phase 4 SECURITY EXECUTION — REMOVED"; grep `LINE_AI_PREPARED_PLAN_SECURITY_EVAL_CASES` พบเฉพาะใน `scripts/` |
 | Flag pattern สำหรับเปิดบน UAT/production: `LINE_AI_EXACT_GREETING_ENABLED` ใน deploy.sh (UAT default true, production hard-error) | `infra/prod-ecs-express/deploy.sh:28-104,354-361,1457-1458` |
 
@@ -116,7 +116,7 @@ Non-goals (มี spec เดิมรองรับหรือถูกถอ
 - **S2-R1 ย้าย corpus เข้า package ที่ ship:** ย้าย/ส่งออก `LINE_AI_PREPARED_PLAN_SECURITY_EVAL_CASES` (23 เคส) จาก `scripts/line-ai-latency-autonomy.corpus.ts` ไปไว้ใน `packages/contracts` (ที่เดียวกับ `line-ai-prepared-plan.ts` ที่มี bounds/parser อยู่แล้ว) โดย root scripts ยัง re-export ได้เพื่อไม่ทำ manifest เดิมพัง — **ห้าม app test import จาก root `scripts/` เด็ดขาด** (สาเหตุ build พังครั้งก่อน)
 - **S2-R2 Executing spec ใน gateway:** เขียน spec ใน `apps/ai-gateway` ที่รันใน `pnpm test` จริง ยืนยันตามที่ spec เดิมเคย claim: 19 เคส reject/fallback แตะ ERP **ศูนย์ครั้ง**, 4 เคส source-honesty ยิง 1 ครั้งและตอบ authoritative terminal, ทุกเคสพิสูจน์ `ResponseComposer.compose === 0`, `CoverageCritic.judge === 0`, `IntentRouter.route === 0` ด้วย method-call counters; รวมเคส trusted-provenance (forged `intakeIntent` → 0 call) และ sanitizer exact-equality
 - **S2-R2b ลงทะเบียน test file (จุดที่เคยพลาด):** `apps/ai-gateway/package.json` `scripts.test` เป็น **explicit file list** — spec ที่ไม่อยู่ใน list จะไม่ถูกรันเลย (สาเหตุที่ suite เดิม "มีไฟล์แต่ไม่เคยรัน"); ไฟล์ spec ใหม่ทุกตัวของ S2/S3 ต้องถูกเพิ่มเข้า list นี้ และให้เพิ่ม `prepared-simple-read-formatter.spec.ts` ที่ตอนนี้ orphan (มีไฟล์อยู่แต่ไม่อยู่ใน list) เข้าไปด้วย — การแก้ `package.json` ครั้งนี้เป็น**ข้อยกเว้นที่ระบุเหตุผลไว้ล่วงหน้า**ต่อกติกา AGENTS.md เพราะเป็นทางเดียวที่ test จะถูกรัน (แก้เฉพาะ `scripts.test` แถวที่เพิ่ม ไม่จัดเรียงใหม่)
-- **S2-R3 เปิด canary บน UAT:** wire `LINE_AI_PREPARED_SIMPLE_READ_ENABLED` + `LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES` เข้า deploy.sh ตาม pattern exact-greeting (UAT เปิดได้, production hard-block จนผ่าน gate); family แรก = `sales.get_sales_summary::single_metric` ต้องผ่าน blind pairwise eval (Phase 5 gate) ก่อนใส่ใน allowlist
+- **S2-R3 เปิด canary บน UAT:** wire `LINE_AI_PREPARED_SIMPLE_READ_ENABLED` + `LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES` เข้า deploy.sh ตาม pattern exact-greeting (UAT เปิดได้, production hard-block จนผ่าน gate); family แรก = `sales.get_sales_summary::single_metric` ต้องผ่าน blind pairwise eval (latency memory Phase 5 gate) ก่อนใส่ใน allowlist
 - **S2-R4 ลำดับบังคับ:** S2-R2 ผ่านใน CI **ก่อน** S2-R3 เสมอ; fused-plan shadow (B4) เปิดก่อนหรือพร้อม canary เพื่อเก็บ provider precision
 
 ## 5. Requirements — S3: สาม compiled families
@@ -192,7 +192,7 @@ Non-goals (มี spec เดิมรองรับหรือถูกถอ
 | Contracts | corpus ย้ายแล้ว build clean: `pnpm -C packages/contracts build` + spec เดิม (`line-ai-prepared-plan.spec.ts`) ไม่แตก | build + tests เขียว |
 | Gateway security suite (ใหม่) | 23/23 executing ใน `apps/ai-gateway` `pnpm test` ตาม S2-R2 (zero-ERP-call counters, composer/critic/router = 0, provenance, sanitizer) | 23/23 ใน CI; ไม่มี import จาก root scripts |
 | Image build | ai-gateway image build ผ่าน (จุดที่เคยพัง) | UAT build run เขียว |
-| Blind pairwise eval | family canary ตาม Phase 5 gate (≥3 ratings/row, 30 paired/ภาษา, LB ≥0.50) | ผลผ่านเกณฑ์ + บันทึกผู้ให้คะแนน |
+| Blind pairwise eval | family canary ตาม latency memory Phase 5 gate (≥3 ratings/row, 30 paired/ภาษา, LB ≥0.50) | ผลผ่านเกณฑ์ + บันทึกผู้ให้คะแนน |
 | UAT runtime | เปิด flag บน UAT: eligible question → 1 ERP call → formatter answer พร้อม source/asOf; ineligible → fallback full path; kill switch CLOSE แล้วกลับ path เดิม | log `prepared_simple_read.*` + p50/p95 เทียบ baseline B1 |
 
 ### 8.3 S3 — Families

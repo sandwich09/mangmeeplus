@@ -397,7 +397,7 @@ mindmap
 
 1. ยืนยันว่า UAT build ปัจจุบันมี telemetry จริง: `line.ai.api_trace`, `line.ai.stage`, `line.ai.turn_summary` ไหลใน hosted log (อ่านสถานะ cloud ตาม runbook `cloud-environment-operations`)
 2. flag เร่งความเร็วทุกตัวยังปิด — พฤติกรรมผู้ใช้ไม่เปลี่ยนในรอบนี้ และเริ่มเก็บ hosted baseline จาก traffic จริงทันทีที่ telemetry ยืนยันแล้ว
-3. Owner ยืนยันรายการคำถาม top-N แล้ว (2026-08-25): **เงินเข้า–ออกวันนี้ / สรุปรายการเดือนนี้ / สรุปค่าใช้จ่าย** — บันทึกลง manifest พร้อม mapping เบื้องต้น (`accounting.get_summary` สองข้อแรก; ค่าใช้จ่ายใช้ `expense.list_recent`/summary shape ตาม §6.1 ของ assessment)
+3. Owner ยืนยันรายการคำถาม top-N แล้ว (2026-08-25): **เงินเข้า–ออกวันนี้ / สรุปรายการเดือนนี้ / สรุปค่าใช้จ่าย** — บันทึกลง manifest พร้อม target mapping ที่ review แล้ว: เงินเข้า–ออกใช้ tool ใหม่ `accounting.get_cash_movement_summary` หลังนิยามผ่านการลงนาม; สรุปรายการใช้ `accounting.get_summary` หลังปิด G1 (>200 เอกสาร); สรุปค่าใช้จ่ายใช้ `expense.list_recent` ตาม §6.1 ของ assessment/spec
 4. กติกาความถูกต้องคงเดิมทุกข้อ: ตัวเลขจาก permission-checked tools เท่านั้น, คำถามนอกขอบเขตปฏิเสธสุภาพไม่เดา, mutation ต้องยืนยัน, `AI-01` ยังเป็น gate ก่อน customer GO
 
 หลักฐานจบ 6B:
@@ -406,7 +406,7 @@ mindmap
 - รายการคำถาม top-N อยู่ใน release manifest พร้อมชื่อ family ที่จะ compile
 - cross-tenant data leak และ unintended write = 0 บนชุดทดสอบเดิม; kill switch ของ AI lane ใช้งานได้ (ผูกกับ P3)
 
-ต่อจากรอบนี้ (B1–B7 ตาม assessment): hosted baseline → loading-on-accept → debounce cohort 1,000 ms → fused-plan shadow → re-establish security suite 23 เคสแล้วเปิด prepared simple-read + family แรก → ขยาย family ตามคำถาม top-N → advisor Slice A; spec/plan ระดับ coding ของ security suite + families อยู่ใน [Real answers spec](../specs/mangmee-brain-real-answers-spec.md) (S2/S3) + [implementation plan](mangmee-brain-real-answers-plan.md) (Phase 2–5)
+ต่อจากรอบนี้ (B1–B7 ตาม assessment): hosted baseline → loading-on-accept → debounce cohort 1,000 ms → fused-plan shadow → re-establish security suite 23 เคสแล้วเปิด prepared simple-read + family แรก → ขยาย family ตามคำถาม top-N → advisor Slice A; architecture/product contract และ delivery map ทั้ง B0–B7 อยู่ใน [Real answers spec](../specs/mangmee-brain-real-answers-spec.md) + [architecture delivery plan](mangmee-brain-real-answers-plan.md) โดย security suite + families อยู่ Phase 6–9
 
 **Fallback 6B:** ถ้าเวลาไม่พอ B0 เลื่อนไปเป็นงานแรกหลัง P8 ทันที — เลื่อนได้แต่ห้ามหายจาก roadmap; CTA สมองมั่งมีบอกขอบเขตที่ทำได้จริงวันนี้ ไม่ใช้คำว่าเดโม
 
@@ -1824,7 +1824,7 @@ P1–P8 เดิมใช้เวลาครบประมาณ 20 ชั�
 - [Expense VAT reconciliation logic](../../apps/api/src/modules/expenses/domain/logic/expense-vat-reconciliation.logic.ts)
 - [Expense receipt upload spec](../specs/expense-receipt-upload-spec.md)
 - [Reimbursement routing policy memory](../agent-memory/reimbursement-approver-routing-policy.md)
-- [Check bill guided routing memory](../agent-memory/expense-check-bill-guided-routing.md)
+- [Business document/check-bill routing memory](../agent-memory/business-document-image-intake.md)
 - [Receipt malware scanning memory](../agent-memory/m14-clamav-provisioning.md)
 - [Internal service tenant boundary memory](../agent-memory/h-14-internal-services-private-no-owner-synthesis.md)
 - [OCR outcome observability memory](../agent-memory/ocr-outcome-observability.md)

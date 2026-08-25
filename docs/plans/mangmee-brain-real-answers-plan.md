@@ -107,7 +107,7 @@ Verify: `pnpm -C packages/contracts build`; contracts specs เดิมเข�
 ## Phase 7 — B5/S2: Canary family บน UAT (รอบถัดไป, ~0.5 วัน + eval)
 
 1. Wire flags เข้า `infra/prod-ecs-express/deploy.sh` ตาม pattern `LINE_AI_EXACT_GREETING_ENABLED` (บรรทัด 28–104, 354–361, 1457–1458): `LINE_AI_PREPARED_SIMPLE_READ_ENABLED`, `LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES`, และ `LINE_AI_FUSED_PLAN_SHADOW_ENABLED` (B4) — UAT เปิดได้ / production hard-block
-2. Blind pairwise eval ของ `sales.get_sales_summary::single_metric` ตาม Phase 5 gate → ผ่านแล้วจึงใส่ allowlist UAT
+2. Blind pairwise eval ของ `sales.get_sales_summary::single_metric` ตาม latency memory Phase 5 gate → ผ่านแล้วจึงใส่ allowlist UAT
 3. เปิดบน UAT, เก็บ `prepared_simple_read.*` + latency เทียบ baseline; ซ้อม kill switch (CLOSE → กลับ full path)
 
 Exit: UAT run IDs, eval report, hosted p50/p95, drill record
