@@ -543,7 +543,9 @@ export class PrismaAccountingRepository {
       };
     }
     const [data, total] = await Promise.all([
-      this.prisma.client.accountingDocument.findMany({ where, skip, take: pageSize, orderBy: { documentDate: 'desc' } }),
+      // id tiebreaker: documentDate is non-unique, and OFFSET paging over an unstable order can
+      // repeat/skip rows across pages (breaks multi-page aggregation in accounting.get_summary)
+      this.prisma.client.accountingDocument.findMany({ where, skip, take: pageSize, orderBy: [{ documentDate: 'desc' }, { id: 'asc' }] }),
       this.prisma.client.accountingDocument.count({ where }),
     ]);
     return { data: data.map((r) => this.toDocumentRecord(r)), total, page, pageSize };
