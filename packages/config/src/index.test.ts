@@ -731,6 +731,24 @@ describe('apiConfigSchema LINE AI latency/autonomy Phase-1 flags', () => {
     assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED: 'true' }).LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED, true);
     assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED: 'false' }).LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED, false);
   });
+
+  it('advisor mode defaults off, accepts only its four stages, and FAILS closed on anything else', () => {
+    assert.equal(apiConfigSchema.parse(base).LINE_AI_ADVISOR_MODE, 'off');
+    for (const mode of ['off', 'social', 'knowledge', 'company'] as const) {
+      assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_ADVISOR_MODE: mode }).LINE_AI_ADVISOR_MODE, mode);
+    }
+    // A typo or a removed stage must break the boot, never silently land on a MORE permissive stage.
+    for (const bad of ['shadow', 'Social', 'true', '1', 'all', '']) {
+      assert.equal(apiConfigSchema.safeParse({ ...base, LINE_AI_ADVISOR_MODE: bad }).success, false, bad);
+    }
+  });
+
+  it('advisor direct-answer kill switch defaults off and opts in only on an explicit boolean', () => {
+    // RESERVED / INERT in Slice A: parsed for a stable env contract, with no runtime consumer yet.
+    assert.equal(apiConfigSchema.parse(base).LINE_AI_ADVISOR_DIRECT_ANSWER_ENABLED, false);
+    assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_ADVISOR_DIRECT_ANSWER_ENABLED: 'true' }).LINE_AI_ADVISOR_DIRECT_ANSWER_ENABLED, true);
+    assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_ADVISOR_DIRECT_ANSWER_ENABLED: 'false' }).LINE_AI_ADVISOR_DIRECT_ANSWER_ENABLED, false);
+  });
 });
 
 describe('apiConfigSchema CRM AI confidence', () => {

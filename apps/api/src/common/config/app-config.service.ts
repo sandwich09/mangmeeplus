@@ -81,6 +81,13 @@ export class AppConfigService {
   get lineAiReimbursementSemanticMode(): 'off' | 'shadow' | 'clarify_only' | 'handoff' { return this.config.LINE_AI_REIMBURSEMENT_SEMANTIC_MODE; }
   // Exact standalone greeting 0-call lane (default false = exact legacy three-call greeting path).
   get lineAiExactGreetingEnabled(): boolean { return this.config.LINE_AI_EXACT_GREETING_ENABLED; }
+  // Advisor staged capability (default 'off' = the `advisor` router capability is never sent, so the
+  // intake prompt/payload/parser are byte-exact legacy). Only 'off' and 'social' are buildable today.
+  get lineAiAdvisorMode(): 'off' | 'social' | 'knowledge' | 'company' { return this.config.LINE_AI_ADVISOR_MODE; }
+  // Advisor direct-answer kill switch. RESERVED / INERT: parsed and exposed for a stable env contract,
+  // but NO consumer reads it yet — the prepared direct-answer lane is a later phase. Off = the reply
+  // always comes from the existing reference path.
+  get lineAiAdvisorDirectAnswerEnabled(): boolean { return this.config.LINE_AI_ADVISOR_DIRECT_ANSWER_ENABLED; }
   // Terminal Flex card on a multi-part reply (default false = exact legacy all-text multi-part shape).
   get lineAiMultipartTerminalFlexEnabled(): boolean { return this.config.LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED; }
   get lineExpenseDraftConversationEnabled(): boolean { return this.config.LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED; }

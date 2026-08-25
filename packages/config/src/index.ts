@@ -239,6 +239,19 @@ export const apiConfigSchema = baseConfigSchema.extend({
   // the versioned greeting allowlist answers deterministically with zero model calls — only after every
   // security/identity/feature gate and only when the turn carries no open state at all.
   LINE_AI_EXACT_GREETING_ENABLED: envBoolean.default(false),
+  // Advisor conversation staged rollout (advisor spec §17). ONE capability enum plus ONE execution kill
+  // switch, deliberately not a flag per feature. 'off' is behavior-identical to today in every byte: the
+  // API never turns the `advisor` router capability on, so the intake prompt/payload/parser stay legacy.
+  // 'social' is the only stage Slice A builds toward (SOCIAL_CHAT); 'knowledge' and 'company' are parsed
+  // here so the env contract is stable, but their semantics/renderers do not exist yet and their
+  // activation gates (spec §18) are unmet — do not set them. An unknown value FAILS the schema (closed),
+  // never silently degrading to a more permissive stage. Rollback goes one stage back, or to 'off'.
+  LINE_AI_ADVISOR_MODE: z.enum(['off', 'social', 'knowledge', 'company']).default('off'),
+  // Execution kill switch, separate from the staged enum so the measurement cohort (mode >= 'social' with
+  // this false: the router emits and the server validates an advisorAnswer, but the reply still comes from
+  // the existing reference path) can be turned on and off without touching the stage. RESERVED / INERT in
+  // Slice A: no consumer reads it yet — the prepared direct-answer lane is a later phase.
+  LINE_AI_ADVISOR_DIRECT_ANSWER_ENABLED: envBoolean.default(false),
   // Terminal Flex card on a MULTI-PART reply (uat-correctness-latency spec §10.1). Default OFF is the exact
   // legacy shape: every part of a split reply is a plain text message and only the last one carries the
   // completion quick reply. On, the terminal part is rendered as the same Flex card a single completed
