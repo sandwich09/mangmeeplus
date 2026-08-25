@@ -8,7 +8,7 @@ def openssl_pre35_quic_mapping_waiver:
   and finding_attribute("package_version") == "3.0.20-1~deb12u2"
   and ((.description // "")
     | contains("The issue is present since OpenSSL 3.5 when the QUIC server implementation was added."))
-  and now < 1787616000;
+  and now < 1787788800;
 
 def waiver_record($digest):
   {
@@ -20,8 +20,8 @@ def waiver_record($digest):
     scannedDigest: $digest,
     reachabilityEvidence: "Provider states the issue begins in OpenSSL 3.5 QUIC server; the scanned package is 3.0.20.",
     compensatingControl: "Exact CVE, severity, package, version and provider statement match; all mismatches remain blocking.",
-    approvedBy: "CHAT-OWNER-DIRECTIVE-2026-08-17-BYPASS-ALWAYS",
-    expiresAtEpoch: 1787616000,
+    approvedBy: "CHAT-OWNER-DIRECTIVE-2026-08-25-EXTEND-TO-2026-08-27",
+    expiresAtEpoch: 1787788800,
     providerStatement: "The issue is present since OpenSSL 3.5 when the QUIC server implementation was added."
   };
 
