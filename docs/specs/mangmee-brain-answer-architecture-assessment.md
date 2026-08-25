@@ -59,7 +59,7 @@
 | **B4** | เปิด `LINE_AI_FUSED_PLAN_SHADOW_ENABLED` — วัดว่า provider จริงเสนอ prepared plan ถูกแค่ไหน (ไม่มีผลต่อคำตอบ) | shadow precision/recall report | ยังไม่เปลี่ยน |
 | **B5** | re-establish security suite 23 เคสให้รันจริงใน CI ก่อน แล้วเปิด `LINE_AI_PREPARED_SIMPLE_READ_ENABLED` + family แรกผ่าน blind pairwise eval (Phase 5 gate) บน UAT | 23/23 execute ใน gateway suite; eval ≥ เกณฑ์; p50/p95 lane จริง | **คำถามยอดขายแบบง่ายตอบเร็วขึ้นชัดเจน (1 model call หรือ 0)** |
 | **B6** | ขยาย compiled family ตามคำถาม top-N ที่ Owner ยืนยัน (§6.1): เงินเข้า–ออกวันนี้, สรุปรายการเดือนนี้, สรุปค่าใช้จ่าย (แต่ละ family: ตรวจ/ขยาย read tool → formatter → blind eval → allowlist) | ต่อ family: eval + hosted latency + ความถูกต้องจาก golden set | **คำถามหลักของหน้าแรกตอบเร็วและตัวเลขตรง** |
-| **B7** | Advisor Slice A ตาม advisor plan (knowledge cards, company advisory profile, social) | ตาม gate ในแผน advisor เดิม | **คุยธรรมชาติ + คำแนะนำอิงบริบทบริษัท** |
+| **B7** | Advisor Slice A ตาม advisor plan: social/persona/short-term context เท่านั้น; Slice B/C knowledge/company ยังอยู่ P23 | naturalness/persona/safety/mixed-intent/cost gates ตามแผน advisor เดิม | **คุยเรื่องทั่วไปได้เป็นธรรมชาติ** โดยไม่ปนข้อมูลบริษัท |
 
 ตลอดทาง (ไม่ข้าม): `AI-01` delivery blockers ปิดก่อน customer GO; cost ต่อ eligible turn ลด ≥30% ต่อ lane; generative calls เฉลี่ย ≤1.1; quality/guard ไม่ถอยเพื่อแลกตัวเลข latency; ทุก flag เปิดผ่าน deploy.sh + UAT run ตาม pattern PR #226; การอ่านสถานะ cloud ทำตาม `docs/runbooks/cloud-environment-operations.md`
 

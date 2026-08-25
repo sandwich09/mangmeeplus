@@ -1,6 +1,6 @@
-# Mangmee Brain Real Answers Spec
+# Mangmee Brain Real Answers — Architecture and Product Spec
 
-สถานะ: **DRAFT v1 สำหรับ review และลงมือ coding (2026-08-25)**
+สถานะ: **DRAFT v2 สำหรับ review และลงมือ coding (2026-08-25)**
 
 ที่มา: การตัดสินใจ Owner ในแผน [mangmee-brain-2-5-day-priority-plan-th](../plans/mangmee-brain-2-5-day-priority-plan-th.md) (v4) และ [Brain answer architecture assessment](mangmee-brain-answer-architecture-assessment.md) — สมองมั่งมีไม่ใช่เดโม, AI ต้องแยกหมวดรายจ่ายได้ก่อน, และตอบ 3 คำถามที่ Owner ยืนยัน: **เงินเข้า–ออกวันนี้ / สรุปรายการเดือนนี้ / สรุปค่าใช้จ่าย**
 
@@ -9,6 +9,47 @@
 - รับคนให้ไหว: ไม่เพิ่มความเสี่ยงล่ม/ตัวเลขผิด — แก้ correctness gap ที่พบก่อนเปิด, ทุก lane มี kill switch และเปิดแบบ evidence-gated
 - ใช้แล้วชอบ: ความฉลาดลงที่จุดที่ผู้ใช้ใช้จริง — หมวดรายจ่ายแม่นบนเส้นทางใบเสร็จ และ 3 คำถามหลักตอบเร็ว+ตัวเลขตรง
 - โตต่อได้: ทุกคำตอบใหม่เพิ่มผ่าน family registry + eval harness เดิม ไม่ต้องรื้อสถาปัตยกรรม
+
+## 0. Product outcome และ architecture contract
+
+### 0.1 ประสบการณ์ที่ต้องส่งมอบ
+
+สมองมั่งมีต้องทำสามเรื่องพร้อมกัน โดยไม่ลด security/correctness เพื่อแลกความเร็ว:
+
+| คุณค่าที่ผู้ใช้รับรู้ | Contract | หลักฐานก่อนเปิด |
+|---|---|---|
+| **ตอบไว** | รับข้อความแบบ durable ก่อน feedback; native LINE loading request accepted ≤1s p95; simple business read ใช้ deterministic/prepared lane เมื่อผ่าน gate; path ซับซ้อนบอกสถานะโดยไม่หมุนเงียบ | hosted p50/p95 ผูก SHA/environment จาก B1; cohort เทียบ control; load smoke Gate C |
+| **ตอบถูก** | ข้อมูลบริษัทอ่านผ่าน permission-checked API tools เท่านั้น; ตัวเลขมาจาก tool result พร้อม source + `asOf`; unknown/partial/forbidden ต้องตอบตามจริง; mutation สุดท้ายยังอยู่นอก Brain-Real track | golden set, 23-case security suite, cross-tenant E2E, per-family blind eval |
+| **คุยเป็นธรรมชาติ** | persona เดียวตาม advisor spec; answer-first, กระชับ, ต่อบริบทระยะสั้นได้; กำกวมถามทีละหนึ่งคำถาม; ไม่อ้างว่าเป็นมนุษย์และไม่ใช้ conversation memory เป็น business truth | social advisor eval + blind human naturalness gate ใน B7; knowledge/company feedback เป็นงาน Slice B/C ใน P23 |
+
+SLO ในตารางเป็น **เป้าทดลอง** จน B1 มี hosted baseline ตามการตัดสินใจที่ยังเปิดใน assessment §6; ห้ามนำไปเป็นคำโฆษณาหรือ Production commitment ก่อนมีหลักฐาน
+
+### 0.2 Runtime architecture ที่ reuse
+
+```text
+LINE webhook
+  -> signature / legal / identity / company / durable acceptance
+  -> loading-on-accept (B2, best effort)
+  -> measured debounce + per-chat serialization (B3)
+  -> one-brain routing
+       -> zero-model deterministic authority lane
+       -> prepared simple-read lane: 1 tool call + compiled formatter (B5–B6)
+       -> full agentic lane: permission-checked tools + grounded fallback
+       -> advisor lane: social / knowledge / company insight (B7)
+  -> response validation: permission + source + asOf + risk/mutation guard
+  -> one final LINE response + delivery replay/fallback
+```
+
+ชั้น context เรียงเป็น `persona → short-term conversation → approved knowledge → bounded company profile → live tools → deterministic analytics` ตาม advisor spec; ชั้นหลังเท่านั้นที่เป็น business truth. ไม่มี runtime multi-agent swarm, ไม่มี AI Gateway อ่านฐานข้อมูลตรง, ไม่มี response cache เหนือ permission boundary และไม่ทำ token streaming ปลอมบน LINE
+
+### 0.3 Conversation และ UX contract
+
+- ช่องหลักช่วง Controlled Beta คือ LINE; dashboard มี CTA ไปช่องที่พร้อมจริง. Web chat/history/streaming/citation drawer อยู่ P23 ไม่อยู่ในรอบ 2.5 วัน
+- social ตอบสั้น 1–3 ประโยค; business/company ตอบ **คำตอบก่อน → เงื่อนไขสำคัญ → source/asOf → next action**
+- คำตอบข้อมูลบริษัทต้องบอกช่วงเวลาและคำว่า `อิงข้อมูลบริษัท ณ ...`; กรณี cash movement ต้องบอกว่าเป็นรายการที่บันทึกในระบบ ไม่ใช่ยอดธนาคาร
+- LINE ใช้ loading แล้วส่ง final response ครั้งเดียว เพราะแก้ bubble เดิมแบบ token streaming ไม่ได้; ห้าม push เศษคำตอบหลายข้อความเพื่อเลียนแบบ web streaming
+- clarification ถามเพียงหนึ่งข้อที่ทำให้ตอบต่อได้; permission denial ไม่เผยว่าข้อมูลหรือ feature ใดมีอยู่; source unavailable เสนอ retry/ทางเลือกที่ปลอดภัย
+- Flex/card ใช้เมื่อช่วยให้เห็นยอด ช่วงเวลา แหล่งข้อมูล และ deep link ชัดขึ้น; social/clarification ใช้ text; ไม่มีศัพท์ provider, confidence หรือ internal tool name ในข้อความผู้ใช้
 
 ## 1. Scope
 
@@ -21,7 +62,7 @@
 Non-goals (มี spec เดิมรองรับหรือถูกถอยตามการตัดสินใจ Owner):
 
 - ไม่แตะกลไก debounce/loading/cohort — activation ตาม [latency lanes spec](line-ai-latency-and-autonomy-lanes-spec.md) เดิม (B1–B3)
-- ไม่ทำ advisor conversation/knowledge cards — ตาม [advisor spec](line-ai-mangmee-advisor-conversation-spec.md) (B7)
+- ไม่ทำ advisor conversation ใน S1–S3; B7 ทำเฉพาะ social Slice A ตาม [advisor spec](line-ai-mangmee-advisor-conversation-spec.md); knowledge/company Slice B/C และ Knowledge Pack อยู่ P23
 - ไม่ทำ web chat, Knowledge Pack, semantic retrieval (P23), รายรับ/Auto Revenue (ถอยหลัง P26), billing (P26)
 - ไม่เปลี่ยน model provider, ไม่เพิ่ม agent ใหม่, ไม่ให้ AI อ่าน DB ตรง (กติกา AGENTS.md)
 
@@ -166,7 +207,17 @@ Non-goals (มี spec เดิมรองรับหรือถูกถอ
 | Hosted latency | p50/p95 ต่อ family บน UAT เทียบ SLO ทดลอง (simple read p50 ≤3s ตาม latency spec) | บันทึกจริง ไม่ใช้ local timing |
 | Load smoke ร่วม | คำถาม family อยู่ในชุด load smoke ของแผน P7 Gate C | error <1%, queue age ไม่โต |
 
-### 8.4 คำสั่งที่ใช้ (pattern ที่รันจริงในรีโปนี้)
+### 8.4 Conversation และ UX integration
+
+| ชุด | เนื้อหา | ผ่านเมื่อ |
+|---|---|---|
+| Response contract | 3 คำถามหลักตอบ answer-first พร้อม period, source, `asOf` และ next action; cash movement มีคำชี้แจงว่าไม่ใช่ยอดธนาคาร | fixture Thai/English ผ่าน 100%; ไม่มีตัวเลขที่ formatter สร้างเอง |
+| Clarification/fallback | คำว่า “รายการ” ที่ยังตีความไม่ได้ถามหนึ่งคำถาม; forbidden/unavailable/partial/no-data ใช้สถานะที่ถูกต้องและไม่เผย tenant data | deterministic cases ผ่าน; ERP call = 0 เมื่อ plan ถูก reject |
+| LINE presentation | loading เกิดหลัง durable acceptance; final response ครั้งเดียว; card/text ตรง mode; deep link คง company context ที่ตรวจแล้ว | integration test + UAT device evidence |
+| Natural conversation (B7) | social, follow-up, mixed social+business, persona และ safety ตาม advisor spec | advisor eval ผ่าน; blind human naturalness win-or-tie ≥0.90; ยังไม่ถือว่าผ่านใน B0–B6 |
+| Feedback | knowledge/company มี `ตรงคำถาม/ไม่ตรง`; social ไม่ถูกรบกวนด้วย feedback ทุก turn; event ไม่มี prompt/PII ดิบ | event/redaction test ผ่าน |
+
+### 8.5 คำสั่งที่ใช้ (pattern ที่รันจริงในรีโปนี้)
 
 ```bash
 pnpm -C packages/contracts build && pnpm exec tsx --test packages/contracts/src/line-ai-prepared-plan.spec.ts
@@ -191,7 +242,16 @@ pnpm exec tsx --test scripts/line-ai-latency-autonomy.corpus.spec.ts
 3. เฉลย golden set หมวดรายจ่าย 30 ใบ (Owner หรือนักบัญชี — คำถามข้อ 20 ของแผน)
 4. ชุด fixtures ที่ sanitize แล้วได้รับอนุญาตให้อยู่ใน repo (G7)
 
-## 11. แหล่งอ้างอิง
+## 11. Definition of Done ระดับผลิตภัณฑ์
+
+- [ ] B0–B6 ทำให้ 3 คำถามหลักตอบจากข้อมูลบริษัทจริงได้โดยไม่ข้าม permission และมี source/`asOf`
+- [ ] B7 ผ่าน naturalness/persona/safety eval ก่อนกล่าวอ้างว่าคุยเรื่องทั่วไปได้เป็นธรรมชาติ; การให้คำแนะนำจาก knowledge/company ต้องรอ Slice B/C ของ P23
+- [ ] latency, accuracy, delivery และ cost ใช้หลักฐาน hosted ของ exact candidate ไม่ใช้ local timing หรือข้อความใน spec แทนผลทดสอบ
+- [ ] `AI-01`, P3 incident drill และ Gate C load smoke ผ่านก่อน customer GO ของ lane ที่เกี่ยว
+- [ ] ทุก lane/family มี default-off flag, allowlist และ rollback owner ใน release manifest
+- [ ] copy หน้าเว็บและ Marketing บอกเฉพาะ capability ที่เปิดจริง; ก่อน B7 ห้ามใช้คำว่า “ตอบได้ทุกเรื่องเหมือน ChatGPT”
+
+## 12. แหล่งอ้างอิง
 
 - [แผน 2.5 วัน v4](../plans/mangmee-brain-2-5-day-priority-plan-th.md) · [Architecture assessment](mangmee-brain-answer-architecture-assessment.md)
 - [Latency/autonomy lanes spec](line-ai-latency-and-autonomy-lanes-spec.md) · [memory](../agent-memory/line-ai-latency-and-autonomy-lanes.md)
