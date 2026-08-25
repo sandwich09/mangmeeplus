@@ -47,7 +47,7 @@ Local verification (2026-08-26, web dev + API dist จาก branch, seeded DB :
 - เร็ว: page load 717ms (dev mode)
 - ป้า 40+: ปุ่ม/ช่อง 44px, input/label 16px, ภาษาไทยไม่มีศัพท์เทคนิค; observation: ตัวอักษรในปุ่ม 14px ตาม pattern เดิมของ card (ไม่ใช่ regression ใหม่)
 - ทดสอบผ่าน seed ตรง DB (`aiVerificationSummaryJson.categorySuggestion`) เพราะ E2E ไม่มีทาง public เขียนค่านี้ (ตามเหตุผลที่บันทึกใน Phase 1.4 report)
-- บั๊กที่เจอระหว่างทาง: NFKC สระอำใน `line-expense-draft-conversation.logic.ts:87-88,521-526` ทำวลี "ตามที่แนะนำ" ไม่ match — spawn เป็นงานแยกแล้ว (task chip)
+- บั๊ก NFKC สระอำ: **แก้แล้ว 2026-08-26** — normalized() NFKC→NFC หนึ่งคำ (domain/logic/line-expense-draft-conversation.logic.ts:88) พร้อม comment กติกา; ผลกระทบจริงกว้างกว่าที่คิด: segment "I0x-CATEGORY: ตามที่แนะนำ" ถูกปฏิเสธเงียบ, คำสั่ง "ทำต่อ/ทำรายการต่อ" ไม่เคยทำงาน, ทางเลือก "รับชำระ" ใน non-expense guard ตาย; regression แบบ red-green 3 เทสต์ (fail 2 ก่อนแก้ → ผ่านหมดหลังแก้); audit ำ/ฺ ทั้งไฟล์ครบ (จุด raw-input 216/531/539 ไม่โดน); expenses 818/818, line-ai 725/725
 
 Next:
 
