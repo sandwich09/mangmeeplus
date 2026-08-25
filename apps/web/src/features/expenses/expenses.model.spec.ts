@@ -6,6 +6,7 @@ import {
   formatTaxId,
   taxIdDigits,
   aiGrandTotalValue,
+  canShowInlineSubstitutePreparation,
   deriveExpenseClassificationReviewState,
   expenseAiFieldProvenance,
   expenseAiSuggestion,
@@ -17,6 +18,7 @@ import {
   needsAiTotalAcknowledgement,
   canRunExpenseDuplicateCheck,
   hasUnresolvedDuplicateWarning,
+  isBlockedCheckBillClassification,
   findOpaqueBounds,
   removeLightBackground,
   allowsDomesticInputTaxCode,
@@ -140,6 +142,22 @@ describe('expenses.model', () => {
       showFinanceOverride: false,
       showWaitingForFinance: false,
     });
+  });
+
+  it('routes an unresolved check bill to guidance and never exposes inline substitute preparation', () => {
+    const checkBill = {
+      status: 'NOT_EXPENSE_DOCUMENT',
+      classification: { documentKind: 'ORDER_OR_CHECK_BILL' },
+    };
+    assert.equal(isBlockedCheckBillClassification(checkBill), true);
+    assert.equal(isBlockedCheckBillClassification({
+      ...checkBill,
+      classification: { documentKind: 'RECEIPT' },
+    }), false);
+    assert.equal(canShowInlineSubstitutePreparation(true, null), false);
+    assert.equal(canShowInlineSubstitutePreparation(false, null), true);
+    assert.equal(canShowInlineSubstitutePreparation(false, 'PREPARED'), true);
+    assert.equal(canShowInlineSubstitutePreparation(false, 'PAYER_CERTIFIED'), false);
   });
 
   it('warns only when the AI and server grand totals differ by more than the reconciliation tolerance', () => {

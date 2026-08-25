@@ -132,4 +132,25 @@ describe('PrismaExpenseRepository substitute-receipt numbers', () => {
     assert.equal(update.data.sourceChannelMetadataJson.lineSubstituteReceiptContinuation.status, 'CONSUMED');
     assert.equal(update.data.sourceChannelMetadataJson.lineSubstituteReceiptContinuation.targetRevision, update.data.updatedAt.toISOString());
   });
+
+  it('records the paid check-bill resolution in the same transaction as prepared evidence', async () => {
+    const summary = {
+      status: 'NOT_EXPENSE_DOCUMENT',
+      classification: { documentKind: 'ORDER_OR_CHECK_BILL' },
+    };
+    const { repo, tx } = makeRepo(null);
+    tx.expenseRecord.findFirst = mock.fn(async () => ({
+      id: 'expense-secret-cuid', companyId: 'company-1', status: 'NEEDS_REVIEW', updatedAt: UPDATED_AT,
+      sourceChannelMetadataJson: null, aiVerificationSummaryJson: summary,
+    }));
+
+    await repo.createPreparedSubstituteEvidence({ ...preparedInput(), routeCheckBill: true });
+
+    const update = tx.expenseRecord.updateMany.mock.calls[0]?.arguments[0].data;
+    assert.equal(update.aiVerificationSummaryJson.classification.documentKind, 'ORDER_OR_CHECK_BILL');
+    assert.equal(update.aiVerificationSummaryJson.classificationResolution.outcome, 'ROUTED_TO_SUBSTITUTE_RECEIPT');
+    assert.equal(update.aiVerificationSummaryJson.classificationResolution.acknowledgedPaidWithoutFinalReceipt, true);
+    assert.equal(update.taxEvidenceStatus, 'SUPPORTING_ONLY');
+    assert.equal(update.inputVatClaimStatus, 'NON_CLAIMABLE');
+  });
 });

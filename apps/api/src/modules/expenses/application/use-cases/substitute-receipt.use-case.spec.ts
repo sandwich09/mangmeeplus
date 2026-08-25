@@ -155,6 +155,44 @@ describe('PrepareSubstituteReceiptUseCase', () => {
     await assert.rejects(() => make(expense({ grandTotalAmount: '0' })).execute(ctx('finance-1'), 'exp-1', input), /ยอดรวมที่ตรวจแล้วต้องมากกว่า 0 บาท/);
   });
 
+  it('routes only an authoritative paid check bill through the same expense', async () => {
+    let captured: any;
+    const repo = {
+      findByIdWithRelations: async () => expense({
+        sourceDocumentType: 'NEEDS_REVIEW',
+        taxEvidenceStatus: 'NEEDS_REVIEW',
+        aiVerificationSummaryJson: {
+          status: 'NOT_EXPENSE_DOCUMENT',
+          classification: { documentKind: 'ORDER_OR_CHECK_BILL' },
+        },
+      }),
+      findActiveMemberIdentity: async () => ({ userId: 'payer-1', displayName: 'สมชาย' }),
+      getSubstituteReceiptPolicy: async () => null,
+      listEligibleSubstituteReceiptApprovers: async () => [{ userId: 'approver-1', displayName: 'ผู้จัดการ' }],
+      findSubstituteEvidenceAttachments: async () => [{
+        id: 'att-source', purpose: 'expense.receipt.primary', originalFileName: 'check-bill.jpg', mimeType: 'image/jpeg',
+      }],
+      createPreparedSubstituteEvidence: async (input: any) => { captured = input; return prepared({ originalSourceDocumentType: 'NEEDS_REVIEW' }); },
+    } as any;
+    const input = {
+      reasonCode: 'RECEIPT_UNAVAILABLE' as const,
+      missingReceiptReason: 'ชำระแล้วแต่ร้านไม่ออกใบเสร็จฉบับสุดท้าย',
+      businessPurpose: 'รับรองลูกค้า', payerUserId: 'payer-1', supportingAttachmentIds: ['att-source'],
+      paymentMethod: 'CASH' as const, idempotencyKey: 'idem-check-bill', expectedExpenseUpdatedAt: now.toISOString(),
+      routeCheckBill: true as const,
+    };
+
+    await new PrepareSubstituteReceiptUseCase(repo, audit, notification).execute(ctx('finance-1'), 'exp-1', input);
+    assert.equal(captured.routeCheckBill, true);
+    assert.equal(captured.originalSourceDocumentType, 'NEEDS_REVIEW');
+
+    await assert.rejects(
+      () => new PrepareSubstituteReceiptUseCase({ ...repo, findByIdWithRelations: async () => expense() } as any, audit, notification)
+        .execute(ctx('finance-1'), 'exp-1', input),
+      /ใช้ได้เฉพาะเช็กบิล/,
+    );
+  });
+
   it('rejects certificate layouts beyond the shared line bounds before preparation', async () => {
     const make = (row: any) => new PrepareSubstituteReceiptUseCase({ findByIdWithRelations: async () => row } as any, audit, notification);
     const input = {

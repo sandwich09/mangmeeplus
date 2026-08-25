@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { LINE_AI_CONTEXT_MAX_TURNS, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
-import { branchScopeFallbackLabel, chatKeyHashOf, classifyPendingMediaReply, formatGroundedReceiptFollowUp, isAffirmativeText, isGroundedReceiptFollowUp, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent } from './process-line-webhook.use-case';
+import { branchScopeFallbackLabel, chatKeyHashOf, classifyPendingMediaReply, formatCheckBillDraftCreatedReply, formatGroundedReceiptFollowUp, isAffirmativeText, isGroundedReceiptFollowUp, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent } from './process-line-webhook.use-case';
 import { ReceiptOcrApplyService } from '../../../expenses/application/services/receipt-ocr-apply.service';
 import { absoluteWebLink, webBaseUrlFromEnv, webLink } from '../../../../common/http/web-link';
 import { LineSubstituteReceiptContinuationUseCase } from '../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case';
@@ -52,6 +52,27 @@ describe('readResponseBodyLimited', () => {
 
     assert.equal(await readResponseBodyLimited(response, 3), null);
     assert.equal(cancelled, true);
+  });
+});
+
+describe('check-bill LINE reply UX', () => {
+  it('confirms one draft and asks only the next question while the flow is collectable', () => {
+    const reply = formatCheckBillDraftCreatedReply({
+      status: 'BLOCKED',
+      replyText: 'blocker dump that should stay hidden',
+      pendingQuestion: 'ค่าใช้จ่ายนี้ใช้ทำอะไรคะ?',
+    });
+    assert.match(reply, /สร้างร่างค่าใช้จ่าย 1 รายการแล้ว/);
+    assert.match(reply, /ค่าใช้จ่ายนี้ใช้ทำอะไรคะ/);
+    assert.doesNotMatch(reply, /blocker dump/);
+  });
+
+  it('keeps the complete explanation for a hard ineligible result', () => {
+    const reply = formatCheckBillDraftCreatedReply({
+      status: 'INELIGIBLE',
+      replyText: 'รายการนี้ไม่เข้าเงื่อนไขที่ระบบรองรับ',
+    });
+    assert.match(reply, /รายการนี้ไม่เข้าเงื่อนไขที่ระบบรองรับ/);
   });
 });
 
@@ -1569,6 +1590,68 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(intakeRequests.length, 0);
     assert.equal(uploadIntents, 0);
     assert.equal(auditEvents[0]?.metadataJson.reason, 'MALWARE_DETECTED');
+  });
+
+  it('explains a check bill and parks it without creating an expense draft', async () => {
+    const { prisma } = makePrisma();
+    const pendingRows: any[] = [];
+    (prisma.client as any).lineIntakePendingMedia = {
+      findFirst: async () => null,
+      findUnique: async () => pendingRows.at(-1) ?? null,
+      create: async ({ data }: any) => {
+        const row = { id: 'pending-check-bill', ...data };
+        pendingRows.push(row);
+        return row;
+      },
+    };
+    let expenseDrafts = 0;
+    const checkBillClassification = {
+      ...receiptClassification('2883.65'),
+      documentFamily: 'COMMERCIAL_DOCUMENT',
+      documentKind: 'ORDER_OR_CHECK_BILL',
+      transactionState: 'DUE',
+      settlementSignals: [],
+      missingRequiredSignals: ['MISSING_PAYMENT_EVIDENCE'],
+      requiresClarification: true,
+    };
+    const { useCase, replies, sentMessages } = makeUseCase(prisma, {
+      permissions: ['expense.receipt.line_upload', 'expense.receipt.upload', 'attachment.create'],
+      intakeRouteFn: () => ({
+        status: 'ROUTED', intent: 'BUSINESS_DOCUMENT_REFERENCE', language: 'th', confidence: 0.98,
+        documentClassification: checkBillClassification,
+      }),
+      receiptOcrFn: () => ({
+        status: 'ok', classification: checkBillClassification,
+        fields: { grandTotalAmount: '2883.65', vendorName: 'Grand Lobby Bar' },
+      }),
+      initReceiptUpload: { execute: async () => { expenseDrafts += 1; } },
+      completeReceiptUpload: { execute: async () => undefined },
+      createUploadIntent: { execute: async () => ({ attachmentId: 'att-check', uploadUrl: 'https://upload', uploadMethod: 'PUT' }) },
+      completeAttachmentUpload: { execute: async () => undefined },
+      substituteReceiptContinuation: {},
+    });
+    (useCase as any).downloadLineMedia = async () => ({
+      fileName: 'check-bill.jpg', mimeType: 'image/jpeg', byteSize: JPEG_BYTES.byteLength,
+      checksumSha256: 'hash', contentBase64: JPEG_BYTES.toString('base64'), bytes: JPEG_BYTES,
+    });
+    (useCase as any).uploadLineMedia = async () => undefined;
+
+    await useCase.executeReceiptUpload({
+      webhookEventId: 'evt-check-bill', lineUserId: 'line-user-secret', replyToken: 'reply-check-bill',
+      lineMessageId: 'line-msg-check-bill', messageType: 'image', messagingChannelId: 'msg-channel-1',
+    });
+
+    assert.equal(expenseDrafts, 0);
+    assert.equal(pendingRows.length, 1);
+    assert.equal(pendingRows[0].askedQuestionJson.kind, 'CHECK_BILL_ACTION');
+    assert.equal(pendingRows[0].askedQuestionJson.ocrFields.grandTotalAmount, '2883.65');
+    assert.match(replies.join('\n'), /ยังไม่สร้างรายการค่าใช้จ่าย/);
+    assert.match(replies.join('\n'), /ยังไม่ยืนยันว่าร้านรับเงินแล้ว/);
+    assert.match(replies.join('\n'), /1\).*จ่ายแล้ว/);
+    assert.deepEqual(sentMessages[0]?.quickReply?.items.map((item: any) => item.action.label), [
+      'จ่ายแล้ว ไม่ได้ใบ', 'ยังไม่ได้จ่าย', 'มีใบเสร็จ ส่งใหม่',
+    ]);
+    assert.deepEqual(sentMessages[0]?.quickReply?.items.map((item: any) => item.action.text), ['1', '2', '3']);
   });
 
   // A4: the SIGNATURE_UPLOAD_TICKET route depends on an AI call that can come back UNAVAILABLE or

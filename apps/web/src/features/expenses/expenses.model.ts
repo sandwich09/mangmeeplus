@@ -228,6 +228,24 @@ export function deriveExpenseClassificationReviewState(
   };
 }
 
+/** Check bills need a plain-language recovery card, not the generic finance blocker. */
+export function isBlockedCheckBillClassification(
+  summary: Record<string, unknown> | null | undefined,
+): boolean {
+  if (!isNonExpenseClassificationBlocking(summary)) return false;
+  const classification = summary?.['classification'];
+  return Boolean(classification && typeof classification === 'object' && !Array.isArray(classification)
+    && (classification as Record<string, unknown>)['documentKind'] === 'ORDER_OR_CHECK_BILL');
+}
+
+/** Keep the toggle and its form on one condition so web never offers a prepare the API will reject. */
+export function canShowInlineSubstitutePreparation(
+  classificationBlocked: boolean,
+  evidenceStatus: SubstituteReceiptEvidenceSummary['status'] | null | undefined,
+): boolean {
+  return !classificationBlocked && (!evidenceStatus || evidenceStatus === 'PREPARED');
+}
+
 export type ExpenseSummary = {
   id: string;
   branchId: string | null;

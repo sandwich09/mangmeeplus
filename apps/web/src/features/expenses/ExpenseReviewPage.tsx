@@ -28,7 +28,7 @@ import {
   deriveExpenseClassificationReviewState, deriveExpenseReviewSteps, expenseAiMissingFields, expenseCapabilities,
   expenseNeedsReceiptOrSubstitute, expenseSubstituteReceiptReady, expenseValueLabel,
   canRunExpenseDuplicateCheck, hasAiGrandTotalMismatch, hasUnresolvedDuplicateWarning, initialExpenseReviewStep, needsAiTotalAcknowledgement,
-  MIME_TYPE_LABELS, canDeleteExpense, effectiveVatRateLabel, expenseDeleteErrorMessage, firstFilled,
+  MIME_TYPE_LABELS, canDeleteExpense, effectiveVatRateLabel, expenseDeleteErrorMessage, firstFilled, isBlockedCheckBillClassification,
   postingErrorText, vatModeRequiresRate,
 } from './expenses.model';
 import type { ExpenseDetail, ExpenseReviewStepKey } from './expenses.model';
@@ -230,7 +230,9 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
   useEffect(() => {
     if (!detail || detail.id !== expenseId || stepInitRef.current === expenseId) return;
     stepInitRef.current = expenseId;
-    setStep(initialExpenseReviewStep(deriveExpenseReviewSteps(detail, canReview), detail.status));
+    setStep(isBlockedCheckBillClassification(detail.aiVerificationSummaryJson)
+      ? 'evidence'
+      : initialExpenseReviewStep(deriveExpenseReviewSteps(detail, canReview), detail.status));
   }, [detail, expenseId, canReview]);
 
   // Signed URL is fetched on click, not on panel open: it expires in 15 min.
@@ -382,6 +384,8 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
   const isZeroAmount = Number(detail.grandTotalAmount) === 0;
   const aiMap = detail.aiVerificationSummaryJson as Record<string, unknown> | null;
   const classificationBlocked = deriveExpenseClassificationReviewState(aiMap, canReview).blocked;
+  const checkBillBlocked = isBlockedCheckBillClassification(aiMap);
+  const classificationBlockMessage = t(checkBillBlocked ? 'expenses.check_bill_workflow_blocked' : 'expenses.non_expense_workflow_blocked', locale);
   const substituteReady = expenseSubstituteReceiptReady(detail);
   const needsReceiptOrSubstitute = expenseNeedsReceiptOrSubstitute(detail);
   const ocrTotalUnacknowledged = needsAiTotalAcknowledgement(detail);
@@ -490,22 +494,22 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
                 {canCheckDuplicates && <button className={ghostClass} onClick={checkDuplicates} disabled={actionLoading}>{t('expenses.check_duplicate', locale)}</button>}
                 {detail.status !== 'READY_FOR_CONFIRMATION' && (
                   <>
-                    <button className={btnClass} onClick={() => doAction(() => canReview ? markExpenseReadyAsReviewer(companyId, expenseId) : markExpenseReady(companyId, expenseId), 'ส่งตรวจสอบเรียบร้อยแล้ว')} disabled={actionLoading || classificationBlocked || !detailsStepDone} title={classificationBlocked ? t('expenses.non_expense_workflow_blocked', locale) : !detailsStepDone ? t('expenses.submit_requires_details', locale) : undefined}>{t('expenses.send_for_review', locale)}</button>
+                    <button className={btnClass} onClick={() => doAction(() => canReview ? markExpenseReadyAsReviewer(companyId, expenseId) : markExpenseReady(companyId, expenseId), 'ส่งตรวจสอบเรียบร้อยแล้ว')} disabled={actionLoading || classificationBlocked || !detailsStepDone} title={classificationBlocked ? classificationBlockMessage : !detailsStepDone ? t('expenses.submit_requires_details', locale) : undefined}>{t('expenses.send_for_review', locale)}</button>
                   </>
                 )}
                 {detail.status === 'READY_FOR_CONFIRMATION' && (
                   <>
-                    {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => doAction(() => confirmExpense(companyId, expenseId), 'ยืนยันและลงบัญชีเรียบร้อยแล้ว')} disabled={actionLoading || !canConfirmExpense} title={classificationBlocked ? t('expenses.non_expense_workflow_blocked', locale) : hasDuplicates ? t('expenses.resolve_duplicate_first', locale) : needsReceiptOrSubstitute ? t('expenses.confirm_needs_receipt', locale) : ocrTotalUnacknowledged ? t('expenses.price_mismatch_blocks_confirm', locale) : isZeroAmount ? t('expenses.zero_amount_warning', locale) : !substituteReady ? 'ต้องให้ผู้จ่ายลงนามและผู้อนุมัติออกใบรับรองฉบับสมบูรณ์ก่อนยืนยันรายจ่าย' : undefined}>{t('expenses.confirm_and_post', locale)}</button>}
+                    {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => doAction(() => confirmExpense(companyId, expenseId), 'ยืนยันและลงบัญชีเรียบร้อยแล้ว')} disabled={actionLoading || !canConfirmExpense} title={classificationBlocked ? classificationBlockMessage : hasDuplicates ? t('expenses.resolve_duplicate_first', locale) : needsReceiptOrSubstitute ? t('expenses.confirm_needs_receipt', locale) : ocrTotalUnacknowledged ? t('expenses.price_mismatch_blocks_confirm', locale) : isZeroAmount ? t('expenses.zero_amount_warning', locale) : !substituteReady ? 'ต้องให้ผู้จ่ายลงนามและผู้อนุมัติออกใบรับรองฉบับสมบูรณ์ก่อนยืนยันรายจ่าย' : undefined}>{t('expenses.confirm_and_post', locale)}</button>}
                   </>
                 )}
               </>
             )}
-            {stepIndex < steps.length - 1 && <button className={btnClass} disabled={stepSaving || (step === 'data' && dataErrorCount !== 0)} title={step === 'data' ? validationBlockMessage : undefined} onClick={() => void goToStep(steps[stepIndex + 1].key)}>{stepSaving && step === 'data' ? t('expenses.saving', locale) : t('expenses.step_next', locale)}</button>}
+            {stepIndex < steps.length - 1 && <button className={btnClass} disabled={stepSaving || (step === 'data' && dataErrorCount !== 0) || (step === 'evidence' && checkBillBlocked)} title={step === 'data' ? validationBlockMessage : step === 'evidence' && checkBillBlocked ? classificationBlockMessage : undefined} onClick={() => void goToStep(steps[stepIndex + 1].key)}>{stepSaving && step === 'data' ? t('expenses.saving', locale) : t('expenses.step_next', locale)}</button>}
           </>
         )}
         {approverOnlyActions && (
           <>
-            {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => doAction(() => confirmExpense(companyId, expenseId), 'ยืนยันและลงบัญชีเรียบร้อยแล้ว')} disabled={actionLoading || !canConfirmExpense} title={classificationBlocked ? t('expenses.non_expense_workflow_blocked', locale) : hasDuplicates ? t('expenses.resolve_duplicate_first', locale) : needsReceiptOrSubstitute ? t('expenses.confirm_needs_receipt', locale) : ocrTotalUnacknowledged ? t('expenses.price_mismatch_blocks_confirm', locale) : isZeroAmount ? t('expenses.zero_amount_warning', locale) : !substituteReady ? 'ต้องให้ผู้จ่ายลงนามและผู้อนุมัติออกใบรับรองฉบับสมบูรณ์ก่อนยืนยันรายจ่าย' : undefined}>{t('expenses.confirm_and_post', locale)}</button>}
+            {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => doAction(() => confirmExpense(companyId, expenseId), 'ยืนยันและลงบัญชีเรียบร้อยแล้ว')} disabled={actionLoading || !canConfirmExpense} title={classificationBlocked ? classificationBlockMessage : hasDuplicates ? t('expenses.resolve_duplicate_first', locale) : needsReceiptOrSubstitute ? t('expenses.confirm_needs_receipt', locale) : ocrTotalUnacknowledged ? t('expenses.price_mismatch_blocks_confirm', locale) : isZeroAmount ? t('expenses.zero_amount_warning', locale) : !substituteReady ? 'ต้องให้ผู้จ่ายลงนามและผู้อนุมัติออกใบรับรองฉบับสมบูรณ์ก่อนยืนยันรายจ่าย' : undefined}>{t('expenses.confirm_and_post', locale)}</button>}
           </>
         )}
         {isConfirmed && (
@@ -524,6 +528,22 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
         )}
         {canRestartReview && <button className={ghostClass} onClick={() => doAction(() => canReview ? markExpenseReadyAsReviewer(companyId, expenseId) : markExpenseReady(companyId, expenseId), 'เริ่มตรวจใหม่เรียบร้อยแล้ว')} disabled={actionLoading}>{t('expenses.restart_review', locale)}</button>}
       </div>
+    </div>
+  ) : null;
+  const checkBillSecondaryActions = checkBillBlocked && (caps.canReject || canDelete) ? (
+    <div className="px-4 pb-4">
+      <details className="rounded-xl border border-gray-200 bg-white p-3">
+        <summary className="min-h-11 cursor-pointer py-2 text-sm font-semibold text-gray-700">
+          {t('expenses.check_bill_more_actions', locale)}
+        </summary>
+        <div className="space-y-3 border-t border-gray-100 pt-3">
+          <p className="text-sm leading-6 text-gray-600">{t('expenses.check_bill_more_actions_help', locale)}</p>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            {caps.canReject && <button className={dangerClass} onClick={openReject} disabled={actionLoading}>{t('expenses.reject', locale)}</button>}
+            {canDelete && <button className={dangerClass} onClick={() => { setShowDelete(true); setShowReject(false); setShowVoid(false); setDuplicateResolution(null); }} disabled={actionLoading || deleting}>{t('expenses.delete', locale)}</button>}
+          </div>
+        </div>
+      </details>
     </div>
   ) : null;
 
@@ -636,7 +656,20 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
     </div>
   );
   const documentReviewCard = (
-    <DocumentReviewSection companyId={companyId} detail={detail} isMutable={isMutable} canReview={canReview} canConfirm={canConfirm} userId={userId} canSelfApprove={canSelfApprove} onSaved={async () => { setNotice(null); await load(); await onRefresh(); }} onOpenFile={showPreview} dirtyRef={evidenceDirtyRef} />
+    <DocumentReviewSection
+      companyId={companyId}
+      detail={detail}
+      isMutable={isMutable}
+      canReview={canReview}
+      canConfirm={canConfirm}
+      userId={userId}
+      canSelfApprove={canSelfApprove}
+      onSaved={async () => { setNotice(null); await load(); await onRefresh(); }}
+      onOpenFile={showPreview}
+      onAttachPrimaryReceipt={canMutateDraft ? (file) => attachPrimaryReceipt(file, detail.branchId) : undefined}
+      receiptUploading={receiptUploading}
+      dirtyRef={evidenceDirtyRef}
+    />
   );
   // A total that disagrees with its own receipt reaches the ledger only through a named decision:
   // Finance either edits the amount or records why the stored figure stands. Accepting is bound to
@@ -912,15 +945,15 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
             </div>
 
             {/* right pane: one continuous scroll column */}
-            <div className="min-h-0 min-w-0">
+            <div className="flex min-h-0 min-w-0 flex-col">
               {attachments.length === 0 && attachReceiptControl && (
-                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 bg-gray-50 px-5 py-3 lg:hidden">
+                <div className={cx('flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 bg-gray-50 px-5 py-3 lg:hidden', checkBillBlocked && 'order-2')}>
                   <span className="text-sm text-gray-500">{t('expenses.viewer_empty', locale)}</span>
                   {attachReceiptControl}
                 </div>
               )}
               {attachments.length > 0 && (
-                <div className="border-b border-gray-100 bg-gray-50 lg:hidden">
+                <div className={cx('border-b border-gray-100 bg-gray-50 lg:hidden', checkBillBlocked && 'order-2')}>
                   {attachments.map((attachment) => (
                     <button
                       key={attachment.id}
@@ -942,7 +975,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
                 </div>
               )}
 
-              <div className="space-y-4 p-4">
+              <div className={cx('space-y-4 p-4', checkBillBlocked && 'order-1')}>
                 {guided ? (
                   <>
                     <div className={cx('space-y-4', step === 'data' ? undefined : 'hidden')}>
@@ -993,11 +1026,13 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
             </div>
           </div>
 
-        {(modalFooter || showVoid || showDelete || duplicateResolution || confirmBlockers) && (
+        {checkBillSecondaryActions}
+
+        {((!checkBillBlocked && (modalFooter || confirmBlockers)) || showVoid || showDelete || duplicateResolution) && (
           <div className="mangmee-safe-bottom sticky bottom-0 z-10 border-t bg-white">
             {(showVoid || showDelete || duplicateResolution || confirmBlockers) && (
               <div className="space-y-2 px-4 py-3">
-              {canMutateDraft && classificationBlocked && <p className={warnNoteClass}>{t('expenses.non_expense_workflow_blocked', locale)}</p>}
+              {canMutateDraft && classificationBlocked && <p className={warnNoteClass}>{classificationBlockMessage}</p>}
               {canMutateDraft && detail.status === 'READY_FOR_CONFIRMATION' && isZeroAmount && <p className={warnNoteClass}>{t('expenses.zero_amount_warning', locale)}</p>}
               {canMutateDraft && detail.status === 'READY_FOR_CONFIRMATION' && hasDuplicates && <p className="text-xs font-semibold text-warning-700">{t('expenses.duplicate_action_required', locale)}</p>}
               {showVoid && (
@@ -1051,7 +1086,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
               )}
               </div>
             )}
-            {modalFooter && <div className="px-4 py-3">{modalFooter}</div>}
+            {!checkBillBlocked && modalFooter && <div className="px-4 py-3">{modalFooter}</div>}
           </div>
         )}
       </MangmeePage>

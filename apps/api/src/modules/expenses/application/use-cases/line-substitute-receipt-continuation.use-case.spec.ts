@@ -233,6 +233,39 @@ async function readyHarness(overrides: Parameters<typeof harness>[0] = {}) {
 }
 
 describe('LineSubstituteReceiptContinuationUseCase', () => {
+  it('starts a paid check-bill route on the same expense and removes only its classification blockers', async () => {
+    const h = harness({
+      expense: expense({
+        sourceDocumentType: 'NEEDS_REVIEW',
+        taxEvidenceStatus: 'NEEDS_REVIEW',
+        aiVerificationSummaryJson: {
+          status: 'NOT_EXPENSE_DOCUMENT',
+          classification: { documentKind: 'ORDER_OR_CHECK_BILL' },
+        },
+        vendorNameSnapshot: 'ร้านอาหารทดสอบ',
+        attachments: [{ id: 'att-check', status: 'ACTIVE', purpose: 'expense.receipt.primary' }],
+      }),
+    });
+    const started = await h.useCase.startFromCheckBill(ctx(), {
+      expenseId: 'expense-1', chatKeyHash: 'chat-hash', webBaseUrl: WEB_BASE,
+    });
+    assert.equal(started.pendingQuestion?.includes('จ่ายเงิน'), true);
+    assert.equal(h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.routeCheckBill, true);
+
+    const next = await h.useCase.execute(ctx(), {
+      messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
+    });
+    const codes = next.blockers.map((item) => item.code);
+    assert.equal(codes.includes('source_type_ineligible'), false);
+    assert.equal(codes.includes('classification_ineligible'), false);
+    assert.equal(codes.includes('document_kind_ineligible'), false);
+    assert.equal(codes.includes('tax_evidence_review_required'), false);
+    assert.equal(h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.acceptedValues.reasonCode, 'RECEIPT_UNAVAILABLE');
+
+    const prefill = await h.useCase.loadForWeb({ ...ctx(), authProvider: 'watchdog' }, 'expense-1', started.workflowId!);
+    assert.equal(prefill.routeCheckBill, true);
+  });
+
   it('returns every knowable blocker together and keeps absent policy as ready OWNER_SELF semantics', async () => {
     const h = harness();
     // Canonical explicit start (a paraphrase like "ทำใบทดแทน" would instead ask to confirm first).
