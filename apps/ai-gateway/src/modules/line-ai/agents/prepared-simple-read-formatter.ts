@@ -83,6 +83,43 @@ function sourceData(output: SpecialistOutput, tool: string): Record<string, unkn
 }
 
 /**
+ * A read tool may admit that its aggregation did not cover the whole period (a page cap, a partial
+ * roll-up). Those numbers UNDERSTATE the period, so a family that sees such a flag returns
+ * `unverified` and the lane answers with the honest terminal instead of a wrong total. Matched on the
+ * key's shape so a flag a tool adds later (`truncated`, `partial`, `capped`, …) still trips this.
+ */
+const INCOMPLETE_AGGREGATION_KEY = /truncat|partial|capped|incomplete/i;
+function aggregationIncomplete(data: Record<string, unknown>): boolean {
+  return Object.entries(data).some(([key, value]) => INCOMPLETE_AGGREGATION_KEY.test(key) && Boolean(value));
+}
+
+/** Money reaches these families in three shapes — a JS number carrying binary-float noise (33.33 + 66.67
+ *  → 100.00000000000001), a 4-decimal Decimal string ('2450.0000'), or an already-grouped string — so all
+ *  of them render at one satang precision (owner answer template 2026-08-26). A value that is not a
+ *  number at all is shown exactly as the tool sent it rather than guessed at. */
+function moneyText(value: string | number): string {
+  const amount = typeof value === 'number' ? value : Number(value.replace(/,/g, ''));
+  if (!Number.isFinite(amount)) return groupThousands(String(value));
+  return groupThousands(amount.toFixed(2));
+}
+
+/** Grouped count + its English noun, singular for exactly one (Thai counts need no such agreement). */
+function plural(count: number, word: string): string {
+  return `${groupThousands(String(count))} ${word}${count === 1 ? '' : 's'}`;
+}
+
+/** The specialist's permission-checked source: its reference, the `Source:` line, and the deep link that
+ *  is the answer's next action. Taken from the fact the tool grounded — never invented here. */
+function groundedSource(output: SpecialistOutput, english: boolean): { sourceRefs: SourceRef[]; webLinks: LineAiWebLink[]; sourceText: string } {
+  const sourceRef = output.facts.find((fact) => fact.sourceRef)?.sourceRef;
+  return {
+    sourceRefs: sourceRef ? [sourceRef] : [],
+    webLinks: sourceRef?.webPath ? [{ label: sourceRef.label, path: sourceRef.webPath }] : [],
+    sourceText: sourceRef ? (english ? `\nSource: ${sourceRef.label}` : `\nที่มา: ${sourceRef.label}`) : '',
+  };
+}
+
+/**
  * sales.get_sales_summary as a single revenue metric. Renders the total (grouped, honestly showing zero
  * as an explicit-empty period) plus the optional transaction count, with the specialist's permission-
  * checked source reference, the tool as-of, and the source link. Returns `unverified` if the total is
@@ -118,6 +155,212 @@ function formatSalesSummarySingleMetric(output: SpecialistOutput, ctx: PreparedF
 }
 
 /**
+ * F1 — `expense.list_recent` as a single spend metric ("สรุปค่าใช้จ่าย", current month by default).
+ * The tool returns `summary.totalAmount` (the money headline), `total` (the COUNTED record basis —
+ * rejected/voided documents are already excluded, `summary.cancelledCount` says how many), the effective
+ * `period`, and up to five raw records. The answer states the one grounded total with its record count,
+ * the excluded-cancelled condition, source, as-of and the expenses link — the records themselves are
+ * never dumped into the bubble. `truncated` (the tool's page cap) means the total understates the period,
+ * so the family returns `unverified` rather than answering with a number that is too small.
+ */
+function formatExpenseListRecentSingleMetric(output: SpecialistOutput, ctx: PreparedFormatContext): PreparedFormatResult {
+  const data = sourceData(output, 'expense.list_recent');
+  const summary = data?.['summary'];
+  if (!summary || typeof summary !== 'object' || Array.isArray(summary)) return { kind: 'unverified' };
+  const totals = summary as Record<string, unknown>;
+  const total = totals['totalAmount'];
+  if (typeof total !== 'number' && typeof total !== 'string') return { kind: 'unverified' };
+  if (data && aggregationIncomplete(data)) return { kind: 'unverified' };
+
+  const english = isEnglish(ctx);
+  const count = typeof data?.['total'] === 'number' ? data['total'] as number
+    : typeof totals['countedItems'] === 'number' ? totals['countedItems'] as number : undefined;
+  const cancelled = typeof totals['cancelledCount'] === 'number' ? totals['cancelledCount'] as number : 0;
+  const { sourceRefs, webLinks, sourceText } = groundedSource(output, english);
+
+  const label = english ? 'Expenses' : 'ค่าใช้จ่าย';
+  const amount = english ? `${moneyText(total)} THB` : `${moneyText(total)} บาท`;
+  const countText = count === undefined ? ''
+    : english ? ` (${plural(count, 'record')})` : ` (${groupThousands(String(count))} รายการ)`;
+  const cancelledText = cancelled > 0
+    ? (english ? `\nExcludes ${plural(cancelled, 'rejected or voided record')}`
+      : `\nไม่รวมรายการที่ยกเลิกหรือถูกปฏิเสธ ${groupThousands(String(cancelled))} รายการ`)
+    : '';
+
+  const replyText = `${label}: ${amount}${countText}${cancelledText}${periodLine(ctx.proposedInput, data, english)}${sourceText}${asOfLine(output.asOf, english)}`;
+  return { kind: 'answer', replyText, sourceRefs, webLinks };
+}
+
+/** Plain labels for the accounting document types the ERP issues; an unknown/legacy type keeps its raw
+ *  key (never a guessed label, never dropped — dropping a type would make the lines disagree with the
+ *  total). English humanizes the key itself so a second label map cannot drift from this one. */
+const ACCOUNTING_DOCUMENT_TYPE_TH: Record<string, string> = {
+  QUOTATION: 'ใบเสนอราคา', INVOICE: 'ใบแจ้งหนี้', BILLING_NOTE: 'ใบวางบิล', RECEIPT: 'ใบเสร็จรับเงิน',
+  TAX_INVOICE: 'ใบกำกับภาษี', CREDIT_NOTE: 'ใบลดหนี้', DEBIT_NOTE: 'ใบเพิ่มหนี้',
+};
+function documentTypeLabel(type: string, english: boolean): string {
+  if (english) return type.charAt(0) + type.slice(1).toLowerCase().replace(/_/g, ' ');
+  return ACCOUNTING_DOCUMENT_TYPE_TH[type] ?? type;
+}
+
+/** Enough document types to be useful in one LINE bubble; the rest are admitted by the "of N types" line. */
+const MAX_DOCUMENT_TYPE_LINES = 5;
+
+/**
+ * F2 — `accounting.get_summary` as a per-document-type list ("สรุปรายการเดือนนี้"). The tool returns
+ * `total` (the period's document count) and `byType[type] = { count, totalAmount }`; the answer states the
+ * overall count, then count + amount per type (most documents first), the period, source, as-of and link.
+ * There is NO overall amount in the tool result, so none is printed — the formatter never adds up money
+ * the tool did not total. Verification repeats the spec's G1 self-check on this side of the boundary:
+ * Σ `byType.count` must equal `total`, else the roll-up covered only part of the period. The tool now
+ * refuses that case itself (`unavailable` + `SUMMARY_COUNT_MISMATCH` / `SUMMARY_PERIOD_TOO_LARGE`, which
+ * never reaches a formatter), so this is defense in depth: a partial roll-up from any tool version yields
+ * `unverified` and the lane answers with the honest terminal instead of numbers that do not add up.
+ */
+function formatAccountingSummaryList(output: SpecialistOutput, ctx: PreparedFormatContext): PreparedFormatResult {
+  const data = sourceData(output, 'accounting.get_summary');
+  const total = data?.['total'];
+  const byType = data?.['byType'];
+  if (typeof total !== 'number' || !byType || typeof byType !== 'object' || Array.isArray(byType)) return { kind: 'unverified' };
+  if (data && aggregationIncomplete(data)) return { kind: 'unverified' };
+
+  const rows: Array<{ type: string; count: number; amount: string | number }> = [];
+  for (const [type, value] of Object.entries(byType as Record<string, unknown>)) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return { kind: 'unverified' };
+    const entry = value as Record<string, unknown>;
+    const amount = entry['totalAmount'];
+    if (typeof entry['count'] !== 'number' || (typeof amount !== 'number' && typeof amount !== 'string')) return { kind: 'unverified' };
+    rows.push({ type, count: entry['count'], amount });
+  }
+  // Spec G1 self-check: a per-type roll-up that does not account for every counted document is partial.
+  if (rows.reduce((sum, row) => sum + row.count, 0) !== total) return { kind: 'unverified' };
+
+  const english = isEnglish(ctx);
+  const { sourceRefs, webLinks, sourceText } = groundedSource(output, english);
+  rows.sort((a, b) => b.count - a.count || a.type.localeCompare(b.type));
+  const shown = rows.slice(0, MAX_DOCUMENT_TYPE_LINES);
+  const typeLines = shown.map((row) => {
+    const label = documentTypeLabel(row.type, english);
+    return english
+      ? `\n• ${label} ${plural(row.count, 'record')}, ${moneyText(row.amount)} THB`
+      : `\n• ${label} ${groupThousands(String(row.count))} รายการ ${moneyText(row.amount)} บาท`;
+  }).join('');
+  const moreText = rows.length > shown.length
+    ? (english ? `\nShowing ${shown.length} of ${rows.length} types` : `\nแสดง ${shown.length} จาก ${rows.length} ประเภท`)
+    : '';
+
+  const headline = english
+    ? `Accounting documents: ${plural(total, 'record')}`
+    : `เอกสารบัญชี: ${groupThousands(String(total))} รายการ`;
+  const replyText = `${headline}${typeLines}${moreText}${periodLine(ctx.proposedInput, data, english)}${sourceText}${asOfLine(output.asOf, english)}`;
+  return { kind: 'answer', replyText, sourceRefs, webLinks };
+}
+
+/** Thai month abbreviations, spelled out so the day phrase is identical in every runtime (a locale-driven
+ *  month name would drift with the host's ICU build, and a compiled answer must not). */
+const THAI_MONTH_ABBR = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+const CIVIL_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/** The tool's as-of instant read in the tool's OWN timezone: the civil day it lands on (so the answer can
+ *  say "today" only when the data really is today) and the wall-clock time the numbers stop at. Returns
+ *  undefined for a missing/unparseable as-of or an unusable timezone — the answer then omits the claim. */
+function asOfInZone(asOf: string | undefined, timeZone: unknown): { day: string; time: string } | undefined {
+  if (!asOf || typeof timeZone !== 'string') return undefined;
+  const at = new Date(asOf);
+  if (Number.isNaN(at.getTime())) return undefined;
+  try {
+    return {
+      day: at.toLocaleDateString('en-CA', { timeZone }),
+      time: at.toLocaleTimeString('en-GB', { timeZone, hour: '2-digit', minute: '2-digit' }),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/** Per-currency money rows (`{currency, count, total}`) rendered as one grounded amount each. Currencies
+ *  are NEVER added together; `undefined` means the rows are malformed, `''` that the tool reported none. */
+function moneyGroupsText(value: unknown, english: boolean): string | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const parts: string[] = [];
+  for (const row of value) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) return undefined;
+    const group = row as Record<string, unknown>;
+    const total = group['total'];
+    const currency = group['currency'];
+    if (typeof currency !== 'string' || (typeof total !== 'string' && typeof total !== 'number')) return undefined;
+    parts.push(`${moneyText(total)} ${!english && currency === 'THB' ? 'บาท' : currency}`);
+  }
+  return parts.join(' · ');
+}
+
+/**
+ * F3 — `expense.get_daily_closing` as one day's spend metric ("ค่าใช้จ่ายวันนี้"). Owner decision
+ * 2026-08-26 narrowed this question to the EXPENSE side only (no revenue tool exists yet), so the answer
+ * never speaks of money in, profit, or a bank balance. From the tool's real result it states the day, the
+ * occurred-today record count (`occurredToday.items.total`) and the per-currency totals it returned
+ * (`occurredToday.totals` / `.paid` / `.outstanding` — 4-decimal strings, one row per currency, never
+ * summed across currencies), the open evidence backlog, source, as-of, and the REQUIRED source-honesty
+ * line: these are entries recorded in the system, not bank movement (spec G5, §5-F3). "วันนี้" is claimed
+ * only when the tool's own as-of day equals the day it answered for.
+ */
+function formatExpenseDailyClosingSingleMetric(output: SpecialistOutput, ctx: PreparedFormatContext): PreparedFormatResult {
+  const data = sourceData(output, 'expense.get_daily_closing');
+  const day = data?.['date'];
+  if (typeof day !== 'string' || !CIVIL_DATE.test(day)) return { kind: 'unverified' };
+  // The validated proposed input names the day the user asked for; it must be the day the tool answered.
+  const requested = ctx.proposedInput?.['date'];
+  if (typeof requested === 'string' && requested !== day) return { kind: 'unverified' };
+  const occurred = data?.['occurredToday'];
+  if (!occurred || typeof occurred !== 'object' || Array.isArray(occurred)) return { kind: 'unverified' };
+  const today = occurred as Record<string, unknown>;
+  const items = today['items'];
+  const count = items && typeof items === 'object' && !Array.isArray(items)
+    ? (items as Record<string, unknown>)['total'] : undefined;
+  if (typeof count !== 'number') return { kind: 'unverified' };
+  const english = isEnglish(ctx);
+  const totals = moneyGroupsText(today['totals'], english);
+  const paid = moneyGroupsText(today['paid'], english);
+  const outstanding = moneyGroupsText(today['outstanding'], english);
+  if (totals === undefined || paid === undefined || outstanding === undefined) return { kind: 'unverified' };
+  if (data && aggregationIncomplete(data)) return { kind: 'unverified' };
+
+  const asOfHere = asOfInZone(output.asOf, data?.['timezone']);
+  const [, , month, dayOfMonth] = CIVIL_DATE.exec(day)!;
+  const dayPhrase = asOfHere?.day === day
+    ? (english ? `Today (${day})` : `วันนี้ (${Number(dayOfMonth)} ${THAI_MONTH_ABBR[Number(month) - 1]})`)
+    : (english ? `On ${day}` : `วันที่ ${day}`);
+
+  // Honest zero: a day with nothing recorded says so, and states no amount the tool did not return.
+  const headline = english
+    ? `${dayPhrase}: ${plural(count, 'expense record')}${totals ? `, total ${totals}` : ''}`
+    : `${dayPhrase} มีค่าใช้จ่าย ${groupThousands(String(count))} รายการ${totals ? ` รวม ${totals}` : ''}`;
+  const settledText = paid || outstanding
+    ? (english
+      ? `\n${[paid && `Paid ${paid}`, outstanding && `Unpaid ${outstanding}`].filter(Boolean).join(' · ')}`
+      : `\n${[paid && `จ่ายแล้ว ${paid}`, outstanding && `ยังไม่ได้จ่าย ${outstanding}`].filter(Boolean).join(' · ')}`)
+    : '';
+  // The evidence backlog the tool returns is every OPEN blocker, not only today's, so it is stated as a
+  // total rather than implied to belong to this day.
+  const blockers = data?.['evidenceBlockers'];
+  const blockerCount = blockers && typeof blockers === 'object' && !Array.isArray(blockers)
+    ? (blockers as Record<string, unknown>)['count'] : undefined;
+  const blockerText = typeof blockerCount === 'number' && blockerCount > 0
+    ? (english ? `\n${plural(blockerCount, 'record')} awaiting evidence review in total`
+      : `\nรอตรวจหลักฐานทั้งหมด ${groupThousands(String(blockerCount))} รายการ`)
+    : '';
+
+  const { sourceRefs, webLinks, sourceText } = groundedSource(output, english);
+  // REQUIRED (spec G5, §5-F3): recorded entries, never bank movement. There is no bank feed (P18).
+  const honestyText = english
+    ? `\n(From entries recorded in the system${asOfHere ? `, up to ${asOfHere.time}` : ''} — not bank money in/out)`
+    : `\n(จากรายการที่บันทึกในระบบ${asOfHere ? ` ถึง ${asOfHere.time}` : ''} — ไม่ใช่ยอดเงินเข้าออกธนาคาร)`;
+
+  const replyText = `${headline}${settledText}${blockerText}${sourceText}${asOfLine(output.asOf, english)}${honestyText}`;
+  return { kind: 'answer', replyText, sourceRefs, webLinks };
+}
+
+/**
  * Authoritative deterministic terminal copy for a prepared read that did NOT reach a verified success —
  * an unavailable/error/failed source, or a success the compiled formatter could not verify. It states an
  * honest outcome with NO fabricated facts, numbers, source, or completion, and instantiates no composer /
@@ -137,6 +380,9 @@ export function preparedTerminalReply(output: SpecialistOutput, ctx: PreparedFor
 const COMPILED_FORMATTERS: ReadonlyMap<string, (output: SpecialistOutput, ctx: PreparedFormatContext) => PreparedFormatResult> =
   new Map([
     [preparedFamilyKey('sales.get_sales_summary', 'single_metric'), formatSalesSummarySingleMetric],
+    [preparedFamilyKey('expense.list_recent', 'single_metric'), formatExpenseListRecentSingleMetric],
+    [preparedFamilyKey('accounting.get_summary', 'list'), formatAccountingSummaryList],
+    [preparedFamilyKey('expense.get_daily_closing', 'single_metric'), formatExpenseDailyClosingSingleMetric],
   ]);
 
 /** The exact set of families that have a compiled formatter (before operator narrowing). */
