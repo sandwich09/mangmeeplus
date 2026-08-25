@@ -413,6 +413,8 @@ jobs:
           psql -h 127.0.0.1 -U watchdog -d watchdog_recovery_ci -c 'CREATE DATABASE watchdog_step0_ci'
           pnpm --filter @watchdog-bms/api exec prisma migrate deploy
           pnpm --filter @watchdog-bms/api test:tax-identity-pg
+          SYSTEM_ADMIN_CUTOVER_TEST_DATABASE_URL="$DATABASE_URL" \
+            pnpm --filter @watchdog-bms/api exec tsx --test prisma/system-admin-cutover.pg.spec.ts
       - run: pnpm test
         if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
       # The LINE AI whole-chain feature specs (substitute-receipt continuation + siblings) are named
@@ -446,6 +448,7 @@ jobs:
           bash infra/prod-ecs-express/maintenance-preflight.spec.sh
           bash infra/prod-ecs-express/wait-production-maintenance-ingress-drain.spec.sh
           bash infra/prod-ecs-express/verify-production-maintenance.spec.sh
+          bash infra/prod-ecs-express/system-admin-cutover.spec.sh
           bash infra/security/validate-production-maintenance-release.spec.sh
           bash infra/security/sync-production-maintenance-release-pins.spec.sh
       - name: Test immutable LINE AI release identity
