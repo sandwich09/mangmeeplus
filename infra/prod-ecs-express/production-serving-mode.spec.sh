@@ -43,6 +43,42 @@ assert_rejected deploy-production-exact-greeting-not-activated \
   'LINE_AI_EXACT_GREETING_ENABLED=true is not activated for production yet' \
   env -i PATH="$PATH" DEPLOY_ENV=production PRODUCTION_SERVING_MODE=live \
     LINE_AI_EXACT_GREETING_ENABLED=true bash "$deploy" all
+assert_rejected deploy-invalid-loading-on-accept-boolean \
+  'LINE_AI_LOADING_ON_ACCEPT_ENABLED must be exactly true or false' \
+  env -i PATH="$PATH" DEPLOY_ENV=uat LINE_AI_LOADING_ON_ACCEPT_ENABLED=yes bash "$deploy" all
+assert_rejected deploy-production-loading-on-accept-not-activated \
+  'LINE_AI_LOADING_ON_ACCEPT_ENABLED=true is not activated for production yet' \
+  env -i PATH="$PATH" DEPLOY_ENV=production PRODUCTION_SERVING_MODE=live \
+    LINE_AI_LOADING_ON_ACCEPT_ENABLED=true bash "$deploy" all
+assert_rejected deploy-invalid-debounce-experiment-boolean \
+  'LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED must be exactly true or false' \
+  env -i PATH="$PATH" DEPLOY_ENV=uat LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED=yes bash "$deploy" all
+assert_rejected deploy-production-debounce-experiment-not-activated \
+  'LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED=true is not activated for production yet' \
+  env -i PATH="$PATH" DEPLOY_ENV=production PRODUCTION_SERVING_MODE=live \
+    LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED=true bash "$deploy" all
+assert_rejected deploy-invalid-fused-shadow-boolean \
+  'LINE_AI_FUSED_PLAN_SHADOW_ENABLED must be exactly true or false' \
+  env -i PATH="$PATH" DEPLOY_ENV=uat LINE_AI_FUSED_PLAN_SHADOW_ENABLED=yes bash "$deploy" all
+assert_rejected deploy-production-fused-shadow-not-activated \
+  'LINE_AI_FUSED_PLAN_SHADOW_ENABLED=true is not activated for production yet' \
+  env -i PATH="$PATH" DEPLOY_ENV=production PRODUCTION_SERVING_MODE=live \
+    LINE_AI_FUSED_PLAN_SHADOW_ENABLED=true bash "$deploy" all
+assert_rejected deploy-invalid-prepared-simple-read-boolean \
+  'LINE_AI_PREPARED_SIMPLE_READ_ENABLED must be exactly true or false' \
+  env -i PATH="$PATH" DEPLOY_ENV=uat LINE_AI_PREPARED_SIMPLE_READ_ENABLED=yes bash "$deploy" all
+assert_rejected deploy-production-prepared-simple-read-not-activated \
+  'LINE_AI_PREPARED_SIMPLE_READ_ENABLED=true is not activated for production yet' \
+  env -i PATH="$PATH" DEPLOY_ENV=production PRODUCTION_SERVING_MODE=live \
+    LINE_AI_PREPARED_SIMPLE_READ_ENABLED=true bash "$deploy" all
+assert_rejected deploy-invalid-deterministic-families-charset \
+  'LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES must be a comma-separated allowlist of' \
+  env -i PATH="$PATH" DEPLOY_ENV=uat \
+    LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES='sales.get_sales_summary::single_metric bad' bash "$deploy" all
+assert_rejected deploy-production-deterministic-families-not-activated \
+  'LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES is not activated for production yet' \
+  env -i PATH="$PATH" DEPLOY_ENV=production PRODUCTION_SERVING_MODE=live \
+    LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES='sales.get_sales_summary::single_metric' bash "$deploy" all
 assert_rejected deploy-bootstrap-flag-missing \
   'maintenance_only requires an immutable quiesced all-target bootstrap' \
   env -i PATH="$PATH" DEPLOY_ENV=production PRODUCTION_SERVING_MODE=maintenance_only \
