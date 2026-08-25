@@ -97,8 +97,8 @@ Non-goals (มี spec เดิมรองรับหรือถูกถอ
 | คำถาม | Tool | หลักฐานและช่องว่าง |
 |---|---|---|
 | สรุปค่าใช้จ่าย | `expense.list_recent` — "expense totals and bounded records for the **current month by default** or an explicit date range" + `fromDate/toDate/branchId` | `packages/contracts/src/ai-tools.ts:349-361` — **ตรงคำถามพอดี ไม่ต้องแก้ tool** |
-| สรุปรายการเดือนนี้ | `accounting.get_summary` — counts/totals ของเอกสารบัญชีต่อ documentType ตามช่วงวันที่ | registry `ai-tools.ts:582-594`; handler `apps/api/src/modules/line-ai/application/use-cases/erp-business-tools.use-case.ts:42-70` — **BUG-GAP: รวมยอดจาก `pageSize: 200` หน้าแรกเท่านั้น** เดือนที่เอกสารเกิน 200 ใบจะได้ยอดผิดแบบเงียบ |
-| เงินเข้า–ออกวันนี้ | **ไม่มี tool เดียวที่ตอบได้** — `ledger.get_financial_summary` = net profit/assets (`ai-tools.ts:337-347`); `dashboard.get_business_health_summary` ไม่มี field เงินเข้า/ออก (grep โมดูล dashboard-notifications ไม่พบ moneyIn/cashIn/inflow); `expense.get_daily_closing` ครอบเฉพาะฝั่งค่าใช้จ่ายวันเดียว (`ai-tools.ts:377-390`); prepared lane ยิงได้ **หนึ่ง call เท่านั้น** จึงประกอบสอง tool ไม่ได้ | ต้องเพิ่ม read tool ใหม่ (ดู §5 F3) |
+| สรุปรายการเดือนนี้ | `accounting.get_summary` — counts/totals ของเอกสารบัญชีต่อ documentType ตามช่วงวันที่ | registry `ai-tools.ts:582-594`; handler `apps/api/src/modules/line-ai/application/use-cases/erp-business-tools.use-case.ts` — BUG-GAP เดิม: รวมยอดจากหน้าแรกเดียว (repository clamp ที่ 100 ใบ) → **แก้แล้ว 2026-08-26 ดู G1** |
+| ค่าใช้จ่ายวันนี้ (F3 นิยามใหม่ 2026-08-26; เดิม "เงินเข้า–ออกวันนี้") | `expense.get_daily_closing` ครอบฝั่งค่าใช้จ่ายวันเดียวพอดี (`ai-tools.ts:377-390`) — **ใช้ tool เดิมได้เลย**; ส่วน "เงินเข้า" ไม่มี tool เดียวตอบได้ (`ledger.get_financial_summary` = net profit/assets; dashboard ไม่มี field เงินเข้า/ออก; prepared lane ยิงได้หนึ่ง call) จึงเลื่อนไปหลังฝั่งรายรับเปิด (P26) | F3 ทำได้ทันที (ดู §5 F3); revenue family = งานอนาคต |
 
 ## 3. Requirements — S1: AI แยกหมวดหมู่รายจ่าย
 
@@ -134,11 +134,14 @@ Non-goals (มี spec เดิมรองรับหรือถูกถอ
 
 - **เงื่อนไขบังคับก่อนเปิด:** ปิด BUG-GAP ยอดจาก 200 ใบแรก (2.3) — แก้ handler ให้รวมยอดครบทุกหน้า (aggregate query หรือ loop จน `page` หมด โดยมี bound ป้องกันงานหนักเกิน) พร้อม regression test เดือนที่เอกสาร > 200 ใบ; ระหว่างยังไม่แก้ ห้ามเปิด family นี้
 - ขอบเขตคำว่า "รายการ": ตีความร่วมกับ Owner ตอนทำ golden fixtures (เอกสารบัญชีต่อประเภท ตาม tool ที่มี); formatter แสดง count+total ต่อ documentType + ช่วงเวลา + ลิงก์
-- ถ้า Owner ต้องการรวมมุมมองเงินเข้า–ออกของเดือน ให้ชี้ไปใช้ F3 ด้วยช่วงเดือนแทน ไม่ขยาย F2 เกิน tool จริง
+- มุมมองเงินเข้า–ออกของเดือนยังไม่มี family รองรับ (F3 นิยามใหม่เป็นค่าใช้จ่ายรายวัน; ฝั่งรายรับหลัง P26) — คำถามลักษณะนั้นให้ fallback ไป full path ตามปกติ ไม่ขยาย F2 เกิน tool จริง
 
-### F3 — เงินเข้า–ออกวันนี้ (tool ใหม่ + `::single_metric`)
+### F3 — ค่าใช้จ่ายวันนี้ (`expense.get_daily_closing`) — นิยามใหม่ตามการตัดสินใจ Owner 2026-08-26
 
-- **เพิ่ม read tool ใหม่** ตาม pattern class เดิมใน `erp-business-tools.use-case.ts` + registry entry ใน `ai-tools.ts`: ชื่อเสนอ `accounting.get_cash_movement_summary`, `optionalInputFields: ['fromDate','toDate']` (default = วันนี้), permission ตามกลุ่ม accounting/expense view ที่มีอยู่ (สรุปจากข้อมูลที่ผู้ถามมีสิทธิ์เห็นเท่านั้น — กติกา union ข้ามสิทธิ์ห้ามเกิด)
+การตัดสินใจ Owner: ฝั่งรายรับยังไม่ได้ทำ → F3 เป็น**รายงานค่าใช้จ่ายรายวัน**ก่อน; family "เงินเข้าวันนี้/เงินเข้า–ออก" เลื่อนไปรอบหลัง P26 พร้อมนิยามที่นักบัญชีลงนาม (ข้อกำหนดเดิมของหัวข้อนี้ย้ายไปกับ family นั้น)
+
+- **ใช้ tool เดิม `expense.get_daily_closing`** (`ai-tools.ts:377-390`) — ไม่สร้าง tool ใหม่ ไม่แตะ DI; tool จำกัดหนึ่งวันโดย design ("Do not use for week, month, or date-range totals") ตรงกับคำถาม
+- Formatter: จำนวนรายการ + ยอดตามที่ tool คืน (จ่ายแล้ว/ค้างจ่าย/รอตรวจ) + วันที่ + ลิงก์ + บรรทัดบังคับ "จากรายการที่บันทึกในระบบ — ไม่ใช่ยอดเงินเข้าออกธนาคาร" (G5); ห้าม formatter บวกยอดที่ tool ไม่ได้รวมมา; template และ phrasing อยู่ใน [user-questions-catalog](mangmee-brain-user-questions-catalog.md) §2-Q3
 - นิยามตัวเลข (ต้องให้นักบัญชี/Owner ลงนามก่อน implement — สอดคล้อง REVENUE-03 "เงินเข้าไม่เท่ากับรายได้"):
   - เงินเข้า = ยอดรับชำระที่บันทึกในระบบ (AccountingPayment ฝั่งรับ) ในช่วงเวลา
   - เงินออก = ยอดค่าใช้จ่ายที่จ่ายแล้ว (paid) ที่บันทึกในระบบ ในช่วงเวลา
@@ -160,7 +163,7 @@ Non-goals (มี spec เดิมรองรับหรือถูกถอ
 
 | # | Gap | Impact ถ้าไม่ปิด | การปิด + slice |
 |---|---|---|---|
-| G1 | `accounting.get_summary` รวมยอด `byType` จาก 200 ใบแรกเท่านั้น (`erp-business-tools.use-case.ts:53-62`; `page.total` ถูกต้องอยู่แล้ว — ที่ truncate คือ count/totalAmount ต่อประเภท) | เดือนเอกสารเยอะ → AI ตอบยอดผิดเงียบ ๆ = ทำลายความเชื่อมั่น (เป้า 1) | แก้ aggregation ของ `byType` ให้ครบ + self-check `page.total != Σ byType.count` เป็น guard + regression >200 ใบ ก่อนเปิด F2 |
+| G1 | **ปิดแล้ว 2026-08-26** — บั๊กจริงแรงกว่าที่บันทึก: repository clamp `pageSize` ที่ **100** (`prisma-accounting.repository.ts:516`) จึง truncate ที่ 100 ใบไม่ใช่ 200; แก้เป็น bounded page walk (สูงสุด 50 หน้า) + self-check `Σ byType.count = total` → `SUMMARY_COUNT_MISMATCH` + เกิน bound → `SUMMARY_PERIOD_TOO_LARGE` (ไม่คืนตัวเลขบางส่วน) + regression 250 ใบ; พ่วงแก้ pagination instability ด้วย `id` tiebreaker ใน orderBy (OFFSET บน key ไม่ unique ซ้ำ/ข้ามแถวได้และ self-check จับไม่ได้) | เดือนเอกสารเยอะ → AI ตอบยอดผิดเงียบ ๆ (เป้า 1) | เหลือ: วัด latency hosted ของ walk (G10) เมื่อมี traffic |
 | G2 | Security suite 23 เคสไม่มีตัวรัน | เปิด lane โดยไม่มีหลักฐาน security = เสี่ยง cross-tenant/forged plan | S2-R1/R2 ก่อน S2-R3 เสมอ |
 | G3 | เกณฑ์ 0.85 ไม่เคย calibrate | auto-fill ผิดบ่อยโดยไม่รู้ หรือเข้มเกินจน auto-fill แทบไม่ทำงาน | S1-R2 baseline → S1-R3 calibrate |
 | G4 | ไม่มี override telemetry | ตรวจ drift ความแม่นหมวดใน production ไม่ได้ | S1-R5 |
@@ -237,7 +240,7 @@ pnpm exec tsx --test scripts/line-ai-latency-autonomy.corpus.spec.ts
 
 ## 10. สิ่งที่ Owner/ผู้เชี่ยวชาญต้องลงนามก่อน implement ส่วนที่เกี่ยว
 
-1. นิยาม "เงินเข้า/เงินออก" ของ F3 (นักบัญชี + Owner) — ก่อนเขียน tool ใหม่
+1. ~~นิยาม "เงินเข้า/เงินออก" ของ F3~~ — เลื่อนไปกับ revenue family หลัง P26 (Owner 2026-08-26: F3 เป็นฝั่งค่าใช้จ่ายก่อน จึงไม่ต้องลงนามในรอบนี้)
 2. ขอบเขต "รายการ" ของ F2 (Owner) — ตอนทำ golden fixtures
 3. เฉลย golden set หมวดรายจ่าย 30 ใบ (Owner หรือนักบัญชี — คำถามข้อ 20 ของแผน)
 4. ชุด fixtures ที่ sanitize แล้วได้รับอนุญาตให้อยู่ใน repo (G7)
