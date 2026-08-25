@@ -369,7 +369,7 @@ mutate_facts active-without-enhanced-findings '.artifactIntegrity.services[0].sc
 mutate_facts nonterminal-scan-provider '.artifactIntegrity.services[0].scanProviderStatus="PENDING"'
 mutate_facts mismatched-scan-counts '.artifactIntegrity.services[0].scanSeverityCounts.HIGH=1'
 mutate_facts unknown-scan-severity '.artifactIntegrity.services[0].scanSeverityCounts.UNKNOWN=1'
-waiver='{"id":"AWS-ECR-CVE-2026-14456-OPENSSL-PRE35-MAPPING","cve":"CVE-2026-14456","severity":"HIGH","packageName":"openssl","packageVersion":"3.0.20-1~deb12u2","scannedDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","reachabilityEvidence":"Provider states the issue begins in OpenSSL 3.5 QUIC server; the scanned package is 3.0.20.","compensatingControl":"Exact CVE, severity, package, version and provider statement match; all mismatches remain blocking.","approvedBy":"CHAT-OWNER-DIRECTIVE-2026-08-17-BYPASS-ALWAYS","expiresAtEpoch":1787616000,"providerStatement":"The issue is present since OpenSSL 3.5 when the QUIC server implementation was added."}'
+waiver='{"id":"AWS-ECR-CVE-2026-14456-OPENSSL-PRE35-MAPPING","cve":"CVE-2026-14456","severity":"HIGH","packageName":"openssl","packageVersion":"3.0.20-1~deb12u2","scannedDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","reachabilityEvidence":"Provider states the issue begins in OpenSSL 3.5 QUIC server; the scanned package is 3.0.20.","compensatingControl":"Exact CVE, severity, package, version and provider statement match; all mismatches remain blocking.","approvedBy":"CHAT-OWNER-DIRECTIVE-2026-08-25-EXTEND-TO-2026-08-27","expiresAtEpoch":1787788800,"providerStatement":"The issue is present since OpenSSL 3.5 when the QUIC server implementation was added."}'
 waived_facts="$fixture/waived-scan.json"
 jq -cS --argjson waiver "$waiver" \
   '.artifactIntegrity.services[0].scanSeverityCounts.HIGH=1
@@ -382,7 +382,7 @@ mutate_facts forged-scan-waiver '.artifactIntegrity.services[0].scanSeverityCoun
     packageName:"openssl",packageVersion:"3.5.0",scannedDigest:.artifactIntegrity.services[0].scanResolvedDigest,
     reachabilityEvidence:"Provider states the issue begins in OpenSSL 3.5 QUIC server; the scanned package is 3.0.20.",
     compensatingControl:"Exact CVE, severity, package, version and provider statement match; all mismatches remain blocking.",
-    approvedBy:"CHAT-OWNER-DIRECTIVE-2026-08-17-BYPASS-ALWAYS",expiresAtEpoch:1787616000,
+    approvedBy:"CHAT-OWNER-DIRECTIVE-2026-08-25-EXTEND-TO-2026-08-27",expiresAtEpoch:1787788800,
     providerStatement:"The issue is present since OpenSSL 3.5 when the QUIC server implementation was added."}]'
 mutate_facts runtime-rds-single-az '.runtimeSecurityBaseline.rds.multiAZ=false'
 mutate_facts runtime-redis-single-node '.runtimeSecurityBaseline.redis.nodeCount=1'

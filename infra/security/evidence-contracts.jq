@@ -1291,8 +1291,8 @@ def e0_ecr_cve_2026_14456_waiver($digest):
     == "Provider states the issue begins in OpenSSL 3.5 QUIC server; the scanned package is 3.0.20."
   and .compensatingControl
     == "Exact CVE, severity, package, version and provider statement match; all mismatches remain blocking."
-  and .approvedBy == "CHAT-OWNER-DIRECTIVE-2026-08-17-BYPASS-ALWAYS"
-  and .expiresAtEpoch == 1787616000
+  and .approvedBy == "CHAT-OWNER-DIRECTIVE-2026-08-25-EXTEND-TO-2026-08-27"
+  and .expiresAtEpoch == 1787788800
   and .providerStatement
     == "The issue is present since OpenSSL 3.5 when the QUIC server implementation was added.";
 
