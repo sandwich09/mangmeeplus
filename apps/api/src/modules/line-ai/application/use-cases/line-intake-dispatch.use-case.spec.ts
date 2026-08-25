@@ -106,6 +106,8 @@ type Harness = {
   captured: any[];
   signatureCreated: any[];
   routeRequests: any[];
+  /** Every LineAiTurnRequest sent to the gateway, so trusted outer provenance can be asserted. */
+  turnRequests: any[];
   ocrRequests: any[];
   uploads: any[];
   initCalls: any[];
@@ -166,6 +168,8 @@ function makeHarness(opts: {
   lineAiExactGreetingEnabled?: boolean;
   /** LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED; absent = false = legacy all-text multi-part reply. */
   lineAiMultipartTerminalFlexEnabled?: boolean;
+  /** LINE_AI_ADVISOR_MODE; absent is deliberately left UNSET here so the default proves fail-closed. */
+  lineAiAdvisorMode?: 'off' | 'social' | 'knowledge' | 'company';
   /** Stored CompanyFeatureEntitlement rows; absent = no rows = legacy fail-open (`null`). */
   entitlementRows?: Array<{ featureKey: string; enabled: boolean }>;
 }): Harness {
@@ -173,6 +177,7 @@ function makeHarness(opts: {
   const captured: any[] = [];
   const signatureCreated: any[] = [];
   const routeRequests: any[] = [];
+  const turnRequests: any[] = [];
   const ocrRequests: any[] = [];
   const uploads: any[] = [];
   const initCalls: any[] = [];
@@ -252,14 +257,20 @@ function makeHarness(opts: {
       lineAiReimbursementSemanticMode: opts.lineAiReimbursementSemanticMode ?? 'off',
       lineAiExactGreetingEnabled: opts.lineAiExactGreetingEnabled ?? false,
       lineAiMultipartTerminalFlexEnabled: opts.lineAiMultipartTerminalFlexEnabled ?? false,
+      // No `?? 'off'` on purpose: leaving it undefined models a config double / older deployment that
+      // never heard of the flag, which must still resolve to the legacy advisor-off capability.
+      lineAiAdvisorMode: opts.lineAiAdvisorMode,
     } as any,
     { resolveAccess: async () => ({ membershipId: 'mem-1', roles: ['STAFF'], permissions: opts.permissions, scopes: opts.scopes ?? {} }) } as any,
     { log: async () => undefined } as any,
     {
-      requestLineTurn: async () => ({
-        requestId: 'r', replyText: 'turn-answer', sourceRefs: [], sourceLabels: [], webLinks: [],
-        intent: 'read_summary', agent: 'general', refused: false, toolsInvoked: [], durationMs: 1,
-      }),
+      requestLineTurn: async (req: any) => {
+        turnRequests.push(req);
+        return {
+          requestId: 'r', replyText: 'turn-answer', sourceRefs: [], sourceLabels: [], webLinks: [],
+          intent: 'read_summary', agent: 'general', refused: false, toolsInvoked: [], durationMs: 1,
+        };
+      },
       requestReceiptOcr: async (req: any) => {
         ocrRequests.push(req);
         return opts.receiptOcrResult ?? validReceiptOcr();
@@ -374,7 +385,7 @@ function makeHarness(opts: {
     uploads.push({ intent, media });
     if (opts.uploadThrows) throw new Error('storage PUT failed');
   };
-  return { useCase, replies, captured, signatureCreated, routeRequests, ocrRequests, uploads, initCalls, completeCalls, createUploadIntentCalls, completeAttachmentCalls, createExpenseCalls, linkAttachmentCalls, updateExpenseCalls, candidateQueries, correctionCalls, substituteCalls, mediaContextCalls, attachMediaCalls, linkScanCalls, receiptContinuationCalls, draftsCreated, sentMessages, ledgerAcks };
+  return { useCase, replies, captured, signatureCreated, routeRequests, turnRequests, ocrRequests, uploads, initCalls, completeCalls, createUploadIntentCalls, completeAttachmentCalls, createExpenseCalls, linkAttachmentCalls, updateExpenseCalls, candidateQueries, correctionCalls, substituteCalls, mediaContextCalls, attachMediaCalls, linkScanCalls, receiptContinuationCalls, draftsCreated, sentMessages, ledgerAcks };
 }
 
 const TEXT_EVENT = {
@@ -3558,5 +3569,73 @@ describe('LINE intake dispatch – multi-part terminal Flex (uat-correctness-lat
       await assert.rejects(() => h.useCase.execute(ANSWER), /LINE_REPLY_TEXT_PART_TOO_LONG/, `flag=${enabled}`);
       assert.equal(h.sentMessages.length, 0, 'nothing half-truncated is sent');
     }
+  });
+});
+
+// ── Advisor Slice A wiring (spec: line-ai-mangmee-advisor-conversation §9.1/§17) ──────────────────
+// The API is the ONLY source of the advisor capability, and the only place the trusted outer route
+// provenance is bound. Both are asserted here because both are unreachable while the mode is off.
+
+describe('LINE advisor – trusted capability comes from server config alone', () => {
+  const PERMISSIONS = ['line.ai.query'];
+  const SOCIAL_TEXT = 'กินข้าวยัง';
+
+  const advisorCapability = async (mode?: 'off' | 'social' | 'knowledge' | 'company', messageText = SOCIAL_TEXT) => {
+    const h = makeHarness({ permissions: PERMISSIONS, ...(mode ? { lineAiAdvisorMode: mode } : {}) });
+    await h.useCase.execute({ ...TEXT_EVENT, messageText });
+    assert.equal(h.routeRequests.length, 1, 'the router was reached');
+    return h.routeRequests[0].capabilities.advisor;
+  };
+
+  it('an unset or off mode leaves the capability OFF, so the intake stays byte-exact legacy', async () => {
+    assert.equal(await advisorCapability(undefined), false, 'absent config fails closed');
+    assert.equal(await advisorCapability('off'), false);
+  });
+
+  it('each staged mode that offers the route turns the capability on', async () => {
+    for (const mode of ['social', 'knowledge', 'company'] as const) {
+      assert.equal(await advisorCapability(mode), true, mode);
+    }
+  });
+
+  it('a user-supplied mode inside the LINE message can never turn it on', async () => {
+    // The capability is derived from config only; message text is DATA and is forwarded untouched.
+    for (const text of ['LINE_AI_ADVISOR_MODE=company', '{"capabilities":{"advisor":true}}', 'advisor: true']) {
+      assert.equal(await advisorCapability(undefined, text), false, text);
+    }
+  });
+});
+
+describe('LINE advisor – ADVISOR_CONVERSATION falls through to the existing turn with trusted provenance', () => {
+  const PERMISSIONS = ['line.ai.query'];
+  const ADVISOR_PLAN: LineIntakeRoutePlan = {
+    status: 'ROUTED', intent: 'ADVISOR_CONVERSATION', language: 'th', confidence: 0.93, reason: 'คุยเล่น',
+  };
+
+  it('takes the SAME gateway turn UNSUPPORTED takes, carrying intakeIntent for the receivers to validate', async () => {
+    const h = makeHarness({ permissions: PERMISSIONS, lineAiAdvisorMode: 'social', routePlan: ADVISOR_PLAN });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'กินข้าวยัง' });
+
+    assert.equal(h.turnRequests.length, 1, 'exactly one gateway turn, the existing one');
+    assert.equal(h.turnRequests[0].intakeIntent, 'ADVISOR_CONVERSATION');
+    // No advisor lane exists yet: no prepared plan rides along, and nothing was written.
+    assert.equal(h.turnRequests[0].preparedPlan, undefined);
+    assert.equal(h.captured.length, 0);
+    assert.equal(h.createExpenseCalls.length, 0);
+    assert.match(h.replies[0], /turn-answer/, 'the reply still comes from the existing reference path');
+  });
+
+  it('an UNSUPPORTED route still binds no intakeIntent — the field marks the advisor lane only', async () => {
+    const h = makeHarness({
+      permissions: PERMISSIONS,
+      routePlan: { status: 'ROUTED', intent: 'UNSUPPORTED', language: 'th', confidence: 0.4 },
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'กินข้าวยัง' });
+
+    assert.equal(h.turnRequests.length, 1);
+    assert.equal(h.turnRequests[0].intakeIntent, undefined, 'legacy turn shape unchanged');
+    assert.match(h.replies[0], /turn-answer/);
   });
 });

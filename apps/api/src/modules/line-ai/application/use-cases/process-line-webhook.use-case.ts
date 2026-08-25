@@ -1182,6 +1182,13 @@ export class ProcessLineWebhookUseCase {
           // clarify_only/handoff only — 'shadow' is inert like 'off' (the router is never offered the route).
           reimbursementSemantic: this.config.lineAiReimbursementSemanticMode === 'clarify_only'
             || this.config.lineAiReimbursementSemanticMode === 'handoff',
+          // Advisor staged capability (advisor spec §17): taken ONLY from server config, never from a
+          // message, a client field or a user-supplied company id. The stages are cumulative, so each
+          // one that offers the route is listed POSITIVELY — an absent or unrecognised value therefore
+          // fails closed to legacy rather than switching the route on. Slice A builds 'social'.
+          advisor: this.config.lineAiAdvisorMode === 'social'
+            || this.config.lineAiAdvisorMode === 'knowledge'
+            || this.config.lineAiAdvisorMode === 'company',
         },
         permissions: input.permissions,
         activeCategories,
@@ -2582,6 +2589,15 @@ export class ProcessLineWebhookUseCase {
             preparedPlan: routePlan.preparedPlan,
             ...(asIntakeRouteIntent(routePlan.intent) ? { intakeIntent: asIntakeRouteIntent(routePlan.intent) } : {}),
           }
+        : {}),
+      // Advisor spec §9.1: an ADVISOR_CONVERSATION route whose direct answer is off, discarded or
+      // never proposed falls through to the SAME gateway turn every UNSUPPORTED turn already takes —
+      // it just carries the trusted outer provenance so each receiver (gateway turn, AgentCore
+      // runtime) validates membership and can tell the lane apart in telemetry. The social envelope
+      // carries no preparedPlan, so this binding is what makes the provenance survive. Unreachable
+      // while LINE_AI_ADVISOR_MODE='off': the router is never offered the route.
+      ...(routePlan.status === 'ROUTED' && routePlan.intent === 'ADVISOR_CONVERSATION'
+        ? { intakeIntent: 'ADVISOR_CONVERSATION' as const }
         : {}),
     };
 

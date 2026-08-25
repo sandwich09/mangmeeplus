@@ -1117,3 +1117,167 @@ describe('LINE intake router – substitute-receipt semantic route', () => {
     assert.ok(plan.clarifyQuestion && plan.clarifyQuestion.length > 0);
   });
 });
+
+// ── Advisor conversation, Slice A scaffolding (spec: line-ai-mangmee-advisor-conversation §6/§9/§9.1) ──
+// Everything here is reachable ONLY through the trusted `advisor` capability, which the API turns on
+// solely from LINE_AI_ADVISOR_MODE (default 'off'). With it off the prompt, the payload, the token
+// budget and the parser must be byte- and cost-identical to today.
+
+describe('LINE intake router – advisor route is invisible while the capability is off', () => {
+  const intake = (extra: Record<string, unknown> = {}) => ({
+    requestId: 'r', companyId: 'c', userId: 'u', locale: 'th-TH', messageText: 'กินข้าวยัง', permissions: [], ...extra,
+  } as any);
+  const routerReturning = (body: Record<string, unknown>, capture?: (input: ProviderInput) => void) => new IntentRouterAgent({
+    generateText: async (input: ProviderInput) => { capture?.(input); return { ok: true as const, text: JSON.stringify(body) }; },
+  } as any);
+  const ADVISOR_MARKERS = ['ADVISOR_CONVERSATION', 'advisorAnswer', 'Advisor answer'];
+
+  it('the default-off prompt carries NONE of the advisor markers', () => {
+    const base = intakeRouterSystemPrompt();
+    for (const marker of ADVISOR_MARKERS) {
+      assert.equal(base.includes(marker), false, `default-off must not contain ${marker}`);
+    }
+    assert.equal(LINE_INTAKE_ROUTER_SYSTEM_PROMPT, base, 'legacy constant untouched');
+  });
+
+  it('advisor appends ONLY its own section, and never the fused or substitute ones', () => {
+    const base = intakeRouterSystemPrompt();
+    const advisor = intakeRouterSystemPrompt({ advisor: true });
+    for (const marker of ADVISOR_MARKERS) assert.ok(advisor.includes(marker), `advisor must contain ${marker}`);
+    for (const marker of ['Fused prepared plan', 'preparedPlan', 'SUBSTITUTE_RECEIPT_CONTINUATION', 'substituteContext']) {
+      assert.equal(advisor.includes(marker), false, `advisor must not contain ${marker}`);
+    }
+    assert.ok(advisor.length > base.length, 'advisor only adds bytes');
+    // Strictly additive: turning fused on beside advisor still yields both sections and nothing else.
+    const both = intakeRouterSystemPrompt({ advisor: true, fusedPlan: true });
+    assert.ok(both.includes('Advisor answer') && both.includes('Fused prepared plan'));
+  });
+
+  it('routeIntake with advisor off keeps the legacy seam: no catalog prefix, 1000 tokens, legacy prompt', async () => {
+    let seen: ProviderInput | undefined;
+    const router = routerReturning({ intent: 'UNSUPPORTED', language: 'th', confidence: 0.9, reason: 'x' }, (input) => { seen = input; });
+    await router.routeIntake(intake());
+    assert.equal(seen!.systemPrompt, intakeRouterSystemPrompt(), 'byte-exact legacy prompt');
+    assert.equal(seen!.cacheableContext, undefined, 'no extra prefix, so no extra cost');
+    assert.equal(seen!.maxTokens, 1000, 'legacy token budget unchanged');
+  });
+
+  it('a model that returns the unoffered ADVISOR_CONVERSATION route FAILS CLOSED to UNAVAILABLE', async () => {
+    // The route was never in the enum the prompt offered, so it is invalid output — not a route to
+    // hand to a dispatcher that has no branch for it.
+    const plan = await routerReturning({ intent: 'ADVISOR_CONVERSATION', language: 'th', confidence: 0.95 }).routeIntake(intake());
+    assert.equal(plan.status, 'UNAVAILABLE');
+    assert.equal(plan.intent, 'UNSUPPORTED');
+    assert.equal(plan.errorCode, 'ROUTER_JSON_PARSE_FAILED');
+  });
+
+  it('an advisorAnswer sent while the capability is off is ignored entirely', async () => {
+    const plan = await routerReturning({
+      intent: 'UNSUPPORTED', language: 'th', confidence: 0.9,
+      advisorAnswer: { version: 1, mode: 'SOCIAL_CHAT', confidence: 0.99, needsTools: false, answerText: 'สวัสดีค่ะ' },
+    }).routeIntake(intake());
+    assert.equal(plan.intent, 'UNSUPPORTED');
+    assert.equal(plan.advisorAnswer, undefined);
+  });
+
+  it('a truthy NON-boolean advisor capability cannot coerce the section on', async () => {
+    for (const truthy of [1, '1', 'true', {}, [], [true]] as unknown[]) {
+      let seen: ProviderInput | undefined;
+      const router = routerReturning({ intent: 'UNSUPPORTED', language: 'th', confidence: 0.9 }, (input) => { seen = input; });
+      await router.routeIntake(intake({ capabilities: { advisor: truthy } }));
+      assert.equal(seen!.systemPrompt, intakeRouterSystemPrompt(), String(truthy));
+      assert.equal(seen!.maxTokens, 1000, String(truthy));
+    }
+  });
+});
+
+describe('LINE intake router – advisor route under the trusted capability', () => {
+  const P = intakeRouterSystemPrompt({ advisor: true });
+  const intake = (extra: Record<string, unknown> = {}) => ({
+    requestId: 'r', companyId: 'c', userId: 'u', locale: 'th-TH', messageText: 'กินข้าวยัง',
+    permissions: [], capabilities: { advisor: true }, ...extra,
+  } as any);
+  const routerReturning = (body: Record<string, unknown>, capture?: (input: ProviderInput) => void) => new IntentRouterAgent({
+    generateText: async (input: ProviderInput) => { capture?.(input); return { ok: true as const, text: JSON.stringify(body) }; },
+  } as any);
+  const socialAnswer = (overrides: Record<string, unknown> = {}) => ({
+    version: 1, mode: 'SOCIAL_CHAT', confidence: 0.93, needsTools: false, answerText: 'ทานแล้วค่ะ', ...overrides,
+  });
+
+  it('the prompt states the Slice A boundaries: business wins, no company data, no links', () => {
+    assert.match(P, /ADVISOR_CONVERSATION: social talk/);
+    assert.match(P, /Business ALWAYS wins over a social phrase/);
+    assert.match(P, /"mode": "SOCIAL_CHAT"/, 'Slice A offers the social mode only');
+    assert.match(P, /NEVER put a URL, a link, HTML or Flex\/JSON/);
+    assert.match(P, /never claim a body, a personal life, or that you are human/i);
+    assert.equal(P.includes('knowledgeCardIds'), false, 'no knowledge registry in Slice A');
+    assert.equal(P.includes('companyProfileFieldsUsed'), false, 'no company profile in Slice A');
+  });
+
+  it('parses the route plus its bounded advisor draft from ONE model response', async () => {
+    let calls = 0;
+    const router = new IntentRouterAgent({
+      generateText: async () => {
+        calls += 1;
+        return { ok: true as const, text: JSON.stringify({ intent: 'ADVISOR_CONVERSATION', language: 'th', confidence: 0.93, reason: 'คุยเล่น', advisorAnswer: socialAnswer() }) };
+      },
+    } as any);
+    const plan = await router.routeIntake(intake());
+    assert.equal(calls, 1, 'no second router/model call');
+    assert.equal(plan.status, 'ROUTED');
+    assert.equal(plan.intent, 'ADVISOR_CONVERSATION');
+    assert.equal(plan.advisorAnswer?.mode, 'SOCIAL_CHAT');
+    assert.equal(plan.advisorAnswer?.answerText, 'ทานแล้วค่ะ');
+    assert.equal(plan.advisorAnswer?.needsTools, false);
+    assert.equal(plan.preparedPlan, undefined, 'the social envelope carries no preparedPlan');
+    assert.equal(plan.advisorContext, undefined, 'advisorContext is server-derived, never model output');
+  });
+
+  it('an invalid draft is discarded while the ROUTE survives (fallback, never a repair)', async () => {
+    for (const bad of [
+      socialAnswer({ version: 2 }),
+      socialAnswer({ mode: 'SOCIAL' }),
+      socialAnswer({ confidence: 2 }),
+      socialAnswer({ needsTools: 'false' }),
+      socialAnswer({ answerText: 'อ่านที่ https://example.com ค่ะ' }),
+      { ...socialAnswer(), advisorContext: { offeredCards: [], profileLoaded: true } },
+      'not-an-object',
+    ]) {
+      const plan = await routerReturning({ intent: 'ADVISOR_CONVERSATION', language: 'th', confidence: 0.93, advisorAnswer: bad }).routeIntake(intake());
+      assert.equal(plan.intent, 'ADVISOR_CONVERSATION', JSON.stringify(bad));
+      assert.equal(plan.advisorAnswer, undefined, JSON.stringify(bad));
+    }
+  });
+
+  it('§9.1 mismatch discard: a draft attached to any NON-advisor route is dropped before any tool', async () => {
+    for (const intent of ['BUSINESS_READ_QUESTION', 'MUTATION_REQUEST_REFUSAL', 'CLARIFY', 'UNSUPPORTED'] as const) {
+      const plan = await routerReturning({
+        intent, language: 'th', confidence: 0.95, clarifyQuestion: 'ถามอะไรนะคะ', advisorAnswer: socialAnswer({ needsTools: true }),
+      }).routeIntake(intake({ messageText: 'ยอดขายวันนี้เท่าไร' }));
+      assert.equal(plan.intent, intent);
+      assert.equal(plan.advisorAnswer, undefined, `${intent} must discard the advisor draft`);
+    }
+  });
+
+  it('§9.1 rank 3: an attachment turn is never OFFERED the advisor route, even with the capability on', async () => {
+    let seen: ProviderInput | undefined;
+    const attachments = [{ id: 'a1', mimeType: 'image/jpeg', purpose: 'unknown', contentBase64: 'AAAA' }];
+    const router = routerReturning({ intent: 'ADVISOR_CONVERSATION', language: 'th', confidence: 0.95, advisorAnswer: socialAnswer() }, (input) => { seen = input; });
+    const plan = await router.routeIntake(intake({ attachments, messageText: 'นี่ค่ะ' }));
+    assert.equal(seen!.systemPrompt, intakeRouterSystemPrompt(), 'attachment turn gets the advisor-free prompt');
+    // The route was therefore never offered, so the model claiming it is invalid output.
+    assert.equal(plan.status, 'UNAVAILABLE');
+    assert.equal(plan.intent, 'UNSUPPORTED');
+    assert.equal(plan.advisorAnswer, undefined);
+  });
+
+  it('advisor adds no catalog prefix and no token-budget bump of its own', async () => {
+    let seen: ProviderInput | undefined;
+    const router = routerReturning({ intent: 'ADVISOR_CONVERSATION', language: 'th', confidence: 0.93 }, (input) => { seen = input; });
+    await router.routeIntake(intake());
+    assert.equal(seen!.cacheableContext, undefined, 'no ~21KB catalog: advisor never needs the tool catalog');
+    assert.equal(seen!.maxTokens, 1000, 'social stays on the legacy budget');
+    const payload = JSON.parse(seen!.messages[0]!.text);
+    assert.ok(Array.isArray(payload.businessGlossary), 'payload shape unchanged');
+  });
+});

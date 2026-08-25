@@ -386,6 +386,11 @@ export type LineIntakeRouteIntent =
   | 'BUSINESS_DOCUMENT_REFERENCE'
   | 'SIGNATURE_UPLOAD_TICKET'
   | 'BUSINESS_READ_QUESTION'
+  /** Advisor conversation (advisor spec §9): social/general-advice talk with no attachment, no open
+   *  continuation and no live tool need. Emitted ONLY under the trusted `advisor` capability. It grants
+   *  NO authority and no lane of its own yet: every receiver validates membership and treats it exactly
+   *  like `UNSUPPORTED` (casual/capability/full path) until the direct-answer lane ships. */
+  | 'ADVISOR_CONVERSATION'
   | 'MUTATION_REQUEST_REFUSAL'
   | 'CLARIFY'
   | 'UNSUPPORTED';
@@ -401,6 +406,7 @@ export const LINE_INTAKE_ROUTE_INTENTS = [
   'BUSINESS_DOCUMENT_REFERENCE',
   'SIGNATURE_UPLOAD_TICKET',
   'BUSINESS_READ_QUESTION',
+  'ADVISOR_CONVERSATION',
   'MUTATION_REQUEST_REFUSAL',
   'CLARIFY',
   'UNSUPPORTED',
@@ -595,7 +601,7 @@ export type LineIntakeRouteRequest = {
  *  PRIMARY modes of LINE_AI_REIMBURSEMENT_SEMANTIC_MODE ('clarify_only' and 'handoff') — never for the
  *  inert 'shadow', which stays byte-identical to 'off' — and it adds the three-way semantic outcome,
  *  funding source and the REIMBURSEMENT_REQUEST_START route to the prompt and parser. */
-export type LineIntakeRouterCapabilities = { fusedPlan?: boolean; substituteSemantic?: boolean; reimbursementSemantic?: boolean };
+export type LineIntakeRouterCapabilities = { fusedPlan?: boolean; substituteSemantic?: boolean; reimbursementSemantic?: boolean; advisor?: boolean };
 
 /** Receiver-boundary validator for the TRUSTED capability flags (same role as {@link asIntakeRouteIntent}).
  *  Accepts ONLY a literal boolean `true` for each known key; EVERY other shape — a truthy
@@ -612,6 +618,9 @@ export function asIntakeRouterCapabilities(value: unknown): LineIntakeRouterCapa
   if (Object.hasOwn(raw, 'fusedPlan') && raw.fusedPlan === true) caps.fusedPlan = true;
   if (Object.hasOwn(raw, 'substituteSemantic') && raw.substituteSemantic === true) caps.substituteSemantic = true;
   if (Object.hasOwn(raw, 'reimbursementSemantic') && raw.reimbursementSemantic === true) caps.reimbursementSemantic = true;
+  // Advisor Slice A (advisor spec §9/§17): gates the ADVISOR_CONVERSATION route and the advisorAnswer
+  // envelope. Off ⇒ byte-exact legacy prompt/payload, exactly like the three flags above.
+  if (Object.hasOwn(raw, 'advisor') && raw.advisor === true) caps.advisor = true;
   return caps;
 }
 
@@ -654,6 +663,69 @@ export type LineIntakeCorrectionHints = {
 export const LINE_CORRECTION_FIELDS = ['expenseDate', 'amount', 'vendorName', 'documentNumber', 'note'] as const;
 export type LineCorrectionField = (typeof LINE_CORRECTION_FIELDS)[number];
 
+// ─── Prepared advisor contract (advisor spec §6/§9) ────────────────────────────────────────────
+// One brain, several rooms: the mode names which room a turn belongs to. Slice A ships SOCIAL_CHAT
+// only — the other members exist so the enum is the spec's, not a moving target, but nothing routes
+// to them yet and each stays fail-closed at every eligibility gate until its slice lands.
+export const MANGMEE_CONVERSATION_MODES = [
+  'SOCIAL_CHAT',
+  'BUSINESS_ADVISOR',
+  'COMPANY_INSIGHT',
+  'LIVE_QUERY',
+  'ACTION_OR_HANDOFF',
+  'SAFETY_OR_PRIVACY',
+] as const;
+export type MangmeeConversationMode = (typeof MANGMEE_CONVERSATION_MODES)[number];
+
+/** The ONE enum an advisor draft may hand to the existing composer when the draft itself is discarded
+ *  (spec §6/§9): a single acknowledging line prepended to a LIVE_QUERY answer, never free-form text. */
+export const ADVISOR_TONE_PREFACES = ['none', 'acknowledge_stress', 'acknowledge_good_news'] as const;
+export type AdvisorTonePreface = (typeof ADVISOR_TONE_PREFACES)[number];
+
+/** Bounded refusal vocabulary (spec §9). A refusal is always one of these codes — never a raw
+ *  model sentence — so nothing free-form can reach a log line or a delivered reply. */
+export const ADVISOR_REFUSAL_CODES = [
+  'mutation_blocked',
+  'safety_crisis',
+  'privacy_rumor',
+  'unsupported_module',
+  'insufficient_current_data',
+] as const;
+export type AdvisorRefusalCode = (typeof ADVISOR_REFUSAL_CODES)[number];
+
+/**
+ * Bounded advisor answer the intake router MAY propose (spec §9). UNTRUSTED model advice with NO
+ * execution authority: it is parsed by its own bounded parser (`parseLineAiPreparedAdvisorAnswer`),
+ * it never nests inside `LineAiPreparedPlan` (that wrapper is tied to `capabilities.fusedPlan` and its
+ * ~21KB catalog), and there is no second trust chain — the server re-derives eligibility, and
+ * `confidence` is veto-only (a high value never makes an ineligible lane eligible).
+ */
+export type PreparedAdvisorAnswer = {
+  version: 1;
+  mode: MangmeeConversationMode;
+  confidence: number;
+  /** HIGH-risk cards and finance/trend only (deterministic renderer); unused in Slice A. */
+  responseFamilyId?: string;
+  /** SOCIAL_CHAT and LOW/MEDIUM business/company prose. */
+  answerText?: string;
+  /** MUST be a subset of `LineIntakeRoutePlan.advisorContext.offeredCards`; `[]` in Slice A. */
+  knowledgeCardIds: string[];
+  /** MUST be a subset of the permission-checked profile the server loaded; `[]` in Slice A. */
+  companyProfileFieldsUsed: string[];
+  needsTools: boolean;
+  tonePreface?: AdvisorTonePreface;
+  clarificationQuestion?: string;
+  refusalCode?: AdvisorRefusalCode;
+};
+
+/** SERVER-derived audit context for an advisor turn (spec §9): what the server offered the model and
+ *  whether a profile was loaded. Never parsed from model output — a wire value claiming to be this is
+ *  ignored, so the model can never widen its own citation or profile surface. */
+export type LineIntakeAdvisorContext = {
+  offeredCards: Array<{ id: string; version: number }>;
+  profileLoaded: boolean;
+};
+
 export type LineIntakeRoutePlan = {
   /** ROUTED = model produced a usable route; UNAVAILABLE = provider disabled/misconfigured/invalid output. */
   status: 'ROUTED' | 'UNAVAILABLE';
@@ -689,6 +761,13 @@ export type LineIntakeRoutePlan = {
   /** Optional additive fused plan (latency/autonomy §7). Additive and optional so an older
    *  gateway that never produced one, or a caller that ignores it, both stay wire-compatible. */
   preparedPlan?: LineAiPreparedPlan;
+  /** Present ONLY under the trusted `advisor` capability (advisor spec §9) — a SIBLING of
+   *  `clarifyQuestion`, never nested in `preparedPlan`. Untrusted model advice re-parsed by
+   *  `parseLineAiPreparedAdvisorAnswer` at every receiver; absent from an older gateway, and an
+   *  older API that ignores the field simply keeps its existing behavior (no HTTP 400). */
+  advisorAnswer?: PreparedAdvisorAnswer;
+  /** SERVER-derived audit context, never model output (spec §9). */
+  advisorContext?: LineIntakeAdvisorContext;
 };
 
 export type LineAiWebLink = {
