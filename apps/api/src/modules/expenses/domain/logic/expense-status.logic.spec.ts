@@ -11,6 +11,7 @@ import {
   hasMissingClaimableVatTaxSnapshot,
   hasUnknownVatRateLine,
   expenseTaxSourceChecksum,
+  readAiCategorySuggestion,
 } from './expense-status.logic';
 
 describe('expenseTaxSourceChecksum', () => {
@@ -424,5 +425,35 @@ describe('buildIdempotencyKey', () => {
     const k1 = buildIdempotencyKey('exp-123', 'confirmed');
     const k2 = buildIdempotencyKey('exp-123', 'voided');
     assert.notEqual(k1, k2);
+  });
+});
+
+// Spec S1-R4: the persisted suggestion is the only thing that tells the review form (and the
+// override telemetry) what AI proposed. A malformed or missing one must read as "no suggestion",
+// never as a partial object a caller could half-trust.
+describe('readAiCategorySuggestion', () => {
+  const suggestion = { expenseCategoryId: 'cat-meals', confidence: 0.42, categoryName: 'ค่าอาหาร' };
+
+  it('reads a stored suggestion whatever the confidence', () => {
+    assert.deepEqual(readAiCategorySuggestion({ categorySuggestion: suggestion }), suggestion);
+    assert.deepEqual(
+      readAiCategorySuggestion({ categorySuggestion: { ...suggestion, confidence: 0.97 } }),
+      { ...suggestion, confidence: 0.97 },
+    );
+  });
+
+  it('reads nothing from a summary that has none, or from a malformed one', () => {
+    assert.equal(readAiCategorySuggestion(null), null);
+    assert.equal(readAiCategorySuggestion({}), null);
+    for (const categorySuggestion of [
+      'cat-meals',
+      [suggestion],
+      { ...suggestion, expenseCategoryId: '' },
+      { ...suggestion, confidence: '0.42' },
+      { ...suggestion, confidence: Number.NaN },
+      { expenseCategoryId: 'cat-meals', confidence: 0.42 },
+    ]) {
+      assert.equal(readAiCategorySuggestion({ categorySuggestion }), null, `expected ${JSON.stringify(categorySuggestion)} to read as none`);
+    }
   });
 });

@@ -66,7 +66,7 @@ import {
 } from '../../../data-model-core/domain/logic/attachment.logic';
 import { AttachmentMalwareScanner } from '../../../data-model-core/infrastructure/attachment-malware-scanner';
 import { deriveTaxEvidence, isExpenseExtractionEligible, sourceDocumentTypeFromClassification, toSourceDocumentType } from '../../../expenses/domain/logic/expense-document.logic';
-import { isStaleOcrApply, ReceiptOcrApplyService, toMoney4 } from '../../../expenses/application/services/receipt-ocr-apply.service';
+import { isStaleOcrApply, ReceiptOcrApplyService, toMoney4, type ReceiptCategorySuggestion } from '../../../expenses/application/services/receipt-ocr-apply.service';
 import { normalizeLineText, hashMessagePreview, parseBareCompanySelection, parseLineCompanyCommand } from '../../domain/logic/line-ai-classifier.logic';
 import type { LineCompanyCommand } from '../../domain/logic/line-ai-classifier.logic';
 import { formatRefusal } from '../../domain/logic/line-ai-formatter.logic';
@@ -3580,6 +3580,7 @@ export class ProcessLineWebhookUseCase {
       hintedCategory = active.find((c) => c.id === hintedCategoryId) ?? null;
     }
     let effectiveCategory = hintedCategory;
+    let categorySuggestion: ReceiptCategorySuggestion | undefined;
     if (ocrFields) {
       const applyOutcome = await this.receiptOcrApply.apply(ctx, intent.expenseId, ocrFields, {
         ...(hintedCategory
@@ -3594,6 +3595,7 @@ export class ProcessLineWebhookUseCase {
       // Stale means a correction landed during the OCR round trip; keep the draft as captured.
       const duplicateResult = isStaleOcrApply(applyOutcome) ? null : applyOutcome;
       hasDuplicate ||= (duplicateResult?.candidatesCreated ?? 0) > 0;
+      categorySuggestion = duplicateResult?.categorySuggestion;
       effectiveCategory = duplicateResult?.categoryId
         ? {
             id: duplicateResult.categoryId,
@@ -3641,6 +3643,9 @@ export class ProcessLineWebhookUseCase {
             expenseCategoryId: hintedCategory?.id,
             confidence: routePlan.captureHints?.confidence,
           } : undefined,
+          // Spec S1-R4: same resolved suggestion the web review form reads, so a below-threshold
+          // category survives the LINE intake instead of being dropped after apply.
+          ...(categorySuggestion ? { categorySuggestion } : {}),
           missingFields: [...missingFields].slice(0, 20),
           duplicateWarning: hasDuplicate,
           nextAction: 'review_in_web',
@@ -3651,6 +3656,7 @@ export class ProcessLineWebhookUseCase {
     const purposeHint = routePlan.captureHints?.businessPurpose?.trim();
     const groundedPurpose = purposeHint && normalizeLineText(caption).toLocaleLowerCase('th-TH')
       .includes(normalizeLineText(purposeHint).toLocaleLowerCase('th-TH')) ? purposeHint : undefined;
+    const draftSuggestedCategoryId = effectiveCategory?.id ?? categorySuggestion?.expenseCategoryId;
     const receiptDraft = expenseDraftConversationEnabled
       ? await this.expenseDraftConversation!.startFromReceipt(ctx, {
         expenseId: intent.expenseId,
@@ -3658,7 +3664,10 @@ export class ProcessLineWebhookUseCase {
         webhookEventId: event.webhookEventId,
         ocrFields,
         ...(groundedPurpose ? { businessPurpose: groundedPurpose } : {}),
-        ...(effectiveCategory?.id ? { suggestedCategoryId: effectiveCategory.id } : {}),
+        // Spec S1-R4: below the auto-fill bar nothing was written, so the draft conversation gets
+        // the suggestion here — it lands as the item's `suggestedCategoryId`, which the reply asks
+        // the user to confirm and never applies on its own.
+        ...(draftSuggestedCategoryId ? { suggestedCategoryId: draftSuggestedCategoryId } : {}),
       })
       : undefined;
     const replyTexts = receiptDraft?.replyTexts.length ? receiptDraft.replyTexts : [formatPaypersReply(this.config.webBaseUrl, companyId, intent.expenseId, {

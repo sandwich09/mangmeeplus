@@ -1,4 +1,4 @@
-import { Injectable, ForbiddenException, NotFoundException, BadRequestException, UnprocessableEntityException } from '@nestjs/common';
+import { Injectable, ForbiddenException, Logger, NotFoundException, BadRequestException, UnprocessableEntityException } from '@nestjs/common';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
 import { AuditService } from '../../../audit/application/audit.service';
 import { OutboxAppendService } from '../../../data-model-core/application/services/outbox-append.service';
@@ -25,6 +25,7 @@ import {
   expenseTaxSourceChecksum,
   hasMissingClaimableVatTaxSnapshot,
   hasUnknownVatRateLine,
+  readAiCategorySuggestion,
 } from '../../domain/logic/expense-status.logic';
 import type { ExpenseLineInput, ExpenseRecord, ExpenseRecordWithRelations, PaginatedExpenses } from '../../domain/models/expense.model';
 import type { RequestContext, CreateExpenseDraftInput, UpdateExpenseDraftInput, ListExpensesFilter, ExpenseStatus } from '@watchdog-bms/contracts';
@@ -522,6 +523,8 @@ export class UpdateExpenseDraftUseCase {
 
 @Injectable()
 export class ConfirmExpenseUseCase {
+  private readonly logger = new Logger(ConfirmExpenseUseCase.name);
+
   constructor(
     private readonly repo: PrismaExpenseRepository,
     private readonly audit: AuditService,
@@ -730,6 +733,24 @@ export class ConfirmExpenseUseCase {
         }),
       },
     });
+    // Spec S1-R5: the reviewer confirmed a category that is not the AI's. `fromSuggested` says
+    // whether AI had a usable suggestion at all, so override rate = these events with
+    // `fromSuggested: true` over `expense_category_suggested`. Ids and booleans only — no category
+    // names, no document content. A reimbursement projection is excluded: its category came from
+    // the claim form, not from a reviewer looking at an AI suggestion, and counting it would
+    // inflate the "no suggestion" side of the rate.
+    if (!authority && r.expenseCategoryId) {
+      const suggestion = readAiCategorySuggestion(r.aiVerificationSummaryJson);
+      if (r.expenseCategoryId !== suggestion?.expenseCategoryId) {
+        this.logger.log({
+          msg: 'expense_category_overridden',
+          companyId: ctx.companyId,
+          expenseId,
+          surface: 'web',
+          fromSuggested: Boolean(suggestion),
+        });
+      }
+    }
     const finalizedTaxLines = finalized.filter(hasSelectedTaxCode);
     if (finalizedTaxLines.length > 0) {
       void this.audit.log({

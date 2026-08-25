@@ -677,6 +677,7 @@ describe('ReceiptOcrApplyService.apply', () => {
       categoryId: 'cat-meals',
       categoryName: 'ค่าอาหาร',
       categoryAutoFilled: true,
+      categorySuggestion: { expenseCategoryId: 'cat-meals', confidence: 0.92, categoryName: 'ค่าอาหาร' },
       chargeReconciliationStatus: 'SUMMARY_LINE',
       chargesApplied: 0,
     });
@@ -719,16 +720,20 @@ describe('ReceiptOcrApplyService.apply', () => {
       return { updates, lines, categoryQueries, result };
     };
 
+    // Spec S1-R4: below the bar the category is resolved for the review form but never written —
+    // the reviewer is offered it, the server does not decide for them.
     const low = await run({ expenseCategoryId: null, expenseCategory: null }, 0.84, { id: 'cat-meals', name: 'ค่าอาหาร', companyId: 'company-1' });
-    assert.equal(low.categoryQueries, 0);
+    assert.equal(low.categoryQueries, 1);
     assert.equal(low.updates[0].data.expenseCategoryId, undefined);
     assert.equal(low.lines[0].expenseCategoryId, null);
     assert.equal(low.result.categoryAutoFilled, false);
+    assert.deepEqual(low.result.categorySuggestion, { expenseCategoryId: 'cat-meals', confidence: 0.84, categoryName: 'ค่าอาหาร' });
 
     const unavailable = await run({ expenseCategoryId: null, expenseCategory: null }, 0.95, null);
     assert.equal(unavailable.categoryQueries, 1);
     assert.equal(unavailable.updates[0].data.expenseCategoryId, undefined);
     assert.equal(unavailable.lines[0].expenseCategoryId, null);
+    assert.equal(unavailable.result.categorySuggestion, undefined, 'a category outside this company or not ACTIVE is not exposed either');
 
     const reviewed = await run({
       expenseCategoryId: 'cat-reviewed',
@@ -738,6 +743,76 @@ describe('ReceiptOcrApplyService.apply', () => {
     assert.equal(reviewed.updates[0].data.expenseCategoryId, 'cat-reviewed');
     assert.equal(reviewed.lines[0].expenseCategoryId, 'cat-reviewed');
     assert.equal(reviewed.result.categoryAutoFilled, false);
+    assert.equal(reviewed.result.categorySuggestion, undefined);
+  });
+
+  // Spec S1-R4 exposure path: the review payload must carry the document-level suggestion even
+  // when nothing was auto-filled, and must carry nothing at all when the model proposed nothing.
+  it('exposes a below-threshold suggestion, rejects a cross-company one, and stays silent without one', async () => {
+    const run = async (fields: any, resolveCategory: any, options: any = {}) => {
+      const updates: any[] = [];
+      const categoryQueries: any[] = [];
+      const tx = {
+        expenseRecord: {
+          findFirst: async () => ({ expenseCategoryId: null, expenseCategory: null }),
+          update: async (args: any) => { updates.push(args); },
+        },
+        expenseCategory: {
+          findFirst: async (args: any) => {
+            categoryQueries.push(args);
+            return resolveCategory;
+          },
+        },
+        expenseLine: { deleteMany: async () => undefined, create: async () => undefined },
+      };
+      const prisma = { client: { $transaction: async (fn: any) => fn(tx) } };
+      const result = await new ReceiptOcrApplyService(prisma as any, makeDuplicateRepo() as any).apply(
+        { companyId: 'company-1', userId: 'user-1' }, 'expense-1', { grandTotalAmount: '65.00', ...fields }, options,
+      );
+      return { updates, categoryQueries, result };
+    };
+    const suggestion = (confidence: number) => ({
+      categorySuggestion: { expenseCategoryId: 'cat-meals', confidence, evidenceSignals: ['ร้านกาแฟ'] },
+    });
+
+    const exposed = await run(suggestion(0.42), { id: 'cat-meals', name: 'ค่าอาหาร', companyId: 'company-1' });
+    assert.deepEqual(exposed.result.categorySuggestion, { expenseCategoryId: 'cat-meals', confidence: 0.42, categoryName: 'ค่าอาหาร' });
+    assert.equal(exposed.result.categoryId, null, 'a recommendation is never applied');
+    assert.equal(exposed.updates[0].data.expenseCategoryId, undefined);
+
+    // Company scope is the query itself: another tenant's category cannot match the ACTIVE
+    // company-or-global filter, so nothing is exposed and nothing is applied.
+    const crossCompany = await run(suggestion(0.95), null);
+    assert.deepEqual(crossCompany.categoryQueries[0].where, {
+      id: 'cat-meals',
+      status: 'ACTIVE',
+      OR: [{ companyId: 'company-1' }, { companyId: null }],
+    });
+    assert.equal(crossCompany.result.categorySuggestion, undefined);
+    assert.equal(crossCompany.result.categoryAutoFilled, false);
+
+    const none = await run({}, { id: 'cat-meals', name: 'ค่าอาหาร', companyId: 'company-1' });
+    assert.equal(none.categoryQueries.length, 0);
+    assert.equal(none.result.categorySuggestion, undefined);
+
+    // Evidence spans are still mandatory for an OCR suggestion; an unevidenced one is not exposed.
+    const unevidenced = await run(
+      { categorySuggestion: { expenseCategoryId: 'cat-meals', confidence: 0.9, evidenceSignals: [] } },
+      { id: 'cat-meals', name: 'ค่าอาหาร', companyId: 'company-1' },
+    );
+    assert.equal(unevidenced.categoryQueries.length, 0);
+    assert.equal(unevidenced.result.categorySuggestion, undefined);
+
+    // A weak OCR guess must not shadow a capture hint that clears the bar: auto-fill still wins.
+    const hinted = await run(
+      suggestion(0.10),
+      { id: 'cat-fuel', name: 'ค่าน้ำมัน', companyId: 'company-1' },
+      { fallbackCategorySuggestion: { expenseCategoryId: 'cat-fuel', confidence: 0.97 } },
+    );
+    assert.deepEqual(hinted.categoryQueries[0].where.id, 'cat-fuel');
+    assert.equal(hinted.result.categoryAutoFilled, true);
+    assert.equal(hinted.result.categoryId, 'cat-fuel');
+    assert.deepEqual(hinted.result.categorySuggestion, { expenseCategoryId: 'cat-fuel', confidence: 0.97, categoryName: 'ค่าน้ำมัน' });
   });
 
   it('automatically flags normalized OCR document fields after applying them', async () => {

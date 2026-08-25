@@ -1,4 +1,4 @@
-import { ConflictException, Injectable } from '@nestjs/common';
+import { ConflictException, Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { ExpenseCategorySummary, LineExpenseDraftRouteContext, LineIntakeCaptureHints, ReceiptOcrFieldResult, RequestContext } from '@watchdog-bms/contracts';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
@@ -62,6 +62,8 @@ function targetRequired(rows: ContinuationRow[]): LineExpenseDraftConversationRe
 
 @Injectable()
 export class LineExpenseDraftConversationUseCase {
+  private readonly logger = new Logger(LineExpenseDraftConversationUseCase.name);
+
   constructor(
     private readonly repo: PrismaExpenseRepository,
     private readonly updateDraft: UpdateExpenseDraftUseCase,
@@ -253,6 +255,20 @@ export class LineExpenseDraftConversationUseCase {
         !control && selectedIndex === null, selected.state.targetRevision,
       );
       const savedState = { ...changed.state, targetRevision: updated.updatedAt.toISOString() };
+      // Spec S1-R5: same override semantics as the web confirm path, on the mobile journey that
+      // carries most of the traffic. Emitted only for a category answer that was actually stored,
+      // and only when it is not the one AI proposed. Ids and booleans only.
+      for (const item of savedState.items) {
+        if (!changed.acceptedFields.includes(`${item.itemRef}-CATEGORY`)) continue;
+        if (!item.expenseCategoryId || item.expenseCategoryId === item.suggestedCategoryId) continue;
+        this.logger.log({
+          msg: 'expense_category_overridden',
+          companyId: ctx.companyId,
+          expenseId: expense.id,
+          surface: 'line',
+          fromSuggested: Boolean(item.suggestedCategoryId),
+        });
+      }
       const reply = formatLineExpenseDraftReply({ state: savedState, categories, acceptedFields: changed.acceptedFields, label: label(selected) });
       const status = savedState.status === 'PAUSED' || savedState.status === 'PAUSED_INTERRUPTED' ? 'PAUSED'
         : savedState.status === 'CANCELLED' ? 'CANCELLED'

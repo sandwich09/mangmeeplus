@@ -239,6 +239,25 @@ export function hasAcknowledgedAiTotalMismatch(
   return record['acknowledged'] === true && sameMoney(String(record['acknowledgedTotalAmount'] ?? ''), grandTotalAmount);
 }
 
+/** Spec S1-R4: the AI category suggestion the capture paths persist on the summary. Already
+ *  resolved against the company's ACTIVE catalogue when written, so reading it needs no lookup —
+ *  bounded here only because the column is JSON that older rows may not carry. */
+export function readAiCategorySuggestion(
+  summary: Record<string, unknown> | null | undefined,
+): { expenseCategoryId: string; confidence: number; categoryName: string } | null {
+  const raw = summary?.['categorySuggestion'];
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const value = raw as Record<string, unknown>;
+  const id = value['expenseCategoryId'];
+  const confidence = value['confidence'];
+  const name = value['categoryName'];
+  return typeof id === 'string' && id.length > 0
+    && typeof confidence === 'number' && Number.isFinite(confidence)
+    && typeof name === 'string'
+    ? { expenseCategoryId: id, confidence, categoryName: name }
+    : null;
+}
+
 export function validateConfirm(input: ConfirmValidationInput): string | null {
   if (!canTransition(input.status, 'CONFIRMED')) {
     return `Cannot confirm expense in status ${input.status}.`;
