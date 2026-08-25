@@ -309,7 +309,7 @@ export class AuthController {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>WatchDog LINE Link</title>
+  <title>มั่งมี Plus LINE Link</title>
   <style>
     body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;padding:24px;line-height:1.5;color:#111827;background:#f9fafb}
     main{max-width:520px;margin:auto;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:20px}
@@ -323,7 +323,7 @@ export class AuthController {
   <main>
     ${LIFF_CLIENT_NOTICE_HTML}
     <div id="liff-content">
-      <h1>WatchDog LINE Link</h1>
+      <h1>มั่งมี Plus LINE Link</h1>
       <p id="status">Ready</p>
       <button id="link">Link LINE account</button>
       <pre id="detail"></pre>
@@ -404,7 +404,7 @@ export class AuthController {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>WatchDog Employee LINE Link</title>
+  <title>มั่งมี Plus LINE Link</title>
   <style>
     body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;padding:24px;line-height:1.5;color:#111827;background:#f9fafb}
     main{max-width:520px;margin:auto;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:20px}

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
-  echo "Usage: $0 <watchdog-bms-api@sha256:digest> <full-commit-sha> [release|release-prepare|maintenance-preflight|incident-preflight|release-intent|release-bind|release-intent-recover|release-orphan-intent-recover|release-pre-intent-recover|release-bootstrap-closed-recover|release-finalize|retire|reconcile|m01-live|a5-bootstrap|a5-ro|a5-capacity-preflight|a5-capacity|a5-capacity-cleanup|f2-plan|f2-apply|f2-verify|operation-reconcile]" >&2
+  echo "Usage: $0 <watchdog-bms-api@sha256:digest> <full-commit-sha> [release|release-prepare|maintenance-preflight|incident-preflight|release-intent|release-bind|release-intent-recover|release-orphan-intent-recover|release-pre-intent-recover|release-bootstrap-closed-recover|release-finalize|retire|reconcile|m01-live|a5-bootstrap|a5-ro|a5-capacity-preflight|a5-capacity|a5-capacity-cleanup|f2-plan|f2-apply|f2-verify|system-admin-add|system-admin-revoke|operation-reconcile]" >&2
   exit 2
 fi
 
@@ -10,7 +10,7 @@ image="$1"
 commit="$2"
 mode="${3:-release}"
 case "$mode" in
-  release|release-prepare|maintenance-preflight|incident-preflight|release-intent|release-bind|release-intent-recover|release-orphan-intent-recover|release-pre-intent-recover|release-bootstrap-closed-recover|release-finalize|retire|reconcile|m01-live|a5-bootstrap|a5-ro|a5-capacity-preflight|a5-capacity|a5-capacity-cleanup|f2-plan|f2-apply|f2-verify|operation-reconcile) ;;
+  release|release-prepare|maintenance-preflight|incident-preflight|release-intent|release-bind|release-intent-recover|release-orphan-intent-recover|release-pre-intent-recover|release-bootstrap-closed-recover|release-finalize|retire|reconcile|m01-live|a5-bootstrap|a5-ro|a5-capacity-preflight|a5-capacity|a5-capacity-cleanup|f2-plan|f2-apply|f2-verify|system-admin-add|system-admin-revoke|operation-reconcile) ;;
   *) echo "ERROR: unsupported release-task mode: $mode" >&2; exit 2 ;;
 esac
 region="${AWS_REGION:-ap-southeast-1}"
@@ -38,6 +38,11 @@ if [ "$mode" = release-prepare ] && [ "$deploy_env" != production ]; then
 fi
 if [ "$mode" = maintenance-preflight ] && [ "$deploy_env" != production ]; then
   echo "ERROR: maintenance-preflight is production read-only" >&2
+  exit 2
+fi
+if { [ "$mode" = system-admin-add ] || [ "$mode" = system-admin-revoke ]; } \
+  && [ "$deploy_env" != production ]; then
+  echo "ERROR: System Admin cutover is Production-only" >&2
   exit 2
 fi
 resource_prefix="watchdog-bms-${resource_stage}"
@@ -141,6 +146,57 @@ f2_approved_plan_path="/tmp/f2-approved-plan.json"
 capacity_marker="${U5_CAPACITY_MARKER:-}"
 capacity_approval_ref="${U5_CAPACITY_APPROVAL_REF:-}"
 capacity_baseline_hash="${U5_CAPACITY_BASELINE_HASH:-}"
+system_admin_username="${ADMIN_USERNAME:-}"
+system_admin_display_name="${ADMIN_DISPLAY_NAME:-}"
+system_admin_source_username="${ADMIN_SOURCE_USERNAME:-}"
+system_admin_approval_ref="${SYSTEM_ADMIN_CUTOVER_APPROVAL_REF:-}"
+system_admin_password_secret_arn="${SYSTEM_ADMIN_PASSWORD_SECRET_ARN:-}"
+system_admin_api_base_url="${SYSTEM_ADMIN_CUTOVER_API_BASE_URL:-}"
+system_admin_request_id=""
+system_admin_actor_ref=""
+case "$mode" in
+  system-admin-add|system-admin-revoke)
+    [ -z "${ADMIN_PASSWORD:-}" ] || {
+      echo "ERROR: plaintext ADMIN_PASSWORD is forbidden; use SYSTEM_ADMIN_PASSWORD_SECRET_ARN" >&2
+      exit 2
+    }
+    [[ "$system_admin_username" =~ ^[a-z][a-z0-9._-]{2,63}$ ]] || {
+      echo "ERROR: ADMIN_USERNAME has an invalid username shape" >&2
+      exit 2
+    }
+    if [ -z "$system_admin_display_name" ] || [ "${#system_admin_display_name}" -gt 120 ] \
+      || [[ "$system_admin_display_name" == *$'\n'* || "$system_admin_display_name" == *$'\r'* ]]; then
+      echo "ERROR: ADMIN_DISPLAY_NAME must be 1-120 printable characters" >&2
+      exit 2
+    fi
+    [[ "$system_admin_approval_ref" =~ ^owner-approved:[A-Za-z0-9][A-Za-z0-9._:/@+=,-]{7,239}$ ]] || {
+      echo "ERROR: SYSTEM_ADMIN_CUTOVER_APPROVAL_REF has an invalid owner approval shape" >&2
+      exit 2
+    }
+    if [ "$mode" = system-admin-add ]; then
+      [ -z "$system_admin_source_username" ] || {
+        echo "ERROR: system-admin-add rejects ADMIN_SOURCE_USERNAME" >&2
+        exit 2
+      }
+    else
+      [[ "$system_admin_source_username" =~ ^[a-z][a-z0-9._-]{2,63}$ ]] \
+        && [ "$system_admin_source_username" != "$system_admin_username" ] || {
+          echo "ERROR: system-admin-revoke requires a different valid ADMIN_SOURCE_USERNAME" >&2
+          exit 2
+        }
+      [ -z "$system_admin_password_secret_arn" ] || {
+        echo "ERROR: system-admin-revoke rejects SYSTEM_ADMIN_PASSWORD_SECRET_ARN" >&2
+        exit 2
+      }
+    fi
+    ;;
+  *)
+    if [ -n "$system_admin_username$system_admin_display_name$system_admin_source_username$system_admin_approval_ref$system_admin_password_secret_arn$system_admin_api_base_url${ADMIN_PASSWORD:-}" ]; then
+      echo "ERROR: System Admin cutover inputs are accepted only by exact cutover modes" >&2
+      exit 2
+    fi
+    ;;
+esac
 case "$mode" in
   a5-capacity-preflight|a5-capacity|a5-capacity-cleanup)
   [[ "$capacity_marker" =~ ^U5C-[0-9A-F]{12,32}$ ]] || {
@@ -313,6 +369,7 @@ if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
     f2-plan) expected_workflow="f2-normalize.yml" ;;
     f2-apply|f2-verify) expected_workflow="f2-normalize-apply.yml" ;;
     a5-capacity-preflight|a5-capacity|a5-capacity-cleanup) expected_workflow="a5-capacity-uat.yml" ;;
+    system-admin-add|system-admin-revoke) expected_workflow="system-admin-cutover.yml" ;;
     release-intent-recover|release-orphan-intent-recover|release-pre-intent-recover|release-bootstrap-closed-recover) expected_workflow="recover-release-intent.yml" ;;
     *)
       expected_workflow="deploy-production.yml"
@@ -329,6 +386,10 @@ if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
     && [ "$github_workflow_ref" != "$alternate_expected_workflow_ref" ]; then
     echo "ERROR: ${deploy_env} ${mode} must be controlled by ${expected_workflow_ref}${alternate_expected_workflow_ref:+ or ${alternate_expected_workflow_ref}}" >&2
     exit 2
+  fi
+  if [ "$mode" = system-admin-add ] || [ "$mode" = system-admin-revoke ]; then
+    system_admin_request_id="system-admin-cutover:${github_run_id}:${mode}"
+    system_admin_actor_ref="github:${github_repository}:${github_run_id}:${github_run_attempt}:${github_actor}"
   fi
 else
   if [ "$mode" != "operation-reconcile" ] && [ "$mode" != "a5-bootstrap" ]; then
@@ -382,6 +443,21 @@ fi
 if [[ ! "$image" =~ ^${account_id}\.dkr\.ecr\.${region}\.amazonaws\.com/watchdog-bms-api@sha256:[0-9a-f]{64}$ ]]; then
   echo "ERROR: release image must be the exact API repository digest" >&2
   exit 1
+fi
+if [ "$mode" = system-admin-add ]; then
+  if [ -z "$system_admin_api_base_url" ] && [ "$render_only" != true ]; then
+    system_admin_api_base_url="$(aws_cmd ssm get-parameter \
+      --name /watchdog-bms/production/ecs-express-api-web-url \
+      --query Parameter.Value --output text --region "$region")"
+    system_admin_api_base_url="${system_admin_api_base_url%/}/v1"
+  fi
+  if [[ ! "$system_admin_api_base_url" =~ ^https://[a-z0-9-]+\.ecs\.ap-southeast-1\.on\.aws/v1$ ]]; then
+    echo "ERROR: Production System Admin verification API must be the exact ECS /v1 origin" >&2
+    exit 1
+  fi
+elif [ -n "$system_admin_api_base_url" ]; then
+  echo "ERROR: SYSTEM_ADMIN_CUTOVER_API_BASE_URL is accepted only by system-admin-add" >&2
+  exit 2
 fi
 
 if [ "$mode" = "release" ] || [ "$mode" = "release-prepare" ] \
@@ -578,6 +654,12 @@ if [ "$readonly_database_mode" != "true" ]; then
     exit 1
   fi
 fi
+if [ "$mode" = system-admin-add ]; then
+  if [[ ! "$system_admin_password_secret_arn" =~ ^arn:aws:secretsmanager:${region}:${account_id}:secret:watchdog-bms/production/system-admin-cutover-password-[A-Za-z0-9]{6}$ ]]; then
+    echo "ERROR: SYSTEM_ADMIN_PASSWORD_SECRET_ARN is not the fixed Production cutover secret" >&2
+    exit 1
+  fi
+fi
 
 short_sha="${commit:0:12}"
 container_name="release"
@@ -604,6 +686,7 @@ direct_task_command=""
 omit_task_role=false
 api_base_url=""
 m01_run_id=""
+system_admin_cutover_mode=""
 # The FULL commit, not the 12-char tag prefix: when api-web is targeted, its per-build attestation
 # must exactly match the build id the deployed service compares against (F1.5.1).
 git_sha_value="$commit"
@@ -615,6 +698,13 @@ elif [ "$mode" = "a5-bootstrap" ]; then
     [
       {name:"DATABASE_URL",valueFrom:$database},
       {name:"A5_READONLY_DATABASE_URL",valueFrom:$readonly}
+    ]')"
+elif [ "$mode" = system-admin-add ]; then
+  task_secrets="$(jq -cn --arg database "$database_secret_arn" \
+    --arg password "$system_admin_password_secret_arn" '
+    [
+      {name:"DATABASE_URL",valueFrom:$database},
+      {name:"ADMIN_PASSWORD",valueFrom:$password}
     ]')"
 else
   task_secrets="$(jq -cn --arg database "$database_secret_arn" \
@@ -764,6 +854,14 @@ case "$mode" in
       direct_task_command="set -eu; ./node_modules/.bin/tsx prisma/normalize-entitlements.ts${f2_flag}; echo f2-task-complete mode=${mode} sha=\$GIT_SHA"
     fi
     ;;
+  system-admin-add|system-admin-revoke)
+    container_name="$mode"
+    log_prefix="$mode"
+    omit_task_role=true
+    system_admin_cutover_mode=ADD
+    [ "$mode" = system-admin-revoke ] && system_admin_cutover_mode=REVOKE
+    direct_task_command='set -eu; ./node_modules/.bin/tsx prisma/system-admin-cutover.ts'
+    ;;
 esac
 
 if [ "$mode" = "release-intent" ] || [ "$mode" = "release-bind" ] \
@@ -912,6 +1010,14 @@ jq -n \
   --arg capacityMarker "$capacity_marker" \
   --arg capacityApprovalRef "$capacity_approval_ref" \
   --arg capacityBaselineHash "$capacity_baseline_hash" \
+  --arg systemAdminCutoverMode "$system_admin_cutover_mode" \
+  --arg systemAdminUsername "$system_admin_username" \
+  --arg systemAdminDisplayName "$system_admin_display_name" \
+  --arg systemAdminSourceUsername "$system_admin_source_username" \
+  --arg systemAdminApprovalRef "$system_admin_approval_ref" \
+  --arg systemAdminRequestId "$system_admin_request_id" \
+  --arg systemAdminActorRef "$system_admin_actor_ref" \
+  --arg systemAdminApiBaseUrl "$system_admin_api_base_url" \
   --arg releaseOperationMode "$mode" \
   --arg releaseDeployTarget "$release_deploy_target" \
   --arg productionReadySha256 "$production_ready_sha256" \
@@ -976,6 +1082,14 @@ jq -n \
         {name:"U5_CAPACITY_MARKER", value:$capacityMarker},
         {name:"U5_CAPACITY_APPROVAL_REF", value:$capacityApprovalRef},
         {name:"U5_CAPACITY_BASELINE_HASH", value:$capacityBaselineHash},
+        {name:"SYSTEM_ADMIN_CUTOVER_MODE", value:$systemAdminCutoverMode},
+        {name:"ADMIN_USERNAME", value:$systemAdminUsername},
+        {name:"ADMIN_DISPLAY_NAME", value:$systemAdminDisplayName},
+        {name:"ADMIN_SOURCE_USERNAME", value:$systemAdminSourceUsername},
+        {name:"SYSTEM_ADMIN_CUTOVER_APPROVAL_REF", value:$systemAdminApprovalRef},
+        {name:"SYSTEM_ADMIN_CUTOVER_REQUEST_ID", value:$systemAdminRequestId},
+        {name:"SYSTEM_ADMIN_CUTOVER_ACTOR_REF", value:$systemAdminActorRef},
+        {name:"SYSTEM_ADMIN_CUTOVER_API_BASE_URL", value:$systemAdminApiBaseUrl},
         {name:"PGOPTIONS", value:(if $readonlyDatabaseMode
           then "-c default_transaction_read_only=on"
           else "" end)}

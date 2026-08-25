@@ -22,14 +22,14 @@ import {
 import {
   EXPENSE_VAT_MODE_LABELS, CAPTURE_SOURCE_LABELS, PAYMENT_METHOD_LABELS,
   SOURCE_DOCUMENT_TYPE_LABELS, TAX_EVIDENCE_STATUS_LABELS, buildExpenseDraftReviewPayload,
-  deriveExpenseClassificationReviewState, hasAiGrandTotalMismatch, hasUnresolvedDuplicateWarning,
+  canShowInlineSubstitutePreparation, deriveExpenseClassificationReviewState, hasAiGrandTotalMismatch, hasUnresolvedDuplicateWarning,
   findOpaqueBounds, removeLightBackground, allowsDomesticInputTaxCode, clearExpenseTaxSelections,
   TAX_EVIDENCE_REASON_LABELS, AI_SUMMARY_STATUS_LABELS, AI_MISSING_FIELD_LABELS,
   ATTACHMENT_PURPOSE_LABELS, MIME_TYPE_LABELS, SUBSTITUTE_RECEIPT_STATUS_LABELS, expenseValueLabel,
   deriveExpenseAuditChecks, deriveExpenseReviewSteps, initialExpenseReviewStep, expenseSubstituteReceiptReady, expenseNeedsReceiptOrSubstitute, expenseCapabilities,
   calculateManualExpenseTotals, buildManualExpenseLines, canAccessExpenseTab, canDeleteExpense, expenseDeleteErrorMessage,
   expenseDeleteTargetLabel, firstFilled, isExpensePending, summarizeExpenseKpis,
-  lateDocumentDays,
+  isBlockedCheckBillClassification, lateDocumentDays,
   POSTING_STATUS_LABELS, aiGrandTotalValue, expenseAiFieldProvenance, expenseRatePercent, expenseDocumentWhtRate,
   vatRatePreset, vatRatePresetValue, expensePercentToRate, expenseRateToPercent,
   effectiveVatRateLabel, vatModeRequiresRate,
@@ -396,7 +396,87 @@ function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { company
 }
 
 // ── Document type / tax evidence review + substitute + signature fill ─────────
-export function DocumentReviewSection({ companyId, detail, isMutable, canReview, canConfirm, userId, canSelfApprove, onSaved, onOpenFile, dirtyRef }: { companyId: string; detail: ExpenseDetail; isMutable: boolean; canReview: boolean; canConfirm: boolean; userId: string; canSelfApprove: boolean; onSaved: () => Promise<void>; onOpenFile: (file: { name: string; mimeType: string; url: string; hideOpenNewTab?: boolean; onViewed?: () => void }) => void; dirtyRef?: MutableRefObject<boolean> }) {
+function CheckBillGuidanceCard({ companyId, expenseId, canReview, receiptUploading, onAttachPrimaryReceipt }: {
+  companyId: string;
+  expenseId: string;
+  canReview: boolean;
+  receiptUploading: boolean;
+  onAttachPrimaryReceipt?: (file: File) => Promise<void>;
+}) {
+  const locale = useWorkspaceLocale();
+  const [answer, setAnswer] = useState<'paid' | 'unpaid' | null>(null);
+  return (
+    <section className="space-y-3 rounded-2xl border-2 border-warning-200 bg-warning-50 p-4" aria-labelledby="check-bill-guidance-title">
+      <div className="flex items-start gap-3">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-warning-100 text-warning-700" aria-hidden="true">{ICON.alert}</span>
+        <div className="min-w-0">
+          <h4 id="check-bill-guidance-title" className="text-base font-extrabold text-gray-900">{t('expenses.check_bill_title', locale)}</h4>
+          <p className="mt-1 text-sm leading-6 text-gray-700">{t('expenses.check_bill_description', locale)}</p>
+        </div>
+      </div>
+
+      {answer === null && (
+        <div className="space-y-2">
+          <p className="text-base font-bold text-gray-900">{t('expenses.check_bill_paid_question', locale)}</p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <button type="button" className={btnClass} onClick={() => setAnswer('paid')}>{t('expenses.check_bill_paid_action', locale)}</button>
+            <button type="button" className={ghostClass} onClick={() => setAnswer('unpaid')}>{t('expenses.check_bill_unpaid_action', locale)}</button>
+          </div>
+          {onAttachPrimaryReceipt && (
+            <label className={cx(ghostClass, 'flex min-h-11 w-full cursor-pointer items-center justify-center text-center')}>
+              {receiptUploading ? t('expenses.uploading', locale) : t('expenses.check_bill_upload_final', locale)}
+              <input className="hidden" type="file" accept={ATTACHMENT_UPLOAD_ACCEPT} disabled={receiptUploading} onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = '';
+                if (file) void onAttachPrimaryReceipt(file);
+              }} />
+            </label>
+          )}
+        </div>
+      )}
+
+      <div aria-live="polite">
+        {answer === 'paid' && (
+          <div className="space-y-3 rounded-xl bg-white p-3">
+          <div>
+            <p className="font-bold text-gray-900">{t('expenses.check_bill_paid_title', locale)}</p>
+            <p className="mt-1 text-sm leading-6 text-gray-600">{t('expenses.check_bill_paid_description', locale)}</p>
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+            {onAttachPrimaryReceipt && (
+              <label className={cx(btnClass, 'flex min-h-11 cursor-pointer items-center justify-center text-center')}>
+                {receiptUploading ? t('expenses.uploading', locale) : t('expenses.check_bill_upload_final', locale)}
+                <input className="hidden" type="file" accept={ATTACHMENT_UPLOAD_ACCEPT} disabled={receiptUploading} onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  event.target.value = '';
+                  if (file) void onAttachPrimaryReceipt(file);
+                }} />
+              </label>
+            )}
+            {canReview && <Link className={ghostClass} href={`/companies/${companyId}/expenses/substitute-receipts/new?expenseId=${encodeURIComponent(expenseId)}&route=check-bill`}>{t('expenses.check_bill_start_new_substitute', locale)}</Link>}
+            <button type="button" className={ghostClass} onClick={() => setAnswer(null)}>{t('expenses.check_bill_back', locale)}</button>
+          </div>
+          {canReview
+            ? <p className="text-xs leading-5 text-warning-700">{t('expenses.check_bill_new_draft_note', locale)}</p>
+            : <p className="text-sm font-semibold leading-6 text-warning-700">{t('expenses.check_bill_waiting_finance', locale)}</p>}
+          </div>
+        )}
+
+        {answer === 'unpaid' && (
+          <div className="space-y-3 rounded-xl bg-white p-3">
+          <div>
+            <p className="font-bold text-gray-900">{t('expenses.check_bill_unpaid_title', locale)}</p>
+            <p className="mt-1 text-sm leading-6 text-gray-600">{t('expenses.check_bill_unpaid_description', locale)}</p>
+          </div>
+          <button type="button" className={ghostClass} onClick={() => setAnswer(null)}>{t('expenses.check_bill_back', locale)}</button>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+export function DocumentReviewSection({ companyId, detail, isMutable, canReview, canConfirm, userId, canSelfApprove, onSaved, onOpenFile, onAttachPrimaryReceipt, receiptUploading = false, dirtyRef }: { companyId: string; detail: ExpenseDetail; isMutable: boolean; canReview: boolean; canConfirm: boolean; userId: string; canSelfApprove: boolean; onSaved: () => Promise<void>; onOpenFile: (file: { name: string; mimeType: string; url: string; hideOpenNewTab?: boolean; onViewed?: () => void }) => void; onAttachPrimaryReceipt?: (file: File) => Promise<void>; receiptUploading?: boolean; dirtyRef?: MutableRefObject<boolean> }) {
   const locale = useWorkspaceLocale();
   const toast = useToast();
   const [docType, setDocType] = useState(detail.sourceDocumentType);
@@ -514,6 +594,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
   });
   const classificationReviewState = deriveExpenseClassificationReviewState(detail.aiVerificationSummaryJson, canReview);
   const classificationBlocked = classificationReviewState.blocked;
+  const checkBillBlocked = isBlockedCheckBillClassification(detail.aiVerificationSummaryJson);
   const canResolveClassification = classificationReviewState.showFinanceOverride && docType !== 'NEEDS_REVIEW' && classificationOverrideReason.trim().length > 0 && classificationOverrideReason.trim().length <= 500;
   const saveDocumentReview = (next?: { docType: ExpenseDetail['sourceDocumentType']; taxStatus: ExpenseDetail['taxEvidenceStatus'] }) => {
     const nextDocType = next?.docType ?? docType;
@@ -559,6 +640,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
     });
   };
   const evidence = detail.substituteReceiptEvidence;
+  const canShowInlineSubstitute = canShowInlineSubstitutePreparation(classificationBlocked, evidence?.status);
   const needsReceiptOrSubstitute = expenseNeedsReceiptOrSubstitute(detail);
   const selectSignatureFile = (file: File | null) => {
     setSignatureFile(file); setCleanedSignatureFile(null); setSignaturePreview(null);
@@ -773,13 +855,16 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
   const blockedNote = (labels: string[]) => labels.length === 0 ? null : (
     <p className="text-xs leading-5 text-gray-600"><span className="font-bold text-warning-700">ยังกดไม่ได้ · ต้องทำให้ครบก่อน:</span> {labels.join(' · ')}</p>
   );
+  const DocumentReviewContainer = checkBillBlocked ? 'details' : 'div';
 
   return (
     <MangmeeCard className="space-y-3 p-4 text-sm">
       <h3 className="font-semibold text-gray-800">{t('expenses.doc_review_title', locale)}</h3>
       {error && <ErrorBanner message={error} />}
       {info && <InfoBanner message={info} />}
-      {classificationBlocked && <InfoBanner message={t(classificationReviewState.showFinanceOverride ? 'expenses.non_expense_override_hint' : 'expenses.non_expense_waiting_finance', locale)} />}
+      {checkBillBlocked
+        ? <CheckBillGuidanceCard key={detail.id} companyId={companyId} expenseId={detail.id} canReview={canReview} receiptUploading={receiptUploading} onAttachPrimaryReceipt={onAttachPrimaryReceipt} />
+        : classificationBlocked && <InfoBanner message={t(classificationReviewState.showFinanceOverride ? 'expenses.non_expense_override_hint' : 'expenses.non_expense_waiting_finance', locale)} />}
       {needsReceiptOrSubstitute && isMutable && canReview && !classificationBlocked && (
         <div className="space-y-2 rounded-xl border border-warning-100 bg-warning-50 p-3">
           <p className="text-xs font-semibold text-warning-700">{t('expenses.no_receipt_banner', locale)}</p>
@@ -787,12 +872,30 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
         </div>
       )}
       {classificationReviewState.showFinanceOverride && (
-        <div>
-          <div className="mb-1 text-xs font-medium text-gray-600">{t('expenses.non_expense_override_reason', locale)}</div>
-          <textarea className={inputClass} rows={2} maxLength={500} value={classificationOverrideReason} onChange={(e) => setClassificationOverrideReason(stripDisallowed(e.target.value))} placeholder={t('expenses.non_expense_override_reason_placeholder', locale)} />
-        </div>
+        checkBillBlocked ? (
+          <details className="rounded-xl border border-gray-200 bg-white p-3">
+            <summary className="cursor-pointer font-semibold text-gray-700">{t('expenses.check_bill_finance_review', locale)}</summary>
+            <div className="mt-3">
+              <div className="mb-1 text-xs font-medium text-gray-600">{t('expenses.non_expense_override_reason', locale)}</div>
+              <textarea className={inputClass} rows={2} maxLength={500} value={classificationOverrideReason} onChange={(e) => setClassificationOverrideReason(stripDisallowed(e.target.value))} placeholder={t('expenses.non_expense_override_reason_placeholder', locale)} />
+              <button className={cx(btnClass, 'mt-2')} disabled={busy || !canResolveClassification} onClick={() => run(overrideClassification, 'ยืนยันการจัดประเภทรายการเรียบร้อยแล้ว')}>{t('expenses.non_expense_override_action', locale)}</button>
+            </div>
+          </details>
+        ) : (
+          <div>
+            <div className="mb-1 text-xs font-medium text-gray-600">{t('expenses.non_expense_override_reason', locale)}</div>
+            <textarea className={inputClass} rows={2} maxLength={500} value={classificationOverrideReason} onChange={(e) => setClassificationOverrideReason(stripDisallowed(e.target.value))} placeholder={t('expenses.non_expense_override_reason_placeholder', locale)} />
+          </div>
+        )
       )}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <DocumentReviewContainer className={checkBillBlocked ? 'rounded-xl border border-gray-200 bg-white p-3' : undefined}>
+        {checkBillBlocked && (
+          <summary className="min-h-11 cursor-pointer py-2 font-semibold text-gray-700">
+            {t('expenses.check_bill_accounting_details', locale)}
+          </summary>
+        )}
+        <div className={checkBillBlocked ? 'mt-3 space-y-3 border-t border-gray-100 pt-3' : 'space-y-3'}>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div>
           <div className="mb-1 flex items-center gap-1.5 text-xs font-medium text-gray-600">
             {t('expenses.doc_type', locale)}
@@ -826,8 +929,8 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
       {isMutable && canReview && (
         <div className="flex flex-wrap items-center gap-2">
           <button className={btnClass} disabled={busy || !dirty} onClick={() => run(saveDocumentReview, 'บันทึกการตรวจเอกสารเรียบร้อยแล้ว')}>{t('expenses.doc_review_save', locale)}</button>
-          {classificationReviewState.showFinanceOverride && <button className={btnClass} disabled={busy || !canResolveClassification} onClick={() => run(overrideClassification, 'ยืนยันการจัดประเภทรายการเรียบร้อยแล้ว')}>{t('expenses.non_expense_override_action', locale)}</button>}
-          {(!evidence || evidence.status === 'PREPARED') && (
+          {classificationReviewState.showFinanceOverride && !checkBillBlocked && <button className={btnClass} disabled={busy || !canResolveClassification} onClick={() => run(overrideClassification, 'ยืนยันการจัดประเภทรายการเรียบร้อยแล้ว')}>{t('expenses.non_expense_override_action', locale)}</button>}
+          {canShowInlineSubstitute && (
             <>
               <button className={ghostClass} disabled={busy} onClick={() => setShowSub((v) => !v)}>{evidence ? 'จัดทำ version แก้ไข' : t('expenses.issue_substitute', locale)}</button>
               <InfoTip label={t('expenses.tip_open', locale)} text={t('expenses.tip_substitute', locale)} />
@@ -835,7 +938,9 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
           )}
         </div>
       )}
-      {showSub && isMutable && canReview && (!evidence || evidence.status === 'PREPARED') && (
+        </div>
+      </DocumentReviewContainer>
+      {showSub && isMutable && canReview && canShowInlineSubstitute && (
         <div className="space-y-2 rounded-xl border border-warning-100 bg-warning-50 p-3">
           <p className="text-xs text-warning-700">{t('expenses.substitute_hint', locale)}</p>
           <p className="text-xs font-semibold text-error-700">หากใบกำกับภาษีสูญหายและต้องการใช้ภาษีซื้อ ให้ขอใบแทนจากผู้ขาย เอกสารภายในนี้ใช้แทนไม่ได้</p>

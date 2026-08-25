@@ -1276,6 +1276,8 @@ export class PrismaExpenseRepository {
     preparedByUserId: string;
     /** R7 audit trail: which surface reserved the document number. */
     preparedFromChannel: 'WEB' | 'LINE';
+    /** Human-confirmed paid check bill; resolved atomically with prepared evidence. */
+    routeCheckBill?: boolean;
     idempotencyKey: string;
     lineContinuation?: { workflowId: string; userId: string; formRequested?: boolean };
   }): Promise<SubstituteReceiptEvidenceRecord> {
@@ -1308,6 +1310,22 @@ export class PrismaExpenseRepository {
         throw new ConflictException({ code: 'expense_stale_reload', message: 'Expense changed after review. Reload before preparing substitute evidence.' });
       }
       const preparedAt = new Date();
+      const currentSummary = expense.aiVerificationSummaryJson && typeof expense.aiVerificationSummaryJson === 'object'
+        && !Array.isArray(expense.aiVerificationSummaryJson)
+        ? { ...expense.aiVerificationSummaryJson }
+        : {};
+      const aiVerificationSummaryJson = input.routeCheckBill
+        ? {
+            ...currentSummary,
+            classificationResolution: {
+              outcome: 'ROUTED_TO_SUBSTITUTE_RECEIPT',
+              acknowledgedPaidWithoutFinalReceipt: true,
+              sourceDocumentKind: 'ORDER_OR_CHECK_BILL',
+              resolvedAt: preparedAt.toISOString(),
+              resolvedByUserId: input.preparedByUserId,
+            },
+          }
+        : undefined;
       let sourceChannelMetadataJson: Record<string, unknown> | undefined;
       if (input.lineContinuation) {
         const metadata = expense.sourceChannelMetadataJson && typeof expense.sourceChannelMetadataJson === 'object'
@@ -1348,6 +1366,7 @@ export class PrismaExpenseRepository {
           taxEvidenceStatus: 'SUPPORTING_ONLY',
           inputVatClaimStatus: 'NON_CLAIMABLE',
           taxEvidenceReasonCode: 'HANDWRITTEN_OR_TEXT_NEEDS_SUBSTITUTE',
+          ...(aiVerificationSummaryJson ? { aiVerificationSummaryJson } : {}),
           updatedByUserId: input.preparedByUserId,
           updatedAt: preparedAt,
           ...(sourceChannelMetadataJson ? { sourceChannelMetadataJson } : {}),

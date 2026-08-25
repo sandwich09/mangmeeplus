@@ -71,6 +71,35 @@ export type OcrTotalAcknowledgementInput = {
   reason: string;
 };
 
+export function isCheckBillClassification(
+  summary: Record<string, unknown> | null | undefined,
+): boolean {
+  const rawClassification = summary?.['classification'];
+  return !!rawClassification
+    && typeof rawClassification === 'object'
+    && !Array.isArray(rawClassification)
+    && (rawClassification as Record<string, unknown>)['documentKind'] === 'ORDER_OR_CHECK_BILL';
+}
+
+export function hasCheckBillSubstituteRoutingResolution(
+  summary: Record<string, unknown> | null | undefined,
+): boolean {
+  if (!isCheckBillClassification(summary)) return false;
+  const rawResolution = summary?.['classificationResolution'];
+  if (!rawResolution || typeof rawResolution !== 'object' || Array.isArray(rawResolution)) return false;
+  const resolution = rawResolution as Record<string, unknown>;
+  const resolvedAt = resolution['resolvedAt'];
+  const resolvedByUserId = resolution['resolvedByUserId'];
+  return resolution['outcome'] === 'ROUTED_TO_SUBSTITUTE_RECEIPT'
+    && resolution['acknowledgedPaidWithoutFinalReceipt'] === true
+    && resolution['sourceDocumentKind'] === 'ORDER_OR_CHECK_BILL'
+    && typeof resolvedAt === 'string'
+    && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(resolvedAt)
+    && Number.isFinite(Date.parse(resolvedAt))
+    && typeof resolvedByUserId === 'string'
+    && resolvedByUserId.trim().length > 0;
+}
+
 export function isNonExpenseClassificationBlocking(
   summary: Record<string, unknown> | null | undefined,
 ): boolean {
@@ -88,7 +117,8 @@ export function isNonExpenseClassificationBlocking(
   const resolvedAt = resolution['resolvedAt'];
   const resolvedByUserId = resolution['resolvedByUserId'];
   return !(
-    resolution['outcome'] === 'FINANCE_OVERRIDDEN_AS_EXPENSE'
+    hasCheckBillSubstituteRoutingResolution(summary)
+    || (resolution['outcome'] === 'FINANCE_OVERRIDDEN_AS_EXPENSE'
     && resolution['acknowledged'] === true
     && typeof reason === 'string'
     && reason.trim().length > 0
@@ -99,7 +129,7 @@ export function isNonExpenseClassificationBlocking(
     && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(resolvedAt)
     && Number.isFinite(Date.parse(resolvedAt))
     && typeof resolvedByUserId === 'string'
-    && resolvedByUserId.trim().length > 0
+    && resolvedByUserId.trim().length > 0)
   );
 }
 
@@ -785,6 +815,9 @@ export type GenerateSubstituteReceiptInput = {
   paymentMethod?: ExpensePaymentMethod;
   idempotencyKey: string;
   expectedExpenseUpdatedAt: string;
+  /** Explicit human choice for an already-paid check bill with no final receipt. The API accepts
+   *  this only when the authoritative raw classification is ORDER_OR_CHECK_BILL. */
+  routeCheckBill?: true;
   /** R10: this prepare answers `ขอฟอร์มไปเซ็นเอง`, so the chat is now waiting for a photo of the
    *  signed sheet. Recorded on the continuation state the prepare consumes; ignored without one. */
   formRequested?: boolean;
@@ -798,6 +831,7 @@ export type LineSubstituteReceiptPrefill = {
   expenseId: string;
   targetRevision: string;
   status: 'OPEN' | 'PAUSED';
+  routeCheckBill?: true;
   acceptedValues: {
     reasonCode?: SubstituteReceiptReasonCode;
     missingReceiptReason?: string;

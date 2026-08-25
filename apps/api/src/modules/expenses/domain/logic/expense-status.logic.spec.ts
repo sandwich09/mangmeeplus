@@ -208,6 +208,33 @@ describe('hasBlockingNonExpenseClassification', () => {
     assert.equal(hasBlockingNonExpenseClassification({ status: 'OCR_EXTRACTED_NEEDS_REVIEW' }), false);
     assert.equal(hasBlockingNonExpenseClassification(null), false);
   });
+
+  it('unblocks only a complete substitute route bound to a check bill', () => {
+    const validCheckBillRoute = {
+      status: 'NOT_EXPENSE_DOCUMENT',
+      classification: { documentKind: 'ORDER_OR_CHECK_BILL' },
+      classificationResolution: {
+        outcome: 'ROUTED_TO_SUBSTITUTE_RECEIPT',
+        acknowledgedPaidWithoutFinalReceipt: true,
+        sourceDocumentKind: 'ORDER_OR_CHECK_BILL',
+        resolvedByUserId: 'user-1',
+        resolvedAt: '2026-08-25T10:00:00.000Z',
+      },
+    };
+
+    assert.equal(hasBlockingNonExpenseClassification(validCheckBillRoute), false);
+    assert.equal(hasBlockingNonExpenseClassification({
+      ...validCheckBillRoute,
+      classification: { documentKind: 'QUOTATION' },
+    }), true);
+    assert.equal(hasBlockingNonExpenseClassification({
+      ...validCheckBillRoute,
+      classificationResolution: {
+        ...validCheckBillRoute.classificationResolution,
+        acknowledgedPaidWithoutFinalReceipt: false,
+      },
+    }), true);
+  });
 });
 
 describe('canTransition', () => {

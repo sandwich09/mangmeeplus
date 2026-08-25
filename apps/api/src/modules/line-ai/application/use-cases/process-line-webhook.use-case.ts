@@ -27,6 +27,9 @@ import { reconcileExpenseDuplicateCandidates } from '../../../expenses/applicati
 import { CaptureLineExpenseNoteUseCase, LineTextExpenseCaptureIncompleteError } from '../../../expenses/application/use-cases/expense-document.use-case';
 import { CorrectLineCapturedExpenseUseCase } from '../../../expenses/application/use-cases/line-correction.use-case';
 import {
+  CHECK_BILL_PAYMENT_CHOICES,
+  CHECK_BILL_PAYMENT_QUESTION,
+  checkBillPaymentChoice,
   classifySubstituteMedia,
   hasActiveSubstituteContinuation,
   isSubstituteReceiptConversationText,
@@ -351,6 +354,52 @@ function formatBusinessDocumentReply(
       }
       return 'ℹ️ เอกสารนี้ยังไม่ผ่านเกณฑ์หลักฐานค่าใช้จ่าย ระบบจึงยังไม่สร้างร่าง กรุณาส่งฉบับที่ชัดเจนหรือระบุวัตถุประสงค์ในข้อความค่ะ';
   }
+}
+
+function formatCheckBillDecisionReply(): string {
+  return [
+    '🧾 รูปนี้ยังไม่ใช่ใบเสร็จค่ะ',
+    'ใบนี้บอกยอดที่ต้องจ่าย แต่ยังไม่ยืนยันว่าร้านรับเงินแล้ว',
+    'ตอนนี้ยังไม่สร้างรายการค่าใช้จ่ายนะคะ',
+    '',
+    CHECK_BILL_PAYMENT_QUESTION,
+    ...CHECK_BILL_PAYMENT_CHOICES.map((choice, index) => `${index + 1}) ${choice}`),
+  ].join('\n');
+}
+
+export function buildCheckBillDecisionQuickReply(): NonNullable<LineReplyMessage['quickReply']> {
+  return {
+    items: [
+      { type: 'action', action: { type: 'message', label: 'จ่ายแล้ว ไม่ได้ใบ', text: '1' } },
+      { type: 'action', action: { type: 'message', label: 'ยังไม่ได้จ่าย', text: '2' } },
+      { type: 'action', action: { type: 'message', label: 'มีใบเสร็จ ส่งใหม่', text: '3' } },
+    ],
+  };
+}
+
+function buildCheckBillReceiptUploadQuickReply(): NonNullable<LineReplyMessage['quickReply']> {
+  return {
+    items: [
+      { type: 'action', action: { type: 'cameraRoll', label: 'เลือกรูปใบเสร็จ' } },
+      { type: 'action', action: { type: 'camera', label: 'ถ่ายรูปใบเสร็จ' } },
+    ],
+  };
+}
+
+export function formatCheckBillDraftCreatedReply(
+  continuation: Pick<LineSubstituteReceiptContinuationResult, 'status' | 'replyText' | 'pendingQuestion'>,
+): string {
+  const hardFailure = ['FORBIDDEN', 'INELIGIBLE', 'STALE'].includes(continuation.status);
+  if (hardFailure || !continuation.pendingQuestion) {
+    return `✅ สร้างร่างค่าใช้จ่าย 1 รายการแล้วค่ะ\n\n${continuation.replyText}`;
+  }
+  return [
+    '✅ สร้างร่างค่าใช้จ่าย 1 รายการแล้วค่ะ',
+    'เก็บเช็กบิลใบเดิมเป็นหลักฐานประกอบ และไม่สร้างรายการซ้ำ',
+    '',
+    'ต่อไปถามทีละข้อนะคะ',
+    continuation.pendingQuestion,
+  ].join('\n');
 }
 
 /**
@@ -1159,8 +1208,12 @@ export class ProcessLineWebhookUseCase {
   private async deliverReply(
     event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string },
     text: string,
+    quickReply?: LineReplyMessage['quickReply'],
   ): Promise<void> {
-    const result = await this.deliverMessages(event, [this.lineReply.buildTextMessage(text)]);
+    const result = await this.deliverMessages(event, [{
+      ...this.lineReply.buildTextMessage(text),
+      ...(quickReply ? { quickReply } : {}),
+    }]);
     if (result !== 'ok') throw new Error(`LINE_DELIVERY_${result.toUpperCase()}`);
   }
 
@@ -3402,6 +3455,42 @@ export class ProcessLineWebhookUseCase {
       },
     });
     if (decision.outcome === 'reference' || decision.outcome === 'unsupported') {
+      const checkBillAwaitingDecision = decision.outcome === 'reference'
+        && decision.classification?.contentKind === 'DOCUMENT'
+        && decision.classification.documentKind === 'ORDER_OR_CHECK_BILL'
+        && Number.isFinite(Number(ocr.fields?.grandTotalAmount))
+        && Number(ocr.fields?.grandTotalAmount) > 0;
+      if (checkBillAwaitingDecision && canCaptureExpense && this.substituteReceiptContinuation) {
+        const reply = formatCheckBillDecisionReply();
+        const { created, pending } = await this.ensurePendingMedia(
+          ctx, event, companyId, identity.userId, caption, media,
+          {
+            kind: 'CHECK_BILL_ACTION', chatKeyHash: chatKeyHashOf(event),
+            ...(ocr.fields ? { ocrFields: ocr.fields } : {}),
+            ...(decision.classification ? { classification: decision.classification } : {}),
+          },
+        );
+        if (created) {
+          await this.deliverReply(event, reply, buildCheckBillDecisionQuickReply());
+          await this.persistIntakeTurn({
+            userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
+            userMessagePreview: `[ผู้ใช้ส่งเช็กบิล]${captionSuffix}`, replyText: reply, intent: 'CLARIFY',
+          });
+          if (pending) {
+            await this.appendMediaClarification({
+              companyId, chatKey: mediaChatKey(event), requestId, webhookEventId: event.webhookEventId,
+              userId: identity.userId, caption, question: reply, pending,
+            });
+          }
+        }
+        await this.updateEventLog(
+          event.webhookEventId,
+          created ? 'clarification_required' : 'duplicate_media_pending',
+          undefined,
+          companyId,
+        );
+        return { outcome: 'done' };
+      }
       const reply = decision.outcome === 'reference'
         ? formatBusinessDocumentReply(decision.classification, this.config.webBaseUrl, companyId)
         : MEDIA_UNSUPPORTED_REPLY;
@@ -3869,6 +3958,9 @@ export class ProcessLineWebhookUseCase {
     const chatKeyHash = chatKeyHashOf(event);
     const asked = parseSubstituteMediaQuestion(pending.askedQuestionJson, chatKeyHash);
     if (!asked) return undefined;
+    if (asked.kind === 'CHECK_BILL_ACTION') {
+      return this.resolvePendingCheckBillAction(event, ctx, access, pending, text, asked);
+    }
     // §14 keeps `expense.receipt.upload` as the attach gate. Someone who lost it between question
     // and answer gets the truth, not a generic failure that also loses what they typed.
     if (!ctx.permissions.includes('expense.receipt.upload')) {
@@ -3981,6 +4073,129 @@ export class ProcessLineWebhookUseCase {
       webBaseUrl: this.config.webBaseUrl,
     });
     return this.deliverSubstituteMediaOutcome(event, ctx, access, pending, text, replyText);
+  }
+
+  private async resolvePendingCheckBillAction(
+    event: LineTextEvent,
+    ctx: RequestContext,
+    access: { membershipId: string; roles: string[]; permissions: string[]; entitlementDeniedPermissions?: Record<string, string>; scopes: { branchIds?: string[] } },
+    pending: { id: string; attachmentId: string; lineMessageId: string; mimeType: string },
+    text: string,
+    asked: Extract<LineSubstituteMediaQuestion, { kind: 'CHECK_BILL_ACTION' }>,
+  ): Promise<{ outcome: 'handled' } | { outcome: 'not_answered'; question: string }> {
+    const chatKeyHash = chatKeyHashOf(event);
+    const choice = checkBillPaymentChoice(text);
+    if (!choice) return { outcome: 'not_answered', question: formatCheckBillDecisionReply() };
+
+    if (choice === 'UNPAID' || choice === 'FINAL_RECEIPT') {
+      const reply = choice === 'UNPAID'
+        ? [
+            '⏸️ ยังไม่สร้างรายการค่าใช้จ่ายค่ะ',
+            'เพราะเช็กบิลใบนี้แสดงเพียงยอดที่ต้องจ่าย แต่ยังไม่มีหลักฐานว่าร้านรับเงินแล้ว',
+            'หลังจ่ายเงิน ส่งใบเสร็จฉบับสุดท้ายเข้ามาได้เลยค่ะ',
+          ].join('\n')
+        : [
+            '📷 ได้เลยค่ะ ยังไม่สร้างรายการจากเช็กบิลใบนี้',
+            'ส่งรูปใบเสร็จฉบับสุดท้ายเข้ามา ระบบจะอ่านและสร้างรายการจากใบเสร็จจริงค่ะ',
+          ].join('\n');
+      await this.deliverReply(
+        event,
+        reply,
+        choice === 'FINAL_RECEIPT' ? buildCheckBillReceiptUploadQuickReply() : undefined,
+      );
+      await this.resolvePendingRow(pending.id, 'RESOLVED_ILLUSTRATION');
+      await this.persistIntakeTurn({
+        userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
+        userMessagePreview: text, replyText: reply, intent: 'CLARIFY',
+      });
+      await this.updateEventLog(event.webhookEventId, 'completed', undefined, ctx.companyId);
+      return { outcome: 'handled' };
+    }
+
+    const canCaptureExpense = ['expense.receipt.line_upload', 'expense.receipt.upload', 'expense.create']
+      .some((permission) => access.permissions.includes(permission));
+    if (!canCaptureExpense || !this.expenseRepo || !this.substituteReceiptContinuation) {
+      return this.refuseSubstituteMediaAnswer(event, ctx, access, text, receiptDeniedReply(access));
+    }
+    const existing = await this.expenseRepo.findByLineMessageId(ctx.companyId, pending.lineMessageId);
+    let expenseId: string;
+    if (existing) {
+      await this.completeReceiptDraft(existing.id, pending, ctx.companyId, ctx.userId, access.scopes);
+      expenseId = existing.id;
+    } else {
+      ({ expenseId } = await this.createReceiptDraftFromPendingMedia(
+        ctx.requestId,
+        ctx.userId,
+        ctx.companyId,
+        event.webhookEventId,
+        pending,
+        access.scopes,
+        chatKeyHashOf(event),
+      ));
+    }
+    if (asked.ocrFields) await this.receiptOcrApply.apply(ctx, expenseId, asked.ocrFields);
+    const classification = asked.classification ?? { documentKind: 'ORDER_OR_CHECK_BILL' };
+    await this.expenseRepo.updateExpense({
+      id: expenseId,
+      companyId: ctx.companyId,
+      updatedByUserId: ctx.userId,
+      sourceDocumentType: 'NEEDS_REVIEW',
+      taxEvidenceStatus: 'NEEDS_REVIEW',
+      inputVatClaimStatus: 'NEEDS_REVIEW',
+      aiVerificationStatus: 'NEEDS_REVIEW',
+      aiVerificationSummaryJson: {
+        status: 'NOT_EXPENSE_DOCUMENT',
+        recognizedFields: asked.ocrFields,
+        classification,
+        missingFields: asked.ocrFields?.missingFields ?? [],
+        duplicateWarning: false,
+        nextAction: 'check_bill_payment_decision_confirmed',
+      },
+    });
+    const started = await this.substituteReceiptContinuation.startFromCheckBill(ctx, {
+      expenseId,
+      chatKeyHash,
+      webBaseUrl: this.config.webBaseUrl,
+    });
+    const continuation = started.status === 'FORBIDDEN'
+      ? started
+      : await this.substituteReceiptContinuation.execute(ctx, {
+          messageText: '1',
+          chatKeyHash,
+          recentCandidates: [{ id: expenseId, label: `เช็กบิลที่ยืนยันว่าจ่ายแล้ว ${expenseId}` }],
+          webBaseUrl: this.config.webBaseUrl,
+          confirmedStart: true,
+        });
+    const reply = formatCheckBillDraftCreatedReply(continuation);
+    if (continuation.pendingQuestion && !['FORBIDDEN', 'INELIGIBLE', 'STALE'].includes(continuation.status)) {
+      await this.deliverReply(event, reply);
+    } else {
+      await this.deliverCompletedReply(event, reply, ctx.companyId, access, continuation.badge);
+    }
+    await this.resolvePendingRow(pending.id, 'RESOLVED_RECEIPT');
+    await this.recordDeliveredReceiptContinuation(event, ctx.companyId, ctx.userId, expenseId, access.scopes);
+    await this.persistIntakeTurn({
+      userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
+      userMessagePreview: text, replyText: reply, intent: 'EVIDENCE_CAPTURE',
+    });
+    if (continuation.pendingQuestion) {
+      await this.ledger?.appendSubRequests({
+        companyId: ctx.companyId, chatKey: event.pushTargetId ?? event.lineUserId,
+        turnId: ctx.requestId, webhookEventId: event.webhookEventId, userId: ctx.userId,
+        items: [{
+          text: 'ทำใบรับรองแทนใบเสร็จรับเงินต่อ', state: 'waiting_user',
+          clarifyQuestion: continuation.pendingQuestion, intent: 'CLARIFY',
+          clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION', candidateExpenseIds: [expenseId],
+        }],
+      });
+    }
+    await this.updateEventLog(
+      event.webhookEventId,
+      continuation.pendingQuestion ? 'clarification_required' : 'completed',
+      undefined,
+      ctx.companyId,
+    );
+    return { outcome: 'handled' };
   }
 
   /** R10 + D9: the confirmed photo becomes the wet-signed original. A refusal from the link (an

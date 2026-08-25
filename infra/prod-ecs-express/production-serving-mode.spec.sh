@@ -36,6 +36,13 @@ assert_rejected deploy-invalid-bootstrap-boolean \
   'MAINTENANCE_BOOTSTRAP_READONLY must be exactly true or false' \
   env -i PATH="$PATH" DEPLOY_ENV=production PRODUCTION_SERVING_MODE=live \
     MAINTENANCE_BOOTSTRAP_READONLY=yes bash "$deploy" all
+assert_rejected deploy-invalid-exact-greeting-boolean \
+  'LINE_AI_EXACT_GREETING_ENABLED must be exactly true or false' \
+  env -i PATH="$PATH" DEPLOY_ENV=uat LINE_AI_EXACT_GREETING_ENABLED=yes bash "$deploy" all
+assert_rejected deploy-production-exact-greeting-not-activated \
+  'LINE_AI_EXACT_GREETING_ENABLED=true is not activated for production yet' \
+  env -i PATH="$PATH" DEPLOY_ENV=production PRODUCTION_SERVING_MODE=live \
+    LINE_AI_EXACT_GREETING_ENABLED=true bash "$deploy" all
 assert_rejected deploy-bootstrap-flag-missing \
   'maintenance_only requires an immutable quiesced all-target bootstrap' \
   env -i PATH="$PATH" DEPLOY_ENV=production PRODUCTION_SERVING_MODE=maintenance_only \
@@ -122,6 +129,11 @@ if grep -Fq '[ "$agentcore_expected_source" = "$SHA" ]' "$deploy"; then
   exit 1
 fi
 grep -Fq '{name:"LINE_AI_LEDGER_ENABLED", value:$aiEnabled}' "$deploy"
+# Exact-greeting 0-call lane: UAT defaults on, production defaults off and rejects true, and the
+# api-web container is the only consumer of the flag.
+grep -Fq 'LINE_AI_EXACT_GREETING_ENABLED_INPUT="${LINE_AI_EXACT_GREETING_ENABLED:-}"' "$deploy"
+grep -Fq -- '--arg lineAiExactGreetingEnabled "$SERVING_LINE_AI_EXACT_GREETING_ENABLED"' "$deploy"
+test "$(grep -Fc '{name:"LINE_AI_EXACT_GREETING_ENABLED", value:$lineAiExactGreetingEnabled}' "$deploy")" -eq 1
 grep -Fq -- '--arg modelProvider "$SERVING_MODEL_PROVIDER"' "$deploy"
 for flag in \
   LINE_AI_AGENT_ORCHESTRATION_ENABLED \
