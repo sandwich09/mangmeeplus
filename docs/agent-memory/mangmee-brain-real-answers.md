@@ -1,6 +1,6 @@
 # Agent Memory: mangmee-brain-real-answers
 
-Status: Phase 0 (B0) ตรวจแล้วบางส่วน; Phase 1.1 harness เสร็จ; Phase 6 (security suite — เดิมเรียก Phase 2 ใน plan v1) เสร็จเขียวทั้งชุด; Phase 1.4 กำลังทำ; ทั้งหมดบน branch `codex/brain-real-answers-p0-2` (worktree แยกจาก origin/develop) ยังไม่ push/PR
+Status: จบตามคำสั่ง Owner "ถึง Phase 2 (v1) พอก่อน" แล้ว — Phase 0 (B0) ตรวจบางส่วน (เหลือส่งข้อความทดสอบ OA UAT 1 ข้อความ), Phase 1.1 harness เสร็จ, Phase 1.4 (data path + UX + telemetry) เสร็จ+ทดสอบ local ผ่าน, security suite (v2 Phase 6) เสร็จเขียว; commits: 28461660 docs v1, a6ff1805 docs v2 sync, d66a4a18 harness+security, b7e16c00 feature; branch `codex/brain-real-answers-p0-2` ยังไม่ push/PR
 
 Owner: thawatchai (Product owner) / Developer 1 คน; coding รอบนี้ทำโดย Claude (Opus 5 subagents ภายใต้ Fable session) ตามคำสั่ง Owner 2026-08-25
 
@@ -40,10 +40,19 @@ Gaps ที่ agent รายงาน (ยังไม่แก้ — นอ�
 6. design tension: `sales.get_sales_summary` ประกาศ `branchId` ใน optionalInputFields แต่ parser FORBIDDEN_INPUT_KEY ปัดทุก key /branch/ → branch-scoped read ผ่าน prepared lane ไม่ได้ (fallback เสมอ) — บันทึกก่อน compile F1–F3
 7. (ปิดแล้ว) memory ไฟล์นี้ถูกสร้างตามที่ plan กำหนด
 
+Local verification (2026-08-26, web dev + API dist จาก branch, seeded DB :15432, 390px):
+
+- Flow ถูก: dev login → dashboard → รายการค่าใช้จ่าย (สรุป ฿113,447.6/191 รายการ) → review 3 ขั้น; ขั้น 1 บล็อกเมื่อไม่กรอกชื่อผู้ขาย (validation ตรงจุด)
+- Feature ใหม่ถูก: seed suggestion 0.62 (ต่ำกว่า 0.85) → หมวด "ยังไม่ระบุ" ไม่ถูกเดา + ปุ่ม "🤖 หมวดที่ AI แนะนำ: ค่าอาหารและเครื่องดื่ม · แตะเพื่อใช้หมวดนี้" แสดงใต้ select; แตะแล้วหมวดถูกเลือกทันที ปุ่มหายไป ปุ่มบันทึก active; ข้อมูลขั้น 1 (ชื่อผู้ขาย) ไม่หาย
+- เร็ว: page load 717ms (dev mode)
+- ป้า 40+: ปุ่ม/ช่อง 44px, input/label 16px, ภาษาไทยไม่มีศัพท์เทคนิค; observation: ตัวอักษรในปุ่ม 14px ตาม pattern เดิมของ card (ไม่ใช่ regression ใหม่)
+- ทดสอบผ่าน seed ตรง DB (`aiVerificationSummaryJson.categorySuggestion`) เพราะ E2E ไม่มีทาง public เขียนค่านี้ (ตามเหตุผลที่บันทึกใน Phase 1.4 report)
+- บั๊กที่เจอระหว่างทาง: NFKC สระอำใน `line-expense-draft-conversation.logic.ts:87-88,521-526` ทำวลี "ตามที่แนะนำ" ไม่ match — spawn เป็นงานแยกแล้ว (task chip)
+
 Next:
 
-1. รอ Phase 1.4 (data path suggestion ต่ำกว่าเกณฑ์ + web UX + override telemetry web/LINE) จบ → ตรวจ diff + รัน api/web tests → commit ทีละก้อน
-2. รัน local stack จาก branch → ทดสอบหน้า web แบบผู้ใช้ 40+ (390px): flow ถูก ข้อมูลถูก เร็ว → บันทึกผล
+1. Owner ตรวจงานบน local (เซิร์ฟเวอร์ยังรันอยู่: web http://127.0.0.1:3000, api :3001) แล้วสั่ง push/PR เข้า develop
+2. แก้บั๊ก NFKC (task chip) + ลงทะเบียน orphan specs (task chip)
 3. ส่งข้อความทดสอบ 1 ข้อความที่ OA UAT (ต้องคนมี OA) แล้วเช็ก telemetry ซ้ำเพื่อปิด B0
 4. งานถัดไปตามแผน v2: Phase 2 (B1 hosted baseline หลังมี traffic) — ไม่เริ่มจนกว่า Owner สั่ง (คำสั่งปัจจุบัน: จบ phase 2 พอก่อน ซึ่งคือจุดนี้)
 5. พิจารณา gaps 1–6 เป็น follow-up แยก (เสนอเป็นงานเล็กหลัง PR แรก)
