@@ -1,6 +1,6 @@
 # Agent Memory: mangmee-brain-real-answers
 
-Status: จบตามคำสั่ง Owner "ถึง Phase 2 (v1) พอก่อน" แล้ว — Phase 0 (B0) ตรวจบางส่วน (เหลือส่งข้อความทดสอบ OA UAT 1 ข้อความ), Phase 1.1 harness เสร็จ, Phase 1.4 (data path + UX + telemetry) เสร็จ+ทดสอบ local ผ่าน, security suite (v2 Phase 6) เสร็จเขียว; commits: 28461660 docs v1, a6ff1805 docs v2 sync, d66a4a18 harness+security, b7e16c00 feature; branch `codex/brain-real-answers-p0-2` ยังไม่ push/PR
+Status: batch 2 (branch codex/brain-real-answers-p6-9) เสร็จ: G1 ปิด (บั๊กจริง clamp 100 ใบ + pagination tiebreaker), infra flags ครบสามชั้น (deploy.sh + agentcore literal-false + gate spec 10 เคส PASS), families F1/F2/F3 compile dormant (gateway 744/744), F3 นิยามใหม่ตาม Owner 2026-08-26 = ค่าใช้จ่ายวันนี้ผ่าน expense.get_daily_closing (ไม่ต้อง tool ใหม่/ลงนาม), catalog คำถาม-คำตอบ + พิมพ์เขียว golden 30 ใบสร้างแล้ว (docs/specs/mangmee-brain-user-questions-catalog.md); B1 ติด traffic: UAT และ production ไม่มี LINE webhook เลยใน 24 ชม. (ตรวจ log จริงทั้งคู่ format ถูก) — ต้องใช้งานจริงบน UAT 2-3 วัน; batch 1 merge แล้วเป็น PR #233 — Phase 0 (B0) ตรวจบางส่วน (เหลือส่งข้อความทดสอบ OA UAT 1 ข้อความ), Phase 1.1 harness เสร็จ, Phase 1.4 (data path + UX + telemetry) เสร็จ+ทดสอบ local ผ่าน, security suite (v2 Phase 6) เสร็จเขียว; commits: 28461660 docs v1, a6ff1805 docs v2 sync, d66a4a18 harness+security, b7e16c00 feature; branch `codex/brain-real-answers-p0-2` ยังไม่ push/PR
 
 Owner: thawatchai (Product owner) / Developer 1 คน; coding รอบนี้ทำโดย Claude (Opus 5 subagents ภายใต้ Fable session) ตามคำสั่ง Owner 2026-08-25
 
@@ -29,6 +29,8 @@ Verification (2026-08-25, ใน worktree; ต้อง `pnpm -C packages/contra
 - ไม่มีไฟล์ใต้ `apps/` import จาก root `scripts/` (grep พิสูจน์)
 - harness: `pnpm exec tsx --test scripts/expense-category.golden.spec.ts` 4/4
 - **Phase 0 (B0):** UAT ทำงานอยู่ (log ล่าสุด 2026-08-25 ~23:26), build ใหม่กว่า merge telemetry (deploy 2026-08-23) แต่ `line.ai.api_trace/stage/turn_summary` = 0 events ใน 7 วัน เพราะ **ไม่มี LINE webhook traffic เลย** (`/v1/line/webhook` 0 events) — ยืนยัน telemetry ให้จบต้องส่งข้อความจริง 1 ข้อความที่ OA `uat-mangmeeplus` แล้ว filter ซ้ำ; AWS อ่านตาม runbook cloud-environment-operations §4
+
+Gaps batch 2 (บันทึก 2026-08-26): F2 ผูกกับ G1 self-check (ถ้า byType เปลี่ยน basis จะ unverified ถาวร — tool ต้อง expose basis), F2 ไม่มี overall money total (tool ไม่คืน — formatter ไม่บวกเอง), daily-closing evidence/pendingReview เป็น company-wide ไม่ scope วัน (ถ้าอยากได้ของวันนี้ต้องแก้ tool), branchId ยังผ่าน prepared lane ไม่ได้ (FORBIDDEN_INPUT_KEY) — branch questions = fallback เสมอ, unbounded sibling walks (AccountingGetReceivableSummaryTool, CrmDailyBrief listAllIssuedDocuments) ไม่มี cap + แชร์บั๊ก tiebreaker เดิม (แก้ที่ repo แล้วหายทั้งคู่), byType.totalAmount เป็น float ขณะ sibling ใช้ Decimal string (formatter รองรับแล้ว)
 
 Gaps ที่ agent รายงาน (ยังไม่แก้ — นอก scope ที่อนุมัติ):
 

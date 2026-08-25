@@ -81,6 +81,19 @@ describe('AccountingGetSummaryTool', () => {
   ];
   const listDocuments = { execute: async () => ({ data: docs, total: 3, page: 1, pageSize: 200 }) } as any;
 
+  // The source repository caps page size at 100, so any period past that is read page by page.
+  function pagedListDocuments(all: Array<{ documentType: string; grandTotalAmount: string }>, total = all.length) {
+    const calls: any[] = [];
+    const source = {
+      execute: async (_ctx: any, filter: any) => {
+        calls.push(filter);
+        const start = (filter.page - 1) * filter.pageSize;
+        return { data: all.slice(start, start + filter.pageSize), total, page: filter.page, pageSize: filter.pageSize };
+      },
+    } as any;
+    return { source, calls };
+  }
+
   it('fails closed without any accounting document view path', async () => {
     const result = await new AccountingGetSummaryTool(listDocuments).execute({ ...baseCtx, permissions: [] });
     assert.equal(result.status, 'forbidden');
@@ -93,6 +106,58 @@ describe('AccountingGetSummaryTool', () => {
     assert.equal(data.byType.TAX_INVOICE.count, 2);
     assert.equal(data.byType.TAX_INVOICE.totalAmount, 150);
     assert.equal(data.period.defaultedToCurrentMonth, true);
+  });
+
+  it('aggregates every page of a month with more documents than one page (G1)', async () => {
+    const many = [
+      ...Array.from({ length: 150 }, () => ({ documentType: 'TAX_INVOICE', grandTotalAmount: '10.0000' })),
+      ...Array.from({ length: 100 }, () => ({ documentType: 'RECEIPT', grandTotalAmount: '2.0000' })),
+    ];
+    const { source, calls } = pagedListDocuments(many);
+    const result = await new AccountingGetSummaryTool(source).execute({ ...baseCtx, permissions: ['accounting.document.read'] });
+    const data = result.data as any;
+    assert.equal(result.status, 'ok');
+    assert.equal(data.total, 250);
+    assert.equal(data.byType.TAX_INVOICE.count, 150);
+    assert.equal(data.byType.TAX_INVOICE.totalAmount, 1500);
+    assert.equal(data.byType.RECEIPT.count, 100);
+    assert.equal(data.byType.RECEIPT.totalAmount, 200);
+    assert.deepEqual(calls.map((filter: any) => filter.page), [1, 2, 3]);
+    assert.ok(calls.every((filter: any) => filter.pageSize === 100 && filter.fromDate === calls[0].fromDate && filter.toDate === calls[0].toDate));
+  });
+
+  it('reports unavailable when the per-type counts disagree with the source total', async () => {
+    // Rows shifted under the walk: the source counts 5 documents but only 3 were aggregated.
+    const { source } = pagedListDocuments(docs, 5);
+    const result = await new AccountingGetSummaryTool(source).execute({ ...baseCtx, permissions: ['accounting.document.read'] });
+    assert.equal(result.status, 'unavailable');
+    assert.equal(result.errorCode, 'SUMMARY_COUNT_MISMATCH');
+    assert.equal(result.data, undefined);
+  });
+
+  it('refuses a period past the bound after one query instead of partial totals', async () => {
+    const { source, calls } = pagedListDocuments(docs, 100_000);
+    const result = await new AccountingGetSummaryTool(source).execute({ ...baseCtx, permissions: ['accounting.document.read'] });
+    assert.equal(result.status, 'unavailable');
+    assert.equal(result.errorCode, 'SUMMARY_PERIOD_TOO_LARGE');
+    assert.equal(result.data, undefined);
+    assert.equal(calls.length, 1, 'the bound is detected from the first page total, not by walking to it');
+  });
+
+  it('bounds the walk even when the source never reports the end of the period', async () => {
+    const fullPage = Array.from({ length: 100 }, () => ({ documentType: 'TAX_INVOICE', grandTotalAmount: '1.0000' }));
+    const calls: any[] = [];
+    const source = {
+      // pageSize 0 makes the "last page" arithmetic never terminate on its own.
+      execute: async (_ctx: any, filter: any) => {
+        calls.push(filter);
+        return { data: fullPage, total: 400, page: filter.page, pageSize: 0 };
+      },
+    } as any;
+    const result = await new AccountingGetSummaryTool(source).execute({ ...baseCtx, permissions: ['accounting.document.read'] });
+    assert.equal(result.status, 'unavailable');
+    assert.equal(result.errorCode, 'SUMMARY_PERIOD_TOO_LARGE');
+    assert.equal(calls.length, 50, 'a pathological source is bounded, never an endless walk');
   });
 
   it('accepts related-record view and leaves relation filtering to the source use case', async () => {

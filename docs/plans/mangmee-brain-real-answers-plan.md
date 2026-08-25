@@ -122,15 +122,16 @@ F1 (`expense.list_recent`, ไม่แก้ API):
 
 F2 (`accounting.get_summary::list`) — **แก้ G1 ก่อน**:
 
-1. แก้ aggregation ใน `erp-business-tools.use-case.ts:42-70` ให้ครบทุกหน้า (มี bound) + regression เดือน >200 ใบ + วัด latency hosted (G10)
+1. ~~แก้ aggregation~~ **เสร็จแล้ว 2026-08-26**: bounded page walk (สูงสุด 50 หน้า × pageSize; ของจริง repository clamp ที่ 100 ใบ/หน้า — บั๊กเดิมจึง truncate ที่ 100 ไม่ใช่ 200) + self-check `Σ byType.count = total` (`SUMMARY_COUNT_MISMATCH`) + เกิน bound → `SUMMARY_PERIOD_TOO_LARGE` ไม่คืนตัวเลขบางส่วน + regression 250 ใบ/mismatch/over-bound; แถม: เพิ่ม `id` tiebreaker ใน `prisma-accounting.repository.ts` orderBy เพราะ OFFSET paging บน `documentDate` อย่างเดียวซ้ำ/ข้ามแถวได้ (self-check จับไม่ได้); เหลือวัด latency hosted (G10) เมื่อ UAT มี traffic
 2. จากนั้นทำ formatter/golden/eval/allowlist ตามลำดับเดียวกับ F1; ขอบเขต "รายการ" ยืนยันกับ Owner ตอน fixtures (spec §10.2)
 
-## Phase 9 — B6/S3-F3 เงินเข้า–ออกวันนี้ (รอบถัดไป, ~1–1.5 วัน หลังนิยามลงนาม)
+## Phase 9 — B6/S3-F3 ค่าใช้จ่ายวันนี้ (นิยามใหม่ตามการตัดสินใจ Owner 2026-08-26)
 
-1. Owner + นักบัญชีลงนามนิยามเงินเข้า/เงินออก (spec §5-F3, §10.1) — ก่อนเขียนโค้ด
-2. เพิ่ม tool `accounting.get_cash_movement_summary`: registry entry ใน `packages/contracts/src/ai-tools.ts` (ตาม shape entry เดิม) + tool class ใน `erp-business-tools.use-case.ts` (ตาม pattern `AccountingGetSummaryTool`) + **ลงทะเบียน DI ให้ครบ** (review finding): `apps/api/src/modules/line-ai/line-ai.module.ts` (import + `erpTools` array) และ `internal-tools.controller.ts` (import + constructor param + `toolMap.set`) — permission ตามกลุ่มที่มีอยู่, default วันนี้, ระบุ source "จากรายการที่บันทึกในระบบ"
-3. Unit: permission negative, นิยามตรงลายเซ็น, explicit-empty, ช่วงวันที่; security เคสใหม่ (forged/cross-company input → sanitizer ตัด → fallback)
-4. Formatter (เข้า X / ออก Y / สุทธิ Z + วันที่ + source) + fixtures + golden + blind eval → allowlist UAT
+การตัดสินใจ Owner: F3 เป็น **รายงานฝั่งค่าใช้จ่ายก่อน** เพราะฝั่งรายรับยังไม่ได้ทำ — คำถาม "เงินเข้าวันนี้" กลับมาเป็น family ใหม่เมื่อฝั่งรายรับเปิด (หลัง P26) และตอนนั้นจึงต้องมีนิยาม/ลายเซ็นนักบัญชี
+
+1. **ไม่ต้องสร้าง tool ใหม่ ไม่ต้องรอลงนาม**: ใช้ `expense.get_daily_closing` ที่มีอยู่ (`ai-tools.ts:377-390` — สรุปค่าใช้จ่ายหนึ่งวัน: เกิดขึ้น/จ่ายแล้ว/ค้างจ่าย/ครบกำหนด/เกินกำหนด/รอตรวจ)
+2. Formatter ตาม template ใน [user-questions-catalog](../specs/mangmee-brain-user-questions-catalog.md) §2-Q3 — บรรทัดปิดบังคับ: "จากรายการที่บันทึกในระบบ ... ไม่ใช่ยอดเงินเข้าออกธนาคาร" (G5); ตัวเลขจากผล tool เท่านั้น ห้าม formatter บวกยอดที่ tool ไม่ได้คืน
+3. Fixtures + phrasing golden (รวม fallback-control สำหรับคำถามฝั่งรายรับที่ต้องยังไม่ map: เงินเข้าวันนี้/กำไรเดือนนี้) + blind eval → allowlist UAT ตามลำดับเดียวกับ F1/F2
 
 ## Phase 10 — B7: Advisor Slice A (ตาม advisor plan)
 

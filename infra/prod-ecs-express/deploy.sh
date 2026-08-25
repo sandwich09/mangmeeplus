@@ -26,6 +26,11 @@ REIMBURSEMENT_BRIDGE_INPUT="${REIMBURSEMENT_BRIDGE:-false}"
 PARTIAL_INCIDENT_READONLY_INPUT="${PARTIAL_INCIDENT_READONLY:-false}"
 MAINTENANCE_BOOTSTRAP_READONLY_INPUT="${MAINTENANCE_BOOTSTRAP_READONLY:-false}"
 LINE_AI_EXACT_GREETING_ENABLED_INPUT="${LINE_AI_EXACT_GREETING_ENABLED:-}"
+LINE_AI_LOADING_ON_ACCEPT_ENABLED_INPUT="${LINE_AI_LOADING_ON_ACCEPT_ENABLED:-false}"
+LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED_INPUT="${LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED:-false}"
+LINE_AI_FUSED_PLAN_SHADOW_ENABLED_INPUT="${LINE_AI_FUSED_PLAN_SHADOW_ENABLED:-false}"
+LINE_AI_PREPARED_SIMPLE_READ_ENABLED_INPUT="${LINE_AI_PREPARED_SIMPLE_READ_ENABLED:-false}"
+LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES_INPUT="${LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES:-}"
 PRODUCTION_SERVING_MODE_INPUT="${PRODUCTION_SERVING_MODE:-}"
 RELEASE_MODE_INPUT="${RELEASE_MODE:-}"
 LOG_RETENTION_DAYS="${LOG_RETENTION_DAYS:-14}"
@@ -103,6 +108,55 @@ esac
 if [ "$DEPLOY_ENV" = production ] && [ "$LINE_AI_EXACT_GREETING_ENABLED_INPUT" = true ]; then
   echo "ERROR: LINE_AI_EXACT_GREETING_ENABLED=true is not activated for production yet" >&2
   exit 2
+fi
+# Brain-Real activation flags (docs/specs/mangmee-brain-real-answers-spec.md §9; plan phases B2-B5).
+# Same contract as the exact-greeting lane above, with one difference: these default OFF/empty in BOTH
+# environments. A UAT cycle turns exactly one lane on by passing the variable on the deploy invocation;
+# production is hard-blocked until that lane passes its activation gates, so an explicit production
+# value fails closed rather than shipping an unmeasured lane to customers.
+case "$LINE_AI_LOADING_ON_ACCEPT_ENABLED_INPUT" in true|false) ;; *)
+  echo "ERROR: LINE_AI_LOADING_ON_ACCEPT_ENABLED must be exactly true or false" >&2; exit 2 ;;
+esac
+if [ "$DEPLOY_ENV" = production ] && [ "$LINE_AI_LOADING_ON_ACCEPT_ENABLED_INPUT" = true ]; then
+  echo "ERROR: LINE_AI_LOADING_ON_ACCEPT_ENABLED=true is not activated for production yet" >&2
+  exit 2
+fi
+case "$LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED_INPUT" in true|false) ;; *)
+  echo "ERROR: LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED must be exactly true or false" >&2; exit 2 ;;
+esac
+if [ "$DEPLOY_ENV" = production ] && [ "$LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED_INPUT" = true ]; then
+  echo "ERROR: LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED=true is not activated for production yet" >&2
+  exit 2
+fi
+case "$LINE_AI_FUSED_PLAN_SHADOW_ENABLED_INPUT" in true|false) ;; *)
+  echo "ERROR: LINE_AI_FUSED_PLAN_SHADOW_ENABLED must be exactly true or false" >&2; exit 2 ;;
+esac
+if [ "$DEPLOY_ENV" = production ] && [ "$LINE_AI_FUSED_PLAN_SHADOW_ENABLED_INPUT" = true ]; then
+  echo "ERROR: LINE_AI_FUSED_PLAN_SHADOW_ENABLED=true is not activated for production yet" >&2
+  exit 2
+fi
+case "$LINE_AI_PREPARED_SIMPLE_READ_ENABLED_INPUT" in true|false) ;; *)
+  echo "ERROR: LINE_AI_PREPARED_SIMPLE_READ_ENABLED must be exactly true or false" >&2; exit 2 ;;
+esac
+if [ "$DEPLOY_ENV" = production ] && [ "$LINE_AI_PREPARED_SIMPLE_READ_ENABLED_INPUT" = true ]; then
+  echo "ERROR: LINE_AI_PREPARED_SIMPLE_READ_ENABLED=true is not activated for production yet" >&2
+  exit 2
+fi
+# Family keys are `${tool}::${answerShape}` (apps/ai-gateway/.../prepared-simple-read-formatter.ts),
+# comma-separated. Reject anything outside that charset here: the value is interpolated into a task
+# definition, and a stray quote/space/newline would either break the JSON or smuggle an entry past the
+# gateway's narrowing. An unknown-but-well-formed key is already inert (activePreparedFamilies only
+# NARROWS the compiled registry), so the charset is the only check this layer owes.
+if [ -n "$LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES_INPUT" ]; then
+  if [[ ! "$LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES_INPUT" =~ ^[A-Za-z0-9.:,_-]+$ ]]; then
+    echo "ERROR: LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES must be a comma-separated allowlist of" >&2
+    echo "       family keys (letters, digits, '.', ':', ',', '_', '-' only)" >&2
+    exit 2
+  fi
+  if [ "$DEPLOY_ENV" = production ]; then
+    echo "ERROR: LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES is not activated for production yet" >&2
+    exit 2
+  fi
 fi
 if [ "$PRODUCTION_SERVING_MODE_INPUT" = maintenance_only ]; then
   maintenance_intent_valid=false
@@ -352,6 +406,11 @@ SERVING_APPROVED_AI_PROVIDERS="${APPROVED_AI_PROVIDERS:-}"
 SERVING_QUEUE_ENABLED=true
 SERVING_MAINTENANCE_ACTIVE=false
 SERVING_LINE_AI_EXACT_GREETING_ENABLED="$LINE_AI_EXACT_GREETING_ENABLED_INPUT"
+SERVING_LINE_AI_LOADING_ON_ACCEPT_ENABLED="$LINE_AI_LOADING_ON_ACCEPT_ENABLED_INPUT"
+SERVING_LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED="$LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED_INPUT"
+SERVING_LINE_AI_FUSED_PLAN_SHADOW_ENABLED="$LINE_AI_FUSED_PLAN_SHADOW_ENABLED_INPUT"
+SERVING_LINE_AI_PREPARED_SIMPLE_READ_ENABLED="$LINE_AI_PREPARED_SIMPLE_READ_ENABLED_INPUT"
+SERVING_LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES="$LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES_INPUT"
 if [ "$PRODUCTION_SERVING_MODE_INPUT" = maintenance_only ]; then
   SERVING_CRM_AUTO_REPLY_ENABLED=false
   SERVING_AI_ENABLED=false
@@ -359,6 +418,11 @@ if [ "$PRODUCTION_SERVING_MODE_INPUT" = maintenance_only ]; then
   SERVING_QUEUE_ENABLED=false
   SERVING_MAINTENANCE_ACTIVE=true
   SERVING_LINE_AI_EXACT_GREETING_ENABLED=false
+  SERVING_LINE_AI_LOADING_ON_ACCEPT_ENABLED=false
+  SERVING_LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED=false
+  SERVING_LINE_AI_FUSED_PLAN_SHADOW_ENABLED=false
+  SERVING_LINE_AI_PREPARED_SIMPLE_READ_ENABLED=false
+  SERVING_LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES=""
 fi
 if [ "$DEPLOY_ENV" = production ] && [ "$PRODUCTION_SERVING_MODE_INPUT" = live ] \
   && { [ "$TARGET" = all ] || [ "$TARGET" = ai-gateway ]; }; then
@@ -1381,6 +1445,10 @@ api_container_json() {
     --arg crmAutoReplyEnabled "$SERVING_CRM_AUTO_REPLY_ENABLED" \
     --arg aiEnabled "$SERVING_AI_ENABLED" \
     --arg lineAiExactGreetingEnabled "$SERVING_LINE_AI_EXACT_GREETING_ENABLED" \
+    --arg lineAiLoadingOnAcceptEnabled "$SERVING_LINE_AI_LOADING_ON_ACCEPT_ENABLED" \
+    --arg lineAiDebounceExperimentEnabled "$SERVING_LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED" \
+    --arg lineAiFusedPlanShadowEnabled "$SERVING_LINE_AI_FUSED_PLAN_SHADOW_ENABLED" \
+    --arg lineAiPreparedSimpleReadEnabled "$SERVING_LINE_AI_PREPARED_SIMPLE_READ_ENABLED" \
     --arg crmAiMinConfidence "${CRM_AI_MIN_CONFIDENCE:-0.7}" \
     --arg crmAiOutboundAllowedDomains "${CRM_AI_OUTBOUND_ALLOWED_DOMAINS:-}" \
     --arg workflowWebhookAllowedHosts "$WORKFLOW_WEBHOOK_ALLOWED_HOSTS" \
@@ -1411,6 +1479,7 @@ api_container_json() {
     --arg credentialKey "$(secret_arn "${SECRET_PREFIX}/credential-encryption-key")" \
     --arg pdpaKey "$(secret_arn "${SECRET_PREFIX}/pdpa-pseudonymization-key")" \
     --arg pdpaPreviousKeys "$(secret_arn "${SECRET_PREFIX}/pdpa-pseudonymization-previous-keys")" \
+    --arg lineAiDebounceExperimentSecret "$(secret_arn "${SECRET_PREFIX}/line-ai-debounce-experiment-secret" 2>/dev/null || true)" \
     --arg logGroup "/ecs/${RESOURCE_PREFIX}-api-web" \
     --arg jwtAudience "watchdog-bms-${DEPLOY_ENV}" \
     '{
@@ -1456,6 +1525,10 @@ api_container_json() {
         {name:"AI_GATEWAY_ENABLED", value:$aiEnabled},
         {name:"LINE_AI_LEDGER_ENABLED", value:$aiEnabled},
         {name:"LINE_AI_EXACT_GREETING_ENABLED", value:$lineAiExactGreetingEnabled},
+        {name:"LINE_AI_LOADING_ON_ACCEPT_ENABLED", value:$lineAiLoadingOnAcceptEnabled},
+        {name:"LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED", value:$lineAiDebounceExperimentEnabled},
+        {name:"LINE_AI_FUSED_PLAN_SHADOW_ENABLED", value:$lineAiFusedPlanShadowEnabled},
+        {name:"LINE_AI_PREPARED_SIMPLE_READ_ENABLED", value:$lineAiPreparedSimpleReadEnabled},
         {name:"WATCHDOG_JWT_ISSUER", value:$publicWebUrl},
         {name:"WATCHDOG_JWT_AUDIENCE", value:$jwtAudience},
         {name:"S3_BUCKET", value:$s3Bucket},
@@ -1499,7 +1572,8 @@ api_container_json() {
         {name:"WATCHDOG_JWT_SECRET_ARN", valueFrom:$jwtSecret},
         {name:"CREDENTIAL_ENCRYPTION_KEY", valueFrom:$credentialKey},
         {name:"PDPA_PSEUDONYMIZATION_KEY", valueFrom:$pdpaKey},
-        {name:"PDPA_PSEUDONYMIZATION_PREVIOUS_KEYS", valueFrom:$pdpaPreviousKeys}
+        {name:"PDPA_PSEUDONYMIZATION_PREVIOUS_KEYS", valueFrom:$pdpaPreviousKeys},
+        {name:"LINE_AI_DEBOUNCE_EXPERIMENT_SECRET", valueFrom:$lineAiDebounceExperimentSecret}
       ] | map(select(.valueFrom != "")))
     }'
 }
@@ -1584,6 +1658,9 @@ ai_container_json() {
     --arg bedrockModelId "${BEDROCK_MODEL_ID:-}" \
     --arg documentAiModelId "${DOCUMENT_AI_MODEL_ID:-}" \
     --arg lineAiAgentRuntime "$line_ai_runtime" \
+    --arg lineAiFusedPlanShadowEnabled "$SERVING_LINE_AI_FUSED_PLAN_SHADOW_ENABLED" \
+    --arg lineAiPreparedSimpleReadEnabled "$SERVING_LINE_AI_PREPARED_SIMPLE_READ_ENABLED" \
+    --arg lineAiDeterministicResponseFamilies "$SERVING_LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES" \
     --arg aiSecret "$(secret_arn "${SECRET_PREFIX}/ai-gateway-internal-secret")" \
     --arg typhoonSecret "$(secret_arn "${SECRET_PREFIX}/typhoon-ocr-api-key" 2>/dev/null || true)" \
     --arg jwtSecret "$(secret_arn "${SECRET_PREFIX}/watchdog-jwt-secret")" \
@@ -1622,6 +1699,9 @@ ai_container_json() {
         {name:"LINE_AI_TOOLUSE_LOOP_ENABLED", value:$aiEnabled},
         {name:"LINE_AI_COVERAGE_CRITIC_ENABLED", value:$aiEnabled},
         {name:"LINE_AI_AGENT_RUNTIME", value:$lineAiAgentRuntime},
+        {name:"LINE_AI_FUSED_PLAN_SHADOW_ENABLED", value:$lineAiFusedPlanShadowEnabled},
+        {name:"LINE_AI_PREPARED_SIMPLE_READ_ENABLED", value:$lineAiPreparedSimpleReadEnabled},
+        {name:"LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES", value:$lineAiDeterministicResponseFamilies},
         {name:"AGENTCORE_REGION", value:$agentcoreRegion},
         {name:"AGENTCORE_RUNTIME_ARN", value:$agentcoreArn},
         {name:"AGENTCORE_RUNTIME_QUALIFIER", value:$agentcoreQualifier},
