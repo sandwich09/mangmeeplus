@@ -230,6 +230,7 @@ export * from './reports.js';
 export * from './ai-lineage.js';
 export * from './line-ai.js';
 export * from './line-ai-prepared-plan.js';
+export * from './line-ai-security-eval.js';
 export * from './ai-tools.js';
 // ---- LINE AI Multi-Intent Completion (Item 10F) ----
 export * from './line-ai-value-normalizer.js';
