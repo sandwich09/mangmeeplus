@@ -13,7 +13,8 @@ jq -cn --argjson finding "$finding" \
 jq -e -f "$policy" "$fixture/exact.json" \
   | jq -e '.coverageComplete and (.waivers|length)==1 and (.blocking|length)==0
     and .waivers[0].scannedDigest==("sha256:"+("1"*64))
-    and .waivers[0].expiresAtEpoch==1787616000' >/dev/null
+    and .waivers[0].expiresAtEpoch==1787788800
+    and .waivers[0].approvedBy=="CHAT-OWNER-DIRECTIVE-2026-08-25-EXTEND-TO-2026-08-27"' >/dev/null
 
 for mutation in \
   '.imageScanFindings.findings[0].name="CVE-2099-1"' \

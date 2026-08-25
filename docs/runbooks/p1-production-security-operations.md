@@ -66,7 +66,7 @@ silently lower the gate.
 
 ### Temporary ECR mapping exception: CVE-2026-14456
 
-Until `2026-08-25T00:00:00Z`, release scanning may waive only the exact AWS ECR
+Until `2026-08-27T00:00:00Z`, release scanning may waive only the exact AWS ECR
 finding `CVE-2026-14456`, severity `HIGH`, source package `openssl`, version
 `3.0.20-1~deb12u2`, when the provider description contains its own statement that
 the issue is present since OpenSSL 3.5 when QUIC server support was added. The
@@ -78,10 +78,16 @@ and `sha256:b89651b3b19cbc00a3bd9bf1ddfb545bf04a1db198f6d9d29f0f6d3b8fb56dc7`.
 `infra/docker/ecr-scan-blocking-findings.jq` is the compensating control. It
 requires the exact CVE, severity, package, version and provider statement, binds
 each emitted waiver to the exact scanned digest, records owner approval
-`CHAT-OWNER-DIRECTIVE-2026-08-17-BYPASS-ALWAYS` and expiry `1787616000`, and
+`CHAT-OWNER-DIRECTIVE-2026-08-25-EXTEND-TO-2026-08-27` and expiry `1787788800`, and
 fails closed when detailed findings do not cover the provider's aggregate
 HIGH/CRITICAL count. Every other HIGH/CRITICAL finding remains blocking. The
 Production Security Preflight retains the raw provider counts and embeds the
 digest-bound waiver in signed evidence. Delete the exception when AWS corrects
 the mapping or before extending the expiry; an extension requires new evidence
 and explicit approval.
+
+Owner renewed this exact exception on 2026-08-25 after UAT run `32829457833`
+attempt 2 reproduced the same provider mapping on fresh image digests. OpenSSL's
+vendor advisory still lists affected versions as 3.5.0+, while the scanned
+Debian source package remains 3.0.20; the renewal does not match any other CVE,
+severity, package, version or provider statement.
