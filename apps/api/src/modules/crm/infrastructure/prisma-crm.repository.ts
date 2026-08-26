@@ -14,6 +14,7 @@ import type {
 } from '../domain/models/crm.model';
 import { DEFAULT_PIPELINE_STAGES } from '../domain/crm.constants';
 import type { CrmBookingSource, CrmCustomerMergeImpact } from '@watchdog-bms/contracts';
+import Decimal from 'decimal.js';
 import { normalizeName, normalizePhone } from '../domain/logic/crm.logic';
 
 type BookingWindow = {
@@ -1337,7 +1338,7 @@ export class PrismaCrmRepository {
     requestId: string;
     requestKey: string;
     allowRevision: boolean;
-  }): Promise<CrmQuotationLinkRecord> {
+  }, beforeMutation?: (db: any) => Promise<void>): Promise<CrmQuotationLinkRecord> {
     return this.db.$transaction(async (tx: any) => {
       await this.lockCustomerIds(tx, input.companyId, [input.expectedCustomerId]);
       const opportunity = await tx.crmOpportunity.findFirst({ where: { id: input.opportunityId, companyId: input.companyId } });
@@ -1345,8 +1346,16 @@ export class PrismaCrmRepository {
       if (opportunity.customerId !== input.expectedCustomerId) throw new Error('opportunity_customer_changed');
       if (opportunity.status !== 'OPEN') throw new Error('opportunity_status_changed');
       if (!input.scope.canManageAll && opportunity.ownerUserId !== input.scope.actorUserId) throw new Error('opportunity_out_of_scope');
+      if (input.scope.branchIds && opportunity.branchId && !input.scope.branchIds.includes(opportunity.branchId)) {
+        throw new Error('opportunity_out_of_scope');
+      }
       const customer = await tx.crmCustomer.findFirst({ where: { id: opportunity.customerId, companyId: input.companyId } });
       if (!customer || customer.status !== 'ACTIVE') throw new Error('customer_not_active');
+      // Opportunity ownership is the direct-quotation authority. Recheck only the customer's
+      // current branch here so a branch move cannot bypass the final transaction boundary.
+      if (input.scope.branchIds && customer.branchId && !input.scope.branchIds.includes(customer.branchId)) {
+        throw new Error('customer_out_of_scope');
+      }
       const retry = await tx.crmQuotationLink.findFirst({
         where: { companyId: input.companyId, opportunityId: opportunity.id, requestKey: input.requestKey },
       });
@@ -1356,6 +1365,8 @@ export class PrismaCrmRepository {
         orderBy: { createdAt: 'desc' },
       });
       if (active && !input.allowRevision) return this.toQuotationLink(active);
+
+      await beforeMutation?.(tx);
 
       let counterpartyId = customer.accountingCounterpartyId as string | null | undefined;
       if (!counterpartyId) {
@@ -1448,6 +1459,232 @@ export class PrismaCrmRepository {
         },
       });
       return this.toQuotationLink(link);
+    });
+  }
+
+  /**
+   * Inbox command boundary: create the opportunity and its accounting quotation
+   * in one transaction. The caller supplies a deterministic opportunity id and
+   * request key, so an exact retry resolves the committed bundle instead of
+   * creating a second deal.
+   */
+  async createConversationQuotationDraftBundle(input: {
+    companyId: string;
+    opportunityId: string;
+    customerId: string;
+    title: string;
+    amountEstimate: string;
+    expectedCloseDate?: Date;
+    scope: CustomerMutationScope;
+    userId: string;
+    requestId: string;
+    requestKey: string;
+  }, beforeMutation: (db: any) => Promise<void>): Promise<{
+    opportunity: CrmOpportunityRecord;
+    quotation: CrmQuotationLinkRecord;
+    replayed: boolean;
+  }> {
+    return this.db.$transaction(async (tx: any) => {
+      // Use the same graph -> customer lock order as normal child creation.
+      await this.lockCustomerIdentityGraph(tx, input.companyId);
+      const customer = await this.lockAndRequireActiveCustomer(tx, input.companyId, input.customerId);
+      this.assertCustomerMutationScope(customer, input.scope);
+
+      const retryOpportunity = await tx.crmOpportunity.findFirst({
+        where: { id: input.opportunityId, companyId: input.companyId },
+      });
+      if (retryOpportunity) {
+        const storedExpectedClose = retryOpportunity.expectedCloseDate
+          ? new Date(retryOpportunity.expectedCloseDate).getTime()
+          : null;
+        const requestedExpectedClose = input.expectedCloseDate?.getTime() ?? null;
+        if (retryOpportunity.customerId !== input.customerId
+          || retryOpportunity.createdByUserId !== input.userId
+          || retryOpportunity.title !== input.title
+          || !new Decimal(retryOpportunity.amountEstimate ?? 0).eq(input.amountEstimate)
+          || storedExpectedClose !== requestedExpectedClose) {
+          throw new Error('quotation_command_conflict');
+        }
+        const retryQuotation = await tx.crmQuotationLink.findFirst({
+          where: {
+            companyId: input.companyId,
+            opportunityId: input.opportunityId,
+            requestKey: input.requestKey,
+          },
+        });
+        if (!retryQuotation) throw new Error('quotation_command_incomplete');
+        return {
+          opportunity: this.toOpportunity(retryOpportunity),
+          quotation: this.toQuotationLink(retryQuotation),
+          replayed: true,
+        };
+      }
+
+      const activeOwner = await tx.companyMembership.findFirst({
+        where: { companyId: input.companyId, userId: input.userId, status: 'ACTIVE' },
+        select: { id: true },
+      });
+      if (!activeOwner) throw new Error('owner_not_active_company_member');
+
+      // No write may happen before this transactional shared launch lock.
+      await beforeMutation(tx);
+
+      let stage = await tx.crmPipelineStage.findFirst({
+        where: { companyId: input.companyId, isActive: true },
+        orderBy: { sortOrder: 'asc' },
+      });
+      if (!stage) {
+        await tx.crmPipelineStage.createMany({
+          data: DEFAULT_PIPELINE_STAGES.map((item) => ({
+            companyId: input.companyId,
+            createdByUserId: input.userId,
+            ...item,
+          })),
+          skipDuplicates: true,
+        });
+        stage = await tx.crmPipelineStage.findFirst({
+          where: { companyId: input.companyId, isActive: true },
+          orderBy: { sortOrder: 'asc' },
+        });
+      }
+      if (!stage) throw new Error('pipeline_stage_unavailable');
+
+      const opportunity = await tx.crmOpportunity.create({
+        data: {
+          id: input.opportunityId,
+          companyId: input.companyId,
+          customerId: input.customerId,
+          ownerUserId: input.userId,
+          title: input.title,
+          stageId: stage.id,
+          canonicalStageGroup: stage.canonicalGroup,
+          amountEstimate: input.amountEstimate,
+          currency: 'THB',
+          probability: stage.probabilityDefault,
+          expectedCloseDate: input.expectedCloseDate,
+          createdByUserId: input.userId,
+        },
+      });
+
+      let counterpartyId = customer.accountingCounterpartyId as string | null | undefined;
+      if (!counterpartyId) {
+        const counterparty = await tx.accountingCounterparty.create({
+          data: {
+            companyId: input.companyId,
+            type: 'CUSTOMER',
+            displayName: customer.displayName,
+            createdByUserId: input.userId,
+          },
+        });
+        counterpartyId = counterparty.id;
+        const linked = await tx.crmCustomer.updateMany({
+          where: { id: customer.id, companyId: input.companyId, status: 'ACTIVE', accountingCounterpartyId: null },
+          data: { accountingCounterpartyId: counterparty.id, updatedByUserId: input.userId },
+        });
+        if (linked.count !== 1) throw new Error('customer_counterparty_changed');
+        await tx.auditLog.create({
+          data: {
+            companyId: input.companyId,
+            actorUserId: input.userId,
+            action: 'accounting.counterparty.create',
+            targetType: 'accounting_counterparty',
+            targetId: counterparty.id,
+            requestId: input.requestId,
+            result: 'SUCCESS',
+            riskLevel: 'MEDIUM',
+            metadataJson: { source: 'crm_inbox_auto_link', crmCustomerId: customer.id },
+          },
+        });
+      }
+
+      const document = await tx.accountingDocument.create({
+        data: {
+          companyId: input.companyId,
+          documentType: 'QUOTATION',
+          documentDate: new Date(),
+          counterpartyId,
+          currency: 'THB',
+          vatMode: 'VAT_EXCLUDED',
+          paymentStatus: 'UNPAID',
+          note: `From CRM Inbox conversation: ${input.title}`,
+          createdByUserId: input.userId,
+        },
+      });
+      const quotation = await tx.crmQuotationLink.create({
+        data: {
+          companyId: input.companyId,
+          customerId: input.customerId,
+          opportunityId: opportunity.id,
+          accountingDocumentId: document.id,
+          requestKey: input.requestKey,
+          accountingDocumentType: 'QUOTATION',
+          accountingDocumentNumber: document.documentNumber,
+          status: 'DRAFT',
+          grandTotalAmount: document.grandTotalAmount,
+          currency: document.currency,
+          createdByUserId: input.userId,
+        },
+      });
+      const occurredAt = new Date();
+      await tx.crmActivity.create({
+        data: {
+          companyId: input.companyId,
+          opportunityId: opportunity.id,
+          customerId: input.customerId,
+          actorUserId: input.userId,
+          type: 'QUOTE_DRAFT_CREATED',
+          note: 'Quotation draft created from CRM Inbox',
+          occurredAt,
+          metadataJson: { accountingDocumentId: document.id },
+        },
+      });
+      await tx.crmOpportunity.update({
+        where: { id: opportunity.id },
+        data: { lastActivityAt: occurredAt, updatedByUserId: input.userId },
+      });
+      await tx.auditLog.createMany({
+        data: [
+          {
+            companyId: input.companyId,
+            actorUserId: input.userId,
+            action: 'crm.opportunity.create',
+            targetType: 'crm_opportunity',
+            targetId: opportunity.id,
+            requestId: input.requestId,
+            result: 'SUCCESS',
+            riskLevel: 'LOW',
+            metadataJson: { source: 'CRM_INBOX' },
+          },
+          {
+            companyId: input.companyId,
+            actorUserId: input.userId,
+            action: 'accounting.document.create',
+            targetType: 'accounting_document',
+            targetId: document.id,
+            requestId: input.requestId,
+            result: 'SUCCESS',
+            riskLevel: 'MEDIUM',
+            metadataJson: { documentType: 'QUOTATION', source: 'CRM_INBOX' },
+          },
+          {
+            companyId: input.companyId,
+            actorUserId: input.userId,
+            action: 'crm.quotation.link',
+            targetType: 'crm_quotation_link',
+            targetId: quotation.id,
+            requestId: input.requestId,
+            result: 'SUCCESS',
+            riskLevel: 'MEDIUM',
+            metadataJson: { accountingDocumentId: document.id, source: 'CRM_INBOX' },
+          },
+        ],
+      });
+      const committedOpportunity = { ...opportunity, lastActivityAt: occurredAt, updatedByUserId: input.userId };
+      return {
+        opportunity: this.toOpportunity(committedOpportunity),
+        quotation: this.toQuotationLink(quotation),
+        replayed: false,
+      };
     });
   }
   async updateQuotationLink(companyId: string, id: string, data: Record<string, unknown>): Promise<CrmQuotationLinkRecord> {

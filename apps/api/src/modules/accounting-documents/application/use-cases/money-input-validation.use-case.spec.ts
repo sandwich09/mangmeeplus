@@ -1,9 +1,17 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { ConflictException } from '@nestjs/common';
 import type { RequestContext } from '@watchdog-bms/contracts';
-import { CreateDocumentUseCase } from './document.use-case';
+import { CreateCounterpartyUseCase, UpdateCounterpartyUseCase } from './counterparty.use-case';
+import { CreateDocumentUseCase, SubmitQuotationApprovalUseCase } from './document.use-case';
 import { CreatePaymentUseCase } from './payment.use-case';
 import { RecordSimpleIncomeUseCase, simpleIncomePayloadFingerprint } from './record-simple-income.use-case';
+import {
+  GetSalesDocumentRootAvailabilityUseCase,
+  SALES_DOCUMENT_LAUNCH_ROUTE_CLOSED_MESSAGE,
+  createsNewSalesRoot,
+} from '../sales-document-launch-gate';
+import { FEATURE_TEMPORARILY_UNAVAILABLE, featureTemporarilyUnavailable } from '../../../employee-access/application/entitlement.helper';
 
 const ctx: RequestContext = {
   requestId: 'request-1', authSubject: 'user-1', userId: 'user-1', companyId: 'company-1',
@@ -16,6 +24,78 @@ const paymentInput = (amount: string) => ({
   method: 'BANK_TRANSFER' as const,
   amount,
   paidAt: '2026-07-18T10:00:00.000Z',
+});
+
+const openLaunchGate = {
+  assertLaunchRouteOpen: async () => undefined,
+  assertLaunchRouteOpenInTransaction: async () => undefined,
+} as any;
+
+describe('P27 sales root launch gate', () => {
+  it('separates new roots from required linked children and corrections', () => {
+    for (const documentType of ['QUOTATION', 'INVOICE', 'BILLING_NOTE'] as const) {
+      assert.equal(createsNewSalesRoot({ documentType }), true);
+    }
+    assert.equal(createsNewSalesRoot({ documentType: 'RECEIPT' }), true);
+    assert.equal(createsNewSalesRoot({ documentType: 'TAX_INVOICE' }), true);
+    assert.equal(createsNewSalesRoot(
+      { documentType: 'RECEIPT', sourceDocumentId: 'invoice-1' },
+      { documentType: 'INVOICE', status: 'ISSUED', paymentStatus: 'PAID', outstandingAmount: '0.00' },
+    ), false);
+    assert.equal(createsNewSalesRoot(
+      { documentType: 'RECEIPT', sourceDocumentId: 'quotation-1' },
+      { documentType: 'QUOTATION', status: 'DRAFT', paymentStatus: 'UNPAID', outstandingAmount: '0.00' },
+    ), true);
+    assert.equal(createsNewSalesRoot(
+      { documentType: 'TAX_INVOICE', sourceDocumentId: 'invoice-1' },
+      { documentType: 'INVOICE', status: 'ISSUED', outstandingAmount: '100.00' },
+    ), false);
+    assert.equal(createsNewSalesRoot({ documentType: 'CREDIT_NOTE', sourceDocumentId: 'invoice-1' }), false);
+    assert.equal(createsNewSalesRoot({ documentType: 'DEBIT_NOTE', sourceDocumentId: 'invoice-1' }), false);
+  });
+
+  it('fails closed before persistence and audits a plain-Thai denial', async () => {
+    let creates = 0;
+    const audits: any[] = [];
+    const useCase = new CreateDocumentUseCase(
+      { createDocument: async (_input: unknown, beforeMutation: (db: unknown) => Promise<void>) => {
+        await beforeMutation({});
+        creates += 1;
+      } } as any,
+      { log: async (entry: any) => { audits.push(entry); } } as any,
+      {} as any,
+      { get: async () => ({ status: 'REGISTERED' }) } as any,
+      { assertLaunchRouteOpenInTransaction: async () => { throw featureTemporarilyUnavailable('sales_documents'); } } as any,
+    );
+    await assert.rejects(
+      () => useCase.execute(ctx, {
+        documentType: 'INVOICE', documentDate: '2026-08-27', vatMode: 'NO_VAT',
+        lines: [{ lineNumber: 1, description: 'Service', quantity: '1', unitPrice: '100.00' }],
+      }),
+      (error: any) => {
+        const body = error.getResponse();
+        assert.equal(body.code, FEATURE_TEMPORARILY_UNAVAILABLE);
+        assert.equal(body.message, SALES_DOCUMENT_LAUNCH_ROUTE_CLOSED_MESSAGE);
+        assert.equal(body.message.includes('sales_documents'), false);
+        return true;
+      },
+    );
+    assert.equal(creates, 0);
+    assert.equal(audits[0]?.action, 'accounting.document.create');
+    assert.equal(audits[0]?.result, 'DENIED');
+  });
+
+  it('returns only a boolean and propagates infrastructure failures', async () => {
+    const closed = new GetSalesDocumentRootAvailabilityUseCase({
+      assertLaunchRouteOpen: async () => { throw featureTemporarilyUnavailable('sales_documents'); },
+    } as any);
+    assert.deepEqual(await closed.execute(), { canCreateSalesRoot: false });
+
+    const broken = new GetSalesDocumentRootAvailabilityUseCase({
+      assertLaunchRouteOpen: async () => { throw new Error('gate read failed'); },
+    } as any);
+    await assert.rejects(() => broken.execute(), /gate read failed/);
+  });
 });
 
 describe('P27 simple-income use-case boundary', () => {
@@ -43,13 +123,38 @@ describe('P27 simple-income use-case boundary', () => {
   it('requires the complete permission set before opening the bundle transaction', async () => {
     let called = false;
     const useCase = new RecordSimpleIncomeUseCase(
-      { recordSimpleIncomeBundle: async () => { called = true; return result; } } as any,
+      { recordSimpleIncomeBundle: async (_record: unknown, _audit: unknown, beforeMutation: (db: unknown) => Promise<void>) => {
+        await beforeMutation({});
+        called = true;
+        return result;
+      } } as any,
       { log: async () => undefined } as any,
       { append: async () => undefined } as any,
       { get: async () => ({ status: 'REGISTERED' }) } as any,
+      openLaunchGate,
     );
     await assert.rejects(() => useCase.execute({ ...fullCtx, permissions: ['accounting.invoice.create'] }, input));
     assert.equal(called, false);
+  });
+
+  it('refuses the atomic receive-income root while the sales route is closed', async () => {
+    let called = false;
+    const audits: any[] = [];
+    const useCase = new RecordSimpleIncomeUseCase(
+      { recordSimpleIncomeBundle: async (_record: unknown, _audit: unknown, beforeMutation: (db: unknown) => Promise<void>) => {
+        await beforeMutation({});
+        called = true;
+        return result;
+      } } as any,
+      { log: async (entry: any) => { audits.push(entry); } } as any,
+      { append: async () => undefined } as any,
+      { get: async () => ({ status: 'REGISTERED' }) } as any,
+      { assertLaunchRouteOpenInTransaction: async () => { throw featureTemporarilyUnavailable('sales_documents'); } } as any,
+    );
+    await assert.rejects(() => useCase.execute(fullCtx, input));
+    assert.equal(called, false);
+    assert.equal(audits[0]?.action, 'accounting.simple_income.record');
+    assert.equal(audits[0]?.result, 'DENIED');
   });
 
   it('defaults a branch-restricted creator to the first permitted branch', async () => {
@@ -62,6 +167,7 @@ describe('P27 simple-income use-case boundary', () => {
       { log: async () => undefined } as any,
       { append: async () => undefined } as any,
       { get: async () => ({ status: 'REGISTERED' }) } as any,
+      openLaunchGate,
     );
 
     await useCase.execute({ ...fullCtx, scopes: { branchIds: ['branch-1'] } }, input);
@@ -80,6 +186,7 @@ describe('P27 simple-income use-case boundary', () => {
       { log: async (_entry: any, db: unknown) => { auditDb = db; } } as any,
       { append: async (event: string) => { events.push(event); } } as any,
       { get: async () => ({ status: 'REGISTERED' }) } as any,
+      openLaunchGate,
     );
     const created = await useCase.execute(fullCtx, input);
     assert.equal(created.receipt.documentNumber, 'RC-1');
@@ -94,6 +201,7 @@ describe('P27 simple-income use-case boundary', () => {
       { log: async () => undefined } as any,
       { append: async () => { events += 1; } } as any,
       { get: async () => ({ status: 'REGISTERED' }) } as any,
+      openLaunchGate,
     );
     assert.equal((await useCase.execute(fullCtx, input)).replayed, true);
     assert.equal(events, 0);
@@ -106,6 +214,7 @@ describe('P27 simple-income use-case boundary', () => {
       { log: async () => undefined } as any,
       { append: async () => undefined } as any,
       { get: async () => ({ status: 'NOT_REGISTERED' }) } as any,
+      openLaunchGate,
     );
     await assert.rejects(() => useCase.execute(fullCtx, { ...input, vatMode: 'VAT_EXCLUDED' }));
     assert.equal(called, false);
@@ -118,6 +227,7 @@ describe('P27 simple-income use-case boundary', () => {
       { log: async () => undefined } as any,
       { append: async () => undefined } as any,
       { get: async () => ({ status: 'UNKNOWN' }) } as any,
+      openLaunchGate,
     );
     await assert.rejects(() => useCase.execute(fullCtx, input), /must be confirmed/);
     assert.equal(called, false);
@@ -302,12 +412,184 @@ describe('H-05 use-case revalidation', () => {
     const useCase = new CreateDocumentUseCase(
       repo as any, { log: async () => undefined } as any, {} as any,
       { get: async () => ({ status: 'REGISTERED' }) } as any,
+      openLaunchGate,
     );
 
     await assert.rejects(() => useCase.execute(ctx, {
       documentType: 'INVOICE', documentDate: '2026-07-18', vatMode: 'NO_VAT',
       lines: [{ lineNumber: 1, description: 'Service', quantity: '1', unitPrice: '-100.00' }],
     }));
+    assert.equal(creates, 0);
+  });
+});
+
+describe('P27 BLOCK_NEW_ROOT mutation coverage', () => {
+  const mutationCtx: RequestContext = {
+    ...ctx,
+    permissions: [
+      'accounting.counterparty.manage', 'accounting.quotation.submit_approval', 'accounting.receipt.create',
+      'accounting.credit_note.create', 'accounting.tax_invoice.create',
+    ],
+  };
+  const closedTransactionalGate = {
+    assertLaunchRouteOpenInTransaction: async () => { throw featureTemporarilyUnavailable('sales_documents'); },
+  } as any;
+
+  it('blocks counterparty create and update inside their final transactions', async () => {
+    const deniedActions: string[] = [];
+    let writes = 0;
+    const audit = { log: async (entry: any) => { deniedActions.push(entry.action); } } as any;
+    const repo = {
+      findCounterpartyById: async () => ({ id: 'cp-1' }),
+      createCounterparty: async (_input: unknown, before: (db: unknown) => Promise<void>) => {
+        await before({});
+        writes += 1;
+      },
+      updateCounterparty: async (_input: unknown, before: (db: unknown) => Promise<void>) => {
+        await before({});
+        writes += 1;
+      },
+    } as any;
+    await assert.rejects(() => new CreateCounterpartyUseCase(repo, audit, closedTransactionalGate)
+      .execute(mutationCtx, { type: 'CUSTOMER', displayName: 'Blocked customer' }));
+    await assert.rejects(() => new UpdateCounterpartyUseCase(repo, audit, closedTransactionalGate)
+      .execute(mutationCtx, 'cp-1', { displayName: 'Blocked update' }));
+    assert.equal(writes, 0);
+    assert.deepEqual(deniedActions, ['accounting.counterparty.create', 'accounting.counterparty.update']);
+  });
+
+  it('blocks quotation submit before its status mutation', async () => {
+    let statusWrites = 0;
+    const repo = {
+      findDocumentById: async () => ({ id: 'quote-1', documentType: 'QUOTATION', status: 'DRAFT' }),
+      submitQuotationForApproval: async (_companyId: string, _id: string, _actor: string, before: (db: unknown) => Promise<void>) => {
+        await before({});
+        statusWrites += 1;
+      },
+    } as any;
+    await assert.rejects(() => new SubmitQuotationApprovalUseCase(
+      repo, { log: async () => undefined } as any, {} as any, closedTransactionalGate,
+    ).execute(mutationCtx, 'quote-1'));
+    assert.equal(statusWrites, 0);
+  });
+
+  it('rejects a second active receipt for the same fully-paid invoice under the source lock', async () => {
+    const source = {
+      id: 'invoice-1', companyId: 'company-1', branchId: undefined, documentType: 'INVOICE', status: 'ISSUED',
+      paymentStatus: 'PAID', outstandingAmount: '0.00', vatMode: 'NO_VAT', vatAmount: '0.00',
+    };
+    let creates = 0;
+    let sourceReads = 0;
+    const repo = {
+      findDocumentById: async () => source,
+      findActiveBranch: async () => true,
+      listRevenueCategories: async () => [],
+      createDocument: async (_input: unknown, before: (db: any) => Promise<void>) => {
+        const db = {
+          $executeRaw: async () => undefined,
+          accountingDocument: { findFirst: async () => {
+            sourceReads += 1;
+            return sourceReads <= 2 ? source : { id: 'receipt-existing' };
+          } },
+        };
+        await before(db);
+        creates += 1;
+      },
+    } as any;
+    const useCase = new CreateDocumentUseCase(
+      repo,
+      { log: async () => undefined } as any,
+      {} as any,
+      { get: async () => ({ status: 'REGISTERED' }) } as any,
+      { assertLaunchRouteOpenInTransaction: async () => undefined } as any,
+    );
+    await assert.rejects(
+      () => useCase.execute(mutationCtx, {
+        documentType: 'RECEIPT', sourceDocumentId: source.id, sourceDocumentType: 'INVOICE',
+        documentDate: '2026-08-27', vatMode: 'NO_VAT',
+        lines: [{ lineNumber: 1, description: 'Payment receipt', quantity: '1', unitPrice: '100.00' }],
+      }),
+      (error: unknown) => error instanceof ConflictException
+        && (error.getResponse() as any).code === 'accounting_receipt_already_exists',
+    );
+    assert.equal(creates, 0);
+  });
+
+  it('keeps a non-VAT credit note eligible when the final Prisma source row carries outputTaxCode=null', async () => {
+    const mappedSource = {
+      id: 'invoice-non-vat', companyId: 'company-1', branchId: undefined, documentType: 'INVOICE', status: 'ISSUED',
+      paymentStatus: 'UNPAID', outstandingAmount: '100.00', vatMode: 'NO_VAT', vatAmount: '0.00', outputTaxCode: undefined,
+    };
+    const rawSource = { ...mappedSource, outputTaxCode: null };
+    let creates = 0;
+    const repo = {
+      findDocumentById: async () => mappedSource,
+      findActiveBranch: async () => true,
+      listRevenueCategories: async () => [],
+      createDocument: async (_input: unknown, before: (db: any) => Promise<void>) => {
+        await before({
+          $executeRaw: async () => undefined,
+          accountingDocument: { findFirst: async () => rawSource },
+        });
+        creates += 1;
+        return { id: 'credit-1' };
+      },
+    } as any;
+    const useCase = new CreateDocumentUseCase(
+      repo,
+      { log: async () => undefined } as any,
+      {} as any,
+      { get: async () => ({ status: 'REGISTERED' }) } as any,
+      { assertLaunchRouteOpenInTransaction: async () => undefined } as any,
+    );
+
+    await useCase.execute(mutationCtx, {
+      documentType: 'CREDIT_NOTE', sourceDocumentId: mappedSource.id, sourceDocumentType: 'INVOICE',
+      adjustmentReasonCode: 'GOODS_RETURNED', documentDate: '2026-08-27', vatMode: 'NO_VAT',
+      lines: [{ lineNumber: 1, description: 'คืนสินค้า', quantity: '1', unitPrice: '10.00' }],
+    });
+    assert.equal(creates, 1);
+  });
+
+  it('rejects a second active linked tax invoice under the source lifecycle lock', async () => {
+    const source = {
+      id: 'invoice-tax-source', companyId: 'company-1', branchId: undefined, documentType: 'INVOICE', status: 'ISSUED',
+      paymentStatus: 'UNPAID', outstandingAmount: '100.00', vatMode: 'NO_VAT', vatAmount: '0.00', outputTaxCode: undefined,
+    };
+    let creates = 0;
+    let reads = 0;
+    const repo = {
+      findDocumentById: async () => source,
+      findActiveBranch: async () => true,
+      listRevenueCategories: async () => [],
+      createDocument: async (_input: unknown, before: (db: any) => Promise<void>) => {
+        await before({
+          $executeRaw: async () => undefined,
+          accountingDocument: {
+            findFirst: async () => (++reads <= 2 ? { ...source, outputTaxCode: null } : { id: 'tax-existing' }),
+            findMany: async () => [],
+          },
+        });
+        creates += 1;
+      },
+    } as any;
+    const useCase = new CreateDocumentUseCase(
+      repo,
+      { log: async () => undefined } as any,
+      {} as any,
+      { get: async () => ({ status: 'REGISTERED' }) } as any,
+      { assertLaunchRouteOpenInTransaction: async () => undefined } as any,
+    );
+
+    await assert.rejects(
+      () => useCase.execute(mutationCtx, {
+        documentType: 'TAX_INVOICE', sourceDocumentId: source.id, sourceDocumentType: 'INVOICE',
+        documentDate: '2026-08-27', vatMode: 'NO_VAT', outputTaxCode: 'O0',
+        lines: [{ lineNumber: 1, description: 'ใบกำกับภาษี', quantity: '1', unitPrice: '100.00' }],
+      }),
+      (error: unknown) => error instanceof ConflictException
+        && (error.getResponse() as any).code === 'accounting_tax_invoice_already_exists',
+    );
     assert.equal(creates, 0);
   });
 });

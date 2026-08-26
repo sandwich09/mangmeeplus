@@ -8,6 +8,8 @@ import { isBranchInScope, resolveCreateBranchId } from '../../../data-model-core
 import { validateAccountingDocumentMoneyInput } from '../../domain/logic/accounting-money-validation.logic';
 import type { RecordSimpleIncomeInput, RecordSimpleIncomeResult } from '../../domain/models/accounting.model';
 import { PrismaAccountingRepository } from '../../infrastructure/prisma-accounting.repository';
+import { LaunchGateGuardService } from '../../../feature-launch/application/launch-gate.guard';
+import { rethrowSalesDocumentRootError } from '../sales-document-launch-gate';
 
 type SimpleIncomeRequest = Omit<RecordSimpleIncomeInput, 'companyId' | 'createdByUserId' | 'payloadFingerprint'>;
 
@@ -36,6 +38,7 @@ export class RecordSimpleIncomeUseCase {
     private readonly audit: AuditService,
     private readonly outbox: OutboxAppendService,
     private readonly vatRegistration: CompanyVatRegistrationUseCase,
+    private readonly launchGate: LaunchGateGuardService,
   ) {}
 
   async execute(ctx: RequestContext, input: SimpleIncomeRequest): Promise<RecordSimpleIncomeResult> {
@@ -72,18 +75,24 @@ export class RecordSimpleIncomeUseCase {
     if (moneyError) throw new UnprocessableEntityException(moneyError);
 
     const payloadFingerprint = simpleIncomePayloadFingerprint(resolvedInput);
-    const result = await this.repo.recordSimpleIncomeBundle(
-      { ...resolvedInput, companyId: ctx.companyId, createdByUserId: ctx.userId, payloadFingerprint },
-      async (db, created) => this.audit.log({
-        companyId: ctx.companyId, actorUserId: ctx.userId,
-        action: 'accounting.simple_income.record', targetType: 'accounting_document', targetId: created.invoice.id,
-        requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH',
-        metadataJson: {
-          invoiceId: created.invoice.id, paymentId: created.payment.id, receiptId: created.receipt.id,
-          amount: created.invoice.grandTotalAmount, method: input.paymentMethod,
-        },
-      }, db),
-    );
+    let result: RecordSimpleIncomeResult;
+    try {
+      result = await this.repo.recordSimpleIncomeBundle(
+        { ...resolvedInput, companyId: ctx.companyId, createdByUserId: ctx.userId, payloadFingerprint },
+        async (db, created) => this.audit.log({
+          companyId: ctx.companyId, actorUserId: ctx.userId,
+          action: 'accounting.simple_income.record', targetType: 'accounting_document', targetId: created.invoice.id,
+          requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH',
+          metadataJson: {
+            invoiceId: created.invoice.id, paymentId: created.payment.id, receiptId: created.receipt.id,
+            amount: created.invoice.grandTotalAmount, method: input.paymentMethod,
+          },
+        }, db),
+        (db) => this.launchGate.assertLaunchRouteOpenInTransaction(db, 'sales_documents', 'DEFAULT'),
+      );
+    } catch (error) {
+      return rethrowSalesDocumentRootError(error, this.audit, ctx, 'accounting.simple_income.record');
+    }
     if (result.replayed) return result;
 
     const occurredAt = result.invoice.issuedAt?.toISOString() ?? new Date().toISOString();

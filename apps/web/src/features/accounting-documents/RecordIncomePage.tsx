@@ -46,6 +46,7 @@ import {
   type LineVatChoice,
   type VatVisibility,
 } from './income-record.logic';
+import { useSalesRootAvailability } from './sales-root-availability';
 
 function ChoiceButton({ active, onClick, disabled, children, ariaLabel }: {
   active: boolean;
@@ -76,6 +77,7 @@ export function RecordIncomePage({ companyId, permissions }: { companyId: string
   const canInvoice = canCreateIncomeInvoice(permissions);
   const canIssue = canIssueIncomeInvoice(permissions);
   const canReadVatStatus = permissions.includes('company.vat_registration.read');
+  const salesAvailability = useSalesRootAvailability(companyId, (canReceived || canInvoice) && canReadVatStatus);
   const [mode, setMode] = useState<IncomeMode | null>(null);
 
   // Deep link ?mode=..., honoured only when the user can actually finish that journey (7.2 row 1).
@@ -107,6 +109,23 @@ export function RecordIncomePage({ companyId, permissions }: { companyId: string
           <p className="text-lg font-bold text-gray-900">ยังตรวจสถานะ VAT ของกิจการไม่ได้</p>
           <p className="mt-2 text-base text-gray-600">ติดต่อเจ้าของกิจการเพื่อเพิ่มสิทธิ์ดูสถานะ VAT ก่อนบันทึกรายรับ เพื่อป้องกันการออกเอกสารผิดประเภท</p>
           <a href={`/companies/${companyId}/sales-documents`} className={`${ghostClass} mt-4 inline-flex min-h-11 items-center`}>กลับหน้าเอกสารขาย</a>
+        </MangmeeCard>
+      </MangmeePage>
+    );
+  }
+
+  if (salesAvailability.state !== 'OPEN') {
+    return (
+      <MangmeePage eyebrow="การเงินและบัญชี" title="บันทึกรายรับ">
+        <MangmeeCard className="border-amber-200 bg-amber-50 p-6 text-center">
+          <p className="text-lg font-bold text-amber-950">
+            {salesAvailability.state === 'LOADING' ? 'กำลังตรวจสอบความพร้อมของระบบ...'
+              : salesAvailability.state === 'CLOSED' ? 'ยังบันทึกรายรับใหม่ไม่ได้ชั่วคราว'
+                : 'ยังตรวจสอบความพร้อมของระบบไม่ได้'}
+          </p>
+          <p className="mt-2 text-base text-amber-900">รายการเดิมยังเปิดดูและรับชำระได้ตามปกติ</p>
+          {salesAvailability.state === 'ERROR' && <button type="button" className={`${ghostClass} mt-4 min-h-12`} onClick={salesAvailability.retry}>ลองตรวจสอบอีกครั้ง</button>}
+          <a href={`/companies/${companyId}/sales-documents`} className={`${ghostClass} mt-4 inline-flex min-h-12 items-center`}>ดูรายการเดิม</a>
         </MangmeeCard>
       </MangmeePage>
     );

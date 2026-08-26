@@ -51,6 +51,7 @@ import { useInputPrompt } from '@/common/components/modal';
 import { LoadingState } from '@/common/components/state/LoadingState';
 import { CorrectionNoteSection } from './CorrectionNoteSection';
 import { canCreateIncomeInvoice, canRecordReceivedIncome } from './income-record.logic';
+import { useSalesRootAvailability } from './sales-root-availability';
 
 const inputClass = 'mangmee-input';
 const btnClass = 'mangmee-btn mangmee-btn-primary disabled:cursor-not-allowed disabled:opacity-50';
@@ -392,7 +393,7 @@ function CreateDocumentForm({ companyId, onCreated, allowedDocumentTypes }: { co
   );
 }
 
-function DocumentDetailPanel({ companyId, documentId, permissions, onChanged }: { companyId: string; documentId?: string; permissions: string[]; onChanged: (documentId?: string) => void }) {
+function DocumentDetailPanel({ companyId, documentId, permissions, canCreateSalesRoot, onChanged }: { companyId: string; documentId?: string; permissions: string[]; canCreateSalesRoot: boolean; onChanged: (documentId?: string) => void }) {
   const toast = useToast();
   const { promptInput, inputPromptDialog } = useInputPrompt();
   const [detail, setDetail] = useState<DocumentDetail | null>(null);
@@ -719,12 +720,12 @@ function DocumentDetailPanel({ companyId, documentId, permissions, onChanged }: 
       </div>
       <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
         {canEdit && !editingDraft && <button className={ghostClass} disabled={busy} onClick={beginDraftEdit}>แก้ไขร่าง</button>}
-        {canSubmit && <button className={ghostClass} disabled={busy} onClick={() => run(() => submitQuotationApproval(companyId, detail.id), 'ส่งขออนุมัติเรียบร้อยแล้ว')}>ส่งขออนุมัติ</button>}
+        {canCreateSalesRoot && canSubmit && <button className={ghostClass} disabled={busy} onClick={() => run(() => submitQuotationApproval(companyId, detail.id), 'ส่งขออนุมัติเรียบร้อยแล้ว')}>ส่งขออนุมัติ</button>}
         {canApprove && <button className={btnClass} disabled={busy} onClick={() => run(() => approveQuotation(companyId, detail.id, 'อนุมัติในหน้าบัญชี'), 'อนุมัติใบเสนอราคาเรียบร้อยแล้ว')}>อนุมัติ</button>}
         {canApprove && <button className={dangerClass} disabled={busy} onClick={() => void rejectDocument()}>ปฏิเสธ</button>}
         {canIssue && <button className={btnClass} disabled={busy} onClick={() => run(() => issueDocument(companyId, detail.id), 'ออกเอกสารเรียบร้อยแล้ว')}>ออกเอกสาร</button>}
-        {canConvertToInvoice && <button className={ghostClass} disabled={busy} onClick={() => run(() => convertDocument(companyId, detail.id, 'INVOICE'), 'แปลงเป็นใบแจ้งหนี้เรียบร้อยแล้ว')}>แปลงเป็นใบแจ้งหนี้</button>}
-        {canConvertToBillingNote && <button className={ghostClass} disabled={busy} onClick={() => run(() => convertDocument(companyId, detail.id, 'BILLING_NOTE'), 'แปลงเป็นใบวางบิลเรียบร้อยแล้ว')}>แปลงเป็นใบวางบิล</button>}
+        {canCreateSalesRoot && canConvertToInvoice && <button className={ghostClass} disabled={busy} onClick={() => run(() => convertDocument(companyId, detail.id, 'INVOICE'), 'แปลงเป็นใบแจ้งหนี้เรียบร้อยแล้ว')}>แปลงเป็นใบแจ้งหนี้</button>}
+        {canCreateSalesRoot && canConvertToBillingNote && <button className={ghostClass} disabled={busy} onClick={() => run(() => convertDocument(companyId, detail.id, 'BILLING_NOTE'), 'แปลงเป็นใบวางบิลเรียบร้อยแล้ว')}>แปลงเป็นใบวางบิล</button>}
         {canTaxInvoice && <button className={ghostClass} onClick={() => { setLinkedTaxInvoiceOpen(true); setLinkedTaxSelections({}); setError(null); }}>สร้างใบกำกับภาษี</button>}
         {canVoid && <button className={dangerClass + ' col-span-2 order-last sm:order-none'} disabled={busy} onClick={() => void voidAccountingDocument()}>ยกเลิกเอกสาร</button>}
       </div>
@@ -825,7 +826,7 @@ function DocumentDetailPanel({ companyId, documentId, permissions, onChanged }: 
   );
 }
 
-function CounterpartyListPage({ companyId }: { companyId: string }) {
+function CounterpartyListPage({ companyId, canCreateSalesRoot }: { companyId: string; canCreateSalesRoot: boolean }) {
   const toast = useToast();
   const [counterparties, setCounterparties] = useState<CounterpartySummary[]>([]);
   const [displayName, setDisplayName] = useState('');
@@ -853,7 +854,7 @@ function CounterpartyListPage({ companyId }: { companyId: string }) {
     <section className="mangmee-card space-y-3 p-4">
       <h2 className="text-base font-bold text-gray-900">ลูกค้าและคู่ค้า</h2>
       {error && <ErrorBanner message={error} />}
-      <form className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_180px_auto]" onSubmit={async (e) => {
+      {canCreateSalesRoot && <form className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_180px_auto]" onSubmit={async (e) => {
         e.preventDefault();
         setBusy(true);
         try {
@@ -872,7 +873,7 @@ function CounterpartyListPage({ companyId }: { companyId: string }) {
         <input className={inputClass} aria-label="ชื่อลูกค้าหรือคู่ค้า" placeholder="ชื่อลูกค้าหรือคู่ค้า" value={displayName} onChange={(e) => setDisplayName(e.target.value)} required />
         <input className={inputClass} aria-label="เลขประจำตัวผู้เสียภาษี" placeholder="เลขประจำตัวผู้เสียภาษี" value={taxId} onChange={(e) => setTaxId(e.target.value)} />
         <button className={btnClass} disabled={busy}>{busy ? 'กำลังบันทึก...' : 'เพิ่มคู่ค้า'}</button>
-      </form>
+      </form>}
       <div className="max-h-64 overflow-auto rounded border border-gray-200">
         {loading ? <LoadingState label="กำลังโหลด..." /> : counterparties.length === 0 ? <p className="p-4 text-sm text-gray-500">ยังไม่มีลูกค้าหรือคู่ค้า</p> : counterparties.map((counterparty) => (
           <div key={counterparty.id} className="flex flex-wrap items-center justify-between border-b border-gray-100 px-3 py-2 text-sm last:border-b-0">
@@ -943,19 +944,25 @@ export function AccountingHubPage({ companyId, permissions }: { companyId: strin
   const readableDocumentTypes = DOCUMENT_TYPES.filter((documentType) => canDocumentAction(permissions, documentType, 'read'));
   const creatableDocumentTypes = DOCUMENT_TYPES.filter((documentType) => canDocumentAction(permissions, documentType, 'create'));
   const canReadDocuments = readableDocumentTypes.length > 0 || permissions.includes('accounting.document.read_related');
-  const canCreateDocuments = creatableDocumentTypes.length > 0;
   const canReadCounterparties = permissions.includes('accounting.counterparty.read');
+  const canManageCounterparties = permissions.includes('accounting.counterparty.manage');
+  const canSubmitQuotation = permissions.includes('accounting.quotation.submit_approval');
   const canReadPayments = permissions.includes('accounting.payment.read');
 
   const canRecordIncome = permissions.includes('company.vat_registration.read')
     && (canRecordReceivedIncome(permissions) || canCreateIncomeInvoice(permissions));
+  const canCreateRootDocument = creatableDocumentTypes.some((type) =>
+    ['QUOTATION', 'INVOICE', 'BILLING_NOTE', 'RECEIPT', 'TAX_INVOICE'].includes(type));
+  const needsSalesAvailability = canCreateRootDocument || canRecordIncome || canManageCounterparties || canSubmitQuotation;
+  const salesAvailability = useSalesRootAvailability(companyId, needsSalesAvailability);
+  const canCreateSalesRoot = salesAvailability.state === 'OPEN';
 
   return (
     <MangmeePage
       eyebrow="การเงินและบัญชี"
       title="บัญชี"
       description="จัดการเอกสารบัญชี การออกเอกสาร การรับชำระ และคู่ค้าโดยอ้างอิง backend จริง"
-      actions={canRecordIncome
+      actions={canRecordIncome && canCreateSalesRoot
         ? <a href={`/companies/${companyId}/sales-documents/record-income`} className="mangmee-btn mangmee-btn-primary flex h-11 items-center">+ บันทึกรายรับ</a>
         : undefined}
     >
@@ -966,7 +973,18 @@ export function AccountingHubPage({ companyId, permissions }: { companyId: strin
               <a href={`/companies/${companyId}/sales-documents/revenue-categories`} className="text-sm font-semibold text-brand-600 hover:text-brand-700">จัดการหมวดรายรับ →</a>
             </div>
           )}
-          {canCreateDocuments && <CreateDocumentForm companyId={companyId} onCreated={refresh} allowedDocumentTypes={creatableDocumentTypes} />}
+          {needsSalesAvailability && salesAvailability.state !== 'OPEN' && (
+            <MangmeeCard className="border-amber-200 bg-amber-50 p-5">
+              <p className="text-base font-bold text-amber-950">
+                {salesAvailability.state === 'LOADING' ? 'กำลังตรวจสอบความพร้อมของระบบ...'
+                  : salesAvailability.state === 'CLOSED' ? 'ยังสร้างรายการขายใหม่ไม่ได้ชั่วคราว'
+                    : 'ยังตรวจสอบความพร้อมของระบบไม่ได้'}
+              </p>
+              <p className="mt-2 text-base text-amber-900">รายการเดิมยังเปิดดู รับชำระ ออกใบเสร็จ และแก้ไขได้ตามปกติ</p>
+              {salesAvailability.state === 'ERROR' && <button type="button" className={`${ghostClass} mt-3 min-h-11`} onClick={salesAvailability.retry}>ลองตรวจสอบอีกครั้ง</button>}
+            </MangmeeCard>
+          )}
+          {canCreateRootDocument && canCreateSalesRoot && <CreateDocumentForm companyId={companyId} onCreated={refresh} allowedDocumentTypes={creatableDocumentTypes} />}
           {canReadDocuments && <DocumentList
             key={contentKey}
             companyId={companyId}
@@ -978,8 +996,8 @@ export function AccountingHubPage({ companyId, permissions }: { companyId: strin
           />}
         </div>
         <div className="min-w-0 space-y-4">
-          {canReadDocuments && <DocumentDetailPanel companyId={companyId} documentId={selectedId} permissions={permissions} onChanged={refresh} />}
-          {canReadCounterparties && <CounterpartyListPage companyId={companyId} />}
+          {canReadDocuments && <DocumentDetailPanel companyId={companyId} documentId={selectedId} permissions={permissions} canCreateSalesRoot={canCreateSalesRoot} onChanged={refresh} />}
+          {canReadCounterparties && <CounterpartyListPage companyId={companyId} canCreateSalesRoot={canManageCounterparties && canCreateSalesRoot} />}
           {canReadPayments && <PaymentListPage companyId={companyId} reloadKey={reloadKey} />}
         </div>
       </div>

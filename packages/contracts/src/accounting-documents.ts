@@ -355,6 +355,10 @@ export type RecordSimpleIncomeResult = {
   replayed: boolean;
 };
 
+export type SalesDocumentRootAvailability = {
+  canCreateSalesRoot: boolean;
+};
+
 export type IncomeExpenseLedgerCategoryAmount = {
   categoryId?: string;
   label: string;

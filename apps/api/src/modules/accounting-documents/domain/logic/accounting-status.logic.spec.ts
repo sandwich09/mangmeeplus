@@ -91,6 +91,24 @@ describe('validateOutputTaxDocument', () => {
     ), null);
   });
 
+  it('allows a linked receipt only for an issued invoice that has been fully paid', () => {
+    const receipt = {
+      documentType: 'RECEIPT' as const,
+      vatMode: 'NO_VAT' as const,
+      sourceDocumentId: 'invoice-1',
+      sourceDocumentType: 'INVOICE',
+    };
+    assert.equal(validateOutputTaxDocument(receipt, {
+      documentType: 'INVOICE', status: 'ISSUED', paymentStatus: 'PAID', outstandingAmount: '0.00',
+    }), null);
+    assert.match(validateOutputTaxDocument({ ...receipt, sourceDocumentType: 'QUOTATION' }, {
+      documentType: 'QUOTATION', status: 'DRAFT', paymentStatus: 'UNPAID', outstandingAmount: '0.00',
+    }) ?? '', /fully paid INVOICE/);
+    assert.match(validateOutputTaxDocument(receipt, {
+      documentType: 'INVOICE', status: 'ISSUED', paymentStatus: 'PARTIALLY_PAID', outstandingAmount: '1.00',
+    }) ?? '', /fully paid INVOICE/);
+  });
+
   it('binds credit notes to the issued original tax invoice with the same code', () => {
     const credit = { documentType: 'CREDIT_NOTE' as const, adjustmentReasonCode: 'GOODS_DAMAGED' as const, outputTaxCode: 'O7' as const, vatMode: 'VAT_EXCLUDED' as const, vatAmount: '7', sourceDocumentId: 'tax-1', sourceDocumentType: 'TAX_INVOICE' };
     assert.equal(validateOutputTaxDocument(credit, { documentType: 'TAX_INVOICE', status: 'ISSUED', outputTaxCode: 'O7' }), null);

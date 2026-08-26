@@ -3,15 +3,29 @@ import { PrismaAccountingRepository } from '../../infrastructure/prisma-accounti
 import { AuditService } from '../../../audit/application/audit.service';
 import type { RequestContext } from '@watchdog-bms/contracts';
 import type { CreateCounterpartyInput, UpdateCounterpartyInput, CounterpartyRecord } from '../../domain/models/accounting.model';
+import { LaunchGateGuardService } from '../../../feature-launch/application/launch-gate.guard';
+import { rethrowSalesDocumentRootError } from '../sales-document-launch-gate';
 
 @Injectable()
 export class CreateCounterpartyUseCase {
-  constructor(private readonly repo: PrismaAccountingRepository, private readonly audit: AuditService) {}
+  constructor(
+    private readonly repo: PrismaAccountingRepository,
+    private readonly audit: AuditService,
+    private readonly launchGate: LaunchGateGuardService,
+  ) {}
 
   async execute(ctx: RequestContext, input: Omit<CreateCounterpartyInput, 'companyId' | 'createdByUserId'>): Promise<CounterpartyRecord> {
     if (!ctx.permissions.includes('accounting.counterparty.manage')) throw new ForbiddenException('Missing permission: accounting.counterparty.manage');
 
-    const result = await this.repo.createCounterparty({ ...input, companyId: ctx.companyId, createdByUserId: ctx.userId });
+    let result: CounterpartyRecord;
+    try {
+      result = await this.repo.createCounterparty(
+        { ...input, companyId: ctx.companyId, createdByUserId: ctx.userId },
+        (db) => this.launchGate.assertLaunchRouteOpenInTransaction(db, 'sales_documents', 'DEFAULT'),
+      );
+    } catch (error) {
+      return rethrowSalesDocumentRootError(error, this.audit, ctx, 'accounting.counterparty.create');
+    }
 
     void this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'accounting.counterparty.create', targetType: 'accounting_counterparty', targetId: result.id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'MEDIUM' });
 
@@ -21,7 +35,11 @@ export class CreateCounterpartyUseCase {
 
 @Injectable()
 export class UpdateCounterpartyUseCase {
-  constructor(private readonly repo: PrismaAccountingRepository, private readonly audit: AuditService) {}
+  constructor(
+    private readonly repo: PrismaAccountingRepository,
+    private readonly audit: AuditService,
+    private readonly launchGate: LaunchGateGuardService,
+  ) {}
 
   async execute(ctx: RequestContext, counterpartyId: string, input: Omit<UpdateCounterpartyInput, 'companyId' | 'counterpartyId' | 'updatedByUserId'>): Promise<CounterpartyRecord> {
     if (!ctx.permissions.includes('accounting.counterparty.manage')) throw new ForbiddenException('Missing permission: accounting.counterparty.manage');
@@ -29,7 +47,15 @@ export class UpdateCounterpartyUseCase {
     const existing = await this.repo.findCounterpartyById(ctx.companyId, counterpartyId);
     if (!existing) throw new NotFoundException(`Counterparty ${counterpartyId} not found`);
 
-    const result = await this.repo.updateCounterparty({ ...input, companyId: ctx.companyId, counterpartyId, updatedByUserId: ctx.userId });
+    let result: CounterpartyRecord;
+    try {
+      result = await this.repo.updateCounterparty(
+        { ...input, companyId: ctx.companyId, counterpartyId, updatedByUserId: ctx.userId },
+        (db) => this.launchGate.assertLaunchRouteOpenInTransaction(db, 'sales_documents', 'DEFAULT'),
+      );
+    } catch (error) {
+      return rethrowSalesDocumentRootError(error, this.audit, ctx, 'accounting.counterparty.update');
+    }
 
     void this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'accounting.counterparty.update', targetType: 'accounting_counterparty', targetId: result.id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'MEDIUM' });
 
