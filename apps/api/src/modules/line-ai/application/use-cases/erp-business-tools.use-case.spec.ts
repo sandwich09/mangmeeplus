@@ -74,104 +74,76 @@ describe('SalesGetSalesSummaryTool', () => {
 });
 
 describe('AccountingGetSummaryTool', () => {
-  const docs = [
-    { documentType: 'TAX_INVOICE', grandTotalAmount: '100.0000' },
-    { documentType: 'TAX_INVOICE', grandTotalAmount: '50.0000' },
-    { documentType: 'RECEIPT', grandTotalAmount: '25.0000' },
-  ];
-  const listDocuments = { execute: async () => ({ data: docs, total: 3, page: 1, pageSize: 200 }) } as any;
-
-  // The source repository caps page size at 100, so any period past that is read page by page.
-  function pagedListDocuments(all: Array<{ documentType: string; grandTotalAmount: string }>, total = all.length) {
-    const calls: any[] = [];
+  // PR #238 review T2: the tool now delegates to ONE snapshot-consistent groupBy on the
+  // permission-scoped use case — no page walk, so the old count-mismatch and period-too-large
+  // refusals are structurally impossible and gone.
+  function aggregateSource(byType: Record<string, { count: number; totalAmount: string }>) {
+    const calls: Array<{ ctx: any; filter: any }> = [];
+    const total = Object.values(byType).reduce((sum, entry) => sum + entry.count, 0);
     const source = {
-      execute: async (_ctx: any, filter: any) => {
-        calls.push(filter);
-        const start = (filter.page - 1) * filter.pageSize;
-        return { data: all.slice(start, start + filter.pageSize), total, page: filter.page, pageSize: filter.pageSize };
+      aggregateByType: async (ctx: any, filter: any) => {
+        calls.push({ ctx, filter });
+        return { total, byType };
       },
     } as any;
     return { source, calls };
   }
 
   it('fails closed without any accounting document view path', async () => {
-    const result = await new AccountingGetSummaryTool(listDocuments).execute({ ...baseCtx, permissions: [] });
+    const { source, calls } = aggregateSource({});
+    const result = await new AccountingGetSummaryTool(source).execute({ ...baseCtx, permissions: [] });
     assert.equal(result.status, 'forbidden');
+    assert.equal(calls.length, 0, 'no repository work happens for a refused caller');
   });
 
   it('aggregates counts and totals by document type with an echoed period', async () => {
-    const result = await new AccountingGetSummaryTool(listDocuments).execute({ ...baseCtx, permissions: ['accounting.document.read'] });
+    const { source } = aggregateSource({
+      TAX_INVOICE: { count: 2, totalAmount: '150.00' },
+      RECEIPT: { count: 1, totalAmount: '25.00' },
+    });
+    const result = await new AccountingGetSummaryTool(source).execute({ ...baseCtx, permissions: ['accounting.document.read'] });
     const data = result.data as any;
+    assert.equal(result.status, 'ok');
     assert.equal(data.total, 3);
     assert.equal(data.byType.TAX_INVOICE.count, 2);
     assert.equal(data.byType.TAX_INVOICE.totalAmount, 150);
     assert.equal(data.period.defaultedToCurrentMonth, true);
   });
 
-  it('aggregates every page of a month with more documents than one page (G1)', async () => {
-    const many = [
-      ...Array.from({ length: 150 }, () => ({ documentType: 'TAX_INVOICE', grandTotalAmount: '10.0000' })),
-      ...Array.from({ length: 100 }, () => ({ documentType: 'RECEIPT', grandTotalAmount: '2.0000' })),
-    ];
-    const { source, calls } = pagedListDocuments(many);
+  it('covers any period size in exactly ONE repository operation (PR #238 T2)', async () => {
+    // 250 documents used to take 3 pages (and up to 50); a concurrent insert/move between pages
+    // could silently corrupt the money while cardinality still matched. One groupBy sees one
+    // snapshot, so the regression here is the call count itself.
+    const { source, calls } = aggregateSource({
+      TAX_INVOICE: { count: 150, totalAmount: '1500.00' },
+      RECEIPT: { count: 100, totalAmount: '200.00' },
+    });
     const result = await new AccountingGetSummaryTool(source).execute({ ...baseCtx, permissions: ['accounting.document.read'] });
     const data = result.data as any;
     assert.equal(result.status, 'ok');
     assert.equal(data.total, 250);
-    assert.equal(data.byType.TAX_INVOICE.count, 150);
     assert.equal(data.byType.TAX_INVOICE.totalAmount, 1500);
-    assert.equal(data.byType.RECEIPT.count, 100);
     assert.equal(data.byType.RECEIPT.totalAmount, 200);
-    assert.deepEqual(calls.map((filter: any) => filter.page), [1, 2, 3]);
-    assert.ok(calls.every((filter: any) => filter.pageSize === 100 && filter.fromDate === calls[0].fromDate && filter.toDate === calls[0].toDate));
+    assert.equal(calls.length, 1, 'one snapshot-consistent operation, never a page walk');
+    assert.equal(calls[0]!.filter.page, undefined, 'no pagination parameters leak into the aggregate');
   });
 
-  it('reports unavailable when the per-type counts disagree with the source total', async () => {
-    // Rows shifted under the walk: the source counts 5 documents but only 3 were aggregated.
-    const { source } = pagedListDocuments(docs, 5);
+  it('keeps satang-level sums exact through the Decimal-string seam', async () => {
+    // The database sums the Decimal column and hands the tool a 2dp string; the tool's only
+    // numeric step is the final Number() for the JSON payload — no float accumulation.
+    const { source } = aggregateSource({ INVOICE: { count: 3, totalAmount: '4020.30' } });
     const result = await new AccountingGetSummaryTool(source).execute({ ...baseCtx, permissions: ['accounting.document.read'] });
-    assert.equal(result.status, 'unavailable');
-    assert.equal(result.errorCode, 'SUMMARY_COUNT_MISMATCH');
-    assert.equal(result.data, undefined);
-  });
-
-  it('refuses a period past the bound after one query instead of partial totals', async () => {
-    const { source, calls } = pagedListDocuments(docs, 100_000);
-    const result = await new AccountingGetSummaryTool(source).execute({ ...baseCtx, permissions: ['accounting.document.read'] });
-    assert.equal(result.status, 'unavailable');
-    assert.equal(result.errorCode, 'SUMMARY_PERIOD_TOO_LARGE');
-    assert.equal(result.data, undefined);
-    assert.equal(calls.length, 1, 'the bound is detected from the first page total, not by walking to it');
-  });
-
-  it('bounds the walk even when the source never reports the end of the period', async () => {
-    const fullPage = Array.from({ length: 100 }, () => ({ documentType: 'TAX_INVOICE', grandTotalAmount: '1.0000' }));
-    const calls: any[] = [];
-    const source = {
-      // pageSize 0 makes the "last page" arithmetic never terminate on its own.
-      execute: async (_ctx: any, filter: any) => {
-        calls.push(filter);
-        return { data: fullPage, total: 400, page: filter.page, pageSize: 0 };
-      },
-    } as any;
-    const result = await new AccountingGetSummaryTool(source).execute({ ...baseCtx, permissions: ['accounting.document.read'] });
-    assert.equal(result.status, 'unavailable');
-    assert.equal(result.errorCode, 'SUMMARY_PERIOD_TOO_LARGE');
-    assert.equal(calls.length, 50, 'a pathological source is bounded, never an endless walk');
+    assert.equal((result.data as any).byType.INVOICE.totalAmount, 4020.3);
   });
 
   it('accepts related-record view and leaves relation filtering to the source use case', async () => {
-    let forwarded: any;
-    const source = { execute: async (sourceCtx: any) => {
-      forwarded = sourceCtx;
-      return { data: docs.slice(0, 1), total: 1, page: 1, pageSize: 200 };
-    } } as any;
+    const { source, calls } = aggregateSource({ INVOICE: { count: 1, totalAmount: '100.00' } });
     const result = await new AccountingGetSummaryTool(source).execute({
       ...baseCtx,
       permissions: ['accounting.document.read_related'],
     });
     assert.equal(result.status, 'ok');
-    assert.deepEqual(forwarded.permissions, ['accounting.document.read_related']);
+    assert.deepEqual(calls[0]!.ctx.permissions, ['accounting.document.read_related']);
   });
 });
 

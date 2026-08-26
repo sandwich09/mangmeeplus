@@ -520,10 +520,8 @@ export class PrismaAccountingRepository {
     return row ? this.toDocumentRecord(row) : null;
   }
 
-  async listDocuments(filter: ListDocumentsFilter, branchIds?: string[]): Promise<PaginatedDocuments> {
-    const page = filter.page ?? 1;
-    const pageSize = Math.min(filter.pageSize ?? 20, 100);
-    const skip = (page - 1) * pageSize;
+  /** Shared visibility predicate for list + aggregate: both must see exactly the same rows. */
+  private async buildDocumentsWhere(filter: ListDocumentsFilter, branchIds?: string[]): Promise<Record<string, unknown>> {
     const where: Record<string, unknown> = { companyId: filter.companyId };
     const and: Record<string, unknown>[] = [branchScopeWhere({ branchIds })];
     // Explicit selection narrows to that branch alone; the scope predicate above stays as defence
@@ -550,6 +548,14 @@ export class PrismaAccountingRepository {
         ...(filter.toDate ? { lt: exclusiveEndOfDay(new Date(filter.toDate.slice(0, 10))) } : {}),
       };
     }
+    return where;
+  }
+
+  async listDocuments(filter: ListDocumentsFilter, branchIds?: string[]): Promise<PaginatedDocuments> {
+    const page = filter.page ?? 1;
+    const pageSize = Math.min(filter.pageSize ?? 20, 100);
+    const skip = (page - 1) * pageSize;
+    const where = await this.buildDocumentsWhere(filter, branchIds);
     const [data, total] = await Promise.all([
       // id tiebreaker: documentDate is non-unique, and OFFSET paging over an unstable order can
       // repeat/skip rows across pages (breaks multi-page aggregation in accounting.get_summary)
@@ -557,6 +563,36 @@ export class PrismaAccountingRepository {
       this.prisma.client.accountingDocument.count({ where }),
     ]);
     return { data: data.map((r) => this.toDocumentRecord(r)), total, page, pageSize };
+  }
+
+  /**
+   * PR #238 review T2: one snapshot-consistent database operation for accounting.get_summary —
+   * a single groupBy sees one consistent row set, so a concurrent insert/move can never duplicate
+   * one document and omit another the way an OFFSET page walk could, and the worst case is one
+   * query instead of fifty. Sums stay exact: the database aggregates the Decimal column and the
+   * result is formatted to a 2dp string, never JS float math.
+   */
+  async aggregateDocumentsByType(
+    filter: Omit<ListDocumentsFilter, 'page' | 'pageSize'>,
+    branchIds?: string[],
+  ): Promise<{ total: number; byType: Record<string, { count: number; totalAmount: string }> }> {
+    const where = await this.buildDocumentsWhere(filter, branchIds);
+    const groups = await (this.prisma.client.accountingDocument as any).groupBy({
+      by: ['documentType'],
+      where,
+      _count: { _all: true },
+      _sum: { grandTotalAmount: true },
+    });
+    const byType: Record<string, { count: number; totalAmount: string }> = {};
+    let total = 0;
+    for (const group of groups as Array<{ documentType: string; _count: { _all: number }; _sum: { grandTotalAmount: unknown } }>) {
+      total += group._count._all;
+      byType[group.documentType] = {
+        count: group._count._all,
+        totalAmount: new Decimal(String(group._sum.grandTotalAmount ?? 0)).toFixed(2),
+      };
+    }
+    return { total, byType };
   }
 
   async issueDocument(

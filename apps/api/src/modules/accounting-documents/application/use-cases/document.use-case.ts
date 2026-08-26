@@ -306,7 +306,11 @@ export class GetDocumentUseCase {
 export class ListDocumentsUseCase {
   constructor(private readonly repo: PrismaAccountingRepository) {}
 
-  async execute(ctx: RequestContext, filter: Omit<ListDocumentsFilter, 'companyId'>): Promise<PaginatedDocuments> {
+  /** Permission narrowing shared by list and aggregate — both must see exactly the same rows. */
+  private scopedFilter<T extends { documentType?: AccountingDocumentType; branchId?: string }>(
+    ctx: RequestContext,
+    filter: T,
+  ): T & { companyId: string; documentTypes?: AccountingDocumentType[]; relatedUserId?: string } {
     const readableTypes = DOCUMENT_TYPES.filter((documentType) => hasDocumentPermission(ctx, documentType, 'read'));
     const canReadRelated = ctx.permissions.includes('accounting.document.read_related');
     const canReadAll = ctx.permissions.includes('accounting.document.read');
@@ -317,12 +321,27 @@ export class ListDocumentsUseCase {
     // Explicit out-of-scope branch filter is a 403, never a silent empty list (spec R6). Written out
     // rather than via isBranchInScope, which answers true for an absent branchId (spec §4.2).
     if (ctx.scopes.branchIds && filter.branchId && !ctx.scopes.branchIds.includes(filter.branchId)) throw new ForbiddenException('Branch is out of scope');
-    return this.repo.listDocuments({
+    return {
       ...filter,
       companyId: ctx.companyId,
       ...(!canReadAll ? { documentTypes: readableTypes } : {}),
       ...(canReadRelated && !canReadAll ? { relatedUserId: ctx.userId } : {}),
-    }, ctx.scopes.branchIds);
+    };
+  }
+
+  async execute(ctx: RequestContext, filter: Omit<ListDocumentsFilter, 'companyId'>): Promise<PaginatedDocuments> {
+    return this.repo.listDocuments(this.scopedFilter(ctx, filter), ctx.scopes.branchIds);
+  }
+
+  /**
+   * PR #238 review T2: snapshot-consistent period aggregate for accounting.get_summary — one
+   * permission-scoped groupBy instead of an OFFSET page walk. Same narrowing as execute().
+   */
+  async aggregateByType(
+    ctx: RequestContext,
+    filter: { fromDate?: string; toDate?: string; branchId?: string },
+  ): Promise<{ total: number; byType: Record<string, { count: number; totalAmount: string }> }> {
+    return this.repo.aggregateDocumentsByType(this.scopedFilter(ctx, filter), ctx.scopes.branchIds);
   }
 }
 

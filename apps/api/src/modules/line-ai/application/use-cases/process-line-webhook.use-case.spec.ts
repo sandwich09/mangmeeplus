@@ -115,8 +115,10 @@ function makePrisma(opts: {
 	  branchFindManyFn?: (args: any) => Promise<Array<{ name: string }>>;
 	  /** §8.3: make the durable terminal-outcome write fail, to exercise the fail-closed delivery seam. */
 	  turnOutcomeUnavailable?: boolean;
+	  /** Allow the first N outcome upserts, fail the rest — the partial-failure seam §14.3 needs. */
+	  turnOutcomeFailAfter?: number;
 	} = {}) {
-	  const { identityUserId = 'user-1', displayName = 'พิม', identityChannelId = 'msg-channel-1', aiAssistantOptOutAt = null, memberships = [{ companyId: 'company-1' }], lineCompanyContext = null, previousEventLog = null, recentTurns = [], entitlements = [], branches = [], branchFindManyFn, turnOutcomeUnavailable = false } = opts;
+	  const { identityUserId = 'user-1', displayName = 'พิม', identityChannelId = 'msg-channel-1', aiAssistantOptOutAt = null, memberships = [{ companyId: 'company-1' }], lineCompanyContext = null, previousEventLog = null, recentTurns = [], entitlements = [], branches = [], branchFindManyFn, turnOutcomeUnavailable = false, turnOutcomeFailAfter } = opts;
   const turnOutcomeWrites: any[] = [];
   const turnOutcomeUpdates: any[] = [];
   const identityQueries: any[] = [];
@@ -154,6 +156,9 @@ function makePrisma(opts: {
         upsert: async (args: any) => {
           turnOutcomeWrites.push(args);
           if (turnOutcomeUnavailable) throw new Error('outcome store unavailable');
+          if (turnOutcomeFailAfter !== undefined && turnOutcomeWrites.length > turnOutcomeFailAfter) {
+            throw new Error('outcome store unavailable');
+          }
           return args;
         },
         updateMany: async (args: any) => { turnOutcomeUpdates.push(args); return { count: 1 }; },
@@ -3341,8 +3346,9 @@ function makeDeliveryRun(opts: {
   replyResults?: string[];
   pushResult?: string;
   turnOutcomeUnavailable?: boolean;
+  turnOutcomeFailAfter?: number;
 } = {}) {
-  const { prisma, updates, turnOutcomeWrites, turnOutcomeUpdates } = makePrisma({ turnOutcomeUnavailable: opts.turnOutcomeUnavailable });
+  const { prisma, updates, turnOutcomeWrites, turnOutcomeUpdates } = makePrisma({ turnOutcomeUnavailable: opts.turnOutcomeUnavailable, turnOutcomeFailAfter: opts.turnOutcomeFailAfter });
   const replyCalls: Array<{ messages: any[]; outcomeWritesBefore: number }> = [];
   const pushCalls: Array<{ to: string; messages: any[] }> = [];
   const results = [...(opts.replyResults ?? ['ok'])];
@@ -3461,6 +3467,25 @@ describe('ProcessLineWebhookUseCase – Flex→text delivery fallback (§14.3, d
     assert.equal(turnOutcomeWrites[1]!.create.messagesJson[0].type, 'text');
     // A different payload cannot inherit the previous one's delivery.
     assert.equal(turnOutcomeWrites[1]!.update.deliveredAt, null);
+  });
+
+  it('FAILS CLOSED on the fallback too: an unrecordable replacement outcome is never sent', async () => {
+    // PR #238 review T1: first upsert (flex) succeeds, the replacement (text_fallback) upsert fails.
+    // Sending the text anyway would mark the stale Flex outcome delivered on success, or leave
+    // orphan replay resending the rejected Flex on failure — so the turn must park instead.
+    const { run, replyCalls, pushCalls, updates, turnOutcomeWrites } = makeDeliveryRun({
+      config: { lineAiFlexTextFallbackEnabled: true, lineAiTerminalOutcomeReplayEnabled: true },
+      replyResults: ['failed_flex', 'ok'],
+      turnOutcomeFailAfter: 1,
+    });
+    await run();
+
+    assert.equal(turnOutcomeWrites.length, 2, 'the replacement upsert was attempted');
+    assert.equal(replyCalls.length, 1, 'the fallback text is NOT sent when its outcome is not durable');
+    assert.equal(pushCalls.length, 0, 'and the rejected Flex is not pushed either');
+    const pending = updates.map((update: any) => update.data).find((data: any) => data.status === 'delivery_pending');
+    assert.ok(pending, 'the turn still owes the user an answer');
+    assert.equal(pending.errorCode, 'LINE_OUTCOME_NOT_RECORDED');
   });
 
   it('never retries a failure that is not a rejected Flex body', async () => {

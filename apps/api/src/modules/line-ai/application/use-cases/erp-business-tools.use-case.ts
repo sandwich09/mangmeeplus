@@ -39,13 +39,6 @@ function money(value: unknown): number {
 
 // ---- accounting.get_summary ----
 
-// The repository caps page size at 100, so a period is aggregated by walking pages.
-// ponytail: bounded walk over the permission-checked list use case, not a new aggregate
-// repository method — 50 pages covers 5,000 documents in a period; add a groupBy in
-// PrismaAccountingRepository if real periods ever pass that.
-const SUMMARY_PAGE_SIZE = 100;
-const SUMMARY_MAX_PAGES = 50;
-
 @Injectable()
 export class AccountingGetSummaryTool implements ErpReadToolPort {
   toolName = 'accounting.get_summary';
@@ -57,35 +50,18 @@ export class AccountingGetSummaryTool implements ErpReadToolPort {
       return { toolName: this.toolName, status: 'forbidden', sourceRefs: [], asOf };
     }
     const period = resolvePeriodInput(input);
+    // PR #238 review T2: ONE permission-scoped groupBy replaces the 50-page OFFSET walk. A single
+    // database operation sees one consistent snapshot, so a concurrent insert/move can no longer
+    // duplicate one document and omit another while the cardinality still matched — the failure
+    // class the old aggregated-vs-total self-check could not actually catch. The database sums the
+    // Decimal column; float never touches the money. With the walk gone, the period-size bound and
+    // the count-mismatch refusal are structurally unnecessary and are gone with it.
+    const aggregate = await this.listDocuments.aggregateByType(toCtx(ctx), {
+      fromDate: period.fromDate, toDate: period.toDate,
+    });
     const byType: Record<string, { count: number; totalAmount: number }> = {};
-    let total = 0;
-    let scannedWholePeriod = false;
-    for (let page = 1; page <= SUMMARY_MAX_PAGES; page += 1) {
-      const result = await this.listDocuments.execute(toCtx(ctx), {
-        fromDate: period.fromDate, toDate: period.toDate, page, pageSize: SUMMARY_PAGE_SIZE,
-      });
-      // The first page already reports the period total, so a period past the bound is refused
-      // after one query instead of fifty that end in a refusal anyway (spec G10).
-      if (page === 1) {
-        total = result.total;
-        if (total > SUMMARY_PAGE_SIZE * SUMMARY_MAX_PAGES) break;
-      }
-      for (const doc of result.data) {
-        const key = String(doc.documentType);
-        byType[key] = byType[key] ?? { count: 0, totalAmount: 0 };
-        byType[key].count += 1;
-        byType[key].totalAmount += money(doc.grandTotalAmount);
-      }
-      if (!result.data.length || page * result.pageSize >= result.total) { scannedWholePeriod = true; break; }
-    }
-    // Wrong totals destroy trust faster than a missing answer (spec G1): a truncated walk, or a
-    // per-type sum that disagrees with the source count, is reported unreadable — never summed.
-    const aggregated = Object.values(byType).reduce((count, entry) => count + entry.count, 0);
-    if (!scannedWholePeriod || aggregated !== total) {
-      return {
-        toolName: this.toolName, status: 'unavailable', sourceRefs: [], asOf,
-        errorCode: scannedWholePeriod ? 'SUMMARY_COUNT_MISMATCH' : 'SUMMARY_PERIOD_TOO_LARGE',
-      };
+    for (const [documentType, entry] of Object.entries(aggregate.byType)) {
+      byType[documentType] = { count: entry.count, totalAmount: money(entry.totalAmount) };
     }
     const sourceRefs: SourceRef[] = [{
       label: 'สรุปเอกสารบัญชี', module: 'accounting-documents', entityType: 'accounting_document_summary',
@@ -96,7 +72,7 @@ export class AccountingGetSummaryTool implements ErpReadToolPort {
       status: 'ok',
       data: {
         period: { fromDate: period.fromDate, toDate: period.toDate, defaultedToCurrentMonth: period.defaulted },
-        total,
+        total: aggregate.total,
         byType,
       },
       sourceRefs,

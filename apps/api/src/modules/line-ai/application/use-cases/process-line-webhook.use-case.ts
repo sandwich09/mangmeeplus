@@ -1477,8 +1477,15 @@ export class ProcessLineWebhookUseCase {
     if (result === 'failed_flex') {
       const textMessages = toCanonicalTextMessages(messages);
       this.logger.warn({ msg: 'line_flex_text_fallback_used', webhookEventId: event.webhookEventId });
-      if (this.config.lineAiTerminalOutcomeReplayEnabled) {
-        await this.recordTurnOutcome(event.webhookEventId, textMessages, 'text_fallback');
+      // Same fail-closed rule as the first send: the text replaces the rejected Flex as the payload
+      // of record, and it may reach LINE only once that replacement is durable. Sending anyway
+      // would either mark the stale Flex outcome delivered (send ok) or leave replay pushing the
+      // very payload LINE just rejected (send fails). Nothing has reached the user this turn, so
+      // parking cannot duplicate — the legacy input replay recomputes the row honestly.
+      if (this.config.lineAiTerminalOutcomeReplayEnabled
+        && !(await this.recordTurnOutcome(event.webhookEventId, textMessages, 'text_fallback'))) {
+        await this.updateEventLog(event.webhookEventId, 'delivery_pending', 'LINE_OUTCOME_NOT_RECORDED');
+        return 'failed_other';
       }
       result = await this.attemptDelivery(event, textMessages);
     }
