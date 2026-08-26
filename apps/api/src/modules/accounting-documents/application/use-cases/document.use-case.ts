@@ -1,4 +1,4 @@
-import { Injectable, ForbiddenException, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import { Injectable, ForbiddenException, NotFoundException, UnprocessableEntityException, ConflictException } from '@nestjs/common';
 import { PrismaAccountingRepository } from '../../infrastructure/prisma-accounting.repository';
 import { AuditService } from '../../../audit/application/audit.service';
 import { OutboxAppendService } from '../../../data-model-core/application/services/outbox-append.service';
@@ -31,6 +31,12 @@ import { civilPeriodKey, coerceCivilDate, todayCivilDate } from '@watchdog-bms/c
 import { observeCustomerJourney } from '../../../../common/observability/customer-journey-audit';
 import { CompanyVatRegistrationUseCase } from '../../../data-model-core/application/use-cases/company-vat-registration.use-case';
 import { canonicalFingerprint } from '../../../../common/security/canonical-fingerprint';
+import { LaunchGateGuardService } from '../../../feature-launch/application/launch-gate.guard';
+import {
+  assertSalesDocumentSourceMutationInTransaction,
+  createsNewSalesRoot,
+  rethrowSalesDocumentRootError,
+} from '../sales-document-launch-gate';
 
 function docPermission(documentType: AccountingDocumentType, action: 'read' | 'create' | 'update' | 'issue' | 'void'): string {
   const typeKey = documentType.toLowerCase();
@@ -80,6 +86,7 @@ export class CreateDocumentUseCase {
     private readonly audit: AuditService,
     private readonly transactionTax: TransactionTaxConfigUseCase,
     private readonly vatRegistration: CompanyVatRegistrationUseCase,
+    private readonly launchGate: LaunchGateGuardService,
   ) {}
 
   async execute(ctx: RequestContext, input: Omit<CreateDocumentInput, 'companyId' | 'createdByUserId' | 'payloadFingerprint'>): Promise<DocumentRecord> {
@@ -121,6 +128,7 @@ export class CreateDocumentUseCase {
     );
     const taxError = validateOutputTaxDocument(normalizedInput, source ?? undefined);
     if (taxError) throw new UnprocessableEntityException(taxError);
+    const createsRoot = createsNewSalesRoot(normalizedInput, source ?? undefined);
     const taxNeutral = ['QUOTATION', 'INVOICE', 'BILLING_NOTE', 'RECEIPT'].includes(normalizedInput.documentType);
     if (taxNeutral && normalizedInput.lines.some((line) => line.taxCodeDefinitionId || line.externalTaxCode)) {
       throw new UnprocessableEntityException(`${normalizedInput.documentType} lines cannot carry a Tax Code`);
@@ -130,12 +138,29 @@ export class CreateDocumentUseCase {
     const payloadFingerprint = idempotencyKey
       ? canonicalFingerprint({ version: 'invoice-draft-create-v1', companyId: ctx.companyId, actorUserId: ctx.userId, ...fingerprintInput })
       : undefined;
-    const result = await this.repo.createDocument({
-      ...normalizedInput,
-      companyId: ctx.companyId,
-      createdByUserId: ctx.userId,
-      ...(payloadFingerprint ? { payloadFingerprint } : {}),
-    });
+    let result: DocumentRecord;
+    try {
+      result = await this.repo.createDocument({
+        ...normalizedInput,
+        companyId: ctx.companyId,
+        createdByUserId: ctx.userId,
+        ...(payloadFingerprint ? { payloadFingerprint } : {}),
+      }, async (db) => {
+        if (createsRoot) {
+          await this.launchGate.assertLaunchRouteOpenInTransaction(db, 'sales_documents', 'DEFAULT');
+        }
+        const currentSource = await assertSalesDocumentSourceMutationInTransaction(db, ctx.companyId, normalizedInput);
+        // A source-linked runoff that loses eligibility must fail closed. Never
+        // let future drift between eligibility and gate classification turn it
+        // into an ungated new root while CLOSED.
+        if (!createsRoot && createsNewSalesRoot(normalizedInput, currentSource)) {
+          throw new UnprocessableEntityException('Referenced source document is no longer eligible for this linked document');
+        }
+      });
+    } catch (error) {
+      if (!createsRoot) throw error;
+      return rethrowSalesDocumentRootError(error, this.audit, ctx, 'accounting.document.create');
+    }
     let persisted: DocumentRecord;
     try {
       if ((normalizedInput.documentType === 'CREDIT_NOTE' || normalizedInput.documentType === 'DEBIT_NOTE')
@@ -705,7 +730,12 @@ export class VoidDocumentUseCase {
 
 @Injectable()
 export class SubmitQuotationApprovalUseCase {
-  constructor(private readonly repo: PrismaAccountingRepository, private readonly audit: AuditService, private readonly outbox: OutboxAppendService) {}
+  constructor(
+    private readonly repo: PrismaAccountingRepository,
+    private readonly audit: AuditService,
+    private readonly outbox: OutboxAppendService,
+    private readonly launchGate: LaunchGateGuardService,
+  ) {}
 
   async execute(ctx: RequestContext, documentId: string): Promise<DocumentRecord> {
     if (!ctx.permissions.includes('accounting.quotation.submit_approval')) throw new ForbiddenException('Missing permission: accounting.quotation.submit_approval');
@@ -717,7 +747,17 @@ export class SubmitQuotationApprovalUseCase {
     const transitionError = validateStatusTransition(doc.status, 'PENDING_APPROVAL', 'QUOTATION');
     if (transitionError) throw new UnprocessableEntityException(transitionError);
 
-    const updated = await this.repo.updateDocumentStatus(ctx.companyId, documentId, 'PENDING_APPROVAL', ctx.userId);
+    let updated: DocumentRecord;
+    try {
+      updated = await this.repo.submitQuotationForApproval(
+        ctx.companyId,
+        documentId,
+        ctx.userId,
+        (db) => this.launchGate.assertLaunchRouteOpenInTransaction(db, 'sales_documents', 'DEFAULT'),
+      );
+    } catch (error) {
+      return rethrowSalesDocumentRootError(error, this.audit, ctx, 'accounting.quotation.submit_approval');
+    }
 
     void this.outbox.append('accounting.quotation.submitted_for_approval', 'accounting_document', documentId, {
       companyId: ctx.companyId, actorUserId: ctx.userId, requestId: ctx.requestId,
@@ -796,7 +836,12 @@ export class RejectQuotationUseCase {
 
 @Injectable()
 export class ConvertDocumentUseCase {
-  constructor(private readonly repo: PrismaAccountingRepository, private readonly audit: AuditService, private readonly outbox: OutboxAppendService) {}
+  constructor(
+    private readonly repo: PrismaAccountingRepository,
+    private readonly audit: AuditService,
+    private readonly outbox: OutboxAppendService,
+    private readonly launchGate: LaunchGateGuardService,
+  ) {}
 
   async execute(ctx: RequestContext, sourceDocumentId: string, targetType: AccountingDocumentType): Promise<DocumentRecord> {
     const source = await this.repo.findDocumentById(ctx.companyId, sourceDocumentId, ctx.scopes.branchIds);
@@ -812,7 +857,6 @@ export class ConvertDocumentUseCase {
     if (!hasDocumentPermission(ctx, targetType, 'create')) {
       throw new ForbiddenException(`Missing permission: ${docPermission(targetType, 'create')}`);
     }
-
     const lines = (source.lines ?? []).map((l) => ({
       lineNumber: l.lineNumber,
       productId: l.productId,
@@ -829,21 +873,26 @@ export class ConvertDocumentUseCase {
       revenueCategoryId: l.revenueCategoryId,
     }));
 
-    const result = await this.repo.convertQuotation(source.id, source.updatedAt, {
-      companyId: ctx.companyId,
-      branchId: source.branchId,
-      documentType: targetType,
-      documentDate: source.documentDate.toISOString().split('T')[0],
-      dueDate: source.dueDate?.toISOString().split('T')[0],
-      counterpartyId: source.counterpartyId,
-      convertedFromDocumentId: source.id,
-      currency: source.currency,
-      vatMode: source.vatMode,
-      outputTaxCode: undefined,
-      note: source.note,
-      createdByUserId: ctx.userId,
-      lines,
-    }, ctx.userId);
+    let result;
+    try {
+      result = await this.repo.convertQuotation(source.id, source.updatedAt, {
+        companyId: ctx.companyId,
+        branchId: source.branchId,
+        documentType: targetType,
+        documentDate: source.documentDate.toISOString().split('T')[0],
+        dueDate: source.dueDate?.toISOString().split('T')[0],
+        counterpartyId: source.counterpartyId,
+        convertedFromDocumentId: source.id,
+        currency: source.currency,
+        vatMode: source.vatMode,
+        outputTaxCode: undefined,
+        note: source.note,
+        createdByUserId: ctx.userId,
+        lines,
+      }, ctx.userId, (db) => this.launchGate.assertLaunchRouteOpenInTransaction(db, 'sales_documents', 'DEFAULT'));
+    } catch (error) {
+      return rethrowSalesDocumentRootError(error, this.audit, ctx, 'accounting.document.convert');
+    }
     const converted = result.document;
 
     if (result.didConvert) {

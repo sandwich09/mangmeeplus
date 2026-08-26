@@ -10,6 +10,11 @@ import { AuditService } from '../../../audit/application/audit.service';
 import { OutboxAppendService } from '../../../data-model-core/application/services/outbox-append.service';
 import { CreateDocumentUseCase, GetDocumentUseCase } from '../../../accounting-documents/application/use-cases/document.use-case';
 import { EnsureCustomerCounterpartyUseCase } from '../../../accounting-documents/application/use-cases/ensure-customer-counterparty.use-case';
+import { LaunchGateGuardService } from '../../../feature-launch/application/launch-gate.guard';
+import {
+  isSalesDocumentLaunchClosedError,
+  rethrowSalesDocumentRootError,
+} from '../../../accounting-documents/application/sales-document-launch-gate';
 import { toQuotationLinkSummary } from '../dto/crm.mapper';
 import { requirePermission, assertCanManageOwned, assertCanReadOwned, ownerScopeForList } from '../crm-access';
 import { crmCanManageAll } from '../../domain/logic/crm.logic';
@@ -62,6 +67,7 @@ export class CreateCrmQuotationDraftUseCase {
     private readonly outbox: OutboxAppendService,
     private readonly _createDocument: CreateDocumentUseCase,
     private readonly _ensureCounterparty: EnsureCustomerCounterpartyUseCase,
+    private readonly launchGate: LaunchGateGuardService,
   ) {}
 
   async execute(ctx: RequestContext, opportunityId: string, input: CreateCrmQuotationDraftInput): Promise<CrmQuotationLinkSummary> {
@@ -94,13 +100,20 @@ export class CreateCrmQuotationDraftUseCase {
         companyId: ctx.companyId,
         opportunityId,
         expectedCustomerId: o.customerId,
-        scope: { actorUserId: ctx.userId, canManageAll: crmCanManageAll(ctx.roles) },
+        scope: {
+          actorUserId: ctx.userId,
+          canManageAll: crmCanManageAll(ctx.roles),
+          ...(ctx.scopes.branchIds ? { branchIds: ctx.scopes.branchIds } : {}),
+        },
         userId: ctx.userId,
         requestId: ctx.requestId,
         requestKey: idempotencyKey ?? ctx.requestId,
         allowRevision: Boolean(input?.revisionReason?.trim()),
-      });
+      }, (db) => this.launchGate.assertLaunchRouteOpenInTransaction(db, 'sales_documents', 'DEFAULT'));
     } catch (error) {
+      if (isSalesDocumentLaunchClosedError(error)) {
+        await rethrowSalesDocumentRootError(error, this.audit, ctx, 'crm.quotation.link');
+      }
       const code = error instanceof Error ? error.message : String(error);
       if (code === 'opportunity_not_found') throw new NotFoundException('Opportunity not found');
       if (code === 'opportunity_out_of_scope') throw new UnprocessableEntityException('Opportunity is out of scope');

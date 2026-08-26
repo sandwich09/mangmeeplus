@@ -35,6 +35,8 @@ type OutputTaxDocumentFacts = {
 type OutputTaxSourceFacts = {
   documentType: AccountingDocumentType;
   status: AccountingDocumentStatus;
+  paymentStatus?: string;
+  outstandingAmount?: string;
   outputTaxCode?: AccountingOutputTaxCode;
   vatMode?: AccountingVatMode;
   vatAmount?: string;
@@ -94,7 +96,8 @@ export function validateOutputTaxDocument(
 
   if (['QUOTATION', 'BILLING_NOTE', 'RECEIPT'].includes(documentType)) {
     const hasLineTax = document.lines?.some((line) => line.taxCodeDefinitionId || line.externalTaxCode || line.taxSnapshot || line.taxComponents?.length);
-    return outputTaxCode || hasLineTax ? `${documentType} cannot carry an output Tax Code` : null;
+    if (outputTaxCode || hasLineTax) return `${documentType} cannot carry an output Tax Code`;
+    if (documentType !== 'RECEIPT') return null;
   }
   if (documentType === 'INVOICE' && outputTaxCode) {
     return 'A plain invoice cannot carry a Tax Code; issue a TAX_INVOICE for VAT or zero-rated sales';
@@ -132,6 +135,12 @@ export function validateOutputTaxDocument(
   if (document.sourceDocumentId && !source) return 'Referenced source document was not found';
   if (source && document.sourceDocumentType && document.sourceDocumentType !== source.documentType) {
     return 'Source document type does not match the referenced document';
+  }
+  if (documentType === 'RECEIPT' && source) {
+    if (source.documentType !== 'INVOICE' || source.status !== 'ISSUED'
+      || source.paymentStatus !== 'PAID' || !new Decimal(source.outstandingAmount ?? 0).isZero()) {
+      return 'A linked RECEIPT requires an issued, fully paid INVOICE source';
+    }
   }
   if (documentType === 'TAX_INVOICE' && source) {
     if (!['INVOICE', 'RECEIPT'].includes(source.documentType) || source.status !== 'ISSUED') {

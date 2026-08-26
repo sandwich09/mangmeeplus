@@ -1,6 +1,6 @@
 # แผนพัฒนา สมุดรายรับ–รายจ่าย (Income–Expense Ledger MVP)
 
-สถานะ: **ACTIVE — Phase 0–2 ✅; Phase 3A backend ✅; Phase 3B UI core ✅ 2026-08-27; Phase 3 ยังมี LED-FIN-07 รอ Owner ตัดสินเรื่องร่าง VAT ไม่ชัด; Phase 4A backend ✅, Phase 4B ledger/payment/export UI core ✅ และ Phase 4C แถบเตือน VAT 1.8 ล้าน ✅ 2026-08-27; Phase 6 ยังเหลือ**; P27 เป็นหัวขบวนสาย "โตต่อได้" (Owner 2026-08-26: P27 → P28 → …; สาย billing P14→P26 ท้ายคิวสุด)
+สถานะ: **ACTIVE — Phase 0–2 ✅; Phase 3A backend ✅; Phase 3B UI core ✅ 2026-08-27; Phase 3 ยังมี LED-FIN-07 รอ Owner ตัดสินเรื่องร่าง VAT ไม่ชัด; Phase 4A/4B/4C ✅; Phase 6 local implementation + automated/browser evidence ✅ 2026-08-27 แต่ human usability/UAT/Production ยังเป็น external gate**; P27 เป็นหัวขบวนสาย "โตต่อได้" (Owner 2026-08-26: P27 → P28 → …; สาย billing P14→P26 ท้ายคิวสุด)
 
 Spec: [Income–Expense Ledger Spec](../specs/mangmee-income-expense-ledger-spec-th.md) — ทุก phase อ้าง requirement/หลักฐานจาก spec; แผนนี้ไม่ประกาศข้อเท็จจริงใหม่
 
@@ -99,13 +99,17 @@ Spec: [Income–Expense Ledger Spec](../specs/mangmee-income-expense-ledger-spec
 
 ## Phase 6 — เปิดระบบ + หลักฐาน (spec F-LED-5, §8)
 
-1. บังคับ launch gate `sales_documents/DEFAULT` ที่ root สร้างเอกสาร + `RecordSimpleIncome` (pattern `assertExpenseRootOpen` + Thai copy + DENIED audit); พิสูจน์ CLOSE → BLOCK_NEW_ROOT แต่ดู/รับชำระเดิมได้
-2. Nav: เพิ่ม "สมุดรายรับ–รายจ่าย" + ปลด `salesdoc` → "ขายและรับเงิน" ตาม entitlement; บริษัทไม่เปิด → เห็นสมุดฝั่งจ่าย + ป้าย ไม่เจอ 403
-3. เปิด entitlement ให้บริษัท allowlist ผ่าน `PUT /v1/system/partners/:id/features` (V5 — CAS `expectedSetVersion`, ระวัง normalization gate ของบริษัทเก่า) + ยืนยัน off/on/off บนบริษัททดสอบ (มี unit พิสูจน์แล้วที่ `set-partner-features.use-case.spec.ts:1322` — ทำซ้ำเชิง E2E หนึ่งรอบ)
-4. E2E @smoke ใหม่ (project `critical`): LED-01 ขายสดจบเดียว→สมุดอัปเดต+ใบเสร็จมีจริง; LED-02 ออกบิล→รับชำระ→รอรับเงินลด; LED-03 หมวดรายรับ manage+ARCHIVED ไม่โผล่ picker; LED-04 export ได้ไฟล์+ยอดตรง; LED-05 perm negative
-5. รัน `e2e:critical` เต็มชุด + unit ทุก package ที่แตะ + evidence ลง manifest (SHA, ผลรัน, นิยามตัวเลข)
-6. Usability ผู้ใช้ 40+ ≥3 คน ตาม gate spec §8 (ต้องมนุษย์ — นัดผ่าน Owner)
-7. UAT ตาม protocol `docs/runbooks/uat-production-v2-deployment.md` เมื่อรอบ release ถัดไปเปิด
+สถานะ 2026-08-27: **local implementation + automated/browser evidence ผ่าน** — backend transactional root/runoff fence, availability API และ fail-closed web UX ครบ; critical LED-01..06 ผ่าน 6/6 ทั้ง desktop/mobile รอบนี้ไม่อ้างว่า UAT/Production หรือ usability จากมนุษย์ 3 คนผ่านแล้ว
+
+1. ✅ บังคับ launch gate `sales_documents/DEFAULT` ที่ root สร้างเอกสาร + `RecordSimpleIncome` + quotation conversion + quotation submit-approval + counterparty POST/PATCH + CRM quotation bundle (Thai copy + DENIED audit); shared guard กับ final write อยู่ transaction เดียวกัน และ CLOSE ใช้ exclusive lock คู่เดียวกัน จึงไม่มี TOCTOU; idempotent replay ไม่ถูก gate ซ้ำ
+2. ✅ Runoff ไม่อาศัย `sourceDocumentId` จาก client อย่างเดียว: linked receipt ต้องอ้าง issued/fully-paid invoice; receipt และ linked tax invoice ห้าม active document ซ้ำต่อ source; non-VAT correction normalize raw Prisma `null` ก่อน domain validation; read/edit/issue/void/payment/correction เดิมยังทำได้ตอน CLOSE
+3. ✅ Nav/หน้า "สมุดรายรับ–รายจ่าย"/"ขายและรับเงิน" ใช้ availability fail-closed: ซ่อน create, submit และฟอร์มคู่ค้าเมื่อ CLOSE แต่รายการเดิมและ runoff actions ยังอยู่; direct URL แสดงภาษาไทยพร้อม retry และไม่เผย gate key
+4. ✅ เปิด entitlement ผ่าน `PUT /v1/system/partners/:id/features` (V5 — CAS `expectedSetVersion` + normalization gate) และ Playwright Platform Admin ทำ off → on → off บนบริษัท fixture จริงแล้ว 1/1; fixture ลบคืนใน `finally`
+5. ✅ E2E @smoke ใหม่: LED-01 ขายสดจบเดียว→สมุดอัปเดต+ใบเสร็จมีจริง; LED-02 ออกบิล→รับชำระ→รอรับเงินลด; LED-03 หมวดรายรับ manage+ARCHIVED ไม่โผล่ picker; LED-04 export ได้ไฟล์+ยอดตรง; LED-05 perm negative; LED-06 CLOSE ซ่อน root actionsและยิง payment/receipt/linked tax invoice/non-VAT correction สำเร็จจริง (6/6)
+6. ✅ Real PostgreSQL accounting/launch 14/14: root-first/close-first รวม actual simple-income/conversion preflight, invoice replay, payment create/void, receipt create/payment void, receipt issue/void, tax create/receipt void และ invoice/receipt-family uniqueness; CRM Inbox atomic deal+quotation 1/1. CI ใช้ฐาน P27 ที่ migrate ใหม่พร้อม `P27_REQUIRE_POSTGRES=true` จึงไม่ skip เงียบ
+7. ✅ Browser local 1280×900 และ 390×844: ไม่มี horizontal overflow และ console error = 0; หลักฐาน/คำสั่งอยู่ [`docs/evidence/p27-phase6/`](../evidence/p27-phase6/README.md)
+8. ⏳ Usability ผู้ใช้ 40+ ≥3 คน ตาม gate spec §8 (ต้องมนุษย์ — นัดผ่าน Owner)
+9. ⏳ UAT ตาม protocol `docs/runbooks/uat-production-v2-deployment.md` เมื่อรอบ release ถัดไปเปิด
 
 ## 2. Test matrix รวม
 
@@ -115,7 +119,7 @@ Spec: [Income–Expense Ledger Spec](../specs/mangmee-income-expense-ledger-spec
 | Unit use-case | RecordSimpleIncome idempotent/rollback/perm-split, category CRUD, export builder | เดียวกัน |
 | Contract | DTO ใหม่ทุกตัว + optional field ไม่ break เดิม | packages/contracts spec |
 | Golden การเงิน | issue→pay→receipt posting ครั้งเดียว; paid+outstanding=grand; void reversal สุทธิศูนย์; CN ลดยอดสมุด | apps/api golden specs |
-| E2E @smoke | LED-01..05 ข้างต้น | `e2e/income-expense-ledger.spec.ts` |
+| E2E @smoke | LED-01..06 ข้างต้น รวม CLOSED/runoff desktop+mobile | `e2e/income-expense-ledger.spec.ts` |
 | Manual gate | ผู้ใช้ 40+ 3 คน + คำต้องห้าม + mobile 390px | บันทึกใน task memory + manifest |
 
 ## 3. ความเสี่ยงและทางถอย

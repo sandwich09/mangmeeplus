@@ -53,6 +53,7 @@ export type VoidDocumentResult = {
 };
 export type ConvertQuotationResult = { document: DocumentRecord; didConvert: boolean };
 export type CreatePaymentResult = { payment: PaymentRecord; replayed: boolean };
+type BeforeAccountingMutation = (db: any) => Promise<void>;
 
 @Injectable()
 export class PrismaAccountingRepository {
@@ -64,8 +65,10 @@ export class PrismaAccountingRepository {
   ) {}
 
   // ---- Counterparty ----
-  async createCounterparty(input: CreateCounterpartyInput): Promise<CounterpartyRecord> {
-    const row = await this.prisma.client.accountingCounterparty.create({
+  async createCounterparty(input: CreateCounterpartyInput, beforeMutation?: BeforeAccountingMutation): Promise<CounterpartyRecord> {
+    const create = async (db: any) => {
+      await beforeMutation?.(db);
+      const row = await db.accountingCounterparty.create({
       data: {
         companyId: input.companyId,
         type: input.type as any,
@@ -79,12 +82,16 @@ export class PrismaAccountingRepository {
         shippingAddressJson: input.shippingAddressJson as any,
         createdByUserId: input.createdByUserId,
       },
-    });
-    return this.toCounterpartyRecord(row);
+      });
+      return this.toCounterpartyRecord(row);
+    };
+    return beforeMutation ? this.prisma.client.$transaction(create) : create(this.prisma.client);
   }
 
-  async updateCounterparty(input: UpdateCounterpartyInput): Promise<CounterpartyRecord> {
-    const row = await this.prisma.client.accountingCounterparty.update({
+  async updateCounterparty(input: UpdateCounterpartyInput, beforeMutation?: BeforeAccountingMutation): Promise<CounterpartyRecord> {
+    const update = async (db: any) => {
+      await beforeMutation?.(db);
+      const row = await db.accountingCounterparty.update({
       where: { id: input.counterpartyId },
       data: {
         displayName: input.displayName,
@@ -98,8 +105,10 @@ export class PrismaAccountingRepository {
         status: input.status as any,
         updatedByUserId: input.updatedByUserId,
       },
-    });
-    return this.toCounterpartyRecord(row);
+      });
+      return this.toCounterpartyRecord(row);
+    };
+    return beforeMutation ? this.prisma.client.$transaction(update) : update(this.prisma.client);
   }
 
   async findCounterpartyById(companyId: string, id: string): Promise<CounterpartyRecord | null> {
@@ -117,7 +126,7 @@ export class PrismaAccountingRepository {
   }
 
   // ---- Document ----
-  async createDocument(input: CreateDocumentInput): Promise<DocumentRecord> {
+  async createDocument(input: CreateDocumentInput, beforeMutation?: BeforeAccountingMutation): Promise<DocumentRecord> {
     if (input.idempotencyKey) {
       if (!input.payloadFingerprint) throw new Error('Server payload fingerprint is required for idempotent document create');
       return this.prisma.client.$transaction(async (tx) => {
@@ -135,6 +144,13 @@ export class PrismaAccountingRepository {
           }
           return this.toDocumentRecord(existing);
         }
+        await beforeMutation?.(tx);
+        return this.createDocumentWithClient(tx, input);
+      });
+    }
+    if (beforeMutation) {
+      return this.prisma.client.$transaction(async (tx) => {
+        await beforeMutation(tx);
         return this.createDocumentWithClient(tx, input);
       });
     }
@@ -215,14 +231,43 @@ export class PrismaAccountingRepository {
     expectedSourceUpdatedAt: Date,
     input: CreateDocumentInput,
     actorUserId: string,
+    beforeMutation?: BeforeAccountingMutation,
   ): Promise<ConvertQuotationResult> {
     return (this.prisma.client as any).$transaction(async (tx: any) => {
+      const optimisticSource = await tx.accountingDocument.findFirst({
+        where: { id: sourceDocumentId, companyId: input.companyId },
+      });
+      if (!optimisticSource) throw new NotFoundException(`Source document ${sourceDocumentId} not found`);
+
+      const optimisticExisting = await tx.accountingDocument.findMany({
+        where: { companyId: input.companyId, convertedFromDocumentId: sourceDocumentId },
+        include: { lines: { orderBy: { lineNumber: 'asc' } } },
+        orderBy: { createdAt: 'asc' },
+        take: 2,
+      });
+      if (optimisticExisting.length > 1 || (optimisticExisting[0] && optimisticExisting[0].documentType !== input.documentType)) {
+        throw new ConflictException({
+          code: 'accounting_document_already_converted',
+          message: 'Quotation already has a different or duplicate converted document.',
+        });
+      }
+      if (optimisticSource.status === 'CLOSED' && optimisticExisting[0]) {
+        return { document: this.toDocumentRecord(optimisticExisting[0]), didConvert: false };
+      }
+      if (optimisticSource.documentType !== 'QUOTATION' || optimisticSource.status !== 'ISSUED'
+        || optimisticSource.updatedAt.getTime() !== expectedSourceUpdatedAt.getTime()) {
+        throw new ConflictException({
+          code: 'accounting_document_changed',
+          message: 'Quotation changed before conversion. Reload and retry.',
+        });
+      }
+
+      await beforeMutation?.(tx);
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${sourceDocumentId}:accounting-document-lifecycle`}))`;
       const source = await tx.accountingDocument.findFirst({
         where: { id: sourceDocumentId, companyId: input.companyId },
       });
       if (!source) throw new NotFoundException(`Source document ${sourceDocumentId} not found`);
-
       const existing = await tx.accountingDocument.findMany({
         where: { companyId: input.companyId, convertedFromDocumentId: sourceDocumentId },
         include: { lines: { orderBy: { lineNumber: 'asc' } } },
@@ -235,9 +280,7 @@ export class PrismaAccountingRepository {
           message: 'Quotation already has a different or duplicate converted document.',
         });
       }
-      if (source.status === 'CLOSED' && existing[0]) {
-        return { document: this.toDocumentRecord(existing[0]), didConvert: false };
-      }
+      if (existing[0]) return { document: this.toDocumentRecord(existing[0]), didConvert: false };
       if (source.documentType !== 'QUOTATION' || source.status !== 'ISSUED'
         || source.updatedAt.getTime() !== expectedSourceUpdatedAt.getTime()) {
         throw new ConflictException({
@@ -263,14 +306,14 @@ export class PrismaAccountingRepository {
         });
       }
 
-      if (existing[0]) {
-        return { document: this.toDocumentRecord(existing[0]), didConvert: true };
-      }
       return {
         document: await this.createDocumentWithClient(tx, input),
         didConvert: true,
       };
-    }, { isolationLevel: 'Serializable' });
+    // The launch lock is intentionally acquired after the replay preflight. READ COMMITTED lets
+    // the gate check observe a CLOSE that committed after those reads; SERIALIZABLE would keep the
+    // stale preflight snapshot and could admit a root after CLOSE.
+    }, { isolationLevel: 'ReadCommitted' });
   }
 
   async deleteDraftDocument(companyId: string, id: string): Promise<void> {
@@ -665,6 +708,32 @@ export class PrismaAccountingRepository {
   ): Promise<{ document: DocumentRecord; taxPreviews: ResolveTransactionTaxPreviewDto[] }> {
     const posting = initialPostingStatus(documentType, 'ISSUED');
     return (this.prisma.client as any).$transaction(async (tx: any) => {
+      const initialDocument = await tx.accountingDocument.findFirst({
+        where: { id, companyId },
+        select: { sourceDocumentId: true },
+      });
+      if (!initialDocument) throw new NotFoundException(`Document ${id} not found`);
+      const initialSource = initialDocument.sourceDocumentId
+        ? await tx.accountingDocument.findFirst({
+            where: { id: initialDocument.sourceDocumentId, companyId },
+            select: { id: true, documentType: true, sourceDocumentId: true },
+          })
+        : null;
+      const upstreamSource = initialSource?.documentType === 'RECEIPT' && initialSource.sourceDocumentId
+        ? await tx.accountingDocument.findFirst({
+            where: { id: initialSource.sourceDocumentId, companyId },
+            select: { id: true, documentType: true },
+          })
+        : null;
+      const lifecycleSourceId = upstreamSource?.documentType === 'INVOICE'
+        ? upstreamSource.id
+        : initialSource?.id;
+      if (lifecycleSourceId) {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${lifecycleSourceId}:accounting-document-lifecycle`}))`;
+      }
+      if (initialSource?.id && initialSource.id !== lifecycleSourceId) {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${initialSource.id}:accounting-document-lifecycle`}))`;
+      }
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${id}:accounting-document-lifecycle`}))`;
       const currentRow = await tx.accountingDocument.findFirst({ where: { id, companyId }, include: { lines: { orderBy: { lineNumber: 'asc' } } } });
       if (!currentRow) throw new NotFoundException(`Document ${id} not found`);
@@ -785,7 +854,9 @@ export class PrismaAccountingRepository {
       if (updated.count !== 1) throw new ConflictException({ code: 'accounting_document_changed', message: 'Document changed during final issue.' });
       const issued = await tx.accountingDocument.findFirstOrThrow({ where: { id, companyId }, include: { lines: { orderBy: { lineNumber: 'asc' } } } });
       return { document: this.toDocumentRecord(issued), taxPreviews };
-    }, { isolationLevel: 'Serializable' });
+    // Source-linked issue and source void share the source lifecycle lock. READ COMMITTED is
+    // required so a waiter validates against the source/corrections committed by the lock winner.
+    }, { isolationLevel: 'ReadCommitted' });
   }
 
   async updateDocumentStatus(
@@ -821,8 +892,35 @@ export class PrismaAccountingRepository {
       data.rejectedAt = new Date();
       if (extra?.approvalNote) data.approvalNote = extra.approvalNote;
     }
-    const row = await this.prisma.client.accountingDocument.update({ where: { id }, data });
+    const row = await this.prisma.client.accountingDocument.update({ where: { id }, data: data as any });
     return this.toDocumentRecord(row);
+  }
+
+  async submitQuotationForApproval(
+    companyId: string,
+    id: string,
+    actorUserId: string,
+    beforeMutation: BeforeAccountingMutation,
+  ): Promise<DocumentRecord> {
+    return this.prisma.client.$transaction(async (tx) => {
+      await beforeMutation(tx);
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${id}:accounting-document-lifecycle`}))`;
+      const updated = await tx.accountingDocument.updateMany({
+        where: { id, companyId, documentType: 'QUOTATION', status: 'DRAFT' },
+        data: {
+          status: 'PENDING_APPROVAL', approvalStatus: 'PENDING', submittedByUserId: actorUserId,
+          submittedAt: new Date(), updatedByUserId: actorUserId,
+        },
+      });
+      if (updated.count !== 1) {
+        throw new ConflictException({
+          code: 'accounting_document_changed',
+          message: 'Quotation changed before approval submission. Reload and retry.',
+        });
+      }
+      const row = await tx.accountingDocument.findFirstOrThrow({ where: { id, companyId } });
+      return this.toDocumentRecord(row);
+    });
   }
 
   // ---- Payment ----
@@ -852,7 +950,7 @@ export class PrismaAccountingRepository {
         if (!input.idempotencyKey) {
           throw new UnprocessableEntityException('A retry key is required when allocating a payment to a document');
         }
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.allocateToDocumentId}:accounting-payment-allocation`}))`;
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.allocateToDocumentId}:accounting-document-lifecycle`}))`;
         allocationTarget = await tx.accountingDocument.findFirst({
           where: { id: input.allocateToDocumentId, companyId: input.companyId },
         });
@@ -979,7 +1077,9 @@ export class PrismaAccountingRepository {
         ownerId: payment.id,
       });
       return { payment: this.toPaymentRecord(updated), replayed: false };
-    }, { isolationLevel: 'Serializable' });
+    // Allocation, receipt creation, and payment/document void all share the document lifecycle
+    // lock. READ COMMITTED makes a waiter calculate from the balance committed by the winner.
+    }, { isolationLevel: 'ReadCommitted' });
 
     let lastError: unknown;
     for (let attempt = 0; attempt < 8; attempt += 1) {
@@ -996,6 +1096,7 @@ export class PrismaAccountingRepository {
   async recordSimpleIncomeBundle(
     input: RecordSimpleIncomeInput,
     withinTransaction: (db: any, result: Omit<RecordSimpleIncomeResult, 'replayed'>) => Promise<void>,
+    beforeMutation?: BeforeAccountingMutation,
   ): Promise<RecordSimpleIncomeResult> {
     const run = () => (this.prisma.client as any).$transaction(async (tx: any) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.idempotencyKey}:simple-income`}))`;
@@ -1022,6 +1123,8 @@ export class PrismaAccountingRepository {
           replayed: true,
         };
       }
+
+      await beforeMutation?.(tx);
 
       if (input.branchId) {
         const branch = await tx.branch.findFirst({ where: { id: input.branchId, companyId: input.companyId, status: 'ACTIVE' }, select: { id: true } });
@@ -1182,10 +1285,9 @@ export class PrismaAccountingRepository {
         },
       });
       return { ...result, replayed: false };
-    }, { isolationLevel: 'Serializable' });
-    // PostgreSQL correctly aborts waiters whose SERIALIZABLE snapshot predates the winner that
-    // committed under the advisory lock. Retrying is how every concurrent caller observes the
-    // completed command row instead of leaking a database conflict to a harmless double-tap.
+    // Idempotency is serialized by the command advisory lock. READ COMMITTED is required because
+    // the shared launch lock follows the replay read and must see a CLOSE committed in that gap.
+    }, { isolationLevel: 'ReadCommitted' });
     let lastError: unknown;
     for (let attempt = 0; attempt < 8; attempt += 1) {
       try {
@@ -1389,6 +1491,29 @@ export class PrismaAccountingRepository {
     reversalEntryNumber?: string,
   ): Promise<VoidPaymentResult> {
     return await (this.prisma.client as any).$transaction(async (tx: any) => {
+      const allocations = await tx.accountingPaymentAllocation.findMany({ where: { paymentId, companyId } });
+      const documentIds = [...new Set(allocations.map((allocation: any) => String(allocation.documentId)))].sort();
+      for (const documentId of documentIds) {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${documentId}:accounting-document-lifecycle`}))`;
+      }
+      const activeReceipt = documentIds.length
+        ? await tx.accountingDocument.findFirst({
+            where: {
+              companyId,
+              sourceDocumentId: { in: documentIds },
+              documentType: 'RECEIPT',
+              status: { not: 'VOIDED' },
+            },
+            select: { documentNumber: true },
+          })
+        : null;
+      if (activeReceipt) {
+        throw new UnprocessableEntityException({
+          code: 'accounting_active_receipt_must_be_voided',
+          message: 'Void the active receipt before voiding its payment.',
+        });
+      }
+
       const claimed = await tx.accountingPayment.updateMany({
         where: { id: paymentId, companyId, status: { not: 'VOIDED' } },
         data: {
@@ -1398,7 +1523,6 @@ export class PrismaAccountingRepository {
       });
       if (claimed.count !== 1) throw new ConflictException('Payment is already voided');
 
-      const allocations = await tx.accountingPaymentAllocation.findMany({ where: { paymentId, companyId } });
       for (const alloc of allocations) {
         const doc = await tx.accountingDocument.findFirst({ where: { id: alloc.documentId, companyId } });
         if (!doc || doc.status === 'VOIDED') continue;
@@ -1430,7 +1554,12 @@ export class PrismaAccountingRepository {
         releasedAllocations: allocations.map((a: any) => ({ allocationId: a.id, paymentId: a.paymentId, documentId: a.documentId, amount: a.amount.toString() })),
         reversalEntryId: reversal.reversalEntryId,
       };
-    }, { isolationLevel: 'Serializable' });
+    // READ COMMITTED is intentional here: allocation ids identify the lifecycle
+    // locks, and after waiting for a concurrent receipt creator the next statement
+    // must see that newly committed receipt. A SERIALIZABLE snapshot taken by the
+    // pre-lock allocation read can stay stale and incorrectly void the payment.
+    // The explicit lifecycle locks plus the payment CAS still serialize every write.
+    }, { isolationLevel: 'ReadCommitted' });
   }
 
   // H-04: document void releases payment allocations back to unapplied credit,
@@ -1444,7 +1573,40 @@ export class PrismaAccountingRepository {
     reversalEntryNumber?: string,
   ): Promise<VoidDocumentResult> {
     return await (this.prisma.client as any).$transaction(async (tx: any) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${documentId}:accounting-document-lifecycle`}))`;
+      const initialDocument = await tx.accountingDocument.findFirst({
+        where: { id: documentId, companyId },
+        select: { documentType: true, sourceDocumentId: true },
+      });
+      const upstreamSource = initialDocument?.documentType === 'RECEIPT' && initialDocument.sourceDocumentId
+        ? await tx.accountingDocument.findFirst({
+            where: { id: initialDocument.sourceDocumentId, companyId },
+            select: { id: true, documentType: true },
+          })
+        : null;
+      const lifecycleSourceId = upstreamSource?.documentType === 'INVOICE' ? upstreamSource.id : documentId;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${lifecycleSourceId}:accounting-document-lifecycle`}))`;
+      if (lifecycleSourceId !== documentId) {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${documentId}:accounting-document-lifecycle`}))`;
+      }
+      const receiptChildren = await tx.accountingDocument.findMany({
+        where: { companyId, sourceDocumentId: documentId, documentType: 'RECEIPT' },
+        select: { id: true },
+      });
+      const activeChild = await tx.accountingDocument.findFirst({
+        where: {
+          companyId,
+          sourceDocumentId: { in: [documentId, ...receiptChildren.map((row: { id: string }) => row.id)] },
+          documentType: { in: ['RECEIPT', 'TAX_INVOICE'] },
+          status: { not: 'VOIDED' },
+        },
+        select: { documentType: true, documentNumber: true },
+      });
+      if (activeChild) {
+        throw new UnprocessableEntityException({
+          code: 'accounting_active_child_document_must_be_voided',
+          message: 'Void the active receipt or tax invoice before voiding its source document.',
+        });
+      }
       const claimed = await tx.accountingDocument.updateMany({
         where: { id: documentId, companyId, status: expectedStatus },
         data: {
@@ -1502,7 +1664,9 @@ export class PrismaAccountingRepository {
         unappliedCredits,
         reversalEntryId: reversal.reversalEntryId,
       };
-    }, { isolationLevel: 'Serializable' });
+    // The lifecycle lock may wait for a linked receipt/tax-invoice creator. READ COMMITTED makes
+    // the child lookup see that commit before allowing the source to be voided.
+    }, { isolationLevel: 'ReadCommitted' });
   }
 
   async updateDocumentPostingStatus(

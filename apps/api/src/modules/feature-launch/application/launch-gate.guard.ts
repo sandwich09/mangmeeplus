@@ -12,6 +12,13 @@ import { Injectable } from '@nestjs/common';
 import { resolveDeploymentIdentity } from '@watchdog-bms/config';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { featureTemporarilyUnavailable } from '../../employee-access/application/entitlement.helper';
+import { sharedLaunchGateLock } from './launch-gate-lock';
+
+type LaunchGateReader = {
+  $executeRaw?: (...args: any[]) => Promise<unknown>;
+  featureLaunchGate: { findUnique: (args: any) => Promise<{ state: string; generation: number } | null> };
+  featureLaunchGateTransition: { findMany: (args: any) => Promise<AttestationMarker[]> };
+};
 
 /**
  * The ONE admission predicate of the launch control plane (F1.5.2): every transition recorded for
@@ -98,6 +105,23 @@ export async function isOpenOnDeployment(
 export class LaunchGateGuardService {
   constructor(private readonly prisma: PrismaService) {}
 
+  private async assertOpenWith(db: LaunchGateReader, gateKey: string, routeKey: string): Promise<void> {
+    const gate = await db.featureLaunchGate.findUnique({
+      where: { gateKey_routeKey: { gateKey, routeKey } },
+      select: { state: true, generation: true },
+    });
+    if (gate?.state !== 'OPEN') throw featureTemporarilyUnavailable(gateKey);
+
+    const admits = await isOpenOnDeployment(
+      db,
+      gateKey,
+      routeKey,
+      gate.generation,
+      resolveDeploymentIdentity(process.env),
+    );
+    if (!admits) throw featureTemporarilyUnavailable(gateKey);
+  }
+
   /**
    * Throws `feature_temporarily_unavailable` (403) unless this exact route is OPEN **on this
    * deployment**.
@@ -143,20 +167,16 @@ export class LaunchGateGuardService {
    * approved.
    */
   async assertLaunchRouteOpen(gateKey: string, routeKey = 'DEFAULT'): Promise<void> {
-    const gate = await this.prisma.client.featureLaunchGate.findUnique({
-      where: { gateKey_routeKey: { gateKey, routeKey } },
-      select: { state: true, generation: true },
-    });
-    if (gate?.state !== 'OPEN') throw featureTemporarilyUnavailable(gateKey);
+    await this.assertOpenWith(this.prisma.client, gateKey, routeKey);
+  }
 
-    const admits = await isOpenOnDeployment(
-      this.prisma.client,
-      gateKey,
-      routeKey,
-      gate.generation,
-      resolveDeploymentIdentity(process.env),
-    );
-    // Includes the no-transition case: an OPEN row with no recorded OPEN was never approved.
-    if (!admits) throw featureTemporarilyUnavailable(gateKey);
+  /**
+   * The final-mutation guard. The caller must commit its root write in this same transaction.
+   * CLOSE takes the exclusive half, so either this transaction commits first or it observes CLOSED.
+   */
+  async assertLaunchRouteOpenInTransaction(db: LaunchGateReader, gateKey: string, routeKey = 'DEFAULT'): Promise<void> {
+    if (!db.$executeRaw) throw new Error('A transaction client is required for a linearized launch-gate check');
+    await db.$executeRaw(sharedLaunchGateLock(gateKey, routeKey));
+    await this.assertOpenWith(db, gateKey, routeKey);
   }
 }

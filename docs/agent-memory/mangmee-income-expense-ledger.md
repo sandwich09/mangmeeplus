@@ -1,6 +1,6 @@
 # Agent Memory: mangmee-income-expense-ledger
 
-Status: Spec v1.5 + plan ACTIVE — **Phase 1–2, 3A backend, 3B UI core, Phase 4A backend, Phase 4B ledger/payment/export UI core, Phase 4C VAT-threshold alert และ Phase 5 backend เสร็จ**. Phase 3 ยังไม่ปิดเต็มเพราะ LED-FIN-07 รอ Owner เลือก durable state สำหรับร่างที่ VAT ยังไม่ชัด; Phase 6 launch/E2E ยังเหลือ
+Status: Spec v1.6 + plan ACTIVE — **Phase 1–2, 3A/3B core, Phase 4A/4B/4C และ Phase 5 merged develop; Phase 6 local verified + pending PR/CI**. Phase 3 ยังไม่ปิดเต็มเพราะ LED-FIN-07 รอ Owner เลือก durable state สำหรับร่างที่ VAT ยังไม่ชัด; human usability/UAT/Production ยังเป็น external gates
 
 Owner: thawatchai (Product Owner) + Lead dev 1 คน
 
@@ -17,7 +17,7 @@ Decisions:
 - PR #238 review (Owner submit 2026-08-26): 3 P1 แก้ครบใน PR #251 (merged develop) — T0 golden baseline gate ที่ intersection ยืนยัน∩มีผล, T1 fallback fail-closed ก่อนส่ง, T2 get_summary เป็น groupBy เดียว snapshot-consistent; ตอบ+resolve ทั้ง 3 thread แล้ว; ข้อเรียกร้อง (2)-(4) ของ review = งาน UAT-phase ใน manifest
 - ไม่สร้างตารางรายรับแยก (REVENUE-02); invariant "รับชำระไม่ลงรายได้/VAT ซ้ำ" โค้ดบังคับแล้ว ห้าม regression
 - V1: `counterpartyId` nullable จริงทุกชั้น → **ไม่สร้าง row "ลูกค้าเงินสด"** (ไม่มี unique fence กันซ้ำ); UI ใช้ label "ลูกค้าทั่วไป (ขายเงินสด)"; payment/เอกสารต้อง match counterparty (null↔null ผ่าน)
-- V6: **ห้าม chain use-case เดิม** → `recordSimpleIncomeBundle` repository method เดียว (Serializable tx + advisory lock + เลขสามชุด + audit ผ่าน tx) ตามแบบ `submitDraftAtomic`; `AccountingSimpleIncomeCommand` จำผลครบก้อน+payload fingerprint; PostgreSQL waiter อาจได้ P2034 แม้มี advisory lock จึง bounded-retry แล้วอ่านผู้ชนะ
+- V6: **ห้าม chain use-case เดิม** → `recordSimpleIncomeBundle` repository method เดียว (READ COMMITTED tx + idempotency/launch advisory locks + เลขสามชุด + audit ผ่าน tx) ตามแบบ `submitDraftAtomic`; `AccountingSimpleIncomeCommand` จำผลครบก้อน+payload fingerprint และ implementation ยัง bounded-retry `P2034` เป็น defensive fallback
 - Auto-RECEIPT ใช้ `postingStatus=not_required`: `AccountingPayment` เป็น canonical settlement posting source; ถ้า receipt pending ด้วยจะเดบิตเงินสด/เครดิต AR ซ้ำ
 - Plain INVOICE ไม่รับ transaction-tax code/snapshot ตาม engine; เก็บยอด VAT ต่อบรรทัดได้ แต่ immutable tax snapshot เกิดตอน TAX_INVOICE เท่านั้น — แก้คำสัญญาเดิมใน spec/plan แล้ว
 - Correction source = TAX_INVOICE หรือ INVOICE เฉพาะ source+correction non-VAT; reason codes validate แยก CREDIT/DEBIT ตาม ม.82/9–82/10 + ประกาศอธิบดีฯ VAT ฉบับ 82; `OTHER_PRESCRIBED` ต้องมีรายละเอียด
@@ -25,6 +25,8 @@ Decisions:
 - F-LED-6 (FlowAccount findings): CN มี 2 ทางสร้าง (แยก/อ้างใบกำกับภาษี), สาเหตุบังคับตามรายการกฎหมาย 2 กลุ่ม, โมเดลมูลค่าเดิม→ถูกต้อง→ผลต่าง, ขายเงินสด = "ใบเสร็จรับเงิน (เงินสด)" ใบเดียวเลขชุด CA- → เรา: ขยาย CN/DN ให้อ้าง INVOICE ที่ issue แล้วได้ + M5 (`adjustmentReasonCode/Text`) + prefill จาก source; **ไม่ทำ CN แบบไม่อ้างเอกสารใน MVP**; รายการสาเหตุต้องตรวจกับต้นทางกรมสรรพากรก่อน copy
 - หมวดรายรับ `RevenueCategory` company-scoped เท่านั้น (เลี่ยงบั๊ก NULL-distinct ฝั่ง expense); STOP-SHIP = LED-FIN-01 (float ใน `accounting-totals.logic.ts`); gap ใหม่ LED-FIN-05 (AI sales summary ไม่นับ payment ไม่มีลูกค้า — ปรับใน Phase 4)
 - เปิดแบบ per-company allowlist: `PUT /v1/system/partners/:id/features` (V5 — CAS + normalization gate; off/on/off มี test พิสูจน์ epoch bump)
+- Phase 6 ใช้ shared PostgreSQL advisory lock ใน transaction เดียวกับ final sales-root mutation และ CLOSE ใช้ exclusive key เดียวกัน; ครอบ document/simple-income/conversion/quotation submit/counterparty/CRM quotation bundle พร้อม idempotent replay ก่อน gate
+- CLOSED ยังคง runoff: read/edit/issue/void/payment/correction และ source-linked child ที่พิสูจน์ source จริง; linked receipt ต้องอ้าง issued fully-paid invoice และห้าม active receipt ซ้ำ
 - Phase 3B ใช้ 2 เส้นทางตามสถานะเงินจริง: "รับเงินแล้ว" เรียก atomic simple-income; "ออกบิลไว้ก่อน" create draft แล้ว issue (หรือหยุดที่ draft ถ้าไม่มี issue permission). ทุก CTA gate จาก permission+VAT read ก่อน render
 - VAT company status `UNKNOWN`/read error fail closed ทั้ง UI และ simple-income use-case; คงค่าที่กรอกในหน้าและมี retry; ไม่เดาว่าเป็น registered/not-registered
 - ตรวจความจริงแล้ว `AccountingVatMode` มีเพียง `NO_VAT/VAT_INCLUDED/VAT_EXCLUDED/EXEMPT` ไม่มี `NEEDS_REVIEW` ตาม spec v1.3 เดิม จึงไม่เก็บร่าง ambiguous VAT ด้วย `NO_VAT` ปลอม; บันทึกเป็น LED-FIN-07 รอ Owner
@@ -58,11 +60,12 @@ Verification:
 - Persistence proof: invoice มี generic-create idempotency key; PostgreSQL มี active `AttachmentLink targetType=accounting.document`, targetId ของ `CN-202608-00001`, purpose=`accounting.document.supporting`, branch ตรง target; หลักฐานภาพ/manifest อยู่ `docs/qa/evidence/p27-phase3b-2026-08-27/README.md`
 - Phase 4B final: real PostgreSQL accounting integration 9/9 (0 skip); web full 1109/1109, API full exit 0, contracts 196/196; API/web typecheck, Prisma validate และ diff check ผ่าน. Chrome local desktop/mobile export 79 rows, payment `INV-202608-00026` 500 บาทสำเร็จและออกจาก receivable, mobile summary รับเงิน/ยอดรอรับเปลี่ยน, mobile payment modal fit, console error/warn = 0. หลักฐาน `docs/qa/evidence/p27-phase4b-2026-08-27/README.md`
 - Phase 4C final: domain 22/22, web logic 9/9, real PostgreSQL accounting integration 9/9 (0 skip รวม allowed/forbidden branch ที่พิสูจน์ summary/entries/receivable/export ไม่รั่ว), full API exit 0, full web 1110/1110, contracts 196/196, contracts build + API/web typecheck + Nest boot DI + diff check ผ่าน. Chrome local 1280×900 และ 390×844 ทดสอบทั้ง APPROACHING/REACHED, conditional 30-day copy + official RD link, console error/warn = 0; QA document ถูกลบและ VAT seed ถูกคืน `REGISTERED` แล้ว (`qaCount=0`). หลักฐาน `docs/qa/evidence/p27-phase4c-vat-threshold-2026-08-27/README.md`
+- Phase 6 local: full API exit 0, full web 1,112/1,112, focused+spec coverage ผ่าน, real PostgreSQL accounting/launch 14/14 + CRM atomic bundle 1/1 (strict pair 26/26), contracts/API/web typecheck, Playwright LED-01..06 6/6 และ Platform Admin entitlement off/on/off 1/1 ผ่าน; CLOSED test ยิง runoff payment/receipt/tax-invoice/correction จริง. Desktop 1280×900 + mobile 390×844 ไม่มี horizontal overflow/console error และ fixtures คืน state/ลบบริษัททดสอบใน `finally`. หลักฐาน `docs/evidence/p27-phase6/README.md`
 
 หมายเหตุ spec-batch (2026-08-26): ตามคำสั่ง Owner "เขียน spec ที่เหลือให้ครบ" — เขียน 8 ฉบับใหม่ในวันเดียว: P10 external-signup, P11 email-claim, P12 line-login-link-journey (ฉบับรวม — มติเปิด line/exchange), P13 line-multi-company-staff, P15–P17 revenue-inbox-matching (ฉบับเดียว 3 หัวข้อ), P21 tax-workpaper-pp30, P24 growth-ux-full-pass, P26 billing-subscription (ราคารอ Owner); ทุกฉบับอิง Explore agents 3 ชุด (P26 billing / auth-LINE-signup / banking-tax) + แผนหลัก §13.5-13.6; matrix ในแผนหลักติ๊กครบ เหลือ P18–P20 ตั้งใจรอ provider
 
 Next:
 
-1. เปิด PR Phase 4C เข้า `develop`; merge เฉพาะเมื่อ CI ผ่านจริง
+1. เปิด PR Phase 6 เข้า `develop`; merge เฉพาะเมื่อ CI ผ่านจริง
 2. Owner ตอบ LED-FIN-07 แล้วทำ Phase 3C contract/migration ถ้าเลือกเก็บร่าง ambiguous VAT
-3. Phase 6 เชื่อม launch gate/availability/normalization/critical E2E; ต้องปิดคำตัดสิน retained permission และ root mutation matrix ก่อนประกาศ launch-complete
+3. นัด human usability อายุ 40+ อย่างน้อย 3 คน และทำ UAT/Production ตาม mandatory release protocol เมื่อ Owner สั่ง GO

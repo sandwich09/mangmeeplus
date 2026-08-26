@@ -44,9 +44,11 @@ import { RecordSimpleIncomeUseCase } from './application/use-cases/record-simple
 import { IncomeExpenseLedgerUseCase } from './application/use-cases/income-expense-ledger.use-case';
 import { IncomeExpenseLedgerController } from './presentation/http/income-expense-ledger.controller';
 import { TaxModule } from '../tax/tax.module';
+import { FeatureLaunchModule } from '../feature-launch/feature-launch.module';
+import { GetSalesDocumentRootAvailabilityUseCase } from './application/sales-document-launch-gate';
 
 @Module({
-  imports: [AuditModule, DataModelCoreModule, TaxModule],
+  imports: [AuditModule, DataModelCoreModule, TaxModule, FeatureLaunchModule],
   controllers: [
     CounterpartyController,
     AccountingDocumentController,
@@ -89,6 +91,7 @@ import { TaxModule } from '../tax/tax.module';
     UpdateRevenueCategoryUseCase,
     RecordSimpleIncomeUseCase,
     IncomeExpenseLedgerUseCase,
+    GetSalesDocumentRootAvailabilityUseCase,
   ],
   exports: [
     PrismaAccountingRepository,

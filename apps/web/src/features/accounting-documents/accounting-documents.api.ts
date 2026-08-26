@@ -24,6 +24,7 @@ import type {
   RecordSimpleIncomeInput,
   RecordSimpleIncomeResult,
   RevenueCategorySummary,
+  SalesDocumentRootAvailability,
   TransactionTaxContext,
   UpdateRevenueCategoryInput,
 } from '@watchdog-bms/contracts';
@@ -171,6 +172,10 @@ export async function updateRevenueCategory(companyId: string, categoryId: strin
 // ---- Simple income bundle (ledger spec F-LED-1) ----
 export async function recordSimpleIncome(companyId: string, body: RecordSimpleIncomeInput): Promise<RecordSimpleIncomeResult> {
   return apiFetch(`/v1/companies/${companyId}/accounting/simple-income`, { method: 'POST', body: JSON.stringify(body) });
+}
+
+export async function getSalesDocumentRootAvailability(companyId: string): Promise<SalesDocumentRootAvailability> {
+  return apiFetch(`/v1/companies/${companyId}/income-expense-ledger/availability`);
 }
 
 // ---- Company VAT registration truth (ledger spec §7.9 / V4) ----

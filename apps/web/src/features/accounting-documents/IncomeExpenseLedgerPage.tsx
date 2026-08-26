@@ -37,6 +37,7 @@ import {
   vatRegistrationAlertCopy,
   visibleLedgerEntryTypes,
 } from './income-expense-ledger.logic';
+import { useSalesRootAvailability } from './sales-root-availability';
 
 const TYPE_LABEL: Record<IncomeExpenseLedgerEntryType, string> = {
   ALL: 'ทั้งหมด',
@@ -297,6 +298,9 @@ export function IncomeExpenseLedgerPage({ companyId, permissions }: { companyId:
   const [chartSide, setChartSide] = useState<'INCOME' | 'EXPENSE'>(permissions.includes('accounting.document.read') ? 'INCOME' : 'EXPENSE');
   const summaryRequest = useRef(0);
   const entriesRequest = useRef(0);
+  const canRecordIncome = canStartLedgerIncomeFlow(permissions);
+  const salesAvailability = useSalesRootAvailability(companyId, canRecordIncome);
+  const canCreateSalesRoot = canRecordIncome && salesAvailability.state === 'OPEN';
 
   useEffect(() => {
     if (entryTypes.includes(type)) return;
@@ -398,7 +402,6 @@ export function IncomeExpenseLedgerPage({ companyId, permissions }: { companyId:
     }
   };
 
-  const canRecordIncome = canStartLedgerIncomeFlow(permissions);
   const canUploadExpense = permissions.includes('expense.receipt.upload');
   const canCreateExpense = permissions.includes('expense.create');
   const canReceivePayment = permissions.includes('accounting.payment.create');
@@ -409,7 +412,7 @@ export function IncomeExpenseLedgerPage({ companyId, permissions }: { companyId:
       : null;
   const emptyAction = type === 'EXPENSE'
     ? expenseEmptyAction
-    : canRecordIncome
+    : canCreateSalesRoot
       ? { href: `/companies/${companyId}/sales-documents`, label: type === 'RECEIVABLE' ? 'ออกบิลรายการแรก' : 'บันทึกรายรับรายการแรก' }
       : type === 'ALL'
         ? expenseEmptyAction
@@ -436,6 +439,17 @@ export function IncomeExpenseLedgerPage({ companyId, permissions }: { companyId:
         description="ดูยอดตามเอกสารและเงินที่รับ–จ่ายจริงในที่เดียว ตัวเลขนี้ยังไม่รวมการกระทบยอดธนาคาร"
       >
         <div className="space-y-5">
+        {canRecordIncome && salesAvailability.state !== 'OPEN' && (
+          <MangmeeCard className="border-amber-200 bg-amber-50 p-4 sm:p-5">
+            <p className="text-base font-bold text-amber-950">
+              {salesAvailability.state === 'LOADING' ? 'กำลังตรวจสอบว่าเพิ่มรายรับได้หรือไม่...'
+                : salesAvailability.state === 'CLOSED' ? 'การเพิ่มรายรับใหม่ปิดปรับปรุงชั่วคราว'
+                  : 'ยังตรวจสอบความพร้อมไม่ได้'}
+            </p>
+            <p className="mt-1 text-base text-amber-900">ยังดูสมุด รับชำระรายการเดิม และบันทึกรายจ่ายได้ตามปกติ</p>
+            {salesAvailability.state === 'ERROR' && <button type="button" className="mangmee-btn mangmee-btn-secondary mt-3 min-h-11" onClick={salesAvailability.retry}>ลองตรวจสอบอีกครั้ง</button>}
+          </MangmeeCard>
+        )}
         <MangmeeCard className="p-4 sm:p-5">
           <label htmlFor="ledger-month" className="block text-base font-bold text-gray-900">เดือนที่ต้องการดู</label>
           <input
@@ -618,12 +632,12 @@ export function IncomeExpenseLedgerPage({ companyId, permissions }: { companyId:
           )}
         </MangmeeCard>
 
-        {(canRecordIncome || canUploadExpense || canCreateExpense) && (
+        {(canCreateSalesRoot || canUploadExpense || canCreateExpense) && (
           <MangmeeCard className="p-4 sm:p-5">
             <h2 className="text-lg font-bold text-gray-900">เพิ่มรายการใหม่</h2>
             <p className="mt-1 text-base text-gray-600">เลือกวิธีที่ตรงกับเอกสารในมือ</p>
             <div className="mt-4 grid gap-3 sm:grid-cols-3">
-              {canRecordIncome && <Link href={`/companies/${companyId}/sales-documents`} className="mangmee-btn mangmee-btn-secondary min-h-14 text-base">บันทึกรายรับ</Link>}
+              {canCreateSalesRoot && <Link href={`/companies/${companyId}/sales-documents`} className="mangmee-btn mangmee-btn-secondary min-h-14 text-base">บันทึกรายรับ</Link>}
               {canUploadExpense && <Link href={`/companies/${companyId}/expenses/upload`} className="mangmee-btn mangmee-btn-secondary min-h-14 text-base">ถ่ายหรืออัปโหลดใบเสร็จ</Link>}
               {canCreateExpense && <Link href={`/companies/${companyId}/expenses/manual`} className="mangmee-btn mangmee-btn-secondary min-h-14 text-base">กรอกรายจ่ายเอง</Link>}
             </div>

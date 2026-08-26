@@ -1,5 +1,10 @@
-import { describe, it, mock } from 'node:test';
+import { after, before, describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { PrismaClient } from '../../../generated/prisma/client';
 import { PrismaCrmRepository } from './prisma-crm.repository';
 
 describe('PrismaCrmRepository customer summary scope', () => {
@@ -156,5 +161,125 @@ describe('PrismaCrmRepository branch and membership write boundaries', () => {
       /customer_out_of_scope/,
     );
     assert.equal(writes, 0);
+  });
+
+  it('blocks a quotation bundle when the locked opportunity or customer moved outside branch scope', async () => {
+    let writes = 0;
+    const tx = {
+      $queryRaw: async () => [],
+      crmOpportunity: {
+        findFirst: async () => ({
+          id: 'opportunity-1', companyId: 'co-1', customerId: 'customer-1', ownerUserId: 'sales-1',
+          branchId: 'branch-allowed', status: 'OPEN', currency: 'THB',
+        }),
+      },
+      crmCustomer: {
+        findFirst: async () => ({
+          id: 'customer-1', companyId: 'co-1', branchId: 'branch-denied', ownerUserId: 'sales-1',
+          status: 'ACTIVE', personalDataErasedAt: null,
+        }),
+      },
+      crmQuotationLink: { findFirst: async () => { writes += 1; return null; } },
+    };
+    const repo = new PrismaCrmRepository({ client: { $transaction: async (run: any) => run(tx) } } as any);
+    await assert.rejects(
+      () => repo.createQuotationDraftBundle({
+        companyId: 'co-1', opportunityId: 'opportunity-1', expectedCustomerId: 'customer-1',
+        scope: { actorUserId: 'sales-1', canManageAll: false, branchIds: ['branch-allowed'] },
+        userId: 'sales-1', requestId: 'request-1', requestKey: 'command-1', allowRevision: false,
+      }),
+      /customer_out_of_scope/,
+    );
+    assert.equal(writes, 0);
+  });
+});
+
+function crmTestDatabaseUrl(): string | null {
+  if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
+  for (const candidate of [join(process.cwd(), '.env'), join(process.cwd(), '../.env'), join(process.cwd(), '../../.env')]) {
+    try {
+      const match = /^DATABASE_URL\s*=\s*"?([^"\n]+)"?/m.exec(readFileSync(candidate, 'utf8'));
+      if (match?.[1]) return match[1];
+    } catch {
+      // Keep walking toward the workspace root.
+    }
+  }
+  return null;
+}
+
+const requireP27Postgres = process.env.P27_REQUIRE_POSTGRES === 'true';
+
+describe('PrismaCrmRepository Inbox quotation bundle (real PostgreSQL)', () => {
+  const tag = randomUUID();
+  const companyId = `crm-inbox-bundle-${tag}`;
+  const userId = `crm-inbox-user-${tag}`;
+  let client: PrismaClient | null = null;
+  let repo: PrismaCrmRepository | null = null;
+  let customerId = '';
+
+  before(async () => {
+    const url = crmTestDatabaseUrl();
+    if (!url) {
+      if (requireP27Postgres) throw new Error('P27 PostgreSQL is required but DATABASE_URL is unavailable');
+      return;
+    }
+    try {
+      client = new PrismaClient({ adapter: new PrismaPg({ connectionString: url }) });
+      await client.company.create({ data: { id: companyId, name: 'CRM Inbox atomic bundle test' } });
+      await client.user.create({ data: { id: userId, displayName: 'CRM Inbox test user' } });
+      await client.companyMembership.create({ data: { companyId, userId } });
+      const customer = await client.crmCustomer.create({ data: {
+        companyId, displayName: 'ลูกค้าทดสอบ transaction', displayNameNormalized: 'ลูกค้าทดสอบ transaction',
+        ownerUserId: userId, createdByUserId: userId,
+      } });
+      customerId = customer.id;
+      repo = new PrismaCrmRepository({ client } as any);
+    } catch (error) {
+      repo = null;
+      if (requireP27Postgres) throw error;
+    }
+  });
+
+  after(async () => {
+    if (!client) return;
+    await client.company.deleteMany({ where: { id: companyId } }).catch(() => {});
+    await client.user.deleteMany({ where: { id: userId } }).catch(() => {});
+    await client.$disconnect();
+  });
+
+  it('writes zero rows on gate denial, then commits and replays one exact bundle', async (t) => {
+    if (!client || !repo) return t.skip('local PostgreSQL is unavailable');
+    const input = {
+      companyId,
+      opportunityId: `convq_${tag.replaceAll('-', '').slice(0, 32)}`,
+      customerId,
+      title: 'ใบเสนอราคาจาก Inbox',
+      amountEstimate: '2500.0000',
+      scope: { actorUserId: userId, canManageAll: false },
+      userId,
+      requestId: `request-${tag}`,
+      requestKey: `command-${tag}`,
+    };
+    await assert.rejects(
+      () => repo!.createConversationQuotationDraftBundle(input, async () => { throw new Error('gate_closed'); }),
+      /gate_closed/,
+    );
+    assert.equal(await client.crmOpportunity.count({ where: { companyId } }), 0);
+    assert.equal(await client.accountingDocument.count({ where: { companyId } }), 0);
+    assert.equal(await client.crmQuotationLink.count({ where: { companyId } }), 0);
+
+    const first = await repo.createConversationQuotationDraftBundle(input, async () => undefined);
+    const replay = await repo.createConversationQuotationDraftBundle(input, async () => { throw new Error('replay_must_not_recheck_gate'); });
+    assert.equal(first.replayed, false);
+    assert.equal(replay.replayed, true);
+    assert.equal(replay.opportunity.id, first.opportunity.id);
+    assert.equal(replay.quotation.id, first.quotation.id);
+    await assert.rejects(
+      () => repo!.createConversationQuotationDraftBundle({ ...input, title: 'เปลี่ยนรายละเอียดแต่ใช้ key เดิม' }, async () => undefined),
+      /quotation_command_conflict/,
+    );
+    assert.equal(await client.crmOpportunity.count({ where: { companyId } }), 1);
+    assert.equal(await client.accountingDocument.count({ where: { companyId, documentType: 'QUOTATION' } }), 1);
+    assert.equal(await client.crmQuotationLink.count({ where: { companyId } }), 1);
   });
 });

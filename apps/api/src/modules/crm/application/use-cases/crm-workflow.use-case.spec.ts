@@ -23,6 +23,7 @@ import {
 } from './crm-customer.use-case';
 
 const noopAudit = { log: async () => undefined } as any;
+const openLaunchGate = { assertLaunchRouteOpenInTransaction: async () => undefined } as any;
 const noopOutbox = { append: async () => undefined } as any;
 const noopEnsureCounterparty = { execute: async () => ({ id: 'cp-auto' }) } as any;
 
@@ -1492,7 +1493,7 @@ describe('CreateCrmQuotationDraftUseCase', () => {
       createQuotationDraftBundle: async () => { created++; return activeLink; },
     } as any;
     const createDoc = { execute: async () => { created++; return { id: 'doc-2' }; } } as any;
-    const uc = new CreateCrmQuotationDraftUseCase(repo, noopAudit, noopOutbox, createDoc, noopEnsureCounterparty);
+    const uc = new CreateCrmQuotationDraftUseCase(repo, noopAudit, noopOutbox, createDoc, noopEnsureCounterparty, openLaunchGate);
     const res = await uc.execute(ctx(), 'o-1', {});
     assert.equal(created, 0, 'should not create a new draft or link');
     assert.equal(res.id, 'ql-1');
@@ -1511,7 +1512,7 @@ describe('CreateCrmQuotationDraftUseCase', () => {
       },
     } as any;
     const createDoc = { execute: async () => { throw new Error('must not create outside bundle'); } } as any;
-    const uc = new CreateCrmQuotationDraftUseCase(repo, noopAudit, noopOutbox, createDoc, noopEnsureCounterparty);
+    const uc = new CreateCrmQuotationDraftUseCase(repo, noopAudit, noopOutbox, createDoc, noopEnsureCounterparty, openLaunchGate);
     const res = await uc.execute(ctx(), 'o-1', { revisionReason: 'price change' });
     assert.ok(bundleCreated);
     assert.equal(res.id, 'ql-2');
@@ -1519,7 +1520,7 @@ describe('CreateCrmQuotationDraftUseCase', () => {
 
   it('denies quotation link without accounting permission', async () => {
     const repo = { findOpportunityById: async () => openOpp } as any;
-    const uc = new CreateCrmQuotationDraftUseCase(repo, noopAudit, noopOutbox, { execute: async () => ({}) } as any, noopEnsureCounterparty);
+    const uc = new CreateCrmQuotationDraftUseCase(repo, noopAudit, noopOutbox, { execute: async () => ({}) } as any, noopEnsureCounterparty, openLaunchGate);
     await assert.rejects(() => uc.execute(ctx({ permissions: ['crm.quotation.link'] }), 'o-1', {}), /accounting\.quotation\.create/);
   });
 });

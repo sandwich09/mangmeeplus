@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module';
 import { DataModelCoreModule } from '../data-model-core/data-model-core.module';
 import { AccountingDocumentsModule } from '../accounting-documents/accounting-documents.module';
+import { FeatureLaunchModule } from '../feature-launch/feature-launch.module';
 import { PrismaCrmRepository } from './infrastructure/prisma-crm.repository';
 import { PrismaCrmBookingProposalRepository } from './infrastructure/prisma-crm-booking-proposal.repository';
 import {
@@ -80,7 +81,7 @@ import { CrmAiController } from './presentation/http/crm-ai.controller';
 import { CrmBookingController } from './presentation/http/crm-booking.controller';
 
 @Module({
-  imports: [AuditModule, DataModelCoreModule, AccountingDocumentsModule],
+  imports: [AuditModule, DataModelCoreModule, AccountingDocumentsModule, FeatureLaunchModule],
   controllers: [CrmCustomerController, CrmLeadController, CrmOpportunityController, CrmFollowUpController, CrmAiController, CrmBookingController],
   providers: [
     PrismaCrmRepository,

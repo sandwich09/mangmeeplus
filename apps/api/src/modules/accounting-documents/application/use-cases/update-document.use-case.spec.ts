@@ -2,6 +2,7 @@ import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { ForbiddenException, UnprocessableEntityException } from '@nestjs/common';
 import { ConvertDocumentUseCase, CreateDocumentUseCase, GetDocumentUseCase, ListDocumentsUseCase, UpdateDocumentUseCase } from './document.use-case';
+import { featureTemporarilyUnavailable } from '../../../employee-access/application/entitlement.helper';
 
 const VERSION = new Date('2026-08-09T10:00:00.000Z');
 const ctx = {
@@ -167,6 +168,10 @@ describe('document-type read permissions', () => {
 });
 
 describe('ConvertDocumentUseCase permissions', () => {
+  const openLaunchGate = {
+    assertLaunchRouteOpen: mock.fn(async () => undefined),
+    assertLaunchRouteOpenInTransaction: mock.fn(async () => undefined),
+  } as any;
   const quotation = {
     ...document('ISSUED'), documentType: 'QUOTATION',
     lines: document('ISSUED').lines,
@@ -178,7 +183,7 @@ describe('ConvertDocumentUseCase permissions', () => {
       findDocumentById: mock.fn(async () => quotation),
       isDocumentRelatedToUser: mock.fn(async () => false),
       convertQuotation,
-    } as any, {} as any, {} as any);
+    } as any, {} as any, {} as any, openLaunchGate);
 
     await assert.rejects(
       () => useCase.execute({ ...ctx, permissions: ['accounting.document.read_related', 'accounting.invoice.create'] }, quotation.id, 'INVOICE'),
@@ -196,7 +201,7 @@ describe('ConvertDocumentUseCase permissions', () => {
         input = candidate;
         return { document: { ...document(), ...candidate, id: 'invoice-1' }, didConvert: true };
       }),
-    } as any, { log: mock.fn(async () => undefined) } as any, { append: mock.fn(async () => undefined) } as any);
+    } as any, { log: mock.fn(async () => undefined) } as any, { append: mock.fn(async () => undefined) } as any, openLaunchGate);
 
     await useCase.execute(
       { ...ctx, permissions: ['accounting.document.read_related', 'accounting.invoice.create'] },
@@ -221,7 +226,7 @@ describe('ConvertDocumentUseCase permissions', () => {
     const useCase = new ConvertDocumentUseCase({
       findDocumentById: mock.fn(async () => closed),
       convertQuotation: mock.fn(async () => ({ document: { ...document(), id: 'invoice-1' }, didConvert: false })),
-    } as any, { log } as any, { append } as any);
+    } as any, { log } as any, { append } as any, openLaunchGate);
 
     const result = await useCase.execute(
       { ...ctx, permissions: ['accounting.quotation.read', 'accounting.invoice.create'] },
@@ -231,6 +236,29 @@ describe('ConvertDocumentUseCase permissions', () => {
     assert.equal(result.id, 'invoice-1');
     assert.equal(append.mock.callCount(), 0);
     assert.equal(log.mock.callCount(), 0);
+  });
+
+  it('blocks quotation conversion because it creates a new sales root', async () => {
+    let persisted = false;
+    const convertQuotation = mock.fn(async (_id: string, _version: Date, _input: unknown, _actor: string, beforeMutation: (db: unknown) => Promise<void>) => {
+      await beforeMutation({});
+      persisted = true;
+      return { document: document(), didConvert: true };
+    });
+    const useCase = new ConvertDocumentUseCase({
+      findDocumentById: mock.fn(async () => quotation),
+      convertQuotation,
+    } as any, { log: mock.fn(async () => undefined) } as any, {} as any, {
+      assertLaunchRouteOpenInTransaction: async () => { throw featureTemporarilyUnavailable('sales_documents'); },
+    } as any);
+
+    await assert.rejects(() => useCase.execute(
+      { ...ctx, permissions: ['accounting.quotation.read', 'accounting.invoice.create'] },
+      quotation.id,
+      'INVOICE',
+    ));
+    assert.equal(convertQuotation.mock.callCount(), 1);
+    assert.equal(persisted, false);
   });
 });
 
@@ -263,6 +291,7 @@ function setupCreateBoundary(vatStatus: 'REGISTERED' | 'NOT_REGISTERED' | 'UNKNO
     { log: mock.fn(async () => undefined) } as any,
     {} as any,
     { get: mock.fn(async () => ({ status: vatStatus })) } as any,
+    { assertLaunchRouteOpen: mock.fn(async () => undefined) } as any,
   );
   return { repo, useCase };
 }
