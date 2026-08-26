@@ -94,6 +94,13 @@ export class AppConfigService {
   get lineAiAdvisorDirectAnswerEnabled(): boolean { return this.config.LINE_AI_ADVISOR_DIRECT_ANSWER_ENABLED; }
   // Terminal Flex card on a multi-part reply (default false = exact legacy all-text multi-part shape).
   get lineAiMultipartTerminalFlexEnabled(): boolean { return this.config.LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED; }
+  // Durable terminal-outcome replay (§8.3). Default false = no outcome row is written or read and the
+  // orphan sweep selects exactly today's rows; true = the rendered messages are persisted before the
+  // first send (fail-closed) and a retry pushes THEM instead of re-routing the input.
+  get lineAiTerminalOutcomeReplayEnabled(): boolean { return this.config.LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED; }
+  // Flex→text delivery fallback (§14.3). Default false = a rejected Flex payload takes the exact
+  // legacy push path; true = one retry with each Flex message's own altText.
+  get lineAiFlexTextFallbackEnabled(): boolean { return this.config.LINE_AI_FLEX_TEXT_FALLBACK_ENABLED; }
   get lineExpenseDraftConversationEnabled(): boolean { return this.config.LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED; }
   // Item 10F: LINE AI turn ledger (Redis Streams; ADR 0010)
   get redisUrl(): string { return this.config.REDIS_URL; }

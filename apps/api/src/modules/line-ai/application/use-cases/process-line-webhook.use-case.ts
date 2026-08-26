@@ -525,6 +525,34 @@ export function chatKeyHashOf(event: { lineUserId: string; pushTargetId?: string
   return hashMessagePreview(event.pushTargetId ?? event.lineUserId);
 }
 
+/** Shape label recorded on the durable outcome, using the same vocabulary the presentation manifest
+ *  in `scripts/line-ai-latency-autonomy.corpus.ts` pins, so an ops row and a corpus row read alike. */
+export function presentationKindOf(messages: LineReplyMessage[]): string {
+  const hasFlex = messages.some((message) => message.type === 'flex');
+  if (!hasFlex) return 'text';
+  return messages.some((message) => message.type === 'text') ? 'text_parts_then_flex' : 'flex';
+}
+
+/** The canonical text of a Flex message is its own `altText` — LINE's designated plain-text
+ *  equivalent, written by the SAME builder that wrote the bubble. Nothing is invented here and no
+ *  model is called: a card LINE refused to render is re-sent as the words it already declared, with
+ *  its quick reply intact so the completion menu survives the downgrade.
+ *
+ *  ponytail: `altText` is `preview(text, 400)` in line-business-card.logic.ts, so a card body longer
+ *  than 400 characters falls back to its VISIBLY marked ("…") preview rather than the full body —
+ *  short of §10.2's lossless bar, but strictly more than the silence it replaces, and on the
+ *  multi-part lane the long text already shipped as text before the card. Give the card builders a
+ *  canonical-text field the day a fallback delivery is observed losing content. */
+export function toCanonicalTextMessages(messages: LineReplyMessage[]): LineReplyMessage[] {
+  return messages.map((message) => (message.type === 'flex'
+    ? {
+        type: 'text' as const,
+        text: message.altText,
+        ...(message.quickReply ? { quickReply: message.quickReply } : {}),
+      }
+    : message));
+}
+
 export function formatLineReply(response: LineAiTurnResponse, webBaseUrl: string | undefined): string {
   const lines = [response.replyText];
   if (response.sourceLabels.length > 0) {
@@ -1407,25 +1435,40 @@ export class ProcessLineWebhookUseCase {
       // Waiting feedback is cosmetic; it must never block the actual answer.
       this.logger.warn({ msg: 'LINE waiting feedback settlement failed', error: (error as Error).message });
     }
-    let result: LineDeliveryResult;
-    try {
-      result = await this.lineReply.sendReply(event.replyToken, messages);
-    } catch (error) {
-      this.logger.warn({ msg: 'LINE reply adapter threw unexpectedly', error: (error as Error).message });
-      result = 'failed_other';
+    // §8.3: the canonical terminal outcome becomes durable BEFORE the first send attempt, and it is
+    // the RENDERED payload — not AiTurn's 240-character preview, which cannot be delivered. FAIL
+    // CLOSED: a send we could not record is the one case a later retry could contradict, so an
+    // unrecordable outcome is parked as `delivery_pending` instead of being sent unrecorded. The
+    // legacy input replay still covers that row (no outcome exists to replay, so recomputing is the
+    // only honest option) and nothing reached the user, so nothing can be duplicated.
+    if (this.config.lineAiTerminalOutcomeReplayEnabled
+      && !(await this.recordTurnOutcome(event.webhookEventId, messages, presentationKindOf(messages)))) {
+      await this.updateEventLog(event.webhookEventId, 'delivery_pending', 'LINE_OUTCOME_NOT_RECORDED');
+      return 'failed_other';
     }
-    if (result === 'failed_token') {
-      this.logger.warn({ msg: 'line_push_fallback_used' });
-      try {
-        result = await this.lineReply.sendPush(event.pushTargetId ?? event.lineUserId, messages);
-      } catch (error) {
-        this.logger.warn({ msg: 'LINE push adapter threw unexpectedly', error: (error as Error).message });
-        result = 'failed_other';
+    let result = await this.attemptDelivery(event, messages);
+    // §14.3 / R4: LINE rejected the message BODY, so pushing the same bytes cannot help. Re-send ONCE
+    // as the canonical text the cards already declare. Only reachable with the flag on — with it off
+    // `attemptDelivery` has already taken the legacy push path for this result.
+    if (result === 'failed_flex') {
+      const textMessages = toCanonicalTextMessages(messages);
+      this.logger.warn({ msg: 'line_flex_text_fallback_used', webhookEventId: event.webhookEventId });
+      if (this.config.lineAiTerminalOutcomeReplayEnabled) {
+        await this.recordTurnOutcome(event.webhookEventId, textMessages, 'text_fallback');
       }
+      result = await this.attemptDelivery(event, textMessages);
     }
     if (result !== 'ok') {
       await this.updateEventLog(event.webhookEventId, 'delivery_pending', `LINE_DELIVERY_${result.toUpperCase()}`);
     } else {
+      if (this.config.lineAiTerminalOutcomeReplayEnabled) {
+        // Delivery status, kept separate from the outcome itself. Best-effort on purpose: the answer
+        // is already on the user's screen, and failing here must not turn it into an error.
+        await this.prisma.client.lineTurnOutcome.updateMany({
+          where: { webhookEventId: event.webhookEventId, deliveredAt: null },
+          data: { deliveredAt: new Date() },
+        }).catch(() => null);
+      }
       const resolution = (event as typeof event & {
         [PENDING_MEDIA_RESOLUTION]?: { id: string; companyId: string; userId: string; status: 'RESOLVED_ILLUSTRATION' | 'RESOLVED_MULTI_ENTRY_REVIEW' };
       })[PENDING_MEDIA_RESOLUTION];
@@ -1447,6 +1490,63 @@ export class ProcessLineWebhookUseCase {
       }
     }
     return result;
+  }
+
+  /** One reply attempt plus the expired-reply-token push fallback (E4).
+   *
+   *  `failed_flex` is returned to the caller ONLY when the Flex→text fallback is on; with it off this
+   *  takes the same push path `failed_token` has always taken, with the same messages and the same
+   *  `line_push_fallback_used` line, and the push result overwrites it — so the value never escapes
+   *  and every observable byte of the legacy path is unchanged. */
+  private async attemptDelivery(
+    event: { replyToken: string; lineUserId: string; pushTargetId?: string },
+    messages: LineReplyMessage[],
+  ): Promise<LineDeliveryResult> {
+    let result: LineDeliveryResult;
+    try {
+      result = await this.lineReply.sendReply(event.replyToken, messages);
+    } catch (error) {
+      this.logger.warn({ msg: 'LINE reply adapter threw unexpectedly', error: (error as Error).message });
+      result = 'failed_other';
+    }
+    if (result === 'failed_token' || (result === 'failed_flex' && !this.config.lineAiFlexTextFallbackEnabled)) {
+      this.logger.warn({ msg: 'line_push_fallback_used' });
+      try {
+        result = await this.lineReply.sendPush(event.pushTargetId ?? event.lineUserId, messages);
+      } catch (error) {
+        this.logger.warn({ msg: 'LINE push adapter threw unexpectedly', error: (error as Error).message });
+        result = 'failed_other';
+      }
+    }
+    return result;
+  }
+
+  /** §8.3: persist the canonical terminal outcome and its replay reference before the send. Upsert,
+   *  because the same event may be re-rendered by a retry — one question keeps ONE answer of record.
+   *  Returns false when the outcome is not durable, and the caller must then not send. */
+  private async recordTurnOutcome(
+    webhookEventId: string,
+    messages: LineReplyMessage[],
+    presentationKind: string,
+  ): Promise<boolean> {
+    try {
+      const log = await this.prisma.client.lineWebhookEventLog.findUnique({
+        where: { webhookEventId },
+        select: { companyId: true },
+      });
+      const messagesJson = messages as unknown as Prisma.InputJsonValue;
+      await this.prisma.client.lineTurnOutcome.upsert({
+        where: { webhookEventId },
+        create: { webhookEventId, companyId: log?.companyId ?? null, messagesJson, presentationKind, attempts: 1 },
+        // A re-render supersedes the previous payload AND clears `deliveredAt`: these are different
+        // bytes, so an earlier delivery does not vouch for them.
+        update: { messagesJson, presentationKind, attempts: { increment: 1 }, deliveredAt: null },
+      });
+      return true;
+    } catch (error) {
+      this.logger.error({ msg: 'line_turn_outcome_not_recorded', webhookEventId, error: (error as Error).message });
+      return false;
+    }
   }
 
   /**

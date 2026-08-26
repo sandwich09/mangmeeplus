@@ -1575,10 +1575,41 @@ model LineWebhookEventLog {
   processedAt    DateTime?
   createdAt      DateTime  @default(now())
 
+  turnOutcome LineTurnOutcome?
+
   @@index([companyId, createdAt])
   @@index([lineUserIdHash])
   @@index([status, createdAt])
   @@index([createdAt])
+}
+
+/// Canonical terminal outcome for ONE turn (uat-correctness-latency §8.3, reliability §6/E3).
+///
+/// `AiTurn` already keeps a 240-character `replyPreview` for audit — a preview is not a deliverable,
+/// so a delivery retry had nothing to send and could only re-run the INPUT through the buffer, which
+/// re-routes and may compute a DIFFERENT answer from the same message. This row is the deliverable:
+/// the exact rendered LINE message array, written BEFORE the first send attempt so a token expiry or
+/// a failed send replays these bytes instead of re-deciding the turn.
+///
+/// Delivery is a SEPARATE status, as §8.3 requires: existence of the row means "outcome decided",
+/// `deliveredAt` means "LINE returned ok". `attempts` counts send attempts, not successes.
+model LineTurnOutcome {
+  id String @id @default(cuid())
+  /// One outcome per webhook event, and the FK the replay looks it up by. `onDelete: Cascade` is the
+  /// whole retention story: the orphan sweep already purges LineWebhookEventLog past
+  /// AI_DATA_RETENTION_DAYS, and these rows go with it rather than needing a second purge.
+  webhookEventId   String    @unique
+  companyId        String?
+  /// The exact LineReplyMessage[] handed to the adapter. Replayed VERBATIM — never re-rendered.
+  messagesJson     Json
+  /// flex | text | text_parts_then_flex | text_fallback (the last set when a rejected Flex payload
+  /// was re-sent as its own altText).
+  presentationKind String
+  attempts         Int       @default(0)
+  deliveredAt      DateTime?
+  createdAt        DateTime  @default(now())
+
+  event LineWebhookEventLog @relation(fields: [webhookEventId], references: [webhookEventId], onDelete: Cascade)
 }
 
 // ---- Item 08: Accounting Documents MVP ----

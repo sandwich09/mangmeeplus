@@ -745,6 +745,20 @@ describe('apiConfigSchema LINE AI latency/autonomy Phase-1 flags', () => {
     assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED: 'false' }).LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED, false);
   });
 
+  it('durable terminal-outcome replay defaults off and opts in only on an explicit boolean', () => {
+    // Off is the whole safety property of this WP: no outcome row is written, so nothing can be
+    // replayed and the sweep keeps selecting exactly the rows it selects today.
+    assert.equal(apiConfigSchema.parse(base).LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED, false);
+    assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED: 'true' }).LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED, true);
+    assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED: 'false' }).LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED, false);
+  });
+
+  it('Flex→text delivery fallback defaults off and opts in only on an explicit boolean', () => {
+    assert.equal(apiConfigSchema.parse(base).LINE_AI_FLEX_TEXT_FALLBACK_ENABLED, false);
+    assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_FLEX_TEXT_FALLBACK_ENABLED: 'true' }).LINE_AI_FLEX_TEXT_FALLBACK_ENABLED, true);
+    assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_FLEX_TEXT_FALLBACK_ENABLED: 'false' }).LINE_AI_FLEX_TEXT_FALLBACK_ENABLED, false);
+  });
+
   it('advisor mode defaults off, accepts only its four stages, and FAILS closed on anything else', () => {
     assert.equal(apiConfigSchema.parse(base).LINE_AI_ADVISOR_MODE, 'off');
     for (const mode of ['off', 'social', 'knowledge', 'company'] as const) {
