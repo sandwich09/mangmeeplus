@@ -20,6 +20,7 @@ Branch: `codex/line-self-service-recovery` from `origin/develop`.
 - API typecheck: passed.
 - Web typecheck: passed.
 - Diff whitespace check: passed.
+- Production maintenance exact-file pins: regenerated with the repository script and `--check` passed (required because password login is a protected source file).
 
 ## Scope boundaries
 
