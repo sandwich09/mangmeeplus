@@ -221,7 +221,7 @@ export class PrismaAttachmentRepository implements AttachmentRepositoryPort {
     const row = await this.prisma.client.$transaction(async (tx) => {
       const attachment = await tx.attachmentObject.findFirst({
         where: { id: input.attachmentId, companyId: input.companyId, status: 'ACTIVE' },
-        select: { id: true },
+        select: { id: true, branchId: true },
       });
       if (!attachment) throw new BadRequestException('Attachment must be ACTIVE in the current company.');
 
@@ -230,15 +230,19 @@ export class PrismaAttachmentRepository implements AttachmentRepositoryPort {
       }
       const conflict = await findAttachmentLinkConflict(tx, input);
       if (conflict) throw new BadRequestException(conflict);
-      const target = await tx.expenseRecord.findFirst({
-        where: {
-          id: input.targetId,
-          companyId: input.companyId,
-          ...(input.targetOwnerUserId ? { createdByUserId: input.targetOwnerUserId } : {}),
-        },
-        select: { id: true },
-      });
+      const targetWhere = {
+        id: input.targetId,
+        companyId: input.companyId,
+        ...(input.targetOwnerUserId ? { createdByUserId: input.targetOwnerUserId } : {}),
+        ...(input.branchIds ? { OR: [{ branchId: { in: input.branchIds } }, { branchId: null }] } : {}),
+      };
+      const target = input.targetType === 'expense.record'
+        ? await tx.expenseRecord.findFirst({ where: targetWhere, select: { id: true, branchId: true } })
+        : await tx.accountingDocument.findFirst({ where: targetWhere, select: { id: true, branchId: true } });
       if (!target) throw new NotFoundException('Attachment target not found.');
+      if (input.targetType === 'accounting.document' && attachment.branchId !== target.branchId) {
+        throw new BadRequestException('Attachment and accounting document must belong to the same branch.');
+      }
 
       return tx.attachmentLink.create({
         data: {

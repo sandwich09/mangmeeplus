@@ -51,7 +51,7 @@ export class AccountingDocumentLineDto {
   @IsArray() @ArrayMaxSize(20) @IsString({ each: true }) @IsOptional() evidenceRefs?: string[];
 }
 
-export class CreateAccountingDocumentDto implements Omit<CreateDocumentInput, 'companyId' | 'createdByUserId'> {
+export class CreateAccountingDocumentDto implements Omit<CreateDocumentInput, 'companyId' | 'createdByUserId' | 'payloadFingerprint'> {
   @IsString() @IsOptional() @MaxLength(64) branchId?: string;
   @IsIn(DOCUMENT_TYPES) documentType!: AccountingDocumentType;
   @IsDateString({ strict: true }) documentDate!: string;
@@ -60,6 +60,7 @@ export class CreateAccountingDocumentDto implements Omit<CreateDocumentInput, 'c
   @IsString() @IsOptional() @MaxLength(64) sourceDocumentId?: string;
   @IsString() @IsOptional() @MaxLength(80) sourceDocumentType?: string;
   @IsString() @IsOptional() @MaxLength(64) convertedFromDocumentId?: string;
+  @IsString() @Matches(/^[A-Za-z0-9_-]{8,64}$/) @IsOptional() idempotencyKey?: string;
   @IsIn(['THB']) @IsOptional() currency?: string;
   @IsIn(VAT_MODES) vatMode!: AccountingVatMode;
   @IsIn(OUTPUT_TAX_CODES) @IsOptional() outputTaxCode?: AccountingOutputTaxCode;

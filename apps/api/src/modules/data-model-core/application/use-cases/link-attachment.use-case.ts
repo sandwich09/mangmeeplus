@@ -17,6 +17,19 @@ function canLinkExpense(ctx: RequestContext): boolean {
     .some((permission) => ctx.permissions.includes(permission));
 }
 
+function canLinkAccountingDocument(ctx: RequestContext): boolean {
+  const allowed = new Set([
+    'accounting.document.create', 'accounting.document.update',
+    'accounting.quotation.create', 'accounting.quotation.update',
+    'accounting.invoice.create', 'accounting.invoice.update',
+    'accounting.billing_note.create', 'accounting.billing_note.update',
+    'accounting.receipt.create', 'accounting.receipt.update',
+    'accounting.credit_note.create', 'accounting.credit_note.update',
+    'accounting.debit_note.create', 'accounting.debit_note.update',
+  ]);
+  return ctx.permissions.some((permission) => allowed.has(permission));
+}
+
 @Injectable()
 export class LinkAttachmentUseCase {
   constructor(
@@ -29,7 +42,10 @@ export class LinkAttachmentUseCase {
       && typeof cmd.targetId === 'string'
       && cmd.targetId.length > 0
       && cmd.targetId.length <= 200;
-    if (!ctx.permissions.includes('attachment.create') || !validTarget || !canLinkExpense(ctx)) {
+    const canMutateTarget = cmd.targetType === 'expense.record'
+      ? canLinkExpense(ctx)
+      : cmd.targetType === 'accounting.document' && canLinkAccountingDocument(ctx);
+    if (!ctx.permissions.includes('attachment.create') || !validTarget || !canMutateTarget) {
       void this.audit.log({
         companyId: ctx.companyId, actorUserId: ctx.userId,
         action: 'attachment.link.create', targetType: 'attachment', targetId: cmd.attachmentId,
@@ -47,12 +63,14 @@ export class LinkAttachmentUseCase {
 
     const link = await this.attachments.linkToTarget({
       companyId: ctx.companyId,
+      branchIds: ctx.scopes.branchIds,
       attachmentId: cmd.attachmentId,
       targetType: cmd.targetType,
       targetId: cmd.targetId,
       purpose: cmd.purpose,
       linkedByUserId: ctx.userId,
-      targetOwnerUserId: ctx.permissions.some((permission) => ['expense.review', 'expense.payment.record'].includes(permission))
+      targetOwnerUserId: cmd.targetType === 'expense.record'
+        && ctx.permissions.some((permission) => ['expense.review', 'expense.payment.record'].includes(permission))
         ? undefined
         : ctx.userId,
     });

@@ -15,6 +15,7 @@ import {
   deriveCompatibleOutputTaxCode,
   validateOutputTaxDocument,
   validateAdjustmentReason,
+  isIssued,
 } from '../../domain/logic/accounting-status.logic';
 import type { DocumentRecord, CreateDocumentInput, UpdateDocumentInput, ListDocumentsFilter, PaginatedDocuments } from '../../domain/models/accounting.model';
 import type { RequestContext, AccountingDocumentType } from '@watchdog-bms/contracts';
@@ -25,9 +26,11 @@ import { Decimal } from 'decimal.js';
 import { createHash } from 'node:crypto';
 import { formatTransactionTaxAmount } from '../../../tax/domain/logic/transaction-tax.logic';
 import { validateAccountingDocumentMoneyInput } from '../../domain/logic/accounting-money-validation.logic';
-import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
+import { isBranchInScope, resolveCreateBranchId } from '../../../data-model-core/domain/logic/branch.logic';
 import { civilPeriodKey, coerceCivilDate, todayCivilDate } from '@watchdog-bms/contracts';
 import { observeCustomerJourney } from '../../../../common/observability/customer-journey-audit';
+import { CompanyVatRegistrationUseCase } from '../../../data-model-core/application/use-cases/company-vat-registration.use-case';
+import { canonicalFingerprint } from '../../../../common/security/canonical-fingerprint';
 
 function docPermission(documentType: AccountingDocumentType, action: 'read' | 'create' | 'update' | 'issue' | 'void'): string {
   const typeKey = documentType.toLowerCase();
@@ -55,35 +58,67 @@ async function assertRevenueCategoriesUsable(
   }
 }
 
+async function assertVatRegistrationAllowsDocument(
+  vatRegistration: CompanyVatRegistrationUseCase,
+  companyId: string,
+  documentDate: string,
+  vatMode: string,
+): Promise<void> {
+  const status = (await vatRegistration.get(companyId, documentDate)).status;
+  if (status === 'UNKNOWN') {
+    throw new UnprocessableEntityException('Company VAT registration status must be confirmed before creating or issuing an accounting document');
+  }
+  if (status === 'NOT_REGISTERED' && vatMode !== 'NO_VAT') {
+    throw new UnprocessableEntityException('A company that is not VAT registered must use NO_VAT on accounting documents');
+  }
+}
+
 @Injectable()
 export class CreateDocumentUseCase {
   constructor(
     private readonly repo: PrismaAccountingRepository,
     private readonly audit: AuditService,
     private readonly transactionTax: TransactionTaxConfigUseCase,
+    private readonly vatRegistration: CompanyVatRegistrationUseCase,
   ) {}
 
-  async execute(ctx: RequestContext, input: Omit<CreateDocumentInput, 'companyId' | 'createdByUserId'>): Promise<DocumentRecord> {
+  async execute(ctx: RequestContext, input: Omit<CreateDocumentInput, 'companyId' | 'createdByUserId' | 'payloadFingerprint'>): Promise<DocumentRecord> {
     const perm = docPermission(input.documentType, 'create');
     if (!hasDocumentPermission(ctx, input.documentType, 'create')) {
       throw new ForbiddenException(`Missing permission: ${perm}`);
     }
-    if (!isBranchInScope(ctx.scopes, input.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
-    if (input.branchId && !(await this.repo.findActiveBranch(ctx.companyId, input.branchId))) {
-      throw new NotFoundException('Branch was not found in the current company.');
+    if (ctx.scopes.branchIds?.length === 0 || !isBranchInScope(ctx.scopes, input.branchId)) {
+      throw new ForbiddenException('Branch is outside your assigned branch scope.');
+    }
+    if (input.idempotencyKey && input.documentType !== 'INVOICE') {
+      throw new UnprocessableEntityException('Create idempotency is supported only for invoice drafts');
     }
     const moneyError = validateAccountingDocumentMoneyInput(input);
     if (moneyError) throw new UnprocessableEntityException(moneyError);
     const reasonError = validateAdjustmentReason(input);
     if (reasonError) throw new UnprocessableEntityException(reasonError);
+    const source = input.sourceDocumentId
+      ? await this.repo.findDocumentById(ctx.companyId, input.sourceDocumentId, ctx.scopes.branchIds)
+      : undefined;
+    if (input.sourceDocumentId && !source) throw new NotFoundException('Referenced source document was not found');
+    if (source && input.branchId !== undefined && input.branchId !== source.branchId) {
+      throw new UnprocessableEntityException('A source-linked document must use the same branch as its source');
+    }
+    if (source && ctx.scopes.branchIds && !source.branchId) {
+      throw new ForbiddenException('A branch-restricted user cannot create a company-central source-linked document');
+    }
+    const branchId = source ? source.branchId : resolveCreateBranchId(ctx.scopes, input.branchId) ?? undefined;
+    if (branchId && !(await this.repo.findActiveBranch(ctx.companyId, branchId))) {
+      throw new NotFoundException('Branch was not found in the current company.');
+    }
     const normalizedInput = {
       ...input,
+      branchId,
       outputTaxCode: input.outputTaxCode ?? deriveCompatibleOutputTaxCode(input.lines),
     };
-    const source = normalizedInput.sourceDocumentId
-      ? await this.repo.findDocumentById(ctx.companyId, normalizedInput.sourceDocumentId, ctx.scopes.branchIds)
-      : undefined;
-    if (normalizedInput.sourceDocumentId && !source) throw new NotFoundException('Referenced source document was not found');
+    await assertVatRegistrationAllowsDocument(
+      this.vatRegistration, ctx.companyId, normalizedInput.documentDate, normalizedInput.vatMode,
+    );
     const taxError = validateOutputTaxDocument(normalizedInput, source ?? undefined);
     if (taxError) throw new UnprocessableEntityException(taxError);
     const taxNeutral = ['QUOTATION', 'INVOICE', 'BILLING_NOTE', 'RECEIPT'].includes(normalizedInput.documentType);
@@ -91,7 +126,16 @@ export class CreateDocumentUseCase {
       throw new UnprocessableEntityException(`${normalizedInput.documentType} lines cannot carry a Tax Code`);
     }
     await assertRevenueCategoriesUsable(this.repo, ctx.companyId, normalizedInput.lines);
-    const result = await this.repo.createDocument({ ...normalizedInput, companyId: ctx.companyId, createdByUserId: ctx.userId });
+    const { idempotencyKey, ...fingerprintInput } = normalizedInput;
+    const payloadFingerprint = idempotencyKey
+      ? canonicalFingerprint({ version: 'invoice-draft-create-v1', companyId: ctx.companyId, actorUserId: ctx.userId, ...fingerprintInput })
+      : undefined;
+    const result = await this.repo.createDocument({
+      ...normalizedInput,
+      companyId: ctx.companyId,
+      createdByUserId: ctx.userId,
+      ...(payloadFingerprint ? { payloadFingerprint } : {}),
+    });
     let persisted: DocumentRecord;
     try {
       if ((normalizedInput.documentType === 'CREDIT_NOTE' || normalizedInput.documentType === 'DEBIT_NOTE')
@@ -149,6 +193,7 @@ export class UpdateDocumentUseCase {
     private readonly repo: PrismaAccountingRepository,
     private readonly audit: AuditService,
     private readonly transactionTax: TransactionTaxConfigUseCase,
+    private readonly vatRegistration: CompanyVatRegistrationUseCase,
   ) {}
 
   async execute(ctx: RequestContext, input: Omit<UpdateDocumentInput, 'companyId' | 'updatedByUserId'>): Promise<DocumentRecord> {
@@ -166,7 +211,19 @@ export class UpdateDocumentUseCase {
       throw new UnprocessableEntityException('expectedUpdatedAt must be a valid timestamp');
     }
 
-    const branchId = input.branchId === undefined ? current.branchId : input.branchId ?? undefined;
+    const source = current.sourceDocumentId
+      ? await this.repo.findDocumentById(ctx.companyId, current.sourceDocumentId, ctx.scopes.branchIds)
+      : undefined;
+    if (current.sourceDocumentId && !source) throw new NotFoundException('Referenced source document was not found');
+    if (source && input.branchId !== undefined && (input.branchId ?? undefined) !== source.branchId) {
+      throw new UnprocessableEntityException('A source-linked document must use the same branch as its source');
+    }
+    if (source && ctx.scopes.branchIds && !source.branchId) {
+      throw new ForbiddenException('A branch-restricted user cannot update a company-central source-linked document');
+    }
+    const branchId = source
+      ? source.branchId
+      : input.branchId === undefined ? current.branchId : input.branchId ?? undefined;
     if (!isBranchInScope(ctx.scopes, branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
     if (branchId && !(await this.repo.findActiveBranch(ctx.companyId, branchId))) {
       throw new NotFoundException('Branch was not found in the current company.');
@@ -221,11 +278,11 @@ export class UpdateDocumentUseCase {
     if (moneyError) throw new UnprocessableEntityException(moneyError);
     const reasonError = validateAdjustmentReason(replacement);
     if (reasonError) throw new UnprocessableEntityException(reasonError);
-    const source = (replacement.sourceDocumentId
-      ? await this.repo.findDocumentById(ctx.companyId, replacement.sourceDocumentId, ctx.scopes.branchIds)
-      : undefined) ?? undefined;
-    const taxError = validateOutputTaxDocument(replacement, source);
+    const taxError = validateOutputTaxDocument(replacement, source ?? undefined);
     if (taxError) throw new UnprocessableEntityException(taxError);
+    await assertVatRegistrationAllowsDocument(
+      this.vatRegistration, ctx.companyId, replacement.documentDate, replacement.vatMode,
+    );
     const taxNeutral = ['QUOTATION', 'INVOICE', 'BILLING_NOTE', 'RECEIPT'].includes(replacement.documentType);
     await assertRevenueCategoriesUsable(this.repo, ctx.companyId, replacement.lines);
 
@@ -306,7 +363,27 @@ export class GetDocumentUseCase {
     if (!hasDocumentPermission(ctx, result.documentType, 'read') && !related) {
       throw new ForbiddenException(`Missing permission: ${docPermission(result.documentType, 'read')}`);
     }
-    return result;
+    if (!['TAX_INVOICE', 'INVOICE'].includes(result.documentType)
+      || !['ISSUED', 'CREDITED', 'DEBITED'].includes(result.status)) return result;
+    const corrections = await this.repo.listIssuedCorrectionLines(ctx.companyId, result.id);
+    const basis = (line: { lineSubtotalAmount: string; lineTotalAmount: string; discountAmount?: string }) => (
+      result.vatMode === 'VAT_INCLUDED'
+        ? new Decimal(line.lineTotalAmount)
+        : new Decimal(line.lineSubtotalAmount).sub(line.discountAmount ?? 0)
+    );
+    return {
+      ...result,
+      lines: result.lines?.map((line) => {
+        let remaining = basis(line);
+        for (const correction of corrections) {
+          const prior = correction.lines.find((candidate) => candidate.lineNumber === line.lineNumber);
+          if (!prior) continue;
+          const amount = basis(prior).abs();
+          remaining = correction.documentType === 'DEBIT_NOTE' ? remaining.add(amount) : remaining.sub(amount);
+        }
+        return { ...line, correctionBasisAmount: Decimal.max(remaining, 0).toDecimalPlaces(2).toFixed(2) };
+      }),
+    };
   }
 }
 
@@ -363,6 +440,7 @@ export class IssueDocumentUseCase {
     private readonly commitNumber: CommitDocumentNumberUseCase,
     private readonly cancelNumber: CancelDocumentNumberUseCase,
     private readonly transactionTax: TransactionTaxConfigUseCase,
+    private readonly vatRegistration: CompanyVatRegistrationUseCase,
   ) {}
 
   async execute(ctx: RequestContext, documentId: string): Promise<DocumentRecord> {
@@ -382,12 +460,20 @@ export class IssueDocumentUseCase {
     if (!doc) throw new NotFoundException(`Document ${documentId} not found`);
     const perm = docPermission(doc.documentType, 'issue');
     if (!hasDocumentPermission(ctx, doc.documentType, 'issue')) throw new ForbiddenException(`Missing permission: ${perm}`);
+    // The document lifecycle itself is the idempotency fence. If the response was lost after a
+    // committed issue, a retry returns the immutable issued document without reserving a second
+    // number, emitting another event, or writing another audit row.
+    if (isIssued(doc.status) && doc.documentNumber && doc.issuedAt) return doc;
 
     const transitionError = validateStatusTransition(doc.status, 'ISSUED', doc.documentType);
     if (transitionError) throw new UnprocessableEntityException(transitionError);
 
     const lineError = validateIssuableLines(doc.lines?.length ?? 0);
     if (lineError) throw new UnprocessableEntityException(lineError);
+
+    await assertVatRegistrationAllowsDocument(
+      this.vatRegistration, ctx.companyId, coerceCivilDate(doc.documentDate), doc.vatMode,
+    );
 
     const source = doc.sourceDocumentId
       ? await this.repo.findDocumentById(ctx.companyId, doc.sourceDocumentId, ctx.scopes.branchIds)

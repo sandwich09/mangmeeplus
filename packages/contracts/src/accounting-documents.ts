@@ -99,6 +99,8 @@ export type AccountingDocumentLineSummary = {
   whtAmount: string;
   lineSubtotalAmount: string;
   lineTotalAmount: string;
+  /** Current value available to the next correction after prior issued credit/debit notes. */
+  correctionBasisAmount?: string;
   taxCategory?: string;
   revenueCategory?: string;
   /** FK to the RevenueCategory master (live row); `revenueCategory` above is the immutable

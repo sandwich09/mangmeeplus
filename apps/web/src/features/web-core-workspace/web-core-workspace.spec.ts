@@ -608,6 +608,12 @@ describe('canAccessWorkspacePath', () => {
     assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['accounting.document.read'], 'abc', '/companies/abc/sales-documents'), true);
   });
 
+  it('lets an income creator reach the dedicated mutation page without broad document read', () => {
+    const path = '/companies/abc/sales-documents/record-income';
+    assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['accounting.invoice.create'], 'abc', path), true);
+    assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['accounting.payment.create'], 'abc', path), false);
+  });
+
   it('hides the retained report row from the sidebar but keeps its page reachable', () => {
     const retainedPermissions = ['report.snapshot.read'];
     const retainedModules = filterModulesByPermissions(WORKSPACE_MODULES, retainedPermissions);

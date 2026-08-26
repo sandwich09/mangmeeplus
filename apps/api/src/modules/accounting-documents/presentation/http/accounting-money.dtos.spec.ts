@@ -33,6 +33,7 @@ describe('H-05 accounting money HTTP DTOs', () => {
     assert.equal((await pipe.transform(validDocument, { type: 'body', metatype: CreateAccountingDocumentDto })).lines.length, 1);
     assert.equal((await pipe.transform(validSimpleIncome, { type: 'body', metatype: RecordSimpleIncomeDto })).paymentMethod, 'CASH');
     assert.equal((await pipe.transform({ expectedUpdatedAt: '2026-08-09T10:00:00.000Z', note: 'แก้ไข' }, { type: 'body', metatype: UpdateAccountingDocumentDto })).note, 'แก้ไข');
+    assert.equal((await pipe.transform({ ...validDocument, idempotencyKey: 'invoice-page-001' }, { type: 'body', metatype: CreateAccountingDocumentDto })).idempotencyKey, 'invoice-page-001');
   });
 
   it('rejects negative, zero, non-finite, exponent, precision, and bound overflow money at the boundary', async () => {
@@ -52,6 +53,8 @@ describe('H-05 accounting money HTTP DTOs', () => {
     await rejects(CreateAccountingDocumentDto, { ...validDocument, currency: 'USD' });
     await rejects(CreateAccountingDocumentDto, { ...validDocument, lines: [{ ...validDocument.lines[0], quantity: '0' }] });
     await rejects(CreateAccountingDocumentDto, { ...validDocument, lines: [{ ...validDocument.lines[0], vatAmount: '999.00' }] });
+    await rejects(CreateAccountingDocumentDto, { ...validDocument, idempotencyKey: 'short' });
+    await rejects(CreateAccountingDocumentDto, { ...validDocument, payloadFingerprint: 'client-must-not-send-this' });
     await rejects(UpdateAccountingDocumentDto, { note: 'missing version' });
     await rejects(UpdateAccountingDocumentDto, { expectedUpdatedAt: 'not-a-date', note: 'bad version' });
     await rejects(UpdateAccountingDocumentDto, { expectedUpdatedAt: '2026-08-09', note: 'version needs an instant' });

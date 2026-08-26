@@ -1,6 +1,6 @@
 # Agent Memory: mangmee-income-expense-ledger
 
-Status: Spec v1.3 + plan ACTIVE — **Phase 1–2 เสร็จ; Phase 3A backend เสร็จ 2026-08-26; ต่อไป Phase 3B UI**: atomic simple-income INVOICE→payment/allocation→evidence-only RECEIPT + command idempotency/fingerprint + composite permissions + in-tx audit; correction reason/source backend + attachment purposes; migration `20260826210000_simple_income_and_adjustment_reason`
+Status: Spec v1.4 + plan ACTIVE — **Phase 1–2, 3A backend และ 3B UI core เสร็จ; Phase 4A backend + Phase 5 backend เสร็จ; Phase 4B UI กำลังทำ**. Phase 3 ยังไม่ปิดเต็มเพราะ LED-FIN-07 รอ Owner เลือก durable state สำหรับร่างที่ VAT ยังไม่ชัด
 
 Owner: thawatchai (Product Owner) + Lead dev 1 คน
 
@@ -25,12 +25,20 @@ Decisions:
 - F-LED-6 (FlowAccount findings): CN มี 2 ทางสร้าง (แยก/อ้างใบกำกับภาษี), สาเหตุบังคับตามรายการกฎหมาย 2 กลุ่ม, โมเดลมูลค่าเดิม→ถูกต้อง→ผลต่าง, ขายเงินสด = "ใบเสร็จรับเงิน (เงินสด)" ใบเดียวเลขชุด CA- → เรา: ขยาย CN/DN ให้อ้าง INVOICE ที่ issue แล้วได้ + M5 (`adjustmentReasonCode/Text`) + prefill จาก source; **ไม่ทำ CN แบบไม่อ้างเอกสารใน MVP**; รายการสาเหตุต้องตรวจกับต้นทางกรมสรรพากรก่อน copy
 - หมวดรายรับ `RevenueCategory` company-scoped เท่านั้น (เลี่ยงบั๊ก NULL-distinct ฝั่ง expense); STOP-SHIP = LED-FIN-01 (float ใน `accounting-totals.logic.ts`); gap ใหม่ LED-FIN-05 (AI sales summary ไม่นับ payment ไม่มีลูกค้า — ปรับใน Phase 4)
 - เปิดแบบ per-company allowlist: `PUT /v1/system/partners/:id/features` (V5 — CAS + normalization gate; off/on/off มี test พิสูจน์ epoch bump)
+- Phase 3B ใช้ 2 เส้นทางตามสถานะเงินจริง: "รับเงินแล้ว" เรียก atomic simple-income; "ออกบิลไว้ก่อน" create draft แล้ว issue (หรือหยุดที่ draft ถ้าไม่มี issue permission). ทุก CTA gate จาก permission+VAT read ก่อน render
+- VAT company status `UNKNOWN`/read error fail closed ทั้ง UI และ simple-income use-case; คงค่าที่กรอกในหน้าและมี retry; ไม่เดาว่าเป็น registered/not-registered
+- ตรวจความจริงแล้ว `AccountingVatMode` มีเพียง `NO_VAT/VAT_INCLUDED/VAT_EXCLUDED/EXEMPT` ไม่มี `NEEDS_REVIEW` ตาม spec v1.3 เดิม จึงไม่เก็บร่าง ambiguous VAT ด้วย `NO_VAT` ปลอม; บันทึกเป็น LED-FIN-07 รอ Owner
+- ไฟล์แนบ accounting เคยผ่าน allow-list แต่ repository ยัง hardcode หา `expenseRecord` ทำให้ link ล้ม 100%; Phase 3B แก้ target-aware validation, exact accounting mutation permission, branch-scope+tenant+creator+target-branch revalidation และ browser QA upload→complete→link จริง
+- UX browser QA พบ sticky summary บังฟอร์มเกือบครึ่งจอที่ 390×844 และบังช่วงล่างบน desktop; เปลี่ยนเป็น summary หลังฟอร์ม ไม่ลอยทับช่องกรอก รอบปิด PR ยังพบ grid child ไม่ shrink ทำให้ปุ่มใบลดหนี้อยู่พ้น viewport จึงเพิ่ม `min-w-0`, จิ้มออกเอกสารซ้ำสำเร็จ และแปล generic accounting hub/payment/counterparty copy หลักเป็นไทย
+- Generic invoice create ใช้ client retry key ที่คงเดิมตลอด page attempt + server canonical fingerprint + unique `(companyId, createIdempotencyKey)`; payload เดิม replay เอกสารเดิม, key เดิม payload ต่าง conflict. Issue retry ของเอกสารที่ออกแล้วคืนผลเดิมโดยไม่ reserve เลข/event ซ้ำ
 
-Open questions: — (ไม่มี; ทุกข้อปิดแล้ว)
+Open questions:
+
+- **LED-FIN-07 (Owner decision required):** ต้องการเก็บร่างที่ VAT บริษัท/รายบรรทัดยังไม่ชัดแบบใด — เพิ่ม review state แยกจาก `vatMode` (แนะนำ เพราะไม่ปน tax semantics) หรือขยาย enum+posting/reader/migration ทุกชั้น? ระหว่างรอระบบ fail closed และไม่สร้างเอกสารผิดภาษี
 
 Artifacts:
 
-- `docs/specs/mangmee-income-expense-ledger-spec-th.md` v1.3 (Phase 3A evidence + M7 + correction source/reason truth + receipt posting invariant)
+- `docs/specs/mangmee-income-expense-ledger-spec-th.md` v1.4 (Phase 3B evidence + แก้ current truth ของ VAT enum + LED-FIN-07)
 - `docs/plans/mangmee-income-expense-ledger-plan-th.md` ACTIVE ฉบับเต็มตามเดิม (Phase 0–2 ✅); คิวรวมสองฝั่งอยู่ที่ `docs/plans/mangmee-master-plan-index-th.md` — **สารบัญอย่างเดียว** (Owner 2026-08-26: "รวมแค่หัวข้อ แล้วมี link กลับไปที่เอกสารเดิม" — เคยรวมเนื้อหาเต็มในไฟล์เดียวแล้วถูกสั่งปรับกลับ)
 - `docs/plans/mangmee-brain-2-5-day-priority-plan-th.md` P27 + §10/§11 อัปเดตคิวตัดสินแล้ว
 - PR #245 (docs ชุดแรก merged); PR ถัดไป = ชุดคำตอบ+Phase 0 นี้
@@ -42,11 +50,14 @@ Verification:
 - Phase 3A focused: 94 discovered; 92/92 non-PostgreSQL ผ่าน และ real PostgreSQL bundle 7/7 ผ่าน: reason/source rules, DTO, composite permission, VAT-registration guard, in-tx audit/no replay events, attachment purposes, atomic tax issue regression; late-audit failure rollback เหลือ 0 rows, 6 concurrent same-key callsได้ invoice ID เดียว/ผู้ชนะหนึ่ง, command 1/payment 1/allocation 1/docs 2/เลข COMMITTED 3, WHT 3 → cash 97 → invoice paid 100, receipt evidence-only; mixed 7%+0% = taxable 200/VAT 7/total+payment+receipt 207
 - Prisma format/validate/generate + contracts build + API typecheck + `test:boot` ผ่าน (Nest resolve provider ครบ); local migration deploy ผ่าน และ fresh PostgreSQL database ใช้ migration ทั้ง 152 ตัวจากศูนย์ผ่านก่อนลบทิ้ง
 - Full API `pnpm test` ผ่านทั้ง pretest/test; ระหว่าง verify พบ P11 observability evidence token เก่าที่อ้างหัวข้อซึ่งเปลี่ยนชื่อแล้ว จึงแก้ catalog ให้ชี้ `F-EM-2 Durable send ผ่าน outbox` และยืนยัน suite เขียวรอบถัดไป
+- Phase 3B final: web full 1100/1100; contracts 196/196; API full pretest+test exit 0; focused API 114/114 และ consolidated boundary/spec-coverage 22/22; contracts/web/API typecheck, Prisma validate และ `git diff --check` ผ่าน
+- Browser local (in-app browser ตาม browser skill) ที่ 1280×900 และ 390×844: เลือก 2 โหมด, `0.0300 × 68.50 = 2.06`, ออก `INV-202608-00028`, รับชำระจน `PAID`, source-first credit note 1.03 พร้อมแนบรูป แล้วออก `CN-202608-00001`; รอบแรกพบปุ่มล้น viewport และแก้ก่อนจิ้มซ้ำสำเร็จ; fresh console error/warn = 0
+- Persistence proof: invoice มี generic-create idempotency key; PostgreSQL มี active `AttachmentLink targetType=accounting.document`, targetId ของ `CN-202608-00001`, purpose=`accounting.document.supporting`, branch ตรง target; หลักฐานภาพ/manifest อยู่ `docs/qa/evidence/p27-phase3b-2026-08-27/README.md`
 
 หมายเหตุ spec-batch (2026-08-26): ตามคำสั่ง Owner "เขียน spec ที่เหลือให้ครบ" — เขียน 8 ฉบับใหม่ในวันเดียว: P10 external-signup, P11 email-claim, P12 line-login-link-journey (ฉบับรวม — มติเปิด line/exchange), P13 line-multi-company-staff, P15–P17 revenue-inbox-matching (ฉบับเดียว 3 หัวข้อ), P21 tax-workpaper-pp30, P24 growth-ux-full-pass, P26 billing-subscription (ราคารอ Owner); ทุกฉบับอิง Explore agents 3 ชุด (P26 billing / auth-LINE-signup / banking-tax) + แผนหลัก §13.5-13.6; matrix ในแผนหลักติ๊กครบ เหลือ P18–P20 ตั้งใจรอ provider
 
 Next:
 
-1. Phase 3B: หน้า "บันทึกรายรับ" mobile-first 2 โหมด + VAT ต่อบรรทัดจากหมวด/สถานะ VAT บริษัท + success path; source-first CN/DN UI
-2. Phase 4 หน้าสมุด+export → Phase 5 จัดหมวดรายจ่ายซ้อน → Phase 6 เปิดระบบ/E2E/หลักฐาน
-3. หมายเหตุข้ามงาน: PR #238 (release รอบก่อน develop→main) CI เขียวครบ ยังรอ Owner approve+merge → แล้วผม dispatch UAT ตาม runbook
+1. เปิด PR Phase 3B เข้า `develop`; merge เฉพาะเมื่อ CI ผ่านจริง
+2. Owner ตอบ LED-FIN-07 แล้วทำ Phase 3C contract/migration ถ้าเลือกเก็บร่าง ambiguous VAT
+3. จบ Phase 4B UI → Phase 6 เชื่อม nav/route/success highlight/E2E/หลักฐานและ usability มนุษย์ 40+ ≥3 คน

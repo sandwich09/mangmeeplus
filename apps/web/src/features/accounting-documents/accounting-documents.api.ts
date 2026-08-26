@@ -12,7 +12,9 @@ import type {
   DocumentLineSummary,
 } from './accounting-documents.model';
 import { authedApiFetch as apiFetch } from '@/common/api/authed-fetch';
-import type { CreateRevenueCategoryInput, RevenueCategorySummary, TransactionTaxContext, UpdateRevenueCategoryInput } from '@watchdog-bms/contracts';
+import { assertAllowedUploadFile, withGenericUploadError } from '@/common/files/upload-file.logic';
+import { uploadReceiptFile } from '@/features/expenses/expenses.api';
+import type { AccountingAdjustmentReasonCode, CreateRevenueCategoryInput, RecordSimpleIncomeInput, RecordSimpleIncomeResult, RevenueCategorySummary, TransactionTaxContext, UpdateRevenueCategoryInput } from '@watchdog-bms/contracts';
 
 function qs(params?: Record<string, unknown>): string {
   const q = new URLSearchParams();
@@ -55,11 +57,14 @@ export async function createDocument(
     sourceDocumentId?: string;
     sourceDocumentType?: string;
     convertedFromDocumentId?: string;
+    idempotencyKey?: string;
     currency?: string;
     vatMode: AccountingVatMode;
     outputTaxCode?: AccountingOutputTaxCode;
     note?: string;
-    lines: Array<{ lineNumber: number; description: string; quantity: string; unitPrice: string; discountAmount?: string; vatRate?: string; taxCodeDefinitionId?: string; externalTaxCode?: string; transactionContext?: TransactionTaxContext }>;
+    adjustmentReasonCode?: AccountingAdjustmentReasonCode;
+    adjustmentReasonText?: string;
+    lines: Array<{ lineNumber: number; description: string; quantity: string; unitPrice: string; discountAmount?: string; vatRate?: string; whtRate?: string; revenueCategoryId?: string; taxCodeDefinitionId?: string; externalTaxCode?: string; transactionContext?: TransactionTaxContext }>;
   },
 ): Promise<DocumentDetail> {
   return apiFetch(`/v1/companies/${companyId}/accounting/documents`, { method: 'POST', body: JSON.stringify(body) });
@@ -121,7 +126,7 @@ export async function createPayment(
   companyId: string,
   // `amount` is cash received; `whtAmount` is tax the customer withheld, which settles the document
   // without reaching the bank and therefore requires an allocation target.
-  body: { direction: AccountingPaymentDirection; method: AccountingPaymentMethod; amount: string; whtAmount?: string; paidAt: string; counterpartyId?: string; note?: string; externalReference?: string; allocateToDocumentId?: string },
+  body: { direction: AccountingPaymentDirection; method: AccountingPaymentMethod; amount: string; whtAmount?: string; paidAt: string; branchId?: string; counterpartyId?: string; note?: string; externalReference?: string; allocateToDocumentId?: string },
 ): Promise<PaymentSummary> {
   return apiFetch(`/v1/companies/${companyId}/accounting/payments`, { method: 'POST', body: JSON.stringify(body) });
 }
@@ -145,4 +150,50 @@ export async function createRevenueCategory(companyId: string, body: CreateReven
 
 export async function updateRevenueCategory(companyId: string, categoryId: string, body: UpdateRevenueCategoryInput): Promise<RevenueCategorySummary> {
   return apiFetch(`/v1/companies/${companyId}/revenue-categories/${categoryId}`, { method: 'PATCH', body: JSON.stringify(body) });
+}
+
+// ---- Simple income bundle (ledger spec F-LED-1) ----
+export async function recordSimpleIncome(companyId: string, body: RecordSimpleIncomeInput): Promise<RecordSimpleIncomeResult> {
+  return apiFetch(`/v1/companies/${companyId}/accounting/simple-income`, { method: 'POST', body: JSON.stringify(body) });
+}
+
+// ---- Company VAT registration truth (ledger spec §7.9 / V4) ----
+export async function getVatRegistrationStatus(companyId: string, asOf?: string): Promise<{ status: string }> {
+  return apiFetch(`/v1/companies/${companyId}/vat-registration${qs({ asOf })}`);
+}
+
+export async function uploadAccountingDocumentSupporting(
+  companyId: string,
+  documentId: string,
+  branchId: string | undefined,
+  file: File,
+): Promise<void> {
+  return withGenericUploadError(async () => {
+    assertAllowedUploadFile(file);
+    const intent = await apiFetch<{ attachmentId: string; uploadUrl: string; uploadMethod: string; uploadHeaders: Record<string, string> }>(
+      `/companies/${companyId}/attachments/upload-intent`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          originalFileName: file.name,
+          mimeType: file.type,
+          byteSize: file.size,
+          visibility: 'ACCOUNTING',
+          ...(branchId ? { branchId } : {}),
+        }),
+      },
+    );
+    await uploadReceiptFile(intent.uploadUrl, intent.uploadMethod, file, intent.uploadHeaders);
+    await apiFetch(`/companies/${companyId}/attachments/${intent.attachmentId}/complete`, {
+      method: 'POST', body: JSON.stringify({ byteSize: file.size }),
+    });
+    await apiFetch(`/companies/${companyId}/attachments/${intent.attachmentId}/links`, {
+      method: 'POST',
+      body: JSON.stringify({
+        targetType: 'accounting.document',
+        targetId: documentId,
+        purpose: 'accounting.document.supporting',
+      }),
+    });
+  });
 }

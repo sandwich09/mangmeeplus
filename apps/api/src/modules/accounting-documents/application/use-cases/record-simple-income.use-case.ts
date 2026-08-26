@@ -4,7 +4,7 @@ import type { AccountingDocumentType, RequestContext } from '@watchdog-bms/contr
 import { AuditService } from '../../../audit/application/audit.service';
 import { OutboxAppendService } from '../../../data-model-core/application/services/outbox-append.service';
 import { CompanyVatRegistrationUseCase } from '../../../data-model-core/application/use-cases/company-vat-registration.use-case';
-import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
+import { isBranchInScope, resolveCreateBranchId } from '../../../data-model-core/domain/logic/branch.logic';
 import { validateAccountingDocumentMoneyInput } from '../../domain/logic/accounting-money-validation.logic';
 import type { RecordSimpleIncomeInput, RecordSimpleIncomeResult } from '../../domain/models/accounting.model';
 import { PrismaAccountingRepository } from '../../infrastructure/prisma-accounting.repository';
@@ -46,9 +46,10 @@ export class RecordSimpleIncomeUseCase {
       !hasDocumentPermission(ctx, 'RECEIPT', 'issue') && 'accounting.receipt.issue',
     ].filter((permission): permission is string => Boolean(permission));
     if (missing.length) throw new ForbiddenException(`Missing permissions: ${missing.join(', ')}`);
-    if (!isBranchInScope(ctx.scopes, input.branchId)) {
+    if (ctx.scopes.branchIds?.length === 0 || !isBranchInScope(ctx.scopes, input.branchId)) {
       throw new ForbiddenException('Branch is outside your assigned branch scope.');
     }
+    const resolvedInput = { ...input, branchId: resolveCreateBranchId(ctx.scopes, input.branchId) ?? undefined };
     if (input.lines.length < 1) throw new UnprocessableEntityException('At least one income line is required');
     if (new Set(input.lines.map((line) => line.lineNumber)).size !== input.lines.length) {
       throw new UnprocessableEntityException('Income line numbers must be unique');
@@ -57,19 +58,22 @@ export class RecordSimpleIncomeUseCase {
       throw new UnprocessableEntityException('Simple income creates a plain invoice; Tax Code lines require the tax-invoice flow');
     }
     const vatStatus = (await this.vatRegistration.get(ctx.companyId, input.documentDate)).status;
+    if (vatStatus === 'UNKNOWN') {
+      throw new UnprocessableEntityException('Company VAT registration status must be confirmed before recording received income');
+    }
     if (vatStatus === 'NOT_REGISTERED' && input.vatMode !== 'NO_VAT') {
       throw new UnprocessableEntityException('A company that is not VAT registered must record simple income without VAT');
     }
     const moneyError = validateAccountingDocumentMoneyInput({
       documentType: 'INVOICE', documentDate: input.documentDate, vatMode: input.vatMode,
-      branchId: input.branchId, counterpartyId: input.counterpartyId, note: input.note,
+      branchId: resolvedInput.branchId, counterpartyId: input.counterpartyId, note: input.note,
       currency: 'THB', lines: input.lines,
     });
     if (moneyError) throw new UnprocessableEntityException(moneyError);
 
-    const payloadFingerprint = simpleIncomePayloadFingerprint(input);
+    const payloadFingerprint = simpleIncomePayloadFingerprint(resolvedInput);
     const result = await this.repo.recordSimpleIncomeBundle(
-      { ...input, companyId: ctx.companyId, createdByUserId: ctx.userId, payloadFingerprint },
+      { ...resolvedInput, companyId: ctx.companyId, createdByUserId: ctx.userId, payloadFingerprint },
       async (db, created) => this.audit.log({
         companyId: ctx.companyId, actorUserId: ctx.userId,
         action: 'accounting.simple_income.record', targetType: 'accounting_document', targetId: created.invoice.id,

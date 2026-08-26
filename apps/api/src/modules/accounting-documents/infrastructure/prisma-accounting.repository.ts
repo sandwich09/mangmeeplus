@@ -116,6 +116,26 @@ export class PrismaAccountingRepository {
 
   // ---- Document ----
   async createDocument(input: CreateDocumentInput): Promise<DocumentRecord> {
+    if (input.idempotencyKey) {
+      if (!input.payloadFingerprint) throw new Error('Server payload fingerprint is required for idempotent document create');
+      return this.prisma.client.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.idempotencyKey}:accounting-document-create`}))`;
+        const existing = await (tx.accountingDocument as any).findUnique({
+          where: { companyId_createIdempotencyKey: { companyId: input.companyId, createIdempotencyKey: input.idempotencyKey } },
+          include: { lines: { orderBy: { lineNumber: 'asc' } } },
+        });
+        if (existing) {
+          if (existing.createPayloadFingerprint !== input.payloadFingerprint) {
+            throw new ConflictException({
+              code: 'accounting_document_create_idempotency_conflict',
+              message: 'This invoice retry key was already used with different details. Reload before creating another invoice.',
+            });
+          }
+          return this.toDocumentRecord(existing);
+        }
+        return this.createDocumentWithClient(tx, input);
+      });
+    }
     return this.createDocumentWithClient(this.prisma.client, input);
   }
 
@@ -141,6 +161,8 @@ export class PrismaAccountingRepository {
         sourceDocumentId: input.sourceDocumentId,
         sourceDocumentType: input.sourceDocumentType,
         convertedFromDocumentId: input.convertedFromDocumentId,
+        createIdempotencyKey: input.idempotencyKey,
+        createPayloadFingerprint: input.payloadFingerprint,
         currency: input.currency ?? 'THB',
         vatMode: input.vatMode as any,
         outputTaxCode: input.outputTaxCode as any,
@@ -526,6 +548,33 @@ export class PrismaAccountingRepository {
     return row ? this.toDocumentRecord(row) : null;
   }
 
+  async listIssuedCorrectionLines(companyId: string, sourceDocumentId: string): Promise<Array<{
+    documentType: 'CREDIT_NOTE' | 'DEBIT_NOTE';
+    lines: Array<{ lineNumber: number; discountAmount: string; lineSubtotalAmount: string; lineTotalAmount: string }>;
+  }>> {
+    const rows = await this.prisma.client.accountingDocument.findMany({
+      where: {
+        companyId,
+        sourceDocumentId,
+        documentType: { in: ['CREDIT_NOTE', 'DEBIT_NOTE'] },
+        status: { in: ['ISSUED', 'CREDITED', 'DEBITED', 'CLOSED'] },
+      },
+      select: {
+        documentType: true,
+        lines: { select: { lineNumber: true, discountAmount: true, lineSubtotalAmount: true, lineTotalAmount: true } },
+      },
+    });
+    return rows.map((row: any) => ({
+      documentType: row.documentType,
+      lines: row.lines.map((line: any) => ({
+        lineNumber: line.lineNumber,
+        discountAmount: line.discountAmount.toString(),
+        lineSubtotalAmount: line.lineSubtotalAmount.toString(),
+        lineTotalAmount: line.lineTotalAmount.toString(),
+      })),
+    }));
+  }
+
   /** Shared visibility predicate for list + aggregate: both must see exactly the same rows. */
   private async buildDocumentsWhere(filter: ListDocumentsFilter, branchIds?: string[]): Promise<Record<string, unknown>> {
     const where: Record<string, unknown> = { companyId: filter.companyId };
@@ -626,6 +675,9 @@ export class PrismaAccountingRepository {
         ? await tx.accountingDocument.findFirst({ where: { id: currentRow.sourceDocumentId, companyId }, include: { lines: { orderBy: { lineNumber: 'asc' } } } })
         : null;
       const source = sourceRow ? this.toDocumentRecord(sourceRow) : undefined;
+      if (sourceRow && currentRow.branchId !== sourceRow.branchId) {
+        throw new UnprocessableEntityException('A source-linked document must use the same branch as its source');
+      }
       const taxError = validateOutputTaxDocument(current, source);
       if (taxError) throw new UnprocessableEntityException(taxError);
 
@@ -699,7 +751,7 @@ export class PrismaAccountingRepository {
         const issuedCorrections = await tx.accountingDocument.findMany({ where: {
           companyId, sourceDocumentId: sourceRow.id, id: { not: id }, documentType: { in: ['CREDIT_NOTE', 'DEBIT_NOTE'] },
           status: { in: ['ISSUED', 'CREDITED', 'DEBITED', 'CLOSED'] },
-        }, select: { documentType: true, lines: { select: { lineNumber: true, taxBaseAmount: true, lineSubtotalAmount: true, transactionTaxAmount: true, vatAmount: true } } } });
+        }, select: { documentType: true, lines: { select: { lineNumber: true, discountAmount: true, taxBaseAmount: true, lineSubtotalAmount: true, transactionTaxAmount: true, vatAmount: true } } } });
         const error = validateCumulativeCreditNote(sourceRow.lines, currentRow.lines, issuedCorrections);
         if (error) throw new UnprocessableEntityException(error);
       }

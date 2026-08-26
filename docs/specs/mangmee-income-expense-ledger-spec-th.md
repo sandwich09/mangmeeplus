@@ -1,6 +1,6 @@
 # สมุดรายรับ–รายจ่าย (Income–Expense Ledger MVP) — Spec
 
-สถานะ: **v1.3 — Owner ตอบ §9 ครบ; Phase 1–2 ส่งมอบแล้ว; Phase 3A backend ส่งมอบ 2026-08-26 (atomic simple-income + correction reasons/source + attachment gate), เหลือ Phase 3B UI**
+สถานะ: **v1.4 — Phase 1–2 + Phase 3A backend ส่งมอบแล้ว; Phase 3B UI core ส่งมอบและทดสอบ local 2026-08-27; เหลือ LED-FIN-07 เรื่อง draft ที่ VAT ยังไม่ชัดก่อนถือว่า Phase 3 ปิดครบตามสัญญาเดิม**
 
 ที่มา: การตัดสินใจ Owner 2026-08-26 — ทำฟีเจอร์ "สมุดรายรับ–รายจ่าย" ก่อน โดยยังไม่ทำระบบบัญชีเต็มและไม่ทำกระทบยอดธนาคาร; เอกสารขายต้องเป็นแกนของรายรับ ไม่ใช่ช่องกรอกยอดลอย ๆ
 
@@ -51,7 +51,7 @@
 | ชนิดเอกสาร 7 ชนิด: `QUOTATION, INVOICE, BILLING_NOTE, RECEIPT, TAX_INVOICE, CREDIT_NOTE, DEBIT_NOTE` | `schema.prisma:1628-1636` |
 | สถานะเอกสาร: `DRAFT, PENDING_APPROVAL, APPROVED, REJECTED, ISSUED, VOIDED, CREDITED, DEBITED, CLOSED` + state machine | `schema.prisma:1638-1648`; `accounting-status.logic.ts:137-146` |
 | สถานะการเงินของเอกสาร: `UNPAID, PARTIALLY_PAID, PAID, OVERDUE, VOIDED` | `schema.prisma:1650-1656` |
-| VAT ต่อเอกสาร: `NO_VAT, VAT_INCLUDED, VAT_EXCLUDED, EXEMPT, NEEDS_REVIEW` + `vatRate/whtRate` ต่อบรรทัด | `schema.prisma:1666-1672,1841,1843` |
+| VAT ต่อเอกสาร: `NO_VAT, VAT_INCLUDED, VAT_EXCLUDED, EXEMPT` + `vatRate/whtRate` ต่อบรรทัด | `schema.prisma` enum `AccountingVatMode`; contract `packages/contracts/src/accounting-documents.ts`; DTO `accounting-money.dtos.ts` |
 | ใบกำกับภาษี FULL/ABBREVIATED ผูกกับเอกสารต้นทาง + tax snapshot ต่อบรรทัดตอน issue | `schema.prisma:1699-1702,1789-1790`; `document.use-case.ts:378-412` |
 | รับชำระ: ช่องทาง `CASH, BANK_TRANSFER, CARD, CHEQUE, OTHER`, WHT, allocation, เศษเกินเป็น unapplied credit, void แบบ true reversal | `schema.prisma:1685-1691`; `prisma-accounting.repository.ts:707-771,745-749,875` |
 | เลขเอกสารรายเดือน (QT-/INV-/TAX-… reserve→commit/cancel) | `document-sequence.logic.ts:13-20`; `document.use-case.ts:347-423` |
@@ -95,6 +95,7 @@
 | LED-FIN-03 | หมวดรายจ่าย default ซ้อน 2 ชุด: 12 ต่อบริษัท (bootstrap) + 11 global dev-seed ชื่อคล้ายกัน และ picker คืน union → บน env ที่ seed ผู้ใช้เห็น ~23 หมวดปนกัน; `@@unique([companyId,name])` ไม่กันแถว global (NULL distinct — มี comment บันทึกใน repo แล้ว) | `expense-category-bootstrap.service.ts:48` vs `prisma/seed.ts:3131,3146-3149`; `prisma-expense.repository.ts:2230-2233` | ผู้ใช้สับสน/AI แนะนำหมวดซ้ำ → ต้องจัดระเบียบ |
 | LED-FIN-04 | ขอบเขตช่วงเวลา 2 convention: `civilDayRangeToUtc` คืน exclusive `lt` แต่ `getPeriodBoundaries` (dashboard) คืน inclusive end (−1 ms) — เคยมีบั๊กจริง ("filter หนึ่งวันได้ 0 จาก 13") | `packages/contracts/src/civil-date.ts:113-128`; `notification.logic.ts:189-193` | หน้าสรุปต้องประกาศ convention เดียว (ใช้ exclusive `lt` + ระบุคอลัมน์ instant vs civil ตาม pattern `erp-expense-daily-closing.use-case.ts:66-72`) |
 | LED-FIN-05 | AI tool `sales.get_sales_summary` นับเฉพาะ payment ที่ผูก counterparty type CUSTOMER/BOTH — ขายสดแบบไม่ระบุลูกค้า (null counterparty ตาม V1) จะไม่ถูกนับในคำตอบ AI ทั้งที่นับในสมุด | `erp-tools.use-case.ts:331-348` | ตัวเลขสมุด vs คำตอบ AI ไม่ตรงกัน → Phase 4 ต้องปรับ tool ให้นับ payment ไม่มีลูกค้าด้วย หรือติดป้ายนิยามต่างให้ชัด (เลือกตอน implement พร้อมหลักฐาน regression ของ family เดิม) |
+| LED-FIN-07 | spec v1.3 เคยอ้างว่า `AccountingVatMode` มี `NEEDS_REVIEW` และจึงเก็บร่างที่ VAT ยังไม่ชัดได้ แต่ตรวจ schema/contract/DTO จริงแล้ว enum **ไม่มีค่านี้** | `schema.prisma` + `packages/contracts/src/accounting-documents.ts` + `accounting-money.dtos.ts` ยอมรับเพียง 4 ค่า | Phase 3B fail closed: คงค่าที่กรอกในหน้าและห้ามสร้าง/issue เมื่อ VAT บริษัทหรือ VAT รายบรรทัดยังไม่ชัด; ห้ามยัด `NO_VAT` แทนเพราะทำ evidence ผิด ต้องให้ Owner เลือกว่าจะเพิ่ม durable review state แบบใดก่อนทำต่อ |
 
 ## 4. ขอบเขต MVP
 
@@ -133,8 +134,8 @@
 | หมวดรายรับ | `AccountingDocumentLine.revenueCategoryId` (ใหม่, §F-LED-2) + snapshot ชื่อลง `revenueCategory` เดิม | เลือกหมวดเดียวทั้งเอกสาร = apply ทุกบรรทัด; แก้รายบรรทัดได้ในโหมดขั้นสูง |
 | ลูกค้า (ไม่บังคับ) | `counterpartyId` | **ยืนยันแล้ว (V1): nullable จริงทั้ง schema/DTO/use-case** (`schema.prisma:1751`, `accounting-money.dtos.ts:49`, create ไม่ validate — `document.use-case.ts:49-74`; issue ก็ best-effort — `:359-364`) → ไม่เลือก = เอกสารไม่มีลูกค้า และ**ไม่สร้าง row "ลูกค้าเงินสด" อัตโนมัติ** (ไม่มี unique fence บนชื่อ — `schema.prisma:1737-1739` — เสี่ยง row ซ้ำ); UI แสดง label "ลูกค้าทั่วไป (ขายเงินสด)" เฉย ๆ ตามแบบ FlowAccount ("Cash Sale / ขายเงินสด"); กติกา engine ที่ต้องเคารพ: payment ต้อง match counterparty ของเอกสาร (null↔null ผ่าน — `accounting-money-validation.logic.ts:95-96`) |
 | ช่องทางรับเงิน: เงินสด/โอน/บัตร/อื่น ๆ | `AccountingPaymentMethod` = `CASH/BANK_TRANSFER/CARD/OTHER` (`CHEQUE` มีในโหมดขั้นสูง) | enum เดิมครบแล้ว |
-| VAT | เอกสาร: `vatMode` (`NO_VAT/VAT_INCLUDED/VAT_EXCLUDED/EXEMPT/NEEDS_REVIEW`) + **ต่อบรรทัด**: `vatRate` โดย default มาจาก `defaultOutputTaxCode` ของหมวดรายรับของบรรทัดนั้น (กติกาเต็ม §7.9 — ห้ามระบบเดา) | enum เดิมครบแล้ว; บรรทัด "ยังไม่แน่ใจ" → ร่างได้ ยืนยันไม่ได้ พร้อมชี้บรรทัด (กฎเดียวกับ VAT-MIX ฝั่งรายจ่าย); **บริษัทไม่จด VAT ซ่อนบล็อก VAT ทั้งหมด default `NO_VAT` (Owner ข้อ 3) — ใช้ truth เดียวกับฝั่งรายจ่าย (V4): `VatRegistrationStatus` ผ่าน `vatRegistration.get(companyId, civilDate)` (`expense-draft.use-case.ts:701`) + กติกา `deriveExpenseCaptureMode` (`expense-capture-policy.logic.ts:28-32`)** |
-| หมายเหตุ + ไฟล์แนบ | `notes` + `AttachmentLink` (polymorphic `schema.prisma:1042`) | **ยืนยันแล้ว (V2): ยังไม่มี purpose ฝั่ง accounting เลย** — gate กลางอนุญาตเฉพาะ `targetType='expense.record'` (`attachment.logic.ts:24-32` บังคับที่ endpoint link กลาง `link-attachment.use-case.ts:28-39`) → งาน Phase 3: ขยาย `isAllowedAttachmentTarget` แบบ additive เพิ่ม `accounting.document` + purposes `accounting.receipt.evidence`/`accounting.document.supporting` (unique เดิม `schema.prisma:1053` รองรับ; ไม่ใช้ทางลัด repo-write ตรงแบบ procurement/crm ที่ bypass gate) |
+| VAT | เอกสาร: `vatMode` (`NO_VAT/VAT_INCLUDED/VAT_EXCLUDED/EXEMPT`) + **ต่อบรรทัด**: `vatRate` โดย default มาจาก `defaultOutputTaxCode` ของหมวดรายรับของบรรทัดนั้น (กติกาเต็ม §7.9 — ห้ามระบบเดา) | บรรทัด/สถานะบริษัท "ยังไม่แน่ใจ" **ยังไม่มี durable enum ใน engine** (LED-FIN-07) → UI Phase 3B คงค่าในหน้าและห้ามสร้าง/issue พร้อมชี้เหตุผล; **บริษัทไม่จด VAT ซ่อนบล็อก VAT ทั้งหมด default `NO_VAT` (Owner ข้อ 3)**; ใช้ `VatRegistrationStatus` ตามวันที่เอกสารและ server revalidate ซ้ำ |
+| หมายเหตุ + ไฟล์แนบ | `note` + `AttachmentLink` polymorphic | **Phase 3B ส่งมอบแล้ว**: เพิ่ม target/purpose `accounting.document` + `accounting.document.supporting`; use-case รับเฉพาะ permission mutate เอกสารบัญชีที่กำหนด (ไม่ยอม `accounting.payment.create` แทน), ส่ง branch scope ถึง repository และ revalidate tenant+ผู้สร้าง+branch ของ attachment/target ใน transaction; UI link ด้วย branch ที่ server persist จริง; browser QA อัปโหลด→complete→link สำเร็จและ DB มีแถว `AttachmentLink` ACTIVE ที่ branch ตรง target |
 | สถานะ: ร่าง / ยืนยันแล้ว / ยกเลิก | `DRAFT` / `ISSUED` / `VOIDED` | label ไทยคงที่ทั้งระบบ |
 
 ### F-LED-2 หมวดหมู่ 2 ชุด
@@ -246,10 +247,10 @@ Flow ถ่าย/อัปโหลด → AI อ่าน → ตรวจ →
 ฟอร์ม (ทั้งสองโหมดใช้โครงเดียว ต่างเฉพาะส่วนการเงินท้ายฟอร์ม):
 
 1. **วันที่** (default วันนี้ ปฏิทินไทย) → 2. **รายการ** (บรรทัดแรกเปิดพร้อมกรอกทันที: รายละเอียด + จำนวนเงิน; ปุ่ม "+ เพิ่มรายการ" เพิ่มบรรทัด; แต่ละบรรทัดมี **หมวดรายรับ** (ThemedSelect จาก picker ACTIVE, default = หมวดของบรรทัดก่อนหน้า) และ **VAT ต่อบรรทัด** ตามกติกา 7.9) → 3. **ลูกค้า** (ไม่บังคับ, default label "ลูกค้าทั่วไป (ขายเงินสด)") → 4. โหมดรับเงินแล้ว: **ช่องทางรับเงิน** ปุ่มเลือก 4 อัน (เงินสด/โอน/บัตร/อื่น ๆ); โหมดออกบิล: **วันครบกำหนด** → 5. ตัวเลือกเพิ่มเติม (ยุบ): หมายเหตุ, ไฟล์แนบ, ส่วนลด, WHT, สาขา
-- แถบสรุปเงินติดท้ายจอ (sticky): ยอดรวม + VAT + ยอดสุทธิ อัปเดตสด
+- กล่องสรุปเงินอยู่ **ถัดจากฟอร์มและไม่ลอยทับช่องกรอก**: ยอดก่อน VAT + VAT + ยอดรวม อัปเดตสด; การตรวจจริงที่ 390×844 พบ sticky แบบเดิมบังฟอร์มเกือบครึ่งจอ จึงห้ามใช้ sticky จนกว่าจะมี layout ที่กันพื้นที่ได้จริง
 - ปุ่ม primary: "บันทึกรับเงิน ฿X,XXX" / "ออกบิล ฿X,XXX" — disabled+เหตุผลจนกว่า: มี ≥1 บรรทัดที่มีรายละเอียด+ยอด, ทุกบรรทัดรู้สถานะ VAT (ไม่มีบรรทัด "ยังไม่แน่ใจ"), เลือกช่องทางรับเงิน (โหมดขายสด)
-- "ยังไม่แน่ใจ" (VAT) → ปุ่ม primary เปลี่ยนเป็น "บันทึกร่างไว้ก่อน" + บอกชัด "รายการที่ N ยังไม่ได้เลือก VAT — ยืนยันได้เมื่อเลือกครบ" (กติกา VAT-MIX เดิม: ร่างได้เสมอ ยืนยันต้องครบ)
-- สำเร็จ: replace → สมุด (แท็บรายรับ) + highlight แถวใหม่ + toast "บันทึกรายรับเรียบร้อย · ใบเสร็จ RC-xxx ออกให้แล้ว" (โหมดขายสด แสดงเลขใบเสร็จที่ออกอัตโนมัติ)
+- "ยังไม่แน่ใจ" (VAT) → **Phase 3B ปิดปุ่มและบอกบรรทัด/สถานะที่ต้องแก้**; ยังไม่แสดงปุ่มบันทึกร่าง เพราะ contract ปัจจุบันไม่มีสถานะที่เก็บความไม่แน่ใจได้อย่างไม่บิดเบือน (LED-FIN-07)
+- สำเร็จ Phase 3B: `router.replace` → หน้าเอกสารขายพร้อมเลือกเอกสารใหม่ + toast และสถานะ/เลขเอกสารถาวร; จะเปลี่ยนปลายทางเป็นสมุด+highlight ใน Phase 6 หลัง route สมุดจาก Phase 4 รวมเข้ากิ่งเดียวกัน
 
 #### 7.4 S2 รายการรอรับเงิน + รับชำระ
 
@@ -298,7 +299,7 @@ Flow ถ่าย/อัปโหลด → AI อ่าน → ตรวจ →
 
 1. **ระบบไม่มีวันเดา VAT ให้บรรทัดใด** — ค่า default ต่อบรรทัดมาจาก **หมวดรายรับของบรรทัดนั้น** เท่านั้น: หมวด `O7` → "มี VAT 7%", หมวด `OX` → "ยกเว้น VAT", หมวด `O0` → "VAT 0%", หมวดไม่กำหนด → บรรทัดขึ้นสถานะ "เลือกวิธีคิด VAT" (ไม่ pre-select อะไร)
 2. หมวดกว้าง ("ขายสินค้า") ตอบภาษีไม่ได้ → ธุรกิจที่ขายของยกเว้น VAT ให้**เพิ่มหมวดแยกตาม tax behaviour** เช่น "ขายผัก-ผลไม้สด (ยกเว้น VAT)" = `OX` — แนวเดียวกับ template รายจ่ายที่แยก ค่ารับรอง/ค่าเช่า/ค่าขนส่ง เพราะภาษีต่างกัน
-3. ผู้ใช้แก้ค่าต่อบรรทัดได้เสมอ (suggestion ไม่ใช่ decision — กติกาเดียวกับ [expense-category-default-tax-code-spec](expense-category-default-tax-code-spec.md) §7); บรรทัดที่ยังไม่รู้ = บันทึกร่างได้ ยืนยันไม่ได้ พร้อมชี้บรรทัด
+3. ผู้ใช้แก้ค่าต่อบรรทัดได้เสมอ (suggestion ไม่ใช่ decision — กติกาเดียวกับ [expense-category-default-tax-code-spec](expense-category-default-tax-code-spec.md) §7); บรรทัดที่ยังไม่รู้ = ยืนยันไม่ได้และต้องชี้บรรทัด; การเก็บร่างแบบ durable รอคำตอบ LED-FIN-07 ห้ามใช้ `NO_VAT` ปลอมแทน
 4. บริษัทไม่จด VAT: ซ่อนทุกอย่าง default `NO_VAT` (V4)
 5. **ค่าจริงต่อหมวดต้องผ่านนักบัญชียืนยันก่อนตั้ง** (Owner ข้อ 5) — แหล่งอ้างอิงเบื้องต้นสำหรับหมวดยกเว้น: รายการกิจการยกเว้น VAT 28 ข้อ (ม.81 ประมวลรัษฎากร; สรุปโดย [บทความ rpacc.co.th ที่ Owner ส่งให้ 2026-08-26](https://www.rpacc.co.th/content/29454/) — ข้อที่พบบ่อยกับลูกค้ามั่งมี: พืชผลทางการเกษตร, สัตว์, ปุ๋ย/อาหารสัตว์, ขนส่งในประเทศ, เช่าอสังหาริมทรัพย์, วิชาชีพอิสระ, กิจการรายรับ ≤1.8 ล้าน/ปี) — ค่า production ต้องบันทึกผ่านกระบวนการ [tax-2026-verified-rules](tax-2026-verified-rules.md) พร้อมชื่อผู้ยืนยัน
    - ตัวอย่างที่พิสูจน์ว่าทำไม default ต้องรอนักบัญชี: **หมวดตั้งต้น "ค่าเช่า" ตอบภาษีไม่ได้ในตัวเอง** — เช่า**อสังหา**ริมทรัพย์ยกเว้น VAT (ข้อ 17 ของรายการ) แต่เช่า**สังหา**ริมทรัพย์ (เครื่องมือ/รถ) เสีย 7% → ตอนตั้งค่ากับนักบัญชีให้แยกเป็นสองหมวด ("ค่าเช่าอสังหาริมทรัพย์" = OX, "ค่าเช่าอุปกรณ์/ทรัพย์สินอื่น" = O7) หรือคง null ให้เลือกต่อบรรทัด — ห้ามตั้งค่าเดียวคลุม

@@ -1,4 +1,4 @@
-import { describe, it } from 'node:test';
+import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import type { RequestContext } from '@watchdog-bms/contracts';
 import { CreateDocumentUseCase } from './document.use-case';
@@ -7,7 +7,7 @@ import { RecordSimpleIncomeUseCase, simpleIncomePayloadFingerprint } from './rec
 
 const ctx: RequestContext = {
   requestId: 'request-1', authSubject: 'user-1', userId: 'user-1', companyId: 'company-1',
-  membershipId: 'membership-1', roles: [], scopes: { branchIds: [] }, authProvider: 'watchdog',
+  membershipId: 'membership-1', roles: [], scopes: {}, authProvider: 'watchdog',
   permissions: ['accounting.document.create', 'accounting.payment.create'],
 };
 
@@ -52,6 +52,22 @@ describe('P27 simple-income use-case boundary', () => {
     assert.equal(called, false);
   });
 
+  it('defaults a branch-restricted creator to the first permitted branch', async () => {
+    let persistedBranchId: string | undefined;
+    const useCase = new RecordSimpleIncomeUseCase(
+      { recordSimpleIncomeBundle: async (record: any) => {
+        persistedBranchId = record.branchId;
+        return { ...result, replayed: true };
+      } } as any,
+      { log: async () => undefined } as any,
+      { append: async () => undefined } as any,
+      { get: async () => ({ status: 'REGISTERED' }) } as any,
+    );
+
+    await useCase.execute({ ...fullCtx, scopes: { branchIds: ['branch-1'] } }, input);
+    assert.equal(persistedBranchId, 'branch-1');
+  });
+
   it('writes the audit inside the transaction and emits three events only for a new bundle', async () => {
     const events: string[] = [];
     let auditDb: unknown;
@@ -92,6 +108,18 @@ describe('P27 simple-income use-case boundary', () => {
       { get: async () => ({ status: 'NOT_REGISTERED' }) } as any,
     );
     await assert.rejects(() => useCase.execute(fullCtx, { ...input, vatMode: 'VAT_EXCLUDED' }));
+    assert.equal(called, false);
+  });
+
+  it('fails closed when the company has not confirmed its VAT status', async () => {
+    let called = false;
+    const useCase = new RecordSimpleIncomeUseCase(
+      { recordSimpleIncomeBundle: async () => { called = true; return result; } } as any,
+      { log: async () => undefined } as any,
+      { append: async () => undefined } as any,
+      { get: async () => ({ status: 'UNKNOWN' }) } as any,
+    );
+    await assert.rejects(() => useCase.execute(fullCtx, input), /must be confirmed/);
     assert.equal(called, false);
   });
 });
@@ -150,10 +178,48 @@ describe('H-05 use-case revalidation', () => {
     assert.equal(result.unappliedAmount, '50.00');
   });
 
+  it('inherits branch and counterparty from the allocation target and rejects mismatches', async () => {
+    let persisted: any;
+    const target = {
+      id: 'doc-1', documentType: 'INVOICE', status: 'ISSUED', currency: 'THB', branchId: 'branch-1',
+      counterpartyId: 'customer-1', outstandingAmount: '100.00',
+    };
+    const repo = {
+      findDocumentById: mock.fn(async () => target),
+      findActiveBranch: mock.fn(async () => ({ id: 'branch-1' })),
+      createPayment: mock.fn(async (value: any) => {
+        persisted = value;
+        return {
+          id: 'payment-1', direction: 'RECEIVED', status: 'RECORDED', method: 'BANK_TRANSFER',
+          amount: '100.00', whtAmount: '0.00', allocatedAmount: '100.00', unappliedAmount: '0.00',
+          currency: 'THB', paidAt: new Date(), postingStatus: 'pending', createdAt: new Date(), updatedAt: new Date(),
+        };
+      }),
+    };
+    const useCase = new CreatePaymentUseCase(
+      repo as any, { log: async () => undefined } as any, { append: async () => undefined } as any,
+    );
+    const branchCtx = { ...ctx, scopes: { branchIds: ['branch-1'] } };
+    await useCase.execute(branchCtx, { ...paymentInput('100.00'), allocateToDocumentId: 'doc-1' });
+    assert.equal(persisted.branchId, 'branch-1');
+    assert.equal(persisted.counterpartyId, 'customer-1');
+
+    await assert.rejects(() => useCase.execute(branchCtx, {
+      ...paymentInput('100.00'), allocateToDocumentId: 'doc-1', branchId: 'branch-2',
+    }), /same branch/);
+    await assert.rejects(() => useCase.execute(branchCtx, {
+      ...paymentInput('100.00'), allocateToDocumentId: 'doc-1', counterpartyId: 'customer-2',
+    }), /same counterparty/);
+    assert.equal(repo.createPayment.mock.callCount(), 1);
+  });
+
   it('rejects invalid document money before createDocument', async () => {
     let creates = 0;
     const repo = { createDocument: async () => { creates += 1; throw new Error('must not persist'); } };
-    const useCase = new CreateDocumentUseCase(repo as any, { log: async () => undefined } as any, {} as any);
+    const useCase = new CreateDocumentUseCase(
+      repo as any, { log: async () => undefined } as any, {} as any,
+      { get: async () => ({ status: 'REGISTERED' }) } as any,
+    );
 
     await assert.rejects(() => useCase.execute(ctx, {
       documentType: 'INVOICE', documentDate: '2026-07-18', vatMode: 'NO_VAT',

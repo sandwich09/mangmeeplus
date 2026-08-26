@@ -12,7 +12,7 @@ import {
   validateAccountingPaymentAllocation,
   validateAccountingPaymentMoneyInput,
 } from '../../domain/logic/accounting-money-validation.logic';
-import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
+import { isBranchInScope, resolveCreateBranchId } from '../../../data-model-core/domain/logic/branch.logic';
 import { civilPeriodKey, todayCivilDate } from '@watchdog-bms/contracts';
 
 @Injectable()
@@ -27,21 +27,39 @@ export class CreatePaymentUseCase {
     if (!ctx.permissions.includes('accounting.payment.create')) {
       throw new ForbiddenException('Missing permission: accounting.payment.create');
     }
-    if (!isBranchInScope(ctx.scopes, input.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
-    if (input.branchId && !(await this.repo.findActiveBranch(ctx.companyId, input.branchId))) {
-      throw new NotFoundException('Branch was not found in the current company.');
-    }
-
     const moneyError = validateAccountingPaymentMoneyInput(input);
     if (moneyError) throw new UnprocessableEntityException(moneyError);
+    let target: Awaited<ReturnType<PrismaAccountingRepository['findDocumentById']>> = null;
     if (input.allocateToDocumentId) {
-      const target = await this.repo.findDocumentById(ctx.companyId, input.allocateToDocumentId, ctx.scopes.branchIds);
+      target = await this.repo.findDocumentById(ctx.companyId, input.allocateToDocumentId, ctx.scopes.branchIds);
       if (!target) throw new NotFoundException('Payment allocation target was not found');
-      const allocationError = validateAccountingPaymentAllocation(input, target);
+      if (input.branchId !== undefined && input.branchId !== target.branchId) {
+        throw new UnprocessableEntityException('Payment and allocation target must use the same branch');
+      }
+      if (ctx.scopes.branchIds && !target.branchId) {
+        throw new ForbiddenException('A branch-restricted user cannot pay a company-central document');
+      }
+      if (input.counterpartyId !== undefined && input.counterpartyId !== target.counterpartyId) {
+        throw new UnprocessableEntityException('Payment and allocation target must use the same counterparty');
+      }
+    }
+    if (ctx.scopes.branchIds?.length === 0) throw new ForbiddenException('Branch is outside your assigned branch scope.');
+    const branchId = target?.branchId ?? resolveCreateBranchId(ctx.scopes, input.branchId) ?? undefined;
+    if (!isBranchInScope(ctx.scopes, branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
+    if (branchId && !(await this.repo.findActiveBranch(ctx.companyId, branchId))) {
+      throw new NotFoundException('Branch was not found in the current company.');
+    }
+    const resolvedInput = {
+      ...input,
+      branchId,
+      ...(target ? { counterpartyId: target.counterpartyId } : {}),
+    };
+    if (target) {
+      const allocationError = validateAccountingPaymentAllocation(resolvedInput, target);
       if (allocationError) throw new UnprocessableEntityException(allocationError);
     }
 
-    const result = await this.repo.createPayment({ ...input, companyId: ctx.companyId, createdByUserId: ctx.userId });
+    const result = await this.repo.createPayment({ ...resolvedInput, companyId: ctx.companyId, createdByUserId: ctx.userId });
 
     const unapplied = parseFloat(result.unappliedAmount);
     if (unapplied > 0) {

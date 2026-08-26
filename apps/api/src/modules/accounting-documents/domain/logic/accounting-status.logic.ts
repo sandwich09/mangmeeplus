@@ -248,7 +248,7 @@ export function isEligibleForCorrection(status: AccountingDocumentStatus): boole
   return status === 'ISSUED' || status === 'CREDITED' || status === 'DEBITED';
 }
 
-type CorrectionLineAmount = { lineNumber: number; taxBaseAmount?: string | null; taxableAmount?: string | null; lineSubtotalAmount?: string | null; transactionTaxAmount?: string | null; vatAmount?: string | null };
+type CorrectionLineAmount = { lineNumber: number; discountAmount?: string | null; taxBaseAmount?: string | null; taxableAmount?: string | null; lineSubtotalAmount?: string | null; transactionTaxAmount?: string | null; vatAmount?: string | null };
 type IssuedCorrectionAmounts = { documentType: 'CREDIT_NOTE' | 'DEBIT_NOTE'; lines: CorrectionLineAmount[] };
 
 /** Credit cannot exceed original plus issued debit increases, net of earlier issued credits. */
@@ -257,9 +257,12 @@ export function validateCumulativeCreditNote(
   creditLines: CorrectionLineAmount[],
   issuedCorrections: IssuedCorrectionAmounts[],
 ): string | null {
-  const value = (line: CorrectionLineAmount, tax: boolean) => new Decimal(
-    (tax ? line.transactionTaxAmount ?? line.vatAmount : line.taxBaseAmount ?? line.taxableAmount ?? line.lineSubtotalAmount) ?? 0,
-  ).abs();
+  const value = (line: CorrectionLineAmount, tax: boolean) => {
+    if (tax) return new Decimal(line.transactionTaxAmount ?? line.vatAmount ?? 0).abs();
+    if (line.taxBaseAmount !== undefined && line.taxBaseAmount !== null) return new Decimal(line.taxBaseAmount).abs();
+    if (line.taxableAmount !== undefined && line.taxableAmount !== null) return new Decimal(line.taxableAmount).abs();
+    return new Decimal(line.lineSubtotalAmount ?? 0).sub(line.discountAmount ?? 0).abs();
+  };
   for (const credit of creditLines) {
     const original = originalLines.find((line) => line.lineNumber === credit.lineNumber);
     if (!original) return `Credit note line ${credit.lineNumber} has no matching original line`;

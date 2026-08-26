@@ -223,6 +223,19 @@ describe('validateCumulativeCreditNote', () => {
     const history = [{ documentType: 'DEBIT_NOTE' as const, lines: [{ lineNumber: 1, taxBaseAmount: '20', transactionTaxAmount: '1.4' }] }];
     assert.equal(validateCumulativeCreditNote(original, [{ lineNumber: 1, taxBaseAmount: '-120', transactionTaxAmount: '-8.4' }], history), null);
   });
+  it('caps a non-tax credit at the discounted source amount', () => {
+    const original = [{ lineNumber: 1, lineSubtotalAmount: '100', discountAmount: '20', vatAmount: '0' }];
+    assert.match(validateCumulativeCreditNote(
+      original,
+      [{ lineNumber: 1, lineSubtotalAmount: '90', discountAmount: '0', vatAmount: '0' }],
+      [],
+    ) ?? '', /exceeds/);
+    assert.equal(validateCumulativeCreditNote(
+      original,
+      [{ lineNumber: 1, lineSubtotalAmount: '80', discountAmount: '0', vatAmount: '0' }],
+      [],
+    ), null);
+  });
   it('uses the persisted line subtotal for non-tax invoice corrections', () => {
     assert.equal(validateCumulativeCreditNote(
       [{ lineNumber: 1, lineSubtotalAmount: '100', vatAmount: '0' }],

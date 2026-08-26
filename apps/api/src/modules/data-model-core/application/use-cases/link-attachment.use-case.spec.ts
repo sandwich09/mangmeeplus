@@ -12,7 +12,7 @@ const context = (permissions: string[]): RequestContext => ({
   membershipId: 'mem-1',
   roles: [],
   permissions,
-  scopes: {},
+  scopes: { branchIds: ['branch-1'] },
   authProvider: 'dev',
 });
 
@@ -71,6 +71,7 @@ describe('LinkAttachmentUseCase', () => {
     });
     const input = (repository.linkToTarget.mock.calls as any[])[0]?.arguments[0];
     assert.equal(input.companyId, 'co-1');
+    assert.deepEqual(input.branchIds, ['branch-1']);
     assert.equal(input.targetOwnerUserId, 'user-1');
   });
 
@@ -84,5 +85,42 @@ describe('LinkAttachmentUseCase', () => {
     });
     const input = (repository.linkToTarget.mock.calls as any[])[0]?.arguments[0];
     assert.equal(input.targetOwnerUserId, undefined);
+  });
+
+  it('allows an accounting creator to link support only to a document they created', async () => {
+    const { useCase, repository } = setup();
+    await useCase.execute(context(['attachment.create', 'accounting.invoice.create']), {
+      attachmentId: 'att-1',
+      targetType: 'accounting.document',
+      targetId: 'invoice-1',
+      purpose: 'accounting.document.supporting',
+    });
+    const input = (repository.linkToTarget.mock.calls as any[])[0]?.arguments[0];
+    assert.equal(input.companyId, 'co-1');
+    assert.equal(input.targetOwnerUserId, 'user-1');
+  });
+
+  it('does not let an accounting reader attach files', async () => {
+    const { useCase, repository } = setup();
+    await assert.rejects(
+      () => useCase.execute(context(['attachment.create', 'accounting.document.read']), {
+        attachmentId: 'att-1', targetType: 'accounting.document', targetId: 'invoice-1',
+        purpose: 'accounting.document.supporting',
+      }),
+      ForbiddenException,
+    );
+    assert.equal(repository.linkToTarget.mock.callCount(), 0);
+  });
+
+  it('does not accept an unrelated accounting mutation permission', async () => {
+    const { useCase, repository } = setup();
+    await assert.rejects(
+      () => useCase.execute(context(['attachment.create', 'accounting.payment.create']), {
+        attachmentId: 'att-1', targetType: 'accounting.document', targetId: 'invoice-1',
+        purpose: 'accounting.document.supporting',
+      }),
+      ForbiddenException,
+    );
+    assert.equal(repository.linkToTarget.mock.callCount(), 0);
   });
 });

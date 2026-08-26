@@ -61,6 +61,8 @@ export type DocumentLineRecord = {
   whtAmount: string;
   lineSubtotalAmount: string;
   lineTotalAmount: string;
+  /** Current source-line value after earlier issued credit/debit notes; detail reads only. */
+  correctionBasisAmount?: string;
   taxCategory?: string;
   revenueCategory?: string;
   revenueCategoryId?: string;
@@ -232,6 +234,9 @@ export type CreateDocumentInput = {
   sourceDocumentId?: string;
   sourceDocumentType?: string;
   convertedFromDocumentId?: string;
+  idempotencyKey?: string;
+  /** Server-computed only; presentation DTOs must never accept this field. */
+  payloadFingerprint?: string;
   currency?: string;
   vatMode: AccountingVatMode;
   outputTaxCode?: AccountingOutputTaxCode;

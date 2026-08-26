@@ -1768,6 +1768,10 @@ model AccountingDocument {
   sourceDocumentId            String?
   sourceDocumentType          String?
   convertedFromDocumentId     String?
+  // Optional client retry fence for the generic invoice-draft command. The fingerprint is
+  // server-computed; both remain private persistence metadata and are never serialized.
+  createIdempotencyKey        String?
+  createPayloadFingerprint    String?
   currency                    String                                    @default("THB")
   vatMode                     AccountingVatMode                         @default(NO_VAT)
   outputTaxCode               AccountingOutputTaxCode?
@@ -1826,6 +1830,7 @@ model AccountingDocument {
   simpleIncomeReceiptCommands AccountingSimpleIncomeCommand[]           @relation("SimpleIncomeReceipt")
 
   @@unique([companyId, documentType, documentNumber])
+  @@unique([companyId, createIdempotencyKey])
   @@unique([companyId, id])
   @@index([companyId, documentType, status])
   @@index([companyId, branchId, documentDate])
