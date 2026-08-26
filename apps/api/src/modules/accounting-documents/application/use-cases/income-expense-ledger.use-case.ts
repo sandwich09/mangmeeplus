@@ -80,6 +80,14 @@ function incomeEntryDocumentWhere() {
   };
 }
 
+function scopedRevenueRootDocumentWhere(scope: Record<string, unknown>) {
+  return { AND: [scope, revenueRootDocumentWhere()] };
+}
+
+function scopedIncomeEntryDocumentWhere(scope: Record<string, unknown>) {
+  return { AND: [scope, incomeEntryDocumentWhere()] };
+}
+
 @Injectable()
 export class IncomeExpenseLedgerUseCase {
   constructor(
@@ -115,7 +123,7 @@ export class IncomeExpenseLedgerUseCase {
       this.prisma.client.$transaction(async (tx: any) => {
         const income = canIncome ? await Promise.all([
           tx.accountingDocument.aggregate({
-            where: { companyId: ctx.companyId, ...scope, ...revenueRootDocumentWhere(), status: { in: [...ISSUED_STATUSES] }, documentDate: civilRange },
+            where: { companyId: ctx.companyId, ...scopedRevenueRootDocumentWhere(scope), status: { in: [...ISSUED_STATUSES] }, documentDate: civilRange },
             _sum: { grandTotalAmount: true },
           }),
           tx.accountingDocument.aggregate({
@@ -127,12 +135,12 @@ export class IncomeExpenseLedgerUseCase {
             _sum: { amount: true, whtAmount: true },
           }),
           tx.accountingDocument.aggregate({
-            where: { companyId: ctx.companyId, ...scope, ...revenueRootDocumentWhere(), status: { in: [...ISSUED_STATUSES] }, outstandingAmount: { gt: 0 } },
+            where: { companyId: ctx.companyId, ...scopedRevenueRootDocumentWhere(scope), status: { in: [...ISSUED_STATUSES] }, outstandingAmount: { gt: 0 } },
             _sum: { outstandingAmount: true },
           }),
           tx.accountingDocumentLine.groupBy({
             by: ['revenueCategoryId', 'revenueCategory'],
-            where: { companyId: ctx.companyId, document: { is: { ...scope, ...revenueRootDocumentWhere(), status: { in: [...ISSUED_STATUSES] }, documentDate: civilRange } } },
+            where: { companyId: ctx.companyId, document: { is: { ...scopedRevenueRootDocumentWhere(scope), status: { in: [...ISSUED_STATUSES] }, documentDate: civilRange } } },
             _sum: { lineTotalAmount: true },
           }),
           tx.accountingDocumentLine.groupBy({
@@ -254,8 +262,8 @@ export class IncomeExpenseLedgerUseCase {
 
     const result = await this.prisma.client.$transaction(async (tx: any) => {
       const documentWhere = includeIncome ? {
-        companyId: ctx.companyId, ...scope,
-        ...(type === 'RECEIVABLE' ? revenueRootDocumentWhere() : incomeEntryDocumentWhere()),
+        companyId: ctx.companyId,
+        ...(type === 'RECEIVABLE' ? scopedRevenueRootDocumentWhere(scope) : scopedIncomeEntryDocumentWhere(scope)),
         status: type === 'RECEIVABLE' ? { in: [...ISSUED_STATUSES] } : filter.status ?? { in: [...ISSUED_STATUSES] },
         ...(type === 'RECEIVABLE' ? { outstandingAmount: { gt: 0 } } : { documentDate: civilRange }),
         ...(filter.categoryId ? { lines: { some: { revenueCategoryId: filter.categoryId } } } : {}),

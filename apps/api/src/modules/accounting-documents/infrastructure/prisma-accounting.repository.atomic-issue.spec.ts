@@ -346,6 +346,13 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
     try {
       await client.company.create({ data: { id: ledgerCompanyId, name: 'P27 ledger test' } });
       await client.companyTaxProfile.create({ data: { companyId: ledgerCompanyId, accountingPeriodMonth: 12 } });
+      const allowedBranch = await client.branch.create({ data: {
+        companyId: ledgerCompanyId, code: 'P27-ALLOWED', name: 'สาขาที่มีสิทธิ์', type: 'BRANCH', createdByUserId: ctx.userId,
+      } });
+      const forbiddenBranch = await client.branch.create({ data: {
+        companyId: ledgerCompanyId, code: 'P27-FORBIDDEN', name: 'สาขาที่ไม่มีสิทธิ์', type: 'BRANCH', createdByUserId: ctx.userId,
+      } });
+      ctx.scopes = { branchIds: [allowedBranch.id] };
       const counterparty = await client.accountingCounterparty.create({ data: {
         companyId: ledgerCompanyId, type: 'CUSTOMER', displayName: 'ลูกค้าทดสอบ', createdByUserId: ctx.userId,
       } });
@@ -366,6 +373,26 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
       await client.accountingDocumentLine.create({ data: {
         companyId: ledgerCompanyId, documentId: creditNote.id, lineNumber: 1, description: 'ลดราคาทดสอบ',
         quantity: '1', unitPrice: '10', lineSubtotalAmount: '10', lineTotalAmount: '10',
+      } });
+      const allowedBranchInvoice = await client.accountingDocument.create({ data: {
+        companyId: ledgerCompanyId, branchId: allowedBranch.id, documentType: 'INVOICE',
+        documentNumber: 'INV-P27-ALLOWED-0001', status: 'ISSUED', documentDate: new Date('2026-08-03T00:00:00.000Z'),
+        dueDate: new Date('2026-08-20T00:00:00.000Z'), subtotalAmount: '20', taxableAmount: '20', grandTotalAmount: '20',
+        paidAmount: '0', outstandingAmount: '20', paymentStatus: 'UNPAID', vatMode: 'NO_VAT', createdByUserId: ctx.userId,
+      } });
+      await client.accountingDocumentLine.create({ data: {
+        companyId: ledgerCompanyId, documentId: allowedBranchInvoice.id, lineNumber: 1, description: 'รายรับสาขาที่มีสิทธิ์',
+        quantity: '1', unitPrice: '20', lineSubtotalAmount: '20', lineTotalAmount: '20',
+      } });
+      const forbiddenBranchInvoice = await client.accountingDocument.create({ data: {
+        companyId: ledgerCompanyId, branchId: forbiddenBranch.id, documentType: 'INVOICE',
+        documentNumber: 'INV-P27-FORBIDDEN-0001', status: 'ISSUED', documentDate: new Date('2026-08-03T00:00:00.000Z'),
+        dueDate: new Date('2026-08-20T00:00:00.000Z'), subtotalAmount: '900', taxableAmount: '900', grandTotalAmount: '900',
+        paidAmount: '0', outstandingAmount: '900', paymentStatus: 'UNPAID', vatMode: 'NO_VAT', createdByUserId: ctx.userId,
+      } });
+      await client.accountingDocumentLine.create({ data: {
+        companyId: ledgerCompanyId, documentId: forbiddenBranchInvoice.id, lineNumber: 1, description: 'รายรับสาขาที่ไม่มีสิทธิ์',
+        quantity: '1', unitPrice: '900', lineSubtotalAmount: '900', lineTotalAmount: '900',
       } });
       const ytdInvoice = await client.accountingDocument.create({ data: {
         companyId: ledgerCompanyId, documentType: 'INVOICE', documentNumber: 'INV-P27-YTD-0001', status: 'ISSUED',
@@ -446,8 +473,8 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
         expense: summary.expense.recordedExpenseTotal, paid: summary.expense.paidExpenseTotal,
         cashDifference: summary.cashDifference, documentDifference: summary.documentDifference,
       }, {
-        sales: '90.00', received: '100.00', wht: '3.00', outstanding: '0.00',
-        expense: '50.00', paid: '20.00', cashDifference: '80.00', documentDifference: '40.00',
+        sales: '110.00', received: '100.00', wht: '3.00', outstanding: '20.00',
+        expense: '50.00', paid: '20.00', cashDifference: '80.00', documentDifference: '60.00',
       });
       const incomeOnly = await ledger.summary({ ...ctx, permissions: ['accounting.document.read'] }, '2026-08-01', '2026-08-31');
       assert.equal(incomeOnly.income.available, true);
@@ -469,7 +496,7 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
       );
       assert.deepEqual(companyWide.income.vatRegistrationAlert, {
         level: 'APPROACHING', periodBasis: 'ACCOUNTING_PERIOD', periodStart: '2026-01-01', periodEnd: '2026-08-27',
-        salesDocumentTotal: '1525090.00', thresholdAmount: '1800000.00',
+        salesDocumentTotal: '1526010.00', thresholdAmount: '1800000.00',
       });
       assert.equal(vatStatusReads, 1);
 
@@ -505,8 +532,9 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
       );
 
       const entries = await ledger.entries(ctx, { type: 'ALL', from: '2026-08-01', to: '2026-08-31' });
-      assert.equal(entries.total, 3, 'evidence-only receipt is not a second income row');
+      assert.equal(entries.total, 4, 'evidence-only receipt and the forbidden branch are not income rows');
       assert.deepEqual(new Set(entries.data.map((row) => row.side)), new Set(['INCOME', 'EXPENSE']));
+      assert.equal(entries.data.some((row) => row.id === forbiddenBranchInvoice.id), false);
       const incomeEntry = entries.data.find((row) => row.id === incomeBundle.invoice.id)!;
       assert.match(incomeEntry.evidenceHref, /\/sales-documents\?documentId=/);
       assert.equal(incomeEntry.dueDate, '2026-08-15');
@@ -516,10 +544,12 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
       assert.equal(creditEntry?.amount, '-10.00');
       assert.equal(creditEntry?.outstandingAmount, undefined, 'credit notes reduce income but never display as receivable');
       const receivables = await ledger.entries(ctx, { type: 'RECEIVABLE', from: '2026-08-01', to: '2026-08-31' });
-      assert.equal(receivables.total, 0, 'credit notes are reductions, never receivable payment targets');
+      assert.equal(receivables.total, 1, 'only the allowed-branch invoice is receivable');
+      assert.equal(receivables.data[0]?.id, allowedBranchInvoice.id);
       const exported = await ledger.export(ctx, { type: 'ALL', from: '2026-08-01', to: '2026-08-31' });
-      assert.equal(exported.rowCount, 3);
+      assert.equal(exported.rowCount, 4);
       assert.match(exported.csv, /รายรับ/);
+      assert.doesNotMatch(exported.csv, /INV-P27-FORBIDDEN-0001/);
       assert.ok(Buffer.from(exported.xlsxBase64, 'base64').subarray(0, 2).equals(Buffer.from('PK')));
     } finally {
       await client.accountingSimpleIncomeCommand.deleteMany({ where: { companyId: ledgerCompanyId } });
