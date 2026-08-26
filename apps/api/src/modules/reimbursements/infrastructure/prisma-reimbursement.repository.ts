@@ -2264,7 +2264,10 @@ export class PrismaReimbursementRepository {
             data: {
               paymentStatus: 'UNPAID',
               paidAmount: '0.0000',
-              outstandingAmount: projection.netPayableAmount,
+              // FIN-01: reset to the satang outstanding the expense page prints, not the raw
+              // 4dp payable of a legacy projection — otherwise the void leaves a residue that
+              // can never be settled (mirrors the expense-side reset).
+              outstandingAmount: computeOutstanding(dec(projection.netPayableAmount), '0'),
               paymentMethod: null,
               paidAt: null,
               updatedByUserId: actorUserId,

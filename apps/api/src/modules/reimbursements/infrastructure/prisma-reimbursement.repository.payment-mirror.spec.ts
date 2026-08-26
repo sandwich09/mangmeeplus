@@ -9,11 +9,11 @@ import { PrismaReimbursementRepository } from './prisma-reimbursement.repository
 const PAID_AT = new Date('2026-08-10T04:00:00.000Z');
 const VERSION = new Date('2026-08-10T01:00:00.000Z');
 
-function recordHarness() {
+function recordHarness(amount = '289.0000', netPayable = amount) {
   const expenseUpdates: any[] = [];
   const request: any = {
     id: 'rb-1', companyId: 'co-1', status: 'READY_FOR_PAYMENT', updatedAt: VERSION,
-    amount: '289.0000', paymentTotalAmount: '0.0000', outstandingAmount: '289.0000',
+    amount, paymentTotalAmount: '0.0000', outstandingAmount: amount,
     financeReviewStatus: 'APPROVED_FOR_PAYMENT', requesterDisplayNameSnapshot: 'sandwich',
     lines: [], approvalSteps: [], payments: [], duplicateCandidates: [],
     createdAt: VERSION, paymentStatus: 'UNPAID', duplicateStatus: 'NO_MATCH',
@@ -43,7 +43,7 @@ function recordHarness() {
       findMany: async ({ where }: any) => {
         assert.equal(where.sourceReimbursementRequestId, 'rb-1');
         assert.equal(where.status, 'CONFIRMED');
-        return [{ id: 'exp-2', netPayableAmount: '289.0000' }];
+        return [{ id: 'exp-2', netPayableAmount: netPayable }];
       },
       update: async (args: any) => { expenseUpdates.push(args); return {}; },
     },
@@ -52,7 +52,46 @@ function recordHarness() {
   const repo = new PrismaReimbursementRepository({ client } as any, {} as any);
   // Projection readiness runs its own queries; the mirror is what this spec pins.
   (repo as any).assertClaimProjectionsReady = async () => undefined;
-  return { repo, expenseUpdates };
+  return { repo, expenseUpdates, request };
+}
+
+function voidHarness(amount = '289.0000', paidAmount = amount, netPayable = amount) {
+  const expenseUpdates: any[] = [];
+  const request: any = {
+    id: 'rb-1', companyId: 'co-1', status: 'PAID', amount,
+    paymentTotalAmount: paidAmount, outstandingAmount: '0.0000', paymentStatus: 'PAID',
+    requesterDisplayNameSnapshot: 'sandwich', lines: [], approvalSteps: [], payments: [],
+    duplicateCandidates: [], claimSignatures: [], createdAt: VERSION, updatedAt: VERSION,
+    duplicateStatus: 'NO_MATCH', receiptRequirementStatus: 'ATTACHED', postingStatus: 'not_required',
+    financeReviewStatus: 'APPROVED_FOR_PAYMENT', requesterUserId: 'staff-1', reason: 'r',
+    categoryKey: 'other', currency: 'THB', incurredDate: VERSION, createdByUserId: 'staff-1',
+  };
+  const tx: any = {
+    reimbursementPayment: {
+      updateMany: async () => ({ count: 1 }),
+      findFirstOrThrow: async () => ({
+        id: 'pay-1', companyId: 'co-1', reimbursementRequestId: 'rb-1', paidAmount,
+        currency: 'THB', paymentMethod: 'BANK_TRANSFER', paidAt: PAID_AT, status: 'VOIDED',
+        postingStatus: 'pending', paidByUserId: 'finance-1', createdAt: VERSION, updatedAt: VERSION,
+      }),
+      update: async ({ data }: any) => data,
+    },
+    journalEntry: { findFirst: async () => null },
+    reimbursementRequest: {
+      findFirstOrThrow: async () => request,
+      update: async ({ data }: any) => { Object.assign(request, data); return request; },
+    },
+    expenseRecord: {
+      findMany: async ({ where }: any) => {
+        assert.equal(where.paymentStatus, 'PAID');
+        return [{ id: 'exp-2', netPayableAmount: netPayable }];
+      },
+      update: async (args: any) => { expenseUpdates.push(args); return {}; },
+    },
+  };
+  const client: any = { $transaction: async (work: (t: any) => Promise<unknown>) => work(tx) };
+  const repo = new PrismaReimbursementRepository({ client } as any, {} as any);
+  return { repo, expenseUpdates, request };
 }
 
 describe('reimbursement payout mirrors the claim expense projections', () => {
@@ -73,41 +112,7 @@ describe('reimbursement payout mirrors the claim expense projections', () => {
   });
 
   it('reverts projections to unpaid when the payout is voided', async () => {
-    const expenseUpdates: any[] = [];
-    const request: any = {
-      id: 'rb-1', companyId: 'co-1', status: 'PAID', amount: '289.0000',
-      paymentTotalAmount: '289.0000', outstandingAmount: '0.0000', paymentStatus: 'PAID',
-      requesterDisplayNameSnapshot: 'sandwich', lines: [], approvalSteps: [], payments: [],
-      duplicateCandidates: [], claimSignatures: [], createdAt: VERSION, updatedAt: VERSION,
-      duplicateStatus: 'NO_MATCH', receiptRequirementStatus: 'ATTACHED', postingStatus: 'not_required',
-      financeReviewStatus: 'APPROVED_FOR_PAYMENT', requesterUserId: 'staff-1', reason: 'r',
-      categoryKey: 'other', currency: 'THB', incurredDate: VERSION, createdByUserId: 'staff-1',
-    };
-    const tx: any = {
-      reimbursementPayment: {
-        updateMany: async () => ({ count: 1 }),
-        findFirstOrThrow: async () => ({
-          id: 'pay-1', companyId: 'co-1', reimbursementRequestId: 'rb-1', paidAmount: '289.0000',
-          currency: 'THB', paymentMethod: 'BANK_TRANSFER', paidAt: PAID_AT, status: 'VOIDED',
-          postingStatus: 'pending', paidByUserId: 'finance-1', createdAt: VERSION, updatedAt: VERSION,
-        }),
-        update: async ({ data }: any) => data,
-      },
-      journalEntry: { findFirst: async () => null },
-      reimbursementRequest: {
-        findFirstOrThrow: async () => request,
-        update: async ({ data }: any) => { Object.assign(request, data); return request; },
-      },
-      expenseRecord: {
-        findMany: async ({ where }: any) => {
-          assert.equal(where.paymentStatus, 'PAID');
-          return [{ id: 'exp-2', netPayableAmount: '289.0000' }];
-        },
-        update: async (args: any) => { expenseUpdates.push(args); return {}; },
-      },
-    };
-    const client: any = { $transaction: async (work: (t: any) => Promise<unknown>) => work(tx) };
-    const repo = new PrismaReimbursementRepository({ client } as any, {} as any);
+    const { repo, expenseUpdates, request } = voidHarness();
     await repo.voidPaymentTrueReversal('co-1', 'rb-1', 'pay-1', 'finance-1', 'โอนผิดบัญชี');
 
     assert.equal(expenseUpdates.length, 1);
@@ -115,6 +120,38 @@ describe('reimbursement payout mirrors the claim expense projections', () => {
       paymentStatus: 'UNPAID', paidAmount: '0.0000', outstandingAmount: '289.0000',
       paymentMethod: null, paidAt: null, updatedByUserId: 'finance-1',
     });
+    assert.equal(request.status, 'READY_FOR_PAYMENT');
+  });
+
+  // FIN-01: a pre-satang claim stores a 4dp amount whose printed outstanding is the satang
+  // rounding. Paying that printed figure must settle claim and projections, and voiding it
+  // must reset them to the same printed figure — never to an unpayable 4dp residue.
+  it('settles a legacy 4dp claim paid at its displayed satang amount', async () => {
+    const { repo, expenseUpdates, request } = recordHarness('580.0042');
+    await repo.recordPaymentAtomic({
+      companyId: 'co-1', reimbursementRequestId: 'rb-1', idempotencyKey: 'k-1',
+      paidAmount: '580.00', currency: 'THB', paymentMethod: 'BANK_TRANSFER',
+      paidAt: PAID_AT, paymentReference: 'TRX-123', paidByUserId: 'finance-1',
+    });
+
+    assert.equal(request.paymentStatus, 'PAID');
+    assert.equal(request.status, 'PAID');
+    assert.equal(request.outstandingAmount, '0.0000');
+    assert.equal(expenseUpdates.length, 1);
+    assert.equal(expenseUpdates[0].data.paymentStatus, 'PAID');
+    assert.equal(expenseUpdates[0].data.outstandingAmount, '0.0000');
+  });
+
+  it('resets a legacy 4dp projection to its satang outstanding on void', async () => {
+    const { repo, expenseUpdates, request } = voidHarness('580.0042', '580.00');
+    await repo.voidPaymentTrueReversal('co-1', 'rb-1', 'pay-1', 'finance-1', 'โอนผิดบัญชี');
+
+    assert.equal(expenseUpdates.length, 1);
+    assert.deepEqual(expenseUpdates[0].data, {
+      paymentStatus: 'UNPAID', paidAmount: '0.0000', outstandingAmount: '580.0000',
+      paymentMethod: null, paidAt: null, updatedByUserId: 'finance-1',
+    });
+    assert.equal(request.outstandingAmount, '580.0000');
     assert.equal(request.status, 'READY_FOR_PAYMENT');
   });
 });

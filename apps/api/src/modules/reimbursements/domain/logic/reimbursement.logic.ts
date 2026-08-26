@@ -12,6 +12,11 @@ import type {
   ReimbursementReceiptRequirementStatus,
   ReimbursementPolicySnapshotV1,
 } from '@watchdog-bms/contracts';
+// FIN-01: one settlement tolerance across the app. Shared, not copied, because the
+// reimbursements module already depends on expenses (projection orchestrator, evidence
+// service, repository) and expenses never depends back — this is a pure Decimal constant,
+// so the "no Nest / Prisma" rule above still holds.
+import { SETTLE_EPSILON } from '../../../expenses/domain/logic/expense-totals.logic';
 
 // ---- Money helpers ----
 
@@ -362,9 +367,13 @@ export function validatePaymentRecording(input: PaymentEligibilityInput): string
   if (!paid.gt(0)) return 'payment_amount_invalid';
 
   const outstanding = d(input.outstandingAmount);
-  if (paid.gt(outstanding)) return 'payment_over_approved_amount';
-  // MVP: full payment only — paid must equal the outstanding amount exactly.
-  if (!paid.eq(outstanding)) return 'partial_payment_not_allowed';
+  // FIN-01: a legacy 4dp claim (580.0042) prints and displays its satang rounding (580.00),
+  // and that is the only figure the payer can transfer. Both guards therefore work to half a
+  // satang, so paying the displayed outstanding is accepted and settles the claim. A real
+  // over- or underpayment (a satang or more either way) is still refused.
+  if (paid.sub(outstanding).gt(SETTLE_EPSILON)) return 'payment_over_approved_amount';
+  // MVP: full payment only — paid must clear the outstanding amount within the satang tolerance.
+  if (outstanding.sub(paid).gte(SETTLE_EPSILON)) return 'partial_payment_not_allowed';
 
   if (!validatePaymentReference(input.paymentMethod, input.paymentReference)) return 'payment_reference_required';
   return null;
@@ -379,15 +388,18 @@ export function validatePaymentReference(method: ReimbursementPaymentMethod, ref
 
 // ---- Payment totals ----
 
+/** Satang policy (FIN-01): the stored outstanding is the figure the UI prints, so sub-satang
+ * residue on a legacy 4dp claim reads and stores as 0.00 instead of an unpayable 0.0042. */
 export function computeOutstanding(approvedAmount: string, paymentTotal: string): string {
-  const outstanding = d(approvedAmount).sub(d(paymentTotal));
-  return decStr(outstanding.lt(0) ? d(0) : outstanding);
+  const outstanding = Decimal.max(d(approvedAmount).sub(d(paymentTotal)), 0);
+  return normalizeReimbursementAmount(outstanding.toFixed(4));
 }
 
 export function computePaymentStatus(approvedAmount: string, paymentTotal: string): 'UNPAID' | 'PARTIALLY_PAID' | 'PAID' {
   const total = d(paymentTotal);
   if (total.lte(0)) return 'UNPAID';
-  if (total.gte(d(approvedAmount))) return 'PAID';
+  // Half a satang forgives only sub-satang residue — a real 0.01 shortfall stays PARTIALLY_PAID.
+  if (d(approvedAmount).sub(total).lt(SETTLE_EPSILON)) return 'PAID';
   return 'PARTIALLY_PAID';
 }
 
