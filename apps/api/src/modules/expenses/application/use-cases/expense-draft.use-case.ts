@@ -31,6 +31,8 @@ import type { ExpenseLineInput, ExpenseRecord, ExpenseRecordWithRelations, Pagin
 import type { RequestContext, CreateExpenseDraftInput, UpdateExpenseDraftInput, ListExpensesFilter, ExpenseStatus, ExpenseVatSourceOverrideInput } from '@watchdog-bms/contracts';
 import { expenseVatReconciliationMessage, isBlockingExpenseVatReconciliation } from '@watchdog-bms/contracts';
 import { ExpenseTransactionTaxService, type ExpenseTaxLineSelection } from '../services/expense-transaction-tax.service';
+import { LaunchGateGuardService } from '../../../feature-launch/application/launch-gate.guard';
+import { assertExpenseRootOpen } from '../expense-launch-gate';
 import { ReserveDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/reserve-document-number.use-case';
 import { CommitDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/commit-document-number.use-case';
 import { CancelDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/cancel-document-number.use-case';
@@ -62,11 +64,14 @@ function assertBranchInScope(ctx: RequestContext, branchId: string | null | unde
 
 @Injectable()
 export class CreateExpenseDraftUseCase {
-  constructor(private readonly repo: PrismaExpenseRepository, private readonly audit: AuditService, private readonly transactionTax: ExpenseTransactionTaxService) {}
+  constructor(private readonly repo: PrismaExpenseRepository, private readonly audit: AuditService, private readonly transactionTax: ExpenseTransactionTaxService, private readonly launchGate: LaunchGateGuardService) {}
 
   async execute(ctx: RequestContext, input: CreateExpenseDraftInput): Promise<ExpenseRecord> {
     const canCreate = hasPerm(ctx, 'expense.create') || hasPerm(ctx, 'expense.receipt.upload') || hasPerm(ctx, 'expense.receipt.line_upload');
     if (!canCreate) throw new ForbiddenException('Missing permission: expense.create');
+    // One of the two roots of the expenses journey — the manual draft. Guarded here rather than in
+    // the controller so every caller of the use case is covered, LINE note capture included.
+    await assertExpenseRootOpen(this.launchGate, this.audit, ctx, 'expense.create');
     assertBranchInScope(ctx, input.branchId);
     const branchId = resolveCreateBranchId(ctx.scopes ?? {}, input.branchId);
 

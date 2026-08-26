@@ -66,6 +66,7 @@ import { GetExpenseCapturePolicyUseCase } from './application/use-cases/expense-
 import { RequestReceiptExtractionUseCase } from './application/use-cases/expense-extraction.use-case';
 import { ReceiptOcrClient } from './infrastructure/receipt-ocr.client';
 import { TaxModule } from '../tax/tax.module';
+import { FeatureLaunchModule } from '../feature-launch/feature-launch.module';
 import { ExpenseTransactionTaxService } from './application/services/expense-transaction-tax.service';
 import { DeleteExpenseUseCase } from './application/use-cases/delete-expense.use-case';
 import { CorrectLineCapturedExpenseUseCase } from './application/use-cases/line-correction.use-case';
@@ -73,7 +74,9 @@ import { LineSubstituteReceiptContinuationUseCase } from './application/use-case
 import { LineExpenseDraftConversationUseCase } from './application/use-cases/line-expense-draft-conversation.use-case';
 
 @Module({
-  imports: [AuditModule, DashboardNotificationsModule, DataModelCoreModule, TaxModule],
+  // FeatureLaunchModule supplies the guard that fences the two roots of the expenses journey
+  // (manual draft, receipt upload) on `expenses/DEFAULT`.
+  imports: [AuditModule, DashboardNotificationsModule, DataModelCoreModule, TaxModule, FeatureLaunchModule],
   controllers: [ExpenseController, ExpenseCategoryController, ExpenseSignatureController, ExpenseSettingsController, CompanySubstituteReceiptController],
   providers: [
     PrismaExpenseRepository,

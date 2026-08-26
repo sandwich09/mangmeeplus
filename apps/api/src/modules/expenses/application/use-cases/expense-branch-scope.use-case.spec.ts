@@ -16,6 +16,7 @@ import { REQUIRED_PERMISSIONS_KEY } from '../../../../common/security/permission
 
 const audit = { log: async () => undefined } as any;
 const transactionTax = { resolveLines: async (_ctx: unknown, _header: unknown, lines: unknown[]) => lines } as any;
+const launchGate = { assertLaunchRouteOpen: async () => undefined } as any;
 const numberServices = [
   { execute: async () => ({ id: 'number-1', documentNumber: 'EXP-202607-00001' }) } as any,
   { execute: async () => undefined } as any,
@@ -87,20 +88,20 @@ describe('CreateExpenseDraftUseCase branch tagging', () => {
 
   it('tags a branch-restricted creator with their first scoped branch (default branch first)', async () => {
     const { repo, created } = makeRepo();
-    await new CreateExpenseDraftUseCase(repo, audit, transactionTax).execute(ctx(['b-default', 'b-2']), input);
+    await new CreateExpenseDraftUseCase(repo, audit, transactionTax, launchGate).execute(ctx(['b-default', 'b-2']), input);
     assert.equal(created[0].branchId, 'b-default');
   });
 
   it('leaves unrestricted creators on company-central (no branch)', async () => {
     const { repo, created } = makeRepo();
-    await new CreateExpenseDraftUseCase(repo, audit, transactionTax).execute(ctx(undefined), input);
+    await new CreateExpenseDraftUseCase(repo, audit, transactionTax, launchGate).execute(ctx(undefined), input);
     assert.equal(created[0].branchId, undefined);
     assert.equal(created[0].vatCaptureSnapshotJson, undefined, 'a pre-OCR draft must not invent reviewer source precedence');
   });
 
   it('stores a snapshot when the creator explicitly supplies the document VAT source', async () => {
     const { repo, created } = makeRepo();
-    await new CreateExpenseDraftUseCase(repo, audit, transactionTax).execute(ctx(undefined), {
+    await new CreateExpenseDraftUseCase(repo, audit, transactionTax, launchGate).execute(ctx(undefined), {
       ...input,
       vatMode: 'VAT_INCLUDED',
       vatSource: { inputType: 'AMOUNT', vatAmount: '7.00' },
@@ -113,7 +114,7 @@ describe('CreateExpenseDraftUseCase branch tagging', () => {
   it('rejects an explicit branch outside the scope', async () => {
     const { repo } = makeRepo();
     await assert.rejects(
-      () => new CreateExpenseDraftUseCase(repo, audit, transactionTax).execute(ctx(['b1']), { ...input, branchId: 'b9' }),
+      () => new CreateExpenseDraftUseCase(repo, audit, transactionTax, launchGate).execute(ctx(['b1']), { ...input, branchId: 'b9' }),
       /branch scope/,
     );
   });
