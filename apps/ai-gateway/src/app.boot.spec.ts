@@ -11,10 +11,14 @@ describe('AI Gateway application graph', () => {
       DEPLOY_ENVIRONMENT: process.env['DEPLOY_ENVIRONMENT'],
       NODE_ENV: process.env['NODE_ENV'],
       SERVICE_NAME: process.env['SERVICE_NAME'],
+      AWS_SDK_LOAD_CONFIG: process.env['AWS_SDK_LOAD_CONFIG'],
     };
     Object.assign(process.env, {
       APP_ENV: 'local', DEPLOY_ENVIRONMENT: 'local', NODE_ENV: 'test', SERVICE_NAME: 'ai-gateway',
     });
+    // Dev machines with an AWS profile export AWS_SDK_LOAD_CONFIG=1 (a string), which fails the
+    // config schema's envBoolean and makes Nest exit(1) silently before any test runs.
+    delete process.env['AWS_SDK_LOAD_CONFIG'];
     const app = await NestFactory.createApplicationContext(AppModule, { logger: false });
     try {
       assert.ok(app.get(AppModule));
