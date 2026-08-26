@@ -5,7 +5,14 @@ import {
   budgetBarWidth,
   budgetPercent,
   budgetTextClass,
+  isOcrConfigVersionConflict,
+  OCR_CONFIG_STALE_MESSAGE,
+  ocrUsageTrackingNote,
+  ocrUnsavedToggleMessage,
   parseBudgetBahtInput,
+  parseOcrMonthlyLimitInput,
+  reloadAfterOcrConfigConflict,
+  ocrRemaining,
   satangToBaht,
   satangToBahtInput,
 } from './ai-budget.logic';
@@ -15,6 +22,11 @@ describe('satangToBaht', () => {
     assert.equal(satangToBaht(0), '฿0.00');
     assert.equal(satangToBaht(1), '฿0.01');
     assert.equal(satangToBaht(123_456), '฿1,234.56');
+  });
+
+  it('explains the one partial rollout month and disappears afterward', () => {
+    assert.match(ocrUsageTrackingNote('2026-08')!, /27 ส\.ค\. 2569/);
+    assert.equal(ocrUsageTrackingNote('2026-09'), null);
   });
 
   it('gives the input field plain baht without separators', () => {
@@ -95,5 +107,46 @@ describe('budget colour thresholds', () => {
     assert.equal(budgetTextClass(50), 'text-gray-500');
     assert.equal(budgetTextClass(90), 'text-yellow-600');
     assert.equal(budgetTextClass(120), 'text-red-600');
+  });
+});
+
+describe('OCR monthly limit', () => {
+  it('uses an empty field for unlimited and accepts whole counts', () => {
+    assert.deepEqual(parseOcrMonthlyLimitInput(''), { ok: true, monthlyLimit: null });
+    assert.deepEqual(parseOcrMonthlyLimitInput(' 250 '), { ok: true, monthlyLimit: 250 });
+  });
+
+  it('rejects zero, decimals, notation and values above the operator safety bound', () => {
+    for (const value of ['0', '-1', '1.5', '1e3', '1000001', 'หนึ่งร้อย']) {
+      assert.equal(parseOcrMonthlyLimitInput(value).ok, false, value);
+    }
+  });
+
+  it('computes remaining without going below zero and keeps unlimited explicit', () => {
+    assert.equal(ocrRemaining(8, 10), 2);
+    assert.equal(ocrRemaining(12, 10), 0);
+    assert.equal(ocrRemaining(12, null), null);
+  });
+
+  it('distinguishes the saved OCR state from an unsaved switch draft', () => {
+    assert.equal(ocrUnsavedToggleMessage(true, true), null);
+    assert.match(ocrUnsavedToggleMessage(true, false)!, /ยังไม่ได้ปิด/);
+    assert.match(ocrUnsavedToggleMessage(false, true)!, /ยังไม่เปิดใช้งาน/);
+    assert.match(ocrUnsavedToggleMessage(false, true)!, /บันทึก OCR/);
+  });
+
+  it('recognizes the stale-write response that requires loading the latest OCR config', () => {
+    assert.equal(isOcrConfigVersionConflict({ status: 409, code: 'ocr_config_version_conflict' }), true);
+    assert.equal(isOcrConfigVersionConflict({ status: 422 }), false);
+    assert.equal(isOcrConfigVersionConflict(new Error('offline')), false);
+  });
+
+  it('reloads latest state on 409 and keeps the operator message in Thai', async () => {
+    let reloads = 0;
+    assert.equal(await reloadAfterOcrConfigConflict({ status: 409 }, async () => { reloads += 1; }), true);
+    assert.equal(await reloadAfterOcrConfigConflict({ status: 422 }, async () => { reloads += 1; }), false);
+    assert.equal(reloads, 1);
+    assert.match(OCR_CONFIG_STALE_MESSAGE, /ผู้ดูแลอีกคน/);
+    assert.match(OCR_CONFIG_STALE_MESSAGE, /โหลดค่าล่าสุด/);
   });
 });

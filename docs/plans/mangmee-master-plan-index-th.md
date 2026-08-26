@@ -2,7 +2,7 @@
 
 สถานะ: **ACTIVE — VERIFIED INDEX 2026-08-27** (สาย 1–4 review แล้ว; สาย 5 Subscribe/Billing ไม่อยู่ใน scope รอบนี้)
 
-ลำดับและกติกาคุมโดย [แผนหลัก 2.5 วัน §10](mangmee-brain-2-5-day-priority-plan-th.md). หลักฐานและเหตุผล verdict อยู่ใน [Coding-readiness Audit](mangmee-four-lane-coding-readiness-audit-th.md); phase/test/exit/gate ที่เติมอยู่ใน [Gap Closure Plan](mangmee-four-lane-gap-closure-plan-th.md). Baseline integration ล่าสุดที่ตรวจคือ `origin/develop@c5a33e06`; branch/worktree status ต้องแยกจาก integration/production status เสมอ.
+ลำดับและกติกาคุมโดย [แผนหลัก 2.5 วัน §10](mangmee-brain-2-5-day-priority-plan-th.md). หลักฐานและเหตุผล verdict อยู่ใน [Coding-readiness Audit](mangmee-four-lane-coding-readiness-audit-th.md); phase/test/exit/gate ที่เติมอยู่ใน [Gap Closure Plan](mangmee-four-lane-gap-closure-plan-th.md). Baseline integration ล่าสุดที่ตรวจคือ `origin/develop@8b575285`; branch/worktree status ต้องแยกจาก integration/production status เสมอ.
 
 คำสถานะ: `READY <phase>` = เริ่ม phase นั้นได้, `PARTIAL READY` = core/read-only เริ่มได้แต่ activation blocked, `IMPLEMENTED / VERIFY` = code มีแต่ rollout evidence ค้าง, `BLOCKED` = ห้ามเดาคำตอบ Owner/provider/expert.
 
@@ -11,6 +11,7 @@
 | งาน | หัวข้อ | Spec | Plan | สถานะ |
 |---|---|---|---|---|
 | P9 | Dashboard/alarm ครบชุด, funnel analytics, incident drill ทุก failure class | [production-ops-spec](../specs/production-ops-spec.md) + runbooks | [P9 closure](mangmee-four-lane-gap-closure-plan-th.md#p9--observability-and-drills) | **READY P9-0..P9-2**; UAT drill gate |
+| OCR-GOV | เปิด/ปิด OCR, quota จำนวนครั้งรายบริษัท และ usage ฝั่ง Platform Admin (งานเสริมตาม Owner; ไม่เกี่ยว Subscribe และไม่แทนเลข P14 เดิม) | [spec](../specs/company-ocr-governance-spec-th.md) | [plan](company-ocr-governance-plan-th.md) | **IMPLEMENTED / LOCAL VERIFIED** — code/test/migration/desktop+mobile browser evidence ครบ; รอ PR/CI integration gate |
 | P25 ฉบับย่อ | Load/capacity บน UAT ที่ workload ของวงถัดไป | [production-a5-v2-spec](../specs/production-a5-v2-spec.md) | [P25 gate](mangmee-four-lane-gap-closure-plan-th.md#p25--capacity-gate) + [แผนเดิม](production-a5-v2-plan.md) | **EXECUTION INPUT** — รอ cohort/workload/SLO ไม่ใช่ code ใหม่ |
 
 ## สาย 2 — ความฉลาด AI "สมองมั่งมี" (ทำคู่ขนานทุกสาย)
@@ -35,7 +36,7 @@
 
 | งาน | หัวข้อ | Spec | Plan | สถานะ |
 |---|---|---|---|---|
-| P27 | สมุดรายรับ–รายจ่าย (ฝั่งขาย–รับเงิน) | [spec](../specs/mangmee-income-expense-ledger-spec-th.md) | [canonical plan](mangmee-income-expense-ledger-plan-th.md) + [status gate](mangmee-four-lane-gap-closure-plan-th.md#p27--income-expense-ledger) | Phase 0–5 **merged develop**; Phase 6 **local verified + pending PR/CI**; LED-FIN-07 และ external human/UAT/Production gates ยังเปิด |
+| P27 | สมุดรายรับ–รายจ่าย (ฝั่งขาย–รับเงิน) | [spec](../specs/mangmee-income-expense-ledger-spec-th.md) | [canonical plan](mangmee-income-expense-ledger-plan-th.md) + [status gate](mangmee-four-lane-gap-closure-plan-th.md#p27--income-expense-ledger) | Phase 0–6 **merged develop**; LED-FIN-07 และ external human/UAT/Production gates ยังเปิด |
 | P28 | ซื้อ–จ่ายเงิน + ใบลดหนี้ฝั่งซื้อ | [spec](../specs/mangmee-purchase-to-pay-mvp-spec-th.md) | [canonical plan](mangmee-purchase-to-pay-mvp-plan-th.md) + [gate](mangmee-four-lane-gap-closure-plan-th.md#p28--purchase-to-pay) | **BLOCKED** Owner §10 ข้อ 2–5 |
 | P13 | พนักงานหลายบริษัทบน LINE | [spec](../specs/mangmee-line-multi-company-staff-spec-th.md) | [P13 plan](mangmee-four-lane-gap-closure-plan-th.md#p13--line-multi-company-staff) | **BLOCKED** active-membership/notification policy |
 | P15–P17 | Auto Revenue foundation + Revenue Inbox + Matching | [spec](../specs/mangmee-revenue-inbox-matching-spec-th.md) | [P15–17 plan](mangmee-four-lane-gap-closure-plan-th.md#p15p17--revenue-foundationinboxmatching) | **READY P15 read-only core**; posting/automation blocked |
@@ -56,7 +57,7 @@ Gate ประจำสาย: **รัน P25 ฉบับเต็มซ้ำ
 | 4 | [P27 Phase 3](mangmee-income-expense-ledger-plan-th.md) | บันทึกรายรับ 2 โหมด (bundle) + ใบลดหนี้/เพิ่มหนี้แบบ FlowAccount | 3 | core merged develop; LED-FIN-07 ยังรอ Owner |
 | 5 | [P27 Phase 4](mangmee-income-expense-ledger-plan-th.md) | หน้าสมุด + export | 2 | 4A/4B/4C merged develop (`c5a33e06`) |
 | 6 | [P27 Phase 5](mangmee-income-expense-ledger-plan-th.md) | จัดระเบียบฝั่งรายจ่าย + ทางเข้า | 0.5 | backend + ทางเข้าในสมุด merged develop |
-| 7 | [P27 Phase 6](mangmee-income-expense-ledger-plan-th.md) | เปิดระบบฝั่งขาย: entitlement/nav/gate/E2E/หลักฐาน | 1.5 | local verified: API/web full green, PostgreSQL accounting/launch 14/14 + CRM bundle 1/1, browser LED-01..06 6/6 + entitlement off/on/off 1/1; pending PR/CI |
+| 7 | [P27 Phase 6](mangmee-income-expense-ledger-plan-th.md) | เปิดระบบฝั่งขาย: entitlement/nav/gate/E2E/หลักฐาน | 1.5 | merged develop (`8b575285`): API/web full green, PostgreSQL accounting/launch 14/14 + CRM bundle 1/1, browser LED-01..06 6/6 + entitlement off/on/off 1/1 |
 | 8 | [P28 Phase 0](mangmee-purchase-to-pay-mvp-plan-th.md) | ยืนยันสัญญา W1–W5 | 0.5 | รอ Owner ตอบ P2P §10 ข้อ 2–5 ก่อนเริ่ม |
 | 9 | [P28 Phase 1](mangmee-purchase-to-pay-mvp-plan-th.md) | SupplierCreditNote engine | 3 | |
 | 10 | [P28 Phase 2](mangmee-purchase-to-pay-mvp-plan-th.md) | หน้าจอ S4 (CN) + S2 ปรับ | 2 | |

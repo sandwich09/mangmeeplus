@@ -13,6 +13,7 @@ import {
 import {
   parseDelimitedStatement, sha256Hex, bytesToBase64, classifyStatementFile,
   extractErrorMessage, IMPORT_STATUS_LABELS, SOURCE_KIND_LABELS, LOW_CONFIDENCE_THRESHOLD,
+  statementExtractErrorCode,
   statementRowErrorMessage,
   MAX_STATEMENT_BINARY_BYTES, MAX_STATEMENT_TEXT_BYTES, STATEMENT_UPLOAD_ACCEPT,
 } from './banking.logic';
@@ -22,6 +23,10 @@ import { useToast } from '@/common/components/toast';
 import { useInputPrompt } from '@/common/components/modal';
 
 function err(e: unknown) { return apiErrorMessage(e); }
+function statementExtractError(e: unknown) {
+  const code = statementExtractErrorCode(e);
+  return code ? extractErrorMessage(code) : apiErrorMessage(e);
+}
 const inputClass = 'mangmee-input';
 const btnClass = 'mangmee-btn mangmee-btn-primary disabled:opacity-50';
 const ghostClass = 'rounded border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50';
@@ -110,7 +115,7 @@ export function StatementImportPanel({ companyId }: { companyId: string }) {
         setExtraction(ex);
         const result = await previewStatementImport(companyId, bankAccountId, { rows: ex.rows });
         setPreview({ ...result, parsedRows: ex.rows });
-      } catch (e) { setError(extractErrorMessage(err(e))); }
+      } catch (e) { setError(statementExtractError(e)); }
       finally { setBusy(false); }
       return;
     }

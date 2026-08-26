@@ -205,8 +205,12 @@ export async function completeReceiptUpload(
   );
 }
 
-export async function requestExpenseExtraction(companyId: string, expenseId: string): Promise<ExpenseExtractionResult> {
-  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/extraction-request`, { method: 'POST', body: '{}' });
+export async function requestExpenseExtraction(companyId: string, expenseId: string, requestId?: string): Promise<ExpenseExtractionResult> {
+  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/extraction-request`, {
+    method: 'POST',
+    body: '{}',
+    ...(requestId ? { headers: { 'X-Request-Id': requestId } } : {}),
+  });
 }
 
 export async function getAttachmentDownloadUrl(companyId: string, attachmentId: string, options?: { disposition?: 'inline' }): Promise<{ downloadUrl: string; expiresAt: string }> {

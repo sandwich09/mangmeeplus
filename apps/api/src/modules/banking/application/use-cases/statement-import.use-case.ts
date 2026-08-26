@@ -149,8 +149,24 @@ export class ExtractStatementFileUseCase {
         userId: ctx.userId,
         attachment: { contentBase64: bytes.toString('base64'), mimeType: input.mimeType },
       });
-      if (response.status === 'not_configured') throw new UnprocessableEntityException('extract_ocr_not_configured');
-      if (response.status !== 'ok' || !response.rows) throw new UnprocessableEntityException('extract_ocr_failed');
+      if (response.status === 'not_configured') {
+        throw new UnprocessableEntityException({ code: 'extract_ocr_not_configured', message: 'extract_ocr_not_configured' });
+      }
+      if (response.errorCode === 'OCR_FEATURE_DISABLED') {
+        throw new UnprocessableEntityException({ code: 'extract_ocr_disabled', message: 'extract_ocr_disabled' });
+      }
+      if (response.errorCode === 'OCR_MONTHLY_LIMIT_EXCEEDED') {
+        throw new UnprocessableEntityException({ code: 'extract_ocr_limit_exceeded', message: 'extract_ocr_limit_exceeded' });
+      }
+      if (response.errorCode === 'OCR_REQUEST_ALREADY_ADMITTED') {
+        throw new UnprocessableEntityException({ code: 'extract_ocr_duplicate_request', message: 'extract_ocr_duplicate_request' });
+      }
+      if (response.errorCode === 'OCR_QUOTA_UNAVAILABLE') {
+        throw new UnprocessableEntityException({ code: 'extract_ocr_quota_unavailable', message: 'extract_ocr_quota_unavailable' });
+      }
+      if (response.status !== 'ok' || !response.rows) {
+        throw new UnprocessableEntityException({ code: 'extract_ocr_failed', message: 'extract_ocr_failed' });
+      }
       sourceKind = 'ocr';
       extractionModelId = response.modelId;
       extractionModelLineage = response.modelLineage?.slice(0, 4);

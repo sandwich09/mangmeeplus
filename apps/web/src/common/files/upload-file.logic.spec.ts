@@ -65,6 +65,15 @@ describe('web upload file policy', () => {
     assert.equal(uploadErrorMessage(new Error('รองรับเฉพาะไฟล์ PNG, JPG และ JPEG')), 'รองรับเฉพาะไฟล์ PNG, JPG และ JPEG');
   });
 
+  it('keeps a stable machine code while sanitizing the wrapped upload message', async () => {
+    const source = Object.assign(new Error('database detail that must stay hidden'), { code: 'extract_ocr_disabled' });
+    await assert.rejects(
+      withGenericUploadError(async () => { throw source; }),
+      (error: unknown) => (error as { code?: unknown }).code === 'extract_ocr_disabled'
+        && (error as Error).message === GENERIC_UPLOAD_ERROR_MESSAGE,
+    );
+  });
+
   it('gives actionable copy for client-side receipt preparation failures', async () => {
     assert.equal(uploadErrorMessage(new Error('UNSUPPORTED_UPLOAD_FILE')), UPLOAD_RECEIPT_SOURCE_UNSUPPORTED_ERROR_MESSAGE);
     assert.equal(uploadErrorMessage(new Error('HEIC_DECODE_UNSUPPORTED')), UPLOAD_HEIC_CONVERSION_ERROR_MESSAGE);

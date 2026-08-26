@@ -1,7 +1,11 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
+import { ConflictException, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { PrismaClient } from '../../../../generated/prisma/client';
 import { SetPartnerAiModelUseCase } from './set-partner-ai-model.use-case';
+import { SetPartnerOcrConfigUseCase } from './set-partner-ocr-config.use-case';
 import { __resetCompanyAiBudgetCache, assertCompanyAiBudget } from '../../../line-ai/application/company-ai-usage-meter';
 
 const APPROVED = 'global.anthropic.claude-sonnet-4-6';
@@ -243,5 +247,212 @@ describe('SetPartnerAiModelUseCase', () => {
       await primeCache(meterPrisma);
       assert.equal(configReads, expectReset ? 2 : 1, `cache reset expected: ${expectReset}`);
     }
+  });
+});
+
+function makeOcrPrisma(input: {
+  existing?: { ocrEnabled: boolean; ocrMonthlyLimit: number | null; ocrConfigVersion?: number };
+  status?: string;
+} = {}) {
+  let saved = input.existing ? { ...input.existing, ocrConfigVersion: input.existing.ocrConfigVersion ?? 0 } : undefined;
+  const audits: any[] = [];
+  let upserts = 0;
+  let locks = 0;
+  const lockKeys: string[] = [];
+  const tx = {
+    $executeRaw: async (_strings: TemplateStringsArray, key: string) => { locks += 1; lockKeys.push(key); },
+    company: { findUnique: async () => ({ id: 'co-1', status: input.status ?? 'ACTIVE' }) },
+    companyAiConfiguration: {
+      findUnique: async () => saved ? { ...saved, updatedAt: new Date('2026-08-20T00:00:00Z') } : null,
+      upsert: async ({ create, update }: any) => {
+        upserts += 1;
+        saved = saved ? {
+          ...saved,
+          ocrEnabled: update.ocrEnabled,
+          ocrMonthlyLimit: update.ocrMonthlyLimit,
+          ocrConfigVersion: saved.ocrConfigVersion + update.ocrConfigVersion.increment,
+        } : {
+          ocrEnabled: create.ocrEnabled,
+          ocrMonthlyLimit: create.ocrMonthlyLimit,
+          ocrConfigVersion: create.ocrConfigVersion,
+        };
+        return { ...saved, updatedAt: new Date('2026-08-27T00:00:00Z') };
+      },
+    },
+    auditLog: { create: async ({ data }: any) => { audits.push(data); return data; } },
+  };
+  return {
+    prisma: { client: { $transaction: (fn: any) => fn(tx) } } as any,
+    saved: () => saved,
+    audits,
+    upserts: () => upserts,
+    locks: () => locks,
+    lockKeys,
+  };
+}
+
+const ocrCommand = (overrides: Partial<{
+  enabled: boolean;
+  monthlyLimit: number | null;
+  expectedVersion: number;
+  requestingAdminUserId: string;
+  requestId: string;
+}> = {}) => ({
+  companyId: 'co-1',
+  enabled: true,
+  monthlyLimit: 100 as number | null,
+  expectedVersion: 0,
+  requestingAdminUserId: 'admin-1',
+  requestId: 'req-1',
+  ...overrides,
+});
+
+describe('SetPartnerOcrConfigUseCase', () => {
+  it('writes config and CRITICAL before/after audit in the same transaction', async () => {
+    const state = makeOcrPrisma({ existing: { ocrEnabled: true, ocrMonthlyLimit: null, ocrConfigVersion: 3 } });
+    const result = await new SetPartnerOcrConfigUseCase(state.prisma).execute(ocrCommand({
+      enabled: false, monthlyLimit: 25, expectedVersion: 3,
+    }));
+    assert.deepEqual(
+      { enabled: result.enabled, monthlyLimit: result.monthlyLimit, version: result.version },
+      { enabled: false, monthlyLimit: 25, version: 4 },
+    );
+    assert.equal(state.locks(), 1);
+    assert.deepEqual(state.lockKeys, ['partner-ocr-config:co-1']);
+    assert.equal(state.audits.length, 1);
+    assert.equal(state.audits[0].riskLevel, 'CRITICAL');
+    assert.deepEqual(state.audits[0].metadataJson, {
+      fromEnabled: true, toEnabled: false, fromMonthlyLimit: null, toMonthlyLimit: 25,
+      fromVersion: 3, toVersion: 4,
+    });
+  });
+
+  it('is naturally idempotent: exact desired replay is a no-op even with a stale expected version', async () => {
+    const state = makeOcrPrisma({ existing: { ocrEnabled: true, ocrMonthlyLimit: 100, ocrConfigVersion: 7 } });
+    const result = await new SetPartnerOcrConfigUseCase(state.prisma).execute(ocrCommand({ expectedVersion: 2 }));
+    assert.equal(result.updatedAt, '2026-08-20T00:00:00.000Z');
+    assert.equal(result.version, 7);
+    assert.equal(state.upserts(), 0);
+    assert.equal(state.audits.length, 0);
+  });
+
+  it('prevents a stale second admin from overwriting, while the first admin replay stays safe', async () => {
+    const state = makeOcrPrisma({ existing: { ocrEnabled: true, ocrMonthlyLimit: null, ocrConfigVersion: 2 } });
+    const useCase = new SetPartnerOcrConfigUseCase(state.prisma);
+
+    const first = await useCase.execute(ocrCommand({
+      enabled: false, monthlyLimit: 25, expectedVersion: 2,
+      requestingAdminUserId: 'admin-a', requestId: 'admin-a-command',
+    }));
+    assert.equal(first.version, 3);
+
+    await assert.rejects(
+      () => useCase.execute(ocrCommand({
+        enabled: true, monthlyLimit: 50, expectedVersion: 2,
+        requestingAdminUserId: 'admin-b', requestId: 'admin-b-command',
+      })),
+      (error: unknown) => error instanceof ConflictException
+        && (error.getResponse() as any).code === 'ocr_config_version_conflict'
+        && (error.getResponse() as any).currentVersion === 3,
+    );
+    assert.deepEqual(state.saved(), { ocrEnabled: false, ocrMonthlyLimit: 25, ocrConfigVersion: 3 });
+    assert.equal(state.upserts(), 1);
+    assert.equal(state.audits.length, 1);
+
+    const replay = await useCase.execute(ocrCommand({
+      enabled: false, monthlyLimit: 25, expectedVersion: 2,
+      requestingAdminUserId: 'admin-a', requestId: 'admin-a-command',
+    }));
+    assert.equal(replay.version, 3);
+    assert.equal(state.upserts(), 1);
+    assert.equal(state.audits.length, 1);
+  });
+
+  it('real PostgreSQL: two admins cannot overwrite each other and the winning stale replay is a no-op', async (t) => {
+    const databaseUrl = process.env.DATABASE_URL?.trim();
+    if (!databaseUrl) {
+      if (process.env.OCR_REQUIRE_POSTGRES === 'true') throw new Error('OCR PostgreSQL test database is required');
+      return t.skip('DATABASE_URL is not set');
+    }
+
+    const clients = [
+      new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl }) }),
+      new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl }) }),
+    ];
+    let companyId = '';
+    const adminIds: string[] = [];
+    const runId = randomUUID();
+    try {
+      await Promise.all(clients.map((client) => client.$queryRaw`SELECT 1`));
+      companyId = (await clients[0]!.company.create({
+        data: { name: `ocr-cas-${process.pid}-${runId}`, status: 'ACTIVE' },
+        select: { id: true },
+      })).id;
+      for (const name of ['A', 'B']) {
+        adminIds.push((await clients[0]!.user.create({
+          data: { displayName: `OCR CAS admin ${name} ${runId}` },
+          select: { id: true },
+        })).id);
+      }
+      const commands = [
+        {
+          companyId, enabled: false, monthlyLimit: null, expectedVersion: 0,
+          requestingAdminUserId: adminIds[0]!, requestId: `ocr-cas-a-${runId}`,
+        },
+        {
+          companyId, enabled: true, monthlyLimit: 25, expectedVersion: 0,
+          requestingAdminUserId: adminIds[1]!, requestId: `ocr-cas-b-${runId}`,
+        },
+      ];
+
+      const results = await Promise.allSettled(clients.map((client, index) =>
+        new SetPartnerOcrConfigUseCase({ client } as any).execute(commands[index]!)));
+      assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
+      assert.equal(results.filter((result) => result.status === 'rejected').length, 1);
+      const rejected = results.find((result) => result.status === 'rejected') as PromiseRejectedResult;
+      assert.ok(rejected.reason instanceof ConflictException);
+      assert.equal((rejected.reason.getResponse() as any).code, 'ocr_config_version_conflict');
+
+      const winnerIndex = results.findIndex((result) => result.status === 'fulfilled');
+      const winner = results[winnerIndex] as PromiseFulfilledResult<any>;
+      assert.equal(winner.value.version, 1);
+      const replay = await new SetPartnerOcrConfigUseCase({ client: clients[0] } as any).execute(commands[winnerIndex]!);
+      assert.equal(replay.version, 1);
+      assert.equal(await clients[0]!.auditLog.count({
+        where: { targetId: companyId, action: 'system.partner_ocr_config.update' },
+      }), 1);
+      assert.equal((await clients[0]!.companyAiConfiguration.findUniqueOrThrow({
+        where: { companyId }, select: { ocrConfigVersion: true },
+      })).ocrConfigVersion, 1);
+    } finally {
+      if (companyId) {
+        await clients[0]!.auditLog.deleteMany({ where: { targetId: companyId } });
+        await clients[0]!.company.deleteMany({ where: { id: companyId } });
+      }
+      if (adminIds.length) await clients[0]!.user.deleteMany({ where: { id: { in: adminIds } } });
+      await Promise.all(clients.map((client) => client.$disconnect().catch(() => undefined)));
+    }
+  });
+
+  it('rejects invalid limits and locked company metadata before any write', async () => {
+    for (const monthlyLimit of [0, 1.5, 1_000_001]) {
+      const state = makeOcrPrisma();
+      await assert.rejects(
+        () => new SetPartnerOcrConfigUseCase(state.prisma).execute(ocrCommand({ monthlyLimit })),
+        UnprocessableEntityException,
+      );
+      assert.equal(state.upserts(), 0);
+    }
+    await assert.rejects(
+      () => new SetPartnerOcrConfigUseCase(makeOcrPrisma().prisma).execute(ocrCommand({ expectedVersion: -1 })),
+      UnprocessableEntityException,
+    );
+
+    const locked = makeOcrPrisma({ status: 'DISABLED' });
+    await assert.rejects(
+      () => new SetPartnerOcrConfigUseCase(locked.prisma).execute(ocrCommand()),
+      UnprocessableEntityException,
+    );
+    assert.equal(locked.upserts(), 0);
   });
 });

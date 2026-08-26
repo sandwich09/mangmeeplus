@@ -15,6 +15,7 @@ export type ExpenseExtractionResult = {
   fields?: ReceiptOcrFieldResult;
   missingFields?: string[];
   classification?: BusinessDocumentClassification;
+  errorCode?: string;
 };
 export type AiVerificationStatus = 'NOT_VERIFIED' | 'VERIFYING' | 'AI_VERIFIED' | 'PARTIAL' | 'NEEDS_REVIEW' | 'FAILED' | 'HUMAN_VERIFIED';
 export type DuplicateStatus = 'NOT_CHECKED' | 'NO_MATCH' | 'POSSIBLE_DUPLICATE' | 'CONFIRMED_DUPLICATE' | 'OVERRIDDEN';
