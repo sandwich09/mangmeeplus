@@ -37,6 +37,8 @@ Verification:
 - หลักฐานโค้ดทุกข้อมี file:line จาก Explore agents (2026-08-26); FlowAccount ตรวจ read-only ไม่มี mutation ใด ๆ (ไม่กดบันทึกเอกสาร/ไม่รับ cookie banner แทนผู้ใช้)
 - Phase 1 (branch `codex/ledger-p1-decimal`): specs ทั้ง module accounting-documents ผ่าน 144/144 (61+83 รวม golden ใหม่ 8 และ `spec-suite-coverage` guard); `tsc --noEmit` apps/api เงียบ; เอกสารเดิมไม่ถูกกระทบ — totals คำนวณเฉพาะตอน create/update draft ไม่มี migration/rewrite แถวเดิม และ `sales_documents` ปิด default ทุก env (DB seeded local ไม่ได้รัน จึงไม่มี count query — บันทึกตามจริง); ไม่มี spec เดิม exercise `createPayment` ตรง ๆ → เคส in-tx numbering คุมด้วย E2E LED-02 ใน Phase 6
 
+หมายเหตุ spec-batch (2026-08-26): ตามคำสั่ง Owner "เขียน spec ที่เหลือให้ครบ" — เขียน 8 ฉบับใหม่ในวันเดียว: P10 external-signup, P11 email-claim, P12 line-login-link-journey (ฉบับรวม — มติเปิด line/exchange), P13 line-multi-company-staff, P15–P17 revenue-inbox-matching (ฉบับเดียว 3 หัวข้อ), P21 tax-workpaper-pp30, P24 growth-ux-full-pass, P26 billing-subscription (ราคารอ Owner); ทุกฉบับอิง Explore agents 3 ชุด (P26 billing / auth-LINE-signup / banking-tax) + แผนหลัก §13.5-13.6; matrix ในแผนหลักติ๊กครบ เหลือ P18–P20 ตั้งใจรอ provider
+
 Next:
 
 1. PR Phase 2 เข้า develop + admin merge

@@ -650,25 +650,25 @@ Quality ต้องไม่ตกหมายถึง “ลดจำนว�
 | P | เรื่อง | spec ที่มีอยู่ (docs/specs) | สถานะ |
 |---|---|---|---|
 | P9 | Monitoring/incident เต็ม | `production-ops-spec`, `m-02-ai-api-observability-spec` + runbooks | ✅ พอสำหรับงาน ops (รายละเอียด OBS-01/02 เติมตอนทำ) |
-| P10 | Auto-register จากเว็บทางการ | `admin-company-onboarding-spec` (ครอบเฉพาะ flow ภายใน) | ❌ ขาด: external signup API contract spec (HMAC/idempotency/durable state) |
-| P11 | Email delivery + claim | — | ❌ ขาดทั้งหมด (SES/outbox/claim link) |
-| P12 | OA กลาง + LIFF + LINE QR Login | `password-reset-line-flow-spec`, `line-web-deeplink-handoff-spec`, `web-line-login-plan` (plan) | ⚠️ ขาด spec รวม journey LINE login/link ฉบับเดียว — ระวัง: checkout หลักมีการแก้ `web-line-login-plan.md` ค้างอยู่ (session อื่น) ประสานก่อนเขียนทับ |
-| P13 | พนักงานหลายบริษัทบน LINE | `multi-company-branch-scope-spec` (ฝั่งเว็บ) | ❌ ขาด: LINE policy change spec (active-membership-based) |
+| P10 | Auto-register จากเว็บทางการ | `mangmee-external-signup-contract-spec-th` (+`admin-company-onboarding-spec` ฝั่งภายใน) | ✅ ครบ 2026-08-26 — รอ Owner ตอบ §8 |
+| P11 | Email delivery + claim | `mangmee-email-delivery-claim-spec-th` | ✅ ครบ 2026-08-26 |
+| P12 | OA กลาง + LIFF + LINE QR Login | `mangmee-line-login-link-journey-spec-th` (ฉบับรวม — หลอม `password-reset-line-flow-spec`, `line-web-deeplink-handoff-spec`, `web-line-login-plan`) | ✅ ครบ 2026-08-26 — มติ: P12 เปิด `line/exchange` (ยกเลิก E11 deferral) |
+| P13 | พนักงานหลายบริษัทบน LINE | `mangmee-line-multi-company-staff-spec-th` (+`multi-company-branch-scope-spec` ฝั่งเว็บ) | ✅ ครบ 2026-08-26 |
 | P14 | Quota AI รายบริษัท | `per-company-ai-budget-override-spec` + `ai-usage-metering-and-monthly-budget-spec` | ✅ (document-work-unit meter เขียนรวมกับ P26) |
-| P15 | Auto Revenue foundation | OS spec §10 (ระดับทิศทาง) | ❌ ขาด spec ละเอียด (แผน P15 บังคับเขียนก่อน connector อยู่แล้ว) |
-| P16 | Revenue Inbox จาก statement เดิม | `bank-reconciliation-spec` | ⚠️ ขาดส่วน inbox UX/classification |
-| P17 | Invoice matching + exception | OS spec §10.4 | ❌ ขาดละเอียด |
+| P15 | Auto Revenue foundation | `mangmee-revenue-inbox-matching-spec-th` §3 (+OS spec §10) | ✅ ครบ 2026-08-26 |
+| P16 | Revenue Inbox จาก statement เดิม | `mangmee-revenue-inbox-matching-spec-th` §4 (+`bank-reconciliation-spec` ฐาน) | ✅ ครบ 2026-08-26 |
+| P17 | Invoice matching + exception | `mangmee-revenue-inbox-matching-spec-th` §5 | ✅ ครบ 2026-08-26 |
 | P18–P20 | Bank/Gateway/Marketplace/POS | `marketplace-import-spec` (P19 บางส่วน) | ❌ เขียนเมื่อเลือก provider จริง (ตามแผนเดิม) |
-| P21 | Accountant review/tax reports | `accounting-tax-setup-workflow-spec`, `sap-compatible-transaction-tax-account-determination-spec`, `tax-thailand-2026-spec`, `tax-2026-verified-rules` | ⚠️ พอเริ่ม — ขาด workpaper/ภ.พ.30 package spec |
+| P21 | Accountant review/tax reports | `mangmee-tax-workpaper-pp30-spec-th` (+ชุด tax specs เดิม 4 ฉบับ) | ✅ ครบ 2026-08-26 |
 | P22 | Controlled auto-accounting | `expense-ledger-auto-post-spec` | ✅ ฝั่งรายจ่าย; ฝั่งขายเขียนตอนเข้าคิว |
 | P23 | สมองมั่งมีเต็ม + คลังความรู้ | `mangmee-accounting-tax-knowledge-spec-th` + ชุด brain specs ปัจจุบัน | ✅ |
-| P24 | Growth/UX รอบเต็ม | `mobile-first-launch-features-spec`, `mangmee-system-ui-alignment-spec` | ⚠️ พอเริ่ม |
+| P24 | Growth/UX รอบเต็ม | `mangmee-growth-ux-full-pass-spec-th` (+`mobile-first-launch-features-spec`, `mangmee-system-ui-alignment-spec`) | ✅ ครบ 2026-08-26 |
 | P25 | Scale/load/DR | `production-a5-v2-spec` (+readiness matrix), `uat-environment-spec` | ✅ พอ |
-| P26 | Billing/Subscription (จำกัดใบเสร็จ) | — | ❌ ขาดทั้งหมด (หัวข้อ P26 บังคับ spec+pricing ที่ Owner อนุมัติก่อนอยู่แล้ว) |
+| P26 | Billing/Subscription (จำกัดใบเสร็จ) | `mangmee-billing-subscription-spec-th` | ✅ กลไกครบ 2026-08-26 — **ตารางราคา §8 รอ Owner อนุมัติก่อน implement** |
 | P27 | สมุดรายรับ–รายจ่าย | `mangmee-income-expense-ledger-spec-th` v1.2 | ✅ |
 | P28 | ซื้อ-จ่ายเงิน MVP + ใบลดหนี้ฝั่งซื้อ | `procurement-supplier-ap-spec` (engine) + `mangmee-purchase-to-pay-mvp-spec-th` (MVP/UX/CN) | ✅ ครบ 2026-08-26 — รอ Owner ตอบ spec §10 |
 
-คิวเขียน spec ที่ขาด (ตามลำดับลงมือของหัวข้อนี้): **1) P28** (กำลังทำ) → **2) P26** billing → **3) P10+P11** (signup+email เขียนคู่กัน) → **4) P12** journey รวม → **5) P13** → **6) P15–P17** ก่อนเริ่มสายธนาคาร → P18–P20 ตอนเลือก provider → P21 workpaper ก่อนเปิดงานนักบัญชี
+**สถานะคิว 2026-08-26: เขียนครบทุกตัวแล้ว** — เหลือเพียง P18–P20 ที่ตั้งใจรอเลือก provider จริง (เขียนก่อน = เดา); แถวที่มีเงื่อนไข Owner ค้าง: P26 (ตารางราคา §8), P10 (§8 สามข้อ), P28 (§10 ห้าข้อ); P27 พร้อม implement ต่อ (Phase 3–6)
 
 ### P9 — Incident, Monitoring และ Fast Hotfix Lane (ส่วนที่เหลือจาก P3)
 
