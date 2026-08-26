@@ -8,17 +8,22 @@ import type {
   IncomeExpenseLedgerSummary,
   RequestContext,
 } from '@watchdog-bms/contracts';
+import { todayCivilDate } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { safeCsvCell } from '../../../../common/export/csv.logic';
 import { buildXlsx } from '../../../../common/export/xlsx.logic';
 import { branchScopeWhere } from '../../../data-model-core/domain/logic/branch.logic';
+import { CompanyVatRegistrationUseCase } from '../../../data-model-core/application/use-cases/company-vat-registration.use-case';
 import {
   calculateIncomeExpenseLedgerAmounts,
+  calculateVatRegistrationAlert,
   categoryBreakdownMatches,
+  INCOME_EXPENSE_LEDGER_TIMEZONE,
   ledgerBangkokInstantRange,
   ledgerCivilRange,
   mergeSignedCategoryAmounts,
   resolveIncomeExpenseLedgerPeriod,
+  resolveVatRegistrationWatchPeriod,
 } from '../../domain/logic/income-expense-ledger.logic';
 
 const ISSUED_STATUSES = ['ISSUED', 'CREDITED', 'DEBITED', 'CLOSED'] as const;
@@ -57,9 +62,17 @@ function boundedPositiveInt(value: number | undefined, fallback: number, max: nu
 
 @Injectable()
 export class IncomeExpenseLedgerUseCase {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly vatRegistration: CompanyVatRegistrationUseCase,
+  ) {}
 
-  async summary(ctx: RequestContext, from?: string, to?: string): Promise<IncomeExpenseLedgerSummary> {
+  async summary(
+    ctx: RequestContext,
+    from?: string,
+    to?: string,
+    today = todayCivilDate(INCOME_EXPENSE_LEDGER_TIMEZONE),
+  ): Promise<IncomeExpenseLedgerSummary> {
     const period = resolveIncomeExpenseLedgerPeriod(from, to);
     if (!period) throw new UnprocessableEntityException('ช่วงวันที่ต้องเป็น YYYY-MM-DD และวันเริ่มต้องไม่เกินวันสิ้นสุด');
     const canIncome = ctx.permissions.includes('accounting.document.read');
@@ -68,57 +81,80 @@ export class IncomeExpenseLedgerUseCase {
     const scope = branchScopeWhere(ctx.scopes);
     const civilRange = ledgerCivilRange(period.from, period.to);
     const instantRange = ledgerBangkokInstantRange(period.from, period.to);
+    // The legal threshold is company-wide. A branch-restricted caller must never see a partial
+    // total presented as the company's VAT-registration position.
+    const canShowVatAlert = canIncome && ctx.scopes.branchIds === undefined;
 
-    const raw = await this.prisma.client.$transaction(async (tx: any) => {
-      const income = canIncome ? await Promise.all([
-        tx.accountingDocument.aggregate({
-          where: { companyId: ctx.companyId, ...scope, documentType: { in: [...POSITIVE_SALE_TYPES] }, status: { in: [...ISSUED_STATUSES] }, documentDate: civilRange },
-          _sum: { grandTotalAmount: true },
-        }),
-        tx.accountingDocument.aggregate({
-          where: { companyId: ctx.companyId, ...scope, documentType: 'CREDIT_NOTE', status: { in: [...ISSUED_STATUSES] }, documentDate: civilRange },
-          _sum: { grandTotalAmount: true },
-        }),
-        tx.accountingPayment.aggregate({
-          where: { companyId: ctx.companyId, ...scope, direction: 'RECEIVED', status: 'RECORDED', paidAt: instantRange },
-          _sum: { amount: true, whtAmount: true },
-        }),
-        tx.accountingDocument.aggregate({
-          where: { companyId: ctx.companyId, ...scope, documentType: { in: [...POSITIVE_SALE_TYPES] }, status: { in: [...ISSUED_STATUSES] }, outstandingAmount: { gt: 0 } },
-          _sum: { outstandingAmount: true },
-        }),
-        tx.accountingDocumentLine.groupBy({
-          by: ['revenueCategoryId', 'revenueCategory'],
-          where: { companyId: ctx.companyId, document: { is: { ...scope, documentType: { in: [...POSITIVE_SALE_TYPES] }, status: { in: [...ISSUED_STATUSES] }, documentDate: civilRange } } },
-          _sum: { lineTotalAmount: true },
-        }),
-        tx.accountingDocumentLine.groupBy({
-          by: ['revenueCategoryId', 'revenueCategory'],
-          where: { companyId: ctx.companyId, document: { is: { ...scope, documentType: 'CREDIT_NOTE', status: { in: [...ISSUED_STATUSES] }, documentDate: civilRange } } },
-          _sum: { lineTotalAmount: true },
-        }),
-      ]) : null;
-      const expense = canExpense ? await Promise.all([
-        tx.expenseRecord.aggregate({
-          where: { companyId: ctx.companyId, ...scope, status: 'CONFIRMED', expenseDate: civilRange },
-          _sum: { grandTotalAmount: true },
-        }),
-        tx.expensePayment.aggregate({
-          where: { companyId: ctx.companyId, status: 'RECORDED', paidAt: instantRange, expense: { is: scope } },
-          _sum: { amount: true },
-        }),
-        tx.expenseLine.groupBy({
-          by: ['expenseCategoryId'],
-          where: { companyId: ctx.companyId, expense: { is: { ...scope, status: 'CONFIRMED', expenseDate: civilRange } } },
-          _sum: { lineTotalAmount: true },
-        }),
-      ]) : null;
-      const categoryIds = (expense?.[2] ?? []).map((row: any) => row.expenseCategoryId).filter(Boolean);
-      const categoryNames = categoryIds.length
-        ? await tx.expenseCategory.findMany({ where: { id: { in: categoryIds }, OR: [{ companyId: ctx.companyId }, { companyId: null }] }, select: { id: true, name: true } })
-        : [];
-      return { income, expense, categoryNames };
-    }, { isolationLevel: 'RepeatableRead' });
+    const [vatStatus, raw] = await Promise.all([
+      // This is an advisory, not a posting control: a transient accessor failure must omit the
+      // banner rather than take the core ledger down with it.
+      canShowVatAlert ? this.vatRegistration.get(ctx.companyId, today).catch(() => null) : null,
+      this.prisma.client.$transaction(async (tx: any) => {
+        const income = canIncome ? await Promise.all([
+          tx.accountingDocument.aggregate({
+            where: { companyId: ctx.companyId, ...scope, documentType: { in: [...POSITIVE_SALE_TYPES] }, status: { in: [...ISSUED_STATUSES] }, documentDate: civilRange },
+            _sum: { grandTotalAmount: true },
+          }),
+          tx.accountingDocument.aggregate({
+            where: { companyId: ctx.companyId, ...scope, documentType: 'CREDIT_NOTE', status: { in: [...ISSUED_STATUSES] }, documentDate: civilRange },
+            _sum: { grandTotalAmount: true },
+          }),
+          tx.accountingPayment.aggregate({
+            where: { companyId: ctx.companyId, ...scope, direction: 'RECEIVED', status: 'RECORDED', paidAt: instantRange },
+            _sum: { amount: true, whtAmount: true },
+          }),
+          tx.accountingDocument.aggregate({
+            where: { companyId: ctx.companyId, ...scope, documentType: { in: [...POSITIVE_SALE_TYPES] }, status: { in: [...ISSUED_STATUSES] }, outstandingAmount: { gt: 0 } },
+            _sum: { outstandingAmount: true },
+          }),
+          tx.accountingDocumentLine.groupBy({
+            by: ['revenueCategoryId', 'revenueCategory'],
+            where: { companyId: ctx.companyId, document: { is: { ...scope, documentType: { in: [...POSITIVE_SALE_TYPES] }, status: { in: [...ISSUED_STATUSES] }, documentDate: civilRange } } },
+            _sum: { lineTotalAmount: true },
+          }),
+          tx.accountingDocumentLine.groupBy({
+            by: ['revenueCategoryId', 'revenueCategory'],
+            where: { companyId: ctx.companyId, document: { is: { ...scope, documentType: 'CREDIT_NOTE', status: { in: [...ISSUED_STATUSES] }, documentDate: civilRange } } },
+            _sum: { lineTotalAmount: true },
+          }),
+        ]) : null;
+        const expense = canExpense ? await Promise.all([
+          tx.expenseRecord.aggregate({
+            where: { companyId: ctx.companyId, ...scope, status: 'CONFIRMED', expenseDate: civilRange },
+            _sum: { grandTotalAmount: true },
+          }),
+          tx.expensePayment.aggregate({
+            where: { companyId: ctx.companyId, status: 'RECORDED', paidAt: instantRange, expense: { is: scope } },
+            _sum: { amount: true },
+          }),
+          tx.expenseLine.groupBy({
+            by: ['expenseCategoryId'],
+            where: { companyId: ctx.companyId, expense: { is: { ...scope, status: 'CONFIRMED', expenseDate: civilRange } } },
+            _sum: { lineTotalAmount: true },
+          }),
+        ]) : null;
+        const categoryIds = (expense?.[2] ?? []).map((row: any) => row.expenseCategoryId).filter(Boolean);
+        const categoryNames = categoryIds.length
+          ? await tx.expenseCategory.findMany({ where: { id: { in: categoryIds }, OR: [{ companyId: ctx.companyId }, { companyId: null }] }, select: { id: true, name: true } })
+          : [];
+        const taxProfile = canShowVatAlert
+          ? await tx.companyTaxProfile.findUnique({ where: { companyId: ctx.companyId }, select: { accountingPeriodMonth: true } })
+          : null;
+        const vatWatchPeriod = taxProfile ? resolveVatRegistrationWatchPeriod(today, taxProfile.accountingPeriodMonth) : null;
+        const vatWatchRange = vatWatchPeriod ? ledgerCivilRange(vatWatchPeriod.periodStart, vatWatchPeriod.periodEnd) : null;
+        const vatWatchIncome = vatWatchRange ? await Promise.all([
+          tx.accountingDocument.aggregate({
+            where: { companyId: ctx.companyId, documentType: { in: [...POSITIVE_SALE_TYPES] }, status: { in: [...ISSUED_STATUSES] }, documentDate: vatWatchRange },
+            _sum: { grandTotalAmount: true },
+          }),
+          tx.accountingDocument.aggregate({
+            where: { companyId: ctx.companyId, documentType: 'CREDIT_NOTE', status: { in: [...ISSUED_STATUSES] }, documentDate: vatWatchRange },
+            _sum: { grandTotalAmount: true },
+          }),
+        ]) : null;
+        return { income, expense, categoryNames, vatWatchPeriod, vatWatchIncome };
+      }, { isolationLevel: 'RepeatableRead' }),
+    ]);
 
     const incomeRows = raw.income ? mergeSignedCategoryAmounts(
       raw.income[4].map((row: any) => ({ categoryId: row.revenueCategoryId, label: row.revenueCategory, amount: sum(row._sum.lineTotalAmount) })),
@@ -143,12 +179,22 @@ export class IncomeExpenseLedgerUseCase {
     const expenseMatches = !raw.expense || categoryBreakdownMatches(amounts.recordedExpenseTotal, expenseRows);
     const incomeAvailable = canIncome && incomeMatches;
     const expenseAvailable = canExpense && expenseMatches;
+    const vatRegistrationAlert = incomeAvailable && vatStatus && raw.vatWatchPeriod && raw.vatWatchIncome
+      ? calculateVatRegistrationAlert({
+          status: vatStatus.status,
+          positiveSales: sum(raw.vatWatchIncome[0]._sum.grandTotalAmount),
+          creditSales: sum(raw.vatWatchIncome[1]._sum.grandTotalAmount),
+          periodStart: raw.vatWatchPeriod.periodStart,
+          periodEnd: raw.vatWatchPeriod.periodEnd,
+        })
+      : undefined;
 
     return {
       period,
       income: incomeAvailable ? {
         available: true, salesDocumentTotal: amounts.salesDocumentTotal, receivedTotal: amounts.receivedTotal,
         withheldTaxTotal: amounts.withheldTaxTotal, receivableOutstanding: amounts.receivableOutstanding, byCategory: incomeRows,
+        ...(vatRegistrationAlert && { vatRegistrationAlert }),
       } : { available: false, unavailableReason: canIncome ? 'DATA_MISMATCH' : 'NO_PERMISSION', byCategory: [] },
       expense: expenseAvailable ? {
         available: true, recordedExpenseTotal: amounts.recordedExpenseTotal, paidExpenseTotal: amounts.paidExpenseTotal, byCategory: expenseRows,

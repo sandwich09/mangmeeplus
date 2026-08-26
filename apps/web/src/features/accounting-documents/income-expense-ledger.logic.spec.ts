@@ -9,6 +9,7 @@ import {
   ledgerBarWidth,
   ledgerMonthPeriod,
   ledgerReceivePaymentBlocker,
+  vatRegistrationAlertCopy,
   visibleLedgerEntryTypes,
 } from './income-expense-ledger.logic';
 
@@ -72,5 +73,14 @@ describe('income expense ledger UI logic', () => {
     assert.equal(canReceiveLedgerPayment(entry, []), false);
     assert.equal(canReceiveLedgerPayment({ ...entry, status: 'CREDITED' }, ['accounting.payment.create']), false);
     assert.equal(canReceiveLedgerPayment({ ...entry, outstandingAmount: '0.00' }, ['accounting.payment.create']), false);
+  });
+
+  it('uses plain Thai copy and the Buddhist year for both VAT threshold levels', () => {
+    const period = { periodBasis: 'ACCOUNTING_PERIOD' as const, periodStart: '2026-01-01', periodEnd: '2026-08-27' };
+    const approaching = vatRegistrationAlertCopy({ level: 'APPROACHING', ...period, salesDocumentTotal: '1440000.00', thresholdAmount: '1800000.00' });
+    assert.match(approaching.title, /แตะ 80%/);
+    assert.match(approaching.detail, /2569/);
+    assert.match(approaching.detail, /1,440,000\.00/);
+    assert.match(vatRegistrationAlertCopy({ level: 'REACHED', ...period, salesDocumentTotal: '1800000.00', thresholdAmount: '1800000.00' }).title, /แตะหรือเกิน/);
   });
 });

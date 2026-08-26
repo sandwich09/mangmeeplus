@@ -1,12 +1,18 @@
 import Decimal from 'decimal.js';
 import { civilDayRangeToUtc, isCivilDate, todayCivilDate } from '@watchdog-bms/contracts';
-import type { IncomeExpenseLedgerCategoryAmount } from '@watchdog-bms/contracts';
+import type {
+  IncomeExpenseLedgerCategoryAmount,
+  IncomeExpenseLedgerVatRegistrationAlert,
+  VatRegistrationStatus,
+} from '@watchdog-bms/contracts';
 
 export const INCOME_EXPENSE_LEDGER_TIMEZONE = 'Asia/Bangkok' as const;
 const BANGKOK_UTC_OFFSET_MS = 7 * 60 * 60 * 1_000;
 
 const money = (value: Decimal.Value | null | undefined) => new Decimal(value ?? 0);
 const moneyString = (value: Decimal.Value) => money(value).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2);
+const VAT_REGISTRATION_THRESHOLD = new Decimal('1800000');
+const VAT_REGISTRATION_WARNING = VAT_REGISTRATION_THRESHOLD.mul('0.8');
 
 export function resolveIncomeExpenseLedgerPeriod(from?: string, to?: string, today = todayCivilDate(INCOME_EXPENSE_LEDGER_TIMEZONE)) {
   const resolvedFrom = from ?? `${today.slice(0, 8)}01`;
@@ -53,6 +59,40 @@ export function calculateIncomeExpenseLedgerAmounts(input: {
     paidExpenseTotal: moneyString(paidExpenseTotal),
     cashDifference: moneyString(receivedTotal.minus(paidExpenseTotal)),
     documentDifference: moneyString(salesDocumentTotal.minus(recordedExpenseTotal)),
+  };
+}
+
+export function calculateVatRegistrationAlert(input: {
+  status: VatRegistrationStatus;
+  positiveSales: Decimal.Value;
+  creditSales: Decimal.Value;
+  periodStart: string;
+  periodEnd: string;
+}): IncomeExpenseLedgerVatRegistrationAlert | undefined {
+  if (input.status !== 'NOT_REGISTERED') return undefined;
+  const salesDocumentTotal = Decimal.max(0, money(input.positiveSales).minus(input.creditSales));
+  if (salesDocumentTotal.lt(VAT_REGISTRATION_WARNING)) return undefined;
+  return {
+    level: salesDocumentTotal.gte(VAT_REGISTRATION_THRESHOLD) ? 'REACHED' : 'APPROACHING',
+    periodBasis: 'ACCOUNTING_PERIOD',
+    periodStart: input.periodStart,
+    periodEnd: input.periodEnd,
+    salesDocumentTotal: moneyString(salesDocumentTotal),
+    thresholdAmount: moneyString(VAT_REGISTRATION_THRESHOLD),
+  };
+}
+
+export function resolveVatRegistrationWatchPeriod(today: string, accountingPeriodMonth: number) {
+  if (!isCivilDate(today) || !Number.isInteger(accountingPeriodMonth) || accountingPeriodMonth < 1 || accountingPeriodMonth > 12) return null;
+  const currentYear = Number(today.slice(0, 4));
+  const currentMonth = Number(today.slice(5, 7));
+  const endYear = currentMonth <= accountingPeriodMonth ? currentYear : currentYear + 1;
+  const startMonth = accountingPeriodMonth % 12 + 1;
+  const startYear = accountingPeriodMonth === 12 ? endYear : endYear - 1;
+  return {
+    periodBasis: 'ACCOUNTING_PERIOD' as const,
+    periodStart: `${startYear}-${String(startMonth).padStart(2, '0')}-01`,
+    periodEnd: today,
   };
 }
 

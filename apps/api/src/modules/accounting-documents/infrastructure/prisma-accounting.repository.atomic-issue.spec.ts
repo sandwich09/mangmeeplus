@@ -345,6 +345,7 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
     };
     try {
       await client.company.create({ data: { id: ledgerCompanyId, name: 'P27 ledger test' } });
+      await client.companyTaxProfile.create({ data: { companyId: ledgerCompanyId, accountingPeriodMonth: 12 } });
       const counterparty = await client.accountingCounterparty.create({ data: {
         companyId: ledgerCompanyId, type: 'CUSTOMER', displayName: 'ลูกค้าทดสอบ', createdByUserId: ctx.userId,
       } });
@@ -366,6 +367,12 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
         companyId: ledgerCompanyId, documentId: creditNote.id, lineNumber: 1, description: 'ลดราคาทดสอบ',
         quantity: '1', unitPrice: '10', lineSubtotalAmount: '10', lineTotalAmount: '10',
       } });
+      await client.accountingDocument.create({ data: {
+        companyId: ledgerCompanyId, documentType: 'INVOICE', documentNumber: 'INV-P27-YTD-0001', status: 'ISSUED',
+        documentDate: new Date('2026-01-15T00:00:00.000Z'), subtotalAmount: '1500000', taxableAmount: '1500000',
+        grandTotalAmount: '1500000', paidAmount: '1500000', outstandingAmount: '0', paymentStatus: 'PAID',
+        vatMode: 'NO_VAT', createdByUserId: ctx.userId,
+      } });
       const expense = await client.expenseRecord.create({ data: {
         companyId: ledgerCompanyId, status: 'CONFIRMED', expenseDate: new Date('2026-08-01T00:00:00.000Z'),
         grandTotalAmount: '50', netPayableAmount: '50', paidAmount: '20', outstandingAmount: '30',
@@ -380,7 +387,10 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
         { companyId: ledgerCompanyId, expenseId: expense.id, amount: '99', paidAt: new Date('2026-07-31T16:59:59.999Z'), createdByUserId: ctx.userId },
       ] });
 
-      const ledger = new IncomeExpenseLedgerUseCase({ client } as any);
+      const ledger = new IncomeExpenseLedgerUseCase(
+        { client } as any,
+        { get: async () => { throw new Error('branch-scoped ledger must not load a company-wide VAT total'); } } as any,
+      );
       const summary = await ledger.summary(ctx, '2026-08-01', '2026-08-31');
       assert.deepEqual({
         sales: summary.income.salesDocumentTotal, received: summary.income.receivedTotal,
@@ -393,8 +403,25 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
       });
       const incomeOnly = await ledger.summary({ ...ctx, permissions: ['accounting.document.read'] }, '2026-08-01', '2026-08-31');
       assert.equal(incomeOnly.income.available, true);
+      assert.equal(incomeOnly.income.vatRegistrationAlert, undefined);
       assert.deepEqual(incomeOnly.expense, { available: false, unavailableReason: 'NO_PERMISSION', byCategory: [] });
       assert.equal(incomeOnly.cashDifference, undefined);
+
+      const companyWide = await new IncomeExpenseLedgerUseCase(
+        { client } as any,
+        { get: async () => ({ status: 'NOT_REGISTERED' }) } as any,
+      ).summary({ ...ctx, scopes: {} }, '2026-08-01', '2026-08-31', '2026-08-27');
+      assert.deepEqual(companyWide.income.vatRegistrationAlert, {
+        level: 'APPROACHING', periodBasis: 'ACCOUNTING_PERIOD', periodStart: '2026-01-01', periodEnd: '2026-08-27',
+        salesDocumentTotal: '1500090.00', thresholdAmount: '1800000.00',
+      });
+
+      const accessorUnavailable = await new IncomeExpenseLedgerUseCase(
+        { client } as any,
+        { get: async () => { throw new Error('temporary VAT accessor outage'); } } as any,
+      ).summary({ ...ctx, scopes: {} }, '2026-08-01', '2026-08-31', '2026-08-27');
+      assert.equal(accessorUnavailable.income.available, true);
+      assert.equal(accessorUnavailable.income.vatRegistrationAlert, undefined);
 
       const entries = await ledger.entries(ctx, { type: 'ALL', from: '2026-08-01', to: '2026-08-31' });
       assert.equal(entries.total, 3, 'evidence-only receipt is not a second income row');
@@ -424,6 +451,7 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
       await client.expensePayment.deleteMany({ where: { companyId: ledgerCompanyId } });
       await client.expenseLine.deleteMany({ where: { companyId: ledgerCompanyId } });
       await client.expenseRecord.deleteMany({ where: { companyId: ledgerCompanyId } });
+      await client.companyTaxProfile.deleteMany({ where: { companyId: ledgerCompanyId } });
       await client.company.deleteMany({ where: { id: ledgerCompanyId } });
     }
   });

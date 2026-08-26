@@ -366,6 +366,15 @@ export type IncomeExpenseLedgerSideSummary = {
   unavailableReason?: 'NO_PERMISSION' | 'DATA_MISMATCH';
 };
 
+export type IncomeExpenseLedgerVatRegistrationAlert = {
+  level: 'APPROACHING' | 'REACHED';
+  periodBasis: 'ACCOUNTING_PERIOD';
+  periodStart: string;
+  periodEnd: string;
+  salesDocumentTotal: string;
+  thresholdAmount: string;
+};
+
 export type IncomeExpenseLedgerSummary = {
   period: { from: string; to: string; timezone: 'Asia/Bangkok' };
   income: IncomeExpenseLedgerSideSummary & {
@@ -374,6 +383,7 @@ export type IncomeExpenseLedgerSummary = {
     withheldTaxTotal?: string;
     receivableOutstanding?: string;
     byCategory: IncomeExpenseLedgerCategoryAmount[];
+    vatRegistrationAlert?: IncomeExpenseLedgerVatRegistrationAlert;
   };
   expense: IncomeExpenseLedgerSideSummary & {
     recordedExpenseTotal?: string;
