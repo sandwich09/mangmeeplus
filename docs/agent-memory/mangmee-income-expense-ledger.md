@@ -1,6 +1,6 @@
 # Agent Memory: mangmee-income-expense-ledger
 
-Status: Spec v1.1 + plan ACTIVE — Owner ตอบคำถาม §9 ครบ 6 ข้อ และ Phase 0 (V1–V6) ปิดด้วยหลักฐานโค้ด+FlowAccount แล้ว (2026-08-26) → **พร้อมเริ่ม coding Phase 1 (LED-FIN-01 decimal + paymentNumber)**; ยังไม่มีการแก้โค้ด
+Status: Spec v1.1 + plan ACTIVE — **Phase 1 (LED-FIN-01) โค้ดเสร็จ 2026-08-26**: `accounting-totals.logic.ts` เป็น decimal.js ROUND_HALF_UP ทั้งไฟล์, จุด float ใน `createPayment` แปลงครบ, `paymentNumber` ออกจาก sequence `accounting.payment` แบบ reserve+commit ใน tx เดียว; golden spec 8 เคส (3 เคสเป็น float tripwire ที่ของเดิมตอบผิดจริง: 57.50×7%→4.03 ไม่ใช่ 4.02, 33.50×3%→1.01, 1.005→1.01) ลงทะเบียนใน test list แล้ว → ต่อไป Phase 2 (หมวดรายรับ)
 
 Owner: thawatchai (Product Owner) + Lead dev 1 คน
 
@@ -31,11 +31,12 @@ Artifacts:
 
 Verification:
 
-- Docs-only; หลักฐานโค้ดทุกข้อมี file:line จาก Explore agents (2026-08-26); FlowAccount ตรวจ read-only ไม่มี mutation ใด ๆ (ไม่กดบันทึกเอกสาร/ไม่รับ cookie banner แทนผู้ใช้)
+- หลักฐานโค้ดทุกข้อมี file:line จาก Explore agents (2026-08-26); FlowAccount ตรวจ read-only ไม่มี mutation ใด ๆ (ไม่กดบันทึกเอกสาร/ไม่รับ cookie banner แทนผู้ใช้)
+- Phase 1 (branch `codex/ledger-p1-decimal`): specs ทั้ง module accounting-documents ผ่าน 144/144 (61+83 รวม golden ใหม่ 8 และ `spec-suite-coverage` guard); `tsc --noEmit` apps/api เงียบ; เอกสารเดิมไม่ถูกกระทบ — totals คำนวณเฉพาะตอน create/update draft ไม่มี migration/rewrite แถวเดิม และ `sales_documents` ปิด default ทุก env (DB seeded local ไม่ได้รัน จึงไม่มี count query — บันทึกตามจริง); ไม่มี spec เดิม exercise `createPayment` ตรง ๆ → เคส in-tx numbering คุมด้วย E2E LED-02 ใน Phase 6
 
 Next:
 
-1. PR docs ชุดนี้เข้า develop + admin merge
-2. เริ่ม Phase 1: แปลง `accounting-totals.logic.ts` → decimal.js + golden + `paymentNumber` (branch ใหม่จาก develop)
-3. ไล่ Phase 2→6 ตามแผน; รายงานผลต่อ Owner ราย phase
+1. PR Phase 1 เข้า develop + admin merge
+2. Phase 2: `RevenueCategory` model→API→UI→bootstrap 6 หมวด (M1, M2)
+3. ไล่ Phase 3→6 ตามแผน; รายงานผลต่อ Owner ราย phase
 4. หมายเหตุข้ามงาน: PR #238 (release รอบก่อน develop→main) CI เขียวครบ ยังรอ Owner approve+merge → แล้วผม dispatch UAT ตาม runbook
