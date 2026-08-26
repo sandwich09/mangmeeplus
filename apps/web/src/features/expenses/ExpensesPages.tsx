@@ -2,7 +2,7 @@
 
 import { Fragment, useState, useEffect, useCallback, useMemo, useRef, type ChangeEvent, type DragEvent, type FormEvent, type MutableRefObject, type ReactNode } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { ThemedFile } from '@/common/components/field/ThemedFile';
 import { InfoTip } from '@/common/components/field/InfoTip';
@@ -70,6 +70,9 @@ import { hasRecordedTax, showsTaxCapture, useExpenseCapturePolicy } from './expe
 import { evaluateExpensePrerequisites, mayApproveSubstituteReceipt, payerWrittenMissingReason, resolveWizardSignatureSource } from './substitute-receipt-wizard.model';
 import { civilPeriodKey, todayCivilDate } from '@watchdog-bms/contracts';
 import { useToast } from '@/common/components/toast';
+
+// The upload copy promises "about 10–20 seconds"; past that the honest message is the queue one.
+const QUEUE_BUSY_AFTER_MS = 8_000;
 
 // ── period control (day / month) ─────────────────────────────────────────────
 type Gran = 'day' | 'month';
@@ -204,6 +207,14 @@ function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { company
   const [extracting, setExtracting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fileNotice, setFileNotice] = useState<string | null>(null);
+  // P4: past the advertised 10–20s read time, a spinner reads as "the system is down" when in fact
+  // the queue is just long. Say which one it is.
+  const [queueBusy, setQueueBusy] = useState(false);
+  useEffect(() => {
+    if (!extracting) { setQueueBusy(false); return; }
+    const timer = window.setTimeout(() => setQueueBusy(true), QUEUE_BUSY_AFTER_MS);
+    return () => window.clearTimeout(timer);
+  }, [extracting]);
 
   const selectFile = async (file: File | null) => {
     setSelectedFile(null); setFileName(''); setFileNotice(null); setError(null);
@@ -302,7 +313,7 @@ function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { company
   const uploadPhase = preparing
     ? t('expenses.upload_phase_preparing', locale)
     : extracting
-      ? t('expenses.upload_phase_extracting', locale)
+      ? t(queueBusy ? 'expenses.upload_phase_queued' : 'expenses.upload_phase_extracting', locale)
       : loading ? t('expenses.upload_phase_uploading', locale) : null;
 
   return (
@@ -369,6 +380,8 @@ function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { company
           <div>
             <div className="mb-1.5 text-xs font-semibold text-gray-600">{t('expenses.upload_receipt_date', locale)}</div>
             <ThemedDate className={inputClass} value={expenseDate} onChange={(e) => setExpenseDate(e.target.value)} />
+            {/* WEB-05: the field defaults to today, so the example has to say which date is meant. */}
+            <p className="mt-1 text-xs text-gray-500">{t('expenses.upload_receipt_date_hint', locale)}</p>
           </div>
           <div>
             <div className="mb-1.5 text-xs font-semibold text-gray-600">{t('expenses.upload_note', locale)}</div>
@@ -385,7 +398,7 @@ function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { company
             {extracting ? t('expenses.ai_reading', locale) : preparing ? t('expenses.upload_preparing', locale) : loading ? t('expenses.uploading', locale) : t('expenses.upload_cta', locale)}
           </span>
         </button>
-        {uploadPhase && <p className="mt-2 text-center text-sm font-semibold text-brand-700">{uploadPhase}</p>}
+        {uploadPhase && <p role="status" aria-live="polite" className="mt-2 text-center text-sm font-semibold text-brand-700">{uploadPhase}</p>}
         {onNoDocument && (
           <button type="button" className="mt-3 min-h-11 w-full text-center text-sm font-semibold text-brand-600 sm:min-h-0 hover:underline" onClick={onNoDocument}>
             {t('expenses.upload_no_document_link', locale)}
@@ -1872,6 +1885,11 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  // EXP-UX-01: `?highlight=<expenseId>` is written by ส่งตรวจสอบ. Always the id, never "the newest
+  // row" — with two people submitting at once, "newest" points at somebody else's document.
+  const highlightId = useSearchParams().get('highlight') ?? '';
+  const focusedHighlight = useRef('');
+  const scrolledToHighlight = useRef('');
   const branchFilter = useBranchFilter();
   const branchId = branchFilter?.branchId ?? '';
   const { fromDate, toDate } = periodRange(gran, month, day);
@@ -1935,6 +1953,32 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
   }, [filtered, page]);
   const pageStart = filtered.length === 0 ? 0 : (page - 1) * LIST_PAGE_SIZE + 1;
   const pageEnd = Math.min(page * LIST_PAGE_SIZE, filtered.length);
+
+  // Land on the row, not near it: a highlight the user still has to hunt for through a chip, a
+  // search box or a page number is no confirmation at all. Filters survive the detail-page round
+  // trip (MenuFilterScope), so a leftover chip/query would otherwise hide the row that was just
+  // submitted. Once per id — after that the user's own filtering wins.
+  useEffect(() => {
+    if (!highlightId || focusedHighlight.current === highlightId) return;
+    if (!rows.some((row) => row.id === highlightId)) return;
+    const index = filtered.findIndex((row) => row.id === highlightId);
+    if (index < 0) { setChip('all'); setQuery(''); return; }
+    focusedHighlight.current = highlightId;
+    setPage(Math.floor(index / LIST_PAGE_SIZE) + 1);
+  }, [highlightId, rows, filtered, setChip, setQuery]);
+
+  // Once per highlighted id — re-scrolling on every re-render would fight the user's own scrolling.
+  // The desktop grid and the mobile card list both render (one is CSS-hidden), so scroll the copy
+  // that actually has a layout box; scrollIntoView on a `display:none` node is a silent no-op.
+  useEffect(() => {
+    if (!highlightId || scrolledToHighlight.current === highlightId) return;
+    const node = Array.from(
+      document.querySelectorAll<HTMLElement>('[data-testid="expenses-row"][data-highlighted], [data-testid="expenses-card"][data-highlighted]'),
+    ).find((el) => el.offsetParent !== null);
+    if (!node) return;
+    scrolledToHighlight.current = highlightId;
+    node.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, [highlightId, pagedRows]);
   const confirmTarget = rows.find((row) => row.id === confirmId);
   const confirmLabel = confirmTarget && expenseDeleteTargetLabel(confirmTarget);
 
@@ -2054,7 +2098,9 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
                 : filtered.length === 0 ? <p className="py-10 text-center text-sm text-gray-500">{t('expenses.empty_period', locale)}</p>
                   : pagedRows.map((e) => (
                       <div key={e.id} onClick={() => onSelect(e.id)} data-testid="expenses-row"
-                        className={cx(GRID, 'cursor-pointer border-b border-gray-50 px-2 py-3 transition hover:bg-gray-50')}>
+                        {...(e.id === highlightId ? { 'data-highlighted': 'true' } : {})}
+                        className={cx(GRID, 'cursor-pointer border-b border-gray-50 px-2 py-3 transition hover:bg-gray-50',
+                          e.id === highlightId && 'rounded-xl ring-2 ring-brand-500 bg-brand-25')}>
                         <div className="min-w-0">
                           <div className="truncate text-[15px] font-semibold text-gray-900">{firstFilled(e.vendorNameSnapshot) ?? t('expenses.vendor_pending', locale)}</div>
                           <div className="mt-0.5 flex items-center gap-1.5 text-xs text-gray-400">
@@ -2085,12 +2131,13 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
           </div>
           <div className="mt-3 space-y-3 md:hidden" data-testid="expenses-card-list">
             {pagedRows.map((e) => (
-              <MangmeeCard key={e.id} className="overflow-hidden">
+              <MangmeeCard key={e.id} className={cx('overflow-hidden', e.id === highlightId && 'ring-2 ring-brand-500')}>
                 <button
                   type="button"
                   className="block min-h-11 w-full p-4 text-left"
                   onClick={() => onSelect(e.id)}
                   data-testid="expenses-card"
+                  {...(e.id === highlightId ? { 'data-highlighted': 'true' } : {})}
                 >
                   <div className="flex min-w-0 items-center gap-2">
                     <span className="max-w-[45%] truncate font-mono text-xs text-gray-600">{firstFilled(e.expenseNumber, e.vendorDocumentNumber) ?? '—'}</span>
@@ -2128,19 +2175,26 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
               )}
       </MangmeeCard>
 
-      {confirmTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onClick={() => { if (!deleting) setConfirmId(null); }}>
-          <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl" onClick={(event) => event.stopPropagation()}>
-            <div className="text-base font-bold text-gray-900">{confirmLabel ? `ลบรายการ “${confirmLabel}” อย่างถาวร?` : 'ลบรายการนี้อย่างถาวร?'}</div>
-            <p className="mt-1.5 text-sm leading-relaxed text-gray-500">รายการค่าใช้จ่ายนี้จะถูกลบอย่างถาวรพร้อมข้อมูลที่เกี่ยวข้อง และไม่สามารถย้อนกลับได้</p>
-            {deleteError && <div className="mt-3"><ErrorBanner message={deleteError} /></div>}
-            <div className="mt-4 flex justify-end gap-2">
-              <button type="button" className={ghostClass} disabled={deleting} onClick={() => setConfirmId(null)}>ยกเลิก</button>
-              <button type="button" className={dangerClass} disabled={deleting} onClick={() => void removeExpense()}>{deleting ? 'กำลังลบ...' : 'ลบถาวร'}</button>
-            </div>
-          </div>
+      {/* A11Y-01: the shared Modal owns the dialog role, focus trap, Escape and the labelled close
+          button. The hand-rolled overlay this replaces had none of them. */}
+      <Modal
+        open={Boolean(confirmTarget)}
+        size="sm"
+        title={confirmLabel ? `ลบรายการ “${confirmLabel}” อย่างถาวร?` : 'ลบรายการนี้อย่างถาวร?'}
+        closeLabel={t('expenses.close', locale)}
+        onClose={() => { if (!deleting) setConfirmId(null); }}
+        footer={(
+          <>
+            <button type="button" className={ghostClass} disabled={deleting} onClick={() => setConfirmId(null)}>ยกเลิก</button>
+            <button type="button" className={dangerClass} disabled={deleting} onClick={() => void removeExpense()}>{deleting ? 'กำลังลบ...' : 'ลบถาวร'}</button>
+          </>
+        )}
+      >
+        <div className="space-y-3">
+          <p className="text-sm leading-relaxed text-gray-600">รายการค่าใช้จ่ายนี้จะถูกลบอย่างถาวรพร้อมข้อมูลที่เกี่ยวข้อง และไม่สามารถย้อนกลับได้</p>
+          {deleteError && <ErrorBanner message={deleteError} />}
         </div>
-      )}
+      </Modal>
 
     </div>
   );

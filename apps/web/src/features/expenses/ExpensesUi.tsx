@@ -98,8 +98,10 @@ export function StatusBadge({ status }: { status: string }) {
 }
 
 // ── banners ──────────────────────────────────────────────────────────────────
+// A11Y-01: `role="alert"` here, not at each call site — the banner only ever mounts when there is
+// something to say, and every expense screen renders its errors through this one component.
 export function ErrorBanner({ message }: { message: string }) {
-  return <div className="rounded-xl border border-[#FECDCA] bg-error-50 px-4 py-3 text-sm font-medium text-error-700">⚠ {message}</div>;
+  return <div role="alert" className="rounded-xl border border-[#FECDCA] bg-error-50 px-4 py-3 text-sm font-medium text-error-700">⚠ {message}</div>;
 }
 export function InfoBanner({ message }: { message: string }) {
   return <div className="rounded-xl border border-brand-100 bg-brand-25 px-4 py-3 text-sm font-medium text-brand-700">✓ {message}</div>;

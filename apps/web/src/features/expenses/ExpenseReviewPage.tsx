@@ -260,6 +260,22 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
     try { await fn(); await load(); onRefresh(); if (successMessage) toast.success(successMessage); } catch (e) { setError(err(e)); } finally { setActionLoading(false); }
   };
 
+  // EXP-UX-01 / plan 13.11.A: ส่งตรวจสอบ ends the job, so it must end on the list — staying on the
+  // detail page left every user closing the page and re-checking by hand. `replace`, not `push`:
+  // Back must not return to the stale pre-submit view. Only after the server confirms; a failure
+  // keeps this page and everything typed into it (doAction's catch already does exactly that).
+  const markReady = async (successMessage = 'ส่งตรวจเรียบร้อยแล้ว') => {
+    setActionLoading(true); setError(null);
+    try {
+      await (canReview ? markExpenseReadyAsReviewer(companyId, expenseId) : markExpenseReady(companyId, expenseId));
+      onRefresh();
+      router.replace(`/companies/${companyId}/expenses?highlight=${encodeURIComponent(expenseId)}`);
+      toast.success(successMessage);
+      // Left set on purpose: the navigation unmounts this page, and re-enabling the button would
+      // let a second submit fire against an expense that already moved on.
+    } catch (e) { setError(err(e)); setActionLoading(false); }
+  };
+
   // Not doAction: the record is gone on success, so reloading it would 404. Leave `deleting` set —
   // the navigation unmounts this page, and re-enabling the button would point it at a dead id.
   const removeExpense = async () => {
@@ -498,7 +514,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
                 {canCheckDuplicates && <button className={ghostClass} onClick={checkDuplicates} disabled={actionLoading}>{t('expenses.check_duplicate', locale)}</button>}
                 {detail.status !== 'READY_FOR_CONFIRMATION' && (
                   <>
-                    <button className={btnClass} onClick={() => doAction(() => canReview ? markExpenseReadyAsReviewer(companyId, expenseId) : markExpenseReady(companyId, expenseId), 'ส่งตรวจสอบเรียบร้อยแล้ว')} disabled={actionLoading || classificationBlocked || !detailsStepDone} title={classificationBlocked ? classificationBlockMessage : !detailsStepDone ? t('expenses.submit_requires_details', locale) : undefined}>{t('expenses.send_for_review', locale)}</button>
+                    <button className={btnClass} onClick={() => void markReady()} disabled={actionLoading || classificationBlocked || !detailsStepDone} title={classificationBlocked ? classificationBlockMessage : !detailsStepDone ? t('expenses.submit_requires_details', locale) : undefined}>{t('expenses.send_for_review', locale)}</button>
                   </>
                 )}
                 {detail.status === 'READY_FOR_CONFIRMATION' && (
@@ -530,7 +546,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
             {canViewJournal && <button className={btnClass} onClick={onGoJournal}>{detail.journalEntryNumber ? `ดู ${detail.journalEntryNumber} →` : t('expenses.view_journal', locale)}</button>}
           </>
         )}
-        {canRestartReview && <button className={ghostClass} onClick={() => doAction(() => canReview ? markExpenseReadyAsReviewer(companyId, expenseId) : markExpenseReady(companyId, expenseId), 'เริ่มตรวจใหม่เรียบร้อยแล้ว')} disabled={actionLoading}>{t('expenses.restart_review', locale)}</button>}
+        {canRestartReview && <button className={ghostClass} onClick={() => void markReady('เริ่มตรวจใหม่เรียบร้อยแล้ว')} disabled={actionLoading}>{t('expenses.restart_review', locale)}</button>}
       </div>
     </div>
   ) : null;
@@ -867,6 +883,11 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
     <>
       <MangmeePage eyebrow={backLink} title={pageTitle} meta={pageMeta}>
         {error && <ErrorBanner message={error} />}
+        {/* A11Y-01: while an action runs the only visible cue is the disabled buttons. Empty when
+            idle, so nothing is announced on mount. */}
+        <p role="status" aria-live="polite" className="sr-only">
+          {actionLoading ? t('expenses.action_in_progress', locale) : ''}
+        </p>
 
         <div className="sticky z-10 flex flex-wrap gap-1.5 border-b border-gray-100 bg-white px-4 py-2.5" style={{ top: `${APP_HEADER_REM}rem` }}>
           {guided ? (
