@@ -1,6 +1,6 @@
 # แผนพัฒนา สมุดรายรับ–รายจ่าย (Income–Expense Ledger MVP)
 
-สถานะ: **DRAFT รอ Owner ตอบคำถาม §9 ของ spec แล้วจึงเริ่ม Phase 0**
+สถานะ: **ACTIVE — Owner ตอบ §9 ครบและ Phase 0 (V1–V6) ปิดแล้ว 2026-08-26 → เริ่ม Phase 1 ได้ทันที**; P27 เป็นคิวหลักก่อนสาย P14→P26 (Owner ข้อ 1)
 
 Spec: [Income–Expense Ledger Spec](../specs/mangmee-income-expense-ledger-spec-th.md) — ทุก phase อ้าง requirement/หลักฐานจาก spec; แผนนี้ไม่ประกาศข้อเท็จจริงใหม่
 
@@ -12,14 +12,14 @@ Spec: [Income–Expense Ledger Spec](../specs/mangmee-income-expense-ledger-spec
 
 | Phase | เนื้องาน | ประเมิน |
 |---|---|---|
-| 0 | ยืนยันสัญญา 6 ข้อ | 0.5 วัน |
+| 0 | ยืนยันสัญญา 6 ข้อ | ~~0.5 วัน~~ **เสร็จแล้ว 2026-08-26** |
 | 1 | การเงินถูกก่อน (LED-FIN-01 + paymentNumber) | 1 วัน |
 | 2 | หมวดรายรับ (model→API→UI→bootstrap) | 1.5 วัน |
-| 3 | บันทึกรายรับ 2 โหมด + RecordSimpleIncome | 2 วัน |
+| 3 | บันทึกรายรับ 2 โหมด (bundle) + ใบลดหนี้/เพิ่มหนี้แบบ FlowAccount | 3 วัน |
 | 4 | หน้าสมุด + export | 2 วัน |
 | 5 | จัดระเบียบฝั่งรายจ่าย + ทางเข้า | 0.5 วัน |
 | 6 | เปิดระบบ: entitlement/nav/gate/E2E/หลักฐาน | 1.5 วัน |
-| รวม | | **~9 วันทำงาน** (มี buffer ต่ำ — ถ้าต้องขยาย CN/DN ตาม spec §9 ข้อ 4 เพิ่มอีก ~1 วัน) |
+| รวม | | **~9.5 วันทำงาน** (CN/DN เข้าขอบเขตแล้วตามคำตอบ Owner ข้อ 4) |
 
 ตัดให้เร็วขึ้นได้ 2 จุดโดยไม่เสียหลักการ: (ก) เลื่อน XLSX เหลือ CSV ก่อน (−0.5 วัน), (ข) เลื่อนหน้า "จัดการหมวดรายรับ" ไปหลังเปิด (ใช้ 6 หมวด default ไปก่อน, −0.5 วัน) — ทั้งคู่ต้องให้ Owner เลือก ไม่ตัดเอง
 
@@ -31,20 +31,16 @@ Spec: [Income–Expense Ledger Spec](../specs/mangmee-income-expense-ledger-spec
 - ทุก spec file ใหม่ของ apps/api ต้องลงทะเบียนใน `scripts.test` (มี spec-suite-coverage guard จับอยู่)
 - Migration: เพิ่มอย่างเดียวตาม spec §6; รัน dry-run บน clone ก่อนตาม protocol เดิม
 
-## Phase 0 — ยืนยันสัญญาที่ spec ระบุว่า "ต้องตรวจ" (ห้ามข้าม)
+## Phase 0 — ยืนยันสัญญา 6 ข้อ ✅ **เสร็จ 2026-08-26** (ผลเต็มอยู่ใน spec §F-LED-1/§F-LED-6)
 
-ปิดคำถามค้างของ spec ด้วยหลักฐานโค้ด/รันจริง ก่อนเขียนโค้ดฟีเจอร์:
-
-| # | สิ่งที่ต้องยืนยัน | วิธี |
-|---|---|---|
-| V1 | `AccountingDocument.counterpartyId` บังคับหรือ nullable + สร้าง "ลูกค้าเงินสด" อัตโนมัติชนกับ unique อะไรไหม | อ่าน schema + `CreateDocumentUseCase` + ลอง create ผ่าน API บน local |
-| V2 | `AttachmentLink` purpose namespace ฝั่ง accounting documents มีอยู่แล้วหรือยัง (ฝั่ง expenses มี 3 ค่า) | grep allowed purposes ทุกที่ที่ validate |
-| V3 | `RECEIPT` ตั้ง `sourceDocumentId` อ้าง INVOICE ได้ไหมใน validation ปัจจุบัน (จำเป็นต่อ auto-receipt) | อ่าน `accounting-status.logic.ts` + ทดลอง create+issue บน local |
-| V4 | แหล่ง truth สถานะจด VAT ของบริษัท (ใช้ซ่อน/แสดงตัวเลือก VAT ตาม spec §9 ข้อ 3) | หา company tax profile ใน schema/settings |
-| V5 | การเปิด entitlement ต่อบริษัทหลัง onboarding ทำผ่านช่องทางไหน (System Admin UI/API) + ผล off/on/off | อ่าน system-partner/entitlement use-cases + ลองบน local |
-| V6 | `IssueDocumentUseCase` เรียกซ้อนใน transaction เดียวกับ payment ได้ไหม (โครง `RecordSimpleIncomeUseCase`) หรือแยก transaction ต่อขั้น + compensating cancel | อ่านโครง use-case + เลขเอกสาร reserve/commit |
-
-ผลลัพธ์: อัปเดต spec §4/§9 ด้วยคำตอบ (แก้ spec ก่อน ไม่ workaround ในโค้ด) + ตาราง V1–V6 ใน task memory
+| # | ผลตรวจ (สรุป) |
+|---|---|
+| V1 | `counterpartyId` nullable ทั้ง schema/DTO/use-case (`schema.prisma:1751`, `accounting-money.dtos.ts:49`); **ไม่มี unique กันชื่อซ้ำ** → ตัดสิน: ไม่สร้าง row "ลูกค้าเงินสด" อัตโนมัติ, เอกสาร+payment ใช้ null คู่กัน (กติกา match `accounting-money-validation.logic.ts:95-96`) |
+| V2 | purpose ฝั่ง accounting **ไม่มี** — gate กลางรับเฉพาะ `expense.record` (`attachment.logic.ts:24-32`) → Phase 3 ขยาย allow-list แบบ additive (spec M6) |
+| V3 | `RECEIPT` + `sourceDocumentId` **ทำได้** (ตรวจ existence+branch แล้ว persist; กฎชนิดเอกสารไม่ block — `accounting-status.logic.ts:59-62`); ไม่มี auto-receipt เดิมในระบบ; `taxInvoiceId` เป็น dead metadata ไม่มี write path |
+| V4 | truth = `VatRegistrationStatus` ผ่าน `vatRegistration.get(companyId, civilDate)` (`expense-draft.use-case.ts:701`) + กติกา `deriveExpenseCaptureMode` (`expense-capture-policy.logic.ts:28-32`) |
+| V5 | `PUT /v1/system/partners/:id/features` (`system.partner_feature.manage`, CAS `expectedSetVersion`, normalization gate); off/on/off มี test พิสูจน์แล้ว (`set-partner-features.use-case.spec.ts:1322`) |
+| V6 | chain use-case เดิม**ไม่ได้** (tx แยกคนละใบ + reserve เลขนอก tx) → ใช้ repository bundle ตามแบบ `submitDraftAtomic` + `reserveNumberInTransaction`/`commitNumberInTransaction` (spec §F-LED-1) |
 
 ## Phase 1 — การเงินถูกก่อน (LED-FIN-01, LED-FIN-02, M3)
 
@@ -64,13 +60,14 @@ Spec: [Income–Expense Ledger Spec](../specs/mangmee-income-expense-ledger-spec
 7. Web: `CategoryManagePanel` ฝั่งรายรับ (reuse โครง component เดิม) ใต้ route sales-documents
 8. Tests: unit bootstrap idempotent, CRUD+perm negative, snapshot-on-issue, spec ลงทะเบียนครบ
 
-## Phase 3 — บันทึกรายรับ (spec F-LED-1)
+## Phase 3 — บันทึกรายรับ + ใบลดหนี้/เพิ่มหนี้ (spec F-LED-1, F-LED-6)
 
-1. `RecordSimpleIncomeUseCase` (โหมด "รับเงินแล้ว"): create INVOICE → issue → payment RECEIVED allocate เต็ม → auto-RECEIPT (ตามคำตอบ V3/V6 + Owner §9 ข้อ 2) ใน orchestration เดียว + `idempotencyKey` (advisory lock pattern) + audit HIGH หนึ่งแถวสรุปทั้งชุด
+1. Repository bundle method ใหม่ `recordSimpleIncomeBundle` (ดีไซน์สรุปใน spec §F-LED-1 ตามผล V6): tx เดียว Serializable + advisory lock — dedup `idempotencyKey` → INVOICE+lines → เลขเอกสารใน tx (`reserveNumberInTransaction`/`commitNumberInTransaction`) → issue (+tax snapshot ผ่าน db param สำหรับบริษัท VAT) → payment RECEIVED + allocation → auto-RECEIPT (`sourceDocumentId` = INVOICE ที่เพิ่ง issue, ผล V3) → audit ผ่าน tx; `RecordSimpleIncomeUseCase` เป็นชั้น permission/validation หุ้ม
 2. Endpoint ใหม่ `POST companies/:companyId/accounting/simple-income` — permission ประกอบจากของเดิม (`accounting.invoice.create` + `accounting.invoice.issue` + `accounting.payment.create` + `accounting.receipt.issue`); ผู้ไม่มีสิทธิ์ issue → สร้างได้แค่ draft พร้อมข้อความบอกขั้นถัดไป
-3. โหมด "ออกบิลไว้ก่อน": ฟอร์มเดียวกัน จบที่ issue INVOICE/BILLING_NOTE (reuse use-case เดิมทั้งหมด — งานคือ UI)
-4. Web หน้า "บันทึกรายรับ" mobile-first 390px: คำถามแรก 2 ปุ่มใหญ่ ≥56px, ช่องกรอกตามตาราง mapping ใน spec §F-LED-1, หลายบรรทัดรายการ, VAT 3 ตัวเลือกหลัก (+ขั้นสูง), `NEEDS_REVIEW` บันทึกร่างได้แต่ยืนยันไม่ได้พร้อมชี้จุดแก้, error/loading/success ครบ, สำเร็จแล้ว `router.replace` ไปสมุด + highlight (pattern EXP-UX-01)
-5. Tests: unit idempotent-retry/partial-failure-rollback/perm-split, contract DTO, golden "issue→pay→receipt posting ครั้งเดียว" (ยืนยัน invariant spec §7.2)
+3. โหมด "ออกบิลไว้ก่อน": ฟอร์มเดียวกัน จบที่ issue INVOICE/BILLING_NOTE (reuse use-case เดิมทั้งหมด — งานคือ UI); UI ลูกค้าไม่บังคับ แสดง label "ลูกค้าทั่วไป (ขายเงินสด)" เมื่อว่าง (ผล V1 — ไม่สร้าง counterparty row)
+4. **ใบลดหนี้/เพิ่มหนี้แบบ FlowAccount (Owner ข้อ 4)**: ขยาย source rule ให้ CN/DN อ้าง `INVOICE` ที่ issue แล้วได้ (แก้ `accounting-status.logic.ts:103-109` + tests), migration M5 (`adjustmentReasonCode/Text`), UI สาเหตุบังคับ (รายการสาเหตุตรวจกับต้นทางกรมสรรพากรก่อน copy — เทียบ `tax-2026-verified-rules.md`), prefill มูลค่าเดิม/ที่ถูกต้อง/ผลต่างจาก source; ไม่ทำ CN แบบไม่อ้างเอกสาร
+5. Web หน้า "บันทึกรายรับ" mobile-first 390px: คำถามแรก 2 ปุ่มใหญ่ ≥56px, ช่องกรอกตามตาราง mapping ใน spec §F-LED-1, หลายบรรทัดรายการ, VAT 3 ตัวเลือกหลัก (+ขั้นสูง; ซ่อนทั้งบล็อกเมื่อบริษัทไม่จด VAT ตามผล V4), `NEEDS_REVIEW` บันทึกร่างได้แต่ยืนยันไม่ได้พร้อมชี้จุดแก้, error/loading/success ครบ, สำเร็จแล้ว `router.replace` ไปสมุด + highlight (pattern EXP-UX-01)
+6. Tests: unit idempotent-retry/partial-failure-rollback/perm-split, contract DTO, golden "issue→pay→receipt posting ครั้งเดียว" (ยืนยัน invariant spec §7.2), CN อ้าง INVOICE + เพดานลดหนี้สะสม + เหตุผลบังคับ
 
 ## Phase 4 — หน้าสมุด + export (spec F-LED-4)
 
@@ -91,7 +88,7 @@ Spec: [Income–Expense Ledger Spec](../specs/mangmee-income-expense-ledger-spec
 
 1. บังคับ launch gate `sales_documents/DEFAULT` ที่ root สร้างเอกสาร + `RecordSimpleIncome` (pattern `assertExpenseRootOpen` + Thai copy + DENIED audit); พิสูจน์ CLOSE → BLOCK_NEW_ROOT แต่ดู/รับชำระเดิมได้
 2. Nav: เพิ่ม "สมุดรายรับ–รายจ่าย" + ปลด `salesdoc` → "ขายและรับเงิน" ตาม entitlement; บริษัทไม่เปิด → เห็นสมุดฝั่งจ่าย + ป้าย ไม่เจอ 403
-3. เปิด entitlement ให้บริษัท allowlist (ช่องทางจาก V5) + ทดสอบ off/on/off ไม่ทำข้อมูลเสีย
+3. เปิด entitlement ให้บริษัท allowlist ผ่าน `PUT /v1/system/partners/:id/features` (V5 — CAS `expectedSetVersion`, ระวัง normalization gate ของบริษัทเก่า) + ยืนยัน off/on/off บนบริษัททดสอบ (มี unit พิสูจน์แล้วที่ `set-partner-features.use-case.spec.ts:1322` — ทำซ้ำเชิง E2E หนึ่งรอบ)
 4. E2E @smoke ใหม่ (project `critical`): LED-01 ขายสดจบเดียว→สมุดอัปเดต+ใบเสร็จมีจริง; LED-02 ออกบิล→รับชำระ→รอรับเงินลด; LED-03 หมวดรายรับ manage+ARCHIVED ไม่โผล่ picker; LED-04 export ได้ไฟล์+ยอดตรง; LED-05 perm negative
 5. รัน `e2e:critical` เต็มชุด + unit ทุก package ที่แตะ + evidence ลง manifest (SHA, ผลรัน, นิยามตัวเลข)
 6. Usability ผู้ใช้ 40+ ≥3 คน ตาม gate spec §8 (ต้องมนุษย์ — นัดผ่าน Owner)
@@ -111,8 +108,8 @@ Spec: [Income–Expense Ledger Spec](../specs/mangmee-income-expense-ledger-spec
 ## 3. ความเสี่ยงและทางถอย
 
 - **LED-FIN-01 เปลี่ยนยอดเอกสารเดิม**: เกณฑ์หยุด — ถ้า golden เทียบ float พบเคสที่มีเอกสารจริงใน DB ยอดเปลี่ยน ให้หยุดและออกแบบ migration/afterthought ก่อน (คาดว่าไม่มีเพราะ feature ปิดอยู่ทั้งระบบ — ยืนยันด้วย count เอกสารใน Phase 1)
-- **Auto-receipt ทำไม่ได้ใน tx เดียว (ผล V6)**: ทางถอย = จบที่ INVOICE PAID แล้วให้ปุ่ม "ออกใบเสร็จ" ชัด ๆ ในหน้า success (ยังตรง invariant ทุกข้อ เสียแค่หนึ่งคลิก)
-- **Gate/entitlement พฤติกรรมไม่ตรงคาด (ผล V5)**: เปิดเฉพาะบริษัททดสอบภายในจนพิสูจน์ off/on/off
+- **Bundle ซับซ้อนกว่าคาด**: V6 ยืนยันความเป็นไปได้แล้ว (pattern `submitDraftAtomic` + เลขเอกสารใน tx มีผู้ใช้จริง 2 module) แต่ถ้าระหว่างทำพบปัญหา isolation/lock → ทางถอย = จบที่ INVOICE PAID แล้วให้ปุ่ม "ออกใบเสร็จ" ชัด ๆ ในหน้า success (ยังตรง invariant ทุกข้อ เสียแค่หนึ่งคลิก)
+- **Entitlement บริษัทเก่าติด normalization gate (ผล V5)**: คำสั่ง set features จะถูกปฏิเสธ `company_entitlement_normalization_pending` จนกว่า normalization จะ COMPLETED — ตรวจสถานะบริษัท allowlist ก่อนวันเปิด
 - Kill switch พร้อมเสมอ: CLOSE `sales_documents/DEFAULT` → หยุดรับงานใหม่ทั้งฟีเจอร์ภายใน 15 นาทีตามกติกา P3
 
 ## 4. สิ่งที่แผนนี้ไม่สัญญา

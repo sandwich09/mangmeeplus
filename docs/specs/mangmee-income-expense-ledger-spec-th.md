@@ -1,10 +1,10 @@
 # สมุดรายรับ–รายจ่าย (Income–Expense Ledger MVP) — Spec
 
-สถานะ: **DRAFT รอ Owner review ก่อนลงมือ (docs-first)**
+สถานะ: **v1.1 — Owner ตอบคำถาม §9 ครบและ Phase 0 (V1–V6) ตรวจเสร็จ 2026-08-26 → พร้อมเริ่ม coding Phase 1**
 
 ที่มา: การตัดสินใจ Owner 2026-08-26 — ทำฟีเจอร์ "สมุดรายรับ–รายจ่าย" ก่อน โดยยังไม่ทำระบบบัญชีเต็มและไม่ทำกระทบยอดธนาคาร; เอกสารขายต้องเป็นแกนของรายรับ ไม่ใช่ช่องกรอกยอดลอย ๆ
 
-หลักฐานโค้ดทั้งหมดอ้างอิง branch `develop` @ `beb0c5f6` (สำรวจ 2026-08-26)
+หลักฐานโค้ดทั้งหมดอ้างอิง branch `develop` @ `beb0c5f6` (สำรวจ 2026-08-26); หลักฐาน FlowAccount จากบัญชีทดสอบของ Owner (`advance.flowaccount.com` บริษัท N9355777, ดูแบบ read-only 2026-08-26 — ดู §F-LED-6)
 
 เอกสารแม่:
 
@@ -92,6 +92,7 @@
 | LED-FIN-02 | `grandTotalAmount` ฝั่งขายไม่หัก WHT (WHT ไปหักตอนรับชำระ) — ถูกต้องตามหลักการ แต่หน้าสรุปต้องนิยามให้ชัดว่าตัวเลขไหนรวม/หักอะไร | `accounting-totals.logic.ts:108`; allocation `whtAmount` `schema.prisma:1930-1949` | นิยามใน §7 |
 | LED-FIN-03 | หมวดรายจ่าย default ซ้อน 2 ชุด: 12 ต่อบริษัท (bootstrap) + 11 global dev-seed ชื่อคล้ายกัน และ picker คืน union → บน env ที่ seed ผู้ใช้เห็น ~23 หมวดปนกัน; `@@unique([companyId,name])` ไม่กันแถว global (NULL distinct — มี comment บันทึกใน repo แล้ว) | `expense-category-bootstrap.service.ts:48` vs `prisma/seed.ts:3131,3146-3149`; `prisma-expense.repository.ts:2230-2233` | ผู้ใช้สับสน/AI แนะนำหมวดซ้ำ → ต้องจัดระเบียบ |
 | LED-FIN-04 | ขอบเขตช่วงเวลา 2 convention: `civilDayRangeToUtc` คืน exclusive `lt` แต่ `getPeriodBoundaries` (dashboard) คืน inclusive end (−1 ms) — เคยมีบั๊กจริง ("filter หนึ่งวันได้ 0 จาก 13") | `packages/contracts/src/civil-date.ts:113-128`; `notification.logic.ts:189-193` | หน้าสรุปต้องประกาศ convention เดียว (ใช้ exclusive `lt` + ระบุคอลัมน์ instant vs civil ตาม pattern `erp-expense-daily-closing.use-case.ts:66-72`) |
+| LED-FIN-05 | AI tool `sales.get_sales_summary` นับเฉพาะ payment ที่ผูก counterparty type CUSTOMER/BOTH — ขายสดแบบไม่ระบุลูกค้า (null counterparty ตาม V1) จะไม่ถูกนับในคำตอบ AI ทั้งที่นับในสมุด | `erp-tools.use-case.ts:331-348` | ตัวเลขสมุด vs คำตอบ AI ไม่ตรงกัน → Phase 4 ต้องปรับ tool ให้นับ payment ไม่มีลูกค้าด้วย หรือติดป้ายนิยามต่างให้ชัด (เลือกตอน implement พร้อมหลักฐาน regression ของ family เดิม) |
 
 ## 4. ขอบเขต MVP
 
@@ -104,12 +105,17 @@
   → เลือก "รับเงินแล้ว" หรือ "ออกบิลไว้ก่อน"
 ```
 
-**โหมด "รับเงินแล้ว" (ขายสด)** — use-case ใหม่ `RecordSimpleIncomeUseCase` ทำงานใน **transaction เดียว + idempotencyKey** (pattern `pg_advisory_xact_lock` + dedup ตาม `prisma-expense.repository.ts:1294-1297`) โดยเรียกของเดิมทั้งหมด:
+**โหมด "รับเงินแล้ว" (ขายสด)** — use-case ใหม่ `RecordSimpleIncomeUseCase` + repository bundle method ใหม่ **หนึ่ง transaction เดียวจบ**
 
-1. สร้าง `INVOICE` จากฟอร์ม → issue ทันที (ได้เลขเอกสาร + posting source ตามเดิม)
-2. บันทึก `AccountingPayment` direction `RECEIVED` เต็มยอด allocate เข้าเอกสาร → เอกสารเป็น `PAID`
-3. ออก `RECEIPT` อ้างเอกสารต้นทางให้อัตโนมัติ (หลักฐานรับเงินตามตารางเอกสารของ Owner); บริษัท VAT ที่ต้องใบกำกับภาษี ใช้ปุ่ม "ออกใบกำกับภาษี" เดิมจากเอกสารได้ (`AccountingPages.tsx:730-776`)
-4. ล้มเหลวขั้นไหน → rollback ทั้งก้อน + คืน error ภาษาคน; retry ด้วย key เดิม → ได้ผลเดิม ไม่สร้างซ้ำ
+ผลตรวจ V6 (2026-08-26): **ห้ามประกอบด้วยการ chain use-case เดิม** — `IssueDocumentUseCase` reserve เลขนอก tx/commit หลัง tx และ `issueDocument` เปิด Serializable tx ของตัวเอง (`document.use-case.ts:347-423`, `prisma-accounting.repository.ts:566-567`) ส่วน `createPayment` เปิด tx แยกอีกใบ (`:712`) → ต้องใช้ pattern bundle ที่ repo ใช้อยู่แล้ว ตามแบบ `submitDraftAtomic` ของ reimbursements (`prisma-reimbursement.repository.ts:354-475`): repository method เดียว เปิด tx เดียว (Serializable + `pg_advisory_xact_lock`) ทำครบภายใน:
+
+1. dedup ด้วย `idempotencyKey` (pattern `prisma-expense.repository.ts:1294-1297`) — retry คืนผลเดิม ไม่สร้างซ้ำ
+2. สร้าง `INVOICE`+lines → จองและ commit เลขเอกสาร **ใน tx** ด้วย `reserveNumberInTransaction`/`commitNumberInTransaction` ที่มีอยู่แล้ว (`prisma-document-sequence.repository.ts:82,225`) → issue (บริษัท VAT: tax snapshot ผ่าน db param ที่ method รองรับอยู่แล้ว — `prisma-accounting.repository.ts:383,425`)
+3. บันทึก `AccountingPayment` direction `RECEIVED` เต็มยอด + allocation → เอกสารเป็น `PAID`
+4. ออก `RECEIPT` อ้างต้นทางอัตโนมัติ (Owner ข้อ 2 = อัตโนมัติทุกครั้ง) — ผลตรวจ V3: `RECEIPT` ตั้ง `sourceDocumentId` ได้จริง (engine ตรวจ existence+branch scope แล้ว persist, กติกาชนิดเอกสารไม่ block เพราะ RECEIPT return ก่อนถึงกฎ CN/DN — `accounting-status.logic.ts:59-62`, `document.use-case.ts:64-67`, `prisma-accounting.repository.ts:133`) โดย use-case เราบังคับเองว่า source ต้องเป็น INVOICE ที่เพิ่ง issue ใน bundle เดียวกัน; บริษัท VAT ออกใบกำกับภาษีต่อด้วยปุ่มเดิม (`AccountingPages.tsx:730-776`)
+5. audit ผ่าน tx hook (`audit.log(entry, tx)` — `audit.service.ts:65`); ล้มเหลวขั้นไหน rollback ทั้งก้อน + error ภาษาคน
+
+ผลพลอยได้: ปิดช่องโหว่ reserve-นอก-tx เดิม (crash ระหว่าง commit เลข → เลขค้าง RESERVED บนเอกสาร ISSUED) สำหรับเส้นทางนี้
 
 **ห้ามทำ shortcut ที่ข้าม engine**: ไม่เขียนตาราง income ใหม่, ไม่ mark PAID โดยไม่มี `AccountingPayment`
 
@@ -123,10 +129,10 @@
 | รายละเอียด (ต่อรายการ) | `AccountingDocumentLine.description` | เพิ่มได้หลายบรรทัด (ฟอร์ม hub เดิมรับบรรทัดเดียว — ฟอร์มใหม่ต้องรองรับหลายบรรทัด) |
 | จำนวนเงิน | `quantity × unitPrice` | โหมดง่าย: qty=1 กรอกยอดเดียว |
 | หมวดรายรับ | `AccountingDocumentLine.revenueCategoryId` (ใหม่, §F-LED-2) + snapshot ชื่อลง `revenueCategory` เดิม | เลือกหมวดเดียวทั้งเอกสาร = apply ทุกบรรทัด; แก้รายบรรทัดได้ในโหมดขั้นสูง |
-| ลูกค้า (ไม่บังคับ) | `counterpartyId` | ไม่เลือก → ใช้ counterparty "ลูกค้าเงินสด" ของบริษัท (สร้างอัตโนมัติครั้งแรก, ยืนยันพฤติกรรม required/nullable ใน Phase 0) |
+| ลูกค้า (ไม่บังคับ) | `counterpartyId` | **ยืนยันแล้ว (V1): nullable จริงทั้ง schema/DTO/use-case** (`schema.prisma:1751`, `accounting-money.dtos.ts:49`, create ไม่ validate — `document.use-case.ts:49-74`; issue ก็ best-effort — `:359-364`) → ไม่เลือก = เอกสารไม่มีลูกค้า และ**ไม่สร้าง row "ลูกค้าเงินสด" อัตโนมัติ** (ไม่มี unique fence บนชื่อ — `schema.prisma:1737-1739` — เสี่ยง row ซ้ำ); UI แสดง label "ลูกค้าทั่วไป (ขายเงินสด)" เฉย ๆ ตามแบบ FlowAccount ("Cash Sale / ขายเงินสด"); กติกา engine ที่ต้องเคารพ: payment ต้อง match counterparty ของเอกสาร (null↔null ผ่าน — `accounting-money-validation.logic.ts:95-96`) |
 | ช่องทางรับเงิน: เงินสด/โอน/บัตร/อื่น ๆ | `AccountingPaymentMethod` = `CASH/BANK_TRANSFER/CARD/OTHER` (`CHEQUE` มีในโหมดขั้นสูง) | enum เดิมครบแล้ว |
-| VAT: ไม่มี / รวมแล้ว / ยังไม่แน่ใจ | `vatMode` = `NO_VAT/VAT_INCLUDED/NEEDS_REVIEW` (`VAT_EXCLUDED/EXEMPT` ในโหมดขั้นสูง) | enum เดิมครบแล้ว; `NEEDS_REVIEW` issue ไม่ได้จนเลือกจริง — ตรงกฎ "ยังไม่แน่ใจ = ร่างได้ ยืนยันไม่ได้" แบบเดียวกับ VAT-MIX ฝั่งรายจ่าย |
-| หมายเหตุ + ไฟล์แนบ | `notes` + `AttachmentLink` (polymorphic `schema.prisma:1042`) | purpose namespace ฝั่ง accounting doc ต้องยืนยันใน Phase 0 |
+| VAT: ไม่มี / รวมแล้ว / ยังไม่แน่ใจ | `vatMode` = `NO_VAT/VAT_INCLUDED/NEEDS_REVIEW` (`VAT_EXCLUDED/EXEMPT` ในโหมดขั้นสูง) | enum เดิมครบแล้ว; `NEEDS_REVIEW` issue ไม่ได้จนเลือกจริง — ตรงกฎ "ยังไม่แน่ใจ = ร่างได้ ยืนยันไม่ได้" แบบเดียวกับ VAT-MIX ฝั่งรายจ่าย; **บริษัทไม่จด VAT ซ่อนบล็อก VAT ทั้งหมด default `NO_VAT` (Owner ข้อ 3) — ใช้ truth เดียวกับฝั่งรายจ่าย (V4): `VatRegistrationStatus` ผ่าน `vatRegistration.get(companyId, civilDate)` (`expense-draft.use-case.ts:701`, ฐานข้อมูล `CompanyVatRegistrationState/Command/Fact` — `schema.prisma:8036+`) + กติกา `deriveExpenseCaptureMode`: `REGISTERED` หรือ `UNKNOWN`+thai_tax → แสดง (`expense-capture-policy.logic.ts:28-32`)** |
+| หมายเหตุ + ไฟล์แนบ | `notes` + `AttachmentLink` (polymorphic `schema.prisma:1042`) | **ยืนยันแล้ว (V2): ยังไม่มี purpose ฝั่ง accounting เลย** — gate กลางอนุญาตเฉพาะ `targetType='expense.record'` (`attachment.logic.ts:24-32` บังคับที่ endpoint link กลาง `link-attachment.use-case.ts:28-39`) → งาน Phase 3: ขยาย `isAllowedAttachmentTarget` แบบ additive เพิ่ม `accounting.document` + purposes `accounting.receipt.evidence`/`accounting.document.supporting` (unique เดิม `schema.prisma:1053` รองรับ; ไม่ใช้ทางลัด repo-write ตรงแบบ procurement/crm ที่ bypass gate) |
 | สถานะ: ร่าง / ยืนยันแล้ว / ยกเลิก | `DRAFT` / `ISSUED` / `VOIDED` | label ไทยคงที่ทั้งระบบ |
 
 ### F-LED-2 หมวดหมู่ 2 ชุด
@@ -178,6 +184,23 @@ Flow ถ่าย/อัปโหลด → AI อ่าน → ตรวจ →
 - เปิด `sales_documents` แบบ **per-company allowlist** ก่อน (ไม่เพิ่มเข้า `DEFAULT_ENABLED_FEATURE_KEYS` จนผ่าน Gate §8) — กลไก entitlement ต่อบริษัทมีแล้ว (`entitlement.helper.ts:42-44`)
 - Kill switch: gate `sales_documents/DEFAULT` (seeded OPEN — `launch-matrix.catalog.ts:64-72`) บังคับใช้จริงที่ root สร้างเอกสาร/รับชำระ ตาม pattern `assertExpenseRootOpen` (`expense-launch-gate.ts:36-56`): CLOSE แล้ว **BLOCK_NEW_ROOT** — สร้างเอกสารใหม่ไม่ได้ แต่ดูรายการเดิม + รับชำระเอกสารค้างยังทำได้ (ตรง close behaviour ที่ประกาศใน `feature-entitlement-launch-matrix.md:74`)
 - หน้าสมุด (read-only) ผูกกับ permission อ่าน (`accounting.document.read` / `expense.read`) — บริษัทที่ยังไม่เปิดฝั่งขายเห็นสมุดฝั่งรายจ่าย + ป้าย "เปิดฝั่งรายรับเร็ว ๆ นี้" ไม่พาไป 403
+- ช่องทางเปิด entitlement ต่อบริษัท **ยืนยันแล้ว (V5)**: `PUT /v1/system/partners/:partnerCompanyId/features` permission `system.partner_feature.manage` (`partner.controller.ts:247-249`) — มี CAS `expectedSetVersion`, normalization gate, dependency cascade; **off/on/off พิสูจน์แล้วด้วย test ที่มีอยู่** (`set-partner-features.use-case.spec.ts:1322` — epoch bump ขา re-enable ทำ stale claim ใช้ไม่ได้, ค่า submenu คงอยู่ข้ามรอบ)
+
+### F-LED-6 ใบลดหนี้/ใบเพิ่มหนี้ตามแบบ FlowAccount (Owner ข้อ 4 — ตัดสิน 2026-08-26)
+
+หลักฐานจากบัญชีทดสอบ FlowAccount ของ Owner (read-only, `advance.flowaccount.com/N9355777`, 2026-08-26):
+
+- เมนูเอกสารขาย FlowAccount = ใบเสนอราคา / ใบวางบิล / ใบแจ้งหนี้ / ใบเสร็จรับเงิน / **ขายเงินสด** / ใบลดหนี้ / ใบเพิ่มหนี้; ขายเงินสดสร้าง "ใบเสร็จรับเงิน (เงินสด)" ใบเดียวจบ เลขชุดแยก (CA-) ลูกค้า default "Cash Sale / ขายเงินสด"
+- ปุ่มสร้างใบลดหนี้มี **2 ทาง**: "ใบลดหนี้แยก" (ไม่ผูกใบกำกับภาษี — อ้างอิงเป็นช่องพิมพ์ "เลขที่อ้างอิง") และ "ใบลดหนี้ที่อ้างอิงใบกำกับภาษี" (modal เลือกลูกค้า → เลือกเอกสารเดิมจากรายการ พร้อมยอด/สถานะ → prefill)
+- ฟอร์มบังคับเลือก **สาเหตุ** จากรายการตามกฎหมาย 2 กลุ่ม: ซื้อ-ขายสินค้า (ลดราคาสินค้าที่ขาย/ชำรุด/ขาดจำนวน/คำนวณผิดสูงไป/รับคืน/คืนมัดจำ/เหตุอื่น-ระบุ) และ ซื้อ-ขายบริการ (ลดราคา/ขาดจำนวน/คำนวณผิด/บอกเลิกสัญญา/คืนมัดจำ/เหตุอื่น-ระบุ)
+- โมเดลยอดท้ายฟอร์ม: **มูลค่าตามเอกสารเดิม (กรอก/prefill) → มูลค่าที่ถูกต้อง (จากรายการ) → ผลต่าง** + WHT + แนบไฟล์
+
+การนำมาใช้กับ engine เรา (สอดคล้อง OS spec §7.1 และ research §6.3):
+
+1. **ขยายกฎ source ของ CN/DN**: จากเดิมบังคับอ้าง `TAX_INVOICE` ที่ issue แล้วเท่านั้น (`accounting-status.logic.ts:103-109`) → อนุญาตอ้าง **`INVOICE` ที่ issue แล้ว** ด้วย (ครอบบริษัทไม่จด VAT ที่ไม่มีใบกำกับภาษี); posting/VAT เดิมของ CN ทำงานตาม tax snapshot ที่มี-ไม่มีตามเอกสารต้นทางอยู่แล้ว
+2. **สาเหตุเป็นข้อมูลบังคับ**: คอลัมน์ additive ใหม่ `adjustmentReasonCode` + `adjustmentReasonText` (กรณี "เหตุอื่น ระบุ") บน `AccountingDocument` เฉพาะ CN/DN; รายการสาเหตุต้อง**ตรวจกับต้นทางกรมสรรพากรก่อน copy จริง** (Phase 3 — ห้ามลอกถ้อยคำ FlowAccount ตรง ๆ ตาม research กติกา "ไม่ clone UI/ถ้อยคำ")
+3. **มูลค่าเดิม/ที่ถูกต้อง/ผลต่าง**: เราได้เปรียบเพราะ source อยู่ในระบบ — prefill จากเอกสารอ้างอิงเสมอ + `validateCumulativeCreditNote` เดิมกันลดเกินยอด (`accounting-status.logic.ts:208-232`)
+4. **ใบลดหนี้แยกแบบไม่อ้างเอกสารเลย: ไม่ทำใน MVP** — journey MVP เอกสารเกิดในระบบทั้งหมด การบังคับอ้างอิงรักษาความถูกของ AR/VAT; เคสแก้เอกสารนอกระบบยกไปรอบถัดไป (บันทึกเป็นข้อจำกัดที่หน้า UI)
 
 ## 5. สิ่งที่ไม่ทำในรอบนี้ (ตาม Owner 2026-08-26)
 
@@ -198,6 +221,8 @@ Flow ถ่าย/อัปโหลด → AI อ่าน → ตรวจ →
 | M2 | `AccountingDocumentLine.revenueCategoryId String?` + FK + `@@index([companyId, revenueCategoryId])` | ADD COLUMN |
 | M3 | ตั้ง `paymentNumber` ตอน `createPayment` ด้วย sequence `accounting.payment` ที่นิยามอยู่แล้ว (`document-sequence.logic.ts:17`) | โค้ด ไม่แก้ schema |
 | M4 | (ไม่มีการแก้ตาราง expenses ใด ๆ) | — |
+| M5 | `AccountingDocument.adjustmentReasonCode String?` + `adjustmentReasonText String?` (ใช้เฉพาะ CN/DN — §F-LED-6) | ADD COLUMN |
+| M6 | ขยาย allow-list `isAllowedAttachmentTarget` เพิ่ม `accounting.document` + purposes ใหม่ (V2) | โค้ด ไม่แก้ schema |
 
 ห้าม: แก้ enum เดิม, แก้คอลัมน์เดิม, migration ที่เขียนข้อมูลย้อนหลังนอกเหนือ bootstrap หมวดรายรับแบบ idempotent
 
@@ -222,11 +247,13 @@ Flow ถ่าย/อัปโหลด → AI อ่าน → ตรวจ →
 - Mobile usability ผู้ใช้ 40+ จริง ≥3 คน: บันทึกขายสด, ออกบิล+รับชำระ, เปิดสมุด+อ่านตัวเลขได้ถูก (บอกได้ว่า "ส่วนต่าง" ไม่ใช่ "กำไร")
 - คำโฆษณา: ใช้ได้แค่ "บันทึกรายรับ–รายจ่ายพร้อมเอกสารและหลักฐาน" — ห้าม "ระบบบัญชีครบ/ยื่นภาษีได้/กระทบยอดได้"
 
-## 9. คำถามที่ Owner ต้องตอบก่อนเริ่ม coding
+## 9. คำถาม Owner — **ตอบครบแล้ว 2026-08-26**
 
-1. **ลำดับคิวกับ P26 (billing/subscription)**: สมุดรายรับ–รายจ่าย (P27) มาก่อน P14→P26 หรือหลัง? (dev คนเดียว ทำคู่ขนานไม่ได้จริง)
-2. **ใบเสร็จอัตโนมัติในโหมดขายสด**: ออก `RECEIPT` ให้ทุกครั้ง หรือให้เลือก "ออกใบเสร็จ" เป็นปุ่มแยก? (ค่าแนะนำ: ออกอัตโนมัติ — ผู้ใช้ 40+ ไม่ควรต้องรู้ว่าใบเสร็จคือเอกสารแยก)
-3. **บริษัทที่ยังไม่จด VAT**: ซ่อนตัวเลือก VAT ทั้งหมด (default `NO_VAT`) ใช่หรือไม่? (ต้องรู้แหล่ง truth ของสถานะ VAT บริษัท — ตรวจใน Phase 0)
-4. **ใบลดหนี้ของเอกสารที่ไม่มีใบกำกับภาษี**: engine วันนี้บังคับ CN/DN อ้าง `TAX_INVOICE` ที่ issue แล้วเท่านั้น (`accounting-status.logic.ts:103-109`) — บริษัทไม่จด VAT จะแก้เอกสารผิดด้วย VOID+ออกใหม่ พอไหม หรือต้องขยาย CN/DN ให้อ้าง INVOICE ได้ (งาน engine เพิ่ม)?
-5. **ใครคือนักบัญชีที่ยืนยัน mapping หมวดรายรับ → account/tax code 6 หมวดตั้งต้น** (ช่อง `accountHintKey`/`defaultOutputTaxCode`)?
-6. ยืนยันชุดคำหน้าจอ: "ยอดขายจากเอกสาร / รับเงินแล้ว / รอรับเงิน / รายจ่ายที่บันทึก / จ่ายแล้ว / ส่วนต่างเงินรับ–เงินจ่าย"
+| ข้อ | คำถาม | คำตอบ Owner | ผลต่อ spec |
+|---|---|---|---|
+| 1 | ลำดับคิวกับสาย P14→P26 (billing) | **P27 มาก่อน** | คิวหลักของ dev = แผนนี้; billing ต่อคิวถัดไป (อัปเดตแผนหลัก §10 แล้ว) |
+| 2 | ใบเสร็จอัตโนมัติในโหมดขายสด | **อัตโนมัติทุกครั้ง** | อยู่ใน bundle ขั้นที่ 4 (§F-LED-1); ความเป็นไปได้ยืนยันด้วย V3 |
+| 3 | บริษัทไม่จด VAT ซ่อนตัวเลือก VAT | **ใช่** | ใช้ `VatRegistrationStatus` + กติกา `deriveExpenseCaptureMode` เดิม (V4 — ตาราง mapping ใน §F-LED-1) |
+| 4 | ใบลดหนี้เมื่อไม่มีใบกำกับภาษี | **เลียนแบบ FlowAccount** (Owner เปิดบัญชีทดสอบให้ตรวจ) | §F-LED-6: ขยาย source rule ให้อ้าง INVOICE ที่ issue แล้วได้ + สาเหตุบังคับ (M5) + มูลค่าเดิม/ถูกต้อง/ผลต่าง prefill; ไม่ทำ CN แบบไม่อ้างเอกสารใน MVP |
+| 5 | นักบัญชีผู้ยืนยัน mapping หมวดรายรับ | **ใช้ตาราง mapping taxcode ที่เคยทำไว้แล้ว** | pattern ตาม [expense-category-default-tax-code-spec](expense-category-default-tax-code-spec.md) (v1.1 Implemented): เก็บ external code ไม่มี FK, resolve ตามวันที่เอกสาร — `RevenueCategory.defaultOutputTaxCode` ใช้กลไกเดียวกันฝั่ง OUTPUT; ค่าตั้งต้นต่อหมวด = **ไม่กำหนด (null)** จนกว่าจะยืนยันกับ [tax-2026-verified-rules](tax-2026-verified-rules.md) ราย code (conservative — suggestion ที่ไม่ resolve = ไม่โผล่ ตามกติกา spec แม่) |
+| 6 | ชุดคำ 6 ตัวเลขหน้าสมุด | **ยืนยัน** | ตาราง §F-LED-4 เป็น final copy |
