@@ -280,6 +280,26 @@ export function toSubstituteEvidenceSummary(row: SubstituteReceiptEvidenceRecord
   };
 }
 
+function selectExpenseCategoryScope<T extends {
+  companyId: string | null;
+  name: string;
+  accountHintKey: string;
+  ledgerAccountReviewedByUserId: string | null;
+}>(categories: T[], companyId: string): T[] {
+  const companyCategories = categories.filter((category) => category.companyId === companyId);
+  if (companyCategories.some((category) => category.ledgerAccountReviewedByUserId === 'system:expense-category-bootstrap')) {
+    return companyCategories;
+  }
+
+  const companyNames = new Set(companyCategories.map((category) => category.name.trim().toLocaleLowerCase('th-TH')));
+  const companyHints = new Set(companyCategories.map((category) => category.accountHintKey));
+  return categories.filter((category) => category.companyId === companyId || (
+    category.companyId === null
+    && !companyNames.has(category.name.trim().toLocaleLowerCase('th-TH'))
+    && !companyHints.has(category.accountHintKey)
+  ));
+}
+
 @Injectable()
 export class PrismaExpenseRepository {
   // `documentNumbers` is annotated, not merely defaulted: Nest reads design:paramtypes to inject
@@ -2229,10 +2249,11 @@ export class PrismaExpenseRepository {
 
   async listCategories(companyId: string): Promise<ExpenseCategorySummary[]> {
     const cats = await this.prisma.client.expenseCategory.findMany({
-      where: { status: 'ACTIVE', OR: [{ companyId }, { companyId: null }] },
+      where: { OR: [{ companyId }, { companyId: null }] },
       orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
     });
-    return cats.map((c): ExpenseCategorySummary => ({ id: c.id, companyId: c.companyId, name: c.name, accountHintKey: c.accountHintKey, defaultInputTaxCode: c.defaultInputTaxCode, status: c.status as any, sortOrder: c.sortOrder }));
+    const selected = selectExpenseCategoryScope(cats, companyId);
+    return selected.filter((c) => c.status === 'ACTIVE').map((c): ExpenseCategorySummary => ({ id: c.id, companyId: c.companyId, name: c.name, accountHintKey: c.accountHintKey, defaultInputTaxCode: c.defaultInputTaxCode, status: c.status as any, sortOrder: c.sortOrder }));
   }
 
   async createCategory(companyId: string, input: CreateExpenseCategoryInput): Promise<ExpenseCategorySummary> {
@@ -2260,13 +2281,14 @@ export class PrismaExpenseRepository {
     return { id: c.id, companyId: c.companyId, name: c.name, accountHintKey: c.accountHintKey, defaultInputTaxCode: c.defaultInputTaxCode, status: c.status as any, sortOrder: c.sortOrder };
   }
 
-  /** Management view: company + global categories in every status. */
+  /** Management view: bootstrapped company set, or de-duplicated legacy global fallback. */
   async listAllCategories(companyId: string): Promise<ExpenseCategorySummary[]> {
     const cats = await this.prisma.client.expenseCategory.findMany({
       where: { OR: [{ companyId }, { companyId: null }] },
       orderBy: [{ status: 'asc' }, { sortOrder: 'asc' }, { name: 'asc' }],
     });
-    return cats.map((c): ExpenseCategorySummary => ({ id: c.id, companyId: c.companyId, name: c.name, accountHintKey: c.accountHintKey, defaultInputTaxCode: c.defaultInputTaxCode, status: c.status as any, sortOrder: c.sortOrder }));
+    const selected = selectExpenseCategoryScope(cats, companyId);
+    return selected.map((c): ExpenseCategorySummary => ({ id: c.id, companyId: c.companyId, name: c.name, accountHintKey: c.accountHintKey, defaultInputTaxCode: c.defaultInputTaxCode, status: c.status as any, sortOrder: c.sortOrder }));
   }
 
   async findNearDuplicates(
