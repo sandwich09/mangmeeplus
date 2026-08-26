@@ -27,6 +27,9 @@ describe('LINE AI terminal outcome logic', () => {
     assert.equal(classifyLineAiTerminalOutcome('safety_crisis'), 'intentional_noop');
     assert.equal(classifyLineAiTerminalOutcome('forbidden'), 'permission_refusal');
     assert.equal(classifyLineAiTerminalOutcome('feature_disabled'), 'feature_disabled');
+    // The P3 kill switch: a distinct status, but NOT a `failed_terminal` — closing the route on
+    // purpose must not read as an AI outage on the alarm that watches that class.
+    assert.equal(classifyLineAiTerminalOutcome('launch_route_closed'), 'feature_disabled');
     assert.equal(classifyLineAiTerminalOutcome('unavailable_delivered'), 'provider_unavailable');
     assert.equal(classifyLineAiTerminalOutcome('ai_error', 'LINE_AI_AI_TIMEOUT'), 'timeout');
     assert.equal(classifyLineAiTerminalOutcome('delivery_pending'), 'delivery_pending');

@@ -112,6 +112,46 @@ describe('PrismaExpenseRepository partial payment history', () => {
     assert.equal(state.payments.length, 0);
   });
 
+  // FIN-01: pre-satang-policy rows carry a 4dp payable. The document, the UI and the payment
+  // input all show its 2dp rounding, so paying that figure has to settle the row — otherwise
+  // finance sees an outstanding balance of ฿0.00 on a row the system still calls PARTIALLY_PAID,
+  // and the overshoot guard leaves no amount that can ever close it.
+  it('settles a legacy 4dp payable when the displayed satang amount is paid', async () => {
+    const { repo, state } = harness({ netPayableAmount: '580.0042', outstandingAmount: '580.0042' });
+    const { expense: paid } = await pay(repo, '580.00');
+
+    assert.equal(paid.outstandingAmount, '0.0000');
+    assert.equal(paid.paymentStatus, 'PAID');
+    assert.equal(state.expense.paidAmount, '580.0000');
+  });
+
+  it('accepts the rounded-up satang amount of a legacy payable that rounds up', async () => {
+    const { repo } = harness({ netPayableAmount: '580.0062', outstandingAmount: '580.0062' });
+    const { expense: paid } = await pay(repo, '580.01');
+
+    assert.equal(paid.outstandingAmount, '0.0000');
+    assert.equal(paid.paymentStatus, 'PAID');
+  });
+
+  it('keeps a real one-satang shortfall partially paid', async () => {
+    const { repo } = harness({ netPayableAmount: '580.0100', outstandingAmount: '580.0100' });
+    const { expense: paid } = await pay(repo, '580.00');
+
+    assert.equal(paid.outstandingAmount, '0.0100');
+    assert.equal(paid.paymentStatus, 'PARTIALLY_PAID');
+  });
+
+  it('refuses an overpayment a full satang past the payable', async () => {
+    const { repo, state } = harness({ netPayableAmount: '580.0062', outstandingAmount: '580.0062' });
+    await assert.rejects(
+      () => pay(repo, '580.02'),
+      (error: unknown) => error instanceof BadRequestException
+        && (error.getResponse() as any).code === 'expense_payment_exceeds_outstanding',
+    );
+    assert.equal(state.expense.paidAmount, '0.0000');
+    assert.equal(state.payments.length, 0);
+  });
+
   it('blocks direct settlement of a claim-born expense', async () => {
     const { repo, state } = harness({ sourceReimbursementRequestId: 'reimbursement-1' });
     await assert.rejects(

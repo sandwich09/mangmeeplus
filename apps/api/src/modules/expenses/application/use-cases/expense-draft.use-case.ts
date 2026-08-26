@@ -24,12 +24,15 @@ import {
   validateDomesticInputVatEvidence,
   expenseTaxSourceChecksum,
   hasMissingClaimableVatTaxSnapshot,
-  hasUnknownVatRateLine,
+  firstUnknownVatRateLineNumber,
   readAiCategorySuggestion,
 } from '../../domain/logic/expense-status.logic';
 import type { ExpenseLineInput, ExpenseRecord, ExpenseRecordWithRelations, PaginatedExpenses } from '../../domain/models/expense.model';
-import type { RequestContext, CreateExpenseDraftInput, UpdateExpenseDraftInput, ListExpensesFilter, ExpenseStatus } from '@watchdog-bms/contracts';
+import type { RequestContext, CreateExpenseDraftInput, UpdateExpenseDraftInput, ListExpensesFilter, ExpenseStatus, ExpenseVatSourceOverrideInput } from '@watchdog-bms/contracts';
+import { expenseVatReconciliationMessage, isBlockingExpenseVatReconciliation } from '@watchdog-bms/contracts';
 import { ExpenseTransactionTaxService, type ExpenseTaxLineSelection } from '../services/expense-transaction-tax.service';
+import { LaunchGateGuardService } from '../../../feature-launch/application/launch-gate.guard';
+import { assertExpenseRootOpen } from '../expense-launch-gate';
 import { ReserveDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/reserve-document-number.use-case';
 import { CommitDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/commit-document-number.use-case';
 import { CancelDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/cancel-document-number.use-case';
@@ -61,11 +64,14 @@ function assertBranchInScope(ctx: RequestContext, branchId: string | null | unde
 
 @Injectable()
 export class CreateExpenseDraftUseCase {
-  constructor(private readonly repo: PrismaExpenseRepository, private readonly audit: AuditService, private readonly transactionTax: ExpenseTransactionTaxService) {}
+  constructor(private readonly repo: PrismaExpenseRepository, private readonly audit: AuditService, private readonly transactionTax: ExpenseTransactionTaxService, private readonly launchGate: LaunchGateGuardService) {}
 
   async execute(ctx: RequestContext, input: CreateExpenseDraftInput): Promise<ExpenseRecord> {
     const canCreate = hasPerm(ctx, 'expense.create') || hasPerm(ctx, 'expense.receipt.upload') || hasPerm(ctx, 'expense.receipt.line_upload');
     if (!canCreate) throw new ForbiddenException('Missing permission: expense.create');
+    // One of the two roots of the expenses journey — the manual draft. Guarded here rather than in
+    // the controller so every caller of the use case is covered, LINE note capture included.
+    await assertExpenseRootOpen(this.launchGate, this.audit, ctx, 'expense.create');
     assertBranchInScope(ctx, input.branchId);
     const branchId = resolveCreateBranchId(ctx.scopes ?? {}, input.branchId);
 
@@ -535,10 +541,14 @@ export class ConfirmExpenseUseCase {
     private readonly vatRegistration: CompanyVatRegistrationUseCase,
   ) {}
 
-  async execute(ctx: RequestContext, expenseId: string): Promise<ExpenseRecord> {
+  async execute(
+    ctx: RequestContext,
+    expenseId: string,
+    vatSourceOverride?: ExpenseVatSourceOverrideInput,
+  ): Promise<ExpenseRecord> {
     requirePerm(ctx, 'expense.confirm', 'confirm expense');
     if (ctx.authProvider === 'line') throw new ForbiddenException('Expense confirmation is available on the authenticated web only.');
-    return this.confirm(ctx, expenseId);
+    return this.confirm(ctx, expenseId, undefined, vatSourceOverride);
   }
 
   /**
@@ -571,6 +581,7 @@ export class ConfirmExpenseUseCase {
       allowMissingReceiptWithReason: boolean;
       systemReconcile?: boolean;
     },
+    vatSourceOverride?: ExpenseVatSourceOverrideInput,
   ): Promise<ExpenseRecord> {
     const r = await this.repo.findByIdWithRelations(ctx.companyId, expenseId);
     if (!r) throw new NotFoundException(`Expense ${expenseId} not found`);
@@ -588,11 +599,55 @@ export class ConfirmExpenseUseCase {
     if (hasBlockingNonExpenseClassification(r.aiVerificationSummaryJson)) {
       throw new BadRequestException(NON_EXPENSE_CLASSIFICATION_REVIEW_REQUIRED);
     }
-    if (r.vatCaptureSnapshotJson
-      && ['MISMATCH', 'NEEDS_REVIEW', 'SOURCE_ONLY'].includes(r.vatCaptureSnapshotJson.reconciliation.status)) {
-      throw new BadRequestException({
-        code: 'EXPENSE_VAT_RECONCILIATION_REQUIRED',
-        message: 'VAT from the document does not reconcile with the system calculation. Review the VAT source before confirmation.',
+    // Plan 13.11.B: a real mismatch still blocks, but it now says which line to open. Over tolerance
+    // the only way through is the named reviewer decision "ใช้ยอดตามเอกสาร" — `expense.review`, a
+    // written reason and the VAT line that carries the difference, written to audit. Nothing is
+    // re-priced here: the printed VAT and the calculated VAT both stay in the snapshot exactly as
+    // reconciliation left them, so no amount changes silently.
+    const snapshot = r.vatCaptureSnapshotJson;
+    if (snapshot && isBlockingExpenseVatReconciliation(snapshot)) {
+      if (!vatSourceOverride) {
+        throw new BadRequestException({
+          code: 'EXPENSE_VAT_RECONCILIATION_REQUIRED',
+          message: expenseVatReconciliationMessage(snapshot),
+          reconciliationStatus: snapshot.reconciliation.status,
+          documentVatAmount: snapshot.source.vatAmount,
+          calculatedVatAmount: snapshot.calculation.vatAmount,
+          differenceAmount: snapshot.reconciliation.differenceAmount,
+          attentionLines: (snapshot.reconciliation.attentionLineNumbers ?? []).map((lineNumber) => ({
+            lineNumber,
+            description: (r.lines ?? []).find((line) => line.lineNumber === lineNumber)?.description ?? null,
+          })),
+        });
+      }
+      requirePerm(ctx, 'expense.review', 'accept the document VAT total over tolerance');
+      const reason = vatSourceOverride.reason.trim();
+      const carrier = (r.lines ?? []).find((line) => line.lineNumber === vatSourceOverride.vatLineNumber);
+      // The difference has to land on a line that actually bears VAT — never on ผัก/ผลไม้.
+      if (!reason || !carrier || !(Number(carrier.vatRate ?? 0) > 0)) {
+        throw new BadRequestException({
+          code: 'EXPENSE_VAT_OVERRIDE_INVALID',
+          message: 'ใช้ยอดตามเอกสาร requires a written reason and a VAT-bearing line to carry the difference.',
+        });
+      }
+      await this.audit.log({
+        companyId: ctx.companyId,
+        actorUserId: ctx.userId,
+        action: 'expense.vat.source_override',
+        targetType: 'expense_record',
+        targetId: expenseId,
+        requestId: ctx.requestId,
+        result: 'SUCCESS',
+        riskLevel: 'HIGH',
+        metadataJson: {
+          reason,
+          vatLineNumber: carrier.lineNumber,
+          reconciliationStatus: snapshot.reconciliation.status,
+          documentVatAmount: snapshot.source.vatAmount,
+          calculatedVatAmount: snapshot.calculation.vatAmount,
+          differenceAmount: snapshot.reconciliation.differenceAmount,
+          toleranceAmount: snapshot.reconciliation.toleranceAmount,
+        },
       });
     }
     const reliesOnSubstitute = Boolean(r.missingReceiptReason || r.substituteReceiptGeneratedAt || r.sourceDocumentType === 'SUBSTITUTE_RECEIPT');
@@ -652,8 +707,11 @@ export class ConfirmExpenseUseCase {
       throw new BadRequestException('Every VAT-bearing expense line requires a server-resolved Tax Code snapshot before confirmation.');
     }
 
-    if (hasUnknownVatRateLine(r.vatMode, r.lines ?? [])) {
-      throw new BadRequestException('The VAT mode says VAT applies but a line has no VAT rate. Enter the printed rate or VAT amount before confirmation.');
+    // Plan 13.11.B: "ยังไม่แน่ใจ" saves as a draft but never confirms, and the block names the line
+    // instead of the rule — an override cannot buy past it, because guessing 0% or 7% is forbidden.
+    const unknownRateLineNumber = firstUnknownVatRateLineNumber(r.vatMode, r.lines ?? []);
+    if (unknownRateLineNumber !== null) {
+      throw new BadRequestException(`The VAT mode says VAT applies but line ${unknownRateLineNumber} has no VAT rate. Enter the printed rate or VAT amount before confirmation.`);
     }
 
     const postingStatus = derivePostingStatus('CONFIRMED', r.duplicateStatus);

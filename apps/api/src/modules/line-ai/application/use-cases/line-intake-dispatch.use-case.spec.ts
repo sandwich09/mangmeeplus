@@ -16,6 +16,9 @@ const shadowProbe = {
   }),
 } as any;
 const acceptedLegal = { isRequired: async () => false } as any;
+/** Launch gate OPEN — the seeded state of `ai_line_assistant/DEFAULT`; the kill switch is exercised
+ *  in process-line-webhook.use-case.spec.ts, these tests assert routing. */
+const openLaunchGate = { assertLaunchRouteOpen: async () => undefined } as any;
 
 function replyAssertionText(message: unknown): string {
   if (!message || typeof message !== 'object') return '';
@@ -297,6 +300,7 @@ function makeHarness(opts: {
     { assertClean: async () => undefined } as any,
     acceptedLegal,
     shadowProbe,
+    openLaunchGate,
     // initReceiptUpload / completeReceiptUpload
     { execute: async (_ctx: any, cmd: any) => { initCalls.push(cmd); return { expenseId: 'expense-1', attachmentId: 'att-1', uploadUrl: '/u', uploadMethod: 'PUT', expiresAt: new Date() }; } } as any,
     { execute: async (_ctx: any, cmd: any) => { completeCalls.push(cmd); return { id: 'expense-1' }; } } as any,

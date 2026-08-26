@@ -446,10 +446,12 @@ describe('expenses.model', () => {
     assert.equal(vatRatePreset(''), 'unset');
     assert.equal(vatRatePreset('0.07'), 'standard');
     assert.equal(vatRatePreset('0.0700'), 'standard');
-    assert.equal(vatRatePreset('0'), 'zero');
+    // Plan 13.11.B: a stored 0 reads back as the headline no-VAT/exempt case, not as export.
+    assert.equal(vatRatePreset('0'), 'exempt');
     assert.equal(vatRatePreset('0.065'), 'custom');
 
     assert.equal(vatRatePresetValue('standard', ''), '0.07');
+    assert.equal(vatRatePresetValue('exempt', '0.07'), '0');
     assert.equal(vatRatePresetValue('zero', '0.07'), '0');
     // Switching to custom keeps the current rate to edit rather than discarding it.
     assert.equal(vatRatePresetValue('custom', '0.065'), '0.065');

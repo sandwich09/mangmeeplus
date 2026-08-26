@@ -157,6 +157,20 @@ export function hasUnknownVatRateLine(
   return lines.some((line) => line.vatRate === null || line.vatRate === undefined || `${line.vatRate}`.trim() === '');
 }
 
+/**
+ * Plan 13.11.B: "ยังไม่แน่ใจ" is a legitimate draft state, so the confirm block has to name the line
+ * to open rather than restate the rule. Same predicate as `hasUnknownVatRateLine` — this only says
+ * which line tripped it first.
+ */
+export function firstUnknownVatRateLineNumber(
+  vatMode: string,
+  lines: Array<{ lineNumber?: number; vatRate?: string | null }>,
+): number | null {
+  if (!hasUnknownVatRateLine(vatMode, lines)) return null;
+  const index = lines.findIndex((line) => line.vatRate === null || line.vatRate === undefined || `${line.vatRate}`.trim() === '');
+  return index < 0 ? null : lines[index]!.lineNumber ?? index + 1;
+}
+
 export function hasSelectedTaxCode(line: ExpenseTaxLineFacts): boolean {
   return Boolean(
     line.taxCodeDefinitionId

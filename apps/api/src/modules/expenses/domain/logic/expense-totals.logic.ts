@@ -27,7 +27,7 @@ function taxRate(value: string | null | undefined): Decimal {
 // Pre-§19d rows store 4dp totals (e.g. 580.0042); paying the printed 580.00 must
 // settle them. Half a satang forgives only sub-satang residue — a real 0.01
 // shortfall stays PARTIALLY_PAID.
-const SETTLE_EPSILON = new Decimal('0.005');
+export const SETTLE_EPSILON = new Decimal('0.005');
 
 export type LineTotalsInput = {
   quantity: string;

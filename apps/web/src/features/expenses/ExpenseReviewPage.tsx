@@ -32,7 +32,7 @@ import {
   postingErrorText, vatModeRequiresRate,
 } from './expenses.model';
 import type { ExpenseDetail, ExpenseReviewStepKey } from './expenses.model';
-import type { BusinessDocumentClassification } from '@watchdog-bms/contracts';
+import type { BusinessDocumentClassification, ExpenseVatSourceOverrideInput } from '@watchdog-bms/contracts';
 import {
   AiFieldLabel, AiFieldMissingHint, DOCUMENT_KIND_LABELS, DocumentReviewSection, ExpenseReviewEditSection,
   InlineSpinner, MoneyRow, STEP_HELPER_KEYS, STEP_LABEL_KEYS, expenseNoticeKey,
@@ -96,6 +96,10 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
   // Evidence-step edits save only via the explicit บันทึกการตรวจ button (the save can cascade —
   // e.g. clearing tax codes), so navigation must not save them; it must refuse to skip past them.
   const evidenceDirtyRef = useRef(false);
+  // Plan 13.11.B: the VAT card owns "ใช้ยอดตามเอกสาร" (it is where the numbers and the pointed line
+  // are), but the decision only takes effect on this page's confirm. Null unless a reviewer has both
+  // named the VAT line taking the difference and written a reason.
+  const vatOverrideRef = useRef<ExpenseVatSourceOverrideInput | null>(null);
   const [stepSaving, setStepSaving] = useState(false);
   const openReject = () => {
     setReason(''); setError(null); setShowReject(true); setShowVoid(false); setDuplicateResolution(null);
@@ -254,6 +258,22 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
   const doAction = async (fn: () => Promise<unknown>, successMessage?: string) => {
     setActionLoading(true); setError(null);
     try { await fn(); await load(); onRefresh(); if (successMessage) toast.success(successMessage); } catch (e) { setError(err(e)); } finally { setActionLoading(false); }
+  };
+
+  // EXP-UX-01 / plan 13.11.A: ส่งตรวจสอบ ends the job, so it must end on the list — staying on the
+  // detail page left every user closing the page and re-checking by hand. `replace`, not `push`:
+  // Back must not return to the stale pre-submit view. Only after the server confirms; a failure
+  // keeps this page and everything typed into it (doAction's catch already does exactly that).
+  const markReady = async (successMessage = 'ส่งตรวจเรียบร้อยแล้ว') => {
+    setActionLoading(true); setError(null);
+    try {
+      await (canReview ? markExpenseReadyAsReviewer(companyId, expenseId) : markExpenseReady(companyId, expenseId));
+      onRefresh();
+      router.replace(`/companies/${companyId}/expenses?highlight=${encodeURIComponent(expenseId)}`);
+      toast.success(successMessage);
+      // Left set on purpose: the navigation unmounts this page, and re-enabling the button would
+      // let a second submit fire against an expense that already moved on.
+    } catch (e) { setError(err(e)); setActionLoading(false); }
   };
 
   // Not doAction: the record is gone on success, so reloading it would 404. Leave `deleting` set —
@@ -494,12 +514,12 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
                 {canCheckDuplicates && <button className={ghostClass} onClick={checkDuplicates} disabled={actionLoading}>{t('expenses.check_duplicate', locale)}</button>}
                 {detail.status !== 'READY_FOR_CONFIRMATION' && (
                   <>
-                    <button className={btnClass} onClick={() => doAction(() => canReview ? markExpenseReadyAsReviewer(companyId, expenseId) : markExpenseReady(companyId, expenseId), 'ส่งตรวจสอบเรียบร้อยแล้ว')} disabled={actionLoading || classificationBlocked || !detailsStepDone} title={classificationBlocked ? classificationBlockMessage : !detailsStepDone ? t('expenses.submit_requires_details', locale) : undefined}>{t('expenses.send_for_review', locale)}</button>
+                    <button className={btnClass} onClick={() => void markReady()} disabled={actionLoading || classificationBlocked || !detailsStepDone} title={classificationBlocked ? classificationBlockMessage : !detailsStepDone ? t('expenses.submit_requires_details', locale) : undefined}>{t('expenses.send_for_review', locale)}</button>
                   </>
                 )}
                 {detail.status === 'READY_FOR_CONFIRMATION' && (
                   <>
-                    {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => doAction(() => confirmExpense(companyId, expenseId), 'ยืนยันและลงบัญชีเรียบร้อยแล้ว')} disabled={actionLoading || !canConfirmExpense} title={classificationBlocked ? classificationBlockMessage : hasDuplicates ? t('expenses.resolve_duplicate_first', locale) : needsReceiptOrSubstitute ? t('expenses.confirm_needs_receipt', locale) : ocrTotalUnacknowledged ? t('expenses.price_mismatch_blocks_confirm', locale) : isZeroAmount ? t('expenses.zero_amount_warning', locale) : !substituteReady ? 'ต้องให้ผู้จ่ายลงนามและผู้อนุมัติออกใบรับรองฉบับสมบูรณ์ก่อนยืนยันรายจ่าย' : undefined}>{t('expenses.confirm_and_post', locale)}</button>}
+                    {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => doAction(() => confirmExpense(companyId, expenseId, vatOverrideRef.current ?? undefined), 'ยืนยันและลงบัญชีเรียบร้อยแล้ว')} disabled={actionLoading || !canConfirmExpense} title={classificationBlocked ? classificationBlockMessage : hasDuplicates ? t('expenses.resolve_duplicate_first', locale) : needsReceiptOrSubstitute ? t('expenses.confirm_needs_receipt', locale) : ocrTotalUnacknowledged ? t('expenses.price_mismatch_blocks_confirm', locale) : isZeroAmount ? t('expenses.zero_amount_warning', locale) : !substituteReady ? 'ต้องให้ผู้จ่ายลงนามและผู้อนุมัติออกใบรับรองฉบับสมบูรณ์ก่อนยืนยันรายจ่าย' : undefined}>{t('expenses.confirm_and_post', locale)}</button>}
                   </>
                 )}
               </>
@@ -509,7 +529,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
         )}
         {approverOnlyActions && (
           <>
-            {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => doAction(() => confirmExpense(companyId, expenseId), 'ยืนยันและลงบัญชีเรียบร้อยแล้ว')} disabled={actionLoading || !canConfirmExpense} title={classificationBlocked ? classificationBlockMessage : hasDuplicates ? t('expenses.resolve_duplicate_first', locale) : needsReceiptOrSubstitute ? t('expenses.confirm_needs_receipt', locale) : ocrTotalUnacknowledged ? t('expenses.price_mismatch_blocks_confirm', locale) : isZeroAmount ? t('expenses.zero_amount_warning', locale) : !substituteReady ? 'ต้องให้ผู้จ่ายลงนามและผู้อนุมัติออกใบรับรองฉบับสมบูรณ์ก่อนยืนยันรายจ่าย' : undefined}>{t('expenses.confirm_and_post', locale)}</button>}
+            {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => doAction(() => confirmExpense(companyId, expenseId, vatOverrideRef.current ?? undefined), 'ยืนยันและลงบัญชีเรียบร้อยแล้ว')} disabled={actionLoading || !canConfirmExpense} title={classificationBlocked ? classificationBlockMessage : hasDuplicates ? t('expenses.resolve_duplicate_first', locale) : needsReceiptOrSubstitute ? t('expenses.confirm_needs_receipt', locale) : ocrTotalUnacknowledged ? t('expenses.price_mismatch_blocks_confirm', locale) : isZeroAmount ? t('expenses.zero_amount_warning', locale) : !substituteReady ? 'ต้องให้ผู้จ่ายลงนามและผู้อนุมัติออกใบรับรองฉบับสมบูรณ์ก่อนยืนยันรายจ่าย' : undefined}>{t('expenses.confirm_and_post', locale)}</button>}
           </>
         )}
         {isConfirmed && (
@@ -526,7 +546,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
             {canViewJournal && <button className={btnClass} onClick={onGoJournal}>{detail.journalEntryNumber ? `ดู ${detail.journalEntryNumber} →` : t('expenses.view_journal', locale)}</button>}
           </>
         )}
-        {canRestartReview && <button className={ghostClass} onClick={() => doAction(() => canReview ? markExpenseReadyAsReviewer(companyId, expenseId) : markExpenseReady(companyId, expenseId), 'เริ่มตรวจใหม่เรียบร้อยแล้ว')} disabled={actionLoading}>{t('expenses.restart_review', locale)}</button>}
+        {canRestartReview && <button className={ghostClass} onClick={() => void markReady('เริ่มตรวจใหม่เรียบร้อยแล้ว')} disabled={actionLoading}>{t('expenses.restart_review', locale)}</button>}
       </div>
     </div>
   ) : null;
@@ -652,7 +672,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
   );
   const vendorCard = (
     <div ref={vendorRef} className="scroll-mt-24">
-      <ExpenseReviewEditSection companyId={companyId} detail={detail} isMutable={canMutateDraft} canReview={canReview} saveRef={reviewSaveRef} onValidationChange={setDataErrorCount} onSaved={async () => { setDetail(await getExpense(companyId, expenseId)); onRefresh(); }} />
+      <ExpenseReviewEditSection companyId={companyId} detail={detail} isMutable={canMutateDraft} canReview={canReview} saveRef={reviewSaveRef} vatOverrideRef={vatOverrideRef} onValidationChange={setDataErrorCount} onSaved={async () => { setDetail(await getExpense(companyId, expenseId)); onRefresh(); }} />
     </div>
   );
   const documentReviewCard = (
@@ -863,6 +883,11 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
     <>
       <MangmeePage eyebrow={backLink} title={pageTitle} meta={pageMeta}>
         {error && <ErrorBanner message={error} />}
+        {/* A11Y-01: while an action runs the only visible cue is the disabled buttons. Empty when
+            idle, so nothing is announced on mount. */}
+        <p role="status" aria-live="polite" className="sr-only">
+          {actionLoading ? t('expenses.action_in_progress', locale) : ''}
+        </p>
 
         <div className="sticky z-10 flex flex-wrap gap-1.5 border-b border-gray-100 bg-white px-4 py-2.5" style={{ top: `${APP_HEADER_REM}rem` }}>
           {guided ? (

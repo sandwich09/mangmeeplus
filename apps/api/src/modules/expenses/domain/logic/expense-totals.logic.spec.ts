@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { calcLineTotals, calcDocumentTotals, calcPaymentAmounts, derivePaymentStatus } from './expense-totals.logic';
 import { reconcileExpenseVat, validateExpenseVatSourceInput, vatSourceFromSnapshot } from './expense-vat-reconciliation.logic';
+import { expenseVatReconciliationMessage } from '@watchdog-bms/contracts';
 
 const vatSourceLine = (unitPrice: string, vatRate: string | null = null, whtRate: string | null = null) => ({
   lineNumber: 1,
@@ -306,6 +307,7 @@ describe('reconcileExpenseVat', () => {
     assert.equal(result.totals.grandTotalAmount, '106.8000');
   });
 
+  // Plan 13.11.B golden example 1: VAT excluded, 7% goods beside a no-VAT line.
   it('accepts an exact mixed-document VAT total without inventing an allocation', () => {
     const result = reconcileExpenseVat({
       vatMode: 'VAT_EXCLUDED',
@@ -316,10 +318,32 @@ describe('reconcileExpenseVat', () => {
       source: { inputType: 'AMOUNT', vatAmount: '7.00' },
     });
     assert.equal(result.snapshot.reconciliation.status, 'MATCHED');
+    assert.equal(result.snapshot.calculation.vatBaseAmount, '100.0000');
+    assert.equal(result.totals.grandTotalAmount, '157.0000');
     assert.ok(result.snapshot.calculation.lineResults.every((lineResult) => lineResult.residualAdjustment === '0.0000'));
+    assert.equal(result.snapshot.reconciliation.attentionLineNumbers, undefined);
   });
 
-  it('requires review when a mixed-document residual has no line evidence', () => {
+  // Plan 13.11.B golden example 2: the same receipt printed VAT-inclusive.
+  it('accepts an exact mixed VAT-included document on the VAT base alone', () => {
+    const result = reconcileExpenseVat({
+      vatMode: 'VAT_INCLUDED',
+      lines: [
+        vatSourceLine('107', '0.0700'),
+        { ...vatSourceLine('50', '0.0000'), lineNumber: 2 },
+      ],
+      source: { inputType: 'AMOUNT', vatAmount: '7.00' },
+    });
+    assert.equal(result.snapshot.reconciliation.status, 'MATCHED');
+    assert.equal(result.snapshot.calculation.vatBaseAmount, '100.0000');
+    assert.equal(result.totals.vatAmount, '7.0000');
+    assert.equal(result.totals.grandTotalAmount, '157.0000');
+    assert.equal(result.lines[1]?.totals.vatAmount, '0.0000');
+  });
+
+  // Plan 13.11.B golden example 3: a mixed document inside the rounding tolerance is allocated
+  // deterministically to the VAT line; the no-VAT line stays at exactly zero.
+  it('allocates an accepted mixed-document residual to the VAT line only', () => {
     const result = reconcileExpenseVat({
       vatMode: 'VAT_EXCLUDED',
       lines: [
@@ -328,7 +352,71 @@ describe('reconcileExpenseVat', () => {
       ],
       source: { inputType: 'AMOUNT', vatAmount: '7.01' },
     });
+    assert.equal(result.snapshot.reconciliation.status, 'MATCHED');
+    assert.deepEqual(result.snapshot.calculation.lineResults.map((line) => line.residualAdjustment), ['0.0100', '0.0000']);
+    assert.equal(result.lines[1]?.totals.vatAmount, '0.0000');
+    assert.equal(result.totals.vatAmount, '7.0100');
+
+    // The table's own figures: 99.99 at 7% rounds to the printed 7.00 with nothing left over.
+    const printed = reconcileExpenseVat({
+      vatMode: 'VAT_EXCLUDED',
+      lines: [
+        vatSourceLine('99.99', '0.0700'),
+        { ...vatSourceLine('50', '0.0000'), lineNumber: 2 },
+      ],
+      source: { inputType: 'AMOUNT', vatAmount: '7.00' },
+    });
+    assert.equal(printed.snapshot.reconciliation.status, 'MATCHED');
+    assert.equal(printed.lines[0]?.totals.vatAmount, '7.0000');
+    assert.equal(printed.lines[1]?.totals.vatAmount, '0.0000');
+  });
+
+  it('never lets a no-VAT line absorb the residual, even when it is the largest line', () => {
+    const result = reconcileExpenseVat({
+      vatMode: 'VAT_EXCLUDED',
+      lines: [
+        vatSourceLine('50', '0.0700'),
+        { ...vatSourceLine('400', '0.0000'), lineNumber: 2 },
+      ],
+      source: { inputType: 'AMOUNT', vatAmount: '3.52' },
+    });
+    assert.equal(result.snapshot.reconciliation.status, 'MATCHED');
+    assert.deepEqual(result.snapshot.calculation.lineResults.map((line) => line.residualAdjustment), ['0.0200', '0.0000']);
+    assert.equal(result.lines[1]?.totals.vatAmount, '0.0000');
+  });
+
+  // Plan 13.11.B golden example 4: a real mismatch is never auto-accepted, and it names the line.
+  it('blocks an over-tolerance mixed document and points at the VAT line', () => {
+    const result = reconcileExpenseVat({
+      vatMode: 'VAT_EXCLUDED',
+      lines: [
+        vatSourceLine('100', '0.0700'),
+        { ...vatSourceLine('50', '0.0000'), lineNumber: 2 },
+      ],
+      source: { inputType: 'AMOUNT', vatAmount: '8.00' },
+    });
+    assert.equal(result.snapshot.reconciliation.status, 'MISMATCH');
+    assert.equal(result.snapshot.reconciliation.differenceAmount, '1.0000');
+    assert.deepEqual(result.snapshot.reconciliation.attentionLineNumbers, [1]);
+    assert.equal(result.totals.vatAmount, '7.0000');
+    assert.equal(
+      expenseVatReconciliationMessage(result.snapshot),
+      'VAT จากเอกสาร 8.00 บาท แต่จากรายการที่เลือก ระบบคำนวณได้ 7.00 บาท ต่างกัน 1.00 บาท '
+      + 'กรุณาตรวจรายการที่ 1 หรือเลือก “ใช้ยอดตามเอกสาร” พร้อมระบุเหตุผล',
+    );
+  });
+
+  it('still refuses to allocate when several positive rates share one document total', () => {
+    const result = reconcileExpenseVat({
+      vatMode: 'VAT_EXCLUDED',
+      lines: [
+        vatSourceLine('100', '0.0700'),
+        { ...vatSourceLine('100', '0.1000'), lineNumber: 2 },
+      ],
+      source: { inputType: 'AMOUNT', vatAmount: '17.01' },
+    });
     assert.equal(result.snapshot.reconciliation.status, 'NEEDS_REVIEW');
+    assert.ok(result.snapshot.calculation.lineResults.every((line) => line.residualAdjustment === '0.0000'));
   });
 
   it('compares line source differences only within the sourced line group', () => {
@@ -352,6 +440,8 @@ describe('reconcileExpenseVat', () => {
     assert.deepEqual(restored.lines, [{ lineNumber: 1, inputType: 'AMOUNT', vatAmount: '7.00' }]);
   });
 
+  // Plan 13.11.B golden example 5: an unknown treatment is never guessed at 0% or 7%; the draft
+  // still holds the values and the first line to check is named.
   it('preserves explicit line treatments when an amount-only document needs allocation', () => {
     const result = reconcileExpenseVat({
       vatMode: 'VAT_EXCLUDED',
@@ -364,6 +454,7 @@ describe('reconcileExpenseVat', () => {
     assert.equal(result.snapshot.reconciliation.status, 'NEEDS_REVIEW');
     assert.equal(result.lines[0]?.vatRate, null);
     assert.equal(result.lines[1]?.vatRate, '0');
+    assert.deepEqual(result.snapshot.reconciliation.attentionLineNumbers, [1]);
   });
 
   it('does not accept positive source VAT against an explicit zero rate', () => {

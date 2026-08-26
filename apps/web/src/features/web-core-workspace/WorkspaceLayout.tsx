@@ -29,12 +29,14 @@ type Props = {
   session: WebSession;
 };
 
+// Plan P4.6: modules still `status: 'planned'` are out of the launch navigation — a row that
+// opens a placeholder costs the user a decision and returns nothing. `salesdoc` and `closing`
+// are dropped here; `closing` was already stripped upstream by ACCOUNTING_UI_HIDDEN.
 const DESIGN_HANDOFF_NAV_ORDER = [
   'dashboard',
   'inbox',
   'customers',
   'booking',
-  'salesdoc',
   'crmreport',
   'crmsettings',
   'expenses',
@@ -42,7 +44,6 @@ const DESIGN_HANDOFF_NAV_ORDER = [
   'journal',
   'tax',
   'reports',
-  'closing',
   'roles',
   'settings',
   'guide',
@@ -55,7 +56,10 @@ export default function WorkspaceLayoutClient({ children, companyId, session }: 
   const locale: SupportedLocale = 'th';
   const pathname = usePathname();
   const router = useRouter();
-  const companyName = session.companyId;
+  // WEB-04: `session.companyId` used to stand in until /my-companies answered, so the header showed
+  // a raw ULID to every user on every cold load. A neutral placeholder is the honest stand-in;
+  // CompanySwitcher replaces it with the real name, or with a retry when the lookup fails.
+  const companyName = 'กำลังโหลด…';
   const currentAccessFingerprint = accessContextFingerprint(session);
   const accessCheckInFlight = useRef<Promise<void> | null>(null);
 
@@ -139,9 +143,16 @@ export default function WorkspaceLayoutClient({ children, companyId, session }: 
   const activeKey = getActiveModuleKey(filteredModules, companyId, pathname);
 
   if (!canAccessCurrentPath) {
-    // Blank only while the redirect above is in flight. With nowhere to send them, say so — a
-    // signed-in person staring at an empty page cannot tell a permission change from an outage.
-    return fallbackHref ? null : (
+    // WEB-06: while the redirect above is in flight, say where the user is going. `null` rendered a
+    // white page, which on a slow phone is indistinguishable from a hung site.
+    // With nowhere to send them, the explicit no-access state below stands instead.
+    return fallbackHref ? (
+      <main className="flex min-h-dvh items-center justify-center bg-brand-25 p-6">
+        <p role="status" aria-live="polite" className="rounded-2xl border border-brand-100 bg-white px-6 py-5 text-center text-base font-semibold text-gray-700 shadow-[var(--shadow-theme-sm)]">
+          กำลังพาไปหน้าที่ใช้ได้…
+        </p>
+      </main>
+    ) : (
       <BrandedState
         eyebrow="การเข้าถึงบริษัท"
         title="ยังไม่มีหน้าที่คุณเปิดได้ในบริษัทนี้"

@@ -30,7 +30,8 @@ function setup() {
   } as any;
   const audit = { log: async () => undefined } as any;
   const transactionTax = { resolveLines: async (_ctx: unknown, _header: unknown, lines: unknown[]) => lines } as any;
-  return { useCase: new CreateExpenseDraftUseCase(repo, audit, transactionTax), created, upserted };
+  const launchGate = { assertLaunchRouteOpen: async () => undefined } as any;
+  return { useCase: new CreateExpenseDraftUseCase(repo, audit, transactionTax, launchGate), created, upserted };
 }
 
 describe('CreateExpenseDraftUseCase amount persistence boundary', () => {

@@ -166,6 +166,34 @@ function derivedFraction(vatMode: ExpenseVatMode, grossOrBase: Decimal, vat: Dec
   return rate.gte(0) && rate.lt(1) ? rate4(rate) : null;
 }
 
+type ReconciledLine = { lineNumber: number; vatRate: string | null; totals: LineTotalsResult };
+
+/**
+ * Plan 13.11.B: the residual belongs to the largest VAT base, tie-broken by line number, and never
+ * to a no-VAT line — ผัก/ผลไม้ on a mixed receipt must stay at exactly zero however the satang fall.
+ * The same line is the one a mismatch points the reviewer at.
+ */
+function largestVatBaseLine<T extends ReconciledLine>(lines: readonly T[]): T | undefined {
+  return lines
+    .filter((line) => decimal(line.vatRate).gt(0))
+    .sort((left, right) => decimal(right.totals.taxableAmount).cmp(left.totals.taxableAmount)
+      || left.lineNumber - right.lineNumber)[0];
+}
+
+/** Plan 13.11.B: name the line(s) to fix. Unknown treatments win — guessing them is forbidden. */
+function attentionLines(
+  status: ExpenseVatCaptureSnapshotV1['reconciliation']['status'],
+  calculated: readonly ReconciledLine[],
+  mismatchedSourceLines: readonly number[],
+): number[] {
+  if (status !== 'MISMATCH' && status !== 'NEEDS_REVIEW' && status !== 'SOURCE_ONLY') return [];
+  const unknown = calculated.filter((line) => line.vatRate === null).map((line) => line.lineNumber);
+  if (unknown.length) return unknown;
+  if (mismatchedSourceLines.length) return [...mismatchedSourceLines];
+  const target = largestVatBaseLine(calculated);
+  return target ? [target.lineNumber] : [];
+}
+
 function recomputeAcceptedTotals(
   totals: LineTotalsResult,
   vatMode: ExpenseVatMode,
@@ -267,6 +295,7 @@ export function reconcileExpenseVat(input: {
   const rateMismatch = documentSourceRate !== null && comparableCalculatedRates.size > 0
     && [...comparableCalculatedRates].some((rate) => decimal(rate).minus(documentSourceRate).abs().gt('0.00005'));
 
+  const mismatchedSourceLines: number[] = [];
   if (source.lines?.length) {
     let mismatch = false;
     let matchedAmount = false;
@@ -278,6 +307,7 @@ export function reconcileExpenseVat(input: {
       if ((decimal(lineSource.vatAmount).gt(0) && target.vatRate !== null && decimal(target.vatRate).eq(0))
         || diff.abs().gt(TOLERANCE)) {
         mismatch = true;
+        mismatchedSourceLines.push(lineSource.lineNumber);
         continue;
       }
       matchedAmount = true;
@@ -304,21 +334,25 @@ export function reconcileExpenseVat(input: {
     const distinctRates = new Set(calculated.map((line) => line.vatRate).filter((rate): rate is string => rate !== null));
     const onlyExplicitZeroRates = calculated.length > 0
       && calculated.every((line) => line.vatRate !== null && decimal(line.vatRate).eq(0));
+    // Plan 13.11.B: one positive rate beside explicit no-VAT lines is the ordinary Thai mixed
+    // receipt — 7% goods plus exempt ผัก/ผลไม้. Every treatment is known and only one rate can carry
+    // the difference, so the deterministic residual below is the correct answer rather than a guess.
+    // Several positive rates, or any unknown line, still have no single answer and stay in review.
+    const singleRateMixedDocument = calculated.length > 0
+      && calculated.every((line) => line.vatRate !== null)
+      && positiveCalculatedRates.size === 1;
     if (rateMismatch || (decimal(source.vatAmount).gt(0) && onlyExplicitZeroRates)) {
       status = 'MISMATCH';
     } else if (documentAmountNeedsAllocation) {
       status = 'NEEDS_REVIEW';
-    } else if (distinctRates.size > 1 && !difference.eq(0)) {
+    } else if (distinctRates.size > 1 && !difference.eq(0) && !singleRateMixedDocument) {
       status = 'NEEDS_REVIEW';
     } else if (difference.abs().gt(TOLERANCE)) {
       status = 'MISMATCH';
     } else {
       status = 'MATCHED';
       acceptedSource = 'SOURCE_AMOUNT';
-      const target = [...accepted]
-        .filter((line) => line.vatRate !== null)
-        .sort((left, right) => decimal(right.totals.taxableAmount).cmp(left.totals.taxableAmount)
-          || left.lineNumber - right.lineNumber)[0];
+      const target = largestVatBaseLine(accepted);
       if (target) {
         residuals.set(target.lineNumber, difference);
         target.totals = recomputeAcceptedTotals(
@@ -337,6 +371,7 @@ export function reconcileExpenseVat(input: {
   }
 
   const totals = calcDocumentTotals({ lines: accepted.map((line) => line.totals) });
+  const attention = attentionLines(status, calculated, mismatchedSourceLines);
   const knownRates = new Set(accepted.map((line) => line.vatRate).filter((rate): rate is string => rate !== null));
   const allKnownRatesAreZero = knownRates.size > 0 && [...knownRates].every((rate) => decimal(rate).eq(0));
   const effectiveRate = knownRates.size === 1 ? decimal([...knownRates][0]).mul(100) : null;
@@ -401,6 +436,7 @@ export function reconcileExpenseVat(input: {
         acceptedSource,
         differenceAmount: difference === null ? null : money4(difference),
         toleranceAmount: '0.05',
+        ...(attention.length && { attentionLineNumbers: attention }),
       },
     },
   };

@@ -71,6 +71,30 @@ describe('UpdateExpenseDraftUseCase VAT decoupling (spec §19c)', () => {
     assert.ok(Math.abs(Number(upserted[0].taxableAmount) - 542.06) < 0.01);
   });
 
+  // Plan 13.11.B: "mismatch ต้องไม่ทำให้บันทึก draft หายหรือเป็นทางตัน" — only final confirmation
+  // blocks. The draft keeps every value the reviewer typed and records which line to come back to.
+  it('saves a mixed-VAT draft whose document total does not reconcile, naming the line to fix', async () => {
+    const { useCase, updates, upserted } = makeUseCase();
+
+    const saved = await useCase.execute(ctx, 'exp-1', {
+      vatMode: 'VAT_EXCLUDED',
+      vatSource: { inputType: 'AMOUNT', vatAmount: '8.00' },
+      lines: [
+        { lineNumber: 1, description: 'สินค้า', quantity: '1', unitPrice: '100', discountAmount: '0', vatRate: '0.07' },
+        { lineNumber: 2, description: 'ผัก', quantity: '1', unitPrice: '50', discountAmount: '0', vatRate: '0' },
+      ],
+    } as any);
+
+    assert.ok(saved, 'the draft save must succeed despite the mismatch');
+    assert.equal(updates[0].vatCaptureSnapshotJson.reconciliation.status, 'MISMATCH');
+    assert.deepEqual(updates[0].vatCaptureSnapshotJson.reconciliation.attentionLineNumbers, [1]);
+    // Both figures survive: the printed 8.00 and the calculated 7.00 on the VAT base alone.
+    assert.equal(updates[0].vatCaptureSnapshotJson.source.vatAmount, '8.0000');
+    assert.equal(updates[0].vatCaptureSnapshotJson.calculation.vatAmount, '7.0000');
+    assert.equal(updates[0].vatCaptureSnapshotJson.calculation.vatBaseAmount, '100.0000');
+    assert.equal(upserted[1].vatAmount, '0.0000');
+  });
+
   it('still rejects claiming input VAT on a receipt', async () => {
     const { useCase } = makeUseCase();
     await assert.rejects(

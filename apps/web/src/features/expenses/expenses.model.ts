@@ -736,23 +736,32 @@ export function expenseDocumentWhtRate(lines: Array<{ whtRate: string | null }>)
   return rates.every((rate) => rate === rates[0]) ? rates[0] ?? '' : null;
 }
 
-/** Spec §19g decision 4 — the three ways a reviewer can express the same stored fraction. */
-export type ExpenseVatRatePreset = 'unset' | 'standard' | 'zero' | 'custom';
+/**
+ * Spec §19g decision 4 — the ways a reviewer can express the same stored fraction.
+ *
+ * Plan 13.11.B renames these into the shop owner's words: มี VAT 7% / ไม่มี VAT หรือได้รับยกเว้น /
+ * อัตราอื่น / ยังไม่แน่ใจ. `exempt` and `zero` are two different tax facts (ผัก/ผลไม้ are exempt;
+ * an export is zero-rated) that both store the rate `0`, because the engine's only line-level VAT
+ * input is the numeric rate — see the gap noted beside the option list in ExpensesPages.
+ */
+export type ExpenseVatRatePreset = 'unset' | 'standard' | 'exempt' | 'zero' | 'custom';
 
 export function vatRatePreset(vatRate: string): ExpenseVatRatePreset {
   if (vatRate.trim() === '') return 'unset';
   const rate = Number(vatRate);
   if (!Number.isFinite(rate)) return 'custom';
   if (Math.abs(rate - 0.07) <= 0.0002) return 'standard';
-  if (rate === 0) return 'zero';
+  // A stored 0 reads back as the plan's headline case (ไม่มี VAT/ได้รับยกเว้น); a reviewer who meant
+  // zero-rated export keeps that choice on screen for as long as the form is open.
+  if (rate === 0) return 'exempt';
   return 'custom';
 }
 
 /** Switching to `custom` keeps whatever rate is already there so the reviewer edits it rather than
- *  losing it; the standard/zero presets are literal. */
+ *  losing it; the standard/exempt/zero presets are literal. */
 export function vatRatePresetValue(preset: string, currentRate: string): string {
   if (preset === 'standard') return '0.07';
-  if (preset === 'zero') return '0';
+  if (preset === 'exempt' || preset === 'zero') return '0';
   if (preset === 'custom') return vatRatePreset(currentRate) === 'unset' ? '' : currentRate;
   return '';
 }

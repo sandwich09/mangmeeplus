@@ -31,6 +31,10 @@ type BranchFilterValue = {
    * escapable when an admin revokes a branch mid-session.
    */
   reportBranchForbidden: () => void;
+  /** WEB-04: the scope lookup failed. Non-blocking — the shell stays usable, the header offers a retry. */
+  scopeFailed: boolean;
+  /** Re-runs the scope lookup behind the retry affordance. */
+  reloadScope: () => void;
 };
 
 const BranchFilterContext = createContext<BranchFilterValue | null>(null);
@@ -55,12 +59,14 @@ export function BranchFilterProvider({
   const [locked, setLocked] = useState(false);
   const [branchId, setBranchIdState] = useState('');
   const [forbidden, setForbidden] = useState(false);
+  const [scopeFailed, setScopeFailed] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     setBranches([]);
     setLocked(false);
+    setScopeFailed(false);
     setBranchIdState(typeof window !== 'undefined' ? (window.localStorage.getItem(storageKey(companyId)) ?? '') : '');
     (async () => {
       try {
@@ -78,8 +84,11 @@ export function BranchFilterProvider({
           // Drop a stale saved selection that is no longer visible.
           setBranchIdState((prev) => (prev && !visible.some((b) => b.id === prev) ? '' : prev));
         }
-      } catch {
-        // Not signed in / no branch.read permission — header simply shows no selector.
+      } catch (error) {
+        // Not signed in / no branch.read permission — header simply shows no selector. Any other
+        // failure used to be swallowed too, which read as "this company has no branches" (WEB-04).
+        const status = (error as { status?: unknown })?.status;
+        if (!cancelled && status !== 401 && status !== 403) setScopeFailed(true);
       }
     })();
     return () => { cancelled = true; };
@@ -101,9 +110,11 @@ export function BranchFilterProvider({
     setReloadToken((n) => n + 1);
   }, [companyId]);
 
+  const reloadScope = useCallback(() => setReloadToken((n) => n + 1), []);
+
   const value = useMemo(
-    () => ({ branchId, setBranchId, branches, locked, reportBranchForbidden }),
-    [branchId, setBranchId, branches, locked, reportBranchForbidden],
+    () => ({ branchId, setBranchId, branches, locked, reportBranchForbidden, scopeFailed, reloadScope }),
+    [branchId, setBranchId, branches, locked, reportBranchForbidden, scopeFailed, reloadScope],
   );
   return (
     <BranchFilterContext.Provider value={value}>
@@ -141,6 +152,21 @@ export function BranchSelector() {
   useCloseOnOutsideClick(rootRef, useCallback(() => setOpen(false), []));
 
   const label = branchScopeLabel(filter, locale);
+
+  // WEB-04: a failed lookup is not "no branches". Say so and offer the retry, before spec R3's
+  // silence — which only covers a resolved context with nothing to name.
+  if (filter?.scopeFailed) {
+    return (
+      <button
+        type="button"
+        onClick={filter.reloadScope}
+        className="flex h-11 items-center gap-2 rounded-lg border border-warning-100 bg-warning-50 px-3 text-sm font-semibold text-warning-700 sm:h-10"
+      >
+        <BranchIcon />
+        {t('shell.scope.load_failed', locale)}
+      </button>
+    );
+  }
 
   // Context unresolved, lookup failed, or no branch to name: render nothing (spec R3).
   if (!filter || !label) return null;
@@ -201,24 +227,48 @@ export function BranchSelector() {
 // ---- Company switcher ----
 
 export function CompanySwitcher({ companyId, fallbackName }: { companyId: string; fallbackName: string }) {
+  const locale = useWorkspaceLocale();
   const [companies, setCompanies] = useState<MyCompany[]>([]);
+  const [settled, setSettled] = useState(false);
+  const [reloadToken, setReloadToken] = useState(0);
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   useCloseOnOutsideClick(rootRef, useCallback(() => setOpen(false), []));
 
   useEffect(() => {
     let cancelled = false;
+    setSettled(false);
     fetchMyCompanies()
       .then((list) => { if (!cancelled) setCompanies(list); })
-      .catch(() => { /* signed out / dev session: keep fallback label */ });
+      .catch(() => { /* surfaced below as the retry affordance, no longer swallowed */ })
+      .finally(() => { if (!cancelled) setSettled(true); });
     return () => { cancelled = true; };
-  }, []);
+  }, [reloadToken]);
 
   const current = companies.find((c) => c.companyId === companyId);
   const label = current?.companyName ?? fallbackName;
 
+  // WEB-04: the lookup is over and the name is still unknown — failed request or a list that does
+  // not contain this company. Offer the retry instead of leaving the loading label up forever.
+  if (settled && !current) {
+    return (
+      <button
+        type="button"
+        onClick={() => setReloadToken((n) => n + 1)}
+        className="block max-w-[44vw] truncate text-sm font-semibold text-warning-700 underline sm:max-w-[240px]"
+      >
+        {t('shell.scope.load_failed', locale)}
+      </button>
+    );
+  }
+
   if (companies.length <= 1) {
-    return <span className="block max-w-[44vw] truncate text-sm font-semibold text-gray-700 sm:max-w-[240px]">{label}</span>;
+    // No company resolved yet: a pulsing placeholder, never a raw identifier.
+    return (
+      <span className={`block max-w-[44vw] truncate text-sm font-semibold text-gray-700 sm:max-w-[240px] ${current ? '' : 'animate-pulse text-gray-400'}`}>
+        {label}
+      </span>
+    );
   }
 
   return (

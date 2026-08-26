@@ -133,6 +133,32 @@ test.describe('EXP — expenses + receipts', () => {
     await expect(authedPage.getByRole('button', { name: /ส่งตรวจสอบ/ })).toBeVisible();
   });
 
+  // EXP-UX-01 / plan 13.11.A: ส่งตรวจสอบ has to END on the list. The old behaviour reloaded the
+  // detail page in place, so the user could not tell the submit from a no-op.
+  test('EXP-04B @smoke ส่งตรวจสอบ lands on the list with the row highlighted and its status shown', async ({ authedPage, api, companyId }) => {
+    const created = await createExpense(api, companyId);
+    await gotoCompany(authedPage, companyId, `/expenses/${created.id}`);
+    await authedPage.getByRole('textbox', { name: /ชื่อผู้ขาย/ }).first().fill('E2E Vendor');
+    await authedPage.getByRole('button', { name: 'ถัดไป', exact: true }).click();
+    await authedPage.getByRole('button', { name: 'ถัดไป', exact: true }).click();
+
+    const submit = authedPage.getByRole('button', { name: /ส่งตรวจสอบ/ });
+    await expect(submit).toBeEnabled();
+    await submit.click();
+
+    // `replace`, so Back must not return to the pre-submit detail view either.
+    await expect(authedPage).toHaveURL(new RegExp(`/companies/${companyId}/expenses\\?highlight=${created.id}$`));
+
+    // The row is found by id, never "the newest one" — and its status is the permanent evidence
+    // the toast is not. READY_FOR_CONFIRMATION renders as "พร้อมยืนยัน" (EXPENSE_STATUS_LABELS).
+    const highlighted = authedPage.locator('[data-testid="expenses-row"][data-highlighted="true"]');
+    await expect(highlighted).toBeVisible();
+    await expect(highlighted).toContainText('พร้อมยืนยัน');
+
+    expect((await json<ExpenseDetail>(await api.get(`companies/${companyId}/expenses/${created.id}`))).status)
+      .toBe('READY_FOR_CONFIRMATION');
+  });
+
   test('EXP-04A @p1 cancellation dialog keeps or rejects a draft with API truth', async ({ authedPage, api, companyId }) => {
     const created = await createExpense(api, companyId);
     await gotoCompany(authedPage, companyId, `/expenses/${created.id}`);
