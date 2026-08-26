@@ -1781,7 +1781,8 @@ deploy_api_web() {
       --provenance=false \
       --build-arg INTERNAL_API_URL="${current_url}/v1" \
       --build-arg NEXT_PUBLIC_API_BASE_URL="/api" \
-      --build-arg NEXT_PUBLIC_AI_GATEWAY_BASE_URL="/api"
+      --build-arg NEXT_PUBLIC_AI_GATEWAY_BASE_URL="/api" \
+      --build-arg NEXT_PUBLIC_LINE_OA_URL="${NEXT_PUBLIC_LINE_OA_URL:-}"
     "$DOCKER_BIN" push "$image"
     image="$(immutable_image_ref "$repo" "$image")"
   fi
