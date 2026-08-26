@@ -643,6 +643,33 @@ Quality ต้องไม่ตกหมายถึง “ลดจำนว�
 
 **Gate เปิด Marketing วงกว้าง = ข้อ 1 และข้อ 3 ผ่านทั้งคู่** — รับโหลดได้แต่สมัครเองไม่ได้ traffic ที่ซื้อมาเสียเปล่า; สมัครได้แต่ไม่มีหลักฐานรับโหลด/ตาดูระบบ เสี่ยงล่มต่อหน้าลูกค้าชุดแรก; ผลเหมือนกันคือเสียคนทั้งก้อน ห้ามเปิดวงกว้างเมื่อขาดข้อใดข้อหนึ่ง
 
+### ตาราง spec coverage ของทุก P (ข้อบังคับ Owner 2026-08-26: "ต้องทำ spec ทั้งหมดที่อยู่ใน plan")
+
+กติกา: **P ใดจะเริ่ม implement ได้ต่อเมื่อคอลัมน์สถานะเป็น ✅ หรือ spec ของงานนั้น merge แล้ว** — แถว ❌/⚠️ ห้ามเริ่มโค้ด ให้เขียน spec ก่อนตามคิวท้ายตาราง; ตารางนี้ต้องอัปเดตทุกครั้งที่ spec ใหม่ merge
+
+| P | เรื่อง | spec ที่มีอยู่ (docs/specs) | สถานะ |
+|---|---|---|---|
+| P9 | Monitoring/incident เต็ม | `production-ops-spec`, `m-02-ai-api-observability-spec` + runbooks | ✅ พอสำหรับงาน ops (รายละเอียด OBS-01/02 เติมตอนทำ) |
+| P10 | Auto-register จากเว็บทางการ | `admin-company-onboarding-spec` (ครอบเฉพาะ flow ภายใน) | ❌ ขาด: external signup API contract spec (HMAC/idempotency/durable state) |
+| P11 | Email delivery + claim | — | ❌ ขาดทั้งหมด (SES/outbox/claim link) |
+| P12 | OA กลาง + LIFF + LINE QR Login | `password-reset-line-flow-spec`, `line-web-deeplink-handoff-spec`, `web-line-login-plan` (plan) | ⚠️ ขาด spec รวม journey LINE login/link ฉบับเดียว — ระวัง: checkout หลักมีการแก้ `web-line-login-plan.md` ค้างอยู่ (session อื่น) ประสานก่อนเขียนทับ |
+| P13 | พนักงานหลายบริษัทบน LINE | `multi-company-branch-scope-spec` (ฝั่งเว็บ) | ❌ ขาด: LINE policy change spec (active-membership-based) |
+| P14 | Quota AI รายบริษัท | `per-company-ai-budget-override-spec` + `ai-usage-metering-and-monthly-budget-spec` | ✅ (document-work-unit meter เขียนรวมกับ P26) |
+| P15 | Auto Revenue foundation | OS spec §10 (ระดับทิศทาง) | ❌ ขาด spec ละเอียด (แผน P15 บังคับเขียนก่อน connector อยู่แล้ว) |
+| P16 | Revenue Inbox จาก statement เดิม | `bank-reconciliation-spec` | ⚠️ ขาดส่วน inbox UX/classification |
+| P17 | Invoice matching + exception | OS spec §10.4 | ❌ ขาดละเอียด |
+| P18–P20 | Bank/Gateway/Marketplace/POS | `marketplace-import-spec` (P19 บางส่วน) | ❌ เขียนเมื่อเลือก provider จริง (ตามแผนเดิม) |
+| P21 | Accountant review/tax reports | `accounting-tax-setup-workflow-spec`, `sap-compatible-transaction-tax-account-determination-spec`, `tax-thailand-2026-spec`, `tax-2026-verified-rules` | ⚠️ พอเริ่ม — ขาด workpaper/ภ.พ.30 package spec |
+| P22 | Controlled auto-accounting | `expense-ledger-auto-post-spec` | ✅ ฝั่งรายจ่าย; ฝั่งขายเขียนตอนเข้าคิว |
+| P23 | สมองมั่งมีเต็ม + คลังความรู้ | `mangmee-accounting-tax-knowledge-spec-th` + ชุด brain specs ปัจจุบัน | ✅ |
+| P24 | Growth/UX รอบเต็ม | `mobile-first-launch-features-spec`, `mangmee-system-ui-alignment-spec` | ⚠️ พอเริ่ม |
+| P25 | Scale/load/DR | `production-a5-v2-spec` (+readiness matrix), `uat-environment-spec` | ✅ พอ |
+| P26 | Billing/Subscription (จำกัดใบเสร็จ) | — | ❌ ขาดทั้งหมด (หัวข้อ P26 บังคับ spec+pricing ที่ Owner อนุมัติก่อนอยู่แล้ว) |
+| P27 | สมุดรายรับ–รายจ่าย | `mangmee-income-expense-ledger-spec-th` v1.2 | ✅ |
+| P28 | ซื้อ-จ่ายเงิน MVP + ใบลดหนี้ฝั่งซื้อ | `procurement-supplier-ap-spec` (engine เดิม) | 🔶 กำลังเขียน MVP/UX + supplier credit note spec (งานปัจจุบัน) |
+
+คิวเขียน spec ที่ขาด (ตามลำดับลงมือของหัวข้อนี้): **1) P28** (กำลังทำ) → **2) P26** billing → **3) P10+P11** (signup+email เขียนคู่กัน) → **4) P12** journey รวม → **5) P13** → **6) P15–P17** ก่อนเริ่มสายธนาคาร → P18–P20 ตอนเลือก provider → P21 workpaper ก่อนเปิดงานนักบัญชี
+
 ### P9 — Incident, Monitoring และ Fast Hotfix Lane (ส่วนที่เหลือจาก P3)
 
 alarm ขั้นต่ำ, kill switch และ drill หนึ่งรอบทำไปแล้วใน P3 ของรอบ 2.5 วัน; ส่วนนี้ทำต่อให้ครบ:
