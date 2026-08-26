@@ -14,7 +14,7 @@
 - [Mangmee Accounting OS Implementation Plan](../plans/mangmee-accounting-os-implementation-plan-th.md) — สมุดฯ = ส่วนตัดของ P7 (Sell-to-Cash) + P8 (Expense) โดยไม่รวม P9 (Bank/Reconciliation)
 - [ผลสำรวจ FlowAccount 2026-08-26](../research/flowaccount-accounting-product-audit-2026-08-26-th.md) — §6.3 (หลักเอกสารขาย), §7.3 (pattern ค่าใช้จ่าย+OCR)
 - [แผนหลัก 2.5 วัน](../plans/mangmee-brain-2-5-day-priority-plan-th.md) — §13.10 (ฟีเจอร์รายรับ), §13.2 แถว "รายรับจากเอกสารขาย", REVENUE-01..08, §15 แถว "รายรับจากเอกสารขาย"
-- แผนส่งมอบของ spec นี้: [Income–Expense Ledger Implementation Plan](../plans/mangmee-income-expense-ledger-plan-th.md); คิวรวมสองฝั่ง: [สารบัญแผนรวม FlowAccount Parity](../plans/mangmee-flowaccount-parity-plan-th.md)
+- แผนส่งมอบของ spec นี้: [Income–Expense Ledger Implementation Plan](../plans/mangmee-income-expense-ledger-plan-th.md); คิวรวมสองฝั่ง: [สารบัญแผนรวมมั่งมีพลัส](../plans/mangmee-master-plan-index-th.md)
 
 ## 1. เป้าหมายและภาษา
 

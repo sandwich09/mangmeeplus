@@ -28,7 +28,7 @@ Open questions: — (ไม่มี; ทุกข้อปิดแล้ว)
 Artifacts:
 
 - `docs/specs/mangmee-income-expense-ledger-spec-th.md` v1.1 (คำตอบ §9 + ผล V1–V6 + F-LED-6 + M5/M6 + LED-FIN-05)
-- `docs/plans/mangmee-income-expense-ledger-plan-th.md` ACTIVE ฉบับเต็มตามเดิม (Phase 0–2 ✅); คิวรวมสองฝั่งอยู่ที่ `docs/plans/mangmee-flowaccount-parity-plan-th.md` — **สารบัญอย่างเดียว** (Owner 2026-08-26: "รวมแค่หัวข้อ แล้วมี link กลับไปที่เอกสารเดิม" — เคยรวมเนื้อหาเต็มในไฟล์เดียวแล้วถูกสั่งปรับกลับ)
+- `docs/plans/mangmee-income-expense-ledger-plan-th.md` ACTIVE ฉบับเต็มตามเดิม (Phase 0–2 ✅); คิวรวมสองฝั่งอยู่ที่ `docs/plans/mangmee-master-plan-index-th.md` — **สารบัญอย่างเดียว** (Owner 2026-08-26: "รวมแค่หัวข้อ แล้วมี link กลับไปที่เอกสารเดิม" — เคยรวมเนื้อหาเต็มในไฟล์เดียวแล้วถูกสั่งปรับกลับ)
 - `docs/plans/mangmee-brain-2-5-day-priority-plan-th.md` P27 + §10/§11 อัปเดตคิวตัดสินแล้ว
 - PR #245 (docs ชุดแรก merged); PR ถัดไป = ชุดคำตอบ+Phase 0 นี้
 

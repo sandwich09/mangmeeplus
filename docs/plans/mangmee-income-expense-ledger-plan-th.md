@@ -4,7 +4,7 @@
 
 Spec: [Income–Expense Ledger Spec](../specs/mangmee-income-expense-ledger-spec-th.md) — ทุก phase อ้าง requirement/หลักฐานจาก spec; แผนนี้ไม่ประกาศข้อเท็จจริงใหม่
 
-ตำแหน่งในแผนหลัก: [แผนหลัก 2.5 วัน](mangmee-brain-2-5-day-priority-plan-th.md) **P27** — ทำก่อนสาย Bank/Auto Revenue (P15–P22); คิวรวมสองฝั่งดูที่ [สารบัญแผนรวม FlowAccount Parity](mangmee-flowaccount-parity-plan-th.md) (ภาค 1 = แผนนี้)
+ตำแหน่งในแผนหลัก: [แผนหลัก 2.5 วัน](mangmee-brain-2-5-day-priority-plan-th.md) **P27** — ทำก่อนสาย Bank/Auto Revenue (P15–P22); คิวรวมสองฝั่งดูที่ [สารบัญแผนรวมมั่งมีพลัส](mangmee-master-plan-index-th.md) (ภาค 1 = แผนนี้)
 
 ## 0. คำตอบตรง ๆ เรื่องเวลา
 
