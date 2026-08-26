@@ -10,8 +10,9 @@
  * on the emitting side — the deploy script is deliberately not edited (a concurrent lane owns it
  * under M-16), so this test is what keeps the two sides honest.
  */
-import { describe, it } from 'node:test';
+import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
+import { ConflictException, ForbiddenException } from '@nestjs/common';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { emitSecurityEvent, SECURITY_EVENT, type SecurityEventName } from './security-event';
@@ -21,6 +22,7 @@ import {
   JOURNEY_METRIC_FORBIDDEN_DIMENSIONS,
   reconcileTerminalCardinality,
 } from '../observability/customer-journey-signal.catalog';
+import { customerJourneyFailure, observeCustomerJourney } from '../observability/customer-journey-audit';
 
 const REPO_ROOT = join(__dirname, '../../../../..');
 const DEPLOY_SCRIPT = join(REPO_ROOT, 'infra/prod-ecs-express/deploy.sh');
@@ -279,5 +281,56 @@ describe('P9-0 customer journey signal contract', () => {
       ]),
       { missing: ['synthetic-c'], duplicates: ['synthetic-b'], orphaned: ['synthetic-orphan'] },
     );
+  });
+});
+
+describe('P9-1b customer journey audit boundary', () => {
+  it('writes one accepted and one successful terminal with the same correlation', async () => {
+    const rows: any[] = [];
+    const audit = { log: mock.fn(async (row: any) => { rows.push(row); }) };
+    const result = await observeCustomerJourney(
+      audit as any,
+      { key: 'receipt-ocr', requestId: 'synthetic-1', targetType: 'expense_record', targetId: 'expense-1' },
+      async () => ({ status: 'ok' }),
+      () => ({ outcome: 'completed' }),
+    );
+
+    assert.deepEqual(result, { status: 'ok' });
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0].action, 'journey.receipt.ocr.accepted');
+    assert.equal(rows[1].action, 'journey.receipt.ocr.terminal');
+    assert.equal(rows[0].requestId, 'synthetic-1');
+    assert.equal(rows[1].requestId, 'synthetic-1');
+    assert.equal(rows[1].metadataJson.outcome, 'completed');
+    assert.equal(typeof rows[1].metadataJson.durationMs, 'number');
+  });
+
+  it('writes one failed terminal and preserves the application error', async () => {
+    const rows: any[] = [];
+    const audit = { log: mock.fn(async (row: any) => { rows.push(row); }) };
+    const conflict = new ConflictException('changed');
+
+    await assert.rejects(
+      () => observeCustomerJourney(
+        audit as any,
+        { key: 'sales-confirmation', requestId: 'synthetic-2', targetType: 'accounting_document' },
+        async () => { throw conflict; },
+        () => ({ outcome: 'issued' }),
+      ),
+      (error) => error === conflict,
+    );
+    assert.equal(rows.length, 2);
+    assert.equal(rows[1].result, 'FAILED');
+    assert.equal(rows[1].metadataJson.outcome, 'conflict');
+    assert.equal(rows[1].metadataJson.failureClass, 'conflict');
+  });
+
+  it('keeps failure classes bounded and carries no exception message', () => {
+    assert.deepEqual(customerJourneyFailure(new ForbiddenException('secret detail')), {
+      outcome: 'denied', failureClass: 'permission',
+    });
+    assert.deepEqual(customerJourneyFailure(new Error('provider response payload')), {
+      outcome: 'failed', failureClass: 'unexpected',
+    });
   });
 });

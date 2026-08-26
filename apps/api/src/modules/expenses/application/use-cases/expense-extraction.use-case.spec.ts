@@ -205,7 +205,7 @@ describe('RequestReceiptExtractionUseCase', () => {
       chargeReconciliation: { status: 'SUMMARY_LINE', chargesApplied: 0 },
       nextAction: 'review_in_web',
     });
-    assert.deepEqual(audits.at(-1), {
+    assert.deepEqual(audits.find((entry) => entry.action === 'expense.ocr.request'), {
       companyId: 'company-1',
       actorUserId: 'user-1',
       action: 'expense.ocr.request',
@@ -345,7 +345,8 @@ describe('RequestReceiptExtractionUseCase', () => {
       assert.equal('grandTotalAmount' in updates[0], false, documentKind);
       assert.equal(updates[0].aiVerificationSummaryJson.classification.documentKind, documentKind);
       assert.equal('evidenceSignals' in updates[0].aiVerificationSummaryJson.classification, false);
-      assert.deepEqual(audits.at(-1).metadataJson.reasonCodes, ['MISSING_PAYMENT_EVIDENCE']);
+      const ocrAudit = audits.find((entry) => entry.action === 'expense.ocr.request');
+      assert.deepEqual(ocrAudit.metadataJson.reasonCodes, ['MISSING_PAYMENT_EVIDENCE']);
     }
   });
 

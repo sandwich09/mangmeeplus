@@ -1,6 +1,6 @@
-# Customer Journey Observability Signal Contract (P9-0)
+# Customer Journey Observability Signal Contract (P9)
 
-Status: **IMPLEMENTED CONTRACT — instrumentation remains phased**  
+Status: **P9-0 CONTRACT + P9-1A DASHBOARD + P9-1B CURRENT BOUNDARIES IMPLEMENTED**
 Scope: Four product lanes only; subscription/payment is excluded.  
 Last reviewed: 2026-08-26
 
@@ -34,9 +34,9 @@ The executable catalog covers:
 6. outbox worker drain;
 7. sales-document issue and expense confirmation through downstream outbox publication.
 
-The accounting rows intentionally distinguish financial commit from downstream publication. Existing
-outbox state proves the latter. A failed request before commit needs separate P9-1 instrumentation and is
-not inferred from absence.
+The accounting rows intentionally distinguish the request-to-financial-commit journey from downstream
+outbox publication. P9-1b pairs issue/confirmation requests through the application boundary; the existing
+outbox-worker row proves downstream publication separately, without retrying a legal document or expense.
 
 ## Cardinality and correlation
 
@@ -62,8 +62,34 @@ promoted into metric dimensions.
 - Runtime alarm regression remains `bash infra/monitoring/runtime-alarms.spec.sh`.
 - Response procedure is `docs/runbooks/customer-journey-signal-triage.md`.
 
-## P9-1 boundary
+## P9-1a dashboard
 
-P9-1 may add missing emitters/adapters and dashboards using existing structured logs, audit, outbox, and
-CloudWatch metric filters. It must not add a second telemetry stack, assign targets without a baseline, or
-change a financial mutation merely to make telemetry convenient.
+`infra/monitoring/runtime-alarms.sh install <environment>` creates or exactly replaces the global
+CloudWatch dashboard `watchdog-bms-<environment>-customer-journeys`. `verify` reads the dashboard
+back and rejects any drift from the source-controlled body.
+
+The dashboard shows:
+
+- proven `LINE AI` accepted and terminal metrics from `WatchDog/LineAI`;
+- existing login-denied, upload-rejection, AI/OCR-failure, API-5xx, and AI-queue context metrics;
+- the four-lane coverage matrix, where durable outbox evidence remains a runbook query rather than
+  an invented CloudWatch metric;
+- explicit `UNKNOWN`, `PARTIAL`, and `PLANNED` guidance with no target line.
+
+The dashboard is account-global, while every metric widget explicitly selects `ap-southeast-1`.
+Its IAM statement is limited to `arn:aws:cloudwatch::<ACCOUNT_ID>:dashboard/watchdog-bms-*-customer-journeys`.
+This follows the AWS contracts for [PutDashboard](https://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/API_PutDashboard.html),
+[dashboard body structure](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch-Dashboard-Body-Structure.html),
+and the [CloudWatch dashboard resource ARN](https://docs.aws.amazon.com/service-authorization/latest/reference/list_cloudwatch.html).
+
+## P9-1b boundary
+
+`observeCustomerJourney` now writes one accepted and one terminal audit row around LINE login/link,
+receipt OCR, receipt-upload completion, sales-document issue, and expense confirmation. It reuses the
+request correlation, emits bounded outcome/failure classes and duration, and rethrows the original error.
+The wrapper does not change a financial mutation or retry it.
+
+Receipt intake remains `PARTIAL` only for an upload intent abandoned before the completion endpoint is
+called; current code has no expiry reconciler that can truthfully classify that terminal. The `PLANNED`
+official-signup, owner-claim, tenant-provision, and claim-email rows cannot become live before P10-P12
+implement those business flows. No second telemetry stack or pre-baseline target is introduced.

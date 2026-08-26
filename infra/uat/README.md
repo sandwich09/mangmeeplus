@@ -226,7 +226,9 @@ SECURITY_ALERT_TOPIC_ARN='arn:aws:sns:ap-southeast-1:311414082667:<confirmed-top
 ```
 
 UAT gets per-log-group 64 MiB/hour guards, per-node Redis memory at 75%, RDS free storage at 4 GB,
-and free memory at 64 MB. Production uses the same script with its documented thresholds; retire the
+free memory at 64 MB, plus the global `watchdog-bms-uat-customer-journeys` dashboard. `verify` reads
+the dashboard body back and rejects console drift. Production uses the same script with its documented
+thresholds; retire the
 old invalid Production Redis alarm only through the guarded Production-only mode in
 `docs/runbooks/production-golive-aws-commands.md`.
 

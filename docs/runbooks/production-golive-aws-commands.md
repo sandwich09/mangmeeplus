@@ -302,7 +302,9 @@ SECURITY_ALERT_TOPIC_ARN="$SECURITY_ALERT_TOPIC_ARN" \
 
 script สร้าง per-log-group `IncomingBytes` 512 MiB/ชั่วโมง, per-node Redis memory 75%, RDS
 free storage 4 GB, free memory 200 MB, connections 150 และ CPU credit 50. `verify` เทียบ contract
-ทุก field, ยืนยัน SNS subscription และบังคับว่าทุก dimension ต้องมี datapoint จริง
+ทุก field, ยืนยัน SNS subscription และบังคับว่าทุก dimension ต้องมี datapoint จริง นอกจากนี้ `install`
+สร้าง dashboard global ชื่อ `watchdog-bms-prod-customer-journeys` และ `verify` อ่าน body กลับมาเทียบ
+กับ source ทุก field; ห้ามแก้ dashboard นี้จาก console เพราะรอบ install ถัดไปจะเขียนทับ
 
 ```sh
 # หลัง verify per-node ผ่านเท่านั้น ลบ alarm เก่าที่ใช้ ReplicationGroupId และไม่มี datapoint

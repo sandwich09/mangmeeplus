@@ -6,6 +6,7 @@ Trigger: missing/duplicate terminal signal, critical terminal failure, abnormal 
 
 ## Preconditions
 
+- Open `watchdog-bms-<environment>-customer-journeys`; a dashboard body mismatch must fail `runtime-alarms.sh verify` before incident interpretation.
 - Use a synthetic correlation ID or an access-controlled real correlation ID; do not paste tenant/customer payloads into tickets or metric labels.
 - Confirm the catalog row is `LIVE`. A `PARTIAL` or `PLANNED` row is an implementation gap, not proof of a live outage.
 - Do not retry a financial mutation until source state and idempotency key are verified.
@@ -41,19 +42,28 @@ Inspect the delivery-attempt state and SES message/event reference. Treat bounce
 
 ### LINE login
 
-Inspect verifier outcome, linked canonical identity, active user/membership, and session issuance audit. Never match by display name, email, photo, or phone number.
+Join `journey.line.login.accepted` and `.terminal` by `requestId`, then inspect verifier outcome,
+linked canonical identity, active user/membership, and session issuance audit. Never match by display
+name, email, photo, or phone number.
 
 ### LINE link
 
-Inspect canonical external identity, provider/channel binding, link-token state, and conflict disposition. Do not reassign or revive a disabled identity outside the approved recovery flow.
+Join `journey.line.link.accepted` and `.terminal` by `requestId`, then inspect canonical external
+identity, provider/channel binding, link-token state, and conflict disposition. Do not reassign or
+revive a disabled identity outside the approved recovery flow.
 
 ### Receipt intake
 
-Inspect attachment completion, `expense.receipt_uploaded` outbox row, workflow inbox, and expense source state. A `DEAD` row requires outbox recovery; do not upload a duplicate receipt as a telemetry workaround.
+Join `journey.receipt.intake.accepted` and `.terminal` for a completion call, then inspect attachment
+completion, `expense.receipt_uploaded` outbox row, workflow inbox, and expense source state. A
+PENDING_UPLOAD intent that never called completion is a known `PARTIAL` gap, not a missing terminal
+from this request boundary. A `DEAD` row requires outbox recovery; do not upload a duplicate receipt.
 
 ### Receipt OCR
 
-Inspect request audit, attachment safety/size, provider result, stale-write protection, and the expense review state. OCR output is a suggestion until deterministic validation and human confirmation pass.
+Join `journey.receipt.ocr.accepted` and `.terminal` by `requestId`, then inspect request audit,
+attachment safety/size, provider result, stale-write protection, and the expense review state. OCR
+output is a suggestion until deterministic validation and human confirmation pass.
 
 ### LINE AI answer
 
@@ -65,14 +75,19 @@ Inspect `OutboxEvent.status`, attempts, lease/claim token, `lastError`, and DEAD
 
 ### Sales confirmation
 
-Verify the accounting document is durably issued and its document number committed before touching the outbox row. A retry must reuse existing document/outbox identity and must not issue a second legal document.
+Join `journey.sales.confirmation.accepted` and `.terminal` by `requestId`. Verify the accounting
+document is durably issued and its document number committed before touching the outbox row. A retry
+must reuse existing document/outbox identity and must not issue a second legal document.
 
 ### Expense confirmation
 
-Verify expense status, number reservation/commit, tax snapshot, duplicate state, journal/posting state, and the `expense.confirmed` outbox row. Never reconfirm or repost to repair a missing signal.
+Join `journey.expense.confirmation.accepted` and `.terminal` by `requestId`. Verify expense status,
+number reservation/commit, tax snapshot, duplicate state, journal/posting state, and the
+`expense.confirmed` outbox row. Never reconfirm or repost to repair a missing signal.
 
 ## Verification and rollback
 
 - Success: one accepted correlation, one terminal classification, durable source state matches the terminal, and customer-visible recovery is verified.
+- Dashboard success: source-controlled body matches exactly; a missing metric is `UNKNOWN`, not success, and a `PARTIAL`/`PLANNED` row is never colored as healthy.
 - Rollback: telemetry-only changes may be reverted; never roll back or rewrite durable financial/customer state merely to align a dashboard.
 - Evidence must contain no secrets, raw prompts, document content, tax IDs, email addresses, LINE user IDs, or tenant IDs in metric dimensions.
