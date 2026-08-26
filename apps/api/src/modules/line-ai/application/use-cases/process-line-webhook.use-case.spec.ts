@@ -113,8 +113,12 @@ function makePrisma(opts: {
 	  entitlements?: Array<{ featureKey: string; enabled: boolean }>;
 	  branches?: Array<{ name: string }>;
 	  branchFindManyFn?: (args: any) => Promise<Array<{ name: string }>>;
+	  /** §8.3: make the durable terminal-outcome write fail, to exercise the fail-closed delivery seam. */
+	  turnOutcomeUnavailable?: boolean;
 	} = {}) {
-	  const { identityUserId = 'user-1', displayName = 'พิม', identityChannelId = 'msg-channel-1', aiAssistantOptOutAt = null, memberships = [{ companyId: 'company-1' }], lineCompanyContext = null, previousEventLog = null, recentTurns = [], entitlements = [], branches = [], branchFindManyFn } = opts;
+	  const { identityUserId = 'user-1', displayName = 'พิม', identityChannelId = 'msg-channel-1', aiAssistantOptOutAt = null, memberships = [{ companyId: 'company-1' }], lineCompanyContext = null, previousEventLog = null, recentTurns = [], entitlements = [], branches = [], branchFindManyFn, turnOutcomeUnavailable = false } = opts;
+  const turnOutcomeWrites: any[] = [];
+  const turnOutcomeUpdates: any[] = [];
   const identityQueries: any[] = [];
   const createdLogs: unknown[] = [];
   const updates: unknown[] = [];
@@ -139,10 +143,20 @@ function makePrisma(opts: {
         },
       }),
       lineWebhookEventLog: {
-        findUnique: async () => null,
+        // Only the §8.3 outcome write reads this with a `select`; every other caller wants the whole
+        // row and must keep seeing "no previous event".
+        findUnique: async (args: any) => (args?.select?.companyId ? { companyId: 'company-1' } : null),
         findFirst: async () => previousEventLog,
         create: async (args: unknown) => { createdLogs.push(args); return args; },
         updateMany: async (args: unknown) => { updates.push(args); return { count: 1 }; },
+      },
+      lineTurnOutcome: {
+        upsert: async (args: any) => {
+          turnOutcomeWrites.push(args);
+          if (turnOutcomeUnavailable) throw new Error('outcome store unavailable');
+          return args;
+        },
+        updateMany: async (args: any) => { turnOutcomeUpdates.push(args); return { count: 1 }; },
       },
       externalIdentity: {
         findFirst: async (args: any) => {
@@ -200,7 +214,7 @@ function makePrisma(opts: {
       },
     },
   } as any;
-  return { prisma, createdLogs, updates, upserts, aiTurns, aiTurnUpdates, toolInvocations, markerWrites, branchFindManyCalls, identityQueries };
+  return { prisma, createdLogs, updates, upserts, aiTurns, aiTurnUpdates, toolInvocations, markerWrites, branchFindManyCalls, identityQueries, turnOutcomeWrites, turnOutcomeUpdates };
 }
 
 function makeUseCase(
@@ -3309,6 +3323,148 @@ describe('ProcessLineWebhookUseCase – completed multi-part replies end in a Fl
     assert.equal(terminal.type, 'flex');
     assert.match(JSON.stringify(terminal.contents), /สรุปร่างค่าใช้จ่าย/);
     assert.ok(terminal.quickReply?.items.length > 0, 'completion menu stays on the terminal card only');
+  });
+});
+
+/** One deterministic completed reply (a Flex card with the completion menu) driven through the single
+ *  delivery seam, so every assertion below is about delivery — not about how the answer was produced. */
+function makeDeliveryRun(opts: {
+  config?: Record<string, unknown>;
+  replyResults?: string[];
+  pushResult?: string;
+  turnOutcomeUnavailable?: boolean;
+} = {}) {
+  const { prisma, updates, turnOutcomeWrites, turnOutcomeUpdates } = makePrisma({ turnOutcomeUnavailable: opts.turnOutcomeUnavailable });
+  const replyCalls: Array<{ messages: any[]; outcomeWritesBefore: number }> = [];
+  const pushCalls: Array<{ to: string; messages: any[] }> = [];
+  const results = [...(opts.replyResults ?? ['ok'])];
+  const { useCase } = makeUseCase(prisma, {
+    permissions: ['line.ai.query', 'expense.create'],
+    // Terminal Flex on, so the seam under test carries a real card — the payload class the fallback
+    // exists for. It is orthogonal to both flags below.
+    config: { lineExpenseDraftConversationEnabled: true, lineAiMultipartTerminalFlexEnabled: true, ...(opts.config ?? {}) },
+    expenseDraftConversation: {
+      routeContexts: async () => [{ status: 'OPEN', expenseId: 'draft-1' }],
+      execute: async () => ({ handled: true, status: 'UPDATED', replyTexts: ['บันทึกวัตถุประสงค์แล้วค่ะ'], acceptedFields: [] }),
+    },
+    sendReplyFn: async (_token: string, messages: any[]) => {
+      // Captured at SEND time: a non-zero count here is the proof that §8.3's "persist the outcome
+      // BEFORE calling LINE" actually holds, not just that both happened during the turn.
+      replyCalls.push({ messages, outcomeWritesBefore: turnOutcomeWrites.length });
+      return results.length > 1 ? results.shift()! : results[0]!;
+    },
+    sendPushFn: async (to: string, messages: any[]) => { pushCalls.push({ to, messages }); return opts.pushResult ?? 'ok'; },
+  });
+  return {
+    // An undelivered required message throws `LINE_DELIVERY_*` by design; these assertions are about
+    // what the seam did on its way there, so the throw is swallowed rather than asserted on here.
+    run: () => useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-delivery-1', messageText: 'D-PURPOSE ค่าเดินทางไปหาลูกค้า' })
+      .catch(() => undefined),
+    replyCalls, pushCalls, updates, turnOutcomeWrites, turnOutcomeUpdates,
+  };
+}
+
+describe('ProcessLineWebhookUseCase – durable terminal outcome (§8.3, default off)', () => {
+  it('writes NOTHING and delivers the exact legacy payload while the flag is off', async () => {
+    const off = makeDeliveryRun();
+    await off.run();
+    assert.deepEqual(off.turnOutcomeWrites, [], 'default-off never touches the outcome table');
+    assert.deepEqual(off.turnOutcomeUpdates, [], 'and never records a delivery status either');
+
+    const on = makeDeliveryRun({ config: { lineAiTerminalOutcomeReplayEnabled: true } });
+    await on.run();
+    // The flag changes what is REMEMBERED, never what is sent.
+    assert.deepEqual(on.replyCalls[0]!.messages, off.replyCalls[0]!.messages);
+  });
+
+  it('persists the exact rendered payload BEFORE the first send, then records delivery separately', async () => {
+    const { run, replyCalls, turnOutcomeWrites, turnOutcomeUpdates } = makeDeliveryRun({
+      config: { lineAiTerminalOutcomeReplayEnabled: true },
+    });
+    await run();
+
+    assert.equal(turnOutcomeWrites.length, 1);
+    assert.equal(replyCalls[0]!.outcomeWritesBefore, 1, 'the outcome is durable before LINE is called');
+    const create = turnOutcomeWrites[0]!.create;
+    assert.equal(create.webhookEventId, 'evt-delivery-1');
+    assert.equal(create.companyId, 'company-1');
+    assert.equal(create.presentationKind, 'flex');
+    assert.equal(create.attempts, 1);
+    // Not a 240-character preview: the stored bytes ARE the message array handed to the adapter.
+    assert.deepEqual(create.messagesJson, replyCalls[0]!.messages);
+    assert.equal(turnOutcomeWrites[0]!.where.webhookEventId, 'evt-delivery-1', 'one outcome of record per turn');
+    // §8.3: delivery is a separate status, written only after LINE returned ok.
+    assert.equal(turnOutcomeUpdates.length, 1);
+    assert.ok(turnOutcomeUpdates[0]!.data.deliveredAt instanceof Date);
+    assert.equal(turnOutcomeUpdates[0]!.where.deliveredAt, null);
+  });
+
+  it('FAILS CLOSED: an outcome it cannot record is never sent', async () => {
+    const { run, replyCalls, pushCalls, updates } = makeDeliveryRun({
+      config: { lineAiTerminalOutcomeReplayEnabled: true }, turnOutcomeUnavailable: true,
+    });
+    await run();
+
+    assert.equal(replyCalls.length, 0, 'sending what we cannot replay is the one thing this table exists to prevent');
+    assert.equal(pushCalls.length, 0);
+    const pending = updates.map((update: any) => update.data).find((data: any) => data.status === 'delivery_pending');
+    assert.ok(pending, 'the turn still owes the user an answer');
+    assert.equal(pending.errorCode, 'LINE_OUTCOME_NOT_RECORDED');
+  });
+});
+
+describe('ProcessLineWebhookUseCase – Flex→text delivery fallback (§14.3, default off)', () => {
+  it('takes the exact legacy push path for a rejected Flex payload while the flag is off', async () => {
+    const { run, replyCalls, pushCalls, updates } = makeDeliveryRun({ replyResults: ['failed_flex'], pushResult: 'failed_other' });
+    await run();
+    assert.equal(replyCalls.length, 1, 'no retry');
+    assert.equal(pushCalls.length, 1, 'failed_flex takes the same push failed_token always took');
+    assert.deepEqual(pushCalls[0]!.messages, replyCalls[0]!.messages, 'with the SAME messages');
+    const pending = updates.map((update: any) => update.data).find((data: any) => data.status === 'delivery_pending');
+    assert.equal(pending?.errorCode, 'LINE_DELIVERY_FAILED_OTHER', 'the legacy error code is unchanged');
+  });
+
+  it('retries ONCE with each card’s own altText and never pushes the payload LINE refused', async () => {
+    const { run, replyCalls, pushCalls } = makeDeliveryRun({
+      config: { lineAiFlexTextFallbackEnabled: true }, replyResults: ['failed_flex', 'ok'],
+    });
+    await run();
+
+    assert.equal(replyCalls.length, 2, 'exactly one retry — never a loop');
+    assert.equal(pushCalls.length, 0, 'the rejected card is not pushed; the text replaces it');
+    const original = replyCalls[0]!.messages[0];
+    const fallback = replyCalls[1]!.messages[0];
+    assert.equal(original.type, 'flex');
+    assert.equal(fallback.type, 'text');
+    // Nothing invented and no extra model call: the fallback text IS the altText the builder wrote.
+    assert.equal(fallback.text, original.altText);
+    assert.deepEqual(fallback.quickReply, original.quickReply, 'the completion menu survives the downgrade');
+  });
+
+  it('records the fallback shape on the outcome row so a later replay sends the text, not the card', async () => {
+    const { run, turnOutcomeWrites } = makeDeliveryRun({
+      config: { lineAiFlexTextFallbackEnabled: true, lineAiTerminalOutcomeReplayEnabled: true },
+      replyResults: ['failed_flex', 'ok'],
+    });
+    await run();
+    assert.equal(turnOutcomeWrites.length, 2, 'the re-render supersedes the payload of record');
+    assert.equal(turnOutcomeWrites[0]!.create.presentationKind, 'flex');
+    assert.equal(turnOutcomeWrites[1]!.create.presentationKind, 'text_fallback');
+    assert.equal(turnOutcomeWrites[1]!.create.messagesJson[0].type, 'text');
+    // A different payload cannot inherit the previous one's delivery.
+    assert.equal(turnOutcomeWrites[1]!.update.deliveredAt, null);
+  });
+
+  it('never retries a failure that is not a rejected Flex body', async () => {
+    for (const [first, expectedReplies, expectedPushes] of [['failed_other', 1, 0], ['failed_token', 1, 1]] as const) {
+      const { run, replyCalls, pushCalls } = makeDeliveryRun({
+        config: { lineAiFlexTextFallbackEnabled: true }, replyResults: [first], pushResult: 'failed_other',
+      });
+      await run();
+      assert.equal(replyCalls.length, expectedReplies, first);
+      assert.equal(pushCalls.length, expectedPushes, `${first}: an expired token still gets its push, with the CARD intact`);
+      if (expectedPushes > 0) assert.equal(pushCalls[0]!.messages[0].type, 'flex');
+    }
   });
 });
 

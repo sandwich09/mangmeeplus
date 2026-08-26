@@ -845,9 +845,14 @@ export const LINE_AI_PRESENTATION_PERMISSION_MANIFEST: readonly PresentationPerm
   {
     id: 'persisted-terminal-outcome-replay', journey: 'delivery_replay', expectedPresentationKind: 'flex',
     authority: 'allowed', expectedCtaPolicy: 'no_cta',
-    expectedDomainWriteCount: 0, maxAdditionalModelCalls: 0, evidenceStatus: 'required_gap',
-    note: 'GAP: §8.3 wants the canonical terminal outcome persisted BEFORE delivery and replayed on a later '
-      + 'retry without re-routing. Today an in-turn delivery failure only marks the event delivery_pending.',
+    expectedDomainWriteCount: 0, maxAdditionalModelCalls: 0, evidenceStatus: 'implemented_fixture',
+    note: '§8.3 LineTurnOutcome (migration 20260826140000): the delivery seam persists the EXACT rendered LINE '
+      + 'message array before the first send attempt and fails CLOSED if it cannot, and the orphan sweep pushes '
+      + 'those stored bytes on a retry — no buffer enqueue, no intake route, so the answer cannot change between '
+      + 'attempts. deliveredAt is the separate delivery status §8.3 demands. Zero model calls by construction: '
+      + 'the replay never re-decides. Code only, flag LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED DEFAULT OFF — no '
+      + 'provider replay or UAT evidence yet. Fixtures: recover-orphan-line-events.use-case.spec.ts "pushes the '
+      + 'STORED outcome verbatim", process-line-webhook.use-case.spec.ts "durable terminal outcome".',
   },
   {
     id: 'long-reply-over-1200-lossless', journey: 'long_reply', expectedPresentationKind: 'text_parts_then_flex',
@@ -872,9 +877,16 @@ export const LINE_AI_PRESENTATION_PERMISSION_MANIFEST: readonly PresentationPerm
   {
     id: 'flex-failure-text-fallback', journey: 'renderer_fallback', expectedPresentationKind: 'text_fallback',
     authority: 'allowed', expectedCtaPolicy: 'no_cta',
-    expectedDomainWriteCount: 0, maxAdditionalModelCalls: 0, evidenceStatus: 'required_gap',
-    note: 'GAP: a rejected Flex payload must fall back to the canonical text so the answer still arrives. The reply '
-      + 'adapter currently reports the failure and stops.',
+    expectedDomainWriteCount: 0, maxAdditionalModelCalls: 0, evidenceStatus: 'implemented_fixture',
+    note: 'The adapter now discriminates `failed_flex` — a LINE 400 whose body names a /messages/ property while '
+      + 'the payload carried a Flex message — as a strict REFINEMENT of failed_token, so an expired token keeps '
+      + 'its push and only a rejected CARD is retried. The retry happens ONCE and re-sends each Flex message as '
+      + 'its own altText, the plain-text equivalent the same builder wrote, with the quick reply intact: nothing '
+      + 'invented, zero extra model calls. KNOWN CEILING: altText is preview(text, 400), so a card body over 400 '
+      + 'characters falls back to its visibly marked ("…") preview, not the full body — a canonical-text field on '
+      + 'the card builders is the fix if a real fallback is observed losing content. Code only, flag '
+      + 'LINE_AI_FLEX_TEXT_FALLBACK_ENABLED DEFAULT OFF — no provider replay or UAT evidence yet. Fixtures: '
+      + 'line-reply.adapter.spec.ts "400 discrimination", process-line-webhook.use-case.spec.ts "Flex→text".',
   },
 ]);
 

@@ -502,13 +502,13 @@ frozen artifact: `LINE_AI_PRESENTATION_PERMISSION_MANIFEST` ใน `scripts/line
 (21 rows) แต่ละ row พิน journey, presentation kind, authority condition, CTA policy,
 `expectedDomainWriteCount`, route/model constraint และ `evidenceStatus`
 
-`evidenceStatus` มีสองค่าเท่านั้นและ integrity spec นับ/รายงานทั้งสองฝั่ง: `implemented_fixture` 17 rows
+`evidenceStatus` มีสองค่าเท่านั้นและ integrity spec นับ/รายงานทั้งสองฝั่ง: `implemented_fixture` 19 rows
 (terminal Flex เดี่ยว/multipart, payer clarify card, clarify-only ไม่มี CTA, handoff tenant path ที่ไม่มี
 query/hash, permission/entitlement/branch denied, legal pending, duplicate webhook, expired reply-token push,
-long reply >1,200/>4,800 แบบ lossless และ DB-backed state 4 rows: outage/stale-expired/cross-user/cross-chat-
-or-company) และ `required_gap` 4 rows (expense card เฉพาะทาง, optional draft card, persisted terminal replay,
-Flex failure fallback) ห้าม mark gap เป็น implemented manifest freeze gold expectation ไม่ใช่หลักฐานว่า
-runtime ทำได้แล้ว
+long reply >1,200/>4,800 แบบ lossless, DB-backed state 4 rows: outage/stale-expired/cross-user/cross-chat-
+or-company และ durable delivery 2 rows: persisted terminal replay, Flex failure fallback) และ `required_gap`
+2 rows (expense card เฉพาะทาง, optional draft card) ห้าม mark gap เป็น implemented manifest freeze gold
+expectation ไม่ใช่หลักฐานว่า runtime ทำได้แล้ว
 
 DB-backed state 4 rows ที่ย้ายมาเป็น `implemented_fixture` หมายถึง **code path + spec มีจริงแล้ว** เท่านั้น:
 `LineIntakeState` (migration `20260826120000_line_intake_state`, partial unique index บน OPEN row) และ
@@ -520,7 +520,24 @@ long reply สองแถวนั้นมี fixture จริงหลัง
 ยาวเกิน 1,200 ส่งเป็น text เต็มแล้วปิดท้ายด้วย concise card, กรณี 4,900 code points พิสูจน์ว่าเกิน 4,800 ไม่หาย
 สักตัวและ card ยังต่อท้ายได้เมื่อยังเหลือ message slot, ที่เพดาน 5 messages เลือก text ครบทุกส่วนแทน card และ
 part ที่เกิน 5,000 ตัวอักษรถูก **ปฏิเสธ** (`LINE_REPLY_TEXT_PART_TOO_LONG`) ไม่ใช่ตัดเงียบ release นี้ยังไม่ได้
-แตก part เดียวที่ยาวเกิน 5,000 ออกเป็นหลาย part และยังไม่มี text fallback เมื่อ Flex delivery ล้ม
+แตก part เดียวที่ยาวเกิน 5,000 ออกเป็นหลาย part
+
+durable delivery 2 rows ที่ย้ายมาเป็น `implemented_fixture` หมายถึง **code path + spec มีจริงแล้ว** เท่านั้น
+เหมือน DB-backed state 4 rows:
+
+- `LineTurnOutcome` (migration `20260826140000_line_turn_outcome`, `webhookEventId` unique + FK cascade บน
+  `LineWebhookEventLog`) เก็บ **rendered LINE message array จริง** ก่อน send attempt แรก ไม่ใช่ `replyPreview`
+  240 ตัวอักษรของ `AiTurn` การเขียน fail **closed**: ถ้าเก็บไม่ได้ให้ mark `delivery_pending`
+  (`LINE_OUTCOME_NOT_RECORDED`) แทนการส่งโดยไม่มี record; `deliveredAt` เป็น delivery status แยกตาม §8.3 และ
+  orphan sweep push ของเดิมกลับไปโดย **ไม่ route ใหม่** (`LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED` default off)
+- Flex failure fallback: adapter แยก `failed_flex` (LINE 400 ที่ body อ้าง `/messages/` และ payload มี flex) ออก
+  จาก `failed_token` แบบ refinement เท่านั้น แล้ว retry **หนึ่งครั้ง** ด้วย `altText` ของการ์ดเอง ไม่แต่งข้อความใหม่
+  และไม่เพิ่ม model call (`LINE_AI_FLEX_TEXT_FALLBACK_ENABLED` default off) เพดานที่รู้ตัว: `altText` คือ
+  `preview(text, 400)` ดังนั้น card body ที่ยาวเกิน 400 จะ fallback เป็น preview ที่มี `…` กำกับ ยังไม่ครบ
+  lossless ตาม §10.2 ถ้าพบเคสจริงที่เนื้อหาหาย ให้เพิ่ม canonical-text field ที่ card builder
+
+ทั้งสอง row ยังไม่มี provider replay หรือ UAT evidence (`note` ของแต่ละ row ต้องเขียน `DEFAULT OFF` ไว้ และ
+integrity spec บังคับข้อนี้)
 
 ### 14.4 Latency/protected journeys
 
