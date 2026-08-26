@@ -92,13 +92,23 @@
 - [x] บังคับ exactly one deterministic amount candidate สำหรับ future final create; mismatch/ambiguity fail closed
 - [x] เพิ่ม typed `missingFields`, `acceptedFields`, `conflictingFields` ใน incomplete result
 - [x] แทน `TEXT_EXPENSE_CLARIFY_REPLY` แบบคงที่ด้วย deterministic formatter ตาม missing fields
-- [ ] เพิ่ม DB-backed neutral intake state ผูก company/user/chat hash พร้อม version/TTL/provenance
-- [ ] ให้ open clarification เก็บ bounded state reference ไม่ใช่ financial source of truth
+- [x] เพิ่ม DB-backed neutral intake state ผูก company/user/chat hash พร้อม version/TTL/provenance —
+  model `LineIntakeState` + migration `20260826120000_line_intake_state` (partial unique index บน OPEN row
+  ต่อ company+user+chatKeyHash) และ `LineIntakeStateRepository` ที่ fail **closed**; gate ด้วย
+  `LINE_AI_INTAKE_STATE_MODE` (`off` default | `shadow` | `on`)
+- [x] ให้ open clarification เก็บ bounded state reference ไม่ใช่ financial source of truth — ledger header
+  ระบุการ demote ชัดเจน: `valueCandidates`/`clarifyQuestion` เป็น snapshot ของถ้อยคำเท่านั้น ไม่ใช่ source of
+  truth ของยอดเงิน และเมื่อ mode = `on` durable state (ไม่ใช่ Redis stream) เป็นตัวตัดสิน financial continuation
 - [ ] merge follow-up โดยรักษาค่าเดิม; conflicting amount ต้องถาม; explicit correction เท่านั้นที่แทนค่าได้ —
-  ทำแล้วสองข้อหลัง (conflict ถาม, correction grammar ปิด) ส่วน “รักษาค่าเดิม” ยัง **จงใจไม่ทำ**: resolved
-  clarification เป็น veto-only จนกว่าจะมี DB-backed state ข้อถัดไป
-- [ ] state outage/stale/cross-owner -> zero write
-- [ ] consume state และ create/replay marker ให้ atomic หรือ unique-idempotent ไม่มี duplicate window
+  ทำแล้วสองข้อหลัง (conflict ถาม, correction grammar ปิด) ส่วน “รักษาค่าเดิม” ยัง **ไม่ครบ**: state เก็บ
+  `acceptedHintsJson`/`provenanceJson` ไว้แล้ว แต่ routing region ยังไม่ได้อ่านค่าเดิมกลับมา merge เข้ากับ
+  follow-up (WP-B ปิดเฉพาะ zero-write guarantees สี่ข้อ)
+- [x] state outage/stale/cross-owner -> zero write — gate อยู่ **ก่อน** `captureExpenseNote.execute` ทุกกรณี
+  จึงเป็น zero-write โดยโครงสร้าง; owner triple อยู่ใน WHERE ของทั้ง read และ resolve UPDATE
+- [x] consume state และ create/replay marker ให้ atomic หรือ unique-idempotent ไม่มี duplicate window —
+  consume เป็น conditional UPDATE เดียว (CAS บน `version` + status OPEN + TTL) จึง atomic ในตัวและ replay
+  ซ้ำได้แบบ idempotent; **ยังไม่ได้** รวม consume กับ source write ไว้ใน transaction เดียว — ใช้ลำดับ
+  CAS-ก่อน-write แทน ซึ่งกันการเขียนซ้ำได้ แต่ถ้า source write ล้มหลัง CAS ผู้ใช้ต้องถามใหม่
 - [ ] persist canonical terminal outcome ก่อน resolve state; delivery retry/reply-token failure replay outcome เดิม
 - [ ] service total เดียวใช้ system quantity representation ที่ audit ได้; สินค้า/หลายรายการห้ามใช้
 

@@ -234,6 +234,17 @@ export const apiConfigSchema = baseConfigSchema.extend({
   // No mode ever creates a reimbursement record. Rollback target for every primary mode is
   // 'clarify_only', not 'off'.
   LINE_AI_REIMBURSEMENT_SEMANTIC_MODE: z.enum(['off', 'shadow', 'clarify_only', 'handoff']).default('off'),
+  // DB-backed neutral intake state for financial clarifications (uat-correctness-latency spec §8.3,
+  // plan Phase 1A). Default 'off' is behavior-identical to today in every byte: the repository is
+  // never called and the Redis ledger remains the only continuation state. 'shadow' writes and reads
+  // the durable state and logs where it DIVERGES from the ledger's view, but the reply, the writes
+  // and the consumption are decided exactly as 'off' decides them — it is a measurement lane, not a
+  // behavior lane. 'on' makes the durable state authoritative for a financial clarification
+  // continuation, which is what buys the four §8.3 zero-write guarantees: a state-store outage, a
+  // stale/expired version, another member, or another chat/company all refuse and write NOTHING.
+  // Membership is checked POSITIVELY ('shadow'/'on'), so an unset or unparsed value stays off —
+  // this store fails CLOSED, unlike the ledger it backstops.
+  LINE_AI_INTAKE_STATE_MODE: z.enum(['off', 'shadow', 'on']).default('off'),
   // Exact standalone greeting lane (uat-correctness-latency spec §11.2, plan Phase 6B). Default OFF keeps
   // the EXACT legacy path where a bare "สวัสดี" costs three model calls. On, a whole-message match against
   // the versioned greeting allowlist answers deterministically with zero model calls — only after every

@@ -79,6 +79,10 @@ export class AppConfigService {
   get lineAiSubstituteSemanticRoutingMode(): 'off' | 'shadow' | 'primary' { return this.config.LINE_AI_SUBSTITUTE_SEMANTIC_ROUTING_MODE; }
   // Expense-vs-reimbursement semantic intake mode (default 'off' = exact legacy intake prompt/parser).
   get lineAiReimbursementSemanticMode(): 'off' | 'shadow' | 'clarify_only' | 'handoff' { return this.config.LINE_AI_REIMBURSEMENT_SEMANTIC_MODE; }
+  // DB-backed neutral intake state (§8.3). Default 'off' = the durable state is never touched and the
+  // fail-open Redis ledger stays the only continuation state; 'shadow' measures divergence without
+  // changing behavior; 'on' makes it authoritative and fails CLOSED with zero writes.
+  get lineAiIntakeStateMode(): 'off' | 'shadow' | 'on' { return this.config.LINE_AI_INTAKE_STATE_MODE; }
   // Exact standalone greeting 0-call lane (default false = exact legacy three-call greeting path).
   get lineAiExactGreetingEnabled(): boolean { return this.config.LINE_AI_EXACT_GREETING_ENABLED; }
   // Advisor staged capability (default 'off' = the `advisor` router capability is never sent, so the

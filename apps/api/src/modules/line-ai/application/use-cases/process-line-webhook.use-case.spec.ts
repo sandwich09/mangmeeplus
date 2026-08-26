@@ -3329,3 +3329,290 @@ describe('isAffirmativeText – bounded confirmation forms with a negative guard
     }
   });
 });
+
+// ── §8.3: DB-backed neutral intake state, three modes (plan Phase 1A) ──
+//
+// The turn under test is the one that MATTERS for money: a follow-up that the router says resolves
+// an earlier expense clarification. That is the only turn where a wrong state read can carry a
+// wrong amount into a real record, so it is the only turn the durable state gates.
+//
+// `off` is asserted as an unchanged SNAPSHOT (reply, write and repository-call count all pinned)
+// because the whole default-off promise is "byte-identical to today"; `shadow` is asserted to
+// produce the SAME snapshot while still logging; `on` is asserted to write NOTHING on each of the
+// four §8.3 refusals.
+
+import { LineIntakeStateRepository } from '../../infrastructure/line-intake-state.repository';
+import { LineTextExpenseCaptureIncompleteError } from '../../../expenses/application/use-cases/expense-document.use-case';
+
+const STATE_ROUTE_CONTINUATION = {
+  status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.95,
+  resolvedClarificationIds: ['clar-amount'],
+  captureHints: { amount: '200' },
+} as const;
+
+/** A capture use case that records every call — "did anything write?" is a count, not a vibe. */
+function makeCapture() {
+  const calls: any[] = [];
+  return {
+    calls,
+    capture: {
+      execute: async (_ctx: any, input: any) => {
+        calls.push(input);
+        return {
+          expense: { id: 'exp-1', sourceDocumentType: 'RECEIPT', expenseDate: null, vendorNameSnapshot: null },
+          replyTexts: ['บันทึกแล้ว 200 บาท'], insertedAmount: '200', categoryName: 'ค่าเดินทาง',
+        };
+      },
+    } as any,
+  };
+}
+
+/** Counts repository traffic so `off` can be proven to make ZERO calls. */
+function makeStateRepo(behavior: {
+  read?: () => any;
+  resolve?: () => any;
+  open?: () => any;
+} = {}) {
+  const calls: string[] = [];
+  const opened: any[] = [];
+  const repo = {
+    readOpenState: async () => {
+      calls.push('read');
+      return behavior.read ? behavior.read() : { ok: true, value: { id: 'state-1', version: 1 } };
+    },
+    resolveState: async () => {
+      calls.push('resolve');
+      return behavior.resolve ? behavior.resolve() : { ok: true, value: { id: 'state-1', version: 2 } };
+    },
+    openState: async (input: any) => {
+      calls.push('open');
+      opened.push(input);
+      return behavior.open ? behavior.open() : { ok: true, value: { id: 'state-1', version: 1 } };
+    },
+  } as unknown as LineIntakeStateRepository;
+  return { repo, calls, opened };
+}
+
+function makeIntakeStateUseCase(prisma: any, opts: {
+  mode?: 'off' | 'shadow' | 'on';
+  stateRepo?: LineIntakeStateRepository;
+  capture?: any;
+  intakeRouteFn?: (req?: any) => any;
+  openWaiting?: any[];
+} = {}) {
+  const replies: string[] = [];
+  const logs: string[] = [];
+  const ledgerSubs: any[] = [];
+  const ledger = {
+    enabled: true,
+    openWaitingUser: async () => opts.openWaiting ?? [],
+    appendTurn: async () => '10-0',
+    appendSubRequests: async (input: any) => { ledgerSubs.push(input); },
+    coverageToSubRequests: () => [],
+    ack: async () => undefined,
+  } as any;
+  const useCase = new ProcessLineWebhookUseCase(
+    prisma,
+    { webBaseUrl: 'https://app.example.com', lineAiIntakeStateMode: opts.mode ?? 'off' } as any,
+    { resolveAccess: async () => ({
+      membershipId: 'mem-1', roles: ['STAFF'],
+      permissions: ['line.ai.query', 'expense.receipt.line_upload'], scopes: {},
+    }) } as any,
+    { log: async () => undefined } as any,
+    {
+      requestLineTurn: async () => { throw new Error('AI Gateway not expected'); },
+      requestLineIntakeRoute: async (req: any) => (opts.intakeRouteFn
+        ? opts.intakeRouteFn(req)
+        : STATE_ROUTE_CONTINUATION),
+    } as any,
+    {
+      buildTextMessage: (text: string) => ({ type: 'text', text }),
+      sendReply: async (_token: string, messages: any[]) => {
+        replies.push(messages[0]?.text ?? messages[0]?.altText ?? '');
+        return 'ok';
+      },
+      sendPush: async () => 'ok',
+    } as any,
+    { apply: async () => ({ candidatesCreated: 0 }) } as any,
+    CLEAN_SCANNER,
+    acceptedLegal,
+    shadowProbe,
+    openLaunchGate,
+    // Positional optionals: 3rd is captureExpenseNote, 7th is the ledger, 16th (last) is the
+    // durable intake state repository.
+    undefined, undefined, opts.capture,
+    undefined, undefined, undefined,
+    ledger,
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+    opts.stateRepo,
+  );
+  // Capture the shadow divergence line without asserting on a real logger transport.
+  const logger = (useCase as any).logger;
+  const originalLog = logger.log.bind(logger);
+  logger.log = (message: string) => { logs.push(String(message)); return originalLog(message); };
+  return { useCase, replies, logs, ledgerSubs };
+}
+
+const STATE_EVENT = { ...BASE_EVENT, webhookEventId: 'evt-state-1', messageText: '200 บาท' };
+
+describe('ProcessLineWebhookUseCase – neutral intake state mode: off (§8.3, default)', () => {
+  it('never touches the repository and captures exactly as today', async () => {
+    const { prisma } = makePrisma();
+    const capture = makeCapture();
+    const state = makeStateRepo();
+    const { useCase, replies } = makeIntakeStateUseCase(prisma, {
+      mode: 'off', capture: capture.capture, stateRepo: state.repo,
+    });
+
+    await useCase.execute(STATE_EVENT);
+
+    assert.deepEqual(state.calls, [], 'default-off is byte-identical: the durable state is not read or written');
+    assert.equal(capture.calls.length, 1, 'the legacy capture still runs');
+    assert.deepEqual(replies, ['บันทึกแล้ว 200 บาท']);
+  });
+
+  it('stays off even when the repository is wired and the state would have refused', async () => {
+    // A wired-but-inert dependency is the thing that most often leaks behavior. An outage-shaped
+    // repository must change nothing at all while the flag is off.
+    const { prisma } = makePrisma();
+    const capture = makeCapture();
+    const state = makeStateRepo({ read: () => ({ ok: false, reason: 'unavailable' }) });
+    const { useCase, replies } = makeIntakeStateUseCase(prisma, {
+      mode: 'off', capture: capture.capture, stateRepo: state.repo,
+    });
+
+    await useCase.execute(STATE_EVENT);
+
+    assert.deepEqual(state.calls, []);
+    assert.equal(capture.calls.length, 1, 'an outage the flag never consulted cannot block a turn');
+    assert.deepEqual(replies, ['บันทึกแล้ว 200 บาท']);
+  });
+});
+
+describe('ProcessLineWebhookUseCase – neutral intake state mode: shadow (§8.3)', () => {
+  it('reads and CAS-consumes the state but changes NOTHING about the turn', async () => {
+    const { prisma } = makePrisma();
+    const capture = makeCapture();
+    const state = makeStateRepo();
+    const { useCase, replies } = makeIntakeStateUseCase(prisma, {
+      mode: 'shadow', capture: capture.capture, stateRepo: state.repo,
+    });
+
+    await useCase.execute(STATE_EVENT);
+
+    assert.deepEqual(state.calls, ['read', 'resolve'], 'shadow exercises the real path so the measurement is real');
+    assert.equal(capture.calls.length, 1, 'same capture as off');
+    assert.deepEqual(replies, ['บันทึกแล้ว 200 บาท'], 'same reply as off');
+  });
+
+  it('logs the divergence when the durable state disagrees, and still lets the turn through', async () => {
+    const { prisma } = makePrisma();
+    const capture = makeCapture();
+    const state = makeStateRepo({ read: () => ({ ok: false, reason: 'unavailable' }) });
+    const { useCase, replies, logs } = makeIntakeStateUseCase(prisma, {
+      mode: 'shadow', capture: capture.capture, stateRepo: state.repo,
+    });
+
+    await useCase.execute(STATE_EVENT);
+
+    const divergence = logs.map((line) => { try { return JSON.parse(line); } catch { return {}; } })
+      .find((entry) => entry.event === 'line_ai_intake_state_shadow_divergence');
+    assert.ok(divergence, 'a shadow lane that logs nothing measures nothing');
+    assert.equal(divergence.durableStateAgreed, false);
+    assert.equal(divergence.refusal, 'unavailable');
+    // The whole contract of shadow: it is allowed to observe, never to decide.
+    assert.equal(capture.calls.length, 1, 'shadow NEVER blocks a turn — that would make it a behavior lane');
+    assert.deepEqual(replies, ['บันทึกแล้ว 200 บาท']);
+  });
+});
+
+describe('ProcessLineWebhookUseCase – neutral intake state mode: on, four zero-write guarantees (§8.3)', () => {
+  it('captures normally when the durable state is healthy and the CAS wins', async () => {
+    const { prisma } = makePrisma();
+    const capture = makeCapture();
+    const state = makeStateRepo();
+    const { useCase, replies } = makeIntakeStateUseCase(prisma, {
+      mode: 'on', capture: capture.capture, stateRepo: state.repo,
+    });
+
+    await useCase.execute(STATE_EVENT);
+
+    assert.deepEqual(state.calls, ['read', 'resolve']);
+    assert.equal(capture.calls.length, 1, 'a healthy, owned, fresh state is exactly what lets a write happen');
+    assert.deepEqual(replies, ['บันทึกแล้ว 200 บาท']);
+  });
+
+  // The four corpus rows, one test each. Each asserts the SAME thing that makes them zero-write:
+  // `captureExpenseNote` was never called, so no expense record could have been created.
+  for (const [gap, behavior] of [
+    ['state-store-outage-zero-write', { read: () => ({ ok: false, reason: 'unavailable' }) }],
+    ['state-stale-or-expired-zero-write', { read: () => ({ ok: false, reason: 'expired' }) }],
+    // A losing CAS is what a cross-user or cross-chat answer produces: the owner triple is in the
+    // WHERE clause, so the intruder's resolve matches zero rows and comes back 'stale'.
+    ['state-cross-user-zero-write', { resolve: () => ({ ok: false, reason: 'stale' }) }],
+    ['state-cross-chat-or-company-zero-write', { read: () => ({ ok: false, reason: 'not_found' }) }],
+  ] as const) {
+    it(`${gap}: refuses with ZERO domain writes and re-asks the canonical question`, async () => {
+      const { prisma } = makePrisma();
+      const capture = makeCapture();
+      const state = makeStateRepo(behavior);
+      const { useCase, replies } = makeIntakeStateUseCase(prisma, {
+        mode: 'on', capture: capture.capture, stateRepo: state.repo,
+      });
+
+      await useCase.execute(STATE_EVENT);
+
+      assert.equal(capture.calls.length, 0, `${gap}: the capture use case is never reached, so nothing can be written`);
+      // Matched on the canonical "not created yet" clause rather than the whole string, so a copy
+      // tweak does not fail this test — but a turn that silently CONFIRMED a record still would.
+      assert.equal(replies.length, 1);
+      assert.match(replies[0], /ยังไม่สร้างรายการ/, 'the customer is re-asked, not answered with a guess');
+    });
+  }
+
+  it('a stale CAS loser cannot consume the question — it stays open for the rightful answer', async () => {
+    // Zero-write is necessary but not sufficient: if a refusal also consumed the ledger question,
+    // the real owner's next answer would arrive with nothing to attach to.
+    const { prisma } = makePrisma();
+    const capture = makeCapture();
+    const state = makeStateRepo({ resolve: () => ({ ok: false, reason: 'stale' }) });
+    const { useCase, ledgerSubs } = makeIntakeStateUseCase(prisma, {
+      mode: 'on', capture: capture.capture, stateRepo: state.repo,
+      openWaiting: [{
+        id: 'clar-amount', text: 'ค่าเดินทาง', clarifyForIntent: 'EXPENSE_DOCUMENT_CAPTURE',
+        entry: { id: 'clar-amount', userId: 'user-1' },
+      }],
+    });
+
+    await useCase.execute(STATE_EVENT);
+
+    assert.equal(capture.calls.length, 0);
+    assert.deepEqual(ledgerSubs, [], 'no new question and no consumption marker on a refused turn');
+  });
+
+  it('opens a durable state when the capture reports missing fields', async () => {
+    // The other half of the contract: without an open on the clarify turn, the continuation above
+    // could never find a state, so `on` would refuse every follow-up forever.
+    const { prisma } = makePrisma();
+    const state = makeStateRepo();
+    const incomplete = {
+      execute: async () => {
+        throw new LineTextExpenseCaptureIncompleteError(['description'], ['amount'], []);
+      },
+    } as any;
+    const { useCase } = makeIntakeStateUseCase(prisma, {
+      mode: 'on', capture: incomplete, stateRepo: state.repo,
+      intakeRouteFn: () => ({ status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.95 }),
+    });
+
+    await useCase.execute({ ...STATE_EVENT, webhookEventId: 'evt-state-open', messageText: 'ค่าเดินทาง' });
+
+    assert.deepEqual(state.calls, ['open'], 'the clarify turn records the durable question');
+    const opened = state.opened[0];
+    assert.equal(opened.targetIntent, 'EXPENSE_DOCUMENT_CAPTURE');
+    assert.deepEqual(opened.missingFields, ['amount']);
+    assert.equal(opened.companyId, 'company-1');
+    assert.ok(opened.chatKeyHash && opened.chatKeyHash !== STATE_EVENT.lineUserId, 'the chat key is hashed, never the raw LINE id');
+    assert.ok(opened.ttlMinutes > 0, 'a question without a TTL never expires, which is its own stale-merge bug');
+  });
+});

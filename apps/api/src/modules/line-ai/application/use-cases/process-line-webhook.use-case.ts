@@ -20,6 +20,7 @@ import { LaunchShadowProbe } from '../../../feature-launch/application/launch-sh
 import { SHADOW_SURFACES } from '../../../feature-launch/domain/shadow-surface.catalog';
 import { AiGatewayClient } from '../../infrastructure/ai-gateway.client';
 import { LineReplyAdapter, type LineDeliveryResult } from '../../infrastructure/line-reply.adapter';
+import { LineIntakeStateRepository } from '../../infrastructure/line-intake-state.repository';
 import {
   InitReceiptUploadUseCase,
   CompleteReceiptUploadUseCase,
@@ -1003,6 +1004,10 @@ export class ProcessLineWebhookUseCase {
     @Optional() private readonly reimbursementApprovalQueue?: ListApprovalQueueUseCase,
     @Optional() private readonly listPurchaseRequests?: ListPurchaseRequestsUseCase,
     @Optional() private readonly listPurchaseOrders?: ListPurchaseOrdersUseCase,
+    // §8.3 DB-backed neutral intake state. `@Optional()` like the ledger, but it fails CLOSED where
+    // the ledger fails open: an absent repository is only ever safe because the flag it is gated on
+    // defaults to 'off'. LAST parameter on purpose — the specs wire these positionally.
+    @Optional() private readonly intakeState?: LineIntakeStateRepository,
   ) {}
 
   /**
@@ -2431,6 +2436,51 @@ export class ProcessLineWebhookUseCase {
         authProvider: 'line',
       };
       const capturePlan = this.planConsumption(companyId, chatKey, identity.userId, openWaiting, routePlan.resolvedClarificationIds, 'evidence_capture');
+
+      // §8.3 durable-state gate. This turn CONTINUES an earlier financial question exactly when the
+      // router says it resolved one; that is also the only turn where a wrong answer can carry a
+      // wrong amount into a real record, so it is the only turn gated here. A first-contact capture
+      // is unchanged in every mode.
+      //
+      // The gate runs BEFORE `captureExpenseNote.execute`, which is what makes every refusal a
+      // ZERO-write refusal: nothing downstream has run, so there is nothing to undo. Ordering it
+      // after the capture would leave a created expense behind on a state we then rejected.
+      const intakeStateMode = this.config.lineAiIntakeStateMode;
+      // Positive membership, per the fail-open lesson: only these two literals activate anything.
+      // An unset flag, or a value the schema somehow let through, stays 'off' and touches nothing.
+      if ((intakeStateMode === 'shadow' || intakeStateMode === 'on')
+        && this.intakeState && (routePlan.resolvedClarificationIds?.length ?? 0) > 0) {
+        const stateOwner = { companyId, userId: identity.userId, chatKeyHash: chatKeyHashOf(event) };
+        // Read then CAS-consume. The owner triple is inside BOTH queries, so a different member,
+        // chat or company selects no row and lands on the same refusal as an outage would.
+        const open = await this.intakeState.readOpenState(stateOwner);
+        const consumed = open.ok
+          ? await this.intakeState.resolveState(stateOwner, { id: open.value.id, version: open.value.version })
+          : open;
+        if (intakeStateMode === 'shadow') {
+          // MEASUREMENT ONLY. The ledger already decided this turn continues; we record whether the
+          // durable state agreed, and then fall through to the byte-identical 'off' behavior. No
+          // reply, no write and no consumption changes on this branch — a shadow lane that could
+          // refuse a turn would be a behavior lane wearing a measurement label.
+          this.logger.log(JSON.stringify({
+            event: 'line_ai_intake_state_shadow_divergence',
+            webhookEventId: event.webhookEventId,
+            companyId,
+            ledgerContinuation: true,
+            durableStateAgreed: consumed.ok,
+            ...(consumed.ok ? {} : { refusal: consumed.reason }),
+          }));
+        } else if (!consumed.ok) {
+          // 'on', and the durable state refused: outage, stale/expired version, or an owner this
+          // state does not belong to. FAIL CLOSED — no capture call, no consumption marker, no
+          // ledger ack, so the open question survives and the customer is re-asked with the same
+          // canonical copy instead of having a guessed amount written for them.
+          await this.deliverReply(event, TEXT_EXPENSE_CLARIFY_REPLY);
+          await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
+          return;
+        }
+      }
+
       let captured: Awaited<ReturnType<CaptureLineExpenseNoteUseCase['execute']>>;
       try {
         captured = await this.timeStage(event.webhookEventId, 'capture_execute', () => this.captureExpenseNote!.execute(ctx, {
@@ -2475,6 +2525,31 @@ export class ProcessLineWebhookUseCase {
             clarifyForIntent: 'EXPENSE_DOCUMENT_CAPTURE',
           }],
         });
+        // §8.3: the durable half of the question the ledger entry above only REFERENCES. The ledger
+        // fails open, so on a Redis outage that entry can vanish; the accepted facts, the missing
+        // field list and the CAS version live here instead, where an outage refuses rather than
+        // forgets. Opening supersedes whatever this owner had open, so the customer never has two
+        // live questions competing for the same answer.
+        //
+        // Best-effort by design, and safe: a failed open leaves NO state, and a later continuation
+        // with no state is exactly the refusal path above. The failure mode is a re-ask, never a
+        // write on a question we did not durably record.
+        if ((intakeStateMode === 'shadow' || intakeStateMode === 'on') && this.intakeState) {
+          await this.intakeState.openState({
+            companyId, userId: identity.userId, chatKeyHash: chatKeyHashOf(event),
+            targetIntent: 'EXPENSE_DOCUMENT_CAPTURE',
+            semanticOutcome: routePlan.semanticOutcome ?? null,
+            // Only what the capture already ACCEPTED (merge rule 1 keeps these until an explicit
+            // correction) plus the field lists the typed error carries. Bounded labels and
+            // already-grounded hints only — no raw conversation, no PII (§8.2).
+            acceptedHints: routePlan.captureHints ?? null,
+            missingFields: error.missingFields,
+            conflictingFields: error.conflictingFields,
+            provenance: { acceptedFields: error.acceptedFields, origin: 'original_turn' },
+            sourceEventHash: hashMessagePreview(event.webhookEventId),
+            ttlMinutes: LINE_AI_CONTEXT_WINDOW_MINUTES,
+          });
+        }
         await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
         return;
       }

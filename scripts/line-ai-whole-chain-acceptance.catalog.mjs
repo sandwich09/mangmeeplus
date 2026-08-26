@@ -349,6 +349,10 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
       'src/modules/line-ai/application/use-cases/line-intake-dispatch.use-case.spec.ts',
       'src/modules/line-ai/application/use-cases/drain-line-ledger.use-case.spec.ts',
       'src/modules/line-ai/application/line-message-buffer.service.spec.ts',
+      // §8.3 DB-backed neutral intake state: the four zero-write guarantees (outage, stale/expired,
+      // cross-user, cross-chat/company). `pnpm test`'s per-package list does not name this file, so
+      // this runner is what executes it.
+      'src/modules/line-ai/infrastructure/line-intake-state.repository.spec.ts',
       'src/modules/line-ai/domain/logic/line-ai-terminal-outcome.logic.spec.ts',
       'src/modules/line-ai/domain/logic/line-ai-reconciliation.logic.spec.ts',
       'src/modules/expenses/application/use-cases/line-substitute-receipt-continuation.use-case.spec.ts',
