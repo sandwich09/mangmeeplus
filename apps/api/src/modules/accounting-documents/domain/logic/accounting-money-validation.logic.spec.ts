@@ -72,7 +72,7 @@ describe('withheld tax on a received payment', () => {
     counterpartyId: 'customer-1', outstandingAmount: '1070.00',
   };
   const withheld = (overrides: Record<string, unknown> = {}) =>
-    payment('1040.00', { whtAmount: '30.00', counterpartyId: 'customer-1', allocateToDocumentId: 'doc-1', ...overrides });
+    payment('1040.00', { idempotencyKey: 'payment_retry_001', whtAmount: '30.00', counterpartyId: 'customer-1', allocateToDocumentId: 'doc-1', ...overrides });
 
   it('accepts cash plus withholding that exactly settles the document', () => {
     assert.equal(validateAccountingPaymentMoneyInput(withheld()), null);
@@ -80,7 +80,7 @@ describe('withheld tax on a received payment', () => {
   });
 
   it('leaves a payment with no withholding behaving exactly as before', () => {
-    const plain = payment('1070.00', { counterpartyId: 'customer-1', allocateToDocumentId: 'doc-1' });
+    const plain = payment('1070.00', { idempotencyKey: 'payment_retry_002', counterpartyId: 'customer-1', allocateToDocumentId: 'doc-1' });
     assert.equal(validateAccountingPaymentMoneyInput(plain), null);
     assert.equal(validateAccountingPaymentAllocation(plain, target), null);
     // Cash alone may still overshoot and become an unapplied credit.
@@ -99,7 +99,6 @@ describe('withheld tax on a received payment', () => {
   });
 
   it('refuses cash plus withholding beyond the outstanding, unlike cash alone', () => {
-    // There is no unapplied credit to absorb the surplus — we never held that money.
     assert.ok(validateAccountingPaymentAllocation(withheld({ amount: '1060.00' }), target));
   });
 });

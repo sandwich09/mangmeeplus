@@ -269,6 +269,10 @@ export type UpdateDocumentInput = {
 
 export type CreatePaymentInput = {
   companyId: string;
+  /** Stable client retry key. Required when allocating a payment to a document. */
+  idempotencyKey?: string;
+  /** Server-computed canonical fingerprint; never accepted from the HTTP body. */
+  payloadFingerprint?: string;
   branchId?: string;
   direction: AccountingPaymentDirection;
   counterpartyId?: string;

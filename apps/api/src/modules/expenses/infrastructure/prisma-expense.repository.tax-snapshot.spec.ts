@@ -80,3 +80,59 @@ describe('PrismaExpenseRepository tax snapshot mapping', () => {
     }
   });
 });
+
+function category(
+  id: string,
+  companyId: string | null,
+  status: 'ACTIVE' | 'ARCHIVED' = 'ACTIVE',
+  options: { accountHintKey?: string; bootstrap?: boolean } = {},
+) {
+  return {
+    id,
+    companyId,
+    name: id,
+    accountHintKey: options.accountHintKey ?? `expense.${id}`,
+    defaultInputTaxCode: null,
+    status,
+    sortOrder: 0,
+    ledgerAccountReviewedByUserId: options.bootstrap ? 'system:expense-category-bootstrap' : null,
+  };
+}
+
+describe('PrismaExpenseRepository expense category precedence', () => {
+  it('uses only company-owned active categories once the canonical set was bootstrapped', async () => {
+    const rows = [category('company-active', 'company-1', 'ACTIVE', { bootstrap: true }), category('global-active', null), category('company-archived', 'company-1', 'ARCHIVED', { bootstrap: true })];
+    const repo = new PrismaExpenseRepository({ client: { expenseCategory: { findMany: async () => rows } } } as any);
+
+    assert.deepEqual((await repo.listCategories('company-1')).map((item) => item.id), ['company-active']);
+    assert.deepEqual((await repo.listAllCategories('company-1')).map((item) => item.id), ['company-active', 'company-archived']);
+  });
+
+  it('does not restore global defaults when every company-owned category is archived', async () => {
+    const rows = [category('company-archived', 'company-1', 'ARCHIVED', { bootstrap: true }), category('global-active', null)];
+    const repo = new PrismaExpenseRepository({ client: { expenseCategory: { findMany: async () => rows } } } as any);
+
+    assert.deepEqual(await repo.listCategories('company-1'), []);
+  });
+
+  it('keeps non-conflicting global fallback for a partial legacy set and prefers company collisions', async () => {
+    const own = category('ค่าเดินทาง', 'company-1', 'ACTIVE', { accountHintKey: 'expense.travel' });
+    const rows = [
+      own,
+      category('เดินทางชื่อเก่า', null, 'ACTIVE', { accountHintKey: 'expense.travel' }),
+      category('ค่าเดินทาง', null, 'ACTIVE', { accountHintKey: 'expense.legacy_travel' }),
+      category('ค่าอาหาร', null, 'ACTIVE', { accountHintKey: 'expense.meals' }),
+    ];
+    const repo = new PrismaExpenseRepository({ client: { expenseCategory: { findMany: async () => rows } } } as any);
+
+    assert.deepEqual((await repo.listCategories('company-1')).map((item) => item.id), ['ค่าเดินทาง', 'ค่าอาหาร']);
+  });
+
+  it('keeps global defaults as a compatibility fallback for companies without their own rows', async () => {
+    const rows = [category('global-active', null), category('global-archived', null, 'ARCHIVED')];
+    const repo = new PrismaExpenseRepository({ client: { expenseCategory: { findMany: async () => rows } } } as any);
+
+    assert.deepEqual((await repo.listCategories('legacy-company')).map((item) => item.id), ['global-active']);
+    assert.deepEqual((await repo.listAllCategories('legacy-company')).map((item) => item.id), ['global-active', 'global-archived']);
+  });
+});

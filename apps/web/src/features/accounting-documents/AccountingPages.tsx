@@ -21,6 +21,7 @@ import {
   listCounterparties,
   listDocuments,
   listPayments,
+  newAccountingPaymentIdempotencyKey,
   rejectQuotation,
   submitQuotationApproval,
   updateDocument,
@@ -407,6 +408,7 @@ function DocumentDetailPanel({ companyId, documentId, permissions, onChanged }: 
   // existing reference field rather than left on paper.
   const [paymentReference, setPaymentReference] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<AccountingPaymentMethod>('BANK_TRANSFER');
+  const paymentAttempt = useRef<{ signature: string; key: string } | null>(null);
   const [linkedTaxInvoiceOpen, setLinkedTaxInvoiceOpen] = useState(false);
   const [linkedTaxInvoiceDate, setLinkedTaxInvoiceDate] = useState(todayCivilDate());
   const [linkedTaxContext, setLinkedTaxContext] = useState<TransactionTaxContext>('DOMESTIC_SALE');
@@ -438,7 +440,7 @@ function DocumentDetailPanel({ companyId, documentId, permissions, onChanged }: 
 
   useEffect(() => { void load(); }, [load]);
 
-  async function run(action: () => Promise<DocumentDetail | PaymentSummary>, successMessage?: string, selectResult = true) {
+  async function run(action: () => Promise<DocumentDetail | PaymentSummary>, successMessage?: string, selectResult = true): Promise<boolean> {
     setError(null);
     setBusy(true);
     try {
@@ -447,8 +449,10 @@ function DocumentDetailPanel({ companyId, documentId, permissions, onChanged }: 
       onChanged(selectResult ? nextId : detail?.id);
       if (nextId) setDetail(await getDocument(companyId, nextId));
       if (successMessage) toast.success(successMessage);
+      return true;
     } catch (e) {
       setError(err(e));
+      return false;
     } finally {
       setBusy(false);
     }
@@ -780,9 +784,15 @@ function DocumentDetailPanel({ companyId, documentId, permissions, onChanged }: 
       {canRecordPayment && (
         <form
           className="grid grid-cols-1 gap-3 border-t border-gray-200 pt-4 sm:grid-cols-2"
-          onSubmit={(e) => {
+          onSubmit={async (e) => {
             e.preventDefault();
-            void run(() => createPayment(companyId, {
+            const signature = JSON.stringify([detail.id, paymentAmount, paymentWht, paymentReference.trim(), paymentMethod]);
+            if (paymentAttempt.current?.signature !== signature) {
+              paymentAttempt.current = { signature, key: newAccountingPaymentIdempotencyKey(detail.id) };
+            }
+            const succeeded = await run(() => createPayment(companyId, {
+              idempotencyKey: paymentAttempt.current!.key,
+              ...(detail.branchId && { branchId: detail.branchId }),
               direction: 'RECEIVED',
               method: paymentMethod,
               amount: paymentAmount,
@@ -793,6 +803,7 @@ function DocumentDetailPanel({ companyId, documentId, permissions, onChanged }: 
               counterpartyId: detail.counterpartyId,
               allocateToDocumentId: detail.id,
             }), 'บันทึกรับชำระเรียบร้อยแล้ว', false);
+            if (succeeded) paymentAttempt.current = null;
           }}
         >
           <input className={inputClass} type="number" min="0.01" step="0.01" placeholder="เงินสดที่ได้รับ" value={paymentAmount} onChange={(e) => setPaymentAmount(e.target.value)} required aria-label="เงินสดที่ได้รับ" />
@@ -804,8 +815,7 @@ function DocumentDetailPanel({ companyId, documentId, permissions, onChanged }: 
           <button className={btnClass} disabled={busy || paymentSettles > Number(detail.outstandingAmount) + 1e-9 && Number(paymentWht) > 0}>{busy ? 'กำลังบันทึก...' : 'บันทึกรับชำระ'}</button>
           <p className="sm:col-span-2 text-xs text-gray-600">
             ตัดยอดค้าง {paymentSettles.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} จาก {Number(detail.outstandingAmount).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            {/* Cash alone may overshoot into an unapplied credit; withheld tax may not, because we
-                never held that money. */}
+            {/* Cash alone may become unapplied credit; withheld tax cannot because no cash moved. */}
             {Number(paymentWht) > 0 && paymentSettles > Number(detail.outstandingAmount) + 1e-9 && <strong className="ml-2 text-error-600">เงินสดรวมยอดถูกหักเกินยอดค้าง</strong>}
           </p>
         </form>

@@ -41,6 +41,8 @@ import { AccountingPaymentController } from './presentation/http/accounting-paym
 import { RevenueCategoryController } from './presentation/http/revenue-category.controller';
 import { SimpleIncomeController } from './presentation/http/simple-income.controller';
 import { RecordSimpleIncomeUseCase } from './application/use-cases/record-simple-income.use-case';
+import { IncomeExpenseLedgerUseCase } from './application/use-cases/income-expense-ledger.use-case';
+import { IncomeExpenseLedgerController } from './presentation/http/income-expense-ledger.controller';
 import { TaxModule } from '../tax/tax.module';
 
 @Module({
@@ -51,6 +53,7 @@ import { TaxModule } from '../tax/tax.module';
     AccountingPaymentController,
     RevenueCategoryController,
     SimpleIncomeController,
+    IncomeExpenseLedgerController,
   ],
   providers: [
     PrismaAccountingRepository,
@@ -85,6 +88,7 @@ import { TaxModule } from '../tax/tax.module';
     CreateRevenueCategoryUseCase,
     UpdateRevenueCategoryUseCase,
     RecordSimpleIncomeUseCase,
+    IncomeExpenseLedgerUseCase,
   ],
   exports: [
     PrismaAccountingRepository,

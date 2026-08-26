@@ -4,9 +4,10 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../../../generated/prisma/client';
-import type { ResolveTransactionTaxPreviewDto } from '@watchdog-bms/contracts';
+import type { RequestContext, ResolveTransactionTaxPreviewDto } from '@watchdog-bms/contracts';
 import { PrismaAccountingRepository } from './prisma-accounting.repository.js';
 import { PrismaDocumentSequenceRepository } from '../../data-model-core/infrastructure/repositories/prisma-document-sequence.repository.js';
+import { IncomeExpenseLedgerUseCase } from '../application/use-cases/income-expense-ledger.use-case.js';
 
 const updatedAt = new Date('2026-07-15T10:00:00.000Z');
 
@@ -196,10 +197,15 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
     if (!url) return;
     try {
       client = new PrismaClient({ adapter: new PrismaPg({ connectionString: url }) });
-      const [probe] = await client.$queryRaw<Array<{ command_table: string | null }>>`
-        SELECT to_regclass('"AccountingSimpleIncomeCommand"')::text AS command_table
+      const [probe] = await client.$queryRaw<Array<{ command_table: string | null; payment_column: boolean }>>`
+        SELECT
+          to_regclass('"AccountingSimpleIncomeCommand"')::text AS command_table,
+          EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'AccountingPayment' AND column_name = 'idempotencyKey'
+          ) AS payment_column
       `;
-      if (!probe?.command_table) return;
+      if (!probe?.command_table || !probe.payment_column) return;
       await client.accountingSimpleIncomeCommand.deleteMany({ where: { companyId } });
       await client.company.deleteMany({ where: { id: companyId } });
       await client.company.create({ data: { id: companyId, name: 'P27 simple-income test' } });
@@ -274,6 +280,43 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
     );
   });
 
+  it('makes allocated payment retries at-most-once and prevents concurrent over-allocation', async (t) => {
+    if (!reachable || !client || !repo) return t.skip('local PostgreSQL or the payment idempotency migration is unavailable');
+    const makeInvoice = (note: string) => client!.accountingDocument.create({ data: {
+      companyId, documentType: 'INVOICE', status: 'ISSUED', documentDate: new Date('2026-08-27T00:00:00.000Z'),
+      currency: 'THB', vatMode: 'NO_VAT', subtotalAmount: '100', taxableAmount: '100', grandTotalAmount: '100',
+      paidAmount: '0', outstandingAmount: '100', paymentStatus: 'UNPAID', note, createdByUserId: 'p27-test-user',
+    } });
+    const payment = (documentId: string, idempotencyKey: string, amount: string) => ({
+      companyId, idempotencyKey, payloadFingerprint: `${idempotencyKey}:${amount}`, direction: 'RECEIVED' as const,
+      method: 'BANK_TRANSFER' as const, amount, paidAt: '2026-08-27T10:00:00.000Z',
+      allocateToDocumentId: documentId, createdByUserId: 'p27-test-user',
+    });
+
+    const retryInvoice = await makeInvoice(`${companyId}-payment-retry`);
+    const retries = await Promise.all(Array.from({ length: 4 }, () => repo!.createPayment(
+      payment(retryInvoice.id, 'payment-retry-0001', '100.00'),
+    )));
+    assert.equal(new Set(retries.map((result) => result.payment.id)).size, 1);
+    assert.equal(retries.filter((result) => !result.replayed).length, 1);
+    assert.equal(await client.accountingPaymentAllocation.count({ where: { companyId, documentId: retryInvoice.id } }), 1);
+
+    const raceInvoice = await makeInvoice(`${companyId}-payment-race`);
+    const race = await Promise.allSettled([
+      repo.createPayment(payment(raceInvoice.id, 'payment-race-0001', '60.00')),
+      repo.createPayment(payment(raceInvoice.id, 'payment-race-0002', '60.00')),
+    ]);
+    assert.equal(race.filter((result) => result.status === 'fulfilled').length, 2);
+    const persisted = await client.accountingDocument.findUniqueOrThrow({ where: { id: raceInvoice.id } });
+    assert.equal(Number(persisted.paidAmount), 100);
+    assert.equal(Number(persisted.outstandingAmount), 0);
+    const allocations = await client.accountingPaymentAllocation.findMany({ where: { companyId, documentId: raceInvoice.id } });
+    assert.equal(allocations.reduce((total, row) => total + Number(row.amount), 0), 100);
+    const racePaymentIds = race.flatMap((result) => result.status === 'fulfilled' ? [result.value.payment.id] : []);
+    const payments = await client.accountingPayment.findMany({ where: { id: { in: racePaymentIds } } });
+    assert.equal(payments.reduce((total, row) => total + Number(row.unappliedAmount), 0), 20);
+  });
+
   it('keeps mixed 7% and zero-rate line arithmetic through invoice, payment, and receipt', async (t) => {
     if (!reachable || !repo) return t.skip('local PostgreSQL or the P27 migration is unavailable');
     const result = await repo.recordSimpleIncomeBundle({
@@ -290,5 +333,98 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
     assert.equal(Number(result.payment.amount), 207);
     assert.equal(Number(result.receipt.grandTotalAmount), 207);
     assert.equal(result.invoice.paymentStatus, 'PAID');
+  });
+
+  it('keeps the six ledger definitions, permission split, Bangkok payment boundary, and export on one dataset', async (t) => {
+    if (!reachable || !client || !repo) return t.skip('local PostgreSQL or the P27 migration is unavailable');
+    const ledgerCompanyId = `${companyId}-ledger`;
+    const ctx: RequestContext = {
+      requestId: 'p27-ledger-request', authSubject: 'p27-ledger-user', userId: 'p27-ledger-user', companyId: ledgerCompanyId,
+      membershipId: 'p27-ledger-membership', roles: [], scopes: { branchIds: [] }, authProvider: 'watchdog',
+      permissions: ['accounting.document.read', 'accounting.document.export', 'expense.read', 'expense.export'],
+    };
+    try {
+      await client.company.create({ data: { id: ledgerCompanyId, name: 'P27 ledger test' } });
+      const counterparty = await client.accountingCounterparty.create({ data: {
+        companyId: ledgerCompanyId, type: 'CUSTOMER', displayName: 'ลูกค้าทดสอบ', createdByUserId: ctx.userId,
+      } });
+      const incomeBundle = await repo.recordSimpleIncomeBundle({
+        companyId: ledgerCompanyId, idempotencyKey: 'ledger-income-0001', payloadFingerprint: 'ledger-fingerprint',
+        documentDate: '2026-08-01', counterpartyId: counterparty.id, vatMode: 'NO_VAT', paymentMethod: 'BANK_TRANSFER',
+        lines: [{ lineNumber: 1, description: 'รายรับทดสอบ', quantity: '1', unitPrice: '100.00', whtRate: '3' }],
+        createdByUserId: ctx.userId,
+      }, async () => undefined);
+      await client.accountingDocument.update({ where: { id: incomeBundle.invoice.id }, data: { dueDate: new Date('2026-08-15T00:00:00.000Z') } });
+      const creditNote = await client.accountingDocument.create({ data: {
+        companyId: ledgerCompanyId, documentType: 'CREDIT_NOTE', documentNumber: 'CN-P27-LEDGER-0001',
+        status: 'ISSUED', documentDate: new Date('2026-08-02T00:00:00.000Z'), sourceDocumentId: incomeBundle.invoice.id,
+        counterpartyId: counterparty.id, counterpartySnapshotJson: { displayName: counterparty.displayName },
+        subtotalAmount: '10', taxableAmount: '10', grandTotalAmount: '10', outstandingAmount: '10',
+        paymentStatus: 'UNPAID', adjustmentReasonCode: 'PRICE_ADJUSTMENT', createdByUserId: ctx.userId,
+      } });
+      await client.accountingDocumentLine.create({ data: {
+        companyId: ledgerCompanyId, documentId: creditNote.id, lineNumber: 1, description: 'ลดราคาทดสอบ',
+        quantity: '1', unitPrice: '10', lineSubtotalAmount: '10', lineTotalAmount: '10',
+      } });
+      const expense = await client.expenseRecord.create({ data: {
+        companyId: ledgerCompanyId, status: 'CONFIRMED', expenseDate: new Date('2026-08-01T00:00:00.000Z'),
+        grandTotalAmount: '50', netPayableAmount: '50', paidAmount: '20', outstandingAmount: '30',
+        paymentStatus: 'PARTIALLY_PAID', createdByUserId: ctx.userId,
+      } });
+      await client.expenseLine.create({ data: {
+        companyId: ledgerCompanyId, expenseId: expense.id, lineNumber: 1, description: 'รายจ่ายทดสอบ',
+        quantity: '1', unitPrice: '50', taxableAmount: '50', lineSubtotalAmount: '50', lineTotalAmount: '50',
+      } });
+      await client.expensePayment.createMany({ data: [
+        { companyId: ledgerCompanyId, expenseId: expense.id, amount: '20', paidAt: new Date('2026-07-31T17:00:00.000Z'), createdByUserId: ctx.userId },
+        { companyId: ledgerCompanyId, expenseId: expense.id, amount: '99', paidAt: new Date('2026-07-31T16:59:59.999Z'), createdByUserId: ctx.userId },
+      ] });
+
+      const ledger = new IncomeExpenseLedgerUseCase({ client } as any);
+      const summary = await ledger.summary(ctx, '2026-08-01', '2026-08-31');
+      assert.deepEqual({
+        sales: summary.income.salesDocumentTotal, received: summary.income.receivedTotal,
+        wht: summary.income.withheldTaxTotal, outstanding: summary.income.receivableOutstanding,
+        expense: summary.expense.recordedExpenseTotal, paid: summary.expense.paidExpenseTotal,
+        cashDifference: summary.cashDifference, documentDifference: summary.documentDifference,
+      }, {
+        sales: '90.00', received: '100.00', wht: '3.00', outstanding: '0.00',
+        expense: '50.00', paid: '20.00', cashDifference: '80.00', documentDifference: '40.00',
+      });
+      const incomeOnly = await ledger.summary({ ...ctx, permissions: ['accounting.document.read'] }, '2026-08-01', '2026-08-31');
+      assert.equal(incomeOnly.income.available, true);
+      assert.deepEqual(incomeOnly.expense, { available: false, unavailableReason: 'NO_PERMISSION', byCategory: [] });
+      assert.equal(incomeOnly.cashDifference, undefined);
+
+      const entries = await ledger.entries(ctx, { type: 'ALL', from: '2026-08-01', to: '2026-08-31' });
+      assert.equal(entries.total, 3, 'evidence-only receipt is not a second income row');
+      assert.deepEqual(new Set(entries.data.map((row) => row.side)), new Set(['INCOME', 'EXPENSE']));
+      const incomeEntry = entries.data.find((row) => row.id === incomeBundle.invoice.id)!;
+      assert.match(incomeEntry.evidenceHref, /\/sales-documents\?documentId=/);
+      assert.equal(incomeEntry.dueDate, '2026-08-15');
+      assert.equal(incomeEntry.counterpartyId, counterparty.id);
+      assert.equal(incomeEntry.partyName, 'ลูกค้าทดสอบ');
+      const creditEntry = entries.data.find((row) => row.id === creditNote.id);
+      assert.equal(creditEntry?.amount, '-10.00');
+      assert.equal(creditEntry?.outstandingAmount, undefined, 'credit notes reduce income but never display as receivable');
+      const receivables = await ledger.entries(ctx, { type: 'RECEIVABLE', from: '2026-08-01', to: '2026-08-31' });
+      assert.equal(receivables.total, 0, 'credit notes are reductions, never receivable payment targets');
+      const exported = await ledger.export(ctx, { type: 'ALL', from: '2026-08-01', to: '2026-08-31' });
+      assert.equal(exported.rowCount, 3);
+      assert.match(exported.csv, /รายรับ/);
+      assert.ok(Buffer.from(exported.xlsxBase64, 'base64').subarray(0, 2).equals(Buffer.from('PK')));
+    } finally {
+      await client.accountingSimpleIncomeCommand.deleteMany({ where: { companyId: ledgerCompanyId } });
+      await client.accountingPaymentAllocation.deleteMany({ where: { companyId: ledgerCompanyId } });
+      await client.accountingPayment.deleteMany({ where: { companyId: ledgerCompanyId } });
+      await client.accountingDocument.deleteMany({ where: { companyId: ledgerCompanyId } });
+      await client.accountingCounterparty.deleteMany({ where: { companyId: ledgerCompanyId } });
+      await client.documentNumber.deleteMany({ where: { companyId: ledgerCompanyId } });
+      await client.documentSequence.deleteMany({ where: { companyId: ledgerCompanyId } });
+      await client.expensePayment.deleteMany({ where: { companyId: ledgerCompanyId } });
+      await client.expenseLine.deleteMany({ where: { companyId: ledgerCompanyId } });
+      await client.expenseRecord.deleteMany({ where: { companyId: ledgerCompanyId } });
+      await client.company.deleteMany({ where: { id: ledgerCompanyId } });
+    }
   });
 });

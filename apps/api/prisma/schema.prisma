@@ -1907,6 +1907,8 @@ model AccountingDocumentLine {
 model AccountingPayment {
   id                       String                          @id @default(cuid())
   companyId                String
+  idempotencyKey           String?
+  payloadFingerprint       String?
   branchId                 String?
   paymentNumber            String?
   direction                AccountingPaymentDirection
@@ -1942,6 +1944,7 @@ model AccountingPayment {
   simpleIncomeCommands     AccountingSimpleIncomeCommand[]
 
   @@unique([companyId, paymentNumber])
+  @@unique([companyId, idempotencyKey])
   @@unique([companyId, id])
   @@index([companyId, direction, status])
   @@index([companyId, paidAt])

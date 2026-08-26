@@ -7,6 +7,7 @@ export const ACCOUNTING_MONEY_PATTERN = /^(?:0|[1-9]\d{0,13})(?:\.\d{1,2})?$/;
 export const POSITIVE_ACCOUNTING_MONEY_PATTERN = /^(?=.*[1-9])(?:0|[1-9]\d{0,13})(?:\.\d{1,2})?$/;
 export const POSITIVE_ACCOUNTING_QUANTITY_PATTERN = /^(?=.*[1-9])(?:0|[1-9]\d{0,13})(?:\.\d{1,4})?$/;
 export const ACCOUNTING_RATE_PATTERN = /^(?:0|[1-9]\d{0,2})(?:\.\d{1,4})?$/;
+export const PAYMENT_IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9_-]{8,64}$/;
 
 const MAX_MONEY = new Decimal('99999999999999.99');
 
@@ -56,6 +57,12 @@ export function validateAccountingDocumentMoneyInput(
 export function validateAccountingPaymentMoneyInput(
   input: Omit<CreatePaymentInput, 'companyId' | 'createdByUserId'>,
 ): string | null {
+  if (input.allocateToDocumentId && !input.idempotencyKey) {
+    return 'A retry key is required when allocating a payment to a document';
+  }
+  if (input.idempotencyKey && !PAYMENT_IDEMPOTENCY_KEY_PATTERN.test(input.idempotencyKey)) {
+    return 'Payment retry key must be 8-64 letters, numbers, underscores, or hyphens';
+  }
   if (!decimal(input.amount, POSITIVE_ACCOUNTING_MONEY_PATTERN)) {
     return 'Payment amount must be a positive THB amount with at most 2 decimal places';
   }
@@ -97,9 +104,6 @@ export function validateAccountingPaymentAllocation(
   }
   const outstanding = decimal(target.outstandingAmount, ACCOUNTING_MONEY_PATTERN);
   if (!outstanding || outstanding.lte(0)) return 'Target document has no outstanding amount';
-  // Cash alone is allowed to exceed the outstanding — the surplus becomes an unapplied credit. The
-  // withheld part cannot: it is not money we hold, so there is nothing to carry forward, and the
-  // pair is what settles the document.
   const withheld = decimal(input.whtAmount ?? '0', ACCOUNTING_MONEY_PATTERN);
   if (!withheld) return 'Withheld tax must be a non-negative THB amount with at most 2 decimal places';
   if (withheld.gt(0)) {

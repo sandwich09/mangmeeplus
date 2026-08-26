@@ -8,7 +8,7 @@ const pipe = new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS);
 
 const validPayment = {
   direction: 'RECEIVED', method: 'BANK_TRANSFER', amount: '100.00',
-  paidAt: '2026-07-18T10:00:00.000Z', allocateToDocumentId: 'doc-1',
+  paidAt: '2026-07-18T10:00:00.000Z', allocateToDocumentId: 'doc-1', idempotencyKey: 'payment_retry_001',
 };
 const validDocument = {
   documentType: 'INVOICE', documentDate: '2026-07-18', currency: 'THB', vatMode: 'NO_VAT',
@@ -49,6 +49,7 @@ describe('H-05 accounting money HTTP DTOs', () => {
   it('rejects invalid enums, dates, currency, nested values, and unknown fields', async () => {
     await rejects(CreateAccountingPaymentDto, { ...validPayment, direction: 'TRANSFERRED' });
     await rejects(CreateAccountingPaymentDto, { ...validPayment, paidAt: 'not-a-date' });
+    await rejects(CreateAccountingPaymentDto, { ...validPayment, idempotencyKey: 'short' });
     await rejects(CreateAccountingPaymentDto, { ...validPayment, companyId: 'other-company' });
     await rejects(CreateAccountingDocumentDto, { ...validDocument, currency: 'USD' });
     await rejects(CreateAccountingDocumentDto, { ...validDocument, lines: [{ ...validDocument.lines[0], quantity: '0' }] });

@@ -614,6 +614,13 @@ describe('canAccessWorkspacePath', () => {
     assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['accounting.payment.create'], 'abc', path), false);
   });
 
+  it('protects the income-expense ledger URL with either supported read permission', () => {
+    const path = '/companies/abc/income-expense-ledger';
+    assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, [], 'abc', path), false);
+    assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['accounting.document.read'], 'abc', path), true);
+    assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['expense.read'], 'abc', path), true);
+  });
+
   it('hides the retained report row from the sidebar but keeps its page reachable', () => {
     const retainedPermissions = ['report.snapshot.read'];
     const retainedModules = filterModulesByPermissions(WORKSPACE_MODULES, retainedPermissions);

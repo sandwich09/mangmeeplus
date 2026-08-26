@@ -355,6 +355,73 @@ export type RecordSimpleIncomeResult = {
   replayed: boolean;
 };
 
+export type IncomeExpenseLedgerCategoryAmount = {
+  categoryId?: string;
+  label: string;
+  amount: string;
+};
+
+export type IncomeExpenseLedgerSideSummary = {
+  available: boolean;
+  unavailableReason?: 'NO_PERMISSION' | 'DATA_MISMATCH';
+};
+
+export type IncomeExpenseLedgerSummary = {
+  period: { from: string; to: string; timezone: 'Asia/Bangkok' };
+  income: IncomeExpenseLedgerSideSummary & {
+    salesDocumentTotal?: string;
+    receivedTotal?: string;
+    withheldTaxTotal?: string;
+    receivableOutstanding?: string;
+    byCategory: IncomeExpenseLedgerCategoryAmount[];
+  };
+  expense: IncomeExpenseLedgerSideSummary & {
+    recordedExpenseTotal?: string;
+    paidExpenseTotal?: string;
+    byCategory: IncomeExpenseLedgerCategoryAmount[];
+  };
+  cashDifference?: string;
+  documentDifference?: string;
+};
+
+export type IncomeExpenseLedgerEntryType = 'ALL' | 'INCOME' | 'EXPENSE' | 'RECEIVABLE';
+
+export type IncomeExpenseLedgerEntry = {
+  id: string;
+  branchId?: string;
+  side: 'INCOME' | 'EXPENSE';
+  sourceType: 'accounting_document' | 'expense_record';
+  date: string;
+  dueDate?: string;
+  referenceNumber?: string;
+  counterpartyId?: string;
+  partyName?: string;
+  categoryLabels: string[];
+  status: string;
+  amount: string;
+  outstandingAmount?: string;
+  evidenceHref: string;
+};
+
+export type IncomeExpenseLedgerEntries = {
+  period: { from: string; to: string; timezone: 'Asia/Bangkok' };
+  data: IncomeExpenseLedgerEntry[];
+  total: number;
+  page: number;
+  pageSize: number;
+  includedSides: Array<'INCOME' | 'EXPENSE'>;
+};
+
+export type IncomeExpenseLedgerExport = {
+  period: { from: string; to: string; timezone: 'Asia/Bangkok' };
+  includedSides: Array<'INCOME' | 'EXPENSE'>;
+  rowCount: number;
+  csvFileName: string;
+  csv: string;
+  xlsxFileName: string;
+  xlsxBase64: string;
+};
+
 // Document sequence keys
 export const ACCOUNTING_SEQUENCE_KEYS = {
   QUOTATION: 'accounting.quotation',

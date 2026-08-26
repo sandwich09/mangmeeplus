@@ -12,6 +12,7 @@ import type { CreateDocumentInput, CreatePaymentInput } from '../../domain/model
 import {
   ACCOUNTING_MONEY_PATTERN,
   ACCOUNTING_RATE_PATTERN,
+  PAYMENT_IDEMPOTENCY_KEY_PATTERN,
   POSITIVE_ACCOUNTING_MONEY_PATTERN,
   POSITIVE_ACCOUNTING_QUANTITY_PATTERN,
 } from '../../domain/logic/accounting-money-validation.logic';
@@ -91,7 +92,8 @@ export class UpdateAccountingDocumentDto {
   lines?: AccountingDocumentLineDto[];
 }
 
-export class CreateAccountingPaymentDto implements Omit<CreatePaymentInput, 'companyId' | 'createdByUserId'> {
+export class CreateAccountingPaymentDto implements Omit<CreatePaymentInput, 'companyId' | 'createdByUserId' | 'payloadFingerprint'> {
+  @IsString() @IsOptional() @Matches(PAYMENT_IDEMPOTENCY_KEY_PATTERN) idempotencyKey?: string;
   @IsString() @IsOptional() @MaxLength(64) branchId?: string;
   @IsIn(PAYMENT_DIRECTIONS) direction!: AccountingPaymentDirection;
   @IsString() @IsOptional() @MaxLength(64) counterpartyId?: string;
