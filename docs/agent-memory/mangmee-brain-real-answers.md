@@ -51,6 +51,8 @@ Local verification (2026-08-26, web dev + API dist จาก branch, seeded DB :
 - ทดสอบผ่าน seed ตรง DB (`aiVerificationSummaryJson.categorySuggestion`) เพราะ E2E ไม่มีทาง public เขียนค่านี้ (ตามเหตุผลที่บันทึกใน Phase 1.4 report)
 - บั๊ก NFKC สระอำ: **แก้แล้ว 2026-08-26** — normalized() NFKC→NFC หนึ่งคำ (domain/logic/line-expense-draft-conversation.logic.ts:88) พร้อม comment กติกา; ผลกระทบจริงกว้างกว่าที่คิด: segment "I0x-CATEGORY: ตามที่แนะนำ" ถูกปฏิเสธเงียบ, คำสั่ง "ทำต่อ/ทำรายการต่อ" ไม่เคยทำงาน, ทางเลือก "รับชำระ" ใน non-expense guard ตาย; regression แบบ red-green 3 เทสต์ (fail 2 ก่อนแก้ → ผ่านหมดหลังแก้); audit ำ/ฺ ทั้งไฟล์ครบ (จุด raw-input 216/531/539 ไม่โดน); expenses 818/818, line-ai 725/725
 
+AI-01 round (2026-08-26, หลังคำสั่ง "ทำต่อให้จบ ไม่ต้องรอ จนพร้อมขึ้น UAT"): WP-B intake state (PR #241, 4 zero-write gaps, LINE_AI_INTAKE_STATE_MODE off|shadow|on), WP-A replay+fallback (PR #242, LineTurnOutcome + replay ไม่ re-route บน worker tick เดิม + failed_flex→altText, สอง flag ใหม่ default off), WP-C การ์ดร่างค่าใช้จ่าย (PR #243, flag multipart-flex เดิม) — corpus 13/8 → 20/1 (เหลือการ์ดเบิก owner-GO); UAT readiness batch (PR #237): orphan specs หมดรีโป (gateway 944), harness เข้า CI, LINE OA build-arg, alarm ติดตั้งบน AWS UAT จริง (แก้ stale redis -v2); release PR #238 develop→main รอ owner approve (CI: แก้ re-pin #239 + spec registration #240/#241 ผ่าน coverage guard); protocol UAT พร้อม dispatch หลัง merge
+
 Next:
 
 1. Owner ตรวจงานบน local (เซิร์ฟเวอร์ยังรันอยู่: web http://127.0.0.1:3000, api :3001) แล้วสั่ง push/PR เข้า develop
