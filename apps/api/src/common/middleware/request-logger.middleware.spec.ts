@@ -10,18 +10,19 @@ import type { AppLogger } from '../logger/logger.service';
 import { apiCacheControl, PRIVATE_NO_STORE } from './api-cache-control.middleware';
 import { RequestLoggerMiddleware } from './request-logger.middleware';
 
-function run(requestLogEnabled: boolean, path = '/v1/companies') {
+function run(requestLogEnabled: boolean, path = '/v1/companies', statusCode = 200) {
   const lines: Array<Record<string, unknown>> = [];
+  const capture = (obj: Record<string, unknown>, msg?: string) => void lines.push({ ...obj, ...(msg ? { msg } : {}) });
   const logger = {
-    info: (obj: Record<string, unknown>) => void lines.push(obj),
-    warn: (obj: Record<string, unknown>) => void lines.push(obj),
-    error: (obj: Record<string, unknown>) => void lines.push(obj),
+    info: capture,
+    warn: capture,
+    error: capture,
   } as unknown as AppLogger;
   const middleware = new RequestLoggerMiddleware(logger, { requestLogEnabled } as AppConfigService);
 
   let finish: (() => void) | undefined;
   const req = { method: 'GET', path, headers: { 'x-request-id': 'req-1' } } as unknown as Request;
-  const res = { statusCode: 200, on: (event: string, cb: () => void) => { if (event === 'finish') finish = cb; } } as unknown as Response;
+  const res = { statusCode, on: (event: string, cb: () => void) => { if (event === 'finish') finish = cb; } } as unknown as Response;
 
   let nextCalls = 0;
   middleware.use(req, res, (() => { nextCalls += 1; }) as NextFunction);
@@ -50,6 +51,13 @@ describe('RequestLoggerMiddleware', () => {
       run(true, '/v1/companies/c1/expenses/e1').lines[0]?.['path'],
       '/v1/companies/c1/expenses/e1',
     );
+  });
+
+  it('captures a 500 response for the API alarm', () => {
+    const { lines } = run(true, '/v1/health/dependency', 500);
+    assert.equal(lines.length, 1);
+    assert.equal(lines[0]?.['status'], 500);
+    assert.equal(lines[0]?.['msg'], 'request');
   });
 
   it('does not even register a finish listener when disabled', () => {

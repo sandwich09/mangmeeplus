@@ -1,6 +1,7 @@
 import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { RequestReceiptExtractionUseCase } from './expense-extraction.use-case';
+import { ReceiptOcrClient } from '../../infrastructure/receipt-ocr.client';
 import type { RequestContext } from '@watchdog-bms/contracts';
 
 const baseExpense = {
@@ -373,5 +374,42 @@ describe('RequestReceiptExtractionUseCase', () => {
     );
     assert.equal(storage.getObject.mock.callCount(), 0);
     assert.equal(client.extract.mock.callCount(), 0);
+  });
+});
+
+describe('ReceiptOcrClient failure boundary', () => {
+  const request = {
+    requestId: 'ocr-fault-1', companyId: 'company-1', attachmentId: 'attachment-1',
+    mimeType: 'image/jpeg', bytesBase64: Buffer.from('receipt').toString('base64'), activeCategories: [],
+  } as any;
+
+  it('returns a reviewable failure when the OCR gateway is unreachable', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mock.fn(async () => { throw new Error('synthetic timeout'); }) as any;
+    try {
+      const client = new ReceiptOcrClient({
+        aiGatewayInternalSecret: 'internal-secret', aiGatewayInternalUrl: 'http://ai.invalid',
+      } as any);
+      assert.deepEqual(await client.extract(request), {
+        status: 'failed', errorCode: 'AI_GATEWAY_UNREACHABLE',
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('keeps provider 5xx distinct and does not fabricate extracted fields', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mock.fn(async () => new Response('', { status: 503 })) as any;
+    try {
+      const client = new ReceiptOcrClient({
+        aiGatewayInternalSecret: 'internal-secret', aiGatewayInternalUrl: 'http://ai.invalid',
+      } as any);
+      assert.deepEqual(await client.extract(request), {
+        status: 'failed', errorCode: 'AI_GATEWAY_ERROR_503',
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

@@ -1,6 +1,6 @@
 # Customer Journey Observability Signal Contract (P9)
 
-Status: **P9-0 CONTRACT + P9-1A DASHBOARD + P9-1B CURRENT BOUNDARIES IMPLEMENTED**
+Status: **P9-0 CONTRACT + P9-1A DASHBOARD + P9-1B BOUNDARIES + P9-2 LOCAL FAILURE MATRIX IMPLEMENTED**
 Scope: Four product lanes only; subscription/payment is excluded.  
 Last reviewed: 2026-08-26
 
@@ -93,3 +93,18 @@ Receipt intake remains `PARTIAL` only for an upload intent abandoned before the 
 called; current code has no expiry reconciler that can truthfully classify that terminal. The `PLANNED`
 official-signup, owner-claim, tenant-provision, and claim-email rows cannot become live before P10-P12
 implement those business flows. No second telemetry stack or pre-baseline target is introduced.
+
+## P9-2 failure matrix
+
+`CUSTOMER_JOURNEY_FAILURE_MATRIX` is the executable local contract for `detect → alert → diagnose →
+recover/no-duplicate`. Each `LIVE` row must have an observable detector, installed alarm contract,
+exact runbook section, recovery behavior, duplicate-safety invariant, and source evidence token.
+
+The matrix must remain honest about rollout state:
+
+- SES hard bounce/provider outage and provisioning partial failure are `PLANNED` until P10/P11 exist.
+- Outbox and database/audit failure are `PARTIAL` because bounded retry, fencing, DEAD detection, and
+  alarms exist, but there is no approved DEAD-row reconciler/replay path.
+- A local automated test is implementation evidence, not proof of alarm delivery. At least one
+  synthetic failure per severity must still complete in UAT with redacted evidence and human alert
+  acknowledgement before the drill/activation gate closes.
