@@ -277,6 +277,25 @@ describe('RecoverOrphanLineEventsUseCase', () => {
     assert.equal(outcomeStore.get('replay-1')?.attempts, 2, 'attempts counts sends, not successes');
   });
 
+  it('NEVER pushes the stale stored outcome for LINE_OUTCOME_NOT_RECORDED — legacy replay instead (PR #238 R2)', async () => {
+    // End-to-end recovery half of the §14.3 chain: in-turn, the first upsert persisted the Flex,
+    // LINE rejected it, and the text replacement upsert FAILED — the webhook seam parked the row as
+    // LINE_OUTCOME_NOT_RECORDED without sending (covered in process-line-webhook.use-case.spec).
+    // The sweep must now treat the stored outcome as superseded: pushing it would resend the very
+    // bytes LINE refused. The honest path is legacy input replay, whose re-run overwrites the row.
+    const { useCase, store, enqueued, pushes } = makeHarness([
+      rowAt('stale-flex-1', LINE_BUFFER_ORPHAN_REPROCESS_MS + 1_000, { status: 'delivery_pending', errorCode: 'LINE_OUTCOME_NOT_RECORDED' }),
+    ], { replayEnabled: true, outcomes: [{ webhookEventId: 'stale-flex-1', messagesJson: STORED_MESSAGES, attempts: 1, deliveredAt: null }] });
+
+    const result = await useCase.execute();
+
+    assert.equal(pushes.length, 0, 'the rejected payload is never pushed');
+    assert.equal(result.replayed, 1);
+    assert.equal(enqueued.length, 1, 'the input goes back through the buffer to be recomputed');
+    assert.equal(store.get('stale-flex-1')?.status, 'received');
+    assert.equal(store.get('stale-flex-1')?.errorCode, 'RETRYABLE_ORPHAN_REPLAY');
+  });
+
   it('keeps the row claimable when the replay push does not reach LINE', async () => {
     const { useCase, store, outcomeStore, pushes } = makeHarness([
       rowAt('replay-2', LINE_BUFFER_ORPHAN_REPROCESS_MS + 1_000, { status: 'delivery_pending', errorCode: 'LINE_DELIVERY_FAILED_OTHER' }),

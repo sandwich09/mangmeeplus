@@ -180,6 +180,16 @@ describe('expense category golden harness', () => {
     const noResults = scoreExpenseCategoryGolden([], confirmed);
     assert.equal(noResults.baselineReady, false);
 
+    // R2 regression: 31 confirmed, results for 30 — the evaluated count clears the minimum, but the
+    // one unevaluated row could be the hard failure someone quietly dropped. EVERY confirmed row
+    // must be evaluated, so this must NOT publish.
+    const thirtyOne = [...confirmed, miniFixture('confirmed-extra', 'cat-a')];
+    const cherryPicked = scoreExpenseCategoryGolden(allResults, thirtyOne);
+    assert.equal(cherryPicked.baseline.evaluatedFixtures, EXPENSE_CATEGORY_GOLDEN_MIN_CONFIRMED_FIXTURES);
+    assert.equal(cherryPicked.baselineReady, false, 'a missing confirmed result blocks publication even above the minimum count');
+    assert.deepEqual(cherryPicked.baseline.confirmedFixturesWithoutResult, ['confirmed-extra']);
+    assert.match(formatExpenseCategoryGoldenReport(cherryPicked, 'cherry-picked run'), /have no evaluated result/);
+
     const ready = scoreExpenseCategoryGolden(allResults, confirmed);
     assert.equal(ready.baselineReady, true);
     assert.equal(ready.baseline.evaluatedFixtures, EXPENSE_CATEGORY_GOLDEN_MIN_CONFIRMED_FIXTURES);
