@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import type { RequestContext } from '@watchdog-bms/contracts';
 import { CreateDocumentUseCase } from './document.use-case';
 import { CreatePaymentUseCase } from './payment.use-case';
+import { RecordSimpleIncomeUseCase, simpleIncomePayloadFingerprint } from './record-simple-income.use-case';
 
 const ctx: RequestContext = {
   requestId: 'request-1', authSubject: 'user-1', userId: 'user-1', companyId: 'company-1',
@@ -15,6 +16,84 @@ const paymentInput = (amount: string) => ({
   method: 'BANK_TRANSFER' as const,
   amount,
   paidAt: '2026-07-18T10:00:00.000Z',
+});
+
+describe('P27 simple-income use-case boundary', () => {
+  const input = {
+    idempotencyKey: 'income_retry_001', documentDate: '2026-08-26', vatMode: 'NO_VAT' as const,
+    paymentMethod: 'BANK_TRANSFER' as const,
+    lines: [{ lineNumber: 1, description: 'ค่าบริการ', quantity: '1', unitPrice: '100.00', revenueCategoryId: 'revenue-1' }],
+  };
+  const fullCtx = {
+    ...ctx,
+    permissions: ['accounting.invoice.create', 'accounting.invoice.issue', 'accounting.payment.create', 'accounting.receipt.issue'],
+  };
+  const result = {
+    invoice: { id: 'invoice-1', issuedAt: new Date(), documentNumber: 'INV-1', grandTotalAmount: '100.00' },
+    payment: { id: 'payment-1', amount: '100.00', whtAmount: '0.00', method: 'BANK_TRANSFER', direction: 'RECEIVED' },
+    receipt: { id: 'receipt-1', documentNumber: 'RC-1' },
+    replayed: false,
+  } as any;
+
+  it('fingerprints canonical payloads deterministically and changes on material input', () => {
+    assert.equal(simpleIncomePayloadFingerprint(input), simpleIncomePayloadFingerprint({ ...input }));
+    assert.notEqual(simpleIncomePayloadFingerprint(input), simpleIncomePayloadFingerprint({ ...input, paymentMethod: 'CASH' }));
+  });
+
+  it('requires the complete permission set before opening the bundle transaction', async () => {
+    let called = false;
+    const useCase = new RecordSimpleIncomeUseCase(
+      { recordSimpleIncomeBundle: async () => { called = true; return result; } } as any,
+      { log: async () => undefined } as any,
+      { append: async () => undefined } as any,
+      { get: async () => ({ status: 'REGISTERED' }) } as any,
+    );
+    await assert.rejects(() => useCase.execute({ ...fullCtx, permissions: ['accounting.invoice.create'] }, input));
+    assert.equal(called, false);
+  });
+
+  it('writes the audit inside the transaction and emits three events only for a new bundle', async () => {
+    const events: string[] = [];
+    let auditDb: unknown;
+    const transactionDb = { tag: 'same-transaction' };
+    const useCase = new RecordSimpleIncomeUseCase(
+      { recordSimpleIncomeBundle: async (_input: any, hook: any) => {
+        await hook(transactionDb, result);
+        return result;
+      } } as any,
+      { log: async (_entry: any, db: unknown) => { auditDb = db; } } as any,
+      { append: async (event: string) => { events.push(event); } } as any,
+      { get: async () => ({ status: 'REGISTERED' }) } as any,
+    );
+    const created = await useCase.execute(fullCtx, input);
+    assert.equal(created.receipt.documentNumber, 'RC-1');
+    assert.equal(auditDb, transactionDb);
+    assert.deepEqual(events.sort(), ['accounting.invoice.issued', 'accounting.payment.recorded', 'accounting.receipt.issued']);
+  });
+
+  it('does not emit duplicate events when the command is replayed', async () => {
+    let events = 0;
+    const useCase = new RecordSimpleIncomeUseCase(
+      { recordSimpleIncomeBundle: async () => ({ ...result, replayed: true }) } as any,
+      { log: async () => undefined } as any,
+      { append: async () => { events += 1; } } as any,
+      { get: async () => ({ status: 'REGISTERED' }) } as any,
+    );
+    assert.equal((await useCase.execute(fullCtx, input)).replayed, true);
+    assert.equal(events, 0);
+  });
+
+  it('blocks VAT modes for a company that is not VAT registered', async () => {
+    let called = false;
+    const useCase = new RecordSimpleIncomeUseCase(
+      { recordSimpleIncomeBundle: async () => { called = true; return result; } } as any,
+      { log: async () => undefined } as any,
+      { append: async () => undefined } as any,
+      { get: async () => ({ status: 'NOT_REGISTERED' }) } as any,
+    );
+    await assert.rejects(() => useCase.execute(fullCtx, { ...input, vatMode: 'VAT_EXCLUDED' }));
+    assert.equal(called, false);
+  });
 });
 
 describe('H-05 use-case revalidation', () => {

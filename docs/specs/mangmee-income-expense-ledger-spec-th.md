@@ -1,6 +1,6 @@
 # สมุดรายรับ–รายจ่าย (Income–Expense Ledger MVP) — Spec
 
-สถานะ: **v1.2 — Owner ตอบ §9 ครบ + Phase 0 (V1–V6) ตรวจเสร็จ + Owner สั่งเพิ่มรอบสอง 2026-08-26 (สเปกหน้าจอ F-LED-7 + กติกา VAT ต่อหมวด 7.9); Phase 1–2 ส่งมอบแล้ว (PR #247, #248)**
+สถานะ: **v1.3 — Owner ตอบ §9 ครบ; Phase 1–2 ส่งมอบแล้ว; Phase 3A backend ส่งมอบ 2026-08-26 (atomic simple-income + correction reasons/source + attachment gate), เหลือ Phase 3B UI**
 
 ที่มา: การตัดสินใจ Owner 2026-08-26 — ทำฟีเจอร์ "สมุดรายรับ–รายจ่าย" ก่อน โดยยังไม่ทำระบบบัญชีเต็มและไม่ทำกระทบยอดธนาคาร; เอกสารขายต้องเป็นแกนของรายรับ ไม่ใช่ช่องกรอกยอดลอย ๆ
 
@@ -111,10 +111,10 @@
 
 ผลตรวจ V6 (2026-08-26): **ห้ามประกอบด้วยการ chain use-case เดิม** — `IssueDocumentUseCase` reserve เลขนอก tx/commit หลัง tx และ `issueDocument` เปิด Serializable tx ของตัวเอง (`document.use-case.ts:347-423`, `prisma-accounting.repository.ts:566-567`) ส่วน `createPayment` เปิด tx แยกอีกใบ (`:712`) → ต้องใช้ pattern bundle ที่ repo ใช้อยู่แล้ว ตามแบบ `submitDraftAtomic` ของ reimbursements (`prisma-reimbursement.repository.ts:354-475`): repository method เดียว เปิด tx เดียว (Serializable + `pg_advisory_xact_lock`) ทำครบภายใน:
 
-1. dedup ด้วย `idempotencyKey` (pattern `prisma-expense.repository.ts:1294-1297`) — retry คืนผลเดิม ไม่สร้างซ้ำ
-2. สร้าง `INVOICE`+lines → จองและ commit เลขเอกสาร **ใน tx** ด้วย `reserveNumberInTransaction`/`commitNumberInTransaction` ที่มีอยู่แล้ว (`prisma-document-sequence.repository.ts:82,225`) → issue (บริษัท VAT: tax snapshot ผ่าน db param ที่ method รองรับอยู่แล้ว — `prisma-accounting.repository.ts:383,425`)
+1. dedup ด้วย `idempotencyKey` + `payloadFingerprint` ใน `AccountingSimpleIncomeCommand` (M7) — row เกิดเมื่อครบทั้งก้อนเท่านั้น; retry payload เดิมคืน result IDs เดิม, key เดิมแต่ payload ต่าง = conflict; concurrent double-tap ที่ PostgreSQL ยกเลิกด้วย `P2034` retry transaction แบบ bounded แล้วอ่านผู้ชนะ
+2. สร้าง `INVOICE`+lines → จองและ commit เลขเอกสาร **ใน tx** ด้วย `reserveNumberInTransaction`/`commitNumberInTransaction` ที่มีอยู่แล้ว (`prisma-document-sequence.repository.ts:82,225`) → issue; plain `INVOICE` เก็บยอด VAT ต่อบรรทัดแต่ **ไม่ใช่ transaction-tax document** ตาม engine ปัจจุบัน จึงไม่มี tax snapshot — บริษัท VAT ต้องออก `TAX_INVOICE` ผ่าน flow เดิมเพื่อ final tax snapshot (แก้ข้อความเดิมที่อ้าง db-param ผิดชนิดเอกสาร)
 3. บันทึก `AccountingPayment` direction `RECEIVED` เต็มยอด + allocation → เอกสารเป็น `PAID`
-4. ออก `RECEIPT` อ้างต้นทางอัตโนมัติ (Owner ข้อ 2 = อัตโนมัติทุกครั้ง) — ผลตรวจ V3: `RECEIPT` ตั้ง `sourceDocumentId` ได้จริง (engine ตรวจ existence+branch scope แล้ว persist, กติกาชนิดเอกสารไม่ block เพราะ RECEIPT return ก่อนถึงกฎ CN/DN — `accounting-status.logic.ts:59-62`, `document.use-case.ts:64-67`, `prisma-accounting.repository.ts:133`) โดย use-case เราบังคับเองว่า source ต้องเป็น INVOICE ที่เพิ่ง issue ใน bundle เดียวกัน; บริษัท VAT ออกใบกำกับภาษีต่อด้วยปุ่มเดิม (`AccountingPages.tsx:730-776`)
+4. ออก `RECEIPT` อ้างต้นทางอัตโนมัติ (Owner ข้อ 2 = อัตโนมัติทุกครั้ง) — source ต้องเป็น INVOICE ที่เพิ่ง issue ใน bundle เดียวกัน; **auto-RECEIPT เป็นหลักฐานเท่านั้น (`postingStatus=not_required`)** เพราะ `AccountingPayment` คือ settlement posting source ตัวจริง หากทั้งคู่ pending จะเดบิตเงินสด/เครดิตลูกหนี้ซ้ำ; บริษัท VAT ออกใบกำกับภาษีต่อด้วย flow เดิม
 5. audit ผ่าน tx hook (`audit.log(entry, tx)` — `audit.service.ts:65`); ล้มเหลวขั้นไหน rollback ทั้งก้อน + error ภาษาคน
 
 ผลพลอยได้: ปิดช่องโหว่ reserve-นอก-tx เดิม (crash ระหว่าง commit เลข → เลขค้าง RESERVED บนเอกสาร ISSUED) สำหรับเส้นทางนี้
@@ -194,13 +194,13 @@ Flow ถ่าย/อัปโหลด → AI อ่าน → ตรวจ →
 
 - เมนูเอกสารขาย FlowAccount = ใบเสนอราคา / ใบวางบิล / ใบแจ้งหนี้ / ใบเสร็จรับเงิน / **ขายเงินสด** / ใบลดหนี้ / ใบเพิ่มหนี้; ขายเงินสดสร้าง "ใบเสร็จรับเงิน (เงินสด)" ใบเดียวจบ เลขชุดแยก (CA-) ลูกค้า default "Cash Sale / ขายเงินสด"
 - ปุ่มสร้างใบลดหนี้มี **2 ทาง**: "ใบลดหนี้แยก" (ไม่ผูกใบกำกับภาษี — อ้างอิงเป็นช่องพิมพ์ "เลขที่อ้างอิง") และ "ใบลดหนี้ที่อ้างอิงใบกำกับภาษี" (modal เลือกลูกค้า → เลือกเอกสารเดิมจากรายการ พร้อมยอด/สถานะ → prefill)
-- ฟอร์มบังคับเลือก **สาเหตุ** จากรายการตามกฎหมาย 2 กลุ่ม: ซื้อ-ขายสินค้า (ลดราคาสินค้าที่ขาย/ชำรุด/ขาดจำนวน/คำนวณผิดสูงไป/รับคืน/คืนมัดจำ/เหตุอื่น-ระบุ) และ ซื้อ-ขายบริการ (ลดราคา/ขาดจำนวน/คำนวณผิด/บอกเลิกสัญญา/คืนมัดจำ/เหตุอื่น-ระบุ)
+- ฟอร์มบังคับเลือก **สาเหตุ** จากรายการตามกฎหมาย 2 กลุ่ม: ซื้อ-ขายสินค้าและซื้อ-ขายบริการ โดยยึด[ประมวลรัษฎากร ม.82/9–82/10](https://www.rd.go.th/5206.html) และ[ประกาศอธิบดีกรมสรรพากร ภาษีมูลค่าเพิ่ม ฉบับที่ 82](https://www.rd.go.th/3380.html) ไม่คัดลอกถ้อยคำจาก FlowAccount; `OTHER_PRESCRIBED` ต้องระบุรายละเอียดและ UI ต้องไม่สื่อว่าเหตุอื่นใดก็ใช้ได้โดยอัตโนมัติ
 - โมเดลยอดท้ายฟอร์ม: **มูลค่าตามเอกสารเดิม (กรอก/prefill) → มูลค่าที่ถูกต้อง (จากรายการ) → ผลต่าง** + WHT + แนบไฟล์
 
 การนำมาใช้กับ engine เรา (สอดคล้อง OS spec §7.1 และ research §6.3):
 
-1. **ขยายกฎ source ของ CN/DN**: จากเดิมบังคับอ้าง `TAX_INVOICE` ที่ issue แล้วเท่านั้น (`accounting-status.logic.ts:103-109`) → อนุญาตอ้าง **`INVOICE` ที่ issue แล้ว** ด้วย (ครอบบริษัทไม่จด VAT ที่ไม่มีใบกำกับภาษี); posting/VAT เดิมของ CN ทำงานตาม tax snapshot ที่มี-ไม่มีตามเอกสารต้นทางอยู่แล้ว
-2. **สาเหตุเป็นข้อมูลบังคับ**: คอลัมน์ additive ใหม่ `adjustmentReasonCode` + `adjustmentReasonText` (กรณี "เหตุอื่น ระบุ") บน `AccountingDocument` เฉพาะ CN/DN; รายการสาเหตุต้อง**ตรวจกับต้นทางกรมสรรพากรก่อน copy จริง** (Phase 3 — ห้ามลอกถ้อยคำ FlowAccount ตรง ๆ ตาม research กติกา "ไม่ clone UI/ถ้อยคำ")
+1. **ขยายกฎ source ของ CN/DN**: อ้าง `TAX_INVOICE` ที่ issue แล้วได้ตามเดิม และอ้าง **`INVOICE` เฉพาะเมื่อ source+correction ไม่มี VAT** (ครอบบริษัทไม่จด VAT); invoice ที่มียอด VAT ต้องอ้าง TAX_INVOICE ที่มี immutable tax snapshot — ห้าม downgrade เป็น non-tax correction
+2. **สาเหตุเป็นข้อมูลบังคับ**: `adjustmentReasonCode` + `adjustmentReasonText` บน `AccountingDocument` เฉพาะ CN/DN; code แยก allow-list CREDIT/DEBIT ตามแหล่งกรมสรรพากรข้างต้น, `OTHER_PRESCRIBED` บังคับข้อความ, เอกสารชนิดอื่นห้ามส่งสองฟิลด์นี้
 3. **มูลค่าเดิม/ที่ถูกต้อง/ผลต่าง**: เราได้เปรียบเพราะ source อยู่ในระบบ — prefill จากเอกสารอ้างอิงเสมอ + `validateCumulativeCreditNote` เดิมกันลดเกินยอด (`accounting-status.logic.ts:208-232`)
 4. **ใบลดหนี้แยกแบบไม่อ้างเอกสารเลย: ไม่ทำใน MVP** — journey MVP เอกสารเกิดในระบบทั้งหมด การบังคับอ้างอิงรักษาความถูกของ AR/VAT; เคสแก้เอกสารนอกระบบยกไปรอบถัดไป (บันทึกเป็นข้อจำกัดที่หน้า UI)
 
@@ -326,6 +326,7 @@ Flow ถ่าย/อัปโหลด → AI อ่าน → ตรวจ →
 | M4 | (ไม่มีการแก้ตาราง expenses ใด ๆ) | — |
 | M5 | `AccountingDocument.adjustmentReasonCode String?` + `adjustmentReasonText String?` (ใช้เฉพาะ CN/DN — §F-LED-6) | ADD COLUMN |
 | M6 | ขยาย allow-list `isAllowedAttachmentTarget` เพิ่ม `accounting.document` + purposes ใหม่ (V2) | โค้ด ไม่แก้ schema |
+| M7 | ตาราง `AccountingSimpleIncomeCommand` (`companyId,idempotencyKey` unique + fingerprint + invoice/payment/receipt IDs พร้อม composite FKs) | CREATE TABLE |
 
 ห้าม: แก้ enum เดิม, แก้คอลัมน์เดิม, migration ที่เขียนข้อมูลย้อนหลังนอกเหนือ bootstrap หมวดรายรับแบบ idempotent
 

@@ -14,6 +14,7 @@ import {
   documentSequenceKey,
   deriveCompatibleOutputTaxCode,
   validateOutputTaxDocument,
+  validateAdjustmentReason,
 } from '../../domain/logic/accounting-status.logic';
 import type { DocumentRecord, CreateDocumentInput, UpdateDocumentInput, ListDocumentsFilter, PaginatedDocuments } from '../../domain/models/accounting.model';
 import type { RequestContext, AccountingDocumentType } from '@watchdog-bms/contracts';
@@ -73,6 +74,8 @@ export class CreateDocumentUseCase {
     }
     const moneyError = validateAccountingDocumentMoneyInput(input);
     if (moneyError) throw new UnprocessableEntityException(moneyError);
+    const reasonError = validateAdjustmentReason(input);
+    if (reasonError) throw new UnprocessableEntityException(reasonError);
     const normalizedInput = {
       ...input,
       outputTaxCode: input.outputTaxCode ?? deriveCompatibleOutputTaxCode(input.lines),
@@ -91,8 +94,8 @@ export class CreateDocumentUseCase {
     const result = await this.repo.createDocument({ ...normalizedInput, companyId: ctx.companyId, createdByUserId: ctx.userId });
     let persisted: DocumentRecord;
     try {
-      if (normalizedInput.documentType === 'CREDIT_NOTE' || normalizedInput.documentType === 'DEBIT_NOTE') {
-        if (!source) throw new UnprocessableEntityException(`${normalizedInput.documentType} requires an original TAX_INVOICE`);
+      if ((normalizedInput.documentType === 'CREDIT_NOTE' || normalizedInput.documentType === 'DEBIT_NOTE')
+        && source?.documentType === 'TAX_INVOICE') {
         const sign = normalizedInput.documentType === 'CREDIT_NOTE' ? -1 : 1;
         const context: TransactionTaxContext = sign === -1 ? 'RETURN_OR_CREDIT' : 'DEBIT_ADJUSTMENT';
         const inherited = (result.lines ?? []).map((line) => {
@@ -208,12 +211,16 @@ export class UpdateDocumentUseCase {
       outputTaxCode,
       note: input.note !== undefined ? input.note ?? undefined : current.note,
       internalMemo: input.internalMemo !== undefined ? input.internalMemo ?? undefined : current.internalMemo,
+      adjustmentReasonCode: input.adjustmentReasonCode !== undefined ? input.adjustmentReasonCode ?? undefined : current.adjustmentReasonCode,
+      adjustmentReasonText: input.adjustmentReasonText !== undefined ? input.adjustmentReasonText ?? undefined : current.adjustmentReasonText,
       lines,
       createdByUserId: current.createdByUserId,
     };
 
     const moneyError = validateAccountingDocumentMoneyInput(replacement);
     if (moneyError) throw new UnprocessableEntityException(moneyError);
+    const reasonError = validateAdjustmentReason(replacement);
+    if (reasonError) throw new UnprocessableEntityException(reasonError);
     const source = (replacement.sourceDocumentId
       ? await this.repo.findDocumentById(ctx.companyId, replacement.sourceDocumentId, ctx.scopes.branchIds)
       : undefined) ?? undefined;
@@ -228,8 +235,8 @@ export class UpdateDocumentUseCase {
       replacement,
       ctx.userId,
       async (db, draft) => {
-        if (replacement.documentType === 'CREDIT_NOTE' || replacement.documentType === 'DEBIT_NOTE') {
-          if (!source) throw new UnprocessableEntityException(`${replacement.documentType} requires an original TAX_INVOICE`);
+        if ((replacement.documentType === 'CREDIT_NOTE' || replacement.documentType === 'DEBIT_NOTE')
+          && source?.documentType === 'TAX_INVOICE') {
           const sign = replacement.documentType === 'CREDIT_NOTE' ? -1 : 1;
           const context: TransactionTaxContext = sign === -1 ? 'RETURN_OR_CREDIT' : 'DEBIT_ADJUSTMENT';
           const inherited = (draft.lines ?? []).map((line) => {
@@ -387,7 +394,8 @@ export class IssueDocumentUseCase {
       : undefined;
     const taxError = validateOutputTaxDocument(doc, source ?? undefined);
     if (taxError) throw new UnprocessableEntityException(taxError);
-    const taxRelevant = ['TAX_INVOICE', 'CREDIT_NOTE', 'DEBIT_NOTE'].includes(doc.documentType);
+    const taxRelevant = doc.documentType === 'TAX_INVOICE'
+      || (['CREDIT_NOTE', 'DEBIT_NOTE'].includes(doc.documentType) && source?.documentType === 'TAX_INVOICE');
     if (taxRelevant && (doc.lines ?? []).some((line) => !line.taxSnapshot || !line.taxComponents?.length)) {
       throw new UnprocessableEntityException('Every tax document line requires a server-resolved Tax Code snapshot before issue');
     }
@@ -446,7 +454,9 @@ export class IssueDocumentUseCase {
               };
             }));
           }
-          if (!currentSource) throw new UnprocessableEntityException(`${current.documentType} requires an original TAX_INVOICE`);
+          if (!currentSource || currentSource.documentType !== 'TAX_INVOICE') {
+            throw new UnprocessableEntityException(`${current.documentType} requires an original TAX_INVOICE for tax finalization`);
+          }
           const sign = current.documentType === 'CREDIT_NOTE' ? -1 : 1;
           const context: TransactionTaxContext = sign === -1 ? 'RETURN_OR_CREDIT' : 'DEBIT_ADJUSTMENT';
           return (current.lines ?? []).map((line) => {

@@ -17,6 +17,7 @@ import type {
   AccountingCounterpartyStatus,
   AccountingTaxInvoiceType,
   AccountingQuotationApprovalStatus,
+  AccountingAdjustmentReasonCode,
   AccountingDocumentLineSummary,
   ResolveTransactionTaxPreviewDto,
   TransactionTaxContext,
@@ -105,6 +106,8 @@ export type DocumentRecord = {
   postingError?: string;
   note?: string;
   internalMemo?: string;
+  adjustmentReasonCode?: AccountingAdjustmentReasonCode;
+  adjustmentReasonText?: string;
   issuedByUserId?: string;
   issuedAt?: Date;
   voidedByUserId?: string;
@@ -234,6 +237,8 @@ export type CreateDocumentInput = {
   outputTaxCode?: AccountingOutputTaxCode;
   note?: string;
   internalMemo?: string;
+  adjustmentReasonCode?: AccountingAdjustmentReasonCode;
+  adjustmentReasonText?: string;
   lines: CreateDocumentLineInput[];
   createdByUserId: string;
 };
@@ -252,6 +257,8 @@ export type UpdateDocumentInput = {
   outputTaxCode?: AccountingOutputTaxCode | null;
   note?: string | null;
   internalMemo?: string | null;
+  adjustmentReasonCode?: AccountingAdjustmentReasonCode | null;
+  adjustmentReasonText?: string | null;
   lines?: CreateDocumentLineInput[];
 };
 
@@ -272,6 +279,27 @@ export type CreatePaymentInput = {
   note?: string;
   allocateToDocumentId?: string;
   createdByUserId: string;
+};
+
+export type RecordSimpleIncomeInput = {
+  companyId: string;
+  idempotencyKey: string;
+  payloadFingerprint: string;
+  branchId?: string;
+  documentDate: string;
+  counterpartyId?: string;
+  vatMode: AccountingVatMode;
+  paymentMethod: AccountingPaymentMethod;
+  note?: string;
+  lines: CreateDocumentLineInput[];
+  createdByUserId: string;
+};
+
+export type RecordSimpleIncomeResult = {
+  invoice: DocumentRecord;
+  payment: PaymentRecord;
+  receipt: DocumentRecord;
+  replayed: boolean;
 };
 
 export type ListDocumentsFilter = {

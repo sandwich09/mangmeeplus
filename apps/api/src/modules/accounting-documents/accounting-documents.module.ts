@@ -39,6 +39,8 @@ import { CounterpartyController } from './presentation/http/counterparty.control
 import { AccountingDocumentController } from './presentation/http/accounting-document.controller';
 import { AccountingPaymentController } from './presentation/http/accounting-payment.controller';
 import { RevenueCategoryController } from './presentation/http/revenue-category.controller';
+import { SimpleIncomeController } from './presentation/http/simple-income.controller';
+import { RecordSimpleIncomeUseCase } from './application/use-cases/record-simple-income.use-case';
 import { TaxModule } from '../tax/tax.module';
 
 @Module({
@@ -48,6 +50,7 @@ import { TaxModule } from '../tax/tax.module';
     AccountingDocumentController,
     AccountingPaymentController,
     RevenueCategoryController,
+    SimpleIncomeController,
   ],
   providers: [
     PrismaAccountingRepository,
@@ -81,6 +84,7 @@ import { TaxModule } from '../tax/tax.module';
     ListAllRevenueCategoriesUseCase,
     CreateRevenueCategoryUseCase,
     UpdateRevenueCategoryUseCase,
+    RecordSimpleIncomeUseCase,
   ],
   exports: [
     PrismaAccountingRepository,

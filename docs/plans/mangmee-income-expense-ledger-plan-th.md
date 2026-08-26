@@ -1,6 +1,6 @@
 # แผนพัฒนา สมุดรายรับ–รายจ่าย (Income–Expense Ledger MVP)
 
-สถานะ: **ACTIVE — Phase 0 ✅ Phase 1 ✅ (PR #247) Phase 2 ✅ merge แล้ว 2026-08-26 → คิวถัดไป Phase 3**; P27 เป็นหัวขบวนสาย "โตต่อได้" (Owner 2026-08-26: P27 → P28 → …; สาย billing P14→P26 ท้ายคิวสุด)
+สถานะ: **ACTIVE — Phase 0–2 ✅; Phase 3A backend ✅ 2026-08-26 → คิวถัดไป Phase 3B UI**; P27 เป็นหัวขบวนสาย "โตต่อได้" (Owner 2026-08-26: P27 → P28 → …; สาย billing P14→P26 ท้ายคิวสุด)
 
 Spec: [Income–Expense Ledger Spec](../specs/mangmee-income-expense-ledger-spec-th.md) — ทุก phase อ้าง requirement/หลักฐานจาก spec; แผนนี้ไม่ประกาศข้อเท็จจริงใหม่
 
@@ -62,12 +62,14 @@ Spec: [Income–Expense Ledger Spec](../specs/mangmee-income-expense-ledger-spec
 
 ## Phase 3 — บันทึกรายรับ + ใบลดหนี้/เพิ่มหนี้ (spec F-LED-1, F-LED-6)
 
-1. Repository bundle method ใหม่ `recordSimpleIncomeBundle` (ดีไซน์สรุปใน spec §F-LED-1 ตามผล V6): tx เดียว Serializable + advisory lock — dedup `idempotencyKey` → INVOICE+lines → เลขเอกสารใน tx (`reserveNumberInTransaction`/`commitNumberInTransaction`) → issue (+tax snapshot ผ่าน db param สำหรับบริษัท VAT) → payment RECEIVED + allocation → auto-RECEIPT (`sourceDocumentId` = INVOICE ที่เพิ่ง issue, ผล V3) → audit ผ่าน tx; `RecordSimpleIncomeUseCase` เป็นชั้น permission/validation หุ้ม
-2. Endpoint ใหม่ `POST companies/:companyId/accounting/simple-income` — permission ประกอบจากของเดิม (`accounting.invoice.create` + `accounting.invoice.issue` + `accounting.payment.create` + `accounting.receipt.issue`); ผู้ไม่มีสิทธิ์ issue → สร้างได้แค่ draft พร้อมข้อความบอกขั้นถัดไป
+สถานะ 2026-08-26: **3A backend ✅** — ข้อ 1–2, M5/M6, backend ของข้อ 4 และ V7 เสร็จพร้อม real-PostgreSQL race/rollback proof; **3B เหลือ UI ข้อ 3/5 + source-first correction UI ของข้อ 4**
+
+1. ✅ Repository `recordSimpleIncomeBundle`: Serializable + advisory lock + bounded retry ของ serialization conflict; dedup ผ่าน M7 command+fingerprint → INVOICE → payment/allocation → auto-RECEIPT → audit ใน tx; receipt เป็น evidence-only ไม่ลง settlement ซ้ำ
+2. ✅ Endpoint `POST companies/:companyId/accounting/simple-income` — use-case บังคับ permission ครบ (`accounting.invoice.create` + `accounting.invoice.issue` + `accounting.payment.create` + `accounting.receipt.issue`); draft-only เป็น flow UI ข้อ 3 ไม่เรียก endpoint นี้
 3. โหมด "ออกบิลไว้ก่อน": ฟอร์มเดียวกัน จบที่ issue INVOICE/BILLING_NOTE (reuse use-case เดิมทั้งหมด — งานคือ UI); UI ลูกค้าไม่บังคับ แสดง label "ลูกค้าทั่วไป (ขายเงินสด)" เมื่อว่าง (ผล V1 — ไม่สร้าง counterparty row)
-4. **ใบลดหนี้/เพิ่มหนี้แบบ FlowAccount (Owner ข้อ 4)**: ขยาย source rule ให้ CN/DN อ้าง `INVOICE` ที่ issue แล้วได้ (แก้ `accounting-status.logic.ts:103-109` + tests), migration M5 (`adjustmentReasonCode/Text`), UI สาเหตุบังคับ (รายการสาเหตุตรวจกับต้นทางกรมสรรพากรก่อน copy — เทียบ `tax-2026-verified-rules.md`), prefill มูลค่าเดิม/ที่ถูกต้อง/ผลต่างจาก source; ไม่ทำ CN แบบไม่อ้างเอกสาร
+4. **backend ✅ / UI รอ**: CN/DN อ้าง issued TAX_INVOICE หรือ issued INVOICE เฉพาะ non-VAT; M5 reason validation อิง ม.82/9–82/10 + ประกาศฯ 82; แก้ cumulative cap ให้ใช้ `lineSubtotalAmount` ของ non-tax source; UI ยังต้อง prefill/disabled reason+เพดาน
 5. Web หน้า "บันทึกรายรับ" ตามสเปกหน้าจอ **spec §F-LED-7 S1 ทุกข้อ** (theme เดิม, 2 ปุ่มใหญ่ ≥56px, action-gating 7.2: ปุ่มที่กดไม่สำเร็จต้องไม่มีอยู่ — ซ่อนตามสิทธิ์/disabled+เหตุผลใต้ปุ่ม, sticky แถบสรุปเงิน, สำเร็จ replace→สมุด+highlight) + **VAT ต่อบรรทัด default จากหมวด (spec §7.9)**: หมวด O7/OX/O0 → pre-select, หมวดไม่กำหนด → บรรทัดบังคับเลือกก่อนยืนยัน, ซ่อนทั้งหมดเมื่อบริษัทไม่จด VAT (V4)
-6. **V7 (เพิ่มจากรอบสอง)**: พิสูจน์ mixed-rate invoice ผ่าน engine จริง (บรรทัด 7% + บรรทัด 0/ยกเว้นในใบเดียว): create→issue→totals→payment ถูกทุกชั้น + `deriveCompatibleOutputTaxCode`/`validateOutputTaxDocument` ยอมรับ — ถ้า engine ติด ให้บันทึกและเสนอทางแก้ก่อนทำ UI
+6. ✅ **V7**: real PostgreSQL พิสูจน์บรรทัด 7% + 0% → invoice 207.00 → payment 207.00 → receipt 207.00; tax validator ยอม mixed line truth โดย header compatibility code เป็น undefined ตามตั้งใจ (ข้อจำกัด OX/O0 semantic ยังอยู่ LED-FIN-06)
 7. Tests: unit idempotent-retry/partial-failure-rollback/perm-split, contract DTO, golden "issue→pay→receipt posting ครั้งเดียว" (ยืนยัน invariant spec §7.2), golden "หมวด OX ไม่สร้าง VAT" (เคสผัก — spec §7.9), CN อ้าง INVOICE + เพดานลดหนี้สะสม + เหตุผลบังคับ
 
 ## Phase 4 — หน้าสมุด + export (spec F-LED-4)

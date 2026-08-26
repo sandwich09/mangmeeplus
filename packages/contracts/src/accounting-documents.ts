@@ -32,6 +32,37 @@ export type AccountingCounterpartyStatus = 'ACTIVE' | 'ARCHIVED';
 export type AccountingTaxInvoiceType = 'FULL' | 'ABBREVIATED';
 export type AccountingQuotationApprovalStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 
+/** Revenue Code sections 82/9–82/10 and RD VAT Director-General Notification No. 82. */
+export const ACCOUNTING_CREDIT_NOTE_REASON_CODES = [
+  'GOODS_NOT_AS_AGREED',
+  'GOODS_DAMAGED',
+  'GOODS_QUANTITY_SHORT',
+  'GOODS_PRICE_OVERSTATED',
+  'SERVICES_NOT_AS_AGREED',
+  'SERVICES_QUANTITY_SHORT',
+  'SERVICES_PRICE_OVERSTATED',
+  'GOODS_RETURNED',
+  'SERVICE_CANCELLED',
+  'LEGAL_COMPENSATION',
+  'ADVANCE_OR_DEPOSIT_REFUND',
+  'GOODS_RETURN_OR_EXCHANGE_TRADE_AGREEMENT',
+  'SERVICE_DEFECT',
+  'SERVICE_NOT_PROVIDED',
+  'OTHER_PRESCRIBED',
+] as const;
+
+export const ACCOUNTING_DEBIT_NOTE_REASON_CODES = [
+  'GOODS_QUANTITY_EXCESS',
+  'GOODS_PRICE_UNDERSTATED',
+  'SERVICES_EXCEED_AGREEMENT',
+  'SERVICES_PRICE_UNDERSTATED',
+  'OTHER_PRESCRIBED',
+] as const;
+
+export type AccountingAdjustmentReasonCode =
+  | typeof ACCOUNTING_CREDIT_NOTE_REASON_CODES[number]
+  | typeof ACCOUNTING_DEBIT_NOTE_REASON_CODES[number];
+
 export type AccountingCounterpartySummary = {
   id: string;
   companyId: string;
@@ -119,6 +150,8 @@ export type AccountingDocumentDetail = AccountingDocumentSummary & {
   postingError?: string;
   note?: string;
   internalMemo?: string;
+  adjustmentReasonCode?: AccountingAdjustmentReasonCode;
+  adjustmentReasonText?: string;
   issuedByUserId?: string;
   issuedAt?: string;
   voidedByUserId?: string;
@@ -289,6 +322,35 @@ export type UpdateRevenueCategoryInput = {
   defaultOutputTaxCode?: string | null;
   sortOrder?: number;
   status?: RevenueCategoryStatus;
+};
+
+export type RecordSimpleIncomeLineInput = {
+  lineNumber: number;
+  description: string;
+  quantity: string;
+  unitPrice: string;
+  discountAmount?: string;
+  vatRate?: string;
+  whtRate?: string;
+  revenueCategoryId?: string;
+};
+
+export type RecordSimpleIncomeInput = {
+  idempotencyKey: string;
+  branchId?: string;
+  documentDate: string;
+  counterpartyId?: string;
+  vatMode: AccountingVatMode;
+  paymentMethod: AccountingPaymentMethod;
+  note?: string;
+  lines: RecordSimpleIncomeLineInput[];
+};
+
+export type RecordSimpleIncomeResult = {
+  invoice: AccountingDocumentDetail;
+  payment: AccountingPaymentSummary;
+  receipt: AccountingDocumentDetail;
+  replayed: boolean;
 };
 
 // Document sequence keys

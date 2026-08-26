@@ -62,8 +62,8 @@ export const CUSTOMER_JOURNEY_FAILURE_MATRIX = [
     detection: null, alarm: null, runbookAnchor: `${RUNBOOK}#claim-email-delivery`, recovery: null,
     noDuplicateInvariant: 'P11 requires one outbox eventKey per signup request and suppression-aware resend policy.',
     evidence: [
-      { path: 'docs/specs/mangmee-email-delivery-claim-spec-th.md', token: 'SES adapter NOT FOUND' },
-    ], gap: 'P11 SES adapter, attempt state, delivery-event consumer and provider configuration are not implemented.',
+      { path: 'docs/specs/mangmee-email-delivery-claim-spec-th.md', token: 'F-EM-2 Durable send ผ่าน outbox' },
+    ], gap: 'P11 durable claim send, attempt state, bounce/complaint consumer and live SES identity configuration are not implemented.',
   },
   {
     key: 'line-invalid-signature', severity: 'HIGH', owner: 'identity-access', coverage: 'LIVE',

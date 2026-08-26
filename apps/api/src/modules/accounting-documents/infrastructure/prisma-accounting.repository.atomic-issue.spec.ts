@@ -1,7 +1,12 @@
-import { describe, it } from 'node:test';
+import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { PrismaClient } from '../../../generated/prisma/client';
 import type { ResolveTransactionTaxPreviewDto } from '@watchdog-bms/contracts';
 import { PrismaAccountingRepository } from './prisma-accounting.repository.js';
+import { PrismaDocumentSequenceRepository } from '../../data-model-core/infrastructure/repositories/prisma-document-sequence.repository.js';
 
 const updatedAt = new Date('2026-07-15T10:00:00.000Z');
 
@@ -164,5 +169,126 @@ describe('atomic accounting tax issue', () => {
     assert.equal(finalized, false);
     assert.equal(state.document.status, 'DRAFT');
     assert.equal(state.document.lines[0]!.taxEvidenceReviewStatus, 'REVIEW_REQUIRED');
+  });
+});
+
+function rootDatabaseUrl(): string | null {
+  if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
+  for (const candidate of [join(process.cwd(), '.env'), join(process.cwd(), '../.env'), join(process.cwd(), '../../.env')]) {
+    try {
+      const match = /^DATABASE_URL\s*=\s*"?([^"\n]+)"?/m.exec(readFileSync(candidate, 'utf8'));
+      if (match?.[1]) return match[1];
+    } catch {
+      // Keep walking toward the workspace root.
+    }
+  }
+  return null;
+}
+
+describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
+  const companyId = `p27-simple-${process.pid}`;
+  let client: PrismaClient | null = null;
+  let repo: PrismaAccountingRepository | null = null;
+  let reachable = false;
+
+  before(async () => {
+    const url = rootDatabaseUrl();
+    if (!url) return;
+    try {
+      client = new PrismaClient({ adapter: new PrismaPg({ connectionString: url }) });
+      const [probe] = await client.$queryRaw<Array<{ command_table: string | null }>>`
+        SELECT to_regclass('"AccountingSimpleIncomeCommand"')::text AS command_table
+      `;
+      if (!probe?.command_table) return;
+      await client.accountingSimpleIncomeCommand.deleteMany({ where: { companyId } });
+      await client.company.deleteMany({ where: { id: companyId } });
+      await client.company.create({ data: { id: companyId, name: 'P27 simple-income test' } });
+      repo = new PrismaAccountingRepository(
+        { client } as any,
+        new PrismaDocumentSequenceRepository({ client } as any),
+      );
+      reachable = true;
+    } catch {
+      reachable = false;
+    }
+  });
+
+  after(async () => {
+    if (!client) return;
+    if (reachable) {
+      await client.accountingSimpleIncomeCommand.deleteMany({ where: { companyId } });
+      await client.accountingPaymentAllocation.deleteMany({ where: { companyId } });
+      await client.accountingPayment.deleteMany({ where: { companyId } });
+      await client.accountingDocument.deleteMany({ where: { companyId } });
+      await client.documentNumber.deleteMany({ where: { companyId } });
+      await client.documentSequence.deleteMany({ where: { companyId } });
+      await client.company.deleteMany({ where: { id: companyId } });
+    }
+    await client.$disconnect();
+  });
+
+  const input = (idempotencyKey: string, payloadFingerprint: string, note: string) => ({
+    companyId, idempotencyKey, payloadFingerprint, documentDate: '2026-08-26', vatMode: 'NO_VAT' as const,
+    paymentMethod: 'BANK_TRANSFER' as const, note,
+    lines: [{ lineNumber: 1, description: note, quantity: '1', unitPrice: '100.00', whtRate: '3' }],
+    createdByUserId: 'p27-test-user',
+  });
+
+  it('rolls back every row on a late failure, then gives one result to concurrent retries', async (t) => {
+    if (!reachable || !client || !repo) return t.skip('local PostgreSQL or the P27 migration is unavailable');
+
+    await assert.rejects(() => repo!.recordSimpleIncomeBundle(
+      input('income-fail-0001', 'fingerprint-fail', `${companyId}-fail`),
+      async () => { throw new Error('audit unavailable'); },
+    ));
+    assert.equal(await client.accountingSimpleIncomeCommand.count({ where: { companyId, idempotencyKey: 'income-fail-0001' } }), 0);
+    assert.equal(await client.accountingDocument.count({ where: { companyId, note: `${companyId}-fail` } }), 0);
+    assert.equal(await client.accountingPayment.count({ where: { companyId, note: `${companyId}-fail` } }), 0);
+
+    const attempts = await Promise.all(Array.from({ length: 6 }, () => repo!.recordSimpleIncomeBundle(
+      input('income-race-0001', 'fingerprint-race', `${companyId}-success`),
+      async () => undefined,
+    )));
+    assert.equal(new Set(attempts.map((result) => result.invoice.id)).size, 1);
+    assert.equal(attempts.filter((result) => !result.replayed).length, 1);
+    const result = attempts[0]!;
+    assert.equal(result.invoice.paymentStatus, 'PAID');
+    assert.equal(Number(result.invoice.paidAmount), 100);
+    assert.equal(Number(result.invoice.outstandingAmount), 0);
+    assert.equal(Number(result.payment.amount), 97);
+    assert.equal(Number(result.payment.whtAmount), 3);
+    assert.equal(result.receipt.sourceDocumentId, result.invoice.id);
+    assert.equal(result.receipt.postingStatus, 'not_required', 'auto-receipt must not post settlement twice');
+    assert.equal(await client.accountingDocument.count({ where: { companyId } }), 2);
+    assert.equal(await client.accountingPayment.count({ where: { companyId } }), 1);
+    assert.equal(await client.accountingPaymentAllocation.count({ where: { companyId } }), 1);
+    assert.equal(await client.accountingSimpleIncomeCommand.count({ where: { companyId } }), 1);
+    assert.equal(await client.documentNumber.count({ where: { companyId, status: 'COMMITTED' } }), 3);
+
+    await assert.rejects(
+      () => repo!.recordSimpleIncomeBundle(
+        input('income-race-0001', 'different-fingerprint', `${companyId}-changed`),
+        async () => undefined,
+      ),
+      (error: any) => error.getResponse?.().code === 'simple_income_idempotency_conflict',
+    );
+  });
+
+  it('keeps mixed 7% and zero-rate line arithmetic through invoice, payment, and receipt', async (t) => {
+    if (!reachable || !repo) return t.skip('local PostgreSQL or the P27 migration is unavailable');
+    const result = await repo.recordSimpleIncomeBundle({
+      ...input('income-mixed-0001', 'fingerprint-mixed', `${companyId}-mixed`),
+      vatMode: 'VAT_EXCLUDED',
+      lines: [
+        { lineNumber: 1, description: 'บริการ VAT 7%', quantity: '1', unitPrice: '100.00', vatRate: '7' },
+        { lineNumber: 2, description: 'รายการอัตรา 0%', quantity: '1', unitPrice: '100.00', vatRate: '0' },
+      ],
+    }, async () => undefined);
+    assert.equal(Number(result.invoice.taxableAmount), 200);
+    assert.equal(Number(result.invoice.vatAmount), 7);
+    assert.equal(Number(result.invoice.grandTotalAmount), 207);
+    assert.equal(Number(result.payment.amount), 207);
+    assert.equal(Number(result.receipt.grandTotalAmount), 207);
+    assert.equal(result.invoice.paymentStatus, 'PAID');
   });
 });
