@@ -106,7 +106,7 @@ describe('AccountingGetSummaryTool', () => {
     assert.equal(result.status, 'ok');
     assert.equal(data.total, 3);
     assert.equal(data.byType.TAX_INVOICE.count, 2);
-    assert.equal(data.byType.TAX_INVOICE.totalAmount, 150);
+    assert.equal(data.byType.TAX_INVOICE.totalAmount, '150.00');
     assert.equal(data.period.defaultedToCurrentMonth, true);
   });
 
@@ -122,18 +122,21 @@ describe('AccountingGetSummaryTool', () => {
     const data = result.data as any;
     assert.equal(result.status, 'ok');
     assert.equal(data.total, 250);
-    assert.equal(data.byType.TAX_INVOICE.totalAmount, 1500);
-    assert.equal(data.byType.RECEIPT.totalAmount, 200);
+    assert.equal(data.byType.TAX_INVOICE.totalAmount, '1500.00');
+    assert.equal(data.byType.RECEIPT.totalAmount, '200.00');
     assert.equal(calls.length, 1, 'one snapshot-consistent operation, never a page walk');
     assert.equal(calls[0]!.filter.page, undefined, 'no pagination parameters leak into the aggregate');
   });
 
-  it('keeps satang-level sums exact through the Decimal-string seam', async () => {
-    // The database sums the Decimal column and hands the tool a 2dp string; the tool's only
-    // numeric step is the final Number() for the JSON payload — no float accumulation.
-    const { source } = aggregateSource({ INVOICE: { count: 3, totalAmount: '4020.30' } });
+  it('carries the exact Decimal sum as a STRING across the tool boundary (PR #238 R2)', async () => {
+    // 90071992547409.93 cannot round-trip through a JS Number (2^53 = 9007199254740992 caps the
+    // cent-safe range at 90,071,992,547,409.92): Number() would answer ...92 and the satang is
+    // gone. The repository's toFixed(2) string must reach the payload unchanged — the prepared
+    // formatter already renders string | number.
+    const { source } = aggregateSource({ INVOICE: { count: 3, totalAmount: '90071992547409.93' } });
     const result = await new AccountingGetSummaryTool(source).execute({ ...baseCtx, permissions: ['accounting.document.read'] });
-    assert.equal((result.data as any).byType.INVOICE.totalAmount, 4020.3);
+    assert.equal((result.data as any).byType.INVOICE.totalAmount, '90071992547409.93');
+    assert.notEqual(String(Number('90071992547409.93')), '90071992547409.93', 'the tripwire premise: Number cannot hold this value');
   });
 
   it('accepts related-record view and leaves relation filtering to the source use case', async () => {

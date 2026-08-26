@@ -75,8 +75,10 @@ export type ExpenseCategoryGoldenScore = {
   ownerConfirmedFixtures: number;
   /**
    * S1-R6 gate: true only when at least EXPENSE_CATEGORY_GOLDEN_MIN_CONFIRMED_FIXTURES
-   * owner-confirmed fixtures EACH have an evaluated result (baseline.evaluatedFixtures >= MIN) —
-   * confirmed labels alone are not evidence.
+   * owner-confirmed fixtures have an evaluated result AND no confirmed fixture is missing one
+   * (confirmedFixturesWithoutResult is empty). Both legs matter: the count stops a thin sample,
+   * and the empty-missing-list stops cherry-picking — with 31 confirmed rows, dropping the one
+   * hard failure must not produce a publishable 30-row baseline.
    */
   baselineReady: boolean;
   /** Baseline metrics over the owner-confirmed ∩ evaluated intersection only. */
@@ -290,7 +292,8 @@ export function scoreExpenseCategoryGolden(
   return {
     scoredFixtures: scored,
     ownerConfirmedFixtures,
-    baselineReady: baselineScored >= EXPENSE_CATEGORY_GOLDEN_MIN_CONFIRMED_FIXTURES,
+    baselineReady: baselineScored >= EXPENSE_CATEGORY_GOLDEN_MIN_CONFIRMED_FIXTURES
+      && confirmedFixturesWithoutResult.length === 0,
     baseline: {
       evaluatedFixtures: baselineScored,
       confirmedFixturesWithoutResult,
@@ -338,10 +341,17 @@ export function formatExpenseCategoryGoldenReport(
   const lines = [`# Expense category golden report — ${runLabel}`];
   if (!score.baselineReady) {
     lines.push(
-      `NOT-A-BASELINE: only ${score.baseline.evaluatedFixtures}/${EXPENSE_CATEGORY_GOLDEN_MIN_CONFIRMED_FIXTURES}`
-      + ' owner-confirmed fixtures have an evaluated result (spec S1-R1; a confirmed label without a run'
-      + ' result proves nothing). The numbers below describe the harness, not the product — do not'
-      + ' publish them as accuracy (S1-R6).',
+      score.baseline.confirmedFixturesWithoutResult.length > 0
+        // Not only a count problem: every confirmed row must be evaluated, or a run could publish
+        // by quietly dropping its hard failures (selection bias).
+        ? `NOT-A-BASELINE: ${score.baseline.confirmedFixturesWithoutResult.length} owner-confirmed`
+          + ` fixture(s) have no evaluated result (listed below) and only ${score.baseline.evaluatedFixtures}/`
+          + `${EXPENSE_CATEGORY_GOLDEN_MIN_CONFIRMED_FIXTURES} are evaluated. Every confirmed row must be`
+          + ' evaluated before any number is a baseline (spec S1-R1/S1-R6).'
+        : `NOT-A-BASELINE: only ${score.baseline.evaluatedFixtures}/${EXPENSE_CATEGORY_GOLDEN_MIN_CONFIRMED_FIXTURES}`
+          + ' owner-confirmed fixtures have an evaluated result (spec S1-R1; a confirmed label without a run'
+          + ' result proves nothing). The numbers below describe the harness, not the product — do not'
+          + ' publish them as accuracy (S1-R6).',
     );
   } else {
     const { baseline } = score;

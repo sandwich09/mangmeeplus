@@ -56,12 +56,15 @@ export class AccountingGetSummaryTool implements ErpReadToolPort {
     // class the old aggregated-vs-total self-check could not actually catch. The database sums the
     // Decimal column; float never touches the money. With the walk gone, the period-size bound and
     // the count-mismatch refusal are structurally unnecessary and are gone with it.
+    // R2: the sum crosses this boundary as the repository's exact 2dp STRING — a Number() here
+    // would silently lose satang above 2^53/100, and the prepared formatter already renders
+    // string | number.
     const aggregate = await this.listDocuments.aggregateByType(toCtx(ctx), {
       fromDate: period.fromDate, toDate: period.toDate,
     });
-    const byType: Record<string, { count: number; totalAmount: number }> = {};
+    const byType: Record<string, { count: number; totalAmount: string }> = {};
     for (const [documentType, entry] of Object.entries(aggregate.byType)) {
-      byType[documentType] = { count: entry.count, totalAmount: money(entry.totalAmount) };
+      byType[documentType] = { count: entry.count, totalAmount: entry.totalAmount };
     }
     const sourceRefs: SourceRef[] = [{
       label: 'สรุปเอกสารบัญชี', module: 'accounting-documents', entityType: 'accounting_document_summary',

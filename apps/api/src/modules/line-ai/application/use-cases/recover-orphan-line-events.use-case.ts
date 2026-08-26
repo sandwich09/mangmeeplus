@@ -140,7 +140,15 @@ export class RecoverOrphanLineEventsUseCase {
       // answer and lose the facts the original turn accepted. Rows without an outcome (the flag was
       // off when they ran, or the outcome write itself failed) keep the legacy input replay below,
       // which is the only honest recovery when there is nothing recorded to send.
-      const outcome = outcomes.get(row.webhookEventId);
+      //
+      // PR #238 review R2: LINE_OUTCOME_NOT_RECORDED is the one code where a stored outcome must
+      // NOT be trusted — it marks a turn whose outcome-of-record could not be updated in-turn, so
+      // whatever the table still holds is the SUPERSEDED payload (concretely: the Flex LINE just
+      // rejected, whose text replacement failed to persist). Pushing it would resend the refused
+      // bytes; legacy input replay below recomputes the turn and its upsert overwrites the stale row.
+      const outcome = row.errorCode === 'LINE_OUTCOME_NOT_RECORDED'
+        ? undefined
+        : outcomes.get(row.webhookEventId);
       if (outcome !== undefined) {
         result[await this.replayOutcome(row, envelope, outcome)] += 1;
         continue;
