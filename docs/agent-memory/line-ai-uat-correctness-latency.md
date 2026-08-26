@@ -2,8 +2,17 @@
 
 Status: Implementation EXISTS on this branch behind three default-off flags, and is MERGE-SAFE but NOT
 ACTIVATION-READY. No deploy, no config/flag change in any environment. Phase 0 eval freeze is closed for
-§14.1 (structural), §14.2 (now bound to the real assessor) and §14.3 (13 implemented_fixture / 8
+§14.1 (structural), §14.2 (now bound to the real assessor) and §14.3 (17 implemented_fixture / 4
 required_gap). Every behaviour phase stays gated, and DRAFT-only (Phase 3B) still waits for owner GO.
+
+WP-B (2026-08-26): the §8.3 DB-backed neutral intake state landed behind a FOURTH default-off flag,
+`LINE_AI_INTAKE_STATE_MODE` (`off` | `shadow` | `on`). New `LineIntakeState` model + migration
+`20260826120000_line_intake_state` (partial unique index on the OPEN row per company+user+chatKeyHash) and
+`LineIntakeStateRepository`, which fails **closed** — the exact opposite of the fail-open Redis ledger it
+backstops. That moved four §14.3 rows from `required_gap` to `implemented_fixture`
+(state outage / stale-expired / cross-user / cross-chat-or-company). Read that as "code path and specs
+exist", NOT as "the lane is proven": the flag is off in every environment, and no provider replay or UAT
+evidence exists for those four rows. Each row's `note` says `DEFAULT OFF` and the integrity spec asserts it.
 
 Owner: thawatchai.phuchana
 
@@ -80,14 +89,15 @@ Decisions:
   asserted for them. §14.1 route accuracy and any mutation/UAT evidence are still missing.
 - Both manifests stay OUT of `LINE_AI_PROTECTED_EVAL_CASE_IDS` (still 164 + 92): they are not provider
   route rows, and the integrity spec asserts their ids never collide with a scored one.
-- §14.3 rows carry `evidenceStatus`. `implemented_fixture` (13) = terminal Flex for single AND multipart
+- §14.3 rows carry `evidenceStatus`. `implemented_fixture` (17) = terminal Flex for single AND multipart
   replies, payer clarification card, clarify-only card with no CTA, handoff card whose only button is
   `/companies/:id/reimbursements/new` (no query/hash), permission / entitlement / empty-branch denials as
   deterministic text with no CTA, legal-pending text, duplicate webhook suppressed by the durable event-log
   claim, the in-turn push fallback for an expired reply token, and the two long-reply rows (>1,200 and
-  >4,800 lossless text closed by a concise card). `required_gap` (8) = the dedicated
-  `ร่างค่าใช้จ่าย`/`ร่างคำขอเบิก` cards, DB-backed state outage/stale/cross-user/cross-chat, persisted
-  terminal-outcome replay, and a Flex-failure text fallback.
+  >4,800 lossless text closed by a concise card), plus the four DB-backed state rows added by WP-B
+  (outage / stale-expired / cross-user / cross-chat-or-company — code implemented, flag default-off, no
+  provider or UAT evidence yet). `required_gap` (4) = the dedicated `ร่างค่าใช้จ่าย`/`ร่างคำขอเบิก` cards,
+  persisted terminal-outcome replay, and a Flex-failure text fallback.
 - Gold-label rule frozen in the corpus: a claim that does not state a payer pins
   `REIMBURSEMENT_REQUEST_START` + `AMBIGUOUS`/`UNKNOWN`; only text containing a literal self-payment span
   (`EXPLICIT_EMPLOYEE_PAID_PHRASES`) may pin `REIMBURSEMENT_CLAIM`/`EMPLOYEE_PAID`, proven mechanically by
@@ -132,5 +142,9 @@ Next:
 - Close Phase 0: UAT source SHA/config + the 4 event ids, the related doc amendments, and the per-journey
   baseline p50/p95/model-call/token/cost.
 - Configured-provider replay for §14.1 route accuracy.
-- The 8 §14.3 `required_gap` implementations, starting with durable replay and the DB-backed neutral state.
+- The remaining 4 §14.3 `required_gap` implementations, starting with persisted terminal-outcome replay
+  (the DB-backed neutral state closed in WP-B).
+- Evidence for the four WP-B rows: a `shadow`-mode divergence run, then provider/UAT evidence, before
+  `LINE_AI_INTAKE_STATE_MODE` may go to `on` anywhere. Wiring the flag into `deploy.sh` is a separate step
+  (UAT flags only reach the environment through its jq blocks).
 - Keep Phase 3B blocked until owner GO.

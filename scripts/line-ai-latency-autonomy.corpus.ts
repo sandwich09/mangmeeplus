@@ -800,26 +800,35 @@ export const LINE_AI_PRESENTATION_PERMISSION_MANIFEST: readonly PresentationPerm
   {
     id: 'state-store-outage-zero-write', journey: 'clarification_state', expectedPresentationKind: 'text',
     authority: 'state_unavailable', expectedCtaPolicy: 'no_cta',
-    expectedDomainWriteCount: 0, maxAdditionalModelCalls: 0, evidenceStatus: 'required_gap',
-    note: 'GAP: §8.3 requires a DB-backed neutral intake state whose outage is zero-write. It does not exist yet (Phase 1A).',
+    expectedDomainWriteCount: 0, maxAdditionalModelCalls: 0, evidenceStatus: 'implemented_fixture',
+    note: '§8.3 LineIntakeState (migration 20260826120000) + LineIntakeStateRepository, which fails CLOSED where '
+      + 'the Redis ledger fails open: a store error returns `unavailable` and never a value. Behind '
+      + 'LINE_AI_INTAKE_STATE_MODE=on the routing region gates BEFORE captureExpenseNote, so the refusal is '
+      + 'zero-write by construction. Code only, flag DEFAULT OFF — no provider replay or UAT evidence yet.',
   },
   {
     id: 'state-stale-or-expired-zero-write', journey: 'clarification_state', expectedPresentationKind: 'text',
     authority: 'state_stale_or_expired', expectedCtaPolicy: 'no_cta',
-    expectedDomainWriteCount: 0, maxAdditionalModelCalls: 0, evidenceStatus: 'required_gap',
-    note: 'GAP: an expired/superseded state version must be refused, not merged. Depends on the same missing state store.',
+    expectedDomainWriteCount: 0, maxAdditionalModelCalls: 0, evidenceStatus: 'implemented_fixture',
+    note: 'Consume is one conditional UPDATE (status OPEN + version = expected + expiresAt > now), so an expired '
+      + 'or already-consumed state matches zero rows and is refused, not merged; a replay is idempotent. '
+      + 'Code only, flag DEFAULT OFF — no provider replay or UAT evidence yet.',
   },
   {
     id: 'state-cross-user-zero-write', journey: 'clarification_state', expectedPresentationKind: 'text',
     authority: 'cross_user', expectedCtaPolicy: 'no_cta',
-    expectedDomainWriteCount: 0, maxAdditionalModelCalls: 0, evidenceStatus: 'required_gap',
-    note: 'GAP: another member answering in the same chat must not consume the first member state.',
+    expectedDomainWriteCount: 0, maxAdditionalModelCalls: 0, evidenceStatus: 'implemented_fixture',
+    note: 'The owner triple is inside the WHERE clause of both the read and the resolve UPDATE, so another member '
+      + 'holding the correct state id AND version still matches zero rows. Code only, flag DEFAULT OFF — no '
+      + 'provider replay or UAT evidence yet.',
   },
   {
     id: 'state-cross-chat-or-company-zero-write', journey: 'clarification_state', expectedPresentationKind: 'text',
     authority: 'cross_chat_or_company', expectedCtaPolicy: 'no_cta',
-    expectedDomainWriteCount: 0, maxAdditionalModelCalls: 0, evidenceStatus: 'required_gap',
-    note: 'GAP: owner binding is company + user + chat hash; a different chat or company can never resolve the state.',
+    expectedDomainWriteCount: 0, maxAdditionalModelCalls: 0, evidenceStatus: 'implemented_fixture',
+    note: 'Owner binding is company + user + chatKeyHash, enforced by a PARTIAL unique index on the OPEN row and '
+      + 'by the same WHERE clause, so a different chat or company can never resolve the state. Code only, flag '
+      + 'DEFAULT OFF — no provider replay or UAT evidence yet.',
   },
   {
     id: 'duplicate-webhook-single-outcome', journey: 'delivery_replay', expectedPresentationKind: 'flex',

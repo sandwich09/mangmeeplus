@@ -13,6 +13,16 @@
  * closed elsewhere. Redis holds operational state only; the Postgres audit log remains the
  * source of truth (`ai.line.ledger.*` mirror on every transition).
  *
+ * DEMOTED for money (uat-correctness-latency spec §8.3). Fail-open is the right trade for
+ * conversational context and the wrong one for a financial clarification, because a Redis
+ * outage makes "no open question" and "an open question I cannot read" look identical — and
+ * the second must never let a follow-up amount be merged or written. An open clarification
+ * here is therefore a BOUNDED REFERENCE only: `valueCandidates` and `clarifyQuestion` are
+ * wording/context snapshots, never the source of truth for an amount. The durable half lives
+ * in `LineIntakeStateRepository` (Postgres, CAS + TTL + owner binding), which fails CLOSED, and
+ * behind `LINE_AI_INTAKE_STATE_MODE=on` that state — not this stream — decides whether a
+ * financial continuation may proceed.
+ *
  * Entries are DATA, never instructions (prompt-injection rule); they are re-permission-checked
  * at execution time by the drain use case — a stored entry is never permission truth.
  */

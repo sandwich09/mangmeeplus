@@ -8177,3 +8177,49 @@ model AccountingIssueAuthzObservation {
   @@unique([companyId, roleKey, documentType, missingPermissionKey, hourBucketUtc])
   @@index([hourBucketUtc])
 }
+
+// §8.3 (uat-correctness-latency): DB-backed NEUTRAL intake state for a financial clarification.
+// The Redis ledger fails OPEN by design, so it may carry a bounded reference to a row here but is
+// never the source of truth for money. Owner binding is the full triple (companyId, userId,
+// chatKeyHash): a different chat, company or member can never resolve someone else's open state.
+// `version` is the CAS token — resolve is a single conditional UPDATE, so a stale or expired
+// version refuses instead of merging, and a store outage refuses instead of writing.
+enum LineIntakeStateStatus {
+  OPEN
+  RESOLVED
+  SUPERSEDED
+  EXPIRED
+}
+
+model LineIntakeState {
+  id                String                @id @default(cuid())
+  companyId         String
+  userId            String
+  /// Hash of the chat the question was asked in (chatKeyHashOf) — never the raw LINE id.
+  chatKeyHash       String
+  targetIntent      String
+  semanticOutcome   String?
+  /// Grounded hints already accepted; merge rule 1 keeps them until an explicit correction.
+  acceptedHintsJson Json?
+  missingFields     String[]
+  conflictingFields String[]
+  /// Per-field origin (original vs follow-up turn) — bounded labels, never raw conversation.
+  provenanceJson    Json?
+  /// Hash of the originating webhook event/message, so a replay resolves the same row once.
+  sourceEventHash   String
+  version           Int                   @default(1)
+  expiresAt         DateTime
+  status            LineIntakeStateStatus @default(OPEN)
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+
+  // NOTE: migration 20260826120000_line_intake_state also adds a PARTIAL unique index
+  // "LineIntakeState_companyId_userId_chatKeyHash_open_key"
+  // ON (companyId, userId, chatKeyHash) WHERE status = 'OPEN' — at most ONE open clarification
+  // per owner. It is partial on purpose: terminal rows (RESOLVED/SUPERSEDED/EXPIRED) accumulate as
+  // history, so a plain @@unique including `status` would reject the SECOND resolved row for the
+  // same owner. Prisma cannot model partial indexes — do NOT let a future `prisma migrate diff`
+  // drop it.
+  @@index([companyId, userId, chatKeyHash, status])
+  @@index([status, expiresAt])
+}

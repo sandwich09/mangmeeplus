@@ -488,7 +488,10 @@ describe('LINE AI latency/autonomy eval corpus', () => {
     const gaps = rows.filter(({ evidenceStatus }) => evidenceStatus === 'required_gap');
     assert.equal(implemented.length + gaps.length, rows.length, 'evidenceStatus stays bounded to the two members');
     assert.ok(implemented.length >= 8, `expected a real implemented set, got ${implemented.length}`);
-    assert.ok(gaps.length >= 6, `the manifest must keep naming its gaps, got ${gaps.length}`);
+    // Four clarification-state rows moved to implemented when the DB-backed neutral state landed
+    // (§8.3 / plan Phase 1A), so the floor drops with them. It stays a FLOOR, not a target: the
+    // manifest's job is to keep naming what is still missing.
+    assert.ok(gaps.length >= 4, `the manifest must keep naming its gaps, got ${gaps.length}`);
 
     const byId = new Map(rows.map((row) => [row.id, row]));
     for (const id of [
@@ -498,13 +501,17 @@ describe('LINE AI latency/autonomy eval corpus', () => {
       'reimbursement-handoff-empty-branch-scope', 'legal-pending-zero-write',
       'duplicate-webhook-single-outcome', 'expired-reply-token-push-same-messages',
       'long-reply-over-1200-lossless', 'long-reply-over-4800-lossless',
+      // §8.3 DB-backed neutral intake state (plan Phase 1A). "Implemented" here means the code path
+      // and its specs exist, NOT that the lane is live: LINE_AI_INTAKE_STATE_MODE defaults to 'off'
+      // and no provider-replay or UAT evidence has been recorded for these four yet.
+      'state-store-outage-zero-write', 'state-stale-or-expired-zero-write',
+      'state-cross-user-zero-write', 'state-cross-chat-or-company-zero-write',
     ]) {
       assert.ok(byId.has(id), `missing presentation row ${id}`);
       assert.equal(byId.get(id)!.evidenceStatus, 'implemented_fixture', `${id} exists in the current path`);
     }
     for (const id of [
-      'expense-draft-structured-card', 'reimbursement-draft-card-owner-go', 'state-store-outage-zero-write',
-      'state-stale-or-expired-zero-write', 'state-cross-user-zero-write', 'state-cross-chat-or-company-zero-write',
+      'expense-draft-structured-card', 'reimbursement-draft-card-owner-go',
       'persisted-terminal-outcome-replay', 'flex-failure-text-fallback',
     ]) {
       assert.ok(byId.has(id), `missing presentation row ${id}`);
@@ -515,7 +522,12 @@ describe('LINE AI latency/autonomy eval corpus', () => {
     assert.equal(byId.get('flex-failure-text-fallback')!.expectedPresentationKind, 'text_fallback');
     for (const row of rows.filter(({ journey }) => journey === 'clarification_state')) {
       assert.equal(row.expectedDomainWriteCount, 0, `${row.id} must be zero-write`);
-      assert.equal(row.evidenceStatus, 'required_gap', `${row.id} rides on the DB-backed state that does not exist yet`);
+      // The DB-backed state now exists (LineIntakeState + LineIntakeStateRepository), so these four
+      // are implemented rather than pending. The note on each row still says the flag is default-off
+      // and that provider/UAT evidence is outstanding — that honesty is asserted below.
+      assert.equal(row.evidenceStatus, 'implemented_fixture', `${row.id} is backed by the DB state store`);
+      assert.match(row.note, /DEFAULT OFF/,
+        `${row.id}: an implemented-but-dark lane must say so, or the manifest reads as a live guarantee`);
     }
 
     // Both long-reply thresholds are represented, and both are backed by a deterministic fixture on the
@@ -529,8 +541,8 @@ describe('LINE AI latency/autonomy eval corpus', () => {
       assert.equal(row.evidenceStatus, 'implemented_fixture', `${row.id}: the lossless text + concise card fixture exists`);
       assert.equal(row.expectedPresentationKind, 'text_parts_then_flex', row.id);
     }
-    assert.equal(implemented.length, 13, 'implemented_fixture rows');
-    assert.equal(gaps.length, 8, 'required_gap rows');
+    assert.equal(implemented.length, 17, 'implemented_fixture rows');
+    assert.equal(gaps.length, 4, 'required_gap rows');
 
     // Both manifests are gold expectations, NOT provider route rows: they stay OUT of the protected replay
     // union, so an id may never collide with one the runner scores.

@@ -720,6 +720,19 @@ describe('apiConfigSchema LINE AI latency/autonomy Phase-1 flags', () => {
     assert.equal(apiConfigSchema.safeParse({ ...base, LINE_AI_REIMBURSEMENT_SEMANTIC_MODE: 'true' }).success, false);
   });
 
+  it('neutral intake state defaults off, accepts its three modes, and FAILS closed on anything else', () => {
+    assert.equal(apiConfigSchema.parse(base).LINE_AI_INTAKE_STATE_MODE, 'off');
+    for (const mode of ['off', 'shadow', 'on'] as const) {
+      assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_INTAKE_STATE_MODE: mode }).LINE_AI_INTAKE_STATE_MODE, mode);
+    }
+    // This flag guards a money path, so an unparsable value must break the boot rather than land
+    // on a mode the operator did not choose. 'true'/'1'/'enabled' are the plausible typos that a
+    // boolean-shaped flag would have silently accepted as ON — here they must all fail.
+    for (const bad of ['true', '1', 'enabled', 'On', 'primary', 'all', '']) {
+      assert.equal(apiConfigSchema.safeParse({ ...base, LINE_AI_INTAKE_STATE_MODE: bad }).success, false, bad);
+    }
+  });
+
   it('exact standalone greeting lane defaults off and opts in only on an explicit boolean', () => {
     assert.equal(apiConfigSchema.parse(base).LINE_AI_EXACT_GREETING_ENABLED, false);
     assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_EXACT_GREETING_ENABLED: 'true' }).LINE_AI_EXACT_GREETING_ENABLED, true);

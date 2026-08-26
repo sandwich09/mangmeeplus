@@ -502,12 +502,19 @@ frozen artifact: `LINE_AI_PRESENTATION_PERMISSION_MANIFEST` ใน `scripts/line
 (21 rows) แต่ละ row พิน journey, presentation kind, authority condition, CTA policy,
 `expectedDomainWriteCount`, route/model constraint และ `evidenceStatus`
 
-`evidenceStatus` มีสองค่าเท่านั้นและ integrity spec นับ/รายงานทั้งสองฝั่ง: `implemented_fixture` 13 rows
+`evidenceStatus` มีสองค่าเท่านั้นและ integrity spec นับ/รายงานทั้งสองฝั่ง: `implemented_fixture` 17 rows
 (terminal Flex เดี่ยว/multipart, payer clarify card, clarify-only ไม่มี CTA, handoff tenant path ที่ไม่มี
-query/hash, permission/entitlement/branch denied, legal pending, duplicate webhook, expired reply-token push
-และ long reply >1,200/>4,800 แบบ lossless) และ `required_gap` 8 rows (expense card เฉพาะทาง, optional draft
-card, DB-backed state outage/stale/cross-owner, persisted terminal replay, Flex failure fallback)
-ห้าม mark gap เป็น implemented manifest freeze gold expectation ไม่ใช่หลักฐานว่า runtime ทำได้แล้ว
+query/hash, permission/entitlement/branch denied, legal pending, duplicate webhook, expired reply-token push,
+long reply >1,200/>4,800 แบบ lossless และ DB-backed state 4 rows: outage/stale-expired/cross-user/cross-chat-
+or-company) และ `required_gap` 4 rows (expense card เฉพาะทาง, optional draft card, persisted terminal replay,
+Flex failure fallback) ห้าม mark gap เป็น implemented manifest freeze gold expectation ไม่ใช่หลักฐานว่า
+runtime ทำได้แล้ว
+
+DB-backed state 4 rows ที่ย้ายมาเป็น `implemented_fixture` หมายถึง **code path + spec มีจริงแล้ว** เท่านั้น:
+`LineIntakeState` (migration `20260826120000_line_intake_state`, partial unique index บน OPEN row) และ
+`LineIntakeStateRepository` ที่ fail **closed** ตรงข้ามกับ Redis ledger ที่ fail open ยังไม่ใช่หลักฐานว่า lane
+เปิดใช้งานแล้ว: `LINE_AI_INTAKE_STATE_MODE` default `off` และยังไม่มี provider replay หรือ UAT evidence
+สำหรับสี่ row นี้ (`note` ของแต่ละ row ต้องเขียน `DEFAULT OFF` ไว้ และ integrity spec บังคับข้อนี้)
 
 long reply สองแถวนั้นมี fixture จริงหลัง `LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED` (default-off): terminal ที่
 ยาวเกิน 1,200 ส่งเป็น text เต็มแล้วปิดท้ายด้วย concise card, กรณี 4,900 code points พิสูจน์ว่าเกิน 4,800 ไม่หาย
