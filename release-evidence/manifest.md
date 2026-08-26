@@ -36,8 +36,11 @@
 
 | ID | สถานะ | หลักฐาน/สิ่งที่เหลือ |
 |---|---|---|
-| FIN-01 | **กำลังแก้ในรอบนี้** — policy+helper+regression มีแล้ว แต่เป็น dead code; path จริง (`prisma-expense.repository.ts:332-333`) ยัง strict eq(0) | wiring helpers + ผ่อน overshoot guard ด้วย SETTLE_EPSILON |
-| VAT-MIX-01 | **กำลังแก้ในรอบนี้** — confirm ยัง hard-block 3 outcome; ไม่มี override "ใช้ยอดตามเอกสาร"; label 0% export ≠ ยกเว้น; ไม่ชี้บรรทัด; allocation in-tolerance ถูกบล็อกเมื่อ >1 rate | guided flow ตามแผน 13.11.B + golden #2/#3 |
+| FIN-01 | **ปิดแล้ว 2026-08-26** (`1ba23bd5` expenses + `82327b23` reimbursements mirror) — settle ภายในครึ่งสตางค์ทั้งสองโมดูล, void/reset mirrors สอดคล้อง, regression 580.0042→PAID ทั้งสองฝั่ง | เหลือ gap บันทึกไว้: accounting-totals ใช้ float round2 (โมดูลบัญชี — ยังไม่เปิดลูกค้า), SETTLE_EPSILON ซ้ำ 2 ที่ (เสนอรวมเข้า contracts ภายหลัง) |
+| VAT-MIX-01 | **ปิดแล้ว 2026-08-26** (`31f4269b`) — allocation in-tolerance ถึงได้จริงสำหรับ single-rate mixed, ชี้บรรทัด (attentionLineNumbers + ประโยคไทยตรงตามแผน), reviewer override "ใช้ยอดตามเอกสาร" + HIGH-risk audit, ตัวเลือกต่อบรรทัดครบ (ยกเว้น ≠ 0% ส่งออก), golden 13.11.B ครบ 5 เคส | gap บันทึก: override บันทึกเจตนาไม่ re-price (อ่านแบบ conservative), exempt/zero conflate ที่ระดับ rate ใน engine, E2E mixed receipt รอ P7 |
+| P4 time-to-value | **ปิดแล้ว 2026-08-26** (`b7eb4fad`) — hero 2 CTA + ตัวอย่างคำถาม, EXP-UX-01 ส่งตรวจ→กลับรายการ+highlight, login field validation, label "วันที่ในใบเสร็จ"+hint, ซ่อน salesdoc/closing จาก nav, queue-busy หลัง 8 วิ, redirect ไม่จอขาว, WEB-04 ไม่โชว์ raw ID + retry | หมายเหตุ: `NEXT_PUBLIC_LINE_OA_URL` เป็นค่า build-time ของ Next — ต้องใส่ตอน build web image (ไม่ใช่ task env); จนกว่าจะใส่ hero แสดง "เร็ว ๆ นี้" ตาม fallback ที่ตั้งใจ; ถ้อยคำสถานะ "พร้อมยืนยัน" vs "รอตรวจสอบ" รอ Owner เลือก |
+| P5 UX 40+ | **ปิดแล้ว 2026-08-26** (`b7eb4fad`) — ErrorBanner role=alert ทั้งระบบ expenses, dashboard banner/skeleton aria, delete dialog ใช้ Modal กลาง (focus trap/Escape), CTA hero ≥56px | เหลือ Gate E (ผู้ใช้จริง 40+ สามคน) — ต้องมนุษย์ |
+| P3 kill switch + alarms | **ปิดแล้ว 2026-08-26** (`73411914`) — AI lane บังคับใช้ launch gate จริง (fail-closed, ข้อความไทย OPEN-9), alarm 5 ตัวใน runtime-alarms.sh (threshold เป็นค่าเริ่มต้นรอ B1) | เหลือ: รัน install script บน AWS + ซ้อม drill จริง 1 รอบบน UAT; expenses gate **ปิดแล้ว** (`e56b25a1` — BLOCK_NEW_ROOT ทั้งสอง root, runoff เปิดตามนโยบาย) |
 | AI-01 | **OPEN — flags คง off ตามที่แผนอนุญาต** — 8 required_gap ใน corpus (durable replay, DB intake state, Flex fallback ฯลฯ) | งาน implementation แยกรอบ; `LINE_AI_REIMBURSEMENT_SEMANTIC_MODE=off` |
 | DOC-01 | โค้ดครบ (PR #228) — เหลือ whole-chain UAT proof | งาน UAT phase |
 | FIN-02 | โค้ดครบ — เหลือ migration clone preflight + concurrent/mutation E2E บน exact candidate | งาน UAT phase |
@@ -51,7 +54,12 @@
 - On-call / rollback owner (ชื่อคน): **TBD (Owner)** — กลไก kill switch พิสูจน์ใน P3
 - ผู้อนุมัติ copy การตลาด: **TBD (Owner)**; ข้อห้ามคำโฆษณาตามแผน §1 ("ตอบได้ทุกเรื่อง", "พร้อม Production", ตัวเลขที่ยังไม่ได้วัด — ห้ามใช้)
 
-## 6. Evidence log (เติมระหว่าง P7)
+## 6. Evidence log (P7 — อัปเดต 2026-08-26)
 
-- unit/typecheck ณ จุดเริ่ม: gateway 756/756, contracts 196/196, config 132/132, api 5077 pass/0 fail (บันทึกจาก batch 3 บน `773651a6`)
-- critical e2e / load smoke / Gate E: **รอ P7**
+- Unit บน branch `codex/brain-25day-p2-p5`: expenses 839/839, reimbursements 298 pass/8 pre-skips, line-ai 738/738, web 1051/1051, contracts 196/196; tsc clean (api/web/contracts); bash -n + serving-mode gate spec PASS
+- **Critical E2E (Gate A): 38 passed / 1 pre-existing skip (JRNL-01) / 0 failed, 49s** — รันด้วย `e2e/run-local.sh --project=critical` (project ใหม่ grep @smoke, 39 เคส) บน seeded DB; รวม **EXP-04B**: ส่งตรวจสอบ → URL หน้ารายการ + row highlight + สถานะ (ข้อพิสูจน์ EXP-UX-01 ตามแผน) และ sidebar matrix หลังถอด planned modules ผ่านทุก role
+- Load smoke (Gate C): script พร้อม (`scripts/load-smoke.k6.js`) — **ยังไม่ได้รัน**: k6 ไม่ได้ติดตั้งบนเครื่อง และตามแผน hosted run บน UAT เท่านั้นที่นับเป็นหลักฐาน (local ใช้แทนไม่ได้) → งาน UAT phase
+- Gate B (AI): golden/`baselineReady` รอ fixtures 30 ใบจาก Owner; families dormant รอ blind eval
+- Gate D: security suite 23 เคสรันใน CI แล้ว (PR #233); SEC-01/02 residuals ตาม memory เดิม
+- Gate E (ผู้ใช้จริง 40+ สามคน): **ต้องมนุษย์ — ยังไม่ได้ทำ**
+- หมายเหตุเครื่องมือ: เครื่อง dev ไม่มี `psql` — e2e preflight ต้องใช้ shim docker exec (บันทึกไว้สำหรับ dev คนถัดไป)
