@@ -15,6 +15,12 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { emitSecurityEvent, SECURITY_EVENT, type SecurityEventName } from './security-event';
+import {
+  CUSTOMER_JOURNEY_SIGNALS,
+  JOURNEY_METRIC_DIMENSION_ALLOWLIST,
+  JOURNEY_METRIC_FORBIDDEN_DIMENSIONS,
+  reconcileTerminalCardinality,
+} from '../observability/customer-journey-signal.catalog';
 
 const REPO_ROOT = join(__dirname, '../../../../..');
 const DEPLOY_SCRIPT = join(REPO_ROOT, 'infra/prod-ecs-express/deploy.sh');
@@ -201,6 +207,77 @@ describe('production security alarm coverage (infra/prod-ecs-express/deploy.sh)'
     assert.ok(
       !emittedEventNames(withoutEmit).has('ai.tool.invoke.denied'),
       'removing every emitSecurityEvent call must make this guard fail, not pass on the catalogue',
+    );
+  });
+});
+
+describe('P9-0 customer journey signal contract', () => {
+  it('covers every required stage across all four product lanes with no invented target', () => {
+    assert.deepEqual(
+      [...new Set(CUSTOMER_JOURNEY_SIGNALS.map((signal) => signal.lane))].sort(),
+      ['accounting', 'ai', 'ops', 'signup'],
+    );
+    assert.deepEqual(
+      CUSTOMER_JOURNEY_SIGNALS.map((signal) => signal.key).sort(),
+      [
+        'claim-email-delivery', 'expense-confirmation', 'line-ai-answer', 'line-link', 'line-login',
+        'official-signup-receive', 'outbox-worker', 'owner-claim', 'receipt-intake', 'receipt-ocr',
+        'sales-confirmation', 'tenant-provision',
+      ].sort(),
+    );
+    for (const signal of CUSTOMER_JOURNEY_SIGNALS) assert.equal(signal.target, null, `${signal.key} needs a real baseline first`);
+  });
+
+  it('has unique stable keys, explicit terminal classes, owner, severity, and one terminal per accepted correlation', () => {
+    const keys = CUSTOMER_JOURNEY_SIGNALS.map((signal) => signal.key);
+    assert.equal(new Set(keys).size, keys.length, 'journey signal keys must be unique');
+    for (const signal of CUSTOMER_JOURNEY_SIGNALS) {
+      assert.match(signal.key, /^[a-z0-9]+(?:-[a-z0-9]+)+$/);
+      assert.ok(signal.owner.length > 0, `${signal.key} needs an owner`);
+      assert.ok(signal.runbook.length > 0, `${signal.key} needs a runbook`);
+      assert.equal(signal.terminalCardinality, 'exactly_one_per_accepted_correlation');
+      assert.ok(signal.successTerminalValues.length > 0, `${signal.key} needs a success terminal`);
+      assert.ok(signal.failureTerminalValues.length > 0, `${signal.key} needs a failure terminal`);
+      const outcomes = [
+        ...signal.successTerminalValues,
+        ...signal.neutralTerminalValues,
+        ...signal.failureTerminalValues,
+      ];
+      assert.equal(new Set(outcomes).size, outcomes.length, `${signal.key} terminal classes must not overlap`);
+      assert.ok(signal.denominator.name.length > 0 && signal.numerator.name.length > 0);
+      assert.ok(signal.latencyClock.start.length > 0 && signal.latencyClock.end.length > 0);
+    }
+  });
+
+  it('keeps metric dimensions low-cardinality and excludes tenant/customer/document identity', () => {
+    assert.deepEqual(JOURNEY_METRIC_DIMENSION_ALLOWLIST, [
+      'environment', 'service', 'journey', 'stage', 'outcome', 'failureClass',
+    ]);
+    const allowed = new Set<string>(JOURNEY_METRIC_DIMENSION_ALLOWLIST);
+    for (const forbidden of JOURNEY_METRIC_FORBIDDEN_DIMENSIONS) {
+      assert.equal(allowed.has(forbidden), false, `${forbidden} must never become a metric dimension`);
+    }
+  });
+
+  it('proves every claimed current source exists and contains the exact evidence token', () => {
+    for (const signal of CUSTOMER_JOURNEY_SIGNALS) {
+      if (signal.coverage === 'LIVE') assert.equal(signal.gap, null, `${signal.key} is LIVE but still names a gap`);
+      if (signal.coverage !== 'PLANNED') assert.ok(signal.evidence.length > 0, `${signal.key} claims current coverage without evidence`);
+      for (const evidence of signal.evidence) {
+        const source = readFileSync(join(REPO_ROOT, evidence.path), 'utf8');
+        assert.ok(source.includes(evidence.token), `${signal.key}: ${evidence.path} must contain ${evidence.token}`);
+      }
+      const runbookPath = signal.runbook.split('#')[0]!;
+      assert.doesNotThrow(() => readFileSync(join(REPO_ROOT, runbookPath), 'utf8'), `${signal.key} runbook must exist`);
+    }
+  });
+
+  it('detects missing, duplicate, and orphan terminals from synthetic correlations', () => {
+    assert.deepEqual(
+      reconcileTerminalCardinality(['synthetic-a', 'synthetic-b', 'synthetic-c'], [
+        'synthetic-a', 'synthetic-b', 'synthetic-b', 'synthetic-orphan',
+      ]),
+      { missing: ['synthetic-c'], duplicates: ['synthetic-b'], orphaned: ['synthetic-orphan'] },
     );
   });
 });

@@ -40,12 +40,13 @@ case "$command" in
     jq -cn '{CacheClusters:[
       {CacheClusterId:"watchdog-bms-prod-redis-001",ReplicationGroupId:"watchdog-bms-prod-redis",CacheNodes:[{CacheNodeId:"0001"}]},
       {CacheClusterId:"watchdog-bms-prod-redis-002",ReplicationGroupId:"watchdog-bms-prod-redis",CacheNodes:[{CacheNodeId:"0001"}]},
-      {CacheClusterId:"watchdog-bms-uat-redis-v2-001",ReplicationGroupId:"watchdog-bms-uat-redis-v2",CacheNodes:[{CacheNodeId:"0001"}]}
+      {CacheClusterId:"watchdog-bms-uat-redis",ReplicationGroupId:null,CacheNodes:[{CacheNodeId:"0001"}]}
     ]}'
     ;;
   sns/list-subscriptions-by-topic)
     jq -cn '{Subscriptions:[{SubscriptionArn:"arn:aws:sns:ap-southeast-1:311414082667:alerts:confirmed",Protocol:"email"}]}'
     ;;
+  logs/put-metric-filter) ;;
   cloudwatch/put-metric-alarm)
     name="$(arg --alarm-name "$@")"; namespace="$(arg --namespace "$@")"; metric="$(arg --metric-name "$@")"
     statistic="$(arg --statistic "$@")"; period="$(arg --period "$@")"; evaluations="$(arg --evaluation-periods "$@")"
@@ -101,18 +102,20 @@ run_alarm() {
 
 reset_state
 run_alarm install uat | grep -Fq 'installed environment=uat'
-test "$(jq '.alarms | length' "$tmp_dir/state.json")" -eq 6
+test "$(jq '.alarms | length' "$tmp_dir/state.json")" -eq 11
+test "$(grep -c '^logs/put-metric-filter ' "$tmp_dir/calls.log")" -eq 6
 run_alarm verify uat | grep -Fq 'datapoints=present subscription=confirmed'
 jq -e '
   .alarms["watchdog-bms-uat-log-ingest-workers"].Threshold == 67108864
   and .alarms["watchdog-bms-uat-db-memory-low"].Threshold == 64000000
-  and .alarms["watchdog-bms-uat-redis-memory-high-001"].Dimensions == [
-    {Name:"CacheClusterId",Value:"watchdog-bms-uat-redis-v2-001"},{Name:"CacheNodeId",Value:"0001"}]
+  and .alarms["watchdog-bms-uat-redis-memory-high-0001"].Dimensions == [
+    {Name:"CacheClusterId",Value:"watchdog-bms-uat-redis"},{Name:"CacheNodeId",Value:"0001"}]
 ' "$tmp_dir/state.json" >/dev/null
 
 reset_state
 run_alarm install production | grep -Fq 'installed environment=production'
-test "$(jq '.alarms | length' "$tmp_dir/state.json")" -eq 9
+test "$(jq '.alarms | length' "$tmp_dir/state.json")" -eq 14
+test "$(grep -c '^logs/put-metric-filter ' "$tmp_dir/calls.log")" -eq 6
 run_alarm verify production | grep -Fq 'verified environment=production'
 jq -e '
   .alarms["watchdog-bms-prod-log-ingest-api-web"].Threshold == 536870912
@@ -138,7 +141,7 @@ run_alarm retire-invalid-prod-redis production \
   CONFIRM_RETIRE_INVALID_PROD_REDIS_ALARM=DELETE_ZERO_DATAPOINT_ALARM \
   | grep -Fq 'retired alarm=watchdog-bms-prod-redis-memory-high'
 jq -e 'has("watchdog-bms-prod-redis-memory-high") | not' < <(jq '.alarms' "$tmp_dir/state.json") >/dev/null
-test "$(jq '.alarms | length' "$tmp_dir/state.json")" -eq 9
+test "$(jq '.alarms | length' "$tmp_dir/state.json")" -eq 14
 
 reset_state
 if run_alarm install uat FAKE_ACCOUNT=999999999999 >/dev/null 2>&1; then
