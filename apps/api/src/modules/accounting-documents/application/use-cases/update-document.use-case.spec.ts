@@ -1,7 +1,7 @@
 import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { ForbiddenException, UnprocessableEntityException } from '@nestjs/common';
-import { ConvertDocumentUseCase, GetDocumentUseCase, ListDocumentsUseCase, UpdateDocumentUseCase } from './document.use-case';
+import { ConvertDocumentUseCase, CreateDocumentUseCase, GetDocumentUseCase, ListDocumentsUseCase, UpdateDocumentUseCase } from './document.use-case';
 
 const VERSION = new Date('2026-08-09T10:00:00.000Z');
 const ctx = {
@@ -37,7 +37,10 @@ describe('UpdateDocumentUseCase', () => {
         return { ...current, ...input, updatedAt: new Date('2026-08-09T10:01:00.000Z') };
       }),
     } as any;
-    const useCase = new UpdateDocumentUseCase(repo, { log: mock.fn(async () => undefined) } as any, {} as any);
+    const useCase = new UpdateDocumentUseCase(
+      repo, { log: mock.fn(async () => undefined) } as any, {} as any,
+      { get: mock.fn(async () => ({ status: 'REGISTERED' })) } as any,
+    );
 
     await useCase.execute(ctx, {
       documentId: current.id,
@@ -56,10 +59,27 @@ describe('UpdateDocumentUseCase', () => {
   it('rejects issued evidence before calling the draft mutation', async () => {
     const updateDraftDocument = mock.fn(async () => document());
     const repo = { findDocumentById: mock.fn(async () => document('ISSUED')), updateDraftDocument } as any;
-    const useCase = new UpdateDocumentUseCase(repo, {} as any, {} as any);
+    const useCase = new UpdateDocumentUseCase(repo, {} as any, {} as any, {} as any);
 
     await assert.rejects(
       () => useCase.execute(ctx, { documentId: 'document-1', expectedUpdatedAt: VERSION, note: 'overwrite issued' }),
+      UnprocessableEntityException,
+    );
+    assert.equal(updateDraftDocument.mock.callCount(), 0);
+  });
+
+  it('revalidates VAT registration before replacing a draft', async () => {
+    const current = document();
+    const updateDraftDocument = mock.fn(async () => current);
+    const repo = { findDocumentById: mock.fn(async () => current), updateDraftDocument } as any;
+    const useCase = new UpdateDocumentUseCase(
+      repo, {} as any, {} as any,
+      { get: mock.fn(async () => ({ status: 'NOT_REGISTERED' })) } as any,
+    );
+    await assert.rejects(
+      () => useCase.execute(ctx, {
+        documentId: current.id, expectedUpdatedAt: VERSION, vatMode: 'EXEMPT',
+      }),
       UnprocessableEntityException,
     );
     assert.equal(updateDraftDocument.mock.callCount(), 0);
@@ -211,5 +231,124 @@ describe('ConvertDocumentUseCase permissions', () => {
     assert.equal(result.id, 'invoice-1');
     assert.equal(append.mock.callCount(), 0);
     assert.equal(log.mock.callCount(), 0);
+  });
+});
+
+const createBoundaryContext = {
+  requestId: 'request-1', authSubject: 'subject-1', userId: 'user-1', companyId: 'company-1',
+  membershipId: 'membership-1', roles: [], permissions: ['accounting.invoice.create'], authProvider: 'dev',
+};
+
+const createBoundaryInput = {
+  documentType: 'INVOICE' as const,
+  documentDate: '2026-08-27',
+  vatMode: 'NO_VAT' as const,
+  lines: [{ lineNumber: 1, description: 'Service', quantity: '1', unitPrice: '100.00' }],
+};
+
+function setupCreateBoundary(vatStatus: 'REGISTERED' | 'NOT_REGISTERED' | 'UNKNOWN' = 'REGISTERED') {
+  const createdDocument = {
+    id: 'document-1', companyId: 'company-1', documentType: 'INVOICE', status: 'DRAFT',
+    branchId: 'branch-1', documentDate: new Date('2026-08-27'), currency: 'THB', vatMode: 'NO_VAT',
+    lines: [],
+  };
+  const repo = {
+    findActiveBranch: mock.fn(async () => ({ id: 'branch-1' })),
+    findDocumentById: mock.fn(async () => createdDocument),
+    listRevenueCategories: mock.fn(async () => []),
+    createDocument: mock.fn(async (value: any) => ({ ...createdDocument, branchId: value.branchId, vatMode: value.vatMode })),
+  };
+  const useCase = new CreateDocumentUseCase(
+    repo as any,
+    { log: mock.fn(async () => undefined) } as any,
+    {} as any,
+    { get: mock.fn(async () => ({ status: vatStatus })) } as any,
+  );
+  return { repo, useCase };
+}
+
+describe('CreateDocumentUseCase accounting boundaries', () => {
+  it('defaults a branch-restricted create to the first permitted branch', async () => {
+    const { repo, useCase } = setupCreateBoundary();
+    await useCase.execute({ ...createBoundaryContext, scopes: { branchIds: ['branch-1'] } } as any, createBoundaryInput);
+    assert.equal((repo.createDocument.mock.calls as any[])[0]?.arguments[0].branchId, 'branch-1');
+  });
+
+  it('does not let a caller with an empty branch scope create a company-central document', async () => {
+    const { repo, useCase } = setupCreateBoundary();
+    await assert.rejects(
+      () => useCase.execute({ ...createBoundaryContext, scopes: { branchIds: [] } } as any, createBoundaryInput),
+      ForbiddenException,
+    );
+    assert.equal(repo.createDocument.mock.callCount(), 0);
+  });
+
+  it('fails closed for every mode while registration is unknown and enforces NO_VAT when not registered', async () => {
+    for (const [status, vatMode] of [['UNKNOWN', 'NO_VAT'], ['NOT_REGISTERED', 'EXEMPT']] as const) {
+      const { repo, useCase } = setupCreateBoundary(status);
+      await assert.rejects(
+        () => useCase.execute({ ...createBoundaryContext, scopes: {} } as any, { ...createBoundaryInput, vatMode }),
+        UnprocessableEntityException,
+      );
+      assert.equal(repo.createDocument.mock.callCount(), 0);
+    }
+  });
+
+  it('computes a stable server fingerprint for invoice retries and changes it with the payload', async () => {
+    const { repo, useCase } = setupCreateBoundary();
+    const createContext = { ...createBoundaryContext, scopes: {} } as any;
+    await useCase.execute(createContext, { ...createBoundaryInput, idempotencyKey: 'invoice-page-001' });
+    await useCase.execute(createContext, { ...createBoundaryInput, idempotencyKey: 'invoice-page-001' });
+    await useCase.execute(createContext, { ...createBoundaryInput, note: 'changed', idempotencyKey: 'invoice-page-001' });
+    const persisted = (repo.createDocument.mock.calls as any[]).map((call) => call.arguments[0]);
+    assert.equal(persisted[0].payloadFingerprint, persisted[1].payloadFingerprint);
+    assert.notEqual(persisted[0].payloadFingerprint, persisted[2].payloadFingerprint);
+    assert.equal(persisted[0].idempotencyKey, 'invoice-page-001');
+  });
+
+  it('does not accept the invoice retry field on another document type', async () => {
+    const { repo, useCase } = setupCreateBoundary();
+    await assert.rejects(
+      () => useCase.execute({ ...createBoundaryContext, scopes: {}, permissions: ['accounting.credit_note.create'] } as any, {
+        ...createBoundaryInput, documentType: 'CREDIT_NOTE', idempotencyKey: 'invoice-page-001',
+      } as any),
+      UnprocessableEntityException,
+    );
+    assert.equal(repo.createDocument.mock.callCount(), 0);
+  });
+
+  it('inherits a source branch and rejects an explicit cross-branch correction', async () => {
+    const { repo, useCase } = setupCreateBoundary();
+    repo.findDocumentById = mock.fn(async () => ({
+      id: 'source-1', documentType: 'INVOICE', status: 'ISSUED', branchId: 'branch-1', vatMode: 'NO_VAT',
+      vatAmount: '0', outputTaxCode: undefined, lines: [],
+    })) as any;
+    await assert.rejects(
+      () => useCase.execute({ ...createBoundaryContext, scopes: {}, permissions: ['accounting.credit_note.create'] } as any, {
+        ...createBoundaryInput, documentType: 'CREDIT_NOTE', sourceDocumentId: 'source-1', sourceDocumentType: 'INVOICE',
+        branchId: 'branch-2', adjustmentReasonCode: 'GOODS_RETURNED',
+      } as any),
+      UnprocessableEntityException,
+    );
+    assert.equal(repo.createDocument.mock.callCount(), 0);
+  });
+});
+
+describe('GetDocumentUseCase correction capacity', () => {
+  it('returns the current per-line basis after issued credits and debits', async () => {
+    const repo = {
+      findDocumentById: mock.fn(async () => ({
+        id: 'document-1', companyId: 'company-1', documentType: 'TAX_INVOICE', status: 'CREDITED',
+        vatMode: 'VAT_EXCLUDED', lines: [{ lineNumber: 1, lineSubtotalAmount: '100.00', lineTotalAmount: '107.00' }],
+      })),
+      listIssuedCorrectionLines: mock.fn(async () => [
+        { documentType: 'CREDIT_NOTE', lines: [{ lineNumber: 1, lineSubtotalAmount: '40.00', lineTotalAmount: '42.80' }] },
+        { documentType: 'DEBIT_NOTE', lines: [{ lineNumber: 1, lineSubtotalAmount: '10.00', lineTotalAmount: '10.70' }] },
+      ]),
+    };
+    const result = await new GetDocumentUseCase(repo as any).execute({
+      ...createBoundaryContext, scopes: {}, permissions: ['accounting.tax_invoice.read'],
+    } as any, 'document-1');
+    assert.equal(result.lines?.[0]?.correctionBasisAmount, '70.00');
   });
 });

@@ -48,6 +48,7 @@ export type DocumentLineSummary = {
   whtAmount?: string;
   lineSubtotalAmount?: string;
   lineTotalAmount: string;
+  correctionBasisAmount?: string;
   taxCategory?: string;
   revenueCategory?: string;
   taxSnapshot?: TransactionTaxSnapshot;
@@ -57,6 +58,7 @@ export type DocumentLineSummary = {
 export type DocumentSummary = {
   id: string;
   companyId: string;
+  branchId?: string;
   documentType: AccountingDocumentType;
   documentNumber?: string;
   status: AccountingDocumentStatus;

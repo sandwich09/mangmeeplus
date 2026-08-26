@@ -387,6 +387,7 @@ model Company {
   accountingDocumentLines           AccountingDocumentLine[]
   accountingPayments                AccountingPayment[]
   accountingPaymentAllocations      AccountingPaymentAllocation[]
+  accountingSimpleIncomeCommands    AccountingSimpleIncomeCommand[]
   // Item 09
   expenseRecords                    ExpenseRecord[]
   expensePayments                   ExpensePayment[]
@@ -1767,6 +1768,10 @@ model AccountingDocument {
   sourceDocumentId            String?
   sourceDocumentType          String?
   convertedFromDocumentId     String?
+  // Optional client retry fence for the generic invoice-draft command. The fingerprint is
+  // server-computed; both remain private persistence metadata and are never serialized.
+  createIdempotencyKey        String?
+  createPayloadFingerprint    String?
   currency                    String                                    @default("THB")
   vatMode                     AccountingVatMode                         @default(NO_VAT)
   outputTaxCode               AccountingOutputTaxCode?
@@ -1788,6 +1793,9 @@ model AccountingDocument {
   postingError                String?
   note                        String?
   internalMemo                String?
+  // Required by application validation for CREDIT_NOTE/DEBIT_NOTE; nullable keeps the migration additive.
+  adjustmentReasonCode        String?
+  adjustmentReasonText        String?
   // Issue metadata
   issuedByUserId              String?
   issuedAt                    DateTime?
@@ -1818,8 +1826,11 @@ model AccountingDocument {
   paymentAllocations          AccountingPaymentAllocation[]
   issueCommands               AccountingDocumentIssueCommand[]
   buyerEvidenceRevisions      AccountingDocumentBuyerEvidenceRevision[]
+  simpleIncomeInvoiceCommands AccountingSimpleIncomeCommand[]           @relation("SimpleIncomeInvoice")
+  simpleIncomeReceiptCommands AccountingSimpleIncomeCommand[]           @relation("SimpleIncomeReceipt")
 
   @@unique([companyId, documentType, documentNumber])
+  @@unique([companyId, createIdempotencyKey])
   @@unique([companyId, id])
   @@index([companyId, documentType, status])
   @@index([companyId, branchId, documentDate])
@@ -1894,40 +1905,41 @@ model AccountingDocumentLine {
 }
 
 model AccountingPayment {
-  id                       String                        @id @default(cuid())
+  id                       String                          @id @default(cuid())
   companyId                String
   branchId                 String?
   paymentNumber            String?
   direction                AccountingPaymentDirection
-  status                   AccountingPaymentRecordStatus @default(DRAFT)
+  status                   AccountingPaymentRecordStatus   @default(DRAFT)
   counterpartyId           String?
   counterpartySnapshotJson Json?
   method                   AccountingPaymentMethod
   // `amount` stays CASH that moved — bank reconciliation matches on it. Tax the payer withheld from
   // us settles the document too but never reaches the bank, so it is its own column rather than
   // being folded in.
-  amount                   Decimal                       @db.Decimal(18, 4)
-  whtAmount                Decimal                       @default(0) @db.Decimal(18, 4)
-  allocatedAmount          Decimal                       @default(0) @db.Decimal(18, 4)
-  unappliedAmount          Decimal                       @default(0) @db.Decimal(18, 4)
-  currency                 String                        @default("THB")
+  amount                   Decimal                         @db.Decimal(18, 4)
+  whtAmount                Decimal                         @default(0) @db.Decimal(18, 4)
+  allocatedAmount          Decimal                         @default(0) @db.Decimal(18, 4)
+  unappliedAmount          Decimal                         @default(0) @db.Decimal(18, 4)
+  currency                 String                          @default("THB")
   paidAt                   DateTime
   bankAccountRef           String?
   externalReference        String?
   note                     String?
-  postingStatus            AccountingPostingStatus       @default(not_required)
+  postingStatus            AccountingPostingStatus         @default(not_required)
   journalEntryId           String?
   createdByUserId          String
   updatedByUserId          String?
   voidedByUserId           String?
   voidedAt                 DateTime?
   voidReason               String?
-  createdAt                DateTime                      @default(now())
-  updatedAt                DateTime                      @updatedAt
-  company                  Company                       @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  counterparty             AccountingCounterparty?       @relation(fields: [companyId, counterpartyId], references: [companyId, id])
-  branch                   Branch?                       @relation(fields: [companyId, branchId], references: [companyId, id])
+  createdAt                DateTime                        @default(now())
+  updatedAt                DateTime                        @updatedAt
+  company                  Company                         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  counterparty             AccountingCounterparty?         @relation(fields: [companyId, counterpartyId], references: [companyId, id])
+  branch                   Branch?                         @relation(fields: [companyId, branchId], references: [companyId, id])
   allocations              AccountingPaymentAllocation[]
+  simpleIncomeCommands     AccountingSimpleIncomeCommand[]
 
   @@unique([companyId, paymentNumber])
   @@unique([companyId, id])
@@ -1956,6 +1968,30 @@ model AccountingPaymentAllocation {
 
   @@unique([paymentId, documentId])
   @@index([companyId, documentId])
+}
+
+// Completed-command record for the all-or-nothing simple-income bundle. A row only exists after
+// invoice, payment, receipt, their numbers, and the in-transaction audit have all committed.
+model AccountingSimpleIncomeCommand {
+  id                 String   @id @default(cuid())
+  companyId          String
+  idempotencyKey     String
+  payloadFingerprint String
+  invoiceId          String
+  paymentId          String
+  receiptId          String
+  completedAt        DateTime @default(now())
+
+  company Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  invoice AccountingDocument @relation("SimpleIncomeInvoice", fields: [companyId, invoiceId], references: [companyId, id])
+  payment AccountingPayment  @relation(fields: [companyId, paymentId], references: [companyId, id])
+  receipt AccountingDocument @relation("SimpleIncomeReceipt", fields: [companyId, receiptId], references: [companyId, id])
+
+  @@unique([companyId, idempotencyKey])
+  @@unique([companyId, invoiceId])
+  @@unique([companyId, paymentId])
+  @@unique([companyId, receiptId])
+  @@index([companyId, completedAt])
 }
 
 // ─── Item 09: Expense and Receipt Upload ────────────────────────────────────

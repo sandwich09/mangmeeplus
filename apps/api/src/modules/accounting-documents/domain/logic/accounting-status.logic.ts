@@ -3,10 +3,15 @@
  */
 
 import type {
+  AccountingAdjustmentReasonCode,
   AccountingDocumentStatus,
   AccountingDocumentType,
   AccountingOutputTaxCode,
   AccountingVatMode,
+} from '@watchdog-bms/contracts';
+import {
+  ACCOUNTING_CREDIT_NOTE_REASON_CODES,
+  ACCOUNTING_DEBIT_NOTE_REASON_CODES,
 } from '@watchdog-bms/contracts';
 import Decimal from 'decimal.js';
 
@@ -17,6 +22,8 @@ type OutputTaxDocumentFacts = {
   vatAmount?: string;
   sourceDocumentId?: string;
   sourceDocumentType?: string;
+  adjustmentReasonCode?: AccountingAdjustmentReasonCode;
+  adjustmentReasonText?: string;
   lines?: Array<{
     taxCodeDefinitionId?: string;
     externalTaxCode?: string;
@@ -29,7 +36,33 @@ type OutputTaxSourceFacts = {
   documentType: AccountingDocumentType;
   status: AccountingDocumentStatus;
   outputTaxCode?: AccountingOutputTaxCode;
+  vatMode?: AccountingVatMode;
+  vatAmount?: string;
 };
+
+export function validateAdjustmentReason(document: {
+  documentType: AccountingDocumentType;
+  adjustmentReasonCode?: AccountingAdjustmentReasonCode;
+  adjustmentReasonText?: string;
+}): string | null {
+  const isCorrection = document.documentType === 'CREDIT_NOTE' || document.documentType === 'DEBIT_NOTE';
+  if (!isCorrection) {
+    return document.adjustmentReasonCode || document.adjustmentReasonText
+      ? 'Adjustment reasons are only allowed on credit or debit notes'
+      : null;
+  }
+  if (!document.adjustmentReasonCode) return `${document.documentType} requires an adjustment reason`;
+  const allowed = document.documentType === 'CREDIT_NOTE'
+    ? ACCOUNTING_CREDIT_NOTE_REASON_CODES
+    : ACCOUNTING_DEBIT_NOTE_REASON_CODES;
+  if (!(allowed as readonly string[]).includes(document.adjustmentReasonCode)) {
+    return `Adjustment reason is not allowed for ${document.documentType}`;
+  }
+  if (document.adjustmentReasonCode === 'OTHER_PRESCRIBED' && (document.adjustmentReasonText?.trim().length ?? 0) < 3) {
+    return 'OTHER_PRESCRIBED requires a specific reason';
+  }
+  return null;
+}
 
 function authoritativeExternalTaxCode(line: NonNullable<OutputTaxDocumentFacts['lines']>[number]): string | undefined {
   return line.taxSnapshot?.externalTaxCode ?? line.externalTaxCode;
@@ -52,6 +85,9 @@ export function validateOutputTaxDocument(
 ): string | null {
   const { documentType, outputTaxCode, vatMode } = document;
 
+  const reasonError = validateAdjustmentReason(document);
+  if (reasonError) return reasonError;
+
   if (outputTaxCode && !['O7', 'OX', 'O0'].includes(outputTaxCode)) {
     return `Unsupported output Tax Code: ${outputTaxCode}`;
   }
@@ -67,7 +103,10 @@ export function validateOutputTaxDocument(
     return 'A plain invoice cannot carry Tax Code lines; issue a TAX_INVOICE';
   }
   const hasAuthoritativeLineTax = document.lines?.some((line) => line.taxCodeDefinitionId || line.externalTaxCode || line.taxSnapshot);
-  if (['TAX_INVOICE', 'CREDIT_NOTE', 'DEBIT_NOTE'].includes(documentType) && !outputTaxCode && !hasAuthoritativeLineTax) {
+  const invoiceCorrection = ['CREDIT_NOTE', 'DEBIT_NOTE'].includes(documentType)
+    && source?.documentType === 'INVOICE';
+  if (['TAX_INVOICE', 'CREDIT_NOTE', 'DEBIT_NOTE'].includes(documentType)
+    && !invoiceCorrection && !outputTaxCode && !hasAuthoritativeLineTax) {
     return `${documentType} requires an output Tax Code`;
   }
   if (outputTaxCode && document.lines?.some((line) => {
@@ -76,18 +115,18 @@ export function validateOutputTaxDocument(
   })) {
     return 'output_tax_code_line_mismatch';
   }
-  if (!outputTaxCode) return null;
+  if (outputTaxCode) {
+    if (outputTaxCode === 'O7' && !['VAT_INCLUDED', 'VAT_EXCLUDED'].includes(vatMode)) {
+      return 'O7 requires VAT_INCLUDED or VAT_EXCLUDED';
+    }
+    if (outputTaxCode === 'OX' && vatMode !== 'EXEMPT') return 'OX requires EXEMPT';
+    if (outputTaxCode === 'O0' && vatMode !== 'NO_VAT') return 'O0 requires NO_VAT';
 
-  if (outputTaxCode === 'O7' && !['VAT_INCLUDED', 'VAT_EXCLUDED'].includes(vatMode)) {
-    return 'O7 requires VAT_INCLUDED or VAT_EXCLUDED';
-  }
-  if (outputTaxCode === 'OX' && vatMode !== 'EXEMPT') return 'OX requires EXEMPT';
-  if (outputTaxCode === 'O0' && vatMode !== 'NO_VAT') return 'O0 requires NO_VAT';
-
-  if (document.vatAmount !== undefined) {
-    const vatAmount = Number(document.vatAmount);
-    if (outputTaxCode === 'O7' && !(vatAmount > 0)) return 'O7 requires a positive VAT amount';
-    if (outputTaxCode !== 'O7' && vatAmount !== 0) return `${outputTaxCode} requires a zero VAT amount`;
+    if (document.vatAmount !== undefined) {
+      const vatAmount = Number(document.vatAmount);
+      if (outputTaxCode === 'O7' && !(vatAmount > 0)) return 'O7 requires a positive VAT amount';
+      if (outputTaxCode !== 'O7' && vatAmount !== 0) return `${outputTaxCode} requires a zero VAT amount`;
+    }
   }
 
   if (document.sourceDocumentId && !source) return 'Referenced source document was not found';
@@ -100,9 +139,17 @@ export function validateOutputTaxDocument(
     }
   }
   if (['CREDIT_NOTE', 'DEBIT_NOTE'].includes(documentType)) {
-    if (!document.sourceDocumentId || !source) return `${documentType} requires a referenced tax document`;
-    if (source.documentType !== 'TAX_INVOICE' || !isIssued(source.status)) {
-      return `${documentType} must reference the issued original TAX_INVOICE`;
+    if (!document.sourceDocumentId || !source) return `${documentType} requires a referenced source document`;
+    if (!['TAX_INVOICE', 'INVOICE'].includes(source.documentType) || !isIssued(source.status)) {
+      return `${documentType} must reference an issued original TAX_INVOICE or non-VAT INVOICE`;
+    }
+    if (source.documentType === 'INVOICE') {
+      const sourceHasVat = new Decimal(source.vatAmount ?? 0).abs().gt(0)
+        || source.outputTaxCode !== undefined
+        || (source.vatMode !== undefined && !['NO_VAT', 'EXEMPT'].includes(source.vatMode));
+      if (sourceHasVat || outputTaxCode || hasAuthoritativeLineTax || new Decimal(document.vatAmount ?? 0).abs().gt(0)) {
+        return `${documentType} can reference an INVOICE only when both documents are non-VAT`;
+      }
     }
     if (source.outputTaxCode && outputTaxCode && source.outputTaxCode !== outputTaxCode) return `${documentType} Tax Code must match its source document`;
   }
@@ -201,7 +248,7 @@ export function isEligibleForCorrection(status: AccountingDocumentStatus): boole
   return status === 'ISSUED' || status === 'CREDITED' || status === 'DEBITED';
 }
 
-type CorrectionLineAmount = { lineNumber: number; taxBaseAmount?: string | null; taxableAmount?: string | null; transactionTaxAmount?: string | null; vatAmount?: string | null };
+type CorrectionLineAmount = { lineNumber: number; discountAmount?: string | null; taxBaseAmount?: string | null; taxableAmount?: string | null; lineSubtotalAmount?: string | null; transactionTaxAmount?: string | null; vatAmount?: string | null };
 type IssuedCorrectionAmounts = { documentType: 'CREDIT_NOTE' | 'DEBIT_NOTE'; lines: CorrectionLineAmount[] };
 
 /** Credit cannot exceed original plus issued debit increases, net of earlier issued credits. */
@@ -210,9 +257,12 @@ export function validateCumulativeCreditNote(
   creditLines: CorrectionLineAmount[],
   issuedCorrections: IssuedCorrectionAmounts[],
 ): string | null {
-  const value = (line: CorrectionLineAmount, tax: boolean) => new Decimal(
-    (tax ? line.transactionTaxAmount ?? line.vatAmount : line.taxBaseAmount ?? line.taxableAmount) ?? 0,
-  ).abs();
+  const value = (line: CorrectionLineAmount, tax: boolean) => {
+    if (tax) return new Decimal(line.transactionTaxAmount ?? line.vatAmount ?? 0).abs();
+    if (line.taxBaseAmount !== undefined && line.taxBaseAmount !== null) return new Decimal(line.taxBaseAmount).abs();
+    if (line.taxableAmount !== undefined && line.taxableAmount !== null) return new Decimal(line.taxableAmount).abs();
+    return new Decimal(line.lineSubtotalAmount ?? 0).sub(line.discountAmount ?? 0).abs();
+  };
   for (const credit of creditLines) {
     const original = originalLines.find((line) => line.lineNumber === credit.lineNumber);
     if (!original) return `Credit note line ${credit.lineNumber} has no matching original line`;

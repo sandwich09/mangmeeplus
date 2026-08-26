@@ -14,6 +14,7 @@ import {
   deriveCompatibleOutputTaxCode,
   validateOutputTaxDocument,
   validateCumulativeCreditNote,
+  validateAdjustmentReason,
 } from './accounting-status.logic';
 
 describe('validateOutputTaxDocument', () => {
@@ -59,6 +60,13 @@ describe('validateOutputTaxDocument', () => {
       { taxCodeDefinitionId: 'legacy-o7', externalTaxCode: 'O7' },
       { taxCodeDefinitionId: 'legacy-ox', externalTaxCode: 'OX' },
     ]), undefined);
+    assert.equal(validateOutputTaxDocument({
+      documentType: 'TAX_INVOICE', vatMode: 'VAT_EXCLUDED', vatAmount: '7.00',
+      lines: [
+        { taxCodeDefinitionId: 'legacy-o7', externalTaxCode: 'O7' },
+        { taxCodeDefinitionId: 'legacy-o0', externalTaxCode: 'O0' },
+      ],
+    }), null, 'a mixed-rate tax invoice has line truth and deliberately no compatibility header');
   });
 
   it('keeps a plain invoice outside transaction-tax lines', () => {
@@ -84,10 +92,37 @@ describe('validateOutputTaxDocument', () => {
   });
 
   it('binds credit notes to the issued original tax invoice with the same code', () => {
-    const credit = { documentType: 'CREDIT_NOTE' as const, outputTaxCode: 'O7' as const, vatMode: 'VAT_EXCLUDED' as const, vatAmount: '7', sourceDocumentId: 'tax-1', sourceDocumentType: 'TAX_INVOICE' };
+    const credit = { documentType: 'CREDIT_NOTE' as const, adjustmentReasonCode: 'GOODS_DAMAGED' as const, outputTaxCode: 'O7' as const, vatMode: 'VAT_EXCLUDED' as const, vatAmount: '7', sourceDocumentId: 'tax-1', sourceDocumentType: 'TAX_INVOICE' };
     assert.equal(validateOutputTaxDocument(credit, { documentType: 'TAX_INVOICE', status: 'ISSUED', outputTaxCode: 'O7' }), null);
     assert.match(validateOutputTaxDocument(credit, { documentType: 'TAX_INVOICE', status: 'ISSUED', outputTaxCode: 'OX' }) ?? '', /must match/);
     assert.match(validateOutputTaxDocument({ ...credit, sourceDocumentType: 'CREDIT_NOTE' }, { documentType: 'CREDIT_NOTE', status: 'ISSUED', outputTaxCode: 'O7' }) ?? '', /original TAX_INVOICE/);
+  });
+
+  it('allows non-VAT corrections against an issued invoice and refuses a VAT-bearing shortcut', () => {
+    const correction = {
+      documentType: 'CREDIT_NOTE' as const, adjustmentReasonCode: 'GOODS_RETURNED' as const,
+      vatMode: 'NO_VAT' as const, vatAmount: '0', sourceDocumentId: 'invoice-1', sourceDocumentType: 'INVOICE',
+    };
+    assert.equal(validateOutputTaxDocument(correction, {
+      documentType: 'INVOICE', status: 'ISSUED', vatMode: 'NO_VAT', vatAmount: '0',
+    }), null);
+    assert.match(validateOutputTaxDocument(correction, {
+      documentType: 'INVOICE', status: 'ISSUED', vatMode: 'VAT_EXCLUDED', vatAmount: '7',
+    }) ?? '', /only when both documents are non-VAT/);
+  });
+});
+
+describe('validateAdjustmentReason', () => {
+  it('requires a reason on every credit/debit note and type-checks the code', () => {
+    assert.match(validateAdjustmentReason({ documentType: 'CREDIT_NOTE' }) ?? '', /requires/);
+    assert.equal(validateAdjustmentReason({ documentType: 'CREDIT_NOTE', adjustmentReasonCode: 'GOODS_DAMAGED' }), null);
+    assert.match(validateAdjustmentReason({ documentType: 'DEBIT_NOTE', adjustmentReasonCode: 'GOODS_DAMAGED' }) ?? '', /not allowed/);
+  });
+
+  it('requires useful detail for the prescribed-other reason and rejects reasons on normal invoices', () => {
+    assert.match(validateAdjustmentReason({ documentType: 'DEBIT_NOTE', adjustmentReasonCode: 'OTHER_PRESCRIBED', adjustmentReasonText: 'x' }) ?? '', /specific/);
+    assert.equal(validateAdjustmentReason({ documentType: 'DEBIT_NOTE', adjustmentReasonCode: 'OTHER_PRESCRIBED', adjustmentReasonText: 'ปรับราคาตามข้อกำหนดเฉพาะ' }), null);
+    assert.match(validateAdjustmentReason({ documentType: 'INVOICE', adjustmentReasonCode: 'OTHER_PRESCRIBED' }) ?? '', /only allowed/);
   });
 });
 
@@ -187,6 +222,31 @@ describe('validateCumulativeCreditNote', () => {
   it('adds issued debit-note increases to the available credit capacity', () => {
     const history = [{ documentType: 'DEBIT_NOTE' as const, lines: [{ lineNumber: 1, taxBaseAmount: '20', transactionTaxAmount: '1.4' }] }];
     assert.equal(validateCumulativeCreditNote(original, [{ lineNumber: 1, taxBaseAmount: '-120', transactionTaxAmount: '-8.4' }], history), null);
+  });
+  it('caps a non-tax credit at the discounted source amount', () => {
+    const original = [{ lineNumber: 1, lineSubtotalAmount: '100', discountAmount: '20', vatAmount: '0' }];
+    assert.match(validateCumulativeCreditNote(
+      original,
+      [{ lineNumber: 1, lineSubtotalAmount: '90', discountAmount: '0', vatAmount: '0' }],
+      [],
+    ) ?? '', /exceeds/);
+    assert.equal(validateCumulativeCreditNote(
+      original,
+      [{ lineNumber: 1, lineSubtotalAmount: '80', discountAmount: '0', vatAmount: '0' }],
+      [],
+    ), null);
+  });
+  it('uses the persisted line subtotal for non-tax invoice corrections', () => {
+    assert.equal(validateCumulativeCreditNote(
+      [{ lineNumber: 1, lineSubtotalAmount: '100', vatAmount: '0' }],
+      [{ lineNumber: 1, lineSubtotalAmount: '100', vatAmount: '0' }],
+      [],
+    ), null);
+    assert.match(validateCumulativeCreditNote(
+      [{ lineNumber: 1, lineSubtotalAmount: '100', vatAmount: '0' }],
+      [{ lineNumber: 1, lineSubtotalAmount: '100.01', vatAmount: '0' }],
+      [],
+    ) ?? '', /exceeds/);
   });
 });
 

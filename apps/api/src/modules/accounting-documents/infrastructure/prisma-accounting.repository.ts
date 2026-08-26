@@ -15,6 +15,8 @@ import type {
   PaginatedDocuments,
   ListPaymentsFilter,
   PaginatedPayments,
+  RecordSimpleIncomeInput,
+  RecordSimpleIncomeResult,
 } from '../domain/models/accounting.model';
 import {
   calculateLine,
@@ -27,7 +29,7 @@ import { initialPostingStatus, validateCumulativeCreditNote, validateOutputTaxDo
 import { buildReversalLines } from '../../ledger/domain/logic/journal-balance.logic';
 import type { AccountingDocumentType, AccountingDocumentStatus, AccountingQuotationApprovalStatus, ResolveTransactionTaxPreviewDto, RevenueCategorySummary, CreateRevenueCategoryInput, UpdateRevenueCategoryInput } from '@watchdog-bms/contracts';
 import { branchScopeWhere } from '../../data-model-core/domain/logic/branch.logic';
-import { civilDate, civilPeriodKey, coerceCivilDate, exclusiveEndOfDay } from '@watchdog-bms/contracts';
+import { civilDate, civilDateToUtcDate, civilPeriodKey, coerceCivilDate, exclusiveEndOfDay } from '@watchdog-bms/contracts';
 import { PrismaDocumentSequenceRepository } from '../../data-model-core/infrastructure/repositories/prisma-document-sequence.repository';
 
 export type AccountingDocumentTaxFinalizer = (input: {
@@ -114,6 +116,26 @@ export class PrismaAccountingRepository {
 
   // ---- Document ----
   async createDocument(input: CreateDocumentInput): Promise<DocumentRecord> {
+    if (input.idempotencyKey) {
+      if (!input.payloadFingerprint) throw new Error('Server payload fingerprint is required for idempotent document create');
+      return this.prisma.client.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.idempotencyKey}:accounting-document-create`}))`;
+        const existing = await (tx.accountingDocument as any).findUnique({
+          where: { companyId_createIdempotencyKey: { companyId: input.companyId, createIdempotencyKey: input.idempotencyKey } },
+          include: { lines: { orderBy: { lineNumber: 'asc' } } },
+        });
+        if (existing) {
+          if (existing.createPayloadFingerprint !== input.payloadFingerprint) {
+            throw new ConflictException({
+              code: 'accounting_document_create_idempotency_conflict',
+              message: 'This invoice retry key was already used with different details. Reload before creating another invoice.',
+            });
+          }
+          return this.toDocumentRecord(existing);
+        }
+        return this.createDocumentWithClient(tx, input);
+      });
+    }
     return this.createDocumentWithClient(this.prisma.client, input);
   }
 
@@ -139,6 +161,8 @@ export class PrismaAccountingRepository {
         sourceDocumentId: input.sourceDocumentId,
         sourceDocumentType: input.sourceDocumentType,
         convertedFromDocumentId: input.convertedFromDocumentId,
+        createIdempotencyKey: input.idempotencyKey,
+        createPayloadFingerprint: input.payloadFingerprint,
         currency: input.currency ?? 'THB',
         vatMode: input.vatMode as any,
         outputTaxCode: input.outputTaxCode as any,
@@ -152,6 +176,8 @@ export class PrismaAccountingRepository {
         paymentStatus: 'UNPAID' as any,
         note: input.note,
         internalMemo: input.internalMemo,
+        adjustmentReasonCode: input.adjustmentReasonCode,
+        adjustmentReasonText: input.adjustmentReasonText,
         createdByUserId: input.createdByUserId,
         lines: {
           // companyId is inherited through the compound document relation —
@@ -296,6 +322,8 @@ export class PrismaAccountingRepository {
           outstandingAmount: totals.grandTotalAmount,
           note: input.note ?? null,
           internalMemo: input.internalMemo ?? null,
+          adjustmentReasonCode: input.adjustmentReasonCode ?? null,
+          adjustmentReasonText: input.adjustmentReasonText ?? null,
           updatedByUserId,
         },
       });
@@ -520,6 +548,33 @@ export class PrismaAccountingRepository {
     return row ? this.toDocumentRecord(row) : null;
   }
 
+  async listIssuedCorrectionLines(companyId: string, sourceDocumentId: string): Promise<Array<{
+    documentType: 'CREDIT_NOTE' | 'DEBIT_NOTE';
+    lines: Array<{ lineNumber: number; discountAmount: string; lineSubtotalAmount: string; lineTotalAmount: string }>;
+  }>> {
+    const rows = await this.prisma.client.accountingDocument.findMany({
+      where: {
+        companyId,
+        sourceDocumentId,
+        documentType: { in: ['CREDIT_NOTE', 'DEBIT_NOTE'] },
+        status: { in: ['ISSUED', 'CREDITED', 'DEBITED', 'CLOSED'] },
+      },
+      select: {
+        documentType: true,
+        lines: { select: { lineNumber: true, discountAmount: true, lineSubtotalAmount: true, lineTotalAmount: true } },
+      },
+    });
+    return rows.map((row: any) => ({
+      documentType: row.documentType,
+      lines: row.lines.map((line: any) => ({
+        lineNumber: line.lineNumber,
+        discountAmount: line.discountAmount.toString(),
+        lineSubtotalAmount: line.lineSubtotalAmount.toString(),
+        lineTotalAmount: line.lineTotalAmount.toString(),
+      })),
+    }));
+  }
+
   /** Shared visibility predicate for list + aggregate: both must see exactly the same rows. */
   private async buildDocumentsWhere(filter: ListDocumentsFilter, branchIds?: string[]): Promise<Record<string, unknown>> {
     const where: Record<string, unknown> = { companyId: filter.companyId };
@@ -620,10 +675,14 @@ export class PrismaAccountingRepository {
         ? await tx.accountingDocument.findFirst({ where: { id: currentRow.sourceDocumentId, companyId }, include: { lines: { orderBy: { lineNumber: 'asc' } } } })
         : null;
       const source = sourceRow ? this.toDocumentRecord(sourceRow) : undefined;
+      if (sourceRow && currentRow.branchId !== sourceRow.branchId) {
+        throw new UnprocessableEntityException('A source-linked document must use the same branch as its source');
+      }
       const taxError = validateOutputTaxDocument(current, source);
       if (taxError) throw new UnprocessableEntityException(taxError);
 
-      const taxRelevant = ['TAX_INVOICE', 'CREDIT_NOTE', 'DEBIT_NOTE'].includes(documentType);
+      const taxRelevant = documentType === 'TAX_INVOICE'
+        || (['CREDIT_NOTE', 'DEBIT_NOTE'].includes(documentType) && sourceRow?.documentType === 'TAX_INVOICE');
       let taxPreviews: ResolveTransactionTaxPreviewDto[] = [];
       if (taxRelevant) {
         const periodKey = civilPeriodKey(coerceCivilDate(current.documentDate));
@@ -686,11 +745,13 @@ export class PrismaAccountingRepository {
       }
 
       if (documentType === 'CREDIT_NOTE') {
-        if (!sourceRow || sourceRow.documentType !== 'TAX_INVOICE') throw new UnprocessableEntityException('Credit note original TAX_INVOICE was not found');
+        if (!sourceRow || !['TAX_INVOICE', 'INVOICE'].includes(sourceRow.documentType)) {
+          throw new UnprocessableEntityException('Credit note original TAX_INVOICE or non-VAT INVOICE was not found');
+        }
         const issuedCorrections = await tx.accountingDocument.findMany({ where: {
           companyId, sourceDocumentId: sourceRow.id, id: { not: id }, documentType: { in: ['CREDIT_NOTE', 'DEBIT_NOTE'] },
           status: { in: ['ISSUED', 'CREDITED', 'DEBITED', 'CLOSED'] },
-        }, select: { documentType: true, lines: { select: { lineNumber: true, taxBaseAmount: true, taxableAmount: true, transactionTaxAmount: true, vatAmount: true } } } });
+        }, select: { documentType: true, lines: { select: { lineNumber: true, discountAmount: true, taxBaseAmount: true, lineSubtotalAmount: true, transactionTaxAmount: true, vatAmount: true } } } });
         const error = validateCumulativeCreditNote(sourceRow.lines, currentRow.lines, issuedCorrections);
         if (error) throw new UnprocessableEntityException(error);
       }
@@ -845,6 +906,211 @@ export class PrismaAccountingRepository {
       });
       return this.toPaymentRecord(updated);
     });
+  }
+
+  async recordSimpleIncomeBundle(
+    input: RecordSimpleIncomeInput,
+    withinTransaction: (db: any, result: Omit<RecordSimpleIncomeResult, 'replayed'>) => Promise<void>,
+  ): Promise<RecordSimpleIncomeResult> {
+    const run = () => (this.prisma.client as any).$transaction(async (tx: any) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.idempotencyKey}:simple-income`}))`;
+
+      const prior = await tx.accountingSimpleIncomeCommand.findUnique({
+        where: { companyId_idempotencyKey: { companyId: input.companyId, idempotencyKey: input.idempotencyKey } },
+      });
+      if (prior) {
+        if (prior.payloadFingerprint !== input.payloadFingerprint) {
+          throw new ConflictException({
+            code: 'simple_income_idempotency_conflict',
+            message: 'This retry key was already used with different income details.',
+          });
+        }
+        const [invoice, payment, receipt] = await Promise.all([
+          tx.accountingDocument.findFirstOrThrow({ where: { companyId: input.companyId, id: prior.invoiceId }, include: { lines: { orderBy: { lineNumber: 'asc' } } } }),
+          tx.accountingPayment.findFirstOrThrow({ where: { companyId: input.companyId, id: prior.paymentId } }),
+          tx.accountingDocument.findFirstOrThrow({ where: { companyId: input.companyId, id: prior.receiptId }, include: { lines: { orderBy: { lineNumber: 'asc' } } } }),
+        ]);
+        return {
+          invoice: this.toDocumentRecord(invoice),
+          payment: this.toPaymentRecord(payment),
+          receipt: this.toDocumentRecord(receipt),
+          replayed: true,
+        };
+      }
+
+      if (input.branchId) {
+        const branch = await tx.branch.findFirst({ where: { id: input.branchId, companyId: input.companyId, status: 'ACTIVE' }, select: { id: true } });
+        if (!branch) throw new NotFoundException('Branch was not found in the current company.');
+      }
+      const counterparty = input.counterpartyId
+        ? await tx.accountingCounterparty.findFirst({ where: { id: input.counterpartyId, companyId: input.companyId, status: 'ACTIVE' } })
+        : null;
+      if (input.counterpartyId && !counterparty) throw new NotFoundException('Customer was not found in the current company.');
+
+      const revenueCategoryIds = [...new Set(input.lines.map((line) => line.revenueCategoryId).filter(Boolean))] as string[];
+      const categories = revenueCategoryIds.length
+        ? await tx.revenueCategory.findMany({ where: { id: { in: revenueCategoryIds }, companyId: input.companyId, status: 'ACTIVE' }, select: { id: true, name: true } })
+        : [];
+      if (categories.length !== revenueCategoryIds.length) {
+        throw new UnprocessableEntityException('Line revenue category is unknown, archived, or belongs to another company');
+      }
+      const revenueNameById = new Map(categories.map((category: any) => [category.id, category.name] as const));
+      const periodKey = civilPeriodKey(coerceCivilDate(input.documentDate));
+      const counterpartySnapshot = counterparty
+        ? { id: counterparty.id, displayName: counterparty.displayName, taxId: counterparty.taxId, legalName: counterparty.legalName }
+        : undefined;
+
+      const invoice = await this.createDocumentWithClient(tx, {
+        companyId: input.companyId,
+        branchId: input.branchId,
+        documentType: 'INVOICE',
+        documentDate: input.documentDate,
+        counterpartyId: input.counterpartyId,
+        currency: 'THB',
+        vatMode: input.vatMode,
+        note: input.note,
+        lines: input.lines,
+        createdByUserId: input.createdByUserId,
+      });
+      const invoiceNumber = await this.documentNumbers.reserveNumberInTransaction(tx, {
+        companyId: input.companyId,
+        branchId: input.branchId,
+        documentType: 'accounting.invoice',
+        periodKey,
+        idempotencyKey: `simple-income:${input.idempotencyKey}:invoice`,
+        reservedByUserId: input.createdByUserId,
+      });
+      for (const line of invoice.lines ?? []) {
+        if (!line.revenueCategoryId) continue;
+        await tx.accountingDocumentLine.update({
+          where: { id: line.id },
+          data: { revenueCategory: revenueNameById.get(line.revenueCategoryId) },
+        });
+      }
+      const issuedAt = new Date();
+      await tx.accountingDocument.update({
+        where: { id: invoice.id },
+        data: {
+          status: 'ISSUED', documentNumber: invoiceNumber.documentNumber,
+          issuedByUserId: input.createdByUserId, issuedAt,
+          counterpartySnapshotJson: counterpartySnapshot as any,
+          postingStatus: 'pending', paymentStatus: 'UNPAID', updatedByUserId: input.createdByUserId,
+        },
+      });
+      await this.documentNumbers.commitNumberInTransaction(tx, {
+        id: invoiceNumber.id, companyId: input.companyId, ownerType: 'accounting_document', ownerId: invoice.id,
+      });
+
+      const invoiceTotal = new Decimal(invoice.grandTotalAmount);
+      const withheld = new Decimal(invoice.whtAmount);
+      const cashReceived = invoiceTotal.minus(withheld).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+      if (cashReceived.lte(0)) {
+        throw new UnprocessableEntityException('Withheld tax must be less than the income total');
+      }
+      const payment = await tx.accountingPayment.create({
+        data: {
+          companyId: input.companyId, branchId: input.branchId, direction: 'RECEIVED', status: 'RECORDED',
+          counterpartyId: input.counterpartyId, counterpartySnapshotJson: counterpartySnapshot as any,
+          method: input.paymentMethod, amount: cashReceived.toFixed(2), whtAmount: withheld.toFixed(2),
+          allocatedAmount: cashReceived.toFixed(2), unappliedAmount: '0', currency: 'THB',
+          paidAt: civilDateToUtcDate(coerceCivilDate(input.documentDate)), note: input.note,
+          postingStatus: 'pending', createdByUserId: input.createdByUserId,
+        },
+      });
+      const paymentNumber = await this.documentNumbers.reserveNumberInTransaction(tx, {
+        companyId: input.companyId, branchId: input.branchId, documentType: 'accounting.payment', periodKey,
+        idempotencyKey: `simple-income:${input.idempotencyKey}:payment`, reservedByUserId: input.createdByUserId,
+      });
+      await tx.accountingPayment.update({ where: { id: payment.id }, data: { paymentNumber: paymentNumber.documentNumber } });
+      await tx.accountingPaymentAllocation.create({
+        data: {
+          companyId: input.companyId, paymentId: payment.id, documentId: invoice.id,
+          amount: cashReceived.toFixed(2), whtAmount: withheld.gt(0) ? withheld.toFixed(2) : null,
+          createdByUserId: input.createdByUserId,
+        },
+      });
+      await this.documentNumbers.commitNumberInTransaction(tx, {
+        id: paymentNumber.id, companyId: input.companyId, ownerType: 'accounting_payment', ownerId: payment.id,
+      });
+      await tx.accountingDocument.update({
+        where: { id: invoice.id },
+        data: {
+          paidAmount: invoiceTotal.toFixed(2), outstandingAmount: '0', paymentStatus: 'PAID',
+          updatedByUserId: input.createdByUserId,
+        },
+      });
+
+      const receipt = await this.createDocumentWithClient(tx, {
+        companyId: input.companyId,
+        branchId: input.branchId,
+        documentType: 'RECEIPT',
+        documentDate: input.documentDate,
+        counterpartyId: input.counterpartyId,
+        sourceDocumentId: invoice.id,
+        sourceDocumentType: 'INVOICE',
+        currency: 'THB',
+        vatMode: input.vatMode,
+        note: input.note,
+        lines: input.lines,
+        createdByUserId: input.createdByUserId,
+      });
+      const receiptNumber = await this.documentNumbers.reserveNumberInTransaction(tx, {
+        companyId: input.companyId, branchId: input.branchId, documentType: 'accounting.receipt', periodKey,
+        idempotencyKey: `simple-income:${input.idempotencyKey}:receipt`, reservedByUserId: input.createdByUserId,
+      });
+      for (const line of receipt.lines ?? []) {
+        if (!line.revenueCategoryId) continue;
+        await tx.accountingDocumentLine.update({ where: { id: line.id }, data: { revenueCategory: revenueNameById.get(line.revenueCategoryId) } });
+      }
+      await tx.accountingDocument.update({
+        where: { id: receipt.id },
+        data: {
+          status: 'ISSUED', documentNumber: receiptNumber.documentNumber,
+          issuedByUserId: input.createdByUserId, issuedAt,
+          counterpartySnapshotJson: counterpartySnapshot as any,
+          // The AccountingPayment above is the canonical settlement posting source. Auto-receipt
+          // is evidence only; marking it pending would post cash/AR a second time.
+          postingStatus: 'not_required', paidAmount: invoiceTotal.toFixed(2), outstandingAmount: '0',
+          paymentStatus: 'PAID', updatedByUserId: input.createdByUserId,
+        },
+      });
+      await this.documentNumbers.commitNumberInTransaction(tx, {
+        id: receiptNumber.id, companyId: input.companyId, ownerType: 'accounting_document', ownerId: receipt.id,
+      });
+
+      const [persistedInvoice, persistedPayment, persistedReceipt] = await Promise.all([
+        tx.accountingDocument.findFirstOrThrow({ where: { companyId: input.companyId, id: invoice.id }, include: { lines: { orderBy: { lineNumber: 'asc' } } } }),
+        tx.accountingPayment.findFirstOrThrow({ where: { companyId: input.companyId, id: payment.id } }),
+        tx.accountingDocument.findFirstOrThrow({ where: { companyId: input.companyId, id: receipt.id }, include: { lines: { orderBy: { lineNumber: 'asc' } } } }),
+      ]);
+      const result = {
+        invoice: this.toDocumentRecord(persistedInvoice),
+        payment: this.toPaymentRecord(persistedPayment),
+        receipt: this.toDocumentRecord(persistedReceipt),
+      };
+      await withinTransaction(tx, result);
+      await tx.accountingSimpleIncomeCommand.create({
+        data: {
+          companyId: input.companyId, idempotencyKey: input.idempotencyKey,
+          payloadFingerprint: input.payloadFingerprint,
+          invoiceId: invoice.id, paymentId: payment.id, receiptId: receipt.id,
+        },
+      });
+      return { ...result, replayed: false };
+    }, { isolationLevel: 'Serializable' });
+    // PostgreSQL correctly aborts waiters whose SERIALIZABLE snapshot predates the winner that
+    // committed under the advisory lock. Retrying is how every concurrent caller observes the
+    // completed command row instead of leaking a database conflict to a harmless double-tap.
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      try {
+        return await run();
+      } catch (error) {
+        lastError = error;
+        if ((error as { code?: string }).code !== 'P2034') throw error;
+      }
+    }
+    throw lastError;
   }
 
   // ---- Revenue categories (ledger spec F-LED-2) ----
@@ -1090,7 +1356,7 @@ export class PrismaAccountingRepository {
       if (claimed.count !== 1) throw new ConflictException({ code: 'accounting_document_changed', message: 'Document changed before void. Reload and retry.' });
       const doc = await tx.accountingDocument.findFirstOrThrow({ where: { id: documentId, companyId } });
 
-      if (doc.documentType === 'TAX_INVOICE') {
+      if (doc.documentType === 'TAX_INVOICE' || doc.documentType === 'INVOICE') {
         const correction = await tx.accountingDocument.findFirst({
           where: {
             companyId, sourceDocumentId: documentId, documentType: { in: ['CREDIT_NOTE', 'DEBIT_NOTE'] },
@@ -1099,7 +1365,7 @@ export class PrismaAccountingRepository {
           select: { documentNumber: true },
         });
         if (correction) {
-          throw new UnprocessableEntityException(`Credit/debit note ${correction.documentNumber ?? ''} still references this tax invoice; void the corrections first`);
+          throw new UnprocessableEntityException(`Credit/debit note ${correction.documentNumber ?? ''} still references this source document; void the corrections first`);
         }
       }
 
@@ -1118,7 +1384,10 @@ export class PrismaAccountingRepository {
       }
       if (allocations.length) await tx.accountingPaymentAllocation.deleteMany({ where: { documentId, companyId } });
 
-      const taxRelevant = ['TAX_INVOICE', 'CREDIT_NOTE', 'DEBIT_NOTE'].includes(doc.documentType);
+      const correctionSource = ['CREDIT_NOTE', 'DEBIT_NOTE'].includes(doc.documentType) && doc.sourceDocumentId
+        ? await tx.accountingDocument.findFirst({ where: { id: doc.sourceDocumentId, companyId }, select: { documentType: true } })
+        : null;
+      const taxRelevant = doc.documentType === 'TAX_INVOICE' || correctionSource?.documentType === 'TAX_INVOICE';
       const reversal = await this.reverseSourceJournalInTx(tx, {
         companyId, sourceType: 'accounting.document', sourceId: documentId,
         reversalEntryNumber, actorUserId,
@@ -1271,6 +1540,8 @@ export class PrismaAccountingRepository {
       taxInvoiceType: row.taxInvoiceType ?? undefined, taxInvoiceId: row.taxInvoiceId ?? undefined,
       postingStatus: row.postingStatus, journalEntryId: row.journalEntryId ?? undefined,
       postingError: row.postingError ?? undefined, note: row.note ?? undefined, internalMemo: row.internalMemo ?? undefined,
+      adjustmentReasonCode: row.adjustmentReasonCode ?? undefined,
+      adjustmentReasonText: row.adjustmentReasonText ?? undefined,
       issuedByUserId: row.issuedByUserId ?? undefined, issuedAt: row.issuedAt ?? undefined,
       voidedByUserId: row.voidedByUserId ?? undefined, voidedAt: row.voidedAt ?? undefined, voidReason: row.voidReason ?? undefined,
       approvalStatus: row.approvalStatus ?? undefined, submittedByUserId: row.submittedByUserId ?? undefined,

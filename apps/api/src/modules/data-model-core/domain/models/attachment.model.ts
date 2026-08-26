@@ -67,6 +67,7 @@ export type MarkAttachmentDeletedInput = { id: string; companyId: string };
 
 export type LinkAttachmentInput = {
   companyId: string;
+  branchIds?: string[];
   attachmentId: string;
   targetType: string;
   targetId: string;
