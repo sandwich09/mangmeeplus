@@ -27,7 +27,7 @@
 
 | งาน | หัวข้อ | Spec | Plan | สถานะ |
 |---|---|---|---|---|
-| P10 | Auto-register จากเว็บทางการ (signed ingress, state, idempotency, claim-before-provision) | [spec](../specs/mangmee-external-signup-contract-spec-th.md) | [P10 plan](mangmee-four-lane-gap-closure-plan-th.md#p10--external-signup) | **READY P10-0**; public ingress รอ Owner §8 |
+| P10 | Auto-register จากเว็บทางการ (signed ingress, state, idempotency, claim-before-provision) | [spec](../specs/mangmee-external-signup-contract-spec-th.md) | [canonical plan](mangmee-external-signup-plan-th.md) + [status gate](mangmee-four-lane-gap-closure-plan-th.md#p10--external-signup) | **P10-0 CORE IMPLEMENTED + LOCAL VERIFIED**; public ingress รอ Owner §8 |
 | P11 | Email delivery + claim account | [spec](../specs/mangmee-email-delivery-claim-spec-th.md) | [P11 plan](mangmee-four-lane-gap-closure-plan-th.md#p11--email-delivery--claim) | **CORE READY**; live รอโดเมน/DNS/region |
 | P12 | LINE login: OAuth/LIFF + account linking + QR login | [spec](../specs/mangmee-line-login-link-journey-spec-th.md) | [P12 plan](mangmee-four-lane-gap-closure-plan-th.md#p12--line-loginlinkqr) | **READY P12-0/1**; live link/QR รอ console/deep-link gate |
 

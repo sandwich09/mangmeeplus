@@ -1,10 +1,10 @@
 # Auto-register จากเว็บไซต์ทางการ (External Signup Contract) — Spec P10
 
-สถานะ: **PARTIAL READY** — core state/idempotency/provisioning เริ่ม P10-0 ได้; ingress auth, claim TTL และ duplicate-tax policy ยังรอ Owner §8 ก่อนเปิด public route; แผนส่งมอบอยู่ใน [Four-lane Gap Closure Plan](../plans/mangmee-four-lane-gap-closure-plan-th.md#p10--external-signup)
+สถานะ: **P10-0 CORE IMPLEMENTED + LOCAL VERIFIED** — durable state/idempotency/audit/outbox/provisioning fence พร้อม; public ingress, email claim และ provision จริงยังปิดจน Owner ตอบ §8 และ P11 พร้อม; แผนส่งมอบอยู่ใน [Four-lane Gap Closure Plan](../plans/mangmee-four-lane-gap-closure-plan-th.md#p10--external-signup)
 
 ที่มา: [แผนหลัก P10 + §13.6](../plans/mangmee-brain-2-5-day-priority-plan-th.md) (flow, states, contract ขั้นต่ำ กำหนดไว้แล้วคำต่อคำ — spec นี้ยกมาเป็นทางการ + ผูกหลักฐานโค้ด); STOP-SHIP ที่ต้องปิด: SIGNUP-01, SIGNUP-02 (§13.3)
 
-หลักฐานโค้ด `develop` (สำรวจ 2026-08-26)
+หลักฐานฐานเดิม `develop` (สำรวจ 2026-08-26) และ candidate P10-0: [แผนส่งมอบ P10](../plans/mangmee-external-signup-plan-th.md)
 
 ## 1. Current truth
 
@@ -18,6 +18,18 @@
 | Idempotency pattern ของ repo = **DB unique บน key ที่ผู้เรียกส่ง** (ไม่มี middleware Idempotency-Key กลาง); มีรูป unique แบบไม่มี company (`@@unique([idempotencyKey])` — `schema.prisma:3812`) ซึ่งเป็น shape ที่ signup ก่อนมี tenant ต้องใช้ | ตาราง unique 8 จุด + helper `buildIdempotencyKey` |
 | Outbox durable มีครบ (PENDING→PROCESSING→PUBLISHED/FAILED/DEAD, claimToken CAS, `companyId` nullable = event ระดับ platform ได้) | `schema.prisma:917-946`; `outbox-append.service.ts:61-75` |
 | Rate-limit policy taxonomy ประกาศแล้ว: bucket ที่คุ้มครอง credential/เงิน = fail-closed default | `redis-rate-limit.service.ts:19-30` |
+
+### 1.1 สิ่งที่ P10-0 เพิ่มแล้ว (ยังไม่มี public route)
+
+| Contract | หลักฐาน candidate |
+|---|---|
+| durable request + state/version + normalized payload hash | `schema.prisma` model `CompanySignupRequest`; migration `20260826200000_external_signup_core`; `company-signup.logic.ts` |
+| key เดิม/payload เดิมคืน request เดิม; key เดิม/payloadต่างคืน 409; race key เดียวสร้างหนึ่ง row | `CompanySignupCoreService.receive()` ใช้ transaction advisory lock + unique key; focused test และ real-PostgreSQL smoke 16 concurrent calls |
+| transition/retry ไม่ข้าม state; provisioning มีผู้ชนะหนึ่งรายและ attempt fencing | `advance()`, `claimProvisioning()`, `completeProvisioning()`, `failProvisioning()`; real-PostgreSQL smoke 8 concurrent claims + stale-attempt rejection |
+| ทุก transition มี audit + outbox ที่ไม่บันทึก PII | `appendEvidence()`; smoke ยืนยัน 8 audit/8 outbox และไม่มี email/company/owner/tax ID ใน evidence payload |
+| public surface ยังปิด | `ExternalSignupModule` มี provider/export เท่านั้น ไม่มี controller และไม่มี `@Public()` route |
+
+ขอบเขตที่ยัง **ไม่ถือว่า implemented**: signed ingress/nonce/rate limit/status API, duplicate email/tax-ID policy, email delivery/claim token, verified owner credential, onboarding adapter, LINE handoff และ UI ทุกหน้า
 
 ## 2. หลักการที่ห้ามละเมิด
 
@@ -60,3 +72,4 @@ invalid/expired/replayed signature ถูกปฏิเสธ; same-request con
 1. เว็บไซต์ทางการถือ secret ได้ไหม → เลือก **HMAC** (ถือ secret ฝั่งเว็บ) หรือ **service JWT** (ออกจาก identity กลาง)
 2. Claim link หมดอายุกี่ชั่วโมง (แนะนำ 24 ชม. — สั้นกว่า 72 ชม.ของ temp password ภายใน) และใครมีสิทธิ์ resend/revoke
 3. นโยบายชน taxId ของบริษัทที่มีอยู่: attach ให้ Owner เดิม (ต้อง verify อย่างไร) หรือส่ง review คิว Admin
+4. `CreateCompanyOnboardingUseCase` ต้องใช้ `businessCategory` แต่ payload สมัครปัจจุบันไม่มี: ให้เว็บไซต์ส่งค่าที่เลือกจาก allowlist หรือกำหนดค่าเริ่มต้นทาง product เป็นอะไร (ห้าม adapter เดาเอง)

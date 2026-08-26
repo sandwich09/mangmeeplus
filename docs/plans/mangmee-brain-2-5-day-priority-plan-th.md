@@ -650,7 +650,7 @@ Quality ต้องไม่ตกหมายถึง “ลดจำนว�
 | P | เรื่อง | spec ที่มีอยู่ (docs/specs) | สถานะ |
 |---|---|---|---|
 | P9 | Monitoring/incident เต็ม | `production-ops-spec`, `m-02-ai-api-observability-spec` + runbooks | READY P9-0..2; UAT drill gate |
-| P10 | Auto-register จากเว็บทางการ | `mangmee-external-signup-contract-spec-th` (+`admin-company-onboarding-spec` ฝั่งภายใน) | READY core P10-0; ingress รอ Owner §8 |
+| P10 | Auto-register จากเว็บทางการ | `mangmee-external-signup-contract-spec-th` (+`admin-company-onboarding-spec` ฝั่งภายใน) | P10-0 core implemented + local verified; ingress รอ Owner §8 |
 | P11 | Email delivery + claim | `mangmee-email-delivery-claim-spec-th` | READY core; live รอ domain/DNS/region |
 | P12 | OA กลาง + LIFF + LINE QR Login | `mangmee-line-login-link-journey-spec-th` (ฉบับรวม) | READY P12-0/1; live link/QR รอ console/deep-link gate |
 | P13 | พนักงานหลายบริษัทบน LINE | `mangmee-line-multi-company-staff-spec-th` (+`multi-company-branch-scope-spec` ฝั่งเว็บ) | BLOCKED active-membership/notification policy |
@@ -668,7 +668,7 @@ Quality ต้องไม่ตกหมายถึง “ลดจำนว�
 | P27 | สมุดรายรับ–รายจ่าย | `mangmee-income-expense-ledger-spec-th` v1.2 | Phase 0–2 merged integration; Phase 3 branch-only ณ audit |
 | P28 | ซื้อ-จ่ายเงิน MVP + ใบลดหนี้ฝั่งซื้อ | `procurement-supplier-ap-spec` (engine) + `mangmee-purchase-to-pay-mvp-spec-th` (MVP/UX/CN) | BLOCKED Owner spec §10 ข้อ 2–5 |
 
-**สถานะหลัง audit 2026-08-26:** ทุกแถวสาย 1–4 มี spec boundary + plan/gate แล้ว แต่ readiness เป็นราย phase ไม่ใช่เขียวทั้งหัวข้อ. ดู ref/status/blocker ที่ [Master Plan Index](mangmee-master-plan-index-th.md); P18–P20 มี provider-neutral contract แล้ว แต่ production adapter ยังต้องรอ provider จริง.
+**สถานะหลัง audit 2026-08-26:** ทุกแถวสาย 1–4 มี spec boundary + plan/gate แล้ว แต่ readiness เป็นราย phase ไม่ใช่เขียวทั้งหัวข้อ. P10-0 core implemented + local verified แล้ว; public ingress/provision จริงยังรอ Owner §8. ดู ref/status/blocker ที่ [Master Plan Index](mangmee-master-plan-index-th.md); P18–P20 มี provider-neutral contract แล้ว แต่ production adapter ยังต้องรอ provider จริง.
 
 ### P9 — Incident, Monitoring และ Fast Hotfix Lane (ส่วนที่เหลือจาก P3)
 
