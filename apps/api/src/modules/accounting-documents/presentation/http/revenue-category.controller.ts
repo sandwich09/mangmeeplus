@@ -1,8 +1,9 @@
 import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import type { CreateRevenueCategoryInput, RequestContext, UpdateRevenueCategoryInput } from '@watchdog-bms/contracts';
+import type { RequestContext } from '@watchdog-bms/contracts';
 import { RequireAnyPermission, RequirePermissions } from '../../../../common/security/permissions.decorator';
 import { ReqCtx } from '../../../auth/presentation/request-context.decorator';
+import { CreateRevenueCategoryDto, UpdateRevenueCategoryDto } from './revenue-category.dtos';
 import {
   CreateRevenueCategoryUseCase,
   ListAllRevenueCategoriesUseCase,
@@ -39,14 +40,14 @@ export class RevenueCategoryController {
   @Post()
   @RequirePermissions('accounting.revenue_category.manage')
   @ApiOperation({ summary: 'Create revenue category' })
-  createCategory(@ReqCtx() ctx: RequestContext, @Body() body: CreateRevenueCategoryInput) {
+  createCategory(@ReqCtx() ctx: RequestContext, @Body() body: CreateRevenueCategoryDto) {
     return this.createCat.execute(ctx, body);
   }
 
   @Patch(':categoryId')
   @RequirePermissions('accounting.revenue_category.manage')
   @ApiOperation({ summary: 'Update revenue category (rename / reorder / retax / archive)' })
-  updateCategory(@ReqCtx() ctx: RequestContext, @Param('categoryId') categoryId: string, @Body() body: UpdateRevenueCategoryInput) {
+  updateCategory(@ReqCtx() ctx: RequestContext, @Param('categoryId') categoryId: string, @Body() body: UpdateRevenueCategoryDto) {
     return this.updateCat.execute(ctx, categoryId, body);
   }
 }
