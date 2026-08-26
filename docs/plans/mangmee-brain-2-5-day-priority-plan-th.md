@@ -811,6 +811,20 @@ STOP-SHIP ของงานนี้: **LED-FIN-01** — `accounting-totals.log
 
 เงื่อนไขก่อน coding ปิดครบแล้ว: Owner ตอบ spec §9 ทั้ง 6 ข้อ (2026-08-26) — P27 คือคิวหลักก่อนสาย P14→P26; รายละเอียดคำตอบอยู่ใน spec §9
 
+### P28 — ซื้อและจ่ายเงิน แบบ FlowAccount (Procure-to-Pay MVP)
+
+การยืนยัน Owner 2026-08-26 (รอบสาม): **เป้าหมายรวมคือ FlowAccount parity ทั้งสองฝั่ง** — ขาย-รับเงิน (P27) และ **ซื้อ-จ่ายเงินครบทั้งสาย** ไม่ใช่แค่ค่าใช้จ่าย
+
+Current truth (ตรวจโค้ด 2026-08-26): engine ฝั่งซื้อมีเกือบครบแล้ว — supplier / purchase-request+PO (approval policy) / goods-receipt (atomic+void) / vendor bill (maker-checker + transaction tax + void) / supplier payment / AP aging / ภ.พ.36 input claim (`apps/api/src/modules/procurement/`) พร้อม feature submenus 7 ตัว (`feature-entitlements.ts` `procurement.*`) — แต่ web มีหน้า hub เดียวและ**ถูกซ่อนจาก nav** (สภาพเดียวกับฝั่งขายก่อน P27); ค่าใช้จ่าย+OCR เปิดใช้จริงอยู่แล้ว
+
+ขอบเขต (ทำหลัง P27 จบ ตามแบบเดียวกัน — spec-first ก่อน coding):
+
+1. หน้าจอ P2P ตามหลัก F-LED-7 (theme เดิม, action-gating, source-first): สั่งซื้อ → รับของ → บันทึกบิล → เตรียมจ่าย/จ่าย → เห็นในสมุดฝั่งจ่าย
+2. อุด gap ที่พบ: **ใบลดหนี้ฝั่งซื้อ** (รับจากผู้ขาย — vendor bill วันนี้แก้ได้ด้วย void เท่านั้น), รวม vendor bill/supplier payment เข้า "จ่ายแล้ว/รอจ่าย" ของสมุดรายรับ–รายจ่าย
+3. เปิดแบบควบคุมด้วย entitlement `procurement.*` + kill switch ตาม pattern P27 Phase 6
+4. อ้างอิง: [OS implementation plan P8](mangmee-accounting-os-implementation-plan-th.md), research FlowAccount §7 (PO/GR/expense/ใบเตรียมจ่าย), ledger spec §F-LED-7
+5. ก่อนเริ่ม: เขียน spec+plan ของ P28 แยก (แบบเดียวกับ P27) — ห้าม implement จากหัวข้อนี้ตรง ๆ
+
 ## 11. คำถามที่ Owner ต้องตัดสินก่อน P1 จบ
 
 ตัดสินแล้วจาก flow ล่าสุด:
