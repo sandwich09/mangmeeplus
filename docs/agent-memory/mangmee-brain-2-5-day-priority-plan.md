@@ -76,6 +76,8 @@ Decisions:
 - Signup state canonical คือ RECEIVED→VALIDATED→EMAIL_PENDING→EMAIL_VERIFIED→PROVISIONING→READY→LINE_LINK_PENDING→COMPLETED; retry ไม่สร้าง Company/User/Membership/email/link ซ้ำ
 - หลัง link ต้อง revalidate membership/role/branch/entitlement, เลือกบริษัทเมื่อหลายบริษัท, redirect กลับ OA และแสดง user/company/role/first-value menu
 
+- v6 (2026-08-26) ลงมือทำ P1–P8 บน branch codex/brain-25day-p2-p5: **FIN-01 ปิดทั้งสองโมดูล** (helpers เดิมเป็น dead code — wiring เข้า path จริง + reimbursements mirror ที่ claim-born expenses ถูกบังคับผ่าน), **VAT-MIX-01 ปิดครบ 13.11.B** (allocation reachable, ชี้บรรทัด, override "ใช้ยอดตามเอกสาร"+HIGH audit, ยกเว้น≠0%ส่งออก, golden 5 เคส), **P3 ปิด** (alarm 5 ตัว + launch gate บังคับจริงทั้ง AI lane และ expenses roots แบบ BLOCK_NEW_ROOT + ข้อความไทย OPEN-9), **P4/P5 ปิดทั้ง 10 ข้อ** (hero, EXP-UX-01, login validation, label, nav, queue-busy, a11y), **P7 บางส่วน**: critical E2E project ใหม่ 38/0 (รวม EXP-04B พิสูจน์ส่งตรวจ→รายการ+highlight), k6 script พร้อมแต่ hosted run รอ UAT; P1 manifest อยู่ release-evidence/manifest.md; เหลือของที่ต้องมนุษย์/UAT: Gate E 3 คน, load smoke hosted, drill จริง, AI-01 8 gaps (flags off), Owner fields (allowlist/on-call/copy) และคำเลือกถ้อยคำ "พร้อมยืนยัน" vs "รอตรวจสอบ"
+
 Open questions:
 
 - Owner ยอมรับ Controlled Beta หรือยังต้องการเปิด Marketing วงกว้าง?
