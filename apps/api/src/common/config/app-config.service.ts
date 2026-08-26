@@ -79,10 +79,28 @@ export class AppConfigService {
   get lineAiSubstituteSemanticRoutingMode(): 'off' | 'shadow' | 'primary' { return this.config.LINE_AI_SUBSTITUTE_SEMANTIC_ROUTING_MODE; }
   // Expense-vs-reimbursement semantic intake mode (default 'off' = exact legacy intake prompt/parser).
   get lineAiReimbursementSemanticMode(): 'off' | 'shadow' | 'clarify_only' | 'handoff' { return this.config.LINE_AI_REIMBURSEMENT_SEMANTIC_MODE; }
+  // DB-backed neutral intake state (§8.3). Default 'off' = the durable state is never touched and the
+  // fail-open Redis ledger stays the only continuation state; 'shadow' measures divergence without
+  // changing behavior; 'on' makes it authoritative and fails CLOSED with zero writes.
+  get lineAiIntakeStateMode(): 'off' | 'shadow' | 'on' { return this.config.LINE_AI_INTAKE_STATE_MODE; }
   // Exact standalone greeting 0-call lane (default false = exact legacy three-call greeting path).
   get lineAiExactGreetingEnabled(): boolean { return this.config.LINE_AI_EXACT_GREETING_ENABLED; }
+  // Advisor staged capability (default 'off' = the `advisor` router capability is never sent, so the
+  // intake prompt/payload/parser are byte-exact legacy). Only 'off' and 'social' are buildable today.
+  get lineAiAdvisorMode(): 'off' | 'social' | 'knowledge' | 'company' { return this.config.LINE_AI_ADVISOR_MODE; }
+  // Advisor direct-answer kill switch. RESERVED / INERT: parsed and exposed for a stable env contract,
+  // but NO consumer reads it yet — the prepared direct-answer lane is a later phase. Off = the reply
+  // always comes from the existing reference path.
+  get lineAiAdvisorDirectAnswerEnabled(): boolean { return this.config.LINE_AI_ADVISOR_DIRECT_ANSWER_ENABLED; }
   // Terminal Flex card on a multi-part reply (default false = exact legacy all-text multi-part shape).
   get lineAiMultipartTerminalFlexEnabled(): boolean { return this.config.LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED; }
+  // Durable terminal-outcome replay (§8.3). Default false = no outcome row is written or read and the
+  // orphan sweep selects exactly today's rows; true = the rendered messages are persisted before the
+  // first send (fail-closed) and a retry pushes THEM instead of re-routing the input.
+  get lineAiTerminalOutcomeReplayEnabled(): boolean { return this.config.LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED; }
+  // Flex→text delivery fallback (§14.3). Default false = a rejected Flex payload takes the exact
+  // legacy push path; true = one retry with each Flex message's own altText.
+  get lineAiFlexTextFallbackEnabled(): boolean { return this.config.LINE_AI_FLEX_TEXT_FALLBACK_ENABLED; }
   get lineExpenseDraftConversationEnabled(): boolean { return this.config.LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED; }
   // Item 10F: LINE AI turn ledger (Redis Streams; ADR 0010)
   get redisUrl(): string { return this.config.REDIS_URL; }

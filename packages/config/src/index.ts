@@ -234,17 +234,57 @@ export const apiConfigSchema = baseConfigSchema.extend({
   // No mode ever creates a reimbursement record. Rollback target for every primary mode is
   // 'clarify_only', not 'off'.
   LINE_AI_REIMBURSEMENT_SEMANTIC_MODE: z.enum(['off', 'shadow', 'clarify_only', 'handoff']).default('off'),
+  // DB-backed neutral intake state for financial clarifications (uat-correctness-latency spec §8.3,
+  // plan Phase 1A). Default 'off' is behavior-identical to today in every byte: the repository is
+  // never called and the Redis ledger remains the only continuation state. 'shadow' writes and reads
+  // the durable state and logs where it DIVERGES from the ledger's view, but the reply, the writes
+  // and the consumption are decided exactly as 'off' decides them — it is a measurement lane, not a
+  // behavior lane. 'on' makes the durable state authoritative for a financial clarification
+  // continuation, which is what buys the four §8.3 zero-write guarantees: a state-store outage, a
+  // stale/expired version, another member, or another chat/company all refuse and write NOTHING.
+  // Membership is checked POSITIVELY ('shadow'/'on'), so an unset or unparsed value stays off —
+  // this store fails CLOSED, unlike the ledger it backstops.
+  LINE_AI_INTAKE_STATE_MODE: z.enum(['off', 'shadow', 'on']).default('off'),
   // Exact standalone greeting lane (uat-correctness-latency spec §11.2, plan Phase 6B). Default OFF keeps
   // the EXACT legacy path where a bare "สวัสดี" costs three model calls. On, a whole-message match against
   // the versioned greeting allowlist answers deterministically with zero model calls — only after every
   // security/identity/feature gate and only when the turn carries no open state at all.
   LINE_AI_EXACT_GREETING_ENABLED: envBoolean.default(false),
+  // Advisor conversation staged rollout (advisor spec §17). ONE capability enum plus ONE execution kill
+  // switch, deliberately not a flag per feature. 'off' is behavior-identical to today in every byte: the
+  // API never turns the `advisor` router capability on, so the intake prompt/payload/parser stay legacy.
+  // 'social' is the only stage Slice A builds toward (SOCIAL_CHAT); 'knowledge' and 'company' are parsed
+  // here so the env contract is stable, but their semantics/renderers do not exist yet and their
+  // activation gates (spec §18) are unmet — do not set them. An unknown value FAILS the schema (closed),
+  // never silently degrading to a more permissive stage. Rollback goes one stage back, or to 'off'.
+  LINE_AI_ADVISOR_MODE: z.enum(['off', 'social', 'knowledge', 'company']).default('off'),
+  // Execution kill switch, separate from the staged enum so the measurement cohort (mode >= 'social' with
+  // this false: the router emits and the server validates an advisorAnswer, but the reply still comes from
+  // the existing reference path) can be turned on and off without touching the stage. RESERVED / INERT in
+  // Slice A: no consumer reads it yet — the prepared direct-answer lane is a later phase.
+  LINE_AI_ADVISOR_DIRECT_ANSWER_ENABLED: envBoolean.default(false),
   // Terminal Flex card on a MULTI-PART reply (uat-correctness-latency spec §10.1). Default OFF is the exact
   // legacy shape: every part of a split reply is a plain text message and only the last one carries the
   // completion quick reply. On, the terminal part is rendered as the same Flex card a single completed
   // reply gets — and when that terminal text is longer than a Flex body can hold, the full text still
   // ships as text and the card is appended after it, so turning this on can never truncate a reply.
   LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED: envBoolean.default(false),
+  // Durable terminal-outcome replay (uat-correctness-latency §8.3, reliability §6/E3). Default OFF is
+  // byte-identical to today: no LineTurnOutcome row is written or read, an in-turn delivery failure
+  // still only marks the event `delivery_pending`, and the orphan sweep selects exactly the rows it
+  // selects now. ON, the exact rendered LINE message array is persisted BEFORE the first send attempt
+  // and the sweep PUSHES those stored bytes on a retry instead of re-routing the input — which is the
+  // point: re-routing can compute a different answer for the same question. The write is FAIL-CLOSED
+  // when this is on: an outcome that cannot be recorded is not sent, because a delivered-but-
+  // unrecorded turn is the one case a later replay could contradict.
+  LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED: envBoolean.default(false),
+  // Flex→text delivery fallback (§14.3, reliability R4/E4). Default OFF is byte-identical: a LINE 400
+  // that rejects a Flex payload takes the same push path a rejected reply token takes and, when that
+  // fails too, ends as `delivery_pending`. ON, the payload is re-sent ONCE as each Flex message's own
+  // `altText` — LINE's designated plain-text equivalent, written by the same builder that wrote the
+  // bubble — so a renderer-shaped rejection still delivers the answer instead of silence. Never a
+  // second model call and never invented copy.
+  LINE_AI_FLEX_TEXT_FALLBACK_ENABLED: envBoolean.default(false),
   // Durable multi-turn expense draft collection. Default off until recorded LINE OA UAT passes.
   LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED: envBoolean.default(false),
   // Item 10F: LINE AI turn ledger on Redis Streams (ADR 0010; fail-open, default off)

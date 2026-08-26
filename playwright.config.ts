@@ -90,6 +90,14 @@ export default defineConfig({
       testIgnore: /evidence\.spec\.ts/,
       use: { ...devices['Desktop Chrome'] },
     },
+    // Plan P7 Gate A: the critical suite. Same browser as `chromium`, narrowed to the @smoke tag so
+    // a release candidate can be gated in minutes instead of a full-suite run. `pnpm e2e:critical`.
+    {
+      name: 'critical',
+      grep: /@smoke/,
+      testIgnore: /evidence\.spec\.ts/,
+      use: { ...devices['Desktop Chrome'] },
+    },
     {
       name: 'mobile-chromium',
       testMatch: /(responsive|evidence)\.spec\.ts/,

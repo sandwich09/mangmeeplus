@@ -12,6 +12,8 @@
     "security:m14-evidence": "tsx scripts/m14-scanner-evidence.ts",
     "legal:release-gate": "bash infra/security/validate-legal-release-readiness.sh",
     "e2e": "playwright test",
+    "e2e:critical": "playwright test --project=critical",
+    "test:harness": "pnpm --filter @watchdog-bms/contracts build && tsx --test scripts/line-ai-latency-autonomy.corpus.spec.ts scripts/expense-category.golden.spec.ts scripts/brain-family-questions.golden.spec.ts",
     "agent:gates": "node scripts/check-agent-gates.mjs",
     "test": "corepack pnpm -r --if-present test",
     "typecheck": "corepack pnpm -r --if-present typecheck",

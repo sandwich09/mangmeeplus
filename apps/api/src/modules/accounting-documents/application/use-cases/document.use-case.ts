@@ -38,6 +38,21 @@ function hasDocumentPermission(ctx: RequestContext, documentType: AccountingDocu
   return ctx.permissions.includes(`accounting.document.${action}`) || ctx.permissions.includes(docPermission(documentType, action));
 }
 
+/** Ledger spec F-LED-2: a line may only reference an ACTIVE revenue category of this company. */
+async function assertRevenueCategoriesUsable(
+  repo: PrismaAccountingRepository,
+  companyId: string,
+  lines: ReadonlyArray<{ revenueCategoryId?: string }>,
+): Promise<void> {
+  const ids = [...new Set(lines.map((line) => line.revenueCategoryId).filter((v): v is string => Boolean(v)))];
+  if (ids.length === 0) return;
+  const active = await repo.listRevenueCategories(companyId);
+  const activeIds = new Set(active.map((category) => category.id));
+  if (ids.some((id) => !activeIds.has(id))) {
+    throw new UnprocessableEntityException('Line revenue category is unknown, archived, or belongs to another company');
+  }
+}
+
 @Injectable()
 export class CreateDocumentUseCase {
   constructor(
@@ -71,6 +86,7 @@ export class CreateDocumentUseCase {
     if (taxNeutral && normalizedInput.lines.some((line) => line.taxCodeDefinitionId || line.externalTaxCode)) {
       throw new UnprocessableEntityException(`${normalizedInput.documentType} lines cannot carry a Tax Code`);
     }
+    await assertRevenueCategoriesUsable(this.repo, ctx.companyId, normalizedInput.lines);
     const result = await this.repo.createDocument({ ...normalizedInput, companyId: ctx.companyId, createdByUserId: ctx.userId });
     let persisted: DocumentRecord;
     try {
@@ -165,6 +181,7 @@ export class UpdateDocumentUseCase {
       whtRate: line.whtRate,
       taxCategory: line.taxCategory,
       revenueCategory: line.revenueCategory,
+      revenueCategoryId: line.revenueCategoryId,
       taxCodeDefinitionId: line.taxSnapshot?.taxCodeDefinitionId ?? undefined,
       externalTaxCode: line.taxSnapshot?.externalTaxCode ?? undefined,
       transactionContext: line.taxSnapshot?.taxContext ?? undefined,
@@ -202,6 +219,7 @@ export class UpdateDocumentUseCase {
     const taxError = validateOutputTaxDocument(replacement, source);
     if (taxError) throw new UnprocessableEntityException(taxError);
     const taxNeutral = ['QUOTATION', 'INVOICE', 'BILLING_NOTE', 'RECEIPT'].includes(replacement.documentType);
+    await assertRevenueCategoriesUsable(this.repo, ctx.companyId, replacement.lines);
 
     const updated = await this.repo.updateDraftDocument(
       input.documentId,
@@ -288,7 +306,11 @@ export class GetDocumentUseCase {
 export class ListDocumentsUseCase {
   constructor(private readonly repo: PrismaAccountingRepository) {}
 
-  async execute(ctx: RequestContext, filter: Omit<ListDocumentsFilter, 'companyId'>): Promise<PaginatedDocuments> {
+  /** Permission narrowing shared by list and aggregate — both must see exactly the same rows. */
+  private scopedFilter<T extends { documentType?: AccountingDocumentType; branchId?: string }>(
+    ctx: RequestContext,
+    filter: T,
+  ): T & { companyId: string; documentTypes?: AccountingDocumentType[]; relatedUserId?: string } {
     const readableTypes = DOCUMENT_TYPES.filter((documentType) => hasDocumentPermission(ctx, documentType, 'read'));
     const canReadRelated = ctx.permissions.includes('accounting.document.read_related');
     const canReadAll = ctx.permissions.includes('accounting.document.read');
@@ -299,12 +321,27 @@ export class ListDocumentsUseCase {
     // Explicit out-of-scope branch filter is a 403, never a silent empty list (spec R6). Written out
     // rather than via isBranchInScope, which answers true for an absent branchId (spec §4.2).
     if (ctx.scopes.branchIds && filter.branchId && !ctx.scopes.branchIds.includes(filter.branchId)) throw new ForbiddenException('Branch is out of scope');
-    return this.repo.listDocuments({
+    return {
       ...filter,
       companyId: ctx.companyId,
       ...(!canReadAll ? { documentTypes: readableTypes } : {}),
       ...(canReadRelated && !canReadAll ? { relatedUserId: ctx.userId } : {}),
-    }, ctx.scopes.branchIds);
+    };
+  }
+
+  async execute(ctx: RequestContext, filter: Omit<ListDocumentsFilter, 'companyId'>): Promise<PaginatedDocuments> {
+    return this.repo.listDocuments(this.scopedFilter(ctx, filter), ctx.scopes.branchIds);
+  }
+
+  /**
+   * PR #238 review T2: snapshot-consistent period aggregate for accounting.get_summary — one
+   * permission-scoped groupBy instead of an OFFSET page walk. Same narrowing as execute().
+   */
+  async aggregateByType(
+    ctx: RequestContext,
+    filter: { fromDate?: string; toDate?: string; branchId?: string },
+  ): Promise<{ total: number; byType: Record<string, { count: number; totalAmount: string }> }> {
+    return this.repo.aggregateDocumentsByType(this.scopedFilter(ctx, filter), ctx.scopes.branchIds);
   }
 }
 
@@ -680,6 +717,7 @@ export class ConvertDocumentUseCase {
       whtRate: l.whtRate,
       taxCategory: l.taxCategory,
       revenueCategory: l.revenueCategory,
+      revenueCategoryId: l.revenueCategoryId,
     }));
 
     const result = await this.repo.convertQuotation(source.id, source.updatedAt, {

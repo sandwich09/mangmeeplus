@@ -1,6 +1,7 @@
 import { Controller, Delete, Get, HttpCode, Post, Patch, Param, Body, Query, Res, StreamableFile } from '@nestjs/common';
 import type { Response } from 'express';
 import {
+  ConfirmExpenseDto,
   CreateSignatureAssetDto,
   ReasonOptionalDto,
   ReasonRequiredDto,
@@ -460,8 +461,8 @@ export class ExpenseController {
 
   @Post(':expenseId/confirm')
   @RequirePermissions('expense.confirm')
-  confirmExpense(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string) {
-    return this.confirm.execute(ctx, expenseId);
+  confirmExpense(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: ConfirmExpenseDto) {
+    return this.confirm.execute(ctx, expenseId, body?.vatSourceOverride);
   }
 
   @Post(':expenseId/reject')

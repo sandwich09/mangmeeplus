@@ -8,6 +8,10 @@ import {
   ResolveDuplicateUseCase,
 } from './expense-upload.use-case';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
+import { EXPENSE_LAUNCH_ROUTE_CLOSED_MESSAGE } from '../expense-launch-gate';
+import { FEATURE_TEMPORARILY_UNAVAILABLE, featureTemporarilyUnavailable } from '../../../employee-access/application/entitlement.helper';
+
+const openLaunchGate = { assertLaunchRouteOpen: async () => undefined } as any;
 
 const ctx = {
   requestId: 'req-1',
@@ -42,6 +46,7 @@ describe('receipt upload use cases', () => {
       { log: async () => undefined } as any,
       // Capture policy: FULL keeps the pre-change NEEDS_REVIEW default these cases assert.
       { execute: async () => ({ mode: 'FULL' }) } as any,
+      openLaunchGate,
     );
 
     const result = await uc.execute(ctx, {
@@ -66,6 +71,7 @@ describe('receipt upload use cases', () => {
       { execute: async () => ({ attachmentId: 'att-1', uploadUrl: '/upload', uploadMethod: 'PUT', expiresAt: new Date() }) } as any,
       { log: async () => undefined } as any,
       { execute: async () => ({ mode: 'SIMPLE' }) } as any,
+      openLaunchGate,
     );
 
     await uc.execute(ctx, {
@@ -83,6 +89,7 @@ describe('receipt upload use cases', () => {
       { execute: async () => { writes.push('intent'); return {}; } } as any,
       { log: async () => undefined } as any,
       { execute: async () => ({ mode: 'FULL' }) } as any,
+      openLaunchGate,
     );
 
     await assert.rejects(() => uc.execute(ctx, {
@@ -104,6 +111,7 @@ describe('receipt upload use cases', () => {
       { log: async () => undefined } as any,
       // Capture policy: FULL keeps the pre-change NEEDS_REVIEW default these cases assert.
       { execute: async () => ({ mode: 'FULL' }) } as any,
+      openLaunchGate,
     );
 
     await uc.execute({ ...ctx, scopes: { branchIds: ['branch-default'] } }, {
@@ -296,6 +304,66 @@ describe('receipt upload use cases', () => {
 
     assert.equal(result.inputVatClaimStatus, 'CLAIMABLE');
     assert.equal(result.taxEvidenceStatus, 'USABLE_FOR_TAX');
+  });
+});
+
+// The receipt-upload half of the expenses kill switch. `expenses/DEFAULT` is BLOCK_NEW_ROOT, so a
+// CLOSE has to stop the upload before either durable write — the attachment intent and the draft.
+describe('InitReceiptUploadUseCase launch gate', () => {
+  function harness(launchGate: any) {
+    const writes: string[] = [];
+    const audits: any[] = [];
+    const uc = new InitReceiptUploadUseCase(
+      { createExpense: async () => { writes.push('expense'); return { id: 'expense-1' }; } } as any,
+      { execute: async () => { writes.push('intent'); return { attachmentId: 'att-1', uploadUrl: '/upload', uploadMethod: 'PUT', expiresAt: new Date() }; } } as any,
+      { log: async (entry: any) => { audits.push(entry); } } as any,
+      { execute: async () => ({ mode: 'FULL' }) } as any,
+      launchGate,
+    );
+    const run = () => uc.execute(ctx, {
+      originalFileName: 'receipt.jpg', mimeType: 'image/jpeg', byteSize: 123,
+      expenseDate: '2026-06-27T00:00:00.000Z', captureSource: 'LINE_UPLOAD',
+    });
+    return { run, writes, audits };
+  }
+
+  it('refuses in plain Thai, audits the denial and writes neither intent nor draft when closed', async () => {
+    const { run, writes, audits } = harness({ assertLaunchRouteOpen: async () => { throw featureTemporarilyUnavailable('expenses'); } });
+
+    await assert.rejects(run, (error: any) => {
+      const body = error.getResponse();
+      assert.equal(body.code, FEATURE_TEMPORARILY_UNAVAILABLE);
+      assert.equal(body.message, EXPENSE_LAUNCH_ROUTE_CLOSED_MESSAGE);
+      // The customer must never see which control-plane row is closed (runbook §2.3).
+      assert.equal(body.message.includes('expenses'), false);
+      return true;
+    });
+
+    assert.deepEqual(writes, []);
+    assert.equal(audits.length, 1);
+    assert.equal(audits[0].action, 'expense.upload_intent.create');
+    assert.equal(audits[0].result, 'DENIED');
+    assert.deepEqual(audits[0].metadataJson, { reason: 'launch_route_closed' });
+  });
+
+  // Runbook R8 rule 2: "we could not tell" is not "the route is closed". A guard that cannot read
+  // its own row must not be converted into a polite refusal that hides a broken control plane.
+  it('rethrows a guard-infrastructure failure instead of refusing politely', async () => {
+    const { run, writes, audits } = harness({ assertLaunchRouteOpen: async () => { throw new Error('gate read failed'); } });
+
+    await assert.rejects(run, /gate read failed/);
+    assert.deepEqual(writes, []);
+    assert.equal(audits.length, 0);
+  });
+
+  it('asks for the expenses DEFAULT route and passes straight through when open', async () => {
+    const asked: string[][] = [];
+    const { run, writes } = harness({ assertLaunchRouteOpen: async (gateKey: string, routeKey: string) => { asked.push([gateKey, routeKey]); } });
+
+    await run();
+
+    assert.deepEqual(asked, [['expenses', 'DEFAULT']]);
+    assert.deepEqual(writes, ['intent', 'expense']);
   });
 });
 

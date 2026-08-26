@@ -62,6 +62,7 @@ export type DocumentLineRecord = {
   lineTotalAmount: string;
   taxCategory?: string;
   revenueCategory?: string;
+  revenueCategoryId?: string;
   taxSnapshot?: TransactionTaxSnapshot;
   taxComponents?: ResolveTransactionTaxPreviewDto['components'];
   createdAt: Date;
@@ -211,6 +212,7 @@ export type CreateDocumentLineInput = {
   whtRate?: string;
   taxCategory?: string;
   revenueCategory?: string;
+  revenueCategoryId?: string;
   taxCodeDefinitionId?: string;
   externalTaxCode?: string;
   transactionContext?: TransactionTaxContext;

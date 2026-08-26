@@ -115,9 +115,10 @@ const ALL = ALL_ROLES;
 export const MENUS: MenuSpec[] = [
   { key: 'dashboard',   th: 'แดชบอร์ด',              en: 'Dashboard',                 path: 'dashboard',              visibleTo: ALL },
   { key: 'booking',     th: 'การจองออนไลน์',          en: 'Online Booking',            path: 'bookings',               visibleTo: ['OWNER', 'ADMIN', 'MANAGER', 'SALES'] },
-  // Every company role receives accounting.document.read_related, so the row is universally
-  // reachable while the API still limits each session to documents related to that person.
-  { key: 'salesdoc',    th: 'เอกสารขายและรับชำระ',     en: 'Sales Documents',           path: 'sales-documents',        visibleTo: ALL },
+  // Plan P4.6: `salesdoc` is still `status: 'planned'`, so it is out of the launch navigation
+  // (WorkspaceLayout DESIGN_HANDOFF_NAV_ORDER) even though every company role can reach the route.
+  // Permission-wise nothing changed: each session still only sees documents related to that person.
+  { key: 'salesdoc',    th: 'เอกสารขายและรับชำระ',     en: 'Sales Documents',           path: 'sales-documents',        visibleTo: [] },
   { key: 'crmsettings', th: 'สินค้าและบริการ',         en: 'Products & Services',       path: 'settings/crm-catalog',   visibleTo: ['OWNER', 'ADMIN', 'MANAGER', 'SALES', 'INVENTORY', 'FINANCE', 'ACCOUNTANT', 'MARKETING'] },
   { key: 'expenses',    th: 'ค่าใช้จ่ายและใบเสร็จ',     en: 'Expenses & Receipts',       path: 'expenses',               visibleTo: ALL },
   // Accounting screens are intentionally presentation-hidden in this launch, even for holders.

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import {
   RECEIPT_ADDITIONAL_CHARGE_KINDS,
@@ -422,10 +422,21 @@ type ReceiptCategoryFallback = {
   confidence: number;
 };
 
+/** Spec S1-R4: the AI's category for the document, resolved against the company's ACTIVE catalogue
+ *  and returned whatever the confidence. Below `RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE` it is a
+ *  recommendation the reviewer must accept, never a value the server wrote — `categoryAutoFilled`
+ *  is the only thing that says the category was applied. */
+export type ReceiptCategorySuggestion = {
+  expenseCategoryId: string;
+  confidence: number;
+  categoryName: string;
+};
+
 type AppliedReceiptCategory = {
   categoryId: string | null;
   categoryName: string | null;
   categoryAutoFilled: boolean;
+  categorySuggestion?: ReceiptCategorySuggestion;
 };
 
 type AppliedReceiptResult = AppliedReceiptCategory & {
@@ -444,6 +455,8 @@ export function isStaleOcrApply(outcome: ReceiptOcrApplyOutcome): boolean {
 
 @Injectable()
 export class ReceiptOcrApplyService {
+  private readonly logger = new Logger(ReceiptOcrApplyService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly expenses: PrismaExpenseRepository,
@@ -534,26 +547,38 @@ export class ReceiptOcrApplyService {
         ? currentExpense.expenseCategory
         : null;
       let categoryAutoFilled = false;
+      let categorySuggestion: ReceiptCategorySuggestion | undefined;
       if (!effectiveCategory && !currentExpense?.expenseCategoryId) {
         const ocrSuggestion = fields.categorySuggestion;
-        const suggested = ocrSuggestion
+        const ocrCandidate = ocrSuggestion
           && typeof ocrSuggestion.expenseCategoryId === 'string'
           && ocrSuggestion.expenseCategoryId.length > 0
           && typeof ocrSuggestion.confidence === 'number'
           && Number.isFinite(ocrSuggestion.confidence)
-          && ocrSuggestion.confidence >= RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE
           && Array.isArray(ocrSuggestion.evidenceSignals)
           && ocrSuggestion.evidenceSignals.length > 0
           ? ocrSuggestion
-          : options.fallbackCategorySuggestion
-            && typeof options.fallbackCategorySuggestion.expenseCategoryId === 'string'
-            && options.fallbackCategorySuggestion.expenseCategoryId.length > 0
-            && Number.isFinite(options.fallbackCategorySuggestion.confidence)
-            && options.fallbackCategorySuggestion.confidence >= RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE
-            ? options.fallbackCategorySuggestion
-            : undefined;
+          : undefined;
+        const fallbackCandidate = options.fallbackCategorySuggestion
+          && typeof options.fallbackCategorySuggestion.expenseCategoryId === 'string'
+          && options.fallbackCategorySuggestion.expenseCategoryId.length > 0
+          && Number.isFinite(options.fallbackCategorySuggestion.confidence)
+          ? options.fallbackCategorySuggestion
+          : undefined;
+        // Spec S1-R4: a below-threshold suggestion used to be dropped right here, so the review
+        // form never saw one. It is resolved and returned now, but only a candidate that clears
+        // the bar is ever written. Auto-fill still picks exactly as before — the first candidate
+        // at or above the threshold — so a weak OCR guess cannot shadow a strong capture hint and
+        // silently downgrade an auto-fill into a recommendation.
+        const autoFillable = (candidate?: { confidence: number }): boolean =>
+          candidate !== undefined && candidate.confidence >= RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE;
+        const suggested = autoFillable(ocrCandidate)
+          ? ocrCandidate
+          : autoFillable(fallbackCandidate)
+            ? fallbackCandidate
+            : ocrCandidate ?? fallbackCandidate;
         if (suggested) {
-          effectiveCategory = await tx.expenseCategory.findFirst({
+          const resolved = await tx.expenseCategory.findFirst({
             where: {
               id: suggested.expenseCategoryId,
               status: 'ACTIVE',
@@ -561,7 +586,13 @@ export class ReceiptOcrApplyService {
             },
             select: { id: true, name: true, companyId: true },
           });
-          categoryAutoFilled = Boolean(effectiveCategory);
+          if (resolved) {
+            categorySuggestion = { expenseCategoryId: resolved.id, confidence: suggested.confidence, categoryName: resolved.name };
+            if (autoFillable(suggested)) {
+              effectiveCategory = resolved;
+              categoryAutoFilled = true;
+            }
+          }
         }
       }
       if (effectiveCategory) data['expenseCategoryId'] = effectiveCategory.id;
@@ -571,6 +602,7 @@ export class ReceiptOcrApplyService {
           categoryId: effectiveCategory?.id ?? currentExpense?.expenseCategoryId ?? null,
           categoryName: effectiveCategory?.name ?? null,
           categoryAutoFilled,
+          ...(categorySuggestion ? { categorySuggestion } : {}),
           chargeReconciliationStatus: 'SUMMARY_LINE',
           chargesApplied: 0,
         };
@@ -602,12 +634,26 @@ export class ReceiptOcrApplyService {
         categoryId: effectiveCategory?.id ?? currentExpense?.expenseCategoryId ?? null,
         categoryName: effectiveCategory?.name ?? null,
         categoryAutoFilled,
+        ...(categorySuggestion ? { categorySuggestion } : {}),
         chargeReconciliationStatus: prepared!.status,
         chargesApplied: prepared!.chargesApplied,
       };
     });
     if (appliedCategory === 'stale') {
       return { staleSkipped: true, candidatesCreated: 0, categoryId: null, categoryName: null, categoryAutoFilled: false } as unknown as ReceiptOcrApplyOutcome;
+    }
+    // Spec S1-R5: ids, a boolean and a confidence band only — never the category name, the OCR text
+    // or any document content. `autoFilled` splits "the server wrote it" from "the reviewer is only
+    // offered it", which is the denominator for the override rate.
+    if (appliedCategory.categorySuggestion) {
+      this.logger.log({
+        msg: 'expense_category_suggested',
+        companyId: ctx.companyId,
+        expenseId,
+        expenseCategoryId: appliedCategory.categorySuggestion.expenseCategoryId,
+        autoFilled: appliedCategory.categoryAutoFilled,
+        confidenceBand: appliedCategory.categorySuggestion.confidence >= RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE ? 'high' : 'low',
+      });
     }
     const duplicateResult = await reconcileExpenseDuplicateCandidates(
       this.expenses,

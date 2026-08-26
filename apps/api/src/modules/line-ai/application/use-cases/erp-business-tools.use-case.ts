@@ -50,15 +50,21 @@ export class AccountingGetSummaryTool implements ErpReadToolPort {
       return { toolName: this.toolName, status: 'forbidden', sourceRefs: [], asOf };
     }
     const period = resolvePeriodInput(input);
-    const page = await this.listDocuments.execute(toCtx(ctx), {
-      fromDate: period.fromDate, toDate: period.toDate, page: 1, pageSize: 200,
+    // PR #238 review T2: ONE permission-scoped groupBy replaces the 50-page OFFSET walk. A single
+    // database operation sees one consistent snapshot, so a concurrent insert/move can no longer
+    // duplicate one document and omit another while the cardinality still matched — the failure
+    // class the old aggregated-vs-total self-check could not actually catch. The database sums the
+    // Decimal column; float never touches the money. With the walk gone, the period-size bound and
+    // the count-mismatch refusal are structurally unnecessary and are gone with it.
+    // R2: the sum crosses this boundary as the repository's exact 2dp STRING — a Number() here
+    // would silently lose satang above 2^53/100, and the prepared formatter already renders
+    // string | number.
+    const aggregate = await this.listDocuments.aggregateByType(toCtx(ctx), {
+      fromDate: period.fromDate, toDate: period.toDate,
     });
-    const byType: Record<string, { count: number; totalAmount: number }> = {};
-    for (const doc of page.data) {
-      const key = String(doc.documentType);
-      byType[key] = byType[key] ?? { count: 0, totalAmount: 0 };
-      byType[key].count += 1;
-      byType[key].totalAmount += money(doc.grandTotalAmount);
+    const byType: Record<string, { count: number; totalAmount: string }> = {};
+    for (const [documentType, entry] of Object.entries(aggregate.byType)) {
+      byType[documentType] = { count: entry.count, totalAmount: entry.totalAmount };
     }
     const sourceRefs: SourceRef[] = [{
       label: 'สรุปเอกสารบัญชี', module: 'accounting-documents', entityType: 'accounting_document_summary',
@@ -69,7 +75,7 @@ export class AccountingGetSummaryTool implements ErpReadToolPort {
       status: 'ok',
       data: {
         period: { fromDate: period.fromDate, toDate: period.toDate, defaultedToCurrentMonth: period.defaulted },
-        total: page.total,
+        total: aggregate.total,
         byType,
       },
       sourceRefs,

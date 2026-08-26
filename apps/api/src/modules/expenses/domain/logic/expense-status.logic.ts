@@ -157,6 +157,20 @@ export function hasUnknownVatRateLine(
   return lines.some((line) => line.vatRate === null || line.vatRate === undefined || `${line.vatRate}`.trim() === '');
 }
 
+/**
+ * Plan 13.11.B: "ยังไม่แน่ใจ" is a legitimate draft state, so the confirm block has to name the line
+ * to open rather than restate the rule. Same predicate as `hasUnknownVatRateLine` — this only says
+ * which line tripped it first.
+ */
+export function firstUnknownVatRateLineNumber(
+  vatMode: string,
+  lines: Array<{ lineNumber?: number; vatRate?: string | null }>,
+): number | null {
+  if (!hasUnknownVatRateLine(vatMode, lines)) return null;
+  const index = lines.findIndex((line) => line.vatRate === null || line.vatRate === undefined || `${line.vatRate}`.trim() === '');
+  return index < 0 ? null : lines[index]!.lineNumber ?? index + 1;
+}
+
 export function hasSelectedTaxCode(line: ExpenseTaxLineFacts): boolean {
   return Boolean(
     line.taxCodeDefinitionId
@@ -237,6 +251,25 @@ export function hasAcknowledgedAiTotalMismatch(
   if (!resolution || typeof resolution !== 'object') return false;
   const record = resolution as Record<string, unknown>;
   return record['acknowledged'] === true && sameMoney(String(record['acknowledgedTotalAmount'] ?? ''), grandTotalAmount);
+}
+
+/** Spec S1-R4: the AI category suggestion the capture paths persist on the summary. Already
+ *  resolved against the company's ACTIVE catalogue when written, so reading it needs no lookup —
+ *  bounded here only because the column is JSON that older rows may not carry. */
+export function readAiCategorySuggestion(
+  summary: Record<string, unknown> | null | undefined,
+): { expenseCategoryId: string; confidence: number; categoryName: string } | null {
+  const raw = summary?.['categorySuggestion'];
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const value = raw as Record<string, unknown>;
+  const id = value['expenseCategoryId'];
+  const confidence = value['confidence'];
+  const name = value['categoryName'];
+  return typeof id === 'string' && id.length > 0
+    && typeof confidence === 'number' && Number.isFinite(confidence)
+    && typeof name === 'string'
+    ? { expenseCategoryId: id, confidence, categoryName: name }
+    : null;
 }
 
 export function validateConfirm(input: ConfirmValidationInput): string | null {

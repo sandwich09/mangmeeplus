@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { LINE_AI_CONTEXT_MAX_TURNS, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
 import { branchScopeFallbackLabel, chatKeyHashOf, classifyPendingMediaReply, formatCheckBillDraftCreatedReply, formatGroundedReceiptFollowUp, isAffirmativeText, isGroundedReceiptFollowUp, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent } from './process-line-webhook.use-case';
+import { featureTemporarilyUnavailable } from '../../../employee-access/application/entitlement.helper';
 import { ReceiptOcrApplyService } from '../../../expenses/application/services/receipt-ocr-apply.service';
 import { absoluteWebLink, webBaseUrlFromEnv, webLink } from '../../../../common/http/web-link';
 import { LineSubstituteReceiptContinuationUseCase } from '../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case';
@@ -26,6 +27,15 @@ const shadowProbe = {
   }),
 } as any;
 const acceptedLegal = { isRequired: async () => false } as any;
+/** Launch-gate doubles for the AI lane's kill switch. `openLaunchGate` is the seeded state of
+ *  `ai_line_assistant/DEFAULT`, so every pre-existing test keeps its exact behaviour. */
+const openLaunchGate = { assertLaunchRouteOpen: async () => undefined } as any;
+const closedLaunchGate = {
+  assertLaunchRouteOpen: async () => { throw featureTemporarilyUnavailable('ai_line_assistant'); },
+} as any;
+const brokenLaunchGate = {
+  assertLaunchRouteOpen: async () => { throw new Error('connection terminated'); },
+} as any;
 
 describe('readResponseBodyLimited', () => {
   it('combines a chunked response within the hard byte cap', async () => {
@@ -103,8 +113,14 @@ function makePrisma(opts: {
 	  entitlements?: Array<{ featureKey: string; enabled: boolean }>;
 	  branches?: Array<{ name: string }>;
 	  branchFindManyFn?: (args: any) => Promise<Array<{ name: string }>>;
+	  /** §8.3: make the durable terminal-outcome write fail, to exercise the fail-closed delivery seam. */
+	  turnOutcomeUnavailable?: boolean;
+	  /** Allow the first N outcome upserts, fail the rest — the partial-failure seam §14.3 needs. */
+	  turnOutcomeFailAfter?: number;
 	} = {}) {
-	  const { identityUserId = 'user-1', displayName = 'พิม', identityChannelId = 'msg-channel-1', aiAssistantOptOutAt = null, memberships = [{ companyId: 'company-1' }], lineCompanyContext = null, previousEventLog = null, recentTurns = [], entitlements = [], branches = [], branchFindManyFn } = opts;
+	  const { identityUserId = 'user-1', displayName = 'พิม', identityChannelId = 'msg-channel-1', aiAssistantOptOutAt = null, memberships = [{ companyId: 'company-1' }], lineCompanyContext = null, previousEventLog = null, recentTurns = [], entitlements = [], branches = [], branchFindManyFn, turnOutcomeUnavailable = false, turnOutcomeFailAfter } = opts;
+  const turnOutcomeWrites: any[] = [];
+  const turnOutcomeUpdates: any[] = [];
   const identityQueries: any[] = [];
   const createdLogs: unknown[] = [];
   const updates: unknown[] = [];
@@ -129,10 +145,23 @@ function makePrisma(opts: {
         },
       }),
       lineWebhookEventLog: {
-        findUnique: async () => null,
+        // Only the §8.3 outcome write reads this with a `select`; every other caller wants the whole
+        // row and must keep seeing "no previous event".
+        findUnique: async (args: any) => (args?.select?.companyId ? { companyId: 'company-1' } : null),
         findFirst: async () => previousEventLog,
         create: async (args: unknown) => { createdLogs.push(args); return args; },
         updateMany: async (args: unknown) => { updates.push(args); return { count: 1 }; },
+      },
+      lineTurnOutcome: {
+        upsert: async (args: any) => {
+          turnOutcomeWrites.push(args);
+          if (turnOutcomeUnavailable) throw new Error('outcome store unavailable');
+          if (turnOutcomeFailAfter !== undefined && turnOutcomeWrites.length > turnOutcomeFailAfter) {
+            throw new Error('outcome store unavailable');
+          }
+          return args;
+        },
+        updateMany: async (args: any) => { turnOutcomeUpdates.push(args); return { count: 1 }; },
       },
       externalIdentity: {
         findFirst: async (args: any) => {
@@ -190,7 +219,7 @@ function makePrisma(opts: {
       },
     },
   } as any;
-  return { prisma, createdLogs, updates, upserts, aiTurns, aiTurnUpdates, toolInvocations, markerWrites, branchFindManyCalls, identityQueries };
+  return { prisma, createdLogs, updates, upserts, aiTurns, aiTurnUpdates, toolInvocations, markerWrites, branchFindManyCalls, identityQueries, turnOutcomeWrites, turnOutcomeUpdates };
 }
 
 function makeUseCase(
@@ -221,6 +250,9 @@ function makeUseCase(
       substituteLedger?: any;
       expenseDraftConversation?: any;
       openWaiting?: any[];
+      /** Defaults to the seeded OPEN route; pass `closedLaunchGate`/`brokenLaunchGate` to drive the
+       *  AI-lane kill switch. */
+      launchGate?: any;
 	  } = {},
 	) {
   const replies: string[] = [];
@@ -283,6 +315,7 @@ function makeUseCase(
       return opts.legalAcceptanceRequired ?? false;
     } } as any,
     shadowProbe,
+    opts.launchGate ?? openLaunchGate,
     opts.initReceiptUpload,
     opts.completeReceiptUpload,
     // Positional @Optional deps, in constructor order: captureExpenseNote, initSignatureUpload,
@@ -601,6 +634,91 @@ describe('ProcessLineWebhookUseCase', () => {
 
     assert.equal(getAiGatewayCalled(), false);
     assert.equal((updates[0] as any).data.status, 'feature_disabled');
+  });
+
+  // --- AI-lane kill switch: the `ai_line_assistant` launch route (plan §P3 item 1) ---------------
+
+  it('refuses the text turn with the CLOSED-route copy, and calls no model or router, when the launch route is closed', async () => {
+    const { prisma, updates } = makePrisma();
+    const { useCase, replies, intakeRequests, auditEvents, getAiGatewayCalled } = makeUseCase(prisma, {
+      permissions: ['line.ai.query'],
+      launchGate: closedLaunchGate,
+    });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-gate-closed-text' });
+
+    assert.equal(getAiGatewayCalled(), false);
+    assert.equal(intakeRequests.length, 0);
+    // "Temporarily unavailable", never "not purchased" (spec CC1 / runbook §2.3), and it names the
+    // channel that still works.
+    assert.match(replies[0] ?? '', /พักให้บริการชั่วคราว/);
+    assert.match(replies[0] ?? '', /เว็บแอป/);
+    assert.doesNotMatch(replies[0] ?? '', /ยังไม่ได้เปิดใช้งาน/);
+    assert.equal((updates.at(-1) as any).data.status, 'launch_route_closed');
+    const denied = auditEvents.find((entry: any) => entry.result === 'DENIED');
+    assert.equal(denied?.metadataJson?.reason, 'launch_route_closed');
+  });
+
+  it('refuses the receipt-upload turn before download, OCR, or storage when the launch route is closed', async () => {
+    const { prisma, updates } = makePrisma();
+    const { useCase, replies, intakeRequests, getAiGatewayCalled } = makeUseCase(prisma, {
+      permissions: ['expense.receipt.line_upload', 'expense.receipt.upload'],
+      launchGate: closedLaunchGate,
+    });
+    let mediaDownloads = 0;
+    (useCase as any).downloadLineMedia = async () => {
+      mediaDownloads += 1;
+      throw new Error('must not download while the launch route is closed');
+    };
+
+    await useCase.executeReceiptUpload({
+      webhookEventId: 'evt-gate-closed-img',
+      lineUserId: 'line-user-secret',
+      replyToken: 'reply-gate-closed-img',
+      lineMessageId: 'line-msg-gate-closed',
+      messageType: 'image',
+      messagingChannelId: 'msg-channel-1',
+    });
+
+    assert.equal(mediaDownloads, 0);
+    assert.equal(intakeRequests.length, 0);
+    assert.equal(getAiGatewayCalled(), false);
+    assert.match(replies[0] ?? '', /พักให้บริการชั่วคราว/);
+    assert.equal((updates.at(-1) as any).data.status, 'launch_route_closed');
+  });
+
+  it('lets an OPEN launch route through unchanged — the gate adds no reply and no refusal', async () => {
+    const { prisma, updates } = makePrisma({ entitlements: [{ featureKey: 'ai_line_assistant', enabled: true }] });
+    const { useCase, replies, getAiGatewayCalled } = makeUseCase(prisma, {
+      permissions: ['line.ai.query'],
+      entitledFeatureKeys: ['ai_line_assistant'],
+      aiGatewayFn: () => ({
+        requestId: 'req-open', replyText: 'สรุปแดชบอร์ดวันนี้', sourceRefs: [], sourceLabels: [],
+        webLinks: [], intent: 'read_summary', agent: 'general', refused: false, toolsInvoked: [], durationMs: 1,
+      }),
+    });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-gate-open-text' });
+
+    assert.equal(getAiGatewayCalled(), true);
+    assert.doesNotMatch(replies[0] ?? '', /พักให้บริการชั่วคราว/);
+    assert.notEqual((updates.at(-1) as any).data.status, 'launch_route_closed');
+  });
+
+  it('does not open the lane when the guard itself fails — the turn is thrown, never modelled', async () => {
+    const { prisma } = makePrisma();
+    const { useCase, getAiGatewayCalled } = makeUseCase(prisma, {
+      permissions: ['line.ai.query'],
+      launchGate: brokenLaunchGate,
+    });
+
+    // Rethrown, not swallowed: "closed" and "we could not tell" are different answers
+    // (`isLaunchRouteOpen`), and the buffer's dispatch catch turns this into a retryable reply.
+    await assert.rejects(
+      () => useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-gate-broken-text' }),
+      /connection terminated/,
+    );
+    assert.equal(getAiGatewayCalled(), false);
   });
 
   it('allows the turn when ai_line_assistant entitlement is enabled', async () => {
@@ -1891,6 +2009,7 @@ describe('ProcessLineWebhookUseCase', () => {
       CLEAN_SCANNER,
     acceptedLegal,
     shadowProbe,
+    openLaunchGate,
       { execute: async () => { throw new Error('expense table missing'); } } as any,
       { execute: async () => undefined } as any,
     );
@@ -1949,6 +2068,7 @@ describe('ProcessLineWebhookUseCase', () => {
       CLEAN_SCANNER,
       acceptedLegal,
       shadowProbe,
+      openLaunchGate,
       { execute: async () => { throw new Error('no expense expected on a failed read'); } } as any,
       { execute: async () => undefined } as any,
     );
@@ -2017,6 +2137,7 @@ describe('ProcessLineWebhookUseCase', () => {
       CLEAN_SCANNER,
     acceptedLegal,
     shadowProbe,
+    openLaunchGate,
       {
         execute: async (_ctx: any, input: any) => {
           initInputs.push(input);
@@ -2151,6 +2272,7 @@ describe('ProcessLineWebhookUseCase', () => {
       CLEAN_SCANNER,
     acceptedLegal,
     shadowProbe,
+    openLaunchGate,
       { execute: async () => ({ expenseId: 'expense-ocr-1', attachmentId: 'att-ocr-1', uploadUrl: 'https://storage.example.com/upload', uploadMethod: 'PUT' }) } as any,
       { execute: async () => ({ id: 'expense-ocr-1' }) } as any,
       undefined,
@@ -2350,6 +2472,7 @@ function makeLedgerUseCase(prisma: any, opts: {
     CLEAN_SCANNER,
     acceptedLegal,
     shadowProbe,
+    openLaunchGate,
     undefined, undefined, undefined, undefined, undefined, undefined,
     ledger,
   );
@@ -3193,6 +3316,14 @@ describe('ProcessLineWebhookUseCase – completed multi-part replies end in a Fl
     assert.ok(messages[0].quickReply?.items.length > 0, 'completion menu stays on the terminal card');
   });
 
+  it('keeps the GENERIC card for a terminal with no grounded expense draft behind it (§10.1)', async () => {
+    // The draft-continuation lane hands `deliverCompletedReplies` no card facts, so the dedicated
+    // ร่างค่าใช้จ่าย card must not appear here — its rows would have nothing to be made of.
+    const messages = await run(['บันทึกวัตถุประสงค์แล้วค่ะ']);
+    assert.equal(messages[0].contents.header.contents[0].text, 'ข้อมูลจากน้องมั่งมี');
+    assert.deepEqual(messages[0].contents.body.contents.filter((entry: any) => entry.type === 'box'), []);
+  });
+
   it('keeps earlier parts as lossless text and renders only the terminal part as the Flex card', async () => {
     const parts = ['ส่วนที่ 1\nรายละเอียดยาว', 'ส่วนที่ 2', 'สรุปร่างค่าใช้จ่าย'];
     const messages = await run(parts);
@@ -3205,6 +3336,168 @@ describe('ProcessLineWebhookUseCase – completed multi-part replies end in a Fl
     assert.equal(terminal.type, 'flex');
     assert.match(JSON.stringify(terminal.contents), /สรุปร่างค่าใช้จ่าย/);
     assert.ok(terminal.quickReply?.items.length > 0, 'completion menu stays on the terminal card only');
+  });
+});
+
+/** One deterministic completed reply (a Flex card with the completion menu) driven through the single
+ *  delivery seam, so every assertion below is about delivery — not about how the answer was produced. */
+function makeDeliveryRun(opts: {
+  config?: Record<string, unknown>;
+  replyResults?: string[];
+  pushResult?: string;
+  turnOutcomeUnavailable?: boolean;
+  turnOutcomeFailAfter?: number;
+} = {}) {
+  const { prisma, updates, turnOutcomeWrites, turnOutcomeUpdates } = makePrisma({ turnOutcomeUnavailable: opts.turnOutcomeUnavailable, turnOutcomeFailAfter: opts.turnOutcomeFailAfter });
+  const replyCalls: Array<{ messages: any[]; outcomeWritesBefore: number }> = [];
+  const pushCalls: Array<{ to: string; messages: any[] }> = [];
+  const results = [...(opts.replyResults ?? ['ok'])];
+  const { useCase } = makeUseCase(prisma, {
+    permissions: ['line.ai.query', 'expense.create'],
+    // Terminal Flex on, so the seam under test carries a real card — the payload class the fallback
+    // exists for. It is orthogonal to both flags below.
+    config: { lineExpenseDraftConversationEnabled: true, lineAiMultipartTerminalFlexEnabled: true, ...(opts.config ?? {}) },
+    expenseDraftConversation: {
+      routeContexts: async () => [{ status: 'OPEN', expenseId: 'draft-1' }],
+      execute: async () => ({ handled: true, status: 'UPDATED', replyTexts: ['บันทึกวัตถุประสงค์แล้วค่ะ'], acceptedFields: [] }),
+    },
+    sendReplyFn: async (_token: string, messages: any[]) => {
+      // Captured at SEND time: a non-zero count here is the proof that §8.3's "persist the outcome
+      // BEFORE calling LINE" actually holds, not just that both happened during the turn.
+      replyCalls.push({ messages, outcomeWritesBefore: turnOutcomeWrites.length });
+      return results.length > 1 ? results.shift()! : results[0]!;
+    },
+    sendPushFn: async (to: string, messages: any[]) => { pushCalls.push({ to, messages }); return opts.pushResult ?? 'ok'; },
+  });
+  return {
+    // An undelivered required message throws `LINE_DELIVERY_*` by design; these assertions are about
+    // what the seam did on its way there, so the throw is swallowed rather than asserted on here.
+    run: () => useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-delivery-1', messageText: 'D-PURPOSE ค่าเดินทางไปหาลูกค้า' })
+      .catch(() => undefined),
+    replyCalls, pushCalls, updates, turnOutcomeWrites, turnOutcomeUpdates,
+  };
+}
+
+describe('ProcessLineWebhookUseCase – durable terminal outcome (§8.3, default off)', () => {
+  it('writes NOTHING and delivers the exact legacy payload while the flag is off', async () => {
+    const off = makeDeliveryRun();
+    await off.run();
+    assert.deepEqual(off.turnOutcomeWrites, [], 'default-off never touches the outcome table');
+    assert.deepEqual(off.turnOutcomeUpdates, [], 'and never records a delivery status either');
+
+    const on = makeDeliveryRun({ config: { lineAiTerminalOutcomeReplayEnabled: true } });
+    await on.run();
+    // The flag changes what is REMEMBERED, never what is sent.
+    assert.deepEqual(on.replyCalls[0]!.messages, off.replyCalls[0]!.messages);
+  });
+
+  it('persists the exact rendered payload BEFORE the first send, then records delivery separately', async () => {
+    const { run, replyCalls, turnOutcomeWrites, turnOutcomeUpdates } = makeDeliveryRun({
+      config: { lineAiTerminalOutcomeReplayEnabled: true },
+    });
+    await run();
+
+    assert.equal(turnOutcomeWrites.length, 1);
+    assert.equal(replyCalls[0]!.outcomeWritesBefore, 1, 'the outcome is durable before LINE is called');
+    const create = turnOutcomeWrites[0]!.create;
+    assert.equal(create.webhookEventId, 'evt-delivery-1');
+    assert.equal(create.companyId, 'company-1');
+    assert.equal(create.presentationKind, 'flex');
+    assert.equal(create.attempts, 1);
+    // Not a 240-character preview: the stored bytes ARE the message array handed to the adapter.
+    assert.deepEqual(create.messagesJson, replyCalls[0]!.messages);
+    assert.equal(turnOutcomeWrites[0]!.where.webhookEventId, 'evt-delivery-1', 'one outcome of record per turn');
+    // §8.3: delivery is a separate status, written only after LINE returned ok.
+    assert.equal(turnOutcomeUpdates.length, 1);
+    assert.ok(turnOutcomeUpdates[0]!.data.deliveredAt instanceof Date);
+    assert.equal(turnOutcomeUpdates[0]!.where.deliveredAt, null);
+  });
+
+  it('FAILS CLOSED: an outcome it cannot record is never sent', async () => {
+    const { run, replyCalls, pushCalls, updates } = makeDeliveryRun({
+      config: { lineAiTerminalOutcomeReplayEnabled: true }, turnOutcomeUnavailable: true,
+    });
+    await run();
+
+    assert.equal(replyCalls.length, 0, 'sending what we cannot replay is the one thing this table exists to prevent');
+    assert.equal(pushCalls.length, 0);
+    const pending = updates.map((update: any) => update.data).find((data: any) => data.status === 'delivery_pending');
+    assert.ok(pending, 'the turn still owes the user an answer');
+    assert.equal(pending.errorCode, 'LINE_OUTCOME_NOT_RECORDED');
+  });
+});
+
+describe('ProcessLineWebhookUseCase – Flex→text delivery fallback (§14.3, default off)', () => {
+  it('takes the exact legacy push path for a rejected Flex payload while the flag is off', async () => {
+    const { run, replyCalls, pushCalls, updates } = makeDeliveryRun({ replyResults: ['failed_flex'], pushResult: 'failed_other' });
+    await run();
+    assert.equal(replyCalls.length, 1, 'no retry');
+    assert.equal(pushCalls.length, 1, 'failed_flex takes the same push failed_token always took');
+    assert.deepEqual(pushCalls[0]!.messages, replyCalls[0]!.messages, 'with the SAME messages');
+    const pending = updates.map((update: any) => update.data).find((data: any) => data.status === 'delivery_pending');
+    assert.equal(pending?.errorCode, 'LINE_DELIVERY_FAILED_OTHER', 'the legacy error code is unchanged');
+  });
+
+  it('retries ONCE with each card’s own altText and never pushes the payload LINE refused', async () => {
+    const { run, replyCalls, pushCalls } = makeDeliveryRun({
+      config: { lineAiFlexTextFallbackEnabled: true }, replyResults: ['failed_flex', 'ok'],
+    });
+    await run();
+
+    assert.equal(replyCalls.length, 2, 'exactly one retry — never a loop');
+    assert.equal(pushCalls.length, 0, 'the rejected card is not pushed; the text replaces it');
+    const original = replyCalls[0]!.messages[0];
+    const fallback = replyCalls[1]!.messages[0];
+    assert.equal(original.type, 'flex');
+    assert.equal(fallback.type, 'text');
+    // Nothing invented and no extra model call: the fallback text IS the altText the builder wrote.
+    assert.equal(fallback.text, original.altText);
+    assert.deepEqual(fallback.quickReply, original.quickReply, 'the completion menu survives the downgrade');
+  });
+
+  it('records the fallback shape on the outcome row so a later replay sends the text, not the card', async () => {
+    const { run, turnOutcomeWrites } = makeDeliveryRun({
+      config: { lineAiFlexTextFallbackEnabled: true, lineAiTerminalOutcomeReplayEnabled: true },
+      replyResults: ['failed_flex', 'ok'],
+    });
+    await run();
+    assert.equal(turnOutcomeWrites.length, 2, 'the re-render supersedes the payload of record');
+    assert.equal(turnOutcomeWrites[0]!.create.presentationKind, 'flex');
+    assert.equal(turnOutcomeWrites[1]!.create.presentationKind, 'text_fallback');
+    assert.equal(turnOutcomeWrites[1]!.create.messagesJson[0].type, 'text');
+    // A different payload cannot inherit the previous one's delivery.
+    assert.equal(turnOutcomeWrites[1]!.update.deliveredAt, null);
+  });
+
+  it('FAILS CLOSED on the fallback too: an unrecordable replacement outcome is never sent', async () => {
+    // PR #238 review T1: first upsert (flex) succeeds, the replacement (text_fallback) upsert fails.
+    // Sending the text anyway would mark the stale Flex outcome delivered on success, or leave
+    // orphan replay resending the rejected Flex on failure — so the turn must park instead.
+    const { run, replyCalls, pushCalls, updates, turnOutcomeWrites } = makeDeliveryRun({
+      config: { lineAiFlexTextFallbackEnabled: true, lineAiTerminalOutcomeReplayEnabled: true },
+      replyResults: ['failed_flex', 'ok'],
+      turnOutcomeFailAfter: 1,
+    });
+    await run();
+
+    assert.equal(turnOutcomeWrites.length, 2, 'the replacement upsert was attempted');
+    assert.equal(replyCalls.length, 1, 'the fallback text is NOT sent when its outcome is not durable');
+    assert.equal(pushCalls.length, 0, 'and the rejected Flex is not pushed either');
+    const pending = updates.map((update: any) => update.data).find((data: any) => data.status === 'delivery_pending');
+    assert.ok(pending, 'the turn still owes the user an answer');
+    assert.equal(pending.errorCode, 'LINE_OUTCOME_NOT_RECORDED');
+  });
+
+  it('never retries a failure that is not a rejected Flex body', async () => {
+    for (const [first, expectedReplies, expectedPushes] of [['failed_other', 1, 0], ['failed_token', 1, 1]] as const) {
+      const { run, replyCalls, pushCalls } = makeDeliveryRun({
+        config: { lineAiFlexTextFallbackEnabled: true }, replyResults: [first], pushResult: 'failed_other',
+      });
+      await run();
+      assert.equal(replyCalls.length, expectedReplies, first);
+      assert.equal(pushCalls.length, expectedPushes, `${first}: an expired token still gets its push, with the CARD intact`);
+      if (expectedPushes > 0) assert.equal(pushCalls[0]!.messages[0].type, 'flex');
+    }
   });
 });
 
@@ -3223,5 +3516,362 @@ describe('isAffirmativeText – bounded confirmation forms with a negative guard
     for (const s of ['ใช่แต่ขอแก้ยอด', 'ทำใบทดแทนของค่าวิน', 'เอากาแฟแก้วนึง']) {
       assert.equal(isAffirmativeText(s), false, s);
     }
+  });
+});
+
+// ── §8.3: DB-backed neutral intake state, three modes (plan Phase 1A) ──
+//
+// The turn under test is the one that MATTERS for money: a follow-up that the router says resolves
+// an earlier expense clarification. That is the only turn where a wrong state read can carry a
+// wrong amount into a real record, so it is the only turn the durable state gates.
+//
+// `off` is asserted as an unchanged SNAPSHOT (reply, write and repository-call count all pinned)
+// because the whole default-off promise is "byte-identical to today"; `shadow` is asserted to
+// produce the SAME snapshot while still logging; `on` is asserted to write NOTHING on each of the
+// four §8.3 refusals.
+
+import { LineIntakeStateRepository } from '../../infrastructure/line-intake-state.repository';
+import { LineTextExpenseCaptureIncompleteError } from '../../../expenses/application/use-cases/expense-document.use-case';
+
+const STATE_ROUTE_CONTINUATION = {
+  status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.95,
+  resolvedClarificationIds: ['clar-amount'],
+  captureHints: { amount: '200' },
+} as const;
+
+/** A capture use case that records every call — "did anything write?" is a count, not a vibe. */
+function makeCapture(expense: Record<string, unknown> = {}) {
+  const calls: any[] = [];
+  return {
+    calls,
+    capture: {
+      execute: async (_ctx: any, input: any) => {
+        calls.push(input);
+        return {
+          expense: { id: 'exp-1', sourceDocumentType: 'RECEIPT', expenseDate: null, vendorNameSnapshot: null, ...expense },
+          replyTexts: ['บันทึกแล้ว 200 บาท'], insertedAmount: '200', categoryName: 'ค่าเดินทาง',
+        };
+      },
+    } as any,
+  };
+}
+
+/** Counts repository traffic so `off` can be proven to make ZERO calls. */
+function makeStateRepo(behavior: {
+  read?: () => any;
+  resolve?: () => any;
+  open?: () => any;
+} = {}) {
+  const calls: string[] = [];
+  const opened: any[] = [];
+  const repo = {
+    readOpenState: async () => {
+      calls.push('read');
+      return behavior.read ? behavior.read() : { ok: true, value: { id: 'state-1', version: 1 } };
+    },
+    resolveState: async () => {
+      calls.push('resolve');
+      return behavior.resolve ? behavior.resolve() : { ok: true, value: { id: 'state-1', version: 2 } };
+    },
+    openState: async (input: any) => {
+      calls.push('open');
+      opened.push(input);
+      return behavior.open ? behavior.open() : { ok: true, value: { id: 'state-1', version: 1 } };
+    },
+  } as unknown as LineIntakeStateRepository;
+  return { repo, calls, opened };
+}
+
+function makeIntakeStateUseCase(prisma: any, opts: {
+  mode?: 'off' | 'shadow' | 'on';
+  stateRepo?: LineIntakeStateRepository;
+  capture?: any;
+  intakeRouteFn?: (req?: any) => any;
+  openWaiting?: any[];
+  config?: Record<string, unknown>;
+} = {}) {
+  const replies: string[] = [];
+  /** The FULL delivered payload, for the render assertions that `replies` (text only) cannot make. */
+  const sent: any[][] = [];
+  const logs: string[] = [];
+  const ledgerSubs: any[] = [];
+  const ledger = {
+    enabled: true,
+    openWaitingUser: async () => opts.openWaiting ?? [],
+    appendTurn: async () => '10-0',
+    appendSubRequests: async (input: any) => { ledgerSubs.push(input); },
+    coverageToSubRequests: () => [],
+    ack: async () => undefined,
+  } as any;
+  const useCase = new ProcessLineWebhookUseCase(
+    prisma,
+    { webBaseUrl: 'https://app.example.com', lineAiIntakeStateMode: opts.mode ?? 'off', ...(opts.config ?? {}) } as any,
+    { resolveAccess: async () => ({
+      membershipId: 'mem-1', roles: ['STAFF'],
+      permissions: ['line.ai.query', 'expense.receipt.line_upload'], scopes: {},
+    }) } as any,
+    { log: async () => undefined } as any,
+    {
+      requestLineTurn: async () => { throw new Error('AI Gateway not expected'); },
+      requestLineIntakeRoute: async (req: any) => (opts.intakeRouteFn
+        ? opts.intakeRouteFn(req)
+        : STATE_ROUTE_CONTINUATION),
+    } as any,
+    {
+      buildTextMessage: (text: string) => ({ type: 'text', text }),
+      sendReply: async (_token: string, messages: any[]) => {
+        replies.push(messages[0]?.text ?? messages[0]?.altText ?? '');
+        sent.push(messages);
+        return 'ok';
+      },
+      sendPush: async () => 'ok',
+    } as any,
+    { apply: async () => ({ candidatesCreated: 0 }) } as any,
+    CLEAN_SCANNER,
+    acceptedLegal,
+    shadowProbe,
+    openLaunchGate,
+    // Positional optionals: 3rd is captureExpenseNote, 7th is the ledger, 16th (last) is the
+    // durable intake state repository.
+    undefined, undefined, opts.capture,
+    undefined, undefined, undefined,
+    ledger,
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+    opts.stateRepo,
+  );
+  // Capture the shadow divergence line without asserting on a real logger transport.
+  const logger = (useCase as any).logger;
+  const originalLog = logger.log.bind(logger);
+  logger.log = (message: string) => { logs.push(String(message)); return originalLog(message); };
+  return { useCase, replies, logs, ledgerSubs, sent };
+}
+
+const STATE_EVENT = { ...BASE_EVENT, webhookEventId: 'evt-state-1', messageText: '200 บาท' };
+
+describe('ProcessLineWebhookUseCase – neutral intake state mode: off (§8.3, default)', () => {
+  it('never touches the repository and captures exactly as today', async () => {
+    const { prisma } = makePrisma();
+    const capture = makeCapture();
+    const state = makeStateRepo();
+    const { useCase, replies } = makeIntakeStateUseCase(prisma, {
+      mode: 'off', capture: capture.capture, stateRepo: state.repo,
+    });
+
+    await useCase.execute(STATE_EVENT);
+
+    assert.deepEqual(state.calls, [], 'default-off is byte-identical: the durable state is not read or written');
+    assert.equal(capture.calls.length, 1, 'the legacy capture still runs');
+    assert.deepEqual(replies, ['บันทึกแล้ว 200 บาท']);
+  });
+
+  it('stays off even when the repository is wired and the state would have refused', async () => {
+    // A wired-but-inert dependency is the thing that most often leaks behavior. An outage-shaped
+    // repository must change nothing at all while the flag is off.
+    const { prisma } = makePrisma();
+    const capture = makeCapture();
+    const state = makeStateRepo({ read: () => ({ ok: false, reason: 'unavailable' }) });
+    const { useCase, replies } = makeIntakeStateUseCase(prisma, {
+      mode: 'off', capture: capture.capture, stateRepo: state.repo,
+    });
+
+    await useCase.execute(STATE_EVENT);
+
+    assert.deepEqual(state.calls, []);
+    assert.equal(capture.calls.length, 1, 'an outage the flag never consulted cannot block a turn');
+    assert.deepEqual(replies, ['บันทึกแล้ว 200 บาท']);
+  });
+});
+
+describe('ProcessLineWebhookUseCase – neutral intake state mode: shadow (§8.3)', () => {
+  it('reads and CAS-consumes the state but changes NOTHING about the turn', async () => {
+    const { prisma } = makePrisma();
+    const capture = makeCapture();
+    const state = makeStateRepo();
+    const { useCase, replies } = makeIntakeStateUseCase(prisma, {
+      mode: 'shadow', capture: capture.capture, stateRepo: state.repo,
+    });
+
+    await useCase.execute(STATE_EVENT);
+
+    assert.deepEqual(state.calls, ['read', 'resolve'], 'shadow exercises the real path so the measurement is real');
+    assert.equal(capture.calls.length, 1, 'same capture as off');
+    assert.deepEqual(replies, ['บันทึกแล้ว 200 บาท'], 'same reply as off');
+  });
+
+  it('logs the divergence when the durable state disagrees, and still lets the turn through', async () => {
+    const { prisma } = makePrisma();
+    const capture = makeCapture();
+    const state = makeStateRepo({ read: () => ({ ok: false, reason: 'unavailable' }) });
+    const { useCase, replies, logs } = makeIntakeStateUseCase(prisma, {
+      mode: 'shadow', capture: capture.capture, stateRepo: state.repo,
+    });
+
+    await useCase.execute(STATE_EVENT);
+
+    const divergence = logs.map((line) => { try { return JSON.parse(line); } catch { return {}; } })
+      .find((entry) => entry.event === 'line_ai_intake_state_shadow_divergence');
+    assert.ok(divergence, 'a shadow lane that logs nothing measures nothing');
+    assert.equal(divergence.durableStateAgreed, false);
+    assert.equal(divergence.refusal, 'unavailable');
+    // The whole contract of shadow: it is allowed to observe, never to decide.
+    assert.equal(capture.calls.length, 1, 'shadow NEVER blocks a turn — that would make it a behavior lane');
+    assert.deepEqual(replies, ['บันทึกแล้ว 200 บาท']);
+  });
+});
+
+describe('ProcessLineWebhookUseCase – neutral intake state mode: on, four zero-write guarantees (§8.3)', () => {
+  it('captures normally when the durable state is healthy and the CAS wins', async () => {
+    const { prisma } = makePrisma();
+    const capture = makeCapture();
+    const state = makeStateRepo();
+    const { useCase, replies } = makeIntakeStateUseCase(prisma, {
+      mode: 'on', capture: capture.capture, stateRepo: state.repo,
+    });
+
+    await useCase.execute(STATE_EVENT);
+
+    assert.deepEqual(state.calls, ['read', 'resolve']);
+    assert.equal(capture.calls.length, 1, 'a healthy, owned, fresh state is exactly what lets a write happen');
+    assert.deepEqual(replies, ['บันทึกแล้ว 200 บาท']);
+  });
+
+  // The four corpus rows, one test each. Each asserts the SAME thing that makes them zero-write:
+  // `captureExpenseNote` was never called, so no expense record could have been created.
+  for (const [gap, behavior] of [
+    ['state-store-outage-zero-write', { read: () => ({ ok: false, reason: 'unavailable' }) }],
+    ['state-stale-or-expired-zero-write', { read: () => ({ ok: false, reason: 'expired' }) }],
+    // A losing CAS is what a cross-user or cross-chat answer produces: the owner triple is in the
+    // WHERE clause, so the intruder's resolve matches zero rows and comes back 'stale'.
+    ['state-cross-user-zero-write', { resolve: () => ({ ok: false, reason: 'stale' }) }],
+    ['state-cross-chat-or-company-zero-write', { read: () => ({ ok: false, reason: 'not_found' }) }],
+  ] as const) {
+    it(`${gap}: refuses with ZERO domain writes and re-asks the canonical question`, async () => {
+      const { prisma } = makePrisma();
+      const capture = makeCapture();
+      const state = makeStateRepo(behavior);
+      const { useCase, replies } = makeIntakeStateUseCase(prisma, {
+        mode: 'on', capture: capture.capture, stateRepo: state.repo,
+      });
+
+      await useCase.execute(STATE_EVENT);
+
+      assert.equal(capture.calls.length, 0, `${gap}: the capture use case is never reached, so nothing can be written`);
+      // Matched on the canonical "not created yet" clause rather than the whole string, so a copy
+      // tweak does not fail this test — but a turn that silently CONFIRMED a record still would.
+      assert.equal(replies.length, 1);
+      assert.match(replies[0], /ยังไม่สร้างรายการ/, 'the customer is re-asked, not answered with a guess');
+    });
+  }
+
+  it('a stale CAS loser cannot consume the question — it stays open for the rightful answer', async () => {
+    // Zero-write is necessary but not sufficient: if a refusal also consumed the ledger question,
+    // the real owner's next answer would arrive with nothing to attach to.
+    const { prisma } = makePrisma();
+    const capture = makeCapture();
+    const state = makeStateRepo({ resolve: () => ({ ok: false, reason: 'stale' }) });
+    const { useCase, ledgerSubs } = makeIntakeStateUseCase(prisma, {
+      mode: 'on', capture: capture.capture, stateRepo: state.repo,
+      openWaiting: [{
+        id: 'clar-amount', text: 'ค่าเดินทาง', clarifyForIntent: 'EXPENSE_DOCUMENT_CAPTURE',
+        entry: { id: 'clar-amount', userId: 'user-1' },
+      }],
+    });
+
+    await useCase.execute(STATE_EVENT);
+
+    assert.equal(capture.calls.length, 0);
+    assert.deepEqual(ledgerSubs, [], 'no new question and no consumption marker on a refused turn');
+  });
+
+  it('opens a durable state when the capture reports missing fields', async () => {
+    // The other half of the contract: without an open on the clarify turn, the continuation above
+    // could never find a state, so `on` would refuse every follow-up forever.
+    const { prisma } = makePrisma();
+    const state = makeStateRepo();
+    const incomplete = {
+      execute: async () => {
+        throw new LineTextExpenseCaptureIncompleteError(['description'], ['amount'], []);
+      },
+    } as any;
+    const { useCase } = makeIntakeStateUseCase(prisma, {
+      mode: 'on', capture: incomplete, stateRepo: state.repo,
+      intakeRouteFn: () => ({ status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.95 }),
+    });
+
+    await useCase.execute({ ...STATE_EVENT, webhookEventId: 'evt-state-open', messageText: 'ค่าเดินทาง' });
+
+    assert.deepEqual(state.calls, ['open'], 'the clarify turn records the durable question');
+    const opened = state.opened[0];
+    assert.equal(opened.targetIntent, 'EXPENSE_DOCUMENT_CAPTURE');
+    assert.deepEqual(opened.missingFields, ['amount']);
+    assert.equal(opened.companyId, 'company-1');
+    assert.ok(opened.chatKeyHash && opened.chatKeyHash !== STATE_EVENT.lineUserId, 'the chat key is hashed, never the raw LINE id');
+    assert.ok(opened.ttlMinutes > 0, 'a question without a TTL never expires, which is its own stale-merge bug');
+  });
+});
+
+// ── §10.1 / AI-01 `expense-draft-structured-card`: an expense capture terminal renders the DEDICATED
+//    ร่างค่าใช้จ่าย card — amount / item / category / status as rows — instead of the generic card
+//    wrapping the canonical reply. Same gate as the rest of terminal Flex
+//    (`LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED`), so default-off is still the legacy all-text shape. ──
+describe('ProcessLineWebhookUseCase – expense draft card on the capture terminal (§10.1, default off)', () => {
+  const CAPTURE_EVENT = { ...STATE_EVENT, webhookEventId: 'evt-draft-card', messageText: '200 บาท' };
+  const run = async (config?: Record<string, unknown>) => {
+    const { prisma } = makePrisma();
+    const capture = makeCapture({ vendorNameSnapshot: 'ร้านกาแฟบ้านไร่' });
+    const harness = makeIntakeStateUseCase(prisma, { capture: capture.capture, ...(config ? { config } : {}) });
+    await harness.useCase.execute(CAPTURE_EVENT);
+    return { ...harness, captureCalls: capture.calls };
+  };
+  const bodyOf = (message: any) => message.contents.body.contents;
+  const rowsOf = (message: any) => bodyOf(message)
+    .filter((entry: any) => entry.type === 'box')
+    .map((box: any) => [box.contents[0].text, box.contents[1].text]);
+
+  it('delivers the legacy all-text reply, unchanged, while the flag is off', async () => {
+    const off = await run();
+    assert.equal(off.captureCalls.length, 1, 'the capture itself is untouched by a render flag');
+    assert.equal(off.sent.length, 1);
+    const [legacy] = off.sent[0]!;
+    // A snapshot, not a spot check: the ONLY keys are the legacy text message plus the completion menu
+    // the terminal part has always carried, so a card slipping in here fails on `type` alone.
+    assert.deepEqual(Object.keys(legacy).sort(), ['quickReply', 'text', 'type']);
+    assert.equal(legacy.type, 'text');
+    assert.equal(legacy.text, 'บันทึกแล้ว 200 บาท');
+    assert.ok(legacy.quickReply.items.length > 0, 'the completion menu is part of the legacy shape');
+  });
+
+  it('renders the ร่างค่าใช้จ่าย card from the capture result — no invented row — when the flag is on', async () => {
+    const on = await run({ lineAiMultipartTerminalFlexEnabled: true });
+    assert.equal(on.sent.length, 1);
+    const [message] = on.sent[0]!;
+    assert.deepEqual(message.quickReply, (await run()).sent[0]![0].quickReply,
+      'only the container changes: the completion menu is the same one the text reply carries');
+    assert.equal(message.type, 'flex');
+    assert.equal(message.contents.header.contents[0].text, 'ร่างค่าใช้จ่าย');
+    // Exactly the values the capture returned: amount '200' and category 'ค่าเดินทาง' from
+    // `makeCapture`, the vendor as the item row, and the server-owned draft status.
+    assert.deepEqual(rowsOf(message), [
+      ['ยอดรวม', '200.00 บาท'],
+      ['รายการ', 'ร้านกาแฟบ้านไร่'],
+      ['หมวดหมู่', 'ค่าเดินทาง'],
+      ['สถานะ', 'ร่าง – รอตรวจสอบและยืนยันในเว็บ'],
+    ]);
+    assert.deepEqual(bodyOf(message).filter((entry: any) => entry.type === 'text'), [],
+      'the long canonical reply is NOT wrapped into the card body (§10.2)');
+    assert.equal(message.altText, 'บันทึกแล้ว 200 บาท', 'altText stays the canonical reply text');
+    assert.equal(message.contents.footer.contents[0].action.uri,
+      'https://app.example.com/companies/company-1/expenses/exp-1');
+  });
+
+  it('omits a row the capture did not ground rather than filling it in', async () => {
+    const { prisma } = makePrisma();
+    // No vendor and no note: the item row simply does not exist. Nothing else changes.
+    const capture = makeCapture();
+    const on = makeIntakeStateUseCase(prisma, {
+      capture: capture.capture, config: { lineAiMultipartTerminalFlexEnabled: true },
+    });
+    await on.useCase.execute(CAPTURE_EVENT);
+    assert.deepEqual(rowsOf(on.sent[0]![0]).map(([label]: string[]) => label), ['ยอดรวม', 'หมวดหมู่', 'สถานะ']);
   });
 });

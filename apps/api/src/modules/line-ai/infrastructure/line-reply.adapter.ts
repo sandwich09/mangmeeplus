@@ -17,10 +17,25 @@ export type LineReplyMessage = {
 
 /** `failed_token` = LINE rejected the request (400): expired/used reply token
  *  or malformed message — the only class where a push fallback can still
- *  deliver. Other failures would fail the push the same way. */
-export type LineDeliveryResult = 'ok' | 'failed_token' | 'failed_other' | 'skipped';
+ *  deliver. Other failures would fail the push the same way.
+ *
+ *  `failed_flex` is a strict REFINEMENT of `failed_token`, never of anything
+ *  else: the same 400, on the same reply call, narrowed to "LINE rejected the
+ *  message BODY and that body contained a Flex message". Pushing the identical
+ *  payload cannot fix a payload LINE refused to render, but re-sending it as
+ *  the Flex message's own `altText` can. Because it only ever appears where
+ *  `failed_token` used to, a caller that does not know the value behaves
+ *  exactly as before by treating it as `failed_token`. */
+export type LineDeliveryResult = 'ok' | 'failed_token' | 'failed_flex' | 'failed_other' | 'skipped';
 
 const LINE_MESSAGE_TIMEOUT_MS = 5_000;
+
+/** LINE reports message-body validation errors with a JSON-pointer `property` into the request:
+ *  `{"details":[{"message":"...","property":"/messages/0/contents/body/..."}]}`. An expired or reused
+ *  reply token instead answers `{"message":"Invalid reply token"}` with no such pointer — so this is
+ *  what separates "your card is malformed" from "your token is stale", and the token case keeps its
+ *  push fallback rather than being downgraded to a text card it did not need. */
+const LINE_MESSAGE_BODY_REJECTION = '/messages/';
 
 @Injectable()
 export class LineReplyAdapter {
@@ -32,7 +47,7 @@ export class LineReplyAdapter {
   constructor(private readonly config: AppConfigService) {}
 
   async sendReply(replyToken: string, messages: LineReplyMessage[]): Promise<LineDeliveryResult> {
-    return this.postMessage(this.LINE_REPLY_URL, { replyToken, messages }, 'reply');
+    return this.postMessage(this.LINE_REPLY_URL, { replyToken, messages }, 'reply', messages);
   }
 
   /** Push delivery consumes the OA monthly message quota (replies are free).
@@ -69,7 +84,12 @@ export class LineReplyAdapter {
     }
   }
 
-  private async postMessage(url: string, body: Record<string, unknown>, kind: 'reply' | 'push'): Promise<LineDeliveryResult> {
+  private async postMessage(
+    url: string,
+    body: Record<string, unknown>,
+    kind: 'reply' | 'push',
+    messages?: LineReplyMessage[],
+  ): Promise<LineDeliveryResult> {
     const accessToken = this.config.lineMessagingChannelAccessToken;
     if (!accessToken) {
       this.logger.warn({ msg: `LINE access token not configured; skipping ${kind}` });
@@ -98,7 +118,10 @@ export class LineReplyAdapter {
       const errText = await response.text().catch(() => '');
       // Truncate to avoid leaking response details
       this.logger.warn({ msg: `LINE ${kind} failed`, status: response.status, body: errText.slice(0, 200) });
-      return kind === 'reply' && response.status === 400 ? 'failed_token' : 'failed_other';
+      if (kind !== 'reply' || response.status !== 400) return 'failed_other';
+      const flexRejected = errText.includes(LINE_MESSAGE_BODY_REJECTION)
+        && (messages ?? []).some((message) => message.type === 'flex');
+      return flexRejected ? 'failed_flex' : 'failed_token';
     }
     return 'ok';
   }

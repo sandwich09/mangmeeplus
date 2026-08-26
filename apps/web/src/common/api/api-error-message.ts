@@ -83,8 +83,12 @@ const CODE_LABELS: Record<string, string> = {
   EXPENSE_UPDATE_VERSION_REQUIRED: 'ข้อมูลเวอร์ชันเอกสารหายไป กรุณาโหลดรายการใหม่ก่อนบันทึก',
   EXPENSE_UPDATE_VERSION_INVALID: 'ข้อมูลเวอร์ชันเอกสารไม่ถูกต้อง กรุณาโหลดรายการใหม่ก่อนบันทึก',
   EXPENSE_UPDATE_CONFLICT: 'รายการถูกแก้ไขโดยผู้ใช้อื่น กรุณาโหลดข้อมูลใหม่ ตรวจสอบ แล้วจึงบันทึกอีกครั้ง',
+  // Plan 13.11.B: a 400 body reaches the client as `code` only, so the amounts and the line to open
+  // are shown on the VAT card itself (`expenseVatReconciliationMessage`). This says where to look.
   EXPENSE_VAT_RECONCILIATION_REQUIRED:
-    'VAT จากเอกสารยังไม่ตรงกับที่ระบบคำนวณ กรุณาตรวจหน่วย อัตรา และจำนวน VAT แล้วบันทึกการตรวจก่อนยืนยัน',
+    'VAT จากเอกสารยังไม่ตรงกับที่ระบบคำนวณ กรุณาดูรายการที่ต้องตรวจในการ์ด VAT แล้วแก้ไข หรือเลือก “ใช้ยอดตามเอกสาร” พร้อมระบุเหตุผล',
+  EXPENSE_VAT_OVERRIDE_INVALID:
+    'ต้องเลือกรายการที่มี VAT เพื่อรับส่วนต่าง และกรอกเหตุผลก่อน จึงจะใช้ยอด VAT ตามเอกสารได้',
   EXPENSE_CHANGED_DURING_DELETE: 'รายการถูกแก้ไขระหว่างการลบ กรุณาโหลดข้อมูลใหม่แล้วลองอีกครั้ง',
   EXPENSE_NOT_DELETABLE: 'ลบรายการค่าใช้จ่ายนี้ไม่ได้ในสถานะปัจจุบัน กรุณาตรวจสอบสถานะเอกสาร',
   EXPENSE_HAS_LINKED_DATA: 'ลบรายการไม่ได้ เพราะมีข้อมูลอื่นเชื่อมโยงอยู่ กรุณาตรวจสอบรายการที่เกี่ยวข้องก่อน',
@@ -472,6 +476,9 @@ const MESSAGE_PATTERNS: ReadonlyArray<[RegExp, (m: RegExpMatchArray) => string]>
     (m) => `ยืนยันลงบัญชีไม่ได้ในสถานะปัจจุบัน (${m[1]}) — ต้องตรวจเอกสารจนพร้อมยืนยันก่อน`],
   [/^Cannot prepare substitute evidence in status (\S+)\.$/,
     (m) => `จัดทำใบรับรองแทนใบเสร็จไม่ได้ในสถานะปัจจุบันของเอกสาร (${m[1]})`],
+  // Plan 13.11.B: "ยังไม่แน่ใจ" saves as a draft but blocks confirmation, and the block names the line.
+  [/^The VAT mode says VAT applies but line (\d+) has no VAT rate\./,
+    (m) => `รายการที่ ${m[1]} ยังไม่ได้ระบุว่ามี VAT หรือไม่ กรุณาเลือกให้ครบทุกรายการก่อนยืนยัน`],
   [/^Accounting period (\S+) is not open; reopen it before voiding\.$/,
     (m) => `งวดบัญชี ${m[1]} ปิดอยู่ ต้องเปิดงวดก่อนจึงจะยกเลิกเอกสารได้`],
   [/^(\S+)\/(\S+) is locked; use an adjustment or amended filing workflow\.$/,

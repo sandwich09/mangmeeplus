@@ -2,8 +2,53 @@
 
 Status: Implementation EXISTS on this branch behind three default-off flags, and is MERGE-SAFE but NOT
 ACTIVATION-READY. No deploy, no config/flag change in any environment. Phase 0 eval freeze is closed for
-§14.1 (structural), §14.2 (now bound to the real assessor) and §14.3 (13 implemented_fixture / 8
+§14.1 (structural), §14.2 (now bound to the real assessor) and §14.3 (20 implemented_fixture / 1
 required_gap). Every behaviour phase stays gated, and DRAFT-only (Phase 3B) still waits for owner GO.
+
+WP-C (2026-08-26): the §10.1 dedicated expense draft card landed — `buildExpenseDraftCardMessage()` in
+`line-business-card.logic.ts` renders `ร่างค่าใช้จ่าย` as structured rows (`ยอดรวม`, `รายการ`, `หมวดหมู่`,
+`สถานะ`) instead of wrapping the canonical reply in the generic 1,200-character body (§10.2). NO new flag:
+it reuses `LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED`, which already gates "is the terminal part a Flex card",
+and the specific-vs-generic card choice happens INSIDE that flag-on branch — so flag-off is still the
+byte-identical legacy all-text shape, pinned by a snapshot test. Rules that matter: a row the capture did
+not ground is OMITTED, never filled with the text reply's `ยังไม่ระบุ` placeholder; a card with nothing
+grounded degrades to the generic text card rather than shipping an empty frame; `altText` stays the
+CANONICAL reply text (so the WP-A Flex→text fallback re-sends the same words, under the same known
+`preview(text, 400)` ceiling as every sibling card); the CTA is the tenant path
+`/companies/{companyId}/expenses/{expenseId}` only, and an untrusted base loses the BUTTON, never guesses a
+URL. Wired at the two capture terminals that actually create a draft (text-note capture and media capture
+with a receipt draft); terminals with no grounded draft keep the generic card. That moved
+`expense-draft-structured-card` from `required_gap` to `implemented_fixture` — read it the same way as
+WP-A/WP-B: code path and fixtures exist, the flag is off in every environment, and no provider replay or
+UAT evidence exists. The ONLY remaining §14.3 gap is `reimbursement-draft-card-owner-go`, which is parked
+on owner GO and was deliberately left untouched.
+
+WP-B (2026-08-26): the §8.3 DB-backed neutral intake state landed behind a FOURTH default-off flag,
+`LINE_AI_INTAKE_STATE_MODE` (`off` | `shadow` | `on`). New `LineIntakeState` model + migration
+`20260826120000_line_intake_state` (partial unique index on the OPEN row per company+user+chatKeyHash) and
+`LineIntakeStateRepository`, which fails **closed** — the exact opposite of the fail-open Redis ledger it
+backstops. That moved four §14.3 rows from `required_gap` to `implemented_fixture`
+(state outage / stale-expired / cross-user / cross-chat-or-company). Read that as "code path and specs
+exist", NOT as "the lane is proven": the flag is off in every environment, and no provider replay or UAT
+evidence exists for those four rows. Each row's `note` says `DEFAULT OFF` and the integrity spec asserts it.
+
+WP-A (2026-08-26): durable terminal-outcome replay and the Flex→text fallback landed behind a FIFTH and
+SIXTH default-off flag, `LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED` and `LINE_AI_FLEX_TEXT_FALLBACK_ENABLED`.
+New `LineTurnOutcome` model + migration `20260826140000_line_turn_outcome` (`webhookEventId` unique, FK to
+`LineWebhookEventLog` with `ON DELETE CASCADE`, so the existing retention purge covers it). The delivery
+seam persists the EXACT rendered LINE message array before the first send and fails **closed** — an
+outcome it cannot record is parked `delivery_pending` / `LINE_OUTCOME_NOT_RECORDED` instead of being sent
+unrecorded — and the orphan sweep's new arm pushes those stored bytes on a retry with no buffer enqueue and
+no intake route, which is the §8.3 "replay without re-routing" requirement. `deliveredAt` is the separate
+delivery status. The adapter's new `failed_flex` is a strict REFINEMENT of `failed_token` (reply + 400 +
+`/messages/` in the error body + a Flex message in the payload), so with the fallback flag off the push
+path, its log line and the resulting error code are byte-identical to before. That moved the last two §14.3
+delivery rows from `required_gap` to `implemented_fixture`. Read it the same way as WP-B: code path and
+fixtures exist, both flags are off in every environment, and no provider replay or UAT evidence exists.
+KNOWN CEILING, recorded rather than hidden: the fallback text is each card's `altText`, which the builders
+produce as `preview(text, 400)`, so a card body over 400 characters falls back to a visibly marked ("…")
+preview — short of §10.2's lossless bar. The fix, if a real fallback is seen losing content, is a
+canonical-text field on the card builders; nothing in this WP invents copy or adds a model call.
 
 Owner: thawatchai.phuchana
 
@@ -19,19 +64,29 @@ clarification, terminal Flex presentation, and latency lanes.
   that lane only. Mixed greeting + business text (including a newline-split bubble) keeps the full route.
 - `LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED` (`false`): terminal part of a completed multi-part reply becomes
   the trusted Flex card; a terminal past the Flex body limit ships intact as text with a concise card after
-  it, and a part past LINE's 5,000-character cap is refused rather than sliced.
+  it, and a part past LINE's 5,000-character cap is refused rather than sliced. Since WP-C this same flag
+  also decides WHICH card: an expense capture terminal that grounded a draft gets the dedicated §10.1
+  `ร่างค่าใช้จ่าย` card, everything else keeps the generic assistant card.
 
 There is NO reimbursement writer anywhere in this branch: the payer question, the clarify-only card and the
 web handoff are canonical server copy with zero domain writes.
 
 ## Activation blockers (all four must close first)
 
-1. Durable replay of the canonical terminal outcome. `persistIntakeTurn` records the outcome before delivery
-   but is best-effort (it swallows its own failure) and no seam re-sends a persisted outcome on a retry.
-2. DB-backed neutral intake state. Financial continuation still rides the Redis ledger, which is why the
-   assessor treats resolved clarifications as VETO evidence only.
-3. Text fallback when Flex delivery fails — the reply adapter reports the failure and stops.
-4. Configured-provider replay of the frozen corpus plus a UAT canary. Neither has run.
+1. Durable replay of the canonical terminal outcome. CODE CLOSED by WP-A, EVIDENCE OPEN. `LineTurnOutcome`
+   now stores the exact rendered message array before the first send (fail-closed), and the orphan sweep
+   pushes it back without re-routing. `persistIntakeTurn` is unchanged and still best-effort — it remains an
+   AUDIT record, not the deliverable. `LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED` is off everywhere and no
+   replay has been observed against a real LINE channel.
+2. DB-backed neutral intake state. CODE CLOSED by WP-B, EVIDENCE OPEN (`LINE_AI_INTAKE_STATE_MODE=off`).
+   Financial continuation still rides the Redis ledger in every environment, which is why the assessor
+   treats resolved clarifications as VETO evidence only.
+3. Text fallback when Flex delivery fails. CODE CLOSED by WP-A, EVIDENCE OPEN. The adapter now discriminates
+   `failed_flex` and the seam retries once with the card's own `altText`;
+   `LINE_AI_FLEX_TEXT_FALLBACK_ENABLED` is off everywhere, no real LINE 400 has exercised it, and the
+   400-character `altText` ceiling above is unproven against real card bodies.
+4. Configured-provider replay of the frozen corpus plus a UAT canary. Neither has run. STILL FULLY OPEN, and
+   it is the blocker the other three now depend on: three of the four are code-complete and evidence-poor.
 
 1,000 ms debounce remains the primary experiment candidate of the existing latency implementation. This
 branch neither activates nor deploys it.
@@ -80,14 +135,16 @@ Decisions:
   asserted for them. §14.1 route accuracy and any mutation/UAT evidence are still missing.
 - Both manifests stay OUT of `LINE_AI_PROTECTED_EVAL_CASE_IDS` (still 164 + 92): they are not provider
   route rows, and the integrity spec asserts their ids never collide with a scored one.
-- §14.3 rows carry `evidenceStatus`. `implemented_fixture` (13) = terminal Flex for single AND multipart
+- §14.3 rows carry `evidenceStatus`. `implemented_fixture` (19) = terminal Flex for single AND multipart
   replies, payer clarification card, clarify-only card with no CTA, handoff card whose only button is
   `/companies/:id/reimbursements/new` (no query/hash), permission / entitlement / empty-branch denials as
   deterministic text with no CTA, legal-pending text, duplicate webhook suppressed by the durable event-log
   claim, the in-turn push fallback for an expired reply token, and the two long-reply rows (>1,200 and
-  >4,800 lossless text closed by a concise card). `required_gap` (8) = the dedicated
-  `ร่างค่าใช้จ่าย`/`ร่างคำขอเบิก` cards, DB-backed state outage/stale/cross-user/cross-chat, persisted
-  terminal-outcome replay, and a Flex-failure text fallback.
+  >4,800 lossless text closed by a concise card), plus the four DB-backed state rows added by WP-B
+  (outage / stale-expired / cross-user / cross-chat-or-company) and the two durable-delivery rows added by
+  WP-A (persisted terminal-outcome replay, Flex-failure text fallback) — all six are code implemented,
+  flag default-off, with no provider or UAT evidence yet. `required_gap` (2) = the dedicated
+  `ร่างค่าใช้จ่าย`/`ร่างคำขอเบิก` cards.
 - Gold-label rule frozen in the corpus: a claim that does not state a payer pins
   `REIMBURSEMENT_REQUEST_START` + `AMBIGUOUS`/`UNKNOWN`; only text containing a literal self-payment span
   (`EXPLICIT_EMPLOYEE_PAID_PHRASES`) may pin `REIMBURSEMENT_CLAIM`/`EMPLOYEE_PAID`, proven mechanically by
@@ -132,5 +189,16 @@ Next:
 - Close Phase 0: UAT source SHA/config + the 4 event ids, the related doc amendments, and the per-journey
   baseline p50/p95/model-call/token/cost.
 - Configured-provider replay for §14.1 route accuracy.
-- The 8 §14.3 `required_gap` implementations, starting with durable replay and the DB-backed neutral state.
+- The remaining 2 §14.3 `required_gap` implementations: the dedicated expense-draft and optional-draft
+  cards. (WP-B closed the DB-backed neutral state; WP-A closed persisted terminal-outcome replay and the
+  Flex-failure text fallback.)
+- Evidence for the four WP-B rows: a `shadow`-mode divergence run, then provider/UAT evidence, before
+  `LINE_AI_INTAKE_STATE_MODE` may go to `on` anywhere. Wiring the flag into `deploy.sh` is a separate step
+  (UAT flags only reach the environment through its jq blocks).
+- Evidence for the two WP-A rows, and the same `deploy.sh` wiring step for both new flags. Neither has a
+  shadow mode — they are behavior lanes — so UAT is the first place a real LINE 400 or a real replay can be
+  observed. Worth watching there: whether any observed Flex fallback loses content to the 400-character
+  `altText` ceiling (that is the trigger for a canonical-text field on the card builders), and whether the
+  replay arm ever picks up a `delivery_pending` row whose `payloadJson` was already cleared — the push
+  target comes from that envelope, so such a row cannot be replayed today.
 - Keep Phase 3B blocked until owner GO.

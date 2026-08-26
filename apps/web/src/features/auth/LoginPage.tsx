@@ -130,6 +130,9 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
   const [remember, setRemember] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // WEB-03: which field is wrong, said next to that field. `noValidate` stays — the browser's own
+  // bubble is English-only and unstyled — so the form owns the check instead.
+  const [fieldErrors, setFieldErrors] = useState<{ identifier?: string; password?: string }>({});
   // Prototype LINE QR channel (demo-only).
   const [lineModal, setLineModal] = useState(false);
   const [lineSeconds, setLineSeconds] = useState(60);
@@ -179,6 +182,20 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
+
+    // Nothing is sent while a required field is empty: a 401 "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง"
+    // for a blank box tells the user their credentials are wrong when they simply missed a field.
+    const nextFieldErrors = {
+      ...(trimmed(identifier) ? {} : { identifier: t('auth.login.error.identifier_required', locale) }),
+      ...(trimmed(password) ? {} : { password: t('auth.login.error.password_required', locale) }),
+    };
+    setFieldErrors(nextFieldErrors);
+    if (nextFieldErrors.identifier || nextFieldErrors.password) {
+      setError(null);
+      document.getElementById(nextFieldErrors.identifier ? 'login-identifier' : 'login-password')?.focus();
+      return;
+    }
+
     setLoading(true);
     setError(null);
 
@@ -304,12 +321,20 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
                   name="username"
                   autoComplete="username"
                   required
+                  aria-invalid={fieldErrors.identifier ? true : undefined}
+                  aria-describedby={fieldErrors.identifier ? 'login-identifier-error' : undefined}
                   value={identifier}
-                  onChange={(event) => setIdentifier(event.target.value)}
+                  onChange={(event) => {
+                    setIdentifier(event.target.value);
+                    if (fieldErrors.identifier) setFieldErrors((prev) => ({ ...prev, identifier: undefined }));
+                  }}
                   onBlur={(event) => setIdentifier(trimmed(event.target.value))}
-                  className={heroInputClass}
+                  className={`${heroInputClass} ${fieldErrors.identifier ? '!border-red-400' : ''}`}
                 />
               </div>
+              {fieldErrors.identifier ? (
+                <p id="login-identifier-error" className="mt-1.5 text-sm font-medium text-red-700">{fieldErrors.identifier}</p>
+              ) : null}
             </div>
 
             <div>
@@ -331,9 +356,14 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
                   type={showPassword ? 'text' : 'password'}
                   autoComplete="current-password"
                   required
+                  aria-invalid={fieldErrors.password ? true : undefined}
+                  aria-describedby={fieldErrors.password ? 'login-password-error' : undefined}
                   value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  className={`${heroInputClass} pr-11`}
+                  onChange={(event) => {
+                    setPassword(event.target.value);
+                    if (fieldErrors.password) setFieldErrors((prev) => ({ ...prev, password: undefined }));
+                  }}
+                  className={`${heroInputClass} pr-11 ${fieldErrors.password ? '!border-red-400' : ''}`}
                 />
                 <button
                   type="button"
@@ -348,6 +378,9 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
                   )}
                 </button>
               </div>
+              {fieldErrors.password ? (
+                <p id="login-password-error" className="mt-1.5 text-sm font-medium text-red-700">{fieldErrors.password}</p>
+              ) : null}
             </div>
 
             <label className="flex cursor-pointer items-center gap-2.5 pt-1 text-[13.5px] text-gray-700">

@@ -15,10 +15,12 @@ import { PrismaService } from '../../../../common/database/prisma.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { AuditService } from '../../../audit/application/audit.service';
 import { PermissionResolverService } from '../../../access-control/application/permission-resolver.service';
+import { LaunchGateGuardService } from '../../../feature-launch/application/launch-gate.guard';
 import { LaunchShadowProbe } from '../../../feature-launch/application/launch-shadow.probe';
 import { SHADOW_SURFACES } from '../../../feature-launch/domain/shadow-surface.catalog';
 import { AiGatewayClient } from '../../infrastructure/ai-gateway.client';
 import { LineReplyAdapter, type LineDeliveryResult } from '../../infrastructure/line-reply.adapter';
+import { LineIntakeStateRepository } from '../../infrastructure/line-intake-state.repository';
 import {
   InitReceiptUploadUseCase,
   CompleteReceiptUploadUseCase,
@@ -66,12 +68,12 @@ import {
 } from '../../../data-model-core/domain/logic/attachment.logic';
 import { AttachmentMalwareScanner } from '../../../data-model-core/infrastructure/attachment-malware-scanner';
 import { deriveTaxEvidence, isExpenseExtractionEligible, sourceDocumentTypeFromClassification, toSourceDocumentType } from '../../../expenses/domain/logic/expense-document.logic';
-import { isStaleOcrApply, ReceiptOcrApplyService, toMoney4 } from '../../../expenses/application/services/receipt-ocr-apply.service';
+import { isStaleOcrApply, ReceiptOcrApplyService, toMoney4, type ReceiptCategorySuggestion } from '../../../expenses/application/services/receipt-ocr-apply.service';
 import { normalizeLineText, hashMessagePreview, parseBareCompanySelection, parseLineCompanyCommand } from '../../domain/logic/line-ai-classifier.logic';
 import type { LineCompanyCommand } from '../../domain/logic/line-ai-classifier.logic';
 import { formatRefusal } from '../../domain/logic/line-ai-formatter.logic';
 import { absoluteWebLink } from '../../../../common/http/web-link';
-import { loadEntitledFeatureKeys } from '../../../employee-access/application/entitlement.helper';
+import { FEATURE_TEMPORARILY_UNAVAILABLE, loadEntitledFeatureKeys } from '../../../employee-access/application/entitlement.helper';
 import { ListApprovalQueueUseCase } from '../../../reimbursements/application/use-cases/reimbursement-approval.use-case';
 import { ListPurchaseRequestsUseCase } from '../../../procurement/application/use-cases/purchase-request.use-case';
 import { ListPurchaseOrdersUseCase } from '../../../procurement/application/use-cases/purchase-order.use-case';
@@ -80,7 +82,7 @@ import { LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERRO
 import { LineAiLedgerService, ledgerKey, type LedgerEntry } from '../line-ai-ledger.service';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
 import { availableApprovalSurfaceKeys, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, staffMenuCommand, PENDING_APPROVAL_ITEM_LIMIT, type ApprovalSurfaceKey, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
-import { buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage } from '../../domain/logic/line-business-card.logic';
+import { buildExpenseDraftCardMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
 import { capabilityFollowUpReply, isDeliveredCapabilityFollowUp, isNextStepQuestionText } from '../../domain/logic/line-ai-capability-follow-up.logic';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import { LINE_BUFFER_ORPHAN_REPROCESS_MS } from '../../domain/logic/line-message-buffer.logic';
@@ -149,6 +151,15 @@ const RATE_LIMIT_REPLY = '⏳ ระบบกำลังประมวลผ�
 const RECEIPT_LINK_REPLY = '🔗 กรุณาเชื่อมต่อบัญชี มั่งมีพลัส กับ LINE ก่อนส่งบิลหรือใบเสร็จนะคะ';
 const RECEIPT_FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์อัปโหลดบิลหรือใบเสร็จผ่าน LINE ค่ะ';
 const EXPENSE_FEATURE_DISABLED_REPLY = '📋 บริษัทนี้ยังไม่ได้เปิดใช้งานระบบค่าใช้จ่ายและเอกสารค่ะ\nหากต้องการใช้ ให้เจ้าของหรือผู้ดูแลเปิดฟีเจอร์ในเว็บแอปก่อนนะคะ';
+/**
+ * The CLOSED-route copy the runbook left unwritten (`feature-launch-control.md` OPEN-9).
+ *
+ * Constraints it has to satisfy, from spec CC1 via runbook §2.3: it says *temporarily unavailable*,
+ * never "not purchased" — that stays `EXPENSE_FEATURE_DISABLED_REPLY`'s wording. It names no route
+ * key, gate, generation or environment (a customer surface may not see control-plane state), and it
+ * points at the channel that still works so a closed AI lane does not read as a dead product.
+ */
+const LAUNCH_ROUTE_CLOSED_REPLY = '🔧 ตอนนี้ผู้ช่วยพักให้บริการชั่วคราวค่ะ\nระหว่างนี้ยังใช้งานผ่านเว็บแอปได้ตามปกติ และเราจะกลับมาให้บริการเร็ว ๆ นี้นะคะ';
 const ASSISTANT_TALK_GREETING = 'สวัสดีค่ะ 😊 น้องมั่งมีมาแล้วนะคะ\nวันนี้มีอะไรให้น้องช่วยแบ่งเบาบ้าง บอกได้เลยค่ะ 💚';
 const COMPANY_CONTEXT_FORBIDDEN_REPLY = '🔒 ผู้ใช้หลายบริษัทต้องเป็น OWNER ของทุกบริษัทก่อนเลือกบริบทใน LINE ค่ะ';
 const SIGNATURE_FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์เก็บลายเซ็นประจำตัวผ่าน LINE ค่ะ';
@@ -514,6 +525,34 @@ export function chatKeyHashOf(event: { lineUserId: string; pushTargetId?: string
   return hashMessagePreview(event.pushTargetId ?? event.lineUserId);
 }
 
+/** Shape label recorded on the durable outcome, using the same vocabulary the presentation manifest
+ *  in `scripts/line-ai-latency-autonomy.corpus.ts` pins, so an ops row and a corpus row read alike. */
+export function presentationKindOf(messages: LineReplyMessage[]): string {
+  const hasFlex = messages.some((message) => message.type === 'flex');
+  if (!hasFlex) return 'text';
+  return messages.some((message) => message.type === 'text') ? 'text_parts_then_flex' : 'flex';
+}
+
+/** The canonical text of a Flex message is its own `altText` — LINE's designated plain-text
+ *  equivalent, written by the SAME builder that wrote the bubble. Nothing is invented here and no
+ *  model is called: a card LINE refused to render is re-sent as the words it already declared, with
+ *  its quick reply intact so the completion menu survives the downgrade.
+ *
+ *  ponytail: `altText` is `preview(text, 400)` in line-business-card.logic.ts, so a card body longer
+ *  than 400 characters falls back to its VISIBLY marked ("…") preview rather than the full body —
+ *  short of §10.2's lossless bar, but strictly more than the silence it replaces, and on the
+ *  multi-part lane the long text already shipped as text before the card. Give the card builders a
+ *  canonical-text field the day a fallback delivery is observed losing content. */
+export function toCanonicalTextMessages(messages: LineReplyMessage[]): LineReplyMessage[] {
+  return messages.map((message) => (message.type === 'flex'
+    ? {
+        type: 'text' as const,
+        text: message.altText,
+        ...(message.quickReply ? { quickReply: message.quickReply } : {}),
+      }
+    : message));
+}
+
 export function formatLineReply(response: LineAiTurnResponse, webBaseUrl: string | undefined): string {
   const lines = [response.replyText];
   if (response.sourceLabels.length > 0) {
@@ -718,6 +757,31 @@ function formatPaypersReply(
   }
   parts.push('', `✅ ตรวจสอบและยืนยันในเว็บแอป:\n${link}`);
   return parts.join('\n');
+}
+
+/** §10.1 status row. The record EXISTS but is unconfirmed — the same state the canonical reply's header
+ *  prints ("บันทึก…เบื้องต้นแล้ว (รอตรวจสอบ)"), said once, here, and never by a model. */
+const EXPENSE_DRAFT_CARD_STATUS = 'ร่าง – รอตรวจสอบและยืนยันในเว็บ';
+
+/** The §10.1 card rows reuse the SAME grounded values `formatPaypersReply` prints, with the same money
+ *  rule. A value the capture did not ground is OMITTED — the card leaves the row out rather than
+ *  repeating the text reply's 'ยังไม่ระบุ' placeholder as if it were a fact. */
+function expenseDraftCardFacts(
+  expenseId: string,
+  options: { amount?: string | null; fields?: ReceiptOcrFieldResult | null; categoryName?: string | null; item?: string | null } = {},
+): LineExpenseDraftCardFacts {
+  const amountValue = options.fields?.grandTotalAmount ?? options.amount;
+  const amount = amountValue && Number(toMoney4(amountValue)) > 0
+    ? `${Number(toMoney4(amountValue)).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท`
+    : undefined;
+  const item = options.item ?? options.fields?.vendorName;
+  return {
+    expenseId,
+    ...(amount ? { amount } : {}),
+    ...(item ? { item } : {}),
+    ...(options.categoryName ? { category: options.categoryName } : {}),
+    status: EXPENSE_DRAFT_CARD_STATUS,
+  };
 }
 
 export function isGroundedReceiptFollowUp(text: string): boolean {
@@ -969,6 +1033,9 @@ export class ProcessLineWebhookUseCase {
     // to wire would report zero would_block observations, which R1 cannot distinguish from a route
     // that was measured and never blocked. Absent evidence must fail loudly at boot, not quietly.
     private readonly shadow: LaunchShadowProbe,
+    // REQUIRED for the same reason the probe above is: this is the AI lane's kill switch, and an
+    // `@Optional()` switch that failed to wire would look exactly like an open route.
+    private readonly launchGate: LaunchGateGuardService,
     @Optional() private readonly initReceiptUpload?: InitReceiptUploadUseCase,
     @Optional() private readonly completeReceiptUpload?: CompleteReceiptUploadUseCase,
     @Optional() private readonly captureExpenseNote?: CaptureLineExpenseNoteUseCase,
@@ -990,6 +1057,10 @@ export class ProcessLineWebhookUseCase {
     @Optional() private readonly reimbursementApprovalQueue?: ListApprovalQueueUseCase,
     @Optional() private readonly listPurchaseRequests?: ListPurchaseRequestsUseCase,
     @Optional() private readonly listPurchaseOrders?: ListPurchaseOrdersUseCase,
+    // §8.3 DB-backed neutral intake state. `@Optional()` like the ledger, but it fails CLOSED where
+    // the ledger fails open: an absent repository is only ever safe because the flag it is gated on
+    // defaults to 'off'. LAST parameter on purpose — the specs wire these positionally.
+    @Optional() private readonly intakeState?: LineIntakeStateRepository,
   ) {}
 
   /**
@@ -1015,6 +1086,58 @@ export class ProcessLineWebhookUseCase {
       // observation, and NOT redundant the moment a second `record` is added here.
       await sweep.flush();
     }
+  }
+
+  /**
+   * THE AI-LANE KILL SWITCH (plan §P3 item 1). `ai_line_assistant/DEFAULT` is the root launch route
+   * of a LINE turn; this runs at the same seam `recordShadowTurn` measures, which is the last point
+   * before a turn can reach the model, a tool, OCR, or any attachment write. Both entry paths (the
+   * text turn and the receipt-upload turn) call it, so closing the route cannot be half-effective.
+   *
+   * Refuses exactly like the entitlement gate below it — reply, DENIED audit row, terminal event
+   * log — but with the CLOSED-route copy, never the "not enabled" copy (spec CC1 / runbook §2.3).
+   *
+   * FAIL MODE, deliberately not fail-open: only the control-plane refusal
+   * (`feature_temporarily_unavailable`) becomes a user-facing close. Anything else — the guard's own
+   * database read failing — rethrows, exactly as the WHT callers do (`isLaunchRouteOpen`,
+   * `wht-certificate-handoff.use-case.ts:22`): "the route is closed" and "we could not tell" are not
+   * the same answer. The rethrow lands in this lane's existing catch (`executeReceiptUpload`, or the
+   * buffer's `dispatchBatch` → `deliverDispatchFailure`), which sends a retryable "try again" reply
+   * and releases the event — so an unreadable gate degrades toward CLOSED with no model call, per
+   * runbook R8 rule 2: "availability problems therefore degrade toward closed, never toward open".
+   */
+  private async refuseWhenLaunchRouteClosed(
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string },
+    actorUserId: string,
+    companyId: string,
+    requestId: string,
+  ): Promise<boolean> {
+    try {
+      await this.launchGate.assertLaunchRouteOpen('ai_line_assistant');
+      return false;
+    } catch (error) {
+      const body = (error as { getResponse?: () => unknown })?.getResponse?.() as { code?: string } | undefined;
+      if (body?.code !== FEATURE_TEMPORARILY_UNAVAILABLE) throw error;
+    }
+    await this.deliverReply(event, LAUNCH_ROUTE_CLOSED_REPLY);
+    await this.audit.log({
+      companyId,
+      actorUserId,
+      action: 'ai.line.query.denied',
+      targetType: 'LineWebhookEvent',
+      targetId: event.webhookEventId,
+      requestId,
+      result: 'DENIED',
+      riskLevel: 'LOW',
+      // Tenant-anonymous and route-anonymous: the operator reads WHICH gate from the control plane,
+      // not from a customer-turn audit row.
+      metadataJson: { reason: 'launch_route_closed' },
+    });
+    // Its own status, not `feature_disabled`: a planned CLOSE and a company that never bought the
+    // feature are different incidents, and R3 verification counts the fallback served under the
+    // first. It classifies as `feature_disabled` so the AI-failure alarm stays quiet during a drill.
+    await this.updateEventLog(event.webhookEventId, 'launch_route_closed', LINE_AI_ERROR_CODES.UNSUPPORTED_MODULE, companyId);
+    return true;
   }
 
   private async resolveBranchScopeLabel(companyId: string, branchIds?: string[]): Promise<string> {
@@ -1182,6 +1305,13 @@ export class ProcessLineWebhookUseCase {
           // clarify_only/handoff only — 'shadow' is inert like 'off' (the router is never offered the route).
           reimbursementSemantic: this.config.lineAiReimbursementSemanticMode === 'clarify_only'
             || this.config.lineAiReimbursementSemanticMode === 'handoff',
+          // Advisor staged capability (advisor spec §17): taken ONLY from server config, never from a
+          // message, a client field or a user-supplied company id. The stages are cumulative, so each
+          // one that offers the route is listed POSITIVELY — an absent or unrecognised value therefore
+          // fails closed to legacy rather than switching the route on. Slice A builds 'social'.
+          advisor: this.config.lineAiAdvisorMode === 'social'
+            || this.config.lineAiAdvisorMode === 'knowledge'
+            || this.config.lineAiAdvisorMode === 'company',
         },
         permissions: input.permissions,
         activeCategories,
@@ -1270,6 +1400,7 @@ export class ProcessLineWebhookUseCase {
     texts: string[],
     companyId: string,
     access: { permissions: string[]; roles: string[] },
+    expenseDraft?: LineExpenseDraftCardFacts,
   ): Promise<void> {
     if (texts.length === 0 || texts.length > LINE_MAX_MESSAGES_PER_REPLY) throw new Error('LINE_EXPENSE_DRAFT_REPLY_PARTS_INVALID');
     const messages = await this.timeStage(event.webhookEventId, 'render', async () => {
@@ -1281,15 +1412,17 @@ export class ProcessLineWebhookUseCase {
         parts[parts.length - 1] = await this.withCompletionMenu(parts[parts.length - 1]!, companyId, access);
         return parts;
       }
+      // §10.1: an expense capture terminal that grounded a draft gets the DEDICATED ร่างค่าใช้จ่าย card;
+      // the generic card stays the render for every terminal with no such draft behind it. Same gate
+      // either way, so flag-off is still the byte-identical legacy all-text shape above.
+      const terminalCard = (text: string): LineReplyMessage => (expenseDraft
+        ? buildExpenseDraftCardMessage(text, expenseDraft, this.config.webBaseUrl, companyId)
+        : buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, companyId));
       // Spec §10.1: earlier parts stay lossless text; the terminal part becomes the same Flex card a
       // single completed reply gets, so a multi-part journey never ends in plain text.
       if (Array.from(terminal).length <= LINE_FLEX_CARD_BODY_MAX_CHARS) {
         const parts = texts.slice(0, -1).map((text) => this.buildLosslessTextMessage(text));
-        parts.push(await this.withCompletionMenu(
-          buildLineAssistantTextCardMessage(terminal, this.config.webBaseUrl, companyId),
-          companyId,
-          access,
-        ));
+        parts.push(await this.withCompletionMenu(terminalCard(terminal), companyId, access));
         return parts;
       }
       // The terminal text is longer than a Flex body holds. Feeding it to the card would drop everything
@@ -1300,11 +1433,7 @@ export class ProcessLineWebhookUseCase {
         parts[parts.length - 1] = await this.withCompletionMenu(parts[parts.length - 1]!, companyId, access);
         return parts;
       }
-      parts.push(await this.withCompletionMenu(
-        buildLineAssistantTextCardMessage(MULTIPART_TERMINAL_FLEX_CLOSER, this.config.webBaseUrl, companyId),
-        companyId,
-        access,
-      ));
+      parts.push(await this.withCompletionMenu(terminalCard(MULTIPART_TERMINAL_FLEX_CLOSER), companyId, access));
       return parts;
     });
     await this.deliverRequiredMessages(event, messages);
@@ -1330,25 +1459,47 @@ export class ProcessLineWebhookUseCase {
       // Waiting feedback is cosmetic; it must never block the actual answer.
       this.logger.warn({ msg: 'LINE waiting feedback settlement failed', error: (error as Error).message });
     }
-    let result: LineDeliveryResult;
-    try {
-      result = await this.lineReply.sendReply(event.replyToken, messages);
-    } catch (error) {
-      this.logger.warn({ msg: 'LINE reply adapter threw unexpectedly', error: (error as Error).message });
-      result = 'failed_other';
+    // §8.3: the canonical terminal outcome becomes durable BEFORE the first send attempt, and it is
+    // the RENDERED payload — not AiTurn's 240-character preview, which cannot be delivered. FAIL
+    // CLOSED: a send we could not record is the one case a later retry could contradict, so an
+    // unrecordable outcome is parked as `delivery_pending` instead of being sent unrecorded. The
+    // legacy input replay still covers that row (no outcome exists to replay, so recomputing is the
+    // only honest option) and nothing reached the user, so nothing can be duplicated.
+    if (this.config.lineAiTerminalOutcomeReplayEnabled
+      && !(await this.recordTurnOutcome(event.webhookEventId, messages, presentationKindOf(messages)))) {
+      await this.updateEventLog(event.webhookEventId, 'delivery_pending', 'LINE_OUTCOME_NOT_RECORDED');
+      return 'failed_other';
     }
-    if (result === 'failed_token') {
-      this.logger.warn({ msg: 'line_push_fallback_used' });
-      try {
-        result = await this.lineReply.sendPush(event.pushTargetId ?? event.lineUserId, messages);
-      } catch (error) {
-        this.logger.warn({ msg: 'LINE push adapter threw unexpectedly', error: (error as Error).message });
-        result = 'failed_other';
+    let result = await this.attemptDelivery(event, messages);
+    // §14.3 / R4: LINE rejected the message BODY, so pushing the same bytes cannot help. Re-send ONCE
+    // as the canonical text the cards already declare. Only reachable with the flag on — with it off
+    // `attemptDelivery` has already taken the legacy push path for this result.
+    if (result === 'failed_flex') {
+      const textMessages = toCanonicalTextMessages(messages);
+      this.logger.warn({ msg: 'line_flex_text_fallback_used', webhookEventId: event.webhookEventId });
+      // Same fail-closed rule as the first send: the text replaces the rejected Flex as the payload
+      // of record, and it may reach LINE only once that replacement is durable. Sending anyway
+      // would either mark the stale Flex outcome delivered (send ok) or leave replay pushing the
+      // very payload LINE just rejected (send fails). Nothing has reached the user this turn, so
+      // parking cannot duplicate — the legacy input replay recomputes the row honestly.
+      if (this.config.lineAiTerminalOutcomeReplayEnabled
+        && !(await this.recordTurnOutcome(event.webhookEventId, textMessages, 'text_fallback'))) {
+        await this.updateEventLog(event.webhookEventId, 'delivery_pending', 'LINE_OUTCOME_NOT_RECORDED');
+        return 'failed_other';
       }
+      result = await this.attemptDelivery(event, textMessages);
     }
     if (result !== 'ok') {
       await this.updateEventLog(event.webhookEventId, 'delivery_pending', `LINE_DELIVERY_${result.toUpperCase()}`);
     } else {
+      if (this.config.lineAiTerminalOutcomeReplayEnabled) {
+        // Delivery status, kept separate from the outcome itself. Best-effort on purpose: the answer
+        // is already on the user's screen, and failing here must not turn it into an error.
+        await this.prisma.client.lineTurnOutcome.updateMany({
+          where: { webhookEventId: event.webhookEventId, deliveredAt: null },
+          data: { deliveredAt: new Date() },
+        }).catch(() => null);
+      }
       const resolution = (event as typeof event & {
         [PENDING_MEDIA_RESOLUTION]?: { id: string; companyId: string; userId: string; status: 'RESOLVED_ILLUSTRATION' | 'RESOLVED_MULTI_ENTRY_REVIEW' };
       })[PENDING_MEDIA_RESOLUTION];
@@ -1370,6 +1521,63 @@ export class ProcessLineWebhookUseCase {
       }
     }
     return result;
+  }
+
+  /** One reply attempt plus the expired-reply-token push fallback (E4).
+   *
+   *  `failed_flex` is returned to the caller ONLY when the Flex→text fallback is on; with it off this
+   *  takes the same push path `failed_token` has always taken, with the same messages and the same
+   *  `line_push_fallback_used` line, and the push result overwrites it — so the value never escapes
+   *  and every observable byte of the legacy path is unchanged. */
+  private async attemptDelivery(
+    event: { replyToken: string; lineUserId: string; pushTargetId?: string },
+    messages: LineReplyMessage[],
+  ): Promise<LineDeliveryResult> {
+    let result: LineDeliveryResult;
+    try {
+      result = await this.lineReply.sendReply(event.replyToken, messages);
+    } catch (error) {
+      this.logger.warn({ msg: 'LINE reply adapter threw unexpectedly', error: (error as Error).message });
+      result = 'failed_other';
+    }
+    if (result === 'failed_token' || (result === 'failed_flex' && !this.config.lineAiFlexTextFallbackEnabled)) {
+      this.logger.warn({ msg: 'line_push_fallback_used' });
+      try {
+        result = await this.lineReply.sendPush(event.pushTargetId ?? event.lineUserId, messages);
+      } catch (error) {
+        this.logger.warn({ msg: 'LINE push adapter threw unexpectedly', error: (error as Error).message });
+        result = 'failed_other';
+      }
+    }
+    return result;
+  }
+
+  /** §8.3: persist the canonical terminal outcome and its replay reference before the send. Upsert,
+   *  because the same event may be re-rendered by a retry — one question keeps ONE answer of record.
+   *  Returns false when the outcome is not durable, and the caller must then not send. */
+  private async recordTurnOutcome(
+    webhookEventId: string,
+    messages: LineReplyMessage[],
+    presentationKind: string,
+  ): Promise<boolean> {
+    try {
+      const log = await this.prisma.client.lineWebhookEventLog.findUnique({
+        where: { webhookEventId },
+        select: { companyId: true },
+      });
+      const messagesJson = messages as unknown as Prisma.InputJsonValue;
+      await this.prisma.client.lineTurnOutcome.upsert({
+        where: { webhookEventId },
+        create: { webhookEventId, companyId: log?.companyId ?? null, messagesJson, presentationKind, attempts: 1 },
+        // A re-render supersedes the previous payload AND clears `deliveredAt`: these are different
+        // bytes, so an earlier delivery does not vouch for them.
+        update: { messagesJson, presentationKind, attempts: { increment: 1 }, deliveredAt: null },
+      });
+      return true;
+    } catch (error) {
+      this.logger.error({ msg: 'line_turn_outcome_not_recorded', webhookEventId, error: (error as Error).message });
+      return false;
+    }
   }
 
   /**
@@ -1570,6 +1778,7 @@ export class ProcessLineWebhookUseCase {
     }
 
     await this.recordShadowTurn(companyId);
+    if (await this.refuseWhenLaunchRouteClosed(event, identity.userId, companyId, requestId)) return;
     if (lineAssistantDisabledFor(entitledFeatureKeys)) {
       await this.deliverReply(event, formatRefusal('feature_disabled'));
       await this.audit.log({
@@ -2358,6 +2567,51 @@ export class ProcessLineWebhookUseCase {
         authProvider: 'line',
       };
       const capturePlan = this.planConsumption(companyId, chatKey, identity.userId, openWaiting, routePlan.resolvedClarificationIds, 'evidence_capture');
+
+      // §8.3 durable-state gate. This turn CONTINUES an earlier financial question exactly when the
+      // router says it resolved one; that is also the only turn where a wrong answer can carry a
+      // wrong amount into a real record, so it is the only turn gated here. A first-contact capture
+      // is unchanged in every mode.
+      //
+      // The gate runs BEFORE `captureExpenseNote.execute`, which is what makes every refusal a
+      // ZERO-write refusal: nothing downstream has run, so there is nothing to undo. Ordering it
+      // after the capture would leave a created expense behind on a state we then rejected.
+      const intakeStateMode = this.config.lineAiIntakeStateMode;
+      // Positive membership, per the fail-open lesson: only these two literals activate anything.
+      // An unset flag, or a value the schema somehow let through, stays 'off' and touches nothing.
+      if ((intakeStateMode === 'shadow' || intakeStateMode === 'on')
+        && this.intakeState && (routePlan.resolvedClarificationIds?.length ?? 0) > 0) {
+        const stateOwner = { companyId, userId: identity.userId, chatKeyHash: chatKeyHashOf(event) };
+        // Read then CAS-consume. The owner triple is inside BOTH queries, so a different member,
+        // chat or company selects no row and lands on the same refusal as an outage would.
+        const open = await this.intakeState.readOpenState(stateOwner);
+        const consumed = open.ok
+          ? await this.intakeState.resolveState(stateOwner, { id: open.value.id, version: open.value.version })
+          : open;
+        if (intakeStateMode === 'shadow') {
+          // MEASUREMENT ONLY. The ledger already decided this turn continues; we record whether the
+          // durable state agreed, and then fall through to the byte-identical 'off' behavior. No
+          // reply, no write and no consumption changes on this branch — a shadow lane that could
+          // refuse a turn would be a behavior lane wearing a measurement label.
+          this.logger.log(JSON.stringify({
+            event: 'line_ai_intake_state_shadow_divergence',
+            webhookEventId: event.webhookEventId,
+            companyId,
+            ledgerContinuation: true,
+            durableStateAgreed: consumed.ok,
+            ...(consumed.ok ? {} : { refusal: consumed.reason }),
+          }));
+        } else if (!consumed.ok) {
+          // 'on', and the durable state refused: outage, stale/expired version, or an owner this
+          // state does not belong to. FAIL CLOSED — no capture call, no consumption marker, no
+          // ledger ack, so the open question survives and the customer is re-asked with the same
+          // canonical copy instead of having a guessed amount written for them.
+          await this.deliverReply(event, TEXT_EXPENSE_CLARIFY_REPLY);
+          await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
+          return;
+        }
+      }
+
       let captured: Awaited<ReturnType<CaptureLineExpenseNoteUseCase['execute']>>;
       try {
         captured = await this.timeStage(event.webhookEventId, 'capture_execute', () => this.captureExpenseNote!.execute(ctx, {
@@ -2402,6 +2656,31 @@ export class ProcessLineWebhookUseCase {
             clarifyForIntent: 'EXPENSE_DOCUMENT_CAPTURE',
           }],
         });
+        // §8.3: the durable half of the question the ledger entry above only REFERENCES. The ledger
+        // fails open, so on a Redis outage that entry can vanish; the accepted facts, the missing
+        // field list and the CAS version live here instead, where an outage refuses rather than
+        // forgets. Opening supersedes whatever this owner had open, so the customer never has two
+        // live questions competing for the same answer.
+        //
+        // Best-effort by design, and safe: a failed open leaves NO state, and a later continuation
+        // with no state is exactly the refusal path above. The failure mode is a re-ask, never a
+        // write on a question we did not durably record.
+        if ((intakeStateMode === 'shadow' || intakeStateMode === 'on') && this.intakeState) {
+          await this.intakeState.openState({
+            companyId, userId: identity.userId, chatKeyHash: chatKeyHashOf(event),
+            targetIntent: 'EXPENSE_DOCUMENT_CAPTURE',
+            semanticOutcome: routePlan.semanticOutcome ?? null,
+            // Only what the capture already ACCEPTED (merge rule 1 keeps these until an explicit
+            // correction) plus the field lists the typed error carries. Bounded labels and
+            // already-grounded hints only — no raw conversation, no PII (§8.2).
+            acceptedHints: routePlan.captureHints ?? null,
+            missingFields: error.missingFields,
+            conflictingFields: error.conflictingFields,
+            provenance: { acceptedFields: error.acceptedFields, origin: 'original_turn' },
+            sourceEventHash: hashMessagePreview(event.webhookEventId),
+            ttlMinutes: LINE_AI_CONTEXT_WINDOW_MINUTES,
+          });
+        }
         await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
         return;
       }
@@ -2419,7 +2698,12 @@ export class ProcessLineWebhookUseCase {
         })];
       const expenseDraftInterruption = await interruptExpenseDraft([captured.expense.id]);
       if (expenseDraftInterruption) replyTexts[replyTexts.length - 1] = `${replyTexts.at(-1)}\n\n${expenseDraftInterruption}`;
-      await this.deliverCompletedReplies(event, replyTexts, companyId, resolvedAccess);
+      await this.deliverCompletedReplies(event, replyTexts, companyId, resolvedAccess,
+        expenseDraftCardFacts(captured.expense.id, {
+          amount: captured.insertedAmount,
+          categoryName: captured.categoryName,
+          item: captured.expense.vendorNameSnapshot ?? captured.expense.note,
+        }));
       await this.ackConsumed(capturePlan, 'evidence_capture');
       await this.persistIntakeTurn({
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
@@ -2582,6 +2866,15 @@ export class ProcessLineWebhookUseCase {
             preparedPlan: routePlan.preparedPlan,
             ...(asIntakeRouteIntent(routePlan.intent) ? { intakeIntent: asIntakeRouteIntent(routePlan.intent) } : {}),
           }
+        : {}),
+      // Advisor spec §9.1: an ADVISOR_CONVERSATION route whose direct answer is off, discarded or
+      // never proposed falls through to the SAME gateway turn every UNSUPPORTED turn already takes —
+      // it just carries the trusted outer provenance so each receiver (gateway turn, AgentCore
+      // runtime) validates membership and can tell the lane apart in telemetry. The social envelope
+      // carries no preparedPlan, so this binding is what makes the provenance survive. Unreachable
+      // while LINE_AI_ADVISOR_MODE='off': the router is never offered the route.
+      ...(routePlan.status === 'ROUTED' && routePlan.intent === 'ADVISOR_CONVERSATION'
+        ? { intakeIntent: 'ADVISOR_CONVERSATION' as const }
         : {}),
     };
 
@@ -3143,6 +3436,7 @@ export class ProcessLineWebhookUseCase {
     )) return;
 
     await this.recordShadowTurn(companyId);
+    if (await this.refuseWhenLaunchRouteClosed(event, identity.userId, companyId, requestId)) return;
     if (await lineAssistantDisabled(this.prisma, companyId)) {
       await this.deliverReply(event, formatRefusal('feature_disabled'));
       await this.audit.log({ companyId, actorUserId: identity.userId, action: 'ai.line.query.denied', targetType: 'LineWebhookEvent', targetId: event.webhookEventId, requestId, result: 'DENIED', riskLevel: 'LOW', metadataJson: { reason: 'feature_disabled' } });
@@ -3580,6 +3874,7 @@ export class ProcessLineWebhookUseCase {
       hintedCategory = active.find((c) => c.id === hintedCategoryId) ?? null;
     }
     let effectiveCategory = hintedCategory;
+    let categorySuggestion: ReceiptCategorySuggestion | undefined;
     if (ocrFields) {
       const applyOutcome = await this.receiptOcrApply.apply(ctx, intent.expenseId, ocrFields, {
         ...(hintedCategory
@@ -3594,6 +3889,7 @@ export class ProcessLineWebhookUseCase {
       // Stale means a correction landed during the OCR round trip; keep the draft as captured.
       const duplicateResult = isStaleOcrApply(applyOutcome) ? null : applyOutcome;
       hasDuplicate ||= (duplicateResult?.candidatesCreated ?? 0) > 0;
+      categorySuggestion = duplicateResult?.categorySuggestion;
       effectiveCategory = duplicateResult?.categoryId
         ? {
             id: duplicateResult.categoryId,
@@ -3641,6 +3937,9 @@ export class ProcessLineWebhookUseCase {
             expenseCategoryId: hintedCategory?.id,
             confidence: routePlan.captureHints?.confidence,
           } : undefined,
+          // Spec S1-R4: same resolved suggestion the web review form reads, so a below-threshold
+          // category survives the LINE intake instead of being dropped after apply.
+          ...(categorySuggestion ? { categorySuggestion } : {}),
           missingFields: [...missingFields].slice(0, 20),
           duplicateWarning: hasDuplicate,
           nextAction: 'review_in_web',
@@ -3651,6 +3950,7 @@ export class ProcessLineWebhookUseCase {
     const purposeHint = routePlan.captureHints?.businessPurpose?.trim();
     const groundedPurpose = purposeHint && normalizeLineText(caption).toLocaleLowerCase('th-TH')
       .includes(normalizeLineText(purposeHint).toLocaleLowerCase('th-TH')) ? purposeHint : undefined;
+    const draftSuggestedCategoryId = effectiveCategory?.id ?? categorySuggestion?.expenseCategoryId;
     const receiptDraft = expenseDraftConversationEnabled
       ? await this.expenseDraftConversation!.startFromReceipt(ctx, {
         expenseId: intent.expenseId,
@@ -3658,7 +3958,10 @@ export class ProcessLineWebhookUseCase {
         webhookEventId: event.webhookEventId,
         ocrFields,
         ...(groundedPurpose ? { businessPurpose: groundedPurpose } : {}),
-        ...(effectiveCategory?.id ? { suggestedCategoryId: effectiveCategory.id } : {}),
+        // Spec S1-R4: below the auto-fill bar nothing was written, so the draft conversation gets
+        // the suggestion here — it lands as the item's `suggestedCategoryId`, which the reply asks
+        // the user to confirm and never applies on its own.
+        ...(draftSuggestedCategoryId ? { suggestedCategoryId: draftSuggestedCategoryId } : {}),
       })
       : undefined;
     const replyTexts = receiptDraft?.replyTexts.length ? receiptDraft.replyTexts : [formatPaypersReply(this.config.webBaseUrl, companyId, intent.expenseId, {
@@ -3668,8 +3971,14 @@ export class ProcessLineWebhookUseCase {
       categoryName: effectiveCategory?.name || null,
       questionText: caption,
     })];
-    if (receiptDraft?.replyTexts.length) await this.deliverCompletedReplies(event, replyTexts, companyId, access);
-    else await this.deliverCompletedReply(event, replyTexts[0]!, companyId, access);
+    if (receiptDraft?.replyTexts.length) {
+      await this.deliverCompletedReplies(event, replyTexts, companyId, access,
+        expenseDraftCardFacts(intent.expenseId, {
+          fields: ocrFields,
+          categoryName: effectiveCategory?.name || null,
+          ...(groundedPurpose ? { item: groundedPurpose } : {}),
+        }));
+    } else await this.deliverCompletedReply(event, replyTexts[0]!, companyId, access);
     await this.recordDeliveredReceiptContinuation(event, companyId, identity.userId, intent.expenseId, access.scopes);
     await this.persistIntakeTurn({
       userId: identity.userId, companyId, webhookEventId: event.webhookEventId,

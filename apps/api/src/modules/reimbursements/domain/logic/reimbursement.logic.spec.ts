@@ -331,6 +331,19 @@ describe('payment recording (MVP full-payment)', () => {
   it('rejects underpayment/partial', () => {
     assert.equal(validatePaymentRecording({ ...base, paidAmount: '250.00' }), 'partial_payment_not_allowed');
   });
+  // FIN-01: a legacy 4dp claim can only be paid at the satang figure the UI prints.
+  it('accepts the displayed satang amount of a legacy 4dp claim', () => {
+    const legacy = { ...base, approvedAmount: '580.0042', outstandingAmount: '580.0042' };
+    assert.equal(validatePaymentRecording({ ...legacy, paidAmount: '580.00' }), null);
+    // …and the same claim when the residue rounds the printed figure up instead.
+    const roundsUp = { ...base, approvedAmount: '580.0058', outstandingAmount: '580.0058' };
+    assert.equal(validatePaymentRecording({ ...roundsUp, paidAmount: '580.01' }), null);
+  });
+  it('still rejects a real satang shortfall or overpayment on a 4dp claim', () => {
+    const legacy = { ...base, approvedAmount: '580.0042', outstandingAmount: '580.0042' };
+    assert.equal(validatePaymentRecording({ ...legacy, paidAmount: '579.99' }), 'partial_payment_not_allowed');
+    assert.equal(validatePaymentRecording({ ...legacy, paidAmount: '580.01' }), 'payment_over_approved_amount');
+  });
   it('requires reference for bank transfer', () => {
     assert.equal(validatePaymentRecording({ ...base, paymentMethod: 'BANK_TRANSFER' }), 'payment_reference_required');
     assert.equal(validatePaymentRecording({ ...base, paymentMethod: 'BANK_TRANSFER', paymentReference: 'TXN-1' }), null);
@@ -358,6 +371,17 @@ describe('payment totals', () => {
     assert.equal(computePaymentStatus('500', '0'), 'UNPAID');
     assert.equal(computePaymentStatus('500', '500'), 'PAID');
     assert.equal(computePaymentStatus('500', '250'), 'PARTIALLY_PAID');
+  });
+  // FIN-01: one satang policy across API/DB/UI — the stored outstanding is the printed one.
+  it('settles a legacy 4dp claim paid at its displayed satang amount', () => {
+    assert.equal(computeOutstanding('580.0042', '580.00'), '0.0000');
+    assert.equal(computePaymentStatus('580.0042', '580.00'), 'PAID');
+    assert.equal(computeOutstanding('580.0058', '580.01'), '0.0000');
+    assert.equal(computePaymentStatus('580.0058', '580.01'), 'PAID');
+  });
+  it('keeps a real satang shortfall outstanding', () => {
+    assert.equal(computeOutstanding('580.0042', '579.99'), '0.0100');
+    assert.equal(computePaymentStatus('580.0042', '579.99'), 'PARTIALLY_PAID');
   });
 });
 

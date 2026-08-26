@@ -720,6 +720,19 @@ describe('apiConfigSchema LINE AI latency/autonomy Phase-1 flags', () => {
     assert.equal(apiConfigSchema.safeParse({ ...base, LINE_AI_REIMBURSEMENT_SEMANTIC_MODE: 'true' }).success, false);
   });
 
+  it('neutral intake state defaults off, accepts its three modes, and FAILS closed on anything else', () => {
+    assert.equal(apiConfigSchema.parse(base).LINE_AI_INTAKE_STATE_MODE, 'off');
+    for (const mode of ['off', 'shadow', 'on'] as const) {
+      assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_INTAKE_STATE_MODE: mode }).LINE_AI_INTAKE_STATE_MODE, mode);
+    }
+    // This flag guards a money path, so an unparsable value must break the boot rather than land
+    // on a mode the operator did not choose. 'true'/'1'/'enabled' are the plausible typos that a
+    // boolean-shaped flag would have silently accepted as ON — here they must all fail.
+    for (const bad of ['true', '1', 'enabled', 'On', 'primary', 'all', '']) {
+      assert.equal(apiConfigSchema.safeParse({ ...base, LINE_AI_INTAKE_STATE_MODE: bad }).success, false, bad);
+    }
+  });
+
   it('exact standalone greeting lane defaults off and opts in only on an explicit boolean', () => {
     assert.equal(apiConfigSchema.parse(base).LINE_AI_EXACT_GREETING_ENABLED, false);
     assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_EXACT_GREETING_ENABLED: 'true' }).LINE_AI_EXACT_GREETING_ENABLED, true);
@@ -730,6 +743,38 @@ describe('apiConfigSchema LINE AI latency/autonomy Phase-1 flags', () => {
     assert.equal(apiConfigSchema.parse(base).LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED, false);
     assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED: 'true' }).LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED, true);
     assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED: 'false' }).LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED, false);
+  });
+
+  it('durable terminal-outcome replay defaults off and opts in only on an explicit boolean', () => {
+    // Off is the whole safety property of this WP: no outcome row is written, so nothing can be
+    // replayed and the sweep keeps selecting exactly the rows it selects today.
+    assert.equal(apiConfigSchema.parse(base).LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED, false);
+    assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED: 'true' }).LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED, true);
+    assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED: 'false' }).LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED, false);
+  });
+
+  it('Flex→text delivery fallback defaults off and opts in only on an explicit boolean', () => {
+    assert.equal(apiConfigSchema.parse(base).LINE_AI_FLEX_TEXT_FALLBACK_ENABLED, false);
+    assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_FLEX_TEXT_FALLBACK_ENABLED: 'true' }).LINE_AI_FLEX_TEXT_FALLBACK_ENABLED, true);
+    assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_FLEX_TEXT_FALLBACK_ENABLED: 'false' }).LINE_AI_FLEX_TEXT_FALLBACK_ENABLED, false);
+  });
+
+  it('advisor mode defaults off, accepts only its four stages, and FAILS closed on anything else', () => {
+    assert.equal(apiConfigSchema.parse(base).LINE_AI_ADVISOR_MODE, 'off');
+    for (const mode of ['off', 'social', 'knowledge', 'company'] as const) {
+      assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_ADVISOR_MODE: mode }).LINE_AI_ADVISOR_MODE, mode);
+    }
+    // A typo or a removed stage must break the boot, never silently land on a MORE permissive stage.
+    for (const bad of ['shadow', 'Social', 'true', '1', 'all', '']) {
+      assert.equal(apiConfigSchema.safeParse({ ...base, LINE_AI_ADVISOR_MODE: bad }).success, false, bad);
+    }
+  });
+
+  it('advisor direct-answer kill switch defaults off and opts in only on an explicit boolean', () => {
+    // RESERVED / INERT in Slice A: parsed for a stable env contract, with no runtime consumer yet.
+    assert.equal(apiConfigSchema.parse(base).LINE_AI_ADVISOR_DIRECT_ANSWER_ENABLED, false);
+    assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_ADVISOR_DIRECT_ANSWER_ENABLED: 'true' }).LINE_AI_ADVISOR_DIRECT_ANSWER_ENABLED, true);
+    assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_ADVISOR_DIRECT_ANSWER_ENABLED: 'false' }).LINE_AI_ADVISOR_DIRECT_ANSWER_ENABLED, false);
   });
 });
 

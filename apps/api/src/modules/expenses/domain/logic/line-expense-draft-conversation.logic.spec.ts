@@ -7,6 +7,7 @@ import {
   formatLineExpenseDraftReply,
   isDeterministicLineExpenseDraftInput,
   isLineExpenseDraftStartEligible,
+  lineExpenseDraftControl,
   materializedLineExpenseDraftItems,
   splitLineExpenseDraftReply,
   transitionLineExpenseDraft,
@@ -72,6 +73,33 @@ describe('LINE expense draft conversation logic', () => {
     assert.deepEqual(answer.state.unresolvedQuestions, []);
     assert.match(formatLineExpenseDraftReply({ state: answer.state, categories, acceptedFields: answer.acceptedFields }), /1\) กระดาษ A4/u);
     assert.equal(materializedLineExpenseDraftItems(answer.state).length, 2);
+  });
+
+  it('accepts the suggested category from segment text with a colon separator (สระอำ must survive normalization)', () => {
+    const state = initial();
+    const answer = applyLineExpenseDraftAnswer({
+      state, categories, now: '2026-08-18T02:00:00.000Z', webhookEventId: 'evt-nfc-1',
+      messageText: 'I02-CATEGORY: ตามที่แนะนำ',
+    });
+    assert.ok(answer.acceptedFields.includes('I02-CATEGORY'), JSON.stringify(answer.acceptedFields));
+    assert.equal(answer.state.items[1]?.expenseCategoryId, 'cat-computer');
+    assert.ok(!answer.rejectedCandidates.some((candidate) => candidate.field === 'I02-CATEGORY'), JSON.stringify(answer.rejectedCandidates));
+  });
+
+  it('accepts the suggested category in plain segment form through the segment path', () => {
+    const state = initial();
+    const answer = applyLineExpenseDraftAnswer({
+      state, categories, now: '2026-08-18T02:00:00.000Z', webhookEventId: 'evt-nfc-2',
+      messageText: 'I02-CATEGORY ตามที่แนะนำ',
+    });
+    assert.ok(answer.acceptedFields.includes('I02-CATEGORY'), JSON.stringify(answer.acceptedFields));
+    assert.equal(answer.state.items[1]?.expenseCategoryId, 'cat-computer');
+  });
+
+  it('recognizes resume commands that contain สระอำ (ทำต่อ / ทำรายการต่อ)', () => {
+    assert.equal(lineExpenseDraftControl('ทำต่อ'), 'resume');
+    assert.equal(lineExpenseDraftControl('ทำรายการต่อ'), 'resume');
+    assert.equal(lineExpenseDraftControl('ต่อ'), 'resume');
   });
 
   it('keeps invalid or ungrounded model facts and unconfirmed categories out of state', () => {

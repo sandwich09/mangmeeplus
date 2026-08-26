@@ -74,39 +74,79 @@ describe('SalesGetSalesSummaryTool', () => {
 });
 
 describe('AccountingGetSummaryTool', () => {
-  const docs = [
-    { documentType: 'TAX_INVOICE', grandTotalAmount: '100.0000' },
-    { documentType: 'TAX_INVOICE', grandTotalAmount: '50.0000' },
-    { documentType: 'RECEIPT', grandTotalAmount: '25.0000' },
-  ];
-  const listDocuments = { execute: async () => ({ data: docs, total: 3, page: 1, pageSize: 200 }) } as any;
+  // PR #238 review T2: the tool now delegates to ONE snapshot-consistent groupBy on the
+  // permission-scoped use case — no page walk, so the old count-mismatch and period-too-large
+  // refusals are structurally impossible and gone.
+  function aggregateSource(byType: Record<string, { count: number; totalAmount: string }>) {
+    const calls: Array<{ ctx: any; filter: any }> = [];
+    const total = Object.values(byType).reduce((sum, entry) => sum + entry.count, 0);
+    const source = {
+      aggregateByType: async (ctx: any, filter: any) => {
+        calls.push({ ctx, filter });
+        return { total, byType };
+      },
+    } as any;
+    return { source, calls };
+  }
 
   it('fails closed without any accounting document view path', async () => {
-    const result = await new AccountingGetSummaryTool(listDocuments).execute({ ...baseCtx, permissions: [] });
+    const { source, calls } = aggregateSource({});
+    const result = await new AccountingGetSummaryTool(source).execute({ ...baseCtx, permissions: [] });
     assert.equal(result.status, 'forbidden');
+    assert.equal(calls.length, 0, 'no repository work happens for a refused caller');
   });
 
   it('aggregates counts and totals by document type with an echoed period', async () => {
-    const result = await new AccountingGetSummaryTool(listDocuments).execute({ ...baseCtx, permissions: ['accounting.document.read'] });
+    const { source } = aggregateSource({
+      TAX_INVOICE: { count: 2, totalAmount: '150.00' },
+      RECEIPT: { count: 1, totalAmount: '25.00' },
+    });
+    const result = await new AccountingGetSummaryTool(source).execute({ ...baseCtx, permissions: ['accounting.document.read'] });
     const data = result.data as any;
+    assert.equal(result.status, 'ok');
     assert.equal(data.total, 3);
     assert.equal(data.byType.TAX_INVOICE.count, 2);
-    assert.equal(data.byType.TAX_INVOICE.totalAmount, 150);
+    assert.equal(data.byType.TAX_INVOICE.totalAmount, '150.00');
     assert.equal(data.period.defaultedToCurrentMonth, true);
   });
 
+  it('covers any period size in exactly ONE repository operation (PR #238 T2)', async () => {
+    // 250 documents used to take 3 pages (and up to 50); a concurrent insert/move between pages
+    // could silently corrupt the money while cardinality still matched. One groupBy sees one
+    // snapshot, so the regression here is the call count itself.
+    const { source, calls } = aggregateSource({
+      TAX_INVOICE: { count: 150, totalAmount: '1500.00' },
+      RECEIPT: { count: 100, totalAmount: '200.00' },
+    });
+    const result = await new AccountingGetSummaryTool(source).execute({ ...baseCtx, permissions: ['accounting.document.read'] });
+    const data = result.data as any;
+    assert.equal(result.status, 'ok');
+    assert.equal(data.total, 250);
+    assert.equal(data.byType.TAX_INVOICE.totalAmount, '1500.00');
+    assert.equal(data.byType.RECEIPT.totalAmount, '200.00');
+    assert.equal(calls.length, 1, 'one snapshot-consistent operation, never a page walk');
+    assert.equal(calls[0]!.filter.page, undefined, 'no pagination parameters leak into the aggregate');
+  });
+
+  it('carries the exact Decimal sum as a STRING across the tool boundary (PR #238 R2)', async () => {
+    // 90071992547409.93 cannot round-trip through a JS Number (2^53 = 9007199254740992 caps the
+    // cent-safe range at 90,071,992,547,409.92): Number() would answer ...92 and the satang is
+    // gone. The repository's toFixed(2) string must reach the payload unchanged — the prepared
+    // formatter already renders string | number.
+    const { source } = aggregateSource({ INVOICE: { count: 3, totalAmount: '90071992547409.93' } });
+    const result = await new AccountingGetSummaryTool(source).execute({ ...baseCtx, permissions: ['accounting.document.read'] });
+    assert.equal((result.data as any).byType.INVOICE.totalAmount, '90071992547409.93');
+    assert.notEqual(String(Number('90071992547409.93')), '90071992547409.93', 'the tripwire premise: Number cannot hold this value');
+  });
+
   it('accepts related-record view and leaves relation filtering to the source use case', async () => {
-    let forwarded: any;
-    const source = { execute: async (sourceCtx: any) => {
-      forwarded = sourceCtx;
-      return { data: docs.slice(0, 1), total: 1, page: 1, pageSize: 200 };
-    } } as any;
+    const { source, calls } = aggregateSource({ INVOICE: { count: 1, totalAmount: '100.00' } });
     const result = await new AccountingGetSummaryTool(source).execute({
       ...baseCtx,
       permissions: ['accounting.document.read_related'],
     });
     assert.equal(result.status, 'ok');
-    assert.deepEqual(forwarded.permissions, ['accounting.document.read_related']);
+    assert.deepEqual(calls[0]!.ctx.permissions, ['accounting.document.read_related']);
   });
 });
 

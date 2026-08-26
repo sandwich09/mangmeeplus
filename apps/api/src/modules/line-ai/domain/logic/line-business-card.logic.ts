@@ -22,6 +22,10 @@ const preview = (value: string, max: number) => {
 
 type SafeButton = { label: string; uri: string };
 
+/** A labelled fact on its own line of the card body. §10.1 asks the expense/reimbursement summaries to
+ *  be STRUCTURED rows rather than one wrapped paragraph, so the reader sees each fact separately. */
+type DetailRow = { label: string; value: string };
+
 function safeTenantLink(webBaseUrl: string | undefined, companyId: string, path: string): string | undefined {
   if (!webBaseUrl || !path.startsWith('/') || path.startsWith('//') || /%2f|%5c/i.test(path)) return undefined;
   try {
@@ -54,6 +58,7 @@ function bubble(
   webBaseUrl: string | undefined,
   companyId: string,
   suppliedButtons?: SafeButton[],
+  rows?: DetailRow[],
 ): Record<string, unknown> {
   const title = bounded(card.title || 'ข้อมูลจากน้องมั่งมี', 80);
   const text = bounded(card.text, 1_200);
@@ -77,7 +82,16 @@ function bubble(
         // §13: the state badge is its own row ABOVE the body, so the reader sees where the work
         // stands before reading anything else.
         ...(badge ? [{ type: 'text', text: badge, color: THEME.brandDark, weight: 'bold', size: 'sm', wrap: true }] : []),
-        { type: 'text', text, color: THEME.text, size: 'sm', wrap: true },
+        // A row-only card passes no prose; LINE rejects an empty text element, so the row is omitted
+        // rather than sent blank. Every prose caller passes non-empty text, so their bytes are unchanged.
+        ...(text ? [{ type: 'text', text, color: THEME.text, size: 'sm', wrap: true }] : []),
+        ...(rows ?? []).map(({ label, value }) => ({
+          type: 'box', layout: 'horizontal', spacing: 'sm',
+          contents: [
+            { type: 'text', text: bounded(label, 20), color: THEME.muted, size: 'sm', flex: 2, wrap: true },
+            { type: 'text', text: bounded(value, 120), color: THEME.text, size: 'sm', weight: 'bold', flex: 5, wrap: true },
+          ],
+        })),
         ...(sources.length > 0
           ? [{ type: 'text', text: `แหล่งข้อมูล: ${sources.join(', ')}`, color: THEME.muted, size: 'xs', wrap: true }]
           : []),
@@ -165,6 +179,58 @@ export function buildLineAssistantTextCardMessage(
     contents: bubble(
       { title: 'ข้อมูลจากน้องมั่งมี', text: cardText, ...(badge ? { badge } : {}) },
       webBaseUrl, companyId, buttons,
+    ),
+  };
+}
+
+/** §10.1 expense draft card facts. Every field is a value the capture ALREADY produced and the
+ *  canonical reply already prints; the card re-uses them and never derives, formats up, or invents one.
+ *  A fact the capture did not ground is left `undefined` so its row is simply absent. */
+export type LineExpenseDraftCardFacts = {
+  expenseId: string;
+  amount?: string | null;
+  item?: string | null;
+  category?: string | null;
+  status?: string | null;
+};
+
+const EXPENSE_DRAFT_CARD_ROWS = [
+  ['amount', 'ยอดรวม'], ['item', 'รายการ'], ['category', 'หมวดหมู่'], ['status', 'สถานะ'],
+] as const;
+
+/** §10.1: the expense capture terminal gets its OWN card — amount, item, category and status each on
+ *  their own row — instead of the generic card wrapping a canonical reply that its 1,200-character body
+ *  would silently cut (§10.2). Only rows the capture actually grounded are drawn.
+ *
+ *  `altText` stays the CANONICAL text, not a summary of the rows: it is what the chat list and the push
+ *  notification show, and it is what the Flex→text fallback re-sends, so a downgraded delivery reads as
+ *  the same words the plain-text reply carries. Same 400-character `preview` ceiling as every sibling
+ *  card — a longer canonical text is VISIBLY marked, never silently cut. */
+export function buildExpenseDraftCardMessage(
+  canonicalText: string,
+  facts: LineExpenseDraftCardFacts,
+  webBaseUrl: string | undefined,
+  companyId: string,
+): LineReplyMessage {
+  const rows = EXPENSE_DRAFT_CARD_ROWS
+    .map(([key, label]) => ({ label, value: (facts[key] ?? '').trim() }))
+    .filter(({ value }) => value.length > 0);
+  // Nothing grounded to show is not a card. The generic text card is still the honest render of the
+  // same reply, so the turn degrades to it rather than shipping an empty ร่างค่าใช้จ่าย frame.
+  if (rows.length === 0) return buildLineAssistantTextCardMessage(canonicalText, webBaseUrl, companyId);
+  return {
+    type: 'flex',
+    altText: preview(canonicalText, 400) || 'ร่างค่าใช้จ่าย',
+    contents: bubble(
+      {
+        title: 'ร่างค่าใช้จ่าย',
+        text: '',
+        webLink: {
+          label: 'เปิดตรวจสอบในเว็บ',
+          path: `/companies/${encodeURIComponent(companyId)}/expenses/${encodeURIComponent(facts.expenseId)}`,
+        },
+      },
+      webBaseUrl, companyId, undefined, rows,
     ),
   };
 }

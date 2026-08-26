@@ -25,9 +25,10 @@ import {
 } from '../domain/logic/accounting-totals.logic';
 import { initialPostingStatus, validateCumulativeCreditNote, validateOutputTaxDocument } from '../domain/logic/accounting-status.logic';
 import { buildReversalLines } from '../../ledger/domain/logic/journal-balance.logic';
-import type { AccountingDocumentType, AccountingDocumentStatus, AccountingQuotationApprovalStatus, ResolveTransactionTaxPreviewDto } from '@watchdog-bms/contracts';
+import type { AccountingDocumentType, AccountingDocumentStatus, AccountingQuotationApprovalStatus, ResolveTransactionTaxPreviewDto, RevenueCategorySummary, CreateRevenueCategoryInput, UpdateRevenueCategoryInput } from '@watchdog-bms/contracts';
 import { branchScopeWhere } from '../../data-model-core/domain/logic/branch.logic';
-import { civilPeriodKey, coerceCivilDate, exclusiveEndOfDay } from '@watchdog-bms/contracts';
+import { civilDate, civilPeriodKey, coerceCivilDate, exclusiveEndOfDay } from '@watchdog-bms/contracts';
+import { PrismaDocumentSequenceRepository } from '../../data-model-core/infrastructure/repositories/prisma-document-sequence.repository';
 
 export type AccountingDocumentTaxFinalizer = (input: {
   db: any;
@@ -51,7 +52,12 @@ export type ConvertQuotationResult = { document: DocumentRecord; didConvert: boo
 
 @Injectable()
 export class PrismaAccountingRepository {
-  constructor(private readonly prisma: PrismaService) {}
+  // `documentNumbers` is annotated, not merely defaulted: Nest reads design:paramtypes to inject
+  // the DI-managed instance; the default keeps the class constructible in bare unit tests.
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly documentNumbers: PrismaDocumentSequenceRepository = new PrismaDocumentSequenceRepository(prisma),
+  ) {}
 
   // ---- Counterparty ----
   async createCounterparty(input: CreateCounterpartyInput): Promise<CounterpartyRecord> {
@@ -167,6 +173,7 @@ export class PrismaAccountingRepository {
             lineTotalAmount: computedLines[i].lineTotalAmount,
             taxCategory: l.taxCategory,
             revenueCategory: l.revenueCategory,
+            revenueCategoryId: l.revenueCategoryId,
           })),
         },
       },
@@ -321,6 +328,7 @@ export class PrismaAccountingRepository {
             lineTotalAmount: computedLines[index].lineTotalAmount,
             taxCategory: line.taxCategory,
             revenueCategory: line.revenueCategory,
+            revenueCategoryId: line.revenueCategoryId,
           })),
         });
       }
@@ -512,10 +520,8 @@ export class PrismaAccountingRepository {
     return row ? this.toDocumentRecord(row) : null;
   }
 
-  async listDocuments(filter: ListDocumentsFilter, branchIds?: string[]): Promise<PaginatedDocuments> {
-    const page = filter.page ?? 1;
-    const pageSize = Math.min(filter.pageSize ?? 20, 100);
-    const skip = (page - 1) * pageSize;
+  /** Shared visibility predicate for list + aggregate: both must see exactly the same rows. */
+  private async buildDocumentsWhere(filter: ListDocumentsFilter, branchIds?: string[]): Promise<Record<string, unknown>> {
     const where: Record<string, unknown> = { companyId: filter.companyId };
     const and: Record<string, unknown>[] = [branchScopeWhere({ branchIds })];
     // Explicit selection narrows to that branch alone; the scope predicate above stays as defence
@@ -542,11 +548,51 @@ export class PrismaAccountingRepository {
         ...(filter.toDate ? { lt: exclusiveEndOfDay(new Date(filter.toDate.slice(0, 10))) } : {}),
       };
     }
+    return where;
+  }
+
+  async listDocuments(filter: ListDocumentsFilter, branchIds?: string[]): Promise<PaginatedDocuments> {
+    const page = filter.page ?? 1;
+    const pageSize = Math.min(filter.pageSize ?? 20, 100);
+    const skip = (page - 1) * pageSize;
+    const where = await this.buildDocumentsWhere(filter, branchIds);
     const [data, total] = await Promise.all([
-      this.prisma.client.accountingDocument.findMany({ where, skip, take: pageSize, orderBy: { documentDate: 'desc' } }),
+      // id tiebreaker: documentDate is non-unique, and OFFSET paging over an unstable order can
+      // repeat/skip rows across pages (breaks multi-page aggregation in accounting.get_summary)
+      this.prisma.client.accountingDocument.findMany({ where, skip, take: pageSize, orderBy: [{ documentDate: 'desc' }, { id: 'asc' }] }),
       this.prisma.client.accountingDocument.count({ where }),
     ]);
     return { data: data.map((r) => this.toDocumentRecord(r)), total, page, pageSize };
+  }
+
+  /**
+   * PR #238 review T2: one snapshot-consistent database operation for accounting.get_summary —
+   * a single groupBy sees one consistent row set, so a concurrent insert/move can never duplicate
+   * one document and omit another the way an OFFSET page walk could, and the worst case is one
+   * query instead of fifty. Sums stay exact: the database aggregates the Decimal column and the
+   * result is formatted to a 2dp string, never JS float math.
+   */
+  async aggregateDocumentsByType(
+    filter: Omit<ListDocumentsFilter, 'page' | 'pageSize'>,
+    branchIds?: string[],
+  ): Promise<{ total: number; byType: Record<string, { count: number; totalAmount: string }> }> {
+    const where = await this.buildDocumentsWhere(filter, branchIds);
+    const groups = await (this.prisma.client.accountingDocument as any).groupBy({
+      by: ['documentType'],
+      where,
+      _count: { _all: true },
+      _sum: { grandTotalAmount: true },
+    });
+    const byType: Record<string, { count: number; totalAmount: string }> = {};
+    let total = 0;
+    for (const group of groups as Array<{ documentType: string; _count: { _all: number }; _sum: { grandTotalAmount: unknown } }>) {
+      total += group._count._all;
+      byType[group.documentType] = {
+        count: group._count._all,
+        totalAmount: new Decimal(String(group._sum.grandTotalAmount ?? 0)).toFixed(2),
+      };
+    }
+    return { total, byType };
   }
 
   async issueDocument(
@@ -649,6 +695,21 @@ export class PrismaAccountingRepository {
         if (error) throw new UnprocessableEntityException(error);
       }
 
+      // Ledger spec F-LED-2: freeze the revenue-category NAME onto each line at issue time. The
+      // free-text `revenueCategory` column is the immutable snapshot the ledger reads
+      // (journal.use-case categoryKey); the FK keeps pointing at the live master for reports.
+      const revenueCategoryIds = [...new Set((currentRow.lines ?? []).map((l: any) => l.revenueCategoryId).filter(Boolean))] as string[];
+      if (revenueCategoryIds.length > 0) {
+        const categories = await tx.revenueCategory.findMany({ where: { id: { in: revenueCategoryIds }, companyId }, select: { id: true, name: true } });
+        const revenueNameById = new Map(categories.map((c: any) => [c.id, c.name] as const));
+        for (const line of currentRow.lines ?? []) {
+          if (!line.revenueCategoryId) continue;
+          const revenueName = revenueNameById.get(line.revenueCategoryId);
+          if (!revenueName) throw new UnprocessableEntityException('Line revenue category was not found for this company');
+          await tx.accountingDocumentLine.update({ where: { id: line.id }, data: { revenueCategory: revenueName } });
+        }
+      }
+
       const issuedAt = new Date();
       const updated = await tx.accountingDocument.updateMany({
         where: { id, companyId, status: expectedStatus, ...(expectedUpdatedAt ? { updatedAt: expectedUpdatedAt } : {}) },
@@ -729,32 +790,44 @@ export class PrismaAccountingRepository {
         },
       });
 
+      // LED-FIN Phase 1: payments carry their own document number. The `accounting.payment`
+      // sequence (PAY-...) existed from day one but was never assigned; reserve + commit stay
+      // inside this transaction so a failed payment never burns a committed number.
+      const reservedNumber = await this.documentNumbers.reserveNumberInTransaction(tx, {
+        companyId: input.companyId,
+        branchId: input.branchId ?? undefined,
+        documentType: 'accounting.payment',
+        periodKey: civilPeriodKey(civilDate(new Date(input.paidAt))),
+        idempotencyKey: `accounting-payment:${payment.id}`,
+        reservedByUserId: input.createdByUserId,
+      });
+
       let allocatedAmount = '0.00';
       if (input.allocateToDocumentId) {
         const doc = await tx.accountingDocument.findFirst({ where: { id: input.allocateToDocumentId, companyId: input.companyId } });
         if (doc) {
-          const outstanding = parseFloat(doc.outstandingAmount.toString());
-          const payAmt = parseFloat(input.amount);
-          const withheld = parseFloat(input.whtAmount ?? '0');
+          const outstanding = new Decimal(doc.outstandingAmount.toString());
+          const payAmt = new Decimal(input.amount);
+          const withheld = new Decimal(input.whtAmount ?? '0');
           // Cash clamps to the outstanding and the surplus becomes an unapplied credit. Withheld
           // tax cannot clamp — it is not money we hold — so the pair is re-checked here against the
           // balance READ IN THIS TRANSACTION. The use case validated against a read taken outside
           // it, which two concurrent receipts would both pass while over-settling the document.
-          const allocAmt = Math.min(payAmt, Math.max(0, outstanding - withheld)).toFixed(2);
-          if (withheld > 0 && parseFloat(allocAmt) + withheld > outstanding + 1e-9) {
+          const alloc = Decimal.min(payAmt, Decimal.max(0, outstanding.minus(withheld))).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+          if (withheld.gt(0) && alloc.plus(withheld).gt(outstanding)) {
             throw new UnprocessableEntityException('Payment and withheld tax together exceed the document outstanding amount');
           }
-          allocatedAmount = allocAmt;
-          const settled = parseFloat(allocAmt) + withheld;
-          const newPaid = (parseFloat(doc.paidAmount.toString()) + settled).toFixed(2);
+          allocatedAmount = alloc.toFixed(2);
+          const settled = alloc.plus(withheld);
+          const newPaid = new Decimal(doc.paidAmount.toString()).plus(settled).toFixed(2);
           const newOutstanding = calculateOutstandingAmount(doc.grandTotalAmount.toString(), newPaid);
-          const payStatus = parseFloat(newOutstanding) <= 0 ? 'PAID' : 'PARTIALLY_PAID';
+          const payStatus = new Decimal(newOutstanding).lte(0) ? 'PAID' : 'PARTIALLY_PAID';
           await tx.accountingDocument.update({
             where: { id: input.allocateToDocumentId },
             data: { paidAmount: newPaid, outstandingAmount: newOutstanding, paymentStatus: payStatus as any },
           });
           await tx.accountingPaymentAllocation.create({
-            data: { companyId: input.companyId, paymentId: payment.id, documentId: input.allocateToDocumentId, amount: allocAmt, whtAmount: input.whtAmount ?? null, createdByUserId: input.createdByUserId },
+            data: { companyId: input.companyId, paymentId: payment.id, documentId: input.allocateToDocumentId, amount: allocatedAmount, whtAmount: input.whtAmount ?? null, createdByUserId: input.createdByUserId },
           });
         }
       }
@@ -762,10 +835,83 @@ export class PrismaAccountingRepository {
       const unapplied = calculateUnappliedCredit(input.amount, allocatedAmount);
       const updated = await tx.accountingPayment.update({
         where: { id: payment.id },
-        data: { allocatedAmount, unappliedAmount: unapplied },
+        data: { paymentNumber: reservedNumber.documentNumber, allocatedAmount, unappliedAmount: unapplied },
+      });
+      await this.documentNumbers.commitNumberInTransaction(tx, {
+        id: reservedNumber.id,
+        companyId: input.companyId,
+        ownerType: 'accounting_payment',
+        ownerId: payment.id,
       });
       return this.toPaymentRecord(updated);
     });
+  }
+
+  // ---- Revenue categories (ledger spec F-LED-2) ----
+  // Company-scoped only — no `companyId: null` union like the expense picker: global default rows
+  // are exactly the duplication trap this master was designed without (LED-FIN-03).
+
+  async listRevenueCategories(companyId: string): Promise<RevenueCategorySummary[]> {
+    const rows = await this.prisma.client.revenueCategory.findMany({
+      where: { companyId, status: 'ACTIVE' },
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+    });
+    return rows.map((row) => this.toRevenueCategorySummary(row));
+  }
+
+  /** Management view including archived rows. */
+  async listAllRevenueCategories(companyId: string): Promise<RevenueCategorySummary[]> {
+    const rows = await this.prisma.client.revenueCategory.findMany({
+      where: { companyId },
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+    });
+    return rows.map((row) => this.toRevenueCategorySummary(row));
+  }
+
+  async findRevenueCategoryById(companyId: string, categoryId: string): Promise<RevenueCategorySummary | null> {
+    const row = await this.prisma.client.revenueCategory.findFirst({ where: { id: categoryId, companyId } });
+    return row ? this.toRevenueCategorySummary(row) : null;
+  }
+
+  async createRevenueCategory(companyId: string, input: CreateRevenueCategoryInput): Promise<RevenueCategorySummary> {
+    const row = await this.prisma.client.revenueCategory.create({
+      data: {
+        companyId,
+        name: input.name,
+        accountHintKey: input.accountHintKey,
+        defaultOutputTaxCode: input.defaultOutputTaxCode ?? null,
+        sortOrder: input.sortOrder ?? 0,
+      },
+    });
+    return this.toRevenueCategorySummary(row);
+  }
+
+  async updateRevenueCategory(companyId: string, categoryId: string, input: UpdateRevenueCategoryInput): Promise<RevenueCategorySummary> {
+    await this.prisma.client.revenueCategory.updateMany({
+      where: { id: categoryId, companyId },
+      data: {
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.accountHintKey !== undefined ? { accountHintKey: input.accountHintKey } : {}),
+        ...(input.defaultOutputTaxCode !== undefined ? { defaultOutputTaxCode: input.defaultOutputTaxCode } : {}),
+        ...(input.sortOrder !== undefined ? { sortOrder: input.sortOrder } : {}),
+        ...(input.status !== undefined ? { status: input.status as any } : {}),
+      },
+    });
+    const row = await this.prisma.client.revenueCategory.findFirst({ where: { id: categoryId, companyId } });
+    if (!row) throw new NotFoundException('Revenue category not found');
+    return this.toRevenueCategorySummary(row);
+  }
+
+  private toRevenueCategorySummary(row: any): RevenueCategorySummary {
+    return {
+      id: row.id,
+      companyId: row.companyId,
+      name: row.name,
+      accountHintKey: row.accountHintKey,
+      defaultOutputTaxCode: row.defaultOutputTaxCode ?? null,
+      status: row.status,
+      sortOrder: row.sortOrder,
+    };
   }
 
   async findPaymentById(companyId: string, id: string, branchIds?: string[]): Promise<PaymentRecord | null> {
@@ -1173,6 +1319,7 @@ export class PrismaAccountingRepository {
       whtAmount: row.whtAmount.toString(), lineSubtotalAmount: row.lineSubtotalAmount.toString(),
       lineTotalAmount: row.lineTotalAmount.toString(), taxCategory: row.taxCategory ?? undefined,
       revenueCategory: row.revenueCategory ?? undefined,
+      revenueCategoryId: row.revenueCategoryId ?? undefined,
       taxSnapshot,
       taxComponents: Array.isArray(row.taxComponentsJson) ? row.taxComponentsJson : undefined,
       createdAt: row.createdAt, updatedAt: row.updatedAt,

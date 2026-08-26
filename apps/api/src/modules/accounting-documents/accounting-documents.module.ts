@@ -29,9 +29,16 @@ import {
 } from './application/use-cases/payment.use-case';
 import { SumReceivedPaymentsByCounterpartyUseCase } from './application/use-cases/sum-received-payments-by-counterparty.use-case';
 import { GetDocumentPostingSourceUseCase } from './application/use-cases/posting-source.use-case';
+import {
+  CreateRevenueCategoryUseCase,
+  ListAllRevenueCategoriesUseCase,
+  ListRevenueCategoriesUseCase,
+  UpdateRevenueCategoryUseCase,
+} from './application/use-cases/revenue-category.use-case';
 import { CounterpartyController } from './presentation/http/counterparty.controller';
 import { AccountingDocumentController } from './presentation/http/accounting-document.controller';
 import { AccountingPaymentController } from './presentation/http/accounting-payment.controller';
+import { RevenueCategoryController } from './presentation/http/revenue-category.controller';
 import { TaxModule } from '../tax/tax.module';
 
 @Module({
@@ -40,6 +47,7 @@ import { TaxModule } from '../tax/tax.module';
     CounterpartyController,
     AccountingDocumentController,
     AccountingPaymentController,
+    RevenueCategoryController,
   ],
   providers: [
     PrismaAccountingRepository,
@@ -68,6 +76,11 @@ import { TaxModule } from '../tax/tax.module';
     SumReceivedPaymentsByCounterpartyUseCase,
     // Posting source
     GetDocumentPostingSourceUseCase,
+    // Revenue categories (ledger spec F-LED-2)
+    ListRevenueCategoriesUseCase,
+    ListAllRevenueCategoriesUseCase,
+    CreateRevenueCategoryUseCase,
+    UpdateRevenueCategoryUseCase,
   ],
   exports: [
     PrismaAccountingRepository,

@@ -105,6 +105,9 @@ import {
 import { ProcessLineWebhookUseCase } from './application/use-cases/process-line-webhook.use-case';
 import { LineMessageBufferService } from './application/line-message-buffer.service';
 
+// §8.3: durable neutral intake state (Postgres, fails CLOSED) — the money-safe counterpart to the
+// fail-open Redis ledger below. Inert until LINE_AI_INTAKE_STATE_MODE leaves 'off'.
+import { LineIntakeStateRepository } from './infrastructure/line-intake-state.repository';
 // Item 10F: turn ledger (Redis Streams) + reclaim drain
 import { LineAiLedgerService } from './application/line-ai-ledger.service';
 import { DrainLineLedgerUseCase } from './application/use-cases/drain-line-ledger.use-case';
@@ -202,6 +205,7 @@ const erpTools = [
     ProcessLineWebhookUseCase,
     LineMessageBufferService,
     LineAiLedgerService,
+    LineIntakeStateRepository,
     DrainLineLedgerUseCase,
     RecoverOrphanLineEventsUseCase,
     ...erpTools,

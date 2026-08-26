@@ -7,6 +7,8 @@ import { OutboxAppendService } from '../../../data-model-core/application/servic
 import { isBranchInScope, resolveCreateBranchId } from '../../../data-model-core/domain/logic/branch.logic';
 import { reconcileExpenseDuplicateCandidates } from '../services/expense-duplicate-detection';
 import { GetExpenseCapturePolicyUseCase } from './expense-capture-policy.use-case';
+import { LaunchGateGuardService } from '../../../feature-launch/application/launch-gate.guard';
+import { assertExpenseRootOpen } from '../expense-launch-gate';
 import type { RequestContext } from '@watchdog-bms/contracts';
 import type { ExpenseRecord } from '../../domain/models/expense.model';
 import { civilDateToUtcDate, coerceCivilDate } from '@watchdog-bms/contracts';
@@ -27,6 +29,7 @@ export class InitReceiptUploadUseCase {
     private readonly createIntent: CreateUploadIntentUseCase,
     private readonly audit: AuditService,
     private readonly capturePolicy: GetExpenseCapturePolicyUseCase,
+    private readonly launchGate: LaunchGateGuardService,
   ) {}
 
   async execute(
@@ -44,6 +47,10 @@ export class InitReceiptUploadUseCase {
     if (!ctx.permissions.includes('expense.receipt.upload') && !ctx.permissions.includes('expense.receipt.line_upload') && !ctx.permissions.includes('expense.create')) {
       throw new ForbiddenException('Missing permission: expense.receipt.upload');
     }
+    // The other root of the expenses journey — the receipt upload. Guarded HERE, on the
+    // expenses-specific entry, not in the shared `CreateUploadIntentUseCase`: that one also serves
+    // every other module's attachments, which the `expenses` gate has no authority over.
+    await assertExpenseRootOpen(this.launchGate, this.audit, ctx, 'expense.upload_intent.create');
     if (!isBranchInScope(ctx.scopes ?? {}, cmd.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
     const branchId = resolveCreateBranchId(ctx.scopes ?? {}, cmd.branchId);
     const expenseDate = civilDateToUtcDate(coerceCivilDate(cmd.expenseDate));

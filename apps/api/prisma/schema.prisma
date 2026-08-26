@@ -392,6 +392,7 @@ model Company {
   expensePayments                   ExpensePayment[]
   expenseLines                      ExpenseLine[]
   expenseCategories                 ExpenseCategory[]
+  revenueCategories                 RevenueCategory[]
   receiptExtractions                ReceiptExtraction[]
   receiptAiVerifications            ReceiptAiVerification[]
   expenseDuplicateCandidates        ExpenseDuplicateCandidate[]
@@ -905,12 +906,12 @@ model AuditLog {
 // One platform-wide customer access switch. Missing/unreadable state fails CLOSED in production;
 // maintenance_only also overrides this row CLOSED so an operator cannot open a partial runtime.
 model PlatformAccessControl {
-  id                           String              @id
-  state                        PlatformAccessState @default(CLOSED)
-  updatedBySystemAdminUserId   String?
-  reason                       String?
-  createdAt                    DateTime            @default(now())
-  updatedAt                    DateTime            @updatedAt
+  id                         String              @id
+  state                      PlatformAccessState @default(CLOSED)
+  updatedBySystemAdminUserId String?
+  reason                     String?
+  createdAt                  DateTime            @default(now())
+  updatedAt                  DateTime            @updatedAt
 }
 
 model OutboxEvent {
@@ -1525,7 +1526,9 @@ model AiTurn {
   modelRegion        String?
   modelPurpose       String?
   modelLineageJson   Json?
-  /** Sanitized runtime identity/binding, measured stage durations, and model-call count. */
+  /**
+   * Sanitized runtime identity/binding, measured stage durations, and model-call count.
+   */
   observabilityJson  Json?
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
@@ -1575,10 +1578,41 @@ model LineWebhookEventLog {
   processedAt    DateTime?
   createdAt      DateTime  @default(now())
 
+  turnOutcome LineTurnOutcome?
+
   @@index([companyId, createdAt])
   @@index([lineUserIdHash])
   @@index([status, createdAt])
   @@index([createdAt])
+}
+
+/// Canonical terminal outcome for ONE turn (uat-correctness-latency §8.3, reliability §6/E3).
+///
+/// `AiTurn` already keeps a 240-character `replyPreview` for audit — a preview is not a deliverable,
+/// so a delivery retry had nothing to send and could only re-run the INPUT through the buffer, which
+/// re-routes and may compute a DIFFERENT answer from the same message. This row is the deliverable:
+/// the exact rendered LINE message array, written BEFORE the first send attempt so a token expiry or
+/// a failed send replays these bytes instead of re-deciding the turn.
+///
+/// Delivery is a SEPARATE status, as §8.3 requires: existence of the row means "outcome decided",
+/// `deliveredAt` means "LINE returned ok". `attempts` counts send attempts, not successes.
+model LineTurnOutcome {
+  id               String    @id @default(cuid())
+  /// One outcome per webhook event, and the FK the replay looks it up by. `onDelete: Cascade` is the
+  /// whole retention story: the orphan sweep already purges LineWebhookEventLog past
+  /// AI_DATA_RETENTION_DAYS, and these rows go with it rather than needing a second purge.
+  webhookEventId   String    @unique
+  companyId        String?
+  /// The exact LineReplyMessage[] handed to the adapter. Replayed VERBATIM — never re-rendered.
+  messagesJson     Json
+  /// flex | text | text_parts_then_flex | text_fallback (the last set when a rejected Flex payload
+  /// was re-sent as its own altText).
+  presentationKind String
+  attempts         Int       @default(0)
+  deliveredAt      DateTime?
+  createdAt        DateTime  @default(now())
+
+  event LineWebhookEventLog @relation(fields: [webhookEventId], references: [webhookEventId], onDelete: Cascade)
 }
 
 // ---- Item 08: Accounting Documents MVP ----
@@ -1815,6 +1849,9 @@ model AccountingDocumentLine {
   lineTotalAmount            Decimal                  @db.Decimal(18, 4)
   taxCategory                String?
   revenueCategory            String?
+  /// FK to the RevenueCategory master; `revenueCategory` above stays the immutable NAME snapshot
+  /// frozen at issue time (ledger spec F-LED-2 M2) — the ledger keeps reading the string.
+  revenueCategoryId          String?
   taxCodeDefinitionId        String?
   externalTaxCodeSnapshot    String?
   taxProfileKeySnapshot      String?
@@ -1845,11 +1882,13 @@ model AccountingDocumentLine {
   document                   AccountingDocument       @relation(fields: [companyId, documentId], references: [companyId, id], onDelete: Cascade)
   company                    Company                  @relation(fields: [companyId], references: [id], onDelete: Cascade)
   taxCodeDefinition          TaxCodeDefinition?       @relation(fields: [taxCodeDefinitionId], references: [id], onDelete: SetNull)
+  revenueCategoryRef         RevenueCategory?         @relation(fields: [revenueCategoryId], references: [id], onDelete: SetNull)
 
   @@unique([documentId, lineNumber])
   @@index([companyId, productId])
   @@index([companyId, taxCodeDefinitionId])
   @@index([companyId, taxTreatmentSnapshot])
+  @@index([companyId, revenueCategoryId])
 }
 
 model AccountingPayment {
@@ -2090,11 +2129,46 @@ enum ExpenseSubstituteReceiptApprovalMode {
   DESIGNATED_APPROVERS
 }
 
+enum RevenueCategoryStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+/// Income-side category master (income-expense-ledger spec F-LED-2). Deliberately
+/// COMPANY-SCOPED ONLY — no global (NULL companyId) rows: the expense-side union of global +
+/// per-company defaults produced near-duplicate pickers, and `@@unique([companyId, name])`
+/// cannot fence NULL rows (Postgres NULL-distinct; LED-FIN-03). With companyId NOT NULL the
+/// unique below is a real fence, which also makes bootstrap idempotent via skipDuplicates.
+model RevenueCategory {
+  id                            String                   @id @default(cuid())
+  companyId                     String
+  name                          String
+  accountHintKey                String
+  /// Reviewed ledger account code this category credits when its revenue posts. Null = nothing
+  /// bound and posting keeps using the default revenue account; `accountHintKey` above is a
+  /// suggestion and deliberately NOT posting authority — same seam as ExpenseCategory.
+  ledgerAccountCode             String?
+  ledgerAccountReviewedByUserId String?
+  ledgerAccountReviewedAt       DateTime?
+  /// Suggested OUTPUT Tax Code as its stable external code (e.g. "O7"), never a
+  /// TaxCodeDefinition id — that row is one dated version and an FK would pin it.
+  defaultOutputTaxCode          String?
+  status                        RevenueCategoryStatus    @default(ACTIVE)
+  sortOrder                     Int                      @default(0)
+  createdAt                     DateTime                 @default(now())
+  updatedAt                     DateTime                 @updatedAt
+  company                       Company                  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  documentLines                 AccountingDocumentLine[]
+
+  @@unique([companyId, name])
+  @@index([companyId, status])
+}
+
 model ExpenseCategory {
-  id                  String                @id @default(cuid())
-  companyId           String?
-  name                String
-  accountHintKey      String
+  id                            String                @id @default(cuid())
+  companyId                     String?
+  name                          String
+  accountHintKey                String
   /// Reviewed ledger account code this category debits when its expense accrues (audit CR-2,
   /// bootstrap spec §9.2). Null means nothing is bound and posting reports
   /// `expense_account_unmapped` rather than falling back to a guessed account — `accountHintKey`
@@ -2102,7 +2176,7 @@ model ExpenseCategory {
   /// an FK, because posting resolves accounts by code at journal-creation time.
   /// Null no longer implies "unreviewed": onboarding binds from the chart template, so
   /// `ledgerAccountReviewedByUserId` below is what says whether a person chose this.
-  ledgerAccountCode   String?
+  ledgerAccountCode             String?
   /// Who attested the `ledgerAccountCode` above. Onboarding seeds the binding from the chart
   /// template's mapping and stamps `EXPENSE_CATEGORY_BOOTSTRAP_ACTOR_USER_ID` here, the same
   /// attestation seam `tax-config-bootstrap` uses: the row is postable on day one, and still
@@ -2112,14 +2186,14 @@ model ExpenseCategory {
   ledgerAccountReviewedAt       DateTime?
   /// Suggested input Tax Code as its stable external code (e.g. "O7"), never a
   /// TaxCodeDefinition id — that row is one dated version and an FK would pin it.
-  defaultInputTaxCode String?
-  status              ExpenseCategoryStatus @default(ACTIVE)
-  sortOrder           Int                   @default(0)
-  createdAt           DateTime              @default(now())
-  updatedAt           DateTime              @updatedAt
-  company             Company?              @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  expenseLines        ExpenseLine[]
-  expenseRecords      ExpenseRecord[]
+  defaultInputTaxCode           String?
+  status                        ExpenseCategoryStatus @default(ACTIVE)
+  sortOrder                     Int                   @default(0)
+  createdAt                     DateTime              @default(now())
+  updatedAt                     DateTime              @updatedAt
+  company                       Company?              @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  expenseLines                  ExpenseLine[]
+  expenseRecords                ExpenseRecord[]
 
   @@unique([companyId, name])
   @@index([companyId, status])
@@ -2262,14 +2336,14 @@ model ExpensePayment {
   paidAt          DateTime
   bankAccountRef  String?
   status          ExpensePaymentRecordStatus @default(RECORDED)
-  postingStatus   ExpensePostingStatus        @default(pending)
+  postingStatus   ExpensePostingStatus       @default(pending)
   journalEntryId  String?
   postingError    String?
   createdByUserId String
   voidedByUserId  String?
   voidedAt        DateTime?
-  createdAt       DateTime                    @default(now())
-  updatedAt       DateTime                    @updatedAt
+  createdAt       DateTime                   @default(now())
+  updatedAt       DateTime                   @updatedAt
   company         Company                    @relation(fields: [companyId], references: [id], onDelete: Cascade)
   expense         ExpenseRecord              @relation(fields: [companyId, expenseId], references: [companyId, id], onDelete: Restrict)
 
@@ -2477,12 +2551,12 @@ model SignatureFillRecord {
 // Immutable, versioned company evidence for a real expense whose receipt could
 // not be obtained. This is supporting accounting evidence, never a tax invoice.
 model ExpenseSubstituteReceiptEvidence {
-  id                              String                          @id @default(cuid())
+  id                              String                           @id @default(cuid())
   companyId                       String
   expenseId                       String
   branchId                        String?
   version                         Int
-  status                          SubstituteReceiptEvidenceStatus @default(PREPARED)
+  status                          SubstituteReceiptEvidenceStatus  @default(PREPARED)
   documentNumber                  String
   idempotencyKey                  String
   snapshotJson                    Json?
@@ -2507,7 +2581,7 @@ model ExpenseSubstituteReceiptEvidence {
   payerPosition                   String?
   payerSignatureAttachmentId      String?
   payerSignatureChecksumSha256    String?
-  certifiedArtifactAttachmentId   String?                         @unique
+  certifiedArtifactAttachmentId   String?                          @unique
   certifiedArtifactChecksumSha256 String?
   certifiedAt                     DateTime?
   approverUserId                  String?
@@ -2515,22 +2589,22 @@ model ExpenseSubstituteReceiptEvidence {
   approverPosition                String?
   approverSignatureAttachmentId   String?
   approvedAt                      DateTime?
-  artifactAttachmentId            String?                         @unique
+  artifactAttachmentId            String?                          @unique
   checksumSha256                  String?
-  signatureMode                   SubstituteReceiptSignatureMode  @default(DIGITAL)
-  wetSignedScanAttachmentId       String?                         @unique
+  signatureMode                   SubstituteReceiptSignatureMode   @default(DIGITAL)
+  wetSignedScanAttachmentId       String?                          @unique
   wetSignedScanChecksumSha256     String?
   preparedFromChannel             SubstituteReceiptPreparedChannel @default(WEB)
   supersededAt                    DateTime?
   supersedeReason                 String?
   issuedByUserId                  String?
   issuedAt                        DateTime?
-  createdAt                       DateTime                        @default(now())
-  updatedAt                       DateTime                        @updatedAt
-  company                         Company                         @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  expense                         ExpenseRecord                   @relation(fields: [expenseId], references: [id], onDelete: Restrict)
-  certifiedArtifactAttachment     AttachmentObject?               @relation("SubstituteCertifiedArtifact", fields: [certifiedArtifactAttachmentId], references: [id], onDelete: Restrict)
-  artifactAttachment              AttachmentObject?               @relation("SubstituteIssuedArtifact", fields: [artifactAttachmentId], references: [id], onDelete: Restrict)
+  createdAt                       DateTime                         @default(now())
+  updatedAt                       DateTime                         @updatedAt
+  company                         Company                          @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  expense                         ExpenseRecord                    @relation(fields: [expenseId], references: [id], onDelete: Restrict)
+  certifiedArtifactAttachment     AttachmentObject?                @relation("SubstituteCertifiedArtifact", fields: [certifiedArtifactAttachmentId], references: [id], onDelete: Restrict)
+  artifactAttachment              AttachmentObject?                @relation("SubstituteIssuedArtifact", fields: [artifactAttachmentId], references: [id], onDelete: Restrict)
 
   @@unique([companyId, expenseId, version])
   @@unique([companyId, expenseId, idempotencyKey])
@@ -5336,26 +5410,26 @@ model ReimbursementClaimSignature {
 }
 
 model ReimbursementApprovalStep {
-  id                     String                          @id @default(cuid())
-  companyId              String
-  reimbursementRequestId String
-  sequenceNo             Int
-  approverUserId         String?
-  approverRoleSnapshot   String?
+  id                          String                          @id @default(cuid())
+  companyId                   String
+  reimbursementRequestId      String
+  sequenceNo                  Int
+  approverUserId              String?
+  approverRoleSnapshot        String?
   assignedApproverUserIdsJson Json?
-  status                 ReimbursementApprovalStepStatus @default(PENDING)
-  assignedAt             DateTime                        @default(now())
-  decidedAt              DateTime?
-  decisionByUserId       String?
-  comment                String?
-  rejectionReason        String?
-  requestSnapshotHash    String
-  invalidatedAt          DateTime?
-  invalidatedReason      String?
-  createdAt              DateTime                        @default(now())
-  updatedAt              DateTime                        @updatedAt
-  company                Company                         @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  request                ReimbursementRequest            @relation(fields: [reimbursementRequestId], references: [id], onDelete: Cascade)
+  status                      ReimbursementApprovalStepStatus @default(PENDING)
+  assignedAt                  DateTime                        @default(now())
+  decidedAt                   DateTime?
+  decisionByUserId            String?
+  comment                     String?
+  rejectionReason             String?
+  requestSnapshotHash         String
+  invalidatedAt               DateTime?
+  invalidatedReason           String?
+  createdAt                   DateTime                        @default(now())
+  updatedAt                   DateTime                        @updatedAt
+  company                     Company                         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  request                     ReimbursementRequest            @relation(fields: [reimbursementRequestId], references: [id], onDelete: Cascade)
 
   @@index([companyId, approverUserId, status])
   @@index([companyId, decisionByUserId])
@@ -8176,4 +8250,50 @@ model AccountingIssueAuthzObservation {
 
   @@unique([companyId, roleKey, documentType, missingPermissionKey, hourBucketUtc])
   @@index([hourBucketUtc])
+}
+
+// §8.3 (uat-correctness-latency): DB-backed NEUTRAL intake state for a financial clarification.
+// The Redis ledger fails OPEN by design, so it may carry a bounded reference to a row here but is
+// never the source of truth for money. Owner binding is the full triple (companyId, userId,
+// chatKeyHash): a different chat, company or member can never resolve someone else's open state.
+// `version` is the CAS token — resolve is a single conditional UPDATE, so a stale or expired
+// version refuses instead of merging, and a store outage refuses instead of writing.
+enum LineIntakeStateStatus {
+  OPEN
+  RESOLVED
+  SUPERSEDED
+  EXPIRED
+}
+
+model LineIntakeState {
+  id                String                @id @default(cuid())
+  companyId         String
+  userId            String
+  /// Hash of the chat the question was asked in (chatKeyHashOf) — never the raw LINE id.
+  chatKeyHash       String
+  targetIntent      String
+  semanticOutcome   String?
+  /// Grounded hints already accepted; merge rule 1 keeps them until an explicit correction.
+  acceptedHintsJson Json?
+  missingFields     String[]
+  conflictingFields String[]
+  /// Per-field origin (original vs follow-up turn) — bounded labels, never raw conversation.
+  provenanceJson    Json?
+  /// Hash of the originating webhook event/message, so a replay resolves the same row once.
+  sourceEventHash   String
+  version           Int                   @default(1)
+  expiresAt         DateTime
+  status            LineIntakeStateStatus @default(OPEN)
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+
+  // NOTE: migration 20260826120000_line_intake_state also adds a PARTIAL unique index
+  // "LineIntakeState_companyId_userId_chatKeyHash_open_key"
+  // ON (companyId, userId, chatKeyHash) WHERE status = 'OPEN' — at most ONE open clarification
+  // per owner. It is partial on purpose: terminal rows (RESOLVED/SUPERSEDED/EXPIRED) accumulate as
+  // history, so a plain @@unique including `status` would reject the SECOND resolved row for the
+  // same owner. Prisma cannot model partial indexes — do NOT let a future `prisma migrate diff`
+  // drop it.
+  @@index([companyId, userId, chatKeyHash, status])
+  @@index([status, expiresAt])
 }

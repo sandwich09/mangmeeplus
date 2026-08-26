@@ -36,7 +36,7 @@ expected_system_layout=3a7dee7ba19479b5b8fb867750cd8c53e3eae450eaf7c0411f3653a37
 expected_change_password_route=2e256a37b0a775e7778839bef15c9516d82dc23503f46660a543213713f3e7f7
 expected_legal_acceptance_route=f0076607745d2b17e6b34281c71b391ef8eeb8f67089de2c347d12801e0b3007
 expected_platform_route=1c72dbc0de94bbb74a4734056b2c67fd8931aeed3f523fbfd48792fc6336e32e
-expected_deploy=e07f8b2cafcfb6bc34a3859b57def4dd5e6cc81542b38412aca4b429fe3e97d3
+expected_deploy=0a53cec3b8a5e0ffb5acccde127c5d18a57e30228e7893c8298f4ab7d354f5ab
 expected_list_service_deployments=fb189137c58cf208191ad24ea2007a9758086bef4dfece967be94f6f7a800620
 expected_verify=ac8d718be2f997948b29c1921d593c9359c46f7fc9fa9f3aaf0f5021753d061a
 expected_maintenance_verify=291c6742b94a559d06315eeef683d9ca52695820fe3f85b4e18ab6dbb582f9ad
@@ -79,6 +79,18 @@ check_literal() {
   }
 }
 
+# Whitespace-tolerant variant for Prisma schema lines: `prisma format` realigns column padding
+# across the whole file, so a byte-exact literal on a schema field breaks on every reformat while
+# the invariant itself (the field, its type, its fail-closed default) is untouched.
+check_pattern() {
+  local relative="$1" pattern="$2"
+  [ -f "$root/$relative" ] || { echo "ERROR: maintenance release is missing $relative" >&2; exit 1; }
+  grep -Eq -- "$pattern" "$root/$relative" || {
+    echo "ERROR: maintenance invariant is missing from $relative: $pattern" >&2
+    exit 1
+  }
+}
+
 check_file infra/api-web/web-api-proxy.mjs "$expected_proxy"
 check_file infra/api-web/Dockerfile.api-web "$expected_api_dockerfile"
 check_file infra/api-web/start-api-web-runtime.sh "$expected_api_start"
@@ -107,7 +119,7 @@ check_literal packages/config/src/index.ts "PRODUCTION_SERVING_MODE: z.enum(['li
 check_literal packages/config/src/index.ts "QUEUE_ENABLED: envBoolean.default(true),"
 check_literal packages/config/src/index.ts "bool(config['QUEUE_ENABLED']) !== (servingMode === 'live')"
 check_literal apps/api/prisma/schema.prisma "model PlatformAccessControl {"
-check_literal apps/api/prisma/schema.prisma "state                        PlatformAccessState @default(CLOSED)"
+check_pattern apps/api/prisma/schema.prisma 'state[[:space:]]+PlatformAccessState[[:space:]]+@default\(CLOSED\)'
 check_literal apps/api/src/common/config/app-config.service.ts "get signedUrlTtlSeconds(): number { return this.config.SIGNED_URL_TTL_SECONDS; }"
 check_literal apps/api/src/common/config/app-config.service.ts "get productionServingMode(): 'live' | 'maintenance_only' | undefined"
 check_literal apps/api/src/modules/audit/domain/models/audit-action.ts "PLATFORM_ACCESS_STATE_UPDATE: 'platform.access.state_update',"

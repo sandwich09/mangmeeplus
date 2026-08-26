@@ -502,18 +502,66 @@ frozen artifact: `LINE_AI_PRESENTATION_PERMISSION_MANIFEST` ใน `scripts/line
 (21 rows) แต่ละ row พิน journey, presentation kind, authority condition, CTA policy,
 `expectedDomainWriteCount`, route/model constraint และ `evidenceStatus`
 
-`evidenceStatus` มีสองค่าเท่านั้นและ integrity spec นับ/รายงานทั้งสองฝั่ง: `implemented_fixture` 13 rows
+`evidenceStatus` มีสองค่าเท่านั้นและ integrity spec นับ/รายงานทั้งสองฝั่ง: `implemented_fixture` 20 rows
 (terminal Flex เดี่ยว/multipart, payer clarify card, clarify-only ไม่มี CTA, handoff tenant path ที่ไม่มี
-query/hash, permission/entitlement/branch denied, legal pending, duplicate webhook, expired reply-token push
-และ long reply >1,200/>4,800 แบบ lossless) และ `required_gap` 8 rows (expense card เฉพาะทาง, optional draft
-card, DB-backed state outage/stale/cross-owner, persisted terminal replay, Flex failure fallback)
+query/hash, permission/entitlement/branch denied, legal pending, duplicate webhook, expired reply-token push,
+long reply >1,200/>4,800 แบบ lossless, DB-backed state 4 rows: outage/stale-expired/cross-user/cross-chat-
+or-company, durable delivery 2 rows: persisted terminal replay, Flex failure fallback และ expense draft card
+เฉพาะทาง §10.1) และ `required_gap` 1 row (optional reimbursement draft card ที่ยัง park รอ owner GO)
 ห้าม mark gap เป็น implemented manifest freeze gold expectation ไม่ใช่หลักฐานว่า runtime ทำได้แล้ว
+
+DB-backed state 4 rows ที่ย้ายมาเป็น `implemented_fixture` หมายถึง **code path + spec มีจริงแล้ว** เท่านั้น:
+`LineIntakeState` (migration `20260826120000_line_intake_state`, partial unique index บน OPEN row) และ
+`LineIntakeStateRepository` ที่ fail **closed** ตรงข้ามกับ Redis ledger ที่ fail open ยังไม่ใช่หลักฐานว่า lane
+เปิดใช้งานแล้ว: `LINE_AI_INTAKE_STATE_MODE` default `off` และยังไม่มี provider replay หรือ UAT evidence
+สำหรับสี่ row นี้ (`note` ของแต่ละ row ต้องเขียน `DEFAULT OFF` ไว้ และ integrity spec บังคับข้อนี้)
 
 long reply สองแถวนั้นมี fixture จริงหลัง `LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED` (default-off): terminal ที่
 ยาวเกิน 1,200 ส่งเป็น text เต็มแล้วปิดท้ายด้วย concise card, กรณี 4,900 code points พิสูจน์ว่าเกิน 4,800 ไม่หาย
 สักตัวและ card ยังต่อท้ายได้เมื่อยังเหลือ message slot, ที่เพดาน 5 messages เลือก text ครบทุกส่วนแทน card และ
 part ที่เกิน 5,000 ตัวอักษรถูก **ปฏิเสธ** (`LINE_REPLY_TEXT_PART_TOO_LONG`) ไม่ใช่ตัดเงียบ release นี้ยังไม่ได้
-แตก part เดียวที่ยาวเกิน 5,000 ออกเป็นหลาย part และยังไม่มี text fallback เมื่อ Flex delivery ล้ม
+แตก part เดียวที่ยาวเกิน 5,000 ออกเป็นหลาย part
+
+durable delivery 2 rows ที่ย้ายมาเป็น `implemented_fixture` หมายถึง **code path + spec มีจริงแล้ว** เท่านั้น
+เหมือน DB-backed state 4 rows:
+
+- `LineTurnOutcome` (migration `20260826140000_line_turn_outcome`, `webhookEventId` unique + FK cascade บน
+  `LineWebhookEventLog`) เก็บ **rendered LINE message array จริง** ก่อน send attempt แรก ไม่ใช่ `replyPreview`
+  240 ตัวอักษรของ `AiTurn` การเขียน fail **closed**: ถ้าเก็บไม่ได้ให้ mark `delivery_pending`
+  (`LINE_OUTCOME_NOT_RECORDED`) แทนการส่งโดยไม่มี record; `deliveredAt` เป็น delivery status แยกตาม §8.3 และ
+  orphan sweep push ของเดิมกลับไปโดย **ไม่ route ใหม่** (`LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED` default off)
+- Flex failure fallback: adapter แยก `failed_flex` (LINE 400 ที่ body อ้าง `/messages/` และ payload มี flex) ออก
+  จาก `failed_token` แบบ refinement เท่านั้น แล้ว retry **หนึ่งครั้ง** ด้วย `altText` ของการ์ดเอง ไม่แต่งข้อความใหม่
+  และไม่เพิ่ม model call (`LINE_AI_FLEX_TEXT_FALLBACK_ENABLED` default off) เพดานที่รู้ตัว: `altText` คือ
+  `preview(text, 400)` ดังนั้น card body ที่ยาวเกิน 400 จะ fallback เป็น preview ที่มี `…` กำกับ ยังไม่ครบ
+  lossless ตาม §10.2 ถ้าพบเคสจริงที่เนื้อหาหาย ให้เพิ่ม canonical-text field ที่ card builder
+
+ทั้งสอง row ยังไม่มี provider replay หรือ UAT evidence (`note` ของแต่ละ row ต้องเขียน `DEFAULT OFF` ไว้ และ
+integrity spec บังคับข้อนี้)
+
+`expense-draft-structured-card` ที่ย้ายมาเป็น `implemented_fixture` หมายถึง **code path + spec มีจริงแล้ว**
+เท่านั้น เหมือนสอง group ข้างบน: `buildExpenseDraftCardMessage()` ใน
+`apps/api/src/modules/line-ai/domain/logic/line-business-card.logic.ts` render card title `ร่างค่าใช้จ่าย`
+เป็น structured rows (`ยอดรวม`, `รายการ`, `หมวดหมู่`, `สถานะ`) แทนการนำ canonical reply มาครอบ generic body
+1,200 ตัวอักษร (§10.2) กติกาสำคัญ:
+
+- row ที่ capture **ไม่ได้ ground** จะถูก **ตัดทิ้ง** ไม่ใช่ใส่ placeholder `ยังไม่ระบุ` ราวกับเป็นข้อเท็จจริง
+  ค่าเงินใช้กติกาเดียวกับ `formatPaypersReply` (`toMoney4` + `th-TH` 2 ตำแหน่ง) และ status เป็น deterministic
+  server-owned copy ไม่มี model text
+- ถ้าไม่มี row ใด ground เลย card จะ degrade กลับเป็น generic text card ไม่ส่ง frame เปล่า
+- `altText` ยังเป็น **canonical reply text** เดิม (เพดาน `preview(text, 400)` เดียวกับ card อื่นทุกใบ ตัดเมื่อไร
+  มี `…` กำกับเสมอ) เพื่อให้ chat preview และ Flex→text fallback ของ §8.3 อ่านได้เป็นข้อความชุดเดียวกับ text reply
+- CTA เป็น tenant path `/companies/{companyId}/expenses/{expenseId}` เท่านั้น ไม่มี query/hash/financial param
+  base ที่ไม่น่าเชื่อถือหรือ id ที่ประกอบ tenant path ไม่ได้ทำให้ **ปุ่มหาย** ไม่ใช่เดา URL
+
+lane นี้ใช้ flag เดิม `LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED` (default `false`) ไม่ได้เพิ่ม flag ใหม่:
+flag นี้ gate อยู่แล้วว่า terminal part เป็น Flex หรือ text ล้วน การเลือก card เฉพาะทาง vs generic card เกิด
+**ข้างใน** สาขา flag-on นั้น ดังนั้น flag-off ยังเป็น legacy all-text shape แบบ byte-identical
+(pinned ด้วย snapshot test) ยังไม่มี provider replay หรือ UAT evidence และ `note` ของ row ต้องเขียน
+`DEFAULT OFF` ไว้ (integrity spec บังคับข้อนี้)
+
+wiring ปัจจุบันครอบ expense capture terminal ที่ **สร้าง draft จริง** สองทาง (text-note capture และ media
+capture ที่มี receipt draft) ส่วน terminal อื่นที่ไม่มี grounded draft ยังใช้ generic card ตามเดิม
 
 ### 14.4 Latency/protected journeys
 

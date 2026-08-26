@@ -24,6 +24,7 @@ import {
   Matches,
   MaxLength,
   Min,
+  ValidateNested,
 } from 'class-validator';
 import { CIVIL_DATE_PATTERN } from '@watchdog-bms/contracts';
 import { POSITIVE_ACCOUNTING_MONEY_PATTERN } from '../../../accounting-documents/domain/logic/accounting-money-validation.logic';
@@ -61,6 +62,22 @@ export class ReasonRequiredDto {
 /** Duplicate dismiss / confirm: the note is genuinely optional here. */
 export class ReasonOptionalDto {
   @IsString() @IsOptional() @MaxLength(500) reason?: string;
+}
+
+/**
+ * Plan 13.11.B "ใช้ยอดตามเอกสาร": the only way past an over-tolerance VAT block, and only for an
+ * `expense.review` holder. Presence of the object is the override itself — the reason and the VAT
+ * line that carries the difference are what the audit row has to be able to explain later.
+ */
+export class ExpenseVatSourceOverrideDto {
+  @IsString() @IsNotEmpty() @MaxLength(500) reason!: string;
+  @Type(() => Number) @IsInt() @Min(1) vatLineNumber!: number;
+}
+
+/** Confirm body. An empty object is the ordinary confirm; every existing caller sends exactly that. */
+export class ConfirmExpenseDto {
+  @IsOptional() @ValidateNested() @Type(() => ExpenseVatSourceOverrideDto)
+  vatSourceOverride?: ExpenseVatSourceOverrideDto;
 }
 
 export class RecordExpensePaymentDto {
