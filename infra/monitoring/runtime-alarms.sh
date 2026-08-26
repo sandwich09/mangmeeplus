@@ -33,7 +33,8 @@ if [ "$environment" = production ]; then
   db_memory_threshold=200000000
 else
   prefix=watchdog-bms-uat
-  redis_group=watchdog-bms-uat-redis-v2
+  # The -v2 replication group no longer exists; UAT runs a standalone cluster of this id.
+  redis_group=watchdog-bms-uat-redis
   db_id=watchdog-bms-uat-db
   log_threshold=67108864
   db_memory_threshold=64000000
@@ -41,7 +42,7 @@ fi
 
 cache_json="$(aws_cmd elasticache describe-cache-clusters --show-cache-node-info --output json --region "$region")"
 nodes="$(jq -cer --arg group "$redis_group" '[
-  .CacheClusters[]? | select(.ReplicationGroupId == $group)
+  .CacheClusters[]? | select(.ReplicationGroupId == $group or .CacheClusterId == $group)
   | . as $cluster | .CacheNodes[]?
   | {cacheClusterId:$cluster.CacheClusterId,cacheNodeId:.CacheNodeId}
 ] | select(length > 0) | sort_by(.cacheClusterId,.cacheNodeId)' <<< "$cache_json")" \
