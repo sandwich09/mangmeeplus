@@ -77,6 +77,7 @@ Spec: [Income–Expense Ledger Spec](../specs/mangmee-income-expense-ledger-spec
 3. Export CSV+XLSX: builder ใหม่ตาม `expense-export.logic.ts` pattern + `safeCsvCell` + `buildXlsx`; ปุ่มเดียวโหลดจาก base64-in-JSON (pattern accountant package); permission `accounting.document.export` + `expense.export` ตามฝั่งที่รวม
 4. Web หน้า "สมุดรายรับ–รายจ่าย" ตามสเปกหน้าจอ **spec §F-LED-7 S3 ทุกข้อ** (ลำดับ 6 ส่วนบน→ล่าง, การ์ด 2×3 บนมือถือ, self-check ไม่ผ่าน = "—" ห้ามโชว์ตัวเลขผิด, บริษัทไม่เปิดฝั่งขายเห็น "เร็ว ๆ นี้" ไม่ใช่ 0.00 หลอก, แท็บรอรับเงิน+รับชำระตาม S2); filter เดือน/ประเภท/หมวด/สถานะ; ห้ามคำ "กำไร/ยอดเงินคงเหลือ" (มี lint คำต้องห้ามใน spec ของหน้า)
 5. Dashboard: เพิ่มการ์ดลิงก์เข้าสมุด (ไม่เพิ่ม provider ใหม่รอบนี้ — ตัวเลขอยู่ในหน้าสมุด)
+5b. แถบเตือนใกล้เกณฑ์จด VAT 1.8 ล้าน (spec §7.9 ข้อ 6 — ถ้า Owner ไม่ตัด): เฉพาะบริษัทไม่จด VAT, 80%/100% ของยอดขายสะสมปีปฏิทิน, ข้อความแนะนำปรึกษานักบัญชี ไม่ block; ใช้ตัวเลขก้อนเดียวกับการ์ดสมุด (ไม่มี query ใหม่)
 6. Tests: unit นิยามตัวเลข 6 ก้อน (golden dataset ที่มี void/credit note/partial/WHT/ข้ามเดือน), self-check mismatch → unavailable, export = หน้าจอ, perm ฝั่งเดียว, timezone ขอบวัน (เคสเที่ยงคืน Bangkok)
 
 ## Phase 5 — จัดระเบียบฝั่งรายจ่าย (spec F-LED-3, LED-FIN-03)
