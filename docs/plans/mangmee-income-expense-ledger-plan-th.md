@@ -1,6 +1,6 @@
 # แผนพัฒนา สมุดรายรับ–รายจ่าย (Income–Expense Ledger MVP)
 
-สถานะ: **ACTIVE — Phase 0–2 ✅; Phase 3A backend ✅; Phase 3B UI core ✅ 2026-08-27; Phase 3 ยังมี LED-FIN-07 รอ Owner ตัดสินเรื่องร่าง VAT ไม่ชัด; Phase 4A backend ✅ และ Phase 4B UI กำลังทำ**; P27 เป็นหัวขบวนสาย "โตต่อได้" (Owner 2026-08-26: P27 → P28 → …; สาย billing P14→P26 ท้ายคิวสุด)
+สถานะ: **ACTIVE — Phase 0–2 ✅; Phase 3A backend ✅; Phase 3B UI core ✅ 2026-08-27; Phase 3 ยังมี LED-FIN-07 รอ Owner ตัดสินเรื่องร่าง VAT ไม่ชัด; Phase 4A backend ✅, Phase 4B ledger/payment/export UI core ✅ 2026-08-27; Phase 4C แถบเตือน VAT 1.8 ล้านและ Phase 6 ยังเหลือ**; P27 เป็นหัวขบวนสาย "โตต่อได้" (Owner 2026-08-26: P27 → P28 → …; สาย billing P14→P26 ท้ายคิวสุด)
 
 Spec: [Income–Expense Ledger Spec](../specs/mangmee-income-expense-ledger-spec-th.md) — ทุก phase อ้าง requirement/หลักฐานจาก spec; แผนนี้ไม่ประกาศข้อเท็จจริงใหม่
 
@@ -77,6 +77,8 @@ Spec: [Income–Expense Ledger Spec](../specs/mangmee-income-expense-ledger-spec
 
 ## Phase 4 — หน้าสมุด + export (spec F-LED-4)
 
+สถานะ 2026-08-27: **Phase 4A + 4B core ✅** — summary/entries/export, 6 cards, category chart, filters, dashboard entry, receivable sort, receive-payment modal และ mobile cards ทำงานจริง; **Phase 4C ยังเหลือข้อ 5b** (คำเตือน VAT 1.8 ล้าน) จึงยังไม่ปิด Phase 4 ทั้งก้อน
+
 1. API สรุป `GET companies/:companyId/income-expense-ledger/summary?from&to` — คืน 6 ตัวเลข + by-category สองฝั่ง + นิยาม period ที่ใช้ (echo กลับเพื่อพิสูจน์ convention); bounded walk + self-check ตาม guardrails `accounting.get_summary`; permission อ่านสองฝั่งแยกส่วน (มีฝั่งเดียวได้ฝั่งเดียว)
 2. API รายการ `GET .../entries?type&categoryId&status&from&to` — union มุมมอง (เอกสารขาย / expense) แบบแบ่งหน้า พร้อม ref ไปหลักฐานต้นทาง
 3. Export CSV+XLSX: builder ใหม่ตาม `expense-export.logic.ts` pattern + `safeCsvCell` + `buildXlsx`; ปุ่มเดียวโหลดจาก base64-in-JSON (pattern accountant package); permission `accounting.document.export` + `expense.export` ตามฝั่งที่รวม
@@ -84,6 +86,8 @@ Spec: [Income–Expense Ledger Spec](../specs/mangmee-income-expense-ledger-spec
 5. Dashboard: เพิ่มการ์ดลิงก์เข้าสมุด (ไม่เพิ่ม provider ใหม่รอบนี้ — ตัวเลขอยู่ในหน้าสมุด)
 5b. แถบเตือนใกล้เกณฑ์จด VAT 1.8 ล้าน (spec §7.9 ข้อ 6 — ถ้า Owner ไม่ตัด): เฉพาะบริษัทไม่จด VAT, 80%/100% ของยอดขายสะสมปีปฏิทิน, ข้อความแนะนำปรึกษานักบัญชี ไม่ block; ใช้ตัวเลขก้อนเดียวกับการ์ดสมุด (ไม่มี query ใหม่)
 6. Tests: unit นิยามตัวเลข 6 ก้อน (golden dataset ที่มี void/credit note/partial/WHT/ข้ามเดือน), self-check mismatch → unavailable, export = หน้าจอ, perm ฝั่งเดียว, timezone ขอบวัน (เคสเที่ยงคืน Bangkok)
+
+หลักฐาน Phase 4B: real PostgreSQL 9/9 (ไม่ skip) รวม payment retry/concurrency/mixed VAT/ledger-export; web full 1109/1109, API full exit 0, contracts 196/196, API/web typecheck, Prisma validate และ diff check ผ่าน. Chrome local 1280×900 + 390×844: เปิดจาก dashboard, กรองรายการ, export 79 แถว, รับชำระ `INV-202608-00026` 500 บาทแล้วหายจาก receivable และยอดสรุปเปลี่ยน, mobile modal ใช้งานได้, console error/warn = 0. Browser QA พบและแก้ gap เพิ่ม: CREDIT_NOTE เคยเข้า receivable/ขึ้น "รอรับ"; ตอนนี้คงเป็นยอดปรับลดติดลบในสมุดแต่ไม่มี outstanding/payment action พร้อม PostgreSQL regression. ภาพและ manifest: [`docs/qa/evidence/p27-phase4b-2026-08-27/`](../qa/evidence/p27-phase4b-2026-08-27/README.md)
 
 ## Phase 5 — จัดระเบียบฝั่งรายจ่าย (spec F-LED-3, LED-FIN-03)
 

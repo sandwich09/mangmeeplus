@@ -186,7 +186,7 @@ export class IncomeExpenseLedgerUseCase {
     const result = await this.prisma.client.$transaction(async (tx: any) => {
       const documentWhere = includeIncome ? {
         companyId: ctx.companyId, ...scope,
-        documentType: { in: [...INCOME_ENTRY_TYPES] },
+        documentType: { in: [...(type === 'RECEIVABLE' ? POSITIVE_SALE_TYPES : INCOME_ENTRY_TYPES)] },
         status: type === 'RECEIVABLE' ? { in: [...ISSUED_STATUSES] } : filter.status ?? { in: [...ISSUED_STATUSES] },
         ...(type === 'RECEIVABLE' ? { outstandingAmount: { gt: 0 } } : { documentDate: civilRange }),
         ...(filter.categoryId ? { lines: { some: { revenueCategoryId: filter.categoryId } } } : {}),
@@ -222,7 +222,8 @@ export class IncomeExpenseLedgerUseCase {
         ...(row.counterpartyId && { counterpartyId: row.counterpartyId }),
         ...(snapshotName(row.counterpartySnapshotJson) && { partyName: snapshotName(row.counterpartySnapshotJson) }),
         categoryLabels: [...new Set(row.lines.map((line: any) => line.revenueCategory || 'ยังไม่จัดหมวด'))],
-        status: row.status, amount, outstandingAmount: new Decimal(row.outstandingAmount).toFixed(2),
+        status: row.status, amount,
+        ...(!negative && { outstandingAmount: new Decimal(row.outstandingAmount).toFixed(2) }),
         evidenceHref: `/companies/${ctx.companyId}/sales-documents?documentId=${encodeURIComponent(row.id)}`,
       };
     });

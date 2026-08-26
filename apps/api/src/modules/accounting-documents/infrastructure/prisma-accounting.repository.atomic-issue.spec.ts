@@ -355,6 +355,17 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
         createdByUserId: ctx.userId,
       }, async () => undefined);
       await client.accountingDocument.update({ where: { id: incomeBundle.invoice.id }, data: { dueDate: new Date('2026-08-15T00:00:00.000Z') } });
+      const creditNote = await client.accountingDocument.create({ data: {
+        companyId: ledgerCompanyId, documentType: 'CREDIT_NOTE', documentNumber: 'CN-P27-LEDGER-0001',
+        status: 'ISSUED', documentDate: new Date('2026-08-02T00:00:00.000Z'), sourceDocumentId: incomeBundle.invoice.id,
+        counterpartyId: counterparty.id, counterpartySnapshotJson: { displayName: counterparty.displayName },
+        subtotalAmount: '10', taxableAmount: '10', grandTotalAmount: '10', outstandingAmount: '10',
+        paymentStatus: 'UNPAID', adjustmentReasonCode: 'PRICE_ADJUSTMENT', createdByUserId: ctx.userId,
+      } });
+      await client.accountingDocumentLine.create({ data: {
+        companyId: ledgerCompanyId, documentId: creditNote.id, lineNumber: 1, description: 'ลดราคาทดสอบ',
+        quantity: '1', unitPrice: '10', lineSubtotalAmount: '10', lineTotalAmount: '10',
+      } });
       const expense = await client.expenseRecord.create({ data: {
         companyId: ledgerCompanyId, status: 'CONFIRMED', expenseDate: new Date('2026-08-01T00:00:00.000Z'),
         grandTotalAmount: '50', netPayableAmount: '50', paidAmount: '20', outstandingAmount: '30',
@@ -377,8 +388,8 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
         expense: summary.expense.recordedExpenseTotal, paid: summary.expense.paidExpenseTotal,
         cashDifference: summary.cashDifference, documentDifference: summary.documentDifference,
       }, {
-        sales: '100.00', received: '100.00', wht: '3.00', outstanding: '0.00',
-        expense: '50.00', paid: '20.00', cashDifference: '80.00', documentDifference: '50.00',
+        sales: '90.00', received: '100.00', wht: '3.00', outstanding: '0.00',
+        expense: '50.00', paid: '20.00', cashDifference: '80.00', documentDifference: '40.00',
       });
       const incomeOnly = await ledger.summary({ ...ctx, permissions: ['accounting.document.read'] }, '2026-08-01', '2026-08-31');
       assert.equal(incomeOnly.income.available, true);
@@ -386,15 +397,20 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
       assert.equal(incomeOnly.cashDifference, undefined);
 
       const entries = await ledger.entries(ctx, { type: 'ALL', from: '2026-08-01', to: '2026-08-31' });
-      assert.equal(entries.total, 2, 'evidence-only receipt is not a second income row');
+      assert.equal(entries.total, 3, 'evidence-only receipt is not a second income row');
       assert.deepEqual(new Set(entries.data.map((row) => row.side)), new Set(['INCOME', 'EXPENSE']));
-      const incomeEntry = entries.data.find((row) => row.side === 'INCOME')!;
+      const incomeEntry = entries.data.find((row) => row.id === incomeBundle.invoice.id)!;
       assert.match(incomeEntry.evidenceHref, /\/sales-documents\?documentId=/);
       assert.equal(incomeEntry.dueDate, '2026-08-15');
       assert.equal(incomeEntry.counterpartyId, counterparty.id);
       assert.equal(incomeEntry.partyName, 'ลูกค้าทดสอบ');
+      const creditEntry = entries.data.find((row) => row.id === creditNote.id);
+      assert.equal(creditEntry?.amount, '-10.00');
+      assert.equal(creditEntry?.outstandingAmount, undefined, 'credit notes reduce income but never display as receivable');
+      const receivables = await ledger.entries(ctx, { type: 'RECEIVABLE', from: '2026-08-01', to: '2026-08-31' });
+      assert.equal(receivables.total, 0, 'credit notes are reductions, never receivable payment targets');
       const exported = await ledger.export(ctx, { type: 'ALL', from: '2026-08-01', to: '2026-08-31' });
-      assert.equal(exported.rowCount, 2);
+      assert.equal(exported.rowCount, 3);
       assert.match(exported.csv, /รายรับ/);
       assert.ok(Buffer.from(exported.xlsxBase64, 'base64').subarray(0, 2).equals(Buffer.from('PK')));
     } finally {
