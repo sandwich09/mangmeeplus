@@ -40,6 +40,7 @@ const SUBFEATURE_RULES = FEATURE_CATALOG.flatMap((feature) =>
 // their own module's feature gate.)
 const PREFIX_FEATURE_RULES: ReadonlyArray<{ prefix: string; featureKeys: readonly string[] }> = [
   { prefix: 'accounting.document.read_related', featureKeys: ['sales_documents'] },
+  { prefix: 'accounting.revenue_category.', featureKeys: ['sales_documents'] },
   { prefix: 'expense.read_related', featureKeys: ['expenses.list'] },
   { prefix: 'procurement.purchase_request.read_related', featureKeys: ['procurement.purchase_requests'] },
   { prefix: 'procurement.purchase_order.read_related', featureKeys: ['procurement.purchase_orders'] },

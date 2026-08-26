@@ -941,6 +941,11 @@ export function AccountingHubPage({ companyId, permissions }: { companyId: strin
     >
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(360px,0.65fr)]">
         <div className="space-y-4">
+          {permissions.includes('accounting.revenue_category.manage') && (
+            <div className="flex justify-end">
+              <a href={`/companies/${companyId}/sales-documents/revenue-categories`} className="text-sm font-semibold text-brand-600 hover:text-brand-700">จัดการหมวดรายรับ →</a>
+            </div>
+          )}
           {canCreateDocuments && <CreateDocumentForm companyId={companyId} onCreated={refresh} allowedDocumentTypes={creatableDocumentTypes} />}
           {canReadDocuments && <DocumentList
             key={contentKey}

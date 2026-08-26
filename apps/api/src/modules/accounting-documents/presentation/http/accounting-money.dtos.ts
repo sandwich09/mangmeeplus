@@ -35,6 +35,7 @@ export class AccountingDocumentLineDto {
   @Matches(ACCOUNTING_RATE_PATTERN) @IsOptional() whtRate?: string;
   @IsString() @IsOptional() @MaxLength(80) taxCategory?: string;
   @IsString() @IsOptional() @MaxLength(80) revenueCategory?: string;
+  @IsString() @IsOptional() @MaxLength(64) revenueCategoryId?: string;
   @IsString() @IsOptional() @MaxLength(64) taxCodeDefinitionId?: string;
   @IsString() @IsOptional() @MaxLength(80) externalTaxCode?: string;
   @IsIn(TRANSACTION_TAX_CONTEXTS) @IsOptional() transactionContext?: TransactionTaxContext;
