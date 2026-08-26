@@ -639,7 +639,7 @@ Quality ต้องไม่ตกหมายถึง “ลดจำนว�
 2. **“ใช้แล้วชอบ” ต่อ — Brain-Real Track B1–B7 (สมองมั่งมีไม่ใช่เดโม):** hosted baseline → loading-on-accept → debounce cohort 1,000 ms → fused-plan shadow → security suite + เปิด prepared simple-read lane → ขยาย family ตามคำถาม top-N → advisor Slice A ตาม [assessment](../specs/mangmee-brain-answer-architecture-assessment.md) — ทำคู่ขนานกับข้อ 3 ได้เพราะคนละพื้นที่โค้ด แต่ dev คนเดียวต้องประกาศคิวหลักไว้ชัด
 3. **ปิด “สมัครง่าย”:** P10 → P11 → P12 — สามตัวนี้คือประตูรับคนจาก Marketing; ตราบใดที่ยังไม่เสร็จ traffic ที่ซื้อมาจะแปลงเป็นผู้ใช้ไม่ได้
 4. **ปิด “เก็บเงินได้” (โมเดล subscribe — การตัดสินใจ Owner 2026-08-25):** P14 (document meter + override) → P26 (package→entitlement จริง, หน้า subscribe/ชำระเงิน, enforcement อ่อนโยน) — ต้องเสร็จก่อนเริ่มจำกัดการใช้ใบเสร็จจริง
-5. **“โตต่อได้”:** **P27 สมุดรายรับ–รายจ่าย (การตัดสินใจ Owner 2026-08-26 — เอกสารขายเป็นแกนรายรับบน engine เดิม มาก่อนสายธนาคาร/Auto Revenue; ลำดับเทียบสาย P14→P26 รอ Owner ยืนยัน)** → P13 → P15–P17 (Revenue Inbox/กระทบยอด — **ถอยมาอยู่หลัง P26** ตามการตัดสินใจ Owner) → P18–P24; รัน P25 ฉบับเต็มซ้ำก่อนขยายวงทุกครั้ง
+5. **“โตต่อได้”:** **P27 สมุดรายรับ–รายจ่าย (การตัดสินใจ Owner 2026-08-26 — เอกสารขายเป็นแกนรายรับบน engine เดิม; Owner ยืนยันแล้ว: P27 มาก่อนสาย P14→P26)** → P13 → P14→P26 → P15–P17 (Revenue Inbox/กระทบยอด) → P18–P24; รัน P25 ฉบับเต็มซ้ำก่อนขยายวงทุกครั้ง
 
 **Gate เปิด Marketing วงกว้าง = ข้อ 1 และข้อ 3 ผ่านทั้งคู่** — รับโหลดได้แต่สมัครเองไม่ได้ traffic ที่ซื้อมาเสียเปล่า; สมัครได้แต่ไม่มีหลักฐานรับโหลด/ตาดูระบบ เสี่ยงล่มต่อหน้าลูกค้าชุดแรก; ผลเหมือนกันคือเสียคนทั้งก้อน ห้ามเปิดวงกว้างเมื่อขาดข้อใดข้อหนึ่ง
 
@@ -796,7 +796,7 @@ P14 คือรากของโมเดล subscribe ตามการต�
 
 การตัดสินใจ Owner 2026-08-26: ทำฟีเจอร์ "สมุดรายรับ–รายจ่าย" ก่อน โดยยังไม่ทำระบบบัญชีเต็มและไม่ทำกระทบยอดธนาคาร — เอกสารขายเป็นแกนของรายรับ (ไม่ใช่ช่องกรอกยอดลอย ๆ) ฝั่งรายจ่ายใช้ engine เดิมจัด UX ใหม่ + หมวดหมู่ 2 ชุด + หน้าสรุปรวม + ดาวน์โหลด Excel/CSV
 
-docs-first พร้อมแล้ว: [Income–Expense Ledger Spec](../specs/mangmee-income-expense-ledger-spec-th.md) + [Implementation Plan](mangmee-income-expense-ledger-plan-th.md) — 7 phases ประเมิน ~9 วันทำงาน; Phase 0 = ยืนยันสัญญา 6 ข้อก่อนเขียนโค้ด
+docs-first พร้อมแล้ว: [Income–Expense Ledger Spec](../specs/mangmee-income-expense-ledger-spec-th.md) + [Implementation Plan](mangmee-income-expense-ledger-plan-th.md) — 7 phases ประเมิน ~9.5 วันทำงาน; **Phase 0 (ยืนยันสัญญา V1–V6) ปิดแล้ว 2026-08-26 และ Owner ตอบคำถาม §9 ครบ → เริ่ม Phase 1 ได้**
 
 ขอบเขตย่อ:
 
@@ -809,7 +809,7 @@ STOP-SHIP ของงานนี้: **LED-FIN-01** — `accounting-totals.log
 
 ไม่ทำในรอบนี้: ธนาคาร/statement/จับคู่/กระทบยอด/Auto Revenue (ยังอยู่ P15–P22), ภ.พ.30/ภ.ง.ด./e-Tax, งบทางการ, สต็อก/ต้นทุน/สินทรัพย์
 
-ก่อนเริ่ม coding: Owner ตอบคำถาม spec §9 ทั้ง 6 ข้อ — สำคัญสุดคือลำดับคิว P27 เทียบสาย P14→P26 (dev คนเดียว เลือกคิวหลักได้สายเดียว)
+เงื่อนไขก่อน coding ปิดครบแล้ว: Owner ตอบ spec §9 ทั้ง 6 ข้อ (2026-08-26) — P27 คือคิวหลักก่อนสาย P14→P26; รายละเอียดคำตอบอยู่ใน spec §9
 
 ## 11. คำถามที่ Owner ต้องตัดสินก่อน P1 จบ
 
@@ -820,7 +820,7 @@ STOP-SHIP ของงานนี้: **LED-FIN-01** — `accounting-totals.log
 - เว็บ, claim page และ LIFF fallback ใช้ credential ชุดเดียว; LIFF ไม่สร้าง password อีกชุดและไม่เปลี่ยนรหัส LINE
 - หลังเชื่อมต้องเลือกบริษัทเมื่อจำเป็น แล้วกลับ OA พร้อม company/role/menu และได้ Value แรกทันที
 - (2026-08-25) ฟีเจอร์ที่ใช้จริงมาก่อน: รายรับ/Auto Revenue ถอยไปหลัง P26; AI แยกหมวดรายจ่ายเป็นงาน AI อันดับหนึ่งของรอบ 2.5 วัน; เพิ่มระบบจ่ายเงิน/Subscription (จำกัดโควตาใบเสร็จ ใช้ต่อต้อง subscribe) เข้าคิว P14 → P26
-- (2026-08-26) เพิ่ม **P27 สมุดรายรับ–รายจ่าย**: เอกสารขายเป็นแกนรายรับบน `AccountingDocument`/`AccountingPayment` เดิม ไม่สร้างตารางรายรับแยก; ฝั่งธนาคาร/กระทบยอดยังไม่ทำ (คงอยู่ P15–P22) — spec+plan: [Income–Expense Ledger Spec](../specs/mangmee-income-expense-ledger-spec-th.md); ลำดับคิวเทียบ P14→P26 รอ Owner ตัดสิน (spec §9 ข้อ 1)
+- (2026-08-26) เพิ่ม **P27 สมุดรายรับ–รายจ่าย**: เอกสารขายเป็นแกนรายรับบน `AccountingDocument`/`AccountingPayment` เดิม ไม่สร้างตารางรายรับแยก; ฝั่งธนาคาร/กระทบยอดยังไม่ทำ (คงอยู่ P15–P22) — spec+plan: [Income–Expense Ledger Spec](../specs/mangmee-income-expense-ledger-spec-th.md); **Owner ตอบคำถาม spec §9 ครบ 6 ข้อวันเดียวกัน: P27 มาก่อนสาย P14→P26, ใบเสร็จอัตโนมัติตอนขายสด, ซ่อน VAT บริษัทไม่จด, ใบลดหนี้เลียนแบบ FlowAccount (ตรวจจากบัญชีทดสอบจริงแล้ว), ใช้ตาราง mapping taxcode เดิม, ยืนยันชุดคำหน้าสมุด**
 
 1. รอบนี้ยอมรับเป้าหมายเป็น **Controlled Beta** หรือยังต้องการ Marketing วงกว้างแม้หลักฐานยังไม่ครบ?
 2. ปุ่ม “ถามสมองมั่งมี” จะไป LINE ที่พร้อมกว่า หรือยืนยันสร้าง web chat ใหม่ในรอบนี้?
