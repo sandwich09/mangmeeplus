@@ -633,7 +633,7 @@ Quality ต้องไม่ตกหมายถึง “ลดจำนว�
 
 ### ลำดับลงมือแนะนำและ Gate เปิดวงกว้าง
 
-หมายเลข P9–P25 เป็นป้ายกลุ่มงาน ไม่ใช่ลำดับลงมือ; ลำดับลงมือจริงจัดตามเป้าหมาย รับคนให้ไหว → ใช้แล้วชอบ → โตต่อได้:
+หมายเลข P9–P25 เป็นป้ายกลุ่มงาน ไม่ใช่ลำดับลงมือ; ลำดับลงมือจริงจัดตามเป้าหมาย รับคนให้ไหว → ใช้แล้วชอบ → โตต่อได้ — **ฉบับกางหน้าเดียวทุกสายพร้อมลิงก์ spec/plan: [สารบัญแผนรวมมั่งมีพลัส](mangmee-master-plan-index-th.md)**:
 
 1. **ปิด “รับคนให้ไหว” ให้จบ:** P9 ส่วนที่เหลือ (dashboard เต็ม, funnel analytics OBS-01/OBS-02, drill ครบ failure class) + P25 ฉบับย่อ (load/capacity บน UAT ที่จำนวนผู้ใช้เป้าหมายของวงถัดไป)
 2. **“ใช้แล้วชอบ” ต่อ — Brain-Real Track B1–B7 (สมองมั่งมีไม่ใช่เดโม):** hosted baseline → loading-on-accept → debounce cohort 1,000 ms → fused-plan shadow → security suite + เปิด prepared simple-read lane → ขยาย family ตามคำถาม top-N → advisor Slice A ตาม [assessment](../specs/mangmee-brain-answer-architecture-assessment.md) — ทำคู่ขนานกับข้อ 3 ได้เพราะคนละพื้นที่โค้ด แต่ dev คนเดียวต้องประกาศคิวหลักไว้ชัด
@@ -823,7 +823,7 @@ P14 คือรากของโมเดล subscribe ตามการต�
 
 การตัดสินใจ Owner 2026-08-26: ทำฟีเจอร์ "สมุดรายรับ–รายจ่าย" ก่อน โดยยังไม่ทำระบบบัญชีเต็มและไม่ทำกระทบยอดธนาคาร — เอกสารขายเป็นแกนของรายรับ (ไม่ใช่ช่องกรอกยอดลอย ๆ) ฝั่งรายจ่ายใช้ engine เดิมจัด UX ใหม่ + หมวดหมู่ 2 ชุด + หน้าสรุปรวม + ดาวน์โหลด Excel/CSV
 
-docs-first พร้อมแล้ว: [Income–Expense Ledger Spec](../specs/mangmee-income-expense-ledger-spec-th.md) + [Implementation Plan](mangmee-income-expense-ledger-plan-th.md) — 7 phases ~9.5 วัน; คิวรวมสองฝั่งดู [สารบัญแผนรวม FlowAccount Parity](mangmee-flowaccount-parity-plan-th.md); **Phase 0–2 ปิด/merge แล้ว 2026-08-26 → คิวถัดไป Phase 3**
+docs-first พร้อมแล้ว: [Income–Expense Ledger Spec](../specs/mangmee-income-expense-ledger-spec-th.md) + [Implementation Plan](mangmee-income-expense-ledger-plan-th.md) — 7 phases ~9.5 วัน; คิวรวมสองฝั่งดู [สารบัญแผนรวมมั่งมีพลัส](mangmee-master-plan-index-th.md); **Phase 0–2 ปิด/merge แล้ว 2026-08-26 → คิวถัดไป Phase 3**
 
 ขอบเขตย่อ:
 
@@ -850,7 +850,7 @@ Current truth (ตรวจโค้ด 2026-08-26): engine ฝั่งซื�
 2. อุด gap ที่พบ: **ใบลดหนี้ฝั่งซื้อ** (รับจากผู้ขาย — vendor bill วันนี้แก้ได้ด้วย void เท่านั้น), รวม vendor bill/supplier payment เข้า "จ่ายแล้ว/รอจ่าย" ของสมุดรายรับ–รายจ่าย
 3. เปิดแบบควบคุมด้วย entitlement `procurement.*` + kill switch ตาม pattern P27 Phase 6
 4. อ้างอิง: [OS implementation plan P8](mangmee-accounting-os-implementation-plan-th.md), research FlowAccount §7 (PO/GR/expense/ใบเตรียมจ่าย), ledger spec §F-LED-7
-5. **spec+plan เขียนเสร็จแล้ว (2026-08-26)**: [Purchase-to-Pay MVP Spec](../specs/mangmee-purchase-to-pay-mvp-spec-th.md) (current truth เชิงลึก, gap register P2P-01..07, ใบลดหนี้ฝั่งซื้อเต็มรูป F-P2P-2, หน้าจอ S1–S5 ตาม F-LED-7) + [plan](mangmee-purchase-to-pay-mvp-plan-th.md) (6 phases ~10.5 วัน); คิวรวมสองฝั่งดู [สารบัญแผนรวม FlowAccount Parity](mangmee-flowaccount-parity-plan-th.md) — **§10 ข้อ 1 (คิว) ตอบแล้ว: ต่อจาก P27 ทันที; รอ Owner ตอบข้อ 2–5 ก่อนเริ่ม Phase 0**
+5. **spec+plan เขียนเสร็จแล้ว (2026-08-26)**: [Purchase-to-Pay MVP Spec](../specs/mangmee-purchase-to-pay-mvp-spec-th.md) (current truth เชิงลึก, gap register P2P-01..07, ใบลดหนี้ฝั่งซื้อเต็มรูป F-P2P-2, หน้าจอ S1–S5 ตาม F-LED-7) + [plan](mangmee-purchase-to-pay-mvp-plan-th.md) (6 phases ~10.5 วัน); คิวรวมสองฝั่งดู [สารบัญแผนรวมมั่งมีพลัส](mangmee-master-plan-index-th.md) — **§10 ข้อ 1 (คิว) ตอบแล้ว: ต่อจาก P27 ทันที; รอ Owner ตอบข้อ 2–5 ก่อนเริ่ม Phase 0**
 
 ## 11. คำถามที่ Owner ต้องตัดสินก่อน P1 จบ
 
@@ -863,7 +863,8 @@ Current truth (ตรวจโค้ด 2026-08-26): engine ฝั่งซื�
 - (2026-08-25) ฟีเจอร์ที่ใช้จริงมาก่อน: รายรับ/Auto Revenue ถอยไปหลัง P26; AI แยกหมวดรายจ่ายเป็นงาน AI อันดับหนึ่งของรอบ 2.5 วัน; เพิ่มระบบจ่ายเงิน/Subscription (จำกัดโควตาใบเสร็จ ใช้ต่อต้อง subscribe) เข้าคิว P14 → P26
 - (2026-08-26) เพิ่ม **P27 สมุดรายรับ–รายจ่าย**: เอกสารขายเป็นแกนรายรับบน `AccountingDocument`/`AccountingPayment` เดิม ไม่สร้างตารางรายรับแยก; ฝั่งธนาคาร/กระทบยอดยังไม่ทำ (คงอยู่ P15–P22) — spec+plan: [Income–Expense Ledger Spec](../specs/mangmee-income-expense-ledger-spec-th.md); **Owner ตอบคำถาม spec §9 ครบ 6 ข้อวันเดียวกัน: P27 มาก่อนสาย P14→P26, ใบเสร็จอัตโนมัติตอนขายสด, ซ่อน VAT บริษัทไม่จด, ใบลดหนี้เลียนแบบ FlowAccount (ตรวจจากบัญชีทดสอบจริงแล้ว), ใช้ตาราง mapping taxcode เดิม, ยืนยันชุดคำหน้าสมุด**
 - (2026-08-26 รอบสี่) **โยกสาย billing/subscription (P14→P26) ไปท้ายคิวสุด** — ลำดับ "โตต่อได้" เดินก่อน (P27 → P28 → P13 → P15–P17 → P18–P24) แล้วค่อยปิด "เก็บเงินได้" เป็นก้อนสุดท้าย; ตอบคำถามคิวของ P26 spec §10 ข้อ 4 และ P28 spec §10 ข้อ 1 ไปในตัว (P28 ต่อจาก P27 ได้เลย ไม่ต้องรอ billing)
-- (2026-08-26 รอบห้า, ปรับรูปแบบรอบหก) **แผนรวม P27+P28 = สารบัญอย่างเดียว** ตามคำสั่ง Owner ("รวมแค่หัวข้อ แล้วมี link กลับไปที่เอกสารเดิม") — [สารบัญแผนรวม FlowAccount Parity](mangmee-flowaccount-parity-plan-th.md) ถือคิวรวม 13 ขั้น; เนื้อหาเต็มอยู่ที่แผนเดิมสองฉบับ ([P27](mangmee-income-expense-ledger-plan-th.md) / [P28](mangmee-purchase-to-pay-mvp-plan-th.md)) ซึ่งคืนสภาพฉบับเต็มแล้ว; spec สองฉบับแยกตามฝั่งเช่นเดิม
+- (2026-08-26 รอบห้า, ปรับรูปแบบรอบหก) **แผนรวม P27+P28 = สารบัญอย่างเดียว** ตามคำสั่ง Owner ("รวมแค่หัวข้อ แล้วมี link กลับไปที่เอกสารเดิม") — เนื้อหาเต็มอยู่ที่แผนเดิมสองฉบับ ([P27](mangmee-income-expense-ledger-plan-th.md) / [P28](mangmee-purchase-to-pay-mvp-plan-th.md)) ซึ่งคืนสภาพฉบับเต็มแล้ว; spec สองฉบับแยกตามฝั่งเช่นเดิม
+- (2026-08-26 รอบเจ็ด) **ขยายสารบัญเป็นทุกสายงาน** ตามคำสั่ง Owner ("ไม่เห็นมีเรื่อง ความฉลาด AI, line login, line register, subscriber") — [สารบัญแผนรวมมั่งมีพลัส](mangmee-master-plan-index-th.md) กาง 5 สาย (ops / สมองมั่งมี / สมัครง่าย LINE / โตต่อได้+คิวย่อย parity 13 ขั้น / เก็บเงินได้) พร้อมลิงก์ spec/plan และรายการค้างที่ Owner; ไฟล์ `mangmee-flowaccount-parity-plan-th.md` เดิมเป็นป้ายชี้
 
 1. รอบนี้ยอมรับเป้าหมายเป็น **Controlled Beta** หรือยังต้องการ Marketing วงกว้างแม้หลักฐานยังไม่ครบ?
 2. ปุ่ม “ถามสมองมั่งมี” จะไป LINE ที่พร้อมกว่า หรือยืนยันสร้าง web chat ใหม่ในรอบนี้?

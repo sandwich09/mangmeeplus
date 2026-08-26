@@ -13,7 +13,7 @@
 - [SAP-compatible transaction tax spec](sap-compatible-transaction-tax-account-determination-spec.md) — ชั้นภาษีที่ vendor bill ใช้อยู่
 - [ผลสำรวจ FlowAccount](../research/flowaccount-accounting-product-audit-2026-08-26-th.md) §7 (PO/GR/expense/ใบเตรียมจ่าย/2-3-way match)
 - Agent memories ที่ผูกงานนี้: `item-12-procurement-ap-review` (จอด supplier credit เป็น backlog — งานนี้คือการปลดจอด), `h-04-vendor-bill-void-true-reversal`, `h-07-vendor-bill-maker-checker`, `procurement-satang-rounding`
-- แผนส่งมอบ: [Purchase-to-Pay MVP Plan](../plans/mangmee-purchase-to-pay-mvp-plan-th.md); คิวรวมสองฝั่ง: [สารบัญแผนรวม FlowAccount Parity](../plans/mangmee-flowaccount-parity-plan-th.md)
+- แผนส่งมอบ: [Purchase-to-Pay MVP Plan](../plans/mangmee-purchase-to-pay-mvp-plan-th.md); คิวรวมสองฝั่ง: [สารบัญแผนรวมมั่งมีพลัส](../plans/mangmee-master-plan-index-th.md)
 
 ## 1. เป้าหมาย
 
@@ -204,7 +204,7 @@ SupplierCreditNote {
 
 ## 10. คำถามที่ Owner ต้องตอบก่อนเริ่ม coding
 
-1. ~~**ลำดับ P28 กับงานที่เหลือของ P27**~~ — **ตอบแล้ว (Owner 2026-08-26)**: ทำ P27 ให้จบก่อนแล้ว P28 ต่อทันที (สาย billing P14→P26 โยกไปท้ายคิวสุด) — สะท้อนใน[สารบัญแผนรวม FlowAccount Parity](../plans/mangmee-flowaccount-parity-plan-th.md)
+1. ~~**ลำดับ P28 กับงานที่เหลือของ P27**~~ — **ตอบแล้ว (Owner 2026-08-26)**: ทำ P27 ให้จบก่อนแล้ว P28 ต่อทันที (สาย billing P14→P26 โยกไปท้ายคิวสุด) — สะท้อนใน[สารบัญแผนรวมมั่งมีพลัส](../plans/mangmee-master-plan-index-th.md)
 2. **เครดิตค้างกับผู้ขาย** (CN เกินยอดค้าง/บิลจ่ายแล้ว): MVP บันทึก+โชว์ให้หักมือถัดไป (แนะนำ) พอไหม หรือต้องหักบิลถัดไปอัตโนมัติ/บันทึกรับเงินคืนตั้งแต่รอบแรก?
 3. **ใบเพิ่มหนี้ฝั่งซื้อ**: เข้าคิวถัดไปหลัง CN (แนะนำ — บิลใหม่ทดแทนได้ระหว่างนี้) หรือทำพร้อมกัน (+~1 วัน)?
 4. **Two-step payment release** (คนเตรียมจ่าย ≠ คนปล่อยจ่าย): คงไว้เป็น backlog ตามเดิม หรือยกเข้ารอบนี้ (+~1–1.5 วัน)?

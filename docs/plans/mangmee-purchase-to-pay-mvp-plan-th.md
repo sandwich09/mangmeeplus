@@ -4,7 +4,7 @@
 
 Spec: [Purchase-to-Pay MVP Spec](../specs/mangmee-purchase-to-pay-mvp-spec-th.md) — แผนนี้ไม่ประกาศข้อเท็จจริงใหม่; engine canonical อยู่ใน [procurement-supplier-ap-spec](../specs/procurement-supplier-ap-spec.md)
 
-ตำแหน่งคิว: **หลัง P27 จบ ต่อทันที (Owner ยืนยัน 2026-08-26 — สาย billing P14→P26 ท้ายคิวสุด)**; คิวรวมสองฝั่งดูที่ [สารบัญแผนรวม FlowAccount Parity](mangmee-flowaccount-parity-plan-th.md) (ภาค 2 = แผนนี้)
+ตำแหน่งคิว: **หลัง P27 จบ ต่อทันที (Owner ยืนยัน 2026-08-26 — สาย billing P14→P26 ท้ายคิวสุด)**; คิวรวมสองฝั่งดูที่ [สารบัญแผนรวมมั่งมีพลัส](mangmee-master-plan-index-th.md) (ภาค 2 = แผนนี้)
 
 ## 0. คำตอบตรง ๆ เรื่องเวลา (dev 1 คน รวม test)
 
