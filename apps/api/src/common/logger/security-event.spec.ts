@@ -23,6 +23,7 @@ import {
   reconcileTerminalCardinality,
 } from '../observability/customer-journey-signal.catalog';
 import { customerJourneyFailure, observeCustomerJourney } from '../observability/customer-journey-audit';
+import { CUSTOMER_JOURNEY_FAILURE_MATRIX } from '../observability/customer-journey-failure-matrix.catalog';
 
 const REPO_ROOT = join(__dirname, '../../../../..');
 const DEPLOY_SCRIPT = join(REPO_ROOT, 'infra/prod-ecs-express/deploy.sh');
@@ -332,5 +333,49 @@ describe('P9-1b customer journey audit boundary', () => {
     assert.deepEqual(customerJourneyFailure(new Error('provider response payload')), {
       outcome: 'failed', failureClass: 'unexpected',
     });
+  });
+});
+
+describe('P9-2 customer journey failure matrix', () => {
+  it('covers every required fault without claiming absent P10/P11 flows are live', () => {
+    assert.deepEqual(CUSTOMER_JOURNEY_FAILURE_MATRIX.map((row) => row.key), [
+      'api-timeout-5xx',
+      'redis-rate-limit-unavailable',
+      'outbox-backlog-dead',
+      'ses-hard-bounce-provider-outage',
+      'line-invalid-signature',
+      'line-provider-error',
+      'ocr-hosted-ai-timeout-fallback',
+      'db-audit-outbox-failure',
+      'provisioning-partial-failure',
+    ]);
+    assert.deepEqual(
+      CUSTOMER_JOURNEY_FAILURE_MATRIX.filter((row) => row.coverage === 'PLANNED').map((row) => row.key),
+      ['ses-hard-bounce-provider-outage', 'provisioning-partial-failure'],
+    );
+  });
+
+  it('gives every live row a complete detect-alert-diagnose-recover/no-duplicate chain', () => {
+    for (const row of CUSTOMER_JOURNEY_FAILURE_MATRIX.filter((entry) => entry.coverage === 'LIVE')) {
+      assert.ok(row.detection, `${row.key}: detection`);
+      assert.ok(row.alarm, `${row.key}: alarm`);
+      assert.ok(row.runbookAnchor, `${row.key}: runbook`);
+      assert.ok(row.recovery, `${row.key}: recovery`);
+      assert.ok(row.noDuplicateInvariant, `${row.key}: no duplicate invariant`);
+      assert.equal(row.gap, null, `${row.key}: live row cannot carry a gap`);
+    }
+  });
+
+  it('pins every claim to source evidence and every runbook anchor to a real section', () => {
+    const runbook = readFileSync(join(REPO_ROOT, 'docs/runbooks/customer-journey-signal-triage.md'), 'utf8');
+    for (const row of CUSTOMER_JOURNEY_FAILURE_MATRIX) {
+      const heading = row.runbookAnchor.split('#')[1]!.replaceAll('-', ' ');
+      assert.ok(runbook.toLowerCase().includes(`### ${heading}`), `${row.key}: missing runbook heading`);
+      assert.ok(row.evidence.length > 0, `${row.key}: evidence`);
+      for (const evidence of row.evidence) {
+        const source = readFileSync(join(REPO_ROOT, evidence.path), 'utf8');
+        assert.ok(source.includes(evidence.token), `${row.key}: missing ${evidence.path}#${evidence.token}`);
+      }
+    }
   });
 });

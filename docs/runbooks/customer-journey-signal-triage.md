@@ -22,6 +22,39 @@ Trigger: missing/duplicate terminal signal, critical terminal failure, abnormal 
 
 Stop and escalate when the durable source state is ambiguous, a retry could duplicate a financial/customer mutation, credentials/provider policy are missing, or recovery requires production mutation outside an approved runbook.
 
+## Failure routing
+
+### API timeout and 5xx
+
+Use the request ID to join the `request` log, service/task health, dependency health, and the current
+immutable release. Probe only a read-only route. Roll back or forward-fix through the release runbook;
+never replay a business mutation merely because the client saw a timeout or 5xx.
+
+### Redis rate limit unavailable
+
+Confirm `api.rate_limit.store_degraded` occurred once on the transition and the local limiter is still
+protecting the process. Restore Redis connectivity, then verify a healthy shared-store request. Do not
+restart repeatedly to manufacture recovery evidence or suppress the transition alarm.
+
+### LINE invalid signature
+
+Confirm `line.webhook.signature_invalid`, the endpoint/channel binding, and secret version without
+printing the secret. A forged request must enqueue zero events. After configuration repair, use LINE's
+original signed redelivery; do not construct a replacement customer message.
+
+### LINE provider error
+
+Inspect the durable LINE ledger row and terminal class (`delivery_pending` or `failed_terminal`). Use the
+existing drain/orphan recovery path with the original row identity. Do not create a second AI turn or
+business mutation to compensate for a failed reply/push.
+
+### Database audit and outbox failure
+
+For `audit.persist.failed`, verify the business source state before interpreting the request result: the
+post-commit audit path deliberately does not turn a committed mutation into a 500. For outbox failures,
+inspect attempts, claim token, backoff, and DEAD state. Automatic recovery stops at DEAD until a governed
+reconciler exists.
+
 ## Stage routing
 
 ### Official signup receive
@@ -69,7 +102,7 @@ output is a suggestion until deterministic validation and human confirmation pas
 
 Join `line.ai.accepted` and `line.ai.terminal` by `webhookEventId`. Classify intentional no-op, permission refusal, and feature-disabled separately from provider/timeout/delivery failure. Preserve the permission-checked API/tool boundary.
 
-### Outbox worker
+### Outbox worker drain
 
 Inspect `OutboxEvent.status`, attempts, lease/claim token, `lastError`, and DEAD count. Use the fenced claim/publish/fail path; never update a row by ID without its current claim token.
 

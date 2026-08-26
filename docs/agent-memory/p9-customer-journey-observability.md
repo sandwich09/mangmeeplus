@@ -1,6 +1,6 @@
 # Agent Memory: P9 Customer Journey Observability
 
-Status: P9-0 is in PR #267; P9-1a is in PR #268; P9-1b current application boundaries implemented and verified locally
+Status: P9-0 is in PR #267; P9-1a is in PR #268; P9-1b is in PR #269; P9-2 local failure matrix implemented and verified
 Owner: Platform Operations with per-stage owner in executable catalog
 Scope: Four product lanes; subscription/payment excluded
 Decisions:
@@ -20,6 +20,7 @@ Open questions:
 Artifacts:
 - `apps/api/src/common/observability/customer-journey-signal.catalog.ts`
 - `apps/api/src/common/observability/customer-journey-audit.ts`
+- `apps/api/src/common/observability/customer-journey-failure-matrix.catalog.ts`
 - `apps/api/src/common/logger/security-event.spec.ts`
 - `docs/specs/customer-journey-observability-signal-contract.md`
 - `docs/runbooks/customer-journey-signal-triage.md`
@@ -46,6 +47,9 @@ Verification:
 - P9-1b targeted Playwright E2E — ACCT-04, EXP-05, EXP-06, and EXP-07 pass (4/4) against the local API, PostgreSQL, Redis, and MinIO stack.
 - Local audit reconciliation after E2E — sales issue 1 accepted/1 terminal, expense confirmation 1/1, receipt upload completion 3/3, and receipt OCR 1/1; zero correlations had accepted or terminal cardinality other than one.
 - Local browser at 1440×900 and 390×844 — dashboard, receipt upload, sales-document list, and expense list render without console errors or horizontal overflow. The local database first exposed a missing applied revenue-category migration; `prisma migrate deploy` applied the committed migration and the sales page then passed.
+- P9-2 focused API failure-matrix, request logging, Redis degradation, LINE signature, OCR client, audit persistence, outbox failure/fencing tests — pass; runtime alarm contract — pass.
+- P9-2 LINE provider/hosted-AI targeted API and AI Gateway suites — pass.
+- P9-2 full API suite, API typecheck, and AI Gateway typecheck — pass. No UI surface changed; P9-1b browser evidence remains the applicable journey-page check.
 Next:
-- Commit, push, and open the P9-1b stacked PR to `develop` (depends on PRs #267 and #268).
-- P9-2 adds the synthetic failure matrix. P10-P12 must land before the `PLANNED` signup/claim/SES rows can truthfully become live.
+- Commit/push/open the P9-2 stacked PR to `develop` (depends on PR #269).
+- UAT must still prove one synthetic alert per severity with acknowledged delivery. P10-P12 must land before the `PLANNED` signup/claim/SES rows can truthfully become live.

@@ -122,6 +122,9 @@ run_alarm verify uat | grep -Fq 'datapoints=present subscription=confirmed'
 jq -e '
   .alarms["watchdog-bms-uat-log-ingest-workers"].Threshold == 67108864
   and .alarms["watchdog-bms-uat-db-memory-low"].Threshold == 64000000
+  and .alarms["watchdog-bms-uat-api-5xx-high"].MetricName == "watchdog_bms_uat_api_5xx"
+  and .alarms["watchdog-bms-uat-ai-ocr-failure-high"].MetricName == "watchdog_bms_uat_ai_ocr_failure"
+  and .alarms["watchdog-bms-uat-api-5xx-high"].AlarmActions == ["arn:aws:sns:ap-southeast-1:311414082667:watchdog-bms-production-security-alerts"]
   and .alarms["watchdog-bms-uat-redis-memory-high-0001"].Dimensions == [
     {Name:"CacheClusterId",Value:"watchdog-bms-uat-redis"},{Name:"CacheNodeId",Value:"0001"}]
   and ((.dashboards["watchdog-bms-uat-customer-journeys"] | fromjson) as $dashboard
