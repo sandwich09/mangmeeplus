@@ -27,7 +27,8 @@ import { initialPostingStatus, validateCumulativeCreditNote, validateOutputTaxDo
 import { buildReversalLines } from '../../ledger/domain/logic/journal-balance.logic';
 import type { AccountingDocumentType, AccountingDocumentStatus, AccountingQuotationApprovalStatus, ResolveTransactionTaxPreviewDto } from '@watchdog-bms/contracts';
 import { branchScopeWhere } from '../../data-model-core/domain/logic/branch.logic';
-import { civilPeriodKey, coerceCivilDate, exclusiveEndOfDay } from '@watchdog-bms/contracts';
+import { civilDate, civilPeriodKey, coerceCivilDate, exclusiveEndOfDay } from '@watchdog-bms/contracts';
+import { PrismaDocumentSequenceRepository } from '../../data-model-core/infrastructure/repositories/prisma-document-sequence.repository';
 
 export type AccountingDocumentTaxFinalizer = (input: {
   db: any;
@@ -51,7 +52,12 @@ export type ConvertQuotationResult = { document: DocumentRecord; didConvert: boo
 
 @Injectable()
 export class PrismaAccountingRepository {
-  constructor(private readonly prisma: PrismaService) {}
+  // `documentNumbers` is annotated, not merely defaulted: Nest reads design:paramtypes to inject
+  // the DI-managed instance; the default keeps the class constructible in bare unit tests.
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly documentNumbers: PrismaDocumentSequenceRepository = new PrismaDocumentSequenceRepository(prisma),
+  ) {}
 
   // ---- Counterparty ----
   async createCounterparty(input: CreateCounterpartyInput): Promise<CounterpartyRecord> {
@@ -731,32 +737,44 @@ export class PrismaAccountingRepository {
         },
       });
 
+      // LED-FIN Phase 1: payments carry their own document number. The `accounting.payment`
+      // sequence (PAY-...) existed from day one but was never assigned; reserve + commit stay
+      // inside this transaction so a failed payment never burns a committed number.
+      const reservedNumber = await this.documentNumbers.reserveNumberInTransaction(tx, {
+        companyId: input.companyId,
+        branchId: input.branchId ?? undefined,
+        documentType: 'accounting.payment',
+        periodKey: civilPeriodKey(civilDate(new Date(input.paidAt))),
+        idempotencyKey: `accounting-payment:${payment.id}`,
+        reservedByUserId: input.createdByUserId,
+      });
+
       let allocatedAmount = '0.00';
       if (input.allocateToDocumentId) {
         const doc = await tx.accountingDocument.findFirst({ where: { id: input.allocateToDocumentId, companyId: input.companyId } });
         if (doc) {
-          const outstanding = parseFloat(doc.outstandingAmount.toString());
-          const payAmt = parseFloat(input.amount);
-          const withheld = parseFloat(input.whtAmount ?? '0');
+          const outstanding = new Decimal(doc.outstandingAmount.toString());
+          const payAmt = new Decimal(input.amount);
+          const withheld = new Decimal(input.whtAmount ?? '0');
           // Cash clamps to the outstanding and the surplus becomes an unapplied credit. Withheld
           // tax cannot clamp — it is not money we hold — so the pair is re-checked here against the
           // balance READ IN THIS TRANSACTION. The use case validated against a read taken outside
           // it, which two concurrent receipts would both pass while over-settling the document.
-          const allocAmt = Math.min(payAmt, Math.max(0, outstanding - withheld)).toFixed(2);
-          if (withheld > 0 && parseFloat(allocAmt) + withheld > outstanding + 1e-9) {
+          const alloc = Decimal.min(payAmt, Decimal.max(0, outstanding.minus(withheld))).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+          if (withheld.gt(0) && alloc.plus(withheld).gt(outstanding)) {
             throw new UnprocessableEntityException('Payment and withheld tax together exceed the document outstanding amount');
           }
-          allocatedAmount = allocAmt;
-          const settled = parseFloat(allocAmt) + withheld;
-          const newPaid = (parseFloat(doc.paidAmount.toString()) + settled).toFixed(2);
+          allocatedAmount = alloc.toFixed(2);
+          const settled = alloc.plus(withheld);
+          const newPaid = new Decimal(doc.paidAmount.toString()).plus(settled).toFixed(2);
           const newOutstanding = calculateOutstandingAmount(doc.grandTotalAmount.toString(), newPaid);
-          const payStatus = parseFloat(newOutstanding) <= 0 ? 'PAID' : 'PARTIALLY_PAID';
+          const payStatus = new Decimal(newOutstanding).lte(0) ? 'PAID' : 'PARTIALLY_PAID';
           await tx.accountingDocument.update({
             where: { id: input.allocateToDocumentId },
             data: { paidAmount: newPaid, outstandingAmount: newOutstanding, paymentStatus: payStatus as any },
           });
           await tx.accountingPaymentAllocation.create({
-            data: { companyId: input.companyId, paymentId: payment.id, documentId: input.allocateToDocumentId, amount: allocAmt, whtAmount: input.whtAmount ?? null, createdByUserId: input.createdByUserId },
+            data: { companyId: input.companyId, paymentId: payment.id, documentId: input.allocateToDocumentId, amount: allocatedAmount, whtAmount: input.whtAmount ?? null, createdByUserId: input.createdByUserId },
           });
         }
       }
@@ -764,7 +782,13 @@ export class PrismaAccountingRepository {
       const unapplied = calculateUnappliedCredit(input.amount, allocatedAmount);
       const updated = await tx.accountingPayment.update({
         where: { id: payment.id },
-        data: { allocatedAmount, unappliedAmount: unapplied },
+        data: { paymentNumber: reservedNumber.documentNumber, allocatedAmount, unappliedAmount: unapplied },
+      });
+      await this.documentNumbers.commitNumberInTransaction(tx, {
+        id: reservedNumber.id,
+        companyId: input.companyId,
+        ownerType: 'accounting_payment',
+        ownerId: payment.id,
       });
       return this.toPaymentRecord(updated);
     });
