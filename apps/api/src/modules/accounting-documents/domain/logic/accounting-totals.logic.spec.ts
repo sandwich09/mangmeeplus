@@ -9,10 +9,12 @@ import {
 } from './accounting-totals.logic';
 import {
   calculateIncomeExpenseLedgerAmounts,
+  calculateVatRegistrationAlert,
   categoryBreakdownMatches,
   ledgerBangkokInstantRange,
   mergeSignedCategoryAmounts,
   resolveIncomeExpenseLedgerPeriod,
+  resolveVatRegistrationWatchPeriod,
 } from './income-expense-ledger.logic';
 
 describe('calculateLine', () => {
@@ -129,5 +131,33 @@ describe('P27 income-expense ledger definitions', () => {
     ]);
     assert.equal(categoryBreakdownMatches('1200', rows), true);
     assert.equal(categoryBreakdownMatches('1199.99', rows), false);
+  });
+
+  it('uses exact product-warning boundaries without presenting them as a legal determination', () => {
+    const period = { periodStart: '2026-01-01', periodEnd: '2026-08-27' };
+    assert.equal(calculateVatRegistrationAlert({ status: 'NOT_REGISTERED', positiveSales: '1439999.99', creditSales: '0', ...period }), undefined);
+    assert.deepEqual(calculateVatRegistrationAlert({ status: 'NOT_REGISTERED', positiveSales: '1440000.00', creditSales: '0', ...period }), {
+      level: 'APPROACHING', periodBasis: 'ACCOUNTING_PERIOD', ...period, salesDocumentTotal: '1440000.00', thresholdAmount: '1800000.00',
+    });
+    assert.equal(calculateVatRegistrationAlert({ status: 'NOT_REGISTERED', positiveSales: '1799999.99', creditSales: '0', ...period })?.level, 'APPROACHING');
+    assert.deepEqual(calculateVatRegistrationAlert({ status: 'NOT_REGISTERED', positiveSales: '1800000.00', creditSales: '0', ...period }), {
+      level: 'REACHED', periodBasis: 'ACCOUNTING_PERIOD', ...period, salesDocumentTotal: '1800000.00', thresholdAmount: '1800000.00',
+    });
+    assert.equal(calculateVatRegistrationAlert({ status: 'NOT_REGISTERED', positiveSales: '1800010.01', creditSales: '10', ...period })?.level, 'REACHED');
+    assert.equal(calculateVatRegistrationAlert({ status: 'REGISTERED', positiveSales: '9999999', creditSales: '0', ...period }), undefined);
+    assert.equal(calculateVatRegistrationAlert({ status: 'UNKNOWN', positiveSales: '9999999', creditSales: '0', ...period }), undefined);
+  });
+
+  it('uses the configured accounting year instead of assuming every company follows the calendar year', () => {
+    assert.deepEqual(resolveVatRegistrationWatchPeriod('2026-08-27', 12), {
+      periodBasis: 'ACCOUNTING_PERIOD', periodStart: '2026-01-01', periodEnd: '2026-08-27',
+    });
+    assert.deepEqual(resolveVatRegistrationWatchPeriod('2026-02-01', 3), {
+      periodBasis: 'ACCOUNTING_PERIOD', periodStart: '2025-04-01', periodEnd: '2026-02-01',
+    });
+    assert.deepEqual(resolveVatRegistrationWatchPeriod('2026-08-27', 3), {
+      periodBasis: 'ACCOUNTING_PERIOD', periodStart: '2026-04-01', periodEnd: '2026-08-27',
+    });
+    assert.equal(resolveVatRegistrationWatchPeriod('2026-08-27', 13), null);
   });
 });

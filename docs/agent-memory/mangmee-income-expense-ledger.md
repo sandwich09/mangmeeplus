@@ -1,6 +1,6 @@
 # Agent Memory: mangmee-income-expense-ledger
 
-Status: Spec v1.4 + plan ACTIVE — **Phase 1–2, 3A backend, 3B UI core, Phase 4A backend, Phase 4B ledger/payment/export UI core และ Phase 5 backend เสร็จ**. Phase 3 ยังไม่ปิดเต็มเพราะ LED-FIN-07 รอ Owner เลือก durable state สำหรับร่างที่ VAT ยังไม่ชัด; Phase 4C VAT-threshold alert และ Phase 6 launch/E2E ยังเหลือ
+Status: Spec v1.5 + plan ACTIVE — **Phase 1–2, 3A backend, 3B UI core, Phase 4A backend, Phase 4B ledger/payment/export UI core, Phase 4C VAT-threshold alert และ Phase 5 backend เสร็จ**. Phase 3 ยังไม่ปิดเต็มเพราะ LED-FIN-07 รอ Owner เลือก durable state สำหรับร่างที่ VAT ยังไม่ชัด; Phase 6 launch/E2E ยังเหลือ
 
 Owner: thawatchai (Product Owner) + Lead dev 1 คน
 
@@ -33,6 +33,7 @@ Decisions:
 - Generic invoice create ใช้ client retry key ที่คงเดิมตลอด page attempt + server canonical fingerprint + unique `(companyId, createIdempotencyKey)`; payload เดิม replay เอกสารเดิม, key เดิม payload ต่าง conflict. Issue retry ของเอกสารที่ออกแล้วคืนผลเดิมโดยไม่ reserve เลข/event ซ้ำ
 - Phase 4B payment allocation ใช้ unique `(companyId, idempotencyKey)` + server fingerprint version 1, Serializable transaction/advisory lock/CAS; retry key เดิม payload เดิมคืนผลเดิมแม้ invoice ปิดยอดแล้ว, key เดิม payload เปลี่ยนได้ 409, concurrent overpayment กลายเป็น unapplied credit โดยไม่ over-allocate
 - Browser QA พบ CREDIT_NOTE มี persisted `outstandingAmount` บวกตาม engine เดิม ทำให้ query กว้างเกินไปเอาเข้า receivable และ mobile ขึ้น "รอรับ"; แก้ที่ ledger boundary ให้ RECEIVABLE รับเฉพาะ INVOICE/BILLING_NOTE/DEBIT_NOTE และไม่ expose outstanding ของ CREDIT_NOTE ขณะที่ยอดรายรับยังเป็นค่าปรับลดติดลบตามเดิม; payment use-case เดิม fail closed ต่อ CREDIT_NOTE อยู่แล้ว
+- Phase 4C ใช้ official RD sources แยกเกณฑ์กฎหมาย “เกิน” ออกจาก product alert “แตะ/เกิน”; 80% เป็น early warning เท่านั้น. Canonical revenue root คือ issued `INVOICE/BILLING_NOTE/DEBIT_NOTE` + source-less `TAX_INVOICE`, หัก `CREDIT_NOTE`; linked `TAX_INVOICE` ไม่นับซ้ำแต่ correction ยังปรับยอด และ `VOIDED` ไม่เข้า. ช่วงตั้งแต่ต้นรอบ `CompanyTaxProfile.accountingPeriodMonth` ถึงวันนี้, เฉพาะ VAT fact `NOT_REGISTERED`, company-wide scope และผู้ใช้มี `accounting.document.read` + `company.vat_registration.read` + `tax.profile.read`; ขาดสิทธิ์ต้องไม่อ่าน accessor/รอบบัญชี, ส่วน config/status/scope ไม่พร้อมหรือ VAT accessor ล่ม = ซ่อน alert แต่สมุดหลักต้องไม่ล่ม
 
 Open questions:
 
@@ -56,12 +57,12 @@ Verification:
 - Browser local (in-app browser ตาม browser skill) ที่ 1280×900 และ 390×844: เลือก 2 โหมด, `0.0300 × 68.50 = 2.06`, ออก `INV-202608-00028`, รับชำระจน `PAID`, source-first credit note 1.03 พร้อมแนบรูป แล้วออก `CN-202608-00001`; รอบแรกพบปุ่มล้น viewport และแก้ก่อนจิ้มซ้ำสำเร็จ; fresh console error/warn = 0
 - Persistence proof: invoice มี generic-create idempotency key; PostgreSQL มี active `AttachmentLink targetType=accounting.document`, targetId ของ `CN-202608-00001`, purpose=`accounting.document.supporting`, branch ตรง target; หลักฐานภาพ/manifest อยู่ `docs/qa/evidence/p27-phase3b-2026-08-27/README.md`
 - Phase 4B final: real PostgreSQL accounting integration 9/9 (0 skip); web full 1109/1109, API full exit 0, contracts 196/196; API/web typecheck, Prisma validate และ diff check ผ่าน. Chrome local desktop/mobile export 79 rows, payment `INV-202608-00026` 500 บาทสำเร็จและออกจาก receivable, mobile summary รับเงิน/ยอดรอรับเปลี่ยน, mobile payment modal fit, console error/warn = 0. หลักฐาน `docs/qa/evidence/p27-phase4b-2026-08-27/README.md`
+- Phase 4C final: domain 22/22, web logic 9/9, real PostgreSQL accounting integration 9/9 (0 skip รวม allowed/forbidden branch ที่พิสูจน์ summary/entries/receivable/export ไม่รั่ว), full API exit 0, full web 1110/1110, contracts 196/196, contracts build + API/web typecheck + Nest boot DI + diff check ผ่าน. Chrome local 1280×900 และ 390×844 ทดสอบทั้ง APPROACHING/REACHED, conditional 30-day copy + official RD link, console error/warn = 0; QA document ถูกลบและ VAT seed ถูกคืน `REGISTERED` แล้ว (`qaCount=0`). หลักฐาน `docs/qa/evidence/p27-phase4c-vat-threshold-2026-08-27/README.md`
 
 หมายเหตุ spec-batch (2026-08-26): ตามคำสั่ง Owner "เขียน spec ที่เหลือให้ครบ" — เขียน 8 ฉบับใหม่ในวันเดียว: P10 external-signup, P11 email-claim, P12 line-login-link-journey (ฉบับรวม — มติเปิด line/exchange), P13 line-multi-company-staff, P15–P17 revenue-inbox-matching (ฉบับเดียว 3 หัวข้อ), P21 tax-workpaper-pp30, P24 growth-ux-full-pass, P26 billing-subscription (ราคารอ Owner); ทุกฉบับอิง Explore agents 3 ชุด (P26 billing / auth-LINE-signup / banking-tax) + แผนหลัก §13.5-13.6; matrix ในแผนหลักติ๊กครบ เหลือ P18–P20 ตั้งใจรอ provider
 
 Next:
 
-1. เปิด PR Phase 4B เข้า `develop`; merge เฉพาะเมื่อ CI ผ่านจริง
-2. ทำ Phase 4C คำเตือน VAT 1.8 ล้านตาม spec ข้อเสนอที่ Owner ยังไม่ตัด
-3. Owner ตอบ LED-FIN-07 แล้วทำ Phase 3C contract/migration ถ้าเลือกเก็บร่าง ambiguous VAT
-4. Phase 6 เชื่อม launch gate/availability/normalization/critical E2E; ต้องปิดคำตัดสิน retained permission และ root mutation matrix ก่อนประกาศ launch-complete
+1. เปิด PR Phase 4C เข้า `develop`; merge เฉพาะเมื่อ CI ผ่านจริง
+2. Owner ตอบ LED-FIN-07 แล้วทำ Phase 3C contract/migration ถ้าเลือกเก็บร่าง ambiguous VAT
+3. Phase 6 เชื่อม launch gate/availability/normalization/critical E2E; ต้องปิดคำตัดสิน retained permission และ root mutation matrix ก่อนประกาศ launch-complete

@@ -1,4 +1,8 @@
-import type { IncomeExpenseLedgerEntry, IncomeExpenseLedgerEntryType } from '@watchdog-bms/contracts';
+import type {
+  IncomeExpenseLedgerEntry,
+  IncomeExpenseLedgerEntryType,
+  IncomeExpenseLedgerVatRegistrationAlert,
+} from '@watchdog-bms/contracts';
 import { isCivilDate } from '@watchdog-bms/contracts';
 
 export type LedgerPermission = 'accounting.document.read' | 'accounting.document.export' | 'expense.read' | 'expense.export';
@@ -23,6 +27,23 @@ export function visibleLedgerEntryTypes(permissions: readonly string[]): IncomeE
     ...(income ? ['INCOME' as const, 'RECEIVABLE' as const] : []),
     ...(expense ? ['EXPENSE' as const] : []),
   ];
+}
+
+export function vatRegistrationAlertCopy(alert: IncomeExpenseLedgerVatRegistrationAlert) {
+  const thaiDate = (value: string) => {
+    const [year, month, day] = value.split('-').map(Number);
+    return `${String(day).padStart(2, '0')}/${String(month).padStart(2, '0')}/${year + 543}`;
+  };
+  const period = `${thaiDate(alert.periodStart)}–${thaiDate(alert.periodEnd)}`;
+  return alert.level === 'REACHED'
+    ? {
+        title: 'ยอดขายตามเอกสารแตะหรือเกิน 1.8 ล้านบาท',
+        detail: `ยอดขายสุทธิตามเอกสารในมั่งมี รอบบัญชี ${period} อยู่ที่ ฿${Number(alert.salesDocumentTotal).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      }
+    : {
+        title: 'ยอดขายตามเอกสารแตะ 80% ของเกณฑ์ 1.8 ล้านบาท',
+        detail: `ยอดขายสุทธิตามเอกสารในมั่งมี รอบบัญชี ${period} อยู่ที่ ฿${Number(alert.salesDocumentTotal).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      };
 }
 
 export function canExportLedger(type: IncomeExpenseLedgerEntryType, permissions: readonly string[]) {

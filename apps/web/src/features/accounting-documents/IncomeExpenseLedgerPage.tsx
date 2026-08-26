@@ -34,6 +34,7 @@ import {
   ledgerBarWidth,
   ledgerMonthPeriod,
   ledgerReceivePaymentBlocker,
+  vatRegistrationAlertCopy,
   visibleLedgerEntryTypes,
 } from './income-expense-ledger.logic';
 
@@ -413,6 +414,8 @@ export function IncomeExpenseLedgerPage({ companyId, permissions }: { companyId:
       : type === 'ALL'
         ? expenseEmptyAction
         : null;
+  const vatAlert = summary?.income.vatRegistrationAlert;
+  const vatAlertText = vatAlert ? vatRegistrationAlertCopy(vatAlert) : null;
 
   if (entryTypes.length === 0) {
     return (
@@ -457,6 +460,27 @@ export function IncomeExpenseLedgerPage({ companyId, permissions }: { companyId:
               <MangmeeStatCard label="จ่ายแล้ว" value={summary.expense.available ? `฿${money(summary.expense.paidExpenseTotal)}` : '—'} sub={!summary.expense.available ? unavailableCopy(summary.expense.unavailableReason) : 'ตามวันที่จ่ายเงิน'} tone="slate" />
               <MangmeeStatCard label="ส่วนต่างเงินรับ–เงินจ่าย" value={summary.cashDifference !== undefined ? `฿${money(summary.cashDifference)}` : '—'} sub={summary.cashDifference !== undefined ? 'เงินรับแล้ว หักเงินจ่ายแล้ว' : 'ต้องมีข้อมูลที่คำนวณสำเร็จทั้งสองฝั่ง'} tone="brand" />
             </div>
+            {vatAlert && vatAlertText && (
+              <section
+                aria-labelledby="vat-registration-alert-title"
+                className={`rounded-2xl border p-4 sm:p-5 ${vatAlert.level === 'REACHED' ? 'border-red-200 bg-red-50 text-red-950' : 'border-amber-200 bg-amber-50 text-amber-950'}`}
+              >
+                <h2 id="vat-registration-alert-title" className="text-lg font-bold">{vatAlertText.title}</h2>
+                <p className="mt-2 text-base font-semibold">{vatAlertText.detail}</p>
+                <p className="mt-2 text-base leading-7">
+                  นี่เป็นการเตือนจากเอกสารที่บันทึกในมั่งมีเท่านั้น ไม่ใช่การยืนยันสถานะภาษี กรุณาให้นักบัญชีตรวจรายรับทั้งหมดและรายการยกเว้น
+                  {vatAlert.level === 'REACHED' && ' หากรายรับตามกฎหมายเกินเกณฑ์ กรมสรรพากรระบุให้ยื่นคำขอจดทะเบียนภายใน 30 วันนับแต่วันที่รายรับเกิน'}
+                </p>
+                <a
+                  href="https://www.rd.go.th/7061.html"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-3 inline-flex min-h-11 items-center rounded-xl border border-current px-4 text-base font-bold underline underline-offset-4"
+                >
+                  อ่านหลักเกณฑ์จากกรมสรรพากร
+                </a>
+              </section>
+            )}
             <MangmeeCard className="border-brand-100 bg-brand-25 p-4 sm:p-5">
               <p className="text-base font-semibold text-gray-700">ส่วนต่างรายรับ–รายจ่ายที่บันทึก (ตามเอกสาร)</p>
               <p className="mt-1 text-2xl font-bold tabular-nums text-brand-800">{summary.documentDifference !== undefined ? `฿${money(summary.documentDifference)}` : '—'}</p>
