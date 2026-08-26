@@ -19,6 +19,7 @@ import type {
 import { civilDate, civilDayRangeToUtc, civilPeriodKey, coerceCivilDate, exclusiveEndOfDay } from '@watchdog-bms/contracts';
 import { expenseTaxSourceChecksum } from '../domain/logic/expense-status.logic';
 import { nextExpensePostingSource } from '../domain/logic/expense-auto-post.logic';
+import { calcPaymentAmounts, derivePaymentStatus, SETTLE_EPSILON } from '../domain/logic/expense-totals.logic';
 
 export type ExpenseDb = Prisma.TransactionClient | PrismaService['client'];
 type SubstituteReceiptPolicyWithApprovalMode = SubstituteReceiptPolicyRecord & { approvalMode: SubstituteReceiptApprovalMode };
@@ -324,14 +325,21 @@ export class PrismaExpenseRepository {
       const paidBefore = new Decimal(current.paidAmount.toString());
       const payable = new Decimal(current.netPayableAmount.toString());
       const paidAfter = paidBefore.plus(amount);
-      if (!amount.isFinite() || amount.lte(0) || paidAfter.gt(payable)) {
+      // FIN-01: a pre-§19d row stores a 4dp payable (580.0042) whose printed and displayed
+      // outstanding is the satang rounding (580.00, or 580.01 when it rounds up). Settling that
+      // figure must be accepted and must settle the row, so both the overshoot guard and the
+      // resulting totals use the one satang policy in expense-totals.logic. A real overpayment
+      // (a satang or more past the payable) is still refused.
+      if (!amount.isFinite() || amount.lte(0) || paidAfter.minus(payable).gt(SETTLE_EPSILON)) {
         throw new BadRequestException({
           code: 'expense_payment_exceeds_outstanding',
           message: 'Payment amount must be positive and cannot exceed the outstanding amount.',
         });
       }
-      const outstanding = Decimal.max(payable.minus(paidAfter), 0);
-      const paymentStatus = outstanding.eq(0) ? 'PAID' : 'PARTIALLY_PAID';
+      const payableText = payable.toFixed(4);
+      const paidAfterText = paidAfter.toFixed(4);
+      const { outstandingAmount } = calcPaymentAmounts(payableText, paidAfterText);
+      const paymentStatus = derivePaymentStatus(payableText, paidAfterText);
       const payment = await tx.expensePayment.create({
         data: {
           companyId: input.companyId,
@@ -349,8 +357,8 @@ export class PrismaExpenseRepository {
       const changed = await tx.expenseRecord.updateMany({
         where: { id: input.expenseId, companyId: input.companyId, status: 'CONFIRMED', updatedAt: current.updatedAt },
         data: {
-          paidAmount: paidAfter.toFixed(4),
-          outstandingAmount: outstanding.toFixed(4),
+          paidAmount: paidAfterText,
+          outstandingAmount,
           paymentStatus,
           paymentMethod: input.paymentMethod ?? null,
           paidAt: input.paidAt,
@@ -893,7 +901,7 @@ export class PrismaExpenseRepository {
           substituteReceiptGeneratedAt: null,
           substituteReceiptGeneratedByUserId: null,
           paidAmount: '0.0000',
-          outstandingAmount: new Decimal(expense.netPayableAmount.toString()).toFixed(4),
+          outstandingAmount: calcPaymentAmounts(expense.netPayableAmount.toString(), '0').outstandingAmount,
           paymentStatus: 'UNPAID',
           paymentMethod: null,
           paidAt: null,
@@ -1587,7 +1595,7 @@ export class PrismaExpenseRepository {
       }
       const paidBefore = new Decimal(expense.paidAmount.toString());
       const payable = new Decimal(expense.netPayableAmount.toString());
-      if (paidBefore.lt(0) || paidBefore.gt(payable)) {
+      if (paidBefore.lt(0) || paidBefore.minus(payable).gt(SETTLE_EPSILON)) {
         throw new Error('Expense payment totals are inconsistent. Reload before approval.');
       }
       const paymentAmount = payable.minus(paidBefore);
@@ -1612,7 +1620,9 @@ export class PrismaExpenseRepository {
         missingReceiptReason: evidence.missingReceiptReason,
         taxEvidenceStatus: 'SUPPORTING_ONLY', inputVatClaimStatus: 'NON_CLAIMABLE',
         taxEvidenceReasonCode: 'HANDWRITTEN_OR_TEXT_NEEDS_SUBSTITUTE',
-        paidAmount: payable.toFixed(4), outstandingAmount: '0.0000', paymentStatus: 'PAID',
+        // Never write the recorded paid amount back down: the guard above forgives a sub-satang
+        // overshoot, so paidBefore can sit a fraction past the payable and still settle here.
+        paidAmount: Decimal.max(paidBefore, payable).toFixed(4), outstandingAmount: '0.0000', paymentStatus: 'PAID',
         paymentMethod: evidence.paymentMethod, paidAt: evidence.paymentDate,
         substituteReceiptGeneratedAt: now, substituteReceiptGeneratedByUserId: input.approverUserId,
         reviewedByUserId: input.approverUserId, reviewedAt: now, updatedByUserId: input.approverUserId,
