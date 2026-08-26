@@ -25,7 +25,7 @@ import {
 } from '../domain/logic/accounting-totals.logic';
 import { initialPostingStatus, validateCumulativeCreditNote, validateOutputTaxDocument } from '../domain/logic/accounting-status.logic';
 import { buildReversalLines } from '../../ledger/domain/logic/journal-balance.logic';
-import type { AccountingDocumentType, AccountingDocumentStatus, AccountingQuotationApprovalStatus, ResolveTransactionTaxPreviewDto } from '@watchdog-bms/contracts';
+import type { AccountingDocumentType, AccountingDocumentStatus, AccountingQuotationApprovalStatus, ResolveTransactionTaxPreviewDto, RevenueCategorySummary, CreateRevenueCategoryInput, UpdateRevenueCategoryInput } from '@watchdog-bms/contracts';
 import { branchScopeWhere } from '../../data-model-core/domain/logic/branch.logic';
 import { civilDate, civilPeriodKey, coerceCivilDate, exclusiveEndOfDay } from '@watchdog-bms/contracts';
 import { PrismaDocumentSequenceRepository } from '../../data-model-core/infrastructure/repositories/prisma-document-sequence.repository';
@@ -173,6 +173,7 @@ export class PrismaAccountingRepository {
             lineTotalAmount: computedLines[i].lineTotalAmount,
             taxCategory: l.taxCategory,
             revenueCategory: l.revenueCategory,
+            revenueCategoryId: l.revenueCategoryId,
           })),
         },
       },
@@ -327,6 +328,7 @@ export class PrismaAccountingRepository {
             lineTotalAmount: computedLines[index].lineTotalAmount,
             taxCategory: line.taxCategory,
             revenueCategory: line.revenueCategory,
+            revenueCategoryId: line.revenueCategoryId,
           })),
         });
       }
@@ -657,6 +659,21 @@ export class PrismaAccountingRepository {
         if (error) throw new UnprocessableEntityException(error);
       }
 
+      // Ledger spec F-LED-2: freeze the revenue-category NAME onto each line at issue time. The
+      // free-text `revenueCategory` column is the immutable snapshot the ledger reads
+      // (journal.use-case categoryKey); the FK keeps pointing at the live master for reports.
+      const revenueCategoryIds = [...new Set((currentRow.lines ?? []).map((l: any) => l.revenueCategoryId).filter(Boolean))] as string[];
+      if (revenueCategoryIds.length > 0) {
+        const categories = await tx.revenueCategory.findMany({ where: { id: { in: revenueCategoryIds }, companyId }, select: { id: true, name: true } });
+        const revenueNameById = new Map(categories.map((c: any) => [c.id, c.name] as const));
+        for (const line of currentRow.lines ?? []) {
+          if (!line.revenueCategoryId) continue;
+          const revenueName = revenueNameById.get(line.revenueCategoryId);
+          if (!revenueName) throw new UnprocessableEntityException('Line revenue category was not found for this company');
+          await tx.accountingDocumentLine.update({ where: { id: line.id }, data: { revenueCategory: revenueName } });
+        }
+      }
+
       const issuedAt = new Date();
       const updated = await tx.accountingDocument.updateMany({
         where: { id, companyId, status: expectedStatus, ...(expectedUpdatedAt ? { updatedAt: expectedUpdatedAt } : {}) },
@@ -792,6 +809,73 @@ export class PrismaAccountingRepository {
       });
       return this.toPaymentRecord(updated);
     });
+  }
+
+  // ---- Revenue categories (ledger spec F-LED-2) ----
+  // Company-scoped only — no `companyId: null` union like the expense picker: global default rows
+  // are exactly the duplication trap this master was designed without (LED-FIN-03).
+
+  async listRevenueCategories(companyId: string): Promise<RevenueCategorySummary[]> {
+    const rows = await this.prisma.client.revenueCategory.findMany({
+      where: { companyId, status: 'ACTIVE' },
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+    });
+    return rows.map((row) => this.toRevenueCategorySummary(row));
+  }
+
+  /** Management view including archived rows. */
+  async listAllRevenueCategories(companyId: string): Promise<RevenueCategorySummary[]> {
+    const rows = await this.prisma.client.revenueCategory.findMany({
+      where: { companyId },
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+    });
+    return rows.map((row) => this.toRevenueCategorySummary(row));
+  }
+
+  async findRevenueCategoryById(companyId: string, categoryId: string): Promise<RevenueCategorySummary | null> {
+    const row = await this.prisma.client.revenueCategory.findFirst({ where: { id: categoryId, companyId } });
+    return row ? this.toRevenueCategorySummary(row) : null;
+  }
+
+  async createRevenueCategory(companyId: string, input: CreateRevenueCategoryInput): Promise<RevenueCategorySummary> {
+    const row = await this.prisma.client.revenueCategory.create({
+      data: {
+        companyId,
+        name: input.name,
+        accountHintKey: input.accountHintKey,
+        defaultOutputTaxCode: input.defaultOutputTaxCode ?? null,
+        sortOrder: input.sortOrder ?? 0,
+      },
+    });
+    return this.toRevenueCategorySummary(row);
+  }
+
+  async updateRevenueCategory(companyId: string, categoryId: string, input: UpdateRevenueCategoryInput): Promise<RevenueCategorySummary> {
+    await this.prisma.client.revenueCategory.updateMany({
+      where: { id: categoryId, companyId },
+      data: {
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.accountHintKey !== undefined ? { accountHintKey: input.accountHintKey } : {}),
+        ...(input.defaultOutputTaxCode !== undefined ? { defaultOutputTaxCode: input.defaultOutputTaxCode } : {}),
+        ...(input.sortOrder !== undefined ? { sortOrder: input.sortOrder } : {}),
+        ...(input.status !== undefined ? { status: input.status as any } : {}),
+      },
+    });
+    const row = await this.prisma.client.revenueCategory.findFirst({ where: { id: categoryId, companyId } });
+    if (!row) throw new NotFoundException('Revenue category not found');
+    return this.toRevenueCategorySummary(row);
+  }
+
+  private toRevenueCategorySummary(row: any): RevenueCategorySummary {
+    return {
+      id: row.id,
+      companyId: row.companyId,
+      name: row.name,
+      accountHintKey: row.accountHintKey,
+      defaultOutputTaxCode: row.defaultOutputTaxCode ?? null,
+      status: row.status,
+      sortOrder: row.sortOrder,
+    };
   }
 
   async findPaymentById(companyId: string, id: string, branchIds?: string[]): Promise<PaymentRecord | null> {
@@ -1199,6 +1283,7 @@ export class PrismaAccountingRepository {
       whtAmount: row.whtAmount.toString(), lineSubtotalAmount: row.lineSubtotalAmount.toString(),
       lineTotalAmount: row.lineTotalAmount.toString(), taxCategory: row.taxCategory ?? undefined,
       revenueCategory: row.revenueCategory ?? undefined,
+      revenueCategoryId: row.revenueCategoryId ?? undefined,
       taxSnapshot,
       taxComponents: Array.isArray(row.taxComponentsJson) ? row.taxComponentsJson : undefined,
       createdAt: row.createdAt, updatedAt: row.updatedAt,

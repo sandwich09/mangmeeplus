@@ -41,6 +41,7 @@ import {
   bootstrapCompanyExpenseCategories,
   type ExpenseCategoryBootstrapSummary,
 } from '../../../expenses/application/services/expense-category-bootstrap.service.js';
+import { bootstrapCompanyRevenueCategories } from '../../../accounting-documents/application/services/revenue-category-bootstrap.service.js';
 
 export type CreateCompanyOnboardingCommand = {
   companyName: string;
@@ -278,6 +279,11 @@ export class CreateCompanyOnboardingUseCase {
       // `expense_account_unmapped:no_category`. Seeded after the chart above because each category
       // binds to an account in it.
       const expenseCategories = await bootstrapCompanyExpenseCategories(tx, { companyId: company.id });
+
+      // Ledger spec F-LED-2: income-side category master, six Owner-confirmed defaults. No chart
+      // binding and no tax-code suggestion yet (accountant confirmation pending) — idempotent via
+      // the NOT NULL companyId unique fence + skipDuplicates.
+      await bootstrapCompanyRevenueCategories(tx, { companyId: company.id });
 
       // Seed the standard feature package: an explicit row for EVERY canonical entitlement key —
       // parents and submenus alike — so the new company is deny-by-default (the permission

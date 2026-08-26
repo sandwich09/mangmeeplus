@@ -108,6 +108,7 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: 'accounting.document.issue',           description: 'Issue accounting documents',             riskLevel: 'HIGH' },
   { key: 'accounting.document.void',            description: 'Void accounting documents',              riskLevel: 'HIGH' },
   { key: 'accounting.document.export',          description: 'Export accounting documents',            riskLevel: 'MEDIUM' },
+  { key: 'accounting.revenue_category.manage',  description: 'Manage revenue categories',              riskLevel: 'MEDIUM' },
   { key: 'accounting.quotation.read',           description: 'Read quotations',                        riskLevel: 'LOW' },
   { key: 'accounting.quotation.create',         description: 'Create quotation drafts',                riskLevel: 'MEDIUM' },
   { key: 'accounting.quotation.update',         description: 'Update draft quotations',                riskLevel: 'MEDIUM' },
@@ -571,7 +572,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'expense.read', 'expense.evidence.read', 'expense.read_own', 'expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload',
     'expense.update', 'expense.review', 'expense.confirm', 'expense.reject', 'expense.void', 'expense.delete',
     'expense.payment.record', 'expense.duplicate.resolve',
-    'expense.category.manage', 'expense.signature.self_manage', 'expense.signature.manage', 'expense.export',
+    'expense.category.manage', 'accounting.revenue_category.manage', 'expense.signature.self_manage', 'expense.signature.manage', 'expense.export',
     // Item 13 banking – Admin can read and manage accounts only
     'bank.account.read', 'bank.account.manage',
     'bank.statement.read', 'bank.match.read',
@@ -774,7 +775,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'procurement.goods_receipt.read_related', 'procurement.vendor_bill.read_related', 'procurement.supplier_payment.read_related',
     'expense.update', 'expense.review', 'expense.confirm', 'expense.reject', 'expense.void', 'expense.delete',
     'expense.payment.record', 'expense.duplicate.resolve', 'expense.ocr.request', 'expense.ai.verify',
-    'expense.category.manage', 'expense.signature.self_manage', 'expense.signature.manage', 'expense.export',
+    'expense.category.manage', 'accounting.revenue_category.manage', 'expense.signature.self_manage', 'expense.signature.manage', 'expense.export',
     // Item 10 – Finance can read ledger and create draft manual journals
     'ledger.account.read', 'ledger.journal.read', 'journal.entry.create',
     'ledger.posting-rule.read', 'ledger.report.read', 'ledger.period.read', 'ledger.export',

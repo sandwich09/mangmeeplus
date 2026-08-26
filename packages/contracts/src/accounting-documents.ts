@@ -70,6 +70,9 @@ export type AccountingDocumentLineSummary = {
   lineTotalAmount: string;
   taxCategory?: string;
   revenueCategory?: string;
+  /** FK to the RevenueCategory master (live row); `revenueCategory` above is the immutable
+   *  name snapshot frozen at issue time. */
+  revenueCategoryId?: string;
   taxSnapshot?: import('./transaction-tax.js').TransactionTaxSnapshot;
   taxComponents?: import('./transaction-tax.js').TransactionTaxComponentPreview[];
 };
@@ -255,6 +258,37 @@ export type PaginatedResult<T> = {
   total: number;
   page: number;
   pageSize: number;
+};
+
+// ---- Revenue categories (accounting.revenue_category.manage) ----
+// Income-expense-ledger spec F-LED-2: company-scoped master for income categories.
+
+export type RevenueCategoryStatus = 'ACTIVE' | 'ARCHIVED';
+
+export type RevenueCategorySummary = {
+  id: string;
+  companyId: string;
+  name: string;
+  accountHintKey: string;
+  /** Suggested OUTPUT Tax Code, as its stable external code. Never a definition id. */
+  defaultOutputTaxCode: string | null;
+  status: RevenueCategoryStatus;
+  sortOrder: number;
+};
+
+export type CreateRevenueCategoryInput = {
+  name: string;
+  accountHintKey: string;
+  defaultOutputTaxCode?: string;
+  sortOrder?: number;
+};
+
+export type UpdateRevenueCategoryInput = {
+  name?: string;
+  accountHintKey?: string;
+  defaultOutputTaxCode?: string | null;
+  sortOrder?: number;
+  status?: RevenueCategoryStatus;
 };
 
 // Document sequence keys

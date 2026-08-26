@@ -115,6 +115,11 @@ function expenseCategoryTx() {
         return { count: data.length };
       },
     },
+    // The revenue-category bootstrap (ledger spec F-LED-2) seeds through the same tx; it never
+    // fails onboarding (skipDuplicates against the NOT NULL companyId unique fence).
+    revenueCategory: {
+      createMany: async ({ data }: any) => ({ count: data.length }),
+    },
   };
 }
 

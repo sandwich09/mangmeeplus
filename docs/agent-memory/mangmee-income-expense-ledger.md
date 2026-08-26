@@ -1,6 +1,6 @@
 # Agent Memory: mangmee-income-expense-ledger
 
-Status: Spec v1.1 + plan ACTIVE — **Phase 1 (LED-FIN-01) โค้ดเสร็จ 2026-08-26**: `accounting-totals.logic.ts` เป็น decimal.js ROUND_HALF_UP ทั้งไฟล์, จุด float ใน `createPayment` แปลงครบ, `paymentNumber` ออกจาก sequence `accounting.payment` แบบ reserve+commit ใน tx เดียว; golden spec 8 เคส (3 เคสเป็น float tripwire ที่ของเดิมตอบผิดจริง: 57.50×7%→4.03 ไม่ใช่ 4.02, 33.50×3%→1.01, 1.005→1.01) ลงทะเบียนใน test list แล้ว → ต่อไป Phase 2 (หมวดรายรับ)
+Status: Spec v1.1 + plan ACTIVE — **Phase 1 merged (PR #247) และ Phase 2 (หมวดรายรับ) โค้ดเสร็จ 2026-08-26**: model `RevenueCategory` (company-scoped NOT NULL + unique จริง) + migration `20260826160000_revenue_category` + `AccountingDocumentLine.revenueCategoryId` FK, bootstrap 6 หมวด Owner (idempotent skipDuplicates, ยังไม่ผูก account/tax code รอนักบัญชี), เรียกจาก onboarding + script backfill บริษัทเดิม, permission ใหม่ `accounting.revenue_category.manage` (ADMIN+FINANCE, prefix rule → `sales_documents`), API `companies/:id/revenue-categories` (GET/manage/POST/PATCH ไม่มี DELETE), validate หมวด ACTIVE ตอน create/update เอกสาร + **snapshot ชื่อหมวดลงคอลัมน์ `revenueCategory` ตอน issue ใน tx**, web `RevenueCategoryPanel` + route `/sales-documents/revenue-categories` + ลิงก์จาก hub → ต่อไป Phase 3 (บันทึกรายรับ 2 โหมด + CN/DN แบบ FlowAccount)
 
 Owner: thawatchai (Product Owner) + Lead dev 1 คน
 
@@ -36,7 +36,8 @@ Verification:
 
 Next:
 
-1. PR Phase 1 เข้า develop + admin merge
-2. Phase 2: `RevenueCategory` model→API→UI→bootstrap 6 หมวด (M1, M2)
-3. ไล่ Phase 3→6 ตามแผน; รายงานผลต่อ Owner ราย phase
-4. หมายเหตุข้ามงาน: PR #238 (release รอบก่อน develop→main) CI เขียวครบ ยังรอ Owner approve+merge → แล้วผม dispatch UAT ตาม runbook
+1. PR Phase 2 เข้า develop + admin merge
+2. Phase 3: repository bundle `recordSimpleIncomeBundle` + endpoint `simple-income` + ขยาย CN/DN อ้าง INVOICE + M5 reason columns + หน้า "บันทึกรายรับ" mobile-first
+3. Phase 4 หน้าสมุด+export → Phase 5 จัดหมวดรายจ่ายซ้อน → Phase 6 เปิดระบบ/E2E/หลักฐาน
+4. Phase 2 verification: contracts build ✓, tsc api/web เงียบ, module accounting 155/155, onboarding+access-control 0 fail (แก้ fake tx เพิ่ม `revenueCategory` stub), web 1051/1051; migration ยังไม่ได้ apply บน DB จริง (ไม่มี local DB รัน) — CI Migration Review + dry-run clone ตาม protocol ก่อน UAT
+5. หมายเหตุข้ามงาน: PR #238 (release รอบก่อน develop→main) CI เขียวครบ ยังรอ Owner approve+merge → แล้วผม dispatch UAT ตาม runbook

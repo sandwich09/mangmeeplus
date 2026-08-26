@@ -12,7 +12,7 @@ import type {
   DocumentLineSummary,
 } from './accounting-documents.model';
 import { authedApiFetch as apiFetch } from '@/common/api/authed-fetch';
-import type { TransactionTaxContext } from '@watchdog-bms/contracts';
+import type { CreateRevenueCategoryInput, RevenueCategorySummary, TransactionTaxContext, UpdateRevenueCategoryInput } from '@watchdog-bms/contracts';
 
 function qs(params?: Record<string, unknown>): string {
   const q = new URLSearchParams();
@@ -128,4 +128,21 @@ export async function createPayment(
 
 export async function voidPayment(companyId: string, paymentId: string, reason: string): Promise<PaymentSummary> {
   return apiFetch(`/v1/companies/${companyId}/accounting/payments/${paymentId}/void`, { method: 'POST', body: JSON.stringify({ reason }) });
+}
+
+// ---- Revenue categories (ledger spec F-LED-2) ----
+export async function listRevenueCategories(companyId: string): Promise<RevenueCategorySummary[]> {
+  return apiFetch(`/v1/companies/${companyId}/revenue-categories`);
+}
+
+export async function listManageRevenueCategories(companyId: string): Promise<RevenueCategorySummary[]> {
+  return apiFetch(`/v1/companies/${companyId}/revenue-categories/manage`);
+}
+
+export async function createRevenueCategory(companyId: string, body: CreateRevenueCategoryInput): Promise<RevenueCategorySummary> {
+  return apiFetch(`/v1/companies/${companyId}/revenue-categories`, { method: 'POST', body: JSON.stringify(body) });
+}
+
+export async function updateRevenueCategory(companyId: string, categoryId: string, body: UpdateRevenueCategoryInput): Promise<RevenueCategorySummary> {
+  return apiFetch(`/v1/companies/${companyId}/revenue-categories/${categoryId}`, { method: 'PATCH', body: JSON.stringify(body) });
 }
