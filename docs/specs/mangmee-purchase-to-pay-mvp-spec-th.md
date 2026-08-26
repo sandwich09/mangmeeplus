@@ -1,6 +1,6 @@
 # ซื้อและจ่ายเงิน แบบ FlowAccount (Purchase-to-Pay MVP + ใบลดหนี้ฝั่งซื้อ) — Spec P28
 
-สถานะ: **DRAFT รอ Owner ตอบคำถาม §10 ก่อนเริ่ม coding (docs-first)**
+สถานะ: **DRAFT รอ Owner ตอบคำถาม §10 ข้อ 2–5 ก่อนเริ่ม coding (docs-first)** — ข้อ 1 (คิว) ตอบแล้ว 2026-08-26: ต่อจาก P27 ทันที; แผนส่งมอบรวมกับ P27 แล้ว (ภาค 2 Phase 7–12)
 
 ที่มา: คำสั่ง Owner 2026-08-26 — "แบบ FlowAccount ต้องได้ทั้งฝั่งจ่ายและซื้อทั้งหมด", "หน้าจอใช้งาน ให้ทำ spec design plan ให้เรียบร้อยก่อน, ทำอันนี้ด้วยใบลดหนี้ฝั่งซื้อ (รับจากผู้ขาย)"
 
@@ -13,7 +13,7 @@
 - [SAP-compatible transaction tax spec](sap-compatible-transaction-tax-account-determination-spec.md) — ชั้นภาษีที่ vendor bill ใช้อยู่
 - [ผลสำรวจ FlowAccount](../research/flowaccount-accounting-product-audit-2026-08-26-th.md) §7 (PO/GR/expense/ใบเตรียมจ่าย/2-3-way match)
 - Agent memories ที่ผูกงานนี้: `item-12-procurement-ap-review` (จอด supplier credit เป็น backlog — งานนี้คือการปลดจอด), `h-04-vendor-bill-void-true-reversal`, `h-07-vendor-bill-maker-checker`, `procurement-satang-rounding`
-- แผนส่งมอบ: [Purchase-to-Pay MVP Plan](../plans/mangmee-purchase-to-pay-mvp-plan-th.md)
+- แผนส่งมอบ: [แผนรวม P27+P28 — ภาค 2 (Phase 7–12)](../plans/mangmee-income-expense-ledger-plan-th.md) (Owner 2026-08-26 สั่งรวมสองแผนเป็นฉบับเดียว)
 
 ## 1. เป้าหมาย
 
@@ -204,7 +204,7 @@ SupplierCreditNote {
 
 ## 10. คำถามที่ Owner ต้องตอบก่อนเริ่ม coding
 
-1. **ลำดับ P28 กับงานที่เหลือของ P27** — ทำ P27 Phase 3–6 ให้จบก่อน (แนะนำ — สมุดฝั่งขายเป็นฐานที่ F-P2P-4 ต้องต่อ) หรือสลับ?
+1. ~~**ลำดับ P28 กับงานที่เหลือของ P27**~~ — **ตอบแล้ว (Owner 2026-08-26)**: ทำ P27 ให้จบก่อนแล้ว P28 ต่อทันที (สาย billing P14→P26 โยกไปท้ายคิวสุด) — สะท้อนในคิวรวมของ[แผนรวม P27+P28](../plans/mangmee-income-expense-ledger-plan-th.md)
 2. **เครดิตค้างกับผู้ขาย** (CN เกินยอดค้าง/บิลจ่ายแล้ว): MVP บันทึก+โชว์ให้หักมือถัดไป (แนะนำ) พอไหม หรือต้องหักบิลถัดไปอัตโนมัติ/บันทึกรับเงินคืนตั้งแต่รอบแรก?
 3. **ใบเพิ่มหนี้ฝั่งซื้อ**: เข้าคิวถัดไปหลัง CN (แนะนำ — บิลใหม่ทดแทนได้ระหว่างนี้) หรือทำพร้อมกัน (+~1 วัน)?
 4. **Two-step payment release** (คนเตรียมจ่าย ≠ คนปล่อยจ่าย): คงไว้เป็น backlog ตามเดิม หรือยกเข้ารอบนี้ (+~1–1.5 วัน)?

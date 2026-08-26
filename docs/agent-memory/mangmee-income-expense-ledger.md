@@ -28,7 +28,7 @@ Open questions: — (ไม่มี; ทุกข้อปิดแล้ว)
 Artifacts:
 
 - `docs/specs/mangmee-income-expense-ledger-spec-th.md` v1.1 (คำตอบ §9 + ผล V1–V6 + F-LED-6 + M5/M6 + LED-FIN-05)
-- `docs/plans/mangmee-income-expense-ledger-plan-th.md` ACTIVE (~9.5 วัน; Phase 0 ปิด; Phase 3 รวม bundle + CN/DN)
+- `docs/plans/mangmee-income-expense-ledger-plan-th.md` ACTIVE — **รวมเป็นแผนเดียวกับ P28 แล้ว (Owner 2026-08-26)**: ภาค 1 = P27 Phase 0–6 (0–2 ✅), ภาค 2 = P28 Phase 7–12; ไฟล์ plan P28 เดิมเป็นป้ายชี้
 - `docs/plans/mangmee-brain-2-5-day-priority-plan-th.md` P27 + §10/§11 อัปเดตคิวตัดสินแล้ว
 - PR #245 (docs ชุดแรก merged); PR ถัดไป = ชุดคำตอบ+Phase 0 นี้
 
