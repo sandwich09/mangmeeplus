@@ -742,9 +742,11 @@ export const LINE_AI_PRESENTATION_PERMISSION_MANIFEST: readonly PresentationPerm
     id: 'expense-draft-structured-card', journey: 'expense_capture_terminal', expectedPresentationKind: 'flex',
     authority: 'allowed', expectedCtaPolicy: 'tenant_path_no_financial_params',
     expectedWebPath: '/companies/{companyId}/expenses/{expenseId}',
-    expectedDomainWriteCount: 1, maxAdditionalModelCalls: 0, evidenceStatus: 'required_gap',
-    note: 'GAP: §10.1 asks for a dedicated "ร่างค่าใช้จ่าย" card with amount/item/category/status rows. Today the '
-      + 'generic assistant card wraps the canonical reply text instead (Phase 1B/4).',
+    expectedDomainWriteCount: 1, maxAdditionalModelCalls: 0, evidenceStatus: 'implemented_fixture',
+    note: 'DEFAULT OFF (LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED): §10.1 dedicated "ร่างค่าใช้จ่าย" card with '
+      + 'amount/item/category/status rows, built ONLY from grounded capture values — an ungrounded row is '
+      + 'omitted, never filled. altText stays the canonical reply text. Code path and fixtures exist; no '
+      + 'provider-replay or UAT evidence recorded yet.',
   },
   {
     id: 'reimbursement-payer-clarify-card', journey: 'reimbursement_clarify', expectedPresentationKind: 'flex',

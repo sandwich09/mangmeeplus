@@ -2,8 +2,26 @@
 
 Status: Implementation EXISTS on this branch behind three default-off flags, and is MERGE-SAFE but NOT
 ACTIVATION-READY. No deploy, no config/flag change in any environment. Phase 0 eval freeze is closed for
-§14.1 (structural), §14.2 (now bound to the real assessor) and §14.3 (19 implemented_fixture / 2
+§14.1 (structural), §14.2 (now bound to the real assessor) and §14.3 (20 implemented_fixture / 1
 required_gap). Every behaviour phase stays gated, and DRAFT-only (Phase 3B) still waits for owner GO.
+
+WP-C (2026-08-26): the §10.1 dedicated expense draft card landed — `buildExpenseDraftCardMessage()` in
+`line-business-card.logic.ts` renders `ร่างค่าใช้จ่าย` as structured rows (`ยอดรวม`, `รายการ`, `หมวดหมู่`,
+`สถานะ`) instead of wrapping the canonical reply in the generic 1,200-character body (§10.2). NO new flag:
+it reuses `LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED`, which already gates "is the terminal part a Flex card",
+and the specific-vs-generic card choice happens INSIDE that flag-on branch — so flag-off is still the
+byte-identical legacy all-text shape, pinned by a snapshot test. Rules that matter: a row the capture did
+not ground is OMITTED, never filled with the text reply's `ยังไม่ระบุ` placeholder; a card with nothing
+grounded degrades to the generic text card rather than shipping an empty frame; `altText` stays the
+CANONICAL reply text (so the WP-A Flex→text fallback re-sends the same words, under the same known
+`preview(text, 400)` ceiling as every sibling card); the CTA is the tenant path
+`/companies/{companyId}/expenses/{expenseId}` only, and an untrusted base loses the BUTTON, never guesses a
+URL. Wired at the two capture terminals that actually create a draft (text-note capture and media capture
+with a receipt draft); terminals with no grounded draft keep the generic card. That moved
+`expense-draft-structured-card` from `required_gap` to `implemented_fixture` — read it the same way as
+WP-A/WP-B: code path and fixtures exist, the flag is off in every environment, and no provider replay or
+UAT evidence exists. The ONLY remaining §14.3 gap is `reimbursement-draft-card-owner-go`, which is parked
+on owner GO and was deliberately left untouched.
 
 WP-B (2026-08-26): the §8.3 DB-backed neutral intake state landed behind a FOURTH default-off flag,
 `LINE_AI_INTAKE_STATE_MODE` (`off` | `shadow` | `on`). New `LineIntakeState` model + migration
@@ -46,7 +64,9 @@ clarification, terminal Flex presentation, and latency lanes.
   that lane only. Mixed greeting + business text (including a newline-split bubble) keeps the full route.
 - `LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED` (`false`): terminal part of a completed multi-part reply becomes
   the trusted Flex card; a terminal past the Flex body limit ships intact as text with a concise card after
-  it, and a part past LINE's 5,000-character cap is refused rather than sliced.
+  it, and a part past LINE's 5,000-character cap is refused rather than sliced. Since WP-C this same flag
+  also decides WHICH card: an expense capture terminal that grounded a draft gets the dedicated §10.1
+  `ร่างค่าใช้จ่าย` card, everything else keeps the generic assistant card.
 
 There is NO reimbursement writer anywhere in this branch: the payer question, the clarify-only card and the
 web handoff are canonical server copy with zero domain writes.
