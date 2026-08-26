@@ -93,14 +93,50 @@ function aggregationIncomplete(data: Record<string, unknown>): boolean {
   return Object.entries(data).some(([key, value]) => INCOMPLETE_AGGREGATION_KEY.test(key) && Boolean(value));
 }
 
+/** Exact 2dp half-up rounding on a plain decimal string — pure string math, no binary float
+ *  anywhere (PR #238 R3): Number('90071992547409.93').toFixed(2) === '90071992547409.94', so a
+ *  string that survived the whole pipeline exactly must not be handed to Number at the very last
+ *  render step. The carry loop is manual because the integer part may exceed 2^53. */
+function roundDecimalString2(raw: string): string {
+  const negative = raw.startsWith('-');
+  const [intRaw = '0', fracRaw = ''] = (negative ? raw.slice(1) : raw).split('.');
+  let intPart = intRaw.replace(/^0+(?=\d)/, '');
+  let cents = (fracRaw + '00').slice(0, 2);
+  if (fracRaw.length > 2 && fracRaw.charCodeAt(2) >= 53 /* '5' */) {
+    const bumped = String(Number(cents) + 1).padStart(2, '0'); // two digits — safe integer math
+    if (bumped.length > 2) {
+      cents = '00';
+      const digits = intPart.split('');
+      let index = digits.length - 1;
+      for (;;) {
+        if (index < 0) { digits.unshift('1'); break; }
+        if (digits[index] === '9') { digits[index] = '0'; index -= 1; continue; }
+        digits[index] = String(Number(digits[index]) + 1); break;
+      }
+      intPart = digits.join('');
+    } else {
+      cents = bumped;
+    }
+  }
+  return `${negative ? '-' : ''}${intPart}.${cents}`;
+}
+
+const PLAIN_DECIMAL = /^-?\d+(\.\d+)?$/;
+
 /** Money reaches these families in three shapes — a JS number carrying binary-float noise (33.33 + 66.67
- *  → 100.00000000000001), a 4-decimal Decimal string ('2450.0000'), or an already-grouped string — so all
- *  of them render at one satang precision (owner answer template 2026-08-26). A value that is not a
- *  number at all is shown exactly as the tool sent it rather than guessed at. */
+ *  → 100.00000000000001), a Decimal string ('2450.0000' or an exact 2dp aggregate), or an
+ *  already-grouped string — so all of them render at one satang precision (owner answer template
+ *  2026-08-26). A decimal STRING is rounded and grouped without ever touching binary floating point,
+ *  so an exact aggregate beyond 2^53/100 renders unchanged; a value that is not a number at all is
+ *  shown exactly as the tool sent it rather than guessed at. */
 function moneyText(value: string | number): string {
-  const amount = typeof value === 'number' ? value : Number(value.replace(/,/g, ''));
-  if (!Number.isFinite(amount)) return groupThousands(String(value));
-  return groupThousands(amount.toFixed(2));
+  if (typeof value === 'string') {
+    const plain = value.replace(/,/g, '');
+    if (PLAIN_DECIMAL.test(plain)) return groupThousands(roundDecimalString2(plain));
+    return groupThousands(String(value));
+  }
+  if (!Number.isFinite(value)) return groupThousands(String(value));
+  return groupThousands(value.toFixed(2));
 }
 
 /** Grouped count + its English noun, singular for exactly one (Thai counts need no such agreement). */

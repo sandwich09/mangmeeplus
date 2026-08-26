@@ -245,6 +245,30 @@ describe('F2 accounting.get_summary::list — สรุปรายการเ�
     }
   });
 
+  it('renders an exact Decimal-string aggregate UNCHANGED — no binary float at the last step (PR #238 R3)', () => {
+    // 90071992547409.93 cannot round-trip a JS Number (Number(...).toFixed(2) says ...94): the API
+    // keeps it as an exact string end-to-end, so the FINAL user-facing render must too — one satang
+    // silently changed here would undo the whole Decimal pipeline.
+    const r = formatPreparedSimpleRead(ACCOUNTING, accountingOutput(accountingData({
+      total: 1, byType: { INVOICE: { count: 1, totalAmount: '90071992547409.93' } },
+    })), TH);
+    assert.equal(r.kind, 'answer');
+    if (r.kind === 'answer') {
+      assert.match(r.replyText, /90,071,992,547,409\.93 บาท/);
+      assert.doesNotMatch(r.replyText, /409\.94/);
+    }
+    // Half-satang strings round HALF-UP decimally (the float path used to round 1.005 down).
+    const half = formatPreparedSimpleRead(ACCOUNTING, accountingOutput(accountingData({
+      total: 1, byType: { INVOICE: { count: 1, totalAmount: '1.005' } },
+    })), TH);
+    if (half.kind === 'answer') assert.match(half.replyText, /1\.01 บาท/);
+    // Carry across the decimal point and through 9s — pure string math must handle 999.995 → 1,000.00.
+    const carry = formatPreparedSimpleRead(ACCOUNTING, accountingOutput(accountingData({
+      total: 1, byType: { INVOICE: { count: 1, totalAmount: '999.995' } },
+    })), TH);
+    if (carry.kind === 'answer') assert.match(carry.replyText, /1,000\.00 บาท/);
+  });
+
   it('keeps an unknown document type as its raw key instead of inventing a label', () => {
     const r = formatPreparedSimpleRead(ACCOUNTING, accountingOutput(accountingData({
       total: 2, byType: { DELIVERY_ORDER: { count: 2, totalAmount: 500 } },
