@@ -153,9 +153,8 @@ describe('expense category golden harness', () => {
     );
   });
 
-  it('reports NOT-A-BASELINE until 30 owner-confirmed fixtures exist', () => {
+  it('reports NOT-A-BASELINE until 30 owner-confirmed fixtures are confirmed AND evaluated (PR #238 T0)', () => {
     assert.ok(EXPENSE_CATEGORY_GOLDEN_FIXTURES.length >= 3, 'the starter set still has to exercise the harness');
-    // Flips only when the Owner-confirmed set actually lands; until then the report may not claim accuracy.
     const starters = scoreExpenseCategoryGolden([], EXPENSE_CATEGORY_GOLDEN_FIXTURES);
     assert.ok(starters.ownerConfirmedFixtures < EXPENSE_CATEGORY_GOLDEN_MIN_CONFIRMED_FIXTURES);
     assert.equal(starters.baselineReady, false);
@@ -165,12 +164,54 @@ describe('expense category golden harness', () => {
       { length: EXPENSE_CATEGORY_GOLDEN_MIN_CONFIRMED_FIXTURES },
       (_unused, index) => miniFixture(`confirmed-${index}`, 'cat-a'),
     );
-    const ready = scoreExpenseCategoryGolden([], confirmed);
-    assert.equal(ready.ownerConfirmedFixtures, EXPENSE_CATEGORY_GOLDEN_MIN_CONFIRMED_FIXTURES);
-    assert.equal(ready.baselineReady, true);
-    assert.equal(/NOT-A-BASELINE/.test(formatExpenseCategoryGoldenReport(ready, 'signed set')), false);
+    const allResults = confirmed.map((fixture) => ({ fixtureId: fixture.id, suggestedCategoryId: 'cat-a', confidence: 0.9 }));
 
-    const oneShort = scoreExpenseCategoryGolden([], confirmed.slice(1));
+    // The bug this test pins down: 30 confirmed LABELS with one evaluated result used to publish a
+    // "ready" 100% baseline. Confirmed-but-unevaluated rows must block readiness, listed by id.
+    const partial = scoreExpenseCategoryGolden(allResults.slice(0, 1), confirmed);
+    assert.equal(partial.ownerConfirmedFixtures, EXPENSE_CATEGORY_GOLDEN_MIN_CONFIRMED_FIXTURES);
+    assert.equal(partial.baselineReady, false, 'labels alone are not evidence');
+    assert.equal(partial.baseline.evaluatedFixtures, 1);
+    assert.equal(partial.baseline.confirmedFixturesWithoutResult.length, EXPENSE_CATEGORY_GOLDEN_MIN_CONFIRMED_FIXTURES - 1);
+    assert.match(formatExpenseCategoryGoldenReport(partial, 'partial run'), /NOT-A-BASELINE/);
+    assert.match(formatExpenseCategoryGoldenReport(partial, 'partial run'), /owner-confirmed fixtures without a result/);
+
+    // No results at all: the labels are confirmed, the baseline is still not evidence.
+    const noResults = scoreExpenseCategoryGolden([], confirmed);
+    assert.equal(noResults.baselineReady, false);
+
+    const ready = scoreExpenseCategoryGolden(allResults, confirmed);
+    assert.equal(ready.baselineReady, true);
+    assert.equal(ready.baseline.evaluatedFixtures, EXPENSE_CATEGORY_GOLDEN_MIN_CONFIRMED_FIXTURES);
+    const readyReport = formatExpenseCategoryGoldenReport(ready, 'signed set');
+    assert.equal(/NOT-A-BASELINE/.test(readyReport), false);
+    assert.match(readyReport, /BASELINE \(owner-confirmed ∩ evaluated/);
+
+    const oneShort = scoreExpenseCategoryGolden(allResults.slice(1), confirmed.slice(1));
     assert.equal(oneShort.baselineReady, false);
+  });
+
+  it('keeps synthetic starter rows out of the baseline while they stay in diagnostics (PR #238 T0)', () => {
+    const confirmed = Array.from(
+      { length: EXPENSE_CATEGORY_GOLDEN_MIN_CONFIRMED_FIXTURES },
+      (_unused, index) => miniFixture(`confirmed-${index}`, 'cat-a'),
+    );
+    const starter = miniFixture('starter-noise', 'cat-b', false);
+    const results = [
+      // Every confirmed row answered correctly with auto-fill confidence…
+      ...confirmed.map((fixture) => ({ fixtureId: fixture.id, suggestedCategoryId: 'cat-a', confidence: 0.9 })),
+      // …and one synthetic starter answered WRONG with high confidence.
+      { fixtureId: 'starter-noise', suggestedCategoryId: 'cat-a', confidence: 0.9 },
+    ];
+    const score = scoreExpenseCategoryGolden(results, [...confirmed, starter]);
+
+    assert.equal(score.baselineReady, true);
+    // Baseline: the starter's wrong answer must not dilute the published numbers…
+    assert.equal(score.baseline.suggestion.accuracy, 1);
+    assert.equal(score.baseline.autoFill.accuracy, 1);
+    assert.equal(score.baseline.evaluatedFixtures, EXPENSE_CATEGORY_GOLDEN_MIN_CONFIRMED_FIXTURES);
+    // …while diagnostics still see it, so the harness run itself stays debuggable.
+    assert.equal(score.scoredFixtures, EXPENSE_CATEGORY_GOLDEN_MIN_CONFIRMED_FIXTURES + 1);
+    assert.equal(score.suggestion.incorrect, 1);
   });
 });
