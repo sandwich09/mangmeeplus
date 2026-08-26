@@ -367,10 +367,58 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
         companyId: ledgerCompanyId, documentId: creditNote.id, lineNumber: 1, description: 'ลดราคาทดสอบ',
         quantity: '1', unitPrice: '10', lineSubtotalAmount: '10', lineTotalAmount: '10',
       } });
-      await client.accountingDocument.create({ data: {
+      const ytdInvoice = await client.accountingDocument.create({ data: {
         companyId: ledgerCompanyId, documentType: 'INVOICE', documentNumber: 'INV-P27-YTD-0001', status: 'ISSUED',
         documentDate: new Date('2026-01-15T00:00:00.000Z'), subtotalAmount: '1500000', taxableAmount: '1500000',
         grandTotalAmount: '1500000', paidAmount: '1500000', outstandingAmount: '0', paymentStatus: 'PAID',
+        vatMode: 'NO_VAT', createdByUserId: ctx.userId,
+      } });
+      const standaloneTaxInvoice = await client.accountingDocument.create({ data: {
+        companyId: ledgerCompanyId, documentType: 'TAX_INVOICE', documentNumber: 'TAX-P27-STANDALONE-0001', status: 'ISSUED',
+        documentDate: new Date('2026-01-20T00:00:00.000Z'), subtotalAmount: '100000', taxableAmount: '100000',
+        grandTotalAmount: '100000', paidAmount: '100000', outstandingAmount: '0', paymentStatus: 'PAID',
+        vatMode: 'NO_VAT', outputTaxCode: 'O0', createdByUserId: ctx.userId,
+      } });
+      await client.accountingDocumentLine.create({ data: {
+        companyId: ledgerCompanyId, documentId: standaloneTaxInvoice.id, lineNumber: 1, description: 'ใบกำกับภาษีต้นทาง',
+        quantity: '1', unitPrice: '100000', lineSubtotalAmount: '100000', lineTotalAmount: '100000',
+      } });
+      const standaloneTaxCredit = await client.accountingDocument.create({ data: {
+        companyId: ledgerCompanyId, documentType: 'CREDIT_NOTE', documentNumber: 'CN-P27-TAX-0001', status: 'ISSUED',
+        documentDate: new Date('2026-01-21T00:00:00.000Z'), sourceDocumentId: standaloneTaxInvoice.id,
+        sourceDocumentType: 'TAX_INVOICE', subtotalAmount: '50000', taxableAmount: '50000', grandTotalAmount: '50000',
+        paidAmount: '0', outstandingAmount: '0', paymentStatus: 'UNPAID', vatMode: 'NO_VAT', outputTaxCode: 'O0',
+        adjustmentReasonCode: 'PRICE_ADJUSTMENT', createdByUserId: ctx.userId,
+      } });
+      await client.accountingDocumentLine.create({ data: {
+        companyId: ledgerCompanyId, documentId: standaloneTaxCredit.id, lineNumber: 1, description: 'ลดใบกำกับภาษีต้นทาง',
+        quantity: '1', unitPrice: '50000', lineSubtotalAmount: '50000', lineTotalAmount: '50000',
+      } });
+      const linkedTaxInvoice = await client.accountingDocument.create({ data: {
+        companyId: ledgerCompanyId, documentType: 'TAX_INVOICE', documentNumber: 'TAX-P27-LINKED-0001', status: 'ISSUED',
+        documentDate: new Date('2026-01-22T00:00:00.000Z'), sourceDocumentId: ytdInvoice.id, sourceDocumentType: 'INVOICE',
+        subtotalAmount: '1500000', taxableAmount: '1500000', grandTotalAmount: '1500000', paidAmount: '1500000',
+        outstandingAmount: '0', paymentStatus: 'PAID', vatMode: 'NO_VAT', outputTaxCode: 'O0', createdByUserId: ctx.userId,
+      } });
+      await client.accountingDocumentLine.create({ data: {
+        companyId: ledgerCompanyId, documentId: linkedTaxInvoice.id, lineNumber: 1, description: 'ใบกำกับภาษีที่อ้างใบแจ้งหนี้',
+        quantity: '1', unitPrice: '1500000', lineSubtotalAmount: '1500000', lineTotalAmount: '1500000',
+      } });
+      const linkedTaxCredit = await client.accountingDocument.create({ data: {
+        companyId: ledgerCompanyId, documentType: 'CREDIT_NOTE', documentNumber: 'CN-P27-LINKED-TAX-0001', status: 'ISSUED',
+        documentDate: new Date('2026-01-23T00:00:00.000Z'), sourceDocumentId: linkedTaxInvoice.id,
+        sourceDocumentType: 'TAX_INVOICE', subtotalAmount: '25000', taxableAmount: '25000', grandTotalAmount: '25000',
+        paidAmount: '0', outstandingAmount: '0', paymentStatus: 'UNPAID', vatMode: 'NO_VAT', outputTaxCode: 'O0',
+        adjustmentReasonCode: 'PRICE_ADJUSTMENT', createdByUserId: ctx.userId,
+      } });
+      await client.accountingDocumentLine.create({ data: {
+        companyId: ledgerCompanyId, documentId: linkedTaxCredit.id, lineNumber: 1, description: 'ลดใบกำกับภาษีที่อ้างใบแจ้งหนี้',
+        quantity: '1', unitPrice: '25000', lineSubtotalAmount: '25000', lineTotalAmount: '25000',
+      } });
+      await client.accountingDocument.create({ data: {
+        companyId: ledgerCompanyId, documentType: 'INVOICE', documentNumber: 'INV-P27-VOIDED-0001', status: 'VOIDED',
+        documentDate: new Date('2026-02-15T00:00:00.000Z'), subtotalAmount: '1000000', taxableAmount: '1000000',
+        grandTotalAmount: '1000000', paidAmount: '0', outstandingAmount: '0', paymentStatus: 'UNPAID',
         vatMode: 'NO_VAT', createdByUserId: ctx.userId,
       } });
       const expense = await client.expenseRecord.create({ data: {
@@ -407,21 +455,54 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
       assert.deepEqual(incomeOnly.expense, { available: false, unavailableReason: 'NO_PERMISSION', byCategory: [] });
       assert.equal(incomeOnly.cashDifference, undefined);
 
-      const companyWide = await new IncomeExpenseLedgerUseCase(
+      let vatStatusReads = 0;
+      const companyWideLedger = new IncomeExpenseLedgerUseCase(
         { client } as any,
-        { get: async () => ({ status: 'NOT_REGISTERED' }) } as any,
-      ).summary({ ...ctx, scopes: {} }, '2026-08-01', '2026-08-31', '2026-08-27');
+        { get: async () => { vatStatusReads += 1; return { status: 'NOT_REGISTERED' }; } } as any,
+      );
+      const companyWidePermissions = [
+        ...ctx.permissions, 'company.vat_registration.read', 'tax.profile.read',
+      ];
+      const companyWide = await companyWideLedger.summary(
+        { ...ctx, scopes: {}, permissions: companyWidePermissions },
+        '2026-08-01', '2026-08-31', '2026-08-27',
+      );
       assert.deepEqual(companyWide.income.vatRegistrationAlert, {
         level: 'APPROACHING', periodBasis: 'ACCOUNTING_PERIOD', periodStart: '2026-01-01', periodEnd: '2026-08-27',
-        salesDocumentTotal: '1500090.00', thresholdAmount: '1800000.00',
+        salesDocumentTotal: '1525090.00', thresholdAmount: '1800000.00',
       });
+      assert.equal(vatStatusReads, 1);
+
+      const missingVatPermission = await companyWideLedger.summary(
+        { ...ctx, scopes: {}, permissions: [...ctx.permissions, 'tax.profile.read'] },
+        '2026-08-01', '2026-08-31', '2026-08-27',
+      );
+      assert.equal(missingVatPermission.income.vatRegistrationAlert, undefined);
+      assert.equal(vatStatusReads, 1, 'VAT status is not read without company.vat_registration.read');
+
+      const missingTaxProfilePermission = await companyWideLedger.summary(
+        { ...ctx, scopes: {}, permissions: [...ctx.permissions, 'company.vat_registration.read'] },
+        '2026-08-01', '2026-08-31', '2026-08-27',
+      );
+      assert.equal(missingTaxProfilePermission.income.vatRegistrationAlert, undefined);
+      assert.equal(vatStatusReads, 1, 'VAT status is not read when the protected accounting period cannot be read');
 
       const accessorUnavailable = await new IncomeExpenseLedgerUseCase(
         { client } as any,
         { get: async () => { throw new Error('temporary VAT accessor outage'); } } as any,
-      ).summary({ ...ctx, scopes: {} }, '2026-08-01', '2026-08-31', '2026-08-27');
+      ).summary(
+        { ...ctx, scopes: {}, permissions: companyWidePermissions },
+        '2026-08-01', '2026-08-31', '2026-08-27',
+      );
       assert.equal(accessorUnavailable.income.available, true);
       assert.equal(accessorUnavailable.income.vatRegistrationAlert, undefined);
+
+      const januaryIncome = await ledger.entries(ctx, { type: 'INCOME', from: '2026-01-01', to: '2026-01-31' });
+      assert.deepEqual(
+        new Set(januaryIncome.data.map((row) => row.id)),
+        new Set([ytdInvoice.id, standaloneTaxInvoice.id, standaloneTaxCredit.id, linkedTaxCredit.id]),
+        'standalone TAX_INVOICE is a revenue root; linked TAX_INVOICE is evidence while its correction still adjusts revenue',
+      );
 
       const entries = await ledger.entries(ctx, { type: 'ALL', from: '2026-08-01', to: '2026-08-31' });
       assert.equal(entries.total, 3, 'evidence-only receipt is not a second income row');

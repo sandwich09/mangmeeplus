@@ -28,7 +28,6 @@ import {
 
 const ISSUED_STATUSES = ['ISSUED', 'CREDITED', 'DEBITED', 'CLOSED'] as const;
 const POSITIVE_SALE_TYPES = ['INVOICE', 'BILLING_NOTE', 'DEBIT_NOTE'] as const;
-const INCOME_ENTRY_TYPES = [...POSITIVE_SALE_TYPES, 'CREDIT_NOTE'] as const;
 const DOCUMENT_STATUSES = ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED', 'ISSUED', 'VOIDED', 'CREDITED', 'DEBITED', 'CLOSED'];
 const EXPENSE_STATUSES = ['DRAFT', 'EXTRACTING', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION', 'CONFIRMED', 'REJECTED', 'VOIDED'];
 const EXPORT_MAX_ROWS = 10_000;
@@ -60,6 +59,27 @@ function boundedPositiveInt(value: number | undefined, fallback: number, max: nu
   return Number.isFinite(value) && value! > 0 ? Math.min(max, Math.trunc(value!)) : fallback;
 }
 
+// A linked TAX_INVOICE is tax evidence for its source and must not recognize the sale twice.
+// A source-less TAX_INVOICE is itself the revenue root and must not disappear from the ledger.
+function revenueRootDocumentWhere() {
+  return {
+    OR: [
+      { documentType: { in: [...POSITIVE_SALE_TYPES] } },
+      { documentType: 'TAX_INVOICE', sourceDocumentId: null },
+    ],
+  };
+}
+
+function incomeEntryDocumentWhere() {
+  return {
+    OR: [
+      { documentType: { in: [...POSITIVE_SALE_TYPES] } },
+      { documentType: 'TAX_INVOICE', sourceDocumentId: null },
+      { documentType: 'CREDIT_NOTE' },
+    ],
+  };
+}
+
 @Injectable()
 export class IncomeExpenseLedgerUseCase {
   constructor(
@@ -83,7 +103,10 @@ export class IncomeExpenseLedgerUseCase {
     const instantRange = ledgerBangkokInstantRange(period.from, period.to);
     // The legal threshold is company-wide. A branch-restricted caller must never see a partial
     // total presented as the company's VAT-registration position.
-    const canShowVatAlert = canIncome && ctx.scopes.branchIds === undefined;
+    const canShowVatAlert = canIncome
+      && ctx.permissions.includes('company.vat_registration.read')
+      && ctx.permissions.includes('tax.profile.read')
+      && ctx.scopes.branchIds === undefined;
 
     const [vatStatus, raw] = await Promise.all([
       // This is an advisory, not a posting control: a transient accessor failure must omit the
@@ -92,7 +115,7 @@ export class IncomeExpenseLedgerUseCase {
       this.prisma.client.$transaction(async (tx: any) => {
         const income = canIncome ? await Promise.all([
           tx.accountingDocument.aggregate({
-            where: { companyId: ctx.companyId, ...scope, documentType: { in: [...POSITIVE_SALE_TYPES] }, status: { in: [...ISSUED_STATUSES] }, documentDate: civilRange },
+            where: { companyId: ctx.companyId, ...scope, ...revenueRootDocumentWhere(), status: { in: [...ISSUED_STATUSES] }, documentDate: civilRange },
             _sum: { grandTotalAmount: true },
           }),
           tx.accountingDocument.aggregate({
@@ -104,12 +127,12 @@ export class IncomeExpenseLedgerUseCase {
             _sum: { amount: true, whtAmount: true },
           }),
           tx.accountingDocument.aggregate({
-            where: { companyId: ctx.companyId, ...scope, documentType: { in: [...POSITIVE_SALE_TYPES] }, status: { in: [...ISSUED_STATUSES] }, outstandingAmount: { gt: 0 } },
+            where: { companyId: ctx.companyId, ...scope, ...revenueRootDocumentWhere(), status: { in: [...ISSUED_STATUSES] }, outstandingAmount: { gt: 0 } },
             _sum: { outstandingAmount: true },
           }),
           tx.accountingDocumentLine.groupBy({
             by: ['revenueCategoryId', 'revenueCategory'],
-            where: { companyId: ctx.companyId, document: { is: { ...scope, documentType: { in: [...POSITIVE_SALE_TYPES] }, status: { in: [...ISSUED_STATUSES] }, documentDate: civilRange } } },
+            where: { companyId: ctx.companyId, document: { is: { ...scope, ...revenueRootDocumentWhere(), status: { in: [...ISSUED_STATUSES] }, documentDate: civilRange } } },
             _sum: { lineTotalAmount: true },
           }),
           tx.accountingDocumentLine.groupBy({
@@ -144,7 +167,7 @@ export class IncomeExpenseLedgerUseCase {
         const vatWatchRange = vatWatchPeriod ? ledgerCivilRange(vatWatchPeriod.periodStart, vatWatchPeriod.periodEnd) : null;
         const vatWatchIncome = vatWatchRange ? await Promise.all([
           tx.accountingDocument.aggregate({
-            where: { companyId: ctx.companyId, documentType: { in: [...POSITIVE_SALE_TYPES] }, status: { in: [...ISSUED_STATUSES] }, documentDate: vatWatchRange },
+            where: { companyId: ctx.companyId, ...revenueRootDocumentWhere(), status: { in: [...ISSUED_STATUSES] }, documentDate: vatWatchRange },
             _sum: { grandTotalAmount: true },
           }),
           tx.accountingDocument.aggregate({
@@ -232,7 +255,7 @@ export class IncomeExpenseLedgerUseCase {
     const result = await this.prisma.client.$transaction(async (tx: any) => {
       const documentWhere = includeIncome ? {
         companyId: ctx.companyId, ...scope,
-        documentType: { in: [...(type === 'RECEIVABLE' ? POSITIVE_SALE_TYPES : INCOME_ENTRY_TYPES)] },
+        ...(type === 'RECEIVABLE' ? revenueRootDocumentWhere() : incomeEntryDocumentWhere()),
         status: type === 'RECEIVABLE' ? { in: [...ISSUED_STATUSES] } : filter.status ?? { in: [...ISSUED_STATUSES] },
         ...(type === 'RECEIVABLE' ? { outstandingAmount: { gt: 0 } } : { documentDate: civilRange }),
         ...(filter.categoryId ? { lines: { some: { revenueCategoryId: filter.categoryId } } } : {}),

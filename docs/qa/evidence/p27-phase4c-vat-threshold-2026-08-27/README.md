@@ -8,7 +8,8 @@ Target: `develop`
 
 ## สิ่งที่พิสูจน์
 
-- alert แสดงเฉพาะ company-wide scope + VAT fact `NOT_REGISTERED`
+- alert แสดงเฉพาะ company-wide scope + VAT fact `NOT_REGISTERED` + สิทธิ์ `accounting.document.read`, `company.vat_registration.read`, `tax.profile.read`; regression ยืนยันว่าขาดสิทธิ์แล้วไม่อ่าน VAT accessor/ไม่คืน alert
+- PostgreSQL regression ครอบ canonical revenue root: source-less `TAX_INVOICE` ถูกนับ, linked `TAX_INVOICE` ไม่ถูกนับซ้ำ, credit ของทั้ง standalone/linked source ยังลดรายรับ และ `VOIDED` ไม่เข้า aggregate
 - ใช้ยอด issued sales documents ตั้งแต่ต้นรอบบัญชีถึงวันนี้ หัก CREDIT_NOTE
 - `< 1,440,000` ไม่เตือน; `>= 1,440,000` เตือนใกล้เกณฑ์; `>= 1,800,000` ใช้ข้อความ “แตะหรือเกิน” โดยไม่ฟันธงหน้าที่ภาษี
 - ถ้า period/status/scope ไม่พร้อม หรือ VAT accessor ชั่วคราวล้ม จะซ่อน alert โดยไม่ทำให้สมุดหลักล่ม
