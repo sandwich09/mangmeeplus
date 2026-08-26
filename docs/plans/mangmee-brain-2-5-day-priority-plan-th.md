@@ -666,7 +666,7 @@ Quality ต้องไม่ตกหมายถึง “ลดจำนว�
 | P25 | Scale/load/DR | `production-a5-v2-spec` (+readiness matrix), `uat-environment-spec` | ✅ พอ |
 | P26 | Billing/Subscription (จำกัดใบเสร็จ) | — | ❌ ขาดทั้งหมด (หัวข้อ P26 บังคับ spec+pricing ที่ Owner อนุมัติก่อนอยู่แล้ว) |
 | P27 | สมุดรายรับ–รายจ่าย | `mangmee-income-expense-ledger-spec-th` v1.2 | ✅ |
-| P28 | ซื้อ-จ่ายเงิน MVP + ใบลดหนี้ฝั่งซื้อ | `procurement-supplier-ap-spec` (engine เดิม) | 🔶 กำลังเขียน MVP/UX + supplier credit note spec (งานปัจจุบัน) |
+| P28 | ซื้อ-จ่ายเงิน MVP + ใบลดหนี้ฝั่งซื้อ | `procurement-supplier-ap-spec` (engine) + `mangmee-purchase-to-pay-mvp-spec-th` (MVP/UX/CN) | ✅ ครบ 2026-08-26 — รอ Owner ตอบ spec §10 |
 
 คิวเขียน spec ที่ขาด (ตามลำดับลงมือของหัวข้อนี้): **1) P28** (กำลังทำ) → **2) P26** billing → **3) P10+P11** (signup+email เขียนคู่กัน) → **4) P12** journey รวม → **5) P13** → **6) P15–P17** ก่อนเริ่มสายธนาคาร → P18–P20 ตอนเลือก provider → P21 workpaper ก่อนเปิดงานนักบัญชี
 
@@ -850,7 +850,7 @@ Current truth (ตรวจโค้ด 2026-08-26): engine ฝั่งซื�
 2. อุด gap ที่พบ: **ใบลดหนี้ฝั่งซื้อ** (รับจากผู้ขาย — vendor bill วันนี้แก้ได้ด้วย void เท่านั้น), รวม vendor bill/supplier payment เข้า "จ่ายแล้ว/รอจ่าย" ของสมุดรายรับ–รายจ่าย
 3. เปิดแบบควบคุมด้วย entitlement `procurement.*` + kill switch ตาม pattern P27 Phase 6
 4. อ้างอิง: [OS implementation plan P8](mangmee-accounting-os-implementation-plan-th.md), research FlowAccount §7 (PO/GR/expense/ใบเตรียมจ่าย), ledger spec §F-LED-7
-5. ก่อนเริ่ม: เขียน spec+plan ของ P28 แยก (แบบเดียวกับ P27) — ห้าม implement จากหัวข้อนี้ตรง ๆ
+5. **spec+plan เขียนเสร็จแล้ว (2026-08-26)**: [Purchase-to-Pay MVP Spec](../specs/mangmee-purchase-to-pay-mvp-spec-th.md) (current truth เชิงลึก, gap register P2P-01..07, ใบลดหนี้ฝั่งซื้อเต็มรูป F-P2P-2, หน้าจอ S1–S5 ตาม F-LED-7, คำถาม Owner 5 ข้อ) + [plan](mangmee-purchase-to-pay-mvp-plan-th.md) (6 phases ~10.5 วัน) — **รอ Owner ตอบ spec §10 ก่อนเริ่ม**
 
 ## 11. คำถามที่ Owner ต้องตัดสินก่อน P1 จบ
 
