@@ -4,6 +4,7 @@ import { AppConfigService } from '../../../../common/config/app-config.service';
 import { LineLoginVerifierAdapter } from '../../infrastructure/line-login-verifier.adapter';
 import { AuditService } from '../../../audit/application/audit.service';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
+import { observeCustomerJourney } from '../../../../common/observability/customer-journey-audit';
 
 @Injectable()
 export class LinkLineIdentityUseCase {
@@ -15,6 +16,18 @@ export class LinkLineIdentityUseCase {
   ) {}
 
   async execute(input: { userId: string; idToken: string; requestId: string; companyId?: string; allowReassign?: boolean }): Promise<{ linked: true; providerUserId: string }> {
+    return observeCustomerJourney(
+      this.audit,
+      {
+        key: 'line-link', requestId: input.requestId, targetType: 'external_identity',
+        actorUserId: input.userId, ...(input.companyId ? { companyId: input.companyId } : {}),
+      },
+      () => this.link(input),
+      () => ({ outcome: 'linked' }),
+    );
+  }
+
+  private async link(input: { userId: string; idToken: string; requestId: string; companyId?: string; allowReassign?: boolean }): Promise<{ linked: true; providerUserId: string }> {
     const { userId, idToken, requestId, companyId, allowReassign = false } = input;
     const { subject: lineUserId } = await this.lineVerifier.verify(idToken);
     // Messaging user ids are channel-scoped; LINE Login channel only verifies identity.

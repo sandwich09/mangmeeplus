@@ -42,19 +42,28 @@ Inspect the delivery-attempt state and SES message/event reference. Treat bounce
 
 ### LINE login
 
-Inspect verifier outcome, linked canonical identity, active user/membership, and session issuance audit. Never match by display name, email, photo, or phone number.
+Join `journey.line.login.accepted` and `.terminal` by `requestId`, then inspect verifier outcome,
+linked canonical identity, active user/membership, and session issuance audit. Never match by display
+name, email, photo, or phone number.
 
 ### LINE link
 
-Inspect canonical external identity, provider/channel binding, link-token state, and conflict disposition. Do not reassign or revive a disabled identity outside the approved recovery flow.
+Join `journey.line.link.accepted` and `.terminal` by `requestId`, then inspect canonical external
+identity, provider/channel binding, link-token state, and conflict disposition. Do not reassign or
+revive a disabled identity outside the approved recovery flow.
 
 ### Receipt intake
 
-Inspect attachment completion, `expense.receipt_uploaded` outbox row, workflow inbox, and expense source state. A `DEAD` row requires outbox recovery; do not upload a duplicate receipt as a telemetry workaround.
+Join `journey.receipt.intake.accepted` and `.terminal` for a completion call, then inspect attachment
+completion, `expense.receipt_uploaded` outbox row, workflow inbox, and expense source state. A
+PENDING_UPLOAD intent that never called completion is a known `PARTIAL` gap, not a missing terminal
+from this request boundary. A `DEAD` row requires outbox recovery; do not upload a duplicate receipt.
 
 ### Receipt OCR
 
-Inspect request audit, attachment safety/size, provider result, stale-write protection, and the expense review state. OCR output is a suggestion until deterministic validation and human confirmation pass.
+Join `journey.receipt.ocr.accepted` and `.terminal` by `requestId`, then inspect request audit,
+attachment safety/size, provider result, stale-write protection, and the expense review state. OCR
+output is a suggestion until deterministic validation and human confirmation pass.
 
 ### LINE AI answer
 
@@ -66,11 +75,15 @@ Inspect `OutboxEvent.status`, attempts, lease/claim token, `lastError`, and DEAD
 
 ### Sales confirmation
 
-Verify the accounting document is durably issued and its document number committed before touching the outbox row. A retry must reuse existing document/outbox identity and must not issue a second legal document.
+Join `journey.sales.confirmation.accepted` and `.terminal` by `requestId`. Verify the accounting
+document is durably issued and its document number committed before touching the outbox row. A retry
+must reuse existing document/outbox identity and must not issue a second legal document.
 
 ### Expense confirmation
 
-Verify expense status, number reservation/commit, tax snapshot, duplicate state, journal/posting state, and the `expense.confirmed` outbox row. Never reconfirm or repost to repair a missing signal.
+Join `journey.expense.confirmation.accepted` and `.terminal` by `requestId`. Verify expense status,
+number reservation/commit, tax snapshot, duplicate state, journal/posting state, and the
+`expense.confirmed` outbox row. Never reconfirm or repost to repair a missing signal.
 
 ## Verification and rollback
 

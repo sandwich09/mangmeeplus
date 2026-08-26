@@ -26,6 +26,7 @@ import { formatTransactionTaxAmount } from '../../../tax/domain/logic/transactio
 import { validateAccountingDocumentMoneyInput } from '../../domain/logic/accounting-money-validation.logic';
 import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
 import { civilPeriodKey, coerceCivilDate, todayCivilDate } from '@watchdog-bms/contracts';
+import { observeCustomerJourney } from '../../../../common/observability/customer-journey-audit';
 
 function docPermission(documentType: AccountingDocumentType, action: 'read' | 'create' | 'update' | 'issue' | 'void'): string {
   const typeKey = documentType.toLowerCase();
@@ -358,6 +359,18 @@ export class IssueDocumentUseCase {
   ) {}
 
   async execute(ctx: RequestContext, documentId: string): Promise<DocumentRecord> {
+    return observeCustomerJourney(
+      this.audit,
+      {
+        key: 'sales-confirmation', requestId: ctx.requestId, targetType: 'accounting_document', targetId: documentId,
+        companyId: ctx.companyId, actorUserId: ctx.userId,
+      },
+      () => this.issue(ctx, documentId),
+      () => ({ outcome: 'issued' }),
+    );
+  }
+
+  private async issue(ctx: RequestContext, documentId: string): Promise<DocumentRecord> {
     const doc = await this.repo.findDocumentById(ctx.companyId, documentId, ctx.scopes.branchIds);
     if (!doc) throw new NotFoundException(`Document ${documentId} not found`);
     const perm = docPermission(doc.documentType, 'issue');

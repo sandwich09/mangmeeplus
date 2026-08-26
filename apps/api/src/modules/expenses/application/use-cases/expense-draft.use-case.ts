@@ -40,6 +40,7 @@ import { CompanyVatRegistrationUseCase } from '../../../data-model-core/applicat
 import { LEDGER_SEQUENCE_KEY, civilDateToUtcDate, coerceCivilDate, utcDateToCivilDate } from '@watchdog-bms/contracts';
 import { civilPeriodKey, todayCivilDate } from '@watchdog-bms/contracts';
 import type { AuditLogEntry } from '../../../audit/domain/models/audit-log.model';
+import { observeCustomerJourney } from '../../../../common/observability/customer-journey-audit';
 
 function hasPerm(ctx: RequestContext, perm: string): boolean {
   return ctx.permissions.includes(perm);
@@ -546,8 +547,6 @@ export class ConfirmExpenseUseCase {
     expenseId: string,
     vatSourceOverride?: ExpenseVatSourceOverrideInput,
   ): Promise<ExpenseRecord> {
-    requirePerm(ctx, 'expense.confirm', 'confirm expense');
-    if (ctx.authProvider === 'line') throw new ForbiddenException('Expense confirmation is available on the authenticated web only.');
     return this.confirm(ctx, expenseId, undefined, vatSourceOverride);
   }
 
@@ -583,6 +582,33 @@ export class ConfirmExpenseUseCase {
     },
     vatSourceOverride?: ExpenseVatSourceOverrideInput,
   ): Promise<ExpenseRecord> {
+    return observeCustomerJourney(
+      this.audit,
+      {
+        key: 'expense-confirmation', requestId: ctx.requestId ?? `expense:${expenseId}:confirm`,
+        targetType: 'expense_record', targetId: expenseId, companyId: ctx.companyId, actorUserId: ctx.userId,
+      },
+      () => this.confirmMutation(ctx, expenseId, authority, vatSourceOverride),
+      () => ({ outcome: 'confirmed' }),
+    );
+  }
+
+  private async confirmMutation(
+    ctx: RequestContext,
+    expenseId: string,
+    authority?: {
+      reimbursementRequestId: string;
+      reimbursementLineId: string;
+      branchId?: string;
+      allowMissingReceiptWithReason: boolean;
+      systemReconcile?: boolean;
+    },
+    vatSourceOverride?: ExpenseVatSourceOverrideInput,
+  ): Promise<ExpenseRecord> {
+    if (!authority) {
+      requirePerm(ctx, 'expense.confirm', 'confirm expense');
+      if (ctx.authProvider === 'line') throw new ForbiddenException('Expense confirmation is available on the authenticated web only.');
+    }
     const r = await this.repo.findByIdWithRelations(ctx.companyId, expenseId);
     if (!r) throw new NotFoundException(`Expense ${expenseId} not found`);
     if (authority) {

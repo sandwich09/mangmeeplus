@@ -482,8 +482,9 @@ describe('ExchangeLineTokenUseCase', () => {
 
     assert.equal((result as any).linked, false);
     assert.ok((result as any).message);
-    assert.equal((audited[0] as any).action, 'auth.login.denied');
-    assert.equal((audited[0] as any).metadataJson.reason, 'unlinked_line_identity');
+    const denied = audited.find((entry: any) => entry.action === 'auth.login.denied') as any;
+    assert.equal(denied.action, 'auth.login.denied');
+    assert.equal(denied.metadataJson.reason, 'unlinked_line_identity');
   });
 
   it('returns tokens when identity is found and user is active', async () => {

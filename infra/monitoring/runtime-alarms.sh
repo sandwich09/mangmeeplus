@@ -108,9 +108,9 @@ journey_dashboard_body() {
             "**Managed by `infra/monitoring/runtime-alarms.sh`; console edits are overwritten.**\n\n" +
             "| Lane | LIVE evidence | Coverage gaps (not an outage) |\n" +
             "|---|---|---|\n" +
-            "| AI | LINE AI accepted → terminal | Receipt OCR is PARTIAL |\n" +
-            "| Accounting | Outbox lifecycle (query durable source via runbook) | Receipt intake, sales issue and expense confirmation are PARTIAL before commit |\n" +
-            "| Signup | — | Official signup, owner claim, tenant provision and claim email are PLANNED; LINE login/link are PARTIAL |\n" +
+            "| AI | LINE AI metrics; receipt OCR accepted → terminal audit | — |\n" +
+            "| Accounting | Sales issue and expense confirmation audits; outbox lifecycle | Receipt upload intents abandoned before completion are PARTIAL |\n" +
+            "| Signup | LINE login/link accepted → terminal audit | Official signup, owner claim, tenant provision and claim email are PLANNED |\n" +
             "| Ops | Outbox drain (query durable source via runbook) | — |\n\n" +
             "No conversion/SLO targets are set until a representative baseline exists. PARTIAL/PLANNED rows must never be presented as live."
           )}

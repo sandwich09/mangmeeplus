@@ -1,6 +1,6 @@
 # Customer Journey Observability Signal Contract (P9)
 
-Status: **P9-0 CONTRACT + P9-1A DASHBOARD IMPLEMENTED — instrumentation remains phased**
+Status: **P9-0 CONTRACT + P9-1A DASHBOARD + P9-1B CURRENT BOUNDARIES IMPLEMENTED**
 Scope: Four product lanes only; subscription/payment is excluded.  
 Last reviewed: 2026-08-26
 
@@ -34,9 +34,9 @@ The executable catalog covers:
 6. outbox worker drain;
 7. sales-document issue and expense confirmation through downstream outbox publication.
 
-The accounting rows intentionally distinguish financial commit from downstream publication. Existing
-outbox state proves the latter. A failed request before commit needs separate P9-1 instrumentation and is
-not inferred from absence.
+The accounting rows intentionally distinguish the request-to-financial-commit journey from downstream
+outbox publication. P9-1b pairs issue/confirmation requests through the application boundary; the existing
+outbox-worker row proves downstream publication separately, without retrying a legal document or expense.
 
 ## Cardinality and correlation
 
@@ -84,7 +84,12 @@ and the [CloudWatch dashboard resource ARN](https://docs.aws.amazon.com/service-
 
 ## P9-1b boundary
 
-P9-1b may add missing accepted/terminal emitters using existing structured logs, audit, outbox, and
-CloudWatch metric filters. The `PLANNED` official-signup, owner-claim, tenant-provision, and claim-email
-rows cannot become live before P10-P12 implement those business flows. P9 must not add a second telemetry
-stack, assign targets without a baseline, or change a financial mutation merely to make telemetry convenient.
+`observeCustomerJourney` now writes one accepted and one terminal audit row around LINE login/link,
+receipt OCR, receipt-upload completion, sales-document issue, and expense confirmation. It reuses the
+request correlation, emits bounded outcome/failure classes and duration, and rethrows the original error.
+The wrapper does not change a financial mutation or retry it.
+
+Receipt intake remains `PARTIAL` only for an upload intent abandoned before the completion endpoint is
+called; current code has no expiry reconciler that can truthfully classify that terminal. The `PLANNED`
+official-signup, owner-claim, tenant-provision, and claim-email rows cannot become live before P10-P12
+implement those business flows. No second telemetry stack or pre-baseline target is introduced.
