@@ -4,9 +4,10 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../../../generated/prisma/client';
-import type { ResolveTransactionTaxPreviewDto } from '@watchdog-bms/contracts';
+import type { RequestContext, ResolveTransactionTaxPreviewDto } from '@watchdog-bms/contracts';
 import { PrismaAccountingRepository } from './prisma-accounting.repository.js';
 import { PrismaDocumentSequenceRepository } from '../../data-model-core/infrastructure/repositories/prisma-document-sequence.repository.js';
+import { IncomeExpenseLedgerUseCase } from '../application/use-cases/income-expense-ledger.use-case.js';
 
 const updatedAt = new Date('2026-07-15T10:00:00.000Z');
 
@@ -290,5 +291,72 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
     assert.equal(Number(result.payment.amount), 207);
     assert.equal(Number(result.receipt.grandTotalAmount), 207);
     assert.equal(result.invoice.paymentStatus, 'PAID');
+  });
+
+  it('keeps the six ledger definitions, permission split, Bangkok payment boundary, and export on one dataset', async (t) => {
+    if (!reachable || !client || !repo) return t.skip('local PostgreSQL or the P27 migration is unavailable');
+    const ledgerCompanyId = `${companyId}-ledger`;
+    const ctx: RequestContext = {
+      requestId: 'p27-ledger-request', authSubject: 'p27-ledger-user', userId: 'p27-ledger-user', companyId: ledgerCompanyId,
+      membershipId: 'p27-ledger-membership', roles: [], scopes: { branchIds: [] }, authProvider: 'watchdog',
+      permissions: ['accounting.document.read', 'accounting.document.export', 'expense.read', 'expense.export'],
+    };
+    try {
+      await client.company.create({ data: { id: ledgerCompanyId, name: 'P27 ledger test' } });
+      await repo.recordSimpleIncomeBundle({
+        companyId: ledgerCompanyId, idempotencyKey: 'ledger-income-0001', payloadFingerprint: 'ledger-fingerprint',
+        documentDate: '2026-08-01', vatMode: 'NO_VAT', paymentMethod: 'BANK_TRANSFER',
+        lines: [{ lineNumber: 1, description: 'รายรับทดสอบ', quantity: '1', unitPrice: '100.00', whtRate: '3' }],
+        createdByUserId: ctx.userId,
+      }, async () => undefined);
+      const expense = await client.expenseRecord.create({ data: {
+        companyId: ledgerCompanyId, status: 'CONFIRMED', expenseDate: new Date('2026-08-01T00:00:00.000Z'),
+        grandTotalAmount: '50', netPayableAmount: '50', paidAmount: '20', outstandingAmount: '30',
+        paymentStatus: 'PARTIALLY_PAID', createdByUserId: ctx.userId,
+      } });
+      await client.expenseLine.create({ data: {
+        companyId: ledgerCompanyId, expenseId: expense.id, lineNumber: 1, description: 'รายจ่ายทดสอบ',
+        quantity: '1', unitPrice: '50', taxableAmount: '50', lineSubtotalAmount: '50', lineTotalAmount: '50',
+      } });
+      await client.expensePayment.createMany({ data: [
+        { companyId: ledgerCompanyId, expenseId: expense.id, amount: '20', paidAt: new Date('2026-07-31T17:00:00.000Z'), createdByUserId: ctx.userId },
+        { companyId: ledgerCompanyId, expenseId: expense.id, amount: '99', paidAt: new Date('2026-07-31T16:59:59.999Z'), createdByUserId: ctx.userId },
+      ] });
+
+      const ledger = new IncomeExpenseLedgerUseCase({ client } as any);
+      const summary = await ledger.summary(ctx, '2026-08-01', '2026-08-31');
+      assert.deepEqual({
+        sales: summary.income.salesDocumentTotal, received: summary.income.receivedTotal,
+        wht: summary.income.withheldTaxTotal, outstanding: summary.income.receivableOutstanding,
+        expense: summary.expense.recordedExpenseTotal, paid: summary.expense.paidExpenseTotal,
+        cashDifference: summary.cashDifference, documentDifference: summary.documentDifference,
+      }, {
+        sales: '100.00', received: '100.00', wht: '3.00', outstanding: '0.00',
+        expense: '50.00', paid: '20.00', cashDifference: '80.00', documentDifference: '50.00',
+      });
+      const incomeOnly = await ledger.summary({ ...ctx, permissions: ['accounting.document.read'] }, '2026-08-01', '2026-08-31');
+      assert.equal(incomeOnly.income.available, true);
+      assert.deepEqual(incomeOnly.expense, { available: false, unavailableReason: 'NO_PERMISSION', byCategory: [] });
+      assert.equal(incomeOnly.cashDifference, undefined);
+
+      const entries = await ledger.entries(ctx, { type: 'ALL', from: '2026-08-01', to: '2026-08-31' });
+      assert.equal(entries.total, 2, 'evidence-only receipt is not a second income row');
+      assert.deepEqual(new Set(entries.data.map((row) => row.side)), new Set(['INCOME', 'EXPENSE']));
+      const exported = await ledger.export(ctx, { type: 'ALL', from: '2026-08-01', to: '2026-08-31' });
+      assert.equal(exported.rowCount, 2);
+      assert.match(exported.csv, /รายรับ/);
+      assert.ok(Buffer.from(exported.xlsxBase64, 'base64').subarray(0, 2).equals(Buffer.from('PK')));
+    } finally {
+      await client.accountingSimpleIncomeCommand.deleteMany({ where: { companyId: ledgerCompanyId } });
+      await client.accountingPaymentAllocation.deleteMany({ where: { companyId: ledgerCompanyId } });
+      await client.accountingPayment.deleteMany({ where: { companyId: ledgerCompanyId } });
+      await client.accountingDocument.deleteMany({ where: { companyId: ledgerCompanyId } });
+      await client.documentNumber.deleteMany({ where: { companyId: ledgerCompanyId } });
+      await client.documentSequence.deleteMany({ where: { companyId: ledgerCompanyId } });
+      await client.expensePayment.deleteMany({ where: { companyId: ledgerCompanyId } });
+      await client.expenseLine.deleteMany({ where: { companyId: ledgerCompanyId } });
+      await client.expenseRecord.deleteMany({ where: { companyId: ledgerCompanyId } });
+      await client.company.deleteMany({ where: { id: ledgerCompanyId } });
+    }
   });
 });

@@ -7,6 +7,13 @@ import {
   calculateOutstandingAmount,
   calculateUnappliedCredit,
 } from './accounting-totals.logic';
+import {
+  calculateIncomeExpenseLedgerAmounts,
+  categoryBreakdownMatches,
+  ledgerBangkokInstantRange,
+  mergeSignedCategoryAmounts,
+  resolveIncomeExpenseLedgerPeriod,
+} from './income-expense-ledger.logic';
 
 describe('calculateLine', () => {
   it('VAT_EXCLUDED: adds VAT on top of taxable amount', () => {
@@ -84,4 +91,43 @@ describe('calculateUnappliedCredit', () => {
   it('unapplied = payment - allocated', () => assert.equal(calculateUnappliedCredit('500.00', '300.00'), '200.00'));
   it('returns 0 when fully allocated', () => assert.equal(calculateUnappliedCredit('300.00', '300.00'), '0.00'));
   it('returns 0 when over-allocated (should not happen but clamps)', () => assert.equal(calculateUnappliedCredit('100.00', '200.00'), '0.00'));
+});
+
+describe('P27 income-expense ledger definitions', () => {
+  it('uses the selected Bangkok month and shifts instant boundaries by UTC+7', () => {
+    assert.deepEqual(resolveIncomeExpenseLedgerPeriod(undefined, undefined, '2026-08-26'), {
+      from: '2026-08-01', to: '2026-08-26', timezone: 'Asia/Bangkok',
+    });
+    assert.equal(resolveIncomeExpenseLedgerPeriod('2026-08-31', '2026-08-01', '2026-08-26'), null);
+    const range = ledgerBangkokInstantRange('2026-08-01', '2026-08-31');
+    assert.equal(range.gte?.toISOString(), '2026-07-31T17:00:00.000Z');
+    assert.equal(range.lt?.toISOString(), '2026-08-31T17:00:00.000Z');
+  });
+
+  it('keeps cash and document differences distinct and counts received WHT as settlement', () => {
+    assert.deepEqual(calculateIncomeExpenseLedgerAmounts({
+      positiveSales: '1300', creditSales: '100', receivedCash: '700', receivedWht: '30',
+      receivableOutstanding: '470', recordedExpense: '500', paidExpense: '200',
+    }), {
+      salesDocumentTotal: '1200.00', receivedTotal: '730.00', withheldTaxTotal: '30.00',
+      receivableOutstanding: '470.00', recordedExpenseTotal: '500.00', paidExpenseTotal: '200.00',
+      cashDifference: '530.00', documentDifference: '700.00',
+    });
+  });
+
+  it('subtracts credit notes by category and detects a header/line mismatch', () => {
+    const rows = mergeSignedCategoryAmounts(
+      [
+        { categoryId: 'goods', label: 'ขายสินค้า', amount: '1000' },
+        { categoryId: 'service', label: 'ค่าบริการ', amount: '300' },
+      ],
+      [{ categoryId: 'goods', label: 'ขายสินค้า', amount: '100' }],
+    );
+    assert.deepEqual(rows, [
+      { categoryId: 'goods', label: 'ขายสินค้า', amount: '900.00' },
+      { categoryId: 'service', label: 'ค่าบริการ', amount: '300.00' },
+    ]);
+    assert.equal(categoryBreakdownMatches('1200', rows), true);
+    assert.equal(categoryBreakdownMatches('1199.99', rows), false);
+  });
 });
