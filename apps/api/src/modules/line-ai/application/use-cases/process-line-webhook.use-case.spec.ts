@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { LINE_AI_CONTEXT_MAX_TURNS, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
 import { branchScopeFallbackLabel, chatKeyHashOf, classifyPendingMediaReply, formatCheckBillDraftCreatedReply, formatGroundedReceiptFollowUp, isAffirmativeText, isGroundedReceiptFollowUp, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent } from './process-line-webhook.use-case';
+import { featureTemporarilyUnavailable } from '../../../employee-access/application/entitlement.helper';
 import { ReceiptOcrApplyService } from '../../../expenses/application/services/receipt-ocr-apply.service';
 import { absoluteWebLink, webBaseUrlFromEnv, webLink } from '../../../../common/http/web-link';
 import { LineSubstituteReceiptContinuationUseCase } from '../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case';
@@ -26,6 +27,15 @@ const shadowProbe = {
   }),
 } as any;
 const acceptedLegal = { isRequired: async () => false } as any;
+/** Launch-gate doubles for the AI lane's kill switch. `openLaunchGate` is the seeded state of
+ *  `ai_line_assistant/DEFAULT`, so every pre-existing test keeps its exact behaviour. */
+const openLaunchGate = { assertLaunchRouteOpen: async () => undefined } as any;
+const closedLaunchGate = {
+  assertLaunchRouteOpen: async () => { throw featureTemporarilyUnavailable('ai_line_assistant'); },
+} as any;
+const brokenLaunchGate = {
+  assertLaunchRouteOpen: async () => { throw new Error('connection terminated'); },
+} as any;
 
 describe('readResponseBodyLimited', () => {
   it('combines a chunked response within the hard byte cap', async () => {
@@ -221,6 +231,9 @@ function makeUseCase(
       substituteLedger?: any;
       expenseDraftConversation?: any;
       openWaiting?: any[];
+      /** Defaults to the seeded OPEN route; pass `closedLaunchGate`/`brokenLaunchGate` to drive the
+       *  AI-lane kill switch. */
+      launchGate?: any;
 	  } = {},
 	) {
   const replies: string[] = [];
@@ -283,6 +296,7 @@ function makeUseCase(
       return opts.legalAcceptanceRequired ?? false;
     } } as any,
     shadowProbe,
+    opts.launchGate ?? openLaunchGate,
     opts.initReceiptUpload,
     opts.completeReceiptUpload,
     // Positional @Optional deps, in constructor order: captureExpenseNote, initSignatureUpload,
@@ -601,6 +615,91 @@ describe('ProcessLineWebhookUseCase', () => {
 
     assert.equal(getAiGatewayCalled(), false);
     assert.equal((updates[0] as any).data.status, 'feature_disabled');
+  });
+
+  // --- AI-lane kill switch: the `ai_line_assistant` launch route (plan §P3 item 1) ---------------
+
+  it('refuses the text turn with the CLOSED-route copy, and calls no model or router, when the launch route is closed', async () => {
+    const { prisma, updates } = makePrisma();
+    const { useCase, replies, intakeRequests, auditEvents, getAiGatewayCalled } = makeUseCase(prisma, {
+      permissions: ['line.ai.query'],
+      launchGate: closedLaunchGate,
+    });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-gate-closed-text' });
+
+    assert.equal(getAiGatewayCalled(), false);
+    assert.equal(intakeRequests.length, 0);
+    // "Temporarily unavailable", never "not purchased" (spec CC1 / runbook §2.3), and it names the
+    // channel that still works.
+    assert.match(replies[0] ?? '', /พักให้บริการชั่วคราว/);
+    assert.match(replies[0] ?? '', /เว็บแอป/);
+    assert.doesNotMatch(replies[0] ?? '', /ยังไม่ได้เปิดใช้งาน/);
+    assert.equal((updates.at(-1) as any).data.status, 'launch_route_closed');
+    const denied = auditEvents.find((entry: any) => entry.result === 'DENIED');
+    assert.equal(denied?.metadataJson?.reason, 'launch_route_closed');
+  });
+
+  it('refuses the receipt-upload turn before download, OCR, or storage when the launch route is closed', async () => {
+    const { prisma, updates } = makePrisma();
+    const { useCase, replies, intakeRequests, getAiGatewayCalled } = makeUseCase(prisma, {
+      permissions: ['expense.receipt.line_upload', 'expense.receipt.upload'],
+      launchGate: closedLaunchGate,
+    });
+    let mediaDownloads = 0;
+    (useCase as any).downloadLineMedia = async () => {
+      mediaDownloads += 1;
+      throw new Error('must not download while the launch route is closed');
+    };
+
+    await useCase.executeReceiptUpload({
+      webhookEventId: 'evt-gate-closed-img',
+      lineUserId: 'line-user-secret',
+      replyToken: 'reply-gate-closed-img',
+      lineMessageId: 'line-msg-gate-closed',
+      messageType: 'image',
+      messagingChannelId: 'msg-channel-1',
+    });
+
+    assert.equal(mediaDownloads, 0);
+    assert.equal(intakeRequests.length, 0);
+    assert.equal(getAiGatewayCalled(), false);
+    assert.match(replies[0] ?? '', /พักให้บริการชั่วคราว/);
+    assert.equal((updates.at(-1) as any).data.status, 'launch_route_closed');
+  });
+
+  it('lets an OPEN launch route through unchanged — the gate adds no reply and no refusal', async () => {
+    const { prisma, updates } = makePrisma({ entitlements: [{ featureKey: 'ai_line_assistant', enabled: true }] });
+    const { useCase, replies, getAiGatewayCalled } = makeUseCase(prisma, {
+      permissions: ['line.ai.query'],
+      entitledFeatureKeys: ['ai_line_assistant'],
+      aiGatewayFn: () => ({
+        requestId: 'req-open', replyText: 'สรุปแดชบอร์ดวันนี้', sourceRefs: [], sourceLabels: [],
+        webLinks: [], intent: 'read_summary', agent: 'general', refused: false, toolsInvoked: [], durationMs: 1,
+      }),
+    });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-gate-open-text' });
+
+    assert.equal(getAiGatewayCalled(), true);
+    assert.doesNotMatch(replies[0] ?? '', /พักให้บริการชั่วคราว/);
+    assert.notEqual((updates.at(-1) as any).data.status, 'launch_route_closed');
+  });
+
+  it('does not open the lane when the guard itself fails — the turn is thrown, never modelled', async () => {
+    const { prisma } = makePrisma();
+    const { useCase, getAiGatewayCalled } = makeUseCase(prisma, {
+      permissions: ['line.ai.query'],
+      launchGate: brokenLaunchGate,
+    });
+
+    // Rethrown, not swallowed: "closed" and "we could not tell" are different answers
+    // (`isLaunchRouteOpen`), and the buffer's dispatch catch turns this into a retryable reply.
+    await assert.rejects(
+      () => useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-gate-broken-text' }),
+      /connection terminated/,
+    );
+    assert.equal(getAiGatewayCalled(), false);
   });
 
   it('allows the turn when ai_line_assistant entitlement is enabled', async () => {
@@ -1891,6 +1990,7 @@ describe('ProcessLineWebhookUseCase', () => {
       CLEAN_SCANNER,
     acceptedLegal,
     shadowProbe,
+    openLaunchGate,
       { execute: async () => { throw new Error('expense table missing'); } } as any,
       { execute: async () => undefined } as any,
     );
@@ -1949,6 +2049,7 @@ describe('ProcessLineWebhookUseCase', () => {
       CLEAN_SCANNER,
       acceptedLegal,
       shadowProbe,
+      openLaunchGate,
       { execute: async () => { throw new Error('no expense expected on a failed read'); } } as any,
       { execute: async () => undefined } as any,
     );
@@ -2017,6 +2118,7 @@ describe('ProcessLineWebhookUseCase', () => {
       CLEAN_SCANNER,
     acceptedLegal,
     shadowProbe,
+    openLaunchGate,
       {
         execute: async (_ctx: any, input: any) => {
           initInputs.push(input);
@@ -2151,6 +2253,7 @@ describe('ProcessLineWebhookUseCase', () => {
       CLEAN_SCANNER,
     acceptedLegal,
     shadowProbe,
+    openLaunchGate,
       { execute: async () => ({ expenseId: 'expense-ocr-1', attachmentId: 'att-ocr-1', uploadUrl: 'https://storage.example.com/upload', uploadMethod: 'PUT' }) } as any,
       { execute: async () => ({ id: 'expense-ocr-1' }) } as any,
       undefined,
@@ -2350,6 +2453,7 @@ function makeLedgerUseCase(prisma: any, opts: {
     CLEAN_SCANNER,
     acceptedLegal,
     shadowProbe,
+    openLaunchGate,
     undefined, undefined, undefined, undefined, undefined, undefined,
     ledger,
   );

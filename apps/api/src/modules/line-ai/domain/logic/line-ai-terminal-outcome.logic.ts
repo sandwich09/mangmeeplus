@@ -58,7 +58,11 @@ export function classifyLineAiTerminalOutcome(
   ) {
     return 'intentional_noop';
   }
-  if (status === 'feature_disabled' || status === 'unsupported_module') return 'feature_disabled';
+  // `launch_route_closed` is the P3 kill switch (an operator closed `ai_line_assistant`), kept as a
+  // distinct STATUS so the durable row and the audit trail can tell a planned CLOSE from a company
+  // that never enabled the feature — but classified here as `feature_disabled` so a drill does not
+  // register as an outage on the AI-failure alarm.
+  if (status === 'feature_disabled' || status === 'unsupported_module' || status === 'launch_route_closed') return 'feature_disabled';
   if (status === 'ai_timeout' || /TIMEOUT/.test(errorCode ?? '')) return 'timeout';
   if (status === 'unavailable_delivered' || status === 'provider_unavailable') return 'provider_unavailable';
   if (CLARIFICATION_STATUSES.has(status)) return 'clarification';

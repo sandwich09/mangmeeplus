@@ -51,6 +51,111 @@ put_alarm() {
   aws_cmd cloudwatch put-metric-alarm "$@" --alarm-actions "$topic" --region "$region" >/dev/null
 }
 
+# --- P3 service alarms (plan §P3 item 2: login failure spike, 5xx, OCR/AI failure, AI queue age,
+# upload failure) -------------------------------------------------------------------------------
+#
+# The infra alarms above read native AWS metrics. None of the five service signals has a native
+# metric, so each is derived from the application log stream by a CloudWatch metric filter — the
+# same mechanism `infra/prod-ecs-express/deploy.sh:ensure_log_group` already uses for
+# `line.ai.accepted` / `line.ai.terminal` / the HIGH-risk security filter. Filters are created here
+# so this script owns the whole install for these five, and re-running is idempotent.
+#
+# Every pattern keys on a STABLE dotted event name (`security-event.ts`: "free-text English
+# sentences cannot be alarm keys"), except the two receipt-OCR gateway lines noted below, which are
+# the only signal the web OCR lane emits today.
+#
+# THRESHOLDS ARE INITIAL VALUES, NOT MEASURED ONES. No B1 traffic baseline exists yet and runbook
+# `feature-launch-control.md` OPEN-6 leaves every numeric threshold undefined; re-derive each from
+# the first week of B1 data rather than tuning ad hoc. UAT and production deliberately share one
+# value for the same reason — there is nothing yet that would justify a split.
+service_namespace=WatchDog/Runtime
+# `prefix` carries hyphens; metric names mirror deploy.sh's sanitized underscore style.
+metric_prefix="$(tr '-' '_' <<< "$prefix")"
+login_failure_threshold=20        # denied logins per 5 min; a real user retrying is ~3
+api_5xx_threshold=10              # 5xx responses per 5 min, sustained over 2 periods
+ai_failure_threshold=10           # AI/OCR failures per 5 min
+ai_queue_wait_threshold=60000     # ms a turn waited in the buffer queue before dispatch (60 s)
+upload_failure_threshold=10       # rejected attachment uploads per 5 min
+
+put_metric_filter() {
+  local log_group="$1" filter_name="$2" pattern="$3" metric="$4" value="${5:-1}"
+  aws_cmd logs put-metric-filter \
+    --log-group-name "$log_group" \
+    --filter-name "$filter_name" \
+    --filter-pattern "$pattern" \
+    --metric-transformations \
+      "metricName=${metric},metricNamespace=${service_namespace},metricValue=${value},defaultValue=0" \
+    --region "$region" >/dev/null
+}
+
+install_service_alarms() {
+  local api_log="/ecs/${prefix}-api-web" ai_log="/ecs/${prefix}-ai-gateway"
+
+  # 1. Login failure spike — `auth.login.denied` (auth.controller.ts) covers both invalid
+  #    credentials and rate-limited attempts. The existing HIGH-risk security alarm fires on ONE
+  #    such event; this one is the volume signal an operator can act on.
+  put_metric_filter "$api_log" login-failure '{ $.msg = "auth.login.denied" }' \
+    "${metric_prefix}_login_denied"
+  put_alarm \
+    --alarm-name "${prefix}-login-failure-spike" \
+    --alarm-description "${environment} denied logins spiked (credential stuffing or a broken login path)" \
+    --namespace "$service_namespace" --metric-name "${metric_prefix}_login_denied" --statistic Sum \
+    --period 300 --evaluation-periods 1 --datapoints-to-alarm 1 --threshold "$login_failure_threshold" \
+    --comparison-operator GreaterThanThreshold --treat-missing-data notBreaching
+
+  # 2. API 5xx — the request logger writes one `request` line per response with a root-level
+  #    `status` (REQUEST_LOG_ENABLED defaults true). Two consecutive periods so a rollout blip does
+  #    not page. Absolute count, not a ratio: a ratio needs metric math, and there is no baseline
+  #    denominator to divide by yet.
+  put_metric_filter "$api_log" api-5xx '{ $.msg = "request" && $.status >= 500 }' \
+    "${metric_prefix}_api_5xx"
+  put_alarm \
+    --alarm-name "${prefix}-api-5xx-high" \
+    --alarm-description "${environment} API is returning server errors to customers" \
+    --namespace "$service_namespace" --metric-name "${metric_prefix}_api_5xx" --statistic Sum \
+    --period 300 --evaluation-periods 2 --datapoints-to-alarm 2 --threshold "$api_5xx_threshold" \
+    --comparison-operator GreaterThanThreshold --treat-missing-data notBreaching
+
+  # 3. OCR/AI failure — one metric fed by two log groups: the AI gateway's provider failures and the
+  #    API's terminal outcome classes. `feature_disabled` is deliberately EXCLUDED so closing the
+  #    launch gate (the P3 kill switch) does not read as an outage on this alarm.
+  #    The two `receipt OCR gateway *` lines are free text — the only OCR signal the web lane emits
+  #    today; re-check this pattern if `receipt-ocr.client.ts` is reworded.
+  # One line on purpose: a CloudWatch filter pattern is a single token stream, not a shell string.
+  local ai_failure_pattern='{ ($.msg = "ai.provider.failure") || ($.msg = "line.ai.terminal" && $.terminalClass = "failed_terminal") || ($.msg = "line.ai.terminal" && $.terminalClass = "provider_unavailable") || ($.msg = "line.ai.terminal" && $.terminalClass = "timeout") || ($.msg = "receipt OCR gateway unreachable") || ($.msg = "receipt OCR gateway error") }'
+  put_metric_filter "$api_log" ai-ocr-failure "$ai_failure_pattern" "${metric_prefix}_ai_ocr_failure"
+  put_metric_filter "$ai_log" ai-ocr-failure "$ai_failure_pattern" "${metric_prefix}_ai_ocr_failure"
+  put_alarm \
+    --alarm-name "${prefix}-ai-ocr-failure-high" \
+    --alarm-description "${environment} AI turns or receipt OCR are failing for users" \
+    --namespace "$service_namespace" --metric-name "${metric_prefix}_ai_ocr_failure" --statistic Sum \
+    --period 300 --evaluation-periods 1 --datapoints-to-alarm 1 --threshold "$ai_failure_threshold" \
+    --comparison-operator GreaterThanThreshold --treat-missing-data notBreaching
+
+  # 4. AI queue age — `line.ai.api_trace` already carries `queueWaitMs` (flush → worker dequeue) for
+  #    every dispatched LINE turn, so the age is published directly instead of counted. Maximum, not
+  #    Sum: one turn waiting a minute is the incident, not the total.
+  put_metric_filter "$api_log" ai-queue-wait '{ $.msg = "line.ai.api_trace" }' \
+    "${metric_prefix}_ai_queue_wait_ms" '$.queueWaitMs'
+  put_alarm \
+    --alarm-name "${prefix}-ai-queue-wait-high" \
+    --alarm-description "${environment} LINE AI turns are queueing before dispatch" \
+    --namespace "$service_namespace" --metric-name "${metric_prefix}_ai_queue_wait_ms" --statistic Maximum \
+    --period 300 --evaluation-periods 2 --datapoints-to-alarm 2 --threshold "$ai_queue_wait_threshold" \
+    --comparison-operator GreaterThanThreshold --treat-missing-data notBreaching
+
+  # 5. Upload failure — `attachment.upload.rejected` is emitted by every attachment path (web
+  #    complete-upload, LINE media, CRM inbox intake and its retry sweep).
+  put_metric_filter "$api_log" upload-failure '{ $.msg = "attachment.upload.rejected" }' \
+    "${metric_prefix}_upload_failure"
+  put_alarm \
+    --alarm-name "${prefix}-upload-failure-high" \
+    --alarm-description "${environment} receipt/attachment uploads are being rejected" \
+    --namespace "$service_namespace" --metric-name "${metric_prefix}_upload_failure" --statistic Sum \
+    --period 300 --evaluation-periods 1 --datapoints-to-alarm 1 --threshold "$upload_failure_threshold" \
+    --comparison-operator GreaterThanThreshold --treat-missing-data notBreaching
+}
+
 install_alarms() {
   local component node cache_id node_id suffix
   for component in api-web ai-gateway workers; do
@@ -105,6 +210,7 @@ install_alarms() {
       --period 300 --evaluation-periods 2 --datapoints-to-alarm 2 --threshold 50 \
       --comparison-operator LessThanThreshold --treat-missing-data notBreaching
   fi
+  install_service_alarms
   echo "[runtime-alarms] installed environment=$environment"
 }
 
@@ -117,10 +223,16 @@ verify_alarm() {
   local alarm_name="$1" namespace="$2" metric="$3" statistic="$4" period="$5" evaluations="$6"
   local datapoints="$7" threshold="$8" comparison="$9" lookback_days="${10}"
   shift 10
-  local dimensions_json alarm_json start_epoch end_epoch start_time end_time count dimension_args=(--dimensions)
-  dimensions_json="$(printf '%s\n' "$@" | jq -Rsc '
-    split("\n")[:-1] | map(capture("Name=(?<Name>[^,]+),Value=(?<Value>.*)")) | sort_by(.Name,.Value)
-  ')"
+  # A log-metric-filter metric carries no dimensions (its identity is the metric NAME, exactly as in
+  # deploy.sh), so both the contract check and the datapoint probe must tolerate an empty set.
+  local alarm_json start_epoch end_epoch start_time end_time count dimensions_json='[]'
+  local stat_args=(--namespace "$namespace" --metric-name "$metric" --statistics "$statistic")
+  if [ "$#" -gt 0 ]; then
+    dimensions_json="$(printf '%s\n' "$@" | jq -Rsc '
+      split("\n")[:-1] | map(capture("Name=(?<Name>[^,]+),Value=(?<Value>.*)")) | sort_by(.Name,.Value)
+    ')"
+    stat_args+=(--dimensions "$@")
+  fi
   alarm_json="$(aws_cmd cloudwatch describe-alarms --alarm-names "$alarm_name" --output json --region "$region")"
   jq -e --arg name "$alarm_name" --arg namespace "$namespace" --arg metric "$metric" \
     --arg statistic "$statistic" --arg comparison "$comparison" --arg topic "$topic" \
@@ -134,12 +246,11 @@ verify_alarm() {
         and $a.TreatMissingData == "notBreaching" and $a.AlarmActions == [$topic]
         and (($a.Dimensions | sort_by(.Name,.Value)) == $dimensions)
     ' <<< "$alarm_json" >/dev/null || fail "alarm contract mismatch: $alarm_name"
-  for dimension in "$@"; do dimension_args+=("$dimension"); done
   end_epoch="$(date +%s)"; start_epoch="$((end_epoch - lookback_days * 86400))"
   start_time="$(iso_at "$start_epoch")"; end_time="$(iso_at "$end_epoch")"
-  count="$(aws_cmd cloudwatch get-metric-statistics --namespace "$namespace" --metric-name "$metric" \
-    "${dimension_args[@]}" --start-time "$start_time" --end-time "$end_time" --period "$period" \
-    --statistics "$statistic" --query 'length(Datapoints)' --output text --region "$region")"
+  count="$(aws_cmd cloudwatch get-metric-statistics "${stat_args[@]}" \
+    --start-time "$start_time" --end-time "$end_time" --period "$period" \
+    --query 'length(Datapoints)' --output text --region "$region")"
   [[ "$count" =~ ^[0-9]+$ ]] && [ "$count" -gt 0 ] || fail "alarm dimension has no datapoints: $alarm_name"
 }
 
@@ -169,7 +280,24 @@ verify_alarms() {
     verify_alarm "${prefix}-db-cpu-credits-low" AWS/RDS CPUCreditBalance Minimum 300 2 2 \
       50 LessThanThreshold 1 "Name=DBInstanceIdentifier,Value=${db_id}"
   fi
+  verify_service_alarms
   echo "[runtime-alarms] verified environment=$environment datapoints=present subscription=confirmed"
+}
+
+# Same contract as the infra alarms, minus dimensions. A metric-filter metric only produces
+# datapoints once its log group has received events, so this fails until the environment has served
+# real traffic — which is the point: an alarm on a metric nothing writes is not a working alarm.
+verify_service_alarms() {
+  verify_alarm "${prefix}-login-failure-spike" "$service_namespace" \
+    "${metric_prefix}_login_denied" Sum 300 1 1 "$login_failure_threshold" GreaterThanThreshold 1
+  verify_alarm "${prefix}-api-5xx-high" "$service_namespace" \
+    "${metric_prefix}_api_5xx" Sum 300 2 2 "$api_5xx_threshold" GreaterThanThreshold 1
+  verify_alarm "${prefix}-ai-ocr-failure-high" "$service_namespace" \
+    "${metric_prefix}_ai_ocr_failure" Sum 300 1 1 "$ai_failure_threshold" GreaterThanThreshold 1
+  verify_alarm "${prefix}-ai-queue-wait-high" "$service_namespace" \
+    "${metric_prefix}_ai_queue_wait_ms" Maximum 300 2 2 "$ai_queue_wait_threshold" GreaterThanThreshold 1
+  verify_alarm "${prefix}-upload-failure-high" "$service_namespace" \
+    "${metric_prefix}_upload_failure" Sum 300 1 1 "$upload_failure_threshold" GreaterThanThreshold 1
 }
 
 retire_invalid_prod_alarm() {

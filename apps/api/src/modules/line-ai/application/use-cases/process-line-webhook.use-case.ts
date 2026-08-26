@@ -15,6 +15,7 @@ import { PrismaService } from '../../../../common/database/prisma.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { AuditService } from '../../../audit/application/audit.service';
 import { PermissionResolverService } from '../../../access-control/application/permission-resolver.service';
+import { LaunchGateGuardService } from '../../../feature-launch/application/launch-gate.guard';
 import { LaunchShadowProbe } from '../../../feature-launch/application/launch-shadow.probe';
 import { SHADOW_SURFACES } from '../../../feature-launch/domain/shadow-surface.catalog';
 import { AiGatewayClient } from '../../infrastructure/ai-gateway.client';
@@ -71,7 +72,7 @@ import { normalizeLineText, hashMessagePreview, parseBareCompanySelection, parse
 import type { LineCompanyCommand } from '../../domain/logic/line-ai-classifier.logic';
 import { formatRefusal } from '../../domain/logic/line-ai-formatter.logic';
 import { absoluteWebLink } from '../../../../common/http/web-link';
-import { loadEntitledFeatureKeys } from '../../../employee-access/application/entitlement.helper';
+import { FEATURE_TEMPORARILY_UNAVAILABLE, loadEntitledFeatureKeys } from '../../../employee-access/application/entitlement.helper';
 import { ListApprovalQueueUseCase } from '../../../reimbursements/application/use-cases/reimbursement-approval.use-case';
 import { ListPurchaseRequestsUseCase } from '../../../procurement/application/use-cases/purchase-request.use-case';
 import { ListPurchaseOrdersUseCase } from '../../../procurement/application/use-cases/purchase-order.use-case';
@@ -149,6 +150,15 @@ const RATE_LIMIT_REPLY = '⏳ ระบบกำลังประมวลผ�
 const RECEIPT_LINK_REPLY = '🔗 กรุณาเชื่อมต่อบัญชี มั่งมีพลัส กับ LINE ก่อนส่งบิลหรือใบเสร็จนะคะ';
 const RECEIPT_FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์อัปโหลดบิลหรือใบเสร็จผ่าน LINE ค่ะ';
 const EXPENSE_FEATURE_DISABLED_REPLY = '📋 บริษัทนี้ยังไม่ได้เปิดใช้งานระบบค่าใช้จ่ายและเอกสารค่ะ\nหากต้องการใช้ ให้เจ้าของหรือผู้ดูแลเปิดฟีเจอร์ในเว็บแอปก่อนนะคะ';
+/**
+ * The CLOSED-route copy the runbook left unwritten (`feature-launch-control.md` OPEN-9).
+ *
+ * Constraints it has to satisfy, from spec CC1 via runbook §2.3: it says *temporarily unavailable*,
+ * never "not purchased" — that stays `EXPENSE_FEATURE_DISABLED_REPLY`'s wording. It names no route
+ * key, gate, generation or environment (a customer surface may not see control-plane state), and it
+ * points at the channel that still works so a closed AI lane does not read as a dead product.
+ */
+const LAUNCH_ROUTE_CLOSED_REPLY = '🔧 ตอนนี้ผู้ช่วยพักให้บริการชั่วคราวค่ะ\nระหว่างนี้ยังใช้งานผ่านเว็บแอปได้ตามปกติ และเราจะกลับมาให้บริการเร็ว ๆ นี้นะคะ';
 const ASSISTANT_TALK_GREETING = 'สวัสดีค่ะ 😊 น้องมั่งมีมาแล้วนะคะ\nวันนี้มีอะไรให้น้องช่วยแบ่งเบาบ้าง บอกได้เลยค่ะ 💚';
 const COMPANY_CONTEXT_FORBIDDEN_REPLY = '🔒 ผู้ใช้หลายบริษัทต้องเป็น OWNER ของทุกบริษัทก่อนเลือกบริบทใน LINE ค่ะ';
 const SIGNATURE_FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์เก็บลายเซ็นประจำตัวผ่าน LINE ค่ะ';
@@ -969,6 +979,9 @@ export class ProcessLineWebhookUseCase {
     // to wire would report zero would_block observations, which R1 cannot distinguish from a route
     // that was measured and never blocked. Absent evidence must fail loudly at boot, not quietly.
     private readonly shadow: LaunchShadowProbe,
+    // REQUIRED for the same reason the probe above is: this is the AI lane's kill switch, and an
+    // `@Optional()` switch that failed to wire would look exactly like an open route.
+    private readonly launchGate: LaunchGateGuardService,
     @Optional() private readonly initReceiptUpload?: InitReceiptUploadUseCase,
     @Optional() private readonly completeReceiptUpload?: CompleteReceiptUploadUseCase,
     @Optional() private readonly captureExpenseNote?: CaptureLineExpenseNoteUseCase,
@@ -1015,6 +1028,58 @@ export class ProcessLineWebhookUseCase {
       // observation, and NOT redundant the moment a second `record` is added here.
       await sweep.flush();
     }
+  }
+
+  /**
+   * THE AI-LANE KILL SWITCH (plan §P3 item 1). `ai_line_assistant/DEFAULT` is the root launch route
+   * of a LINE turn; this runs at the same seam `recordShadowTurn` measures, which is the last point
+   * before a turn can reach the model, a tool, OCR, or any attachment write. Both entry paths (the
+   * text turn and the receipt-upload turn) call it, so closing the route cannot be half-effective.
+   *
+   * Refuses exactly like the entitlement gate below it — reply, DENIED audit row, terminal event
+   * log — but with the CLOSED-route copy, never the "not enabled" copy (spec CC1 / runbook §2.3).
+   *
+   * FAIL MODE, deliberately not fail-open: only the control-plane refusal
+   * (`feature_temporarily_unavailable`) becomes a user-facing close. Anything else — the guard's own
+   * database read failing — rethrows, exactly as the WHT callers do (`isLaunchRouteOpen`,
+   * `wht-certificate-handoff.use-case.ts:22`): "the route is closed" and "we could not tell" are not
+   * the same answer. The rethrow lands in this lane's existing catch (`executeReceiptUpload`, or the
+   * buffer's `dispatchBatch` → `deliverDispatchFailure`), which sends a retryable "try again" reply
+   * and releases the event — so an unreadable gate degrades toward CLOSED with no model call, per
+   * runbook R8 rule 2: "availability problems therefore degrade toward closed, never toward open".
+   */
+  private async refuseWhenLaunchRouteClosed(
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string },
+    actorUserId: string,
+    companyId: string,
+    requestId: string,
+  ): Promise<boolean> {
+    try {
+      await this.launchGate.assertLaunchRouteOpen('ai_line_assistant');
+      return false;
+    } catch (error) {
+      const body = (error as { getResponse?: () => unknown })?.getResponse?.() as { code?: string } | undefined;
+      if (body?.code !== FEATURE_TEMPORARILY_UNAVAILABLE) throw error;
+    }
+    await this.deliverReply(event, LAUNCH_ROUTE_CLOSED_REPLY);
+    await this.audit.log({
+      companyId,
+      actorUserId,
+      action: 'ai.line.query.denied',
+      targetType: 'LineWebhookEvent',
+      targetId: event.webhookEventId,
+      requestId,
+      result: 'DENIED',
+      riskLevel: 'LOW',
+      // Tenant-anonymous and route-anonymous: the operator reads WHICH gate from the control plane,
+      // not from a customer-turn audit row.
+      metadataJson: { reason: 'launch_route_closed' },
+    });
+    // Its own status, not `feature_disabled`: a planned CLOSE and a company that never bought the
+    // feature are different incidents, and R3 verification counts the fallback served under the
+    // first. It classifies as `feature_disabled` so the AI-failure alarm stays quiet during a drill.
+    await this.updateEventLog(event.webhookEventId, 'launch_route_closed', LINE_AI_ERROR_CODES.UNSUPPORTED_MODULE, companyId);
+    return true;
   }
 
   private async resolveBranchScopeLabel(companyId: string, branchIds?: string[]): Promise<string> {
@@ -1577,6 +1642,7 @@ export class ProcessLineWebhookUseCase {
     }
 
     await this.recordShadowTurn(companyId);
+    if (await this.refuseWhenLaunchRouteClosed(event, identity.userId, companyId, requestId)) return;
     if (lineAssistantDisabledFor(entitledFeatureKeys)) {
       await this.deliverReply(event, formatRefusal('feature_disabled'));
       await this.audit.log({
@@ -3159,6 +3225,7 @@ export class ProcessLineWebhookUseCase {
     )) return;
 
     await this.recordShadowTurn(companyId);
+    if (await this.refuseWhenLaunchRouteClosed(event, identity.userId, companyId, requestId)) return;
     if (await lineAssistantDisabled(this.prisma, companyId)) {
       await this.deliverReply(event, formatRefusal('feature_disabled'));
       await this.audit.log({ companyId, actorUserId: identity.userId, action: 'ai.line.query.denied', targetType: 'LineWebhookEvent', targetId: event.webhookEventId, requestId, result: 'DENIED', riskLevel: 'LOW', metadataJson: { reason: 'feature_disabled' } });
