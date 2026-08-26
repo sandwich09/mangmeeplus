@@ -388,10 +388,13 @@ export type IncomeExpenseLedgerEntryType = 'ALL' | 'INCOME' | 'EXPENSE' | 'RECEI
 
 export type IncomeExpenseLedgerEntry = {
   id: string;
+  branchId?: string;
   side: 'INCOME' | 'EXPENSE';
   sourceType: 'accounting_document' | 'expense_record';
   date: string;
+  dueDate?: string;
   referenceNumber?: string;
+  counterpartyId?: string;
   partyName?: string;
   categoryLabels: string[];
   status: string;

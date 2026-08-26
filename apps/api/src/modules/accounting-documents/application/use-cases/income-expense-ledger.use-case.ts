@@ -197,7 +197,9 @@ export class IncomeExpenseLedgerUseCase {
       } : null;
       const [documents, documentCount, expenses, expenseCount] = await Promise.all([
         documentWhere ? tx.accountingDocument.findMany({
-          where: documentWhere, orderBy: [{ documentDate: 'desc' }, { id: 'desc' }], take: candidateLimit,
+          where: documentWhere,
+          orderBy: type === 'RECEIVABLE' ? [{ dueDate: 'asc' }, { documentDate: 'asc' }, { id: 'asc' }] : [{ documentDate: 'desc' }, { id: 'desc' }],
+          take: candidateLimit,
           include: { lines: { select: { revenueCategoryId: true, revenueCategory: true } } },
         }) : [],
         documentWhere ? tx.accountingDocument.count({ where: documentWhere }) : 0,
@@ -214,12 +216,14 @@ export class IncomeExpenseLedgerUseCase {
       const negative = row.documentType === 'CREDIT_NOTE';
       const amount = new Decimal(row.grandTotalAmount.toString()).mul(negative ? -1 : 1).toFixed(2);
       return {
-        id: row.id, side: 'INCOME', sourceType: 'accounting_document', date: row.documentDate.toISOString().slice(0, 10),
+        id: row.id, ...(row.branchId && { branchId: row.branchId }), side: 'INCOME', sourceType: 'accounting_document', date: row.documentDate.toISOString().slice(0, 10),
+        ...(row.dueDate && { dueDate: row.dueDate.toISOString().slice(0, 10) }),
         ...(row.documentNumber && { referenceNumber: row.documentNumber }),
+        ...(row.counterpartyId && { counterpartyId: row.counterpartyId }),
         ...(snapshotName(row.counterpartySnapshotJson) && { partyName: snapshotName(row.counterpartySnapshotJson) }),
         categoryLabels: [...new Set(row.lines.map((line: any) => line.revenueCategory || 'ยังไม่จัดหมวด'))],
         status: row.status, amount, outstandingAmount: new Decimal(row.outstandingAmount).toFixed(2),
-        evidenceHref: `/companies/${ctx.companyId}/accounting?documentId=${encodeURIComponent(row.id)}`,
+        evidenceHref: `/companies/${ctx.companyId}/sales-documents?documentId=${encodeURIComponent(row.id)}`,
       };
     });
     const expenseEntries: IncomeExpenseLedgerEntry[] = result.expenses.map((row: any) => ({
@@ -233,7 +237,9 @@ export class IncomeExpenseLedgerUseCase {
     }));
     const offset = (page - 1) * pageSize;
     const data = [...documentEntries, ...expenseEntries]
-      .sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id))
+      .sort((a, b) => type === 'RECEIVABLE'
+        ? (a.dueDate ?? '9999-12-31').localeCompare(b.dueDate ?? '9999-12-31') || a.date.localeCompare(b.date) || a.id.localeCompare(b.id)
+        : b.date.localeCompare(a.date) || b.id.localeCompare(a.id))
       .slice(offset, offset + pageSize);
     return {
       period, data, total: result.documentCount + result.expenseCount, page, pageSize,

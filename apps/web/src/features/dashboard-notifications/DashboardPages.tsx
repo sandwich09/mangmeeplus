@@ -97,7 +97,7 @@ const HERO_EXAMPLE_KEYS: DictionaryKey[] = [
 
 // Plan P4.1–P4.3 (WEB-01/WEB-02): the two things a new user should be able to start from the
 // landing page without reading the menu. Both targets are one tap; nothing here is a placeholder.
-function StartHereHero({ companyId, locale, canUploadReceipts }: { companyId: string; locale: SupportedLocale; canUploadReceipts: boolean }) {
+function StartHereHero({ companyId, locale, canUploadReceipts, canOpenLedger }: { companyId: string; locale: SupportedLocale; canUploadReceipts: boolean; canOpenLedger: boolean }) {
   const ctaClass =
     'flex min-h-[56px] w-full items-center justify-center gap-2 rounded-xl px-5 py-3 text-center text-base font-extrabold';
   return (
@@ -139,6 +139,17 @@ function StartHereHero({ companyId, locale, canUploadReceipts }: { companyId: st
           </div>
           <Link href={companyHref(companyId, 'expenses/upload')} className={`${ctaClass} mt-auto bg-brand-600 text-white`}>
             {t('dashboard.hero.receipt_title', locale)}
+          </Link>
+        </Card>
+      )}
+      {canOpenLedger && (
+        <Card className="flex flex-col gap-3 p-5">
+          <div>
+            <h2 className="text-[19px] font-extrabold text-gray-900">{locale === 'th' ? 'สมุดรายรับ–รายจ่าย' : 'Income & expense book'}</h2>
+            <p className="mt-1 text-base leading-7 text-gray-600">{locale === 'th' ? 'ดูยอดตามเอกสาร เงินที่รับ–จ่าย และรายการย้อนหลังในหน้าเดียว' : 'Review document totals, cash movements, and source records in one place.'}</p>
+          </div>
+          <Link href={companyHref(companyId, 'income-expense-ledger')} className={`${ctaClass} mt-auto bg-brand-600 text-white`}>
+            {locale === 'th' ? 'เปิดสมุด' : 'Open book'}
           </Link>
         </Card>
       )}
@@ -367,7 +378,12 @@ export function CompanyDashboardPage({
         </div>
       </div>
 
-      <StartHereHero companyId={companyId} locale={locale} canUploadReceipts={permissions.includes('expense.receipt.upload')} />
+      <StartHereHero
+        companyId={companyId}
+        locale={locale}
+        canUploadReceipts={permissions.includes('expense.receipt.upload')}
+        canOpenLedger={permissions.includes('accounting.document.read') || permissions.includes('expense.read')}
+      />
 
       {permissions.includes('crm.inbox.read') && <CrmDailyBriefCard companyId={companyId} periodKind={periodKind} refreshToken={refreshToken} />}
 

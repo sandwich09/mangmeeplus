@@ -14,7 +14,19 @@ import type {
 import { authedApiFetch as apiFetch } from '@/common/api/authed-fetch';
 import { assertAllowedUploadFile, withGenericUploadError } from '@/common/files/upload-file.logic';
 import { uploadReceiptFile } from '@/features/expenses/expenses.api';
-import type { AccountingAdjustmentReasonCode, CreateRevenueCategoryInput, RecordSimpleIncomeInput, RecordSimpleIncomeResult, RevenueCategorySummary, TransactionTaxContext, UpdateRevenueCategoryInput } from '@watchdog-bms/contracts';
+import type {
+  AccountingAdjustmentReasonCode,
+  CreateRevenueCategoryInput,
+  IncomeExpenseLedgerEntries,
+  IncomeExpenseLedgerEntryType,
+  IncomeExpenseLedgerExport,
+  IncomeExpenseLedgerSummary,
+  RecordSimpleIncomeInput,
+  RecordSimpleIncomeResult,
+  RevenueCategorySummary,
+  TransactionTaxContext,
+  UpdateRevenueCategoryInput,
+} from '@watchdog-bms/contracts';
 
 function qs(params?: Record<string, unknown>): string {
   const q = new URLSearchParams();
@@ -126,9 +138,13 @@ export async function createPayment(
   companyId: string,
   // `amount` is cash received; `whtAmount` is tax the customer withheld, which settles the document
   // without reaching the bank and therefore requires an allocation target.
-  body: { direction: AccountingPaymentDirection; method: AccountingPaymentMethod; amount: string; whtAmount?: string; paidAt: string; branchId?: string; counterpartyId?: string; note?: string; externalReference?: string; allocateToDocumentId?: string },
+  body: { idempotencyKey?: string; branchId?: string; direction: AccountingPaymentDirection; method: AccountingPaymentMethod; amount: string; whtAmount?: string; paidAt: string; counterpartyId?: string; note?: string; externalReference?: string; allocateToDocumentId?: string },
 ): Promise<PaymentSummary> {
   return apiFetch(`/v1/companies/${companyId}/accounting/payments`, { method: 'POST', body: JSON.stringify(body) });
+}
+
+export function newAccountingPaymentIdempotencyKey(sourceId: string): string {
+  return `payment_${sourceId.slice(0, 22)}_${globalThis.crypto.randomUUID().replaceAll('-', '')}`;
 }
 
 export async function voidPayment(companyId: string, paymentId: string, reason: string): Promise<PaymentSummary> {
@@ -196,4 +212,26 @@ export async function uploadAccountingDocumentSupporting(
       }),
     });
   });
+}
+
+// ---- Income-expense ledger (P27 Phase 4) ----
+export async function getIncomeExpenseLedgerSummary(
+  companyId: string,
+  params: { from: string; to: string },
+): Promise<IncomeExpenseLedgerSummary> {
+  return apiFetch(`/v1/companies/${companyId}/income-expense-ledger/summary${qs(params)}`);
+}
+
+export async function listIncomeExpenseLedgerEntries(
+  companyId: string,
+  params: { type: IncomeExpenseLedgerEntryType; categoryId?: string; status?: string; from: string; to: string; page?: number; pageSize?: number },
+): Promise<IncomeExpenseLedgerEntries> {
+  return apiFetch(`/v1/companies/${companyId}/income-expense-ledger/entries${qs(params)}`);
+}
+
+export async function exportIncomeExpenseLedger(
+  companyId: string,
+  params: { type: IncomeExpenseLedgerEntryType; categoryId?: string; status?: string; from: string; to: string },
+): Promise<IncomeExpenseLedgerExport> {
+  return apiFetch(`/v1/companies/${companyId}/income-expense-ledger/export${qs(params)}`);
 }

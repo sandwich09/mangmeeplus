@@ -1,4 +1,4 @@
-import { describe, it, mock } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { RequestContext } from '@watchdog-bms/contracts';
 import { CreateDocumentUseCase } from './document.use-case';
@@ -146,10 +146,11 @@ describe('H-05 use-case revalidation', () => {
         documentType: 'INVOICE', status: 'DRAFT', currency: 'THB',
         outstandingAmount: '100.00',
       }),
+      findPaymentByIdempotencyKey: async () => null,
       createPayment: async () => { creates += 1; throw new Error('must not persist'); },
     };
     const useCase = new CreatePaymentUseCase(repo as any, { log: async () => undefined } as any, { append: async () => undefined } as any);
-    await assert.rejects(() => useCase.execute(ctx, { ...paymentInput('150.00'), allocateToDocumentId: 'doc-1' }));
+    await assert.rejects(() => useCase.execute(ctx, { ...paymentInput('150.00'), idempotencyKey: 'payment_retry_000', allocateToDocumentId: 'doc-1' }));
     assert.equal(creates, 0);
   });
 
@@ -160,57 +161,139 @@ describe('H-05 use-case revalidation', () => {
         documentType: 'INVOICE', status: 'ISSUED', currency: 'THB', counterpartyId: 'customer-1',
         outstandingAmount: '100.00',
       }),
+      findPaymentByIdempotencyKey: async () => null,
       createPayment: async (input: any) => {
         creates += 1;
-        return {
+        return { replayed: false, payment: {
           id: 'payment-1', companyId: input.companyId, direction: input.direction, status: 'RECORDED',
-          method: input.method, amount: input.amount, allocatedAmount: '100.00', unappliedAmount: '50.00',
+          method: input.method, amount: input.amount, whtAmount: '0', allocatedAmount: '100.00', unappliedAmount: '50.00',
           currency: 'THB', paidAt: new Date(input.paidAt), postingStatus: 'pending',
           createdByUserId: input.createdByUserId, createdAt: new Date(), updatedAt: new Date(),
-        };
+        } };
       },
     };
     const useCase = new CreatePaymentUseCase(repo as any, { log: async () => undefined } as any, { append: async () => undefined } as any);
     const result = await useCase.execute(ctx, {
-      ...paymentInput('150.00'), counterpartyId: 'customer-1', allocateToDocumentId: 'doc-1',
+      ...paymentInput('150.00'), idempotencyKey: 'payment_retry_001', counterpartyId: 'customer-1', allocateToDocumentId: 'doc-1',
     });
     assert.equal(creates, 1);
     assert.equal(result.unappliedAmount, '50.00');
   });
 
-  it('inherits branch and counterparty from the allocation target and rejects mismatches', async () => {
+  it('inherits branch and counterparty from the scoped target and suppresses replay side effects', async () => {
     let persisted: any;
-    const target = {
-      id: 'doc-1', documentType: 'INVOICE', status: 'ISSUED', currency: 'THB', branchId: 'branch-1',
-      counterpartyId: 'customer-1', outstandingAmount: '100.00',
-    };
+    let events = 0;
+    let audits = 0;
     const repo = {
-      findDocumentById: mock.fn(async () => target),
-      findActiveBranch: mock.fn(async () => ({ id: 'branch-1' })),
-      createPayment: mock.fn(async (value: any) => {
-        persisted = value;
-        return {
-          id: 'payment-1', direction: 'RECEIVED', status: 'RECORDED', method: 'BANK_TRANSFER',
-          amount: '100.00', whtAmount: '0.00', allocatedAmount: '100.00', unappliedAmount: '0.00',
-          currency: 'THB', paidAt: new Date(), postingStatus: 'pending', createdAt: new Date(), updatedAt: new Date(),
-        };
+      findDocumentById: async () => ({
+        documentType: 'INVOICE', status: 'ISSUED', currency: 'THB', branchId: 'branch-1', counterpartyId: 'customer-1',
+        outstandingAmount: '100.00',
       }),
+      findPaymentByIdempotencyKey: async () => null,
+      findActiveBranch: async () => ({ id: 'branch-1' }),
+      createPayment: async (input: any) => {
+        persisted = input;
+        return { replayed: true, payment: {
+          id: 'payment-1', companyId: input.companyId, branchId: input.branchId, counterpartyId: input.counterpartyId,
+          direction: input.direction, status: 'RECORDED', method: input.method, amount: input.amount, whtAmount: '0',
+          allocatedAmount: input.amount, unappliedAmount: '0', currency: 'THB', paidAt: new Date(input.paidAt),
+          postingStatus: 'pending', createdByUserId: input.createdByUserId, createdAt: new Date(), updatedAt: new Date(),
+        } };
+      },
     };
     const useCase = new CreatePaymentUseCase(
-      repo as any, { log: async () => undefined } as any, { append: async () => undefined } as any,
+      repo as any,
+      { log: async () => { audits += 1; } } as any,
+      { append: async () => { events += 1; } } as any,
     );
-    const branchCtx = { ...ctx, scopes: { branchIds: ['branch-1'] } };
-    await useCase.execute(branchCtx, { ...paymentInput('100.00'), allocateToDocumentId: 'doc-1' });
+    const scopedCtx = { ...ctx, scopes: { branchIds: ['branch-1'] } };
+    const result = await useCase.execute(scopedCtx, {
+      ...paymentInput('100.00'), idempotencyKey: 'payment_retry_002', allocateToDocumentId: 'doc-1',
+    });
+    assert.equal(result.id, 'payment-1');
     assert.equal(persisted.branchId, 'branch-1');
     assert.equal(persisted.counterpartyId, 'customer-1');
+    assert.equal(typeof persisted.payloadFingerprint, 'string');
+    assert.equal(events, 0);
+    assert.equal(audits, 0);
+  });
 
-    await assert.rejects(() => useCase.execute(branchCtx, {
-      ...paymentInput('100.00'), allocateToDocumentId: 'doc-1', branchId: 'branch-2',
-    }), /same branch/);
-    await assert.rejects(() => useCase.execute(branchCtx, {
-      ...paymentInput('100.00'), allocateToDocumentId: 'doc-1', counterpartyId: 'customer-2',
-    }), /same counterparty/);
-    assert.equal(repo.createPayment.mock.callCount(), 1);
+  it('replays a settled target before allocation validation without duplicate side effects', async () => {
+    let creates = 0;
+    let events = 0;
+    let audits = 0;
+    const request = {
+      ...paymentInput('100.00'), idempotencyKey: 'payment_retry_004', allocateToDocumentId: 'doc-1',
+    };
+    const target: any = {
+      documentType: 'INVOICE', status: 'ISSUED', paymentStatus: 'UNPAID', currency: 'THB',
+      branchId: 'branch-1', counterpartyId: 'customer-1', outstandingAmount: '100.00',
+    };
+    const priorPayment = {
+      id: 'payment-settled', companyId: ctx.companyId, branchId: 'branch-1', counterpartyId: 'customer-1',
+      direction: 'RECEIVED', status: 'RECORDED', method: 'BANK_TRANSFER', amount: '100.00', whtAmount: '0',
+      allocatedAmount: '100.00', unappliedAmount: '0', currency: 'THB', paidAt: new Date(request.paidAt),
+      postingStatus: 'pending', createdByUserId: ctx.userId, createdAt: new Date(), updatedAt: new Date(),
+    } as any;
+    let prior: { payment: typeof priorPayment; payloadFingerprint: string } | null = null;
+    let branchActive = true;
+    const repo = {
+      findDocumentById: async (companyId: string) => companyId === ctx.companyId ? target : null,
+      findPaymentByIdempotencyKey: async (_companyId: string, key: string) => key === request.idempotencyKey
+        ? prior
+        : null,
+      findActiveBranch: async () => branchActive ? { id: 'branch-1' } : null,
+      createPayment: async (input: any) => {
+        creates += 1;
+        target.paymentStatus = 'PAID';
+        target.outstandingAmount = '0.00';
+        prior = { payment: priorPayment, payloadFingerprint: input.payloadFingerprint };
+        return { payment: priorPayment, replayed: false };
+      },
+    };
+    const useCase = new CreatePaymentUseCase(
+      repo as any,
+      { log: async () => { audits += 1; } } as any,
+      { append: async () => { events += 1; } } as any,
+    );
+    const scopedCtx = { ...ctx, scopes: { branchIds: ['branch-1'] } };
+    assert.equal((await useCase.execute(scopedCtx, request)).id, 'payment-settled');
+    assert.equal(target.outstandingAmount, '0.00');
+    assert.equal((await useCase.execute(scopedCtx, request)).id, 'payment-settled');
+    await assert.rejects(
+      () => useCase.execute(scopedCtx, { ...request, amount: '99.00' }),
+      (error: any) => error.getResponse?.().code === 'accounting_payment_idempotency_conflict',
+    );
+    await assert.rejects(() => useCase.execute(scopedCtx, { ...request, idempotencyKey: 'payment_retry_005' }));
+    await assert.rejects(() => useCase.execute({ ...scopedCtx, permissions: [] }, request));
+    await assert.rejects(() => useCase.execute({ ...scopedCtx, companyId: 'company-2' }, request));
+    await assert.rejects(() => useCase.execute({ ...scopedCtx, scopes: { branchIds: ['branch-2'] } }, request));
+    await assert.rejects(() => useCase.execute(scopedCtx, { ...request, counterpartyId: 'customer-2' }));
+    branchActive = false;
+    await assert.rejects(() => useCase.execute(scopedCtx, request));
+    assert.equal(creates, 1);
+    assert.equal(events, 1);
+    assert.equal(audits, 1);
+  });
+
+  it('rejects source branch/counterparty mismatch, inactive branch, and out-of-scope target', async () => {
+    const target = {
+      documentType: 'INVOICE', status: 'ISSUED', currency: 'THB', branchId: 'branch-1', counterpartyId: 'customer-1',
+      outstandingAmount: '100.00',
+    };
+    const execute = (overrides: Record<string, unknown>, branchIds = ['branch-1'], active = true) => new CreatePaymentUseCase({
+      findDocumentById: async () => target,
+      findPaymentByIdempotencyKey: async () => null,
+      findActiveBranch: async () => active ? { id: 'branch-1' } : null,
+      createPayment: async () => { throw new Error('must not persist'); },
+    } as any, {} as any, {} as any).execute(
+      { ...ctx, scopes: { branchIds } },
+      { ...paymentInput('100.00'), idempotencyKey: 'payment_retry_003', allocateToDocumentId: 'doc-1', ...overrides },
+    );
+    await assert.rejects(() => execute({ branchId: 'branch-2' }));
+    await assert.rejects(() => execute({ counterpartyId: 'customer-2' }));
+    await assert.rejects(() => execute({}, ['branch-2']));
+    await assert.rejects(() => execute({}, ['branch-1'], false));
   });
 
   it('rejects invalid document money before createDocument', async () => {

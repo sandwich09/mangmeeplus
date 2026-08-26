@@ -197,10 +197,15 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
     if (!url) return;
     try {
       client = new PrismaClient({ adapter: new PrismaPg({ connectionString: url }) });
-      const [probe] = await client.$queryRaw<Array<{ command_table: string | null }>>`
-        SELECT to_regclass('"AccountingSimpleIncomeCommand"')::text AS command_table
+      const [probe] = await client.$queryRaw<Array<{ command_table: string | null; payment_column: boolean }>>`
+        SELECT
+          to_regclass('"AccountingSimpleIncomeCommand"')::text AS command_table,
+          EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'AccountingPayment' AND column_name = 'idempotencyKey'
+          ) AS payment_column
       `;
-      if (!probe?.command_table) return;
+      if (!probe?.command_table || !probe.payment_column) return;
       await client.accountingSimpleIncomeCommand.deleteMany({ where: { companyId } });
       await client.company.deleteMany({ where: { id: companyId } });
       await client.company.create({ data: { id: companyId, name: 'P27 simple-income test' } });
@@ -275,6 +280,43 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
     );
   });
 
+  it('makes allocated payment retries at-most-once and prevents concurrent over-allocation', async (t) => {
+    if (!reachable || !client || !repo) return t.skip('local PostgreSQL or the payment idempotency migration is unavailable');
+    const makeInvoice = (note: string) => client!.accountingDocument.create({ data: {
+      companyId, documentType: 'INVOICE', status: 'ISSUED', documentDate: new Date('2026-08-27T00:00:00.000Z'),
+      currency: 'THB', vatMode: 'NO_VAT', subtotalAmount: '100', taxableAmount: '100', grandTotalAmount: '100',
+      paidAmount: '0', outstandingAmount: '100', paymentStatus: 'UNPAID', note, createdByUserId: 'p27-test-user',
+    } });
+    const payment = (documentId: string, idempotencyKey: string, amount: string) => ({
+      companyId, idempotencyKey, payloadFingerprint: `${idempotencyKey}:${amount}`, direction: 'RECEIVED' as const,
+      method: 'BANK_TRANSFER' as const, amount, paidAt: '2026-08-27T10:00:00.000Z',
+      allocateToDocumentId: documentId, createdByUserId: 'p27-test-user',
+    });
+
+    const retryInvoice = await makeInvoice(`${companyId}-payment-retry`);
+    const retries = await Promise.all(Array.from({ length: 4 }, () => repo!.createPayment(
+      payment(retryInvoice.id, 'payment-retry-0001', '100.00'),
+    )));
+    assert.equal(new Set(retries.map((result) => result.payment.id)).size, 1);
+    assert.equal(retries.filter((result) => !result.replayed).length, 1);
+    assert.equal(await client.accountingPaymentAllocation.count({ where: { companyId, documentId: retryInvoice.id } }), 1);
+
+    const raceInvoice = await makeInvoice(`${companyId}-payment-race`);
+    const race = await Promise.allSettled([
+      repo.createPayment(payment(raceInvoice.id, 'payment-race-0001', '60.00')),
+      repo.createPayment(payment(raceInvoice.id, 'payment-race-0002', '60.00')),
+    ]);
+    assert.equal(race.filter((result) => result.status === 'fulfilled').length, 2);
+    const persisted = await client.accountingDocument.findUniqueOrThrow({ where: { id: raceInvoice.id } });
+    assert.equal(Number(persisted.paidAmount), 100);
+    assert.equal(Number(persisted.outstandingAmount), 0);
+    const allocations = await client.accountingPaymentAllocation.findMany({ where: { companyId, documentId: raceInvoice.id } });
+    assert.equal(allocations.reduce((total, row) => total + Number(row.amount), 0), 100);
+    const racePaymentIds = race.flatMap((result) => result.status === 'fulfilled' ? [result.value.payment.id] : []);
+    const payments = await client.accountingPayment.findMany({ where: { id: { in: racePaymentIds } } });
+    assert.equal(payments.reduce((total, row) => total + Number(row.unappliedAmount), 0), 20);
+  });
+
   it('keeps mixed 7% and zero-rate line arithmetic through invoice, payment, and receipt', async (t) => {
     if (!reachable || !repo) return t.skip('local PostgreSQL or the P27 migration is unavailable');
     const result = await repo.recordSimpleIncomeBundle({
@@ -303,12 +345,16 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
     };
     try {
       await client.company.create({ data: { id: ledgerCompanyId, name: 'P27 ledger test' } });
-      await repo.recordSimpleIncomeBundle({
+      const counterparty = await client.accountingCounterparty.create({ data: {
+        companyId: ledgerCompanyId, type: 'CUSTOMER', displayName: 'ลูกค้าทดสอบ', createdByUserId: ctx.userId,
+      } });
+      const incomeBundle = await repo.recordSimpleIncomeBundle({
         companyId: ledgerCompanyId, idempotencyKey: 'ledger-income-0001', payloadFingerprint: 'ledger-fingerprint',
-        documentDate: '2026-08-01', vatMode: 'NO_VAT', paymentMethod: 'BANK_TRANSFER',
+        documentDate: '2026-08-01', counterpartyId: counterparty.id, vatMode: 'NO_VAT', paymentMethod: 'BANK_TRANSFER',
         lines: [{ lineNumber: 1, description: 'รายรับทดสอบ', quantity: '1', unitPrice: '100.00', whtRate: '3' }],
         createdByUserId: ctx.userId,
       }, async () => undefined);
+      await client.accountingDocument.update({ where: { id: incomeBundle.invoice.id }, data: { dueDate: new Date('2026-08-15T00:00:00.000Z') } });
       const expense = await client.expenseRecord.create({ data: {
         companyId: ledgerCompanyId, status: 'CONFIRMED', expenseDate: new Date('2026-08-01T00:00:00.000Z'),
         grandTotalAmount: '50', netPayableAmount: '50', paidAmount: '20', outstandingAmount: '30',
@@ -342,6 +388,11 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
       const entries = await ledger.entries(ctx, { type: 'ALL', from: '2026-08-01', to: '2026-08-31' });
       assert.equal(entries.total, 2, 'evidence-only receipt is not a second income row');
       assert.deepEqual(new Set(entries.data.map((row) => row.side)), new Set(['INCOME', 'EXPENSE']));
+      const incomeEntry = entries.data.find((row) => row.side === 'INCOME')!;
+      assert.match(incomeEntry.evidenceHref, /\/sales-documents\?documentId=/);
+      assert.equal(incomeEntry.dueDate, '2026-08-15');
+      assert.equal(incomeEntry.counterpartyId, counterparty.id);
+      assert.equal(incomeEntry.partyName, 'ลูกค้าทดสอบ');
       const exported = await ledger.export(ctx, { type: 'ALL', from: '2026-08-01', to: '2026-08-31' });
       assert.equal(exported.rowCount, 2);
       assert.match(exported.csv, /รายรับ/);
@@ -351,6 +402,7 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
       await client.accountingPaymentAllocation.deleteMany({ where: { companyId: ledgerCompanyId } });
       await client.accountingPayment.deleteMany({ where: { companyId: ledgerCompanyId } });
       await client.accountingDocument.deleteMany({ where: { companyId: ledgerCompanyId } });
+      await client.accountingCounterparty.deleteMany({ where: { companyId: ledgerCompanyId } });
       await client.documentNumber.deleteMany({ where: { companyId: ledgerCompanyId } });
       await client.documentSequence.deleteMany({ where: { companyId: ledgerCompanyId } });
       await client.expensePayment.deleteMany({ where: { companyId: ledgerCompanyId } });

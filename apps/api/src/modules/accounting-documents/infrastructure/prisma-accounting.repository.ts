@@ -26,6 +26,7 @@ import {
   calculateUnappliedCredit,
 } from '../domain/logic/accounting-totals.logic';
 import { initialPostingStatus, validateCumulativeCreditNote, validateOutputTaxDocument } from '../domain/logic/accounting-status.logic';
+import { validateAccountingPaymentAllocation } from '../domain/logic/accounting-money-validation.logic';
 import { buildReversalLines } from '../../ledger/domain/logic/journal-balance.logic';
 import type { AccountingDocumentType, AccountingDocumentStatus, AccountingQuotationApprovalStatus, ResolveTransactionTaxPreviewDto, RevenueCategorySummary, CreateRevenueCategoryInput, UpdateRevenueCategoryInput } from '@watchdog-bms/contracts';
 import { branchScopeWhere } from '../../data-model-core/domain/logic/branch.logic';
@@ -51,6 +52,7 @@ export type VoidDocumentResult = {
   reversalEntryId: string | null;
 };
 export type ConvertQuotationResult = { document: DocumentRecord; didConvert: boolean };
+export type CreatePaymentResult = { payment: PaymentRecord; replayed: boolean };
 
 @Injectable()
 export class PrismaAccountingRepository {
@@ -824,15 +826,71 @@ export class PrismaAccountingRepository {
   }
 
   // ---- Payment ----
-  async createPayment(input: CreatePaymentInput): Promise<PaymentRecord> {
-    const counterpartySnapshot = input.counterpartyId
-      ? await this.prisma.client.accountingCounterparty.findFirst({ where: { id: input.counterpartyId, companyId: input.companyId } }).then((c) => c ? { id: c.id, displayName: c.displayName, taxId: c.taxId } : undefined)
-      : undefined;
+  async createPayment(input: CreatePaymentInput): Promise<CreatePaymentResult> {
+    const run = () => this.prisma.client.$transaction(async (tx) => {
+      if (input.idempotencyKey) {
+        if (!input.payloadFingerprint) {
+          throw new UnprocessableEntityException('A server payment fingerprint is required with a retry key');
+        }
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.idempotencyKey}:accounting-payment-command`}))`;
+        const prior = await tx.accountingPayment.findUnique({
+          where: { companyId_idempotencyKey: { companyId: input.companyId, idempotencyKey: input.idempotencyKey } },
+        });
+        if (prior) {
+          if (prior.payloadFingerprint !== input.payloadFingerprint) {
+            throw new ConflictException({
+              code: 'accounting_payment_idempotency_conflict',
+              message: 'This retry key was already used with different payment details.',
+            });
+          }
+          return { payment: this.toPaymentRecord(prior), replayed: true };
+        }
+      }
 
-    return await this.prisma.client.$transaction(async (tx) => {
+      let allocationTarget: any = null;
+      if (input.allocateToDocumentId) {
+        if (!input.idempotencyKey) {
+          throw new UnprocessableEntityException('A retry key is required when allocating a payment to a document');
+        }
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.allocateToDocumentId}:accounting-payment-allocation`}))`;
+        allocationTarget = await tx.accountingDocument.findFirst({
+          where: { id: input.allocateToDocumentId, companyId: input.companyId },
+        });
+        if (!allocationTarget) throw new NotFoundException('Payment allocation target was not found');
+        if ((allocationTarget.branchId ?? undefined) !== input.branchId) {
+          throw new UnprocessableEntityException('Payment branch must match the target document');
+        }
+        if ((allocationTarget.counterpartyId ?? undefined) !== input.counterpartyId) {
+          throw new UnprocessableEntityException('Payment counterparty must match the target document');
+        }
+        const allocationError = validateAccountingPaymentAllocation(input, {
+          documentType: allocationTarget.documentType,
+          status: allocationTarget.status,
+          currency: allocationTarget.currency,
+          counterpartyId: allocationTarget.counterpartyId ?? undefined,
+          outstandingAmount: allocationTarget.outstandingAmount.toString(),
+        });
+        if (allocationError) throw new UnprocessableEntityException(allocationError);
+      }
+
+      if (input.branchId) {
+        const activeBranch = await tx.branch.findFirst({
+          where: { id: input.branchId, companyId: input.companyId, status: 'ACTIVE' },
+          select: { id: true },
+        });
+        if (!activeBranch) throw new UnprocessableEntityException('The payment branch is inactive');
+      }
+
+      const liveCounterparty = input.counterpartyId && !allocationTarget?.counterpartySnapshotJson
+        ? await tx.accountingCounterparty.findFirst({ where: { id: input.counterpartyId, companyId: input.companyId } })
+        : null;
+      const counterpartySnapshot = allocationTarget?.counterpartySnapshotJson
+        ?? (liveCounterparty ? { id: liveCounterparty.id, displayName: liveCounterparty.displayName, taxId: liveCounterparty.taxId } : undefined);
       const payment = await tx.accountingPayment.create({
         data: {
           companyId: input.companyId,
+          idempotencyKey: input.idempotencyKey,
+          payloadFingerprint: input.payloadFingerprint,
           branchId: input.branchId,
           direction: input.direction as any,
           status: 'RECORDED' as any,
@@ -851,9 +909,7 @@ export class PrismaAccountingRepository {
         },
       });
 
-      // LED-FIN Phase 1: payments carry their own document number. The `accounting.payment`
-      // sequence (PAY-...) existed from day one but was never assigned; reserve + commit stay
-      // inside this transaction so a failed payment never burns a committed number.
+      // The number and the payment remain one transaction; a failed CAS cannot burn either.
       const reservedNumber = await this.documentNumbers.reserveNumberInTransaction(tx, {
         companyId: input.companyId,
         branchId: input.branchId ?? undefined,
@@ -864,39 +920,57 @@ export class PrismaAccountingRepository {
       });
 
       let allocatedAmount = '0.00';
-      if (input.allocateToDocumentId) {
-        const doc = await tx.accountingDocument.findFirst({ where: { id: input.allocateToDocumentId, companyId: input.companyId } });
-        if (doc) {
-          const outstanding = new Decimal(doc.outstandingAmount.toString());
-          const payAmt = new Decimal(input.amount);
-          const withheld = new Decimal(input.whtAmount ?? '0');
-          // Cash clamps to the outstanding and the surplus becomes an unapplied credit. Withheld
-          // tax cannot clamp — it is not money we hold — so the pair is re-checked here against the
-          // balance READ IN THIS TRANSACTION. The use case validated against a read taken outside
-          // it, which two concurrent receipts would both pass while over-settling the document.
-          const alloc = Decimal.min(payAmt, Decimal.max(0, outstanding.minus(withheld))).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
-          if (withheld.gt(0) && alloc.plus(withheld).gt(outstanding)) {
-            throw new UnprocessableEntityException('Payment and withheld tax together exceed the document outstanding amount');
-          }
-          allocatedAmount = alloc.toFixed(2);
-          const settled = alloc.plus(withheld);
-          const newPaid = new Decimal(doc.paidAmount.toString()).plus(settled).toFixed(2);
-          const newOutstanding = calculateOutstandingAmount(doc.grandTotalAmount.toString(), newPaid);
-          const payStatus = new Decimal(newOutstanding).lte(0) ? 'PAID' : 'PARTIALLY_PAID';
-          await tx.accountingDocument.update({
-            where: { id: input.allocateToDocumentId },
-            data: { paidAmount: newPaid, outstandingAmount: newOutstanding, paymentStatus: payStatus as any },
-          });
-          await tx.accountingPaymentAllocation.create({
-            data: { companyId: input.companyId, paymentId: payment.id, documentId: input.allocateToDocumentId, amount: allocatedAmount, whtAmount: input.whtAmount ?? null, createdByUserId: input.createdByUserId },
+      if (allocationTarget) {
+        const outstanding = new Decimal(allocationTarget.outstandingAmount.toString());
+        const withheld = new Decimal(input.whtAmount ?? '0');
+        const alloc = Decimal.min(new Decimal(input.amount), Decimal.max(0, outstanding.minus(withheld)))
+          .toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+        allocatedAmount = alloc.toFixed(2);
+        const settled = alloc.plus(withheld);
+        const newPaid = new Decimal(allocationTarget.paidAmount.toString()).plus(settled).toFixed(2);
+        const newOutstanding = calculateOutstandingAmount(allocationTarget.grandTotalAmount.toString(), newPaid);
+        const changed = await tx.accountingDocument.updateMany({
+          where: {
+            id: allocationTarget.id,
+            companyId: input.companyId,
+            updatedAt: allocationTarget.updatedAt,
+            status: 'ISSUED',
+            branchId: allocationTarget.branchId,
+            counterpartyId: allocationTarget.counterpartyId,
+            outstandingAmount: allocationTarget.outstandingAmount,
+          },
+          data: {
+            paidAmount: newPaid,
+            outstandingAmount: newOutstanding,
+            paymentStatus: new Decimal(newOutstanding).lte(0) ? 'PAID' : 'PARTIALLY_PAID',
+            updatedByUserId: input.createdByUserId,
+          },
+        });
+        if (changed.count !== 1) {
+          throw new ConflictException({
+            code: 'accounting_payment_state_changed',
+            message: 'The document balance changed while recording this payment. Reload and try again.',
           });
         }
+        await tx.accountingPaymentAllocation.create({
+          data: {
+            companyId: input.companyId,
+            paymentId: payment.id,
+            documentId: allocationTarget.id,
+            amount: allocatedAmount,
+            whtAmount: input.whtAmount ?? null,
+            createdByUserId: input.createdByUserId,
+          },
+        });
       }
 
-      const unapplied = calculateUnappliedCredit(input.amount, allocatedAmount);
       const updated = await tx.accountingPayment.update({
         where: { id: payment.id },
-        data: { paymentNumber: reservedNumber.documentNumber, allocatedAmount, unappliedAmount: unapplied },
+        data: {
+          paymentNumber: reservedNumber.documentNumber,
+          allocatedAmount,
+          unappliedAmount: calculateUnappliedCredit(input.amount, allocatedAmount),
+        },
       });
       await this.documentNumbers.commitNumberInTransaction(tx, {
         id: reservedNumber.id,
@@ -904,8 +978,19 @@ export class PrismaAccountingRepository {
         ownerType: 'accounting_payment',
         ownerId: payment.id,
       });
-      return this.toPaymentRecord(updated);
-    });
+      return { payment: this.toPaymentRecord(updated), replayed: false };
+    }, { isolationLevel: 'Serializable' });
+
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      try {
+        return await run();
+      } catch (error) {
+        lastError = error;
+        if ((error as { code?: string }).code !== 'P2034') throw error;
+      }
+    }
+    throw lastError;
   }
 
   async recordSimpleIncomeBundle(
@@ -1183,6 +1268,20 @@ export class PrismaAccountingRepository {
   async findPaymentById(companyId: string, id: string, branchIds?: string[]): Promise<PaymentRecord | null> {
     const row = await this.prisma.client.accountingPayment.findFirst({ where: { id, companyId, ...branchScopeWhere({ branchIds }) } });
     return row ? this.toPaymentRecord(row) : null;
+  }
+
+  async findPaymentByIdempotencyKey(
+    companyId: string,
+    idempotencyKey: string,
+    branchIds?: string[],
+  ): Promise<{ payment: PaymentRecord; payloadFingerprint?: string } | null> {
+    const row = await this.prisma.client.accountingPayment.findFirst({
+      where: { companyId, idempotencyKey, ...branchScopeWhere({ branchIds }) },
+    });
+    return row ? {
+      payment: this.toPaymentRecord(row),
+      payloadFingerprint: row.payloadFingerprint ?? undefined,
+    } : null;
   }
 
   /**
