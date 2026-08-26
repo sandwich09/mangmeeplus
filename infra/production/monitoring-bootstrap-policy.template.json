@@ -58,6 +58,15 @@
       }
     },
     {
+      "Sid": "CustomerJourneyDashboard",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:PutDashboard",
+        "cloudwatch:GetDashboard"
+      ],
+      "Resource": "arn:aws:cloudwatch::<ACCOUNT_ID>:dashboard/watchdog-bms-*-customer-journeys"
+    },
+    {
       "Sid": "EcrLifecycle",
       "Effect": "Allow",
       "Action": [

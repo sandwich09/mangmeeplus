@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root="$(git rev-parse --show-toplevel)"
 script="$repo_root/infra/monitoring/runtime-alarms.sh"
 policy="$repo_root/infra/production/monitoring-bootstrap-policy.template.json"
+deploy="$repo_root/infra/prod-ecs-express/deploy.sh"
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/watchdog-runtime-alarms-spec.XXXXXX")"
 trap '[ "${KEEP_TMP:-false}" = true ] || rm -rf "$tmp_dir"' EXIT
 
@@ -47,6 +48,18 @@ case "$command" in
     jq -cn '{Subscriptions:[{SubscriptionArn:"arn:aws:sns:ap-southeast-1:311414082667:alerts:confirmed",Protocol:"email"}]}'
     ;;
   logs/put-metric-filter) ;;
+  cloudwatch/put-dashboard)
+    name="$(arg --dashboard-name "$@")"; body="$(arg --dashboard-body "$@")"
+    next="$(jq --arg name "$name" --arg body "$body" '.dashboards[$name]=$body' "$state")"
+    printf '%s\n' "$next" > "$state"
+    printf '{"DashboardValidationMessages":[]}\n'
+    ;;
+  cloudwatch/get-dashboard)
+    name="$(arg --dashboard-name "$@")"
+    jq -c --arg name "$name" --arg account "${FAKE_ACCOUNT:-311414082667}" '
+      {DashboardName:$name,DashboardArn:("arn:aws:cloudwatch::"+$account+":dashboard/"+$name),DashboardBody:.dashboards[$name]}
+    ' "$state"
+    ;;
   cloudwatch/put-metric-alarm)
     name="$(arg --alarm-name "$@")"; namespace="$(arg --namespace "$@")"; metric="$(arg --metric-name "$@")"
     statistic="$(arg --statistic "$@")"; period="$(arg --period "$@")"; evaluations="$(arg --evaluation-periods "$@")"
@@ -87,7 +100,7 @@ EOF
 chmod +x "$tmp_dir/aws"
 
 reset_state() {
-  printf '{"alarms":{}}\n' > "$tmp_dir/state.json"
+  printf '{"alarms":{},"dashboards":{}}\n' > "$tmp_dir/state.json"
   : > "$tmp_dir/calls.log"
 }
 
@@ -104,18 +117,24 @@ reset_state
 run_alarm install uat | grep -Fq 'installed environment=uat'
 test "$(jq '.alarms | length' "$tmp_dir/state.json")" -eq 11
 test "$(grep -c '^logs/put-metric-filter ' "$tmp_dir/calls.log")" -eq 6
+test "$(grep -c '^cloudwatch/put-dashboard ' "$tmp_dir/calls.log")" -eq 1
 run_alarm verify uat | grep -Fq 'datapoints=present subscription=confirmed'
 jq -e '
   .alarms["watchdog-bms-uat-log-ingest-workers"].Threshold == 67108864
   and .alarms["watchdog-bms-uat-db-memory-low"].Threshold == 64000000
   and .alarms["watchdog-bms-uat-redis-memory-high-0001"].Dimensions == [
     {Name:"CacheClusterId",Value:"watchdog-bms-uat-redis"},{Name:"CacheNodeId",Value:"0001"}]
+  and ((.dashboards["watchdog-bms-uat-customer-journeys"] | fromjson) as $dashboard
+    | ($dashboard.widgets | length) == 5
+    and any($dashboard.widgets[]; .properties.title == "LINE AI — accepted and terminal outcomes (LIVE)")
+    and any($dashboard.widgets[]; .properties.markdown? | strings | contains("PARTIAL/PLANNED rows must never be presented as live")))
 ' "$tmp_dir/state.json" >/dev/null
 
 reset_state
 run_alarm install production | grep -Fq 'installed environment=production'
 test "$(jq '.alarms | length' "$tmp_dir/state.json")" -eq 14
 test "$(grep -c '^logs/put-metric-filter ' "$tmp_dir/calls.log")" -eq 6
+test "$(grep -c '^cloudwatch/put-dashboard ' "$tmp_dir/calls.log")" -eq 1
 run_alarm verify production | grep -Fq 'verified environment=production'
 jq -e '
   .alarms["watchdog-bms-prod-log-ingest-api-web"].Threshold == 536870912
@@ -124,6 +143,10 @@ jq -e '
   and .alarms["watchdog-bms-prod-db-cpu-credits-low"].Threshold == 50
   and .alarms["watchdog-bms-prod-redis-memory-high-001"].Dimensions[0].Name == "CacheClusterId"
   and .alarms["watchdog-bms-prod-redis-memory-high-002"].Dimensions[0].Name == "CacheClusterId"
+  and ((.dashboards["watchdog-bms-prod-customer-journeys"] | fromjson | tostring) as $dashboard
+    | ($dashboard | contains("_ecs_watchdog_bms_prod_api_web_line_ai_accepted"))
+    and ($dashboard | contains("companyId") | not)
+    and ($dashboard | contains("documentId") | not))
 ' "$tmp_dir/state.json" >/dev/null
 ! grep -Fq 'Name=ReplicationGroupId' "$tmp_dir/calls.log"
 
@@ -154,7 +177,15 @@ jq -e '
     and (.Action | index("cloudwatch:DeleteAlarms")))
   and any(.Statement[]; .Sid=="DiscoverRedisMetricDimensions"
     and .Action=="elasticache:DescribeCacheClusters")
+  and any(.Statement[]; .Sid=="CustomerJourneyDashboard"
+    and (.Action | index("cloudwatch:PutDashboard"))
+    and (.Action | index("cloudwatch:GetDashboard"))
+    and .Resource=="arn:aws:cloudwatch::<ACCOUNT_ID>:dashboard/watchdog-bms-*-customer-journeys")
 ' "$policy" >/dev/null
 test "$(grep -c 'Name=ReplicationGroupId' "$script")" -eq 1
+for terminal_class in delivered clarification intentional_noop permission_refusal feature_disabled \
+  provider_unavailable timeout delivery_pending failed_terminal; do
+  grep -Fq "$terminal_class" "$deploy"
+done
 
 echo 'runtime-alarms.spec.sh: ok'

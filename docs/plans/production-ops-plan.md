@@ -288,7 +288,8 @@ Make production health, metrics, and alert rules visible without leaking sensiti
 ### Tasks
 
 - [x] P9-0: add the executable customer-journey signal contract, privacy allowlist, source-evidence tests, and shared triage runbook (`docs/specs/customer-journey-observability-signal-contract.md`).
-- [ ] P9-1: instrument every `PARTIAL`/`PLANNED` journey row and build dashboards without claiming unavailable coverage or setting pre-baseline targets.
+- [x] P9-1a: install and exactly verify an environment-scoped CloudWatch journey dashboard for proven metrics, with an explicit four-lane `LIVE`/gap matrix and no pre-baseline targets.
+- [ ] P9-1b: add accepted/terminal emitters for currently `PARTIAL` rows; `PLANNED` signup/claim/SES rows remain dependent on P10-P12 business flows.
 - [ ] Implement monitoring signal model and summary service.
 - [ ] Add signal adapters for available local health endpoints.
 - [ ] Add alert rule catalog persistence.

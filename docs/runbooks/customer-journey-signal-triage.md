@@ -6,6 +6,7 @@ Trigger: missing/duplicate terminal signal, critical terminal failure, abnormal 
 
 ## Preconditions
 
+- Open `watchdog-bms-<environment>-customer-journeys`; a dashboard body mismatch must fail `runtime-alarms.sh verify` before incident interpretation.
 - Use a synthetic correlation ID or an access-controlled real correlation ID; do not paste tenant/customer payloads into tickets or metric labels.
 - Confirm the catalog row is `LIVE`. A `PARTIAL` or `PLANNED` row is an implementation gap, not proof of a live outage.
 - Do not retry a financial mutation until source state and idempotency key are verified.
@@ -74,5 +75,6 @@ Verify expense status, number reservation/commit, tax snapshot, duplicate state,
 ## Verification and rollback
 
 - Success: one accepted correlation, one terminal classification, durable source state matches the terminal, and customer-visible recovery is verified.
+- Dashboard success: source-controlled body matches exactly; a missing metric is `UNKNOWN`, not success, and a `PARTIAL`/`PLANNED` row is never colored as healthy.
 - Rollback: telemetry-only changes may be reverted; never roll back or rewrite durable financial/customer state merely to align a dashboard.
 - Evidence must contain no secrets, raw prompts, document content, tax IDs, email addresses, LINE user IDs, or tenant IDs in metric dimensions.
