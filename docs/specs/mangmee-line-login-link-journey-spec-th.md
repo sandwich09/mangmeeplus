@@ -1,6 +1,6 @@
 # LINE Login + เชื่อมบัญชี + Web QR Login (Journey รวม) — Spec P12
 
-สถานะ: DRAFT ฉบับรวม — หลอมสามเอกสารเดิมเป็น journey เดียว รอเข้าคิว implement; แผนส่งมอบเขียนตอนเข้าคิว
+สถานะ: **PARTIAL READY** — canonical-channel inventory/migration + web OAuth core เริ่ม coding ได้; live linking/QR rollout รอ Provider-console evidence และ deep-link decisions; แผนส่งมอบอยู่ใน [Four-lane Gap Closure Plan](../plans/mangmee-four-lane-gap-closure-plan-th.md#p12--line-loginlinkqr)
 
 เอกสารที่หลอมรวม (ยังเป็น source ของรายละเอียดเฉพาะทาง):
 
@@ -27,7 +27,7 @@ STOP-SHIP ที่ spec นี้ปิด: AUTH-01, AUTH-03, AUTH-04 (+ AUTH-0
 ## 2. Journey ที่ต้องได้ (จาก §13.5 — บังคับทุกข้อ)
 
 ```text
-กด "เข้าสู่ระบบด้วย LINE" → LINE OAuth/LIFF พร้อม state+nonce → callback ตรวจ issuer/audience/expiry/state
+กด "เข้าสู่ระบบด้วย LINE" → external web ใช้ OAuth 2.0 Authorization Code + PKCE S256; LIFF surface ใช้ `liff.login()` → callback ตรวจ issuer/audience/expiry/state/nonce/code_verifier
 → exchange เฉพาะ identity linked+active → BFF ตั้ง HttpOnly cookie (route ใหม่ /api/auth/line-login)
 → 0 บริษัท: อธิบายวิธีขอสิทธิ์ · 1 บริษัท: เข้า landing · หลายบริษัท: เลือกบริษัทพร้อมชื่อบทบาท
 ```
@@ -50,12 +50,18 @@ QR = opaque public code TTL สั้น single-use bind browser/intent; secret 
 ## 5. LIFF fallback + deep-link handoff
 
 - LIFF = UI/auth bridge ของเรา; password ไป Mangmee API เท่านั้น (กฎ §13.6C ทุกข้อ)
+- แยกเส้นทางตาม surface เป็นข้อยุติของ spec: browser ปกติใช้ OAuth redirect + PKCE; ภายใน/จาก LIFF ใช้ `liff.login()` ตามคำแนะนำ LINE แล้วส่งผลเข้า backend verification/identity-resolution ชุดเดียวกัน — ไม่ทำ authorization request ตรงภายใน LIFF browser
 - Signed short-lived handoff (จาก claim → LINE) ใช้ดีไซน์ `line-web-deeplink-handoff-spec` (single-use, TTL 15 นาที, bind company+path, re-tap ≠ success เพราะ session คือ side effect ใหม่ — :140) — เปิดคำถาม Q1–Q4 ของ spec นั้นให้ Owner ตอบตอนเข้าคิว
 
 ## 6. Gates/tests (ยกจาก §15 แถว "OA/LIFF Linking", "Web QR Login/Fallback", "Existing LINE user migration" — ทั้งสามแถวคำต่อคำเป็นเกณฑ์ผ่าน)
 
 ## 7. คำถาม Owner (ตอนเข้าคิว)
 
-1. เส้นทางรับ ID token ฝั่งเว็บ: LIFF หรือ OAuth redirect (plan เปิดไว้ — "เลือก path เล็กสุดที่เข้ากับ config LIFF เดิม")
-2. Q1–Q4 ของ deep-link handoff spec (provider claim ของ handoff session, link-preview burn, TTL, alert rail)
-3. ยืนยันหลักฐาน LINE Developers Console: Messaging/Login/LIFF Provider เดียวกัน (ใครเป็น Admin ของ Provider — คำถาม §11 ข้อ 17 เดิม)
+1. Q1–Q4 ของ deep-link handoff spec (provider claim ของ handoff session, link-preview burn, TTL, alert rail)
+2. ยืนยันหลักฐาน LINE Developers Console: Messaging/Login/LIFF Provider เดียวกัน (ใครเป็น Admin ของ Provider — คำถาม §11 ข้อ 17 เดิม)
+
+## 8. หลักฐาน LINE ทางการที่เป็น gate
+
+- [Web login integration](https://developers.line.biz/en/docs/line-login/integrate-line-login/): authorization-code flow, `state`, `nonce`, PKCE S256 และ `liff.login()` สำหรับ LIFF surface
+- [LINE Login security checklist](https://developers.line.biz/en/docs/line-login/security-checklist/): HTTPS/exact callback, open-redirect guard, cryptographic state, callback-state match และ token verification
+- [User account linking](https://developers.line.biz/en/docs/messaging-api/linking-accounts/): link token single-use และ nonce ที่คาดเดาไม่ได้อย่างน้อย 128 บิต; implementation ต้องมี unlink/recovery path ตาม account lifecycle

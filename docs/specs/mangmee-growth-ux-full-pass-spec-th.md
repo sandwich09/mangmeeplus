@@ -1,6 +1,6 @@
 # Growth และ UX รอบเต็ม — Spec P24
 
-สถานะ: DRAFT — เติมเต็มช่องว่างของ P24 ในตาราง spec-coverage (คำสั่ง Owner 2026-08-26: ทุก P ในแผนต้องมี spec); แผนส่งมอบเขียนตอน P24 เข้าคิว implement
+สถานะ: **READY FOR BASELINE/UX CODING** — ไม่รอ P26; pricing/subscription/quota enforcement อยู่นอก scope การรีวิวนี้; แผนส่งมอบอยู่ใน [Four-lane Gap Closure Plan](../plans/mangmee-four-lane-gap-closure-plan-th.md#p24--growthux-full-pass)
 
 ขอบเขตจาก [แผนหลัก P24](../plans/mangmee-brain-2-5-day-priority-plan-th.md): (1) self-service signup/trial + onboarding checklist + lead attribution (2) navigation ตามบทบาท + preference/memory แบบ opt-in ลบได้ (3) full real-device matrix + font/touch-target audit ทุกหน้าลูกค้า
 
@@ -21,6 +21,7 @@
 - หลัง claim สำเร็จ (P11) ผู้ใช้ใหม่เห็น checklist 3 ข้อแรกในแอป (ผูกกับ StartHereHero เดิม): เชื่อม LINE → ถ่ายใบเสร็จใบแรก → เปิดสมุดรายรับ–รายจ่าย; ข้อที่ทำแล้วติ๊กจริงจากข้อมูล (ไม่ใช่ localStorage)
 - Lead attribution: referral/campaign code ไหลจากฟอร์มสมัคร (P10 payload มีแล้ว) → เก็บบน Company record → รายงาน conversion ต่อ campaign แบบนับจำนวน ไม่เก็บ identifier ภายนอกเกินจำเป็น
 - นิยาม "activated" ที่วัดได้: บริษัทที่มีใบเสร็จยืนยันแล้ว ≥1 ภายใน 7 วันหลัง claim — ใช้เป็นตัวเลขเดียวกันทั้ง product/marketing
+- P24 ใช้ cohort/entitlement allowlist เดิมเพื่อเปิด trial แบบควบคุม; **ไม่กำหนดราคา วันหมดอายุ โควตา หรือ enforcement** และห้ามแอบพึ่ง P26 — ถ้าภายหลังมี billing ให้เชื่อมผ่าน entitlement contract แยก
 
 ### 2.2 Navigation ตามบทบาท + preference
 
@@ -40,7 +41,6 @@
 3. matrix + audit ผ่านทุก journey หลักบนอุปกรณ์จริงอย่างน้อย 1 เครื่องต่อกลุ่ม พร้อมหลักฐานรุ่น/ผล
 4. preference ลบแล้วหายจริงทุก surface และไม่กระทบตัวเลขใด ๆ
 
-## 4. คำถาม Owner (ตอบตอนเข้าคิว)
+## 4. คำถาม Owner (ไม่ block baseline)
 
-1. นิยาม trial: ฟรีตลอดจนชนโควตา P26 หรือมีวันหมดอายุ?
-2. เป้า activation rate แรกที่ยอมรับได้ (หลังเห็น baseline cohort แรก)?
+1. เป้า activation rate แรกที่ยอมรับได้ (ตั้งหลังเห็น baseline cohort แรก; ไม่ block instrumentation/checklist/device audit)

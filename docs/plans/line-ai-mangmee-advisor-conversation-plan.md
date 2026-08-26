@@ -2,7 +2,7 @@
 
 ## 1. สถานะ
 
-- สถานะ: **PROPOSED v2; docs only, implementation ยังไม่เริ่ม**
+- สถานะ: **ACTIVE v2; initial Phase 1 default-off scaffolding merge แล้ว (`4c472d6c`, PR #235), user-visible behavior ยังปิด**
 - วันที่: 2026-08-21; แก้ไข 2026-08-22 ตาม owner decisions 1–5 และรีวิว (spec §1.1)
 - Linked spec: `docs/specs/line-ai-mangmee-advisor-conversation-spec.md`
 - Default behavior: ไม่เปลี่ยนจนกว่า `LINE_AI_ADVISOR_MODE` ถูกเปิดผ่าน rollout gate
@@ -95,6 +95,8 @@ reviewer ภาษี/บัญชี; Slice C พักรอข้อมูล
   card ใน Phase 2 แต่ไม่บล็อก Phase 0/1 scaffolding
 
 ## 5. Phase 1 — Contracts, flags and no-behavior scaffolding
+
+Delivery note 2026-08-26: contracts/parser/config flags และ off-mode regression subset merge แล้วใน `4c472d6c`; checklist ด้านล่างคงไว้เป็น acceptance ของ Phase 1 เต็มและต้อง reconcile ทีละข้อก่อนประกาศ phase complete — ห้ามตีความ commit เดียวว่า dispatcher/composer/validator ทุกข้อเสร็จ.
 
 ### งาน
 

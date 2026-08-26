@@ -1,6 +1,6 @@
 # Email Delivery และ Claim Account — Spec P11
 
-สถานะ: DRAFT — รอเข้าคิว implement คู่กับ P10; แผนส่งมอบเขียนตอนเข้าคิว
+สถานะ: **PARTIAL READY** — adapter/outbox/claim core เริ่ม coding ได้; live delivery รอโดเมนผู้ส่ง, DNS และ region จาก Owner §5; แผนส่งมอบอยู่ใน [Four-lane Gap Closure Plan](../plans/mangmee-four-lane-gap-closure-plan-th.md#p11--email-delivery--claim)
 
 ที่มา: [แผนหลัก P11 + §13.6](../plans/mangmee-brain-2-5-day-priority-plan-th.md); STOP-SHIP: EMAIL-01 (§13.3); AUTH-02 (credential ชุดเดียว) บังคับกับหน้า claim
 
@@ -33,12 +33,12 @@
 
 - Implement `SesAuthMailerAdapter` (พอร์ตเดิม 2 method + method ใหม่ `sendAccountClaim` — ขยาย port แบบ additive) ด้วย AWS SDK v3 (มี `@aws-sdk` ใช้อยู่แล้วใน gateway — ตรวจ dependency ตอน implement ตามกติกา no-new-dep)
 - Factory: `disabled → noop`, `local → console`, `ses → SesAdapter` (แทน throw); production validation เดิมคุม region/from
-- DKIM/SPF: งาน infra + หลักฐาน delivery ถึง inbox ทดสอบ (gate §15 แถว Email/Claim)
+- Sender identity ต้องยืนยันโดเมนและตั้ง SPF/DKIM/DMARC; ใช้ SES configuration set แยก transactional claim mail และส่ง delivery/bounce/complaint event ไป consumer ที่ durable — หลักฐาน live คือ inbox + authentication result + event round-trip ไม่ใช่แค่ API ตอบ 2xx
 
 ### F-EM-2 Durable send ผ่าน outbox
 
 - Event `email.account_claim.requested` (companyId null ได้) → consumer ใหม่ (workers) เรียก adapter; retry/backoff/DEAD ตาม outbox กลไกเดิม; `eventKey` = `email:claim:<signupRequestId>` กันส่งซ้ำ
-- Bounce/complaint: SES notification (SNS→endpoint หรือ poll) เขียนสถานะกลับ `CompanySignupRequest.EMAIL_FAILED` + โชว์ใน System Admin (ตาม §13.4 ข้อ 3 "แสดงว่าอีเมลส่งแล้ว/ตีกลับ/รอ retry")
+- Bounce/complaint: SES event destination เขียนสถานะกลับ `CompanySignupRequest.EMAIL_FAILED`, เพิ่ม address ลง suppression policy ของบัญชีเมื่อเข้าเงื่อนไข, และโชว์ใน System Admin (ตาม §13.4 ข้อ 3 "แสดงว่าอีเมลส่งแล้ว/ตีกลับ/รอ retry"); ห้าม retry hard bounce/complaint แบบไม่จำกัด
 
 ### F-EM-3 Claim flow
 
@@ -54,3 +54,9 @@ SES delivery ถึง inbox ทดสอบ, DKIM ผ่าน, bounce/complain
 
 1. โดเมนผู้ส่ง (`SES_FROM_ADDRESS`) ใช้โดเมนไหน ใครถือ DNS (ต้องตั้ง DKIM)
 2. SES อยู่ region ไหน (แนะนำ ap-southeast-1 ใกล้ผู้ใช้)
+
+## 6. หลักฐานภายนอกที่ต้องตรวจซ้ำตอน implement
+
+- [AWS SES — configuring identities](https://docs.aws.amazon.com/en_en/ses/latest/dg/configure-identities.html): sender authentication ครอบ SPF, DKIM และ DMARC
+- [AWS SES — configuration sets](https://docs.aws.amazon.com/en_en/ses/latest/dg/using-configuration-sets.html): ผูก configuration set กับ identity/header และ event destinations
+- [AWS SES — account-level suppression](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_PutAccountSuppressionAttributes.html): suppression reason เป็น `BOUNCE`/`COMPLAINT`; config production ต้องมี test ยืนยัน policy จริง

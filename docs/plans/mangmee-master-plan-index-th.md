@@ -1,23 +1,25 @@
 # สารบัญแผนรวมมั่งมีพลัส (Master Plan Index)
 
-สถานะ: **ACTIVE — สารบัญอย่างเดียว ทุกสายงาน** (กติกา Owner 2026-08-26: รวมแค่หัวข้อ แล้วลิงก์กลับเอกสารเดิม — ห้ามคัดลอกเนื้อหามาไว้ที่นี่)
+สถานะ: **ACTIVE — VERIFIED INDEX 2026-08-26** (สาย 1–4 review แล้ว; สาย 5 Subscribe/Billing ไม่อยู่ใน scope รอบนี้)
 
-ลำดับและกติกาคุมโดย [แผนหลัก 2.5 วัน §10](mangmee-brain-2-5-day-priority-plan-th.md) — สารบัญนี้แค่กางคิวให้เห็นทุกสายในหน้าเดียว; งานใดยังไม่มีแผนส่งมอบ = เขียนตอนเข้าคิวตามกติกา docs-first
+ลำดับและกติกาคุมโดย [แผนหลัก 2.5 วัน §10](mangmee-brain-2-5-day-priority-plan-th.md). หลักฐานและเหตุผล verdict อยู่ใน [Coding-readiness Audit](mangmee-four-lane-coding-readiness-audit-th.md); phase/test/exit/gate ที่เติมอยู่ใน [Gap Closure Plan](mangmee-four-lane-gap-closure-plan-th.md). Baseline integration ที่ตรวจคือ `origin/develop@1ad0ea6c`; branch/worktree status ต้องแยกจาก integration/production status เสมอ.
+
+คำสถานะ: `READY <phase>` = เริ่ม phase นั้นได้, `PARTIAL READY` = core/read-only เริ่มได้แต่ activation blocked, `IMPLEMENTED / VERIFY` = code มีแต่ rollout evidence ค้าง, `BLOCKED` = ห้ามเดาคำตอบ Owner/provider/expert.
 
 ## สาย 1 — รับคนให้ไหว (Ops/Monitoring/Scale)
 
 | งาน | หัวข้อ | Spec | Plan | สถานะ |
 |---|---|---|---|---|
-| P9 | Dashboard/alarm ครบชุด, funnel analytics, incident drill ทุก failure class | [production-ops-spec](../specs/production-ops-spec.md) + runbooks | เขียนตอนเข้าคิว | รอคิว |
-| P25 ฉบับย่อ | Load/capacity บน UAT ที่จำนวนผู้ใช้วงถัดไป | [production-a5-v2-spec](../specs/production-a5-v2-spec.md) | เขียนตอนเข้าคิว | รอคิว (ทำคู่ P9) |
+| P9 | Dashboard/alarm ครบชุด, funnel analytics, incident drill ทุก failure class | [production-ops-spec](../specs/production-ops-spec.md) + runbooks | [P9 closure](mangmee-four-lane-gap-closure-plan-th.md#p9--observability-and-drills) | **READY P9-0..P9-2**; UAT drill gate |
+| P25 ฉบับย่อ | Load/capacity บน UAT ที่ workload ของวงถัดไป | [production-a5-v2-spec](../specs/production-a5-v2-spec.md) | [P25 gate](mangmee-four-lane-gap-closure-plan-th.md#p25--capacity-gate) + [แผนเดิม](production-a5-v2-plan.md) | **EXECUTION INPUT** — รอ cohort/workload/SLO ไม่ใช่ code ใหม่ |
 
 ## สาย 2 — ความฉลาด AI "สมองมั่งมี" (ทำคู่ขนานทุกสาย)
 
 | งาน | หัวข้อ | Spec | Plan | สถานะ |
 |---|---|---|---|---|
-| Brain-Real B1–B7 | สมองมั่งมีตอบจริง: hosted baseline → loading-on-accept → debounce → fused-plan shadow → security suite + prepared simple-read → ขยาย family ตามคำถาม top-N | [mangmee-brain-real-answers-spec](../specs/mangmee-brain-real-answers-spec.md) + [assessment](../specs/mangmee-brain-answer-architecture-assessment.md) + [คลังคำถามผู้ใช้](../specs/mangmee-brain-user-questions-catalog.md) | [mangmee-brain-real-answers-plan](mangmee-brain-real-answers-plan.md) | ตามคิว B1–B7 ใน[แผนหลัก §10 ข้อ 2](mangmee-brain-2-5-day-priority-plan-th.md) |
-| Advisor | น้องมั่งมีคุยต่อเนื่องเชิงที่ปรึกษา (Slice A ก่อน — มติ Owner 2026-08-22) | [line-ai-mangmee-advisor-conversation-spec](../specs/line-ai-mangmee-advisor-conversation-spec.md) | [line-ai-mangmee-advisor-conversation-plan](line-ai-mangmee-advisor-conversation-plan.md) | ต่อท้าย track B (B7) |
-| P23 | สมองมั่งมีเต็ม + คลังความรู้ (Knowledge Pack, web chat, retrieval) | [mangmee-accounting-tax-knowledge-spec](../specs/mangmee-accounting-tax-knowledge-spec-th.md) | เขียนตอนเข้าคิว | รอคิว (หลัง track B) |
+| Brain-Real B1–B7 | hosted baseline → loading/debounce → fused-plan shadow → security + simple-read → family top-N | [spec](../specs/mangmee-brain-real-answers-spec.md) + [assessment](../specs/mangmee-brain-answer-architecture-assessment.md) + [catalog](../specs/mangmee-brain-user-questions-catalog.md) | [canonical plan](mangmee-brain-real-answers-plan.md) + [readiness gate](mangmee-four-lane-gap-closure-plan-th.md#brain-real--b1b7) | **PARTIAL READY**; real traffic/golden/reviewer gate ต่อ family |
+| Advisor | น้องมั่งมีคุยต่อเนื่องเชิงที่ปรึกษา | [spec](../specs/line-ai-mangmee-advisor-conversation-spec.md) | [canonical plan](line-ai-mangmee-advisor-conversation-plan.md) + [gate](mangmee-four-lane-gap-closure-plan-th.md#advisor--conversation) | **Slice A READY**; knowledge/company slices blocked ตาม decision table |
+| P23 | Knowledge Pack, web chat, retrieval | [spec](../specs/mangmee-accounting-tax-knowledge-spec-th.md) | [P23 plan](mangmee-four-lane-gap-closure-plan-th.md#p23--knowledge-pack) | **READY P23-0/1 product-help**; tax publish blocked |
 
 ## สาย 3 — สมัครง่าย (LINE register + LINE login) — ประตูรับคนจาก Marketing
 
@@ -25,22 +27,22 @@
 
 | งาน | หัวข้อ | Spec | Plan | สถานะ |
 |---|---|---|---|---|
-| P10 | Auto-register จากเว็บทางการ (HMAC, state machine, idempotency, provision-after-claim) | [mangmee-external-signup-contract-spec](../specs/mangmee-external-signup-contract-spec-th.md) | เขียนตอนเข้าคิว | spec ✅ — **รอ Owner ตอบ §8 (3 ข้อ)** |
-| P11 | Email delivery + claim account (SES, ลิงก์ตั้งรหัสครั้งเดียว) | [mangmee-email-delivery-claim-spec](../specs/mangmee-email-delivery-claim-spec-th.md) | เขียนตอนเข้าคิว | spec ✅ |
-| P12 | LINE login: OA กลาง + LIFF account linking + QR login บนเว็บ (เปิด `line/exchange`) | [mangmee-line-login-link-journey-spec](../specs/mangmee-line-login-link-journey-spec-th.md) | เขียนตอนเข้าคิว | spec ✅ |
+| P10 | Auto-register จากเว็บทางการ (signed ingress, state, idempotency, claim-before-provision) | [spec](../specs/mangmee-external-signup-contract-spec-th.md) | [P10 plan](mangmee-four-lane-gap-closure-plan-th.md#p10--external-signup) | **READY P10-0**; public ingress รอ Owner §8 |
+| P11 | Email delivery + claim account | [spec](../specs/mangmee-email-delivery-claim-spec-th.md) | [P11 plan](mangmee-four-lane-gap-closure-plan-th.md#p11--email-delivery--claim) | **CORE READY**; live รอโดเมน/DNS/region |
+| P12 | LINE login: OAuth/LIFF + account linking + QR login | [spec](../specs/mangmee-line-login-link-journey-spec-th.md) | [P12 plan](mangmee-four-lane-gap-closure-plan-th.md#p12--line-loginlinkqr) | **READY P12-0/1**; live link/QR รอ console/deep-link gate |
 
 ## สาย 4 — โตต่อได้ (FlowAccount parity + รายรับ + ภาษี)
 
 | งาน | หัวข้อ | Spec | Plan | สถานะ |
 |---|---|---|---|---|
-| P27 | สมุดรายรับ–รายจ่าย (ฝั่งขาย–รับเงิน) | [income-expense-ledger-spec](../specs/mangmee-income-expense-ledger-spec-th.md) | [แผนฉบับเต็ม](mangmee-income-expense-ledger-plan-th.md) | **กำลังทำ — Phase 0–2 ✅ → Phase 3** |
-| P28 | ซื้อ–จ่ายเงิน + ใบลดหนี้ฝั่งซื้อ | [purchase-to-pay-mvp-spec](../specs/mangmee-purchase-to-pay-mvp-spec-th.md) | [แผนฉบับเต็ม](mangmee-purchase-to-pay-mvp-plan-th.md) | ต่อจาก P27 — **รอ Owner ตอบ §10 ข้อ 2–5** |
-| P13 | พนักงานหลายบริษัทบน LINE (active-membership-based) | [mangmee-line-multi-company-staff-spec](../specs/mangmee-line-multi-company-staff-spec-th.md) | เขียนตอนเข้าคิว | spec ✅ |
-| P15–P17 | Auto Revenue foundation + Revenue Inbox + Matching | [mangmee-revenue-inbox-matching-spec](../specs/mangmee-revenue-inbox-matching-spec-th.md) | เขียนตอนเข้าคิว | spec ✅ |
-| P18–P20 | Direct bank/QR/Gateway, Marketplace settlement, POS/Partner API | ([marketplace-import-spec](../specs/marketplace-import-spec.md) บางส่วน) | — | **spec เขียนเมื่อเลือก provider จริง** |
-| P21 | Accountant review + tax workpaper ภ.พ.30 | [mangmee-tax-workpaper-pp30-spec](../specs/mangmee-tax-workpaper-pp30-spec-th.md) | เขียนตอนเข้าคิว | spec ✅ |
-| P22 | Controlled auto-accounting (precision-gated) | [expense-ledger-auto-post-spec](../specs/expense-ledger-auto-post-spec.md) | เขียนตอนเข้าคิว | spec ✅ ฝั่งรายจ่าย |
-| P24 | Growth/UX รอบเต็ม (self-service signup, device matrix) | [mangmee-growth-ux-full-pass-spec](../specs/mangmee-growth-ux-full-pass-spec-th.md) | เขียนตอนเข้าคิว | spec ✅ |
+| P27 | สมุดรายรับ–รายจ่าย (ฝั่งขาย–รับเงิน) | [spec](../specs/mangmee-income-expense-ledger-spec-th.md) | [canonical plan](mangmee-income-expense-ledger-plan-th.md) + [status gate](mangmee-four-lane-gap-closure-plan-th.md#p27--income-expense-ledger) | Phase 0–2 **merged integration**; Phase 3 **branch-only** รอ review/merge |
+| P28 | ซื้อ–จ่ายเงิน + ใบลดหนี้ฝั่งซื้อ | [spec](../specs/mangmee-purchase-to-pay-mvp-spec-th.md) | [canonical plan](mangmee-purchase-to-pay-mvp-plan-th.md) + [gate](mangmee-four-lane-gap-closure-plan-th.md#p28--purchase-to-pay) | **BLOCKED** Owner §10 ข้อ 2–5 |
+| P13 | พนักงานหลายบริษัทบน LINE | [spec](../specs/mangmee-line-multi-company-staff-spec-th.md) | [P13 plan](mangmee-four-lane-gap-closure-plan-th.md#p13--line-multi-company-staff) | **BLOCKED** active-membership/notification policy |
+| P15–P17 | Auto Revenue foundation + Revenue Inbox + Matching | [spec](../specs/mangmee-revenue-inbox-matching-spec-th.md) | [P15–17 plan](mangmee-four-lane-gap-closure-plan-th.md#p15p17--revenue-foundationinboxmatching) | **READY P15 read-only core**; posting/automation blocked |
+| P18–P20 | Direct bank/QR/Gateway, Marketplace settlement, POS/Partner API | [provider-neutral contract](../specs/mangmee-revenue-connectors-contract-spec-th.md) + [marketplace partial](../specs/marketplace-import-spec.md) | [P18–20 plan](mangmee-four-lane-gap-closure-plan-th.md#p18p20--revenue-connectors) | shared harness **READY**; adapters **BLOCKED** provider selection |
+| P21 | Accountant review + tax workpaper ภ.พ.30 | [spec](../specs/mangmee-tax-workpaper-pp30-spec-th.md) | [P21 plan](mangmee-four-lane-gap-closure-plan-th.md#p21--tax-workpaper--accountant-review) | **READY P21-0 core**; form output รอ current fixture/expert |
+| P22 | Controlled auto-accounting | [expense spec](../specs/expense-ledger-auto-post-spec.md) | [implemented plan](expense-ledger-auto-post-plan.md) + [P22 gate](mangmee-four-lane-gap-closure-plan-th.md#p22--controlled-auto-accounting) | expense **IMPLEMENTED / VERIFY**; revenue blocked หลัง P17 |
+| P24 | Growth/UX รอบเต็ม | [spec](../specs/mangmee-growth-ux-full-pass-spec-th.md) | [P24 plan](mangmee-four-lane-gap-closure-plan-th.md#p24--growthux-full-pass) | **READY baseline/UX**; ไม่พึ่ง Billing |
 
 Gate ประจำสาย: **รัน P25 ฉบับเต็มซ้ำก่อนขยายวงทุกครั้ง** ([production-a5-v2-spec](../specs/production-a5-v2-spec.md))
 
@@ -49,9 +51,9 @@ Gate ประจำสาย: **รัน P25 ฉบับเต็มซ้ำ
 | คิว | อ้างอิง | หัวข้อ | ประเมิน | สถานะ |
 |---|---|---|---|---|
 | 1 | [P27 Phase 0](mangmee-income-expense-ledger-plan-th.md) | ยืนยันสัญญา V1–V6 | 0.5 | ✅ 2026-08-26 |
-| 2 | [P27 Phase 1](mangmee-income-expense-ledger-plan-th.md) | การเงินถูกก่อน (decimal + paymentNumber) | 1 | ✅ PR #247 |
-| 3 | [P27 Phase 2](mangmee-income-expense-ledger-plan-th.md) | หมวดรายรับ (model→API→UI→bootstrap) | 1.5 | ✅ 2026-08-26 |
-| 4 | [P27 Phase 3](mangmee-income-expense-ledger-plan-th.md) | บันทึกรายรับ 2 โหมด (bundle) + ใบลดหนี้/เพิ่มหนี้แบบ FlowAccount | 3 | ← **คิวถัดไป** |
+| 2 | [P27 Phase 1](mangmee-income-expense-ledger-plan-th.md) | การเงินถูกก่อน (decimal + paymentNumber) | 1 | merged integration (`2f9d3c57`) |
+| 3 | [P27 Phase 2](mangmee-income-expense-ledger-plan-th.md) | หมวดรายรับ (model→API→UI→bootstrap) | 1.5 | merged integration (`596776c0`) |
+| 4 | [P27 Phase 3](mangmee-income-expense-ledger-plan-th.md) | บันทึกรายรับ 2 โหมด (bundle) + ใบลดหนี้/เพิ่มหนี้แบบ FlowAccount | 3 | branch-only `01587293` — review/rebase/verify/merge |
 | 5 | [P27 Phase 4](mangmee-income-expense-ledger-plan-th.md) | หน้าสมุด + export | 2 | |
 | 6 | [P27 Phase 5](mangmee-income-expense-ledger-plan-th.md) | จัดระเบียบฝั่งรายจ่าย + ทางเข้า | 0.5 | |
 | 7 | [P27 Phase 6](mangmee-income-expense-ledger-plan-th.md) | เปิดระบบฝั่งขาย: entitlement/nav/gate/E2E/หลักฐาน | 1.5 | |
@@ -61,9 +63,9 @@ Gate ประจำสาย: **รัน P25 ฉบับเต็มซ้ำ
 | 11 | [P28 Phase 3](mangmee-purchase-to-pay-mvp-plan-th.md) | S1 landing + S3 อนุมัติ/จ่ายรวมหลายบิล | 2 | |
 | 12 | [P28 Phase 4](mangmee-purchase-to-pay-mvp-plan-th.md) | รวมฝั่งซื้อเข้าสมุด (F-P2P-4) + S5 | 1.5 | ต้องมาหลังคิว 5 (W4 ตอบโดยลำดับนี้) |
 | 13 | [P28 Phase 5](mangmee-purchase-to-pay-mvp-plan-th.md) | เปิดระบบฝั่งซื้อ: nav/gate/E2E/หลักฐาน | 1.5 | |
-| | | **รวม** | **~20 วัน** | ทำแล้ว ~3 เหลือ ~17 |
+| | | **รวมเดิม** | **~20 วัน** | ต้อง re-estimate หลัง Phase 3 merge และ Owner ปิด P28 §10 |
 
-## สาย 5 — เก็บเงินได้ (Subscriber/Billing) — **ท้ายคิวสุด (คำสั่ง Owner 2026-08-26)**
+## สาย 5 — เก็บเงินได้ (Subscriber/Billing) — **ไม่ review ในรอบนี้**
 
 | งาน | หัวข้อ | Spec | Plan | สถานะ |
 |---|---|---|---|---|
@@ -74,9 +76,14 @@ Gate ประจำสาย: **รัน P25 ฉบับเต็มซ้ำ
 
 **สาย 1 + สาย 3 ต้องผ่านทั้งคู่** (รับโหลดได้ + สมัครเองได้) — รายละเอียดใน[แผนหลัก §10](mangmee-brain-2-5-day-priority-plan-th.md)
 
-## ค้างที่ Owner ตอนนี้
+## ค้างที่ Owner/หลักฐาน (เฉพาะสาย 1–4)
 
-1. P28 spec §10 ข้อ 2–5 (ก่อนคิวย่อยขั้น 8) — [spec](../specs/mangmee-purchase-to-pay-mvp-spec-th.md)
-2. P26 ตารางราคา §8 (ก่อน implement billing) — [spec](../specs/mangmee-billing-subscription-spec-th.md)
-3. P10 คำถาม §8 สามข้อ (ก่อนเริ่มสาย 3) — [spec](../specs/mangmee-external-signup-contract-spec-th.md)
-4. เลือก provider จริง (payment / bank / marketplace) → ปลดล็อกการเขียน spec P18–P20
+1. P10 ingress/claim/duplicate policy — [spec §8](../specs/mangmee-external-signup-contract-spec-th.md)
+2. P28 accounting/product policy — [spec §10 ข้อ 2–5](../specs/mangmee-purchase-to-pay-mvp-spec-th.md)
+3. P13 active-membership + notification policy — [spec §5](../specs/mangmee-line-multi-company-staff-spec-th.md)
+4. P15–P17 pilot/reviewer/matrix — [spec §7](../specs/mangmee-revenue-inbox-matching-spec-th.md)
+5. P18–P20 provider + pilot + selection evidence — [contract §6](../specs/mangmee-revenue-connectors-contract-spec-th.md)
+6. P21/P23/Advisor named accounting/tax reviewer + current sanitized fixture/SLA
+7. P25 next-cohort workload inputs
+
+P14/P26/Subscribe payment ไม่ถูกตัดสินหรือแก้ scope ใน audit นี้.

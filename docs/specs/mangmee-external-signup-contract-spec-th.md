@@ -1,6 +1,6 @@
 # Auto-register จากเว็บไซต์ทางการ (External Signup Contract) — Spec P10
 
-สถานะ: DRAFT — กลไก/สัญญาครบ รอ Owner ตอบ §8 ก่อนเข้าคิว implement; แผนส่งมอบเขียนตอนเข้าคิว
+สถานะ: **PARTIAL READY** — core state/idempotency/provisioning เริ่ม P10-0 ได้; ingress auth, claim TTL และ duplicate-tax policy ยังรอ Owner §8 ก่อนเปิด public route; แผนส่งมอบอยู่ใน [Four-lane Gap Closure Plan](../plans/mangmee-four-lane-gap-closure-plan-th.md#p10--external-signup)
 
 ที่มา: [แผนหลัก P10 + §13.6](../plans/mangmee-brain-2-5-day-priority-plan-th.md) (flow, states, contract ขั้นต่ำ กำหนดไว้แล้วคำต่อคำ — spec นี้ยกมาเป็นทางการ + ผูกหลักฐานโค้ด); STOP-SHIP ที่ต้องปิด: SIGNUP-01, SIGNUP-02 (§13.3)
 
@@ -32,7 +32,8 @@
 - `POST /v1/integrations/official/company-signups`
 - Auth: HMAC (sha256 raw body ตามแบบ `line-webhook-verifier`) **หรือ** short-lived service JWT — เลือกที่ §8 ข้อ 1; + timestamp + nonce (กัน replay), secret rotation ได้
 - Header idempotency: ใช้รูปแบบ repo = field ใน payload `externalSignupId` + DB `@@unique([externalSignupId])` บน `SignupRequest` (แบบ `schema.prisma:3812`) — ไม่ประดิษฐ์ middleware ใหม่
-- Payload ขั้นต่ำ: `externalSignupId, companyName, taxId?, ownerDisplayName, contactEmail, consentVersion, referralCode?, requestedPackage (จาก BillingPackage ของ P26)`; DTO ทุกช่อง bounded/pattern ตามแบบ customer-register
+- Payload ขั้นต่ำ: `externalSignupId, companyName, taxId?, ownerDisplayName, contactEmail, consentVersion, referralCode?, requestedOfferKey?`; DTO ทุกช่อง bounded/pattern ตามแบบ customer-register
+- `requestedOfferKey` เป็นเพียงรหัส attribution/onboarding offer แบบ versioned ที่ตรวจจาก allowlist และเก็บ audit; **P10 ห้ามพึ่ง `BillingPackage`, ราคา, subscription หรือ quota ของ P26** และห้ามให้ field นี้เปิด entitlement เอง — provisioning ใช้ policy ฝั่ง server ที่อนุมัติไว้เท่านั้น
 - ตอบ `202 { requestId }` เสมอ — ไม่มีการยืนยันสร้างบริษัทก่อน durable state; ไม่มี secret ใด ๆ ใน response
 - request เดิม+payload เดิม → ผลเดิม; key เดิม+payload ต่าง → `409`; email/taxId/externalSignupId ชนของเดิม → deterministic attach/review policy (ห้ามเดาจากชื่อบริษัท)
 - Rate limit: bucket ใหม่ `official-signup-ip` + `official-signup-email` (normalize lowercase ตามแบบ L-06) — fail-closed; abuse: schema allowlist + audit `source='official-site'`
@@ -52,7 +53,7 @@ invalid/expired/replayed signature ถูกปฏิเสธ; same-request con
 
 ## 7. สิ่งที่ไม่ทำ
 
-ช่องทางสมัครอื่น (มือถือ app), การอนุมัติ partner หลายเจ้า (contract รองรับ `source` ไว้), SMS
+ช่องทางสมัครอื่น (มือถือ app), การอนุมัติ partner หลายเจ้า (contract รองรับ `source` ไว้), SMS, ราคา/แพ็กเกจ/การเก็บเงิน/การบังคับโควตา
 
 ## 8. คำถาม Owner (จาก §11 แผนหลักข้อ 7–8 ที่ยังไม่ตอบ)
 

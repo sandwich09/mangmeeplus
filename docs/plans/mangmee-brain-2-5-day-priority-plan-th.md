@@ -49,7 +49,7 @@
 - คำตอบภาษี/บัญชีที่มีความเสี่ยงสูงต้องมีแหล่งอ้างอิง อายุข้อมูล และผู้เชี่ยวชาญรับรอง
 - ถ้าหลักฐานไม่ครบ ฟีเจอร์เสี่ยงต้องยัง `off` แต่เดโมและโครงสร้างที่ทำไว้ไม่สูญเปล่า
 - ฝั่งเว็บรองรับผู้ใช้หนึ่งคนอยู่หลายบริษัทอยู่แล้ว แต่ต้องพิสูจน์ permission isolation; ฝั่ง LINE ยังต้องแก้นโยบายที่จำกัดเฉพาะ Owner
-- ฟีเจอร์รายรับมี engine เอกสารขาย, รับชำระ, Bank Statement และการจับคู่บางส่วนอยู่แล้ว จึงควรต่อยอดเป็น Revenue Inbox โดยไม่สร้าง payment/ledger ซ้ำอีกชุด (**ถอยไปหลัง P26** ตามการตัดสินใจ Owner)
+- ฟีเจอร์รายรับมี engine เอกสารขาย, รับชำระ, Bank Statement และการจับคู่บางส่วนอยู่แล้ว จึงควรต่อยอดเป็น Revenue Inbox โดยไม่สร้าง payment/ledger ซ้ำอีกชุด; คิวปัจจุบันอยู่หลัง P27/P28/P13 และ **ไม่พึ่ง P26** (มติ Owner 2026-08-26 รอบสี่ supersede ลำดับ 2026-08-25)
 - Auto Revenue ช่วยทำ **cash-to-document reconciliation** ได้ แต่ full bank reconciliation ยังต้องรวมเงินออก, ค่าธรรมเนียม, ดอกเบี้ย, ยอดยกมา–ยอดปลายงวด และรายการที่อนุมัติให้ ignore
 
 สิ่งที่ **ไม่ควรสัญญา** ภายใน 2.5 วัน:
@@ -645,30 +645,30 @@ Quality ต้องไม่ตกหมายถึง “ลดจำนว�
 
 ### ตาราง spec coverage ของทุก P (ข้อบังคับ Owner 2026-08-26: "ต้องทำ spec ทั้งหมดที่อยู่ใน plan")
 
-กติกา: **P ใดจะเริ่ม implement ได้ต่อเมื่อคอลัมน์สถานะเป็น ✅ หรือ spec ของงานนั้น merge แล้ว** — แถว ❌/⚠️ ห้ามเริ่มโค้ด ให้เขียน spec ก่อนตามคิวท้ายตาราง; ตารางนี้ต้องอัปเดตทุกครั้งที่ spec ใหม่ merge
+กติกา: เครื่องหมาย ✅ หรือการมีไฟล์ spec **ไม่เพียงพอ** ต่อการเริ่มโค้ด. ให้ใช้ verdict/phase/gate ใน [Coding-readiness Audit](mangmee-four-lane-coding-readiness-audit-th.md) และ [Gap Closure Plan](mangmee-four-lane-gap-closure-plan-th.md); phase ที่ `BLOCKED` ห้ามผู้ implement ตอบคำถาม Owner/provider/expert เอง.
 
 | P | เรื่อง | spec ที่มีอยู่ (docs/specs) | สถานะ |
 |---|---|---|---|
-| P9 | Monitoring/incident เต็ม | `production-ops-spec`, `m-02-ai-api-observability-spec` + runbooks | ✅ พอสำหรับงาน ops (รายละเอียด OBS-01/02 เติมตอนทำ) |
-| P10 | Auto-register จากเว็บทางการ | `mangmee-external-signup-contract-spec-th` (+`admin-company-onboarding-spec` ฝั่งภายใน) | ✅ ครบ 2026-08-26 — รอ Owner ตอบ §8 |
-| P11 | Email delivery + claim | `mangmee-email-delivery-claim-spec-th` | ✅ ครบ 2026-08-26 |
-| P12 | OA กลาง + LIFF + LINE QR Login | `mangmee-line-login-link-journey-spec-th` (ฉบับรวม — หลอม `password-reset-line-flow-spec`, `line-web-deeplink-handoff-spec`, `web-line-login-plan`) | ✅ ครบ 2026-08-26 — มติ: P12 เปิด `line/exchange` (ยกเลิก E11 deferral) |
-| P13 | พนักงานหลายบริษัทบน LINE | `mangmee-line-multi-company-staff-spec-th` (+`multi-company-branch-scope-spec` ฝั่งเว็บ) | ✅ ครบ 2026-08-26 |
+| P9 | Monitoring/incident เต็ม | `production-ops-spec`, `m-02-ai-api-observability-spec` + runbooks | READY P9-0..2; UAT drill gate |
+| P10 | Auto-register จากเว็บทางการ | `mangmee-external-signup-contract-spec-th` (+`admin-company-onboarding-spec` ฝั่งภายใน) | READY core P10-0; ingress รอ Owner §8 |
+| P11 | Email delivery + claim | `mangmee-email-delivery-claim-spec-th` | READY core; live รอ domain/DNS/region |
+| P12 | OA กลาง + LIFF + LINE QR Login | `mangmee-line-login-link-journey-spec-th` (ฉบับรวม) | READY P12-0/1; live link/QR รอ console/deep-link gate |
+| P13 | พนักงานหลายบริษัทบน LINE | `mangmee-line-multi-company-staff-spec-th` (+`multi-company-branch-scope-spec` ฝั่งเว็บ) | BLOCKED active-membership/notification policy |
 | P14 | Quota AI รายบริษัท | `per-company-ai-budget-override-spec` + `ai-usage-metering-and-monthly-budget-spec` | ✅ (document-work-unit meter เขียนรวมกับ P26) |
-| P15 | Auto Revenue foundation | `mangmee-revenue-inbox-matching-spec-th` §3 (+OS spec §10) | ✅ ครบ 2026-08-26 |
-| P16 | Revenue Inbox จาก statement เดิม | `mangmee-revenue-inbox-matching-spec-th` §4 (+`bank-reconciliation-spec` ฐาน) | ✅ ครบ 2026-08-26 |
-| P17 | Invoice matching + exception | `mangmee-revenue-inbox-matching-spec-th` §5 | ✅ ครบ 2026-08-26 |
-| P18–P20 | Bank/Gateway/Marketplace/POS | `marketplace-import-spec` (P19 บางส่วน) | ❌ เขียนเมื่อเลือก provider จริง (ตามแผนเดิม) |
-| P21 | Accountant review/tax reports | `mangmee-tax-workpaper-pp30-spec-th` (+ชุด tax specs เดิม 4 ฉบับ) | ✅ ครบ 2026-08-26 |
-| P22 | Controlled auto-accounting | `expense-ledger-auto-post-spec` | ✅ ฝั่งรายจ่าย; ฝั่งขายเขียนตอนเข้าคิว |
-| P23 | สมองมั่งมีเต็ม + คลังความรู้ | `mangmee-accounting-tax-knowledge-spec-th` + ชุด brain specs ปัจจุบัน | ✅ |
-| P24 | Growth/UX รอบเต็ม | `mangmee-growth-ux-full-pass-spec-th` (+`mobile-first-launch-features-spec`, `mangmee-system-ui-alignment-spec`) | ✅ ครบ 2026-08-26 |
-| P25 | Scale/load/DR | `production-a5-v2-spec` (+readiness matrix), `uat-environment-spec` | ✅ พอ |
+| P15 | Auto Revenue foundation | `mangmee-revenue-inbox-matching-spec-th` §3 (+OS spec §10) | READY read-only core; matrix/reviewer gate |
+| P16 | Revenue Inbox จาก statement เดิม | `mangmee-revenue-inbox-matching-spec-th` §4 (+`bank-reconciliation-spec` ฐาน) | PARTIAL READY หลัง pilot/golden |
+| P17 | Invoice matching + exception | `mangmee-revenue-inbox-matching-spec-th` §5 | PARTIAL READY; auto-confirm ยัง off |
+| P18–P20 | Bank/Gateway/Marketplace/POS | `mangmee-revenue-connectors-contract-spec-th` + `marketplace-import-spec` | shared contract/harness READY; adapters BLOCKED provider |
+| P21 | Accountant review/tax reports | `mangmee-tax-workpaper-pp30-spec-th` (+ชุด tax specs เดิม 4 ฉบับ) | READY core P21-0; form output รอ current fixture/expert |
+| P22 | Controlled auto-accounting | `expense-ledger-auto-post-spec` | expense implemented/รอ live browser; revenue blocked หลัง P17 |
+| P23 | สมองมั่งมีเต็ม + คลังความรู้ | `mangmee-accounting-tax-knowledge-spec-th` + ชุด brain specs ปัจจุบัน | READY product-help P23-0/1; tax publish blocked |
+| P24 | Growth/UX รอบเต็ม | `mangmee-growth-ux-full-pass-spec-th` (+`mobile-first-launch-features-spec`, `mangmee-system-ui-alignment-spec`) | READY baseline/UX; ไม่พึ่ง Billing |
+| P25 | Scale/load/DR | `production-a5-v2-spec` (+readiness matrix), `uat-environment-spec` | execution-ready เมื่อมี cohort workload/SLO |
 | P26 | Billing/Subscription (จำกัดใบเสร็จ) | `mangmee-billing-subscription-spec-th` | ✅ กลไกครบ 2026-08-26 — **ตารางราคา §8 รอ Owner อนุมัติก่อน implement** |
-| P27 | สมุดรายรับ–รายจ่าย | `mangmee-income-expense-ledger-spec-th` v1.2 | ✅ |
-| P28 | ซื้อ-จ่ายเงิน MVP + ใบลดหนี้ฝั่งซื้อ | `procurement-supplier-ap-spec` (engine) + `mangmee-purchase-to-pay-mvp-spec-th` (MVP/UX/CN) | ✅ ครบ 2026-08-26 — รอ Owner ตอบ spec §10 |
+| P27 | สมุดรายรับ–รายจ่าย | `mangmee-income-expense-ledger-spec-th` v1.2 | Phase 0–2 merged integration; Phase 3 branch-only ณ audit |
+| P28 | ซื้อ-จ่ายเงิน MVP + ใบลดหนี้ฝั่งซื้อ | `procurement-supplier-ap-spec` (engine) + `mangmee-purchase-to-pay-mvp-spec-th` (MVP/UX/CN) | BLOCKED Owner spec §10 ข้อ 2–5 |
 
-**สถานะคิว 2026-08-26: เขียนครบทุกตัวแล้ว** — เหลือเพียง P18–P20 ที่ตั้งใจรอเลือก provider จริง (เขียนก่อน = เดา); แถวที่มีเงื่อนไข Owner ค้าง: P26 (ตารางราคา §8), P10 (§8 สามข้อ), P28 (§10 ห้าข้อ); P27 พร้อม implement ต่อ (Phase 3–6)
+**สถานะหลัง audit 2026-08-26:** ทุกแถวสาย 1–4 มี spec boundary + plan/gate แล้ว แต่ readiness เป็นราย phase ไม่ใช่เขียวทั้งหัวข้อ. ดู ref/status/blocker ที่ [Master Plan Index](mangmee-master-plan-index-th.md); P18–P20 มี provider-neutral contract แล้ว แต่ production adapter ยังต้องรอ provider จริง.
 
 ### P9 — Incident, Monitoring และ Fast Hotfix Lane (ส่วนที่เหลือจาก P3)
 
@@ -683,7 +683,7 @@ alarm ขั้นต่ำ, kill switch และ drill หนึ่งรอ�
 
 - เพิ่ม API สำหรับ `official.mangmeeplus.com` โดยแยกจาก System Admin browser endpoint
 - มี HMAC/service identity, timestamp, nonce, idempotency key, durable request state และ audit
-- ตรวจ email/duplicate/consent/package ก่อน provision และใช้ application service onboarding เดิม เพื่อไม่ให้เกิดกฎสร้างบริษัทสองชุด
+- ตรวจ email/duplicate/consent/`requestedOfferKey` ก่อน provision และใช้ application service onboarding เดิม เพื่อไม่ให้เกิดกฎสร้างบริษัทสองชุด; offer เป็น attribution เท่านั้นและไม่พึ่ง Billing/P26
 - ใช้ state `RECEIVED → VALIDATED → EMAIL_PENDING → EMAIL_VERIFIED → PROVISIONING → READY → LINE_LINK_PENDING → COMPLETED`; retry ได้โดยไม่สร้าง Company/User/Membership ซ้ำ
 - ค่าแนะนำคือสร้างบริษัทหลัง email claim สำเร็จเพื่อลดบริษัทขยะ; pre-approved partner อาจ provision ก่อนแต่ต้องใช้ state/idempotency ชุดเดียวกัน
 
@@ -725,7 +725,7 @@ P14 คือรากของโมเดล subscribe ตามการต�
 
 ### P15 — Auto Revenue foundation และกฎบัญชี
 
-ถอยมาอยู่หลัง P26 ตามการตัดสินใจ Owner 2026-08-25 — เริ่มเมื่อระบบเก็บเงินใช้ได้จริงแล้ว:
+อยู่หลัง P27/P28/P13 และไม่พึ่ง P26 ตามลำดับล่าสุด 2026-08-26; เริ่ม safe core ตาม gate ในแผน closure:
 
 - ทำ spec ของ external cash event, source lineage, state machine, สิทธิ์, period lock และ reversal ก่อนเขียน connector
 - กำหนด classification ที่ Accountant อนุมัติ: invoice payment, cash sale, customer deposit, transfer, capital/director loan, bank loan, refund, tax refund, marketplace settlement และ unknown
@@ -860,7 +860,7 @@ Current truth (ตรวจโค้ด 2026-08-26): engine ฝั่งซื�
 - Auto-register ส่ง single-use email claim ให้ตั้งรหัส Mangmee; ไม่ส่ง temporary password หรือ QR account-link ส่วนตัว
 - เว็บ, claim page และ LIFF fallback ใช้ credential ชุดเดียว; LIFF ไม่สร้าง password อีกชุดและไม่เปลี่ยนรหัส LINE
 - หลังเชื่อมต้องเลือกบริษัทเมื่อจำเป็น แล้วกลับ OA พร้อม company/role/menu และได้ Value แรกทันที
-- (2026-08-25) ฟีเจอร์ที่ใช้จริงมาก่อน: รายรับ/Auto Revenue ถอยไปหลัง P26; AI แยกหมวดรายจ่ายเป็นงาน AI อันดับหนึ่งของรอบ 2.5 วัน; เพิ่มระบบจ่ายเงิน/Subscription (จำกัดโควตาใบเสร็จ ใช้ต่อต้อง subscribe) เข้าคิว P14 → P26
+- (2026-08-25 — **historical, superseded โดยมติรอบสี่บรรทัดถัดไป**) ฟีเจอร์ที่ใช้จริงมาก่อน: รายรับ/Auto Revenue เคยถูกวางหลัง P26; AI แยกหมวดรายจ่ายเป็นงาน AI อันดับหนึ่งของรอบ 2.5 วัน; เพิ่มระบบจ่ายเงิน/Subscription เข้าคิว P14 → P26
 - (2026-08-26) เพิ่ม **P27 สมุดรายรับ–รายจ่าย**: เอกสารขายเป็นแกนรายรับบน `AccountingDocument`/`AccountingPayment` เดิม ไม่สร้างตารางรายรับแยก; ฝั่งธนาคาร/กระทบยอดยังไม่ทำ (คงอยู่ P15–P22) — spec+plan: [Income–Expense Ledger Spec](../specs/mangmee-income-expense-ledger-spec-th.md); **Owner ตอบคำถาม spec §9 ครบ 6 ข้อวันเดียวกัน: P27 มาก่อนสาย P14→P26, ใบเสร็จอัตโนมัติตอนขายสด, ซ่อน VAT บริษัทไม่จด, ใบลดหนี้เลียนแบบ FlowAccount (ตรวจจากบัญชีทดสอบจริงแล้ว), ใช้ตาราง mapping taxcode เดิม, ยืนยันชุดคำหน้าสมุด**
 - (2026-08-26 รอบสี่) **โยกสาย billing/subscription (P14→P26) ไปท้ายคิวสุด** — ลำดับ "โตต่อได้" เดินก่อน (P27 → P28 → P13 → P15–P17 → P18–P24) แล้วค่อยปิด "เก็บเงินได้" เป็นก้อนสุดท้าย; ตอบคำถามคิวของ P26 spec §10 ข้อ 4 และ P28 spec §10 ข้อ 1 ไปในตัว (P28 ต่อจาก P27 ได้เลย ไม่ต้องรอ billing)
 - (2026-08-26 รอบห้า, ปรับรูปแบบรอบหก) **แผนรวม P27+P28 = สารบัญอย่างเดียว** ตามคำสั่ง Owner ("รวมแค่หัวข้อ แล้วมี link กลับไปที่เอกสารเดิม") — เนื้อหาเต็มอยู่ที่แผนเดิมสองฉบับ ([P27](mangmee-income-expense-ledger-plan-th.md) / [P28](mangmee-purchase-to-pay-mvp-plan-th.md)) ซึ่งคืนสภาพฉบับเต็มแล้ว; spec สองฉบับแยกตามฝั่งเช่นเดิม
@@ -1731,7 +1731,7 @@ P1–P8 เดิมใช้เวลาครบประมาณ 20 ชั�
 
 | P | สิ่งที่แทรกในงานเดิม | สิ่งที่ได้เมื่อจบ |
 |---|---|---|
-| P1 | freeze LINE Login=`off`, external signup=`off`, quota enforcement=`off`; บันทึกการตัดสินใจ Owner: รายรับ/Auto Revenue ถอยไปหลัง P26; ระบุ on-call/rollback owner | ไม่มี feature ครึ่งเสร็จถูกเปิดโดยเผลอ และทีมเข้าใจตรงกันว่ารายรับถอยแล้ว |
+| P1 | freeze LINE Login=`off`, external signup=`off`, quota enforcement=`off`; บันทึกลำดับล่าสุด: รายรับ/Auto Revenue อยู่หลัง P27/P28/P13 แต่ไม่พึ่ง P26; ระบุ on-call/rollback owner | ไม่มี feature ครึ่งเสร็จถูกเปิดโดยเผลอ และทีมเข้าใจคิวปัจจุบันตรงกัน |
 | P2 | แก้ `VAT-MIX-01` และตรวจ PLATFORM-01, AUTH-01/02/03/04, SIGNUP-01/02, EMAIL-01, LINE-ONBOARD-01, MULTI-01, quota/revenue blockers; ล็อกกฎ deposit ≠ revenue | ใบเสร็จจริงไม่ติดทางตัน และ flow ที่ยังไม่พร้อมถูกปิดโดยไม่สร้าง credential/บริษัท/session ซ้ำ |
 | P3 | พิสูจน์ kill switch ครอบคลุม flag ใหม่ที่ยัง `off` (LINE Login, external signup, revenue) และ alarm มองเห็นเหตุจาก flow เหล่านี้ | เปิด flag ผิดหรือมีเหตุจาก flow ใหม่ ถูกหยุดได้ภายใน 15 นาที |
 | P4 | แก้ `EXP-UX-01` ให้ส่งตรวจแล้วกลับรายการ; ถอดทางเข้า “รายรับ” และเดโม Auto Revenue ออกจากรอบนี้ตามการตัดสินใจ Owner | งานค่าใช้จ่ายจบชัด และหน้าแรกไม่พาไป 403/ทางตัน |
@@ -1891,7 +1891,7 @@ P1–P8 เดิมใช้เวลาครบประมาณ 20 ชั�
 ### แหล่งทางการภายนอกสำหรับกฎบัญชีและภาษี
 
 - [ประมวลรัษฎากร หมวดภาษีมูลค่าเพิ่ม: ความรับผิด/ฐานภาษี](https://www.rd.go.th/2596.html)
-- [คำแนะนำการกรอกและยื่นแบบ ภ.พ.30](https://www.rd.go.th/fileadmin/tax_pdf/vat/2568/pp30_010968.pdf)
+- [หน้ารวมแบบแสดงรายการภาษีมูลค่าเพิ่มปัจจุบัน — ดาวน์โหลด ภ.พ.30/ใบแนบจากลิงก์ current](https://www.rd.go.th/7049.html) (เก็บ retrieved-at/effective date/checksum; หน้าแหล่งระบุปรับปรุงล่าสุด 28-02-2026)
 - [กรมสรรพากร: แบบที่ใช้ในการนำส่งภาษีเงินได้หัก ณ ที่จ่าย](https://www.rd.go.th/fileadmin/download/insight_pasi/wht_3_53_030260.pdf)
 - [กรมสรรพากร: หนังสือรับรองการหักภาษีเงินได้ ณ ที่จ่าย](https://www.rd.go.th/22062.html)
 - [กรมสรรพากร: คำถามเกี่ยวกับ ภ.ง.ด.51](https://www.rd.go.th/60577.html)
@@ -1928,13 +1928,12 @@ Gate เปิดวงกว้าง: (P9 ส่วนที่เหลือ
 Brain-Real B1–B7 ทำสมองมั่งมีตอบจริง เร็วและถูก คู่ขนานกับ P10–P12 (ดู assessment)
 
 P9 ทำ monitoring/funnel/incident ส่วนที่เหลือให้พิสูจน์ได้
-P10–P14 ทำ Auto-register, email claim, migrate ผู้ใช้ LINE เดิม, OA กลาง/LIFF, Web QR Login + auto fallback, multi-company LINE และ quota meter
-P26 ทำระบบจ่ายเงิน/Subscription — จำกัดโควตาใบเสร็จ ใช้ต่อต้อง subscribe (มาก่อนรายรับ)
-P15 กำหนดฐาน Auto Revenue และกฎบัญชี (ถอยไปหลัง P26)
+P10–P13 ทำ Auto-register, email claim, migrateผู้ใช้ LINE เดิม, OA กลาง/LIFF, Web QR Login + auto fallback และ multi-company LINE
+P15 กำหนดฐาน Auto Revenue และกฎบัญชีหลัง P27/P28/P13 โดยไม่พึ่ง Billing
 P16–P17 ทำ Revenue Inbox จาก Bank Statement + Invoice/Exception matching
 P18–P20 ต่อ Direct Bank/Gateway, Marketplace และ POS/Partner API
 P21–P22 ทำ Accountant/Tax review และเปิด automation ตามหลักฐาน
-P23–P25 ทำสมองมั่งมีเต็มรูปแบบ, Growth และ Scale — P25 รันซ้ำก่อนขยายวงทุกครั้ง
+P23–P25 ทำสมองมั่งมีเต็มรูปแบบ, Growth และ Scale — P25 รันซ้ำก่อนขยายวงทุกครั้ง; P14/P26/Subscribe อยู่ท้ายคิวและไม่อยู่ใน audit สาย 1–4
 ```
 
 หลักคิดเดียวของแผนนี้คือ: **ตัด scope ได้ แต่ห้ามตัดความถูกต้อง ความปลอดภัย และหลักฐาน — ทางเร็วต้องเป็นทางที่ซ้อมและตรวจย้อนหลังได้ ไม่ใช่การข้าม gate**
