@@ -82,7 +82,7 @@ import { LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERRO
 import { LineAiLedgerService, ledgerKey, type LedgerEntry } from '../line-ai-ledger.service';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
 import { availableApprovalSurfaceKeys, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, staffMenuCommand, PENDING_APPROVAL_ITEM_LIMIT, type ApprovalSurfaceKey, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
-import { buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage } from '../../domain/logic/line-business-card.logic';
+import { buildExpenseDraftCardMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
 import { capabilityFollowUpReply, isDeliveredCapabilityFollowUp, isNextStepQuestionText } from '../../domain/logic/line-ai-capability-follow-up.logic';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import { LINE_BUFFER_ORPHAN_REPROCESS_MS } from '../../domain/logic/line-message-buffer.logic';
@@ -759,6 +759,31 @@ function formatPaypersReply(
   return parts.join('\n');
 }
 
+/** §10.1 status row. The record EXISTS but is unconfirmed — the same state the canonical reply's header
+ *  prints ("บันทึก…เบื้องต้นแล้ว (รอตรวจสอบ)"), said once, here, and never by a model. */
+const EXPENSE_DRAFT_CARD_STATUS = 'ร่าง – รอตรวจสอบและยืนยันในเว็บ';
+
+/** The §10.1 card rows reuse the SAME grounded values `formatPaypersReply` prints, with the same money
+ *  rule. A value the capture did not ground is OMITTED — the card leaves the row out rather than
+ *  repeating the text reply's 'ยังไม่ระบุ' placeholder as if it were a fact. */
+function expenseDraftCardFacts(
+  expenseId: string,
+  options: { amount?: string | null; fields?: ReceiptOcrFieldResult | null; categoryName?: string | null; item?: string | null } = {},
+): LineExpenseDraftCardFacts {
+  const amountValue = options.fields?.grandTotalAmount ?? options.amount;
+  const amount = amountValue && Number(toMoney4(amountValue)) > 0
+    ? `${Number(toMoney4(amountValue)).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท`
+    : undefined;
+  const item = options.item ?? options.fields?.vendorName;
+  return {
+    expenseId,
+    ...(amount ? { amount } : {}),
+    ...(item ? { item } : {}),
+    ...(options.categoryName ? { category: options.categoryName } : {}),
+    status: EXPENSE_DRAFT_CARD_STATUS,
+  };
+}
+
 export function isGroundedReceiptFollowUp(text: string): boolean {
   const normalized = normalizeLineText(text).toLocaleLowerCase('th-TH');
   const currentReference = /(บิลนี้|ใบนี้|ใบเสร็จนี้|เอกสารนี้|รายการนี้|อันนี้|เมื่อกี้)/u.test(normalized);
@@ -1375,6 +1400,7 @@ export class ProcessLineWebhookUseCase {
     texts: string[],
     companyId: string,
     access: { permissions: string[]; roles: string[] },
+    expenseDraft?: LineExpenseDraftCardFacts,
   ): Promise<void> {
     if (texts.length === 0 || texts.length > LINE_MAX_MESSAGES_PER_REPLY) throw new Error('LINE_EXPENSE_DRAFT_REPLY_PARTS_INVALID');
     const messages = await this.timeStage(event.webhookEventId, 'render', async () => {
@@ -1386,15 +1412,17 @@ export class ProcessLineWebhookUseCase {
         parts[parts.length - 1] = await this.withCompletionMenu(parts[parts.length - 1]!, companyId, access);
         return parts;
       }
+      // §10.1: an expense capture terminal that grounded a draft gets the DEDICATED ร่างค่าใช้จ่าย card;
+      // the generic card stays the render for every terminal with no such draft behind it. Same gate
+      // either way, so flag-off is still the byte-identical legacy all-text shape above.
+      const terminalCard = (text: string): LineReplyMessage => (expenseDraft
+        ? buildExpenseDraftCardMessage(text, expenseDraft, this.config.webBaseUrl, companyId)
+        : buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, companyId));
       // Spec §10.1: earlier parts stay lossless text; the terminal part becomes the same Flex card a
       // single completed reply gets, so a multi-part journey never ends in plain text.
       if (Array.from(terminal).length <= LINE_FLEX_CARD_BODY_MAX_CHARS) {
         const parts = texts.slice(0, -1).map((text) => this.buildLosslessTextMessage(text));
-        parts.push(await this.withCompletionMenu(
-          buildLineAssistantTextCardMessage(terminal, this.config.webBaseUrl, companyId),
-          companyId,
-          access,
-        ));
+        parts.push(await this.withCompletionMenu(terminalCard(terminal), companyId, access));
         return parts;
       }
       // The terminal text is longer than a Flex body holds. Feeding it to the card would drop everything
@@ -1405,11 +1433,7 @@ export class ProcessLineWebhookUseCase {
         parts[parts.length - 1] = await this.withCompletionMenu(parts[parts.length - 1]!, companyId, access);
         return parts;
       }
-      parts.push(await this.withCompletionMenu(
-        buildLineAssistantTextCardMessage(MULTIPART_TERMINAL_FLEX_CLOSER, this.config.webBaseUrl, companyId),
-        companyId,
-        access,
-      ));
+      parts.push(await this.withCompletionMenu(terminalCard(MULTIPART_TERMINAL_FLEX_CLOSER), companyId, access));
       return parts;
     });
     await this.deliverRequiredMessages(event, messages);
@@ -2667,7 +2691,12 @@ export class ProcessLineWebhookUseCase {
         })];
       const expenseDraftInterruption = await interruptExpenseDraft([captured.expense.id]);
       if (expenseDraftInterruption) replyTexts[replyTexts.length - 1] = `${replyTexts.at(-1)}\n\n${expenseDraftInterruption}`;
-      await this.deliverCompletedReplies(event, replyTexts, companyId, resolvedAccess);
+      await this.deliverCompletedReplies(event, replyTexts, companyId, resolvedAccess,
+        expenseDraftCardFacts(captured.expense.id, {
+          amount: captured.insertedAmount,
+          categoryName: captured.categoryName,
+          item: captured.expense.vendorNameSnapshot ?? captured.expense.note,
+        }));
       await this.ackConsumed(capturePlan, 'evidence_capture');
       await this.persistIntakeTurn({
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
@@ -3935,8 +3964,14 @@ export class ProcessLineWebhookUseCase {
       categoryName: effectiveCategory?.name || null,
       questionText: caption,
     })];
-    if (receiptDraft?.replyTexts.length) await this.deliverCompletedReplies(event, replyTexts, companyId, access);
-    else await this.deliverCompletedReply(event, replyTexts[0]!, companyId, access);
+    if (receiptDraft?.replyTexts.length) {
+      await this.deliverCompletedReplies(event, replyTexts, companyId, access,
+        expenseDraftCardFacts(intent.expenseId, {
+          fields: ocrFields,
+          categoryName: effectiveCategory?.name || null,
+          ...(groundedPurpose ? { item: groundedPurpose } : {}),
+        }));
+    } else await this.deliverCompletedReply(event, replyTexts[0]!, companyId, access);
     await this.recordDeliveredReceiptContinuation(event, companyId, identity.userId, intent.expenseId, access.scopes);
     await this.persistIntakeTurn({
       userId: identity.userId, companyId, webhookEventId: event.webhookEventId,

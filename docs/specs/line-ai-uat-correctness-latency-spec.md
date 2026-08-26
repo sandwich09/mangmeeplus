@@ -502,13 +502,13 @@ frozen artifact: `LINE_AI_PRESENTATION_PERMISSION_MANIFEST` ใน `scripts/line
 (21 rows) แต่ละ row พิน journey, presentation kind, authority condition, CTA policy,
 `expectedDomainWriteCount`, route/model constraint และ `evidenceStatus`
 
-`evidenceStatus` มีสองค่าเท่านั้นและ integrity spec นับ/รายงานทั้งสองฝั่ง: `implemented_fixture` 19 rows
+`evidenceStatus` มีสองค่าเท่านั้นและ integrity spec นับ/รายงานทั้งสองฝั่ง: `implemented_fixture` 20 rows
 (terminal Flex เดี่ยว/multipart, payer clarify card, clarify-only ไม่มี CTA, handoff tenant path ที่ไม่มี
 query/hash, permission/entitlement/branch denied, legal pending, duplicate webhook, expired reply-token push,
 long reply >1,200/>4,800 แบบ lossless, DB-backed state 4 rows: outage/stale-expired/cross-user/cross-chat-
-or-company และ durable delivery 2 rows: persisted terminal replay, Flex failure fallback) และ `required_gap`
-2 rows (expense card เฉพาะทาง, optional draft card) ห้าม mark gap เป็น implemented manifest freeze gold
-expectation ไม่ใช่หลักฐานว่า runtime ทำได้แล้ว
+or-company, durable delivery 2 rows: persisted terminal replay, Flex failure fallback และ expense draft card
+เฉพาะทาง §10.1) และ `required_gap` 1 row (optional reimbursement draft card ที่ยัง park รอ owner GO)
+ห้าม mark gap เป็น implemented manifest freeze gold expectation ไม่ใช่หลักฐานว่า runtime ทำได้แล้ว
 
 DB-backed state 4 rows ที่ย้ายมาเป็น `implemented_fixture` หมายถึง **code path + spec มีจริงแล้ว** เท่านั้น:
 `LineIntakeState` (migration `20260826120000_line_intake_state`, partial unique index บน OPEN row) และ
@@ -538,6 +538,30 @@ durable delivery 2 rows ที่ย้ายมาเป็น `implemented_fix
 
 ทั้งสอง row ยังไม่มี provider replay หรือ UAT evidence (`note` ของแต่ละ row ต้องเขียน `DEFAULT OFF` ไว้ และ
 integrity spec บังคับข้อนี้)
+
+`expense-draft-structured-card` ที่ย้ายมาเป็น `implemented_fixture` หมายถึง **code path + spec มีจริงแล้ว**
+เท่านั้น เหมือนสอง group ข้างบน: `buildExpenseDraftCardMessage()` ใน
+`apps/api/src/modules/line-ai/domain/logic/line-business-card.logic.ts` render card title `ร่างค่าใช้จ่าย`
+เป็น structured rows (`ยอดรวม`, `รายการ`, `หมวดหมู่`, `สถานะ`) แทนการนำ canonical reply มาครอบ generic body
+1,200 ตัวอักษร (§10.2) กติกาสำคัญ:
+
+- row ที่ capture **ไม่ได้ ground** จะถูก **ตัดทิ้ง** ไม่ใช่ใส่ placeholder `ยังไม่ระบุ` ราวกับเป็นข้อเท็จจริง
+  ค่าเงินใช้กติกาเดียวกับ `formatPaypersReply` (`toMoney4` + `th-TH` 2 ตำแหน่ง) และ status เป็น deterministic
+  server-owned copy ไม่มี model text
+- ถ้าไม่มี row ใด ground เลย card จะ degrade กลับเป็น generic text card ไม่ส่ง frame เปล่า
+- `altText` ยังเป็น **canonical reply text** เดิม (เพดาน `preview(text, 400)` เดียวกับ card อื่นทุกใบ ตัดเมื่อไร
+  มี `…` กำกับเสมอ) เพื่อให้ chat preview และ Flex→text fallback ของ §8.3 อ่านได้เป็นข้อความชุดเดียวกับ text reply
+- CTA เป็น tenant path `/companies/{companyId}/expenses/{expenseId}` เท่านั้น ไม่มี query/hash/financial param
+  base ที่ไม่น่าเชื่อถือหรือ id ที่ประกอบ tenant path ไม่ได้ทำให้ **ปุ่มหาย** ไม่ใช่เดา URL
+
+lane นี้ใช้ flag เดิม `LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED` (default `false`) ไม่ได้เพิ่ม flag ใหม่:
+flag นี้ gate อยู่แล้วว่า terminal part เป็น Flex หรือ text ล้วน การเลือก card เฉพาะทาง vs generic card เกิด
+**ข้างใน** สาขา flag-on นั้น ดังนั้น flag-off ยังเป็น legacy all-text shape แบบ byte-identical
+(pinned ด้วย snapshot test) ยังไม่มี provider replay หรือ UAT evidence และ `note` ของ row ต้องเขียน
+`DEFAULT OFF` ไว้ (integrity spec บังคับข้อนี้)
+
+wiring ปัจจุบันครอบ expense capture terminal ที่ **สร้าง draft จริง** สองทาง (text-note capture และ media
+capture ที่มี receipt draft) ส่วน terminal อื่นที่ไม่มี grounded draft ยังใช้ generic card ตามเดิม
 
 ### 14.4 Latency/protected journeys
 

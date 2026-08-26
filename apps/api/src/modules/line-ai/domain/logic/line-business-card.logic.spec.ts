@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { LineAiTurnResponse } from '@watchdog-bms/contracts';
 import {
+  buildExpenseDraftCardMessage,
   buildLineAssistantTextCardMessage,
   buildLineBusinessAnswerMessage,
   buildReimbursementHandoffMessage,
@@ -204,6 +205,86 @@ describe('FIX-5 — a link label becomes its button, never a dangling colon line
     const { body, buttons } = card('ดาวน์โหลด: https://evil.example/d/abc');
     assert.deepEqual(buttons, []);
     assert.equal(body, 'ดาวน์โหลด: https://evil.example/d/abc');
+  });
+});
+
+// ── §10.1 expense draft card: a dedicated ร่างค่าใช้จ่าย card with one row per grounded fact, instead
+//    of the generic card wrapping a canonical reply its 1,200-character body would silently cut. ──
+describe('expense draft card (§10.1)', () => {
+  const WEB = 'https://app.example.com';
+  const CANONICAL = '🧾 บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว (รอตรวจสอบ)\n• ยอดรวม – 1,250.00';
+  const FULL = { expenseId: 'exp-1', amount: '1,250.00 บาท', item: 'ร้านกาแฟบ้านไร่', category: 'ค่าเดินทาง', status: 'ร่าง – รอตรวจสอบ' };
+  const rowsOf = (message: { type: string }) => ((message as any).contents.body.contents as any[])
+    .filter((entry) => entry.type === 'box')
+    .map((box) => [box.contents[0].text, box.contents[1].text]);
+
+  it('draws one row per fact, in a fixed order, with plain-Thai labels and no prose row', () => {
+    const message = buildExpenseDraftCardMessage(CANONICAL, FULL, WEB, 'c1');
+    assert.equal(message.type, 'flex');
+    const contents = (message as any).contents;
+    assert.equal(contents.header.contents[0].text, 'ร่างค่าใช้จ่าย');
+    assert.deepEqual(rowsOf(message), [
+      ['ยอดรวม', '1,250.00 บาท'],
+      ['รายการ', 'ร้านกาแฟบ้านไร่'],
+      ['หมวดหมู่', 'ค่าเดินทาง'],
+      ['สถานะ', 'ร่าง – รอตรวจสอบ'],
+    ]);
+    // No wrapped-paragraph row survives beside the structured ones (§10.2).
+    assert.deepEqual(contents.body.contents.filter((entry: any) => entry.type === 'text'), []);
+  });
+
+  it('omits every row the capture did not ground, and never substitutes a placeholder', () => {
+    const message = buildExpenseDraftCardMessage(CANONICAL, { expenseId: 'exp-1', category: 'ค่าเดินทาง' }, WEB, 'c1');
+    assert.deepEqual(rowsOf(message), [['หมวดหมู่', 'ค่าเดินทาง']]);
+    assert.doesNotMatch(JSON.stringify((message as any).contents), /ยังไม่ระบุ|undefined|null/u);
+    // Blank-but-present values are the same as absent: an empty Flex text element is not sent.
+    assert.deepEqual(
+      rowsOf(buildExpenseDraftCardMessage(CANONICAL, { expenseId: 'exp-1', amount: '  ', item: '', category: 'ค่าเดินทาง' }, WEB, 'c1')),
+      [['หมวดหมู่', 'ค่าเดินทาง']],
+    );
+  });
+
+  it('degrades to the generic text card when nothing at all is grounded', () => {
+    const message = buildExpenseDraftCardMessage(CANONICAL, { expenseId: 'exp-1' }, WEB, 'c1');
+    assert.equal(message.type, 'flex');
+    assert.equal((message as any).contents.header.contents[0].text, 'ข้อมูลจากน้องมั่งมี');
+    assert.match(JSON.stringify(message.contents), /บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว/u);
+  });
+
+  it('carries the CANONICAL reply as altText — the words the text reply and the Flex→text fallback use', () => {
+    const message = buildExpenseDraftCardMessage(CANONICAL, FULL, WEB, 'c1');
+    assert.equal(message.type === 'flex' && message.altText, CANONICAL);
+    // Longer than the shared 400-character preview ceiling: VISIBLY marked, never silently cut.
+    const long = `${'ก'.repeat(500)}`;
+    const marked = buildExpenseDraftCardMessage(long, FULL, WEB, 'c1');
+    assert.equal(marked.type === 'flex' && Array.from(marked.altText).length, 400);
+    assert.ok(marked.type === 'flex' && marked.altText.endsWith('…'));
+  });
+
+  it('opens exactly the tenant expense record — no query, no hash, no financial parameter', () => {
+    const action = (buildExpenseDraftCardMessage(CANONICAL, FULL, WEB, 'c1') as any).contents.footer.contents[0].action;
+    assert.equal(action.type, 'uri');
+    assert.equal(action.uri, 'https://app.example.com/companies/c1/expenses/exp-1');
+    assert.equal(new URL(action.uri).search, '');
+    assert.equal(new URL(action.uri).hash, '');
+    // An untrusted base, or an id that cannot form a tenant path, loses the BUTTON — never the card.
+    for (const [base, companyId, expenseId] of [
+      [undefined, 'c1', 'exp-1'], ['javascript:alert(1)', 'c1', 'exp-1'], [WEB, '..', 'exp-1'], [WEB, 'c1', '../../c2/expenses/e9'],
+    ] as Array<[string | undefined, string, string]>) {
+      const card = (buildExpenseDraftCardMessage(CANONICAL, { ...FULL, expenseId }, base, companyId) as any).contents;
+      const uri = card.footer?.contents[0]?.action?.uri;
+      assert.ok(uri === undefined || uri === `${WEB}/companies/${encodeURIComponent(companyId)}/expenses/${encodeURIComponent(expenseId)}`, String(uri));
+      assert.ok(card.body.contents.length > 0, 'the rows survive whatever happens to the link');
+    }
+  });
+
+  it('passes Thai NFC text through byte-identically, in the rows and in the altText', () => {
+    // NFC: base + tone/vowel marks as their own code points — normalising to NFKC would rewrite them.
+    const item = 'ค่าน้ำมันรถ'.normalize('NFC');
+    const message = buildExpenseDraftCardMessage(item, { ...FULL, item }, WEB, 'c1');
+    assert.equal(rowsOf(message)[1]![1], item);
+    assert.equal(message.type === 'flex' && message.altText, item);
+    assert.equal(JSON.parse(JSON.stringify(message)).altText, item);
   });
 });
 

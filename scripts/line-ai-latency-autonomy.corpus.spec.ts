@@ -489,10 +489,11 @@ describe('LINE AI latency/autonomy eval corpus', () => {
     assert.equal(implemented.length + gaps.length, rows.length, 'evidenceStatus stays bounded to the two members');
     assert.ok(implemented.length >= 8, `expected a real implemented set, got ${implemented.length}`);
     // Four clarification-state rows moved to implemented when the DB-backed neutral state landed
-    // (§8.3 / plan Phase 1A), and two delivery rows moved when LineTurnOutcome + the Flex→text
-    // fallback landed, so the floor drops with them. It stays a FLOOR, not a target: the manifest's
-    // job is to keep naming what is still missing — here the two card-rendering rows.
-    assert.ok(gaps.length >= 2, `the manifest must keep naming its gaps, got ${gaps.length}`);
+    // (§8.3 / plan Phase 1A), two delivery rows moved when LineTurnOutcome + the Flex→text fallback
+    // landed, and the expense draft card moved when §10.1's dedicated card landed — so the floor drops
+    // with them. It stays a FLOOR, not a target: the manifest's job is to keep naming what is still
+    // missing — here the reimbursement draft card, which is parked on an owner GO.
+    assert.ok(gaps.length >= 1, `the manifest must keep naming its gaps, got ${gaps.length}`);
 
     const byId = new Map(rows.map((row) => [row.id, row]));
     for (const id of [
@@ -510,11 +511,15 @@ describe('LINE AI latency/autonomy eval corpus', () => {
       // §8.3 durable delivery. Same meaning of "implemented" as the four above: the code path and its
       // fixtures exist, and BOTH flags default off with no provider/UAT evidence recorded yet.
       'persisted-terminal-outcome-replay', 'flex-failure-text-fallback',
+      // §10.1 dedicated expense draft card. Same meaning of "implemented": the builder, the capture
+      // wiring and their specs exist behind LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED, which is still
+      // default-off with no provider/UAT evidence recorded.
+      'expense-draft-structured-card',
     ]) {
       assert.ok(byId.has(id), `missing presentation row ${id}`);
       assert.equal(byId.get(id)!.evidenceStatus, 'implemented_fixture', `${id} exists in the current path`);
     }
-    for (const id of ['expense-draft-structured-card', 'reimbursement-draft-card-owner-go']) {
+    for (const id of ['reimbursement-draft-card-owner-go']) {
       assert.ok(byId.has(id), `missing presentation row ${id}`);
       assert.equal(byId.get(id)!.evidenceStatus, 'required_gap', `${id} is not implemented, so it must not read as implemented`);
     }
@@ -536,6 +541,11 @@ describe('LINE AI latency/autonomy eval corpus', () => {
         `${id}: an implemented-but-dark lane must say so, or the manifest reads as a live guarantee`);
       assert.equal(byId.get(id)!.maxAdditionalModelCalls, 0, `${id}: a delivery retry must never re-decide the turn`);
     }
+    // And for the expense draft card, which renders behind the same dark terminal-Flex flag.
+    assert.match(byId.get('expense-draft-structured-card')!.note, /DEFAULT OFF/,
+      'expense-draft-structured-card: an implemented-but-dark lane must say so');
+    assert.equal(byId.get('expense-draft-structured-card')!.expectedPresentationKind, 'flex');
+    assert.equal(byId.get('expense-draft-structured-card')!.expectedWebPath, '/companies/{companyId}/expenses/{expenseId}');
 
     // Both long-reply thresholds are represented, and both are backed by a deterministic fixture on the
     // multipart lane: the terminal text ships intact and a concise card closes the turn. The Flex-DELIVERY
@@ -548,8 +558,8 @@ describe('LINE AI latency/autonomy eval corpus', () => {
       assert.equal(row.evidenceStatus, 'implemented_fixture', `${row.id}: the lossless text + concise card fixture exists`);
       assert.equal(row.expectedPresentationKind, 'text_parts_then_flex', row.id);
     }
-    assert.equal(implemented.length, 19, 'implemented_fixture rows');
-    assert.equal(gaps.length, 2, 'required_gap rows');
+    assert.equal(implemented.length, 20, 'implemented_fixture rows');
+    assert.equal(gaps.length, 1, 'required_gap rows');
 
     // Both manifests are gold expectations, NOT provider route rows: they stay OUT of the protected replay
     // union, so an id may never collide with one the runner scores.

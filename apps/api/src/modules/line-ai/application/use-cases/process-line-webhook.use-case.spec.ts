@@ -3311,6 +3311,14 @@ describe('ProcessLineWebhookUseCase – completed multi-part replies end in a Fl
     assert.ok(messages[0].quickReply?.items.length > 0, 'completion menu stays on the terminal card');
   });
 
+  it('keeps the GENERIC card for a terminal with no grounded expense draft behind it (§10.1)', async () => {
+    // The draft-continuation lane hands `deliverCompletedReplies` no card facts, so the dedicated
+    // ร่างค่าใช้จ่าย card must not appear here — its rows would have nothing to be made of.
+    const messages = await run(['บันทึกวัตถุประสงค์แล้วค่ะ']);
+    assert.equal(messages[0].contents.header.contents[0].text, 'ข้อมูลจากน้องมั่งมี');
+    assert.deepEqual(messages[0].contents.body.contents.filter((entry: any) => entry.type === 'box'), []);
+  });
+
   it('keeps earlier parts as lossless text and renders only the terminal part as the Flex card', async () => {
     const parts = ['ส่วนที่ 1\nรายละเอียดยาว', 'ส่วนที่ 2', 'สรุปร่างค่าใช้จ่าย'];
     const messages = await run(parts);
@@ -3507,7 +3515,7 @@ const STATE_ROUTE_CONTINUATION = {
 } as const;
 
 /** A capture use case that records every call — "did anything write?" is a count, not a vibe. */
-function makeCapture() {
+function makeCapture(expense: Record<string, unknown> = {}) {
   const calls: any[] = [];
   return {
     calls,
@@ -3515,7 +3523,7 @@ function makeCapture() {
       execute: async (_ctx: any, input: any) => {
         calls.push(input);
         return {
-          expense: { id: 'exp-1', sourceDocumentType: 'RECEIPT', expenseDate: null, vendorNameSnapshot: null },
+          expense: { id: 'exp-1', sourceDocumentType: 'RECEIPT', expenseDate: null, vendorNameSnapshot: null, ...expense },
           replyTexts: ['บันทึกแล้ว 200 บาท'], insertedAmount: '200', categoryName: 'ค่าเดินทาง',
         };
       },
@@ -3555,8 +3563,11 @@ function makeIntakeStateUseCase(prisma: any, opts: {
   capture?: any;
   intakeRouteFn?: (req?: any) => any;
   openWaiting?: any[];
+  config?: Record<string, unknown>;
 } = {}) {
   const replies: string[] = [];
+  /** The FULL delivered payload, for the render assertions that `replies` (text only) cannot make. */
+  const sent: any[][] = [];
   const logs: string[] = [];
   const ledgerSubs: any[] = [];
   const ledger = {
@@ -3569,7 +3580,7 @@ function makeIntakeStateUseCase(prisma: any, opts: {
   } as any;
   const useCase = new ProcessLineWebhookUseCase(
     prisma,
-    { webBaseUrl: 'https://app.example.com', lineAiIntakeStateMode: opts.mode ?? 'off' } as any,
+    { webBaseUrl: 'https://app.example.com', lineAiIntakeStateMode: opts.mode ?? 'off', ...(opts.config ?? {}) } as any,
     { resolveAccess: async () => ({
       membershipId: 'mem-1', roles: ['STAFF'],
       permissions: ['line.ai.query', 'expense.receipt.line_upload'], scopes: {},
@@ -3585,6 +3596,7 @@ function makeIntakeStateUseCase(prisma: any, opts: {
       buildTextMessage: (text: string) => ({ type: 'text', text }),
       sendReply: async (_token: string, messages: any[]) => {
         replies.push(messages[0]?.text ?? messages[0]?.altText ?? '');
+        sent.push(messages);
         return 'ok';
       },
       sendPush: async () => 'ok',
@@ -3606,7 +3618,7 @@ function makeIntakeStateUseCase(prisma: any, opts: {
   const logger = (useCase as any).logger;
   const originalLog = logger.log.bind(logger);
   logger.log = (message: string) => { logs.push(String(message)); return originalLog(message); };
-  return { useCase, replies, logs, ledgerSubs };
+  return { useCase, replies, logs, ledgerSubs, sent };
 }
 
 const STATE_EVENT = { ...BASE_EVENT, webhookEventId: 'evt-state-1', messageText: '200 บาท' };
@@ -3770,5 +3782,71 @@ describe('ProcessLineWebhookUseCase – neutral intake state mode: on, four zero
     assert.equal(opened.companyId, 'company-1');
     assert.ok(opened.chatKeyHash && opened.chatKeyHash !== STATE_EVENT.lineUserId, 'the chat key is hashed, never the raw LINE id');
     assert.ok(opened.ttlMinutes > 0, 'a question without a TTL never expires, which is its own stale-merge bug');
+  });
+});
+
+// ── §10.1 / AI-01 `expense-draft-structured-card`: an expense capture terminal renders the DEDICATED
+//    ร่างค่าใช้จ่าย card — amount / item / category / status as rows — instead of the generic card
+//    wrapping the canonical reply. Same gate as the rest of terminal Flex
+//    (`LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED`), so default-off is still the legacy all-text shape. ──
+describe('ProcessLineWebhookUseCase – expense draft card on the capture terminal (§10.1, default off)', () => {
+  const CAPTURE_EVENT = { ...STATE_EVENT, webhookEventId: 'evt-draft-card', messageText: '200 บาท' };
+  const run = async (config?: Record<string, unknown>) => {
+    const { prisma } = makePrisma();
+    const capture = makeCapture({ vendorNameSnapshot: 'ร้านกาแฟบ้านไร่' });
+    const harness = makeIntakeStateUseCase(prisma, { capture: capture.capture, ...(config ? { config } : {}) });
+    await harness.useCase.execute(CAPTURE_EVENT);
+    return { ...harness, captureCalls: capture.calls };
+  };
+  const bodyOf = (message: any) => message.contents.body.contents;
+  const rowsOf = (message: any) => bodyOf(message)
+    .filter((entry: any) => entry.type === 'box')
+    .map((box: any) => [box.contents[0].text, box.contents[1].text]);
+
+  it('delivers the legacy all-text reply, unchanged, while the flag is off', async () => {
+    const off = await run();
+    assert.equal(off.captureCalls.length, 1, 'the capture itself is untouched by a render flag');
+    assert.equal(off.sent.length, 1);
+    const [legacy] = off.sent[0]!;
+    // A snapshot, not a spot check: the ONLY keys are the legacy text message plus the completion menu
+    // the terminal part has always carried, so a card slipping in here fails on `type` alone.
+    assert.deepEqual(Object.keys(legacy).sort(), ['quickReply', 'text', 'type']);
+    assert.equal(legacy.type, 'text');
+    assert.equal(legacy.text, 'บันทึกแล้ว 200 บาท');
+    assert.ok(legacy.quickReply.items.length > 0, 'the completion menu is part of the legacy shape');
+  });
+
+  it('renders the ร่างค่าใช้จ่าย card from the capture result — no invented row — when the flag is on', async () => {
+    const on = await run({ lineAiMultipartTerminalFlexEnabled: true });
+    assert.equal(on.sent.length, 1);
+    const [message] = on.sent[0]!;
+    assert.deepEqual(message.quickReply, (await run()).sent[0]![0].quickReply,
+      'only the container changes: the completion menu is the same one the text reply carries');
+    assert.equal(message.type, 'flex');
+    assert.equal(message.contents.header.contents[0].text, 'ร่างค่าใช้จ่าย');
+    // Exactly the values the capture returned: amount '200' and category 'ค่าเดินทาง' from
+    // `makeCapture`, the vendor as the item row, and the server-owned draft status.
+    assert.deepEqual(rowsOf(message), [
+      ['ยอดรวม', '200.00 บาท'],
+      ['รายการ', 'ร้านกาแฟบ้านไร่'],
+      ['หมวดหมู่', 'ค่าเดินทาง'],
+      ['สถานะ', 'ร่าง – รอตรวจสอบและยืนยันในเว็บ'],
+    ]);
+    assert.deepEqual(bodyOf(message).filter((entry: any) => entry.type === 'text'), [],
+      'the long canonical reply is NOT wrapped into the card body (§10.2)');
+    assert.equal(message.altText, 'บันทึกแล้ว 200 บาท', 'altText stays the canonical reply text');
+    assert.equal(message.contents.footer.contents[0].action.uri,
+      'https://app.example.com/companies/company-1/expenses/exp-1');
+  });
+
+  it('omits a row the capture did not ground rather than filling it in', async () => {
+    const { prisma } = makePrisma();
+    // No vendor and no note: the item row simply does not exist. Nothing else changes.
+    const capture = makeCapture();
+    const on = makeIntakeStateUseCase(prisma, {
+      capture: capture.capture, config: { lineAiMultipartTerminalFlexEnabled: true },
+    });
+    await on.useCase.execute(CAPTURE_EVENT);
+    assert.deepEqual(rowsOf(on.sent[0]![0]).map(([label]: string[]) => label), ['ยอดรวม', 'หมวดหมู่', 'สถานะ']);
   });
 });
