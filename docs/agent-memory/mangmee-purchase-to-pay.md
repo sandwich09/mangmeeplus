@@ -29,7 +29,7 @@ Open questions (spec §10 — Owner):
 Artifacts:
 
 - `docs/specs/mangmee-purchase-to-pay-mvp-spec-th.md` (ใหม่)
-- `docs/plans/mangmee-purchase-to-pay-mvp-plan-th.md` (ใหม่ — 6 phases ~10.5 วัน, Phase 0 = W1–W5)
+- plan รวมเข้ากับ P27 แล้ว (Owner 2026-08-26): `docs/plans/mangmee-income-expense-ledger-plan-th.md` **ภาค 2 Phase 7–12** (~10.5 วัน, Phase 7 = W1–W5; W4 ตอบโดยคิวรวม); ไฟล์ `mangmee-purchase-to-pay-mvp-plan-th.md` เหลือเป็นป้ายชี้; §10 ข้อ 1 (คิว) ตอบแล้ว — เหลือข้อ 2–5
 - แผนหลัก: P28 section + spec-coverage matrix → ✅
 
 Verification:
