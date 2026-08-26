@@ -409,6 +409,7 @@ model Company {
   periodCloseRuns                   PeriodCloseRun[]
   // Item 10A
   onboardingRuns                    CompanyOnboardingRun[]
+  signupRequests                    CompanySignupRequest[]
   activatedAt                       DateTime?
   disabledAt                        DateTime?
   archivedAt                        DateTime?
@@ -566,6 +567,7 @@ model User {
   // Item 10A
   ownedOnboardingRuns     CompanyOnboardingRun[]   @relation("OwnedOnboardingRuns")
   createdOnboardingRuns   CompanyOnboardingRun[]   @relation("CreatedOnboardingRuns")
+  signupRequestsOwned     CompanySignupRequest[]
   // Item 10C
   employeeAccessProfiles  EmployeeAccessProfile[]
 }
@@ -2698,6 +2700,21 @@ enum OnboardingRunStatus {
   FAILED
 }
 
+enum CompanySignupState {
+  RECEIVED
+  VALIDATED
+  EMAIL_PENDING
+  EMAIL_VERIFIED
+  PROVISIONING
+  READY
+  LINE_LINK_PENDING
+  COMPLETED
+  EMAIL_FAILED
+  PROVISIONING_FAILED
+  SUSPENDED
+  EXPIRED
+}
+
 model ChartOfAccount {
   id                           String                        @id @default(cuid())
   companyId                    String?
@@ -2907,6 +2924,39 @@ model CompanyOnboardingRun {
 
   @@index([companyId])
   @@index([createdBySystemAdminUserId])
+}
+
+// P10 external-signup core. Public ingress remains absent until the owner chooses its signing and
+// duplicate-identity policy. requestedOfferKey is attribution only; it grants no entitlement.
+model CompanySignupRequest {
+  id                    String             @id @default(cuid())
+  source                String             @default("official-site")
+  externalSignupId      String             @unique
+  payloadHash           String
+  companyName           String
+  taxId                 String?
+  ownerDisplayName      String
+  contactEmail          String
+  consentVersion        String
+  referralCode          String?
+  requestedOfferKey     String?
+  state                 CompanySignupState @default(RECEIVED)
+  version               Int                @default(0)
+  failureCode           String?
+  provisioningAttemptId String?            @unique
+  provisioningStartedAt DateTime?
+  companyId             String?
+  ownerUserId           String?
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+  company               Company?           @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  owner                 User?              @relation(fields: [ownerUserId], references: [id], onDelete: SetNull)
+
+  @@index([state, updatedAt])
+  @@index([contactEmail])
+  @@index([taxId])
+  @@index([companyId])
+  @@index([ownerUserId])
 }
 
 // ---- Item 10A: Partner Management ----
