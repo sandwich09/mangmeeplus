@@ -7,6 +7,7 @@ import type {
   CertifySubstituteReceiptInput,
   CreateExpenseDraftInput,
   ExpenseExtractionResult,
+  ExpenseVatSourceOverrideInput,
   GenerateSubstituteReceiptInput,
   LineSubstituteReceiptPrefill,
   PreviewSubstituteReceiptInput,
@@ -280,8 +281,17 @@ export async function markExpenseReadyAsReviewer(companyId: string, expenseId: s
   return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/reviewer-mark-ready`, { method: 'POST', body: '{}' });
 }
 
-export async function confirmExpense(companyId: string, expenseId: string): Promise<ExpenseSummary> {
-  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/confirm`, { method: 'POST', body: '{}' });
+/** Plan 13.11.B: `vatSourceOverride` is the reviewer's "ใช้ยอดตามเอกสาร"; omitted, this is the
+ *  ordinary confirm and an unreconciled VAT total still blocks. */
+export async function confirmExpense(
+  companyId: string,
+  expenseId: string,
+  vatSourceOverride?: ExpenseVatSourceOverrideInput,
+): Promise<ExpenseSummary> {
+  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/confirm`, {
+    method: 'POST',
+    body: JSON.stringify(vatSourceOverride ? { vatSourceOverride } : {}),
+  });
 }
 
 export async function rejectExpense(companyId: string, expenseId: string, reason: string): Promise<ExpenseSummary> {

@@ -314,8 +314,59 @@ export type ExpenseVatCaptureSnapshotV1 = {
     acceptedSource: 'SOURCE_AMOUNT' | 'CALCULATED' | null;
     differenceAmount: string | null;
     toleranceAmount: '0.05';
+    /**
+     * Plan 13.11.B: a blocked reconciliation names the line the reviewer has to open, never just a
+     * document total. Unknown treatments come first (the plan forbids guessing them), otherwise the
+     * VAT line the printed total disagrees with. Absent while nothing needs attention.
+     */
+    attentionLineNumbers?: number[];
   };
 };
+
+/**
+ * Plan 13.11.B: "ใช้ยอดตามเอกสาร". An over-tolerance document VAT total is accepted only as a named
+ * reviewer decision — `expense.review`, a written reason, and the VAT line that carries the
+ * difference. Presence of this object IS the override flag; there is no silent amount change, both
+ * the printed and the calculated VAT stay in `ExpenseVatCaptureSnapshotV1`.
+ */
+export type ExpenseVatSourceOverrideInput = {
+  reason: string;
+  vatLineNumber: number;
+};
+
+export type ConfirmExpenseRequest = {
+  vatSourceOverride?: ExpenseVatSourceOverrideInput;
+};
+
+/** Blocking reconciliation outcomes — confirmation stops here until the lines or a reviewer decide. */
+export const EXPENSE_VAT_BLOCKING_STATUSES: readonly ExpenseVatReconciliationStatus[] =
+  ['MISMATCH', 'NEEDS_REVIEW', 'SOURCE_ONLY'];
+
+export function isBlockingExpenseVatReconciliation(
+  snapshot: ExpenseVatCaptureSnapshotV1 | null | undefined,
+): boolean {
+  return Boolean(snapshot && EXPENSE_VAT_BLOCKING_STATUSES.includes(snapshot.reconciliation.status));
+}
+
+/**
+ * Plan 13.11.B: the one sentence a blocked mixed-VAT receipt is explained with — printed total,
+ * calculated total, difference, and the line to open. Shared by the API block and the review card
+ * so the two cannot drift into telling the reviewer different things.
+ */
+export function expenseVatReconciliationMessage(snapshot: ExpenseVatCaptureSnapshotV1): string {
+  const satang = (value: string | null): string | null =>
+    value !== null && Number.isFinite(Number(value)) ? Math.abs(Number(value)).toFixed(2) : null;
+  const attention = snapshot.reconciliation.attentionLineNumbers ?? [];
+  const check = attention.length
+    ? `กรุณาตรวจรายการที่ ${attention.join(', ')} หรือเลือก “ใช้ยอดตามเอกสาร” พร้อมระบุเหตุผล`
+    : 'กรุณาตรวจรายการในเอกสาร หรือเลือก “ใช้ยอดตามเอกสาร” พร้อมระบุเหตุผล';
+  const documentVat = satang(snapshot.source.vatAmount);
+  const difference = satang(snapshot.reconciliation.differenceAmount);
+  const calculated = satang(snapshot.calculation.vatAmount) ?? '0.00';
+  return documentVat !== null && difference !== null
+    ? `VAT จากเอกสาร ${documentVat} บาท แต่จากรายการที่เลือก ระบบคำนวณได้ ${calculated} บาท ต่างกัน ${difference} บาท ${check}`
+    : `VAT จากเอกสารยังไม่ตรงกับที่ระบบคำนวณ ${check}`;
+}
 
 /**
  * Spec §19g decision 3: the rate shown beside the mode is derived from the lines, never assumed.

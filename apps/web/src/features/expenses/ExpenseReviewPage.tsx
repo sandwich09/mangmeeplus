@@ -32,7 +32,7 @@ import {
   postingErrorText, vatModeRequiresRate,
 } from './expenses.model';
 import type { ExpenseDetail, ExpenseReviewStepKey } from './expenses.model';
-import type { BusinessDocumentClassification } from '@watchdog-bms/contracts';
+import type { BusinessDocumentClassification, ExpenseVatSourceOverrideInput } from '@watchdog-bms/contracts';
 import {
   AiFieldLabel, AiFieldMissingHint, DOCUMENT_KIND_LABELS, DocumentReviewSection, ExpenseReviewEditSection,
   InlineSpinner, MoneyRow, STEP_HELPER_KEYS, STEP_LABEL_KEYS, expenseNoticeKey,
@@ -96,6 +96,10 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
   // Evidence-step edits save only via the explicit บันทึกการตรวจ button (the save can cascade —
   // e.g. clearing tax codes), so navigation must not save them; it must refuse to skip past them.
   const evidenceDirtyRef = useRef(false);
+  // Plan 13.11.B: the VAT card owns "ใช้ยอดตามเอกสาร" (it is where the numbers and the pointed line
+  // are), but the decision only takes effect on this page's confirm. Null unless a reviewer has both
+  // named the VAT line taking the difference and written a reason.
+  const vatOverrideRef = useRef<ExpenseVatSourceOverrideInput | null>(null);
   const [stepSaving, setStepSaving] = useState(false);
   const openReject = () => {
     setReason(''); setError(null); setShowReject(true); setShowVoid(false); setDuplicateResolution(null);
@@ -499,7 +503,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
                 )}
                 {detail.status === 'READY_FOR_CONFIRMATION' && (
                   <>
-                    {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => doAction(() => confirmExpense(companyId, expenseId), 'ยืนยันและลงบัญชีเรียบร้อยแล้ว')} disabled={actionLoading || !canConfirmExpense} title={classificationBlocked ? classificationBlockMessage : hasDuplicates ? t('expenses.resolve_duplicate_first', locale) : needsReceiptOrSubstitute ? t('expenses.confirm_needs_receipt', locale) : ocrTotalUnacknowledged ? t('expenses.price_mismatch_blocks_confirm', locale) : isZeroAmount ? t('expenses.zero_amount_warning', locale) : !substituteReady ? 'ต้องให้ผู้จ่ายลงนามและผู้อนุมัติออกใบรับรองฉบับสมบูรณ์ก่อนยืนยันรายจ่าย' : undefined}>{t('expenses.confirm_and_post', locale)}</button>}
+                    {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => doAction(() => confirmExpense(companyId, expenseId, vatOverrideRef.current ?? undefined), 'ยืนยันและลงบัญชีเรียบร้อยแล้ว')} disabled={actionLoading || !canConfirmExpense} title={classificationBlocked ? classificationBlockMessage : hasDuplicates ? t('expenses.resolve_duplicate_first', locale) : needsReceiptOrSubstitute ? t('expenses.confirm_needs_receipt', locale) : ocrTotalUnacknowledged ? t('expenses.price_mismatch_blocks_confirm', locale) : isZeroAmount ? t('expenses.zero_amount_warning', locale) : !substituteReady ? 'ต้องให้ผู้จ่ายลงนามและผู้อนุมัติออกใบรับรองฉบับสมบูรณ์ก่อนยืนยันรายจ่าย' : undefined}>{t('expenses.confirm_and_post', locale)}</button>}
                   </>
                 )}
               </>
@@ -509,7 +513,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
         )}
         {approverOnlyActions && (
           <>
-            {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => doAction(() => confirmExpense(companyId, expenseId), 'ยืนยันและลงบัญชีเรียบร้อยแล้ว')} disabled={actionLoading || !canConfirmExpense} title={classificationBlocked ? classificationBlockMessage : hasDuplicates ? t('expenses.resolve_duplicate_first', locale) : needsReceiptOrSubstitute ? t('expenses.confirm_needs_receipt', locale) : ocrTotalUnacknowledged ? t('expenses.price_mismatch_blocks_confirm', locale) : isZeroAmount ? t('expenses.zero_amount_warning', locale) : !substituteReady ? 'ต้องให้ผู้จ่ายลงนามและผู้อนุมัติออกใบรับรองฉบับสมบูรณ์ก่อนยืนยันรายจ่าย' : undefined}>{t('expenses.confirm_and_post', locale)}</button>}
+            {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => doAction(() => confirmExpense(companyId, expenseId, vatOverrideRef.current ?? undefined), 'ยืนยันและลงบัญชีเรียบร้อยแล้ว')} disabled={actionLoading || !canConfirmExpense} title={classificationBlocked ? classificationBlockMessage : hasDuplicates ? t('expenses.resolve_duplicate_first', locale) : needsReceiptOrSubstitute ? t('expenses.confirm_needs_receipt', locale) : ocrTotalUnacknowledged ? t('expenses.price_mismatch_blocks_confirm', locale) : isZeroAmount ? t('expenses.zero_amount_warning', locale) : !substituteReady ? 'ต้องให้ผู้จ่ายลงนามและผู้อนุมัติออกใบรับรองฉบับสมบูรณ์ก่อนยืนยันรายจ่าย' : undefined}>{t('expenses.confirm_and_post', locale)}</button>}
           </>
         )}
         {isConfirmed && (
@@ -652,7 +656,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
   );
   const vendorCard = (
     <div ref={vendorRef} className="scroll-mt-24">
-      <ExpenseReviewEditSection companyId={companyId} detail={detail} isMutable={canMutateDraft} canReview={canReview} saveRef={reviewSaveRef} onValidationChange={setDataErrorCount} onSaved={async () => { setDetail(await getExpense(companyId, expenseId)); onRefresh(); }} />
+      <ExpenseReviewEditSection companyId={companyId} detail={detail} isMutable={canMutateDraft} canReview={canReview} saveRef={reviewSaveRef} vatOverrideRef={vatOverrideRef} onValidationChange={setDataErrorCount} onSaved={async () => { setDetail(await getExpense(companyId, expenseId)); onRefresh(); }} />
     </div>
   );
   const documentReviewCard = (

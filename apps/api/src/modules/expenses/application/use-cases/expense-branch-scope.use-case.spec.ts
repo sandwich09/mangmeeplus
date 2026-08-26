@@ -255,18 +255,91 @@ describe('expense Tax Code confirmation guard', () => {
     }],
   };
 
-  it('blocks confirmation while VAT source reconciliation needs review', async () => {
+  // Plan 13.11.B: the mismatched snapshot a reviewer actually sees — printed 8.00 against a
+  // calculated 7.00 on a 7%-plus-no-VAT receipt, pointing at line 1.
+  const mismatchedVatRecord = {
+    ...readyRecord,
+    vatCaptureSnapshotJson: {
+      version: 1,
+      source: { vatAmount: '8.0000' },
+      calculation: { vatAmount: '7.0000' },
+      reconciliation: {
+        status: 'MISMATCH', acceptedSource: 'CALCULATED',
+        differenceAmount: '1.0000', toleranceAmount: '0.05', attentionLineNumbers: [1],
+      },
+    },
+  };
+
+  it('blocks confirmation while VAT source reconciliation needs review, naming the line to check', async () => {
+    const repo = { findByIdWithRelations: async () => mismatchedVatRecord } as any;
+
+    await assert.rejects(
+      () => new ConfirmExpenseUseCase(repo, audit, transactionTax, ...numberServices).execute(ctx(undefined, ['expense.confirm']), 'exp-1'),
+      (error: any) => {
+        const body = error?.getResponse?.();
+        assert.equal(body.code, 'EXPENSE_VAT_RECONCILIATION_REQUIRED');
+        assert.match(body.message, /VAT จากเอกสาร 8\.00 บาท/);
+        assert.match(body.message, /กรุณาตรวจรายการที่ 1/);
+        assert.deepEqual(body.attentionLines, [{ lineNumber: 1, description: 'สินค้า' }]);
+        return true;
+      },
+    );
+  });
+
+  it('refuses the document-VAT override without the reviewer permission', async () => {
+    const repo = { findByIdWithRelations: async () => mismatchedVatRecord } as any;
+
+    await assert.rejects(
+      () => new ConfirmExpenseUseCase(repo, audit, transactionTax, ...numberServices)
+        .execute(ctx(undefined, ['expense.confirm']), 'exp-1', { reason: 'ใบเสร็จพิมพ์ VAT รวมทั้งใบ', vatLineNumber: 1 }),
+      /Missing permission: expense\.review/,
+    );
+  });
+
+  it('refuses to hang the difference on a line that bears no VAT', async () => {
     const repo = {
       findByIdWithRelations: async () => ({
-        ...readyRecord,
-        vatCaptureSnapshotJson: { version: 1, reconciliation: { status: 'MISMATCH' } },
+        ...mismatchedVatRecord,
+        lines: [...mismatchedVatRecord.lines, { ...mismatchedVatRecord.lines[0], id: 'line-2', lineNumber: 2, description: 'ผัก', vatRate: '0', vatAmount: '0', taxSnapshot: null, taxComponents: [] }],
       }),
     } as any;
 
     await assert.rejects(
-      () => new ConfirmExpenseUseCase(repo, audit, transactionTax, ...numberServices).execute(ctx(undefined, ['expense.confirm']), 'exp-1'),
-      (error: any) => error?.getResponse?.().code === 'EXPENSE_VAT_RECONCILIATION_REQUIRED',
+      () => new ConfirmExpenseUseCase(repo, audit, transactionTax, ...numberServices)
+        .execute(ctx(undefined, ['expense.confirm', 'expense.review']), 'exp-1', { reason: 'ตามเอกสาร', vatLineNumber: 2 }),
+      (error: any) => error?.getResponse?.().code === 'EXPENSE_VAT_OVERRIDE_INVALID',
     );
+  });
+
+  it('lets a reviewer confirm on the document VAT total and writes the decision to audit', async () => {
+    const auditEntries: any[] = [];
+    const repo = {
+      findByIdWithRelations: async () => mismatchedVatRecord,
+      finalizeAndConfirmExpenseCas: async (input: any, finalize: any) => {
+        const finalized = await finalize({ db: {}, expense: mismatchedVatRecord });
+        return { expense: { ...input, status: 'CONFIRMED', expenseNumber: 'EXP-1' }, finalized };
+      },
+    } as any;
+
+    const confirmed = await new ConfirmExpenseUseCase(
+      repo, { log: async (entry: any) => { auditEntries.push(entry); } } as any, transactionTax, ...numberServices,
+    ).execute(ctx(undefined, ['expense.confirm', 'expense.review']), 'exp-1', {
+      reason: 'ใบเสร็จพิมพ์ VAT รวมทั้งใบ ตรวจกับร้านแล้ว', vatLineNumber: 1,
+    });
+
+    assert.equal(confirmed.status, 'CONFIRMED');
+    const override = auditEntries.find((entry) => entry.action === 'expense.vat.source_override');
+    assert.ok(override, 'the override decision must be audited');
+    assert.equal(override.riskLevel, 'HIGH');
+    assert.deepEqual(override.metadataJson, {
+      reason: 'ใบเสร็จพิมพ์ VAT รวมทั้งใบ ตรวจกับร้านแล้ว',
+      vatLineNumber: 1,
+      reconciliationStatus: 'MISMATCH',
+      documentVatAmount: '8.0000',
+      calculatedVatAmount: '7.0000',
+      differenceAmount: '1.0000',
+      toleranceAmount: '0.05',
+    });
   });
 
   it('rejects confirmation when a receipt still has a Tax Code snapshot', async () => {

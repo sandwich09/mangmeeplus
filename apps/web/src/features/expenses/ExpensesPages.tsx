@@ -37,7 +37,8 @@ import {
   formatTaxId, taxIdDigits, expenseVatSourceFromSnapshot, expenseVatSourceValidationMessage,
 } from './expenses.model';
 import type { AiReviewField, ExpenseAiSuggestion, ExpenseSummary, ExpenseDetail, ExpenseDraftReviewValues, ExpenseCategorySummary, ExpenseReviewStepKey, ExpenseCapabilities, ExpensesTab, ManualExpenseItem } from './expenses.model';
-import type { BusinessDocumentClassification, BuyerEntityKind, ExpenseExtractionResult, SubstituteReceiptEvidenceSummary, SubstituteReceiptRuntimePolicy } from '@watchdog-bms/contracts';
+import type { BusinessDocumentClassification, BuyerEntityKind, ExpenseExtractionResult, ExpenseVatSourceOverrideInput, SubstituteReceiptEvidenceSummary, SubstituteReceiptRuntimePolicy } from '@watchdog-bms/contracts';
+import { expenseVatReconciliationMessage, isBlockingExpenseVatReconciliation } from '@watchdog-bms/contracts';
 import { CategoryManagePanel, SignaturePanel, SignatureThumb, EvidencePanel, IconBtn } from './ExpensesWorkspacePanels';
 import { useBranchFilter } from '../web-core-workspace/WorkspaceScope';
 import { isBranchScope403 } from '../web-core-workspace/branch-scope-label.logic';
@@ -1141,7 +1142,7 @@ export function reviewValues(detail: ExpenseDetail): ExpenseDraftReviewValues {
   };
 }
 
-export function ExpenseReviewEditSection({ companyId, detail, isMutable, canReview, onSaved, saveRef, onValidationChange }: {
+export function ExpenseReviewEditSection({ companyId, detail, isMutable, canReview, onSaved, saveRef, onValidationChange, vatOverrideRef }: {
   companyId: string;
   detail: ExpenseDetail;
   isMutable: boolean;
@@ -1150,6 +1151,8 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   /** The modal's ถัดไป/chip navigation triggers this save when leaving the details step — no in-section save button. */
   saveRef?: MutableRefObject<(() => Promise<boolean>) | null>;
   onValidationChange?: (errorCount: number) => void;
+  /** Plan 13.11.B: the VAT card collects "ใช้ยอดตามเอกสาร"; the page's confirm button spends it. */
+  vatOverrideRef?: MutableRefObject<ExpenseVatSourceOverrideInput | null>;
 }) {
   const locale = useWorkspaceLocale();
   const [values, setValues] = useState<ExpenseDraftReviewValues>(() => reviewValues(detail));
@@ -1157,8 +1160,10 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   // Keyed by line index. `custom` is needed because "custom, nothing typed yet" and "unset" are the
-  // same stored value (''), so the preset cannot be derived from the rate alone.
-  const [vatEditors, setVatEditors] = useState<Record<number, { custom?: boolean }>>({});
+  // same stored value (''), so the preset cannot be derived from the rate alone. `zeroRated` is the
+  // same problem for the two 0% meanings: exempt and zero-rated export both store `0`, and the
+  // engine has no line-level field to tell them apart, so the reviewer's pick is only held here.
+  const [vatEditors, setVatEditors] = useState<Record<number, { custom?: boolean; zeroRated?: boolean }>>({});
   const [vatSourceDirty, setVatSourceDirty] = useState(false);
   // The stored date, not the edited one: a reviewer mid-edit must not have the tax fields vanish
   // under their cursor. `hasRecordedTax` then keeps them visible for a document that already
@@ -1208,8 +1213,28 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
       : vatSnapshot?.reconciliation.status === 'NEEDS_REVIEW' || vatSnapshot?.reconciliation.status === 'SOURCE_ONLY' ? 'รอตรวจ'
         : vatSnapshot?.reconciliation.status === 'CALCULATED_ONLY' ? 'ระบบคำนวณ'
           : 'ไม่ใช้ VAT';
+  // Plan 13.11.B: a blocked reconciliation says which line to open and, for a reviewer, offers the
+  // one named way through — "ใช้ยอดตามเอกสาร" with a reason and the VAT line taking the difference.
+  const vatBlocked = !vatSourceDirty && isBlockingExpenseVatReconciliation(vatSnapshot);
+  const vatAttentionLines = (vatSnapshot?.reconciliation.attentionLineNumbers ?? [])
+    .map((lineNumber) => ({ lineNumber, description: values.lines[lineNumber - 1]?.description?.trim() ?? '' }));
+  const vatCarrierLines = values.lines
+    .map((line, index) => ({ lineNumber: index + 1, description: line.description?.trim() ?? '', vatRate: line.vatRate }))
+    .filter((line) => Number(line.vatRate) > 0);
+  const [vatOverrideReason, setVatOverrideReason] = useState('');
+  const [vatOverrideLineNumber, setVatOverrideLineNumber] = useState<number | null>(null);
 
-  useEffect(() => { setValues(reviewValues(detail)); setVatEditors({}); setVatSourceDirty(false); }, [detail.id, detail.updatedAt]);
+  useEffect(() => {
+    setValues(reviewValues(detail)); setVatEditors({}); setVatSourceDirty(false);
+    setVatOverrideReason(''); setVatOverrideLineNumber(null);
+  }, [detail.id, detail.updatedAt]);
+  useEffect(() => {
+    if (!vatOverrideRef) return;
+    const reason = vatOverrideReason.trim();
+    vatOverrideRef.current = vatBlocked && canReview && reason !== '' && vatOverrideLineNumber !== null
+      ? { reason, vatLineNumber: vatOverrideLineNumber }
+      : null;
+  }, [canReview, vatBlocked, vatOverrideLineNumber, vatOverrideReason, vatOverrideRef]);
   useEffect(() => { onValidationChange?.(blockingIssueCount); }, [blockingIssueCount, onValidationChange]);
 
   const updateLine = (index: number, field: EditableReviewLineField, value: string) => {
@@ -1542,6 +1567,56 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
                   <p className="mt-1 text-xs text-gray-500">ยอดที่ใช้: {vatSnapshot.reconciliation.acceptedSource === 'SOURCE_AMOUNT' ? 'ตามเอกสาร' : 'ระบบคำนวณ'}</p>
                 </div>
               )}
+            {vatBlocked && vatSnapshot && (
+              <div className="space-y-2 rounded-lg border border-error-100 bg-white px-3 py-2">
+                <p className="text-xs font-medium text-error-600">{expenseVatReconciliationMessage(vatSnapshot)}</p>
+                {vatAttentionLines.length > 0 && (
+                  <ul className="list-inside list-disc text-xs text-gray-600">
+                    {vatAttentionLines.map((line) => (
+                      <li key={line.lineNumber}>รายการที่ {line.lineNumber}{line.description ? ` · ${line.description}` : ''}</li>
+                    ))}
+                  </ul>
+                )}
+                {canReview && vatCarrierLines.length > 0 && (
+                  <div className="space-y-2 border-t border-gray-100 pt-2">
+                    <p className="text-xs font-semibold text-gray-700">ถ้าตรวจแล้วเอกสารถูกต้อง ให้เลือก “ใช้ยอดตามเอกสาร”</p>
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-medium text-gray-600">รายการที่รับส่วนต่าง VAT</span>
+                      <ThemedSelect
+                        className={inputClass}
+                        value={vatOverrideLineNumber === null ? '' : String(vatOverrideLineNumber)}
+                        onChange={(event) => setVatOverrideLineNumber(event.target.value === '' ? null : Number(event.target.value))}
+                        disabled={busy}
+                      >
+                        <option value="">ยังไม่เลือก</option>
+                        {vatCarrierLines.map((line) => (
+                          <option key={line.lineNumber} value={line.lineNumber}>
+                            รายการที่ {line.lineNumber}{line.description ? ` · ${line.description}` : ''}
+                          </option>
+                        ))}
+                      </ThemedSelect>
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-medium text-gray-600">เหตุผล (จำเป็น)</span>
+                      <textarea
+                        className={inputClass}
+                        rows={2}
+                        maxLength={500}
+                        value={vatOverrideReason}
+                        onChange={(event) => setVatOverrideReason(event.target.value)}
+                        disabled={busy}
+                        placeholder="เช่น ใบเสร็จพิมพ์ VAT รวมทั้งใบ ตรวจกับร้านแล้ว"
+                      />
+                    </label>
+                    <p className="text-xs text-gray-500">
+                      {vatOverrideReason.trim() !== '' && vatOverrideLineNumber !== null
+                        ? 'กด “ยืนยันและลงบัญชี” เพื่อบันทึกโดยใช้ยอดตามเอกสาร ระบบจะเก็บชื่อผู้ตัดสินใจและเหตุผลไว้ในประวัติการตรวจสอบ'
+                        : 'เลือกรายการที่รับส่วนต่างและกรอกเหตุผลก่อน จึงจะยืนยันด้วยยอดตามเอกสารได้'}
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
         {/* RA-18: the payee's taxpayer class decides ภ.ง.ด.3 vs ภ.ง.ด.53, so it is only asked for when
@@ -1588,6 +1663,10 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
         const vatPercent = expenseRatePercent(line.vatRate);
         // "custom, nothing typed yet" stores the same '' as "unset", so the flag has to be sticky.
         const showCustomRate = vatRatePreset(line.vatRate) === 'custom' || vatEditors[index]?.custom === true;
+        // Same reason for the two 0% meanings: exempt and zero-rated export both store `0`.
+        const linePreset = showCustomRate ? 'custom'
+          : vatEditors[index]?.zeroRated === true ? 'zero'
+            : vatRatePreset(line.vatRate);
         return (
         <div key={index} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
@@ -1646,18 +1725,23 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
                 id={`expense-vat-rate-${detail.id}-${index}`}
                 className={validationInputClass(vatRateIssue)}
                 aria-invalid={vatRateIssue?.severity === 'error' || undefined}
-                value={showCustomRate ? 'custom' : vatRatePreset(line.vatRate)}
+                value={linePreset}
                 onChange={(e) => {
                   const preset = e.target.value;
-                  setVatEditors((current) => ({ ...current, [index]: { ...current[index], custom: preset === 'custom' } }));
+                  setVatEditors((current) => ({ ...current, [index]: { ...current[index], custom: preset === 'custom', zeroRated: preset === 'zero' } }));
                   updateLine(index, 'vatRate', vatRatePresetValue(preset, line.vatRate));
                 }}
                 disabled={!isMutable || busy}
               >
-                {!showCustomRate && line.vatRate.trim() === '' && <option value="unset">{t('expenses.vat_rate_preset_unset', locale)}</option>}
+                {/* Plan 13.11.B per-line vocabulary. GAP: exempt (ผัก/ผลไม้) and zero-rated export are
+                    different tax facts but the line only stores a rate, so both write `0` and the
+                    VAT base excludes them identically — the distinction survives only in the Tax Code
+                    the reviewer picks below, and is not carried in the line row itself. */}
                 <option value="standard">{t('expenses.vat_rate_preset_standard', locale)}</option>
+                <option value="exempt">{t('expenses.vat_rate_preset_exempt', locale)}</option>
                 <option value="zero">{t('expenses.vat_rate_preset_zero', locale)}</option>
                 <option value="custom">{t('expenses.vat_rate_preset_custom', locale)}</option>
+                {!showCustomRate && line.vatRate.trim() === '' && <option value="unset">{t('expenses.vat_rate_preset_unset', locale)}</option>}
               </ThemedSelect>
               <FieldIssueNote issue={vatRateIssue} />
               {showCustomRate && (
