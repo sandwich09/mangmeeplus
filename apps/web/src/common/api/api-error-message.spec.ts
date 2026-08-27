@@ -5,6 +5,22 @@ import { apiErrorMessage, translateApiError } from './api-error-message';
 
 const apiError = (message: string, extra: Record<string, unknown> = {}) => Object.assign(new Error(message), extra);
 
+test('explains only supplier source-number duplicates without relabeling unrelated conflicts', () => {
+  const expected = 'เลขที่เอกสารผู้ขายนี้ถูกบันทึกสำหรับผู้ขายรายนี้แล้ว กรุณาตรวจสอบบิลเดิมก่อนสร้างซ้ำ';
+  assert.equal(apiErrorMessage(apiError('duplicate_supplier_document_number', { status: 409 })), expected);
+  assert.equal(apiErrorMessage(apiError('Conflict', { status: 409, code: 'duplicate_supplier_document_number' })), expected);
+  assert.equal(apiErrorMessage(apiError(
+    'Duplicate value: a record with the same unique field(s) already exists. Fields: companyId, supplierId, supplierDocumentNumber',
+    { status: 409 },
+  )), expected);
+  assert.equal(apiErrorMessage(apiError('Conflict', { status: 409 })),
+    'ข้อมูลถูกเปลี่ยนแปลงระหว่างทำรายการ กรุณาเปิดใหม่แล้วลองอีกครั้ง');
+  assert.equal(apiErrorMessage(apiError(
+    'Duplicate value: a record with the same unique field(s) already exists. Fields: companyId, taxInvoiceNumber',
+    { status: 409 },
+  )), 'ข้อมูลถูกเปลี่ยนแปลงระหว่างทำรายการ กรุณาเปิดใหม่แล้วลองอีกครั้ง');
+});
+
 test('translates a known API sentence to Thai', () => {
   assert.equal(
     apiErrorMessage(apiError('Expense requires a receipt attachment or a missing receipt reason.', { status: 400 })),

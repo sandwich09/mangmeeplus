@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
+import type { SupplierSummary } from '@watchdog-bms/contracts';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { ForbiddenState, LoadingState } from '@/common/components/state';
 import { formatThaiDate } from '@/common/i18n/thai-date';
@@ -41,7 +42,7 @@ function ErrorBanner({ message }: { message: string }) {
 
 // ── Supplier List ─────────────────────────────────────────────────────────────
 function SupplierList({ companyId }: { companyId: string }) {
-  const [data, setData] = useState<any[]>([]);
+  const [data, setData] = useState<SupplierSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -69,7 +70,7 @@ function SupplierList({ companyId }: { companyId: string }) {
               <tr><th className="px-4 py-3">ชื่อ</th><th className="px-4 py-3">เลขประจำตัวผู้เสียภาษี</th><th className="px-4 py-3">ประเภท</th><th className="px-4 py-3">สถานะ</th></tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {data.length === 0 ? <tr><td colSpan={4} className="px-4 py-8 text-center text-gray-400">ไม่พบข้อมูล</td></tr> : data.map((s: any) => (
+              {data.length === 0 ? <tr><td colSpan={4} className="px-4 py-8 text-center text-gray-400">ไม่พบข้อมูล</td></tr> : data.map((s) => (
                 <tr key={s.id} className="hover:bg-gray-50">
                   <td className="px-4 py-3 font-medium">{s.displayNameSnapshot}</td>
                   <td className="px-4 py-3 text-gray-500">{s.taxId ?? '-'}</td>
