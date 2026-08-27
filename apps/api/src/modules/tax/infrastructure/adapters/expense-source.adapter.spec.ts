@@ -44,6 +44,24 @@ describe('ExpenseSourceAdapter WHT source facts', () => {
     client: { expenseRecord: { findMany: async (input: any) => { queries.push(input); return [row]; } } },
   } as any);
 
+  it('retains whole-bill base and no fabricated rate for explicit amount-only WHT', async () => {
+    const row = { ...whtRow([{ whtRate: null, taxableAmount: '1000' }], 'JURISTIC'),
+      whtInputJson: { inputType: 'AMOUNT', value: '0.01', origin: 'REVIEWER' }, whtAmount: '0.01' };
+    const [source] = await adapter(row).findConfirmedWithWhtByCompany('company-1');
+    assert.equal(source?.grossAmount, '1500', 'zero-satang allocated lines still belong to the whole-bill base');
+    assert.equal(source?.whtRate, null);
+    assert.equal(source?.whtAmount, '0.01');
+  });
+
+  it('keeps the entire explicit RATE base even when small lines withhold zero satang', async () => {
+    const row = { ...whtRow([{ whtRate: '0.0300', taxableAmount: '100' }], 'JURISTIC'),
+      taxableAmount: '100.10', whtInputJson: { inputType: 'RATE', value: '3', origin: 'REVIEWER' }, whtAmount: '3' };
+    const [source] = await adapter(row).findConfirmedWithWhtByCompany('company-1');
+    assert.equal(source?.grossAmount, '100.10');
+    assert.equal(source?.whtRate, '3.0000');
+    assert.equal(source?.whtAmount, '3');
+  });
+
   it('carries the payee class and branch code, scales the line rate to a percent, and bases gross on the withholding lines only', async () => {
     const row = whtRow([{ whtRate: '0.0300', taxableAmount: '1000' }], 'INDIVIDUAL');
 

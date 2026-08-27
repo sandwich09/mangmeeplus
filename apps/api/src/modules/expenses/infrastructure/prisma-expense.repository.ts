@@ -127,6 +127,7 @@ function mapExpense(r: any): ExpenseRecord {
     aiVerifiedFieldsJson: r.aiVerifiedFieldsJson ?? null,
     aiVerificationSummaryJson: r.aiVerificationSummaryJson ?? null,
     vatCaptureSnapshotJson: r.vatCaptureSnapshotJson ?? null,
+    whtInputJson: r.whtInputJson ?? null,
   };
 }
 
@@ -169,6 +170,7 @@ function mapLine(l: any) {
     discountAmount: l.discountAmount?.toString() ?? '0',
     taxableAmount: l.taxableAmount?.toString() ?? '0',
     vatRate: l.vatRate?.toString() ?? null,
+    vatTreatment: l.vatTreatment ?? null,
     vatAmount: l.vatAmount?.toString() ?? '0',
     whtRate: l.whtRate?.toString() ?? null,
     whtAmount: l.whtAmount?.toString() ?? '0',
@@ -488,6 +490,7 @@ export class PrismaExpenseRepository {
         sourceChannelMetadataJson: input.sourceChannelMetadataJson as any,
         vendorNameSnapshot: input.vendorNameSnapshot,
         vatCaptureSnapshotJson: input.vatCaptureSnapshotJson as any,
+        whtInputJson: input.whtInputJson as any,
         subtotalAmount: input.subtotalAmount,
         discountAmount: input.discountAmount,
         taxableAmount: input.taxableAmount,
@@ -850,6 +853,7 @@ export class PrismaExpenseRepository {
     }
     const data: any = {};
     const fields: Array<keyof typeof rest> = ['branchId', 'status', 'vendorCounterpartyId', 'vendorSnapshotJson', 'vendorNameSnapshot', 'vendorTaxIdSnapshot', 'vendorBranchCodeSnapshot', 'vendorEntityKindSnapshot', 'vendorDocumentNumber', 'expenseDate', 'receivedAt', 'dueDate', 'currency', 'vatMode', 'inputVatClaimStatus', 'expenseCategoryId', 'accountHintKey', 'taxCategory', 'duplicateStatus', 'duplicateOfExpenseId', 'duplicateOverrideReason', 'primaryAttachmentId', 'extractionId', 'aiVerificationStatus', 'aiVerifiedFieldsJson', 'aiVerificationSummaryJson', 'vatCaptureSnapshotJson', 'aiVerificationConfidence', 'aiVerifiedAt', 'lineMessageId', 'lineEventId', 'missingReceiptReason', 'postingStatus', 'postingError', 'note', 'internalMemo', 'updatedByUserId', 'updatedAt', 'reviewedByUserId', 'reviewedAt', 'confirmedByUserId', 'confirmedAt', 'rejectedByUserId', 'rejectedAt', 'rejectReason', 'voidedByUserId', 'voidedAt', 'voidReason', 'subtotalAmount', 'discountAmount', 'taxableAmount', 'vatAmount', 'whtAmount', 'grandTotalAmount', 'netPayableAmount', 'paidAmount', 'outstandingAmount', 'paymentStatus', 'paymentMethod', 'paidAt', 'bankAccountRef', 'expenseNumber', 'sourceDocumentType', 'sourceDocumentLanguage', 'taxEvidenceStatus', 'taxEvidenceReasonCode', 'substituteReceiptGeneratedAt', 'substituteReceiptGeneratedByUserId', 'sourceChannelMetadataJson'];
+    fields.push('whtInputJson');
     for (const f of fields) {
       if (rest[f] !== undefined) data[f] = rest[f];
     }
@@ -865,7 +869,7 @@ export class PrismaExpenseRepository {
         'branchId', 'vendorCounterpartyId', 'vendorSnapshotJson', 'vendorNameSnapshot', 'vendorTaxIdSnapshot',
         'vendorBranchCodeSnapshot', 'vendorDocumentNumber', 'expenseDate', 'currency', 'vatMode',
         'inputVatClaimStatus', 'expenseCategoryId', 'accountHintKey', 'taxCategory', 'primaryAttachmentId',
-        'vatCaptureSnapshotJson',
+        'vatCaptureSnapshotJson', 'whtInputJson',
         'missingReceiptReason', 'note', 'subtotalAmount', 'discountAmount', 'taxableAmount', 'vatAmount',
         'whtAmount', 'grandTotalAmount', 'netPayableAmount', 'paidAmount', 'outstandingAmount',
         'paymentStatus', 'paymentMethod', 'paidAt', 'bankAccountRef', 'sourceDocumentType',
@@ -2261,7 +2265,7 @@ export class PrismaExpenseRepository {
           const data = {
           expenseId, companyId, lineNumber: l.lineNumber, description: l.description,
           quantity: l.quantity, unitPrice: l.unitPrice, discountAmount: l.discountAmount,
-          taxableAmount: l.taxableAmount, vatRate: l.vatRate, vatAmount: l.vatAmount,
+          taxableAmount: l.taxableAmount, vatRate: l.vatRate, vatTreatment: l.vatTreatment ?? null, vatAmount: l.vatAmount,
           whtRate: l.whtRate, whtAmount: l.whtAmount, lineSubtotalAmount: l.lineSubtotalAmount,
           lineTotalAmount: l.lineTotalAmount, expenseCategoryId: l.expenseCategoryId,
           accountHintKey: l.accountHintKey, taxCategory: l.taxCategory, sourceLineText: l.sourceLineText,

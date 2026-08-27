@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import type {
   RequestContext,
   ResolveTransactionTaxPreviewDto,
@@ -7,6 +7,7 @@ import type {
 import Decimal from 'decimal.js';
 import { TransactionTaxConfigUseCase } from '../../../tax/application/use-cases/transaction-tax-config.use-case';
 import type { ExpenseLineInput } from '../../domain/models/expense.model';
+import { validateExpenseLineVatTreatments } from '../../domain/logic/expense-draft-amount-validation.logic';
 
 export type ExpenseTaxLineSelection = {
   taxCodeDefinitionId?: string;
@@ -32,6 +33,8 @@ export class ExpenseTransactionTaxService {
     mode: 'DRAFT' | 'FINAL' = 'DRAFT',
     db?: any,
   ): Promise<ExpenseLineInput[]> {
+    const treatmentError = validateExpenseLineVatTreatments(lines);
+    if (treatmentError) throw new BadRequestException(treatmentError);
     return Promise.all(lines.map(async (line) => {
       if (!line.taxCodeDefinitionId && !line.externalTaxCode) return line;
       const context = line.transactionContext ?? 'DOMESTIC_PURCHASE';
@@ -57,9 +60,16 @@ export class ExpenseTransactionTaxService {
       const preview: ResolveTransactionTaxPreviewDto = db
         ? await this.transactionTax.resolveSourceTaxInTransaction(ctx, input, mode, db, undefined, context === 'IMPORT_SERVICE' ? 'SELF_ASSESSED' : 'INPUT', 'expense')
         : await this.transactionTax.resolveSourceTax(ctx, input, mode, undefined, context === 'IMPORT_SERVICE' ? 'SELF_ASSESSED' : 'INPUT', 'expense');
+      const isVat = preview.snapshot.taxRegime === 'VAT' || preview.snapshot.taxRegime === 'IMPORT_VAT';
+      if (line.vatTreatment && isVat) {
+        const expectedTreatments = line.vatTreatment === 'NON_VAT' ? ['NON_TAXABLE', 'OUTSIDE_SCOPE'] : [line.vatTreatment];
+        if (!new Decimal(preview.snapshot.taxRate).isZero() || !expectedTreatments.includes(preview.snapshot.taxTreatment ?? '')) {
+          throw new BadRequestException(`Line ${line.lineNumber} VAT treatment conflicts with the selected Tax Code.`);
+        }
+      }
       return {
         ...line,
-        vatRate: preview.snapshot.taxRegime === 'VAT' || preview.snapshot.taxRegime === 'IMPORT_VAT'
+        vatRate: isVat
           // Expense's legacy/source contract stores VAT as a fraction (0.07),
           // while item 11B Tax Code snapshots store the percentage (7).
           ? new Decimal(preview.snapshot.taxRate).div(100).toString() : line.vatRate,

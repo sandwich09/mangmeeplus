@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { ExpenseWhtCapture } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import type { ExpenseSourceRow, ExpenseWhtSourceRow, TransactionTaxSourceLineRow } from '../../domain/ports/source-reader.port';
 
@@ -11,7 +12,10 @@ import type { ExpenseSourceRow, ExpenseWhtSourceRow, TransactionTaxSourceLineRow
  *    `taxableAmount` also sums non-WHT lines and would make gross x rate != withheld on the ใบแนบ.
  *  The ใบแนบ groups by payee + income category + rate, so a document mixing rates has no header rate
  *  to report — leave it null for review instead of picking one line's rate. */
-function whtLineFacts(lines: Array<{ whtRate: unknown; taxableAmount: unknown }> | undefined, headerBase: string) {
+function whtLineFacts(lines: Array<{ whtRate: unknown; taxableAmount: unknown }> | undefined, headerBase: string, input?: ExpenseWhtCapture | null) {
+  // Explicit source is whole-bill even when a small line's WHT rounds to zero and the query
+  // excludes that line. Legacy input still uses only the lines the user originally withheld on.
+  if (input) return { whtRate: input.inputType === 'RATE' ? Number(input.value).toFixed(4) : null, grossAmount: headerBase };
   const rates = new Set((lines ?? []).map(l => (l.whtRate === null || l.whtRate === undefined ? '' : String(l.whtRate))).filter(Boolean));
   const lineBase = (lines ?? []).reduce((sum, l) => sum + (Number(l.taxableAmount) || 0), 0);
   return {
@@ -77,7 +81,7 @@ export class ExpenseSourceAdapter {
       vendorBranchCode: r.vendorBranchCodeSnapshot ?? null,
       payeeEntityKind: r.vendorEntityKindSnapshot ?? null,
       incomeCategoryCode: r.taxCategory ?? null,
-      ...whtLineFacts(r.lines, String(r.taxableAmount ?? '0')),
+      ...whtLineFacts(r.lines, String(r.taxableAmount ?? '0'), r.whtInputJson as ExpenseWhtCapture | null),
       currency: r.currency ?? 'THB',
       updatedAt: r.updatedAt,
     }));

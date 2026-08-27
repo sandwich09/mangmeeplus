@@ -12,7 +12,7 @@
  * apply leaves no trace claiming it happened.
  */
 import { ForbiddenException, Injectable } from '@nestjs/common';
-import type { LineCorrectionField, LineIntakeCorrectionCandidate, LineIntakeCorrectionHints, RequestContext } from '@watchdog-bms/contracts';
+import type { ExpenseLineVatTreatment, LineCorrectionField, LineIntakeCorrectionCandidate, LineIntakeCorrectionHints, RequestContext } from '@watchdog-bms/contracts';
 import { LINE_CORRECTION_FIELDS } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AuditService } from '../../../audit/application/audit.service';
@@ -158,12 +158,14 @@ export class CorrectLineCapturedExpenseUseCase {
 
   /** The trivial single line a text note carries — `canCorrectAmount` already refused anything
    *  richer, so rewriting it cannot destroy itemisation or a tax selection. */
-  private amountOnlyLine(record: { lines: Array<{ description?: string | null }>; note?: string | null }, amount: string) {
+  private amountOnlyLine(record: { lines: Array<{ description?: string | null; vatRate?: { toString(): string } | null; vatTreatment?: ExpenseLineVatTreatment | null }>; note?: string | null }, amount: string) {
     return [{
       lineNumber: 1,
       description: record.lines[0]?.description ?? record.note ?? 'LINE correction',
       quantity: '1',
       unitPrice: amount,
+      vatRate: record.lines[0]?.vatRate?.toString(),
+      vatTreatment: record.lines[0]?.vatTreatment ?? null,
     }];
   }
 

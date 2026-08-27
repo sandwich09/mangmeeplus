@@ -18,6 +18,12 @@ const baseEvent = {
 };
 
 describe('groupWhtEvents', () => {
+  it('preserves an unknown rate for amount-only WHT without changing accepted money', () => {
+    const [group] = groupWhtEvents([{ ...baseEvent, whtRate: null, grossAmount: '1234.56', withheldAmount: '30.01' }]);
+    assert.equal(group!.whtRate, null);
+    assert.equal(group!.totalGross, '1234.5600');
+    assert.equal(group!.totalWithheld, '30.0100');
+  });
   it('groups two events from same payee+category+rate into one group', () => {
     const e2 = { ...baseEvent, id: 'e2', grossAmount: '5000.0000', withheldAmount: '150.0000', netPaidAmount: '4850.0000' };
     const groups = groupWhtEvents([baseEvent, e2]);

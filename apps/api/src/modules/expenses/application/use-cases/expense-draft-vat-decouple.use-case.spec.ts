@@ -41,6 +41,51 @@ function makeUseCase(overrides: Record<string, unknown> = {}) {
 }
 
 describe('UpdateExpenseDraftUseCase VAT decoupling (spec §19c)', () => {
+  it('keeps saved baht WHT on reload and edits even when the legacy caller sends a different rate', async () => {
+    const saved = { inputType: 'AMOUNT', value: '30.01', origin: 'REVIEWER' };
+    const { useCase, updates, upserted } = makeUseCase({ whtInputJson: saved });
+    await useCase.execute(ctx, 'exp-1', {
+      lines: [{ ...receiptLine, unitPrice: '2345.67', discountAmount: '5', whtRate: '0.03' }],
+    });
+    assert.equal(updates[0].whtAmount, '30.0100');
+    assert.equal(upserted[0].whtAmount, '30.0100');
+    assert.equal(upserted[0].whtRate, null);
+    assert.equal(updates[0].whtInputJson, undefined, 'omitted source keeps stored intent');
+  });
+
+  it('switches baht to percent explicitly and keeps gross separate from payable', async () => {
+    const { useCase, updates, upserted } = makeUseCase({ whtInputJson: { inputType: 'AMOUNT', value: '30.01', origin: 'REVIEWER' } });
+    await useCase.execute(ctx, 'exp-1', {
+      vatMode: 'VAT_INCLUDED', whtInput: { inputType: 'RATE', value: '3' },
+      lines: [{ ...receiptLine, unitPrice: '1070' }],
+    });
+    assert.equal(updates[0].whtAmount, '30.0000');
+    assert.equal(upserted[0].whtRate, '0.0300');
+    assert.equal(updates[0].grandTotalAmount, '1070.0000');
+    assert.equal(updates[0].netPayableAmount, '1040.0000');
+    assert.deepEqual(updates[0].whtInputJson, { inputType: 'RATE', value: '3', origin: 'REVIEWER' });
+  });
+
+  it('does not collapse historical mixed WHT rates when no whole-bill input exists', async () => {
+    const { useCase, updates, upserted } = makeUseCase();
+    await useCase.execute(ctx, 'exp-1', { lines: [
+      { ...receiptLine, unitPrice: '1000', whtRate: '0.03' },
+      { ...receiptLine, lineNumber: 2, unitPrice: '500', whtRate: '0.05' },
+    ] });
+    assert.deepEqual(upserted.map((line) => line.whtRate), ['0.03', '0.05']);
+    assert.equal(updates[0].whtAmount, '55.0000');
+    assert.equal(updates[0].whtInputJson, undefined);
+  });
+
+  it('blocks lowering the pre-VAT base below saved baht WHT without persisting a partial change', async () => {
+    const { useCase, updates, upserted } = makeUseCase({ whtInputJson: { inputType: 'AMOUNT', value: '30.01', origin: 'REVIEWER' } });
+    await assert.rejects(() => useCase.execute(ctx, 'exp-1', { lines: [{ ...receiptLine, unitPrice: '30' }] }), /pre-VAT/);
+    await assert.rejects(() => useCase.execute(ctx, 'exp-1', { whtInput: { inputType: 'RATE', value: '3' } }), /lines are required/);
+    await assert.rejects(() => useCase.execute(ctx, 'exp-1', { vatMode: 'VAT_INCLUDED' }), /lines are required/);
+    assert.equal(updates.length, 0);
+    assert.equal(upserted.length, 0);
+  });
+
   it('persists source, accepted line VAT, and the calculation snapshot in one review update', async () => {
     const { useCase, updates, upserted } = makeUseCase();
 
@@ -101,6 +146,47 @@ describe('UpdateExpenseDraftUseCase VAT decoupling (spec §19c)', () => {
       () => useCase.execute(ctx, 'exp-1', { inputVatClaimStatus: 'CLAIMABLE' } as any),
       /cannot claim input VAT/,
     );
+  });
+
+  it('retains all zero treatments with mixed VAT, discounts, rounding residuals, and mismatch gates', async () => {
+    for (const vatMode of ['VAT_INCLUDED', 'VAT_EXCLUDED'] as const) {
+      for (const vatAmount of ['7.01', '8.00']) {
+        const { useCase, updates, upserted } = makeUseCase();
+        await useCase.execute(ctx, 'exp-1', {
+          vatMode,
+          vatSource: { inputType: 'AMOUNT', vatAmount },
+          lines: [
+            { lineNumber: 1, description: 'Taxable', quantity: '1', unitPrice: vatMode === 'VAT_INCLUDED' ? '127' : '120', discountAmount: '20', vatRate: '0.07' },
+            { lineNumber: 2, description: 'Exempt', quantity: '1', unitPrice: '500', discountAmount: '50', vatRate: '0', vatTreatment: 'EXEMPT' },
+            { lineNumber: 3, description: 'Zero-rated', quantity: '1', unitPrice: '20', vatRate: '0', vatTreatment: 'ZERO_RATED' },
+            { lineNumber: 4, description: 'Non-VAT', quantity: '1', unitPrice: '30', vatRate: '0', vatTreatment: 'NON_VAT' },
+          ],
+        });
+        const matched = vatAmount === '7.01';
+        const snapshot = updates[0].vatCaptureSnapshotJson;
+        assert.equal(snapshot.reconciliation.status, matched ? 'MATCHED' : 'MISMATCH');
+        assert.equal(updates[0].discountAmount, '70.0000');
+        assert.equal(updates[0].vatAmount, matched ? '7.0100' : '7.0000');
+        assert.equal(updates[0].grandTotalAmount, matched && vatMode === 'VAT_EXCLUDED' ? '607.0100' : '607.0000');
+        assert.deepEqual(upserted.map((line) => line.vatTreatment), [null, 'EXEMPT', 'ZERO_RATED', 'NON_VAT']);
+        assert.deepEqual(upserted.slice(1).map((line) => [line.taxableAmount, line.vatAmount]), [
+          ['450.0000', '0.0000'], ['20.0000', '0.0000'], ['30.0000', '0.0000'],
+        ]);
+        assert.deepEqual(snapshot.calculation.lineResults.slice(1).map((line: any) => line.residualAdjustment), ['0.0000', '0.0000', '0.0000']);
+        if (!matched) assert.deepEqual(snapshot.reconciliation.attentionLineNumbers, [1]);
+      }
+    }
+  });
+
+  it('rejects zero-treatment/source-rate conflicts on update without writing', async () => {
+    const { useCase, updates, upserted } = makeUseCase();
+    await assert.rejects(() => useCase.execute(ctx, 'exp-1', {
+      vatMode: 'VAT_EXCLUDED',
+      vatSource: { inputType: 'NONE', lines: [{ lineNumber: 1, inputType: 'RATE', vatRatePercent: '7' }] },
+      lines: [{ lineNumber: 1, description: 'Exempt', quantity: '1', unitPrice: '100', vatRate: '0', vatTreatment: 'EXEMPT' }],
+    }), /requires an explicit zero VAT rate/);
+    assert.equal(updates.length, 0);
+    assert.equal(upserted.length, 0);
   });
 
   // Spec §19h: same write-path treatment as a receipt — the abbreviated invoice keeps its printed
