@@ -1,6 +1,6 @@
 # Agent Memory: Reimbursement Self-Service All Roles
 
-Status: Implemented and locally verified; preparing latest-develop integration (2026-08-27).
+Status: Complete; implemented, tested and pushed to develop (2026-08-27). No live deployment.
 Owner: /root/reimbursement_self_service
 Scope: User-authorized isolated branch codex/reimbursement-self-service-all-roles from develop
 a53bb992fc04713d7cba2f2b19c08286f27c08e5; fix every company role's own reimbursement journey,
@@ -48,5 +48,21 @@ Verification:
   ignored root generated directory because the unlink path used the wrong cwd. No tracked root
   source/schema or database was changed. Link removed before generating our own local client.
 
-Next: Commit scoped files, merge latest develop (WHT/VAT delivered at 8c472324), regenerate
-local client, rerun focused tests/typechecks, coordinate before normal non-force develop push.
+Final integration:
+
+- Implementation: `065e917c` (`fix(reimbursements): enable own requests for every company role`).
+- Merged develop `8c472324` (WHT + VAT navigation) without conflicts at
+  `2bb26f163b10e2596fb01c905d49d9d22b6104ce` and regenerated local Prisma/contracts.
+- Reran the combined API command above with both focused and boundary specs: 333 passed.
+- Reran the web command above plus expense-review-validation.spec.ts and expenses.model.spec.ts:
+  184 passed. Combined final regression count: 517, zero failed/skipped.
+- Full API/web `tsc --noEmit --incremental false` both passed after integration.
+- `git diff --check` passed; no package.json or generated/build artifact in the committed change.
+- `git push --atomic origin HEAD:refs/heads/codex/reimbursement-self-service-all-roles
+  HEAD:refs/heads/develop` succeeded without force. `git ls-remote --heads origin develop
+  codex/reimbursement-self-service-all-roles` confirmed both remote heads at `2bb26f16`.
+- This documentation-only follow-up records the verified delivery; no application code changed
+  after the final tests. Temporary dependency links used for verification are removed at handoff.
+
+Next: Parent may continue backlog review. UAT/Production remain unchanged; the existing normal
+permission sync applies system-role grants and old-custom-role backfills when this code is released.

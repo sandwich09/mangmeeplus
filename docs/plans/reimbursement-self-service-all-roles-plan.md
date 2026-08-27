@@ -1,6 +1,6 @@
 # Plan: Reimbursement self-service for every company role
 
-Status: In progress (2026-08-27)
+Status: Complete and pushed to develop (2026-08-27); not deployed to UAT/Production.
 
 ## Product and architecture
 
@@ -23,13 +23,16 @@ Status: In progress (2026-08-27)
 - [x] Test persisted-role sync, templates/compiler, effective permissions and own create/submit
   including receipt evidence; test feature OFF, tenant/branch/ownership denial and unchanged
   approve/pay boundaries.
-- [ ] Reconcile latest develop, rerun focused verification, commit and push normally to develop.
+- [x] Reconcile latest develop, rerun focused verification, commit and push normally to develop.
 
 ## Integration evidence
 
-Initial checks: 193 focused API + 139 boundary API + 82 web tests passed; web and API full
-typechecks passed after generating this worktree's Prisma client and resolving installed
-dependencies. One additional role-catalog regression will be included in the integration rerun.
+Implementation `065e917c`; merged WHT/VAT develop `8c472324` at `2bb26f16` without conflicts.
+Final integration rerun: 333 API + 184 web tests passed, including role catalog and updated VAT
+web regressions. Full API and web typechecks passed with this worktree's generated client.
+Atomic non-force push delivered `2bb26f163b10e2596fb01c905d49d9d22b6104ce` to develop and
+codex/reimbursement-self-service-all-roles; both remote heads were confirmed with ls-remote.
+This final documentation follow-up records that successful delivery without application changes.
 Local browser: ADMIN CTA at 390px, custom-readonly CTA at 1280px (no horizontal overflow),
 auditor own create form posts synthetic 25 THB draft/branch, feature-OFF hub and direct-create
 show accurate guidance and no create action. The synthetic API did not exercise live login,
