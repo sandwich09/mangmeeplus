@@ -103,8 +103,8 @@ function planFor(messageText: string) {
   if (/^สวัสดี|^วันนี้เหนื่อย|หวยแตกมาก|ต่อยกันไหม/.test(messageText) && !/ยอดขาย|รายได้|สต็อก|ค่าใช้จ่าย/.test(messageText)) {
     return { status: 'ROUTABLE', language: 'th', intents: [{ intent: 'casual_conversation', subject: 'unknown', agent: 'general', priority: 1, requiredTools: [], missingContext: [] }], refusals: [], requiresHumanReview: false };
   }
-  if (/ค่าใช้จ่าย/.test(messageText)) {
-    return { status: 'ROUTABLE', language: 'th', intents: [{ intent: 'read_detail', subject: 'expense', agent: 'accounting', priority: 1, requiredTools: ['expense.list_recent'], missingContext: [] }], refusals: [], requiresHumanReview: false };
+  if (/ค่าใช้จ่าย|\bexpenses?\b/i.test(messageText)) {
+    return { status: 'ROUTABLE', language: /[ก-๙]/.test(messageText) ? 'th' : 'en', intents: [{ intent: 'read_detail', subject: 'expense', agent: 'accounting', priority: 1, requiredTools: ['expense.list_recent'], missingContext: [] }], refusals: [], requiresHumanReview: false };
   }
   if (/ยอดขาย|รายได้/.test(messageText)) {
     return { status: 'ROUTABLE', language: 'th', intents: [{ intent: 'report_request', subject: 'sale', agent: 'sales', priority: 1, requiredTools: ['sales.get_sales_summary'], missingContext: [] }], refusals: [], requiresHumanReview: false };
@@ -317,7 +317,7 @@ describe('OrchestratorAgent', () => {
     assert.ok(okCalls.every((call) => call.status === 'ok' && call.errorCode === undefined), 'success must not invent an errorCode');
   });
 
-  it('expense query invokes expense read tool and preserves source-backed item names and amounts', async () => {
+  it('keeps broad expense amounts concise while preserving source-backed details and counts on request', async () => {
     const calledTools: string[] = [];
     const erpTools = {
       invoke: async (tool: any) => {
@@ -326,6 +326,7 @@ describe('OrchestratorAgent', () => {
           toolName: tool.name,
           status: tool.name === 'expense.list_recent' ? 'ok' : 'unsupported_module',
           data: tool.name === 'expense.list_recent' ? {
+            total: 7,
             summary: {
               totalAmount: 11875,
               pendingAmount: 0,
@@ -354,19 +355,23 @@ describe('OrchestratorAgent', () => {
     assert.ok(result.replyText.includes('11,875.00'));
     assert.ok(!result.replyText.includes('สิ้นกำหนดวันนี้'));
     assert.ok(!result.replyText.includes('เกินกำหนด'));
-    assert.ok(result.replyText.includes('ยอดทั้งหมด'));
-    // Work in progress is the whole pending set, not drafts alone.
-    assert.ok(result.replyText.includes('รอตรวจสอบ'));
-    assert.ok(result.replyText.includes('ยืนยันแล้ว'));
-    assert.ok(result.replyText.includes('จ่ายแล้ว'));
-    assert.ok(result.replyText.includes('ยังไม่จ่าย'));
-    assert.ok(result.replyText.includes('บริษัท โฟลว์แอคเคาท์ ทดสอบ จำกัด'));
-    assert.ok(result.replyText.includes('11,875.00'));
+    assert.equal(result.replyText, '• ยอดรวม: 11,875.00 บาท');
+    assert.doesNotMatch(result.replyText, /รอตรวจสอบ|ยืนยันแล้ว|จ่ายแล้ว|ยังไม่จ่าย|บริษัท โฟลว์แอคเคาท์/);
     assert.ok(!result.replyText.includes('expense-draft-empty'));
     assert.deepEqual(result.webLinks, [{ label: 'รายการค่าใช้จ่าย', path: '/companies/company-1/expenses' }]);
     assert.equal(result.sourceRefs[0]?.permissionChecked, true);
     assert.equal(result.presentation?.kind, 'answer_cards');
     assert.equal(result.presentation?.cards[0]?.text, result.replyText);
+    for (const question of ['ค่าใช้จ่ายเดือนนี้มีกี่ใบ', 'ค่าใช้จ่ายเดือนนี้มีกี่รายการ', 'how many expenses this month?', 'ยอดค่าใช้จ่ายเดือนนี้เท่าไหร่ มีกี่ใบ']) {
+      const countReq = makeReq(question);
+      countReq.userContext.permissions.push('expense.read');
+      const counted = await orchestrator.run(countReq);
+      assert.match(counted.replyText, /7 (?:รายการ|records)/, question);
+      assert.match(counted.replyText, /11,875\.00/, question);
+      assert.deepEqual(counted.webLinks, result.webLinks);
+      assert.equal(counted.sourceRefs[0]?.permissionChecked, true);
+      assert.equal(counted.presentation?.cards[0]?.text, counted.replyText);
+    }
   });
 
   it('expense query with unavailable tool does not fall back to accounting no-data copy', async () => {
