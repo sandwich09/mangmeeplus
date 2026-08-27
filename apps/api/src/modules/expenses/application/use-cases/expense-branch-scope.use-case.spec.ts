@@ -308,7 +308,7 @@ describe('expense Tax Code confirmation guard', () => {
 
     await assert.rejects(
       () => new ConfirmExpenseUseCase(repo, audit, transactionTax, ...numberServices)
-        .execute(ctx(undefined, ['expense.confirm']), 'exp-1', { reason: 'ใบเสร็จพิมพ์ VAT รวมทั้งใบ', vatLineNumber: 1 }),
+        .execute(ctx(undefined, ['expense.confirm']), 'exp-1', { reason: 'ใบเสร็จพิมพ์ VAT รวมทั้งใบ', vatLineNumber: 1, expectedUpdatedAt: readyRecord.updatedAt.toISOString() }),
       /Missing permission: expense\.review/,
     );
   });
@@ -323,7 +323,7 @@ describe('expense Tax Code confirmation guard', () => {
 
     await assert.rejects(
       () => new ConfirmExpenseUseCase(repo, audit, transactionTax, ...numberServices)
-        .execute(ctx(undefined, ['expense.confirm', 'expense.review']), 'exp-1', { reason: 'ตามเอกสาร', vatLineNumber: 2 }),
+        .execute(ctx(undefined, ['expense.confirm', 'expense.review']), 'exp-1', { reason: 'ตามเอกสาร', vatLineNumber: 2, expectedUpdatedAt: readyRecord.updatedAt.toISOString() }),
       (error: any) => error?.getResponse?.().code === 'EXPENSE_VAT_OVERRIDE_INVALID',
     );
   });
@@ -333,15 +333,23 @@ describe('expense Tax Code confirmation guard', () => {
     const repo = {
       findByIdWithRelations: async () => mismatchedVatRecord,
       finalizeAndConfirmExpenseCas: async (input: any, finalize: any) => {
-        const finalized = await finalize({ db: {}, expense: mismatchedVatRecord });
+        assert.equal(input.vatSourceOverride.vatLineNumber, 1);
+        const finalized = await finalize({ db: { transaction: true }, expense: {
+          ...mismatchedVatRecord, taxableAmount: '100.0000', vatAmount: '8.0000', grandTotalAmount: '108.0000',
+          whtAmount: '0.0000', netPayableAmount: '108.0000',
+        } });
         return { expense: { ...input, status: 'CONFIRMED', expenseNumber: 'EXP-1' }, finalized };
       },
     } as any;
 
     const confirmed = await new ConfirmExpenseUseCase(
-      repo, { log: async (entry: any) => { auditEntries.push(entry); } } as any, transactionTax, ...numberServices,
+      repo, { log: async (entry: any, tx: any) => {
+        if (entry.action === 'expense.vat.source_override') assert.equal(tx.transaction, true);
+        auditEntries.push(entry);
+      } } as any, transactionTax, ...numberServices,
     ).execute(ctx(undefined, ['expense.confirm', 'expense.review']), 'exp-1', {
       reason: 'ใบเสร็จพิมพ์ VAT รวมทั้งใบ ตรวจกับร้านแล้ว', vatLineNumber: 1,
+      expectedUpdatedAt: readyRecord.updatedAt.toISOString(),
     });
 
     assert.equal(confirmed.status, 'CONFIRMED');
@@ -356,6 +364,8 @@ describe('expense Tax Code confirmation guard', () => {
       calculatedVatAmount: '7.0000',
       differenceAmount: '1.0000',
       toleranceAmount: '0.05',
+      acceptedVatAmount: '8.0000', acceptedPreVatAmount: '100.0000', acceptedGrossAmount: '108.0000',
+      acceptedWhtAmount: '0.0000', acceptedNetPayableAmount: '108.0000',
     });
   });
 
@@ -397,6 +407,30 @@ describe('expense Tax Code confirmation guard', () => {
       taxProfileKey: 'SAP-TH', taxProfileVersion: 1, taxContext: 'DOMESTIC_PURCHASE', taxTreatment: 'CLAIMABLE',
       claimability: 'CLAIMABLE', evidenceStatus: 'VERIFIED', accountRuleVersion: 1, reportRuleVersion: 1,
     });
+  });
+
+  it('carries zero-treatment meaning into the final Tax Code resolution clone', async () => {
+    for (const vatTreatment of ['ZERO_RATED', 'EXEMPT', 'NON_VAT'] as const) {
+      const record = {
+        ...readyRecord, grandTotalAmount: '100.00', inputVatClaimStatus: 'NON_CLAIMABLE',
+        lines: [{
+          ...readyRecord.lines[0], vatRate: '0', vatAmount: '0', vatTreatment, lineTotalAmount: '100',
+          taxSnapshot: { ...readyRecord.lines[0].taxSnapshot, taxRate: '0', taxAmount: '0', taxTreatment: vatTreatment === 'NON_VAT' ? 'NON_TAXABLE' : vatTreatment },
+        }],
+      };
+      let finalizedTreatment: string | undefined;
+      const repo = {
+        findByIdWithRelations: async () => record,
+        finalizeAndConfirmExpenseCas: async (input: any, finalize: any) => {
+          const finalized = await finalize({ db: {}, expense: record });
+          finalizedTreatment = finalized[0]?.vatTreatment;
+          return { expense: { ...input, status: 'CONFIRMED' }, finalized };
+        },
+      } as any;
+      await new ConfirmExpenseUseCase(repo, audit, transactionTax, ...numberServices)
+        .execute(ctx(undefined, ['expense.confirm']), 'exp-1');
+      assert.equal(finalizedTreatment, vatTreatment);
+    }
   });
 
   // Spec S1-R5: override telemetry on the web confirm path. `fromSuggested` separates "the reviewer

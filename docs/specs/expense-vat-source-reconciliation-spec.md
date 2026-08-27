@@ -115,7 +115,7 @@ Version 1 contains:
   - decimalPlaces: 2
   - calculationVersion: expense-vat-v1
 - reconciliation
-  - status: NOT_APPLICABLE | MATCHED | CALCULATED_ONLY | SOURCE_ONLY |
+  - status: NOT_APPLICABLE | MATCHED | REVIEWER_ACCEPTED | CALCULATED_ONLY | SOURCE_ONLY |
     MISMATCH | NEEDS_REVIEW | LEGACY_UNAVAILABLE
   - acceptedSource: SOURCE_AMOUNT | CALCULATED | null
   - differenceAmount: source VAT minus calculated VAT
@@ -180,8 +180,15 @@ the 7% VAT base.
 - Expense capture tolerance is ฿0.05.
 - Difference is source VAT minus calculated VAT.
 - MATCHED includes exact equality and absolute difference within tolerance.
-- MISMATCH exceeds tolerance and blocks confirmation.
+- MISMATCH exceeds tolerance and blocks ordinary confirmation. An explicit reviewer
+  decision may accept the document amount with a written reason and a selected positive-VAT
+  carrier; zero-rated, exempt and non-VAT lines cannot carry the difference.
+- REVIEWER_ACCEPTED resolves that decision without claiming source and calculation matched.
+  Preserve printed/calculated evidence and their difference; persist the accepted line/header
+  amounts together, keeping included gross or excluded base fixed and recalculating WHT.
 - A stricter tax-code/profile tolerance controls claim/posting eligibility.
+- Reviewer acceptance cannot bypass that stricter tolerance, rate/treatment conflicts or
+  tax-evidence requirements. A receipt without Tax Code still follows its non-claimable path.
 - Passing tolerance never permits different final VAT in expense, tax, report, and ledger.
 - Without a source amount, calculated VAT is accepted.
 - A valid source amount within tolerance is accepted exactly.
@@ -282,8 +289,13 @@ when input VAT is non-claimable. Tax Code and claimability remain governed by th
 - Include snapshot version, source, accepted values, and status in
   expenseTaxSourceChecksum and confirmation compare-and-swap input.
 - A concurrent line, VAT source, tax-code, or evidence change invalidates confirmation.
+- The optional `vatSourceOverride` confirmation decision requires `reason`, `vatLineNumber`
+  and `expectedUpdatedAt` from the detail actually reviewed. Ordinary empty confirmation is
+  unchanged; stale or unversioned override clients must reload before deciding again.
 - Audit origin changes, reviewer changes, status changes, and accepted-source changes with
   bounded before/after metadata.
+- Write a successful reviewer override audit inside the final confirmation transaction with
+  accepted amounts, tax snapshots and outbox; failures must leave no partial amount or audit.
 - Public clients cannot forge derived snapshot fields.
 
 ## 13. Downstream Integration

@@ -1,4 +1,4 @@
-import { Injectable, ForbiddenException, Logger, NotFoundException, BadRequestException, UnprocessableEntityException } from '@nestjs/common';
+import { Injectable, ForbiddenException, Logger, NotFoundException, BadRequestException, ConflictException, UnprocessableEntityException } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
 import { PAYMENT_IDEMPOTENCY_KEY_PATTERN } from '../../../accounting-documents/domain/logic/accounting-money-validation.logic';
 import { PrismaExpenseRepository, requireExpenseBranchId } from '../../infrastructure/prisma-expense.repository';
@@ -10,7 +10,8 @@ import {
   validateExpenseVatSourceInput,
   vatSourceFromSnapshot,
 } from '../../domain/logic/expense-vat-reconciliation.logic';
-import { validateExpenseDraftAmounts } from '../../domain/logic/expense-draft-amount-validation.logic';
+import { validateExpenseDraftAmounts, validateExpenseLineVatTreatments } from '../../domain/logic/expense-draft-amount-validation.logic';
+import { applyExpenseWhtInput, expenseWhtLineRate } from '../../domain/logic/expense-wht-input.logic';
 import { toSourceDocumentType } from '../../domain/logic/expense-document.logic';
 import {
   validateStatusTransition,
@@ -31,7 +32,7 @@ import {
 } from '../../domain/logic/expense-status.logic';
 import type { ExpenseLineInput, ExpenseRecord, ExpenseRecordWithRelations, PaginatedExpenses } from '../../domain/models/expense.model';
 import type { RequestContext, CreateExpenseDraftInput, UpdateExpenseDraftInput, ListExpensesFilter, ExpenseStatus, ExpenseVatSourceOverrideInput, RecordExpensePaymentInput } from '@watchdog-bms/contracts';
-import { expenseVatReconciliationMessage, isBlockingExpenseVatReconciliation } from '@watchdog-bms/contracts';
+import { expenseVatReconciliationMessage, isBlockingExpenseVatReconciliation, validateExpenseWhtInput } from '@watchdog-bms/contracts';
 import { ExpenseTransactionTaxService, type ExpenseTaxLineSelection } from '../services/expense-transaction-tax.service';
 import { LaunchGateGuardService } from '../../../feature-launch/application/launch-gate.guard';
 import { assertExpenseRootOpen } from '../expense-launch-gate';
@@ -50,12 +51,6 @@ function hasPerm(ctx: RequestContext, perm: string): boolean {
 
 function requirePerm(ctx: RequestContext, perm: string, action: string) {
   if (!hasPerm(ctx, perm)) throw new ForbiddenException(`Missing permission: ${perm} for ${action}`);
-}
-
-// Spec §19g decision 1: the review form now sends a blank rate rather than omitting it, so blank
-// and absent must land on the same stored NULL — the column is Decimal and '' is not a number.
-function storedRate(value: string | null | undefined): string | null {
-  return value === null || value === undefined || value.trim() === '' ? null : value;
 }
 
 // 10D branch ABAC: membership branch scope governs reads and writes; null branchId = company-central.
@@ -82,6 +77,8 @@ export class CreateExpenseDraftUseCase {
     const lines = input.lines ?? [];
     const amountError = validateExpenseDraftAmounts({ vatMode: input.vatMode, lines });
     if (amountError) throw new BadRequestException(amountError);
+    const whtInputError = validateExpenseWhtInput(input.whtInput);
+    if (whtInputError) throw new BadRequestException(whtInputError);
     const vatSourceError = validateExpenseVatSourceInput(input.vatSource, input.vatMode, lines.map((line) => line.lineNumber));
     if (vatSourceError) throw new BadRequestException(vatSourceError);
     const vat = reconcileExpenseVat({
@@ -90,6 +87,10 @@ export class CreateExpenseDraftUseCase {
       source: input.vatSource,
       sourceOrigin: 'REVIEWER',
     });
+    const whtAmountError = applyExpenseWhtInput(vat, input.whtInput);
+    if (whtAmountError) throw new BadRequestException(whtAmountError);
+    const vatTreatmentError = validateExpenseLineVatTreatments(lines.map((line, index) => ({ ...line, vatRate: vat.lines[index]!.vatRate })));
+    if (vatTreatmentError) throw new BadRequestException(vatTreatmentError);
     const totals = vat.totals;
 
     const record = await this.repo.createExpense({
@@ -109,6 +110,7 @@ export class CreateExpenseDraftUseCase {
       // An upload draft is created before OCR. Persisting a REVIEWER/NONE source here would make
       // the later OCR result incorrectly lose to a reviewer decision that never happened.
       ...(input.vatSource !== undefined && { vatCaptureSnapshotJson: vat.snapshot }),
+      ...(input.whtInput !== undefined && { whtInputJson: { ...input.whtInput, origin: 'REVIEWER' as const } }),
       ...totals,
       outstandingAmount: totals.netPayableAmount,
     });
@@ -121,8 +123,8 @@ export class CreateExpenseDraftUseCase {
           expenseId: record.id, companyId: ctx.companyId, lineNumber: l.lineNumber,
           description: l.description, quantity: l.quantity, unitPrice: l.unitPrice,
           discountAmount: t.discountAmount, taxableAmount: t.taxableAmount,
-          vatRate: reconciled.vatRate, vatAmount: t.vatAmount,
-          whtRate: storedRate(l.whtRate), whtAmount: t.whtAmount,
+          vatRate: reconciled.vatRate, vatTreatment: l.vatTreatment ?? null, vatAmount: t.vatAmount,
+          whtRate: expenseWhtLineRate(input.whtInput, l.whtRate), whtAmount: t.whtAmount,
           lineSubtotalAmount: t.lineSubtotalAmount, lineTotalAmount: t.lineTotalAmount,
           expenseCategoryId: l.expenseCategoryId ?? null, accountHintKey: l.accountHintKey ?? null, taxCategory: l.taxCategory ?? null,
           ...taxSelection(l),
@@ -270,6 +272,9 @@ export class UpdateExpenseDraftUseCase {
     }
 
     const lines = input.lines;
+    const whtInputError = validateExpenseWhtInput(input.whtInput);
+    if (whtInputError) throw new BadRequestException(whtInputError);
+    const whtInput = input.whtInput ?? r.whtInputJson;
     let resolvedLines: ExpenseLineInput[] | undefined;
     const nextSourceDocumentType = input.sourceDocumentType ?? r.sourceDocumentType;
     const nextTaxEvidenceStatus = input.taxEvidenceStatus ?? r.taxEvidenceStatus;
@@ -300,6 +305,10 @@ export class UpdateExpenseDraftUseCase {
         sourceEvidenceRefs: input.vatSource ? undefined : r.vatCaptureSnapshotJson?.source.evidenceRefs,
         capturedAt: input.vatSource ? undefined : r.vatCaptureSnapshotJson?.source.capturedAt,
       });
+      const whtAmountError = applyExpenseWhtInput(vat, whtInput);
+      if (whtAmountError) throw new BadRequestException(whtAmountError);
+      const vatTreatmentError = validateExpenseLineVatTreatments(lines.map((line, index) => ({ ...line, vatRate: vat.lines[index]!.vatRate })));
+      if (vatTreatmentError) throw new BadRequestException(vatTreatmentError);
       totals = vat.totals;
       vatCaptureSnapshotJson = vat.snapshot;
       const prepared = lines.map((l, i) => {
@@ -308,8 +317,8 @@ export class UpdateExpenseDraftUseCase {
         return {
           expenseId, companyId: ctx.companyId, lineNumber: l.lineNumber, description: l.description,
           quantity: l.quantity, unitPrice: l.unitPrice, discountAmount: t.discountAmount,
-          taxableAmount: t.taxableAmount, vatRate: reconciled.vatRate, vatAmount: t.vatAmount,
-          whtRate: storedRate(l.whtRate), whtAmount: t.whtAmount, lineSubtotalAmount: t.lineSubtotalAmount,
+          taxableAmount: t.taxableAmount, vatRate: reconciled.vatRate, vatTreatment: l.vatTreatment ?? null, vatAmount: t.vatAmount,
+          whtRate: expenseWhtLineRate(whtInput, l.whtRate), whtAmount: t.whtAmount, lineSubtotalAmount: t.lineSubtotalAmount,
           lineTotalAmount: t.lineTotalAmount, expenseCategoryId: l.expenseCategoryId ?? null,
           accountHintKey: l.accountHintKey ?? null, taxCategory: l.taxCategory ?? null,
           ...taxSelection(l),
@@ -319,8 +328,9 @@ export class UpdateExpenseDraftUseCase {
         expenseId, branchId: input.branchId ?? r.branchId ?? undefined,
         expenseDate: input.expenseDate ?? r.expenseDate.toISOString(), currency: r.currency,
       }, prepared, 'DRAFT', options.db);
-    } else if (input.vatSource !== undefined) {
-      throw new BadRequestException('lines are required when updating vatSource.');
+    } else if (input.vatSource !== undefined || input.whtInput !== undefined
+      || (whtInput && input.vatMode !== undefined && input.vatMode !== r.vatMode)) {
+      throw new BadRequestException('lines are required when updating vatSource or whtInput.');
     }
 
     const reviewedAt = canReview ? new Date() : undefined;
@@ -470,6 +480,7 @@ export class UpdateExpenseDraftUseCase {
       ...(input.taxEvidenceReasonCode !== undefined && { taxEvidenceReasonCode: input.taxEvidenceReasonCode }),
       ...(nextSummaryJson && { aiVerificationSummaryJson: nextSummaryJson }),
       ...(vatCaptureSnapshotJson && { vatCaptureSnapshotJson }),
+      ...(input.whtInput !== undefined && { whtInputJson: { ...input.whtInput, origin: 'REVIEWER' as const } }),
       ...(options.lineDraftCollection && {
         sourceChannelMetadataJson: options.lineDraftCollection.sourceChannelMetadataJson,
         aiVerificationSummaryJson: options.lineDraftCollection.aiVerificationSummaryJson,
@@ -494,8 +505,11 @@ export class UpdateExpenseDraftUseCase {
       requestId: ctx.requestId,
       result: 'SUCCESS',
       riskLevel: classificationOverride ? 'HIGH' : 'MEDIUM',
-      ...((classificationOverride || input.vatSource) && {
+      ...((classificationOverride || input.vatSource || input.whtInput) && {
         metadataJson: {
+          ...(input.whtInput && {
+            whtInput: { before: r.whtInputJson ?? null, after: { ...input.whtInput, origin: 'REVIEWER' } },
+          }),
           ...(input.vatSource && {
             vatSource: {
               before: r.vatCaptureSnapshotJson ? {
@@ -630,10 +644,12 @@ export class ConfirmExpenseUseCase {
     }
     // Plan 13.11.B: a real mismatch still blocks, but it now says which line to open. Over tolerance
     // the only way through is the named reviewer decision "ใช้ยอดตามเอกสาร" — `expense.review`, a
-    // written reason and the VAT line that carries the difference, written to audit. Nothing is
-    // re-priced here: the printed VAT and the calculated VAT both stay in the snapshot exactly as
-    // reconciliation left them, so no amount changes silently.
+    // written reason and the VAT line that carries the difference. The CAS transaction applies
+    // accepted amounts and writes the audit together; captured/calculated evidence stays intact.
     const snapshot = r.vatCaptureSnapshotJson;
+    if (vatSourceOverride && !isBlockingExpenseVatReconciliation(snapshot)) {
+      throw new BadRequestException({ code: 'EXPENSE_VAT_OVERRIDE_INVALID', message: 'Review the current VAT source before accepting a difference.' });
+    }
     if (snapshot && isBlockingExpenseVatReconciliation(snapshot)) {
       if (!vatSourceOverride) {
         throw new BadRequestException({
@@ -650,7 +666,11 @@ export class ConfirmExpenseUseCase {
         });
       }
       requirePerm(ctx, 'expense.review', 'accept the document VAT total over tolerance');
-      const reason = vatSourceOverride.reason.trim();
+      if (typeof vatSourceOverride.expectedUpdatedAt !== 'string'
+        || new Date(vatSourceOverride.expectedUpdatedAt).getTime() !== r.updatedAt.getTime()) {
+        throw new ConflictException({ code: 'EXPENSE_VAT_OVERRIDE_STALE', message: 'Reload and review the current VAT amounts before accepting them.' });
+      }
+      const reason = typeof vatSourceOverride.reason === 'string' ? vatSourceOverride.reason.trim() : '';
       const carrier = (r.lines ?? []).find((line) => line.lineNumber === vatSourceOverride.vatLineNumber);
       // The difference has to land on a line that actually bears VAT — never on ผัก/ผลไม้.
       if (!reason || !carrier || !(Number(carrier.vatRate ?? 0) > 0)) {
@@ -659,25 +679,6 @@ export class ConfirmExpenseUseCase {
           message: 'ใช้ยอดตามเอกสาร requires a written reason and a VAT-bearing line to carry the difference.',
         });
       }
-      await this.audit.log({
-        companyId: ctx.companyId,
-        actorUserId: ctx.userId,
-        action: 'expense.vat.source_override',
-        targetType: 'expense_record',
-        targetId: expenseId,
-        requestId: ctx.requestId,
-        result: 'SUCCESS',
-        riskLevel: 'HIGH',
-        metadataJson: {
-          reason,
-          vatLineNumber: carrier.lineNumber,
-          reconciliationStatus: snapshot.reconciliation.status,
-          documentVatAmount: snapshot.source.vatAmount,
-          calculatedVatAmount: snapshot.calculation.vatAmount,
-          differenceAmount: snapshot.reconciliation.differenceAmount,
-          toleranceAmount: snapshot.reconciliation.toleranceAmount,
-        },
-      });
     }
     const reliesOnSubstitute = Boolean(r.missingReceiptReason || r.substituteReceiptGeneratedAt || r.sourceDocumentType === 'SUBSTITUTE_RECEIPT');
     // A claim-born projection carries the CLAIM's missing-receipt reason, and its legal instrument
@@ -763,6 +764,7 @@ export class ConfirmExpenseUseCase {
         id: expenseId, companyId: ctx.companyId, expectedUpdatedAt: r.updatedAt, actorUserId: ctx.userId,
         expectedSourceChecksum: expenseTaxSourceChecksum(r),
         substituteCoveredByClaimForm: reasonCoveredByClaimForm,
+        vatSourceOverride,
         postingStatus, vendorSnapshotJson, expenseNumber: reserved.documentNumber,
         outboxEvent: {
           eventKey: `expense.confirmed:expense_record:${expenseId}:${eventRequestId}`,
@@ -776,18 +778,34 @@ export class ConfirmExpenseUseCase {
           expenseId: current.id, companyId: ctx.companyId, lineNumber: line.lineNumber, sourceLineId: line.id,
           description: line.description, quantity: line.quantity, unitPrice: line.unitPrice,
           discountAmount: line.discountAmount, taxableAmount: line.taxableAmount,
-          vatRate: line.vatRate, vatAmount: line.vatAmount, whtRate: line.whtRate, whtAmount: line.whtAmount,
+          vatRate: line.vatRate, vatTreatment: line.vatTreatment ?? null, vatAmount: line.vatAmount, whtRate: line.whtRate, whtAmount: line.whtAmount,
           lineSubtotalAmount: line.lineSubtotalAmount, lineTotalAmount: line.lineTotalAmount,
           expenseCategoryId: line.expenseCategoryId, accountHintKey: line.accountHintKey, taxCategory: line.taxCategory,
           taxCodeDefinitionId: line.taxSnapshot?.taxCodeDefinitionId ?? undefined,
           externalTaxCode: line.taxSnapshot?.externalTaxCode ?? undefined,
           transactionContext: line.taxSnapshot?.taxContext ?? undefined,
         }));
-        if (!selectedLines.length) return [];
-        return this.transactionTax.resolveLines(ctx, {
+        const lines = selectedLines.length ? await this.transactionTax.resolveLines(ctx, {
           expenseId: current.id, branchId: current.branchId ?? undefined,
           expenseDate: current.expenseDate.toISOString(), currency: current.currency,
-        }, selectedLines, 'FINAL', db);
+          preserveAcceptedVat: current.vatCaptureSnapshotJson?.reconciliation.acceptedSource === 'SOURCE_AMOUNT',
+        }, selectedLines, 'FINAL', db) : [];
+        if (vatSourceOverride && snapshot) {
+          await this.audit.log({
+            companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.vat.source_override',
+            targetType: 'expense_record', targetId: expenseId, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH',
+            metadataJson: {
+              reason: vatSourceOverride.reason.trim(), vatLineNumber: vatSourceOverride.vatLineNumber,
+              reconciliationStatus: snapshot.reconciliation.status,
+              documentVatAmount: snapshot.source.vatAmount, calculatedVatAmount: snapshot.calculation.vatAmount,
+              differenceAmount: snapshot.reconciliation.differenceAmount, toleranceAmount: snapshot.reconciliation.toleranceAmount,
+              acceptedVatAmount: current.vatAmount, acceptedPreVatAmount: current.taxableAmount,
+              acceptedGrossAmount: current.grandTotalAmount, acceptedWhtAmount: current.whtAmount,
+              acceptedNetPayableAmount: current.netPayableAmount,
+            },
+          }, db);
+        }
+        return lines;
       }));
       await this.commitNumber.execute({
         id: reserved.id, companyId: ctx.companyId, ownerType: 'expense_record', ownerId: expenseId,

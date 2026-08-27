@@ -22,7 +22,7 @@ import {
 import {
   EXPENSE_VAT_MODE_LABELS, CAPTURE_SOURCE_LABELS, PAYMENT_METHOD_LABELS,
   SOURCE_DOCUMENT_TYPE_LABELS, TAX_EVIDENCE_STATUS_LABELS, buildExpenseDraftReviewPayload,
-  canShowInlineSubstitutePreparation, deriveExpenseClassificationReviewState, hasAiGrandTotalMismatch, hasUnresolvedDuplicateWarning,
+  canShowInlineSubstitutePreparation, substituteReceiptPreparationHref, deriveExpenseClassificationReviewState, hasAiGrandTotalMismatch, hasUnresolvedDuplicateWarning,
   findOpaqueBounds, removeLightBackground, allowsDomesticInputTaxCode, clearExpenseTaxSelections,
   TAX_EVIDENCE_REASON_LABELS, AI_SUMMARY_STATUS_LABELS, AI_MISSING_FIELD_LABELS,
   ATTACHMENT_PURPOSE_LABELS, MIME_TYPE_LABELS, SUBSTITUTE_RECEIPT_STATUS_LABELS, expenseValueLabel,
@@ -31,14 +31,15 @@ import {
   expenseDeleteTargetLabel, firstFilled, isExpensePending, summarizeExpenseKpis,
   isBlockedCheckBillClassification, lateDocumentDays,
   POSTING_STATUS_LABELS, aiGrandTotalValue, expenseAiFieldProvenance, expenseRatePercent, expenseDocumentWhtRate,
-  vatRatePreset, vatRatePresetValue, expensePercentToRate, expenseRateToPercent,
+  vatRatePreset, vatRatePresetValue, vatTreatmentForPreset, expensePercentToRate, expenseRateToPercent,
   effectiveVatRateLabel, vatModeRequiresRate,
   PAYEE_ENTITY_KIND_LABELS, AI_SUGGESTION_FIELD_LABELS, applyExpenseAiSuggestion, expenseAiSuggestion, expenseAiCategorySuggestion,
-  formatTaxId, taxIdDigits, expenseVatSourceFromSnapshot, expenseVatSourceValidationMessage,
+  formatTaxId, taxIdDigits, reviewValues, expenseReviewWithholdsTax, expenseVatSourceValidationMessage,
 } from './expenses.model';
+export { reviewValues } from './expenses.model';
 import type { AiReviewField, ExpenseAiSuggestion, ExpenseSummary, ExpenseDetail, ExpenseDraftReviewValues, ExpenseCategorySummary, ExpenseReviewStepKey, ExpenseCapabilities, ExpensesTab, ManualExpenseItem } from './expenses.model';
-import type { BusinessDocumentClassification, BuyerEntityKind, ExpenseExtractionResult, ExpenseVatSourceOverrideInput, SubstituteReceiptEvidenceSummary, SubstituteReceiptRuntimePolicy } from '@watchdog-bms/contracts';
-import { expenseVatReconciliationMessage, isBlockingExpenseVatReconciliation } from '@watchdog-bms/contracts';
+import type { BusinessDocumentClassification, BuyerEntityKind, ExpenseExtractionResult, ExpenseLineVatTreatment, ExpenseVatSourceOverrideInput, ExpenseWhtInput, SubstituteReceiptEvidenceSummary, SubstituteReceiptRuntimePolicy } from '@watchdog-bms/contracts';
+import { expenseVatReconciliationMessage, isBlockingExpenseVatReconciliation, isCheckBillClassification, substituteReceiptRequiresPaymentEvidence } from '@watchdog-bms/contracts';
 import { CategoryManagePanel, SignaturePanel, SignatureThumb, EvidencePanel, IconBtn } from './ExpensesWorkspacePanels';
 import { useBranchFilter } from '../web-core-workspace/WorkspaceScope';
 import { TransactionBranchField, useTransactionCreateBranchId } from '../web-core-workspace/TransactionBranchField';
@@ -609,7 +610,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
       if (result === false) return;
       if (refresh) await onSaved();
       if (inline) setInfo(doneText); else toast.success(doneText);
-    } catch (e) { setError(err(e)); } finally { setBusy(false); }
+    } catch (e) { setError(err(e, locale)); } finally { setBusy(false); }
   };
   const isPreviewRequestCurrent = (requestId: number, requestScope: string) => (
     requestId === previewRequestRef.current && requestScope === previewScopeRef.current
@@ -734,7 +735,8 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
       paymentMethod: subPaymentMethod as NonNullable<ExpenseDetail['paymentMethod']>,
       idempotencyKey: `sub-${detail.id}-${detail.updatedAt}-v${detail.substituteReceiptEvidence?.version ?? 0}`.slice(0, 128),
       expectedExpenseUpdatedAt: detail.updatedAt,
-    });
+      ...(isCheckBillClassification(detail.aiVerificationSummaryJson) ? { routeCheckBill: true as const } : {}),
+    }, locale);
     setShowSub(false);
   };
   const uploadEvidence = async (purpose: 'expense.receipt.supporting' | 'expense.payment.evidence') => {
@@ -840,8 +842,9 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
       throw cause;
     }
   };
-  const requiresPaymentEvidence = subPaymentMethod !== 'CASH'
-    || substitutePolicy?.cashEvidencePolicy === 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE';
+  const requiresPaymentEvidence = substituteReceiptRequiresPaymentEvidence(
+    detail.aiVerificationSummaryJson, subPaymentMethod || null, substitutePolicy?.cashEvidencePolicy,
+  );
   // R9: a saved ACTIVE signature signs this certificate too; a freshly prepared file still wins.
   const signatureSource = resolveWizardSignatureSource({
     hasReusableSignature: substitutePolicy?.hasReusableSignature ?? false,
@@ -974,6 +977,14 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
         <div className="flex flex-wrap items-center gap-2">
           <button className={btnClass} disabled={busy || !dirty} onClick={() => run(saveDocumentReview, 'บันทึกการตรวจเอกสารเรียบร้อยแล้ว')}>{t('expenses.doc_review_save', locale)}</button>
           {classificationReviewState.showFinanceOverride && !checkBillBlocked && <button className={btnClass} disabled={busy || !canResolveClassification} onClick={() => run(overrideClassification, 'ยืนยันการจัดประเภทรายการเรียบร้อยแล้ว')}>{t('expenses.non_expense_override_action', locale)}</button>}
+          {!classificationBlocked && (!evidence || evidence.status === 'SUPERSEDED') && (
+            <>
+              <Link className={ghostClass} href={substituteReceiptPreparationHref(companyId, detail.id, detail.aiVerificationSummaryJson)}>
+                {t('expenses.issue_substitute', locale)}
+              </Link>
+              {isCheckBillClassification(detail.aiVerificationSummaryJson) && <p className="text-sm text-gray-600">{t('expenses.check_bill_new_draft_note', locale)}</p>}
+            </>
+          )}
           {canShowInlineSubstitute && (
             <>
               <button className={ghostClass} disabled={busy} onClick={() => setShowSub((v) => !v)}>{evidence ? 'จัดทำ version แก้ไข' : t('expenses.issue_substitute', locale)}</button>
@@ -1026,7 +1037,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
             </div>
           </div>
           <div className="space-y-1 rounded-lg border border-warning-100 bg-white p-2 text-xs">
-              <p className="font-semibold text-gray-700">2. เลือกหลักฐานการจ่าย (ต้องเป็นคนละไฟล์กับหลักฐานต้นทาง){requiresPaymentEvidence ? ' · จำเป็นตามนโยบาย' : ' · ไม่บังคับ'}</p>
+              <p className="font-semibold text-gray-700">2. เลือกหลักฐานการจ่าย (ต้องเป็นคนละไฟล์กับหลักฐานต้นทาง){requiresPaymentEvidence ? ' · จำเป็น' : ' · ไม่บังคับ'}</p>
               {subPaymentMethod === 'CASH' && substitutePolicy?.cashEvidenceInstructions && <p className="text-gray-500">{substitutePolicy.cashEvidenceInstructions}</p>}
               {detail.attachments.filter((attachment) => attachment.status === 'ACTIVE' && attachment.purpose === 'expense.payment.evidence').map((attachment) => (
                 <label key={attachment.id} className="flex items-center gap-2">
@@ -1145,32 +1156,6 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
 
 type EditableReviewLineField = 'description' | 'quantity' | 'unitPrice' | 'discountAmount' | 'vatRate';
 
-export function reviewValues(detail: ExpenseDetail): ExpenseDraftReviewValues {
-  return {
-    vendorNameSnapshot: detail.vendorNameSnapshot ?? '',
-    vendorTaxIdSnapshot: detail.vendorTaxIdSnapshot ?? '',
-    vendorEntityKindSnapshot: detail.vendorEntityKindSnapshot ?? '',
-    vendorDocumentNumber: detail.vendorDocumentNumber ?? '',
-    expenseDate: detail.expenseDate.slice(0, 10),
-    vatMode: detail.vatMode,
-    vatSource: expenseVatSourceFromSnapshot(detail.vatCaptureSnapshotJson),
-    lines: detail.lines.map((line) => ({
-      description: line.description,
-      quantity: line.quantity,
-      unitPrice: line.unitPrice,
-      discountAmount: line.discountAmount,
-      vatRate: line.vatRate ?? '',
-      whtRate: line.whtRate,
-      expenseCategoryId: line.expenseCategoryId,
-      accountHintKey: line.accountHintKey,
-      taxCategory: line.taxCategory,
-      taxCodeDefinitionId: line.taxSnapshot?.taxCodeDefinitionId ?? null,
-      externalTaxCode: line.taxSnapshot?.externalTaxCode ?? null,
-      transactionContext: line.taxSnapshot?.taxContext ?? 'DOMESTIC_PURCHASE',
-    })),
-  };
-}
-
 export function ExpenseReviewEditSection({ companyId, detail, isMutable, canReview, onSaved, saveRef, onValidationChange, vatOverrideRef }: {
   companyId: string;
   detail: ExpenseDetail;
@@ -1179,7 +1164,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   onSaved: () => Promise<void>;
   /** The modal's ถัดไป/chip navigation triggers this save when leaving the details step — no in-section save button. */
   saveRef?: MutableRefObject<(() => Promise<boolean>) | null>;
-  onValidationChange?: (errorCount: number) => void;
+  onValidationChange?: (errorCount: number, firstErrorMessage: string | null) => void;
   /** Plan 13.11.B: the VAT card collects "ใช้ยอดตามเอกสาร"; the page's confirm button spends it. */
   vatOverrideRef?: MutableRefObject<ExpenseVatSourceOverrideInput | null>;
 }) {
@@ -1189,10 +1174,8 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   // Keyed by line index. `custom` is needed because "custom, nothing typed yet" and "unset" are the
-  // same stored value (''), so the preset cannot be derived from the rate alone. `zeroRated` is the
-  // same problem for the two 0% meanings: exempt and zero-rated export both store `0`, and the
-  // engine has no line-level field to tell them apart, so the reviewer's pick is only held here.
-  const [vatEditors, setVatEditors] = useState<Record<number, { custom?: boolean; zeroRated?: boolean }>>({});
+  // same stored value (''), so the preset cannot be derived from the rate alone.
+  const [vatEditors, setVatEditors] = useState<Record<number, { custom?: boolean }>>({});
   const [vatSourceDirty, setVatSourceDirty] = useState(false);
   // The stored date, not the edited one: a reviewer mid-edit must not have the tax fields vanish
   // under their cursor. `hasRecordedTax` then keeps them visible for a document that already
@@ -1207,16 +1190,21 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   const documentNumberIssue = fieldIssue(issues, 'vendorDocumentNumber');
   const expenseDateIssue = fieldIssue(issues, 'expenseDate');
   const linesIssue = fieldIssue(issues, 'lines');
-  const whtRateIssue = fieldIssue(issues, 'whtRate');
+  const whtValueIssue = fieldIssue(issues, 'whtInput.value') ?? fieldIssue(issues, 'whtRate');
+  const whtUnitIssue = fieldIssue(issues, 'whtInput.inputType');
   const payeeEntityKindIssue = fieldIssue(issues, 'vendorEntityKindSnapshot');
   const totalIssues = issues.filter((issue) => issue.field === 'total');
   const documentWhtRate = expenseDocumentWhtRate(values.lines);
-  const documentWhtPercent = expenseRatePercent(documentWhtRate ?? '');
-  const withholdsTax = Number(detail.whtAmount) > 0 || values.lines.some((line) => Number(line.whtRate) > 0);
+  const whtInput: ExpenseWhtInput = values.whtInput ?? { inputType: 'RATE', value: expenseRateToPercent(documentWhtRate ?? '') };
+  const withholdsTax = expenseReviewWithholdsTax(values, detail.whtAmount);
   const vatSource = values.vatSource ?? { inputType: 'NONE' as const };
   const vatSourceMode = vatSource.lines?.length ? 'LINES' : vatSource.inputType;
   const vatSourceError = expenseVatSourceValidationMessage(vatSource, values.vatMode);
   const blockingIssueCount = issues.filter((issue) => issue.severity === 'error').length + (vatSourceError ? 1 : 0);
+  const firstBlockingIssue = issues.find((issue) => issue.severity === 'error');
+  const firstBlockingMessage = firstBlockingIssue
+    ? messageWithParams(t(firstBlockingIssue.messageKey, locale), firstBlockingIssue.params)
+    : vatSourceError;
   const showsVatCard = showsTax || vatModeRequiresRate(values.vatMode) || vatSource.inputType !== 'NONE' || Boolean(vatSource.lines?.length) || withholdsTax;
   const vatSnapshot = detail.vatCaptureSnapshotJson;
   const snapshotSourceAmount = vatSnapshot?.source.vatAmount ?? (() => {
@@ -1238,6 +1226,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   const collapsesVatBase = vatBaseGroups.length === 1
     && Math.abs(acceptedVatBase - Number(detail.taxableAmount)) < 0.005;
   const vatStatusLabel = vatSnapshot?.reconciliation.status === 'MATCHED' ? 'ตรงกับระบบ'
+    : vatSnapshot?.reconciliation.status === 'REVIEWER_ACCEPTED' ? 'ผู้ตรวจยืนยันยอดตามเอกสาร'
     : vatSnapshot?.reconciliation.status === 'MISMATCH' ? 'ยอดไม่ตรง'
       : vatSnapshot?.reconciliation.status === 'NEEDS_REVIEW' || vatSnapshot?.reconciliation.status === 'SOURCE_ONLY' ? 'รอตรวจ'
         : vatSnapshot?.reconciliation.status === 'CALCULATED_ONLY' ? 'ระบบคำนวณ'
@@ -1261,16 +1250,17 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
     if (!vatOverrideRef) return;
     const reason = vatOverrideReason.trim();
     vatOverrideRef.current = vatBlocked && canReview && reason !== '' && vatOverrideLineNumber !== null
-      ? { reason, vatLineNumber: vatOverrideLineNumber }
+      ? { reason, vatLineNumber: vatOverrideLineNumber, expectedUpdatedAt: detail.updatedAt }
       : null;
-  }, [canReview, vatBlocked, vatOverrideLineNumber, vatOverrideReason, vatOverrideRef]);
-  useEffect(() => { onValidationChange?.(blockingIssueCount); }, [blockingIssueCount, onValidationChange]);
+  }, [canReview, detail.updatedAt, vatBlocked, vatOverrideLineNumber, vatOverrideReason, vatOverrideRef]);
+  useEffect(() => { onValidationChange?.(blockingIssueCount, firstBlockingMessage); }, [blockingIssueCount, firstBlockingMessage, onValidationChange]);
 
-  const updateLine = (index: number, field: EditableReviewLineField, value: string) => {
+  const updateLine = (index: number, field: EditableReviewLineField, value: string, vatTreatment?: ExpenseLineVatTreatment | null) => {
     if (field !== 'description') setVatSourceDirty(true);
     setValues((current) => ({
       ...current,
-      lines: current.lines.map((line, lineIndex) => lineIndex === index ? { ...line, [field]: value } : line),
+      lines: current.lines.map((line, lineIndex) => lineIndex === index
+        ? { ...line, [field]: value, ...(field === 'vatRate' && { vatTreatment: vatTreatment ?? null }) } : line),
     }));
   };
 
@@ -1476,7 +1466,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
                 <p className="text-xs text-gray-500">เลือกหน่วยตามที่เอกสารพิมพ์ ระบบจะเก็บค่าต้นฉบับแยกจากค่าที่คำนวณ</p>
               </div>
               {!vatSourceDirty && vatSnapshot && (
-                <MangmeeBadge tone={vatSnapshot.reconciliation.status === 'MATCHED' ? 'brand' : ['MISMATCH', 'NEEDS_REVIEW', 'SOURCE_ONLY'].includes(vatSnapshot.reconciliation.status) ? 'danger' : 'slate'}>
+                <MangmeeBadge tone={['MATCHED', 'REVIEWER_ACCEPTED'].includes(vatSnapshot.reconciliation.status) ? 'brand' : ['MISMATCH', 'NEEDS_REVIEW', 'SOURCE_ONLY'].includes(vatSnapshot.reconciliation.status) ? 'danger' : 'slate'}>
                   {vatStatusLabel}
                 </MangmeeBadge>
               )}
@@ -1489,6 +1479,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
               <ThemedSelect
                 className={inputClass}
                 value={vatSourceMode}
+                aria-invalid={Boolean(vatSourceError) || undefined}
                 onChange={(event) => setVatSourceType(event.target.value as 'RATE' | 'AMOUNT' | 'BOTH' | 'NONE' | 'LINES')}
                 disabled={!isMutable || busy}
               >
@@ -1579,11 +1570,12 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
             )}
             {vatSourceError && <p className="text-xs font-medium text-error-600">{vatSourceError}</p>}
             {vatSourceDirty
-              ? <p className="rounded-lg bg-white px-3 py-2 text-xs text-gray-500">บันทึกการตรวจเพื่อให้ระบบคำนวณและเปรียบเทียบยอดล่าสุด</p>
+              ? <p className="rounded-lg bg-white px-3 py-2 text-xs text-gray-500">กด “ถัดไป” เพื่อบันทึกและให้ระบบคำนวณเปรียบเทียบยอดล่าสุด</p>
               : vatSnapshot && (
                 <div className="rounded-lg bg-white px-3 py-2">
                   <MoneyRow label="VAT จากเอกสาร" value={snapshotSourceAmount ?? '0'} muted={snapshotSourceAmount === null} />
                   <MoneyRow label="VAT ที่ระบบคำนวณ" value={vatSnapshot.calculation.vatAmount} />
+                  <MoneyRow label="VAT ที่ใช้บันทึก" value={detail.vatAmount} />
                   {vatSnapshot.reconciliation.differenceAmount !== null && <MoneyRow label="ส่วนต่าง" value={vatSnapshot.reconciliation.differenceAmount} />}
                   <MoneyRow
                     label={collapsesVatBase ? 'ฐาน VAT (ยอดก่อน VAT ที่ใช้)' : 'ยอดก่อน VAT ที่ใช้'}
@@ -1671,7 +1663,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
         {isMutable && (
           <button type="button" className={ghostClass} disabled={busy} onClick={() => { setVatSourceDirty(true); setValues((v) => ({
             ...v,
-            lines: [...v.lines, { description: '', quantity: '1', unitPrice: '0', discountAmount: '0', vatRate: '', whtRate: expenseDocumentWhtRate(v.lines) || null, expenseCategoryId: null, accountHintKey: null, taxCategory: null, taxCodeDefinitionId: null, externalTaxCode: null, transactionContext: 'DOMESTIC_PURCHASE' }],
+            lines: [...v.lines, { description: '', quantity: '1', unitPrice: '0', discountAmount: '0', vatRate: '', vatTreatment: null, whtRate: v.whtInput ? null : expenseDocumentWhtRate(v.lines) || null, expenseCategoryId: null, accountHintKey: null, taxCategory: null, taxCodeDefinitionId: null, externalTaxCode: null, transactionContext: 'DOMESTIC_PURCHASE' }],
             ...(v.vatSource?.lines?.length && { vatSource: { ...v.vatSource, lines: [...v.vatSource.lines, { lineNumber: v.lines.length + 1, inputType: 'NONE' as const }] } }),
           })); }}>{t('expenses.add_line', locale)}</button>
         )}
@@ -1691,11 +1683,8 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
         const vatRateIssue = fieldIssue(issues, `lines.${index}.vatRate`);
         const vatPercent = expenseRatePercent(line.vatRate);
         // "custom, nothing typed yet" stores the same '' as "unset", so the flag has to be sticky.
-        const showCustomRate = vatRatePreset(line.vatRate) === 'custom' || vatEditors[index]?.custom === true;
-        // Same reason for the two 0% meanings: exempt and zero-rated export both store `0`.
-        const linePreset = showCustomRate ? 'custom'
-          : vatEditors[index]?.zeroRated === true ? 'zero'
-            : vatRatePreset(line.vatRate);
+        const showCustomRate = vatRatePreset(line.vatRate, line.vatTreatment) === 'custom' || vatEditors[index]?.custom === true;
+        const linePreset = showCustomRate ? 'custom' : vatRatePreset(line.vatRate, line.vatTreatment);
         return (
         <div key={index} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
@@ -1757,18 +1746,16 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
                 value={linePreset}
                 onChange={(e) => {
                   const preset = e.target.value;
-                  setVatEditors((current) => ({ ...current, [index]: { ...current[index], custom: preset === 'custom', zeroRated: preset === 'zero' } }));
-                  updateLine(index, 'vatRate', vatRatePresetValue(preset, line.vatRate));
+                  setVatEditors((current) => ({ ...current, [index]: { custom: preset === 'custom' } }));
+                  updateLine(index, 'vatRate', vatRatePresetValue(preset, line.vatRate), vatTreatmentForPreset(preset));
                 }}
                 disabled={!isMutable || busy}
               >
-                {/* Plan 13.11.B per-line vocabulary. GAP: exempt (ผัก/ผลไม้) and zero-rated export are
-                    different tax facts but the line only stores a rate, so both write `0` and the
-                    VAT base excludes them identically — the distinction survives only in the Tax Code
-                    the reviewer picks below, and is not carried in the line row itself. */}
                 <option value="standard">{t('expenses.vat_rate_preset_standard', locale)}</option>
                 <option value="exempt">{t('expenses.vat_rate_preset_exempt', locale)}</option>
                 <option value="zero">{t('expenses.vat_rate_preset_zero', locale)}</option>
+                <option value="nonVat">{t('expenses.vat_rate_preset_non_vat', locale)}</option>
+                {linePreset === 'unknownZero' && <option value="unknownZero">{t('expenses.vat_rate_preset_unknown_zero', locale)}</option>}
                 <option value="custom">{t('expenses.vat_rate_preset_custom', locale)}</option>
                 {!showCustomRate && line.vatRate.trim() === '' && <option value="unset">{t('expenses.vat_rate_preset_unset', locale)}</option>}
               </ThemedSelect>
@@ -1803,7 +1790,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
               labelAddon={<InfoTip label={t('expenses.tip_open', locale)} text={t('expenses.tip_tax_code', locale)} />}
               canConfigureTax={capture.canConfigureTax}
               suggestedTaxCode={detail.categoryDefaultInputTaxCode ?? null}
-              onChange={(id, definition) => setValues((current) => ({ ...current, lines: current.lines.map((item, lineIndex) => lineIndex === index ? { ...item, taxCodeDefinitionId: id || null, externalTaxCode: definition?.externalCode ?? null, vatRate: definition ? taxDefinitionRateForSource(definition.rate, 'expense') : '' } : item) }))}
+              onChange={(id, definition) => setValues((current) => ({ ...current, lines: current.lines.map((item, lineIndex) => lineIndex === index ? { ...item, taxCodeDefinitionId: id || null, externalTaxCode: definition?.externalCode ?? null, vatRate: definition ? taxDefinitionRateForSource(definition.rate, 'expense') : '', vatTreatment: definition && Number(definition.rate) === 0 ? item.vatTreatment : null } : item) }))}
             />
           </div> : <p className="mt-3 text-xs text-gray-500">รหัสภาษีซื้อในประเทศเลือกได้เมื่อเอกสารถูกจัดประเภทเป็นใบกำกับภาษีเท่านั้น</p>}
         </div>
@@ -1813,30 +1800,44 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
       {values.lines.length > 0 && (
         <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
           <span className="mb-1 flex items-center gap-1.5 text-xs font-medium text-gray-600">
-            <label htmlFor={`expense-wht-rate-${detail.id}`}>{t('expenses.document_wht_rate', locale)}</label>
+            <span>{t('expenses.document_wht_rate', locale)}</span>
             <InfoTip label={t('expenses.tip_open', locale)} text={t('expenses.tip_wht_rate', locale)} />
           </span>
-          <input
-            id={`expense-wht-rate-${detail.id}`}
-            type="number"
-            min="0"
-            max="1"
-            step="0.0001"
-            className={validationInputClass(whtRateIssue)}
-            aria-invalid={whtRateIssue?.severity === 'error' || undefined}
-            value={documentWhtRate ?? ''}
-            onChange={(event) => {
-              const whtRate = event.target.value || null;
-              setValues((current) => ({
-                ...current,
-                lines: current.lines.map((line) => ({ ...line, whtRate })),
-              }));
-            }}
-            disabled={!isMutable || busy}
-          />
-          <FieldIssueNote issue={whtRateIssue} />
-          {documentWhtRate === null && <p className="mt-1 text-xs text-warning-700">{t('expenses.wht_multiple_rates_hint', locale)}</p>}
-          {documentWhtPercent !== null && <p className="mt-1 text-xs text-gray-500">{t('expenses.rate_percent_echo', locale).replace('{percent}', documentWhtPercent)}</p>}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <label>
+              <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.wht_input_unit', locale)}</span>
+              <ThemedSelect
+                className={validationInputClass(whtUnitIssue)}
+                aria-invalid={whtUnitIssue?.severity === 'error' || undefined}
+                value={whtInput.inputType}
+                onChange={(event) => setValues((current) => ({ ...current, whtInput: { inputType: event.target.value as ExpenseWhtInput['inputType'], value: '' } }))}
+                disabled={!isMutable || busy}
+              >
+                <option value="RATE">{t('expenses.wht_unit_percent', locale)}</option>
+                <option value="AMOUNT">{t('expenses.wht_unit_baht', locale)}</option>
+              </ThemedSelect>
+              <FieldIssueNote issue={whtUnitIssue} />
+            </label>
+            <label>
+              <span className="mb-1 block text-xs font-medium text-gray-600">{t(whtInput.inputType === 'AMOUNT' ? 'expenses.wht_value_baht' : 'expenses.wht_value_percent', locale)}</span>
+              <input
+                id={`expense-wht-rate-${detail.id}`}
+                type="number"
+                inputMode="decimal"
+                min="0"
+                max={whtInput.inputType === 'RATE' ? '100' : undefined}
+                step="0.01"
+                className={validationInputClass(whtValueIssue)}
+                aria-invalid={whtValueIssue?.severity === 'error' || undefined}
+                value={whtInput.value}
+                onChange={(event) => setValues((current) => ({ ...current, whtInput: { inputType: whtInput.inputType, value: event.target.value } }))}
+                disabled={!isMutable || busy}
+              />
+              <FieldIssueNote issue={whtValueIssue} />
+            </label>
+          </div>
+          {!values.whtInput && documentWhtRate === null && <p className="mt-1 text-xs text-warning-700">{t('expenses.wht_multiple_rates_hint', locale)}</p>}
+          <p className="mt-1 text-xs text-gray-500">{t(whtInput.inputType === 'AMOUNT' ? 'expenses.wht_amount_hint' : 'expenses.wht_percent_hint', locale)}</p>
         </div>
       )}
 

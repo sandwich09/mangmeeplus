@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { reimbursementIncurredDateError, todayCivilDate } from '@watchdog-bms/contracts';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { ThemedFile } from '@/common/components/field/ThemedFile';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
@@ -14,6 +15,7 @@ import { ICON, ErrorBanner, inputClass, btnClass, ghostClass } from '../expenses
 import { RECEIPT_UPLOAD_ACCEPT } from '../expenses/expense-upload.logic';
 import { collectReceiptUploadResults, mergeDraftLineEvidence, validateRequestForm, sumLineAmounts, formatMoney, errorText } from './reimbursements.logic';
 import { TransactionBranchField, useTransactionCreateBranchId } from '../web-core-workspace/TransactionBranchField';
+import { REIMBURSEMENT_CREATE_UNAVAILABLE } from './reimbursements.model';
 
 const CATEGORY_OPTIONS: { value: string; label: string }[] = [
   { value: 'travel', label: 'เดินทาง' },
@@ -103,6 +105,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
   const setLine = (index: number, patch: Partial<FormLine>) =>
     setForm(f => ({ ...f, lines: f.lines.map((l, i) => (i === index ? { ...l, ...patch } : l)) }));
   const total = sumLineAmounts(form.lines);
+  const maxIncurredDate = todayCivilDate();
   const allLinesCollapsed = form.lines.every((_line, i) => !!collapsedLines[i]);
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -192,7 +195,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
         <MangmeeCard className="p-6">
           <EmptyState
             title={editing ? 'ไม่มีสิทธิ์แก้ไขคำขอเบิก' : 'ไม่มีสิทธิ์สร้างคำขอเบิก'}
-            description={editing ? 'เฉพาะผู้ขอที่มีสิทธิ์แก้ไขร่างเท่านั้น' : 'บัญชีนี้ยังไม่มีสิทธิ์สร้างคำขอเบิกค่าใช้จ่าย ติดต่อผู้ดูแลระบบเพื่อขอสิทธิ์'}
+            description={editing ? 'เฉพาะผู้ขอที่มีสิทธิ์แก้ไขร่างเท่านั้น' : REIMBURSEMENT_CREATE_UNAVAILABLE}
           />
         </MangmeeCard>
       </MangmeePage>
@@ -272,7 +275,11 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
                   <div className={cx('mt-3 grid gap-3 sm:grid-cols-2', collapsedLines[i] && 'hidden')}>
                     <div>
                       <label className="mb-1.5 block text-xs font-semibold text-gray-600">วันที่ *</label>
-                      <ThemedDate aria-label="วันที่" className={inputClass} required value={l.incurredDate} onChange={e => setLine(i, { incurredDate: e.target.value })} />
+                      <ThemedDate aria-label="วันที่" className={inputClass} required value={l.incurredDate} max={maxIncurredDate} today={maxIncurredDate}
+                        aria-invalid={!!l.incurredDate && !!reimbursementIncurredDateError(l.incurredDate, maxIncurredDate)}
+                        aria-describedby={`incurred-date-help-${i}`}
+                        onChange={e => setLine(i, { incurredDate: e.target.value })} />
+                      <p id={`incurred-date-help-${i}`} className="mt-1 text-xs text-gray-500">วันที่รายการเบิกต้องไม่เกินวันนี้ (เวลาไทย)</p>
                     </div>
                     <div>
                       <label className="mb-1.5 block text-xs font-semibold text-gray-600">หมวด *</label>

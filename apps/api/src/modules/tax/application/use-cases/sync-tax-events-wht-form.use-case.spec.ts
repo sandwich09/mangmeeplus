@@ -43,6 +43,13 @@ function harness(rows: Array<Record<string, unknown>>) {
 }
 
 describe('SyncTaxEventsUseCase WHT form selection', () => {
+  it('carries exact amount-only WHT into tax events without fabricating a reporting rate', async () => {
+    const h = harness([whtExpense({ whtAmount: '30.01', grossAmount: '1234.56', whtRate: null })]);
+    await h.run();
+    assert.equal(h.events[0].withheldAmount, '30.01');
+    assert.equal(h.events[0].grossAmount, '1234.56');
+    assert.equal(h.events[0].whtRate, null);
+  });
   it('files an individual payee on ภ.ง.ด.3', async () => {
     const h = harness([whtExpense({ payeeEntityKind: 'INDIVIDUAL' })]);
 

@@ -9,8 +9,9 @@ import {
   temporaryPasswordExpiry,
 } from '../../domain/logic/employee-access.logic';
 import { encryptCredential } from '../../../system-partner-management/domain/logic/credential-cipher.logic';
-import { pushSystemLineMessage } from '../../../auth/infrastructure/system-line-push';
+import { buildTemporaryPasswordFlexMessage, pushSystemLineMessages } from '../../../auth/infrastructure/system-line-push';
 import { revokeActiveSessions } from '../../../auth/domain/logic/session-revocation.logic';
+import { lockEmployeeProfile } from '../lock-employee-profile';
 
 export type RegenerateEmployeeCredentialCommand = {
   companyId: string;
@@ -48,6 +49,7 @@ export class RegenerateEmployeeCredentialUseCase {
     const expiresAt = temporaryPasswordExpiry(new Date());
 
     await this.prisma.client.$transaction(async (tx) => {
+      await lockEmployeeProfile(tx, cmd.companyId, cmd.employeeId);
       await tx.userCredential.update({
         where: { userId: profile.userId },
         data: {
@@ -102,10 +104,12 @@ export class RegenerateEmployeeCredentialUseCase {
     if (!identity) return false;
 
     const expiry = expiresAt.toLocaleString('th-TH', { timeZone: 'Asia/Bangkok', dateStyle: 'medium', timeStyle: 'short' });
-    return pushSystemLineMessage(
-      token,
-      identity.providerUserId,
-      `🔐 รหัสผ่านชั่วคราวของคุณ: ${temporaryPassword}\nใช้ได้ถึง ${expiry}\nเข้าสู่ระบบแล้วระบบจะให้ตั้งรหัสผ่านใหม่ทันที`,
-    );
+    // Same one-tap copy card as the forgot-password flow (Owner 2026-08-27).
+    return pushSystemLineMessages(token, identity.providerUserId, [
+      buildTemporaryPasswordFlexMessage(temporaryPassword, [
+        `ใช้ได้ถึง ${expiry}`,
+        'เข้าสู่ระบบแล้วระบบจะให้ตั้งรหัสผ่านใหม่ทันที',
+      ]),
+    ]);
   }
 }

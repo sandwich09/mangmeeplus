@@ -66,6 +66,40 @@ Decisions (Owner 2026-08-27 — ตอบ 4 ข้อของ strategy discussi
 - Verified 2026-08-27 ~19:00: ทั้ง 3 service (api-web / ai-gateway / workers) digest = `git-79c018ef...`; `/v1/health` 200 ok; AgentCore artifact `watchdog_orchestrator_uat_candidate-NwJNiqG5Jd` qualifier `candidate_uat_79c018ef9f15_4ffbf835` env มี `LINE_AI_FUSED_PLAN_SHADOW_ENABLED=true`, `LINE_AI_PREPARED_SIMPLE_READ_ENABLED=true`, families 4 ตัวครบ; smoke 2 เคสผ่าน (forbidden read + mutation refused) บน `global.anthropic.claude-sonnet-4-6`; prompt cache ทำงานจริง (call แรก cacheWrite 7,239 → call สอง cacheRead 7,239)
 - ECR waiver openssl 4 CVE หมดอายุ 2026-09-10 — ต้อง revisit เมื่อ Debian ออก patch
 - ค้าง: Owner retest บน LINE UAT → ดึง per-stage latency ทำตาราง before/after → ถ้าเลนเร็วยังไม่ยิงบน 4.6 debug ต่อใน artifact
+- **รอบ A+B (Owner สั่ง "ขนของ develop เข้า main และ deploy UAT" 2026-08-27 ~19:40):** PR #308 (develop→main, merge `007dcba7` — บรรทุก #307 A+B, #265 LINE self-service recovery, #306 local-active regression; 150 ไฟล์; tree main==develop ยืนยันแล้ว)
+  - Run **33075313286 FAILED** ที่ Resolve UAT Release: "release commit is not reachable from origin/develop" — ผมส่ง merge SHA ของ main เป็น release_ref; contract จริงคือ **release_ref ต้องเป็น commit บน develop** (main เป็นแค่ controller) — บทเรียนใหม่ของ protocol
+  - Run **33075441692 SUCCESS** (จบ 13:50Z): release_ref = develop tip `a53bb992fc04713d7cba2f2b19c08286f27c08e5`, controller ref=main (`007dcba7` มี deploy.sh advisor wiring)
+  - Verified 2026-08-27 ~20:51: ทั้ง 3 service digest = `git-a53bb992...`; `/v1/health` 200; api-web env `LINE_AI_ADVISOR_MODE=social` (เลนใหม่ติดอาวุธแล้ว) + debounce 1000 + loading + ledger ครบ; AgentCore artifact env เลนเร็วคงเดิม (fused/prepared true + 4 families)
+  - รอ Owner retest: (1) รูป+พิมพ์คุยทันที ต้องได้คำตอบจริง (2) ทักเล่น ~5-6s + log `line.ai.advisor_direct_served` (3) 4 คำถามเลนเร็วธุรกิจ (4) ใบเสร็จใบเดิมยังอ่านถูก
+
+## รอบเทสรัว (Owner 21:32) → แก้ครบ 3 ข้อตามสั่ง (2026-08-27 ดึก)
+
+- วินิจฉัยจาก log 14:32-14:35Z: (ก) เลน advisor ยิงจริงครั้งแรก (`advisor_direct_served` — "หวัดดีจร้าา" การ์ดเขียว) (ข) busy-wait 25s แพ้เทิร์นรูป 4-model-call (ช่องว่าง lease เป็น ms) → "ดูค่าใช้จ่าย" bounce แล้ว ledger ตามตอบ 14:35 (ค) ปุ่ม talk + ข้อความรอคิว 23.6s เพราะ busy-wait ถือ per-chat worker (ง) **ใบเสร็จ CHAGEE ตายหลัง OCR สำเร็จ: `TRANSACTION_BRANCH_REQUIRED` (บริษัทหลายสาขา, LINE ไม่มีตัวเลือกสาขา) + copy โกหกว่า "ชั่วคราว"**
+- แก้ (branch codex/rapid-fire-fixes): (1) **สาขา**: `pickLineDefaultBranchId` (สาขาเดียว→ใช้เลย; หลายสาขา→HEAD_OFFICE ตัวเดียว; ไม่ได้→undefined) + query ก่อน initReceiptUpload + catch แยก TRANSACTION_BRANCH_* → `RECEIPT_BRANCH_REQUIRED_REPLY` (บอกไปเลือกสาขาบนเว็บ ไม่ชวน retry) (2) **คิว**: lease แยกเลน `chat`/`media` ต่อบริษัท (meter laneKey; overshoot งบสูงสุด ~฿2/เลน Owner รับ) + คำสั่งเมนู stateless ลัดคิวทันทีแม้ worker ไม่ว่าง (คำสั่ง /company ยังรักษาลำดับ) + `promotion` ข้าม legal preflight เหมือน contact/talk (3) **ข้อความซ้อน**: ตัด status bubble 5 วิของเทิร์นข้อความเมื่อ loading animation เปิด (ack รูป delay-0 คงเดิม; spec buffer อัปเดตเป็นสัญญาใหม่ 4 เคส)
+- ผลคาด: คุยระหว่างรูป = ตอบสดผ่านเลน chat ไม่ต้องรอ/ไม่ bounce; ปุ่มเมนูตอบทันทีเสมอ; ใบเสร็จบริษัทหลายสาขาบันทึกเข้า review ด้วยสำนักงานใหญ่; แชทรกน้อยลง
+
+## บิลน้ำมันอ่านไม่ได้ 23:04/23:07 → intake vision timeout (Owner สั่งแก้ 2026-08-27 ดึก)
+
+- อาการ: ส่งบิลน้ำมัน 2 ครั้ง ได้คำถามกลับว่ารูปอะไร; log: `line.intake-route` `PROVIDER_TIMEOUT` **15,011ms / 15,006ms** (`usageEstimated:true` → inputTokens 200000 เป็นค่าประมาณตอน timeout ไม่ใช่ token จริง) → route UNAVAILABLE → terminal `clarification_required`
+- Root cause: `line-ai-internal.controller.ts:125` สร้าง `IntentRouterAgent(createProvider(this.config))` **ไม่ override timeout** → ได้ `AI_TOOL_TIMEOUT_MS`=15s (งบแชท) ขณะที่ทุก document path ในไฟล์เดียวกัน (161/205/325) ใช้ `DOCUMENT_OCR_TIMEOUT_MS`=45s; intake ตอนนี้ทำ vision + fused-plan prompt ก้อนใหญ่ = document workload แต่ถูกจับเวลาแบบ chat
+- หลักฐานว่าเป็นปัญหาเชิงระบบ ไม่ใช่บิลน้ำมันใบเดียว: CHAGEE 21:32 = **15,003ms ok:true** (รอดหวุดหวิด), บิลน้ำมัน 15,011/15,006 = ตาย → รูปทุกใบเสี่ยง ~50/50
+- แก้ 2 จุดคู่กัน (PR #314): gateway = attachment → `DOCUMENT_OCR_TIMEOUT_MS` (text-only คงงบแชท 15s ไม่ทำให้แชทช้าลง); api = `LINE_INTAKE_MEDIA_TIMEOUT_MS` 55s เฉพาะ media path (เดิม 30s จะตัดก่อน gateway 45s ทำให้ fix ฝั่ง gateway ไร้ผล)
+- Verify: gateway suite **990/990**, api client/webhook/dispatch เขียว, typecheck ทั้ง 2 app สะอาด; เทสใหม่ 2 เคสใช้ fake timers พิสูจน์ทั้งสองทิศ (มีรูป: ไม่ตายที่ 15.1s แต่ตายในงบ 45s; ข้อความล้วน: ยังตายที่ 15s)
+
+## สลิปรูดบัตร PTT อ่านไม่ได้ 23:18 → reason-code vocabulary (Owner สั่งแก้ทั้ง 2 ทาง 2026-08-27 ดึก)
+
+- **ไม่ใช่ timeout** (ต่างจากบิลน้ำมัน 23:04/23:07): log 23:18:28 = `ok:true durationMs 13130` แต่ plan = UNAVAILABLE/UNSUPPORTED/confidence 0 → `ROUTER_JSON_PARSE_FAILED`
+- พิสูจน์ด้วย local harness (สร้างสลิปจำลอง PTT/Jiffy/KBank → ยิง `IntentRouterAgent` + Sonnet 4.6 จริง, ดัก raw output): **โมเดลอ่านออกครบทุกฟิลด์** (PTT Station Jiffy, 1,000.00, KTC-Visa ****3544, APPR 594567, จัดหมวด cat-fuel เอง, ทักด้วยว่าไม่มีจำนวนลิตร) แต่กรอก `missingRequiredSignals: ["itemised fuel quantity/litres not shown on this slip"]` = ประโยคอิสระในช่องที่รับเฉพาะ reason code → `parseKnownArray` strict → classification null → บรรทัด 887 `if (raw['documentClassification'] !== undefined && !documentClassification) return null` → ทิ้ง plan ทั้งก้อน
+- Root cause แท้จริงอยู่ที่ **prompt**: ทุก field enumerate ค่าที่อนุญาต ยกเว้น `missingRequiredSignals`/`contradictionSignals` ที่เขียนไว้แค่ `[]` เปล่า — **บั๊กพันธุ์เดียวกับ evidenceRoles เมื่อวาน** ที่ผมแก้ field เดียวโดยไม่ไล่ดู field พี่น้อง (บทเรียน: แก้ทั้งตระกูล)
+- แก้ 2 ทางตามที่ Owner สั่ง (PR #315): (1) prompt render vocabulary จาก `BUSINESS_DOCUMENT_REASON_CODES` โดยตรง (ไม่ drift) + ประโยคห้าม free text + ใบ้ว่าสลิปบัตรคือ `PAYMENT_EVIDENCE_ONLY` (2) parser: `parseReasonCodes` filter รหัสที่ไม่รู้จัก + คืน `sawUnknown` → เติม `HUMAN_REVIEW_REQUIRED` + `requiresClarification=true` แทนการทิ้งทั้งใบ (non-array = shape เสีย ยังทิ้งเหมือนเดิม); ลบ `parseKnownArray` ที่ไม่มีผู้ใช้แล้ว
+- พิสูจน์หลังแก้ (harness เดิม, โมเดลจริง): สลิปใบเดียวกัน → **ROUTED / EXPENSE_DOCUMENT_CAPTURE**, vendor PTT Station Jiffy, 1,000.00, cat-fuel, documentKind `TRANSFER_SLIP`, และเลือกรหัสถูกเอง `["PAYMENT_EVIDENCE_ONLY","MISSING_TAX_BASE_OR_VAT","MISSING_VENDOR_TAX_ID"]` — ตรงกับข้อสังเกตของ Owner ว่า "เหมือนใบแจ้งเฉย ๆ ไม่ใช่ใบเสร็จ" (EDC customer copy ขอคืน VAT ไม่ได้ ต้องขอใบกำกับภาษีจากปั๊ม)
+- Verify: gateway suite **994/994**, typecheck สะอาด, spec ใหม่ 5 เคส (escalate/ผสม/ไม่ flag เกินจำเป็น/contradiction/non-array)
+
+## Rich menu v2 ver2 + capability fix (Owner สั่งพร้อมภาพดีไซน์ 2026-08-27 ค่ำ)
+
+- Owner ส่งดีไซน์ 2 ภาพ: rich menu 6 ช่อง (Promotion แทน เริ่มต้นใช้งานฟรี) + โปสเตอร์แพ็กเกจ 4 tier; สั่ง (1) คำตอบ "ทำอะไรได้บ้าง" ห้ามโฆษณาของที่ใช้ไม่ได้ (2) ปุ่มถ่ายใบเสร็จเข้ากล้องตรง ไม่ถาม แนบ/กล้อง/กลับ (3) เปลี่ยน rich menu (4) ช่อง Promotion ขึ้นโปสเตอร์
+- ทำแล้ว: manifest+spec `rich-menu-v2-ver2` (ใบเสร็จ = URI `https://line.me/R/nv/camera/` — camera action ใช้ได้แค่ quick reply; Promotion = message `โปรโมชั่น`), backend `staff_menu_promotion` (public) + `buildPromotionCard` (hero โปสเตอร์+ปุ่มทดลองฟรี), `isCapabilityQuestion`+`buildCapabilityCard` (การ์ด 6 ฟังก์ชันจริง, จับเฉพาะคำถามสั้น; "ใบกำกับภาษีใช้ยังไง" ไม่โดนดัก), spec/runbook ต่อท้ายส่วน Ver2
+- **ค้างรอ Owner: ไฟล์ PNG 2 ไฟล์** — bitmap เมนู 2500x1686 + โปสเตอร์ 1080x1350 (วางที่ `apps/web/public/assets/line/` ชื่อตาม manifest แล้วบันทึก sha256/byteSize ลง manifest) และการ apply เข้า LINE OA ผ่าน Messaging API ตาม runbook (ต้องใช้ channel token; ทำหลัง backend deploy)
 
 ## วินิจฉัยรอบทดสอบ 2 (2026-08-27 18:58–19:02 ICT, log+code proof — ยังไม่แก้ รอ Owner สั่ง)
 

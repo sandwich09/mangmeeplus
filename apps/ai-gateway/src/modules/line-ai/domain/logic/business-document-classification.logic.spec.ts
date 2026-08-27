@@ -26,7 +26,54 @@ describe('evidenceRoles tolerance', () => {
   it('a non-array evidenceRoles is still rejected', () => {
     assert.equal(parseBusinessDocumentClassification({ ...base, evidenceRoles: 'PAYMENT_PROOF' }, ''), null);
   });
-  it('reason-code arrays stay strict — an unknown reason still voids the classification', () => {
-    assert.equal(parseBusinessDocumentClassification({ ...base, evidenceRoles: [], missingRequiredSignals: ['NOT_A_REAL_CODE'] }, ''), null);
+});
+
+/** UAT 2026-08-27 (evening): a PTT fuel card slip the model read perfectly was thrown away because
+ *  it wrote a free sentence into the code-only `missingRequiredSignals`. An undecodable reason must
+ *  reach a human, not delete the turn. */
+describe('reason-code tolerance', () => {
+  const base = {
+    contentKind: 'DOCUMENT', documentFamily: 'PAYMENT_EVIDENCE', documentKind: 'RECEIPT',
+    businessDirection: 'PURCHASE_EXPENSE', transactionState: 'PAID', confidence: 0.93,
+    evidenceSignals: [], amountSignals: [], settlementSignals: [], evidenceRoles: ['PAYMENT_PROOF'],
+    missingRequiredSignals: [], contradictionSignals: [], requiresClarification: false,
+  };
+
+  it('keeps the classification and escalates to a person when a reason code cannot be decoded', () => {
+    const parsed = parseBusinessDocumentClassification(
+      { ...base, missingRequiredSignals: ['itemised fuel quantity/litres not shown on this slip'] },
+      '',
+    );
+    assert.ok(parsed, 'the read survives — the slip is not discarded over one field');
+    assert.equal(parsed?.documentKind, 'RECEIPT');
+    assert.deepEqual(parsed?.missingRequiredSignals, ['HUMAN_REVIEW_REQUIRED']);
+    assert.equal(parsed?.requiresClarification, true);
+  });
+
+  it('keeps the codes it does understand alongside the escalation', () => {
+    const parsed = parseBusinessDocumentClassification(
+      { ...base, missingRequiredSignals: ['PAYMENT_EVIDENCE_ONLY', 'something the model made up'] },
+      '',
+    );
+    assert.deepEqual(parsed?.missingRequiredSignals, ['PAYMENT_EVIDENCE_ONLY', 'HUMAN_REVIEW_REQUIRED']);
+    assert.equal(parsed?.requiresClarification, true);
+  });
+
+  it('an all-known reason array is untouched — no spurious review flag', () => {
+    const parsed = parseBusinessDocumentClassification({ ...base, missingRequiredSignals: ['PAYMENT_EVIDENCE_ONLY'] }, '');
+    assert.deepEqual(parsed?.missingRequiredSignals, ['PAYMENT_EVIDENCE_ONLY']);
+    assert.equal(parsed?.requiresClarification, false);
+  });
+
+  it('an undecodable CONTRADICTION also escalates instead of voiding', () => {
+    const parsed = parseBusinessDocumentClassification({ ...base, contradictionSignals: ['dates disagree somehow'] }, '');
+    assert.ok(parsed);
+    assert.deepEqual(parsed?.contradictionSignals, []);
+    assert.ok(parsed?.missingRequiredSignals.includes('HUMAN_REVIEW_REQUIRED'));
+    assert.equal(parsed?.requiresClarification, true);
+  });
+
+  it('a non-array reason field is still invalid SHAPE and still voids the classification', () => {
+    assert.equal(parseBusinessDocumentClassification({ ...base, missingRequiredSignals: 'PAYMENT_EVIDENCE_ONLY' }, ''), null);
   });
 });

@@ -1,5 +1,6 @@
 import {
   isNonExpenseClassificationBlocking,
+  isCheckBillClassification,
   SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS,
   type ExpensePaymentMethod,
   type SourceDocumentType,
@@ -158,6 +159,7 @@ export function evaluateManualLinesReadiness(lines: SubstituteManualLineDraft[])
  * stays eligible because continueFromExpense intentionally reviews it into SUPPORTING_ONLY +
  * EXPENSE_NOTE_TEXT before prepare. */
 type SubstituteReceiptCandidateInput = {
+  status?: string;
   currency: string;
   grandTotalAmount: string;
   sourceDocumentType: SourceDocumentType;
@@ -181,18 +183,20 @@ export function substituteReceiptRenderabilityIssue(
 /** Base business eligibility is exported so the picker can keep an otherwise-valid over-limit
  * expense visible with an actionable warning instead of making it disappear without explanation. */
 export function isSubstituteReceiptCandidateOtherwiseEligible(input: SubstituteReceiptCandidateInput): boolean {
+  const checkBill = isCheckBillClassification(input.aiVerificationSummaryJson);
+  if (input.status && !['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(input.status)) return false;
   if (input.sourceDocumentType === 'SUBSTITUTE_RECEIPT') return false;
   if (input.currency !== 'THB' || !(Number(input.grandTotalAmount) > 0)) return false;
-  if (input.taxEvidenceStatus === 'USABLE_FOR_TAX') return false;
+  if (input.taxEvidenceStatus === 'USABLE_FOR_TAX' && !checkBill) return false;
   if (!input.lines.length || input.lines.some((line) => !line.description.trim())) return false;
   const hasReviewedCategory = Boolean(input.expenseCategoryId || input.accountHintKey)
     || input.lines.every((line) => Boolean(line.expenseCategoryId || line.accountHintKey));
-  if (!hasReviewedCategory || isNonExpenseClassificationBlocking(input.aiVerificationSummaryJson)) return false;
+  if (!hasReviewedCategory || (!checkBill && isNonExpenseClassificationBlocking(input.aiVerificationSummaryJson))) return false;
   const classification = input.aiVerificationSummaryJson?.['classification'];
   const rawKind = classification && typeof classification === 'object' && !Array.isArray(classification)
     ? (classification as Record<string, unknown>)['documentKind']
     : null;
-  return typeof rawKind !== 'string' || !INELIGIBLE_CLASSIFICATION_KINDS.has(rawKind);
+  return checkBill || typeof rawKind !== 'string' || !INELIGIBLE_CLASSIFICATION_KINDS.has(rawKind);
 }
 
 export function isSubstituteReceiptCandidateEligible(input: SubstituteReceiptCandidateInput): boolean {

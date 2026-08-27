@@ -45,6 +45,29 @@ const line = (taxCodeDefinitionId: string, context: TransactionTaxLineInput['tra
 });
 
 describe('transaction tax resolver', () => {
+  it('preserves trusted expense amounts only within configured tolerance and with the same VAT rate', () => {
+    const definition = current('s4-i7', 'I7', 'STANDARD', '7', 'DOMESTIC_PURCHASE', 'INPUT');
+    const args = { definitions: [definition], accountRules: [accountRule(definition)], reportRules: reportRules(definition),
+      input: { ...line(definition.id, 'DOMESTIC_PURCHASE'), sourceType: 'expense.record', netAmount: '100', grossAmount: '107.01', enteredTaxAmount: '7.01' },
+      sourceModule: 'expense', direction: 'INPUT' as const };
+    const ordinary = resolveTransactionTaxPreview(args);
+    assert.equal(ordinary.snapshot.taxAmount, '7.00');
+    const accepted = resolveTransactionTaxPreview({ ...args, acceptedExpenseVatRate: '0.07' });
+    assert.deepEqual(accepted.errors, []);
+    assert.equal(accepted.snapshot.taxAmount, '7.01');
+    assert.equal(accepted.components[0]!.snapshot.taxAmount, '7.01');
+    assert.equal(aggregatePp30Boxes(accepted.reportContributions).box7InputTax, '7.01');
+    const outside = resolveTransactionTaxPreview({ ...args, input: { ...args.input, enteredTaxAmount: '7.02', grossAmount: '107.02' }, acceptedExpenseVatRate: '0.07' });
+    assert.ok(outside.errors.includes('entered_tax_amount_outside_tolerance'));
+    const conflict = resolveTransactionTaxPreview({ ...args, acceptedExpenseVatRate: '0.08' });
+    assert.ok(conflict.errors.includes('accepted_expense_vat_rate_conflict'));
+    for (const input of [{ ...args.input, sourceType: 'accounting.document' }, { ...args.input, grossAmount: '108' }, { ...args.input, enteredTaxAmount: '-7' }]) {
+      assert.ok(resolveTransactionTaxPreview({ ...args, input, acceptedExpenseVatRate: '0.07' }).errors.includes('accepted_expense_vat_amount_invalid'));
+    }
+    const spoof = resolveTransactionTaxPreview({ ...args, input: { ...args.input, acceptedExpenseVatRate: '0.07' } as any });
+    assert.equal(spoof.snapshot.taxAmount, '7.00', 'public input cannot enable accepted-amount authority');
+  });
+
   it('keeps legacy and current SAP O1 meanings isolated by profile', () => {
     const legacy = current('erp-o1', 'O1', 'STANDARD', '10', 'DOMESTIC_SALE');
     const s4 = current('s4-o1', 'O1', 'STANDARD', '7', 'DOMESTIC_SALE');

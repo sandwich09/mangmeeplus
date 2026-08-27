@@ -57,6 +57,7 @@ export type ExpenseRecord = {
   aiVerifiedFieldsJson: Record<string, unknown> | null;
   aiVerificationSummaryJson: Record<string, unknown> | null;
   vatCaptureSnapshotJson: import('@watchdog-bms/contracts').ExpenseVatCaptureSnapshotV1 | null;
+  whtInputJson?: import('@watchdog-bms/contracts').ExpenseWhtCapture | null;
   aiVerificationConfidence: number | null;
   aiVerifiedAt: Date | null;
   lineMessageId: string | null;
@@ -216,6 +217,7 @@ export type CreateExpenseRecordInput = {
   sourceChannelMetadataJson?: Record<string, unknown>;
   vendorNameSnapshot?: string;
   vatCaptureSnapshotJson?: import('@watchdog-bms/contracts').ExpenseVatCaptureSnapshotV1;
+  whtInputJson?: import('@watchdog-bms/contracts').ExpenseWhtCapture;
   // computed totals
   subtotalAmount: string;
   discountAmount: string;
@@ -297,6 +299,7 @@ export type ExpenseLineInput = {
   discountAmount: string;
   taxableAmount: string;
   vatRate: string | null;
+  vatTreatment?: import('@watchdog-bms/contracts').ExpenseLineVatTreatment | null;
   vatAmount: string;
   whtRate: string | null;
   whtAmount: string;

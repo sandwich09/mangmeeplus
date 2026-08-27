@@ -4,11 +4,25 @@ import { compileRole, summarizeCapabilities, toEffectivePermissions } from './ca
 import { CAPABILITY_PACKS, CAPABILITY_PACK_BY_KEY } from '../registries/capability-pack.registry';
 import { COMPANY_ROLE_BACKFILLS } from '../registries/company-role-backfill.registry';
 import { ROLE_TEMPLATES } from '../registries/role-template.registry';
-import { COMPANY_PERMISSION_KEYS } from '../../../auth/permission-registry';
+import { COMPANY_PERMISSION_KEYS, REIMBURSEMENT_SELF_SERVICE_PERMISSIONS } from '../../../auth/permission-registry';
+import { filterPermissionsByEntitlement } from './feature-gate.logic';
+import { evaluateEntitledFeatureKeys } from '../../application/entitlement.helper';
+import { ListCapabilityPacksUseCase } from '../../application/use-cases/list-capability-packs.use-case';
 
 const COMPANY_KEYS = new Set(COMPANY_PERMISSION_KEYS);
 
 describe('capability-pack registry integrity', () => {
+  it('shows own-request self-service as automatic rather than an ungrantable job pack for a feature-OFF editor', async () => {
+    const catalog = await new ListCapabilityPacksUseCase({ client: { companyFeatureEntitlement: {
+      findMany: async () => [{ featureKey: 'reimbursement', enabled: false }],
+    } } } as any).execute('co-1', ['account.session.read'], false);
+    const packs = catalog.modules.flatMap((module) => module.packs);
+    const self = packs.find((pack) => pack.key === 'pack.reimbursement.self')!;
+    assert.equal(self.isCore, true);
+    assert.equal(self.grantableByCurrentUser, true);
+    assert.equal(packs.find((pack) => pack.key === 'pack.reimbursement.approve')!.grantableByCurrentUser, false);
+  });
+
   it('every pack key is a known company permission key', () => {
     for (const pack of CAPABILITY_PACKS) {
       for (const k of pack.permissionKeys) {
@@ -71,6 +85,7 @@ describe('capability-pack registry integrity', () => {
     it('anchors every key that is not universal, so a backfill cannot hit read-only roles', () => {
       const universal = COMPANY_ROLE_BACKFILLS.filter((backfill) => backfill.anchor === null);
       assert.deepEqual(universal.map((backfill) => backfill.key), [
+        ...REIMBURSEMENT_SELF_SERVICE_PERMISSIONS,
         'account.password.change', 'dashboard.read', 'accounting.document.read_related', 'expense.read_related',
         'reimbursement.read_related',
         'procurement.purchase_request.read_related', 'procurement.purchase_order.read_related',
@@ -90,6 +105,40 @@ describe('capability-pack registry integrity', () => {
 });
 
 describe('compileRole', () => {
+  it('every template and custom role receives mandatory own reimbursement, including evidence/branch prerequisites', () => {
+    for (const roleTemplateKey of [undefined, ...ROLE_TEMPLATES.map((template) => template.key)]) {
+      const { permissionKeys } = compileRole({ roleTemplateKey, entitledFeatureKeys: null });
+      for (const key of REIMBURSEMENT_SELF_SERVICE_PERMISSIONS) {
+        assert.ok(permissionKeys.includes(key), `${roleTemplateKey ?? 'custom'}: ${key}`);
+      }
+    }
+    const ownOnly = compileRole({ entitledFeatureKeys: null }).permissionKeys;
+    for (const key of ['reimbursement.read', 'reimbursement.approve', 'reimbursement.finance_review',
+      'reimbursement.payment.record', 'reimbursement.export', 'reimbursement.policy.manage']) {
+      assert.equal(ownOnly.includes(key), false, `automatic baseline must not grant ${key}`);
+    }
+    assert.equal(CAPABILITY_PACK_BY_KEY.get('pack.reimbursement.self')?.isCore, true);
+  });
+
+  it('persists universal own service despite a feature-OFF granter, but runtime OFF still blocks new claims', () => {
+    const { permissionKeys, dropped } = compileRole({
+      permissionKeys: ['reimbursement.approve', 'reimbursement.payment.record'],
+      granterPermissionKeys: new Set(['account.session.read']),
+      entitledFeatureKeys: new Set(),
+    });
+    for (const key of REIMBURSEMENT_SELF_SERVICE_PERMISSIONS) assert.ok(permissionKeys.includes(key));
+    assert.deepEqual(dropped.filter(({ key }) => ['reimbursement.approve', 'reimbursement.payment.record'].includes(key)), [
+      { key: 'reimbursement.approve', reason: 'above_granter_scope' },
+      { key: 'reimbursement.payment.record', reason: 'above_granter_scope' },
+    ]);
+    const off = filterPermissionsByEntitlement(permissionKeys, new Set());
+    assert.ok(off.includes('reimbursement.read_own'));
+    assert.equal(off.includes('reimbursement.create'), false);
+    assert.equal(off.includes('reimbursement.submit'), false);
+    const on = filterPermissionsByEntitlement(permissionKeys, evaluateEntitledFeatureKeys([{ featureKey: 'reimbursement', enabled: true }]));
+    for (const key of REIMBURSEMENT_SELF_SERVICE_PERMISSIONS) assert.ok(on.includes(key));
+  });
+
   it('expands a preset into permission keys and always includes core basics', () => {
     const { permissionKeys, dropped } = compileRole({ roleTemplateKey: 'tpl.retail.cashier', entitledFeatureKeys: null });
     assert.equal(dropped.length, 0);

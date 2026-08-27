@@ -157,6 +157,19 @@ describe('reimbursementOwnActions', () => {
 });
 
 describe('reimbursementSubmitReadiness', () => {
+  it('blocks an existing future-dated draft until corrected but leaves historical non-drafts alone', () => {
+    const lines = [
+      { lineNo: 1, incurredDate: '2026-08-27T00:00:00.000Z' },
+      { lineNo: 2, incurredDate: '2026-08-28T00:00:00.000Z' },
+    ];
+    const request = detail({ status: 'DRAFT', receiptRequirementStatus: 'ATTACHED', lines });
+    const future = reimbursementSubmitReadiness(request, '2026-08-27');
+    assert.equal(future.blocked, true);
+    assert.match(future.message ?? '', /รายการที่ 2: วันที่รายการเบิกต้องไม่เกินวันนี้/);
+    assert.deepEqual(reimbursementSubmitReadiness({ ...request, status: 'APPROVED' }, '2026-08-27'), { blocked: false });
+    lines[1]!.incurredDate = '2026-08-27T00:00:00.000Z';
+    assert.deepEqual(reimbursementSubmitReadiness(request, '2026-08-27'), { blocked: false });
+  });
   it('blocks a draft that still requires a receipt with policy-specific guidance', () => {
     const strict = reimbursementSubmitReadiness(detail({
       status: 'DRAFT', receiptRequirementStatus: 'REQUIRED', allowMissingReceiptWithReason: false,

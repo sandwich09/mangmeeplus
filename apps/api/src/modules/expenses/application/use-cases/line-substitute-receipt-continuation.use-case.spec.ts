@@ -145,7 +145,7 @@ function harness(overrides: {
       : { bucket: 'b', objectKey: 'scan', mimeType: overrides.scanObject?.mimeType ?? 'application/pdf', checksumSha256: 'scan-checksum' },
     linkAttachment: async (expenseId: string, attachmentId: string, purpose: string) => {
       links.push({ expenseId, attachmentId, purpose });
-      current = { ...current, attachments: [...(current.attachments ?? []), { id: attachmentId, status: 'ACTIVE', purpose }] };
+      current = { ...current, attachments: [...(current.attachments ?? []), { id: attachmentId, status: 'ACTIVE', purpose, mimeType: 'image/jpeg' }] };
     },
     linkSubstituteWetSignedScan: async (input: any) => {
       const evidence = current.substituteReceiptEvidence;
@@ -260,10 +260,32 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
     assert.equal(codes.includes('classification_ineligible'), false);
     assert.equal(codes.includes('document_kind_ineligible'), false);
     assert.equal(codes.includes('tax_evidence_review_required'), false);
+    assert.equal(codes.includes('payment_evidence_required'), true, 'check-bill cash also needs separate actual proof');
     assert.equal(h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.acceptedValues.reasonCode, 'RECEIPT_UNAVAILABLE');
 
     const prefill = await h.useCase.loadForWeb({ ...ctx(), authProvider: 'watchdog' }, 'expense-1', started.workflowId!);
     assert.equal(prefill.routeCheckBill, true);
+  });
+
+  it('blocks cash check bills without separate active image/PDF proof under permissive and absent policies', async () => {
+    for (const policy of [null, { approvalMode: 'OWNER_SELF', cashEvidencePolicy: 'ALLOW_SUPPORTING_EVIDENCE_ONLY' }]) {
+      for (const proof of [null,
+        { id: 'source', status: 'ACTIVE', purpose: 'expense.payment.evidence', mimeType: 'image/jpeg' },
+        { id: 'proof', status: 'DELETED', purpose: 'expense.payment.evidence', mimeType: 'image/jpeg' },
+        { id: 'proof', status: 'ACTIVE', purpose: 'expense.payment.evidence', mimeType: 'text/plain' },
+        { id: 'proof', status: 'ACTIVE', purpose: 'expense.payment.evidence', mimeType: 'application/pdf' }]) {
+        const h = harness({ policy, expense: expense({
+          primaryAttachmentId: 'source', paymentMethod: 'CASH',
+          aiVerificationSummaryJson: { status: 'NOT_EXPENSE_DOCUMENT', classification: { documentKind: 'ORDER_OR_CHECK_BILL' } },
+          attachments: [{ id: 'source', status: 'ACTIVE', purpose: 'expense.receipt.primary', mimeType: 'image/jpeg' }, ...(proof ? [proof] : [])],
+        }) });
+        await h.useCase.startFromCheckBill(ctx(), { expenseId: 'expense-1', chatKeyHash: 'chat-hash', webBaseUrl: WEB_BASE });
+        const result = await h.useCase.execute(ctx(), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+        assert.equal(result.blockers.some((item) => item.code === 'payment_evidence_required'), proof?.mimeType !== 'application/pdf');
+        assert.equal(h.prepares.length, 0);
+        assert.equal(h.getExpense().id, 'expense-1');
+      }
+    }
   });
 
   it('returns every knowable blocker together and keeps absent policy as ready OWNER_SELF semantics', async () => {
@@ -781,7 +803,7 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
         missingReceiptReason: 'ร้านไม่ออกใบเสร็จ',
         attachments: [
           { id: 'att-1', status: 'ACTIVE', purpose: 'expense.source.document' },
-          { id: 'att-2', status: 'ACTIVE', purpose: 'expense.payment.evidence' },
+          { id: 'att-2', status: 'ACTIVE', purpose: 'expense.payment.evidence', mimeType: 'image/jpeg' },
         ],
       }),
     });
@@ -1160,7 +1182,7 @@ describe('R13 — the assistant asks before producing the document', () => {
         missingReceiptReason: 'วินไม่ออกใบเสร็จ',
         attachments: [
           { id: 'att-photo', status: 'ACTIVE', purpose: 'expense.receipt.supporting' },
-          { id: 'att-slip', status: 'ACTIVE', purpose: 'expense.payment.evidence' },
+          { id: 'att-slip', status: 'ACTIVE', purpose: 'expense.payment.evidence', mimeType: 'image/jpeg' },
           // A superseded version left these behind: its certified SVG and its signature render.
           { id: 'att-old-certificate', status: 'ACTIVE', purpose: 'expense.review.evidence' },
           { id: 'att-old-signature', status: 'ACTIVE', purpose: 'expense.review.evidence' },

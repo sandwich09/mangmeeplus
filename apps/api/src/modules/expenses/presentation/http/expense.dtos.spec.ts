@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { BadRequestException, ValidationPipe } from '@nestjs/common';
 import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../../../../common/pipes/validation-pipe.options';
 import {
+  ConfirmExpenseDto,
   CreateSignatureAssetDto,
   ReasonOptionalDto,
   ReasonRequiredDto,
@@ -20,6 +21,18 @@ const run = (metatype: unknown, value: unknown) =>
   pipe.transform(value, { type: 'body', metatype: metatype as never });
 
 describe('expense body DTOs (audit H-23)', () => {
+  it('binds document VAT acceptance to a reviewed version without changing ordinary confirmation', async () => {
+    assert.equal((await run(ConfirmExpenseDto, {})).vatSourceOverride, undefined);
+    const vatSourceOverride = { reason: 'Checked printed VAT', vatLineNumber: 1, expectedUpdatedAt: '2026-08-27T01:00:00.000Z' };
+    assert.equal((await run(ConfirmExpenseDto, { vatSourceOverride })).vatSourceOverride.expectedUpdatedAt, vatSourceOverride.expectedUpdatedAt);
+    for (const invalid of [
+      { reason: 'Checked', vatLineNumber: 1 },
+      { ...vatSourceOverride, expectedUpdatedAt: 'yesterday' },
+      { ...vatSourceOverride, acceptedVatAmount: '999' },
+      { ...vatSourceOverride, status: 'REVIEWER_ACCEPTED' },
+    ]) await assert.rejects(() => run(ConfirmExpenseDto, { vatSourceOverride: invalid }), BadRequestException);
+  });
+
   // The sharpest case in the whole finding: several handlers call `reason.trim()`. An object in
   // that field was a 500, the same type-confusion the audit found in reimbursement.
   describe('ReasonRequiredDto', () => {

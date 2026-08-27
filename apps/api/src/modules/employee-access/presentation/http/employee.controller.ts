@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Req } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Req } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { RequireAnyPermission, RequirePermissions } from '../../../../common/security/permissions.decorator';
@@ -11,6 +11,7 @@ import { GetEmployeeUseCase } from '../../application/use-cases/get-employee.use
 import { CreateEmployeeUseCase } from '../../application/use-cases/create-employee.use-case';
 import { UpdateEmployeeUseCase } from '../../application/use-cases/update-employee.use-case';
 import { SetEmployeeStatusUseCase } from '../../application/use-cases/set-employee-status.use-case';
+import { DeleteEmployeeDraftUseCase } from '../../application/use-cases/delete-employee-draft.use-case';
 import { RegenerateEmployeeCredentialUseCase } from '../../application/use-cases/regenerate-employee-credential.use-case';
 import { IssueEmployeeLineLinkTokenUseCase } from '../../application/use-cases/issue-employee-line-link-token.use-case';
 import { RevokeEmployeeLineLinkTokenUseCase } from '../../application/use-cases/revoke-employee-line-link-token.use-case';
@@ -27,6 +28,7 @@ export class EmployeeController {
     private readonly regenerateCredential: RegenerateEmployeeCredentialUseCase,
     private readonly issueLineLinkToken: IssueEmployeeLineLinkTokenUseCase,
     private readonly revokeLineLinkToken: RevokeEmployeeLineLinkTokenUseCase,
+    private readonly deleteEmployeeDraft: DeleteEmployeeDraftUseCase,
   ) {}
 
   @Get()
@@ -99,6 +101,20 @@ export class EmployeeController {
       requestId: ctx.requestId,
       status: body.status ?? 'DISABLED',
       reason: body.reason,
+    });
+  }
+
+  @Delete(':employeeId/draft')
+  @HttpCode(204)
+  @RequirePermissions('access.employee.disable')
+  @ApiOperation({ summary: 'Delete an unfinished company employee draft, preserving its login account' })
+  deleteDraft(@ReqCtx() ctx: RequestContext, @Param('employeeId') employeeId: string) {
+    return this.deleteEmployeeDraft.execute({
+      companyId: ctx.companyId,
+      employeeId,
+      requestingUserId: ctx.userId,
+      requesterPermissions: ctx.permissions,
+      requestId: ctx.requestId,
     });
   }
 

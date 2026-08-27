@@ -30,6 +30,7 @@ import { useToast } from '@/common/components/toast';
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
 import { listBranches as listCompanyBranches, type Branch } from '../branch-settings/branches.api';
 import {
+  deleteEmployeeDraft,
   employeeShortName,
   getAccessMatrix,
   listEmployees,
@@ -336,6 +337,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
   const selectedRoleNames = selectedEmployee?.roles.map(roleDisplayName).join(', ') ?? '';
   const allBranchRoles = selectedRoles.filter((role) => ALL_BRANCH_ROLE_KEYS.includes(role.key));
   const branchPickerLocked = allBranchRoles.length > 0;
+  const canEditBranchScope = canEditEmployee && !selectedIsOwner && selectedActive && !branchPickerLocked;
   const accessProjection = useMemo(
     () => projectGrantedMenus(
       selectedEmployee?.roles.map((role) => role.id) ?? [],
@@ -359,7 +361,15 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
 
   const withBusy = async (key: SaveKey, fn: () => Promise<void>, done?: string) => {
     setBusy(true); setPendingKey(key); setSavedAt(null);
-    try { await fn(); setSavedAt(key); if (done) toast.success(done); } catch (e) { setError(localizedErrorMessage(e, locale, { fallback: 'error.save_failed' })); }
+    try { await fn(); setSavedAt(key); if (done) toast.success(done); } catch (e) {
+      setError(localizedErrorMessage(e, locale, {
+        fallback: 'error.save_failed',
+        conflictCodes: {
+          employee_draft_not_found: 'employee.error.draft_not_found',
+          employee_draft_not_deletable: 'employee.error.draft_not_deletable',
+        },
+      }));
+    }
     finally { setBusy(false); setPendingKey(null); }
   };
 
@@ -380,13 +390,26 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
   }
 
   async function deleteSelectedEmployee() {
-    if (!selectedEmployee || selectedIsOwner || !canDisableEmployee) return;
-    if (!(await confirm(`ปิดการใช้งานบัญชีของ ${employeeShortName(selectedEmployee)} ใช่หรือไม่?`))) return;
+    if (!selectedEmployee || selectedIsOwner || !canDisableEmployee || busy) return;
+    const isDraft = selectedEmployee.status === 'DRAFT';
+    const confirmation = isDraft
+      ? `ลบร่างพนักงาน ${employeeShortName(selectedEmployee)} ออกจากบริษัทนี้ใช่หรือไม่? บัญชีเข้าสู่ระบบเดิมและข้อมูลบริษัทอื่นจะไม่ถูกลบ`
+      : `ปิดการใช้งานบัญชีของ ${employeeShortName(selectedEmployee)} ใช่หรือไม่?`;
+    if (!(await confirm(confirmation))) return;
     await withBusy('status', async () => {
-      await setEmployeeStatus(companyId, selectedEmployee.id, 'DISABLED');
+      try {
+        if (isDraft) await deleteEmployeeDraft(companyId, selectedEmployee.id);
+        else await setEmployeeStatus(companyId, selectedEmployee.id, 'DISABLED');
+      } catch (e) {
+        if (isDraft && (statusOf(e) === 404 || statusOf(e) === 409)) {
+          setEmployeeMenuOpen(false);
+          await reload();
+        }
+        throw e;
+      }
       setEmployeeMenuOpen(false);
       await reload();
-    }, 'ปิดการใช้งานพนักงานเรียบร้อยแล้ว');
+    }, isDraft ? 'ลบร่างพนักงานเรียบร้อยแล้ว' : 'ปิดการใช้งานพนักงานเรียบร้อยแล้ว');
   }
 
   async function confirmResetPassword() {
@@ -642,10 +665,10 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                           <HorizontalDotsIcon className="h-5 w-5" />
                         </button>
                         {employeeMenuOpen && (
-                          <div role="menu" className="fixed inset-x-4 top-auto z-20 overflow-hidden rounded-xl border border-gray-200 bg-white py-1 text-sm font-extrabold shadow-lg sm:absolute sm:inset-x-auto sm:right-0 sm:top-10 sm:w-52">
+                          <div role="menu" className="fixed inset-x-4 bottom-4 z-20 overflow-hidden rounded-xl border border-gray-200 bg-white py-1 text-sm font-extrabold shadow-lg sm:absolute sm:inset-x-auto sm:bottom-auto sm:right-0 sm:top-10 sm:w-52">
                             {canEditEmployee && <button type="button" role="menuitem" disabled={busy} onClick={editSelectedEmployee} className="w-full px-3 py-2 text-left text-gray-700 hover:bg-gray-50 disabled:opacity-50">แก้ไขข้อมูลพนักงาน</button>}
                             {canIssueCredential && <button type="button" role="menuitem" disabled={busy} onClick={() => { setEmployeeMenuOpen(false); setResetError(null); setResetTarget(selectedEmployee); }} className="w-full px-3 py-2 text-left text-gray-700 hover:bg-gray-50 disabled:opacity-50">รีเซ็ตรหัสผ่าน</button>}
-                            {canDisableEmployee && <button type="button" role="menuitem" disabled={busy} onClick={() => void deleteSelectedEmployee()} className="w-full px-3 py-2 text-left text-error-700 hover:bg-error-50 disabled:opacity-50">ลบพนักงาน</button>}
+                            {canDisableEmployee && <button type="button" role="menuitem" disabled={busy} onClick={() => void deleteSelectedEmployee()} className="w-full px-3 py-2 text-left text-error-700 hover:bg-error-50 disabled:opacity-50">{selectedIsDraft ? 'ลบร่างพนักงาน' : 'ลบพนักงาน'}</button>}
                           </div>
                         )}
                       </div>
@@ -774,20 +797,20 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                     </p>
                   </div>
                   <div className="flex shrink-0 items-center gap-3">
-                    <span
+                    {(busy && pendingKey === 'branch' || savedAt === 'branch') && <span
                       aria-live="polite"
                       className={cx('text-xs font-bold', savedAt === 'branch' ? 'text-brand-600' : 'text-gray-400')}
                     >
-                      {busy && pendingKey === 'branch' ? 'กำลังบันทึก...' : savedAt === 'branch' ? 'บันทึกแล้ว' : null}
-                    </span>
-                    <span className="rounded-full bg-blue-light-50 px-4 py-2 text-sm font-extrabold tabular-nums text-blue-light-500">{branchCountLabel}</span>
+                      {busy && pendingKey === 'branch' ? 'กำลังบันทึก...' : 'บันทึกแล้ว'}
+                    </span>}
+                    <span data-testid="employee-branch-count" className="rounded-full bg-blue-light-50 px-4 py-2 text-sm font-extrabold tabular-nums text-blue-light-500">{branchCountLabel}</span>
                   </div>
                 </div>
 
-                {canEditEmployee && <div className="mangmee-segmented mt-5">
+                {canEditBranchScope && <div className="mangmee-segmented mt-5">
                   <button
                     type="button"
-                    disabled={selectedIsOwner || !selectedActive || busy || branchPickerLocked}
+                    disabled={busy}
                     onClick={() => void selectAllBranches()}
                     aria-pressed={selectedEmployee.branchScopeMode === 'ALL_BRANCHES' && !branchPickerOpen}
                     className={cx(
@@ -799,7 +822,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                   </button>
                   <button
                     type="button"
-                    disabled={selectedIsOwner || !selectedActive || busy || branchPickerLocked}
+                    disabled={busy}
                     onClick={() => setBranchPickerOpen(true)}
                     aria-pressed={selectedEmployee.branchScopeMode === 'SELECTED_BRANCHES' || branchPickerOpen}
                     className={cx(
@@ -811,13 +834,25 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                   </button>
                 </div>}
 
+                {!canEditBranchScope && selectedEmployee.branchScopeMode === 'ALL_BRANCHES' && (
+                  <button
+                    type="button"
+                    className="mangmee-btn mangmee-btn-secondary mt-5"
+                    aria-expanded={branchPickerOpen}
+                    aria-controls="employee-accessible-branches"
+                    onClick={() => setBranchPickerOpen((open) => !open)}
+                  >
+                    {branchPickerOpen ? 'ซ่อนรายชื่อสาขา' : 'ดูสาขาที่เข้าถึง'}
+                  </button>
+                )}
+
                 {(selectedEmployee.branchScopeMode === 'SELECTED_BRANCHES' || branchPickerOpen) && (
-                  <div className="mt-5 flex min-w-0 flex-wrap gap-2">
-                    {branches.filter((branch) => canEditEmployee || selectedBranchIds.includes(branch.id)).map((branch) => {
+                  <div id="employee-accessible-branches" className="mt-5 flex min-w-0 flex-wrap gap-2">
+                    {branches.filter((branch) => canEditBranchScope || selectedBranchIds.includes(branch.id)).map((branch) => {
                       const selected = selectedBranchIds.includes(branch.id);
                       const lastBranchLocked = selected && selectedBranchIds.length === 1;
                       const otherwiseDisabled = selectedIsOwner || !selectedActive || busy || branchPickerLocked;
-                      return canEditEmployee ? (
+                      return canEditBranchScope ? (
                         <BranchAccessChip
                           key={branch.id} label={branch.name} selected={selected}
                           disabled={otherwiseDisabled || lastBranchLocked}

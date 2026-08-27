@@ -191,6 +191,8 @@ function makePrisma(opts: {
       },
       companyMembership: {
         findMany: async () => membershipRows,
+        // LINE default-branch lookup (Owner 2026-08-27): no assigned branch in this harness.
+        findUnique: async () => null,
       },
       lineCompanyContext: {
         findUnique: async () => lineCompanyContext,

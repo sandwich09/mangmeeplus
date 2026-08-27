@@ -15,6 +15,28 @@ import {
 } from './expense-status.logic';
 
 describe('expenseTaxSourceChecksum', () => {
+  it('protects WHT source units and accepted line money at confirmation', () => {
+    const expense = { id: 'expense-1', expenseDate: new Date('2026-08-27'),
+      whtInputJson: { inputType: 'RATE', value: '3', origin: 'REVIEWER' },
+      lines: [{ id: 'line-1', lineNumber: 1, taxableAmount: '100', whtRate: '0.03', whtAmount: '3' }],
+    } as any;
+    const token = expenseTaxSourceChecksum(expense);
+    assert.notEqual(token, expenseTaxSourceChecksum({ ...expense, whtInputJson: { ...expense.whtInputJson, inputType: 'AMOUNT' } }));
+    assert.notEqual(token, expenseTaxSourceChecksum({ ...expense, lines: [{ ...expense.lines[0], whtAmount: '3.01' }] }));
+  });
+
+  it('protects zero-treatment meaning even when the numeric amounts do not change', () => {
+    const expense = {
+      id: 'expense-1', expenseDate: new Date('2026-08-27T00:00:00.000Z'),
+      lines: [{ id: 'line-1', lineNumber: 1, taxableAmount: '100', vatRate: '0', vatAmount: '0', lineSubtotalAmount: '100', lineTotalAmount: '100' }],
+    } as any;
+    const legacy = expenseTaxSourceChecksum(expense);
+    assert.equal(legacy, expenseTaxSourceChecksum({ ...expense, lines: [{ ...expense.lines[0], vatTreatment: null }] }));
+    const checksums = ['ZERO_RATED', 'EXEMPT', 'NON_VAT'].map((vatTreatment) =>
+      expenseTaxSourceChecksum({ ...expense, lines: [{ ...expense.lines[0], vatTreatment }] }));
+    assert.equal(new Set([legacy, ...checksums]).size, 4);
+  });
+
   it('changes when the verified evidence bytes checksum changes', () => {
     const expense = {
       id: 'expense-1', companyId: 'co-1', branchId: null, status: 'READY_FOR_CONFIRMATION', duplicateStatus: 'NO_MATCH',

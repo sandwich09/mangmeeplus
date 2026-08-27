@@ -1,14 +1,17 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { isBlockingExpenseVatReconciliation, type ExpenseVatCaptureSnapshotV1 } from '@watchdog-bms/contracts';
 import {
   postingErrorText,
   expensePaymentAttempt,
   classifyExpensePaymentFailure,
   buildExpenseDraftReviewPayload,
+  reviewValues,
   formatTaxId,
   taxIdDigits,
   aiGrandTotalValue,
   canShowInlineSubstitutePreparation,
+  substituteReceiptPreparationHref,
   deriveExpenseClassificationReviewState,
   expenseAiFieldProvenance,
   expenseAiSuggestion,
@@ -31,6 +34,7 @@ import {
   vatRateFromPrintedAmount,
   vatRatePreset,
   vatRatePresetValue,
+  vatTreatmentForPreset,
   expensePercentToRate,
   expenseRateToPercent,
   effectiveVatRateLabel,
@@ -52,6 +56,7 @@ import {
   expenseVatSourceFromSnapshot,
   expenseVatSourceValidationMessage,
   type ExpenseDraftReviewValues,
+  type ExpenseDetail,
 } from './expenses.model';
 
 describe('expenses.model', () => {
@@ -226,9 +231,21 @@ describe('expenses.model', () => {
       classification: { documentKind: 'RECEIPT' },
     }), false);
     assert.equal(canShowInlineSubstitutePreparation(true, null), false);
-    assert.equal(canShowInlineSubstitutePreparation(false, null), true);
+    assert.equal(canShowInlineSubstitutePreparation(false, null), false);
     assert.equal(canShowInlineSubstitutePreparation(false, 'PREPARED'), true);
     assert.equal(canShowInlineSubstitutePreparation(false, 'PAYER_CERTIFIED'), false);
+    assert.equal(canShowInlineSubstitutePreparation(false, 'ISSUED'), false);
+    assert.equal(canShowInlineSubstitutePreparation(false, 'SUPERSEDED'), false);
+    const overridden = { ...checkBill, classificationResolution: {
+      outcome: 'FINANCE_OVERRIDDEN_AS_EXPENSE', sourceDocumentType: 'RECEIPT', reason: 'checked original',
+      acknowledged: true, resolvedByUserId: 'finance-1', resolvedAt: '2026-08-27T00:00:00.000Z',
+    } };
+    assert.equal(isBlockedCheckBillClassification(overridden), false, 'genuine finance correction remains available for normal receipt review');
+    assert.equal(canShowInlineSubstitutePreparation(false, null), false, 'an override must not reopen the old new-preparation form');
+    assert.equal(substituteReceiptPreparationHref('co/1', 'exp 1', overridden),
+      '/companies/co%2F1/expenses/substitute-receipts/new?expenseId=exp%201&route=check-bill');
+    assert.equal(substituteReceiptPreparationHref('co1', 'exp1', { classification: { documentKind: 'RECEIPT' } }),
+      '/companies/co1/expenses/substitute-receipts/new?expenseId=exp1');
   });
 
   it('warns only when the AI and server grand totals differ by more than the reconciliation tolerance', () => {
@@ -384,8 +401,70 @@ describe('expenses.model', () => {
     assert.equal(expenseVatSourceValidationMessage(payload.vatSource!), null);
   });
 
+  it('round trips exact WHT source units without deriving a rate or sending a server-owned origin', () => {
+    for (const whtInput of [
+      { inputType: 'AMOUNT', value: '12.34' },
+      { inputType: 'RATE', value: '3' },
+      { inputType: 'RATE', value: '100' },
+      { inputType: 'AMOUNT', value: '0' },
+    ] as const) {
+      // Only fields read by the review mapper are relevant to this persisted-detail fixture.
+      const detail = {
+        vendorNameSnapshot: 'ร้านทดสอบ', expenseDate: '2026-08-27', vatMode: 'VAT_EXCLUDED',
+        whtInputJson: { ...whtInput, origin: 'OCR' },
+        lines: [{
+          description: 'ค่าบริการ', quantity: '1', unitPrice: '1000', discountAmount: '0',
+          vatRate: '0.07', whtRate: '0.03', expenseCategoryId: null, accountHintKey: null, taxCategory: null,
+        }],
+      } as ExpenseDetail;
+      const values = reviewValues(detail);
+      assert.deepEqual(values.whtInput, whtInput);
+      values.lines[0]!.unitPrice = '2000';
+      values.lines[0]!.discountAmount = '100';
+      const payload = buildExpenseDraftReviewPayload(values);
+      assert.deepEqual(payload.whtInput, whtInput);
+      assert.equal('origin' in payload.whtInput!, false);
+      assert.equal('whtRate' in payload.lines![0]!, false, 'source input replaces stale line rates');
+    }
+  });
+
+  it('preserves a legacy mixed-rate bill on ordinary save until an explicit whole-bill replacement', () => {
+    const detail = {
+      expenseDate: '2026-08-27', vatMode: 'NO_VAT', whtInputJson: null,
+      lines: ['0.03', '0.01', null].map((whtRate) => ({
+        description: 'รายการ', quantity: '1', unitPrice: '100', discountAmount: '0',
+        vatRate: '0', whtRate, expenseCategoryId: null, accountHintKey: null, taxCategory: null,
+      })),
+    } as ExpenseDetail;
+    const values = reviewValues(detail);
+    values.vendorNameSnapshot = 'แก้ชื่อผู้ขายเท่านั้น';
+    const unchanged = buildExpenseDraftReviewPayload(values);
+    assert.equal('whtInput' in unchanged, false);
+    assert.deepEqual(unchanged.lines!.map((line) => line.whtRate), ['0.03', '0.01', undefined]);
+    values.whtInput = { inputType: 'RATE', value: '0' };
+    const replaced = buildExpenseDraftReviewPayload(values);
+    assert.deepEqual(replaced.whtInput, { inputType: 'RATE', value: '0' });
+    assert.ok(replaced.lines!.every((line) => !('whtRate' in line)));
+  });
+
+  it('keeps all zero VAT meanings through reload and removal of receipt-ineligible Tax Codes', () => {
+    const detail = {
+      expenseDate: '2026-08-27', vatMode: 'VAT_EXCLUDED',
+      lines: ['ZERO_RATED', 'EXEMPT', 'NON_VAT', null].map((vatTreatment) => ({
+        description: 'ชื่อสินค้าไม่ใช้ตัดสินประเภทภาษี', quantity: '1', unitPrice: '50', discountAmount: '0',
+        vatRate: '0', vatTreatment, whtRate: null, expenseCategoryId: null, accountHintKey: null, taxCategory: null,
+        taxSnapshot: { taxCodeDefinitionId: 'tax-code', externalTaxCode: 'ZERO', taxContext: 'DOMESTIC_PURCHASE' },
+      })),
+    } as ExpenseDetail;
+    const values = reviewValues(detail);
+    const payload = buildExpenseDraftReviewPayload({ ...values, lines: clearExpenseTaxSelections(values.lines) });
+    assert.deepEqual(payload.lines!.map((line) => line.vatTreatment), ['ZERO_RATED', 'EXEMPT', 'NON_VAT', null]);
+    assert.ok(payload.lines!.every((line) => line.vatRate === '0' && !line.taxCodeDefinitionId));
+    assert.deepEqual(values.lines.map((line) => vatRatePreset(line.vatRate, line.vatTreatment)), ['zero', 'exempt', 'nonVat', 'unknownZero']);
+  });
+
   it('hydrates normalized source VAT and validates missing unit values', () => {
-    const source = expenseVatSourceFromSnapshot({
+    const snapshot: ExpenseVatCaptureSnapshotV1 = {
       version: 1,
       source: {
         inputType: 'BOTH', origin: 'OCR', vatRatePercent: '7.0000', vatAmount: '27.0800',
@@ -399,8 +478,15 @@ describe('expenses.model', () => {
       reconciliation: {
         status: 'MATCHED', acceptedSource: 'SOURCE_AMOUNT', differenceAmount: '0.0000', toleranceAmount: '0.05',
       },
-    });
+    };
+    const source = expenseVatSourceFromSnapshot(snapshot);
     assert.deepEqual(source, { inputType: 'BOTH', vatRatePercent: '7', vatAmount: '27.08' });
+    const accepted: ExpenseVatCaptureSnapshotV1 = { ...snapshot,
+      calculation: { ...snapshot.calculation, vatAmount: '27.0000' },
+      reconciliation: { ...snapshot.reconciliation, status: 'REVIEWER_ACCEPTED', differenceAmount: '0.0800' },
+    };
+    assert.equal(isBlockingExpenseVatReconciliation(accepted), false);
+    assert.deepEqual(expenseVatSourceFromSnapshot(accepted), source, 'reload retains source evidence rather than calculating it away');
     assert.match(expenseVatSourceValidationMessage({ inputType: 'AMOUNT', vatAmount: '' }) ?? '', /บาท/);
     assert.match(expenseVatSourceValidationMessage({
       inputType: 'NONE',
@@ -516,13 +602,23 @@ describe('expenses.model', () => {
     assert.equal(vatRatePreset(''), 'unset');
     assert.equal(vatRatePreset('0.07'), 'standard');
     assert.equal(vatRatePreset('0.0700'), 'standard');
-    // Plan 13.11.B: a stored 0 reads back as the headline no-VAT/exempt case, not as export.
-    assert.equal(vatRatePreset('0'), 'exempt');
+    assert.equal(vatRatePreset('0'), 'unknownZero');
+    assert.equal(vatRatePreset('0', 'EXEMPT'), 'exempt');
+    assert.equal(vatRatePreset('0.0000', 'ZERO_RATED'), 'zero');
+    assert.equal(vatRatePreset('0', 'NON_VAT'), 'nonVat');
     assert.equal(vatRatePreset('0.065'), 'custom');
 
     assert.equal(vatRatePresetValue('standard', ''), '0.07');
     assert.equal(vatRatePresetValue('exempt', '0.07'), '0');
     assert.equal(vatRatePresetValue('zero', '0.07'), '0');
+    assert.equal(vatRatePresetValue('nonVat', '0.07'), '0');
+    assert.equal(vatRatePresetValue('unknownZero', '0.07'), '0');
+    assert.equal(vatTreatmentForPreset('exempt'), 'EXEMPT');
+    assert.equal(vatTreatmentForPreset('zero'), 'ZERO_RATED');
+    assert.equal(vatTreatmentForPreset('nonVat'), 'NON_VAT');
+    assert.equal(vatTreatmentForPreset('unknownZero'), null);
+    assert.equal(vatTreatmentForPreset('standard'), null);
+    assert.equal(vatTreatmentForPreset('custom'), null);
     // Switching to custom keeps the current rate to edit rather than discarding it.
     assert.equal(vatRatePresetValue('custom', '0.065'), '0.065');
     assert.equal(vatRatePresetValue('custom', ''), '');

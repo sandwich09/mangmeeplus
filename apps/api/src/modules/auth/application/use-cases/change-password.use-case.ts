@@ -9,14 +9,23 @@ export const PASSWORD_REUSE = {
   message: 'New password must be different from the current password.',
 };
 
+// Reauthentication input failure, not a session 401 that clients should refresh.
+export const CURRENT_PASSWORD_INCORRECT = {
+  code: 'current_password_incorrect',
+  message: 'Current password is incorrect.',
+};
+
 @Injectable()
 export class ChangePasswordUseCase {
   constructor(private readonly prisma: PrismaService) {}
 
   async execute(userId: string, currentPassword: string, newPassword: string, currentTokenId: string): Promise<void> {
     const credential = await this.prisma.client.userCredential.findUnique({ where: { userId } });
-    if (!credential || credential.status === 'DISABLED' || !verifyPassword(currentPassword, credential.passwordHash)) {
+    if (!credential || credential.status === 'DISABLED') {
       throw new UnauthorizedException('Current password is incorrect.');
+    }
+    if (!verifyPassword(currentPassword, credential.passwordHash)) {
+      throw new BadRequestException(CURRENT_PASSWORD_INCORRECT);
     }
 
     if (credential.expiresAt && credential.expiresAt <= new Date()) {

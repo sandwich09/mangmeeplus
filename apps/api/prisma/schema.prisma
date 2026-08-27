@@ -2296,6 +2296,8 @@ model ExpenseRecord {
   aiVerifiedFieldsJson               Json?
   aiVerificationSummaryJson          Json?
   vatCaptureSnapshotJson             Json?
+  // Explicit whole-bill WHT input; amount mode never derives a rate. Null preserves legacy line rates.
+  whtInputJson                       Json?
   aiVerificationConfidence           Float?
   aiVerifiedAt                       DateTime?
   lineMessageId                      String?
@@ -2412,6 +2414,8 @@ model ExpenseLine {
   discountAmount             Decimal                  @default(0) @db.Decimal(18, 4)
   taxableAmount              Decimal                  @default(0) @db.Decimal(18, 4)
   vatRate                    Decimal?                 @db.Decimal(8, 4)
+  // ZERO_RATED / EXEMPT / NON_VAT; null means no explicit zero-treatment evidence.
+  vatTreatment               String?
   vatAmount                  Decimal                  @default(0) @db.Decimal(18, 4)
   whtRate                    Decimal?                 @db.Decimal(8, 4)
   whtAmount                  Decimal                  @default(0) @db.Decimal(18, 4)

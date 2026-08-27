@@ -10,12 +10,15 @@ import type {
   ExpensePaymentSummary,
   ExpenseVatCaptureSnapshotV1,
   ExpenseVatSourceInput,
+  ExpenseWhtInput,
+  ExpenseWhtCapture,
+  ExpenseLineVatTreatment,
   RecordExpensePaymentInput,
 } from '@watchdog-bms/contracts';
 import {
   EXPENSE_STATUS_LABELS, EXPENSE_PAYMENT_STATUS_LABELS, EXPENSE_VAT_MODE_LABELS,
   SOURCE_DOCUMENT_TYPE_LABELS, TAX_EVIDENCE_STATUS_LABELS, SIGNATURE_ASSET_STATUS_LABELS,
-  isExpenseCancelled, isExpenseDeletableState, isExpensePending, isNonExpenseClassificationBlocking,
+  isExpenseCancelled, isExpenseDeletableState, isExpensePending, isNonExpenseClassificationBlocking, isCheckBillClassification,
   effectiveVatRateLabel, vatModeRequiresRate, civilDate, civilDateToUtcDate, civilPeriodKey, isCivilDate,
 } from '@watchdog-bms/contracts';
 export { isExpensePending } from '@watchdog-bms/contracts';
@@ -271,12 +274,17 @@ export function isBlockedCheckBillClassification(
     && (classification as Record<string, unknown>)['documentKind'] === 'ORDER_OR_CHECK_BILL');
 }
 
-/** Keep the toggle and its form on one condition so web never offers a prepare the API will reject. */
+/** New preparation uses the canonical wizard; preserve the existing PREPARED edit lifecycle. */
 export function canShowInlineSubstitutePreparation(
   classificationBlocked: boolean,
   evidenceStatus: SubstituteReceiptEvidenceSummary['status'] | null | undefined,
 ): boolean {
-  return !classificationBlocked && (!evidenceStatus || evidenceStatus === 'PREPARED');
+  return !classificationBlocked && evidenceStatus === 'PREPARED';
+}
+
+export function substituteReceiptPreparationHref(companyId: string, expenseId: string, summary: Record<string, unknown> | null): string {
+  return `/companies/${encodeURIComponent(companyId)}/expenses/substitute-receipts/new?expenseId=${encodeURIComponent(expenseId)}`
+    + (isCheckBillClassification(summary) ? '&route=check-bill' : '');
 }
 
 export type ExpenseSummary = {
@@ -333,6 +341,7 @@ export type ExpenseDetail = ExpenseSummary & {
   discountAmount: string;
   taxableAmount: string;
   whtAmount: string;
+  whtInputJson?: ExpenseWhtCapture | null;
   paymentMethod: ExpensePaymentMethod | null;
   paidAt: string | null;
   accountHintKey: string | null;
@@ -374,6 +383,7 @@ export type ExpenseDetail = ExpenseSummary & {
     discountAmount: string;
     taxableAmount: string;
     vatRate: string | null;
+    vatTreatment?: ExpenseLineVatTreatment | null;
     vatAmount: string;
     whtRate: string | null;
     whtAmount: string;
@@ -420,12 +430,14 @@ export type ExpenseDraftReviewValues = {
   expenseDate: string;
   vatMode: ExpenseVatMode;
   vatSource?: ExpenseVatSourceInput;
+  whtInput?: ExpenseWhtInput;
   lines: Array<{
     description: string;
     quantity: string;
     unitPrice: string;
     discountAmount: string;
     vatRate: string;
+    vatTreatment?: ExpenseLineVatTreatment | null;
     whtRate: string | null;
     expenseCategoryId: string | null;
     accountHintKey: string | null;
@@ -435,6 +447,34 @@ export type ExpenseDraftReviewValues = {
     transactionContext?: import('@watchdog-bms/contracts').TransactionTaxContext;
   }>;
 };
+
+export function reviewValues(detail: ExpenseDetail): ExpenseDraftReviewValues {
+  return {
+    vendorNameSnapshot: detail.vendorNameSnapshot ?? '',
+    vendorTaxIdSnapshot: detail.vendorTaxIdSnapshot ?? '',
+    vendorEntityKindSnapshot: detail.vendorEntityKindSnapshot ?? '',
+    vendorDocumentNumber: detail.vendorDocumentNumber ?? '',
+    expenseDate: detail.expenseDate.slice(0, 10),
+    vatMode: detail.vatMode,
+    vatSource: expenseVatSourceFromSnapshot(detail.vatCaptureSnapshotJson),
+    ...(detail.whtInputJson && { whtInput: { inputType: detail.whtInputJson.inputType, value: detail.whtInputJson.value } }),
+    lines: detail.lines.map((line) => ({
+      description: line.description,
+      quantity: line.quantity,
+      unitPrice: line.unitPrice,
+      discountAmount: line.discountAmount,
+      vatRate: line.vatRate ?? '',
+      vatTreatment: line.vatTreatment ?? null,
+      whtRate: line.whtRate,
+      expenseCategoryId: line.expenseCategoryId,
+      accountHintKey: line.accountHintKey,
+      taxCategory: line.taxCategory,
+      taxCodeDefinitionId: line.taxSnapshot?.taxCodeDefinitionId ?? null,
+      externalTaxCode: line.taxSnapshot?.externalTaxCode ?? null,
+      transactionContext: line.taxSnapshot?.taxContext ?? 'DOMESTIC_PURCHASE',
+    })),
+  };
+}
 
 export function allowsDomesticInputTaxCode(
   sourceDocumentType: SourceDocumentType,
@@ -479,6 +519,7 @@ export function buildExpenseDraftReviewPayload(values: ExpenseDraftReviewValues)
     expenseDate: values.expenseDate,
     vatMode: values.vatMode,
     ...(values.vatSource && { vatSource: values.vatSource }),
+    ...(values.whtInput && { whtInput: values.whtInput }),
     lines: values.lines.map((line, index) => ({
       lineNumber: index + 1,
       description: line.description.trim(),
@@ -488,7 +529,8 @@ export function buildExpenseDraftReviewPayload(values: ExpenseDraftReviewValues)
       // Spec §19g decision 1: send the rate even when blank. Dropping it let the server fall back to
       // its own default, so the totals previewed here were not the totals stored.
       vatRate: line.vatRate,
-      ...(line.whtRate && { whtRate: line.whtRate }),
+      ...(line.vatTreatment !== undefined && { vatTreatment: line.vatTreatment }),
+      ...(!values.whtInput && line.whtRate && { whtRate: line.whtRate }),
       ...(line.expenseCategoryId && { expenseCategoryId: line.expenseCategoryId }),
       ...(line.accountHintKey && { accountHintKey: line.accountHintKey }),
       ...(line.taxCategory && { taxCategory: line.taxCategory }),
@@ -769,32 +811,35 @@ export function expenseDocumentWhtRate(lines: Array<{ whtRate: string | null }>)
   return rates.every((rate) => rate === rates[0]) ? rates[0] ?? '' : null;
 }
 
-/**
- * Spec §19g decision 4 — the ways a reviewer can express the same stored fraction.
- *
- * Plan 13.11.B renames these into the shop owner's words: มี VAT 7% / ไม่มี VAT หรือได้รับยกเว้น /
- * อัตราอื่น / ยังไม่แน่ใจ. `exempt` and `zero` are two different tax facts (ผัก/ผลไม้ are exempt;
- * an export is zero-rated) that both store the rate `0`, because the engine's only line-level VAT
- * input is the numeric rate — see the gap noted beside the option list in ExpensesPages.
- */
-export type ExpenseVatRatePreset = 'unset' | 'standard' | 'exempt' | 'zero' | 'custom';
+/** Explicit input (including zero) wins over the previous saved total and line rates. */
+export function expenseReviewWithholdsTax(values: ExpenseDraftReviewValues, savedWhtAmount?: string | null): boolean {
+  return values.whtInput
+    ? Number(values.whtInput.value) > 0
+    : Number(savedWhtAmount) > 0 || values.lines.some((line) => Number(line.whtRate) > 0);
+}
 
-export function vatRatePreset(vatRate: string): ExpenseVatRatePreset {
+export type ExpenseVatRatePreset = 'unset' | 'standard' | 'exempt' | 'zero' | 'nonVat' | 'unknownZero' | 'custom';
+
+export function vatRatePreset(vatRate: string, vatTreatment?: ExpenseLineVatTreatment | null): ExpenseVatRatePreset {
   if (vatRate.trim() === '') return 'unset';
   const rate = Number(vatRate);
   if (!Number.isFinite(rate)) return 'custom';
   if (Math.abs(rate - 0.07) <= 0.0002) return 'standard';
-  // A stored 0 reads back as the plan's headline case (ไม่มี VAT/ได้รับยกเว้น); a reviewer who meant
-  // zero-rated export keeps that choice on screen for as long as the form is open.
-  if (rate === 0) return 'exempt';
+  // A legacy zero tells us the amount, not why VAT does not apply. Never invent its tax meaning.
+  if (rate === 0) return vatTreatment === 'EXEMPT' ? 'exempt' : vatTreatment === 'ZERO_RATED' ? 'zero'
+    : vatTreatment === 'NON_VAT' ? 'nonVat' : 'unknownZero';
   return 'custom';
+}
+
+export function vatTreatmentForPreset(preset: string): ExpenseLineVatTreatment | null {
+  return preset === 'exempt' ? 'EXEMPT' : preset === 'zero' ? 'ZERO_RATED' : preset === 'nonVat' ? 'NON_VAT' : null;
 }
 
 /** Switching to `custom` keeps whatever rate is already there so the reviewer edits it rather than
  *  losing it; the standard/exempt/zero presets are literal. */
 export function vatRatePresetValue(preset: string, currentRate: string): string {
   if (preset === 'standard') return '0.07';
-  if (preset === 'exempt' || preset === 'zero') return '0';
+  if (preset === 'exempt' || preset === 'zero' || preset === 'nonVat' || preset === 'unknownZero') return '0';
   if (preset === 'custom') return vatRatePreset(currentRate) === 'unset' ? '' : currentRate;
   return '';
 }

@@ -1,10 +1,11 @@
-import { ConflictException, Inject, Injectable, Optional, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, Optional, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { verifyPassword } from '../../domain/logic/password-credential.logic';
 import { generateRawToken, hashToken } from '../../domain/logic/secure-token.logic';
 import { AUTH_MAILER_TOKEN, type AuthMailerPort } from '../../domain/ports/auth-mailer.port';
 import { AuditService } from '../../../audit/application/audit.service';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
+import { CURRENT_PASSWORD_INCORRECT } from './change-password.use-case';
 
 const EMAIL_VERIFICATION_TTL_MS = 15 * 60 * 1000;
 
@@ -29,8 +30,11 @@ export class RequestEmailChangeUseCase {
     });
     const credential = user?.credential;
 
-    if (!user || !credential || credential.status === 'DISABLED' || !verifyPassword(input.currentPassword, credential.passwordHash)) {
+    if (!user || !credential || credential.status === 'DISABLED') {
       throw new UnauthorizedException('Current password is incorrect.');
+    }
+    if (!verifyPassword(input.currentPassword, credential.passwordHash)) {
+      throw new BadRequestException(CURRENT_PASSWORD_INCORRECT);
     }
 
     if (user.email === newEmail && user.emailVerifiedAt) {

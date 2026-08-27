@@ -36,6 +36,33 @@ function setup() {
 }
 
 describe('CreateExpenseDraftUseCase amount persistence boundary', () => {
+  it('persists an exact baht input and accepted WHT without inventing a rate', async () => {
+    const { useCase, created, upserted } = setup();
+    await useCase.execute(ctx, {
+      ...input([{ lineNumber: 1, description: 'Service', quantity: '1', unitPrice: '1234.56' }]),
+      whtInput: { inputType: 'AMOUNT', value: '30.01' },
+    });
+    assert.deepEqual(created[0].whtInputJson, { inputType: 'AMOUNT', value: '30.01', origin: 'REVIEWER' });
+    assert.equal(created[0].whtAmount, '30.0100');
+    assert.equal(created[0].grandTotalAmount, '1234.5600');
+    assert.equal(created[0].netPayableAmount, '1204.5500');
+    assert.equal(upserted[0].whtRate, null);
+    assert.equal(upserted[0].whtAmount, created[0].whtAmount);
+  });
+
+  it('rejects malformed/excess baht source before creating anything', async () => {
+    for (const whtInput of [{ inputType: 'AMOUNT', value: '100.01' }, { inputType: 'RATE', value: '3.001' },
+      { inputType: 'RATE', value: '3', origin: 'OCR' }]) {
+      const { useCase, created, upserted } = setup();
+      await assert.rejects(() => useCase.execute(ctx, {
+        ...input([{ lineNumber: 1, description: 'Service', quantity: '1', unitPrice: '100' }]),
+        whtInput,
+      } as any));
+      assert.equal(created.length, 0);
+      assert.equal(upserted.length, 0);
+    }
+  });
+
   it('rejects malformed input before creating a database record', async () => {
     const { useCase, created } = setup();
     await assert.rejects(
@@ -66,6 +93,31 @@ describe('CreateExpenseDraftUseCase amount persistence boundary', () => {
     assert.equal(created[0].subtotalAmount, '99999999999999.9900');
     assert.equal(created[0].grandTotalAmount, '99999999999999.9900');
     assert.equal(upserted[0].lineSubtotalAmount, '99999999999999.9900');
+  });
+
+  it('creates mixed-VAT lines with independent zero treatment and no invented historical meaning', async () => {
+    const { useCase, created, upserted } = setup();
+    await useCase.execute(ctx, {
+      ...input([
+        { lineNumber: 1, description: 'Taxable', quantity: '1', unitPrice: '100', vatRate: '0.07' },
+        { lineNumber: 2, description: 'Exempt', quantity: '1', unitPrice: '50', vatRate: '0', vatTreatment: 'EXEMPT' },
+        { lineNumber: 3, description: 'Legacy zero', quantity: '1', unitPrice: '20', vatRate: '0' },
+      ]),
+      vatMode: 'VAT_EXCLUDED',
+    });
+    assert.equal(created[0].grandTotalAmount, '177.0000');
+    assert.deepEqual(upserted.map((line) => line.vatTreatment), [null, 'EXEMPT', null]);
+    assert.deepEqual(upserted.map((line) => line.vatAmount), ['7.0000', '0.0000', '0.0000']);
+  });
+
+  it('rejects a line source that overrides an explicit zero treatment before creating the record', async () => {
+    const { useCase, created } = setup();
+    await assert.rejects(() => useCase.execute(ctx, {
+      ...input([{ lineNumber: 1, description: 'Exempt', quantity: '1', unitPrice: '100', vatRate: '0', vatTreatment: 'EXEMPT' }]),
+      vatMode: 'VAT_EXCLUDED',
+      vatSource: { inputType: 'NONE', lines: [{ lineNumber: 1, inputType: 'RATE', vatRatePercent: '7' }] },
+    }), /requires an explicit zero VAT rate/);
+    assert.equal(created.length, 0);
   });
 });
 

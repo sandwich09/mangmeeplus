@@ -161,6 +161,18 @@ export type SubstituteReceiptEvidenceStatus = 'PREPARED' | 'PAYER_CERTIFIED' | '
 export type SubstituteReceiptCashEvidencePolicy =
   | 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE'
   | 'ALLOW_SUPPORTING_EVIDENCE_ONLY';
+
+/** Check bills never prove payment, including cash and finance-overridden classifications. */
+export function substituteReceiptRequiresPaymentEvidence(
+  summary: Record<string, unknown> | null | undefined,
+  paymentMethod: ExpensePaymentMethod | null | undefined,
+  cashEvidencePolicy?: SubstituteReceiptCashEvidencePolicy | null,
+): boolean {
+  return isCheckBillClassification(summary)
+    || Boolean(paymentMethod && paymentMethod !== 'CASH')
+    || cashEvidencePolicy === 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE';
+}
+
 export type SubstituteReceiptApprovalMode = 'OWNER_SELF' | 'DESIGNATED_APPROVERS';
 export type SubstituteReceiptReasonCode =
   | 'PAYEE_CANNOT_ISSUE'
@@ -254,6 +266,7 @@ export type ExpenseVatSourceOrigin = 'OCR' | 'REVIEWER' | 'IMPORT';
 export type ExpenseVatReconciliationStatus =
   | 'NOT_APPLICABLE'
   | 'MATCHED'
+  | 'REVIEWER_ACCEPTED'
   | 'CALCULATED_ONLY'
   | 'SOURCE_ONLY'
   | 'MISMATCH'
@@ -334,6 +347,8 @@ export type ExpenseVatCaptureSnapshotV1 = {
 export type ExpenseVatSourceOverrideInput = {
   reason: string;
   vatLineNumber: number;
+  /** Bind the decision to the saved values the reviewer actually saw. */
+  expectedUpdatedAt: string;
 };
 
 export type ConfirmExpenseRequest = {
@@ -434,6 +449,27 @@ export type ExpenseCategorySummary = {
   sortOrder: number;
 };
 
+/** Source intent only: RATE uses percent (3 = 3%); AMOUNT uses baht. */
+export type ExpenseWhtInput = { inputType: 'RATE' | 'AMOUNT'; value: string };
+export type ExpenseWhtCapture = ExpenseWhtInput & { origin: 'REVIEWER' | 'OCR' };
+/** HTTP bodies are contract types rather than DTO classes; validate source intent at runtime. */
+export function validateExpenseWhtInput(input: unknown): string | null {
+  if (input === undefined) return null;
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return 'whtInput must be an object.';
+  const value = input as Record<string, unknown>;
+  if (Object.keys(value).some((key) => key !== 'inputType' && key !== 'value')) {
+    return 'whtInput contains server-owned or unsupported fields.';
+  }
+  if (value.inputType !== 'RATE' && value.inputType !== 'AMOUNT') return 'whtInput.inputType must be RATE or AMOUNT.';
+  if (typeof value.value !== 'string' || !/^(?:0|[1-9]\d{0,13})(?:\.\d{1,2})?$/.test(value.value)) {
+    return 'WHT value must be non-negative with at most two decimal places and fit Decimal(18,4).';
+  }
+  if (value.inputType === 'RATE' && Number(value.value) > 100) return 'WHT percent must be between 0 and 100.';
+  return null;
+}
+/** An explicit zero treatment, independent of claimability and a selected Tax Code. */
+export type ExpenseLineVatTreatment = 'ZERO_RATED' | 'EXEMPT' | 'NON_VAT';
+
 export type ExpenseLineSummary = {
   id: string;
   lineNumber: number;
@@ -443,6 +479,7 @@ export type ExpenseLineSummary = {
   discountAmount: string;
   taxableAmount: string;
   vatRate: string | null;
+  vatTreatment?: ExpenseLineVatTreatment | null;
   vatAmount: string;
   whtRate: string | null;
   whtAmount: string;
@@ -555,6 +592,7 @@ export type ExpenseDetail = ExpenseSummary & {
   aiVerifiedFieldsJson: Record<string, unknown> | null;
   aiVerificationSummaryJson: Record<string, unknown> | null;
   vatCaptureSnapshotJson: ExpenseVatCaptureSnapshotV1 | null;
+  whtInputJson?: ExpenseWhtCapture | null;
   aiVerificationConfidence: number | null;
   aiVerifiedAt: string | null;
   note: string | null;
@@ -596,6 +634,7 @@ export type CreateExpenseDraftInput = {
   note?: string;
   missingReceiptReason?: string;
   vatSource?: ExpenseVatSourceInput;
+  whtInput?: ExpenseWhtInput;
   lines: Array<{
     lineNumber: number;
     description: string;
@@ -603,6 +642,7 @@ export type CreateExpenseDraftInput = {
     unitPrice: string;
     discountAmount?: string;
     vatRate?: string;
+    vatTreatment?: ExpenseLineVatTreatment | null;
     whtRate?: string;
     expenseCategoryId?: string;
     accountHintKey?: string;

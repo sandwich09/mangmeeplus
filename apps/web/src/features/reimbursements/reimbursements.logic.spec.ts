@@ -88,6 +88,15 @@ describe('validatePaymentForm', () => {
 });
 
 describe('validateRequestForm (multi-line claim)', () => {
+  it('accepts past/today but identifies a future or malformed row without changing its value', () => {
+    const rows = [line({ incurredDate: '2026-08-26' }), line({ incurredDate: '2026-08-27' })];
+    assert.equal(validateRequestForm({ reason: 'r', lines: rows }, '2026-08-27'), null);
+    rows[1]!.incurredDate = '2026-08-28';
+    assert.match(validateRequestForm({ reason: 'r', lines: rows }, '2026-08-27') ?? '', /รายการที่ 2: วันที่รายการเบิกต้องไม่เกินวันนี้/);
+    assert.equal(rows[1]!.incurredDate, '2026-08-28');
+    rows[1]!.incurredDate = '2026-02-30';
+    assert.match(validateRequestForm({ reason: 'r', lines: rows }, '2026-08-27') ?? '', /รายการที่ 2: กรุณาระบุวันที่รายการเบิกให้ถูกต้อง/);
+  });
   it('accepts a claim with several complete rows', () => {
     assert.equal(validateRequestForm({ reason: 'r', lines: [line(), line({ amount: '50', description: 'ที่พัก' })] }), null);
   });

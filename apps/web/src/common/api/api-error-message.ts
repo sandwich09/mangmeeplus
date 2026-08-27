@@ -28,6 +28,8 @@ const CODE_LABELS: Record<string, string> = {
   reimbursement_changed: 'คำขอเบิกถูกแก้ไขระหว่างทำรายการ กรุณาเปิดรายการใหม่แล้วลองอีกครั้ง',
   reimbursement_draft_changed:
     'ใบเบิกถูกแก้ไขหรือส่งอนุมัติแล้ว กรุณาเปิดรายการใหม่ ตรวจสอบข้อมูล แล้วลองอีกครั้ง',
+  line_incurred_date_invalid: 'กรุณาระบุวันที่รายการเบิกให้ถูกต้อง',
+  line_incurred_date_in_future: 'วันที่รายการเบิกต้องไม่เกินวันนี้ (เวลาไทย) กรุณาแก้ไขวันที่ก่อนส่งอนุมัติ',
   expense_auto_post_not_enabled: 'ต้องเปิดระบบบัญชีแยกประเภทและ Auto-post ค่าใช้จ่ายก่อน',
   // Onboarding bootstrap: the standard expense-category template names accounts the company's
   // chart does not offer, so no category was seeded. The operator cannot fix this from the screen.
@@ -98,7 +100,15 @@ const CODE_LABELS: Record<string, string> = {
   EXPENSE_VAT_RECONCILIATION_REQUIRED:
     'VAT จากเอกสารยังไม่ตรงกับที่ระบบคำนวณ กรุณาดูรายการที่ต้องตรวจในการ์ด VAT แล้วแก้ไข หรือเลือก “ใช้ยอดตามเอกสาร” พร้อมระบุเหตุผล',
   EXPENSE_VAT_OVERRIDE_INVALID:
-    'ต้องเลือกรายการที่มี VAT เพื่อรับส่วนต่าง และกรอกเหตุผลก่อน จึงจะใช้ยอด VAT ตามเอกสารได้',
+    'ยังใช้ยอด VAT ตามเอกสารไม่ได้ กรุณาตรวจยอดต้นฉบับและอัตรา VAT ให้ครบ บันทึกข้อมูลล่าสุด แล้วเลือกรายการที่มี VAT เพื่อรับส่วนต่างพร้อมระบุเหตุผล',
+  EXPENSE_VAT_TAX_TOLERANCE_REQUIRED:
+    'VAT ตามเอกสารต่างเกินเกณฑ์ของ Tax Code กรุณาตรวจเอกสารและ Tax Code ก่อนยืนยัน การเลือกใช้ยอดตามเอกสารไม่สามารถข้ามเกณฑ์ภาษีนี้ได้',
+  EXPENSE_VAT_TAX_RATE_CONFLICT:
+    'อัตรา VAT ของรายการไม่ตรงกับ Tax Code กรุณาแก้อัตราหรือเลือก Tax Code ให้ตรงกับเอกสารก่อนยืนยัน',
+  EXPENSE_VAT_OVERRIDE_STALE:
+    'ข้อมูลค่าใช้จ่ายเปลี่ยนแล้ว กรุณาโหลดใหม่ ตรวจยอด VAT ล่าสุด แล้วเลือกใช้ยอดตามเอกสารอีกครั้ง',
+  expense_confirmation_accepted_vat_changed:
+    'ยอด VAT ขั้นสุดท้ายไม่ตรงกับยอดที่ยอมรับ กรุณาตรวจเอกสารและ Tax Code อีกครั้ง ยังไม่มีการยืนยันรายการ',
   EXPENSE_CHANGED_DURING_DELETE: 'รายการถูกแก้ไขระหว่างการลบ กรุณาโหลดข้อมูลใหม่แล้วลองอีกครั้ง',
   EXPENSE_NOT_DELETABLE: 'ลบรายการค่าใช้จ่ายนี้ไม่ได้ในสถานะปัจจุบัน กรุณาตรวจสอบสถานะเอกสาร',
   EXPENSE_HAS_LINKED_DATA: 'ลบรายการไม่ได้ เพราะมีข้อมูลอื่นเชื่อมโยงอยู่ กรุณาตรวจสอบรายการที่เกี่ยวข้องก่อน',
@@ -135,6 +145,20 @@ const CODE_LABELS: Record<string, string> = {
     'ประเภทเอกสารต้นทางยังไม่ผ่านการตรวจหรือไม่รองรับใบรับรองแทนใบเสร็จ กรุณาตรวจและเลือกประเภทเอกสารให้ถูกต้อง',
   check_bill_route_ineligible:
     'ทำขั้นตอนนี้ได้เฉพาะเช็กบิลที่จ่ายแล้วแต่ร้านไม่มีใบเสร็จ กรุณากลับไปตรวจเอกสารและตอบเรื่องการจ่ายเงินก่อน',
+  check_bill_route_required:
+    'เปิดขั้นตอนจัดทำใบรับรองของรายการเดิม ยืนยันว่าจ่ายแล้วแต่ไม่มีใบเสร็จฉบับสุดท้าย และแนบหลักฐานการชำระเงินแยกจากเช็กบิล',
+  check_bill_payment_evidence_required:
+    'เช็กบิลไม่ใช่หลักฐานการจ่าย กรุณาแนบหลักฐานการชำระเงินจริงแยกจากเช็กบิล แม้จ่ายเงินสด แล้วจัดทำใบรับรองของรายการเดิมต่อ',
+  payment_evidence_required:
+    'กรุณาแนบหลักฐานการชำระเงินจริงแยกจากเอกสารต้นทางก่อนจัดทำใบรับรอง',
+  substitute_evidence_overlap:
+    'ใช้ไฟล์เดียวกันเป็นทั้งเช็กบิลหรือเอกสารต้นทางและหลักฐานชำระเงินไม่ได้ กรุณาเลือกหลักฐานการจ่ายคนละไฟล์',
+  substitute_evidence_unavailable:
+    'หลักฐานที่เลือกไม่มีพร้อมใช้ในรายการนี้ กรุณาโหลดรายการใหม่แล้วเลือกหรือแนบหลักฐานอีกครั้ง',
+  substitute_payment_evidence_invalid:
+    'กรุณาแนบรูปหรือ PDF หลักฐานการชำระเงินจริงในช่องหลักฐานการจ่าย โดยใช้คนละไฟล์กับเช็กบิลหรือเอกสารต้นทาง',
+  substitute_expense_changed:
+    'รายการถูกแก้ไขหลังตรวจ กรุณาโหลดรายการเดิมใหม่ ตรวจข้อมูลล่าสุด แล้วจัดทำใบรับรองอีกครั้ง',
   valid_receipt_normal_path:
     'เอกสารนี้มีใบเสร็จหรือใบกำกับภาษีที่ใช้ได้ ให้ดำเนินการตามขั้นตอนปกติ ใบรับรองแทนใบเสร็จใช้ได้เมื่อต้นฉบับไม่มีหรือข้อมูลสำคัญไม่ครบเท่านั้น',
   classification_ineligible:
@@ -168,6 +192,8 @@ const CODE_LABELS: Record<string, string> = {
   tax_period_locked: 'งวดภาษีของเอกสารนี้ถูกล็อกแล้ว ให้ใช้การปรับปรุงหรือยื่นแบบเพิ่มเติมแทน',
 
   // ---- รายการเบิกจ่าย: ส่งใบเบิก ----
+  missing_receipt:
+    'ยังส่งไม่ได้ตามนโยบายใบเสร็จของบริษัท กรุณาเปิดรายละเอียดเพื่อแนบใบเสร็จหรือแก้ไขคำขอ',
   missing_receipt_reason_required:
     'มีรายการที่ยังไม่แนบหลักฐาน กรุณาระบุเหตุผลที่ไม่มีใบเสร็จก่อนส่งใบเบิก',
   duplicate_unresolved: 'ระบบพบใบเบิกที่อาจซ้ำกับรายการเดิม นโยบายบริษัทกำหนดให้ตรวจสอบก่อนจึงจะส่งได้',
@@ -266,6 +292,8 @@ const CODE_LABELS: Record<string, string> = {
   // ---- พนักงาน: เพิ่ม/แก้ไข ----
   // แต่ละโค้ดชี้ช่องที่ชนจริง เพราะหน้าเพิ่มพนักงานมีหลายช่องที่ต้องไม่ซ้ำ
   employee_identity_conflict: 'มีพนักงานที่ใช้เลขบัตรประชาชนหรือพาสปอร์ตนี้อยู่แล้ว',
+  employee_draft_not_found: 'ไม่พบพนักงานนี้แล้ว กรุณาโหลดรายชื่อพนักงานใหม่',
+  employee_draft_not_deletable: 'ลบได้เฉพาะร่างพนักงานที่ยังไม่เสร็จสิ้น กรุณาตรวจสอบสถานะล่าสุด',
   employee_phone_conflict: 'มีพนักงานที่ใช้เบอร์โทรศัพท์นี้อยู่แล้ว',
   employee_email_conflict: 'มีผู้ใช้ที่ใช้อีเมลนี้อยู่แล้ว',
   employee_username_conflict: 'ชื่อผู้ใช้นี้ถูกใช้ไปแล้ว กรุณาตั้งชื่อผู้ใช้อื่น',
@@ -286,6 +314,7 @@ const CODE_LABELS: Record<string, string> = {
   // ---- เข้าสู่ระบบ / บัญชีผู้ใช้ ----
   password_change_required: 'ต้องเปลี่ยนรหัสผ่านก่อนเข้าใช้งาน',
   password_reuse: 'รหัสผ่านใหม่ต้องไม่ซ้ำกับรหัสผ่านเดิม',
+  current_password_incorrect: 'รหัสผ่านปัจจุบันไม่ถูกต้อง',
   company_access_unavailable: 'คุณไม่มีสิทธิ์เข้าใช้บริษัทนี้แล้ว กรุณาติดต่อเจ้าของร้าน',
 
   // ---- ยอมรับข้อกำหนดการใช้งาน ----
@@ -541,6 +570,9 @@ export function translateApiError(raw: string): string | null {
   if (!text) return null;
   if (MESSAGE_LABELS[text]) return MESSAGE_LABELS[text];
   if (CODE_LABELS[text]) return CODE_LABELS[text];
+  // Line validation can join multiple failures; the toast names the first date to fix.
+  const incurredDate = /^(line_incurred_date_(?:invalid|in_future)):([1-9]\d?)(?:,|$)/.exec(text);
+  if (incurredDate) return `รายการที่ ${incurredDate[2]}: ${CODE_LABELS[incurredDate[1]!]}`;
   // Conflicts carry their detail inline, e.g. `..._accounting_period_locked:2026-07`.
   const prefix = Object.keys(CODE_LABELS).find((code) => text.startsWith(`${code}:`));
   if (prefix) return CODE_LABELS[prefix]!;
@@ -551,8 +583,32 @@ export function translateApiError(raw: string): string | null {
   return null;
 }
 
+// The substitute workflow shares these codes with LINE; never display raw server diagnostics.
+const SUBSTITUTE_ERROR_LABELS_EN: Record<string, string> = {
+  check_bill_route_required: 'Open the substitute-receipt wizard for the same expense, confirm payment without a final receipt, and attach separate proof of payment.',
+  check_bill_route_ineligible: 'This route is only for a paid check bill without a final receipt. Reload and review the source document before continuing.',
+  check_bill_payment_evidence_required: 'A check bill is not proof of payment. Attach separate proof of actual payment, including cash, then continue with the same expense.',
+  payment_evidence_required: 'Attach proof of actual payment separate from the source document before preparing the certificate.',
+  substitute_evidence_overlap: 'The source document and payment proof cannot be the same file. Select separate proof of payment.',
+  substitute_evidence_unavailable: 'Selected evidence is no longer available for this expense. Reload the expense and select or upload evidence again.',
+  substitute_payment_evidence_invalid: 'Upload a separate image or PDF of actual payment in the payment-evidence field. The check bill or source document cannot serve as payment proof.',
+  substitute_expense_changed: 'The expense changed after review. Reload the same expense, review the latest details, and prepare again.',
+  expense_stale_reload: 'The expense changed after review. Reload the same expense before preparing the certificate.',
+  expense_status_ineligible: 'Only draft, in-review, or ready-for-confirmation expenses can be prepared. Review the current expense status.',
+  source_type_ineligible: 'Review the source document type on the same expense before preparing a certificate.',
+  valid_receipt_normal_path: 'A usable receipt or tax invoice belongs in the normal receipt flow. A substitute is only for an unavailable or materially incomplete original.',
+  classification_ineligible: 'This document is not supported expense evidence. Attach readable expense evidence and review its classification.',
+  document_kind_ineligible: 'Quotations, purchase orders, appointments, bookings, and non-expense images cannot support a substitute receipt. Attach appropriate expense evidence.',
+  currency_not_supported: 'Substitute receipts currently support THB expenses only.',
+  reviewed_total_required: 'Review and confirm an expense total greater than zero before preparing.',
+  reviewed_items_required: 'Review and complete all expense item descriptions before preparing.',
+  reviewed_category_required: 'Review and select the expense category or account before preparing.',
+  tax_evidence_review_required: 'Complete the tax-evidence review on the same expense before preparing.',
+  tax_evidence_nonclaimable: 'Substitute receipts cannot support input VAT claims. Use non-claimable supporting evidence or request a replacement tax invoice.',
+};
+
 /** Customer copy for a caught error; raw API diagnostics remain on the original object. */
-export function apiErrorMessage(e: unknown): string {
+export function apiErrorMessage(e: unknown, locale: 'th' | 'en' = 'th'): string {
   const error = e as {
     message?: unknown;
     code?: unknown;
@@ -566,6 +622,7 @@ export function apiErrorMessage(e: unknown): string {
     : undefined;
   const code = error?.code ?? details?.code;
   if (typeof code === 'string') {
+    if (locale === 'en' && SUBSTITUTE_ERROR_LABELS_EN[code]) return SUBSTITUTE_ERROR_LABELS_EN[code]!;
     const byCode = translateApiError(code);
     if (byCode) return byCode;
   }

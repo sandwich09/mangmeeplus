@@ -2,7 +2,7 @@
 
 ## 1. Status
 
-- Status: Full same-expense Web + LINE implementation in progress locally
+- Status: Core delivered; recovery/proof completion verified and integrated into develop, 2026-08-27. No deployment; browser limits recorded in scoped memory.
 - Owner request: 2026-08-24
 - Product area: Expenses / document extraction / substitute-receipt routing
 - Primary incident: Production company `MangmeePlus` (`บริษัท มั่งมียั่งยืน จำกัด`) accepted a restaurant check bill into expense review, showed six green checks, exposed an inline substitute-receipt form, and then returned an unactionable HTTP 400 after the user completed the form.
@@ -14,6 +14,22 @@
 The first local slice changed only the web application. The owner has now expanded the implementation to the API and LINE journey. The temporary new-expense workaround must be removed before handoff.
 
 The final implementation reuses the same expense. A paid-without-final-receipt decision is carried as explicit input into substitute preparation, then revalidated and committed together with the prepared evidence in the existing database transaction. No replacement expense is created, so there is no old row to auto-cancel. A failed or stale prepare leaves the item classified as a blocked check bill and is safe to retry.
+
+### 1.2 Recovery completion (owner direction, 2026-08-27)
+
+Check bill is an itemized supporting document, not a receipt or proof of payment by itself.
+For this classification only, separate real payment evidence is mandatory for every payment
+method, including CASH with permissive or missing company policy. This overrides the earlier
+cash exception below; ordinary non-check-bill cash policy remains unchanged. The original check
+bill cannot be selected as payment evidence, even through another purpose link or finance override.
+
+Every new preparation enters the existing canonical wizard on the same expense. A raw check
+bill remains routable after finance correction and through an ordinary deep link/picker; the
+current saved classification, not a client route flag, determines its payment-proof requirement.
+This does not revoke a genuine finance misclassification correction's normal receipt path or
+alter final-receipt replacement. Existing PREPARED edits, history, signatures and approval remain.
+No historical certificates are rewritten or removed. Known API failures carry stable codes with
+actionable messages; unknown failures retain the safe fallback.
 
 ## 2. Executive Product Decision
 
@@ -125,7 +141,7 @@ Age is not used as a proxy for ability. The interface is deliberately designed f
 - Do not turn a customer/employee signature on a check bill into merchant settlement evidence.
 - Do not label a check bill as a receipt merely because it includes a tax ID, VAT amount, or a total due.
 - Do not make an internal certificate a tax invoice or input-VAT document.
-- Do not auto-confirm that payment occurred from the user's tap alone; required payment evidence and company cash policy remain authoritative.
+- Do not auto-confirm payment from a tap alone; check bills always need separate payment proof. Company cash policy remains authoritative for ordinary non-check-bill expenses.
 - Do not add a generic document-management system, new OCR provider, new AI agent, or dependency.
 - Do not automatically delete the original draft or attachment.
 - Do not broaden quotation, purchase-order, appointment, booking, non-financial, unreadable, or multi-document eligibility.
@@ -187,7 +203,7 @@ Required copy:
 
 **Explanation**
 
-> เราเห็นยอดที่ต้องจ่าย แต่ยังไม่เห็นหลักฐานว่าร้านได้รับเงินแล้ว จึงใช้เอกสารใบนี้เพียงใบเดียวยืนยันค่าใช้จ่ายไม่ได้
+> เช็กบิลแสดงรายการและยอดที่ต้องจ่าย แต่ยังไม่ยืนยันว่าร้านรับเงินแล้ว เอกสารนี้ใช้เป็นหลักฐานยืนยันค่าใช้จ่ายโดยลำพังไม่ได้
 
 **Question**
 
@@ -231,7 +247,7 @@ Then ask for payment evidence using examples that match the payment method:
 
 - card: card slip or matching bank/card transaction;
 - transfer: transfer slip or matching bank transaction;
-- cash: follow current company cash-evidence policy and expose the existing printable payment-voucher route when appropriate.
+- cash: attach separate actual payment evidence; the existing printable payment voucher is only a blank form until completed and supported by real payment evidence.
 
 The primary action is:
 
@@ -333,7 +349,7 @@ The wizard leads with a short visible limitation: this certificate is not a tax 
    - `SUPPORTING_ONLY` tax evidence and `NON_CLAIMABLE` input VAT;
    - a supported missing-receipt reason;
    - current payer/approval policy; and
-   - payment evidence according to payment method/company cash policy.
+   - separate actual payment evidence for every method, including cash and permissive/missing cash policy.
 5. A routing resolution never changes or deletes the original classification.
 6. A new extraction/classification revision invalidates a stale routing resolution until reviewed again.
 7. A route resolution may unblock mark-ready, but final confirmation still requires a current `ISSUED` substitute artifact under existing rules.
@@ -530,7 +546,7 @@ Success indicators after rollout:
 - [ ] A paid-without-receipt choice reuses the current expense, preserves the original attachment, and enters the dedicated substitute wizard.
 - [ ] The check bill is supporting evidence, not input-VAT evidence.
 - [ ] Non-cash payment still requires separate payment evidence.
-- [ ] Cash follows current company evidence policy.
+- [ ] Cash check bills require separate real payment proof; ordinary cash policy stays unchanged.
 - [ ] No duplicate expense is created by the recovery path.
 
 ### Architecture and safety
@@ -562,7 +578,7 @@ Success indicators after rollout:
 3. Merchant-issued final receipt with paid signal → normal receipt path.
 4. Check bill + card slip, reviewed positive amount/category, explicit paid-without-receipt resolution → dedicated wizard eligible.
 5. Check bill + transfer method but no transfer proof → payment-evidence blocker shown before prepare.
-6. Cash check bill under permissive policy → supporting evidence may continue; payer/approval/signature rules remain.
+6. Cash check bill under permissive or missing policy → separate payment evidence required; payer/approval/signature rules remain.
 7. Cash check bill under strict policy → separate payment evidence required.
 8. Finance correction says image is actually a receipt, with reason → normal review can continue and audit retains original classification.
 9. Quotation with finance override → still cannot route to substitute.
@@ -593,4 +609,4 @@ No blocker is required for the first implementation slice. Proposed defaults are
 1. Reuse the existing web expense; on LINE, create the single expense only after the paid/no-final-receipt answer.
 2. Store the bounded route resolution additively in the current review summary; revisit schema only when reporting needs justify it.
 3. LINE may collect the decision and prepare the same expense, while signing and approval remain web-owned.
-4. Use the existing company cash-evidence policy without adding a special restaurant exception.
+4. Apply the 2026-08-27 check-bill-only separate-proof requirement; keep ordinary cash policy unchanged.

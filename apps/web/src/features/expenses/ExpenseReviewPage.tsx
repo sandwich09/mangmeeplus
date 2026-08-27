@@ -75,6 +75,10 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
   const [extractionLoading, setExtractionLoading] = useState(false);
   const [notice, setNotice] = useState<ExtractionNotice | null>(null);
   const [dataErrorCount, setDataErrorCount] = useState<number | null>(null);
+  const [dataErrorMessage, setDataErrorMessage] = useState<string | null>(null);
+  const onDataValidationChange = useCallback((count: number, message: string | null) => {
+    setDataErrorCount(count); setDataErrorMessage(message);
+  }, []);
   const [reason, setReason] = useState('');
   const [ocrTotalReason, setOcrTotalReason] = useState('');
   const [showReject, setShowReject] = useState(false);
@@ -527,7 +531,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
   const stepIndex = steps.findIndex((entry) => entry.key === step);
   const detailsStepDone = steps.some((entry) => entry.key === 'data' && entry.state === 'done');
   const validationBlockMessage = dataErrorCount && dataErrorCount > 0
-    ? t('expenses.v_blocking_count', locale).replace('{count}', String(dataErrorCount))
+    ? dataErrorMessage ?? t('expenses.v_blocking_count', locale).replace('{count}', String(dataErrorCount))
     : undefined;
 
   const pageTitle = (
@@ -575,6 +579,17 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
       <div className="flex flex-col gap-2 sm:ml-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
         {guided && (
           <>
+            {step === 'data' && validationBlockMessage && (
+              <div className="max-w-lg text-sm text-error-600">
+                <p id={`expense-review-block-${detail.id}`} role="status">{validationBlockMessage}</p>
+                <button type="button" className="mt-1 font-semibold underline underline-offset-2" onClick={() => {
+                  const section = vendorRef.current;
+                  const target = section?.querySelector<HTMLElement>('[aria-invalid="true"]') ?? section;
+                  target?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                  target?.focus({ preventScroll: true });
+                }}>{t('expenses.v_fix_fields', locale)}</button>
+              </div>
+            )}
             {stepIndex > 0 && <button className={ghostClass} disabled={stepSaving} onClick={() => void goToStep(steps[stepIndex - 1].key)}>{t('expenses.step_back', locale)}</button>}
             {step === 'review' && (
               <>
@@ -591,7 +606,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
                 )}
               </>
             )}
-            {stepIndex < steps.length - 1 && <button className={btnClass} disabled={stepSaving || (step === 'data' && dataErrorCount !== 0) || (step === 'evidence' && checkBillBlocked)} title={step === 'data' ? validationBlockMessage : step === 'evidence' && checkBillBlocked ? classificationBlockMessage : undefined} onClick={() => void goToStep(steps[stepIndex + 1].key)}>{stepSaving && step === 'data' ? t('expenses.saving', locale) : t('expenses.step_next', locale)}</button>}
+            {stepIndex < steps.length - 1 && <button className={btnClass} disabled={stepSaving || (step === 'data' && dataErrorCount !== 0) || (step === 'evidence' && checkBillBlocked)} aria-describedby={step === 'data' && validationBlockMessage ? `expense-review-block-${detail.id}` : undefined} title={step === 'data' ? validationBlockMessage : step === 'evidence' && checkBillBlocked ? classificationBlockMessage : undefined} onClick={() => void goToStep(steps[stepIndex + 1].key)}>{stepSaving && step === 'data' ? t('expenses.saving', locale) : t('expenses.step_next', locale)}</button>}
           </>
         )}
         {approverOnlyActions && (
@@ -738,8 +753,8 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
     </div>
   );
   const vendorCard = (
-    <div ref={vendorRef} className="scroll-mt-24">
-      <ExpenseReviewEditSection companyId={companyId} detail={detail} isMutable={canMutateDraft} canReview={canReview} saveRef={reviewSaveRef} vatOverrideRef={vatOverrideRef} onValidationChange={setDataErrorCount} onSaved={async () => { setDetail(await getExpense(companyId, expenseId)); onRefresh(); }} />
+    <div ref={vendorRef} className="scroll-mt-24" tabIndex={-1}>
+      <ExpenseReviewEditSection companyId={companyId} detail={detail} isMutable={canMutateDraft} canReview={canReview} saveRef={reviewSaveRef} vatOverrideRef={vatOverrideRef} onValidationChange={onDataValidationChange} onSaved={async () => { setDetail(await getExpense(companyId, expenseId)); onRefresh(); }} />
     </div>
   );
   const documentReviewCard = (

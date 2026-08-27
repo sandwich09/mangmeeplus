@@ -4,32 +4,7 @@ import {
   notificationBadgeText,
   severityColor,
   severityLabel,
-  visibleNotificationChildLinks,
 } from './dashboard-notifications.logic';
-
-describe('visibleNotificationChildLinks', () => {
-  it('shows only settings endpoints the session can manage', () => {
-    assert.deepEqual(
-      visibleNotificationChildLinks(['notification.preference.manage']),
-      ['preferences'],
-    );
-    assert.deepEqual(
-      visibleNotificationChildLinks(['notification.rule.manage']),
-      ['rules'],
-    );
-  });
-
-  it('keeps source order and ignores notification centre read access', () => {
-    assert.deepEqual(
-      visibleNotificationChildLinks([
-        'notification.rule.manage',
-        'notification.preference.manage',
-      ]),
-      ['preferences', 'rules'],
-    );
-    assert.deepEqual(visibleNotificationChildLinks(['notification.read']), []);
-  });
-});
 
 describe('notificationBadgeText', () => {
   it('hides the badge at zero or invalid counts', () => {

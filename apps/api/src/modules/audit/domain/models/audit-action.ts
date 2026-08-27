@@ -31,6 +31,7 @@ export const AuditAction = {
   ACCESS_EMPLOYEE_CREATE: 'access.employee.create',
   ACCESS_EMPLOYEE_UPDATE: 'access.employee.update',
   ACCESS_EMPLOYEE_DISABLE: 'access.employee.disable',
+  ACCESS_EMPLOYEE_DRAFT_DELETE: 'access.employee.draft.delete',
   ACCESS_EMPLOYEE_CREDENTIAL_ISSUE: 'access.employee.credential.issue',
   ACCESS_EMPLOYEE_LINE_LINK_ISSUE: 'access.employee.line_link.issue',
   ACCESS_EMPLOYEE_LINE_LINK_REVOKE: 'access.employee.line_link.revoke',

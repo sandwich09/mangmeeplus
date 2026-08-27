@@ -11,9 +11,10 @@ test.describe('NOTIF — notifications', () => {
     await gotoCompany(authedPage, companyId, '/notifications');
     await expect(authedPage.getByRole('heading', { name: /ศูนย์การแจ้งเตือน|Notifications/i })).toBeVisible();
     await expect(authedPage.getByRole('button', { name: /อ่านทั้งหมด|Read all/i })).toBeVisible();
-    // Scoped to main: the sidebar carries "ตั้งค่าบริษัท" and a "ตั้งค่าใบรับรองแทนใบเสร็จ"
-    // dropdown item, so an unscoped /ตั้งค่า/ matches three links and trips strict mode.
-    await expect(authedPage.locator('main').getByRole('link', { name: /ตั้งค่า|Preferences|Settings/i })).toBeVisible();
+    const center = authedPage.locator('main');
+    await expect(center.getByRole('button', { name: 'ยังไม่ได้อ่าน', exact: true })).toBeVisible();
+    await expect(center.getByRole('button', { name: 'ทั้งหมด', exact: true })).toBeVisible();
+    await expect(center.getByRole('link', { name: /^(ตั้งค่า|กฎ|Preferences|Settings|Rules)$/i })).toHaveCount(0);
   });
 
   test('NOTIF-02 @p1 preferences form renders and API exposes channels', async ({ authedPage, api, companyId }) => {

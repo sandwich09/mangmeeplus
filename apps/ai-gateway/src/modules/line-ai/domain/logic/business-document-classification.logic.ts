@@ -21,18 +21,32 @@ function isKnown<T extends string>(value: unknown, values: readonly T[]): value 
   return typeof value === 'string' && values.includes(value as T);
 }
 
-function parseKnownArray<T extends string>(value: unknown, values: readonly T[]): T[] | null {
-  if (value === undefined) return [];
-  if (!Array.isArray(value) || value.some((item) => !isKnown(item, values))) return null;
-  return [...new Set(value as T[])].slice(0, MAX_SIGNAL_COUNT);
-}
-
 /** Like parseKnownArray, but unknown entries are FILTERED instead of voiding the array — for
  *  descriptive fields only, never for reason codes that feed clarification gates. */
 function parseFilteredKnownArray<T extends string>(value: unknown, values: readonly T[]): T[] | null {
   if (value === undefined) return [];
   if (!Array.isArray(value)) return null;
   return [...new Set(value.filter((item): item is T => isKnown(item, values)))].slice(0, MAX_SIGNAL_COUNT);
+}
+
+/**
+ * Reason codes, kept honest without throwing the turn away (UAT 2026-08-27). A code the vocabulary
+ * does not contain used to void the whole classification, which voided the whole plan: a PTT fuel
+ * card slip the model had read perfectly was answered with "what is this picture?" because ONE
+ * field held the sentence "itemised fuel quantity/litres not shown on this slip".
+ *
+ * Discarding everything is not the safe reading of that. The model was telling us something is
+ * missing; we simply do not know its code. So the unknown entry is dropped and `sawUnknown` is
+ * reported, and the caller turns that into HUMAN_REVIEW_REQUIRED + clarification — a record a
+ * person checks, instead of no record and a confused employee. A non-array is still invalid shape
+ * (not a vocabulary miss) and still voids the classification.
+ */
+function parseReasonCodes(value: unknown): { codes: BusinessDocumentReasonCode[]; sawUnknown: boolean } | null {
+  if (value === undefined) return { codes: [], sawUnknown: false };
+  if (!Array.isArray(value)) return null;
+  const codes = parseFilteredKnownArray(value, BUSINESS_DOCUMENT_REASON_CODES);
+  if (!codes) return null;
+  return { codes, sawUnknown: value.some((item) => !isKnown(item, BUSINESS_DOCUMENT_REASON_CODES)) };
 }
 
 function parseExactSpans(value: unknown, documentText: string): string[] | null {
@@ -77,16 +91,21 @@ export function parseBusinessDocumentClassification(
   // model (e.g. "RECEIPT" for a receipt) is dropped, never allowed to void the classification —
   // rejecting the whole turn over a synonym stranded real receipts (UAT 2026-08-27).
   const evidenceRoles = parseFilteredKnownArray(raw['evidenceRoles'], BUSINESS_DOCUMENT_EVIDENCE_ROLES);
-  const missingRequiredSignals = parseKnownArray(raw['missingRequiredSignals'], BUSINESS_DOCUMENT_REASON_CODES);
-  const contradictionSignals = parseKnownArray(raw['contradictionSignals'], BUSINESS_DOCUMENT_REASON_CODES);
+  const missing = parseReasonCodes(raw['missingRequiredSignals']);
+  const contradiction = parseReasonCodes(raw['contradictionSignals']);
   const evidenceSignals = parseExactSpans(raw['evidenceSignals'], documentText);
   const amountSignals = parseExactSpans(raw['amountSignals'], documentText);
   const settlementSignals = parseExactSpans(raw['settlementSignals'], documentText);
   if (
-    !evidenceRoles || !missingRequiredSignals || !contradictionSignals
+    !evidenceRoles || !missing || !contradiction
     || !evidenceSignals || !amountSignals || !settlementSignals
   ) return null;
 
+  const missingRequiredSignals = missing.codes;
+  const contradictionSignals = contradiction.codes;
+  // A reason we could not decode is still a reason: route it to a person rather than acting on a
+  // classification whose caveat we dropped.
+  const droppedUnknownReason = missing.sawUnknown || contradiction.sawUnknown;
   const confidence = Math.max(0, Math.min(1, raw['confidence']));
   const needsConfidenceReview = confidence < MIN_CLASSIFICATION_CONFIDENCE;
   const hasContradiction = contradictionSignals.length > 0;
@@ -104,6 +123,7 @@ export function parseBusinessDocumentClassification(
     missingRequiredSignals: addReasons(
       missingRequiredSignals,
       ...(needsConfidenceReview ? ['LOW_CLASSIFICATION_CONFIDENCE' as const] : []),
+      ...(droppedUnknownReason ? ['HUMAN_REVIEW_REQUIRED' as const] : []),
     ),
     contradictionSignals: addReasons(
       contradictionSignals,
@@ -112,6 +132,7 @@ export function parseBusinessDocumentClassification(
     requiresClarification: raw['requiresClarification']
       || needsConfidenceReview
       || hasContradiction
+      || droppedUnknownReason
       || raw['contentKind'] !== 'DOCUMENT',
   };
 }

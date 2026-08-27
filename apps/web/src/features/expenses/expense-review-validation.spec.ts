@@ -131,13 +131,60 @@ describe('validateExpenseReview', () => {
   });
 
   it('accepts an explicit zero rate and leaves non-VAT modes alone', () => {
-    const zeroRated = validValues(); zeroRated.vatMode = 'VAT_EXCLUDED'; zeroRated.lines[0]!.vatRate = '0';
-    assert.equal(zeroRated.lines[0]!.vatRate === '0' && validate(zeroRated).some((issue) => issue.field === 'lines.0.vatRate'), false);
+    for (const vatMode of ['VAT_INCLUDED', 'VAT_EXCLUDED'] as const) {
+      const zeroRated = validValues(); zeroRated.vatMode = vatMode; zeroRated.lines[0]!.vatRate = '0';
+      assert.equal(validate(zeroRated).some((issue) => issue.field === 'lines.0.vatRate'), false);
+    }
 
     for (const vatMode of ['NO_VAT', 'EXEMPT', 'NEEDS_REVIEW'] as const) {
       const values = validValues(); values.vatMode = vatMode; values.lines[0]!.vatRate = '';
       assert.equal(validate(values).some((issue) => issue.field === 'lines.0.vatRate'), false, vatMode);
     }
+  });
+
+  it('lets supported source evidence resolve a blank rate on save without guessing or changing inclusive gross', () => {
+    for (const vatMode of ['VAT_INCLUDED', 'VAT_EXCLUDED'] as const) {
+      for (const source of [
+        { inputType: 'RATE', vatRatePercent: '7' },
+        { inputType: 'AMOUNT', vatAmount: '1.64' },
+        { inputType: 'AMOUNT', vatAmount: '0' },
+        { inputType: 'BOTH', vatRatePercent: '7', vatAmount: '1.64' },
+      ] as const) {
+        const values = validValues();
+        values.vatMode = vatMode; values.lines[0]!.unitPrice = '25'; values.vatSource = source;
+        assert.equal(validate(values).some((issue) => issue.field === 'lines.0.vatRate'), false, `${vatMode}/${source.inputType}`);
+        assert.equal(values.lines[0]!.vatRate, '', 'validation must not mutate a derived rate into reviewer input');
+        assert.equal(values.lines[0]!.unitPrice, '25');
+      }
+    }
+  });
+
+  it('keeps unknown rates blocked for missing/invalid amount evidence and impossible derivations', () => {
+    for (const vatMode of ['VAT_INCLUDED', 'VAT_EXCLUDED'] as const) {
+      for (const vatAmount of ['', 'abc', '-1', '1.001', '100']) {
+        const values = validValues(); values.vatMode = vatMode; values.lines[0]!.unitPrice = '25';
+        values.vatSource = { inputType: 'AMOUNT', vatAmount };
+        assert.equal(validate(values).some((issue) => issue.field === 'lines.0.vatRate'), true, `${vatMode}/${vatAmount}`);
+      }
+    }
+  });
+
+  it('does not apply a document amount to unknown lines mixed with known zero/positive rates', () => {
+    for (const vatRate of ['0', '0.07']) {
+      const values = validValues(); values.vatMode = 'VAT_INCLUDED';
+      values.lines.push({ ...values.lines[0]!, vatRate });
+      values.vatSource = { inputType: 'AMOUNT', vatAmount: '6.54' };
+      assert.equal(validate(values).some((issue) => issue.field === 'lines.0.vatRate'), true);
+      values.vatSource = { inputType: 'NONE', lines: [{ lineNumber: 1, inputType: 'AMOUNT', vatAmount: '6.54' }] };
+      assert.equal(validate(values).some((issue) => issue.field === 'lines.0.vatRate'), false);
+      assert.equal(values.lines[1]!.vatRate, vatRate);
+    }
+  });
+
+  it('resolves only the line named by line-level source evidence', () => {
+    const values = validValues(); values.vatMode = 'VAT_EXCLUDED'; values.lines.push({ ...values.lines[0]! });
+    values.vatSource = { inputType: 'NONE', lines: [{ lineNumber: 2, inputType: 'RATE', vatRatePercent: '7' }] };
+    assert.deepEqual(validate(values).filter((issue) => issue.messageKey === 'expenses.v_vat_rate_required').map((issue) => issue.field), ['lines.0.vatRate']);
   });
 
   it('keeps WHT rate in the fraction range 0..1 when set', () => {
@@ -146,7 +193,76 @@ describe('validateExpenseReview', () => {
     values.lines[0]!.whtRate = 'abc';
     const issues = validate(values).filter((issue) => issue.field === 'whtRate');
     assert.equal(issues.length, 1);
-    assert.equal(issues[0]?.messageKey, 'expenses.v_rate_range');
+    assert.equal(issues[0]?.messageKey, 'expenses.v_wht_percent');
+  });
+
+  it('validates WHT percent as 0..100 and exact baht as non-negative two-decimal input', () => {
+    for (const inputType of ['RATE', 'AMOUNT'] as const) {
+      for (const value of ['', '-1', '1.001', '1e2', 'NaN', '100000000000000']) {
+        const values = validValues();
+        values.whtInput = { inputType, value };
+        assert.equal(validate(values).find((issue) => issue.field === 'whtInput.value')?.messageKey,
+          inputType === 'RATE' ? 'expenses.v_wht_percent' : 'expenses.v_wht_amount', `${inputType}: ${value}`);
+      }
+      for (const value of ['0', '3', '30.50', '100']) {
+        const values = validValues();
+        values.whtInput = { inputType, value };
+        assert.equal(validate(values).some((issue) => issue.field.startsWith('whtInput')), false, `${inputType}: ${value}`);
+      }
+    }
+    const tooHigh = validValues(); tooHigh.whtInput = { inputType: 'RATE', value: '100.01' };
+    assert.equal(validate(tooHigh).find((issue) => issue.field === 'whtInput.value')?.messageKey, 'expenses.v_wht_percent');
+    const unknownUnit = validValues();
+    unknownUnit.whtInput = { inputType: 'UNKNOWN', value: '3' } as unknown as ExpenseDraftReviewValues['whtInput'];
+    assert.equal(validate(unknownUnit).find((issue) => issue.field === 'whtInput.inputType')?.messageKey, 'expenses.v_wht_unit');
+  });
+
+  it('checks the amount against the current pre-VAT base after price and discount edits', () => {
+    for (const vatMode of ['NO_VAT', 'VAT_EXCLUDED', 'VAT_INCLUDED'] as const) {
+      const values = validValues();
+      values.vatMode = vatMode;
+      values.lines[0]!.vatRate = vatMode === 'NO_VAT' ? '0' : '0.07';
+      values.lines[0]!.unitPrice = vatMode === 'VAT_INCLUDED' ? '117' : '110';
+      values.lines[0]!.discountAmount = '10';
+      values.whtInput = { inputType: 'AMOUNT', value: '100' };
+      assert.equal(validate(values).some((issue) => issue.field === 'whtInput.value'), false, vatMode);
+      values.whtInput.value = '100.01';
+      assert.equal(validate(values).find((issue) => issue.field === 'whtInput.value')?.messageKey, 'expenses.v_wht_exceeds_base', vatMode);
+    }
+    // The API, not a second client reconciler, owns accepted printed VAT and its exact base.
+    const inclusive = validValues();
+    inclusive.vatMode = 'VAT_INCLUDED'; inclusive.lines[0]!.unitPrice = '107'; inclusive.lines[0]!.vatRate = '0.07';
+    inclusive.vatSource = { inputType: 'AMOUNT', vatAmount: '6.99' };
+    inclusive.whtInput = { inputType: 'AMOUNT', value: '100.01' };
+    assert.equal(validate(inclusive).some((issue) => issue.field === 'whtInput.value'), false);
+    inclusive.whtInput.value = '107.01';
+    assert.equal(validate(inclusive).find((issue) => issue.field === 'whtInput.value')?.messageKey, 'expenses.v_wht_exceeds_base');
+  });
+
+  it('uses pending WHT, including clearing to zero, instead of a stale saved total or line rate', () => {
+    for (const inputType of ['RATE', 'AMOUNT'] as const) {
+      const values = validValues();
+      values.whtInput = { inputType, value: '3' };
+      assert.equal(validate(values).find((issue) => issue.field === 'vendorEntityKindSnapshot')?.severity, 'error');
+      values.lines[0]!.whtRate = '0.03';
+      values.whtInput.value = '0';
+      assert.equal(validateExpenseReview(values, { today: '2026-07-31', whtAmount: '3' })
+        .some((issue) => issue.field === 'vendorEntityKindSnapshot'), false);
+    }
+  });
+
+  it('requires zero for explicit zero VAT treatment and keeps unknown included VAT blocking', () => {
+    for (const vatTreatment of ['ZERO_RATED', 'EXEMPT', 'NON_VAT'] as const) {
+      const values = validValues(); values.vatMode = 'VAT_INCLUDED';
+      values.lines[0]!.vatTreatment = vatTreatment;
+      values.lines[0]!.vatRate = '0.07';
+      assert.equal(validate(values).find((issue) => issue.messageKey === 'expenses.v_vat_treatment_zero')?.field, 'lines.0.vatRate');
+      values.lines[0]!.vatRate = '0';
+      assert.equal(validate(values).some((issue) => issue.field === 'lines.0.vatRate'), false);
+    }
+    const unknown = validValues(); unknown.vatMode = 'VAT_INCLUDED'; unknown.lines[0]!.unitPrice = '25';
+    unknown.whtInput = { inputType: 'AMOUNT', value: '0' };
+    assert.equal(validate(unknown).find((issue) => issue.field === 'lines.0.vatRate')?.messageKey, 'expenses.v_vat_rate_required');
   });
 
   it('warns when the computed total differs from the AI total by more than 0.01', () => {

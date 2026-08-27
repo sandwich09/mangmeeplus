@@ -440,6 +440,14 @@ const REPORT_BI_AUDITOR_GRANTS = [
   'report.audit.read', 'bi.view.read',
 ];
 
+// Company-member self-service, not approval/payment authority. Persist these even while the
+// reimbursement feature is OFF; the runtime entitlement gate still blocks new claims.
+export const REIMBURSEMENT_SELF_SERVICE_PERMISSIONS = [
+  'company.branch.read', 'attachment.read', 'attachment.create',
+  'reimbursement.read_own', 'reimbursement.create', 'reimbursement.update_own_draft',
+  'reimbursement.submit', 'reimbursement.cancel_own',
+];
+
 const STAFF_ROLE_GRANTS = [
   'account.session.read', 'account.password.change', 'ai.tool.invoke', 'line.ai.query',
   'accounting.document.read_related',
@@ -487,11 +495,11 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'system.data_rights.manage',
   ],
   COMPANY_VIEW: [
+    ...REIMBURSEMENT_SELF_SERVICE_PERMISSIONS,
     'account.session.read',
     'account.password.change',
     'company.setup.read',
     'company.settings.view',
-    'company.branch.read',
     'dashboard.read',
     'notification.read',
     'notification.preference.manage',
@@ -901,8 +909,9 @@ export const ROLE_GRANTS: Record<string, string[]> = {
   ],
   STAFF: STAFF_ROLE_GRANTS,
   AUDITOR_READONLY: [
+    ...REIMBURSEMENT_SELF_SERVICE_PERMISSIONS,
     'account.session.read', 'account.password.change', 'company.setup.read', 'audit.log.read', 'ai.tool.invoke', 'line.ai.query',
-    'company.branch.read', 'attachment.read', 'document.sequence.read', 'outbox.event.read',
+    'document.sequence.read', 'outbox.event.read',
     'inventory.product.read', 'inventory.location.read', 'inventory.movement.read', 'inventory.report.read',
     'dashboard.read', 'notification.read', 'notification.delivery.read',
     'accounting.counterparty.read', 'accounting.document.read', 'accounting.document.export',
@@ -927,8 +936,8 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'procurement.supplier.read', 'procurement.purchase_request.read', 'procurement.purchase_order.read',
     'procurement.goods_receipt.read', 'procurement.vendor_bill.read', 'procurement.supplier_payment.read', 'procurement.ap.report',
     'procurement.approval_policy.read',
-    // Item 14 reimbursement – Auditor reads and exports
-    'reimbursement.read', 'reimbursement.read_own', 'reimbursement.export',
+    // Audit authority remains read/export; own requests use the universal baseline above.
+    'reimbursement.read', 'reimbursement.export',
     // Item 15 CRM – Auditor reads all CRM records and exports customers
     'crm.customer.read', 'crm.customer.export', 'crm.contact.read', 'crm.lead.read',
     'crm.opportunity.read', 'crm.activity.read', 'crm.follow_up.read', 'crm.report.read',

@@ -6,6 +6,17 @@ import { fileURLToPath } from 'node:url';
 
 const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'ReimbursementsPages.tsx'), 'utf8');
 
+describe('reimbursement self-service entry', () => {
+  it('uses the effective create permission on every screen width, with matching unavailable-create guidance', () => {
+    assert.match(source, /canCreate=\{permissions\.includes\('reimbursement\.create'\)\}/);
+    assert.match(source, /\{canCreate && \([\s\S]*?reimbursements\/new[\s\S]*?min-h-11 w-full sm:w-auto/);
+    assert.match(source, /\? canCreate \? 'กด "สร้างคำขอเบิก" เพื่อเริ่มคำขอแรกของคุณ' : REIMBURSEMENT_CREATE_UNAVAILABLE/);
+    const createPage = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'ReimbursementCreatePage.tsx'), 'utf8');
+    assert.match(createPage, /editing \? !canUpdate : !canCreate/);
+    assert.match(createPage, /description=\{editing \? [^\n]+ : REIMBURSEMENT_CREATE_UNAVAILABLE\}/);
+  });
+});
+
 describe('reimbursement document preview lifecycle', () => {
   it('uses one latest-request gate for generated claim forms and authenticated attachments', () => {
     assert.match(source, /previewReimbursementClaimForm\(companyId, target\.reimbursementId\)/);

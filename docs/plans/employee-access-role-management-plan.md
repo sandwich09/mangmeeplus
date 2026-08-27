@@ -259,3 +259,11 @@ Exit criteria: new employee logs in with birthdate password immediately and inde
 - [x] Show a `Draft` badge in individual access, expose profile editing from the three-dot menu, and block draft activation in both UI and API.
 - [x] Reuse the four-step Add Employee wizard for editing every employee field, including protected identity replacement and persisted full-address fields.
 - [x] Verify focused API tests, API/web typecheck, Prisma validation, and migration review; record evidence in [[agent-memory/employee-access-draft-provisioning]].
+
+## Follow-Up 2026-08-27 — Delete Unfinished Employee Drafts
+
+- [x] Add a company-scoped draft-delete API under `access.employee.disable`, retaining owner/privileged-role protections and an audit record.
+- [x] Remove only draft membership/profile provisioning data, revoke pending tokens, and preserve global/shared accounts and non-draft behavior.
+- [x] Serialize deletion with Finish/resume/token and credential issue; recheck source state before mutations.
+- [x] Wire the existing menu to draft-specific confirmation, request, success and actionable stale-state errors, with the mobile menu kept inside the viewport.
+- [x] Verify removal/reload/retry, tenant/permission/state negatives, shared account preservation, existing-account recreation and lifecycle interleavings; record exact local API/web/browser evidence and real-DB limits in [[agent-memory/draft-employee-deletion]].

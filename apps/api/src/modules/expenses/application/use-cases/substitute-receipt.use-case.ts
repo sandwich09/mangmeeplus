@@ -1,7 +1,8 @@
-import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, HttpException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import {
   hasCheckBillSubstituteRoutingResolution,
   isCheckBillClassification,
+  substituteReceiptRequiresPaymentEvidence,
   SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS,
 } from '@watchdog-bms/contracts';
 import { createHash, randomUUID } from 'node:crypto';
@@ -152,9 +153,7 @@ export type SubstituteReceiptEligibilityIssue = { code: string; message: string 
 
 /** All target-level eligibility failures knowable from one current expense snapshot.
  *
- *  Every `message` is Thai because it is shown verbatim: LINE prints it on the blocker card and the
- *  web prints it whenever `validateEligibility` throws (that throw carries no code for the web's own
- *  code→Thai map to resolve). The `code` is the machine handle and never changes. */
+ *  LINE displays the Thai message; web uses the stable code for localized actionable copy. */
 export function collectSubstituteReceiptEligibilityIssues(
   expense: ExpenseRecordWithRelations,
   reasonCode?: string,
@@ -166,6 +165,9 @@ export function collectSubstituteReceiptEligibilityIssues(
     || (options?.routeCheckBill === true && checkBillClassification);
   if (options?.routeCheckBill === true && !checkBillClassification) {
     issues.push({ code: 'check_bill_route_ineligible', message: 'เส้นทางนี้ใช้ได้เฉพาะเช็กบิลที่จ่ายแล้วแต่ร้านไม่มีใบเสร็จฉบับสุดท้ายค่ะ' });
+  }
+  if (checkBillClassification && !checkBillRoute) {
+    issues.push({ code: 'check_bill_route_required', message: 'เปิดขั้นตอนจัดทำใบรับรองของรายการเดิม ยืนยันว่าจ่ายแล้วแต่ไม่มีใบเสร็จฉบับสุดท้าย และแนบหลักฐานการชำระเงินแยกจากเช็กบิลค่ะ' });
   }
   if (!['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(expense.status)) {
     issues.push({ code: 'expense_status_ineligible', message: `จัดทำใบรับรองแทนใบเสร็จรับเงินได้เฉพาะรายการที่ยังเป็นร่าง อยู่ระหว่างตรวจ หรือพร้อมยืนยัน (สถานะตอนนี้: ${expense.status})` });
@@ -218,10 +220,7 @@ function validateEligibility(
 ): void {
   const issue = collectSubstituteReceiptEligibilityIssues(expense, reasonCode, options)[0];
   if (!issue) return;
-  if (issue.code === 'substitute_receipt_too_many_lines' || issue.code === 'substitute_receipt_line_description_too_long') {
-    throw renderabilityError(issue.code, issue.message);
-  }
-  throw new BadRequestException(issue.message);
+  throw new BadRequestException(issue);
 }
 
 async function buildSnapshot(
@@ -436,7 +435,9 @@ export class PrepareSubstituteReceiptUseCase {
     const payeeAddress = optionalText(input.payeeAddress, 'payeeAddress', 300);
     const payeeTaxId = optionalPayeeTaxId(input.payeeTaxId);
     const expectedExpenseUpdatedAt = parseExpectedDate(input.expectedExpenseUpdatedAt, 'expectedExpenseUpdatedAt');
-    if (expense.updatedAt.getTime() !== expectedExpenseUpdatedAt.getTime()) throw new ConflictException('Expense changed after review. Reload before preparing substitute evidence.');
+    if (expense.updatedAt.getTime() !== expectedExpenseUpdatedAt.getTime()) throw new ConflictException({
+      code: 'substitute_expense_changed', message: 'Expense changed after review. Reload before preparing substitute evidence.',
+    });
 
     const payer = await this.repo.findActiveMemberIdentity(ctx.companyId, payerUserId, expense.branchId);
     if (!payer) throw new BadRequestException('The selected payer is not an active company member in this branch.');
@@ -455,7 +456,7 @@ export class PrepareSubstituteReceiptUseCase {
     const paymentIds = uniqueIds(input.paymentEvidenceAttachmentIds);
     const supportingIds = uniqueIds(input.supportingAttachmentIds);
     if (paymentIds.some((id) => supportingIds.includes(id))) {
-      throw new BadRequestException('The same file cannot serve as both source/supporting evidence and payment evidence.');
+      throw new BadRequestException({ code: 'substitute_evidence_overlap', message: 'The same file cannot serve as both source/supporting evidence and payment evidence.' });
     }
     const allIds = [...new Set([...paymentIds, ...supportingIds])];
     if (allIds.length > SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxEvidenceAttachments) {
@@ -465,20 +466,27 @@ export class PrepareSubstituteReceiptUseCase {
       );
     }
     const attachments = await this.repo.findSubstituteEvidenceAttachments(ctx.companyId, expenseId, allIds);
-    if (attachments.length !== allIds.length) throw new BadRequestException('Every evidence attachment must be ACTIVE and linked to this expense.');
+    if (attachments.length !== allIds.length) throw new BadRequestException({
+      code: 'substitute_evidence_unavailable', message: 'Every evidence attachment must be ACTIVE and linked to this expense.',
+    });
     assertSubstituteReceiptEvidenceRenderable(attachments);
     const paymentEvidence = attachments.filter((attachment) => paymentIds.includes(attachment.id));
-    if (paymentEvidence.some((attachment) => attachment.purpose !== 'expense.payment.evidence'
+    if ((isCheckBillClassification(expense.aiVerificationSummaryJson)
+      && (paymentIds.includes(expense.primaryAttachmentId ?? '')
+        || expense.attachments.some((source) => paymentIds.includes(source.id) && source.purpose !== 'expense.payment.evidence')))
+      || paymentEvidence.some((attachment) => attachment.purpose !== 'expense.payment.evidence'
       || (!attachment.mimeType.startsWith('image/') && attachment.mimeType !== 'application/pdf'))) {
-      throw new BadRequestException('Payment evidence must be an image/PDF linked with purpose expense.payment.evidence.');
+      throw new BadRequestException({ code: 'substitute_payment_evidence_invalid', message: 'Payment evidence must be a separate image/PDF linked with purpose expense.payment.evidence.' });
     }
     const paymentMethod = input.paymentMethod ?? expense.paymentMethod;
     if (!paymentMethod) throw new BadRequestException('Payment method is required.');
-    if (paymentIds.length === 0 && (paymentMethod !== 'CASH'
-      || (policy?.cashEvidencePolicy ?? 'ALLOW_SUPPORTING_EVIDENCE_ONLY') === 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE')) {
-      throw new BadRequestException(paymentMethod === 'CASH'
-        ? 'Company policy requires separate payment evidence for cash expenses.'
-        : 'Non-cash expenses require linked payment evidence.');
+    if (paymentIds.length === 0 && substituteReceiptRequiresPaymentEvidence(
+      expense.aiVerificationSummaryJson, paymentMethod, policy?.cashEvidencePolicy,
+    )) {
+      throw new BadRequestException({
+        code: isCheckBillClassification(expense.aiVerificationSummaryJson) ? 'check_bill_payment_evidence_required' : 'payment_evidence_required',
+        message: 'Attach separate proof of actual payment before preparing the substitute receipt.',
+      });
     }
     const paymentDate = input.paymentDate ? parseExpectedDate(input.paymentDate, 'paymentDate') : expense.paidAt;
     if (!paymentDate) throw new BadRequestException('Payment date is required because the payer certifies an amount already paid for company business.');
@@ -534,6 +542,7 @@ export class PrepareSubstituteReceiptUseCase {
       }
       return toSubstituteEvidenceSummary(evidence);
     } catch (error) {
+      if (error instanceof HttpException) throw error;
       throw new ConflictException((error as Error).message);
     }
   }

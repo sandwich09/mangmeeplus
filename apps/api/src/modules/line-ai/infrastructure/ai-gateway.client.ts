@@ -33,6 +33,10 @@ import {
 
 const LINE_TURN_TIMEOUT_MS = 120_000;
 const LINE_INTAKE_TIMEOUT_MS = 30_000;
+/** An intake carrying an image runs the gateway's DOCUMENT reader (45s budget there), so this
+ *  caller must outlast it — otherwise the HTTP client aborts first and the provider-side fix is
+ *  invisible. Kept strictly above the gateway budget plus request overhead (UAT 2026-08-27). */
+const LINE_INTAKE_MEDIA_TIMEOUT_MS = 55_000;
 const RECEIPT_OCR_TIMEOUT_MS = 120_000;
 
 export class AiGatewayRequestError extends Error {
@@ -96,6 +100,7 @@ export class AiGatewayClient {
         monthKey,
       ),
       options.busyWaitDeadlineMs,
+      request.attachments?.length ? 'media' : 'chat',
     );
   }
 
@@ -120,6 +125,7 @@ export class AiGatewayClient {
       companyId,
       (monthKey) => this.requestReceiptOcrAdmitted(governedRequest, monthKey, options.ocrAlreadyAdmitted === true),
       options.busyWaitDeadlineMs,
+      'media',
     );
   }
 
@@ -196,6 +202,7 @@ export class AiGatewayClient {
       companyId,
       (monthKey) => this.requestLineIntakeRouteAdmitted(request, media?.id, monthKey),
       options.busyWaitDeadlineMs,
+      media ? 'media' : 'chat',
     );
     // The AI Gateway is a separate service; its optional prepared plan is untrusted wire JSON. Re-bound
     // it here (discard an invalid plan) before the API ever forwards it into a LineAiTurnRequest.
@@ -228,7 +235,7 @@ export class AiGatewayClient {
     }
     try {
       const plan = await this.postInternal<LineIntakeRoutePlan>(
-        '/internal/ai/line-intake-route', request, request.requestId, LINE_INTAKE_TIMEOUT_MS, budgetMonthKey,
+        '/internal/ai/line-intake-route', request, request.requestId, LINE_INTAKE_MEDIA_TIMEOUT_MS, budgetMonthKey,
       );
       if (plan.status === 'UNAVAILABLE') {
         if (plan.errorCode === 'PROVIDER_DISABLED' || plan.errorCode === 'PROVIDER_CONFIG_MISSING') {
@@ -284,10 +291,10 @@ export class AiGatewayClient {
     }
   }
 
-  private async runBudgeted<T>(companyId: string | undefined, action: (monthKey?: string) => Promise<T>, busyWaitDeadlineMs?: number): Promise<T> {
+  private async runBudgeted<T>(companyId: string | undefined, action: (monthKey?: string) => Promise<T>, busyWaitDeadlineMs?: number, laneKey?: 'chat' | 'media'): Promise<T> {
     if (!companyId) return action();
     const admission = await retryBusyAdmission(
-      () => runWithCompanyAiBudgetAdmission(this.prisma, this.config, this.rateLimits, companyId, action),
+      () => runWithCompanyAiBudgetAdmission(this.prisma, this.config, this.rateLimits, companyId, action, laneKey),
       busyWaitDeadlineMs,
     );
     if (admission.allowed) return admission.value;

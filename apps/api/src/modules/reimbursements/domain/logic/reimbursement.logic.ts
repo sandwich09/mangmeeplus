@@ -5,6 +5,7 @@
 
 import { createHash } from 'node:crypto';
 import { Decimal } from 'decimal.js';
+import { reimbursementIncurredDateError, todayCivilDate } from '@watchdog-bms/contracts';
 import type {
   ReimbursementRequestStatus,
   ReimbursementPaymentMethod,
@@ -120,7 +121,7 @@ export function validateRequestFields(input: RequestFieldsInput): string[] {
 }
 
 /** ≥1 line, ≤50, dense lineNo 1..N, every line complete and positive, claim total > 0. */
-export function validateLines(lines?: readonly ReimbursementLineFields[]): string[] {
+export function validateLines(lines?: readonly ReimbursementLineFields[], today = todayCivilDate()): string[] {
   const errors: string[] = [];
   if (!lines || lines.length === 0) return ['lines_required'];
   if (lines.length > REIMBURSEMENT_MAX_LINES) errors.push('too_many_lines');
@@ -131,6 +132,10 @@ export function validateLines(lines?: readonly ReimbursementLineFields[]): strin
     if (!line.description || line.description.trim() === '') errors.push('line_description_required');
     if (!line.categoryKey || line.categoryKey.trim() === '') errors.push('line_category_required');
     if (!line.incurredDate) errors.push('line_incurred_date_required');
+    else {
+      const dateError = reimbursementIncurredDateError(line.incurredDate, today);
+      if (dateError) errors.push(`${dateError}:${line.lineNo}`);
+    }
     if (line.amount === undefined || line.amount === null || line.amount === '') errors.push('line_amount_required');
     else {
       const normalized = d(normalizeReimbursementAmount(line.amount));

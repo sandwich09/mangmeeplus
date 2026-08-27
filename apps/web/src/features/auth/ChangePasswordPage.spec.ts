@@ -31,6 +31,21 @@ describe('ChangePasswordPage exits', () => {
 // A date-of-birth temporary password is DDMMYYYY — 8 characters — so the minimum-length rule
 // accepted it as the "new" password too, and the account stayed on the employer-issued password.
 describe('ChangePasswordPage new-password rules', () => {
+  it('localizes the specific wrong-current-password code without relabeling a genuine 401', async () => {
+    const { localizedErrorMessage } = await import('@/common/i18n/error-message.logic');
+    const overrides = {
+      fallback: 'auth.change.error.failed',
+      conflictCodes: {
+        current_password_incorrect: 'auth.change.error.current',
+        password_reuse: 'auth.change.error.same',
+      },
+    } as const;
+    const wrongPassword = { statusCode: 400, code: 'current_password_incorrect' };
+    assert.equal(localizedErrorMessage(wrongPassword, 'th', overrides), 'รหัสผ่านปัจจุบันไม่ถูกต้อง');
+    assert.equal(localizedErrorMessage(wrongPassword, 'en', overrides), 'Current password is incorrect.');
+    assert.equal(localizedErrorMessage({ statusCode: 401 }, 'th', overrides), 'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่');
+  });
+
   it('names the reuse rule in both locales', async () => {
     const { workspaceDictionary } = await import('@/common/i18n/workspace-dictionary');
     assert.equal(workspaceDictionary.th['auth.change.error.same'], 'รหัสผ่านใหม่ต้องไม่ซ้ำกับรหัสผ่านเดิม');

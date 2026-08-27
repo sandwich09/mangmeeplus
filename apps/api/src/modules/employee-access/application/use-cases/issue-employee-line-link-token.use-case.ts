@@ -1,9 +1,10 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import type { EmployeeLineLinkPackage } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
 import { buildLineLinkPackage, generateLineLinkToken } from '../../domain/logic/employee-access.logic';
+import { lockEmployeeProfile } from '../lock-employee-profile';
 
 export type IssueEmployeeLineLinkTokenCommand = {
   companyId: string;
@@ -21,14 +22,10 @@ export class IssueEmployeeLineLinkTokenUseCase {
   ) {}
 
   async execute(cmd: IssueEmployeeLineLinkTokenCommand): Promise<EmployeeLineLinkPackage> {
-    const profile = await this.prisma.client.employeeAccessProfile.findFirst({
-      where: { id: cmd.employeeId, companyId: cmd.companyId },
-    });
-    if (!profile) throw new NotFoundException('Employee not found');
-
     const { rawToken, tokenHash, expiresAt } = generateLineLinkToken();
 
     await this.prisma.client.$transaction(async (tx) => {
+      const profile = await lockEmployeeProfile(tx, cmd.companyId, cmd.employeeId);
       await tx.employeeLineLinkToken.updateMany({
         where: { membershipId: profile.membershipId, status: 'PENDING' },
         data: { status: 'REVOKED' },

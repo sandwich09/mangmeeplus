@@ -59,11 +59,12 @@ function makePrisma(options: {
 }
 
 function captureLinePush(ok = true) {
-  const pushes: Array<{ to: string; text: string }> = [];
+  const pushes: Array<{ to: string; clipboardText: string | undefined }> = [];
   const original = globalThis.fetch;
   globalThis.fetch = (async (_url: unknown, init: any) => {
     const body = JSON.parse(init.body as string);
-    pushes.push({ to: body.to, text: body.messages[0].text });
+    // The temp password now rides the flex card's copy button (never the altText).
+    pushes.push({ to: body.to, clipboardText: body.messages[0]?.contents?.footer?.contents?.[0]?.action?.clipboardText });
     return { ok, status: ok ? 200 : 500 } as Response;
   }) as typeof fetch;
   return { pushes, restore: () => { globalThis.fetch = original; } };
@@ -138,7 +139,7 @@ describe('NotifyPasswordResetRequestUseCase', () => {
         assert.equal(result.message, GENERIC_MESSAGE);
         assert.equal(line.pushes.length, 1);
         assert.equal(line.pushes[0]!.to, 'line-user-1');
-        const temporaryPassword = /รหัสผ่านชั่วคราว: ([^\n]+)/.exec(line.pushes[0]!.text)?.[1];
+        const temporaryPassword = line.pushes[0]!.clipboardText;
         assert.ok(temporaryPassword);
         assert.equal(tokens.length, 1);
         assert.equal(tokens[0]!.tokenHash, hashLineRecoveryPassword(temporaryPassword, ACTIVE_USER.credential.passwordHash));

@@ -6,7 +6,7 @@ import { emitSecurityEvent, SECURITY_EVENT } from '../../../../common/logger/sec
 import { AuditService } from '../../../audit/application/audit.service';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
 import { generateRawToken, hashLineRecoveryPassword } from '../../domain/logic/secure-token.logic';
-import { pushSystemLineMessage } from '../../infrastructure/system-line-push';
+import { buildTemporaryPasswordFlexMessage, pushSystemLineMessages } from '../../infrastructure/system-line-push';
 
 const RECOVERY_TTL_MS = 30 * 60 * 1000;
 // Identical reply for every outcome: the caller must not learn whether the username,
@@ -127,11 +127,13 @@ export class NotifyPasswordResetRequestUseCase {
       dateStyle: 'medium',
       timeStyle: 'short',
     });
-    const delivered = await pushSystemLineMessage(
-      params.lineToken,
-      params.lineUserId,
-      `🔐 รหัสผ่านชั่วคราว: ${params.temporaryPassword}\nใช้เข้าสู่ระบบภายใน ${expiry} แล้วตั้งรหัสผ่านใหม่ทันที\nรหัสเดิมยังใช้ได้จนกว่าจะใช้รหัสนี้`,
-    );
+    // Owner 2026-08-27: one-tap copy card; the altText carries no password (no lock-screen leak).
+    const delivered = await pushSystemLineMessages(params.lineToken, params.lineUserId, [
+      buildTemporaryPasswordFlexMessage(params.temporaryPassword, [
+        `ใช้เข้าสู่ระบบภายใน ${expiry} แล้วตั้งรหัสผ่านใหม่ทันที`,
+        'รหัสเดิมยังใช้ได้จนกว่าจะใช้รหัสนี้',
+      ]),
+    ]);
 
     if (!delivered) {
       await this.prisma.client.passwordResetToken.updateMany({

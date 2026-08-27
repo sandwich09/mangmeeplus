@@ -23,6 +23,8 @@ function makePrisma(identity: { providerUserId: string } | null) {
       },
       $transaction: async (fn: any) => {
         const result = await fn({
+          $queryRaw: async () => [],
+          employeeAccessProfile: { findFirst: async () => PROFILE },
           userCredential: { update: async () => ({}) },
           authSession: {
             updateMany: async (args: any) => {
@@ -41,11 +43,12 @@ function makePrisma(identity: { providerUserId: string } | null) {
 }
 
 function captureLinePushes(ok: boolean | 'reject' = true) {
-  const pushes: Array<{ to: string; text: string }> = [];
+  const pushes: Array<{ to: string; clipboardText: string | undefined }> = [];
   const original = globalThis.fetch;
   globalThis.fetch = (async (_url: unknown, init: any) => {
     const body = JSON.parse(init.body as string);
-    pushes.push({ to: body.to, text: body.messages[0].text });
+    // The temp password rides the flex card's copy button now (never the altText).
+    pushes.push({ to: body.to, clipboardText: body.messages[0]?.contents?.footer?.contents?.[0]?.action?.clipboardText });
     if (ok === 'reject') throw new Error('network down');
     return { ok } as Response;
   }) as typeof fetch;
@@ -53,6 +56,22 @@ function captureLinePushes(ok: boolean | 'reject' = true) {
 }
 
 describe('RegenerateEmployeeCredentialUseCase', () => {
+  it('does not reset a credential or revoke sessions when its draft was deleted before the transaction', async () => {
+    const { prisma, state } = makePrisma(null);
+    let writes = 0;
+    prisma.client.$transaction = async (fn: any) => fn({
+      $queryRaw: async () => [],
+      employeeAccessProfile: { findFirst: async () => null },
+      userCredential: { update: async () => { writes++; } },
+      authSession: { updateMany: async () => { writes++; } },
+      auditLog: { create: async () => { writes++; } },
+    });
+    await assert.rejects(() => new RegenerateEmployeeCredentialUseCase(prisma, CONFIG).execute(COMMAND),
+      (error: any) => error.getResponse().code === 'employee_draft_not_found');
+    assert.equal(writes, 0);
+    assert.equal(state.identityLookupAfterCommit, false);
+  });
+
   it('pushes the temporary password to the linked LINE identity after the transaction commits', async () => {
     const line = captureLinePushes();
     const { prisma, state } = makePrisma({ providerUserId: 'line-staff-1' });
@@ -63,7 +82,7 @@ describe('RegenerateEmployeeCredentialUseCase', () => {
       assert.equal(state.identityLookupAfterCommit, true, 'LINE work must run after the transaction commits');
       assert.equal(line.pushes.length, 1);
       assert.equal(line.pushes[0]!.to, 'line-staff-1');
-      assert.ok(line.pushes[0]!.text.includes(handoff.temporaryPassword));
+      assert.equal(line.pushes[0]!.clipboardText, handoff.temporaryPassword);
       assert.deepEqual(state.revocations[0].where, { userId: 'user-1', status: 'ACTIVE' });
       assert.equal(state.revocations[0].data.status, 'REVOKED');
       assert.equal(state.auditLogs[0].metadataJson.revokedSessionCount, 2);

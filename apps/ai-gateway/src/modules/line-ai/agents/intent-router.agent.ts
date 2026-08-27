@@ -5,11 +5,19 @@
  * route BEFORE any source-module use case runs. It emits a route plan only.
  * Uses model prompt when a provider is configured; fails closed when model routing is unavailable.
  */
-import { LINE_CORRECTION_FIELDS, LINE_TOOL_REGISTRY, LINE_AI_BUSINESS_SUBJECTS, LINE_AI_CONTEXT_WINDOW_MINUTES, VALUE_ASSUMPTIONS, asIntakeClarificationFields, asIntakeFundingSource, asIntakeRouteIntent, asIntakeRouterCapabilities, asIntakeSemanticOutcome, isAmbiguousDateCandidate, formatDateClarifyQuestion, parseLineAiPreparedAdvisorAnswer, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
+import { BUSINESS_DOCUMENT_REASON_CODES, LINE_CORRECTION_FIELDS, LINE_TOOL_REGISTRY, LINE_AI_BUSINESS_SUBJECTS, LINE_AI_CONTEXT_WINDOW_MINUTES, VALUE_ASSUMPTIONS, asIntakeClarificationFields, asIntakeFundingSource, asIntakeRouteIntent, asIntakeRouterCapabilities, asIntakeSemanticOutcome, isAmbiguousDateCandidate, formatDateClarifyQuestion, parseLineAiPreparedAdvisorAnswer, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
 import type { AgentIntentPlan, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeCorrectionHints, LineIntakeExpenseItemHint, LineIntakeReimbursementHints, LineIntakeRouteIntent, LineIntakeRoutePlan, LineIntakeRouteRequest } from '@watchdog-bms/contracts';
 import type { IModelProvider } from '../infrastructure/provider/provider.port';
 import { extractJson } from '../../../common/ai/extract-json';
 import { parseBusinessDocumentClassification } from '../domain/logic/business-document-classification.logic';
+
+/** The reason-code vocabulary, rendered from the contract itself so the prompt can never drift
+ *  from the parser. UAT 2026-08-27: these two arrays were the only classification fields the
+ *  prompt left unexplained (`"missingRequiredSignals": []`), so the model wrote a free sentence
+ *  ("itemised fuel quantity/litres not shown on this slip") into a code-only field and a perfectly
+ *  read PTT fuel-card slip was discarded whole. Same failure shape as the evidenceRoles synonym
+ *  bug fixed the day before — this time every sibling field is listed. */
+const REASON_CODE_VOCABULARY = BUSINESS_DOCUMENT_REASON_CODES.map((code) => `"${code}"`).join('|');
 
 export const LINE_AI_THAI_BUSINESS_GLOSSARY = [
   { forms: ['ผปก', 'ผปก.'], meaning: 'ผู้ประกอบการ', routingHint: 'owner/operator persona only; never grants permission' },
@@ -255,8 +263,9 @@ For EXPENSE_DOCUMENT_CAPTURE or BUSINESS_DOCUMENT_REFERENCE images, include docu
   "businessDirection": "PURCHASE_EXPENSE"|"SALES_RECEIVABLE"|"CUSTOMER_INBOUND"|"UNKNOWN",
   "transactionState": "PROPOSED"|"ORDERED"|"DUE"|"PAID"|"SCHEDULED"|"CONFIRMED"|"CANCELLED"|"UNKNOWN",
   "evidenceRoles": ["EXPENSE_SUPPORT"|"TAX_EVIDENCE_CANDIDATE"|"PAYMENT_PROOF"|"COMMERCIAL_PROPOSAL"|"SCHEDULING_PROOF"|"CONVERSATION_ATTACHMENT"], "confidence": 0.0, "evidenceSignals": [], "amountSignals": [], "settlementSignals": [],
-  "missingRequiredSignals": [], "contradictionSignals": [], "requiresClarification": false
+  "missingRequiredSignals": [${REASON_CODE_VOCABULARY}], "contradictionSignals": [${REASON_CODE_VOCABULARY}], "requiresClarification": false
 }
+missingRequiredSignals and contradictionSignals accept ONLY the codes listed above — never free text, never a code you invent. Pick the closest listed code and leave the array empty when none fits; put any wording of your own in evidenceSignals instead. A card/EDC payment slip that proves payment but shows no itemised goods is PAYMENT_EVIDENCE_ONLY.
 Classification is advisory. Quantity/items without a transaction total are ORDER_OR_CHECK_BILL, never RECEIPT. Quotations, appointments, bookings, reservations, and non-financial images are never expense receipts because they show an amount.
 A ledger, notebook page, phone screenshot, or handwritten summary containing multiple independent expense transactions or per-row totals is MULTI_DOCUMENT with MULTIPLE_DOCUMENTS even when it is physically one page. Route it as EXPENSE_DOCUMENT_CAPTURE for safe clarification; never collapse its grand total into one expense.
 captureHints (EXPENSE_DOCUMENT_CAPTURE or EXPENSE_DRAFT_CONTINUATION only; omit unknown fields, never invent values):

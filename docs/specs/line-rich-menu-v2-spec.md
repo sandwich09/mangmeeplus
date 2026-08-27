@@ -273,3 +273,29 @@ Real LINE UAT must capture the six rich-menu taps on current iOS and Android cli
 ## 13. Open questions
 
 None for product behavior. LINE OA activation, rollback-target capture, and iOS/Android UAT evidence remain rollout work.
+
+## Ver2 profile (Owner design 2026-08-27)
+
+Profile `line-rich-menu-v2-ver2` (`scripts/line-oa/rich-menu-v2-ver2.manifest.json`) supersedes Ver1 as the
+next skin. Equal 3×2 grid on the same 2500×1686 canvas. Deltas against Ver1, all Owner-directed:
+
+| ช่อง | Ver1 | Ver2 |
+|---|---|---|
+| Promotion Package ทดลองใช้ฟรี | (ไม่มี — เดิมคือ URI เริ่มต้นใช้งานฟรี) | message `โปรโมชั่น` → การ์ดโปสเตอร์แพ็กเกจ (`staff_menu_promotion`, public เหมือน `contact`) พร้อมปุ่ม ทดลองใช้ฟรี → official site |
+| ถ่ายใบเสร็จ | message `ถ่ายใบเสร็จ` → การ์ดถาม แนบรูป/เปิดกล้อง | URI `https://line.me/R/nv/camera/` เปิดกล้อง LINE ทันที ไม่มี bot round-trip (camera action ใช้ได้เฉพาะ quick reply จึงใช้ URI scheme) |
+| บริษัทของฉัน / คุยกับน้องมั่งมี / สรุปค่าใช้จ่าย / ติดต่อเรา | — | action เดิมทุกประการ ย้ายตำแหน่งตาม grid ใหม่ |
+
+Typed `ถ่ายใบเสร็จ` text still returns the attach/camera helper card — only the tile stops asking.
+
+Related deterministic behavior added with Ver2 (independent of the menu skin): a SHORT standalone
+capability question ("ทำอะไรได้บ้าง" and bounded variants — `isCapabilityQuestion`) is answered by the
+curated `buildCapabilityCard` listing ONLY the six real functions, because a model-composed answer
+advertised features that do not exist (Owner report 2026-08-27). Business questions that merely contain a
+stem keep the full AI route; the matcher requires the system as subject for the generic "ใช้ยังไง" stems.
+
+Pending assets (Owner-supplied design exports, not yet committed):
+
+1. `apps/web/public/assets/line/mangmeeplus-line-rich-menu-v2-ver2-2500x1686.png` — menu bitmap; record
+   sha256/byteSize into the manifest when committed (the manifest spec enforces this pairing).
+2. `apps/web/public/assets/line/mangmeeplus-package-promo-1080x1350.png` — package poster served by the web
+   app for the promotion card hero (4:5; keep under ~1 MB for fast chat loading).

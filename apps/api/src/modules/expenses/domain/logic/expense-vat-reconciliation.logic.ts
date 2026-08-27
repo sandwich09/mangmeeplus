@@ -5,8 +5,12 @@ import {
   type ExpenseVatMode,
   type ExpenseVatSourceInput,
   type ExpenseVatSourceOrigin,
+  type ExpenseVatSourceOverrideInput,
 } from '@watchdog-bms/contracts';
 import { calcDocumentTotals, calcLineTotals, type LineTotalsResult } from './expense-totals.logic';
+import type { ExpenseRecordWithRelations } from '../models/expense.model';
+import { EXPENSE_DECIMAL_18_4_PATTERN, validateExpenseDraftAmounts } from './expense-draft-amount-validation.logic';
+import { applyExpenseWhtInput } from './expense-wht-input.logic';
 
 const TOLERANCE = new Decimal('0.05');
 const MONEY = /^(?:0|[1-9]\d{0,15})(?:\.\d{1,2})?$/;
@@ -199,12 +203,14 @@ function recomputeAcceptedTotals(
   vatMode: ExpenseVatMode,
   whtRate: string | null | undefined,
   acceptedVat: Decimal,
-): LineTotalsResult {
+): LineTotalsResult | null {
   const calculatedTaxable = decimal(totals.taxableAmount);
   const calculatedGross = decimal(totals.lineTotalAmount);
   const taxable = vatMode === 'VAT_INCLUDED'
     ? calculatedGross.minus(acceptedVat)
     : calculatedTaxable;
+  // Tolerance is not permission to make a tiny VAT carrier's base (or tax) negative.
+  if (taxable.lt(0) || acceptedVat.lt(0)) return null;
   const wht = taxable.mul(decimal(whtRate)).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
   return {
     ...totals,
@@ -213,6 +219,84 @@ function recomputeAcceptedTotals(
     whtAmount: money4(wht),
     lineTotalAmount: money4(taxable.plus(acceptedVat)),
   };
+}
+
+/** Explicit reviewer decision, never a tolerance bypass for Tax Code/evidence validation.
+ * Called on the authoritative CAS re-read before FINAL tax resolution and persistence. */
+export function acceptExpenseVatSource(
+  expense: ExpenseRecordWithRelations,
+  decision: Pick<ExpenseVatSourceOverrideInput, 'reason' | 'vatLineNumber'>,
+): ExpenseVatReconciliationResult {
+  const snapshot = expense.vatCaptureSnapshotJson;
+  const source = snapshot?.source;
+  const fail = (message: string): never => { throw new Error(message); };
+  if (!snapshot || snapshot.version !== 1 || !['MISMATCH', 'NEEDS_REVIEW'].includes(snapshot.reconciliation.status)
+    || !['VAT_INCLUDED', 'VAT_EXCLUDED'].includes(expense.vatMode)
+    || !source || !sourceHasAmount(source) || source.lineSources?.length
+    || typeof source.vatAmount !== 'string' || !EXPENSE_DECIMAL_18_4_PATTERN.test(source.vatAmount)
+    || new Decimal(source.vatAmount).decimalPlaces() > 2) {
+    return fail('A current document VAT amount is required; resolve missing or line-level VAT evidence first.');
+  }
+  if (!decision.reason?.trim() || decision.reason.trim().length > 500 || !Number.isSafeInteger(decision.vatLineNumber)) {
+    return fail('A written reason and a VAT-bearing line are required.');
+  }
+  const amountError = validateExpenseDraftAmounts(expense);
+  if (amountError) return fail(amountError);
+  if (!expense.lines.length || expense.lines.some((line) => !line.vatRate?.trim())) {
+    return fail('Every line must have an explicit VAT rate before accepting document VAT.');
+  }
+  if (sourceHasRate(source) && (typeof source.vatRatePercent !== 'string'
+    || !PERCENT.test(source.vatRatePercent)
+    || expense.lines.some((line) => decimal(line.vatRate).gt(0)
+      && decimal(line.vatRate).minus(decimal(source.vatRatePercent).div(100)).abs().gt('0.00005')))) {
+    return fail('The printed VAT rate conflicts with the expense lines; correct the rate before confirmation.');
+  }
+  const result = reconcileExpenseVat({ vatMode: expense.vatMode, lines: expense.lines, source: vatSourceFromSnapshot(snapshot) });
+  const baselineWhtError = applyExpenseWhtInput(result, expense.whtInputJson);
+  if (baselineWhtError) return fail(baselineWhtError);
+  const same = (left: string | undefined, right: string): boolean =>
+    typeof left === 'string' && EXPENSE_DECIMAL_18_4_PATTERN.test(left) && new Decimal(left).eq(right);
+  if (!same(snapshot.calculation.vatAmount, result.snapshot.calculation.vatAmount)
+    || !same(snapshot.calculation.preVatAmount, result.snapshot.calculation.preVatAmount)
+    || !same(snapshot.calculation.grossAmount, result.snapshot.calculation.grossAmount)
+    || Object.entries(result.totals).some(([key, value]) => !same(expense[key as keyof typeof result.totals], value))
+    || result.lines.some((line) => {
+      const current = expense.lines.find((item) => item.lineNumber === line.lineNumber);
+      return !current || Object.entries(line.totals).some(([key, value]) => !same(current[key as keyof LineTotalsResult], value));
+    })) {
+    return fail('The saved VAT calculation no longer matches the expense. Save and review the current lines again.');
+  }
+  const target = result.lines.find((line) => line.lineNumber === decision.vatLineNumber);
+  const current = expense.lines.find((line) => line.lineNumber === decision.vatLineNumber);
+  if (!target || !current || current.vatTreatment || !decimal(target.vatRate).gt(0)) {
+    return fail('The selected line must bear VAT; zero-rated, exempt and non-VAT lines cannot carry the difference.');
+  }
+  const residual = new Decimal(source.vatAmount).minus(result.totals.vatAmount);
+  const adjusted = recomputeAcceptedTotals(target.totals, expense.vatMode, current.whtRate,
+    new Decimal(target.totals.vatAmount).plus(residual));
+  if (!adjusted) return fail('Document VAT would make the selected line VAT or pre-VAT amount negative.');
+  target.totals = adjusted;
+  result.totals = calcDocumentTotals({ lines: result.lines.map((line) => line.totals) });
+  const whtError = applyExpenseWhtInput(result, expense.whtInputJson);
+  if (whtError) return fail(whtError);
+  if ([...Object.values(result.totals), ...result.lines.flatMap((line) => Object.values(line.totals))]
+    .some((value) => !EXPENSE_DECIMAL_18_4_PATTERN.test(value))) {
+    return fail('Accepted document amounts must be non-negative and fit Decimal(18,4).');
+  }
+  result.snapshot = {
+    ...snapshot,
+    calculation: {
+      ...snapshot.calculation,
+      lineResults: result.snapshot.calculation.lineResults.map((line) => {
+        const accepted = result.lines.find((item) => item.lineNumber === line.lineNumber)!;
+        return { ...line, acceptedTaxableAmount: accepted.totals.taxableAmount,
+          acceptedVatAmount: accepted.totals.vatAmount,
+          residualAdjustment: money4(new Decimal(accepted.totals.vatAmount).minus(line.calculatedVatAmount)) };
+      }),
+    },
+    reconciliation: { ...snapshot.reconciliation, status: 'REVIEWER_ACCEPTED', acceptedSource: 'SOURCE_AMOUNT', attentionLineNumbers: [] },
+  };
+  return result;
 }
 
 export function reconcileExpenseVat(input: {
@@ -310,10 +394,16 @@ export function reconcileExpenseVat(input: {
         mismatchedSourceLines.push(lineSource.lineNumber);
         continue;
       }
+      const adjusted = recomputeAcceptedTotals(target.totals, input.vatMode, target.whtRate, decimal(lineSource.vatAmount));
+      if (!adjusted) {
+        mismatch = true;
+        mismatchedSourceLines.push(lineSource.lineNumber);
+        continue;
+      }
       matchedAmount = true;
       if (!hasUnmappedLineSource) {
         residuals.set(target.lineNumber, diff);
-        target.totals = recomputeAcceptedTotals(target.totals, input.vatMode, target.whtRate, decimal(lineSource.vatAmount));
+        target.totals = adjusted;
       }
     }
     status = mismatch ? 'MISMATCH' : hasUnmappedLineSource ? 'NEEDS_REVIEW' : matchedAmount ? 'MATCHED' : 'CALCULATED_ONLY';
@@ -354,13 +444,19 @@ export function reconcileExpenseVat(input: {
       acceptedSource = 'SOURCE_AMOUNT';
       const target = largestVatBaseLine(accepted);
       if (target) {
-        residuals.set(target.lineNumber, difference);
-        target.totals = recomputeAcceptedTotals(
+        const adjusted = recomputeAcceptedTotals(
           target.totals,
           input.vatMode,
           target.whtRate,
           decimal(target.totals.vatAmount).plus(difference),
         );
+        if (adjusted) {
+          residuals.set(target.lineNumber, difference);
+          target.totals = adjusted;
+        } else {
+          status = 'MISMATCH';
+          acceptedSource = 'CALCULATED';
+        }
       } else if (!decimal(source.vatAmount).eq(0)) {
         status = 'SOURCE_ONLY';
         acceptedSource = 'CALCULATED';

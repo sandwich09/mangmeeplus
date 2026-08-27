@@ -217,9 +217,17 @@ export async function runWithCompanyAiBudgetAdmission<T>(
   rateLimits: RedisRateLimitService | undefined,
   companyId: string,
   action: (monthKey: string) => Promise<T>,
+  /** Optional admission lane (UAT 2026-08-27). A media turn makes model calls back-to-back for up
+   *  to ~45s, so one combined lease made chat impossible while a photo processed — the poll gaps
+   *  are milliseconds. A lane suffix gives chat and media their OWN single-flight lease. The
+   *  monthly cap stays enforced: every admission re-reads the live aggregate after acquiring its
+   *  lane, so the worst overshoot is ONE concurrent call per extra lane (~฿2), which the Owner
+   *  accepted in exchange for "คุยระหว่างรูปได้จริง". Callers that pass no lane keep the exact
+   *  legacy combined lease. */
+  laneKey?: 'chat' | 'media',
 ): Promise<({ allowed: true; value: T } | Exclude<CompanyAiBudgetDecision, { allowed: true }>)> {
   const monthKey = bangkokMonthKey();
-  const leaseKey = `${companyId}:${monthKey}`;
+  const leaseKey = `${companyId}:${monthKey}${laneKey ? `:${laneKey}` : ''}`;
   let token: string;
   let shared = false;
 

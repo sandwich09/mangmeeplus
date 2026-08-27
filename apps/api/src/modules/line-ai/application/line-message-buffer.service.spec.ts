@@ -528,11 +528,14 @@ describe('LineMessageBufferService – media and captions', () => {
 
     await h.service.enqueue(textEnv('after-captioned', 'ติดต่อเรา'));
     await sleep(20);
-    assert.equal(h.executed.length, 0, 'caption context keeps strict ordering');
+    // Owner 2026-08-27: stateless MENU commands answer immediately instead of waiting behind the
+    // in-flight receipt turn; only company commands still keep strict send order.
+    assert.equal(h.executed.length, 1, 'stateless menu command overtakes the busy worker');
+    assert.equal(h.executed[0]?.messageText, 'ติดต่อเรา');
 
     releaseReceipt();
     await sleep(40);
-    assert.equal(h.executed[0]?.messageText, 'ติดต่อเรา');
+    assert.equal(h.executed.length, 1, 'no duplicate dispatch after the receipt completes');
   });
 
   it('text buffered with media rides along as caption and gets no standalone turn', async () => {
@@ -726,7 +729,7 @@ describe('LineMessageBufferService – shutdown and loading animation', () => {
     assert.deepEqual(h.loadingCalls, ['user-1']);
   });
 
-  it('shows one varied status only after 5 seconds, then restores loading after the bubble', async (t) => {
+  it('keeps the spinner as the only waiting feedback — no status bubble stacks (Owner 2026-08-27)', async (t) => {
     t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
     try {
       t.mock.timers.setTime(0);
@@ -760,27 +763,14 @@ describe('LineMessageBufferService – shutdown and loading animation', () => {
       await started;
       assert.deepEqual(h.loadingCalls, ['user-1']);
 
-      t.mock.timers.tick(2_998);
+      t.mock.timers.tick(60_000);
       await settle();
-      assert.equal(h.pushes.length, 0, 'no status before 5 seconds from the user bubble');
-
-      t.mock.timers.tick(1);
-      await settle();
-      assert.equal(h.pushes.length, 1);
-      assert.match(h.pushes[0]?.text ?? '', /ตรวจสอบ|เช็กข้อมูล/);
-      assert.deepEqual(h.loadingCalls, ['user-1'], 'restart does not race the status bubble');
-
-      t.mock.timers.tick(300);
-      await settle();
-      assert.deepEqual(h.loadingCalls, ['user-1', 'user-1'], 'loading returns while slow work continues');
-
-      t.mock.timers.tick(1_000);
-      await settle();
-      assert.deepEqual(h.loadingCalls, ['user-1', 'user-1', 'user-1'], 'one keepalive covers delayed device delivery');
+      assert.equal(h.pushes.length, 0, 'the spinner is the whole waiting story — no status bubble');
+      assert.deepEqual(h.loadingCalls, ['user-1'], 'and no restart machinery runs without one');
 
       releaseTurn();
       await completed;
-      assert.equal(h.pushes.length, 1);
+      assert.equal(h.pushes.length, 0);
     } finally {
       t.mock.timers.reset();
     }
@@ -811,7 +801,7 @@ describe('LineMessageBufferService – shutdown and loading animation', () => {
     }
   });
 
-  it('cancels the delayed loading keepalive when the answer is ready after the first restart', async (t) => {
+  it('runs no loading restarts now that no status bubble dismisses the spinner', async (t) => {
     t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
     try {
       let releaseTurn!: () => void;
@@ -834,19 +824,19 @@ describe('LineMessageBufferService – shutdown and loading animation', () => {
       await settle();
       t.mock.timers.tick(300);
       await settle();
-      assert.deepEqual(h.loadingCalls, ['user-1', 'user-1']);
+      assert.deepEqual(h.loadingCalls, ['user-1'], 'one spinner request, no status, no restart');
 
       releaseTurn();
       await completed;
       t.mock.timers.tick(1_000);
       await settle();
-      assert.deepEqual(h.loadingCalls, ['user-1', 'user-1'], 'final answer cancels the keepalive');
+      assert.deepEqual(h.loadingCalls, ['user-1'], 'nothing left to cancel after the answer');
     } finally {
       t.mock.timers.reset();
     }
   });
 
-  it('anchors the 5-second status to the latest durable acceptance when LINE timestamps reorder', async (t) => {
+  it('keeps reordered-batch joining intact with no status bubble at any tick', async (t) => {
     t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
     try {
       t.mock.timers.setTime(0);
@@ -878,11 +868,11 @@ describe('LineMessageBufferService – shutdown and loading animation', () => {
 
       t.mock.timers.tick(1_999);
       await settle();
-      assert.equal(h.pushes.length, 0, 'an older sorted-last acceptance cannot trigger status early');
+      assert.equal(h.pushes.length, 0);
 
-      t.mock.timers.tick(1_000);
+      t.mock.timers.tick(60_000);
       await settle();
-      assert.equal(h.pushes.length, 1, 'status starts 5 seconds after the latest durable acceptance');
+      assert.equal(h.pushes.length, 0, 'no status bubble even long past the old 5-second mark');
 
       releaseTurn();
       await settle();

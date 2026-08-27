@@ -1,7 +1,7 @@
 import { ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
-import type { BusinessDocumentClassification, ExpensePaymentMethod, LineIntakeSubstituteContext, LineSubstituteReceiptPrefill, ReceiptOcrFieldResult, RequestContext, SubstituteReceiptReasonCode } from '@watchdog-bms/contracts';
-import { extractValueCandidates, isAmbiguousDateCandidate, isCheckBillClassification } from '@watchdog-bms/contracts';
+import type { BusinessDocumentClassification, ExpensePaymentMethod, LineIntakeSubstituteContext, LineSubstituteReceiptPrefill, ReceiptOcrFieldResult, RequestContext, SubstituteReceiptCashEvidencePolicy, SubstituteReceiptReasonCode } from '@watchdog-bms/contracts';
+import { extractValueCandidates, isAmbiguousDateCandidate, isCheckBillClassification, substituteReceiptRequiresPaymentEvidence } from '@watchdog-bms/contracts';
 import type { ExpenseRecordWithRelations } from '../../domain/models/expense.model';
 import { AuditService } from '../../../audit/application/audit.service';
 import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../../data-model-core/domain/ports/attachment-storage.port';
@@ -481,7 +481,7 @@ function preflight(
   ctx: RequestContext,
   expense: ExpenseRecordWithRelations,
   values: LineSubstituteReceiptValues,
-  policy: { configured: boolean; approvalMode: 'OWNER_SELF' | 'DESIGNATED_APPROVERS'; approverUserIds: string[]; cashEvidencePolicy: string },
+  policy: { configured: boolean; approvalMode: 'OWNER_SELF' | 'DESIGNATED_APPROVERS'; approverUserIds: string[]; cashEvidencePolicy: SubstituteReceiptCashEvidencePolicy },
   eligibleApproverIds: Set<string>,
   payerActive: boolean,
   routeCheckBill = false,
@@ -518,13 +518,16 @@ function preflight(
     result.push(blocker('owner_self_approver_not_ready', 'ยังไม่มีสมาชิกที่มีสิทธิ์อนุมัติค่าใช้จ่ายในสาขานี้'));
   }
   const activeAttachments = expense.attachments.filter((item) => item.status === 'ACTIVE');
-  const payments = activeAttachments.filter((item) => item.purpose === 'expense.payment.evidence');
+  const payments = activeAttachments.filter((item) => item.purpose === 'expense.payment.evidence'
+    && item.id !== expense.primaryAttachmentId
+    && !expense.attachments.some((source) => source.id === item.id && source.purpose !== 'expense.payment.evidence')
+    && (item.mimeType?.startsWith('image/') || item.mimeType === 'application/pdf'));
   // R5: evidence is required only when evidence exists. The assistant still asks — once — and a
   // stated “ไม่มีหลักฐาน” clears the blocker instead of dead-ending a legal no-attachment document.
   if (activeAttachments.length === 0 && !values.evidenceNone) {
     result.push(blocker('supporting_evidence_required', 'ส่งรูปสลิป/รูปถ่ายประกอบเข้ามาในแชทนี้ หรือแนบในเว็บ หรือยืนยันว่าไม่มีหลักฐาน', true));
   }
-  if (((paymentMethod && paymentMethod !== 'CASH') || policy.cashEvidencePolicy === 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE')
+  if (substituteReceiptRequiresPaymentEvidence(expense.aiVerificationSummaryJson, paymentMethod, policy.cashEvidencePolicy)
     && payments.length === 0) {
     result.push(blocker('payment_evidence_required', 'ส่งรูปหลักฐานการชำระเงินเข้ามาในแชทนี้ หรือแนบในเว็บ (ข้อความใช้แทนไฟล์ไม่ได้)'));
   }

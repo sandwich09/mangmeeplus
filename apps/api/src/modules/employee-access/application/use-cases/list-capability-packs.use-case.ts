@@ -17,7 +17,8 @@ export class ListCapabilityPacksUseCase {
       return {
         ...pack,
         locked,
-        grantableByCurrentUser: isOwner || pack.permissionKeys.every((k) => granter.has(k)),
+        grantableByCurrentUser: pack.key === 'pack.reimbursement.self'
+          || isOwner || pack.permissionKeys.every((k) => granter.has(k)),
       };
     });
 

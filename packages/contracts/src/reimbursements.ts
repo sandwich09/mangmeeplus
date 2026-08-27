@@ -3,6 +3,21 @@
 // Business contract for the reimbursement workflow. All monetary amounts are
 // decimal strings (4 dp in DB). Dates are ISO strings across the wire.
 
+import { coerceCivilDate, isCivilDate, todayCivilDate } from './civil-date.js';
+
+/** One incurred-date rule for API writes, stored-draft submit and client validation. */
+export function reimbursementIncurredDateError(value: string | Date, today = todayCivilDate()): string | null {
+  try {
+    // Date parsing otherwise silently rolls an impossible ISO day into the next month.
+    if (typeof value === 'string') {
+      if (!isCivilDate(value.slice(0, 10))) return 'line_incurred_date_invalid';
+    } else if (!(value instanceof Date)) return 'line_incurred_date_invalid';
+    return coerceCivilDate(value) > today ? 'line_incurred_date_in_future' : null;
+  } catch {
+    return 'line_incurred_date_invalid';
+  }
+}
+
 export type ReimbursementRequestStatus =
   | 'DRAFT'
   | 'PENDING_APPROVAL'
