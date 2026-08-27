@@ -1,6 +1,6 @@
 # Agent Memory: employee-branch-access-view
 
-Status: Implementation and scoped verification complete; integrating latest develop before delivery.
+Status: Completed and pushed to develop on 2026-08-27; no deployment.
 Owner: /root
 Scope: Employee access-overview card only: align the all-branch badge and let users view accessible branch names without changing the employee's permissions. Work on `codex/employee-branch-access-view` from develop `463feeb0eba0b207c65861a6a6cafc71bb3b733f`; merge/push develop after verification. No deployment or live account changes.
 
@@ -43,4 +43,12 @@ Verification:
 - Durable database-backed E2E cases were added/listed, not executed against seeded or live accounts. Equivalent UI scenarios were exercised with synthetic data through the actual component. Broad E2E test discovery initially failed on unrelated absent generated Prisma imports; settings-only discovery passed without generating shared clients. Fixture initial bundling needed the existing web dependency path; corrected locally without adding dependencies.
 - Final review checked the real role registry: COMPANY_VIEW does not hold access.employee.read and must not enter this page. E2E uses the existing owner fixture rather than granting access or inventing an auditor seed; read-only access.employee.read behavior is covered by the synthetic component checks above.
 
-Next: Merge latest develop, rerun focused checks/types, normal-push feature/develop, and record exact delivery hashes. Remove only the owned temporary fixture/dependency links and stop its server/tab/viewport. Preserve the root `plan` worktree and unrelated edits.
+Delivery:
+
+- UI implementation: `240706d4e1c039e1ac941c30e14c3108cd298ca1`; final E2E fixture correction: `cda74a15`. Integration with notification delivery: `fdc17fb2c93103ca7f7391097c7223274b9d75d9`.
+- Initial atomic push was rejected because develop advanced with the independent LINE intake-timeout PR #314. Neither remote ref changed on that failed attempt; no force push used.
+- Merged fresh develop `483f614948b5a88c798593eb65d512298a59a011` without conflicts, producing tested integration `4012d491c112d12a68c2359b5b823e45b16f0aca`. Incoming changes affect LINE intake only, not this UI, its contracts or styles. Repeated the 27 API and 54 web focused checks and full web typecheck: all passed. Earlier contracts build, route generation and browser evidence remain applicable.
+- Normal atomic push succeeded for both `codex/employee-branch-access-view` and `develop` at `4012d491c112d12a68c2359b5b823e45b16f0aca`, confirmed with ls-remote. This documentation-only completion record follows that tested integration.
+- Owned synthetic fixture files and temporary dependency links removed; fixture server stopped, browser tab closed and viewport reset. Root `plan` worktree/unrelated edits preserved. No live API, account, database, main push or deployment.
+
+Next: No implementation work remains for this display-only branch-card fix. Live release, if requested, uses the separate mandatory deployment workflow.
