@@ -1,10 +1,35 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { FEATURE_CATALOG, MENU_ENTITLEMENT_BINDINGS } from '@watchdog-bms/contracts';
 import { filterModulesByPermissions, getActiveModuleKey, groupNavItems, buildNavItems, canAccessWorkspacePath, collectMenuTargets, resolveMenuKey } from './web-core-workspace.logic';
 import { WORKSPACE_MODULES, NAV_GROUP_ORDER, ACCOUNTING_UI_HIDDEN_MODULE_KEYS } from './web-core-workspace.constants';
 import type { NavItem } from './web-core-workspace.model';
 import { canSeeRoute, findRoutePermissionRule, ROUTE_PERMISSION_RULES } from './route-permissions';
+import { t } from '@/common/i18n/workspace-i18n.logic';
+
+it('P24-2b keeps all seven scope-control templates touch-sized with forced-colors-safe focus', () => {
+  const source = readFileSync(new URL('./WorkspaceScope.tsx', import.meta.url), 'utf8');
+  const classes = [...source.matchAll(/<button\b[\s\S]*?className=(?:"([^"]*)"|\{`([^`]*)`)/g)]
+    .map((match) => match[1] ?? match[2] ?? '');
+  assert.equal(classes.length, 7, 'both triggers/retries, company/branch options and all-branches option');
+  for (const value of classes) {
+    assert.match(value, /(?:^|\s)(?:h-11|min-h-11)(?:\s|$)/);
+    assert.doesNotMatch(value, /\bsm:h-10\b/);
+    assert.match(value, /focus-visible:outline-hidden/);
+    assert.match(value, /focus-visible:ring-2/);
+    assert.match(value, /focus-visible:ring-brand-500/);
+  }
+  assert.equal([...source.matchAll(/t\('client_notice\.retry', locale\)/g)].length, 2);
+  assert.equal(t('client_notice.retry', 'th'), 'ลองใหม่');
+  assert.equal(t('client_notice.retry', 'en'), 'Try again');
+  for (const locale of ['th', 'en'] as const) {
+    assert.ok(t('shell.scope.load_failed', locale).toLowerCase().includes(t('client_notice.retry', locale).toLowerCase()),
+      `${locale} accessible name contains the visible retry action`);
+  }
+  assert.equal([...source.matchAll(/max-h-\[calc\(100dvh-var\(--app-header-h\)-1rem\)\] overflow-y-auto/g)].length, 2,
+    'both company and branch popups have a viewport-bounded vertical scroller');
+});
 
 // Superset of every module permission — an OWNER-like session.
 const ALL_MODULE_PERMISSIONS = Array.from(

@@ -160,10 +160,13 @@ export function BranchSelector() {
       <button
         type="button"
         onClick={filter.reloadScope}
-        className="flex h-11 items-center gap-2 rounded-lg border border-warning-100 bg-warning-50 px-3 text-sm font-semibold text-warning-700 sm:h-10"
+        aria-label={t('shell.scope.load_failed', locale)}
+        title={t('shell.scope.load_failed', locale)}
+        className="flex h-11 min-w-11 flex-1 items-center gap-2 rounded-lg border border-warning-100 bg-warning-50 px-3 text-sm font-semibold text-warning-700 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 sm:flex-none"
       >
-        <BranchIcon />
-        {t('shell.scope.load_failed', locale)}
+        <span className="shrink-0"><BranchIcon /></span>
+        <span className="sm:hidden">{t('client_notice.retry', locale)}</span>
+        <span className="hidden min-w-0 truncate sm:block">{t('shell.scope.load_failed', locale)}</span>
       </button>
     );
   }
@@ -186,7 +189,7 @@ export function BranchSelector() {
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex h-11 w-full min-w-0 items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 sm:h-10 text-sm font-bold text-gray-700 hover:border-brand-200 sm:w-auto sm:max-w-[240px]"
+        className="flex h-11 w-full min-w-11 items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm font-bold text-gray-700 hover:border-brand-200 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 sm:w-auto sm:max-w-[240px]"
         aria-label="เลือกสาขา"
       >
         <span className="shrink-0"><BranchIcon /></span>
@@ -196,10 +199,10 @@ export function BranchSelector() {
         </svg>
       </button>
       {open && (
-        <div className="fixed right-4 top-[var(--app-header-h)] z-50 mt-2 w-64 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-gray-200 bg-white p-1 shadow-[var(--shadow-theme-md)] sm:absolute sm:top-auto sm:right-auto sm:left-0">
+        <div className="fixed right-4 top-[var(--app-header-h)] z-50 mt-2 w-64 max-w-[calc(100vw-2rem)] max-h-[calc(100dvh-var(--app-header-h)-1rem)] overflow-y-auto rounded-xl border border-gray-200 bg-white p-1 shadow-[var(--shadow-theme-md)] sm:absolute sm:top-auto sm:right-auto sm:left-0">
           <button
             type="button"
-            className={`block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-brand-25 ${
+            className={`block min-h-11 w-full rounded-lg px-3 py-2 text-left text-sm break-words hover:bg-brand-25 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 ${
               filter.branchId === '' ? 'font-semibold text-brand-700' : 'font-medium text-gray-700'
             }`}
             onClick={() => { setOpen(false); filter.setBranchId(''); }}
@@ -210,7 +213,7 @@ export function BranchSelector() {
             <button
               key={b.id}
               type="button"
-              className={`block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-brand-25 ${
+              className={`block min-h-11 w-full rounded-lg px-3 py-2 text-left text-sm break-words hover:bg-brand-25 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 ${
                 b.id === filter.branchId ? 'font-semibold text-brand-700' : 'font-medium text-gray-700'
               }`}
               onClick={() => { setOpen(false); filter.setBranchId(b.id); }}
@@ -255,9 +258,12 @@ export function CompanySwitcher({ companyId, fallbackName }: { companyId: string
       <button
         type="button"
         onClick={() => setReloadToken((n) => n + 1)}
-        className="block max-w-[44vw] truncate text-sm font-semibold text-warning-700 underline sm:max-w-[240px]"
+        aria-label={t('shell.scope.load_failed', locale)}
+        title={t('shell.scope.load_failed', locale)}
+        className="block h-11 min-w-11 max-w-[44vw] flex-1 truncate rounded-lg px-1 text-sm font-semibold text-warning-700 underline focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 sm:max-w-[240px] sm:flex-none"
       >
-        {t('shell.scope.load_failed', locale)}
+        <span className="sm:hidden">{t('client_notice.retry', locale)}</span>
+        <span className="hidden sm:inline">{t('shell.scope.load_failed', locale)}</span>
       </button>
     );
   }
@@ -275,7 +281,7 @@ export function CompanySwitcher({ companyId, fallbackName }: { companyId: string
     <div ref={rootRef} className="relative min-w-0 flex-1 sm:flex-none">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="flex h-11 w-full min-w-0 items-center gap-1 rounded-lg border border-gray-200 bg-gray-50 px-3 sm:h-10 text-sm font-semibold text-gray-700 hover:border-brand-200 sm:w-auto sm:max-w-[240px]"
+        className="flex h-11 w-full min-w-11 items-center gap-1 rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm font-semibold text-gray-700 hover:border-brand-200 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 sm:w-auto sm:max-w-[240px]"
         aria-label="สลับบริษัท"
       >
         <span className="min-w-0 truncate">{label}</span>
@@ -284,11 +290,11 @@ export function CompanySwitcher({ companyId, fallbackName }: { companyId: string
         </svg>
       </button>
       {open && (
-        <div className="fixed right-4 top-[var(--app-header-h)] z-50 mt-2 w-72 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-gray-200 bg-white p-1 shadow-[var(--shadow-theme-md)] sm:absolute sm:top-auto sm:right-auto sm:left-0">
+        <div className="fixed right-4 top-[var(--app-header-h)] z-50 mt-2 w-72 max-w-[calc(100vw-2rem)] max-h-[calc(100dvh-var(--app-header-h)-1rem)] overflow-y-auto rounded-xl border border-gray-200 bg-white p-1 shadow-[var(--shadow-theme-md)] sm:absolute sm:top-auto sm:right-auto sm:left-0">
           {companies.map((c) => (
             <button
               key={c.companyId}
-              className={`block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-brand-25 ${
+              className={`block min-h-11 w-full rounded-lg px-3 py-2 text-left text-sm break-words hover:bg-brand-25 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 ${
                 c.companyId === companyId ? 'font-semibold text-brand-700' : 'font-medium text-gray-700'
               }`}
               onClick={() => {
