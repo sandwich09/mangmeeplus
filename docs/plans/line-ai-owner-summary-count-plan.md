@@ -1,5 +1,9 @@
 # LINE AI owner summary count plan
 
+Status: MERGED DEVELOP via PR #288 at `c6f3d06f0558ef9dd3a0944ae2065bbae67946a0`,
+2026-08-27T05:30:29Z. Exact-head CI and fresh combined checks passed; historical
+authoring/refreeze steps below are retained, not live-provider or main acceptance.
+
 Spec: [response contract](../specs/line-ai-owner-summary-count-spec.md).
 
 - [x] Inspect exact PR #264 commit/diff and current develop callers/API count basis.
@@ -36,7 +40,14 @@ Spec: [response contract](../specs/line-ai-owner-summary-count-spec.md).
 - [x] Rerun registered focused118/118/full gateway984/984 (zero skip), API/gateway types
   and diff check; record exact evidence and refreeze for root review. Earlier green
   review/CI is not proof for this follow-up.
-- [ ] Exact-head PR CI and root approval before merge.
+- [x] Fresh combined review of exact head `29a0605b10102cc6efc0802ba90abe4e5482b6d7`:
+  [verbatim report](../agent-memory/capture-integration-final.md) records NO BLOCKERS,
+  API5327/5425 (98 skipped), Gateway984/984 and Web1139/1139 (zero skipped), three
+  typechecks,45pins and six real-class/fake-dependency probes PASS. Not DB/live proof.
+- [x] [Exact-head CI33041868515](https://github.com/MangmeeDev/mangmeeplus/actions/runs/33041868515)
+  SUCCESS on `29a0605b10102cc6efc0802ba90abe4e5482b6d7`; root approved and merged
+  [PR #288](https://github.com/MangmeeDev/mangmeeplus/pull/288) at `c6f3d06f`.
+  Old70033af2/CI33040537029 predates the amount/date correction and is not its approval.
 
 Ponytail full: reuse the composer (already has source data and fallback), existing
 model/provider stubs, and renderer. No new router, harness, dependency or schema.

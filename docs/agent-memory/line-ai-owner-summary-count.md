@@ -1,8 +1,30 @@
 # Agent Memory: LINE AI owner summary count
 
-Status: Amount-role follow-up frozen at base `70033af22415d59424fa3415448e150404262e48`; focused118/118, gateway984/984, API/gateway types and diff check passed. PR #288 held for root review and new exact-head CI. Not shipped or live-provider accepted.
+Status: MERGED DEVELOP via PR #288 at `c6f3d06f0558ef9dd3a0944ae2065bbae67946a0`, 2026-08-27T05:30:29Z, after exact-head CI33041868515 SUCCESS on `29a0605b10102cc6efc0802ba90abe4e5482b6d7` and fresh combined acceptance. Bounded response correction delivered; no live-provider/main acceptance claim. Historical refreeze findings/counts below are unchanged.
 Owner: `/root/ocr_platform_admin`; root reviews/integrates.
 Scope: Port the intended PR #264 response-only slice and preserve source count/amount roles.
+
+## Final delivery provenance — supersedes authoring/hold status below
+
+- Read-only GitHub confirms [PR #288](https://github.com/MangmeeDev/mangmeeplus/pull/288)
+  MERGED at `c6f3d06f0558ef9dd3a0944ae2065bbae67946a0`, 2026-08-27T05:30:29Z;
+  [CI33041868515](https://github.com/MangmeeDev/mangmeeplus/actions/runs/33041868515)
+  completed/SUCCESS on exact head `29a0605b10102cc6efc0802ba90abe4e5482b6d7`.
+  Root accepted fix `86c72e7f46a1a66becb9c5132bce5f1e5ca757df`, integrated develop/P11
+  `d8d9808e`, reviewed the combined result and performed the merge. Old head70033af2
+  and CI33040537029 predate the correction and remain historical held evidence.
+- Root's final post-integration focused118/118, API/Gateway types/builds,45 maintenance
+  pins and diff checks passed. The [fresh combined independent report](capture-integration-final.md)
+  records bounded NO BLOCKERS on exact29a0605b: API5327 passed/5425 total (98 skipped),
+  Gateway984/984 and Web1139/1139 zero skipped, three typechecks and45pins PASS.
+- Six real-class/fake-dependency source→presentation/card cases preserve count7 versus
+  preview5 and authoritative amount85 despite date2026, prior-context150 and candidate60,
+  with zero provider calls. This is synthetic local acceptance, not PostgreSQL, browser,
+  live router/model/LINE quality, human40+ or physical-device proof.
+- The 9,261-byte report is copied verbatim in the [delivery checkpoint](capture-first-delivery-checkpoint.md),
+  SHA256 `8792c9edc55c6f81366fecffe1e1e51df4b2c117fc0447df795581c2cc408b6c`.
+  Its at-review CI-pending wording is retained; this delivery provenance records the later
+  actual merge. PR264 runtime is superseded in full; this docs update does not close it.
 
 ## Decisions and inspected evidence
 
@@ -84,7 +106,7 @@ needed; source count semantics are proved by the existing API contract test.
 
 ## Verification
 
-### Current refreeze: authoritative amount roles (PR #288 hold)
+### Pre-integration refreeze: authoritative amount roles (historical PR #288 hold)
 
 - Read-only start confirmed clean HEAD `70033af22415d59424fa3415448e150404262e48`.
   Read repo AGENTS and Ponytail full; traced AccountingSummaryAgent facts and composer
@@ -260,9 +282,10 @@ from a five-row preview. Root owns independent review and later live validation.
 
 ## Next
 
-Keep this worktree frozen for root review. Root decides integration/rebase, follow-up
-commit/exact-head PR CI and release after review; old PR #264 and expense/P15 worktrees
-remain untouched.
+No further implementation remains for this bounded merged slice. Root owns later live
+validation and active-scope/main acceptance; those gates are not closed by synthetic
+tests or CI. Do not repeat the old PR #264 implementation or close it in this docs-only
+checkpoint. Expense/P15 and other worktrees remain untouched.
 
 ## Earlier root integration verification — 2026-08-27 (before amount-role follow-up)
 

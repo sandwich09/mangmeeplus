@@ -1,24 +1,24 @@
 # Email Delivery และ Claim Account — Spec P11
 
-สถานะ: **PARTIAL — Phase 0 disabled-safe provider foundation LOCAL VERIFIED CANDIDATE บน develop `9aaacfe2`** (docs-only fast-forward จาก tested runtime `11153296`); ยังไม่ merge และยังไม่มี CI ของ candidate. Phase 1 durable claim send รอ secret-lifecycle decision และ live delivery รอ Owner/operations §5. ดู [แผน P11](../plans/mangmee-email-delivery-claim-plan-th.md); ไม่ใช่การเปิด email/claim หรือปิด EMAIL-01.
+สถานะ: **PARTIAL — Phase 0 disabled-safe provider foundation MERGED DEVELOP `d8d9808e` ผ่าน PR #290** (2026-08-27T05:08:55Z); exact-head CI `33040896057` SUCCESS บน `6f85339d`. Phase 1 durable claim send รอ secret-lifecycle decision และ live delivery รอ Owner/operations §5. ดู [แผน P11](../plans/mangmee-email-delivery-claim-plan-th.md); ไม่ใช่การเปิด email/claim หรือปิด EMAIL-01.
 
 ที่มา: [แผนหลัก P11 + §13.6](../plans/mangmee-brain-2-5-day-priority-plan-th.md); STOP-SHIP: EMAIL-01 (§13.3); AUTH-02 (credential ชุดเดียว) บังคับกับหน้า claim
 
-หลักฐานโค้ด `develop` (สำรวจ 2026-08-26)
+หลักฐานฐานโค้ดสำรวจ 2026-08-26; ผลส่ง Phase 0 ยืนยัน 2026-08-27
 
 ## 1. Current truth
 
 | ข้อเท็จจริง | หลักฐาน |
 |---|---|
-| Candidate รองรับ `EMAIL_PROVIDER: disabled/local-console/ses` โดย default disabled; production ปฏิเสธ console และบังคับ `SES_REGION`/`SES_FROM_ADDRESS`/explicit `WEB_BASE_URL` เมื่อเลือก ses | `packages/config/src/index.ts`; provider factory ใน `auth.module.ts` |
-| ฐาน develop `21f109d5` ยังปฏิเสธ `EMAIL_PROVIDER=ses`; PR272 มี adapter แต่ยังไม่ merge. Phase 0 นี้นำเฉพาะ provider/config/dependency จาก `ec03bc6f` มารวม ไม่ย้าย P9/P10 ที่ซ้อนใน PR | `auth.module.ts`; [PR272](https://github.com/MangmeeDev/mangmeeplus/pull/272) |
+| develop รองรับ `EMAIL_PROVIDER: disabled/local-console/ses` โดย default disabled; production ปฏิเสธ console และบังคับ `SES_REGION`/`SES_FROM_ADDRESS`/explicit `WEB_BASE_URL` เมื่อเลือก ses | `packages/config/src/index.ts`; provider factory ใน `auth.module.ts` |
+| PR290 นำเฉพาะ provider/config/dependency จาก `ec03bc6f` พร้อม explicit frontend-base hardening มารวม; ไม่ merge P9/P10 stack ของ PR272 และไม่เปิด provider | `auth.module.ts`; [PR290](https://github.com/MangmeeDev/mangmeeplus/pull/290) |
 | Port เดิมมี verify/reset; Phase 0 เพิ่ม `sendAccountClaim` แบบ additive แต่ยังไม่มี production caller/claim route/outbox producer | `auth-mailer.port.ts`; adapters ใน `auth/infrastructure` |
 | ADR-0009 Accepted: `disabled` เป็น no-op แท้ทุก env; "shipping without real delivery is a fully valid, secure state" | `docs/adr/0009-auth-security-email-delivery.md` |
 | Token pattern สำเร็จรูป: reset token single-use + atomic claim + TTL 30 นาที + ขอใหม่ revoke ของเก่า + reset สำเร็จ revoke ทุก session อื่น + audit HIGH fail-closed | forgot-password-reset-spec :78-81,:120 (backend use-cases park อยู่ใน `auth.module.ts:58-59` ไม่มี route — ตาม password-reset-line-flow decision 5) |
 | `User.email` ไม่มีใครเขียนตอนสร้างบัญชี; ความ eligible ผูก `emailVerifiedAt` เท่านั้น | forgot-password spec :27,:77 (ยืนยันกับโค้ดแล้ว) |
 | Outbox durable ใช้ได้กับ email (companyId nullable) แต่ `NotificationChannel = { WEB, LINE }` — **ไม่มี EMAIL** และ workers ไม่มี email adapter | `schema.prisma:917-946,1225-1228`; `notification-delivery-adapters.ts` |
 | Gotcha ภายใน: `regenerate-temporary-password` **หมุนรหัสเสมอ** (ล็อก Owner ที่ตั้งรหัสถาวรแล้วได้) — จึงมี `reissue-owner-line-link` เป็น QR-only escape (audit CRITICAL) | `regenerate-temporary-password.use-case.ts:24-68`; `reissue-owner-line-link.use-case.ts:16-68` |
-| ฐานเดิมเลือก console ใน local แม้ provider เป็น `disabled`; Phase 0 ต้องแก้ให้ disabled ไม่ส่ง/ไม่ log และ console ต้อง opt-in | `auth.module.ts` provider factory |
+| ฐานเดิมเลือก console ใน local แม้ provider เป็น `disabled`; Phase 0 แก้แล้วให้ disabled ไม่ส่ง/ไม่ log และ console ต้อง opt-in | `auth.module.ts` provider factory |
 | Account email change/resend มี route และเรียก mailer อยู่แล้ว; หากเปิด SES ภายหลังจะเริ่มส่ง verification mail ได้ทันที ไม่ใช่แค่เตรียม claim | `auth.controller.ts` account/email + account/email/resend; request/resend-email-verification use-cases |
 | Durable claim link ยังตัดสินไม่ได้: generic outbox redact key ที่มี `token` แต่ claim ต้อง hash-only; ห้ามเปลี่ยนชื่อ field เพื่อซ่อน raw secret | `outbox.logic.ts`; §2 และ §5 ข้อ 3 |
 
@@ -31,7 +31,7 @@
 - มี local provider/config regression, current-base API/config typecheck, DI boot แบบ disabled และ complete synthetic SES config โดยไม่ส่ง mail; maintenance pins ต้องตรงโค้ดที่รีวิว.
 - ไม่เพิ่ม schema/migration, signup event, outbox consumer, claim route/page หรือ provider activation. ผลทดสอบ Phase 0 ไม่ใช่หลักฐาน inbox/DKIM/bounce/complaint.
 
-หลักฐาน current-base 2026-08-27 หลัง explicit-frontend follow-up: auth/reset 44/44 (provider 6/6) + DI/spec registration 6/6 รวม 50/50, config 138/138, API/config typecheck และ config/contracts/API build ผ่าน. Deny-network DI boot 4 cases ยืนยัน default disabled/complete synthetic SES บูตได้ แต่ missing/empty WEB_BASE_URL แม้มี PUBLIC_BASE_URL บูตไม่ผ่าน; ไม่มี network attempts. Root default API หลัง follow-up บน `11153296`: 5325 ผ่าน/5423 ทั้งหมด, skipped98; pretest16/30, skipped14; ไม่มี failure ไม่อ้าง skipped เป็น integration pass. Root source review, maintenance pin check + generator/validator regression ผ่าน. รายละเอียดคำสั่ง/ข้อจำกัดอยู่ใน [task memory](../agent-memory/p11-email-provider-foundation.md); exact-head CI ยังรอ และไม่ใช่ live email acceptance.
+หลักฐาน current-base 2026-08-27 หลัง explicit-frontend follow-up: auth/reset 44/44 (provider 6/6) + DI/spec registration 6/6 รวม 50/50, config 138/138, API/config typecheck และ config/contracts/API build ผ่าน. Deny-network DI boot 4 cases ยืนยัน default disabled/complete synthetic SES บูตได้ แต่ missing/empty WEB_BASE_URL แม้มี PUBLIC_BASE_URL บูตไม่ผ่าน; ไม่มี network attempts. Root default API หลัง follow-up บน `11153296`: 5325 ผ่าน/5423 ทั้งหมด, skipped98; pretest16/30, skipped14; ไม่มี failure ไม่อ้าง skipped เป็น integration pass. Root source review, maintenance pin check + generator/validator regression ผ่าน; exact-head CI `33040896057` SUCCESS ก่อน merge PR290. รายละเอียดคำสั่ง/ข้อจำกัดอยู่ใน [task memory](../agent-memory/p11-email-provider-foundation.md); ไม่ใช่ live email acceptance.
 
 ## 2. หลักการที่ห้ามละเมิด
 
@@ -57,6 +57,7 @@
 ### F-EM-3 Claim flow
 
 - ตาราง `AccountClaimToken` (hash unique, TTL จาก §8 ของ P10 spec, single-use atomic claim H-09, ขอใหม่ revoke เก่า — กติกาเดียวกับ reset token)
+- Token ที่หมดอายุ ใช้ไปแล้ว หรือไม่รู้จัก (expired/used/unknown) ต้องตอบข้อความ public ทั่วไปเดียวกัน; Phase 2 acceptance ต้องตรวจทั้งสามกรณี ตาม [canonical plan เดิม:37](https://github.com/MangmeeDev/mangmeeplus/blob/384d72a5720a58efde943831124e85765ebbc5cb/docs/plans/mangmee-email-delivery-claim-plan-th.md#L37). เป็นข้อกำหนดเดิม ไม่เลือก TTL/token representation หรือเปิด route ใหม่.
 - หน้า claim (public, CSP/no-store ตามแบบ LIFF pages): ยืนยัน email (`emailVerifiedAt` เขียนที่นี่ — จุดแรกที่ระบบเขียน email อย่างเป็นทางการ) → ตั้งรหัส (policy เดิม) → provision (P10 state PROVISIONING→READY) → success + ปุ่ม "เพิ่มเพื่อนและเชื่อม LINE" (ต่อ P12)
 - Claim ใช้กับ onboarding ภายในด้วย (PLATFORM-02: เปลี่ยน handoff จาก copy รหัสเป็น claim link) — admin flow เดิมคงอยู่เป็น fallback
 
