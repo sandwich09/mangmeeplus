@@ -10,3 +10,9 @@ Spec: [current-password-error-feedback-spec](../specs/current-password-error-fee
 - [x] Fetch/merge current develop, preserve concurrent date/login-label changes, rerun impacted checks, then normal non-force push.
 
 Implementation scope: two reauthentication use cases, existing error catalogs/page mapping, tests and scoped docs. No general auth rewrite, new dependency, database migration or live mutation.
+
+## Runner integration follow-up
+
+- [x] Move the six password-change error regressions into the already wired `auth-endpoints.spec.ts`; remove the orphan test file without changing package.json or the runtime.
+- [x] Verify the official spec-coverage gate, focused auth suites and typechecks.
+- [ ] Push the verified test-only follow-up to develop.
