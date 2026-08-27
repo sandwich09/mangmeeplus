@@ -403,6 +403,61 @@ test.describe('SET — settings', () => {
     await expect(authedPage.getByTestId('branch-access-error')).toContainText('โหลดข้อมูลสาขาไม่สำเร็จ');
   });
 
+  for (const viewerRole of ['OWNER', 'COMPANY_VIEW'] as const) {
+    for (const width of [390, 1280]) {
+      test(`SET-08F @p1 ${viewerRole} can view all-branch names without editing scope at ${width}px`, async ({ pageAs, api, companyId }) => {
+        const page = await pageAs(viewerRole);
+        await page.setViewportSize({ width, height: 844 });
+        const roles = await json<Role[]>(await api.get(`companies/${companyId}/settings/roles`));
+        const assignedRoles = roles.filter((role) => ['FINANCE', 'ACCOUNTANT'].includes(role.key));
+        expect(assignedRoles).toHaveLength(2);
+        const { items: branches } = await json<BranchPage>(await api.get(`companies/${companyId}/branches?pageSize=100`));
+        expect(branches.length).toBeGreaterThan(1);
+        const employee = {
+          id: 'e2e-branch-view-only', userId: 'e2e-branch-view-only', membershipId: 'e2e-branch-view-only',
+          displayName: 'Branch view fixture', phoneNumber: '', status: 'ACTIVE',
+          identityType: 'PASSPORT', identityMasked: '', mustChangePassword: false, lineLinked: false,
+          roles: assignedRoles.map(({ id, key, name }) => ({ id, key, name })),
+          branchScopeMode: 'ALL_BRANCHES', branchScopeBranchIds: [], defaultBranchId: branches[0]!.id,
+          createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
+        };
+        const writes: string[] = [];
+        // Synthetic employee only; an accidental scope write must never reach the real API.
+        await page.route(`**/api/v1/companies/${companyId}/settings/employees**`, async (route) => {
+          if (route.request().method() !== 'GET') {
+            writes.push(route.request().method());
+            await route.fulfill({ status: 403, json: { message: 'Read-only fixture' } });
+          } else {
+            await route.fulfill({ status: 200, json: [employee] });
+          }
+        });
+
+        await gotoCompany(page, companyId, '/settings/access-overview');
+        const card = page.locator('section').filter({ has: page.getByRole('heading', { name: 'สาขาที่เข้าถึงได้', exact: true }) });
+        await expect(card.getByTestId('employee-branch-count')).toHaveText('ทุกสาขา');
+        await expect(card.getByRole('button', { name: 'เลือกสาขา', exact: true })).toHaveCount(0);
+        const expand = card.getByRole('button', { name: 'ดูสาขาที่เข้าถึง', exact: true });
+        await expect(expand).toBeEnabled();
+        await expect(expand).toHaveAttribute('aria-expanded', 'false');
+        if (width === 390) {
+          const badge = await card.getByTestId('employee-branch-count').boundingBox();
+          const heading = await card.getByRole('heading').boundingBox();
+          expect(Math.abs(badge!.x - heading!.x), 'badge aligns with card content when wrapped').toBeLessThanOrEqual(1);
+        }
+        await expand.click();
+        const list = card.locator('#employee-accessible-branches');
+        for (const branch of branches) await expect(list.getByText(branch.name, { exact: true })).toBeVisible();
+        await expect(list.locator('button, input, [role="button"]')).toHaveCount(0);
+        const collapse = card.getByRole('button', { name: 'ซ่อนรายชื่อสาขา', exact: true });
+        await expect(collapse).toHaveAttribute('aria-expanded', 'true');
+        await collapse.click();
+        await expect(list).toHaveCount(0);
+        await expect(expand).toHaveAttribute('aria-expanded', 'false');
+        expect(writes, 'viewing branch names must not update employee permissions').toEqual([]);
+      });
+    }
+  }
+
   // Regression guard for BUG-2: the roles screen never received the viewer's permissions and
   // inferred editability from `catalog.length > 0`. The catalog fetch is allSettled and needs
   // its own access.permission.read, so a viewer without it saw every control disabled and no

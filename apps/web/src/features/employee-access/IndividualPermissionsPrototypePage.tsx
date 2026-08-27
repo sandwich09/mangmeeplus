@@ -337,6 +337,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
   const selectedRoleNames = selectedEmployee?.roles.map(roleDisplayName).join(', ') ?? '';
   const allBranchRoles = selectedRoles.filter((role) => ALL_BRANCH_ROLE_KEYS.includes(role.key));
   const branchPickerLocked = allBranchRoles.length > 0;
+  const canEditBranchScope = canEditEmployee && !selectedIsOwner && selectedActive && !branchPickerLocked;
   const accessProjection = useMemo(
     () => projectGrantedMenus(
       selectedEmployee?.roles.map((role) => role.id) ?? [],
@@ -796,20 +797,20 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                     </p>
                   </div>
                   <div className="flex shrink-0 items-center gap-3">
-                    <span
+                    {(busy && pendingKey === 'branch' || savedAt === 'branch') && <span
                       aria-live="polite"
                       className={cx('text-xs font-bold', savedAt === 'branch' ? 'text-brand-600' : 'text-gray-400')}
                     >
-                      {busy && pendingKey === 'branch' ? 'กำลังบันทึก...' : savedAt === 'branch' ? 'บันทึกแล้ว' : null}
-                    </span>
-                    <span className="rounded-full bg-blue-light-50 px-4 py-2 text-sm font-extrabold tabular-nums text-blue-light-500">{branchCountLabel}</span>
+                      {busy && pendingKey === 'branch' ? 'กำลังบันทึก...' : 'บันทึกแล้ว'}
+                    </span>}
+                    <span data-testid="employee-branch-count" className="rounded-full bg-blue-light-50 px-4 py-2 text-sm font-extrabold tabular-nums text-blue-light-500">{branchCountLabel}</span>
                   </div>
                 </div>
 
-                {canEditEmployee && <div className="mangmee-segmented mt-5">
+                {canEditBranchScope && <div className="mangmee-segmented mt-5">
                   <button
                     type="button"
-                    disabled={selectedIsOwner || !selectedActive || busy || branchPickerLocked}
+                    disabled={busy}
                     onClick={() => void selectAllBranches()}
                     aria-pressed={selectedEmployee.branchScopeMode === 'ALL_BRANCHES' && !branchPickerOpen}
                     className={cx(
@@ -821,7 +822,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                   </button>
                   <button
                     type="button"
-                    disabled={selectedIsOwner || !selectedActive || busy || branchPickerLocked}
+                    disabled={busy}
                     onClick={() => setBranchPickerOpen(true)}
                     aria-pressed={selectedEmployee.branchScopeMode === 'SELECTED_BRANCHES' || branchPickerOpen}
                     className={cx(
@@ -833,13 +834,25 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                   </button>
                 </div>}
 
+                {!canEditBranchScope && selectedEmployee.branchScopeMode === 'ALL_BRANCHES' && (
+                  <button
+                    type="button"
+                    className="mangmee-btn mangmee-btn-secondary mt-5"
+                    aria-expanded={branchPickerOpen}
+                    aria-controls="employee-accessible-branches"
+                    onClick={() => setBranchPickerOpen((open) => !open)}
+                  >
+                    {branchPickerOpen ? 'ซ่อนรายชื่อสาขา' : 'ดูสาขาที่เข้าถึง'}
+                  </button>
+                )}
+
                 {(selectedEmployee.branchScopeMode === 'SELECTED_BRANCHES' || branchPickerOpen) && (
-                  <div className="mt-5 flex min-w-0 flex-wrap gap-2">
-                    {branches.filter((branch) => canEditEmployee || selectedBranchIds.includes(branch.id)).map((branch) => {
+                  <div id="employee-accessible-branches" className="mt-5 flex min-w-0 flex-wrap gap-2">
+                    {branches.filter((branch) => canEditBranchScope || selectedBranchIds.includes(branch.id)).map((branch) => {
                       const selected = selectedBranchIds.includes(branch.id);
                       const lastBranchLocked = selected && selectedBranchIds.length === 1;
                       const otherwiseDisabled = selectedIsOwner || !selectedActive || busy || branchPickerLocked;
-                      return canEditEmployee ? (
+                      return canEditBranchScope ? (
                         <BranchAccessChip
                           key={branch.id} label={branch.name} selected={selected}
                           disabled={otherwiseDisabled || lastBranchLocked}
