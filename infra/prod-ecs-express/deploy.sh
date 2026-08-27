@@ -31,6 +31,7 @@ LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED_INPUT="${LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED
 LINE_AI_FUSED_PLAN_SHADOW_ENABLED_INPUT="${LINE_AI_FUSED_PLAN_SHADOW_ENABLED:-}"
 LINE_AI_PREPARED_SIMPLE_READ_ENABLED_INPUT="${LINE_AI_PREPARED_SIMPLE_READ_ENABLED:-}"
 LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES_INPUT="${LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES:-}"
+LINE_AI_BUFFER_DEBOUNCE_MS_INPUT="${LINE_AI_BUFFER_DEBOUNCE_MS:-}"
 PRODUCTION_SERVING_MODE_INPUT="${PRODUCTION_SERVING_MODE:-}"
 RELEASE_MODE_INPUT="${RELEASE_MODE:-}"
 LOG_RETENTION_DAYS="${LOG_RETENTION_DAYS:-14}"
@@ -138,6 +139,19 @@ if [ -z "$LINE_AI_PREPARED_SIMPLE_READ_ENABLED_INPUT" ]; then
     LINE_AI_PREPARED_SIMPLE_READ_ENABLED_INPUT=false
   fi
 fi
+# Debounce: Owner selected 1,000 ms as the primary candidate (spec decision 2026-08-22);
+# UAT runs it as the canary default, production keeps the shipped 2,000 ms until the
+# cohort gates pass. Numeric-only; the app clamps its own bounds.
+if [ -z "$LINE_AI_BUFFER_DEBOUNCE_MS_INPUT" ]; then
+  if [ "$DEPLOY_ENV" = uat ]; then
+    LINE_AI_BUFFER_DEBOUNCE_MS_INPUT=1000
+  else
+    LINE_AI_BUFFER_DEBOUNCE_MS_INPUT=2000
+  fi
+fi
+case "$LINE_AI_BUFFER_DEBOUNCE_MS_INPUT" in ''|*[!0-9]*)
+  echo "ERROR: LINE_AI_BUFFER_DEBOUNCE_MS must be a positive integer (milliseconds)" >&2; exit 2 ;;
+esac
 # The four compiled families (prepared-simple-read-formatter.ts) — UAT only; unknown keys can
 # only narrow, never widen, and production still refuses any non-empty allowlist below.
 if [ -z "$LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES_INPUT" ] && [ "$DEPLOY_ENV" = uat ]; then
@@ -1475,6 +1489,7 @@ api_container_json() {
     --arg aiEnabled "$SERVING_AI_ENABLED" \
     --arg lineAiExactGreetingEnabled "$SERVING_LINE_AI_EXACT_GREETING_ENABLED" \
     --arg lineAiLoadingOnAcceptEnabled "$SERVING_LINE_AI_LOADING_ON_ACCEPT_ENABLED" \
+    --arg lineAiBufferDebounceMs "$LINE_AI_BUFFER_DEBOUNCE_MS_INPUT" \
     --arg lineAiDebounceExperimentEnabled "$SERVING_LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED" \
     --arg lineAiFusedPlanShadowEnabled "$SERVING_LINE_AI_FUSED_PLAN_SHADOW_ENABLED" \
     --arg lineAiPreparedSimpleReadEnabled "$SERVING_LINE_AI_PREPARED_SIMPLE_READ_ENABLED" \
@@ -1555,6 +1570,7 @@ api_container_json() {
         {name:"LINE_AI_LEDGER_ENABLED", value:$aiEnabled},
         {name:"LINE_AI_EXACT_GREETING_ENABLED", value:$lineAiExactGreetingEnabled},
         {name:"LINE_AI_LOADING_ON_ACCEPT_ENABLED", value:$lineAiLoadingOnAcceptEnabled},
+        {name:"LINE_AI_BUFFER_DEBOUNCE_MS", value:$lineAiBufferDebounceMs},
         {name:"LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED", value:$lineAiDebounceExperimentEnabled},
         {name:"LINE_AI_FUSED_PLAN_SHADOW_ENABLED", value:$lineAiFusedPlanShadowEnabled},
         {name:"LINE_AI_PREPARED_SIMPLE_READ_ENABLED", value:$lineAiPreparedSimpleReadEnabled},

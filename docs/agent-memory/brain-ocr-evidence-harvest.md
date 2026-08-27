@@ -52,3 +52,9 @@ Decisions (Owner 2026-08-27 — ตอบ 4 ข้อของ strategy discussi
 2. Export 18 confirmed receipts (ภาพ+label) จาก UAT → เติม golden fixtures แบบ sanitized; ขอ Owner ยืนยันเพิ่ม ~12 ใบจาก pool NEEDS_REVIEW 88 ใบ
 3. เสนอแก้ intake-route: เปิด prompt caching เต็ม/ตัด catalogue ที่ยัดเข้า prompt (17k tokens) — คาดลดต้นทุน ~10x และตัด latency ก้อนแรก
 4. ทำตามลำดับ activation เดิม (assessment): loading-on-accept → debounce cohort → prepared lane canary; ทุก flag ผ่าน UAT ก่อน
+
+## รอบจูนใหญ่ 2026-08-27 เย็น (Owner: "จูนให้ครบทีเดียว")
+
+- Owner อนุมัติขยาย approval `DPO-2026-07-23-bedrock-global` ให้ UAT (chat directive 2026-08-27) → ตั้ง repo variable `AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF` แล้ว; UAT deploy ถัดไปรัน Sonnet 4.6 ทั้ง chat+doc เท่า production
+- หลักฐานรอบทดสอบแรกของ Owner: เลนเร็วไม่ยิง (preparedPlanVersion=null ทุกเทิร์น — โมเดล 3.5 ไม่ emit fused plan), intake 5.5s (prompt ใหญ่ขึ้น+โมเดลเก่า), รูปใบเสร็จ→unknown
+- จูนชุดเดียว: UAT debounce default 1000ms (deploy.sh wiring ใหม่ + pins re-synced), composer ธุรกิจ = คำตอบ+ตัวเลขบรรทัดแรก ≤400 ตัวอักษร, casual = ปลดล็อกความรู้ทั่วไป/ธุรกิจ/บัญชี/ภาษี + ตัวย่อแชทไทย (Owner concept: คุยได้แบบ ChatGPT) โดยคงกติกา: ห้ามเลขบริษัทนอก tools, ห้ามอ้างข้อมูลสด, เคสเฉพาะให้เช็คนักบัญชี; casual maxTokens 180→400; gateway suite 984/0
