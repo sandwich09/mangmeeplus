@@ -1,6 +1,6 @@
 # Agent Memory: expense-document-vat-acceptance
 
-Status: Implemented and verified on `codex/expense-document-vat-acceptance`; integration with latest develop and delivery pending. Initial base `2ef787b1cabf08f0958890d5b6f2ce68e327b2d6`.
+Status: Implemented and integration-verified on `codex/expense-document-vat-acceptance`; remote delivery pending. Initial base `2ef787b1cabf08f0958890d5b6f2ce68e327b2d6`.
 Owner: /root/expense_document_vat_acceptance
 Scope: Complete existing reviewer “ใช้ยอดตามเอกสาร” confirmation. No navigation redesign, duplicate mixed-VAT work, historical rewrite, deployment, schema or dependency change.
 
@@ -34,7 +34,15 @@ Artifacts: Existing source spec/plan above; this memory; scoped implementation a
 - Existing review-to-expense-list redirect is unchanged. Mixed VAT and baht WHT regressions remain covered; no duplicate implementation, deployment or historical confirmed-record rewrite.
 - Runtime only: reused read-only installed package links and copied schema-matching generated Prisma into this owned worktree; isolated SES 3.1118.0 from `/tmp/mangmee-draft-delete-ses.XMhjOC` (matches lock) resolves missing preinstalled dependency. No dependency manifest, lockfile or schema edits, and no generation through another worktree's package links.
 
-Next: Merge Checkbill/draft fixes from latest develop, repeat integration checks, then normal push feature and HEAD:develop.
+## Integration evidence
+
+- Implementation: `2b46cebb`; merge: `65575487` from `origin/develop` `554ef68e` (includes Checkbill, employee-draft deletion and warehouse-option fixes).
+- Only conflict was adjacent new tests in `api-error-message.spec.ts`; retained both VAT and draft-employee regressions. Diff against integrated develop remains 20 scoped files; no upstream behavior removed.
+- Post-merge commands below: expense/API/tax-event/ledger + spec guard **1,035 passed / 6 DB skips**; shared tax suite **365 passed / 14 DB skips**; full web **1,195 passed**; contracts **204 passed**. All zero failures. Shared-tax skips are database-dependent accounting close/issue/concurrency scenarios (local PostgreSQL/P27/payment-idempotency fixture unavailable).
+- Contracts build, API/web full non-incremental type checks and `git diff --check` passed after integration.
+- Review-submit navigation rechecked at `ExpenseReviewPage.tsx:338`: server success precedes `router.replace` to the highlighted expense list; failure stays on the form. No change needed.
+
+Next: Normal push feature branch and HEAD:develop, verify remote SHA, record delivery proof. No deploy.
 
 ### Reproduction commands
 
