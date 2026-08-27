@@ -31,7 +31,7 @@ describe('LINE recovery PostgreSQL lifecycle and concurrency', { skip: !database
       assert.equal(String(input), 'https://api.line.me/v2/bot/message/push');
       const payload = JSON.parse(init.body);
       assert.equal(payload.to, `${tag}-line`);
-      messages.push(/รหัสผ่านชั่วคราว: ([^\n]+)/.exec(payload.messages[0].text)![1]!);
+      messages.push(payload.messages[0].contents.footer.contents[0].action.clipboardText);
       return { ok: delivered, status: delivered ? 200 : 500 } as Response;
     }) as typeof fetch;
     const requester = new NotifyPasswordResetRequestUseCase(prisma, {

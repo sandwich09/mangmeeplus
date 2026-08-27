@@ -1,5 +1,6 @@
 import { test, expect } from './harness/fixtures';
 import { gotoCompany, json, unique } from './harness/e2e-utils';
+import { addCivilDays, todayCivilDate } from '../packages/contracts/src/civil-date';
 
 type Policy = {
   allowSelfApproval: boolean;
@@ -51,6 +52,21 @@ async function withPolicy(api: any, companyId: string, patch: Partial<Policy>, f
 }
 
 test.describe('REIMB — reimbursements', () => {
+  test('REIMB-06 @p1 incurred-date picker permits today but disables tomorrow', async ({ authedPage, companyId }) => {
+    const today = todayCivilDate();
+    const tomorrow = addCivilDays(today, 1);
+    await gotoCompany(authedPage, companyId, '/reimbursements/new');
+    await authedPage.getByRole('combobox', { name: 'วันที่', exact: true }).click();
+    await authedPage.getByRole('button', { name: 'วันนี้', exact: true }).click();
+    await authedPage.getByRole('combobox', { name: 'วันที่', exact: true }).click();
+    const calendar = authedPage.getByRole('button', { name: 'วันนี้', exact: true }).locator('..').locator('..');
+    await expect(calendar.getByRole('button', { name: String(Number(today.slice(-2))), exact: true })).toBeEnabled();
+    if (today.slice(0, 7) !== tomorrow.slice(0, 7)) {
+      await authedPage.getByRole('button', { name: 'เดือนถัดไป', exact: true }).click();
+    }
+    await expect(calendar.getByRole('button', { name: String(Number(tomorrow.slice(-2))), exact: true })).toBeDisabled();
+  });
+
   test('REIMB-01 @smoke reimbursements list renders', async ({ authedPage, companyId }) => {
     await gotoCompany(authedPage, companyId, '/reimbursements');
     await expect(authedPage.getByRole('heading', { name: /การเบิกจ่ายและอนุมัติ|Reimbursements/i })).toBeVisible();

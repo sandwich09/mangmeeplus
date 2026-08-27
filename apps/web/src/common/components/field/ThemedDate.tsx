@@ -41,6 +41,8 @@ export type ThemedDateProps = {
   placeholder?: string;
   min?: string;
   max?: string;
+  /** Optional business-day override for Today/highlighting; defaults to the browser day. */
+  today?: string;
   id?: string;
   'aria-label'?: string;
   'aria-describedby'?: string;
@@ -71,12 +73,14 @@ function parseParts(value: string | undefined, mode: Mode) {
   return { year: Number(match[1]), month: Number(match[2]) - 1, day: match[3] ? Number(match[3]) : 1 };
 }
 
-function todayParts() {
+function todayParts(value?: string) {
+  const parts = parseParts(value, 'date');
+  if (parts) return parts;
   const now = new Date();
   return { year: now.getFullYear(), month: now.getMonth(), day: now.getDate() };
 }
 
-export function ThemedDate({ value, defaultValue, onChange, mode = 'date', disabled = false, className, placeholder, min, max, id, 'aria-label': ariaLabel, 'aria-describedby': ariaDescribedBy, 'aria-invalid': ariaInvalid, triggerRef, name, required }: ThemedDateProps) {
+export function ThemedDate({ value, defaultValue, onChange, mode = 'date', disabled = false, className, placeholder, min, max, today: businessToday, id, 'aria-label': ariaLabel, 'aria-describedby': ariaDescribedBy, 'aria-invalid': ariaInvalid, triggerRef, name, required }: ThemedDateProps) {
   const locale = useWorkspaceLocale();
   const monthsAbbr = MONTHS_ABBR[locale] ?? MONTHS_ABBR.th;
   const monthsFull = MONTHS_FULL[locale] ?? MONTHS_FULL.th;
@@ -88,7 +92,7 @@ export function ThemedDate({ value, defaultValue, onChange, mode = 'date', disab
   const rootRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const parts = parseParts(current, mode);
-  const [view, setView] = useState(() => parts ?? todayParts());
+  const [view, setView] = useState(() => parts ?? todayParts(businessToday));
 
   useEffect(() => {
     if (parts) setView((v) => (v.year === parts.year && v.month === parts.month ? v : parts));
@@ -107,6 +111,7 @@ export function ThemedDate({ value, defaultValue, onChange, mode = 'date', disab
   }, [parts, mode, placeholder, monthsAbbr, labels, locale]);
 
   function emit(next: string) {
+    if (next && outOfRange(next, min, max, mode === 'month' ? 7 : 10)) return;
     setInner(next);
     onChange?.({ target: { value: next } });
     setOpen(false);
@@ -134,7 +139,8 @@ export function ThemedDate({ value, defaultValue, onChange, mode = 'date', disab
     return cells;
   }, [view.year, view.month]);
 
-  const today = todayParts();
+  const today = todayParts(businessToday);
+  const todayValue = mode === 'month' ? `${today.year}-${pad(today.month + 1)}` : `${today.year}-${pad(today.month + 1)}-${pad(today.day)}`;
 
   return (
     <div ref={rootRef} className={cx('relative min-w-0', className?.includes('w-auto') ? 'inline-block' : '')}>
@@ -260,8 +266,9 @@ export function ThemedDate({ value, defaultValue, onChange, mode = 'date', disab
           <button type="button" onClick={() => emit('')} className="rounded-lg px-2 py-1 text-gray-500 hover:bg-gray-100">{labels.clear}</button>
           <button
             type="button"
-            onClick={() => emit(mode === 'month' ? `${today.year}-${pad(today.month + 1)}` : `${today.year}-${pad(today.month + 1)}-${pad(today.day)}`)}
-            className="rounded-lg px-2 py-1 text-brand-600 hover:bg-brand-25"
+            disabled={outOfRange(todayValue, min, max, mode === 'month' ? 7 : 10)}
+            onClick={() => emit(todayValue)}
+            className="rounded-lg px-2 py-1 text-brand-600 hover:bg-brand-25 disabled:cursor-not-allowed disabled:opacity-30"
           >
             {mode === 'month' ? labels.thisMonth : labels.today}
           </button>
