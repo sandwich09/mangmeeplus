@@ -158,7 +158,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
     // employee message never crosses the durable-payload boundary.
     const companyCommand = envelope.item.kind === 'text' && !!parseLineCompanyCommand(envelope.item.text);
     const publicCommand = envelope.item.kind === 'text' && staffMenuCommand(envelope.item.text);
-    const legal = publicCommand === 'contact' || publicCommand === 'talk'
+    const legal = publicCommand === 'contact' || publicCommand === 'talk' || publicCommand === 'promotion'
       ? { status: 'continue' as const, companyId: undefined }
       : await this.processWebhook.preflightLegalAcceptance({
           lineUserId: envelope.lineUserId,
@@ -412,6 +412,15 @@ export class LineMessageBufferService implements OnModuleDestroy {
       state.pending = [item];
       state.pendingMeta = { firstAcceptedAt: acceptedAt, flushedAt: acceptedAt, loading: null };
       this.kickWorker(key, state);
+      return;
+    }
+    // Stateless MENU commands (Owner 2026-08-27: the talk tile answered 24s late behind an
+    // in-flight turn) run immediately even while the chat worker is busy: they call no model,
+    // touch no lease, and change no context, so overtaking is harmless. Company commands are
+    // exactly the ones the ordering comment above protects, so they still join the queue.
+    if (item.kind === 'command' && incoming.kind === 'text' && !parseLineCompanyCommand(incoming.text)) {
+      void this.dispatchBatch(key, state, [item], { firstAcceptedAt: acceptedAt, flushedAt: acceptedAt, loading: null })
+        .catch((err) => this.logger.error({ msg: 'LINE menu command fast dispatch failed', error: (err as Error).message }));
       return;
     }
 
@@ -839,7 +848,11 @@ export class LineMessageBufferService implements OnModuleDestroy {
     const last = textItems[textItems.length - 1];
     const messageText = joinGroupText(textItems);
     const latestAcceptedAt = Math.max(...textItems.map((item) => item.acceptedAt));
-    const statusDelayMs = Math.max(0, latestAcceptedAt + LINE_WAIT_STATUS_DELAY_MS - Date.now());
+    // With the loading animation on, the spinner is the whole waiting story (Owner 2026-08-27);
+    // the timed status bubble only remains as the fallback when the animation is disabled.
+    const statusDelayMs = this.config.lineAiLoadingAnimationEnabled
+      ? null
+      : Math.max(0, latestAcceptedAt + LINE_WAIT_STATUS_DELAY_MS - Date.now());
     await this.withWaitFeedback(
       state,
       lineWaitStatusText(messageText, last.webhookEventId),
@@ -910,7 +923,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
     statusText: string,
     turn: (beforeReply: () => Promise<void>) => Promise<T>,
     suppressLoading: boolean,
-    statusDelayMs: number,
+    statusDelayMs: number | null,
     statusWithoutLoading = false,
   ): Promise<T> {
     const finish = await this.startWaitFeedback(
@@ -931,7 +944,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
     state: ChatState,
     statusText: string,
     suppressLoading: boolean,
-    statusDelayMs: number,
+    statusDelayMs: number | null,
     statusWithoutLoading: boolean,
   ): Promise<() => Promise<void>> {
     // Loading and waiting feedback are 1:1 only; a group chat never shows either.
@@ -961,7 +974,11 @@ export class LineMessageBufferService implements OnModuleDestroy {
     };
 
     let statusTimer: NodeJS.Timeout | null = null;
-    if (statusDelayMs === 0) {
+    if (statusDelayMs === null) {
+      // No status bubble for this turn (Owner 2026-08-27 "ลดข้อความซ้อน"): the loading animation
+      // already says "working", so the slow-turn text only stacked noise. Loading handling above
+      // is untouched; the media ack (delay 0) and the no-animation fallback keep their bubble.
+    } else if (statusDelayMs === 0) {
       statusDelivery = deliverStatus();
     } else {
       statusTimer = setTimeout(() => {

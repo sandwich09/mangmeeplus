@@ -96,6 +96,7 @@ export class AiGatewayClient {
         monthKey,
       ),
       options.busyWaitDeadlineMs,
+      request.attachments?.length ? 'media' : 'chat',
     );
   }
 
@@ -120,6 +121,7 @@ export class AiGatewayClient {
       companyId,
       (monthKey) => this.requestReceiptOcrAdmitted(governedRequest, monthKey, options.ocrAlreadyAdmitted === true),
       options.busyWaitDeadlineMs,
+      'media',
     );
   }
 
@@ -196,6 +198,7 @@ export class AiGatewayClient {
       companyId,
       (monthKey) => this.requestLineIntakeRouteAdmitted(request, media?.id, monthKey),
       options.busyWaitDeadlineMs,
+      media ? 'media' : 'chat',
     );
     // The AI Gateway is a separate service; its optional prepared plan is untrusted wire JSON. Re-bound
     // it here (discard an invalid plan) before the API ever forwards it into a LineAiTurnRequest.
@@ -284,10 +287,10 @@ export class AiGatewayClient {
     }
   }
 
-  private async runBudgeted<T>(companyId: string | undefined, action: (monthKey?: string) => Promise<T>, busyWaitDeadlineMs?: number): Promise<T> {
+  private async runBudgeted<T>(companyId: string | undefined, action: (monthKey?: string) => Promise<T>, busyWaitDeadlineMs?: number, laneKey?: 'chat' | 'media'): Promise<T> {
     if (!companyId) return action();
     const admission = await retryBusyAdmission(
-      () => runWithCompanyAiBudgetAdmission(this.prisma, this.config, this.rateLimits, companyId, action),
+      () => runWithCompanyAiBudgetAdmission(this.prisma, this.config, this.rateLimits, companyId, action, laneKey),
       busyWaitDeadlineMs,
     );
     if (admission.allowed) return admission.value;
