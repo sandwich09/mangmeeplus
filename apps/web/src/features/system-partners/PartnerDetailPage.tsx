@@ -65,6 +65,7 @@ import {
   disableBlockForChange,
   diffEntitlements,
   entitlementEnabled,
+  featurePackageEditingNotice,
   filterMenuCards,
   isAmbiguousCommandFailure,
   isNormalizationPending,
@@ -724,7 +725,7 @@ function PackageMenuSection({
             </span>
           </div>
           <p className="mt-2 text-xs leading-5 text-gray-500">
-            ตัวเลือกที่ต้องปิดฟีเจอร์ซึ่งระบบยังเตรียมไม่เสร็จจะกดไม่ได้ แต่การเปิดเพิ่มยังทำได้ตามปกติ
+            {featurePackageEditingNotice(controlsLocked)}
           </p>
         </div>
 
