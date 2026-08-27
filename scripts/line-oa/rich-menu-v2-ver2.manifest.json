@@ -2,8 +2,8 @@
   "profileId": "line-rich-menu-v2-ver2",
   "image": {
     "path": "apps/web/public/assets/line/mangmeeplus-line-rich-menu-v2-ver2-2500x1686.png",
-    "sha256": null,
-    "byteSize": null
+    "sha256": "728bee2836882fff668dad19e875737bea6aebde3cdf3d795f1c2ce7b0d2fc12",
+    "byteSize": 241567
   },
   "rollbackProfileId": "line-rich-menu-v2-ver1",
   "lineRichMenu": {

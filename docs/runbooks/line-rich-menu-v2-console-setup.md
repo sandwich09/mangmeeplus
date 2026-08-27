@@ -80,11 +80,12 @@ Official references:
 Profile: `line-rich-menu-v2-ver2` — manifest `scripts/line-oa/rich-menu-v2-ver2.manifest.json`, spec test
 `scripts/line-oa/rich-menu-v2-ver2.manifest.spec.mjs` (`node --test`), rollback profile = Ver1.
 
-Bitmap: `apps/web/public/assets/line/mangmeeplus-line-rich-menu-v2-ver2-2500x1686.png` — **pending Owner
-export**. When the file is committed, record its sha256/byteSize in the manifest; the spec test fails a
-present file with null checksums. The promotion poster
-`apps/web/public/assets/line/mangmeeplus-package-promo-1080x1350.png` must also be committed (served by the
-web app; referenced by `buildPromotionCard`).
+Bitmap: `apps/web/public/assets/line/mangmeeplus-line-rich-menu-v2-ver2-2500x1686.png` — committed
+2026-08-27 (Owner export), `2500 x 1686` opaque PNG, 241,567 bytes, SHA-256
+`728bee2836882fff668dad19e875737bea6aebde3cdf3d795f1c2ce7b0d2fc12` (recorded in the manifest; the spec
+test binds them). The promotion poster
+`apps/web/public/assets/line/mangmeeplus-package-promo-1080x1350.png` (1080×1350, 304,743 bytes) is
+committed beside it — served by the web app and referenced by `buildPromotionCard`.
 
 ## Exact area/action mapping (equal 3×2 grid)
 
