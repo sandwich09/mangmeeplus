@@ -31,6 +31,25 @@ import * as lineAi from './line-ai.js';
 import * as procurement from './procurement.js';
 import * as transactionTax from './transaction-tax.js';
 
+describe('check-bill payment proof contract', () => {
+  it('requires separate proof for every check-bill payment and ignores resolution as proof', () => {
+    for (const classificationResolution of [undefined, { outcome: 'FINANCE_OVERRIDDEN_AS_EXPENSE' }, { outcome: 'ROUTED_TO_SUBSTITUTE_RECEIPT' }]) {
+      const summary = { classification: { documentKind: 'ORDER_OR_CHECK_BILL' }, classificationResolution };
+      for (const method of expenses.EXPENSE_PAYMENT_METHODS) {
+        for (const policy of [undefined, 'ALLOW_SUPPORTING_EVIDENCE_ONLY', 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE'] as const) {
+          assert.equal(expenses.substituteReceiptRequiresPaymentEvidence(summary, method, policy), true);
+        }
+      }
+    }
+  });
+  it('preserves ordinary cash policy and does not infer check bills from document text', () => {
+    assert.equal(expenses.substituteReceiptRequiresPaymentEvidence(null, 'CASH'), false);
+    assert.equal(expenses.substituteReceiptRequiresPaymentEvidence({ description: 'check bill' }, 'CASH', 'ALLOW_SUPPORTING_EVIDENCE_ONLY'), false);
+    assert.equal(expenses.substituteReceiptRequiresPaymentEvidence(null, 'CASH', 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE'), true);
+    assert.equal(expenses.substituteReceiptRequiresPaymentEvidence(null, 'BANK_TRANSFER'), true);
+  });
+});
+
 describe('expense WHT input contract', () => {
   it('accepts explicit baht and percent including zero and the precise storage limit', () => {
     for (const input of [undefined, { inputType: 'RATE', value: '3' }, { inputType: 'RATE', value: '100' },

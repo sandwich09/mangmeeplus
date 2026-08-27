@@ -161,6 +161,18 @@ export type SubstituteReceiptEvidenceStatus = 'PREPARED' | 'PAYER_CERTIFIED' | '
 export type SubstituteReceiptCashEvidencePolicy =
   | 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE'
   | 'ALLOW_SUPPORTING_EVIDENCE_ONLY';
+
+/** Check bills never prove payment, including cash and finance-overridden classifications. */
+export function substituteReceiptRequiresPaymentEvidence(
+  summary: Record<string, unknown> | null | undefined,
+  paymentMethod: ExpensePaymentMethod | null | undefined,
+  cashEvidencePolicy?: SubstituteReceiptCashEvidencePolicy | null,
+): boolean {
+  return isCheckBillClassification(summary)
+    || Boolean(paymentMethod && paymentMethod !== 'CASH')
+    || cashEvidencePolicy === 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE';
+}
+
 export type SubstituteReceiptApprovalMode = 'OWNER_SELF' | 'DESIGNATED_APPROVERS';
 export type SubstituteReceiptReasonCode =
   | 'PAYEE_CANNOT_ISSUE'

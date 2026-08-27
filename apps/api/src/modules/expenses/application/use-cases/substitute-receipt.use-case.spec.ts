@@ -12,6 +12,7 @@ import {
   PreviewSubstituteReceiptUseCase,
 } from './substitute-receipt.use-case';
 import { SetSignatureDerivedAssetUseCase } from './signature-asset.use-case';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
 import { buildSubstituteCertificationText, canonicalSnapshotHash, type SubstituteReceiptSnapshot } from '../../domain/logic/substitute-receipt.logic';
 import { buildDedupKey } from '../../../dashboard-notifications/domain/logic/notification.logic';
@@ -171,7 +172,7 @@ describe('PrepareSubstituteReceiptUseCase', () => {
       listEligibleSubstituteReceiptApprovers: async () => [{ userId: 'approver-1', displayName: 'ผู้จัดการ' }],
       findSubstituteEvidenceAttachments: async () => [{
         id: 'att-source', purpose: 'expense.receipt.primary', originalFileName: 'check-bill.jpg', mimeType: 'image/jpeg',
-      }],
+      }, { id: 'att-payment', purpose: 'expense.payment.evidence', originalFileName: 'cash-payment.jpg', mimeType: 'image/jpeg' }],
       createPreparedSubstituteEvidence: async (input: any) => { captured = input; return prepared({ originalSourceDocumentType: 'NEEDS_REVIEW' }); },
     } as any;
     const input = {
@@ -180,6 +181,7 @@ describe('PrepareSubstituteReceiptUseCase', () => {
       businessPurpose: 'รับรองลูกค้า', payerUserId: 'payer-1', supportingAttachmentIds: ['att-source'],
       paymentMethod: 'CASH' as const, idempotencyKey: 'idem-check-bill', expectedExpenseUpdatedAt: now.toISOString(),
       routeCheckBill: true as const,
+      paymentEvidenceAttachmentIds: ['att-payment'],
     };
 
     await new PrepareSubstituteReceiptUseCase(repo, audit, notification).execute(ctx('finance-1'), 'exp-1', input);
@@ -191,6 +193,84 @@ describe('PrepareSubstituteReceiptUseCase', () => {
         .execute(ctx('finance-1'), 'exp-1', input),
       /ใช้ได้เฉพาะเช็กบิล/,
     );
+  });
+
+  it('requires separate actual payment proof for check bills regardless of cash policy, finance override, or a previously resolved route', async () => {
+    let writes = 0;
+    const checkBillSummary = { status: 'NOT_EXPENSE_DOCUMENT', classification: { documentKind: 'ORDER_OR_CHECK_BILL' } };
+    const input = { reasonCode: 'RECEIPT_UNAVAILABLE' as const, missingReceiptReason: 'ชำระแล้วแต่ไม่มีใบเสร็จ',
+      businessPurpose: 'รับรองลูกค้า', payerUserId: 'payer-1', expectedExpenseUpdatedAt: now.toISOString(),
+      idempotencyKey: 'check-payment', routeCheckBill: true as const, paymentEvidenceAttachmentIds: [] as string[] };
+    const make = (summary: any, policy: any, attachments: any[] = [], extra: any = {}) => new PrepareSubstituteReceiptUseCase({
+      findByIdWithRelations: async () => expense({ primaryAttachmentId: 'att-source', aiVerificationSummaryJson: summary, ...extra }),
+      findActiveMemberIdentity: async () => ({ userId: 'payer-1', displayName: 'สมชาย' }),
+      getSubstituteReceiptPolicy: async () => policy,
+      listEligibleSubstituteReceiptApprovers: async () => [{ userId: 'approver-1' }],
+      findSubstituteEvidenceAttachments: async () => attachments,
+      createPreparedSubstituteEvidence: async () => { writes++; return prepared(); },
+    } as any, audit, notification);
+    const codeIs = (code: string) => (error: unknown) => {
+      assert.ok(error instanceof BadRequestException || error instanceof ConflictException);
+      assert.equal((error.getResponse() as { code: string }).code, code);
+      return true;
+    };
+    const resolved = { ...checkBillSummary, classificationResolution: {
+      outcome: 'ROUTED_TO_SUBSTITUTE_RECEIPT', acknowledgedPaidWithoutFinalReceipt: true,
+      sourceDocumentKind: 'ORDER_OR_CHECK_BILL', resolvedAt: now.toISOString(), resolvedByUserId: 'finance-1',
+    } };
+    const overridden = { ...checkBillSummary, classificationResolution: {
+      outcome: 'FINANCE_OVERRIDDEN_AS_EXPENSE', acknowledged: true,
+      sourceDocumentType: 'EXPENSE_NOTE_TEXT', reason: 'finance checked', resolvedAt: now.toISOString(), resolvedByUserId: 'finance-1',
+    } };
+    for (const summary of [checkBillSummary, overridden, resolved]) {
+      for (const policy of [null, { cashEvidencePolicy: 'ALLOW_SUPPORTING_EVIDENCE_ONLY' }, { cashEvidencePolicy: 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE' }]) {
+        for (const paymentMethod of ['CASH', 'BANK_TRANSFER', 'CARD'] as const) {
+          await assert.rejects(() => make(summary, policy).execute(ctx(), 'exp-1', { ...input, paymentMethod }), codeIs('check_bill_payment_evidence_required'));
+        }
+      }
+    }
+    // An old route cannot turn a false/omitted flag into a cash-policy escape hatch.
+    for (const routeCheckBill of [undefined, false]) {
+      await assert.rejects(() => make(resolved, null).execute(ctx(), 'exp-1', { ...input, routeCheckBill } as any), codeIs('check_bill_payment_evidence_required'));
+      await assert.rejects(() => make(overridden, null).execute(ctx(), 'exp-1', { ...input, routeCheckBill } as any), codeIs('check_bill_route_required'));
+    }
+    const payment = { id: 'proof', purpose: 'expense.payment.evidence', originalFileName: 'paid.jpg', mimeType: 'image/jpeg' };
+    const proofInput = { ...input, paymentEvidenceAttachmentIds: ['proof'] };
+    for (const invalid of [{ ...payment, purpose: 'expense.receipt.primary' }, { ...payment, mimeType: 'text/plain' }]) {
+      await assert.rejects(() => make(checkBillSummary, null, [invalid]).execute(ctx(), 'exp-1', proofInput), codeIs('substitute_payment_evidence_invalid'));
+    }
+    await assert.rejects(() => make(checkBillSummary, null, [{ ...payment, id: 'att-source' }]).execute(ctx(), 'exp-1', {
+      ...input, paymentEvidenceAttachmentIds: ['att-source'],
+    }), codeIs('substitute_payment_evidence_invalid'));
+    await assert.rejects(() => make(checkBillSummary, null).execute(ctx(), 'exp-1', {
+      ...input, supportingAttachmentIds: ['proof'], paymentEvidenceAttachmentIds: ['proof'],
+    }), codeIs('substitute_evidence_overlap'));
+    // Repository returns no match for inactive, unlinked, or other-tenant evidence.
+    await assert.rejects(() => make(checkBillSummary, null).execute(ctx(), 'exp-1', proofInput), codeIs('substitute_evidence_unavailable'));
+    await assert.rejects(() => make(checkBillSummary, null).execute(ctx(), 'exp-1', {
+      ...input, expectedExpenseUpdatedAt: new Date(now.getTime() - 1000).toISOString(),
+    }), codeIs('substitute_expense_changed'));
+    assert.equal(writes, 0);
+    await make(checkBillSummary, null, [payment]).execute(ctx(), 'exp-1', proofInput);
+    assert.equal(writes, 1);
+    await make(resolved, null, [payment]).execute(ctx(), 'exp-1', { ...proofInput, routeCheckBill: undefined });
+    assert.equal(writes, 2, 'an already-resolved route remains usable with valid proof');
+  });
+
+  it('keeps coded repository conflicts actionable without retrying a stale prepare', async () => {
+    const stale = new ConflictException({ code: 'expense_stale_reload', message: 'Reload before preparing.' });
+    const useCase = new PrepareSubstituteReceiptUseCase({
+      findByIdWithRelations: async () => expense(),
+      findActiveMemberIdentity: async () => ({ userId: 'payer-1', displayName: 'สมชาย' }),
+      getSubstituteReceiptPolicy: async () => null,
+      listEligibleSubstituteReceiptApprovers: async () => [{ userId: 'approver-1' }],
+      findSubstituteEvidenceAttachments: async () => [],
+      createPreparedSubstituteEvidence: async () => { throw stale; },
+    } as any, audit, notification);
+    await assert.rejects(() => useCase.execute(ctx(), 'exp-1', {
+      reasonCode: 'OTHER', missingReceiptReason: 'ไม่มีใบเสร็จ', businessPurpose: 'ใช้ในกิจการ', payerUserId: 'payer-1',
+      expectedExpenseUpdatedAt: now.toISOString(), idempotencyKey: 'stale-prepare',
+    }), (error) => error === stale);
   });
 
   it('rejects certificate layouts beyond the shared line bounds before preparation', async () => {
@@ -344,10 +424,10 @@ describe('PrepareSubstituteReceiptUseCase', () => {
         approvalMode: 'OWNER_SELF', approverUserIds: [], cashEvidencePolicy: 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE',
       }),
     } as any, audit, notification).execute(ctx('finance-1'), 'exp-1', input),
-    /requires separate payment evidence/);
+    /Attach separate proof of actual payment/);
     await assert.rejects(() => new PrepareSubstituteReceiptUseCase(repo, audit, notification)
       .execute(ctx('finance-1'), 'exp-1', { ...input, paymentMethod: 'BANK_TRANSFER' }),
-    /Non-cash expenses require linked payment evidence/);
+    /Attach separate proof of actual payment/);
     await assert.rejects(() => new PrepareSubstituteReceiptUseCase(repo, audit, notification)
       .execute(ctx('finance-1'), 'exp-1', { ...input, businessPurpose: '  ' }),
     /businessPurpose/);

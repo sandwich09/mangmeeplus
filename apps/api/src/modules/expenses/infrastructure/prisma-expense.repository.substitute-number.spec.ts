@@ -5,6 +5,19 @@ import { PrismaExpenseRepository } from './prisma-expense.repository';
 
 const UPDATED_AT = new Date('2026-08-10T01:00:00.000Z');
 
+it('resolves payment evidence only through active same-tenant links on the same expense', async () => {
+  let query: any;
+  const repo = new PrismaExpenseRepository({ client: { attachmentLink: { findMany: async (input: any) => {
+    query = input;
+    return [];
+  } } } } as any, {} as any);
+  assert.deepEqual(await repo.findSubstituteEvidenceAttachments('co-1', 'exp-1', ['proof']), []);
+  assert.deepEqual(query.where, {
+    companyId: 'co-1', targetType: 'expense.record', targetId: 'exp-1', attachmentId: { in: ['proof'] },
+    attachment: { companyId: 'co-1', status: 'ACTIVE' },
+  });
+});
+
 function preparedInput() {
   return {
     companyId: 'company-1',
@@ -152,5 +165,19 @@ describe('PrismaExpenseRepository substitute-receipt numbers', () => {
     assert.equal(update.aiVerificationSummaryJson.classificationResolution.acknowledgedPaidWithoutFinalReceipt, true);
     assert.equal(update.taxEvidenceStatus, 'SUPPORTING_ONLY');
     assert.equal(update.inputVatClaimStatus, 'NON_CLAIMABLE');
+    for (const preserved of ['sourceDocumentType', 'expenseDate', 'vendorNameSnapshot', 'grandTotalAmount', 'primaryAttachmentId']) {
+      assert.equal(Object.hasOwn(update, preserved), false, `${preserved} must not be replaced during routing`);
+    }
+  });
+
+  it('does not route, prepare, or reserve a number when the same check bill changed after review', async () => {
+    const { repo, tx, reserveNumberInTransaction, commitNumberInTransaction } = makeRepo();
+    tx.expenseRecord.findFirst = mock.fn(async () => ({ id: 'expense-secret-cuid', companyId: 'company-1', updatedAt: new Date(UPDATED_AT.getTime() + 1) }));
+    await assert.rejects(() => repo.createPreparedSubstituteEvidence({ ...preparedInput(), routeCheckBill: true }),
+      (error: any) => error.getResponse().code === 'expense_stale_reload');
+    assert.equal(tx.expenseRecord.updateMany.mock.calls.length, 0);
+    assert.equal(tx.expenseSubstituteReceiptEvidence.create.mock.calls.length, 0);
+    assert.equal(reserveNumberInTransaction.mock.calls.length, 0);
+    assert.equal(commitNumberInTransaction.mock.calls.length, 0);
   });
 });

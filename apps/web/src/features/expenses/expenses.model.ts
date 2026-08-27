@@ -18,7 +18,7 @@ import type {
 import {
   EXPENSE_STATUS_LABELS, EXPENSE_PAYMENT_STATUS_LABELS, EXPENSE_VAT_MODE_LABELS,
   SOURCE_DOCUMENT_TYPE_LABELS, TAX_EVIDENCE_STATUS_LABELS, SIGNATURE_ASSET_STATUS_LABELS,
-  isExpenseCancelled, isExpenseDeletableState, isExpensePending, isNonExpenseClassificationBlocking,
+  isExpenseCancelled, isExpenseDeletableState, isExpensePending, isNonExpenseClassificationBlocking, isCheckBillClassification,
   effectiveVatRateLabel, vatModeRequiresRate, civilDate, civilDateToUtcDate, civilPeriodKey, isCivilDate,
 } from '@watchdog-bms/contracts';
 export { isExpensePending } from '@watchdog-bms/contracts';
@@ -274,12 +274,17 @@ export function isBlockedCheckBillClassification(
     && (classification as Record<string, unknown>)['documentKind'] === 'ORDER_OR_CHECK_BILL');
 }
 
-/** Keep the toggle and its form on one condition so web never offers a prepare the API will reject. */
+/** New preparation uses the canonical wizard; preserve the existing PREPARED edit lifecycle. */
 export function canShowInlineSubstitutePreparation(
   classificationBlocked: boolean,
   evidenceStatus: SubstituteReceiptEvidenceSummary['status'] | null | undefined,
 ): boolean {
-  return !classificationBlocked && (!evidenceStatus || evidenceStatus === 'PREPARED');
+  return !classificationBlocked && evidenceStatus === 'PREPARED';
+}
+
+export function substituteReceiptPreparationHref(companyId: string, expenseId: string, summary: Record<string, unknown> | null): string {
+  return `/companies/${encodeURIComponent(companyId)}/expenses/substitute-receipts/new?expenseId=${encodeURIComponent(expenseId)}`
+    + (isCheckBillClassification(summary) ? '&route=check-bill' : '');
 }
 
 export type ExpenseSummary = {

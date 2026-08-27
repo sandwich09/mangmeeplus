@@ -8,6 +8,7 @@ import { GetEmployeeUseCase } from './application/use-cases/get-employee.use-cas
 import { CreateEmployeeUseCase } from './application/use-cases/create-employee.use-case';
 import { UpdateEmployeeUseCase } from './application/use-cases/update-employee.use-case';
 import { SetEmployeeStatusUseCase } from './application/use-cases/set-employee-status.use-case';
+import { DeleteEmployeeDraftUseCase } from './application/use-cases/delete-employee-draft.use-case';
 import { RegenerateEmployeeCredentialUseCase } from './application/use-cases/regenerate-employee-credential.use-case';
 import { IssueEmployeeLineLinkTokenUseCase } from './application/use-cases/issue-employee-line-link-token.use-case';
 import { RevokeEmployeeLineLinkTokenUseCase } from './application/use-cases/revoke-employee-line-link-token.use-case';
@@ -44,6 +45,7 @@ import { EntitlementExceptionUseCase } from './application/use-cases/entitlement
     CreateEmployeeUseCase,
     UpdateEmployeeUseCase,
     SetEmployeeStatusUseCase,
+    DeleteEmployeeDraftUseCase,
     RegenerateEmployeeCredentialUseCase,
     IssueEmployeeLineLinkTokenUseCase,
     RevokeEmployeeLineLinkTokenUseCase,

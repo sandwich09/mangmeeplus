@@ -11,6 +11,7 @@ import {
 import { encryptCredential } from '../../../system-partner-management/domain/logic/credential-cipher.logic';
 import { buildTemporaryPasswordFlexMessage, pushSystemLineMessages } from '../../../auth/infrastructure/system-line-push';
 import { revokeActiveSessions } from '../../../auth/domain/logic/session-revocation.logic';
+import { lockEmployeeProfile } from '../lock-employee-profile';
 
 export type RegenerateEmployeeCredentialCommand = {
   companyId: string;
@@ -48,6 +49,7 @@ export class RegenerateEmployeeCredentialUseCase {
     const expiresAt = temporaryPasswordExpiry(new Date());
 
     await this.prisma.client.$transaction(async (tx) => {
+      await lockEmployeeProfile(tx, cmd.companyId, cmd.employeeId);
       await tx.userCredential.update({
         where: { userId: profile.userId },
         data: {
