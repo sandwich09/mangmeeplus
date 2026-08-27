@@ -26,6 +26,7 @@ import {
   CompleteReceiptUploadUseCase,
 } from '../../../expenses/application/use-cases/expense-upload.use-case';
 import { reconcileExpenseDuplicateCandidates } from '../../../expenses/application/services/expense-duplicate-detection';
+import { pickLineDefaultBranchId } from '../../../expenses/domain/logic/line-receipt-branch.logic';
 import { CaptureLineExpenseNoteUseCase, LineTextExpenseCaptureIncompleteError } from '../../../expenses/application/use-cases/expense-document.use-case';
 import { CorrectLineCapturedExpenseUseCase } from '../../../expenses/application/use-cases/line-correction.use-case';
 import {
@@ -148,6 +149,9 @@ export const LEGAL_ACCEPTANCE_REQUIRED_REPLY = '📄 กรุณาเข้า
 const FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์ใช้งาน LINE AI สำหรับบริษัทนี้ค่ะ';
 const ERROR_REPLY = '⏳ ขออภัยค่ะ เกิดข้อผิดพลาดชั่วคราว กรุณาลองใหม่อีกครั้งนะคะ';
 const RATE_LIMIT_REPLY = '⏳ ระบบกำลังประมวลผลข้อความก่อนหน้า กรุณารอสักครู่แล้วลองใหม่อีกครั้งนะคะ';
+/** Post-OCR branch ambiguity (multi-branch company, no defaultable head office): the read
+ *  succeeded, only the branch decision is missing — send the user to the web picker honestly. */
+const RECEIPT_BRANCH_REQUIRED_REPLY = '🧾 อ่านใบเสร็จได้แล้วค่ะ แต่บริษัทมีหลายสาขาและน้องเลือกให้เองไม่ได้ รบกวนบันทึกผ่านเว็บแล้วเลือกสาขานะคะ';
 /** Sent INSTEAD of RATE_LIMIT_REPLY when the turn's ledger entry exists: the reclaim drain WILL
  *  answer it, so telling the user to resend would produce a double answer (UAT 2026-08-27). */
 const BUSY_FOLLOW_UP_REPLY = '⏳ น้องมั่งมีกำลังตอบข้อความก่อนหน้าอยู่ค่ะ ข้อความนี้รับไว้แล้ว เดี๋ยวตามมาตอบให้เองนะคะ ไม่ต้องส่งซ้ำค่ะ';
@@ -3443,6 +3447,15 @@ export class ProcessLineWebhookUseCase {
     try {
       return (await this.executeReceiptUploadInner(event, captionText)) ?? { outcome: 'done' };
     } catch (err) {
+      // Branch ambiguity is a data-setup state, not a transient fault: say what to do instead of
+      // the "ชั่วคราว ลองใหม่" copy that retries into the identical failure (Owner 2026-08-27).
+      const response = (err as { getResponse?: () => unknown }).getResponse?.() as { code?: string } | undefined;
+      if (response?.code === 'TRANSACTION_BRANCH_REQUIRED' || response?.code === 'TRANSACTION_BRANCH_INVALID') {
+        this.logger.warn({ msg: 'LINE receipt upload needs branch selection', webhookEventId: event.webhookEventId });
+        await this.deliverReply(event, RECEIPT_BRANCH_REQUIRED_REPLY).catch(() => {});
+        await this.updateEventLog(event.webhookEventId, 'clarification_required', 'RECEIPT_BRANCH_SELECTION_REQUIRED');
+        return { outcome: 'done' };
+      }
       this.logger.error({ msg: 'LINE receipt upload error', webhookEventId: event.webhookEventId, error: (err as Error).message });
       await this.deliverReply(event, ERROR_REPLY).catch(() => {});
       await this.releaseWebhookEvent(event.webhookEventId, 'RETRYABLE_RECEIPT_UPLOAD_ERROR');
@@ -3906,7 +3919,23 @@ export class ProcessLineWebhookUseCase {
     }
     if (decision.outcome !== 'expense') return;
 
+    // Owner 2026-08-27: never lose a successfully-read receipt to branch ambiguity. LINE has no
+    // branch picker, so default the USER'S OWN branch (membership defaultBranchId — "สาขาที่ user
+    // นั้นอยู่"), else the single in-scope branch, else the sole head office; the init use case
+    // re-validates scope and ACTIVE status, and the review lane keeps the branch editable.
+    const [branchCandidates, membership] = await Promise.all([
+      this.prisma.client.branch.findMany({
+        where: { companyId: ctx.companyId, status: 'ACTIVE', ...(ctx.scopes?.branchIds ? { id: { in: ctx.scopes.branchIds } } : {}) },
+        select: { id: true, type: true },
+        take: 20,
+      }),
+      ctx.membershipId
+        ? this.prisma.client.companyMembership.findUnique({ where: { id: ctx.membershipId }, select: { defaultBranchId: true } })
+        : Promise.resolve(null),
+    ]);
+    const defaultBranchId = pickLineDefaultBranchId(branchCandidates, membership?.defaultBranchId);
     const intent = await this.initReceiptUpload.execute(ctx, {
+      ...(defaultBranchId ? { branchId: defaultBranchId } : {}),
       originalFileName: media.fileName,
       mimeType: media.mimeType,
       byteSize: media.byteSize,

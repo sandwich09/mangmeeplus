@@ -12,6 +12,14 @@ test('explains stale draft removal without a misleading generic concurrency erro
     'ลบได้เฉพาะร่างพนักงานที่ยังไม่เสร็จสิ้น กรุณาตรวจสอบสถานะล่าสุด');
 });
 
+test('distinguishes a wrong current password from an expired session', () => {
+  assert.equal(apiErrorMessage(apiError('Current password is incorrect.', {
+    status: 400, code: 'current_password_incorrect',
+  })), 'รหัสผ่านปัจจุบันไม่ถูกต้อง');
+  assert.equal(apiErrorMessage(apiError('No active session.', { status: 401 })),
+    'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่');
+});
+
 test('explains missing and invalid transaction source branches in plain Thai', () => {
   assert.equal(apiErrorMessage(apiError('Unprocessable Entity', { status: 422, code: 'TRANSACTION_BRANCH_REQUIRED' })),
     'กรุณาระบุสาขาของรายการก่อนดำเนินการ');

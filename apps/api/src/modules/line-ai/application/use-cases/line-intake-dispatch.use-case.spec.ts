@@ -62,11 +62,15 @@ function makePrisma() {
         create: async (args: unknown) => args,
         updateMany: async (args: any) => { updates.push(args); return { count: 1 }; },
       },
+      // LINE default-branch lookup (Owner 2026-08-27): no branches = no default, legacy behavior.
+      branch: { findMany: async () => [] },
       externalIdentity: {
         findFirst: async () => ({ userId: 'user-1', user: { status: 'ACTIVE' } }),
       },
       companyMembership: {
         findMany: async () => [{ companyId: 'company-1', company: { name: 'c1', brandName: null }, roles: [{ role: { key: 'OWNER' } }] }],
+        // LINE default-branch lookup (Owner 2026-08-27): no assigned branch in this harness.
+        findUnique: async () => null,
       },
       lineCompanyContext: { findUnique: async () => null, upsert: async (args: unknown) => args },
       companyFeatureEntitlement: { findMany: async () => [] },

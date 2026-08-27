@@ -69,7 +69,10 @@ export default function ChangePasswordPage({ homePath = null }: { homePath?: str
     } catch (nextError) {
       setError(localizedErrorMessage(nextError, locale, {
         fallback: 'auth.change.error.failed',
-        conflictCodes: { password_reuse: 'auth.change.error.same' },
+        conflictCodes: {
+          current_password_incorrect: 'auth.change.error.current',
+          password_reuse: 'auth.change.error.same',
+        },
       }));
     } finally {
       setLoading(false);
