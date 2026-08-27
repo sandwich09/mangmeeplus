@@ -1,8 +1,8 @@
 # Agent Memory: Expense payment capture integrity
 
-Status: Root local acceptance completed: full expense E2E 21/21, strict PG 128/128,
-manual Chrome desktop/mobile capture and payment evidence inspected. Integration rebase,
-post-base checks, PR/CI/merge remain pending; not shipped and no main/Production claim.
+Status: Root local integration accepted on develop21f109d5: accounting6 + AP6 + expense21
+=33/33 E2E, strict PG128/128, web1139/1139, API/web/E2E typechecks pass. Six final images
+and API proof inspected. PR/CI/merge pending; not shipped and no main/Production claim.
 Owner: `/root/ocr_platform_admin` implementation; `/root` review, browser QA and integration.
 Scope: Expense payment durable retry identity, atomic audit/outbox, explicit actual paid
 date, registered regressions and isolated local PostgreSQL proof. P15 remains frozen and
@@ -235,6 +235,37 @@ untouched. No subscription, bank/revenue matching/reconciliation, or P28 credit 
   change was added under Ponytail full. Post-write replay is idempotent at the DB boundary.
 
 ## Isolated browser bootstrap handoff (executed; retained for root)
+
+### Post-rebase integration setup
+
+- Rebased implementation onto develop `21f109d5` as `70346946`; source integration had
+  no conflicts. Post-base web **1139/1139 passed, zero skipped**; web/API typecheck pass.
+  Changes since the original baseline include no API production change, only its
+  procurement DTO test, so the isolated compiled API remains the same tested source.
+- Expanded local browser check to accounting + AP + expenses (33 cases). First run was
+  **28/33**: accounting writes correctly returned422 because this fresh isolated seed
+  had no company VAT fact. No guard or production code was changed. Via the normal
+  permission-checked local Owner API, set only this synthetic company to NOT_REGISTERED
+  effective2026-07-01, command `expense-capture-qa-vat-notregistered-20260827`, version0→1.
+  This describes the NO_VAT test fixture, not the Owner's real tax status or the pending
+  P27 unknown-document-VAT policy. No live/shared DB was touched.
+- Next run was **32/33**: all accounting6 and AP6 passed; legacy EXP-04 incorrectly
+  required a VAT-base row even when the real capture-policy endpoint returned SIMPLE.
+  Code `showsTaxCapture()` intentionally hides VAT rows on untaxed SIMPLE documents.
+  Root changed only that test to read the policy for the actual expense civil date and
+  assert the corresponding visible/absent VAT row; totals/transition assertions remain.
+  The same test already passed FULL mode before this fixture configuration; no production
+  behavior or financial expectation was weakened. Final combined run follows below.
+- Final combined run at 2026-08-27T04:17:41Z: **33/33 passed, zero skipped/flaky**, 33.7s.
+  Accounting6 + AP6 + expense21, including the real receive/payment retry and two real
+  expense-payment retries. E2E TypeScript no-emit for all three files: **0 diagnostics**.
+  Updated four PNG and payment-api-proof.json to this same final run; recaptured both
+  Chrome JPEG after rebase and the synthetic company setup. Root inspected all six.
+  Actual Chrome no main error alerts, warning/error logs empty, no horizontal overflow
+  at1280×900/390×844; viewport reset afterward. `playwright-report/index.html` is the
+  full generated 33-case report. The earlier failed environment/test attempts above are
+  retained in this log rather than represented as passing. No production code changed
+  after the implementation rebase; final delta is E2E fixture-aware assertions/evidence.
 
 - Retain DB `watchdog_expense_payment_capture_20260827` on local `docker-postgres-1`,
   `127.0.0.1:15432`, for root's requested browser QA. URL pattern (do not log the password):

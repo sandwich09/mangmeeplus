@@ -120,10 +120,18 @@ test.describe('EXP — expenses + receipts', () => {
 
   test('EXP-04 @p1 expense detail renders totals and transitions', async ({ authedPage, api, companyId }) => {
     const created = await createExpense(api, companyId);
+    const detail = await json<FullExpenseDetail>(await api.get(`companies/${companyId}/expenses/${created.id}`));
+    const capturePolicy = await json<{ mode: 'FULL' | 'SIMPLE' }>(await api.get(
+      `companies/${companyId}/expenses/capture-policy?on=${civilDate(new Date(detail.expenseDate))}`,
+    ));
     await gotoCompany(authedPage, companyId, `/expenses?expenseId=${created.id}`);
     // guided stepper opens on the vendor+items step, where the money summary lives
     await expect(authedPage.getByText('ยอดก่อนหักส่วนลด', { exact: true })).toBeVisible();
-    await expect(authedPage.getByText('ฐานภาษี (ยอดก่อน VAT)', { exact: true })).toBeVisible();
+    // This fixture has no tax: a non-VAT company's SIMPLE capture deliberately hides VAT rows.
+    expect(['FULL', 'SIMPLE']).toContain(capturePolicy.mode);
+    const taxableBase = authedPage.getByText('ฐานภาษี (ยอดก่อน VAT)', { exact: true });
+    if (capturePolicy.mode === 'FULL') await expect(taxableBase).toBeVisible();
+    else await expect(taxableBase).toHaveCount(0);
     await expect(authedPage.getByText('ยอดรวมทั้งสิ้น', { exact: true })).toBeVisible();
     // The stepper is display-only: reach the final step through ถัดไป. A vendor name is
     // required first — createExpense() leaves it empty, which disables ถัดไป by validation.

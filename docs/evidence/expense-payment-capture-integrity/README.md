@@ -55,13 +55,16 @@ S3_E2E=1 API_PORT=3003 E2E_API_BASE_URL=http://127.0.0.1:3003/v1 \
   E2E_WEB_BASE_URL=http://127.0.0.1:3000 PLAYWRIGHT_HTML_OPEN=never \
   PLAYWRIGHT_JSON_OUTPUT_FILE=test-results/expense-payment-report.json \
   pnpm exec playwright test e2e/expenses.spec.ts --project=chromium \
-  --workers=1 --reporter=list,html,json
+  e2e/accounting.spec.ts e2e/accounts-payable.spec.ts --workers=1 --reporter=list,html,json
 ```
 
 Generated full report: `playwright-report/index.html`; raw artifacts: `test-results/`
 (ไม่ commit ทั้งสอง directory); ไฟล์หลักฐานที่เลือกไว้ด้านบน commit ไปกับ phase นี้
-ผล full local suite: **21/21 passed, zero skipped** ก่อน integration;
-ผลหลัง rebase และ CI/merge ให้ยึด task memory ฉบับล่าสุด
+ผลหลัง rebase: **33/33 passed, zero skipped/flaky** (ขาย6 + บิลผู้ขาย6 + รายจ่าย21),
+2026-08-27T04:17:41Z; web1139/1139 และ API/web/E2E typecheck ผ่าน
+ภาพทั้งหกตรวจอีกครั้งหลัง integration; บริษัทจำลองตั้งเป็น NOT_REGISTERED
+effective2026-07-01 ผ่าน API ปกติเพื่อให้เอกสาร NO_VAT ทดสอบได้ โดยไม่ปิด guard
+ผล CI/merge ให้ยึด task memory ฉบับล่าสุด
 
 ## Review และขอบเขตการส่งมอบ
 
