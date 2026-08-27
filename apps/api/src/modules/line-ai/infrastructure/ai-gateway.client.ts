@@ -33,6 +33,10 @@ import {
 
 const LINE_TURN_TIMEOUT_MS = 120_000;
 const LINE_INTAKE_TIMEOUT_MS = 30_000;
+/** An intake carrying an image runs the gateway's DOCUMENT reader (45s budget there), so this
+ *  caller must outlast it — otherwise the HTTP client aborts first and the provider-side fix is
+ *  invisible. Kept strictly above the gateway budget plus request overhead (UAT 2026-08-27). */
+const LINE_INTAKE_MEDIA_TIMEOUT_MS = 55_000;
 const RECEIPT_OCR_TIMEOUT_MS = 120_000;
 
 export class AiGatewayRequestError extends Error {
@@ -231,7 +235,7 @@ export class AiGatewayClient {
     }
     try {
       const plan = await this.postInternal<LineIntakeRoutePlan>(
-        '/internal/ai/line-intake-route', request, request.requestId, LINE_INTAKE_TIMEOUT_MS, budgetMonthKey,
+        '/internal/ai/line-intake-route', request, request.requestId, LINE_INTAKE_MEDIA_TIMEOUT_MS, budgetMonthKey,
       );
       if (plan.status === 'UNAVAILABLE') {
         if (plan.errorCode === 'PROVIDER_DISABLED' || plan.errorCode === 'PROVIDER_CONFIG_MISSING') {

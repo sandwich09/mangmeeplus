@@ -1229,3 +1229,85 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
     assert.ok(!BASE64_MEDIA_ROUTES.test('/v1/internal/ai/line-turn'), 'text turns stay at HTTP_BODY_LIMIT');
   });
 });
+
+/**
+ * UAT 2026-08-27: intake carrying a photo was still timed on the chat/tool budget, so real
+ * receipts died at the 15-second line (two fuel bills aborted at 15,011ms / 15,006ms; a milk-tea
+ * bill scraped through at 15,003ms). These cases pin BOTH directions of the fix.
+ */
+describe('intake route timeout budget', () => {
+  const bedrockConfig = {
+    aiGatewayInternalSecret: 'secret',
+    modelProvider: 'bedrock',
+    bedrockRegion: 'ap-southeast-1',
+    bedrockModelId: 'global.anthropic.claude-sonnet-4-6',
+    aiToolTimeoutMs: 15_000,
+  } as any;
+
+  const baseBody = {
+    requestId: 'req-budget', companyId: 'company-1', userId: 'user-1', locale: 'th',
+    messageText: '', permissions: ['expense.receipt.line_upload'],
+  };
+
+  /** Never answers; only the provider's own abort ends the call — so the wall clock IS the budget. */
+  function hangUntilAborted() {
+    const original = BedrockRuntimeClient.prototype.send;
+    (BedrockRuntimeClient.prototype as any).send = (_command: any, options: any) =>
+      new Promise((_resolve, reject) => {
+        options.abortSignal.addEventListener('abort', () => reject(new Error('aborted')));
+      });
+    return () => { (BedrockRuntimeClient.prototype as any).send = original; };
+  }
+
+  async function settle() {
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+  }
+
+  it('an intake WITH an attachment survives past the chat budget and uses the document budget', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const restore = hangUntilAborted();
+    try {
+      const controller = new LineAiInternalController(bedrockConfig, { execute: async () => { throw new Error('no turn'); } } as any);
+      let settled = false;
+      const pending = controller.lineIntakeRoute('secret', {
+        ...baseBody,
+        attachments: [{ id: 'att-fuel', mimeType: 'image/jpeg', purpose: 'unknown', contentBase64: 'ZmFrZQ==' }],
+      } as any).then((plan) => { settled = true; return plan; });
+
+      t.mock.timers.tick(15_100);
+      await settle();
+      assert.equal(settled, false, 'the old 15s chat budget must no longer abort a photo intake');
+
+      t.mock.timers.tick(30_000);
+      await settle();
+      const plan = await pending;
+      assert.equal(plan.status, 'UNAVAILABLE', 'the document budget still bounds it — it does not hang forever');
+    } finally {
+      restore();
+      t.mock.timers.reset();
+    }
+  });
+
+  it('a text-only intake keeps the chat budget, so ordinary chat latency is untouched', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const restore = hangUntilAborted();
+    try {
+      const controller = new LineAiInternalController(bedrockConfig, { execute: async () => { throw new Error('no turn'); } } as any);
+      let settled = false;
+      const pending = controller.lineIntakeRoute('secret', { ...baseBody, messageText: 'ยอดขายวันนี้' } as any)
+        .then((plan) => { settled = true; return plan; });
+
+      t.mock.timers.tick(14_900);
+      await settle();
+      assert.equal(settled, false);
+
+      t.mock.timers.tick(200);
+      await settle();
+      const plan = await pending;
+      assert.equal(plan.status, 'UNAVAILABLE', 'text intake still aborts at the 15s chat budget');
+    } finally {
+      restore();
+      t.mock.timers.reset();
+    }
+  });
+});
