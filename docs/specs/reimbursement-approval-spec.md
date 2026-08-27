@@ -234,6 +234,9 @@ No company entitlement or deployment/customer gate is changed by this role-polic
 - Draft submission UX must explain the effective company receipt policy before the requester submits. When an
   unevidenced line is blocked by policy, the submit action is disabled and the detail view directs the requester to
   attach a receipt; a missing-receipt reason must not be presented as sufficient when the company policy disallows it.
+- Receipt-policy API rejections must use the same reviewed Thai guidance in the shared mutation toast and inline
+  error. `missing_receipt` must not suggest that reloading fixes missing evidence or that a reason always suffices;
+  `missing_receipt_reason_required` must specifically ask for the missing reason. Unknown API diagnostics stay hidden.
 - A claim-form signature action uses the latest `ACTIVE` company signature asset submitted by the eligible signer.
   It must never resolve another user's signature. If the signer has no active saved signature, the web shows a modal
   with a secondary cancel action and a primary `ไปหน้าลายเซ็น` action that navigates to the existing signature feature.
