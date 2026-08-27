@@ -702,7 +702,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
 
       <div className="grid gap-5">
         <MangmeeCard className="flex flex-wrap items-center gap-[18px] p-4 sm:p-[18px_22px]">
-          <div className="flex min-w-0 shrink-0 items-center gap-3.5">
+          <div className="flex min-w-0 basis-full items-center gap-3.5 lg:basis-auto lg:shrink-0">
             <div className="flex h-[52px] w-[52px] items-center justify-center rounded-xl text-[17px] font-extrabold text-white" style={{ backgroundColor: colorForRole(selectedRole) }}>
               {avatarInitial}
             </div>
@@ -715,7 +715,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
               )}
             </div>
           </div>
-          <div className="grid min-w-0 flex-1 grid-cols-2 gap-x-6 gap-y-2.5 md:grid-cols-4">
+          <div className="grid min-w-0 basis-full grid-cols-1 gap-x-6 gap-y-2.5 sm:grid-cols-2 lg:basis-auto lg:flex-1 xl:grid-cols-4">
             {summaryRows.map((row) => (
               <div key={row.label} className="min-w-0">
                 <div className="text-sm text-gray-400">{row.label}</div>

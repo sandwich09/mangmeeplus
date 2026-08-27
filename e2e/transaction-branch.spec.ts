@@ -86,6 +86,9 @@ for (const width of [390, 1280]) {
     try {
       expect(created.branchId).toBe(chosen.id);
       await expect(page).toHaveURL(new RegExp(`/expenses/${created.id}`));
+      await expect(page.getByRole('heading', { name: /กำลังโหลด/ })).toHaveCount(0);
+      await expect(page.getByRole('heading', { name: 'ไม่พบรายการ', exact: true })).toHaveCount(0);
+      await expect(page.getByRole('heading', { name: /รอระบุผู้ขาย/ })).toBeVisible();
       const saved = await json<{ id: string; branchId: string; grandTotalAmount: string }>(await api.get(`companies/${companyId}/expenses/${created.id}`));
       expect(saved.branchId).toBe(chosen.id);
       expect(Number(saved.grandTotalAmount)).toBe(1);
@@ -126,6 +129,9 @@ for (const width of [390, 1280]) {
       const complete = await completedResponse;
       expect(complete.ok(), await complete.text()).toBeTruthy();
       await expect(page).toHaveURL(new RegExp(`/expenses/${intent.expenseId}`));
+      await expect(page.getByRole('heading', { name: /กำลังโหลด/ })).toHaveCount(0);
+      await expect(page.getByRole('heading', { name: 'ไม่พบรายการ', exact: true })).toHaveCount(0);
+      await expect(page.getByRole('heading', { name: /รอระบุผู้ขาย/ })).toBeVisible();
       const saved = await json<{ id: string; branchId: string; primaryAttachmentId: string }>(await api.get(`companies/${companyId}/expenses/${intent.expenseId}`));
       expect(saved.branchId).toBe(chosen.id);
       expect(saved.primaryAttachmentId).toBe(intent.attachmentId);

@@ -74,6 +74,11 @@ for (const width of [390, 1280]) {
     await page.getByRole('button', { name: 'ถัดไป ›', exact: true }).click();
     await expect(page.getByRole('button', { name: '+ ฝ่ายบัญชี', exact: true })).toHaveAttribute('aria-pressed', 'false');
     await expect(page.locator('#employee-default-branch')).toHaveText(branch.name);
+    const emailSummary = page.getByText('regression@example.test', { exact: true });
+    await expect(emailSummary).toBeVisible();
+    expect((await emailSummary.boundingBox())!.height).toBeLessThan(48);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.getByRole('heading', { name: 'เพิ่มพนักงาน', exact: true }).scrollIntoViewIfNeeded();
     await page.screenshot({ path: info.outputPath(`employee-choice-${width}.png`), fullPage: true });
   });
 }
