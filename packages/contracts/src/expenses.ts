@@ -987,7 +987,7 @@ export type SharedEvidenceFilter = {
   fromDate?: string;
   toDate?: string;
   yearMonth?: string;
-  /** Narrows within the caller's branch scope; an out-of-scope id yields zero rows (ANDed with ABAC). */
+  /** Narrows within the caller's branch scope; an out-of-scope id is rejected before querying. */
   branchId?: string;
   status?: ExpenseStatus;
   sourceDocumentType?: SourceDocumentType;

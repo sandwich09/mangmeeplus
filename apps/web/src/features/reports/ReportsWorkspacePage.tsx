@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
 import type { ReportDatasetDefinitionDto, ReportDatasetStatus, ReportExportRequestDto, ReportFieldType, ReportFilterValue, ReportResultDto, ReportRunHistoryItemDto, ReportViewDto } from '@watchdog-bms/contracts';
@@ -80,6 +81,7 @@ function downloadTextFile(fileName: string, mimeType: string, content: string) {
 }
 
 export function ReportsWorkspacePage({ companyId }: { companyId: string }) {
+  const requestedExportId = useSearchParams().get('exportId');
   const toast = useToast();
   const [datasets, setDatasets] = useState<ReportDatasetDefinitionDto[]>([]);
   const [views, setViews] = useState<ReportViewDto[]>([]);
@@ -96,6 +98,13 @@ export function ReportsWorkspacePage({ companyId }: { companyId: string }) {
   const [historyOnly, setHistoryOnly] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pendingView = useRef<ReportViewDto | null>(null);
+  const focusedExport = useRef('');
+  const requestedExport = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!requestedExportId || focusedExport.current === requestedExportId || !requestedExport.current) return;
+    focusedExport.current = requestedExportId;
+    requestedExport.current.scrollIntoView({ block: 'center' });
+  }, [requestedExportId, exports]);
 
   const selected = useMemo(() => datasets.find((dataset) => dataset.code === selectedCode), [datasets, selectedCode]);
   const enabledDatasets = useMemo(() => datasets.filter((dataset) => dataset.status === 'ENABLED'), [datasets]);
@@ -326,10 +335,12 @@ export function ReportsWorkspacePage({ companyId }: { companyId: string }) {
           </MangmeeCard>
 
           <MangmeeCard className="p-4">
-            <h2 className="text-sm font-semibold text-gray-900">ศูนย์ส่งออกข้อมูล</h2>
+            <h2 className="text-sm font-semibold text-gray-900">ไฟล์รายงานที่ส่งออก</h2>
+            {requestedExportId && !loading && !exports.some((item) => item.id === requestedExportId) && <p role="status" className="mt-2 rounded-lg bg-warning-50 p-3 text-sm text-warning-800">ไม่พบไฟล์จากการแจ้งเตือนนี้ในประวัติที่คุณเปิดได้ ข้อความแจ้งเตือนเป็นข้อมูล ณ วันที่สร้าง ไม่ได้ยืนยันว่าไฟล์ยังดาวน์โหลดได้ · ไฟล์อื่นด้านล่างไม่ใช่ไฟล์เดียวกัน</p>}
             <div className="mt-3 max-h-[520px] space-y-2 overflow-auto pr-1 text-sm">
               {exports.map((item) => (
-                <div key={item.id} className="rounded-lg border border-gray-100 px-3 py-2">
+                <div key={item.id} ref={item.id === requestedExportId ? requestedExport : undefined} className={`rounded-lg border px-3 py-2 ${item.id === requestedExportId ? 'border-brand-400 bg-brand-25' : 'border-gray-100'}`}>
+                  {item.id === requestedExportId && <p className="font-semibold text-brand-700">ไฟล์จากการแจ้งเตือน</p>}
                   <div className="flex justify-between gap-2"><span>{item.datasetTitle ?? 'รายงานเดิม'}</span><span>{reportExportStatusText(item.status)}</span></div>
                   <div className="text-xs text-gray-500">
                     {item.format} · {item.rowCount} แถว · {formatThaiDateTime(item.createdAt, '-')}{reportExportErrorText(item, historyOnly) ? ` · ${reportExportErrorText(item, historyOnly)}` : ''}

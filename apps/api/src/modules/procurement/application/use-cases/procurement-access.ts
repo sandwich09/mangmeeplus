@@ -1,6 +1,7 @@
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
-import { isBranchInScope, resolveCreateBranchId } from '../../../data-model-core/domain/logic/branch.logic';
+import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
+import type { PrismaProcurementRepository } from '../../infrastructure/prisma-procurement.repository';
 
 export const PROCUREMENT_RELATED_READ_PERMISSIONS = {
   PURCHASE_REQUEST: 'procurement.purchase_request.read_related',
@@ -18,12 +19,13 @@ export function assertProcurementBranchScope(
   if (!isBranchInScope(ctx.scopes ?? {}, branchId)) throw new NotFoundException(`${label} not found`);
 }
 
-export function resolveProcurementCreateBranch(
+export async function resolveProcurementCreateBranch(
   ctx: RequestContext,
   branchId: string | null | undefined,
-): string | undefined {
+  repo: PrismaProcurementRepository,
+): Promise<string> {
   if (ctx.scopes?.branchIds?.length === 0 || !isBranchInScope(ctx.scopes ?? {}, branchId)) {
     throw new ForbiddenException('Branch is outside your assigned branch scope.');
   }
-  return resolveCreateBranchId(ctx.scopes ?? {}, branchId) ?? undefined;
+  return repo.resolveCreateBranchId(ctx.companyId, ctx.scopes ?? {}, branchId);
 }

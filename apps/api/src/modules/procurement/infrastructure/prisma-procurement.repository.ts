@@ -17,6 +17,7 @@ import { round2, SETTLE_EPSILON, vendorBillTaxSourceChecksum } from '../domain/l
 import { deriveWhtIncomeBase } from '../../tax/domain/logic/wht-report.logic';
 import { civilDate, civilDayRangeToUtc, civilPeriodKey, coerceCivilDate, exclusiveEndOfDay } from '@watchdog-bms/contracts';
 import { branchScopeWhere, type BranchScopes } from '../../data-model-core/domain/logic/branch.logic';
+import { resolveTransactionBranchId, requireTransactionBranchId } from '../../data-model-core/application/services/transaction-branch';
 import { findAttachmentLinkConflict } from '../../data-model-core/domain/logic/attachment.logic';
 
 export type ProcurementDocumentKind = 'PURCHASE_REQUEST' | 'PURCHASE_ORDER' | 'GOODS_RECEIPT' | 'VENDOR_BILL' | 'SUPPLIER_PAYMENT';
@@ -106,6 +107,10 @@ export type VendorBillTaxFinalizer = (input: { db: any; bill: VendorBillRecord }
 
 @Injectable()
 export class PrismaProcurementRepository {
+  async resolveCreateBranchId(companyId: string, scopes: { branchIds?: string[] }, selectedBranchId?: string | null): Promise<string> {
+    return resolveTransactionBranchId(this.prisma.client, companyId, scopes, selectedBranchId);
+  }
+
   constructor(private readonly prisma: PrismaService) {}
 
   async branchExists(companyId: string, branchId: string): Promise<boolean> {
@@ -477,6 +482,7 @@ export class PrismaProcurementRepository {
     subtotalAmount: string; discountAmount: string; taxableAmount: string; vatAmount: string; whtEstimateAmount?: string; grandTotalAmount: string;
     lines: { lineNumber: number; lineType?: string; productId?: string; description: string; unitName?: string; requestedQuantity: string; estimatedUnitPrice: string; discountAmount: string; vatMode: string; vatRate?: string; vatAmount: string; lineSubtotalAmount: string; lineTotalAmount: string; accountHint?: string; inventoryLocationId?: string }[];
   }, createdByUserId: string): Promise<PurchaseRequestRecord> {
+    requireTransactionBranchId(data.branchId);
     const row = await this.prisma.client.purchaseRequest.create({
       data: {
         companyId, branchId: data.branchId, neededByDate: data.neededByDate, supplierId: data.supplierId,
@@ -579,6 +585,7 @@ export class PrismaProcurementRepository {
     supplierSnapshotJson?: Record<string, unknown>;
     lines: { lineNumber: number; lineType?: string; productId?: string; description: string; unitName?: string; orderedQuantity: string; unitPrice: string; discountAmount: string; vatMode: string; vatRate?: string; vatAmount: string; whtCategoryCode?: string; whtRate?: string; whtEstimateAmount?: string; lineSubtotalAmount: string; lineTotalAmount: string; accountHint?: string; inventoryLocationId?: string; sourcePurchaseRequestLineId?: string }[];
   }, createdByUserId: string): Promise<PurchaseOrderRecord> {
+    requireTransactionBranchId(data.branchId);
     const create = (db: any) => db.purchaseOrder.create({
       data: {
         companyId, supplierId: data.supplierId, branchId: data.branchId, orderDate: data.orderDate,
@@ -680,6 +687,7 @@ export class PrismaProcurementRepository {
     note?: string; supplierSnapshotJson?: Record<string, unknown>;
     lines: { purchaseOrderLineId: string; lineNumber: number; lineType?: string; productId?: string; description: string; inventoryLocationId?: string; orderedQuantity: string; previouslyReceivedQuantity: string; receivedQuantity: string; acceptedQuantity: string; rejectedQuantity?: string; unitName?: string; varianceReason?: string }[];
   }, receivedByUserId: string): Promise<GoodsReceiptRecord> {
+    requireTransactionBranchId(data.branchId);
     const row = await this.prisma.client.goodsReceipt.create({
       data: {
         companyId, purchaseOrderId: data.purchaseOrderId, supplierId: data.supplierId,
@@ -876,6 +884,7 @@ export class PrismaProcurementRepository {
     matchingMode?: string;
     lines: { lineNumber: number; lineType?: string; productId?: string; description: string; unitName?: string; quantity: string; unitPrice: string; discountAmount: string; vatMode: string; vatRate?: string; vatAmount: string; inputVatClaimStatus?: string; whtCategoryCode?: string; whtRate?: string; whtAmount: string; lineSubtotalAmount: string; lineTotalAmount: string; accountHint?: string; assetCandidate?: boolean; purchaseOrderLineId?: string }[];
   }, createdByUserId: string): Promise<VendorBillRecord> {
+    requireTransactionBranchId(data.branchId);
     const row = await (this.prisma.client as any).$transaction(async (tx: any) => {
       if (!await tx.supplierProfile.findFirst({ where: { id: data.supplierId, companyId, status: 'ACTIVE' }, select: { id: true } })) {
         throw new ConflictException('supplier_not_active_or_outside_company');
@@ -1325,6 +1334,7 @@ export class PrismaProcurementRepository {
       const existing = await this.prisma.client.supplierPayment.findFirst({ where: { companyId, paymentNumber: data.paymentNumber }, include: { allocations: true } });
       if (existing) return this.toSupplierPaymentRecord(existing);
     }
+    requireTransactionBranchId(data.branchId);
     const allocatedAmount = data.allocations.reduce((acc, allocation) => acc.add(allocation.amount), new Decimal(0));
     // Against the gross, because allocations clear debt rather than move cash. Measuring the
     // unapplied remainder against netPaid would report a withheld payment as over-applied.

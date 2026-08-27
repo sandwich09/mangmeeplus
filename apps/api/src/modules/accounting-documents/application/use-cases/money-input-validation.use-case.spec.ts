@@ -58,7 +58,10 @@ describe('P27 sales root launch gate', () => {
     let creates = 0;
     const audits: any[] = [];
     const useCase = new CreateDocumentUseCase(
-      { createDocument: async (_input: unknown, beforeMutation: (db: unknown) => Promise<void>) => {
+      {
+        findActiveBranch: async () => ({ id: 'branch-1' }),
+        resolveCreateBranchId: async (_companyId: string, scopes: { branchIds?: string[] }, selected?: string) => selected ?? scopes.branchIds?.[0] ?? 'branch-1',
+         createDocument: async (_input: unknown, beforeMutation: (db: unknown) => Promise<void>) => {
         await beforeMutation({});
         creates += 1;
       } } as any,
@@ -123,7 +126,10 @@ describe('P27 simple-income use-case boundary', () => {
   it('requires the complete permission set before opening the bundle transaction', async () => {
     let called = false;
     const useCase = new RecordSimpleIncomeUseCase(
-      { recordSimpleIncomeBundle: async (_record: unknown, _audit: unknown, beforeMutation: (db: unknown) => Promise<void>) => {
+      {
+        findActiveBranch: async () => ({ id: 'branch-1' }),
+        resolveCreateBranchId: async (_companyId: string, scopes: { branchIds?: string[] }, selected?: string) => selected ?? scopes.branchIds?.[0] ?? 'branch-1',
+         recordSimpleIncomeBundle: async (_record: unknown, _audit: unknown, beforeMutation: (db: unknown) => Promise<void>) => {
         await beforeMutation({});
         called = true;
         return result;
@@ -141,7 +147,10 @@ describe('P27 simple-income use-case boundary', () => {
     let called = false;
     const audits: any[] = [];
     const useCase = new RecordSimpleIncomeUseCase(
-      { recordSimpleIncomeBundle: async (_record: unknown, _audit: unknown, beforeMutation: (db: unknown) => Promise<void>) => {
+      {
+        findActiveBranch: async () => ({ id: 'branch-1' }),
+        resolveCreateBranchId: async (_companyId: string, scopes: { branchIds?: string[] }, selected?: string) => selected ?? scopes.branchIds?.[0] ?? 'branch-1',
+         recordSimpleIncomeBundle: async (_record: unknown, _audit: unknown, beforeMutation: (db: unknown) => Promise<void>) => {
         await beforeMutation({});
         called = true;
         return result;
@@ -157,10 +166,13 @@ describe('P27 simple-income use-case boundary', () => {
     assert.equal(audits[0]?.result, 'DENIED');
   });
 
-  it('defaults a branch-restricted creator to the first permitted branch', async () => {
+  it('uses the single available branch returned by the source-branch resolver', async () => {
     let persistedBranchId: string | undefined;
     const useCase = new RecordSimpleIncomeUseCase(
-      { recordSimpleIncomeBundle: async (record: any) => {
+      {
+        findActiveBranch: async () => ({ id: 'branch-1' }),
+        resolveCreateBranchId: async (_companyId: string, scopes: { branchIds?: string[] }, selected?: string) => selected ?? scopes.branchIds?.[0] ?? 'branch-1',
+         recordSimpleIncomeBundle: async (record: any) => {
         persistedBranchId = record.branchId;
         return { ...result, replayed: true };
       } } as any,
@@ -179,7 +191,10 @@ describe('P27 simple-income use-case boundary', () => {
     let auditDb: unknown;
     const transactionDb = { tag: 'same-transaction' };
     const useCase = new RecordSimpleIncomeUseCase(
-      { recordSimpleIncomeBundle: async (_input: any, hook: any) => {
+      {
+        findActiveBranch: async () => ({ id: 'branch-1' }),
+        resolveCreateBranchId: async (_companyId: string, scopes: { branchIds?: string[] }, selected?: string) => selected ?? scopes.branchIds?.[0] ?? 'branch-1',
+         recordSimpleIncomeBundle: async (_input: any, hook: any) => {
         await hook(transactionDb, result);
         return result;
       } } as any,
@@ -197,7 +212,10 @@ describe('P27 simple-income use-case boundary', () => {
   it('does not emit duplicate events when the command is replayed', async () => {
     let events = 0;
     const useCase = new RecordSimpleIncomeUseCase(
-      { recordSimpleIncomeBundle: async () => ({ ...result, replayed: true }) } as any,
+      {
+        findActiveBranch: async () => ({ id: 'branch-1' }),
+        resolveCreateBranchId: async (_companyId: string, scopes: { branchIds?: string[] }, selected?: string) => selected ?? scopes.branchIds?.[0] ?? 'branch-1',
+         recordSimpleIncomeBundle: async () => ({ ...result, replayed: true }) } as any,
       { log: async () => undefined } as any,
       { append: async () => { events += 1; } } as any,
       { get: async () => ({ status: 'REGISTERED' }) } as any,
@@ -210,7 +228,10 @@ describe('P27 simple-income use-case boundary', () => {
   it('blocks VAT modes for a company that is not VAT registered', async () => {
     let called = false;
     const useCase = new RecordSimpleIncomeUseCase(
-      { recordSimpleIncomeBundle: async () => { called = true; return result; } } as any,
+      {
+        findActiveBranch: async () => ({ id: 'branch-1' }),
+        resolveCreateBranchId: async (_companyId: string, scopes: { branchIds?: string[] }, selected?: string) => selected ?? scopes.branchIds?.[0] ?? 'branch-1',
+         recordSimpleIncomeBundle: async () => { called = true; return result; } } as any,
       { log: async () => undefined } as any,
       { append: async () => undefined } as any,
       { get: async () => ({ status: 'NOT_REGISTERED' }) } as any,
@@ -223,7 +244,10 @@ describe('P27 simple-income use-case boundary', () => {
   it('fails closed when the company has not confirmed its VAT status', async () => {
     let called = false;
     const useCase = new RecordSimpleIncomeUseCase(
-      { recordSimpleIncomeBundle: async () => { called = true; return result; } } as any,
+      {
+        findActiveBranch: async () => ({ id: 'branch-1' }),
+        resolveCreateBranchId: async (_companyId: string, scopes: { branchIds?: string[] }, selected?: string) => selected ?? scopes.branchIds?.[0] ?? 'branch-1',
+         recordSimpleIncomeBundle: async () => { called = true; return result; } } as any,
       { log: async () => undefined } as any,
       { append: async () => undefined } as any,
       { get: async () => ({ status: 'UNKNOWN' }) } as any,
@@ -238,6 +262,9 @@ describe('H-05 use-case revalidation', () => {
   it('rejects invalid payment money before the repository transaction', async () => {
     let creates = 0;
     const repo = {
+      findActiveBranch: async () => ({ id: 'branch-1' }),
+      resolveCreateBranchId: async (_companyId: string, scopes: { branchIds?: string[] }, selected?: string) => selected ?? scopes.branchIds?.[0] ?? 'branch-1',
+
       findDocumentById: async () => null,
       createPayment: async () => { creates += 1; throw new Error('must not persist'); },
     };
@@ -252,8 +279,11 @@ describe('H-05 use-case revalidation', () => {
   it('rejects an invalid allocation target before persistence', async () => {
     let creates = 0;
     const repo = {
+      findActiveBranch: async () => ({ id: 'branch-1' }),
+      resolveCreateBranchId: async (_companyId: string, scopes: { branchIds?: string[] }, selected?: string) => selected ?? scopes.branchIds?.[0] ?? 'branch-1',
+
       findDocumentById: async () => ({
-        documentType: 'INVOICE', status: 'DRAFT', currency: 'THB',
+        branchId: 'branch-1', documentType: 'INVOICE', status: 'DRAFT', currency: 'THB',
         outstandingAmount: '100.00',
       }),
       findPaymentByIdempotencyKey: async () => null,
@@ -267,8 +297,11 @@ describe('H-05 use-case revalidation', () => {
   it('keeps valid overpayment for repository allocation/unapplied-credit handling', async () => {
     let creates = 0;
     const repo = {
+      findActiveBranch: async () => ({ id: 'branch-1' }),
+      resolveCreateBranchId: async (_companyId: string, scopes: { branchIds?: string[] }, selected?: string) => selected ?? scopes.branchIds?.[0] ?? 'branch-1',
+
       findDocumentById: async () => ({
-        documentType: 'INVOICE', status: 'ISSUED', currency: 'THB', counterpartyId: 'customer-1',
+        branchId: 'branch-1', documentType: 'INVOICE', status: 'ISSUED', currency: 'THB', counterpartyId: 'customer-1',
         outstandingAmount: '100.00',
       }),
       findPaymentByIdempotencyKey: async () => null,
@@ -295,6 +328,8 @@ describe('H-05 use-case revalidation', () => {
     let events = 0;
     let audits = 0;
     const repo = {
+      resolveCreateBranchId: async (_companyId: string, scopes: { branchIds?: string[] }, selected?: string) => selected ?? scopes.branchIds?.[0] ?? 'branch-1',
+
       findDocumentById: async () => ({
         documentType: 'INVOICE', status: 'ISSUED', currency: 'THB', branchId: 'branch-1', counterpartyId: 'customer-1',
         outstandingAmount: '100.00',
@@ -348,6 +383,8 @@ describe('H-05 use-case revalidation', () => {
     let prior: { payment: typeof priorPayment; payloadFingerprint: string } | null = null;
     let branchActive = true;
     const repo = {
+      resolveCreateBranchId: async (_companyId: string, scopes: { branchIds?: string[] }, selected?: string) => selected ?? scopes.branchIds?.[0] ?? 'branch-1',
+
       findDocumentById: async (companyId: string) => companyId === ctx.companyId ? target : null,
       findPaymentByIdempotencyKey: async (_companyId: string, key: string) => key === request.idempotencyKey
         ? prior
@@ -392,6 +429,8 @@ describe('H-05 use-case revalidation', () => {
       outstandingAmount: '100.00',
     };
     const execute = (overrides: Record<string, unknown>, branchIds = ['branch-1'], active = true) => new CreatePaymentUseCase({
+      resolveCreateBranchId: async (_companyId: string, scopes: { branchIds?: string[] }, selected?: string) => selected ?? scopes.branchIds?.[0] ?? 'branch-1',
+
       findDocumentById: async () => target,
       findPaymentByIdempotencyKey: async () => null,
       findActiveBranch: async () => active ? { id: 'branch-1' } : null,
@@ -408,7 +447,10 @@ describe('H-05 use-case revalidation', () => {
 
   it('rejects invalid document money before createDocument', async () => {
     let creates = 0;
-    const repo = { createDocument: async () => { creates += 1; throw new Error('must not persist'); } };
+    const repo = {
+      findActiveBranch: async () => ({ id: 'branch-1' }),
+      resolveCreateBranchId: async (_companyId: string, scopes: { branchIds?: string[] }, selected?: string) => selected ?? scopes.branchIds?.[0] ?? 'branch-1',
+       createDocument: async () => { creates += 1; throw new Error('must not persist'); } };
     const useCase = new CreateDocumentUseCase(
       repo as any, { log: async () => undefined } as any, {} as any,
       { get: async () => ({ status: 'REGISTERED' }) } as any,
@@ -440,6 +482,8 @@ describe('P27 BLOCK_NEW_ROOT mutation coverage', () => {
     let writes = 0;
     const audit = { log: async (entry: any) => { deniedActions.push(entry.action); } } as any;
     const repo = {
+      resolveCreateBranchId: async (_companyId: string, scopes: { branchIds?: string[] }, selected?: string) => selected ?? scopes.branchIds?.[0] ?? 'branch-1',
+
       findCounterpartyById: async () => ({ id: 'cp-1' }),
       createCounterparty: async (_input: unknown, before: (db: unknown) => Promise<void>) => {
         await before({});
@@ -461,6 +505,8 @@ describe('P27 BLOCK_NEW_ROOT mutation coverage', () => {
   it('blocks quotation submit before its status mutation', async () => {
     let statusWrites = 0;
     const repo = {
+      resolveCreateBranchId: async (_companyId: string, scopes: { branchIds?: string[] }, selected?: string) => selected ?? scopes.branchIds?.[0] ?? 'branch-1',
+
       findDocumentById: async () => ({ id: 'quote-1', documentType: 'QUOTATION', status: 'DRAFT' }),
       submitQuotationForApproval: async (_companyId: string, _id: string, _actor: string, before: (db: unknown) => Promise<void>) => {
         await before({});
@@ -475,12 +521,14 @@ describe('P27 BLOCK_NEW_ROOT mutation coverage', () => {
 
   it('rejects a second active receipt for the same fully-paid invoice under the source lock', async () => {
     const source = {
-      id: 'invoice-1', companyId: 'company-1', branchId: undefined, documentType: 'INVOICE', status: 'ISSUED',
+      id: 'invoice-1', companyId: 'company-1', branchId: 'branch-1', documentType: 'INVOICE', status: 'ISSUED',
       paymentStatus: 'PAID', outstandingAmount: '0.00', vatMode: 'NO_VAT', vatAmount: '0.00',
     };
     let creates = 0;
     let sourceReads = 0;
     const repo = {
+      resolveCreateBranchId: async (_companyId: string, scopes: { branchIds?: string[] }, selected?: string) => selected ?? scopes.branchIds?.[0] ?? 'branch-1',
+
       findDocumentById: async () => source,
       findActiveBranch: async () => true,
       listRevenueCategories: async () => [],
@@ -517,7 +565,7 @@ describe('P27 BLOCK_NEW_ROOT mutation coverage', () => {
 
   it('keeps a non-VAT credit note eligible when the final Prisma source row carries outputTaxCode=null', async () => {
     const mappedSource = {
-      id: 'invoice-non-vat', companyId: 'company-1', branchId: undefined, documentType: 'INVOICE', status: 'ISSUED',
+      id: 'invoice-non-vat', companyId: 'company-1', branchId: 'branch-1', documentType: 'INVOICE', status: 'ISSUED',
       paymentStatus: 'UNPAID', outstandingAmount: '100.00', vatMode: 'NO_VAT', vatAmount: '0.00', outputTaxCode: undefined,
     };
     const rawSource = { ...mappedSource, outputTaxCode: null };
@@ -553,7 +601,7 @@ describe('P27 BLOCK_NEW_ROOT mutation coverage', () => {
 
   it('rejects a second active linked tax invoice under the source lifecycle lock', async () => {
     const source = {
-      id: 'invoice-tax-source', companyId: 'company-1', branchId: undefined, documentType: 'INVOICE', status: 'ISSUED',
+      id: 'invoice-tax-source', companyId: 'company-1', branchId: 'branch-1', documentType: 'INVOICE', status: 'ISSUED',
       paymentStatus: 'UNPAID', outstandingAmount: '100.00', vatMode: 'NO_VAT', vatAmount: '0.00', outputTaxCode: undefined,
     };
     let creates = 0;

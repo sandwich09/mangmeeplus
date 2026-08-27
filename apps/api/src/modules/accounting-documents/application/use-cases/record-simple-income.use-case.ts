@@ -4,7 +4,7 @@ import type { AccountingDocumentType, RequestContext } from '@watchdog-bms/contr
 import { AuditService } from '../../../audit/application/audit.service';
 import { OutboxAppendService } from '../../../data-model-core/application/services/outbox-append.service';
 import { CompanyVatRegistrationUseCase } from '../../../data-model-core/application/use-cases/company-vat-registration.use-case';
-import { isBranchInScope, resolveCreateBranchId } from '../../../data-model-core/domain/logic/branch.logic';
+import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
 import { validateAccountingDocumentMoneyInput } from '../../domain/logic/accounting-money-validation.logic';
 import type { RecordSimpleIncomeInput, RecordSimpleIncomeResult } from '../../domain/models/accounting.model';
 import { PrismaAccountingRepository } from '../../infrastructure/prisma-accounting.repository';
@@ -52,7 +52,7 @@ export class RecordSimpleIncomeUseCase {
     if (ctx.scopes.branchIds?.length === 0 || !isBranchInScope(ctx.scopes, input.branchId)) {
       throw new ForbiddenException('Branch is outside your assigned branch scope.');
     }
-    const resolvedInput = { ...input, branchId: resolveCreateBranchId(ctx.scopes, input.branchId) ?? undefined };
+    const resolvedInput = { ...input, branchId: await this.repo.resolveCreateBranchId(ctx.companyId, ctx.scopes, input.branchId) };
     if (input.lines.length < 1) throw new UnprocessableEntityException('At least one income line is required');
     if (new Set(input.lines.map((line) => line.lineNumber)).size !== input.lines.length) {
       throw new UnprocessableEntityException('Income line numbers must be unique');

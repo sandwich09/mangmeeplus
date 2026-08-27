@@ -2,6 +2,7 @@ import { Injectable, UnprocessableEntityException } from '@nestjs/common';
 import type { RequestContext } from '@watchdog-bms/contracts';
 import { PrismaAttachmentRepository } from '../../../data-model-core/infrastructure/repositories/prisma-attachment.repository';
 import { PrismaExpenseRepository } from '../../../expenses/infrastructure/prisma-expense.repository';
+import { requireTransactionBranchId } from '../../../data-model-core/application/services/transaction-branch';
 
 type EvidenceRef = {
   attachmentId?: string | null;
@@ -18,7 +19,8 @@ export class ReimbursementEvidenceService {
   // Evidence must belong to the request's REQUESTER, not the caller — finance may
   // update/submit on the requester's behalf without owning the receipt. Applied
   // per line: one bad row fails the whole claim.
-  async validate(ctx: RequestContext, requesterUserId: string, refs: readonly EvidenceRef[]): Promise<void> {
+  async validate(ctx: RequestContext, requesterUserId: string, refs: readonly EvidenceRef[], branchId: string | null | undefined): Promise<void> {
+    const sourceBranchId = requireTransactionBranchId(branchId);
     for (const ref of refs) {
       if (ref.attachmentId !== undefined && ref.attachmentId !== null) {
         const attachment = await this.attachments.findById({ id: ref.attachmentId, companyId: ctx.companyId });
@@ -30,6 +32,7 @@ export class ReimbursementEvidenceService {
         ) {
           throw new UnprocessableEntityException('invalid_primary_attachment');
         }
+        this.assertEvidenceBranch(attachment.branchId, sourceBranchId);
       }
 
       if (ref.linkedExpenseId !== undefined && ref.linkedExpenseId !== null) {
@@ -37,7 +40,17 @@ export class ReimbursementEvidenceService {
         if (!expense || expense.companyId !== ctx.companyId || expense.createdByUserId !== requesterUserId) {
           throw new UnprocessableEntityException('invalid_linked_expense');
         }
+        this.assertEvidenceBranch(expense.branchId, sourceBranchId);
       }
+    }
+  }
+
+  private assertEvidenceBranch(branchId: string | null | undefined, sourceBranchId: string): void {
+    if (branchId !== sourceBranchId) {
+      throw new UnprocessableEntityException({
+        code: 'REIMBURSEMENT_EVIDENCE_BRANCH_MISMATCH',
+        message: 'ใบเสร็จหรือค่าใช้จ่ายต้องระบุสาขาเดียวกับคำขอเบิก',
+      });
     }
   }
 

@@ -193,7 +193,7 @@ export function BranchSelector() {
         aria-label="เลือกสาขา"
       >
         <span className="shrink-0"><BranchIcon /></span>
-        <span className="min-w-0 truncate">{label}</span>
+        <span className="min-w-0 break-words text-left text-xs sm:truncate sm:text-sm" title={label}>{label}</span>
         <svg className={`h-4 w-4 shrink-0 text-gray-500 transition-transform ${open ? 'rotate-180' : ''}`} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
           <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.17l3.71-3.94a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
         </svg>

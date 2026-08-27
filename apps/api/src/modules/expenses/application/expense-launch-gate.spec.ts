@@ -29,7 +29,11 @@ function harness(launchGate: any) {
   const created: any[] = [];
   const audits: any[] = [];
   const useCase = new CreateExpenseDraftUseCase(
-    { createExpense: async (data: any) => { created.push(data); return { id: 'expense-1', ...data }; }, upsertLines: async () => undefined } as any,
+    {
+      resolveCreateBranchId: async () => 'branch-1',
+      createExpense: async (data: any) => { created.push(data); return { id: 'expense-1', ...data }; },
+      upsertLines: async () => undefined,
+    } as any,
     { log: async (entry: any) => { audits.push(entry); } } as any,
     { resolveLines: async (_ctx: unknown, _header: unknown, lines: unknown[]) => lines } as any,
     launchGate,
@@ -82,6 +86,7 @@ describe('CreateExpenseDraftUseCase launch gate', () => {
 
     assert.deepEqual(asked, [['expenses', 'DEFAULT']]);
     assert.equal(record.id, 'expense-1');
+    assert.equal(record.branchId, 'branch-1');
     assert.equal(created.length, 1);
     assert.equal(audits[0].result, 'SUCCESS');
   });

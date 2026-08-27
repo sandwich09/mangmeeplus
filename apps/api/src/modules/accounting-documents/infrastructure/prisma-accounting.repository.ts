@@ -29,7 +29,8 @@ import { initialPostingStatus, validateCumulativeCreditNote, validateOutputTaxDo
 import { validateAccountingPaymentAllocation } from '../domain/logic/accounting-money-validation.logic';
 import { buildReversalLines } from '../../ledger/domain/logic/journal-balance.logic';
 import type { AccountingDocumentType, AccountingDocumentStatus, AccountingQuotationApprovalStatus, ResolveTransactionTaxPreviewDto, RevenueCategorySummary, CreateRevenueCategoryInput, UpdateRevenueCategoryInput } from '@watchdog-bms/contracts';
-import { branchScopeWhere } from '../../data-model-core/domain/logic/branch.logic';
+import { branchScopeWhere, type BranchScopes } from '../../data-model-core/domain/logic/branch.logic';
+import { resolveTransactionBranchId, requireTransactionBranchId } from '../../data-model-core/application/services/transaction-branch';
 import { civilDate, civilDateToUtcDate, civilPeriodKey, coerceCivilDate, exclusiveEndOfDay } from '@watchdog-bms/contracts';
 import { PrismaDocumentSequenceRepository } from '../../data-model-core/infrastructure/repositories/prisma-document-sequence.repository';
 
@@ -57,6 +58,10 @@ type BeforeAccountingMutation = (db: any) => Promise<void>;
 
 @Injectable()
 export class PrismaAccountingRepository {
+  async resolveCreateBranchId(companyId: string, scopes: BranchScopes, selectedBranchId?: string | null): Promise<string> {
+    return resolveTransactionBranchId(this.prisma.client, companyId, scopes, selectedBranchId);
+  }
+
   // `documentNumbers` is annotated, not merely defaulted: Nest reads design:paramtypes to inject
   // the DI-managed instance; the default keeps the class constructible in bare unit tests.
   constructor(
@@ -158,6 +163,7 @@ export class PrismaAccountingRepository {
   }
 
   private async createDocumentWithClient(db: any, input: CreateDocumentInput): Promise<DocumentRecord> {
+    requireTransactionBranchId(input.branchId);
     const computedLines = input.lines.map((l) => calculateLine({ ...l, vatMode: input.vatMode, discountAmount: l.discountAmount ?? '0' }));
     const totals = calculateDocumentTotals(input.lines.map((l, i) => ({
       lineSubtotalAmount: computedLines[i].lineSubtotalAmount,
@@ -925,6 +931,7 @@ export class PrismaAccountingRepository {
 
   // ---- Payment ----
   async createPayment(input: CreatePaymentInput): Promise<CreatePaymentResult> {
+    requireTransactionBranchId(input.branchId);
     const run = () => this.prisma.client.$transaction(async (tx) => {
       if (input.idempotencyKey) {
         if (!input.payloadFingerprint) {
@@ -1098,6 +1105,7 @@ export class PrismaAccountingRepository {
     withinTransaction: (db: any, result: Omit<RecordSimpleIncomeResult, 'replayed'>) => Promise<void>,
     beforeMutation?: BeforeAccountingMutation,
   ): Promise<RecordSimpleIncomeResult> {
+    requireTransactionBranchId(input.branchId);
     const run = () => (this.prisma.client as any).$transaction(async (tx: any) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.idempotencyKey}:simple-income`}))`;
 

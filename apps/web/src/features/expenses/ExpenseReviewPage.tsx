@@ -662,7 +662,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
                     ? 'JV ของเอกสารนี้ถูกกลับรายการแล้ว'
                     : caps.canPostLedger
                       ? 'เอกสารยืนยันแล้ว รอผู้มีสิทธิ์สร้าง JV'
-                      : 'เอกสารยืนยันแล้ว รอเปิดใช้และกำหนดสิทธิ์สมุดรายวัน'}
+                      : 'ยืนยันเอกสารแล้ว ยังไม่มีรายการในสมุดรายวัน'}
           </p>
           {/* The whole form below is disabled at CONFIRMED, but nothing on the page said so —
               the fields just stopped responding. State the rule and the way out, once, here. */}

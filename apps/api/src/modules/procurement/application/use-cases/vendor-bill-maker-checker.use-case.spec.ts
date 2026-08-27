@@ -324,8 +324,10 @@ describe('Submit → approve → pay audit chain (H-07)', () => {
   });
 
   it('records the payment with an audit entry when create and release are both held', async () => {
-    const approvedBill = bill({ status: 'APPROVED' });
+    const approvedBill = bill({ status: 'APPROVED', branchId: 'branch-1' });
     const repo: any = {
+      resolveCreateBranchId: async (_companyId: string, _scopes: unknown, branchId?: string) => branchId,
+      branchExists: async () => true,
       findSupplierPaymentByIdempotencyKey: mock.fn(async () => null),
       findSupplierById: mock.fn(async () => ({ id: 'sup_1', status: 'ACTIVE' })),
       findVendorBillById: mock.fn(async () => approvedBill),

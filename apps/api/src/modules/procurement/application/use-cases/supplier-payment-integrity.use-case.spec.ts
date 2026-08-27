@@ -27,6 +27,7 @@ function useCase(repo: any) {
 
 function validRepo(overrides: Record<string, unknown> = {}) {
   return {
+    resolveCreateBranchId: async (_companyId: string, _scopes: unknown, branchId?: string) => branchId ?? 'branch-1',
     findSupplierPaymentByIdempotencyKey: async () => null,
     findSupplierById: async () => ({ id: 'supplier-1', companyId: 'company-1', status: 'ACTIVE' }),
     branchExists: async () => true,
@@ -53,7 +54,7 @@ describe('CreateSupplierPaymentUseCase AP reference integrity', () => {
     await assert.rejects(() => useCase(validRepo({ findSupplierById: async () => ({ id: 'supplier-1', status: 'ON_HOLD' }) })).execute(ctx(['branch-1']), dto()), /Supplier is not active/);
     await assert.rejects(() => useCase(validRepo()).execute(ctx(['branch-2']), dto()), /outside your assigned branch scope/);
     await assert.rejects(() => useCase(validRepo({ branchExists: async () => false })).execute(ctx(['branch-1']), dto()), /Branch does not exist/);
-    await assert.rejects(() => useCase(validRepo()).execute(ctx(['branch-1']), dto({ branchId: undefined })), /branch-scoped user must create the supplier payment in an assigned branch/i);
+    await assert.rejects(() => useCase(validRepo({ findVendorBillById: async () => bill({ branchId: null }) })).execute(ctx(['branch-1']), dto()), /กรุณาเลือกสาขา/);
   });
 
   it('rejects supplier bank accounts outside the company/supplier and duplicate allocations', async () => {
@@ -76,7 +77,8 @@ describe('CreateSupplierPaymentUseCase AP reference integrity', () => {
       findVendorBillById: async () => bill({ outstandingAmount: '100.0042' }),
       createSupplierPayment: async (_companyId: string, data: any) => { recorded.push(data); return { id: 'payment-1', status: 'RECORDED', allocations: [] }; },
     });
-    assert.equal((await payable(settleRepo).execute(ctx(['branch-1']), dto())).id, 'payment-1');
+    assert.equal((await payable(settleRepo).execute(ctx(['branch-1']), dto({ branchId: undefined }))).id, 'payment-1');
+    assert.equal(recorded[0].branchId, 'branch-1', 'the payment inherits its bill branch, not a page filter');
     assert.equal(recorded[0].allocations[0].amount, '100');
 
     const overshootRepo = validRepo({

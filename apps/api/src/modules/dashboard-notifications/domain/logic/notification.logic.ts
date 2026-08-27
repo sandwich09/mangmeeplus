@@ -168,6 +168,14 @@ export function resolveDeliveryOutcome(input: {
 
 // ---- Period boundaries ----
 
+/** Follow the persisted report source, including notifications created before exact links existed. */
+export function notificationSourceHref(event: { companyId: string; sourceType?: string | null; sourceId?: string | null; deepLinkHref?: string | null }): string | undefined {
+  if (event.sourceType === 'report_export' && event.sourceId) {
+    return `/companies/${encodeURIComponent(event.companyId)}/reports?exportId=${encodeURIComponent(event.sourceId)}`;
+  }
+  return event.deepLinkHref ?? undefined;
+}
+
 export function getPeriodBoundaries(
   kind: 'today' | 'week' | 'month' | 'quarter' | 'last_month' | 'custom',
   now: Date,

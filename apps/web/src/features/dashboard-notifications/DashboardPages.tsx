@@ -9,7 +9,7 @@ import { getCrmDailyBrief } from '@/features/crm-inbox/crm-inbox.api';
 import type { DashboardSnapshot, DashboardWidget, DashboardMetricValue, DashboardPeriodKind } from './dashboard-notifications.model';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import { formatThaiTime } from '@/common/i18n/thai-date';
-import type { DictionaryKey, SupportedLocale } from '@/common/i18n/workspace-dictionary';
+import type { DictionaryKey } from '@/common/i18n/workspace-dictionary';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import { stripThaiTitlePrefix } from '@/common/components/mangmee';
 import { useBranchFilter, useBranchScopeLabel } from '@/features/web-core-workspace/WorkspaceScope';
@@ -83,78 +83,6 @@ function RefreshIcon(props: SVGProps<SVGSVGElement>) {
 
 function Card({ children, className = '' }: { children?: React.ReactNode; className?: string }) {
   return <section className={`rounded-2xl border border-gray-200 bg-white shadow-[var(--shadow-theme-sm)] ${className}`}>{children}</section>;
-}
-
-// Plan P4.2: the brain answers on LINE this launch, so the CTA points at the OA. Read as a static
-// literal — Next only inlines NEXT_PUBLIC_* into the client bundle through property access.
-const LINE_OA_URL = process.env.NEXT_PUBLIC_LINE_OA_URL ?? '';
-
-const HERO_EXAMPLE_KEYS: DictionaryKey[] = [
-  'dashboard.hero.example_cashflow',
-  'dashboard.hero.example_category',
-  'dashboard.hero.example_receipt',
-];
-
-// Plan P4.1–P4.3 (WEB-01/WEB-02): the two things a new user should be able to start from the
-// landing page without reading the menu. Both targets are one tap; nothing here is a placeholder.
-function StartHereHero({ companyId, locale, canUploadReceipts, canOpenLedger }: { companyId: string; locale: SupportedLocale; canUploadReceipts: boolean; canOpenLedger: boolean }) {
-  const ctaClass =
-    'flex min-h-[56px] w-full items-center justify-center gap-2 rounded-xl px-5 py-3 text-center text-base font-extrabold';
-  return (
-    <div className="mt-5 grid gap-4 sm:grid-cols-2">
-      <Card className="flex flex-col gap-3 p-5">
-        <div>
-          <h2 className="text-[19px] font-extrabold text-gray-900">{t('dashboard.hero.brain_title', locale)}</h2>
-          <p className="mt-1 text-base leading-7 text-gray-600">{t('dashboard.hero.brain_desc', locale)}</p>
-        </div>
-        {/* No OA link configured: say when it opens instead of shipping a dead button (plan P4 fallback). */}
-        {LINE_OA_URL ? (
-          <a href={LINE_OA_URL} target="_blank" rel="noopener noreferrer" className={`${ctaClass} bg-brand-600 text-white`}>
-            {t('dashboard.hero.brain_title', locale)}
-          </a>
-        ) : (
-          <p className={`${ctaClass} border border-dashed border-gray-300 bg-gray-50 !font-semibold text-gray-500`}>
-            {t('dashboard.hero.brain_soon', locale)}
-          </p>
-        )}
-        <div>
-          <p className="text-sm font-bold text-gray-500">{t('dashboard.hero.brain_examples', locale)}</p>
-          {/* Text, not buttons: a chip that looks pressable but does nothing is worse than none. */}
-          <ul className="mt-2 flex flex-wrap gap-2">
-            {HERO_EXAMPLE_KEYS.map((key) => (
-              <li key={key} className="rounded-full bg-brand-25 px-3 py-1.5 text-base text-gray-700">
-                “{t(key, locale)}”
-              </li>
-            ))}
-          </ul>
-        </div>
-      </Card>
-
-      {/* Without expense.receipt.upload the tab refuses the visitor, so the card is not offered. */}
-      {canUploadReceipts && (
-        <Card className="flex flex-col gap-3 p-5">
-          <div>
-            <h2 className="text-[19px] font-extrabold text-gray-900">{t('dashboard.hero.receipt_title', locale)}</h2>
-            <p className="mt-1 text-base leading-7 text-gray-600">{t('dashboard.hero.receipt_desc', locale)}</p>
-          </div>
-          <Link href={companyHref(companyId, 'expenses/upload')} className={`${ctaClass} mt-auto bg-brand-600 text-white`}>
-            {t('dashboard.hero.receipt_title', locale)}
-          </Link>
-        </Card>
-      )}
-      {canOpenLedger && (
-        <Card className="flex flex-col gap-3 p-5">
-          <div>
-            <h2 className="text-[19px] font-extrabold text-gray-900">{locale === 'th' ? 'สมุดรายรับ–รายจ่าย' : 'Income & expense book'}</h2>
-            <p className="mt-1 text-base leading-7 text-gray-600">{locale === 'th' ? 'ดูยอดตามเอกสาร เงินที่รับ–จ่าย และรายการย้อนหลังในหน้าเดียว' : 'Review document totals, cash movements, and source records in one place.'}</p>
-          </div>
-          <Link href={companyHref(companyId, 'income-expense-ledger')} className={`${ctaClass} mt-auto bg-brand-600 text-white`}>
-            {locale === 'th' ? 'เปิดสมุด' : 'Open book'}
-          </Link>
-        </Card>
-      )}
-    </div>
-  );
 }
 
 function SectionTitle({ tone, title }: { tone: string; title: string }) {
@@ -377,13 +305,6 @@ export function CompanyDashboardPage({
           </button>
         </div>
       </div>
-
-      <StartHereHero
-        companyId={companyId}
-        locale={locale}
-        canUploadReceipts={permissions.includes('expense.receipt.upload')}
-        canOpenLedger={permissions.includes('accounting.document.read') || permissions.includes('expense.read')}
-      />
 
       {permissions.includes('crm.inbox.read') && <CrmDailyBriefCard companyId={companyId} periodKind={periodKind} refreshToken={refreshToken} />}
 

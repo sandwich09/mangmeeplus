@@ -723,7 +723,7 @@ export class CreateReportExportUseCase {
       // message rather than a row in a list the workspace already frames.
       title: 'ไฟล์รายงานพร้อมดาวน์โหลดแล้ว',
       body: `ไฟล์ CSV ของรายงาน "${result.dataset.title}" พร้อมให้ดาวน์โหลดแล้ว`,
-      deepLinkHref: `/companies/${companyId}/reports`,
+      deepLinkHref: `/companies/${companyId}/reports?exportId=${encodeURIComponent(request.id)}`,
       sourceRefs: result.sourceRefs,
       recipientUserIds: [ctx.userId],
       periodKey: todayCivilDate(),

@@ -14,7 +14,7 @@ const VERSION = new Date('2026-08-10T01:00:00.000Z');
 
 function expense(overrides: Record<string, unknown> = {}) {
   return {
-    id: 'expense-1', companyId: 'company-1', branchId: null, status: 'CONFIRMED', sourceReimbursementRequestId: null,
+    id: 'expense-1', companyId: 'company-1', branchId: 'branch-1', status: 'CONFIRMED', sourceReimbursementRequestId: null,
     currency: 'THB', netPayableAmount: '100.0000', paidAmount: '0.0000', outstandingAmount: '100.0000',
     paymentStatus: 'UNPAID', postingStatus: 'posted', paymentMethod: null, paidAt: null, bankAccountRef: null,
     createdByUserId: 'creator-1', updatedByUserId: null, createdAt: VERSION, updatedAt: VERSION,
@@ -297,6 +297,7 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
   const required = process.env.EXPENSE_PAYMENT_REQUIRE_POSTGRES === 'true';
   const companyId = `expense-intent-pg-${randomUUID()}`;
   const userId = `${companyId}-user`;
+  const branchId = `${companyId}-branch`;
   let clients: PrismaClient[] = [];
   let ready = false;
   let fixtureCreated = false;
@@ -313,6 +314,7 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
     await clients[0]!.company.create({ data: { id: companyId, name: 'Synthetic expense intent tests' } });
     fixtureCreated = true;
     await clients[0]!.user.create({ data: { id: userId, displayName: 'Synthetic payment tester' } });
+    await clients[0]!.branch.create({ data: { id: branchId, companyId, code: 'HO', name: 'Source branch', type: 'HEAD_OFFICE', createdByUserId: userId } });
     ready = true;
   });
 
@@ -339,7 +341,7 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
     audit ?? new AuditService(new PrismaAuditRepository({ client } as any), { error: () => undefined } as any),
   );
   const createExpense = () => clients[0]!.expenseRecord.create({ data: {
-    companyId, createdByUserId: userId, status: 'CONFIRMED', expenseDate: new Date('2026-07-31T00:00:00Z'),
+    companyId, branchId, createdByUserId: userId, status: 'CONFIRMED', expenseDate: new Date('2026-07-31T00:00:00Z'),
     netPayableAmount: '100', outstandingAmount: '100', postingStatus: 'posted',
   } });
 
@@ -441,7 +443,7 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
     await clients[0]!.expenseRecord.update({ where: { id: expense.id }, data: { branchId: 'restricted-test-branch' } });
     await assert.rejects(() => useCase(clients[1]!).execute({ ...context(), scopes: { branchIds: ['other-branch'] } }, expense.id, input), ForbiddenException);
     await assert.rejects(() => useCase(clients[1]!).execute({ ...context(), companyId: 'foreign-company' }, expense.id, input), NotFoundException);
-    await clients[0]!.expenseRecord.update({ where: { id: expense.id }, data: { branchId: null } });
+    await clients[0]!.expenseRecord.update({ where: { id: expense.id }, data: { branchId } });
     await new PrismaExpenseRepository({ client: clients[0] } as any).voidExpenseTrueReversal(companyId, expense.id, userId, 'Synthetic void replay regression');
     const result = await useCase(clients[1]!).execute(context(), expense.id, input);
     assert.equal(result.status, 'VOIDED');

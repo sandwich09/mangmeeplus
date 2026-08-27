@@ -15,10 +15,11 @@ import { completeEmployee, createEmployee, getEmployee, issueEmployeeLineLinkTok
 import { QrLinkCard } from './EmployeeAccessPages';
 import { employeeDateToIso, formatEmployeeDateInput } from './employee-date.logic';
 import { isEmployeeEmail } from './employee-email.logic';
-import { assignableRoleOptions, isOperationalRoleTargetReadOnly, isSelfEmployee } from './role-picker.logic';
+import { assignableRoleOptions, isOperationalRoleTargetReadOnly, isSelfEmployee, roleDisplayName } from './role-picker.logic';
 import { localizedErrorMessage } from '@/common/i18n/error-message.logic';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import { t } from '@/common/i18n/workspace-i18n.logic';
+import { useBranchFilter } from '../web-core-workspace/WorkspaceScope';
 
 type TitleOption = 'นาย' | 'นาง' | 'นางสาว';
 type AddStep = 1 | 2 | 3 | 4;
@@ -262,6 +263,9 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
   const locale = useWorkspaceLocale();
   const router = useRouter();
   const toast = useToast();
+  const workspaceBranch = useBranchFilter();
+  const selectedWorkspaceBranch = useRef(workspaceBranch?.branchId ?? '');
+  selectedWorkspaceBranch.current = workspaceBranch?.branchId ?? '';
   const [roles, setRoles] = useState<RoleSummary[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [loading, setLoading] = useState(true);
@@ -317,16 +321,19 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
       ]);
       if (rolesResult.status === 'fulfilled') {
         const currentRoleIds = employeeResult.status === 'fulfilled' ? employeeResult.value?.roles.map((role) => role.id) : undefined;
-        const assignable = assignableRoleOptions(rolesResult.value, currentRoleIds);
+        const assignable = assignableRoleOptions(rolesResult.value, currentRoleIds).map((role) => ({ ...role, name: roleDisplayName(role) }));
         setRoles(assignable);
-        setRoleIds((current) => current.length ? current : currentRoleIds?.length ? currentRoleIds : assignable[0] ? [assignable[0].id] : []);
+        setRoleIds((current) => current.length ? current : currentRoleIds ?? []);
       } else {
         setLoadError(localizedErrorMessage(rolesResult.reason, locale, { fallback: 'error.load_failed' }));
       }
       if (branchesResult.status === 'fulfilled') {
         setBranches(branchesResult.value);
-        setBranchIds((current) => (current.length ? current : branchesResult.value[0] ? [branchesResult.value[0].id] : []));
-        setDefaultBranchId((current) => current || branchesResult.value[0]?.id || '');
+        const active = branchesResult.value.filter((branch) => branch.status === 'ACTIVE');
+        const initial = active.find((branch) => branch.id === selectedWorkspaceBranch.current)?.id
+          ?? (active.length === 1 ? active[0]!.id : '');
+        setBranchIds((current) => current.length ? current : initial ? [initial] : []);
+        setDefaultBranchId((current) => current || initial);
       }
       if (employeeResult.status === 'fulfilled' && employeeResult.value) {
         const employee = employeeResult.value;
@@ -424,7 +431,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
   useEffect(() => {
     if (!branchPickerLocked || branches.length === 0) return;
     setBranchIds(branches.map((branch) => branch.id));
-    setDefaultBranchId((current) => current || branches[0]!.id);
+    setDefaultBranchId((current) => current || (branches.length === 1 ? branches[0]!.id : ''));
   }, [branchPickerLocked, branches]);
 
   const provinces = unique([...addressOptions.map((row) => row.provinceTh), ...(province ? [province] : [])]);
@@ -870,7 +877,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
               )}
               <label className="mt-4 block max-w-md">
                 <span className="mb-1.5 block text-[15px] font-semibold text-gray-700">
-                  สาขาหลัก (Default Branch) <span className="text-error-500">*</span>
+                  สาขาหลัก <span className="text-error-500">*</span>
                 </span>
                 <ThemedSelect
                   id="employee-default-branch"
@@ -879,6 +886,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
                   onChange={(event) => { setDefaultBranchId(event.target.value); setError(''); }}
                   className="h-11 w-full rounded-lg border border-gray-300 bg-white px-3.5 text-base text-gray-800 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
                 >
+                  <option value="">เลือกสาขาหลัก</option>
                   {branches.filter((branch) => branchIds.includes(branch.id)).map((branch) => (
                     <option key={branch.id} value={branch.id}>{branch.name}</option>
                   ))}

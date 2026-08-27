@@ -4,7 +4,7 @@ import { CreateUploadIntentUseCase } from '../../../data-model-core/application/
 import { CompleteAttachmentUploadUseCase } from '../../../data-model-core/application/use-cases/complete-attachment-upload.use-case';
 import { AuditService } from '../../../audit/application/audit.service';
 import { OutboxAppendService } from '../../../data-model-core/application/services/outbox-append.service';
-import { isBranchInScope, resolveCreateBranchId } from '../../../data-model-core/domain/logic/branch.logic';
+import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
 import { reconcileExpenseDuplicateCandidates } from '../services/expense-duplicate-detection';
 import { GetExpenseCapturePolicyUseCase } from './expense-capture-policy.use-case';
 import { LaunchGateGuardService } from '../../../feature-launch/application/launch-gate.guard';
@@ -53,7 +53,8 @@ export class InitReceiptUploadUseCase {
     // every other module's attachments, which the `expenses` gate has no authority over.
     await assertExpenseRootOpen(this.launchGate, this.audit, ctx, 'expense.upload_intent.create');
     if (!isBranchInScope(ctx.scopes ?? {}, cmd.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
-    const branchId = resolveCreateBranchId(ctx.scopes ?? {}, cmd.branchId);
+    // Reject before reserving storage or creating an attachment, not only when saving the draft.
+    const branchId = await this.repo.resolveCreateBranchId(ctx.companyId, ctx.scopes ?? {}, cmd.branchId);
     const expenseDate = civilDateToUtcDate(coerceCivilDate(cmd.expenseDate));
 
     // Create the attachment upload intent via shared data-model-core

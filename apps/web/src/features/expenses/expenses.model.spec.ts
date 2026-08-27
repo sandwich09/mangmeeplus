@@ -720,14 +720,21 @@ describe('summarizeExpenseKpis', () => {
     row({ vatAmount: '0.00' }),
   ];
 
-  it('leaves rejected and voided documents out of the total, the count, and the VAT credit', () => {
+  it('separates captured totals from confirmed payable amounts', () => {
     const kpi = summarizeExpenseKpis(rows, '2026-08-05');
 
     assert.equal(kpi.total, 450);
     assert.equal(kpi.counted, 3);
-    // The rejected receipt's ฿11.78 must not read as creditable input tax.
+    // VAT on captured documents is not a claimable tax amount.
     assert.equal(kpi.vat, 11.78);
-    assert.equal(kpi.outstanding, 450);
+    assert.equal(kpi.outstanding, 0);
+    const confirmed = summarizeExpenseKpis([...rows,
+      row({ status: 'CONFIRMED', outstandingAmount: '40.50', paymentStatus: 'PARTIALLY_PAID', dueDate: '2026-08-04' }),
+      row({ status: 'CONFIRMED', outstandingAmount: '0', paymentStatus: 'PAID' }),
+    ], '2026-08-05');
+    assert.equal(confirmed.outstanding, 40.5);
+    assert.equal(confirmed.overdue, 40.5);
+    assert.equal(confirmed.overdueCount, 1);
   });
 
   it('counts รอตรวจสอบ from DRAFT onward, by the same rule the chip uses', () => {
@@ -744,9 +751,10 @@ describe('summarizeExpenseKpis', () => {
 
   it('counts a past due date as overdue and stops at a paid or cancelled row', () => {
     const kpi = summarizeExpenseKpis([
-      row({ dueDate: '2026-08-04' }),
-      row({ dueDate: '2026-08-05' }),
-      row({ dueDate: '2026-08-01', paymentStatus: 'PAID', outstandingAmount: '0.00' }),
+      row({ status: 'CONFIRMED', dueDate: '2026-08-04' }),
+      row({ status: 'CONFIRMED', dueDate: '2026-08-05' }),
+      row({ status: 'CONFIRMED', dueDate: '2026-08-01', paymentStatus: 'PAID', outstandingAmount: '0.00' }),
+      row({ status: 'NEEDS_REVIEW', dueDate: '2026-08-01' }),
       row({ dueDate: '2026-08-01', status: 'VOIDED' }),
     ], '2026-08-05');
 
