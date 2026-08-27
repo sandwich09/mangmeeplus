@@ -21,6 +21,7 @@ function setup() {
   const created: any[] = [];
   const upserted: any[] = [];
   const repo = {
+    resolveCreateBranchId: async () => 'branch-1',
     createExpense: async (data: any) => {
       created.push(data);
       return { id: 'expense-1', ...data };

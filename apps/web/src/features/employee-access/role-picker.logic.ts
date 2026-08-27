@@ -1,5 +1,15 @@
 import { HR_ASSIGNABLE_ROLE_KEYS, type AssignableRoleSummary, type RoleSummary } from '@watchdog-bms/contracts';
 
+const THAI_SYSTEM_ROLE_NAMES: Record<string, string> = {
+  OWNER: 'เจ้าของกิจการ', ADMIN: 'ผู้ดูแลบริษัท', SYSTEM_ADMIN: 'ผู้ดูแลระบบ', MANAGER: 'ผู้จัดการ',
+  HR: 'ฝ่ายบุคคล', SALES: 'ฝ่ายขาย', INVENTORY: 'ฝ่ายคลังสินค้า', FINANCE: 'ฝ่ายการเงิน',
+  ACCOUNTANT: 'ฝ่ายบัญชี', MARKETING: 'ฝ่ายการตลาด', STAFF: 'พนักงาน', AUDITOR_READONLY: 'ผู้ตรวจสอบ (ดูอย่างเดียว)',
+};
+
+export function roleDisplayName(role: Pick<RoleSummary, 'key' | 'name'> & { isSystem?: boolean }): string {
+  return role.isSystem === false ? role.name : THAI_SYSTEM_ROLE_NAMES[role.key] ?? role.name;
+}
+
 /** Prevent an older cached API shape from silently becoming an empty role picker. */
 export function isAssignableRoleCatalog(value: unknown): value is AssignableRoleSummary[] {
   return Array.isArray(value) && value.every((role) => (

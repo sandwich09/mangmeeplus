@@ -11,9 +11,17 @@ import {
   computeDeliveryBackoffAt,
   getPeriodBoundaries,
   resolveDeliveryOutcome,
+  notificationSourceHref,
 } from './notification.logic';
 import { MAX_DELIVERY_ATTEMPTS, IMPLEMENTED_TRIGGER_KEYS } from '../models/notification.model';
 import { WORKFLOW_TEMPLATE_CATALOG } from '../../../workflow/domain/workflow-template-catalog';
+
+describe('notification source links', () => {
+  it('opens the exact persisted report export without substituting another report', () => {
+    assert.equal(notificationSourceHref({ companyId: 'co', sourceType: 'report_export', sourceId: 'old-id', deepLinkHref: '/companies/co/reports' }), '/companies/co/reports?exportId=old-id');
+    assert.equal(notificationSourceHref({ companyId: 'co', sourceType: 'expense', sourceId: 'exp', deepLinkHref: '/companies/co/expenses/exp' }), '/companies/co/expenses/exp');
+  });
+});
 
 describe('implemented-trigger gate (LINE preference suppression)', () => {
   // ProcessQueuedDeliveryUseCase falls back to IMPLEMENTED_TRIGGER_KEYS when a user has no

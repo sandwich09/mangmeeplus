@@ -24,7 +24,7 @@ export class CreatePurchaseRequestUseCase {
     lines: { lineNumber: number; lineType?: string; productId?: string; description: string; unitName?: string; requestedQuantity: string; estimatedUnitPrice: string; discountAmount: string; vatMode: string; vatRate?: string; vatAmount: string; lineSubtotalAmount: string; lineTotalAmount: string; accountHint?: string; inventoryLocationId?: string }[];
   }): Promise<PurchaseRequestRecord> {
     if (!ctx.permissions.includes('procurement.purchase_request.create')) throw new ForbiddenException();
-    const branchId = resolveProcurementCreateBranch(ctx, dto.branchId);
+    const branchId = await resolveProcurementCreateBranch(ctx, dto.branchId, this.repo);
     if (branchId && !await this.repo.branchExists(ctx.companyId, branchId)) throw new BadRequestException('Branch does not exist in this company');
     const pr = await this.repo.createPurchaseRequest(ctx.companyId, { ...dto, branchId }, ctx.userId);
     void this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'procurement.purchase_request.create', targetType: 'purchase_request', targetId: pr.id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'LOW' });

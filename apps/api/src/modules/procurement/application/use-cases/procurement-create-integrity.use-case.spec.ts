@@ -33,6 +33,8 @@ describe('procurement create source integrity', () => {
   it('converts only an approved PR in scope and passes its branch to the atomic repository mutation', async () => {
     let createData: any;
     const repo = {
+      resolveCreateBranchId: async (_companyId: string, scopes: { branchIds?: string[] }, selected?: string) => selected ?? scopes.branchIds?.[0] ?? 'branch-1',
+
       findPurchaseRequestById: async () => purchaseRequest(),
       branchExists: async () => true,
       createPurchaseOrder: async (_companyId: string, data: any) => { createData = data; return { id: 'po-1' }; },
@@ -53,6 +55,8 @@ describe('procurement create source integrity', () => {
     it(`rejects ${scenario.label} before creating a PO`, async () => {
       let creates = 0;
       const repo = {
+        resolveCreateBranchId: async (_companyId: string, scopes: { branchIds?: string[] }, selected?: string) => selected ?? scopes.branchIds?.[0] ?? 'branch-1',
+
         findPurchaseRequestById: async () => purchaseRequest(scenario.source),
         branchExists: async () => true,
         createPurchaseOrder: async () => { creates += 1; },
@@ -87,6 +91,8 @@ describe('procurement create source integrity', () => {
     for (const item of cases) {
       let creates = 0;
       const repo = {
+        resolveCreateBranchId: async (_companyId: string, scopes: { branchIds?: string[] }, selected?: string) => selected ?? scopes.branchIds?.[0] ?? 'branch-1',
+
         findPurchaseOrderById: async () => ({ id: 'po-1', branchId: 'branch-1', supplierId: 'supplier-1', status: 'ISSUED', lines: [{ id: 'po-line-1' }], ...item.po }),
         createGoodsReceipt: async () => { creates += 1; },
       };

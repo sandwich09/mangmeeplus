@@ -26,7 +26,8 @@ import { Decimal } from 'decimal.js';
 import { createHash } from 'node:crypto';
 import { formatTransactionTaxAmount } from '../../../tax/domain/logic/transaction-tax.logic';
 import { validateAccountingDocumentMoneyInput } from '../../domain/logic/accounting-money-validation.logic';
-import { isBranchInScope, resolveCreateBranchId } from '../../../data-model-core/domain/logic/branch.logic';
+import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
+import { requireTransactionBranchId } from '../../../data-model-core/application/services/transaction-branch';
 import { civilPeriodKey, coerceCivilDate, todayCivilDate } from '@watchdog-bms/contracts';
 import { observeCustomerJourney } from '../../../../common/observability/customer-journey-audit';
 import { CompanyVatRegistrationUseCase } from '../../../data-model-core/application/use-cases/company-vat-registration.use-case';
@@ -114,7 +115,9 @@ export class CreateDocumentUseCase {
     if (source && ctx.scopes.branchIds && !source.branchId) {
       throw new ForbiddenException('A branch-restricted user cannot create a company-central source-linked document');
     }
-    const branchId = source ? source.branchId : resolveCreateBranchId(ctx.scopes, input.branchId) ?? undefined;
+    const branchId = source
+      ? requireTransactionBranchId(source.branchId)
+      : await this.repo.resolveCreateBranchId(ctx.companyId, ctx.scopes, input.branchId);
     if (branchId && !(await this.repo.findActiveBranch(ctx.companyId, branchId))) {
       throw new NotFoundException('Branch was not found in the current company.');
     }

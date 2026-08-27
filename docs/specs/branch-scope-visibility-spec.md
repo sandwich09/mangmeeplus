@@ -2,6 +2,12 @@
 
 ## 1. Status
 
+Owner amendments dated 2026-08-27 in R4 are implemented locally for transactional
+source branches. Unit/regression checks and responsive branch-selection UI checks pass;
+real save E2E is still blocked by the local launch gate's old-build approval. The older
+v1.1 verification below does not certify these amendments. Legacy unassigned records
+have not been moved, deleted, or hidden.
+
 v1.1, 2026-08-15. **Implemented (all six plan phases) and verified end to end: api and web suites
 zero failures, typecheck clean, and `e2e/branch-scope.spec.ts` 5/5 against a real local stack
 (docker infra, migration applied, twice — implementer and supervisor runs).** Outstanding before
@@ -247,6 +253,31 @@ nature. Their chips must say so, and must not follow the selector.
 The single `!filter || filter.locked` branch at `WorkspaceScope.tsx:103` must be split.
 
 ### R4 — The dashboard gains a branch dimension
+
+**Owner scope extension 2026-08-27:** the source-branch rule applies to all transactional
+write actions, including reimbursements, sales/income, payments and purchasing, not
+only receipt uploads. Source-linked follow-up actions inherit the source document's
+branch (never the current view's filter). Shared company settings/master data and
+personal assets are not independently branch-owned transactions. Existing feature
+switches remain unchanged. Legacy unassigned transactions require source correction,
+not an invented fallback to Head Office.
+Receipt/expense references on reimbursement creation, edit, and submission must belong
+to that same branch as well. An unrestricted user is not permission to combine branches
+or attach unassigned financial evidence. Manual journal lines also require a source branch.
+
+**Owner correction 2026-08-27 — expense source branch is mandatory.** The owner rejected
+company-central expenses after reviewing the local dashboard. New expense records must
+belong to a real active branch of their company, across manual capture, receipt upload,
+LINE and reimbursement projection. An all-branches read selection is not a write branch.
+Use the currently selected branch; automatically default only when exactly one ACTIVE
+branch is available in the caller's scope. With multiple branches and no selection,
+request a branch before creation/upload; do not pick the first permitted/default branch
+merely because it appears first. Apply the same rule in the API. Reject attempts to clear a branch
+and prevent legacy unassigned expenses from reaching confirmation. Do not silently hide,
+delete or assign legacy records to Head Office: historical source mapping requires evidence
+or owner confirmation. This overrides the company-central-expense allowance below and
+the corresponding expense creation default in the parent multi-company spec; unrelated
+shared company assets (such as personal signatures) are not expense source records.
 
 - Unrestricted caller, no selection → company-wide snapshot. **Unchanged from today.**
 - Any caller, branch X selected and in scope → snapshot computed over branch X only.

@@ -7,11 +7,13 @@ import {
   GetExpenseSourcePostingInputUseCase,
   ResolveDuplicateUseCase,
 } from './expense-upload.use-case';
-import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
+import { PrismaExpenseRepository, requireExpenseBranchId } from '../../infrastructure/prisma-expense.repository';
 import { EXPENSE_LAUNCH_ROUTE_CLOSED_MESSAGE } from '../expense-launch-gate';
 import { FEATURE_TEMPORARILY_UNAVAILABLE, featureTemporarilyUnavailable } from '../../../employee-access/application/entitlement.helper';
 
 const openLaunchGate = { assertLaunchRouteOpen: async () => undefined } as any;
+const branchValidation = { resolveCreateBranchId: async (_companyId: string, scopes: { branchIds?: string[] }, branchId?: string) =>
+  requireExpenseBranchId(branchId ?? (scopes.branchIds?.length === 1 ? scopes.branchIds[0] : null)) };
 
 const ctx = {
   requestId: 'req-1',
@@ -30,6 +32,7 @@ describe('receipt upload use cases', () => {
     const created: any[] = [];
     const uc = new InitReceiptUploadUseCase(
       {
+        ...branchValidation,
         createExpense: async (input: any) => {
           created.push(input);
           return { id: 'expense-1' };
@@ -55,6 +58,7 @@ describe('receipt upload use cases', () => {
       byteSize: 123,
       expenseDate: '2026-06-27T00:00:00.000Z',
       captureSource: 'LINE_UPLOAD',
+      branchId: 'branch-default',
     });
 
     assert.equal(result.expenseId, 'expense-1');
@@ -67,7 +71,7 @@ describe('receipt upload use cases', () => {
   it('lands an upload NON_CLAIMABLE when the company is on simple capture', async () => {
     const created: any[] = [];
     const uc = new InitReceiptUploadUseCase(
-      { createExpense: async (input: any) => { created.push(input); return { id: 'expense-1' }; } } as any,
+      { ...branchValidation, createExpense: async (input: any) => { created.push(input); return { id: 'expense-1' }; } } as any,
       { execute: async () => ({ attachmentId: 'att-1', uploadUrl: '/upload', uploadMethod: 'PUT', expiresAt: new Date() }) } as any,
       { log: async () => undefined } as any,
       { execute: async () => ({ mode: 'SIMPLE' }) } as any,
@@ -76,7 +80,7 @@ describe('receipt upload use cases', () => {
 
     await uc.execute(ctx, {
       originalFileName: 'receipt.jpg', mimeType: 'image/jpeg', byteSize: 123,
-      expenseDate: '2026-06-27T00:00:00.000Z', captureSource: 'LINE_UPLOAD',
+      expenseDate: '2026-06-27T00:00:00.000Z', captureSource: 'LINE_UPLOAD', branchId: 'branch-default',
     });
 
     assert.equal(created[0].inputVatClaimStatus, 'NON_CLAIMABLE');
@@ -85,7 +89,7 @@ describe('receipt upload use cases', () => {
   it('rejects Buddhist-era dates before creating an upload intent or expense', async () => {
     const writes: string[] = [];
     const uc = new InitReceiptUploadUseCase(
-      { createExpense: async () => { writes.push('expense'); return { id: 'expense-1' }; } } as any,
+      { ...branchValidation, createExpense: async () => { writes.push('expense'); return { id: 'expense-1' }; } } as any,
       { execute: async () => { writes.push('intent'); return {}; } } as any,
       { log: async () => undefined } as any,
       { execute: async () => ({ mode: 'FULL' }) } as any,
@@ -94,7 +98,7 @@ describe('receipt upload use cases', () => {
 
     await assert.rejects(() => uc.execute(ctx, {
       originalFileName: 'receipt.jpg', mimeType: 'image/jpeg', byteSize: 123,
-      expenseDate: '2569-03-15', captureSource: 'LINE_UPLOAD',
+      expenseDate: '2569-03-15', captureSource: 'LINE_UPLOAD', branchId: 'branch-default',
     }), /invalid civil date/);
     assert.deepEqual(writes, []);
   });
@@ -103,7 +107,7 @@ describe('receipt upload use cases', () => {
     const created: any[] = [];
     const intents: any[] = [];
     const uc = new InitReceiptUploadUseCase(
-      { createExpense: async (input: any) => { created.push(input); return { id: 'expense-1' }; } } as any,
+      { ...branchValidation, createExpense: async (input: any) => { created.push(input); return { id: 'expense-1' }; } } as any,
       { execute: async (_ctx: any, input: any) => {
         intents.push(input);
         return { attachmentId: 'att-1', uploadUrl: '/upload', uploadMethod: 'PUT', expiresAt: new Date() };
@@ -314,7 +318,7 @@ describe('InitReceiptUploadUseCase launch gate', () => {
     const writes: string[] = [];
     const audits: any[] = [];
     const uc = new InitReceiptUploadUseCase(
-      { createExpense: async () => { writes.push('expense'); return { id: 'expense-1' }; } } as any,
+      { ...branchValidation, createExpense: async () => { writes.push('expense'); return { id: 'expense-1' }; } } as any,
       { execute: async () => { writes.push('intent'); return { attachmentId: 'att-1', uploadUrl: '/upload', uploadMethod: 'PUT', expiresAt: new Date() }; } } as any,
       { log: async (entry: any) => { audits.push(entry); } } as any,
       { execute: async () => ({ mode: 'FULL' }) } as any,
@@ -322,7 +326,7 @@ describe('InitReceiptUploadUseCase launch gate', () => {
     );
     const run = () => uc.execute(ctx, {
       originalFileName: 'receipt.jpg', mimeType: 'image/jpeg', byteSize: 123,
-      expenseDate: '2026-06-27T00:00:00.000Z', captureSource: 'LINE_UPLOAD',
+      expenseDate: '2026-06-27T00:00:00.000Z', captureSource: 'LINE_UPLOAD', branchId: 'branch-default',
     });
     return { run, writes, audits };
   }

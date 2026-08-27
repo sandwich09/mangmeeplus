@@ -247,6 +247,7 @@ describe('P27 sales-root launch gate race (real database)', () => {
   let guards: LaunchGateGuardService[] = [];
   let raceCompanyId = '';
   let raceUserId = '';
+  const raceBranchId = `${tag}-branch`;
   let reachable = false;
 
   async function resetOpen(): Promise<void> {
@@ -287,6 +288,7 @@ describe('P27 sales-root launch gate race (real database)', () => {
     }
     raceCompanyId = (await raceClients[0]!.company.create({ data: { name: tag, status: 'ACTIVE' }, select: { id: true } })).id;
     raceUserId = (await raceClients[0]!.user.create({ data: { displayName: tag }, select: { id: true } })).id;
+    await raceClients[0]!.branch.create({ data: { id: raceBranchId, companyId: raceCompanyId, code: 'HO', name: 'Source branch', type: 'HEAD_OFFICE', createdByUserId: raceUserId } });
     guards = raceClients.map((client) => new LaunchGateGuardService({ client } as any));
   });
 
@@ -379,7 +381,7 @@ describe('P27 sales-root launch gate race (real database)', () => {
     if (!reachable) return t.skip('no database reachable');
     const repo = new PrismaAccountingRepository({ client: raceClients[0]! } as any);
     const input = {
-      companyId: raceCompanyId,
+      companyId: raceCompanyId, branchId: raceBranchId,
       documentType: 'INVOICE' as const,
       documentDate: '2026-08-27',
       idempotencyKey: `${tag}-invoice-replay`,
@@ -411,7 +413,7 @@ describe('P27 sales-root launch gate race (real database)', () => {
     const afterReplayRead = new Promise<void>((resolve) => { reachedAfterReplayRead = resolve; });
     const idempotencyKey = `${tag}-simple-close-gap`;
     const mutation = repo.recordSimpleIncomeBundle({
-      companyId: raceCompanyId,
+      companyId: raceCompanyId, branchId: raceBranchId,
       idempotencyKey,
       payloadFingerprint: `${tag}-simple-fingerprint`,
       documentDate: '2026-08-27',
@@ -448,7 +450,7 @@ describe('P27 sales-root launch gate race (real database)', () => {
     const repo = new PrismaAccountingRepository({ client: raceClients[0]! } as any);
     const source = await raceClients[0]!.accountingDocument.create({
       data: {
-        companyId: raceCompanyId, documentType: 'QUOTATION', status: 'ISSUED', documentNumber: `QT-${randomUUID()}`,
+        companyId: raceCompanyId, branchId: raceBranchId, documentType: 'QUOTATION', status: 'ISSUED', documentNumber: `QT-${randomUUID()}`,
         documentDate: new Date('2026-08-27T00:00:00.000Z'), currency: 'THB', vatMode: 'NO_VAT',
         subtotalAmount: '100', taxableAmount: '100', grandTotalAmount: '100', outstandingAmount: '100',
         paymentStatus: 'UNPAID', createdByUserId: raceUserId,
@@ -460,7 +462,7 @@ describe('P27 sales-root launch gate race (real database)', () => {
     let reachedAfterOptimisticRead!: () => void;
     const afterOptimisticRead = new Promise<void>((resolve) => { reachedAfterOptimisticRead = resolve; });
     const mutation = repo.convertQuotation(source.id, source.updatedAt, {
-      companyId: raceCompanyId,
+      companyId: raceCompanyId, branchId: raceBranchId,
       documentType: 'INVOICE',
       documentDate: '2026-08-27',
       convertedFromDocumentId: source.id,
@@ -492,6 +494,7 @@ describe('P27 sales-root launch gate race (real database)', () => {
 
 describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
   const companyId = `p27-simple-${process.pid}`;
+  const branchId = `${companyId}-branch`;
   let client: PrismaClient | null = null;
   let repo: PrismaAccountingRepository | null = null;
   let reachable = false;
@@ -519,6 +522,7 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
       await client.accountingSimpleIncomeCommand.deleteMany({ where: { companyId } });
       await client.company.deleteMany({ where: { id: companyId } });
       await client.company.create({ data: { id: companyId, name: 'P27 simple-income test' } });
+      await client.branch.create({ data: { id: branchId, companyId, code: 'HO', name: 'Source branch', type: 'HEAD_OFFICE', createdByUserId: 'p27-test-user' } });
       repo = new PrismaAccountingRepository(
         { client } as any,
         new PrismaDocumentSequenceRepository({ client } as any),
@@ -545,7 +549,7 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
   });
 
   const input = (idempotencyKey: string, payloadFingerprint: string, note: string) => ({
-    companyId, idempotencyKey, payloadFingerprint, documentDate: '2026-08-26', vatMode: 'NO_VAT' as const,
+    companyId, branchId, idempotencyKey, payloadFingerprint, documentDate: '2026-08-26', vatMode: 'NO_VAT' as const,
     paymentMethod: 'BANK_TRANSFER' as const, note,
     lines: [{ lineNumber: 1, description: note, quantity: '1', unitPrice: '100.00', whtRate: '3' }],
     createdByUserId: 'p27-test-user',
@@ -607,12 +611,12 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
   it('makes allocated payment retries at-most-once and prevents concurrent over-allocation', async (t) => {
     if (!reachable || !client || !repo) return t.skip('local PostgreSQL or the payment idempotency migration is unavailable');
     const makeInvoice = (note: string) => client!.accountingDocument.create({ data: {
-      companyId, documentType: 'INVOICE', status: 'ISSUED', documentDate: new Date('2026-08-27T00:00:00.000Z'),
+      companyId, branchId, documentType: 'INVOICE', status: 'ISSUED', documentDate: new Date('2026-08-27T00:00:00.000Z'),
       currency: 'THB', vatMode: 'NO_VAT', subtotalAmount: '100', taxableAmount: '100', grandTotalAmount: '100',
       paidAmount: '0', outstandingAmount: '100', paymentStatus: 'UNPAID', note, createdByUserId: 'p27-test-user',
     } });
     const payment = (documentId: string, idempotencyKey: string, amount: string) => ({
-      companyId, idempotencyKey, payloadFingerprint: `${idempotencyKey}:${amount}`, direction: 'RECEIVED' as const,
+      companyId, branchId, idempotencyKey, payloadFingerprint: `${idempotencyKey}:${amount}`, direction: 'RECEIVED' as const,
       method: 'BANK_TRANSFER' as const, amount, paidAt: '2026-08-27T10:00:00.000Z',
       allocateToDocumentId: documentId, createdByUserId: 'p27-test-user',
     });
@@ -646,20 +650,20 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
     const createFixture = async (suffix: string) => {
       const invoice = await client!.accountingDocument.create({
         data: {
-          companyId, documentType: 'INVOICE', documentNumber: `INV-${randomUUID()}`, status: 'ISSUED',
+          companyId, branchId, documentType: 'INVOICE', documentNumber: `INV-${randomUUID()}`, status: 'ISSUED',
           documentDate: new Date('2026-08-27T00:00:00.000Z'), currency: 'THB', vatMode: 'NO_VAT',
           subtotalAmount: '100', taxableAmount: '100', grandTotalAmount: '100', paidAmount: '0',
           outstandingAmount: '100', paymentStatus: 'UNPAID', createdByUserId: 'p27-test-user',
         },
       });
       const first = await repo!.createPayment({
-        companyId, idempotencyKey: `payment-void-race-first-${suffix}-${randomUUID()}`,
+        companyId, branchId, idempotencyKey: `payment-void-race-first-${suffix}-${randomUUID()}`,
         payloadFingerprint: `payment-void-race-first-${suffix}`,
         direction: 'RECEIVED', method: 'BANK_TRANSFER', amount: '40.00', paidAt: '2026-08-27T10:00:00.000Z',
         allocateToDocumentId: invoice.id, createdByUserId: 'p27-test-user',
       });
       const secondInput = {
-        companyId, idempotencyKey: `payment-void-race-second-${suffix}-${randomUUID()}`,
+        companyId, branchId, idempotencyKey: `payment-void-race-second-${suffix}-${randomUUID()}`,
         payloadFingerprint: `payment-void-race-second-${suffix}`,
         direction: 'RECEIVED' as const, method: 'BANK_TRANSFER' as const, amount: '30.00', paidAt: '2026-08-27T11:00:00.000Z',
         allocateToDocumentId: invoice.id, createdByUserId: 'p27-test-user',
@@ -725,7 +729,7 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
     if (!reachable || !client || !repo) return t.skip('local PostgreSQL or the payment idempotency migration is unavailable');
     const invoice = await client.accountingDocument.create({
       data: {
-        companyId, documentType: 'INVOICE', documentNumber: `INV-${randomUUID()}`, status: 'ISSUED',
+        companyId, branchId, documentType: 'INVOICE', documentNumber: `INV-${randomUUID()}`, status: 'ISSUED',
         documentDate: new Date('2026-08-27T00:00:00.000Z'), currency: 'THB', vatMode: 'NO_VAT',
         subtotalAmount: '75', taxableAmount: '75', grandTotalAmount: '75', paidAmount: '0',
         outstandingAmount: '75', paymentStatus: 'UNPAID', createdByUserId: 'p27-test-user',
@@ -733,7 +737,7 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
       },
     });
     const payment = await repo.createPayment({
-      companyId, idempotencyKey: `receipt-race-payment-${randomUUID()}`, payloadFingerprint: `receipt-race-${invoice.id}`,
+      companyId, branchId, idempotencyKey: `receipt-race-payment-${randomUUID()}`, payloadFingerprint: `receipt-race-${invoice.id}`,
       direction: 'RECEIVED', method: 'BANK_TRANSFER', amount: '75.00', paidAt: '2026-08-27T10:00:00.000Z',
       allocateToDocumentId: invoice.id, createdByUserId: 'p27-test-user',
     });
@@ -743,7 +747,7 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
     let receiptLocked!: () => void;
     const receiptHasLock = new Promise<void>((resolve) => { receiptLocked = resolve; });
     const receiptInput = {
-      companyId, documentType: 'RECEIPT' as const, sourceDocumentId: invoice.id, sourceDocumentType: 'INVOICE',
+      companyId, branchId, documentType: 'RECEIPT' as const, sourceDocumentId: invoice.id, sourceDocumentType: 'INVOICE',
       documentDate: '2026-08-27', vatMode: 'NO_VAT' as const, createdByUserId: 'p27-test-user',
       lines: [{ lineNumber: 1, description: 'Receipt race', quantity: '1', unitPrice: '75.00' }],
     };
@@ -784,7 +788,7 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
     if (!reachable || !client || !repo) return t.skip('local PostgreSQL or the P27 migration is unavailable');
     const invoice = await client.accountingDocument.create({
       data: {
-        companyId, documentType: 'INVOICE', documentNumber: `INV-${randomUUID()}`, status: 'ISSUED',
+        companyId, branchId, documentType: 'INVOICE', documentNumber: `INV-${randomUUID()}`, status: 'ISSUED',
         documentDate: new Date('2026-08-27T00:00:00.000Z'), currency: 'THB', vatMode: 'NO_VAT',
         subtotalAmount: '100', taxableAmount: '100', grandTotalAmount: '100', paidAmount: '0',
         outstandingAmount: '100', paymentStatus: 'UNPAID', createdByUserId: 'p27-test-user',
@@ -793,7 +797,7 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
     });
     const receipt = await client.accountingDocument.create({
       data: {
-        companyId, documentType: 'RECEIPT', documentNumber: `REC-${randomUUID()}`, status: 'ISSUED',
+        companyId, branchId, documentType: 'RECEIPT', documentNumber: `REC-${randomUUID()}`, status: 'ISSUED',
         // Historical rows may omit sourceDocumentType; canonicalization must trust the upstream row.
         sourceDocumentId: invoice.id,
         documentDate: new Date('2026-08-27T00:00:00.000Z'), currency: 'THB', vatMode: 'NO_VAT',
@@ -804,7 +808,7 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
     });
     const createLinkedTaxInvoice = (sourceDocumentId: string, sourceDocumentType: 'INVOICE' | 'RECEIPT', suffix: string) => {
       const input = {
-        companyId, documentType: 'TAX_INVOICE' as const, sourceDocumentId, sourceDocumentType,
+        companyId, branchId, documentType: 'TAX_INVOICE' as const, sourceDocumentId, sourceDocumentType,
         idempotencyKey: `tax-invoice-race-${suffix}-${randomUUID()}`, payloadFingerprint: `tax-invoice-race-${suffix}`,
         documentDate: '2026-08-27', vatMode: 'NO_VAT' as const, outputTaxCode: 'O0' as const, createdByUserId: 'p27-test-user',
         lines: [{ lineNumber: 1, description: 'Tax invoice race', quantity: '1', unitPrice: '100.00' }],
@@ -829,7 +833,7 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
     const createFixture = async (suffix: string) => {
       const invoice = await client!.accountingDocument.create({
         data: {
-          companyId, documentType: 'INVOICE', documentNumber: `INV-${randomUUID()}`, status: 'ISSUED',
+          companyId, branchId, documentType: 'INVOICE', documentNumber: `INV-${randomUUID()}`, status: 'ISSUED',
           documentDate: new Date('2026-08-27T00:00:00.000Z'), currency: 'THB', vatMode: 'NO_VAT',
           subtotalAmount: '50', taxableAmount: '50', grandTotalAmount: '50', paidAmount: '50',
           outstandingAmount: '0', paymentStatus: 'PAID', createdByUserId: 'p27-test-user',
@@ -838,7 +842,7 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
       });
       const receipt = await client!.accountingDocument.create({
         data: {
-          companyId, documentType: 'RECEIPT', status: 'DRAFT', sourceDocumentId: invoice.id,
+          companyId, branchId, documentType: 'RECEIPT', status: 'DRAFT', sourceDocumentId: invoice.id,
           documentDate: new Date('2026-08-27T00:00:00.000Z'), currency: 'THB', vatMode: 'NO_VAT',
           subtotalAmount: '50', taxableAmount: '50', grandTotalAmount: '50', outstandingAmount: '50',
           paymentStatus: 'UNPAID', createdByUserId: 'p27-test-user',
@@ -912,7 +916,7 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
     const createFixture = async (suffix: string) => {
       const invoice = await client!.accountingDocument.create({
         data: {
-          companyId, documentType: 'INVOICE', documentNumber: `INV-${randomUUID()}`, status: 'ISSUED',
+          companyId, branchId, documentType: 'INVOICE', documentNumber: `INV-${randomUUID()}`, status: 'ISSUED',
           documentDate: new Date('2026-08-27T00:00:00.000Z'), currency: 'THB', vatMode: 'NO_VAT',
           subtotalAmount: '80', taxableAmount: '80', grandTotalAmount: '80', outstandingAmount: '80',
           paymentStatus: 'UNPAID', createdByUserId: 'p27-test-user',
@@ -920,7 +924,7 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
       });
       const receipt = await client!.accountingDocument.create({
         data: {
-          companyId, documentType: 'RECEIPT', documentNumber: `REC-${randomUUID()}`, status: 'ISSUED',
+          companyId, branchId, documentType: 'RECEIPT', documentNumber: `REC-${randomUUID()}`, status: 'ISSUED',
           sourceDocumentId: invoice.id,
           documentDate: new Date('2026-08-27T00:00:00.000Z'), currency: 'THB', vatMode: 'NO_VAT',
           subtotalAmount: '80', taxableAmount: '80', grandTotalAmount: '80', paidAmount: '80',
@@ -928,7 +932,7 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
         },
       });
       const input = {
-        companyId, documentType: 'TAX_INVOICE' as const, sourceDocumentId: receipt.id, sourceDocumentType: 'RECEIPT',
+        companyId, branchId, documentType: 'TAX_INVOICE' as const, sourceDocumentId: receipt.id, sourceDocumentType: 'RECEIPT',
         documentDate: '2026-08-27', vatMode: 'NO_VAT' as const, outputTaxCode: 'O0' as const,
         createdByUserId: 'p27-test-user',
         lines: [{ lineNumber: 1, description: `Tax/void ${suffix}`, quantity: '1', unitPrice: '80.00' }],
@@ -1038,7 +1042,7 @@ describe('P27 simple-income bundle (real PostgreSQL when available)', () => {
         companyId: ledgerCompanyId, type: 'CUSTOMER', displayName: 'ลูกค้าทดสอบ', createdByUserId: ctx.userId,
       } });
       const incomeBundle = await repo.recordSimpleIncomeBundle({
-        companyId: ledgerCompanyId, idempotencyKey: 'ledger-income-0001', payloadFingerprint: 'ledger-fingerprint',
+        companyId: ledgerCompanyId, branchId: allowedBranch.id, idempotencyKey: 'ledger-income-0001', payloadFingerprint: 'ledger-fingerprint',
         documentDate: '2026-08-01', counterpartyId: counterparty.id, vatMode: 'NO_VAT', paymentMethod: 'BANK_TRANSFER',
         lines: [{ lineNumber: 1, description: 'รายรับทดสอบ', quantity: '1', unitPrice: '100.00', whtRate: '3' }],
         createdByUserId: ctx.userId,

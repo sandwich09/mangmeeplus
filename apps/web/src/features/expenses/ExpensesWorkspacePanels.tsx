@@ -22,7 +22,7 @@ import { findForbiddenChars, stripDisallowed } from '@/common/forms/sanitize';
 import { assertAllowedUploadFile, uploadErrorMessage } from '@/common/files/upload-file.logic';
 import { formatThaiDateTime, formatThaiMonth } from '@/common/i18n/thai-date';
 import { SignaturePad } from './SignaturePad';
-import { err, baht0, dateShort, inputClass, btnClass, ghostClass, dangerClass, ICON, ErrorBanner, InfoBanner, StateBanner, HowItWorks } from './ExpensesUi';
+import { err, baht, baht0, dateShort, inputClass, btnClass, ghostClass, dangerClass, ICON, ErrorBanner, InfoBanner, StateBanner, HowItWorks } from './ExpensesUi';
 import {
   deriveEvidenceRowFlags,
   evidenceRowState,
@@ -37,6 +37,8 @@ import { showsTaxCapture, useExpenseCapturePolicy } from './expense-capture-poli
 import { listTaxCodeDefinitions } from '../tax/transaction-tax.api';
 import { availableTaxDefinitions } from '../tax/transaction-tax.model';
 import { useMenuFilterState } from '../web-core-workspace/MenuFilterScope';
+import { useBranchFilter, useBranchScopeLabel } from '../web-core-workspace/WorkspaceScope';
+import { isBranchScope403 } from '../web-core-workspace/branch-scope-label.logic';
 import { todayCivilDate } from '@watchdog-bms/contracts';
 import { useToast } from '@/common/components/toast';
 import { classifySignatureUploadFile, HeicDecodeError, prepareSignatureFile, SIGNATURE_UPLOAD_ACCEPT } from './expense-upload.logic';
@@ -597,6 +599,10 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
   onOpenExpense: (expenseId: string) => void;
 }) {
   const toast = useToast();
+  const branchFilter = useBranchFilter();
+  const branchId = branchFilter?.branchId ?? '';
+  const branchLabel = useBranchScopeLabel();
+  const loadVersion = useRef(0);
   // Company-level screen with no single document date, so the policy is read for today.
   const showsTax = showsTaxCapture(useExpenseCapturePolicy(companyId).mode);
   const [view, setView] = useState<SharedEvidenceView | null>(null);
@@ -624,26 +630,45 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
   const [backfillMessage, setBackfillMessage] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    setLoading(true); setError(null);
+    const version = ++loadVersion.current;
+    setLoading(true); setError(null); setView(null);
     try {
-      setView(await getSharedEvidence(companyId, {
+      const filters = {
+        ...(branchId ? { branchId } : {}),
         dateField,
         status: documentStatus,
         ...(yearMonth ? { yearMonth } : {}),
         ...(taxEvidenceStatus ? { taxEvidenceStatus } : {}),
         ...(sourceDocumentType ? { sourceDocumentType } : {}),
         ...(postingStatus ? { postingStatus } : {}),
-      }));
-    } catch (e) { setError(err(e)); }
-    finally { setLoading(false); }
-  }, [companyId, dateField, documentStatus, yearMonth, taxEvidenceStatus, sourceDocumentType, postingStatus]);
-  useEffect(() => { void load(); }, [load]);
+      };
+      const next = await getSharedEvidence(companyId, { ...filters, page: 1, pageSize: 200 });
+      if (version !== loadVersion.current) return;
+      for (let nextPage = 2; next.rows.length < next.total; nextPage += 1) {
+        if (nextPage > 50) throw new Error('รายการมากเกินไป กรุณาเลือกเดือนเพื่อดูข้อมูลให้ครบ');
+        const more = await getSharedEvidence(companyId, { ...filters, page: nextPage, pageSize: next.pageSize });
+        if (version !== loadVersion.current) return;
+        if (!more.rows.length) throw new Error('โหลดหลักฐานไม่ครบ กรุณาลองใหม่');
+        next.rows.push(...more.rows);
+      }
+      setView(next);
+    } catch (e) {
+      if (version !== loadVersion.current) return;
+      if (isBranchScope403(e, branchId)) branchFilter?.reportBranchForbidden();
+      setError(err(e));
+    }
+    finally { if (version === loadVersion.current) setLoading(false); }
+  }, [companyId, branchId, dateField, documentStatus, yearMonth, taxEvidenceStatus, sourceDocumentType, postingStatus]);
+  useEffect(() => { void load(); return () => { loadVersion.current += 1; }; }, [load]);
+  useEffect(() => { setConfirmExport(false); setPackageResult(null); setPage(1); }, [branchId]);
 
   const exportPackage = async () => {
+    const version = loadVersion.current;
     setConfirmExport(false);
     setExporting(true); setError(null);
     try {
       const result = await createAccountantPackage(companyId, {
+        ...(branchId ? { branchId } : {}),
         dateField,
         status: documentStatus,
         // ponytail: this panel is the accounting-office view — always the full column set.
@@ -653,11 +678,16 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
         ...(sourceDocumentType ? { sourceDocumentType } : {}),
         ...(postingStatus ? { postingStatus } : {}),
       });
+      if (version !== loadVersion.current) return;
       // Same guard as the list page (ebed6dfb): a header-only workbook reads as a broken export.
       if (result.rowCount === 0) { toast.warning('ไม่มีรายการตามตัวกรองในช่วงนี้ จึงยังส่งออกไม่ได้'); return; }
       setPackageResult(result);
       downloadIndexXlsx(result, `expense-index-${yearMonth || 'all'}.xlsx`);
-    } catch (e) { setError(err(e)); }
+    } catch (e) {
+      if (version !== loadVersion.current) return;
+      if (isBranchScope403(e, branchId)) branchFilter?.reportBranchForbidden();
+      setError(err(e));
+    }
     finally { setExporting(false); }
   };
 
@@ -733,7 +763,7 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
       {/* Step 2 used to promise "คลิกเปิดแก้ได้ทันที". This tab only ever lists CONFIRMED
           documents, and CONFIRMED is locked for editing everywhere — API and UI alike — so the
           promise was false for every row it was shown on. */}
-      <HowItWorks title="ส่งหลักฐานให้สำนักงานบัญชีอย่างไร" steps={['ยืนยันเอกสารในแท็บรายการ', 'คลิกแถวที่ขึ้น ⚠ เพื่อเปิดดูรายละเอียด (เอกสารที่ยืนยันแล้วแก้ไขไม่ได้)', 'ส่งออก Excel พร้อมรายการลิงก์ดาวน์โหลดหลักฐานให้สำนักงานบัญชี']} />
+      <HowItWorks title="เตรียมหลักฐานให้สำนักงานบัญชี" steps={['เปิดรายการที่มีคำเตือนเพื่อตรวจข้อมูล', 'หากเอกสารยืนยันแล้วผิด ให้ยกเลิกแล้วบันทึกใหม่', 'ตรวจความครบถ้วนก่อนส่งออกให้บัญชี']} />
       <StateBanner error={error} />
       {backfillMessage && <InfoBanner message={backfillMessage} />}
 
@@ -741,7 +771,7 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
         <>
           <div className="flex flex-wrap gap-3">
             <div className="min-w-[180px] flex-1"><MangmeeStatCard tone="brand" icon={ICON.doc} label={EXPENSE_STATUS_LABELS[documentStatus as keyof typeof EXPENSE_STATUS_LABELS] ?? 'เอกสาร'} value={`${view?.total ?? 0} รายการ`} sub={yearMonth ? formatThaiMonth(yearMonth) : 'ทั้งหมด'} /></div>
-            <div className="min-w-[180px] flex-1"><MangmeeStatCard tone="indigo" icon={ICON.wallet} label="มูลค่าในหน้าที่โหลด" value={baht0(total)} sub={`${view?.rows.length ?? 0} รายการล่าสุด`} /></div>
+            <div className="min-w-[180px] flex-1"><MangmeeStatCard tone="indigo" icon={ICON.wallet} label="ยอดรวมตามตัวกรอง" value={baht(total)} sub={`${view?.rows.length ?? 0} รายการ`} /></div>
             {/* Toggles the same 'attention' state the filter chips below use, so the card and the
                 chip row can never disagree about what is currently filtered. */}
             <button type="button" aria-pressed={flagFilter === 'attention'}
@@ -789,7 +819,7 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
             </label>}
             {/* No attention checkbox here: that filter now lives in the chip row with the others. */}
             {canPostLedger && <button className={cx(ghostClass, 'sm:ml-auto')} onClick={() => void previewHistoricalBackfill()} disabled={backfillBusy}>{backfillBusy ? 'กำลังตรวจ...' : 'ตรวจรายการเก่าก่อน Auto-post'}</button>}
-            {canExport && <button className={cx(btnClass, canPostLedger ? '' : 'sm:ml-auto')} onClick={() => setConfirmExport(true)} disabled={exporting}>{exporting ? 'กำลังสร้าง...' : 'ส่งออกชุดเอกสารให้บัญชี'}</button>}
+            {canExport && <button className={cx(btnClass, canPostLedger ? '' : 'sm:ml-auto')} onClick={() => setConfirmExport(true)} disabled={exporting || loading || !view?.total}>{exporting ? 'กำลังสร้าง...' : 'ส่งออกชุดเอกสารให้บัญชี'}</button>}
           </MangmeeCard>
 
           {/* Themed confirm instead of window.confirm(): the browser dialog ignored the app theme. */}
@@ -807,6 +837,8 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
           >
             <div className="space-y-3 text-sm">
               <p className="text-gray-600">ระบบจะส่งออกเอกสารตามตัวกรองปัจจุบัน</p>
+              <p className="font-semibold text-gray-900">สาขา: {branchLabel ?? 'กำลังตรวจสอบสาขา'}</p>
+              <p className="text-gray-600">{dateField === 'uploadedAt' ? 'วันที่ส่งเข้า' : 'วันที่เอกสาร'}: {yearMonth ? formatThaiMonth(yearMonth) : 'ทุกช่วงเวลา'} · {EXPENSE_STATUS_LABELS[documentStatus as keyof typeof EXPENSE_STATUS_LABELS] ?? documentStatus}</p>
               {summary.attention > 0 ? (
                 <div className="rounded-lg border border-warning-100 bg-warning-50 p-3 text-warning-800">
                   ⚠ พบ {summary.attention} รายการที่มีคำเตือนในหน้าที่โหลด ระบบจะรวมรายการเหล่านี้ในชุดส่งออกด้วย

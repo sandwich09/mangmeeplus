@@ -55,6 +55,9 @@ describe('CreateDocumentUseCase Tax Code compatibility header', () => {
       }],
     };
     const repo = {
+      findActiveBranch: async () => ({ id: 'branch-1' }),
+      resolveCreateBranchId: async (_companyId: string, scopes: { branchIds?: string[] }, selected?: string) => selected ?? scopes.branchIds?.[0] ?? 'branch-1',
+
       createDocument: mock.fn(async () => document),
       findDocumentById: mock.fn(async () => document),
       saveLineTaxSnapshots: mock.fn(async (_companyId: string, _documentId: string, rows: any[]) => {

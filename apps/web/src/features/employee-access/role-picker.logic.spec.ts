@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { RoleSummary } from '@watchdog-bms/contracts';
-import { assignableRoleOptions, isAssignableRoleCatalog, isOperationalRoleTargetReadOnly, isRoleFieldReadOnly, isSelfEmployee } from './role-picker.logic';
+import { assignableRoleOptions, isAssignableRoleCatalog, isOperationalRoleTargetReadOnly, isRoleFieldReadOnly, isSelfEmployee, roleDisplayName } from './role-picker.logic';
 
 function role(id: string, assignableByCurrentUser?: boolean): RoleSummary {
   return { id, key: id.toUpperCase(), name: id, isSystem: true, status: 'ACTIVE', permissionKeys: [], assignableByCurrentUser };
@@ -12,6 +12,11 @@ const OWNER_VIEW = [role('sales', true), role('manager', true), role('finance', 
 const MANAGER_VIEW = [role('sales', true), role('manager', false), role('finance', false)];
 
 describe('isAssignableRoleCatalog', () => {
+  it('uses Thai names for system roles without renaming custom roles', () => {
+    assert.equal(roleDisplayName(role('accountant')), 'ฝ่ายบัญชี');
+    assert.equal(roleDisplayName({ key: 'CUSTOM', name: 'ผู้ช่วยร้าน' }), 'ผู้ช่วยร้าน');
+    assert.equal(roleDisplayName({ ...role('finance'), isSystem: false, name: 'ผู้ช่วยการเงินพิเศษ' }), 'ผู้ช่วยการเงินพิเศษ');
+  });
   it('accepts both allowed and denied roles when the server supplies a boolean decision', () => {
     assert.equal(isAssignableRoleCatalog(MANAGER_VIEW), true);
     assert.equal(isAssignableRoleCatalog([]), true);

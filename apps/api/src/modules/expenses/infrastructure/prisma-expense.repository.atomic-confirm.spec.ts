@@ -19,10 +19,10 @@ const components: TransactionTaxComponentPreview[] = [{
   reportContributions: [{ formType: 'PP30', boxKey: 'INPUT_VAT', amount: '7.00', amountSource: 'TAX_AMOUNT' }],
 }];
 
-function harness(options: { accountingStatus?: string; taxStatus?: string; withAttachment?: boolean } = {}) {
+function harness(options: { accountingStatus?: string; taxStatus?: string; withAttachment?: boolean; branchId?: string | null } = {}) {
   const updatedAt = new Date('2026-07-15T10:00:00.000Z');
   const row: any = {
-    id: 'expense-1', companyId: 'company-1', branchId: null, status: 'READY_FOR_CONFIRMATION', captureSource: 'WEB_MANUAL',
+    id: 'expense-1', companyId: 'company-1', branchId: options.branchId === undefined ? 'branch-1' : options.branchId, status: 'READY_FOR_CONFIRMATION', captureSource: 'WEB_MANUAL',
     duplicateStatus: 'NO_MATCH', expenseDate: new Date('2026-07-15T00:00:00.000Z'), currency: 'THB', vatMode: 'VAT_EXCLUDED',
     sourceDocumentType: 'TAX_INVOICE', taxEvidenceStatus: 'USABLE_FOR_TAX', inputVatClaimStatus: 'CLAIMABLE',
     primaryAttachmentId: 'attachment-1', missingReceiptReason: null, substituteReceiptGeneratedAt: null,
@@ -97,6 +97,14 @@ const finalize = async () => [{
 }];
 
 describe('PrismaExpenseRepository atomic tax confirmation', () => {
+  it('blocks legacy unassigned expenses before any tax, header or outbox write', async () => {
+    const { repo, writes, updatedAt } = harness({ branchId: null });
+    const input = await inputFor(repo, updatedAt);
+    await assert.rejects(() => repo.finalizeAndConfirmExpenseCas(input, finalize), /เลือกสาขา/);
+    assert.equal(writes.header, 0);
+    assert.equal(writes.line, 0);
+    assert.equal(writes.outbox, 0);
+  });
   it('persists FINAL snapshots, status CAS, and outbox in one serializable transaction', async () => {
     const { repo, writes, updatedAt } = harness();
     const result = await repo.finalizeAndConfirmExpenseCas(await inputFor(repo, updatedAt), finalize);

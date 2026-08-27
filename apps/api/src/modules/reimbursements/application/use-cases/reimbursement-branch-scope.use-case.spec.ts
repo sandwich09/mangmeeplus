@@ -16,6 +16,7 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ForbiddenException } from '@nestjs/common';
+import { requireTransactionBranchId } from '../../../data-model-core/application/services/transaction-branch';
 import {
   ExportReimbursementEvidenceUseCase,
   FinanceReviewReimbursementUseCase,
@@ -123,6 +124,13 @@ const WRITES = [
   },
 ];
 
+it('refuses a new payout without the saved claim branch before reserving a number or writing', async () => {
+  const payment = WRITES[0]!;
+  const ctx = { ...scopedTo(['branch-1'], payment.permissions), scopes: {} };
+  await assert.rejects(() => payment.run(repoFor(otherBranchClaim({ branchId: null })), ctx),
+    (error: any) => error.getStatus() === 422 && error.getResponse().code === 'TRANSACTION_BRANCH_REQUIRED');
+});
+
 describe('reimbursement branch ABAC (audit H-2)', () => {
   for (const write of WRITES) {
     it(`refuses to ${write.name} in a branch outside the caller's scope`, async () => {
@@ -164,6 +172,7 @@ describe('reimbursement branch ABAC (audit H-2)', () => {
     it('tags an omitted branch with the requester own branch rather than company-central', async () => {
       let written: any;
       const repo = {
+        resolveCreateBranchId: async (_companyId: string, scopes: { branchIds?: string[] }, selected?: string) => requireTransactionBranchId(selected ?? scopes.branchIds?.[0]),
         findPolicy: async () => null,
         getUserDisplayName: async () => 'สมชาย',
         createRequest: async (data: any) => { written = data; return { ...data, id: 'rb-new', status: 'DRAFT', createdAt: new Date(), updatedAt: new Date() }; },
@@ -180,21 +189,22 @@ describe('reimbursement branch ABAC (audit H-2)', () => {
       assert.equal(written.branchId, 'branch-1');
     });
 
-    it('still creates company-central for an unrestricted requester', async () => {
+    it('rejects an unrestricted requester without a selection when multiple branches exist', async () => {
       let written: any;
       const repo = {
+        resolveCreateBranchId: async () => requireTransactionBranchId(null),
         findPolicy: async () => null,
         getUserDisplayName: async () => 'สมชาย',
         createRequest: async (data: any) => { written = data; return { ...data, id: 'rb-new', status: 'DRAFT', createdAt: new Date(), updatedAt: new Date() }; },
       } as any;
       const unrestricted = { ...scopedTo(['branch-1'], ['reimbursement.create']), scopes: {} };
 
-      await new CreateReimbursementDraftUseCase(repo, audit, evidence).execute(unrestricted, {
+      await assert.rejects(() => new CreateReimbursementDraftUseCase(repo, audit, evidence).execute(unrestricted, {
         reason: 'ไปพบลูกค้า',
         lines: [{ lineNo: 1, incurredDate: '2026-01-05T00:00:00.000Z', description: 'แท็กซี่', categoryKey: 'travel', categoryLabel: 'เดินทาง', amount: '100.00', attachmentId: 'att-1' }],
-      } as any);
+      } as any), /เลือกสาขา/);
 
-      assert.equal(written.branchId, undefined);
+      assert.equal(written, undefined);
     });
   });
 

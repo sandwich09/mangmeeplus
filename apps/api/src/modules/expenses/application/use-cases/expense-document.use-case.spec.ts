@@ -819,6 +819,11 @@ describe('signature asset lifecycle', () => {
 });
 
 describe('GetSharedEvidenceViewUseCase', () => {
+  it('rejects an explicit branch outside the caller scope before reading or exporting', async () => {
+    const scoped = { ...ctx(['expense.evidence.read', 'expense.export', 'expense.read']), scopes: { branchIds: ['b1'] } };
+    await assert.rejects(() => new GetSharedEvidenceViewUseCase({} as any).execute(scoped, { branchId: 'b2' }), /branch/i);
+    await assert.rejects(() => new CreateAccountantPackageUseCase({} as any, {} as any, audit, {} as any).execute(scoped, { branchId: 'b2' }), /branch/i);
+  });
   const repo = {
     summarizeSharedEvidenceFolders: async () => [],
     listSharedEvidence: async () => ({ rows: [], total: 0, page: 1, pageSize: 20 }),
@@ -840,7 +845,7 @@ describe('CreateAccountantPackageUseCase', () => {
         appliedFilter = filter;
         return {
           rows: [{
-            id: 'exp-1', expenseNumber: 'EXP-1', status: 'CONFIRMED', captureSource: 'LINE_UPLOAD',
+            id: 'exp-1', branchId: 'b1', expenseNumber: 'EXP-1', status: 'CONFIRMED', captureSource: 'LINE_UPLOAD',
             sourceDocumentType: 'TAX_INVOICE', taxEvidenceStatus: 'USABLE_FOR_TAX', taxEvidenceReasonCode: 'VALID_TAX_INVOICE_FIELDS',
             uploadedAt: new Date('2026-07-01T10:00:00Z'), expenseDate: new Date('2026-06-28T00:00:00Z'),
             createdByUserId: 'user-1', reviewedByUserId: null,
@@ -861,13 +866,16 @@ describe('CreateAccountantPackageUseCase', () => {
     const prisma = {
       client: {
         company: { findUnique: async () => ({ name: 'บริษัท ทดสอบ', taxId: '0105' }) },
+        branch: { findMany: async () => [{ id: 'b1', code: 'SIAM' }] },
         user: { findMany: async () => [{ id: 'user-1', displayName: 'สมชาย', email: null }] },
         expenseSubstituteReceiptEvidence: { findMany: async () => [] },
       },
     } as any;
 
     const useCase = new CreateAccountantPackageUseCase(repo, downloadUrl, audit, prisma);
-    const result = await useCase.execute(ctx(['expense.export', 'expense.read', 'attachment.read']), {});
+    const result = await useCase.execute(ctx(['expense.export', 'expense.read', 'attachment.read']), { branchId: 'b1' });
+    assert.equal(appliedFilter.branchId, 'b1');
+    assert.equal(result.indexRows[0]?.branch_code, 'SIAM');
     assert.equal(result.rowCount, 1);
     assert.equal(result.totalMatched, 2);
     assert.equal(result.truncated, true);
@@ -917,7 +925,8 @@ describe('GetSharedEvidenceViewUseCase', () => {
 
     // Evidence now has its own permission; this case is about the default status filter and the
     // folder counts, so it just needs a caller the use case admits.
-    const result = await new GetSharedEvidenceViewUseCase(repo).execute(ctx(['expense.evidence.read']), {});
+    const result = await new GetSharedEvidenceViewUseCase(repo).execute(ctx(['expense.evidence.read']), { branchId: 'b1' });
+    assert.deepEqual(filters.map((filter) => filter.branchId), ['b1', 'b1']);
 
     assert.deepEqual(filters.map((filter) => filter.status), ['CONFIRMED', 'CONFIRMED']);
     assert.equal(result.folders[0]?.evidenceCount, 1);

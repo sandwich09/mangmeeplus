@@ -287,13 +287,13 @@ const requestInput: any = {
 
 function attachment(overrides: Partial<any> = {}) {
   return {
-    id: 'att-1', companyId: 'co-1', originalFileName: 'receipt.pdf', status: 'ACTIVE',
+    id: 'att-1', companyId: 'co-1', branchId: 'branch-1', originalFileName: 'receipt.pdf', status: 'ACTIVE',
     uploadedByUserId: 'staff-1', ...overrides,
   } as any;
 }
 
 function expense(overrides: Partial<any> = {}) {
-  return { id: 'exp-1', companyId: 'co-1', createdByUserId: 'staff-1', ...overrides } as any;
+  return { id: 'exp-1', companyId: 'co-1', branchId: 'branch-1', createdByUserId: 'staff-1', ...overrides } as any;
 }
 
 function evidenceService(attachmentResult: any = null, expenseResult: any = null) {
@@ -314,7 +314,7 @@ function lineRecord(overrides: Partial<any> = {}): any {
 
 function draftRequest(overrides: Partial<any> = {}) {
   return {
-    id: 'rb-1', companyId: 'co-1', requesterUserId: 'staff-1', requesterDisplayNameSnapshot: 'Somchai',
+    id: 'rb-1', companyId: 'co-1', branchId: 'branch-1', requesterUserId: 'staff-1', requesterDisplayNameSnapshot: 'Somchai',
     reason: requestInput.reason, categoryKey: 'travel', amount: '500.0000',
     currency: requestInput.currency, incurredDate: new Date('2026-01-01T00:00:00.000Z'), status: 'DRAFT',
     financeReviewStatus: 'NOT_REQUIRED', paymentStatus: 'UNPAID', duplicateStatus: 'NOT_CHECKED',
@@ -329,6 +329,7 @@ function requestRepo(initial?: any, claimedElsewhere: any[] = []) {
   let request = initial;
   const events: any[] = [];
   const repo = {
+    resolveCreateBranchId: async () => 'branch-1',
     findPolicy: async () => null,
     getUserDisplayName: async () => 'Somchai',
     // Lane D: the detail path resolves approver/reviewer/payer names in one batch.

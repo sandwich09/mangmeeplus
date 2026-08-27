@@ -33,8 +33,9 @@ export function updateReimbursementDraft(companyId: string, id: string, body: Re
 }
 
 /** The 3-step upload-intent flow, returning the attachment id to put on a line. */
-export async function uploadReceiptFile(companyId: string, file: File): Promise<string> {
+export async function uploadReceiptFile(companyId: string, file: File, branchId: string | null | undefined): Promise<string> {
   return withGenericUploadError(async () => {
+    if (!branchId?.trim()) throw Object.assign(new Error('TRANSACTION_BRANCH_REQUIRED'), { code: 'TRANSACTION_BRANCH_REQUIRED' });
     const preparedFile = (await prepareReceiptFile(file)).file;
     assertAllowedUploadFile(preparedFile);
     const intent = await apiFetch<{ attachmentId: string; uploadUrl: string; uploadMethod: string; uploadHeaders: Record<string, string> }>(
@@ -46,6 +47,7 @@ export async function uploadReceiptFile(companyId: string, file: File): Promise<
           mimeType: preparedFile.type,
           byteSize: preparedFile.size,
           visibility: 'INTERNAL',
+          branchId,
         }),
       },
     );
@@ -74,9 +76,9 @@ export function toLineInputs(lines: any[]): Record<string, unknown>[] {
 }
 
 /** Upload (or clear) the receipt of ONE line, keeping the other lines as they are. */
-export async function setLineReceipt(companyId: string, requestId: string, lines: any[], lineNo: number, file: File | null) {
+export async function setLineReceipt(companyId: string, requestId: string, lines: any[], lineNo: number, file: File | null, branchId: string | null | undefined) {
   return withGenericUploadError(async () => {
-    const attachmentId = file ? await uploadReceiptFile(companyId, file) : null;
+    const attachmentId = file ? await uploadReceiptFile(companyId, file, branchId) : null;
     const next = toLineInputs(lines).map((line) => (line.lineNo === lineNo ? { ...line, attachmentId } : line));
     return updateReimbursementDraft(companyId, requestId, { lines: next });
   });
@@ -154,9 +156,9 @@ export function signReimbursementClaimForm(companyId: string, requestId: string,
 }
 
 /** Uploads a scan/photo of the wet-ink signed form and links it to the claim. */
-export async function uploadSignedClaimFormCopy(companyId: string, requestId: string, file: File) {
+export async function uploadSignedClaimFormCopy(companyId: string, requestId: string, file: File, branchId: string | null | undefined) {
   return withGenericUploadError(async () => {
-    const attachmentId = await uploadReceiptFile(companyId, file);
+    const attachmentId = await uploadReceiptFile(companyId, file, branchId);
     return apiFetch<any>(`${base(companyId)}/${requestId}/claim-form/signed-copies`, { method: 'POST', body: JSON.stringify({ attachmentId }) });
   });
 }

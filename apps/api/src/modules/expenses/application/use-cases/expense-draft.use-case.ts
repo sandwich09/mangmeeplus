@@ -1,10 +1,10 @@
 import { Injectable, ForbiddenException, Logger, NotFoundException, BadRequestException, UnprocessableEntityException } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
 import { PAYMENT_IDEMPOTENCY_KEY_PATTERN } from '../../../accounting-documents/domain/logic/accounting-money-validation.logic';
-import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
+import { PrismaExpenseRepository, requireExpenseBranchId } from '../../infrastructure/prisma-expense.repository';
 import { AuditService } from '../../../audit/application/audit.service';
 import { OutboxAppendService } from '../../../data-model-core/application/services/outbox-append.service';
-import { isBranchInScope, resolveCreateBranchId } from '../../../data-model-core/domain/logic/branch.logic';
+import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
 import {
   reconcileExpenseVat,
   validateExpenseVatSourceInput,
@@ -76,7 +76,7 @@ export class CreateExpenseDraftUseCase {
     // the controller so every caller of the use case is covered, LINE note capture included.
     await assertExpenseRootOpen(this.launchGate, this.audit, ctx, 'expense.create');
     assertBranchInScope(ctx, input.branchId);
-    const branchId = resolveCreateBranchId(ctx.scopes ?? {}, input.branchId);
+    const branchId = await this.repo.resolveCreateBranchId(ctx.companyId, ctx.scopes ?? {}, input.branchId);
 
     // Compute totals from lines
     const lines = input.lines ?? [];
@@ -624,6 +624,7 @@ export class ConfirmExpenseUseCase {
     } else {
       assertBranchInScope(ctx, r.branchId);
     }
+    requireExpenseBranchId(r.branchId);
     if (hasBlockingNonExpenseClassification(r.aiVerificationSummaryJson)) {
       throw new BadRequestException(NON_EXPENSE_CLASSIFICATION_REVIEW_REQUIRED);
     }
@@ -1132,6 +1133,7 @@ export class RecordExpensePaymentUseCase {
         message: 'Claim-projected expenses are settled by their reimbursement payout, not a manual expense payment.',
       });
     }
+    requireExpenseBranchId(r.branchId);
     if (input.idempotencyKey !== undefined && (typeof input.idempotencyKey !== 'string' || !PAYMENT_IDEMPOTENCY_KEY_PATTERN.test(input.idempotencyKey))) {
       throw new BadRequestException({ code: 'expense_payment_invalid_key', message: 'Payment key must contain 8–64 letters, numbers, underscores or hyphens.' });
     }

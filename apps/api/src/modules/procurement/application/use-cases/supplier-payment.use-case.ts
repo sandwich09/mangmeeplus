@@ -2,6 +2,7 @@ import { Injectable, ForbiddenException, NotFoundException, BadRequestException 
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import { PrismaProcurementRepository } from '../../infrastructure/prisma-procurement.repository';
 import { AuditService } from '../../../audit/application/audit.service';
+import { requireTransactionBranchId } from '../../../data-model-core/application/services/transaction-branch';
 import { OutboxAppendService } from '../../../data-model-core/application/services/outbox-append.service';
 import { ReserveDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/reserve-document-number.use-case';
 import { CommitDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/commit-document-number.use-case';
@@ -55,6 +56,12 @@ export class CreateSupplierPaymentUseCase {
     const supplier = await this.repo.findSupplierById(ctx.companyId, dto.supplierId);
     if (!supplier) throw new BadRequestException('Supplier does not exist in this company');
     if (supplier.status !== 'ACTIVE') throw new BadRequestException('Supplier is not active for payment');
+    const firstBillId = dto.allocations[0]?.vendorBillId;
+    const firstBill = firstBillId ? await this.repo.findVendorBillById(ctx.companyId, firstBillId) : null;
+    if (firstBillId && !firstBill) throw new BadRequestException('Vendor bill not found');
+    const sourceBranchId = firstBill ? requireTransactionBranchId(firstBill.branchId) : undefined;
+    if (sourceBranchId && dto.branchId && sourceBranchId !== dto.branchId) throw new BadRequestException('Vendor bill branch does not match the payment branch');
+    dto = { ...dto, branchId: await this.repo.resolveCreateBranchId(ctx.companyId, ctx.scopes ?? {}, dto.branchId ?? sourceBranchId) };
     if (dto.branchId) {
       if (ctx.scopes?.branchIds && !ctx.scopes.branchIds.includes(dto.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
       if (!await this.repo.branchExists(ctx.companyId, dto.branchId)) throw new BadRequestException('Branch does not exist in this company');
