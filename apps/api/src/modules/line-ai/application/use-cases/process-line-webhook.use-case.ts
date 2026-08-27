@@ -3920,14 +3920,20 @@ export class ProcessLineWebhookUseCase {
     if (decision.outcome !== 'expense') return;
 
     // Owner 2026-08-27: never lose a successfully-read receipt to branch ambiguity. LINE has no
-    // branch picker, so default the single in-scope branch or the sole head office; the init use
-    // case re-validates scope and ACTIVE status, and the review lane keeps the branch editable.
-    const branchCandidates = await this.prisma.client.branch.findMany({
-      where: { companyId: ctx.companyId, status: 'ACTIVE', ...(ctx.scopes?.branchIds ? { id: { in: ctx.scopes.branchIds } } : {}) },
-      select: { id: true, type: true },
-      take: 20,
-    });
-    const defaultBranchId = pickLineDefaultBranchId(branchCandidates);
+    // branch picker, so default the USER'S OWN branch (membership defaultBranchId — "สาขาที่ user
+    // นั้นอยู่"), else the single in-scope branch, else the sole head office; the init use case
+    // re-validates scope and ACTIVE status, and the review lane keeps the branch editable.
+    const [branchCandidates, membership] = await Promise.all([
+      this.prisma.client.branch.findMany({
+        where: { companyId: ctx.companyId, status: 'ACTIVE', ...(ctx.scopes?.branchIds ? { id: { in: ctx.scopes.branchIds } } : {}) },
+        select: { id: true, type: true },
+        take: 20,
+      }),
+      ctx.membershipId
+        ? this.prisma.client.companyMembership.findUnique({ where: { id: ctx.membershipId }, select: { defaultBranchId: true } })
+        : Promise.resolve(null),
+    ]);
+    const defaultBranchId = pickLineDefaultBranchId(branchCandidates, membership?.defaultBranchId);
     const intent = await this.initReceiptUpload.execute(ctx, {
       ...(defaultBranchId ? { branchId: defaultBranchId } : {}),
       originalFileName: media.fileName,
