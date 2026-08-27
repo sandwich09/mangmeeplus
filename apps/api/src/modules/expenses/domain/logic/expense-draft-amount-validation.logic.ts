@@ -1,5 +1,5 @@
 import Decimal from 'decimal.js';
-import type { ExpenseVatMode } from '@watchdog-bms/contracts';
+import type { ExpenseLineVatTreatment, ExpenseVatMode } from '@watchdog-bms/contracts';
 import { calcDocumentTotals, calcLineTotals, type LineTotalsResult } from './expense-totals.logic';
 
 /** PostgreSQL Decimal(18,4): fourteen integer digits and up to four fractional digits. */
@@ -14,6 +14,7 @@ export type ExpenseDraftAmountLine = {
   unitPrice: string;
   discountAmount?: string;
   vatRate?: string | null;
+  vatTreatment?: ExpenseLineVatTreatment | null;
   whtRate?: string | null;
 };
 
@@ -32,8 +33,23 @@ function parsedDecimal(value: unknown): Decimal | null {
   }
 }
 
-function lineLabel(line: ExpenseDraftAmountLine, index: number): number {
+function lineLabel(line: Pick<ExpenseDraftAmountLine, 'lineNumber'>, index: number): number {
   return Number.isSafeInteger(line.lineNumber) && line.lineNumber > 0 ? line.lineNumber : index + 1;
+}
+
+/** An explicit zero treatment is independent of Tax Code; absence never implies exemption. */
+export function validateExpenseLineVatTreatments(
+  lines: readonly { lineNumber: number; vatRate?: string | null; vatTreatment?: unknown }[],
+): string | null {
+  for (const [index, line] of lines.entries()) {
+    if (line.vatTreatment === undefined || line.vatTreatment === null) continue;
+    const label = lineLabel(line, index);
+    if (typeof line.vatTreatment !== 'string' || !['ZERO_RATED', 'EXEMPT', 'NON_VAT'].includes(line.vatTreatment)) {
+      return `Line ${label} VAT treatment must be ZERO_RATED, EXEMPT, or NON_VAT.`;
+    }
+    if (!parsedDecimal(line.vatRate)?.isZero()) return `Line ${label} VAT treatment requires an explicit zero VAT rate.`;
+  }
+  return null;
 }
 
 function validateRate(value: string | null | undefined, label: string): string | null {
@@ -115,6 +131,9 @@ export function validateExpenseDraftAmounts(input: ExpenseDraftAmountInput): str
     if (calculatedError) return calculatedError;
     calculatedLines.push(calculated);
   }
+
+  const treatmentError = validateExpenseLineVatTreatments(lines as ExpenseDraftAmountLine[]);
+  if (treatmentError) return treatmentError;
 
   const totals = calcDocumentTotals({ lines: calculatedLines });
   if (Object.values(totals).some((value) => !calculatedAmountFits(value))) {

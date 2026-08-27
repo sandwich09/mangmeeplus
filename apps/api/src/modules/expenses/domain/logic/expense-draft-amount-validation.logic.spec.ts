@@ -41,6 +41,27 @@ describe('create expense Decimal(18,4) boundary validation', () => {
     }) ?? '', /VAT rate/);
   });
 
+  it('accepts explicit zero treatments only with a known zero VAT rate', () => {
+    for (const vatTreatment of ['ZERO_RATED', 'EXEMPT', 'NON_VAT'] as const) {
+      assert.equal(validateExpenseDraftAmounts({
+        vatMode: 'VAT_EXCLUDED', lines: [line({ vatRate: '0.0000', vatTreatment })],
+      }), null);
+      for (const vatRate of ['0.07', '', '  ', null, undefined]) {
+        assert.match(validateExpenseDraftAmounts({
+          vatMode: 'VAT_INCLUDED', lines: [line({ vatRate, vatTreatment })],
+        }) ?? '', /requires an explicit zero VAT rate/);
+      }
+    }
+    for (const vatTreatment of ['', 'STANDARD', 'exempt', 0, {}, []]) {
+      assert.match(validateExpenseDraftAmounts({
+        vatMode: 'VAT_EXCLUDED', lines: [line({ vatRate: '0', vatTreatment: vatTreatment as any })],
+      }) ?? '', /VAT treatment must be/);
+    }
+    assert.equal(validateExpenseDraftAmounts({
+      vatMode: 'VAT_EXCLUDED', lines: [line({ vatRate: '0', vatTreatment: null })],
+    }), null, 'historical zero rates need not invent a tax treatment');
+  });
+
   it('rejects a line whose satang-rounded result exceeds Decimal(18,4)', () => {
     assert.match(validateExpenseDraftAmounts({
       vatMode: 'NO_VAT',

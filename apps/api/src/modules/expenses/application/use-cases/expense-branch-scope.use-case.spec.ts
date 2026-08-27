@@ -399,6 +399,30 @@ describe('expense Tax Code confirmation guard', () => {
     });
   });
 
+  it('carries zero-treatment meaning into the final Tax Code resolution clone', async () => {
+    for (const vatTreatment of ['ZERO_RATED', 'EXEMPT', 'NON_VAT'] as const) {
+      const record = {
+        ...readyRecord, grandTotalAmount: '100.00', inputVatClaimStatus: 'NON_CLAIMABLE',
+        lines: [{
+          ...readyRecord.lines[0], vatRate: '0', vatAmount: '0', vatTreatment, lineTotalAmount: '100',
+          taxSnapshot: { ...readyRecord.lines[0].taxSnapshot, taxRate: '0', taxAmount: '0', taxTreatment: vatTreatment === 'NON_VAT' ? 'NON_TAXABLE' : vatTreatment },
+        }],
+      };
+      let finalizedTreatment: string | undefined;
+      const repo = {
+        findByIdWithRelations: async () => record,
+        finalizeAndConfirmExpenseCas: async (input: any, finalize: any) => {
+          const finalized = await finalize({ db: {}, expense: record });
+          finalizedTreatment = finalized[0]?.vatTreatment;
+          return { expense: { ...input, status: 'CONFIRMED' }, finalized };
+        },
+      } as any;
+      await new ConfirmExpenseUseCase(repo, audit, transactionTax, ...numberServices)
+        .execute(ctx(undefined, ['expense.confirm']), 'exp-1');
+      assert.equal(finalizedTreatment, vatTreatment);
+    }
+  });
+
   // Spec S1-R5: override telemetry on the web confirm path. `fromSuggested` separates "the reviewer
   // replaced the AI's category" from "AI proposed nothing", which is what makes an override rate
   // readable. Ids, a surface and a boolean only — no category names, no document content.

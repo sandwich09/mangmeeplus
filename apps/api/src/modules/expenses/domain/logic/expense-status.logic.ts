@@ -32,6 +32,7 @@ export function expenseTaxSourceChecksum(expense: ExpenseRecordWithRelations): s
     taxEvidenceStatus: expense.taxEvidenceStatus,
     inputVatClaimStatus: expense.inputVatClaimStatus,
     vatCaptureSnapshot: expense.vatCaptureSnapshotJson ?? null,
+    whtInput: expense.whtInputJson ?? null,
     primaryAttachmentId: expense.primaryAttachmentId ?? null,
     attachments: [...(expense.attachments ?? [])]
       .sort((left, right) => left.id.localeCompare(right.id) || left.purpose.localeCompare(right.purpose))
@@ -55,7 +56,11 @@ export function expenseTaxSourceChecksum(expense: ExpenseRecordWithRelations): s
         id: line.id,
         lineNumber: line.lineNumber,
         taxableAmount: line.taxableAmount,
+        vatRate: line.vatRate ?? null,
+        vatTreatment: line.vatTreatment ?? null,
         vatAmount: line.vatAmount,
+        whtRate: line.whtRate,
+        whtAmount: line.whtAmount,
         lineSubtotalAmount: line.lineSubtotalAmount,
         lineTotalAmount: line.lineTotalAmount,
         taxCodeDefinitionId: line.taxSnapshot?.taxCodeDefinitionId ?? null,

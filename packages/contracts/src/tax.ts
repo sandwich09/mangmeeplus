@@ -274,7 +274,8 @@ export type WhtPayeeGroupDto = {
   payeeName: string;
   payeeTaxId: string | null;
   incomeCategoryCode: string;
-  whtRate: string;
+  /** Null when only an amount is known or the source carries mixed rates; never implies 0%. */
+  whtRate: string | null;
   totalGross: string;
   totalWithheld: string;
   totalNetPaid: string;

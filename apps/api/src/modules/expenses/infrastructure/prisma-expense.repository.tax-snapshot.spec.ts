@@ -12,6 +12,77 @@ const taxSnapshot: TransactionTaxSnapshot = {
 };
 
 describe('PrismaExpenseRepository tax snapshot mapping', () => {
+  it('round-trips WHT input with header money on create and version-checked update', async () => {
+    let stored: any;
+    let updateWhere: any;
+    let sameTransaction = false;
+    const client: any = {
+      branch: { findFirst: async () => ({ id: 'branch-1' }) },
+      $transaction: async (work: (tx: any) => Promise<unknown>) => work(client),
+      $executeRaw: async () => undefined,
+      expenseSubstituteReceiptEvidence: { findFirst: async () => null },
+      expenseRecord: {
+        create: async ({ data }: any) => { stored = { id: 'expense-1', ...data }; return stored; },
+        updateMany: async ({ where, data }: any) => { updateWhere = where; stored = { ...stored, ...data }; return { count: 1 }; },
+        findFirstOrThrow: async () => stored,
+      },
+    };
+    const repo = new PrismaExpenseRepository({ client } as any);
+    const source = { inputType: 'AMOUNT', value: '30.01', origin: 'REVIEWER' } as const;
+    const created = await repo.createExpense({ companyId: 'company-1', branchId: 'branch-1',
+      captureSource: 'WEB_MANUAL', expenseDate: new Date('2026-08-27'), vatMode: 'NO_VAT',
+      inputVatClaimStatus: 'NON_CLAIMABLE', createdByUserId: 'user-1',
+      whtInputJson: source, whtAmount: '30.0100', subtotalAmount: '1234.5600', discountAmount: '0',
+      taxableAmount: '1234.5600', vatAmount: '0', grandTotalAmount: '1234.5600',
+      netPayableAmount: '1204.5500', outstandingAmount: '1204.5500',
+    });
+    assert.deepEqual(created.whtInputJson, source);
+    assert.equal(created.whtAmount, '30.0100');
+    const expectedUpdatedAt = new Date('2026-08-27T12:00:00Z');
+    const updated = await repo.updateExpense({ id: 'expense-1', companyId: 'company-1', updatedByUserId: 'user-1',
+      expectedUpdatedAt, whtInputJson: { inputType: 'RATE', value: '3', origin: 'REVIEWER' },
+      whtAmount: '37.0400', netPayableAmount: '1197.5200', outstandingAmount: '1197.5200',
+    }, async (tx) => { sameTransaction = tx === client; });
+    assert.equal(updateWhere.expectedUpdatedAt, undefined);
+    assert.deepEqual(updateWhere.updatedAt, expectedUpdatedAt);
+    assert.equal(sameTransaction, true);
+    assert.deepEqual(updated.whtInputJson, { inputType: 'RATE', value: '3', origin: 'REVIEWER' });
+    assert.equal(updated.whtAmount, '37.0400');
+    assert.equal(updated.netPayableAmount, '1197.5200');
+  });
+
+  it('round-trips explicit zero treatments on create/update and keeps historical zero unknown', async () => {
+    const persisted = new Map<number, any>();
+    const client: any = {
+      journalEntry: { findMany: async () => [] },
+      $transaction: async (work: (tx: any) => Promise<unknown>) => work(client),
+      $executeRaw: async () => undefined,
+      expenseSubstituteReceiptEvidence: { findFirst: async () => null },
+      expenseLine: {
+        deleteMany: async () => ({ count: 0 }),
+        upsert: async ({ create, update }: any) => {
+          const prior = persisted.get(create.lineNumber);
+          const line = prior ? { ...prior, ...update } : { id: `line-${create.lineNumber}`, ...create };
+          persisted.set(create.lineNumber, line);
+          return line;
+        },
+      },
+      expenseRecord: { findFirst: async () => ({ id: 'expense-1', lines: [...persisted.values()], duplicateCandidates: [] }) },
+      attachmentLink: { findMany: async () => [] },
+    };
+    const repo = new PrismaExpenseRepository({ client } as any);
+    const treatments = ['ZERO_RATED', 'EXEMPT', 'NON_VAT', undefined] as const;
+    const lines = treatments.map((vatTreatment, index) => ({
+      expenseId: 'expense-1', companyId: 'company-1', lineNumber: index + 1, description: 'Zero VAT', quantity: '1', unitPrice: '100',
+      discountAmount: '0', taxableAmount: '100', vatRate: '0', vatTreatment, vatAmount: '0', whtRate: null, whtAmount: '0',
+      lineSubtotalAmount: '100', lineTotalAmount: '100', expenseCategoryId: null, accountHintKey: null, taxCategory: null,
+    }));
+    await repo.upsertLines('company-1', 'expense-1', lines);
+    assert.deepEqual((await repo.findByIdWithRelations('company-1', 'expense-1'))?.lines.map((line) => line.vatTreatment), ['ZERO_RATED', 'EXEMPT', 'NON_VAT', null]);
+    await repo.upsertLines('company-1', 'expense-1', lines.map((line) => ({ ...line, description: 'Edited' })));
+    assert.deepEqual((await repo.findByIdWithRelations('company-1', 'expense-1'))?.lines.map((line) => line.vatTreatment), ['ZERO_RATED', 'EXEMPT', 'NON_VAT', null]);
+  });
+
   it('round-trips the resolver rounding policy through ExpenseLine', async () => {
     let persistedLine: any;
     const client: any = {
