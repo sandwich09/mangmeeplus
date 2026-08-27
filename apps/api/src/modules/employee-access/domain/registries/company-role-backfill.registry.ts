@@ -12,6 +12,8 @@
 //
 // These are never revoked. Removing an entry stops future backfills; it does not take the
 // permission away from roles that already have it.
+import { REIMBURSEMENT_SELF_SERVICE_PERMISSIONS } from '../../../auth/permission-registry';
+
 export type CompanyRoleBackfill = {
   key: string;
   anchor: string | null;
@@ -19,6 +21,13 @@ export type CompanyRoleBackfill = {
 };
 
 export const COMPANY_ROLE_BACKFILLS: readonly CompanyRoleBackfill[] = [
+  ...REIMBURSEMENT_SELF_SERVICE_PERMISSIONS.map((key) => ({
+    key,
+    anchor: null,
+    why: 'Every company-member role has own reimbursement self-service (2026-08-27), including '
+      + 'old custom/read-only roles. Branch selection and receipt upload/read are prerequisites; '
+      + 'feature entitlement, requester/branch scope and approval/payment checks remain separate.',
+  })),
   {
     key: 'account.password.change',
     anchor: null,

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { COMPANY_PERMISSION_KEYS, PERMISSIONS, PERMISSION_KEYS, ROLE_GRANTS, SYSTEM_ROLES } from './permission-registry';
+import { COMPANY_PERMISSION_KEYS, PERMISSIONS, PERMISSION_KEYS, REIMBURSEMENT_SELF_SERVICE_PERMISSIONS, ROLE_GRANTS, SYSTEM_ROLES } from './permission-registry';
 import { REQUIRED_ANY_PERMISSIONS_KEY } from '../../common/security/permissions.decorator';
 import { AccessCatalogController } from '../employee-access/presentation/http/access-catalog.controller';
 import { EmployeeController } from '../employee-access/presentation/http/employee.controller';
@@ -105,8 +105,23 @@ describe('permission-registry', () => {
       }
     }
     for (const role of ['SYSTEM_ADMIN', 'COMPANY_VIEW', 'AUDITOR_READONLY']) {
-      for (const permission of baseline.filter((key) => !key.endsWith('.read_own'))) {
+      for (const permission of baseline.filter((key) => !key.endsWith('.read_own')
+        && (role === 'SYSTEM_ADMIN' || !REIMBURSEMENT_SELF_SERVICE_PERMISSIONS.includes(key)))) {
         assert.equal(ROLE_GRANTS[role]?.includes(permission), false, `${role} must not receive ${permission}`);
+      }
+    }
+  });
+
+  it('every company role can request its own reimbursement without granting approval or payment to read-only roles', () => {
+    for (const { key: role } of SYSTEM_ROLES) {
+      for (const permission of REIMBURSEMENT_SELF_SERVICE_PERMISSIONS) {
+        assert.equal(ROLE_GRANTS[role].includes(permission), role !== 'SYSTEM_ADMIN', `${role}: ${permission}`);
+      }
+    }
+    for (const role of ['COMPANY_VIEW', 'AUDITOR_READONLY']) {
+      for (const permission of ['reimbursement.approve', 'reimbursement.reject', 'reimbursement.finance_review',
+        'reimbursement.payment.record', 'reimbursement.payment.void', 'reimbursement.policy.manage']) {
+        assert.equal(ROLE_GRANTS[role].includes(permission), false, `${role}: ${permission}`);
       }
     }
   });

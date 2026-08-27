@@ -9,6 +9,9 @@ import {
   reimbursementPeriodKey,
 } from './reimbursement-request.use-case';
 import { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
+import { ROLE_GRANTS } from '../../../auth/permission-registry';
+import { compileRole } from '../../../employee-access/domain/logic/capability.logic';
+import { filterPermissionsByEntitlement } from '../../../employee-access/domain/logic/feature-gate.logic';
 import {
   approverModeForRole,
   buildReimbursementApproverRoleOptions,
@@ -121,9 +124,8 @@ function fakeRepo(options: RepoOptions = {}) {
       }));
       return request;
     },
-    findRequestById: async (_companyId: string, _id: string, withRelations?: boolean) => (withRelations
-      ? { ...request, approvalSteps: [], payments: [], duplicateCandidates: [] }
-      : request),
+    findRequestById: async (companyId: string, id: string, withRelations?: boolean) => request?.companyId !== companyId || request?.id !== id
+      ? null : withRelations ? { ...request, approvalSteps: [], payments: [], duplicateCandidates: [] } : request,
     updateRequest: async (_companyId: string, _id: string, data: any) => { Object.assign(request, data); return request; },
     reopenRejectedRequest: async (_companyId: string, _id: string, expectedUpdatedAt: Date, actorUserId: string) => {
       assert.equal(expectedUpdatedAt, request.updatedAt);
@@ -240,6 +242,43 @@ function useCases(state: { repo: any; calls?: { audits: any[] } }) {
     ),
   };
 }
+
+describe('every company role own reimbursement journey', () => {
+  const roles = { ...ROLE_GRANTS, CUSTOM_READONLY: compileRole({ entitledFeatureKeys: null }).permissionKeys };
+  for (const [role, permissions] of Object.entries(roles).filter(([key]) => key !== 'SYSTEM_ADMIN')) {
+    it(`${role} creates, attaches evidence, updates and submits its own draft`, async () => {
+      const state = fakeRepo();
+      const cases = useCases(state);
+      const caller = ctx({ roles: [role], permissions });
+      assert.ok(permissions.includes('attachment.create'));
+      assert.ok(permissions.includes('company.branch.read'));
+      const created = await cases.create.execute(caller, { reason: 'เดินทาง', branchId: 'branch-1', lines: [inputLine()] } as any);
+      assert.equal(created.requesterUserId, caller.userId);
+      await cases.update.execute(caller, created.id, { lines: [inputLine({ attachmentId: 'att-1' })] });
+      const submitted = await cases.submit.execute(caller, created.id);
+      assert.equal(submitted.status, 'PENDING_APPROVAL');
+      assert.equal(state.request.submittedByUserId, caller.userId);
+      assert.equal(state.calls.approvalSteps[0].assignedApproverUserIds.includes(caller.userId), false);
+    });
+  }
+
+  it('keeps custom self service own-only, branch scoped and feature gated at create and submit', async () => {
+    const state = fakeRepo();
+    const cases = useCases(state);
+    const own = ctx({ roles: ['CUSTOM_READONLY'], permissions: roles.CUSTOM_READONLY, scopes: { branchIds: ['branch-1'] } });
+    const created = await cases.create.execute(own, { branchId: 'branch-1', reason: 'เดินทาง', lines: [inputLine({ attachmentId: 'att-1' })] } as any);
+    const other = { ...own, userId: 'other-user' };
+    await assert.rejects(() => cases.update.execute(other, created.id, { reason: 'not mine' }), /Cannot update/);
+    await assert.rejects(() => cases.submit.execute(other, created.id), /Only the requester/);
+    await assert.rejects(() => cases.submit.execute({ ...own, companyId: 'co-2' }, created.id), /not found/);
+    await assert.rejects(() => cases.submit.execute({ ...own, scopes: { branchIds: ['branch-2'] } }, created.id), /branch/i);
+    const off = { ...own, permissions: filterPermissionsByEntitlement(own.permissions, new Set()) };
+    await assert.rejects(() => cases.create.execute(off, { reason: 'เดินทาง', lines: [inputLine()] } as any), /Missing permission/);
+    await assert.rejects(() => cases.submit.execute(off, created.id), /Missing permission/);
+    assert.equal(state.request.status, 'DRAFT');
+    assert.equal(state.calls.approvalSteps.length, 0);
+  });
+});
 
 describe('CreateReimbursementDraftUseCase (multi-line)', () => {
   it('rolls the header up from the lines instead of trusting the client', async () => {

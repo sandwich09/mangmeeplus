@@ -57,11 +57,16 @@ The first pass must be useful without an advanced policy engine. It should suppo
 
 - Owner: sees reimbursement exposure, pending approvals, overdue approvals, paid/unpaid status, high-risk corrections, and policy settings.
 - Admin: reads reimbursement configuration and manages policy only when granted.
-- Staff/requester: creates own requests, edits own drafts, submits, cancels allowed own requests, and reads own status.
+- Requester (every company-member role, owner decision 2026-08-27): creates own requests,
+  uploads receipt evidence, edits own drafts, submits, cancels allowed own requests, and reads
+  own status while reimbursement is enabled. This includes ADMIN, company view/read-only,
+  and custom roles. Platform-only SYSTEM_ADMIN is not a company requester.
 - Manager: reviews assigned/team requests, approves or rejects in web, and sees pending approval queue.
 - Finance: reviews approved requests, resolves duplicate/tax/accounting blockers, records repayment, exports evidence, and manages corrections.
 - Accountant: reads accounting/tax/posting status, export evidence, and review blockers; may mark accounting review fields when granted by policy.
-- Auditor readonly: reads requests, approvals, payments, attachments metadata, exports, and audit history without mutation.
+- Auditor readonly: reads requests, approvals, payments, attachments metadata, exports, and
+  audit history without business mutation, except the same own-request self-service as every
+  company member. It gains no approval or payment authority from that exception.
 - AI assistant user: asks reimbursement status and queue summaries through permission-checked read tools only.
 
 ## 5. Boundary and Ownership
@@ -132,6 +137,13 @@ Before implementation, inspect latest code again. Items 01 through 13 may add Pr
 ## 8. Core Workflows
 
 ### 8.1 Staff Creates and Submits Request
+
+The create action must be visible and usable on mobile and desktop for every entitled
+company-member role, with supporting branch selection and receipt upload permissions. Old
+custom roles are backfilled through the standard permission sync; new/edited roles include
+the mandatory self-service pack. Feature OFF still removes new-claim actions; the hub and
+empty state must describe unavailable creation without directing the user to a missing button.
+No company entitlement or deployment/customer gate is changed by this role-policy fix.
 
 1. Staff opens web reimbursement workspace.
 2. Staff creates draft with amount, currency, incurred date, category, reason, optional vendor/payee display, branch/project/cost center where available, and receipt evidence.

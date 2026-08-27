@@ -4,7 +4,7 @@
 // so the runtime authorization path is unchanged. featureEntitlementKey values map to the real
 // APPROVED_FEATURE_KEYS used by item 10A (system-partner-management/domain/feature-registry.ts).
 import type { CapabilityPack, RiskLevel } from '@watchdog-bms/contracts';
-import { PERMISSIONS } from '../../../auth/permission-registry';
+import { PERMISSIONS, REIMBURSEMENT_SELF_SERVICE_PERMISSIONS } from '../../../auth/permission-registry';
 
 type RawPack = Omit<CapabilityPack, 'riskLevel' | 'isCore'> & { isCore?: boolean };
 
@@ -281,10 +281,10 @@ const RAW_PACKS: RawPack[] = [
 
   // ---- Reimbursement (no dedicated feature entitlement key in 10A) ----
   {
-    key: 'pack.reimbursement.self', module: 'reimbursement',
-    nameTh: 'ขอเบิกของฉัน', nameEn: 'Request own reimbursement',
-    description: 'สร้าง แก้ ส่ง และยกเลิกคำขอเบิกของตัวเอง',
-    permissionKeys: ['reimbursement.read_own', 'reimbursement.create', 'reimbursement.update_own_draft', 'reimbursement.submit', 'reimbursement.cancel_own'],
+    key: 'pack.reimbursement.self', module: 'reimbursement', isCore: true,
+    nameTh: 'ขอเบิกของฉัน (ทุกคน)', nameEn: 'Request own reimbursement (everyone)',
+    description: 'ทุกบทบาทได้รับอัตโนมัติ: สร้าง แนบใบเสร็จ แก้ ส่ง และยกเลิกคำขอของตัวเอง เมื่อบริษัทเปิดการเบิกจ่าย',
+    permissionKeys: REIMBURSEMENT_SELF_SERVICE_PERMISSIONS,
   },
   {
     key: 'pack.reimbursement.approve', module: 'reimbursement',

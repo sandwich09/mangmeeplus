@@ -30,7 +30,7 @@ import {
 import {
   REQUEST_STATUS_LABELS, REQUEST_STATUS_TONES, PAYMENT_STATUS_LABELS, PAYMENT_STATUS_TONES,
   FINANCE_REVIEW_LABELS, PAYMENT_METHOD_LABELS, RECEIPT_REQUIREMENT_LABELS, DUPLICATE_STATUS_LABELS,
-  APPROVAL_STEP_STATUS_LABELS,
+  APPROVAL_STEP_STATUS_LABELS, REIMBURSEMENT_CREATE_UNAVAILABLE,
   CLAIM_SIGNATURE_ROLES, CLAIM_SIGNATURE_ROLE_LABELS, canUploadSignedCopy, eligibleSignatureRoles,
   canVoidRecordedPayment, reimbursementOwnActions, reimbursementSubmitReadiness, type ClaimSignatureRole,
 } from './reimbursements.model';
@@ -600,7 +600,7 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
         </div>
       )}
     >
-      {!permissions.includes('reimbursement.create') && <div role="status" className="mb-4 rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm text-gray-600">หน้านี้ยังเก็บประวัติการเบิกจ่ายไว้ บัญชีนี้ไม่สามารถสร้างคำขอใหม่ได้ขณะนี้ · ดูรายละเอียดเดิมได้ตามสิทธิ์</div>}
+      {!permissions.includes('reimbursement.create') && <div role="status" className="mb-4 rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm text-gray-600">{REIMBURSEMENT_CREATE_UNAVAILABLE}</div>}
       {tab === 'mine' && <MyRequests
         {...queueProps}
         userId={userId}
@@ -869,7 +869,7 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
           can only 403 on submit is worse than no link. */}
       {canCreate && (
         <div className="flex justify-end">
-          <Link href={`/companies/${companyId}/reimbursements/new`} className={btnClass}>+ สร้างคำขอเบิก</Link>
+          <Link href={`/companies/${companyId}/reimbursements/new`} className={cx(btnClass, 'min-h-11 w-full sm:w-auto')}>+ สร้างคำขอเบิก</Link>
         </div>
       )}
       {error && <ErrorBanner message={error} />}
@@ -912,7 +912,9 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
               <div className="mt-3">
                 <EmptyState
                   title={data.length === 0 ? 'ยังไม่มีคำขอเบิก' : 'ไม่พบรายการที่ตรงกับตัวกรอง'}
-                  description={data.length === 0 ? 'กด "สร้างคำขอเบิก" เพื่อเริ่มคำขอแรกของคุณ' : 'ลองล้างคำค้นหรือเลือกสถานะอื่น'}
+                  description={data.length === 0
+                    ? canCreate ? 'กด "สร้างคำขอเบิก" เพื่อเริ่มคำขอแรกของคุณ' : REIMBURSEMENT_CREATE_UNAVAILABLE
+                    : 'ลองล้างคำค้นหรือเลือกสถานะอื่น'}
                 />
               </div>
             ) : (

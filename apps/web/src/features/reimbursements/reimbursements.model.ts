@@ -1,5 +1,7 @@
 import type { MangmeeTone } from '@/common/components/mangmee';
 
+export const REIMBURSEMENT_CREATE_UNAVAILABLE = 'ขณะนี้ไม่สามารถสร้างคำขอใหม่ได้ กรุณาติดต่อผู้ดูแลบริษัทเพื่อตรวจสอบการเปิดใช้งานการเบิกจ่ายและสิทธิ์บัญชี · ยังดูประวัติเดิมได้ตามสิทธิ์';
+
 export const REQUEST_STATUS_LABELS: Record<string, string> = {
   DRAFT: 'ร่าง',
   PENDING_APPROVAL: 'รออนุมัติ',

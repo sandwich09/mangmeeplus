@@ -95,6 +95,15 @@ function makePrismaResolver(
 }
 
 describe('PrismaPermissionResolverRepository branch scopes', () => {
+  it('does not turn a platform role or an inactive/missing company membership into company access', async () => {
+    const { resolver, prisma } = makePrismaResolver(null as any);
+    await assert.rejects(() => resolver.resolveForUser({ userId: 'platform-user', companyId: 'other-company' }), /No active company membership/);
+    assert.deepEqual(prisma.client.companyMembership.findFirst.mock.calls[0].arguments[0].where,
+      { userId: 'platform-user', companyId: 'other-company', status: 'ACTIVE' });
+    const suspended = makePrismaResolver(makeMembership({ company: { status: 'SUSPENDED' } }));
+    await assert.rejects(() => suspended.resolver.resolveForUser({ userId: 'u-1', companyId: 'co-1' }), /Company is not active/);
+  });
+
   it('leaves branchIds undefined for ALL_BRANCHES', async () => {
     const { resolver } = makePrismaResolver(makeMembership());
     const result = await resolver.resolveForUser({ userId: 'u-1', companyId: 'co-1' });

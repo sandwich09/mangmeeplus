@@ -2,7 +2,7 @@
 // Compiles capability packs / job presets into permission keys, and summarizes a key set back into
 // human-readable capabilities. No DB, no framework — the runtime authorization path is untouched.
 import type { EffectiveCapability, EffectivePermission, RiskLevel } from '@watchdog-bms/contracts';
-import { COMPANY_PERMISSION_KEYS, PERMISSIONS } from '../../../auth/permission-registry';
+import { COMPANY_PERMISSION_KEYS, PERMISSIONS, REIMBURSEMENT_SELF_SERVICE_PERMISSIONS } from '../../../auth/permission-registry';
 import { CAPABILITY_PACKS, CAPABILITY_PACK_BY_KEY, CORE_PACK_KEYS } from '../registries/capability-pack.registry';
 import { ROLE_TEMPLATE_BY_KEY } from '../registries/role-template.registry';
 
@@ -68,7 +68,9 @@ export function compileRole(input: CompileInput): {
       dropped.push({ key: k, reason: 'unknown' });
       continue;
     }
-    if (granter && !granter.has(k)) {
+    // Mandatory own-request service is not delegated business authority. In particular, do not
+    // lose it when a feature-OFF editor saves a role, then the company later re-enables claims.
+    if (granter && !granter.has(k) && !REIMBURSEMENT_SELF_SERVICE_PERMISSIONS.includes(k)) {
       dropped.push({ key: k, reason: 'above_granter_scope' });
       continue;
     }

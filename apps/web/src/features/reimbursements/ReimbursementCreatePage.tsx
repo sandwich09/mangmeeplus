@@ -14,6 +14,7 @@ import { ICON, ErrorBanner, inputClass, btnClass, ghostClass } from '../expenses
 import { RECEIPT_UPLOAD_ACCEPT } from '../expenses/expense-upload.logic';
 import { collectReceiptUploadResults, mergeDraftLineEvidence, validateRequestForm, sumLineAmounts, formatMoney, errorText } from './reimbursements.logic';
 import { TransactionBranchField, useTransactionCreateBranchId } from '../web-core-workspace/TransactionBranchField';
+import { REIMBURSEMENT_CREATE_UNAVAILABLE } from './reimbursements.model';
 
 const CATEGORY_OPTIONS: { value: string; label: string }[] = [
   { value: 'travel', label: 'เดินทาง' },
@@ -192,7 +193,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
         <MangmeeCard className="p-6">
           <EmptyState
             title={editing ? 'ไม่มีสิทธิ์แก้ไขคำขอเบิก' : 'ไม่มีสิทธิ์สร้างคำขอเบิก'}
-            description={editing ? 'เฉพาะผู้ขอที่มีสิทธิ์แก้ไขร่างเท่านั้น' : 'บัญชีนี้ยังไม่มีสิทธิ์สร้างคำขอเบิกค่าใช้จ่าย ติดต่อผู้ดูแลระบบเพื่อขอสิทธิ์'}
+            description={editing ? 'เฉพาะผู้ขอที่มีสิทธิ์แก้ไขร่างเท่านั้น' : REIMBURSEMENT_CREATE_UNAVAILABLE}
           />
         </MangmeeCard>
       </MangmeePage>

@@ -311,8 +311,18 @@ Rules:
   own expense capture/evidence/draft maintenance, own reimbursement request lifecycle, and own
   personal signature. This does not grant review, approval, payment, role administration, or access
   to another employee's rows.
-- `AUDITOR_READONLY`, platform/view roles, and company custom roles are not inferred to be internal
-  employees. Custom roles opt in through the existing self-service capability packs.
+- Own reimbursement is universal company-member self-service (owner decision 2026-08-27):
+  every company role, including `COMPANY_VIEW`, `AUDITOR_READONLY`, and custom roles, receives
+  `reimbursement.read_own/create/update_own_draft/submit/cancel_own`, plus the existing
+  `company.branch.read` and `attachment.read/create` prerequisites. `pack.reimbursement.self`
+  is automatic; existing custom roles receive the same additive permission-sync backfill.
+  This mandatory baseline cannot be removed by a role editor or lost because the editor's
+  company currently has reimbursement disabled. Effective runtime entitlement still blocks
+  new claims/draft edits/submission when the feature is OFF and retains historical reads.
+- This exception does not make read-only/custom roles internal expense operators and does not
+  grant broad reimbursement read, approval, finance review, payment, export, or policy access.
+  Existing active-company membership, branch scope, requester ownership, and evidence checks
+  still apply. `SYSTEM_ADMIN` alone receives no company reimbursement grants or membership.
 
 ### 8.1 Owner-delegated granting (team decision 2026-07-28)
 
