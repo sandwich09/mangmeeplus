@@ -1,5 +1,10 @@
+import 'reflect-metadata';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { RequestMethod } from '@nestjs/common';
+import { HTTP_CODE_METADATA, METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
+import { REQUIRED_PERMISSIONS_KEY } from '../../../../common/security/permissions.decorator';
+import { EmployeeController } from '../../presentation/http/employee.controller';
 import { SetEmployeeStatusUseCase } from './set-employee-status.use-case';
 import { IssueEmployeeLineLinkTokenUseCase } from './issue-employee-line-link-token.use-case';
 
@@ -67,6 +72,21 @@ function makePrisma(targetRoleRows: Array<{ role: { key: string; permissions: Ar
 
 const ADMIN_PERMS = ['access.employee.disable', 'access.role.manage'];
 const MANAGER_PERMS = ['access.employee.read', 'access.employee.update', 'access.employee.disable', 'access.role.read'];
+
+it('binds draft deletion to the existing disable permission and forwards only trusted request context', async () => {
+  const handler = EmployeeController.prototype.deleteDraft;
+  assert.equal(Reflect.getMetadata(PATH_METADATA, handler), ':employeeId/draft');
+  assert.equal(Reflect.getMetadata(METHOD_METADATA, handler), RequestMethod.DELETE);
+  assert.equal(Reflect.getMetadata(HTTP_CODE_METADATA, handler), 204);
+  assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, handler), ['access.employee.disable']);
+  const seen: unknown[] = [];
+  const controller = new EmployeeController(...[
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+    { execute: async (command: unknown) => { seen.push(command); } },
+  ] as unknown as ConstructorParameters<typeof EmployeeController>);
+  await controller.deleteDraft({ companyId: 'trusted-company', userId: 'actor', permissions: ['access.employee.disable'], requestId: 'req' } as any, 'employee');
+  assert.deepEqual(seen, [{ companyId: 'trusted-company', employeeId: 'employee', requestingUserId: 'actor', requesterPermissions: ['access.employee.disable'], requestId: 'req' }]);
+});
 
 describe('SetEmployeeStatusUseCase', () => {
   it('disables both the access profile and the underlying membership together', async () => {

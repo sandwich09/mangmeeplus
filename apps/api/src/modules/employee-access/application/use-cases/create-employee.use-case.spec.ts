@@ -656,12 +656,14 @@ describe('company employee draft removal', () => {
       await assert.rejects(() => new DeleteEmployeeDraftUseCase(prisma).execute(command(employeeId)), hasCode('employee_draft_not_deletable'));
       assert.deepEqual(state, before);
     }
-    const { useCase, prisma, state } = makeUseCase();
-    const { employeeId } = await useCase.execute(baseCommand);
-    state.memberships[0].status = 'ACTIVE';
-    const before = structuredClone(state);
-    await assert.rejects(() => new DeleteEmployeeDraftUseCase(prisma).execute(command(employeeId)), hasCode('employee_draft_not_deletable'));
-    assert.deepEqual(state, before);
+    for (const mismatch of [{ status: 'ACTIVE' }, { companyId: 'other-company' }, { userId: 'other-user' }]) {
+      const { useCase, prisma, state } = makeUseCase();
+      const { employeeId } = await useCase.execute(baseCommand);
+      Object.assign(state.memberships[0], mismatch);
+      const before = structuredClone(state);
+      await assert.rejects(() => new DeleteEmployeeDraftUseCase(prisma).execute(command(employeeId)), hasCode('employee_draft_not_deletable'));
+      assert.deepEqual(state, before);
+    }
   });
 
   it('rolls back removal and revocation if the audit cannot be retained', async () => {
