@@ -1,6 +1,6 @@
 # Agent Memory: P9 Customer Journey Observability
 
-Status: P9-0/1a/1b/2 present in origin/develop; P9-1c locally implemented/verified from 086a4549, PR/CI integration pending
+Status: P9-0/1a/1b/1c/2 merged develop; P9-1c PR #281 / CI 33032595709 success / merge d33f8d2eaff629d6a4e1660ce6232f04b39d6246 (2026-08-27). Cloud activation remains separate.
 Owner: Platform Operations with per-stage owner in executable catalog
 Scope: Four product lanes; subscription/payment excluded
 Decisions:
@@ -67,5 +67,5 @@ Verification:
 - No cloud operation was performed. Config verification/local HTTP samples do not prove CloudWatch ingestion,
   percentile availability or alert delivery; those remain the explicit UAT/Production rollout gates.
 Next:
-- Open P9-1c PR to `develop`; merge only after CI passes (final local/agent/Opus reviews complete).
+- P9-1c integration is complete. Do not reopen/reimplement the phase; CI passed before merge and local/agent/Opus reviews are recorded above.
 - UAT must still prove one synthetic alert per severity with acknowledged delivery. P10-P12 must land before the `PLANNED` signup/claim/SES rows can truthfully become live.

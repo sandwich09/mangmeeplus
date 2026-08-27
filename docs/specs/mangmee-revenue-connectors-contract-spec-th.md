@@ -1,6 +1,6 @@
 # Revenue Connectors Contract — Spec P18/P19/P20
 
-สถานะ: **PROVIDER-NEUTRAL CORE READY; ADAPTER BLOCKED** — เขียน shared contract/conformance harness ได้ แต่ห้ามเขียน production adapter หรือขอ credential จน Owner เลือก provider/account/source จริง; แผนส่งมอบอยู่ใน [Four-lane Gap Closure Plan](../plans/mangmee-four-lane-gap-closure-plan-th.md#p18p20--revenue-connectors)
+สถานะ: **DEFERRED BY OWNER 2026-08-27** — รอบนี้เก็บข้อมูล/เอกสารรับ–จ่ายก่อน เลื่อนการเชื่อมธนาคาร/QR/Gateway, Marketplace และ POS/Partner API รวม shared contract/conformance harness; ไม่เป็น release/main gate รอบนี้. Spec ด้านล่างเก็บไว้สำหรับอนาคต ต้องยืนยัน scope/provider ใหม่ก่อน code หรือขอ credential. ไม่ได้หมายถึงลบใบสั่งซื้อ/เอกสารซื้อภายใน. แผนส่งมอบอยู่ใน [Four-lane Gap Closure Plan](../plans/mangmee-four-lane-gap-closure-plan-th.md#p18p20--revenue-connectors)
 
 ขอบเขต:
 
