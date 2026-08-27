@@ -46,6 +46,9 @@ AP-05 mocks only a background supplier GET403 and verifies no focus/scroll theft
 it is UI error-path evidence, not a real authorization regression test.
 
 Full web tests1126/1126, procurement DTO tests32/32, web typecheck and diff check passed.
+After rebasing onto develop78057e38: AP6/6, web1129/1129 (including three merged
+partner-copy tests), typecheck and diff check passed again; screenshots retain their
+pre-rebase capture provenance.
 E2E retains its normal labeled draft fixtures; none are approved or paid by the new cases.
 The original default-first supplier behavior and100-row cap remain unchanged.
 Visible labels and ARIA names are verified; native label-tap behavior for the existing
