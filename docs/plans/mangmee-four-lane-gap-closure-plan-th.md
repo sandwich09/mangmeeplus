@@ -18,6 +18,7 @@
 - P24-2a PR #283 merged ที่ `b98e500f` หลัง CI `33034949214` SUCCESS; scoped E2E16/16 + mobile3/3 + sidebar5/5 + web1125/1125 และ JPEG5 ไฟล์อยู่ใน Git. Partner-copy PR #284 merged ต่อที่ `78057e38` หลัง CI `33035656163` SUCCESS. Full P24 ยัง PARTIAL.
 - Capture follow-ups: sales-payment retry PR #285 merged `145924a3` / CI `33036847494` SUCCESS; vendor-bill capture PR #286 merged `21f109d5` / CI `33037405174` SUCCESS; expense-payment/date PR #287 merged `11153296` / CI `33039136161` SUCCESS. Final combined E2E33/33 (6+6+21), zero skipped/flaky, web1139/1139, ชุดตรวจ 128/128 รวม real PostgreSQL 6 เคส และ [ภาพ6ไฟล์/API proof](../evidence/expense-payment-capture-integrity/README.md) ตรวจย้อนกลับได้. [Capture-first audit](../agent-memory/capture-first-progress-audit.md) แยก merged delivery จาก Owner/acceptance gates ที่ยังเปิด.
 - P11 Phase 0 merged PR290 ที่ `d8d9808e` หลัง exact-head CI `33040896057` SUCCESS; provider ยัง disabled. Corrected AI PR288 head29a0605b merged ที่ `c6f3d06f` หลัง fresh combined review/checks PASS และ exact-head CI33041868515 SUCCESS; old70033af2 green CI ไม่ใช่ final acceptance และ local/CI ไม่ใช่ live AI/main approval. ดู [delivery checkpoint](../agent-memory/capture-first-delivery-checkpoint.md).
+- Docs checkpoint PR291 merged `d8f1a853` / CI33043341836 SUCCESS บน `bd88a14e`; runtime jobs ข้ามตาม docs-only scope. P24-2b PR292 merged `a2d8e793` หลัง CI33043955626 SUCCESS บน exact head `d3a531d6`, scoped local/Chrome และ approved-origin capture33/33 + selector61/61/manual draft-reload ผ่าน; ผลแต่ละรอบเก็บแยก ไม่ใช้33/33 เดิมแทนรอบใหม่.
 
 ## กติกาใช้แผนนี้
 
@@ -242,7 +243,7 @@ Exit: source→TaxEvent→register→box→snapshot checksum trace; filed snapsh
 <a id="p24--growthux-full-pass"></a>
 ## P24 — Growth/UX Full Pass
 
-สถานะ: **PARTIAL — P24-2a MERGED DEVELOP; FULL JOURNEY/PHYSICAL-DEVICE ACCEPTANCE REMAINS**
+สถานะ: **PARTIAL — P24-2a/2b MERGED DEVELOP; FULL JOURNEY/PHYSICAL-DEVICE ACCEPTANCE REMAINS**
 
 Spec: [P24](../specs/mangmee-growth-ux-full-pass-spec-th.md).
 
@@ -250,7 +251,7 @@ Spec: [P24](../specs/mangmee-growth-ux-full-pass-spec-th.md).
 - P24-1: role-based ordering + opt-in user/company preference; permissions/entitlements remain authoritative; delete/export tests.
 - P24-2: device matrix + F-LED-7 audit ทุก customer page, including P27/P28 surfaces; run automated responsive then real iOS/Android/iPad/desktop evidence.
   - P24-2a **merged develop `b98e500f` / PR #283 / CI `33034949214` SUCCESS**: [shared-shell targets](../specs/mangmee-growth-ux-full-pass-spec-th.md#231-p24-2a--shared-shell-targets-scoped-desktop-visible-correction) เฉพาะสามปุ่ม toggle/bell; 44px + forced-colors focus, คง semantics/guards. Repo E2E16/16, drawer/popover3/3, sidebar5/5, web1125/1125 และ real Chrome JPEG5 ไฟล์ผ่าน; final Opus5 max read-only follow-up **APPROVE** หลังแก้ initial REQUEST CHANGES. Intentional `[desktop-visible]` exception จำกัดสามปุ่ม; ไม่ปิด full P24/physical-device matrix. หลักฐาน/ข้อจำกัดอยู่ใน [task memory](../agent-memory/p24-shared-shell-touch-targets.md).
-  - P24-2b selector44px: `codex/p24-scope-selector-targets` จาก `d8d9808e` ยัง uncommitted/in progress; root ดูแล manual UI และ acceptance ไม่มีผลผ่าน/PR/merge ที่อ้างได้ใน checkpoint นี้.
+  - P24-2b [selector44px spec](../specs/p24-scope-selector-targets-spec.md) / [plan](p24-scope-selector-targets-plan.md): **merged `a2d8e793` / PR292 / CI33043955626 SUCCESS บน `d3a531d6`**, 2026-08-27T06:08:41Z. Scoped61/61 E2E, web1140/1140, focused89/89 และ typechecks ผ่าน; root ตรวจ [ภาพเดิม8ไฟล์/Chrome journey + manual draft เพิ่ม1ภาพ](../evidence/p24-scope-selector-targets/README.md). หลัง capture24/33 จาก local-origin mismatch ได้ย้ายเฉพาะ own web ไป allowed3000 โดยไม่แก้ API/CORS guard แล้ว fresh capture33/33 + selector61/61 (2 runs รวม94) และ Chrome draft-save/reload ผ่าน. [หลักฐานแยกรอบ](../agent-memory/capture-first-delivery-checkpoint.md#p24-post-scope-capture-rerun) และ [memory](../agent-memory/p24-scope-selector-targets.md) คงผล red/ข้อจำกัด; full P24/human/device gates ยังเปิด.
 
 P24 ไม่กำหนด/บังคับราคา subscription quota หรือ trial expiry; controlled cohort ใช้ existing allowlist/entitlement. Activation-rate target กำหนดหลัง baseline และไม่ block instrumentation/UX fixes.
 

@@ -1,10 +1,41 @@
 # Agent Memory: P24-2b scope selector targets
 
-Status: ROOT ACCEPTED scoped source and real-Chrome evidence; integrated onto develop `d8f1a8536145beb24118dff901f18a4b92b08583`. Final61/61 local E2E includes long-list scrolling; phase PR/exact-head CI pending. Not full P24/main acceptance.
+Status: MERGED DEVELOP via PR292 at `a2d8e793de11eb60077e63bb1a7ccf0303b390c6`, 2026-08-27T06:08:41Z, after CI33043955626 SUCCESS on exact head `d3a531d69d2ef1ee2259b51228aa6e676b22eb91`. Root accepted scoped source/Chrome, approved-origin capture33/33 + selector61/61 and manual draft/reload. Historical selector61/61 retains its read/geometry scope; no full P24/main acceptance.
 Owner: `/root/ocr_platform_admin`; root owns manual Chrome, integration and PR.
 Scope: Existing company/branch selector triggers, retries and options in WorkspaceScope;
 44px targets and visible keyboard/forced-colors focus, plus bounded readable retry text
 and label-in-name containment using existing translations.
+
+## Delivery status — supersedes historical pre-PR wording below
+
+- [PR292](https://github.com/MangmeeDev/mangmeeplus/pull/292) merged at
+  `a2d8e793de11eb60077e63bb1a7ccf0303b390c6`, 2026-08-27T06:08:41Z, after
+  [CI33043955626](https://github.com/MangmeeDev/mangmeeplus/actions/runs/33043955626)
+  completed/SUCCESS on exact head `d3a531d69d2ef1ee2259b51228aa6e676b22eb91`.
+  All six validation jobs passed; production image/publish jobs skipped as expected,
+  not deployment proof. Root accepted scoped61 E2E/1140 web/89 focused/typechecks and
+  eight images; previous counts/red runs below retain their original scope.
+- Additional root capture run on web3004 finished24 passed/9 failed. Root proved the
+  isolated API allows origin3000 only; no-Origin and origin3000 health reads return200,
+  origin3004 returns500. This is an environment finding, not a selector source regression.
+  [Exact provenance and preserved failed report](capture-first-delivery-checkpoint.md#p24-post-scope-capture-rerun).
+  Root moved only its own web to vacant3000 with the same source; API/CORS guard, policy,
+  DB/bootstrap and provider state are unchanged. Fresh capture33/33 passed at
+  2026-08-27T06:00:07.943Z in38.558s, zero skipped/unexpected/flaky/report errors;
+  JSON `test-results/p24-capture-approved-origin.json`. Fresh selector61/61 also passed:
+  start2026-08-27T06:00:07.944Z,89.793503s, zero skipped/unexpected/flaky/report errors,
+  `test-results/p24-scope-approved-origin.json`. These are94 cases in two distinct runs,
+  not a single94-case suite. The docs follow-up read both final JSON summaries directly.
+- Root's real Chrome on3000 saved one synthetic manual expense draft
+  `cmtb47c9d02rzq6k1r4bs9vmf`: quantity1,price100; DOM showed DRAFT, manual/NO_VAT,
+  total100/unpaid100 and missing tax evidence. No confirm/payment/posting/OCR; no
+  horizontal overflow or error logs. [Ninth image and precise visual limits](../evidence/p24-scope-selector-targets/README.md#approved-origin-integration-and-manual-draft--2026-08-27)
+  record that total100 is below the screenshot viewport and comes from DOM evidence.
+  A hard navigation back to the exact route showed loading then retained description,
+  quantity1/unit100/total100/unpaid100, draft/tax-evidence status and disabled next action.
+  This is persisted UI reload, not independent API readback. Existing local company
+  NOT_REGISTERED/NO_VAT does not decide the separate P27 VAT-unknown policy.
+  Original eight images and earlier draft `cmtazlakn001sq6k1ladnx7yz` remain untouched.
 
 ## Decisions
 
@@ -277,8 +308,38 @@ No open policy question: root approved the bounded mobile retry label. No new
 retry/permission behavior is proposed. Full P24 and actual physical-device/40+ acceptance remain outside this slice;
 root owns those decisions and manual evidence.
 
+## Reproduce approved-origin runs (existing services only)
+
+Root ran both commands from `mangmeeplus-p24-scope-selector-targets` at `d3a531d6` with
+its own frontend on3000 and unchanged API3003. The existing temporary config imports
+the repo config, sets the exact E2E testDir and `webServer: undefined`; it must not
+bootstrap or replace shared services/DB. Original3004 commands above are historical
+selector evidence, not the correct origin for capture writes. No guard was relaxed.
+
+```sh
+env -i PATH="$PATH" S3_E2E=1 API_PORT=3003 WEB_PORT=3000 \
+  E2E_WEB_BASE_URL=http://127.0.0.1:3000 E2E_API_BASE_URL=http://127.0.0.1:3003/v1 \
+  NEXT_TELEMETRY_DISABLED=1 PLAYWRIGHT_HTML_OPEN=never \
+  PLAYWRIGHT_HTML_OUTPUT_DIR="$PWD/test-results/p24-capture-approved-origin-report" \
+  PLAYWRIGHT_JSON_OUTPUT_NAME="$PWD/test-results/p24-capture-approved-origin.json" \
+  pnpm exec playwright test --config=/tmp/p24-scope-selector-targets.playwright.config.ts \
+  e2e/accounting.spec.ts e2e/accounts-payable.spec.ts e2e/expenses.spec.ts \
+  --project=chromium --workers=1 --reporter=list,html,json \
+  --output=test-results/p24-capture-approved-origin
+
+env -i PATH="$PATH" S3_E2E=1 API_PORT=3003 WEB_PORT=3000 \
+  E2E_WEB_BASE_URL=http://127.0.0.1:3000 E2E_API_BASE_URL=http://127.0.0.1:3003/v1 \
+  NEXT_TELEMETRY_DISABLED=1 PLAYWRIGHT_HTML_OPEN=never \
+  PLAYWRIGHT_HTML_OUTPUT_DIR="$PWD/test-results/p24-scope-approved-origin-report" \
+  PLAYWRIGHT_JSON_OUTPUT_NAME="$PWD/test-results/p24-scope-approved-origin.json" \
+  pnpm exec playwright test --config=/tmp/p24-scope-selector-targets.playwright.config.ts \
+  e2e/responsive.spec.ts e2e/branch-scope.spec.ts --project=chromium --project=mobile-chromium \
+  --grep "P24-2[ab]|BSC-03" --workers=1 --reporter=list,html,json \
+  --output=test-results/p24-scope-approved-origin
+```
+
 ## Next
 
-Root delivers the accepted scoped source and eight images through its own phase PR and
-exact-head CI. Keep web3004/session49397 and API3003 available; do not stage generated
-reports or auth-bearing traces. Broader P24/physical40+ and other active owner gates remain.
+The bounded P24-2b slice is delivered on develop. Keep failed/successful reports separate;
+do not stage auth-bearing traces, repeat the implementation or alter original image bytes.
+Broader P24/physical40+ and other active product/owner/live gates remain separate.

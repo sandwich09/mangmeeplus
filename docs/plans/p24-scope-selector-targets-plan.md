@@ -1,5 +1,10 @@
 # P24-2b — Scope selector target plan
 
+Status: MERGED DEVELOP via PR292 at `a2d8e793de11eb60077e63bb1a7ccf0303b390c6`,
+2026-08-27T06:08:41Z; CI33043955626 SUCCESS on exact head
+`d3a531d69d2ef1ee2259b51228aa6e676b22eb91`. Scoped local/approved-origin/manual
+acceptance passed; full P24/main acceptance remains separate.
+
 Spec: [bounded selector contract](../specs/p24-scope-selector-targets-spec.md).
 
 - [x] Create clean worktree at `d8d9808e`; read AGENTS, Ponytail full, P24/mobile/UI refs,
@@ -25,7 +30,18 @@ Spec: [bounded selector contract](../specs/p24-scope-selector-targets-spec.md).
 - [x] Root manual Chrome review and eight selected images; independent final-JSON/unit
   check, disjoint fast-forward to develop `d8f1a853`, unchanged source hashes and both
   post-integration TypeScript checks passed. See the task memory for API/source limits.
-- [ ] Phase PR and exact-head CI before merge; not full P24 or main acceptance.
+- [x] Open [PR292](https://github.com/MangmeeDev/mangmeeplus/pull/292) at exact head
+  `d3a531d69d2ef1ee2259b51228aa6e676b22eb91`.
+- [x] Additional capture run on origin3004 ended24 passed/9 failed; root proved local-origin mismatch
+  and moved only its own web to allowed3000. Fresh capture33/33 passed with source/API/
+  CORS guards unchanged; [separate reports/timestamps](../agent-memory/capture-first-delivery-checkpoint.md#p24-post-scope-capture-rerun)
+  preserve the failed run and do not relabel earlier evidence.
+- [x] Approved-origin selector61/61 passed separately from capture33/33 (94 cases in two
+  runs), then root saved/reloaded a real synthetic manual draft via Chrome. Ninth image
+  is separate from the unchanged eight originals; DOM, not screenshot alone, proves100.
+- [x] [Exact-head CI33043955626](https://github.com/MangmeeDev/mangmeeplus/actions/runs/33043955626)
+  SUCCESS before root merged PR292 at `a2d8e793`. Production image/publish jobs were
+  skipped as expected; no full P24/main or live-release acceptance is claimed.
 
 Ponytail full: CSS classes and existing test helpers first; no new component, dependency,
 router, policy, harness or seed. No shared DB/service changes. Full P24 and physical-device

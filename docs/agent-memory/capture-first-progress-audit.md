@@ -1,6 +1,6 @@
 # Agent Memory: Capture-first progress audit
 
-Status: ORIGINAL DOCS AUDIT MERGED via PR289 at `9aaacfe2`; delivery status refreshed in a separate docs-only checkpoint at develop `c6f3d06f` on 2026-08-27. P11 Phase 0 and corrected AI PR288 merged after exact-head CI SUCCESS. Historical audit evidence below retains its original refs; P24-2b is in progress and no full-product/main/production completion is claimed.
+Status: ORIGINAL DOCS AUDIT MERGED via PR289 at `9aaacfe2`; delivery snapshot now verified at develop `a2d8e793` on 2026-08-27. Docs PR291, P11 Phase0, corrected AI PR288 and P24-2b PR292 are merged. P24 approved-origin33+61, manual draft/reload and exact-head CI passed; full P24 remains PARTIAL. Historical evidence retains its original refs; no full-product/main/production completion claim.
 Owner: Codex audit; root owns current implementation, browser acceptance and integration.
 Scope: Active non-subscription capture-first delivery status. Do not touch primary dirty `plan`, other worktrees, runtime code, DB, cloud, entitlements or CI dispatch.
 
@@ -13,10 +13,13 @@ Decisions:
 - Read-only GitHub confirms expense PR #287 MERGED at `111532966c415fee11abb36ca1749bf1fc66ee52` on 2026-08-27T04:36:17Z, CI `33039136161` SUCCESS on `179981a45f00a1d0b3a1898dce9f877f2457563e`. This supersedes the branch-only/no-PR expense snapshot; it is not a Production rollout.
 - Read-only GitHub confirms P11 PR290 MERGED at `d8d9808e41d15360810ed67e9169ade0cd5605ab`, 2026-08-27T05:08:55Z, CI `33040896057` SUCCESS on `6f85339d6179a456957a7db77a3fc161047b8647`. [Delivery checkpoint](capture-first-delivery-checkpoint.md) records the disabled-safe boundary and separate AI delivery.
 - Read-only GitHub confirms AI PR288 MERGED at `c6f3d06f0558ef9dd3a0944ae2065bbae67946a0`, 2026-08-27T05:30:29Z, CI `33041868515` SUCCESS on `29a0605b10102cc6efc0802ba90abe4e5482b6d7`. This supersedes the corrected-head CI-pending snapshot; old70033af2/CI33040537029 remains held historical evidence, not approval of the later amount/date fix.
+- Read-only GitHub confirms docs PR291 MERGED at `d8f1a8536145beb24118dff901f18a4b92b08583`, 2026-08-27T05:43:09Z, CI33043341836 SUCCESS on `bd88a14e1bbb1bf8bd46364d30c71343b679499b`; runtime jobs skipped as designed, not new runtime acceptance. P24-2b PR292 MERGED at `a2d8e793de11eb60077e63bb1a7ccf0303b390c6`, 2026-08-27T06:08:41Z, CI33043955626 SUCCESS on `d3a531d69d2ef1ee2259b51228aa6e676b22eb91`. Scoped61 E2E/1140 web/89 focused/typechecks passed; [image evidence](../evidence/p24-scope-selector-targets/README.md) retains eight originals plus the later ninth manual-draft image. Approved-origin capture33/33 + selector61/61 and manual draft/reload passed separately; skipped production image/publish jobs are not deployment proof.
 
 ## Capture delivery at the current audit baseline
 
 Sales/vendor/expense fixes are now in audit HEAD and must not be reimplemented. Their scoped delivery is supported by exact-head CI and tracked local evidence; remaining Owner/human/live gates are separate.
+
+The table retains the earlier capture baseline. Root's additional33-case run on web3004 finished24 passed/9 failed; root proved local CORS allows origin3000, not3004. Moving only its own web to3000 without API/CORS-guard changes produced separate capture33/33 and selector61/61 passes (94 cases in two runs), followed by real manual draft-save/reload. This is an environment correction, not a source fix. Do not relabel old results. [Distinct reports/timestamps and current delivery status](capture-first-delivery-checkpoint.md#p24-post-scope-capture-rerun).
 
 | Slice | Verified code/status at `11153296` | Evidence and limits |
 |---|---|---|
@@ -88,5 +91,5 @@ Verification:
 
 Next:
 
-- Root reviews/finalizes the [delivery checkpoint](capture-first-delivery-checkpoint.md). Partner/sales/vendor/expense, disabled-safe P11 Phase0 and corrected AI PR288 are merged; do not repeat implementation or relabel old evidence. PR265 still needs security fixes and contract clarification. P24-2b selector44px remains uncommitted/in progress without acceptance. Root owns later status/old-PR disposition; this audit does not close PRs or wait for those phases.
+- Partner/sales/vendor/expense, disabled-safe P11 Phase0, corrected AI PR288 and scoped P24-2b PR292 are merged; do not repeat implementation or relabel old evidence. [Delivery checkpoint](capture-first-delivery-checkpoint.md) records their bounded proof. PR265 still needs security fixes/contract clarification; full P24 and other active Owner/human/live gates remain open. Root owns later status/old-PR disposition; this audit does not close PRs or perform runtime investigation.
 - Ask only the explicit active-scope Owner questions when the dependent phase is reached; do not restart P15–20 or subscription work. Main promotion remains an active-scope acceptance decision, separate from UAT/Production deployment protocol.
