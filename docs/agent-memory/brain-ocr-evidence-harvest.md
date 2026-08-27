@@ -72,6 +72,12 @@ Decisions (Owner 2026-08-27 — ตอบ 4 ข้อของ strategy discussi
   - Verified 2026-08-27 ~20:51: ทั้ง 3 service digest = `git-a53bb992...`; `/v1/health` 200; api-web env `LINE_AI_ADVISOR_MODE=social` (เลนใหม่ติดอาวุธแล้ว) + debounce 1000 + loading + ledger ครบ; AgentCore artifact env เลนเร็วคงเดิม (fused/prepared true + 4 families)
   - รอ Owner retest: (1) รูป+พิมพ์คุยทันที ต้องได้คำตอบจริง (2) ทักเล่น ~5-6s + log `line.ai.advisor_direct_served` (3) 4 คำถามเลนเร็วธุรกิจ (4) ใบเสร็จใบเดิมยังอ่านถูก
 
+## รอบเทสรัว (Owner 21:32) → แก้ครบ 3 ข้อตามสั่ง (2026-08-27 ดึก)
+
+- วินิจฉัยจาก log 14:32-14:35Z: (ก) เลน advisor ยิงจริงครั้งแรก (`advisor_direct_served` — "หวัดดีจร้าา" การ์ดเขียว) (ข) busy-wait 25s แพ้เทิร์นรูป 4-model-call (ช่องว่าง lease เป็น ms) → "ดูค่าใช้จ่าย" bounce แล้ว ledger ตามตอบ 14:35 (ค) ปุ่ม talk + ข้อความรอคิว 23.6s เพราะ busy-wait ถือ per-chat worker (ง) **ใบเสร็จ CHAGEE ตายหลัง OCR สำเร็จ: `TRANSACTION_BRANCH_REQUIRED` (บริษัทหลายสาขา, LINE ไม่มีตัวเลือกสาขา) + copy โกหกว่า "ชั่วคราว"**
+- แก้ (branch codex/rapid-fire-fixes): (1) **สาขา**: `pickLineDefaultBranchId` (สาขาเดียว→ใช้เลย; หลายสาขา→HEAD_OFFICE ตัวเดียว; ไม่ได้→undefined) + query ก่อน initReceiptUpload + catch แยก TRANSACTION_BRANCH_* → `RECEIPT_BRANCH_REQUIRED_REPLY` (บอกไปเลือกสาขาบนเว็บ ไม่ชวน retry) (2) **คิว**: lease แยกเลน `chat`/`media` ต่อบริษัท (meter laneKey; overshoot งบสูงสุด ~฿2/เลน Owner รับ) + คำสั่งเมนู stateless ลัดคิวทันทีแม้ worker ไม่ว่าง (คำสั่ง /company ยังรักษาลำดับ) + `promotion` ข้าม legal preflight เหมือน contact/talk (3) **ข้อความซ้อน**: ตัด status bubble 5 วิของเทิร์นข้อความเมื่อ loading animation เปิด (ack รูป delay-0 คงเดิม; spec buffer อัปเดตเป็นสัญญาใหม่ 4 เคส)
+- ผลคาด: คุยระหว่างรูป = ตอบสดผ่านเลน chat ไม่ต้องรอ/ไม่ bounce; ปุ่มเมนูตอบทันทีเสมอ; ใบเสร็จบริษัทหลายสาขาบันทึกเข้า review ด้วยสำนักงานใหญ่; แชทรกน้อยลง
+
 ## Rich menu v2 ver2 + capability fix (Owner สั่งพร้อมภาพดีไซน์ 2026-08-27 ค่ำ)
 
 - Owner ส่งดีไซน์ 2 ภาพ: rich menu 6 ช่อง (Promotion แทน เริ่มต้นใช้งานฟรี) + โปสเตอร์แพ็กเกจ 4 tier; สั่ง (1) คำตอบ "ทำอะไรได้บ้าง" ห้ามโฆษณาของที่ใช้ไม่ได้ (2) ปุ่มถ่ายใบเสร็จเข้ากล้องตรง ไม่ถาม แนบ/กล้อง/กลับ (3) เปลี่ยน rich menu (4) ช่อง Promotion ขึ้นโปสเตอร์

@@ -895,3 +895,29 @@ describe('retryBusyAdmission', () => {
     assert.equal(attempts, 1);
   });
 });
+
+describe('admission lanes', () => {
+  it('chat and media lanes acquire DIFFERENT leases; no lane keeps the legacy combined key', async () => {
+    const keys: string[] = [];
+    const rateLimits = {
+      tryAcquireLease: async (_scope: string, key: string) => { keys.push(key); return { acquired: true, token: 't' }; },
+      releaseLease: async () => undefined,
+    } as any;
+    const prisma = { client: {
+      companyAiConfiguration: { findUnique: async () => null },
+      platformAiBudgetConfig: { findUnique: async () => null },
+      companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: 0 }) },
+    } } as any;
+    const run = (lane?: 'chat' | 'media') =>
+      runWithCompanyAiBudgetAdmission(prisma, config, rateLimits, 'co-lane', async () => 'ok', lane);
+    __resetCompanyAiBudgetCache();
+    await run('chat');
+    await run('media');
+    await run();
+    assert.equal(keys.length, 3);
+    assert.match(keys[0]!, /:chat$/);
+    assert.match(keys[1]!, /:media$/);
+    assert.ok(!keys[2]!.endsWith(':chat') && !keys[2]!.endsWith(':media'), 'legacy callers keep the combined lease');
+    assert.equal(keys[0]!.replace(/:chat$/, ''), keys[2]!, 'lanes only SUFFIX the legacy key');
+  });
+});
