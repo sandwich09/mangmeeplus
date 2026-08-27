@@ -1,9 +1,25 @@
 import { afterEach, describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { changePassword, refreshSessionWithOutcome } from './auth.api';
+import { changePassword, loginWithPassword, refreshSessionWithOutcome } from './auth.api';
 
 const originalFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = originalFetch; });
+
+describe('loginWithPassword', () => {
+  it('keeps forwarding username and email identifiers unchanged despite username-first UI copy', async () => {
+    const response = { passwordChangeRequired: false, legalAcceptanceRequired: false, companyId: null, redirectPath: '/' };
+    const fetchMock = mock.fn(async (_input: string | URL | Request, _init?: RequestInit) => Response.json(response));
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    for (const username of ['test-user', 'test-user@example.com']) {
+      assert.deepEqual(await loginWithPassword(username, 'Test-password-123', false), response);
+      const [url, init] = fetchMock.mock.calls.at(-1)!.arguments;
+      assert.equal(url, '/api/auth/login');
+      assert.equal(init?.method, 'POST');
+      assert.deepEqual(JSON.parse(String(init?.body)), { username, password: 'Test-password-123', remember: false });
+    }
+  });
+});
 
 describe('changePassword', () => {
   it('refreshes an expired first-login session and retries once', async () => {
