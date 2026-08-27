@@ -254,7 +254,7 @@ For EXPENSE_DOCUMENT_CAPTURE or BUSINESS_DOCUMENT_REFERENCE images, include docu
   "documentKind": "RECEIPT"|"TAX_INVOICE"|"SUPPLIER_INVOICE_OR_BILL"|"ORDER_OR_CHECK_BILL"|"QUOTATION"|"PURCHASE_ORDER"|"DELIVERY_NOTE"|"TRANSFER_SLIP"|"MARKETPLACE_ORDER"|"HANDWRITTEN_CASH_BILL"|"APPOINTMENT_CARD"|"BOOKING_CONFIRMATION"|"RESERVATION_CONFIRMATION"|"SIGNATURE_IMAGE"|"OTHER_BUSINESS_DOCUMENT"|"NON_FINANCIAL_IMAGE"|"NEEDS_REVIEW",
   "businessDirection": "PURCHASE_EXPENSE"|"SALES_RECEIVABLE"|"CUSTOMER_INBOUND"|"UNKNOWN",
   "transactionState": "PROPOSED"|"ORDERED"|"DUE"|"PAID"|"SCHEDULED"|"CONFIRMED"|"CANCELLED"|"UNKNOWN",
-  "evidenceRoles": [], "confidence": 0.0, "evidenceSignals": [], "amountSignals": [], "settlementSignals": [],
+  "evidenceRoles": ["EXPENSE_SUPPORT"|"TAX_EVIDENCE_CANDIDATE"|"PAYMENT_PROOF"|"COMMERCIAL_PROPOSAL"|"SCHEDULING_PROOF"|"CONVERSATION_ATTACHMENT"], "confidence": 0.0, "evidenceSignals": [], "amountSignals": [], "settlementSignals": [],
   "missingRequiredSignals": [], "contradictionSignals": [], "requiresClarification": false
 }
 Classification is advisory. Quantity/items without a transaction total are ORDER_OR_CHECK_BILL, never RECEIPT. Quotations, appointments, bookings, reservations, and non-financial images are never expense receipts because they show an amount.
