@@ -1,7 +1,7 @@
 import { describe, it, beforeEach } from 'node:test';
 import './line-recovery.pg.spec';
 import assert from 'node:assert/strict';
-import { BadRequestException, ConflictException, ForbiddenException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { IssueTokenUseCase } from './application/use-cases/issue-token.use-case';
 import { ExchangeLineTokenUseCase } from './application/use-cases/exchange-line-token.use-case';
 import { LogoutUseCase } from './application/use-cases/logout.use-case';
@@ -771,6 +771,8 @@ describe('JWT verifiers', () => {
 // ---- ExchangeLineTokenUseCase ----
 
 describe('ExchangeLineTokenUseCase', () => {
+  const exchangeConfig = { lineMessagingChannelId: 'msg-ch-1', isProduction: false } as any;
+
   it('returns linked=false when ExternalIdentity not found', async () => {
     const lineVerifier = { verify: async () => ({ subject: 'line-u1' }) } as any;
     const prisma = {
@@ -782,7 +784,7 @@ describe('ExchangeLineTokenUseCase', () => {
     const audited: unknown[] = [];
     const audit = { log: async (entry: unknown) => { audited.push(entry); } } as any;
 
-    const useCase = new ExchangeLineTokenUseCase(lineVerifier, prisma, issueToken, audit);
+    const useCase = new ExchangeLineTokenUseCase(lineVerifier, prisma, exchangeConfig, issueToken, audit);
     const result = await useCase.execute('id-token', 'channel-1');
 
     assert.equal((result as any).linked, false);
@@ -803,7 +805,7 @@ describe('ExchangeLineTokenUseCase', () => {
     } as any;
     const issueToken = { execute: async () => ({ accessToken: 'tok', refreshToken: 'ref', expiresIn: 900 }) } as any;
 
-    const useCase = new ExchangeLineTokenUseCase(lineVerifier, prisma, issueToken);
+    const useCase = new ExchangeLineTokenUseCase(lineVerifier, prisma, exchangeConfig, issueToken);
     const result = await useCase.execute('id-token', 'channel-1');
 
     assert.equal((result as any).linked, true);
@@ -821,10 +823,47 @@ describe('ExchangeLineTokenUseCase', () => {
     } as any;
     const issueToken = { execute: async () => ({}) } as any;
 
-    const useCase = new ExchangeLineTokenUseCase(lineVerifier, prisma, issueToken);
+    const useCase = new ExchangeLineTokenUseCase(lineVerifier, prisma, exchangeConfig, issueToken);
     await assert.rejects(
       () => useCase.execute('id-token', 'channel-1'),
       (err: unknown) => { assert.ok(err instanceof ForbiddenException); return true; },
+    );
+  });
+
+  it('resolves via canonical channel first and falls back channel-agnostically for legacy rows', async () => {
+    const lineVerifier = { verify: async () => ({ subject: 'line-u4' }) } as any;
+    const calls: any[] = [];
+    const prisma = {
+      client: {
+        externalIdentity: {
+          findFirst: async (args: any) => {
+            calls.push(args.where);
+            return args.where.providerChannelId ? null : { id: 'ei-legacy', user: { id: 'u-4', status: 'ACTIVE' } };
+          },
+        },
+      },
+    } as any;
+    const issueToken = { execute: async () => ({ accessToken: 'tok', refreshToken: 'ref', expiresIn: 900 }) } as any;
+
+    const useCase = new ExchangeLineTokenUseCase(lineVerifier, prisma, exchangeConfig, issueToken);
+    const result = await useCase.execute('id-token', 'channel-1');
+
+    assert.equal((result as any).linked, true);
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].providerChannelId, 'msg-ch-1');
+    assert.equal(calls[1].providerChannelId, undefined);
+  });
+
+  it('fails closed in production when the canonical channel is not configured', async () => {
+    const lineVerifier = { verify: async () => ({ subject: 'line-u5' }) } as any;
+    const prisma = { client: { externalIdentity: { findFirst: async () => ({ user: { id: 'u-5', status: 'ACTIVE' } }) } } } as any;
+    const issueToken = { execute: async () => ({}) } as any;
+    const prodConfig = { lineMessagingChannelId: undefined, isProduction: true } as any;
+
+    const useCase = new ExchangeLineTokenUseCase(lineVerifier, prisma, prodConfig, issueToken);
+    await assert.rejects(
+      () => useCase.execute('id-token', 'channel-1'),
+      (err: unknown) => { assert.ok(err instanceof ServiceUnavailableException); return true; },
     );
   });
 });
