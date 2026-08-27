@@ -7,10 +7,14 @@ import {
   suggestedAllocation,
   confirmedMatchedTotal,
   sha256Hex,
+  extractErrorMessage,
   statementRowErrorMessage,
+  statementExtractErrorCode,
   visibleBankingTabs,
   parseBankingTab,
 } from './banking.logic';
+import { authedApiFetch } from '@/common/api/authed-fetch';
+import { withGenericUploadError } from '@/common/files/upload-file.logic';
 
 describe('statement preview diagnostics', () => {
   it('maps known row errors and never exposes an unknown diagnostic', () => {
@@ -20,6 +24,40 @@ describe('statement preview diagnostics', () => {
       statementRowErrorMessage('database column secret'),
       'ข้อมูลแถวนี้ไม่ถูกต้อง กรุณาตรวจสอบวันที่และจำนวนเงิน',
     );
+  });
+});
+
+describe('statement extraction API errors', () => {
+  it('recovers only allowlisted OCR codes before generic 422 formatting', () => {
+    for (const code of ['extract_ocr_disabled', 'extract_ocr_limit_exceeded', 'extract_ocr_quota_unavailable']) {
+      assert.equal(statementExtractErrorCode(Object.assign(new Error(code), {
+        status: 422,
+        details: { statusCode: 422, message: code },
+      })), code);
+      assert.notEqual(extractErrorMessage(code), code);
+    }
+    assert.equal(statementExtractErrorCode({ status: 422, details: { message: 'database_secret' } }), null);
+  });
+
+  it('keeps the Nest 422 OCR code through API fetch and the real upload wrapper', async () => {
+    const wrapped = await withGenericUploadError(() => authedApiFetch(
+      '/companies/c1/banking/bank-accounts/b1/statement-imports/extract',
+      { method: 'POST', body: '{}' },
+      async () => new Response(JSON.stringify({
+        statusCode: 422,
+        code: 'extract_ocr_limit_exceeded',
+        message: 'extract_ocr_limit_exceeded',
+      }), { status: 422, headers: { 'Content-Type': 'application/json' } }),
+    )).catch((error: unknown) => error);
+    assert.equal(statementExtractErrorCode(wrapped), 'extract_ocr_limit_exceeded');
+    assert.match(extractErrorMessage('extract_ocr_limit_exceeded'), /ครบจำนวน/);
+  });
+
+  it('does not treat object-prototype names as allowlisted API codes', () => {
+    for (const code of ['constructor', 'toString', '__proto__']) {
+      assert.equal(statementExtractErrorCode({ code }), null);
+      assert.equal(extractErrorMessage(code), code);
+    }
   });
 });
 

@@ -418,6 +418,8 @@ model Company {
   aiConfiguration                   CompanyAiConfiguration?
   aiUsageEvents                     AiUsageEvent[]
   aiMonthlyUsage                    CompanyAiMonthlyUsage[]
+  ocrUsageEvents                    CompanyOcrUsageEvent[]
+  ocrMonthlyUsage                   CompanyOcrMonthlyUsage[]
   integrationCredentials            CompanyIntegrationCredential[]
   // Item 11
   companyTaxProfile                 CompanyTaxProfile?
@@ -1025,6 +1027,7 @@ model AttachmentObject {
   @@unique([companyId, id])
   @@unique([bucket, objectKey])
   @@index([companyId, status, createdAt])
+  @@index([companyId, status, uploadedAt])
   @@index([companyId, checksumSha256])
   @@index([uploadedByUserId, createdAt])
 }
@@ -3040,6 +3043,9 @@ model CompanyAiConfiguration {
   companyId                  String   @unique
   modelId                    String? // null = inherit the platform default model (metering spec §6.8)
   monthlyBudgetSatang        Int? // null = inherit AI_MONTHLY_BUDGET_SATANG (metering spec §7.3)
+  ocrEnabled                 Boolean  @default(true)
+  ocrMonthlyLimit            Int? // null = unlimited; Platform Admin only (OCR governance spec §4)
+  ocrConfigVersion           Int      @default(0) // monotonic CAS fence; increment only on real OCR config change
   updatedBySystemAdminUserId String?
   createdAt                  DateTime @default(now())
   updatedAt                  DateTime @updatedAt
@@ -3110,6 +3116,36 @@ model CompanyAiMonthlyUsage {
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
   company               Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, monthKey])
+}
+
+// One row per OCR action admitted immediately before a provider call. The unique request fence
+// makes a transport retry with the same request id unable to consume quota or call the provider twice.
+model CompanyOcrUsageEvent {
+  id          String   @id @default(cuid())
+  companyId   String
+  monthKey    String // 'YYYY-MM', Asia/Bangkok
+  sourceRoute String // 'receipt-ocr-web' | 'receipt-ocr-line' | 'bank-statement-extract'
+  requestId   String
+  createdAt   DateTime @default(now())
+  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, sourceRoute, requestId])
+  @@index([companyId, monthKey, sourceRoute])
+  @@index([companyId, createdAt])
+}
+
+// Serialized by the per-company/month advisory lock in the admission helper. This aggregate is
+// the quota truth; OCR/model usage rows are deliberately not reused because one read can call models many times.
+model CompanyOcrMonthlyUsage {
+  id        String   @id @default(cuid())
+  companyId String
+  monthKey  String // 'YYYY-MM', Asia/Bangkok
+  usedCount Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@unique([companyId, monthKey])
 }

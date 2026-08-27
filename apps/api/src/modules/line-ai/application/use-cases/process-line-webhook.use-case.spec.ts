@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { LINE_AI_CONTEXT_MAX_TURNS, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
-import { branchScopeFallbackLabel, chatKeyHashOf, classifyPendingMediaReply, formatCheckBillDraftCreatedReply, formatGroundedReceiptFollowUp, isAffirmativeText, isGroundedReceiptFollowUp, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent } from './process-line-webhook.use-case';
+import { branchScopeFallbackLabel, chatKeyHashOf, classifyPendingMediaReply, formatCheckBillDraftCreatedReply, formatGroundedReceiptFollowUp, formatOcrGovernanceClarifyReply, isAffirmativeText, isGroundedReceiptFollowUp, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent } from './process-line-webhook.use-case';
 import { featureTemporarilyUnavailable } from '../../../employee-access/application/entitlement.helper';
 import { ReceiptOcrApplyService } from '../../../expenses/application/services/receipt-ocr-apply.service';
 import { absoluteWebLink, webBaseUrlFromEnv, webLink } from '../../../../common/http/web-link';
@@ -36,6 +36,23 @@ const closedLaunchGate = {
 const brokenLaunchGate = {
   assertLaunchRouteOpen: async () => { throw new Error('connection terminated'); },
 } as any;
+
+describe('OCR governance LINE reply UX', () => {
+  it('explains disabled and monthly-limit refusals without losing the numbered manual path', () => {
+    for (const code of ['OCR_FEATURE_DISABLED', 'OCR_MONTHLY_LIMIT_EXCEEDED'] as const) {
+      const reply = formatOcrGovernanceClarifyReply(code);
+      assert.match(reply, /ยังเก็บไฟล์นี้ไว้ได้/);
+      assert.match(reply, /1\) ใบเสร็จ/);
+      assert.doesNotMatch(reply, /OCR_|receipt-ocr|quota/i);
+    }
+  });
+
+  it('keeps the ordinary clarification copy for unrelated provider failures', () => {
+    const reply = formatOcrGovernanceClarifyReply('PROVIDER_TIMEOUT');
+    assert.match(reply, /^🤔 รูปนี้เป็นอะไรคะ/);
+    assert.doesNotMatch(reply, /สิทธิ์อ่านเอกสาร/);
+  });
+});
 
 describe('readResponseBodyLimited', () => {
   it('combines a chunked response within the hard byte cap', async () => {
@@ -2100,6 +2117,56 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(ocrAudit.metadataJson.status, 'OCR_FAILED');
     assert.equal(ocrAudit.metadataJson.errorCode, 'OCR_EMPTY_OUTPUT');
     assert.equal(ocrAudit.metadataJson.recognizedFieldCount, 0);
+  });
+
+  it('does not make a second LINE image call after the governed intake router denies OCR', async () => {
+    const { prisma } = makePrisma();
+    const replies: string[] = [];
+    let receiptOcrCalls = 0;
+    const useCase = new ProcessLineWebhookUseCase(
+      prisma,
+      { webBaseUrl: 'https://app.example.com', lineMessagingChannelAccessToken: 'line-token' } as any,
+      { resolveAccess: async () => ({
+        membershipId: 'mem-1', roles: ['STAFF'],
+        permissions: ['expense.receipt.line_upload', 'attachment.create', 'expense.create'], scopes: {},
+      }) } as any,
+      { log: async () => undefined } as any,
+      {
+        requestLineTurn: async () => { throw new Error('not expected'); },
+        requestLineIntakeRoute: async () => ({
+          status: 'UNAVAILABLE', intent: 'UNSUPPORTED', language: 'th', confidence: 0,
+          ocrAdmission: 'denied', ocrErrorCode: 'OCR_FEATURE_DISABLED',
+        }),
+        requestReceiptOcr: async () => { receiptOcrCalls += 1; throw new Error('must not run'); },
+      } as any,
+      {
+        buildTextMessage: (text: string) => ({ type: 'text', text }),
+        sendReply: async (_token: string, messages: Array<{ text: string }>) => {
+          replies.push(messages[0]?.text ?? '');
+          return 'ok';
+        },
+      } as any,
+      { apply: async () => ({ candidatesCreated: 0 }) } as any,
+      CLEAN_SCANNER,
+      acceptedLegal,
+      shadowProbe,
+      openLaunchGate,
+      { execute: async () => { throw new Error('no expense expected'); } } as any,
+      { execute: async () => undefined } as any,
+    );
+    (useCase as any).downloadLineMedia = async () => ({
+      fileName: 'receipt.jpg', mimeType: 'image/jpeg', byteSize: JPEG_BYTES.byteLength,
+      checksumSha256: 'hash', contentBase64: JPEG_BYTES.toString('base64'), bytes: JPEG_BYTES,
+    });
+    (useCase as any).ensurePendingMedia = async () => ({ created: true, pending: null });
+
+    await useCase.executeReceiptUpload({
+      webhookEventId: 'evt-ocr-off', lineUserId: 'line-user-secret', replyToken: 'reply-ocr-off',
+      lineMessageId: 'line-msg-ocr-off', messageType: 'image', messagingChannelId: 'msg-channel-1',
+    });
+
+    assert.equal(receiptOcrCalls, 0);
+    assert.match(replies.join('\n'), /บริษัทปิดการอ่านเอกสารด้วย AI/);
   });
 
   it('creates LINE upload expense draft with line_upload permission only', async () => {

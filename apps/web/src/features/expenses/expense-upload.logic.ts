@@ -1,4 +1,5 @@
 import { attachmentMimeTypeForFileName } from '@/common/files/upload-file.logic';
+import type { ExpenseExtractionResult } from '@watchdog-bms/contracts';
 
 // The budget a re-encoded photo is compressed into. Every server-side limit on this path is
 // 10 MB — `UPLOAD_MAX_BYTES` (packages/config), the attachment gate, and `MAX_EXTRACTION_BYTES`
@@ -21,6 +22,21 @@ export const SIGNATURE_UPLOAD_ACCEPT =
   '.png,.jpg,.jpeg,.jpe,.heic,.heif,.gif,image/png,image/jpeg,image/heic,image/heif,image/gif';
 
 export type UploadFileKind = 'image' | 'pdf' | 'heic' | 'unsupported';
+
+/** Lost HTTP responses reuse the idempotency key; a received provider failure is a fresh attempt. */
+export function expenseExtractionRetryMode(
+  result: ExpenseExtractionResult | null,
+): 'same_request' | 'new_request' | 'none' {
+  if (result === null) return 'same_request';
+  if (result.status === 'failed' && !result.errorCode?.startsWith('OCR_')) return 'new_request';
+  return 'none';
+}
+
+export const expenseExtractionRetryRequestId = (
+  mode: Exclude<ReturnType<typeof expenseExtractionRetryMode>, 'none'>,
+  originalRequestId: string,
+  freshRequestId: string,
+): string => mode === 'same_request' ? originalRequestId : freshRequestId;
 
 export class HeicDecodeError extends Error {
   constructor() {

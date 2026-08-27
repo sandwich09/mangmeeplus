@@ -11,6 +11,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  Max,
   MaxLength,
   Min,
   ValidateIf,
@@ -28,6 +29,7 @@ import { UpdatePartnerProfileUseCase } from '../../application/use-cases/update-
 import { PartnerLifecycleTransitionUseCase } from '../../application/use-cases/partner-lifecycle-transition.use-case';
 import { SetPartnerFeaturesUseCase } from '../../application/use-cases/set-partner-features.use-case';
 import { SetPartnerAiModelUseCase } from '../../application/use-cases/set-partner-ai-model.use-case';
+import { SetPartnerOcrConfigUseCase } from '../../application/use-cases/set-partner-ocr-config.use-case';
 import { GetPartnerAiUsageUseCase } from '../../application/use-cases/get-partner-ai-usage.use-case';
 import { ListPartnerMembersUseCase } from '../../application/use-cases/list-partner-members.use-case';
 import { PartnerMemberLineUnlinkUseCase } from '../../application/use-cases/partner-member-line-unlink.use-case';
@@ -84,6 +86,14 @@ export class SetAiModelBodyDto {
   @unlessNullish @IsInt() monthlyBudgetSatang?: number | null;
 }
 
+export class SetOcrConfigBodyDto {
+  @IsBoolean() enabled!: boolean;
+  // Unlike the partial AI-model body, this is absolute desired state: undefined must fail,
+  // while null deliberately means unlimited.
+  @ValidateIf((_object, value) => value !== null) @IsInt() @Min(1) @Max(1_000_000) monthlyLimit!: number | null;
+  @Type(() => Number) @IsInt() @Min(0) expectedVersion!: number;
+}
+
 export class SetPartnerVatRegistrationBodyDto {
   @IsIn(VAT_FACT_STATUSES) status!: VatFactStatus;
   @IsString() @IsNotEmpty() effectiveFrom!: string;
@@ -102,6 +112,7 @@ export class PartnerController {
     private readonly lifecycle: PartnerLifecycleTransitionUseCase,
     private readonly setFeatures: SetPartnerFeaturesUseCase,
     private readonly setAiModel: SetPartnerAiModelUseCase,
+    private readonly setOcrConfig: SetPartnerOcrConfigUseCase,
     private readonly getAiUsage: GetPartnerAiUsageUseCase,
     private readonly listMembers: ListPartnerMembersUseCase,
     private readonly unlinkMemberLine: PartnerMemberLineUnlinkUseCase,
@@ -280,6 +291,27 @@ export class PartnerController {
       companyId,
       modelId: dto.modelId,
       monthlyBudgetSatang: dto.monthlyBudgetSatang,
+      requestingAdminUserId: req.context.userId,
+      requestId: req.context.requestId,
+    });
+  }
+
+  @Put(':partnerCompanyId/ocr-config')
+  @RequirePermissions('system.partner_ai_model.manage')
+  @ApiOperation({ summary: 'Enable/disable OCR and set the monthly OCR read limit for one partner company' })
+  @ApiResponse({ status: 200 })
+  @ApiResponse({ status: 409, description: 'OCR config changed after the operator loaded it; reload before saving' })
+  @ApiResponse({ status: 422, description: 'Company metadata locked or monthlyLimit outside 1..1,000,000' })
+  setOcrConfiguration(
+    @Param('partnerCompanyId') companyId: string,
+    @Body() dto: SetOcrConfigBodyDto,
+    @Req() req: AuthedRequest,
+  ) {
+    return this.setOcrConfig.execute({
+      companyId,
+      enabled: dto.enabled,
+      monthlyLimit: dto.monthlyLimit,
+      expectedVersion: dto.expectedVersion,
       requestingAdminUserId: req.context.userId,
       requestId: req.context.requestId,
     });

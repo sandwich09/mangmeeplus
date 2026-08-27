@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { BadRequestException, ForbiddenException, ValidationPipe } from '@nestjs/common';
-import { PartnerController, SetAiModelBodyDto, SetFeaturesBodyDto } from './partner.controller';
+import { PartnerController, SetAiModelBodyDto, SetFeaturesBodyDto, SetOcrConfigBodyDto } from './partner.controller';
 import { SystemAiBudgetController } from './system-ai-budget.controller';
 import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../../../../common/pipes/validation-pipe.options';
 import { REQUIRED_PERMISSIONS_KEY } from '../../../../common/security/permissions.decorator';
@@ -22,6 +22,7 @@ function makeUCs() {
     lifecycle: { execute: async () => ({ id: 'co-1', status: 'DISABLED' }) } as any,
     setFeatures: { execute: async () => ({ companyId: 'co-1', features: [] }) } as any,
     setAiModel: { execute: async () => ({ companyId: 'co-1', modelId: 'global.anthropic.claude-sonnet-4-6', monthlyBudgetSatang: null, updatedAt: '' }) } as any,
+    setOcrConfig: { execute: async () => ({ enabled: true, monthlyLimit: null, version: 0, updatedAt: null }) } as any,
     getAiUsage: { execute: async () => ({ current: null, previous: null, budget: { effectiveSatang: 5_000_000, overrideSatang: null, defaultSatang: 5_000_000, ceilingSatang: 50_000_000 }, topTags: [] }) } as any,
     listMembers: { execute: async () => ({ items: [] }) } as any,
     unlinkMemberLine: { execute: async () => ({ unlinked: true }) } as any,
@@ -33,7 +34,7 @@ function makeUCs() {
 function makeCtrl(overrides: Partial<ReturnType<typeof makeUCs>> = {}) {
   const uc = { ...makeUCs(), ...overrides };
   return new PartnerController(
-    uc.listPartners, uc.getDetail, uc.updateProfile, uc.lifecycle, uc.setFeatures, uc.setAiModel,
+    uc.listPartners, uc.getDetail, uc.updateProfile, uc.lifecycle, uc.setFeatures, uc.setAiModel, uc.setOcrConfig,
     uc.getAiUsage, uc.listMembers, uc.unlinkMemberLine, uc.resetMemberPassword, uc.revealMemberPassword,
     // VAT registration: delegated to the company's own service, not re-implemented here.
     { put: async () => ({ version: 1, resultKind: 'APPLIED', replayed: false }) } as any,
@@ -144,6 +145,41 @@ describe('PartnerController', () => {
     assert.equal(result.budget.overrideSatang, null);
   });
 
+  it('setOcrConfiguration() passes absolute state and admin context to the use case', async () => {
+    let called: any;
+    const ctrl = makeCtrl({ setOcrConfig: { execute: async (cmd: any) => {
+      called = cmd;
+      return { enabled: cmd.enabled, monthlyLimit: cmd.monthlyLimit, version: 5, updatedAt: '' };
+    } } as any });
+    await ctrl.setOcrConfiguration('co-1', { enabled: false, monthlyLimit: 25, expectedVersion: 4 }, makeReq());
+    assert.deepEqual(called, {
+      companyId: 'co-1', enabled: false, monthlyLimit: 25,
+      expectedVersion: 4,
+      requestingAdminUserId: 'admin-1', requestId: 'req-1',
+    });
+  });
+
+  it('the OCR config DTO accepts CAS version + null/unlimited and rejects missing or invalid fields', async () => {
+    const pipe = new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS);
+    const run = (body: Record<string, unknown>) =>
+      pipe.transform(body, { type: 'body', metatype: SetOcrConfigBodyDto }) as Promise<any>;
+    const unlimited = await run({ enabled: true, monthlyLimit: null, expectedVersion: 0 });
+    assert.equal(unlimited.enabled, true);
+    assert.equal(unlimited.monthlyLimit, null);
+    assert.equal((await run({ enabled: false, monthlyLimit: 100, expectedVersion: 7 })).monthlyLimit, 100);
+    for (const poison of [
+      {}, { enabled: true, monthlyLimit: null }, { monthlyLimit: 10, expectedVersion: 0 },
+      { enabled: 'true', monthlyLimit: 10, expectedVersion: 0 },
+      { enabled: true, monthlyLimit: 0, expectedVersion: 0 },
+      { enabled: true, monthlyLimit: 1.5, expectedVersion: 0 },
+      { enabled: true, monthlyLimit: 1_000_001, expectedVersion: 0 },
+      { enabled: true, monthlyLimit: 100, expectedVersion: -1 },
+      { enabled: true, monthlyLimit: 100, expectedVersion: 1.5 },
+    ]) {
+      await assert.rejects(() => run(poison), BadRequestException, JSON.stringify(poison));
+    }
+  });
+
   it('the ai-model body DTO keeps null (clear) and absent (leave alone) distinguishable', async () => {
     // The exact global pipe main.ts registers, against the DTO the ai-model route binds.
     const pipe = new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS);
@@ -173,6 +209,7 @@ describe('PartnerController', () => {
       ['transitionLifecycle', 'system.partner_company.lifecycle.manage'],
       ['setFeatureEntitlements', 'system.partner_feature.manage'],
       ['setAiModelConfig', 'system.partner_ai_model.manage'],
+      ['setOcrConfiguration', 'system.partner_ai_model.manage'],
       // Read-only meter: reuses the partner detail read permission, no new permission (spec §7.7).
       ['aiUsage', 'system.partner_dashboard.read'],
     ];
@@ -194,7 +231,7 @@ describe('PartnerController', () => {
 
   it('no route uses a :companyId param (auth guard would demand membership in the CUSTOMER company)', () => {
     const proto = PartnerController.prototype as unknown as Record<string, unknown>;
-    for (const method of ['list', 'detail', 'update', 'transitionLifecycle', 'setFeatureEntitlements', 'setAiModelConfig', 'aiUsage']) {
+    for (const method of ['list', 'detail', 'update', 'transitionLifecycle', 'setFeatureEntitlements', 'setAiModelConfig', 'setOcrConfiguration', 'aiUsage']) {
       const path: string | string[] | undefined = Reflect.getMetadata('path', proto[method] as object);
       const paths = Array.isArray(path) ? path : [path ?? ''];
       for (const p of paths) {

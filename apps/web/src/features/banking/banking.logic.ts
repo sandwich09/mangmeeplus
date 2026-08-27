@@ -187,20 +187,43 @@ export function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-export function extractErrorMessage(code: string): string {
-  const map: Record<string, string> = {
+const EXTRACT_ERROR_MESSAGES: Record<string, string> = {
     extract_pdf_scanned_unsupported:
       'PDF นี้เป็นไฟล์สแกน (ไม่มีชั้นข้อความ) — ถ่ายรูปหน้ากระดาษเป็น JPG/PNG แล้วอัพโหลดแทน หรือใช้ไฟล์ CSV จากธนาคาร',
     extract_pdf_table_not_found: 'อ่าน PDF ได้แต่ไม่พบหัวตารางรายการเดินบัญชี — ตรวจสอบว่าเป็น statement จากธนาคาร หรือใช้ไฟล์ CSV แทน',
     extract_pdf_unreadable: 'เปิดไฟล์ PDF ไม่สำเร็จ ไฟล์อาจเสียหายหรือถูกล็อกด้วยรหัสผ่าน',
     extract_ocr_not_configured: 'ระบบ OCR ยังไม่ถูกเปิดใช้งาน — ใช้ไฟล์ CSV จากธนาคาร หรือติดต่อผู้ดูแลระบบ',
+    extract_ocr_disabled: 'ผู้ดูแลปิด OCR ของบริษัทนี้ไว้ — กรุณาใช้ไฟล์ CSV จากธนาคาร หรือติดต่อผู้ดูแล',
+    extract_ocr_limit_exceeded: 'ใช้ OCR ครบจำนวนของเดือนนี้แล้ว — กรุณาใช้ไฟล์ CSV จากธนาคาร หรือติดต่อผู้ดูแล',
+    extract_ocr_duplicate_request: 'คำขออ่านไฟล์นี้เคยถูกรับแล้ว — ตรวจรายการเดิมก่อนลองอัปโหลดอีกครั้ง',
+    extract_ocr_quota_unavailable: 'ตรวจสอบสิทธิ์ OCR ไม่สำเร็จชั่วคราว — กรุณาลองใหม่ภายหลังหรือใช้ไฟล์ CSV',
     extract_ocr_failed: 'อ่านรูปภาพไม่สำเร็จ ลองถ่ายใหม่ให้ชัดขึ้น หรือใช้ไฟล์ CSV จากธนาคาร',
     extract_file_too_large: 'ไฟล์ใหญ่เกินกำหนด',
     extract_unsupported_mime_type: 'รองรับเฉพาะไฟล์ PDF, JPG, PNG',
     extract_invalid_file: 'ไฟล์ไม่ถูกต้อง ชนิดไฟล์อาจไม่ตรงกับนามสกุล หรือไฟล์ไม่ผ่านการตรวจสอบความปลอดภัย',
     extract_no_rows_found: 'ไม่พบรายการเดินบัญชีในไฟล์',
-  };
-  return map[code] ?? code;
+};
+
+export function extractErrorMessage(code: string): string {
+  return Object.hasOwn(EXTRACT_ERROR_MESSAGES, code) ? EXTRACT_ERROR_MESSAGES[code]! : code;
+}
+
+/** Pull only an allowlisted statement-extraction code before the global API formatter hides raw 422 details. */
+export function statementExtractErrorCode(error: unknown): string | null {
+  const value = error as {
+    message?: unknown;
+    code?: unknown;
+    details?: { message?: unknown; code?: unknown };
+  } | null;
+  const candidates = [value?.code, value?.details?.code, value?.message, value?.details?.message];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && Object.hasOwn(EXTRACT_ERROR_MESSAGES, candidate)) return candidate;
+    if (Array.isArray(candidate)) {
+      const match = candidate.find((item) => typeof item === 'string' && Object.hasOwn(EXTRACT_ERROR_MESSAGES, item));
+      if (typeof match === 'string') return match;
+    }
+  }
+  return null;
 }
 
 const STATEMENT_ROW_ERROR_MESSAGES: Record<string, string> = {

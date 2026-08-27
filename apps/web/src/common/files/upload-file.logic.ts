@@ -87,6 +87,11 @@ export async function withGenericUploadError<T>(operation: () => Promise<T>): Pr
   try {
     return await operation();
   } catch (error) {
-    throw new Error(uploadErrorMessage(error));
+    const safe = new Error(uploadErrorMessage(error));
+    // Keep only the stable machine code. Screens still receive sanitized Thai copy, while a
+    // feature allowlist (for example statement OCR governance) can choose the right recovery path.
+    const code = (error as { code?: unknown } | null)?.code;
+    if (typeof code === 'string') Object.assign(safe, { code });
+    throw safe;
   }
 }

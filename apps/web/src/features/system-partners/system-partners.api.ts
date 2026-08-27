@@ -8,6 +8,8 @@ import type {
   SetPartnerFeaturesDto,
   SetPartnerFeaturesResultDto,
   SetPartnerAiModelDto,
+  SetPartnerOcrConfigDto,
+  PartnerOcrConfigDto,
   SetSharedLineCredentialDto,
   SharedLineCredentialMetadataDto,
   PartnerFeatureEntitlementDto,
@@ -36,6 +38,8 @@ export type {
   SetPartnerFeaturesDto,
   SetPartnerFeaturesResultDto,
   SetPartnerAiModelDto,
+  SetPartnerOcrConfigDto,
+  PartnerOcrConfigDto,
   SetSharedLineCredentialDto,
   SharedLineCredentialMetadataDto,
   PartnerFeatureEntitlementDto,
@@ -151,6 +155,17 @@ export async function setPartnerAiModel(
 
 export async function getPartnerAiUsage(companyId: string): Promise<PartnerAiUsageDto> {
   return apiFetch<PartnerAiUsageDto>(`/v1/system/partners/${companyId}/ai-usage`);
+}
+
+export async function setPartnerOcrConfig(
+  companyId: string,
+  dto: SetPartnerOcrConfigDto,
+): Promise<PartnerOcrConfigDto> {
+  return apiFetch<PartnerOcrConfigDto>(`/v1/system/partners/${companyId}/ocr-config`, {
+    method: 'PUT',
+    body: JSON.stringify(dto),
+    suppressErrorToast: true,
+  });
 }
 
 export async function getPlatformAiBudget(): Promise<PlatformAiBudgetDto> {

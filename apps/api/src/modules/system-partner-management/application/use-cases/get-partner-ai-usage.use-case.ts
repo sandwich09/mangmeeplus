@@ -1,7 +1,8 @@
-import { Injectable } from '@nestjs/common';
-import type { PartnerAiUsageDto, PartnerAiUsageMonthDto } from '@watchdog-bms/contracts';
+import { Injectable, NotFoundException } from '@nestjs/common';
+import type { PartnerAiUsageDto, PartnerAiUsageMonthDto, PartnerOcrUsageMonthDto } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
+import { Prisma } from '../../../../generated/prisma/client';
 import {
   bangkokMonthKey,
   previousBangkokMonthKey,
@@ -18,6 +19,18 @@ const MONTH_SELECT = {
   cacheWriteInputTokens: true,
 } as const;
 
+const OCR_SOURCE_ROUTES = ['receipt-ocr-web', 'receipt-ocr-line', 'bank-statement-extract'] as const;
+const RECEIPT_UPLOAD_PURPOSES = ['expense.receipt.primary', 'expense.receipt.supporting'] as const;
+
+function bangkokMonthRange(monthKey: string): { gte: Date; lt: Date } {
+  const [year, month] = monthKey.split('-').map(Number);
+  const bangkokOffsetMs = 7 * 60 * 60 * 1_000;
+  return {
+    gte: new Date(Date.UTC(year!, month! - 1, 1) - bangkokOffsetMs),
+    lt: new Date(Date.UTC(year!, month!, 1) - bangkokOffsetMs),
+  };
+}
+
 /** Read half of the partner-console AI meter (metering spec §7.7) — system-admin surface only. */
 @Injectable()
 export class GetPartnerAiUsageUseCase {
@@ -30,31 +43,72 @@ export class GetPartnerAiUsageUseCase {
     const monthKey = bangkokMonthKey();
     const previousMonthKey = previousBangkokMonthKey();
 
-    const [months, configuration, tagGroups, platform] = await Promise.all([
-      this.prisma.client.companyAiMonthlyUsage.findMany({
+    const reads = await this.prisma.client.$transaction(async (tx) => {
+      // Establish one MVCC snapshot before reading the event-derived breakdown. Without this,
+      // a concurrent admission can make aggregate.usedCount and sourceCounts describe different moments.
+      const ocrMonths = await tx.companyOcrMonthlyUsage.findMany({
+        where: { companyId, monthKey: { in: [monthKey, previousMonthKey] } },
+        select: { monthKey: true, usedCount: true },
+      });
+      const txPrisma = { client: tx } as PrismaService;
+      // PrismaPg uses one connection for an interactive transaction; keep these sequential so the
+      // adapter never receives overlapping client.query calls while preserving the same snapshot.
+      const company = await tx.company.findUnique({ where: { id: companyId }, select: { id: true } });
+      const months = await tx.companyAiMonthlyUsage.findMany({
         where: { companyId, monthKey: { in: [monthKey, previousMonthKey] } },
         select: MONTH_SELECT,
-      }),
-      this.prisma.client.companyAiConfiguration.findUnique({
+      });
+      const configuration = await tx.companyAiConfiguration.findUnique({
         where: { companyId },
-        select: { monthlyBudgetSatang: true },
-      }),
-      this.prisma.client.aiUsageEvent.groupBy({
+        select: {
+          monthlyBudgetSatang: true,
+          ocrEnabled: true,
+          ocrMonthlyLimit: true,
+          ocrConfigVersion: true,
+          updatedAt: true,
+        },
+      });
+      const tagGroups = await tx.aiUsageEvent.groupBy({
         by: ['usageTag'],
         where: { companyId, monthKey },
         _sum: { costSatang: true },
         _count: { _all: true },
         orderBy: { _sum: { costSatang: 'desc' } },
         take: 10,
-      }),
+      });
       // The console must quote what a company actually inherits, which is the platform settings
       // row when one exists — the same value the five enforcement seams compare against.
-      resolvePlatformAiBudget(this.prisma, this.config),
-    ]);
+      const platform = await resolvePlatformAiBudget(txPrisma, this.config);
+      const ocrSources = await tx.companyOcrUsageEvent.groupBy({
+        by: ['monthKey', 'sourceRoute'],
+        where: { companyId, monthKey: { in: [monthKey, previousMonthKey] } },
+        _count: { _all: true },
+      });
+      const currentUploads = await this.countUploadedReceipts(tx, companyId, monthKey);
+      const previousUploads = await this.countUploadedReceipts(tx, companyId, previousMonthKey);
+      return { company, months, configuration, tagGroups, platform, ocrMonths, ocrSources, currentUploads, previousUploads };
+    }, {
+      isolationLevel: 'RepeatableRead',
+      maxWait: 5_000,
+      timeout: 15_000,
+    });
+
+    const { company, months, configuration, tagGroups, platform, ocrMonths, ocrSources, currentUploads, previousUploads } = reads;
+
+    if (!company) throw new NotFoundException(`Partner company "${companyId}" not found.`);
 
     const overrideSatang = configuration?.monthlyBudgetSatang ?? null;
     const defaultSatang = platform.monthlyBudgetSatang;
     const month = (key: string): PartnerAiUsageMonthDto | null => months.find((m) => m.monthKey === key) ?? null;
+    const ocrMonth = (key: string, uploadedReceiptDocumentCount: number): PartnerOcrUsageMonthDto => ({
+      monthKey: key,
+      usedCount: ocrMonths.find((item) => item.monthKey === key)?.usedCount ?? 0,
+      uploadedReceiptDocumentCount,
+      sourceCounts: OCR_SOURCE_ROUTES.map((sourceRoute) => ({
+        sourceRoute,
+        reads: ocrSources.find((item) => item.monthKey === key && item.sourceRoute === sourceRoute)?._count._all ?? 0,
+      })),
+    });
 
     return {
       current: month(monthKey),
@@ -70,6 +124,34 @@ export class GetPartnerAiUsageUseCase {
         costSatang: group._sum.costSatang ?? 0,
         calls: group._count._all,
       })),
+      ocr: {
+        config: {
+          enabled: configuration?.ocrEnabled ?? true,
+          monthlyLimit: configuration?.ocrMonthlyLimit ?? null,
+          version: configuration?.ocrConfigVersion ?? 0,
+          updatedAt: configuration?.updatedAt.toISOString() ?? null,
+        },
+        current: ocrMonth(monthKey, currentUploads),
+        previous: ocrMonth(previousMonthKey, previousUploads),
+      },
     };
+  }
+
+  private countUploadedReceipts(tx: Prisma.TransactionClient, companyId: string, monthKey: string): Promise<number> {
+    const uploadedAt = bangkokMonthRange(monthKey);
+    return tx.attachmentObject.count({
+      where: {
+        companyId,
+        status: 'ACTIVE',
+        uploadedAt,
+        links: {
+          some: {
+            companyId,
+            targetType: 'expense.record',
+            purpose: { in: [...RECEIPT_UPLOAD_PURPOSES] },
+          },
+        },
+      },
+    });
   }
 }

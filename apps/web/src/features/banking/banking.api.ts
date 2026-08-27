@@ -36,9 +36,20 @@ export function listStatementImports(companyId: string, id: string) {
   return apiFetch<any>(`/companies/${companyId}/banking/bank-accounts/${id}/statement-imports`);
 }
 
-export function extractStatementFile(companyId: string, id: string, body: { fileBase64: string; mimeType: string; fileName: string }) {
+export function extractStatementFile(
+  companyId: string,
+  id: string,
+  body: { fileBase64: string; mimeType: string; fileName: string },
+  requestId = globalThis.crypto.randomUUID(),
+) {
+  // authedApiFetch may replay once after session/CSRF refresh. The same logical OCR action must
+  // keep one quota fence even when that transport recovery reaches the API twice.
   return withGenericUploadError(() =>
-    apiFetch<any>(`/companies/${companyId}/banking/bank-accounts/${id}/statement-imports/extract`, { method: 'POST', body: JSON.stringify(body) }),
+    apiFetch<any>(`/companies/${companyId}/banking/bank-accounts/${id}/statement-imports/extract`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+      headers: { 'X-Request-Id': requestId },
+    }),
   );
 }
 

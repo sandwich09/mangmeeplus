@@ -221,7 +221,7 @@ export class RequestReceiptExtractionUseCase {
     errorCode?: string,
   ): Promise<ExpenseExtractionResult> {
     await this.auditOutcome(ctx, expenseId, status, attachmentId, 0, undefined, modelLineage, errorCode);
-    return { status };
+    return { status, ...(errorCode ? { errorCode } : {}) };
   }
 
   private auditOutcome(
