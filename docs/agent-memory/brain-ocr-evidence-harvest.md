@@ -78,6 +78,14 @@ Decisions (Owner 2026-08-27 — ตอบ 4 ข้อของ strategy discussi
 - แก้ (branch codex/rapid-fire-fixes): (1) **สาขา**: `pickLineDefaultBranchId` (สาขาเดียว→ใช้เลย; หลายสาขา→HEAD_OFFICE ตัวเดียว; ไม่ได้→undefined) + query ก่อน initReceiptUpload + catch แยก TRANSACTION_BRANCH_* → `RECEIPT_BRANCH_REQUIRED_REPLY` (บอกไปเลือกสาขาบนเว็บ ไม่ชวน retry) (2) **คิว**: lease แยกเลน `chat`/`media` ต่อบริษัท (meter laneKey; overshoot งบสูงสุด ~฿2/เลน Owner รับ) + คำสั่งเมนู stateless ลัดคิวทันทีแม้ worker ไม่ว่าง (คำสั่ง /company ยังรักษาลำดับ) + `promotion` ข้าม legal preflight เหมือน contact/talk (3) **ข้อความซ้อน**: ตัด status bubble 5 วิของเทิร์นข้อความเมื่อ loading animation เปิด (ack รูป delay-0 คงเดิม; spec buffer อัปเดตเป็นสัญญาใหม่ 4 เคส)
 - ผลคาด: คุยระหว่างรูป = ตอบสดผ่านเลน chat ไม่ต้องรอ/ไม่ bounce; ปุ่มเมนูตอบทันทีเสมอ; ใบเสร็จบริษัทหลายสาขาบันทึกเข้า review ด้วยสำนักงานใหญ่; แชทรกน้อยลง
 
+## บิลน้ำมันอ่านไม่ได้ 23:04/23:07 → intake vision timeout (Owner สั่งแก้ 2026-08-27 ดึก)
+
+- อาการ: ส่งบิลน้ำมัน 2 ครั้ง ได้คำถามกลับว่ารูปอะไร; log: `line.intake-route` `PROVIDER_TIMEOUT` **15,011ms / 15,006ms** (`usageEstimated:true` → inputTokens 200000 เป็นค่าประมาณตอน timeout ไม่ใช่ token จริง) → route UNAVAILABLE → terminal `clarification_required`
+- Root cause: `line-ai-internal.controller.ts:125` สร้าง `IntentRouterAgent(createProvider(this.config))` **ไม่ override timeout** → ได้ `AI_TOOL_TIMEOUT_MS`=15s (งบแชท) ขณะที่ทุก document path ในไฟล์เดียวกัน (161/205/325) ใช้ `DOCUMENT_OCR_TIMEOUT_MS`=45s; intake ตอนนี้ทำ vision + fused-plan prompt ก้อนใหญ่ = document workload แต่ถูกจับเวลาแบบ chat
+- หลักฐานว่าเป็นปัญหาเชิงระบบ ไม่ใช่บิลน้ำมันใบเดียว: CHAGEE 21:32 = **15,003ms ok:true** (รอดหวุดหวิด), บิลน้ำมัน 15,011/15,006 = ตาย → รูปทุกใบเสี่ยง ~50/50
+- แก้ 2 จุดคู่กัน (PR #314): gateway = attachment → `DOCUMENT_OCR_TIMEOUT_MS` (text-only คงงบแชท 15s ไม่ทำให้แชทช้าลง); api = `LINE_INTAKE_MEDIA_TIMEOUT_MS` 55s เฉพาะ media path (เดิม 30s จะตัดก่อน gateway 45s ทำให้ fix ฝั่ง gateway ไร้ผล)
+- Verify: gateway suite **990/990**, api client/webhook/dispatch เขียว, typecheck ทั้ง 2 app สะอาด; เทสใหม่ 2 เคสใช้ fake timers พิสูจน์ทั้งสองทิศ (มีรูป: ไม่ตายที่ 15.1s แต่ตายในงบ 45s; ข้อความล้วน: ยังตายที่ 15s)
+
 ## Rich menu v2 ver2 + capability fix (Owner สั่งพร้อมภาพดีไซน์ 2026-08-27 ค่ำ)
 
 - Owner ส่งดีไซน์ 2 ภาพ: rich menu 6 ช่อง (Promotion แทน เริ่มต้นใช้งานฟรี) + โปสเตอร์แพ็กเกจ 4 tier; สั่ง (1) คำตอบ "ทำอะไรได้บ้าง" ห้ามโฆษณาของที่ใช้ไม่ได้ (2) ปุ่มถ่ายใบเสร็จเข้ากล้องตรง ไม่ถาม แนบ/กล้อง/กลับ (3) เปลี่ยน rich menu (4) ช่อง Promotion ขึ้นโปสเตอร์

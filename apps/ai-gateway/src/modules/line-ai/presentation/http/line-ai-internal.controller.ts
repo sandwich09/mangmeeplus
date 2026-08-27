@@ -122,7 +122,17 @@ export class LineAiInternalController {
     // routeIntake (defense in depth). No caller can flip on the fused/substitute sections without one.
     body.capabilities = asIntakeRouterCapabilities(body.capabilities);
 
-    const router = new IntentRouterAgent(createProvider(this.config));
+    // UAT 2026-08-27: an intake carrying an image is a DOCUMENT workload — the model reads the
+    // photo on top of the fused-plan prompt — but this route was still built on the chat/tool
+    // budget (AI_TOOL_TIMEOUT_MS, 15s on UAT). Real receipts landed at 15.00s either side of that
+    // line: a milk-tea bill scraped through at 15,003ms while two fuel bills were aborted at
+    // 15,011ms and 15,006ms and came back as "what is this picture?". Attachments now get the same
+    // document budget every other reader in this file uses; text-only intake keeps the chat budget
+    // so ordinary chat latency is untouched.
+    const hasAttachment = (body.attachments?.length ?? 0) > 0;
+    const router = new IntentRouterAgent(
+      createProvider(this.config, hasAttachment ? { timeoutMs: DOCUMENT_OCR_TIMEOUT_MS } : undefined),
+    );
     const plan = await router.routeIntake(body);
     this.logger.log({ msg: 'LINE intake routed', requestId: body.requestId, status: plan.status, intent: plan.intent, confidence: plan.confidence });
     return plan;
