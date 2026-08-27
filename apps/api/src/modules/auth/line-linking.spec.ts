@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { LinkLineIdentityUseCase } from './application/use-cases/link-line-identity.use-case';
 import { UnlinkLineIdentityUseCase } from './application/use-cases/unlink-line-identity.use-case';
 import { LineChannelBindingService } from './application/line-channel-binding.service';
@@ -17,7 +17,7 @@ describe('LinkLineIdentityUseCase', () => {
     const prisma = {
       client: {
         externalIdentity: {
-          findFirst: async () => ({ id: 'ei-1', userId: 'user-1', status: 'ACTIVE' }),
+          findFirst: async () => ({ id: 'ei-1', userId: 'user-1', status: 'ACTIVE', providerChannelId: 'msg-ch-1' }),
         },
         companyMembership: { findMany: async () => [ownerMembership()] },
         lineCompanyContext: { upsert: async () => {} },
@@ -33,7 +33,7 @@ describe('LinkLineIdentityUseCase', () => {
     const prisma = {
       client: {
         externalIdentity: {
-          findFirst: async () => ({ id: 'ei-1', userId: 'other-user', status: 'ACTIVE' }),
+          findFirst: async () => ({ id: 'ei-1', userId: 'other-user', status: 'ACTIVE', providerChannelId: 'msg-ch-1' }),
         },
         companyMembership: { findMany: async () => [ownerMembership()] },
       },
@@ -78,7 +78,7 @@ describe('LinkLineIdentityUseCase', () => {
     const prisma = {
       client: {
         externalIdentity: {
-          findFirst: async () => ({ id: 'ei-1', userId: 'user-1', status: 'ACTIVE' }),
+          findFirst: async () => ({ id: 'ei-1', userId: 'user-1', status: 'ACTIVE', providerChannelId: 'msg-ch-1' }),
         },
         companyMembership: { findMany: async () => [ownerMembership('co-1')] },
         lineCompanyContext: { upsert: async (args: unknown) => { upserted.push(args); return {}; } },
@@ -169,6 +169,60 @@ describe('LinkLineIdentityUseCase', () => {
     await assert.rejects(
       () => uc.execute({ userId: 'user-1', idToken: 'tok', requestId: 'req-1', companyId: 'co-2' }),
       (err: unknown) => { assert.ok(err instanceof ForbiddenException); return true; },
+    );
+  });
+
+  it('prefers the canonical-channel row when looking up an existing identity', async () => {
+    const wheres: any[] = [];
+    const prisma = {
+      client: {
+        externalIdentity: {
+          findFirst: async (args: any) => {
+            wheres.push(args.where);
+            return { id: 'ei-1', userId: 'user-1', status: 'ACTIVE', providerChannelId: 'msg-ch-1' };
+          },
+        },
+        companyMembership: { findMany: async () => [ownerMembership()] },
+        lineCompanyContext: { upsert: async () => {} },
+      },
+    } as any;
+    const uc = new LinkLineIdentityUseCase(lineVerifier, prisma, config);
+    const result = await uc.execute({ userId: 'user-1', idToken: 'tok', requestId: 'req-1' });
+    assert.equal(result.linked, true);
+    assert.equal(wheres.length, 1);
+    assert.equal(wheres[0].providerChannelId, 'msg-ch-1');
+  });
+
+  it('falls back to a legacy-channel row and reactivates it in place', async () => {
+    const updates: any[] = [];
+    const prisma = {
+      client: {
+        externalIdentity: {
+          findFirst: async (args: any) =>
+            args.where.providerChannelId
+              ? null
+              : { id: 'ei-legacy', userId: 'user-1', status: 'UNLINKED', providerChannelId: 'legacy-ch' },
+          update: async (args: any) => { updates.push(args); return {}; },
+        },
+        companyMembership: { findMany: async () => [ownerMembership()] },
+        lineCompanyContext: { upsert: async () => {} },
+      },
+    } as any;
+    const uc = new LinkLineIdentityUseCase(lineVerifier, prisma, config);
+    const result = await uc.execute({ userId: 'user-1', idToken: 'tok', requestId: 'req-1' });
+    assert.equal(result.linked, true);
+    assert.equal(updates.length, 1);
+    assert.equal(updates[0].where.id, 'ei-legacy');
+    assert.equal(updates[0].data.status, 'ACTIVE');
+  });
+
+  it('fails closed in production when no LINE channel is configured', async () => {
+    const prisma = { client: { externalIdentity: { findFirst: async () => null } } } as any;
+    const prodConfig = { lineMessagingChannelId: undefined, lineLoginChannelId: undefined, isProduction: true } as any;
+    const uc = new LinkLineIdentityUseCase(lineVerifier, prisma, prodConfig);
+    await assert.rejects(
+      () => uc.execute({ userId: 'user-1', idToken: 'tok', requestId: 'req-1' }),
+      (err: unknown) => { assert.ok(err instanceof ServiceUnavailableException); return true; },
     );
   });
 });

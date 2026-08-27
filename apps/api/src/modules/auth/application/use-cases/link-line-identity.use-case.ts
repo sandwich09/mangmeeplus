@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException, Inject, Injectable, Optional } from '@nestjs/common';
+import { ConflictException, ForbiddenException, Inject, Injectable, Optional, ServiceUnavailableException } from '@nestjs/common';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { LineLoginVerifierAdapter } from '../../infrastructure/line-login-verifier.adapter';
@@ -31,15 +31,29 @@ export class LinkLineIdentityUseCase {
     const { userId, idToken, requestId, companyId, allowReassign = false } = input;
     const { subject: lineUserId } = await this.lineVerifier.verify(idToken);
     // Messaging user ids are channel-scoped; LINE Login channel only verifies identity.
-    const providerChannelId = this.config.lineMessagingChannelId ?? this.config.lineLoginChannelId ?? 'unknown';
+    const canonicalChannelId = this.config.lineMessagingChannelId ?? this.config.lineLoginChannelId;
+    if (!canonicalChannelId && this.config.isProduction) {
+      // P12.1: production must not create or resolve 'unknown'-channel identities.
+      throw new ServiceUnavailableException('LINE channel configuration is missing.');
+    }
+    // ponytail: 'unknown' survives for local/dev only; production fails closed above
+    const providerChannelId = canonicalChannelId ?? 'unknown';
     const resolvedCompanyId = await this.resolveCompanyId(userId, companyId);
 
     // Match regardless of status: an UNLINKED row still owns the unique
     // (provider, channel, providerUserId) slot, so it must be reactivated in
-    // place — a create here would blow up on the unique constraint.
-    const existing = await this.prisma.client.externalIdentity.findFirst({
-      where: { provider: 'LINE', providerUserId: lineUserId },
-    });
+    // place — a create here would blow up on the unique constraint. Prefer the
+    // canonical-channel row (P12.1); fall back to legacy-channel rows with a
+    // warn until the migration backfill lands.
+    const matchAnyStatus = { provider: 'LINE' as const, providerUserId: lineUserId };
+    const existing =
+      (await this.prisma.client.externalIdentity.findFirst({
+        where: { ...matchAnyStatus, providerChannelId },
+      })) ??
+      (await this.prisma.client.externalIdentity.findFirst({ where: matchAnyStatus }));
+    if (existing && existing.providerChannelId !== providerChannelId) {
+      console.warn(`[line-link] line_identity_legacy_channel_row identityId=${existing.id}`);
+    }
 
     if (existing?.status === 'ACTIVE') {
       if (existing.userId !== userId) {
