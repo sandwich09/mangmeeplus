@@ -38,9 +38,11 @@ const AppHeader: React.FC<Props> = ({
         {/* Left: hamburger + company name */}
         <div className="flex min-w-0 flex-1 items-center gap-3">
           <button
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-gray-200 text-gray-600 hover:border-brand-200 hover:bg-brand-25 sm:h-10 sm:w-10 lg:hidden"
+            type="button"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-gray-200 text-gray-600 hover:border-brand-200 hover:bg-brand-25 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 lg:hidden"
             onClick={handleToggle}
             aria-label={t('shell.toggle_sidebar', locale)}
+            aria-expanded={isMobileOpen}
           >
             {isMobileOpen ? (
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">

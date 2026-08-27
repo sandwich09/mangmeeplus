@@ -244,6 +244,7 @@ Spec: [P24](../specs/mangmee-growth-ux-full-pass-spec-th.md).
 - P24-0: instrument signup→claim→activated funnel ตาม P9; server-backed checklist derived from facts; campaign attribution bounded/redacted.
 - P24-1: role-based ordering + opt-in user/company preference; permissions/entitlements remain authoritative; delete/export tests.
 - P24-2: device matrix + F-LED-7 audit ทุก customer page, including P27/P28 surfaces; run automated responsive then real iOS/Android/iPad/desktop evidence.
+  - P24-2a (local verified; PR/CI pending): [shared-shell targets](../specs/mangmee-growth-ux-full-pass-spec-th.md#231-p24-2a--shared-shell-targets-scoped-desktop-visible-correction) เฉพาะสามปุ่ม toggle/bell; 44px + forced-colors focus, คง semantics/guards. Repo E2E16/16, drawer/popover3/3, sidebar5/5 และ real Chrome screenshots ผ่าน. Intentional `[desktop-visible]` exception จำกัดสามปุ่ม; ไม่ปิด full P24/physical-device matrix. หลักฐาน/งานค้างอยู่ใน [task memory](../agent-memory/p24-shared-shell-touch-targets.md).
 
 P24 ไม่กำหนด/บังคับราคา subscription quota หรือ trial expiry; controlled cohort ใช้ existing allowlist/entitlement. Activation-rate target กำหนดหลัง baseline และไม่ block instrumentation/UX fixes.
 

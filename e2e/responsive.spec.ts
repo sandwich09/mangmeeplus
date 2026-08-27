@@ -168,6 +168,109 @@ if (viewportOverride) {
   test.use({ viewport: { width: Number(viewportOverride[1]), height: Number(viewportOverride[2]) } });
 }
 
+// P24-2a deliberately covers desktop too; the legacy mobile-only describe below must not skip it.
+test.describe('P24-2a shared-shell targets', () => {
+  for (const width of [360, 640, 768, 1023, 1024, 1280]) {
+    test(`${width}px — 44px controls keep pointer and keyboard behavior`, async ({ authedPage, companyId }) => {
+      await authedPage.setViewportSize({ width, height: 900 });
+      await gotoAndSettle(authedPage, companyId, '/dashboard');
+      const originalUrl = authedPage.url();
+      const drawer = authedPage.locator('aside').first();
+      const compact = width < 1024;
+      const toggle = authedPage.locator(compact ? 'header' : 'aside').getByRole('button', { name: 'สลับเมนู', exact: true });
+      const bell = authedPage.getByRole('button', { name: 'การแจ้งเตือน', exact: true });
+
+      // Each fixture has a fresh page/context; also prove the initial desktop state in rendered pixels.
+      if (!compact) await expect.poll(async () => Math.round((await drawer.boundingBox())?.width ?? 0)).toBe(289);
+
+      for (const [label, control] of [['menu toggle', toggle], ['notification bell', bell]] as const) {
+        await expect(control, `${label} must exist before measuring`).toHaveCount(1);
+        await expect(control).toBeVisible();
+        const box = await control.boundingBox();
+        expect(box?.width ?? 0, `${label} width at ${width}px`).toBeGreaterThanOrEqual(44);
+        expect(box?.height ?? 0, `${label} height at ${width}px`).toBeGreaterThanOrEqual(44);
+        await expectInViewport(control, label);
+      }
+
+      const dimensions = await authedPage.evaluate(() => ({
+        scrollWidth: document.scrollingElement?.scrollWidth ?? 0,
+        viewportWidth: document.documentElement.clientWidth,
+      }));
+      expect(dimensions.scrollWidth, 'expanded shell controls must not cause page overflow').toBeLessThanOrEqual(dimensions.viewportWidth + 1);
+
+      await bell.click();
+      await expect(bell).toHaveAttribute('aria-expanded', 'true');
+      const panel = bell.locator('..').locator('div.fixed');
+      await expect(panel).toBeVisible();
+      await expectInViewport(panel, 'notification panel');
+      await authedPage.keyboard.press('Escape');
+      await expect(bell).toHaveAttribute('aria-expanded', 'false');
+      await bell.press('Enter');
+      await expect(bell).toBeFocused();
+      await expect(bell).toHaveAttribute('aria-expanded', 'true');
+      expect(await bell.evaluate((node) => window.getComputedStyle(node).boxShadow), 'keyboard focus stays visible').not.toBe('none');
+      await authedPage.keyboard.press('Escape');
+      await expect(bell).toHaveAttribute('aria-expanded', 'false');
+
+      await toggle.click();
+      if (compact) {
+        await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+        await expect(drawer).toHaveClass(/(?:^|\s)translate-x-0(?:\s|$)/);
+        await authedPage.keyboard.press('Escape');
+        await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+        await toggle.press('Enter');
+        await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+        await expect(toggle).toBeFocused();
+        await authedPage.keyboard.press('Escape');
+        await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+        await expect(drawer).toHaveClass(/(?:^|\s)-translate-x-full(?:\s|$)/);
+        await expect(drawer).toBeHidden();
+      } else {
+        // Existing desktop collapse removes its trigger; restoring that focus is a separate P24 gap.
+        // The desktop shell expands on hover: move off it before asserting the collapsed state.
+        const pageHeading = authedPage.getByRole('heading', { level: 1 });
+        await pageHeading.hover();
+        await expect.poll(async () => Math.round((await drawer.boundingBox())?.width ?? 0)).toBe(86);
+        if (await authedPage.evaluate(() => window.matchMedia('(hover: hover)').matches)) {
+          await drawer.hover();
+          await expect.poll(async () => Math.round((await drawer.boundingBox())?.width ?? 0)).toBe(289);
+          await pageHeading.hover();
+          await expect.poll(async () => Math.round((await drawer.boundingBox())?.width ?? 0)).toBe(86);
+        }
+      }
+
+      await expect(authedPage).toHaveURL(originalUrl);
+      await expectNoClientError(authedPage);
+    });
+  }
+
+  for (const width of [390, 1280]) {
+    test(`${width}px — forced colors preserve keyboard focus outlines`, async ({ authedPage, companyId, browserName }) => {
+      test.skip(browserName !== 'chromium', 'Windows-style forced-colors is verified with Chromium emulation.');
+      await authedPage.setViewportSize({ width, height: 900 });
+      await authedPage.emulateMedia({ forcedColors: 'active' });
+      await gotoAndSettle(authedPage, companyId, '/dashboard');
+      expect(await authedPage.evaluate(() => window.matchMedia('(forced-colors: active)').matches)).toBe(true);
+      await authedPage.keyboard.press('Tab');
+      const toggle = authedPage.locator(width < 1024 ? 'header' : 'aside').getByRole('button', { name: 'สลับเมนู', exact: true });
+      const bell = authedPage.getByRole('button', { name: 'การแจ้งเตือน', exact: true });
+      for (const control of [toggle, bell]) {
+        await expect(control).toBeVisible();
+        await control.focus();
+        await expect(control).toBeFocused();
+        const outline = await control.evaluate((node) => {
+          const style = window.getComputedStyle(node);
+          return { style: style.outlineStyle, width: style.outlineWidth, color: style.outlineColor };
+        });
+        expect(outline.style).not.toBe('none');
+        expect(parseFloat(outline.width)).toBeGreaterThanOrEqual(2);
+        expect(outline.color).not.toBe('rgba(0, 0, 0, 0)');
+      }
+      await expectNoClientError(authedPage);
+    });
+  }
+});
+
 test.describe('Mobile responsive invariants', () => {
   test.beforeEach(async ({ isMobile }) => {
     test.skip(!isMobile, 'Responsive invariants run only in mobile-chromium.');

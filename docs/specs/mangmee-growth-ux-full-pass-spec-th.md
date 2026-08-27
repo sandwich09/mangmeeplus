@@ -34,6 +34,15 @@
 - Audit อัตโนมัติ: font ≥16px เนื้อหา, touch target ≥44px, contrast ผ่าน — เพิ่มเข้า checklist E2E responsive ที่มีอยู่ ไม่สร้างเครื่องมือใหม่
 - ทุกหน้าที่ fail = issue พร้อม severity เข้าคิวแก้ก่อนเปิดวงถัดไป (เกณฑ์เดียวกับ Gate E)
 
+### 2.3.1 P24-2a — Shared-shell targets (scoped desktop-visible correction)
+
+- Scope เฉพาะปุ่มสลับเมนูใน header/sidebar และ notification bell ของ company shell เดิม: ทุกปุ่มที่แสดงต้องมีพื้นที่กดอย่างน้อย 44×44 CSS px ทุก breakpoint.
+- Baseline `32343c1d`: desktop sidebar toggle 32×32, bell ตั้งแต่ `sm` 36×36, header toggle ที่ 640–1023px 40×40; มือถือเล็กมี 44×44 แล้ว. ลบเฉพาะ responsive downsizing และ reuse brand focus-ring convention; ใช้ `outline-hidden` ของ Tailwind 4 เพื่อคง outline ใน forced-colors ตาม [official migration guide](https://tailwindcss.com/docs/upgrade-guide#renamed-outline-utility). ไม่เปลี่ยน handler, route, permission/entitlement หรือ notification mutation.
+- `[desktop-visible]` เป็นข้อยกเว้นเฉพาะสามปุ่มนี้ต่อ desktop pixel-parity (D2/D11) ของ mobile-first spec เดิม ตาม P24 §2.3; ขนาด icon, layout breakpoint และพฤติกรรมเมนูคงเดิม.
+- เพิ่ม assertion ใน `e2e/responsive.spec.ts` เดิมนอก mobile-only describe: พบ control จริงก่อนวัด, 44×44, mobile/tablet/desktop, no horizontal overflow, เปิดด้วย pointer/keyboard และปิด popup/drawer ด้วย Escape โดยไม่เปลี่ยน URL.
+- Desktop collapse/hover ต้องตรวจ rendered width พร้อม initial-state precondition ไม่อาศัย substring ของ CSS class; test fixture สร้าง context/page ใหม่ต่อ test. Chromium forced-colors emulation ต้องพิสูจน์ outline ยังมองเห็นได้ของทั้งสาม control ที่ 390/1280px (ไม่อ้างว่าเป็นการทดสอบ Windows จริง).
+- Phase นี้ไม่รับรอง full P24/device matrix หรือแก้ keyboard focus restoration เดิม; company/branch selectors, ปุ่มภายใน notification panel และหน้าลูกค้าอื่นยังอยู่ใน P24-2 ที่เหลือ. Repo E2E และ real Chrome evidence ต้องผ่านก่อนส่งมอบ.
+
 ## 3. Acceptance
 
 1. ผู้ใช้ใหม่จากสมัครเอง → activated โดยไม่มีมนุษย์ช่วย ≥ เป้าที่ Owner ตั้งต่อ cohort (ตัวเลขตั้งหลังมี baseline — ห้ามตั้งจากความรู้สึก)
