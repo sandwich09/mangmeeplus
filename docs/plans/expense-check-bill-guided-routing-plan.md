@@ -14,7 +14,21 @@
 
 ## Current Delivery Slice — Full Web + API + LINE
 
-Status: core implementation and mobile/LINE low-confidence UX hardening complete locally on 2026-08-25; not committed or pushed.
+Status: core delivered via PR #228; 2026-08-27 recovery completion follows the bounded checklist below.
+
+### Recovery completion checklist (2026-08-27)
+
+- [x] Inspect current develop and confirm the post-override inline dead end, uncoded failures, ambiguous copy and permissive-CASH check-bill proof gap.
+- [x] Confirm owner direction: same expense/provenance; separate real payment proof for check bills only; no historical rewrite or live mutation.
+- [x] Route all new preparation to the canonical wizard; preserve PREPARED edit/history/sign/approve and genuine misclassification/final receipt paths.
+- [x] Make check-bill picker/deep-link/reload behavior consistent with API routing; never infer tax validity from a route or override.
+- [x] Share the authoritative check-bill payment-proof predicate across API, wizard/inline edit and LINE readiness. Reject source/self, cross-purpose, inactive, unlinked and foreign evidence.
+- [x] Return stable known eligibility/evidence codes and actionable UI copy; retain safe unknown fallback.
+- [ ] Verify focused API/web/contracts, guards/atomicity, browser mobile/desktop, and current develop integration; record evidence in `docs/agent-memory/check-bill-recovery-completion.md`.
+
+This completion supersedes references below to preserving the cash-policy exception for check
+bills. Other cash expenses and issued historical certificates are unchanged. Deployment is outside
+this delivery; old rollout checkboxes are not acceptance for a source-only integration.
 
 - [x] Open unresolved check bills directly on the evidence step.
 - [x] Explain in plain Thai that the document proves an amount due, not payment.
@@ -187,7 +201,7 @@ Freeze the current behavior and owner decisions before code changes.
   - preserve the original attachment/classification;
   - no schema migration;
   - web-owned resolution and canonical wizard;
-  - current cash-evidence policy remains unchanged.
+  - ordinary cash policy remains unchanged; check bills require separate actual payment proof (2026-08-27 owner direction).
 - [ ] Add/update task memory with baseline commands and evidence.
 
 ### Tests

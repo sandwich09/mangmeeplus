@@ -22,7 +22,7 @@ import {
 import {
   EXPENSE_VAT_MODE_LABELS, CAPTURE_SOURCE_LABELS, PAYMENT_METHOD_LABELS,
   SOURCE_DOCUMENT_TYPE_LABELS, TAX_EVIDENCE_STATUS_LABELS, buildExpenseDraftReviewPayload,
-  canShowInlineSubstitutePreparation, deriveExpenseClassificationReviewState, hasAiGrandTotalMismatch, hasUnresolvedDuplicateWarning,
+  canShowInlineSubstitutePreparation, substituteReceiptPreparationHref, deriveExpenseClassificationReviewState, hasAiGrandTotalMismatch, hasUnresolvedDuplicateWarning,
   findOpaqueBounds, removeLightBackground, allowsDomesticInputTaxCode, clearExpenseTaxSelections,
   TAX_EVIDENCE_REASON_LABELS, AI_SUMMARY_STATUS_LABELS, AI_MISSING_FIELD_LABELS,
   ATTACHMENT_PURPOSE_LABELS, MIME_TYPE_LABELS, SUBSTITUTE_RECEIPT_STATUS_LABELS, expenseValueLabel,
@@ -39,7 +39,7 @@ import {
 export { reviewValues } from './expenses.model';
 import type { AiReviewField, ExpenseAiSuggestion, ExpenseSummary, ExpenseDetail, ExpenseDraftReviewValues, ExpenseCategorySummary, ExpenseReviewStepKey, ExpenseCapabilities, ExpensesTab, ManualExpenseItem } from './expenses.model';
 import type { BusinessDocumentClassification, BuyerEntityKind, ExpenseExtractionResult, ExpenseLineVatTreatment, ExpenseVatSourceOverrideInput, ExpenseWhtInput, SubstituteReceiptEvidenceSummary, SubstituteReceiptRuntimePolicy } from '@watchdog-bms/contracts';
-import { expenseVatReconciliationMessage, isBlockingExpenseVatReconciliation } from '@watchdog-bms/contracts';
+import { expenseVatReconciliationMessage, isBlockingExpenseVatReconciliation, isCheckBillClassification, substituteReceiptRequiresPaymentEvidence } from '@watchdog-bms/contracts';
 import { CategoryManagePanel, SignaturePanel, SignatureThumb, EvidencePanel, IconBtn } from './ExpensesWorkspacePanels';
 import { useBranchFilter } from '../web-core-workspace/WorkspaceScope';
 import { TransactionBranchField, useTransactionCreateBranchId } from '../web-core-workspace/TransactionBranchField';
@@ -610,7 +610,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
       if (result === false) return;
       if (refresh) await onSaved();
       if (inline) setInfo(doneText); else toast.success(doneText);
-    } catch (e) { setError(err(e)); } finally { setBusy(false); }
+    } catch (e) { setError(err(e, locale)); } finally { setBusy(false); }
   };
   const isPreviewRequestCurrent = (requestId: number, requestScope: string) => (
     requestId === previewRequestRef.current && requestScope === previewScopeRef.current
@@ -735,7 +735,8 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
       paymentMethod: subPaymentMethod as NonNullable<ExpenseDetail['paymentMethod']>,
       idempotencyKey: `sub-${detail.id}-${detail.updatedAt}-v${detail.substituteReceiptEvidence?.version ?? 0}`.slice(0, 128),
       expectedExpenseUpdatedAt: detail.updatedAt,
-    });
+      ...(isCheckBillClassification(detail.aiVerificationSummaryJson) ? { routeCheckBill: true as const } : {}),
+    }, locale);
     setShowSub(false);
   };
   const uploadEvidence = async (purpose: 'expense.receipt.supporting' | 'expense.payment.evidence') => {
@@ -841,8 +842,9 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
       throw cause;
     }
   };
-  const requiresPaymentEvidence = subPaymentMethod !== 'CASH'
-    || substitutePolicy?.cashEvidencePolicy === 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE';
+  const requiresPaymentEvidence = substituteReceiptRequiresPaymentEvidence(
+    detail.aiVerificationSummaryJson, subPaymentMethod || null, substitutePolicy?.cashEvidencePolicy,
+  );
   // R9: a saved ACTIVE signature signs this certificate too; a freshly prepared file still wins.
   const signatureSource = resolveWizardSignatureSource({
     hasReusableSignature: substitutePolicy?.hasReusableSignature ?? false,
@@ -975,6 +977,14 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
         <div className="flex flex-wrap items-center gap-2">
           <button className={btnClass} disabled={busy || !dirty} onClick={() => run(saveDocumentReview, 'บันทึกการตรวจเอกสารเรียบร้อยแล้ว')}>{t('expenses.doc_review_save', locale)}</button>
           {classificationReviewState.showFinanceOverride && !checkBillBlocked && <button className={btnClass} disabled={busy || !canResolveClassification} onClick={() => run(overrideClassification, 'ยืนยันการจัดประเภทรายการเรียบร้อยแล้ว')}>{t('expenses.non_expense_override_action', locale)}</button>}
+          {!classificationBlocked && (!evidence || evidence.status === 'SUPERSEDED') && (
+            <>
+              <Link className={ghostClass} href={substituteReceiptPreparationHref(companyId, detail.id, detail.aiVerificationSummaryJson)}>
+                {t('expenses.issue_substitute', locale)}
+              </Link>
+              {isCheckBillClassification(detail.aiVerificationSummaryJson) && <p className="text-sm text-gray-600">{t('expenses.check_bill_new_draft_note', locale)}</p>}
+            </>
+          )}
           {canShowInlineSubstitute && (
             <>
               <button className={ghostClass} disabled={busy} onClick={() => setShowSub((v) => !v)}>{evidence ? 'จัดทำ version แก้ไข' : t('expenses.issue_substitute', locale)}</button>

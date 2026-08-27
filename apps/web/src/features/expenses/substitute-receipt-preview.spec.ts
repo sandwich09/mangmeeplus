@@ -10,6 +10,21 @@ const reviewSource = readFileSync(join(featureDir, 'ExpenseReviewPage.tsx'), 'ut
 const wizardSource = readFileSync(join(featureDir, 'SubstituteReceiptWizardPage.tsx'), 'utf8');
 const legacyReviewSource = readFileSync(join(featureDir, 'ExpensesPages.tsx'), 'utf8');
 
+describe('check-bill canonical preparation wiring', () => {
+  it('derives the route from the selected server expense on deep link and reload, not URL or LINE flags', () => {
+    assert.match(wizardSource, /const checkBillRoute = isCheckBillClassification\(detail\?\.aiVerificationSummaryJson\)/);
+    assert.match(wizardSource, /checkBillRoute \? \{ routeCheckBill: true as const \}/);
+    assert.match(wizardSource, /!checkBillRoute && detail\.sourceDocumentType === 'NEEDS_REVIEW'/);
+    assert.match(wizardSource, /paymentCount: selectedPaymentCount/);
+    assert.match(wizardSource, /String\(selectedCount\)/, 'a stale selected id must not count as a ready evidence file');
+  });
+  it('uses canonical new preparation while retaining the PREPARED editing and signing path', () => {
+    assert.match(legacyReviewSource, /href=\{substituteReceiptPreparationHref\(companyId, detail\.id, detail\.aiVerificationSummaryJson\)\}/);
+    assert.match(legacyReviewSource, /showSub && isMutable && canReview && canShowInlineSubstitute/);
+    assert.match(legacyReviewSource, /isCheckBillClassification\(detail\.aiVerificationSummaryJson\) \? \{ routeCheckBill: true as const \}/);
+  });
+});
+
 function sourceSection(source: string, start: string, end: string): string {
   const startIndex = source.indexOf(start);
   const endIndex = source.indexOf(end, startIndex + start.length);

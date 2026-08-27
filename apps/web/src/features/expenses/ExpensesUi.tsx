@@ -10,7 +10,7 @@ import { formatThaiDate } from '@/common/i18n/thai-date';
 import { EXPENSE_STATUS_LABELS, EXPENSE_PAYMENT_STATUS_LABELS } from './expenses.model';
 
 /** Every expense banner goes through here, so API messages reach the user in Thai. */
-export function err(e: unknown) { return apiErrorMessage(e); }
+export function err(e: unknown, locale: 'th' | 'en' = 'th') { return apiErrorMessage(e, locale); }
 // OCR fields copy money exactly as printed on the bill, so a raw value can carry
 // thousand separators ("12,500") — Number() alone would render ฿NaN.
 const money = (v: string | number) => Number((typeof v === 'string' ? v.replace(/,/g, '') : v) || 0) || 0;

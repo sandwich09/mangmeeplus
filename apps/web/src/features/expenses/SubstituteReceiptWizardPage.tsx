@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import {
   SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS,
+  isCheckBillClassification,
+  substituteReceiptRequiresPaymentEvidence,
   type ExpensePaymentMethod,
   type LineSubstituteReceiptPrefill,
   type SubstituteReceiptEvidenceSummary,
@@ -490,7 +492,6 @@ export function SubstituteReceiptWizardPage({
   canSelfApprove,
   initialExpenseId,
   initialEntryMode,
-  routeCheckBill = false,
   workflowId,
   evidenceId,
 }: {
@@ -523,7 +524,8 @@ export function SubstituteReceiptWizardPage({
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [linePrefill, setLinePrefill] = useState<LineSubstituteReceiptPrefill | null>(null);
-  const checkBillRoute = routeCheckBill || linePrefill?.routeCheckBill === true;
+  // URL/LINE flags are navigation hints. Reloaded server classification decides the route.
+  const checkBillRoute = isCheckBillClassification(detail?.aiVerificationSummaryJson);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const [candidates, setCandidates] = useState<ExpenseDetail[]>([]);
@@ -672,6 +674,11 @@ export function SubstituteReceiptWizardPage({
   // W2: the prepare blockers that live on the expense itself. Evaluated as soon as an expense is
   // chosen so they are visible before anything is typed, not one per failed จัดทำเอกสาร.
   const expensePrerequisites = detail ? evaluateExpensePrerequisites(detail) : null;
+  const expenseIneligible = detail ? !isSubstituteReceiptCandidateOtherwiseEligible(detail) : false;
+  const selectedPaymentCount = detail?.attachments.filter((attachment) => paymentIds.includes(attachment.id)
+    && attachment.status === 'ACTIVE' && attachment.purpose === 'expense.payment.evidence'
+    && !detail.attachments.some((source) => source.id === attachment.id && source.purpose !== 'expense.payment.evidence')
+    && (attachment.mimeType.startsWith('image/') || attachment.mimeType === 'application/pdf')).length ?? 0;
   const selectedEvidenceAttachments = useMemo(() => {
     const selectedIds = new Set([...supportingIds, ...paymentIds]);
     return detail?.attachments.filter((attachment) => selectedIds.has(attachment.id)) ?? [];
@@ -720,6 +727,7 @@ export function SubstituteReceiptWizardPage({
   /** Last line of defence for the two expense-level blockers; the buttons are already gated on them,
    *  so reaching this means the expense changed under an open wizard. */
   const assertExpensePrerequisites = (target: ExpenseDetail) => {
+    if (!isSubstituteReceiptCandidateOtherwiseEligible(target)) throw new Error(t('expenses.substitute_wizard.expense_ineligible', locale));
     const issue = evaluateExpensePrerequisites(target).missing.find((candidate) => candidate !== 'renderability');
     if (issue) throw new Error(t(PREREQUISITE_KEYS[issue], locale));
   };
@@ -817,7 +825,8 @@ export function SubstituteReceiptWizardPage({
     listCandidateExpenses(companyId, branchId || undefined)
       .then(({ details, truncated }) => {
         if (cancelled) return;
-        const nextCandidates = details.filter((item) => expenseNeedsReceiptOrSubstitute(item)
+        const nextCandidates = details.filter((item) => (expenseNeedsReceiptOrSubstitute(item)
+          || (isCheckBillClassification(item.aiVerificationSummaryJson) && (!item.substituteReceiptEvidence || item.substituteReceiptEvidence.status === 'SUPERSEDED')))
           && isSubstituteReceiptCandidateOtherwiseEligible(item));
         setCandidates(nextCandidates);
         setEntryMode((current) => current ?? resolveWizardEntryMode({
@@ -918,7 +927,7 @@ export function SubstituteReceiptWizardPage({
     setBusy(true);
     setError(null);
     setInfo(null);
-    try { await action(); } catch (cause) { setError(err(cause)); } finally { busyRef.current = false; setBusy(false); }
+    try { await action(); } catch (cause) { setError(err(cause, locale)); } finally { busyRef.current = false; setBusy(false); }
   };
 
   const selectExpense = (nextDetail: ExpenseDetail, mode: WizardEntryMode = 'existing') => {
@@ -1106,8 +1115,7 @@ export function SubstituteReceiptWizardPage({
     });
   };
 
-  const requiresPaymentEvidence = paymentMethod !== 'CASH'
-    || policy?.cashEvidencePolicy === 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE';
+  const requiresPaymentEvidence = substituteReceiptRequiresPaymentEvidence(detail?.aiVerificationSummaryJson, paymentMethod, policy?.cashEvidencePolicy);
 
   const prepare = async () => {
     if (!detail) throw new Error(t('expenses.substitute_wizard.expense_required', locale));
@@ -1123,7 +1131,7 @@ export function SubstituteReceiptWizardPage({
     if (selectedEvidenceRenderabilityIssue) {
       throw new Error(evidenceRenderabilityIssueMessage(selectedEvidenceRenderabilityIssue, locale));
     }
-    if (requiresPaymentEvidence && paymentIds.length === 0) {
+    if (requiresPaymentEvidence && selectedPaymentCount === 0) {
       throw new Error(t('expenses.substitute_wizard.evidence_required', locale));
     }
     const result = await generateSubstituteReceipt(companyId, detail.id, {
@@ -1142,7 +1150,7 @@ export function SubstituteReceiptWizardPage({
       expectedExpenseUpdatedAt: detail.updatedAt,
       ...(checkBillRoute ? { routeCheckBill: true as const } : {}),
       ...(workflowId ? { continuationId: workflowId } : {}),
-    });
+    }, locale);
     setReceiptEvidence(result);
     setDetail((current) => current ? { ...current, substituteReceiptEvidence: result } : current);
     // The typed answers are now on the server: the local copy must not outlive them and rehydrate
@@ -1449,6 +1457,7 @@ export function SubstituteReceiptWizardPage({
   // One readiness list per step, and the same labels are what the blocked primary button names —
   // a section can no longer read "ครบแล้ว พร้อมไปต่อ" while the server is still going to refuse.
   const expenseStepReadinessItems = [
+    ...(expenseIneligible ? [{ label: t('expenses.substitute_wizard.expense_ineligible', locale), complete: false }] : []),
     { label: t('expenses.substitute_wizard.readiness_expense', locale), complete: !selectedExpenseRenderabilityIssue },
     { label: t('expenses.substitute_wizard.readiness_reviewed_amount', locale), complete: !expensePrerequisites?.missing.includes('reviewedAmount') },
     { label: t('expenses.substitute_wizard.readiness_reviewed_category', locale), complete: !expensePrerequisites?.missing.includes('reviewedCategory') },
@@ -1844,6 +1853,7 @@ export function SubstituteReceiptWizardPage({
             </div>
             {renderPrerequisiteCard()}
             <DetailSummary detail={detail} title={t('expenses.substitute_wizard.selected_expense', locale)} categories={categories} />
+            {checkBillRoute && <p className="rounded-xl bg-warning-50 p-3 text-sm leading-6 text-warning-800">{t('expenses.check_bill_new_draft_note', locale)}</p>}
             {selectedExpenseRenderabilityIssue && (
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warning-200 bg-warning-50 px-3 py-2">
                 <p className="text-xs font-semibold leading-5 text-warning-700">
@@ -2052,8 +2062,10 @@ export function SubstituteReceiptWizardPage({
   ) => {
     const attachments = detail?.attachments.filter((attachment) => attachment.status === 'ACTIVE'
       && (purpose === 'expense.payment.evidence'
-        ? attachment.purpose === purpose
+        ? attachment.purpose === purpose && !detail?.attachments.some((source) => source.id === attachment.id && source.purpose !== purpose)
+          && (attachment.mimeType.startsWith('image/') || attachment.mimeType === 'application/pdf')
         : attachment.purpose !== 'expense.payment.evidence' && attachment.purpose !== 'expense.review.evidence')) ?? [];
+    const selectedCount = attachments.filter((attachment) => ids.includes(attachment.id)).length;
     return (
       <MangmeeCard className={cx('space-y-4 p-5', required ? 'border-brand-100' : 'border-gray-200')}>
         <div className="flex items-start justify-between gap-3">
@@ -2061,9 +2073,9 @@ export function SubstituteReceiptWizardPage({
           <h2 className="font-bold text-gray-900">{t(titleKey, locale)}{required && <RequiredMark />}</h2>
           <p className="mt-1 text-sm text-gray-500">{t(helpKey, locale)}</p>
           </div>
-          <MangmeeBadge tone={ids.length > 0 ? 'brand' : required ? 'amber' : 'slate'}>
-            {ids.length > 0
-              ? t('expenses.substitute_wizard.file_count', locale).replace('{count}', String(ids.length))
+          <MangmeeBadge tone={selectedCount > 0 ? 'brand' : required ? 'amber' : 'slate'}>
+            {selectedCount > 0
+              ? t('expenses.substitute_wizard.file_count', locale).replace('{count}', String(selectedCount))
               : t(required ? 'expenses.substitute_wizard.required_badge' : 'expenses.substitute_wizard.optional_badge', locale)}
           </MangmeeBadge>
         </div>
@@ -2150,13 +2162,14 @@ export function SubstituteReceiptWizardPage({
 
   const evidenceReadiness = evaluateEvidenceReadiness({
     policyReady: Boolean(policy?.ready),
-    paymentCount: paymentIds.length,
+    paymentCount: selectedPaymentCount,
     requiresPaymentEvidence,
     renderabilityIssue: selectedEvidenceRenderabilityIssue,
   });
   // The expense-level blockers are repeated here because this is the step whose button calls the
   // endpoint that enforces them.
   const evidenceStepReadinessItems = [
+    ...(expenseIneligible ? [{ label: t('expenses.substitute_wizard.expense_ineligible', locale), complete: false }] : []),
     { label: t('expenses.substitute_wizard.readiness_reviewed_amount', locale), complete: !expensePrerequisites?.missing.includes('reviewedAmount') },
     { label: t('expenses.substitute_wizard.readiness_reviewed_category', locale), complete: !expensePrerequisites?.missing.includes('reviewedCategory') },
     { label: t('expenses.substitute_wizard.readiness_policy', locale), complete: !evidenceReadiness.missing.includes('policy') },
