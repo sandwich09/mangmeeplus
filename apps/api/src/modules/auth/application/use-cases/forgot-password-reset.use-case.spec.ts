@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ForbiddenException, HttpException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, HttpException, UnauthorizedException } from '@nestjs/common';
 import { hashPassword, verifyPassword } from '../../domain/logic/password-credential.logic';
 import { RequestPasswordResetUseCase } from './request-password-reset.use-case';
 import { ConfirmPasswordResetUseCase } from './confirm-password-reset.use-case';
@@ -259,7 +259,9 @@ describe('RequestEmailChangeUseCase', () => {
     assert.equal(calls.length, 2);
   });
 
-  it('rejects a wrong current password', async () => {
+  it('rejects a wrong current password without writes, email delivery or audit', async () => {
+    let sideEffects = 0;
+    const unexpected = async () => { sideEffects += 1; throw new Error('Unexpected side effect'); };
     const prisma = {
       client: {
         user: {
@@ -270,21 +272,48 @@ describe('RequestEmailChangeUseCase', () => {
               passwordHash: hashPassword('watchdog-old'),
             },
           }),
+          findFirst: unexpected,
         },
+        $transaction: unexpected,
       },
     } as any;
 
     await assert.rejects(
-      () => new RequestEmailChangeUseCase(prisma, { sendEmailVerification: async () => {}, sendPasswordResetLink: async () => {} } as any).execute({
+      () => new RequestEmailChangeUseCase(prisma, { sendEmailVerification: unexpected } as any, { log: unexpected } as any).execute({
         userId: 'user-1',
         currentPassword: 'wrong-password',
         newEmail: 'owner@example.com',
       }),
       (error: unknown) => {
-        assert.ok(error instanceof UnauthorizedException);
+        assert.ok(error instanceof BadRequestException);
+        assert.equal(error.getStatus(), 400);
+        assert.deepEqual(error.getResponse(), {
+          code: 'current_password_incorrect',
+          message: 'Current password is incorrect.',
+        });
         return true;
       },
     );
+    assert.equal(sideEffects, 0);
+  });
+
+  it('keeps missing users, missing credentials and disabled credentials unauthorized', async () => {
+    for (const user of [null, { credential: null }, {
+      credential: { status: 'DISABLED', passwordHash: hashPassword('synthetic-current-password') },
+    }]) {
+      let transactions = 0;
+      const prisma = { client: {
+        user: { findUnique: async () => user },
+        $transaction: async () => { transactions += 1; throw new Error('Unexpected mutation'); },
+      } } as any;
+      await assert.rejects(
+        new RequestEmailChangeUseCase(prisma, {} as any).execute({
+          userId: 'synthetic-user', currentPassword: 'synthetic-current-password', newEmail: 'new@example.test',
+        }),
+        (error: unknown) => error instanceof UnauthorizedException && error.getStatus() === 401,
+      );
+      assert.equal(transactions, 0);
+    }
   });
 });
 

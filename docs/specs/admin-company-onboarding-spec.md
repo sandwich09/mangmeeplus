@@ -306,6 +306,7 @@ Add or extend only if missing:
 - `POST /v1/auth/password/change`
   - Authenticated endpoint.
   - Required before business module access when `mustChangePassword=true`.
+  - Wrong current-password input returns 400 `current_password_incorrect`, distinct from session/authentication 401; see [current-password error feedback](current-password-error-feedback-spec.md).
 
 - Existing LINE account-link endpoints remain source for LINE identity linking.
 

@@ -375,6 +375,7 @@ export const workspaceDictionary = {
     'auth.change.home': 'กลับหน้าหลัก',
     'auth.change.cancel': 'ยกเลิกและออกจากระบบ',
     'auth.change.error.min': 'รหัสผ่านใหม่ต้องมีอย่างน้อย 8 ตัวอักษร',
+    'auth.change.error.current': 'รหัสผ่านปัจจุบันไม่ถูกต้อง',
     'auth.change.error.same': 'รหัสผ่านใหม่ต้องไม่ซ้ำกับรหัสผ่านเดิม',
     'auth.change.error.failed': 'ไม่สามารถเปลี่ยนรหัสผ่านได้ กรุณาลองอีกครั้ง',
     // Auth — verify email
@@ -1757,6 +1758,7 @@ export const workspaceDictionary = {
     'auth.change.home': 'Back to home',
     'auth.change.cancel': 'Cancel and sign out',
     'auth.change.error.min': 'New password must be at least 8 characters.',
+    'auth.change.error.current': 'Current password is incorrect.',
     'auth.change.error.same': 'Your new password must be different from your current one.',
     'auth.change.error.failed': 'Unable to change the password. Please try again.',
     // Auth — verify email
