@@ -65,6 +65,9 @@ for (const width of [390, 1280]) {
       await page.goto(`/companies/${COMPANY_ID}/dashboard`);
       await expect(page.getByRole('heading', { name: /สวัสดี/ })).toBeVisible();
       expect((await client.passwordResetToken.findUniqueOrThrow({ where: { id: token.id } })).status).toBe('PENDING');
+      if (!await page.getByRole('button', { name: /เมนูผู้ใช้|User Menu/ }).isVisible()) {
+        await page.getByRole('button', { name: 'สลับเมนู', exact: true }).click();
+      }
       await page.getByRole('button', { name: /เมนูผู้ใช้|User Menu/ }).click();
       await page.getByRole('button', { name: /ออกจากระบบ|Sign out/ }).click();
       await page.getByRole('dialog').getByRole('button', { name: /ออกจากระบบ|Sign out/ }).click();
@@ -88,12 +91,15 @@ for (const width of [390, 1280]) {
       await login('chosen-new-ui-password');
       await expect(page).toHaveURL(new RegExp(`/companies/${COMPANY_ID}/dashboard`));
       await expect(page.getByRole('heading', { name: /สวัสดี/ })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'เลือกสาขา', exact: true })).toBeVisible();
+      await expect(page.getByRole('link', { name: /ใบเสร็จรอตรวจ \(ทุกช่วงเวลา\)/ })).toBeVisible();
       await expectNoClientError(page);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await page.screenshot({ path: info.outputPath(`recovered-${width}.png`), fullPage: true });
       expect(errors).toEqual([]);
     } finally {
-      await client.legalDocumentActionRecord.deleteMany({ where: { acceptedByUserId: userId } });
+      // Legal acceptance is append-only even in this isolated clone. Retain its
+      // synthetic evidence; never disable the trigger merely to clean a fixture.
       await client.auditLog.deleteMany({ where: { actorUserId: userId } });
       await client.companyMembership.deleteMany({ where: { userId } });
       await client.user.deleteMany({ where: { id: userId } });

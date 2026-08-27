@@ -104,6 +104,29 @@ describe('NotifyPasswordResetRequestUseCase', () => {
     assert.equal(queried.where.username, 'owner.one');
   });
 
+  it('preserves the generic response without changing credentials for every ineligible account', async () => {
+    for (const options of [
+      { user: { ...ACTIVE_USER, status: 'SUSPENDED' } },
+      { user: { ...ACTIVE_USER, credential: null } },
+      { user: { ...ACTIVE_USER, credential: { ...ACTIVE_USER.credential, status: 'DISABLED' } } },
+      { membership: null },
+      { identity: null },
+    ]) {
+      const line = captureLinePush();
+      const { prisma, tokens } = makePrisma(options);
+      try {
+        assert.equal((await run(prisma)).result.message, GENERIC_MESSAGE);
+        await flushDetached();
+        assert.equal(tokens.length, 0);
+        assert.equal(line.pushes.length, 0);
+      } finally { line.restore(); }
+    }
+    const { prisma, tokens } = makePrisma({});
+    const { result } = await run(prisma, { passwordResetResponseMinMs: 0 } as any);
+    assert.equal(result.message, GENERIC_MESSAGE);
+    assert.equal(tokens.length, 0, 'a missing LINE channel must not create an unusable recovery token');
+  });
+
   it('sends one hash-backed recovery password to the exact linked user for owner or employee accounts', async () => {
     for (const username of ['owner.one', 'staff.one']) {
       const line = captureLinePush();

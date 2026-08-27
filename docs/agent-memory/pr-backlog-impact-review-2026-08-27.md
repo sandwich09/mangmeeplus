@@ -1,6 +1,6 @@
 # Agent Memory: PR backlog impact review 2026-08-27
 
-Status: IN PROGRESS
+Status: LOCAL VERIFIED — final exact-head CI/merge delivery record is PR #265
 Owner: Codex, at the product owner's request
 Scope: Review eight open PRs, repair verified regressions, merge safe changes into develop; retain current feature switches and local data. No main promotion, deployment, cloud calls, provider enablement, or subscription work.
 
@@ -29,9 +29,8 @@ Scope: Review eight open PRs, repair verified regressions, merge safe changes in
 - Red/green: registered lifecycle test failed before fix (`Missing expected rejection`), passed after fix.
 - Focused auth/reset/SES: 55 passed. Real PostgreSQL lifecycle/concurrency: 1 scenario passed, 0 skipped, against dedicated `watchdog_recovery_review_20260827` cloned read-only from original. Four concurrent requests leave one PENDING token; two concurrent claims yield exactly one success; old password and sessions remain valid until claim; self/admin changes, stale snapshot, closed platform and disabled credential fail safely; failed intercepted LINE delivery revokes its token. Synthetic rows are removed by exact IDs.
 - Current API card/category/accounting focused: 113 passed. AI composer/orchestrator: 118 passed. Runtime monitoring shell spec passed (no AWS calls).
-- Full API suite passed; full web suite 1,144 passed/0 skipped. API/web typechecks and builds passed. Browser regression and final exact-head CI still pending.
+- Full API suite passed; full web suite 1,144 passed/0 skipped. API/web typechecks and builds passed. Final focused auth coverage 56 passed. Combined real-browser suite 25/25 passed, 0 skipped/flaky (last run 23.1 seconds); Chrome request/back-to-login manually verified. Nine screenshots and scope limits are in [the evidence report](../evidence/pr-backlog-impact-review-2026-08-27/README.md).
+- UI harness corrections: open the mobile menu before logout; do not delete append-only legal evidence; wait for real branch/metric content before taking the final dashboard screenshots. No application guard was bypassed.
 
-- Compare scoped implementation patches and all newer safeguards, then close only proven-superseded PRs with replacement references (do not reintroduce old code merely to mark it merged).
-- Fix and test #265 in isolation, including actual PostgreSQL concurrency and browser recovery/ordinary-login journeys with synthetic data and intercepted LINE transport, not a real push.
-- Update PR heads without rewriting unrelated work; require successful exact-head CI before normal merge.
+- All six superseded PRs are closed with replacement evidence; #306 is merged. #265 source is updated and locally verified; require successful exact-head CI before normal merge. Final run ID/merge SHA are recorded in the PR delivery comment (the immutable source report cannot contain its own future CI result).
 - Historical 157 branchless expenses remain unmapped; no invented provenance. Real OCR/provider accuracy is outside this backlog proof.
