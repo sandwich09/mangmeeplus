@@ -77,6 +77,49 @@ describe('validateProductionConfig', () => {
     );
   });
 
+  it('parses explicit local-console email delivery locally and rejects it in production', () => {
+    assert.equal(apiConfigSchema.parse({
+      APP_ENV: 'local', SERVICE_NAME: 'api', DATABASE_URL: 'postgresql://local/test', S3_BUCKET: 'local-test',
+    }).EMAIL_PROVIDER, 'disabled');
+    assert.equal(apiConfigSchema.parse({
+      APP_ENV: 'local', SERVICE_NAME: 'api', DATABASE_URL: 'postgresql://local/test',
+      S3_BUCKET: 'local-test', EMAIL_PROVIDER: 'local-console',
+    }).EMAIL_PROVIDER, 'local-console');
+    assert.throws(
+      () => validateProductionConfig({ ...validProduction, EMAIL_PROVIDER: 'local-console' }),
+      /EMAIL_PROVIDER=local-console is allowed only when APP_ENV=local/,
+    );
+  });
+
+  it('requires the SES region and sender address when SES is enabled', () => {
+    assert.throws(
+      () => validateProductionConfig({ ...validProduction, EMAIL_PROVIDER: 'ses', SES_REGION: '', SES_FROM_ADDRESS: '' }),
+      /SES_REGION is required when EMAIL_PROVIDER=ses/,
+    );
+    assert.doesNotThrow(() => validateProductionConfig({
+      ...validProduction,
+      EMAIL_PROVIDER: 'ses',
+      SES_REGION: 'ap-southeast-1',
+      SES_FROM_ADDRESS: 'no-reply@example.com',
+    }));
+  });
+
+  it('requires an explicit SES frontend base even when the public API origin is configured', () => {
+    for (const WEB_BASE_URL of [undefined, '']) {
+      assert.throws(() => validateProductionConfig({
+        ...validProduction, EMAIL_PROVIDER: 'ses', SES_REGION: 'ap-southeast-1',
+        SES_FROM_ADDRESS: 'no-reply@example.com', WEB_BASE_URL,
+      }), /WEB_BASE_URL is required when EMAIL_PROVIDER=ses/);
+    }
+    assert.doesNotThrow(() => validateProductionConfig({
+      ...validProduction, EMAIL_PROVIDER: 'disabled', WEB_BASE_URL: undefined,
+    }));
+    assert.doesNotThrow(() => validateProductionConfig({
+      ...validProduction, EMAIL_PROVIDER: 'ses', SES_REGION: 'ap-southeast-1',
+      SES_FROM_ADDRESS: 'no-reply@example.com', WEB_BASE_URL: 'https://frontend.example.com',
+    }));
+  });
+
   it('rejects DEV_AUTH_ENABLED=true', () => {
     assert.throws(
       () => validateProductionConfig({ ...validProduction, DEV_AUTH_ENABLED: true }),

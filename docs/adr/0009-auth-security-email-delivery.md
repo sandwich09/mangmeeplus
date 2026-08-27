@@ -14,8 +14,8 @@ This decision is bigger than one feature: it introduces email as a new, first-cl
 
 Add AWS SES as the email provider, behind a provider port/adapter boundary, scoped narrowly to **auth-security transactional email only** (password-reset links, email-verification links, and later an optional "your password was changed" notice) — not a general-purpose notification, marketing, or reports email system.
 
-- `EMAIL_PROVIDER=disabled|ses` env var, defaulting to `disabled`, mirroring the existing `MODEL_PROVIDER=disabled|bedrock|openai` idiom already established for AI Gateway providers.
-- `disabled` is a true no-op in every environment; a separate local-dev-only console-log adapter (gated on `APP_ENV=local`, never reachable in staging/production) lets developers see the link without a real mailbox.
+- `EMAIL_PROVIDER=disabled|local-console|ses` env var, defaulting to `disabled`, mirroring the existing provider-selection idiom. `local-console` is rejected unless `APP_ENV=local`.
+- `disabled` is a true no-op in every environment; a separate explicit `local-console` adapter (gated on `APP_ENV=local`, never reachable in staging/production) lets developers see the link without a real mailbox. This explicit value closes the original implementation ambiguity where local mode selected the console adapter even when the configured provider was `disabled`.
 - AWS SES is chosen over a third-party transactional email API because it fits the already-decided AWS-first hosting stack ([[adr/0005-aws-first-hosting-and-deployment-strategy|ADR 0005]]) — same account, same region, same IAM/Secrets Manager boundary as everything else, no new vendor relationship.
 - Scope stays narrow on purpose: this ADR does not approve a general email-notification system, digest emails, or marketing email. Any future feature that wants to send email should reuse the SES account/sending-domain setup this ADR establishes, but needs its own scoping decision about content, frequency, and unsubscribe/compliance handling — those are materially different concerns from a one-time security link.
 

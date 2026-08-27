@@ -1,12 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { AppConfigService } from '../../../common/config/app-config.service';
-import type { AuthMailerPort } from '../domain/ports/auth-mailer.port';
+import type { AccountClaimEmailInput, AuthEmailLinkInput, AuthMailerPort } from '../domain/ports/auth-mailer.port';
 
 @Injectable()
 export class LocalConsoleAuthMailerAdapter implements AuthMailerPort {
   constructor(private readonly config: AppConfigService) {}
 
-  async sendEmailVerification(input: { toEmail: string; rawToken: string; expiresAt: Date }): Promise<void> {
+  async sendEmailVerification(input: AuthEmailLinkInput): Promise<void> {
     console.info('[auth-mailer] email_verification', {
       toEmail: input.toEmail,
       expiresAt: input.expiresAt.toISOString(),
@@ -14,11 +14,21 @@ export class LocalConsoleAuthMailerAdapter implements AuthMailerPort {
     });
   }
 
-  async sendPasswordResetLink(input: { toEmail: string; rawToken: string; expiresAt: Date }): Promise<void> {
+  async sendPasswordResetLink(input: AuthEmailLinkInput): Promise<void> {
     console.info('[auth-mailer] password_reset', {
       toEmail: input.toEmail,
       expiresAt: input.expiresAt.toISOString(),
       resetUrl: this.buildUrl('/reset-password', input.rawToken),
+    });
+  }
+
+  async sendAccountClaim(input: AccountClaimEmailInput): Promise<void> {
+    console.info('[auth-mailer] account_claim', {
+      toEmail: input.toEmail,
+      companyName: input.companyName,
+      expiresAt: input.expiresAt.toISOString(),
+      claimUrl: this.buildUrl('/claim-account', input.rawToken),
+      lineOaAddUrl: input.lineOaAddUrl,
     });
   }
 
