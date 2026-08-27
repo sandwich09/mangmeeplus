@@ -1,6 +1,6 @@
 # ผลแก้ regression ฟีเจอร์พื้นฐาน — 27 สิงหาคม 2569
 
-แก้โค้ดตามรายงาน R01–R12 และทดสอบบนสำเนาฐานข้อมูล local จริงแล้ว ไม่เปิดฟีเจอร์เพิ่ม ไม่เปลี่ยนข้อมูลเก่าที่ไม่ทราบสาขา และยังไม่ใช่หลักฐานว่า AI/OCR อ่านใบเสร็จจริงถูกต้อง
+แก้โค้ดตามรายงาน R01–R12 ทดสอบบนสำเนาฐานข้อมูล และกดบันทึกจริงบน local เดิม 3000/3003 แล้ว ไม่เปิดฟีเจอร์เพิ่ม ไม่เปลี่ยนข้อมูลเก่าที่ไม่ทราบสาขา และยังไม่ใช่หลักฐานว่า AI/OCR อ่านใบเสร็จจริงถูกต้อง
 
 ## สิ่งที่แก้และหลักฐาน
 
@@ -42,6 +42,7 @@
 | PostgreSQL จริง: payment / atomic issue | 44 ผ่าน |
 | Source-branch browser: manual / upload / required / single available | 8 ผ่าน |
 | Active-feature browser + dashboard | 13 ผ่าน |
+| รัน active-feature browser + dashboard ซ้ำบน local เดิม 3000/3003 | 13 ผ่าน รวมตรวจชื่อสาขาไม่ถูกตัดทั้ง 390/1280 px |
 | Single-branch PostgreSQL | default/readback, ambiguous reject, one-allowed default, explicit choice, out-of-scope reject, archived reject ผ่าน |
 | Whole-chain acceptance | 21 repository scenarios ผ่าน; 3 external-image scenarios ไม่รัน |
 
@@ -61,4 +62,21 @@ pnpm exec playwright test e2e/local-active-feature-regression.spec.ts e2e/dashbo
 1. ข้อมูลเดิม 157 รายการไม่มีสาขาที่พิสูจน์ได้ ยอดทุกสาขาจึงยังไม่อาจแจกแจงเท่าผลรวมรายสาขาจนกว่าจะได้แหล่งที่มา ห้ามตีความว่าโค้ดป้องกันรายการใหม่แก้ข้อมูลเก่าแล้ว
 2. MODEL_PROVIDER ปิดและไม่มี worker อ่านใบเสร็จจริงในชุดพิสูจน์นี้ จึงพิสูจน์การรับไฟล์/จัดสาขา ไม่ใช่ความฉลาด/ความเร็ว/ความถูกต้อง AI และไม่เปิด LINE หรือฟีเจอร์ที่ปิดไว้
 3. ไม่ใช่ UAT/Production release ไม่ merge main ไม่แก้ cloud หรือสวิตช์ 16 ON / 44 OFF
-4. การนำโค้ดที่ผ่านไปเปิดบน local เดิม 3000/3003 และหลักฐานการบันทึกของรุ่นที่ commit จะเติมในหัวข้อถัดไปก่อนส่งงาน
+
+## พิสูจน์บน local เดิม ไม่ใช่แค่ฐานสำเนา
+
+- รุ่นโค้ดที่กดบันทึกผ่าน Chrome: `cdc215532eec27758c28cc7318d396d56bb4640d` (API application bytes ไม่เปลี่ยนในรอบจัดข้อความสาขาบนคอมที่ตามมา)
+- Web `http://127.0.0.1:3000`, API `http://127.0.0.1:3003`; ใช้ฐานเดิม `watchdog_expense_payment_capture_20260827`, bucket เดิม `expense-payment-capture-20260827`, Redis DB 15
+- แก้ต้นเหตุการบันทึกถูกปฏิเสธโดยเรียก `attestOpenOnThisBuild` ที่มีอยู่แล้ว เฉพาะ local `expenses/DEFAULT` และ `sales_documents/DEFAULT` ซึ่งเป็น ORDINARY และ SYSTEM เปิดไว้เดิม ไม่แก้ state/generation ไม่เปิดสวิตช์ ไม่ปลอม SHA ไม่ข้าม guard และไม่แตะ human/specialist approval
+- เข้าผ่านปุ่ม Dev sign-in บนหน้าจอ → เลือกสยาม → กรอกรายการ → กด “บันทึกฉบับร่าง” → เปิดรายละเอียดสำเร็จ → อ่านฐานข้อมูลแบบ read-only ยืนยัน `branchId=seed-room45-branch-siam`, `status=DRAFT`, `grandTotalAmount=1`
+- รายการ `cmtbgn0pl0002z6k1644zw31s` ชื่อ “ทดสอบหลังแก้ regression 27 ส.ค. 2569 — 1 บาท” เก็บเป็นฉบับร่างให้เจ้าของเปิดดูได้ **ยังไม่ยืนยัน ไม่ลงบัญชี ไม่บันทึกจ่ายเงินจริง**
+- กลับหน้ารายการสยามเห็นรับเข้า 1 บาท, รอตรวจ 1, ค้างจ่ายที่ยืนยันแล้ว 0 บาท ตรงกับสถานะฉบับร่าง
+- จำนวนเดิม 163 → 164 เพราะฉบับร่างทดสอบนี้เพียงใบเดียว; ไม่ทราบสาขายัง 157 เดิม; feature switches 16 ON / 44 OFF เท่าเดิม
+- ไม่ bootstrap/seed/migrate ฐานเดิม ไม่ลบข้อมูลเก่า; ข้อมูลทดสอบที่ชุด transaction สร้างบนฐานสำเนาถูกลบเฉพาะ ID ของชุดนั้นผ่าน API ตาม cleanup ของเทส
+- โค้ดสกปรกใน worktree เดิม `mangmeeplus-p24-scope-selector-targets` และ `mangmeeplus-p21-tax-summary-decimal` ยังอยู่ครบ ไม่เอางาน tax-summary ที่ไม่เกี่ยวข้องมาใส่ PR นี้ โหมดภาษีขั้นสูงยังปิดอยู่
+
+หลักฐาน: [ก่อนบันทึก](13-original-local-before-save.png) · [รายละเอียดที่บันทึกแล้ว](14-original-local-saved.png) · [ยอดสาขาสยามหลังบันทึก](15-original-local-siam-list.png)
+
+รายงานรอบฐานเดิมอยู่ที่ `test-results/original-local-report/index.html` และ `test-results/original-local-results.json` ใน worktree นี้
+
+การตรวจภาพพบกล่องสรุปพนักงานบนมือถือเบียดข้อความ จึงแก้ให้เรียงอ่านลงมาและเพิ่ม assertion ความสูงข้อความอีเมล ภาพหลังบันทึกเพิ่ม positive assertion ว่ารายละเอียดโหลดแล้วก่อนถ่าย ไม่ใช้ภาพ “กำลังโหลด” เป็นหลักฐานหน้าสำเร็จ

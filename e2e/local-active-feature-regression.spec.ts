@@ -49,6 +49,8 @@ for (const width of [390, 1280]) {
       await page.getByRole('button', { name: 'เลือกสาขา', exact: true }).click();
       await page.getByRole('button', { name: new RegExp(`^${escaped(branch.name)}`) }).click();
       await expect(page.getByRole('button', { name: 'เลือกสาขา', exact: true })).toContainText(branch.name);
+      const branchLabel = page.getByRole('button', { name: 'เลือกสาขา', exact: true }).locator('span[title]');
+      expect(await branchLabel.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
       await expect(page.getByText('กำลังโหลด...').filter({ visible: true })).toHaveCount(0);
       await page.screenshot({ path: info.outputPath(`evidence-${width}-${branch.code}.png`), fullPage: true });
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
