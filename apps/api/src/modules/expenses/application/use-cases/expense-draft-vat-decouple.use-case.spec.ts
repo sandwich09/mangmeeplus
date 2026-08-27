@@ -41,6 +41,21 @@ function makeUseCase(overrides: Record<string, unknown> = {}) {
 }
 
 describe('UpdateExpenseDraftUseCase VAT decoupling (spec §19c)', () => {
+  it('saves a 25-baht inclusive receipt from an explicit rate or amount-only source without adding VAT again', async () => {
+    for (const source of [{ inputType: 'NONE' }, { inputType: 'AMOUNT', vatAmount: '1.64' }] as const) {
+      const { useCase, updates, upserted } = makeUseCase();
+      await useCase.execute(ctx, 'exp-1', {
+        vatMode: 'VAT_INCLUDED', vatSource: source,
+        lines: [{ ...receiptLine, unitPrice: '25', vatRate: source.inputType === 'NONE' ? '0.07' : '' }],
+      });
+      assert.equal(updates[0].grandTotalAmount, '25.0000');
+      assert.equal(updates[0].taxableAmount, '23.3600');
+      assert.equal(updates[0].vatAmount, '1.6400');
+      assert.equal(upserted[0].lineTotalAmount, '25.0000');
+      assert.notEqual(upserted[0].vatRate, null);
+    }
+  });
+
   it('persists source, accepted line VAT, and the calculation snapshot in one review update', async () => {
     const { useCase, updates, upserted } = makeUseCase();
 

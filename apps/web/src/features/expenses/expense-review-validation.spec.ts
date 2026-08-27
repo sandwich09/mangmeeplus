@@ -131,13 +131,60 @@ describe('validateExpenseReview', () => {
   });
 
   it('accepts an explicit zero rate and leaves non-VAT modes alone', () => {
-    const zeroRated = validValues(); zeroRated.vatMode = 'VAT_EXCLUDED'; zeroRated.lines[0]!.vatRate = '0';
-    assert.equal(zeroRated.lines[0]!.vatRate === '0' && validate(zeroRated).some((issue) => issue.field === 'lines.0.vatRate'), false);
+    for (const vatMode of ['VAT_INCLUDED', 'VAT_EXCLUDED'] as const) {
+      const zeroRated = validValues(); zeroRated.vatMode = vatMode; zeroRated.lines[0]!.vatRate = '0';
+      assert.equal(validate(zeroRated).some((issue) => issue.field === 'lines.0.vatRate'), false);
+    }
 
     for (const vatMode of ['NO_VAT', 'EXEMPT', 'NEEDS_REVIEW'] as const) {
       const values = validValues(); values.vatMode = vatMode; values.lines[0]!.vatRate = '';
       assert.equal(validate(values).some((issue) => issue.field === 'lines.0.vatRate'), false, vatMode);
     }
+  });
+
+  it('lets supported source evidence resolve a blank rate on save without guessing or changing inclusive gross', () => {
+    for (const vatMode of ['VAT_INCLUDED', 'VAT_EXCLUDED'] as const) {
+      for (const source of [
+        { inputType: 'RATE', vatRatePercent: '7' },
+        { inputType: 'AMOUNT', vatAmount: '1.64' },
+        { inputType: 'AMOUNT', vatAmount: '0' },
+        { inputType: 'BOTH', vatRatePercent: '7', vatAmount: '1.64' },
+      ] as const) {
+        const values = validValues();
+        values.vatMode = vatMode; values.lines[0]!.unitPrice = '25'; values.vatSource = source;
+        assert.equal(validate(values).some((issue) => issue.field === 'lines.0.vatRate'), false, `${vatMode}/${source.inputType}`);
+        assert.equal(values.lines[0]!.vatRate, '', 'validation must not mutate a derived rate into reviewer input');
+        assert.equal(values.lines[0]!.unitPrice, '25');
+      }
+    }
+  });
+
+  it('keeps unknown rates blocked for missing/invalid amount evidence and impossible derivations', () => {
+    for (const vatMode of ['VAT_INCLUDED', 'VAT_EXCLUDED'] as const) {
+      for (const vatAmount of ['', 'abc', '-1', '1.001', '100']) {
+        const values = validValues(); values.vatMode = vatMode; values.lines[0]!.unitPrice = '25';
+        values.vatSource = { inputType: 'AMOUNT', vatAmount };
+        assert.equal(validate(values).some((issue) => issue.field === 'lines.0.vatRate'), true, `${vatMode}/${vatAmount}`);
+      }
+    }
+  });
+
+  it('does not apply a document amount to unknown lines mixed with known zero/positive rates', () => {
+    for (const vatRate of ['0', '0.07']) {
+      const values = validValues(); values.vatMode = 'VAT_INCLUDED';
+      values.lines.push({ ...values.lines[0]!, vatRate });
+      values.vatSource = { inputType: 'AMOUNT', vatAmount: '6.54' };
+      assert.equal(validate(values).some((issue) => issue.field === 'lines.0.vatRate'), true);
+      values.vatSource = { inputType: 'NONE', lines: [{ lineNumber: 1, inputType: 'AMOUNT', vatAmount: '6.54' }] };
+      assert.equal(validate(values).some((issue) => issue.field === 'lines.0.vatRate'), false);
+      assert.equal(values.lines[1]!.vatRate, vatRate);
+    }
+  });
+
+  it('resolves only the line named by line-level source evidence', () => {
+    const values = validValues(); values.vatMode = 'VAT_EXCLUDED'; values.lines.push({ ...values.lines[0]! });
+    values.vatSource = { inputType: 'NONE', lines: [{ lineNumber: 2, inputType: 'RATE', vatRatePercent: '7' }] };
+    assert.deepEqual(validate(values).filter((issue) => issue.messageKey === 'expenses.v_vat_rate_required').map((issue) => issue.field), ['lines.0.vatRate']);
   });
 
   it('keeps WHT rate in the fraction range 0..1 when set', () => {

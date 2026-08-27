@@ -1,5 +1,5 @@
 import type { DictionaryKey } from '@/common/i18n/workspace-dictionary';
-import { calculateManualExpenseTotals, vatModeRequiresRate, type ExpenseDraftReviewValues } from './expenses.model';
+import { calculateManualExpenseTotals, expenseVatSourceValidationMessage, vatModeRequiresRate, vatRateFromPrintedAmount, type ExpenseDraftReviewValues } from './expenses.model';
 
 export type ExpenseFieldIssue = {
   field: string;
@@ -76,6 +76,26 @@ function differsByMoreThanCent(left: number, right: number): boolean {
   return Math.abs(left - right) > 0.01 + floatingPointSlack;
 }
 
+/** Only waive the blank-rate input when ERP Core can resolve that rate from supplied evidence. */
+function sourceSuppliesVatRate(values: ExpenseDraftReviewValues, index: number): boolean {
+  const source = values.vatSource;
+  if (!source || expenseVatSourceValidationMessage(source, values.vatMode)) return false;
+  const perLine = Boolean(source.lines?.length);
+  const selected = perLine ? source.lines!.find((line) => line.lineNumber === index + 1) : source;
+  if (!selected) return false;
+  if (selected.inputType === 'RATE' || selected.inputType === 'BOTH') return true;
+  if (selected.inputType !== 'AMOUNT') return false;
+  // A document amount cannot determine which unknown line bears VAT in a mixed document.
+  if (!perLine && values.lines.some((line) => line.vatRate.trim() !== '')) return false;
+  const lines = perLine ? [values.lines[index]!] : values.lines;
+  const afterDiscount = lines.reduce((total, line) => total
+    + Math.round(Number(line.quantity) * Number(line.unitPrice) * 100) / 100
+    - Math.round(Number(line.discountAmount) * 100) / 100, 0);
+  return Number(selected.vatAmount) === 0 || vatRateFromPrintedAmount({
+    afterDiscountAmount: afterDiscount, printedVatAmount: selected.vatAmount!, vatMode: values.vatMode,
+  }) !== '';
+}
+
 export function validateExpenseReview(
   values: ExpenseDraftReviewValues,
   opts: { today: string; aiGrandTotal?: string | null; whtAmount?: string | null },
@@ -138,9 +158,9 @@ export function validateExpenseReview(
     }
 
     if (line.vatRate.trim() === '') {
-      // Spec §19g decision 1: a VAT mode asserts that VAT applies, so an unknown rate is an
-      // unanswered question, not a zero. Confirmation blocks on the same condition server-side.
-      if (vatModeRequiresRate(values.vatMode)) {
+      // Source VAT may supply the rate during draft save. Otherwise unknown remains unanswered;
+      // the authoritative reconciliation/confirmation gates still run after the save.
+      if (vatModeRequiresRate(values.vatMode) && !sourceSuppliesVatRate(values, index)) {
         addIssue(issues, `${prefix}.vatRate`, 'error', 'expenses.v_vat_rate_required');
       }
     } else {

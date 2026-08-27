@@ -1179,7 +1179,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   onSaved: () => Promise<void>;
   /** The modal's ถัดไป/chip navigation triggers this save when leaving the details step — no in-section save button. */
   saveRef?: MutableRefObject<(() => Promise<boolean>) | null>;
-  onValidationChange?: (errorCount: number) => void;
+  onValidationChange?: (errorCount: number, firstErrorMessage: string | null) => void;
   /** Plan 13.11.B: the VAT card collects "ใช้ยอดตามเอกสาร"; the page's confirm button spends it. */
   vatOverrideRef?: MutableRefObject<ExpenseVatSourceOverrideInput | null>;
 }) {
@@ -1217,6 +1217,10 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   const vatSourceMode = vatSource.lines?.length ? 'LINES' : vatSource.inputType;
   const vatSourceError = expenseVatSourceValidationMessage(vatSource, values.vatMode);
   const blockingIssueCount = issues.filter((issue) => issue.severity === 'error').length + (vatSourceError ? 1 : 0);
+  const firstBlockingIssue = issues.find((issue) => issue.severity === 'error');
+  const firstBlockingMessage = firstBlockingIssue
+    ? messageWithParams(t(firstBlockingIssue.messageKey, locale), firstBlockingIssue.params)
+    : vatSourceError;
   const showsVatCard = showsTax || vatModeRequiresRate(values.vatMode) || vatSource.inputType !== 'NONE' || Boolean(vatSource.lines?.length) || withholdsTax;
   const vatSnapshot = detail.vatCaptureSnapshotJson;
   const snapshotSourceAmount = vatSnapshot?.source.vatAmount ?? (() => {
@@ -1264,7 +1268,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
       ? { reason, vatLineNumber: vatOverrideLineNumber }
       : null;
   }, [canReview, vatBlocked, vatOverrideLineNumber, vatOverrideReason, vatOverrideRef]);
-  useEffect(() => { onValidationChange?.(blockingIssueCount); }, [blockingIssueCount, onValidationChange]);
+  useEffect(() => { onValidationChange?.(blockingIssueCount, firstBlockingMessage); }, [blockingIssueCount, firstBlockingMessage, onValidationChange]);
 
   const updateLine = (index: number, field: EditableReviewLineField, value: string) => {
     if (field !== 'description') setVatSourceDirty(true);
@@ -1489,6 +1493,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
               <ThemedSelect
                 className={inputClass}
                 value={vatSourceMode}
+                aria-invalid={Boolean(vatSourceError) || undefined}
                 onChange={(event) => setVatSourceType(event.target.value as 'RATE' | 'AMOUNT' | 'BOTH' | 'NONE' | 'LINES')}
                 disabled={!isMutable || busy}
               >
@@ -1579,7 +1584,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
             )}
             {vatSourceError && <p className="text-xs font-medium text-error-600">{vatSourceError}</p>}
             {vatSourceDirty
-              ? <p className="rounded-lg bg-white px-3 py-2 text-xs text-gray-500">บันทึกการตรวจเพื่อให้ระบบคำนวณและเปรียบเทียบยอดล่าสุด</p>
+              ? <p className="rounded-lg bg-white px-3 py-2 text-xs text-gray-500">กด “ถัดไป” เพื่อบันทึกและให้ระบบคำนวณเปรียบเทียบยอดล่าสุด</p>
               : vatSnapshot && (
                 <div className="rounded-lg bg-white px-3 py-2">
                   <MoneyRow label="VAT จากเอกสาร" value={snapshotSourceAmount ?? '0'} muted={snapshotSourceAmount === null} />
