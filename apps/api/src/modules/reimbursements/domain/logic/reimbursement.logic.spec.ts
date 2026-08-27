@@ -49,6 +49,16 @@ describe('reimbursement threshold', () => {
   });
 });
 
+describe('reimbursement incurred-date validation', () => {
+  it('validates every ordered line and names malformed/future rows without mutating dates', () => {
+    const lines = [line({ incurredDate: '2026-08-27' }), line({ lineNo: 2, incurredDate: new Date('2026-08-28T00:00:00Z') })];
+    assert.deepEqual(validateLines(lines, '2026-08-27'), ['line_incurred_date_in_future:2']);
+    assert.equal(lines[1].incurredDate.toISOString(), '2026-08-28T00:00:00.000Z');
+    assert.deepEqual(validateLines([line({ incurredDate: '2026-02-30' })], '2026-08-27'), ['line_incurred_date_invalid:1']);
+    assert.deepEqual(validateLines([line({ incurredDate: '2026-08-26' }), line({ lineNo: 2, incurredDate: '2026-08-27' })], '2026-08-27'), []);
+  });
+});
+
 describe('frozen approval assignment', () => {
   it('keeps an active submitted assignee authoritative after their role changes', () => {
     assert.equal(frozenApprovalAuthority(['u-1', 'u-2'], new Set(['u-1', 'u-2']), 'u-1'), 'ASSIGNED');

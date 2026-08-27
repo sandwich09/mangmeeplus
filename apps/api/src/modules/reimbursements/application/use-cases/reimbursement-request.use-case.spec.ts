@@ -281,6 +281,36 @@ describe('every company role own reimbursement journey', () => {
 });
 
 describe('CreateReimbursementDraftUseCase (multi-line)', () => {
+  it('rejects future dates at create/update/submit without mutation and accepts correction at Bangkok midnight', async (t) => {
+    t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-12-31T17:00:00.000Z') });
+    const state = fakeRepo();
+    const cases = useCases(state);
+    const future = inputLine({ incurredDate: '2027-01-02', attachmentId: 'att-1' });
+    await assert.rejects(() => cases.create.execute(ctx(), { reason: 'r', lines: [future] } as any), /line_incurred_date_in_future:1/);
+    assert.equal(state.request, null);
+    assert.equal(state.calls.audits.length, 0);
+
+    const today = inputLine({ incurredDate: '2027-01-01', attachmentId: 'att-1' });
+    const created = await cases.create.execute(ctx(), { reason: 'r', lines: [today] } as any);
+    const beforeUpdate = structuredClone(state.request);
+    await assert.rejects(() => cases.update.execute(ctx(), created.id, { lines: [future] }), /line_incurred_date_in_future:1/);
+    assert.deepEqual(state.request, beforeUpdate);
+
+    // A pre-fix persisted future draft cannot bypass validation by sending an empty submit body.
+    state.request!.lines[0].incurredDate = new Date('2027-01-02T00:00:00Z');
+    const beforeSubmit = structuredClone(state.request);
+    await assert.rejects(() => cases.submit.execute(ctx(), created.id), /line_incurred_date_in_future:1/);
+    assert.deepEqual(state.request, beforeSubmit);
+    assert.equal(state.calls.approvalSteps.length, 0);
+    assert.equal(state.calls.duplicates.length, 0);
+    assert.equal(state.calls.outbox.length, 0);
+    assert.equal(state.calls.projections.length, 0);
+
+    await cases.update.execute(ctx(), created.id, { lines: [today] });
+    const submitted = await cases.submit.execute(ctx(), created.id);
+    assert.equal(submitted.status, 'PENDING_APPROVAL');
+    assert.equal(state.request!.lines[0].incurredDate.toISOString(), '2027-01-01T00:00:00.000Z');
+  });
   it('rolls the header up from the lines instead of trusting the client', async () => {
     const state = fakeRepo();
     const created = await useCases(state).create.execute(ctx(), {
