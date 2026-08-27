@@ -1,6 +1,6 @@
 # Agent Memory: Reimbursement Receipt Error Notification
 
-Status: Implemented and verified; preparing Git delivery (2026-08-27).
+Status: Complete; implemented, verified and pushed to develop (2026-08-27). No live deployment.
 Owner: /root/reimbursement_receipt_error_notification
 Scope: User-authorized notification-only fix on `codex/reimbursement-receipt-error-notification`,
 branched from `origin/develop` at `be7d58c644e31abd123501e0c06f3be0931076fd` in an isolated worktree.
@@ -57,4 +57,14 @@ Verification:
   runs the actual submit client, fetch wrapper, toast bus and inline translator with synthetic HTTP
   responses. It verifies one toast, one POST, unchanged raw error details, and policy-safe Thai copy.
 
-Next: Refresh develop, commit scoped changes and push feature/develop without force.
+Integration:
+
+- Refetched develop immediately before delivery; it remained at `be7d58c6`, so no merge or
+  rebase was needed after the 363 passing tests and web typecheck.
+- Implementation commit `a4bdfedb` (`fix(reimbursements): align receipt-policy error notifications`).
+- `git push --atomic origin HEAD:refs/heads/codex/reimbursement-receipt-error-notification
+  HEAD:refs/heads/develop` succeeded without force. Remote branch lookup confirmed both heads
+  at the implementation commit; worktree was clean and temporary dependency links were removed.
+- This documentation-only follow-up records delivery; no application code changed after verification.
+
+Next: Parent may continue backlog review. UAT/Production and company receipt policies remain unchanged.
