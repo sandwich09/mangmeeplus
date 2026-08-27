@@ -58,3 +58,10 @@ Decisions (Owner 2026-08-27 — ตอบ 4 ข้อของ strategy discussi
 - Owner อนุมัติขยาย approval `DPO-2026-07-23-bedrock-global` ให้ UAT (chat directive 2026-08-27) → ตั้ง repo variable `AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF` แล้ว; UAT deploy ถัดไปรัน Sonnet 4.6 ทั้ง chat+doc เท่า production
 - หลักฐานรอบทดสอบแรกของ Owner: เลนเร็วไม่ยิง (preparedPlanVersion=null ทุกเทิร์น — โมเดล 3.5 ไม่ emit fused plan), intake 5.5s (prompt ใหญ่ขึ้น+โมเดลเก่า), รูปใบเสร็จ→unknown
 - จูนชุดเดียว: UAT debounce default 1000ms (deploy.sh wiring ใหม่ + pins re-synced), composer ธุรกิจ = คำตอบ+ตัวเลขบรรทัดแรก ≤400 ตัวอักษร, casual = ปลดล็อกความรู้ทั่วไป/ธุรกิจ/บัญชี/ภาษี + ตัวย่อแชทไทย (Owner concept: คุยได้แบบ ChatGPT) โดยคงกติกา: ห้ามเลขบริษัทนอก tools, ห้ามอ้างข้อมูลสด, เคสเฉพาะให้เช็คนักบัญชี; casual maxTokens 180→400; gateway suite 984/0
+
+## การตัดสินใจ Owner 2026-08-27 (ค่ำ): ผู้รับรองความรู้ภาษี/บัญชี
+
+- **ผู้รับรอง (named reviewer) = นักบัญชีคนที่จัดทำผังบัญชี 175 บัญชี** (คนเดิมของบริษัท) — ใช้กับ P23 tax pack, Advisor Slice B, และการตรวจรายการสาเหตุ CN/DN (F-LED-6)
+- **แหล่งความจริง = เว็บ/ประกาศกรมสรรพากรเท่านั้น** (rd.go.th) — ทุกการ์ดต้องแนบ citation ต้นทาง; นักบัญชีคือผู้เซ็นรับรองการตีความ ไม่ใช่แหล่งข้อมูลแทน RD
+- ค้างเก็บตอนทำ pack แรก: ชื่อ-นามสกุลจริงของนักบัญชี (สำหรับ approver row) + SLA การทบทวน — Owner เป็นผู้ประสาน
+- ลำดับที่ตกลง: (1) pack `mangmee-product-help` ก่อน (ไม่ติด gate) (2) pack ภาษีปี 2569 เมื่อได้ลายเซ็นนักบัญชี
