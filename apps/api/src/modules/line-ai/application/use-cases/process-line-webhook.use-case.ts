@@ -82,6 +82,7 @@ import { LineAiLedgerService, ledgerKey, type LedgerEntry } from '../line-ai-led
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
 import { availableApprovalSurfaceKeys, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, staffMenuCommand, PENDING_APPROVAL_ITEM_LIMIT, type ApprovalSurfaceKey, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
 import { buildExpenseDraftCardMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
+import { advisorDirectAnswerText } from '../../domain/logic/line-advisor-direct-answer.logic';
 import { capabilityFollowUpReply, isDeliveredCapabilityFollowUp, isNextStepQuestionText } from '../../domain/logic/line-ai-capability-follow-up.logic';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import { LINE_BUFFER_ORPHAN_REPROCESS_MS } from '../../domain/logic/line-message-buffer.logic';
@@ -147,6 +148,13 @@ export const LEGAL_ACCEPTANCE_REQUIRED_REPLY = '📄 กรุณาเข้า
 const FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์ใช้งาน LINE AI สำหรับบริษัทนี้ค่ะ';
 const ERROR_REPLY = '⏳ ขออภัยค่ะ เกิดข้อผิดพลาดชั่วคราว กรุณาลองใหม่อีกครั้งนะคะ';
 const RATE_LIMIT_REPLY = '⏳ ระบบกำลังประมวลผลข้อความก่อนหน้า กรุณารอสักครู่แล้วลองใหม่อีกครั้งนะคะ';
+/** Sent INSTEAD of RATE_LIMIT_REPLY when the turn's ledger entry exists: the reclaim drain WILL
+ *  answer it, so telling the user to resend would produce a double answer (UAT 2026-08-27). */
+const BUSY_FOLLOW_UP_REPLY = '⏳ น้องมั่งมีกำลังตอบข้อความก่อนหน้าอยู่ค่ะ ข้อความนี้รับไว้แล้ว เดี๋ยวตามมาตอบให้เองนะคะ ไม่ต้องส่งซ้ำค่ะ';
+/** How long a live turn may wait for the per-company AI admission lease before giving up. The
+ *  lease frees between a media turn's model calls, so a queued chat message usually slips into
+ *  one of those gaps well inside this window; LINE's loading indicator covers the wait. */
+const LINE_AI_LIVE_BUSY_WAIT_MS = 25_000;
 const RECEIPT_LINK_REPLY = '🔗 กรุณาเชื่อมต่อบัญชี มั่งมีพลัส กับ LINE ก่อนส่งบิลหรือใบเสร็จนะคะ';
 const RECEIPT_FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์อัปโหลดบิลหรือใบเสร็จผ่าน LINE ค่ะ';
 const EXPENSE_FEATURE_DISABLED_REPLY = '📋 บริษัทนี้ยังไม่ได้เปิดใช้งานระบบค่าใช้จ่ายและเอกสารค่ะ\nหากต้องการใช้ ให้เจ้าของหรือผู้ดูแลเปิดฟีเจอร์ในเว็บแอปก่อนนะคะ';
@@ -1291,6 +1299,7 @@ export class ProcessLineWebhookUseCase {
     recentCapturedExpenses?: LineIntakeCorrectionCandidate[];
     activeExpenseDrafts?: LineExpenseDraftRouteContext[];
     substituteContext?: LineIntakeSubstituteContext;
+    busyWaitDeadlineMs?: number;
   }): Promise<GovernedLineIntakeRoutePlan> {
     try {
       const activeCategories = this.expenseRepo
@@ -1339,7 +1348,7 @@ export class ProcessLineWebhookUseCase {
               }],
             }
           : {}),
-      });
+      }, { busyWaitDeadlineMs: input.busyWaitDeadlineMs });
     } catch (err) {
       this.logger.warn({ msg: 'LINE intake route unavailable', requestId: input.requestId, error: (err as Error).message });
       return { status: 'UNAVAILABLE', intent: 'UNSUPPORTED', language: 'th', confidence: 0, errorCode: 'ROUTER_UNREACHABLE' };
@@ -2291,6 +2300,9 @@ export class ProcessLineWebhookUseCase {
 
     // 5.5 LINE Intake Router first: semantic route before any source-module dispatch.
     // Deterministic guards (identity, company, permissions) already ran above.
+    // One busy-wait budget for the WHOLE live turn (intake + gateway turn share it), so a turn
+    // queued behind an in-flight media turn waits for the lease instead of bouncing the user.
+    const busyWaitDeadlineMs = Date.now() + LINE_AI_LIVE_BUSY_WAIT_MS;
     const routePlan = await this.timeStage(event.webhookEventId, 'intake_route', () => this.tryRouteIntake({
       requestId,
       companyId,
@@ -2305,7 +2317,34 @@ export class ProcessLineWebhookUseCase {
       // PRIMARY only — off AND the inert 'shadow' NO-GO never send substituteContext, so their intake DATA
       // payload stays byte-equivalent to legacy (shadow must not diverge from off in any observable way).
       ...(substituteMode === 'primary' ? { substituteContext } : {}),
+      busyWaitDeadlineMs,
     }));
+
+    // Advisor Slice A (spec §9.1 row 7 / §9.2): a routed ADVISOR_CONVERSATION whose bounded social
+    // draft passes every delivery-time gate is answered HERE from the single intake call — no
+    // gateway turn, no second model call. Any declined gate falls through UNCHANGED: the turn
+    // request below carries intakeIntent='ADVISOR_CONVERSATION' and the full path treats it like
+    // UNSUPPORTED, reusing no authority from the discarded payload.
+    const advisorDirectText = advisorDirectAnswerText(routePlan.advisorAnswer, {
+      advisorEnabled: this.config.lineAiAdvisorMode !== 'off',
+      routedAdvisor: routePlan.status === 'ROUTED' && routePlan.intent === 'ADVISOR_CONVERSATION',
+      hasAttachment: false, // text path — the media path routes documents, never ADVISOR_CONVERSATION
+      hasOpenClarifications: openWaiting.length > 0,
+      hasActiveExpenseDrafts: activeExpenseDrafts.length > 0,
+      hasPendingMediaCapsule: !!mediaResumeCapsule,
+      hasSubstituteState: substituteContext.workflowState !== 'none' || substituteContext.hasPendingQuestion,
+    });
+    if (advisorDirectText) {
+      this.logger.log({ msg: 'line.ai.advisor_direct_served', requestId, companyId, context: 'ProcessLineWebhookUseCase' });
+      // Same ordering as the exact-greeting lane: record what was decided, then deliver.
+      await this.persistIntakeTurn({
+        userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
+        userMessagePreview: normalizedText, replyText: advisorDirectText, intent: 'UNKNOWN',
+      });
+      await this.deliverCompletedReply(event, advisorDirectText, companyId, resolvedAccess);
+      await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
+      return;
+    }
 
     // PRIMARY substitute semantic dispatch — a TYPED branch AFTER routePlan (OFF/SHADOW ran the legacy
     // regex path above; the two never both execute). It reuses the existing continuation use case
@@ -2905,7 +2944,7 @@ export class ProcessLineWebhookUseCase {
     // 8. Call AI Gateway
     let turnResponse: LineAiTurnResponse;
     try {
-      turnResponse = await this.timeStage(event.webhookEventId, 'gateway_turn', () => this.aiGateway.requestLineTurn(turnRequest));
+      turnResponse = await this.timeStage(event.webhookEventId, 'gateway_turn', () => this.aiGateway.requestLineTurn(turnRequest, { busyWaitDeadlineMs }));
     } catch (err) {
       this.logger.error({ msg: 'AI Gateway error', requestId, error: (err as Error).message });
       const failure = classifyLineAiGatewayFailure(err);
@@ -2913,7 +2952,9 @@ export class ProcessLineWebhookUseCase {
         event,
         failure.replyKind === 'timeout'
           ? formatRefusal('ai_timeout')
-          : failure.replyKind === 'rate_limited' ? RATE_LIMIT_REPLY : ERROR_REPLY,
+          // With a ledger entry the reclaim drain WILL answer this turn — say so instead of
+          // inviting a resend that would double-answer. No entry ⇒ the legacy resend copy.
+          : failure.replyKind === 'rate_limited' ? (ledgerTurnId ? BUSY_FOLLOW_UP_REPLY : RATE_LIMIT_REPLY) : ERROR_REPLY,
       );
       await this.updateEventLog(event.webhookEventId, failure.status, failure.errorCode, companyId);
       // The turn entry stays unacked on purpose: the reclaim worker retries it later and
@@ -3542,6 +3583,9 @@ export class ProcessLineWebhookUseCase {
       attachment: { id: event.lineMessageId, mimeType: media.mimeType, contentBase64: media.contentBase64 },
       conversationContext,
       ...(captionCandidates && { valueCandidates: captionCandidates }),
+      // A media turn queued behind another in-flight turn waits for the admission lease the same
+      // way a text turn does, instead of failing the upload with a busy error.
+      busyWaitDeadlineMs: Date.now() + LINE_AI_LIVE_BUSY_WAIT_MS,
     });
 
     // F8: a signature photo filed on ANY route should steer the sender back to “ตอบ 1” exactly when a
@@ -4978,7 +5022,9 @@ export class ProcessLineWebhookUseCase {
         userId: ctx.userId,
         activeCategories,
         attachment: { id: attachmentId, mimeType: media.mimeType, purpose: 'receipt', contentBase64: media.contentBase64 },
-      }, { ocrAlreadyAdmitted });
+        // The lease can now be held briefly by a chat turn that slipped into a gap between this
+        // media turn's model calls (busy-wait lane) — wait it out instead of failing the OCR.
+      }, { ocrAlreadyAdmitted, busyWaitDeadlineMs: Date.now() + LINE_AI_LIVE_BUSY_WAIT_MS });
       if (result.status === 'not_configured') return { status: 'NOT_CONFIGURED', fields: null, classification: null };
       if (result.status !== 'ok') {
         return { status: 'OCR_FAILED', fields: null, classification: null, ...(result.errorCode ? { errorCode: result.errorCode } : {}) };

@@ -21,7 +21,7 @@ import {
 import { ActorDelegationService } from './actor-delegation.service';
 import { RedisRateLimitService } from '../../../common/security/redis-rate-limit.service';
 import { PrismaService } from '../../../common/database/prisma.service';
-import { recordCompanyAiUsage, runWithCompanyAiBudgetAdmission } from '../application/company-ai-usage-meter';
+import { recordCompanyAiUsage, retryBusyAdmission, runWithCompanyAiBudgetAdmission } from '../application/company-ai-usage-meter';
 import { resolveCompanyAiModelPolicy } from '../application/company-ai-model-policy';
 import {
   admitCompanyOcr,
@@ -64,7 +64,7 @@ export class AiGatewayClient {
     private readonly prisma: PrismaService,
   ) {}
 
-  async requestLineTurn(request: LineAiTurnRequest): Promise<LineAiTurnResponse> {
+  async requestLineTurn(request: LineAiTurnRequest, options: { busyWaitDeadlineMs?: number } = {}): Promise<LineAiTurnResponse> {
     await this.assertRateLimit('llm', request.userContext.companyId);
     const { internalUserId: userId, companyId, membershipId, permissions, entitledFeatureKeys } = request.userContext;
     const entitled = entitledFeatureKeys === undefined
@@ -95,12 +95,13 @@ export class AiGatewayClient {
         LINE_TURN_TIMEOUT_MS,
         monthKey,
       ),
+      options.busyWaitDeadlineMs,
     );
   }
 
   async requestReceiptOcr(
     request: ReceiptOcrRequest,
-    options: { ocrAlreadyAdmitted?: boolean } = {},
+    options: { ocrAlreadyAdmitted?: boolean; busyWaitDeadlineMs?: number } = {},
   ): Promise<ReceiptOcrResponse> {
     const companyId = request.companyId;
     await this.assertRateLimit('ocr', companyId);
@@ -118,6 +119,7 @@ export class AiGatewayClient {
     return this.runBudgeted(
       companyId,
       (monthKey) => this.requestReceiptOcrAdmitted(governedRequest, monthKey, options.ocrAlreadyAdmitted === true),
+      options.busyWaitDeadlineMs,
     );
   }
 
@@ -173,7 +175,7 @@ export class AiGatewayClient {
   }
 
   /** LINE Intake Router: semantic route plan before intake dispatch. */
-  async requestLineIntakeRoute(request: LineIntakeRouteRequest): Promise<GovernedLineIntakeRoutePlan> {
+  async requestLineIntakeRoute(request: LineIntakeRouteRequest, options: { busyWaitDeadlineMs?: number } = {}): Promise<GovernedLineIntakeRoutePlan> {
     const companyId = (request as any).companyId ?? (request as any).userContext?.companyId;
     await this.assertRateLimit('llm', companyId);
     const media = request.attachments?.find((attachment) =>
@@ -193,6 +195,7 @@ export class AiGatewayClient {
     const plan = await this.runBudgeted(
       companyId,
       (monthKey) => this.requestLineIntakeRouteAdmitted(request, media?.id, monthKey),
+      options.busyWaitDeadlineMs,
     );
     // The AI Gateway is a separate service; its optional prepared plan is untrusted wire JSON. Re-bound
     // it here (discard an invalid plan) before the API ever forwards it into a LineAiTurnRequest.
@@ -281,9 +284,12 @@ export class AiGatewayClient {
     }
   }
 
-  private async runBudgeted<T>(companyId: string | undefined, action: (monthKey?: string) => Promise<T>): Promise<T> {
+  private async runBudgeted<T>(companyId: string | undefined, action: (monthKey?: string) => Promise<T>, busyWaitDeadlineMs?: number): Promise<T> {
     if (!companyId) return action();
-    const admission = await runWithCompanyAiBudgetAdmission(this.prisma, this.config, this.rateLimits, companyId, action);
+    const admission = await retryBusyAdmission(
+      () => runWithCompanyAiBudgetAdmission(this.prisma, this.config, this.rateLimits, companyId, action),
+      busyWaitDeadlineMs,
+    );
     if (admission.allowed) return admission.value;
     const body = admission.reason === 'busy'
       ? { code: 'AI_BUDGET_BUSY', retryAfterSeconds: admission.retryAfterSeconds }

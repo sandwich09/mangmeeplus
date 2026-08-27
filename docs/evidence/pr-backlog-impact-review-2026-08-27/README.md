@@ -17,6 +17,8 @@
 
 การปิด PR ซ้ำไม่ได้ลบ branch หรือทิ้งงาน ทุกตัวมีคอมเมนต์ระบุ commit/PR ที่ส่งมอบงานไปแล้ว
 
+ระหว่างรอ #265 รอบแรก CI `33072074916` ผ่านครบ แต่มีงาน #307 เข้า develop ที่ `4e6d2918` จาก task อื่นก่อน merge จึงรวมฐานใหม่นี้และตรวจซ้ำ ไม่ใช้ผล CI เก่ารับรองโค้ดรวม จุด conflict มีเพียง checksum ที่สร้างใหม่จากไฟล์จริง; ไม่ทับงาน LINE ของ #307 และไม่มี diff ของ package manifest เทียบกับ develop ล่าสุด
+
 ## บั๊กที่แก้ใน #265
 
 ก่อนแก้: ขอรหัสกู้คืน → ผู้ใช้เปลี่ยนรหัสผ่านแล้ว → รหัสกู้คืนที่ค้างอยู่ยังทับรหัสใหม่ได้ เทสยืนยันด้วย `Missing expected rejection`
@@ -34,18 +36,22 @@
 |---|---|
 | Focused auth/reset/SES | 56 ผ่าน |
 | PostgreSQL จริง | lifecycle/concurrency 1 scenario ผ่าน ไม่ skip: ขอพร้อมกัน 4 ครั้งเหลือ 1 pending; ใช้พร้อมกัน 2 ครั้งสำเร็จ 1; เปลี่ยนเอง/ผู้ดูแล/stale snapshot/ปิดสิทธิ์/ส่ง LINE ล้มเหลว |
-| API เต็ม | ผ่านทั้ง pretest/test |
+| API เต็ม | ผ่านทั้ง pretest/test และ rerun หลังรวม #307; ก่อนรวมฐานใหม่ TAP 5,342 ผ่าน / 98 environment-gated skips / 0 fail |
 | Web เต็ม | 1,144 ผ่าน, 0 skip |
 | API/Web typecheck + build | ผ่าน |
 | API card/category/accounting focused | 113 ผ่าน |
 | AI composer/orchestrator | 118 ผ่าน |
 | Monitoring shell spec | ผ่าน โดยไม่เรียก AWS |
 | UI รวมบน 390/1280 px | 25 ผ่าน, 0 fail/skip/flaky; รอบสุดท้าย 23.1 วินาที |
+| Login UI เดิม | เพิ่มอีก 5 ผ่าน รวม 30 browser checks |
+| PostgreSQL expense/accounting | อีก 44 ผ่าน, 0 skip; พิสูจน์การจ่ายเงิน/เอกสาร/rollback ด้วยฐานข้อมูลจริง |
 | Chrome จริง | ส่งคำขอแบบบัญชีไม่ทราบตัวตน → ข้อความกลาง → กลับเข้าสู่ระบบได้ |
 
 คำสั่งทดสอบหลัก: `pnpm --filter @watchdog-bms/api test`, `pnpm --filter @watchdog-bms/web test`, `tsx --test .../auth-endpoints.spec.ts .../notify-password-reset-request.use-case.spec.ts .../forgot-password-reset.use-case.spec.ts`, PostgreSQL `.../line-recovery.pg.spec.ts` ด้วย `AUTH_RECOVERY_TEST_DATABASE_URL`, และ Playwright `e2e/line-recovery.spec.ts e2e/local-active-feature-regression.spec.ts e2e/dashboard.spec.ts e2e/transaction-branch.spec.ts`
 
 รอบ UI แรกพบข้อผิดพลาดใน test harness: ยังไม่เปิดเมนูมือถือก่อน logout และพยายามล้าง legal acceptance ซึ่งเป็น append-only แก้เฉพาะ harness แล้ว rerun ผ่านครบ โดยไม่ลดข้อป้องกันข้อมูล ภาพหลังเข้าสู่ระบบรอ branch/ตัวเลขโหลดครบก่อนเก็บหลักฐาน
+
+หลังรวม #307: รัน API เต็ม, web 1,144 ข้อ, web typecheck และ PostgreSQL 45 ข้อผ่านอีกครั้ง ตรวจ maintenance source ได้ `bytes=verified` ผล API build/typecheck, UI rerun และ CI ของ commit ใหม่ก่อน merge บันทึกต่อในคอมเมนต์ส่งมอบ #265
 
 ## ภาพหน้าจอ
 
