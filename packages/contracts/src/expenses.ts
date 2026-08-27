@@ -26,7 +26,8 @@ export type ExpensePostingSourceType = 'expense.record' | 'expense.payment';
 export type ExpenseVatMode = 'NO_VAT' | 'VAT_INCLUDED' | 'VAT_EXCLUDED' | 'EXEMPT' | 'NEEDS_REVIEW';
 export const INPUT_VAT_CLAIM_STATUSES = ['CLAIMABLE', 'NON_CLAIMABLE', 'NEEDS_REVIEW'] as const;
 export type InputVatClaimStatus = (typeof INPUT_VAT_CLAIM_STATUSES)[number];
-export type ExpensePaymentMethod = 'CASH' | 'BANK_TRANSFER' | 'CARD' | 'CHEQUE' | 'OTHER';
+export const EXPENSE_PAYMENT_METHODS = ['CASH', 'BANK_TRANSFER', 'CARD', 'CHEQUE', 'OTHER'] as const;
+export type ExpensePaymentMethod = (typeof EXPENSE_PAYMENT_METHODS)[number];
 export type ExpenseCaptureSource = 'WEB_UPLOAD' | 'WEB_MANUAL' | 'LINE_UPLOAD' | 'API_INTERNAL';
 export type ExpenseAttachmentPurpose = 'expense.receipt.primary' | 'expense.receipt.supporting' | 'expense.payment.evidence' | 'expense.review.evidence' | 'expense.signature.asset';
 export type ExpenseCategoryStatus = 'ACTIVE' | 'ARCHIVED';
@@ -466,6 +467,16 @@ export type ExpenseAttachmentRef = {
   checksumSha256: string | null;
   status: string;
   createdAt: string;
+};
+
+export type RecordExpensePaymentInput = {
+  /** Stable for one intent, including network retries; omitted only by legacy callers. */
+  idempotencyKey?: string;
+  paidAmount: string;
+  paymentMethod?: ExpensePaymentMethod;
+  /** Actual paid civil day, YYYY-MM-DD. Omission retains the legacy first-write instant. */
+  paidAt?: string;
+  bankAccountRef?: string;
 };
 
 export type ExpensePaymentSummary = {

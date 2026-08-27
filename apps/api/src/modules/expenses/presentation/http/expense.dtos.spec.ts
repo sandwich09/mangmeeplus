@@ -106,8 +106,21 @@ describe('expense body DTOs (audit H-23)', () => {
 
   describe('RecordExpensePaymentDto', () => {
     it('accepts an ordinary payment', async () => {
-      const result = await run(RecordExpensePaymentDto, { paidAmount: '1070.25', paymentMethod: 'TRANSFER' });
+      const result = await run(RecordExpensePaymentDto, { paidAmount: '1070.25', paymentMethod: 'BANK_TRANSFER', idempotencyKey: 'payment-intent-1', paidAt: '2026-07-31' });
       assert.equal(result.paidAmount, '1070.25');
+      assert.equal(result.idempotencyKey, 'payment-intent-1');
+      assert.equal(result.paidAt, '2026-07-31');
+    });
+
+    it('allows legacy omission but fails closed for any malformed supplied intent key', async () => {
+      assert.equal((await run(RecordExpensePaymentDto, { paidAmount: '1' })).idempotencyKey, undefined);
+      for (const idempotencyKey of [null, '', 'short', 'a'.repeat(65), 'bad key 123', 12345678, ['valid-key'], {}]) {
+        await assert.rejects(() => run(RecordExpensePaymentDto, { paidAmount: '1', idempotencyKey }), BadRequestException);
+      }
+    });
+
+    it('rejects unknown methods before they can become a database enum error', async () => {
+      await assert.rejects(() => run(RecordExpensePaymentDto, { paidAmount: '1', paymentMethod: 'TRANSFER' }), BadRequestException);
     });
 
     // Same money pattern the accounting documents use, so the two boundaries cannot disagree.
