@@ -1,6 +1,6 @@
 # Agent Memory: WHT input units and mixed VAT
 
-Status: implementation and local verification complete, 2026-08-27; remote integration pending.
+Status: implemented, verified and integrated into remote develop, 2026-08-27.
 Owner: delegated implementation agent.
 Scope: expense receipt/review WHT baht/percent; durable zero-VAT line treatment; test and integrate into develop.
 Decisions:
@@ -40,4 +40,11 @@ Verification:
 
 Limitations: additive migration has not been applied to a real database; six PostgreSQL tests, authenticated/live E2E, UAT/Production deployment are not claimed. Amount-only tax-document rate selection remains accountant-owned, not guessed from amount. Browser verification uses synthetic state, not a full authentication/persistence stack.
 
-Next: fetch develop again, commit/push scoped feature, fast-forward develop and record verified remote delivery SHAs.
+Delivery:
+
+- Implementation commit: `bef36ab35d77e79e371788b1abf57e3bdf75ddc0` (`feat(expenses): preserve WHT input units and mixed VAT treatment`).
+- Feature pushed to `origin/codex/wht-input-units-mixed-vat`.
+- Ordinary `git push origin HEAD:develop` fast-forwarded remote develop from `a53bb992fc04713d7cba2f2b19c08286f27c08e5` to `bef36ab35d77e79e371788b1abf57e3bdf75ddc0`; subsequent fetch returned that exact SHA and `git merge-base --is-ancestor bef36ab35d77e79e371788b1abf57e3bdf75ddc0 origin/develop` exited0.
+- This delivery-note-only follow-up carries no code changes; the final follow-up tip is reported in the task handoff after its remote push is verified.
+
+Next: no implementation work remains for this bounded task. VAT-navigation/reimbursement agents must fetch this develop before integrating. Run the additive migration and authenticated PostgreSQL/E2E checks in the separately authorized release workflow; do not infer deployment from this source integration.

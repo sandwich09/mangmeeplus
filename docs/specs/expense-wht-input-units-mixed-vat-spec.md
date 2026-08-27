@@ -1,6 +1,6 @@
 # Expense WHT input units and mixed-VAT line meaning
 
-Status: implemented and locally verified, 2026-08-27; develop integration pending. Scope: expense receipt draft/review only.
+Status: implemented, locally verified and integrated into develop, 2026-08-27. Scope: expense receipt draft/review only.
 
 ## Product and acceptance
 

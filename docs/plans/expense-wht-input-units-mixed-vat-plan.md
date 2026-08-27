@@ -11,6 +11,6 @@ Base: `origin/develop@a53bb992`, isolated branch `codex/wht-input-units-mixed-va
 - [x] Add clear unit/value UI, validation and save/reload with legacy mixed-rate preservation.
 - [x] Run focused regression suites, contracts build, API/web typechecks and safe browser checks.
 - [x] Review scoped diff; fetch concurrent develop updates and rerun affected checks (base unchanged).
-- [ ] Commit/push feature branch, integrate non-force into develop (respect protection), verify remote containment.
+- [x] Commit/push feature branch, integrate non-force into develop (respect protection), verify remote containment.
 
 Evidence and exact commands/results belong in the task memory. No UAT/Production deployment.
