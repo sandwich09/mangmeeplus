@@ -597,6 +597,8 @@ jobs:
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
       - run: pnpm config:validate
+      - name: Test runtime monitoring contracts (fake AWS)
+        run: bash infra/monitoring/runtime-alarms.spec.sh
 
   migration-review:
     name: Migration Review

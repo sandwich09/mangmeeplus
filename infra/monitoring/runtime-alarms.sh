@@ -75,6 +75,7 @@ metric_prefix="$(tr '-' '_' <<< "$prefix")"
 line_ai_namespace=WatchDog/LineAI
 line_ai_metric_prefix="$(tr '/-' '_' <<< "/ecs/${prefix}-api-web" | tr -cd '[:alnum:]_')"
 journey_dashboard_name="${prefix}-customer-journeys"
+api_latency_pattern='{ $.msg = "request" && $.durationMs >= 0 }'
 login_failure_threshold=20        # denied logins per 5 min; a real user retrying is ~3
 api_5xx_threshold=10              # 5xx responses per 5 min, sustained over 2 periods
 ai_failure_threshold=10           # AI/OCR failures per 5 min
@@ -166,6 +167,14 @@ journey_dashboard_body() {
             "- Metric dimensions never contain tenant, customer, provider-user or document identity."
           )
           }
+        },
+        {
+          type:"metric", x:0, y:18, width:24, height:6,
+          properties:{
+            title:"API response latency (p95 milliseconds; runtime context)", view:"timeSeries", stacked:false,
+            region:$region, period:300, stat:"p95",
+            metrics:[[$runtimeNamespace, ($runtimePrefix + "_api_response_latency_ms"), {label:"All completed API requests (incl. health/internal)"}]]
+          }
         }
       ]
     }'
@@ -188,6 +197,24 @@ verify_journey_dashboard() {
   jq -e --arg name "$journey_dashboard_name" --arg arn "$expected_arn" --argjson expected "$expected" '
     .DashboardName == $name and .DashboardArn == $arn and (.DashboardBody | fromjson) == $expected
   ' <<< "$actual" >/dev/null || fail "dashboard contract mismatch: $journey_dashboard_name"
+}
+
+verify_api_latency_filter() {
+  local actual
+  actual="$(aws_cmd logs describe-metric-filters --log-group-name "/ecs/${prefix}-api-web" \
+    --filter-name-prefix api-response-latency --region "$region")"
+  jq -e --arg pattern "$api_latency_pattern" --arg metric "${metric_prefix}_api_response_latency_ms" \
+    --arg namespace "$service_namespace" '
+      [.metricFilters[]? | select(.filterName == "api-response-latency")] as $filters
+      | ($filters | length) == 1 and $filters[0].filterPattern == $pattern
+        and ($filters[0].emitSystemFieldDimensions // []) == []
+        and ($filters[0].fieldSelectionCriteria // "") == ""
+        and ($filters[0].applyOnTransformedLogs // false) == false
+        and ($filters[0].metricTransformations[0].dimensions // {}) == {}
+        and ($filters[0].metricTransformations | map(del(.dimensions))) == [{
+          metricName:$metric, metricNamespace:$namespace, metricValue:"$.durationMs", unit:"Milliseconds"
+        }]
+    ' <<< "$actual" >/dev/null || fail 'API latency metric-filter contract mismatch'
 }
 
 install_service_alarms() {
@@ -217,6 +244,14 @@ install_service_alarms() {
     --namespace "$service_namespace" --metric-name "${metric_prefix}_api_5xx" --statistic Sum \
     --period 300 --evaluation-periods 2 --datapoints-to-alarm 2 --threshold "$api_5xx_threshold" \
     --comparison-operator GreaterThanThreshold --treat-missing-data notBreaching
+
+  # P9-1c: latency is a distribution, not a counter. No defaultValue=0: missing responses are
+  # UNKNOWN, not zero-ms samples. Non-negative values keep CloudWatch percentiles available.
+  aws_cmd logs put-metric-filter --log-group-name "$api_log" --filter-name api-response-latency \
+    --filter-pattern "$api_latency_pattern" \
+    --metric-transformations \
+      "metricName=${metric_prefix}_api_response_latency_ms,metricNamespace=${service_namespace},metricValue=\$.durationMs,unit=Milliseconds" \
+    --region "$region" >/dev/null
 
   # 3. OCR/AI failure — one metric fed by two log groups: the AI gateway's provider failures and the
   #    API's terminal outcome classes. `feature_disabled` is deliberately EXCLUDED so closing the
@@ -384,6 +419,7 @@ verify_alarms() {
       50 LessThanThreshold 1 "Name=DBInstanceIdentifier,Value=${db_id}"
   fi
   verify_service_alarms
+  verify_api_latency_filter
   verify_journey_dashboard
   echo "[runtime-alarms] verified environment=$environment datapoints=present subscription=confirmed"
 }

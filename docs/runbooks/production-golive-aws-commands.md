@@ -293,6 +293,12 @@ aws sns publish --topic-arn "$SECURITY_ALERT_TOPIC_ARN" \
 
 `IncomingBytes` คือตัวที่ถ้ามีตั้งแต่ต้นเดือน เหตุการณ์ 6 ส.ค. จะจบที่ $7 แทน $179
 
+Monitoring operator ต้องมี policy `infra/production/monitoring-bootstrap-policy.template.json` รุ่นปัจจุบัน
+(แทน `<ACCOUNT_ID>` ก่อนใช้): P9-1c เพิ่ม statement สำหรับ `PutMetricFilter`, `DescribeMetricFilters`
+และ `DeleteMetricFilter` (rollback) โดยจำกัดไว้ที่ API/AI log groups ของ UAT/Production เท่านั้น.
+สิทธิ์รวมของ operator ยังขึ้นกับ policy อื่นที่ผูกอยู่ด้วย; template นี้ไม่ใช่หลักฐานของ effective permissions.
+API p95 เป็น runtime context จาก request ที่จบแล้ว ไม่ใช่ SLO; ไม่มี traffic จะแสดงไม่มีข้อมูล ไม่ใช่ 0 ms.
+
 ```sh
 SECURITY_ALERT_TOPIC_ARN="$SECURITY_ALERT_TOPIC_ARN" \
   bash infra/monitoring/runtime-alarms.sh install production
@@ -305,6 +311,16 @@ free storage 4 GB, free memory 200 MB, connections 150 และ CPU credit 50. 
 ทุก field, ยืนยัน SNS subscription และบังคับว่าทุก dimension ต้องมี datapoint จริง นอกจากนี้ `install`
 สร้าง dashboard global ชื่อ `watchdog-bms-prod-customer-journeys` และ `verify` อ่าน body กลับมาเทียบ
 กับ source ทุก field; ห้ามแก้ dashboard นี้จาก console เพราะรอบ install ถัดไปจะเขียนทับ
+
+**P9-1c activation evidence แยกจาก config verify:** บันทึก deployed API revision/image digest และยืนยันว่า
+รุ่นนั้นส่ง `msg=request` + numeric `durationMs` จริงก่อนเริ่มเก็บหลักฐาน. หลัง install ให้เปิดหน้า read-only ตามปกติ
+แล้วเก็บ `SampleCount > 0` และ `p95` ของ `WatchDog/Runtime/watchdog_bms_prod_api_response_latency_ms`
+ใน region `ap-southeast-1`/ช่วงเวลา UTC หลัง install ที่ระบุชัดเจน พร้อม request log `msg=request`
+ที่มี `durationMs` เป็นตัวเลข. ห้ามนับกราฟว่างว่าผ่าน และห้ามยิง financial mutation ซ้ำเพื่อสร้าง telemetry.
+ทำ UAT ด้วย metric prefix `watchdog_bms_uat` ก่อน Production ตาม deployment protocol;
+fake-AWS/local test ไม่แทนหลักฐานนี้. หากต้อง rollback ให้ลบเฉพาะ filter `api-response-latency`
+ใน API log group ของ environment ที่ตรวจ account/region แล้ว และติดตั้ง dashboard จาก revision ก่อน P9-1c;
+ข้อมูล metric เดิมหมดอายุตาม retention ของ CloudWatch ไม่ได้ถูกลบตาม filter.
 
 ```sh
 # หลัง verify per-node ผ่านเท่านั้น ลบ alarm เก่าที่ใช้ ReplicationGroupId และไม่มี datapoint
