@@ -6,10 +6,6 @@ import { COMPANY_ID, ensureBrowserLegalAcceptance, expectNoClientError } from '.
 
 // API dependencies stay owned by the API package; no new root dependency is needed.
 const apiRequire = createRequire(resolve('apps/api/package.json'));
-const { PrismaPg } = apiRequire('@prisma/adapter-pg');
-const { PrismaClient } = apiRequire(resolve('apps/api/dist/apps/api/src/generated/prisma/client.js'));
-const { hashPassword, verifyPassword } = apiRequire(resolve('apps/api/dist/apps/api/src/modules/auth/domain/logic/password-credential.logic.js'));
-const { hashLineRecoveryPassword } = apiRequire(resolve('apps/api/dist/apps/api/src/modules/auth/domain/logic/secure-token.logic.js'));
 
 for (const width of [390, 1280]) {
   test(`LINE recovery generic request and support fallback at ${width}px`, async ({ page }, info) => {
@@ -35,6 +31,11 @@ for (const width of [390, 1280]) {
   test(`LINE recovery real login, forced change and ordinary login at ${width}px`, async ({ page, context }, info) => {
     const databaseUrl = process.env.AUTH_RECOVERY_TEST_DATABASE_URL;
     test.skip(!databaseUrl, 'requires the isolated local recovery review database');
+    // Load compiled helpers only after webServer setup, not during clean-tree test discovery.
+    const { PrismaPg } = apiRequire('@prisma/adapter-pg');
+    const { PrismaClient } = apiRequire(resolve('apps/api/dist/apps/api/src/generated/prisma/client.js'));
+    const { hashPassword, verifyPassword } = apiRequire(resolve('apps/api/dist/apps/api/src/modules/auth/domain/logic/password-credential.logic.js'));
+    const { hashLineRecoveryPassword } = apiRequire(resolve('apps/api/dist/apps/api/src/modules/auth/domain/logic/secure-token.logic.js'));
     const url = new URL(databaseUrl!);
     expect(['localhost', '127.0.0.1']).toContain(url.hostname);
     expect(url.pathname).toMatch(/_recovery_review_/);
