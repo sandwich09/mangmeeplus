@@ -1,6 +1,6 @@
 # Agent Memory: draft-employee-deletion
 
-Status: Final integrated checks passed on `codex/draft-employee-deletion`; ready for normal push to develop. Isolated worktree originally based on e5477b60943e30cff91a2193f4f5675560aeef91.
+Status: Delivered to `origin/develop` and `origin/codex/draft-employee-deletion` by normal atomic push; remote confirmation recorded below. Isolated worktree originally based on e5477b60943e30cff91a2193f4f5675560aeef91.
 Owner: delegated agent `/root/reimbursement_no_future_dates` (new task after date delivery).
 Scope: Make the existing employee-delete menu actually remove unfinished company employee drafts. No live data/deployment or global account removal.
 
@@ -55,4 +55,10 @@ Open questions: none; account ownership and recreation follow existing create/li
 - Full API and web: `./node_modules/.bin/tsc --noEmit --incremental false -p tsconfig.json` from each app directory — **both passed** after restoring the missing installed SES dependency.
 - `git diff --check` passed; no manifest, lockfile or schema change relative to latest develop. Synthetic browser evidence above remains valid; no real Postgres/UAT claim is made.
 
-Next: normal non-force push and record remote ancestry.
+### Delivery confirmation
+
+- `git push --atomic origin HEAD:refs/heads/codex/draft-employee-deletion HEAD:refs/heads/develop` succeeded without force or bypass, advancing develop from `2ef787b1` to `7f20e74057d057e0904d60cfcba3d283449fbd48` and creating the feature branch at the same commit.
+- `git ls-remote --heads origin develop codex/draft-employee-deletion` confirmed both exact remote SHAs above. Ancestor checks confirmed implementation `62ed1ada` and upstream/password-runner delivery `2ef787b1` are included.
+- The final follow-up changes only this delivery record. Temporary root/contracts/config dependency symlinks created by this task were removed; no shared target was removed or changed.
+
+Next: scoped task complete. No live deployment or customer-data action was performed or scheduled.
