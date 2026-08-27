@@ -28,7 +28,7 @@ export class ExpenseTransactionTaxService {
 
   async resolveLines(
     ctx: RequestContext,
-    header: { expenseId: string; branchId?: string; expenseDate: string; currency: string },
+    header: { expenseId: string; branchId?: string; expenseDate: string; currency: string; preserveAcceptedVat?: boolean },
     lines: Array<ExpenseLineInput & ExpenseTaxLineSelection>,
     mode: 'DRAFT' | 'FINAL' = 'DRAFT',
     db?: any,
@@ -57,9 +57,26 @@ export class ExpenseTransactionTaxService {
           authoritativeOtherTaxAmount: line.authoritativeOtherTaxAmount,
           authoritativeImportVatAmount: line.authoritativeImportVatAmount,
         };
-      const preview: ResolveTransactionTaxPreviewDto = db
-        ? await this.transactionTax.resolveSourceTaxInTransaction(ctx, input, mode, db, undefined, context === 'IMPORT_SERVICE' ? 'SELF_ASSESSED' : 'INPUT', 'expense')
-        : await this.transactionTax.resolveSourceTax(ctx, input, mode, undefined, context === 'IMPORT_SERVICE' ? 'SELF_ASSESSED' : 'INPUT', 'expense');
+      const internal = mode === 'FINAL' && header.preserveAcceptedVat && context === 'DOMESTIC_PURCHASE'
+        ? { acceptedExpenseVatRate: line.vatRate ?? undefined } : undefined;
+      let preview: ResolveTransactionTaxPreviewDto;
+      try {
+        preview = db
+          ? await this.transactionTax.resolveSourceTaxInTransaction(ctx, input, mode, db, undefined, context === 'IMPORT_SERVICE' ? 'SELF_ASSESSED' : 'INPUT', 'expense', internal)
+          : await this.transactionTax.resolveSourceTax(ctx, input, mode, undefined, context === 'IMPORT_SERVICE' ? 'SELF_ASSESSED' : 'INPUT', 'expense', internal);
+      } catch (error) {
+        const response = (error as { getResponse?: () => any }).getResponse?.();
+        if (internal && response?.code === 'transaction_tax_needs_review') {
+          const errors: string[] = response.preview?.errors ?? [];
+          if (errors.includes('accepted_expense_vat_rate_conflict')) {
+            throw new BadRequestException({ code: 'EXPENSE_VAT_TAX_RATE_CONFLICT', message: 'The expense VAT rate conflicts with its Tax Code. Correct the rate or Tax Code first.' });
+          }
+          if (errors.includes('entered_tax_amount_outside_tolerance')) {
+            throw new BadRequestException({ code: 'EXPENSE_VAT_TAX_TOLERANCE_REQUIRED', message: 'Document VAT exceeds the Tax Code tolerance. Review the document and Tax Code; accepting document VAT cannot bypass this tax rule.' });
+          }
+        }
+        throw error;
+      }
       const isVat = preview.snapshot.taxRegime === 'VAT' || preview.snapshot.taxRegime === 'IMPORT_VAT';
       if (line.vatTreatment && isVat) {
         const expectedTreatments = line.vatTreatment === 'NON_VAT' ? ['NON_TAXABLE', 'OUTSIDE_SCOPE'] : [line.vatTreatment];

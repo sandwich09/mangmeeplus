@@ -5,6 +5,12 @@ import { apiErrorMessage, translateApiError } from './api-error-message';
 
 const apiError = (message: string, extra: Record<string, unknown> = {}) => Object.assign(new Error(message), extra);
 
+test('explains document VAT acceptance without suggesting a bypass of Tax Code rules', () => {
+  assert.match(apiErrorMessage(apiError('Bad Request', { status: 400, code: 'EXPENSE_VAT_TAX_TOLERANCE_REQUIRED' })), /เกินเกณฑ์ของ Tax Code/);
+  assert.match(apiErrorMessage(apiError('Bad Request', { status: 400, code: 'EXPENSE_VAT_TAX_RATE_CONFLICT' })), /อัตรา VAT ของรายการไม่ตรง/);
+  assert.match(apiErrorMessage(apiError('Bad Request', { status: 400, code: 'EXPENSE_VAT_OVERRIDE_INVALID' })), /ตรวจยอดต้นฉบับและอัตรา VAT/);
+});
+
 test('distinguishes a wrong current password from an expired session', () => {
   assert.equal(apiErrorMessage(apiError('Current password is incorrect.', {
     status: 400, code: 'current_password_incorrect',

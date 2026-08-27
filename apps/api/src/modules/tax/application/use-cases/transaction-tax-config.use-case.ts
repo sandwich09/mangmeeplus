@@ -39,6 +39,8 @@ export type LegacyTaxRemediationInput = {
 };
 
 type InternalTaxResolution = {
+  /** Server-owned expense source rate; retain its accepted amounts within the profile tolerance. */
+  acceptedExpenseVatRate?: string;
   authoritativeSelfAssessedTaxBaseAmount?: string;
   authoritativeSelfAssessedTaxAmount?: string;
   historicalSnapshot?: TransactionTaxSnapshot;
@@ -555,6 +557,7 @@ export class TransactionTaxConfigUseCase {
       definitions, accountRules, reportRules, input: trustedInput, profileId: selected.id, direction, sourceModule,
       profileKey: selected.sourceProfileKey, profileVersion: selected.version,
       roundingPolicy,
+      acceptedExpenseVatRate: internal?.acceptedExpenseVatRate,
     });
     preview.errors = [...new Set([...preview.errors, ...trustErrors])];
     return preview;

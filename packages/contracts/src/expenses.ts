@@ -254,6 +254,7 @@ export type ExpenseVatSourceOrigin = 'OCR' | 'REVIEWER' | 'IMPORT';
 export type ExpenseVatReconciliationStatus =
   | 'NOT_APPLICABLE'
   | 'MATCHED'
+  | 'REVIEWER_ACCEPTED'
   | 'CALCULATED_ONLY'
   | 'SOURCE_ONLY'
   | 'MISMATCH'
@@ -334,6 +335,8 @@ export type ExpenseVatCaptureSnapshotV1 = {
 export type ExpenseVatSourceOverrideInput = {
   reason: string;
   vatLineNumber: number;
+  /** Bind the decision to the saved values the reviewer actually saw. */
+  expectedUpdatedAt: string;
 };
 
 export type ConfirmExpenseRequest = {

@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { calcLineTotals, calcDocumentTotals, calcPaymentAmounts, derivePaymentStatus } from './expense-totals.logic';
-import { reconcileExpenseVat, validateExpenseVatSourceInput, vatSourceFromSnapshot } from './expense-vat-reconciliation.logic';
+import { acceptExpenseVatSource, reconcileExpenseVat, validateExpenseVatSourceInput, vatSourceFromSnapshot } from './expense-vat-reconciliation.logic';
 import { expenseVatReconciliationMessage } from '@watchdog-bms/contracts';
 import Decimal from 'decimal.js';
 import { applyExpenseWhtInput, expenseWhtLineRate } from './expense-wht-input.logic';
@@ -10,6 +10,108 @@ function bill(prices: string[], vatMode: 'NO_VAT' | 'VAT_INCLUDED' | 'VAT_EXCLUD
     lineNumber: index + 1, quantity: '1', unitPrice, vatRate: index === 0 ? '0.07' : '0',
   })) });
 }
+
+function sourceDecisionExpense(vatMode: 'VAT_INCLUDED' | 'VAT_EXCLUDED' = 'VAT_INCLUDED', sourceVat = '8', whtInput?: { inputType: 'RATE' | 'AMOUNT'; value: string }) {
+  const units = [
+    { lineNumber: 1, quantity: '2', unitPrice: vatMode === 'VAT_INCLUDED' ? '58.50' : '55', discountAmount: '10', vatRate: '0.07', whtRate: expenseWhtLineRate(whtInput, '0.03') },
+    ...(['EXEMPT', 'ZERO_RATED', 'NON_VAT'] as const).map((vatTreatment, index) => ({
+      lineNumber: index + 2, quantity: '1', unitPrice: '50', discountAmount: '0', vatRate: '0', vatTreatment, whtRate: expenseWhtLineRate(whtInput, '0.03'),
+    })),
+  ];
+  const vat = reconcileExpenseVat({ vatMode, lines: units, source: { inputType: 'AMOUNT', vatAmount: sourceVat } });
+  assert.equal(applyExpenseWhtInput(vat, whtInput), null);
+  return { vatMode, ...vat.totals, whtInputJson: whtInput, vatCaptureSnapshotJson: vat.snapshot,
+    lines: units.map((line, index) => ({ ...line, ...vat.lines[index]!.totals })) } as any;
+}
+
+describe('explicit document VAT acceptance arithmetic', () => {
+  for (const vatMode of ['VAT_INCLUDED', 'VAT_EXCLUDED'] as const) {
+    for (const whtInput of [undefined, { inputType: 'RATE', value: '3' }, { inputType: 'AMOUNT', value: '7.51' }] as const) {
+      for (const source of ['8', '6']) {
+        it(`${vatMode} source ${source} preserves discount/zero treatment and ${whtInput?.inputType ?? 'legacy'} WHT`, () => {
+          const expense = sourceDecisionExpense(vatMode, source, whtInput);
+          const before = structuredClone(expense);
+          const accepted = acceptExpenseVatSource(expense, { reason: 'Printed total checked', vatLineNumber: 1 });
+          assert.deepEqual(expense, before, 'the preparation helper never mutates the saved source');
+          assert.equal(accepted.totals.vatAmount, `${source}.0000`);
+          assert.equal(accepted.totals.discountAmount, '10.0000');
+          assert.equal(Number(accepted.totals.grandTotalAmount), vatMode === 'VAT_INCLUDED' ? 257 : 250 + Number(source));
+          assert.equal(Number(accepted.totals.taxableAmount), vatMode === 'VAT_INCLUDED' ? 257 - Number(source) : 250);
+          for (const line of accepted.lines.slice(1)) assert.equal(line.totals.vatAmount, '0.0000');
+          const expectedWht = whtInput?.inputType === 'AMOUNT' ? '7.5100'
+            : calcDocumentTotals({ lines: accepted.lines.map((line) => ({ ...line.totals,
+              whtAmount: new Decimal(line.totals.taxableAmount).mul('0.03').toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(4),
+            })) }).whtAmount;
+          assert.equal(accepted.totals.whtAmount, expectedWht);
+          assert.equal(accepted.totals.netPayableAmount, new Decimal(accepted.totals.grandTotalAmount).minus(expectedWht).toFixed(4));
+          assert.equal(accepted.snapshot.calculation.vatAmount, '7.0000');
+          assert.equal(accepted.snapshot.calculation.lineResults[0]!.residualAdjustment, source === '8' ? '1.0000' : '-1.0000');
+        });
+      }
+    }
+  }
+
+  it('requires a bounded reason and refuses every explicit zero treatment as a carrier', () => {
+    const expense = sourceDecisionExpense('VAT_EXCLUDED');
+    for (const vatLineNumber of [2, 3, 4, 99]) {
+      assert.throws(() => acceptExpenseVatSource(expense, { reason: 'Checked', vatLineNumber }), /VAT|selected line/);
+    }
+    assert.throws(() => acceptExpenseVatSource(expense, { reason: ' ', vatLineNumber: 1 }), /reason/);
+    assert.throws(() => acceptExpenseVatSource(expense, { reason: 'x'.repeat(501), vatLineNumber: 1 }), /reason/);
+  });
+
+  it('applies a mixed-positive-rate difference only to the explicitly selected line', () => {
+    const units = [
+      { lineNumber: 1, quantity: '1', unitPrice: '100', vatRate: '0.07' },
+      { lineNumber: 2, quantity: '1', unitPrice: '100', vatRate: '0.05' },
+    ];
+    for (const sourceVat of ['15', '4']) {
+      const vat = reconcileExpenseVat({ vatMode: 'VAT_EXCLUDED', lines: units, source: { inputType: 'AMOUNT', vatAmount: sourceVat } });
+      const expense: any = { vatMode: 'VAT_EXCLUDED', ...vat.totals, vatCaptureSnapshotJson: vat.snapshot,
+        lines: units.map((line, index) => ({ ...line, ...vat.lines[index]!.totals })) };
+      if (sourceVat === '4') {
+        assert.throws(() => acceptExpenseVatSource(expense, { reason: 'Checked', vatLineNumber: 2 }), /negative/);
+      } else {
+        const accepted = acceptExpenseVatSource(expense, { reason: 'Checked', vatLineNumber: 2 });
+        assert.equal(accepted.lines[0]!.totals.vatAmount, '7.0000');
+        assert.equal(accepted.lines[1]!.totals.vatAmount, '8.0000');
+        assert.equal(accepted.totals.vatAmount, '15.0000');
+      }
+    }
+  });
+
+  it('rejects missing, malformed, rate-conflicting, unknown and stale source evidence', () => {
+    const mutations: Array<(expense: any) => void> = [
+      (e) => { e.vatCaptureSnapshotJson = null; },
+      (e) => { e.vatCaptureSnapshotJson.source.vatAmount = null; },
+      (e) => { e.vatCaptureSnapshotJson.source.vatAmount = '-1'; },
+      (e) => { e.vatCaptureSnapshotJson.source.vatAmount = '8.001'; },
+      (e) => { e.vatCaptureSnapshotJson.source.vatAmount = '100000000000000'; },
+      (e) => { e.vatCaptureSnapshotJson.source.lineSources = [{ lineNumber: 1, inputType: 'AMOUNT', vatAmount: '8' }]; },
+      (e) => { e.vatCaptureSnapshotJson.source.inputType = 'BOTH'; e.vatCaptureSnapshotJson.source.vatRatePercent = '8'; },
+      (e) => { e.lines[1].vatRate = null; e.lines[1].vatTreatment = null; },
+      (e) => { e.lines[0].unitPrice = '60'; },
+      (e) => { e.vatCaptureSnapshotJson.calculation.vatAmount = '6'; },
+      (e) => { e.vatAmount = '6'; },
+    ];
+    for (const mutate of mutations) {
+      const expense = sourceDecisionExpense();
+      mutate(expense);
+      assert.throws(() => acceptExpenseVatSource(expense, { reason: 'Checked', vatLineNumber: 1 }));
+    }
+  });
+
+  it('rejects negative carriers, WHT beyond the accepted base and aggregate overflow', () => {
+    assert.throws(() => acceptExpenseVatSource(sourceDecisionExpense('VAT_INCLUDED', '108'), { reason: 'Checked', vatLineNumber: 1 }), /negative/);
+    const wht = sourceDecisionExpense('VAT_INCLUDED', '8', { inputType: 'AMOUNT', value: '250' });
+    assert.throws(() => acceptExpenseVatSource(wht, { reason: 'Checked', vatLineNumber: 1 }), /WHT amount/);
+    const units = [{ lineNumber: 1, quantity: '1', unitPrice: '90000000000000', vatRate: '0.07' }];
+    const result = reconcileExpenseVat({ vatMode: 'VAT_EXCLUDED', lines: units, source: { inputType: 'AMOUNT', vatAmount: '20000000000000' } });
+    const expense: any = { vatMode: 'VAT_EXCLUDED', ...result.totals, vatCaptureSnapshotJson: result.snapshot,
+      lines: [{ ...units[0], ...result.lines[0]!.totals }] };
+    assert.throws(() => acceptExpenseVatSource(expense, { reason: 'Checked', vatLineNumber: 1 }), /Decimal\(18,4\)/);
+  });
+});
 
 describe('authoritative whole-bill WHT', () => {
   it('never lets a within-tolerance VAT source create a negative base or WHT carrier', () => {

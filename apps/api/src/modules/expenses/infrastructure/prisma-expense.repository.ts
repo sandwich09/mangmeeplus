@@ -17,11 +17,13 @@ import type {
   ListExpensesFilter, ExpenseCategorySummary, DuplicateCandidateSummary,
   CreateExpenseCategoryInput, UpdateExpenseCategoryInput, SharedEvidenceFilter, SignatureSubmitChannel,
   SubstituteReceiptApprovalMode, SubstituteReceiptListFilter,
+  ExpenseVatSourceOverrideInput,
 } from '@watchdog-bms/contracts';
 import { civilDate, civilDateToUtcDate, civilDayRangeToUtc, civilPeriodKey, coerceCivilDate, exclusiveEndOfDay, isCivilDate, EXPENSE_PAYMENT_METHODS } from '@watchdog-bms/contracts';
 import { expenseTaxSourceChecksum } from '../domain/logic/expense-status.logic';
 import { nextExpensePostingSource } from '../domain/logic/expense-auto-post.logic';
 import { calcPaymentAmounts, derivePaymentStatus, SETTLE_EPSILON } from '../domain/logic/expense-totals.logic';
+import { acceptExpenseVatSource } from '../domain/logic/expense-vat-reconciliation.logic';
 import {
   assertActiveTransactionBranch as assertActiveExpenseBranch,
   requireTransactionBranchId as requireExpenseBranchId,
@@ -2040,6 +2042,7 @@ export class PrismaExpenseRepository {
     /** Claim-born confirm under reimbursement authority: the signed ใบเบิก covers the missing
      *  receipt, so no expense-side substitute artifact is demanded (mirrors the use-case gate). */
     substituteCoveredByClaimForm?: boolean;
+    vatSourceOverride?: ExpenseVatSourceOverrideInput;
     outboxEvent: { eventKey: string; payloadJson: Record<string, unknown> };
   }, finalizeTax: ExpenseTaxFinalizer): Promise<{ expense: ExpenseRecord; finalized: ExpenseLineInput[] }> {
     const client = this.prisma.client as any;
@@ -2094,7 +2097,24 @@ export class PrismaExpenseRepository {
       if (reliesOnSubstitute && !coveredByClaimForm && (!substitute || substitute.status !== 'ISSUED' || !substitute.artifactAttachmentId)) {
         throw new ConflictException('expense_confirmation_substitute_evidence_changed');
       }
-      const finalized = await finalizeTax({ db: tx, expense: currentRecord });
+      let acceptedVat: ReturnType<typeof acceptExpenseVatSource> | undefined;
+      if (input.vatSourceOverride) {
+        if (typeof input.vatSourceOverride.expectedUpdatedAt !== 'string'
+          || new Date(input.vatSourceOverride.expectedUpdatedAt).getTime() !== current.updatedAt.getTime()) {
+          throw new ConflictException({ code: 'EXPENSE_VAT_OVERRIDE_STALE', message: 'Reload and review the current VAT amounts before accepting them.' });
+        }
+        try { acceptedVat = acceptExpenseVatSource(currentRecord, input.vatSourceOverride); }
+        catch (error) {
+          throw new BadRequestException({ code: 'EXPENSE_VAT_OVERRIDE_INVALID', message: (error as Error).message });
+        }
+      }
+      const acceptedRecord = acceptedVat ? {
+        ...currentRecord, ...acceptedVat.totals, vatCaptureSnapshotJson: acceptedVat.snapshot,
+        lines: currentRecord.lines.map((line) => ({
+          ...line, ...acceptedVat!.lines.find((item) => item.lineNumber === line.lineNumber)!.totals,
+        })),
+      } : currentRecord;
+      const finalized = await finalizeTax({ db: tx, expense: acceptedRecord });
       const expectedLineIds = currentRecord.lines.filter((line) => line.taxSnapshot?.taxCodeDefinitionId || line.taxSnapshot?.externalTaxCode).map((line) => line.id);
       if (finalized.length !== expectedLineIds.length || new Set(finalized.map((line) => line.sourceLineId)).size !== finalized.length
         || finalized.some((line) => !line.sourceLineId || !expectedLineIds.includes(line.sourceLineId)
@@ -2103,6 +2123,12 @@ export class PrismaExpenseRepository {
       }
       if (finalized.some((line) => isDomesticTaxSnapshot(line.taxSnapshot) && line.taxSnapshot?.evidenceStatus !== 'VERIFIED')) {
         throw new ConflictException('expense_confirmation_tax_evidence_changed');
+      }
+      if (acceptedRecord.vatCaptureSnapshotJson?.reconciliation.acceptedSource === 'SOURCE_AMOUNT'
+        && finalized.some((line) => line.taxSnapshot?.taxContext === 'DOMESTIC_PURCHASE' && line.taxSnapshot.taxRegime === 'VAT'
+          && (!new Decimal(line.taxSnapshot!.taxAmount).eq(line.vatAmount)
+            || !new Decimal(line.taxSnapshot!.taxBaseAmount).eq(line.taxableAmount)))) {
+        throw new ConflictException('expense_confirmation_accepted_vat_changed');
       }
       const evidenceIds = [...new Set(finalized.flatMap((line) => line.taxSnapshot?.evidenceRefs ?? []))];
       if (evidenceIds.length) {
@@ -2143,11 +2169,25 @@ export class PrismaExpenseRepository {
         });
         if (changed.count !== 1) throw new ConflictException('expense_confirmation_tax_line_changed');
       }
+      if (acceptedVat) {
+        for (const line of acceptedRecord.lines) {
+          const changed = await tx.expenseLine.updateMany({
+            where: { id: line.id, companyId: input.companyId, expenseId: input.id },
+            data: acceptedVat.lines.find((item) => item.lineNumber === line.lineNumber)!.totals,
+          });
+          if (changed.count !== 1) throw new ConflictException('expense_confirmation_tax_line_changed');
+        }
+      }
       const changed = await tx.expenseRecord.updateMany({
         where: { id: input.id, companyId: input.companyId, status: 'READY_FOR_CONFIRMATION', updatedAt: input.expectedUpdatedAt },
         data: {
           status: 'CONFIRMED', confirmedByUserId: input.actorUserId, confirmedAt: new Date(), updatedByUserId: input.actorUserId,
           expenseNumber: input.expenseNumber, postingStatus: input.postingStatus,
+          ...(acceptedVat && {
+            ...acceptedVat.totals, vatCaptureSnapshotJson: acceptedVat.snapshot,
+            ...calcPaymentAmounts(acceptedVat.totals.netPayableAmount, currentRecord.paidAmount),
+            paymentStatus: derivePaymentStatus(acceptedVat.totals.netPayableAmount, currentRecord.paidAmount),
+          }),
           ...(input.vendorSnapshotJson ? { vendorSnapshotJson: input.vendorSnapshotJson } : {}),
         },
       });

@@ -1,4 +1,4 @@
-import { Injectable, ForbiddenException, Logger, NotFoundException, BadRequestException, UnprocessableEntityException } from '@nestjs/common';
+import { Injectable, ForbiddenException, Logger, NotFoundException, BadRequestException, ConflictException, UnprocessableEntityException } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
 import { PAYMENT_IDEMPOTENCY_KEY_PATTERN } from '../../../accounting-documents/domain/logic/accounting-money-validation.logic';
 import { PrismaExpenseRepository, requireExpenseBranchId } from '../../infrastructure/prisma-expense.repository';
@@ -644,10 +644,12 @@ export class ConfirmExpenseUseCase {
     }
     // Plan 13.11.B: a real mismatch still blocks, but it now says which line to open. Over tolerance
     // the only way through is the named reviewer decision "ใช้ยอดตามเอกสาร" — `expense.review`, a
-    // written reason and the VAT line that carries the difference, written to audit. Nothing is
-    // re-priced here: the printed VAT and the calculated VAT both stay in the snapshot exactly as
-    // reconciliation left them, so no amount changes silently.
+    // written reason and the VAT line that carries the difference. The CAS transaction applies
+    // accepted amounts and writes the audit together; captured/calculated evidence stays intact.
     const snapshot = r.vatCaptureSnapshotJson;
+    if (vatSourceOverride && !isBlockingExpenseVatReconciliation(snapshot)) {
+      throw new BadRequestException({ code: 'EXPENSE_VAT_OVERRIDE_INVALID', message: 'Review the current VAT source before accepting a difference.' });
+    }
     if (snapshot && isBlockingExpenseVatReconciliation(snapshot)) {
       if (!vatSourceOverride) {
         throw new BadRequestException({
@@ -664,7 +666,11 @@ export class ConfirmExpenseUseCase {
         });
       }
       requirePerm(ctx, 'expense.review', 'accept the document VAT total over tolerance');
-      const reason = vatSourceOverride.reason.trim();
+      if (typeof vatSourceOverride.expectedUpdatedAt !== 'string'
+        || new Date(vatSourceOverride.expectedUpdatedAt).getTime() !== r.updatedAt.getTime()) {
+        throw new ConflictException({ code: 'EXPENSE_VAT_OVERRIDE_STALE', message: 'Reload and review the current VAT amounts before accepting them.' });
+      }
+      const reason = typeof vatSourceOverride.reason === 'string' ? vatSourceOverride.reason.trim() : '';
       const carrier = (r.lines ?? []).find((line) => line.lineNumber === vatSourceOverride.vatLineNumber);
       // The difference has to land on a line that actually bears VAT — never on ผัก/ผลไม้.
       if (!reason || !carrier || !(Number(carrier.vatRate ?? 0) > 0)) {
@@ -673,25 +679,6 @@ export class ConfirmExpenseUseCase {
           message: 'ใช้ยอดตามเอกสาร requires a written reason and a VAT-bearing line to carry the difference.',
         });
       }
-      await this.audit.log({
-        companyId: ctx.companyId,
-        actorUserId: ctx.userId,
-        action: 'expense.vat.source_override',
-        targetType: 'expense_record',
-        targetId: expenseId,
-        requestId: ctx.requestId,
-        result: 'SUCCESS',
-        riskLevel: 'HIGH',
-        metadataJson: {
-          reason,
-          vatLineNumber: carrier.lineNumber,
-          reconciliationStatus: snapshot.reconciliation.status,
-          documentVatAmount: snapshot.source.vatAmount,
-          calculatedVatAmount: snapshot.calculation.vatAmount,
-          differenceAmount: snapshot.reconciliation.differenceAmount,
-          toleranceAmount: snapshot.reconciliation.toleranceAmount,
-        },
-      });
     }
     const reliesOnSubstitute = Boolean(r.missingReceiptReason || r.substituteReceiptGeneratedAt || r.sourceDocumentType === 'SUBSTITUTE_RECEIPT');
     // A claim-born projection carries the CLAIM's missing-receipt reason, and its legal instrument
@@ -777,6 +764,7 @@ export class ConfirmExpenseUseCase {
         id: expenseId, companyId: ctx.companyId, expectedUpdatedAt: r.updatedAt, actorUserId: ctx.userId,
         expectedSourceChecksum: expenseTaxSourceChecksum(r),
         substituteCoveredByClaimForm: reasonCoveredByClaimForm,
+        vatSourceOverride,
         postingStatus, vendorSnapshotJson, expenseNumber: reserved.documentNumber,
         outboxEvent: {
           eventKey: `expense.confirmed:expense_record:${expenseId}:${eventRequestId}`,
@@ -797,11 +785,27 @@ export class ConfirmExpenseUseCase {
           externalTaxCode: line.taxSnapshot?.externalTaxCode ?? undefined,
           transactionContext: line.taxSnapshot?.taxContext ?? undefined,
         }));
-        if (!selectedLines.length) return [];
-        return this.transactionTax.resolveLines(ctx, {
+        const lines = selectedLines.length ? await this.transactionTax.resolveLines(ctx, {
           expenseId: current.id, branchId: current.branchId ?? undefined,
           expenseDate: current.expenseDate.toISOString(), currency: current.currency,
-        }, selectedLines, 'FINAL', db);
+          preserveAcceptedVat: current.vatCaptureSnapshotJson?.reconciliation.acceptedSource === 'SOURCE_AMOUNT',
+        }, selectedLines, 'FINAL', db) : [];
+        if (vatSourceOverride && snapshot) {
+          await this.audit.log({
+            companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.vat.source_override',
+            targetType: 'expense_record', targetId: expenseId, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH',
+            metadataJson: {
+              reason: vatSourceOverride.reason.trim(), vatLineNumber: vatSourceOverride.vatLineNumber,
+              reconciliationStatus: snapshot.reconciliation.status,
+              documentVatAmount: snapshot.source.vatAmount, calculatedVatAmount: snapshot.calculation.vatAmount,
+              differenceAmount: snapshot.reconciliation.differenceAmount, toleranceAmount: snapshot.reconciliation.toleranceAmount,
+              acceptedVatAmount: current.vatAmount, acceptedPreVatAmount: current.taxableAmount,
+              acceptedGrossAmount: current.grandTotalAmount, acceptedWhtAmount: current.whtAmount,
+              acceptedNetPayableAmount: current.netPayableAmount,
+            },
+          }, db);
+        }
+        return lines;
       }));
       await this.commitNumber.execute({
         id: reserved.id, companyId: ctx.companyId, ownerType: 'expense_record', ownerId: expenseId,

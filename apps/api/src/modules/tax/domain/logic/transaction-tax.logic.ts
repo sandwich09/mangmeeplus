@@ -213,6 +213,8 @@ export function resolveTransactionTaxPreview(args: {
   profileKey?: string;
   profileVersion?: number;
   roundingPolicy?: Partial<TransactionTaxRoundingPolicy>;
+  /** Internal ERP input, deliberately absent from the public TransactionTaxLineInput. */
+  acceptedExpenseVatRate?: string;
 }): ResolveTransactionTaxPreviewDto {
   const roundingPolicy = normalizeTaxRoundingPolicy(args.roundingPolicy);
   const found = findEffectiveTaxCode(args.definitions, args.input, args.profileId, args.direction);
@@ -235,6 +237,27 @@ export function resolveTransactionTaxPreview(args: {
 
   const definition = found.definition;
   const calculated = calculateAmounts(definition, args.input, roundingPolicy);
+  if (args.acceptedExpenseVatRate !== undefined) {
+    const entered = new Decimal(args.input.enteredTaxAmount ?? -1);
+    const acceptedBase = new Decimal(args.input.netAmount);
+    const acceptedGross = new Decimal(args.input.grossAmount);
+    if (args.input.sourceType !== 'expense.record' || args.sourceModule !== 'expense'
+      || args.input.transactionContext !== 'DOMESTIC_PURCHASE' || definition.direction !== 'INPUT'
+      || definition.taxRegime !== 'VAT' || sourceCurrency(args.input) !== taxCurrency(args.input)
+      || (args.input.correctionSign ?? 1) !== 1 || !entered.isFinite() || entered.lt(0)
+      || !acceptedBase.isFinite() || acceptedBase.lt(0) || !acceptedBase.plus(entered).eq(acceptedGross)
+      || !new Decimal(money(entered, roundingPolicy)).eq(entered)
+      || !new Decimal(money(acceptedBase, roundingPolicy)).eq(acceptedBase)) {
+      calculated.errors.push('accepted_expense_vat_amount_invalid');
+    } else if (!new Decimal(args.acceptedExpenseVatRate).mul(100).eq(definition.rate)) {
+      calculated.errors.push('accepted_expense_vat_rate_conflict');
+    } else if (!calculated.errors.length) {
+      // The profile's entered-tax tolerance was checked above. Preserve the accepted source
+      // base/VAT for snapshots, report contributions and posting, not another calculated total.
+      calculated.base = acceptedBase;
+      calculated.tax = entered;
+    }
+  }
   const evidenceRequired = Boolean(definition.evidenceRuleKey)
     || (definition.treatment === 'ZERO_RATED' && args.input.transactionContext.startsWith('EXPORT_'))
     || ['IMPORT_GOODS', 'IMPORT_SERVICE'].includes(args.input.transactionContext);

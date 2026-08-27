@@ -1216,6 +1216,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   const collapsesVatBase = vatBaseGroups.length === 1
     && Math.abs(acceptedVatBase - Number(detail.taxableAmount)) < 0.005;
   const vatStatusLabel = vatSnapshot?.reconciliation.status === 'MATCHED' ? 'ตรงกับระบบ'
+    : vatSnapshot?.reconciliation.status === 'REVIEWER_ACCEPTED' ? 'ผู้ตรวจยืนยันยอดตามเอกสาร'
     : vatSnapshot?.reconciliation.status === 'MISMATCH' ? 'ยอดไม่ตรง'
       : vatSnapshot?.reconciliation.status === 'NEEDS_REVIEW' || vatSnapshot?.reconciliation.status === 'SOURCE_ONLY' ? 'รอตรวจ'
         : vatSnapshot?.reconciliation.status === 'CALCULATED_ONLY' ? 'ระบบคำนวณ'
@@ -1239,9 +1240,9 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
     if (!vatOverrideRef) return;
     const reason = vatOverrideReason.trim();
     vatOverrideRef.current = vatBlocked && canReview && reason !== '' && vatOverrideLineNumber !== null
-      ? { reason, vatLineNumber: vatOverrideLineNumber }
+      ? { reason, vatLineNumber: vatOverrideLineNumber, expectedUpdatedAt: detail.updatedAt }
       : null;
-  }, [canReview, vatBlocked, vatOverrideLineNumber, vatOverrideReason, vatOverrideRef]);
+  }, [canReview, detail.updatedAt, vatBlocked, vatOverrideLineNumber, vatOverrideReason, vatOverrideRef]);
   useEffect(() => { onValidationChange?.(blockingIssueCount, firstBlockingMessage); }, [blockingIssueCount, firstBlockingMessage, onValidationChange]);
 
   const updateLine = (index: number, field: EditableReviewLineField, value: string, vatTreatment?: ExpenseLineVatTreatment | null) => {
@@ -1455,7 +1456,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
                 <p className="text-xs text-gray-500">เลือกหน่วยตามที่เอกสารพิมพ์ ระบบจะเก็บค่าต้นฉบับแยกจากค่าที่คำนวณ</p>
               </div>
               {!vatSourceDirty && vatSnapshot && (
-                <MangmeeBadge tone={vatSnapshot.reconciliation.status === 'MATCHED' ? 'brand' : ['MISMATCH', 'NEEDS_REVIEW', 'SOURCE_ONLY'].includes(vatSnapshot.reconciliation.status) ? 'danger' : 'slate'}>
+                <MangmeeBadge tone={['MATCHED', 'REVIEWER_ACCEPTED'].includes(vatSnapshot.reconciliation.status) ? 'brand' : ['MISMATCH', 'NEEDS_REVIEW', 'SOURCE_ONLY'].includes(vatSnapshot.reconciliation.status) ? 'danger' : 'slate'}>
                   {vatStatusLabel}
                 </MangmeeBadge>
               )}
@@ -1564,6 +1565,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
                 <div className="rounded-lg bg-white px-3 py-2">
                   <MoneyRow label="VAT จากเอกสาร" value={snapshotSourceAmount ?? '0'} muted={snapshotSourceAmount === null} />
                   <MoneyRow label="VAT ที่ระบบคำนวณ" value={vatSnapshot.calculation.vatAmount} />
+                  <MoneyRow label="VAT ที่ใช้บันทึก" value={detail.vatAmount} />
                   {vatSnapshot.reconciliation.differenceAmount !== null && <MoneyRow label="ส่วนต่าง" value={vatSnapshot.reconciliation.differenceAmount} />}
                   <MoneyRow
                     label={collapsesVatBase ? 'ฐาน VAT (ยอดก่อน VAT ที่ใช้)' : 'ยอดก่อน VAT ที่ใช้'}
