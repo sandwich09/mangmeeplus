@@ -1,6 +1,6 @@
 # Agent Memory: Login username label
 
-Status: copy change and local verification complete, 2026-08-27; develop integration pending.
+Status: implemented, verified and integrated into remote develop, 2026-08-27.
 Owner: delegated copy-only implementation agent.
 Scope: Login identifier label and blank-field message in Thai/English; test and integrate into develop.
 Decisions:
@@ -22,4 +22,11 @@ Verification:
 - Browser skill: actual Next `/login?recovered=1` on localhost4340, isolated API base localhost4341 (no API running): Thai label/blank error and English label/whitespace error verified. Required-field focus, aria-invalid/description, `name="username"`, and `autocomplete="username"` unchanged. No login request submitted, real credentials used, database accessed, or browser console error. Test tab closed and Next server stopped; generated next-env change removed.
 - `git diff --check`: passed. No package.json/lockfile/generated-file diff.
 
-Next: commit, merge latest develop preserving concurrent auth-copy changes, repeat auth/i18n/typecheck, then non-force push feature/develop and verify remote containment. No live account, cloud, DB or deployment operation is authorized or claimed.
+Delivery:
+
+- Implementation commit `3f7fa6f4`; merged latest develop `7fdbfaf45c598d5694b83851fd0d961888d8f63d` without conflicts as `45e1816b51d6995d158457be9f8e05e45416ae9d`. Preserved reimbursement-date and temporary-password-copy changes; diff against that develop contains only this task's four files.
+- Repeated all 105 auth/i18n tests, local contracts/config builds and web typecheck after merge: passed.
+- Ordinary atomic push updated feature `codex/login-username-label` and develop together. Subsequent fetch reported both refs at `45e1816b51d6995d158457be9f8e05e45416ae9d`; implementation ancestor check exited0.
+- This delivery-note-only follow-up has no code change; its verified remote tip is reported in the final handoff.
+
+Next: no remaining implementation work. Sibling password-error agent should fetch latest develop before integration. No live account, cloud, DB or deployment operation is authorized or claimed.
