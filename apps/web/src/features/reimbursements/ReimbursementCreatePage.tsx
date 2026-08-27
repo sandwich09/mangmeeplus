@@ -13,6 +13,7 @@ import { createReimbursement, getReimbursement, updateReimbursementDraft, upload
 import { ICON, ErrorBanner, inputClass, btnClass, ghostClass } from '../expenses/ExpensesUi';
 import { RECEIPT_UPLOAD_ACCEPT } from '../expenses/expense-upload.logic';
 import { collectReceiptUploadResults, mergeDraftLineEvidence, validateRequestForm, sumLineAmounts, formatMoney, errorText } from './reimbursements.logic';
+import { TransactionBranchField, useTransactionCreateBranchId } from '../web-core-workspace/TransactionBranchField';
 
 const CATEGORY_OPTIONS: { value: string; label: string }[] = [
   { value: 'travel', label: 'เดินทาง' },
@@ -51,6 +52,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
   canUpdate?: boolean;
 }) {
   const router = useRouter();
+  const branchId = useTransactionCreateBranchId();
   const hubHref = `/companies/${companyId}/reimbursements`;
   const editing = Boolean(requestId);
   const [form, setForm] = useState(emptyForm);
@@ -61,6 +63,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
   const [editLoaded, setEditLoaded] = useState(!editing);
   const [error, setError] = useState<string | null>(null);
   const [correctionNote, setCorrectionNote] = useState<string | null>(null);
+  const [sourceBranchId, setSourceBranchId] = useState<string | null>(null);
   // Set only when the draft was created but its receipts failed to attach. Re-submitting would
   // create a second claim, so the primary action becomes "open the draft" instead.
   const [strandedDraftId, setStrandedDraftId] = useState<string | null>(null);
@@ -73,6 +76,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
       if (!active) return;
       if (detail.status !== 'DRAFT') throw new Error('แก้ไขได้เฉพาะคำขอฉบับร่าง');
       if (detail.requesterUserId !== userId) throw new Error('เฉพาะผู้ขอเท่านั้นที่แก้ไขคำขอนี้ได้');
+      setSourceBranchId(detail.branchId ?? null);
       setForm({
         reason: detail.reason ?? '',
         currency: detail.currency ?? 'THB',
@@ -103,6 +107,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault(); setError(null);
+    if (!editing && !branchId) { setError('กรุณาเลือกสาขาของรายการ'); return; }
     const v = validateRequestForm({
       reason: form.reason,
       missingReceiptReason: form.missingReceiptReason,
@@ -126,7 +131,8 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
         amount: l.amount,
       }));
       if (requestId) {
-        const results = await Promise.allSettled(form.lines.map(l => (l.file ? uploadReceiptFile(companyId, l.file) : Promise.resolve(null))));
+        if (!sourceBranchId) throw new Error('คำขอเดิมยังไม่ระบุสาขา กรุณาตรวจสอบสาขาของเอกสารก่อนบันทึก');
+        const results = await Promise.allSettled(form.lines.map(l => (l.file ? uploadReceiptFile(companyId, l.file, sourceBranchId) : Promise.resolve(null))));
         const { attachmentIds, failedLineNumbers, firstFailure } = collectReceiptUploadResults(results);
         if (failedLineNumbers.length > 0) {
           throw new Error(`แนบไฟล์รายการที่ ${failedLineNumbers.join(', ')} ไม่สำเร็จ: ${errorText(firstFailure)}`);
@@ -144,6 +150,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
         return;
       }
       const created = await createReimbursement(companyId, {
+        branchId,
         reason: form.reason,
         currency: form.currency || undefined,
         missingReceiptReason: form.missingReceiptReason.trim() || undefined,
@@ -152,7 +159,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
       createdId = created.id;
       const files = form.lines.map(l => l.file);
       if (files.some(Boolean)) {
-        const results = await Promise.allSettled(files.map(f => (f ? uploadReceiptFile(companyId, f) : Promise.resolve(null))));
+        const results = await Promise.allSettled(files.map(f => (f ? uploadReceiptFile(companyId, f, created.branchId ?? branchId) : Promise.resolve(null))));
         const { attachmentIds, failedLineNumbers, firstFailure } = collectReceiptUploadResults(results);
         if (attachmentIds.some(Boolean)) {
           await updateReimbursementDraft(companyId, created.id, {
@@ -211,6 +218,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
           covers every field with a Thai, line-numbered message instead. */}
       <form onSubmit={handleCreate} noValidate className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="space-y-4">
+          {!editing && <TransactionBranchField value={branchId} />}
           {correctionNote && <ErrorBanner message={`ฝ่ายการเงินขอให้แก้ไข: ${correctionNote}`} />}
           <MangmeeCard className="p-4">
             <h3 className="text-sm font-bold text-gray-900">ข้อมูลคำขอ</h3>

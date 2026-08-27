@@ -12,7 +12,8 @@ import {
   validateAccountingPaymentAllocation,
   validateAccountingPaymentMoneyInput,
 } from '../../domain/logic/accounting-money-validation.logic';
-import { isBranchInScope, resolveCreateBranchId } from '../../../data-model-core/domain/logic/branch.logic';
+import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
+import { requireTransactionBranchId } from '../../../data-model-core/application/services/transaction-branch';
 import { civilPeriodKey, todayCivilDate } from '@watchdog-bms/contracts';
 import { canonicalFingerprint } from '../../../../common/security/canonical-fingerprint';
 
@@ -66,7 +67,9 @@ export class CreatePaymentUseCase {
       }
     }
     if (ctx.scopes.branchIds?.length === 0) throw new ForbiddenException('Branch is outside your assigned branch scope.');
-    const branchId = target?.branchId ?? resolveCreateBranchId(ctx.scopes, input.branchId) ?? undefined;
+    const branchId = target
+      ? requireTransactionBranchId(target.branchId)
+      : await this.repo.resolveCreateBranchId(ctx.companyId, ctx.scopes, input.branchId);
     if (!isBranchInScope(ctx.scopes, branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
     if (branchId && !(await this.repo.findActiveBranch(ctx.companyId, branchId))) {
       throw new NotFoundException('Branch was not found in the current company.');

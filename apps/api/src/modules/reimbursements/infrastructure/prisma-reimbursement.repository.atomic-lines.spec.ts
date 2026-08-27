@@ -79,7 +79,7 @@ describe('PrismaReimbursementRepository aggregate transaction', () => {
   it('rolls a new header back when line replacement fails', async () => {
     const state = fakePrisma({ failLineUpsert: true });
     await assert.rejects(() => state.repo.createRequest({
-      companyId: 'company-1', requesterUserId: 'user-1', requesterDisplayNameSnapshot: 'User',
+      companyId: 'company-1', branchId: 'branch-1', requesterUserId: 'user-1', requesterDisplayNameSnapshot: 'User',
       reason: 'Travel', categoryKey: 'travel', amount: '100.0000', currency: 'THB',
       incurredDate: new Date('2026-08-03T00:00:00Z'), receiptRequirementStatus: 'REQUIRED',
       createdByUserId: 'user-1', lines: [line],

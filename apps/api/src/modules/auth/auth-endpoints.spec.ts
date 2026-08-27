@@ -1,4 +1,5 @@
 import { describe, it, beforeEach } from 'node:test';
+import './line-recovery.pg.spec';
 import assert from 'node:assert/strict';
 import { ConflictException, ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import { IssueTokenUseCase } from './application/use-cases/issue-token.use-case';
@@ -6,8 +7,10 @@ import { ExchangeLineTokenUseCase } from './application/use-cases/exchange-line-
 import { LogoutUseCase } from './application/use-cases/logout.use-case';
 import { RevokeOtherSessionsUseCase } from './application/use-cases/revoke-other-sessions.use-case';
 import { PasswordLoginUseCase } from './application/use-cases/password-login.use-case';
+import { NotifyPasswordResetRequestUseCase } from './application/use-cases/notify-password-reset-request.use-case';
 import { ChangePasswordUseCase } from './application/use-cases/change-password.use-case';
 import { hashPassword, verifyPassword } from './domain/logic/password-credential.logic';
+import { hashToken, hashLineRecoveryPassword } from './domain/logic/secure-token.logic';
 import { WatchdogJwtVerifierAdapter } from './infrastructure/watchdog-jwt-verifier.adapter';
 import { DevJwtVerifierAdapter } from './infrastructure/dev-jwt-verifier.adapter';
 import { PlatformAccessService } from './application/platform-access.service';
@@ -20,6 +23,61 @@ import { AppConfigService } from '../../common/config/app-config.service';
 const pendingLegalAcceptance = {
   getStatus: async () => ({ required: true }),
 } as any;
+
+describe('LINE recovery credential lifecycle', () => {
+  it('rejects a pending recovery password after the user changes their password', async () => {
+    let credential = {
+      passwordHash: hashPassword('old-user-password'), status: 'ACTIVE', mustChangePassword: false,
+      updatedAt: new Date('2026-08-27T08:00:00Z'), expiresAt: null,
+    };
+    const tokens: any[] = [];
+    let recoveryPassword = '';
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (_url: unknown, init: any) => {
+      recoveryPassword = /รหัสผ่านชั่วคราว: ([^\n]+)/.exec(JSON.parse(init.body).messages[0].text)![1]!;
+      return { ok: true } as Response;
+    }) as typeof fetch;
+    const client: any = {
+      $queryRaw: async () => [{ id: 'credential-1' }],
+      user: { findFirst: async () => ({ id: 'user-1', status: 'ACTIVE', credential: { ...credential } }) },
+      companyMembership: { findFirst: async () => ({ id: 'member-1', companyId: 'company-1', roles: [{ role: { key: 'OWNER' } }] }) },
+      externalIdentity: { findFirst: async () => ({ providerUserId: 'synthetic-line-owner' }) },
+      userCredential: {
+        findUnique: async () => ({ ...credential }),
+        update: async ({ data }: any) => (credential = { ...credential, ...data, updatedAt: new Date(credential.updatedAt.getTime() + 1) }),
+      },
+      passwordResetToken: {
+        create: async ({ data }: any) => { const token = { id: 'reset-1', ...data, status: 'PENDING' }; tokens.push(token); return token; },
+        findUnique: async ({ where }: any) => tokens.find((token) => token.tokenHash === where.tokenHash) ?? null,
+        updateMany: async ({ where, data }: any) => {
+          const matching = tokens.filter((token) => token.status === where.status && (!where.id || token.id === where.id));
+          matching.forEach((token) => Object.assign(token, data));
+          return { count: matching.length };
+        },
+      },
+      authSession: { updateMany: async () => ({ count: 0 }) },
+      auditLog: { create: async () => ({}) },
+    };
+    client.$transaction = async (fn: any) => fn(client);
+    const prisma = { client } as any;
+    const issueToken = { execute: async () => ({ accessToken: 'test', refreshToken: 'test', expiresIn: 900 }) } as any;
+    try {
+      await new NotifyPasswordResetRequestUseCase(prisma, { lineMessagingChannelAccessToken: 'synthetic', passwordResetResponseMinMs: 0 } as any)
+        .execute({ username: 'owner.one' });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.ok(recoveryPassword);
+      await new ChangePasswordUseCase(prisma).execute('user-1', 'old-user-password', 'new-user-password', 'current-session');
+      await assert.rejects(
+        () => new PasswordLoginUseCase(prisma, issueToken, pendingLegalAcceptance).execute('owner.one', recoveryPassword),
+        (error: unknown) => error instanceof UnauthorizedException,
+      );
+      assert.equal(verifyPassword('new-user-password', credential.passwordHash), true);
+      assert.equal(tokens[0].status, 'PENDING', 'an invalidated token must not rotate the current credential');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
 
 // ---- IssueTokenUseCase ----
 
@@ -219,6 +277,177 @@ describe('PasswordLoginUseCase', () => {
     assert.equal(result.companyId, 'company-1');
     assert.equal(result.redirectPath, '/companies/company-1/dashboard');
     assert.equal(result.legalAcceptanceRequired, true);
+  });
+
+  it('keeps the current password valid while a recovery token is pending', async () => {
+    const credentialUpdatedAt = new Date('2026-08-26T08:00:00.000Z');
+    let rotated = false;
+    const prisma = {
+      client: {
+        user: { findFirst: async () => ({
+          id: 'user-1', status: 'ACTIVE', credential: {
+            status: 'ACTIVE', passwordHash: hashPassword('current-password'),
+            mustChangePassword: false, expiresAt: null, updatedAt: credentialUpdatedAt,
+          },
+        }) },
+        passwordResetToken: { findUnique: async () => ({
+          id: 'reset-1', userId: 'user-1', status: 'PENDING', expiresAt: new Date(Date.now() + 60_000),
+        }) },
+        companyMembership: { findFirst: async () => ({
+          id: 'membership-1', companyId: 'company-1', roles: [{ role: { key: 'OWNER' } }],
+        }) },
+        $transaction: async () => { rotated = true; },
+      },
+    } as any;
+    const issueToken = { execute: async (_userId: string, _provider: string, version: Date) => {
+      assert.equal(version, credentialUpdatedAt);
+      return { accessToken: 'access', refreshToken: 'refresh', expiresIn: 900 };
+    } } as any;
+
+    const result = await new PasswordLoginUseCase(prisma, issueToken, pendingLegalAcceptance)
+      .execute('owner.one', 'current-password');
+
+    assert.equal(result.passwordChangeRequired, false);
+    assert.equal(rotated, false);
+  });
+
+  it('atomically turns a one-time LINE recovery password into a forced-change credential', async () => {
+    const recoveryPassword = 'Abcdef12_-xy';
+    const oldHash = hashPassword('current-password');
+    const credentialUpdatedAt = new Date('2026-08-26T08:10:00.000Z');
+    const nextCredentialUpdatedAt = new Date('2026-08-26T08:11:00.000Z');
+    let credentialUpdate: any;
+    let sessionUpdate: any;
+    let auditCreate: any;
+    const tx = {
+      $queryRaw: async () => [{ id: 'credential-1' }],
+      passwordResetToken: {
+        updateMany: async ({ where, data }: any) => {
+          assert.equal(where.id, 'reset-1');
+          assert.equal(where.userId, 'user-1');
+          assert.equal(where.status, 'PENDING');
+          assert.deepEqual(data, { status: 'USED', usedAt: where.expiresAt.gt });
+          return { count: 1 };
+        },
+      },
+      userCredential: {
+        findUnique: async () => ({ status: 'ACTIVE', passwordHash: oldHash, updatedAt: credentialUpdatedAt }),
+        update: async (args: any) => {
+          credentialUpdate = args;
+          return { updatedAt: nextCredentialUpdatedAt };
+        },
+      },
+      authSession: {
+        updateMany: async (args: any) => {
+          sessionUpdate = args;
+          return { count: 2 };
+        },
+      },
+      auditLog: { create: async (args: any) => { auditCreate = args; return {}; } },
+    };
+    const prisma = {
+      client: {
+        user: { findFirst: async () => ({
+          id: 'user-1', status: 'ACTIVE', credential: {
+            status: 'ACTIVE', passwordHash: oldHash, mustChangePassword: false,
+            expiresAt: null, updatedAt: credentialUpdatedAt,
+          },
+        }) },
+        passwordResetToken: { findUnique: async ({ where }: any) => {
+          assert.equal(where.tokenHash, hashLineRecoveryPassword(recoveryPassword, oldHash));
+          return { id: 'reset-1', userId: 'user-1', status: 'PENDING', expiresAt: new Date(Date.now() + 60_000) };
+        } },
+        companyMembership: { findFirst: async () => ({
+          id: 'membership-1', companyId: 'company-1', roles: [{ role: { key: 'STAFF' } }],
+        }) },
+        $transaction: async (fn: (db: typeof tx) => Promise<unknown>) => fn(tx),
+      },
+    } as any;
+    const issueToken = { execute: async (userId: string, provider: string, version: Date) => {
+      assert.equal(userId, 'user-1');
+      assert.equal(provider, 'watchdog');
+      assert.equal(version, nextCredentialUpdatedAt);
+      return { accessToken: 'access', refreshToken: 'refresh', expiresIn: 900 };
+    } } as any;
+
+    const result = await new PasswordLoginUseCase(prisma, issueToken, pendingLegalAcceptance)
+      .execute('staff.one', recoveryPassword);
+
+    assert.equal(result.passwordChangeRequired, true);
+    assert.equal(credentialUpdate.data.status, 'TEMPORARY');
+    assert.equal(credentialUpdate.data.mustChangePassword, true);
+    assert.equal(verifyPassword(recoveryPassword, credentialUpdate.data.passwordHash), true);
+    assert.equal(verifyPassword('current-password', credentialUpdate.data.passwordHash), false);
+    assert.equal(credentialUpdate.data.tempPasswordEncrypted, null);
+    assert.deepEqual(sessionUpdate.where, { userId: 'user-1', status: 'ACTIVE' });
+    assert.equal(sessionUpdate.data.status, 'REVOKED');
+    assert.equal(auditCreate.data.targetId, 'reset-1');
+    assert.equal(auditCreate.data.metadataJson.revokedSessionCount, 2);
+  });
+
+  it('never treats a parked email-reset token as a login password', async () => {
+    let tokenLookupCalled = false;
+    const prisma = {
+      client: {
+        user: { findFirst: async () => ({
+          id: 'user-1', status: 'ACTIVE', credential: {
+            status: 'ACTIVE', passwordHash: hashPassword('current-password'),
+            mustChangePassword: false, expiresAt: null, updatedAt: new Date(),
+          },
+        }) },
+        passwordResetToken: { findUnique: async () => {
+          tokenLookupCalled = true;
+          return { id: 'email-reset', userId: 'user-1', status: 'PENDING', expiresAt: new Date(Date.now() + 60_000) };
+        } },
+      },
+    } as any;
+    const issueToken = { execute: async () => { throw new Error('must not issue'); } } as any;
+
+    await assert.rejects(
+      () => new PasswordLoginUseCase(prisma, issueToken, pendingLegalAcceptance).execute('staff.one', 'x'.repeat(43)),
+      (error: unknown) => error instanceof UnauthorizedException,
+    );
+    assert.equal(tokenLookupCalled, false);
+  });
+
+  it('rejects an expired or concurrently claimed recovery password as invalid credentials', async () => {
+    for (const token of [
+      { id: 'expired', userId: 'user-1', status: 'PENDING', expiresAt: new Date(Date.now() - 1) },
+      { id: 'claimed', userId: 'user-1', status: 'PENDING', expiresAt: new Date(Date.now() + 60_000) },
+    ]) {
+      let transactionCalled = false;
+      const currentCredential = {
+        status: 'ACTIVE', passwordHash: hashPassword('current-password'),
+        mustChangePassword: false, expiresAt: null, updatedAt: new Date(),
+      };
+      const tx = {
+        $queryRaw: async () => [{ id: 'credential-1' }],
+        userCredential: { findUnique: async () => currentCredential },
+        passwordResetToken: { updateMany: async () => ({ count: 0 }) },
+      };
+      const prisma = {
+        client: {
+          user: { findFirst: async () => ({
+            id: 'user-1', status: 'ACTIVE', credential: currentCredential,
+          }) },
+          passwordResetToken: { findUnique: async () => token },
+          companyMembership: { findFirst: async () => ({
+            id: 'membership-1', companyId: 'company-1', roles: [{ role: { key: 'STAFF' } }],
+          }) },
+          $transaction: async (fn: (db: typeof tx) => Promise<unknown>) => {
+            transactionCalled = true;
+            return fn(tx);
+          },
+        },
+      } as any;
+      const issueToken = { execute: async () => { throw new Error('must not issue'); } } as any;
+
+      await assert.rejects(
+        () => new PasswordLoginUseCase(prisma, issueToken, pendingLegalAcceptance).execute('staff.one', 'Abcdef12_-xy'),
+        (error: unknown) => error instanceof UnauthorizedException,
+      );
+      assert.equal(transactionCalled, token.id === 'claimed');
+    }
   });
 
   it('matches the trimmed identifier against username or lowercased email', async () => {

@@ -59,13 +59,13 @@ function inputLine(overrides: Partial<any> = {}): any {
 }
 
 function evidenceService() {
-  const attachment = { id: 'att-1', companyId: 'co-1', originalFileName: 'receipt.pdf', status: 'ACTIVE', uploadedByUserId: 'staff-1' };
+  const attachment = { id: 'att-1', companyId: 'co-1', branchId: 'branch-1', originalFileName: 'receipt.pdf', status: 'ACTIVE', uploadedByUserId: 'staff-1' };
   return new ReimbursementEvidenceService(
     {
       findById: async ({ id }: any) => ({ ...attachment, id }),
       findManyByIds: async ({ ids }: any) => ids.map((id: string) => ({ ...attachment, id })),
     } as any,
-    { findById: async (_c: string, id: string) => ({ id, companyId: 'co-1', createdByUserId: 'staff-1' }) } as any,
+    { findById: async (_c: string, id: string) => ({ id, companyId: 'co-1', branchId: 'branch-1', createdByUserId: 'staff-1' }) } as any,
   );
 }
 
@@ -95,6 +95,7 @@ function fakeRepo(options: RepoOptions = {}) {
     approvalSteps: [] as any[], voided: [] as string[], projections: [] as any[],
   };
   const repo = {
+    resolveCreateBranchId: async () => 'branch-1',
     findPolicy: async () => options.policy ?? null,
     getUserDisplayName: async () => 'Somchai',
     // Lane D: the detail path resolves approver/reviewer/payer names in one batch.

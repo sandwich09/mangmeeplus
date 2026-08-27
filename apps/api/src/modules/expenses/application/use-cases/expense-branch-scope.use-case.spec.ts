@@ -13,6 +13,7 @@ import {
 import type { RequestContext } from '@watchdog-bms/contracts';
 import { ExpenseController } from '../../presentation/http/expense.controller';
 import { REQUIRED_PERMISSIONS_KEY } from '../../../../common/security/permissions.decorator';
+import { requireExpenseBranchId } from '../../infrastructure/prisma-expense.repository';
 
 const audit = { log: async () => undefined } as any;
 const transactionTax = { resolveLines: async (_ctx: unknown, _header: unknown, lines: unknown[]) => lines } as any;
@@ -79,6 +80,8 @@ describe('CreateExpenseDraftUseCase branch tagging', () => {
     return {
       created,
       repo: {
+        resolveCreateBranchId: async (_companyId: string, scopes: { branchIds?: string[] }, branchId?: string) =>
+          requireExpenseBranchId(branchId ?? (scopes.branchIds?.length === 1 ? scopes.branchIds[0] : null)),
         createExpense: async (input: any) => { created.push(input); return { id: 'exp-1', ...input }; },
         upsertLines: async () => undefined,
       } as any,
@@ -86,16 +89,28 @@ describe('CreateExpenseDraftUseCase branch tagging', () => {
   }
   const input = { captureSource: 'WEB_MANUAL', expenseDate: '2026-07-03', vatMode: 'NO_VAT', inputVatClaimStatus: 'NOT_CLAIMABLE' } as any;
 
-  it('tags a branch-restricted creator with their first scoped branch (default branch first)', async () => {
+  it('defaults the only available scoped branch', async () => {
     const { repo, created } = makeRepo();
-    await new CreateExpenseDraftUseCase(repo, audit, transactionTax, launchGate).execute(ctx(['b-default', 'b-2']), input);
+    await new CreateExpenseDraftUseCase(repo, audit, transactionTax, launchGate).execute(ctx(['b-default']), input);
     assert.equal(created[0].branchId, 'b-default');
   });
 
-  it('leaves unrestricted creators on company-central (no branch)', async () => {
+  it('does not guess the first scoped branch when more than one is available', async () => {
     const { repo, created } = makeRepo();
-    await new CreateExpenseDraftUseCase(repo, audit, transactionTax, launchGate).execute(ctx(undefined), input);
-    assert.equal(created[0].branchId, undefined);
+    await assert.rejects(() => new CreateExpenseDraftUseCase(repo, audit, transactionTax, launchGate).execute(ctx(['b-default', 'b-2']), input), /เลือกสาขา/);
+    assert.equal(created.length, 0);
+  });
+
+  it('requires unrestricted creators to select a source branch', async () => {
+    const { repo, created } = makeRepo();
+    await assert.rejects(() => new CreateExpenseDraftUseCase(repo, audit, transactionTax, launchGate).execute(ctx(undefined), input), /เลือกสาขา/);
+    assert.equal(created.length, 0);
+  });
+
+  it('preserves an explicitly selected branch without inventing a reviewer VAT snapshot', async () => {
+    const { repo, created } = makeRepo();
+    await new CreateExpenseDraftUseCase(repo, audit, transactionTax, launchGate).execute(ctx(undefined), { ...input, branchId: 'b1' });
+    assert.equal(created[0].branchId, 'b1');
     assert.equal(created[0].vatCaptureSnapshotJson, undefined, 'a pre-OCR draft must not invent reviewer source precedence');
   });
 
@@ -103,6 +118,7 @@ describe('CreateExpenseDraftUseCase branch tagging', () => {
     const { repo, created } = makeRepo();
     await new CreateExpenseDraftUseCase(repo, audit, transactionTax, launchGate).execute(ctx(undefined), {
       ...input,
+      branchId: 'b1',
       vatMode: 'VAT_INCLUDED',
       vatSource: { inputType: 'AMOUNT', vatAmount: '7.00' },
       lines: [{ lineNumber: 1, description: 'service', quantity: '1', unitPrice: '107', discountAmount: '0' }],
@@ -232,7 +248,7 @@ describe('UpdateExpenseDraftUseCase branch scope', () => {
 
 describe('expense Tax Code confirmation guard', () => {
   const readyRecord = {
-    id: 'exp-1', branchId: null, status: 'READY_FOR_CONFIRMATION', duplicateStatus: 'NO_MATCH',
+    id: 'exp-1', branchId: 'b1', status: 'READY_FOR_CONFIRMATION', duplicateStatus: 'NO_MATCH',
     primaryAttachmentId: 'att-1', missingReceiptReason: null, vendorNameSnapshot: 'Supplier',
     vendorTaxIdSnapshot: '0100000000001', vendorDocumentNumber: 'TAX-INV-1',
     expenseDate: new Date('2026-07-13T00:00:00.000Z'), currency: 'THB',
@@ -517,7 +533,7 @@ describe('manual web upload non-expense workflow guard', () => {
   it('blocks direct confirmation for an unresolved non-expense classification', async () => {
     const repo = {
       findByIdWithRelations: async () => ({
-        id: 'exp-1', branchId: null, status: 'READY_FOR_CONFIRMATION',
+        id: 'exp-1', branchId: 'b1', status: 'READY_FOR_CONFIRMATION',
         aiVerificationSummaryJson: nonExpenseSummary,
       }),
     } as any;
@@ -682,7 +698,7 @@ describe('manual web upload non-expense workflow guard', () => {
 ] as const;
     const repo = {
       findByIdWithRelations: async () => ({
-        id: 'exp-1', branchId: null, status: 'READY_FOR_CONFIRMATION', duplicateStatus: 'NO_MATCH',
+        id: 'exp-1', branchId: 'b1', status: 'READY_FOR_CONFIRMATION', duplicateStatus: 'NO_MATCH',
         primaryAttachmentId: 'att-1', missingReceiptReason: null, vendorNameSnapshot: 'Supplier',
         vendorDocumentNumber: 'BILL-1', expenseDate: new Date('2026-07-13T00:00:00.000Z'),
         grandTotalAmount: '100.00', vatMode: 'NO_VAT', inputVatClaimStatus: 'NON_CLAIMABLE',

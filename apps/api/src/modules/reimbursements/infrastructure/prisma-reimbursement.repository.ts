@@ -5,8 +5,9 @@ import type { Prisma } from '../../../generated/prisma/client';
 import { PrismaDocumentSequenceRepository } from '../../data-model-core/infrastructure/repositories/prisma-document-sequence.repository';
 import type { ReservedDocumentNumberRecord } from '../../data-model-core/domain/models/document-sequence.model';
 import { branchScopeWhere, isBranchInScope, type BranchScopes } from '../../data-model-core/domain/logic/branch.logic';
+import { resolveTransactionBranchId, requireTransactionBranchId } from '../../data-model-core/application/services/transaction-branch';
 import { findAttachmentLinkConflict } from '../../data-model-core/domain/logic/attachment.logic';
-import { expenseRelatedToUserWhere } from '../../expenses/infrastructure/prisma-expense.repository';
+import { assertActiveExpenseBranch, expenseRelatedToUserWhere } from '../../expenses/infrastructure/prisma-expense.repository';
 import { buildReversalLines } from '../../ledger/domain/logic/journal-balance.logic';
 import type {
   ReimbursementPolicyRecord,
@@ -117,6 +118,10 @@ export function reimbursementRelatedToUserWhere(
 
 @Injectable()
 export class PrismaReimbursementRepository {
+  async resolveCreateBranchId(companyId: string, scopes: BranchScopes, selectedBranchId?: string | null): Promise<string> {
+    return resolveTransactionBranchId(this.prisma.client, companyId, scopes, selectedBranchId);
+  }
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly documentNumbers: PrismaDocumentSequenceRepository,
@@ -290,6 +295,7 @@ export class PrismaReimbursementRepository {
   // ---- Request ----
 
   async createRequest(data: CreateReimbursementRequestData): Promise<ReimbursementRequestRecord> {
+    requireTransactionBranchId(data.branchId);
     const client = this.prisma.client as any;
     const row = await client.$transaction(async (tx: any) => {
       const created = await tx.reimbursementRequest.create({
@@ -677,6 +683,7 @@ export class PrismaReimbursementRepository {
     systemReconcile = false,
     expectedBranchId?: string,
   ): void {
+    requireTransactionBranchId(branchId);
     if (systemReconcile) {
       if ((branchId ?? undefined) !== expectedBranchId) {
         throw new ForbiddenException('reimbursement_projection_branch_changed');
@@ -1228,6 +1235,7 @@ export class PrismaReimbursementRepository {
           continue;
         }
 
+        await assertActiveExpenseBranch(tx, data.companyId, request.branchId);
         const expense = await tx.expenseRecord.create({
           data: {
             companyId: data.companyId,
@@ -1937,6 +1945,7 @@ export class PrismaReimbursementRepository {
       if (!request) throw new NotFoundException('Reimbursement request not found');
       if (request.paymentStatus === 'PAID') throw new ConflictException('reimbursement_payment_already_recorded');
       if (request.cancellationPendingAt) throw new ConflictException('reimbursement_cancellation_pending');
+      requireTransactionBranchId(request.branchId);
       await this.assertClaimProjectionsReady(tx, this.toRequest(request));
 
       const policy = effectivePolicyForRequest(this.toRequest(request), effectivePolicy(await tx.reimbursementPolicy.findFirst({

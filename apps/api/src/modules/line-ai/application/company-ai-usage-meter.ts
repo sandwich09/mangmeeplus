@@ -266,6 +266,33 @@ export async function runWithCompanyAiBudgetAdmission<T>(
   }
 }
 
+/** How often a waiting caller re-attempts the single-flight admission. The lease is released
+ *  between a turn's model calls, so short polls catch those gaps without hammering the store. */
+const BUSY_ADMISSION_POLL_MS = 1_200;
+
+/**
+ * Bounded retry around a busy admission (UAT 2026-08-27). The per-company single-flight lease
+ * exists for budget accounting, but on the LIVE chat path an instant `busy` failure blocks the
+ * user mid-conversation: a photo turn holds the lease through its model calls, so "คุยระหว่างนี้ได้"
+ * was impossible. A live caller passes a deadline and only the `busy` outcome is retried until
+ * then; every other outcome (allowed, exceeded, unavailable) returns immediately. Callers without
+ * a deadline keep the exact fail-fast behavior — the ledger drain relies on it.
+ */
+export async function retryBusyAdmission<D>(
+  attempt: () => Promise<D>,
+  busyWaitDeadlineMs: number | undefined,
+  sleepFn: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+): Promise<D> {
+  for (;;) {
+    const decision = await attempt();
+    const busy = (decision as { allowed?: unknown }).allowed === false
+      && (decision as { reason?: unknown }).reason === 'busy';
+    const remainingMs = busyWaitDeadlineMs === undefined ? 0 : busyWaitDeadlineMs - Date.now();
+    if (!busy || remainingMs <= 0) return decision;
+    await sleepFn(Math.min(BUSY_ADMISSION_POLL_MS, remainingMs));
+  }
+}
+
 /**
  * Writes one `AiUsageEvent` per reported model call and increments the monthly aggregate,
  * both inside ONE interactive transaction. The upsert is scalar-only against the unique

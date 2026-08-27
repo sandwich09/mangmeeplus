@@ -8,7 +8,7 @@ const NEXT_VERSION = new Date('2026-08-09T10:01:00.000Z');
 
 function sourceRow(status = 'ISSUED') {
   return {
-    id: 'quotation-1', companyId: 'company-1', branchId: null, documentType: 'QUOTATION', documentNumber: 'QT-1',
+    id: 'quotation-1', companyId: 'company-1', branchId: 'branch-1', documentType: 'QUOTATION', documentNumber: 'QT-1',
     status, documentDate: new Date('2026-08-01T00:00:00.000Z'), dueDate: null, counterpartyId: null,
     counterpartySnapshotJson: null, sourceDocumentId: null, sourceDocumentType: null, convertedFromDocumentId: null,
     currency: 'THB', vatMode: 'NO_VAT', outputTaxCode: null, subtotalAmount: '100', discountAmount: '0',
@@ -31,7 +31,7 @@ function convertedRow(documentType = 'INVOICE') {
 }
 
 const input = {
-  companyId: 'company-1', documentType: 'INVOICE' as const, documentDate: '2026-08-01', currency: 'THB',
+  companyId: 'company-1', branchId: 'branch-1', documentType: 'INVOICE' as const, documentDate: '2026-08-01', currency: 'THB',
   vatMode: 'NO_VAT' as const, convertedFromDocumentId: 'quotation-1', createdByUserId: 'sales-1',
   lines: [{ lineNumber: 1, description: 'Service', quantity: '1', unitPrice: '100.00' }],
 };

@@ -17,7 +17,7 @@ function ctx(perms: string[]) {
 
 function financeReviewedRequest(overrides: Partial<any> = {}): any {
   return {
-    id: 'rb-1', companyId: 'co-1', requestNo: 'RB-202601-000001', requesterUserId: 'staff-1', requesterDisplayNameSnapshot: 'Somchai',
+    id: 'rb-1', companyId: 'co-1', branchId: 'branch-1', requestNo: 'RB-202601-000001', requesterUserId: 'staff-1', requesterDisplayNameSnapshot: 'Somchai',
     amount: '500.0000', currency: 'THB', categoryKey: 'travel', reason: 'Taxi', status: 'READY_FOR_PAYMENT',
     financeReviewStatus: 'APPROVED_FOR_PAYMENT', paymentStatus: 'UNPAID',
     paymentTotalAmount: '0.0000', outstandingAmount: '500.0000', duplicateStatus: 'NO_MATCH',
@@ -562,7 +562,7 @@ function claimLine(overrides: Partial<any> = {}) {
 function claimProjection(overrides: Partial<any> = {}) {
   return {
     id: 'exp-1', companyId: 'co-1', sourceReimbursementRequestId: 'rb-1', sourceReimbursementLineId: 'rbl-1',
-    branchId: undefined, grandTotalAmount: '500.0000', status: 'CONFIRMED',
+    branchId: 'branch-1', grandTotalAmount: '500.0000', status: 'CONFIRMED',
     postingStatus: 'posted', duplicateStatus: 'NO_MATCH',
     ...overrides,
   };

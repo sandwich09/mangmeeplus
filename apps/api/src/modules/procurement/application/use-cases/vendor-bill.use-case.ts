@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import { PrismaProcurementRepository } from '../../infrastructure/prisma-procurement.repository';
 import { AuditService } from '../../../audit/application/audit.service';
+import { requireTransactionBranchId } from '../../../data-model-core/application/services/transaction-branch';
 import { OutboxAppendService } from '../../../data-model-core/application/services/outbox-append.service';
 import { ReserveDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/reserve-document-number.use-case';
 import { CommitDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/commit-document-number.use-case';
@@ -122,8 +123,9 @@ export class CreateVendorBillUseCase {
     if (goodsReceipt && goodsReceipt.status !== 'POSTED') throw new BadRequestException('Goods receipt must be POSTED before vendor billing');
     if (goodsReceipt && (!purchaseOrder || goodsReceipt.purchaseOrderId !== purchaseOrder.id)) throw new BadRequestException('Goods receipt does not belong to the referenced purchase order');
 
-    const referenceBranchId = purchaseOrder?.branchId ?? goodsReceipt?.branchId;
-    const branchId = dto.branchId ?? referenceBranchId;
+    const sourceDocument = purchaseOrder ?? goodsReceipt;
+    const referenceBranchId = sourceDocument ? requireTransactionBranchId(sourceDocument.branchId) : undefined;
+    const branchId = await this.repo.resolveCreateBranchId(ctx.companyId, ctx.scopes ?? {}, dto.branchId ?? referenceBranchId);
     if (purchaseOrder && (purchaseOrder.branchId ?? null) !== (branchId ?? null)) throw new BadRequestException('Purchase order branch does not match the vendor bill branch');
     if (goodsReceipt && (goodsReceipt.branchId ?? null) !== (branchId ?? null)) throw new BadRequestException('Goods receipt branch does not match the vendor bill branch');
     if (branchId) {

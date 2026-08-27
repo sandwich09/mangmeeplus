@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, UnprocessableEntityException } from '@nestjs/common';
 import { CreateManualJournalUseCase, PostJournalUseCase } from './journal.use-case';
 import { validateJournalBalance } from '../../domain/logic/journal-balance.logic';
 
@@ -16,7 +16,7 @@ const account = (id: string, overrides: Record<string, unknown> = {}) => ({
 });
 
 const input = (lines: any[]) => ({ entryDate: '2026-07-18', memo: 'manual adjustment', lines });
-const balancedLines = (creditAccountId = 'credit', branchId?: string) => [
+const balancedLines = (creditAccountId = 'credit', branchId: string = 'branch-1') => [
   { accountId: 'debit', branchId, debitAmount: '100.00' },
   { accountId: creditAccountId, branchId, creditAmount: '100.00' },
 ];
@@ -38,6 +38,7 @@ function entry(lines: any[] = balancedLines()) {
 
 function repo(overrides: Record<string, unknown> = {}) {
   return {
+    resolveCreateBranchId: async () => 'branch-1',
     findAccountById: async (id: string) => account(id),
     findBranchById: async (id: string) => ({ id, companyId: 'company-1', status: 'ACTIVE' }),
     findPeriod: async () => ({ id: 'period-1', companyId: 'company-1', periodKey: '2026-07', status: 'OPEN' }),
@@ -56,6 +57,16 @@ const commit = { execute: async () => undefined } as any;
 const outbox = { append: async () => undefined } as any;
 
 describe('CreateManualJournalUseCase H-03 invariants', () => {
+  it('requires branch selection before reserving a number or writing a journal when branches are ambiguous', async () => {
+    let writes = 0;
+    const useCase = new CreateManualJournalUseCase(repo({
+      resolveCreateBranchId: async () => { throw new UnprocessableEntityException({ code: 'TRANSACTION_BRANCH_REQUIRED' }); },
+      createJournalEntry: async () => { writes++; },
+    }), audit, { execute: async () => { writes++; } } as any, commit);
+    await assert.rejects(() => useCase.execute(ctx(), input(balancedLines().map(({ branchId, ...line }) => line))), UnprocessableEntityException);
+    assert.equal(writes, 0);
+  });
+
   it('rejects an arithmetic-balanced cross-tenant split so the tenant report cannot become half-entry', async () => {
     const lines = balancedLines('foreign-credit');
     assert.equal(validateJournalBalance(lines).isBalanced, true);
@@ -88,8 +99,8 @@ describe('CreateManualJournalUseCase H-03 invariants', () => {
       { accountId: 'credit', creditAmount: '100', sourceId: 'forged', reportContributions: [{ report: 'VAT' }] },
     ] as any));
     assert.deepEqual(persisted.lines, [
-      { accountId: 'debit', branchId: undefined, description: undefined, debitAmount: '100', creditAmount: undefined, currency: undefined },
-      { accountId: 'credit', branchId: undefined, description: undefined, debitAmount: undefined, creditAmount: '100', currency: undefined },
+      { accountId: 'debit', branchId: 'branch-1', description: undefined, debitAmount: '100', creditAmount: undefined, currency: undefined },
+      { accountId: 'credit', branchId: 'branch-1', description: undefined, debitAmount: undefined, creditAmount: '100', currency: undefined },
     ]);
   });
 
@@ -117,6 +128,16 @@ describe('CreateManualJournalUseCase H-03 invariants', () => {
 });
 
 describe('PostJournalUseCase H-03 invariants', () => {
+  it('refuses to post a legacy journal with no source branch', async () => {
+    let posts = 0;
+    const useCase = new PostJournalUseCase(repo({
+      getJournalLines: async () => entry().lines.map((line: any) => ({ ...line, branchId: null })),
+      postJournalEntry: async () => { posts++; },
+    }), audit, outbox);
+    await assert.rejects(() => useCase.execute(ctx(), 'journal-1'), UnprocessableEntityException);
+    assert.equal(posts, 0);
+  });
+
   it('re-resolves accounts and rejects an arithmetic-balanced legacy cross-tenant draft', async () => {
     const lines = entry(balancedLines('foreign-credit')).lines;
     assert.equal(validateJournalBalance(lines).isBalanced, true);

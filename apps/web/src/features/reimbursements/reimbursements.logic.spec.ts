@@ -358,5 +358,7 @@ describe('errorText', () => {
 describe('formatMoney', () => {
   it('formats to 2 decimals', () => {
     assert.equal(formatMoney('500'), '500.00');
+    assert.equal(formatMoney('500', 'THB'), '500.00 บาท');
+    assert.equal(formatMoney('500', 'USD'), '500.00 USD');
   });
 });

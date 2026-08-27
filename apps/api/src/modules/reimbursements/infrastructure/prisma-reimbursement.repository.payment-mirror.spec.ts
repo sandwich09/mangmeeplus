@@ -12,7 +12,7 @@ const VERSION = new Date('2026-08-10T01:00:00.000Z');
 function recordHarness(amount = '289.0000', netPayable = amount) {
   const expenseUpdates: any[] = [];
   const request: any = {
-    id: 'rb-1', companyId: 'co-1', status: 'READY_FOR_PAYMENT', updatedAt: VERSION,
+    id: 'rb-1', companyId: 'co-1', branchId: 'branch-1', status: 'READY_FOR_PAYMENT', updatedAt: VERSION,
     amount, paymentTotalAmount: '0.0000', outstandingAmount: amount,
     financeReviewStatus: 'APPROVED_FOR_PAYMENT', requesterDisplayNameSnapshot: 'sandwich',
     lines: [], approvalSteps: [], payments: [], duplicateCandidates: [],
@@ -95,6 +95,18 @@ function voidHarness(amount = '289.0000', paidAmount = amount, netPayable = amou
 }
 
 describe('reimbursement payout mirrors the claim expense projections', () => {
+  it('refuses an unassigned claim again under the payment lock without changing its totals', async () => {
+    const { repo, expenseUpdates, request } = recordHarness();
+    request.branchId = null;
+    await assert.rejects(() => repo.recordPaymentAtomic({
+      companyId: 'co-1', reimbursementRequestId: 'rb-1', idempotencyKey: 'missing-branch',
+      paidAmount: '289.0000', currency: 'THB', paymentMethod: 'BANK_TRANSFER',
+      paidAt: PAID_AT, paymentReference: 'TRX-123', paidByUserId: 'finance-1',
+    }), (error: any) => error.getStatus() === 422 && error.getResponse().code === 'TRANSACTION_BRANCH_REQUIRED');
+    assert.equal(request.paymentTotalAmount, '0.0000');
+    assert.deepEqual(expenseUpdates, []);
+  });
+
   it('marks confirmed projections PAID with the payout method/date and no ExpensePayment row', async () => {
     const { repo, expenseUpdates } = recordHarness();
     await repo.recordPaymentAtomic({

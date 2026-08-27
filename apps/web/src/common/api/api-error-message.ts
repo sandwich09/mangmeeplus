@@ -11,6 +11,9 @@ const CODE_LABELS: Record<string, string> = {
   duplicate_supplier_document_number: 'เลขที่เอกสารผู้ขายนี้ถูกบันทึกสำหรับผู้ขายรายนี้แล้ว กรุณาตรวจสอบบิลเดิมก่อนสร้างซ้ำ',
   // Permissions / scope
   insufficient_permissions: 'คุณไม่มีสิทธิ์ทำรายการนี้ กรุณาติดต่อเจ้าของร้าน',
+  TRANSACTION_BRANCH_REQUIRED: 'กรุณาระบุสาขาของรายการก่อนดำเนินการ',
+  TRANSACTION_BRANCH_INVALID: 'ไม่พบสาขาที่ใช้งานได้ในบริษัทนี้ กรุณาเลือกสาขาอีกครั้ง',
+  REIMBURSEMENT_EVIDENCE_BRANCH_MISMATCH: 'ใบเสร็จหรือค่าใช้จ่ายต้องระบุสาขาเดียวกับคำขอเบิก',
   legal_acceptance_not_required: 'บัญชีนี้ไม่ต้องยอมรับเอกสารกฎหมาย',
   platform_access_closed: 'ระบบกำลังปรับปรุง กรุณาลองใหม่ภายหลัง',
   platform_access_open_unavailable: 'ยังเปิดระบบไม่ได้จนกว่า production release จะผ่านการตรวจสอบครบถ้วน',

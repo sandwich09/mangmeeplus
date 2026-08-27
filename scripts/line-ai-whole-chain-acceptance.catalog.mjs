@@ -360,6 +360,10 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
       'src/modules/expenses/domain/logic/line-expense-draft-conversation.logic.spec.ts',
       'src/modules/expenses/infrastructure/prisma-expense.repository.line-continuation.spec.ts',
       'src/modules/expenses/application/services/receipt-ocr-apply.service.spec.ts',
+      // The shared source-branch boundary also protects LINE capture and reimbursement evidence.
+      'src/modules/data-model-core/application/services/transaction-branch.spec.ts',
+      'src/modules/expenses/infrastructure/prisma-expense.repository.branch.spec.ts',
+      'src/modules/reimbursements/application/services/reimbursement-evidence.service.spec.ts',
     ],
   },
   {

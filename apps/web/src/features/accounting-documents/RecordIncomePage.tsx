@@ -25,6 +25,7 @@ import {
   uploadAccountingDocumentSupporting,
 } from './accounting-documents.api';
 import { PAYMENT_METHOD_LABELS } from './accounting-documents.model';
+import { TransactionBranchField, useTransactionCreateBranchId } from '../web-core-workspace/TransactionBranchField';
 import type { CounterpartySummary, DocumentDetail } from './accounting-documents.model';
 import {
   VAT_CHOICE_LABELS,
@@ -189,7 +190,7 @@ function IncomeForm({ companyId, mode, canIssueInvoice, canAttach, onBack }: {
   const router = useRouter();
   const toast = useToast();
   const branch = useBranchFilter();
-  const branchId = branch?.branchId || undefined;
+  const branchId = useTransactionCreateBranchId() || undefined;
 
   const [documentDate, setDocumentDate] = useState(todayCivilDate());
   const [dueDate, setDueDate] = useState('');
@@ -258,7 +259,7 @@ function IncomeForm({ companyId, mode, canIssueInvoice, canAttach, onBack }: {
 
   const form: IncomeFormSnapshot = { mode, visibility, lines, priceIncludesVat, paymentMethod, whtRate, documentDate, dueDate };
   const totals = computeIncomeTotals(form);
-  const blocker = attachmentError ?? incomeSubmitBlocker(form);
+  const blocker = (!branchId ? 'กรุณาเลือกสาขาของรายการ' : null) ?? attachmentError ?? incomeSubmitBlocker(form);
   const showVat = visibility === 'SHOWN';
   const anyVat7 = showVat && lines.some((line) => line.vatChoice === 'VAT7');
   const draftOnly = mode === 'invoice' && !canIssueInvoice;
@@ -354,6 +355,7 @@ function IncomeForm({ companyId, mode, canIssueInvoice, canAttach, onBack }: {
       actions={<button type="button" className="text-base font-semibold text-brand-600 hover:text-brand-700" onClick={onBack}>← เปลี่ยนวิธีบันทึก</button>}
     >
       <div className="mx-auto w-full max-w-2xl space-y-4 pb-6">
+        {!savedReceived && !failedDraft && <TransactionBranchField value={branchId ?? ''} />}
         {savedReceived ? (
           <MangmeeCard className="space-y-3 p-4">
             <ErrorBanner message={`บันทึกรายรับและออกใบเสร็จแล้ว แต่แนบไฟล์ไม่สำเร็จ: ${error ?? 'เกิดข้อผิดพลาด'}`} />

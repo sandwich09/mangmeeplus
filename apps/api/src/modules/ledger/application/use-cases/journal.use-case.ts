@@ -1,6 +1,7 @@
 import { Injectable, ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaLedgerRepository } from '../../infrastructure/prisma-ledger.repository';
 import { AuditService } from '../../../audit/application/audit.service';
+import { requireTransactionBranchId } from '../../../data-model-core/application/services/transaction-branch';
 import { OutboxAppendService } from '../../../data-model-core/application/services/outbox-append.service';
 import { ReserveDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/reserve-document-number.use-case';
 import { CommitDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/commit-document-number.use-case';
@@ -248,7 +249,11 @@ export class CreateManualJournalUseCase {
 
   async execute(ctx: RequestContext, input: CreateManualJournalInput): Promise<JournalEntrySummary> {
     requirePerm(ctx, 'journal.entry.create');
-    const lines = manualJournalLines(input.lines);
+    const draftLines = manualJournalLines(input.lines);
+    const defaultBranchId = draftLines.some((line) => !line.branchId)
+      ? await this.repo.resolveCreateBranchId(ctx.companyId, ctx.scopes ?? {})
+      : undefined;
+    const lines = draftLines.map((line) => ({ ...line, branchId: requireTransactionBranchId(line.branchId ?? defaultBranchId) }));
     await assertManualJournalInvariants(this.repo, ctx, lines);
     const bal = validateJournalBalance(lines);
     if (!bal.isBalanced) throw new BadRequestException({ message: 'Journal unbalanced', errors: bal.errors, totalDebit: bal.totalDebit, totalCredit: bal.totalCredit });
@@ -293,6 +298,7 @@ export class PostJournalUseCase {
 
     const lines = await this.repo.getJournalLines(ctx.companyId, journalId, ctx.scopes.branchIds);
     if (entry.entryType === 'MANUAL') {
+      lines.forEach((line) => requireTransactionBranchId(line.branchId));
       if (lines.some(hasCallerOwnedManualMetadata)) throw new BadRequestException({ code: 'manual_journal_provenance_forbidden', message: 'Manual journal provenance and tax metadata are server-owned' });
       await assertManualJournalInvariants(this.repo, ctx, lines);
     }

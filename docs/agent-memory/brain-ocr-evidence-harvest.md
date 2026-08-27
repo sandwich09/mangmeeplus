@@ -59,6 +59,33 @@ Decisions (Owner 2026-08-27 — ตอบ 4 ข้อของ strategy discussi
 - หลักฐานรอบทดสอบแรกของ Owner: เลนเร็วไม่ยิง (preparedPlanVersion=null ทุกเทิร์น — โมเดล 3.5 ไม่ emit fused plan), intake 5.5s (prompt ใหญ่ขึ้น+โมเดลเก่า), รูปใบเสร็จ→unknown
 - จูนชุดเดียว: UAT debounce default 1000ms (deploy.sh wiring ใหม่ + pins re-synced), composer ธุรกิจ = คำตอบ+ตัวเลขบรรทัดแรก ≤400 ตัวอักษร, casual = ปลดล็อกความรู้ทั่วไป/ธุรกิจ/บัญชี/ภาษี + ตัวย่อแชทไทย (Owner concept: คุยได้แบบ ChatGPT) โดยคงกติกา: ห้ามเลขบริษัทนอก tools, ห้ามอ้างข้อมูลสด, เคสเฉพาะให้เช็คนักบัญชี; casual maxTokens 180→400; gateway suite 984/0
 
+## Release ledger UAT 2026-08-27 (รอบจูนใหญ่)
+
+- Run IDs ตามลำดับ: 33054181991 (fail: ci.yml candidate≠main) → 33054568144 (fail: maintenance pins stale) → 33054821373 (fail: ECR 4 HIGH openssl CVEs) → 33056939107 (สำเร็จ — Sonnet 4.6 + debounce 1000ms + composer/casual ใหม่) → 33062335397 (สำเร็จ — แต่พบเลนเร็วตายใน AgentCore + evidenceRoles bug) → 33066376858 (ยกเลิกตามคำสั่ง Owner "อย่าพึ่งดีพอย") → **33066716942 สำเร็จ (final)**
+- Candidate final: `79c018ef9f15ee0bec0635fc63688155262bff09` (PR #304 AgentCore lane flags env-aware, #305 evidenceRoles tolerant-filter + prompt enumeration)
+- Verified 2026-08-27 ~19:00: ทั้ง 3 service (api-web / ai-gateway / workers) digest = `git-79c018ef...`; `/v1/health` 200 ok; AgentCore artifact `watchdog_orchestrator_uat_candidate-NwJNiqG5Jd` qualifier `candidate_uat_79c018ef9f15_4ffbf835` env มี `LINE_AI_FUSED_PLAN_SHADOW_ENABLED=true`, `LINE_AI_PREPARED_SIMPLE_READ_ENABLED=true`, families 4 ตัวครบ; smoke 2 เคสผ่าน (forbidden read + mutation refused) บน `global.anthropic.claude-sonnet-4-6`; prompt cache ทำงานจริง (call แรก cacheWrite 7,239 → call สอง cacheRead 7,239)
+- ECR waiver openssl 4 CVE หมดอายุ 2026-09-10 — ต้อง revisit เมื่อ Debian ออก patch
+- ค้าง: Owner retest บน LINE UAT → ดึง per-stage latency ทำตาราง before/after → ถ้าเลนเร็วยังไม่ยิงบน 4.6 debug ต่อใน artifact
+
+## วินิจฉัยรอบทดสอบ 2 (2026-08-27 18:58–19:02 ICT, log+code proof — ยังไม่แก้ รอ Owner สั่ง)
+
+อาการ Owner: (ก) ส่งรูปแล้วพิมพ์คุยโดนบล็อคทั้งที่ ack บอกคุยได้ (ข) คุยช้า ขึ้น loading ทุกครั้ง (ค) คำตอบของข้อความที่โดนบล็อคเด้งมาทีหลัง ~3 นาที
+
+1. **ตัวบล็อค = budget admission lease** (`runWithCompanyAiBudgetAdmission` → `tryAcquireLease` ใน company-ai-usage-meter.ts): บริษัทละ **1 AI call พร้อมกัน** ทุก call (intake/turn/OCR) ต้องถือ lease — ระหว่างรูปกิน intake 14.6s+OCR 7.4s ข้อความแชท 2 ตัว (11:59:08/12) เจอ busy → 429 AI_BUDGET_BUSY → map เป็น rate_limited (5ms ไม่แตะโมเดล) → ส่ง "⏳ ระบบกำลังประมวลผลข้อความก่อนหน้า กรุณารอสักครู่แล้วลองใหม่" ขัดกับ `LINE_MEDIA_RECEIVED_TEXT` ("ระหว่างนี้คุยกับน้องต่อได้เลยนะคะ") — ไม่ใช่ token bucket (AI_LLM_MAX_PER_COMPANY=60/60s ไม่มีทางชน)
+2. **คำตอบมาทีหลัง = LINE AI ledger drain (item 10F, Redis Stream PEL)**: `tryRouteIntake` ล้มแบบเงียบ → `ledger.appendTurn` (:2899) เขียน entry ก่อนเรียก turn → turn โดน 429 → entry ไม่ถูก ack → cron ทุกนาที `DrainLineLedgerUseCase` XAUTOCLAIM หลัง min-idle → รัน `requestLineTurn` ตรง (ไม่ผ่าน intake, ไม่มี log line.ai/ai.line ตอนสำเร็จ — เทิร์น 12:02:00/12:02:06 requestId 00e7625a/5157d4bb) → push คำตอบเข้าแชท ⇒ สัญญาชนกัน: reply บอก "ส่งใหม่" แต่ ledger จะตอบให้อยู่ดี (ถ้าผู้ใช้ส่งซ้ำ = ตอบซ้อน)
+3. **ความช้าแชทเล่น (วัดจริง)**: รวม 10.4–13.3s = debounce 1.0s + intake-route 3.8–4.4s (cache hit 9,642 แล้ว; output fused plan ~250 tokens) + artifact turn 3.4–6.1s (plan-route+casual compose) + delivery 0.2s ⇒ 3 model calls ต่อ 1 ข้อความแชทเล่น; loading-on-accept ทำให้เห็น "กำลังหาคำตอบ" ทุกเทิร์น
+4. ข่าวดีที่พิสูจน์แล้ว: รูปใบเสร็จ route ถูก (EXPENSE_DOCUMENT_CAPTURE 0.97, OCR ok, จบ delivered 28s เพราะ cold cache — warm คาด ~15s), Sonnet 4.6 ทุกจุด, planVer=1 ออกจริง (lane=null เพราะคำถามเป็น casual ทั้งหมด — เลนเร็ว 4 family ยังไม่ถูกทดสอบ)
+
+แนวแก้ที่เสนอ (รอ Owner เลือก): A=รอ+retry lease แทนบล็อค (คุยระหว่างรูปได้จริง), B=ยุบ 3 calls→2/1 สำหรับ casual + ตัด fused plan เมื่อไม่ใช่ read family (เป้า ~5-6s), C=แก้ RATE_LIMIT_REPLY ให้ตรงกับพฤติกรรม ledger + เร่ง drain min-idle
+
+### Implement A+B (Owner สั่ง 2026-08-27 ค่ำ; "แก้แล้วยังไม่ต้องดีพอย — ขน develop เข้า main ไป UAT รอบเดียว")
+
+- **A**: `retryBusyAdmission` ใน company-ai-usage-meter (poll 1.2s เฉพาะ outcome busy, ไม่มี deadline = fail-fast เดิม → drain ไม่เปลี่ยน); เดินสายผ่าน `runBudgeted` ของ ai-gateway.client (line-turn / intake / receipt-ocr รับ `busyWaitDeadlineMs`); use case ให้งบรอ 25s ต่อ live turn (text+media+OCR); ถ้ายังไม่ทันและมี ledger entry → ส่ง `BUSY_FOLLOW_UP_REPLY` ("เดี๋ยวตามมาตอบ ไม่ต้องส่งซ้ำ") แทน copy เดิมที่ชวนส่งซ้ำ
+- **B**: เปิดใช้ Advisor Slice A ตาม spec (scaffolding PR #235 มีครบ: contract+parser+caps+intakeIntent binding) — เพิ่มเฉพาะที่ขาด: `line-advisor-direct-answer.logic.ts` (eligibility §9.2 ฝั่ง delivery: SOCIAL_CHAT เท่านั้น, needsTools=false, confidence≥0.80, ไม่มี refusal/clarification/card/profile/family, veto จำนวนเงินบาท, สถานะแชทว่าง) + block ส่งตรงหลัง intake ใน webhook use case (pattern เดียวกับ exact-greeting; log `line.ai.advisor_direct_served`) → casual = 1 model call; เคสไม่ผ่าน gate ตกไปทางเดิมทุกประการ
+- deploy.sh: `LINE_AI_ADVISOR_MODE` UAT default `social`, production non-off exit 2, maintenance บังคับ off; pins re-synced `bytes=verified`
+- Verify: typecheck api = 0 error (หลัง prisma generate + pnpm install ใน worktree — error ก่อนหน้าเป็น stale client/dep บน develop ไม่เกี่ยวงานนี้); advisor logic spec 8/8; meter spec 0 fail (รวม 4 เคส retryBusyAdmission); 4 suite เดิมที่แตะไฟล์ (process-line-webhook / line-intake-dispatch / ai-gateway.client / recover-orphan) exit 0 ไม่มี fail
+- คาดผล: คุยระหว่างรูป = รอคิวแล้วตอบจริง (ไม่บล็อค/ไม่ตอบซ้อน), casual ~5-6s (debounce 1s + intake ~4s + ส่งเลย), เคส fallback เท่าเดิม; ยังไม่ deploy ตามคำสั่ง
+
 ## การตัดสินใจ Owner 2026-08-27 (ค่ำ): ผู้รับรองความรู้ภาษี/บัญชี
 
 - **ผู้รับรอง (named reviewer) = นักบัญชีคนที่จัดทำผังบัญชี 175 บัญชี** (คนเดิมของบริษัท) — ใช้กับ P23 tax pack, Advisor Slice B, และการตรวจรายการสาเหตุ CN/DN (F-LED-6)

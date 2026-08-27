@@ -2,6 +2,7 @@ import { Injectable, ForbiddenException, NotFoundException, BadRequestException 
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import { PrismaProcurementRepository } from '../../infrastructure/prisma-procurement.repository';
 import { AuditService } from '../../../audit/application/audit.service';
+import { requireTransactionBranchId } from '../../../data-model-core/application/services/transaction-branch';
 import { OutboxAppendService } from '../../../data-model-core/application/services/outbox-append.service';
 import { ReserveDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/reserve-document-number.use-case';
 import { CommitDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/commit-document-number.use-case';
@@ -51,7 +52,8 @@ export class CreatePurchaseOrderUseCase {
         throw new BadRequestException('Purchase order conversion must reference every source purchase request line exactly once');
       }
     }
-    const branchId = resolveProcurementCreateBranch(ctx, dto.branchId ?? sourceRequest?.branchId);
+    if (sourceRequest) requireTransactionBranchId(sourceRequest.branchId);
+    const branchId = await resolveProcurementCreateBranch(ctx, dto.branchId ?? sourceRequest?.branchId, this.repo);
     if (sourceRequest?.branchId && sourceRequest.branchId !== branchId) {
       throw new BadRequestException('Purchase request branch does not match the purchase order branch');
     }

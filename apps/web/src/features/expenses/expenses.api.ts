@@ -563,6 +563,7 @@ export async function getSharedEvidence(
   companyId: string,
   params?: {
     dateField?: 'uploadedAt' | 'expenseDate'; fromDate?: string; toDate?: string; yearMonth?: string;
+    branchId?: string;
     status?: string; sourceDocumentType?: string; taxEvidenceStatus?: string; expenseCategoryId?: string;
     paymentStatus?: string; postingStatus?: string; page?: number; pageSize?: number;
   },

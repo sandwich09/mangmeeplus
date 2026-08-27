@@ -35,7 +35,7 @@ import {
   canVoidRecordedPayment, reimbursementOwnActions, reimbursementSubmitReadiness, type ClaimSignatureRole,
 } from './reimbursements.model';
 import {
-  baht0, ICON, KPI, StatCard, ErrorBanner, InfoBanner,
+  baht0, dateShort, ICON, KPI, StatCard, ErrorBanner, InfoBanner,
   inputClass, btnClass, ghostClass, dangerClass, successBtn, successBtnStyle,
 } from '../expenses/ExpensesUi';
 import {
@@ -72,7 +72,7 @@ const approverRoleName = (option?: Pick<ReimbursementApproverRoleOption, 'key' |
   if (!option) return '';
   return option.name === STANDARD_ROLE_NAMES[option.key] ? (APPROVER_ROLE_LABELS[option.key] ?? option.name) : option.name;
 };
-const shortDate = (iso?: string) => (iso ? String(iso).slice(0, 10) : '—');
+const shortDate = (iso?: string) => dateShort(iso);
 const attachmentPreviewMimeType = (fileName: string): 'application/pdf' | 'image/png' | 'image/jpeg' => (
   /\.pdf$/i.test(fileName) ? 'application/pdf' : /\.png$/i.test(fileName) ? 'image/png' : 'image/jpeg'
 );
@@ -263,14 +263,14 @@ function StaleApprovalDialog({ requestNo, diff, lines, currency, busy, error, on
                     <td>{shortDate(line.incurredDate)}</td>
                     <td>{line.description}</td>
                     <td className="text-gray-500">{line.categoryLabelSnapshot ?? line.categoryKey}</td>
-                    <td className="text-right tabular-nums">{formatMoney(line.amount)} {currency}</td>
+                    <td className="text-right tabular-nums">{formatMoney(line.amount, currency)}</td>
                   </tr>
                 ))}
               </tbody>
               <tfoot>
                 <tr className="bg-gray-50 font-medium">
                   <td colSpan={4}>รวมเป็นเงิน</td>
-                  <td className="text-right tabular-nums">{formatMoney(sumLineAmounts(lines))} {currency}</td>
+                  <td className="text-right tabular-nums">{formatMoney(sumLineAmounts(lines), currency)}</td>
                 </tr>
               </tfoot>
             </table>
@@ -600,6 +600,7 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
         </div>
       )}
     >
+      {!permissions.includes('reimbursement.create') && <div role="status" className="mb-4 rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm text-gray-600">หน้านี้ยังเก็บประวัติการเบิกจ่ายไว้ บัญชีนี้ไม่สามารถสร้างคำขอใหม่ได้ขณะนี้ · ดูรายละเอียดเดิมได้ตามสิทธิ์</div>}
       {tab === 'mine' && <MyRequests
         {...queueProps}
         userId={userId}
@@ -621,9 +622,9 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
         onClose={() => { closeDocumentPreview(); setDetail(null); setDrawerError(null); }}
         onPrintClaimForm={openClaimForm}
         onSign={role => void signWithSavedSignature(role)}
-        onUploadSignedCopy={(file) => drawerAction(() => uploadSignedClaimFormCopy(companyId, detail.id, file), 'แนบสำเนาใบเบิกที่ลงนามเรียบร้อยแล้ว')}
+        onUploadSignedCopy={(file) => drawerAction(() => uploadSignedClaimFormCopy(companyId, detail.id, file, detail.branchId), 'แนบสำเนาใบเบิกที่ลงนามเรียบร้อยแล้ว')}
         onOpenAttachment={openAttachment}
-        onLineReceipt={(lineNo, file) => drawerAction(() => setLineReceipt(companyId, detail.id, detail.lines ?? [], lineNo, file), 'แนบใบเสร็จเรียบร้อยแล้ว')}
+        onLineReceipt={(lineNo, file) => drawerAction(() => setLineReceipt(companyId, detail.id, detail.lines ?? [], lineNo, file, detail.branchId), 'แนบใบเสร็จเรียบร้อยแล้ว')}
         onSubmit={() => drawerAction(() => submitReimbursement(companyId, detail.id), 'ส่งขออนุมัติเรียบร้อยแล้ว')}
         onRequestCancel={() => { setDrawerError(null); setCancelling(true); }}
         onReopen={() => drawerAction(() => reopenReimbursement(companyId, detail.id), 'เปิดคำขอกลับเป็นร่างแล้ว แก้ไขและส่งอนุมัติได้อีกครั้ง')}
@@ -938,7 +939,7 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
                         <td>{r.reason}</td>
                         <td className="text-gray-500">{r.categoryLabelSnapshot ?? r.categoryKey}</td>
                         <td className="text-right tabular-nums text-gray-500">{r.lineCount ?? 1} รายการ</td>
-                        <td className="text-right tabular-nums">{formatMoney(r.amount)} {r.currency}</td>
+                        <td className="text-right tabular-nums">{formatMoney(r.amount, r.currency)}</td>
                         <td><StatusBadge status={r.status} /></td>
                         <td><PaymentBadge status={r.paymentStatus} /></td>
                         <td className="text-right">
@@ -983,7 +984,7 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
                       <StatusBadge status={r.status} />
                       <span className="shrink-0 text-xs text-gray-500">{shortDate(r.incurredDate)}</span>
                     </div>
-                    <div className="mt-3 text-right text-lg font-bold tabular-nums text-gray-900">{formatMoney(r.amount)} {r.currency}</div>
+                    <div className="mt-3 text-right text-lg font-bold tabular-nums text-gray-900">{formatMoney(r.amount, r.currency)}</div>
                   </div>
                   {(reimbursementOwnActions(r, userId, permissions).canSubmit || reimbursementOwnActions(r, userId, permissions).canCancel) && (
                     <div className="relative z-20 mt-4 space-y-2 border-t border-gray-100 pt-3">
@@ -1099,8 +1100,8 @@ function DetailDrawer({ companyId, detail, context, userId, permissions, busy, e
               </div>
               <div className="sm:text-right">
                 <div className="text-xs font-semibold text-gray-500">ยอดรวม</div>
-                <div className="mt-1 text-[28px] font-extrabold tabular-nums text-gray-900">{formatMoney(detail.amount)} {detail.currency}</div>
-                <div className="mt-1 text-sm text-gray-500">คงค้าง {formatMoney(detail.outstandingAmount)} {detail.currency}</div>
+                <div className="mt-1 text-[28px] font-extrabold tabular-nums text-gray-900">{formatMoney(detail.amount, detail.currency)}</div>
+                <div className="mt-1 text-sm text-gray-500">คงค้าง {formatMoney(detail.outstandingAmount, detail.currency)}</div>
               </div>
             </div>
           </MangmeeCard>
@@ -1158,7 +1159,7 @@ function DetailDrawer({ companyId, detail, context, userId, permissions, busy, e
               <tfoot>
                 <tr className="bg-gray-50 font-medium">
                   <td colSpan={5}>รวมเป็นเงิน</td>
-                  <td className="text-right tabular-nums">{formatMoney(detail.amount)} {detail.currency}</td>
+                  <td className="text-right tabular-nums">{formatMoney(detail.amount, detail.currency)}</td>
                   <td></td>
                 </tr>
               </tfoot>
@@ -1250,7 +1251,7 @@ function DetailDrawer({ companyId, detail, context, userId, permissions, busy, e
                   <li key={p.id} className="rounded-xl border border-gray-200 px-3 py-2.5 text-xs text-gray-600">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className="font-mono font-semibold text-gray-700">{p.paymentNo}</span>
-                      <span className="font-semibold tabular-nums text-gray-900">{formatMoney(p.paidAmount)} {p.currency}</span>
+                      <span className="font-semibold tabular-nums text-gray-900">{formatMoney(p.paidAmount, p.currency)}</span>
                     </div>
                     <div className="mt-1">{PAYMENT_METHOD_LABELS[p.paymentMethod] ?? p.paymentMethod} · {p.status === 'RECORDED' ? 'บันทึกแล้ว' : PAYMENT_STATUS_LABELS[p.status] ?? 'สถานะการจ่าย'}</div>
                     {p.paidByName && <div className="mt-1 text-gray-500">จ่ายโดย {p.paidByName}</div>}
@@ -1381,7 +1382,7 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
                         <td>{r.requesterDisplayNameSnapshot}</td>
                         <td>{r.reason}</td>
                         <td className="text-right tabular-nums text-gray-500">{r.lineCount ?? 1} รายการ</td>
-                        <td className="text-right tabular-nums">{formatMoney(r.amount)} {r.currency}</td>
+                        <td className="text-right tabular-nums">{formatMoney(r.amount, r.currency)}</td>
                         <td className="text-right">
                           <div className="flex flex-wrap items-center justify-end gap-2">
                             <span className="tabular-nums">{r.ageHours} ชม.</span>
@@ -1421,7 +1422,7 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
                     </div>
                     <span className="shrink-0 text-xs tabular-nums text-gray-500">{r.ageHours} ชม.</span>
                   </div>
-                  <div className="mt-3 text-right text-lg font-bold tabular-nums text-gray-900">{formatMoney(r.amount)} {r.currency}</div>
+                  <div className="mt-3 text-right text-lg font-bold tabular-nums text-gray-900">{formatMoney(r.amount, r.currency)}</div>
                   <div className="mt-4 space-y-2 border-t border-gray-100 pt-3">
                     <Link href={`?tab=approvals&focus=${encodeURIComponent(r.id)}`} className={cx(ghostClass, 'min-h-11 w-full')} data-testid="reimbursements-approvals-card">ดูรายละเอียด</Link>
                     <button className={cx(successBtn, 'min-h-11 w-full')} style={successBtnStyle} disabled={busy === r.id} onClick={() => approveRow(r)}>อนุมัติ</button>
@@ -1587,7 +1588,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
                         <td className="font-mono text-xs">{r.requestNo ?? '—'}</td>
                         <td>{r.requesterDisplayNameSnapshot}</td>
                         <td className="text-right tabular-nums text-gray-500">{r.lineCount ?? 1} รายการ</td>
-                        <td className="text-right tabular-nums">{formatMoney(r.outstandingAmount)} / {formatMoney(r.amount)} {r.currency}</td>
+                        <td className="text-right tabular-nums">{formatMoney(r.outstandingAmount)} / {formatMoney(r.amount, r.currency)}</td>
                         <td><div className="flex flex-wrap items-center gap-2"><StatusBadge status={r.status} />{r.hasDuplicateBlocker && <MangmeeBadge tone="amber">อาจซ้ำ</MangmeeBadge>}</div></td>
                         <td className="text-xs text-gray-500">{FINANCE_REVIEW_LABELS[r.financeReviewStatus] ?? r.financeReviewStatus}</td>
                         <td className="text-right">
@@ -1622,7 +1623,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
                     </div>
                     <span className="shrink-0 text-xs tabular-nums text-gray-500">{r.ageHours} ชม.</span>
                   </div>
-                  <div className="mt-3 text-right text-lg font-bold tabular-nums text-gray-900">{formatMoney(r.outstandingAmount)} / {formatMoney(r.amount)} {r.currency}</div>
+                  <div className="mt-3 text-right text-lg font-bold tabular-nums text-gray-900">{formatMoney(r.outstandingAmount)} / {formatMoney(r.amount, r.currency)}</div>
                   <div className="mt-4 space-y-2 border-t border-gray-100 pt-3">
                     <Link href={`?tab=finance&focus=${encodeURIComponent(r.id)}`} className={cx(ghostClass, 'min-h-11 w-full')} data-testid="reimbursements-finance-card">ดูรายละเอียด</Link>
                     {r.status === 'FINANCE_REVIEW' && <button className={cx(successBtn, 'min-h-11 w-full')} style={successBtnStyle} disabled={busy === r.id || (r.hasDuplicateBlocker && !permissions.includes('reimbursement.duplicate.resolve'))} title={r.hasDuplicateBlocker && !permissions.includes('reimbursement.duplicate.resolve') ? 'รายการนี้อาจซ้ำ ต้องให้ผู้มีสิทธิ์แก้รายการซ้ำตรวจสอบ' : undefined} onClick={() => action(r.id, () => financeReviewReimbursement(companyId, r.id, { decision: 'APPROVED_FOR_PAYMENT', resolveDuplicate: r.hasDuplicateBlocker, duplicateResolutionReason: r.hasDuplicateBlocker ? 'ตรวจสอบแล้วไม่ซ้ำ' : undefined }), r.financeReviewStatus === 'APPROVED_FOR_PAYMENT' ? 'ดำเนินการคำขอจ่ายต่อเรียบร้อยแล้ว' : 'อนุมัติจ่ายเรียบร้อยแล้ว')}>{financeActionLabel(r)}</button>}
@@ -1682,7 +1683,7 @@ function PaymentModal({ companyId, request, onClose, onDone }: { companyId: stri
   return (
     <Modal open title={`บันทึกการจ่ายเงิน — ${request.requestNo}`} size="sm" closeLabel="ยกเลิก" onClose={onClose}>
       <form className="space-y-3" onSubmit={submit}>
-        <p className="text-xs text-gray-500">จ่ายเต็มจำนวนคงค้าง {formatMoney(request.outstandingAmount)} {request.currency}</p>
+        <p className="text-xs text-gray-500">จ่ายเต็มจำนวนคงค้าง {formatMoney(request.outstandingAmount, request.currency)}</p>
         <div><label className="mb-1.5 block text-xs font-semibold text-gray-600">จำนวนเงิน *</label><input className={inputClass} type="number" step="0.01" required value={form.paidAmount} onChange={e => setForm(f => ({ ...f, paidAmount: e.target.value }))} /></div>
         <div><label className="mb-1.5 block text-xs font-semibold text-gray-600">วิธีจ่าย</label>
           <ThemedSelect className={inputClass} value={form.paymentMethod} onChange={e => setForm(f => ({ ...f, paymentMethod: e.target.value }))}>

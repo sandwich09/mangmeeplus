@@ -22,8 +22,18 @@ import { civilDate, civilDateToUtcDate, civilDayRangeToUtc, civilPeriodKey, coer
 import { expenseTaxSourceChecksum } from '../domain/logic/expense-status.logic';
 import { nextExpensePostingSource } from '../domain/logic/expense-auto-post.logic';
 import { calcPaymentAmounts, derivePaymentStatus, SETTLE_EPSILON } from '../domain/logic/expense-totals.logic';
+import {
+  assertActiveTransactionBranch as assertActiveExpenseBranch,
+  requireTransactionBranchId as requireExpenseBranchId,
+  resolveTransactionBranchId,
+} from '../../data-model-core/application/services/transaction-branch';
+export {
+  assertActiveTransactionBranch as assertActiveExpenseBranch,
+  requireTransactionBranchId as requireExpenseBranchId,
+} from '../../data-model-core/application/services/transaction-branch';
 
 export type ExpenseDb = Prisma.TransactionClient | PrismaService['client'];
+
 type ExpensePaymentResult = { expense: ExpenseRecord; payment: ExpensePaymentRecord; replayed: boolean };
 type SubstituteReceiptPolicyWithApprovalMode = SubstituteReceiptPolicyRecord & { approvalMode: SubstituteReceiptApprovalMode };
 
@@ -444,7 +454,16 @@ export class PrismaExpenseRepository {
     return row ? { ...mapPayment(row), expense: mapExpense(row.expense) } : null;
   }
 
+  async assertActiveBranch(companyId: string, branchId: string | null | undefined): Promise<void> {
+    await assertActiveExpenseBranch(this.prisma.client, companyId, branchId);
+  }
+
+  async resolveCreateBranchId(companyId: string, scopes: BranchScopes, selectedBranchId?: string | null): Promise<string> {
+    return resolveTransactionBranchId(this.prisma.client, companyId, scopes, selectedBranchId);
+  }
+
   async createExpense(input: CreateExpenseRecordInput): Promise<ExpenseRecord> {
+    await this.assertActiveBranch(input.companyId, input.branchId);
     const r = await this.prisma.client.expenseRecord.create({
       data: {
         companyId: input.companyId,
@@ -712,7 +731,7 @@ export class PrismaExpenseRepository {
     const scopeWhere = scopes && !rest.branchId ? branchScopeWhere(scopes) : {};
     const where: any = { companyId, ...scopeWhere, ...(rest.status && { status: rest.status }), ...(rest.paymentStatus && { paymentStatus: rest.paymentStatus }), ...(rest.duplicateStatus && { duplicateStatus: rest.duplicateStatus }), ...(rest.postingStatus && { postingStatus: rest.postingStatus }), ...(rest.vendorCounterpartyId && { vendorCounterpartyId: rest.vendorCounterpartyId }), ...(rest.captureSource && { captureSource: rest.captureSource }), ...(rest.sourceDocumentType && { sourceDocumentType: rest.sourceDocumentType }), ...(rest.taxEvidenceStatus && { taxEvidenceStatus: rest.taxEvidenceStatus }), ...(rest.expenseCategoryId && { expenseCategoryId: rest.expenseCategoryId }), ...(rest.createdByUserId && { createdByUserId: rest.createdByUserId }), ...(rest.branchId && { branchId: rest.branchId }), ...(rest.fromDate || rest.toDate ? { expenseDate: civilDayRangeToUtc(rest.fromDate, rest.toDate) } : {}), ...(rest.uploadedFromDate || rest.uploadedToDate ? { uploadedAt: bangkokCivilDayRangeToUtc(rest.uploadedFromDate, rest.uploadedToDate) } : {}), ...(relatedUserId ? { AND: [expenseRelatedToUserWhere(relatedUserId)] } : {}) };
     const uploadDateLens = (rest.uploadedFromDate || rest.uploadedToDate) && !(rest.fromDate || rest.toDate);
-    const orderBy = uploadDateLens ? { uploadedAt: 'desc' as const } : { expenseDate: 'desc' as const };
+    const orderBy = [uploadDateLens ? { uploadedAt: 'desc' as const } : { expenseDate: 'desc' as const }, { id: 'desc' as const }];
     const [data, total] = await Promise.all([
       this.prisma.client.expenseRecord.findMany({ where, skip, take: pageSize, orderBy }),
       this.prisma.client.expenseRecord.count({ where }),
@@ -823,6 +842,7 @@ export class PrismaExpenseRepository {
    */
   async updateExpense(input: UpdateExpenseRecordInput, withinTx?: (tx: any) => Promise<void>, db?: any): Promise<ExpenseRecord> {
     const { id, companyId, expectedUpdatedAt, ...rest } = input;
+    if (rest.branchId !== undefined) await assertActiveExpenseBranch(db ?? this.prisma.client, companyId, rest.branchId);
     // H-04: VOIDED is intentionally rejected here — voids must go through
     // voidExpenseTrueReversal so the GL reversal and status change stay atomic.
     if (rest.status === 'VOIDED') {
@@ -2026,6 +2046,7 @@ export class PrismaExpenseRepository {
         include: { lines: { orderBy: { lineNumber: 'asc' } }, duplicateCandidates: { where: { status: { not: 'DISMISSED' } } } },
       });
       if (!current || current.status !== 'READY_FOR_CONFIRMATION') throw new ConflictException('expense_confirmation_source_status_changed');
+      requireExpenseBranchId(current.branchId);
       if (current.updatedAt.getTime() !== input.expectedUpdatedAt.getTime()) throw new ConflictException('expense_confirmation_source_version_changed');
       const substitute = await tx.expenseSubstituteReceiptEvidence.findFirst({
         where: { companyId: input.companyId, expenseId: input.id, status: { not: 'SUPERSEDED' } }, orderBy: { version: 'desc' },
@@ -3006,13 +3027,16 @@ export class PrismaExpenseRepository {
 
   buildSharedEvidenceWhere(companyId: string, filter: SharedEvidenceFilter, scopes?: { branchIds?: string[] }): Record<string, unknown> {
     const dateField = filter.dateField === 'expenseDate' ? 'expenseDate' : 'uploadedAt';
-    let fromDate = filter.fromDate ? new Date(filter.fromDate) : undefined;
-    let toDate = filter.toDate ? new Date(filter.toDate) : undefined;
+    let fromDate = filter.fromDate;
+    let toDate = filter.toDate;
     if (filter.yearMonth && /^\d{4}-\d{2}$/.test(filter.yearMonth)) {
       const [y, m] = filter.yearMonth.split('-').map(Number);
-      fromDate = new Date(Date.UTC(y!, m! - 1, 1));
-      toDate = new Date(Date.UTC(y!, m!, 1));
+      fromDate = `${filter.yearMonth}-01`;
+      toDate = new Date(Date.UTC(y!, m!, 0)).toISOString().slice(0, 10);
     }
+    const dateRange = dateField === 'uploadedAt'
+      ? bangkokCivilDayRangeToUtc(fromDate, toDate)
+      : civilDayRangeToUtc(fromDate, toDate);
     const postingWhere = filter.postingStatus === 'pending' || filter.postingStatus === 'posting_error'
       ? {
         OR: [
@@ -3037,7 +3061,7 @@ export class PrismaExpenseRepository {
       ...(filter.expenseCategoryId && { expenseCategoryId: filter.expenseCategoryId }),
       ...(filter.paymentStatus && { paymentStatus: filter.paymentStatus }),
       ...(filter.createdByUserId && { createdByUserId: filter.createdByUserId }),
-      ...(fromDate || toDate ? { [dateField]: { ...(fromDate && { gte: fromDate }), ...(toDate && { lt: toDate }) } } : {}),
+      ...(fromDate || toDate ? { [dateField]: dateRange } : {}),
     };
   }
 
@@ -3048,7 +3072,7 @@ export class PrismaExpenseRepository {
     pageSize: number;
   }> {
     const page = filter.page && filter.page > 0 ? filter.page : 1;
-    const pageSize = filter.pageSize && filter.pageSize > 0 && filter.pageSize <= 200 ? filter.pageSize : 50;
+    const pageSize = filter.pageSize && filter.pageSize > 0 && filter.pageSize <= 500 ? filter.pageSize : 50;
     const where = this.buildSharedEvidenceWhere(companyId, filter, scopes);
     const dateField = filter.dateField === 'expenseDate' ? 'expenseDate' : 'uploadedAt';
 
@@ -3056,7 +3080,7 @@ export class PrismaExpenseRepository {
       this.prisma.client.expenseRecord.findMany({
         where: where as any,
         include: { expenseCategory: { select: { name: true } } },
-        orderBy: { [dateField]: 'desc' },
+        orderBy: [{ [dateField]: 'desc' }, { id: 'desc' }],
         skip: (page - 1) * pageSize,
         take: pageSize,
       }),

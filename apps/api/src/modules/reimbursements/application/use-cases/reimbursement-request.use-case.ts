@@ -15,7 +15,6 @@ import { ReimbursementEvidenceService } from '../services/reimbursement-evidence
 import { AuditService } from '../../../audit/application/audit.service';
 import { OutboxAppendService } from '../../../data-model-core/application/services/outbox-append.service';
 import { VoidExpenseUseCase } from '../../../expenses/application/use-cases/expense-draft.use-case';
-import { resolveCreateBranchId } from '../../../data-model-core/domain/logic/branch.logic';
 import { assertReimbursementBranchInScope } from './reimbursement-branch-scope';
 import type {
   ReimbursementDuplicateCandidateWriteData,
@@ -146,16 +145,13 @@ export class CreateReimbursementDraftUseCase {
 
   async execute(ctx: RequestContext, input: CreateReimbursementRequestInput): Promise<ReimbursementRequestSummary> {
     if (!ctx.permissions.includes('reimbursement.create')) throw new ForbiddenException('Missing permission: reimbursement.create');
-    // Same two steps as CreateExpenseDraftUseCase, and both matter. The assertion stops a
-    // branch-restricted employee planting a claim in a branch they cannot see; resolveCreateBranchId
-    // stops the opposite failure, where omitting branchId tagged the claim company-central and
-    // `branchScopeWhere` then showed it to every branch's approval and finance queue.
+    // The same source-branch rule as receipt upload; never default to the first of many branches.
     assertReimbursementBranchInScope(ctx, input.branchId);
-    const branchId = resolveCreateBranchId(ctx.scopes ?? {}, input.branchId);
+    const branchId = await this.repo.resolveCreateBranchId(ctx.companyId, ctx.scopes ?? {}, input.branchId);
 
     const errors = validateRequestFields(input);
     if (errors.length > 0) throw new BadRequestException(errors.join(','));
-    await this.evidence.validate(ctx, ctx.userId, input.lines);
+    await this.evidence.validate(ctx, ctx.userId, input.lines, branchId);
 
     const policy = await loadPolicy(this.repo, ctx.companyId);
     const displayName = await this.repo.getUserDisplayName(ctx.userId);
@@ -230,7 +226,7 @@ export class UpdateReimbursementDraftUseCase {
     if (input.lines !== undefined) {
       const errors = validateLines(input.lines);
       if (errors.length > 0) throw new BadRequestException(errors.join(','));
-      await this.evidence.validate(ctx, req.requesterUserId, input.lines);
+      await this.evidence.validate(ctx, req.requesterUserId, input.lines, req.branchId);
       const header = deriveHeaderFromLines(input.lines);
       data.amount = header.amount;
       data.categoryKey = header.categoryKey;
@@ -391,7 +387,7 @@ export class SubmitReimbursementUseCase {
     const lines = req.lines ?? [];
     const lineErrors = validateLines(lines);
     if (lineErrors.length > 0) throw new UnprocessableEntityException(lineErrors.join(','));
-    await this.evidence.validate(ctx, req.requesterUserId, lines);
+    await this.evidence.validate(ctx, req.requesterUserId, lines, req.branchId);
 
     const policyRecord = await this.repo.findPolicy(ctx.companyId, null);
     const policy = effectivePolicy(policyRecord);

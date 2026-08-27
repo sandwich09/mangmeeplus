@@ -29,9 +29,7 @@ type Props = {
   session: WebSession;
 };
 
-// Plan P4.6: modules still `status: 'planned'` are out of the launch navigation — a row that
-// opens a placeholder costs the user a decision and returns nothing. `salesdoc` and `closing`
-// are dropped here; `closing` was already stripped upstream by ACCOUNTING_UI_HIDDEN.
+// Only implemented entry points; permissions still decide which enabled features are visible.
 const DESIGN_HANDOFF_NAV_ORDER = [
   'dashboard',
   'inbox',
@@ -39,6 +37,7 @@ const DESIGN_HANDOFF_NAV_ORDER = [
   'booking',
   'crmreport',
   'crmsettings',
+  'salesdoc',
   'expenses',
   'reimbursements',
   'journal',
@@ -163,10 +162,11 @@ export default function WorkspaceLayoutClient({ children, companyId, session }: 
 
   return (
     <BranchFilterProvider companyId={companyId} onContextLoaded={applyLatestAccessContext}>
+      <div className="[--app-header-h:112px] sm:[--app-header-h:68px]">
       <WorkspaceShell
         companyName={companyName}
         companyArea={
-          <div className="flex min-w-0 flex-1 items-center gap-2">
+          <div className="flex min-w-0 flex-1 flex-col items-stretch gap-1 sm:flex-row sm:items-center sm:gap-2">
             <CompanySwitcher companyId={companyId} fallbackName={companyName} />
             <BranchSelector />
           </div>
@@ -188,6 +188,7 @@ export default function WorkspaceLayoutClient({ children, companyId, session }: 
       >
         <MenuFilterProvider menuKey={menuKey}>{children}</MenuFilterProvider>
       </WorkspaceShell>
+      </div>
     </BranchFilterProvider>
   );
 }

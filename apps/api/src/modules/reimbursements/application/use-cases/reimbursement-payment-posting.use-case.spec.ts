@@ -19,7 +19,7 @@ function ctx(perms: string[]) {
 describe('RecordReimbursementPaymentUseCase — postingStatus lifecycle', () => {
   it('leaves the recorded payment in postingStatus pending (it is now a posting source)', async () => {
     const req: any = {
-      id: 'rb-1', companyId: 'co-1', requestNo: 'RB-1', requesterUserId: 'staff-1', requesterDisplayNameSnapshot: 'Somchai',
+      id: 'rb-1', companyId: 'co-1', branchId: 'br-1', requestNo: 'RB-1', requesterUserId: 'staff-1', requesterDisplayNameSnapshot: 'Somchai',
       amount: '500.0000', currency: 'THB', categoryKey: 'travel', reason: 'Taxi', status: 'READY_FOR_PAYMENT',
       financeReviewStatus: 'APPROVED_FOR_PAYMENT', paymentStatus: 'UNPAID', paymentTotalAmount: '0.0000',
       outstandingAmount: '500.0000', duplicateStatus: 'NO_MATCH', incurredDate: new Date('2026-01-01T00:00:00.000Z'),

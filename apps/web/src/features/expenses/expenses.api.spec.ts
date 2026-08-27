@@ -6,6 +6,7 @@ import {
 } from '@/common/files/upload-file.logic';
 import {
   confirmDuplicate,
+  getSharedEvidence,
   dismissDuplicate,
   downloadSubstituteReceiptPdf,
   fetchAttachmentPreviewBlob,
@@ -44,6 +45,15 @@ function mockAttachmentPreviewResponse(fileResponse: Response): Array<{ input: s
 }
 
 describe('expenses.api URL helpers', () => {
+  it('carries the selected source branch to the shared evidence endpoint', async () => {
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = new URL(String(input), 'http://localhost');
+      assert.equal(url.searchParams.get('branchId'), 'branch-siam');
+      assert.equal(url.searchParams.get('dateField'), 'uploadedAt');
+      return new Response(JSON.stringify({ rows: [], total: 0, folders: [] }), { headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch;
+    await getSharedEvidence('company-1', { branchId: 'branch-siam', dateField: 'uploadedAt' });
+  });
   it('retries an expense payment with the exact intent and civil paid date, without browser UTC conversion', async () => {
     const bodies: unknown[] = [];
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {

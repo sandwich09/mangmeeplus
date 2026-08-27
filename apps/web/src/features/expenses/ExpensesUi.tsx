@@ -3,7 +3,7 @@
 // Shared presentational primitives for the Expenses workspace, matching the
 // มั่งมี mock's exact card/colour/spacing system. Real Thai copy from the feature;
 // exact hex accents from the mock (mangmee brand tokens for the green shell).
-import type { ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { MangmeeBadge, cx, type MangmeeTone } from '@/common/components/mangmee';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import { formatThaiDate } from '@/common/i18n/thai-date';
@@ -100,8 +100,14 @@ export function StatusBadge({ status }: { status: string }) {
 // ── banners ──────────────────────────────────────────────────────────────────
 // A11Y-01: `role="alert"` here, not at each call site — the banner only ever mounts when there is
 // something to say, and every expense screen renders its errors through this one component.
-export function ErrorBanner({ message }: { message: string }) {
-  return <div role="alert" className="rounded-xl border border-[#FECDCA] bg-error-50 px-4 py-3 text-sm font-medium text-error-700">⚠ {message}</div>;
+export function ErrorBanner({ message, focus = false }: { message: string; focus?: boolean }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!focus) return;
+    ref.current?.scrollIntoView({ block: 'center' });
+    ref.current?.focus({ preventScroll: true });
+  }, [message, focus]);
+  return <div ref={ref} tabIndex={-1} role="alert" className="rounded-xl border border-[#FECDCA] bg-error-50 px-4 py-3 text-sm font-medium text-error-700">⚠ {message}</div>;
 }
 export function InfoBanner({ message }: { message: string }) {
   return <div className="rounded-xl border border-brand-100 bg-brand-25 px-4 py-3 text-sm font-medium text-brand-700">✓ {message}</div>;

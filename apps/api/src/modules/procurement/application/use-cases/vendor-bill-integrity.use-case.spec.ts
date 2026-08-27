@@ -27,6 +27,7 @@ function useCase(repo: any) {
 
 function validRepo(overrides: Record<string, unknown> = {}) {
   return {
+    resolveCreateBranchId: async (_companyId: string, _scopes: unknown, branchId?: string) => branchId ?? 'branch-1',
     findSupplierById: async () => ({ id: 'supplier-1', companyId: 'company-1', status: 'ACTIVE', taxId: '0100000000001' }),
     branchExists: async () => true,
     findPurchaseOrderById: async () => null,
