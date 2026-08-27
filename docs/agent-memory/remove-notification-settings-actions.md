@@ -1,6 +1,6 @@
 # Agent Memory: remove-notification-settings-actions
 
-Status: Implementation and focused verification complete; preparing integration with latest develop, 2026-08-27.
+Status: Delivered to origin/develop and the feature branch by verified normal atomic push on 2026-08-27. No deployment performed.
 Owner: /root/remove_notification_settings_actions
 Scope: Remove only the `ตั้งค่า` and `กฎ` header links from the notification center on mobile and desktop, for every role, including users with both management permissions.
 
@@ -33,5 +33,14 @@ Verification:
 - Browser skill: actual notification center and bell rendered against local synthetic fetch responses at `127.0.0.1:3228`, desktop 1280×900 and mobile 390×844. Verified no Settings/Rules links for management-granted and read-only sessions; read-all, unread/all filters, bell badge, single-read, read-all success toast, dismiss, empty state, read-permission forbidden state, and source navigation to the synthetic destination. No console warnings/errors were observed.
 - Browser fixtures blocked non-fixture API requests. Temporary fixture pages removed, owned dev servers stopped and tabs closed, viewport override reset. No live UAT/account/notification/LINE/DB actions.
 - `git diff --check` — passed; no helper callers remain. All new web specs match the existing `src/**/*.spec.ts` test glob; no package manifest or test-script edit.
+- After merging current develop, reran the same 118 focused tests, contracts build, and full web typecheck successfully. No merge conflict or notification-file overlap.
 
-Next: Commit only scoped files, merge current develop (VAT agent delivered `234d14255de67275d087aae85b63f1216f142210`) and rerun relevant checks, then normal non-force push the feature branch and tested HEAD to develop.
+Delivery:
+
+- Scoped implementation commit: `f0ac7e0322732e381cd47b64d551ad9cc8ea662e`.
+- Integrated upstream develop: `234d14255de67275d087aae85b63f1216f142210`.
+- Tested integration/delivery commit: `463feeb0eba0b207c65861a6a6cafc71bb3b733f`.
+- `git push --atomic origin HEAD:refs/heads/codex/remove-notification-settings-actions HEAD:refs/heads/develop` succeeded. `git ls-remote` confirmed both remote refs at `463feeb0eba0b207c65861a6a6cafc71bb3b733f`.
+- This documentation-only follow-up records that confirmed push; its final remote SHA is reported in the handoff. Runtime dependencies were reused through temporary symlinks without modifying shared contents; the owned links are removed during final cleanup.
+
+Next: Root may continue the employee branch-access review independently. Notification UI fix is complete in develop; UAT/production release remains a separate, explicitly authorized workflow.
