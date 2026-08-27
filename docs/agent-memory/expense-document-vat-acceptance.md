@@ -1,6 +1,6 @@
 # Agent Memory: expense-document-vat-acceptance
 
-Status: Implemented and integration-verified on `codex/expense-document-vat-acceptance`; remote delivery pending. Initial base `2ef787b1cabf08f0958890d5b6f2ce68e327b2d6`.
+Status: Complete; implemented, integration-verified and pushed to feature branch and develop. Initial base `2ef787b1cabf08f0958890d5b6f2ce68e327b2d6`.
 Owner: /root/expense_document_vat_acceptance
 Scope: Complete existing reviewer “ใช้ยอดตามเอกสาร” confirmation. No navigation redesign, duplicate mixed-VAT work, historical rewrite, deployment, schema or dependency change.
 
@@ -42,7 +42,12 @@ Artifacts: Existing source spec/plan above; this memory; scoped implementation a
 - Contracts build, API/web full non-incremental type checks and `git diff --check` passed after integration.
 - Review-submit navigation rechecked at `ExpenseReviewPage.tsx:338`: server success precedes `router.replace` to the highlighted expense list; failure stays on the form. No change needed.
 
-Next: Normal push feature branch and HEAD:develop, verify remote SHA, record delivery proof. No deploy.
+## Delivery
+
+- Normal feature push and `git push origin HEAD:develop` succeeded. `git ls-remote` confirmed both refs at `0326e123f72c187ebaed6effdc3802ef97718639` before this documentation-only delivery record.
+- Coordinated final push window with the notification-actions agent, which will fetch/merge this delivery before its own change. No forced history, main push, live data access, deployment or release actions.
+
+Next: No implementation work remaining. UAT/Production deployment and live browser acceptance remain separate authorized release work.
 
 ### Reproduction commands
 
