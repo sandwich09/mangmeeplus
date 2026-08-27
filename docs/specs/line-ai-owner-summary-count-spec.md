@@ -1,7 +1,8 @@
 # LINE AI concise owner summaries and count preservation
 
-Status: Root integrated checks passed on develop `11153296`, 2026-08-27.
-Independent bounded review passed; phase PR/CI pending, no deployment authorized.
+Status: Amount-role correction frozen at base `70033af2`, 2026-08-27: focused118/118,
+gateway984/984 and API/gateway types passed. PR #288 remains held for root review and
+new exact-head CI; earlier review/CI predate this finding. No deployment authorized.
 
 ## Goal and existing authority
 
@@ -17,17 +18,23 @@ current composer boundary, where both raw data and grounded fallback are already
 
 ## Contract
 
-- Only a sole `expense.list_recent` result can use amount-only projection. Explicit
+- Only a sole `expense.list_recent` result can use the concise amount-only answer. Explicit
   count wording uses the same predicate as the existing requested-count guard and is
   never amount-only. Record/vendor/recent/status requests keep the original detail data.
-- Broad amount summaries expose only their amount to model composition and return the
-  corresponding concise grounded total on provider failure or grounding rejection.
+- Broad amount summaries return their existing concise grounded total before model
+  composition, just like count and daily-closing answers. Numeric membership cannot
+  establish a monetary role: a year/date, earlier conversation amount or user-value
+  candidate must not replace the current source total. Remove the now-unreachable
+  amount-only model projection; the remaining model paths retain their full source data.
+  Reuse the AccountingSummaryAgent `ยอดทั้งหมด` fact and existing `ยอดรวม` label; no new
+  currency assumption, monetary parser or formatter. English questions use that same
+  source line (currently Thai); this slice does not implement full fallback translation.
 - For sole expense results, `กี่บาท` and `จำนวนเงิน` (allowing whitespace between words)
   ask for money, not record count. Remove only these phrases from count-detection text;
   leave the actual question unchanged. A mixed question that still asks `กี่ใบ`/`กี่รายการ`
   remains deterministic count+amount. This is a narrow Thai wording guard, not a general
-  currency parser or NLU guarantee. Subsequent model count validation sees the same
-  projected data as the model, never the raw record count that was intentionally pruned.
+  currency parser or NLU guarantee. Neither supported count nor amount-only answers
+  call the provider; remaining model validation uses the same full data as its payload.
 - An expense count comes only from a nonnegative safe-integer `data.total`. The actual
   API (`ExpenseListRecentTool`, `erp-tools.use-case.ts`) sets it to
   `summary.countedItems`, excluding REJECTED/VOIDED, after permission/tenant/branch reads.
@@ -52,10 +59,11 @@ current composer boundary, where both raw data and grounded fallback are already
   other vendor/status terms still require unavailable copy. Excluding just one status or
   requesting an additional subset does not establish a matching global-count request.
 - Missing/invalid `total` yields explicit count-unavailable copy and no model guess.
-  `truncated: true` is incomplete data: no exact amount/count answer or model projection.
+  `truncated: true` is incomplete data: no exact amount/count answer or model composition.
   This slice does not add subset aggregation or change the API count basis.
-- Numeric/semantic guards, daily-closing determinism, multi-tool responses, current
-  conversation context, permission refusals, source refs and tenant links stay intact.
+- Numeric/semantic guards, daily-closing determinism, multi-tool responses, permission
+  refusals, source refs and tenant links stay intact. Context and value candidates remain
+  available to other model paths; they cannot rewrite a sole-expense canonical total.
 - Default Flex headings use trusted tool-family/intent metadata. Same-family answers
   may name the topic; mixed/unknown families remain generic. Explicit nonblank card
   titles survive. Refused responses never inherit a business topic or untrusted cards.
@@ -68,11 +76,13 @@ current composer boundary, where both raw data and grounded fallback are already
 ## Acceptance and limits
 
 Registered composer/orchestrator/card tests must cover Thai/English count phrases,
-count+amount, valid zero, total larger than preview length, no model call for count,
+count+amount, valid zero, total larger than preview length, no model call for count or
+amount-only answers, nonempty-preview date/context/candidate-as-money counterexamples,
 swapped count/money and count-as-date responses, missing/invalid count, truncated source, detail/vendor/status intent,
 unsupported distinct-vendor/status-subset counts and nested-count decoys,
 single/mixed/unknown headings, explicit titles, refusals, and safe tenant links.
 Fixtures are synthetic, provider calls are stubbed. These checks prove the local
-response boundary, not live semantic-router/model quality or LINE delivery.
+response boundary, not live semantic-router/model quality, end-to-end latency, full
+translation or LINE delivery.
 
 No schema, permission, provider/config/secret, package, cloud, browser, or live-AI change.

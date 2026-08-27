@@ -1,8 +1,8 @@
 # Agent Memory: LINE AI owner summary count
 
-Status: Root integrated verification and independent bounded review passed on develop `11153296`; phase PR/CI pending. Not shipped or live-provider accepted.
+Status: Amount-role follow-up frozen at base `70033af22415d59424fa3415448e150404262e48`; focused118/118, gateway984/984, API/gateway types and diff check passed. PR #288 held for root review and new exact-head CI. Not shipped or live-provider accepted.
 Owner: `/root/ocr_platform_admin`; root reviews/integrates.
-Scope: Port the intended PR #264 response-only slice and correct count preservation.
+Scope: Port the intended PR #264 response-only slice and preserve source count/amount roles.
 
 ## Decisions and inspected evidence
 
@@ -45,13 +45,29 @@ Scope: Port the intended PR #264 response-only slice and correct count preservat
   provider composition, just like deterministic daily closing. Count+money/date labels
   cannot be model-reassigned; no new count-unit parser, router or provider setting.
   Previous supported-count provider-called golden expectations are superseded by this
-  stricter deterministic contract. Amount-only model composition remains unchanged.
+  stricter deterministic contract. Amount-only model composition was unchanged at that
+  earlier freeze; it is superseded by the authoritative-amount follow-up below.
 - Root then reproduced `ค่าใช้จ่ายเดือนนี้กี่บาท` being treated as a count because the
   shared count predicate matches `กี่`; `จำนวนเงิน` has the equivalent collision. Correct
   only the sole-expense predicate by removing these two Thai monetary phrases from its
-  guard text. The actual question and generic routing remain untouched. The later model
-  count guard must inspect `effectiveToolData`, not a raw count excluded from the model's
-  amount-only projection. Mixed record-count plus money wording stays deterministic.
+  guard text. The actual question and generic routing remained untouched. At that freeze,
+  the later model count guard consumed `effectiveToolData`, not a raw count excluded from
+  the model's amount-only projection. That projection is now removed; mixed record-count
+  plus money wording stays deterministic.
+- Root reproduced a remaining amount-role failure at clean HEAD `70033af2`: source
+  count 7, current total 85 and nonempty preview amount 40 accepted `ค่าใช้จ่ายทั้งหมด
+  2026 บาท` when 2026 came from the question or `currentDate`. Existing numeric guards
+  also admit prior-context and value-candidate amounts; membership is not monetary-role
+  authority. This supersedes the amount-model/projection contract in the history below.
+  Reuse the existing concise grounded total as an authoritative early return for the
+  already-classified sole-expense amount-only path, and delete its unreachable projection.
+  Detail/status/vendor, multi-tool and other model paths retain full source and their
+  existing context/value-candidate guards. No new role parser, router or provider config.
+- The current AccountingSummaryAgent expense total fact is `ยอดทั้งหมด` plus its
+  existing formatted value and `บาท`; the composer only relabels it `ยอดรวม`. Keep that
+  line even for English questions rather than inventing currency/formatting or claiming
+  full translation. Generic context tests must still exercise a reachable model path;
+  separate nonempty-source regressions prove amount-only answers cannot reuse an old sum.
 
 ## Artifacts
 
@@ -68,7 +84,57 @@ needed; source count semantics are proved by the existing API contract test.
 
 ## Verification
 
-### Latest refreeze: narrow Thai amount wording
+### Current refreeze: authoritative amount roles (PR #288 hold)
+
+- Read-only start confirmed clean HEAD `70033af22415d59424fa3415448e150404262e48`.
+  Read repo AGENTS and Ponytail full; traced AccountingSummaryAgent facts and composer
+  caller. Spec/plan updated before implementation. No P11, API, DB, package or live changes.
+- Registered composer/orchestrator tests ran red before the production change:
+  **106/118 passed, 12 failed, zero skipped**. Five nonempty-preview cases returned the
+  wrong monetary total unchanged: 2026 from Thai/English question or `currentDate`, 150
+  from prior conversation and 60 from an extracted Thai-word value candidate. Seven
+  additional failures were the new zero-provider contract for broad/Thai/English amounts.
+- Production change is the early-return condition plus deletion of the unreachable
+  projection/alias. It introduces no new intent rule, role parser, formatter or provider
+  configuration. Existing detail/vendor/status, unsupported subset, missing/truncated,
+  count/money, multi-tool and daily-closing tests remain green. Generic context tests now
+  explicitly request expense detail to exercise the still-reachable full-source model
+  path; generic number reformatting is checked with the existing sales-summary tool.
+  Amount-only context/candidate questions are separately proved canonical, not model-led.
+- Final focused command:
+  `pnpm --filter @watchdog-bms/ai-gateway exec tsx --test --test-reporter=spec
+  src/modules/line-ai/agents/response-composer.agent.spec.ts
+  src/modules/line-ai/agents/orchestrator.agent.spec.ts`: **118/118 passed, zero skipped**.
+- `pnpm --filter @watchdog-bms/ai-gateway test`: **984/984 passed, zero skipped**, including
+  registered response, orchestration, native/model-loop, permission, context, value-candidate
+  and local graph-boot tests. Read-only script inspection confirms both focused specs are
+  in the default test and LINE business-coverage registries; no standalone test/package edit.
+- `pnpm --filter @watchdog-bms/ai-gateway typecheck`,
+  `pnpm --filter @watchdog-bms/api typecheck`, and `git diff --check`: **passed**.
+  API production/tests are unchanged; no new full-API run is claimed for this follow-up.
+- Six amount-wording goldens assert zero provider calls and the exact existing Thai
+  `• ยอดรวม: 85.00 บาท` line, including the two English questions. No unrequested count,
+  vendor or status appears. This is a scoped grounding repair, not full translation,
+  arbitrary-language NLU, live model/LINE quality or end-to-end latency acceptance.
+- Frozen source SHA-256: composer
+  `fcc5bea96b9fea612f91b13296d9ffe14397069fe30604961ee788764f7f03e3`;
+  registered composer spec
+  `9b4a395da4fade450017ed04f8451906a14521a2be4098923e76357e7ff1f858`.
+  Exactly five current dirty files: composer, its registered spec and these three docs.
+- Root reports old-head `70033af2` CI `33040537029` succeeded, but it predates these red
+  cases and cannot clear the hold. Root will integrate the later develop/P11 merge only
+  after this freeze, then obtain a new commit/exact-head CI. No rebase/commit/push, P11
+  modification, cloud, browser, live provider or DB operation was performed here.
+- Root independently reviewed the frozen five-file diff and reran the registered
+  composer/orchestrator pair: **118/118 passed, zero skipped**. The original nonempty
+  source counterexample (count7/total85/preview40) now returns exactly
+  `• ยอดรวม: 85.00 บาท` with zero provider calls for Thai explicit-year, Thai current-month
+  with currentDate2026-08-27, and English August2026 questions. All29 incoming paths
+  from develop `d8d9808e41d15360810ed67e9169ade0cd5605ab` are disjoint from the eight
+  phase files. This accepts the scoped source fix for integration/new CI, not live AI,
+  main promotion or the old green CI as proof of this correction.
+
+### Previous refreeze: narrow Thai amount wording
 
 - New registered amount goldens ran red before production changes: **107/111 passed,
   4 failed, zero skip**, all because monetary questions skipped the amount-only provider
@@ -194,10 +260,11 @@ from a five-row preview. Root owns independent review and later live validation.
 
 ## Next
 
-Keep this worktree frozen for root review. Root decides integration/rebase, commit/PR and
-release after independent review; old PR #264 and expense/P15 worktrees remain untouched.
+Keep this worktree frozen for root review. Root decides integration/rebase, follow-up
+commit/exact-head PR CI and release after review; old PR #264 and expense/P15 worktrees
+remain untouched.
 
-## Root current-base verification — 2026-08-27
+## Earlier root integration verification — 2026-08-27 (before amount-role follow-up)
 
 - Compared PR287's 30 incoming paths with this eight-file candidate: no overlap.
   Fast-forwarded from `21f109d5` to `111532966c415fee11abb36ca1749bf1fc66ee52`

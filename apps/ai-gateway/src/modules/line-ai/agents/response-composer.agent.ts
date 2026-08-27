@@ -329,7 +329,8 @@ export class ResponseComposerAgent {
    * directly from bounded raw tool data. Grounding guard: every number in the answer must be
    * derivable from the tool data (numeric tokens or array lengths) or the question itself, and
    * the answer must stay chat-sized. Any provider failure or guard violation falls back to the
-   * deterministic composed reply, so LINE always answers safely.
+   * deterministic composed reply. Expense total/count and daily-closing answers keep their
+   * canonical labels without a model rewrite.
    */
   async composeAnswer(
     question: string,
@@ -368,13 +369,10 @@ export class ResponseComposerAgent {
       && !/(?:รายการ|อะไร|ร้านไหน|ใคร|ผู้ขาย|ล่าสุด|สถานะ|จ่ายแล้ว|ยังไม่จ่าย|ค้าง|รอตรวจ|ยืนยัน|\blist\b|\bwhich\b|vendor|latest|status|paid|unpaid|pending|confirmed)/iu.test(question);
     const totalLine = expenseTotalOnly ? groundedFallback.split('\n').find((line) => line.trimStart().startsWith('• ยอดทั้งหมด:')) : undefined;
     const fallback = expenseCountRequested ? `${countLine}\n${groundedFallback}` : totalLine?.replace('ยอดทั้งหมด:', 'ยอดรวม:') ?? groundedFallback;
-    // Keep the counted basis and amount labels authoritative; numeric membership alone
-    // cannot stop a model from swapping a count with money or quoting it as a date.
-    if (expenseCountRequested) return fallback;
-    const effectiveToolData = expenseTotalOnly
-      ? toolData.map((entry) => ({ ...entry, data: { summary: { totalAmount: (summary as Record<string, unknown>)['totalAmount'] } } }))
-      : toolData;
-    const annotatedToolData = effectiveToolData.map((entry, index) => ({ ...entry, state: isExplicitEmptyData(toolData[index]?.data) ? 'empty' : 'data' }));
+    // Keep count and amount roles authoritative: numeric membership cannot stop a model
+    // from replacing the current total with a date, context amount or user-value candidate.
+    if (expenseCountRequested || expenseTotalOnly) return fallback;
+    const annotatedToolData = toolData.map((entry) => ({ ...entry, state: isExplicitEmptyData(entry.data) ? 'empty' : 'data' }));
     const hasEmptyResults = annotatedToolData.some((entry) => entry.state === 'empty');
     const result = await provider.generateText({
       systemPrompt: ANSWER_COMPOSER_SYSTEM_PROMPT,
@@ -397,7 +395,7 @@ export class ResponseComposerAgent {
     if (!answer || answer.length > 1200) return fallback;
     // A bare JSON object/array is never a valid chat answer (confused model) — fall back.
     if (looksLikeJson(answer)) return fallback;
-    const allowed = allowedNumbersFromData(effectiveToolData, `${question} ${opts.currentDate ?? ''}`);
+    const allowed = allowedNumbersFromData(toolData, `${question} ${opts.currentDate ?? ''}`);
     // Multi-turn: numbers quoted from recent conversation previews were grounded when first
     // produced, so a follow-up answer may repeat them (timestamps/intents deliberately excluded).
     for (const n of numericValues(contextPreviewText(opts.conversationContext))) allowed.add(n);
@@ -406,12 +404,12 @@ export class ResponseComposerAgent {
     // ISO (ค.ศ.), so both year forms plus day/month numbers are allowed.
     for (const n of candidateNumbers(opts.valueCandidates)) allowed.add(n);
     for (const n of numericValues(answer)) if (!allowed.has(n)) return fallback;
-    const requestedCounts = countValuesRequestedBy(question, effectiveToolData);
+    const requestedCounts = countValuesRequestedBy(question, toolData);
     if (requestedCounts.size > 0) {
       const answerNumbers = numericValues(answer);
       if (![...requestedCounts].some((count) => answerNumbers.has(count))) return fallback;
     }
-    if (!preservesSemanticGrounding([question, fallback, ...scalarTexts(effectiveToolData)], answer)) return fallback;
+    if (!preservesSemanticGrounding([question, fallback, ...scalarTexts(toolData)], answer)) return fallback;
     return answer;
   }
 

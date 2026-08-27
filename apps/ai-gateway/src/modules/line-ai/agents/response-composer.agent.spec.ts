@@ -226,10 +226,10 @@ describe('ResponseComposerAgent.composeAnswer (model-composed grounded answer)',
   });
 
   it('accepts value-equal number reformatting (85 vs 85.0000)', async () => {
-    const data = [{ tool: 'expense.list_recent', data: { summary: { totalAmount: '85.0000' } } }];
-    const provider = answerProvider('ยอดค่าใช้จ่ายรวม 85 บาท');
-    const out = await agent.composeAnswer('ค่าใช้จ่ายเท่าไหร่', data, FALLBACK, provider);
-    assert.equal(out, 'ยอดค่าใช้จ่ายรวม 85 บาท');
+    const data = [{ tool: 'sales.get_sales_summary', data: { totalSales: '85.0000' } }];
+    const provider = answerProvider('ยอดขายรวม 85 บาท');
+    const out = await agent.composeAnswer('ยอดขายเท่าไหร่', data, FALLBACK, provider);
+    assert.equal(out, 'ยอดขายรวม 85 บาท');
   });
 
   const expenseData = [{ tool: 'expense.list_recent', data: {
@@ -240,14 +240,14 @@ describe('ResponseComposerAgent.composeAnswer (model-composed grounded answer)',
   } }];
   const expenseFallback = '• ยอดทั้งหมด: 85.00 บาท\n• รอตรวจสอบ: 15.00 บาท\n• รายการค่าใช้จ่ายล่าสุด: Synthetic Vendor 40.00 บาท';
 
-  it('keeps broad expense amounts concise and projects away unrequested record/status/count data', async () => {
-    let captured: any;
-    const output = await agent.composeAnswer('ดูค่าใช้จ่ายเดือนนี้', expenseData, expenseFallback, answerProvider((payload) => {
-      captured = payload;
+  it('keeps the canonical expense total concise without model composition', async () => {
+    let calls = 0;
+    const output = await agent.composeAnswer('ดูค่าใช้จ่ายเดือนนี้', expenseData, expenseFallback, answerProvider(() => {
+      calls += 1;
       return 'ค่าใช้จ่าย 999 บาท';
     }));
     assert.equal(output, '• ยอดรวม: 85.00 บาท');
-    assert.deepEqual(captured.systemData, [{ tool: 'expense.list_recent', data: { summary: { totalAmount: '85.00' } }, state: 'data' }]);
+    assert.equal(calls, 0, 'the source total is authoritative before the provider');
     assert.equal(await agent.composeAnswer('ยอดค่าใช้จ่ายเท่าไหร่', expenseData, expenseFallback, answerProvider('', false)), output);
   });
 
@@ -256,19 +256,48 @@ describe('ResponseComposerAgent.composeAnswer (model-composed grounded answer)',
     'ค่าใช้จ่ายเดือนนี้กี่ บาท',
     'จำนวนเงินค่าใช้จ่ายเดือนนี้เท่าไหร่',
     'ค่าใช้จ่ายเดือนนี้มีจำนวน เงินเท่าไหร่',
+    'what is the expense total this month?',
+    'summarize expenses this month',
   ]) {
     it(`amount wording golden: ${question}`, async () => {
       let calls = 0;
-      const output = await agent.composeAnswer(question, expenseData, expenseFallback, answerProvider((payload) => {
+      const output = await agent.composeAnswer(question, expenseData, expenseFallback, answerProvider(() => {
         calls += 1;
-        assert.equal(payload.question, question, 'the question is not rewritten');
-        assert.deepEqual(payload.systemData, [{ tool: 'expense.list_recent', data: { summary: { totalAmount: '85.00' } }, state: 'data' }]);
         return 'ยอดค่าใช้จ่ายรวม 85 บาท';
       }));
-      assert.equal(calls, 1, 'money wording keeps the amount-only composition path');
-      assert.equal(output, 'ยอดค่าใช้จ่ายรวม 85 บาท', 'a pruned count must not reject the grounded amount answer');
+      assert.equal(calls, 0, 'money wording uses the canonical amount-only answer');
+      assert.equal(output, '• ยอดรวม: 85.00 บาท', 'reuse the existing source line, including its currency and language');
       assert.doesNotMatch(output, /7|15|Synthetic Vendor|รายการ/);
       assert.equal(await agent.composeAnswer(question, expenseData, expenseFallback, answerProvider('', false)), '• ยอดรวม: 85.00 บาท');
+    });
+  }
+
+  for (const { question, candidate, opts } of [
+    { question: 'ค่าใช้จ่ายเดือน 8 ปี 2026 กี่บาท', candidate: 'ค่าใช้จ่ายทั้งหมด 2026 บาท', opts: {} },
+    { question: 'what is the expense total for August 2026?', candidate: 'Expense total 2026', opts: {} },
+    { question: 'ยอดค่าใช้จ่ายเดือนนี้เท่าไหร่', candidate: 'ค่าใช้จ่ายทั้งหมด 2026 บาท', opts: { currentDate: '2026-08-27' } },
+    {
+      question: 'ยอดค่าใช้จ่ายเดือนนี้เท่าไหร่', candidate: 'ค่าใช้จ่ายทั้งหมด 150 บาท',
+      opts: { conversationContext: {
+        windowMinutes: 15, maxTurns: 15,
+        recentTurns: [{ at: '2026-08-27T10:00:00.000Z', userMessagePreview: 'ค่ากาแฟ 150 บาท', assistantReplyPreview: 'บันทึกแล้ว 150 บาท', refused: false }],
+      } },
+    },
+    {
+      question: 'หกสิบบาทคือยอดค่าใช้จ่ายเดือนนี้ไหม', candidate: 'ค่าใช้จ่ายทั้งหมด 60 บาท',
+      opts: { valueCandidates: extractValueCandidates('หกสิบบาทคือยอดค่าใช้จ่ายเดือนนี้ไหม', '2026-08-27') },
+    },
+  ]) {
+    it(`keeps the current expense total instead of a date/context/candidate amount: ${question} / ${candidate}`, async () => {
+      let calls = 0;
+      // Nonempty preview exposes the old numeric-role bug; the empty-data guard cannot mask it.
+      const output = await agent.composeAnswer(question, expenseData, expenseFallback, answerProvider(() => {
+        calls += 1;
+        return candidate;
+      }), opts);
+      assert.equal(output, '• ยอดรวม: 85.00 บาท');
+      assert.notEqual(output, candidate);
+      assert.equal(calls, 0, 'an allowed number is not authority to replace the current monetary total');
     });
   }
 
@@ -406,7 +435,7 @@ describe('ResponseComposerAgent.composeAnswer (model-composed grounded answer)',
     }
   });
 
-  it('keeps multi-tool answers outside the expense-only projection', async () => {
+  it('keeps multi-tool answers outside the expense-only deterministic path', async () => {
     let captured: any;
     const data = [...expenseData, { tool: 'company.get_current_context', data: { name: 'Synthetic Company' } }];
     assert.equal(await agent.composeAnswer('สรุปค่าใช้จ่ายและบริษัท', data, expenseFallback, answerProvider((payload) => {
@@ -522,7 +551,7 @@ describe('ResponseComposerAgent.composeAnswer – multi-turn context grounding',
 
   it('allows a follow-up answer to repeat a number from recent conversation previews', async () => {
     const out = await agent.composeAnswer(
-      'รวมกับเมื่อกี้เป็นเท่าไหร่',
+      'สรุปรายการค่าใช้จ่ายล่าสุดกับเมื่อกี้',
       [{ tool: 'expense.list_recent', data: { summary: { totalAmount: '65' } } }],
       FALLBACK,
       provider('เมื่อกี้ 150 บาท รอบนี้ 65 บาทค่ะ'),
@@ -533,7 +562,7 @@ describe('ResponseComposerAgent.composeAnswer – multi-turn context grounding',
 
   it('still rejects numbers absent from tool data, question, and context', async () => {
     const out = await agent.composeAnswer(
-      'รวมกับเมื่อกี้เป็นเท่าไหร่',
+      'สรุปรายการค่าใช้จ่ายล่าสุดกับเมื่อกี้',
       [{ tool: 'expense.list_recent', data: { summary: { totalAmount: '65' } } }],
       FALLBACK,
       provider('รวมทั้งหมด 999 บาทค่ะ'),
@@ -544,7 +573,7 @@ describe('ResponseComposerAgent.composeAnswer – multi-turn context grounding',
 
   it('does not treat context timestamps as allowed numbers', async () => {
     const out = await agent.composeAnswer(
-      'ยอดเท่าไหร่',
+      'รายละเอียดรายการค่าใช้จ่ายล่าสุด',
       [{ tool: 'expense.list_recent', data: { summary: { totalAmount: '65' } } }],
       FALLBACK,
       provider('ยอด 2026 บาท'),
