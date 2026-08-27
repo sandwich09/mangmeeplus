@@ -21,7 +21,8 @@ import {
   severityColor,
   severityLabel,
   formatRelativeTime,
-  visibleNotificationChildLinks, internalNotificationHref } from './dashboard-notifications.logic';
+  internalNotificationHref,
+} from './dashboard-notifications.logic';
 import type { NotificationItem, NotificationRule, NotificationPreference, NotificationSeverity } from './dashboard-notifications.model';
 import { canSeeRoute } from '@/features/web-core-workspace/route-permissions';
 
@@ -87,7 +88,6 @@ export function NotificationCenterPage({ companyId, permissions }: { companyId: 
   const toast = useToast();
   const router = useRouter();
   const canRead = canSeeRoute('/notifications', permissions);
-  const childLinks = visibleNotificationChildLinks(permissions);
   const [items, setItems] = useState<NotificationItem[]>([]);
   const [loading, setLoading] = useState(canRead);
   const [error, setError] = useState<string | null>(null);
@@ -163,22 +163,6 @@ export function NotificationCenterPage({ companyId, permissions }: { companyId: 
           >
             {markAllBusy ? 'กำลังทำเครื่องหมาย...' : 'อ่านทั้งหมด'}
           </button>
-          {childLinks.includes('preferences') && (
-            <Link
-              href={`/companies/${companyId}/settings/notifications`}
-              className="inline-flex min-h-11 items-center rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 sm:min-h-0"
-            >
-              ตั้งค่า
-            </Link>
-          )}
-          {childLinks.includes('rules') && (
-            <Link
-              href={`/companies/${companyId}/notifications/rules`}
-              className="inline-flex min-h-11 items-center rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 sm:min-h-0"
-            >
-              กฎ
-            </Link>
-          )}
         </div>
       </div>
 

@@ -1,23 +1,5 @@
 import type { DashboardWidget, DashboardFreshness, NotificationSeverity } from './dashboard-notifications.model';
 
-export const NOTIFICATION_CHILD_LINKS = ['preferences', 'rules'] as const;
-export type NotificationChildLink = (typeof NOTIFICATION_CHILD_LINKS)[number];
-
-/**
- * Settings links are offered only when their GET and mutation endpoints can be used.
- * The notification centre itself remains available through `notification.read`.
- */
-const NOTIFICATION_CHILD_LINK_PERMISSIONS: Record<NotificationChildLink, readonly string[]> = {
-  preferences: ['notification.preference.manage'],
-  rules: ['notification.rule.manage'],
-};
-
-export function visibleNotificationChildLinks(permissions: readonly string[]): NotificationChildLink[] {
-  return NOTIFICATION_CHILD_LINKS.filter((link) =>
-    NOTIFICATION_CHILD_LINK_PERMISSIONS[link].some((key) => permissions.includes(key)),
-  );
-}
-
 export function getWidgetMetricValue(widget: DashboardWidget, metricKey: string): number | string | null {
   return widget.metrics.find((m) => m.key === metricKey)?.value ?? null;
 }
