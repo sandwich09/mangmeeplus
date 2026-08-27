@@ -28,7 +28,7 @@ controls; no feature was toggled. This phase changes monitoring only and does no
   entries 135ms, summary 143ms, filtered entries 56ms (individual dev observations, not a latency target).
 - `bash -n infra/monitoring/runtime-alarms.sh infra/monitoring/runtime-alarms.spec.sh` — pass.
 - `bash infra/monitoring/runtime-alarms.spec.sh` — pass, UAT/Production fake installation and read-back;
-  rejects default sample, identity dimensions, system dimensions, system selection, transformed input,
+  rejects absent filter, default sample, identity dimensions, system dimensions, system selection, transformed input,
   missing non-negative guard and Average-stat drift; accepts empty optional dimensions/metadata.
 - Registered journey/request logger specs — 34/34 pass, 0 skipped; API build/typecheck, web typecheck,
   contracts/config builds and production config validation 48/48 pass.

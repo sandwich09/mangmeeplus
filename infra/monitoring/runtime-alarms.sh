@@ -173,7 +173,7 @@ journey_dashboard_body() {
           properties:{
             title:"API response latency (p95 milliseconds; runtime context)", view:"timeSeries", stacked:false,
             region:$region, period:300, stat:"p95",
-            metrics:[[$runtimeNamespace, ($runtimePrefix + "_api_response_latency_ms"), {label:"Completed API requests"}]]
+            metrics:[[$runtimeNamespace, ($runtimePrefix + "_api_response_latency_ms"), {label:"All completed API requests (incl. health/internal)"}]]
           }
         }
       ]

@@ -52,7 +52,7 @@ Verification:
 - P9-2 focused API failure-matrix, request logging, Redis degradation, LINE signature, OCR client, audit persistence, outbox failure/fencing tests — pass; runtime alarm contract — pass.
 - P9-2 LINE provider/hosted-AI targeted API and AI Gateway suites — pass.
 - P9-2 full API suite, API typecheck, and AI Gateway typecheck — pass. No UI surface changed; P9-1b browser evidence remains the applicable journey-page check.
-- P9-1c shell syntax, fake-AWS UAT/Production install/read-back, seven adverse mutations, empty AWS response
+- P9-1c shell syntax, fake-AWS UAT/Production install/read-back, eight adverse mutations, empty AWS response
   normalization and scoped IAM assertions — pass. CI now runs the shell suite directly in Production Config Validation.
 - P9-1c request logger/journey-source specs — 34/34 pass; duration is explicitly asserted finite/numeric.
 - P9-1c contracts/config build, API build/typecheck, web typecheck and production config validation (48/48) — pass.
@@ -62,8 +62,10 @@ Verification:
   Screenshots and reproduction are in `docs/evidence/p9-api-p95/README.md`; no financial mutation/provider call.
 - Two independent agents report no blocker after IAM/filter/CI fixes. Opus 5 max review residuals were addressed
   with a separate live-data activation gate, explicit rollback permission, effective-IAM caveat and empty-dimension normalization.
+- Final Claude CLI `--model opus --effort max` reports model `claude-opus-5` and a ship verdict. Remaining
+  local checks cover absent-filter rejection, the exact `msg` source, and the all-request caveat in the graph label.
 - No cloud operation was performed. Config verification/local HTTP samples do not prove CloudWatch ingestion,
   percentile availability or alert delivery; those remain the explicit UAT/Production rollout gates.
 Next:
-- Open P9-1c PR to `develop`; merge only after CI and the final Opus follow-up pass.
+- Open P9-1c PR to `develop`; merge only after CI passes (final local/agent/Opus reviews complete).
 - UAT must still prove one synthetic alert per severity with acknowledged delivery. P10-P12 must land before the `PLANNED` signup/claim/SES rows can truthfully become live.

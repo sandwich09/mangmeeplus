@@ -42,6 +42,7 @@ describe('RequestLoggerMiddleware', () => {
     assert.equal(lines.length, 1);
     assert.equal(lines[0]?.['requestId'], 'req-1');
     assert.equal(lines[0]?.['status'], 200);
+    assert.equal(lines[0]?.['msg'], 'request');
     const durationMs = lines[0]?.['durationMs'];
     assert.ok(typeof durationMs === 'number' && Number.isFinite(durationMs) && durationMs >= 0);
   });

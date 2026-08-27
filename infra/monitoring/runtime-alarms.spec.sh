@@ -149,7 +149,7 @@ jq -e '
     | ($dashboard.widgets | length) == 6
     and any($dashboard.widgets[]; .properties.title == "LINE AI — accepted and terminal outcomes (LIVE)")
     and any($dashboard.widgets[]; .properties.stat == "p95" and .properties.period == 300
-      and .properties.metrics == [["WatchDog/Runtime", "watchdog_bms_uat_api_response_latency_ms", {label:"Completed API requests"}]])
+      and .properties.metrics == [["WatchDog/Runtime", "watchdog_bms_uat_api_response_latency_ms", {label:"All completed API requests (incl. health/internal)"}]])
     and any($dashboard.widgets[]; .properties.markdown? | strings | contains("PARTIAL/PLANNED rows must never be presented as live")))
   and .filters["/ecs/watchdog-bms-uat-api-web"]["api-response-latency"] == {
     filterName:"api-response-latency", filterPattern:"{ $.msg = \"request\" && $.durationMs >= 0 }",
@@ -181,6 +181,7 @@ jq -e '
 
 cp "$tmp_dir/state.json" "$tmp_dir/valid-state.json"
 for mutation in \
+  'del(.filters["/ecs/watchdog-bms-prod-api-web"]["api-response-latency"])' \
   '.filters["/ecs/watchdog-bms-prod-api-web"]["api-response-latency"].metricTransformations[0].defaultValue=0' \
   '.filters["/ecs/watchdog-bms-prod-api-web"]["api-response-latency"].metricTransformations[0].dimensions={companyId:"$.companyId"}' \
   '.filters["/ecs/watchdog-bms-prod-api-web"]["api-response-latency"].emitSystemFieldDimensions=["@aws.account"]' \

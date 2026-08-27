@@ -312,7 +312,8 @@ free storage 4 GB, free memory 200 MB, connections 150 และ CPU credit 50. 
 สร้าง dashboard global ชื่อ `watchdog-bms-prod-customer-journeys` และ `verify` อ่าน body กลับมาเทียบ
 กับ source ทุก field; ห้ามแก้ dashboard นี้จาก console เพราะรอบ install ถัดไปจะเขียนทับ
 
-**P9-1c activation evidence แยกจาก config verify:** หลัง install ให้เปิดหน้า read-only ตามปกติ
+**P9-1c activation evidence แยกจาก config verify:** บันทึก deployed API revision/image digest และยืนยันว่า
+รุ่นนั้นส่ง `msg=request` + numeric `durationMs` จริงก่อนเริ่มเก็บหลักฐาน. หลัง install ให้เปิดหน้า read-only ตามปกติ
 แล้วเก็บ `SampleCount > 0` และ `p95` ของ `WatchDog/Runtime/watchdog_bms_prod_api_response_latency_ms`
 ใน region `ap-southeast-1`/ช่วงเวลา UTC หลัง install ที่ระบุชัดเจน พร้อม request log `msg=request`
 ที่มี `durationMs` เป็นตัวเลข. ห้ามนับกราฟว่างว่าผ่าน และห้ามยิง financial mutation ซ้ำเพื่อสร้าง telemetry.
