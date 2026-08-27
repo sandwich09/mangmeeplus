@@ -2,6 +2,11 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { ACCOUNTING_CREDIT_NOTE_REASON_CODES, ACCOUNTING_DEBIT_NOTE_REASON_CODES, type AccountingPaymentMethod } from '@watchdog-bms/contracts';
 import {
+  createPayment,
+  prepareAccountingDocumentPaymentAttempt,
+  type AccountingDocumentPaymentAttempt,
+} from './accounting-documents.api';
+import {
   buildCorrectionInput,
   buildInvoiceDraftInput,
   buildSimpleIncomeInput,
@@ -41,6 +46,76 @@ function form(overrides: Partial<IncomeFormSnapshot> = {}): IncomeFormSnapshot {
     ...overrides,
   };
 }
+
+describe('sales document payment stable retry', () => {
+  const paymentInput = () => ({
+    direction: 'RECEIVED' as const,
+    method: 'BANK_TRANSFER' as const,
+    amount: '970.00',
+    whtAmount: '30.00',
+    externalReference: 'WHT-50-001',
+    branchId: 'branch-1',
+    counterpartyId: 'customer-1',
+    allocateToDocumentId: 'invoice-1',
+  });
+
+  it('sends identical serialized body/key after a lost response despite the advanced clock', async (t) => {
+    t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-08-27T03:00:00.000Z') });
+    const requests: string[] = [];
+    t.mock.method(globalThis, 'fetch', async (url: string, init?: RequestInit) => {
+      assert.equal(url, '/api/v1/companies/company-1/accounting/payments');
+      assert.equal(init?.method, 'POST');
+      requests.push(String(init?.body));
+      if (requests.length === 1) throw new Error('response lost after the payment committed');
+      return new Response(JSON.stringify({ id: 'payment-1' }), { status: 201 });
+    });
+    let current: AccountingDocumentPaymentAttempt | null = null;
+    const submit = async () => {
+      const attempt = prepareAccountingDocumentPaymentAttempt(current, 'company-1', paymentInput());
+      current = attempt;
+      const result = await createPayment('company-1', attempt.body);
+      if (current === attempt) current = null;
+      return result;
+    };
+
+    await assert.rejects(submit());
+    t.mock.timers.tick(60_000);
+    assert.equal((await submit()).id, 'payment-1');
+    assert.equal(requests[1], requests[0], 'actual API serializer must replay the entire original body');
+    const firstBody = JSON.parse(requests[0]);
+    assert.deepEqual(firstBody, { ...paymentInput(), idempotencyKey: firstBody.idempotencyKey, paidAt: '2026-08-27T03:00:00.000Z' });
+    assert.match(firstBody.idempotencyKey, /^payment_invoice-1_[a-f0-9]{32}$/);
+
+    t.mock.timers.tick(60_000);
+    await submit();
+    const nextBody = JSON.parse(requests[2]);
+    assert.notEqual(nextBody.idempotencyKey, firstBody.idempotencyKey, 'confirmed success permits a new payment attempt');
+    assert.equal(nextBody.paidAt, '2026-08-27T03:02:00.000Z');
+  });
+
+  it('reuses an immutable attempt until submitted intent or company/document context changes', () => {
+    const input = paymentInput();
+    const attempt = prepareAccountingDocumentPaymentAttempt(null, 'company-1', input);
+    assert.equal(prepareAccountingDocumentPaymentAttempt(attempt, 'company-1', { ...input }), attempt);
+    assert.ok(Object.isFrozen(attempt));
+    assert.ok(Object.isFrozen(attempt.body));
+    input.amount = '900.00';
+    assert.equal(attempt.body.amount, '970.00', 'editing form input must not mutate the in-flight payload');
+
+    for (const change of [
+      { amount: '900.00' }, { whtAmount: '20.00' }, { method: 'CASH' as const },
+      { externalReference: 'WHT-50-002' }, { branchId: 'branch-2' },
+      { counterpartyId: 'customer-2' }, { allocateToDocumentId: 'invoice-2' },
+    ]) {
+      const changed = prepareAccountingDocumentPaymentAttempt(attempt, 'company-1', { ...paymentInput(), ...change });
+      assert.notEqual(changed.body.idempotencyKey, attempt.body.idempotencyKey);
+    }
+    assert.notEqual(
+      prepareAccountingDocumentPaymentAttempt(attempt, 'company-2', paymentInput()).body.idempotencyKey,
+      attempt.body.idempotencyKey,
+    );
+  });
+});
 
 describe('VAT defaults from category (spec §7.9 — never guessed)', () => {
   it('maps O7/OX/O0 and leaves unknown categories unselected', () => {

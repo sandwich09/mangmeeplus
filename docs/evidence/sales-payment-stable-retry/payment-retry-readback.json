@@ -1,0 +1,196 @@
+{
+  "documentId": "cmtaykk77009rtak102laf3ep",
+  "customerId": "cmtaykk6v009ptak17hf2gwhe",
+  "requestBodies": [
+    "{\"direction\":\"RECEIVED\",\"method\":\"BANK_TRANSFER\",\"amount\":\"97.00\",\"whtAmount\":\"3.00\",\"externalReference\":\"E2E payment retry-1787801025837-v4il2z\",\"counterpartyId\":\"cmtaykk6v009ptak17hf2gwhe\",\"allocateToDocumentId\":\"cmtaykk77009rtak102laf3ep\",\"idempotencyKey\":\"payment_cmtaykk77009rtak102laf_f2502f5bc435456386651cf1b3e95d8d\",\"paidAt\":\"2026-08-27T03:23:46.318Z\"}",
+    "{\"direction\":\"RECEIVED\",\"method\":\"BANK_TRANSFER\",\"amount\":\"97.00\",\"whtAmount\":\"3.00\",\"externalReference\":\"E2E payment retry-1787801025837-v4il2z\",\"counterpartyId\":\"cmtaykk6v009ptak17hf2gwhe\",\"allocateToDocumentId\":\"cmtaykk77009rtak102laf3ep\",\"idempotencyKey\":\"payment_cmtaykk77009rtak102laf_f2502f5bc435456386651cf1b3e95d8d\",\"paidAt\":\"2026-08-27T03:23:46.318Z\"}"
+  ],
+  "beforeRetry": {
+    "data": [
+      {
+        "id": "cmtaykkle00a1tak1m61xfk81",
+        "companyId": "seed-local-company",
+        "paymentNumber": "PAY-202608-00024",
+        "direction": "RECEIVED",
+        "status": "RECORDED",
+        "counterpartyId": "cmtaykk6v009ptak17hf2gwhe",
+        "counterpartySnapshotJson": {
+          "id": "cmtaykk6v009ptak17hf2gwhe",
+          "displayName": "E2E payment retry-1787801025837-v4il2z"
+        },
+        "method": "BANK_TRANSFER",
+        "amount": "97",
+        "whtAmount": "3",
+        "allocatedAmount": "97",
+        "unappliedAmount": "0",
+        "currency": "THB",
+        "paidAt": "2026-08-27T03:23:46.318Z",
+        "externalReference": "E2E payment retry-1787801025837-v4il2z",
+        "postingStatus": "pending",
+        "createdByUserId": "seed-qa-user-finance",
+        "createdAt": "2026-08-27T03:23:46.370Z",
+        "updatedAt": "2026-08-27T03:23:46.380Z"
+      }
+    ],
+    "total": 1,
+    "page": 1,
+    "pageSize": 100
+  },
+  "afterRetry": {
+    "data": [
+      {
+        "id": "cmtaykkle00a1tak1m61xfk81",
+        "companyId": "seed-local-company",
+        "paymentNumber": "PAY-202608-00024",
+        "direction": "RECEIVED",
+        "status": "RECORDED",
+        "counterpartyId": "cmtaykk6v009ptak17hf2gwhe",
+        "counterpartySnapshotJson": {
+          "id": "cmtaykk6v009ptak17hf2gwhe",
+          "displayName": "E2E payment retry-1787801025837-v4il2z"
+        },
+        "method": "BANK_TRANSFER",
+        "amount": "97",
+        "whtAmount": "3",
+        "allocatedAmount": "97",
+        "unappliedAmount": "0",
+        "currency": "THB",
+        "paidAt": "2026-08-27T03:23:46.318Z",
+        "externalReference": "E2E payment retry-1787801025837-v4il2z",
+        "postingStatus": "pending",
+        "createdByUserId": "seed-qa-user-finance",
+        "createdAt": "2026-08-27T03:23:46.370Z",
+        "updatedAt": "2026-08-27T03:23:46.380Z"
+      }
+    ],
+    "total": 1,
+    "page": 1,
+    "pageSize": 100
+  },
+  "payment": {
+    "id": "cmtaykkle00a1tak1m61xfk81",
+    "companyId": "seed-local-company",
+    "paymentNumber": "PAY-202608-00024",
+    "direction": "RECEIVED",
+    "status": "RECORDED",
+    "counterpartyId": "cmtaykk6v009ptak17hf2gwhe",
+    "counterpartySnapshotJson": {
+      "id": "cmtaykk6v009ptak17hf2gwhe",
+      "displayName": "E2E payment retry-1787801025837-v4il2z"
+    },
+    "method": "BANK_TRANSFER",
+    "amount": "97",
+    "whtAmount": "3",
+    "allocatedAmount": "97",
+    "unappliedAmount": "0",
+    "currency": "THB",
+    "paidAt": "2026-08-27T03:23:46.318Z",
+    "externalReference": "E2E payment retry-1787801025837-v4il2z",
+    "postingStatus": "pending",
+    "createdByUserId": "seed-qa-user-finance",
+    "createdAt": "2026-08-27T03:23:46.370Z",
+    "updatedAt": "2026-08-27T03:23:46.380Z"
+  },
+  "paidBeforeRetry": {
+    "id": "cmtaykk77009rtak102laf3ep",
+    "companyId": "seed-local-company",
+    "documentType": "INVOICE",
+    "documentNumber": "INV-202608-00065",
+    "status": "ISSUED",
+    "documentDate": "2026-08-27T00:00:00.000Z",
+    "counterpartyId": "cmtaykk6v009ptak17hf2gwhe",
+    "counterpartySnapshotJson": {
+      "id": "cmtaykk6v009ptak17hf2gwhe",
+      "displayName": "E2E payment retry-1787801025837-v4il2z"
+    },
+    "currency": "THB",
+    "vatMode": "NO_VAT",
+    "taxCodeSummary": "NONE",
+    "subtotalAmount": "250",
+    "discountAmount": "0",
+    "taxableAmount": "250",
+    "vatAmount": "0",
+    "whtAmount": "0",
+    "grandTotalAmount": "250",
+    "paidAmount": "100",
+    "outstandingAmount": "150",
+    "paymentStatus": "PARTIALLY_PAID",
+    "postingStatus": "pending",
+    "issuedByUserId": "seed-qa-user-finance",
+    "issuedAt": "2026-08-27T03:23:45.883Z",
+    "createdByUserId": "seed-qa-user-finance",
+    "updatedByUserId": "seed-qa-user-finance",
+    "createdAt": "2026-08-27T03:23:45.859Z",
+    "updatedAt": "2026-08-27T03:23:46.377Z",
+    "lines": [
+      {
+        "id": "cmtaykk78009stak154ntred5",
+        "companyId": "seed-local-company",
+        "documentId": "cmtaykk77009rtak102laf3ep",
+        "lineNumber": 1,
+        "description": "E2E payment retry-1787801025837-v4il2z",
+        "quantity": "2",
+        "unitPrice": "125",
+        "discountAmount": "0",
+        "vatAmount": "0",
+        "whtAmount": "0",
+        "lineSubtotalAmount": "250",
+        "lineTotalAmount": "250",
+        "createdAt": "2026-08-27T03:23:45.859Z",
+        "updatedAt": "2026-08-27T03:23:45.859Z",
+        "correctionBasisAmount": "250.00"
+      }
+    ]
+  },
+  "paidAfterRetry": {
+    "id": "cmtaykk77009rtak102laf3ep",
+    "companyId": "seed-local-company",
+    "documentType": "INVOICE",
+    "documentNumber": "INV-202608-00065",
+    "status": "ISSUED",
+    "documentDate": "2026-08-27T00:00:00.000Z",
+    "counterpartyId": "cmtaykk6v009ptak17hf2gwhe",
+    "counterpartySnapshotJson": {
+      "id": "cmtaykk6v009ptak17hf2gwhe",
+      "displayName": "E2E payment retry-1787801025837-v4il2z"
+    },
+    "currency": "THB",
+    "vatMode": "NO_VAT",
+    "taxCodeSummary": "NONE",
+    "subtotalAmount": "250",
+    "discountAmount": "0",
+    "taxableAmount": "250",
+    "vatAmount": "0",
+    "whtAmount": "0",
+    "grandTotalAmount": "250",
+    "paidAmount": "100",
+    "outstandingAmount": "150",
+    "paymentStatus": "PARTIALLY_PAID",
+    "postingStatus": "pending",
+    "issuedByUserId": "seed-qa-user-finance",
+    "issuedAt": "2026-08-27T03:23:45.883Z",
+    "createdByUserId": "seed-qa-user-finance",
+    "updatedByUserId": "seed-qa-user-finance",
+    "createdAt": "2026-08-27T03:23:45.859Z",
+    "updatedAt": "2026-08-27T03:23:46.377Z",
+    "lines": [
+      {
+        "id": "cmtaykk78009stak154ntred5",
+        "companyId": "seed-local-company",
+        "documentId": "cmtaykk77009rtak102laf3ep",
+        "lineNumber": 1,
+        "description": "E2E payment retry-1787801025837-v4il2z",
+        "quantity": "2",
+        "unitPrice": "125",
+        "discountAmount": "0",
+        "vatAmount": "0",
+        "whtAmount": "0",
+        "lineSubtotalAmount": "250",
+        "lineTotalAmount": "250",
+        "createdAt": "2026-08-27T03:23:45.859Z",
+        "updatedAt": "2026-08-27T03:23:45.859Z",
+        "correctionBasisAmount": "250.00"
+      }
+    ]
+  }
+}
