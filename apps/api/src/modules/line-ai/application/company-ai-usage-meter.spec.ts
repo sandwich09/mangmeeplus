@@ -20,6 +20,7 @@ import {
   bangkokMonthKey,
   recordCompanyAiUsage,
   resolvePlatformAiBudget,
+  retryBusyAdmission,
   runWithCompanyAiBudgetAdmission,
 } from './company-ai-usage-meter';
 
@@ -846,5 +847,51 @@ describe('assertCompanyAiBudget against the platform settings row', () => {
 
     assert.deepEqual(await assertCompanyAiBudget(prisma, platformConfig, 'co-grandfathered'), { allowed: true });
     assert.equal(reads.platform, 0, 'a read never consults the platform row when an override exists');
+  });
+});
+
+describe('retryBusyAdmission', () => {
+  const busy = { allowed: false as const, reason: 'busy' as const, retryAfterSeconds: 3 };
+  const ok = { allowed: true as const, value: 42 };
+
+  it('returns a non-busy outcome immediately, with or without a deadline', async () => {
+    const sleeps: number[] = [];
+    const record = (ms: number) => { sleeps.push(ms); return Promise.resolve(); };
+    assert.deepEqual(await retryBusyAdmission(async () => ok, Date.now() + 5_000, record), ok);
+    const exceeded = { allowed: false as const, reason: 'exceeded' as const };
+    assert.deepEqual(await retryBusyAdmission(async () => exceeded, Date.now() + 5_000, record), exceeded);
+    assert.equal(sleeps.length, 0, 'non-busy outcomes never wait');
+  });
+
+  it('without a deadline, busy fails fast exactly as before (the ledger drain path)', async () => {
+    let attempts = 0;
+    const decision = await retryBusyAdmission(async () => { attempts += 1; return busy; }, undefined, () => {
+      throw new Error('must not sleep');
+    });
+    assert.deepEqual(decision, busy);
+    assert.equal(attempts, 1);
+  });
+
+  it('retries a busy admission until it is allowed within the deadline', async () => {
+    const sleeps: number[] = [];
+    let attempts = 0;
+    const decision = await retryBusyAdmission(
+      async () => { attempts += 1; return attempts < 3 ? busy : ok; },
+      Date.now() + 60_000,
+      (ms) => { sleeps.push(ms); return Promise.resolve(); },
+    );
+    assert.deepEqual(decision, ok);
+    assert.equal(attempts, 3);
+    assert.equal(sleeps.length, 2);
+    assert.ok(sleeps.every((ms) => ms > 0 && ms <= 1_200), 'polls are short and bounded');
+  });
+
+  it('returns the busy outcome once the deadline has passed', async () => {
+    let attempts = 0;
+    const decision = await retryBusyAdmission(async () => { attempts += 1; return busy; }, Date.now() - 1, () => {
+      throw new Error('must not sleep past the deadline');
+    });
+    assert.deepEqual(decision, busy);
+    assert.equal(attempts, 1);
   });
 });
