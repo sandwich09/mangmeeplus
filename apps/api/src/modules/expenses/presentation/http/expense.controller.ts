@@ -183,6 +183,7 @@ export class ExpenseController {
   @RequirePermissions('expense.evidence.read')
   getSharedEvidence(@ReqCtx() ctx: RequestContext, @Query() query: Record<string, string>) {
     const filter: SharedEvidenceFilter = {
+      ...(query['branchId'] && { branchId: query['branchId'] }),
       ...(query['dateField'] === 'expenseDate' ? { dateField: 'expenseDate' as const } : { dateField: 'uploadedAt' as const }),
       ...(query['fromDate'] && { fromDate: query['fromDate'] }),
       ...(query['toDate'] && { toDate: query['toDate'] }),

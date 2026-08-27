@@ -7,6 +7,7 @@ import { formatThaiDate } from '@/common/i18n/thai-date';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import { MangmeeBadge, MangmeeCard, MangmeePage } from '@/common/components/mangmee';
 import { useBranchFilter } from '@/features/web-core-workspace/WorkspaceScope';
+import { TransactionBranchField, useTransactionCreateBranchId } from '@/features/web-core-workspace/TransactionBranchField';
 import { isBranchScope403 } from '@/features/web-core-workspace/branch-scope-label.logic';
 import { TransactionTaxLineSelector } from '@/features/tax/TransactionTaxLineSelector';
 import { isReceiptTaxCodeAllowed } from '@/features/tax/transaction-tax.model';
@@ -252,7 +253,7 @@ function DocumentList({
 
 function CreateDocumentForm({ companyId, onCreated, allowedDocumentTypes }: { companyId: string; onCreated: (documentId?: string) => void; allowedDocumentTypes: AccountingDocumentType[] }) {
   const toast = useToast();
-  const branch = useBranchFilter();
+  const createBranchId = useTransactionCreateBranchId();
   const docTypes = (['QUOTATION', 'INVOICE', 'BILLING_NOTE', 'RECEIPT', 'TAX_INVOICE'] as AccountingDocumentType[])
     .filter((documentType) => allowedDocumentTypes.includes(documentType));
   const [docType, setDocType] = useState<AccountingDocumentType>(docTypes[0] ?? 'QUOTATION');
@@ -292,12 +293,13 @@ function CreateDocumentForm({ companyId, onCreated, allowedDocumentTypes }: { co
     setLoading(true);
     setError(null);
     try {
+      if (!createBranchId) throw new Error('กรุณาเลือกสาขาของรายการ');
       const created = await createDocument(companyId, {
         documentType: docType,
         documentDate,
         vatMode,
         outputTaxCode,
-        branchId: branch?.branchId || undefined,
+        branchId: createBranchId,
         lines: [{ lineNumber: 1, description, quantity, unitPrice, vatRate, ...(whtRate ? { whtRate } : {}), taxCodeDefinitionId: taxCodeDefinitionId || undefined, externalTaxCode, transactionContext }],
       });
       setDescription('');
@@ -315,6 +317,7 @@ function CreateDocumentForm({ companyId, onCreated, allowedDocumentTypes }: { co
   return (
     <form onSubmit={submit} className="mangmee-card space-y-3 p-4">
       <h2 className="text-base font-bold text-gray-900">สร้างเอกสารใหม่</h2>
+      <TransactionBranchField value={createBranchId} />
       {error && <ErrorBanner message={error} />}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <ThemedSelect aria-label="ประเภทเอกสาร" className={inputClass} value={docType} onChange={(e) => changeDocumentType(e.target.value as AccountingDocumentType)}>
@@ -368,7 +371,7 @@ function CreateDocumentForm({ companyId, onCreated, allowedDocumentTypes }: { co
       </div>
       {isReceiptTaxCodeAllowed(docType) && <TransactionTaxLineSelector
         companyId={companyId}
-        branchId={branch?.branchId || undefined}
+        branchId={createBranchId || undefined}
         sourceType="accounting.document"
         sourceId="new-document"
         sourceLineId="line-1"

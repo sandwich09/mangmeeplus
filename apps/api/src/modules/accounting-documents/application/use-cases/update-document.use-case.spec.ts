@@ -281,6 +281,8 @@ function setupCreateBoundary(vatStatus: 'REGISTERED' | 'NOT_REGISTERED' | 'UNKNO
     lines: [],
   };
   const repo = {
+    resolveCreateBranchId: async (_companyId: string, scopes: { branchIds?: string[] }, selected?: string) => selected ?? scopes.branchIds?.[0] ?? 'branch-1',
+
     findActiveBranch: mock.fn(async () => ({ id: 'branch-1' })),
     findDocumentById: mock.fn(async () => createdDocument),
     listRevenueCategories: mock.fn(async () => []),

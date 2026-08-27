@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { ConflictException } from '@nestjs/common';
+import { resolveTransactionBranchId } from '../../../data-model-core/application/services/transaction-branch';
 import { chatKeyHashOf, ProcessLineWebhookUseCase, putLineMediaUpload, classifyPendingMediaReply, splitPendingMediaReply, isExactStandaloneGreeting } from './process-line-webhook.use-case';
 import { isDeliveredCapabilityFollowUp, isNextStepQuestionText } from '../../domain/logic/line-ai-capability-follow-up.logic';
 import type { BusinessDocumentClassification, LineIntakeRoutePlan } from '@watchdog-bms/contracts';
@@ -206,6 +207,9 @@ function makeHarness(opts: {
 
   // expenseRepo doubles as the repository the REAL capture use case reads and writes through.
   const expenseRepo = {
+    resolveCreateBranchId: async (companyId: string, scopes: { branchIds?: string[] }) => resolveTransactionBranchId({
+      branch: { findMany: async () => (scopes.branchIds ?? ['branch-1']).map((id) => ({ id })) },
+    } as any, companyId, scopes),
     listCategories: async () => [{ id: 'cat-meals', name: 'ค่าอาหาร' }],
     listRecentLineCaptures: async (input: any) => { candidateQueries.push(input); return opts.recentCaptures ?? []; },
     listLineSubstituteContinuationRows: async () => opts.substituteContinuationRows ?? [],

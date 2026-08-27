@@ -41,6 +41,7 @@ import type { BusinessDocumentClassification, BuyerEntityKind, ExpenseExtraction
 import { expenseVatReconciliationMessage, isBlockingExpenseVatReconciliation } from '@watchdog-bms/contracts';
 import { CategoryManagePanel, SignaturePanel, SignatureThumb, EvidencePanel, IconBtn } from './ExpensesWorkspacePanels';
 import { useBranchFilter } from '../web-core-workspace/WorkspaceScope';
+import { TransactionBranchField, useTransactionCreateBranchId } from '../web-core-workspace/TransactionBranchField';
 import { isBranchScope403 } from '../web-core-workspace/branch-scope-label.logic';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import { t } from '@/common/i18n/workspace-i18n.logic';
@@ -70,7 +71,7 @@ import { validateExpenseReview, type ExpenseFieldIssue } from './expense-review-
 import { useMenuFilterState } from '../web-core-workspace/MenuFilterScope';
 import { hasRecordedTax, showsTaxCapture, useExpenseCapturePolicy } from './expense-capture-policy';
 import { evaluateExpensePrerequisites, mayApproveSubstituteReceipt, payerWrittenMissingReason, resolveWizardSignatureSource } from './substitute-receipt-wizard.model';
-import { civilPeriodKey, todayCivilDate } from '@watchdog-bms/contracts';
+import { civilPeriodKey, todayCivilDate, isCivilDate } from '@watchdog-bms/contracts';
 import { useToast } from '@/common/components/toast';
 
 // The upload copy promises "about 10–20 seconds"; past that the honest message is the queue one.
@@ -265,6 +266,7 @@ function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { company
   };
 
   const handleUpload = async () => {
+    if (!branchId) { setError(t('transaction.source_branch_required', locale)); return; }
     const file = selectedFile;
     if (!file) { setError(t('expenses.upload_select_file_error', locale)); return; }
     const forbidden = findForbiddenChars(note);
@@ -354,7 +356,7 @@ function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { company
       </div>
 
       <MangmeeCard className="p-6">
-        {error && <div className="mb-4"><ErrorBanner message={error} /></div>}
+        {error && <div className="mb-4"><ErrorBanner message={error} focus /></div>}
         {/* Phones get the camera, not a dropzone. A phone has no drag, no file manager and no
             click, so the desktop copy below ("ลากไฟล์มาวาง หรือคลิกเพื่อเลือก") is an instruction the
             user cannot follow on the device they are holding — while photographing the receipt
@@ -1876,6 +1878,13 @@ const LIST_PAGE_SIZE = 10;
 
 function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: string; caps: ExpenseCapabilities; userId: string; onSelect: (id: string) => void }) {
   const locale = useWorkspaceLocale();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const requestedView = searchParams.get('view');
+  const requestedFrom = searchParams.get('fromDate');
+  const requestedTo = searchParams.get('toDate');
+  const sourceView = requestedView === 'pending' || requestedView === 'unpaid' ? requestedView
+    : requestedView === 'confirmed' && isCivilDate(requestedFrom) && isCivilDate(requestedTo) && requestedFrom <= requestedTo ? 'confirmed' : null;
   const toast = useToast();
   const [rows, setRows] = useState<ExpenseSummary[]>([]);
   const [catNames, setCatNames] = useState<Record<string, string>>({});
@@ -1901,31 +1910,46 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
   const [deleteError, setDeleteError] = useState<string | null>(null);
   // EXP-UX-01: `?highlight=<expenseId>` is written by ส่งตรวจสอบ. Always the id, never "the newest
   // row" — with two people submitting at once, "newest" points at somebody else's document.
-  const highlightId = useSearchParams().get('highlight') ?? '';
+  const highlightId = searchParams.get('highlight') ?? '';
   const focusedHighlight = useRef('');
   const scrolledToHighlight = useRef('');
   const branchFilter = useBranchFilter();
   const branchId = branchFilter?.branchId ?? '';
-  const { fromDate, toDate } = periodRange(gran, month, day);
+  const { fromDate, toDate } = sourceView
+    ? { fromDate: sourceView === 'confirmed' ? requestedFrom! : undefined, toDate: sourceView === 'confirmed' ? requestedTo! : undefined }
+    : periodRange(gran, month, day);
+  const loadVersion = useRef(0);
+  useEffect(() => { if (sourceView) { setChip('all'); setQuery(''); } }, [sourceView, requestedFrom, requestedTo, setChip, setQuery]);
 
   const load = useCallback(async () => {
-    setLoading(true); setError(null);
+    const version = ++loadVersion.current;
+    setLoading(true); setRows([]); setError(null);
     try {
-      const res = await listExpenses(companyId, {
-        ...(branchId ? { branchId } : {}),
-        uploadedFromDate: fromDate,
-        uploadedToDate: toDate,
-        pageSize: 200,
-      });
-      setRows(res.data);
+      const loaded: ExpenseSummary[] = [];
+      // Counts and totals must not silently stop at the first 200 documents.
+      for (let nextPage = 1; ; nextPage += 1) {
+        const res = await listExpenses(companyId, {
+          ...(branchId ? { branchId } : {}),
+          ...(sourceView === 'confirmed' ? { status: 'CONFIRMED', fromDate, toDate }
+            : sourceView === 'unpaid' ? { status: 'CONFIRMED' }
+            : { uploadedFromDate: fromDate, uploadedToDate: toDate }),
+          page: nextPage, pageSize: 200,
+        });
+        if (version !== loadVersion.current) return;
+        loaded.push(...res.data);
+        if (loaded.length >= res.total) break;
+        if (res.data.length === 0 || nextPage >= 50) throw new Error('โหลดรายการไม่ครบ กรุณาเลือกช่วงวันที่สั้นลง หรือลองใหม่');
+      }
+      setRows(loaded);
     } catch (e) {
+      if (version !== loadVersion.current) return;
       if (isBranchScope403(e, branchId)) { branchFilter?.reportBranchForbidden(); return; }
       setError(err(e));
     }
-    finally { setLoading(false); }
+    finally { if (version === loadVersion.current) setLoading(false); }
     // `branchFilter` is deliberately absent: reportBranchForbidden is stable per companyId, which is here.
-  }, [companyId, branchId, fromDate, toDate]);
-  useEffect(() => { void load(); }, [load]);
+  }, [companyId, branchId, fromDate, toDate, sourceView]);
+  useEffect(() => { void load(); return () => { loadVersion.current += 1; }; }, [load]);
   useEffect(() => {
     setCategoryNamesLoading(true);
     void listExpenseCategories(companyId)
@@ -1934,19 +1958,21 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
       .finally(() => setCategoryNamesLoading(false));
   }, [companyId]);
 
-  const kpi = useMemo(() => summarizeExpenseKpis(rows, todayCivilDate()), [rows]);
+  const sourceRows = useMemo(() => rows.filter((row) => sourceView === 'pending' ? isExpensePending(row.status)
+    : sourceView === 'unpaid' ? row.status === 'CONFIRMED' && ['UNPAID', 'PARTIALLY_PAID'].includes(row.paymentStatus) : true), [rows, sourceView]);
+  const kpi = useMemo(() => summarizeExpenseKpis(sourceRows, todayCivilDate()), [sourceRows]);
 
   const chipCounts = useMemo(() => ({
-    all: rows.length,
-    draft: rows.filter((r) => r.status === 'DRAFT').length,
-    pending: rows.filter((r) => isExpensePending(r.status)).length,
-    confirmed: rows.filter((r) => r.status === 'CONFIRMED').length,
-    rejected: rows.filter((r) => r.status === 'REJECTED').length,
-  }), [rows]);
+    all: sourceRows.length,
+    draft: sourceRows.filter((r) => r.status === 'DRAFT').length,
+    pending: sourceRows.filter((r) => isExpensePending(r.status)).length,
+    confirmed: sourceRows.filter((r) => r.status === 'CONFIRMED').length,
+    rejected: sourceRows.filter((r) => r.status === 'REJECTED').length,
+  }), [sourceRows]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return rows.filter((r) => {
+    return sourceRows.filter((r) => {
       if (chip === 'draft' && r.status !== 'DRAFT') return false;
       if (chip === 'pending' && !isExpensePending(r.status)) return false;
       if (chip === 'confirmed' && r.status !== 'CONFIRMED') return false;
@@ -1954,7 +1980,7 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
       if (!q) return true;
       return `${r.expenseNumber ?? ''} ${r.vendorNameSnapshot ?? ''} ${r.vendorDocumentNumber ?? ''}`.toLowerCase().includes(q);
     });
-  }, [rows, chip, query]);
+  }, [sourceRows, chip, query]);
 
   useEffect(() => { setPage(1); setExportNotice(null); }, [chip, query, gran, month, day, branchId]);
 
@@ -2009,9 +2035,11 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
   };
 
   const exportExcel = async () => {
+    const version = loadVersion.current;
     setExporting(true); setError(null); setExportNotice(null);
     try {
-      const result = await createAccountantPackage(companyId, { dateField: 'expenseDate', fromDate, toDate, columnSet, ...(branchId ? { branchId } : {}) });
+      const result = await createAccountantPackage(companyId, { dateField: sourceView === 'confirmed' ? 'expenseDate' : 'uploadedAt', fromDate, toDate, columnSet, ...(branchId ? { branchId } : {}) });
+      if (version !== loadVersion.current) return;
       // The package covers confirmed expenses only. Downloading an empty workbook reads as a broken
       // export; say which rows it would have contained instead.
       if (result.rowCount === 0) { toast.warning(t('expenses.export_empty', locale)); return; }
@@ -2034,18 +2062,27 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
     { key: 'all', label: t('expenses.chip_all', locale) }, { key: 'draft', label: t('expenses.chip_draft', locale) }, { key: 'pending', label: t('expenses.chip_pending', locale) }, { key: 'confirmed', label: t('expenses.chip_confirmed', locale) }, { key: 'rejected', label: t('expenses.chip_rejected', locale) },
   ];
   const cards = [
-    { label: t('expenses.kpi_total', locale), value: baht0(kpi.total), sub: `${kpi.counted} ${t('expenses.kpi_total_sub', locale)}`, icon: ICON.receipt, ...KPI.amber },
+    { label: t('expenses.kpi_total', locale), value: baht(kpi.total), sub: `${kpi.counted} ${t('expenses.kpi_total_sub', locale)}`, icon: ICON.receipt, ...KPI.amber },
     { label: t('expenses.kpi_pending', locale), value: `${kpi.pending} ${t('expenses.unit_document', locale)}`, sub: t('expenses.kpi_pending_sub', locale), icon: ICON.clock, ...KPI.sky },
-    { label: t('expenses.kpi_outstanding', locale), value: baht0(kpi.outstanding), sub: t('expenses.kpi_outstanding_sub', locale), icon: ICON.wallet, ...KPI.purple },
-    { label: t('expenses.kpi_overdue', locale), value: baht0(kpi.overdue), sub: `${kpi.overdueCount} ${t('expenses.kpi_overdue_sub', locale)}`, icon: ICON.alert, ...KPI.danger, danger: true },
-    { label: t('expenses.kpi_vat', locale), value: baht0(kpi.vat), sub: t('expenses.kpi_vat_sub', locale), icon: ICON.doc, ...KPI.brand },
+    { label: t('expenses.kpi_outstanding', locale), value: baht(kpi.outstanding), sub: t('expenses.kpi_outstanding_sub', locale), icon: ICON.wallet, ...KPI.purple },
+    { label: t('expenses.kpi_overdue', locale), value: baht(kpi.overdue), sub: `${kpi.overdueCount} ${t('expenses.kpi_overdue_sub', locale)}`, icon: ICON.alert, ...KPI.danger, danger: true },
+    { label: t('expenses.kpi_vat', locale), value: baht(kpi.vat), sub: t('expenses.kpi_vat_sub', locale), icon: ICON.doc, ...KPI.brand },
   ];
 
   return (
     <div className="space-y-4">
+      <div className="flex flex-wrap gap-2">
+        {caps.canUploadReceipts && <Link className={btnClass} href={`/companies/${companyId}/expenses/upload`}>อัปโหลดใบเสร็จ</Link>}
+        {caps.canCreate && <Link className={ghostClass} href={`/companies/${companyId}/expenses/manual`}>บันทึกเอง</Link>}
+      </div>
+      {sourceView && <div role="status" className="rounded-xl bg-brand-25 p-3 text-sm text-brand-800">
+        {sourceView === 'confirmed' ? `รายการยืนยันแล้ว · วันที่เอกสาร ${dateShort(fromDate)} – ${dateShort(toDate)}`
+          : sourceView === 'pending' ? 'ใบเสร็จรอตรวจ · ทุกช่วงเวลา รวมฉบับร่าง' : 'ค้างจ่ายที่ยืนยันแล้ว · ทุกช่วงเวลา'}
+        <button className="ml-2 min-h-11 underline" onClick={() => router.replace(`/companies/${companyId}/expenses`)}>กลับไปดูรายการตามเดือน</button>
+      </div>}
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         {/* period control (finBar) */}
-        <div className="w-full sm:w-auto">
+        {!sourceView && <div className="w-full sm:w-auto">
           <div className="flex w-full items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:w-auto sm:flex-wrap sm:overflow-x-visible">
             <div className="mangmee-segmented shrink-0 whitespace-nowrap">
               <button className={cx('mangmee-tab', gran === 'day' && 'mangmee-tab-active')} onClick={() => setGran('day')}>{t('expenses.granularity_day', locale)}</button>
@@ -2057,8 +2094,10 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
             {gran === 'day' && <button className={cx(ghostClass, 'shrink-0 whitespace-nowrap px-3')} onClick={() => setDay(todayCivilDate())}>{t('expenses.today', locale)}</button>}
           </div>
           <p className="mt-1 text-xs text-gray-400">{t('expenses.intake_filter_desc', locale)}</p>
-        </div>
+        </div>}
         {/* export controls */}
+        {!sourceView || sourceView === 'confirmed' ? <details className="text-sm lg:ml-auto">
+          <summary className="min-h-11 cursor-pointer py-3 font-semibold text-gray-600">ส่งออกเอกสารยืนยันแล้ว</summary>
         <div className="flex flex-col gap-1 lg:shrink-0 lg:items-end">
           <div className="flex flex-wrap items-center gap-2">
             {exportNotice && <span className="text-sm font-semibold text-warning-700">{exportNotice}</span>}
@@ -2070,11 +2109,15 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
             <button className={btnClass} onClick={exportExcel} disabled={exporting}>{exporting ? t('expenses.generating', locale) : t('expenses.export_excel', locale)}</button>
           </div>
           <p className="text-xs text-gray-400">{t('expenses.export_desc', locale)}</p>
-        </div>
+        </div></details> : null}
       </div>
 
       {/* KPI cards */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">{cards.map((c) => <StatCard key={c.label} {...c} />)}</div>
+      <div className="hidden gap-3 sm:grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">{cards.map((c) => <StatCard key={c.label} {...c} />)}</div>
+      <details className="rounded-xl border border-gray-200 bg-white p-3 sm:hidden">
+        <summary className="cursor-pointer text-sm font-semibold">{kpi.counted} รายการ · {baht(kpi.total)} · ดูสรุปยอด</summary>
+        <div className="mt-3 grid gap-2">{cards.map((c) => <StatCard key={c.label} {...c} />)}</div>
+      </details>
 
       {error && <ErrorBanner message={error} />}
 
@@ -2268,6 +2311,7 @@ function ManualExpensePanel({ companyId, branchId, canAttachReceipt, onSuccess }
   async function submit(event: FormEvent) {
     event.preventDefault(); setBusy(true); setError('');
     try {
+      if (!branchId) throw new Error(t('transaction.source_branch_required', locale));
       const forbidden = findForbiddenChars(items.map((item) => item.description).join(''));
       if (forbidden.length > 0) throw new Error(t('common.forbidden_chars', locale).replace('{chars}', forbidden.join(' ')));
       if (!(totals.grandTotal > 0)) throw new Error(t('expenses.manual_total_required', locale));
@@ -2312,7 +2356,7 @@ function ManualExpensePanel({ companyId, branchId, canAttachReceipt, onSuccess }
   const req = <span aria-hidden="true" className="text-error-500"> *</span>;
   return <div className="space-y-4">
     <div><h2 className="text-lg font-bold text-gray-900">{t('expenses.manual_title', locale)}</h2><p className="text-sm text-gray-500">{t('expenses.manual_intro', locale)}</p></div>
-    {error && <ErrorBanner message={error} />}
+    {error && <ErrorBanner message={error} focus />}
     <form onSubmit={submit} className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
       <div className="space-y-4">
         <MangmeeCard className="space-y-3 p-4">
@@ -2403,7 +2447,7 @@ function ManualExpensePanel({ companyId, branchId, canAttachReceipt, onSuccess }
               <div className="mt-1 tabular-nums text-2xl font-black text-gray-900">{baht(totals.grandTotal)}</div>
             </div>
           </div>
-          <MangmeeBadge tone={taxCodeDefinitionId ? 'purple' : 'slate'}>{taxCodeName || t('expenses.manual_no_tax_code', locale)}</MangmeeBadge>
+          {showsTaxCapture(capture.mode) && <MangmeeBadge tone={taxCodeDefinitionId ? 'purple' : 'slate'}>{taxCodeName || t('expenses.manual_no_tax_code', locale)}</MangmeeBadge>}
           {savedExpenseId
             ? <button type="button" className={cx(btnClass, 'w-full')} onClick={() => onSuccess(savedExpenseId)}>{t('expenses.manual_open_saved', locale)}</button>
             : <>
@@ -2443,6 +2487,7 @@ export function ExpensesHubPage({ companyId, userId, permissions, tab = 'list' }
   const router = useRouter();
   const branchFilter = useBranchFilter();
   const branchId = branchFilter?.branchId ?? '';
+  const createBranchId = useTransactionCreateBranchId();
   const caps = expenseCapabilities(permissions);
   // A2: the LINE ticket names one signature. The `?tab=` redirect below already carries every other
   // query param through to the real route, so this only has to read it once it lands.
@@ -2488,8 +2533,13 @@ export function ExpensesHubPage({ companyId, userId, permissions, tab = 'list' }
       {forbidden ? <StateBanner error="Forbidden" /> : (
         <>
           {tab === 'list' && <ExpenseListPage companyId={companyId} caps={caps} userId={userId} onSelect={openListExpense} />}
-          {tab === 'upload' && <UploadPanel companyId={companyId} {...(branchId ? { branchId } : {})} {...(caps.canCreate ? { onNoDocument: () => router.push(`/companies/${companyId}/expenses/substitute-receipts/new`) } : {})} onSuccess={(expenseId, notice) => { storeExtractionNotice(expenseId, notice); openListExpense(expenseId); }} />}
-          {tab === 'manual' && <ManualExpensePanel companyId={companyId} {...(branchId ? { branchId } : {})} canAttachReceipt={caps.canUploadReceipts && permissions.includes('attachment.create')} onSuccess={openListExpense} />}
+          {(tab === 'upload' || tab === 'manual') && <>
+            <TransactionBranchField value={createBranchId} />
+            <fieldset disabled={!createBranchId} className="min-w-0">
+              {tab === 'upload' && <UploadPanel companyId={companyId} branchId={createBranchId} {...(caps.canCreate ? { onNoDocument: () => router.push(`/companies/${companyId}/expenses/substitute-receipts/new`) } : {})} onSuccess={(expenseId, notice) => { storeExtractionNotice(expenseId, notice); openListExpense(expenseId); }} />}
+              {tab === 'manual' && <ManualExpensePanel companyId={companyId} branchId={createBranchId} canAttachReceipt={caps.canUploadReceipts && permissions.includes('attachment.create')} onSuccess={openListExpense} />}
+            </fieldset>
+          </>}
           {tab === 'categories' && <CategoryManagePanel companyId={companyId} />}
           {tab === 'signatures' && <SignaturePanel companyId={companyId} {...(focusSignatureId ? { focusSignatureId } : {})} />}
           {tab === 'evidence' && <EvidencePanel companyId={companyId} canExport={caps.canExportPackage} canReadLedger={caps.canReadLedger} canPostLedger={caps.canPostLedger} onOpenExpense={openListExpense} />}

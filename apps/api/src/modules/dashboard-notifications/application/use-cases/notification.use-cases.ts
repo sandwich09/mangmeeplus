@@ -7,7 +7,7 @@ import { PrismaNotificationDeliveryRepository } from '../../infrastructure/prism
 import { PrismaNotificationPreferenceRepository } from '../../infrastructure/prisma-notification.repository';
 import { PrismaNotificationRuleRepository } from '../../infrastructure/prisma-notification.repository';
 import { PrismaAlertStateRepository } from '../../infrastructure/prisma-notification.repository';
-import { buildDedupKey, isInCooldown, computeCooldownUntil, isImplementedTrigger, isRetryable, isInQuietHours, resolveDeliveryOutcome } from '../../domain/logic/notification.logic';
+import { buildDedupKey, isInCooldown, computeCooldownUntil, isImplementedTrigger, isRetryable, isInQuietHours, resolveDeliveryOutcome, notificationSourceHref } from '../../domain/logic/notification.logic';
 import type { NotificationSummaryDto, NotificationPreferenceDto, NotificationRuleDto, UnreadCountDto, UpdatePreferenceDto, UpdateRuleDto } from '@watchdog-bms/contracts';
 import { IMPLEMENTED_TRIGGER_KEYS, MAX_DELIVERY_ATTEMPTS, DEFAULT_ENABLED_CHANNELS, DELIVERY_SWEEP_BATCH_LIMIT } from '../../domain/models/notification.model';
 import { AuditService } from '../../../audit/application/audit.service';
@@ -497,7 +497,7 @@ export class ProcessQueuedDeliveryUseCase {
         title: event.title,
         body: event.body,
         severity: event.severity.toLowerCase(),
-        deepLinkHref: event.deepLinkHref ?? undefined,
+        deepLinkHref: notificationSourceHref(event),
       }), deliveryId);
       const now = new Date();
       const attemptCountAfter = expectedAttemptCount + 1;
@@ -597,7 +597,7 @@ export class ProcessQueuedDeliveryUseCase {
         title: event.title,
         body: event.body,
         severity: event.severity.toLowerCase(),
-        deepLinkHref: event.deepLinkHref ?? undefined,
+        deepLinkHref: notificationSourceHref(event),
       }), deliveryId);
       const now = new Date();
       const attemptCountAfter = expectedAttemptCount + 1;
@@ -807,7 +807,7 @@ function toSummary(event: any): NotificationSummaryDto {
     title: event.title,
     body: event.body,
     sourceRefs: refs,
-    deepLinkHref: event.deepLinkHref,
+    deepLinkHref: notificationSourceHref(event),
     createdAt: event.createdAt instanceof Date ? event.createdAt.toISOString() : event.createdAt,
     readAt: event.readAt instanceof Date ? event.readAt.toISOString() : event.readAt,
     dismissedAt: event.dismissedAt instanceof Date ? event.dismissedAt.toISOString() : event.dismissedAt,

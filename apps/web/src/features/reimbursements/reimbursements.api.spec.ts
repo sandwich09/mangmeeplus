@@ -27,7 +27,7 @@ describe('reimbursement receipt upload', () => {
     }) as typeof fetch;
     const source = new File([Uint8Array.from([0xff, 0xd8, 0xff, 0xd9])], 'dime-slip.jpg', { type: 'image/jpg' });
 
-    const attachmentId = await uploadReceiptFile('co-1', source);
+    const attachmentId = await uploadReceiptFile('co-1', source, 'source-branch');
 
     assert.equal(attachmentId, 'att-1');
     assert.equal(requests.length, 3);
@@ -36,10 +36,21 @@ describe('reimbursement receipt upload', () => {
       mimeType: 'image/jpeg',
       byteSize: 4,
       visibility: 'INTERNAL',
+      branchId: 'source-branch',
     });
     const uploaded = requests[1]?.init?.body as File;
     assert.equal(uploaded.type, 'image/jpeg');
     assert.equal(uploaded.name, 'dime-slip.jpg');
     assert.deepEqual(JSON.parse(String(requests[2]?.init?.body)), { byteSize: 4 });
+  });
+
+  it('does not upload receipt bytes without the saved claim branch', async () => {
+    let requests = 0;
+    globalThis.fetch = (async () => { requests++; return new Response(null); }) as typeof fetch;
+    const file = new File(['receipt'], 'receipt.png', { type: 'image/png' });
+    for (const branchId of [null, undefined, '', '  ']) {
+      await assert.rejects(() => uploadReceiptFile('co-1', file, branchId), /สาขา/);
+    }
+    assert.equal(requests, 0);
   });
 });

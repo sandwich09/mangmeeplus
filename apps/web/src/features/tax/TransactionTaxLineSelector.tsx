@@ -118,22 +118,22 @@ export function TransactionTaxLineSelector({
 
   return (
     <div className="space-y-2" data-testid="transaction-tax-selector">
-      <div className="flex items-center gap-1.5 text-xs font-bold text-gray-600">Tax Code รายบรรทัด {labelAddon}</div>
+      <div className="flex items-center gap-1.5 text-xs font-bold text-gray-600">ประเภทภาษีของรายการ {labelAddon}</div>
       <ThemedSelect
         value={effectiveValue}
         disabled={disabled || loading}
-        aria-label="เลือก Tax Code รายบรรทัด"
+        aria-label="เลือกประเภทภาษีของรายการ"
         onChange={(event) => {
           const definition = choices.find((item) => item.id === event.target.value);
           setPreview(null);
           onChange(event.target.value, definition);
         }}
       >
-        {allowNoTax && <option value="">ไม่ใช้ Tax Code (รายการนี้ไม่มี VAT)</option>}
-        {!allowNoTax && <option value="">เลือก Tax Code</option>}
+        {allowNoTax && <option value="">รายการนี้ไม่มี VAT</option>}
+        {!allowNoTax && <option value="">เลือกประเภทภาษี</option>}
         {choices.map((item) => (
           <option key={item.id} value={item.id}>
-            {item.externalCode} · {taxChoiceLabel(item)}
+            {taxChoiceLabel(item)} ({item.externalCode})
           </option>
         ))}
       </ThemedSelect>
@@ -143,10 +143,10 @@ export function TransactionTaxLineSelector({
           ? 'ภาษีซื้อ “ขอคืนได้” คือการนำ VAT ไปหักตอนยื่นภาษี · “ขอคืนไม่ได้” คือ VAT ที่รวมเป็นค่าใช้จ่าย'
           : 'เลือกรหัสภาษีให้ตรงกับเอกสารภาษีของรายการนี้'}
       </p>
-      {loading && <p className="text-xs text-gray-500">กำลังโหลด Tax Code ที่มีผลใช้...</p>}
+      {loading && <p className="text-xs text-gray-500">กำลังโหลดประเภทภาษีที่ใช้ได้...</p>}
       {!loading && choices.length === 0 && !error && (
         <p className="text-xs text-amber-700">
-          ยังไม่มี Tax Code ที่ใช้งานได้สำหรับบริบทและวันที่นี้
+          ยังไม่มีประเภทภาษีที่ใช้ได้กับรายการและวันที่นี้
           {setupHref
             ? <> · <Link className="font-bold underline" href={setupHref}>ตั้งค่าภาษี</Link></>
             : ' กรุณาติดต่อผู้ดูแลการตั้งค่าภาษีของบริษัท'}

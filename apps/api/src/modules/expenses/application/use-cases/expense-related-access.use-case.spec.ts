@@ -119,7 +119,7 @@ describe('expense related-view ABAC', () => {
       companyId: 'company-1', uploadedFromDate: '2026-08-01', uploadedToDate: '2026-08-31', pageSize: 200,
     }, { branchIds: ['branch-1'] }, 'actor-1');
 
-    assert.deepEqual(capturedFindMany.orderBy, { uploadedAt: 'desc' });
+    assert.deepEqual(capturedFindMany.orderBy, [{ uploadedAt: 'desc' }, { id: 'desc' }]);
     assert.equal(capturedFindMany.take, 200);
     assert.equal(capturedFindMany.where.companyId, 'company-1');
     assert.deepEqual(capturedFindMany.where.OR, [
@@ -147,12 +147,12 @@ describe('expense related-view ABAC', () => {
 
     await new PrismaExpenseRepository(prisma).listExpenses({ companyId: 'company-1', pageSize: 20 });
 
-    assert.deepEqual(capturedFindMany.orderBy, { expenseDate: 'desc' });
+    assert.deepEqual(capturedFindMany.orderBy, [{ expenseDate: 'desc' }, { id: 'desc' }]);
 
     await new PrismaExpenseRepository(prisma).listExpenses({
       companyId: 'company-1', fromDate: '2026-08-01', uploadedFromDate: '2026-08-01', pageSize: 20,
     });
 
-    assert.deepEqual(capturedFindMany.orderBy, { expenseDate: 'desc' });
+    assert.deepEqual(capturedFindMany.orderBy, [{ expenseDate: 'desc' }, { id: 'desc' }]);
   });
 });

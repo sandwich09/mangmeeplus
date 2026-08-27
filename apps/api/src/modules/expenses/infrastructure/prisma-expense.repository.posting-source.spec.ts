@@ -71,6 +71,25 @@ describe('PrismaExpenseRepository expense posting-source projection', () => {
 });
 
 describe('PrismaExpenseRepository shared evidence posting state', () => {
+  it('honors the 500-row export contract and uses stable pagination for tied dates', async () => {
+    let query: any;
+    const repo = new PrismaExpenseRepository({ client: { expenseRecord: {
+      findMany: async (args: any) => { query = args; return []; }, count: async () => 0,
+    } } } as any);
+    const page = await repo.listSharedEvidence('co-1', { page: 2, pageSize: 500 });
+    assert.equal(page.pageSize, 500);
+    assert.equal(query.take, 500);
+    assert.equal(query.skip, 500);
+    assert.deepEqual(query.orderBy, [{ uploadedAt: 'desc' }, { id: 'desc' }]);
+  });
+  it('uses the selected branch and includes the last civil day with the same date lens as the list', () => {
+    const repo = makeRepo([]);
+    const uploaded = repo.buildSharedEvidenceWhere('co-1', { branchId: 'b1', yearMonth: '2026-08', dateField: 'uploadedAt' });
+    assert.equal(uploaded.branchId, 'b1');
+    assert.deepEqual(uploaded.uploadedAt, { gte: new Date('2026-07-31T17:00:00Z'), lt: new Date('2026-08-31T17:00:00Z') });
+    const document = repo.buildSharedEvidenceWhere('co-1', { fromDate: '2026-08-31', toDate: '2026-08-31', dateField: 'expenseDate' });
+    assert.deepEqual(document.expenseDate, { gte: new Date('2026-08-31T00:00:00Z'), lt: new Date('2026-09-01T00:00:00Z') });
+  });
   it('keeps branch scope while filtering pending payment events', () => {
     const where = makeRepo([]).buildSharedEvidenceWhere('co-1', { postingStatus: 'pending' }, { branchIds: ['branch-1'] });
     assert.deepEqual(where['AND'], [

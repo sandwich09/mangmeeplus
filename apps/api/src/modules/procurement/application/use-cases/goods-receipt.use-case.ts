@@ -2,6 +2,7 @@ import { Injectable, ForbiddenException, NotFoundException, BadRequestException 
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import { PrismaProcurementRepository } from '../../infrastructure/prisma-procurement.repository';
 import { AuditService } from '../../../audit/application/audit.service';
+import { requireTransactionBranchId } from '../../../data-model-core/application/services/transaction-branch';
 import { OutboxAppendService } from '../../../data-model-core/application/services/outbox-append.service';
 import { ReserveDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/reserve-document-number.use-case';
 import { CommitDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/commit-document-number.use-case';
@@ -25,7 +26,8 @@ export class CreateGoodsReceiptUseCase {
     assertProcurementBranchScope(ctx, purchaseOrder.branchId, 'Purchase order');
     if (!['ISSUED', 'PARTIALLY_RECEIVED'].includes(purchaseOrder.status)) throw new BadRequestException('Purchase order is not open for receiving');
     if (purchaseOrder.supplierId !== dto.supplierId) throw new BadRequestException('Purchase order supplier does not match the goods receipt supplier');
-    const branchId = resolveProcurementCreateBranch(ctx, dto.branchId ?? purchaseOrder.branchId);
+    requireTransactionBranchId(purchaseOrder.branchId);
+    const branchId = await resolveProcurementCreateBranch(ctx, dto.branchId ?? purchaseOrder.branchId, this.repo);
     if ((purchaseOrder.branchId ?? null) !== (branchId ?? null)) throw new BadRequestException('Purchase order branch does not match the goods receipt branch');
     const orderLineIds = new Set((purchaseOrder.lines ?? []).map((line) => line.id));
     if (dto.lines.some((line) => !orderLineIds.has(line.purchaseOrderLineId))) {

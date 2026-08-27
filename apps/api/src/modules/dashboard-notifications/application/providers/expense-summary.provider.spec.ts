@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { EXPENSE_PENDING_STATUSES } from '@watchdog-bms/contracts';
 import { ExpenseSummaryProvider } from './expense-summary.provider';
 
-const PERIOD = { periodStart: new Date('2026-08-01T00:00:00Z'), periodEnd: new Date('2026-08-31T23:59:59Z') };
+const PERIOD = { periodStart: new Date('2026-07-31T17:00:00Z'), periodEnd: new Date('2026-08-31T16:59:59.999Z') };
 
 function makeSut(opts: {
   confirmedTotal?: string | number;
@@ -55,7 +55,12 @@ describe('ExpenseSummaryProvider', () => {
       ],
     );
     // The money metric is period-scoped; the two worklist metrics are current-state.
-    assert.deepEqual((calls[0] as any).expenseDate, { gte: PERIOD.periodStart, lte: PERIOD.periodEnd });
+    assert.deepEqual((calls[0] as any).expenseDate, { gte: new Date('2026-08-01T00:00:00Z'), lt: new Date('2026-09-01T00:00:00Z') });
+    assert.deepEqual(widget.metrics.map((metric) => metric.sourceRefs?.[0]?.href), [
+      '/companies/c1/expenses?view=confirmed&fromDate=2026-08-01&toDate=2026-08-31',
+      '/companies/c1/expenses?view=pending',
+      '/companies/c1/expenses?view=unpaid',
+    ]);
     assert.equal((calls[1] as any).expenseDate, undefined);
     assert.equal((calls[2] as any).expenseDate, undefined);
   });

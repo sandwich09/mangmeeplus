@@ -22,6 +22,7 @@ import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import type { DictionaryKey, SupportedLocale } from '@/common/i18n/workspace-dictionary';
 import { useBranchFilter } from '../web-core-workspace/WorkspaceScope';
+import { TransactionBranchField, useTransactionCreateBranchId } from '../web-core-workspace/TransactionBranchField';
 import {
   approveSubstituteReceipt,
   certifySubstituteReceipt,
@@ -507,6 +508,7 @@ export function SubstituteReceiptWizardPage({
   const router = useRouter();
   const branchFilter = useBranchFilter();
   const branchId = branchFilter?.branchId ?? '';
+  const createBranchId = useTransactionCreateBranchId();
   const canReview = permissions.includes('expense.review');
   const canUploadEvidence = canReview && permissions.includes('attachment.create');
   const canConfirm = permissions.includes('expense.confirm');
@@ -972,6 +974,7 @@ export function SubstituteReceiptWizardPage({
   };
 
   const createManualExpense = async () => {
+    if (!createBranchId) throw new Error(t('transaction.source_branch_required', locale));
     setManualValidationAttempted(true);
     assertAllowed(...manualLines.map((line) => line.description));
     if (!canReview) throw new Error(t('expenses.substitute_wizard.review_permission_required', locale));
@@ -996,7 +999,7 @@ export function SubstituteReceiptWizardPage({
     const created = await createExpenseDraft(companyId, {
       captureSource: 'WEB_MANUAL',
       expenseDate: manualDate,
-      ...(branchId ? { branchId } : {}),
+      branchId: createBranchId,
       vatMode: 'NO_VAT',
       inputVatClaimStatus: 'NEEDS_REVIEW',
       lines: manualLines.map((line, index) => ({
@@ -1693,6 +1696,7 @@ export function SubstituteReceiptWizardPage({
 
       {!detail && entryMode === 'new' && (
         <MangmeeCard className="space-y-4 p-5">
+          <TransactionBranchField value={createBranchId} />
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h2 ref={manualHeadingRef} tabIndex={-1} className="scroll-mt-24 font-bold text-gray-900 focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2">{t('expenses.substitute_wizard.manual_title', locale)}</h2>
@@ -1817,7 +1821,7 @@ export function SubstituteReceiptWizardPage({
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-4">
             {!canCreate && <p className="text-xs text-warning-700">{t('expenses.manual_read_only', locale)}</p>}
             {canCreate && manualMissingCount > 0 && <p className="text-xs font-medium text-gray-500">{t('expenses.substitute_wizard.manual_missing', locale).replace('{count}', String(manualMissingCount))}</p>}
-            <button type="button" className={cx(btnClass, 'ml-auto')} disabled={!canCreate || !canReview || busy || categoriesLoading || Boolean(categoriesError) || categories.length === 0} onClick={() => void run(createManualExpense)}>
+            <button type="button" className={cx(btnClass, 'ml-auto')} disabled={!createBranchId || !canCreate || !canReview || busy || categoriesLoading || Boolean(categoriesError) || categories.length === 0} onClick={() => void run(createManualExpense)}>
               {t('expenses.substitute_wizard.create_and_select', locale)}
             </button>
           </div>

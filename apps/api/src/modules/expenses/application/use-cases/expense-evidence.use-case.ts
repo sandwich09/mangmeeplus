@@ -4,6 +4,7 @@ import { CreateDownloadUrlUseCase } from '../../../data-model-core/application/u
 import { AuditService } from '../../../audit/application/audit.service';
 import { buildAccountantIndexRow, buildAccountantIndexCsv, buildAccountantIndexXlsx, buildManifestEntry, evidenceRef } from '../../domain/logic/expense-export.logic';
 import { PrismaService } from '../../../../common/database/prisma.service';
+import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
 import type {
   RequestContext, SharedEvidenceFilter, SharedEvidenceView, AccountantPackageRequest, AccountantPackageResult,
   ExpenseAttachmentRef, EvidenceManifestEntry, SkippedEvidenceEntry,
@@ -44,6 +45,7 @@ export class GetSharedEvidenceViewUseCase {
     if (!hasPerm(ctx, 'expense.evidence.read') && !hasPerm(ctx, 'expense.export')) {
       throw new ForbiddenException('Missing permission: expense.evidence.read or expense.export');
     }
+    if (!isBranchInScope(ctx.scopes ?? {}, filter.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
     const effectiveFilter = { ...filter, status: filter.status ?? 'CONFIRMED' as const };
     const dateField = filter.dateField === 'expenseDate' ? 'expenseDate' : 'uploadedAt';
     const [folders, page] = await Promise.all([
@@ -104,6 +106,7 @@ export class CreateAccountantPackageUseCase {
   async execute(ctx: RequestContext, request: AccountantPackageRequest): Promise<AccountantPackageResult> {
     if (!hasPerm(ctx, 'expense.export')) throw new ForbiddenException('Missing permission: expense.export');
     if (!hasPerm(ctx, 'expense.read')) throw new ForbiddenException('Missing permission: expense.read');
+    if (!isBranchInScope(ctx.scopes ?? {}, request.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
 
     const columnSet = request.columnSet === 'full' ? 'full' : 'summary';
     const pageSize = request.pageSize && request.pageSize > 0 && request.pageSize <= 500 ? request.pageSize : 500;
@@ -119,6 +122,11 @@ export class CreateAccountantPackageUseCase {
       ? await this.prisma.client.user.findMany({ where: { id: { in: userIds } }, select: { id: true, displayName: true, email: true } })
       : [];
     const userName = new Map(users.map((u) => [u.id, u.displayName ?? u.email ?? u.id]));
+    const branchIds = [...new Set(page.rows.map((row) => row.branchId).filter((id): id is string => !!id))];
+    const branches = branchIds.length ? await this.prisma.client.branch.findMany({
+      where: { companyId: ctx.companyId, id: { in: branchIds } }, select: { id: true, code: true },
+    }) : [];
+    const branchCodes = new Map(branches.map((branch) => [branch.id, branch.code]));
     const issuedSubstitutes = page.rows.length
       ? await this.prisma.client.expenseSubstituteReceiptEvidence.findMany({
         where: { companyId: ctx.companyId, expenseId: { in: page.rows.map((row) => row.id) }, status: 'ISSUED' },
@@ -140,7 +148,7 @@ export class CreateAccountantPackageUseCase {
     const indexRows = page.rows.map((r) => buildAccountantIndexRow({
       companyName: company?.name ?? ctx.companyId,
       companyTaxId: company?.taxId ?? null,
-      branchCode: null,
+      branchCode: r.branchId ? branchCodes.get(r.branchId) ?? null : null,
       expenseId: r.id,
       expenseNumber: r.expenseNumber,
       status: r.status,

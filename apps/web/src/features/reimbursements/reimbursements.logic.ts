@@ -221,6 +221,7 @@ export function parseHubTab(value: string | null | undefined, visible: readonly 
   return visible.includes(value as HubTab) ? (value as HubTab) : (visible[0] ?? 'mine');
 }
 
-export function formatMoney(v: unknown): string {
-  return Number(v ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+export function formatMoney(v: unknown, currency?: string): string {
+  const amount = Number(v ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return currency ? `${amount} ${currency === 'THB' ? 'บาท' : currency}` : amount;
 }

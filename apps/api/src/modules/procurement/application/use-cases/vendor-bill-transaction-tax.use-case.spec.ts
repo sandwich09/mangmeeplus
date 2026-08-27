@@ -263,6 +263,7 @@ describe('vendor bill server-authoritative totals', () => {
     const recognizedTaxes: string[] = [];
     const useCase = new CreateSupplierPaymentUseCase(
       {
+        resolveCreateBranchId: async (_companyId: string, _scopes: unknown, branchId?: string) => branchId ?? 'branch-1',
         findSupplierPaymentByIdempotencyKey: async () => null,
         findSupplierById: async () => ({ id: 'supplier-1', status: 'ACTIVE' }),
         branchExists: async () => true,

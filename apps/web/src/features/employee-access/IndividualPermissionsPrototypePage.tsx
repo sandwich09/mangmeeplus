@@ -39,7 +39,7 @@ import {
   updateEmployee,
 } from './employee-access.api';
 import { accountAccessNotice, MENU_GROUP_LABEL_TH, projectGrantedMenus } from './access-overview.model';
-import { assignableRoleOptions, isOperationalRoleTargetReadOnly, isRoleFieldReadOnly, isSelfEmployee } from './role-picker.logic';
+import { assignableRoleOptions, isOperationalRoleTargetReadOnly, isRoleFieldReadOnly, isSelfEmployee, roleDisplayName } from './role-picker.logic';
 import { localizedErrorMessage, statusOf } from '@/common/i18n/error-message.logic';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 
@@ -112,8 +112,8 @@ function colorForRole(role: DisplayRole): string {
 function RoleBadge({ role, withCaret = false, className }: { role: DisplayRole; withCaret?: boolean; className?: string }) {
   const color = colorForRole(role);
   return (
-    <span title={role.name} className={cx('inline-flex h-7 items-center gap-1.5 rounded-full px-2.5 text-xs font-extrabold', className)} style={{ color, backgroundColor: `${color}1F` }}>
-      {role.name}
+    <span title={roleDisplayName(role)} className={cx('inline-flex h-7 items-center gap-1.5 rounded-full px-2.5 text-xs font-extrabold', className)} style={{ color, backgroundColor: `${color}1F` }}>
+      {roleDisplayName(role)}
       {withCaret && <ChevronDownIcon className="h-3.5 w-3.5" />}
     </span>
   );
@@ -263,7 +263,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
       setError(localizedErrorMessage(employeesR.reason, locale, { fallback: 'error.load_failed' }));
     }
     if (rolesR.status === 'fulfilled') {
-      setRoles(rolesR.value);
+      setRoles(rolesR.value.map((role) => ({ ...role, name: roleDisplayName(role) })));
     } else {
       setRoles([]);
       setPermissionError(localizedErrorMessage(rolesR.reason, locale, { fallback: 'error.load_failed' }));
@@ -333,7 +333,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
     optionCount: roleOptions.length,
   }) || isOperationalRoleTargetReadOnly(viewerPermissions, selectedRoles);
 
-  const selectedRoleNames = selectedEmployee?.roles.map((role) => role.name).join(', ') ?? '';
+  const selectedRoleNames = selectedEmployee?.roles.map(roleDisplayName).join(', ') ?? '';
   const allBranchRoles = selectedRoles.filter((role) => ALL_BRANCH_ROLE_KEYS.includes(role.key));
   const branchPickerLocked = allBranchRoles.length > 0;
   const accessProjection = useMemo(
@@ -460,7 +460,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
 
   return (
     <MangmeePage
-      title="สิทธิ์รายบุคคล"
+      title="รายชื่อพนักงาน"
       description="ดูตำแหน่งงาน และจัดการบทบาท สิทธิ์ สาขา และสถานะบัญชีของพนักงานเป็นรายคน"
       actions={viewerPermissions.includes('access.employee.create') && (
         <Link href={`/companies/${companyId}/settings/employees`} className="mangmee-btn mangmee-btn-primary">
@@ -599,7 +599,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                                 onClick={() => void toggleSelectedRole(role.id)}
                                 className={cx('flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm font-extrabold hover:bg-gray-50 disabled:opacity-60', selectedRoleIds.includes(role.id) ? 'text-brand-700' : 'text-gray-700')}
                               >
-                                <span className="min-w-0 truncate">{role.name}</span>
+                                <span className="min-w-0 truncate">{roleDisplayName(role)}</span>
                                 {selectedRoleIds.includes(role.id) && <CheckLineIcon className="h-4 w-4 shrink-0" />}
                               </button>
                             ))}
@@ -835,7 +835,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                 )}
                 {branchPickerLocked && (
                   <p className="mt-3 text-sm font-semibold text-gray-400">
-                    บทบาท {allBranchRoles.map((role) => role.name).join(', ')} ต้องเห็นข้อมูลทุกสาขา จึงจำกัดสาขาไม่ได้
+                    บทบาท {allBranchRoles.map(roleDisplayName).join(', ')} ต้องเห็นข้อมูลทุกสาขา จึงจำกัดสาขาไม่ได้
                   </p>
                 )}
               </MangmeeCard>

@@ -58,7 +58,6 @@ import { PrismaExpenseRepository } from '../../../expenses/infrastructure/prisma
 import type { ExpenseRecordWithRelations } from '../../../expenses/domain/models/expense.model';
 import { CreateUploadIntentUseCase } from '../../../data-model-core/application/use-cases/create-upload-intent.use-case';
 import { CompleteAttachmentUploadUseCase } from '../../../data-model-core/application/use-cases/complete-attachment-upload.use-case';
-import { resolveCreateBranchId } from '../../../data-model-core/domain/logic/branch.logic';
 import {
   canonicalAttachmentExtension,
   inspectAttachmentBytes,
@@ -4899,7 +4898,7 @@ export class ProcessLineWebhookUseCase {
     chatKeyHash?: string,
   ): Promise<{ expenseId: string; hasDuplicate: boolean }> {
     const expense = await this.expenseRepo!.createExpense({
-      companyId, branchId: resolveCreateBranchId(scopes, undefined) ?? undefined,
+      companyId, branchId: await this.expenseRepo!.resolveCreateBranchId(companyId, scopes),
       captureSource: 'LINE_UPLOAD', expenseDate: new Date(), currency: 'THB',
       vatMode: 'NO_VAT', inputVatClaimStatus: 'NEEDS_REVIEW', note: 'LINE receipt (clarified)',
       createdByUserId: userId, lineMessageId: pending.lineMessageId, lineEventId,

@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { EXPENSE_PENDING_STATUSES } from '@watchdog-bms/contracts';
+import { EXPENSE_PENDING_STATUSES, civilDate, civilDayRangeToUtc } from '@watchdog-bms/contracts';
 import type { DashboardWidget } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
 
@@ -32,10 +32,13 @@ export class ExpenseSummaryProvider {
 
     try {
       const href = `/companies/${companyId}/expenses`;
+      const fromDate = civilDate(periodStart);
+      const toDate = civilDate(periodEnd);
+      const sourceRefs = (query: string) => [{ module: 'expenses', sourceType: 'expense', label: 'รายการค่าใช้จ่าย', href: `${href}?${query}`, permissionKey: 'expense.read' }];
       // ponytail: three counting queries, no shared scan. Fold into one groupBy if this shows up in slow logs.
       const [confirmedInPeriod, pendingReview, unpaid] = await Promise.all([
         this.prisma.client.expenseRecord.aggregate({
-          where: { companyId, ...(branchIds && { branchId: { in: branchIds } }), status: 'CONFIRMED', expenseDate: { gte: periodStart, lte: periodEnd } },
+          where: { companyId, ...(branchIds && { branchId: { in: branchIds } }), status: 'CONFIRMED', expenseDate: civilDayRangeToUtc(fromDate, toDate) },
           _sum: { grandTotalAmount: true },
           _count: { _all: true },
         }),
@@ -52,7 +55,6 @@ export class ExpenseSummaryProvider {
         }),
       ]);
 
-      const sourceRefs = [{ module: 'expenses', sourceType: 'expense', label: 'รายการค่าใช้จ่าย', href, permissionKey: 'expense.read' }];
       const periodTotal = Number(confirmedInPeriod._sum.grandTotalAmount ?? 0);
       const outstanding = Number(unpaid._sum.outstandingAmount ?? 0);
 
@@ -64,27 +66,27 @@ export class ExpenseSummaryProvider {
           unit: 'บาท',
           severity: 'normal',
           freshness: 'fresh',
-          sourceRefs,
+          sourceRefs: sourceRefs(`view=confirmed&fromDate=${fromDate}&toDate=${toDate}`),
           computedAt,
         },
         {
           key: 'expense_pending_review',
-          label: 'ใบเสร็จรอตรวจ',
+          label: 'ใบเสร็จรอตรวจ (ทุกช่วงเวลา)',
           value: pendingReview,
           unit: 'รายการ',
           severity: pendingReview > 0 ? 'warning' : 'normal',
           freshness: 'fresh',
-          sourceRefs,
+          sourceRefs: sourceRefs('view=pending'),
           computedAt,
         },
         {
           key: 'expense_unpaid_outstanding',
-          label: 'ยอดค้างชำระ',
+          label: 'ค้างจ่ายที่ยืนยันแล้ว (ทุกช่วงเวลา)',
           value: outstanding,
           unit: 'บาท',
           severity: outstanding > 0 ? 'warning' : 'normal',
           freshness: 'fresh',
-          sourceRefs,
+          sourceRefs: sourceRefs('view=unpaid'),
           computedAt,
         },
       ];

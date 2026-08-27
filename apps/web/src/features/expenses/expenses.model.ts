@@ -1099,15 +1099,13 @@ export function summarizeExpenseKpis(
 ): ExpenseKpis {
   const kpi: ExpenseKpis = { counted: 0, total: 0, outstanding: 0, overdue: 0, overdueCount: 0, vat: 0, pending: 0 };
   for (const row of rows) {
-    // Cancelled documents are skipped wholesale. Outstanding already did this; the headline total
-    // and the VAT card did not, so a rejected receipt inflated both — and the VAT card claims to
-    // show creditable input tax, which a rejected document can never be.
+    // Captured totals include unconfirmed documents. VAT is observed, not a claimable tax total.
     if (isExpenseCancelled(row.status)) continue;
     kpi.counted += 1;
     kpi.total += Number(row.grandTotalAmount || 0);
     kpi.vat += Number(row.vatAmount || 0);
     if (isExpensePending(row.status)) kpi.pending += 1;
-    if (row.paymentStatus === 'PAID') continue;
+    if (row.status !== 'CONFIRMED' || row.paymentStatus === 'PAID') continue;
     kpi.outstanding += Number(row.outstandingAmount || 0);
     if (row.dueDate && row.dueDate.slice(0, 10) < today) {
       kpi.overdue += Number(row.outstandingAmount || 0);

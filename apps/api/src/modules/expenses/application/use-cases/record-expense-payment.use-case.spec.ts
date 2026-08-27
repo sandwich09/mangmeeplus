@@ -33,7 +33,7 @@ describe('RecordExpensePaymentUseCase', () => {
     let recorded: any;
     const repo: any = {
       findById: async () => ({
-        id: 'exp-1', companyId: 'co-1', branchId: null, status: 'CONFIRMED',
+        id: 'exp-1', companyId: 'co-1', branchId: 'branch-1', status: 'CONFIRMED',
         sourceReimbursementRequestId: null, outstandingAmount: '289.0000',
       }),
       recordPaymentAtomic: async (input: any) => {
@@ -52,7 +52,7 @@ describe('RecordExpensePaymentUseCase', () => {
     assert.equal(result.paymentStatus, 'PAID');
   });
 
-  function ordinary(branchId: string | null = null) {
+  function ordinary(branchId: string | null = 'branch-1') {
     const calls: any[] = [];
     const repo: any = {
       findById: async () => ({ id: 'exp-1', companyId: 'co-1', branchId, status: 'CONFIRMED', currency: 'THB' }),
@@ -70,6 +70,12 @@ describe('RecordExpensePaymentUseCase', () => {
     assert.equal(calls[1].idempotencyKey, calls[0].idempotencyKey);
     assert.equal(calls[0].paidAt, '2026-07-31');
     assert.deepEqual(calls[0].scopes, { branchIds: ['branch-1'] });
+  });
+
+  it('refuses payment on a legacy expense whose source branch is unknown', async () => {
+    const { calls, useCase } = ordinary(null);
+    await assert.rejects(() => useCase.execute(ctx(), 'exp-1', { paidAmount: '1' }), /เลือกสาขา/);
+    assert.equal(calls.length, 0);
   });
 
   it('hashes the whole legacy request ID, so shared prefixes never collapse different payments', async () => {
@@ -103,7 +109,7 @@ describe('RecordExpensePaymentUseCase', () => {
     const events: any[] = [];
     const audits: any[] = [];
     const repo: any = {
-      findById: async () => ({ branchId: null }),
+      findById: async () => ({ branchId: 'branch-1' }),
       recordPaymentAtomic: async (_input: any, hook: any) => {
         const result = { payment: { id: 'pay-original', amount: '40.0000' }, expense: { id: 'exp-1', paidAmount: '40.0000', paymentStatus: 'PARTIALLY_PAID' }, replayed: false };
         await hook(tx, result);

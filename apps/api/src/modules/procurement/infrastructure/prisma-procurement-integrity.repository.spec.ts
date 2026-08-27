@@ -311,7 +311,7 @@ describe('PrismaProcurementRepository AP transaction integrity', () => {
       // writer, while the returned row must expose the persisted array.
       supplierPayment: { create: async ({ data }: any) => ({ id: 'pay-1', ...data, allocations: [] }) },
       vendorBill: {
-        findFirst: async () => ({ id: 'bill-1', companyId: 'company-1', branchId: null, status: billStatus, supplierId: 'supplier-1', currency: 'THB', paidAmount: '0', outstandingAmount: '100', lines: [] }),
+        findFirst: async () => ({ id: 'bill-1', companyId: 'company-1', branchId: 'branch-1', status: billStatus, supplierId: 'supplier-1', currency: 'THB', paidAmount: '0', outstandingAmount: '100', lines: [] }),
         update: async () => undefined,
       },
       whtCertificateHandoff: { create: async ({ data }: any) => { handoffs.push(data); return { id: 'handoff-1', ...data }; } },
@@ -320,7 +320,7 @@ describe('PrismaProcurementRepository AP transaction integrity', () => {
   };
 
   const withholdingPayment = {
-    supplierId: 'supplier-1', paymentDate: new Date('2026-07-14'), method: 'BANK_TRANSFER', currency: 'THB',
+    supplierId: 'supplier-1', branchId: 'branch-1', paymentDate: new Date('2026-07-14'), method: 'BANK_TRANSFER', currency: 'THB',
     grossAmount: '100', whtAmount: '3', netPaidAmount: '97', allocations: [{ vendorBillId: 'bill-1', amount: '97' }],
   };
 

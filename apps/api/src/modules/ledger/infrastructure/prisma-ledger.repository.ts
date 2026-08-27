@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../../common/database/prisma.service';
+import { resolveTransactionBranchId } from '../../data-model-core/application/services/transaction-branch';
 import type { AccountRecord, PeriodRecord, JournalEntryRecord, JournalLineRecord, CreateJournalEntryInput } from '../domain/models/ledger.model';
 import type { LedgerJournalLineInput, UpdateChartOfAccountInput } from '@watchdog-bms/contracts';
 import { branchScopeWhere } from '../../data-model-core/domain/logic/branch.logic';
@@ -73,6 +74,10 @@ function mapEntry(r: any): JournalEntryRecord {
 
 @Injectable()
 export class PrismaLedgerRepository {
+  async resolveCreateBranchId(companyId: string, scopes: { branchIds?: string[] }, selectedBranchId?: string | null): Promise<string> {
+    return resolveTransactionBranchId(this.prisma.client, companyId, scopes, selectedBranchId);
+  }
+
   constructor(private readonly prisma: PrismaService) {}
 
   // ─── Chart of Accounts ────────────────────────────────────────────────────

@@ -5,6 +5,13 @@ import { apiErrorMessage, translateApiError } from './api-error-message';
 
 const apiError = (message: string, extra: Record<string, unknown> = {}) => Object.assign(new Error(message), extra);
 
+test('explains missing and invalid transaction source branches in plain Thai', () => {
+  assert.equal(apiErrorMessage(apiError('Unprocessable Entity', { status: 422, code: 'TRANSACTION_BRANCH_REQUIRED' })),
+    'กรุณาระบุสาขาของรายการก่อนดำเนินการ');
+  assert.equal(apiErrorMessage(apiError('Unprocessable Entity', { status: 422, code: 'TRANSACTION_BRANCH_INVALID' })),
+    'ไม่พบสาขาที่ใช้งานได้ในบริษัทนี้ กรุณาเลือกสาขาอีกครั้ง');
+});
+
 test('explains only supplier source-number duplicates without relabeling unrelated conflicts', () => {
   const expected = 'เลขที่เอกสารผู้ขายนี้ถูกบันทึกสำหรับผู้ขายรายนี้แล้ว กรุณาตรวจสอบบิลเดิมก่อนสร้างซ้ำ';
   assert.equal(apiErrorMessage(apiError('duplicate_supplier_document_number', { status: 409 })), expected);
