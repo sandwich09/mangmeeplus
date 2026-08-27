@@ -2,7 +2,7 @@
 
 ## 1. Status
 
-- Status: Core delivered; recovery/proof completion in progress, 2026-08-27
+- Status: Core delivered; recovery/proof completion verified and integrated into develop, 2026-08-27. No deployment; browser limits recorded in scoped memory.
 - Owner request: 2026-08-24
 - Product area: Expenses / document extraction / substitute-receipt routing
 - Primary incident: Production company `MangmeePlus` (`บริษัท มั่งมียั่งยืน จำกัด`) accepted a restaurant check bill into expense review, showed six green checks, exposed an inline substitute-receipt form, and then returned an unactionable HTTP 400 after the user completed the form.

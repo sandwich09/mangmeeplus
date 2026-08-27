@@ -1,6 +1,6 @@
 # Agent Memory: Check-bill recovery completion
 
-Status: implementation merged with current develop and verified; remote delivery pending, 2026-08-27.
+Status: implemented, verified and integrated into remote develop, 2026-08-27. No deployment.
 Owner: delegated implementation agent.
 Scope: complete same-expense check-bill recovery, preparation routing, actionable failures and separate payment-proof enforcement; integrate develop, no deployment.
 Decisions:
@@ -33,4 +33,10 @@ Integration:
 - Post-merge owned contracts/config builds and API/web no-emit typechecks passed. `git diff --check` passed. Diff against latest develop contains only this task's files; no package.json/schema/lockfile or temporary fixture changes.
 - Shared API exception filter forwards coded HttpExceptions through Nest unchanged; the actual-use-case synthetic browser rejection and client-toast regression cover the server-body/client-rendering seam. Unknown API errors continue using the safe fallback.
 
-Next: ordinary non-force atomic feature/develop push, then remote containment verification and delivery note. No deployment.
+Delivery:
+
+- Ordinary atomic non-force push updated `codex/check-bill-recovery-completion` and `develop` together to `959b1e9586f6f60bac4cd9439a9009766001ca58` (implementation `32ed42f2`, integration `b601472c`, verification/copy `959b1e95`).
+- Subsequent fetch reported both remote refs at that SHA. `git merge-base --is-ancestor 32ed42f2909c3f06116a9a4e819476ea41c5e25c origin/develop` exited0. No branch protection or required check was bypassed.
+- This delivery-note-only follow-up changes no runtime code; final remote note SHA is included in the handoff. Worktree has no temporary fixture, generated-file, package.json, schema or dependency diff.
+
+Next: no remaining implementation work. Other agents must fetch current develop before integration. Physical mobile viewport/authenticated full-workspace browser validation remains an explicitly recorded limitation, not a deployment claim.

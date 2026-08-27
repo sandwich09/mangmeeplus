@@ -14,7 +14,7 @@
 
 ## Current Delivery Slice — Full Web + API + LINE
 
-Status: core delivered via PR #228; 2026-08-27 recovery completion follows the bounded checklist below.
+Status: core delivered via PR #228; recovery completion integrated into develop on 2026-08-27 (verification and delivery SHAs in scoped memory).
 
 ### Recovery completion checklist (2026-08-27)
 
@@ -24,7 +24,7 @@ Status: core delivered via PR #228; 2026-08-27 recovery completion follows the b
 - [x] Make check-bill picker/deep-link/reload behavior consistent with API routing; never infer tax validity from a route or override.
 - [x] Share the authoritative check-bill payment-proof predicate across API, wizard/inline edit and LINE readiness. Reject source/self, cross-purpose, inactive, unlinked and foreign evidence.
 - [x] Return stable known eligibility/evidence codes and actionable UI copy; retain safe unknown fallback.
-- [ ] Verify focused API/web/contracts, guards/atomicity, browser mobile/desktop, and current develop integration; record evidence in `docs/agent-memory/check-bill-recovery-completion.md`.
+- [x] Verify focused API/web/contracts, guards/atomicity, desktop synthetic browser, and current develop integration; record evidence and the physical-mobile/CSP limitation in `docs/agent-memory/check-bill-recovery-completion.md`.
 
 This completion supersedes references below to preserving the cash-policy exception for check
 bills. Other cash expenses and issued historical certificates are unchanged. Deployment is outside
