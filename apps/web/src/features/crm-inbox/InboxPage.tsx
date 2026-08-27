@@ -22,6 +22,7 @@ import { t } from '@/common/i18n/workspace-i18n.logic';
 import type { SupportedLocale } from '@/common/i18n/workspace-dictionary';
 import { getCrmCustomer } from '@/features/crm/crm.api';
 import { lineIdentityText } from '@/features/crm/customers-prototype.model';
+import { useSalesRootAvailability } from '@/features/accounting-documents/sales-root-availability';
 import {
   listConversations,
   getConversation,
@@ -1054,7 +1055,12 @@ function MessageBubble({ companyId, message, locale }: { companyId: string; mess
 function QuickActions({ companyId, conversationId, customerName, permissions, locale }: { companyId: string; conversationId: string; customerName: string; permissions: string[]; locale: SupportedLocale }) {
   const canDeal = permissions.includes('crm.opportunity.create');
   const canTask = permissions.includes('crm.follow_up.create');
-  const canQuote = permissions.includes('crm.quotation.link');
+  const canRequestQuotation = canDeal
+    && permissions.includes('crm.quotation.link')
+    && (permissions.includes('accounting.quotation.create') || permissions.includes('accounting.document.create'));
+  const quotationAvailability = useSalesRootAvailability(companyId, canRequestQuotation);
+  const canQuote = canRequestQuotation && quotationAvailability.state === 'OPEN';
+  const quotationRequestRef = useRef<{ conversationId: string; key: string } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -1082,7 +1088,14 @@ function QuickActions({ companyId, conversationId, customerName, permissions, lo
   const onQuote = () => {
     const title = window.prompt(t('inbox.quotation_name_prompt', locale), `${t('inbox.quotation_prefix', locale)} ${customerName}`);
     if (!title) return;
-    void run('quote', () => createQuotationFromConversation(companyId, conversationId, { title }));
+    const pending = quotationRequestRef.current?.conversationId === conversationId
+      ? quotationRequestRef.current
+      : { conversationId, key: crypto.randomUUID() };
+    quotationRequestRef.current = pending;
+    void run('quote', async () => {
+      await createQuotationFromConversation(companyId, conversationId, { title, idempotencyKey: pending.key });
+      quotationRequestRef.current = null;
+    });
   };
 
   return (
@@ -1093,6 +1106,19 @@ function QuickActions({ companyId, conversationId, customerName, permissions, lo
         {canTask && <button onClick={onTask} disabled={!!busy} className="rounded-full border border-gray-200 bg-white px-3 py-1 text-[12.5px] font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50">{busy === 'task' ? '…' : `✅ ${t('inbox.create_task', locale)}`}</button>}
         {canQuote && <button onClick={onQuote} disabled={!!busy} className="rounded-full border border-gray-200 bg-white px-3 py-1 text-[12.5px] font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50">{busy === 'quote' ? '…' : `📄 ${t('inbox.create_quotation', locale)}`}</button>}
       </div>
+      {canRequestQuotation && quotationAvailability.state !== 'OPEN' && (
+        <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950" role={quotationAvailability.state === 'LOADING' ? 'status' : 'alert'}>
+          <div className="font-semibold">
+            {quotationAvailability.state === 'LOADING' ? 'กำลังตรวจสอบว่าสร้างใบเสนอราคาได้หรือไม่...'
+              : quotationAvailability.state === 'CLOSED' ? 'ยังสร้างใบเสนอราคาใหม่ไม่ได้ชั่วคราว'
+                : 'ยังตรวจสอบความพร้อมของระบบไม่ได้'}
+          </div>
+          <div className="mt-1">แชท ดีล และใบเสนอราคาเดิมยังใช้งานได้ตามปกติ</div>
+          {quotationAvailability.state === 'ERROR' && (
+            <button type="button" className="mt-2 min-h-11 rounded-lg border border-amber-300 bg-white px-3 font-semibold" onClick={quotationAvailability.retry}>ลองตรวจสอบอีกครั้ง</button>
+          )}
+        </div>
+      )}
       {msg && <div className="mt-1.5 text-[12px] text-gray-500">{msg}</div>}
     </div>
   );

@@ -1,4 +1,4 @@
-import { Injectable, ForbiddenException, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import { ConflictException, Injectable, ForbiddenException, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { PrismaAccountingRepository } from '../../infrastructure/prisma-accounting.repository';
 import { AuditService } from '../../../audit/application/audit.service';
 import { OutboxAppendService } from '../../../data-model-core/application/services/outbox-append.service';
@@ -12,8 +12,30 @@ import {
   validateAccountingPaymentAllocation,
   validateAccountingPaymentMoneyInput,
 } from '../../domain/logic/accounting-money-validation.logic';
-import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
+import { isBranchInScope, resolveCreateBranchId } from '../../../data-model-core/domain/logic/branch.logic';
 import { civilPeriodKey, todayCivilDate } from '@watchdog-bms/contracts';
+import { canonicalFingerprint } from '../../../../common/security/canonical-fingerprint';
+
+type CreatePaymentRequest = Omit<CreatePaymentInput, 'companyId' | 'createdByUserId' | 'payloadFingerprint'>;
+
+export function accountingPaymentPayloadFingerprint(input: CreatePaymentRequest): string {
+  return canonicalFingerprint({
+    version: 1,
+    idempotencyKey: input.idempotencyKey,
+    branchId: input.branchId,
+    direction: input.direction,
+    counterpartyId: input.counterpartyId,
+    method: input.method,
+    amount: input.amount,
+    whtAmount: input.whtAmount ?? '0',
+    currency: input.currency ?? 'THB',
+    paidAt: new Date(input.paidAt).toISOString(),
+    bankAccountRef: input.bankAccountRef,
+    externalReference: input.externalReference,
+    note: input.note,
+    allocateToDocumentId: input.allocateToDocumentId,
+  });
+}
 
 @Injectable()
 export class CreatePaymentUseCase {
@@ -23,25 +45,61 @@ export class CreatePaymentUseCase {
     private readonly outbox: OutboxAppendService,
   ) {}
 
-  async execute(ctx: RequestContext, input: Omit<CreatePaymentInput, 'companyId' | 'createdByUserId'>): Promise<PaymentRecord> {
+  async execute(ctx: RequestContext, input: CreatePaymentRequest): Promise<PaymentRecord> {
     if (!ctx.permissions.includes('accounting.payment.create')) {
       throw new ForbiddenException('Missing permission: accounting.payment.create');
     }
-    if (!isBranchInScope(ctx.scopes, input.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
-    if (input.branchId && !(await this.repo.findActiveBranch(ctx.companyId, input.branchId))) {
-      throw new NotFoundException('Branch was not found in the current company.');
-    }
-
     const moneyError = validateAccountingPaymentMoneyInput(input);
     if (moneyError) throw new UnprocessableEntityException(moneyError);
+    let target: Awaited<ReturnType<PrismaAccountingRepository['findDocumentById']>> = null;
     if (input.allocateToDocumentId) {
-      const target = await this.repo.findDocumentById(ctx.companyId, input.allocateToDocumentId, ctx.scopes.branchIds);
+      target = await this.repo.findDocumentById(ctx.companyId, input.allocateToDocumentId, ctx.scopes.branchIds);
       if (!target) throw new NotFoundException('Payment allocation target was not found');
-      const allocationError = validateAccountingPaymentAllocation(input, target);
+      if (input.branchId !== undefined && input.branchId !== target.branchId) {
+        throw new UnprocessableEntityException('Payment and allocation target must use the same branch');
+      }
+      if (ctx.scopes.branchIds && !target.branchId) {
+        throw new ForbiddenException('A branch-restricted user cannot pay a company-central document');
+      }
+      if (input.counterpartyId !== undefined && input.counterpartyId !== target.counterpartyId) {
+        throw new UnprocessableEntityException('Payment and allocation target must use the same counterparty');
+      }
+    }
+    if (ctx.scopes.branchIds?.length === 0) throw new ForbiddenException('Branch is outside your assigned branch scope.');
+    const branchId = target?.branchId ?? resolveCreateBranchId(ctx.scopes, input.branchId) ?? undefined;
+    if (!isBranchInScope(ctx.scopes, branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
+    if (branchId && !(await this.repo.findActiveBranch(ctx.companyId, branchId))) {
+      throw new NotFoundException('Branch was not found in the current company.');
+    }
+    const resolvedInput = {
+      ...input,
+      branchId,
+      ...(target ? { counterpartyId: target.counterpartyId } : {}),
+    };
+    const payloadFingerprint = accountingPaymentPayloadFingerprint(resolvedInput);
+    if (target) {
+      const prior = await this.repo.findPaymentByIdempotencyKey(ctx.companyId, input.idempotencyKey!, ctx.scopes.branchIds);
+      if (prior) {
+        if (prior.payloadFingerprint !== payloadFingerprint) {
+          throw new ConflictException({
+            code: 'accounting_payment_idempotency_conflict',
+            message: 'This retry key was already used with different payment details.',
+          });
+        }
+        return prior.payment;
+      }
+      const allocationError = validateAccountingPaymentAllocation(resolvedInput, target);
       if (allocationError) throw new UnprocessableEntityException(allocationError);
     }
 
-    const result = await this.repo.createPayment({ ...input, companyId: ctx.companyId, createdByUserId: ctx.userId });
+    const created = await this.repo.createPayment({
+      ...resolvedInput,
+      companyId: ctx.companyId,
+      createdByUserId: ctx.userId,
+      payloadFingerprint,
+    });
+    const result = created.payment;
+    if (created.replayed) return result;
 
     const unapplied = parseFloat(result.unappliedAmount);
     if (unapplied > 0) {

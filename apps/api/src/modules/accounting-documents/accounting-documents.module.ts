@@ -39,15 +39,23 @@ import { CounterpartyController } from './presentation/http/counterparty.control
 import { AccountingDocumentController } from './presentation/http/accounting-document.controller';
 import { AccountingPaymentController } from './presentation/http/accounting-payment.controller';
 import { RevenueCategoryController } from './presentation/http/revenue-category.controller';
+import { SimpleIncomeController } from './presentation/http/simple-income.controller';
+import { RecordSimpleIncomeUseCase } from './application/use-cases/record-simple-income.use-case';
+import { IncomeExpenseLedgerUseCase } from './application/use-cases/income-expense-ledger.use-case';
+import { IncomeExpenseLedgerController } from './presentation/http/income-expense-ledger.controller';
 import { TaxModule } from '../tax/tax.module';
+import { FeatureLaunchModule } from '../feature-launch/feature-launch.module';
+import { GetSalesDocumentRootAvailabilityUseCase } from './application/sales-document-launch-gate';
 
 @Module({
-  imports: [AuditModule, DataModelCoreModule, TaxModule],
+  imports: [AuditModule, DataModelCoreModule, TaxModule, FeatureLaunchModule],
   controllers: [
     CounterpartyController,
     AccountingDocumentController,
     AccountingPaymentController,
     RevenueCategoryController,
+    SimpleIncomeController,
+    IncomeExpenseLedgerController,
   ],
   providers: [
     PrismaAccountingRepository,
@@ -81,6 +89,9 @@ import { TaxModule } from '../tax/tax.module';
     ListAllRevenueCategoriesUseCase,
     CreateRevenueCategoryUseCase,
     UpdateRevenueCategoryUseCase,
+    RecordSimpleIncomeUseCase,
+    IncomeExpenseLedgerUseCase,
+    GetSalesDocumentRootAvailabilityUseCase,
   ],
   exports: [
     PrismaAccountingRepository,

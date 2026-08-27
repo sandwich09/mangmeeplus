@@ -8,6 +8,12 @@ import { WORKFLOW_TEMPLATE_CATALOG } from '../../../workflow/domain/workflow-tem
 import { APPROVED_FEATURE_KEYS } from '../../../system-partner-management/domain/feature-registry';
 import { resolveTransactionTaxPreview } from '../../../tax/domain/logic/transaction-tax.logic';
 import { bootstrapCompanyTaxConfiguration, TAX_CONFIG_BOOTSTRAP_ACTOR_USER_ID } from '../../../tax/application/services/tax-config-bootstrap.service';
+import { CompanySignupCoreService } from '../../../external-signup/application/company-signup-core.service';
+import {
+  canTransitionCompanySignup,
+  companySignupPayloadHash,
+  normalizeCompanySignupInput,
+} from '../../../external-signup/domain/company-signup.logic';
 
 // ponytail: unit-level; prisma and all side-effects are mocked inline
 
@@ -671,6 +677,173 @@ describe('CreateCompanyOnboardingUseCase', () => {
       () => bootstrapCompanyTaxConfiguration({ companyTaxCodeProfile: { count: async () => 1 } } as any, { companyId: 'co-1', createdByUserId: 'owner-1' }),
       (error: any) => error.getResponse?.().code === 'tax_config_already_bootstrapped',
     );
+  });
+});
+
+function externalSignupHarness() {
+  const rows = new Map<string, any>();
+  const audits: any[] = [];
+  const outbox: any[] = [];
+  let idSequence = 0;
+  let lockCalls = 0;
+  let transactionTail = Promise.resolve();
+
+  const byWhere = (where: any) => {
+    if (where.id) return rows.get(where.id) ?? null;
+    return [...rows.values()].find((row) => row.externalSignupId === where.externalSignupId) ?? null;
+  };
+  const tx = {
+    $executeRaw: async () => { lockCalls += 1; return 1; },
+    companySignupRequest: {
+      findUnique: async ({ where }: any) => byWhere(where),
+      findUniqueOrThrow: async ({ where }: any) => {
+        const row = byWhere(where);
+        if (!row) throw new Error('not found');
+        return row;
+      },
+      create: async ({ data }: any) => {
+        const now = new Date();
+        const row = {
+          id: `signup-${++idSequence}`, source: 'official-site', state: 'RECEIVED', version: 0,
+          failureCode: null, provisioningAttemptId: null, provisioningStartedAt: null,
+          companyId: null, ownerUserId: null, createdAt: now, updatedAt: now, ...data,
+        };
+        rows.set(row.id, row);
+        return row;
+      },
+      updateMany: async ({ where, data }: any) => {
+        const row = rows.get(where.id);
+        if (!row || row.state !== where.state || row.version !== where.version) return { count: 0 };
+        const { version, ...fields } = data;
+        Object.assign(row, fields, { version: row.version + version.increment, updatedAt: new Date() });
+        return { count: 1 };
+      },
+    },
+    auditLog: { create: async ({ data }: any) => { audits.push(data); return data; } },
+    outboxEvent: { create: async ({ data }: any) => { outbox.push(data); return data; } },
+  };
+  const client = {
+    $transaction: async (work: (transaction: any) => Promise<any>) => {
+      let release!: () => void;
+      const previous = transactionTail;
+      transactionTail = new Promise<void>((resolve) => { release = resolve; });
+      await previous;
+      try { return await work(tx); } finally { release(); }
+    },
+  };
+  return {
+    service: new CompanySignupCoreService({ client } as any), rows, audits, outbox,
+    lockCalls: () => lockCalls,
+  };
+}
+
+const signupInput = {
+  externalSignupId: 'official-001', companyName: 'บริษัท ตัวอย่าง จำกัด', taxId: '0105555000012',
+  ownerDisplayName: 'คุณสมชาย', contactEmail: 'Owner@Example.com', consentVersion: 'terms-2026-08',
+  referralCode: 'creator-a', requestedOfferKey: 'starter',
+};
+
+describe('P10-0 external signup core', () => {
+  it('normalizes identity fields before a stable payload hash and pins recovery transitions', () => {
+    const first = normalizeCompanySignupInput(signupInput);
+    const retry = normalizeCompanySignupInput({
+      ...signupInput, companyName: `  ${signupInput.companyName} `, contactEmail: ' owner@example.COM ',
+      taxId: '0-1055-55000-01-2',
+    });
+    assert.deepEqual(retry, first);
+    assert.equal(companySignupPayloadHash(retry), companySignupPayloadHash(first));
+    assert.equal(canTransitionCompanySignup('EMAIL_FAILED', 'EMAIL_PENDING'), true);
+    assert.equal(canTransitionCompanySignup('PROVISIONING_FAILED', 'PROVISIONING'), true);
+    assert.equal(canTransitionCompanySignup('COMPLETED', 'RECEIVED'), false);
+  });
+
+  it('replays the same external id/payload and rejects a conflicting payload', async () => {
+    const h = externalSignupHarness();
+    const first = await h.service.receive(signupInput, 'request-1');
+    const retry = await h.service.receive({ ...signupInput, contactEmail: 'owner@example.com' }, 'request-2');
+    assert.equal(first.replayed, false);
+    assert.equal(retry.replayed, true);
+    assert.equal(retry.request.id, first.request.id);
+    assert.equal(h.rows.size, 1);
+    assert.equal(h.audits.length, 1);
+    assert.equal(h.outbox.length, 1);
+    await assert.rejects(
+      () => h.service.receive({ ...signupInput, companyName: 'คนละบริษัท' }, 'request-3'),
+      (error: unknown) => error instanceof ConflictException,
+    );
+  });
+
+  it('serializes concurrent same-request retries into exactly one durable request', async () => {
+    const h = externalSignupHarness();
+    const results = await Promise.all(Array.from({ length: 8 }, (_, index) =>
+      h.service.receive(signupInput, `concurrent-${index}`)));
+    assert.equal(h.rows.size, 1);
+    assert.equal(results.filter((result) => !result.replayed).length, 1);
+    assert.equal(new Set(results.map((result) => result.request.id)).size, 1);
+    assert.equal(h.audits.length, 1);
+    assert.equal(h.outbox.length, 1);
+    assert.equal(h.lockCalls(), 8, 'every receive takes the database advisory lock');
+  });
+
+  it('records state evidence without copying signup PII into audit or outbox', async () => {
+    const h = externalSignupHarness();
+    const received = await h.service.receive(signupInput, 'state-0');
+    await h.service.advance(received.request.id, 'VALIDATED', 'state-1');
+    await h.service.advance(received.request.id, 'EMAIL_PENDING', 'state-2');
+    const replay = await h.service.advance(received.request.id, 'EMAIL_PENDING', 'state-3');
+    assert.equal(replay.replayed, true);
+    assert.equal(h.audits.length, 3);
+    assert.equal(h.outbox.length, 3);
+    const evidence = JSON.stringify({ audits: h.audits, outbox: h.outbox });
+    for (const privateValue of [signupInput.companyName, signupInput.contactEmail.toLowerCase(), signupInput.taxId]) {
+      assert.equal(evidence.includes(privateValue), false);
+    }
+  });
+
+  it('elects one provisioning caller and makes successful completion idempotent', async () => {
+    const h = externalSignupHarness();
+    const received = await h.service.receive(signupInput, 'provision-0');
+    await h.service.advance(received.request.id, 'VALIDATED', 'provision-1');
+    await h.service.advance(received.request.id, 'EMAIL_PENDING', 'provision-2');
+    await h.service.advance(received.request.id, 'EMAIL_VERIFIED', 'provision-3');
+    const claims = await Promise.all(Array.from({ length: 6 }, (_, index) =>
+      h.service.claimProvisioning(received.request.id, `claim-${index}`)));
+    const winner = claims.find((claim) => claim.claimed)!;
+    assert.equal(claims.filter((claim) => claim.claimed).length, 1);
+    assert.ok(winner.attemptId);
+    const complete = await h.service.completeProvisioning({
+      requestId: received.request.id, attemptId: winner.attemptId!, companyId: 'company-1',
+      ownerUserId: 'owner-1', correlationRequestId: 'complete-1',
+    });
+    const replay = await h.service.completeProvisioning({
+      requestId: received.request.id, attemptId: winner.attemptId!, companyId: 'company-1',
+      ownerUserId: 'owner-1', correlationRequestId: 'complete-2',
+    });
+    assert.equal(complete.request.state, 'READY');
+    assert.equal(replay.replayed, true);
+    assert.equal(h.outbox.filter((event) => event.eventType === 'company_signup.state_changed').length, 5);
+  });
+
+  it('recovers EMAIL_FAILED and PROVISIONING_FAILED with a fresh fenced attempt', async () => {
+    const h = externalSignupHarness();
+    const received = await h.service.receive(signupInput, 'recover-0');
+    await h.service.advance(received.request.id, 'VALIDATED', 'recover-1');
+    await h.service.advance(received.request.id, 'EMAIL_PENDING', 'recover-2');
+    await h.service.advance(received.request.id, 'EMAIL_FAILED', 'recover-3', 'provider_unavailable');
+    await h.service.advance(received.request.id, 'EMAIL_PENDING', 'recover-4');
+    await h.service.advance(received.request.id, 'EMAIL_VERIFIED', 'recover-5');
+    const first = await h.service.claimProvisioning(received.request.id, 'recover-6');
+    await h.service.failProvisioning({
+      requestId: received.request.id, attemptId: first.attemptId!, failureCode: 'company_conflict',
+      correlationRequestId: 'recover-7',
+    });
+    const second = await h.service.claimProvisioning(received.request.id, 'recover-8');
+    assert.equal(second.claimed, true);
+    assert.notEqual(second.attemptId, first.attemptId);
+    await assert.rejects(() => h.service.completeProvisioning({
+      requestId: received.request.id, attemptId: first.attemptId!, companyId: 'company-1',
+      ownerUserId: 'owner-1', correlationRequestId: 'stale-attempt',
+    }), (error: unknown) => error instanceof ConflictException);
   });
 });
 

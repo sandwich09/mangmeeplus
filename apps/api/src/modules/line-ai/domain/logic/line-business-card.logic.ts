@@ -109,6 +109,31 @@ function bubble(
   };
 }
 
+function answerTopic(tools: readonly string[]): string {
+  const topics = tools.map((name) => {
+    if (name.startsWith('expense.')) return 'ค่าใช้จ่าย';
+    if (name.startsWith('reimbursement.')) return 'ใบเบิก';
+    if (name.startsWith('sales.')) return 'ยอดขาย';
+    if (name.startsWith('inventory.')) return 'สต็อก';
+    if (name.startsWith('crm.')) return 'ลูกค้า';
+    if (name.startsWith('procurement.')) return 'งานจัดซื้อ';
+    if (name.startsWith('tax.')) return 'ภาษี';
+    if (name.startsWith('company.')) return 'บริษัท';
+    if (name.startsWith('hr.') || name.startsWith('payroll.') || name.startsWith('leave.')) return 'งานบุคคล';
+    if (name.startsWith('ledger.') || name.startsWith('accounting.') || name.startsWith('bank.') || name.startsWith('reports.')) return 'การเงิน';
+    return '';
+  });
+  return new Set(topics).size === 1 ? topics[0]! : '';
+}
+
+function answerCardTitle(response: LineAiTurnResponse): string {
+  if (response.refused) return 'น้องมั่งมีแจ้งให้ทราบนะคะ';
+  const topic = answerTopic(response.toolsInvoked);
+  if (response.intent === 'read_summary' || response.intent === 'read_detail'
+    || response.intent === 'report_request' || response.intent === 'sales_suggestion') return `น้องมั่งมีสรุป${topic}ให้นะคะ`;
+  return 'น้องมั่งมีตอบให้นะคะ';
+}
+
 const MAX_BUTTON_LABEL = 40;
 
 /**
@@ -131,6 +156,7 @@ export function buildLineAssistantTextCardMessage(
   webBaseUrl: string | undefined,
   companyId: string,
   badge?: string,
+  title = 'ข้อมูลจากน้องมั่งมี',
 ): LineReplyMessage {
   const links: Array<{ uri: string; label?: string }> = [];
   const kept: string[] = [];
@@ -177,7 +203,7 @@ export function buildLineAssistantTextCardMessage(
     type: 'flex',
     altText: preview(cardText, 400) || 'ข้อมูลจากน้องมั่งมี',
     contents: bubble(
-      { title: 'ข้อมูลจากน้องมั่งมี', text: cardText, ...(badge ? { badge } : {}) },
+      { title, text: cardText, ...(badge ? { badge } : {}) },
       webBaseUrl, companyId, buttons,
     ),
   };
@@ -281,9 +307,10 @@ export function buildLineBusinessAnswerMessage(
   const cards = !response.refused && response.presentation?.kind === 'answer_cards'
     ? response.presentation.cards.filter((card) => card.text.trim()).slice(0, 12)
     : [];
-  if (cards.length === 0) return buildLineAssistantTextCardMessage(fallbackText, webBaseUrl, companyId);
+  const title = answerCardTitle(response);
+  if (cards.length === 0) return buildLineAssistantTextCardMessage(fallbackText, webBaseUrl, companyId, undefined, title);
 
-  const bubbles = cards.map((card) => bubble(card, webBaseUrl, companyId));
+  const bubbles = cards.map((card) => bubble({ ...card, title: card.title?.trim() || title }, webBaseUrl, companyId));
   return {
     type: 'flex',
     altText: preview(fallbackText, 400) || 'ข้อมูลจากน้องมั่งมี',

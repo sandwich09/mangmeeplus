@@ -1,6 +1,6 @@
 # Mangmee Accounting and Tax Knowledge Spec
 
-สถานะ: DRAFT — โครงสร้างคลังความรู้และการตอบของสมองมั่งมี
+สถานะ: **PARTIAL READY** — product-help source manifest/retrieval security เริ่ม P23-0/1 ได้; tax/accounting pack publication รอ §19; แผนส่งมอบอยู่ใน [Four-lane Gap Closure Plan](../plans/mangmee-four-lane-gap-closure-plan-th.md#p23--knowledge-pack)
 
 เอกสารหลัก: [Mangmee Accounting Operating System Spec](mangmee-accounting-operating-system-spec-th.md)
 
@@ -484,8 +484,8 @@ Knowledge Agent ทำ draft/test ได้ แต่ R3/R4 ต้องมี�
 
 ### Official tax sources
 
-- [แบบภาษีมูลค่าเพิ่ม ภ.พ.30/ภ.พ.36](https://www.rd.go.th/62345.html)
-- [คำแนะนำ ภ.พ.30](https://www.rd.go.th/fileadmin/tax_pdf/vat/2568/pp30_010968.pdf)
+- [หน้ารวมแบบแสดงรายการภาษีมูลค่าเพิ่มปัจจุบัน](https://www.rd.go.th/7049.html) — ดาวน์โหลดแบบ/ใบแนบจากลิงก์ current และเก็บ retrieved-at/effective date/checksum; หน้าแหล่งข้อมูลระบุปรับปรุงล่าสุด 28-02-2026
+- PDF/ZIP ภ.พ.30 และใบแนบที่ใช้สร้าง pack ต้อง resolve จากหน้ารวมข้างต้นในวันที่ build; ห้าม pin direct URL เก่าโดยไม่ตรวจ version/effective date
 - [ประมวลรัษฎากร หมวด VAT](https://www.rd.go.th/2596.html)
 - [หน้าที่ผู้ประกอบการจด VAT](https://www.rd.go.th/7051.html)
 - [แบบ ภ.ง.ด.3/ภ.ง.ด.53](https://www.rd.go.th/fileadmin/download/insight_pasi/wht_3_53_030260.pdf)

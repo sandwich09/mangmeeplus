@@ -1,4 +1,6 @@
 import { Injectable, ForbiddenException, Logger, NotFoundException, BadRequestException, UnprocessableEntityException } from '@nestjs/common';
+import { createHash, randomUUID } from 'node:crypto';
+import { PAYMENT_IDEMPOTENCY_KEY_PATTERN } from '../../../accounting-documents/domain/logic/accounting-money-validation.logic';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
 import { AuditService } from '../../../audit/application/audit.service';
 import { OutboxAppendService } from '../../../data-model-core/application/services/outbox-append.service';
@@ -28,7 +30,7 @@ import {
   readAiCategorySuggestion,
 } from '../../domain/logic/expense-status.logic';
 import type { ExpenseLineInput, ExpenseRecord, ExpenseRecordWithRelations, PaginatedExpenses } from '../../domain/models/expense.model';
-import type { RequestContext, CreateExpenseDraftInput, UpdateExpenseDraftInput, ListExpensesFilter, ExpenseStatus, ExpenseVatSourceOverrideInput } from '@watchdog-bms/contracts';
+import type { RequestContext, CreateExpenseDraftInput, UpdateExpenseDraftInput, ListExpensesFilter, ExpenseStatus, ExpenseVatSourceOverrideInput, RecordExpensePaymentInput } from '@watchdog-bms/contracts';
 import { expenseVatReconciliationMessage, isBlockingExpenseVatReconciliation } from '@watchdog-bms/contracts';
 import { ExpenseTransactionTaxService, type ExpenseTaxLineSelection } from '../services/expense-transaction-tax.service';
 import { LaunchGateGuardService } from '../../../feature-launch/application/launch-gate.guard';
@@ -40,6 +42,7 @@ import { CompanyVatRegistrationUseCase } from '../../../data-model-core/applicat
 import { LEDGER_SEQUENCE_KEY, civilDateToUtcDate, coerceCivilDate, utcDateToCivilDate } from '@watchdog-bms/contracts';
 import { civilPeriodKey, todayCivilDate } from '@watchdog-bms/contracts';
 import type { AuditLogEntry } from '../../../audit/domain/models/audit-log.model';
+import { observeCustomerJourney } from '../../../../common/observability/customer-journey-audit';
 
 function hasPerm(ctx: RequestContext, perm: string): boolean {
   return ctx.permissions.includes(perm);
@@ -546,8 +549,6 @@ export class ConfirmExpenseUseCase {
     expenseId: string,
     vatSourceOverride?: ExpenseVatSourceOverrideInput,
   ): Promise<ExpenseRecord> {
-    requirePerm(ctx, 'expense.confirm', 'confirm expense');
-    if (ctx.authProvider === 'line') throw new ForbiddenException('Expense confirmation is available on the authenticated web only.');
     return this.confirm(ctx, expenseId, undefined, vatSourceOverride);
   }
 
@@ -583,6 +584,33 @@ export class ConfirmExpenseUseCase {
     },
     vatSourceOverride?: ExpenseVatSourceOverrideInput,
   ): Promise<ExpenseRecord> {
+    return observeCustomerJourney(
+      this.audit,
+      {
+        key: 'expense-confirmation', requestId: ctx.requestId ?? `expense:${expenseId}:confirm`,
+        targetType: 'expense_record', targetId: expenseId, companyId: ctx.companyId, actorUserId: ctx.userId,
+      },
+      () => this.confirmMutation(ctx, expenseId, authority, vatSourceOverride),
+      () => ({ outcome: 'confirmed' }),
+    );
+  }
+
+  private async confirmMutation(
+    ctx: RequestContext,
+    expenseId: string,
+    authority?: {
+      reimbursementRequestId: string;
+      reimbursementLineId: string;
+      branchId?: string;
+      allowMissingReceiptWithReason: boolean;
+      systemReconcile?: boolean;
+    },
+    vatSourceOverride?: ExpenseVatSourceOverrideInput,
+  ): Promise<ExpenseRecord> {
+    if (!authority) {
+      requirePerm(ctx, 'expense.confirm', 'confirm expense');
+      if (ctx.authProvider === 'line') throw new ForbiddenException('Expense confirmation is available on the authenticated web only.');
+    }
     const r = await this.repo.findByIdWithRelations(ctx.companyId, expenseId);
     if (!r) throw new NotFoundException(`Expense ${expenseId} not found`);
     if (authority) {
@@ -1084,12 +1112,12 @@ export class MarkExpenseReadyUseCase {
 
 @Injectable()
 export class RecordExpensePaymentUseCase {
-  constructor(private readonly repo: PrismaExpenseRepository, private readonly audit: AuditService, private readonly outbox: OutboxAppendService) {}
+  constructor(private readonly repo: PrismaExpenseRepository, private readonly audit: AuditService) {}
 
   async execute(
     ctx: RequestContext,
     expenseId: string,
-    input: { paidAmount: string; paymentMethod?: string; paidAt?: string; bankAccountRef?: string },
+    input: RecordExpensePaymentInput,
   ): Promise<ExpenseRecord> {
     requirePerm(ctx, 'expense.payment.record', 'record expense payment');
     const r = await this.repo.findById(ctx.companyId, expenseId);
@@ -1104,18 +1132,33 @@ export class RecordExpensePaymentUseCase {
         message: 'Claim-projected expenses are settled by their reimbursement payout, not a manual expense payment.',
       });
     }
+    if (input.idempotencyKey !== undefined && (typeof input.idempotencyKey !== 'string' || !PAYMENT_IDEMPOTENCY_KEY_PATTERN.test(input.idempotencyKey))) {
+      throw new BadRequestException({ code: 'expense_payment_invalid_key', message: 'Payment key must contain 8–64 letters, numbers, underscores or hyphens.' });
+    }
+    // Separate caller keys from legacy transport IDs; hash the whole ID, never a prefix.
+    const idempotencyKey = input.idempotencyKey === undefined
+      ? `request:${createHash('sha256').update(ctx.requestId || randomUUID()).digest('hex')}`
+      : `client:${input.idempotencyKey}`;
     const result = await this.repo.recordPaymentAtomic({
       companyId: ctx.companyId,
       expenseId,
       actorUserId: ctx.userId,
+      scopes: ctx.scopes ?? {},
+      idempotencyKey,
       amount: input.paidAmount,
       paymentMethod: input.paymentMethod,
-      paidAt: input.paidAt ? civilDateToUtcDate(coerceCivilDate(input.paidAt)) : new Date(),
+      paidAt: input.paidAt,
       bankAccountRef: input.bankAccountRef,
+    }, async (tx, created) => {
+      const data = { expenseId, paymentId: created.payment.id, paidAmount: created.payment.amount, cumulativePaidAmount: created.expense.paidAmount, paymentStatus: created.expense.paymentStatus };
+      await this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.payment.record', targetType: 'expense_payment', targetId: created.payment.id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: data }, tx);
+      await tx.outboxEvent.create({ data: {
+        companyId: ctx.companyId, eventType: 'expense.payment_recorded', aggregateType: 'expense_payment', aggregateId: created.payment.id,
+        eventKey: `expense.payment_recorded:expense_payment:${created.payment.id}`,
+        payloadJson: { companyId: ctx.companyId, aggregateType: 'expense_payment', aggregateId: created.payment.id, requestId: ctx.requestId ?? `expense:paid:${created.payment.id}`, occurredAt: new Date().toISOString(), data },
+        priority: 'NORMAL', status: 'PENDING',
+      } });
     });
-
-    await this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.payment.record', targetType: 'expense_payment', targetId: result.payment.id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: { expenseId, paidAmount: input.paidAmount, cumulativePaidAmount: result.expense.paidAmount, paymentStatus: result.expense.paymentStatus } });
-    void this.outbox.append('expense.payment_recorded', 'expense_payment', result.payment.id, { companyId: ctx.companyId, aggregateType: 'expense_payment', aggregateId: result.payment.id, requestId: ctx.requestId ?? `expense:paid:${result.payment.id}`, occurredAt: new Date().toISOString(), data: { expenseId, paymentId: result.payment.id, paidAmount: input.paidAmount, cumulativePaidAmount: result.expense.paidAmount, paymentStatus: result.expense.paymentStatus } });
     return result.expense;
   }
 }

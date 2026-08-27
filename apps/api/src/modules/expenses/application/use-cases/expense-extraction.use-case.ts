@@ -6,6 +6,7 @@ import { ReceiptOcrClient } from '../../infrastructure/receipt-ocr.client';
 import { isStaleOcrApply, ocrLineVatRateUnknown, ReceiptOcrApplyService } from '../services/receipt-ocr-apply.service';
 import { deriveTaxEvidence, isExpenseExtractionEligible, sourceDocumentTypeFromClassification, toSourceDocumentType } from '../../domain/logic/expense-document.logic';
 import type { AiModelLineage, BusinessDocumentClassification, ExpenseExtractionResult, RequestContext } from '@watchdog-bms/contracts';
+import { observeCustomerJourney } from '../../../../common/observability/customer-journey-audit';
 
 const SUPPORTED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'application/pdf']);
 const MAX_EXTRACTION_BYTES = 10_000_000;
@@ -57,6 +58,20 @@ export class RequestReceiptExtractionUseCase {
   ) {}
 
   async execute(ctx: RequestContext, expenseId: string): Promise<ExpenseExtractionResult> {
+    return observeCustomerJourney(
+      this.audit,
+      {
+        key: 'receipt-ocr', requestId: ctx.requestId, targetType: 'expense_record', targetId: expenseId,
+        companyId: ctx.companyId, actorUserId: ctx.userId,
+      },
+      () => this.extract(ctx, expenseId),
+      (result) => result.status === 'ok' || result.status === 'not_expense_document'
+        ? { outcome: result.status }
+        : { outcome: result.status, failureClass: result.status },
+    );
+  }
+
+  private async extract(ctx: RequestContext, expenseId: string): Promise<ExpenseExtractionResult> {
     const expense = await this.repo.findById(ctx.companyId, expenseId);
     if (!expense) {
       await this.auditOutcome(ctx, expenseId, 'not_found');
@@ -206,7 +221,7 @@ export class RequestReceiptExtractionUseCase {
     errorCode?: string,
   ): Promise<ExpenseExtractionResult> {
     await this.auditOutcome(ctx, expenseId, status, attachmentId, 0, undefined, modelLineage, errorCode);
-    return { status };
+    return { status, ...(errorCode ? { errorCode } : {}) };
   }
 
   private auditOutcome(

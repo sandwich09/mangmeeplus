@@ -288,7 +288,7 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
               setIsHovered(false);
               toggleSidebar();
             }}
-            className="hidden h-11 w-11 items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 sm:h-8 sm:w-8 lg:flex"
+            className="hidden h-11 w-11 items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 lg:flex"
             aria-label={t('shell.toggle_sidebar', locale)}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">

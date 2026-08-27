@@ -21,6 +21,10 @@ import { parseCrmTab, visibleCrmTabs, type CrmTab } from './crm.logic';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import { useToast } from '@/common/components/toast';
 import { useInputPrompt } from '@/common/components/modal';
+import {
+  useSalesRootAvailability,
+  type SalesRootAvailabilityState,
+} from '@/features/accounting-documents/sales-root-availability';
 
 function err(e: unknown) { return apiErrorMessage(e); }
 function money(v?: string) { const n = Number(v ?? 0); return new Intl.NumberFormat('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(n); }
@@ -94,7 +98,7 @@ export function CrmWorkspacePage({ companyId, permissions }: { companyId: string
       </div>
       {visibleTabs.includes(tab) && tab === 'overview' && <Overview companyId={companyId} />}
       {visibleTabs.includes(tab) && tab === 'leads' && <Leads companyId={companyId} />}
-      {visibleTabs.includes(tab) && tab === 'pipeline' && <Pipeline companyId={companyId} />}
+      {visibleTabs.includes(tab) && tab === 'pipeline' && <Pipeline companyId={companyId} permissions={permissions} />}
       {visibleTabs.includes(tab) && tab === 'followups' && <FollowUps companyId={companyId} />}
     </div>
   );
@@ -306,8 +310,11 @@ function Leads({ companyId }: { companyId: string }) {
 }
 
 // ── Pipeline ──────────────────────────────────────────────────────────────────
-function Pipeline({ companyId }: { companyId: string }) {
+function Pipeline({ companyId, permissions }: { companyId: string; permissions: readonly string[] }) {
   const locale = useWorkspaceLocale();
+  const canRequestQuotation = permissions.includes('crm.quotation.link')
+    && (permissions.includes('accounting.quotation.create') || permissions.includes('accounting.document.create'));
+  const quotationAvailability = useSalesRootAvailability(companyId, canRequestQuotation);
   const [board, setBoard] = useState<any | null>(null);
   const [stages, setStages] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -360,12 +367,36 @@ function Pipeline({ companyId }: { companyId: string }) {
           </div>
         ))}
       </div>
-      {selected && <OpportunityDetail companyId={companyId} opportunity={selected} stages={stages} onClose={() => setSelected(null)} onChange={load} />}
+      {selected && <OpportunityDetail
+        companyId={companyId}
+        opportunity={selected}
+        stages={stages}
+        canRequestQuotation={canRequestQuotation}
+        quotationAvailability={quotationAvailability}
+        onClose={() => setSelected(null)}
+        onChange={load}
+      />}
     </div>
   );
 }
 
-function OpportunityDetail({ companyId, opportunity, stages, onClose, onChange }: { companyId: string; opportunity: any; stages: any[]; onClose: () => void; onChange: () => void }) {
+function OpportunityDetail({
+  companyId,
+  opportunity,
+  stages,
+  canRequestQuotation,
+  quotationAvailability,
+  onClose,
+  onChange,
+}: {
+  companyId: string;
+  opportunity: any;
+  stages: any[];
+  canRequestQuotation: boolean;
+  quotationAvailability: { state: SalesRootAvailabilityState; retry: () => void };
+  onClose: () => void;
+  onChange: () => void;
+}) {
   const locale = useWorkspaceLocale();
   const toast = useToast();
   const { promptInput, inputPromptDialog } = useInputPrompt();
@@ -417,6 +448,19 @@ function OpportunityDetail({ companyId, opportunity, stages, onClose, onChange }
           <button className={ghostClass} onClick={onClose}>{t('customers.close', locale)}</button>
         </div>
         {error && <div className="mt-3"><ErrorBanner message={error} /></div>}
+        {open && canRequestQuotation && quotationAvailability.state !== 'OPEN' && (
+          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3" role={quotationAvailability.state === 'LOADING' ? 'status' : 'alert'}>
+            <p className="text-base font-semibold text-amber-950">
+              {quotationAvailability.state === 'LOADING' ? 'กำลังตรวจสอบว่าสร้างใบเสนอราคาได้หรือไม่...'
+                : quotationAvailability.state === 'CLOSED' ? 'ยังสร้างใบเสนอราคาใหม่ไม่ได้ชั่วคราว'
+                  : 'ยังตรวจสอบความพร้อมของระบบไม่ได้'}
+            </p>
+            <p className="mt-1 text-base text-amber-900">ดีลและใบเสนอราคาเดิมยังเปิดดูและติดตามต่อได้</p>
+            {quotationAvailability.state === 'ERROR' && (
+              <button type="button" className={`${ghostClass} mt-2 min-h-11`} onClick={quotationAvailability.retry}>ลองตรวจสอบอีกครั้ง</button>
+            )}
+          </div>
+        )}
         {open && (
           <div className="mt-4 space-y-3">
             <div>
@@ -427,7 +471,9 @@ function OpportunityDetail({ companyId, opportunity, stages, onClose, onChange }
               </ThemedSelect>
             </div>
             <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
-              <button className={btnClass} disabled={busy} onClick={quote}>{t('customers.create_quotation_draft', locale)}</button>
+              {canRequestQuotation && quotationAvailability.state === 'OPEN' && (
+                <button className={btnClass} disabled={busy} onClick={quote}>{t('customers.create_quotation_draft', locale)}</button>
+              )}
               <button className={ghostClass} disabled={busy} onClick={logActivity}>{t('customers.log_activity', locale)}</button>
               <button className={ghostClass} disabled={busy} onClick={() => close('WON')}>{t('customers.close_won', locale)}</button>
               <button className={ghostClass} disabled={busy} onClick={() => close('LOST')}>{t('customers.close_lost', locale)}</button>

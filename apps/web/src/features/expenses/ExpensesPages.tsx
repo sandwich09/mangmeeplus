@@ -58,6 +58,8 @@ import { TransactionTaxLineSelector } from '@/features/tax/TransactionTaxLineSel
 import { taxDefinitionRateForSource } from '@/features/tax/transaction-tax.model';
 import {
   classifyUploadFile, HeicDecodeError, MAX_PDF_EXTRACTION_BYTES, prepareReceiptFile, RECEIPT_UPLOAD_ACCEPT,
+  expenseExtractionRetryMode,
+  expenseExtractionRetryRequestId,
 } from './expense-upload.logic';
 import {
   err, baht, baht0, dateShort, inputClass, btnClass, ghostClass, dangerClass, successBtn, successBtnStyle,
@@ -190,6 +192,10 @@ export function extractionNotice(result: ExpenseExtractionResult, locale: Suppor
   if (result.status === 'unsupported') return { tone: 'info', message: t('expenses.extract_unsupported', locale) };
   if (result.status === 'not_configured') return { tone: 'info', message: t('expenses.extract_not_configured', locale) };
   if (result.status === 'no_attachment') return { tone: 'error', message: t('expenses.extract_no_attachment', locale) };
+  if (result.errorCode === 'OCR_FEATURE_DISABLED') return { tone: 'info', message: t('expenses.extract_ocr_disabled', locale) };
+  if (result.errorCode === 'OCR_MONTHLY_LIMIT_EXCEEDED') return { tone: 'info', message: t('expenses.extract_ocr_limit', locale) };
+  if (result.errorCode === 'OCR_REQUEST_ALREADY_ADMITTED') return { tone: 'info', message: t('expenses.extract_ocr_duplicate', locale) };
+  if (result.errorCode === 'OCR_QUOTA_UNAVAILABLE') return { tone: 'error', message: t('expenses.extract_ocr_unavailable', locale) };
   return { tone: 'error', message: t('expenses.extract_failed', locale) };
 }
 
@@ -285,19 +291,27 @@ function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { company
       };
       try {
         let result: ExpenseExtractionResult | null = null;
+        const ocrRequestId = globalThis.crypto.randomUUID();
         try {
-          result = await requestExpenseExtraction(companyId, intent.expenseId);
+          result = await requestExpenseExtraction(companyId, intent.expenseId, ocrRequestId);
         } catch { /* recovery-checked below, then retried once */ }
-        if (!result || result.status === 'failed') {
+        const retryMode = expenseExtractionRetryMode(result);
+        if (retryMode !== 'none') {
           const recovered = await recoveredNotice();
           if (recovered) {
             notice = recovered;
           } else {
             await new Promise((resolve) => setTimeout(resolve, 1500));
-            result = await requestExpenseExtraction(companyId, intent.expenseId);
+            const retryRequestId = expenseExtractionRetryRequestId(
+              retryMode,
+              ocrRequestId,
+              globalThis.crypto.randomUUID(),
+            );
+            result = await requestExpenseExtraction(companyId, intent.expenseId, retryRequestId);
             notice = extractionNotice(result, locale);
           }
         } else {
+          if (!result) throw new Error('OCR_RETRY_STATE_INVALID');
           notice = extractionNotice(result, locale);
         }
       } catch (e) {

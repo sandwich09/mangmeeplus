@@ -21,6 +21,8 @@ import { PrismaService } from '../../../common/database/prisma.service';
 import { LOGGER_TOKEN, type AppLogger } from '../../../common/logger/logger.service';
 // The ONE authority rule of the control plane, shared with the guard, the command and the bootstrap.
 import { attestationKey, liveAttestationKeys } from './launch-gate.guard';
+import { sharedLaunchGateLock } from './launch-gate-lock';
+export { exclusiveLaunchGateLock } from './launch-gate-lock';
 
 export type LaunchRouteRef = { gateKey: string; routeKey?: string };
 export type StampedLaunchEntry = { gateKey: string; routeKey: string; generation: number };
@@ -106,8 +108,6 @@ export const DEFAULT_DISPATCH_LEASE_MS = 60_000;
 
 export const sharedEntitlementLock = (companyId: string) =>
   Prisma.sql`SELECT pg_advisory_xact_lock_shared(hashtext(${`entitlement:${companyId}`}))`;
-const sharedLaunchGateLock = (gateKey: string, routeKey: string) =>
-  Prisma.sql`SELECT pg_advisory_xact_lock_shared(hashtext(${`launch_gate:${gateKey}:${routeKey}`}))`;
 
 /**
  * Serializes two callers stamping the SAME work. `ON CONFLICT` arbitrates on one index only, and
@@ -134,8 +134,6 @@ const attemptSourceIdentityLock = (companyScope: string, sourceType: string, sou
 /** The exclusive counterparts, taken by the entitlement and launch-gate commands (spec:60). */
 export const exclusiveEntitlementLock = (companyId: string) =>
   Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`entitlement:${companyId}`}))`;
-export const exclusiveLaunchGateLock = (gateKey: string, routeKey: string) =>
-  Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`launch_gate:${gateKey}:${routeKey}`}))`;
 
 /**
  * Platform-level work has no company row, and Postgres treats NULLs in a unique index as distinct,

@@ -13,6 +13,7 @@ import {
   initPersonalSignatureUpload,
   loadLineSubstituteReceiptPrefill,
   normalizeApiBase,
+  recordExpensePayment,
   resolveUploadUrl,
   uploadReceiptFile,
 } from './expenses.api';
@@ -43,6 +44,21 @@ function mockAttachmentPreviewResponse(fileResponse: Response): Array<{ input: s
 }
 
 describe('expenses.api URL helpers', () => {
+  it('retries an expense payment with the exact intent and civil paid date, without browser UTC conversion', async () => {
+    const bodies: unknown[] = [];
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      assert.equal(String(input), '/api/v1/companies/company-1/expenses/expense-1/payment');
+      assert.equal(init?.method, 'POST');
+      bodies.push(JSON.parse(String(init?.body)));
+      return new Response(JSON.stringify({ id: 'expense-1', status: 'CONFIRMED' }), { headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch;
+    const body = { idempotencyKey: 'intent-payment-1', paidAmount: '40.00', paidAt: '2026-07-31', paymentMethod: 'CASH' as const };
+    await recordExpensePayment('company-1', 'expense-1', body);
+    await recordExpensePayment('company-1', 'expense-1', body);
+    assert.deepEqual(bodies, [body, body]);
+    assert.equal(body.paidAt, '2026-07-31');
+  });
+
   it('normalizes API base URL that already includes v1', () => {
     assert.equal(normalizeApiBase('http://localhost:3001/v1'), 'http://localhost:3001');
     assert.equal(normalizeApiBase('http://localhost:3001/v1/'), 'http://localhost:3001');

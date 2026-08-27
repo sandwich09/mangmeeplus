@@ -72,6 +72,10 @@ put_alarm() {
 service_namespace=WatchDog/Runtime
 # `prefix` carries hyphens; metric names mirror deploy.sh's sanitized underscore style.
 metric_prefix="$(tr '-' '_' <<< "$prefix")"
+line_ai_namespace=WatchDog/LineAI
+line_ai_metric_prefix="$(tr '/-' '_' <<< "/ecs/${prefix}-api-web" | tr -cd '[:alnum:]_')"
+journey_dashboard_name="${prefix}-customer-journeys"
+api_latency_pattern='{ $.msg = "request" && $.durationMs >= 0 }'
 login_failure_threshold=20        # denied logins per 5 min; a real user retrying is ~3
 api_5xx_threshold=10              # 5xx responses per 5 min, sustained over 2 periods
 ai_failure_threshold=10           # AI/OCR failures per 5 min
@@ -87,6 +91,130 @@ put_metric_filter() {
     --metric-transformations \
       "metricName=${metric},metricNamespace=${service_namespace},metricValue=${value},defaultValue=0" \
     --region "$region" >/dev/null
+}
+
+journey_dashboard_body() {
+  jq -cn \
+    --arg environment "$environment" --arg region "$region" \
+    --arg runtimeNamespace "$service_namespace" --arg runtimePrefix "$metric_prefix" \
+    --arg lineNamespace "$line_ai_namespace" --arg linePrefix "$line_ai_metric_prefix" '
+    {
+      start:"-PT24H",
+      periodOverride:"inherit",
+      widgets:[
+        {
+          type:"text", x:0, y:0, width:24, height:5,
+          properties:{markdown:(
+            "## Customer journey coverage — " + $environment + "\n" +
+            "**Managed by `infra/monitoring/runtime-alarms.sh`; console edits are overwritten.**\n\n" +
+            "| Lane | LIVE evidence | Coverage gaps (not an outage) |\n" +
+            "|---|---|---|\n" +
+            "| AI | LINE AI metrics; receipt OCR accepted → terminal audit | — |\n" +
+            "| Accounting | Sales issue and expense confirmation audits; outbox lifecycle | Receipt upload intents abandoned before completion are PARTIAL |\n" +
+            "| Signup | LINE login/link accepted → terminal audit | Official signup, owner claim, tenant provision and claim email are PLANNED |\n" +
+            "| Ops | Outbox drain (query durable source via runbook) | — |\n\n" +
+            "No conversion/SLO targets are set until a representative baseline exists. PARTIAL/PLANNED rows must never be presented as live."
+          )}
+        },
+        {
+          type:"metric", x:0, y:5, width:16, height:7,
+          properties:{
+            title:"LINE AI — accepted and terminal outcomes (LIVE)", view:"timeSeries", stacked:false,
+            region:$region, period:300, stat:"Sum",
+            metrics:[
+              [$lineNamespace, ($linePrefix + "_line_ai_accepted"), {label:"Accepted"}],
+              [$lineNamespace, ($linePrefix + "_line_ai_delivered"), {label:"Delivered"}],
+              [$lineNamespace, ($linePrefix + "_line_ai_clarification"), {label:"Clarification"}],
+              [$lineNamespace, ($linePrefix + "_line_ai_intentional_noop"), {label:"Intentional no-op"}],
+              [$lineNamespace, ($linePrefix + "_line_ai_permission_refusal"), {label:"Permission refusal"}],
+              [$lineNamespace, ($linePrefix + "_line_ai_feature_disabled"), {label:"Feature disabled"}],
+              [$lineNamespace, ($linePrefix + "_line_ai_provider_unavailable"), {label:"Provider unavailable"}],
+              [$lineNamespace, ($linePrefix + "_line_ai_timeout"), {label:"Timeout"}],
+              [$lineNamespace, ($linePrefix + "_line_ai_delivery_pending"), {label:"Delivery pending"}],
+              [$lineNamespace, ($linePrefix + "_line_ai_failed_terminal"), {label:"Failed terminal"}]
+            ]
+          }
+        },
+        {
+          type:"metric", x:16, y:5, width:8, height:7,
+          properties:{
+            title:"Customer-impact context (not conversion rates)", view:"timeSeries", stacked:false,
+            region:$region, period:300, stat:"Sum",
+            metrics:[
+              [$runtimeNamespace, ($runtimePrefix + "_login_denied"), {label:"Login denied"}],
+              [$runtimeNamespace, ($runtimePrefix + "_upload_failure"), {label:"Upload rejected"}],
+              [$runtimeNamespace, ($runtimePrefix + "_ai_ocr_failure"), {label:"AI/OCR failure"}],
+              [$runtimeNamespace, ($runtimePrefix + "_api_5xx"), {label:"API 5xx"}]
+            ]
+          }
+        },
+        {
+          type:"metric", x:0, y:12, width:12, height:6,
+          properties:{
+            title:"LINE AI queue wait (maximum milliseconds)", view:"timeSeries", stacked:false,
+            region:$region, period:300, stat:"Maximum",
+            metrics:[[$runtimeNamespace, ($runtimePrefix + "_ai_queue_wait_ms"), {label:"Queue wait ms"}]]
+          }
+        },
+        {
+          type:"text", x:12, y:12, width:12, height:6,
+          properties:{markdown:(
+            "## How to read this dashboard\n\n" +
+            "- A missing metric is **UNKNOWN**, not success.\n" +
+            "- Reconcile accepted/terminal correlation before retrying.\n" +
+            "- Never retry a financial mutation to repair telemetry.\n" +
+            "- Durable outbox/audit rows are inspected through `docs/runbooks/customer-journey-signal-triage.md`.\n" +
+            "- Metric dimensions never contain tenant, customer, provider-user or document identity."
+          )
+          }
+        },
+        {
+          type:"metric", x:0, y:18, width:24, height:6,
+          properties:{
+            title:"API response latency (p95 milliseconds; runtime context)", view:"timeSeries", stacked:false,
+            region:$region, period:300, stat:"p95",
+            metrics:[[$runtimeNamespace, ($runtimePrefix + "_api_response_latency_ms"), {label:"All completed API requests (incl. health/internal)"}]]
+          }
+        }
+      ]
+    }'
+}
+
+install_journey_dashboard() {
+  local body response
+  body="$(journey_dashboard_body)"
+  response="$(aws_cmd cloudwatch put-dashboard --dashboard-name "$journey_dashboard_name" \
+    --dashboard-body "$body" --region "$region")"
+  jq -e '(.DashboardValidationMessages // []) | length == 0' <<< "$response" >/dev/null \
+    || fail "dashboard validation failed: $journey_dashboard_name"
+}
+
+verify_journey_dashboard() {
+  local actual expected expected_arn
+  actual="$(aws_cmd cloudwatch get-dashboard --dashboard-name "$journey_dashboard_name" --region "$region")"
+  expected="$(journey_dashboard_body)"
+  expected_arn="arn:aws:cloudwatch::${account_id}:dashboard/${journey_dashboard_name}"
+  jq -e --arg name "$journey_dashboard_name" --arg arn "$expected_arn" --argjson expected "$expected" '
+    .DashboardName == $name and .DashboardArn == $arn and (.DashboardBody | fromjson) == $expected
+  ' <<< "$actual" >/dev/null || fail "dashboard contract mismatch: $journey_dashboard_name"
+}
+
+verify_api_latency_filter() {
+  local actual
+  actual="$(aws_cmd logs describe-metric-filters --log-group-name "/ecs/${prefix}-api-web" \
+    --filter-name-prefix api-response-latency --region "$region")"
+  jq -e --arg pattern "$api_latency_pattern" --arg metric "${metric_prefix}_api_response_latency_ms" \
+    --arg namespace "$service_namespace" '
+      [.metricFilters[]? | select(.filterName == "api-response-latency")] as $filters
+      | ($filters | length) == 1 and $filters[0].filterPattern == $pattern
+        and ($filters[0].emitSystemFieldDimensions // []) == []
+        and ($filters[0].fieldSelectionCriteria // "") == ""
+        and ($filters[0].applyOnTransformedLogs // false) == false
+        and ($filters[0].metricTransformations[0].dimensions // {}) == {}
+        and ($filters[0].metricTransformations | map(del(.dimensions))) == [{
+          metricName:$metric, metricNamespace:$namespace, metricValue:"$.durationMs", unit:"Milliseconds"
+        }]
+    ' <<< "$actual" >/dev/null || fail 'API latency metric-filter contract mismatch'
 }
 
 install_service_alarms() {
@@ -116,6 +244,14 @@ install_service_alarms() {
     --namespace "$service_namespace" --metric-name "${metric_prefix}_api_5xx" --statistic Sum \
     --period 300 --evaluation-periods 2 --datapoints-to-alarm 2 --threshold "$api_5xx_threshold" \
     --comparison-operator GreaterThanThreshold --treat-missing-data notBreaching
+
+  # P9-1c: latency is a distribution, not a counter. No defaultValue=0: missing responses are
+  # UNKNOWN, not zero-ms samples. Non-negative values keep CloudWatch percentiles available.
+  aws_cmd logs put-metric-filter --log-group-name "$api_log" --filter-name api-response-latency \
+    --filter-pattern "$api_latency_pattern" \
+    --metric-transformations \
+      "metricName=${metric_prefix}_api_response_latency_ms,metricNamespace=${service_namespace},metricValue=\$.durationMs,unit=Milliseconds" \
+    --region "$region" >/dev/null
 
   # 3. OCR/AI failure — one metric fed by two log groups: the AI gateway's provider failures and the
   #    API's terminal outcome classes. `feature_disabled` is deliberately EXCLUDED so closing the
@@ -212,6 +348,7 @@ install_alarms() {
       --comparison-operator LessThanThreshold --treat-missing-data notBreaching
   fi
   install_service_alarms
+  install_journey_dashboard
   echo "[runtime-alarms] installed environment=$environment"
 }
 
@@ -282,6 +419,8 @@ verify_alarms() {
       50 LessThanThreshold 1 "Name=DBInstanceIdentifier,Value=${db_id}"
   fi
   verify_service_alarms
+  verify_api_latency_filter
+  verify_journey_dashboard
   echo "[runtime-alarms] verified environment=$environment datapoints=present subscription=confirmed"
 }
 

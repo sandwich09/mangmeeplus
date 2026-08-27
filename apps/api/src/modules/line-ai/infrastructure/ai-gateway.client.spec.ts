@@ -21,6 +21,15 @@ const baseTurnRequest: LineAiTurnRequest = {
   messagePreviewHash: 'hash',
 };
 
+function governedPrisma() {
+  return {
+    client: {
+      companyAiConfiguration: { findUnique: async () => ({ modelId: null, monthlyBudgetSatang: 1_000_000 }) },
+      companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: 0 }) },
+    },
+  } as any;
+}
+
 describe('AiGatewayClient failure classification', () => {
   const createClient = () => new AiGatewayClient(
     {
@@ -28,6 +37,8 @@ describe('AiGatewayClient failure classification', () => {
       aiGatewayInternalSecret: 'workload-secret',
     } as any,
     { issue: () => 'signed' } as any,
+    undefined,
+    governedPrisma(),
   );
 
   async function expectFetchFailure(
@@ -78,6 +89,8 @@ describe('AiGatewayClient actor delegation', () => {
           return `signed:${input.toolName}`;
         },
       } as any,
+      undefined,
+      governedPrisma(),
     );
     const request: LineAiTurnRequest = {
       requestId: 'request-1',
@@ -125,6 +138,8 @@ describe('AiGatewayClient actor delegation', () => {
     const client = new AiGatewayClient(
       { aiGatewayInternalUrl: 'http://ai-gateway.test/v1', aiGatewayInternalSecret: 'workload-secret' } as any,
       { issue: ({ toolName }: { toolName: string }) => { issued.push(toolName); return 'signed'; } } as any,
+      undefined,
+      governedPrisma(),
     );
     let posted: LineAiTurnRequest | undefined;
     const originalFetch = globalThis.fetch;
@@ -146,6 +161,324 @@ describe('AiGatewayClient actor delegation', () => {
     }
     assert.equal(issued.includes('sales.get_sales_summary'), false);
     assert.equal(posted?.actorDelegations?.['sales.get_sales_summary'], undefined);
+  });
+});
+
+describe('AiGatewayClient OCR governance', () => {
+  function readyOcrPrisma() {
+    const events: any[] = [];
+    let usedCount = 0;
+    const tx = {
+      $executeRaw: async () => undefined,
+      companyAiConfiguration: { findUnique: async () => ({ ocrEnabled: true, ocrMonthlyLimit: 10 }) },
+      companyOcrUsageEvent: {
+        findUnique: async ({ where }: any) => {
+          const key = where.companyId_sourceRoute_requestId;
+          return events.find((event) => event.companyId === key.companyId
+            && event.sourceRoute === key.sourceRoute && event.requestId === key.requestId) ?? null;
+        },
+        create: async ({ data }: any) => {
+          const event = { id: `event-${events.length + 1}`, ...data };
+          events.push(event);
+          return event;
+        },
+        delete: async ({ where }: any) => events.splice(events.findIndex((event) => event.id === where.id), 1)[0],
+      },
+      companyOcrMonthlyUsage: {
+        findUnique: async () => usedCount ? { usedCount } : null,
+        upsert: async () => ({ usedCount: ++usedCount }),
+        updateMany: async () => { usedCount -= 1; return { count: 1 }; },
+      },
+    };
+    const prisma = {
+      client: {
+        companyAiConfiguration: { findUnique: async () => ({ modelId: null, monthlyBudgetSatang: 1_000_000 }) },
+        companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: 0 }) },
+        $transaction: async (fn: (value: typeof tx) => Promise<unknown>) => fn(tx),
+      },
+    } as any;
+    return { prisma, events, usedCount: () => usedCount };
+  }
+
+  it('refuses both the LINE image router and receipt OCR before fetch when the company switch is off', async () => {
+    __resetCompanyAiBudgetCache();
+    let fetchCalls = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => {
+      fetchCalls += 1;
+      return { ok: true, json: async () => ({ status: 'ok' }) } as Response;
+    };
+    const tx = {
+      $executeRaw: async () => undefined,
+      companyOcrUsageEvent: { findUnique: async () => null },
+      companyAiConfiguration: { findUnique: async () => ({ ocrEnabled: false, ocrMonthlyLimit: 10 }) },
+      companyOcrMonthlyUsage: { findUnique: async () => null },
+    };
+    const prisma = {
+      client: {
+        companyAiConfiguration: { findUnique: async () => ({ monthlyBudgetSatang: null }) },
+        companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: 0 }) },
+        $transaction: async (fn: (value: typeof tx) => Promise<unknown>) => fn(tx),
+      },
+    } as any;
+    try {
+      const client = new AiGatewayClient({
+        aiGatewayInternalUrl: 'http://ai-gateway.test/v1',
+        aiGatewayInternalSecret: 'workload-secret',
+        aiMonthlyBudgetSatang: 1_000_000,
+        isProduction: false,
+      } as any, { issue: () => 'signed' } as any, undefined, prisma);
+      const result = await client.requestReceiptOcr({
+        requestId: 'webhook-request-1', companyId: 'company-1', userId: 'user-1',
+        activeCategories: [],
+        attachment: { id: 'line-message-1', mimeType: 'image/jpeg', purpose: 'receipt', contentBase64: 'AA==' },
+      });
+      assert.deepEqual(result, { status: 'failed', errorCode: 'OCR_FEATURE_DISABLED' });
+      const route = await client.requestLineIntakeRoute({
+        requestId: 'webhook-route-1', companyId: 'company-1', userId: 'user-1', locale: 'th-TH',
+        messageText: '', permissions: [], activeCategories: [],
+        attachments: [{ id: 'line-route-message-1', mimeType: 'image/jpeg', purpose: 'unknown', contentBase64: 'AA==' }],
+      });
+      assert.equal(route.ocrAdmission, 'denied');
+      assert.equal(route.ocrErrorCode, 'OCR_FEATURE_DISABLED');
+      assert.equal(fetchCalls, 0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('does not count a LINE read when the provider credential is missing', async () => {
+    __resetCompanyAiBudgetCache();
+    let quotaTransactions = 0;
+    const prisma = {
+      client: {
+        companyAiConfiguration: { findUnique: async () => ({ monthlyBudgetSatang: null }) },
+        companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: 0 }) },
+        $transaction: async () => { quotaTransactions += 1; throw new Error('unexpected OCR admission'); },
+      },
+    } as any;
+    const client = new AiGatewayClient({
+      aiGatewayInternalUrl: 'http://ai-gateway.test/v1',
+      aiGatewayInternalSecret: undefined,
+      aiMonthlyBudgetSatang: 1_000_000,
+      isProduction: false,
+    } as any, { issue: () => 'signed' } as any, undefined, prisma);
+
+    await assert.rejects(
+      () => client.requestReceiptOcr({
+        requestId: 'webhook-request-no-provider', companyId: 'company-1', userId: 'user-1',
+        activeCategories: [],
+        attachment: { id: 'line-message-no-provider', mimeType: 'image/jpeg', purpose: 'receipt', contentBase64: 'AA==' },
+      }),
+      (error: unknown) => error instanceof AiGatewayRequestError && error.code === 'AI_GATEWAY_UNAVAILABLE',
+    );
+    assert.equal(quotaTransactions, 0);
+  });
+
+  it('releases the LINE OCR event and aggregate when Typhoon is missing downstream', async () => {
+    __resetCompanyAiBudgetCache();
+    const state = readyOcrPrisma();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => ({
+      ok: true,
+      json: async () => ({ status: 'not_configured', errorCode: 'PROVIDER_CONFIG_MISSING' }),
+    } as Response);
+    try {
+      const client = new AiGatewayClient({
+        aiGatewayInternalUrl: 'http://ai-gateway.test/v1',
+        aiGatewayInternalSecret: 'workload-secret',
+        aiMonthlyBudgetSatang: 1_000_000,
+        isProduction: false,
+      } as any, { issue: () => 'signed' } as any, undefined, state.prisma);
+      const result = await client.requestReceiptOcr({
+        requestId: 'webhook-request-no-typhoon', companyId: 'company-1', userId: 'user-1',
+        activeCategories: [],
+        attachment: { id: 'line-message-no-typhoon', mimeType: 'image/jpeg', purpose: 'receipt', contentBase64: 'AA==' },
+      });
+      assert.deepEqual(result, { status: 'not_configured', errorCode: 'PROVIDER_CONFIG_MISSING' });
+      assert.equal(state.events.length, 0);
+      assert.equal(state.usedCount(), 0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('admits one LINE document before the image router and reuses it for receipt OCR', async () => {
+    __resetCompanyAiBudgetCache();
+    const state = readyOcrPrisma();
+    const originalFetch = globalThis.fetch;
+    let fetchCalls = 0;
+    globalThis.fetch = async () => {
+      fetchCalls += 1;
+      return fetchCalls === 1
+        ? new Response(JSON.stringify({ status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.99 }))
+        : new Response(JSON.stringify({ status: 'ok', fields: {} }));
+    };
+    try {
+      const client = new AiGatewayClient({
+        aiGatewayInternalUrl: 'http://ai-gateway.test/v1',
+        aiGatewayInternalSecret: 'workload-secret',
+        aiMonthlyBudgetSatang: 1_000_000,
+        isProduction: false,
+      } as any, { issue: () => 'signed' } as any, undefined, state.prisma);
+      const route = await client.requestLineIntakeRoute({
+        requestId: 'webhook-route-admitted', companyId: 'company-1', userId: 'user-1', locale: 'th-TH',
+        messageText: '', permissions: [], activeCategories: [],
+        attachments: [{ id: 'line-document-admitted', mimeType: 'image/jpeg', purpose: 'unknown', contentBase64: 'AA==' }],
+      });
+      assert.equal(route.ocrAdmission, 'admitted');
+      const result = await client.requestReceiptOcr({
+        requestId: 'webhook-ocr-admitted', companyId: 'company-1', userId: 'user-1', activeCategories: [],
+        attachment: { id: 'line-document-admitted', mimeType: 'image/jpeg', purpose: 'receipt', contentBase64: 'AA==' },
+      }, { ocrAlreadyAdmitted: true });
+      assert.equal(result.status, 'ok');
+      assert.equal(fetchCalls, 2);
+      assert.equal(state.events.length, 1);
+      assert.equal(state.usedCount(), 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('does not pre-admit a PDF that the intake router receives as metadata only', async () => {
+    __resetCompanyAiBudgetCache();
+    const state = readyOcrPrisma();
+    const originalFetch = globalThis.fetch;
+    let fetchCalls = 0;
+    globalThis.fetch = async () => {
+      fetchCalls += 1;
+      return fetchCalls === 1
+        ? new Response(JSON.stringify({ status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.99 }))
+        : new Response(JSON.stringify({ status: 'ok', fields: {} }));
+    };
+    try {
+      const client = new AiGatewayClient({
+        aiGatewayInternalUrl: 'http://ai-gateway.test/v1', aiGatewayInternalSecret: 'workload-secret',
+        aiMonthlyBudgetSatang: 1_000_000, isProduction: false,
+      } as any, { issue: () => 'signed' } as any, undefined, state.prisma);
+      const route = await client.requestLineIntakeRoute({
+        requestId: 'webhook-route-pdf', companyId: 'company-1', userId: 'user-1', locale: 'th-TH',
+        messageText: '', permissions: [], activeCategories: [],
+        attachments: [{ id: 'line-pdf', mimeType: 'application/pdf', purpose: 'unknown', contentBase64: 'AA==' }],
+      });
+      assert.equal(route.ocrAdmission, undefined);
+      assert.equal(state.events.length, 0);
+
+      await client.requestReceiptOcr({
+        requestId: 'webhook-ocr-pdf', companyId: 'company-1', userId: 'user-1', activeCategories: [],
+        attachment: { id: 'line-pdf', mimeType: 'application/pdf', purpose: 'receipt', contentBase64: 'AA==' },
+      });
+      assert.equal(state.events.length, 1);
+      assert.equal(state.usedCount(), 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('releases a disabled 200 router plan for receipt OCR, but blocks a second image call after an uncertain plan', async () => {
+    __resetCompanyAiBudgetCache();
+    const originalFetch = globalThis.fetch;
+    try {
+      const disabled = readyOcrPrisma();
+      let disabledFetchCalls = 0;
+      globalThis.fetch = async () => {
+        disabledFetchCalls += 1;
+        return disabledFetchCalls === 1
+          ? new Response(JSON.stringify({
+            status: 'UNAVAILABLE', intent: 'UNSUPPORTED', language: 'th', confidence: 0,
+            errorCode: 'PROVIDER_DISABLED',
+          }))
+          : new Response(JSON.stringify({ status: 'ok', fields: {} }));
+      };
+      const disabledClient = new AiGatewayClient({
+        aiGatewayInternalUrl: 'http://ai-gateway.test/v1', aiGatewayInternalSecret: 'workload-secret',
+        aiMonthlyBudgetSatang: 1_000_000, isProduction: false,
+      } as any, { issue: () => 'signed' } as any, undefined, disabled.prisma);
+      const disabledPlan = await disabledClient.requestLineIntakeRoute({
+        requestId: 'route-disabled', companyId: 'company-1', userId: 'user-1', locale: 'th-TH',
+        messageText: '', permissions: [], activeCategories: [],
+        attachments: [{ id: 'image-disabled', mimeType: 'image/jpeg', purpose: 'unknown', contentBase64: 'AA==' }],
+      });
+      assert.equal(disabledPlan.ocrAdmission, 'denied');
+      assert.equal(disabledPlan.ocrErrorCode, undefined);
+      assert.equal(disabled.events.length, 0);
+      assert.equal(disabled.usedCount(), 0);
+      assert.equal((await disabledClient.requestReceiptOcr({
+        requestId: 'receipt-after-route-disabled', companyId: 'company-1', userId: 'user-1', activeCategories: [],
+        attachment: { id: 'image-disabled', mimeType: 'image/jpeg', purpose: 'receipt', contentBase64: 'AA==' },
+      })).status, 'ok');
+      assert.equal(disabledFetchCalls, 2);
+      assert.equal(disabled.events.length, 1);
+      assert.equal(disabled.usedCount(), 1);
+
+      const uncertain = readyOcrPrisma();
+      globalThis.fetch = async () => new Response(JSON.stringify({
+        status: 'UNAVAILABLE', intent: 'UNSUPPORTED', language: 'th', confidence: 0,
+        errorCode: 'PROVIDER_TIMEOUT',
+      }));
+      const uncertainClient = new AiGatewayClient({
+        aiGatewayInternalUrl: 'http://ai-gateway.test/v1', aiGatewayInternalSecret: 'workload-secret',
+        aiMonthlyBudgetSatang: 1_000_000, isProduction: false,
+      } as any, { issue: () => 'signed' } as any, undefined, uncertain.prisma);
+      const uncertainPlan = await uncertainClient.requestLineIntakeRoute({
+        requestId: 'route-timeout', companyId: 'company-1', userId: 'user-1', locale: 'th-TH',
+        messageText: '', permissions: [], activeCategories: [],
+        attachments: [{ id: 'image-timeout', mimeType: 'image/jpeg', purpose: 'unknown', contentBase64: 'AA==' }],
+      });
+      assert.equal(uncertainPlan.ocrAdmission, 'admitted');
+      assert.equal(uncertainPlan.ocrErrorCode, 'OCR_ROUTE_UNAVAILABLE');
+      assert.equal(uncertain.events.length, 1);
+      assert.equal(uncertain.usedCount(), 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('releases an authenticated LINE OCR fence on a pre-provider 401 but not on contradictory success JSON', async () => {
+    __resetCompanyAiBudgetCache();
+    const originalFetch = globalThis.fetch;
+    try {
+      const rejected = readyOcrPrisma();
+      globalThis.fetch = async () => new Response('', { status: 401 });
+      const rejectedClient = new AiGatewayClient({
+        aiGatewayInternalUrl: 'http://ai-gateway.test/v1', aiGatewayInternalSecret: 'stale-secret',
+        aiMonthlyBudgetSatang: 1_000_000, isProduction: false,
+      } as any, { issue: () => 'signed' } as any, undefined, rejected.prisma);
+      await assert.rejects(() => rejectedClient.requestReceiptOcr({
+        requestId: 'webhook-http-401', companyId: 'company-1', userId: 'user-1', activeCategories: [],
+        attachment: { id: 'line-http-401', mimeType: 'image/jpeg', purpose: 'receipt', contentBase64: 'AA==' },
+      }), (error: unknown) => error instanceof AiGatewayRequestError && error.httpStatus === 401);
+      assert.equal(rejected.events.length, 0);
+      assert.equal(rejected.usedCount(), 0);
+
+      const contradictory = readyOcrPrisma();
+      globalThis.fetch = async () => new Response(JSON.stringify({ status: 'ok', errorCode: 'PROVIDER_CONFIG_MISSING' }));
+      const contradictoryClient = new AiGatewayClient({
+        aiGatewayInternalUrl: 'http://ai-gateway.test/v1', aiGatewayInternalSecret: 'workload-secret',
+        aiMonthlyBudgetSatang: 1_000_000, isProduction: false,
+      } as any, { issue: () => 'signed' } as any, undefined, contradictory.prisma);
+      assert.equal((await contradictoryClient.requestReceiptOcr({
+        requestId: 'webhook-contradictory', companyId: 'company-1', userId: 'user-1', activeCategories: [],
+        attachment: { id: 'line-contradictory', mimeType: 'image/jpeg', purpose: 'receipt', contentBase64: 'AA==' },
+      })).status, 'ok');
+      assert.equal(contradictory.events.length, 1);
+      assert.equal(contradictory.usedCount(), 1);
+
+      const syntheticHttpCode = readyOcrPrisma();
+      globalThis.fetch = async () => new Response(JSON.stringify({ status: 'failed', errorCode: 'AI_GATEWAY_ERROR_401' }));
+      const syntheticClient = new AiGatewayClient({
+        aiGatewayInternalUrl: 'http://ai-gateway.test/v1', aiGatewayInternalSecret: 'workload-secret',
+        aiMonthlyBudgetSatang: 1_000_000, isProduction: false,
+      } as any, { issue: () => 'signed' } as any, undefined, syntheticHttpCode.prisma);
+      assert.equal((await syntheticClient.requestReceiptOcr({
+        requestId: 'webhook-synthetic-http-code', companyId: 'company-1', userId: 'user-1', activeCategories: [],
+        attachment: { id: 'line-synthetic-http-code', mimeType: 'image/jpeg', purpose: 'receipt', contentBase64: 'AA==' },
+      })).status, 'failed');
+      assert.equal(syntheticHttpCode.events.length, 1);
+      assert.equal(syntheticHttpCode.usedCount(), 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
 

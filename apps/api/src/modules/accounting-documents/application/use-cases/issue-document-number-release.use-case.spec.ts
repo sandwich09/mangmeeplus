@@ -34,6 +34,7 @@ describe('IssueDocumentUseCase number release', () => {
       commitNumber: { execute: mock.fn(async () => undefined) },
       cancelNumber: { execute: mock.fn(async () => undefined) },
       transactionTax: {},
+      vatRegistration: { get: mock.fn(async () => ({ status: 'REGISTERED' })) },
     };
     repo = {
       findDocumentById: mock.fn(async () => draftInvoice()),
@@ -46,6 +47,7 @@ describe('IssueDocumentUseCase number release', () => {
 
   const make = () => new IssueDocumentUseCase(
     repo, s.audit, s.outbox, s.reserveNumber, s.commitNumber, s.cancelNumber, s.transactionTax,
+    s.vatRegistration,
   );
 
   it('cancels the reservation and propagates the original error when issue fails', async () => {
@@ -68,5 +70,22 @@ describe('IssueDocumentUseCase number release', () => {
       id: 'num_1', companyId: 'co_1', ownerType: 'accounting_document', ownerId: 'doc_1',
     });
     assert.equal(s.cancelNumber.execute.mock.callCount(), 0);
+  });
+
+  it('replays an already-issued result without another number or event', async () => {
+    repo.findDocumentById = mock.fn(async () => ({
+      ...draftInvoice(), status: 'ISSUED', documentNumber: 'INV-0001', issuedAt: new Date('2026-07-01'),
+    }));
+    const result = await make().execute(ctx, 'doc_1');
+    assert.equal(result.documentNumber, 'INV-0001');
+    assert.equal(s.reserveNumber.execute.mock.callCount(), 0);
+    assert.equal(repo.issueDocument.mock.callCount(), 0);
+    assert.equal(s.outbox.append.mock.callCount(), 0);
+  });
+
+  it('does not issue even a NO_VAT document while company VAT status is unknown', async () => {
+    s.vatRegistration.get = mock.fn(async () => ({ status: 'UNKNOWN' }));
+    await assert.rejects(() => make().execute(ctx, 'doc_1'), /must be confirmed/);
+    assert.equal(s.reserveNumber.execute.mock.callCount(), 0);
   });
 });

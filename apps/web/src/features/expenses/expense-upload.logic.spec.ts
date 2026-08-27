@@ -4,6 +4,8 @@ import {
   classifySignatureUploadFile,
   classifyUploadFile,
   detectReceiptImageByteKind,
+  expenseExtractionRetryMode,
+  expenseExtractionRetryRequestId,
   RECEIPT_UPLOAD_ACCEPT,
   SIGNATURE_UPLOAD_ACCEPT,
 } from './expense-upload.logic';
@@ -38,6 +40,19 @@ describe('classifyUploadFile', () => {
     for (const value of ['.pdf', '.png', '.jpg', '.jpeg', '.jpe', '.heic', '.heif', '.gif', 'image/gif']) {
       assert.ok(RECEIPT_UPLOAD_ACCEPT.split(',').includes(value));
     }
+  });
+});
+
+describe('OCR extraction retry', () => {
+  it('reuses the request id after a lost response, but starts a fresh provider retry', () => {
+    assert.equal(expenseExtractionRetryMode(null), 'same_request');
+    assert.equal(expenseExtractionRetryMode({ status: 'failed', errorCode: 'AI_GATEWAY_ERROR_503' }), 'new_request');
+    assert.equal(expenseExtractionRetryMode({ status: 'failed' }), 'new_request');
+    assert.equal(expenseExtractionRetryMode({ status: 'failed', errorCode: 'OCR_FEATURE_DISABLED' }), 'none');
+    assert.equal(expenseExtractionRetryMode({ status: 'failed', errorCode: 'OCR_MONTHLY_LIMIT_EXCEEDED' }), 'none');
+    assert.equal(expenseExtractionRetryMode({ status: 'ok' }), 'none');
+    assert.equal(expenseExtractionRetryRequestId('same_request', 'first-id', 'fresh-id'), 'first-id');
+    assert.equal(expenseExtractionRetryRequestId('new_request', 'first-id', 'fresh-id'), 'fresh-id');
   });
 });
 

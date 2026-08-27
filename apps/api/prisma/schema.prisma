@@ -387,6 +387,7 @@ model Company {
   accountingDocumentLines           AccountingDocumentLine[]
   accountingPayments                AccountingPayment[]
   accountingPaymentAllocations      AccountingPaymentAllocation[]
+  accountingSimpleIncomeCommands    AccountingSimpleIncomeCommand[]
   // Item 09
   expenseRecords                    ExpenseRecord[]
   expensePayments                   ExpensePayment[]
@@ -409,6 +410,7 @@ model Company {
   periodCloseRuns                   PeriodCloseRun[]
   // Item 10A
   onboardingRuns                    CompanyOnboardingRun[]
+  signupRequests                    CompanySignupRequest[]
   activatedAt                       DateTime?
   disabledAt                        DateTime?
   archivedAt                        DateTime?
@@ -416,6 +418,8 @@ model Company {
   aiConfiguration                   CompanyAiConfiguration?
   aiUsageEvents                     AiUsageEvent[]
   aiMonthlyUsage                    CompanyAiMonthlyUsage[]
+  ocrUsageEvents                    CompanyOcrUsageEvent[]
+  ocrMonthlyUsage                   CompanyOcrMonthlyUsage[]
   integrationCredentials            CompanyIntegrationCredential[]
   // Item 11
   companyTaxProfile                 CompanyTaxProfile?
@@ -566,6 +570,7 @@ model User {
   // Item 10A
   ownedOnboardingRuns     CompanyOnboardingRun[]   @relation("OwnedOnboardingRuns")
   createdOnboardingRuns   CompanyOnboardingRun[]   @relation("CreatedOnboardingRuns")
+  signupRequestsOwned     CompanySignupRequest[]
   // Item 10C
   employeeAccessProfiles  EmployeeAccessProfile[]
 }
@@ -1022,6 +1027,7 @@ model AttachmentObject {
   @@unique([companyId, id])
   @@unique([bucket, objectKey])
   @@index([companyId, status, createdAt])
+  @@index([companyId, status, uploadedAt])
   @@index([companyId, checksumSha256])
   @@index([uploadedByUserId, createdAt])
 }
@@ -1765,6 +1771,10 @@ model AccountingDocument {
   sourceDocumentId            String?
   sourceDocumentType          String?
   convertedFromDocumentId     String?
+  // Optional client retry fence for the generic invoice-draft command. The fingerprint is
+  // server-computed; both remain private persistence metadata and are never serialized.
+  createIdempotencyKey        String?
+  createPayloadFingerprint    String?
   currency                    String                                    @default("THB")
   vatMode                     AccountingVatMode                         @default(NO_VAT)
   outputTaxCode               AccountingOutputTaxCode?
@@ -1786,6 +1796,9 @@ model AccountingDocument {
   postingError                String?
   note                        String?
   internalMemo                String?
+  // Required by application validation for CREDIT_NOTE/DEBIT_NOTE; nullable keeps the migration additive.
+  adjustmentReasonCode        String?
+  adjustmentReasonText        String?
   // Issue metadata
   issuedByUserId              String?
   issuedAt                    DateTime?
@@ -1816,8 +1829,11 @@ model AccountingDocument {
   paymentAllocations          AccountingPaymentAllocation[]
   issueCommands               AccountingDocumentIssueCommand[]
   buyerEvidenceRevisions      AccountingDocumentBuyerEvidenceRevision[]
+  simpleIncomeInvoiceCommands AccountingSimpleIncomeCommand[]           @relation("SimpleIncomeInvoice")
+  simpleIncomeReceiptCommands AccountingSimpleIncomeCommand[]           @relation("SimpleIncomeReceipt")
 
   @@unique([companyId, documentType, documentNumber])
+  @@unique([companyId, createIdempotencyKey])
   @@unique([companyId, id])
   @@index([companyId, documentType, status])
   @@index([companyId, branchId, documentDate])
@@ -1892,42 +1908,46 @@ model AccountingDocumentLine {
 }
 
 model AccountingPayment {
-  id                       String                        @id @default(cuid())
+  id                       String                          @id @default(cuid())
   companyId                String
+  idempotencyKey           String?
+  payloadFingerprint       String?
   branchId                 String?
   paymentNumber            String?
   direction                AccountingPaymentDirection
-  status                   AccountingPaymentRecordStatus @default(DRAFT)
+  status                   AccountingPaymentRecordStatus   @default(DRAFT)
   counterpartyId           String?
   counterpartySnapshotJson Json?
   method                   AccountingPaymentMethod
   // `amount` stays CASH that moved — bank reconciliation matches on it. Tax the payer withheld from
   // us settles the document too but never reaches the bank, so it is its own column rather than
   // being folded in.
-  amount                   Decimal                       @db.Decimal(18, 4)
-  whtAmount                Decimal                       @default(0) @db.Decimal(18, 4)
-  allocatedAmount          Decimal                       @default(0) @db.Decimal(18, 4)
-  unappliedAmount          Decimal                       @default(0) @db.Decimal(18, 4)
-  currency                 String                        @default("THB")
+  amount                   Decimal                         @db.Decimal(18, 4)
+  whtAmount                Decimal                         @default(0) @db.Decimal(18, 4)
+  allocatedAmount          Decimal                         @default(0) @db.Decimal(18, 4)
+  unappliedAmount          Decimal                         @default(0) @db.Decimal(18, 4)
+  currency                 String                          @default("THB")
   paidAt                   DateTime
   bankAccountRef           String?
   externalReference        String?
   note                     String?
-  postingStatus            AccountingPostingStatus       @default(not_required)
+  postingStatus            AccountingPostingStatus         @default(not_required)
   journalEntryId           String?
   createdByUserId          String
   updatedByUserId          String?
   voidedByUserId           String?
   voidedAt                 DateTime?
   voidReason               String?
-  createdAt                DateTime                      @default(now())
-  updatedAt                DateTime                      @updatedAt
-  company                  Company                       @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  counterparty             AccountingCounterparty?       @relation(fields: [companyId, counterpartyId], references: [companyId, id])
-  branch                   Branch?                       @relation(fields: [companyId, branchId], references: [companyId, id])
+  createdAt                DateTime                        @default(now())
+  updatedAt                DateTime                        @updatedAt
+  company                  Company                         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  counterparty             AccountingCounterparty?         @relation(fields: [companyId, counterpartyId], references: [companyId, id])
+  branch                   Branch?                         @relation(fields: [companyId, branchId], references: [companyId, id])
   allocations              AccountingPaymentAllocation[]
+  simpleIncomeCommands     AccountingSimpleIncomeCommand[]
 
   @@unique([companyId, paymentNumber])
+  @@unique([companyId, idempotencyKey])
   @@unique([companyId, id])
   @@index([companyId, direction, status])
   @@index([companyId, paidAt])
@@ -1954,6 +1974,30 @@ model AccountingPaymentAllocation {
 
   @@unique([paymentId, documentId])
   @@index([companyId, documentId])
+}
+
+// Completed-command record for the all-or-nothing simple-income bundle. A row only exists after
+// invoice, payment, receipt, their numbers, and the in-transaction audit have all committed.
+model AccountingSimpleIncomeCommand {
+  id                 String   @id @default(cuid())
+  companyId          String
+  idempotencyKey     String
+  payloadFingerprint String
+  invoiceId          String
+  paymentId          String
+  receiptId          String
+  completedAt        DateTime @default(now())
+
+  company Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  invoice AccountingDocument @relation("SimpleIncomeInvoice", fields: [companyId, invoiceId], references: [companyId, id])
+  payment AccountingPayment  @relation(fields: [companyId, paymentId], references: [companyId, id])
+  receipt AccountingDocument @relation("SimpleIncomeReceipt", fields: [companyId, receiptId], references: [companyId, id])
+
+  @@unique([companyId, idempotencyKey])
+  @@unique([companyId, invoiceId])
+  @@unique([companyId, paymentId])
+  @@unique([companyId, receiptId])
+  @@index([companyId, completedAt])
 }
 
 // ─── Item 09: Expense and Receipt Upload ────────────────────────────────────
@@ -2327,27 +2371,30 @@ model ExpenseRecord {
 }
 
 model ExpensePayment {
-  id              String                     @id @default(cuid())
-  companyId       String
-  expenseId       String
-  amount          Decimal                    @db.Decimal(18, 4)
-  currency        String                     @default("THB")
-  paymentMethod   ExpensePaymentMethod?
-  paidAt          DateTime
-  bankAccountRef  String?
-  status          ExpensePaymentRecordStatus @default(RECORDED)
-  postingStatus   ExpensePostingStatus       @default(pending)
-  journalEntryId  String?
-  postingError    String?
-  createdByUserId String
-  voidedByUserId  String?
-  voidedAt        DateTime?
-  createdAt       DateTime                   @default(now())
-  updatedAt       DateTime                   @updatedAt
-  company         Company                    @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  expense         ExpenseRecord              @relation(fields: [companyId, expenseId], references: [companyId, id], onDelete: Restrict)
+  id                 String                     @id @default(cuid())
+  companyId          String
+  expenseId          String
+  idempotencyKey     String?
+  payloadFingerprint String?
+  amount             Decimal                    @db.Decimal(18, 4)
+  currency           String                     @default("THB")
+  paymentMethod      ExpensePaymentMethod?
+  paidAt             DateTime
+  bankAccountRef     String?
+  status             ExpensePaymentRecordStatus @default(RECORDED)
+  postingStatus      ExpensePostingStatus       @default(pending)
+  journalEntryId     String?
+  postingError       String?
+  createdByUserId    String
+  voidedByUserId     String?
+  voidedAt           DateTime?
+  createdAt          DateTime                   @default(now())
+  updatedAt          DateTime                   @updatedAt
+  company            Company                    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  expense            ExpenseRecord              @relation(fields: [companyId, expenseId], references: [companyId, id], onDelete: Restrict)
 
   @@unique([companyId, id])
+  @@unique([companyId, idempotencyKey])
   @@index([companyId, expenseId, paidAt])
   @@index([companyId, postingStatus, paidAt])
   @@index([companyId, createdByUserId])
@@ -2698,6 +2745,21 @@ enum OnboardingRunStatus {
   FAILED
 }
 
+enum CompanySignupState {
+  RECEIVED
+  VALIDATED
+  EMAIL_PENDING
+  EMAIL_VERIFIED
+  PROVISIONING
+  READY
+  LINE_LINK_PENDING
+  COMPLETED
+  EMAIL_FAILED
+  PROVISIONING_FAILED
+  SUSPENDED
+  EXPIRED
+}
+
 model ChartOfAccount {
   id                           String                        @id @default(cuid())
   companyId                    String?
@@ -2909,6 +2971,39 @@ model CompanyOnboardingRun {
   @@index([createdBySystemAdminUserId])
 }
 
+// P10 external-signup core. Public ingress remains absent until the owner chooses its signing and
+// duplicate-identity policy. requestedOfferKey is attribution only; it grants no entitlement.
+model CompanySignupRequest {
+  id                    String             @id @default(cuid())
+  source                String             @default("official-site")
+  externalSignupId      String             @unique
+  payloadHash           String
+  companyName           String
+  taxId                 String?
+  ownerDisplayName      String
+  contactEmail          String
+  consentVersion        String
+  referralCode          String?
+  requestedOfferKey     String?
+  state                 CompanySignupState @default(RECEIVED)
+  version               Int                @default(0)
+  failureCode           String?
+  provisioningAttemptId String?            @unique
+  provisioningStartedAt DateTime?
+  companyId             String?
+  ownerUserId           String?
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+  company               Company?           @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  owner                 User?              @relation(fields: [ownerUserId], references: [id], onDelete: SetNull)
+
+  @@index([state, updatedAt])
+  @@index([contactEmail])
+  @@index([taxId])
+  @@index([companyId])
+  @@index([ownerUserId])
+}
+
 // ---- Item 10A: Partner Management ----
 
 enum CompanyCredentialKind {
@@ -2951,6 +3046,9 @@ model CompanyAiConfiguration {
   companyId                  String   @unique
   modelId                    String? // null = inherit the platform default model (metering spec §6.8)
   monthlyBudgetSatang        Int? // null = inherit AI_MONTHLY_BUDGET_SATANG (metering spec §7.3)
+  ocrEnabled                 Boolean  @default(true)
+  ocrMonthlyLimit            Int? // null = unlimited; Platform Admin only (OCR governance spec §4)
+  ocrConfigVersion           Int      @default(0) // monotonic CAS fence; increment only on real OCR config change
   updatedBySystemAdminUserId String?
   createdAt                  DateTime @default(now())
   updatedAt                  DateTime @updatedAt
@@ -3021,6 +3119,36 @@ model CompanyAiMonthlyUsage {
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
   company               Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, monthKey])
+}
+
+// One row per OCR action admitted immediately before a provider call. The unique request fence
+// makes a transport retry with the same request id unable to consume quota or call the provider twice.
+model CompanyOcrUsageEvent {
+  id          String   @id @default(cuid())
+  companyId   String
+  monthKey    String // 'YYYY-MM', Asia/Bangkok
+  sourceRoute String // 'receipt-ocr-web' | 'receipt-ocr-line' | 'bank-statement-extract'
+  requestId   String
+  createdAt   DateTime @default(now())
+  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, sourceRoute, requestId])
+  @@index([companyId, monthKey, sourceRoute])
+  @@index([companyId, createdAt])
+}
+
+// Serialized by the per-company/month advisory lock in the admission helper. This aggregate is
+// the quota truth; OCR/model usage rows are deliberately not reused because one read can call models many times.
+model CompanyOcrMonthlyUsage {
+  id        String   @id @default(cuid())
+  companyId String
+  monthKey  String // 'YYYY-MM', Asia/Bangkok
+  usedCount Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@unique([companyId, monthKey])
 }

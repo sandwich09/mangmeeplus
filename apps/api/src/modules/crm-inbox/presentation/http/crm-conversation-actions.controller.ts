@@ -43,7 +43,7 @@ export class CrmConversationActionsController {
   }
 
   @Post('create-quotation')
-  @RequirePermissions('crm.quotation.link')
+  @RequirePermissions('crm.opportunity.create', 'crm.quotation.link')
   @ApiOperation({ summary: 'Create a deal + quotation draft from a conversation' })
   createQuotation(@ReqCtx() ctx: RequestContext, @Param('conversationId') conversationId: string, @Body() body: CreateQuotationFromConversationInput) {
     return this.createFrom.createQuotation(ctx, conversationId, body);

@@ -80,6 +80,8 @@ describe('CreateDocumentUseCase Tax Code compatibility header', () => {
       repo as any,
       { log: mock.fn(async () => undefined) } as any,
       transactionTax as any,
+      { get: mock.fn(async () => ({ status: 'REGISTERED' })) } as any,
+      { assertLaunchRouteOpen: mock.fn(async () => undefined) } as any,
     );
 
     await assert.rejects(

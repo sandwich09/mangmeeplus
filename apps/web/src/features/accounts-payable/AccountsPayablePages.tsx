@@ -10,7 +10,7 @@ import { ForbiddenState } from '@/common/components/state';
 import { formatThaiDate } from '@/common/i18n/thai-date';
 import { listVendorBills, getVendorBill, createVendorBill, matchVendorBill, submitVendorBill, approveVendorBill, rejectVendorBill, voidVendorBill, getSupplierPayment, listSupplierPayments, createSupplierPayment, voidSupplierPayment, generateSourceJournal, releasePp36InputClaim, getApAging, reviewVendorBillTaxEvidence, updateVendorBillTaxEvidence, getApprovalPolicy, updateApprovalPolicy, listWhtHandoffs, linkExternalWhtCertificate, listWhtIncomeCategories } from './accounts-payable.api';
 import type { WhtIncomeCategoryOption } from './accounts-payable.api';
-import type { PaymentMethod, SupplierPaymentDetail, SupplierPaymentSummary, TradeTaxEvidenceDto, TransactionTaxContext, VendorBillDetail, VendorBillSummary } from '@watchdog-bms/contracts';
+import type { PaymentMethod, SupplierPaymentDetail, SupplierPaymentSummary, SupplierSummary, TradeTaxEvidenceDto, TransactionTaxContext, VendorBillDetail, VendorBillSummary } from '@watchdog-bms/contracts';
 import { listSuppliers } from '@/features/procurement/procurement.api';
 import { TransactionTaxLineSelector } from '@/features/tax/TransactionTaxLineSelector';
 import { listTradeTaxEvidence, uploadTradeTaxEvidenceAttachment } from '@/features/tax/transaction-tax.api';
@@ -260,8 +260,9 @@ function VendorBillTaxEvidencePanel({ companyId, bill, canEdit, canUpload, canRe
 function CreateVendorBillForm({ companyId, canCreate, onCreated }: { companyId: string; canCreate: boolean; onCreated: (id: string) => void }) {
   const toast = useToast();
   const branch = useBranchFilter();
-  const [suppliers, setSuppliers] = useState<Array<{ id: string; displayName: string }>>([]);
+  const [suppliers, setSuppliers] = useState<SupplierSummary[]>([]);
   const [supplierId, setSupplierId] = useState('');
+  const [supplierDocumentNumber, setSupplierDocumentNumber] = useState('');
   const [context, setContext] = useState<TransactionTaxContext>('DOMESTIC_PURCHASE');
   const [billDate, setBillDate] = useState(todayCivilDate());
   const [dueDate, setDueDate] = useState(todayCivilDate());
@@ -275,13 +276,20 @@ function CreateVendorBillForm({ companyId, canCreate, onCreated }: { companyId: 
   const [busy, setBusy] = useState(false);
   const [suppliersLoading, setSuppliersLoading] = useState(canCreate);
   const [error, setError] = useState('');
+  const [submitErrorRevision, setSubmitErrorRevision] = useState(0);
+  const errorSummaryRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (submitErrorRevision === 0) return;
+    errorSummaryRef.current?.scrollIntoView({ behavior: 'auto', block: 'start' });
+    errorSummaryRef.current?.focus({ preventScroll: true });
+  }, [submitErrorRevision]);
   useEffect(() => {
     if (!canCreate) return;
     const loadSuppliers = async () => {
       setSuppliersLoading(true);
       try {
         const result = await listSuppliers(companyId, { status: 'ACTIVE', pageSize: 100 });
-        const rows = (result as { data?: Array<{ id: string; displayName: string }> }).data ?? [];
+        const rows = result.data ?? [];
         setSuppliers(rows); setSupplierId((current) => current || rows[0]?.id || '');
       } catch (cause) {
         setError(err(cause));
@@ -296,29 +304,56 @@ function CreateVendorBillForm({ companyId, canCreate, onCreated }: { companyId: 
     try {
       const created = await createVendorBill(companyId, {
         supplierId, branchId: branch?.branchId || undefined, billDate, dueDate, currency: 'THB', vatMode,
+        supplierDocumentNumber: supplierDocumentNumber.trim() || undefined,
         matchingMode: 'NONE',
         pp36Candidate: context === 'IMPORT_SERVICE',
         lines: [{ lineNumber: 1, description, quantity, unitPrice, vatMode, vatRate: vatRate || undefined, inputVatClaimStatus: definitionId ? 'NEEDS_REVIEW' : 'NON_CLAIMABLE', taxCodeDefinitionId: definitionId || undefined, externalTaxCode, transactionContext: context }],
       });
       onCreated(created.id);
-      toast.success('สร้างร่าง Vendor Bill เรียบร้อยแล้ว');
-    } catch (cause) { setError(err(cause)); } finally { setBusy(false); }
+      toast.success('บันทึกบิลผู้ขายฉบับร่างแล้ว');
+    } catch (cause) { setError(err(cause)); setSubmitErrorRevision((current) => current + 1); } finally { setBusy(false); }
   }
   const amount = String(Number(quantity || 0) * Number(unitPrice || 0));
   return <details className="rounded-xl border border-gray-200 bg-white p-4" open>
-    <summary className="cursor-pointer font-bold text-gray-900">สร้าง Vendor Bill พร้อม Tax Code รายบรรทัด</summary>
-    {error && <div className="mt-3"><ErrorBanner message={error} /></div>}
+    <summary className="cursor-pointer font-bold text-gray-900">บันทึกบิลผู้ขาย</summary>
+    {error && <div ref={errorSummaryRef} role="alert" tabIndex={-1} className="mt-3 scroll-mt-[calc(var(--app-header-h)+1rem)] rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2">{error}</div>}
     <form className="mt-4 grid gap-3 sm:grid-cols-2" onSubmit={submit}>
-      <ThemedSelect value={supplierId} disabled={!canCreate || suppliersLoading} onChange={(event) => setSupplierId(event.target.value)}>{suppliersLoading ? <option value="">กำลังโหลด...</option> : suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.displayName}</option>)}</ThemedSelect>
-      <ThemedSelect value={context} onChange={(event) => { setContext(event.target.value as TransactionTaxContext); setDefinitionId(''); setExternalTaxCode(undefined); setVatRate(''); setVatMode('NO_VAT'); }}><option value="DOMESTIC_PURCHASE">ซื้อในประเทศ</option><option value="IMPORT_GOODS">นำเข้าสินค้า</option><option value="IMPORT_SERVICE">บริการต่างประเทศ / ภ.พ.36</option></ThemedSelect>
-      <ThemedDate className={inputClass} value={billDate} onChange={(event) => setBillDate(event.target.value)} required />
-      <ThemedDate className={inputClass} value={dueDate} onChange={(event) => setDueDate(event.target.value)} required />
-      <input className={`${inputClass} sm:col-span-2`} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="รายละเอียด" required />
-      <input className={inputClass} type="number" step="0.0001" min="0" value={quantity} onChange={(event) => setQuantity(event.target.value)} required />
-      <input className={inputClass} type="number" step="0.01" min="0" value={unitPrice} onChange={(event) => setUnitPrice(event.target.value)} required />
+      <div className="space-y-1">
+        <label htmlFor="vendor-bill-supplier" className="block text-sm font-medium text-gray-700">ผู้ขาย</label>
+        <ThemedSelect id="vendor-bill-supplier" aria-label="ผู้ขาย" value={supplierId} disabled={!canCreate || suppliersLoading} onChange={(event) => setSupplierId(event.target.value)}>{suppliersLoading ? <option value="">กำลังโหลด...</option> : suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.displayNameSnapshot}</option>)}</ThemedSelect>
+      </div>
+      <div className="space-y-1">
+        <label htmlFor="vendor-bill-context" className="block text-sm font-medium text-gray-700">ประเภทการซื้อ</label>
+        <ThemedSelect id="vendor-bill-context" aria-label="ประเภทการซื้อ" value={context} onChange={(event) => { setContext(event.target.value as TransactionTaxContext); setDefinitionId(''); setExternalTaxCode(undefined); setVatRate(''); setVatMode('NO_VAT'); }}><option value="DOMESTIC_PURCHASE">ซื้อในประเทศ</option><option value="IMPORT_GOODS">นำเข้าสินค้า</option><option value="IMPORT_SERVICE">บริการต่างประเทศ / ภ.พ.36</option></ThemedSelect>
+      </div>
+      <div className="space-y-1 sm:col-span-2">
+        <label htmlFor="vendor-bill-source-number" className="block text-sm font-medium text-gray-700">เลขที่เอกสารผู้ขาย (ถ้ามี)</label>
+        <input id="vendor-bill-source-number" name="supplierDocumentNumber" className={inputClass} value={supplierDocumentNumber} onChange={(event) => setSupplierDocumentNumber(event.target.value)} maxLength={80} disabled={!canCreate || busy} aria-describedby="vendor-bill-source-number-help" placeholder="เช่น INV-001" />
+        <p id="vendor-bill-source-number-help" className="text-sm text-gray-500">หากไม่มีเลขให้เว้นว่าง เลขนี้ไม่แทนเลขที่ใบกำกับภาษีในส่วนหลักฐานภาษี</p>
+      </div>
+      <div className="space-y-1">
+        <label htmlFor="vendor-bill-date" className="block text-sm font-medium text-gray-700">วันที่เอกสาร</label>
+        <ThemedDate id="vendor-bill-date" className={inputClass} value={billDate} onChange={(event) => setBillDate(event.target.value)} required />
+      </div>
+      <div className="space-y-1">
+        <label htmlFor="vendor-bill-due-date" className="block text-sm font-medium text-gray-700">วันที่ครบกำหนดชำระ</label>
+        <ThemedDate id="vendor-bill-due-date" className={inputClass} value={dueDate} onChange={(event) => setDueDate(event.target.value)} required />
+      </div>
+      <div className="space-y-1 sm:col-span-2">
+        <label htmlFor="vendor-bill-description" className="block text-sm font-medium text-gray-700">รายละเอียดสินค้า/บริการ</label>
+        <input id="vendor-bill-description" className={inputClass} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="รายละเอียด" required />
+      </div>
+      <div className="space-y-1">
+        <label htmlFor="vendor-bill-quantity" className="block text-sm font-medium text-gray-700">จำนวน</label>
+        <input id="vendor-bill-quantity" className={inputClass} type="number" step="0.0001" min="0" value={quantity} onChange={(event) => setQuantity(event.target.value)} required />
+      </div>
+      <div className="space-y-1">
+        <label htmlFor="vendor-bill-unit-price" className="block text-sm font-medium text-gray-700">ราคาต่อหน่วย (บาท)</label>
+        <input id="vendor-bill-unit-price" className={inputClass} type="number" step="0.01" min="0" value={unitPrice} onChange={(event) => setUnitPrice(event.target.value)} required />
+      </div>
       <div className="sm:col-span-2"><TransactionTaxLineSelector companyId={companyId} branchId={branch?.branchId || undefined} sourceType="procurement.vendor_bill" sourceId="new-vendor-bill" sourceLineId="line-1" transactionContext={context} direction={context === 'IMPORT_SERVICE' ? 'SELF_ASSESSED' : 'INPUT'} documentDate={billDate} netAmount={amount} grossAmount={amount} value={definitionId} onChange={(id, definition) => { setDefinitionId(id); setExternalTaxCode(definition?.externalCode); setVatRate(definition?.rate ?? ''); setVatMode(context === 'IMPORT_SERVICE' || !definition || definition.calculationMethod === 'NONE' ? 'NO_VAT' : definition.treatment === 'EXEMPT' ? 'EXEMPT' : definition.calculationMethod === 'INCLUSIVE' ? 'VAT_INCLUDED' : 'VAT_EXCLUDED'); }} /></div>
       {['IMPORT_GOODS', 'IMPORT_SERVICE'].includes(context) && <p className="text-xs text-amber-700 sm:col-span-2">รายการนำเข้าจะอยู่สถานะ pending evidence จนแนบและยืนยันหลักฐานในหน้า Tax Evidence</p>}
-      <button disabled={!canCreate || busy || !supplierId || !description} className={`${btnClass} sm:col-span-2`}>{busy ? 'กำลังบันทึก...' : 'สร้าง Vendor Bill Draft'}</button>
+      <button disabled={!canCreate || busy || !supplierId || !description} className={`${btnClass} sm:col-span-2`}>{busy ? 'กำลังบันทึก...' : 'บันทึกฉบับร่าง'}</button>
     </form>
   </details>;
 }

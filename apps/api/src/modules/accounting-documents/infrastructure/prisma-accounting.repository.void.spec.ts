@@ -203,6 +203,22 @@ describe('voidPaymentTrueReversal (H-04)', () => {
     );
   });
 
+  it('keeps a paid invoice and payment intact until its active receipt is voided', async () => {
+    client.state.documents.push({
+      id: 'receipt_1', companyId: CO, documentType: 'RECEIPT', documentNumber: 'RC-1', status: 'ISSUED',
+      sourceDocumentId: 'doc_1', paidAmount: '0.00', outstandingAmount: '0.00',
+    });
+
+    await assert.rejects(
+      () => repo.voidPaymentTrueReversal(CO, 'pay_1', 'u2', 'บันทึกผิดรายการ', 'JV-REV-1'),
+      (error: unknown) => error instanceof UnprocessableEntityException
+        && (error.getResponse() as any).code === 'accounting_active_receipt_must_be_voided',
+    );
+    assert.equal(client.state.payments[0].status, 'RECORDED');
+    assert.equal(client.state.documents[0].paidAmount, '400.00');
+    assert.equal(client.state.allocations.length, 1);
+  });
+
   it('fails closed when a posted journal exists but no reversal number was reserved', async () => {
     await assert.rejects(
       () => repo.voidPaymentTrueReversal(CO, 'pay_1', 'u2', 'เหตุผล'),
@@ -321,6 +337,19 @@ describe('voidDocumentTrueReversal (H-04)', () => {
       () => repo.voidDocumentTrueReversal(CO, 'doc_1', 'u2', 'เหตุผล', 'ISSUED', 'JV-REV-9'),
       UnprocessableEntityException,
     );
+  });
+
+  it('blocks source void while an active receipt or tax-invoice child remains', async () => {
+    client.state.documents.push({
+      id: 'receipt_1', companyId: CO, documentType: 'RECEIPT', documentNumber: 'RC-1', status: 'ISSUED',
+      sourceDocumentId: 'doc_1', paidAmount: '0.00', outstandingAmount: '0.00',
+    });
+    await assert.rejects(
+      () => repo.voidDocumentTrueReversal(CO, 'doc_1', 'u2', 'เหตุผล', 'ISSUED', 'JV-REV-9'),
+      (error: unknown) => error instanceof UnprocessableEntityException
+        && (error.getResponse() as any).code === 'accounting_active_child_document_must_be_voided',
+    );
+    assert.equal(client.state.documents[0].status, 'ISSUED');
   });
 
   it('blocks a tax-relevant void when the PP30 period is filed', async () => {

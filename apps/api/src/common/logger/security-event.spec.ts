@@ -10,11 +10,20 @@
  * on the emitting side — the deploy script is deliberately not edited (a concurrent lane owns it
  * under M-16), so this test is what keeps the two sides honest.
  */
-import { describe, it } from 'node:test';
+import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
+import { ConflictException, ForbiddenException } from '@nestjs/common';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { emitSecurityEvent, SECURITY_EVENT, type SecurityEventName } from './security-event';
+import {
+  CUSTOMER_JOURNEY_SIGNALS,
+  JOURNEY_METRIC_DIMENSION_ALLOWLIST,
+  JOURNEY_METRIC_FORBIDDEN_DIMENSIONS,
+  reconcileTerminalCardinality,
+} from '../observability/customer-journey-signal.catalog';
+import { customerJourneyFailure, observeCustomerJourney } from '../observability/customer-journey-audit';
+import { CUSTOMER_JOURNEY_FAILURE_MATRIX } from '../observability/customer-journey-failure-matrix.catalog';
 
 const REPO_ROOT = join(__dirname, '../../../../..');
 const DEPLOY_SCRIPT = join(REPO_ROOT, 'infra/prod-ecs-express/deploy.sh');
@@ -202,5 +211,171 @@ describe('production security alarm coverage (infra/prod-ecs-express/deploy.sh)'
       !emittedEventNames(withoutEmit).has('ai.tool.invoke.denied'),
       'removing every emitSecurityEvent call must make this guard fail, not pass on the catalogue',
     );
+  });
+});
+
+describe('P9-0 customer journey signal contract', () => {
+  it('covers every required stage across all four product lanes with no invented target', () => {
+    assert.deepEqual(
+      [...new Set(CUSTOMER_JOURNEY_SIGNALS.map((signal) => signal.lane))].sort(),
+      ['accounting', 'ai', 'ops', 'signup'],
+    );
+    assert.deepEqual(
+      CUSTOMER_JOURNEY_SIGNALS.map((signal) => signal.key).sort(),
+      [
+        'claim-email-delivery', 'expense-confirmation', 'line-ai-answer', 'line-link', 'line-login',
+        'official-signup-receive', 'outbox-worker', 'owner-claim', 'receipt-intake', 'receipt-ocr',
+        'sales-confirmation', 'tenant-provision',
+      ].sort(),
+    );
+    for (const signal of CUSTOMER_JOURNEY_SIGNALS) assert.equal(signal.target, null, `${signal.key} needs a real baseline first`);
+  });
+
+  it('has unique stable keys, explicit terminal classes, owner, severity, and one terminal per accepted correlation', () => {
+    const keys = CUSTOMER_JOURNEY_SIGNALS.map((signal) => signal.key);
+    assert.equal(new Set(keys).size, keys.length, 'journey signal keys must be unique');
+    for (const signal of CUSTOMER_JOURNEY_SIGNALS) {
+      assert.match(signal.key, /^[a-z0-9]+(?:-[a-z0-9]+)+$/);
+      assert.ok(signal.owner.length > 0, `${signal.key} needs an owner`);
+      assert.ok(signal.runbook.length > 0, `${signal.key} needs a runbook`);
+      assert.equal(signal.terminalCardinality, 'exactly_one_per_accepted_correlation');
+      assert.ok(signal.successTerminalValues.length > 0, `${signal.key} needs a success terminal`);
+      assert.ok(signal.failureTerminalValues.length > 0, `${signal.key} needs a failure terminal`);
+      const outcomes = [
+        ...signal.successTerminalValues,
+        ...signal.neutralTerminalValues,
+        ...signal.failureTerminalValues,
+      ];
+      assert.equal(new Set(outcomes).size, outcomes.length, `${signal.key} terminal classes must not overlap`);
+      assert.ok(signal.denominator.name.length > 0 && signal.numerator.name.length > 0);
+      assert.ok(signal.latencyClock.start.length > 0 && signal.latencyClock.end.length > 0);
+    }
+  });
+
+  it('keeps metric dimensions low-cardinality and excludes tenant/customer/document identity', () => {
+    assert.deepEqual(JOURNEY_METRIC_DIMENSION_ALLOWLIST, [
+      'environment', 'service', 'journey', 'stage', 'outcome', 'failureClass',
+    ]);
+    const allowed = new Set<string>(JOURNEY_METRIC_DIMENSION_ALLOWLIST);
+    for (const forbidden of JOURNEY_METRIC_FORBIDDEN_DIMENSIONS) {
+      assert.equal(allowed.has(forbidden), false, `${forbidden} must never become a metric dimension`);
+    }
+  });
+
+  it('proves every claimed current source exists and contains the exact evidence token', () => {
+    for (const signal of CUSTOMER_JOURNEY_SIGNALS) {
+      if (signal.coverage === 'LIVE') assert.equal(signal.gap, null, `${signal.key} is LIVE but still names a gap`);
+      if (signal.coverage !== 'PLANNED') assert.ok(signal.evidence.length > 0, `${signal.key} claims current coverage without evidence`);
+      for (const evidence of signal.evidence) {
+        const source = readFileSync(join(REPO_ROOT, evidence.path), 'utf8');
+        assert.ok(source.includes(evidence.token), `${signal.key}: ${evidence.path} must contain ${evidence.token}`);
+      }
+      const runbookPath = signal.runbook.split('#')[0]!;
+      assert.doesNotThrow(() => readFileSync(join(REPO_ROOT, runbookPath), 'utf8'), `${signal.key} runbook must exist`);
+    }
+  });
+
+  it('detects missing, duplicate, and orphan terminals from synthetic correlations', () => {
+    assert.deepEqual(
+      reconcileTerminalCardinality(['synthetic-a', 'synthetic-b', 'synthetic-c'], [
+        'synthetic-a', 'synthetic-b', 'synthetic-b', 'synthetic-orphan',
+      ]),
+      { missing: ['synthetic-c'], duplicates: ['synthetic-b'], orphaned: ['synthetic-orphan'] },
+    );
+  });
+});
+
+describe('P9-1b customer journey audit boundary', () => {
+  it('writes one accepted and one successful terminal with the same correlation', async () => {
+    const rows: any[] = [];
+    const audit = { log: mock.fn(async (row: any) => { rows.push(row); }) };
+    const result = await observeCustomerJourney(
+      audit as any,
+      { key: 'receipt-ocr', requestId: 'synthetic-1', targetType: 'expense_record', targetId: 'expense-1' },
+      async () => ({ status: 'ok' }),
+      () => ({ outcome: 'completed' }),
+    );
+
+    assert.deepEqual(result, { status: 'ok' });
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0].action, 'journey.receipt.ocr.accepted');
+    assert.equal(rows[1].action, 'journey.receipt.ocr.terminal');
+    assert.equal(rows[0].requestId, 'synthetic-1');
+    assert.equal(rows[1].requestId, 'synthetic-1');
+    assert.equal(rows[1].metadataJson.outcome, 'completed');
+    assert.equal(typeof rows[1].metadataJson.durationMs, 'number');
+  });
+
+  it('writes one failed terminal and preserves the application error', async () => {
+    const rows: any[] = [];
+    const audit = { log: mock.fn(async (row: any) => { rows.push(row); }) };
+    const conflict = new ConflictException('changed');
+
+    await assert.rejects(
+      () => observeCustomerJourney(
+        audit as any,
+        { key: 'sales-confirmation', requestId: 'synthetic-2', targetType: 'accounting_document' },
+        async () => { throw conflict; },
+        () => ({ outcome: 'issued' }),
+      ),
+      (error) => error === conflict,
+    );
+    assert.equal(rows.length, 2);
+    assert.equal(rows[1].result, 'FAILED');
+    assert.equal(rows[1].metadataJson.outcome, 'conflict');
+    assert.equal(rows[1].metadataJson.failureClass, 'conflict');
+  });
+
+  it('keeps failure classes bounded and carries no exception message', () => {
+    assert.deepEqual(customerJourneyFailure(new ForbiddenException('secret detail')), {
+      outcome: 'denied', failureClass: 'permission',
+    });
+    assert.deepEqual(customerJourneyFailure(new Error('provider response payload')), {
+      outcome: 'failed', failureClass: 'unexpected',
+    });
+  });
+});
+
+describe('P9-2 customer journey failure matrix', () => {
+  it('covers every required fault without claiming absent P10/P11 flows are live', () => {
+    assert.deepEqual(CUSTOMER_JOURNEY_FAILURE_MATRIX.map((row) => row.key), [
+      'api-timeout-5xx',
+      'redis-rate-limit-unavailable',
+      'outbox-backlog-dead',
+      'ses-hard-bounce-provider-outage',
+      'line-invalid-signature',
+      'line-provider-error',
+      'ocr-hosted-ai-timeout-fallback',
+      'db-audit-outbox-failure',
+      'provisioning-partial-failure',
+    ]);
+    assert.deepEqual(
+      CUSTOMER_JOURNEY_FAILURE_MATRIX.filter((row) => row.coverage === 'PLANNED').map((row) => row.key),
+      ['ses-hard-bounce-provider-outage', 'provisioning-partial-failure'],
+    );
+  });
+
+  it('gives every live row a complete detect-alert-diagnose-recover/no-duplicate chain', () => {
+    for (const row of CUSTOMER_JOURNEY_FAILURE_MATRIX.filter((entry) => entry.coverage === 'LIVE')) {
+      assert.ok(row.detection, `${row.key}: detection`);
+      assert.ok(row.alarm, `${row.key}: alarm`);
+      assert.ok(row.runbookAnchor, `${row.key}: runbook`);
+      assert.ok(row.recovery, `${row.key}: recovery`);
+      assert.ok(row.noDuplicateInvariant, `${row.key}: no duplicate invariant`);
+      assert.equal(row.gap, null, `${row.key}: live row cannot carry a gap`);
+    }
+  });
+
+  it('pins every claim to source evidence and every runbook anchor to a real section', () => {
+    const runbook = readFileSync(join(REPO_ROOT, 'docs/runbooks/customer-journey-signal-triage.md'), 'utf8');
+    for (const row of CUSTOMER_JOURNEY_FAILURE_MATRIX) {
+      const heading = row.runbookAnchor.split('#')[1]!.replaceAll('-', ' ');
+      assert.ok(runbook.toLowerCase().includes(`### ${heading}`), `${row.key}: missing runbook heading`);
+      assert.ok(row.evidence.length > 0, `${row.key}: evidence`);
+      for (const evidence of row.evidence) {
+        const source = readFileSync(join(REPO_ROOT, evidence.path), 'utf8');
+        assert.ok(source.includes(evidence.token), `${row.key}: missing ${evidence.path}#${evidence.token}`);
+      }
+    }
   });
 });

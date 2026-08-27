@@ -137,9 +137,11 @@ export class AppConfigService {
   get watchdogJwtSecret(): string | undefined { return this.config.WATCHDOG_JWT_SECRET_ARN; }
   /** Single signing/verifying secret resolver; both sides must always use the same key. */
   get authJwtSecret(): string | undefined { return this.watchdogJwtSecret ?? this.devAuthSecret; }
-  get emailProvider(): 'disabled' | 'ses' { return this.config.EMAIL_PROVIDER; }
+  get emailProvider(): 'disabled' | 'local-console' | 'ses' { return this.config.EMAIL_PROVIDER; }
   get sesRegion(): string | undefined { return this.config.SES_REGION; }
   get sesFromAddress(): string | undefined { return this.config.SES_FROM_ADDRESS; }
+  /** SES links require an explicit frontend URL, never the public API-origin fallback. */
+  get sesWebBaseUrl(): string | undefined { return this.config.WEB_BASE_URL; }
   get passwordLoginMaxPerIdentifier(): number { return this.config.PASSWORD_LOGIN_MAX_PER_IDENTIFIER; }
   get passwordLoginMaxPerIp(): number { return this.config.PASSWORD_LOGIN_MAX_PER_IP; }
   get passwordLoginWindowSeconds(): number { return this.config.PASSWORD_LOGIN_WINDOW_SECONDS; }

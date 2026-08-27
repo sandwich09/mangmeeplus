@@ -18,7 +18,7 @@ import { PermissionResolverService } from '../../../access-control/application/p
 import { LaunchGateGuardService } from '../../../feature-launch/application/launch-gate.guard';
 import { LaunchShadowProbe } from '../../../feature-launch/application/launch-shadow.probe';
 import { SHADOW_SURFACES } from '../../../feature-launch/domain/shadow-surface.catalog';
-import { AiGatewayClient } from '../../infrastructure/ai-gateway.client';
+import { AiGatewayClient, type GovernedLineIntakeRoutePlan } from '../../infrastructure/ai-gateway.client';
 import { LineReplyAdapter, type LineDeliveryResult } from '../../infrastructure/line-reply.adapter';
 import { LineIntakeStateRepository } from '../../infrastructure/line-intake-state.repository';
 import {
@@ -176,6 +176,21 @@ const MEDIA_CLARIFY_REPLY = [
   '2) ภาพประกอบคำถาม ไม่ต้องบันทึก',
   '3) สรุปหลายรายการ (เก็บไฟล์ไว้ตรวจ แต่ยังไม่สร้างค่าใช้จ่าย)',
 ].join('\n');
+
+/** Keep a governed OCR refusal useful: the attachment remains recoverable and the same simple
+ * numbered manual path stays available. Internal route/config names never reach the customer. */
+export function formatOcrGovernanceClarifyReply(errorCode?: string): string {
+  const notice = errorCode === 'OCR_FEATURE_DISABLED'
+    ? '🤖 บริษัทปิดการอ่านเอกสารด้วย AI ไว้ค่ะ ระบบยังเก็บไฟล์นี้ไว้ได้ แต่จะไม่อ่านข้อมูลให้อัตโนมัติ'
+    : errorCode === 'OCR_MONTHLY_LIMIT_EXCEEDED'
+      ? '📊 บริษัทใช้สิทธิ์อ่านเอกสารด้วย AI ครบเดือนนี้แล้วค่ะ ระบบยังเก็บไฟล์นี้ไว้ได้ แต่จะไม่อ่านข้อมูลให้อัตโนมัติ'
+      : errorCode === 'OCR_QUOTA_UNAVAILABLE'
+        ? '⏳ ระบบตรวจสอบสิทธิ์การอ่านเอกสารไม่ได้ชั่วคราวค่ะ ระบบยังเก็บไฟล์นี้ไว้ได้ แต่จะไม่อ่านข้อมูลให้อัตโนมัติ'
+        : errorCode === 'OCR_REQUEST_ALREADY_ADMITTED'
+          ? '✅ ระบบรับคำขออ่านเอกสารนี้ไว้แล้วค่ะ เพื่อป้องกันการนับซ้ำ จึงไม่ส่งอ่านซ้ำ'
+          : null;
+  return notice ? `${notice}\n\n${MEDIA_CLARIFY_REPLY}` : MEDIA_CLARIFY_REPLY;
+}
 /** §11 escape: the picture answered a question and is not evidence of anything. Same outcome the
  *  receipt clarify's choice 2 has always had — the bytes stay stored, nothing is recorded. */
 const MEDIA_NOT_RECORDED_REPLY = '🖼️ รับทราบค่ะ เก็บรูปไว้เฉยๆ ไม่ได้บันทึกเป็นหลักฐานของรายการไหน';
@@ -1277,7 +1292,7 @@ export class ProcessLineWebhookUseCase {
     recentCapturedExpenses?: LineIntakeCorrectionCandidate[];
     activeExpenseDrafts?: LineExpenseDraftRouteContext[];
     substituteContext?: LineIntakeSubstituteContext;
-  }): Promise<LineIntakeRoutePlan> {
+  }): Promise<GovernedLineIntakeRoutePlan> {
     try {
       const activeCategories = this.expenseRepo
         ? (await this.expenseRepo.listCategories(input.companyId)).map((c) => ({ id: c.id, name: c.name }))
@@ -3727,7 +3742,13 @@ export class ProcessLineWebhookUseCase {
 
     // JPEG/PNG classification runs once, before initReceiptUpload. PDF/unsupported media produces
     // NOT_REQUESTED and therefore fails closed unless a routed expense caption supplies purpose.
-    const ocr = await this.tryExtractReceiptFields(ctx, event.lineMessageId, media);
+    const ocr = await this.tryExtractReceiptFields(
+      ctx,
+      event.lineMessageId,
+      media,
+      routePlan.ocrAdmission === 'admitted',
+      routePlan.ocrErrorCode,
+    );
     const decision = decideLineBusinessDocument(routePlan, ocr, caption.length > 0);
     // Every LINE OCR attempt is recorded here, before the outcome branches. A failed read routes to
     // `clarify` and returns below without ever creating an expense, so auditing further down (as this
@@ -3798,7 +3819,7 @@ export class ProcessLineWebhookUseCase {
     }
     if (decision.outcome === 'clarify') {
       const reply = decision.persistMedia
-        ? MEDIA_CLARIFY_REPLY
+        ? formatOcrGovernanceClarifyReply(ocr.errorCode)
         : formatBusinessDocumentReply(decision.classification, this.config.webBaseUrl, companyId);
       let terminalStatus = 'clarification_required';
       if (decision.persistMedia && canCaptureExpense) {
@@ -4939,9 +4960,14 @@ export class ProcessLineWebhookUseCase {
     ctx: { requestId: string; userId: string; companyId: string },
     attachmentId: string,
     media: { mimeType: string; contentBase64?: string },
+    ocrAlreadyAdmitted = false,
+    routeOcrErrorCode?: string,
   ): Promise<ReceiptOcrPreflight> {
     if (!media.contentBase64 || (media.mimeType !== 'image/jpeg' && media.mimeType !== 'image/png' && media.mimeType !== 'application/pdf')) {
       return { status: 'NOT_REQUESTED', fields: null, classification: null };
+    }
+    if (routeOcrErrorCode) {
+      return { status: 'OCR_FAILED', fields: null, classification: null, errorCode: routeOcrErrorCode };
     }
     try {
       const activeCategories = this.expenseRepo
@@ -4953,7 +4979,7 @@ export class ProcessLineWebhookUseCase {
         userId: ctx.userId,
         activeCategories,
         attachment: { id: attachmentId, mimeType: media.mimeType, purpose: 'receipt', contentBase64: media.contentBase64 },
-      });
+      }, { ocrAlreadyAdmitted });
       if (result.status === 'not_configured') return { status: 'NOT_CONFIGURED', fields: null, classification: null };
       if (result.status !== 'ok') {
         return { status: 'OCR_FAILED', fields: null, classification: null, ...(result.errorCode ? { errorCode: result.errorCode } : {}) };

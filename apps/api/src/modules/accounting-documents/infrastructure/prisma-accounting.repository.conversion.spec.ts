@@ -101,12 +101,17 @@ describe('PrismaAccountingRepository quotation conversion', () => {
 
   it('returns the same target without another mutation after a completed retry', async () => {
     const { repo, createCalls, updateCalls } = harness({ status: 'CLOSED', targets: [convertedRow()] });
-    const result = await repo.convertQuotation('quotation-1', VERSION, input, 'sales-1');
+    let gateCalls = 0;
+    const result = await repo.convertQuotation('quotation-1', VERSION, input, 'sales-1', async () => {
+      gateCalls += 1;
+      throw new Error('a completed retry must not need the launch gate');
+    });
 
     assert.equal(result.didConvert, false);
     assert.equal(result.document.id, 'converted-1');
     assert.equal(updateCalls(), 0);
     assert.equal(createCalls(), 0);
+    assert.equal(gateCalls, 0);
   });
 
   it('rejects a different or duplicate target without changing the source', async () => {

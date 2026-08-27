@@ -1,0 +1,212 @@
+import { ConflictException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
+import type { CompanySignupRequest, Prisma } from '../../../generated/prisma/client';
+import { PrismaService } from '../../../common/database/prisma.service';
+import {
+  canTransitionCompanySignup,
+  companySignupPayloadHash,
+  isCompanySignupFailureState,
+  normalizeCompanySignupInput,
+  type CompanySignupInput,
+  type CompanySignupState,
+  type NormalizedCompanySignupInput,
+} from '../domain/company-signup.logic';
+
+const SERVICE_ACTOR = 'official-signup-core';
+const SPECIAL_PROVISIONING_STATES = new Set<CompanySignupState>(['PROVISIONING', 'READY', 'PROVISIONING_FAILED']);
+
+type ReceiveResult = Readonly<{ request: CompanySignupRequest; replayed: boolean }>;
+type ProvisionClaim = Readonly<{ request: CompanySignupRequest; claimed: boolean; attemptId: string | null }>;
+
+@Injectable()
+export class CompanySignupCoreService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  async receive(input: CompanySignupInput, correlationRequestId: string): Promise<ReceiveResult> {
+    let normalized: NormalizedCompanySignupInput;
+    try {
+      normalized = normalizeCompanySignupInput(input);
+    } catch (error) {
+      throw new UnprocessableEntityException((error as Error).message);
+    }
+    const payloadHash = companySignupPayloadHash(normalized);
+
+    return this.prisma.client.$transaction(async (tx) => {
+      await this.lock(tx, normalized.externalSignupId);
+      const existing = await tx.companySignupRequest.findUnique({
+        where: { externalSignupId: normalized.externalSignupId },
+      });
+      if (existing) {
+        if (existing.payloadHash !== payloadHash) throw new ConflictException('external_signup_payload_conflict');
+        return { request: existing, replayed: true };
+      }
+
+      const request = await tx.companySignupRequest.create({ data: { ...normalized, payloadHash } });
+      await this.appendEvidence(tx, request, null, 'RECEIVED', correlationRequestId);
+      return { request, replayed: false };
+    });
+  }
+
+  async advance(
+    requestId: string,
+    toState: Exclude<CompanySignupState, 'RECEIVED'>,
+    correlationRequestId: string,
+    failureCode?: string,
+  ): Promise<ReceiveResult> {
+    if (SPECIAL_PROVISIONING_STATES.has(toState)) throw new ConflictException('use_provisioning_boundary');
+    return this.changeState(requestId, toState, correlationRequestId, failureCode);
+  }
+
+  async claimProvisioning(requestId: string, correlationRequestId: string): Promise<ProvisionClaim> {
+    return this.prisma.client.$transaction(async (tx) => {
+      await this.lock(tx, requestId);
+      const current = await this.findOrThrow(tx, requestId);
+      if (current.state === 'PROVISIONING' || current.state === 'READY'
+        || current.state === 'LINE_LINK_PENDING' || current.state === 'COMPLETED') {
+        return { request: current, claimed: false, attemptId: null };
+      }
+      if (!canTransitionCompanySignup(current.state as CompanySignupState, 'PROVISIONING')) {
+        throw new ConflictException(`invalid_signup_transition:${current.state}:PROVISIONING`);
+      }
+      const attemptId = randomUUID();
+      const request = await this.casUpdate(tx, current, {
+        state: 'PROVISIONING', failureCode: null, provisioningAttemptId: attemptId, provisioningStartedAt: new Date(),
+      });
+      await this.appendEvidence(tx, request, current.state as CompanySignupState, 'PROVISIONING', correlationRequestId);
+      return { request, claimed: true, attemptId };
+    });
+  }
+
+  async completeProvisioning(input: {
+    requestId: string;
+    attemptId: string;
+    companyId: string;
+    ownerUserId: string;
+    correlationRequestId: string;
+  }): Promise<ReceiveResult> {
+    return this.prisma.client.$transaction(async (tx) => {
+      await this.lock(tx, input.requestId);
+      const current = await this.findOrThrow(tx, input.requestId);
+      if (current.state === 'READY' && current.companyId === input.companyId && current.ownerUserId === input.ownerUserId) {
+        return { request: current, replayed: true };
+      }
+      this.assertAttempt(current, input.attemptId);
+      const request = await this.casUpdate(tx, current, {
+        state: 'READY', failureCode: null, companyId: input.companyId, ownerUserId: input.ownerUserId,
+      });
+      await this.appendEvidence(tx, request, 'PROVISIONING', 'READY', input.correlationRequestId);
+      return { request, replayed: false };
+    });
+  }
+
+  async failProvisioning(input: {
+    requestId: string;
+    attemptId: string;
+    failureCode: string;
+    correlationRequestId: string;
+  }): Promise<ReceiveResult> {
+    const failureCode = input.failureCode.trim().slice(0, 64);
+    if (!failureCode) throw new UnprocessableEntityException('failure_code_required');
+    return this.prisma.client.$transaction(async (tx) => {
+      await this.lock(tx, input.requestId);
+      const current = await this.findOrThrow(tx, input.requestId);
+      if (current.state === 'PROVISIONING_FAILED' && current.provisioningAttemptId === input.attemptId
+        && current.failureCode === failureCode) {
+        return { request: current, replayed: true };
+      }
+      this.assertAttempt(current, input.attemptId);
+      const request = await this.casUpdate(tx, current, { state: 'PROVISIONING_FAILED', failureCode });
+      await this.appendEvidence(tx, request, 'PROVISIONING', 'PROVISIONING_FAILED', input.correlationRequestId);
+      return { request, replayed: false };
+    });
+  }
+
+  private async changeState(
+    requestId: string,
+    toState: CompanySignupState,
+    correlationRequestId: string,
+    failureCode?: string,
+  ): Promise<ReceiveResult> {
+    return this.prisma.client.$transaction(async (tx) => {
+      await this.lock(tx, requestId);
+      const current = await this.findOrThrow(tx, requestId);
+      const normalizedFailure = failureCode?.trim().slice(0, 64) || null;
+      if (current.state === toState && current.failureCode === normalizedFailure) {
+        return { request: current, replayed: true };
+      }
+      if (!canTransitionCompanySignup(current.state as CompanySignupState, toState)) {
+        throw new ConflictException(`invalid_signup_transition:${current.state}:${toState}`);
+      }
+      if (isCompanySignupFailureState(toState) && !normalizedFailure) {
+        throw new UnprocessableEntityException('failure_code_required');
+      }
+      const request = await this.casUpdate(tx, current, {
+        state: toState,
+        failureCode: isCompanySignupFailureState(toState) ? normalizedFailure : null,
+      });
+      await this.appendEvidence(tx, request, current.state as CompanySignupState, toState, correlationRequestId);
+      return { request, replayed: false };
+    });
+  }
+
+  private async lock(tx: Prisma.TransactionClient, key: string): Promise<void> {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
+  }
+
+  private async findOrThrow(tx: Prisma.TransactionClient, id: string): Promise<CompanySignupRequest> {
+    const request = await tx.companySignupRequest.findUnique({ where: { id } });
+    if (!request) throw new NotFoundException('company_signup_request_not_found');
+    return request;
+  }
+
+  private async casUpdate(
+    tx: Prisma.TransactionClient,
+    current: CompanySignupRequest,
+    data: Prisma.CompanySignupRequestUncheckedUpdateManyInput,
+  ): Promise<CompanySignupRequest> {
+    const changed = await tx.companySignupRequest.updateMany({
+      where: { id: current.id, state: current.state, version: current.version },
+      data: { ...data, version: { increment: 1 } },
+    });
+    if (changed.count !== 1) throw new ConflictException('company_signup_concurrent_transition');
+    return tx.companySignupRequest.findUniqueOrThrow({ where: { id: current.id } });
+  }
+
+  private assertAttempt(current: CompanySignupRequest, attemptId: string): void {
+    if (current.state !== 'PROVISIONING' || current.provisioningAttemptId !== attemptId) {
+      throw new ConflictException('provisioning_attempt_mismatch');
+    }
+  }
+
+  private async appendEvidence(
+    tx: Prisma.TransactionClient,
+    request: CompanySignupRequest,
+    fromState: CompanySignupState | null,
+    toState: CompanySignupState,
+    correlationRequestId: string,
+  ): Promise<void> {
+    const failed = isCompanySignupFailureState(toState);
+    await tx.auditLog.create({
+      data: {
+        actorType: 'SERVICE', actorRefId: SERVICE_ACTOR,
+        action: fromState ? 'signup.request.transition' : 'signup.request.received',
+        targetType: 'company_signup_request', targetId: request.id, requestId: correlationRequestId,
+        result: failed ? 'FAILED' : 'SUCCESS',
+        riskLevel: toState === 'PROVISIONING' || toState === 'READY' ? 'HIGH' : 'MEDIUM',
+        metadataJson: { source: request.source, fromState, toState, version: request.version },
+      },
+    });
+    await tx.outboxEvent.create({
+      data: {
+        eventType: fromState ? 'company_signup.state_changed' : 'company_signup.received',
+        aggregateType: 'CompanySignupRequest', aggregateId: request.id,
+        eventKey: `company_signup:${request.id}:${request.version}`,
+        payloadJson: {
+          schemaVersion: 1, requestId: correlationRequestId, occurredAt: new Date().toISOString(),
+          data: { signupRequestId: request.id, fromState, toState, version: request.version },
+        },
+        priority: toState === 'PROVISIONING' || toState === 'READY' ? 'HIGH' : 'NORMAL',
+      },
+    });
+  }
+}

@@ -9,6 +9,8 @@ import {
   CommitStatementImportUseCase,
 } from './statement-import.use-case';
 import type { RequestContext } from '@watchdog-bms/contracts';
+import { StatementAiExtractClient } from '../../infrastructure/statement-ai-extract.client';
+import { __resetCompanyAiBudgetCache } from '../../../line-ai/application/company-ai-usage-meter';
 
 const ctx: RequestContext = {
   requestId: 'req-1',
@@ -154,8 +156,34 @@ describe('ExtractStatementFileUseCase', () => {
     const { uc } = makeUc({ ai: { extract: mock.fn(async () => ({ status: 'not_configured' })) } });
     await assert.rejects(
       () => uc.execute(importCtx, { bankAccountId: 'ba-1', fileBase64: imageBase64, mimeType: 'image/jpeg', fileName: 'statement.jpg' }),
-      (e: Error) => e.message === 'extract_ocr_not_configured',
+      (error: unknown) => {
+        assert.ok(error instanceof UnprocessableEntityException);
+        assert.deepEqual(error.getResponse(), {
+          code: 'extract_ocr_not_configured',
+          message: 'extract_ocr_not_configured',
+        });
+        return true;
+      },
     );
+  });
+
+  it('returns statement OCR governance failures as stable response codes', async () => {
+    for (const [errorCode, expected] of [
+      ['OCR_FEATURE_DISABLED', 'extract_ocr_disabled'],
+      ['OCR_MONTHLY_LIMIT_EXCEEDED', 'extract_ocr_limit_exceeded'],
+      ['OCR_REQUEST_ALREADY_ADMITTED', 'extract_ocr_duplicate_request'],
+      ['OCR_QUOTA_UNAVAILABLE', 'extract_ocr_quota_unavailable'],
+    ] as const) {
+      const { uc } = makeUc({ ai: { extract: mock.fn(async () => ({ status: 'failed', errorCode })) } });
+      await assert.rejects(
+        () => uc.execute(importCtx, { bankAccountId: 'ba-1', fileBase64: imageBase64, mimeType: 'image/jpeg', fileName: 'statement.jpg' }),
+        (error: unknown) => {
+          assert.ok(error instanceof UnprocessableEntityException);
+          assert.deepEqual(error.getResponse(), { code: expected, message: expected });
+          return true;
+        },
+      );
+    }
   });
 
   it('rejects unsupported mime types', async () => {
@@ -284,5 +312,165 @@ describe('ListStatementImportsUseCase', () => {
     const uc = new ListStatementImportsUseCase(repo as any);
     await assert.rejects(() => uc.execute({ ...ctx, permissions: [] }, 'ba-1'), ForbiddenException);
     assert.equal(repo.listStatementImports.mock.calls.length, 0);
+  });
+});
+
+describe('StatementAiExtractClient OCR governance', () => {
+  function readyPrisma() {
+    const events: any[] = [];
+    let usedCount = 0;
+    const tx = {
+      $executeRaw: async () => undefined,
+      companyAiConfiguration: { findUnique: async () => ({ ocrEnabled: true, ocrMonthlyLimit: 10 }) },
+      companyOcrUsageEvent: {
+        findUnique: async ({ where }: any) => {
+          const key = where.companyId_sourceRoute_requestId;
+          return events.find((event) => event.companyId === key.companyId
+            && event.sourceRoute === key.sourceRoute && event.requestId === key.requestId) ?? null;
+        },
+        create: async ({ data }: any) => {
+          const event = { id: `event-${events.length + 1}`, ...data };
+          events.push(event);
+          return event;
+        },
+        delete: async ({ where }: any) => events.splice(events.findIndex((event) => event.id === where.id), 1)[0],
+      },
+      companyOcrMonthlyUsage: {
+        findUnique: async () => usedCount ? { usedCount } : null,
+        upsert: async () => ({ usedCount: ++usedCount }),
+        updateMany: async () => { usedCount -= 1; return { count: 1 }; },
+      },
+    };
+    const prisma = {
+      client: {
+        companyAiConfiguration: { findUnique: async () => null },
+        companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: 0 }) },
+        $transaction: async (fn: (value: typeof tx) => Promise<unknown>) => fn(tx),
+      },
+    } as any;
+    return { prisma, events, usedCount: () => usedCount };
+  }
+
+  it('fails closed before fetch when the company OCR quota is exhausted', async () => {
+    __resetCompanyAiBudgetCache();
+    let fetchCalls = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => {
+      fetchCalls += 1;
+      return { ok: true, json: async () => ({ status: 'ok', rows: [] }) } as Response;
+    };
+    const tx = {
+      $executeRaw: async () => undefined,
+      companyOcrUsageEvent: { findUnique: async () => null },
+      companyAiConfiguration: { findUnique: async () => ({ ocrEnabled: true, ocrMonthlyLimit: 2 }) },
+      companyOcrMonthlyUsage: { findUnique: async () => ({ usedCount: 2 }) },
+    };
+    const prisma = {
+      client: {
+        companyAiConfiguration: { findUnique: async () => ({ monthlyBudgetSatang: null }) },
+        companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: 0 }) },
+        $transaction: async (fn: (value: typeof tx) => Promise<unknown>) => fn(tx),
+      },
+    } as any;
+    try {
+      const client = new StatementAiExtractClient({
+        aiGatewayInternalSecret: 'internal-secret', aiGatewayInternalUrl: 'http://ai.invalid',
+        aiMonthlyBudgetSatang: 1_000_000, isProduction: false,
+      } as any, undefined, prisma);
+      const result = await client.extract({
+        requestId: 'statement-read-1', companyId: 'company-1', userId: 'user-1',
+        attachment: { mimeType: 'image/png', contentBase64: 'AA==' },
+      });
+      assert.deepEqual(result, {
+        status: 'failed', errorCode: 'OCR_MONTHLY_LIMIT_EXCEEDED',
+      });
+      assert.equal(fetchCalls, 0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('does not count a read when the provider credential is missing', async () => {
+    __resetCompanyAiBudgetCache();
+    let quotaTransactions = 0;
+    const prisma = {
+      client: {
+        companyAiConfiguration: { findUnique: async () => ({ monthlyBudgetSatang: null }) },
+        companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: 0 }) },
+        $transaction: async () => { quotaTransactions += 1; throw new Error('unexpected OCR admission'); },
+      },
+    } as any;
+    const client = new StatementAiExtractClient({
+      aiGatewayInternalSecret: undefined,
+      aiMonthlyBudgetSatang: 1_000_000,
+      isProduction: false,
+    } as any, undefined, prisma);
+
+    assert.deepEqual(await client.extract({
+      requestId: 'statement-read-no-provider', companyId: 'company-1', userId: 'user-1',
+      attachment: { mimeType: 'image/png', contentBase64: 'AA==' },
+    }), { status: 'not_configured', errorCode: 'AI_GATEWAY_SECRET_MISSING' });
+    assert.equal(quotaTransactions, 0);
+  });
+
+  it('releases the OCR event and aggregate when Typhoon is missing downstream', async () => {
+    __resetCompanyAiBudgetCache();
+    const state = readyPrisma();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => ({
+      ok: true,
+      json: async () => ({ status: 'not_configured', errorCode: 'PROVIDER_CONFIG_MISSING' }),
+    } as Response);
+    try {
+      const client = new StatementAiExtractClient({
+        aiGatewayInternalSecret: 'internal-secret', aiGatewayInternalUrl: 'http://ai.invalid',
+        aiMonthlyBudgetSatang: 1_000_000, isProduction: false,
+      } as any, undefined, state.prisma);
+      const result = await client.extract({
+        requestId: 'statement-read-no-typhoon', companyId: 'company-1', userId: 'user-1',
+        attachment: { mimeType: 'image/png', contentBase64: 'AA==' },
+      });
+      assert.deepEqual(result, { status: 'not_configured', errorCode: 'PROVIDER_CONFIG_MISSING' });
+      assert.equal(state.events.length, 0);
+      assert.equal(state.usedCount(), 0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('releases a pre-provider gateway 401 but keeps quota for contradictory success JSON', async () => {
+    __resetCompanyAiBudgetCache();
+    const originalFetch = globalThis.fetch;
+    const request = {
+      requestId: 'statement-boundary', companyId: 'company-1', userId: 'user-1',
+      attachment: { mimeType: 'image/png' as const, contentBase64: 'AA==' },
+    };
+    try {
+      const rejected = readyPrisma();
+      globalThis.fetch = async () => new Response('', { status: 401 });
+      const rejectedClient = new StatementAiExtractClient({
+        aiGatewayInternalSecret: 'stale-secret', aiGatewayInternalUrl: 'http://ai.invalid',
+        aiMonthlyBudgetSatang: 1_000_000, isProduction: false,
+      } as any, undefined, rejected.prisma);
+      assert.deepEqual(await rejectedClient.extract(request), {
+        status: 'failed', errorCode: 'AI_GATEWAY_ERROR_401',
+      });
+      assert.equal(rejected.events.length, 0);
+      assert.equal(rejected.usedCount(), 0);
+
+      const contradictory = readyPrisma();
+      globalThis.fetch = async () => new Response(JSON.stringify({
+        status: 'ok', errorCode: 'PROVIDER_CONFIG_MISSING', rows: [],
+      }));
+      const contradictoryClient = new StatementAiExtractClient({
+        aiGatewayInternalSecret: 'internal-secret', aiGatewayInternalUrl: 'http://ai.invalid',
+        aiMonthlyBudgetSatang: 1_000_000, isProduction: false,
+      } as any, undefined, contradictory.prisma);
+      assert.equal((await contradictoryClient.extract(request)).status, 'ok');
+      assert.equal(contradictory.events.length, 1);
+      assert.equal(contradictory.usedCount(), 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

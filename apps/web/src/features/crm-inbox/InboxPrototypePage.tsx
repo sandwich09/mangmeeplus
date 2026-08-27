@@ -64,6 +64,10 @@ import {
   type InboxChipId,
 } from './inbox-prototype.model';
 import { InboxAiPanel } from './InboxAiPanel';
+import {
+  useSalesRootAvailability,
+  type SalesRootAvailabilityState,
+} from '@/features/accounting-documents/sales-root-availability';
 
 const POLL_MS = 10_000;
 
@@ -177,7 +181,11 @@ export function InboxPrototypePage({
   const canSeeCustomer = permissions.includes('crm.customer.read');
   const canCreateDeal = permissions.includes('crm.opportunity.create');
   const canCreateTask = permissions.includes('crm.follow_up.create');
-  const canQuote = permissions.includes('crm.quotation.link');
+  const canRequestQuotation = canCreateDeal
+    && permissions.includes('crm.quotation.link')
+    && (permissions.includes('accounting.quotation.create') || permissions.includes('accounting.document.create'));
+  const quotationAvailability = useSalesRootAvailability(companyId, canRequestQuotation);
+  const canQuote = canRequestQuotation && quotationAvailability.state === 'OPEN';
 
   const [statusFilter, setStatusFilter] = useState<InboxChipId>('all');
   const [tagFilter, setTagFilter] = useState<string | null>(null);
@@ -206,6 +214,7 @@ export function InboxPrototypePage({
   const [priorityMenuOpen, setPriorityMenuOpen] = useState(false);
   const statusMenuRef = useRef<HTMLDivElement>(null);
   const priorityMenuRef = useRef<HTMLDivElement>(null);
+  const quotationRequestRef = useRef<{ conversationId: string; key: string } | null>(null);
   useCloseOnOutsideClick(statusMenuRef, useCallback(() => setStatusMenuOpen(false), []));
   useCloseOnOutsideClick(priorityMenuRef, useCallback(() => setPriorityMenuOpen(false), []));
 
@@ -518,10 +527,16 @@ export function InboxPrototypePage({
 
   const createQuotation = useCallback(async () => {
     if (!detail) return;
+    const pending = quotationRequestRef.current?.conversationId === detail.id
+      ? quotationRequestRef.current
+      : { conversationId: detail.id, key: crypto.randomUUID() };
+    quotationRequestRef.current = pending;
     // canonical endpoint resolves-or-creates the opportunity + drafts the quotation and links the conversation.
     await createQuotationFromConversation(companyId, detail.id, {
       title: `ใบเสนอราคา — ${customer?.displayName ?? detail.customerDisplayName ?? 'ลูกค้า'}`,
+      idempotencyKey: pending.key,
     });
+    quotationRequestRef.current = null;
     toast.success('สร้างใบเสนอราคาเรียบร้อยแล้ว');
     await refreshSummary();
   }, [companyId, detail, customer, refreshSummary, toast]);
@@ -1007,7 +1022,9 @@ export function InboxPrototypePage({
                         canResolve={canResolve}
                         canCreateDeal={canCreateDeal}
                         canCreateTask={canCreateTask}
+                        canRequestQuotation={canRequestQuotation}
                         canQuote={canQuote}
+                        quotationAvailability={quotationAvailability}
                         onSaveTags={saveTags}
                         onCreateDeal={createDeal}
                         onCreateTask={createTask}
@@ -1235,7 +1252,9 @@ function CustomerPanel({
   canResolve,
   canCreateDeal,
   canCreateTask,
+  canRequestQuotation,
   canQuote,
+  quotationAvailability,
   onSaveTags,
   onCreateDeal,
   onCreateTask,
@@ -1252,7 +1271,9 @@ function CustomerPanel({
   canResolve: boolean;
   canCreateDeal: boolean;
   canCreateTask: boolean;
+  canRequestQuotation: boolean;
   canQuote: boolean;
+  quotationAvailability: { state: SalesRootAvailabilityState; retry: () => void };
   onSaveTags: (tags: string[]) => Promise<void>;
   onCreateDeal: (title: string) => Promise<void>;
   onCreateTask: (title: string, dueAt: string) => Promise<void>;
@@ -1329,8 +1350,8 @@ function CustomerPanel({
     setQuoteError(null);
     try {
       await onCreateQuotation();
-    } catch {
-      setQuoteError('สร้างใบเสนอราคาไม่สำเร็จ กรุณาลองใหม่');
+    } catch (error) {
+      setQuoteError(apiErrorMessage(error));
     } finally {
       setQuoteBusy(false);
     }
@@ -1490,6 +1511,21 @@ function CustomerPanel({
           </Sec>
 
           <Sec title="ใบเสนอราคา">
+            {canRequestQuotation && quotationAvailability.state !== 'OPEN' && (
+              <div className="mb-2 rounded-lg border border-amber-200 bg-amber-50 p-3" role={quotationAvailability.state === 'LOADING' ? 'status' : 'alert'}>
+                <div className="text-base font-semibold text-amber-950">
+                  {quotationAvailability.state === 'LOADING' ? 'กำลังตรวจสอบว่าสร้างใบเสนอราคาได้หรือไม่...'
+                    : quotationAvailability.state === 'CLOSED' ? 'ยังสร้างใบเสนอราคาใหม่ไม่ได้ชั่วคราว'
+                      : 'ยังตรวจสอบความพร้อมของระบบไม่ได้'}
+                </div>
+                <div className="mt-1 text-base text-amber-900">แชท ดีล และใบเสนอราคาเดิมยังใช้งานได้ตามปกติ</div>
+                {quotationAvailability.state === 'ERROR' && (
+                  <button type="button" onClick={quotationAvailability.retry} className="mt-2 min-h-11 rounded-lg border border-amber-300 bg-white px-3 text-sm font-semibold text-amber-900">
+                    ลองตรวจสอบอีกครั้ง
+                  </button>
+                )}
+              </div>
+            )}
             {summary360.quotations === null ? (
               <RedactNote />
             ) : summary360.quotations.length === 0 ? (

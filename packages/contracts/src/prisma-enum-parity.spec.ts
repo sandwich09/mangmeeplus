@@ -93,6 +93,7 @@ const REGISTRY: Registration[] = [
   { source: 'procurement.ts', arrayName: 'PROCUREMENT_VAT_MODES', prismaEnum: 'AccountingVatMode' },
   { source: 'procurement.ts', arrayName: 'PAYMENT_METHODS', prismaEnum: 'AccountingPaymentMethod' },
   { source: 'expenses.ts', arrayName: 'INPUT_VAT_CLAIM_STATUSES', prismaEnum: 'InputVatClaimStatus' },
+  { source: 'expenses.ts', arrayName: 'EXPENSE_PAYMENT_METHODS', prismaEnum: 'ExpensePaymentMethod' },
   // Cross-named: the LINE turn intent list mirrors the Prisma AiTurnIntent enum.
   { source: 'line-ai.ts', arrayName: 'AI_TURN_INTENT_VALUES', prismaEnum: 'AiTurnIntent' },
   { source: 'transaction-tax.ts', arrayName: 'TAX_SOURCE_SYSTEMS', prismaEnum: 'TaxSourceSystem' },

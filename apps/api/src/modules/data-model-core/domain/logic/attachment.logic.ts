@@ -28,8 +28,14 @@ const EXPENSE_ATTACHMENT_PURPOSES = new Set([
   'expense.review.evidence',
 ]);
 
+const ACCOUNTING_DOCUMENT_ATTACHMENT_PURPOSES = new Set([
+  'accounting.receipt.evidence',
+  'accounting.document.supporting',
+]);
+
 export function isAllowedAttachmentTarget(targetType: string, purpose: string): boolean {
-  return targetType === 'expense.record' && EXPENSE_ATTACHMENT_PURPOSES.has(purpose);
+  return (targetType === 'expense.record' && EXPENSE_ATTACHMENT_PURPOSES.has(purpose))
+    || (targetType === 'accounting.document' && ACCOUNTING_DOCUMENT_ATTACHMENT_PURPOSES.has(purpose));
 }
 
 export const SIGNATURE_ASSET_TARGET_TYPE = 'company.signature_asset';

@@ -27,6 +27,14 @@ function parseKnownArray<T extends string>(value: unknown, values: readonly T[])
   return [...new Set(value as T[])].slice(0, MAX_SIGNAL_COUNT);
 }
 
+/** Like parseKnownArray, but unknown entries are FILTERED instead of voiding the array — for
+ *  descriptive fields only, never for reason codes that feed clarification gates. */
+function parseFilteredKnownArray<T extends string>(value: unknown, values: readonly T[]): T[] | null {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) return null;
+  return [...new Set(value.filter((item): item is T => isKnown(item, values)))].slice(0, MAX_SIGNAL_COUNT);
+}
+
 function parseExactSpans(value: unknown, documentText: string): string[] | null {
   if (value === undefined) return [];
   if (!Array.isArray(value)) return null;
@@ -65,7 +73,10 @@ export function parseBusinessDocumentClassification(
     || typeof raw['requiresClarification'] !== 'boolean'
   ) return null;
 
-  const evidenceRoles = parseKnownArray(raw['evidenceRoles'], BUSINESS_DOCUMENT_EVIDENCE_ROLES);
+  // evidenceRoles is descriptive metadata, not a gate: an out-of-vocabulary label from a newer
+  // model (e.g. "RECEIPT" for a receipt) is dropped, never allowed to void the classification —
+  // rejecting the whole turn over a synonym stranded real receipts (UAT 2026-08-27).
+  const evidenceRoles = parseFilteredKnownArray(raw['evidenceRoles'], BUSINESS_DOCUMENT_EVIDENCE_ROLES);
   const missingRequiredSignals = parseKnownArray(raw['missingRequiredSignals'], BUSINESS_DOCUMENT_REASON_CODES);
   const contradictionSignals = parseKnownArray(raw['contradictionSignals'], BUSINESS_DOCUMENT_REASON_CODES);
   const evidenceSignals = parseExactSpans(raw['evidenceSignals'], documentText);

@@ -8,20 +8,26 @@ import type { NextFunction, Request, Response } from 'express';
 import type { AppConfigService } from '../config/app-config.service';
 import type { AppLogger } from '../logger/logger.service';
 import { apiCacheControl, PRIVATE_NO_STORE } from './api-cache-control.middleware';
+import {
+  MAX_INBOUND_REQUEST_ID_BYTES,
+  normalizeRequestId,
+  RequestIdMiddleware,
+} from './request-id.middleware';
 import { RequestLoggerMiddleware } from './request-logger.middleware';
 
-function run(requestLogEnabled: boolean, path = '/v1/companies') {
+function run(requestLogEnabled: boolean, path = '/v1/companies', statusCode = 200) {
   const lines: Array<Record<string, unknown>> = [];
+  const capture = (obj: Record<string, unknown>, msg?: string) => void lines.push({ ...obj, ...(msg ? { msg } : {}) });
   const logger = {
-    info: (obj: Record<string, unknown>) => void lines.push(obj),
-    warn: (obj: Record<string, unknown>) => void lines.push(obj),
-    error: (obj: Record<string, unknown>) => void lines.push(obj),
+    info: capture,
+    warn: capture,
+    error: capture,
   } as unknown as AppLogger;
   const middleware = new RequestLoggerMiddleware(logger, { requestLogEnabled } as AppConfigService);
 
   let finish: (() => void) | undefined;
   const req = { method: 'GET', path, headers: { 'x-request-id': 'req-1' } } as unknown as Request;
-  const res = { statusCode: 200, on: (event: string, cb: () => void) => { if (event === 'finish') finish = cb; } } as unknown as Response;
+  const res = { statusCode, on: (event: string, cb: () => void) => { if (event === 'finish') finish = cb; } } as unknown as Response;
 
   let nextCalls = 0;
   middleware.use(req, res, (() => { nextCalls += 1; }) as NextFunction);
@@ -36,6 +42,9 @@ describe('RequestLoggerMiddleware', () => {
     assert.equal(lines.length, 1);
     assert.equal(lines[0]?.['requestId'], 'req-1');
     assert.equal(lines[0]?.['status'], 200);
+    assert.equal(lines[0]?.['msg'], 'request');
+    const durationMs = lines[0]?.['durationMs'];
+    assert.ok(typeof durationMs === 'number' && Number.isFinite(durationMs) && durationMs >= 0);
   });
 
   it('logs nothing — and still calls next — when REQUEST_LOG_ENABLED is false', () => {
@@ -52,6 +61,13 @@ describe('RequestLoggerMiddleware', () => {
     );
   });
 
+  it('captures a 500 response for the API alarm', () => {
+    const { lines } = run(true, '/v1/health/dependency', 500);
+    assert.equal(lines.length, 1);
+    assert.equal(lines[0]?.['status'], 500);
+    assert.equal(lines[0]?.['msg'], 'request');
+  });
+
   it('does not even register a finish listener when disabled', () => {
     const listeners: string[] = [];
     const logger = { info: () => {}, warn: () => {}, error: () => {} } as unknown as AppLogger;
@@ -62,6 +78,38 @@ describe('RequestLoggerMiddleware', () => {
       (() => {}) as NextFunction,
     );
     assert.deepEqual(listeners, []);
+  });
+});
+
+describe('RequestIdMiddleware', () => {
+  it('preserves a bounded caller id so transport retries share one OCR fence', () => {
+    const req = { headers: { 'x-request-id': 'ocr-attempt-1' } } as unknown as Request;
+    const headers = new Map<string, string>();
+    let nextCalls = 0;
+    const res = {
+      setHeader: (name: string, value: string) => { headers.set(name, value); },
+    } as unknown as Response;
+
+    new RequestIdMiddleware().use(req, res, (() => { nextCalls += 1; }) as NextFunction);
+
+    assert.equal(req.headers['x-request-id'], 'ocr-attempt-1');
+    assert.equal(headers.get('X-Request-Id'), 'ocr-attempt-1');
+    assert.equal(nextCalls, 1);
+  });
+
+  it('hashes an oversized id deterministically instead of risking a btree write failure', () => {
+    const oversized = 'ก'.repeat(MAX_INBOUND_REQUEST_ID_BYTES);
+    const first = normalizeRequestId(oversized);
+    const retry = normalizeRequestId(oversized);
+
+    assert.equal(first, retry);
+    assert.match(first, /^sha256:[a-f0-9]{64}$/);
+    assert.ok(Buffer.byteLength(first, 'utf8') <= MAX_INBOUND_REQUEST_ID_BYTES);
+  });
+
+  it('mints a UUID when the header is absent or blank', () => {
+    assert.match(normalizeRequestId(undefined), /^[0-9a-f-]{36}$/);
+    assert.match(normalizeRequestId('   '), /^[0-9a-f-]{36}$/);
   });
 });
 

@@ -2,7 +2,7 @@
 
 ## 1. สถานะ
 
-- สถานะ: **DRAFT v2 APPROVED FOR IMPLEMENTATION PLANNING; ยังไม่มี code, deploy หรือ behavior change**
+- สถานะ: **DRAFT v2; Phase 1 default-off scaffolding merge แล้ว (`4c472d6c`, PR #235), ยังไม่มี user-visible activation** — Slice A เดินต่อได้ตามแผน; knowledge/company activation ยังติด gate
 - วันที่: 2026-08-21; แก้ไข 2026-08-22 ตาม owner decisions 1–5 และผลรีวิว (ดู §1.1)
 - เจ้าของ: Product / LINE AI / AI Gateway / Finance Platform / Tax & Accounting Domain
 - ขอบเขต: LINE OA “น้องมั่งมี” สำหรับผู้ใช้ที่เชื่อมบัญชีบริษัทแล้ว

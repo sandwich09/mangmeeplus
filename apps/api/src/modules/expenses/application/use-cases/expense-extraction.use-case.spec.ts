@@ -1,7 +1,9 @@
 import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { RequestReceiptExtractionUseCase } from './expense-extraction.use-case';
+import { ReceiptOcrClient } from '../../infrastructure/receipt-ocr.client';
 import type { RequestContext } from '@watchdog-bms/contracts';
+import { __resetCompanyAiBudgetCache } from '../../../line-ai/application/company-ai-usage-meter';
 
 const baseExpense = {
   id: 'expense-1',
@@ -205,7 +207,7 @@ describe('RequestReceiptExtractionUseCase', () => {
       chargeReconciliation: { status: 'SUMMARY_LINE', chargesApplied: 0 },
       nextAction: 'review_in_web',
     });
-    assert.deepEqual(audits.at(-1), {
+    assert.deepEqual(audits.find((entry) => entry.action === 'expense.ocr.request'), {
       companyId: 'company-1',
       actorUserId: 'user-1',
       action: 'expense.ocr.request',
@@ -345,7 +347,8 @@ describe('RequestReceiptExtractionUseCase', () => {
       assert.equal('grandTotalAmount' in updates[0], false, documentKind);
       assert.equal(updates[0].aiVerificationSummaryJson.classification.documentKind, documentKind);
       assert.equal('evidenceSignals' in updates[0].aiVerificationSummaryJson.classification, false);
-      assert.deepEqual(audits.at(-1).metadataJson.reasonCodes, ['MISSING_PAYMENT_EVIDENCE']);
+      const ocrAudit = audits.find((entry) => entry.action === 'expense.ocr.request');
+      assert.deepEqual(ocrAudit.metadataJson.reasonCodes, ['MISSING_PAYMENT_EVIDENCE']);
     }
   });
 
@@ -372,5 +375,213 @@ describe('RequestReceiptExtractionUseCase', () => {
     );
     assert.equal(storage.getObject.mock.callCount(), 0);
     assert.equal(client.extract.mock.callCount(), 0);
+  });
+});
+
+describe('ReceiptOcrClient failure boundary', () => {
+  const request = {
+    requestId: 'ocr-fault-1', companyId: 'company-1', attachmentId: 'attachment-1',
+    mimeType: 'image/jpeg', bytesBase64: Buffer.from('receipt').toString('base64'), activeCategories: [],
+  } as any;
+
+  function readyPrisma() {
+    const events: any[] = [];
+    let usedCount = 0;
+    const tx = {
+      $executeRaw: async () => undefined,
+      companyAiConfiguration: { findUnique: async () => ({ ocrEnabled: true, ocrMonthlyLimit: 10 }) },
+      companyOcrUsageEvent: {
+        findUnique: async ({ where }: any) => {
+          const key = where.companyId_sourceRoute_requestId;
+          return events.find((event) => event.companyId === key.companyId
+            && event.sourceRoute === key.sourceRoute && event.requestId === key.requestId) ?? null;
+        },
+        create: async ({ data }: any) => {
+          const event = { id: `event-${events.length + 1}`, ...data };
+          events.push(event);
+          return event;
+        },
+        delete: async ({ where }: any) => events.splice(events.findIndex((event) => event.id === where.id), 1)[0],
+      },
+      companyOcrMonthlyUsage: {
+        findUnique: async () => usedCount ? { usedCount } : null,
+        upsert: async () => ({ usedCount: ++usedCount }),
+        updateMany: async () => { usedCount -= 1; return { count: 1 }; },
+      },
+    };
+    const prisma = {
+      client: {
+        companyAiConfiguration: { findUnique: async () => null },
+        companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: 0 }) },
+        $transaction: async (fn: (value: typeof tx) => Promise<unknown>) => fn(tx),
+      },
+    } as any;
+    return { prisma, events, usedCount: () => usedCount };
+  }
+
+  it('returns a reviewable failure when the OCR gateway is unreachable', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mock.fn(async () => { throw new Error('synthetic timeout'); }) as any;
+    try {
+      const state = readyPrisma();
+      const client = new ReceiptOcrClient({
+        aiGatewayInternalSecret: 'internal-secret', aiGatewayInternalUrl: 'http://ai.invalid',
+        aiMonthlyBudgetSatang: 1_000_000, isProduction: false,
+      } as any, undefined, state.prisma);
+      assert.deepEqual(await client.extract(request), {
+        status: 'failed', errorCode: 'AI_GATEWAY_UNREACHABLE',
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('keeps provider 5xx distinct and does not fabricate extracted fields', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mock.fn(async () => new Response('', { status: 503 })) as any;
+    try {
+      const state = readyPrisma();
+      const client = new ReceiptOcrClient({
+        aiGatewayInternalSecret: 'internal-secret', aiGatewayInternalUrl: 'http://ai.invalid',
+        aiMonthlyBudgetSatang: 1_000_000, isProduction: false,
+      } as any, undefined, state.prisma);
+      assert.deepEqual(await client.extract(request), {
+        status: 'failed', errorCode: 'AI_GATEWAY_ERROR_503',
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('releases a pre-provider gateway 401 but keeps quota for contradictory success JSON', async () => {
+    __resetCompanyAiBudgetCache();
+    const originalFetch = globalThis.fetch;
+    try {
+      const rejected = readyPrisma();
+      globalThis.fetch = mock.fn(async () => new Response('', { status: 401 })) as any;
+      const rejectedClient = new ReceiptOcrClient({
+        aiGatewayInternalSecret: 'stale-secret', aiGatewayInternalUrl: 'http://ai.invalid',
+        aiMonthlyBudgetSatang: 1_000_000, isProduction: false,
+      } as any, undefined, rejected.prisma);
+      assert.deepEqual(await rejectedClient.extract(request), {
+        status: 'failed', errorCode: 'AI_GATEWAY_ERROR_401',
+      });
+      assert.equal(rejected.events.length, 0);
+      assert.equal(rejected.usedCount(), 0);
+
+      const contradictory = readyPrisma();
+      globalThis.fetch = mock.fn(async () => new Response(JSON.stringify({
+        status: 'ok', errorCode: 'PROVIDER_CONFIG_MISSING', fields: {},
+      }))) as any;
+      const contradictoryClient = new ReceiptOcrClient({
+        aiGatewayInternalSecret: 'internal-secret', aiGatewayInternalUrl: 'http://ai.invalid',
+        aiMonthlyBudgetSatang: 1_000_000, isProduction: false,
+      } as any, undefined, contradictory.prisma);
+      assert.equal((await contradictoryClient.extract(request)).status, 'ok');
+      assert.equal(contradictory.events.length, 1);
+      assert.equal(contradictory.usedCount(), 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('fails closed before fetch when the company OCR switch is off', async () => {
+    __resetCompanyAiBudgetCache();
+    let fetchCalls = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mock.fn(async () => { fetchCalls += 1; return new Response('{}'); }) as any;
+    const tx = {
+      $executeRaw: async () => undefined,
+      companyOcrUsageEvent: { findUnique: async () => null },
+      companyAiConfiguration: { findUnique: async () => ({ ocrEnabled: false, ocrMonthlyLimit: 10 }) },
+      companyOcrMonthlyUsage: { findUnique: async () => null },
+    };
+    const prisma = {
+      client: {
+        companyAiConfiguration: { findUnique: async () => ({ monthlyBudgetSatang: null }) },
+        companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: 0 }) },
+        $transaction: async (fn: (value: typeof tx) => Promise<unknown>) => fn(tx),
+      },
+    } as any;
+    try {
+      const client = new ReceiptOcrClient({
+        aiGatewayInternalSecret: 'internal-secret', aiGatewayInternalUrl: 'http://ai.invalid',
+        aiMonthlyBudgetSatang: 1_000_000, isProduction: false,
+      } as any, undefined, prisma);
+      assert.deepEqual(await client.extract(request), {
+        status: 'failed', errorCode: 'OCR_FEATURE_DISABLED',
+      });
+      assert.equal(fetchCalls, 0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('does not count a read when the provider credential is missing', async () => {
+    __resetCompanyAiBudgetCache();
+    let quotaTransactions = 0;
+    const prisma = {
+      client: {
+        companyAiConfiguration: { findUnique: async () => ({ monthlyBudgetSatang: null }) },
+        companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: 0 }) },
+        $transaction: async () => { quotaTransactions += 1; throw new Error('unexpected OCR admission'); },
+      },
+    } as any;
+    const client = new ReceiptOcrClient({
+      aiGatewayInternalSecret: undefined,
+      aiMonthlyBudgetSatang: 1_000_000,
+      isProduction: false,
+    } as any, undefined, prisma);
+
+    assert.deepEqual(await client.extract(request), {
+      status: 'not_configured', errorCode: 'AI_GATEWAY_SECRET_MISSING',
+    });
+    assert.equal(quotaTransactions, 0);
+  });
+
+  it('releases the OCR event and aggregate when a PDF provider is unsupported', async () => {
+    __resetCompanyAiBudgetCache();
+    const state = readyPrisma();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mock.fn(async () => new Response(JSON.stringify({
+      status: 'not_configured', errorCode: 'PDF_PROVIDER_UNSUPPORTED',
+    }))) as any;
+    try {
+      const client = new ReceiptOcrClient({
+        aiGatewayInternalSecret: 'internal-secret', aiGatewayInternalUrl: 'http://ai.invalid',
+        aiMonthlyBudgetSatang: 1_000_000, isProduction: false,
+      } as any, undefined, state.prisma);
+      const result = await client.extract({ ...request, mimeType: 'application/pdf' });
+      assert.deepEqual(result, { status: 'not_configured', errorCode: 'PDF_PROVIDER_UNSUPPORTED' });
+      assert.equal(state.events.length, 0);
+      assert.equal(state.usedCount(), 0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('does not admit quota when local tenant model policy resolution fails', async () => {
+    __resetCompanyAiBudgetCache();
+    let quotaTransactions = 0;
+    let fetchCalls = 0;
+    const prisma = {
+      client: {
+        companyAiConfiguration: { findUnique: async () => { throw new Error('POLICY_DB_DOWN'); } },
+        $transaction: async () => { quotaTransactions += 1; },
+      },
+    } as any;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mock.fn(async () => { fetchCalls += 1; return new Response('{}'); }) as any;
+    try {
+      const client = new ReceiptOcrClient({
+        aiGatewayInternalSecret: 'internal-secret', aiGatewayInternalUrl: 'http://ai.invalid',
+        aiMonthlyBudgetSatang: 1_000_000, isProduction: false,
+      } as any, undefined, prisma);
+      await assert.rejects(() => client.extract(request), /POLICY_DB_DOWN/);
+      assert.equal(quotaTransactions, 0);
+      assert.equal(fetchCalls, 0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

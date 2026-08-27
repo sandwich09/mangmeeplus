@@ -12,6 +12,7 @@ import { assertExpenseRootOpen } from '../expense-launch-gate';
 import type { RequestContext } from '@watchdog-bms/contracts';
 import type { ExpenseRecord } from '../../domain/models/expense.model';
 import { civilDateToUtcDate, coerceCivilDate } from '@watchdog-bms/contracts';
+import { observeCustomerJourney } from '../../../../common/observability/customer-journey-audit';
 
 export type InitReceiptUploadResult = {
   expenseId: string;
@@ -119,6 +120,21 @@ export class CompleteReceiptUploadUseCase {
   ) {}
 
   async execute(
+    ctx: RequestContext,
+    cmd: { expenseId: string; attachmentId: string; checksumSha256?: string; byteSize?: number; purpose?: string },
+  ): Promise<ExpenseRecord> {
+    return observeCustomerJourney(
+      this.audit,
+      {
+        key: 'receipt-intake', requestId: ctx.requestId, targetType: 'expense_record', targetId: cmd.expenseId,
+        companyId: ctx.companyId, actorUserId: ctx.userId,
+      },
+      () => this.complete(ctx, cmd),
+      () => ({ outcome: 'uploaded' }),
+    );
+  }
+
+  private async complete(
     ctx: RequestContext,
     cmd: { expenseId: string; attachmentId: string; checksumSha256?: string; byteSize?: number; purpose?: string },
   ): Promise<ExpenseRecord> {

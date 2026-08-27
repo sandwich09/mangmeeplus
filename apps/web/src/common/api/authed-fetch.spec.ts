@@ -212,6 +212,35 @@ describe('authed-fetch', () => {
     }
   });
 
+  it('preserves a caller OCR request id while merging Content-Type and refreshed CSRF headers', async () => {
+    (globalThis as Record<string, unknown>)['document'] = { cookie: '' };
+    try {
+      const calls: Call[] = [];
+      const fetchImpl = scriptedFetch(
+        [
+          () => jsonResponse(403, { message: 'CSRF token missing or invalid.', code: 'csrf_token_invalid' }),
+          () => {
+            (globalThis as Record<string, unknown>)['document'] = { cookie: 'watchdog_csrf=fresh-token' };
+            return jsonResponse(204);
+          },
+          () => jsonResponse(200, { ok: true }),
+        ],
+        calls,
+      );
+      await authedFetch('/companies/c1/expenses/e1/extraction-request', {
+        method: 'POST', body: '{}', headers: { 'X-Request-Id': 'ocr-attempt-1' },
+      }, fetchImpl);
+      const first = calls[0]!.init?.headers as Record<string, string>;
+      const retry = calls[2]!.init?.headers as Record<string, string>;
+      assert.equal(first['X-Request-Id'], 'ocr-attempt-1');
+      assert.equal(retry['X-Request-Id'], 'ocr-attempt-1');
+      assert.equal(retry['Content-Type'], 'application/json');
+      assert.equal(retry['x-csrf-token'], 'fresh-token');
+    } finally {
+      delete (globalThis as Record<string, unknown>)['document'];
+    }
+  });
+
   it('returns a second CSRF rejection instead of retrying again', async () => {
     const calls: Call[] = [];
     const csrf403 = () => jsonResponse(403, { message: 'CSRF token missing or invalid.', code: 'csrf_token_invalid' });
