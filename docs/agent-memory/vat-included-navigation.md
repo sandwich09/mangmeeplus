@@ -1,6 +1,6 @@
 # Agent Memory: VAT-included navigation
 
-Status: implemented and locally verified; merging WHT/develop next, 2026-08-27.
+Status: implemented, verified and integrated into remote develop, 2026-08-27.
 Owner: /root/wht_units_mixed_vat/zero_vat_persistence, assigned by /root.
 Scope: source-aware VAT validation and usable Next navigation; isolated worktree
 `mangmeeplus-vat-included-navigation`, branch `codex/vat-included-navigation` from
@@ -64,5 +64,35 @@ Limitations: synthetic API supplies permissions/detail and bypasses real login/s
 no authenticated full-stack database E2E or live release check was run. Server use-case,
 frontend save/refresh, stale-version request shape, and retry were exercised together.
 
-Next: integrate WHT origin/develop 8cafd8af, regenerate contracts/Prisma, rerun combined
-affected tests/typechecks, push feature then develop non-force, and verify remote SHA.
+## Combined integration and delivery
+
+- Merged WHT `origin/develop@8cafd8af9510bd8f1a866ab67b39db90df1304f5` into the feature.
+  Kept both API regression blocks and all validation imports when resolving two
+  conflicts; automatic frontend merges reviewed. No WHT/treatment behavior removed.
+- Regenerated local contracts/config and Prisma; API/web typechecks PASS again.
+- All expense web specs:
+  `rg --files apps/web/src/features/expenses | rg '\.spec\.tsx?$' | xargs ./node_modules/.bin/tsx --tsconfig apps/web/tsconfig.json --test --test-reporter=spec`:
+  **234/234 PASS**.
+- All expense API specs excluding PostgreSQL files:
+  `rg --files apps/api/src/modules/expenses | rg '\.spec\.ts$' | rg -v '\.pg\.spec\.ts$' | xargs ./apps/api/node_modules/.bin/tsx --tsconfig apps/api/tsconfig.json --test --test-concurrency=4 --test-reporter=spec`:
+  **924 tests, 918 PASS, 6 PostgreSQL-dependent skips, 0 failures**.
+- All contract specs using the earlier command: **199/199 PASS** after WHT merge.
+- Repeated actual local browser page/use-case after merge: blank included rate still
+  blocks and focus works; sourceAMOUNT1.64 with new WHT RATE0 saves and advances,
+  accepted base23.36/VAT1.64/gross25, expectedUpdatedAt retained. Returning to step1
+  shows saved amount1.64, source match, and WHT percent0. Removed fixture and stopped
+  both processes again; no generated/test-route changes remain.
+- Read-only GitHub develop protection check: required PR/status checks null,
+  force-push and deletion disabled. Used only ordinary non-force pushes.
+- Implementation commit: `abd3e47a` (`fix(expenses): unblock VAT source review navigation`).
+- Combined implementation tip: `6c9a060fcddd2d8e2deb707ea5a889fb9c067add`.
+- Pushed `codex/vat-included-navigation`, refreshed develop/checked ancestry, then
+  `git push origin HEAD:develop` fast-forwarded remote from8cafd8af to6c9a060f.
+  Subsequent fetch showed local HEAD and origin/develop equal to the full combined
+  SHA above; `git merge-base --is-ancestor HEAD origin/develop` exited0.
+- This documentation-only follow-up records completion; its final remote tip is
+  reported in the task handoff after push verification.
+
+Next: no implementation work remains for this bounded navigation task. The next
+reimbursement agent must fetch the final develop tip before integration. This is
+source integration, not a deployment or database-migration claim.

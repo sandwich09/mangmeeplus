@@ -9,7 +9,7 @@ Base: origin/develop a53bb992; branch codex/vat-included-navigation.
 - [x] Show an actionable footer validation message and focus the invalid control.
 - [x] Add focused client/server regressions and synthetic local browser verification.
 - [x] Run source-local contract/config builds, API/web typechecks and relevant tests.
-- [ ] Coordinate WHT overlap; integrate latest develop and rerun affected checks.
-- [ ] Commit/push scoped feature; integrate non-force into develop; verify remote containment.
+- [x] Coordinate WHT overlap; integrate latest develop and rerun affected checks.
+- [x] Commit/push scoped feature; integrate non-force into develop; verify remote containment.
 
 No live database, cloud operation or release/deployment is authorized.

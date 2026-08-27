@@ -1,6 +1,6 @@
 # Expense VAT-included review navigation
 
-Status: implemented and locally verified; develop integration pending, 2026-08-27.
+Status: implemented, verified and integrated into remote develop, 2026-08-27.
 
 ## Product and acceptance
 
