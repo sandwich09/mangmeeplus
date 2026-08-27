@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { FEATURE_CATALOG } from '@watchdog-bms/contracts';
-import { availableApprovalSurfaceKeys, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, staffMenuCommand } from './line-staff-menu.logic';
+import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, isCapabilityQuestion, staffMenuCommand } from './line-staff-menu.logic';
 
 // entitledFeatureKeys null is the legacy fail-open company, so these cases keep asserting the
 // permission dimension on its own. Feature gating has its own cases at the end of the suite.
@@ -307,5 +307,46 @@ describe('LINE staff menu', () => {
       assert.match(JSON.stringify(buildStaffMainMenu(context)), /บริษัทเปิดใช้/);
       assert.match((buildStaffQueryMenu(context) as { text: string }).text, /บริษัทเปิดใช้/);
     });
+  });
+});
+
+describe('promotion menu (rich menu v2 ver2)', () => {
+  it('matches the promotion command, emoji-prefixed and synonym forms included', () => {
+    assert.equal(staffMenuCommand('โปรโมชั่น'), 'promotion');
+    assert.equal(staffMenuCommand('แพ็กเกจ'), 'promotion');
+    assert.equal(staffMenuCommand('🎁 โปรโมชั่น'), 'promotion');
+    assert.equal(staffMenuCommand('โปรโมชั่นอะไรดี'), null);
+  });
+
+  it('builds the poster card from the web asset base and survives a missing base URL', () => {
+    const withBase = JSON.stringify(buildPromotionCard('https://app.example.com/'));
+    assert.match(withBase, /https:\/\/app\.example\.com\/assets\/line\/mangmeeplus-package-promo-1080x1350\.png/);
+    assert.match(withBase, /ทดลองใช้ฟรี/);
+    const withoutBase = JSON.stringify(buildPromotionCard(undefined));
+    assert.ok(!withoutBase.includes('"hero"'), 'no hero image without a base URL');
+    assert.match(withoutBase, /249/);
+  });
+});
+
+describe('capability question (Owner 2026-08-27: only real features)', () => {
+  it('catches short standalone capability questions', () => {
+    assert.equal(isCapabilityQuestion('ทำอะไรได้บ้าง'), true);
+    assert.equal(isCapabilityQuestion('น้องมั่งมีช่วยอะไรได้บ้าง'), true);
+    assert.equal(isCapabilityQuestion('ระบบนี้ใช้ยังไง'), true);
+    assert.equal(isCapabilityQuestion('มีฟีเจอร์อะไรบ้าง'), true);
+  });
+
+  it('never swallows a real business question that contains a stem', () => {
+    assert.equal(isCapabilityQuestion('ใบกำกับภาษีใช้ยังไง'), false);
+    assert.equal(isCapabilityQuestion('ยอดขายวันนี้เท่าไหร่'), false);
+    assert.equal(isCapabilityQuestion('อยากรู้ว่าภ.ง.ด.53 ต้องยื่นยังไงและระบบภาษีทำอะไรได้บ้างช่วยอธิบายละเอียดหน่อย'), false);
+    assert.equal(isCapabilityQuestion(''), false);
+  });
+
+  it('the curated card lists only the six real functions', () => {
+    const card = JSON.stringify(buildCapabilityCard());
+    for (const feature of ['ถ่ายใบเสร็จ', 'ยอดขายวันนี้', 'คุยกับน้องมั่งมี', 'บริษัทของฉัน', 'โปรโมชั่น', 'ติดต่อเรา']) {
+      assert.ok(card.includes(feature), feature);
+    }
   });
 });

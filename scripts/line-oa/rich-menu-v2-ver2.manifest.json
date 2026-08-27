@@ -1,0 +1,44 @@
+{
+  "profileId": "line-rich-menu-v2-ver2",
+  "image": {
+    "path": "apps/web/public/assets/line/mangmeeplus-line-rich-menu-v2-ver2-2500x1686.png",
+    "sha256": null,
+    "byteSize": null
+  },
+  "rollbackProfileId": "line-rich-menu-v2-ver1",
+  "lineRichMenu": {
+    "size": {
+      "width": 2500,
+      "height": 1686
+    },
+    "selected": true,
+    "name": "MangmeePlus Ver2",
+    "chatBarText": "เมนู",
+    "areas": [
+      {
+        "bounds": { "x": 0, "y": 0, "width": 833, "height": 843 },
+        "action": { "type": "message", "label": "Promotion Package", "text": "โปรโมชั่น" }
+      },
+      {
+        "bounds": { "x": 833, "y": 0, "width": 834, "height": 843 },
+        "action": { "type": "message", "label": "บริษัทของฉัน", "text": "/companies" }
+      },
+      {
+        "bounds": { "x": 1667, "y": 0, "width": 833, "height": 843 },
+        "action": { "type": "uri", "label": "ถ่ายใบเสร็จ", "uri": "https://line.me/R/nv/camera/" }
+      },
+      {
+        "bounds": { "x": 0, "y": 843, "width": 833, "height": 843 },
+        "action": { "type": "postback", "label": "คุยกับน้องมั่งมี", "data": "action=line-rich-talk", "inputOption": "openKeyboard" }
+      },
+      {
+        "bounds": { "x": 833, "y": 843, "width": 834, "height": 843 },
+        "action": { "type": "message", "label": "สรุปค่าใช้จ่าย", "text": "ดูค่าใช้จ่ายเดือนนี้" }
+      },
+      {
+        "bounds": { "x": 1667, "y": 843, "width": 833, "height": 843 },
+        "action": { "type": "message", "label": "ติดต่อเรา", "text": "ติดต่อเรา" }
+      }
+    ]
+  }
+}

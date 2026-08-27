@@ -72,3 +72,42 @@ Official references:
 - [Rich menus overview](https://developers.line.biz/en/docs/messaging-api/rich-menus-overview/)
 - [Use rich menus](https://developers.line.biz/en/docs/messaging-api/using-rich-menus/)
 - [Messaging API rich-menu reference](https://developers.line.biz/en/reference/messaging-api/#rich-menu)
+
+---
+
+# Ver2 (Owner design 2026-08-27)
+
+Profile: `line-rich-menu-v2-ver2` — manifest `scripts/line-oa/rich-menu-v2-ver2.manifest.json`, spec test
+`scripts/line-oa/rich-menu-v2-ver2.manifest.spec.mjs` (`node --test`), rollback profile = Ver1.
+
+Bitmap: `apps/web/public/assets/line/mangmeeplus-line-rich-menu-v2-ver2-2500x1686.png` — **pending Owner
+export**. When the file is committed, record its sha256/byteSize in the manifest; the spec test fails a
+present file with null checksums. The promotion poster
+`apps/web/public/assets/line/mangmeeplus-package-promo-1080x1350.png` must also be committed (served by the
+web app; referenced by `buildPromotionCard`).
+
+## Exact area/action mapping (equal 3×2 grid)
+
+| Area | Bounds `(x,y,w,h)` | Action |
+|---|---|---|
+| Promotion Package ทดลองใช้ฟรี | `0,0,833,843` | message `โปรโมชั่น` |
+| บริษัทของฉัน | `833,0,834,843` | message `/companies` |
+| ถ่ายใบเสร็จ | `1667,0,833,843` | URI `https://line.me/R/nv/camera/` |
+| คุยกับน้องมั่งมี | `0,843,833,843` | postback `action=line-rich-talk`, `inputOption=openKeyboard` |
+| สรุปค่าใช้จ่าย | `833,843,834,843` | message `ดูค่าใช้จ่ายเดือนนี้` |
+| ติดต่อเรา | `1667,843,833,843` | message `ติดต่อเรา` |
+
+Apply with the SAME Messaging API sequence as Ver1 above (validate → create → upload PNG → deploy backend →
+set default). The backend gate for Ver2 is the commit carrying `staff_menu_promotion`,
+`buildPromotionCard`, and the capability-question card; the receipt tile needs no backend at all (URI opens
+the LINE camera client-side).
+
+## Ver2 device smoke additions
+
+1. Promotion tile: unlinked AND linked accounts get the poster card; ทดลองใช้ฟรี opens only
+   `https://official.mangmeeplus.com/`; คุยกับทีมงาน returns the contact card.
+2. ถ่ายใบเสร็จ tile: LINE camera opens IMMEDIATELY (no attach/camera prompt); a captured photo sends into
+   the chat and the receipt pipeline picks it up as before. Typed `ถ่ายใบเสร็จ` still shows the helper card.
+3. "ทำอะไรได้บ้าง" returns the curated six-function card, not a model answer; "ใบกำกับภาษีใช้ยังไง" still
+   reaches the AI route.
+4. Poster image loads inside LINE (public HTTPS web asset) on both iOS and Android.
