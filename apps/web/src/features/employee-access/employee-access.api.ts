@@ -38,6 +38,8 @@ export const updateEmployee = (c: string, id: string, body: Record<string, unkno
   apiFetch<EmployeeSummary>(`${base(c)}/employees/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
 export const setEmployeeStatus = (c: string, id: string, status: string, reason?: string) =>
   apiFetch<EmployeeSummary>(`${base(c)}/employees/${id}/disable`, { method: 'POST', body: JSON.stringify({ status, reason }) });
+export const deleteEmployeeDraft = (c: string, id: string) =>
+  apiFetch<void>(`${base(c)}/employees/${id}/draft`, { method: 'DELETE' });
 export const regenerateEmployeeCredential = (c: string, id: string) =>
   apiFetch<EmployeeCredentialHandoff>(`${base(c)}/employees/${id}/credentials/regenerate`, { method: 'POST' });
 export const issueEmployeeLineLinkToken = (c: string, id: string) =>

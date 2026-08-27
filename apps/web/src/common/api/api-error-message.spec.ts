@@ -5,6 +5,13 @@ import { apiErrorMessage, translateApiError } from './api-error-message';
 
 const apiError = (message: string, extra: Record<string, unknown> = {}) => Object.assign(new Error(message), extra);
 
+test('explains stale draft removal without a misleading generic concurrency error', () => {
+  assert.equal(apiErrorMessage(apiError('Internal diagnostic', { status: 404, code: 'employee_draft_not_found' })),
+    'ไม่พบพนักงานนี้แล้ว กรุณาโหลดรายชื่อพนักงานใหม่');
+  assert.equal(apiErrorMessage(apiError('Internal diagnostic', { status: 409, code: 'employee_draft_not_deletable' })),
+    'ลบได้เฉพาะร่างพนักงานที่ยังไม่เสร็จสิ้น กรุณาตรวจสอบสถานะล่าสุด');
+});
+
 test('explains missing and invalid transaction source branches in plain Thai', () => {
   assert.equal(apiErrorMessage(apiError('Unprocessable Entity', { status: 422, code: 'TRANSACTION_BRANCH_REQUIRED' })),
     'กรุณาระบุสาขาของรายการก่อนดำเนินการ');

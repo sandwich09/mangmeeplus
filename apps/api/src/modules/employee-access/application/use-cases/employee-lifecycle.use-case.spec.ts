@@ -12,7 +12,9 @@ function makePrisma(targetRoleRows: Array<{ role: { key: string; permissions: Ar
 ]) {
   const state = { profileStatus: 'ACTIVE', membershipStatus: 'ACTIVE', auditLogs: [] as any[], tokens: [] as any[], aiPurges: [] as any[] };
   const tx = {
+    $queryRaw: async () => [],
     employeeAccessProfile: {
+      findFirst: async ({ where }: any) => where.id === PROFILE.id && where.companyId === COMPANY_ID ? { ...PROFILE, status: state.profileStatus } : null,
       update: async ({ data }: any) => { state.profileStatus = data.status ?? state.profileStatus; },
     },
     companyMembership: {

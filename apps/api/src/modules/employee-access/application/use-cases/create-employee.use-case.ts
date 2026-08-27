@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, Injectable } from '@nestjs/common';
 import type { EmployeeCredentialHandoff } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
@@ -15,6 +15,7 @@ import {
   roleGrantViolation,
 } from '../../domain/logic/employee-access.logic';
 import { encryptCredential } from '../../../system-partner-management/domain/logic/credential-cipher.logic';
+import { lockEmployeeProfile } from '../lock-employee-profile';
 
 export type CreateEmployeeCommand = {
   companyId: string;
@@ -130,10 +131,6 @@ export class CreateEmployeeUseCase {
       // An oversight role must hold every branch; resuming a draft is a role write onto a membership
       // whose scope a previous pass through the wizard may already have narrowed.
       const widenBranchScope = roles.some((role) => ALL_BRANCH_ROLE_KEYS.includes(role.key));
-      const previousRoleIds = (await this.prisma.client.membershipRole.findMany({
-        where: { membershipId: duplicateIdentity.membershipId },
-        select: { roleId: true },
-      })).map((row) => row.roleId);
       // A user attached from another company (see attachExistingUser) keeps their own login. When
       // their draft here is resumed, never overwrite the shared user row or reset its credential —
       // only re-sync this company's membership, roles, and profile.
@@ -143,6 +140,12 @@ export class CreateEmployeeUseCase {
         })) > 0;
       try {
         await this.prisma.client.$transaction(async (tx) => {
+          const current = await lockEmployeeProfile(tx, cmd.companyId, duplicateIdentity.id);
+          if (current.status !== 'DRAFT') throw new ConflictException(IDENTITY_CONFLICT);
+          const previousRoleIds = (await tx.membershipRole.findMany({
+            where: { membershipId: current.membershipId },
+            select: { roleId: true },
+          })).map((row) => row.roleId);
           if (!reusedExistingUser) {
             await tx.user.update({
               where: { id: duplicateIdentity.userId },
@@ -509,14 +512,10 @@ export class CreateEmployeeUseCase {
     requestingUserId: string;
     requestId: string;
   }): Promise<CompleteEmployeeDraftResult> {
-    const draft = await this.prisma.client.employeeAccessProfile.findFirst({
-      where: { id: cmd.employeeId, companyId: cmd.companyId },
-    });
-    if (!draft) throw new NotFoundException('Employee draft not found.');
-    if (draft.status === 'ACTIVE') return { employeeId: draft.id, status: 'ACTIVE' };
-    if (draft.status !== 'DRAFT') throw new ConflictException('Only an employee draft can be completed.');
-
     await this.prisma.client.$transaction(async (tx) => {
+      const draft = await lockEmployeeProfile(tx, cmd.companyId, cmd.employeeId);
+      if (draft.status === 'ACTIVE') return;
+      if (draft.status !== 'DRAFT') throw new ConflictException('Only an employee draft can be completed.');
       await tx.employeeAccessProfile.update({
         where: { id: draft.id },
         data: { status: 'ACTIVE', updatedByUserId: cmd.requestingUserId },
@@ -540,7 +539,7 @@ export class CreateEmployeeUseCase {
       });
     });
 
-    return { employeeId: draft.id, status: 'ACTIVE' };
+    return { employeeId: cmd.employeeId, status: 'ACTIVE' };
   }
 }
 

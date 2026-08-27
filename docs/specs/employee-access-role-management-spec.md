@@ -264,3 +264,12 @@ Supersedes the temporary-password rules above for newly created employees:
 - Province, district, and subdistrict are persisted with the employee profile instead of being UI-only address fields.
 - The contact/address step looks up the canonical `ThaiAddressMaster` by five-digit postal code and offers linked province, district, and subdistrict choices. If the master has no matching row, the form keeps a free-text fallback so legacy or exceptional addresses remain editable.
 - Account status controls are disabled for drafts, and the status API must reject every transition out of `DRAFT`; only the wizard Finish endpoint may activate a draft.
+
+### Draft removal — 2026-08-27
+
+- The employee menu removes an unfinished draft through a dedicated draft-delete action, not a transition to `DISABLED`. After reload the draft is absent and cannot be reopened or finished.
+- Reuse `access.employee.disable` and the existing owner/platform and people-manager protections. The final transaction must check company ownership and both profile/membership draft state; a concurrent Finish must never allow deletion of an activated employee.
+- Remove only this company's draft profile, membership, role assignments and branch scopes; revoke its pending LINE-link tokens and retain a deletion audit. Preserve the global user, credential, external identities, sessions and all other-company records. Non-draft disabling remains unchanged.
+- Draft resume, Finish, token issue and credential issue must serialize with removal and recheck existence before writing. No pending token or credential reset may be issued for a draft already removed.
+- Freed company identity/phone values can be reused. The preserved login still follows existing-account confirmation and the existing distinct company-email requirement; removal neither silently attaches an account nor resets its password.
+- Confirmation/success text must describe draft removal and retained login accurately. Stale/deleted drafts return actionable not-found feedback; newly activated employees return a draft-specific conflict, not a misleading concurrent-update message.
