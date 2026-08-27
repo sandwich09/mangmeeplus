@@ -1649,8 +1649,11 @@ policy, enable bank/reconciliation integrations, or change posting/settlement ar
   default instant is assigned only on first creation, so retries across midnight are safe.
   Existing optional method/date/reference nulls normalize to omission; a blank/whitespace
   bank reference normalizes to null. The standard HTTP string-trimming pipe still applies.
-- Permission, tenant, and branch access are checked again inside the write boundary before
-  replay or mutation. Replaying a payment after source void returns current voided state
+- `expense.payment.record` permission is enforced at command entry against the resolved
+  request context. Inside the transaction, the repository rereads the company-scoped source
+  and checks its branch against the supplied resolved request scopes before replay or mutation;
+  it does not perform a fresh database permission lookup inside that transaction.
+  Replaying a payment after source void returns current voided state
   without restoring payment, source totals, or posting. Claim-backed expenses remain
   exclusively settled through reimbursement.
 - Payment row, totals, success audit, and one payment-recorded outbox event commit together.

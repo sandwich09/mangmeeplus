@@ -11,6 +11,11 @@ import { hashPassword, verifyPassword } from './domain/logic/password-credential
 import { WatchdogJwtVerifierAdapter } from './infrastructure/watchdog-jwt-verifier.adapter';
 import { DevJwtVerifierAdapter } from './infrastructure/dev-jwt-verifier.adapter';
 import { PlatformAccessService } from './application/platform-access.service';
+import { DisabledAuthMailerAdapter } from './infrastructure/disabled-auth-mailer.adapter';
+import { LocalConsoleAuthMailerAdapter } from './infrastructure/local-console-auth-mailer.adapter';
+import { SesAuthMailerAdapter } from './infrastructure/ses-auth-mailer.adapter';
+import { selectAuthMailer } from './auth.module';
+import { AppConfigService } from '../../common/config/app-config.service';
 
 const pendingLegalAcceptance = {
   getStatus: async () => ({ required: true }),
@@ -715,5 +720,162 @@ describe('PlatformAccessService', () => {
     assert.equal(result.audits[0].client, result.tx);
     assert.equal(result.audits[0].entry.riskLevel, 'CRITICAL');
     assert.equal(result.audits[0].entry.metadataJson.to, 'OPEN');
+  });
+});
+
+describe('P11 SES auth mailer provider boundary', () => {
+  function config(overrides: Record<string, unknown> = {}) {
+    return {
+      emailProvider: 'ses', isLocal: false, sesRegion: 'ap-southeast-1',
+      sesFromAddress: 'no-reply@example.com', webBaseUrl: 'https://api.example.com', sesWebBaseUrl: 'https://app.example.com',
+      ...overrides,
+    } as any;
+  }
+
+  function sesMailer(options: { failure?: Error } = {}) {
+    const commands: any[] = [];
+    const client = {
+      send: async (command: any) => {
+        commands.push(command);
+        if (options.failure) throw options.failure;
+        return { MessageId: 'ses-message-1' };
+      },
+    };
+    return { mailer: new SesAuthMailerAdapter(config(), client as any), commands };
+  }
+
+  it('keeps disabled as a true no-op and makes local console explicit', async () => {
+    const disabled = new DisabledAuthMailerAdapter();
+    const local = new LocalConsoleAuthMailerAdapter(config({ webBaseUrl: 'http://localhost:3000' }));
+    const ses = sesMailer().mailer;
+    for (const isLocal of [true, false]) {
+      assert.equal(selectAuthMailer(config({ emailProvider: 'disabled', isLocal }), disabled, local, ses), disabled);
+    }
+    assert.equal(selectAuthMailer(config({ emailProvider: 'local-console', isLocal: true }), disabled, local, ses), local);
+    assert.throws(
+      () => selectAuthMailer(config({ emailProvider: 'local-console', isLocal: false }), disabled, local, ses),
+      /allowed only when APP_ENV=local/,
+    );
+    assert.equal(selectAuthMailer(config(), disabled, local, ses), ses);
+
+    const logged: unknown[] = [];
+    const previous = console.info;
+    console.info = (...args: unknown[]) => { logged.push(args); };
+    try {
+      const input = { toEmail: 'owner@example.com', rawToken: 'secret-token', expiresAt: new Date() };
+      await disabled.sendEmailVerification(input);
+      await disabled.sendPasswordResetLink(input);
+      await disabled.sendAccountClaim({ ...input, companyName: 'Acme', lineOaAddUrl: 'https://lin.ee/example' });
+    } finally {
+      console.info = previous;
+    }
+    assert.equal(logged.length, 0, 'disabled must never log a raw auth link in local mode');
+  });
+
+  it('fails SES selection at boot when required delivery config is missing', () => {
+    const disabled = new DisabledAuthMailerAdapter();
+    const local = new LocalConsoleAuthMailerAdapter(config({ webBaseUrl: 'http://localhost:3000' }));
+    const ses = sesMailer().mailer;
+    for (const key of ['sesRegion', 'sesFromAddress', 'sesWebBaseUrl']) {
+      for (const missing of [undefined, '']) {
+        assert.throws(
+          () => selectAuthMailer(config({ [key]: missing }), disabled, local, ses),
+          /requires SES_REGION, SES_FROM_ADDRESS, and WEB_BASE_URL/,
+        );
+      }
+    }
+  });
+
+  it('never uses the public API origin as the SES frontend base', async () => {
+    const disabled = new DisabledAuthMailerAdapter();
+    for (const WEB_BASE_URL of [undefined, '', 'https://frontend.example.com']) {
+      // Exercise the real getters without changing process.env or booting external services.
+      const actual = Object.assign(Object.create(AppConfigService.prototype), { config: {
+        APP_ENV: 'local', EMAIL_PROVIDER: 'ses', SES_REGION: 'ap-southeast-1',
+        SES_FROM_ADDRESS: 'no-reply@example.com', PUBLIC_BASE_URL: 'https://api.example.com', WEB_BASE_URL,
+      } }) as AppConfigService;
+      assert.equal(actual.webBaseUrl, WEB_BASE_URL ?? 'https://api.example.com', 'general fallback stays unchanged');
+      assert.equal(actual.sesWebBaseUrl, WEB_BASE_URL);
+      const commands: any[] = [];
+      const ses = new SesAuthMailerAdapter(actual, { send: async (command: any) => { commands.push(command); return {}; } } as any);
+      const local = new LocalConsoleAuthMailerAdapter(actual);
+      const send = () => ses.sendEmailVerification({ toEmail: 'owner@example.com', rawToken: 'token', expiresAt: new Date() });
+      if (!WEB_BASE_URL) {
+        assert.throws(() => selectAuthMailer(actual, disabled, local, ses), /requires SES_REGION, SES_FROM_ADDRESS, and WEB_BASE_URL/);
+        await assert.rejects(send, /WEB_BASE_URL is required/);
+        assert.equal(commands.length, 0);
+      } else {
+        assert.equal(selectAuthMailer(actual, disabled, local, ses), ses);
+        await send();
+        assert.match(commands[0].input.Message.Body.Text.Data, /https:\/\/frontend\.example\.com\/verify-email\?token=token/);
+        assert.doesNotMatch(JSON.stringify(commands), /https:\/\/api\.example\.com/);
+      }
+    }
+  });
+
+  it('builds UTF-8 SES messages for verification, reset, and account claim without unsafe HTML', async () => {
+    const { mailer, commands } = sesMailer();
+    const expiresAt = new Date('2026-08-27T08:30:00.000Z');
+    await mailer.sendEmailVerification({ toEmail: 'owner@example.com', rawToken: 'verify+/=', expiresAt });
+    await mailer.sendPasswordResetLink({ toEmail: 'owner@example.com', rawToken: 'reset+/=', expiresAt });
+    await mailer.sendAccountClaim({
+      toEmail: 'owner@example.com', rawToken: 'claim+/=', expiresAt,
+      companyName: 'บริษัท <script>alert(1)</script> จำกัด', lineOaAddUrl: 'https://lin.ee/mangmee',
+    });
+
+    assert.equal(commands.length, 3);
+    const inputs = commands.map((command) => command.input);
+    assert.ok(inputs.every((input) => input.Source === 'no-reply@example.com'));
+    assert.ok(inputs.every((input) => input.Message.Body.Text.Data.includes('https://app.example.com/')));
+    assert.doesNotMatch(JSON.stringify(inputs), /https:\/\/api\.example\.com/);
+    for (const input of inputs) {
+      assert.deepEqual(input.Destination, { ToAddresses: ['owner@example.com'] });
+      assert.equal(input.Message.Subject.Charset, 'UTF-8');
+      assert.equal(input.Message.Body.Text.Charset, 'UTF-8');
+      assert.equal(input.Message.Body.Html.Charset, 'UTF-8');
+    }
+    assert.deepEqual(inputs.map((input) => input.Tags[0].Value), ['email_verification', 'password_reset', 'account_claim']);
+    assert.match(inputs[0].Message.Body.Text.Data, /verify-email\?token=verify%2B%2F%3D/);
+    assert.match(inputs[1].Message.Body.Text.Data, /reset-password\?token=reset%2B%2F%3D/);
+    assert.match(inputs[2].Message.Body.Text.Data, /claim-account\?token=claim%2B%2F%3D/);
+    assert.match(inputs[2].Message.Body.Text.Data, /ไม่ใช่รหัสผ่านของ LINE/);
+    assert.match(inputs[2].Message.Body.Html.Data, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+    assert.doesNotMatch(inputs[2].Message.Body.Html.Data, /<script>/);
+    assert.match(inputs[2].Message.Body.Html.Data, /href="https:\/\/lin\.ee\/mangmee"/);
+    assert.doesNotMatch(JSON.stringify(inputs[2]), /temporaryPassword|taxId|qrImage|passwordHash/);
+  });
+
+  it('propagates SES failures so the caller or outbox can retry', async () => {
+    const { mailer } = sesMailer({ failure: new Error('ses unavailable') });
+    await assert.rejects(
+      () => mailer.sendEmailVerification({
+        toEmail: 'owner@example.com', rawToken: 'verify-token', expiresAt: new Date('2026-08-27T08:30:00.000Z'),
+      }),
+      /ses unavailable/,
+    );
+  });
+
+  it('rejects non-HTTPS claim and application links before sending', async () => {
+    const { mailer, commands } = sesMailer();
+    await assert.rejects(
+      () => mailer.sendAccountClaim({
+        toEmail: 'owner@example.com', rawToken: 'token', expiresAt: new Date(),
+        companyName: 'Acme', lineOaAddUrl: 'javascript:alert(1)',
+      }),
+      /lineOaAddUrl must use HTTPS/,
+    );
+    await assert.rejects(
+      () => mailer.sendAccountClaim({
+        toEmail: 'owner@example.com', rawToken: 'token', expiresAt: new Date(),
+        companyName: 'Acme', lineOaAddUrl: 'https://attacker.example/line-lookalike',
+      }),
+      /lineOaAddUrl must use an official LINE host/,
+    );
+    const insecure = new SesAuthMailerAdapter(config({ sesWebBaseUrl: 'http://app.example.com' }), { send: async () => ({}) } as any);
+    await assert.rejects(
+      () => insecure.sendEmailVerification({ toEmail: 'owner@example.com', rawToken: 'token', expiresAt: new Date() }),
+      /WEB_BASE_URL must use HTTPS/,
+    );
+    assert.equal(commands.length, 0);
   });
 });

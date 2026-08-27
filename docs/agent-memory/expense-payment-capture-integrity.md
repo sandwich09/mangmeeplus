@@ -1,8 +1,11 @@
 # Agent Memory: Expense payment capture integrity
 
-Status: Root local integration accepted on develop21f109d5: accounting6 + AP6 + expense21
-=33/33 E2E, strict PG128/128, web1139/1139, API/web/E2E typechecks pass. Six final images
-and API proof inspected. PR/CI/merge pending; not shipped and no main/Production claim.
+Status: MERGED DEVELOP via PR #287 at `111532966c415fee11abb36ca1749bf1fc66ee52`,
+2026-08-27T04:36:17Z; exact-head CI `33039136161` SUCCESS on
+`179981a45f00a1d0b3a1898dce9f877f2457563e`. Final accounting6 + AP6 + expense21 =33/33
+E2E, zero skipped/flaky; eight-suite checks128/128 (including 6 real PostgreSQL cases),
+web1139/1139 and API/web/E2E typechecks pass.
+Six tracked images/API proof support this scoped delivery, not main/Production approval.
 Owner: `/root/ocr_platform_admin` implementation; `/root` review, browser QA and integration.
 Scope: Expense payment durable retry identity, atomic audit/outbox, explicit actual paid
 date, registered regressions and isolated local PostgreSQL proof. P15 remains frozen and
@@ -10,13 +13,17 @@ untouched. No subscription, bank/revenue matching/reconciliation, or P28 credit 
 
 ## Decisions
 
-- Branch `codex/expense-payment-capture-integrity`, clean worktree
+- Implementation started on branch `codex/expense-payment-capture-integrity`, worktree
   `/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus-expense-payment-capture-integrity`,
   baseline `d2b40f37948d482c1bdd29c6047551c4258f24a7`.
 - Root approved spec §19m: optional validated key, hashed request-ID legacy fallback,
   current authorized ExpenseRecord replay response, exact canonical money/civil date,
   company uniqueness, rechecked tenant/branch scope, void replay without settlement,
   transactional audit/outbox, deliberate new intent after edits.
+- Permission boundary clarification after integration: `requirePerm(ctx, 'expense.payment.record')`
+  runs at command entry (`expense-draft.use-case.ts:1122`). The transaction rereads the
+  company-bound source and compares its branch with resolved request scopes
+  (`prisma-expense.repository.ts:333–336`); it does not reread permissions from the DB.
 - Ponytail full: extend existing payment transaction and validators; no new dependency,
   permission, endpoint, or payment abstraction. Read repository AGENTS and Ponytail full.
 - Existing actual caller: ExpenseReviewPage → expenses.api → RecordExpensePaymentUseCase
@@ -334,12 +341,26 @@ untouched. No subscription, bank/revenue matching/reconciliation, or P28 credit 
   to `http://127.0.0.1:3003/v1`. Existing API3001 and shared DB were left untouched. Retain
   the isolated DB, versioned bucket, and API session for root's desktop/mobile browser QA.
 
+## Delivery provenance — supersedes pre-PR/authoring state above
+
+- Read-only GitHub verification on 2026-08-27: [PR287](https://github.com/MangmeeDev/mangmeeplus/pull/287)
+  is MERGED to develop at `111532966c415fee11abb36ca1749bf1fc66ee52`, merged
+  2026-08-27T04:36:17Z. [CI33039136161](https://github.com/MangmeeDev/mangmeeplus/actions/runs/33039136161)
+  completed SUCCESS on exact head `179981a45f00a1d0b3a1898dce9f877f2457563e`.
+- Final post-rebase browser run began2026-08-27T04:17:41Z: accounting6 + AP6 + expense21
+  **33/33 passed, zero skipped/flaky**, web1139/1139 and eight-suite checks128/128
+  (including 6 real PostgreSQL cases). Six selected
+  desktop/mobile images plus [payment-api-proof.json](../evidence/expense-payment-capture-integrity/payment-api-proof.json)
+  are tracked in the merged commit; [README](../evidence/expense-payment-capture-integrity/README.md)
+  distinguishes real EXP27/29 commits from EXP28 mocked POST errors and physical-device limits.
+- This superseding docs audit did not rerun browser/DB tests or alter runtime. Earlier
+  failures, author-only notes and root's Opus disposition remain historical evidence;
+  there is no invented final Opus APPROVE or live rollout claim.
+
 ## Next
 
-Root completes independent review and desktop/mobile browser QA: choose an actual past
-payment day; record partial/full payments; simulate lost response and retry unchanged;
-edit and observe the explicit new-intent warning; verify first 400 versus network→403 and
-conflict guidance; confirm history/ledger month; verify staff cannot pay and void replay
-never restores settlement. EXP-27 remains the other agent's frozen real-commit test;
-this agent added only EXP-28/29 to that existing file under root authorization. Root owns
-both browser runs/screenshots, followed by commit/PR/CI/merge.
+No implementation/PR work remains for this bounded capture fix. Preserve the isolated
+fixtures/evidence while root uses them; do not rerun bootstrap or apply migration to a
+shared/live DB from this audit. Main promotion remains gated by the remaining active scope;
+production migration lock timing, deployment protocol, physical-device/40+ acceptance and
+P27/P28 Owner policies remain separate decisions.

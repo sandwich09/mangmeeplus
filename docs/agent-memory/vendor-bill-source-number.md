@@ -1,10 +1,10 @@
 # Agent Memory: Vendor Bill Supplier Source Number
 
-Status: LOCAL CAPTURE ACCEPTANCE PASS; isolated branch `codex/vendor-bill-source-number` initially from `origin/develop` `d2b40f37`. Final submit-scoped implementation passes full AP6/6 and web1126/1126, actual Chrome desktop/mobile checks and read-only persisted draft verification. Integration/CI pending; no main or deployment claim.
+Status: MERGED DEVELOP via PR #286 at `21f109d51e91d96836aaa3423730072378e977b7`; exact-head CI `33037405174` SUCCESS on `cfbd91d8`. Final submit-scoped implementation passed AP6/6, post-rebase web1129/1129, actual Chrome desktop/mobile checks and persisted draft verification. No main or deployment claim.
 Owner: Codex implementation agent; root owns review, repo E2E and real Chrome sessions.
 Scope: Capture-first direct vendor-bill form: expose the existing optional supplier document number and translate its duplicate rejection; fix verified supplier-name contract drift and label existing direct-entry controls in plain Thai. No subscription, connectors, reconciliation, P28 credit/approval policy, schema or backend behavior changes.
 
-## Current evidence and contract
+## Baseline evidence and contract (before implementation)
 
 - [Capture-first scope](mangmee-capture-first-scope.md) keeps purchase/payment/source-document capture active; [canonical procurement spec](../specs/procurement-supplier-ap-spec.md#vendorbill) distinguishes nullable `supplierDocumentNumber` from `taxInvoiceNumber` and scopes uniqueness by company+supplier.
 - `AccountsPayablePages.tsx:260` contains the only `CreateVendorBillForm`; its only caller at `:466` requires both `procurement.vendor_bill.create` and `procurement.vendor_bill.direct_entry`. Its only `createVendorBill` call omits the source number.
@@ -99,4 +99,9 @@ Artifacts: This memory; direct vendor-bill form; shared API error mapper; typed 
 
 - Rebased onto current develop `78057e3848414190b5803d89658aee83b0b51420` after P24/partner-copy merges; scoped form/API/E2E source is unchanged by rebase. Post-rebase **AP6/6**, full web **1129/1129, zero skipped**, typecheck and diff check PASS. The count includes three additional merged partner-copy tests. Screenshots above remain the exact pre-rebase captures, not images from the later test run.
 
-Next: Push/open PR; merge only after exact-head CI succeeds. Native select label-tap, full P24, P28 accounting policy and physical-device/human acceptance remain separate.
+## Delivery provenance — refreshed 2026-08-27
+
+- Read-only GitHub verification: [PR #286](https://github.com/MangmeeDev/mangmeeplus/pull/286) merged into develop at `21f109d51e91d96836aaa3423730072378e977b7` on 2026-08-27T04:01:13Z; [CI 33037405174](https://github.com/MangmeeDev/mangmeeplus/actions/runs/33037405174) completed SUCCESS on exact PR head `cfbd91d85dde44d3ca23bb13ec72092e97d77add`.
+- [Tracked evidence](../evidence/vendor-bill-source-number/README.md) distinguishes failure examples from final desktop/mobile captures and preserves the pre-rebase provenance. The final AP6/6/post-rebase web1129/1129 result and root acceptance supersede earlier pending/five-case statuses. No final Opus APPROVE verdict is added.
+
+Next: Do not repeat this merged capture fix. Native select label-tap, full P24, P28 accounting policy and physical-device/human acceptance remain separate; integration is not main or deployment acceptance.
