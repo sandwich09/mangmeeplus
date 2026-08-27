@@ -18,6 +18,7 @@
 import { Type } from 'class-transformer';
 import {
   IsInt,
+  IsISO8601,
   IsIn,
   IsNotEmpty,
   IsOptional,
@@ -74,6 +75,7 @@ export class ReasonOptionalDto {
 export class ExpenseVatSourceOverrideDto {
   @IsString() @IsNotEmpty() @MaxLength(500) reason!: string;
   @Type(() => Number) @IsInt() @Min(1) vatLineNumber!: number;
+  @IsString() @IsISO8601({ strict: true }) expectedUpdatedAt!: string;
 }
 
 /** Confirm body. An empty object is the ordinary confirm; every existing caller sends exactly that. */

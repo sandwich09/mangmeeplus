@@ -148,6 +148,26 @@ describe('TransactionTaxConfigUseCase lifecycle and trust boundary', () => {
     assert.equal(preview.snapshot.taxAmountTolerance, '0.50');
   });
 
+  it('does not accept public expense amount authority but forwards the internal decision within profile tolerance', async () => {
+    const def = { ...definition(), direction: 'INPUT' as const, transactionContexts: ['DOMESTIC_PURCHASE' as const], claimabilityDefault: 'CLAIMABLE' as const };
+    const repo = {
+      listProfiles: async () => [profile('p1')], listDefinitions: async () => [def],
+      listAccountRules: async () => [{ ...account(def), accountRole: 'INPUT_VAT_CLAIMABLE', postingSide: 'DEBIT' }],
+      listReportRules: async () => reports(def).map((rule, index) => ({ ...rule, boxKey: index ? 'box_7_input_tax' : 'box_6_eligible_purchases' })),
+    } as any;
+    const tax = useCase(repo);
+    const input = { sourceType: 'expense.record', sourceId: 'e1', sourceLineId: 'l1', transactionContext: 'DOMESTIC_PURCHASE',
+      documentDate: '2026-07-14', currency: 'THB', taxCodeDefinitionId: def.id, netAmount: '100', grossAmount: '107.01',
+      enteredTaxAmount: '7.01', acceptedExpenseVatRate: '0.07', preserveAcceptedVat: true } as any;
+    const ordinary = await tax.resolveSourceTax(ctx(['expense.read', 'expense.confirm']), input, 'FINAL', undefined, 'INPUT', 'expense');
+    assert.equal(ordinary.snapshot.taxAmount, '7.00', 'payload fields cannot opt into internal acceptance');
+    const accepted = await tax.resolveSourceTax(ctx(['expense.read', 'expense.confirm']), input, 'FINAL', undefined, 'INPUT', 'expense', { acceptedExpenseVatRate: '0.07' });
+    assert.equal(accepted.snapshot.taxAmount, '7.01');
+    await assert.rejects(() => tax.resolveSourceTax(ctx(['expense.read', 'expense.confirm']), { ...input, grossAmount: '107.02', enteredTaxAmount: '7.02' },
+      'FINAL', undefined, 'INPUT', 'expense', { acceptedExpenseVatRate: '0.07' }),
+    (error: any) => error.getResponse?.().preview?.errors?.includes('entered_tax_amount_outside_tolerance'));
+  });
+
   it('overrides forged import amounts with matching verified evidence', async () => {
     const def = { ...definition(), taxRegime: 'IMPORT_VAT' as const, direction: 'INPUT' as const, treatment: 'CLAIMABLE' as const, transactionContexts: ['IMPORT_GOODS' as const], claimabilityDefault: 'CLAIMABLE' as const, evidenceRuleKey: 'CUSTOMS_ENTRY' };
     const importAccounts = [

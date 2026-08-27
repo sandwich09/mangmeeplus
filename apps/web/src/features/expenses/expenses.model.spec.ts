@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { isBlockingExpenseVatReconciliation, type ExpenseVatCaptureSnapshotV1 } from '@watchdog-bms/contracts';
 import {
   postingErrorText,
   expensePaymentAttempt,
@@ -463,7 +464,7 @@ describe('expenses.model', () => {
   });
 
   it('hydrates normalized source VAT and validates missing unit values', () => {
-    const source = expenseVatSourceFromSnapshot({
+    const snapshot: ExpenseVatCaptureSnapshotV1 = {
       version: 1,
       source: {
         inputType: 'BOTH', origin: 'OCR', vatRatePercent: '7.0000', vatAmount: '27.0800',
@@ -477,8 +478,15 @@ describe('expenses.model', () => {
       reconciliation: {
         status: 'MATCHED', acceptedSource: 'SOURCE_AMOUNT', differenceAmount: '0.0000', toleranceAmount: '0.05',
       },
-    });
+    };
+    const source = expenseVatSourceFromSnapshot(snapshot);
     assert.deepEqual(source, { inputType: 'BOTH', vatRatePercent: '7', vatAmount: '27.08' });
+    const accepted: ExpenseVatCaptureSnapshotV1 = { ...snapshot,
+      calculation: { ...snapshot.calculation, vatAmount: '27.0000' },
+      reconciliation: { ...snapshot.reconciliation, status: 'REVIEWER_ACCEPTED', differenceAmount: '0.0800' },
+    };
+    assert.equal(isBlockingExpenseVatReconciliation(accepted), false);
+    assert.deepEqual(expenseVatSourceFromSnapshot(accepted), source, 'reload retains source evidence rather than calculating it away');
     assert.match(expenseVatSourceValidationMessage({ inputType: 'AMOUNT', vatAmount: '' }) ?? '', /บาท/);
     assert.match(expenseVatSourceValidationMessage({
       inputType: 'NONE',
