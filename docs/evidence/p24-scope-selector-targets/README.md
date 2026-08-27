@@ -1,7 +1,11 @@
 # P24-2b — Company and branch selector evidence
 
-Status: final scoped local browser checks passed; PR/exact-head CI pending. This is local
-synthetic-data evidence, not full P24, physical-device or human 40+ acceptance.
+Status: MERGED DEVELOP via [PR292](https://github.com/MangmeeDev/mangmeeplus/pull/292)
+at `a2d8e793de11eb60077e63bb1a7ccf0303b390c6`, 2026-08-27T06:08:41Z, after
+CI33043955626 SUCCESS on exact head `d3a531d69d2ef1ee2259b51228aa6e676b22eb91`.
+Approved-origin capture33/33, selector61/61 and manual draft/reload passed separately below.
+Original eight images/provenance are unchanged; the ninth is a distinct root-reviewed
+manual draft. No full P24, physical-device or human40+ acceptance.
 
 ## Real Chrome baseline — 2026-08-27
 
@@ -88,6 +92,43 @@ Root visually inspected these images. Thai is the actual workspace locale; unit 
 also verify the existing English retry-label relationship, not English rendered UX.
 Local full report: `test-results/p24-scope-long-list-final-report/index.html`; JSON:
 `test-results/p24-scope-long-list-final.json`. Reports/traces remain ignored and are not
-committed because they may carry session information. Only the eight selected images
-and this explanation are delivery artifacts. No physical device or actual40+ user test
+committed because they may carry session information. From this selector run, only the
+eight selected images and this explanation are delivery artifacts. No physical device or actual40+ user test
 is claimed, and this bounded correction does not close the full P24 backlog.
+
+## Approved-origin integration and manual draft — 2026-08-27
+
+The later capture run on web3004 failed because the isolated API's existing CORS allowlist
+accepts local port3000, not3004. Root moved only its own web to3000, keeping source
+`d3a531d6`, API3003, CORS guards and DB/provider state unchanged. Failed reports remain
+preserved; these are distinct runs, not relabelled earlier results:
+
+| Run | Start (UTC) | Duration | Result |
+| --- | --- | --- | --- |
+| Capture, wrong origin3004 | 2026-08-27T05:54:22.303Z | 77.998s | 24 passed,9 failed |
+| Capture, approved origin3000 | 2026-08-27T06:00:07.943Z | 38.558s | 33/33 passed |
+| Selector, approved origin3000 | 2026-08-27T06:00:07.944Z | 89.794s | 61/61 passed |
+
+Both approved-origin runs have zero skipped/unexpected/flaky tests and zero report errors:
+**94 cases in two runs**, not one94-case suite. Commands, exact local report paths and
+environment finding are in [memory](../../agent-memory/p24-scope-selector-targets.md)
+and [checkpoint](../../agent-memory/capture-first-delivery-checkpoint.md#p24-post-scope-capture-rerun).
+
+Root then used real Chrome at `http://127.0.0.1:3000`, native1126×796, to enter description
+`CHROME-P24-ORIGIN-20260827 ทดสอบข้อมูล local ไม่ใช่รายการจริง`, quantity1 and price100,
+then clicked `บันทึกฉบับร่าง` once. The persisted route ended in expense
+`cmtb47c9d02rzq6k1r4bs9vmf` under `seed-local-company`. DOM readback showed DRAFT,
+`รอตรวจหลักฐานภาษี`, manual/NO_VAT, total100 and unpaid100; no confirm, payment, posting
+or OCR. Root then hard-navigated to the saved route: after loading, the exact description,
+quantity/unit/total/unpaid values and draft/tax-evidence status persisted; missing vendor/
+receipt still disabled the next action and error logs stayed empty. This is persisted UI
+reload evidence, not independent API readback. Existing local company NOT_REGISTERED/
+NO_VAT does not decide the separate P27 VAT-unknown draft policy.
+
+- [Approved-origin manual draft](chrome-approved-origin-manual-draft.jpg), JPEG1126×796,
+  saved and visually inspected by root. It shows the draft header, missing vendor/receipt
+  and disabled next action. **Total100 is below the captured viewport** and proved by
+  DOM readback, not this screenshot alone. No horizontal overflow; browser error logs empty.
+- Original eight image bytes and port3004 provenance above remain unchanged. The earlier
+  draft `cmtazlakn001sq6k1ladnx7yz` is preserved; this docs task performs no record cleanup.
+  The ninth image is additional local synthetic proof, not physical-device/human UAT.

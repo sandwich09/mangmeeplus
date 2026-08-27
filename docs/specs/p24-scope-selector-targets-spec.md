@@ -1,7 +1,13 @@
 # P24-2b — Company/branch selector touch targets
 
-Status: Scoped source and real-Chrome evidence accepted by root, including many-options
-scrolling and label-in-name corrections; phase PR/exact-head CI pending.
+Status: MERGED DEVELOP via [PR292](https://github.com/MangmeeDev/mangmeeplus/pull/292)
+at `a2d8e793de11eb60077e63bb1a7ccf0303b390c6`, 2026-08-27T06:08:41Z, after
+CI33043955626 SUCCESS on exact head `d3a531d69d2ef1ee2259b51228aa6e676b22eb91`.
+Scoped source/Chrome, approved-origin capture33/33 + selector61/61 and manual draft/reload
+passed; this bounded delivery does not close full P24 or main acceptance.
+The [additional capture run](../agent-memory/capture-first-delivery-checkpoint.md#p24-post-scope-capture-rerun)
+failed on an unallowed local origin; moving only the frontend to allowed3000 restored
+capture acceptance without a source/CORS-guard change. Its failed report is preserved.
 Original base: develop `d8d9808e41d15360810ed67e9169ade0cd5605ab` (2026-08-27);
 post-freeze integration `d8f1a853` preserves all tested frontend bytes.
 

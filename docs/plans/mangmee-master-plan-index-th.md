@@ -2,7 +2,7 @@
 
 สถานะ: **ACTIVE — VERIFIED INDEX 2026-08-27** (สาย 1–4 review แล้ว; สาย 5 Subscribe/Billing ไม่อยู่ใน scope รอบนี้)
 
-ลำดับและกติกาคุมโดย [แผนหลัก 2.5 วัน §10](mangmee-brain-2-5-day-priority-plan-th.md), ภายใต้ scope ล่าสุดด้านล่าง. หลักฐานและเหตุผล verdict อยู่ใน [Coding-readiness Audit](mangmee-four-lane-coding-readiness-audit-th.md); phase/test/exit/gate ที่เติมอยู่ใน [Gap Closure Plan](mangmee-four-lane-gap-closure-plan-th.md). Baseline integration ล่าสุดที่ตรวจคือ `origin/develop@c6f3d06f` (รวม P11 disabled-safe foundation PR #290 และ corrected AI PR #288); branch/worktree status ต้องแยกจาก integration/production status เสมอ.
+ลำดับและกติกาคุมโดย [แผนหลัก 2.5 วัน §10](mangmee-brain-2-5-day-priority-plan-th.md), ภายใต้ scope ล่าสุดด้านล่าง. หลักฐานและเหตุผล verdict อยู่ใน [Coding-readiness Audit](mangmee-four-lane-coding-readiness-audit-th.md); phase/test/exit/gate ที่เติมอยู่ใน [Gap Closure Plan](mangmee-four-lane-gap-closure-plan-th.md). Baseline integration ล่าสุดที่ตรวจคือ `origin/develop@a2d8e793` (รวม P11 PR290, corrected AI PR288, docs checkpoint PR291 และ P24-2b PR292). Branch/worktree status ต้องแยกจาก integration/production status เสมอ.
 
 คำสถานะ: `READY <phase>` = เริ่ม phase นั้นได้, `PARTIAL READY` = core/read-only เริ่มได้แต่ activation blocked, `IMPLEMENTED / VERIFY` = code มีแต่ rollout evidence ค้าง, `BLOCKED` = ห้ามเดาคำตอบ Owner/provider/expert.
 
@@ -53,7 +53,7 @@
 | P18–P20 | Direct bank/QR/Gateway, Marketplace settlement, POS/Partner API | [provider-neutral contract](../specs/mangmee-revenue-connectors-contract-spec-th.md) + [marketplace partial](../specs/marketplace-import-spec.md) | [P18–20 plan](mangmee-four-lane-gap-closure-plan-th.md#p18p20--revenue-connectors) | **DEFERRED BY OWNER 2026-08-27** — รวม shared harness/adapter; ไม่เป็น gate รอบนี้ |
 | P21 | Accountant review + tax workpaper ภ.พ.30 | [spec](../specs/mangmee-tax-workpaper-pp30-spec-th.md) | [P21 plan](mangmee-four-lane-gap-closure-plan-th.md#p21--tax-workpaper--accountant-review) | **READY P21-0 core**; form output รอ current fixture/expert |
 | P22 | Controlled auto-accounting | [expense spec](../specs/expense-ledger-auto-post-spec.md) | [implemented plan](expense-ledger-auto-post-plan.md) + [P22 gate](mangmee-four-lane-gap-closure-plan-th.md#p22--controlled-auto-accounting) | expense เดิม **IMPLEMENTED / VERIFY**; revenue automation หลัง P17 **DEFERRED** ไม่ใช่ gate รอบนี้ |
-| P24 | Growth/UX รอบเต็ม | [spec](../specs/mangmee-growth-ux-full-pass-spec-th.md) | [P24 plan](mangmee-four-lane-gap-closure-plan-th.md#p24--growthux-full-pass) | **PARTIAL** — P24-2a merged develop `b98e500f`, PR #283 / CI `33034949214` SUCCESS; P24-2b selector44px ยัง uncommitted/in progress ไม่มี acceptance; full 40+/physical-device journeys ยังไม่ครบ; ไม่พึ่ง Billing |
+| P24 | Growth/UX รอบเต็ม | [spec](../specs/mangmee-growth-ux-full-pass-spec-th.md) | [P24 plan](mangmee-four-lane-gap-closure-plan-th.md#p24--growthux-full-pass) | **PARTIAL** — P24-2a merged `b98e500f` / PR283; P24-2b merged `a2d8e793` / PR292 / exact-head CI33043955626 SUCCESS บน `d3a531d6`. Scoped local/Chrome + approved-origin33+61/manual draft-reload ผ่าน; full 40+/physical-device journeys ยังไม่ครบ; ไม่พึ่ง Billing |
 
 Gate ประจำสาย: **รัน P25 ฉบับเต็มซ้ำก่อนขยายวงทุกครั้ง** ([production-a5-v2-spec](../specs/production-a5-v2-spec.md))
 
@@ -98,6 +98,8 @@ Gate ประจำสาย: **รัน P25 ฉบับเต็มซ้ำ
 7. P27 usability ผู้ใช้ 40+ ≥3 คน และ P24 physical-device journeys ยังเปิด; P25 รอ next-cohort workload/SLO ก่อนรัน capacity gate. Local Chromium ไม่ใช่หลักฐานผ่านสองรายการนี้.
 
 AI PR288 head `29a0605b` รวม amount/date fix `86c72e7f` และ merged ที่ `c6f3d06f` เมื่อ 2026-08-27T05:30:29Z หลัง [fresh combined review/checks PASS](../agent-memory/capture-integration-final.md) และ exact-head CI `33041868515` SUCCESS. PR264 runtime จึง superseded แล้ว แต่ audit นี้ไม่ปิด PR เก่า. Old head70033af2/CI33040537029 เคยผ่านแต่ถูก HOLD เพราะตอบปี2026เป็นยอดแทน actual85 จึงใช้อนุมัติ head ใหม่ไม่ได้; ผล local/CI ไม่ใช่ live AI หรือ main acceptance. LINE recovery PR #265 ยังติด security findings 5 จุดและความหมาย one-time ที่ spec ขัดกัน (claim ครั้งเดียวหรือ login ครั้งเดียว). รายละเอียดอยู่ใน [delivery checkpoint](../agent-memory/capture-first-delivery-checkpoint.md) และ [security audit](../agent-memory/capture-first-progress-audit.md#pr265--security-hold-unmerged-branch-only); ไม่เลือก policy แทน Owner.
+
+P24-2b มี scoped E2E61/61, web1140/1140, focused89/89, typechecks และ [ภาพเดิม8ไฟล์ + manual draft อีก1ไฟล์](../evidence/p24-scope-selector-targets/README.md). Capture บน web3004 ได้24/33 จาก local CORS อนุญาต3000เท่านั้น; ย้ายเฉพาะ own web โดยไม่แก้ API/guard แล้ว capture33/33 + selector61/61 ผ่านใน **2 runs รวม94เคส** ตามด้วย Chrome draft-save/reload จริง. PR292 merged เมื่อ 2026-08-27T06:08:41Z หลัง CI ของ head จริงผ่าน; ดู [ผลและข้อจำกัดแต่ละรอบ](../agent-memory/capture-first-delivery-checkpoint.md#p24-post-scope-capture-rerun). Docs PR291 / CI33043341836 SUCCESS ข้าม runtime jobs ตามแบบ docs-only ไม่ใช่หลักฐาน runtime/P24.
 
 P15–P20 และ matching-dependent revenue automation **DEFERRED BY OWNER** ไม่อยู่ในรายการตัดสินใจ/งานที่ต้องเสร็จก่อน main รอบนี้. Main/UAT/Production ยังต้องผ่าน acceptance ของ active scope ตาม protocol.
 
