@@ -2,6 +2,8 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   postingErrorText,
+  expensePaymentAttempt,
+  classifyExpensePaymentFailure,
   buildExpenseDraftReviewPayload,
   formatTaxId,
   taxIdDigits,
@@ -53,6 +55,74 @@ import {
 } from './expenses.model';
 
 describe('expenses.model', () => {
+  it('treats a first definitive client refusal as rejected, not an uncertain payment', () => {
+    for (const status of [400, 401, 403, 404, 409, 422, 429]) {
+      assert.equal(classifyExpensePaymentFailure({ status }, false), 'definitive');
+      assert.equal(classifyExpensePaymentFailure({ statusCode: status }, false), 'definitive');
+    }
+    assert.equal(classifyExpensePaymentFailure({ details: { statusCode: 422 } }, false), 'definitive');
+  });
+
+  it('retains ambiguity for network, timeout, server, and missing-status failures', () => {
+    for (const failure of [new Error('network'), { kind: 'network_error' }, { status: 408 }, { statusCode: 500 }, { status: 504 }, {}, null, undefined]) {
+      assert.equal(classifyExpensePaymentFailure(failure, false), 'uncertain');
+    }
+  });
+
+  it('does not clear a network-uncertain intent when a later retry is forbidden or otherwise refused', () => {
+    const input = { paidAmount: '40.00', paymentMethod: 'CASH' as const, paidAt: '2026-07-31' };
+    const first = expensePaymentAttempt(null, 'company-1', 'expense-1', input, () => 'same-intent');
+    const initial = classifyExpensePaymentFailure(new Error('lost response'), false);
+    for (const status of [400, 403, 404, 409, 422]) {
+      assert.equal(classifyExpensePaymentFailure({ status }, initial === 'uncertain'), 'uncertain');
+    }
+    assert.equal(expensePaymentAttempt(first, 'company-1', 'expense-1', input, () => { throw new Error('must keep key'); }), first);
+  });
+
+  it('keeps an idempotency conflict distinct from both rejection and a same-key retryable outcome', () => {
+    for (const hadUncertain of [false, true]) {
+      assert.equal(classifyExpensePaymentFailure({ status: 409, code: 'expense_payment_idempotency_conflict' }, hadUncertain), 'conflict');
+      assert.equal(classifyExpensePaymentFailure({ details: { statusCode: 409, code: 'expense_payment_idempotency_conflict' } }, hadUncertain), 'conflict');
+    }
+  });
+
+  it('starts fresh failure history after an explicit edit or confirmed success resets the intent', () => {
+    const input = { paidAmount: '40.00', paidAt: '2026-07-31' };
+    const original = expensePaymentAttempt(null, 'company-1', 'expense-1', input, () => 'old-intent');
+    assert.equal(classifyExpensePaymentFailure({ status: 500 }, false), 'uncertain');
+    for (const resetAfter of ['success', 'edit'] as const) {
+      const fresh = expensePaymentAttempt(null, 'company-1', 'expense-1', input, () => `after-${resetAfter}`);
+      assert.notEqual(fresh.payload.idempotencyKey, original.payload.idempotencyKey);
+      assert.equal(classifyExpensePaymentFailure({ status: 400 }, false), 'definitive');
+    }
+  });
+
+  it('retains the same payment intent and exact selected civil date on uncertain retries', () => {
+    let keys = 0;
+    const createKey = () => `intent-${++keys}`;
+    const input = { paidAmount: '40.00', paymentMethod: 'CASH' as const, paidAt: '2026-07-31' };
+    const first = expensePaymentAttempt(null, 'company-1', 'expense-1', input, createKey);
+    const retry = expensePaymentAttempt(first, 'company-1', 'expense-1', { ...input }, createKey);
+    assert.equal(retry, first);
+    assert.equal(retry.payload.paidAt, '2026-07-31');
+    assert.equal(keys, 1);
+    input.paidAt = '2026-08-01';
+    assert.equal(first.payload.paidAt, '2026-07-31', 'the original wire body is a snapshot, not a reference to edited values');
+  });
+
+  it('uses a new intent for any deliberate edit, new target, or confirmed second payment', () => {
+    let keys = 0;
+    const createKey = () => `intent-${++keys}`;
+    const input = { paidAmount: '40.00', paymentMethod: 'CASH' as const, paidAt: '2026-07-31' };
+    const first = expensePaymentAttempt(null, 'company-1', 'expense-1', input, createKey);
+    for (const edited of [{ ...input, paidAmount: '40.01' }, { ...input, paidAt: '2026-08-01' }, { ...input, paymentMethod: 'BANK_TRANSFER' as const }, { ...input, bankAccountRef: 'BANK-1' }]) {
+      assert.notEqual(expensePaymentAttempt(first, 'company-1', 'expense-1', edited, createKey).payload.idempotencyKey, first.payload.idempotencyKey);
+    }
+    assert.notEqual(expensePaymentAttempt(first, 'company-2', 'expense-1', input, createKey).payload.idempotencyKey, first.payload.idempotencyKey);
+    assert.notEqual(expensePaymentAttempt(first, 'company-1', 'expense-2', input, createKey).payload.idempotencyKey, first.payload.idempotencyKey);
+    assert.notEqual(expensePaymentAttempt(null, 'company-1', 'expense-1', input, createKey).payload.idempotencyKey, first.payload.idempotencyKey);
+  });
+
   it('marks a document as backdated only when its Bangkok intake date is in a later month', () => {
     assert.equal(lateDocumentDays({ expenseDate: '2026-06-30', uploadedAt: '2026-08-20T10:00:00.000Z' }), 51);
     assert.equal(lateDocumentDays({ expenseDate: '2026-07-31', uploadedAt: '2026-07-31T18:00:00.000Z' }), 1);

@@ -10,6 +10,7 @@ import type {
   ExpensePaymentSummary,
   ExpenseVatCaptureSnapshotV1,
   ExpenseVatSourceInput,
+  RecordExpensePaymentInput,
 } from '@watchdog-bms/contracts';
 import {
   EXPENSE_STATUS_LABELS, EXPENSE_PAYMENT_STATUS_LABELS, EXPENSE_VAT_MODE_LABELS,
@@ -21,6 +22,38 @@ export { isExpensePending } from '@watchdog-bms/contracts';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import type { SupportedLocale } from '@/common/i18n/workspace-dictionary';
 import { ACCOUNTING_UI_HIDDEN } from '@/features/web-core-workspace/web-core-workspace.constants';
+
+export type ExpensePaymentAttempt = {
+  companyId: string;
+  expenseId: string;
+  payload: RecordExpensePaymentInput;
+};
+
+export type ExpensePaymentFailure = 'definitive' | 'uncertain' | 'conflict';
+
+/** A later refusal cannot disprove a commit hidden by an earlier lost response. */
+export function classifyExpensePaymentFailure(error: unknown, hadUncertainOutcome: boolean): ExpensePaymentFailure {
+  const failure = error as { status?: unknown; statusCode?: unknown; code?: unknown; details?: unknown } | null | undefined;
+  const details = failure?.details && typeof failure.details === 'object' ? failure.details as typeof failure : undefined;
+  if ((failure?.code ?? details?.code) === 'expense_payment_idempotency_conflict') return 'conflict';
+  if (hadUncertainOutcome) return 'uncertain';
+  const status = [failure?.status, failure?.statusCode, details?.status, details?.statusCode].find((value) => typeof value === 'number');
+  return typeof status === 'number' && status >= 400 && status < 500 && status !== 408 ? 'definitive' : 'uncertain';
+}
+
+/** Retain the exact wire payload on uncertain errors; an edit/confirmed success clears previous. */
+export function expensePaymentAttempt(
+  previous: ExpensePaymentAttempt | null,
+  companyId: string,
+  expenseId: string,
+  input: Omit<RecordExpensePaymentInput, 'idempotencyKey'>,
+  createKey: () => string = () => crypto.randomUUID(),
+): ExpensePaymentAttempt {
+  if (previous && previous.companyId === companyId && previous.expenseId === expenseId
+    && previous.payload.paidAmount === input.paidAmount && previous.payload.paymentMethod === input.paymentMethod
+    && previous.payload.paidAt === input.paidAt && previous.payload.bankAccountRef === input.bankAccountRef) return previous;
+  return { companyId, expenseId, payload: { ...input, idempotencyKey: createKey() } };
+}
 
 export type {
   ExpenseStatus, ExpenseVatMode, ExpensePaymentStatus, ExpensePostingStatus, ExpensePostingSourceType, AiVerificationStatus, DuplicateStatus,

@@ -1,0 +1,355 @@
+{
+  "capturedAt": "2026-08-27T04:06:51.537Z",
+  "scope": "Isolated local API3003/DB/MinIO; synthetic fixtures. Projection excludes attachment URLs/storage metadata. EXP27/29 real payment writes; EXP28 mocked errors only. Own EXP27-29 fixtures voided through supported API after proof.",
+  "reportStats": {
+    "startTime": "2026-08-27T04:05:39.879Z",
+    "duration": 21002.242000000002,
+    "expected": 21,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "evidence": [
+    {
+      "test": "EXP-27 @smoke retries a real backdated partial expense payment on mobile without paying twice",
+      "results": [
+        {
+          "status": "passed",
+          "durationMs": 7818,
+          "attachments": {
+            "expense-payment-retry-api-proof": {
+              "expenseId": "cmtb02lss00jkq6k1000ekrsg",
+              "paidDay": "2026-07-31",
+              "attempts": [
+                {
+                  "body": "{\"paidAmount\":\"40\",\"paymentMethod\":\"CASH\",\"paidAt\":\"2026-07-31\",\"idempotencyKey\":\"d233ff6e-38f7-4a64-880f-b8744f715fdf\"}",
+                  "clientTime": 1787803548213,
+                  "status": 201,
+                  "expenseId": "cmtb02lss00jkq6k1000ekrsg"
+                },
+                {
+                  "body": "{\"paidAmount\":\"40\",\"paymentMethod\":\"CASH\",\"paidAt\":\"2026-07-31\",\"idempotencyKey\":\"d233ff6e-38f7-4a64-880f-b8744f715fdf\"}",
+                  "clientTime": 1787803609213,
+                  "status": 201,
+                  "expenseId": "cmtb02lss00jkq6k1000ekrsg"
+                }
+              ],
+              "periodsBefore": {
+                "previous": 0,
+                "current": 0
+              },
+              "periodsAfter": {
+                "previous": 40,
+                "current": 0
+              },
+              "runtimeErrors": [],
+              "consoleErrors": [],
+              "before": {
+                "id": "cmtb02lss00jkq6k1000ekrsg",
+                "companyId": "seed-local-company",
+                "status": "CONFIRMED",
+                "expenseNumber": "EXP-202608-00015",
+                "expenseDate": "2026-08-27T00:00:00.000Z",
+                "currency": "THB",
+                "vatMode": "NO_VAT",
+                "grandTotalAmount": "100",
+                "netPayableAmount": "100",
+                "paidAmount": "0",
+                "outstandingAmount": "100",
+                "paymentStatus": "UNPAID",
+                "paidAt": null,
+                "postingStatus": "pending",
+                "payments": []
+              },
+              "firstCommit": {
+                "id": "cmtb02lss00jkq6k1000ekrsg",
+                "companyId": "seed-local-company",
+                "status": "CONFIRMED",
+                "expenseNumber": "EXP-202608-00015",
+                "expenseDate": "2026-08-27T00:00:00.000Z",
+                "currency": "THB",
+                "vatMode": "NO_VAT",
+                "grandTotalAmount": "100",
+                "netPayableAmount": "100",
+                "paidAmount": "40",
+                "outstandingAmount": "60",
+                "paymentStatus": "PARTIALLY_PAID",
+                "paidAt": "2026-07-31T00:00:00.000Z",
+                "postingStatus": "pending",
+                "payments": [
+                  {
+                    "id": "cmtb02mh600k3q6k1wmzzan5n",
+                    "expenseId": "cmtb02lss00jkq6k1000ekrsg",
+                    "amount": "40",
+                    "paidAt": "2026-07-31T00:00:00.000Z",
+                    "paymentMethod": "CASH",
+                    "status": "RECORDED",
+                    "postingStatus": "pending",
+                    "journalEntryId": null
+                  }
+                ]
+              },
+              "after": {
+                "id": "cmtb02lss00jkq6k1000ekrsg",
+                "companyId": "seed-local-company",
+                "status": "CONFIRMED",
+                "expenseNumber": "EXP-202608-00015",
+                "expenseDate": "2026-08-27T00:00:00.000Z",
+                "currency": "THB",
+                "vatMode": "NO_VAT",
+                "grandTotalAmount": "100",
+                "netPayableAmount": "100",
+                "paidAmount": "40",
+                "outstandingAmount": "60",
+                "paymentStatus": "PARTIALLY_PAID",
+                "paidAt": "2026-07-31T00:00:00.000Z",
+                "postingStatus": "pending",
+                "payments": [
+                  {
+                    "id": "cmtb02mh600k3q6k1wmzzan5n",
+                    "expenseId": "cmtb02lss00jkq6k1000ekrsg",
+                    "amount": "40",
+                    "paidAt": "2026-07-31T00:00:00.000Z",
+                    "paymentMethod": "CASH",
+                    "status": "RECORDED",
+                    "postingStatus": "pending",
+                    "journalEntryId": null
+                  }
+                ]
+              }
+            },
+            "expense-payment-own-fixture-voided": {
+              "id": "cmtb02lss00jkq6k1000ekrsg",
+              "companyId": "seed-local-company",
+              "status": "VOIDED",
+              "expenseNumber": "EXP-202608-00015",
+              "expenseDate": "2026-08-27T00:00:00.000Z",
+              "currency": "THB",
+              "vatMode": "NO_VAT",
+              "grandTotalAmount": "100",
+              "netPayableAmount": "100",
+              "paidAmount": "0",
+              "outstandingAmount": "0",
+              "paymentStatus": "VOIDED",
+              "paidAt": "2026-07-31T00:00:00.000Z",
+              "postingStatus": "not_required",
+              "payments": [
+                {
+                  "id": "cmtb02mh600k3q6k1wmzzan5n",
+                  "expenseId": "cmtb02lss00jkq6k1000ekrsg",
+                  "amount": "40",
+                  "paidAt": "2026-07-31T00:00:00.000Z",
+                  "paymentMethod": "CASH",
+                  "status": "VOIDED",
+                  "postingStatus": "not_required",
+                  "journalEntryId": null
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "test": "EXP-28 @p1 distinguishes rejected, uncertain, and conflicting expense payment attempts",
+      "results": [
+        {
+          "status": "passed",
+          "durationMs": 1174,
+          "attachments": {
+            "expense-payment-mocked-error-ui-proof": {
+              "expenseId": "cmtb02ru300kcq6k1s2s48pfs",
+              "attempts": [
+                "{\"paidAmount\":\"40\",\"paymentMethod\":\"BANK_TRANSFER\",\"paidAt\":\"2026-08-27\",\"idempotencyKey\":\"eba97a17-9065-4c73-a8cc-754b399a6a53\"}",
+                "{\"paidAmount\":\"41\",\"paymentMethod\":\"BANK_TRANSFER\",\"paidAt\":\"2026-08-27\",\"idempotencyKey\":\"bc7ee43a-562f-45fb-9ec9-092ac4011349\"}",
+                "{\"paidAmount\":\"41\",\"paymentMethod\":\"BANK_TRANSFER\",\"paidAt\":\"2026-08-27\",\"idempotencyKey\":\"81ca9dfa-2f2a-4549-814f-d7543fe5b3de\"}",
+                "{\"paidAmount\":\"41\",\"paymentMethod\":\"BANK_TRANSFER\",\"paidAt\":\"2026-08-27\",\"idempotencyKey\":\"81ca9dfa-2f2a-4549-814f-d7543fe5b3de\"}",
+                "{\"paidAmount\":\"41\",\"paymentMethod\":\"BANK_TRANSFER\",\"paidAt\":\"2026-08-27\",\"idempotencyKey\":\"81ca9dfa-2f2a-4549-814f-d7543fe5b3de\"}"
+              ],
+              "responses": [
+                {
+                  "status": 400,
+                  "body": {
+                    "code": "expense_payment_exceeds_outstanding",
+                    "message": "Payment amount must be positive and cannot exceed the outstanding amount."
+                  }
+                },
+                {
+                  "status": 403,
+                  "body": {
+                    "statusCode": 403,
+                    "message": "Insufficient permissions.",
+                    "error": "Forbidden"
+                  }
+                },
+                null,
+                {
+                  "status": 403,
+                  "body": {
+                    "statusCode": 403,
+                    "message": "Insufficient permissions.",
+                    "error": "Forbidden"
+                  }
+                },
+                {
+                  "status": 409,
+                  "body": {
+                    "code": "expense_payment_idempotency_conflict",
+                    "message": "This payment key was already used for a different payment."
+                  }
+                }
+              ],
+              "runtimeErrors": [],
+              "evidenceLimit": "Payment responses mocked; no real payment mutation.",
+              "unchanged": {
+                "id": "cmtb02ru300kcq6k1s2s48pfs",
+                "companyId": "seed-local-company",
+                "status": "CONFIRMED",
+                "expenseNumber": "EXP-202608-00016",
+                "expenseDate": "2026-08-27T00:00:00.000Z",
+                "currency": "THB",
+                "vatMode": "NO_VAT",
+                "grandTotalAmount": "100",
+                "netPayableAmount": "100",
+                "paidAmount": "0",
+                "outstandingAmount": "100",
+                "paymentStatus": "UNPAID",
+                "paidAt": null,
+                "postingStatus": "pending",
+                "payments": []
+              }
+            },
+            "expense-payment-error-ui-own-fixture-voided": {
+              "id": "cmtb02ru300kcq6k1s2s48pfs",
+              "companyId": "seed-local-company",
+              "status": "VOIDED",
+              "expenseNumber": "EXP-202608-00016",
+              "expenseDate": "2026-08-27T00:00:00.000Z",
+              "currency": "THB",
+              "vatMode": "NO_VAT",
+              "grandTotalAmount": "100",
+              "netPayableAmount": "100",
+              "paidAmount": "0",
+              "outstandingAmount": "0",
+              "paymentStatus": "VOIDED",
+              "paidAt": null,
+              "postingStatus": "not_required",
+              "payments": []
+            }
+          }
+        }
+      ]
+    },
+    {
+      "test": "EXP-29 @p1 retains a committed payment intent until its detail refresh succeeds",
+      "results": [
+        {
+          "status": "passed",
+          "durationMs": 1207,
+          "attachments": {
+            "expense-payment-post-write-refresh-proof": {
+              "expenseId": "cmtb02sqf00l1q6k1zovoviaj",
+              "attempts": [
+                {
+                  "body": "{\"paidAmount\":\"40\",\"paymentMethod\":\"BANK_TRANSFER\",\"paidAt\":\"2026-08-27\",\"idempotencyKey\":\"f0e149f0-ed42-465e-84cd-8233171af829\"}",
+                  "status": 201
+                },
+                {
+                  "body": "{\"paidAmount\":\"40\",\"paymentMethod\":\"BANK_TRANSFER\",\"paidAt\":\"2026-08-27\",\"idempotencyKey\":\"f0e149f0-ed42-465e-84cd-8233171af829\"}",
+                  "status": 201
+                }
+              ],
+              "failedDetailReads": 1,
+              "runtimeErrors": [],
+              "evidenceLimit": "Real payment POSTs; only one following detail GET failed with a mocked 500.",
+              "firstCommit": {
+                "id": "cmtb02sqf00l1q6k1zovoviaj",
+                "companyId": "seed-local-company",
+                "status": "CONFIRMED",
+                "expenseNumber": "EXP-202608-00017",
+                "expenseDate": "2026-08-27T00:00:00.000Z",
+                "currency": "THB",
+                "vatMode": "NO_VAT",
+                "grandTotalAmount": "100",
+                "netPayableAmount": "100",
+                "paidAmount": "40",
+                "outstandingAmount": "60",
+                "paymentStatus": "PARTIALLY_PAID",
+                "paidAt": "2026-08-27T00:00:00.000Z",
+                "postingStatus": "pending",
+                "payments": [
+                  {
+                    "id": "cmtb02t9400lkq6k1uagarc25",
+                    "expenseId": "cmtb02sqf00l1q6k1zovoviaj",
+                    "amount": "40",
+                    "paidAt": "2026-08-27T00:00:00.000Z",
+                    "paymentMethod": "BANK_TRANSFER",
+                    "status": "RECORDED",
+                    "postingStatus": "pending",
+                    "journalEntryId": null
+                  }
+                ]
+              },
+              "after": {
+                "id": "cmtb02sqf00l1q6k1zovoviaj",
+                "companyId": "seed-local-company",
+                "status": "CONFIRMED",
+                "expenseNumber": "EXP-202608-00017",
+                "expenseDate": "2026-08-27T00:00:00.000Z",
+                "currency": "THB",
+                "vatMode": "NO_VAT",
+                "grandTotalAmount": "100",
+                "netPayableAmount": "100",
+                "paidAmount": "40",
+                "outstandingAmount": "60",
+                "paymentStatus": "PARTIALLY_PAID",
+                "paidAt": "2026-08-27T00:00:00.000Z",
+                "postingStatus": "pending",
+                "payments": [
+                  {
+                    "id": "cmtb02t9400lkq6k1uagarc25",
+                    "expenseId": "cmtb02sqf00l1q6k1zovoviaj",
+                    "amount": "40",
+                    "paidAt": "2026-08-27T00:00:00.000Z",
+                    "paymentMethod": "BANK_TRANSFER",
+                    "status": "RECORDED",
+                    "postingStatus": "pending",
+                    "journalEntryId": null
+                  }
+                ]
+              }
+            },
+            "expense-payment-refresh-own-fixture-voided": {
+              "id": "cmtb02sqf00l1q6k1zovoviaj",
+              "companyId": "seed-local-company",
+              "status": "VOIDED",
+              "expenseNumber": "EXP-202608-00017",
+              "expenseDate": "2026-08-27T00:00:00.000Z",
+              "currency": "THB",
+              "vatMode": "NO_VAT",
+              "grandTotalAmount": "100",
+              "netPayableAmount": "100",
+              "paidAmount": "0",
+              "outstandingAmount": "0",
+              "paymentStatus": "VOIDED",
+              "paidAt": "2026-08-27T00:00:00.000Z",
+              "postingStatus": "not_required",
+              "payments": [
+                {
+                  "id": "cmtb02t9400lkq6k1uagarc25",
+                  "expenseId": "cmtb02sqf00l1q6k1zovoviaj",
+                  "amount": "40",
+                  "paidAt": "2026-08-27T00:00:00.000Z",
+                  "paymentMethod": "BANK_TRANSFER",
+                  "status": "VOIDED",
+                  "postingStatus": "not_required",
+                  "journalEntryId": null
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

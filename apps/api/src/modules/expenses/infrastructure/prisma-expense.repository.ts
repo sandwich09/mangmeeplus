@@ -2,7 +2,9 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import Decimal from 'decimal.js';
 import { PrismaService } from '../../../common/database/prisma.service';
 import type { Prisma } from '../../../generated/prisma/client';
-import { branchScopeWhere, isBranchInScope } from '../../data-model-core/domain/logic/branch.logic';
+import { branchScopeWhere, isBranchInScope, type BranchScopes } from '../../data-model-core/domain/logic/branch.logic';
+import { canonicalFingerprint } from '../../../common/security/canonical-fingerprint';
+import { POSITIVE_ACCOUNTING_MONEY_PATTERN } from '../../accounting-documents/domain/logic/accounting-money-validation.logic';
 import { findAttachmentLinkConflict } from '../../data-model-core/domain/logic/attachment.logic';
 import { PrismaDocumentSequenceRepository } from '../../data-model-core/infrastructure/repositories/prisma-document-sequence.repository';
 import { buildReversalLines } from '../../ledger/domain/logic/journal-balance.logic';
@@ -16,12 +18,13 @@ import type {
   CreateExpenseCategoryInput, UpdateExpenseCategoryInput, SharedEvidenceFilter, SignatureSubmitChannel,
   SubstituteReceiptApprovalMode, SubstituteReceiptListFilter,
 } from '@watchdog-bms/contracts';
-import { civilDate, civilDayRangeToUtc, civilPeriodKey, coerceCivilDate, exclusiveEndOfDay } from '@watchdog-bms/contracts';
+import { civilDate, civilDateToUtcDate, civilDayRangeToUtc, civilPeriodKey, coerceCivilDate, exclusiveEndOfDay, isCivilDate, EXPENSE_PAYMENT_METHODS } from '@watchdog-bms/contracts';
 import { expenseTaxSourceChecksum } from '../domain/logic/expense-status.logic';
 import { nextExpensePostingSource } from '../domain/logic/expense-auto-post.logic';
 import { calcPaymentAmounts, derivePaymentStatus, SETTLE_EPSILON } from '../domain/logic/expense-totals.logic';
 
 export type ExpenseDb = Prisma.TransactionClient | PrismaService['client'];
+type ExpensePaymentResult = { expense: ExpenseRecord; payment: ExpensePaymentRecord; replayed: boolean };
 type SubstituteReceiptPolicyWithApprovalMode = SubstituteReceiptPolicyRecord & { approvalMode: SubstituteReceiptApprovalMode };
 
 const AUTO_STALE_DUPLICATE_REASON = 'system:stale_after_rescan';
@@ -315,17 +318,22 @@ export class PrismaExpenseRepository {
     companyId: string;
     expenseId: string;
     actorUserId: string;
+    scopes: BranchScopes;
+    idempotencyKey: string;
     amount: string;
     paymentMethod?: string;
-    paidAt: Date;
+    paidAt?: string;
     bankAccountRef?: string;
-  }): Promise<{ expense: ExpenseRecord; payment: ExpensePaymentRecord }> {
+  }, withinTx?: (tx: Prisma.TransactionClient, result: ExpensePaymentResult) => Promise<void>): Promise<ExpensePaymentResult> {
     return (this.prisma.client as any).$transaction(async (tx: any) => {
+      // Key first: conflicting uses on different expenses must serialize too. ReadCommitted
+      // sees the first writer's committed row after waiting; Serializable can keep a stale snapshot.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.idempotencyKey}:expense-payment-command`}))`;
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.expenseId}:expense-record-lifecycle`}))`;
       const current = await tx.expenseRecord.findFirst({ where: { id: input.expenseId, companyId: input.companyId } });
       if (!current) throw new NotFoundException(`Expense ${input.expenseId} not found`);
-      if (current.status !== 'CONFIRMED') {
-        throw new BadRequestException(`Can only record payment for CONFIRMED expenses (current: ${current.status})`);
+      if (!isBranchInScope(input.scopes, current.branchId)) {
+        throw new ForbiddenException('Branch is outside your assigned branch scope.');
       }
       if (current.sourceReimbursementRequestId != null) {
         throw new BadRequestException({
@@ -333,15 +341,42 @@ export class PrismaExpenseRepository {
           message: 'A claim-born expense settles through reimbursement payment.',
         });
       }
-      let amount: Decimal;
-      try {
-        amount = new Decimal(input.amount);
-      } catch {
+      if (typeof input.amount !== 'string' || !POSITIVE_ACCOUNTING_MONEY_PATTERN.test(input.amount)) {
         throw new BadRequestException({
           code: 'expense_payment_exceeds_outstanding',
           message: 'Payment amount must be positive and cannot exceed the outstanding amount.',
         });
       }
+      const amount = new Decimal(input.amount);
+      if (input.paidAt != null && !isCivilDate(input.paidAt)) {
+        throw new BadRequestException({ code: 'expense_payment_invalid_date', message: 'Payment date must be a real YYYY-MM-DD calendar day.' });
+      }
+      if (input.paymentMethod != null && !EXPENSE_PAYMENT_METHODS.includes(input.paymentMethod as any)) {
+        throw new BadRequestException({ code: 'expense_payment_invalid_method', message: 'Unknown expense payment method.' });
+      }
+      if (input.bankAccountRef != null && (typeof input.bankAccountRef !== 'string' || input.bankAccountRef.length > 128)) {
+        throw new BadRequestException({ code: 'expense_payment_invalid_reference', message: 'Bank reference must be at most 128 characters.' });
+      }
+      const bankAccountRef = input.bankAccountRef?.trim() || null;
+      const payloadFingerprint = canonicalFingerprint({
+        version: 1, expenseId: input.expenseId, branchId: current.branchId ?? null,
+        currency: current.currency, amount: amount.toFixed(4), paymentMethod: input.paymentMethod ?? null,
+        paidAt: input.paidAt ?? null, bankAccountRef,
+      });
+      const previous = await tx.expensePayment.findFirst({
+        where: { companyId: input.companyId, idempotencyKey: input.idempotencyKey },
+      });
+      if (previous) {
+        if (previous.expenseId !== input.expenseId || previous.payloadFingerprint !== payloadFingerprint) {
+          throw new ConflictException({ code: 'expense_payment_idempotency_conflict', message: 'This payment key was already used for a different payment.' });
+        }
+        // Current source is returned even after void. Never restore totals or emit another event.
+        return { expense: mapExpense(current), payment: mapPayment(previous), replayed: true };
+      }
+      if (current.status !== 'CONFIRMED') {
+        throw new BadRequestException(`Can only record payment for CONFIRMED expenses (current: ${current.status})`);
+      }
+      const paidAt = input.paidAt ? civilDateToUtcDate(coerceCivilDate(input.paidAt)) : new Date();
       const paidBefore = new Decimal(current.paidAmount.toString());
       const payable = new Decimal(current.netPayableAmount.toString());
       const paidAfter = paidBefore.plus(amount);
@@ -364,11 +399,13 @@ export class PrismaExpenseRepository {
         data: {
           companyId: input.companyId,
           expenseId: input.expenseId,
+          idempotencyKey: input.idempotencyKey,
+          payloadFingerprint,
           amount: amount.toFixed(4),
           currency: current.currency,
           paymentMethod: input.paymentMethod ?? null,
-          paidAt: input.paidAt,
-          bankAccountRef: input.bankAccountRef ?? null,
+          paidAt,
+          bankAccountRef,
           status: 'RECORDED',
           postingStatus: 'pending',
           createdByUserId: input.actorUserId,
@@ -381,19 +418,22 @@ export class PrismaExpenseRepository {
           outstandingAmount,
           paymentStatus,
           paymentMethod: input.paymentMethod ?? null,
-          paidAt: input.paidAt,
-          bankAccountRef: input.bankAccountRef ?? null,
+          paidAt,
+          bankAccountRef,
           updatedByUserId: input.actorUserId,
         },
       });
       if (changed.count !== 1) {
         throw new ConflictException({ code: 'expense_payment_changed', message: 'Expense changed while recording payment.' });
       }
-      return {
+      const result = {
         expense: mapExpense(await tx.expenseRecord.findFirstOrThrow({ where: { id: input.expenseId, companyId: input.companyId } })),
         payment: mapPayment(payment),
+        replayed: false,
       };
-    }, { isolationLevel: 'Serializable' });
+      if (withinTx) await withinTx(tx, result);
+      return result;
+    }, { isolationLevel: 'ReadCommitted' });
   }
 
   async findPaymentById(companyId: string, paymentId: string): Promise<(ExpensePaymentRecord & { expense: ExpenseRecord }) | null> {

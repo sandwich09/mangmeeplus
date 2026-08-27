@@ -1,6 +1,6 @@
 import { deflateSync, crc32 } from 'node:zlib';
 import { randomBytes } from 'node:crypto';
-import { addCivilDays, civilDate } from '@watchdog-bms/contracts';
+import { addCivilDays, civilDate, type ExpenseDetail as FullExpenseDetail, type IncomeExpenseLedgerSummary } from '@watchdog-bms/contracts';
 import { test, expect } from './harness/fixtures';
 import { gotoCompany, json, unique } from './harness/e2e-utils';
 
@@ -414,6 +414,422 @@ test('EXP-26 @p1 keeps a backdated document in its intake month and labels both 
   await expect(card).toContainText('วันที่เอกสาร');
   await expect(card).toContainText('ส่งเข้าระบบ');
   await expect(card).toContainText('เอกสารย้อนหลัง 51 วัน');
+});
+
+// §19m: the first POST really commits; only its browser response is lost. Run against
+// an isolated DB with --workers=1 because the paid-period assertions compare totals.
+test('EXP-27 @smoke retries a real backdated partial expense payment on mobile without paying twice', async ({ apiAs, pageAs, request, companyId }, testInfo) => {
+  test.skip(
+    process.env['S3_E2E'] !== '1' && process.env['S3_E2E_ACTIVE'] !== '1',
+    'EXP-27 needs a real primary receipt and confirmation; run with S3_E2E=1 and the isolated API/DB plus compose MinIO ready.',
+  );
+  const api = await apiAs('FINANCE');
+  const page = await pageAs('FINANCE');
+  const runtimeErrors: string[] = [];
+  const consoleErrors: string[] = [];
+  page.on('pageerror', (error) => runtimeErrors.push(error.message));
+  const created = await createExpenseWithReceipt(api, request, companyId, '100.00');
+  testInfo.annotations.push({ type: 'own-expense', description: created.id });
+  const expensePath = `companies/${companyId}/expenses/${created.id}`;
+  const paymentPath = `/api/v1/${expensePath}/payment`;
+  const paymentRoute = `**${paymentPath}`;
+  let droppedResponses = 0;
+  page.on('console', (message) => {
+    if (message.type() !== 'error') return;
+    if (droppedResponses === 1 && message.location().url.endsWith(paymentPath)
+      && message.text() === 'Failed to load resource: net::ERR_FAILED') return;
+    consoleErrors.push(message.text());
+  });
+  const attempts: Array<{ body: string; clientTime: number; status: number; expenseId: string }> = [];
+  let releaseFirstResponse = () => {};
+  const firstResponseGate = new Promise<void>((resolve) => { releaseFirstResponse = resolve; });
+  try {
+    expect((await json<ExpenseSummary>(await api.post(`${expensePath}/mark-ready`, { data: {} }))).status)
+      .toBe('READY_FOR_CONFIRMATION');
+    expect((await json<ExpenseSummary>(await api.post(`${expensePath}/confirm`, { data: {} }))).status)
+      .toBe('CONFIRMED');
+    const before = await json<FullExpenseDetail>(await api.get(expensePath));
+    expect(Number(before.grandTotalAmount)).toBe(100);
+    expect(Number(before.paidAmount)).toBe(0);
+    expect(before.payments).toHaveLength(0);
+
+    const today = civilDate(new Date());
+    const currentMonthStart = `${today.slice(0, 7)}-01`;
+    const paidDay = addCivilDays(currentMonthStart, -1);
+    const previousMonthStart = `${paidDay.slice(0, 7)}-01`;
+    const readPaidPeriods = async () => {
+      const previous = await json<IncomeExpenseLedgerSummary>(await api.get(
+        `companies/${companyId}/income-expense-ledger/summary?from=${previousMonthStart}&to=${paidDay}`,
+      ));
+      const current = await json<IncomeExpenseLedgerSummary>(await api.get(
+        `companies/${companyId}/income-expense-ledger/summary?from=${currentMonthStart}&to=${today}`,
+      ));
+      expect(previous.expense.available).toBe(true);
+      expect(current.expense.available).toBe(true);
+      return { previous: Number(previous.expense.paidExpenseTotal), current: Number(current.expense.paidExpenseTotal) };
+    };
+    const periodsBefore = await readPaidPeriods();
+    const paidDate = new Date(`${paidDay}T00:00:00.000Z`);
+    const monthName = new Intl.DateTimeFormat('th-TH', { timeZone: 'Asia/Bangkok', month: 'long' }).format(paidDate);
+    const calendarHeader = `${monthName} ${Number(paidDay.slice(0, 4)) + 543}`;
+    const paidDateLabel = new Intl.DateTimeFormat('th-TH-u-ca-buddhist', {
+      timeZone: 'Asia/Bangkok', day: 'numeric', month: 'short', year: 'numeric',
+    }).format(paidDate);
+
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await gotoCompany(page, companyId, `/expenses/${created.id}`);
+    const card = page.getByRole('heading', { name: 'การชำระเงิน', exact: true }).locator('..');
+    const amount = card.getByRole('spinbutton', { name: 'ยอดชำระ', exact: true });
+    const method = card.locator('label').filter({ hasText: 'วิธีจ่ายเงิน' }).getByRole('combobox');
+    const paidAt = card.getByRole('combobox', { name: 'วันที่จ่ายเงินจริง', exact: true });
+    await expect(card).toContainText('เลือกวันที่จ่ายเงินจริง แม้จะนำมาบันทึกภายหลัง');
+    await expect(card).toContainText('ยอดค้างจ่าย ฿100.00');
+    await amount.fill('40');
+    await method.click();
+    await page.getByRole('option', { name: 'เงินสด', exact: true }).click();
+    await paidAt.click();
+    await page.getByRole('button', { name: 'เดือนก่อนหน้า', exact: true }).click();
+    const header = page.getByText(calendarHeader, { exact: true });
+    await expect(header).toBeVisible();
+    await header.locator('..').locator('..').getByRole('button', { name: String(Number(paidDay.slice(-2))), exact: true }).click();
+    await expect(paidAt).toHaveText(paidDateLabel);
+
+    await page.route(paymentRoute, async (route) => {
+      if (route.request().method() !== 'POST') return route.continue();
+      const body = route.request().postData()!;
+      const clientTime = await page.evaluate(() => Date.now());
+      // No response or mutation stub: route.fetch uses the real BFF/auth/API transaction.
+      const response = await route.fetch({ maxRetries: 0 });
+      const result = await response.json() as ExpenseSummary;
+      attempts.push({ body, clientTime, status: response.status(), expenseId: result.id });
+      if (attempts.length === 1) {
+        await firstResponseGate;
+        droppedResponses += 1;
+        await route.abort('failed');
+      } else {
+        await route.fulfill({ response });
+      }
+    });
+    await card.getByRole('button', { name: 'บันทึกชำระ', exact: true }).click();
+    await expect.poll(() => attempts.length, { message: 'the real first payment transaction must finish before dropping its response' }).toBe(1);
+    expect(attempts[0]!.status).toBe(201);
+    expect(attempts[0]!.expenseId).toBe(created.id);
+    await expect(amount).toBeDisabled();
+    await expect(method).toHaveAttribute('aria-disabled', 'true');
+    await expect(paidAt).toBeDisabled();
+    await expect(card.getByRole('button', { name: 'กำลังบันทึก…', exact: true })).toBeDisabled();
+    const firstCommit = await json<FullExpenseDetail>(await api.get(expensePath));
+    expect(firstCommit.payments).toHaveLength(1);
+    expect(Number(firstCommit.paidAmount)).toBe(40);
+    expect(Number(firstCommit.outstandingAmount)).toBe(60);
+    releaseFirstResponse();
+
+    const retry = card.getByRole('button', { name: 'ลองบันทึกรายการเดิมอีกครั้ง', exact: true });
+    await expect(retry).toBeEnabled();
+    await expect(card.getByRole('status')).toContainText('ยังยืนยันผลการบันทึกไม่ได้');
+    await expect(card.getByRole('status')).toContainText('ไม่เพิ่มยอดจ่ายซ้ำ');
+    await expect(amount).toHaveValue('40');
+    await expect(method).toHaveText('เงินสด');
+    await expect(paidAt).toHaveText(paidDateLabel);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    const desktopPath = testInfo.outputPath('expense-payment-lost-response-desktop.png');
+    await card.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: desktopPath, fullPage: false });
+    await testInfo.attach('expense-payment-lost-response-desktop', { path: desktopPath, contentType: 'image/png' });
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await retry.scrollIntoViewIfNeeded();
+    await expect(retry).toBeVisible();
+    await expect(paidAt).toHaveText(paidDateLabel);
+    // Only Date advances, not timers; the visible form and its attempt stay mounted.
+    await page.clock.setFixedTime(attempts[0]!.clientTime + 61_000);
+    await retry.click();
+    await expect(card.getByRole('button', { name: 'บันทึกชำระ', exact: true })).toBeDisabled();
+    await expect(card.getByRole('status')).toHaveCount(0);
+    expect(attempts).toHaveLength(2);
+    expect(droppedResponses).toBe(1);
+    expect(attempts[1]!.status).toBe(201);
+    expect(attempts[1]!.expenseId).toBe(created.id);
+    expect(attempts[1]!.clientTime - attempts[0]!.clientTime).toBeGreaterThanOrEqual(61_000);
+    expect(attempts[1]!.body).toBe(attempts[0]!.body);
+    const payload = JSON.parse(attempts[0]!.body) as Record<string, unknown>;
+    expect(payload).toMatchObject({ paidAmount: '40', paymentMethod: 'CASH', paidAt: paidDay });
+    expect(payload.idempotencyKey).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+
+    const after = await json<FullExpenseDetail>(await api.get(expensePath));
+    expect(after.status).toBe('CONFIRMED');
+    expect(after.paymentStatus).toBe('PARTIALLY_PAID');
+    expect(Number(after.paidAmount)).toBe(40);
+    expect(Number(after.outstandingAmount)).toBe(60);
+    expect(after.payments).toHaveLength(1);
+    expect(after.payments[0]!.id).toBe(firstCommit.payments[0]!.id);
+    expect(after.payments[0]!.status).toBe('RECORDED');
+    expect(after.payments[0]!.paymentMethod).toBe('CASH');
+    expect(Number(after.payments[0]!.amount)).toBe(40);
+    expect(after.payments[0]!.paidAt).toBe(`${paidDay}T00:00:00.000Z`);
+    expect(civilDate(new Date(after.payments[0]!.paidAt))).toBe(paidDay);
+    const history = card.getByText('ประวัติการจ่าย', { exact: true }).locator('..');
+    await expect(history.locator(':scope > div')).toHaveCount(1);
+    await expect(history).toContainText(`${paidDateLabel} · เงินสด`);
+    await expect(history).toContainText('฿40.00');
+    await expect(card).toContainText('ยอดค้างจ่าย ฿60.00');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    const mobilePath = testInfo.outputPath('expense-payment-replayed-mobile.png');
+    // Let the deliberately induced transport-error toast expire before capturing success.
+    await expect(page.getByText('เชื่อมต่อระบบไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่', { exact: true })).toHaveCount(0);
+    await history.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: mobilePath, fullPage: false });
+    await testInfo.attach('expense-payment-replayed-mobile', { path: mobilePath, contentType: 'image/png' });
+    const periodsAfter = await readPaidPeriods();
+    expect(periodsAfter.previous - periodsBefore.previous).toBeCloseTo(40, 2);
+    expect(periodsAfter.current - periodsBefore.current).toBeCloseTo(0, 2);
+    await testInfo.attach('expense-payment-retry-api-proof', {
+      body: Buffer.from(JSON.stringify({ expenseId: created.id, paidDay, attempts, before, firstCommit, after, periodsBefore, periodsAfter, runtimeErrors, consoleErrors }, null, 2)),
+      contentType: 'application/json',
+    });
+    expect(runtimeErrors).toEqual([]);
+    expect(consoleErrors).toEqual([]);
+  } finally {
+    releaseFirstResponse();
+    await page.unroute(paymentRoute);
+    const current = await json<FullExpenseDetail>(await api.get(expensePath));
+    if (current.status === 'CONFIRMED') {
+      await json<ExpenseSummary>(await api.post(`${expensePath}/void`, { data: { reason: `EXP-27 own fixture cleanup ${created.id}` } }));
+      const voided = await json<FullExpenseDetail>(await api.get(expensePath));
+      expect(voided.status).toBe('VOIDED');
+      expect(Number(voided.paidAmount)).toBe(0);
+      expect(voided.payments.every((payment) => payment.status === 'VOIDED')).toBe(true);
+      await testInfo.attach('expense-payment-own-fixture-voided', { body: Buffer.from(JSON.stringify(voided, null, 2)), contentType: 'application/json' });
+    } else {
+      testInfo.annotations.push({ type: 'fixture-preserved', description: `${created.id}: ${current.status}; normal void only accepts CONFIRMED expenses` });
+    }
+  }
+});
+
+// §19m error-response UI only: payment POSTs never reach the API. EXP-27 proves real replay.
+test('EXP-28 @p1 distinguishes rejected, uncertain, and conflicting expense payment attempts', async ({ apiAs, pageAs, request, companyId }, testInfo) => {
+  test.skip(
+    process.env['S3_E2E'] !== '1' && process.env['S3_E2E_ACTIVE'] !== '1',
+    'EXP-28 needs its own confirmed receipt-backed expense; use S3_E2E=1 with the isolated local API/DB and MinIO.',
+  );
+  const api = await apiAs('FINANCE');
+  const page = await pageAs('FINANCE');
+  const runtimeErrors: string[] = [];
+  page.on('pageerror', (error) => runtimeErrors.push(error.message));
+  const created = await createExpenseWithReceipt(api, request, companyId, '100.00');
+  testInfo.annotations.push({ type: 'own-expense', description: created.id });
+  testInfo.annotations.push({ type: 'evidence-limit', description: 'Mocked payment error envelopes only; no real payment POST or authorization decision.' });
+  const expensePath = `companies/${companyId}/expenses/${created.id}`;
+  const paymentRoute = `**/api/v1/${expensePath}/payment`;
+  const forbidden = { status: 403, body: { statusCode: 403, message: 'Insufficient permissions.', error: 'Forbidden' } };
+  // Exact Nest exception body shapes from the payment repository and permission guard.
+  const responses = [
+    { status: 400, body: { code: 'expense_payment_exceeds_outstanding', message: 'Payment amount must be positive and cannot exceed the outstanding amount.' } },
+    forbidden,
+    null, // network failure, not an HTTP refusal
+    forbidden,
+    { status: 409, body: { code: 'expense_payment_idempotency_conflict', message: 'This payment key was already used for a different payment.' } },
+  ];
+  const attempts: string[] = [];
+  try {
+    expect((await json<ExpenseSummary>(await api.post(`${expensePath}/mark-ready`, { data: {} }))).status).toBe('READY_FOR_CONFIRMATION');
+    expect((await json<ExpenseSummary>(await api.post(`${expensePath}/confirm`, { data: {} }))).status).toBe('CONFIRMED');
+    await page.route(paymentRoute, async (route) => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      attempts.push(route.request().postData()!);
+      const response = responses[attempts.length - 1];
+      // Unexpected extra POSTs also abort; no error-state test can make a payment.
+      if (!response) return route.abort('failed');
+      return route.fulfill({ status: response.status, contentType: 'application/json', body: JSON.stringify(response.body) });
+    });
+    await gotoCompany(page, companyId, `/expenses/${created.id}`);
+    const card = page.getByRole('heading', { name: 'การชำระเงิน', exact: true }).locator('..');
+    const amount = card.getByRole('spinbutton', { name: 'ยอดชำระ', exact: true });
+    const method = card.getByRole('combobox', { name: 'วิธีจ่ายเงิน', exact: true });
+    const submit = card.getByRole('button', { name: 'บันทึกชำระ', exact: true });
+    const retry = card.getByRole('button', { name: 'ลองบันทึกรายการเดิมอีกครั้ง', exact: true });
+    const notice = card.getByRole('status');
+    await expect(method).toBeVisible();
+    await amount.fill('40');
+    await submit.click();
+    await expect(page.getByRole('alert').filter({ hasText: 'ยอดจ่ายต้องมากกว่า 0 และไม่เกินยอดคงเหลือที่ต้องจ่าย' }).first()).toBeVisible();
+    await expect(submit).toBeEnabled();
+    await expect(notice).toHaveCount(0);
+    await expect(retry).toHaveCount(0);
+    await amount.fill('41');
+    await expect(notice).toHaveCount(0); // a rejected first attempt must not warn about duplicate payment on edit
+    await submit.click();
+    await expect(page.getByRole('alert').filter({ hasText: 'คุณไม่มีสิทธิ์ทำรายการนี้ กรุณาติดต่อเจ้าของร้าน' }).first()).toBeVisible();
+    await expect(submit).toBeEnabled();
+    await expect(notice).toHaveCount(0);
+    await expect(retry).toHaveCount(0);
+
+    await submit.click(); // lost network response, with a fresh intent after definitive 403
+    await expect(retry).toBeEnabled();
+    await expect(notice).toContainText('ยังยืนยันผลการบันทึกไม่ได้');
+    expect(attempts).toHaveLength(3);
+    expect(JSON.parse(attempts[2]!).idempotencyKey).not.toBe(JSON.parse(attempts[1]!).idempotencyKey);
+    await retry.click(); // a later 403 cannot disprove the earlier uncertain outcome
+    await expect.poll(() => attempts.length).toBe(4);
+    await expect(retry).toBeEnabled();
+    await expect(notice).toContainText('ยังยืนยันผลการบันทึกไม่ได้');
+    expect(attempts[3]).toBe(attempts[2]);
+    await retry.click();
+    await expect(card.getByRole('button', { name: 'กรุณาตรวจประวัติการจ่าย', exact: true })).toBeDisabled();
+    await expect(notice).toContainText('ข้อมูลรายการนี้ไม่ตรงกับการจ่ายที่บันทึกไว้');
+    await expect(retry).toHaveCount(0);
+    expect(attempts).toHaveLength(5);
+    expect(attempts[4]).toBe(attempts[2]);
+    await amount.fill('42');
+    await expect(submit).toBeEnabled();
+    await expect(notice).toContainText('การบันทึกครั้งถัดไปเป็นรายการจ่ายใหม่');
+    await expect(notice).toContainText('กรุณาตรวจประวัติการจ่ายก่อนเพื่อไม่ให้จ่ายซ้ำ');
+    await expect(retry).toHaveCount(0);
+    expect(attempts).toHaveLength(5); // editing never silently submits the new intent
+    await amount.press('ArrowUp');
+    await expect(amount).toHaveValue('42.01');
+    await expect(notice).toContainText('การบันทึกครั้งถัดไปเป็นรายการจ่ายใหม่');
+    expect(attempts).toHaveLength(5); // keyboard edits also require a separate explicit save
+    const unchanged = await json<FullExpenseDetail>(await api.get(expensePath));
+    expect(unchanged.status).toBe('CONFIRMED');
+    expect(Number(unchanged.paidAmount)).toBe(0);
+    expect(Number(unchanged.outstandingAmount)).toBe(100);
+    expect(unchanged.payments).toHaveLength(0);
+    expect(runtimeErrors).toEqual([]);
+    await testInfo.attach('expense-payment-mocked-error-ui-proof', {
+      body: Buffer.from(JSON.stringify({ expenseId: created.id, responses, attempts, unchanged, runtimeErrors, evidenceLimit: 'Payment responses mocked; no real payment mutation.' }, null, 2)),
+      contentType: 'application/json',
+    });
+  } finally {
+    await page.unroute(paymentRoute);
+    const current = await json<FullExpenseDetail>(await api.get(expensePath));
+    if (current.status === 'CONFIRMED') {
+      await json<ExpenseSummary>(await api.post(`${expensePath}/void`, { data: { reason: `EXP-28 own fixture cleanup ${created.id}` } }));
+      const voided = await json<FullExpenseDetail>(await api.get(expensePath));
+      expect(voided.status).toBe('VOIDED');
+      expect(Number(voided.paidAmount)).toBe(0);
+      expect(voided.payments).toHaveLength(0);
+      await testInfo.attach('expense-payment-error-ui-own-fixture-voided', { body: Buffer.from(JSON.stringify(voided, null, 2)), contentType: 'application/json' });
+    } else {
+      testInfo.annotations.push({ type: 'fixture-preserved', description: `${created.id}: ${current.status}; normal void only accepts CONFIRMED expenses` });
+    }
+  }
+});
+
+// §19m: both POSTs are real; only the first post-save detail GET is failed.
+test('EXP-29 @p1 retains a committed payment intent until its detail refresh succeeds', async ({ apiAs, pageAs, request, companyId }, testInfo) => {
+  test.skip(
+    process.env['S3_E2E'] !== '1' && process.env['S3_E2E_ACTIVE'] !== '1',
+    'EXP-29 needs a real receipt-backed payment; use S3_E2E=1 with the isolated local API/DB and MinIO.',
+  );
+  const api = await apiAs('FINANCE');
+  const page = await pageAs('FINANCE');
+  const runtimeErrors: string[] = [];
+  page.on('pageerror', (error) => runtimeErrors.push(error.message));
+  const created = await createExpenseWithReceipt(api, request, companyId, '100.00');
+  testInfo.annotations.push({ type: 'own-expense', description: created.id });
+  const expensePath = `companies/${companyId}/expenses/${created.id}`;
+  const paymentPath = `/api/v1/${expensePath}/payment`;
+  const detailRoute = `**/api/v1/${expensePath}`;
+  const attempts: Array<{ body: string; status: number }> = [];
+  let failedDetailReads = 0;
+  page.on('response', (response) => {
+    const request = response.request();
+    if (request.method() === 'POST' && new URL(request.url()).pathname === paymentPath) {
+      attempts.push({ body: request.postData()!, status: response.status() });
+    }
+  });
+  try {
+    expect((await json<ExpenseSummary>(await api.post(`${expensePath}/mark-ready`, { data: {} }))).status).toBe('READY_FOR_CONFIRMATION');
+    expect((await json<ExpenseSummary>(await api.post(`${expensePath}/confirm`, { data: {} }))).status).toBe('CONFIRMED');
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await gotoCompany(page, companyId, `/expenses/${created.id}`);
+    const card = page.getByRole('heading', { name: 'การชำระเงิน', exact: true }).locator('..');
+    const amount = card.getByRole('spinbutton', { name: 'ยอดชำระ', exact: true });
+    const submit = card.getByRole('button', { name: 'บันทึกชำระ', exact: true });
+    const retry = card.getByRole('button', { name: 'ลองบันทึกรายการเดิมอีกครั้ง', exact: true });
+    const notice = card.getByRole('status');
+    await amount.fill('40');
+    await page.route(detailRoute, (route) => {
+      if (route.request().method() === 'GET' && attempts.length === 1 && attempts[0]!.status === 201 && failedDetailReads === 0) {
+        failedDetailReads += 1;
+        return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ statusCode: 500, message: 'Internal server error' }) });
+      }
+      return route.fallback();
+    });
+    await submit.click();
+    await expect(retry).toBeEnabled();
+    await expect(notice).toContainText('บันทึกการจ่ายแล้ว แต่โหลดข้อมูลล่าสุดไม่สำเร็จ');
+    await expect(notice).toContainText('ไม่เพิ่มยอดจ่ายซ้ำ');
+    await expect(notice).not.toContainText('ยังยืนยันผลการบันทึกไม่ได้');
+    await expect(amount).toHaveValue('40');
+    await expect(submit).toHaveCount(0);
+    // Next's empty route announcer is outside main; check the actual expense error surface.
+    await expect(page.getByRole('main').getByRole('alert')).toHaveCount(0);
+    expect(failedDetailReads).toBe(1);
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]!.status).toBe(201);
+    const firstCommit = await json<FullExpenseDetail>(await api.get(expensePath));
+    expect(firstCommit.payments).toHaveLength(1);
+    expect(Number(firstCommit.paidAmount)).toBe(40);
+    expect(Number(firstCommit.outstandingAmount)).toBe(60);
+    // Desktop Chromium wheel interaction must not silently replace the saved intent.
+    await amount.focus();
+    await amount.hover();
+    await page.mouse.wheel(0, 100);
+    await expect(amount).toHaveValue('40');
+    await expect(notice).toContainText('บันทึกการจ่ายแล้ว แต่โหลดข้อมูลล่าสุดไม่สำเร็จ');
+    expect(attempts).toHaveLength(1);
+    const pendingPath = testInfo.outputPath('expense-payment-saved-refresh-failed.png');
+    await card.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: pendingPath, fullPage: false });
+    await testInfo.attach('expense-payment-saved-refresh-failed', { path: pendingPath, contentType: 'image/png' });
+
+    await retry.click(); // real POST replay with the original immutable intent
+    await expect(submit).toBeDisabled();
+    await expect(amount).toHaveValue('');
+    await expect(notice).toHaveCount(0);
+    await expect(retry).toHaveCount(0);
+    await expect(page.getByRole('main').getByRole('alert')).toHaveCount(0);
+    await expect(card).toContainText('ยอดค้างจ่าย ฿60.00');
+    expect(attempts).toHaveLength(2);
+    expect(attempts[1]!.status).toBe(201);
+    expect(attempts[1]!.body).toBe(attempts[0]!.body);
+    const payload = JSON.parse(attempts[0]!.body) as { paidAmount: string; paidAt: string; idempotencyKey: string };
+    expect(payload.paidAmount).toBe('40');
+    expect(payload.idempotencyKey).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    const after = await json<FullExpenseDetail>(await api.get(expensePath));
+    expect(after.payments).toHaveLength(1);
+    expect(after.payments[0]!.id).toBe(firstCommit.payments[0]!.id);
+    expect(after.payments[0]!.paidAt).toBe(`${payload.paidAt}T00:00:00.000Z`);
+    expect(Number(after.paidAmount)).toBe(40);
+    expect(Number(after.outstandingAmount)).toBe(60);
+    const history = card.getByText('ประวัติการจ่าย', { exact: true }).locator('..');
+    await expect(history.locator(':scope > div')).toHaveCount(1);
+    await expect(history).toContainText('฿40.00');
+    expect(runtimeErrors).toEqual([]);
+    const refreshedPath = testInfo.outputPath('expense-payment-refreshed-on-replay.png');
+    await card.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: refreshedPath, fullPage: false });
+    await testInfo.attach('expense-payment-refreshed-on-replay', { path: refreshedPath, contentType: 'image/png' });
+    await testInfo.attach('expense-payment-post-write-refresh-proof', {
+      body: Buffer.from(JSON.stringify({ expenseId: created.id, attempts, failedDetailReads, firstCommit, after, runtimeErrors, evidenceLimit: 'Real payment POSTs; only one following detail GET failed with a mocked 500.' }, null, 2)),
+      contentType: 'application/json',
+    });
+  } finally {
+    await page.unroute(detailRoute);
+    const current = await json<FullExpenseDetail>(await api.get(expensePath));
+    if (current.status === 'CONFIRMED') {
+      await json<ExpenseSummary>(await api.post(`${expensePath}/void`, { data: { reason: `EXP-29 own fixture cleanup ${created.id}` } }));
+      const voided = await json<FullExpenseDetail>(await api.get(expensePath));
+      expect(voided.status).toBe('VOIDED');
+      expect(Number(voided.paidAmount)).toBe(0);
+      expect(voided.payments.every((payment) => payment.status === 'VOIDED')).toBe(true);
+      await testInfo.attach('expense-payment-refresh-own-fixture-voided', { body: Buffer.from(JSON.stringify(voided, null, 2)), contentType: 'application/json' });
+    } else {
+      testInfo.annotations.push({ type: 'fixture-preserved', description: `${created.id}: ${current.status}; normal void only accepts CONFIRMED expenses` });
+    }
+  }
 });
 
 // Filter retention — docs/specs/list-filter-retention-spec.md §2, §14.

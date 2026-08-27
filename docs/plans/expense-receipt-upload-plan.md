@@ -675,6 +675,48 @@ Verification evidence:
 - Contracts, AI Gateway, and API TypeScript typechecks passed; contracts build passed.
 - `git diff --check` passed.
 
+## Capture-first payment integrity follow-up — 2026-08-27
+
+Scope: spec §19m; no P28 credit policy, bank connections, matching, reconciliation, or
+subscription changes. Baseline: `d2b40f37948d482c1bdd29c6047551c4258f24a7`.
+
+- [x] Trace the real review-page/API/use-case/repository caller and AccountingPayment
+  idempotency precedent; agree the optional-key legacy compatibility contract.
+- [x] Add nullable company-unique expense payment intent/fingerprint fields and migration.
+- [x] Keep replay, source authorization, payment/totals, audit, and outbox inside the
+  existing transaction/lifecycle lock. Return current authorized expense on replay.
+- [x] Add the actual civil paid-date field and stable retry intent to the existing panel.
+- [x] Extend registered DTO/use-case/repository/web tests, including real isolated
+  PostgreSQL concurrency and rollback; require PostgreSQL execution in existing CI job.
+- [x] Run focused/typecheck/full relevant checks; source frozen and uncommitted for root review.
+- [x] Resolve the Opus review's initial-refusal UX finding: distinguish definitive first
+  4xx from uncertain network/408/5xx outcomes, preserve earlier uncertainty on a later
+  refusal, and block same-key retry on an explicit idempotency conflict. Verify the
+  classifier and success/edit reset in the registered model suite.
+- [x] Bootstrap only the root-authorized isolated local DB/MinIO bucket and API port 3003;
+  retain them for root's browser QA. No shared DB or cloud mutation.
+- [x] Author/list/typecheck EXP-28 in the existing expense E2E file for initial refusal,
+  uncertain retry, conflict, and explicit edit. Only payment error responses are mocked;
+  its owned confirmed receipt fixture is voided through the supported endpoint in finally.
+  EXP-27's real payment test remains unchanged. Add the payment method's accessible label.
+- [x] Keep the payment intent after a known successful POST until a direct detail refresh
+  succeeds; persistent Thai saved/refresh-pending guidance permits only safe original-key
+  retry or the existing deliberate-edit exit. Shared load/classifier/backend unchanged.
+  Author/list/typecheck EXP-29 for real payment, failed following GET, exact replay and
+  one payment row; final browser execution belongs to root. EXP-27/28 remain unchanged.
+- [x] Root completes desktop/mobile browser evidence and independent review: full expense
+  E2E21/21, strict PG128/128, real Chrome manual draft and six inspected images; see memory
+  for real-versus-mocked boundaries and Opus/root dispositions.
+- [ ] Rebase onto latest develop, rerun integration checks, then PR/CI/merge. No shared DB
+  migration or main/Production promotion in this phase.
+
+Evidence and exact commands live in
+`docs/agent-memory/expense-payment-capture-integrity.md`. Existing unkeyed rows stay
+compatible; external callers generating fresh request IDs still represent new payments.
+The migration's validating CHECK takes an ACCESS EXCLUSIVE lock and scans existing rows;
+its non-concurrent unique-index build also locks writes. Both require production operator
+timing review before deployment; this task does not authorize shared DB migration.
+
 ## Risks
 
 - Items 01 through 08 may introduce different schema, auth, request context, route, storage, or UI conventions. Mitigation: Phase 0 reconciliation before edits.

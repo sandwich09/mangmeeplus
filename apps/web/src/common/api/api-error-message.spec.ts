@@ -54,6 +54,11 @@ test('translates chart-template and posting-readiness failures', () => {
 test('translates partial-payment validation and settlement-route failures', () => {
   assert.match(translateApiError('expense_payment_exceeds_outstanding')!, /ไม่เกินยอดคงเหลือ/);
   assert.match(translateApiError('expense_payment_changed')!, /โหลดรายการใหม่/);
+  assert.match(translateApiError('expense_payment_idempotency_conflict')!, /ตรวจประวัติการจ่าย/);
+  assert.match(translateApiError('expense_payment_invalid_date')!, /ปฏิทิน/);
+  assert.match(translateApiError('expense_payment_invalid_key')!, /ตรวจประวัติการจ่าย/);
+  assert.match(translateApiError('expense_payment_invalid_method')!, /เลือกวิธีจ่ายเงิน/);
+  assert.match(translateApiError('expense_payment_invalid_reference')!, /128/);
   assert.match(translateApiError('claim_expense_settles_via_reimbursement')!, /ผ่านขั้นตอนจ่ายคืนของใบเบิก/);
 });
 

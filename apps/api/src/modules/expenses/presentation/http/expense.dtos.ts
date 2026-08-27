@@ -18,6 +18,7 @@
 import { Type } from 'class-transformer';
 import {
   IsInt,
+  IsIn,
   IsNotEmpty,
   IsOptional,
   IsString,
@@ -25,9 +26,10 @@ import {
   MaxLength,
   Min,
   ValidateNested,
+  ValidateIf,
 } from 'class-validator';
-import { CIVIL_DATE_PATTERN } from '@watchdog-bms/contracts';
-import { POSITIVE_ACCOUNTING_MONEY_PATTERN } from '../../../accounting-documents/domain/logic/accounting-money-validation.logic';
+import { CIVIL_DATE_PATTERN, EXPENSE_PAYMENT_METHODS, type RecordExpensePaymentInput, type ExpensePaymentMethod } from '@watchdog-bms/contracts';
+import { PAYMENT_IDEMPOTENCY_KEY_PATTERN, POSITIVE_ACCOUNTING_MONEY_PATTERN } from '../../../accounting-documents/domain/logic/accounting-money-validation.logic';
 
 /** Shared upload-intent shape: the client names a file, the server reserves storage for it. */
 export class UploadIntentDto {
@@ -80,11 +82,13 @@ export class ConfirmExpenseDto {
   vatSourceOverride?: ExpenseVatSourceOverrideDto;
 }
 
-export class RecordExpensePaymentDto {
+export class RecordExpensePaymentDto implements RecordExpensePaymentInput {
+  @ValidateIf((_object, value) => value !== undefined)
+  @Matches(PAYMENT_IDEMPOTENCY_KEY_PATTERN) idempotencyKey?: string;
   // Same money pattern the accounting documents use — one definition of what a payable amount
   // looks like, so the two boundaries cannot disagree about "1e5" or "-0.001".
   @Matches(POSITIVE_ACCOUNTING_MONEY_PATTERN) paidAmount!: string;
-  @IsString() @IsOptional() @MaxLength(64) paymentMethod?: string;
+  @IsIn(EXPENSE_PAYMENT_METHODS) @IsOptional() paymentMethod?: ExpensePaymentMethod;
   @Matches(CIVIL_DATE_PATTERN) @IsOptional() paidAt?: string;
   @IsString() @IsOptional() @MaxLength(128) bankAccountRef?: string;
 }

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
+import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { Modal } from '@/common/components/modal/Modal';
 import { ThemedSteps } from '@/common/components/steps/ThemedSteps';
 import { CoverLoader } from '@/common/components/state/CoverLoader';
@@ -29,10 +30,10 @@ import {
   expenseNeedsReceiptOrSubstitute, expenseSubstituteReceiptReady, expenseValueLabel,
   canRunExpenseDuplicateCheck, hasAiGrandTotalMismatch, hasUnresolvedDuplicateWarning, initialExpenseReviewStep, needsAiTotalAcknowledgement,
   MIME_TYPE_LABELS, canDeleteExpense, effectiveVatRateLabel, expenseDeleteErrorMessage, firstFilled, isBlockedCheckBillClassification,
-  postingErrorText, vatModeRequiresRate,
+  postingErrorText, vatModeRequiresRate, expensePaymentAttempt, classifyExpensePaymentFailure,
 } from './expenses.model';
-import type { ExpenseDetail, ExpenseReviewStepKey } from './expenses.model';
-import type { BusinessDocumentClassification, ExpenseVatSourceOverrideInput } from '@watchdog-bms/contracts';
+import type { ExpenseDetail, ExpenseReviewStepKey, ExpensePaymentAttempt, ExpensePaymentFailure } from './expenses.model';
+import { todayCivilDate, isCivilDate, type BusinessDocumentClassification, type ExpenseVatSourceOverrideInput, type ExpensePaymentMethod } from '@watchdog-bms/contracts';
 import {
   AiFieldLabel, AiFieldMissingHint, DOCUMENT_KIND_LABELS, DocumentReviewSection, ExpenseReviewEditSection,
   InlineSpinner, MoneyRow, STEP_HELPER_KEYS, STEP_LABEL_KEYS, expenseNoticeKey,
@@ -54,6 +55,7 @@ const APP_HEADER_REM = 4.25; // 68px
 const STEPPER_REM = 4.5; // 72px
 const VIEWER_TOP_REM = APP_HEADER_REM + STEPPER_REM;
 const VIEWER_BOTTOM_GAP_REM = 6; // clearance for the sticky action bar
+const PAYMENT_SAVED_REFRESH_NOTICE = 'บันทึกการจ่ายแล้ว แต่โหลดข้อมูลล่าสุดไม่สำเร็จ กรุณาตรวจประวัติการจ่าย หรือกด “ลองบันทึกรายการเดิมอีกครั้ง” เพื่อโหลดข้อมูล โดยไม่เพิ่มยอดจ่ายซ้ำ';
 type ExpensePreviewSource = DocumentPreviewSource & { hideOpenNewTab?: boolean; onViewed?: () => void };
 
 export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, canSelfApprove }: { companyId: string; expenseId: string; userId: string; permissions: string[]; canSelfApprove: boolean }) {
@@ -81,7 +83,12 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
   const [deleting, setDeleting] = useState(false);
   const [duplicateResolution, setDuplicateResolution] = useState<{ candidateId: string; action: 'dismiss' | 'confirm' } | null>(null);
   const [paidAmount, setPaidAmount] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState('BANK_TRANSFER');
+  const [paymentMethod, setPaymentMethod] = useState<ExpensePaymentMethod>('BANK_TRANSFER');
+  const [paidAt, setPaidAt] = useState<string>(() => todayCivilDate());
+  const paymentAttemptRef = useRef<ExpensePaymentAttempt | null>(null);
+  const paymentPendingRef = useRef(false);
+  const [paymentNotice, setPaymentNotice] = useState<string | null>(null);
+  const [paymentFailure, setPaymentFailure] = useState<ExpensePaymentFailure | 'refresh_failed' | null>(null);
   const [receiptUploading, setReceiptUploading] = useState(false);
   const [preview, setPreview] = useState<ExpensePreviewSource | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -258,6 +265,66 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
   const doAction = async (fn: () => Promise<unknown>, successMessage?: string) => {
     setActionLoading(true); setError(null);
     try { await fn(); await load(); onRefresh(); if (successMessage) toast.success(successMessage); } catch (e) { setError(err(e)); } finally { setActionLoading(false); }
+  };
+
+  const editPayment = (change: () => void) => {
+    if (paymentPendingRef.current) return;
+    setPaymentFailure(null);
+    if (paymentAttemptRef.current) {
+      paymentAttemptRef.current = null;
+      setPaymentNotice('คุณแก้ไขข้อมูลแล้ว การบันทึกครั้งถัดไปเป็นรายการจ่ายใหม่ กรุณาตรวจประวัติการจ่ายก่อนเพื่อไม่ให้จ่ายซ้ำ');
+    }
+    change();
+  };
+
+  const submitPayment = async () => {
+    // Synchronous guard also covers two clicks before React renders the disabled state.
+    if (paymentPendingRef.current || actionLoading || paymentFailure === 'conflict' || !paidAmount || !isCivilDate(paidAt)) return;
+    paymentPendingRef.current = true;
+    setActionLoading(true); setError(null);
+    try {
+      const attempt = expensePaymentAttempt(paymentAttemptRef.current, companyId, expenseId, { paidAmount, paymentMethod, paidAt });
+      paymentAttemptRef.current = attempt;
+      await recordExpensePayment(companyId, expenseId, attempt.payload);
+      let refreshed: ExpenseDetail;
+      try {
+        // Shared load() catches GET failures internally; it cannot confirm fresh payment totals.
+        refreshed = await getExpense(companyId, expenseId);
+      } catch {
+        setPaymentFailure('refresh_failed');
+        setPaymentNotice(PAYMENT_SAVED_REFRESH_NOTICE);
+        return;
+      }
+      setDetail(refreshed);
+      paymentAttemptRef.current = null;
+      setPaidAmount(''); setPaymentFailure(null); setPaymentNotice(null);
+      // A successful replay may report a source voided since the original payment.
+      toast.success(refreshed.status === 'VOIDED' ? 'รายการนี้ถูกยกเลิกแล้ว ไม่มีการบันทึกจ่ายเพิ่ม' : 'บันทึกการจ่ายเรียบร้อยแล้ว');
+    } catch (e) {
+      if (paymentAttemptRef.current) {
+        const failure = classifyExpensePaymentFailure(e, paymentFailure === 'uncertain' || paymentFailure === 'refresh_failed');
+        if (paymentFailure === 'refresh_failed' && failure === 'uncertain') {
+          // A refused retry cannot undo the POST we already know succeeded.
+          setPaymentNotice(PAYMENT_SAVED_REFRESH_NOTICE);
+          return;
+        }
+        setPaymentFailure(failure === 'definitive' ? null : failure);
+        if (failure === 'definitive') {
+          paymentAttemptRef.current = null;
+          setPaymentNotice(null);
+        } else {
+          setPaymentNotice(failure === 'conflict'
+            ? 'ข้อมูลรายการนี้ไม่ตรงกับการจ่ายที่บันทึกไว้ กรุณาตรวจประวัติการจ่ายก่อนแก้ไขเป็นรายการใหม่'
+            : 'ยังยืนยันผลการบันทึกไม่ได้ กด “ลองบันทึกรายการเดิมอีกครั้ง” ได้โดยไม่เพิ่มยอดจ่ายซ้ำ หากจะเปลี่ยนข้อมูล กรุณาตรวจประวัติการจ่ายก่อน');
+        }
+      }
+      setError(err(e));
+      return;
+    } finally {
+      paymentPendingRef.current = false;
+      setActionLoading(false);
+    }
+    onRefresh();
   };
 
   // EXP-UX-01 / plan 13.11.A: ส่งตรวจสอบ ends the job, so it must end on the list — staying on the
@@ -832,13 +899,27 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
           </p>
         )}
         {isConfirmed && caps.canRecordPayment && Number(detail.outstandingAmount) > 0 && !detail.sourceReimbursementRequestId && (
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-            <input className={inputClass} type="number" min="0.01" max={detail.outstandingAmount} step="0.01" placeholder={t('expenses.payment_amount', locale)} value={paidAmount} onChange={(e) => setPaidAmount(e.target.value)} />
-            <ThemedSelect className={inputClass} value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
-              {Object.entries(PAYMENT_METHOD_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-            </ThemedSelect>
-            <button className={btnClass} onClick={() => doAction(() => recordExpensePayment(companyId, expenseId, { paidAmount, paymentMethod }), 'บันทึกการจ่ายเรียบร้อยแล้ว')} disabled={actionLoading || !paidAmount}>{t('expenses.record_payment', locale)}</button>
-          </div>
+          <form onSubmit={(event) => { event.preventDefault(); void submitPayment(); }} className="space-y-3">
+            <fieldset disabled={actionLoading} className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <label className="space-y-1 text-sm text-gray-700">
+                <span>{t('expenses.payment_amount', locale)}</span>
+                <input className={inputClass} type="number" inputMode="decimal" min="0.01" step="0.01" required placeholder="0.00" value={paidAmount} onChange={(e) => editPayment(() => setPaidAmount(e.target.value))} />
+              </label>
+              <label className="space-y-1 text-sm text-gray-700">
+                <span>วิธีจ่ายเงิน</span>
+                <ThemedSelect aria-label="วิธีจ่ายเงิน" className={inputClass} value={paymentMethod} disabled={actionLoading} onChange={(e) => editPayment(() => setPaymentMethod(e.target.value as ExpensePaymentMethod))}>
+                  {Object.entries(PAYMENT_METHOD_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                </ThemedSelect>
+              </label>
+              <div className="space-y-1 text-sm text-gray-700">
+                <label htmlFor="expense-payment-paid-at">วันที่จ่ายเงินจริง</label>
+                <ThemedDate id="expense-payment-paid-at" name="paidAt" className={inputClass} value={paidAt} required disabled={actionLoading} onChange={(e) => editPayment(() => setPaidAt(e.target.value))} />
+              </div>
+            </fieldset>
+            <p className="text-sm text-gray-500">เลือกวันที่จ่ายเงินจริง แม้จะนำมาบันทึกภายหลัง · ยอดค้างจ่าย {baht(detail.outstandingAmount)}</p>
+            {paymentNotice && <p role="status" className="rounded-xl bg-warning-50 p-3 text-sm text-warning-800">{paymentNotice}</p>}
+            <button type="submit" className={cx(btnClass, 'w-full sm:w-auto')} disabled={actionLoading || paymentFailure === 'conflict' || !paidAmount || !isCivilDate(paidAt)}>{actionLoading ? 'กำลังบันทึก…' : paymentFailure === 'conflict' ? 'กรุณาตรวจประวัติการจ่าย' : paymentFailure === 'uncertain' || paymentFailure === 'refresh_failed' ? 'ลองบันทึกรายการเดิมอีกครั้ง' : t('expenses.record_payment', locale)}</button>
+          </form>
         )}
         {(detail.payments?.length ?? 0) > 0 && (
           <div className="space-y-2 border-t border-gray-100 pt-3">

@@ -1602,6 +1602,79 @@ accepted accounting amount. Existing ExpenseRecord and ExpenseLine totals remain
 for tax, ledger, and reporting integrations. It also defines the narrow conditional
 document-arithmetic exception to SIMPLE capture; Tax Code and claimability remain hidden.
 
+### 19m. Expense payment retry integrity and actual paid date (2026-08-27)
+
+Capture-first follow-up: the existing `POST /expenses/:id/payment` must distinguish a
+retry from a genuine second payment. This does not choose the open P28 purchase-credit
+policy, enable bank/reconciliation integrations, or change posting/settlement arithmetic.
+
+- The request adds optional `idempotencyKey` (`[A-Za-z0-9_-]{8,64}`). A supplied malformed
+  key, including null/blank, fails closed. The web sends one UUID for one payment intent
+  and retains both key and payload through uncertain errors. A deliberate edit starts a
+  visibly identified new intent; controls are disabled while submission is pending.
+- An initial definitive HTTP 4xx refusal (except timeout 408) clears the pending intent
+  and uncertainty notice, shows the translated error, and returns to the normal submit
+  action without a duplicate-payment warning on edit. Network/timeout 408, HTTP 5xx, or
+  missing-status failures preserve the exact key/payload and show retry guidance. If an
+  earlier attempt had an uncertain outcome, a later 4xx cannot disprove that earlier
+  commit and must retain the same intent and ambiguity. The specific HTTP 409
+  `expense_payment_idempotency_conflict` instead shows check-history guidance and disables
+  same-key submission; only an explicit edit starts a new intent with the duplicate-risk
+  warning. Confirmed success plus a successful detail refresh, or deliberate edits,
+  reset the prior failure history.
+- A known-successful payment POST followed by a failed detail GET is **saved, refresh
+  pending**, not a rejected or unknown payment. Keep the exact intent and input until
+  the payment-only detail refresh succeeds; show persistent Thai saved-but-not-refreshed
+  guidance, not a misleading save-error banner. Retrying sends the original key/body so
+  it only replays the committed payment. A later POST refusal does not erase that known
+  success or create a new key; an explicit idempotency conflict still blocks submission.
+  A deliberate edit remains the visible new-intent exit with a duplicate-risk warning.
+  Only after fresh detail is available clear the intent/input/notice, then run the
+  existing refresh callback outside payment-error classification. Shared `load()` for
+  other actions is unchanged; it catches errors internally and cannot prove refresh success.
+- Legacy callers without a body key use a namespaced SHA-256 of the normalized request ID,
+  never a truncated ID. Repeating an `X-Request-Id` protects that retry; legacy callers
+  issuing fresh request IDs still create distinct payments. Historical rows remain
+  unkeyed; no existing payment is guessed or backfilled as an intent.
+- A company-scoped unique key and transaction lock serialize same-key commands, including
+  commands aimed at different expenses. Same key + same canonical payload reuses the
+  original payment and returns the **current authorized ExpenseRecord**. Changed payload
+  or target with the same key returns HTTP 409. A new key is a genuine second payment,
+  subject to the existing outstanding balance and source-state checks.
+- The versioned server fingerprint covers expense, source currency/branch, exact validated
+  money, method, trimmed bank reference, and civil paid date. Keep the existing positive
+  accounting money grammar (at most two decimals), four-decimal storage, and satang
+  settlement tolerance. Equivalent accepted decimal spellings normalize without rounding
+  distinct accepted values together. An omitted date has a null fingerprint marker; its
+  default instant is assigned only on first creation, so retries across midnight are safe.
+  Existing optional method/date/reference nulls normalize to omission; a blank/whitespace
+  bank reference normalizes to null. The standard HTTP string-trimming pipe still applies.
+- Permission, tenant, and branch access are checked again inside the write boundary before
+  replay or mutation. Replaying a payment after source void returns current voided state
+  without restoring payment, source totals, or posting. Claim-backed expenses remain
+  exclusively settled through reimbursement.
+- Payment row, totals, success audit, and one payment-recorded outbox event commit together.
+  Any audit/outbox failure rolls all of them back. Replay creates no audit, event, or new
+  posting source. Existing posting source identity remains the original payment ID.
+- The web requires an explicit actual paid date, initially today's **civil date**, through
+  the existing themed date input. It transmits `YYYY-MM-DD` unchanged, never converts the
+  selected day through browser UTC. This date is what the P27 paid-money ledger filters.
+
+Acceptance: registered tests cover malformed keys/money/date, equivalent and changed
+payloads, different target conflict, legacy request-ID compatibility, new-key second
+payment, revoked branch access and void replay, atomic failures, and a real PostgreSQL
+concurrent same-key race producing one payment/audit/outbox and one totals increment.
+CI must require the PostgreSQL suite rather than silently skip it. Registered web tests
+cover first definitive refusal, network then forbidden retry, timeout, idempotency conflict,
+and success/edit reset. EXP-29 covers a real committed payment with only the following
+detail GET failed, followed by same-key replay and one payment row; EXP-28 covers mocked
+POST errors only. Browser acceptance checks desktop/mobile date entry, distinct
+refusal/retry/conflict feedback, disabled pending controls, readable Thai copy, payment
+history, and the paid-date ledger period. The additive migration's `ALTER TABLE ... ADD
+CHECK` validates existing rows with a full scan under an `ACCESS EXCLUSIVE` lock; the
+non-concurrent unique-index build also locks writes. Production rollout timing remains
+an operator decision, not authorization to migrate a shared database in local development.
+
 ## 20. Backlog After MVP
 
 - Typhoon OCR provider implementation for receipt/tax-invoice AI capture. See [[specs/typhoon-receipt-ocr-spec|Typhoon Receipt OCR Spec]].
