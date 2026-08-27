@@ -2,7 +2,7 @@ import { ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/c
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { hashPassword, verifyPassword } from '../../domain/logic/password-credential.logic';
 import { revokeActiveSessions } from '../../domain/logic/session-revocation.logic';
-import { hashToken } from '../../domain/logic/secure-token.logic';
+import { hashLineRecoveryPassword } from '../../domain/logic/secure-token.logic';
 import { IssueTokenUseCase, type AuthTokensResult } from './issue-token.use-case';
 import { LegalAcceptanceService } from '../legal-acceptance.service';
 import { PlatformAccessService } from '../platform-access.service';
@@ -43,7 +43,7 @@ export class PasswordLoginUseCase {
     // the fallback does not reintroduce identifier enumeration through query count.
     const recoveryToken = RECOVERY_PASSWORD_PATTERN.test(password)
       ? await this.prisma.client.passwordResetToken?.findUnique({
-        where: { tokenHash: hashToken(password) },
+        where: { tokenHash: hashLineRecoveryPassword(password, user?.credential?.passwordHash ?? DUMMY_PASSWORD_HASH) },
       }) ?? null
       : null;
     const credential = user?.credential;
@@ -114,6 +114,15 @@ export class PasswordLoginUseCase {
       const recoveryPasswordHash = hashPassword(password);
 
       credentialUpdatedAt = await this.prisma.client.$transaction(async (tx) => {
+        // Same lock order as request/issuance. A stale login must never overwrite
+        // a password changed or disabled while its access checks were running.
+        await tx.$queryRaw`SELECT "id" FROM "UserCredential" WHERE "userId" = ${user.id} FOR UPDATE`;
+        const currentCredential = await tx.userCredential.findUnique({ where: { userId: user.id } });
+        if (!currentCredential || currentCredential.status === 'DISABLED'
+          || currentCredential.passwordHash !== credential.passwordHash
+          || currentCredential.updatedAt.getTime() !== credential.updatedAt.getTime()) {
+          throw new UnauthorizedException('Invalid username or password.');
+        }
         const claim = await tx.passwordResetToken.updateMany({
           where: {
             id: recoveryToken.id,

@@ -27,3 +27,13 @@ Branch: `codex/line-self-service-recovery` from `origin/develop`.
 - Admin-driven employee credential regeneration remains unchanged.
 - Parked email reset endpoints/use cases remain parked.
 - No deploy, migration, or live LINE push is part of this branch.
+
+## Backlog impact review — 2026-08-27
+
+- Integrated current develop including #306 without reverting its scope/UX safeguards; conflict was only the generated maintenance checksum, regenerated through the existing tool.
+- Reproduced a real regression: a pending recovery password could overwrite the user's later chosen password (`Missing expected rejection` before the fix).
+- Bind the recovery hash to the existing credential hash and recheck the locked credential before claim. This invalidates pending recovery across all existing password writers without changing each module or adding a migration. Serialize repeated requests on the same row.
+- Preserve generic response and old-password continuity; show admin/support fallback for missing or unlinked LINE.
+- Registered the lifecycle regression and an opt-in real PostgreSQL concurrency suite through the existing auth test entry, without editing package manifests. Dedicated `AUTH_RECOVERY_TEST_DATABASE_URL` must identify a local `_recovery_review_` database.
+- Focused auth/reset/SES: 55/55 passed. Real PostgreSQL: one end-to-end lifecycle/concurrency scenario passed with four simultaneous requests, two simultaneous claims, self/admin rotation, stale snapshot, closed access, disabled credential and failed LINE delivery. LINE transport is intercepted; no live push.
+- Full API/web, browser and exact-head CI results are recorded in [backlog task memory](../agent-memory/pr-backlog-impact-review-2026-08-27.md).

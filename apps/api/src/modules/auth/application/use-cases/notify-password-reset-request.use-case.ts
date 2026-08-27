@@ -5,7 +5,7 @@ import { AppConfigService } from '../../../../common/config/app-config.service';
 import { emitSecurityEvent, SECURITY_EVENT } from '../../../../common/logger/security-event';
 import { AuditService } from '../../../audit/application/audit.service';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
-import { generateRawToken, hashToken } from '../../domain/logic/secure-token.logic';
+import { generateRawToken, hashLineRecoveryPassword } from '../../domain/logic/secure-token.logic';
 import { pushSystemLineMessage } from '../../infrastructure/system-line-push';
 
 const RECOVERY_TTL_MS = 30 * 60 * 1000;
@@ -82,15 +82,20 @@ export class NotifyPasswordResetRequestUseCase {
     const temporaryPassword = generateRawToken(9);
     const expiresAt = new Date(Date.now() + RECOVERY_TTL_MS);
     const resetToken = await this.prisma.client.$transaction(async (tx) => {
+      // Serialize repeat requests on the existing credential, before locking tokens.
+      await tx.$queryRaw`SELECT "id" FROM "UserCredential" WHERE "userId" = ${user.id} FOR UPDATE`;
+      const currentCredential = await tx.userCredential.findUnique({ where: { userId: user.id } });
+      if (!currentCredential || currentCredential.status === 'DISABLED') return null;
       await tx.passwordResetToken.updateMany({
         where: { userId: user.id, status: 'PENDING' },
         data: { status: 'REVOKED' },
       });
       return tx.passwordResetToken.create({
-        data: { userId: user.id, tokenHash: hashToken(temporaryPassword), expiresAt },
+        data: { userId: user.id, tokenHash: hashLineRecoveryPassword(temporaryPassword, currentCredential.passwordHash), expiresAt },
         select: { id: true },
       });
     });
+    if (!resetToken) return deny('ineligible_account', user.id, membership.companyId);
 
     // LINE latency and delivery state must not reveal account existence through this response.
     void this.deliverAndAudit({

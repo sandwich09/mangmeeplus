@@ -1,10 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { NotifyPasswordResetRequestUseCase } from './notify-password-reset-request.use-case';
-import { hashToken } from '../../domain/logic/secure-token.logic';
+import { hashLineRecoveryPassword } from '../../domain/logic/secure-token.logic';
 
 const GENERIC_MESSAGE = 'If the account is eligible, a temporary password has been sent to its linked LINE.';
-const ACTIVE_USER = { id: 'user-1', status: 'ACTIVE', credential: { status: 'ACTIVE' } };
+const ACTIVE_USER = { id: 'user-1', status: 'ACTIVE', credential: { status: 'ACTIVE', passwordHash: 'synthetic-credential-hash' } };
 const TOKEN_CONFIG = { lineMessagingChannelAccessToken: 'system-oa-token', passwordResetResponseMinMs: 0 } as any;
 
 function makePrisma(options: {
@@ -15,6 +15,8 @@ function makePrisma(options: {
 }) {
   const tokens: Array<{ id: string; userId: string; tokenHash: string; expiresAt: Date; status: string }> = [];
   const tx = {
+    $queryRaw: async () => [{ id: 'credential-1' }],
+    userCredential: { findUnique: async () => ACTIVE_USER.credential },
     passwordResetToken: {
       updateMany: async ({ where, data }: any) => {
         let count = 0;
@@ -116,7 +118,7 @@ describe('NotifyPasswordResetRequestUseCase', () => {
         const temporaryPassword = /รหัสผ่านชั่วคราว: ([^\n]+)/.exec(line.pushes[0]!.text)?.[1];
         assert.ok(temporaryPassword);
         assert.equal(tokens.length, 1);
-        assert.equal(tokens[0]!.tokenHash, hashToken(temporaryPassword));
+        assert.equal(tokens[0]!.tokenHash, hashLineRecoveryPassword(temporaryPassword, ACTIVE_USER.credential.passwordHash));
         assert.equal(tokens[0]!.status, 'PENDING');
         assert.equal(audits[0].result, 'SUCCESS');
         assert.deepEqual(audits[0].metadataJson, { channel: 'line', recipientCount: 1 });
