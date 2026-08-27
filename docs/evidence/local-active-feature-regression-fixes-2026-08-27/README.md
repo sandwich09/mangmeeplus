@@ -65,6 +65,7 @@ pnpm exec playwright test e2e/local-active-feature-regression.spec.ts e2e/dashbo
 
 ## พิสูจน์บน local เดิม ไม่ใช่แค่ฐานสำเนา
 
+- PR: [#306 → develop](https://github.com/MangmeeDev/mangmeeplus/pull/306). รุ่น application สุดท้ายที่เปิดค้างไว้คือ `732afad40a21ae3478dee528f3458e0a81743575`; หลังเริ่มใหม่เทสหน้าจอ 13 กรณีผ่านอีกครั้ง และอ่านฉบับร่างเดิมได้ การแก้บันทึกส่งงานหลังจากนี้เป็น docs-only ไม่เปลี่ยน application bytes
 - รุ่นโค้ดที่กดบันทึกผ่าน Chrome: `cdc215532eec27758c28cc7318d396d56bb4640d` (API application bytes ไม่เปลี่ยนในรอบจัดข้อความสาขาบนคอมที่ตามมา)
 - Web `http://127.0.0.1:3000`, API `http://127.0.0.1:3003`; ใช้ฐานเดิม `watchdog_expense_payment_capture_20260827`, bucket เดิม `expense-payment-capture-20260827`, Redis DB 15
 - แก้ต้นเหตุการบันทึกถูกปฏิเสธโดยเรียก `attestOpenOnThisBuild` ที่มีอยู่แล้ว เฉพาะ local `expenses/DEFAULT` และ `sales_documents/DEFAULT` ซึ่งเป็น ORDINARY และ SYSTEM เปิดไว้เดิม ไม่แก้ state/generation ไม่เปิดสวิตช์ ไม่ปลอม SHA ไม่ข้าม guard และไม่แตะ human/specialist approval
