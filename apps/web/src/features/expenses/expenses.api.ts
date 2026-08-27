@@ -23,6 +23,8 @@ import type {
   UpdateExpenseDraftInput,
 } from '@watchdog-bms/contracts';
 import { authedApiFetch as apiFetch, authedFetch } from '@/common/api/authed-fetch';
+import { apiErrorMessage } from '@/common/api/api-error-message';
+import { emitToast } from '@/common/feedback/toast-bus';
 import { assertAllowedUploadFile, withGenericUploadError } from '@/common/files/upload-file.logic';
 
 // Same-origin: upload URLs stay relative and proxy through the /local-storage rewrite.
@@ -361,8 +363,13 @@ export async function listCompanySubstituteReceipts(
   return apiFetch(`/v1/companies/${companyId}/substitute-receipts${qs(filter)}`);
 }
 
-export async function generateSubstituteReceipt(companyId: string, expenseId: string, body: GenerateSubstituteReceiptInput): Promise<SubstituteReceiptEvidenceSummary> {
-  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/substitute-receipt`, { method: 'POST', body: JSON.stringify(body) });
+export async function generateSubstituteReceipt(companyId: string, expenseId: string, body: GenerateSubstituteReceiptInput, locale: 'th' | 'en' = 'th'): Promise<SubstituteReceiptEvidenceSummary> {
+  try {
+    return await apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/substitute-receipt`, { method: 'POST', body: JSON.stringify(body), suppressErrorToast: true });
+  } catch (error) {
+    emitToast({ tone: 'error', message: apiErrorMessage(error, locale) });
+    throw error;
+  }
 }
 
 export async function loadLineSubstituteReceiptPrefill(

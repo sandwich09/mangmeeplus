@@ -110,6 +110,23 @@ test('starts receipt-classified expenses with a compatible missing-receipt reaso
   assert.equal(defaultSubstituteReceiptReason('EXPENSE_NOTE_TEXT'), 'PAYEE_CANNOT_ISSUE');
 });
 
+test('keeps check bills selectable after override or reload without relaxing other eligibility', () => {
+  const checkBill = { ...eligibleCandidate, sourceDocumentType: 'NEEDS_REVIEW' as const, taxEvidenceStatus: 'NEEDS_REVIEW',
+    aiVerificationSummaryJson: { status: 'NOT_EXPENSE_DOCUMENT', classification: { documentKind: 'ORDER_OR_CHECK_BILL' } } };
+  for (const outcome of ['FINANCE_OVERRIDDEN_AS_EXPENSE', 'ROUTED_TO_SUBSTITUTE_RECEIPT', undefined]) {
+    assert.equal(isSubstituteReceiptCandidateEligible({ ...checkBill, aiVerificationSummaryJson: {
+      ...checkBill.aiVerificationSummaryJson, classificationResolution: { outcome },
+    } }), true);
+  }
+  assert.equal(isSubstituteReceiptCandidateEligible({ ...checkBill, status: 'VOIDED' }), false);
+  assert.equal(isSubstituteReceiptCandidateEligible({ ...checkBill, status: 'CONFIRMED' }), false);
+  assert.equal(isSubstituteReceiptCandidateEligible({ ...checkBill, currency: 'USD' }), false);
+  assert.equal(isSubstituteReceiptCandidateEligible({ ...checkBill, grandTotalAmount: '0' }), false);
+  assert.equal(isSubstituteReceiptCandidateEligible({ ...checkBill, lines: [] }), false);
+  assert.equal(isSubstituteReceiptCandidateEligible({ ...checkBill, taxEvidenceStatus: 'USABLE_FOR_TAX' }), true,
+    'the atomic check-bill route downgrades tax status instead of making it claimable');
+});
+
 test('validates and normalizes substitute-receipt payee identity fields', () => {
   assert.deepEqual(validatePayeeIdentity({
     payeeName: 'ผู้ขายเดิม', payeeAddress: '', payeeTaxId: '', vendorNameSnapshot: 'ผู้ขายเดิม',

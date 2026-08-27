@@ -1,5 +1,7 @@
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { subscribeToastBus } from '@/common/feedback/toast-bus';
+import { apiErrorMessage } from '@/common/api/api-error-message';
 import {
   GENERIC_UPLOAD_ERROR_MESSAGE,
   UPLOAD_FILE_TYPE_MISMATCH_ERROR_MESSAGE,
@@ -7,6 +9,7 @@ import {
 import {
   confirmDuplicate,
   getSharedEvidence,
+  generateSubstituteReceipt,
   dismissDuplicate,
   downloadSubstituteReceiptPdf,
   fetchAttachmentPreviewBlob,
@@ -45,6 +48,29 @@ function mockAttachmentPreviewResponse(fileResponse: Response): Array<{ input: s
 }
 
 describe('expenses.api URL helpers', () => {
+  it('carries same-expense routing and renders one localized actionable toast from a coded prepare rejection', async () => {
+    const input = { reasonCode: 'RECEIPT_UNAVAILABLE' as const, missingReceiptReason: 'paid without final receipt',
+      businessPurpose: 'business meal', payerUserId: 'payer-1', routeCheckBill: true as const,
+      paymentMethod: 'CASH' as const, expectedExpenseUpdatedAt: '2026-08-27T00:00:00.000Z', idempotencyKey: 'same-expense' };
+    for (const locale of ['th', 'en'] as const) {
+      const toasts: string[] = [];
+      const unsubscribe = subscribeToastBus((event) => toasts.push(event.message));
+      globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+        assert.equal(String(url), '/api/v1/companies/co-1/expenses/exp-1/substitute-receipt');
+        assert.deepEqual(JSON.parse(String(init?.body)), input);
+        return new Response(JSON.stringify({ code: 'check_bill_payment_evidence_required', message: 'Attach separate proof of actual payment before preparing the substitute receipt.' }),
+          { status: 400, headers: { 'content-type': 'application/json' } });
+      }) as typeof fetch;
+      try {
+        await assert.rejects(() => generateSubstituteReceipt('co-1', 'exp-1', input, locale), (error: unknown) => {
+          const message = apiErrorMessage(error, locale);
+          assert.match(message, locale === 'th' ? /เงินจริง.*เงินสด.*รายการเดิม/ : /actual payment.*cash.*same expense/);
+          assert.deepEqual(toasts, [message], 'toast and persistent inline error agree, with no generic duplicate');
+          return true;
+        });
+      } finally { unsubscribe(); }
+    }
+  });
   it('carries the selected source branch to the shared evidence endpoint', async () => {
     globalThis.fetch = (async (input: string | URL | Request) => {
       const url = new URL(String(input), 'http://localhost');

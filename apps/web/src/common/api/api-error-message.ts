@@ -137,6 +137,20 @@ const CODE_LABELS: Record<string, string> = {
     'ประเภทเอกสารต้นทางยังไม่ผ่านการตรวจหรือไม่รองรับใบรับรองแทนใบเสร็จ กรุณาตรวจและเลือกประเภทเอกสารให้ถูกต้อง',
   check_bill_route_ineligible:
     'ทำขั้นตอนนี้ได้เฉพาะเช็กบิลที่จ่ายแล้วแต่ร้านไม่มีใบเสร็จ กรุณากลับไปตรวจเอกสารและตอบเรื่องการจ่ายเงินก่อน',
+  check_bill_route_required:
+    'เปิดขั้นตอนจัดทำใบรับรองของรายการเดิม ยืนยันว่าจ่ายแล้วแต่ไม่มีใบเสร็จฉบับสุดท้าย และแนบหลักฐานการชำระเงินแยกจากเช็กบิล',
+  check_bill_payment_evidence_required:
+    'เช็กบิลไม่ใช่หลักฐานการจ่าย กรุณาแนบหลักฐานการชำระเงินจริงแยกจากเช็กบิล แม้จ่ายเงินสด แล้วจัดทำใบรับรองของรายการเดิมต่อ',
+  payment_evidence_required:
+    'กรุณาแนบหลักฐานการชำระเงินจริงแยกจากเอกสารต้นทางก่อนจัดทำใบรับรอง',
+  substitute_evidence_overlap:
+    'ใช้ไฟล์เดียวกันเป็นทั้งเช็กบิลหรือเอกสารต้นทางและหลักฐานชำระเงินไม่ได้ กรุณาเลือกหลักฐานการจ่ายคนละไฟล์',
+  substitute_evidence_unavailable:
+    'หลักฐานที่เลือกไม่มีพร้อมใช้ในรายการนี้ กรุณาโหลดรายการใหม่แล้วเลือกหรือแนบหลักฐานอีกครั้ง',
+  substitute_payment_evidence_invalid:
+    'กรุณาแนบรูปหรือ PDF หลักฐานการชำระเงินจริงในช่องหลักฐานการจ่าย โดยใช้คนละไฟล์กับเช็กบิลหรือเอกสารต้นทาง',
+  substitute_expense_changed:
+    'รายการถูกแก้ไขหลังตรวจ กรุณาโหลดรายการเดิมใหม่ ตรวจข้อมูลล่าสุด แล้วจัดทำใบรับรองอีกครั้ง',
   valid_receipt_normal_path:
     'เอกสารนี้มีใบเสร็จหรือใบกำกับภาษีที่ใช้ได้ ให้ดำเนินการตามขั้นตอนปกติ ใบรับรองแทนใบเสร็จใช้ได้เมื่อต้นฉบับไม่มีหรือข้อมูลสำคัญไม่ครบเท่านั้น',
   classification_ineligible:
@@ -561,8 +575,32 @@ export function translateApiError(raw: string): string | null {
   return null;
 }
 
+// The substitute workflow shares these codes with LINE; never display raw server diagnostics.
+const SUBSTITUTE_ERROR_LABELS_EN: Record<string, string> = {
+  check_bill_route_required: 'Open the substitute-receipt wizard for the same expense, confirm payment without a final receipt, and attach separate proof of payment.',
+  check_bill_route_ineligible: 'This route is only for a paid check bill without a final receipt. Reload and review the source document before continuing.',
+  check_bill_payment_evidence_required: 'A check bill is not proof of payment. Attach separate proof of actual payment, including cash, then continue with the same expense.',
+  payment_evidence_required: 'Attach proof of actual payment separate from the source document before preparing the certificate.',
+  substitute_evidence_overlap: 'The source document and payment proof cannot be the same file. Select separate proof of payment.',
+  substitute_evidence_unavailable: 'Selected evidence is no longer available for this expense. Reload the expense and select or upload evidence again.',
+  substitute_payment_evidence_invalid: 'Upload a separate image or PDF of actual payment in the payment-evidence field. The check bill or source document cannot serve as payment proof.',
+  substitute_expense_changed: 'The expense changed after review. Reload the same expense, review the latest details, and prepare again.',
+  expense_stale_reload: 'The expense changed after review. Reload the same expense before preparing the certificate.',
+  expense_status_ineligible: 'Only draft, in-review, or ready-for-confirmation expenses can be prepared. Review the current expense status.',
+  source_type_ineligible: 'Review the source document type on the same expense before preparing a certificate.',
+  valid_receipt_normal_path: 'A usable receipt or tax invoice belongs in the normal receipt flow. A substitute is only for an unavailable or materially incomplete original.',
+  classification_ineligible: 'This document is not supported expense evidence. Attach readable expense evidence and review its classification.',
+  document_kind_ineligible: 'Quotations, purchase orders, appointments, bookings, and non-expense images cannot support a substitute receipt. Attach appropriate expense evidence.',
+  currency_not_supported: 'Substitute receipts currently support THB expenses only.',
+  reviewed_total_required: 'Review and confirm an expense total greater than zero before preparing.',
+  reviewed_items_required: 'Review and complete all expense item descriptions before preparing.',
+  reviewed_category_required: 'Review and select the expense category or account before preparing.',
+  tax_evidence_review_required: 'Complete the tax-evidence review on the same expense before preparing.',
+  tax_evidence_nonclaimable: 'Substitute receipts cannot support input VAT claims. Use non-claimable supporting evidence or request a replacement tax invoice.',
+};
+
 /** Customer copy for a caught error; raw API diagnostics remain on the original object. */
-export function apiErrorMessage(e: unknown): string {
+export function apiErrorMessage(e: unknown, locale: 'th' | 'en' = 'th'): string {
   const error = e as {
     message?: unknown;
     code?: unknown;
@@ -576,6 +614,7 @@ export function apiErrorMessage(e: unknown): string {
     : undefined;
   const code = error?.code ?? details?.code;
   if (typeof code === 'string') {
+    if (locale === 'en' && SUBSTITUTE_ERROR_LABELS_EN[code]) return SUBSTITUTE_ERROR_LABELS_EN[code]!;
     const byCode = translateApiError(code);
     if (byCode) return byCode;
   }
