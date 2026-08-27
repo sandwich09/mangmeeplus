@@ -66,6 +66,17 @@ Decisions (Owner 2026-08-27 — ตอบ 4 ข้อของ strategy discussi
 - Verified 2026-08-27 ~19:00: ทั้ง 3 service (api-web / ai-gateway / workers) digest = `git-79c018ef...`; `/v1/health` 200 ok; AgentCore artifact `watchdog_orchestrator_uat_candidate-NwJNiqG5Jd` qualifier `candidate_uat_79c018ef9f15_4ffbf835` env มี `LINE_AI_FUSED_PLAN_SHADOW_ENABLED=true`, `LINE_AI_PREPARED_SIMPLE_READ_ENABLED=true`, families 4 ตัวครบ; smoke 2 เคสผ่าน (forbidden read + mutation refused) บน `global.anthropic.claude-sonnet-4-6`; prompt cache ทำงานจริง (call แรก cacheWrite 7,239 → call สอง cacheRead 7,239)
 - ECR waiver openssl 4 CVE หมดอายุ 2026-09-10 — ต้อง revisit เมื่อ Debian ออก patch
 - ค้าง: Owner retest บน LINE UAT → ดึง per-stage latency ทำตาราง before/after → ถ้าเลนเร็วยังไม่ยิงบน 4.6 debug ต่อใน artifact
+- **รอบ A+B (Owner สั่ง "ขนของ develop เข้า main และ deploy UAT" 2026-08-27 ~19:40):** PR #308 (develop→main, merge `007dcba7` — บรรทุก #307 A+B, #265 LINE self-service recovery, #306 local-active regression; 150 ไฟล์; tree main==develop ยืนยันแล้ว)
+  - Run **33075313286 FAILED** ที่ Resolve UAT Release: "release commit is not reachable from origin/develop" — ผมส่ง merge SHA ของ main เป็น release_ref; contract จริงคือ **release_ref ต้องเป็น commit บน develop** (main เป็นแค่ controller) — บทเรียนใหม่ของ protocol
+  - Run **33075441692 SUCCESS** (จบ 13:50Z): release_ref = develop tip `a53bb992fc04713d7cba2f2b19c08286f27c08e5`, controller ref=main (`007dcba7` มี deploy.sh advisor wiring)
+  - Verified 2026-08-27 ~20:51: ทั้ง 3 service digest = `git-a53bb992...`; `/v1/health` 200; api-web env `LINE_AI_ADVISOR_MODE=social` (เลนใหม่ติดอาวุธแล้ว) + debounce 1000 + loading + ledger ครบ; AgentCore artifact env เลนเร็วคงเดิม (fused/prepared true + 4 families)
+  - รอ Owner retest: (1) รูป+พิมพ์คุยทันที ต้องได้คำตอบจริง (2) ทักเล่น ~5-6s + log `line.ai.advisor_direct_served` (3) 4 คำถามเลนเร็วธุรกิจ (4) ใบเสร็จใบเดิมยังอ่านถูก
+
+## Rich menu v2 ver2 + capability fix (Owner สั่งพร้อมภาพดีไซน์ 2026-08-27 ค่ำ)
+
+- Owner ส่งดีไซน์ 2 ภาพ: rich menu 6 ช่อง (Promotion แทน เริ่มต้นใช้งานฟรี) + โปสเตอร์แพ็กเกจ 4 tier; สั่ง (1) คำตอบ "ทำอะไรได้บ้าง" ห้ามโฆษณาของที่ใช้ไม่ได้ (2) ปุ่มถ่ายใบเสร็จเข้ากล้องตรง ไม่ถาม แนบ/กล้อง/กลับ (3) เปลี่ยน rich menu (4) ช่อง Promotion ขึ้นโปสเตอร์
+- ทำแล้ว: manifest+spec `rich-menu-v2-ver2` (ใบเสร็จ = URI `https://line.me/R/nv/camera/` — camera action ใช้ได้แค่ quick reply; Promotion = message `โปรโมชั่น`), backend `staff_menu_promotion` (public) + `buildPromotionCard` (hero โปสเตอร์+ปุ่มทดลองฟรี), `isCapabilityQuestion`+`buildCapabilityCard` (การ์ด 6 ฟังก์ชันจริง, จับเฉพาะคำถามสั้น; "ใบกำกับภาษีใช้ยังไง" ไม่โดนดัก), spec/runbook ต่อท้ายส่วน Ver2
+- **ค้างรอ Owner: ไฟล์ PNG 2 ไฟล์** — bitmap เมนู 2500x1686 + โปสเตอร์ 1080x1350 (วางที่ `apps/web/public/assets/line/` ชื่อตาม manifest แล้วบันทึก sha256/byteSize ลง manifest) และการ apply เข้า LINE OA ผ่าน Messaging API ตาม runbook (ต้องใช้ channel token; ทำหลัง backend deploy)
 
 ## วินิจฉัยรอบทดสอบ 2 (2026-08-27 18:58–19:02 ICT, log+code proof — ยังไม่แก้ รอ Owner สั่ง)
 

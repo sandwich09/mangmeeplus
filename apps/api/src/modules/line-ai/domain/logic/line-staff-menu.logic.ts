@@ -168,6 +168,73 @@ export function buildServiceEntitlementMessage(entitled: ReadonlySet<string> | n
   };
 }
 
+/** Owner design 2026-08-27 (rich menu v2 ver2): the Promotion tile shows the package poster.
+ *  The poster is a committed web asset so LINE fetches it over existing HTTPS hosting; when the
+ *  base URL is unset (misconfigured env) the card still delivers its text body, never a broken
+ *  image reference. */
+export function buildPromotionCard(assetBaseUrl: string | undefined): LineReplyMessage {
+  const imageUrl = assetBaseUrl
+    ? `${assetBaseUrl.replace(/\/+$/, '')}/assets/line/mangmeeplus-package-promo-1080x1350.png`
+    : undefined;
+  return {
+    type: 'flex',
+    altText: 'แพ็กเกจมั่งมี Plus — เริ่มต้น 249.-/เดือน ทดลองใช้ PRO ฟรี',
+    contents: {
+      type: 'bubble', size: 'mega',
+      ...(imageUrl ? {
+        hero: {
+          type: 'image', url: imageUrl, size: 'full', aspectRatio: '4:5', aspectMode: 'cover',
+          action: { type: 'uri', label: 'ดูแพ็กเกจ', uri: 'https://official.mangmeeplus.com/' },
+        },
+      } : {}),
+      body: { type: 'box', layout: 'vertical', spacing: 'sm', paddingAll: '16px', contents: [
+        { type: 'text', text: '🎁 Package ที่เหมาะกับร้านคุณ', weight: 'bold', size: 'md', color: '#101828', wrap: true },
+        { type: 'text', text: 'เริ่มต้น 249.-/เดือน และเริ่มด้วยแพ็กเกจ PRO “ทดลองใช้ฟรี” ได้เลยค่ะ', size: 'sm', color: '#475467', wrap: true },
+      ] },
+      footer: { type: 'box', layout: 'vertical', spacing: 'sm', contents: [
+        { type: 'button', style: 'primary', color: '#22C55E', action: { type: 'uri', label: 'ทดลองใช้ฟรี', uri: 'https://official.mangmeeplus.com/' } },
+        { type: 'button', style: 'secondary', action: { type: 'message', label: 'คุยกับทีมงาน', text: 'ติดต่อเรา' } },
+      ] },
+    },
+  };
+}
+
+/**
+ * Owner 2026-08-27: a "ทำอะไรได้บ้าง" question answered by the model advertised features that do
+ * not exist. A capability question now gets the curated card below — deterministic, zero model
+ * calls, only the real menu functions. Bounded to SHORT messages, and the generic "ใช้ยังไง"
+ * stems additionally require the system itself as the subject, so a real business question that
+ * merely contains a stem (e.g. "ใบกำกับภาษีใช้ยังไง") still takes the full AI route.
+ */
+export function isCapabilityQuestion(text: string): boolean {
+  const normalized = text.trim();
+  if (normalized.length === 0 || normalized.length > 40) return false;
+  if (['ทำอะไรได้', 'ทำไรได้', 'ช่วยอะไรได้', 'ช่วยไรได้', 'มีฟีเจอร์อะไร'].some((stem) => normalized.includes(stem))) return true;
+  return ['ใช้ยังไง', 'ใช้งานยังไง'].some((stem) => normalized.includes(stem))
+    && ['มั่งมี', 'ระบบ', 'แอป', 'แอพ', 'ที่นี่', 'เมนู'].some((subject) => normalized.includes(subject));
+}
+
+/** The six REAL functions, matching rich menu v2 ver2 — nothing aspirational belongs here. */
+export function buildCapabilityCard(): LineReplyMessage {
+  return {
+    type: 'flex',
+    altText: 'น้องมั่งมีช่วยอะไรได้บ้าง',
+    contents: {
+      type: 'bubble',
+      body: { type: 'box', layout: 'vertical', spacing: 'md', paddingAll: '16px', contents: [
+        { type: 'text', text: 'น้องมั่งมีช่วยอะไรได้บ้าง 💚', weight: 'bold', size: 'lg', color: '#101828', wrap: true },
+        { type: 'text', text: '🧾 ถ่ายใบเสร็จ — ส่งรูปใบเสร็จ ระบบอ่านและบันทึกค่าใช้จ่ายให้', size: 'sm', color: '#475467', wrap: true },
+        { type: 'text', text: '📊 ถามข้อมูลธุรกิจ — เช่น “ยอดขายวันนี้” “ค่าใช้จ่ายเดือนนี้” “สรุปบัญชี”', size: 'sm', color: '#475467', wrap: true },
+        { type: 'text', text: '💬 คุยกับน้องมั่งมี — ปรึกษาธุรกิจ บัญชี ภาษีเบื้องต้น หรือคุยเล่นก็ได้', size: 'sm', color: '#475467', wrap: true },
+        { type: 'text', text: '🏢 บริษัทของฉัน — ดูหรือสลับบริษัท (พิมพ์ /companies)', size: 'sm', color: '#475467', wrap: true },
+        { type: 'text', text: '🎁 โปรโมชั่น — ดูแพ็กเกจและทดลองใช้ฟรี (พิมพ์ โปรโมชั่น)', size: 'sm', color: '#475467', wrap: true },
+        { type: 'text', text: '☎️ ติดต่อเรา — คุยกับทีมงานตัวจริง', size: 'sm', color: '#475467', wrap: true },
+        { type: 'text', text: 'พิมพ์ “เมนูหลัก” เพื่อเรียกเมนูได้ทุกเมื่อค่ะ', size: 'xs', color: '#667085', wrap: true, margin: 'md' },
+      ] },
+    },
+  };
+}
+
 export function buildContactCard(): LineReplyMessage {
   return {
     type: 'flex',
@@ -371,8 +438,8 @@ export function buildPendingApprovalCard(context: StaffMenuContext, pending: Pen
   };
 }
 
-export function staffMenuCommand(text: string): 'main' | 'query' | 'approval' | 'receipt' | 'services' | 'contact' | 'talk' | null {
-  const normalized = text.trim().replace(/[📊✅📷]/gu, '').trim();
+export function staffMenuCommand(text: string): 'main' | 'query' | 'approval' | 'receipt' | 'services' | 'contact' | 'talk' | 'promotion' | null {
+  const normalized = text.trim().replace(/[📊✅📷🎁]/gu, '').trim();
   if (normalized === 'เมนูหลัก') return 'main';
   if (normalized === 'ถามข้อมูล') return 'query';
   if (normalized === 'รายการรออนุมัติ') return 'approval';
@@ -380,5 +447,6 @@ export function staffMenuCommand(text: string): 'main' | 'query' | 'approval' | 
   if (normalized === 'บริการของเรา') return 'services';
   if (normalized === 'ติดต่อเรา') return 'contact';
   if (normalized === 'คุยกับน้องมั่งมี') return 'talk';
+  if (normalized === 'โปรโมชั่น' || normalized === 'แพ็กเกจ') return 'promotion';
   return null;
 }

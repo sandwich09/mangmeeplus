@@ -80,7 +80,7 @@ import type { BusinessDocumentClassification, LineExpenseDraftRouteContext, Line
 import { LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, asIntakeRouteIntent, extractValueCandidates, hasToolPermissions, todayCivilDate } from '@watchdog-bms/contracts';
 import { LineAiLedgerService, ledgerKey, type LedgerEntry } from '../line-ai-ledger.service';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
-import { availableApprovalSurfaceKeys, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, staffMenuCommand, PENDING_APPROVAL_ITEM_LIMIT, type ApprovalSurfaceKey, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
+import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, isCapabilityQuestion, staffMenuCommand, PENDING_APPROVAL_ITEM_LIMIT, type ApprovalSurfaceKey, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
 import { buildExpenseDraftCardMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
 import { advisorDirectAnswerText } from '../../domain/logic/line-advisor-direct-answer.logic';
 import { capabilityFollowUpReply, isDeliveredCapabilityFollowUp, isNextStepQuestionText } from '../../domain/logic/line-ai-capability-follow-up.logic';
@@ -1684,6 +1684,21 @@ export class ProcessLineWebhookUseCase {
     if (publicCommand === 'talk') {
       await this.deliverReply(event, ASSISTANT_TALK_GREETING);
       await this.updateEventLog(event.webhookEventId, 'staff_menu_talk');
+      return;
+    }
+    // Rich menu v2 ver2 Promotion tile (Owner design 2026-08-27). Public like `contact`: a
+    // prospect exploring packages may well be unlinked, and the card carries no tenant data.
+    if (publicCommand === 'promotion') {
+      await this.deliverRequiredMessages(event, [buildPromotionCard(this.config.webBaseUrl)]);
+      await this.updateEventLog(event.webhookEventId, 'staff_menu_promotion');
+      return;
+    }
+    // "ทำอะไรได้บ้าง" (Owner 2026-08-27): a model-composed answer advertised features that do
+    // not exist, so a short capability question is answered by the curated card — deterministic,
+    // zero model calls, only the six real functions.
+    if (isCapabilityQuestion(event.messageText)) {
+      await this.deliverRequiredMessages(event, [buildCapabilityCard()]);
+      await this.updateEventLog(event.webhookEventId, 'staff_menu_capability');
       return;
     }
 
