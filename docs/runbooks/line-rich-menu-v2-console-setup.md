@@ -87,6 +87,31 @@ test binds them). The promotion poster
 `apps/web/public/assets/line/mangmeeplus-package-promo-1080x1350.png` (1080×1350, 304,743 bytes) is
 committed beside it — served by the web app and referenced by `buildPromotionCard`.
 
+## Apply it (scripted)
+
+`scripts/line-oa/apply-rich-menu.mjs` performs the Messaging API sequence above. It reads the
+channel access token from Secrets Manager at run time (`watchdog-bms/<env>/line-messaging-channel-access-token`),
+never prints it, and refuses to upload a bitmap whose sha256/byteSize do not match the manifest.
+Staging and activation are deliberately SEPARATE commands so a menu cannot go live before the
+backend that answers its tiles is deployed.
+
+```bash
+# 1. Record the current default as the rollback target (read-only).
+node scripts/line-oa/apply-rich-menu.mjs status --env uat
+
+# 2. Validate + create + upload. Nothing employees see changes yet.
+node scripts/line-oa/apply-rich-menu.mjs stage --env uat --profile line-rich-menu-v2-ver2
+
+# 3. AFTER the backend deploy: make it the default (prompts for confirmation).
+node scripts/line-oa/apply-rich-menu.mjs activate --env uat --rich-menu-id richmenu-<staged>
+
+# Rollback: point the default back at the recorded id. Delete only after acceptance.
+node scripts/line-oa/apply-rich-menu.mjs rollback --env uat --rich-menu-id richmenu-<previous>
+```
+
+UAT rollback target recorded 2026-08-27: `richmenu-a32a4477ff5d6831ecc8e17cf34c6b40` (MangmeePlus
+Ver1, 2500x1686) — the only rich menu on the UAT OA at that time, and the active default.
+
 ## Exact area/action mapping (equal 3×2 grid)
 
 | Area | Bounds `(x,y,w,h)` | Action |
