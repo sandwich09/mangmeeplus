@@ -1,6 +1,6 @@
 # Agent Memory: hide-warehouse-branch-option
 
-Status: Implementation and focused verification complete on 2026-08-27; syncing develop before delivery.
+Status: Implementation and integrated verification complete on 2026-08-27; ready for authorized normal push.
 Owner: /root/hide_warehouse_branch_option
 Scope: Hide the warehouse type from Settings > Branches > Add branch for the current expense-focused release. User authorized an isolated develop branch, implementation, testing, and normal push into develop; no deployment.
 
@@ -28,5 +28,7 @@ Verification:
 - Browser created BRANCH and ONLINE on mobile and HEAD_OFFICE on desktop. Verified trimmed/uppercased code, selected type, optional tax branch payload, disabled submit while pending, refreshed row and success toast; permission failure retained form values and surfaced localized error, retry succeeded; cancel closed the form.
 - Historical WAREHOUSE row retained its label. Editing its name, tax branch code, and status submitted PATCH without `type`, retained the WAREHOUSE label after refresh, and showed success; no data/scoping change.
 - Temporary synthetic fixture was removed, its local development server stopped, browser tab closed, and viewport override reset. No live API, database, account, cloud, deployment, or user-data access.
+- Scoped implementation commit `01f937ad`; integrated latest `origin/develop` `dbf1501a2b6292e748fe558d99685d912ce2190e` in merge `80bc3a1772b7dd3bc5584b313539ed86fe82d7bd`. After merge, repeated all 43 focused checks, rebuilt contracts in the isolated worktree, regenerated web route types after fixture removal, and passed full web typecheck and `git diff --check`.
+- Diff against develop is exactly the component's one-line filter, its focused web spec, and this memory. No package, schema, API, branch-scope, or unrelated file changes. Existing database-backed branch E2E suite was not run; browser coverage used synthetic responses and therefore does not claim live persistence or deployment validation.
 
-Next: Commit the three scoped files, fetch/merge latest develop, rerun focused checks/typecheck, and push normally.
+Next: Push the verified branch and develop atomically without force, then record the observed remote result.
