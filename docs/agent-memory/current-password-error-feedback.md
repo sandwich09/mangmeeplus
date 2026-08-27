@@ -1,6 +1,6 @@
 # Agent Memory: current-password-error-feedback
 
-Status: Implemented and verified locally; preparing latest-develop integration, no live deployment.
+Status: Implemented and verified against current develop; ready for normal non-force delivery, no live deployment.
 Owner: current-password agent (reassigned from reimbursement self-service).
 Scope: Correct wrong-current-password feedback and prevent unnecessary session refresh; test and push into develop.
 Decisions:
@@ -23,4 +23,6 @@ Verification:
 - Browser skill: local Next page imports the actual `ChangePasswordPage` and actual client; temporary fixture redirects only auth test calls to a loopback fake API executing the actual `ChangePasswordUseCase` with an in-memory repository. No credentials, cookies or real account used; BFF cookie/code boundary separately tested with actual route and synthetic requests.
 - Browser confirmed Thai exact message and English equivalent, each with only `change`; min-length/reuse validation adds zero requests; dead session yields `change, refresh` plus session-expired guidance; expired access then wrong password yields `change, refresh, change` plus the correct password error. Fake API recorded zero credential/session writes. Successful mutation/revocation/logout are covered by existing API/client unit tests, not a real browser account action.
 - Temporary page removed, browser tab closed and ports 4360/4361 stopped. Harness source remains only in `/tmp/mangmee-password-feedback.qLek3e`; no fixture enters the commit.
-Next: Merge latest develop (including reimbursement date and login/temp-password copy), rerun impacted checks and push without force.
+- Implementation commit `ae6f369e`; integration commit `788ad0a9` includes develop `e5477b60943e30cff91a2193f4f5675560aeef91` (date validation, username login copy, temporary-password copy and PR311 assets). The only conflict was auth test imports; both test families are retained. No package.json diff against develop.
+- Post-merge verification: combined API files above **58 passed**; combined web files above plus `api-error-coverage.spec.ts` and `no-raw-api-error-display.spec.ts` **158 passed**. Both complete API/web typechecks passed again after rebuilding own contracts. Total **216 passing tests**; database recovery integration remains intentionally unexecuted.
+Next: Push tested feature/develop refs atomically without force and verify remote SHAs.
