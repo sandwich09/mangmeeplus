@@ -1,6 +1,6 @@
 # Agent Memory: Reimbursement no future dates
 
-Status: Implemented; final integration verification in progress (2026-08-27).
+Status: Implementation and integration verification complete (2026-08-27).
 Owner: /root/reimbursement_no_future_dates
 Scope: User-confirmed incurred dates on reimbursement lines only, on
 `codex/reimbursement-no-future-dates` from `origin/develop` `3b8bfd137db0786441874214acce9a41eb5c2137`.
@@ -62,5 +62,23 @@ Verification:
 - Local fixture routes were removed with apply_patch, generated next-env restored, the browser
   viewport restored and tab closed, and the local Next process stopped.
 
-Next: Refetch/merge current develop, rerun focused checks, commit and push scoped work without force.
+Integration:
+
+- Implementation commit: `fb8b5854`. Merged concurrent develop `11bc689365cb2b80fd658007bedbc3dbda7f8ce6`
+  (rich-menu PR 309) with no conflicts; no application code was changed during integration.
+- Repeated post-merge checks: web/contracts 176 passed; API 208 passed / 8 PostgreSQL tests skipped;
+  web typecheck and `git diff --check` passed. Delivery uses normal atomic feature + develop push.
+- Exact verification commands (from this worktree):
+
+```sh
+./apps/api/node_modules/.bin/tsc -p packages/contracts/tsconfig.json
+./apps/api/node_modules/.bin/tsx --tsconfig apps/web/tsconfig.json --test --test-reporter=spec packages/contracts/src/reimbursements.spec.ts packages/contracts/src/civil-date.spec.ts apps/web/src/common/components/field/ThemedDate.spec.ts apps/web/src/features/reimbursements/reimbursements.logic.spec.ts apps/web/src/features/reimbursements/reimbursements.model.spec.ts apps/web/src/features/reimbursements/reimbursements.api.spec.ts apps/web/src/common/api/api-error-message.spec.ts apps/web/src/common/api/authed-fetch.spec.ts
+./apps/api/node_modules/.bin/tsx --tsconfig apps/api/tsconfig.json --test --test-reporter=spec apps/api/src/modules/reimbursements/domain/logic/reimbursement.logic.spec.ts apps/api/src/modules/reimbursements/application/use-cases/reimbursement-request.use-case.spec.ts apps/api/src/modules/reimbursements/presentation/http/reimbursement.dtos.spec.ts apps/api/src/modules/reimbursements/application/use-cases/reimbursement-approval.use-case.spec.ts apps/api/src/modules/reimbursements/application/use-cases/reimbursement-branch-scope.use-case.spec.ts apps/api/src/modules/reimbursements/application/use-cases/reimbursement-related-access.use-case.spec.ts apps/api/src/modules/reimbursements/infrastructure/prisma-reimbursement.repository.draft-submit-race.spec.ts
+./apps/api/node_modules/.bin/tsc --noEmit --incremental false -p apps/web/tsconfig.json
+./apps/api/node_modules/.bin/tsc --noEmit -p apps/api/tsconfig.json
+./node_modules/.bin/playwright test e2e/reimbursements.spec.ts --list --grep REIMB-06 --project chromium
+git diff --check
+```
+
+Next: Parent can continue backlog review. UAT/Production deployment remains separate from this code delivery.
 No live DB, UAT, Production, permission sync, deployment or cloud operations were performed.
