@@ -1,6 +1,6 @@
 # Agent Memory: Sales payment stable retry
 
-Status: IMPLEMENTED / LOCAL PAYMENT ACCEPTANCE PASS — committed and rebased onto develop; ready for PR, CI and merge pending. No deployment or main promotion.
+Status: MERGED DEVELOP via PR #285 at `145924a3223ba1cbe1f793acf0789d46565d22be`; exact-head CI `33036847494` SUCCESS on `b6f99079`. Local payment acceptance passed; no deployment or main promotion.
 Owner: Codex / phase6_launch_review; parent owns local E2E/browser acceptance and delivery.
 Scope: The existing sales-document receive-payment form in `AccountingPages.tsx`; subscription, auto-accounting and reconciliation remain excluded.
 
@@ -8,7 +8,7 @@ Scope: The existing sales-document receive-payment form in `AccountingPages.tsx`
 
 Canonical sources: [Income–Expense Ledger spec §7](../specs/mangmee-income-expense-ledger-spec-th.md#7-ความถูกต้องการเงิน-stop-ship-ของ-spec-นี้) and [P27 plan Phase 3](../plans/mangmee-income-expense-ledger-plan-th.md#phase-3--บันทึกรายรับ--ใบลดหนี้เพิ่มหนี้-spec-f-led-1-f-led-6). This is a bug correction to existing receive-payment behavior, not a new financial policy.
 
-Proven defect: `DocumentDetailPanel` preserves a key using form fields but generates a new `paidAt` on every submit. `accountingPaymentPayloadFingerprint` includes exact ISO `paidAt`; therefore a persisted payment whose response is lost receives a different fingerprint on retry and returns `accounting_payment_idempotency_conflict` instead of the prior payment.
+Baseline defect (before this correction): `DocumentDetailPanel` preserved a key using form fields but generated a new `paidAt` on every submit. `accountingPaymentPayloadFingerprint` includes exact ISO `paidAt`; therefore a persisted payment whose response was lost received a different fingerprint on retry and returned `accounting_payment_idempotency_conflict` instead of the prior payment.
 
 Acceptance:
 
@@ -88,4 +88,9 @@ UI-regression follow-up (author/list only, **NOT RUN against local server**):
 - The screenshots/readback above retain their exact pre-rebase fixture identities; the post-rebase run independently repeats the same assertions with new uniquely named fixtures and supported cleanup. No claim that a previous screenshot depicts the later run.
 - Generated `next-env.d.ts` returned to the tracked typegen reference after typecheck. The generated local Playwright HTML report is not part of the source change.
 
-Next: Push this bounded correction and open its PR to develop; merge only after the exact-head PR CI passes. No reconciliation, auto-accounting, subscription or main promotion is included.
+## Delivery provenance — refreshed 2026-08-27
+
+- Read-only GitHub verification: [PR #285](https://github.com/MangmeeDev/mangmeeplus/pull/285) merged into develop at `145924a3223ba1cbe1f793acf0789d46565d22be` on 2026-08-27T03:50:24Z; [CI 33036847494](https://github.com/MangmeeDev/mangmeeplus/actions/runs/33036847494) completed SUCCESS on the exact PR head `b6f9907905ee6541aa00a17ecc8576a5376fd399`.
+- The tracked [evidence](../evidence/sales-payment-stable-retry/README.md) retains its stated fixture/capture dates; post-rebase E2E6/6 and web1127/1127 are separate repeated assertions. This supersedes pre-PR delivery status, not historical author-only/failure notes or physical-device limitations.
+
+Next: Do not repeat this merged retry fix. Mounted-form refresh/unmount persistence, persistent visible field labels and full P24/human acceptance remain outside the delivered slice. No reconciliation, auto-accounting, subscription or main promotion is included.
