@@ -1,6 +1,6 @@
 # Agent Memory: current-password-error-feedback
 
-Status: Runtime delivered; test-runner wiring follow-up verified and ready for delivery, no live deployment.
+Status: Runtime and test-runner wiring follow-up delivered to develop; verified, no live deployment.
 Owner: current-password agent (reassigned from reimbursement self-service).
 Scope: Correct wrong-current-password feedback and prevent unnecessary session refresh; test and push into develop.
 Decisions:
@@ -32,4 +32,5 @@ Integration follow-up:
 - Reproduced the gate failure with exactly that single orphan. After relocation, `env -u AUTH_RECOVERY_TEST_DATABASE_URL ./apps/api/node_modules/.bin/tsx --tsconfig apps/api/tsconfig.json --test apps/api/src/spec-suite-coverage.spec.ts apps/api/src/modules/auth/auth-endpoints.spec.ts apps/api/src/modules/auth/application/use-cases/forgot-password-reset.use-case.spec.ts apps/api/src/modules/auth/domain/logic/password-credential.logic.spec.ts apps/api/src/modules/auth/presentation/auth.guard.spec.ts apps/api/src/modules/auth/domain/logic/session-revocation.logic.spec.ts` passed **61/61** (58 existing auth cases plus the three registration checks).
 - Same 13-file web regression selection from post-merge verification passed **158/158**; API and web `tsc --noEmit --incremental false` both passed. Total **219 passing tests**. Verified the default package test script already names `auth-endpoints.spec.ts` and the gate. No package.json or runtime diff.
 - No browser rerun for this test-location-only follow-up; prior browser evidence remains applicable. No DB tests or live actions enabled.
-Next: Deliver the verified test-only follow-up. UAT/Production remains outside scope.
+- Follow-up `a0cc83775b3661bf714dc955c9590507142da807` pushed atomically without force to feature/develop; both remote refs verified at that SHA before this status-only documentation follow-up.
+Next: No remaining work in this scope. UAT/Production remains outside scope.

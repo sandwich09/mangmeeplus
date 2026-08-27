@@ -15,4 +15,4 @@ Implementation scope: two reauthentication use cases, existing error catalogs/pa
 
 - [x] Move the six password-change error regressions into the already wired `auth-endpoints.spec.ts`; remove the orphan test file without changing package.json or the runtime.
 - [x] Verify the official spec-coverage gate, focused auth suites and typechecks.
-- [ ] Push the verified test-only follow-up to develop.
+- [x] Push the verified test-only follow-up to develop.
