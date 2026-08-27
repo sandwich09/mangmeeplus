@@ -26,10 +26,10 @@ REIMBURSEMENT_BRIDGE_INPUT="${REIMBURSEMENT_BRIDGE:-false}"
 PARTIAL_INCIDENT_READONLY_INPUT="${PARTIAL_INCIDENT_READONLY:-false}"
 MAINTENANCE_BOOTSTRAP_READONLY_INPUT="${MAINTENANCE_BOOTSTRAP_READONLY:-false}"
 LINE_AI_EXACT_GREETING_ENABLED_INPUT="${LINE_AI_EXACT_GREETING_ENABLED:-}"
-LINE_AI_LOADING_ON_ACCEPT_ENABLED_INPUT="${LINE_AI_LOADING_ON_ACCEPT_ENABLED:-false}"
+LINE_AI_LOADING_ON_ACCEPT_ENABLED_INPUT="${LINE_AI_LOADING_ON_ACCEPT_ENABLED:-}"
 LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED_INPUT="${LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED:-false}"
-LINE_AI_FUSED_PLAN_SHADOW_ENABLED_INPUT="${LINE_AI_FUSED_PLAN_SHADOW_ENABLED:-false}"
-LINE_AI_PREPARED_SIMPLE_READ_ENABLED_INPUT="${LINE_AI_PREPARED_SIMPLE_READ_ENABLED:-false}"
+LINE_AI_FUSED_PLAN_SHADOW_ENABLED_INPUT="${LINE_AI_FUSED_PLAN_SHADOW_ENABLED:-}"
+LINE_AI_PREPARED_SIMPLE_READ_ENABLED_INPUT="${LINE_AI_PREPARED_SIMPLE_READ_ENABLED:-}"
 LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES_INPUT="${LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES:-}"
 PRODUCTION_SERVING_MODE_INPUT="${PRODUCTION_SERVING_MODE:-}"
 RELEASE_MODE_INPUT="${RELEASE_MODE:-}"
@@ -114,6 +114,35 @@ fi
 # environments. A UAT cycle turns exactly one lane on by passing the variable on the deploy invocation;
 # production is hard-blocked until that lane passes its activation gates, so an explicit production
 # value fails closed rather than shipping an unmeasured lane to customers.
+# Speed-lane UAT defaults (Owner 2026-08-27, activation ladder B2/B4/B5-Ph7): UAT turns the
+# measured lanes on by default so the evening canary needs no special invocation; an explicit
+# variable still overrides, and every production=true case below keeps failing closed.
+if [ -z "$LINE_AI_LOADING_ON_ACCEPT_ENABLED_INPUT" ]; then
+  if [ "$DEPLOY_ENV" = uat ]; then
+    LINE_AI_LOADING_ON_ACCEPT_ENABLED_INPUT=true
+  else
+    LINE_AI_LOADING_ON_ACCEPT_ENABLED_INPUT=false
+  fi
+fi
+if [ -z "$LINE_AI_FUSED_PLAN_SHADOW_ENABLED_INPUT" ]; then
+  if [ "$DEPLOY_ENV" = uat ]; then
+    LINE_AI_FUSED_PLAN_SHADOW_ENABLED_INPUT=true
+  else
+    LINE_AI_FUSED_PLAN_SHADOW_ENABLED_INPUT=false
+  fi
+fi
+if [ -z "$LINE_AI_PREPARED_SIMPLE_READ_ENABLED_INPUT" ]; then
+  if [ "$DEPLOY_ENV" = uat ]; then
+    LINE_AI_PREPARED_SIMPLE_READ_ENABLED_INPUT=true
+  else
+    LINE_AI_PREPARED_SIMPLE_READ_ENABLED_INPUT=false
+  fi
+fi
+# The four compiled families (prepared-simple-read-formatter.ts) — UAT only; unknown keys can
+# only narrow, never widen, and production still refuses any non-empty allowlist below.
+if [ -z "$LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES_INPUT" ] && [ "$DEPLOY_ENV" = uat ]; then
+  LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES_INPUT="sales.get_sales_summary::single_metric,expense.list_recent::single_metric,accounting.get_summary::list,expense.get_daily_closing::single_metric"
+fi
 case "$LINE_AI_LOADING_ON_ACCEPT_ENABLED_INPUT" in true|false) ;; *)
   echo "ERROR: LINE_AI_LOADING_ON_ACCEPT_ENABLED must be exactly true or false" >&2; exit 2 ;;
 esac
