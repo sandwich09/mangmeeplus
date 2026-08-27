@@ -1,0 +1,32 @@
+# Agent Memory: hide-warehouse-branch-option
+
+Status: Implementation and focused verification complete on 2026-08-27; syncing develop before delivery.
+Owner: /root/hide_warehouse_branch_option
+Scope: Hide the warehouse type from Settings > Branches > Add branch for the current expense-focused release. User authorized an isolated develop branch, implementation, testing, and normal push into develop; no deployment.
+
+Decisions:
+
+- Base: `origin/develop` `aa003846af101976c2554b6cad71840abcf4ef0d`; worktree `mangmeeplus-hide-warehouse-branch-option`, branch `codex/hide-warehouse-branch-option`.
+- Follow `docs/specs/multi-company-branch-scope-spec.md` sections 5/7/8: existing branch management API, company permissions, branch scoping and audit remain unchanged.
+- Filter `WAREHOUSE` only in the creation selector. Retain the shared labels, stored enum/API support, existing rows, branch selectors, and update payload. No migration, data removal, feature flags, dependencies, or package metadata changes.
+- Acceptance: create options remain Head Office / Branch / Online with Branch as default; normal create still submits and refreshes; historical warehouse rows keep their label and remain editable without rewriting type; loading/failure/retry and narrow-screen selector remain usable.
+- Ponytail full: legacy skill location is unavailable; read the available repository skill completely. Smallest correct selector-only change, existing source-contract test pattern and browser validation using synthetic local data.
+
+Open questions: None.
+
+Artifacts:
+
+- `apps/web/src/features/branch-settings/BranchSettingsPage.tsx`
+- `apps/web/src/features/branch-settings/BranchSettingsPage.spec.ts`
+
+Verification:
+
+- Focused web checks: **43 passed**, zero failed/skipped: `./node_modules/.bin/tsx --tsconfig apps/web/tsconfig.json --test apps/web/src/features/branch-settings/BranchSettingsPage.spec.ts apps/web/src/features/web-core-workspace/branch-scope-label.logic.spec.ts apps/web/src/common/components/field/ThemedSelect.spec.ts apps/web/src/common/api/authed-fetch.spec.ts`.
+- The two new source-contract checks follow the existing web test pattern and are automatically included by the existing `src/**/*.spec.ts` test glob; no test-runner/package edit.
+- Contracts built locally with `./packages/contracts/node_modules/.bin/tsc -p packages/contracts/tsconfig.json`; web route type generation and full typecheck passed from `apps/web`: `./node_modules/.bin/next typegen && ./node_modules/.bin/tsc --noEmit`. An initial typegen invocation from the repository root reported no app directory; corrected working directory and reran successfully.
+- In-app browser, synthetic local data only, viewport **390×844** and **1280×900**: exactly Head Office / Branch / Online, default Branch, dropdown fits viewport (mobile x41/y435/w308/h129.5); no warehouse creation option.
+- Browser created BRANCH and ONLINE on mobile and HEAD_OFFICE on desktop. Verified trimmed/uppercased code, selected type, optional tax branch payload, disabled submit while pending, refreshed row and success toast; permission failure retained form values and surfaced localized error, retry succeeded; cancel closed the form.
+- Historical WAREHOUSE row retained its label. Editing its name, tax branch code, and status submitted PATCH without `type`, retained the WAREHOUSE label after refresh, and showed success; no data/scoping change.
+- Temporary synthetic fixture was removed, its local development server stopped, browser tab closed, and viewport override reset. No live API, database, account, cloud, deployment, or user-data access.
+
+Next: Commit the three scoped files, fetch/merge latest develop, rerun focused checks/typecheck, and push normally.

@@ -131,7 +131,7 @@ export default function BranchSettingsPage({ companyId }: { companyId: string })
           <label className="text-sm text-gray-700">
             ประเภท
             <ThemedSelect className={inputClass} value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value as BranchType })}>
-              {Object.entries(TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              {Object.entries(TYPE_LABELS).filter(([type]) => type !== 'WAREHOUSE').map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </ThemedSelect>
           </label>
           <label className="text-sm text-gray-700">
