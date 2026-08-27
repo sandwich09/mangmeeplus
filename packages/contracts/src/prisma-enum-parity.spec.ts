@@ -31,6 +31,23 @@ import * as lineAi from './line-ai.js';
 import * as procurement from './procurement.js';
 import * as transactionTax from './transaction-tax.js';
 
+describe('expense WHT input contract', () => {
+  it('accepts explicit baht and percent including zero and the precise storage limit', () => {
+    for (const input of [undefined, { inputType: 'RATE', value: '3' }, { inputType: 'RATE', value: '100' },
+      { inputType: 'RATE', value: '0.01' }, { inputType: 'AMOUNT', value: '0' }, { inputType: 'AMOUNT', value: '99999999999999.99' }]) {
+      assert.equal(expenses.validateExpenseWhtInput(input), null, JSON.stringify(input));
+    }
+  });
+  it('rejects forged provenance, malformed values, excess precision, percent and storage overflow', () => {
+    for (const input of [null, [], { inputType: 'BAHT', value: '3' }, { inputType: 'RATE', value: '100.01' },
+      { inputType: 'AMOUNT', value: '100000000000000' }, { inputType: 'AMOUNT', value: 30 },
+      { inputType: 'AMOUNT', value: '3', origin: 'OCR' }, { inputType: 'AMOUNT', value: '3', whtAmount: '999' },
+      ...['', '-1', 'NaN', 'Infinity', '1e3', '01', '1.001', ' 3 ', '.03'].map((value) => ({ inputType: 'RATE', value }))]) {
+      assert.notEqual(expenses.validateExpenseWhtInput(input), null, JSON.stringify(input));
+    }
+  });
+});
+
 const SRC_DIR = path.dirname(fileURLToPath(import.meta.url));
 // packages/contracts/src -> three hops up is the repo root.
 const SCHEMA_PATH = path.resolve(SRC_DIR, '../../../apps/api/prisma/schema.prisma');

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { completeVatFields, isStaleOcrApply, ocrLineVatRateUnknown, ocrVatSource, ReceiptOcrApplyService, verifyDiscountAmount } from './receipt-ocr-apply.service';
+import { completeVatFields, isStaleOcrApply, ocrLineVatRateUnknown, ocrVatSource, ocrWhtInput, ReceiptOcrApplyService, verifyDiscountAmount } from './receipt-ocr-apply.service';
 import { calcLineTotals } from '../../domain/logic/expense-totals.logic';
 
 function makeDuplicateRepo(overrides: Record<string, unknown> = {}) {
@@ -203,12 +203,12 @@ describe('ocrVatSource', () => {
   });
 });
 
-async function applyFields(fields: any, vatCaptureSnapshotJson: any = null) {
+async function applyFields(fields: any, vatCaptureSnapshotJson: any = null, existing: Record<string, unknown> = {}) {
   const updates: any[] = [];
   const lines: any[] = [];
   const tx = {
     expenseRecord: {
-      findFirst: async () => ({ expenseCategoryId: null, expenseCategory: null, vatCaptureSnapshotJson }),
+      findFirst: async () => ({ expenseCategoryId: null, expenseCategory: null, vatCaptureSnapshotJson, ...existing }),
       update: async (args: any) => { updates.push(args); },
     },
     expenseCategory: { findFirst: async () => null },
@@ -570,11 +570,39 @@ describe('ReceiptOcrApplyService.apply', () => {
       whtAmount: '30.00',
       vatMode: 'NO_VAT',
     });
-    assert.equal(applied.line.whtRate, '0.0300');
+    assert.equal(applied.line.whtRate, null, 'the printed amount is authoritative, not an inferred rate');
+    assert.deepEqual(applied.record.whtInputJson, { inputType: 'AMOUNT', value: '30.00', origin: 'OCR' });
     assert.equal(applied.line.whtAmount, '30.0000');
     assert.equal(applied.record.grandTotalAmount, '1000.0000');
     assert.equal(applied.record.netPayableAmount, '970.0000');
     assert.equal(applied.record.outstandingAmount, '970.0000');
+  });
+
+  it('keeps a non-round-ratio printed WHT amount exact and accepts a rate-only document', async () => {
+    const amount = await applyFields({ grandTotalAmount: '1234.56', whtAmount: '30.01', vatMode: 'NO_VAT' });
+    assert.equal(amount.record.whtAmount, '30.0100');
+    assert.equal(amount.line.whtRate, null);
+    const rate = await applyFields({ grandTotalAmount: '1000', whtRate: '0.03', vatMode: 'NO_VAT' });
+    assert.equal(rate.record.whtAmount, '30.0000');
+    assert.equal(rate.line.whtRate, '0.0300');
+    assert.deepEqual(rate.record.whtInputJson, { inputType: 'RATE', value: '3.00', origin: 'OCR' });
+    assert.equal(ocrWhtInput({ whtAmount: '-1', whtRate: 'NaN' }), null);
+  });
+
+  it('does not replace reviewed WHT, explicit zero-treatment lines or historical mixed rates on OCR retry', async () => {
+    for (const existing of [
+      { whtInputJson: { inputType: 'AMOUNT', value: '30.01', origin: 'REVIEWER' } },
+      { lines: [{ vatTreatment: 'EXEMPT', whtRate: null }, { vatTreatment: 'ZERO_RATED', whtRate: null }] },
+      { lines: [{ whtRate: '0.03' }, { whtRate: '0.05' }] },
+    ]) {
+      const raw = { grandTotalAmount: '500', whtAmount: '15', vatMode: 'NO_VAT' };
+      const result = await applyFields(raw, null, existing);
+      assert.deepEqual(result.lines, []);
+      for (const field of ['whtInputJson', 'whtAmount', 'vatMode', 'vatCaptureSnapshotJson', 'netPayableAmount', 'grandTotalAmount']) {
+        assert.equal(field in result.record, false, field);
+      }
+      assert.deepEqual(result.record.aiVerifiedFieldsJson, raw);
+    }
   });
 
   it('folds unbalanced charges into the safe summary line and requires review', async () => {

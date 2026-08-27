@@ -1,17 +1,22 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../../../common/database/prisma.service';
+import { Prisma } from '../../../../generated/prisma/client';
+import Decimal from 'decimal.js';
 import {
   RECEIPT_ADDITIONAL_CHARGE_KINDS,
   RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE,
   type ExpenseVatMode,
   type ExpenseVatCaptureSnapshotV1,
   type ExpenseVatSourceInput,
+  type ExpenseWhtCapture,
   type ReceiptOcrFieldResult,
+  validateExpenseWhtInput,
 } from '@watchdog-bms/contracts';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
 import { reconcileExpenseDuplicateCandidates } from './expense-duplicate-detection';
 import { calcDocumentTotals, calcLineTotals } from '../../domain/logic/expense-totals.logic';
 import { reconcileExpenseVat, vatSourceFromSnapshot } from '../../domain/logic/expense-vat-reconciliation.logic';
+import { applyExpenseWhtInput, expenseWhtLineRate } from '../../domain/logic/expense-wht-input.logic';
 
 export function toMoney4(value: string | undefined | null): string {
   const n = Number(String(value ?? '').replace(/,/g, ''));
@@ -136,28 +141,19 @@ export function completeVatFields(fields: ReceiptOcrFieldResult): ReceiptOcrFiel
   return out;
 }
 
-function completeWhtFields(fields: ReceiptOcrFieldResult): ReceiptOcrFieldResult {
-  const out = { ...fields };
-  const grand = positiveMoney(fields.grandTotalAmount);
-  const taxable = positiveMoney(fields.taxableAmount) ?? grand;
-  const wht = positiveMoney(fields.whtAmount);
-  if (!grand || !taxable || !wht || wht > grand) {
-    delete out.whtAmount;
-    delete out.whtRate;
-    return out;
+/** Keep the printed amount, never a rate inferred from it. OCR fields use fractional rates. */
+export function ocrWhtInput(fields: ReceiptOcrFieldResult): ExpenseWhtCapture | null {
+  for (const [inputType, raw] of [['AMOUNT', fields.whtAmount], ['RATE', fields.whtRate]] as const) {
+    if (typeof raw !== 'string' || raw.trim() === '') continue;
+    try {
+      const number = new Decimal(raw.replace(/,/g, ''));
+      const value = inputType === 'RATE' ? number.mul(100) : number;
+      if (!value.isFinite() || value.decimalPlaces() > 2) continue;
+      const input = { inputType, value: value.toFixed(2) };
+      if (!validateExpenseWhtInput(input)) return { ...input, origin: 'OCR' };
+    } catch { /* Invalid OCR evidence stays raw; it cannot authorize a money mutation. */ }
   }
-  const printed = Number.parseFloat(String(fields.whtRate ?? ''));
-  const printedUsable = Number.isFinite(printed) && printed > 0 && printed < 1
-    && Math.abs(taxable * printed - wht) <= VAT_TOLERANCE;
-  const derived = wht / taxable;
-  const rate = printedUsable ? printed : derived > 0 && derived < 1 ? derived : undefined;
-  if (rate === undefined) {
-    delete out.whtAmount;
-    delete out.whtRate;
-  } else {
-    out.whtRate = rate.toFixed(4);
-  }
-  return out;
+  return null;
 }
 
 function deriveLineSubtotal(fields: ReceiptOcrFieldResult, lineTotal: string, lineVatRate: string | null): number {
@@ -289,8 +285,7 @@ function reconciledTotals(
   const taxableIsComparable = new Set(candidate.map((line) => line.vatRate ?? '')).size <= 1;
   const ok = closeEnough(totals.grandTotalAmount, fields.grandTotalAmount)
     && (!taxableIsComparable || closeEnough(totals.taxableAmount, fields.taxableAmount))
-    && closeEnough(totals.vatAmount, fields.vatAmount)
-    && closeEnough(totals.whtAmount, fields.whtAmount);
+    && closeEnough(totals.vatAmount, fields.vatAmount);
   return ok ? totals : null;
 }
 
@@ -320,7 +315,7 @@ function prepareOcrLines(
   chargesApplied: number;
 } {
   const vatMode = documentVatMode(fields);
-  const whtRate = fields.whtRate ?? null;
+  const whtRate = expenseWhtLineRate(ocrWhtInput(fields));
   const hadChargeSuggestions = Array.isArray(fields.additionalCharges) && fields.additionalCharges.length > 0;
   const charges = Array.isArray(fields.additionalCharges) && fields.additionalCharges.length <= MAX_OCR_ADDITIONAL_CHARGES
     ? fields.additionalCharges.filter((charge) => {
@@ -475,7 +470,7 @@ export class ReceiptOcrApplyService {
     fields: ReceiptOcrFieldResult,
     options: { fallbackCategorySuggestion?: ReceiptCategoryFallback; expectedUpdatedAt?: Date } = {},
   ): Promise<ReceiptOcrApplyOutcome> {
-    const completed = completeWhtFields(completeVatFields(verifyDiscountAmount(fields)));
+    const completed = completeVatFields(verifyDiscountAmount(fields));
     const lineTotal = completed.grandTotalAmount ?? completed.subtotalAmount;
     let prepared = lineTotal ? prepareOcrLines(completed, lineTotal) : null;
     const data: Record<string, unknown> = {
@@ -500,6 +495,8 @@ export class ReceiptOcrApplyService {
           expenseCategoryId: true,
           updatedAt: true,
           vatCaptureSnapshotJson: true,
+          whtInputJson: true,
+          lines: { select: { whtRate: true, vatTreatment: true } },
           expenseCategory: { select: { id: true, name: true, companyId: true } },
         },
       });
@@ -508,7 +505,14 @@ export class ReceiptOcrApplyService {
         return 'stale';
       }
       if (!currentExpense) throw new NotFoundException(`Expense ${expenseId} not found`);
-      if (prepared) {
+      const priorWht = currentExpense.whtInputJson as ExpenseWhtCapture | null;
+      // A rerun may change line order/count. Never attach reviewed tax meaning to a new OCR row
+      // by index, or erase a saved whole-bill amount/mixed historical rates with provider output.
+      const preserveReviewedLines = priorWht?.origin === 'REVIEWER'
+        || (currentExpense.lines ?? []).some((line) => line.vatTreatment != null)
+        || new Set((currentExpense.lines ?? []).map((line) => line.whtRate?.toString() ?? '')).size > 1;
+      if (preserveReviewedLines) delete data['vatMode'];
+      if (prepared && !preserveReviewedLines) {
         const prior = currentExpense.vatCaptureSnapshotJson as ExpenseVatCaptureSnapshotV1 | null;
         const keepReviewerSource = prior?.version === 1 && prior.source.origin === 'REVIEWER';
         const source = keepReviewerSource ? vatSourceFromSnapshot(prior) : ocrVatSource(fields);
@@ -529,18 +533,24 @@ export class ReceiptOcrApplyService {
           sourceEvidenceRefs: keepReviewerSource ? prior.source.evidenceRefs : undefined,
           capturedAt: keepReviewerSource ? prior.source.capturedAt : undefined,
         });
+        const whtInput = ocrWhtInput(fields);
+        const whtError = applyExpenseWhtInput(vat, whtInput);
+        // Invalid printed WHT stays review evidence, never a negative payable or inferred rate.
+        const acceptedWhtInput = whtError ? null : whtInput;
         prepared = {
           ...prepared,
           totals: vat.totals,
           lines: prepared.lines.map((line, index) => ({
             ...line,
             vatRate: vat.lines[index]!.vatRate,
+            whtRate: expenseWhtLineRate(acceptedWhtInput),
             totals: vat.lines[index]!.totals,
           })),
         };
         Object.assign(data, vat.totals);
         data['outstandingAmount'] = vat.totals.netPayableAmount;
         data['vatCaptureSnapshotJson'] = vat.snapshot;
+        data['whtInputJson'] = acceptedWhtInput ?? Prisma.DbNull;
       }
       let effectiveCategory = currentExpense?.expenseCategory
         && (currentExpense.expenseCategory.companyId === null || currentExpense.expenseCategory.companyId === ctx.companyId)
@@ -597,7 +607,7 @@ export class ReceiptOcrApplyService {
       }
       if (effectiveCategory) data['expenseCategoryId'] = effectiveCategory.id;
       await tx.expenseRecord.update({ where: { id: expenseId }, data });
-      if (!lineTotal) {
+      if (!lineTotal || preserveReviewedLines) {
         return {
           categoryId: effectiveCategory?.id ?? currentExpense?.expenseCategoryId ?? null,
           categoryName: effectiveCategory?.name ?? null,

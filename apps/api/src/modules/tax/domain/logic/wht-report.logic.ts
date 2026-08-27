@@ -76,7 +76,7 @@ export function groupWhtEvents(events: WhtEventInput[]): WhtPayeeGroupDto[] {
       payeeName: first.payeeSnapshot?.name ?? '',
       payeeTaxId: first.payeeSnapshot?.taxId ?? null,
       incomeCategoryCode: first.incomeCategoryCode ?? '',
-      whtRate: first.whtRate ?? '0',
+      whtRate: first.whtRate ?? null,
       totalGross: d4(totalGross),
       totalWithheld: d4(totalWithheld),
       totalNetPaid: d4(totalNetPaid),

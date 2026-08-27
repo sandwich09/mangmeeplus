@@ -199,12 +199,14 @@ function recomputeAcceptedTotals(
   vatMode: ExpenseVatMode,
   whtRate: string | null | undefined,
   acceptedVat: Decimal,
-): LineTotalsResult {
+): LineTotalsResult | null {
   const calculatedTaxable = decimal(totals.taxableAmount);
   const calculatedGross = decimal(totals.lineTotalAmount);
   const taxable = vatMode === 'VAT_INCLUDED'
     ? calculatedGross.minus(acceptedVat)
     : calculatedTaxable;
+  // Tolerance is not permission to make a tiny VAT carrier's base (or tax) negative.
+  if (taxable.lt(0) || acceptedVat.lt(0)) return null;
   const wht = taxable.mul(decimal(whtRate)).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
   return {
     ...totals,
@@ -310,10 +312,16 @@ export function reconcileExpenseVat(input: {
         mismatchedSourceLines.push(lineSource.lineNumber);
         continue;
       }
+      const adjusted = recomputeAcceptedTotals(target.totals, input.vatMode, target.whtRate, decimal(lineSource.vatAmount));
+      if (!adjusted) {
+        mismatch = true;
+        mismatchedSourceLines.push(lineSource.lineNumber);
+        continue;
+      }
       matchedAmount = true;
       if (!hasUnmappedLineSource) {
         residuals.set(target.lineNumber, diff);
-        target.totals = recomputeAcceptedTotals(target.totals, input.vatMode, target.whtRate, decimal(lineSource.vatAmount));
+        target.totals = adjusted;
       }
     }
     status = mismatch ? 'MISMATCH' : hasUnmappedLineSource ? 'NEEDS_REVIEW' : matchedAmount ? 'MATCHED' : 'CALCULATED_ONLY';
@@ -354,13 +362,19 @@ export function reconcileExpenseVat(input: {
       acceptedSource = 'SOURCE_AMOUNT';
       const target = largestVatBaseLine(accepted);
       if (target) {
-        residuals.set(target.lineNumber, difference);
-        target.totals = recomputeAcceptedTotals(
+        const adjusted = recomputeAcceptedTotals(
           target.totals,
           input.vatMode,
           target.whtRate,
           decimal(target.totals.vatAmount).plus(difference),
         );
+        if (adjusted) {
+          residuals.set(target.lineNumber, difference);
+          target.totals = adjusted;
+        } else {
+          status = 'MISMATCH';
+          acceptedSource = 'CALCULATED';
+        }
       } else if (!decimal(source.vatAmount).eq(0)) {
         status = 'SOURCE_ONLY';
         acceptedSource = 'CALCULATED';

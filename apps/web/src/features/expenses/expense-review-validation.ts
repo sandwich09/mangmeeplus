@@ -1,5 +1,6 @@
 import type { DictionaryKey } from '@/common/i18n/workspace-dictionary';
-import { calculateManualExpenseTotals, expenseVatSourceValidationMessage, vatModeRequiresRate, vatRateFromPrintedAmount, type ExpenseDraftReviewValues } from './expenses.model';
+import { validateExpenseWhtInput } from '@watchdog-bms/contracts';
+import { calculateManualExpenseTotals, expenseReviewWithholdsTax, expenseVatSourceValidationMessage, vatModeRequiresRate, vatRateFromPrintedAmount, type ExpenseDraftReviewValues } from './expenses.model';
 
 export type ExpenseFieldIssue = {
   field: string;
@@ -23,6 +24,11 @@ type ValidationMessageKey =
   | 'expenses.v_discount_exceeds'
   | 'expenses.v_rate_range'
   | 'expenses.v_vat_rate_required'
+  | 'expenses.v_vat_treatment_zero'
+  | 'expenses.v_wht_unit'
+  | 'expenses.v_wht_percent'
+  | 'expenses.v_wht_amount'
+  | 'expenses.v_wht_exceeds_base'
   | 'expenses.v_total_mismatch'
   | 'expenses.v_total_zero'
   | 'expenses.v_payee_kind_required';
@@ -49,8 +55,9 @@ function isoDate(value: string): Date | null {
   return Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value ? null : parsed;
 }
 
-function computedGrandTotal(values: ExpenseDraftReviewValues): number | null {
-  let total = 0;
+function computedTotals(values: ExpenseDraftReviewValues): { subtotal: number; grandTotal: number } | null {
+  let subtotal = 0;
+  let grandTotal = 0;
   for (const line of values.lines) {
     const quantity = numberValue(line.quantity);
     const unitPrice = numberValue(line.unitPrice);
@@ -61,14 +68,16 @@ function computedGrandTotal(values: ExpenseDraftReviewValues): number | null {
       || (line.vatRate.trim() !== '' && (enteredVatRate === null || enteredVatRate < 0 || enteredVatRate > 1))) return null;
 
     const afterDiscount = quantity * unitPrice - discount;
-    total += calculateManualExpenseTotals({
+    const totals = calculateManualExpenseTotals({
       quantity: '1',
       unitPrice: afterDiscount,
       vatRate: line.vatRate,
       vatMode: values.vatMode,
-    }).grandTotal;
+    });
+    subtotal += totals.subtotal;
+    grandTotal += totals.grandTotal;
   }
-  return total;
+  return { subtotal, grandTotal };
 }
 
 function differsByMoreThanCent(left: number, right: number): boolean {
@@ -105,7 +114,7 @@ export function validateExpenseReview(
   // RA-18 mirror of `validateConfirm` (`expense-status.logic.ts:199`): a withholding expense may not
   // be confirmed without the payee's taxpayer class, because it decides ภ.ง.ด.3 vs ภ.ง.ด.53. Same
   // predicate the review form uses to show the select at all.
-  const withholdsTax = Number(opts.whtAmount) > 0 || values.lines.some((line) => Number(line.whtRate) > 0);
+  const withholdsTax = expenseReviewWithholdsTax(values, opts.whtAmount);
   if (withholdsTax && !values.vendorEntityKindSnapshot) {
     addIssue(issues, 'vendorEntityKindSnapshot', 'error', 'expenses.v_payee_kind_required');
   }
@@ -167,18 +176,37 @@ export function validateExpenseReview(
       const rate = numberValue(line.vatRate);
       if (rate === null || rate < 0 || rate > 1) addIssue(issues, `${prefix}.vatRate`, 'error', 'expenses.v_rate_range');
     }
+    if (line.vatTreatment != null && (numberValue(line.vatRate) !== 0
+      || !['ZERO_RATED', 'EXEMPT', 'NON_VAT'].includes(line.vatTreatment))) {
+      addIssue(issues, `${prefix}.vatRate`, 'error', 'expenses.v_vat_treatment_zero');
+    }
   });
 
-  // The web form presents WHT once for the bill and writes the chosen rate to every line. Report a
-  // single issue beside that control even for historical drafts whose line rates differ.
-  if (values.lines.some((line) => {
+  const totals = computedTotals(values);
+  if (values.whtInput) {
+    const { inputType, value } = values.whtInput;
+    if (inputType !== 'RATE' && inputType !== 'AMOUNT') {
+      addIssue(issues, 'whtInput.inputType', 'error', 'expenses.v_wht_unit');
+    } else if (validateExpenseWhtInput(values.whtInput)) {
+      addIssue(issues, 'whtInput.value', 'error', inputType === 'RATE' ? 'expenses.v_wht_percent' : 'expenses.v_wht_amount');
+    } else if (inputType === 'AMOUNT' && totals) {
+      // ponytail: the server owns VAT reconciliation. Inclusive source VAT can alter the accepted
+      // base, so use gross as a safe upper bound there; the API enforces the exact pre-VAT cap.
+      const hasVatSource = values.vatSource && (values.vatSource.inputType !== 'NONE' || values.vatSource.lines?.length);
+      const base = values.vatMode === 'VAT_INCLUDED' && hasVatSource ? totals.grandTotal : totals.subtotal;
+      if (Math.round(Number(value) * 100) > Math.round(base * 100)) {
+        addIssue(issues, 'whtInput.value', 'error', 'expenses.v_wht_exceeds_base');
+      }
+    }
+  // Omitted input preserves historical per-line rates; explicit whole-bill input replaces them.
+  } else if (values.lines.some((line) => {
     const rate = numberValue(line.whtRate);
     return line.whtRate !== null && line.whtRate.trim() !== '' && (rate === null || rate < 0 || rate > 1);
   })) {
-    addIssue(issues, 'whtRate', 'error', 'expenses.v_rate_range');
+    addIssue(issues, 'whtRate', 'error', 'expenses.v_wht_percent');
   }
 
-  const computed = computedGrandTotal(values);
+  const computed = totals?.grandTotal ?? null;
   const ai = opts.aiGrandTotal?.trim() ? Number(opts.aiGrandTotal.replace(/,/g, '')) : null;
   if (computed !== null && ai !== null && Number.isFinite(ai) && differsByMoreThanCent(computed, ai)) {
     addIssue(issues, 'total', 'warn', 'expenses.v_total_mismatch', { computed: computed.toFixed(2), ai: ai.toFixed(2) });
