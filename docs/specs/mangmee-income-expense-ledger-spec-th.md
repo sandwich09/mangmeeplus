@@ -345,6 +345,7 @@ Flow ถ่าย/อัปโหลด → AI อ่าน → ตรวจ →
    - `paidAmount + outstandingAmount = grandTotalAmount` (ภายใน `SETTLE_EPSILON`)
    - issue → pay → receipt → void ทุกเส้นทาง: รายได้/Output VAT เกิด **ครั้งเดียว** ที่ posting source ของเอกสารขาย ไม่เกิดที่ payment/receipt (`posting-engine.logic.ts:136-168` + `journal.use-case.ts:109-119` ที่ map `RECEIPT → accounting.payment.received`)
    - retry `RecordSimpleIncomeUseCase` ด้วย idempotencyKey เดิม → เอกสาร+payment+ใบเสร็จชุดเดียว
+   - ฟอร์มรับชำระเอกสารขายเดิมต้องเก็บ request body + idempotency key ของ attempt เดียวกัน รวม `paidAt` ที่สร้างครั้งแรก: เมื่อ response หายหรือการโหลดเอกสารหลังบันทึกล้มเหลว การกดซ้ำโดยไม่แก้ payload ต้องส่ง body/key เดิมแม้นาฬิกาเดินไปแล้ว; เปลี่ยน attempt เมื่อยืนยันสำเร็จหรือผู้ใช้เปลี่ยน payload/บริษัท/เอกสารเป้าหมายเท่านั้น ไม่เปลี่ยนกติกา cash/WHT/allocation/ยอดเกิน และต้องมี regression ตรวจ serialized request จริง
    - ยอดในสมุด = ผลรวมจากรายการที่ drill ได้ 100% (self-check แบบ `SUMMARY_COUNT_MISMATCH`)
 3. ตัวเลขทุกก้อนในสมุดต้องมี "นิยามพิมพ์ได้" (ตาราง §F-LED-4) และ export ใช้นิยามเดียวกับหน้าจอ
 

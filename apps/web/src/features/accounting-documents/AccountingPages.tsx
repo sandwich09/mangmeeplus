@@ -21,12 +21,13 @@ import {
   listCounterparties,
   listDocuments,
   listPayments,
-  newAccountingPaymentIdempotencyKey,
+  prepareAccountingDocumentPaymentAttempt,
   rejectQuotation,
   submitQuotationApproval,
   updateDocument,
   uploadAccountingDocumentSupporting,
   voidDocument,
+  type AccountingDocumentPaymentAttempt,
 } from './accounting-documents.api';
 import {
   DOCUMENT_STATUS_LABELS,
@@ -409,7 +410,7 @@ function DocumentDetailPanel({ companyId, documentId, permissions, canCreateSale
   // existing reference field rather than left on paper.
   const [paymentReference, setPaymentReference] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<AccountingPaymentMethod>('BANK_TRANSFER');
-  const paymentAttempt = useRef<{ signature: string; key: string } | null>(null);
+  const paymentAttempt = useRef<AccountingDocumentPaymentAttempt | null>(null);
   const [linkedTaxInvoiceOpen, setLinkedTaxInvoiceOpen] = useState(false);
   const [linkedTaxInvoiceDate, setLinkedTaxInvoiceDate] = useState(todayCivilDate());
   const [linkedTaxContext, setLinkedTaxContext] = useState<TransactionTaxContext>('DOMESTIC_SALE');
@@ -787,24 +788,19 @@ function DocumentDetailPanel({ companyId, documentId, permissions, canCreateSale
           className="grid grid-cols-1 gap-3 border-t border-gray-200 pt-4 sm:grid-cols-2"
           onSubmit={async (e) => {
             e.preventDefault();
-            const signature = JSON.stringify([detail.id, paymentAmount, paymentWht, paymentReference.trim(), paymentMethod]);
-            if (paymentAttempt.current?.signature !== signature) {
-              paymentAttempt.current = { signature, key: newAccountingPaymentIdempotencyKey(detail.id) };
-            }
-            const succeeded = await run(() => createPayment(companyId, {
-              idempotencyKey: paymentAttempt.current!.key,
-              ...(detail.branchId && { branchId: detail.branchId }),
+            const attempt = prepareAccountingDocumentPaymentAttempt(paymentAttempt.current, companyId, {
               direction: 'RECEIVED',
               method: paymentMethod,
               amount: paymentAmount,
               ...(Number(paymentWht) > 0 ? { whtAmount: paymentWht } : {}),
               ...(paymentReference.trim() ? { externalReference: paymentReference.trim() } : {}),
-              paidAt: new Date().toISOString(),
               branchId: detail.branchId,
               counterpartyId: detail.counterpartyId,
               allocateToDocumentId: detail.id,
-            }), 'บันทึกรับชำระเรียบร้อยแล้ว', false);
-            if (succeeded) paymentAttempt.current = null;
+            });
+            paymentAttempt.current = attempt;
+            const succeeded = await run(() => createPayment(companyId, attempt.body), 'บันทึกรับชำระเรียบร้อยแล้ว', false);
+            if (succeeded && paymentAttempt.current === attempt) paymentAttempt.current = null;
           }}
         >
           <input className={inputClass} type="number" min="0.01" step="0.01" placeholder="เงินสดที่ได้รับ" value={paymentAmount} onChange={(e) => setPaymentAmount(e.target.value)} required aria-label="เงินสดที่ได้รับ" />

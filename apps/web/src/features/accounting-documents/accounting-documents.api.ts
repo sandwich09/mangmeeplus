@@ -148,6 +148,29 @@ export function newAccountingPaymentIdempotencyKey(sourceId: string): string {
   return `payment_${sourceId.slice(0, 22)}_${globalThis.crypto.randomUUID().replaceAll('-', '')}`;
 }
 
+export type AccountingDocumentPaymentAttempt = Readonly<{
+  signature: string;
+  body: Readonly<Parameters<typeof createPayment>[1] & { idempotencyKey: string }>;
+}>;
+
+/** The legacy document form stamps paidAt once; an uncertain retry must replay those exact bytes. */
+export function prepareAccountingDocumentPaymentAttempt(
+  previous: AccountingDocumentPaymentAttempt | null,
+  companyId: string,
+  input: Omit<Parameters<typeof createPayment>[1], 'idempotencyKey' | 'paidAt'> & { allocateToDocumentId: string },
+): AccountingDocumentPaymentAttempt {
+  const signature = JSON.stringify([companyId, input]);
+  if (previous?.signature === signature) return previous;
+  return Object.freeze({
+    signature,
+    body: Object.freeze({
+      ...input,
+      idempotencyKey: newAccountingPaymentIdempotencyKey(input.allocateToDocumentId),
+      paidAt: new Date().toISOString(),
+    }),
+  });
+}
+
 export async function voidPayment(companyId: string, paymentId: string, reason: string): Promise<PaymentSummary> {
   return apiFetch(`/v1/companies/${companyId}/accounting/payments/${paymentId}/void`, { method: 'POST', body: JSON.stringify({ reason }) });
 }
