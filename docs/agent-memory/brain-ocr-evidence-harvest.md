@@ -86,6 +86,15 @@ Decisions (Owner 2026-08-27 — ตอบ 4 ข้อของ strategy discussi
 - แก้ 2 จุดคู่กัน (PR #314): gateway = attachment → `DOCUMENT_OCR_TIMEOUT_MS` (text-only คงงบแชท 15s ไม่ทำให้แชทช้าลง); api = `LINE_INTAKE_MEDIA_TIMEOUT_MS` 55s เฉพาะ media path (เดิม 30s จะตัดก่อน gateway 45s ทำให้ fix ฝั่ง gateway ไร้ผล)
 - Verify: gateway suite **990/990**, api client/webhook/dispatch เขียว, typecheck ทั้ง 2 app สะอาด; เทสใหม่ 2 เคสใช้ fake timers พิสูจน์ทั้งสองทิศ (มีรูป: ไม่ตายที่ 15.1s แต่ตายในงบ 45s; ข้อความล้วน: ยังตายที่ 15s)
 
+## สลิปรูดบัตร PTT อ่านไม่ได้ 23:18 → reason-code vocabulary (Owner สั่งแก้ทั้ง 2 ทาง 2026-08-27 ดึก)
+
+- **ไม่ใช่ timeout** (ต่างจากบิลน้ำมัน 23:04/23:07): log 23:18:28 = `ok:true durationMs 13130` แต่ plan = UNAVAILABLE/UNSUPPORTED/confidence 0 → `ROUTER_JSON_PARSE_FAILED`
+- พิสูจน์ด้วย local harness (สร้างสลิปจำลอง PTT/Jiffy/KBank → ยิง `IntentRouterAgent` + Sonnet 4.6 จริง, ดัก raw output): **โมเดลอ่านออกครบทุกฟิลด์** (PTT Station Jiffy, 1,000.00, KTC-Visa ****3544, APPR 594567, จัดหมวด cat-fuel เอง, ทักด้วยว่าไม่มีจำนวนลิตร) แต่กรอก `missingRequiredSignals: ["itemised fuel quantity/litres not shown on this slip"]` = ประโยคอิสระในช่องที่รับเฉพาะ reason code → `parseKnownArray` strict → classification null → บรรทัด 887 `if (raw['documentClassification'] !== undefined && !documentClassification) return null` → ทิ้ง plan ทั้งก้อน
+- Root cause แท้จริงอยู่ที่ **prompt**: ทุก field enumerate ค่าที่อนุญาต ยกเว้น `missingRequiredSignals`/`contradictionSignals` ที่เขียนไว้แค่ `[]` เปล่า — **บั๊กพันธุ์เดียวกับ evidenceRoles เมื่อวาน** ที่ผมแก้ field เดียวโดยไม่ไล่ดู field พี่น้อง (บทเรียน: แก้ทั้งตระกูล)
+- แก้ 2 ทางตามที่ Owner สั่ง (PR #315): (1) prompt render vocabulary จาก `BUSINESS_DOCUMENT_REASON_CODES` โดยตรง (ไม่ drift) + ประโยคห้าม free text + ใบ้ว่าสลิปบัตรคือ `PAYMENT_EVIDENCE_ONLY` (2) parser: `parseReasonCodes` filter รหัสที่ไม่รู้จัก + คืน `sawUnknown` → เติม `HUMAN_REVIEW_REQUIRED` + `requiresClarification=true` แทนการทิ้งทั้งใบ (non-array = shape เสีย ยังทิ้งเหมือนเดิม); ลบ `parseKnownArray` ที่ไม่มีผู้ใช้แล้ว
+- พิสูจน์หลังแก้ (harness เดิม, โมเดลจริง): สลิปใบเดียวกัน → **ROUTED / EXPENSE_DOCUMENT_CAPTURE**, vendor PTT Station Jiffy, 1,000.00, cat-fuel, documentKind `TRANSFER_SLIP`, และเลือกรหัสถูกเอง `["PAYMENT_EVIDENCE_ONLY","MISSING_TAX_BASE_OR_VAT","MISSING_VENDOR_TAX_ID"]` — ตรงกับข้อสังเกตของ Owner ว่า "เหมือนใบแจ้งเฉย ๆ ไม่ใช่ใบเสร็จ" (EDC customer copy ขอคืน VAT ไม่ได้ ต้องขอใบกำกับภาษีจากปั๊ม)
+- Verify: gateway suite **994/994**, typecheck สะอาด, spec ใหม่ 5 เคส (escalate/ผสม/ไม่ flag เกินจำเป็น/contradiction/non-array)
+
 ## Rich menu v2 ver2 + capability fix (Owner สั่งพร้อมภาพดีไซน์ 2026-08-27 ค่ำ)
 
 - Owner ส่งดีไซน์ 2 ภาพ: rich menu 6 ช่อง (Promotion แทน เริ่มต้นใช้งานฟรี) + โปสเตอร์แพ็กเกจ 4 tier; สั่ง (1) คำตอบ "ทำอะไรได้บ้าง" ห้ามโฆษณาของที่ใช้ไม่ได้ (2) ปุ่มถ่ายใบเสร็จเข้ากล้องตรง ไม่ถาม แนบ/กล้อง/กลับ (3) เปลี่ยน rich menu (4) ช่อง Promotion ขึ้นโปสเตอร์
