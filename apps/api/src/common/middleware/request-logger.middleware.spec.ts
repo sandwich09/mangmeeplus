@@ -42,6 +42,8 @@ describe('RequestLoggerMiddleware', () => {
     assert.equal(lines.length, 1);
     assert.equal(lines[0]?.['requestId'], 'req-1');
     assert.equal(lines[0]?.['status'], 200);
+    const durationMs = lines[0]?.['durationMs'];
+    assert.ok(typeof durationMs === 'number' && Number.isFinite(durationMs) && durationMs >= 0);
   });
 
   it('logs nothing — and still calls next — when REQUEST_LOG_ENABLED is false', () => {

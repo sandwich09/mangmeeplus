@@ -1,6 +1,6 @@
 # Agent Memory: company-ocr-governance
 
-Status: IMPLEMENTED_LOCAL — integration evidence and CI/merge history tracked in PR #280
+Status: MERGED_DEVELOP — PR #280 at 086a4549990c0a0c1312d23aba13f2ab662bf6ca after CI 33030846368 passed
 Owner: Platform / AI / Finance Operations
 Scope: per-company OCR on/off, monthly read quota, OCR + receipt upload usage on Platform Admin; no subscription/billing
 
@@ -113,4 +113,5 @@ Verification:
 - `git diff --check` passes and temporary dev-login/CORS changes are absent from the final diff.
 
 Next:
-- PR #280 targets `develop`; merge only after every required GitHub check is green.
+- Develop integration complete; all required checks passed before merge. Live rollout remains governed by the
+  deployment/customer-acceptance protocol; no Production OCR activation is claimed from local/CI evidence.

@@ -2,7 +2,7 @@
 
 สถานะ: **ACTIVE — VERIFIED INDEX 2026-08-27** (สาย 1–4 review แล้ว; สาย 5 Subscribe/Billing ไม่อยู่ใน scope รอบนี้)
 
-ลำดับและกติกาคุมโดย [แผนหลัก 2.5 วัน §10](mangmee-brain-2-5-day-priority-plan-th.md). หลักฐานและเหตุผล verdict อยู่ใน [Coding-readiness Audit](mangmee-four-lane-coding-readiness-audit-th.md); phase/test/exit/gate ที่เติมอยู่ใน [Gap Closure Plan](mangmee-four-lane-gap-closure-plan-th.md). Baseline integration ล่าสุดที่ตรวจคือ `origin/develop@8b575285`; branch/worktree status ต้องแยกจาก integration/production status เสมอ.
+ลำดับและกติกาคุมโดย [แผนหลัก 2.5 วัน §10](mangmee-brain-2-5-day-priority-plan-th.md). หลักฐานและเหตุผล verdict อยู่ใน [Coding-readiness Audit](mangmee-four-lane-coding-readiness-audit-th.md); phase/test/exit/gate ที่เติมอยู่ใน [Gap Closure Plan](mangmee-four-lane-gap-closure-plan-th.md). Baseline integration ล่าสุดที่ตรวจคือ `origin/develop@086a4549`; branch/worktree status ต้องแยกจาก integration/production status เสมอ.
 
 คำสถานะ: `READY <phase>` = เริ่ม phase นั้นได้, `PARTIAL READY` = core/read-only เริ่มได้แต่ activation blocked, `IMPLEMENTED / VERIFY` = code มีแต่ rollout evidence ค้าง, `BLOCKED` = ห้ามเดาคำตอบ Owner/provider/expert.
 
@@ -10,8 +10,8 @@
 
 | งาน | หัวข้อ | Spec | Plan | สถานะ |
 |---|---|---|---|---|
-| P9 | Dashboard/alarm ครบชุด, funnel analytics, incident drill ทุก failure class | [production-ops-spec](../specs/production-ops-spec.md) + runbooks | [P9 closure](mangmee-four-lane-gap-closure-plan-th.md#p9--observability-and-drills) | **READY P9-0..P9-2**; UAT drill gate |
-| OCR-GOV | เปิด/ปิด OCR, quota จำนวนครั้งรายบริษัท และ usage ฝั่ง Platform Admin (งานเสริมตาม Owner; ไม่เกี่ยว Subscribe และไม่แทนเลข P14 เดิม) | [spec](../specs/company-ocr-governance-spec-th.md) | [plan](company-ocr-governance-plan-th.md) | **IMPLEMENTED / LOCAL VERIFIED** — code/test/migration/desktop+mobile browser evidence ครบ; integration evidence และ CI/merge history อยู่ใน PR #280 |
+| P9 | Dashboard/alarm ครบชุด, funnel analytics, incident drill ทุก failure class | [production-ops-spec](../specs/production-ops-spec.md) + runbooks | [P9 closure](mangmee-four-lane-gap-closure-plan-th.md#p9--observability-and-drills) | P9-0/1a/1b/2 **merged develop**; P9-1c API p95 **local verified / integration pending**; signup/SES coverage และ UAT drill gate ยังเปิด |
+| OCR-GOV | เปิด/ปิด OCR, quota จำนวนครั้งรายบริษัท และ usage ฝั่ง Platform Admin (งานเสริมตาม Owner; ไม่เกี่ยว Subscribe และไม่แทนเลข P14 เดิม) | [spec](../specs/company-ocr-governance-spec-th.md) | [plan](company-ocr-governance-plan-th.md) | **MERGED DEVELOP `086a4549`** — PR #280, CI `33030846368` ผ่าน; code/test/migration/desktop+mobile browser evidence ครบ |
 | P25 ฉบับย่อ | Load/capacity บน UAT ที่ workload ของวงถัดไป | [production-a5-v2-spec](../specs/production-a5-v2-spec.md) | [P25 gate](mangmee-four-lane-gap-closure-plan-th.md#p25--capacity-gate) + [แผนเดิม](production-a5-v2-plan.md) | **EXECUTION INPUT** — รอ cohort/workload/SLO ไม่ใช่ code ใหม่ |
 
 ## สาย 2 — ความฉลาด AI "สมองมั่งมี" (ทำคู่ขนานทุกสาย)

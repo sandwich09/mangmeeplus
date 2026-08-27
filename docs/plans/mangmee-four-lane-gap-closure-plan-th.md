@@ -1,6 +1,6 @@
 # Four-lane Gap Closure Plan — แผนปิดช่องว่างก่อน Coding
 
-สถานะ: **ACTIVE — reviewed 2026-08-26**
+สถานะ: **ACTIVE — readiness audit 2026-08-26; integration status updated 2026-08-27**
 
 ขอบเขต: ทุกหัวข้อใน [Master Plan Index](mangmee-master-plan-index-th.md) สาย 1–4; **ไม่ review/ไม่เปลี่ยน P14/P26 หรือการจ่ายเงิน Subscribe**
 
@@ -10,6 +10,8 @@
 - worktree ปัจจุบันอยู่ `plan@425ce7bd` และเก่ากว่า integration ref; ห้ามใช้การ grep ที่ worktree นี้เพียงอย่างเดียวสรุปว่า PR ที่ merge แล้ว “หาย”
 - P27 Phase 1–2 อยู่ใน `origin/develop`; Phase 3 ณ เวลาตรวจอยู่ `codex/ledger-p3-bundle@01587293` และยังไม่อยู่ `origin/develop`
 - ผลตรวจและคำสั่ง reproduce อยู่ใน [Four-lane Coding-readiness Audit](mangmee-four-lane-coding-readiness-audit-th.md)
+- อัปเดต integration 2026-08-27: P27 Phase 0–6 merged ที่ `8b575285`; OCR governance PR #280 merged ที่
+  `086a4549` หลัง CI `33030846368` ผ่าน. ข้อความฐานงานก่อนหน้านี้คือ snapshot ตอน audit ไม่ใช่สถานะปัจจุบัน.
 
 ## กติกาใช้แผนนี้
 
@@ -24,7 +26,7 @@
 <a id="p9--observability-and-drills"></a>
 ## P9 — Observability และ Incident Drills
 
-สถานะ: **READY FOR CODING P9-0 ถึง P9-2; drill/activation ต้องมี UAT evidence**
+สถานะ: **P9-0/1a/1b/2 MERGED; P9-1c LOCAL VERIFIED / INTEGRATION PENDING; drill/activation ต้องมี UAT evidence**
 
 Canonical spec/plan: [Production Ops Spec](../specs/production-ops-spec.md), [Production Ops Plan](production-ops-plan.md). เอกสารสองฉบับนี้แข็งแรงด้าน runtime alarm, backup/restore, release และ runbook แต่ยังไม่ผูก marketing/signup funnel และ failure class ของสายใหม่เป็น contract เดียว.
 
@@ -40,6 +42,13 @@ Canonical spec/plan: [Production Ops Spec](../specs/production-ops-spec.md), [Pr
 - Reuse structured log/metric helpers และ `infra/monitoring/runtime-alarms.sh`; ไม่เพิ่ม telemetry stack.
 - Dashboard อย่างน้อย: signup funnel, login/link outcome, API 5xx+p95, queue age/DEAD, OCR/AI accepted→terminal latency, SES delivery/bounce/complaint, outbox stuck.
 - Alarm ทุกตัวต้องมี owner + exact runbook + observable recovery; dashboard-only signal ห้ามถูกเรียกว่า alarm coverage.
+
+#### P9-1c — API p95 dashboard closure
+
+- ใช้ `msg=request` + non-negative `durationMs` เดิมเป็น latency observation หน่วย Milliseconds โดยไม่ใส่ default zero/dimensions
+- เพิ่ม widget p95/300s ใน dashboard เดิม; เป็น runtime context ไม่ใช่ SLO และไม่เพิ่ม alarm threshold
+- `verify` อ่าน exact metric-filter transformation และ dashboard body; fake-AWS tests ครบ UAT/Production + drift rejection
+- ไม่เรียก cloud จริงใน implementation phase; UAT install/traffic/alert evidence ยังเป็น rollout gate แยก
 
 ### P9-2 — Failure matrix tests
 
@@ -162,9 +171,9 @@ Activation gate: LINE Developers Console ยืนยัน Messaging/Login/LIFF
 <a id="p27--income-expense-ledger"></a>
 ## P27 — Income/Expense Ledger
 
-สถานะ: **INTEGRATION MERGED PHASE 0–2; PHASE 3 BRANCH-ONLY ณ baseline**
+สถานะ: **INTEGRATION MERGED PHASE 0–6 (`8b575285`); LED-FIN-07 / external human / rollout gates ยังเปิด**
 
-ใช้ [P27 Spec](../specs/mangmee-income-expense-ledger-spec-th.md) และ [P27 Plan](mangmee-income-expense-ledger-plan-th.md). ขั้นถัดไปไม่ใช่เขียน Phase 3 ซ้ำ: review/rebase/verify `codex/ledger-p3-bundle@01587293` กับ `origin/develop`, merge แล้วจึงเดิน Phase 4–6 ตาม canonical plan. Status ต้องอัปเดตด้วย integration SHA ไม่ใช้ PR/branch label อย่างเดียว.
+ใช้ [P27 Spec](../specs/mangmee-income-expense-ledger-spec-th.md) และ [P27 Plan](mangmee-income-expense-ledger-plan-th.md). Phase 0–6 อยู่ใน `origin/develop` แล้ว; ไม่เขียนหรือ merge phase เดิมซ้ำ. ขั้นต่อไปคือปิด Owner/rollout gates ตาม canonical plan โดยอ้าง integration SHA และหลักฐานจริง ไม่ใช้ PR/branch label อย่างเดียว.
 
 <a id="p28--purchase-to-pay"></a>
 ## P28 — Purchase-to-Pay + Supplier Credit Note

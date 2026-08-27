@@ -1,8 +1,8 @@
 # Customer Journey Observability Signal Contract (P9)
 
-Status: **P9-0 CONTRACT + P9-1A DASHBOARD + P9-1B BOUNDARIES + P9-2 LOCAL FAILURE MATRIX IMPLEMENTED**
-Scope: Four product lanes only; subscription/payment is excluded.  
-Last reviewed: 2026-08-26
+Status: **P9-0/1A/1B/2 IMPLEMENTED; P9-1C LOCALLY VERIFIED / INTEGRATION PENDING**
+Scope: Four product lanes only; subscription/payment is excluded.
+Last reviewed: 2026-08-27
 
 ## Goal
 
@@ -81,6 +81,30 @@ Its IAM statement is limited to `arn:aws:cloudwatch::<ACCOUNT_ID>:dashboard/watc
 This follows the AWS contracts for [PutDashboard](https://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/API_PutDashboard.html),
 [dashboard body structure](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch-Dashboard-Body-Structure.html),
 and the [CloudWatch dashboard resource ARN](https://docs.aws.amazon.com/service-authorization/latest/reference/list_cloudwatch.html).
+
+## P9-1c API response latency context
+
+Publish one non-negative `durationMs` observation from each completed `msg=request` log as
+`WatchDog/Runtime/<environment-prefix>_api_response_latency_ms`, with unit `Milliseconds` and no dimensions.
+The scope is all completed API request logs, including internal/health requests; it is runtime context,
+not a customer-journey completion SLO. Aborted requests without a `finish` log are not observed.
+
+The metric filter deliberately omits `defaultValue`: an interval with no matching response must remain
+UNKNOWN, not become a fabricated zero-millisecond response. Negative clock deltas are excluded because
+[CloudWatch percentile metrics cannot contain negative values](https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/MonitoringLogData.html).
+The dashboard uses `p95` over 300-second periods; no alarm or threshold is introduced before baseline review.
+
+`verify` must read back the exact latency filter transformation and dashboard body. Local fake-AWS tests
+cover UAT and Production, reject filter/dashboard drift, and assert no tenant/document dimensions or default
+sample. New data starts only after filter installation; historical request logs are not backfilled.
+Read-back also rejects system-field dimensions, selection criteria and transformed-log input that would
+change metric identity or coverage ([AWS MetricFilter contract](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_MetricFilter.html)).
+The monitoring-bootstrap operator policy grants metric-filter put/read/delete only for the four
+UAT/Production API/AI log groups; deletion permits explicit rollback, not automatic removal. No IAM change is applied automatically. CI's Production Config
+Validation job runs the fake-AWS suite directly, without AWS credentials.
+Empty optional dimension maps and AWS response metadata are accepted; default samples or identity dimensions are not.
+Configuration verification does not prove traffic: the rollout gate separately requires an observed positive
+SampleCount and p95 from post-install requests, with the exact window/region/metric recorded.
 
 ## P9-1b boundary
 

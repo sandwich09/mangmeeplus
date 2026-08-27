@@ -47,7 +47,25 @@ case "$command" in
   sns/list-subscriptions-by-topic)
     jq -cn '{Subscriptions:[{SubscriptionArn:"arn:aws:sns:ap-southeast-1:311414082667:alerts:confirmed",Protocol:"email"}]}'
     ;;
-  logs/put-metric-filter) ;;
+  logs/put-metric-filter)
+    group="$(arg --log-group-name "$@")"; name="$(arg --filter-name "$@")"
+    pattern="$(arg --filter-pattern "$@")"; transformation="$(arg --metric-transformations "$@")"
+    transformation_json="$(jq -cn --arg value "$transformation" '
+      $value | split(",") | map(capture("(?<key>[^=]+)=(?<value>.*)")) | from_entries
+      | if has("defaultValue") then .defaultValue |= tonumber else . end
+    ')"
+    next="$(jq --arg group "$group" --arg name "$name" --arg pattern "$pattern" \
+      --argjson transformation "$transformation_json" '
+      .filters[$group][$name]={filterName:$name,filterPattern:$pattern,metricTransformations:[$transformation]}
+    ' "$state")"
+    printf '%s\n' "$next" > "$state"
+    ;;
+  logs/describe-metric-filters)
+    group="$(arg --log-group-name "$@")"; prefix="$(arg --filter-name-prefix "$@")"
+    jq -c --arg group "$group" --arg prefix "$prefix" '
+      {metricFilters:[.filters[$group][]? | select(.filterName | startswith($prefix))]}
+    ' "$state"
+    ;;
   cloudwatch/put-dashboard)
     name="$(arg --dashboard-name "$@")"; body="$(arg --dashboard-body "$@")"
     next="$(jq --arg name "$name" --arg body "$body" '.dashboards[$name]=$body' "$state")"
@@ -100,7 +118,7 @@ EOF
 chmod +x "$tmp_dir/aws"
 
 reset_state() {
-  printf '{"alarms":{},"dashboards":{}}\n' > "$tmp_dir/state.json"
+  printf '{"alarms":{},"dashboards":{},"filters":{}}\n' > "$tmp_dir/state.json"
   : > "$tmp_dir/calls.log"
 }
 
@@ -116,7 +134,7 @@ run_alarm() {
 reset_state
 run_alarm install uat | grep -Fq 'installed environment=uat'
 test "$(jq '.alarms | length' "$tmp_dir/state.json")" -eq 11
-test "$(grep -c '^logs/put-metric-filter ' "$tmp_dir/calls.log")" -eq 6
+test "$(grep -c '^logs/put-metric-filter ' "$tmp_dir/calls.log")" -eq 7
 test "$(grep -c '^cloudwatch/put-dashboard ' "$tmp_dir/calls.log")" -eq 1
 run_alarm verify uat | grep -Fq 'datapoints=present subscription=confirmed'
 jq -e '
@@ -128,15 +146,21 @@ jq -e '
   and .alarms["watchdog-bms-uat-redis-memory-high-0001"].Dimensions == [
     {Name:"CacheClusterId",Value:"watchdog-bms-uat-redis"},{Name:"CacheNodeId",Value:"0001"}]
   and ((.dashboards["watchdog-bms-uat-customer-journeys"] | fromjson) as $dashboard
-    | ($dashboard.widgets | length) == 5
+    | ($dashboard.widgets | length) == 6
     and any($dashboard.widgets[]; .properties.title == "LINE AI — accepted and terminal outcomes (LIVE)")
+    and any($dashboard.widgets[]; .properties.stat == "p95" and .properties.period == 300
+      and .properties.metrics == [["WatchDog/Runtime", "watchdog_bms_uat_api_response_latency_ms", {label:"Completed API requests"}]])
     and any($dashboard.widgets[]; .properties.markdown? | strings | contains("PARTIAL/PLANNED rows must never be presented as live")))
+  and .filters["/ecs/watchdog-bms-uat-api-web"]["api-response-latency"] == {
+    filterName:"api-response-latency", filterPattern:"{ $.msg = \"request\" && $.durationMs >= 0 }",
+    metricTransformations:[{metricName:"watchdog_bms_uat_api_response_latency_ms",metricNamespace:"WatchDog/Runtime",metricValue:"$.durationMs",unit:"Milliseconds"}]
+  }
 ' "$tmp_dir/state.json" >/dev/null
 
 reset_state
 run_alarm install production | grep -Fq 'installed environment=production'
 test "$(jq '.alarms | length' "$tmp_dir/state.json")" -eq 14
-test "$(grep -c '^logs/put-metric-filter ' "$tmp_dir/calls.log")" -eq 6
+test "$(grep -c '^logs/put-metric-filter ' "$tmp_dir/calls.log")" -eq 7
 test "$(grep -c '^cloudwatch/put-dashboard ' "$tmp_dir/calls.log")" -eq 1
 run_alarm verify production | grep -Fq 'verified environment=production'
 jq -e '
@@ -146,12 +170,39 @@ jq -e '
   and .alarms["watchdog-bms-prod-db-cpu-credits-low"].Threshold == 50
   and .alarms["watchdog-bms-prod-redis-memory-high-001"].Dimensions[0].Name == "CacheClusterId"
   and .alarms["watchdog-bms-prod-redis-memory-high-002"].Dimensions[0].Name == "CacheClusterId"
+  and .filters["/ecs/watchdog-bms-prod-api-web"]["api-response-latency"].metricTransformations == [
+    {metricName:"watchdog_bms_prod_api_response_latency_ms",metricNamespace:"WatchDog/Runtime",metricValue:"$.durationMs",unit:"Milliseconds"}]
   and ((.dashboards["watchdog-bms-prod-customer-journeys"] | fromjson | tostring) as $dashboard
     | ($dashboard | contains("_ecs_watchdog_bms_prod_api_web_line_ai_accepted"))
     and ($dashboard | contains("companyId") | not)
     and ($dashboard | contains("documentId") | not))
 ' "$tmp_dir/state.json" >/dev/null
 ! grep -Fq 'Name=ReplicationGroupId' "$tmp_dir/calls.log"
+
+cp "$tmp_dir/state.json" "$tmp_dir/valid-state.json"
+for mutation in \
+  '.filters["/ecs/watchdog-bms-prod-api-web"]["api-response-latency"].metricTransformations[0].defaultValue=0' \
+  '.filters["/ecs/watchdog-bms-prod-api-web"]["api-response-latency"].metricTransformations[0].dimensions={companyId:"$.companyId"}' \
+  '.filters["/ecs/watchdog-bms-prod-api-web"]["api-response-latency"].emitSystemFieldDimensions=["@aws.account"]' \
+  '.filters["/ecs/watchdog-bms-prod-api-web"]["api-response-latency"].fieldSelectionCriteria="@aws.region = \"us-east-1\""' \
+  '.filters["/ecs/watchdog-bms-prod-api-web"]["api-response-latency"].applyOnTransformedLogs=true' \
+  '.filters["/ecs/watchdog-bms-prod-api-web"]["api-response-latency"].filterPattern="{ $.msg = \"request\" }"' \
+  '.dashboards["watchdog-bms-prod-customer-journeys"] |= (fromjson | .widgets[5].properties.stat="Average" | tojson)'; do
+  jq "$mutation" "$tmp_dir/valid-state.json" > "$tmp_dir/state.json"
+  if run_alarm verify production >/dev/null 2>&1; then
+    echo 'ERROR: accepted latency metric/dashboard drift' >&2; exit 1
+  fi
+done
+cp "$tmp_dir/valid-state.json" "$tmp_dir/state.json"
+
+# AWS may echo empty optional fields and response metadata; these do not change the metric.
+jq '.filters["/ecs/watchdog-bms-prod-api-web"]["api-response-latency"] += {
+  creationTime:123,logGroupName:"/ecs/watchdog-bms-prod-api-web",
+  emitSystemFieldDimensions:[],fieldSelectionCriteria:"",applyOnTransformedLogs:false
+} | .filters["/ecs/watchdog-bms-prod-api-web"]["api-response-latency"].metricTransformations[0].dimensions={}' \
+  "$tmp_dir/valid-state.json" > "$tmp_dir/state.json"
+run_alarm verify production | grep -Fq 'verified environment=production'
+cp "$tmp_dir/valid-state.json" "$tmp_dir/state.json"
 
 if run_alarm verify production FAKE_ZERO_DATAPOINTS=true >/dev/null 2>&1; then
   echo 'ERROR: accepted alarms with zero datapoints' >&2; exit 1
@@ -180,6 +231,13 @@ jq -e '
     and (.Action | index("cloudwatch:DeleteAlarms")))
   and any(.Statement[]; .Sid=="DiscoverRedisMetricDimensions"
     and .Action=="elasticache:DescribeCacheClusters")
+  and any(.Statement[]; .Sid=="RuntimeMetricFilters" and .Effect=="Allow"
+    and .Action==["logs:PutMetricFilter", "logs:DescribeMetricFilters", "logs:DeleteMetricFilter"]
+    and .Resource==[
+      "arn:aws:logs:ap-southeast-1:<ACCOUNT_ID>:log-group:/ecs/watchdog-bms-uat-api-web:*",
+      "arn:aws:logs:ap-southeast-1:<ACCOUNT_ID>:log-group:/ecs/watchdog-bms-uat-ai-gateway:*",
+      "arn:aws:logs:ap-southeast-1:<ACCOUNT_ID>:log-group:/ecs/watchdog-bms-prod-api-web:*",
+      "arn:aws:logs:ap-southeast-1:<ACCOUNT_ID>:log-group:/ecs/watchdog-bms-prod-ai-gateway:*"])
   and any(.Statement[]; .Sid=="CustomerJourneyDashboard"
     and (.Action | index("cloudwatch:PutDashboard"))
     and (.Action | index("cloudwatch:GetDashboard"))

@@ -1,6 +1,6 @@
 # Agent Memory: P9 Customer Journey Observability
 
-Status: P9-0 is in PR #267; P9-1a is in PR #268; P9-1b is in PR #269; P9-2 local failure matrix implemented and verified
+Status: P9-0/1a/1b/2 present in origin/develop; P9-1c locally implemented/verified from 086a4549, PR/CI integration pending
 Owner: Platform Operations with per-stage owner in executable catalog
 Scope: Four product lanes; subscription/payment excluded
 Decisions:
@@ -12,6 +12,8 @@ Decisions:
 - Build the first dashboard only from metrics already emitted in deployed code; show durable-source and unimplemented rows as coverage gaps instead of fabricating zeroes.
 - CloudWatch dashboards are account-global, so IAM and verification use the regionless dashboard ARN while metric widgets pin `ap-southeast-1`.
 - Reuse durable `AuditLog` for request-boundary accepted/terminal pairs; the helper rethrows the original error and never retries the observed mutation.
+- P9-1c reuses completed request logs as non-negative millisecond observations, without default zero or identity dimensions.
+  The p95/300s widget is runtime context (including health/internal routes), not an alarm or customer-journey SLO.
 Open questions:
 - P9-1 thresholds remain unset until baseline evidence exists.
 - P10/P11/P12 provider and owner policy gates remain in their canonical specs; P9 does not decide them.
@@ -27,7 +29,7 @@ Artifacts:
 - `docs/plans/production-ops-plan.md`
 - `infra/monitoring/runtime-alarms.spec.sh` (aligned stale UAT Redis fake fixture with the current standalone runtime contract)
 - `infra/monitoring/runtime-alarms.sh` (environment journey dashboard install/exact verification)
-- `infra/production/monitoring-bootstrap-policy.template.json` (dashboard-scoped IAM)
+- `infra/production/monitoring-bootstrap-policy.template.json` (dashboard/log-group-scoped monitoring IAM)
 Verification:
 - `corepack pnpm --filter @watchdog-bms/api exec tsx --test --test-reporter=spec src/common/logger/security-event.spec.ts` — 18/18 pass.
 - `corepack pnpm --filter @watchdog-bms/api test` — full API suite pass.
@@ -50,6 +52,18 @@ Verification:
 - P9-2 focused API failure-matrix, request logging, Redis degradation, LINE signature, OCR client, audit persistence, outbox failure/fencing tests — pass; runtime alarm contract — pass.
 - P9-2 LINE provider/hosted-AI targeted API and AI Gateway suites — pass.
 - P9-2 full API suite, API typecheck, and AI Gateway typecheck — pass. No UI surface changed; P9-1b browser evidence remains the applicable journey-page check.
+- P9-1c shell syntax, fake-AWS UAT/Production install/read-back, seven adverse mutations, empty AWS response
+  normalization and scoped IAM assertions — pass. CI now runs the shell suite directly in Production Config Validation.
+- P9-1c request logger/journey-source specs — 34/34 pass; duration is explicitly asserted finite/numeric.
+- P9-1c contracts/config build, API build/typecheck, web typecheck and production config validation (48/48) — pass.
+- P9-1c Chrome 1440x1000 and 390x844 — local seeded-owner sign-in, ledger outstanding filter, receipt-upload
+  navigation and editable note pass. No horizontal overflow or browser error/warn; main ledger filters/payment
+  actions are 44px. Actual local completed ledger reads emitted numeric durationMs (56/135/143ms examples).
+  Screenshots and reproduction are in `docs/evidence/p9-api-p95/README.md`; no financial mutation/provider call.
+- Two independent agents report no blocker after IAM/filter/CI fixes. Opus 5 max review residuals were addressed
+  with a separate live-data activation gate, explicit rollback permission, effective-IAM caveat and empty-dimension normalization.
+- No cloud operation was performed. Config verification/local HTTP samples do not prove CloudWatch ingestion,
+  percentile availability or alert delivery; those remain the explicit UAT/Production rollout gates.
 Next:
-- Commit/push/open the P9-2 stacked PR to `develop` (depends on PR #269).
+- Open P9-1c PR to `develop`; merge only after CI and the final Opus follow-up pass.
 - UAT must still prove one synthetic alert per severity with acknowledged delivery. P10-P12 must land before the `PLANNED` signup/claim/SES rows can truthfully become live.
