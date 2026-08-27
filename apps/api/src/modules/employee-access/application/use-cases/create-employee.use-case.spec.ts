@@ -1,6 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { CreateEmployeeUseCase } from './create-employee.use-case';
+import { DeleteEmployeeDraftUseCase } from './delete-employee-draft.use-case';
+import { IssueEmployeeLineLinkTokenUseCase } from './issue-employee-line-link-token.use-case';
+import { ListEmployeesUseCase } from './list-employees.use-case';
+import { GetEmployeeUseCase } from './get-employee.use-case';
 import { verifyPassword } from '../../../auth/domain/logic/password-credential.logic';
 
 const KEY = Buffer.from('a'.repeat(64), 'hex');
@@ -10,8 +14,25 @@ function makeUseCase(opts: { roles?: Array<{ id: string; key: string; permission
   const roles = (opts.roles ?? [{ id: 'role-sales', key: 'SALES' }]).map((role) => ({ ...role, permissions: role.permissions ?? [] }));
   const state = { users: [] as any[], credentials: [] as any[], memberships: [] as any[], membershipRoles: [] as any[], profiles: [] as any[], auditLogs: [] as any[], lineLinkTokens: [] as any[], branchScopes: [] as any[] };
   for (const u of opts.existingUsers ?? []) state.users.push({ status: 'ACTIVE', ...u });
+  let sequence = 0;
+  const controls = { beforeTransaction: undefined as (() => Promise<void>) | undefined, locks: [] as string[][] };
+  const findProfile = async ({ where, include }: any) => {
+    const row = state.profiles.find((item) => item.id === where.id && item.companyId === where.companyId);
+    if (!row) return null;
+    return include ? profileWithRelations(row) : { ...row };
+  };
+  const profileWithRelations = (row: any) => ({
+    ...row,
+    user: { ...state.users.find((user) => user.id === row.userId), credential: state.credentials.find((c) => c.userId === row.userId), externalIdentities: [] },
+    membership: { ...state.memberships.find((m) => m.id === row.membershipId), roles: state.membershipRoles.filter((m) => m.membershipId === row.membershipId).map((m) => ({ role: roles.find((r) => r.id === m.roleId) })), branchScopes: [] },
+  });
 
   const tx = {
+    $queryRaw: async (strings: TemplateStringsArray, ...values: string[]) => {
+      assert.match(strings.join('?'), /FROM "EmployeeAccessProfile" WHERE "id" = \? AND "companyId" = \? FOR UPDATE/);
+      controls.locks.push(values);
+      return [];
+    },
     user: {
       create: async ({ data }: any) => {
         const row = { id: `user-${state.users.length + 1}`, ...data };
@@ -34,7 +55,7 @@ function makeUseCase(opts: { roles?: Array<{ id: string; key: string; permission
     },
     companyMembership: {
       create: async ({ data }: any) => {
-        const row = { id: `membership-${state.memberships.length + 1}`, ...data };
+        const row = { id: `membership-${++sequence}`, ...data };
         state.memberships.push(row);
         return row;
       },
@@ -43,8 +64,18 @@ function makeUseCase(opts: { roles?: Array<{ id: string; key: string; permission
         if (row) Object.assign(row, data);
         return row ?? { id: where.id, ...data };
       },
+      deleteMany: async ({ where }: any) => {
+        const row = state.memberships.find((m) => m.id === where.id && m.companyId === where.companyId && m.userId === where.userId && m.status === where.status);
+        if (!row) return { count: 0 };
+        state.memberships = state.memberships.filter((m) => m.id !== row.id);
+        state.profiles = state.profiles.filter((p) => p.membershipId !== row.id);
+        state.membershipRoles = state.membershipRoles.filter((r) => r.membershipId !== row.id);
+        state.branchScopes = state.branchScopes.filter((b) => b.membershipId !== row.id);
+        return { count: 1 };
+      },
     },
     membershipRole: {
+      findMany: async ({ where }: any) => state.membershipRoles.filter((row) => row.membershipId === where.membershipId).map((row) => ({ ...row, role: roles.find((role) => role.id === row.roleId) })),
       createMany: async ({ data }: any) => { state.membershipRoles.push(...data); return { count: data.length }; },
       deleteMany: async ({ where }: any) => {
         state.membershipRoles = state.membershipRoles.filter((item) => item.membershipId !== where.membershipId);
@@ -58,8 +89,9 @@ function makeUseCase(opts: { roles?: Array<{ id: string; key: string; permission
       },
     },
     employeeAccessProfile: {
+      findFirst: findProfile,
       create: async ({ data }: any) => {
-        const row = { id: `profile-${state.profiles.length + 1}`, ...data };
+        const row = { id: `profile-${++sequence}`, createdAt: new Date(), updatedAt: new Date(), ...data };
         state.profiles.push(row);
         return row;
       },
@@ -71,12 +103,16 @@ function makeUseCase(opts: { roles?: Array<{ id: string; key: string; permission
     },
     auditLog: { create: async ({ data }: any) => { state.auditLogs.push(data); return data; } },
     employeeLineLinkToken: {
-      create: async ({ data }: any) => { state.lineLinkTokens.push(data); return data; },
+      create: async ({ data }: any) => { const row = { status: 'PENDING', ...data }; state.lineLinkTokens.push(row); return row; },
       updateMany: async ({ where, data }: any) => {
+        let count = 0;
         for (const row of state.lineLinkTokens) {
-          if (row.membershipId === where.membershipId && row.status === where.status) Object.assign(row, data);
+          if (row.membershipId === where.membershipId && row.status === where.status && (!where.companyId || row.companyId === where.companyId)) {
+            Object.assign(row, data);
+            count++;
+          }
         }
-        return { count: 1 };
+        return { count };
       },
     },
   };
@@ -100,8 +136,9 @@ function makeUseCase(opts: { roles?: Array<{ id: string; key: string; permission
           ).length,
       },
       employeeAccessProfile: {
+        findMany: async ({ where }: any) => state.profiles.filter((row) => row.companyId === where.companyId).map(profileWithRelations),
         findFirst: async ({ where }: any) => {
-          if (where.id) return state.profiles.find((row) => row.id === where.id) ?? null;
+          if (where.id) return findProfile({ where });
           if (where.identityHash) {
             const row = state.profiles.find((item) => item.companyId === where.companyId && item.identityHash === where.identityHash);
             if (row) return { ...row, user: { username: state.users.find((user) => user.id === row.userId)?.username } };
@@ -115,13 +152,20 @@ function makeUseCase(opts: { roles?: Array<{ id: string; key: string; permission
           return null;
         },
       },
-      $transaction: async (fn: any) => fn(tx),
+      // Deterministic committed interleavings, not a substitute for Postgres row-lock verification.
+      $transaction: async (fn: any) => {
+        const before = controls.beforeTransaction;
+        controls.beforeTransaction = undefined;
+        if (before) await before();
+        const snapshot = structuredClone(state);
+        try { return await fn(tx); } catch (error) { Object.assign(state, snapshot); throw error; }
+      },
     },
   } as any;
 
   const config = { credentialEncryptionKey: KEY } as any;
   const useCase = new CreateEmployeeUseCase(prisma, config);
-  return { useCase, state };
+  return { useCase, state, prisma, tx, controls, config, roles };
 }
 
 const baseCommand = {
@@ -506,5 +550,180 @@ describe('CreateEmployeeUseCase job title', () => {
     assert.equal(state.profiles.length, 1);
     assert.equal(state.profiles[0].jobTitle, 'หัวหน้าฝ่ายขาย');
     assert.deepEqual(state.membershipRoles.map((row) => row.roleId), ['role-sales']);
+  });
+});
+
+describe('company employee draft removal', () => {
+  const command = (employeeId: string) => ({
+    companyId: COMPANY_ID, employeeId, requestingUserId: 'admin-1',
+    requesterPermissions: ['access.employee.disable', 'access.role.manage'], requestId: 'req-delete',
+  });
+  const hasCode = (code: string) => (error: any) => error.getResponse?.().code === code;
+
+  it('removes only this company draft, releases its identity/phone, revokes pending tokens and audits without PII', async () => {
+    const { useCase, prisma, state, controls } = makeUseCase();
+    const created = await useCase.execute(baseCommand);
+    const membershipId = state.profiles[0].membershipId;
+    state.branchScopes.push({ membershipId, branchId: 'branch-1' });
+    // The login is also used by a real employee in another company.
+    state.memberships.push({ id: 'other-membership', companyId: 'other-company', userId: created.userId, status: 'ACTIVE' });
+    state.membershipRoles.push({ membershipId: 'other-membership', roleId: 'role-sales' });
+    state.branchScopes.push({ membershipId: 'other-membership', branchId: 'other-branch' });
+    state.profiles.push({ ...state.profiles[0], id: 'other-profile', membershipId: 'other-membership', companyId: 'other-company', status: 'ACTIVE' });
+    state.lineLinkTokens.push({ companyId: 'other-company', membershipId: 'other-membership', status: 'PENDING' });
+    const account = structuredClone({ users: state.users, credentials: state.credentials });
+
+    await new DeleteEmployeeDraftUseCase(prisma).execute(command(created.employeeId));
+
+    assert.deepEqual(await new ListEmployeesUseCase(prisma).execute(COMPANY_ID), []);
+    await assert.rejects(() => new GetEmployeeUseCase(prisma).execute(COMPANY_ID, created.employeeId), /not found/i);
+    assert.equal(state.profiles[0].id, 'other-profile');
+    assert.deepEqual(state.memberships.map((m) => m.id), ['other-membership']);
+    assert.deepEqual(state.membershipRoles.map((r) => r.membershipId), ['other-membership']);
+    assert.deepEqual(state.branchScopes.map((b) => b.membershipId), ['other-membership']);
+    assert.deepEqual({ users: state.users, credentials: state.credentials }, account);
+    assert.deepEqual(state.lineLinkTokens.map((t) => t.status), ['REVOKED', 'PENDING']);
+    assert.deepEqual(controls.locks, [[created.employeeId, COMPANY_ID]]);
+    const audit = state.auditLogs.at(-1);
+    assert.equal(audit.action, 'access.employee.draft.delete');
+    assert.equal(audit.targetId, created.employeeId);
+    assert.equal(audit.actorUserId, 'admin-1');
+    assert.equal(audit.companyId, COMPANY_ID);
+    assert.deepEqual(audit.metadataJson, { membershipId, userId: created.userId, revokedTokenCount: 1 });
+    assert.doesNotMatch(JSON.stringify(audit), /password|identity|phone|tokenHash|dateOfBirth/i);
+  });
+
+  it('keeps the existing login and existing-account confirmation/email policy when recreating the deleted identity', async () => {
+    const { useCase, prisma, state } = makeUseCase();
+    const created = await useCase.execute({ ...baseCommand, email: 'login@example.test' });
+    const credential = structuredClone(state.credentials);
+    await new DeleteEmployeeDraftUseCase(prisma).execute(command(created.employeeId));
+
+    await assert.rejects(() => useCase.execute(baseCommand), hasCode('employee_existing_user'));
+    await assert.rejects(() => useCase.execute({ ...baseCommand, linkExistingUser: true, email: 'login@example.test' }), hasCode('employee_email_must_differ'));
+    const recreated = await useCase.execute({ ...baseCommand, linkExistingUser: true, email: 'company@example.test' });
+    assert.notEqual(recreated.employeeId, created.employeeId);
+    assert.equal(recreated.userId, created.userId);
+    assert.equal(recreated.reusedExistingAccount, true);
+    assert.equal(recreated.temporaryPassword, '');
+    assert.deepEqual(state.credentials, credential);
+    assert.equal(state.users.length, 1);
+    assert.equal(state.users[0].email, 'login@example.test');
+    assert.equal(state.profiles[0].email, 'company@example.test');
+    assert.equal(state.profiles[0].phoneNumber, baseCommand.phoneNumber);
+    assert.equal(state.profiles[0].status, 'DRAFT');
+    await assert.rejects(() => useCase.completeDraft(command(created.employeeId)), hasCode('employee_draft_not_found'));
+  });
+
+  it('returns the same safe not-found result for an unknown, cross-company or already-deleted draft', async () => {
+    const { useCase, prisma, state } = makeUseCase();
+    const { employeeId } = await useCase.execute(baseCommand);
+    const remove = new DeleteEmployeeDraftUseCase(prisma);
+    const before = structuredClone(state);
+    await assert.rejects(() => remove.execute(command('unknown')), hasCode('employee_draft_not_found'));
+    await assert.rejects(() => remove.execute({ ...command(employeeId), companyId: 'other-company' }), hasCode('employee_draft_not_found'));
+    assert.deepEqual(state, before);
+    await remove.execute(command(employeeId));
+    const after = structuredClone(state);
+    await assert.rejects(() => remove.execute(command(employeeId)), hasCode('employee_draft_not_found'));
+    assert.deepEqual(state, after);
+  });
+
+  it('denies missing permissions, owner/platform targets and privileged targets without role-management authority', async () => {
+    const { useCase, prisma, state, roles } = makeUseCase();
+    const { employeeId } = await useCase.execute(baseCommand);
+    const remove = new DeleteEmployeeDraftUseCase(prisma);
+    const before = structuredClone(state);
+    await assert.rejects(() => remove.execute({ ...command(employeeId), requesterPermissions: [] }), (e: any) => e.getStatus() === 403);
+    for (const key of ['OWNER', 'SYSTEM_ADMIN']) {
+      roles[0].key = key;
+      await assert.rejects(() => remove.execute(command(employeeId)), /Owner and platform/);
+    }
+    roles[0].key = 'ADMIN';
+    roles[0].permissions = [{ permission: { key: 'access.role.manage' } }];
+    await assert.rejects(() => remove.execute({ ...command(employeeId), requesterPermissions: ['access.employee.disable'] }), /requires access.role.manage/);
+    assert.deepEqual(state, before);
+    await remove.execute(command(employeeId));
+    assert.equal(state.profiles.length, 0);
+  });
+
+  it('never deletes a non-draft profile or an active membership, and rolls back token revocation on rejection', async () => {
+    for (const status of ['ACTIVE', 'SUSPENDED', 'DISABLED', 'INVITED']) {
+      const { useCase, prisma, state } = makeUseCase();
+      const { employeeId } = await useCase.execute(baseCommand);
+      state.profiles[0].status = status;
+      const before = structuredClone(state);
+      await assert.rejects(() => new DeleteEmployeeDraftUseCase(prisma).execute(command(employeeId)), hasCode('employee_draft_not_deletable'));
+      assert.deepEqual(state, before);
+    }
+    for (const mismatch of [{ status: 'ACTIVE' }, { companyId: 'other-company' }, { userId: 'other-user' }]) {
+      const { useCase, prisma, state } = makeUseCase();
+      const { employeeId } = await useCase.execute(baseCommand);
+      Object.assign(state.memberships[0], mismatch);
+      const before = structuredClone(state);
+      await assert.rejects(() => new DeleteEmployeeDraftUseCase(prisma).execute(command(employeeId)), hasCode('employee_draft_not_deletable'));
+      assert.deepEqual(state, before);
+    }
+  });
+
+  it('rolls back removal and revocation if the audit cannot be retained', async () => {
+    const { useCase, prisma, state, tx } = makeUseCase();
+    const { employeeId } = await useCase.execute(baseCommand);
+    const before = structuredClone(state);
+    tx.auditLog.create = async () => { throw new Error('audit unavailable'); };
+    await assert.rejects(() => new DeleteEmployeeDraftUseCase(prisma).execute(command(employeeId)), /audit unavailable/);
+    assert.deepEqual(state, before);
+  });
+
+  it('rechecks Finish after a deletion wins, and rejects deletion when Finish wins', async () => {
+    const { useCase, prisma, state, controls } = makeUseCase();
+    const { employeeId } = await useCase.execute(baseCommand);
+    const remove = new DeleteEmployeeDraftUseCase(prisma);
+    controls.beforeTransaction = () => remove.execute(command(employeeId));
+    await assert.rejects(() => useCase.completeDraft(command(employeeId)), hasCode('employee_draft_not_found'));
+    assert.equal(state.profiles.length, 0);
+    assert.equal(state.memberships.length, 0);
+
+    const recreated = await useCase.execute({ ...baseCommand, linkExistingUser: true, email: 'company@example.test' });
+    controls.beforeTransaction = async () => { await useCase.completeDraft(command(recreated.employeeId)); };
+    await assert.rejects(() => remove.execute(command(recreated.employeeId)), hasCode('employee_draft_not_deletable'));
+    assert.equal(state.profiles[0].status, 'ACTIVE');
+    assert.equal(state.memberships[0].status, 'ACTIVE');
+    await useCase.completeDraft(command(recreated.employeeId)); // Finish remains idempotent.
+  });
+
+  it('does not let a stale resume recreate a removed draft or reset a completed employee credential', async () => {
+    for (const winner of ['delete', 'finish']) {
+      const { useCase, prisma, state, controls } = makeUseCase();
+      const { employeeId } = await useCase.execute(baseCommand);
+      const credential = structuredClone(state.credentials);
+      controls.beforeTransaction = async () => {
+        if (winner === 'delete') await new DeleteEmployeeDraftUseCase(prisma).execute(command(employeeId));
+        else await useCase.completeDraft(command(employeeId));
+      };
+      await assert.rejects(() => useCase.execute({ ...baseCommand, dateOfBirth: '1990-01-01' }), hasCode(winner === 'delete' ? 'employee_draft_not_found' : 'employee_identity_conflict'));
+      assert.deepEqual(state.credentials, credential);
+      assert.equal(state.profiles.length, winner === 'delete' ? 0 : 1);
+      if (winner === 'finish') assert.equal(state.profiles[0].status, 'ACTIVE');
+    }
+  });
+
+  it('does not issue an orphan token after deletion, and revokes a token issued just before deletion', async () => {
+    for (const winner of ['delete', 'issue']) {
+      const { useCase, prisma, state, controls, config } = makeUseCase();
+      const { employeeId } = await useCase.execute(baseCommand);
+      const remove = new DeleteEmployeeDraftUseCase(prisma);
+      const issue = new IssueEmployeeLineLinkTokenUseCase(prisma, config);
+      const issueCommand = { ...command(employeeId), apiBaseUrl: baseCommand.apiBaseUrl };
+      if (winner === 'delete') {
+        controls.beforeTransaction = () => remove.execute(command(employeeId));
+        await assert.rejects(() => issue.execute(issueCommand), hasCode('employee_draft_not_found'));
+      } else {
+        controls.beforeTransaction = async () => { await issue.execute(issueCommand); };
+        await remove.execute(command(employeeId));
+      }
+      assert.equal(state.lineLinkTokens.filter((t) => t.status === 'PENDING').length, 0);
+      assert.equal(state.profiles.length, 0);
+    }
   });
 });

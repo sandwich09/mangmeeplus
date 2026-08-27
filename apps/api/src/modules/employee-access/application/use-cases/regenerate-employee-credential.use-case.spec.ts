@@ -23,6 +23,8 @@ function makePrisma(identity: { providerUserId: string } | null) {
       },
       $transaction: async (fn: any) => {
         const result = await fn({
+          $queryRaw: async () => [],
+          employeeAccessProfile: { findFirst: async () => PROFILE },
           userCredential: { update: async () => ({}) },
           authSession: {
             updateMany: async (args: any) => {
@@ -54,6 +56,22 @@ function captureLinePushes(ok: boolean | 'reject' = true) {
 }
 
 describe('RegenerateEmployeeCredentialUseCase', () => {
+  it('does not reset a credential or revoke sessions when its draft was deleted before the transaction', async () => {
+    const { prisma, state } = makePrisma(null);
+    let writes = 0;
+    prisma.client.$transaction = async (fn: any) => fn({
+      $queryRaw: async () => [],
+      employeeAccessProfile: { findFirst: async () => null },
+      userCredential: { update: async () => { writes++; } },
+      authSession: { updateMany: async () => { writes++; } },
+      auditLog: { create: async () => { writes++; } },
+    });
+    await assert.rejects(() => new RegenerateEmployeeCredentialUseCase(prisma, CONFIG).execute(COMMAND),
+      (error: any) => error.getResponse().code === 'employee_draft_not_found');
+    assert.equal(writes, 0);
+    assert.equal(state.identityLookupAfterCommit, false);
+  });
+
   it('pushes the temporary password to the linked LINE identity after the transaction commits', async () => {
     const line = captureLinePushes();
     const { prisma, state } = makePrisma({ providerUserId: 'line-staff-1' });
