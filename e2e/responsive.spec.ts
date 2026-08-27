@@ -1,7 +1,7 @@
-import { type Locator, type Page } from '@playwright/test';
+import { type APIRequestContext, type Locator, type Page } from '@playwright/test';
 import { test, expect } from './harness/fixtures';
 import { expectNoClientError } from './harness/auth';
-import { expectMainReady } from './harness/e2e-utils';
+import { expectMainReady, json } from './harness/e2e-utils';
 
 const ROUTES = [
   '/dashboard',
@@ -269,6 +269,302 @@ test.describe('P24-2a shared-shell targets', () => {
       await expectNoClientError(authedPage);
     });
   }
+});
+
+test.describe('P24-2b scope-selector targets', () => {
+  const retryName = 'โหลดข้อมูลไม่สำเร็จ · ลองใหม่';
+  const companyUrl = '**/api/v1/auth/me/companies';
+  const branchUrl = '**/api/v1/companies/*/branches?status=ACTIVE&pageSize=100';
+
+  async function scopeFixtures(api: APIRequestContext, companyId: string) {
+    const { data: companies } = await json<{ data: Array<{ companyId: string; companyName: string }> }>(await api.get('auth/me/companies'));
+    const { items: branches } = await json<{ items: Array<{ id: string; name: string; type: string }> }>(await api.get(`companies/${companyId}/branches?status=ACTIVE&pageSize=100`));
+    expect(companies.length, 'real memberships must expose a company switcher').toBeGreaterThanOrEqual(2);
+    expect(branches.length, 'real branches must expose selectable options').toBeGreaterThanOrEqual(2);
+    return { companies, branches };
+  }
+
+  async function target(control: Locator, label: string) {
+    await expect(control, `${label}: no silent missing-control pass`).toHaveCount(1);
+    await expect(control).toBeVisible();
+    const box = await control.boundingBox();
+    expect.soft(box?.width ?? 0, `${label}: width`).toBeGreaterThanOrEqual(44);
+    expect.soft(box?.height ?? 0, `${label}: height`).toBeGreaterThanOrEqual(44);
+    await expectInViewport(control, label);
+    const hit = await control.evaluate((node) => {
+      const rect = node.getBoundingClientRect();
+      const top = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+      return { matches: node.contains(top), covering: top?.outerHTML.slice(0, 240), x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+    });
+    expect.soft(hit.matches, `${label}: center is hit-testable ${JSON.stringify(hit)}`).toBe(true);
+  }
+
+  async function focus(control: Locator, forcedColors = false) {
+    await control.focus();
+    await expect(control).toBeFocused();
+    const style = await control.evaluate((node) => {
+      const css = getComputedStyle(node);
+      return { shadow: css.boxShadow, outline: css.outlineStyle, width: css.outlineWidth, color: css.outlineColor };
+    });
+    if (forcedColors) {
+      expect.soft(style.outline).not.toBe('none');
+      expect.soft(parseFloat(style.width)).toBeGreaterThanOrEqual(2);
+      expect.soft(style.color).not.toBe('rgba(0, 0, 0, 0)');
+    } else expect.soft(style.shadow, 'keyboard focus ring').not.toBe('none');
+  }
+
+  async function noOverflow(page: Page) {
+    expect.soft(await page.evaluate(() => (document.scrollingElement?.scrollWidth ?? 0) - document.documentElement.clientWidth), 'scope controls do not widen the page').toBeLessThanOrEqual(1);
+  }
+
+  for (const width of [360, 390, 768, 1280]) {
+    test(`${width}px — real membership/branch targets keep selection and keyboard behavior`, async ({ authedPage, api, companyId }, testInfo) => {
+      const { companies, branches } = await scopeFixtures(api, companyId);
+      await authedPage.setViewportSize({ width, height: width === 360 ? 740 : width === 390 ? 844 : 900 });
+      await gotoAndSettle(authedPage, companyId, '/dashboard');
+      const originalUrl = authedPage.url();
+      const company = authedPage.getByRole('button', { name: 'สลับบริษัท', exact: true });
+      const branch = authedPage.getByRole('button', { name: 'เลือกสาขา', exact: true });
+      await expect(company).toContainText(companies.find((c) => c.companyId === companyId)!.companyName);
+      await expect(branch).toHaveText('ทุกสาขา (รวม)');
+      await authedPage.keyboard.press('Tab');
+      for (const [label, trigger, count] of [['company', company, companies.length], ['branch', branch, branches.length + 1]] as const) {
+        // Tab initially focuses the visible skip link; move focus off it before hit-testing the header.
+        await focus(trigger);
+        await target(trigger, label);
+        await trigger.press('Enter');
+        const popup = trigger.locator('..').locator('div.fixed');
+        await expectInViewport(popup, `${label} popup`);
+        await expect(popup).toBeInViewport({ ratio: 1 });
+        const options = popup.getByRole('button');
+        await expect(options).toHaveCount(count);
+        for (let index = 0; index < count; index += 1) {
+          await target(options.nth(index), `${label} option ${index}`);
+          await focus(options.nth(index));
+        }
+        await noOverflow(authedPage);
+        await testInfo.attach(`real-${label}-${width}px`, { body: await authedPage.screenshot(), contentType: 'image/png' });
+        // Re-selecting current scope only closes the menu; it must not navigate or mutate.
+        await popup.getByRole('button', { name: / ✓$/, exact: false }).press('Enter');
+        await expect(popup).toHaveCount(0);
+        await expect(authedPage).toHaveURL(originalUrl);
+      }
+      const pick = branches.find((b) => b.type === 'BRANCH');
+      expect(pick, 'real non-HQ branch fixture').toBeDefined();
+      await branch.click();
+      const scopedRead = authedPage.waitForResponse((res) => res.url().includes('/dashboard?') && new URL(res.url()).searchParams.get('branchId') === pick!.id);
+      await branch.locator('..').getByRole('button', { name: pick!.name, exact: true }).click();
+      expect((await scopedRead).status()).toBe(200);
+      await expect(branch).toHaveText(pick!.name);
+      await authedPage.reload();
+      await expect(branch).toHaveText(pick!.name);
+      await branch.click();
+      await branch.locator('..').getByRole('button', { name: 'ทุกสาขา (รวม)', exact: true }).click();
+      await expect(branch).toHaveText('ทุกสาขา (รวม)');
+      await expect(authedPage).toHaveURL(originalUrl);
+      await noOverflow(authedPage);
+      await expectNoClientError(authedPage);
+    });
+
+    test(`${width}px — mocked long display labels retain real IDs and fit targets/popups`, async ({ authedPage, companyId }, testInfo) => {
+      const longLabel = ' ชื่อแสดงผลจำลองสำหรับตรวจหน้าจอเท่านั้น '.repeat(2) + 'LongUnbrokenDisplayLabel'.repeat(4);
+      // Change display text only after a successful real read; no invented membership/permission.
+      for (const url of [companyUrl, branchUrl]) await authedPage.route(url, async (route) => {
+        const response = await route.fetch();
+        expect(response.status()).toBe(200);
+        const body = await response.json();
+        if (url === companyUrl) body.data = body.data.map((row: { companyName: string }) => ({ ...row, companyName: row.companyName + longLabel }));
+        else body.items = body.items.map((row: { name: string }, index: number) => ({ ...row, name: row.name + (index === 0 ? longLabel : '') }));
+        await route.fulfill({ response, json: body });
+      });
+      await authedPage.setViewportSize({ width, height: width === 360 ? 740 : width === 390 ? 844 : 900 });
+      await gotoAndSettle(authedPage, companyId, '/dashboard');
+      for (const name of ['สลับบริษัท', 'เลือกสาขา']) {
+        const trigger = authedPage.getByRole('button', { name, exact: true });
+        await target(trigger, name);
+        await trigger.click();
+        const popup = trigger.locator('..').locator('div.fixed');
+        await expectInViewport(popup, `${name} long-label popup`);
+        await expect(popup).toBeInViewport({ ratio: 1 });
+        const options = popup.getByRole('button');
+        expect(await options.count(), 'long-label case must render options').toBeGreaterThanOrEqual(2);
+        for (const option of await options.all()) {
+          await target(option, 'long-label option');
+          expect.soft(await option.evaluate((node) => node.scrollWidth - node.clientWidth), 'option text must wrap rather than be clipped').toBeLessThanOrEqual(1);
+        }
+        await noOverflow(authedPage);
+        await testInfo.attach(`mock-display-only-${name}-${width}px`, { body: await authedPage.screenshot(), contentType: 'image/png' });
+        await trigger.click();
+        await expect(popup).toHaveCount(0);
+      }
+      await expectNoClientError(authedPage);
+    });
+  }
+
+  for (const width of [360, 390, 1280]) for (const [kind, url, name, count] of [
+    ['company', companyUrl, 'สลับบริษัท', 20],
+    ['branch', branchUrl, 'เลือกสาขา', 100],
+  ] as const) {
+    test(`${width}px — synthetic long ${kind} menu scrolls to a valid last option (geometry only)`, async ({ authedPage, api, companyId }, testInfo) => {
+      const { branches } = await scopeFixtures(api, companyId);
+      const lastBranch = branches.find((row) => row.type === 'BRANCH')!;
+      await authedPage.route(url, async (route) => {
+        const response = await route.fetch();
+        expect(response.status()).toBe(200);
+        const body = await response.json();
+        // Geometry fixture only: preserve every real ID/row; never select a synthetic ID.
+        if (kind === 'company') {
+          const rows = body.data as Array<{ companyId: string; companyName: string }>;
+          const current = rows.find((row) => row.companyId === companyId)!;
+          body.data = [...rows.filter((row) => row !== current),
+            ...Array.from({ length: count - rows.length }, (_, index) => ({ ...current, companyId: `p24-geometry-company-${index}`, companyName: `บริษัทจำลองหน้าจอ ${index + 1}` })), current];
+        } else {
+          const rows = body.items as Array<{ id: string; name: string }>;
+          const last = rows.find((row) => row.id === lastBranch.id)!;
+          body.items = [...rows.filter((row) => row !== last),
+            ...Array.from({ length: count - rows.length }, (_, index) => ({ ...last, id: `p24-geometry-branch-${index}`, name: `สาขาจำลองหน้าจอ ${index + 1}` })), last];
+        }
+        await route.fulfill({ response, json: body });
+      });
+      await authedPage.setViewportSize({ width, height: width === 360 ? 740 : width === 390 ? 844 : 900 });
+      await gotoAndSettle(authedPage, companyId, '/dashboard');
+      const originalUrl = authedPage.url();
+      const trigger = authedPage.getByRole('button', { name, exact: true });
+      await trigger.click();
+      const popup = trigger.locator('..').locator('div.fixed');
+      const options = popup.getByRole('button');
+      await expect(options).toHaveCount(count + (kind === 'branch' ? 1 : 0));
+      const geometry = await popup.evaluate((node) => {
+        const box = node.getBoundingClientRect();
+        return { top: box.top, bottom: box.bottom, height: box.height, viewportHeight: innerHeight, clientHeight: node.clientHeight, scrollHeight: node.scrollHeight, overflowY: getComputedStyle(node).overflowY };
+      });
+      await testInfo.attach(`mock-long-${kind}-${width}px-geometry`, { body: Buffer.from(JSON.stringify(geometry)), contentType: 'application/json' });
+      await testInfo.attach(`mock-long-${kind}-${width}px-open`, { body: await authedPage.screenshot(), contentType: 'image/png' });
+      expect(geometry.bottom, JSON.stringify(geometry)).toBeLessThanOrEqual(geometry.viewportHeight);
+      expect(geometry.scrollHeight).toBeGreaterThan(geometry.clientHeight);
+      await expect(popup).toBeInViewport({ ratio: 1 });
+      const last = options.last();
+      await authedPage.keyboard.press('Tab');
+      await last.scrollIntoViewIfNeeded();
+      expect(await popup.evaluate((node) => node.scrollTop), 'last option requires actual internal scrolling').toBeGreaterThan(0);
+      await focus(last);
+      await target(last, 'last valid long-menu option');
+      await noOverflow(authedPage);
+      await testInfo.attach(`mock-long-${kind}-${width}px-scrolled`, { body: await authedPage.screenshot(), contentType: 'image/png' });
+      const scopedRead = kind === 'branch' ? authedPage.waitForResponse((res) => res.url().includes('/dashboard?') && new URL(res.url()).searchParams.get('branchId') === lastBranch.id) : null;
+      await last.press('Enter');
+      await expect(popup).toHaveCount(0);
+      if (scopedRead) { expect((await scopedRead).status()).toBe(200); await expect(trigger).toHaveText(lastBranch.name); }
+      await expect(authedPage).toHaveURL(originalUrl);
+      await noOverflow(authedPage);
+      await expectNoClientError(authedPage);
+    });
+  }
+
+  for (const width of [360, 390, 1280]) {
+    test(`${width}px — mocked lookup failures expose readable touch-sized retries and recover real options`, async ({ authedPage, companyId }, testInfo) => {
+      let fail = true;
+      const reads = { company: 0, branch: 0 };
+      for (const [kind, url] of [['company', companyUrl], ['branch', branchUrl]] as const) await authedPage.route(url, async (route) => {
+        reads[kind] += 1;
+        if (fail) await route.fulfill({ status: 503, json: { statusCode: 503, message: 'Synthetic scope lookup failure', error: 'Service Unavailable' } });
+        else await route.continue();
+      });
+      await authedPage.setViewportSize({ width, height: width === 360 ? 740 : width === 390 ? 844 : 900 });
+      await gotoAndSettle(authedPage, companyId, '/dashboard');
+      const retries = authedPage.locator('header').getByRole('button', { name: retryName, exact: true });
+      await expect(retries).toHaveCount(2);
+      await expect(authedPage.getByRole('button', { name: 'เลือกสาขา', exact: true })).toHaveCount(0);
+      await authedPage.keyboard.press('Tab');
+      for (const control of await retries.all()) {
+        await focus(control);
+        await target(control, 'lookup retry');
+        await expect(control).toHaveAttribute('aria-label', retryName);
+        await expect(control).toHaveAttribute('title', retryName);
+        const visibleAction = width < 640 ? 'ลองใหม่' : retryName;
+        const visibleCopy = control.getByText(visibleAction, { exact: true });
+        await expect(visibleCopy).toBeVisible();
+        await expect(control).toHaveAccessibleName(new RegExp(visibleAction, 'i'));
+        expect(await visibleCopy.evaluate((node) => {
+          const text = node.getBoundingClientRect();
+          const button = node.closest('button')!.getBoundingClientRect();
+          return text.left >= button.left && text.right <= button.right && text.top >= button.top && text.bottom <= button.bottom;
+        }), 'the complete visible retry action fits inside its button').toBe(true);
+      }
+      await noOverflow(authedPage);
+      await testInfo.attach(`mock-503-retries-${width}px`, { body: await authedPage.screenshot(), contentType: 'image/png' });
+      const before = { ...reads };
+      fail = false;
+      await retries.first().press('Enter');
+      await expect(authedPage.getByRole('button', { name: 'สลับบริษัท', exact: true })).toBeVisible();
+      await expect(retries).toHaveCount(1);
+      await retries.press('Enter');
+      await expect(authedPage.getByRole('button', { name: 'เลือกสาขา', exact: true })).toBeVisible();
+      expect(reads.company).toBeGreaterThan(before.company);
+      expect(reads.branch).toBeGreaterThan(before.branch);
+      await expect(retries).toHaveCount(0);
+      await expectNoClientError(authedPage);
+    });
+
+    test(`${width}px — forced colors keep real controls and mocked retries visibly focused`, async ({ authedPage, companyId, browserName }) => {
+      test.skip(browserName !== 'chromium', 'Forced-colors is Chromium emulation, not physical Windows evidence.');
+      await authedPage.setViewportSize({ width, height: width === 360 ? 740 : width === 390 ? 844 : 900 });
+      await authedPage.emulateMedia({ forcedColors: 'active' });
+      await gotoAndSettle(authedPage, companyId, '/dashboard');
+      expect(await authedPage.evaluate(() => matchMedia('(forced-colors: active)').matches)).toBe(true);
+      await authedPage.keyboard.press('Tab');
+      for (const name of ['สลับบริษัท', 'เลือกสาขา']) {
+        const trigger = authedPage.getByRole('button', { name, exact: true });
+        await focus(trigger, true);
+        await target(trigger, name);
+        await trigger.press('Enter');
+        const popup = trigger.locator('..').locator('div.fixed');
+        await expect(popup).toBeInViewport({ ratio: 1 });
+        const options = popup.getByRole('button');
+        expect(await options.count()).toBeGreaterThanOrEqual(2);
+        for (const option of await options.all()) await focus(option, true);
+        await trigger.press('Enter');
+        await expect(popup).toHaveCount(0);
+      }
+      for (const url of [companyUrl, branchUrl]) await authedPage.route(url, (route) => route.fulfill({ status: 503, json: { statusCode: 503, message: 'Synthetic scope lookup failure', error: 'Service Unavailable' } }));
+      await authedPage.reload();
+      const retries = authedPage.locator('header').getByRole('button', { name: retryName, exact: true });
+      await expect(retries).toHaveCount(2);
+      await authedPage.keyboard.press('Tab');
+      for (const control of await retries.all()) { await focus(control, true); await target(control, 'forced-colors retry'); }
+    });
+  }
+
+  test('mocked 403 keeps branch choices hidden and company retry honest', async ({ authedPage, companyId }) => {
+    await authedPage.route(branchUrl, (route) => route.fulfill({ status: 403, json: { statusCode: 403, message: 'Forbidden', error: 'Forbidden' } }));
+    await authedPage.setViewportSize({ width: 390, height: 844 });
+    await gotoAndSettle(authedPage, companyId, '/dashboard');
+    await expect(authedPage.getByRole('button', { name: 'สลับบริษัท', exact: true })).toBeVisible();
+    await expect(authedPage.getByRole('button', { name: 'เลือกสาขา', exact: true })).toHaveCount(0);
+    await expect(authedPage.locator('header').getByRole('button', { name: retryName, exact: true })).toHaveCount(0);
+    await authedPage.route(companyUrl, (route) => route.fulfill({ status: 403, json: { statusCode: 403, message: 'Forbidden', error: 'Forbidden' } }));
+    await authedPage.reload();
+    const retry = authedPage.locator('header').getByRole('button', { name: retryName, exact: true });
+    await target(retry, 'company 403 retry');
+    await expect(authedPage.getByRole('button', { name: 'สลับบริษัท', exact: true })).toHaveCount(0);
+    await expect(authedPage.getByRole('button', { name: 'เลือกสาขา', exact: true })).toHaveCount(0);
+  });
+
+  test('mocked single-branch scope stays a noninteractive label, not permission evidence', async ({ authedPage, api, companyId }) => {
+    const { branches } = await scopeFixtures(api, companyId);
+    const branch = branches.find((row) => row.type === 'BRANCH');
+    expect(branch).toBeDefined();
+    await authedPage.route('**/api/v1/auth/me', async (route) => {
+      const response = await route.fetch();
+      expect(response.status()).toBe(200);
+      const body = await response.json();
+      await route.fulfill({ response, json: { ...body, scopes: { ...body.scopes, branchIds: [branch!.id] } } });
+    });
+    await gotoAndSettle(authedPage, companyId, '/dashboard');
+    await expect(authedPage.locator('header').getByText(branch!.name, { exact: true })).toBeVisible();
+    await expect(authedPage.getByRole('button', { name: 'เลือกสาขา', exact: true })).toHaveCount(0);
+    await expectNoClientError(authedPage);
+  });
 });
 
 test.describe('Mobile responsive invariants', () => {
