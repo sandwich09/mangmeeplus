@@ -2,7 +2,7 @@
 
 สถานะ: **ACTIVE — VERIFIED INDEX 2026-08-27** (สาย 1–4 review แล้ว; สาย 5 Subscribe/Billing ไม่อยู่ใน scope รอบนี้)
 
-ลำดับและกติกาคุมโดย [แผนหลัก 2.5 วัน §10](mangmee-brain-2-5-day-priority-plan-th.md), ภายใต้ scope ล่าสุดด้านล่าง. หลักฐานและเหตุผล verdict อยู่ใน [Coding-readiness Audit](mangmee-four-lane-coding-readiness-audit-th.md); phase/test/exit/gate ที่เติมอยู่ใน [Gap Closure Plan](mangmee-four-lane-gap-closure-plan-th.md). Baseline integration ล่าสุดที่ตรวจคือ `origin/develop@d33f8d2e`; branch/worktree status ต้องแยกจาก integration/production status เสมอ.
+ลำดับและกติกาคุมโดย [แผนหลัก 2.5 วัน §10](mangmee-brain-2-5-day-priority-plan-th.md), ภายใต้ scope ล่าสุดด้านล่าง. หลักฐานและเหตุผล verdict อยู่ใน [Coding-readiness Audit](mangmee-four-lane-coding-readiness-audit-th.md); phase/test/exit/gate ที่เติมอยู่ใน [Gap Closure Plan](mangmee-four-lane-gap-closure-plan-th.md). Baseline integration ล่าสุดที่ตรวจคือ `origin/develop@11153296` (ถึง expense-payment capture PR #287); branch/worktree status ต้องแยกจาก integration/production status เสมอ.
 
 คำสถานะ: `READY <phase>` = เริ่ม phase นั้นได้, `PARTIAL READY` = core/read-only เริ่มได้แต่ activation blocked, `IMPLEMENTED / VERIFY` = code มีแต่ rollout evidence ค้าง, `BLOCKED` = ห้ามเดาคำตอบ Owner/provider/expert.
 
@@ -14,6 +14,7 @@
 - P15-0 ที่ทดสอบแล้วเก็บไว้ใน worktree แยก **ยังไม่ commit/push/PR/merge**. ไม่เพิ่ม migration เพื่อเตรียม reconciliation ที่ยังไม่ต้องใช้.
 - งานอื่นในสาย 1–4 และการยกเว้น Subscribe คงเดิม. Financial correctness, local desktop/mobile, CI และ acceptance ของ scope ที่เหลือยังต้องผ่านก่อน main; การเลื่อนงานไม่ใช่การรับรอง production.
 - บันทึกการตัดสินใจและสถานะจริง: [capture-first memory](../agent-memory/mangmee-capture-first-scope.md).
+- สถานะส่งต่อ ณ audit 2026-08-27: partner-copy PR #284, sales-payment retry PR #285 (`145924a3` / CI `33036847494`), vendor-bill capture PR #286 (`21f109d5` / CI `33037405174`) และ expense-payment/date PR #287 (`11153296` / CI `33039136161`) **merged develop / CI SUCCESS**. Expense final integration 33/33 (ขาย6 + บิลผู้ขาย6 + รายจ่าย21), zero skipped/flaky; web1139/1139, ชุดตรวจ 128/128 รวม real PostgreSQL 6 เคส และ [ภาพ6ไฟล์/API proof](../evidence/expense-payment-capture-integrity/README.md) อยู่ใน Git. ดู [current capture delivery/acceptance](../agent-memory/capture-first-progress-audit.md); ไม่เท่ากับปิด P27/P28 หรืออนุมัติ main/Production.
 
 ## สาย 1 — รับคนให้ไหว (Ops/Monitoring/Scale)
 
@@ -38,7 +39,7 @@
 | งาน | หัวข้อ | Spec | Plan | สถานะ |
 |---|---|---|---|---|
 | P10 | Auto-register จากเว็บทางการ (signed ingress, state, idempotency, claim-before-provision) | [spec](../specs/mangmee-external-signup-contract-spec-th.md) | [canonical plan](mangmee-external-signup-plan-th.md) + [status gate](mangmee-four-lane-gap-closure-plan-th.md#p10--external-signup) | **P10-0 CORE IMPLEMENTED + LOCAL VERIFIED**; public ingress รอ Owner §8 |
-| P11 | Email delivery + claim account | [spec](../specs/mangmee-email-delivery-claim-spec-th.md) | [P11 plan](mangmee-four-lane-gap-closure-plan-th.md#p11--email-delivery--claim) | **CORE READY**; live รอโดเมน/DNS/region |
+| P11 | Email delivery + claim account | [spec](../specs/mangmee-email-delivery-claim-spec-th.md) | [P11 plan](mangmee-four-lane-gap-closure-plan-th.md#p11--email-delivery--claim) | **PARTIAL / CURRENT-BASE CANDIDATE**: `codex/p11-ses-foundation-current` บน `11153296` port เฉพาะ disabled-safe foundation; root-recorded Opus5 max conditional APPROVE แต่ accepted WEB_BASE_URL fallback finding ยังแก้อยู่ ต้องตรวจผลใหม่. Uncommitted/no new PR/CI/merge; claim/delivery และ secret/TTL/sender/DNS/region gates ยังเปิด |
 | P12 | LINE login: OAuth/LIFF + account linking + QR login | [spec](../specs/mangmee-line-login-link-journey-spec-th.md) | [P12 plan](mangmee-four-lane-gap-closure-plan-th.md#p12--line-loginlinkqr) | **READY P12-0/1**; live link/QR รอ console/deep-link gate |
 
 ## สาย 4 — โตต่อได้ (FlowAccount parity + รายรับ + ภาษี)
@@ -52,7 +53,7 @@
 | P18–P20 | Direct bank/QR/Gateway, Marketplace settlement, POS/Partner API | [provider-neutral contract](../specs/mangmee-revenue-connectors-contract-spec-th.md) + [marketplace partial](../specs/marketplace-import-spec.md) | [P18–20 plan](mangmee-four-lane-gap-closure-plan-th.md#p18p20--revenue-connectors) | **DEFERRED BY OWNER 2026-08-27** — รวม shared harness/adapter; ไม่เป็น gate รอบนี้ |
 | P21 | Accountant review + tax workpaper ภ.พ.30 | [spec](../specs/mangmee-tax-workpaper-pp30-spec-th.md) | [P21 plan](mangmee-four-lane-gap-closure-plan-th.md#p21--tax-workpaper--accountant-review) | **READY P21-0 core**; form output รอ current fixture/expert |
 | P22 | Controlled auto-accounting | [expense spec](../specs/expense-ledger-auto-post-spec.md) | [implemented plan](expense-ledger-auto-post-plan.md) + [P22 gate](mangmee-four-lane-gap-closure-plan-th.md#p22--controlled-auto-accounting) | expense เดิม **IMPLEMENTED / VERIFY**; revenue automation หลัง P17 **DEFERRED** ไม่ใช่ gate รอบนี้ |
-| P24 | Growth/UX รอบเต็ม | [spec](../specs/mangmee-growth-ux-full-pass-spec-th.md) | [P24 plan](mangmee-four-lane-gap-closure-plan-th.md#p24--growthux-full-pass) | **READY baseline/UX**; ไม่พึ่ง Billing |
+| P24 | Growth/UX รอบเต็ม | [spec](../specs/mangmee-growth-ux-full-pass-spec-th.md) | [P24 plan](mangmee-four-lane-gap-closure-plan-th.md#p24--growthux-full-pass) | **PARTIAL** — P24-2a merged develop `b98e500f`, PR #283 / CI `33034949214` SUCCESS; full 40+/physical-device journeys ยังไม่ครบ; ไม่พึ่ง Billing |
 
 Gate ประจำสาย: **รัน P25 ฉบับเต็มซ้ำก่อนขยายวงทุกครั้ง** ([production-a5-v2-spec](../specs/production-a5-v2-spec.md))
 
@@ -88,12 +89,16 @@ Gate ประจำสาย: **รัน P25 ฉบับเต็มซ้ำ
 
 ## ค้างที่ Owner/หลักฐาน (เฉพาะสาย 1–4)
 
-1. P10 ingress/claim/duplicate policy — [spec §8](../specs/mangmee-external-signup-contract-spec-th.md)
-2. P28 accounting/product policy — [spec §10 ข้อ 2–5](../specs/mangmee-purchase-to-pay-mvp-spec-th.md)
-3. P13 active-membership + notification policy — [spec §5](../specs/mangmee-line-multi-company-staff-spec-th.md)
-4. **พักไว้ ไม่ block รอบนี้:** P15–P17 pilot/reviewer/matrix — [spec §7](../specs/mangmee-revenue-inbox-matching-spec-th.md)
-5. **พักไว้ ไม่ block รอบนี้:** P18–P20 provider + pilot + selection evidence — [contract §6](../specs/mangmee-revenue-connectors-contract-spec-th.md)
-6. P21/P23/Advisor named accounting/tax reviewer + current sanitized fixture/SLA
-7. P25 next-cohort workload inputs
+1. P27 **LED-FIN-07**: durable draft เมื่อ VAT ยังไม่ชัด — เลือก review-state contract ก่อนเพิ่ม migration; ตอนนี้ fail closed ไม่แทนด้วย `NO_VAT` ([spec](../specs/mangmee-income-expense-ledger-spec-th.md), [Phase 3](mangmee-income-expense-ledger-plan-th.md#phase-3--บันทึกรายรับ--ใบลดหนี้เพิ่มหนี้-spec-f-led-1-f-led-6)).
+2. P28 [§10 ข้อ 2–5](../specs/mangmee-purchase-to-pay-mvp-spec-th.md): เครดิตผู้ขายเกินค้าง/คืนเงิน, ใบเพิ่มหนี้เข้ารอบใด, two-step release และ pilot ใช้สต็อกหรือ direct bill. ไม่เลือกคำตอบแนะนำแทน Owner.
+3. P10 [§8](../specs/mangmee-external-signup-contract-spec-th.md): ingress secret model, claim TTL/resend/revoke, duplicate taxId และแหล่ง `businessCategory` ที่ onboarding บังคับ.
+4. P11 [§5](../specs/mangmee-email-delivery-claim-spec-th.md): sender domain/DNS owner/SES region; disabled-safe current-base candidate ยังต้อง root review/CI/integrate. Durable raw-link/key lifecycle และ claim TTL/resend/revoke ยังไม่ตัดสิน; claim/delivery core ยังไม่ครบ ไม่ใช่เพียงเปิด DNS.
+5. P12 [§7](../specs/mangmee-line-login-link-journey-spec-th.md): Console Provider evidence และ handoff Q1–Q4; P13 [§5](../specs/mangmee-line-multi-company-staff-spec-th.md): active-membership + notification policy.
+6. Brain-Real/Advisor/P21/P23: golden/reviewer evidence ตาม family; tax/form publication ต้องมี named reviewer, current sanitized fixture และ SLA ไม่ใช้ผล synthetic แทน.
+7. P27 usability ผู้ใช้ 40+ ≥3 คน และ P24 physical-device journeys ยังเปิด; P25 รอ next-cohort workload/SLO ก่อนรัน capacity gate. Local Chromium ไม่ใช่หลักฐานผ่านสองรายการนี้.
+
+งาน candidate ไม่ถูกนับว่า merged: AI `codex/line-ai-owner-summary-count` บน baseline `11153296` เป็น OPEN PR #288 head `70033af2`; root local checks/independent review ผ่าน แต่ CI `33040537029` ยัง in progress. LINE recovery PR #265 ยังติด security findings 5 จุดและความหมาย one-time ที่ spec ขัดกัน (claim ครั้งเดียวหรือ login ครั้งเดียว). รายละเอียด/หลักฐานอยู่ใน [progress audit](../agent-memory/capture-first-progress-audit.md#pr265--security-hold-unmerged-branch-only); ไม่เลือก policy แทน Owner และไม่ใช้ CI เก่าอนุมัติ merge.
+
+P15–P20 และ matching-dependent revenue automation **DEFERRED BY OWNER** ไม่อยู่ในรายการตัดสินใจ/งานที่ต้องเสร็จก่อน main รอบนี้. Main/UAT/Production ยังต้องผ่าน acceptance ของ active scope ตาม protocol.
 
 P14/P26/Subscribe payment ไม่ถูกตัดสินหรือแก้ scope ใน audit นี้.

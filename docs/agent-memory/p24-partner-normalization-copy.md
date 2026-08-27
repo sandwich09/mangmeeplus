@@ -1,6 +1,6 @@
 # Agent Memory: P24 Partner normalization-pending copy
 
-Status: IMPLEMENTED / LOCAL BROWSER ACCEPTANCE PASS — ready for commit/PR to develop; CI and merge still pending. No entitlement or deployment change.
+Status: MERGED DEVELOP via PR #284 at `78057e3848414190b5803d89658aee83b0b51420`; exact-head CI `33035656163` SUCCESS on `73beae72`. Local browser acceptance passed; no entitlement or deployment change.
 Owner: Codex / phase6_launch_review; parent owns the P24 local browser acceptance.
 Scope: Platform Admin → Partner detail → package controls only. Capture-first delivery remains the active scope; subscription and reconciliation/P15–20 remain out of scope.
 
@@ -64,4 +64,9 @@ Verification (2026-08-27, isolated worktree):
 - At both widths, document scroll width equals viewport width. Browser warning/error log is empty. Viewed both saved screenshots; this is Chrome viewport evidence, not physical-device or complete accessibility certification.
 - Evidence: [desktop/mobile screenshots and reproduction notes](../evidence/p24-partner-normalization-copy/README.md).
 
-Next: Commit/push this scoped correction, open PR to develop, and merge only after its CI passes. Do not normalize fixture data or relax guards to make this message disappear. The legacy company's pending normalization remains a separate audited operation.
+## Delivery provenance — refreshed 2026-08-27
+
+- [PR #284](https://github.com/MangmeeDev/mangmeeplus/pull/284) merged into develop at `78057e3848414190b5803d89658aee83b0b51420` on 2026-08-27T03:33:42Z after [CI 33035656163](https://github.com/MangmeeDev/mangmeeplus/actions/runs/33035656163) SUCCESS on `73beae72de9e16e2c1972d38f8d50dc6b6cf0f65`. This supersedes the earlier pre-PR status, not the scoped test/capture provenance above.
+- This is source integration only, not normalization execution, main promotion or cloud deployment.
+
+Next: Do not repeat this merged copy fix or normalize fixture data/relax guards to make the message disappear. The legacy company's pending normalization remains a separate audited operation; full P24/physical-device acceptance remains open.
