@@ -31,7 +31,7 @@ Verification:
 # From repo root:
 ./node_modules/.bin/tsc --noEmit -p apps/web/tsconfig.json
 ./node_modules/.bin/playwright test e2e/settings.spec.ts --list --grep 'SET-08F' --project=chromium
-# 4 new regression cases discovered (OWNER/COMPANY_VIEW x 390/1280px).
+# 2 new regression cases discovered (OWNER viewing a Finance+Accountant target at 390/1280px).
 ```
 
 - Contracts build, route generation and full web typecheck passed. No package.json, API, data schema, role grant or workspace header changes.
@@ -41,5 +41,6 @@ Verification:
 - Editable STAFF: 3 -> 2 -> 1 branches sends the existing expected scope/default-branch payloads. Last selected branch remains disabled. ALL_BRANCHES restores scope and closes the picker. Pending writes disable chips/show saving status; a synthetic 503 preserves the old scope, shows the error, and re-enables controls.
 - Branch GET failure: explicit scoped error and retry, no misleading all-branch badge or disclosure. Recovery restores the card. Desktop 1280px: both editor and read-only viewer expand/collapse three noninteractive names without PATCHes, no horizontal overflow. Mobile/desktop screenshots inspected; no browser error/warn logs.
 - Durable database-backed E2E cases were added/listed, not executed against seeded or live accounts. Equivalent UI scenarios were exercised with synthetic data through the actual component. Broad E2E test discovery initially failed on unrelated absent generated Prisma imports; settings-only discovery passed without generating shared clients. Fixture initial bundling needed the existing web dependency path; corrected locally without adding dependencies.
+- Final review checked the real role registry: COMPANY_VIEW does not hold access.employee.read and must not enter this page. E2E uses the existing owner fixture rather than granting access or inventing an auditor seed; read-only access.employee.read behavior is covered by the synthetic component checks above.
 
 Next: Merge latest develop, rerun focused checks/types, normal-push feature/develop, and record exact delivery hashes. Remove only the owned temporary fixture/dependency links and stop its server/tab/viewport. Preserve the root `plan` worktree and unrelated edits.
