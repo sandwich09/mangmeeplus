@@ -313,7 +313,7 @@ export const workspaceDictionary = {
     // Auth — login
     'auth.login.title': 'เข้าสู่ระบบ',
     'auth.login.subtitle': 'ยินดีต้อนรับกลับ — จัดการร้านของคุณได้เลย',
-    'auth.login.identifier': 'ชื่อผู้ใช้ หรือ อีเมล',
+    'auth.login.identifier': 'ชื่อผู้ใช้',
     'auth.login.password': 'รหัสผ่าน',
     'auth.login.show_password': 'แสดงรหัสผ่าน',
     'auth.login.hide_password': 'ซ่อนรหัสผ่าน',
@@ -334,7 +334,7 @@ export const workspaceDictionary = {
     'auth.login.error.temp_expired': 'รหัสผ่านชั่วคราวหมดอายุ กรุณาติดต่อผู้ดูแลเพื่อออกรหัสใหม่',
     'auth.login.error.company_access_unavailable': 'บริษัทถูกปิดใช้งานหรือสิทธิ์ของคุณถูกยกเลิก กรุณาติดต่อผู้ดูแลระบบ',
     // WEB-03: field-level messages, so "เข้าสู่ระบบไม่ได้" never has to stand in for "ช่องนี้ว่าง".
-    'auth.login.error.identifier_required': 'กรุณากรอกอีเมลหรือชื่อผู้ใช้',
+    'auth.login.error.identifier_required': 'กรุณากรอกชื่อผู้ใช้',
     'auth.login.error.password_required': 'กรุณากรอกรหัสผ่าน',
     // Auth — hero (login left panel)
     'auth.hero.headline1': 'พาร้านมั่งคั่ง',
@@ -1697,7 +1697,7 @@ export const workspaceDictionary = {
     // Auth — login
     'auth.login.title': 'Sign in',
     'auth.login.subtitle': 'Welcome back — manage your store right away',
-    'auth.login.identifier': 'Username or email',
+    'auth.login.identifier': 'Username',
     'auth.login.password': 'Password',
     'auth.login.show_password': 'Show password',
     'auth.login.hide_password': 'Hide password',
@@ -1717,7 +1717,7 @@ export const workspaceDictionary = {
     'auth.login.error.rate_limited': 'Too many sign-in attempts. Please wait a moment and try again.',
     'auth.login.error.temp_expired': 'Your temporary password has expired. Ask your admin to issue a new one.',
     'auth.login.error.company_access_unavailable': 'The company is inactive or your access was removed. Contact your administrator.',
-    'auth.login.error.identifier_required': 'Enter your email or username.',
+    'auth.login.error.identifier_required': 'Enter your username.',
     'auth.login.error.password_required': 'Enter your password.',
     // Auth — hero (login left panel)
     'auth.hero.headline1': 'Grow a prosperous store',

@@ -1,11 +1,27 @@
 import { afterEach, describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { changePassword, refreshSessionWithOutcome, requestEmailChange } from './auth.api';
+import { changePassword, loginWithPassword, refreshSessionWithOutcome, requestEmailChange } from './auth.api';
 import { localizedErrorMessage } from '../../common/i18n/error-message.logic';
 import { authErrorMessage } from './auth.logic';
 
 const originalFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = originalFetch; });
+
+describe('loginWithPassword', () => {
+  it('keeps forwarding username and email identifiers unchanged despite username-first UI copy', async () => {
+    const response = { passwordChangeRequired: false, legalAcceptanceRequired: false, companyId: null, redirectPath: '/' };
+    const fetchMock = mock.fn(async (_input: string | URL | Request, _init?: RequestInit) => Response.json(response));
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    for (const username of ['test-user', 'test-user@example.com']) {
+      assert.deepEqual(await loginWithPassword(username, 'Test-password-123', false), response);
+      const [url, init] = fetchMock.mock.calls.at(-1)!.arguments;
+      assert.equal(url, '/api/auth/login');
+      assert.equal(init?.method, 'POST');
+      assert.deepEqual(JSON.parse(String(init?.body)), { username, password: 'Test-password-123', remember: false });
+    }
+  });
+});
 
 describe('changePassword', () => {
   it('preserves a wrong-current-password error without refreshing or retrying', async () => {
@@ -91,6 +107,7 @@ describe('requestEmailChange reauthentication', () => {
     assert.deepEqual(calls, ['/api/v1/auth/account/email']);
   });
 });
+
 describe('refreshSessionWithOutcome', () => {
   it('keeps a real signed-out response distinct from service failure', async () => {
     for (const [status, expected] of [[204, 'restored'], [401, 'signed_out'], [500, 'unavailable']] as const) {

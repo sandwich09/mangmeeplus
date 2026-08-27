@@ -28,6 +28,8 @@ const CODE_LABELS: Record<string, string> = {
   reimbursement_changed: 'คำขอเบิกถูกแก้ไขระหว่างทำรายการ กรุณาเปิดรายการใหม่แล้วลองอีกครั้ง',
   reimbursement_draft_changed:
     'ใบเบิกถูกแก้ไขหรือส่งอนุมัติแล้ว กรุณาเปิดรายการใหม่ ตรวจสอบข้อมูล แล้วลองอีกครั้ง',
+  line_incurred_date_invalid: 'กรุณาระบุวันที่รายการเบิกให้ถูกต้อง',
+  line_incurred_date_in_future: 'วันที่รายการเบิกต้องไม่เกินวันนี้ (เวลาไทย) กรุณาแก้ไขวันที่ก่อนส่งอนุมัติ',
   expense_auto_post_not_enabled: 'ต้องเปิดระบบบัญชีแยกประเภทและ Auto-post ค่าใช้จ่ายก่อน',
   // Onboarding bootstrap: the standard expense-category template names accounts the company's
   // chart does not offer, so no category was seeded. The operator cannot fix this from the screen.
@@ -544,6 +546,9 @@ export function translateApiError(raw: string): string | null {
   if (!text) return null;
   if (MESSAGE_LABELS[text]) return MESSAGE_LABELS[text];
   if (CODE_LABELS[text]) return CODE_LABELS[text];
+  // Line validation can join multiple failures; the toast names the first date to fix.
+  const incurredDate = /^(line_incurred_date_(?:invalid|in_future)):([1-9]\d?)(?:,|$)/.exec(text);
+  if (incurredDate) return `รายการที่ ${incurredDate[2]}: ${CODE_LABELS[incurredDate[1]!]}`;
   // Conflicts carry their detail inline, e.g. `..._accounting_period_locked:2026-07`.
   const prefix = Object.keys(CODE_LABELS).find((code) => text.startsWith(`${code}:`));
   if (prefix) return CODE_LABELS[prefix]!;

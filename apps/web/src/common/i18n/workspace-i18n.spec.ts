@@ -3,6 +3,13 @@ import assert from 'node:assert/strict';
 import { t, getDefaultLocale } from './workspace-i18n.logic';
 
 describe('workspace-i18n', () => {
+  it('names username consistently in the login label and required-field message in both locales', () => {
+    assert.equal(t('auth.login.identifier', 'th'), 'ชื่อผู้ใช้');
+    assert.equal(t('auth.login.error.identifier_required', 'th'), 'กรุณากรอกชื่อผู้ใช้');
+    assert.equal(t('auth.login.identifier', 'en'), 'Username');
+    assert.equal(t('auth.login.error.identifier_required', 'en'), 'Enter your username.');
+  });
+
   it('returns Thai string for th locale', () => {
     assert.strictEqual(t('dashboard.title', 'th'), 'แดชบอร์ด');
   });

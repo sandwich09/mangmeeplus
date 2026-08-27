@@ -34,7 +34,7 @@ describe('LINE recovery credential lifecycle', () => {
     let recoveryPassword = '';
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (_url: unknown, init: any) => {
-      recoveryPassword = /รหัสผ่านชั่วคราว: ([^\n]+)/.exec(JSON.parse(init.body).messages[0].text)![1]!;
+      recoveryPassword = JSON.parse(init.body).messages[0].contents.footer.contents[0].action.clipboardText;
       return { ok: true } as Response;
     }) as typeof fetch;
     const client: any = {

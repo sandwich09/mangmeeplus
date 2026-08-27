@@ -1,5 +1,6 @@
 // Pure client-side helpers for the reimbursement forms (mirror server rules for UX only).
 
+import { reimbursementIncurredDateError, todayCivilDate } from '@watchdog-bms/contracts';
 import { apiErrorMessage, translateApiError } from '@/common/api/api-error-message';
 import { ERROR_CODE_LABELS } from './reimbursements.model';
 
@@ -159,7 +160,7 @@ export function matchesSearch(parts: readonly unknown[], query: string): boolean
 export { DEFAULT_PAGE_SIZE as QUEUE_PAGE_SIZE, pageBounds } from '@/common/table/paging.logic';
 
 /** Client-side validation of the multi-line claim form. Returns a message or null. */
-export function validateRequestForm(input: { reason: string; missingReceiptReason?: string; lines: readonly ClaimFormLine[] }): string | null {
+export function validateRequestForm(input: { reason: string; missingReceiptReason?: string; lines: readonly ClaimFormLine[] }, today = todayCivilDate()): string | null {
   if (!input.reason || input.reason.trim() === '') return 'กรุณาระบุเหตุผล';
   if (!input.lines || input.lines.length === 0) return 'ต้องมีอย่างน้อย 1 รายการ';
   if (input.lines.length > MAX_CLAIM_LINES) return `ใบเบิกหนึ่งใบมีได้ไม่เกิน ${MAX_CLAIM_LINES} รายการ`;
@@ -168,6 +169,8 @@ export function validateRequestForm(input: { reason: string; missingReceiptReaso
     if (!line.description || line.description.trim() === '') return `รายการที่ ${no}: กรุณาระบุรายการ`;
     if (!line.categoryKey || line.categoryKey.trim() === '') return `รายการที่ ${no}: กรุณาเลือกหมวด`;
     if (!line.incurredDate) return `รายการที่ ${no}: กรุณาระบุวันที่`;
+    const dateError = reimbursementIncurredDateError(line.incurredDate, today);
+    if (dateError) return errorMessage(`${dateError}:${no}`);
     if (!(Number(line.amount) > 0)) return `รายการที่ ${no}: จำนวนเงินต้องมากกว่า 0`;
   }
   if (!(sumLineAmounts(input.lines) > 0)) return 'ยอดรวมต้องมากกว่า 0';

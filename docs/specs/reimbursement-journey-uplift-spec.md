@@ -107,6 +107,13 @@ Header semantics:
 Business rules:
 
 - A claim must have ≥1 line; every line `amount > 0`; claim total > 0. Line count cap 50.
+- Incurred dates must be real calendar dates on or before today in the reimbursement business
+  timezone (Asia/Bangkok), not the browser/server local day or UTC today. Create, replacement-line
+  draft updates and submit validate every line; an existing future-dated draft must be corrected
+  before submission. Date errors name the line, leave values available to correct, and never
+  silently clamp dates or change historical approved requests. The create/edit picker bounds all
+  selection paths (including Today); this rule does not constrain payment dates, appointments,
+  due dates or search filters. Existing ISO/Date compatibility is retained.
 - Evidence per line: a line is evidenced when it has `attachmentId` or `linkedExpenseId`. When policy requires receipts, submit requires every line evidenced, OR a claim-level `missingReceiptReason` (one reason may cover multiple gaps — matches the existing single field). `receiptRequirementStatus` stays claim-level.
 - Double-claim protection: an `ExpenseRecord` or attachment already referenced by a line of another active claim (status not REJECTED/CANCELLED/VOIDED) cannot be linked again — submit-time validation error `expense_already_claimed` / `attachment_already_claimed`.
 - Duplicate detection: scoring inputs now iterate lines — any shared line `attachmentId` (+60) or `linkedExpenseId` (+60) across requests; total-amount (+20) and same-day (+10) signals stay header-level. `ReimbursementDuplicateCandidate` schema unchanged; the offending line is named in `reason`.

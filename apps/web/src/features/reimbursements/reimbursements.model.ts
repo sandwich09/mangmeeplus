@@ -1,4 +1,6 @@
 import type { MangmeeTone } from '@/common/components/mangmee';
+import { reimbursementIncurredDateError, todayCivilDate } from '@watchdog-bms/contracts';
+import { translateApiError } from '@/common/api/api-error-message';
 
 export const REIMBURSEMENT_CREATE_UNAVAILABLE = 'ขณะนี้ไม่สามารถสร้างคำขอใหม่ได้ กรุณาติดต่อผู้ดูแลบริษัทเพื่อตรวจสอบการเปิดใช้งานการเบิกจ่ายและสิทธิ์บัญชี · ยังดูประวัติเดิมได้ตามสิทธิ์';
 
@@ -150,8 +152,13 @@ export function reimbursementOwnActions(detail: any, userId: string, permissions
   };
 }
 
-export function reimbursementSubmitReadiness(detail: any): { blocked: boolean; message?: string } {
-  if (detail?.status !== 'DRAFT' || detail?.receiptRequirementStatus !== 'REQUIRED') {
+export function reimbursementSubmitReadiness(detail: any, today = todayCivilDate()): { blocked: boolean; message?: string } {
+  if (detail?.status !== 'DRAFT') return { blocked: false };
+  for (const line of detail.lines ?? []) {
+    const dateError = reimbursementIncurredDateError(line.incurredDate, today);
+    if (dateError) return { blocked: true, message: translateApiError(`${dateError}:${line.lineNo}`) ?? undefined };
+  }
+  if (detail?.receiptRequirementStatus !== 'REQUIRED') {
     return { blocked: false };
   }
   return detail?.allowMissingReceiptWithReason
