@@ -11,6 +11,7 @@ import type {
   GenerateSubstituteReceiptInput,
   LineSubstituteReceiptPrefill,
   PreviewSubstituteReceiptInput,
+  RecordExpensePaymentInput,
   SourceDocumentType,
   SubstituteReceiptEvidenceSummary,
   SubstituteReceiptListFilter,
@@ -205,8 +206,12 @@ export async function completeReceiptUpload(
   );
 }
 
-export async function requestExpenseExtraction(companyId: string, expenseId: string): Promise<ExpenseExtractionResult> {
-  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/extraction-request`, { method: 'POST', body: '{}' });
+export async function requestExpenseExtraction(companyId: string, expenseId: string, requestId?: string): Promise<ExpenseExtractionResult> {
+  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/extraction-request`, {
+    method: 'POST',
+    body: '{}',
+    ...(requestId ? { headers: { 'X-Request-Id': requestId } } : {}),
+  });
 }
 
 export async function getAttachmentDownloadUrl(companyId: string, attachmentId: string, options?: { disposition?: 'inline' }): Promise<{ downloadUrl: string; expiresAt: string }> {
@@ -305,7 +310,7 @@ export async function voidExpense(companyId: string, expenseId: string, reason: 
 export async function recordExpensePayment(
   companyId: string,
   expenseId: string,
-  body: { paidAmount: string; paymentMethod?: string; paidAt?: string; bankAccountRef?: string },
+  body: RecordExpensePaymentInput,
 ): Promise<ExpenseSummary> {
   return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/payment`, { method: 'POST', body: JSON.stringify(body) });
 }

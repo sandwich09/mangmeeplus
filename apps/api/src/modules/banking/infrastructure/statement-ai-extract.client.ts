@@ -4,13 +4,20 @@
  * AiGatewayClient transport: internal secret header, bounded timeout,
  * fail-closed on transport errors.
  */
-import { Injectable, Logger, Optional } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { AppConfigService } from '../../../common/config/app-config.service';
-import type { BankStatementAiExtractRequest, BankStatementAiExtractResponse } from '@watchdog-bms/contracts';
+import type { AiModelPolicy, BankStatementAiExtractRequest, BankStatementAiExtractResponse } from '@watchdog-bms/contracts';
 import { RedisRateLimitService } from '../../../common/security/redis-rate-limit.service';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { resolveCompanyAiModelPolicy } from '../../line-ai/application/company-ai-model-policy';
 import { recordCompanyAiUsage, runWithCompanyAiBudgetAdmission } from '../../line-ai/application/company-ai-usage-meter';
+import {
+  admitCompanyOcr,
+  companyOcrErrorCode,
+  isOcrPreProviderHttpStatus,
+  isOcrPreProviderRefusal,
+  releaseCompanyOcrAdmission,
+} from '../../line-ai/application/company-ocr-governance';
 
 const EXTRACT_TIMEOUT_MS = 60_000;
 
@@ -20,8 +27,8 @@ export class StatementAiExtractClient {
 
   constructor(
     private readonly config: AppConfigService,
-    private readonly rateLimits?: RedisRateLimitService,
-    @Optional() private readonly prisma?: PrismaService,
+    @Inject(RedisRateLimitService) private readonly rateLimits: RedisRateLimitService | undefined,
+    private readonly prisma: PrismaService,
   ) {}
 
   async extract(request: BankStatementAiExtractRequest): Promise<BankStatementAiExtractResponse> {
@@ -29,13 +36,20 @@ export class StatementAiExtractClient {
       const decision = await this.rateLimits.consume('ai-ocr-company', request.companyId, this.config.aiOcrMaxPerCompany, this.config.aiRateLimitWindowSeconds);
       if (!decision.allowed) return { status: 'failed', errorCode: 'AI_OCR_RATE_LIMITED' };
     }
-    if (!this.prisma) return this.extractAdmitted(request);
+    if (!this.config.aiGatewayInternalSecret) {
+      return { status: 'not_configured', errorCode: 'AI_GATEWAY_SECRET_MISSING' };
+    }
+    const modelPolicy = await resolveCompanyAiModelPolicy(
+      this.prisma,
+      request.companyId,
+      this.config.approvedAiModelIds,
+    );
     const admission = await runWithCompanyAiBudgetAdmission(
       this.prisma,
       this.config,
       this.rateLimits,
       request.companyId,
-      (monthKey) => this.extractAdmitted(request, monthKey),
+      (monthKey) => this.extractOcrAdmitted(request, modelPolicy, monthKey),
     );
     if (admission.allowed) return admission.value;
     return {
@@ -46,13 +60,36 @@ export class StatementAiExtractClient {
     };
   }
 
-  private async extractAdmitted(request: BankStatementAiExtractRequest, budgetMonthKey?: string): Promise<BankStatementAiExtractResponse> {
-    const secret = this.config.aiGatewayInternalSecret;
-    if (!secret) return { status: 'not_configured', errorCode: 'AI_GATEWAY_SECRET_MISSING' };
+  private async extractOcrAdmitted(
+    request: BankStatementAiExtractRequest,
+    modelPolicy: AiModelPolicy | undefined,
+    budgetMonthKey?: string,
+  ): Promise<BankStatementAiExtractResponse> {
+    const admission = await admitCompanyOcr(this.prisma, {
+      companyId: request.companyId,
+      sourceRoute: 'bank-statement-extract',
+      requestId: request.requestId,
+      monthKey: budgetMonthKey,
+    });
+    if (!admission.allowed) return { status: 'failed', errorCode: companyOcrErrorCode(admission) };
+    const result = await this.extractAdmitted(request, modelPolicy, budgetMonthKey);
+    if (isOcrPreProviderRefusal(result)) {
+      const released = await releaseCompanyOcrAdmission(this.prisma, {
+        companyId: request.companyId,
+        sourceRoute: 'bank-statement-extract',
+        requestId: request.requestId,
+      });
+      if (!released) return { status: 'failed', errorCode: 'OCR_QUOTA_UNAVAILABLE' };
+    }
+    return result;
+  }
 
-    const modelPolicy = this.prisma
-      ? await resolveCompanyAiModelPolicy(this.prisma, request.companyId, this.config.approvedAiModelIds)
-      : undefined;
+  private async extractAdmitted(
+    request: BankStatementAiExtractRequest,
+    modelPolicy: AiModelPolicy | undefined,
+    budgetMonthKey?: string,
+  ): Promise<BankStatementAiExtractResponse> {
+    const secret = this.config.aiGatewayInternalSecret!;
     const governedRequest = { ...request, ...(modelPolicy && { modelPolicy }) };
     let response: Response;
     try {
@@ -72,21 +109,27 @@ export class StatementAiExtractClient {
 
     if (!response.ok) {
       this.logger.error({ msg: 'statement extract gateway error', status: response.status, requestId: request.requestId });
+      if (isOcrPreProviderHttpStatus(response.status)) {
+        const released = await releaseCompanyOcrAdmission(this.prisma, {
+          companyId: request.companyId,
+          sourceRoute: 'bank-statement-extract',
+          requestId: request.requestId,
+        });
+        if (!released) return { status: 'failed', errorCode: 'OCR_QUOTA_UNAVAILABLE' };
+      }
       return { status: 'failed', errorCode: `AI_GATEWAY_ERROR_${response.status}` };
     }
 
     const result = (await response.json()) as BankStatementAiExtractResponse;
-    if (this.prisma) {
-      try {
-        await recordCompanyAiUsage(
-          this.prisma,
-          this.config,
-          { companyId: request.companyId, sourceRoute: 'bank-statement-extract', requestId: request.requestId, monthKey: budgetMonthKey },
-          result.usage,
-        );
-      } catch (err) {
-        this.logger.warn({ msg: 'ai.usage.record_failed', requestId: request.requestId, error: (err as Error).message });
-      }
+    try {
+      await recordCompanyAiUsage(
+        this.prisma,
+        this.config,
+        { companyId: request.companyId, sourceRoute: 'bank-statement-extract', requestId: request.requestId, monthKey: budgetMonthKey },
+        result.usage,
+      );
+    } catch (err) {
+      this.logger.warn({ msg: 'ai.usage.record_failed', requestId: request.requestId, error: (err as Error).message });
     }
     return result;
   }

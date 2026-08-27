@@ -355,7 +355,7 @@ export function disableBlockForChange(
     // Only reachable when an affected key has NO readiness row to borrow a reason from (a legacy or
     // partially materialized company, or a mixed-version deploy) — never the runoff refusal, which
     // no longer exists.
-    ?? 'ข้อมูลฟีเจอร์ไม่ครบ กรุณาโหลดหน้าใหม่ก่อนปิดฟีเจอร์นี้';
+    ?? 'ข้อมูลสิทธิ์ของฟีเจอร์นี้ยังไม่ครบ จึงยังปิดไม่ได้';
   return { reason, featureKeys: blocked };
 }
 
@@ -400,6 +400,13 @@ export function changedEntitlements(
  * message whether they hit the banner or a toast.
  */
 export const NORMALIZATION_PENDING_NOTICE = 'ระบบกำลังเตรียมสิทธิ์ให้ ไม่ต้องดำเนินการ';
+
+/** Use the screen's existing lock state; copy must not promise an unavailable command. */
+export function featurePackageEditingNotice(controlsLocked: boolean): string {
+  return controlsLocked
+    ? 'ขณะนี้ยังเปิดหรือปิดฟีเจอร์ไม่ได้'
+    : 'ตรวจสอบรายการที่เลือกก่อนบันทึก การเปลี่ยนแปลงจะมีผลเมื่อบันทึกสำเร็จ';
+}
 
 /** A refused save changed NOTHING; a refused disable must say the switch is still on. */
 export const NOT_DISABLED_NOTICE = 'ยังไม่ได้ปิด';

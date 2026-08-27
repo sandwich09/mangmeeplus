@@ -1,4 +1,5 @@
 import { authedApiFetch as apiFetch } from '@/common/api/authed-fetch';
+import type { PaginatedProcurementResult, SupplierSummary } from '@watchdog-bms/contracts';
 
 function qs(params?: Record<string, unknown>): string {
   const q = new URLSearchParams();
@@ -12,7 +13,7 @@ function qs(params?: Record<string, unknown>): string {
 // ---- Suppliers ----
 
 export function listSuppliers(companyId: string, params?: { status?: string; search?: string; page?: number; pageSize?: number }) {
-  return apiFetch<any>(`/companies/${companyId}/procurement/suppliers${qs(params)}`);
+  return apiFetch<PaginatedProcurementResult<SupplierSummary>>(`/companies/${companyId}/procurement/suppliers${qs(params)}`);
 }
 
 export function getSupplier(companyId: string, supplierId: string) {

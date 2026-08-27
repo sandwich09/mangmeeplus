@@ -1,6 +1,6 @@
 # Tax Workpaper ภ.พ.30 + Accountant Review — Spec P21
 
-สถานะ: **DRAFT — เติมช่องว่าง "workpaper/ภ.พ.30 package" ของ P21 ในตาราง spec-coverage**; แผนส่งมอบเขียนตอนเข้าคิว
+สถานะ: **PARTIAL READY** — source-to-workpaper core เริ่มได้ แต่ form mapping/export activation ต้องรอแบบทางการ current-version + named tax expert + fixture จริง; แผนส่งมอบอยู่ใน [Four-lane Gap Closure Plan](../plans/mangmee-four-lane-gap-closure-plan-th.md#p21--tax-workpaper--accountant-review)
 
 ที่มา: [แผนหลัก P21](../plans/mangmee-brain-2-5-day-priority-plan-th.md) 3 ข้อ — (1) approval queue + entry preview + reasoned override + reversal + closed-period handling (2) เชื่อมรายงานภาษีขาย/ภ.พ.30, WHT receivable/50ทวิ, AR aging/unapplied credit, reconciliation evidence (3) แยก "ระบบเตรียมข้อมูล" ออกจาก "ระบบยื่นแบบ" — ห้ามแสดงว่ายื่น/กรมสรรพากรรับแล้วถ้าไม่มีหลักฐานจริง — บวกรายการองค์ประกอบ PP30 package ตาม [OS spec §12.3](mangmee-accounting-operating-system-spec-th.md): output register, input register, selected input lines, carry-forward, adjustments, summary boxes, branch/scope snapshot, report/PDF/export artifact, reviewer sign-off, submission/payment evidence, amendment chain
 
@@ -62,6 +62,7 @@
 5. Snapshot ของงวดที่ FILED ต้อง immutable; แก้หลัง FILED = เดินทาง AMENDED + amendment chain เท่านั้น; period lock ที่บังคับอยู่ (`tax_period_locked`) ห้ามอ่อนลง
 6. Workpaper ส่งออกผ่านเส้น tax filing-packages (perm `tax.report.export`) เท่านั้น — ห้ามผ่าน generic reports engine ซึ่งรับ CSV เท่านั้น (`report.use-cases.ts:615-618`)
 7. ทุกตัวเลขใน workpaper ต้อง trace กลับได้: บรรทัด register → `TaxEvent` → `sourceType/sourceId/sourceLineId` — ห้ามผลิตตัวเลขที่ตรวจย้อนไม่ได้
+8. แบบฟอร์มเป็นข้อมูล versioned: package ต้องบันทึก `formCode`, `formEffectiveFrom`, source URL, retrieved-at และ checksum ของ fixture/layout; ห้ามอ้าง layout จาก PDF เก่าเมื่อหน้าแบบทางการเปลี่ยน
 
 ## 3. ขอบเขต
 
@@ -125,14 +126,14 @@
 5. **Amendment lineage**: งวด AMENDED ชี้กลับงวดเดิมผ่าน `amendmentOfPeriodId`, ไม่มีการเขียนทับ package เก่า
 6. **Carry-forward ต่อเนื่อง**: ยอดยกไปของงวด n = ยอดยกมาของงวด n+1 (self-check ต่อ chain)
 7. **WHT gate**: `validateCertificateTotals` + กติกา 50ทวิ↔ใบแนบตรงกัน (`wht-report.logic.ts:29-38`) เป็น blocking gate ของ package ภ.ง.ด.
-8. **P21-FIN-01 ปิดแล้ว**: เส้นเงินใน tax.summary เป็น Decimal ทั้งหมด
+8. **P21-FIN-01 ต้องปิดก่อนเปิดใช้**: เส้นเงินใน tax.summary เป็น Decimal ทั้งหมด
 
 ## 6. ตรวจตอน implement (สิ่งที่หลักฐานปัจจุบันยังไม่ชี้ขาด)
 
 1. ชื่อ/ชนิด field additive สุดท้าย: `selectedInReturn`/`returnPeriodKey` บน TaxEvent; ช่อง carry-forward บน TaxPeriod (satang int vs Decimal(18,4))
 2. เงื่อนไข/เพดานกฎหมายของการใช้สิทธิภาษีซื้อข้ามงวด — ยืนยันกับ rule pack + ผู้เชี่ยวชาญที่ลงนาม
 3. แหล่งข้อมูล branch/scope snapshot (โครงสาขาของบริษัทในระบบตอนนี้มีแค่ไหน)
-4. mapping ช่องแบบ ภ.พ.30/ภ.ง.ด.3/53 ทางการ ↔ fixture ไฟล์จริงจากนักบัญชี (รอคำตอบ Owner ข้อ 3)
+4. mapping ช่องแบบ ภ.พ.30/ภ.ง.ด.3/53 ทางการ ↔ fixture ไฟล์จริงจากนักบัญชี (รอคำตอบ Owner ข้อ 3); source of truth เริ่มที่ [หน้ารวมแบบแสดงรายการภาษีของกรมสรรพากร](https://www.rd.go.th/7049.html) ซึ่งระบุปรับปรุงล่าสุด 28-02-2026 และมีทั้ง ภ.พ.30/ใบแนบ ภ.พ.30 — ตอน implement ต้องดาวน์โหลดจากลิงก์ปัจจุบันและเก็บ checksum ห้าม pin URL เอกสารเก่าโดยไม่ตรวจ effective date
 5. ต้องมี permission ใหม่สำหรับ approve/reasoned override ใน F-TAX-3 หรือ perm ชุดเดิมพอ
 6. กลไก freeze "selected input lines" (flag บน TaxEvent + list ใน snapshot) ต้องรองรับ re-export ซ้ำโดยผลลัพธ์ deterministic
 7. รูปแบบเลขลำดับบรรทัด/ใบแนบให้ตรงกับแบบแนบทางการ (ต่อฟอร์ม ต่อหน้า หรือต่อทั้งงวด)

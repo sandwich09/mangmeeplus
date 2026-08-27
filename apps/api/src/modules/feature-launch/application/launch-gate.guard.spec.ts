@@ -126,6 +126,24 @@ describe('LaunchGateGuardService.assertLaunchRouteOpen', () => {
     } as any;
     await new LaunchGateGuardService(prisma).assertLaunchRouteOpen('crm');
   });
+
+  it('takes the shared route lock before any in-transaction authority read', async () => {
+    const calls: string[] = [];
+    const db = {
+      $executeRaw: async () => { calls.push('lock'); },
+      featureLaunchGate: { findUnique: async () => {
+        calls.push('gate');
+        return { state: 'OPEN', generation: 1 };
+      } },
+      featureLaunchGateTransition: { findMany: async () => {
+        calls.push('attestation');
+        return [{ ...openedHere(), gateKey: 'sales_documents', routeKey: 'DEFAULT', seq: 1 }];
+      } },
+    } as any;
+    await new LaunchGateGuardService({ client: {} } as any)
+      .assertLaunchRouteOpenInTransaction(db, 'sales_documents', 'DEFAULT');
+    assert.deepEqual(calls, ['lock', 'gate', 'attestation']);
+  });
 });
 
 /**

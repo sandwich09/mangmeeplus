@@ -1,6 +1,6 @@
 import { Type } from 'class-transformer';
 import {
-  ArrayMaxSize, IsArray, IsDateString, IsIn, IsInt, IsNotEmpty,
+  ArrayMaxSize, ArrayMinSize, IsArray, IsDateString, IsIn, IsInt, IsNotEmpty,
   IsOptional, IsString, Matches, Max, MaxLength, Min, ValidateNested,
 } from 'class-validator';
 import { TRANSACTION_TAX_CONTEXTS } from '@watchdog-bms/contracts';
@@ -12,15 +12,25 @@ import type { CreateDocumentInput, CreatePaymentInput } from '../../domain/model
 import {
   ACCOUNTING_MONEY_PATTERN,
   ACCOUNTING_RATE_PATTERN,
+  PAYMENT_IDEMPOTENCY_KEY_PATTERN,
   POSITIVE_ACCOUNTING_MONEY_PATTERN,
   POSITIVE_ACCOUNTING_QUANTITY_PATTERN,
 } from '../../domain/logic/accounting-money-validation.logic';
+import {
+  ACCOUNTING_CREDIT_NOTE_REASON_CODES,
+  ACCOUNTING_DEBIT_NOTE_REASON_CODES,
+  type AccountingAdjustmentReasonCode,
+} from '@watchdog-bms/contracts';
 
 const DOCUMENT_TYPES: AccountingDocumentType[] = ['QUOTATION', 'INVOICE', 'BILLING_NOTE', 'RECEIPT', 'TAX_INVOICE', 'CREDIT_NOTE', 'DEBIT_NOTE'];
 const VAT_MODES: AccountingVatMode[] = ['NO_VAT', 'VAT_INCLUDED', 'VAT_EXCLUDED', 'EXEMPT'];
 const OUTPUT_TAX_CODES: AccountingOutputTaxCode[] = ['O7', 'OX', 'O0'];
 const PAYMENT_DIRECTIONS: AccountingPaymentDirection[] = ['RECEIVED', 'PAID'];
 const PAYMENT_METHODS: AccountingPaymentMethod[] = ['CASH', 'BANK_TRANSFER', 'CARD', 'CHEQUE', 'OTHER'];
+const ADJUSTMENT_REASON_CODES: AccountingAdjustmentReasonCode[] = [
+  ...ACCOUNTING_CREDIT_NOTE_REASON_CODES,
+  ...ACCOUNTING_DEBIT_NOTE_REASON_CODES,
+];
 
 export class AccountingDocumentLineDto {
   @IsInt() @Min(1) @Max(10_000) lineNumber!: number;
@@ -42,7 +52,7 @@ export class AccountingDocumentLineDto {
   @IsArray() @ArrayMaxSize(20) @IsString({ each: true }) @IsOptional() evidenceRefs?: string[];
 }
 
-export class CreateAccountingDocumentDto implements Omit<CreateDocumentInput, 'companyId' | 'createdByUserId'> {
+export class CreateAccountingDocumentDto implements Omit<CreateDocumentInput, 'companyId' | 'createdByUserId' | 'payloadFingerprint'> {
   @IsString() @IsOptional() @MaxLength(64) branchId?: string;
   @IsIn(DOCUMENT_TYPES) documentType!: AccountingDocumentType;
   @IsDateString({ strict: true }) documentDate!: string;
@@ -51,11 +61,14 @@ export class CreateAccountingDocumentDto implements Omit<CreateDocumentInput, 'c
   @IsString() @IsOptional() @MaxLength(64) sourceDocumentId?: string;
   @IsString() @IsOptional() @MaxLength(80) sourceDocumentType?: string;
   @IsString() @IsOptional() @MaxLength(64) convertedFromDocumentId?: string;
+  @IsString() @Matches(/^[A-Za-z0-9_-]{8,64}$/) @IsOptional() idempotencyKey?: string;
   @IsIn(['THB']) @IsOptional() currency?: string;
   @IsIn(VAT_MODES) vatMode!: AccountingVatMode;
   @IsIn(OUTPUT_TAX_CODES) @IsOptional() outputTaxCode?: AccountingOutputTaxCode;
   @IsString() @IsOptional() @MaxLength(1_000) note?: string;
   @IsString() @IsOptional() @MaxLength(1_000) internalMemo?: string;
+  @IsIn(ADJUSTMENT_REASON_CODES) @IsOptional() adjustmentReasonCode?: AccountingAdjustmentReasonCode;
+  @IsString() @IsOptional() @MaxLength(500) adjustmentReasonText?: string;
   @IsArray() @ArrayMaxSize(200)
   @ValidateNested({ each: true }) @Type(() => AccountingDocumentLineDto)
   lines!: AccountingDocumentLineDto[];
@@ -72,12 +85,15 @@ export class UpdateAccountingDocumentDto {
   @IsIn(OUTPUT_TAX_CODES) @IsOptional() outputTaxCode?: AccountingOutputTaxCode | null;
   @IsString() @IsOptional() @MaxLength(1_000) note?: string | null;
   @IsString() @IsOptional() @MaxLength(1_000) internalMemo?: string | null;
+  @IsIn(ADJUSTMENT_REASON_CODES) @IsOptional() adjustmentReasonCode?: AccountingAdjustmentReasonCode | null;
+  @IsString() @IsOptional() @MaxLength(500) adjustmentReasonText?: string | null;
   @IsArray() @ArrayMaxSize(200) @IsOptional()
   @ValidateNested({ each: true }) @Type(() => AccountingDocumentLineDto)
   lines?: AccountingDocumentLineDto[];
 }
 
-export class CreateAccountingPaymentDto implements Omit<CreatePaymentInput, 'companyId' | 'createdByUserId'> {
+export class CreateAccountingPaymentDto implements Omit<CreatePaymentInput, 'companyId' | 'createdByUserId' | 'payloadFingerprint'> {
+  @IsString() @IsOptional() @Matches(PAYMENT_IDEMPOTENCY_KEY_PATTERN) idempotencyKey?: string;
   @IsString() @IsOptional() @MaxLength(64) branchId?: string;
   @IsIn(PAYMENT_DIRECTIONS) direction!: AccountingPaymentDirection;
   @IsString() @IsOptional() @MaxLength(64) counterpartyId?: string;
@@ -92,4 +108,17 @@ export class CreateAccountingPaymentDto implements Omit<CreatePaymentInput, 'com
   @IsString() @IsOptional() @MaxLength(160) externalReference?: string;
   @IsString() @IsOptional() @MaxLength(1_000) note?: string;
   @IsString() @IsOptional() @MaxLength(64) allocateToDocumentId?: string;
+}
+
+export class RecordSimpleIncomeDto {
+  @IsString() @Matches(/^[A-Za-z0-9_-]{8,64}$/) idempotencyKey!: string;
+  @IsString() @IsOptional() @MaxLength(64) branchId?: string;
+  @IsDateString({ strict: true }) documentDate!: string;
+  @IsString() @IsOptional() @MaxLength(64) counterpartyId?: string;
+  @IsIn(VAT_MODES) vatMode!: AccountingVatMode;
+  @IsIn(PAYMENT_METHODS) paymentMethod!: AccountingPaymentMethod;
+  @IsString() @IsOptional() @MaxLength(1_000) note?: string;
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(200)
+  @ValidateNested({ each: true }) @Type(() => AccountingDocumentLineDto)
+  lines!: AccountingDocumentLineDto[];
 }

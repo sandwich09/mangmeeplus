@@ -17,6 +17,7 @@ import type {
   AccountingCounterpartyStatus,
   AccountingTaxInvoiceType,
   AccountingQuotationApprovalStatus,
+  AccountingAdjustmentReasonCode,
   AccountingDocumentLineSummary,
   ResolveTransactionTaxPreviewDto,
   TransactionTaxContext,
@@ -60,6 +61,8 @@ export type DocumentLineRecord = {
   whtAmount: string;
   lineSubtotalAmount: string;
   lineTotalAmount: string;
+  /** Current source-line value after earlier issued credit/debit notes; detail reads only. */
+  correctionBasisAmount?: string;
   taxCategory?: string;
   revenueCategory?: string;
   revenueCategoryId?: string;
@@ -105,6 +108,8 @@ export type DocumentRecord = {
   postingError?: string;
   note?: string;
   internalMemo?: string;
+  adjustmentReasonCode?: AccountingAdjustmentReasonCode;
+  adjustmentReasonText?: string;
   issuedByUserId?: string;
   issuedAt?: Date;
   voidedByUserId?: string;
@@ -229,11 +234,16 @@ export type CreateDocumentInput = {
   sourceDocumentId?: string;
   sourceDocumentType?: string;
   convertedFromDocumentId?: string;
+  idempotencyKey?: string;
+  /** Server-computed only; presentation DTOs must never accept this field. */
+  payloadFingerprint?: string;
   currency?: string;
   vatMode: AccountingVatMode;
   outputTaxCode?: AccountingOutputTaxCode;
   note?: string;
   internalMemo?: string;
+  adjustmentReasonCode?: AccountingAdjustmentReasonCode;
+  adjustmentReasonText?: string;
   lines: CreateDocumentLineInput[];
   createdByUserId: string;
 };
@@ -252,11 +262,17 @@ export type UpdateDocumentInput = {
   outputTaxCode?: AccountingOutputTaxCode | null;
   note?: string | null;
   internalMemo?: string | null;
+  adjustmentReasonCode?: AccountingAdjustmentReasonCode | null;
+  adjustmentReasonText?: string | null;
   lines?: CreateDocumentLineInput[];
 };
 
 export type CreatePaymentInput = {
   companyId: string;
+  /** Stable client retry key. Required when allocating a payment to a document. */
+  idempotencyKey?: string;
+  /** Server-computed canonical fingerprint; never accepted from the HTTP body. */
+  payloadFingerprint?: string;
   branchId?: string;
   direction: AccountingPaymentDirection;
   counterpartyId?: string;
@@ -272,6 +288,27 @@ export type CreatePaymentInput = {
   note?: string;
   allocateToDocumentId?: string;
   createdByUserId: string;
+};
+
+export type RecordSimpleIncomeInput = {
+  companyId: string;
+  idempotencyKey: string;
+  payloadFingerprint: string;
+  branchId?: string;
+  documentDate: string;
+  counterpartyId?: string;
+  vatMode: AccountingVatMode;
+  paymentMethod: AccountingPaymentMethod;
+  note?: string;
+  lines: CreateDocumentLineInput[];
+  createdByUserId: string;
+};
+
+export type RecordSimpleIncomeResult = {
+  invoice: DocumentRecord;
+  payment: PaymentRecord;
+  receipt: DocumentRecord;
+  replayed: boolean;
 };
 
 export type ListDocumentsFilter = {

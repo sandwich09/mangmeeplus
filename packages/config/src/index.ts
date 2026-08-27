@@ -310,7 +310,7 @@ export const apiConfigSchema = baseConfigSchema.extend({
   WATCHDOG_JWT_AUDIENCE: z.string().optional(),
   WATCHDOG_JWT_SECRET_ARN: z.string().optional(),
   JWT_CLOCK_TOLERANCE_SECONDS: z.coerce.number().int().nonnegative().default(30),
-  EMAIL_PROVIDER: z.enum(['disabled', 'ses']).default('disabled'),
+  EMAIL_PROVIDER: z.enum(['disabled', 'local-console', 'ses']).default('disabled'),
   SES_REGION: z.string().optional(),
   SES_FROM_ADDRESS: z.string().email().optional(),
   PASSWORD_LOGIN_MAX_PER_IDENTIFIER: z.coerce.number().int().positive().default(5),
@@ -760,8 +760,11 @@ export function validateProductionConfig(config: Record<string, unknown>): void 
     if (missing('RATE_LIMIT_MAX_REQUESTS')) {
       errors.push('RATE_LIMIT_MAX_REQUESTS is required in production');
     }
+    if (config['EMAIL_PROVIDER'] === 'local-console') {
+      errors.push('EMAIL_PROVIDER=local-console is allowed only when APP_ENV=local');
+    }
     if (config['EMAIL_PROVIDER'] === 'ses') {
-      for (const key of ['SES_REGION', 'SES_FROM_ADDRESS']) {
+      for (const key of ['SES_REGION', 'SES_FROM_ADDRESS', 'WEB_BASE_URL']) {
         if (missing(key)) errors.push(`${key} is required when EMAIL_PROVIDER=ses`);
       }
     }

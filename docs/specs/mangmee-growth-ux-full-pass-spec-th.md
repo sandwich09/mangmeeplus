@@ -1,6 +1,6 @@
 # Growth และ UX รอบเต็ม — Spec P24
 
-สถานะ: DRAFT — เติมเต็มช่องว่างของ P24 ในตาราง spec-coverage (คำสั่ง Owner 2026-08-26: ทุก P ในแผนต้องมี spec); แผนส่งมอบเขียนตอน P24 เข้าคิว implement
+สถานะ: **READY FOR BASELINE/UX CODING** — ไม่รอ P26; pricing/subscription/quota enforcement อยู่นอก scope การรีวิวนี้; แผนส่งมอบอยู่ใน [Four-lane Gap Closure Plan](../plans/mangmee-four-lane-gap-closure-plan-th.md#p24--growthux-full-pass)
 
 ขอบเขตจาก [แผนหลัก P24](../plans/mangmee-brain-2-5-day-priority-plan-th.md): (1) self-service signup/trial + onboarding checklist + lead attribution (2) navigation ตามบทบาท + preference/memory แบบ opt-in ลบได้ (3) full real-device matrix + font/touch-target audit ทุกหน้าลูกค้า
 
@@ -21,6 +21,7 @@
 - หลัง claim สำเร็จ (P11) ผู้ใช้ใหม่เห็น checklist 3 ข้อแรกในแอป (ผูกกับ StartHereHero เดิม): เชื่อม LINE → ถ่ายใบเสร็จใบแรก → เปิดสมุดรายรับ–รายจ่าย; ข้อที่ทำแล้วติ๊กจริงจากข้อมูล (ไม่ใช่ localStorage)
 - Lead attribution: referral/campaign code ไหลจากฟอร์มสมัคร (P10 payload มีแล้ว) → เก็บบน Company record → รายงาน conversion ต่อ campaign แบบนับจำนวน ไม่เก็บ identifier ภายนอกเกินจำเป็น
 - นิยาม "activated" ที่วัดได้: บริษัทที่มีใบเสร็จยืนยันแล้ว ≥1 ภายใน 7 วันหลัง claim — ใช้เป็นตัวเลขเดียวกันทั้ง product/marketing
+- P24 ใช้ cohort/entitlement allowlist เดิมเพื่อเปิด trial แบบควบคุม; **ไม่กำหนดราคา วันหมดอายุ โควตา หรือ enforcement** และห้ามแอบพึ่ง P26 — ถ้าภายหลังมี billing ให้เชื่อมผ่าน entitlement contract แยก
 
 ### 2.2 Navigation ตามบทบาท + preference
 
@@ -33,6 +34,15 @@
 - Audit อัตโนมัติ: font ≥16px เนื้อหา, touch target ≥44px, contrast ผ่าน — เพิ่มเข้า checklist E2E responsive ที่มีอยู่ ไม่สร้างเครื่องมือใหม่
 - ทุกหน้าที่ fail = issue พร้อม severity เข้าคิวแก้ก่อนเปิดวงถัดไป (เกณฑ์เดียวกับ Gate E)
 
+### 2.3.1 P24-2a — Shared-shell targets (scoped desktop-visible correction)
+
+- Scope เฉพาะปุ่มสลับเมนูใน header/sidebar และ notification bell ของ company shell เดิม: ทุกปุ่มที่แสดงต้องมีพื้นที่กดอย่างน้อย 44×44 CSS px ทุก breakpoint.
+- Baseline `32343c1d`: desktop sidebar toggle 32×32, bell ตั้งแต่ `sm` 36×36, header toggle ที่ 640–1023px 40×40; มือถือเล็กมี 44×44 แล้ว. ลบเฉพาะ responsive downsizing และ reuse brand focus-ring convention; ใช้ `outline-hidden` ของ Tailwind 4 เพื่อคง outline ใน forced-colors ตาม [official migration guide](https://tailwindcss.com/docs/upgrade-guide#renamed-outline-utility). ไม่เปลี่ยน handler, route, permission/entitlement หรือ notification mutation.
+- `[desktop-visible]` เป็นข้อยกเว้นเฉพาะสามปุ่มนี้ต่อ desktop pixel-parity (D2/D11) ของ mobile-first spec เดิม ตาม P24 §2.3; ขนาด icon, layout breakpoint และพฤติกรรมเมนูคงเดิม.
+- เพิ่ม assertion ใน `e2e/responsive.spec.ts` เดิมนอก mobile-only describe: พบ control จริงก่อนวัด, 44×44, mobile/tablet/desktop, no horizontal overflow, เปิดด้วย pointer/keyboard และปิด popup/drawer ด้วย Escape โดยไม่เปลี่ยน URL.
+- Desktop collapse/hover ต้องตรวจ rendered width พร้อม initial-state precondition ไม่อาศัย substring ของ CSS class; test fixture สร้าง context/page ใหม่ต่อ test. Chromium forced-colors emulation ต้องพิสูจน์ outline ยังมองเห็นได้ของทั้งสาม control ที่ 390/1280px (ไม่อ้างว่าเป็นการทดสอบ Windows จริง).
+- Phase นี้ไม่รับรอง full P24/device matrix หรือแก้ keyboard focus restoration เดิม; company/branch selectors, ปุ่มภายใน notification panel และหน้าลูกค้าอื่นยังอยู่ใน P24-2 ที่เหลือ. Repo E2E และ real Chrome evidence ต้องผ่านก่อนส่งมอบ.
+
 ## 3. Acceptance
 
 1. ผู้ใช้ใหม่จากสมัครเอง → activated โดยไม่มีมนุษย์ช่วย ≥ เป้าที่ Owner ตั้งต่อ cohort (ตัวเลขตั้งหลังมี baseline — ห้ามตั้งจากความรู้สึก)
@@ -40,7 +50,6 @@
 3. matrix + audit ผ่านทุก journey หลักบนอุปกรณ์จริงอย่างน้อย 1 เครื่องต่อกลุ่ม พร้อมหลักฐานรุ่น/ผล
 4. preference ลบแล้วหายจริงทุก surface และไม่กระทบตัวเลขใด ๆ
 
-## 4. คำถาม Owner (ตอบตอนเข้าคิว)
+## 4. คำถาม Owner (ไม่ block baseline)
 
-1. นิยาม trial: ฟรีตลอดจนชนโควตา P26 หรือมีวันหมดอายุ?
-2. เป้า activation rate แรกที่ยอมรับได้ (หลังเห็น baseline cohort แรก)?
+1. เป้า activation rate แรกที่ยอมรับได้ (ตั้งหลังเห็น baseline cohort แรก; ไม่ block instrumentation/checklist/device audit)

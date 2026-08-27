@@ -25,6 +25,7 @@ import {
   partnerLifecycleTransition,
   setPartnerFeatures,
   setPartnerAiModel,
+  setPartnerOcrConfig,
   setPartnerVatRegistration,
   getPartnerAiUsage,
   getPartnerMembers,
@@ -43,7 +44,13 @@ import {
   budgetBarWidth,
   budgetPercent,
   budgetTextClass,
+  OCR_CONFIG_STALE_MESSAGE,
   parseBudgetBahtInput,
+  parseOcrMonthlyLimitInput,
+  reloadAfterOcrConfigConflict,
+  ocrRemaining,
+  ocrUnsavedToggleMessage,
+  ocrUsageTrackingNote,
   satangToBaht,
   satangToBahtInput,
 } from './ai-budget.logic';
@@ -58,6 +65,7 @@ import {
   disableBlockForChange,
   diffEntitlements,
   entitlementEnabled,
+  featurePackageEditingNotice,
   filterMenuCards,
   isAmbiguousCommandFailure,
   isNormalizationPending,
@@ -717,7 +725,7 @@ function PackageMenuSection({
             </span>
           </div>
           <p className="mt-2 text-xs leading-5 text-gray-500">
-            ตัวเลือกที่ต้องปิดฟีเจอร์ซึ่งระบบยังเตรียมไม่เสร็จจะกดไม่ได้ แต่การเปิดเพิ่มยังทำได้ตามปกติ
+            {featurePackageEditingNotice(controlsLocked)}
           </p>
         </div>
 
@@ -1115,12 +1123,18 @@ function AiUsageBudgetSection({
   const [usageError, setUsageError] = useState<string | null>(null);
   const [budgetInput, setBudgetInput] = useState('');
   const [budgetLoading, setBudgetLoading] = useState(false);
+  const [ocrEnabled, setOcrEnabled] = useState(true);
+  const [ocrLimitInput, setOcrLimitInput] = useState('');
+  const [ocrLoading, setOcrLoading] = useState(false);
+  const { confirm, confirmDialog } = useConfirm();
 
   const loadUsage = async () => {
     try {
       const result = await getPartnerAiUsage(companyId);
       setUsage(result);
       setBudgetInput(result.budget.overrideSatang === null ? '' : satangToBahtInput(result.budget.overrideSatang));
+      setOcrEnabled(result.ocr.config.enabled);
+      setOcrLimitInput(result.ocr.config.monthlyLimit === null ? '' : String(result.ocr.config.monthlyLimit));
       setUsageError(null);
     } catch (err) {
       const e = err as Error & { status?: number };
@@ -1165,11 +1179,74 @@ function AiUsageBudgetSection({
 
   const spendSatang = usage?.current?.costSatang ?? 0;
   const percent = usage ? budgetPercent(spendSatang, usage.budget.effectiveSatang) : 0;
+  const savedOcrEnabled = usage?.ocr.config.enabled ?? true;
+  const ocrTogglePendingMessage = ocrUnsavedToggleMessage(savedOcrEnabled, ocrEnabled);
+
+  const handleOcrSave = async () => {
+    if (!usage) return;
+    const parsed = parseOcrMonthlyLimitInput(ocrLimitInput);
+    if (!parsed.ok) {
+      showToast(parsed.message, 'error');
+      return;
+    }
+    if (usage?.ocr.config.enabled && !ocrEnabled) {
+      const accepted = await confirm({
+        title: 'ยืนยันปิด OCR ของบริษัทนี้',
+        message: 'หลังบันทึก AI จะไม่เริ่มอ่านใบเสร็จจากเว็บ/LINE หรือรูป statement ใหม่ คำขอที่เริ่มไปแล้วจะทำจนจบ และผู้ใช้ยังอัปโหลด เปิดเอกสารเดิม และกรอกข้อมูลเองได้',
+        confirmLabel: 'ปิด OCR',
+        cancelLabel: 'ยังไม่ปิด',
+      });
+      if (!accepted) return;
+    }
+    if (
+      ocrEnabled
+      && parsed.monthlyLimit !== null
+      && parsed.monthlyLimit <= (usage?.ocr.current.usedCount ?? 0)
+      && parsed.monthlyLimit !== usage?.ocr.config.monthlyLimit
+    ) {
+      const accepted = await confirm({
+        title: 'ยืนยันจำกัด OCR ตั้งแต่ตอนนี้',
+        message: `เดือนนี้อ่านไปแล้ว ${(usage?.ocr.current.usedCount ?? 0).toLocaleString('th-TH')} ครั้ง หากตั้งไว้ ${parsed.monthlyLimit.toLocaleString('th-TH')} ครั้ง ระบบจะไม่อ่านเอกสารใหม่จนถึงเดือนถัดไป`,
+        confirmLabel: 'ยืนยันจำนวนนี้',
+        cancelLabel: 'กลับไปแก้',
+      });
+      if (!accepted) return;
+    }
+    setOcrLoading(true);
+    try {
+      const config = await setPartnerOcrConfig(companyId, {
+        enabled: ocrEnabled,
+        monthlyLimit: parsed.monthlyLimit,
+        expectedVersion: usage.ocr.config.version,
+      });
+      setUsage((previous) => previous ? { ...previous, ocr: { ...previous.ocr, config } } : previous);
+      setOcrEnabled(config.enabled);
+      setOcrLimitInput(config.monthlyLimit === null ? '' : String(config.monthlyLimit));
+      showToast('บันทึกการตั้งค่า OCR แล้ว', 'success');
+    } catch (err) {
+      if (await reloadAfterOcrConfigConflict(err, loadUsage)) {
+        showToast(OCR_CONFIG_STALE_MESSAGE, 'error');
+      } else {
+        showToast(apiErrorMessage(err), 'error');
+      }
+    } finally {
+      setOcrLoading(false);
+    }
+  };
 
   return (
     <SectionCard title="AI Usage & Budget">
       {usageError ? (
-        <p className="text-sm text-red-600">{usageError}</p>
+        <div className="space-y-3 rounded-xl border border-red-200 bg-red-50 p-4">
+          <p className="text-sm leading-6 text-red-800">{usageError}</p>
+          <button
+            type="button"
+            className="mangmee-btn mangmee-btn-secondary min-h-11 text-base"
+            onClick={() => { setUsageError(null); void loadUsage(); }}
+          >
+            ลองโหลดข้อมูลอีกครั้ง
+          </button>
+        </div>
       ) : !usage ? (
         <div className="h-16 rounded border border-gray-100 animate-pulse" />
       ) : (
@@ -1260,6 +1337,130 @@ function AiUsageBudgetSection({
             Leave empty to inherit the platform default {satangToBaht(usage.budget.defaultSatang)}.
             Platform ceiling {satangToBaht(usage.budget.ceilingSatang)}.
           </p>
+
+          <section className="space-y-4 border-t-2 border-gray-100 pt-5" aria-labelledby="ocr-governance-title">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h3 id="ocr-governance-title" className="text-base font-bold text-gray-900">ควบคุมการอ่านเอกสารด้วย OCR</h3>
+                <p className="mt-1 text-sm leading-6 text-gray-600">
+                  ตั้งจำนวนครั้งต่อเดือนสำหรับบริษัทนี้โดยเฉพาะ ครอบคลุมใบเสร็จจากเว็บ/LINE และรูป statement
+                </p>
+              </div>
+              <div className="flex min-h-12 items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 px-3">
+                <EntitlementSwitch
+                  checked={ocrEnabled}
+                  disabled={ocrLoading || fieldsLocked}
+                  label="เปิดให้ AI อ่านเอกสาร"
+                  onClick={() => setOcrEnabled((value) => !value)}
+                />
+                <div>
+                  <p className="text-sm font-bold text-gray-900">เปิดให้ AI อ่านเอกสาร</p>
+                  <p className={`text-xs font-semibold ${savedOcrEnabled ? 'text-green-700' : 'text-red-700'}`}>
+                    {savedOcrEnabled ? 'เปิดใช้งานอยู่' : 'ปิดใช้งานอยู่'}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {ocrTogglePendingMessage && (
+              <p role="status" className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold leading-6 text-blue-900">
+                {ocrTogglePendingMessage}
+              </p>
+            )}
+
+            {!savedOcrEnabled && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
+                OCR จะไม่อ่านเอกสารใหม่ แต่ผู้ใช้ยังอัปโหลด เปิดเอกสารเดิม และกรอกข้อมูลเองได้ตามปกติ
+              </div>
+            )}
+
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-4">
+                <p className="text-sm font-medium text-blue-800">อ่านแล้วเดือนนี้</p>
+                <p className="mt-1 text-3xl font-bold tabular-nums text-blue-950">
+                  {usage.ocr.current.usedCount.toLocaleString('th-TH')}
+                  <span className="ml-1 text-base font-medium">ครั้ง</span>
+                </p>
+                <p className="mt-1 text-xs text-blue-700">{formatThaiMonth(usage.ocr.current.monthKey)}</p>
+              </div>
+              <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-4">
+                <p className="text-sm font-medium text-green-800">คงเหลือ</p>
+                <p className="mt-1 text-3xl font-bold tabular-nums text-green-950">
+                  {ocrRemaining(usage.ocr.current.usedCount, usage.ocr.config.monthlyLimit)?.toLocaleString('th-TH') ?? 'ไม่จำกัด'}
+                </p>
+                <p className="mt-1 text-xs text-green-700">รีเซ็ตเมื่อขึ้นเดือนใหม่ตามเวลาไทย</p>
+              </div>
+              <div className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-4">
+                <p className="text-sm font-medium text-violet-800">ใบเสร็จที่อัปโหลดสำเร็จ</p>
+                <p className="mt-1 text-3xl font-bold tabular-nums text-violet-950">
+                  {usage.ocr.current.uploadedReceiptDocumentCount.toLocaleString('th-TH')}
+                  <span className="ml-1 text-base font-medium">ฉบับ</span>
+                </p>
+                <p className="mt-1 text-xs text-violet-700">ไม่รวมลายเซ็น ไฟล์ที่ระบบสร้าง และหลักฐานจ่ายเงิน</p>
+              </div>
+            </div>
+
+            {ocrUsageTrackingNote(usage.ocr.current.monthKey) && (
+              <p className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-900">
+                {ocrUsageTrackingNote(usage.ocr.current.monthKey)}
+              </p>
+            )}
+
+            <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
+              <p className="text-sm font-bold text-gray-800">อ่านจากช่องทางไหนเดือนนี้</p>
+              <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                {usage.ocr.current.sourceCounts.map((source) => (
+                  <div key={source.sourceRoute} className="flex min-h-11 items-center justify-between rounded-lg bg-gray-50 px-3 text-sm">
+                    <span className="text-gray-600">
+                      {source.sourceRoute === 'receipt-ocr-web'
+                        ? 'ใบเสร็จบนเว็บ'
+                        : source.sourceRoute === 'receipt-ocr-line'
+                          ? 'รูปจาก LINE ที่ AI ตรวจ'
+                          : 'รูป Statement'}
+                    </span>
+                    <strong className="tabular-nums text-gray-900">{source.reads.toLocaleString('th-TH')}</strong>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-3 text-sm text-gray-500">
+                เดือนก่อน ({formatThaiMonth(usage.ocr.previous.monthKey)}): อ่าน {usage.ocr.previous.usedCount.toLocaleString('th-TH')} ครั้ง ·
+                ใบเสร็จอัปโหลด {usage.ocr.previous.uploadedReceiptDocumentCount.toLocaleString('th-TH')} ฉบับ
+              </p>
+            </div>
+
+            <div className="grid gap-3 border-t border-gray-100 pt-4 sm:grid-cols-[1fr_auto] sm:items-end">
+              <div>
+                <label className="mb-1 block text-sm font-bold text-gray-700" htmlFor="ocr-monthly-limit">
+                  จำนวน OCR สูงสุดต่อเดือน
+                </label>
+                <input
+                  id="ocr-monthly-limit"
+                  className={`${inputClass} min-h-12 text-base`}
+                  type="number"
+                  min={1}
+                  max={1_000_000}
+                  step={1}
+                  inputMode="numeric"
+                  placeholder="เว้นว่าง = ไม่จำกัด"
+                  value={ocrLimitInput}
+                  onChange={(event) => setOcrLimitInput(event.target.value)}
+                  disabled={ocrLoading || fieldsLocked}
+                />
+                <p className="mt-1 text-xs leading-5 text-gray-500">
+                  นับทุกครั้งที่ระบบเริ่มส่งเอกสารให้ OCR แม้อ่านไม่สำเร็จ เพราะผู้ให้บริการอาจคิดต้นทุนแล้ว
+                </p>
+              </div>
+              <button
+                type="button"
+                className={`${btnPrimary} min-h-12 min-w-32 text-base`}
+                disabled={ocrLoading || fieldsLocked}
+                onClick={() => void handleOcrSave()}
+              >
+                {ocrLoading ? 'กำลังบันทึก…' : 'บันทึก OCR'}
+              </button>
+            </div>
+          </section>
+          {confirmDialog}
         </>
       )}
     </SectionCard>
@@ -1655,7 +1856,7 @@ export default function PartnerDetailPage({ companyId }: { companyId: string }) 
         </SectionCard>
 
         {/* AI spend meter + monthly budget override */}
-        <AiUsageBudgetSection companyId={companyId} fieldsLocked={fieldsLocked} showToast={showToast} />
+        <AiUsageBudgetSection key={companyId} companyId={companyId} fieldsLocked={fieldsLocked} showToast={showToast} />
 
         {/* LINE context health */}
         <SectionCard title="LINE Context">

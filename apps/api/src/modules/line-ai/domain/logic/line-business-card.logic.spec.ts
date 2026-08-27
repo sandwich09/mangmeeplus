@@ -17,9 +17,28 @@ const response = (cards?: NonNullable<LineAiTurnResponse['presentation']>['cards
 
 describe('LINE business answer card renderer', () => {
   it('returns a fallback card when presentation is absent', () => {
-    const message = buildLineBusinessAnswerMessage(response(), 'plain fallback', 'https://app.example.com', 'c1');
+    const message = buildLineBusinessAnswerMessage({ ...response(), toolsInvoked: ['expense.list_recent'] }, 'plain fallback', 'https://app.example.com', 'c1');
     assert.equal(message.type, 'flex');
     assert.match(JSON.stringify(message), /plain fallback/);
+    assert.equal((message.contents as any).header.contents[0].text, 'น้องมั่งมีสรุปค่าใช้จ่ายให้นะคะ');
+  });
+
+  it('uses trusted contextual headings and preserves explicit titles', () => {
+    for (const [tools, expected] of [
+      [['expense.list_recent'], 'น้องมั่งมีสรุปค่าใช้จ่ายให้นะคะ'],
+      [['expense.list_recent', 'expense.get_detail'], 'น้องมั่งมีสรุปค่าใช้จ่ายให้นะคะ'],
+      [['sales.get_sales_summary'], 'น้องมั่งมีสรุปยอดขายให้นะคะ'],
+      [['expense.list_recent', 'sales.get_sales_summary'], 'น้องมั่งมีสรุปให้นะคะ'],
+      [['unknown.read'], 'น้องมั่งมีสรุปให้นะคะ'],
+      [[], 'น้องมั่งมีสรุปให้นะคะ'],
+    ] as const) {
+      const result = buildLineBusinessAnswerMessage({ ...response([{ text: 'ข้อมูล 7 รายการ', title: '  ' }]), toolsInvoked: [...tools] }, 'fallback', undefined, 'c1');
+      assert.equal(result.type, 'flex');
+      assert.equal((result.contents as any).header.contents[0].text, expected);
+    }
+    const explicit = buildLineBusinessAnswerMessage(response([{ title: 'สรุปปิดร้าน', text: 'ข้อมูล' }]), 'fallback', undefined, 'c1');
+    assert.equal(explicit.type, 'flex');
+    assert.equal((explicit.contents as any).header.contents[0].text, 'สรุปปิดร้าน');
   });
 
   it('fails closed to a trusted fallback card when a refused response unexpectedly carries cards', () => {
@@ -28,6 +47,24 @@ describe('LINE business answer card renderer', () => {
     assert.equal(message.type, 'flex');
     assert.match(JSON.stringify(message), /ไม่มีสิทธิ์/);
     assert.doesNotMatch(JSON.stringify(message), /ข้อมูลที่ห้ามแสดง/);
+    assert.equal((message.contents as any).header.contents[0].text, 'น้องมั่งมีแจ้งให้ทราบนะคะ');
+  });
+
+  it('does not infer capture success from intent when no tool or a failed tool produced no presentation', () => {
+    const errorReply = '⏳ เกิดข้อผิดพลาดชั่วคราว กรุณาลองใหม่อีกครั้งนะคะ';
+    const capture: LineAiTurnResponse = { ...response(), intent: 'capture_accounting_evidence', refused: false, toolsInvoked: [], replyText: errorReply };
+    const failed: LineAiTurnResponse = { ...capture, toolsInvoked: ['accounting.capture_receipt_evidence'], toolCalls: [{ name: 'accounting.capture_receipt_evidence', status: 'error', durationMs: 1, errorCode: 'TOOL_TIMEOUT' }] };
+    for (const result of [capture, failed]) {
+      const message = buildLineBusinessAnswerMessage(result, errorReply, undefined, 'c1');
+      assert.equal(message.type, 'flex');
+      assert.equal((message.contents as any).header.contents[0].text, 'น้องมั่งมีตอบให้นะคะ');
+      assert.equal((message.contents as any).body.contents[0].text, errorReply);
+      assert.doesNotMatch((message.contents as any).header.contents[0].text, /รับข้อมูลแล้ว|บันทึก.*แล้ว|สำเร็จ/);
+    }
+    const explicit = buildLineBusinessAnswerMessage({ ...failed, presentation: { kind: 'answer_cards', cards: [{ title: 'กรุณาตรวจสอบข้อมูล', text: errorReply }] } }, errorReply, undefined, 'c1');
+    assert.equal(explicit.type, 'flex');
+    assert.equal((explicit.contents as any).header.contents[0].text, 'กรุณาตรวจสอบข้อมูล');
+    assert.equal((explicit.contents as any).body.contents[0].text, errorReply);
   });
 
   it('moves safe tenant URLs from deterministic reply text into Flex buttons', () => {

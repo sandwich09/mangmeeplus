@@ -5,6 +5,7 @@ import { LineLoginVerifierAdapter } from '../../infrastructure/line-login-verifi
 import { IssueTokenUseCase, type AuthTokensResult } from './issue-token.use-case';
 import { AuditService } from '../../../audit/application/audit.service';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
+import { observeCustomerJourney } from '../../../../common/observability/customer-journey-audit';
 
 export type ExchangeLineTokenResult =
   | ({ linked: true } & AuthTokensResult)
@@ -23,6 +24,17 @@ export class ExchangeLineTokenUseCase {
   //           but LINE token is verified using the server-configured channelId via LineLoginVerifierAdapter
   async execute(idToken: string, _channelId: string): Promise<ExchangeLineTokenResult> {
     const requestId = randomUUID();
+    return observeCustomerJourney(
+      this.audit,
+      { key: 'line-login', requestId, targetType: 'external_identity' },
+      () => this.exchange(idToken, requestId),
+      (result) => result.linked
+        ? { outcome: 'linked' }
+        : { outcome: 'unlinked', failureClass: 'identity_unlinked' },
+    );
+  }
+
+  private async exchange(idToken: string, requestId: string): Promise<ExchangeLineTokenResult> {
     let lineUserId: string;
     try {
       const verified = await this.lineVerifier.verify(idToken);

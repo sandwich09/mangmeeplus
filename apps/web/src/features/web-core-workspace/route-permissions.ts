@@ -51,6 +51,11 @@ export const ROUTE_PERMISSION_RULES: readonly RoutePermissionRule[] = [
     ],
   },
   { path: '/journal', anyOf: ['ledger.journal.read'] },
+  {
+    path: '/sales-documents/record-income',
+    anyOf: ['accounting.document.create', 'accounting.invoice.create'],
+  },
+  { path: '/income-expense-ledger', anyOf: ['accounting.document.read', 'expense.read'] },
   { path: '/reports', anyOf: ['report.catalog.read', 'report.snapshot.read'] },
   { path: '/ai-suggestions', anyOf: ['ai.suggestion.read', 'ai.suggestion.read_own'] },
   {

@@ -58,6 +58,30 @@
       }
     },
     {
+      "Sid": "RuntimeMetricFilters",
+      "Effect": "Allow",
+      "Action": [
+        "logs:PutMetricFilter",
+        "logs:DescribeMetricFilters",
+        "logs:DeleteMetricFilter"
+      ],
+      "Resource": [
+        "arn:aws:logs:ap-southeast-1:<ACCOUNT_ID>:log-group:/ecs/watchdog-bms-uat-api-web:*",
+        "arn:aws:logs:ap-southeast-1:<ACCOUNT_ID>:log-group:/ecs/watchdog-bms-uat-ai-gateway:*",
+        "arn:aws:logs:ap-southeast-1:<ACCOUNT_ID>:log-group:/ecs/watchdog-bms-prod-api-web:*",
+        "arn:aws:logs:ap-southeast-1:<ACCOUNT_ID>:log-group:/ecs/watchdog-bms-prod-ai-gateway:*"
+      ]
+    },
+    {
+      "Sid": "CustomerJourneyDashboard",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:PutDashboard",
+        "cloudwatch:GetDashboard"
+      ],
+      "Resource": "arn:aws:cloudwatch::<ACCOUNT_ID>:dashboard/watchdog-bms-*-customer-journeys"
+    },
+    {
       "Sid": "EcrLifecycle",
       "Effect": "Allow",
       "Action": [

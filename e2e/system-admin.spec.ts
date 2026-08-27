@@ -1,4 +1,6 @@
 import { test, expect } from './harness/fixtures';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { PrismaClient } from '../apps/api/src/generated/prisma/client';
 import {
   COMPANY_ID,
   SEED_USERS,
@@ -52,6 +54,55 @@ test.describe('SYS — system admin', () => {
     await page.getByRole('option', { name: 'ค้าปลีก (Retail)', exact: true }).click();
     await page.getByRole('button', { name: /Create Onboarding/i }).click();
     await expect(page.getByText(/Handoff Package|temporary password|Company/i).first()).toBeVisible();
+  });
+
+  test('SYS-04 @p1 platform admin completes a reversible sales entitlement off/on/off cycle', async ({ page }) => {
+    const databaseUrl = process.env['DATABASE_URL'];
+    test.skip(!databaseUrl, 'DATABASE_URL is required for the reversible entitlement fixture');
+    const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
+    const companyId = unique('e2e-entitlement-cycle').toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    try {
+      await client.company.create({ data: { id: companyId, name: 'E2E Entitlement Cycle' } });
+      await client.companyEntitlementSet.create({ data: { companyId } });
+      await client.companyEntitlementNormalization.create({ data: {
+        companyId, status: 'COMPLETED', snapshotHash: companyId, runId: companyId,
+        normalizerVersion: 1, cohortKind: 'EXPLICIT', completedAt: new Date(),
+      } });
+      await client.companyFeatureEntitlement.create({ data: { companyId, featureKey: 'sales_documents', enabled: true } });
+
+      await page.setViewportSize({ width: 1280, height: 900 });
+      await login(page, SEED_USERS.systemAdmin.username, SEED_USERS.systemAdmin.password);
+      await page.goto(`/system/partners/${companyId}`);
+      await expect(page.getByRole('heading', { name: /E2E Entitlement Cycle/i })).toBeVisible();
+
+      const salesSwitch = () => page.locator('article').filter({ hasText: 'เอกสารขายและรับชำระ' }).first().getByRole('switch');
+      const saveCycle = async (enabled: boolean) => {
+        await expect(salesSwitch()).toHaveAttribute('aria-checked', String(!enabled));
+        await salesSwitch().click();
+        await page.getByRole('button', { name: 'ตรวจสอบและบันทึก' }).click();
+        await page.getByRole('button', { name: 'ยืนยันและบันทึก' }).click();
+        await expect(salesSwitch()).toHaveAttribute('aria-checked', String(enabled));
+      };
+
+      await saveCycle(false);
+      await saveCycle(true);
+      await saveCycle(false);
+      await page.reload();
+      await expect(salesSwitch()).toHaveAttribute('aria-checked', 'false');
+      const desktopOverflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      expect(desktopOverflow).toBeLessThanOrEqual(1);
+      await page.screenshot({ path: 'docs/evidence/p27-phase6/platform-admin-entitlement-off-desktop.png', fullPage: true });
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.reload();
+      await expect(salesSwitch()).toHaveAttribute('aria-checked', 'false');
+      const mobileOverflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      expect(mobileOverflow).toBeLessThanOrEqual(1);
+      await page.screenshot({ path: 'docs/evidence/p27-phase6/platform-admin-entitlement-off-mobile.png', fullPage: true });
+      await expectNoClientError(page);
+    } finally {
+      await client.company.deleteMany({ where: { id: companyId } }).catch(() => {});
+      await client.$disconnect();
+    }
   });
 
   test('SYS-05 @p1 seeded owner cannot reach system partner scope', async ({ authedPage }) => {

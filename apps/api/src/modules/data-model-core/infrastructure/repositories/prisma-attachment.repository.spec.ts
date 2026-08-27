@@ -179,15 +179,16 @@ describe('PrismaAttachmentRepository.markDeleted', () => {
 
 describe('PrismaAttachmentRepository.linkToTarget', () => {
   function setup(input: { attachment?: object | null; target?: object | null; conflictingLink?: object | null } = {}) {
-    const attachmentObject = { findFirst: mock.fn(async () => input.attachment === undefined ? { id: 'att-1' } : input.attachment) };
-    const expenseRecord = { findFirst: mock.fn(async () => input.target === undefined ? { id: 'expense-1' } : input.target) };
+    const attachmentObject = { findFirst: mock.fn(async () => input.attachment === undefined ? { id: 'att-1', branchId: 'branch-1' } : input.attachment) };
+    const expenseRecord = { findFirst: mock.fn(async () => input.target === undefined ? { id: 'expense-1', branchId: 'branch-1' } : input.target) };
+    const accountingDocument = { findFirst: mock.fn(async () => input.target === undefined ? { id: 'invoice-1', branchId: 'branch-1' } : input.target) };
     const attachmentLink = {
       findFirst: mock.fn(async () => input.conflictingLink ?? null),
       create: mock.fn(async ({ data }: any) => ({ id: 'link-1', ...data, createdAt: new Date('2026-07-28T00:00:00Z') })),
     };
-    const tx = { attachmentObject, expenseRecord, attachmentLink };
+    const tx = { attachmentObject, expenseRecord, accountingDocument, attachmentLink };
     const client = { $transaction: (fn: (value: typeof tx) => unknown) => fn(tx) };
-    return { repo: new PrismaAttachmentRepository({ client } as any), attachmentObject, expenseRecord, attachmentLink };
+    return { repo: new PrismaAttachmentRepository({ client } as any), attachmentObject, expenseRecord, accountingDocument, attachmentLink };
   }
 
   it('validates ACTIVE attachment, tenant target, and owner inside one transaction', async () => {
@@ -220,6 +221,34 @@ describe('PrismaAttachmentRepository.linkToTarget', () => {
       purpose: 'expense.receipt.supporting',
       linkedByUserId: 'user-1',
     }), /not found/i);
+    assert.equal(attachmentLink.create.mock.callCount(), 0);
+  });
+
+  it('validates an accounting-document target in the same tenant and owner scope', async () => {
+    const { repo, expenseRecord, accountingDocument, attachmentLink } = setup();
+    await repo.linkToTarget({
+      companyId: 'co-1', attachmentId: 'att-1', targetType: 'accounting.document',
+      targetId: 'invoice-1', purpose: 'accounting.document.supporting',
+      linkedByUserId: 'user-1', targetOwnerUserId: 'user-1', branchIds: ['branch-1'],
+    });
+    assert.equal(expenseRecord.findFirst.mock.callCount(), 0);
+    assert.deepEqual((accountingDocument.findFirst.mock.calls as any[])[0]?.arguments[0].where, {
+      id: 'invoice-1', companyId: 'co-1', createdByUserId: 'user-1',
+      OR: [{ branchId: { in: ['branch-1'] } }, { branchId: null }],
+    });
+    assert.equal(attachmentLink.create.mock.callCount(), 1);
+  });
+
+  it('rejects an accounting attachment from a different branch', async () => {
+    const { repo, attachmentLink } = setup({
+      attachment: { id: 'att-1', branchId: 'branch-2' },
+      target: { id: 'invoice-1', branchId: 'branch-1' },
+    });
+    await assert.rejects(() => repo.linkToTarget({
+      companyId: 'co-1', attachmentId: 'att-1', targetType: 'accounting.document',
+      targetId: 'invoice-1', purpose: 'accounting.document.supporting', linkedByUserId: 'user-1',
+      branchIds: ['branch-1'],
+    }), /same branch/i);
     assert.equal(attachmentLink.create.mock.callCount(), 0);
   });
 

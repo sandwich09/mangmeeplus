@@ -21,10 +21,13 @@ import {
   listCounterparties,
   listDocuments,
   listPayments,
+  prepareAccountingDocumentPaymentAttempt,
   rejectQuotation,
   submitQuotationApproval,
   updateDocument,
+  uploadAccountingDocumentSupporting,
   voidDocument,
+  type AccountingDocumentPaymentAttempt,
 } from './accounting-documents.api';
 import {
   DOCUMENT_STATUS_LABELS,
@@ -40,7 +43,6 @@ import type {
   AccountingVatMode,
   CounterpartySummary,
   DocumentDetail,
-  DocumentLineSummary,
   DocumentSummary,
   PaymentSummary,
 } from './accounting-documents.model';
@@ -48,12 +50,19 @@ import { todayCivilDate } from '@watchdog-bms/contracts';
 import { useToast } from '@/common/components/toast';
 import { useInputPrompt } from '@/common/components/modal';
 import { LoadingState } from '@/common/components/state/LoadingState';
+import { CorrectionNoteSection } from './CorrectionNoteSection';
+import { canCreateIncomeInvoice, canRecordReceivedIncome } from './income-record.logic';
+import { useSalesRootAvailability } from './sales-root-availability';
 
 const inputClass = 'mangmee-input';
 const btnClass = 'mangmee-btn mangmee-btn-primary disabled:cursor-not-allowed disabled:opacity-50';
 const ghostClass = 'mangmee-btn mangmee-btn-secondary disabled:cursor-not-allowed disabled:opacity-50';
 const dangerClass = 'mangmee-btn mangmee-btn-danger disabled:cursor-not-allowed disabled:opacity-50';
 const DOCUMENT_TYPES: AccountingDocumentType[] = ['QUOTATION', 'INVOICE', 'BILLING_NOTE', 'RECEIPT', 'TAX_INVOICE', 'CREDIT_NOTE', 'DEBIT_NOTE'];
+const POSTING_STATUS_LABELS: Record<string, string> = {
+  not_required: 'ไม่ต้องลงบัญชี', pending: 'รอลงบัญชี', posted: 'ลงบัญชีแล้ว',
+  posting_error: 'ลงบัญชีไม่สำเร็จ', reversed: 'กลับรายการแล้ว',
+};
 
 function documentPermission(documentType: AccountingDocumentType, action: 'read' | 'create' | 'update' | 'issue' | 'void') {
   return `accounting.${documentType.toLowerCase()}.${action}`;
@@ -120,19 +129,6 @@ function ErrorBanner({ message }: { message: string }) {
   return <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{message}</div>;
 }
 
-function copyLines(lines: DocumentLineSummary[]) {
-  return lines.map((line) => ({
-    lineNumber: line.lineNumber,
-    description: line.description,
-    quantity: line.quantity,
-    unitPrice: line.unitPrice,
-    discountAmount: line.discountAmount,
-    vatRate: line.vatRate,
-    taxCodeDefinitionId: line.taxSnapshot?.taxCodeDefinitionId ?? undefined,
-    externalTaxCode: line.taxSnapshot?.externalTaxCode ?? undefined,
-  }));
-}
-
 type LinkedTaxSelection = Pick<TaxCodeDefinitionDto, 'id' | 'externalCode' | 'rate' | 'calculationMethod' | 'treatment'>;
 
 function linkedTaxInvoiceVatMode(selections: LinkedTaxSelection[]): AccountingVatMode | null {
@@ -190,28 +186,28 @@ function DocumentList({
   return (
     <section className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-bold text-gray-900">Accounting documents</h1>
+        <h1 className="text-xl font-bold text-gray-900">เอกสารบัญชี</h1>
         <ThemedSelect className={`${inputClass} max-w-xs`} value={filterType} onChange={(e) => onFilterTypeChange(e.target.value as AccountingDocumentType | '')}>
-          <option value="">All types</option>
+          <option value="">เอกสารทุกประเภท</option>
           {DOCUMENT_TYPES.map((type) => <option key={type} value={type}>{DOCUMENT_TYPE_LABELS[type]}</option>)}
         </ThemedSelect>
       </div>
       {error && <ErrorBanner message={error} />}
       <div className="mangmee-card overflow-hidden">
         {loading ? <LoadingState label="กำลังโหลด..." />
-          : docs.length === 0 ? <p className="px-4 py-8 text-center text-sm text-gray-500">No documents</p>
+          : docs.length === 0 ? <p className="px-4 py-8 text-center text-sm text-gray-500">ยังไม่มีเอกสาร</p>
             : <>
         <div className="hidden md:block" data-testid="accounting-documents-table">
         <div className="mangmee-table-scroll">
           <table className="mangmee-table min-w-full">
           <thead>
             <tr>
-              {['Type', 'Number', 'Status', 'Date', 'Total', 'Payment', 'Posting'].map((header) => <th key={header}>{header}</th>)}
+              {['ประเภท', 'เลขที่', 'สถานะ', 'วันที่', 'ยอดรวม', 'การชำระ', 'การลงบัญชี'].map((header) => <th key={header}>{header}</th>)}
             </tr>
           </thead>
           <tbody>
             {loading && <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-gray-500">กำลังโหลด...</td></tr>}
-            {!loading && docs.length === 0 && <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-gray-500">No documents</td></tr>}
+            {!loading && docs.length === 0 && <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-gray-500">ยังไม่มีเอกสาร</td></tr>}
             {!loading && docs.map((doc) => (
               <tr key={doc.id} className={`cursor-pointer ${selectedId === doc.id ? 'bg-brand-25' : ''}`} onClick={() => onSelect(doc.id)}>
                 <td className="px-4 py-3 text-sm text-gray-900">{DOCUMENT_TYPE_LABELS[doc.documentType]}</td>
@@ -318,10 +314,10 @@ function CreateDocumentForm({ companyId, onCreated, allowedDocumentTypes }: { co
 
   return (
     <form onSubmit={submit} className="mangmee-card space-y-3 p-4">
-      <h2 className="text-base font-bold text-gray-900">New document</h2>
+      <h2 className="text-base font-bold text-gray-900">สร้างเอกสารใหม่</h2>
       {error && <ErrorBanner message={error} />}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <ThemedSelect aria-label="Document type" className={inputClass} value={docType} onChange={(e) => changeDocumentType(e.target.value as AccountingDocumentType)}>
+        <ThemedSelect aria-label="ประเภทเอกสาร" className={inputClass} value={docType} onChange={(e) => changeDocumentType(e.target.value as AccountingDocumentType)}>
           {docTypes.map((type) => <option key={type} value={type}>{DOCUMENT_TYPE_LABELS[type]}</option>)}
         </ThemedSelect>
         <ThemedDate className={inputClass} value={documentDate} onChange={(e) => setDocumentDate(e.target.value)} />
@@ -329,12 +325,12 @@ function CreateDocumentForm({ companyId, onCreated, allowedDocumentTypes }: { co
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <ThemedSelect className={inputClass} value={vatMode} onChange={(e) => setVatMode(e.target.value as AccountingVatMode)}>
-          {(!outputTaxCode || outputTaxCode === 'O0') && <option value="NO_VAT">No VAT</option>}
-          {(!outputTaxCode || outputTaxCode === 'O7') && <option value="VAT_EXCLUDED">VAT excluded</option>}
-          {(!outputTaxCode || outputTaxCode === 'O7') && <option value="VAT_INCLUDED">VAT included</option>}
-          {(!outputTaxCode || outputTaxCode === 'OX') && <option value="EXEMPT">VAT exempt</option>}
+          {(!outputTaxCode || outputTaxCode === 'O0') && <option value="NO_VAT">ไม่มี VAT</option>}
+          {(!outputTaxCode || outputTaxCode === 'O7') && <option value="VAT_EXCLUDED">ราคายังไม่รวม VAT</option>}
+          {(!outputTaxCode || outputTaxCode === 'O7') && <option value="VAT_INCLUDED">ราคารวม VAT แล้ว</option>}
+          {(!outputTaxCode || outputTaxCode === 'OX') && <option value="EXEMPT">ยกเว้น VAT</option>}
         </ThemedSelect>
-        <input className={inputClass} type="number" min="0.0001" step="0.0001" value={vatRate} onChange={(e) => setVatRate(e.target.value)} disabled={outputTaxCode !== 'O7'} required={outputTaxCode === 'O7'} aria-label="VAT rate" />
+        <input className={inputClass} type="number" min="0.0001" step="0.0001" value={vatRate} onChange={(e) => setVatRate(e.target.value)} disabled={outputTaxCode !== 'O7'} required={outputTaxCode === 'O7'} aria-label="อัตรา VAT" />
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <label className="block text-xs font-bold text-gray-600">
@@ -366,9 +362,9 @@ function CreateDocumentForm({ companyId, onCreated, allowedDocumentTypes }: { co
         </ThemedSelect>
       </label>}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_120px_160px]">
-        <input className={inputClass} placeholder="Line description" value={description} onChange={(e) => setDescription(e.target.value)} required />
-        <input className={inputClass} type="number" min="0" step="0.0001" placeholder="Qty" value={quantity} onChange={(e) => setQuantity(e.target.value)} required />
-        <input className={inputClass} type="number" min="0" step="0.01" placeholder="Unit price" value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} required />
+        <input className={inputClass} aria-label="รายละเอียดรายการ" placeholder="รายละเอียดรายการ" value={description} onChange={(e) => setDescription(e.target.value)} required />
+        <input className={inputClass} aria-label="จำนวน" type="number" min="0" step="0.0001" placeholder="จำนวน" value={quantity} onChange={(e) => setQuantity(e.target.value)} required />
+        <input className={inputClass} aria-label="ราคาต่อหน่วย" type="number" min="0" step="0.01" placeholder="ราคาต่อหน่วย" value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} required />
       </div>
       {isReceiptTaxCodeAllowed(docType) && <TransactionTaxLineSelector
         companyId={companyId}
@@ -393,12 +389,12 @@ function CreateDocumentForm({ companyId, onCreated, allowedDocumentTypes }: { co
           else setVatMode(definition.calculationMethod === 'INCLUSIVE' ? 'VAT_INCLUDED' : 'VAT_EXCLUDED');
         }}
       />}
-      <button className={btnClass} disabled={loading || (docType === 'TAX_INVOICE' && !taxCodeDefinitionId)}>{loading ? 'กำลังบันทึก...' : 'Save draft'}</button>
+      <button className={btnClass} disabled={loading || (docType === 'TAX_INVOICE' && !taxCodeDefinitionId)}>{loading ? 'กำลังบันทึก...' : 'บันทึกร่าง'}</button>
     </form>
   );
 }
 
-function DocumentDetailPanel({ companyId, documentId, permissions, onChanged }: { companyId: string; documentId?: string; permissions: string[]; onChanged: (documentId?: string) => void }) {
+function DocumentDetailPanel({ companyId, documentId, permissions, canCreateSalesRoot, onChanged }: { companyId: string; documentId?: string; permissions: string[]; canCreateSalesRoot: boolean; onChanged: (documentId?: string) => void }) {
   const toast = useToast();
   const { promptInput, inputPromptDialog } = useInputPrompt();
   const [detail, setDetail] = useState<DocumentDetail | null>(null);
@@ -414,6 +410,7 @@ function DocumentDetailPanel({ companyId, documentId, permissions, onChanged }: 
   // existing reference field rather than left on paper.
   const [paymentReference, setPaymentReference] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<AccountingPaymentMethod>('BANK_TRANSFER');
+  const paymentAttempt = useRef<AccountingDocumentPaymentAttempt | null>(null);
   const [linkedTaxInvoiceOpen, setLinkedTaxInvoiceOpen] = useState(false);
   const [linkedTaxInvoiceDate, setLinkedTaxInvoiceDate] = useState(todayCivilDate());
   const [linkedTaxContext, setLinkedTaxContext] = useState<TransactionTaxContext>('DOMESTIC_SALE');
@@ -445,7 +442,7 @@ function DocumentDetailPanel({ companyId, documentId, permissions, onChanged }: 
 
   useEffect(() => { void load(); }, [load]);
 
-  async function run(action: () => Promise<DocumentDetail | PaymentSummary>, successMessage?: string, selectResult = true) {
+  async function run(action: () => Promise<DocumentDetail | PaymentSummary>, successMessage?: string, selectResult = true): Promise<boolean> {
     setError(null);
     setBusy(true);
     try {
@@ -454,8 +451,35 @@ function DocumentDetailPanel({ companyId, documentId, permissions, onChanged }: 
       onChanged(selectResult ? nextId : detail?.id);
       if (nextId) setDetail(await getDocument(companyId, nextId));
       if (successMessage) toast.success(successMessage);
+      return true;
     } catch (e) {
       setError(err(e));
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function createCorrection(body: Parameters<typeof createDocument>[1], successMessage: string, attachment?: File) {
+    setError(null);
+    setBusy(true);
+    let created: DocumentDetail | null = null;
+    try {
+      created = await createDocument(companyId, body);
+      if (attachment) {
+        await uploadAccountingDocumentSupporting(companyId, created.id, created.branchId, attachment);
+      }
+      onChanged(created.id);
+      setDetail(await getDocument(companyId, created.id));
+      toast.success(successMessage);
+    } catch (e) {
+      if (created) {
+        onChanged(created.id);
+        setDetail(await getDocument(companyId, created.id));
+        setError(`สร้างร่างเอกสารแล้ว แต่แนบไฟล์ไม่สำเร็จ: ${err(e)} คุณเปิดร่างนี้เพื่อลองแนบใหม่ได้`);
+      } else {
+        setError(err(e));
+      }
     } finally {
       setBusy(false);
     }
@@ -533,21 +557,6 @@ function DocumentDetailPanel({ companyId, documentId, permissions, onChanged }: 
     }
   }
 
-  async function createLinked(type: AccountingDocumentType) {
-    if (!detail) return;
-    await run(() => createDocument(companyId, {
-      documentType: type,
-      documentDate: todayCivilDate(),
-      counterpartyId: detail.counterpartyId,
-      sourceDocumentId: detail.id,
-      sourceDocumentType: detail.documentType,
-      vatMode: detail.vatMode,
-      outputTaxCode: detail.outputTaxCode,
-      note: `${DOCUMENT_TYPE_LABELS[type]} for ${detail.documentNumber ?? detail.id}`,
-      lines: copyLines(detail.lines).map((line) => ({ ...line, transactionContext: type === 'CREDIT_NOTE' ? 'RETURN_OR_CREDIT' as const : type === 'DEBIT_NOTE' ? 'DEBIT_ADJUSTMENT' as const : 'DOMESTIC_SALE' as const })),
-    }), type === 'CREDIT_NOTE' ? 'สร้างใบลดหนี้เรียบร้อยแล้ว' : 'สร้างใบเพิ่มหนี้เรียบร้อยแล้ว');
-  }
-
   async function createLinkedTaxInvoice() {
     if (!detail) return;
     const selections = detail.lines.map((line) => linkedTaxSelections[line.lineNumber]).filter(Boolean) as LinkedTaxSelection[];
@@ -611,14 +620,10 @@ function DocumentDetailPanel({ companyId, documentId, permissions, onChanged }: 
     seededWhtFor.current = detail.id;
     setPaymentWht(Number(detail.whtAmount) > 0 && Number(detail.paidAmount) === 0 ? String(detail.whtAmount) : '');
   }, [detail]);
-  const correctionSourceReady = detail?.documentType === 'TAX_INVOICE' && detail.status === 'ISSUED'
-    && detail.lines.some((line) => line.taxSnapshot?.taxCodeDefinitionId);
-  const canCreateCreditNote = correctionSourceReady && canDocumentAction(permissions, 'CREDIT_NOTE', 'create');
-  const canCreateDebitNote = correctionSourceReady && canDocumentAction(permissions, 'DEBIT_NOTE', 'create');
   const canTaxInvoice = detail && ['INVOICE', 'RECEIPT'].includes(detail.documentType) && detail.status === 'ISSUED' && permissions.includes('accounting.document.create');
   const canVoid = detail && detail.status !== 'VOIDED' && canDocumentAction(permissions, detail.documentType, 'void');
 
-  if (!documentId) return <section className="mangmee-card p-4 text-sm text-gray-500">Select a document to review actions.</section>;
+  if (!documentId) return <section className="mangmee-card p-4 text-base text-gray-500">เลือกเอกสารเพื่อดูรายละเอียดและดำเนินการ</section>;
   if (loading) return <section className="mangmee-card p-4"><LoadingState label="กำลังโหลด..." /></section>;
   if (!detail) return <section className="mangmee-card p-4">{error && <ErrorBanner message={error} />}</section>;
 
@@ -637,7 +642,7 @@ function DocumentDetailPanel({ companyId, documentId, permissions, onChanged }: 
           <div className="grid gap-3 sm:grid-cols-3">
             <label className="text-xs font-bold text-gray-600">วันที่เอกสาร<ThemedDate className={inputClass} value={editDocumentDate} onChange={(event) => setEditDocumentDate(event.target.value)} /></label>
             <label className="text-xs font-bold text-gray-600">รูปแบบ VAT<ThemedSelect className={inputClass} value={editVatMode} onChange={(event) => setEditVatMode(event.target.value as AccountingVatMode)}>
-              <option value="NO_VAT">No VAT</option><option value="VAT_EXCLUDED">VAT excluded</option><option value="VAT_INCLUDED">VAT included</option><option value="EXEMPT">VAT exempt</option>
+              <option value="NO_VAT">ไม่มี VAT</option><option value="VAT_EXCLUDED">ราคายังไม่รวม VAT</option><option value="VAT_INCLUDED">ราคารวม VAT แล้ว</option><option value="EXEMPT">ยกเว้น VAT</option>
             </ThemedSelect></label>
             <label className="text-xs font-bold text-gray-600">หมายเหตุ<input className={inputClass} value={editNote} maxLength={1000} onChange={(event) => setEditNote(event.target.value)} /></label>
           </div>
@@ -684,21 +689,21 @@ function DocumentDetailPanel({ companyId, documentId, permissions, onChanged }: 
           </div>
         </section>
       )}
-      <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-        <div><dt className="text-gray-500">Date</dt><dd className="font-medium text-gray-900">{formatThaiDate(detail.documentDate)}</dd></div>
-        <div><dt className="text-gray-500">Total</dt><dd className="font-medium text-gray-900">{money(detail.grandTotalAmount)} {detail.currency}</dd></div>
-        <div><dt className="text-gray-500">Paid</dt><dd className="font-medium text-gray-900">{money(detail.paidAmount)}</dd></div>
-        <div><dt className="text-gray-500">Outstanding</dt><dd className="font-medium text-gray-900">{money(detail.outstandingAmount)}</dd></div>
+      <dl className="grid grid-cols-2 gap-3 text-base sm:grid-cols-4">
+        <div><dt className="text-gray-500">วันที่เอกสาร</dt><dd className="font-medium text-gray-900">{formatThaiDate(detail.documentDate)}</dd></div>
+        <div><dt className="text-gray-500">ยอดรวม</dt><dd className="font-medium text-gray-900">{money(detail.grandTotalAmount)} {detail.currency}</dd></div>
+        <div><dt className="text-gray-500">รับชำระแล้ว</dt><dd className="font-medium text-gray-900">{money(detail.paidAmount)}</dd></div>
+        <div><dt className="text-gray-500">ยอดค้างรับ</dt><dd className="font-medium text-gray-900">{money(detail.outstandingAmount)}</dd></div>
         <div><dt className="text-gray-500">VAT</dt><dd className="font-medium text-gray-900">{money(detail.vatAmount)}</dd></div>
-        <div><dt className="text-gray-500">Tax Code</dt><dd className="font-mono font-medium text-gray-900">{detail.documentType === 'RECEIPT' ? 'ไม่มี — รับชำระเท่านั้น' : `${detail.taxCodeSummary ?? 'NONE'}${detail.outputTaxCode ? ` · ${detail.outputTaxCode}` : ''}`}</dd></div>
-        <div><dt className="text-gray-500">WHT</dt><dd className="font-medium text-gray-900">{money(detail.whtAmount)}</dd></div>
-        <div><dt className="text-gray-500">Posting</dt><dd className="font-medium text-gray-900">{detail.postingStatus}</dd></div>
-        <div><dt className="text-gray-500">Source</dt><dd className="font-medium text-gray-900">{detail.sourceDocumentId ? detail.sourceDocumentId.slice(0, 8) : '-'}</dd></div>
+        <div><dt className="text-gray-500">รหัสภาษี</dt><dd className="font-mono font-medium text-gray-900">{detail.documentType === 'RECEIPT' ? 'ไม่มี — รับชำระเท่านั้น' : `${!detail.taxCodeSummary || detail.taxCodeSummary === 'NONE' ? 'ไม่มี' : detail.taxCodeSummary === 'SINGLE' ? 'รหัสเดียว' : 'หลายรหัส'}${detail.outputTaxCode ? ` · ${detail.outputTaxCode}` : ''}`}</dd></div>
+        <div><dt className="text-gray-500">หัก ณ ที่จ่าย</dt><dd className="font-medium text-gray-900">{money(detail.whtAmount)}</dd></div>
+        <div><dt className="text-gray-500">สถานะลงบัญชี</dt><dd className="font-medium text-gray-900">{POSTING_STATUS_LABELS[detail.postingStatus] ?? detail.postingStatus}</dd></div>
+        <div><dt className="text-gray-500">เอกสารต้นทาง</dt><dd className="font-medium text-gray-900">{detail.sourceDocumentId ? detail.sourceDocumentId.slice(0, 8) : 'ไม่มี'}</dd></div>
       </dl>
       <div className="overflow-hidden rounded-lg border border-gray-200">
         <div className="mangmee-table-scroll">
           <table className="mangmee-table min-w-full">
-          <thead><tr><th>Line</th><th>Description</th><th>Tax Code</th><th className="text-right">Qty</th><th className="text-right">Unit</th><th className="text-right">Total</th></tr></thead>
+          <thead><tr><th>ลำดับ</th><th>รายการ</th><th>รหัสภาษี</th><th className="text-right">จำนวน</th><th className="text-right">ราคาต่อหน่วย</th><th className="text-right">ยอดรวม</th></tr></thead>
           <tbody className="divide-y divide-gray-200">
             {detail.lines.map((line) => (
               <tr key={line.id}>
@@ -715,18 +720,22 @@ function DocumentDetailPanel({ companyId, documentId, permissions, onChanged }: 
         </div>
       </div>
       <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
-        {canEdit && !editingDraft && <button className={ghostClass} disabled={busy} onClick={beginDraftEdit}>แก้ไข Draft</button>}
-        {canSubmit && <button className={ghostClass} disabled={busy} onClick={() => run(() => submitQuotationApproval(companyId, detail.id), 'ส่งขออนุมัติเรียบร้อยแล้ว')}>Submit approval</button>}
-        {canApprove && <button className={btnClass} disabled={busy} onClick={() => run(() => approveQuotation(companyId, detail.id, 'Approved in accounting workspace'), 'อนุมัติใบเสนอราคาเรียบร้อยแล้ว')}>Approve</button>}
-        {canApprove && <button className={dangerClass} disabled={busy} onClick={() => void rejectDocument()}>Reject</button>}
-        {canIssue && <button className={btnClass} disabled={busy} onClick={() => run(() => issueDocument(companyId, detail.id), 'ออกเอกสารเรียบร้อยแล้ว')}>Issue</button>}
-        {canConvertToInvoice && <button className={ghostClass} disabled={busy} onClick={() => run(() => convertDocument(companyId, detail.id, 'INVOICE'), 'แปลงเป็นใบแจ้งหนี้เรียบร้อยแล้ว')}>Convert to invoice</button>}
-        {canConvertToBillingNote && <button className={ghostClass} disabled={busy} onClick={() => run(() => convertDocument(companyId, detail.id, 'BILLING_NOTE'), 'แปลงเป็นใบวางบิลเรียบร้อยแล้ว')}>Convert to billing note</button>}
-        {canTaxInvoice && <button className={ghostClass} onClick={() => { setLinkedTaxInvoiceOpen(true); setLinkedTaxSelections({}); setError(null); }}>Create tax invoice</button>}
-        {canCreateCreditNote && <button className={ghostClass} disabled={busy} onClick={() => createLinked('CREDIT_NOTE')}>Create credit note</button>}
-        {canCreateDebitNote && <button className={ghostClass} disabled={busy} onClick={() => createLinked('DEBIT_NOTE')}>Create debit note</button>}
-        {canVoid && <button className={dangerClass + ' col-span-2 order-last sm:order-none'} disabled={busy} onClick={() => void voidAccountingDocument()}>Void</button>}
+        {canEdit && !editingDraft && <button className={ghostClass} disabled={busy} onClick={beginDraftEdit}>แก้ไขร่าง</button>}
+        {canCreateSalesRoot && canSubmit && <button className={ghostClass} disabled={busy} onClick={() => run(() => submitQuotationApproval(companyId, detail.id), 'ส่งขออนุมัติเรียบร้อยแล้ว')}>ส่งขออนุมัติ</button>}
+        {canApprove && <button className={btnClass} disabled={busy} onClick={() => run(() => approveQuotation(companyId, detail.id, 'อนุมัติในหน้าบัญชี'), 'อนุมัติใบเสนอราคาเรียบร้อยแล้ว')}>อนุมัติ</button>}
+        {canApprove && <button className={dangerClass} disabled={busy} onClick={() => void rejectDocument()}>ปฏิเสธ</button>}
+        {canIssue && <button className={btnClass} disabled={busy} onClick={() => run(() => issueDocument(companyId, detail.id), 'ออกเอกสารเรียบร้อยแล้ว')}>ออกเอกสาร</button>}
+        {canCreateSalesRoot && canConvertToInvoice && <button className={ghostClass} disabled={busy} onClick={() => run(() => convertDocument(companyId, detail.id, 'INVOICE'), 'แปลงเป็นใบแจ้งหนี้เรียบร้อยแล้ว')}>แปลงเป็นใบแจ้งหนี้</button>}
+        {canCreateSalesRoot && canConvertToBillingNote && <button className={ghostClass} disabled={busy} onClick={() => run(() => convertDocument(companyId, detail.id, 'BILLING_NOTE'), 'แปลงเป็นใบวางบิลเรียบร้อยแล้ว')}>แปลงเป็นใบวางบิล</button>}
+        {canTaxInvoice && <button className={ghostClass} onClick={() => { setLinkedTaxInvoiceOpen(true); setLinkedTaxSelections({}); setError(null); }}>สร้างใบกำกับภาษี</button>}
+        {canVoid && <button className={dangerClass + ' col-span-2 order-last sm:order-none'} disabled={busy} onClick={() => void voidAccountingDocument()}>ยกเลิกเอกสาร</button>}
       </div>
+      <CorrectionNoteSection
+        detail={detail}
+        permissions={permissions}
+        busy={busy}
+        onCreate={createCorrection}
+      />
       {canTaxInvoice && linkedTaxInvoiceOpen && (
         <section className="space-y-3 rounded-lg border border-brand-200 bg-brand-25 p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -777,18 +786,21 @@ function DocumentDetailPanel({ companyId, documentId, permissions, onChanged }: 
       {canRecordPayment && (
         <form
           className="grid grid-cols-1 gap-3 border-t border-gray-200 pt-4 sm:grid-cols-2"
-          onSubmit={(e) => {
+          onSubmit={async (e) => {
             e.preventDefault();
-            void run(() => createPayment(companyId, {
+            const attempt = prepareAccountingDocumentPaymentAttempt(paymentAttempt.current, companyId, {
               direction: 'RECEIVED',
               method: paymentMethod,
               amount: paymentAmount,
               ...(Number(paymentWht) > 0 ? { whtAmount: paymentWht } : {}),
               ...(paymentReference.trim() ? { externalReference: paymentReference.trim() } : {}),
-              paidAt: new Date().toISOString(),
+              branchId: detail.branchId,
               counterpartyId: detail.counterpartyId,
               allocateToDocumentId: detail.id,
-            }), 'บันทึกรับชำระเรียบร้อยแล้ว', false);
+            });
+            paymentAttempt.current = attempt;
+            const succeeded = await run(() => createPayment(companyId, attempt.body), 'บันทึกรับชำระเรียบร้อยแล้ว', false);
+            if (succeeded && paymentAttempt.current === attempt) paymentAttempt.current = null;
           }}
         >
           <input className={inputClass} type="number" min="0.01" step="0.01" placeholder="เงินสดที่ได้รับ" value={paymentAmount} onChange={(e) => setPaymentAmount(e.target.value)} required aria-label="เงินสดที่ได้รับ" />
@@ -797,11 +809,10 @@ function DocumentDetailPanel({ companyId, documentId, permissions, onChanged }: 
           <ThemedSelect className={inputClass} value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value as AccountingPaymentMethod)}>
             {Object.entries(PAYMENT_METHOD_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
           </ThemedSelect>
-          <button className={btnClass} disabled={busy || paymentSettles > Number(detail.outstandingAmount) + 1e-9 && Number(paymentWht) > 0}>{busy ? 'กำลังบันทึก...' : 'Record payment'}</button>
+          <button className={btnClass} disabled={busy || paymentSettles > Number(detail.outstandingAmount) + 1e-9 && Number(paymentWht) > 0}>{busy ? 'กำลังบันทึก...' : 'บันทึกรับชำระ'}</button>
           <p className="sm:col-span-2 text-xs text-gray-600">
             ตัดยอดค้าง {paymentSettles.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} จาก {Number(detail.outstandingAmount).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            {/* Cash alone may overshoot into an unapplied credit; withheld tax may not, because we
-                never held that money. */}
+            {/* Cash alone may become unapplied credit; withheld tax cannot because no cash moved. */}
             {Number(paymentWht) > 0 && paymentSettles > Number(detail.outstandingAmount) + 1e-9 && <strong className="ml-2 text-error-600">เงินสดรวมยอดถูกหักเกินยอดค้าง</strong>}
           </p>
         </form>
@@ -811,7 +822,7 @@ function DocumentDetailPanel({ companyId, documentId, permissions, onChanged }: 
   );
 }
 
-function CounterpartyListPage({ companyId }: { companyId: string }) {
+function CounterpartyListPage({ companyId, canCreateSalesRoot }: { companyId: string; canCreateSalesRoot: boolean }) {
   const toast = useToast();
   const [counterparties, setCounterparties] = useState<CounterpartySummary[]>([]);
   const [displayName, setDisplayName] = useState('');
@@ -837,9 +848,9 @@ function CounterpartyListPage({ companyId }: { companyId: string }) {
 
   return (
     <section className="mangmee-card space-y-3 p-4">
-      <h2 className="text-base font-bold text-gray-900">Customers and counterparties</h2>
+      <h2 className="text-base font-bold text-gray-900">ลูกค้าและคู่ค้า</h2>
       {error && <ErrorBanner message={error} />}
-      <form className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_180px_auto]" onSubmit={async (e) => {
+      {canCreateSalesRoot && <form className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_180px_auto]" onSubmit={async (e) => {
         e.preventDefault();
         setBusy(true);
         try {
@@ -855,12 +866,12 @@ function CounterpartyListPage({ companyId }: { companyId: string }) {
           setBusy(false);
         }
       }}>
-        <input className={inputClass} placeholder="Display name" value={displayName} onChange={(e) => setDisplayName(e.target.value)} required />
-        <input className={inputClass} placeholder="Tax ID" value={taxId} onChange={(e) => setTaxId(e.target.value)} />
-        <button className={btnClass} disabled={busy}>{busy ? 'กำลังบันทึก...' : 'Add'}</button>
-      </form>
+        <input className={inputClass} aria-label="ชื่อลูกค้าหรือคู่ค้า" placeholder="ชื่อลูกค้าหรือคู่ค้า" value={displayName} onChange={(e) => setDisplayName(e.target.value)} required />
+        <input className={inputClass} aria-label="เลขประจำตัวผู้เสียภาษี" placeholder="เลขประจำตัวผู้เสียภาษี" value={taxId} onChange={(e) => setTaxId(e.target.value)} />
+        <button className={btnClass} disabled={busy}>{busy ? 'กำลังบันทึก...' : 'เพิ่มคู่ค้า'}</button>
+      </form>}
       <div className="max-h-64 overflow-auto rounded border border-gray-200">
-        {loading ? <LoadingState label="กำลังโหลด..." /> : counterparties.length === 0 ? <p className="p-4 text-sm text-gray-500">No counterparties</p> : counterparties.map((counterparty) => (
+        {loading ? <LoadingState label="กำลังโหลด..." /> : counterparties.length === 0 ? <p className="p-4 text-sm text-gray-500">ยังไม่มีลูกค้าหรือคู่ค้า</p> : counterparties.map((counterparty) => (
           <div key={counterparty.id} className="flex flex-wrap items-center justify-between border-b border-gray-100 px-3 py-2 text-sm last:border-b-0">
             <span className="font-medium text-gray-900">{counterparty.displayName}</span>
             <span className="text-gray-500">{counterparty.taxId ?? '-'}</span>
@@ -894,15 +905,15 @@ function PaymentListPage({ companyId, reloadKey }: { companyId: string; reloadKe
 
   return (
     <section className="mangmee-card space-y-3 p-4">
-      <h2 className="text-base font-bold text-gray-900">Received payments</h2>
+      <h2 className="text-base font-bold text-gray-900">รายการรับชำระ</h2>
       {error && <ErrorBanner message={error} />}
       <div className="max-h-64 overflow-auto rounded border border-gray-200">
-        {loading ? <LoadingState label="กำลังโหลด..." /> : payments.length === 0 ? <p className="p-4 text-sm text-gray-500">No payments</p> : payments.map((payment) => (
+        {loading ? <LoadingState label="กำลังโหลด..." /> : payments.length === 0 ? <p className="p-4 text-sm text-gray-500">ยังไม่มีรายการรับชำระ</p> : payments.map((payment) => (
           <div key={payment.id} className="grid grid-cols-2 gap-3 border-b border-gray-100 px-3 py-2 text-sm last:border-b-0 sm:grid-cols-4">
             <span>{formatThaiDate(payment.paidAt)}</span>
             <span>{PAYMENT_METHOD_LABELS[payment.method]}</span>
             <span className="text-right">{money(payment.amount)}</span>
-            <span className="text-right text-gray-500">{payment.postingStatus}</span>
+            <span className="text-right text-gray-500">{POSTING_STATUS_LABELS[payment.postingStatus] ?? payment.postingStatus}</span>
           </div>
         ))}
       </div>
@@ -929,24 +940,47 @@ export function AccountingHubPage({ companyId, permissions }: { companyId: strin
   const readableDocumentTypes = DOCUMENT_TYPES.filter((documentType) => canDocumentAction(permissions, documentType, 'read'));
   const creatableDocumentTypes = DOCUMENT_TYPES.filter((documentType) => canDocumentAction(permissions, documentType, 'create'));
   const canReadDocuments = readableDocumentTypes.length > 0 || permissions.includes('accounting.document.read_related');
-  const canCreateDocuments = creatableDocumentTypes.length > 0;
   const canReadCounterparties = permissions.includes('accounting.counterparty.read');
+  const canManageCounterparties = permissions.includes('accounting.counterparty.manage');
+  const canSubmitQuotation = permissions.includes('accounting.quotation.submit_approval');
   const canReadPayments = permissions.includes('accounting.payment.read');
+
+  const canRecordIncome = permissions.includes('company.vat_registration.read')
+    && (canRecordReceivedIncome(permissions) || canCreateIncomeInvoice(permissions));
+  const canCreateRootDocument = creatableDocumentTypes.some((type) =>
+    ['QUOTATION', 'INVOICE', 'BILLING_NOTE', 'RECEIPT', 'TAX_INVOICE'].includes(type));
+  const needsSalesAvailability = canCreateRootDocument || canRecordIncome || canManageCounterparties || canSubmitQuotation;
+  const salesAvailability = useSalesRootAvailability(companyId, needsSalesAvailability);
+  const canCreateSalesRoot = salesAvailability.state === 'OPEN';
 
   return (
     <MangmeePage
       eyebrow="การเงินและบัญชี"
       title="บัญชี"
       description="จัดการเอกสารบัญชี การออกเอกสาร การรับชำระ และคู่ค้าโดยอ้างอิง backend จริง"
+      actions={canRecordIncome && canCreateSalesRoot
+        ? <a href={`/companies/${companyId}/sales-documents/record-income`} className="mangmee-btn mangmee-btn-primary flex h-11 items-center">+ บันทึกรายรับ</a>
+        : undefined}
     >
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(360px,0.65fr)]">
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           {permissions.includes('accounting.revenue_category.manage') && (
             <div className="flex justify-end">
               <a href={`/companies/${companyId}/sales-documents/revenue-categories`} className="text-sm font-semibold text-brand-600 hover:text-brand-700">จัดการหมวดรายรับ →</a>
             </div>
           )}
-          {canCreateDocuments && <CreateDocumentForm companyId={companyId} onCreated={refresh} allowedDocumentTypes={creatableDocumentTypes} />}
+          {needsSalesAvailability && salesAvailability.state !== 'OPEN' && (
+            <MangmeeCard className="border-amber-200 bg-amber-50 p-5">
+              <p className="text-base font-bold text-amber-950">
+                {salesAvailability.state === 'LOADING' ? 'กำลังตรวจสอบความพร้อมของระบบ...'
+                  : salesAvailability.state === 'CLOSED' ? 'ยังสร้างรายการขายใหม่ไม่ได้ชั่วคราว'
+                    : 'ยังตรวจสอบความพร้อมของระบบไม่ได้'}
+              </p>
+              <p className="mt-2 text-base text-amber-900">รายการเดิมยังเปิดดู รับชำระ ออกใบเสร็จ และแก้ไขได้ตามปกติ</p>
+              {salesAvailability.state === 'ERROR' && <button type="button" className={`${ghostClass} mt-3 min-h-11`} onClick={salesAvailability.retry}>ลองตรวจสอบอีกครั้ง</button>}
+            </MangmeeCard>
+          )}
+          {canCreateRootDocument && canCreateSalesRoot && <CreateDocumentForm companyId={companyId} onCreated={refresh} allowedDocumentTypes={creatableDocumentTypes} />}
           {canReadDocuments && <DocumentList
             key={contentKey}
             companyId={companyId}
@@ -957,9 +991,9 @@ export function AccountingHubPage({ companyId, permissions }: { companyId: strin
             onFilterTypeChange={setFilterType}
           />}
         </div>
-        <div className="space-y-4">
-          {canReadDocuments && <DocumentDetailPanel companyId={companyId} documentId={selectedId} permissions={permissions} onChanged={refresh} />}
-          {canReadCounterparties && <CounterpartyListPage companyId={companyId} />}
+        <div className="min-w-0 space-y-4">
+          {canReadDocuments && <DocumentDetailPanel companyId={companyId} documentId={selectedId} permissions={permissions} canCreateSalesRoot={canCreateSalesRoot} onChanged={refresh} />}
+          {canReadCounterparties && <CounterpartyListPage companyId={companyId} canCreateSalesRoot={canManageCounterparties && canCreateSalesRoot} />}
           {canReadPayments && <PaymentListPage companyId={companyId} reloadKey={reloadKey} />}
         </div>
       </div>

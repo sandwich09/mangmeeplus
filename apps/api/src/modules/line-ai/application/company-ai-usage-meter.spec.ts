@@ -1,9 +1,19 @@
 import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { Logger } from '@nestjs/common';
+import { PrismaPg } from '@prisma/adapter-pg';
 import type { AiUsageEntry } from '@watchdog-bms/contracts';
+import { PrismaClient } from '../../../generated/prisma/client';
 import { RedisRateLimitService } from '../../../common/security/redis-rate-limit.service';
 import { __resetFxCache } from './ai-fx-rate';
+import {
+  admitCompanyOcr,
+  companyOcrErrorCode,
+  isOcrPreProviderHttpStatus,
+  isOcrPreProviderRefusal,
+  releaseCompanyOcrAdmission,
+} from './company-ocr-governance';
 import {
   __resetCompanyAiBudgetCache,
   assertCompanyAiBudget,
@@ -25,6 +35,245 @@ const usage = (over: Partial<AiUsageEntry> = {}): AiUsageEntry => ({
   cacheWriteInputTokens: 8_000,
   durationMs: 1234,
   ...over,
+});
+
+type OcrEvent = { id: string; companyId: string; monthKey: string; sourceRoute: string; requestId: string };
+
+function fakeOcrPrisma(input: { enabled?: boolean; limit?: number | null; used?: number } = {}) {
+  const events: OcrEvent[] = [];
+  let usedCount = input.used ?? 0;
+  let queue = Promise.resolve();
+  let lockCalls = 0;
+  const lockKeys: string[] = [];
+  const tx = {
+    $executeRaw: async (_strings: TemplateStringsArray, key: string) => { lockCalls += 1; lockKeys.push(key); },
+    companyOcrUsageEvent: {
+      findUnique: async ({ where }: any) => {
+        const key = where.companyId_sourceRoute_requestId;
+        return events.find((event) => event.companyId === key.companyId
+          && event.sourceRoute === key.sourceRoute && event.requestId === key.requestId) ?? null;
+      },
+      create: async ({ data }: any) => {
+        const event = { id: `event-${events.length + 1}`, ...data };
+        events.push(event);
+        return event;
+      },
+      delete: async ({ where }: any) => {
+        const index = events.findIndex((event) => event.id === where.id);
+        return events.splice(index, 1)[0];
+      },
+    },
+    companyAiConfiguration: {
+      findUnique: async () => input.enabled === undefined && input.limit === undefined
+        ? null
+        : { ocrEnabled: input.enabled ?? true, ocrMonthlyLimit: input.limit ?? null },
+    },
+    companyOcrMonthlyUsage: {
+      findUnique: async () => usedCount === 0 ? null : { usedCount },
+      upsert: async () => ({ usedCount: ++usedCount }),
+      updateMany: async () => {
+        if (usedCount <= 0) return { count: 0 };
+        usedCount -= 1;
+        return { count: 1 };
+      },
+    },
+  };
+  const prisma = {
+    client: {
+      $transaction: <T>(fn: (value: typeof tx) => Promise<T>): Promise<T> => {
+        const result = queue.then(() => fn(tx));
+        queue = result.then(() => undefined, () => undefined);
+        return result;
+      },
+    },
+  } as any;
+  return { prisma, events, usedCount: () => usedCount, lockCalls: () => lockCalls, lockKeys };
+}
+
+const baseOcrAdmission = {
+  companyId: 'co-1',
+  sourceRoute: 'receipt-ocr-web' as const,
+  requestId: 'req-1',
+  monthKey: '2026-08',
+};
+
+describe('company OCR admission', () => {
+  it('keeps legacy companies enabled and unlimited, then records one event + aggregate', async () => {
+    const state = fakeOcrPrisma();
+    const result = await admitCompanyOcr(state.prisma, baseOcrAdmission);
+    assert.deepEqual(result, { allowed: true, monthKey: '2026-08', usedCount: 1, monthlyLimit: null });
+    assert.equal(state.events.length, 1);
+    assert.equal(state.usedCount(), 1);
+    assert.equal(state.lockCalls(), 2);
+    assert.deepEqual(state.lockKeys, ['partner-ocr-config:co-1', 'ocr-quota:co-1:2026-08']);
+  });
+
+  it('fails closed when disabled or exhausted without consuming a read', async () => {
+    const disabled = fakeOcrPrisma({ enabled: false, limit: 10 });
+    const disabledResult = await admitCompanyOcr(disabled.prisma, baseOcrAdmission);
+    assert.deepEqual(disabledResult, { allowed: false, reason: 'disabled' });
+    assert.equal(companyOcrErrorCode(disabledResult as any), 'OCR_FEATURE_DISABLED');
+    assert.equal(disabled.usedCount(), 0);
+
+    const full = fakeOcrPrisma({ limit: 2, used: 2 });
+    const fullResult = await admitCompanyOcr(full.prisma, baseOcrAdmission);
+    assert.deepEqual(fullResult, { allowed: false, reason: 'exceeded', usedCount: 2, monthlyLimit: 2 });
+    assert.equal(full.events.length, 0);
+  });
+
+  it('uses the request fence: an exact retry neither increments nor reaches a second provider admission', async () => {
+    const state = fakeOcrPrisma({ limit: 10 });
+    assert.equal((await admitCompanyOcr(state.prisma, baseOcrAdmission)).allowed, true);
+    const replay = await admitCompanyOcr(state.prisma, baseOcrAdmission);
+    assert.deepEqual(replay, { allowed: false, reason: 'duplicate' });
+    assert.equal(state.usedCount(), 1);
+    assert.equal(state.events.length, 1);
+  });
+
+  it('atomically releases a pre-provider refusal and permits a later retry', async () => {
+    const state = fakeOcrPrisma({ limit: 1 });
+    assert.equal((await admitCompanyOcr(state.prisma, baseOcrAdmission)).allowed, true);
+    assert.equal(await releaseCompanyOcrAdmission(state.prisma, baseOcrAdmission), true);
+    assert.equal(state.events.length, 0);
+    assert.equal(state.usedCount(), 0);
+    assert.equal((await admitCompanyOcr(state.prisma, baseOcrAdmission)).allowed, true);
+    assert.equal(state.events.length, 1);
+    assert.equal(state.usedCount(), 1);
+  });
+
+  it('retries two transient release failures across a bounded recovery window', async () => {
+    const state = fakeOcrPrisma({ limit: 1 });
+    assert.equal((await admitCompanyOcr(state.prisma, baseOcrAdmission)).allowed, true);
+    const transaction = state.prisma.client.$transaction.bind(state.prisma.client);
+    let failuresRemaining = 2;
+    state.prisma.client.$transaction = (...args: any[]) => {
+      if (failuresRemaining > 0) {
+        failuresRemaining -= 1;
+        return Promise.reject(new Error('TRANSIENT_DB_FAILURE'));
+      }
+      return transaction(...args);
+    };
+    assert.equal(await releaseCompanyOcrAdmission(state.prisma, baseOcrAdmission), true);
+    assert.equal(state.events.length, 0);
+    assert.equal(state.usedCount(), 0);
+    assert.equal((await admitCompanyOcr(state.prisma, baseOcrAdmission)).allowed, true);
+  });
+
+  it('fails closed and emits a compensation alert when every release attempt is exhausted', async () => {
+    const state = fakeOcrPrisma();
+    assert.equal((await admitCompanyOcr(state.prisma, baseOcrAdmission)).allowed, true);
+    const warn = mock.method(Logger.prototype, 'warn', () => undefined);
+    state.prisma.client.$transaction = async () => { throw new Error('DB_STILL_DOWN'); };
+
+    assert.equal(await releaseCompanyOcrAdmission(state.prisma, baseOcrAdmission), false);
+    assert.equal(state.events.length, 1, 'conservative quota remains when compensation cannot be proved');
+    assert.equal(state.usedCount(), 1);
+    assert.equal(warn.mock.calls.some((call) =>
+      (call.arguments[0] as any)?.actionRequired === 'OCR_QUOTA_COMPENSATION_REQUIRED'
+      && (call.arguments[0] as any)?.msg === 'ocr.quota.release_unavailable'
+      && (call.arguments[0] as any)?.riskLevel === 'HIGH'
+      && (call.arguments[0] as any)?.attempts === 4), true);
+    warn.mock.restore();
+  });
+
+  it('releases only exact pre-provider status/code pairs from the gateway', () => {
+    assert.equal(isOcrPreProviderRefusal({ status: 'not_configured', errorCode: 'PROVIDER_CONFIG_MISSING' }), true);
+    assert.equal(isOcrPreProviderRefusal({ status: 'not_configured', errorCode: 'PDF_PROVIDER_UNSUPPORTED' }), true);
+    assert.equal(isOcrPreProviderRefusal({ status: 'failed', errorCode: 'UNSUPPORTED_MIME_TYPE' }), true);
+    assert.equal(isOcrPreProviderRefusal({ status: 'failed', errorCode: 'AI_GATEWAY_ERROR_401' }), false);
+    assert.equal(isOcrPreProviderHttpStatus(401), true);
+    assert.equal(isOcrPreProviderHttpStatus(503), false);
+    assert.equal(isOcrPreProviderRefusal({ status: 'ok', errorCode: 'PROVIDER_CONFIG_MISSING' }), false);
+    assert.equal(isOcrPreProviderRefusal({ status: 'failed', errorCode: 'PROVIDER_CONFIG_MISSING' }), false);
+    assert.equal(isOcrPreProviderRefusal({ status: 'not_configured', errorCode: 'UNSUPPORTED_MIME_TYPE' }), false);
+    assert.equal(isOcrPreProviderRefusal({ status: 'failed', errorCode: 'AI_GATEWAY_ERROR_503' }), false);
+  });
+
+  it('serializes concurrent calls at limit-1 so exactly one wins', async () => {
+    const state = fakeOcrPrisma({ limit: 2, used: 1 });
+    const results = await Promise.all([
+      admitCompanyOcr(state.prisma, { ...baseOcrAdmission, requestId: 'req-a' }),
+      admitCompanyOcr(state.prisma, { ...baseOcrAdmission, requestId: 'req-b' }),
+    ]);
+    assert.equal(results.filter((result) => result.allowed).length, 1);
+    assert.equal(results.filter((result) => !result.allowed && result.reason === 'exceeded').length, 1);
+    assert.equal(state.usedCount(), 2);
+    assert.equal(state.events.length, 1);
+  });
+
+  it('returns unavailable rather than allowing an unmetered read when the store fails', async () => {
+    const result = await admitCompanyOcr({
+      client: { $transaction: async () => { throw new Error('DB_DOWN'); } },
+    } as any, baseOcrAdmission);
+    assert.deepEqual(result, { allowed: false, reason: 'unavailable' });
+  });
+
+  it('real PostgreSQL: limit 2 with used 1 admits only one of two concurrent requests', async (t) => {
+    const databaseUrl = process.env.DATABASE_URL?.trim();
+    if (!databaseUrl) {
+      if (process.env.OCR_REQUIRE_POSTGRES === 'true') throw new Error('OCR PostgreSQL test database is required');
+      return t.skip('DATABASE_URL is not set');
+    }
+
+    const clients = [
+      new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl }) }),
+      new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl }) }),
+    ];
+    let companyId = '';
+    const monthKey = '2099-08';
+    try {
+      await Promise.all(clients.map((client) => client.$queryRaw`SELECT 1`));
+      companyId = (await clients[0]!.company.create({
+        data: { name: `ocr-admission-race-${process.pid}-${randomUUID()}`, status: 'ACTIVE' },
+        select: { id: true },
+      })).id;
+      await clients[0]!.companyAiConfiguration.create({
+        data: { companyId, ocrEnabled: true, ocrMonthlyLimit: 2 },
+      });
+      await clients[0]!.companyOcrMonthlyUsage.create({
+        data: { companyId, monthKey, usedCount: 1 },
+      });
+
+      const requestIds = clients.map((_client, index) => `ocr-race-${index}-${randomUUID()}`);
+      const results = await Promise.all(clients.map((client, index) => admitCompanyOcr(
+        { client } as any,
+        {
+          companyId,
+          monthKey,
+          sourceRoute: 'receipt-ocr-web',
+          requestId: requestIds[index]!,
+        },
+      )));
+
+      assert.equal(results.filter((result) => result.allowed).length, 1);
+      assert.equal(results.filter((result) => !result.allowed && result.reason === 'exceeded').length, 1);
+      assert.equal(await clients[0]!.companyOcrUsageEvent.count({ where: { companyId, monthKey } }), 1);
+      assert.equal((await clients[0]!.companyOcrMonthlyUsage.findUniqueOrThrow({
+        where: { companyId_monthKey: { companyId, monthKey } },
+        select: { usedCount: true },
+      })).usedCount, 2);
+
+      const admittedIndex = results.findIndex((result) => result.allowed);
+      const releasedInput = {
+        companyId,
+        sourceRoute: 'receipt-ocr-web' as const,
+        requestId: requestIds[admittedIndex]!,
+      };
+      assert.equal(await releaseCompanyOcrAdmission({ client: clients[0] } as any, releasedInput), true);
+      assert.equal(await clients[0]!.companyOcrUsageEvent.count({ where: { companyId, monthKey } }), 0);
+      assert.equal((await clients[0]!.companyOcrMonthlyUsage.findUniqueOrThrow({
+        where: { companyId_monthKey: { companyId, monthKey } },
+        select: { usedCount: true },
+      })).usedCount, 1);
+      assert.equal((await admitCompanyOcr(
+        { client: clients[0] } as any,
+        { ...releasedInput, monthKey },
+      )).allowed, true, 'a released pre-provider refusal must be retryable');
+    } finally {
+      if (companyId) await clients[0]!.company.deleteMany({ where: { id: companyId } });
+      await Promise.all(clients.map((client) => client.$disconnect().catch(() => undefined)));
+    }
+  });
 });
 
 /** Fake prisma that records what ran inside each `$transaction` callback and keeps the

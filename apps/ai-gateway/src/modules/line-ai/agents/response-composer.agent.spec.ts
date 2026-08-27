@@ -226,10 +226,224 @@ describe('ResponseComposerAgent.composeAnswer (model-composed grounded answer)',
   });
 
   it('accepts value-equal number reformatting (85 vs 85.0000)', async () => {
-    const data = [{ tool: 'expense.list_recent', data: { summary: { totalAmount: '85.0000' } } }];
-    const provider = answerProvider('ยอดค่าใช้จ่ายรวม 85 บาท');
-    const out = await agent.composeAnswer('ค่าใช้จ่ายเท่าไหร่', data, FALLBACK, provider);
-    assert.equal(out, 'ยอดค่าใช้จ่ายรวม 85 บาท');
+    const data = [{ tool: 'sales.get_sales_summary', data: { totalSales: '85.0000' } }];
+    const provider = answerProvider('ยอดขายรวม 85 บาท');
+    const out = await agent.composeAnswer('ยอดขายเท่าไหร่', data, FALLBACK, provider);
+    assert.equal(out, 'ยอดขายรวม 85 บาท');
+  });
+
+  const expenseData = [{ tool: 'expense.list_recent', data: {
+    total: 7,
+    period: { fromDate: '2026-08-01', toDate: '2026-08-31' },
+    summary: { countedItems: 7, cancelledCount: 1, totalAmount: '85.00', pendingAmount: '15.00' },
+    items: [{ vendorNameSnapshot: 'Synthetic Vendor', grandTotalAmount: '40.00' }, { status: 'REJECTED', grandTotalAmount: '10.00' }],
+  } }];
+  const expenseFallback = '• ยอดทั้งหมด: 85.00 บาท\n• รอตรวจสอบ: 15.00 บาท\n• รายการค่าใช้จ่ายล่าสุด: Synthetic Vendor 40.00 บาท';
+
+  it('keeps the canonical expense total concise without model composition', async () => {
+    let calls = 0;
+    const output = await agent.composeAnswer('ดูค่าใช้จ่ายเดือนนี้', expenseData, expenseFallback, answerProvider(() => {
+      calls += 1;
+      return 'ค่าใช้จ่าย 999 บาท';
+    }));
+    assert.equal(output, '• ยอดรวม: 85.00 บาท');
+    assert.equal(calls, 0, 'the source total is authoritative before the provider');
+    assert.equal(await agent.composeAnswer('ยอดค่าใช้จ่ายเท่าไหร่', expenseData, expenseFallback, answerProvider('', false)), output);
+  });
+
+  for (const question of [
+    'ค่าใช้จ่ายเดือนนี้กี่บาท',
+    'ค่าใช้จ่ายเดือนนี้กี่ บาท',
+    'จำนวนเงินค่าใช้จ่ายเดือนนี้เท่าไหร่',
+    'ค่าใช้จ่ายเดือนนี้มีจำนวน เงินเท่าไหร่',
+    'what is the expense total this month?',
+    'summarize expenses this month',
+  ]) {
+    it(`amount wording golden: ${question}`, async () => {
+      let calls = 0;
+      const output = await agent.composeAnswer(question, expenseData, expenseFallback, answerProvider(() => {
+        calls += 1;
+        return 'ยอดค่าใช้จ่ายรวม 85 บาท';
+      }));
+      assert.equal(calls, 0, 'money wording uses the canonical amount-only answer');
+      assert.equal(output, '• ยอดรวม: 85.00 บาท', 'reuse the existing source line, including its currency and language');
+      assert.doesNotMatch(output, /7|15|Synthetic Vendor|รายการ/);
+      assert.equal(await agent.composeAnswer(question, expenseData, expenseFallback, answerProvider('', false)), '• ยอดรวม: 85.00 บาท');
+    });
+  }
+
+  for (const { question, candidate, opts } of [
+    { question: 'ค่าใช้จ่ายเดือน 8 ปี 2026 กี่บาท', candidate: 'ค่าใช้จ่ายทั้งหมด 2026 บาท', opts: {} },
+    { question: 'what is the expense total for August 2026?', candidate: 'Expense total 2026', opts: {} },
+    { question: 'ยอดค่าใช้จ่ายเดือนนี้เท่าไหร่', candidate: 'ค่าใช้จ่ายทั้งหมด 2026 บาท', opts: { currentDate: '2026-08-27' } },
+    {
+      question: 'ยอดค่าใช้จ่ายเดือนนี้เท่าไหร่', candidate: 'ค่าใช้จ่ายทั้งหมด 150 บาท',
+      opts: { conversationContext: {
+        windowMinutes: 15, maxTurns: 15,
+        recentTurns: [{ at: '2026-08-27T10:00:00.000Z', userMessagePreview: 'ค่ากาแฟ 150 บาท', assistantReplyPreview: 'บันทึกแล้ว 150 บาท', refused: false }],
+      } },
+    },
+    {
+      question: 'หกสิบบาทคือยอดค่าใช้จ่ายเดือนนี้ไหม', candidate: 'ค่าใช้จ่ายทั้งหมด 60 บาท',
+      opts: { valueCandidates: extractValueCandidates('หกสิบบาทคือยอดค่าใช้จ่ายเดือนนี้ไหม', '2026-08-27') },
+    },
+  ]) {
+    it(`keeps the current expense total instead of a date/context/candidate amount: ${question} / ${candidate}`, async () => {
+      let calls = 0;
+      // Nonempty preview exposes the old numeric-role bug; the empty-data guard cannot mask it.
+      const output = await agent.composeAnswer(question, expenseData, expenseFallback, answerProvider(() => {
+        calls += 1;
+        return candidate;
+      }), opts);
+      assert.equal(output, '• ยอดรวม: 85.00 บาท');
+      assert.notEqual(output, candidate);
+      assert.equal(calls, 0, 'an allowed number is not authority to replace the current monetary total');
+    });
+  }
+
+  for (const question of [
+    'ค่าใช้จ่ายเดือนนี้มีกี่ใบ',
+    'ค่าใช้จ่ายเดือนนี้มีกี่รายการ',
+    'ขอจำนวนค่าใช้จ่ายเดือนนี้',
+    'how many expenses this month?',
+    'count expenses this month',
+    'ยอดค่าใช้จ่ายเดือนนี้เท่าไหร่ มีกี่ใบ',
+    'ค่าใช้จ่ายเดือนนี้กี่บาท มีกี่ใบ',
+    'ค่าใช้จ่ายเดือนนี้มีกี่ใบ จำนวนเงินเท่าไหร่',
+  ]) {
+    it(`count golden: ${question}`, async () => {
+      const output = await agent.composeAnswer(question, expenseData, expenseFallback, {
+        generateText: async () => { throw new Error('count labels must stay deterministic'); },
+      });
+      assert.match(output, /: 7 (?:รายการ|records)/, 'exact scoped total survives; preview contains only two rows');
+      assert.ok(output.endsWith(expenseFallback));
+      assert.match(output, /85\.00/);
+    });
+  }
+
+  it('keeps the exact expense count without a model that could omit, invent, or use preview cardinality', async () => {
+    for (const answer of ['ยอดค่าใช้จ่ายรวม 85 บาท', 'มีค่าใช้จ่าย 2 รายการ', 'มีค่าใช้จ่าย 999 รายการ']) {
+      const output = await agent.composeAnswer('ค่าใช้จ่ายเดือนนี้มีกี่ใบ', expenseData, expenseFallback, answerProvider(answer));
+      assert.match(output, /^• จำนวนค่าใช้จ่ายในระบบ \(ไม่รวมยกเลิกหรือถูกปฏิเสธ\): 7 รายการ/);
+      assert.ok(output.endsWith(expenseFallback));
+    }
+  });
+
+  for (const [question, candidate] of [
+    ['ยอดค่าใช้จ่ายเท่าไหร่ มีกี่ใบ', 'มีค่าใช้จ่าย 85 ใบ จำนวน 7 บาท'],
+    ['how many expenses and total amount?', '85 expenses total 7'],
+    ['ค่าใช้จ่ายวันที่ 7 เดือนนี้มีกี่ใบ', 'วันที่ 7 ค่าใช้จ่าย 85 บาท'],
+  ] as const) {
+    it(`keeps canonical count/money roles: ${question}`, async () => {
+      let calls = 0;
+      // Nonempty preview avoids masking the old role-swap bug with the empty-data guard.
+      const output = await agent.composeAnswer(question, expenseData, expenseFallback, answerProvider(() => {
+        calls += 1;
+        return candidate;
+      }));
+      assert.match(output, /: 7 (?:รายการ|records)/);
+      assert.match(output, /ยอดทั้งหมด: 85\.00 บาท/);
+      assert.notEqual(output, candidate);
+      assert.equal(calls, 0, 'a count cannot be relabelled as money or a date by composition');
+    });
+  }
+
+  for (const question of [
+    'ค่าใช้จ่ายของร้านเรามีกี่ใบ',
+    'ค่าใช้จ่ายร้านของเรามีกี่รายการ',
+    'ค่าใช้จ่ายของบริษัทเรามีกี่ใบ',
+    'ค่าใช้จ่ายร้านของฉันมีกี่ใบ',
+    'เดือนนี้มีค่าใช้จ่ายกี่ใบ',
+    'เดือนนี้มีค่าใช้จ่ายกี่ใบ ไม่รวมยกเลิกหรือถูกปฏิเสธ',
+    'เดือนนี้มีค่าใช้จ่ายกี่ใบ ไม่รวมรายการที่ถูกปฏิเสธและยกเลิก',
+    'how many expenses for our company, excluding rejected or voided records?',
+  ]) {
+    it(`supported count scope golden: ${question}`, async () => {
+      let calls = 0;
+      const output = await agent.composeAnswer(question, expenseData, expenseFallback, answerProvider(() => {
+        calls += 1;
+        return /[ก-๙]/u.test(question) ? 'มีค่าใช้จ่าย 7 ใบ' : '7 expenses';
+      }));
+      assert.equal(calls, 0, 'the source answers this count deterministically without refusal or model composition');
+      assert.match(output, /7/);
+      assert.doesNotMatch(output, /ยังยืนยันจำนวนแยก|unavailable/);
+      const fallback = await agent.composeAnswer(question, expenseData, expenseFallback, answerProvider('', false));
+      assert.match(fallback, /: 7 (?:รายการ|records)/);
+      assert.doesNotMatch(fallback, /ยังยืนยันจำนวนแยก|unavailable/);
+    });
+  }
+
+  it('preserves detail/vendor/status intent instead of reducing it to an amount', async () => {
+    for (const question of ['เดือนนี้มีรายการอะไรบ้าง', 'ค่าใช้จ่ายร้านไหนบ้าง', 'ค่าใช้จ่ายผู้ขายรายไหน', 'ดูค่าใช้จ่ายล่าสุด', 'สถานะค่าใช้จ่าย จ่ายแล้วหรือยังไม่จ่าย', 'ดูค่าใช้จ่ายรออนุมัติ', 'ค่าใช้จ่ายที่ยกเลิก', 'list expenses by vendor and status']) {
+      let captured: any;
+      assert.equal(await agent.composeAnswer(question, expenseData, expenseFallback, answerProvider((payload) => {
+        captured = payload;
+        return 'invalid invented 999';
+      })), expenseFallback);
+      assert.deepEqual(captured.systemData[0].data, expenseData[0]!.data);
+    }
+  });
+
+  it('does not substitute the overall expense count for unsupported distinct or subset counts', async () => {
+    for (const question of ['เดือนนี้มีผู้ขายกี่ราย', 'เดือนนี้มีร้านกี่ราย', 'รายการรออนุมัติมีกี่ใบ', 'ค่าใช้จ่ายจ่ายแล้วกี่ใบ', 'ค่าใช้จ่ายจ่ายกี่ครั้ง', 'ค่าใช้จ่ายของร้านเรารออนุมัติมีกี่ใบ', 'ค่าใช้จ่ายกี่ใบ ไม่รวมยกเลิก', 'ค่าใช้จ่ายกี่ใบ ไม่รวมยกเลิกหรือถูกปฏิเสธ เฉพาะรออนุมัติ', 'how many vendors this month?', 'how many pending expenses?', 'count unpaid expenses', 'how many paid expenses excluding rejected or voided records?']) {
+      for (const total of [0, 7]) {
+        const data = [{ tool: 'expense.list_recent', data: { ...expenseData[0]!.data, total } }];
+        const output = await agent.composeAnswer(question, data, expenseFallback, {
+          generateText: async () => { throw new Error('unsupported count must not be inferred by the model'); },
+        });
+        assert.match(output, /ยังยืนยันจำนวนแยกตามที่ถามไม่ได้|requested breakdown count is unavailable/);
+        assert.ok(output.endsWith(expenseFallback), 'trusted detail context is retained');
+        assert.doesNotMatch(output, /: [027] (?:รายการ|records)/);
+      }
+    }
+  });
+
+  it('requires the canonical expense total even if a preview carries a different count key', async () => {
+    const data = [{ tool: 'expense.list_recent', data: { ...expenseData[0]!.data, items: [{ count: 2 }] } }];
+    const output = await agent.composeAnswer('ค่าใช้จ่ายมีกี่ใบ', data, expenseFallback, answerProvider('มีค่าใช้จ่าย 2 ใบ'));
+    assert.match(output, /: 7 รายการ/);
+    assert.ok(output.endsWith(expenseFallback));
+  });
+
+  it('keeps a real zero count distinct from missing data, including fallback', async () => {
+    const data = [{ tool: 'expense.list_recent', data: { total: 0, summary: { totalAmount: '0.00', countedItems: 0 }, items: [] } }];
+    for (const ok of [true, false]) {
+      const output = await agent.composeAnswer('ค่าใช้จ่ายเดือนนี้มีกี่ใบ', data, '• ยอดทั้งหมด: 0.00 บาท', answerProvider('มี 0 ใบ', ok));
+      assert.match(output, /: 0 รายการ/);
+      assert.doesNotMatch(output, /ยังไม่มีข้อมูลจำนวน|ไม่ครบ/);
+    }
+  });
+
+  it('never infers a missing or invalid expense count from preview rows or zero', async () => {
+    for (const total of [undefined, null, '7', -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+      let called = false;
+      const data = [{ tool: 'expense.list_recent', data: { ...expenseData[0]!.data, total } }];
+      const output = await agent.composeAnswer('how many expenses?', data, expenseFallback, answerProvider(() => { called = true; return '2 expenses'; }));
+      assert.equal(called, false);
+      assert.match(output, /expense count is unavailable/);
+      assert.doesNotMatch(output, /[027] records/);
+    }
+  });
+
+  it('never projects an incomplete expense aggregate into an exact amount or count', async () => {
+    for (const question of ['ค่าใช้จ่ายเดือนนี้เท่าไหร่', 'ค่าใช้จ่ายเดือนนี้มีกี่ใบ', 'how many expenses?']) {
+      const output = await agent.composeAnswer(question, [{ tool: 'expense.list_recent', data: { ...expenseData[0]!.data, truncated: true } }], expenseFallback, {
+        generateText: async () => { throw new Error('incomplete source must not reach model composition'); },
+      });
+      assert.match(output, /ไม่ครบ|incomplete/);
+      assert.doesNotMatch(output, /85|7/);
+    }
+  });
+
+  it('keeps multi-tool answers outside the expense-only deterministic path', async () => {
+    let captured: any;
+    const data = [...expenseData, { tool: 'company.get_current_context', data: { name: 'Synthetic Company' } }];
+    assert.equal(await agent.composeAnswer('สรุปค่าใช้จ่ายและบริษัท', data, expenseFallback, answerProvider((payload) => {
+      captured = payload;
+      return 'invalid invented 999';
+    })), expenseFallback);
+    assert.deepEqual(captured.systemData[0].data, expenseData[0]!.data);
+    assert.equal(captured.systemData.length, 2);
   });
 
   it('falls back when the model invents a number not in the tool data', async () => {
@@ -337,7 +551,7 @@ describe('ResponseComposerAgent.composeAnswer – multi-turn context grounding',
 
   it('allows a follow-up answer to repeat a number from recent conversation previews', async () => {
     const out = await agent.composeAnswer(
-      'รวมกับเมื่อกี้เป็นเท่าไหร่',
+      'สรุปรายการค่าใช้จ่ายล่าสุดกับเมื่อกี้',
       [{ tool: 'expense.list_recent', data: { summary: { totalAmount: '65' } } }],
       FALLBACK,
       provider('เมื่อกี้ 150 บาท รอบนี้ 65 บาทค่ะ'),
@@ -348,7 +562,7 @@ describe('ResponseComposerAgent.composeAnswer – multi-turn context grounding',
 
   it('still rejects numbers absent from tool data, question, and context', async () => {
     const out = await agent.composeAnswer(
-      'รวมกับเมื่อกี้เป็นเท่าไหร่',
+      'สรุปรายการค่าใช้จ่ายล่าสุดกับเมื่อกี้',
       [{ tool: 'expense.list_recent', data: { summary: { totalAmount: '65' } } }],
       FALLBACK,
       provider('รวมทั้งหมด 999 บาทค่ะ'),
@@ -359,7 +573,7 @@ describe('ResponseComposerAgent.composeAnswer – multi-turn context grounding',
 
   it('does not treat context timestamps as allowed numbers', async () => {
     const out = await agent.composeAnswer(
-      'ยอดเท่าไหร่',
+      'รายละเอียดรายการค่าใช้จ่ายล่าสุด',
       [{ tool: 'expense.list_recent', data: { summary: { totalAmount: '65' } } }],
       FALLBACK,
       provider('ยอด 2026 บาท'),

@@ -18,6 +18,7 @@ import {
   disableBlockForChange,
   diffEntitlements,
   entitlementEnabled,
+  featurePackageEditingNotice,
   filterMenuCards,
   isNormalizationPending,
   previewNavGroups,
@@ -413,7 +414,42 @@ describe('disableBlockForChange — directional readiness', () => {
   it('fails closed when an older detail response has no readiness field', () => {
     const current = enabledState();
     const next = toggleMenuCard(current, binding('inventory'), false);
-    assert.ok(disableBlockForChange(current, next, current));
+    assert.equal(
+      disableBlockForChange(current, next, current)?.reason,
+      'ข้อมูลสิทธิ์ของฟีเจอร์นี้ยังไม่ครบ จึงยังปิดไม่ได้',
+    );
+  });
+
+  it('keeps zero-row legacy features on without suggesting reload will normalize them', () => {
+    const current: { featureKey: string; enabled: boolean }[] = [];
+    const cards = buildMenuCards(MENU_ENTITLEMENT_BINDINGS, FEATURE_CATALOG, current);
+    assert.ok(cards.every((card) => card.enabled), 'legacy effective access must not change');
+    const next = toggleMenuCard(current, binding('inventory'), false);
+    const block = disableBlockForChange(current, next, current);
+    assert.ok(block);
+    assert.equal(block.reason, 'ข้อมูลสิทธิ์ของฟีเจอร์นี้ยังไม่ครบ จึงยังปิดไม่ได้');
+    assert.doesNotMatch(block.reason, /โหลด|รีเฟรช/);
+    assert.deepEqual(current, [], 'copy resolution must not materialize legacy rows');
+  });
+});
+
+describe('feature package editing guidance', () => {
+  it('says neither direction is available while the existing controls are locked', () => {
+    assert.equal(featurePackageEditingNotice(true), 'ขณะนี้ยังเปิดหรือปิดฟีเจอร์ไม่ได้');
+    for (const pending of [true, undefined]) {
+      assert.equal(
+        featurePackageEditingNotice(isNormalizationPending(pending)),
+        'ขณะนี้ยังเปิดหรือปิดฟีเจอร์ไม่ได้',
+      );
+    }
+  });
+
+  it('explains review and save when editable without promising every feature can change', () => {
+    assert.equal(
+      featurePackageEditingNotice(false),
+      'ตรวจสอบรายการที่เลือกก่อนบันทึก การเปลี่ยนแปลงจะมีผลเมื่อบันทึกสำเร็จ',
+    );
+    assert.doesNotMatch(featurePackageEditingNotice(false), /เปิดเพิ่มยังทำได้/);
   });
 });
 

@@ -32,6 +32,37 @@ export type AccountingCounterpartyStatus = 'ACTIVE' | 'ARCHIVED';
 export type AccountingTaxInvoiceType = 'FULL' | 'ABBREVIATED';
 export type AccountingQuotationApprovalStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 
+/** Revenue Code sections 82/9–82/10 and RD VAT Director-General Notification No. 82. */
+export const ACCOUNTING_CREDIT_NOTE_REASON_CODES = [
+  'GOODS_NOT_AS_AGREED',
+  'GOODS_DAMAGED',
+  'GOODS_QUANTITY_SHORT',
+  'GOODS_PRICE_OVERSTATED',
+  'SERVICES_NOT_AS_AGREED',
+  'SERVICES_QUANTITY_SHORT',
+  'SERVICES_PRICE_OVERSTATED',
+  'GOODS_RETURNED',
+  'SERVICE_CANCELLED',
+  'LEGAL_COMPENSATION',
+  'ADVANCE_OR_DEPOSIT_REFUND',
+  'GOODS_RETURN_OR_EXCHANGE_TRADE_AGREEMENT',
+  'SERVICE_DEFECT',
+  'SERVICE_NOT_PROVIDED',
+  'OTHER_PRESCRIBED',
+] as const;
+
+export const ACCOUNTING_DEBIT_NOTE_REASON_CODES = [
+  'GOODS_QUANTITY_EXCESS',
+  'GOODS_PRICE_UNDERSTATED',
+  'SERVICES_EXCEED_AGREEMENT',
+  'SERVICES_PRICE_UNDERSTATED',
+  'OTHER_PRESCRIBED',
+] as const;
+
+export type AccountingAdjustmentReasonCode =
+  | typeof ACCOUNTING_CREDIT_NOTE_REASON_CODES[number]
+  | typeof ACCOUNTING_DEBIT_NOTE_REASON_CODES[number];
+
 export type AccountingCounterpartySummary = {
   id: string;
   companyId: string;
@@ -68,6 +99,8 @@ export type AccountingDocumentLineSummary = {
   whtAmount: string;
   lineSubtotalAmount: string;
   lineTotalAmount: string;
+  /** Current value available to the next correction after prior issued credit/debit notes. */
+  correctionBasisAmount?: string;
   taxCategory?: string;
   revenueCategory?: string;
   /** FK to the RevenueCategory master (live row); `revenueCategory` above is the immutable
@@ -119,6 +152,8 @@ export type AccountingDocumentDetail = AccountingDocumentSummary & {
   postingError?: string;
   note?: string;
   internalMemo?: string;
+  adjustmentReasonCode?: AccountingAdjustmentReasonCode;
+  adjustmentReasonText?: string;
   issuedByUserId?: string;
   issuedAt?: string;
   voidedByUserId?: string;
@@ -289,6 +324,116 @@ export type UpdateRevenueCategoryInput = {
   defaultOutputTaxCode?: string | null;
   sortOrder?: number;
   status?: RevenueCategoryStatus;
+};
+
+export type RecordSimpleIncomeLineInput = {
+  lineNumber: number;
+  description: string;
+  quantity: string;
+  unitPrice: string;
+  discountAmount?: string;
+  vatRate?: string;
+  whtRate?: string;
+  revenueCategoryId?: string;
+};
+
+export type RecordSimpleIncomeInput = {
+  idempotencyKey: string;
+  branchId?: string;
+  documentDate: string;
+  counterpartyId?: string;
+  vatMode: AccountingVatMode;
+  paymentMethod: AccountingPaymentMethod;
+  note?: string;
+  lines: RecordSimpleIncomeLineInput[];
+};
+
+export type RecordSimpleIncomeResult = {
+  invoice: AccountingDocumentDetail;
+  payment: AccountingPaymentSummary;
+  receipt: AccountingDocumentDetail;
+  replayed: boolean;
+};
+
+export type SalesDocumentRootAvailability = {
+  canCreateSalesRoot: boolean;
+};
+
+export type IncomeExpenseLedgerCategoryAmount = {
+  categoryId?: string;
+  label: string;
+  amount: string;
+};
+
+export type IncomeExpenseLedgerSideSummary = {
+  available: boolean;
+  unavailableReason?: 'NO_PERMISSION' | 'DATA_MISMATCH';
+};
+
+export type IncomeExpenseLedgerVatRegistrationAlert = {
+  level: 'APPROACHING' | 'REACHED';
+  periodBasis: 'ACCOUNTING_PERIOD';
+  periodStart: string;
+  periodEnd: string;
+  salesDocumentTotal: string;
+  thresholdAmount: string;
+};
+
+export type IncomeExpenseLedgerSummary = {
+  period: { from: string; to: string; timezone: 'Asia/Bangkok' };
+  income: IncomeExpenseLedgerSideSummary & {
+    salesDocumentTotal?: string;
+    receivedTotal?: string;
+    withheldTaxTotal?: string;
+    receivableOutstanding?: string;
+    byCategory: IncomeExpenseLedgerCategoryAmount[];
+    vatRegistrationAlert?: IncomeExpenseLedgerVatRegistrationAlert;
+  };
+  expense: IncomeExpenseLedgerSideSummary & {
+    recordedExpenseTotal?: string;
+    paidExpenseTotal?: string;
+    byCategory: IncomeExpenseLedgerCategoryAmount[];
+  };
+  cashDifference?: string;
+  documentDifference?: string;
+};
+
+export type IncomeExpenseLedgerEntryType = 'ALL' | 'INCOME' | 'EXPENSE' | 'RECEIVABLE';
+
+export type IncomeExpenseLedgerEntry = {
+  id: string;
+  branchId?: string;
+  side: 'INCOME' | 'EXPENSE';
+  sourceType: 'accounting_document' | 'expense_record';
+  date: string;
+  dueDate?: string;
+  referenceNumber?: string;
+  counterpartyId?: string;
+  partyName?: string;
+  categoryLabels: string[];
+  status: string;
+  amount: string;
+  outstandingAmount?: string;
+  evidenceHref: string;
+};
+
+export type IncomeExpenseLedgerEntries = {
+  period: { from: string; to: string; timezone: 'Asia/Bangkok' };
+  data: IncomeExpenseLedgerEntry[];
+  total: number;
+  page: number;
+  pageSize: number;
+  includedSides: Array<'INCOME' | 'EXPENSE'>;
+};
+
+export type IncomeExpenseLedgerExport = {
+  period: { from: string; to: string; timezone: 'Asia/Bangkok' };
+  includedSides: Array<'INCOME' | 'EXPENSE'>;
+  rowCount: number;
+  csvFileName: string;
+  csv: string;
+  xlsxFileName: string;
+  xlsxBase64: string;
 };
 
 // Document sequence keys

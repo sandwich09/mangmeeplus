@@ -1,6 +1,6 @@
 # Auto Revenue Foundation + Revenue Inbox + Matching — Spec P15/P16/P17
 
-สถานะ: DRAFT — ครอบสามหัวข้อของแผนหลักเป็น pipeline เดียว; เริ่ม implement หลัง P26 ตามลำดับ Owner (2026-08-25); แผนส่งมอบเขียนตอนเข้าคิว
+สถานะ: **DEFERRED BY OWNER 2026-08-27** — รอบนี้เก็บข้อมูล/เอกสารรับ–จ่ายก่อน ไม่ทำ reconciliation, Revenue Inbox/Matching หรือ foundation/harness เพื่อเตรียมงานเหล่านี้. Spec ด้านล่างเก็บไว้สำหรับอนาคต ไม่เป็น release/main gate รอบนี้; ต้องประเมิน current truth และ Owner §7 ใหม่ก่อนกลับมาเริ่ม. P15-0 worktree ที่ทดสอบแล้วหยุดโดยยังไม่ commit/push/merge. แผนส่งมอบอยู่ใน [Four-lane Gap Closure Plan](../plans/mangmee-four-lane-gap-closure-plan-th.md#p15p17--revenue-foundationinboxmatching)
 
 เอกสารแม่: [bank-reconciliation-spec](bank-reconciliation-spec.md) (item 13 — ฐาน implement แล้ว), [OS spec §10](mangmee-accounting-operating-system-spec-th.md) (state/classification), [แผนหลัก P15–P17 + REVENUE-01..08 + §13.12](../plans/mangmee-brain-2-5-day-priority-plan-th.md), [P27 ledger spec](mangmee-income-expense-ledger-spec-th.md) (ทางสร้างเอกสารขายที่ Inbox ต้องใช้)
 

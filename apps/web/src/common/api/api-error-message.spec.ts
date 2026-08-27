@@ -5,6 +5,22 @@ import { apiErrorMessage, translateApiError } from './api-error-message';
 
 const apiError = (message: string, extra: Record<string, unknown> = {}) => Object.assign(new Error(message), extra);
 
+test('explains only supplier source-number duplicates without relabeling unrelated conflicts', () => {
+  const expected = 'เลขที่เอกสารผู้ขายนี้ถูกบันทึกสำหรับผู้ขายรายนี้แล้ว กรุณาตรวจสอบบิลเดิมก่อนสร้างซ้ำ';
+  assert.equal(apiErrorMessage(apiError('duplicate_supplier_document_number', { status: 409 })), expected);
+  assert.equal(apiErrorMessage(apiError('Conflict', { status: 409, code: 'duplicate_supplier_document_number' })), expected);
+  assert.equal(apiErrorMessage(apiError(
+    'Duplicate value: a record with the same unique field(s) already exists. Fields: companyId, supplierId, supplierDocumentNumber',
+    { status: 409 },
+  )), expected);
+  assert.equal(apiErrorMessage(apiError('Conflict', { status: 409 })),
+    'ข้อมูลถูกเปลี่ยนแปลงระหว่างทำรายการ กรุณาเปิดใหม่แล้วลองอีกครั้ง');
+  assert.equal(apiErrorMessage(apiError(
+    'Duplicate value: a record with the same unique field(s) already exists. Fields: companyId, taxInvoiceNumber',
+    { status: 409 },
+  )), 'ข้อมูลถูกเปลี่ยนแปลงระหว่างทำรายการ กรุณาเปิดใหม่แล้วลองอีกครั้ง');
+});
+
 test('translates a known API sentence to Thai', () => {
   assert.equal(
     apiErrorMessage(apiError('Expense requires a receipt attachment or a missing receipt reason.', { status: 400 })),
@@ -38,6 +54,11 @@ test('translates chart-template and posting-readiness failures', () => {
 test('translates partial-payment validation and settlement-route failures', () => {
   assert.match(translateApiError('expense_payment_exceeds_outstanding')!, /ไม่เกินยอดคงเหลือ/);
   assert.match(translateApiError('expense_payment_changed')!, /โหลดรายการใหม่/);
+  assert.match(translateApiError('expense_payment_idempotency_conflict')!, /ตรวจประวัติการจ่าย/);
+  assert.match(translateApiError('expense_payment_invalid_date')!, /ปฏิทิน/);
+  assert.match(translateApiError('expense_payment_invalid_key')!, /ตรวจประวัติการจ่าย/);
+  assert.match(translateApiError('expense_payment_invalid_method')!, /เลือกวิธีจ่ายเงิน/);
+  assert.match(translateApiError('expense_payment_invalid_reference')!, /128/);
   assert.match(translateApiError('claim_expense_settles_via_reimbursement')!, /ผ่านขั้นตอนจ่ายคืนของใบเบิก/);
 });
 
@@ -236,6 +257,44 @@ test('maps a conflicting quotation conversion to the persisted-target instructio
       code: 'accounting_document_already_converted',
     })),
     'ใบเสนอราคานี้ถูกแปลงเป็นเอกสารอื่นแล้ว กรุณาโหลดใหม่และตรวจสอบเอกสารที่สร้างไว้',
+  );
+});
+
+test('explains the receipt-first order before voiding a received payment', () => {
+  assert.equal(
+    apiErrorMessage(apiError('Void the active receipt before voiding its payment.', {
+      status: 422,
+      code: 'accounting_active_receipt_must_be_voided',
+    })),
+    'รายการนี้ออกใบเสร็จแล้ว กรุณายกเลิกใบเสร็จก่อน แล้วจึงยกเลิกการรับชำระ',
+  );
+  assert.equal(
+    apiErrorMessage(apiError('Void the active receipt or tax invoice before voiding its source document.', {
+      status: 422,
+      code: 'accounting_active_child_document_must_be_voided',
+    })),
+    'รายการนี้มีใบเสร็จหรือใบกำกับภาษีที่ยังใช้งานอยู่ กรุณายกเลิกเอกสารลูกก่อน แล้วจึงยกเลิกรายการต้นทาง',
+  );
+  assert.equal(
+    apiErrorMessage(apiError('Invoice already has an active receipt.', {
+      status: 409,
+      code: 'accounting_receipt_already_exists',
+    })),
+    'ใบแจ้งหนี้นี้มีใบเสร็จที่ยังใช้งานอยู่แล้ว กรุณาเปิดใบเสร็จเดิมแทนการสร้างซ้ำ',
+  );
+  assert.equal(
+    apiErrorMessage(apiError('Source document already has an active tax invoice.', {
+      status: 409,
+      code: 'accounting_tax_invoice_already_exists',
+    })),
+    'เอกสารต้นทางนี้มีใบกำกับภาษีที่ยังใช้งานอยู่แล้ว กรุณาเปิดใบเดิมแทนการสร้างซ้ำ',
+  );
+});
+
+test('explains a changed CRM quotation retry without exposing an internal command code', () => {
+  assert.equal(
+    apiErrorMessage(apiError('quotation_command_conflict', { status: 409, code: 'quotation_command_conflict' })),
+    'คำสั่งนี้เคยใช้สร้างใบเสนอราคาด้วยรายละเอียดอื่นแล้ว กรุณาโหลดข้อมูลใหม่ก่อนลองอีกครั้ง',
   );
 });
 

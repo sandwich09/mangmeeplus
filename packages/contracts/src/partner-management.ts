@@ -165,6 +165,24 @@ export type SetPartnerAiModelDto = {
   monthlyBudgetSatang?: number | null;
 };
 
+/** Platform-admin OCR control. Both fields are absolute desired state; replaying the same body is a no-op. */
+export type SetPartnerOcrConfigDto = {
+  enabled: boolean;
+  /** null = unlimited; otherwise 1..1,000,000 reads per Bangkok calendar month. */
+  monthlyLimit: number | null;
+  /** CAS fence from the latest partner AI-usage read. */
+  expectedVersion: number;
+};
+
+export type PartnerOcrConfigDto = {
+  enabled: boolean;
+  monthlyLimit: number | null;
+  /** Dedicated OCR-config CAS version; starts at 0 and increments only on a real config change. */
+  version: number;
+  /** null when the company has never needed an explicit AI/OCR configuration row. */
+  updatedAt: string | null;
+};
+
 export type PartnerAiUsageMonthDto = {
   /** 'YYYY-MM' in Asia/Bangkok. */
   monthKey: string;
@@ -189,6 +207,24 @@ export type PartnerAiUsageDto = {
   };
   /** Current month's spend by `usageTag`, highest first, at most 10 rows. */
   topTags: Array<{ tag: string; costSatang: number; calls: number }>;
+  ocr: {
+    config: PartnerOcrConfigDto;
+    current: PartnerOcrUsageMonthDto;
+    previous: PartnerOcrUsageMonthDto;
+  };
+};
+
+export type PartnerOcrUsageMonthDto = {
+  /** 'YYYY-MM' in Asia/Bangkok. */
+  monthKey: string;
+  /** OCR requests admitted immediately before a provider call, success and failure combined. */
+  usedCount: number;
+  /** Stored ACTIVE receipt primary/supporting attachments; excludes signatures/generated/payment evidence. */
+  uploadedReceiptDocumentCount: number;
+  sourceCounts: Array<{
+    sourceRoute: 'receipt-ocr-web' | 'receipt-ocr-line' | 'bank-statement-extract';
+    reads: number;
+  }>;
 };
 
 /**

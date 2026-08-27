@@ -1,6 +1,6 @@
 # พนักงานหลายบริษัทบน LINE (Active-Membership Policy) — Spec P13
 
-สถานะ: DRAFT — policy/security change รอเข้าคิว implement (หลัง P12 canonical channel); แผนส่งมอบเขียนตอนเข้าคิว
+สถานะ: **BLOCKED BY OWNER POLICY** — architecture/test boundary ครบ แต่ห้ามเปลี่ยน owner-all guard จน Owner ยืนยัน §5; งาน discovery หลัง P12 อ้าง [Four-lane Gap Closure Plan](../plans/mangmee-four-lane-gap-closure-plan-th.md#p13--line-multi-company-staff)
 
 ที่มา: [แผนหลัก P13 + §13.5 กฎ multi-company](../plans/mangmee-brain-2-5-day-priority-plan-th.md); ปิด MULTI-01, MULTI-02 (§13.3)
 

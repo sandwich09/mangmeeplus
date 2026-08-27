@@ -227,7 +227,7 @@ export function createTaskFromConversation(companyId: string, conversationId: st
   return apiFetch<{ id: string; title: string }>(`${conv(companyId, conversationId)}/create-task`, { method: 'POST', body: JSON.stringify(input) });
 }
 
-export function createQuotationFromConversation(companyId: string, conversationId: string, input: { title: string; amountEstimate?: string }) {
+export function createQuotationFromConversation(companyId: string, conversationId: string, input: { title: string; amountEstimate?: string; expectedCloseDate?: string; idempotencyKey: string }) {
   return apiFetch<{ opportunity: { id: string }; quotation: { id: string } }>(`${conv(companyId, conversationId)}/create-quotation`, { method: 'POST', body: JSON.stringify(input) });
 }
 
