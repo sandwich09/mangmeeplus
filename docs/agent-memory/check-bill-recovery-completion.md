@@ -1,6 +1,6 @@
 # Agent Memory: Check-bill recovery completion
 
-Status: implementation and focused verification complete; latest-develop integration pending, 2026-08-27.
+Status: implementation merged with current develop and verified; remote delivery pending, 2026-08-27.
 Owner: delegated implementation agent.
 Scope: complete same-expense check-bill recovery, preparation routing, actionable failures and separate payment-proof enforcement; integrate develop, no deployment.
 Decisions:
@@ -26,4 +26,11 @@ Verification:
 - Browser persisted-state inspection: same `check-expense`, date `2026-08-23`, synthetic Grand Lobby Bar–DusitThani, `2883.65`, original source/classification/attachment retained; separate payment proof; SUPPORTING_ONLY/NON_CLAIMABLE and explicit route resolution. No duplicate expense. The synthetic fixture uses a simulated repository, not PostgreSQL; normal authenticated workspace navigation is not claimed.
 - Mobile limitation: 390px iframe preview was refused by existing CSP. Did not weaken CSP, use a real account, or claim physical/mobile viewport verification. Desktop responsive components and actual workflow were inspected. Temporary fixture files were removed, browser tab closed, local servers stopped, and next-env generation reverted.
 
-Next: commit scoped files; merge latest origin/develop, preserve sibling dictionary/error keys and password test wiring, rerun affected checks, then ordinary non-force atomic feature/develop push and remote containment verification. No deployment.
+Integration:
+
+- Implementation `32ed42f2909c3f06116a9a4e819476ea41c5e25c` merged with latest develop `aa003846af101976c2554b6cad71840abcf4ef0d` as `b601472ccc8c545bd065ee56f80a4a49e4d52782`, without conflicts. Retained employee draft deletion/error copy, password test wiring and branch-default changes.
+- Repeated broad API substitute/LINE/status: **357/357 passed**; web expense/API/i18n/toast: **373/373 passed**; contract parity/payment proof: **45/45 passed**; API suite-registration gate: **3/3 passed**, no skips. Earlier retained-boundary runs add 107 document/upload/branch/concurrency/confirmation tests and 3 attachment-retention tests, all passing.
+- Post-merge owned contracts/config builds and API/web no-emit typechecks passed. `git diff --check` passed. Diff against latest develop contains only this task's files; no package.json/schema/lockfile or temporary fixture changes.
+- Shared API exception filter forwards coded HttpExceptions through Nest unchanged; the actual-use-case synthetic browser rejection and client-toast regression cover the server-body/client-rendering seam. Unknown API errors continue using the safe fallback.
+
+Next: ordinary non-force atomic feature/develop push, then remote containment verification and delivery note. No deployment.

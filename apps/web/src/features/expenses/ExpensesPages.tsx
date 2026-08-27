@@ -1037,7 +1037,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
             </div>
           </div>
           <div className="space-y-1 rounded-lg border border-warning-100 bg-white p-2 text-xs">
-              <p className="font-semibold text-gray-700">2. เลือกหลักฐานการจ่าย (ต้องเป็นคนละไฟล์กับหลักฐานต้นทาง){requiresPaymentEvidence ? ' · จำเป็นตามนโยบาย' : ' · ไม่บังคับ'}</p>
+              <p className="font-semibold text-gray-700">2. เลือกหลักฐานการจ่าย (ต้องเป็นคนละไฟล์กับหลักฐานต้นทาง){requiresPaymentEvidence ? ' · จำเป็น' : ' · ไม่บังคับ'}</p>
               {subPaymentMethod === 'CASH' && substitutePolicy?.cashEvidenceInstructions && <p className="text-gray-500">{substitutePolicy.cashEvidenceInstructions}</p>}
               {detail.attachments.filter((attachment) => attachment.status === 'ACTIVE' && attachment.purpose === 'expense.payment.evidence').map((attachment) => (
                 <label key={attachment.id} className="flex items-center gap-2">
