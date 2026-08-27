@@ -187,6 +187,16 @@ describe('CreateVendorBillDto', () => {
     assert.equal(out.lines[0].externalTaxCode, 'I7');
   });
 
+  it('keeps the source number optional, limits it to 80 characters, and separates tax-invoice identity', async () => {
+    assert.equal((await accepts(CreateVendorBillDto, webPayload)).supplierDocumentNumber, undefined);
+    const out = await accepts(CreateVendorBillDto, {
+      ...webPayload, supplierDocumentNumber: 'S'.repeat(80), taxInvoiceNumber: 'TAX-OTHER',
+    });
+    assert.equal(out.supplierDocumentNumber, 'S'.repeat(80));
+    assert.equal(out.taxInvoiceNumber, 'TAX-OTHER');
+    await rejects(CreateVendorBillDto, { ...webPayload, supplierDocumentNumber: 'S'.repeat(81) });
+  });
+
   it('gives the use case a Date for billDate — it calls .toISOString() on it whenever a line carries a tax code', async () => {
     const out = await accepts(CreateVendorBillDto, webPayload);
     assert.ok(out.billDate instanceof Date);
