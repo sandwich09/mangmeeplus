@@ -11,7 +11,7 @@
 | งาน | หัวข้อ | Spec | Plan | สถานะ |
 |---|---|---|---|---|
 | P9 | Dashboard/alarm ครบชุด, funnel analytics, incident drill ทุก failure class | [production-ops-spec](../specs/production-ops-spec.md) + runbooks | [P9 closure](mangmee-four-lane-gap-closure-plan-th.md#p9--observability-and-drills) | **READY P9-0..P9-2**; UAT drill gate |
-| OCR-GOV | เปิด/ปิด OCR, quota จำนวนครั้งรายบริษัท และ usage ฝั่ง Platform Admin (งานเสริมตาม Owner; ไม่เกี่ยว Subscribe และไม่แทนเลข P14 เดิม) | [spec](../specs/company-ocr-governance-spec-th.md) | [plan](company-ocr-governance-plan-th.md) | **IMPLEMENTED / LOCAL VERIFIED** — code/test/migration/desktop+mobile browser evidence ครบ; รอ PR/CI integration gate |
+| OCR-GOV | เปิด/ปิด OCR, quota จำนวนครั้งรายบริษัท และ usage ฝั่ง Platform Admin (งานเสริมตาม Owner; ไม่เกี่ยว Subscribe และไม่แทนเลข P14 เดิม) | [spec](../specs/company-ocr-governance-spec-th.md) | [plan](company-ocr-governance-plan-th.md) | **IMPLEMENTED / LOCAL VERIFIED** — code/test/migration/desktop+mobile browser evidence ครบ; integration evidence และ CI/merge history อยู่ใน PR #280 |
 | P25 ฉบับย่อ | Load/capacity บน UAT ที่ workload ของวงถัดไป | [production-a5-v2-spec](../specs/production-a5-v2-spec.md) | [P25 gate](mangmee-four-lane-gap-closure-plan-th.md#p25--capacity-gate) + [แผนเดิม](production-a5-v2-plan.md) | **EXECUTION INPUT** — รอ cohort/workload/SLO ไม่ใช่ code ใหม่ |
 
 ## สาย 2 — ความฉลาด AI "สมองมั่งมี" (ทำคู่ขนานทุกสาย)
