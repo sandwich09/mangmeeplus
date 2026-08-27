@@ -1,6 +1,6 @@
 # Agent Memory: Sales payment stable retry
 
-Status: IMPLEMENTED / LOCAL PAYMENT ACCEPTANCE PASS — ready for commit/PR to develop; CI and merge pending. No deployment or main promotion.
+Status: IMPLEMENTED / LOCAL PAYMENT ACCEPTANCE PASS — committed and rebased onto develop; ready for PR, CI and merge pending. No deployment or main promotion.
 Owner: Codex / phase6_launch_review; parent owns local E2E/browser acceptance and delivery.
 Scope: The existing sales-document receive-payment form in `AccountingPages.tsx`; subscription, auto-accounting and reconciliation remain excluded.
 
@@ -81,4 +81,11 @@ UI-regression follow-up (author/list only, **NOT RUN against local server**):
 - Evidence: [screenshots and exact generated API readback](../evidence/sales-payment-stable-retry/README.md). The HTML reporter retains body attachments; list-only reporting does not write them to disk, correcting the earlier author-only expectation above.
 - Full P24/physical-device acceptance remains open: legacy payment inputs still use placeholder/ARIA names rather than persistent visible labels. The financial retry fix does not claim to close that existing UX gap.
 
-Next: Commit/push this bounded correction, rebase onto current develop as needed, rerun focused integration after rebase, and merge only after the PR CI passes. No reconciliation, auto-accounting, subscription or main promotion is included.
+## Integration-base recheck — 2026-08-27
+
+- Rebased the scoped implementation onto develop `b98e500fa027553222f0dd4af137ac993d35d79c` (merged P24 shared-shell controls). Production and E2E diff versus the pre-rebase implementation is empty.
+- Post-rebase full accounting E2E: **6/6 PASS**; full web unit suite: **1127/1127 PASS, 0 skipped**; web typecheck and `git diff --check`: PASS.
+- The screenshots/readback above retain their exact pre-rebase fixture identities; the post-rebase run independently repeats the same assertions with new uniquely named fixtures and supported cleanup. No claim that a previous screenshot depicts the later run.
+- Generated `next-env.d.ts` returned to the tracked typegen reference after typecheck. The generated local Playwright HTML report is not part of the source change.
+
+Next: Push this bounded correction and open its PR to develop; merge only after the exact-head PR CI passes. No reconciliation, auto-accounting, subscription or main promotion is included.
