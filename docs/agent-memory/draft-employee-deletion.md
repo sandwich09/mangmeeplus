@@ -1,6 +1,6 @@
 # Agent Memory: draft-employee-deletion
 
-Status: Implemented and locally verified on `codex/draft-employee-deletion`; preparing integration with latest develop. Isolated worktree originally based on e5477b60943e30cff91a2193f4f5675560aeef91.
+Status: Final integrated checks passed on `codex/draft-employee-deletion`; ready for normal push to develop. Isolated worktree originally based on e5477b60943e30cff91a2193f4f5675560aeef91.
 Owner: delegated agent `/root/reimbursement_no_future_dates` (new task after date delivery).
 Scope: Make the existing employee-delete menu actually remove unfinished company employee drafts. No live data/deployment or global account removal.
 
@@ -45,5 +45,14 @@ Open questions: none; account ownership and recreation follow existing create/li
 - Only merge conflict was the first test in `api-error-message.spec.ts`; retained both the password-session test and draft-removal test. Password/date/login/LINE branch work remains intact; no package.json diff relative to develop.
 - Integrated API functional checks including auth guard/current-password regression: 270 passed, 6 existing real-DB skips. Web employee, fetch/toast/i18n plus current-password page/API/BFF regressions: 132 passed. Web typecheck passed; API still reports only the two missing-SES dependency errors noted above.
 - `spec-suite-coverage.spec.ts` finds exactly one upstream orphan: `modules/auth/application/use-cases/change-password.use-case.spec.ts`. Confirmed the file exists but is not referenced by scripts/catalog at fetched develop itself. Parent assigned the password agent to fix that wiring without package.json edits; this task's controller assertions were moved into the already-wired employee lifecycle suite.
+- Synced the password runner fix at `2ef787b1cabf08f0958890d5b6f2ce68e327b2d6` in merge `c2632ab4b934a7b2ebfdcf9c035beaf759368eee`; the three test-registration checks now pass.
+- The wider auth-endpoints suite exposed the same missing installed SES dependency at runtime. Restored **only the version already pinned by pnpm-lock.yaml, `@aws-sdk/client-ses@3.1118.0`**, using `npm install --prefix /tmp/mangmee-draft-delete-ses.XMhjOC --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @aws-sdk/client-ses@3.1118.0` (24 installed packages). Replaced only this task's `apps/api/node_modules/@aws-sdk` symlink with a local directory retaining read-only links to the existing SDK packages plus the isolated SES package. No tracked manifest/lock or shared-root dependency was changed. Rerunning combined API tests and nonincremental typecheck against that restored runtime.
 
-Next: sync the password agent's runner-wiring follow-up from develop, rerun the integration guard, normal non-force push and record remote ancestry.
+### Final verification on merged develop 2ef787b1
+
+- API (cwd `apps/api`): `env -u DATABASE_URL -u AUTH_RECOVERY_TEST_DATABASE_URL ./node_modules/.bin/tsx --test src/modules/employee-access/domain/logic/*.spec.ts src/modules/employee-access/application/use-cases/*.spec.ts src/modules/auth/application/use-cases/complete-employee-line-link.use-case.spec.ts src/modules/auth/auth-endpoints.spec.ts src/modules/auth/auth.guard.spec.ts src/spec-suite-coverage.spec.ts` — **313 passed, 6 existing real-DB skips, 0 failures**.
+- Web (worktree root): `./apps/api/node_modules/.bin/tsx --tsconfig apps/web/tsconfig.json --test apps/web/src/features/employee-access/*.spec.ts apps/web/src/common/api/api-error-message.spec.ts apps/web/src/common/i18n/error-message.logic.spec.ts apps/web/src/common/api/authed-fetch.spec.ts apps/web/src/features/auth/ChangePasswordPage.spec.ts apps/web/src/features/auth/auth.api.spec.ts apps/web/src/common/auth/change-password-bff.server.spec.ts` — **132 passed**. Additional `api-error-coverage.spec.ts` and `no-raw-api-error-display.spec.ts` — **13 passed** (145 total).
+- Full API and web: `./node_modules/.bin/tsc --noEmit --incremental false -p tsconfig.json` from each app directory — **both passed** after restoring the missing installed SES dependency.
+- `git diff --check` passed; no manifest, lockfile or schema change relative to latest develop. Synthetic browser evidence above remains valid; no real Postgres/UAT claim is made.
+
+Next: normal non-force push and record remote ancestry.
