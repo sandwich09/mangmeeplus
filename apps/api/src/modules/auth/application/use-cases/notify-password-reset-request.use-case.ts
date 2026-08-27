@@ -5,11 +5,13 @@ import { AppConfigService } from '../../../../common/config/app-config.service';
 import { emitSecurityEvent, SECURITY_EVENT } from '../../../../common/logger/security-event';
 import { AuditService } from '../../../audit/application/audit.service';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
+import { generateRawToken, hashLineRecoveryPassword } from '../../domain/logic/secure-token.logic';
 import { pushSystemLineMessage } from '../../infrastructure/system-line-push';
 
-// Identical reply for unknown, ineligible, owner and notified accounts: the
-// caller must not be able to tell accounts apart (no enumeration).
-const GENERIC_MESSAGE = 'If the account is eligible, an administrator has been notified.';
+const RECOVERY_TTL_MS = 30 * 60 * 1000;
+// Identical reply for every outcome: the caller must not learn whether the username,
+// credential or linked LINE identity exists.
+const GENERIC_MESSAGE = 'If the account is eligible, a temporary password has been sent to its linked LINE.';
 
 @Injectable()
 export class NotifyPasswordResetRequestUseCase {
@@ -21,24 +23,17 @@ export class NotifyPasswordResetRequestUseCase {
     @Optional() @Inject(AuditService) private readonly audit: AuditService | null = null,
   ) {}
 
-  /**
-   * L-06: fixed minimum-duration envelope. The body, status and headers are already
-   * identical for every outcome; what still leaked was the round-trip count — one query
-   * for an unknown identifier against four to six for an eligible one. The floor is a
-   * single constant for all branches: per-branch floors or added jitter would themselves
-   * be a signal.
-   */
   async execute(input: { username: string; requestId?: string }): Promise<{ message: string }> {
     const startedAt = Date.now();
     try {
-      return await this.notify(input);
+      return await this.request(input);
     } finally {
       const remainingMs = this.config.passwordResetResponseMinMs - (Date.now() - startedAt);
       if (remainingMs > 0) await delay(remainingMs);
     }
   }
 
-  private async notify(input: { username: string; requestId?: string }): Promise<{ message: string }> {
+  private async request(input: { username: string; requestId?: string }): Promise<{ message: string }> {
     const username = input.username.trim().toLowerCase();
     const requestId = input.requestId ?? 'system';
 
@@ -67,32 +62,48 @@ export class NotifyPasswordResetRequestUseCase {
       return deny('ineligible_account', user.id);
     }
 
-    // Same membership selection as password login: oldest ACTIVE membership in an
-    // ACTIVE company is the one the account actually signs in with.
     const membership = await this.prisma.client.companyMembership.findFirst({
       where: { userId: user.id, status: 'ACTIVE', company: { status: 'ACTIVE' } },
-      select: {
-        companyId: true,
-        roles: { select: { role: { select: { key: true } } } },
-      },
+      select: { companyId: true },
       orderBy: { createdAt: 'asc' },
     });
     if (!membership) return deny('no_active_company', user.id);
 
-    const roles = membership.roles.map((mr) => mr.role.key);
-    // Owners have nobody above them in the company; the support line covers them.
-    if (roles.includes('OWNER')) return deny('owner_requester', user.id, membership.companyId);
+    const lineToken = this.config.lineMessagingChannelAccessToken;
+    if (!lineToken) return deny('line_channel_unavailable', user.id, membership.companyId);
 
-    let targets = await this.deliverableLineUserIds(membership.companyId, roles.includes('ADMIN') ? 'OWNER' : 'ADMIN');
-    if (targets.length === 0 && !roles.includes('ADMIN')) {
-      targets = await this.deliverableLineUserIds(membership.companyId, 'OWNER');
-    }
+    // The destination comes only from the identity already bound to this exact account.
+    const identity = await this.prisma.client.externalIdentity.findFirst({
+      where: { userId: user.id, provider: 'LINE', status: 'ACTIVE' },
+      select: { providerUserId: true },
+    });
+    if (!identity) return deny('line_identity_unavailable', user.id, membership.companyId);
 
-    // Detached: awaiting LINE would make a real account answer seconds slower
-    // than an unknown one, so response time itself would leak existence.
+    const temporaryPassword = generateRawToken(9);
+    const expiresAt = new Date(Date.now() + RECOVERY_TTL_MS);
+    const resetToken = await this.prisma.client.$transaction(async (tx) => {
+      // Serialize repeat requests on the existing credential, before locking tokens.
+      await tx.$queryRaw`SELECT "id" FROM "UserCredential" WHERE "userId" = ${user.id} FOR UPDATE`;
+      const currentCredential = await tx.userCredential.findUnique({ where: { userId: user.id } });
+      if (!currentCredential || currentCredential.status === 'DISABLED') return null;
+      await tx.passwordResetToken.updateMany({
+        where: { userId: user.id, status: 'PENDING' },
+        data: { status: 'REVOKED' },
+      });
+      return tx.passwordResetToken.create({
+        data: { userId: user.id, tokenHash: hashLineRecoveryPassword(temporaryPassword, currentCredential.passwordHash), expiresAt },
+        select: { id: true },
+      });
+    });
+    if (!resetToken) return deny('ineligible_account', user.id, membership.companyId);
+
+    // LINE latency and delivery state must not reveal account existence through this response.
     void this.deliverAndAudit({
-      text: `🔐 ${user.displayName} (${username}) ขอรีเซ็ตรหัสผ่าน\nไปที่ ตั้งค่า → ภาพรวมสิทธิ์ เลือกพนักงานคนนี้ แล้วกดเมนู "รีเซ็ตรหัสผ่าน"`,
-      targets,
+      lineToken,
+      lineUserId: identity.providerUserId,
+      temporaryPassword,
+      expiresAt,
+      resetTokenId: resetToken.id,
       userId: user.id,
       companyId: membership.companyId,
       requestId,
@@ -101,45 +112,44 @@ export class NotifyPasswordResetRequestUseCase {
     return { message: GENERIC_MESSAGE };
   }
 
-  /** Runs after the response is on the wire; audits how many pushes actually landed. */
   private async deliverAndAudit(params: {
-    text: string;
-    targets: string[];
+    lineToken: string;
+    lineUserId: string;
+    temporaryPassword: string;
+    expiresAt: Date;
+    resetTokenId: string;
     userId: string;
     companyId: string;
     requestId: string;
   }): Promise<void> {
-    const token = this.config.lineMessagingChannelAccessToken;
-    let recipientCount = 0;
-    if (token && params.targets.length > 0) {
-      const results = await Promise.all(params.targets.map((lineUserId) => pushSystemLineMessage(token, lineUserId, params.text)));
-      recipientCount = results.filter(Boolean).length;
+    const expiry = params.expiresAt.toLocaleString('th-TH', {
+      timeZone: 'Asia/Bangkok',
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    });
+    const delivered = await pushSystemLineMessage(
+      params.lineToken,
+      params.lineUserId,
+      `🔐 รหัสผ่านชั่วคราว: ${params.temporaryPassword}\nใช้เข้าสู่ระบบภายใน ${expiry} แล้วตั้งรหัสผ่านใหม่ทันที\nรหัสเดิมยังใช้ได้จนกว่าจะใช้รหัสนี้`,
+    );
+
+    if (!delivered) {
+      await this.prisma.client.passwordResetToken.updateMany({
+        where: { id: params.resetTokenId, status: 'PENDING' },
+        data: { status: 'REVOKED' },
+      });
     }
 
     await this.audit?.log({
       action: AuditAction.AUTH_PASSWORD_RESET_REQUEST,
       actorUserId: params.userId,
       companyId: params.companyId,
-      targetType: 'User',
-      targetId: params.userId,
+      targetType: 'PasswordResetToken',
+      targetId: params.resetTokenId,
       requestId: params.requestId,
-      result: 'SUCCESS',
+      result: delivered ? 'SUCCESS' : 'FAILED',
       riskLevel: 'MEDIUM',
-      metadataJson: { channel: 'line', recipientCount },
+      metadataJson: { channel: 'line', recipientCount: delivered ? 1 : 0 },
     });
-  }
-
-  private async deliverableLineUserIds(companyId: string, roleKey: string): Promise<string[]> {
-    const memberships = await this.prisma.client.companyMembership.findMany({
-      where: { companyId, status: 'ACTIVE', roles: { some: { role: { key: roleKey } } } },
-      select: { userId: true },
-    });
-    if (memberships.length === 0) return [];
-
-    const identities = await this.prisma.client.externalIdentity.findMany({
-      where: { userId: { in: memberships.map((m) => m.userId) }, provider: 'LINE', status: 'ACTIVE' },
-      select: { providerUserId: true },
-    });
-    return [...new Set(identities.map((identity) => identity.providerUserId))];
   }
 }

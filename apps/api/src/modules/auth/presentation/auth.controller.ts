@@ -220,7 +220,7 @@ export class AuthController {
   @Public()
   @Post('password/reset-request')
   @HttpCode(200)
-  @ApiOperation({ summary: 'Ask the company admins (or owner) to reset the password for an account' })
+  @ApiOperation({ summary: 'Send a one-time recovery password to the account\'s linked LINE identity' })
   @ApiBody({ type: PasswordResetRequestDto })
   @ApiResponse({ status: 200, description: 'Generic response returned for all requests' })
   @ApiResponse({ status: 429, description: 'Too many reset requests for this account or IP' })
