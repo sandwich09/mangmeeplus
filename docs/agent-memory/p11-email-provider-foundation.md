@@ -1,6 +1,6 @@
 # Agent Memory: P11 Email Provider Foundation
 
-Status: ROOT FOLLOW-UP ACCEPTED / LOCAL VERIFIED — explicit SES frontend-base fix reviewed and full API rerun passed; phase commit/PR/CI pending. No activation.
+Status: MERGED DEVELOP via PR #290 at `d8d9808e41d15360810ed67e9169ade0cd5605ab`, 2026-08-27T05:08:55Z; exact-head CI `33040896057` SUCCESS on `6f85339d6179a456957a7db77a3fc161047b8647`. Explicit SES frontend-base fix is included. Disabled-safe Phase 0 only; no activation.
 Owner: Root integration; original bounded implementation by phase6_launch_review; explicit SES frontend-base follow-up by `/root/ocr_platform_admin`.
 Scope: Only SES auth-mailer runtime/config/dependency patch from `ec03bc6f`, scoped P11 docs and exact maintenance pins. Initial baseline `21f109d51e91d96836aaa3423730072378e977b7`, fast-forwarded to `111532966c415fee11abb36ca1749bf1fc66ee52` after expense PR287; branch `codex/p11-ses-foundation-current`.
 
@@ -36,7 +36,7 @@ Verification:
 - `git diff --check` and P11 relative-doc-link check: PASS. Full API suite/new CI/browser/live delivery not run in this bounded handoff; no claim of inbox/DKIM or human acceptance.
 
 Next:
-- Root reviews frozen diff, integrates onto latest develop and runs required CI before delivery. Keep Phase 1–4 and activation blocked; root owns master/closure status integration and disposition of old stacked PR272. Do not copy its unrelated P9/P10 commits.
+- The bounded provider slice is integrated. Keep Phase 1–4 and activation blocked; root owns disposition of old stacked PR272. Do not copy its unrelated P9/P10 commits or infer claim/live acceptance from provider tests.
 
 ## Root/Opus follow-up — explicit SES frontend base
 
@@ -125,3 +125,15 @@ Next:
 - Before commit, fast-forwarded to `9aaacfe2617f83f1bd10e941580ee2cc8dc2b396`
   (docs-only PR289 / CI33040756154 SUCCESS). All 11 incoming Markdown paths were disjoint
   from this candidate; tested runtime/config/dependency bytes are unchanged. No stash/reset.
+
+## Delivery provenance — supersedes pre-PR/authoring status above
+
+- [PR290](https://github.com/MangmeeDev/mangmeeplus/pull/290) merged into develop at
+  `d8d9808e41d15360810ed67e9169ade0cd5605ab`, 2026-08-27T05:08:55Z after
+  [CI33040896057](https://github.com/MangmeeDev/mangmeeplus/actions/runs/33040896057) SUCCESS
+  on exact head `6f85339d6179a456957a7db77a3fc161047b8647`. Read-only git/gh verified;
+  the merge tree equals the candidate tree. Earlier tests/review keep their stated scope.
+- The docs-only [delivery checkpoint](capture-first-delivery-checkpoint.md) restores the
+  existing Phase 2 acceptance: expired/used/unknown tokens receive the same generic public
+  message. It adds no claim implementation, TTL/secret decision or provider activation,
+  and does not claim those future claim tests have run.

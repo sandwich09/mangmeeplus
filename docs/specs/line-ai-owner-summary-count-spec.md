@@ -1,8 +1,11 @@
 # LINE AI concise owner summaries and count preservation
 
-Status: Amount-role correction frozen at base `70033af2`, 2026-08-27: focused118/118,
-gateway984/984 and API/gateway types passed. PR #288 remains held for root review and
-new exact-head CI; earlier review/CI predate this finding. No deployment authorized.
+Status: MERGED DEVELOP via [PR #288](https://github.com/MangmeeDev/mangmeeplus/pull/288)
+at `c6f3d06f0558ef9dd3a0944ae2065bbae67946a0`, 2026-08-27T05:30:29Z, after
+[CI33041868515](https://github.com/MangmeeDev/mangmeeplus/actions/runs/33041868515)
+SUCCESS on exact head `29a0605b10102cc6efc0802ba90abe4e5482b6d7` and
+[fresh combined acceptance](../agent-memory/capture-integration-final.md).
+This is the bounded response correction, not live-provider or main acceptance.
 
 ## Goal and existing authority
 
@@ -10,8 +13,9 @@ Owners should get a brief amount answer for a broad expense summary, but an expl
 count question must not lose its count. This extends the existing operator-intent spec
 §8 and business-query coverage spec §7.4; it does not add a keyword router or tools.
 
-PR #264 (`0edb396b1d3bf56c042fbd53194778738e4d696e`) contains one unmerged concise-card
-commit. Its amount-only projection misses `ค่าใช้จ่ายเดือนนี้มีกี่ใบ` and `how many
+Historical baseline: PR #264 (`0edb396b1d3bf56c042fbd53194778738e4d696e`) contains one
+unmerged concise-card commit, now runtime-superseded by PR #288. Its amount-only
+projection misses `ค่าใช้จ่ายเดือนนี้มีกี่ใบ` and `how many
 expenses`, removes `total`, and rejects a correct count through its numeric guard.
 The pre-existing AccountingSummaryAgent fallback also has no count fact. Reuse the
 current composer boundary, where both raw data and grounded fallback are already available.

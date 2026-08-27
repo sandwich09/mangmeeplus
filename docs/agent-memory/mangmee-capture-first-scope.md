@@ -1,6 +1,6 @@
 # Agent Memory: Mangmee capture-first delivery scope
 
-Status: SCOPE MERGED via PR #282 at `d2b40f37`; progress rechecked 2026-08-27 against develop `11153296` after P24/partner-copy and sales/vendor/expense capture PRs #283–287. Not full-product completion or production acceptance.
+Status: SCOPE MERGED via PR #282 at `d2b40f37`; progress rechecked 2026-08-27 against develop `c6f3d06f` after capture PRs #283–287, audit PR289, P11 foundation PR290 and corrected AI PR288, all merged after their exact-head CI. P24-2b remains in progress. Not full-product completion or production acceptance.
 Owner: User scope decision; Codex execution.
 Scope: Keep current non-subscription delivery, but collect income/expense data and documents before reconciliation/integrations.
 
@@ -14,7 +14,7 @@ Decisions:
 - P9 PR #281 merged after CI 33032595709 success at `d33f8d2eaff629d6a4e1660ce6232f04b39d6246`; OCR PR #280 and P27 phases 0–6 are already on develop. No main merge or cloud action occurred.
 - P24-2a shared-shell correction merged via PR #283 at `b98e500f`, CI `33034949214` SUCCESS. Final scoped E2E16/16, mobile3/3, sidebar5/5, web1125/1125 and five tracked JPEG supersede the first 10/12 run; final Opus5 max follow-up APPROVE followed the corrected outline/width tests. Full P24 stays PARTIAL, not physical-device or 40+ human acceptance.
 - Partner-copy PR #284 merged at `78057e38` / CI `33035656163` SUCCESS; sales-payment retry PR #285 merged `145924a3` / CI `33036847494` SUCCESS; vendor-bill capture PR #286 merged `21f109d5` / CI `33037405174` SUCCESS; expense-payment/date PR #287 merged `11153296` / CI `33039136161` SUCCESS. Final combined E2E33/33 (accounting6 + AP6 + expense21), zero skipped/flaky, ชุดตรวจ 128/128 รวม real PostgreSQL 6 เคส, web1139/1139 และ [tracked images/API proof](../evidence/expense-payment-capture-integrity/README.md) support the scoped capture delivery, not main/Production approval.
-- P11 disabled-safe foundation remains an uncommitted candidate on `11153296`, no PR: root-recorded Opus5 max conditional APPROVE does not cover the subsequent explicit WEB_BASE_URL fallback correction now in progress. AI owner-summary correction is OPEN PR #288, head `70033af2`, CI `33040537029` still in progress; root local checks/independent review passed, not merged or live-provider accepted. LINE recovery PR #265 is held on five security findings and an unresolved one-time contract; see [progress audit](capture-first-progress-audit.md#pr265--security-hold-unmerged-branch-only). No new policy/owner decision is inferred.
+- P11 disabled-safe foundation, including explicit WEB_BASE_URL correction, merged via PR290 at `d8d9808e` after exact-head CI `33040896057` SUCCESS on `6f85339d`; claim/live delivery remain gated. AI PR288 old70033af2/CI33040537029 was held for amount2026 versus actual85; corrected29a0605b passed [fresh combined checks](capture-integration-final.md) and exact-head CI33041868515, then merged at `c6f3d06f`. PR264 runtime is superseded; no old PR is closed by this audit. LINE recovery PR #265 retains its five security findings and unresolved one-time contract; see [progress audit](capture-first-progress-audit.md#pr265--security-hold-unmerged-branch-only). No new policy/owner decision is inferred.
 
 Open questions:
 
@@ -32,6 +32,8 @@ Verification:
 - Follow-up audit: read-only GitHub confirms PR #283 MERGED / CI `33034949214` SUCCESS and PR #284 MERGED / CI `33035656163` SUCCESS. The earlier six-file/109-link result belongs to the scope PR, not this follow-up; current audit checks are recorded separately.
 - Refreshed read-only verification confirms PR #285 MERGED / CI `33036847494` SUCCESS on `b6f99079` and PR #286 MERGED / CI `33037405174` SUCCESS on `cfbd91d8`; exact merge IDs and evidence links are in the progress audit.
 - Latest read-only verification confirms PR #287 MERGED at `111532966c415fee11abb36ca1749bf1fc66ee52`, 2026-08-27T04:36:17Z; CI `33039136161` SUCCESS on `179981a45f00a1d0b3a1898dce9f877f2457563e`. No runtime/DB/cloud change in this audit.
+- Delivery checkpoint confirms PR290 MERGED at `d8d9808e41d15360810ed67e9169ade0cd5605ab`, 2026-08-27T05:08:55Z; CI `33040896057` SUCCESS on `6f85339d6179a456957a7db77a3fc161047b8647`.
+- Final read-only verification confirms PR288 MERGED at `c6f3d06f0558ef9dd3a0944ae2065bbae67946a0`, 2026-08-27T05:30:29Z; CI `33041868515` completed/SUCCESS on `29a0605b10102cc6efc0802ba90abe4e5482b6d7`. [Checkpoint memory](capture-first-delivery-checkpoint.md) separates scoped source/CI delivery from future claim, live AI and main acceptance.
 
 Next:
 

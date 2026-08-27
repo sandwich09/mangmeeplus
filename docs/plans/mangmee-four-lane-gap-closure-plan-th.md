@@ -17,6 +17,7 @@
 - P9-1c PR #281 merged ที่ `d33f8d2e` หลัง CI `33032595709` ผ่าน; ไม่มี cloud rollout ใน phase นี้.
 - P24-2a PR #283 merged ที่ `b98e500f` หลัง CI `33034949214` SUCCESS; scoped E2E16/16 + mobile3/3 + sidebar5/5 + web1125/1125 และ JPEG5 ไฟล์อยู่ใน Git. Partner-copy PR #284 merged ต่อที่ `78057e38` หลัง CI `33035656163` SUCCESS. Full P24 ยัง PARTIAL.
 - Capture follow-ups: sales-payment retry PR #285 merged `145924a3` / CI `33036847494` SUCCESS; vendor-bill capture PR #286 merged `21f109d5` / CI `33037405174` SUCCESS; expense-payment/date PR #287 merged `11153296` / CI `33039136161` SUCCESS. Final combined E2E33/33 (6+6+21), zero skipped/flaky, web1139/1139, ชุดตรวจ 128/128 รวม real PostgreSQL 6 เคส และ [ภาพ6ไฟล์/API proof](../evidence/expense-payment-capture-integrity/README.md) ตรวจย้อนกลับได้. [Capture-first audit](../agent-memory/capture-first-progress-audit.md) แยก merged delivery จาก Owner/acceptance gates ที่ยังเปิด.
+- P11 Phase 0 merged PR290 ที่ `d8d9808e` หลัง exact-head CI `33040896057` SUCCESS; provider ยัง disabled. Corrected AI PR288 head29a0605b merged ที่ `c6f3d06f` หลัง fresh combined review/checks PASS และ exact-head CI33041868515 SUCCESS; old70033af2 green CI ไม่ใช่ final acceptance และ local/CI ไม่ใช่ live AI/main approval. ดู [delivery checkpoint](../agent-memory/capture-first-delivery-checkpoint.md).
 
 ## กติกาใช้แผนนี้
 
@@ -147,15 +148,15 @@ Exit: concurrency สร้าง request/company/user/membership อย่า�
 <a id="p11--email-delivery--claim"></a>
 ## P11 — Email Delivery + Claim
 
-สถานะ: **PARTIAL — DISABLED-SAFE FOUNDATION เป็น CURRENT-BASE CANDIDATE; CLAIM/LIVE DELIVERY ยัง BLOCKED**
+สถานะ: **PARTIAL — DISABLED-SAFE FOUNDATION MERGED DEVELOP ผ่าน PR290; CLAIM/LIVE DELIVERY ยัง BLOCKED**
 
 Spec: [Email Delivery/Claim](../specs/mangmee-email-delivery-claim-spec-th.md).
 
-- P11-0: `codex/p11-ses-foundation-current` บน `11153296` port เฉพาะ SES/provider/config/dependency จาก `ec03bc6f` ไม่รวม P9/P10 stack ของ PR272. Root rerun API5324 passed/5422 total (98 skipped), pretest16/30 (14 skipped), config137/137, API/config typecheck/build, network-denied disabled/SES boot145/122ms และ maintenance checks ผ่านใน source ก่อน follow-up. Root-recorded actual Opus5 max verdict เป็น conditional APPROVE รอ CI; root รับ medium finding เรื่อง explicit WEB_BASE_URL fallback และกำลังแก้ จึงต้องตรวจ diff/ผลใหม่ก่อน final acceptance. ยัง uncommitted/no new PR/CI/merge และ provider คง disabled; ไม่ถือ skipped cases เป็น PostgreSQL/live-provider evidence.
+- P11-0: port provider/config/dependency จาก `ec03bc6f` พร้อม explicit frontend WEB_BASE_URL fix merged ที่ `d8d9808e` / PR290 / CI `33040896057` SUCCESS บน `6f85339d`. Root post-fix API5325 passed/5423 total (98 skipped), pretest16/30 (14 skipped), focused50/50, config138/138, typecheck/build, network-denied boot4กรณีและ maintenance checks ผ่าน. Root source review หลัง fix ไม่ใช่การเปลี่ยน conditional Opus verdict ก่อน fix ให้เป็น blanket approval; provider คง disabled และ skipped cases ไม่ใช่ PostgreSQL/live-provider evidence.
 - Durable send/claim token/public route ไม่อยู่ใน foundation: ต้องตัดสิน raw-link/key lifecycle ที่ไม่ persist plaintext/หลบ outbox redactor พร้อม TTL/resend/revoke ก่อนสร้าง producer/consumer หรือ claim flow. ไม่ถือว่า outbox/claim concurrency ผ่านจากผล provider test.
 - ก่อน live ยังต้อง sender identity/configuration set, delivery/bounce/complaint consumer, suppression policy, System Admin status, CSP/no-store, credential/session/provision contract และ email content deny tests; foundation ไม่เปิด sender/region หรือ email จริง.
 
-Exit foundation: root review + exact-head CI/merge ของ disabled-safe slice. Exit claim: durable retry และ hash-only/single-use/expiry/replay/concurrency ตาม contract ที่อนุมัติ. Exit live: SPF/DKIM/DMARC, inbox, hard-bounce/complaint round-trip และ suppression evidence ใน chosen region/domain. ดู [current audit](../agent-memory/capture-first-progress-audit.md) สำหรับ branch-only provenance.
+Exit foundation ผ่านเฉพาะ disabled-safe slice ตาม PR290. Exit claim: durable retry และ hash-only/single-use/expiry/replay/concurrency ตาม contract ที่อนุมัติ รวมข้อความ public ทั่วไปเดียวกันสำหรับ expired/used/unknown ตาม [P11 plan Phase 2](mangmee-email-delivery-claim-plan-th.md#phase-2--claim-tokenroute-blocked). Exit live: SPF/DKIM/DMARC, inbox, hard-bounce/complaint round-trip และ suppression evidence ใน chosen region/domain. ดู [delivery memory](../agent-memory/p11-email-provider-foundation.md); ไม่เปิด provider จากผล local/CI.
 
 <a id="p12--line-loginlinkqr"></a>
 ## P12 — LINE Login/Link/QR
@@ -169,7 +170,7 @@ Spec: [LINE Login Journey](../specs/mangmee-line-login-link-journey-spec-th.md);
 - P12-2: unlinked account flow + single-use link/recovery/unlink; ห้าม match ด้วยชื่อ/email/รูป/เบอร์.
 - P12-3: web QR opaque code/intent binding/poll rate/replay; deep-link handoff หลัง Owner ตอบ Q1–Q4.
 
-LINE recovery PR #265 เป็น implementation ที่ยังไม่อยู่ develop และ **NOT READY TO MERGE**: read-only review พบ security 5 จุดกับ one-time contract ที่ขัดกัน; [exact findings](../agent-memory/capture-first-progress-audit.md#pr265--security-hold-unmerged-branch-only). แก้/review ตาม evidence ก่อน port และถามความหมาย one-time โดยไม่อนุมานคำตอบ; historical green CI ไม่ปิด gate นี้. AI owner-summary correction บน baseline `11153296` เปิด PR #288 head `70033af2` แล้ว; root local checks/independent review ผ่าน แต่ CI `33040537029` ยัง in progress และยังไม่ merged/live accepted.
+LINE recovery PR #265 เป็น implementation ที่ยังไม่อยู่ develop และ **NOT READY TO MERGE**: read-only review พบ security 5 จุดกับ one-time contract ที่ขัดกัน; [exact findings](../agent-memory/capture-first-progress-audit.md#pr265--security-hold-unmerged-branch-only). แก้/review ตาม evidence ก่อน port และถามความหมาย one-time โดยไม่อนุมานคำตอบ; historical green CI ไม่ปิด gate นี้. AI PR288 head `29a0605b` รวม root-accepted amount/date fix `86c72e7f`; [fresh combined report](../agent-memory/capture-integration-final.md) NO BLOCKERS, API5327/5425 (skip98), Gateway984/984 + Web1139/1139 (zero skip),3types/45pins และ6 real-class/fake-dependency probes ผ่าน. Exact-head CI `33041868515` SUCCESS และ root merged ที่ `c6f3d06f` เมื่อ 2026-08-27T05:30:29Z; PR264 runtime superseded แล้วโดยไม่ปิด PR เก่าใน audit นี้. Old70033af2/CI33040537029 ไม่อนุมัติผลใหม่ และไม่มีการอ้าง live-provider/main acceptance.
 
 Activation gate: LINE Developers Console ยืนยัน Messaging/Login/LIFF อยู่ Provider ที่ออกแบบรองรับ, conflict inventory = 0 หรือมี disposition, shadow resolves ถูก user, cross-tenant negative, revoke/disabled/no-membership และ rollback ผ่าน.
 
@@ -249,6 +250,7 @@ Spec: [P24](../specs/mangmee-growth-ux-full-pass-spec-th.md).
 - P24-1: role-based ordering + opt-in user/company preference; permissions/entitlements remain authoritative; delete/export tests.
 - P24-2: device matrix + F-LED-7 audit ทุก customer page, including P27/P28 surfaces; run automated responsive then real iOS/Android/iPad/desktop evidence.
   - P24-2a **merged develop `b98e500f` / PR #283 / CI `33034949214` SUCCESS**: [shared-shell targets](../specs/mangmee-growth-ux-full-pass-spec-th.md#231-p24-2a--shared-shell-targets-scoped-desktop-visible-correction) เฉพาะสามปุ่ม toggle/bell; 44px + forced-colors focus, คง semantics/guards. Repo E2E16/16, drawer/popover3/3, sidebar5/5, web1125/1125 และ real Chrome JPEG5 ไฟล์ผ่าน; final Opus5 max read-only follow-up **APPROVE** หลังแก้ initial REQUEST CHANGES. Intentional `[desktop-visible]` exception จำกัดสามปุ่ม; ไม่ปิด full P24/physical-device matrix. หลักฐาน/ข้อจำกัดอยู่ใน [task memory](../agent-memory/p24-shared-shell-touch-targets.md).
+  - P24-2b selector44px: `codex/p24-scope-selector-targets` จาก `d8d9808e` ยัง uncommitted/in progress; root ดูแล manual UI และ acceptance ไม่มีผลผ่าน/PR/merge ที่อ้างได้ใน checkpoint นี้.
 
 P24 ไม่กำหนด/บังคับราคา subscription quota หรือ trial expiry; controlled cohort ใช้ existing allowlist/entitlement. Activation-rate target กำหนดหลัง baseline และไม่ block instrumentation/UX fixes.
 
