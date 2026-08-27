@@ -4,6 +4,8 @@
 
 ขอบเขต: ทุกหัวข้อใน [Master Plan Index](mangmee-master-plan-index-th.md) สาย 1–4; **ไม่ review/ไม่เปลี่ยน P14/P26 หรือการจ่ายเงิน Subscribe**
 
+**Owner scope amendment 2026-08-27:** รอบนี้เน้นเก็บข้อมูล/เอกสารรับ–จ่าย ไม่ต้องกระทบยอด. P15–P17, P18–P20 และ revenue automation ที่พึ่ง matching เป็น **DEFERRED BY OWNER** ทั้ง code/harness/activation ไม่ใช่ release/main gate รอบนี้. Checklist เดิมด้านล่างเก็บไว้สำหรับอนาคต ไม่ใช่คำสั่งเริ่มงาน. คง expense/purchase/sales document flow, permission และ accounting safeguards เดิม; ไม่ลบ code/data หรือเปลี่ยน entitlement. ดู [scope ล่าสุด](mangmee-master-plan-index-th.md) และ [memory](../agent-memory/mangmee-capture-first-scope.md).
+
 หลักฐานฐานงาน:
 
 - เอกสาร index ตรงกับ `origin/develop@1ad0ea6c` แบบ byte-for-byte ณ วันที่ตรวจ
@@ -12,6 +14,7 @@
 - ผลตรวจและคำสั่ง reproduce อยู่ใน [Four-lane Coding-readiness Audit](mangmee-four-lane-coding-readiness-audit-th.md)
 - อัปเดต integration 2026-08-27: P27 Phase 0–6 merged ที่ `8b575285`; OCR governance PR #280 merged ที่
   `086a4549` หลัง CI `33030846368` ผ่าน. ข้อความฐานงานก่อนหน้านี้คือ snapshot ตอน audit ไม่ใช่สถานะปัจจุบัน.
+- P9-1c PR #281 merged ที่ `d33f8d2e` หลัง CI `33032595709` ผ่าน; ไม่มี cloud rollout ใน phase นี้.
 
 ## กติกาใช้แผนนี้
 
@@ -26,7 +29,7 @@
 <a id="p9--observability-and-drills"></a>
 ## P9 — Observability และ Incident Drills
 
-สถานะ: **P9-0/1a/1b/2 MERGED; P9-1c LOCAL VERIFIED / INTEGRATION PENDING; drill/activation ต้องมี UAT evidence**
+สถานะ: **P9-0/1a/1b/1c/2 MERGED DEVELOP; drill/activation ต้องมี UAT evidence**
 
 Canonical spec/plan: [Production Ops Spec](../specs/production-ops-spec.md), [Production Ops Plan](production-ops-plan.md). เอกสารสองฉบับนี้แข็งแรงด้าน runtime alarm, backup/restore, release และ runbook แต่ยังไม่ผูก marketing/signup funnel และ failure class ของสายใหม่เป็น contract เดียว.
 
@@ -192,7 +195,7 @@ Spec: [P13](../specs/mangmee-line-multi-company-staff-spec-th.md). เริ่�
 <a id="p15p17--revenue-foundationinboxmatching"></a>
 ## P15–P17 — Revenue Foundation/Inbox/Matching
 
-สถานะ: **P15 READ-ONLY CORE READY; posting/automation blocked**
+สถานะ: **DEFERRED BY OWNER 2026-08-27 — ไม่ทำในรอบเก็บข้อมูลรับ/จ่าย**
 
 Spec: [P15–P17](../specs/mangmee-revenue-inbox-matching-spec-th.md).
 
@@ -206,9 +209,9 @@ Owner gate: confirm statement-import-first, pilot source/volume, accountant revi
 <a id="p18p20--revenue-connectors"></a>
 ## P18–P20 — Revenue Connectors
 
-สถานะ: **SHARED CONTRACT READY; PROVIDER ADAPTER BLOCKED**
+สถานะ: **DEFERRED BY OWNER 2026-08-27 — รวม shared harness และ provider adapter**
 
-Spec: [Revenue Connectors Contract](../specs/mangmee-revenue-connectors-contract-spec-th.md). Coding ได้เฉพาะ canonical envelope, verifier/poller ports และ provider-neutral conformance fixture runner. Adapter เริ่มเมื่อ Owner เลือก provider/pilot และ selection gate §6 ครบ. ห้ามขอ credential, mutate provider หรือ infer settlement semantics จาก provider อื่น.
+Spec: [Revenue Connectors Contract](../specs/mangmee-revenue-connectors-contract-spec-th.md). หยุด code/harness/adapter ในรอบนี้. เมื่อ Owner กลับมาเปิด scope จึงประเมิน canonical envelope, verifier/poller ports และ provider-neutral conformance fixture runner ใหม่; adapter ต้องมี provider/pilot และ selection gate §6 ครบ. ห้ามขอ credential, mutate provider หรือ infer settlement semantics จาก provider อื่น.
 
 <a id="p21--tax-workpaper--accountant-review"></a>
 ## P21 — Tax Workpaper + Accountant Review
@@ -227,7 +230,7 @@ Exit: source→TaxEvent→register→box→snapshot checksum trace; filed snapsh
 <a id="p22--controlled-auto-accounting"></a>
 ## P22 — Controlled Auto-accounting
 
-สถานะ: **EXPENSE SIDE IMPLEMENTED, LIVE BROWSER/ROLLOUT EVIDENCE REMAINS; REVENUE SIDE NOT READY**
+สถานะ: **EXPENSE SIDE IMPLEMENTED, LIVE BROWSER/ROLLOUT EVIDENCE REMAINS; REVENUE AUTOMATION DEFERRED BY OWNER**
 
 ใช้ [Expense Auto-post Spec](../specs/expense-ledger-auto-post-spec.md), [Implementation Plan](expense-ledger-auto-post-plan.md) และ task memory เป็น canonical. ไม่เขียน expense engine ซ้ำ; ปิด live authenticated browser journey/rollout evidence ที่ plan ยัง unchecked. Revenue auto-accounting เป็น phase ใหม่หลัง P15–P17 มี source-specific precision evidence และต้องมี spec amendment ระบุ preview/approval/reversal/period-lock/idempotency; ห้าม reuse 99.5% ของ source หนึ่งกับทุก source.
 
@@ -251,4 +254,4 @@ P24 ไม่กำหนด/บังคับราคา subscription quota �
 - Focused automated check ผ่าน; financial/tax/security flows มี negative/replay/concurrency/golden cases ตามความเสี่ยง.
 - UI มี loading/empty/error/forbidden/disabled-reason/mobile evidence.
 - Rollout flag default-off เมื่อ behavior/security เปลี่ยน; UAT evidence + rollback + owner/customer gate ก่อน production.
-- Open owner/provider/external decisions ยังเป็น `BLOCKED` และห้ามผู้ implement เติมคำตอบเอง.
+- Open owner/provider/external decisions ของ active scope ยังเป็น `BLOCKED` และห้ามผู้ implement เติมคำตอบเอง; งาน `DEFERRED BY OWNER` ไม่ถูกนับเป็น release gate จน Owner เปิด scope ใหม่.

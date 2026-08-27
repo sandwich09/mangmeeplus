@@ -2,15 +2,24 @@
 
 สถานะ: **ACTIVE — VERIFIED INDEX 2026-08-27** (สาย 1–4 review แล้ว; สาย 5 Subscribe/Billing ไม่อยู่ใน scope รอบนี้)
 
-ลำดับและกติกาคุมโดย [แผนหลัก 2.5 วัน §10](mangmee-brain-2-5-day-priority-plan-th.md). หลักฐานและเหตุผล verdict อยู่ใน [Coding-readiness Audit](mangmee-four-lane-coding-readiness-audit-th.md); phase/test/exit/gate ที่เติมอยู่ใน [Gap Closure Plan](mangmee-four-lane-gap-closure-plan-th.md). Baseline integration ล่าสุดที่ตรวจคือ `origin/develop@086a4549`; branch/worktree status ต้องแยกจาก integration/production status เสมอ.
+ลำดับและกติกาคุมโดย [แผนหลัก 2.5 วัน §10](mangmee-brain-2-5-day-priority-plan-th.md), ภายใต้ scope ล่าสุดด้านล่าง. หลักฐานและเหตุผล verdict อยู่ใน [Coding-readiness Audit](mangmee-four-lane-coding-readiness-audit-th.md); phase/test/exit/gate ที่เติมอยู่ใน [Gap Closure Plan](mangmee-four-lane-gap-closure-plan-th.md). Baseline integration ล่าสุดที่ตรวจคือ `origin/develop@d33f8d2e`; branch/worktree status ต้องแยกจาก integration/production status เสมอ.
 
 คำสถานะ: `READY <phase>` = เริ่ม phase นั้นได้, `PARTIAL READY` = core/read-only เริ่มได้แต่ activation blocked, `IMPLEMENTED / VERIFY` = code มีแต่ rollout evidence ค้าง, `BLOCKED` = ห้ามเดาคำตอบ Owner/provider/expert.
+
+## Scope ล่าสุด — เก็บข้อมูลรับ/จ่ายก่อน (Owner 2026-08-27)
+
+- รอบนี้ยังไม่ต้องกระทบยอดบัญชี: **เลื่อน P15–P17 Revenue Foundation/Inbox/Matching และ P18–P20 การเชื่อมธนาคาร/QR/Gateway, Marketplace, POS/Partner API** รวมถึง revenue automation ที่พึ่งงานเหล่านี้. `DEFERRED BY OWNER` ไม่ใช่งานที่ต้องเสร็จก่อนส่งรอบนี้/merge main.
+- เน้นบันทึกข้อมูลรายรับ รายจ่าย การรับ/จ่ายที่ผู้ใช้ระบุ และเอกสาร/หลักฐานผ่าน P27/expense/purchase journey เดิม; ไม่ต้องมี statement หรือผล matching จึงจะบันทึกได้. ไม่สร้างรายได้/VAT/journal จากเงินเข้าธนาคารโดยอัตโนมัติ.
+- การเลื่อนนี้ไม่ลบข้อมูล/code ที่มีอยู่ ไม่ปิด feature ของบริษัทโดยพลการ และไม่เปลี่ยนกฎบัญชี/permission/audit/ยืนยันเอกสารเดิม. งานซื้อ–จ่าย/เอกสารภายในยังอยู่; คำว่า “PO” ในคำสั่งล่าสุดไม่ถูกใช้เป็นเหตุให้ลบหรือข้ามใบสั่งซื้อ.
+- P15-0 ที่ทดสอบแล้วเก็บไว้ใน worktree แยก **ยังไม่ commit/push/PR/merge**. ไม่เพิ่ม migration เพื่อเตรียม reconciliation ที่ยังไม่ต้องใช้.
+- งานอื่นในสาย 1–4 และการยกเว้น Subscribe คงเดิม. Financial correctness, local desktop/mobile, CI และ acceptance ของ scope ที่เหลือยังต้องผ่านก่อน main; การเลื่อนงานไม่ใช่การรับรอง production.
+- บันทึกการตัดสินใจและสถานะจริง: [capture-first memory](../agent-memory/mangmee-capture-first-scope.md).
 
 ## สาย 1 — รับคนให้ไหว (Ops/Monitoring/Scale)
 
 | งาน | หัวข้อ | Spec | Plan | สถานะ |
 |---|---|---|---|---|
-| P9 | Dashboard/alarm ครบชุด, funnel analytics, incident drill ทุก failure class | [production-ops-spec](../specs/production-ops-spec.md) + runbooks | [P9 closure](mangmee-four-lane-gap-closure-plan-th.md#p9--observability-and-drills) | P9-0/1a/1b/2 **merged develop**; P9-1c API p95 **local verified / integration pending**; signup/SES coverage และ UAT drill gate ยังเปิด |
+| P9 | Dashboard/alarm ครบชุด, funnel analytics, incident drill ทุก failure class | [production-ops-spec](../specs/production-ops-spec.md) + runbooks | [P9 closure](mangmee-four-lane-gap-closure-plan-th.md#p9--observability-and-drills) | P9-0/1a/1b/1c/2 **merged develop**; P9-1c PR #281 / CI `33032595709` / merge `d33f8d2e`; signup/SES coverage และ UAT drill gate ยังเปิด |
 | OCR-GOV | เปิด/ปิด OCR, quota จำนวนครั้งรายบริษัท และ usage ฝั่ง Platform Admin (งานเสริมตาม Owner; ไม่เกี่ยว Subscribe และไม่แทนเลข P14 เดิม) | [spec](../specs/company-ocr-governance-spec-th.md) | [plan](company-ocr-governance-plan-th.md) | **MERGED DEVELOP `086a4549`** — PR #280, CI `33030846368` ผ่าน; code/test/migration/desktop+mobile browser evidence ครบ |
 | P25 ฉบับย่อ | Load/capacity บน UAT ที่ workload ของวงถัดไป | [production-a5-v2-spec](../specs/production-a5-v2-spec.md) | [P25 gate](mangmee-four-lane-gap-closure-plan-th.md#p25--capacity-gate) + [แผนเดิม](production-a5-v2-plan.md) | **EXECUTION INPUT** — รอ cohort/workload/SLO ไม่ใช่ code ใหม่ |
 
@@ -39,10 +48,10 @@
 | P27 | สมุดรายรับ–รายจ่าย (ฝั่งขาย–รับเงิน) | [spec](../specs/mangmee-income-expense-ledger-spec-th.md) | [canonical plan](mangmee-income-expense-ledger-plan-th.md) + [status gate](mangmee-four-lane-gap-closure-plan-th.md#p27--income-expense-ledger) | Phase 0–6 **merged develop**; LED-FIN-07 และ external human/UAT/Production gates ยังเปิด |
 | P28 | ซื้อ–จ่ายเงิน + ใบลดหนี้ฝั่งซื้อ | [spec](../specs/mangmee-purchase-to-pay-mvp-spec-th.md) | [canonical plan](mangmee-purchase-to-pay-mvp-plan-th.md) + [gate](mangmee-four-lane-gap-closure-plan-th.md#p28--purchase-to-pay) | **BLOCKED** Owner §10 ข้อ 2–5 |
 | P13 | พนักงานหลายบริษัทบน LINE | [spec](../specs/mangmee-line-multi-company-staff-spec-th.md) | [P13 plan](mangmee-four-lane-gap-closure-plan-th.md#p13--line-multi-company-staff) | **BLOCKED** active-membership/notification policy |
-| P15–P17 | Auto Revenue foundation + Revenue Inbox + Matching | [spec](../specs/mangmee-revenue-inbox-matching-spec-th.md) | [P15–17 plan](mangmee-four-lane-gap-closure-plan-th.md#p15p17--revenue-foundationinboxmatching) | **READY P15 read-only core**; posting/automation blocked |
-| P18–P20 | Direct bank/QR/Gateway, Marketplace settlement, POS/Partner API | [provider-neutral contract](../specs/mangmee-revenue-connectors-contract-spec-th.md) + [marketplace partial](../specs/marketplace-import-spec.md) | [P18–20 plan](mangmee-four-lane-gap-closure-plan-th.md#p18p20--revenue-connectors) | shared harness **READY**; adapters **BLOCKED** provider selection |
+| P15–P17 | Auto Revenue foundation + Revenue Inbox + Matching | [spec](../specs/mangmee-revenue-inbox-matching-spec-th.md) | [P15–17 plan](mangmee-four-lane-gap-closure-plan-th.md#p15p17--revenue-foundationinboxmatching) | **DEFERRED BY OWNER 2026-08-27** — เก็บข้อมูลรับ/จ่ายก่อน; ไม่เป็น gate รอบนี้ |
+| P18–P20 | Direct bank/QR/Gateway, Marketplace settlement, POS/Partner API | [provider-neutral contract](../specs/mangmee-revenue-connectors-contract-spec-th.md) + [marketplace partial](../specs/marketplace-import-spec.md) | [P18–20 plan](mangmee-four-lane-gap-closure-plan-th.md#p18p20--revenue-connectors) | **DEFERRED BY OWNER 2026-08-27** — รวม shared harness/adapter; ไม่เป็น gate รอบนี้ |
 | P21 | Accountant review + tax workpaper ภ.พ.30 | [spec](../specs/mangmee-tax-workpaper-pp30-spec-th.md) | [P21 plan](mangmee-four-lane-gap-closure-plan-th.md#p21--tax-workpaper--accountant-review) | **READY P21-0 core**; form output รอ current fixture/expert |
-| P22 | Controlled auto-accounting | [expense spec](../specs/expense-ledger-auto-post-spec.md) | [implemented plan](expense-ledger-auto-post-plan.md) + [P22 gate](mangmee-four-lane-gap-closure-plan-th.md#p22--controlled-auto-accounting) | expense **IMPLEMENTED / VERIFY**; revenue blocked หลัง P17 |
+| P22 | Controlled auto-accounting | [expense spec](../specs/expense-ledger-auto-post-spec.md) | [implemented plan](expense-ledger-auto-post-plan.md) + [P22 gate](mangmee-four-lane-gap-closure-plan-th.md#p22--controlled-auto-accounting) | expense เดิม **IMPLEMENTED / VERIFY**; revenue automation หลัง P17 **DEFERRED** ไม่ใช่ gate รอบนี้ |
 | P24 | Growth/UX รอบเต็ม | [spec](../specs/mangmee-growth-ux-full-pass-spec-th.md) | [P24 plan](mangmee-four-lane-gap-closure-plan-th.md#p24--growthux-full-pass) | **READY baseline/UX**; ไม่พึ่ง Billing |
 
 Gate ประจำสาย: **รัน P25 ฉบับเต็มซ้ำก่อนขยายวงทุกครั้ง** ([production-a5-v2-spec](../specs/production-a5-v2-spec.md))
@@ -82,8 +91,8 @@ Gate ประจำสาย: **รัน P25 ฉบับเต็มซ้ำ
 1. P10 ingress/claim/duplicate policy — [spec §8](../specs/mangmee-external-signup-contract-spec-th.md)
 2. P28 accounting/product policy — [spec §10 ข้อ 2–5](../specs/mangmee-purchase-to-pay-mvp-spec-th.md)
 3. P13 active-membership + notification policy — [spec §5](../specs/mangmee-line-multi-company-staff-spec-th.md)
-4. P15–P17 pilot/reviewer/matrix — [spec §7](../specs/mangmee-revenue-inbox-matching-spec-th.md)
-5. P18–P20 provider + pilot + selection evidence — [contract §6](../specs/mangmee-revenue-connectors-contract-spec-th.md)
+4. **พักไว้ ไม่ block รอบนี้:** P15–P17 pilot/reviewer/matrix — [spec §7](../specs/mangmee-revenue-inbox-matching-spec-th.md)
+5. **พักไว้ ไม่ block รอบนี้:** P18–P20 provider + pilot + selection evidence — [contract §6](../specs/mangmee-revenue-connectors-contract-spec-th.md)
 6. P21/P23/Advisor named accounting/tax reviewer + current sanitized fixture/SLA
 7. P25 next-cohort workload inputs
 
