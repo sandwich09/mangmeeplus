@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
+import { SESClient } from '@aws-sdk/client-ses';
 import { DevJwtVerifierAdapter } from './infrastructure/dev-jwt-verifier.adapter';
 import { WatchdogJwtVerifierAdapter } from './infrastructure/watchdog-jwt-verifier.adapter';
 import { LineLoginVerifierAdapter } from './infrastructure/line-login-verifier.adapter';
@@ -31,10 +32,30 @@ import { AuditModule } from '../audit/audit.module';
 import { AUTH_MAILER_TOKEN } from './domain/ports/auth-mailer.port';
 import { DisabledAuthMailerAdapter } from './infrastructure/disabled-auth-mailer.adapter';
 import { LocalConsoleAuthMailerAdapter } from './infrastructure/local-console-auth-mailer.adapter';
+import { SES_EMAIL_CLIENT_TOKEN, SesAuthMailerAdapter } from './infrastructure/ses-auth-mailer.adapter';
 import { AppConfigService } from '../../common/config/app-config.service';
 import { LegalAcceptanceService } from './application/legal-acceptance.service';
 import { PlatformAccessService } from './application/platform-access.service';
 import { PublicPlatformAccessController, SystemPlatformAccessController } from './presentation/platform-access.controller';
+
+type MailerSelectionConfig = Pick<AppConfigService, 'emailProvider' | 'isLocal' | 'sesRegion' | 'sesFromAddress' | 'sesWebBaseUrl'>;
+
+export function selectAuthMailer(
+  config: MailerSelectionConfig,
+  disabledMailer: DisabledAuthMailerAdapter,
+  localConsoleMailer: LocalConsoleAuthMailerAdapter,
+  sesMailer: SesAuthMailerAdapter,
+) {
+  if (config.emailProvider === 'disabled') return disabledMailer;
+  if (config.emailProvider === 'local-console') {
+    if (!config.isLocal) throw new Error('EMAIL_PROVIDER=local-console is allowed only when APP_ENV=local.');
+    return localConsoleMailer;
+  }
+  if (!config.sesRegion || !config.sesFromAddress || !config.sesWebBaseUrl) {
+    throw new Error('EMAIL_PROVIDER=ses requires SES_REGION, SES_FROM_ADDRESS, and WEB_BASE_URL.');
+  }
+  return sesMailer;
+}
 
 // ponytail: JwtModule registered with no default secret; each verifier supplies its own per-call
 @Module({
@@ -70,19 +91,21 @@ import { PublicPlatformAccessController, SystemPlatformAccessController } from '
     AuthGuard,
     DisabledAuthMailerAdapter,
     LocalConsoleAuthMailerAdapter,
+    SesAuthMailerAdapter,
+    {
+      provide: SES_EMAIL_CLIENT_TOKEN,
+      inject: [AppConfigService],
+      useFactory: (config: AppConfigService) => new SESClient({ region: config.sesRegion }),
+    },
     {
       provide: AUTH_MAILER_TOKEN,
-      inject: [AppConfigService, DisabledAuthMailerAdapter, LocalConsoleAuthMailerAdapter],
+      inject: [AppConfigService, DisabledAuthMailerAdapter, LocalConsoleAuthMailerAdapter, SesAuthMailerAdapter],
       useFactory: (
         config: AppConfigService,
         disabledMailer: DisabledAuthMailerAdapter,
         localConsoleMailer: LocalConsoleAuthMailerAdapter,
-      ) => {
-        if (config.emailProvider === 'ses') {
-          throw new Error('EMAIL_PROVIDER=ses is not implemented yet in this workspace.');
-        }
-        return config.isLocal ? localConsoleMailer : disabledMailer;
-      },
+        sesMailer: SesAuthMailerAdapter,
+      ) => selectAuthMailer(config, disabledMailer, localConsoleMailer, sesMailer),
     },
   ],
   exports: [AuthGuard, ResolveRequestContextUseCase, LineLoginVerifierAdapter, LineChannelBindingService, AuthRateLimitService, LegalAcceptanceService],
