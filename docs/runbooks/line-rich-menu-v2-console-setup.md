@@ -109,8 +109,17 @@ node scripts/line-oa/apply-rich-menu.mjs activate --env uat --rich-menu-id richm
 node scripts/line-oa/apply-rich-menu.mjs rollback --env uat --rich-menu-id richmenu-<previous>
 ```
 
-UAT rollback target recorded 2026-08-27: `richmenu-a32a4477ff5d6831ecc8e17cf34c6b40` (MangmeePlus
-Ver1, 2500x1686) — the only rich menu on the UAT OA at that time, and the active default.
+UAT rollout record (2026-08-28, backend candidate `f852acf7`):
+
+| | rich-menu id | state |
+|---|---|---|
+| Ver2 (`line-rich-menu-v2-ver2`) | `richmenu-bf590764d063eda623f5325c95049b50` | **ACTIVE default** since 2026-08-28 |
+| Ver1 (rollback target) | `richmenu-a32a4477ff5d6831ecc8e17cf34c6b40` | kept, not deleted |
+
+Bitmap identity was verified end to end before activation: the image pulled BACK from LINE, the
+Owner's original export, and the committed asset all hash to
+`728bee2836882fff668dad19e875737bea6aebde3cdf3d795f1c2ce7b0d2fc12`. Keep Ver1 until the device
+smoke below is accepted.
 
 ## Exact area/action mapping (equal 3×2 grid)
 
