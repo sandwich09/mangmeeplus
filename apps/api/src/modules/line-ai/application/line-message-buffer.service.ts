@@ -32,7 +32,7 @@ import {
   debounceCohortMs,
   fittingPrefixCount,
   joinGroupText,
-  lineWaitStatusText,
+  lineWaitStages,
   nextFlushDelayMs,
   segmentBatch,
   sortBatchItems,
@@ -40,8 +40,6 @@ import {
   LINE_BUFFER_SHUTDOWN_DRAIN_TIMEOUT_MS,
   LINE_LOADING_KEEPALIVE_DELAY_MS,
   LINE_LOADING_RESTART_DELAY_MS,
-  LINE_MEDIA_RECEIVED_TEXT,
-  LINE_WAIT_STATUS_DELAY_MS,
 } from '../domain/logic/line-message-buffer.logic';
 import type {
   LineBatchGroup,
@@ -49,6 +47,7 @@ import type {
   LineBufferTextItem,
   LineBufferMediaItem,
   LineBufferFlushTiming,
+  LineWaitStage,
 } from '../domain/logic/line-message-buffer.logic';
 import { emitLineAiTerminalOutcome } from '../domain/logic/line-ai-terminal-outcome.logic';
 
@@ -825,15 +824,17 @@ export class LineMessageBufferService implements OnModuleDestroy {
       const media = group.mediaItems[index];
       const result = await this.withWaitFeedback(
         state,
-        LINE_MEDIA_RECEIVED_TEXT,
+        lineWaitStages({
+          kind: 'media', messageText: caption, seed: media.webhookEventId,
+          loadingEnabled: this.config.lineAiLoadingAnimationEnabled,
+          latestAcceptedAt: media.acceptedAt, now: Date.now(),
+        }),
         (beforeReply) => this.processWebhook.executeReceiptUpload(
           { ...this.toMediaEvent(state, media), beforeReply },
           deferText ? '' : caption,
         ),
         // Only the very first media turn can reuse the batch's accept-loading; later turns re-show it.
         suppressLoading && index === 0,
-        0,
-        true,
       );
       if (index === 0 && result.outcome === 'defer_text') deferText = true;
     }
@@ -848,17 +849,18 @@ export class LineMessageBufferService implements OnModuleDestroy {
     const last = textItems[textItems.length - 1];
     const messageText = joinGroupText(textItems);
     const latestAcceptedAt = Math.max(...textItems.map((item) => item.acceptedAt));
-    // With the loading animation on, the spinner is the whole waiting story (Owner 2026-08-27);
-    // the timed status bubble only remains as the fallback when the animation is disabled.
-    const statusDelayMs = this.config.lineAiLoadingAnimationEnabled
-      ? null
-      : Math.max(0, latestAcceptedAt + LINE_WAIT_STATUS_DELAY_MS - Date.now());
+    // With the loading animation on, the spinner is the waiting story for quick turns (Owner
+    // 2026-08-27); the 5 s topic bubble only remains as the fallback when the animation is
+    // disabled. Either way ONE slow-turn status lands before the 60 s spinner window lapses.
     await this.withWaitFeedback(
       state,
-      lineWaitStatusText(messageText, last.webhookEventId),
+      lineWaitStages({
+        kind: 'text', messageText, seed: last.webhookEventId,
+        loadingEnabled: this.config.lineAiLoadingAnimationEnabled,
+        latestAcceptedAt, now: Date.now(),
+      }),
       (beforeReply) => this.processWebhook.execute({ ...this.toTextEvent(state, textItems), beforeReply }),
       suppressLoading,
-      statusDelayMs,
     );
     await this.markBatched(textItems.filter((item) => item !== last).map((item) => item.webhookEventId));
   }
@@ -920,19 +922,11 @@ export class LineMessageBufferService implements OnModuleDestroy {
    *  gets an immediate acknowledgement. Final delivery settles in-flight feedback to preserve order. */
   private async withWaitFeedback<T>(
     state: ChatState,
-    statusText: string,
+    stages: LineWaitStage[],
     turn: (beforeReply: () => Promise<void>) => Promise<T>,
     suppressLoading: boolean,
-    statusDelayMs: number | null,
-    statusWithoutLoading = false,
   ): Promise<T> {
-    const finish = await this.startWaitFeedback(
-      state,
-      statusText,
-      suppressLoading,
-      statusDelayMs,
-      statusWithoutLoading,
-    );
+    const finish = await this.startWaitFeedback(state, stages, suppressLoading);
     try {
       return await turn(finish);
     } finally {
@@ -942,14 +936,11 @@ export class LineMessageBufferService implements OnModuleDestroy {
 
   private async startWaitFeedback(
     state: ChatState,
-    statusText: string,
+    stages: LineWaitStage[],
     suppressLoading: boolean,
-    statusDelayMs: number | null,
-    statusWithoutLoading: boolean,
   ): Promise<() => Promise<void>> {
     // Loading and waiting feedback are 1:1 only; a group chat never shows either.
     if (state.chatId !== state.lineUserId) return async () => {};
-    if (!this.config.lineAiLoadingAnimationEnabled && !statusWithoutLoading) return async () => {};
 
     // `suppressLoading` means this batch's accept-loading was actually SHOWN (LINE accepted it) and awaited
     // (in dispatchBatch) for this first content turn, and its spinner is still up — so skip the duplicate
@@ -957,12 +948,13 @@ export class LineMessageBufferService implements OnModuleDestroy {
     // dismissed the spinner, or a later content turn) show the processing-start spinner now.
     if (!suppressLoading) await this.startLoading(state);
     let finished = false;
-    let statusDelivery: Promise<void> | null = null;
+    const statusDeliveries: Promise<void>[] = [];
+    const statusTimers: NodeJS.Timeout[] = [];
     const restartDeliveries: Promise<void>[] = [];
     const restartTimers: NodeJS.Timeout[] = [];
 
-    const deliverStatus = async () => {
-      const delivered = await this.sendWaitStatus(state, statusText);
+    const deliverStatus = async (text: string) => {
+      const delivered = await this.sendWaitStatus(state, text);
       if (!delivered || finished) return;
       // LINE dismisses loading when an OA bubble arrives. Restart after a short delivery cushion and
       // once more as a keepalive for slow devices; `settle` cancels both when the answer is ready.
@@ -973,28 +965,25 @@ export class LineMessageBufferService implements OnModuleDestroy {
       }
     };
 
-    let statusTimer: NodeJS.Timeout | null = null;
-    if (statusDelayMs === null) {
-      // No status bubble for this turn (Owner 2026-08-27 "ลดข้อความซ้อน"): the loading animation
-      // already says "working", so the slow-turn text only stacked noise. Loading handling above
-      // is untouched; the media ack (delay 0) and the no-animation fallback keep their bubble.
-    } else if (statusDelayMs === 0) {
-      statusDelivery = deliverStatus();
-    } else {
-      statusTimer = setTimeout(() => {
-        statusTimer = null;
-        if (!finished) statusDelivery = deliverStatus();
-      }, statusDelayMs);
+    // The stage list is the whole waiting story for this turn (lineWaitStages): the media ack at
+    // delay 0, then at most one delayed status per stage. Final delivery cancels what has not fired.
+    for (const stage of stages) {
+      if (stage.delayMs === 0) {
+        statusDeliveries.push(deliverStatus(stage.text));
+      } else {
+        statusTimers.push(setTimeout(() => {
+          if (!finished) statusDeliveries.push(deliverStatus(stage.text));
+        }, stage.delayMs));
+      }
     }
 
     return async () => {
       if (!finished) {
         finished = true;
-        if (statusTimer) clearTimeout(statusTimer);
+        for (const timer of statusTimers) clearTimeout(timer);
         for (const timer of restartTimers) clearTimeout(timer);
-        statusTimer = null;
       }
-      await statusDelivery;
+      await Promise.all(statusDeliveries);
       await Promise.all(restartDeliveries);
     };
   }

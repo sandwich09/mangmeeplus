@@ -226,9 +226,17 @@ export class RecoverOrphanLineEventsUseCase {
       data: { attempts: { increment: 1 } },
     }).catch(() => null);
 
+    // A replayed outcome lands minutes after its question — possibly mid-conversation about
+    // something else — so name what it answers. The stored messages themselves stay verbatim
+    // (§8.3); LINE allows 5 messages per push, so a full payload drops the prefix, not the answer.
+    const questionPreview = envelope.item.kind === 'text' ? envelope.item.text.trim().slice(0, 60) : '';
+    const contextPrefix = this.lineReply.buildTextMessage(questionPreview
+      ? `💬 ตอบข้อความก่อนหน้านะคะ: “${questionPreview}”`
+      : '💬 ตอบรูป/ไฟล์ที่ส่งไว้ก่อนหน้านะคะ');
+    const payload = messages.length < 5 ? [contextPrefix, ...messages] : messages;
     let delivered = false;
     try {
-      delivered = await this.lineReply.sendPush(envelope.chatId, messages) === 'ok';
+      delivered = await this.lineReply.sendPush(envelope.chatId, payload) === 'ok';
     } catch (err) {
       this.logger.warn({ msg: 'line_outcome_replay_failed', webhookEventId: row.webhookEventId, error: (err as Error).message });
     }

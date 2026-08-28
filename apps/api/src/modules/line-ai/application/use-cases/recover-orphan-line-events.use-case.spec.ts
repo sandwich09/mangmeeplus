@@ -109,6 +109,7 @@ function makeHarness(rows: Row[], opts: {
       return opts.pushResult ?? 'ok';
     },
     sendReply: async () => { throw new Error('a replay must never spend a reply token'); },
+    buildTextMessage: (text: string) => ({ type: 'text', text }),
   } as any;
 
   return {
@@ -268,13 +269,27 @@ describe('RecoverOrphanLineEventsUseCase', () => {
     assert.equal(enqueued.length, 0, 'a stored outcome is replayed, never re-routed');
     assert.equal(pushes.length, 1, 'exactly one push, and no reply token is spent');
     assert.equal(pushes[0]!.to, 'U-chat', 'pushed into the source chat, not the user id');
-    assert.deepEqual(pushes[0]!.messages, STORED_MESSAGES, 'byte-for-byte the rendered payload');
+    // The late answer names its question first; the stored payload itself stays byte-for-byte.
+    assert.match(pushes[0]!.messages[0]?.text ?? '', /ตอบข้อความก่อนหน้า.*ยอดขายเดือนนี้/);
+    assert.deepEqual(pushes[0]!.messages.slice(1), STORED_MESSAGES, 'byte-for-byte the rendered payload');
     // Delivery — and only delivery — closes the turn.
     assert.equal(store.get('replay-1')?.status, 'completed');
     assert.equal(store.get('replay-1')?.errorCode, null);
     assert.equal(store.get('replay-1')?.payloadJson, null, 'raw chat ids leave with the terminal status');
     assert.ok(outcomeStore.get('replay-1')?.deliveredAt instanceof Date, 'deliveredAt is the separate delivery status');
     assert.equal(outcomeStore.get('replay-1')?.attempts, 2, 'attempts counts sends, not successes');
+  });
+
+  it('drops the context prefix, never the answer, when the stored outcome already fills LINE\'s 5-message cap', async () => {
+    const fullPayload = Array.from({ length: 5 }, (_, index) => ({ type: 'text', text: `ส่วนที่ ${index + 1}` }));
+    const { useCase, pushes } = makeHarness([
+      rowAt('replay-full', LINE_BUFFER_ORPHAN_REPROCESS_MS + 1_000, { status: 'delivery_pending', errorCode: 'LINE_DELIVERY_FAILED_TOKEN' }),
+    ], { replayEnabled: true, outcomes: [{ webhookEventId: 'replay-full', messagesJson: fullPayload, attempts: 1, deliveredAt: null }] });
+
+    const result = await useCase.execute();
+
+    assert.equal(result.replayed, 1);
+    assert.deepEqual(pushes[0]!.messages, fullPayload, 'a full payload ships verbatim with no prefix');
   });
 
   it('NEVER pushes the stale stored outcome for LINE_OUTCOME_NOT_RECORDED — legacy replay instead (PR #238 R2)', async () => {

@@ -1927,7 +1927,8 @@ describe('LINE intake dispatch – media path', () => {
     await h.useCase.executeReceiptUpload(MEDIA_EVENT);
     assert.equal(h.uploads.length, 1);
     assert.equal(h.completeCalls.length, 0);
-    assert.match(h.replies[0] ?? '', /เกิดข้อผิดพลาดชั่วคราว/);
+    // Media failure copy names the photo and the resend path (owner UX 2026-08-29).
+    assert.match(h.replies[0] ?? '', /ประมวลผลรูปนี้ไม่สำเร็จ/);
     assert.equal(updates.at(-1)?.data.status, undefined);
     assert.equal(updates.at(-1)?.data.processedAt, null);
     assert.equal(updates.at(-1)?.data.errorCode, 'RETRYABLE_RECEIPT_UPLOAD_ERROR');
