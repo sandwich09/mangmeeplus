@@ -10,7 +10,6 @@ import { assertInternalSecret } from '../../../../common/security/internal-secre
 import { AiGatewayConfigService } from '../../../../common/config/ai-gateway-config.service';
 import { LineAiTurnUseCase } from '../../application/use-cases/line-ai-turn.use-case';
 import { createProvider } from '../../infrastructure/provider/provider.factory';
-import { TyphoonOcrClient } from '../../infrastructure/typhoon-ocr.client';
 import { IntentRouterAgent } from '../../agents/intent-router.agent';
 import { gateBusinessDocumentClassification, parseBusinessDocumentClassification } from '../../domain/logic/business-document-classification.logic';
 import { LINE_AI_AGENT_REGISTRY, LINE_TOOL_REGISTRY, RECEIPT_ADDITIONAL_CHARGE_KINDS, asIntakeRouterCapabilities, extractValueCandidates, isAmbiguousDateCandidate, mapThaiDigits, VALUE_ASSUMPTIONS, type AiModelLineage, type LineAiTurnRequest, type LineAiTurnResponse, type LineIntakeRoutePlan, type LineIntakeRouteRequest, type ReceiptOcrRequest, type ReceiptOcrResponse, type BankStatementAiExtractRequest, type BankStatementAiExtractResponse, type BankStatementAiExtractRow } from '@watchdog-bms/contracts';
@@ -158,54 +157,11 @@ export class LineAiInternalController {
     // Stage 1 (reading): emit the verbatim document markdown that stage 2 must select its
     // values from — the §13 cross-check below is only meaningful against real read text.
     const isPdf = mimeType === 'application/pdf';
-    let stageOneText: string;
-    let stageOneLineage: AiModelLineage;
-    if (isPdf) {
-      // Typhoon takes an image data URI only, so a PDF is read straight from a Bedrock
-      // document block under the same {"natural_text": md} contract.
-      // ponytail: bedrock-only; OpenAI's ProviderInput has no document channel.
-      if (this.config.modelProvider !== 'bedrock') {
-        return { status: 'not_configured', errorCode: 'PDF_PROVIDER_UNSUPPORTED' };
-      }
-      const readerModelId = body.modelPolicy?.modelId ?? this.config.documentAiModelId;
-      const reader = createProvider(this.config, { modelId: readerModelId, timeoutMs: DOCUMENT_OCR_TIMEOUT_MS });
-      const read = await reader.generateText({
-        systemPrompt: bedrockOcrPrompt('PDF'),
-        messages: [{ role: 'user', text: 'Transcribe the attached document.' }],
-        documents: [{ mimeType, contentBase64: body.attachment.contentBase64 }],
-        maxTokens: 4096,
-        usageTag: 'ocr.receipt.pdf-read',
-      });
-      if (!read.ok) return { status: 'failed', errorCode: read.error.code };
-      stageOneText = read.text;
-      stageOneLineage = modelLineage(this.config, 'receipt_ocr_read', readerModelId);
-    } else {
-      // Owner decision 2026-07-03: Typhoon OCR is the single receipt OCR provider for images.
-      // Missing key -> not_configured (manual review stays available); no OpenAI/Bedrock fallback here.
-      const typhoonKey = this.config.typhoonOcrApiKey;
-      if (!typhoonKey) {
-        return { status: 'not_configured', errorCode: 'PROVIDER_CONFIG_MISSING' };
-      }
-      // Typhoon OCR is fine-tuned to answer the official prompt with {"natural_text": "<markdown>"}
-      // only — it does not follow arbitrary field schemas, so we ask it exactly what it was
-      // trained for and take the markdown out.
-      const client = new TyphoonOcrClient({ apiKey: typhoonKey, timeoutMs: DOCUMENT_OCR_TIMEOUT_MS });
-      const result = await client.extract({
-        mimeType,
-        contentBase64: body.attachment.contentBase64,
-        prompt: TYPHOON_OCR_PROMPT,
-      });
-      if (!result.ok) {
-        return { status: 'failed', errorCode: result.error.code };
-      }
-      stageOneText = result.text;
-      stageOneLineage = {
-        provider: 'typhoon',
-        modelId: 'typhoon-ocr',
-        region: this.config.typhoonProcessingRegion ?? 'not-configured',
-        purpose: 'receipt_ocr_read',
-      };
-    }
+    const readerModelId = body.modelPolicy?.modelId ?? this.config.documentAiModelId;
+    const stageOne = await this.readDocumentText(mimeType, body.attachment.contentBase64, readerModelId, 'receipt');
+    if (!stageOne.ok) return { status: stageOne.status, errorCode: stageOne.errorCode };
+    const stageOneText = stageOne.text;
+    let stageOneLineage: AiModelLineage = modelLineage(this.config, 'receipt_ocr_read', readerModelId);
     const documentText = parseTyphoonNaturalText(stageOneText);
     if (!documentText) return { status: 'failed', errorCode: 'OCR_EMPTY_OUTPUT' };
 
@@ -262,6 +218,42 @@ export class LineAiInternalController {
 
   /** Stage 2 over one stage-1 reading: bounded fields + classification, cross-checked against
    *  that same text. Runs once per reading so a re-read is judged on its own evidence. */
+  /**
+   * Stage 1 for every document read: the configured vision model transcribes the page.
+   *
+   * Owner decision 2026-08-28 ("อยากใช้ vision ai"), replacing the 2026-07-03 Typhoon-only rule
+   * after Typhoon's image endpoint hung on UAT — it answered text prompts in 0.26s while every
+   * image request, down to a 1x1 pixel, stalled past the 45s budget, so real receipts died at
+   * stage 1 while the intake router read the SAME photo correctly on vision at 0.97 confidence.
+   * PDFs already read this way, and the image re-read below has used this exact prompt and parser
+   * all along; this makes one reader serve receipts and bank statements, PDF and photo alike.
+   */
+  private async readDocumentText(
+    mimeType: string,
+    contentBase64: string,
+    modelId: string | undefined,
+    label: string,
+  ): Promise<{ ok: true; text: string } | { ok: false; status: 'failed' | 'not_configured'; errorCode: string }> {
+    const isPdf = mimeType === 'application/pdf';
+    // Images go to whichever configured provider reads vision; a PDF still needs Bedrock, whose
+    // Converse document block is the only channel that carries one.
+    if (isPdf && this.config.modelProvider !== 'bedrock') {
+      return { ok: false, status: 'not_configured', errorCode: 'PDF_PROVIDER_UNSUPPORTED' };
+    }
+    const reader = createProvider(this.config, { modelId, timeoutMs: DOCUMENT_OCR_TIMEOUT_MS });
+    const read = await reader.generateText({
+      systemPrompt: bedrockOcrPrompt(isPdf ? 'PDF' : 'image'),
+      messages: [{ role: 'user', text: 'Transcribe the attached document.' }],
+      ...(isPdf
+        ? { documents: [{ mimeType: 'application/pdf' as const, contentBase64 }] }
+        : { images: [{ mimeType: mimeType as 'image/jpeg' | 'image/png', contentBase64 }] }),
+      maxTokens: 4096,
+      usageTag: `ocr.${label === 'receipt' ? 'receipt' : 'bank-statement'}.${isPdf ? 'pdf' : 'image'}-read`,
+    });
+    if (!read.ok) return { ok: false, status: 'failed', errorCode: read.error.code };
+    return { ok: true, text: read.text };
+  }
+
   private async understandReceiptText(
     provider: ReturnType<typeof createProvider>,
     documentText: string,
@@ -313,22 +305,13 @@ export class LineAiInternalController {
       return { status: 'failed', errorCode: 'UNSUPPORTED_MIME_TYPE' };
     }
 
-    // Same two-stage pipeline as receipt OCR (owner decision 2026-07-03: Typhoon reads).
-    const typhoonKey = this.config.typhoonOcrApiKey;
-    if (!typhoonKey) {
-      return { status: 'not_configured', errorCode: 'PROVIDER_CONFIG_MISSING' };
-    }
-
-    const client = new TyphoonOcrClient({ apiKey: typhoonKey, timeoutMs: DOCUMENT_OCR_TIMEOUT_MS });
-    const result = await client.extract({
-      mimeType: body.attachment.mimeType,
-      contentBase64: body.attachment.contentBase64,
-      prompt: TYPHOON_OCR_PROMPT,
-    });
-    if (!result.ok) {
-      return { status: 'failed', errorCode: result.error.code };
-    }
-    const documentText = parseTyphoonNaturalText(result.text);
+    // Same two-stage pipeline as receipt OCR, and the same vision reader (Owner 2026-08-28).
+    const statementReaderModelId = body.modelPolicy?.modelId ?? this.config.documentAiModelId;
+    const statementRead = await this.readDocumentText(
+      body.attachment.mimeType, body.attachment.contentBase64, statementReaderModelId, 'bank statement',
+    );
+    if (!statementRead.ok) return { status: statementRead.status, errorCode: statementRead.errorCode };
+    const documentText = parseTyphoonNaturalText(statementRead.text);
     if (!documentText) return { status: 'failed', errorCode: 'OCR_EMPTY_OUTPUT' };
 
     const extractionModelId = body.modelPolicy?.modelId ?? this.config.documentAiModelId;
@@ -408,15 +391,10 @@ function modelLineage(
   };
 }
 
-/** Official Typhoon OCR default prompt (docs.opentyphoon.ai, v1.5 — no task_type/anchor needed). */
-const TYPHOON_OCR_PROMPT = `
-Below is an image of a document page. Simply return the markdown representation of this document, presenting tables in markdown format as they naturally appear. If the document contains images, use a placeholder like dummy.png for each image. Your final output must be in JSON format with a single key \`natural_text\` containing the response.
-`.trim();
-
-/** Bedrock mirror of TYPHOON_OCR_PROMPT, used by the PDF stage-1 read and the image re-read.
- *  Same {"natural_text": md} contract so parseTyphoonNaturalText and the §13 value cross-check
- *  stay identical for every media type. The verbatim-number rule is load-bearing: a reformatted
- *  figure fails the cross-check and drops the field to NEEDS_REVIEW. */
+/** The stage-1 read prompt for every document and media type (Owner 2026-08-28: vision reads).
+ *  Keeps the {"natural_text": md} contract the Typhoon era established, so parseTyphoonNaturalText
+ *  and the §13 value cross-check stay identical. The verbatim-number rule is load-bearing: a
+ *  reformatted figure fails the cross-check and drops the field to NEEDS_REVIEW. */
 const bedrockOcrPrompt = (source: 'PDF' | 'image') => `
 Below is a ${source} of a document. Simply return the markdown representation of this document, presenting tables in markdown format as they naturally appear. Transcribe every number exactly as printed — never reformat, round, convert, or infer a value. If the document contains images, use a placeholder like dummy.png for each image. Your final output must be in JSON format with a single key \`natural_text\` containing the response.
 `.trim();

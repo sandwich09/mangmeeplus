@@ -110,13 +110,15 @@ describe('LineAiInternalController', () => {
     assert.ok(JSON.stringify(result).includes('local-ai-internal-secret') === false);
   });
 
-  it('receipt OCR returns not_configured when TYPHOON_OCR_API_KEY is missing (no OpenAI/Bedrock fallback)', async () => {
+  // Owner 2026-08-28: no separate OCR vendor key exists any more — the page is read by the
+  // configured vision provider. A PDF is the one media type that still needs Bedrock, because
+  // only its Converse document block can carry one; that door stays closed and typed.
+  it('receipt OCR returns not_configured for a PDF when the provider has no document channel', async () => {
     const controller = new LineAiInternalController(
       {
         aiGatewayInternalSecret: 'secret',
         modelProvider: 'openai',
         openAiApiKey: 'should-not-be-used',
-        typhoonOcrApiKey: undefined,
         aiToolTimeoutMs: 1000,
       } as any,
       { execute: async () => { throw new Error('should not execute'); } } as any,
@@ -126,17 +128,17 @@ describe('LineAiInternalController', () => {
       requestId: 'req-ocr',
       companyId: 'company-1',
       userId: 'user-1',
-      attachment: { id: 'att-1', mimeType: 'image/jpeg', purpose: 'receipt', contentBase64: 'ZmFrZQ==' },
+      attachment: { id: 'att-1', mimeType: 'application/pdf', purpose: 'receipt', contentBase64: 'ZmFrZQ==' },
     });
 
     assert.equal(result.status, 'not_configured');
-    assert.equal(result.errorCode, 'PROVIDER_CONFIG_MISSING');
+    assert.equal(result.errorCode, 'PDF_PROVIDER_UNSUPPORTED');
   });
 
-  it('receipt OCR routes PDFs away from the image-only Typhoon API', async () => {
+  it('receipt OCR keeps PDFs on the Bedrock document channel', async () => {
     const originalFetch = globalThis.fetch;
     let typhoonCalled = false;
-    globalThis.fetch = (async (url: any) => {
+    globalThis.fetch = (async (url: any, init: any) => {
       if (String(url).includes('api.opentyphoon.ai')) typhoonCalled = true;
       throw new Error('no network in test');
     }) as any;
@@ -164,13 +166,13 @@ describe('LineAiInternalController', () => {
       // hand the PDF to Typhoon (which accepts image data URIs only).
       assert.equal(result.status, 'not_configured');
       assert.equal(result.errorCode, 'PDF_PROVIDER_UNSUPPORTED');
-      assert.equal(typhoonCalled, false, 'PDF must never be sent to the image-only Typhoon API');
+      assert.equal(typhoonCalled, false, 'no third-party OCR vendor is called any more');
     } finally {
       globalThis.fetch = originalFetch;
     }
   });
 
-  it('receipt OCR runs two stages: Typhoon natural_text markdown then provider field extraction', async () => {
+  it('receipt OCR runs two stages: a vision natural_text read then provider field extraction', async () => {
     const originalFetch = globalThis.fetch;
     let typhoonBody: any = {};
     let typhoonAuth = '';
@@ -178,14 +180,14 @@ describe('LineAiInternalController', () => {
     let extractionInstructions = '';
     globalThis.fetch = (async (url: any, init: any) => {
       const requestedUrl = String(url);
-      if (requestedUrl.includes('api.opentyphoon.ai')) {
+      if (JSON.parse(init.body as string).input?.some?.((item: any) => JSON.stringify(item).includes('input_image'))) {
         typhoonAuth = init.headers.Authorization;
         typhoonBody = JSON.parse(init.body);
         return {
           ok: true,
           status: 200,
           json: async () => ({
-            choices: [{ message: { content: '{"natural_text":"# ใบเสร็จ ร้านกาแฟ\\nยอดก่อนค่าบริการ 55.00\\nService charge 10.00\\nหัก ณ ที่จ่าย 1.50\\nยอดรวม 65.00 บาท"}' } }],
+            output_text: '{"natural_text":"# ใบเสร็จ ร้านกาแฟ\\nยอดก่อนค่าบริการ 55.00\\nService charge 10.00\\nหัก ณ ที่จ่าย 1.50\\nยอดรวม 65.00 บาท"}',
           }),
         };
       }
@@ -270,10 +272,9 @@ describe('LineAiInternalController', () => {
       });
       assert.equal(result.classification?.documentKind, 'RECEIPT');
       assert.deepEqual(result.classification?.settlementSignals, ['ใบเสร็จ']);
-      assert.equal(typhoonAuth, 'Bearer typhoon-key');
-      assert.equal(typhoonBody.model, 'typhoon-ocr');
-      assert.equal(typhoonBody.temperature, 0.1);
-      assert.ok(String(typhoonBody.messages[0].content[0].text).includes('natural_text'), 'stage 1 must use the official Typhoon prompt');
+      assert.equal(typhoonAuth, 'Bearer openai-key', 'stage 1 reads on the configured provider, not a separate OCR vendor');
+      assert.ok(JSON.stringify(typhoonBody.input).includes('input_image'), 'stage 1 must send the page as vision input');
+      assert.ok(String(typhoonBody.instructions).includes('natural_text'), 'stage 1 keeps the {"natural_text"} read contract');
       assert.ok(extractionInput.includes('ใบเสร็จ ร้านกาแฟ'), 'stage 2 must receive the OCR markdown, not the image');
       assert.ok(extractionInstructions.includes('multiple independent expense transactions'), 'stage 2 must forbid collapsing a multi-entry ledger into one expense');
       assert.ok(extractionInput.includes('cat-meals'), 'stage 2 must receive the bounded active category catalogue');
@@ -288,13 +289,13 @@ describe('LineAiInternalController', () => {
   it('receipt OCR returns one entry per printed item row and drops the block when a row amount is unprinted', async () => {
     const originalFetch = globalThis.fetch;
     const runOcr = async (rows: unknown[]) => {
-      globalThis.fetch = (async (url: any) => {
-        if (String(url).includes('api.opentyphoon.ai')) {
+      globalThis.fetch = (async (url: any, init: any) => {
+        if (JSON.parse(init.body as string).input?.some?.((item: any) => JSON.stringify(item).includes('input_image'))) {
           return {
             ok: true,
             status: 200,
             json: async () => ({
-              choices: [{ message: { content: '{"natural_text":"ใบเสร็จ ร้านอาหาร\\nพิซซ่า 1 524.00\\nปีกไก่ 2 298.00\\nรวม 822.00 PAID"}' } }],
+              output_text: '{"natural_text":"ใบเสร็จ ร้านอาหาร\\nพิซซ่า 1 524.00\\nปีกไก่ 2 298.00\\nรวม 822.00 PAID"}',
             }),
           };
         }
@@ -358,12 +359,12 @@ describe('LineAiInternalController', () => {
   it('receipt OCR drops category suggestions outside the active catalogue or without exact OCR evidence', async () => {
     const originalFetch = globalThis.fetch;
     const runOcr = async (expenseCategoryId: string, evidenceSignals: string[]) => {
-      globalThis.fetch = (async (url: any) => {
-        if (String(url).includes('api.opentyphoon.ai')) {
+      globalThis.fetch = (async (url: any, init: any) => {
+        if (JSON.parse(init.body as string).input?.some?.((item: any) => JSON.stringify(item).includes('input_image'))) {
           return {
             ok: true,
             status: 200,
-            json: async () => ({ choices: [{ message: { content: '{"natural_text":"ใบเสร็จ ร้านกาแฟ\\nTOTAL 65.00 PAID"}' } }] }),
+            json: async () => ({ output_text: '{"natural_text":"ใบเสร็จ ร้านกาแฟ\\nTOTAL 65.00 PAID"}', }),
           };
         }
         return {
@@ -419,9 +420,9 @@ describe('LineAiInternalController', () => {
     const originalFetch = globalThis.fetch;
     const ocrText = 'BENLAI ใบเสร็จรับเงิน\\nTAX RATE 7%\\nTAX AMT 37.94\\nTAX Exclude 542.06\\nTOTAL 580.00 PAID';
     const runOcr = async (rawVatRate: string) => {
-      globalThis.fetch = (async (url: any) => {
-        if (String(url).includes('api.opentyphoon.ai')) {
-          return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: `{"natural_text":"${ocrText}"}` } }] }) };
+      globalThis.fetch = (async (url: any, init: any) => {
+        if (JSON.parse(init.body as string).input?.some?.((item: any) => JSON.stringify(item).includes('input_image'))) {
+          return { ok: true, status: 200, json: async () => ({ output_text: `{"natural_text":"${ocrText}"}`, }) };
         }
         return {
           ok: true,
@@ -480,7 +481,7 @@ describe('LineAiInternalController', () => {
     }
   });
 
-  it('receipt OCR fails typed when Typhoon reads the document but the extraction provider is disabled', async () => {
+  it('receipt OCR fails typed when the page reads but the extraction provider is disabled', async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async () => ({
       ok: true,
@@ -505,12 +506,15 @@ describe('LineAiInternalController', () => {
     }
   });
 
-  it('receipt OCR maps Typhoon throttle to failed with bounded error code', async () => {
+  it('receipt OCR maps a provider throttle to failed with bounded error code', async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async () => ({ ok: false, status: 429, json: async () => ({}) })) as any;
     try {
       const controller = new LineAiInternalController(
-        { aiGatewayInternalSecret: 'secret', typhoonOcrApiKey: 'typhoon-key', aiToolTimeoutMs: 1000 } as any,
+        {
+          aiGatewayInternalSecret: 'secret', aiToolTimeoutMs: 1000,
+          modelProvider: 'openai', openAiApiKey: 'openai-key', openAiModel: 'gpt-test',
+        } as any,
         { execute: async () => { throw new Error('should not execute'); } } as any,
       );
       const result = await controller.receiptOcr('secret', {
@@ -580,9 +584,9 @@ describe('LineAiInternalController', () => {
     assert.deepEqual(legit.capabilities, { fusedPlan: true }, 'literal-true survives; false is dropped');
   });
 
-  it('bank statement extract fails closed on missing typhoon key and rejects non-image mime types', async () => {
+  it('bank statement extract rejects non-image mime types and fails typed with no provider', async () => {
     const controller = new LineAiInternalController(
-      { aiGatewayInternalSecret: 'secret', typhoonOcrApiKey: undefined, aiToolTimeoutMs: 1000 } as any,
+      { aiGatewayInternalSecret: 'secret', modelProvider: 'disabled', aiToolTimeoutMs: 1000 } as any,
       { execute: async () => { throw new Error('should not execute'); } } as any,
     );
 
@@ -601,20 +605,20 @@ describe('LineAiInternalController', () => {
       userId: 'user-1',
       attachment: { mimeType: 'image/jpeg', contentBase64: 'ZmFrZQ==' },
     });
-    assert.equal(noKey.status, 'not_configured');
-    assert.equal(noKey.errorCode, 'PROVIDER_CONFIG_MISSING');
+    assert.equal(noKey.status, 'failed');
+    assert.equal(noKey.errorCode, 'PROVIDER_DISABLED');
   });
 
   it('bank statement extract runs two stages and returns bounded rows with model id', async () => {
     const originalFetch = globalThis.fetch;
     let extractionInput = '';
     globalThis.fetch = (async (url: any, init: any) => {
-      if (String(url).includes('api.opentyphoon.ai')) {
+      if (JSON.parse(init.body as string).input?.some?.((item: any) => JSON.stringify(item).includes('input_image'))) {
         return {
           ok: true,
           status: 200,
           json: async () => ({
-            choices: [{ message: { content: '{"natural_text":"| วันที่ | รายการ | ถอน | ฝาก | คงเหลือ |\\n| 01/07/69 | รับโอน | | 1,500.00 | 11,500.00 |"}' } }],
+            output_text: '{"natural_text":"| วันที่ | รายการ | ถอน | ฝาก | คงเหลือ |\\n| 01/07/69 | รับโอน | | 1,500.00 | 11,500.00 |"}',
           }),
         };
       }
@@ -1058,8 +1062,10 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
     return () => { globalThis.fetch = originalFetch; };
   }
 
-  /** Bedrock serves both roles here: the vision re-read (image block) and stage 2 (text only). */
+  /** Bedrock serves every role here now (Owner 2026-08-28): the stage-1 vision read, the single
+   *  vision re-read, and stage 2 (text only). The first image call is the page as first read. */
   function stubBedrock(options: {
+    firstReadText?: string;
     rereadText?: string;
     firstTotal?: string;
     secondTotal?: string;
@@ -1067,7 +1073,9 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
     firstRequiresClarification?: boolean;
     contentKind?: string;
   } = {}) {
+    const firstReadText = options.firstReadText ?? TYPHOON_TEXT_WITHOUT_TOTAL;
     const rereadText = options.rereadText ?? BEDROCK_REREAD_TEXT;
+    let readCount = 0;
     const firstTotal = options.firstTotal ?? '160.00';
     const secondTotal = options.secondTotal ?? '180.00';
     const original = BedrockRuntimeClient.prototype.send;
@@ -1077,7 +1085,9 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
       const isRead = content.some((block: any) => block.image);
       calls.push(isRead ? 'read' : 'extract');
       if (isRead) {
-        return { output: { message: { content: [{ text: JSON.stringify({ natural_text: rereadText }) }] } } };
+        readCount += 1;
+        const text = readCount === 1 ? firstReadText : rereadText;
+        return { output: { message: { content: [{ text: JSON.stringify({ natural_text: text }) }] } } };
       }
       const rereadMarker = options.rereadVatAmount ?? 'Total Amount 180.00';
       const sawRereadText = JSON.stringify(content).includes(rereadMarker);
@@ -1130,7 +1140,7 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
       assert.equal(result.status, 'ok');
       assert.equal(result.fields?.grandTotalAmount, '180.00');
       assert.equal(result.classification?.requiresClarification, false);
-      assert.deepEqual(bedrock.calls, ['extract', 'read', 'extract'], 'exactly one re-read, never a loop');
+      assert.deepEqual(bedrock.calls, ['read', 'extract', 'read', 'extract'], 'one vision read, then exactly one re-read');
     } finally {
       bedrock.restore();
       restoreFetch();
@@ -1140,8 +1150,9 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
   it('recovers one printed VAT amount only when the re-read confirms the same total', async () => {
     const firstText = '# Royal Pizza\nTotal 2890.00\nVAT 7% (รวม)\nPayment 2890.00';
     const rereadText = '# Royal Pizza\nTotal 2890.00\nVAT 7% (รวม) 189.07\nPayment 2890.00';
-    const restoreFetch = stubTyphoon(firstText);
+    const restoreFetch = stubTyphoon();
     const bedrock = stubBedrock({
+      firstReadText: firstText,
       rereadText,
       firstTotal: '2890.00',
       secondTotal: '2,890.00',
@@ -1162,7 +1173,7 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
       assert.equal(result.fields?.grandTotalAmount, '2890.00', 'retain the first cross-checked display value');
       assert.equal(result.fields?.vatAmount, '189.07');
       assert.ok(!result.fields?.missingFields?.includes('vatAmount'));
-      assert.deepEqual(bedrock.calls, ['extract', 'read', 'extract'], 'one bounded re-read');
+      assert.deepEqual(bedrock.calls, ['read', 'extract', 'read', 'extract'], 'one bounded re-read after the stage-1 read');
     } finally {
       bedrock.restore();
       restoreFetch();
@@ -1170,7 +1181,7 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
   });
 
   it('never returns single-expense fields or vision-rereads a multi-entry ledger', async () => {
-    const restoreFetch = stubTyphoon('# สมุดค่าใช้จ่าย\nรายการ A 1000\nรายการ B 3214\nรวม 4214');
+    const restoreFetch = stubTyphoon();
     const bedrock = stubBedrock({
       firstTotal: '4214',
       firstRequiresClarification: true,
@@ -1190,7 +1201,7 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
       assert.equal(result.classification?.contentKind, 'MULTI_DOCUMENT');
       assert.equal(result.classification?.requiresClarification, true);
       assert.equal(result.fields, undefined, 'a multi-entry page cannot expose one expense draft');
-      assert.deepEqual(bedrock.calls, ['extract'], 'multi-entry classification must not be weakened by a total re-read');
+      assert.deepEqual(bedrock.calls, ['read', 'extract'], 'multi-entry classification must not be weakened by a total re-read');
     } finally {
       bedrock.restore();
       restoreFetch();
