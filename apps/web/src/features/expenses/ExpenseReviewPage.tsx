@@ -31,6 +31,7 @@ import {
   canRunExpenseDuplicateCheck, hasAiGrandTotalMismatch, hasUnresolvedDuplicateWarning, initialExpenseReviewStep, needsAiTotalAcknowledgement,
   MIME_TYPE_LABELS, canDeleteExpense, effectiveVatRateLabel, expenseDeleteErrorMessage, firstFilled, isBlockedCheckBillClassification,
   postingErrorText, vatModeRequiresRate, expensePaymentAttempt, classifyExpensePaymentFailure,
+  expenseConfirmBlocker,
 } from './expenses.model';
 import type { ExpenseDetail, ExpenseReviewStepKey, ExpensePaymentAttempt, ExpensePaymentFailure } from './expenses.model';
 import { todayCivilDate, isCivilDate, type BusinessDocumentClassification, type ExpenseVatSourceOverrideInput, type ExpensePaymentMethod } from '@watchdog-bms/contracts';
@@ -468,6 +469,8 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
   const canViewJournal = isConfirmed && caps.canReadLedger && detail.journalEntryId !== null;
   const canCheckDuplicates = canReview && canRunExpenseDuplicateCheck(detail.status);
   const hasDuplicates = hasUnresolvedDuplicateWarning(detail.duplicateStatus);
+  const isConfirmedDuplicate = detail.duplicateStatus === 'CONFIRMED_DUPLICATE';
+  const duplicateBlockMessage = t(isConfirmedDuplicate ? 'expenses.duplicate_confirmed_block' : 'expenses.duplicate_action_required', locale);
   const hasWht = Number(detail.whtAmount) > 0;
   // Spec §7.5: a document that already records VAT keeps showing it, whatever the workspace mode.
   const showsVat = showsTaxCapture(capture.mode, hasRecordedTax([{ vatAmount: detail.vatAmount }, ...detail.lines]));
@@ -484,6 +487,23 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
   // the button stayed live on a ฿0 expense. The API refuses it now; including it here means the
   // reviewer is told before the round trip, and the button no longer disagrees with the rule.
   const canConfirmExpense = canConfirm && detail.status === 'READY_FOR_CONFIRMATION' && !hasDuplicates && !classificationBlocked && substituteReady && !needsReceiptOrSubstitute && !ocrTotalUnacknowledged && !isZeroAmount;
+  // Owner requirement 2026-08-28: the reason used to live only in the button's `title`, i.e. a hover
+  // tooltip — and expenses get reviewed on a phone, where nothing hovers. One helper decides it now,
+  // both footers use it, and it is rendered as text under the button instead of hidden behind a cursor.
+  const confirmBlocker = canConfirm && !canConfirmExpense
+    ? expenseConfirmBlocker({
+      status: detail.status, classificationBlocked, hasDuplicates, isConfirmedDuplicate, needsReceiptOrSubstitute,
+      substituteReady, ocrTotalUnacknowledged, isZeroAmount, classificationBlockMessage,
+    })
+    : null;
+  const confirmBlockedText = confirmBlocker
+    ? (confirmBlocker.literal ?? t(confirmBlocker.key!, locale))
+    : null;
+  const confirmBlockedNotice = confirmBlockedText ? (
+    <p className="w-full text-center text-xs font-medium text-warning-700">
+      {t('expenses.confirm_blocked_prefix', locale)} {confirmBlockedText}
+    </p>
+  ) : null;
   const storedClassification = aiMap?.['classification'] && typeof aiMap['classification'] === 'object'
     ? aiMap['classification'] as Record<string, unknown>
     : null;
@@ -601,7 +621,8 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
                 )}
                 {detail.status === 'READY_FOR_CONFIRMATION' && (
                   <>
-                    {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => doAction(() => confirmExpense(companyId, expenseId, vatOverrideRef.current ?? undefined), 'ยืนยันและลงบัญชีเรียบร้อยแล้ว')} disabled={actionLoading || !canConfirmExpense} title={classificationBlocked ? classificationBlockMessage : hasDuplicates ? t('expenses.resolve_duplicate_first', locale) : needsReceiptOrSubstitute ? t('expenses.confirm_needs_receipt', locale) : ocrTotalUnacknowledged ? t('expenses.price_mismatch_blocks_confirm', locale) : isZeroAmount ? t('expenses.zero_amount_warning', locale) : !substituteReady ? 'ต้องให้ผู้จ่ายลงนามและผู้อนุมัติออกใบรับรองฉบับสมบูรณ์ก่อนยืนยันรายจ่าย' : undefined}>{t('expenses.confirm_and_post', locale)}</button>}
+                    {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => doAction(() => confirmExpense(companyId, expenseId, vatOverrideRef.current ?? undefined), 'ยืนยันเอกสารเรียบร้อยแล้ว')} disabled={actionLoading || !canConfirmExpense} title={confirmBlockedText ?? undefined}>{t('expenses.confirm_and_post', locale)}</button>}
+                    {confirmBlockedNotice}
                   </>
                 )}
               </>
@@ -611,7 +632,8 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
         )}
         {approverOnlyActions && (
           <>
-            {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => doAction(() => confirmExpense(companyId, expenseId, vatOverrideRef.current ?? undefined), 'ยืนยันและลงบัญชีเรียบร้อยแล้ว')} disabled={actionLoading || !canConfirmExpense} title={classificationBlocked ? classificationBlockMessage : hasDuplicates ? t('expenses.resolve_duplicate_first', locale) : needsReceiptOrSubstitute ? t('expenses.confirm_needs_receipt', locale) : ocrTotalUnacknowledged ? t('expenses.price_mismatch_blocks_confirm', locale) : isZeroAmount ? t('expenses.zero_amount_warning', locale) : !substituteReady ? 'ต้องให้ผู้จ่ายลงนามและผู้อนุมัติออกใบรับรองฉบับสมบูรณ์ก่อนยืนยันรายจ่าย' : undefined}>{t('expenses.confirm_and_post', locale)}</button>}
+            {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => doAction(() => confirmExpense(companyId, expenseId, vatOverrideRef.current ?? undefined), 'ยืนยันเอกสารเรียบร้อยแล้ว')} disabled={actionLoading || !canConfirmExpense} title={confirmBlockedText ?? undefined}>{t('expenses.confirm_and_post', locale)}</button>}
+            {confirmBlockedNotice}
           </>
         )}
         {isConfirmed && (
@@ -754,7 +776,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
   );
   const vendorCard = (
     <div ref={vendorRef} className="scroll-mt-24" tabIndex={-1}>
-      <ExpenseReviewEditSection companyId={companyId} detail={detail} isMutable={canMutateDraft} canReview={canReview} saveRef={reviewSaveRef} vatOverrideRef={vatOverrideRef} onValidationChange={onDataValidationChange} onSaved={async () => { setDetail(await getExpense(companyId, expenseId)); onRefresh(); }} />
+      <ExpenseReviewEditSection companyId={companyId} detail={detail} isMutable={canMutateDraft} canReview={canReview} canConfirm={canConfirm} saveRef={reviewSaveRef} vatOverrideRef={vatOverrideRef} onValidationChange={onDataValidationChange} onSaved={async () => { setDetail(await getExpense(companyId, expenseId)); onRefresh(); }} />
     </div>
   );
   const documentReviewCard = (
@@ -837,6 +859,18 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
           {t('expenses.ai_must_fill', locale)}: {expenseValueLabel(AI_MISSING_FIELD_LABELS, field, 'ข้อมูลที่ต้องตรวจเพิ่ม')}
         </span>
       ))}
+      {/* The rows on the page do not add up to the page's own total. The record still follows the
+          printed total — that is what was paid — but showing both numbers is the whole point: a real
+          cash bill whose rows read 1,040 was confirmed by a person at 7,040 and nobody ever saw the
+          two side by side. This warns; it never blocks. */}
+      {(aiMap?.['chargeReconciliation'] as { status?: string; itemsSumAmount?: string } | undefined)?.status === 'ITEMS_DID_NOT_RECONCILE' && (
+        <span className="rounded-full border border-warning-100 bg-warning-50 px-2 py-0.5 font-medium text-warning-700">
+          {t('expenses.ai_items_not_reconciled', locale)}
+          {(aiMap?.['chargeReconciliation'] as { itemsSumAmount?: string } | undefined)?.itemsSumAmount
+            ? ` (${(aiMap?.['chargeReconciliation'] as { itemsSumAmount?: string }).itemsSumAmount} / ${detail.grandTotalAmount})`
+            : ''}
+        </span>
+      )}
       {(aiMap?.['chargeReconciliation'] as { status?: string } | undefined)?.status === 'FOLDED_INTO_SUMMARY_NEEDS_REVIEW' && (
         <span className="rounded-full border border-warning-100 bg-warning-50 px-2 py-0.5 font-medium text-warning-700">
           {t('expenses.ai_charges_folded', locale)}
@@ -870,7 +904,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
     .join(' · ');
   const duplicatesCard = hasDuplicates && (
     <MangmeeCard className="space-y-2 border-warning-100 bg-warning-50 p-4">
-      <h3 className="text-sm font-semibold text-warning-700">⚠ {t('expenses.duplicate_warning_title', locale)}</h3>
+      <h3 className="text-sm font-semibold text-warning-700">⚠ {t(isConfirmedDuplicate ? 'expenses.duplicate_confirmed_title' : 'expenses.duplicate_warning_title', locale)}</h3>
       {detail.duplicateStatus === 'POSSIBLE_DUPLICATE' && openDuplicateCandidates.length === 0 && (
         <p className="text-xs text-warning-700">{t('expenses.duplicate_restricted', locale)}</p>
       )}
@@ -885,7 +919,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
             </Link>
             {duplicateReasonText(candidate) && <span className="text-gray-500">{duplicateReasonText(candidate)}</span>}
           </span>
-          <span className="font-semibold text-error-700">{t('expenses.confirm_duplicate', locale)}</span>
+          <span className="font-semibold text-error-700">{t('expenses.duplicate_confirmed_title', locale)}</span>
         </div>
       ))}
       {openDuplicateCandidates.map((d, index) => (
@@ -958,6 +992,23 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
 
   // Shared by the desktop empty-viewer pane and the small-screen strip: the viewer
   // pane is lg-only, so mobile needs its own way into the primary-receipt slot.
+  const receiptFileInput = (label: string) => canMutateDraft && (
+    <label className="cursor-pointer">
+      <span className={cx(ghostClass, 'inline-flex')}>{receiptUploading ? t('expenses.uploading', locale) : label}</span>
+      <input
+        className="hidden"
+        type="file"
+        accept={ATTACHMENT_UPLOAD_ACCEPT}
+        disabled={receiptUploading}
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = '';
+          if (file) void attachPrimaryReceipt(file, detail.branchId);
+        }}
+      />
+    </label>
+  );
+  const replaceReceiptControl = receiptFileInput(t('expenses.replace_receipt', locale));
   const attachReceiptControl = canMutateDraft && (
     <label className="cursor-pointer">
       <span className={cx(ghostClass, 'inline-flex')}>{receiptUploading ? t('expenses.uploading', locale) : t('expenses.attach_receipt', locale)}</span>
@@ -1037,6 +1088,10 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
                         : expenseValueLabel(ATTACHMENT_PURPOSE_LABELS, activeAttachment?.purpose, 'เอกสารแนบ')}</div>
                     </div>
                     <div className="flex flex-shrink-0 items-center gap-1.5">
+                      {/* Owner 2026-08-28: "เผื่ออัพโหลดผิด". Re-uploading has always worked on the server —
+                          the newest primary upload becomes the receipt — but the control was rendered only
+                          while there were zero attachments, so a wrong file could never be corrected here. */}
+                      {replaceReceiptControl}
                       {attachments.length > 1 && (
                         <>
                           <button type="button" className={ghostClass} onClick={() => setViewerIndex(Math.max(0, safeViewerIndex - 1))} disabled={safeViewerIndex <= 0} aria-label={t('expenses.viewer_prev', locale)}>‹</button>
@@ -1075,6 +1130,11 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
               )}
               {attachments.length > 0 && (
                 <div className={cx('border-b border-gray-100 bg-gray-50 lg:hidden', checkBillBlocked && 'order-2')}>
+                  {/* The phone is where receipts are actually reviewed, so the "wrong file" fix has to be
+                      here too — the desktop viewer header alone would have left mobile with no way out. */}
+                  {replaceReceiptControl && (
+                    <div className="flex justify-end border-b border-gray-100 px-5 py-2">{replaceReceiptControl}</div>
+                  )}
                   {attachments.map((attachment) => (
                     <button
                       key={attachment.id}
@@ -1155,7 +1215,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
               <div className="space-y-2 px-4 py-3">
               {canMutateDraft && classificationBlocked && <p className={warnNoteClass}>{classificationBlockMessage}</p>}
               {canMutateDraft && detail.status === 'READY_FOR_CONFIRMATION' && isZeroAmount && <p className={warnNoteClass}>{t('expenses.zero_amount_warning', locale)}</p>}
-              {canMutateDraft && detail.status === 'READY_FOR_CONFIRMATION' && hasDuplicates && <p className="text-xs font-semibold text-warning-700">{t('expenses.duplicate_action_required', locale)}</p>}
+              {canMutateDraft && detail.status === 'READY_FOR_CONFIRMATION' && hasDuplicates && <p className="text-xs font-semibold text-warning-700">{duplicateBlockMessage}</p>}
               {showVoid && (
                 <>
                   <div className="text-sm font-medium text-gray-700">{t('expenses.void_reason', locale)}</div>

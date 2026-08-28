@@ -36,6 +36,11 @@ describe('isActiveNavSubItem', () => {
 });
 
 describe('workspace account menu placement', () => {
+  it('uses the authenticated custom role name rather than the user-menu caption', () => {
+    const source = readFileSync(join(shellDir, 'AppSidebar.tsx'), 'utf8');
+    assert.ok(source.includes('userRoleNames?.[role]?.trim()'));
+    assert.ok(!source.includes("roleLabelKey[role] ?? 'shell.user_menu'"));
+  });
   it('keeps account actions in the sidebar footer and out of the header', () => {
     const sidebarSource = readFileSync(join(shellDir, 'AppSidebar.tsx'), 'utf8');
     const headerSource = readFileSync(join(shellDir, 'AppHeader.tsx'), 'utf8');

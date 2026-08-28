@@ -4,6 +4,10 @@ import * as React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime';
 import { ToastContext } from '@/common/components/toast/use-toast';
+import { readFileSync } from 'node:fs';
+
+const centerSource = readFileSync(new URL('./NotificationPages.tsx', import.meta.url), 'utf8');
+const bellSource = readFileSync(new URL('./NotificationBell.tsx', import.meta.url), 'utf8');
 
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
 
@@ -46,5 +50,15 @@ describe('notification center header', () => {
     const html = renderCenter(['notification.preference.manage', 'notification.rule.manage']);
     assert.doesNotMatch(html, /ศูนย์การแจ้งเตือน|อ่านทั้งหมด|ยังไม่ได้อ่าน/);
     assert.match(html, /ไม่มีสิทธิ์/);
+  });
+});
+
+describe('notification mutation integrity', () => {
+  it('updates center and bell state only after a successful API mutation', () => {
+    assert.match(centerSource, /await markRead\(companyId, id\);\s*setItems/);
+    assert.match(centerSource, /catch \(err\) \{\s*setError\(apiErrorMessage\(err\)\)/);
+    assert.doesNotMatch(centerSource, /mark(?:Read|AllRead).*\.catch\(\(\) => null\)/);
+    assert.match(bellSource, /await markAllRead\(companyId\);\s*setItems/);
+    assert.match(bellSource, /catch \(err\) \{\s*toast\.error\(err\)/);
   });
 });

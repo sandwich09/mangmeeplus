@@ -16,12 +16,14 @@ import {
   updateRule,
   getPreferences,
   updatePreferences,
+  NOTIFICATIONS_CHANGED_EVENT,
 } from './dashboard-notifications.api';
 import {
   severityColor,
   severityLabel,
   formatRelativeTime,
   internalNotificationHref,
+  visibleNotifications,
 } from './dashboard-notifications.logic';
 import type { NotificationItem, NotificationRule, NotificationPreference, NotificationSeverity } from './dashboard-notifications.model';
 import { canSeeRoute } from '@/features/web-core-workspace/route-permissions';
@@ -94,23 +96,32 @@ export function NotificationCenterPage({ companyId, permissions }: { companyId: 
   const [filter, setFilter] = useState<'all' | 'unread'>('unread');
   const [busyRow, setBusyRow] = useState<{ id: string; action: 'read' | 'dismiss' } | null>(null);
   const [markAllBusy, setMarkAllBusy] = useState(false);
+  const visibleItems = visibleNotifications(items, filter);
 
   function reload() {
     if (!canRead) return;
     setLoading(true);
+    setError(null);
     listNotifications(companyId, { read: filter === 'unread' ? false : undefined, pageSize: 50 })
       .then((res) => { setItems(res.items); setLoading(false); })
       .catch((err: unknown) => { setError(apiErrorMessage(err)); setLoading(false); });
   }
 
-  useEffect(() => { reload(); }, [canRead, companyId, filter]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    reload();
+    window.addEventListener(NOTIFICATIONS_CHANGED_EVENT, reload);
+    return () => window.removeEventListener(NOTIFICATIONS_CHANGED_EVENT, reload);
+  }, [canRead, companyId, filter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleMarkRead(id: string) {
     if (busyRow || markAllBusy) return;
     setBusyRow({ id, action: 'read' });
+    setError(null);
     try {
-      await markRead(companyId, id).catch(() => null);
+      await markRead(companyId, id);
       setItems((prev) => prev.map((n) => n.id === id ? { ...n, read: true } : n));
+    } catch (err) {
+      setError(apiErrorMessage(err));
     } finally {
       setBusyRow(null);
     }
@@ -119,9 +130,12 @@ export function NotificationCenterPage({ companyId, permissions }: { companyId: 
   async function handleDismiss(id: string) {
     if (busyRow || markAllBusy) return;
     setBusyRow({ id, action: 'dismiss' });
+    setError(null);
     try {
-      await dismissNotification(companyId, id).catch(() => null);
+      await dismissNotification(companyId, id);
       setItems((prev) => prev.filter((n) => n.id !== id));
+    } catch (err) {
+      setError(apiErrorMessage(err));
     } finally {
       setBusyRow(null);
     }
@@ -130,9 +144,13 @@ export function NotificationCenterPage({ companyId, permissions }: { companyId: 
   async function handleMarkAllRead() {
     if (busyRow || markAllBusy) return;
     setMarkAllBusy(true);
+    setError(null);
     try {
-      await markAllRead(companyId).then(() => toast.success('ทำเครื่องหมายว่าอ่านทั้งหมดเรียบร้อยแล้ว')).catch(() => null);
+      await markAllRead(companyId);
       setItems((prev) => prev.map((n) => ({ ...n, read: true })));
+      toast.success('ทำเครื่องหมายว่าอ่านทั้งหมดเรียบร้อยแล้ว');
+    } catch (err) {
+      setError(apiErrorMessage(err));
     } finally {
       setMarkAllBusy(false);
     }
@@ -158,7 +176,7 @@ export function NotificationCenterPage({ companyId, permissions }: { companyId: 
         <div className="flex gap-2">
           <button
             onClick={handleMarkAllRead}
-            disabled={markAllBusy || busyRow !== null}
+            disabled={loading || markAllBusy || busyRow !== null || !items.some((item) => !item.read)}
             className="inline-flex min-h-11 items-center rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 sm:min-h-0"
           >
             {markAllBusy ? 'กำลังทำเครื่องหมาย...' : 'อ่านทั้งหมด'}
@@ -183,12 +201,12 @@ export function NotificationCenterPage({ companyId, permissions }: { companyId: 
       {loading && <p className="text-sm text-gray-400">กำลังโหลด...</p>}
       {error && <ErrorBanner message={error} />}
 
-      {!loading && items.length === 0 && (
+      {!loading && visibleItems.length === 0 && (
         <p className="text-sm text-gray-400">ไม่มีการแจ้งเตือน</p>
       )}
 
       <div className="rounded-lg border border-gray-200 bg-white overflow-hidden divide-y divide-gray-100">
-        {items.map((item) => (
+        {visibleItems.map((item) => (
           <div key={item.id} className={`relative flex items-start gap-3 p-3 ${item.read ? 'opacity-60' : ''}`}>
             {/* The whole row is the target, badge included. It used to be a <div role="link">
                 covering only the middle column — about 180px of a 390px screen, and not a real

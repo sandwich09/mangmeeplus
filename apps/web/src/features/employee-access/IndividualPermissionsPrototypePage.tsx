@@ -209,7 +209,7 @@ const MVP1_INDIVIDUAL_PERMISSION_MENU_IDS = new Set<MenuDefinition['id']>([
 
 type SaveKey = 'role' | 'branch' | 'status';
 
-export function IndividualPermissionsPrototypePage({ companyId, viewerPermissions = [], viewerUserId }: { companyId: string; viewerPermissions?: string[]; viewerUserId?: string }) {
+export function IndividualPermissionsPrototypePage({ companyId, viewerPermissions = [], viewerUserId, viewerBranchIds }: { companyId: string; viewerPermissions?: string[]; viewerUserId?: string; viewerBranchIds?: string[] }) {
   const locale = useWorkspaceLocale();
   const router = useRouter();
   const toast = useToast();
@@ -276,7 +276,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
       setPermissionError(localizedErrorMessage(matrixR.reason, locale, { fallback: 'error.load_failed' }));
     }
     if (branchesR.status === 'fulfilled') {
-      setBranches(branchesR.value);
+      setBranches(branchesR.value.filter((branch) => branch.status === 'ACTIVE'));
     } else {
       setBranches([]);
       setBranchError(localizedErrorMessage(branchesR.reason, locale, { fallback: 'error.load_failed' }));
@@ -337,7 +337,11 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
   const selectedRoleNames = selectedEmployee?.roles.map(roleDisplayName).join(', ') ?? '';
   const allBranchRoles = selectedRoles.filter((role) => ALL_BRANCH_ROLE_KEYS.includes(role.key));
   const branchPickerLocked = allBranchRoles.length > 0;
-  const canEditBranchScope = canEditEmployee && !selectedIsOwner && selectedActive && !branchPickerLocked;
+  const scopeOutsideViewer = viewerBranchIds !== undefined && selectedEmployee && (
+    selectedEmployee.branchScopeMode === 'ALL_BRANCHES'
+    || [...selectedEmployee.branchScopeBranchIds, ...(selectedEmployee.defaultBranchId ? [selectedEmployee.defaultBranchId] : [])].some((id) => !viewerBranchIds.includes(id))
+  );
+  const canEditBranchScope = canEditEmployee && !selectedIsOwner && selectedActive && !branchPickerLocked && !scopeOutsideViewer;
   const accessProjection = useMemo(
     () => projectGrantedMenus(
       selectedEmployee?.roles.map((role) => role.id) ?? [],
@@ -349,7 +353,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
   );
 
   const selectedBranchIds = selectedEmployee
-    ? (selectedEmployee.branchScopeMode === 'ALL_BRANCHES' ? branches.map((b) => b.id) : selectedEmployee.branchScopeBranchIds)
+    ? (selectedEmployee.branchScopeMode === 'ALL_BRANCHES' ? branches.map((b) => b.id) : selectedEmployee.branchScopeBranchIds.filter((id) => branches.some((branch) => branch.id === id)))
     : [];
   const branchCountLabel = selectedBranchIds.length === branches.length ? 'ทุกสาขา' : `${selectedBranchIds.length} สาขา`;
 
@@ -445,11 +449,11 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
   }
 
   async function toggleBranch(branchId: string) {
-    if (!selectedEmployee || selectedIsOwner || !selectedActive || !canEditEmployee || branchPickerLocked) return;
+    if (!selectedEmployee || !canEditBranchScope || (viewerBranchIds !== undefined && !viewerBranchIds.includes(branchId))) return;
     const exists = selectedBranchIds.includes(branchId);
     if (exists && selectedBranchIds.length === 1) return;
     const next = exists ? selectedBranchIds.filter((id) => id !== branchId) : [...selectedBranchIds, branchId];
-    const allSelected = next.length === branches.length;
+    const allSelected = viewerBranchIds === undefined && next.length === branches.length;
     await withBusy('branch', async () => {
       await updateEmployee(companyId, selectedEmployee.id, {
         branchScopeMode: allSelected ? 'ALL_BRANCHES' : 'SELECTED_BRANCHES',
@@ -461,7 +465,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
   }
 
   async function selectAllBranches() {
-    if (!selectedEmployee || selectedIsOwner || !selectedActive || !canEditEmployee || branchPickerLocked) return;
+    if (!selectedEmployee || !canEditBranchScope || viewerBranchIds !== undefined) return;
     await withBusy('branch', async () => {
       await updateEmployee(companyId, selectedEmployee.id, {
         branchScopeMode: 'ALL_BRANCHES',
@@ -567,7 +571,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
         </div>
 
         {!selectedEmployee ? (
-          <MangmeeCard className="p-6 text-sm text-gray-400">ยังไม่มีพนักงานในบริษัทนี้</MangmeeCard>
+          <MangmeeCard className="p-6 text-sm text-gray-400">{employees.length === 0 ? 'ยังไม่มีพนักงานในบริษัทนี้' : 'ไม่พบพนักงานที่ตรงกับตัวกรอง กรุณาปรับตัวกรองหรือคำค้นหา'}</MangmeeCard>
         ) : (
           <div className="grid min-w-0 gap-5">
             <MangmeeCard className="relative p-5">
@@ -705,10 +709,13 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                   <p className="mt-2 max-w-4xl text-xs font-semibold leading-5 text-gray-400">
                     {accountAccessNotice(selectedEmployee.status)}
                   </p>
+                  <p className="mt-1 max-w-4xl text-xs leading-5 text-gray-400">
+                    หน้านี้สรุปเฉพาะเมนูในตารางสิทธิ์ ไม่ใช่สิทธิ์ทั้งหมดของบทบาท
+                  </p>
                 </div>
                 {!permissionError && accessProjection.complete && (
                   <MangmeeBadge tone="brand" className="shrink-0 tabular-nums">
-                    ใช้งานได้ {accessProjection.grantedCount} เมนู
+                    แสดงสิทธิ์ {accessProjection.grantedCount} เมนู
                   </MangmeeBadge>
                 )}
               </div>
@@ -735,7 +742,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                   </div>
                 ) : accessProjection.groups.length === 0 ? (
                   <p className="rounded-xl bg-gray-50 p-4 text-sm font-semibold text-gray-500">
-                    ยังไม่มีเมนูที่ใช้งานได้จากบทบาทที่กำหนด
+                    ไม่มีสิทธิ์ในเมนูที่สรุปในตารางนี้
                   </p>
                 ) : accessProjection.groups.map(({ group, menus: groupMenus }) => (
                   <div key={group} className="grid gap-1">
@@ -810,7 +817,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                 {canEditBranchScope && <div className="mangmee-segmented mt-5">
                   <button
                     type="button"
-                    disabled={busy}
+                    disabled={busy || viewerBranchIds !== undefined}
                     onClick={() => void selectAllBranches()}
                     aria-pressed={selectedEmployee.branchScopeMode === 'ALL_BRANCHES' && !branchPickerOpen}
                     className={cx(
@@ -848,7 +855,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
 
                 {(selectedEmployee.branchScopeMode === 'SELECTED_BRANCHES' || branchPickerOpen) && (
                   <div id="employee-accessible-branches" className="mt-5 flex min-w-0 flex-wrap gap-2">
-                    {branches.filter((branch) => canEditBranchScope || selectedBranchIds.includes(branch.id)).map((branch) => {
+                    {branches.filter((branch) => selectedBranchIds.includes(branch.id) || (canEditBranchScope && (viewerBranchIds === undefined || viewerBranchIds.includes(branch.id)))).map((branch) => {
                       const selected = selectedBranchIds.includes(branch.id);
                       const lastBranchLocked = selected && selectedBranchIds.length === 1;
                       const otherwiseDisabled = selectedIsOwner || !selectedActive || busy || branchPickerLocked;
@@ -871,6 +878,11 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                 {branchPickerLocked && (
                   <p className="mt-3 text-sm font-semibold text-gray-400">
                     บทบาท {allBranchRoles.map(roleDisplayName).join(', ')} ต้องเห็นข้อมูลทุกสาขา จึงจำกัดสาขาไม่ได้
+                  </p>
+                )}
+                {viewerBranchIds !== undefined && (
+                  <p className="mt-3 text-sm font-semibold text-gray-500">
+                    กำหนดได้เฉพาะสาขาที่บัญชีของคุณเข้าถึง หากต้องการเปลี่ยนขอบเขตนอกเหนือจากนี้ กรุณาติดต่อเจ้าของร้าน
                   </p>
                 )}
               </MangmeeCard>

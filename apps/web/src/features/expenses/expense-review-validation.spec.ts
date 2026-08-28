@@ -335,3 +335,28 @@ describe('validateExpenseReview', () => {
     assert.equal(validate(values).find((issue) => issue.field === 'lines.3.quantity')?.messageKey, 'expenses.v_number_invalid');
   });
 });
+
+// Owner report 2026-08-28: "0400" was accepted by the form and refused by the server. The form asked
+// JavaScript ("is Number('0400') finite?" — yes, 400); the server asked for the Decimal(18,4) shape.
+// A person typing an amount now learns at the field, not after pressing save.
+describe('amount fields reject the shapes the server rejects', () => {
+  const formatIssues = (unitPrice: string) => {
+    const values = validValues();
+    values.lines[0]!.unitPrice = unitPrice;
+    return validate(values).filter((issue) => issue.messageKey === 'expenses.v_number_format');
+  };
+
+  it('refuses a leading zero, which used to sail all the way through to the save', () => {
+    for (const bad of ['0400', '007', '00.5']) assert.equal(formatIssues(bad).length, 1, bad);
+  });
+
+  it('refuses the other malformed shapes the server refuses', () => {
+    // '-5' keeps its own clearer "negative" message and '1e3' its "not a number" one; this check is
+    // only for what those two miss — a value JavaScript is happy with that the column will not take.
+    for (const bad of ['.5', '1.23456']) assert.equal(formatIssues(bad).length, 1, bad);
+  });
+
+  it('still accepts what a person legitimately types', () => {
+    for (const good of ['400', '0.400', '0', '4.00', '1234.5678']) assert.equal(formatIssues(good).length, 0, good);
+  });
+});

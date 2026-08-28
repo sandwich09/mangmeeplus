@@ -1,0 +1,644 @@
+[
+  {
+    "role": "MANAGER",
+    "links": [
+      {
+        "href": "/",
+        "name": "มั่งมี"
+      },
+      {
+        "href": "/companies/seed-local-company/dashboard",
+        "name": "แดชบอร์ด"
+      },
+      {
+        "href": "/companies/seed-local-company/sales-documents",
+        "name": "เอกสารขายและรับชำระ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses",
+        "name": "รายการค่าใช้จ่าย"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/upload",
+        "name": "อัปโหลดใบเสร็จ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/manual",
+        "name": "บันทึกด้วยมือ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/signatures",
+        "name": "ลายเซ็นของฉัน"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/substitute-receipts",
+        "name": "ใบรับรองแทนใบเสร็จ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/evidence",
+        "name": "หลักฐานทางบัญชี"
+      },
+      {
+        "href": "/companies/seed-local-company/reimbursements",
+        "name": "การเบิกจ่าย"
+      },
+      {
+        "href": "/companies/seed-local-company/settings/access-overview",
+        "name": "รายชื่อพนักงาน"
+      },
+      {
+        "href": "/companies/seed-local-company/user-guide/expenses",
+        "name": "ค่าใช้จ่ายและใบเสร็จ"
+      },
+      {
+        "href": "/companies/seed-local-company/user-guide/substitute-receipts",
+        "name": "ใบรับรองแทนใบเสร็จรับเงิน"
+      },
+      {
+        "href": "/companies/seed-local-company/user-guide/reimbursements",
+        "name": "การเบิกจ่ายและอนุมัติ"
+      }
+    ],
+    "ui": "- link \"ข้ามไปยังเนื้อหา\":\n  - /url: \"#workspace-main\"\n- complementary:\n  - link \"มั่งมี\":\n    - /url: /\n    - generic: มั่งมี\n  - button \"สลับเมนู\":\n  - navigation:\n    - list:\n      - link \"แดชบอร์ด\":\n        - /url: /companies/seed-local-company/dashboard\n        - generic: แดชบอร์ด\n      - listitem \"ลูกค้าและการขาย\"\n      - link \"เอกสารขายและรับชำระ\":\n        - /url: /companies/seed-local-company/sales-documents\n        - generic: เอกสารขายและรับชำระ\n      - listitem \"การเงินและบัญชี\"\n      - button \"ค่าใช้จ่ายและใบเสร็จ\":\n        - generic: ค่าใช้จ่ายและใบเสร็จ\n      - list:\n        - link \"รายการค่าใช้จ่าย\":\n          - /url: /companies/seed-local-company/expenses\n          - text: รายการค่าใช้จ่าย\n        - link \"อัปโหลดใบเสร็จ\":\n          - /url: /companies/seed-local-company/expenses/upload\n          - text: อัปโหลดใบเสร็จ\n        - link \"บันทึกด้วยมือ\":\n          - /url: /companies/seed-local-company/expenses/manual\n          - text: บันทึกด้วยมือ\n        - link \"ลายเซ็นของฉัน\":\n          - /url: /companies/seed-local-company/expenses/signatures\n          - text: ลายเซ็นของฉัน\n        - link \"ใบรับรองแทนใบเสร็จ\":\n          - /url: /companies/seed-local-company/expenses/substitute-receipts\n          - text: ใบรับรองแทนใบเสร็จ\n        - link \"หลักฐานทางบัญชี\":\n          - /url: /companies/seed-local-company/expenses/evidence\n          - text: หลักฐานทางบัญชี\n      - link \"การเบิกจ่าย\":\n        - /url: /companies/seed-local-company/reimbursements\n        - generic: การเบิกจ่าย\n      - listitem \"บุคลากรและการตั้งค่า\"\n      - button \"พนักงานและสิทธิ์\" [expanded]:\n        - generic: พนักงานและสิทธิ์\n      - list:\n        - link \"รายชื่อพนักงาน\":\n          - /url: /companies/seed-local-company/settings/access-overview\n          - text: รายชื่อพนักงาน\n      - button \"คู่มือการใช้งานระบบ\":\n        - generic: คู่มือการใช้งานระบบ\n      - list:\n        - link \"ค่าใช้จ่ายและใบเสร็จ\":\n          - /url: /companies/seed-local-company/user-guide/expenses\n          - text: ค่าใช้จ่ายและใบเสร็จ\n        - link \"ใบรับรองแทนใบเสร็จรับเงิน\":\n          - /url: /companies/seed-local-company/user-guide/substitute-receipts\n          - text: ใบรับรองแทนใบเสร็จรับเงิน\n        - link \"การเบิกจ่ายและอนุมัติ\":\n          - /url: /companies/seed-local-company/user-guide/reimbursements\n          - text: การเบิกจ่ายและอนุมัติ\n  - button \"เมนูผู้ใช้\":\n    - generic: QU\n    - generic: QACOMPLETE UI Regression\n    - generic: ผู้จัดการ\n- banner:\n  - generic: WatchDog Local Company\n  - text: Head Office (สำนักงานใหญ่)\n  - button \"การแจ้งเตือน\":\n- main:\n  - link \"มั่งมี\":\n    - /url: /companies/seed-local-company/dashboard\n  - text: /แดชบอร์ด\n  - text: Head Office (สำนักงานใหญ่)\n  - heading \"สวัสดี คุณ QACOMPLETE\" [level=1]\n  - paragraph: ภาพรวมธุรกิจ · Head Office (สำนักงานใหญ่) · อัปเดตล่าสุด 17:18 น.\n  - button \"วันนี้\"\n  - button \"สัปดาห์นี้\"\n  - button \"เดือนนี้\"\n  - button \"ไตรมาสนี้\"\n  - button \"รีเฟรช\":\n    - text: รีเฟรช\n  - generic: ภาพรวม\n  - generic: ค่าใช้จ่ายและใบเสร็จ\n  - link \"ค่าใช้จ่ายที่ยืนยันแล้ว 274.5 บาท\":\n    - /url: /companies/seed-local-company/expenses?view=confirmed&fromDate=2026-08-28&toDate=2026-08-28\n    - generic: ค่าใช้จ่ายที่ยืนยันแล้ว\n    - generic: 274.5 บาท\n  - link \"ใบเสร็จรอตรวจ (ทุกช่วงเวลา) 6 รายการ\":\n    - /url: /companies/seed-local-company/expenses?view=pending\n    - generic: ใบเสร็จรอตรวจ (ทุกช่วงเวลา)\n    - generic: 6 รายการ\n  - link \"ค้างจ่ายที่ยืนยันแล้ว (ทุกช่วงเวลา) 2,494 บาท\":\n    - /url: /companies/seed-local-company/expenses?view=unpaid\n    - generic: ค้างจ่ายที่ยืนยันแล้ว (ทุกช่วงเวลา)\n    - generic: 2,494 บาท\n- button \"Open Next.js Dev Tools\":\n- alert"
+  },
+  {
+    "role": "FINANCE",
+    "links": [
+      {
+        "href": "/",
+        "name": "มั่งมี"
+      },
+      {
+        "href": "/companies/seed-local-company/dashboard",
+        "name": "แดชบอร์ด"
+      },
+      {
+        "href": "/companies/seed-local-company/sales-documents",
+        "name": "เอกสารขายและรับชำระ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses",
+        "name": "รายการค่าใช้จ่าย"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/upload",
+        "name": "อัปโหลดใบเสร็จ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/manual",
+        "name": "บันทึกด้วยมือ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/categories",
+        "name": "หมวดหมู่"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/signatures",
+        "name": "ลายเซ็นของฉัน"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/substitute-receipts",
+        "name": "ใบรับรองแทนใบเสร็จ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/evidence",
+        "name": "หลักฐานทางบัญชี"
+      },
+      {
+        "href": "/companies/seed-local-company/reimbursements",
+        "name": "การเบิกจ่าย"
+      },
+      {
+        "href": "/companies/seed-local-company/user-guide/expenses",
+        "name": "ค่าใช้จ่ายและใบเสร็จ"
+      },
+      {
+        "href": "/companies/seed-local-company/user-guide/substitute-receipts",
+        "name": "ใบรับรองแทนใบเสร็จรับเงิน"
+      },
+      {
+        "href": "/companies/seed-local-company/user-guide/reimbursements",
+        "name": "การเบิกจ่ายและอนุมัติ"
+      }
+    ],
+    "ui": "- link \"ข้ามไปยังเนื้อหา\":\n  - /url: \"#workspace-main\"\n- complementary:\n  - link \"มั่งมี\":\n    - /url: /\n    - generic: มั่งมี\n  - button \"สลับเมนู\":\n  - navigation:\n    - list:\n      - link \"แดชบอร์ด\":\n        - /url: /companies/seed-local-company/dashboard\n        - generic: แดชบอร์ด\n      - listitem \"ลูกค้าและการขาย\"\n      - link \"เอกสารขายและรับชำระ\":\n        - /url: /companies/seed-local-company/sales-documents\n        - generic: เอกสารขายและรับชำระ\n      - listitem \"การเงินและบัญชี\"\n      - button \"ค่าใช้จ่ายและใบเสร็จ\":\n        - generic: ค่าใช้จ่ายและใบเสร็จ\n      - list:\n        - link \"รายการค่าใช้จ่าย\":\n          - /url: /companies/seed-local-company/expenses\n          - text: รายการค่าใช้จ่าย\n        - link \"อัปโหลดใบเสร็จ\":\n          - /url: /companies/seed-local-company/expenses/upload\n          - text: อัปโหลดใบเสร็จ\n        - link \"บันทึกด้วยมือ\":\n          - /url: /companies/seed-local-company/expenses/manual\n          - text: บันทึกด้วยมือ\n        - link \"หมวดหมู่\":\n          - /url: /companies/seed-local-company/expenses/categories\n          - text: หมวดหมู่\n        - link \"ลายเซ็นของฉัน\":\n          - /url: /companies/seed-local-company/expenses/signatures\n          - text: ลายเซ็นของฉัน\n        - link \"ใบรับรองแทนใบเสร็จ\":\n          - /url: /companies/seed-local-company/expenses/substitute-receipts\n          - text: ใบรับรองแทนใบเสร็จ\n        - link \"หลักฐานทางบัญชี\":\n          - /url: /companies/seed-local-company/expenses/evidence\n          - text: หลักฐานทางบัญชี\n      - link \"การเบิกจ่าย\":\n        - /url: /companies/seed-local-company/reimbursements\n        - generic: การเบิกจ่าย\n      - listitem \"บุคลากรและการตั้งค่า\"\n      - button \"คู่มือการใช้งานระบบ\":\n        - generic: คู่มือการใช้งานระบบ\n      - list:\n        - link \"ค่าใช้จ่ายและใบเสร็จ\":\n          - /url: /companies/seed-local-company/user-guide/expenses\n          - text: ค่าใช้จ่ายและใบเสร็จ\n        - link \"ใบรับรองแทนใบเสร็จรับเงิน\":\n          - /url: /companies/seed-local-company/user-guide/substitute-receipts\n          - text: ใบรับรองแทนใบเสร็จรับเงิน\n        - link \"การเบิกจ่ายและอนุมัติ\":\n          - /url: /companies/seed-local-company/user-guide/reimbursements\n          - text: การเบิกจ่ายและอนุมัติ\n  - button \"เมนูผู้ใช้\":\n    - generic: QU\n    - generic: QACOMPLETE UI Regression\n    - generic: การเงิน\n- banner:\n  - generic: WatchDog Local Company\n  - button \"เลือกสาขา\":\n    - generic \"Head Office (สำนักงานใหญ่)\"\n  - button \"การแจ้งเตือน\":\n- main:\n  - link \"มั่งมี\":\n    - /url: /companies/seed-local-company/dashboard\n  - text: /แดชบอร์ด\n  - text: Head Office (สำนักงานใหญ่)\n  - heading \"สวัสดี คุณ QACOMPLETE\" [level=1]\n  - paragraph: ภาพรวมธุรกิจ · Head Office (สำนักงานใหญ่) · อัปเดตล่าสุด 17:48 น.\n  - button \"วันนี้\"\n  - button \"สัปดาห์นี้\"\n  - button \"เดือนนี้\"\n  - button \"ไตรมาสนี้\"\n  - button \"รีเฟรช\":\n    - text: รีเฟรช\n  - generic: ภาพรวม\n  - generic: ค่าใช้จ่ายและใบเสร็จ\n  - link \"ค่าใช้จ่ายที่ยืนยันแล้ว 274.5 บาท\":\n    - /url: /companies/seed-local-company/expenses?view=confirmed&fromDate=2026-08-28&toDate=2026-08-28\n    - generic: ค่าใช้จ่ายที่ยืนยันแล้ว\n    - generic: 274.5 บาท\n  - link \"ใบเสร็จรอตรวจ (ทุกช่วงเวลา) 6 รายการ\":\n    - /url: /companies/seed-local-company/expenses?view=pending\n    - generic: ใบเสร็จรอตรวจ (ทุกช่วงเวลา)\n    - generic: 6 รายการ\n  - link \"ค้างจ่ายที่ยืนยันแล้ว (ทุกช่วงเวลา) 2,494 บาท\":\n    - /url: /companies/seed-local-company/expenses?view=unpaid\n    - generic: ค้างจ่ายที่ยืนยันแล้ว (ทุกช่วงเวลา)\n    - generic: 2,494 บาท\n- button \"Open Next.js Dev Tools\":\n- alert"
+  },
+  {
+    "role": "SALES",
+    "links": [
+      {
+        "href": "/",
+        "name": "มั่งมี"
+      },
+      {
+        "href": "/companies/seed-local-company/dashboard",
+        "name": "แดชบอร์ด"
+      },
+      {
+        "href": "/companies/seed-local-company/sales-documents",
+        "name": "เอกสารขายและรับชำระ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses",
+        "name": "รายการค่าใช้จ่าย"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/upload",
+        "name": "อัปโหลดใบเสร็จ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/manual",
+        "name": "บันทึกด้วยมือ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/signatures",
+        "name": "ลายเซ็นของฉัน"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/substitute-receipts",
+        "name": "ใบรับรองแทนใบเสร็จ"
+      },
+      {
+        "href": "/companies/seed-local-company/reimbursements",
+        "name": "การเบิกจ่าย"
+      },
+      {
+        "href": "/companies/seed-local-company/user-guide/expenses",
+        "name": "ค่าใช้จ่ายและใบเสร็จ"
+      },
+      {
+        "href": "/companies/seed-local-company/user-guide/substitute-receipts",
+        "name": "ใบรับรองแทนใบเสร็จรับเงิน"
+      },
+      {
+        "href": "/companies/seed-local-company/user-guide/reimbursements",
+        "name": "การเบิกจ่ายและอนุมัติ"
+      }
+    ],
+    "ui": "- link \"ข้ามไปยังเนื้อหา\":\n  - /url: \"#workspace-main\"\n- complementary:\n  - link \"มั่งมี\":\n    - /url: /\n    - generic: มั่งมี\n  - button \"สลับเมนู\":\n  - navigation:\n    - list:\n      - link \"แดชบอร์ด\":\n        - /url: /companies/seed-local-company/dashboard\n        - generic: แดชบอร์ด\n      - listitem \"ลูกค้าและการขาย\"\n      - link \"เอกสารขายและรับชำระ\":\n        - /url: /companies/seed-local-company/sales-documents\n        - generic: เอกสารขายและรับชำระ\n      - listitem \"การเงินและบัญชี\"\n      - button \"ค่าใช้จ่ายและใบเสร็จ\":\n        - generic: ค่าใช้จ่ายและใบเสร็จ\n      - list:\n        - link \"รายการค่าใช้จ่าย\":\n          - /url: /companies/seed-local-company/expenses\n          - text: รายการค่าใช้จ่าย\n        - link \"อัปโหลดใบเสร็จ\":\n          - /url: /companies/seed-local-company/expenses/upload\n          - text: อัปโหลดใบเสร็จ\n        - link \"บันทึกด้วยมือ\":\n          - /url: /companies/seed-local-company/expenses/manual\n          - text: บันทึกด้วยมือ\n        - link \"ลายเซ็นของฉัน\":\n          - /url: /companies/seed-local-company/expenses/signatures\n          - text: ลายเซ็นของฉัน\n        - link \"ใบรับรองแทนใบเสร็จ\":\n          - /url: /companies/seed-local-company/expenses/substitute-receipts\n          - text: ใบรับรองแทนใบเสร็จ\n      - link \"การเบิกจ่าย\":\n        - /url: /companies/seed-local-company/reimbursements\n        - generic: การเบิกจ่าย\n      - listitem \"บุคลากรและการตั้งค่า\"\n      - button \"คู่มือการใช้งานระบบ\":\n        - generic: คู่มือการใช้งานระบบ\n      - list:\n        - link \"ค่าใช้จ่ายและใบเสร็จ\":\n          - /url: /companies/seed-local-company/user-guide/expenses\n          - text: ค่าใช้จ่ายและใบเสร็จ\n        - link \"ใบรับรองแทนใบเสร็จรับเงิน\":\n          - /url: /companies/seed-local-company/user-guide/substitute-receipts\n          - text: ใบรับรองแทนใบเสร็จรับเงิน\n        - link \"การเบิกจ่ายและอนุมัติ\":\n          - /url: /companies/seed-local-company/user-guide/reimbursements\n          - text: การเบิกจ่ายและอนุมัติ\n  - button \"เมนูผู้ใช้\":\n    - generic: QU\n    - generic: QACOMPLETE UI Regression\n    - generic: ฝ่ายขาย\n- banner:\n  - generic: WatchDog Local Company\n  - text: Head Office (สำนักงานใหญ่)\n  - button \"การแจ้งเตือน\":\n- main:\n  - link \"มั่งมี\":\n    - /url: /companies/seed-local-company/dashboard\n  - text: /แดชบอร์ด\n  - text: Head Office (สำนักงานใหญ่)\n  - heading \"สวัสดี คุณ QACOMPLETE\" [level=1]\n  - paragraph: ภาพรวมธุรกิจ · Head Office (สำนักงานใหญ่) · อัปเดตล่าสุด 17:48 น.\n  - button \"วันนี้\"\n  - button \"สัปดาห์นี้\"\n  - button \"เดือนนี้\"\n  - button \"ไตรมาสนี้\"\n  - button \"รีเฟรช\":\n    - text: รีเฟรช\n  - generic: ภาพรวม\n  - generic: ยังไม่มีข้อมูลสำหรับช่วงเวลานี้\n- button \"Open Next.js Dev Tools\":\n- alert"
+  },
+  {
+    "role": "INVENTORY",
+    "links": [
+      {
+        "href": "/",
+        "name": "มั่งมี"
+      },
+      {
+        "href": "/companies/seed-local-company/dashboard",
+        "name": "แดชบอร์ด"
+      },
+      {
+        "href": "/companies/seed-local-company/sales-documents",
+        "name": "เอกสารขายและรับชำระ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses",
+        "name": "รายการค่าใช้จ่าย"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/upload",
+        "name": "อัปโหลดใบเสร็จ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/manual",
+        "name": "บันทึกด้วยมือ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/signatures",
+        "name": "ลายเซ็นของฉัน"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/substitute-receipts",
+        "name": "ใบรับรองแทนใบเสร็จ"
+      },
+      {
+        "href": "/companies/seed-local-company/reimbursements",
+        "name": "การเบิกจ่าย"
+      },
+      {
+        "href": "/companies/seed-local-company/user-guide/expenses",
+        "name": "ค่าใช้จ่ายและใบเสร็จ"
+      },
+      {
+        "href": "/companies/seed-local-company/user-guide/substitute-receipts",
+        "name": "ใบรับรองแทนใบเสร็จรับเงิน"
+      },
+      {
+        "href": "/companies/seed-local-company/user-guide/reimbursements",
+        "name": "การเบิกจ่ายและอนุมัติ"
+      }
+    ],
+    "ui": "- link \"ข้ามไปยังเนื้อหา\":\n  - /url: \"#workspace-main\"\n- complementary:\n  - link \"มั่งมี\":\n    - /url: /\n    - generic: มั่งมี\n  - button \"สลับเมนู\":\n  - navigation:\n    - list:\n      - link \"แดชบอร์ด\":\n        - /url: /companies/seed-local-company/dashboard\n        - generic: แดชบอร์ด\n      - listitem \"ลูกค้าและการขาย\"\n      - link \"เอกสารขายและรับชำระ\":\n        - /url: /companies/seed-local-company/sales-documents\n        - generic: เอกสารขายและรับชำระ\n      - listitem \"การเงินและบัญชี\"\n      - button \"ค่าใช้จ่ายและใบเสร็จ\":\n        - generic: ค่าใช้จ่ายและใบเสร็จ\n      - list:\n        - link \"รายการค่าใช้จ่าย\":\n          - /url: /companies/seed-local-company/expenses\n          - text: รายการค่าใช้จ่าย\n        - link \"อัปโหลดใบเสร็จ\":\n          - /url: /companies/seed-local-company/expenses/upload\n          - text: อัปโหลดใบเสร็จ\n        - link \"บันทึกด้วยมือ\":\n          - /url: /companies/seed-local-company/expenses/manual\n          - text: บันทึกด้วยมือ\n        - link \"ลายเซ็นของฉัน\":\n          - /url: /companies/seed-local-company/expenses/signatures\n          - text: ลายเซ็นของฉัน\n        - link \"ใบรับรองแทนใบเสร็จ\":\n          - /url: /companies/seed-local-company/expenses/substitute-receipts\n          - text: ใบรับรองแทนใบเสร็จ\n      - link \"การเบิกจ่าย\":\n        - /url: /companies/seed-local-company/reimbursements\n        - generic: การเบิกจ่าย\n      - listitem \"บุคลากรและการตั้งค่า\"\n      - button \"คู่มือการใช้งานระบบ\":\n        - generic: คู่มือการใช้งานระบบ\n      - list:\n        - link \"ค่าใช้จ่ายและใบเสร็จ\":\n          - /url: /companies/seed-local-company/user-guide/expenses\n          - text: ค่าใช้จ่ายและใบเสร็จ\n        - link \"ใบรับรองแทนใบเสร็จรับเงิน\":\n          - /url: /companies/seed-local-company/user-guide/substitute-receipts\n          - text: ใบรับรองแทนใบเสร็จรับเงิน\n        - link \"การเบิกจ่ายและอนุมัติ\":\n          - /url: /companies/seed-local-company/user-guide/reimbursements\n          - text: การเบิกจ่ายและอนุมัติ\n  - button \"เมนูผู้ใช้\":\n    - generic: QU\n    - generic: QACOMPLETE UI Regression\n    - generic: คลังสินค้า\n- banner:\n  - generic: WatchDog Local Company\n  - text: Head Office (สำนักงานใหญ่)\n  - button \"การแจ้งเตือน\":\n- main:\n  - link \"มั่งมี\":\n    - /url: /companies/seed-local-company/dashboard\n  - text: /แดชบอร์ด\n  - text: Head Office (สำนักงานใหญ่)\n  - heading \"สวัสดี คุณ QACOMPLETE\" [level=1]\n  - paragraph: ภาพรวมธุรกิจ · Head Office (สำนักงานใหญ่) · อัปเดตล่าสุด 18:15 น.\n  - button \"วันนี้\"\n  - button \"สัปดาห์นี้\"\n  - button \"เดือนนี้\"\n  - button \"ไตรมาสนี้\"\n  - button \"รีเฟรช\":\n    - text: รีเฟรช\n  - generic: ภาพรวม\n  - generic: ยังไม่มีข้อมูลสำหรับช่วงเวลานี้\n- button \"Open Next.js Dev Tools\":\n- alert"
+  },
+  {
+    "role": "MARKETING",
+    "links": [
+      {
+        "href": "/",
+        "name": "มั่งมี"
+      },
+      {
+        "href": "/companies/seed-local-company/dashboard",
+        "name": "แดชบอร์ด"
+      },
+      {
+        "href": "/companies/seed-local-company/sales-documents",
+        "name": "เอกสารขายและรับชำระ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses",
+        "name": "รายการค่าใช้จ่าย"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/upload",
+        "name": "อัปโหลดใบเสร็จ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/manual",
+        "name": "บันทึกด้วยมือ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/signatures",
+        "name": "ลายเซ็นของฉัน"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/substitute-receipts",
+        "name": "ใบรับรองแทนใบเสร็จ"
+      },
+      {
+        "href": "/companies/seed-local-company/reimbursements",
+        "name": "การเบิกจ่าย"
+      },
+      {
+        "href": "/companies/seed-local-company/user-guide/expenses",
+        "name": "ค่าใช้จ่ายและใบเสร็จ"
+      },
+      {
+        "href": "/companies/seed-local-company/user-guide/substitute-receipts",
+        "name": "ใบรับรองแทนใบเสร็จรับเงิน"
+      },
+      {
+        "href": "/companies/seed-local-company/user-guide/reimbursements",
+        "name": "การเบิกจ่ายและอนุมัติ"
+      }
+    ],
+    "ui": "- link \"ข้ามไปยังเนื้อหา\":\n  - /url: \"#workspace-main\"\n- complementary:\n  - link \"มั่งมี\":\n    - /url: /\n    - generic: มั่งมี\n  - button \"สลับเมนู\":\n  - navigation:\n    - list:\n      - link \"แดชบอร์ด\":\n        - /url: /companies/seed-local-company/dashboard\n        - generic: แดชบอร์ด\n      - listitem \"ลูกค้าและการขาย\"\n      - link \"เอกสารขายและรับชำระ\":\n        - /url: /companies/seed-local-company/sales-documents\n        - generic: เอกสารขายและรับชำระ\n      - listitem \"การเงินและบัญชี\"\n      - button \"ค่าใช้จ่ายและใบเสร็จ\":\n        - generic: ค่าใช้จ่ายและใบเสร็จ\n      - list:\n        - link \"รายการค่าใช้จ่าย\":\n          - /url: /companies/seed-local-company/expenses\n          - text: รายการค่าใช้จ่าย\n        - link \"อัปโหลดใบเสร็จ\":\n          - /url: /companies/seed-local-company/expenses/upload\n          - text: อัปโหลดใบเสร็จ\n        - link \"บันทึกด้วยมือ\":\n          - /url: /companies/seed-local-company/expenses/manual\n          - text: บันทึกด้วยมือ\n        - link \"ลายเซ็นของฉัน\":\n          - /url: /companies/seed-local-company/expenses/signatures\n          - text: ลายเซ็นของฉัน\n        - link \"ใบรับรองแทนใบเสร็จ\":\n          - /url: /companies/seed-local-company/expenses/substitute-receipts\n          - text: ใบรับรองแทนใบเสร็จ\n      - link \"การเบิกจ่าย\":\n        - /url: /companies/seed-local-company/reimbursements\n        - generic: การเบิกจ่าย\n      - listitem \"บุคลากรและการตั้งค่า\"\n      - button \"คู่มือการใช้งานระบบ\":\n        - generic: คู่มือการใช้งานระบบ\n      - list:\n        - link \"ค่าใช้จ่ายและใบเสร็จ\":\n          - /url: /companies/seed-local-company/user-guide/expenses\n          - text: ค่าใช้จ่ายและใบเสร็จ\n        - link \"ใบรับรองแทนใบเสร็จรับเงิน\":\n          - /url: /companies/seed-local-company/user-guide/substitute-receipts\n          - text: ใบรับรองแทนใบเสร็จรับเงิน\n        - link \"การเบิกจ่ายและอนุมัติ\":\n          - /url: /companies/seed-local-company/user-guide/reimbursements\n          - text: การเบิกจ่ายและอนุมัติ\n  - button \"เมนูผู้ใช้\":\n    - generic: QU\n    - generic: QACOMPLETE UI Regression\n    - generic: การตลาด\n- banner:\n  - generic: WatchDog Local Company\n  - text: Head Office (สำนักงานใหญ่)\n  - button \"การแจ้งเตือน\":\n- main:\n  - link \"มั่งมี\":\n    - /url: /companies/seed-local-company/dashboard\n  - text: /แดชบอร์ด\n  - text: Head Office (สำนักงานใหญ่)\n  - heading \"สวัสดี คุณ QACOMPLETE\" [level=1]\n  - paragraph: ภาพรวมธุรกิจ · Head Office (สำนักงานใหญ่) · อัปเดตล่าสุด 18:15 น.\n  - button \"วันนี้\"\n  - button \"สัปดาห์นี้\"\n  - button \"เดือนนี้\"\n  - button \"ไตรมาสนี้\"\n  - button \"รีเฟรช\":\n    - text: รีเฟรช\n  - generic: ภาพรวม\n  - generic: ยังไม่มีข้อมูลสำหรับช่วงเวลานี้\n- button \"Open Next.js Dev Tools\":\n- alert"
+  },
+  {
+    "role": "HR",
+    "links": [
+      {
+        "href": "/",
+        "name": "มั่งมี"
+      },
+      {
+        "href": "/companies/seed-local-company/dashboard",
+        "name": "แดชบอร์ด"
+      },
+      {
+        "href": "/companies/seed-local-company/sales-documents",
+        "name": "เอกสารขายและรับชำระ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses",
+        "name": "รายการค่าใช้จ่าย"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/upload",
+        "name": "อัปโหลดใบเสร็จ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/manual",
+        "name": "บันทึกด้วยมือ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/signatures",
+        "name": "ลายเซ็นของฉัน"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/substitute-receipts",
+        "name": "ใบรับรองแทนใบเสร็จ"
+      },
+      {
+        "href": "/companies/seed-local-company/reimbursements",
+        "name": "การเบิกจ่าย"
+      },
+      {
+        "href": "/companies/seed-local-company/settings/access-overview",
+        "name": "รายชื่อพนักงาน"
+      },
+      {
+        "href": "/companies/seed-local-company/settings/employees",
+        "name": "เพิ่มพนักงาน"
+      },
+      {
+        "href": "/companies/seed-local-company/user-guide/expenses",
+        "name": "ค่าใช้จ่ายและใบเสร็จ"
+      },
+      {
+        "href": "/companies/seed-local-company/user-guide/substitute-receipts",
+        "name": "ใบรับรองแทนใบเสร็จรับเงิน"
+      },
+      {
+        "href": "/companies/seed-local-company/user-guide/reimbursements",
+        "name": "การเบิกจ่ายและอนุมัติ"
+      }
+    ],
+    "ui": "- link \"ข้ามไปยังเนื้อหา\":\n  - /url: \"#workspace-main\"\n- complementary:\n  - link \"มั่งมี\":\n    - /url: /\n    - generic: มั่งมี\n  - button \"สลับเมนู\":\n  - navigation:\n    - list:\n      - link \"แดชบอร์ด\":\n        - /url: /companies/seed-local-company/dashboard\n        - generic: แดชบอร์ด\n      - listitem \"ลูกค้าและการขาย\"\n      - link \"เอกสารขายและรับชำระ\":\n        - /url: /companies/seed-local-company/sales-documents\n        - generic: เอกสารขายและรับชำระ\n      - listitem \"การเงินและบัญชี\"\n      - button \"ค่าใช้จ่ายและใบเสร็จ\":\n        - generic: ค่าใช้จ่ายและใบเสร็จ\n      - list:\n        - link \"รายการค่าใช้จ่าย\":\n          - /url: /companies/seed-local-company/expenses\n          - text: รายการค่าใช้จ่าย\n        - link \"อัปโหลดใบเสร็จ\":\n          - /url: /companies/seed-local-company/expenses/upload\n          - text: อัปโหลดใบเสร็จ\n        - link \"บันทึกด้วยมือ\":\n          - /url: /companies/seed-local-company/expenses/manual\n          - text: บันทึกด้วยมือ\n        - link \"ลายเซ็นของฉัน\":\n          - /url: /companies/seed-local-company/expenses/signatures\n          - text: ลายเซ็นของฉัน\n        - link \"ใบรับรองแทนใบเสร็จ\":\n          - /url: /companies/seed-local-company/expenses/substitute-receipts\n          - text: ใบรับรองแทนใบเสร็จ\n      - link \"การเบิกจ่าย\":\n        - /url: /companies/seed-local-company/reimbursements\n        - generic: การเบิกจ่าย\n      - listitem \"บุคลากรและการตั้งค่า\"\n      - button \"พนักงานและสิทธิ์\" [expanded]:\n        - generic: พนักงานและสิทธิ์\n      - list:\n        - link \"รายชื่อพนักงาน\":\n          - /url: /companies/seed-local-company/settings/access-overview\n          - text: รายชื่อพนักงาน\n        - link \"เพิ่มพนักงาน\":\n          - /url: /companies/seed-local-company/settings/employees\n          - text: เพิ่มพนักงาน\n      - button \"คู่มือการใช้งานระบบ\":\n        - generic: คู่มือการใช้งานระบบ\n      - list:\n        - link \"ค่าใช้จ่ายและใบเสร็จ\":\n          - /url: /companies/seed-local-company/user-guide/expenses\n          - text: ค่าใช้จ่ายและใบเสร็จ\n        - link \"ใบรับรองแทนใบเสร็จรับเงิน\":\n          - /url: /companies/seed-local-company/user-guide/substitute-receipts\n          - text: ใบรับรองแทนใบเสร็จรับเงิน\n        - link \"การเบิกจ่ายและอนุมัติ\":\n          - /url: /companies/seed-local-company/user-guide/reimbursements\n          - text: การเบิกจ่ายและอนุมัติ\n  - button \"เมนูผู้ใช้\":\n    - generic: QU\n    - generic: QACOMPLETE UI Regression\n    - generic: ฝ่ายบุคคล\n- banner:\n  - generic: WatchDog Local Company\n  - button \"เลือกสาขา\":\n    - generic \"ทุกสาขา (รวม)\"\n  - button \"การแจ้งเตือน\":\n- main:\n  - link \"มั่งมี\":\n    - /url: /companies/seed-local-company/dashboard\n  - text: /แดชบอร์ด\n  - text: ทุกสาขา (รวม)\n  - heading \"สวัสดี คุณ QACOMPLETE\" [level=1]\n  - paragraph: ภาพรวมธุรกิจ · ทุกสาขา (รวม) · อัปเดตล่าสุด 18:19 น.\n  - button \"วันนี้\"\n  - button \"สัปดาห์นี้\"\n  - button \"เดือนนี้\"\n  - button \"ไตรมาสนี้\"\n  - button \"รีเฟรช\":\n    - text: รีเฟรช\n  - generic: ภาพรวม\n  - generic: ยังไม่มีข้อมูลสำหรับช่วงเวลานี้\n- button \"Open Next.js Dev Tools\":\n- alert"
+  },
+  {
+    "role": "ADMIN",
+    "links": [
+      {
+        "href": "/",
+        "name": "มั่งมี"
+      },
+      {
+        "href": "/companies/seed-local-company/dashboard",
+        "name": "แดชบอร์ด"
+      },
+      {
+        "href": "/companies/seed-local-company/sales-documents",
+        "name": "เอกสารขายและรับชำระ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses",
+        "name": "รายการค่าใช้จ่าย"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/upload",
+        "name": "อัปโหลดใบเสร็จ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/manual",
+        "name": "บันทึกด้วยมือ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/categories",
+        "name": "หมวดหมู่"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/signatures",
+        "name": "ลายเซ็นของฉัน"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/substitute-receipts",
+        "name": "ใบรับรองแทนใบเสร็จ"
+      },
+      {
+        "href": "/companies/seed-local-company/settings/substitute-receipt",
+        "name": "ตั้งค่าใบรับรองแทนใบเสร็จ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/evidence",
+        "name": "หลักฐานทางบัญชี"
+      },
+      {
+        "href": "/companies/seed-local-company/reimbursements",
+        "name": "การเบิกจ่าย"
+      },
+      {
+        "href": "/companies/seed-local-company/settings/access-overview",
+        "name": "รายชื่อพนักงาน"
+      },
+      {
+        "href": "/companies/seed-local-company/settings/employees",
+        "name": "เพิ่มพนักงาน"
+      },
+      {
+        "href": "/companies/seed-local-company/settings",
+        "name": "ภาพรวมการตั้งค่า"
+      },
+      {
+        "href": "/companies/seed-local-company/settings/branches",
+        "name": "สาขา"
+      },
+      {
+        "href": "/companies/seed-local-company/user-guide/expenses",
+        "name": "ค่าใช้จ่ายและใบเสร็จ"
+      },
+      {
+        "href": "/companies/seed-local-company/user-guide/substitute-receipts",
+        "name": "ใบรับรองแทนใบเสร็จรับเงิน"
+      },
+      {
+        "href": "/companies/seed-local-company/user-guide/reimbursements",
+        "name": "การเบิกจ่ายและอนุมัติ"
+      }
+    ],
+    "ui": "- link \"ข้ามไปยังเนื้อหา\":\n  - /url: \"#workspace-main\"\n- complementary:\n  - link \"มั่งมี\":\n    - /url: /\n    - generic: มั่งมี\n  - button \"สลับเมนู\":\n  - navigation:\n    - list:\n      - link \"แดชบอร์ด\":\n        - /url: /companies/seed-local-company/dashboard\n        - generic: แดชบอร์ด\n      - listitem \"ลูกค้าและการขาย\"\n      - link \"เอกสารขายและรับชำระ\":\n        - /url: /companies/seed-local-company/sales-documents\n        - generic: เอกสารขายและรับชำระ\n      - listitem \"การเงินและบัญชี\"\n      - button \"ค่าใช้จ่ายและใบเสร็จ\":\n        - generic: ค่าใช้จ่ายและใบเสร็จ\n      - list:\n        - link \"รายการค่าใช้จ่าย\":\n          - /url: /companies/seed-local-company/expenses\n          - text: รายการค่าใช้จ่าย\n        - link \"อัปโหลดใบเสร็จ\":\n          - /url: /companies/seed-local-company/expenses/upload\n          - text: อัปโหลดใบเสร็จ\n        - link \"บันทึกด้วยมือ\":\n          - /url: /companies/seed-local-company/expenses/manual\n          - text: บันทึกด้วยมือ\n        - link \"หมวดหมู่\":\n          - /url: /companies/seed-local-company/expenses/categories\n          - text: หมวดหมู่\n        - link \"ลายเซ็นของฉัน\":\n          - /url: /companies/seed-local-company/expenses/signatures\n          - text: ลายเซ็นของฉัน\n        - link \"ใบรับรองแทนใบเสร็จ\":\n          - /url: /companies/seed-local-company/expenses/substitute-receipts\n          - text: ใบรับรองแทนใบเสร็จ\n        - link \"ตั้งค่าใบรับรองแทนใบเสร็จ\":\n          - /url: /companies/seed-local-company/settings/substitute-receipt\n          - text: ตั้งค่าใบรับรองแทนใบเสร็จ\n        - link \"หลักฐานทางบัญชี\":\n          - /url: /companies/seed-local-company/expenses/evidence\n          - text: หลักฐานทางบัญชี\n      - link \"การเบิกจ่าย\":\n        - /url: /companies/seed-local-company/reimbursements\n        - generic: การเบิกจ่าย\n      - listitem \"บุคลากรและการตั้งค่า\"\n      - button \"พนักงานและสิทธิ์\" [expanded]:\n        - generic: พนักงานและสิทธิ์\n      - list:\n        - link \"รายชื่อพนักงาน\":\n          - /url: /companies/seed-local-company/settings/access-overview\n          - text: รายชื่อพนักงาน\n        - link \"เพิ่มพนักงาน\":\n          - /url: /companies/seed-local-company/settings/employees\n          - text: เพิ่มพนักงาน\n      - button \"ตั้งค่าบริษัท\":\n        - generic: ตั้งค่าบริษัท\n      - list:\n        - link \"ภาพรวมการตั้งค่า\":\n          - /url: /companies/seed-local-company/settings\n          - text: ภาพรวมการตั้งค่า\n        - link \"สาขา\":\n          - /url: /companies/seed-local-company/settings/branches\n          - text: สาขา\n      - button \"คู่มือการใช้งานระบบ\":\n        - generic: คู่มือการใช้งานระบบ\n      - list:\n        - link \"ค่าใช้จ่ายและใบเสร็จ\":\n          - /url: /companies/seed-local-company/user-guide/expenses\n          - text: ค่าใช้จ่ายและใบเสร็จ\n        - link \"ใบรับรองแทนใบเสร็จรับเงิน\":\n          - /url: /companies/seed-local-company/user-guide/substitute-receipts\n          - text: ใบรับรองแทนใบเสร็จรับเงิน\n        - link \"การเบิกจ่ายและอนุมัติ\":\n          - /url: /companies/seed-local-company/user-guide/reimbursements\n          - text: การเบิกจ่ายและอนุมัติ\n  - button \"เมนูผู้ใช้\":\n    - generic: QU\n    - generic: QACOMPLETE UI Regression\n    - generic: แอดมิน\n- banner:\n  - generic: WatchDog Local Company\n  - button \"เลือกสาขา\":\n    - generic \"ทุกสาขา (รวม)\"\n  - button \"การแจ้งเตือน\":\n- main:\n  - link \"มั่งมี\":\n    - /url: /companies/seed-local-company/dashboard\n  - text: /แดชบอร์ด\n  - text: ทุกสาขา (รวม)\n  - heading \"สวัสดี คุณ QACOMPLETE\" [level=1]\n  - paragraph: ภาพรวมธุรกิจ · ทุกสาขา (รวม) · อัปเดตล่าสุด 18:19 น.\n  - button \"วันนี้\"\n  - button \"สัปดาห์นี้\"\n  - button \"เดือนนี้\"\n  - button \"ไตรมาสนี้\"\n  - button \"รีเฟรช\":\n    - text: รีเฟรช\n  - generic: ภาพรวม\n  - generic: ค่าใช้จ่ายและใบเสร็จ\n  - link \"ค่าใช้จ่ายที่ยืนยันแล้ว 524.75 บาท\":\n    - /url: /companies/seed-local-company/expenses?view=confirmed&fromDate=2026-08-28&toDate=2026-08-28\n    - generic: ค่าใช้จ่ายที่ยืนยันแล้ว\n    - generic: 524.75 บาท\n  - link \"ใบเสร็จรอตรวจ (ทุกช่วงเวลา) 108 รายการ\":\n    - /url: /companies/seed-local-company/expenses?view=pending\n    - generic: ใบเสร็จรอตรวจ (ทุกช่วงเวลา)\n    - generic: 108 รายการ\n  - link \"ค้างจ่ายที่ยืนยันแล้ว (ทุกช่วงเวลา) 14,194 บาท\":\n    - /url: /companies/seed-local-company/expenses?view=unpaid\n    - generic: ค้างจ่ายที่ยืนยันแล้ว (ทุกช่วงเวลา)\n    - generic: 14,194 บาท\n- button \"Open Next.js Dev Tools\":\n- alert"
+  },
+  {
+    "role": "AUDITOR_READONLY",
+    "links": [
+      {
+        "href": "/",
+        "name": "มั่งมี"
+      },
+      {
+        "href": "/companies/seed-local-company/dashboard",
+        "name": "แดชบอร์ด"
+      },
+      {
+        "href": "/companies/seed-local-company/sales-documents",
+        "name": "เอกสารขายและรับชำระ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses",
+        "name": "รายการค่าใช้จ่าย"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/substitute-receipts",
+        "name": "ใบรับรองแทนใบเสร็จ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/evidence",
+        "name": "หลักฐานทางบัญชี"
+      },
+      {
+        "href": "/companies/seed-local-company/reimbursements",
+        "name": "การเบิกจ่าย"
+      },
+      {
+        "href": "/companies/seed-local-company/settings/access-overview",
+        "name": "รายชื่อพนักงาน"
+      },
+      {
+        "href": "/companies/seed-local-company/user-guide/expenses",
+        "name": "ค่าใช้จ่ายและใบเสร็จ"
+      },
+      {
+        "href": "/companies/seed-local-company/user-guide/substitute-receipts",
+        "name": "ใบรับรองแทนใบเสร็จรับเงิน"
+      },
+      {
+        "href": "/companies/seed-local-company/user-guide/reimbursements",
+        "name": "การเบิกจ่ายและอนุมัติ"
+      }
+    ],
+    "ui": "- link \"ข้ามไปยังเนื้อหา\":\n  - /url: \"#workspace-main\"\n- complementary:\n  - link \"มั่งมี\":\n    - /url: /\n    - generic: มั่งมี\n  - button \"สลับเมนู\":\n  - navigation:\n    - list:\n      - link \"แดชบอร์ด\":\n        - /url: /companies/seed-local-company/dashboard\n        - generic: แดชบอร์ด\n      - listitem \"ลูกค้าและการขาย\"\n      - link \"เอกสารขายและรับชำระ\":\n        - /url: /companies/seed-local-company/sales-documents\n        - generic: เอกสารขายและรับชำระ\n      - listitem \"การเงินและบัญชี\"\n      - button \"ค่าใช้จ่ายและใบเสร็จ\":\n        - generic: ค่าใช้จ่ายและใบเสร็จ\n      - list:\n        - link \"รายการค่าใช้จ่าย\":\n          - /url: /companies/seed-local-company/expenses\n          - text: รายการค่าใช้จ่าย\n        - link \"ใบรับรองแทนใบเสร็จ\":\n          - /url: /companies/seed-local-company/expenses/substitute-receipts\n          - text: ใบรับรองแทนใบเสร็จ\n        - link \"หลักฐานทางบัญชี\":\n          - /url: /companies/seed-local-company/expenses/evidence\n          - text: หลักฐานทางบัญชี\n      - link \"การเบิกจ่าย\":\n        - /url: /companies/seed-local-company/reimbursements\n        - generic: การเบิกจ่าย\n      - listitem \"บุคลากรและการตั้งค่า\"\n      - button \"พนักงานและสิทธิ์\" [expanded]:\n        - generic: พนักงานและสิทธิ์\n      - list:\n        - link \"รายชื่อพนักงาน\":\n          - /url: /companies/seed-local-company/settings/access-overview\n          - text: รายชื่อพนักงาน\n      - button \"คู่มือการใช้งานระบบ\":\n        - generic: คู่มือการใช้งานระบบ\n      - list:\n        - link \"ค่าใช้จ่ายและใบเสร็จ\":\n          - /url: /companies/seed-local-company/user-guide/expenses\n          - text: ค่าใช้จ่ายและใบเสร็จ\n        - link \"ใบรับรองแทนใบเสร็จรับเงิน\":\n          - /url: /companies/seed-local-company/user-guide/substitute-receipts\n          - text: ใบรับรองแทนใบเสร็จรับเงิน\n        - link \"การเบิกจ่ายและอนุมัติ\":\n          - /url: /companies/seed-local-company/user-guide/reimbursements\n          - text: การเบิกจ่ายและอนุมัติ\n  - button \"เมนูผู้ใช้\":\n    - generic: QU\n    - generic: QACOMPLETE UI Regression\n    - generic: ผู้ตรวจสอบ (อ่านอย่างเดียว)\n- banner:\n  - generic: WatchDog Local Company\n  - button \"เลือกสาขา\":\n    - generic \"ทุกสาขา (รวม)\"\n  - button \"การแจ้งเตือน\":\n- main:\n  - link \"มั่งมี\":\n    - /url: /companies/seed-local-company/dashboard\n  - text: /แดชบอร์ด\n  - text: ทุกสาขา (รวม)\n  - heading \"สวัสดี คุณ QACOMPLETE\" [level=1]\n  - paragraph: ภาพรวมธุรกิจ · ทุกสาขา (รวม) · อัปเดตล่าสุด 18:19 น.\n  - button \"วันนี้\"\n  - button \"สัปดาห์นี้\"\n  - button \"เดือนนี้\"\n  - button \"ไตรมาสนี้\"\n  - button \"รีเฟรช\":\n    - text: รีเฟรช\n  - generic: ภาพรวม\n  - generic: ค่าใช้จ่ายและใบเสร็จ\n  - link \"ค่าใช้จ่ายที่ยืนยันแล้ว 524.75 บาท\":\n    - /url: /companies/seed-local-company/expenses?view=confirmed&fromDate=2026-08-28&toDate=2026-08-28\n    - generic: ค่าใช้จ่ายที่ยืนยันแล้ว\n    - generic: 524.75 บาท\n  - link \"ใบเสร็จรอตรวจ (ทุกช่วงเวลา) 108 รายการ\":\n    - /url: /companies/seed-local-company/expenses?view=pending\n    - generic: ใบเสร็จรอตรวจ (ทุกช่วงเวลา)\n    - generic: 108 รายการ\n  - link \"ค้างจ่ายที่ยืนยันแล้ว (ทุกช่วงเวลา) 14,194 บาท\":\n    - /url: /companies/seed-local-company/expenses?view=unpaid\n    - generic: ค้างจ่ายที่ยืนยันแล้ว (ทุกช่วงเวลา)\n    - generic: 14,194 บาท\n- button \"Open Next.js Dev Tools\":\n- alert"
+  },
+  {
+    "role": "ACCOUNTANT",
+    "links": [
+      {
+        "href": "/",
+        "name": "มั่งมี"
+      },
+      {
+        "href": "/companies/seed-local-company/dashboard",
+        "name": "แดชบอร์ด"
+      },
+      {
+        "href": "/companies/seed-local-company/sales-documents",
+        "name": "เอกสารขายและรับชำระ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses",
+        "name": "รายการค่าใช้จ่าย"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/upload",
+        "name": "อัปโหลดใบเสร็จ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/manual",
+        "name": "บันทึกด้วยมือ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/signatures",
+        "name": "ลายเซ็นของฉัน"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/substitute-receipts",
+        "name": "ใบรับรองแทนใบเสร็จ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/evidence",
+        "name": "หลักฐานทางบัญชี"
+      },
+      {
+        "href": "/companies/seed-local-company/reimbursements",
+        "name": "การเบิกจ่าย"
+      },
+      {
+        "href": "/companies/seed-local-company/user-guide/expenses",
+        "name": "ค่าใช้จ่ายและใบเสร็จ"
+      },
+      {
+        "href": "/companies/seed-local-company/user-guide/substitute-receipts",
+        "name": "ใบรับรองแทนใบเสร็จรับเงิน"
+      },
+      {
+        "href": "/companies/seed-local-company/user-guide/reimbursements",
+        "name": "การเบิกจ่ายและอนุมัติ"
+      }
+    ],
+    "ui": "- link \"ข้ามไปยังเนื้อหา\":\n  - /url: \"#workspace-main\"\n- complementary:\n  - link \"มั่งมี\":\n    - /url: /\n    - generic: มั่งมี\n  - button \"สลับเมนู\":\n  - navigation:\n    - list:\n      - link \"แดชบอร์ด\":\n        - /url: /companies/seed-local-company/dashboard\n        - generic: แดชบอร์ด\n      - listitem \"ลูกค้าและการขาย\"\n      - link \"เอกสารขายและรับชำระ\":\n        - /url: /companies/seed-local-company/sales-documents\n        - generic: เอกสารขายและรับชำระ\n      - listitem \"การเงินและบัญชี\"\n      - button \"ค่าใช้จ่ายและใบเสร็จ\":\n        - generic: ค่าใช้จ่ายและใบเสร็จ\n      - list:\n        - link \"รายการค่าใช้จ่าย\":\n          - /url: /companies/seed-local-company/expenses\n          - text: รายการค่าใช้จ่าย\n        - link \"อัปโหลดใบเสร็จ\":\n          - /url: /companies/seed-local-company/expenses/upload\n          - text: อัปโหลดใบเสร็จ\n        - link \"บันทึกด้วยมือ\":\n          - /url: /companies/seed-local-company/expenses/manual\n          - text: บันทึกด้วยมือ\n        - link \"ลายเซ็นของฉัน\":\n          - /url: /companies/seed-local-company/expenses/signatures\n          - text: ลายเซ็นของฉัน\n        - link \"ใบรับรองแทนใบเสร็จ\":\n          - /url: /companies/seed-local-company/expenses/substitute-receipts\n          - text: ใบรับรองแทนใบเสร็จ\n        - link \"หลักฐานทางบัญชี\":\n          - /url: /companies/seed-local-company/expenses/evidence\n          - text: หลักฐานทางบัญชี\n      - link \"การเบิกจ่าย\":\n        - /url: /companies/seed-local-company/reimbursements\n        - generic: การเบิกจ่าย\n      - listitem \"บุคลากรและการตั้งค่า\"\n      - button \"คู่มือการใช้งานระบบ\":\n        - generic: คู่มือการใช้งานระบบ\n      - list:\n        - link \"ค่าใช้จ่ายและใบเสร็จ\":\n          - /url: /companies/seed-local-company/user-guide/expenses\n          - text: ค่าใช้จ่ายและใบเสร็จ\n        - link \"ใบรับรองแทนใบเสร็จรับเงิน\":\n          - /url: /companies/seed-local-company/user-guide/substitute-receipts\n          - text: ใบรับรองแทนใบเสร็จรับเงิน\n        - link \"การเบิกจ่ายและอนุมัติ\":\n          - /url: /companies/seed-local-company/user-guide/reimbursements\n          - text: การเบิกจ่ายและอนุมัติ\n  - button \"เมนูผู้ใช้\":\n    - generic: QU\n    - generic: QACOMPLETE UI Regression\n    - generic: บัญชี\n- banner:\n  - generic: WatchDog Local Company\n  - button \"เลือกสาขา\":\n    - generic \"ทุกสาขา (รวม)\"\n  - button \"การแจ้งเตือน\":\n- main:\n  - link \"มั่งมี\":\n    - /url: /companies/seed-local-company/dashboard\n  - text: /แดชบอร์ด\n  - text: ทุกสาขา (รวม)\n  - heading \"สวัสดี คุณ QACOMPLETE\" [level=1]\n  - paragraph: ภาพรวมธุรกิจ · ทุกสาขา (รวม) · อัปเดตล่าสุด 18:19 น.\n  - button \"วันนี้\"\n  - button \"สัปดาห์นี้\"\n  - button \"เดือนนี้\"\n  - button \"ไตรมาสนี้\"\n  - button \"รีเฟรช\":\n    - text: รีเฟรช\n  - generic: ภาพรวม\n  - generic: ค่าใช้จ่ายและใบเสร็จ\n  - link \"ค่าใช้จ่ายที่ยืนยันแล้ว 524.75 บาท\":\n    - /url: /companies/seed-local-company/expenses?view=confirmed&fromDate=2026-08-28&toDate=2026-08-28\n    - generic: ค่าใช้จ่ายที่ยืนยันแล้ว\n    - generic: 524.75 บาท\n  - link \"ใบเสร็จรอตรวจ (ทุกช่วงเวลา) 108 รายการ\":\n    - /url: /companies/seed-local-company/expenses?view=pending\n    - generic: ใบเสร็จรอตรวจ (ทุกช่วงเวลา)\n    - generic: 108 รายการ\n  - link \"ค้างจ่ายที่ยืนยันแล้ว (ทุกช่วงเวลา) 14,194 บาท\":\n    - /url: /companies/seed-local-company/expenses?view=unpaid\n    - generic: ค้างจ่ายที่ยืนยันแล้ว (ทุกช่วงเวลา)\n    - generic: 14,194 บาท\n- button \"Open Next.js Dev Tools\":\n- alert"
+  },
+  {
+    "role": "CUSTOM_EXPENSE_READ",
+    "links": [
+      {
+        "href": "/",
+        "name": "มั่งมี"
+      },
+      {
+        "href": "/companies/seed-local-company/dashboard",
+        "name": "แดชบอร์ด"
+      },
+      {
+        "href": "/companies/seed-local-company/sales-documents",
+        "name": "เอกสารขายและรับชำระ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses",
+        "name": "รายการค่าใช้จ่าย"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/substitute-receipts",
+        "name": "ใบรับรองแทนใบเสร็จ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/evidence",
+        "name": "หลักฐานทางบัญชี"
+      },
+      {
+        "href": "/companies/seed-local-company/reimbursements",
+        "name": "การเบิกจ่าย"
+      },
+      {
+        "href": "/companies/seed-local-company/user-guide/expenses",
+        "name": "ค่าใช้จ่ายและใบเสร็จ"
+      },
+      {
+        "href": "/companies/seed-local-company/user-guide/substitute-receipts",
+        "name": "ใบรับรองแทนใบเสร็จรับเงิน"
+      },
+      {
+        "href": "/companies/seed-local-company/user-guide/reimbursements",
+        "name": "การเบิกจ่ายและอนุมัติ"
+      }
+    ],
+    "ui": "- link \"ข้ามไปยังเนื้อหา\":\n  - /url: \"#workspace-main\"\n- complementary:\n  - link \"มั่งมี\":\n    - /url: /\n    - generic: มั่งมี\n  - button \"สลับเมนู\":\n  - navigation:\n    - list:\n      - link \"แดชบอร์ด\":\n        - /url: /companies/seed-local-company/dashboard\n        - generic: แดชบอร์ด\n      - listitem \"ลูกค้าและการขาย\"\n      - link \"เอกสารขายและรับชำระ\":\n        - /url: /companies/seed-local-company/sales-documents\n        - generic: เอกสารขายและรับชำระ\n      - listitem \"การเงินและบัญชี\"\n      - button \"ค่าใช้จ่ายและใบเสร็จ\":\n        - generic: ค่าใช้จ่ายและใบเสร็จ\n      - list:\n        - link \"รายการค่าใช้จ่าย\":\n          - /url: /companies/seed-local-company/expenses\n          - text: รายการค่าใช้จ่าย\n        - link \"ใบรับรองแทนใบเสร็จ\":\n          - /url: /companies/seed-local-company/expenses/substitute-receipts\n          - text: ใบรับรองแทนใบเสร็จ\n        - link \"หลักฐานทางบัญชี\":\n          - /url: /companies/seed-local-company/expenses/evidence\n          - text: หลักฐานทางบัญชี\n      - link \"การเบิกจ่าย\":\n        - /url: /companies/seed-local-company/reimbursements\n        - generic: การเบิกจ่าย\n      - listitem \"บุคลากรและการตั้งค่า\"\n      - button \"คู่มือการใช้งานระบบ\":\n        - generic: คู่มือการใช้งานระบบ\n      - list:\n        - link \"ค่าใช้จ่ายและใบเสร็จ\":\n          - /url: /companies/seed-local-company/user-guide/expenses\n          - text: ค่าใช้จ่ายและใบเสร็จ\n        - link \"ใบรับรองแทนใบเสร็จรับเงิน\":\n          - /url: /companies/seed-local-company/user-guide/substitute-receipts\n          - text: ใบรับรองแทนใบเสร็จรับเงิน\n        - link \"การเบิกจ่ายและอนุมัติ\":\n          - /url: /companies/seed-local-company/user-guide/reimbursements\n          - text: การเบิกจ่ายและอนุมัติ\n  - button \"เมนูผู้ใช้\":\n    - generic: QU\n    - generic: QACOMPLETE UI Regression\n    - generic: เมนูผู้ใช้\n- banner:\n  - generic: WatchDog Local Company\n  - button \"เลือกสาขา\":\n    - generic \"ทุกสาขา (รวม)\"\n  - button \"การแจ้งเตือน\":\n- main:\n  - link \"มั่งมี\":\n    - /url: /companies/seed-local-company/dashboard\n  - text: /แดชบอร์ด\n  - text: ทุกสาขา (รวม)\n  - heading \"สวัสดี คุณ QACOMPLETE\" [level=1]\n  - paragraph: ภาพรวมธุรกิจ · ทุกสาขา (รวม) · อัปเดตล่าสุด 18:34 น.\n  - button \"วันนี้\"\n  - button \"สัปดาห์นี้\"\n  - button \"เดือนนี้\"\n  - button \"ไตรมาสนี้\"\n  - button \"รีเฟรช\":\n    - text: รีเฟรช\n  - generic: ภาพรวม\n  - generic: ค่าใช้จ่ายและใบเสร็จ\n  - link \"ค่าใช้จ่ายที่ยืนยันแล้ว 524.75 บาท\":\n    - /url: /companies/seed-local-company/expenses?view=confirmed&fromDate=2026-08-28&toDate=2026-08-28\n    - generic: ค่าใช้จ่ายที่ยืนยันแล้ว\n    - generic: 524.75 บาท\n  - link \"ใบเสร็จรอตรวจ (ทุกช่วงเวลา) 108 รายการ\":\n    - /url: /companies/seed-local-company/expenses?view=pending\n    - generic: ใบเสร็จรอตรวจ (ทุกช่วงเวลา)\n    - generic: 108 รายการ\n  - link \"ค้างจ่ายที่ยืนยันแล้ว (ทุกช่วงเวลา) 14,194 บาท\":\n    - /url: /companies/seed-local-company/expenses?view=unpaid\n    - generic: ค้างจ่ายที่ยืนยันแล้ว (ทุกช่วงเวลา)\n    - generic: 14,194 บาท\n- button \"Open Next.js Dev Tools\":\n- alert"
+  },
+  {
+    "role": "CUSTOM_EXPENSE_SELF",
+    "links": [
+      {
+        "href": "/",
+        "name": "มั่งมี"
+      },
+      {
+        "href": "/companies/seed-local-company/dashboard",
+        "name": "แดชบอร์ด"
+      },
+      {
+        "href": "/companies/seed-local-company/sales-documents",
+        "name": "เอกสารขายและรับชำระ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses",
+        "name": "รายการค่าใช้จ่าย"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/upload",
+        "name": "อัปโหลดใบเสร็จ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/manual",
+        "name": "บันทึกด้วยมือ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/signatures",
+        "name": "ลายเซ็นของฉัน"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/substitute-receipts",
+        "name": "ใบรับรองแทนใบเสร็จ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses/evidence",
+        "name": "หลักฐานทางบัญชี"
+      },
+      {
+        "href": "/companies/seed-local-company/reimbursements",
+        "name": "การเบิกจ่าย"
+      },
+      {
+        "href": "/companies/seed-local-company/user-guide/expenses",
+        "name": "ค่าใช้จ่ายและใบเสร็จ"
+      },
+      {
+        "href": "/companies/seed-local-company/user-guide/substitute-receipts",
+        "name": "ใบรับรองแทนใบเสร็จรับเงิน"
+      },
+      {
+        "href": "/companies/seed-local-company/user-guide/reimbursements",
+        "name": "การเบิกจ่ายและอนุมัติ"
+      }
+    ],
+    "ui": "- link \"ข้ามไปยังเนื้อหา\":\n  - /url: \"#workspace-main\"\n- complementary:\n  - link \"มั่งมี\":\n    - /url: /\n    - generic: มั่งมี\n  - button \"สลับเมนู\":\n  - navigation:\n    - list:\n      - link \"แดชบอร์ด\":\n        - /url: /companies/seed-local-company/dashboard\n        - generic: แดชบอร์ด\n      - listitem \"ลูกค้าและการขาย\"\n      - link \"เอกสารขายและรับชำระ\":\n        - /url: /companies/seed-local-company/sales-documents\n        - generic: เอกสารขายและรับชำระ\n      - listitem \"การเงินและบัญชี\"\n      - button \"ค่าใช้จ่ายและใบเสร็จ\":\n        - generic: ค่าใช้จ่ายและใบเสร็จ\n      - list:\n        - link \"รายการค่าใช้จ่าย\":\n          - /url: /companies/seed-local-company/expenses\n          - text: รายการค่าใช้จ่าย\n        - link \"อัปโหลดใบเสร็จ\":\n          - /url: /companies/seed-local-company/expenses/upload\n          - text: อัปโหลดใบเสร็จ\n        - link \"บันทึกด้วยมือ\":\n          - /url: /companies/seed-local-company/expenses/manual\n          - text: บันทึกด้วยมือ\n        - link \"ลายเซ็นของฉัน\":\n          - /url: /companies/seed-local-company/expenses/signatures\n          - text: ลายเซ็นของฉัน\n        - link \"ใบรับรองแทนใบเสร็จ\":\n          - /url: /companies/seed-local-company/expenses/substitute-receipts\n          - text: ใบรับรองแทนใบเสร็จ\n        - link \"หลักฐานทางบัญชี\":\n          - /url: /companies/seed-local-company/expenses/evidence\n          - text: หลักฐานทางบัญชี\n      - link \"การเบิกจ่าย\":\n        - /url: /companies/seed-local-company/reimbursements\n        - generic: การเบิกจ่าย\n      - listitem \"บุคลากรและการตั้งค่า\"\n      - button \"คู่มือการใช้งานระบบ\":\n        - generic: คู่มือการใช้งานระบบ\n      - list:\n        - link \"ค่าใช้จ่ายและใบเสร็จ\":\n          - /url: /companies/seed-local-company/user-guide/expenses\n          - text: ค่าใช้จ่ายและใบเสร็จ\n        - link \"ใบรับรองแทนใบเสร็จรับเงิน\":\n          - /url: /companies/seed-local-company/user-guide/substitute-receipts\n          - text: ใบรับรองแทนใบเสร็จรับเงิน\n        - link \"การเบิกจ่ายและอนุมัติ\":\n          - /url: /companies/seed-local-company/user-guide/reimbursements\n          - text: การเบิกจ่ายและอนุมัติ\n  - button \"เมนูผู้ใช้\":\n    - generic: QU\n    - generic: QACOMPLETE UI Regression\n    - generic: เมนูผู้ใช้\n- banner:\n  - generic: WatchDog Local Company\n  - button \"เลือกสาขา\":\n    - generic \"ทุกสาขา (รวม)\"\n  - button \"การแจ้งเตือน\":\n- main:\n  - link \"มั่งมี\":\n    - /url: /companies/seed-local-company/dashboard\n  - text: /แดชบอร์ด\n  - text: ทุกสาขา (รวม)\n  - heading \"สวัสดี คุณ QACOMPLETE\" [level=1]\n  - paragraph: ภาพรวมธุรกิจ · ทุกสาขา (รวม) · อัปเดตล่าสุด 18:34 น.\n  - button \"วันนี้\"\n  - button \"สัปดาห์นี้\"\n  - button \"เดือนนี้\"\n  - button \"ไตรมาสนี้\"\n  - button \"รีเฟรช\":\n    - text: รีเฟรช\n  - generic: ภาพรวม\n  - generic: ค่าใช้จ่ายและใบเสร็จ\n  - link \"ค่าใช้จ่ายที่ยืนยันแล้ว 524.75 บาท\":\n    - /url: /companies/seed-local-company/expenses?view=confirmed&fromDate=2026-08-28&toDate=2026-08-28\n    - generic: ค่าใช้จ่ายที่ยืนยันแล้ว\n    - generic: 524.75 บาท\n  - link \"ใบเสร็จรอตรวจ (ทุกช่วงเวลา) 108 รายการ\":\n    - /url: /companies/seed-local-company/expenses?view=pending\n    - generic: ใบเสร็จรอตรวจ (ทุกช่วงเวลา)\n    - generic: 108 รายการ\n  - link \"ค้างจ่ายที่ยืนยันแล้ว (ทุกช่วงเวลา) 14,194 บาท\":\n    - /url: /companies/seed-local-company/expenses?view=unpaid\n    - generic: ค้างจ่ายที่ยืนยันแล้ว (ทุกช่วงเวลา)\n    - generic: 14,194 บาท\n- button \"Open Next.js Dev Tools\":\n- alert"
+  }
+]

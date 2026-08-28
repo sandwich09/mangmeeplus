@@ -200,6 +200,8 @@ export class RequestReceiptExtractionUseCase {
           chargeReconciliation: {
             status: duplicateResult.chargeReconciliationStatus,
             chargesApplied: duplicateResult.chargesApplied,
+            // Shown to the reviewer beside the printed total when the two disagree.
+            ...(duplicateResult.itemsSumAmount ? { itemsSumAmount: duplicateResult.itemsSumAmount } : {}),
           },
           nextAction: 'review_in_web',
         },

@@ -796,6 +796,69 @@ describe('LINE intake router – default-off is byte- and cost-equivalent to leg
   });
 });
 
+// UAT 2026-08-28: the router was taught to return documentText (the page transcribed) so receipt OCR
+// would not read the same photo twice — but the response budget stayed at the plan-sized 1500. Every one
+// of six real receipts stopped at exactly 1500 output tokens, which is not a shorter plan but unparseable
+// JSON, so all six failed closed to UNAVAILABLE and the customer was asked "what is this picture?". The
+// suite stayed green throughout: a hand-written mock answer is never truncated, and the one test that did
+// assert the budget only checked the number passed IN. These pin the shape that failure needed.
+describe('LINE intake router – a transcribed page needs its own output budget', () => {
+  const PNG_1X1 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const plannedAnswer = JSON.stringify({ intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.9, reason: 'x' });
+  const capture = () => {
+    let seen: ProviderInput | undefined;
+    const router = new IntentRouterAgent({
+      generateText: async (input: ProviderInput) => { seen = input; return { ok: true as const, text: plannedAnswer }; },
+    } as any);
+    return { router, seen: () => seen };
+  };
+  const withImage = (extra: Record<string, unknown> = {}) => ({
+    requestId: 'r', companyId: 'c', userId: 'u', locale: 'th-TH', messageText: '', permissions: [],
+    attachments: [{ id: 'a1', mimeType: 'image/png', purpose: 'expense_document', contentBase64: PNG_1X1 }],
+    ...extra,
+  } as any);
+
+  it('an image asks for documentText, so it gets a budget a whole page can fit in', async () => {
+    const c = capture();
+    await c.router.routeIntake(withImage({ capabilities: { fusedPlan: true } }));
+    const budget = c.seen()!.maxTokens!;
+    assert.ok(budget >= 8000, `a transcribed page needs room; got ${budget}`);
+    assert.notEqual(budget, 1500, 'the plan-sized budget cannot hold a plan AND a page');
+  });
+
+  it('the document budget does not depend on fusedPlan — the prompt asks for documentText either way', async () => {
+    const c = capture();
+    await c.router.routeIntake(withImage());
+    assert.ok(c.seen()!.maxTokens! >= 8000, 'legacy-shaped plans still carry the transcription');
+  });
+
+  it('text-only intake keeps the legacy budgets, so ordinary chat cost is untouched', async () => {
+    const legacy = capture();
+    await legacy.router.routeIntake({ requestId: 'r', companyId: 'c', userId: 'u', locale: 'th-TH', messageText: 'สวัสดี', permissions: [] } as any);
+    assert.equal(legacy.seen()!.maxTokens, 1000);
+    const fused = capture();
+    await fused.router.routeIntake({ requestId: 'r', companyId: 'c', userId: 'u', locale: 'th-TH', messageText: 'สวัสดี', permissions: [], capabilities: { fusedPlan: true } } as any);
+    assert.equal(fused.seen()!.maxTokens, 1500);
+  });
+
+  it('an answer that ran out of room is reported as truncation, not as a bad answer', async () => {
+    const router = new IntentRouterAgent({
+      generateText: async () => ({ ok: true as const, text: plannedAnswer.slice(0, 40), stopReason: 'max_tokens' as const }),
+    } as any);
+    const plan = await router.routeIntake(withImage());
+    assert.equal(plan.status, 'UNAVAILABLE');
+    assert.equal(plan.errorCode, 'ROUTER_OUTPUT_TRUNCATED', 'raise the budget is a different fix from fix the prompt');
+  });
+
+  it('an unparseable answer that finished normally keeps the parse-failure code', async () => {
+    const router = new IntentRouterAgent({
+      generateText: async () => ({ ok: true as const, text: 'not json at all', stopReason: 'end_turn' as const }),
+    } as any);
+    const plan = await router.routeIntake(withImage());
+    assert.equal(plan.errorCode, 'ROUTER_JSON_PARSE_FAILED');
+  });
+});
+
 // The intake receiver boundary bounds the TRUSTED capability flags at runtime (not only the TS shape): a
 // malformed/hostile `capabilities` object can NEVER coerce a section on. routeIntake self-defends via
 // asIntakeRouterCapabilities, so these hold no matter how the request was built.

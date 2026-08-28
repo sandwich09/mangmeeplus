@@ -1,9 +1,33 @@
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { generateSnapshot, getDashboard, normalizeNotification, normalizeRule } from './dashboard-notifications.api';
+import { generateSnapshot, getDashboard, normalizeNotification, normalizeRule, markRead, markAllRead, dismissNotification, NOTIFICATIONS_CHANGED_EVENT } from './dashboard-notifications.api';
 
 const originalFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = originalFetch; });
+
+describe('notification mutation events', () => {
+  it('notifies the bell only after a successful read, read-all or dismiss', async () => {
+    const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+    const target = new EventTarget();
+    let changes = 0;
+    target.addEventListener(NOTIFICATIONS_CHANGED_EVENT, () => changes++);
+    Object.defineProperty(globalThis, 'window', { configurable: true, value: target });
+    try {
+      for (const mutate of [() => markRead('c1', 'n1'), () => markAllRead('c1'), () => dismissNotification('c1', 'n1')]) {
+        const before = changes;
+        globalThis.fetch = async () => new Response(null, { status: 204 });
+        await mutate();
+        assert.equal(changes, before + 1);
+        globalThis.fetch = async () => new Response(JSON.stringify({ message: 'Service unavailable' }), { status: 503 });
+        await assert.rejects(mutate);
+        assert.equal(changes, before + 1, 'a failure must not announce a successful read-state change');
+      }
+    } finally {
+      if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow);
+      else Reflect.deleteProperty(globalThis, 'window');
+    }
+  });
+});
 
 function captureRequest(): { url?: string; body?: string } {
   const request: { url?: string; body?: string } = {};

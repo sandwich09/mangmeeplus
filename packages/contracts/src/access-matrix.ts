@@ -99,9 +99,9 @@ export const MENU_REGISTRY: MenuDefinition[] = [
     group: 'fin',
     route: '/expenses',
     actions: {
-      view: ['expense.read'],
+      view: ['expense.read', 'expense.read_related', 'expense.read_own'],
       create: ['expense.create'],
-      edit: ['expense.review'],
+      edit: ['expense.review', 'expense.update'],
       del: ['expense.void', 'expense.delete'],
       approve: ['expense.confirm'],
     },

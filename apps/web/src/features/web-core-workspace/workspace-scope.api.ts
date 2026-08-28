@@ -14,16 +14,18 @@ export type MyContext = {
   userId: string;
   companyId: string;
   roles: string[];
+  roleNames?: Record<string, string>;
   permissions: string[];
   scopes?: { branchIds?: string[] };
 };
 
-type AccessContext = Pick<MyContext, 'roles' | 'permissions' | 'scopes'>;
+type AccessContext = Pick<MyContext, 'roles' | 'roleNames' | 'permissions' | 'scopes'>;
 
 export function accessContextFingerprint(context: AccessContext): string {
   const sorted = (items: readonly string[] | undefined) => [...new Set(items ?? [])].sort();
   return JSON.stringify({
     roles: sorted(context.roles),
+    roleNames: sorted(context.roles).map((key) => [key, context.roleNames?.[key] ?? '']),
     permissions: sorted(context.permissions),
     // undefined means unrestricted branches; preserve it instead of collapsing it to [].
     branchIds: context.scopes?.branchIds === undefined ? null : sorted(context.scopes.branchIds),

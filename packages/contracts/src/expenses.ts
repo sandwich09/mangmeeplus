@@ -453,6 +453,15 @@ export type ExpenseCategorySummary = {
 export type ExpenseWhtInput = { inputType: 'RATE' | 'AMOUNT'; value: string };
 export type ExpenseWhtCapture = ExpenseWhtInput & { origin: 'REVIEWER' | 'OCR' };
 /** HTTP bodies are contract types rather than DTO classes; validate source intent at runtime. */
+/**
+ * PostgreSQL Decimal(18,4) as a person may type it: fourteen integer digits, up to four decimals,
+ * no sign, no exponent, no leading zero. It lives here because BOTH the API guard and the review
+ * form need it — while it lived only in the API, the form accepted "0400" (JavaScript's Number()
+ * reads it as 400), let the reviewer keep typing, and only failed on save with an English
+ * Decimal(18,4) message. Owner report 2026-08-28.
+ */
+export const EXPENSE_DECIMAL_18_4_PATTERN = /^(?:0|[1-9]\d{0,13})(?:\.\d{1,4})?$/;
+
 export function validateExpenseWhtInput(input: unknown): string | null {
   if (input === undefined) return null;
   if (!input || typeof input !== 'object' || Array.isArray(input)) return 'whtInput must be an object.';
@@ -1023,6 +1032,8 @@ export type UpdateSubstituteReceiptPolicyInput = {
 // ---- Accountant shared evidence view ----
 
 export type SharedEvidenceFilter = {
+  /** Optional selection narrows within all server-side filters and permissions; [] matches nothing. */
+  expenseIds?: string[];
   dateField?: 'uploadedAt' | 'expenseDate';
   fromDate?: string;
   toDate?: string;

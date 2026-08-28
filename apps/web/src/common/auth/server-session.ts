@@ -52,5 +52,7 @@ export async function fetchServerSessionResult(companyId?: string): Promise<Serv
 
 export async function fetchServerSession(companyId?: string): Promise<WebSession | null> {
   const result = await fetchServerSessionResult(companyId);
+  // Soft navigation can reuse the authenticated layout; pages must not turn an outage into empty permissions.
+  if (result.status === 'unavailable') throw new Error('Cannot reach the authentication service. Please try again.');
   return result.status === 'signed_in' ? result.session : null;
 }

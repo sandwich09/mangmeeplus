@@ -6,7 +6,7 @@ import { useToast } from '@/common/components/toast';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import type { SupportedLocale } from '@/common/i18n/workspace-dictionary';
 import { DesignIcons } from '@/features/web-core-workspace/design-icons';
-import { getUnreadCount, listNotifications, markAllRead, markRead } from './dashboard-notifications.api';
+import { getUnreadCount, listNotifications, markAllRead, markRead, NOTIFICATIONS_CHANGED_EVENT } from './dashboard-notifications.api';
 import type { NotificationItem } from './dashboard-notifications.model';
 import { formatRelativeTime, notificationBadgeText, severityColor, severityLabel, internalNotificationHref } from './dashboard-notifications.logic';
 
@@ -18,6 +18,8 @@ export function NotificationBell({ companyId, locale }: { companyId: string; loc
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<NotificationItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [markAllBusy, setMarkAllBusy] = useState(false);
+  const [error, setError] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useCloseOnOutsideClick(ref, useCallback(() => setOpen(false), []));
 
@@ -29,17 +31,20 @@ export function NotificationBell({ companyId, locale }: { companyId: string; loc
     refreshCount();
     const timer = window.setInterval(refreshCount, POLL_MS);
     window.addEventListener('focus', refreshCount);
+    window.addEventListener(NOTIFICATIONS_CHANGED_EVENT, refreshCount);
     return () => {
       window.clearInterval(timer);
       window.removeEventListener('focus', refreshCount);
+      window.removeEventListener(NOTIFICATIONS_CHANGED_EVENT, refreshCount);
     };
   }, [refreshCount]);
 
   const loadItems = useCallback(() => {
     setLoading(true);
+    setError(false);
     listNotifications(companyId, { pageSize: 8 })
       .then((result) => setItems(result.items))
-      .catch(() => setItems([]))
+      .catch(() => setError(true))
       .finally(() => setLoading(false));
   }, [companyId]);
 
@@ -53,14 +58,24 @@ export function NotificationBell({ companyId, locale }: { companyId: string; loc
   const handleItemClick = (item: NotificationItem) => {
     setOpen(false);
     if (item.read) return;
-    setItems((current) => current.map((entry) => (entry.id === item.id ? { ...entry, read: true } : entry)));
-    void markRead(companyId, item.id).then(refreshCount).catch(() => undefined);
+    void markRead(companyId, item.id)
+      .then(() => setItems((current) => current.map((entry) => (entry.id === item.id ? { ...entry, read: true } : entry))))
+      .catch((err: unknown) => toast.error(err));
   };
 
-  const handleMarkAllRead = () => {
-    setItems((current) => current.map((entry) => ({ ...entry, read: true })));
-    setUnread(0);
-    void markAllRead(companyId).then(() => { toast.success('ทำเครื่องหมายว่าอ่านทั้งหมดเรียบร้อยแล้ว'); refreshCount(); }).catch(() => undefined);
+  const handleMarkAllRead = async () => {
+    if (markAllBusy) return;
+    setMarkAllBusy(true);
+    try {
+      await markAllRead(companyId);
+      setItems((current) => current.map((entry) => ({ ...entry, read: true })));
+      setUnread(0);
+      toast.success('ทำเครื่องหมายว่าอ่านทั้งหมดเรียบร้อยแล้ว');
+    } catch (err) {
+      toast.error(err);
+    } finally {
+      setMarkAllBusy(false);
+    }
   };
 
   const badge = notificationBadgeText(unread);
@@ -86,13 +101,15 @@ export function NotificationBell({ companyId, locale }: { companyId: string; loc
         <div className="fixed inset-x-3 top-[calc(var(--app-header-h)+8px)] z-50 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-[var(--shadow-theme-md)] sm:absolute sm:inset-x-auto sm:right-0 sm:top-auto sm:mt-2 sm:w-[min(360px,calc(100vw-2rem))]">
           <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
             <span className="text-sm font-bold text-gray-900">{t('shell.notifications', locale)}</span>
-            <button type="button" className="text-xs font-semibold text-brand-700 hover:underline disabled:opacity-40" onClick={handleMarkAllRead} disabled={unread === 0}>
+            <button type="button" className="text-xs font-semibold text-brand-700 hover:underline disabled:opacity-40" onClick={handleMarkAllRead} disabled={unread === 0 || markAllBusy || loading || error}>
               อ่านทั้งหมดแล้ว
             </button>
           </div>
           <div className="max-h-[min(380px,60dvh)] overflow-y-auto">
             {loading ? (
               <p className="px-4 py-6 text-center text-sm text-gray-500">กำลังโหลด...</p>
+            ) : error ? (
+              <div className="px-4 py-6 text-center text-sm text-red-700">โหลดการแจ้งเตือนไม่สำเร็จ <button type="button" className="underline" onClick={loadItems}>ลองใหม่</button></div>
             ) : items.length === 0 ? (
               <p className="px-4 py-6 text-center text-sm text-gray-500">ยังไม่มีการแจ้งเตือน</p>
             ) : (

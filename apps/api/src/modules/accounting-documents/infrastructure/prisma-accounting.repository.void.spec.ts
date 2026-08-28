@@ -295,6 +295,28 @@ describe('voidDocumentTrueReversal (H-04)', () => {
     repo = new PrismaAccountingRepository({ client } as any);
   });
 
+  it('clears obsolete pending/error posting when voiding a document with no posted journal', async () => {
+    for (const postingStatus of ['pending', 'posting_error']) {
+      const seed = issuedDocumentSeed();
+      seed.journalEntries = [];
+      Object.assign(seed.documents[0]!, { postingStatus, journalEntryId: null, postingError: 'old posting failure' });
+      const noJournal = makeClient(seed);
+      const result = await new PrismaAccountingRepository({ client: noJournal } as any)
+        .voidDocumentTrueReversal(CO, 'doc_1', 'u2', 'QA no journal', 'ISSUED');
+      assert.equal(result.document.postingStatus, 'not_required');
+      assert.equal(noJournal.state.documents[0].postingError, null);
+      assert.equal(result.reversalEntryId, null);
+    }
+  });
+
+  it('does not present older voided queue states as pending work or rewrite their audit data', async () => {
+    Object.assign(client.state.documents[0], { status: 'VOIDED', postingStatus: 'posting_error', postingError: 'historical error' });
+    const result = await repo.findDocumentById(CO, 'doc_1');
+    assert.equal(result?.postingStatus, 'not_required');
+    assert.equal(result?.postingError, undefined);
+    assert.equal(client.state.documents[0].postingError, 'historical error');
+  });
+
   it('releases allocations to unapplied credit, zeroes balances, and reverses the GL entry', async () => {
     const result = await repo.voidDocumentTrueReversal(CO, 'doc_1', 'u2', 'ออกเอกสารผิด', 'ISSUED', 'JV-REV-9');
 
@@ -369,7 +391,7 @@ describe('voidDocumentTrueReversal (H-04)', () => {
     const result = await repo.voidDocumentTrueReversal(CO, 'doc_1', 'u2', 'เหตุผล', 'ISSUED');
     assert.equal(result.reversalEntryId, null);
     assert.equal(client.state.documents[0].status, 'VOIDED');
-    assert.equal(client.state.documents[0].postingStatus, 'pending');
+    assert.equal(client.state.documents[0].postingStatus, 'not_required');
     assert.equal(client.state.journalEntries.length, 0);
   });
 });

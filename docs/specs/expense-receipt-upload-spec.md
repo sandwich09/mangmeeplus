@@ -969,6 +969,7 @@ GET /expenses/shared-evidence
 POST /expenses/accountant-package
 - Permission: expense.export plus source read permission for all included records.
 - Creates or requests an accountant-ready export package from DB filters. Supported filters include uploaded date range, expense/document date range, source document type, tax evidence status, category, uploader/requester, payment status, posting status, and virtual year/month bucket.
+- Evidence warning chips also narrow the displayed total and export: submit the visible matched expense IDs across all loaded pages, intersected server-side with tenant, branch and ordinary filters. An empty selection matches no rows; malformed selections fail closed. Changing any filter clears the old export result and invalidates an in-flight result. The confirmation states the matched count; the existing 500-row package limit must still be disclosed if truncated.
 - Package contents include a generic Thai accounting-office expense evidence index XLSX (machine-key CSV in the same response), `evidence_manifest.json`, source refs, and individual signed evidence links through the web export center. Do not generate bundled archives in the first pass.
 
 GET /expenses/:expenseId/source-posting-input

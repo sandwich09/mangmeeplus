@@ -44,7 +44,9 @@ function harness() {
         $executeRaw: async () => 0,
         accountingDocument: {
           updateMany: async ({ where, data }: any) => {
-            if (where.id !== draft.id || where.companyId !== draft.companyId || where.status !== draft.status
+            const statusMatches = typeof where.status === 'string' ? where.status === draft.status : where.status.in.includes(draft.status);
+            if (where.id !== draft.id || where.companyId !== draft.companyId || !statusMatches
+              || (where.documentType && where.documentType !== draft.documentType)
               || where.updatedAt.getTime() !== draft.updatedAt.getTime()) return { count: 0 };
             Object.assign(draft, data, { updatedAt: NEXT_VERSION });
             return { count: 1 };
@@ -74,6 +76,48 @@ const replacement = {
 };
 
 describe('PrismaAccountingRepository draft update', () => {
+  it('does not let a stale approval overwrite a rejection or revised draft', async () => {
+    const { state, repo } = harness();
+    Object.assign(state.document, { documentType: 'QUOTATION', status: 'PENDING_APPROVAL' });
+    const expected = { expectedStatus: 'PENDING_APPROVAL' as const, expectedUpdatedAt: VERSION };
+    const rejected = await repo.updateDocumentStatus('company-1', 'document-1', 'REJECTED', 'reviewer', {
+      ...expected, approvalNote: 'Fix the quote',
+    });
+    assert.equal(rejected.status, 'REJECTED');
+    await assert.rejects(() => repo.updateDocumentStatus('company-1', 'document-1', 'APPROVED', 'stale-reviewer', expected), ConflictException);
+    await repo.updateDraftDocument('document-1', NEXT_VERSION, { ...replacement, documentType: 'QUOTATION' }, 'editor');
+    await assert.rejects(() => repo.updateDocumentStatus('company-1', 'document-1', 'APPROVED', 'stale-reviewer', expected), ConflictException);
+    assert.equal(state.document.status, 'DRAFT');
+  });
+
+  it('atomically returns a rejected quotation to draft without retaining approval authority', async () => {
+    const { state, repo } = harness();
+    Object.assign(state.document, {
+      documentType: 'QUOTATION', status: 'REJECTED', approvalStatus: 'REJECTED',
+      submittedByUserId: 'submitter', approvedByUserId: 'old-approver', approvedAt: VERSION,
+      rejectedByUserId: 'reviewer', rejectedAt: VERSION, approvalNote: 'Please correct the quote',
+    });
+    const result = await repo.updateDraftDocument('document-1', VERSION, { ...replacement, documentType: 'QUOTATION' }, 'editor-1');
+    assert.equal(result.status, 'DRAFT');
+    assert.equal(result.note, 'corrected');
+    for (const field of ['approvalStatus', 'submittedByUserId', 'approvedByUserId', 'approvedAt', 'rejectedByUserId', 'rejectedAt', 'approvalNote'] as const) {
+      assert.equal(state.document[field], null, field);
+    }
+  });
+
+  it('never reopens a non-quotation, approved, issued or stale rejected document', async () => {
+    for (const [documentType, status, expected] of [
+      ['INVOICE', 'REJECTED', VERSION], ['QUOTATION', 'APPROVED', VERSION],
+      ['QUOTATION', 'ISSUED', VERSION], ['QUOTATION', 'REJECTED', new Date(0)],
+    ] as const) {
+      const { state, repo, deletedLines } = harness();
+      Object.assign(state.document, { documentType, status });
+      await assert.rejects(() => repo.updateDraftDocument('document-1', expected, { ...replacement, documentType }, 'editor-1'), ConflictException);
+      assert.equal(deletedLines(), 0);
+      assert.equal(state.document.status, status);
+    }
+  });
+
   it('replaces header and lines atomically after the version CAS', async () => {
     const { state, repo, transactionClient } = harness();
     let callbackClient: unknown;

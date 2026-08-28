@@ -6,7 +6,7 @@ import { Button } from '@/common/components/button';
 import { logoutCurrentSession } from '@/common/auth/session';
 import { useLocale } from '@/common/i18n/use-locale';
 
-export default function ErrorPage({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
+export default function ErrorPage({ error }: { error: Error & { digest?: string } }) {
   const [locale] = useLocale();
   const th = locale === 'th';
   const [signingOut, setSigningOut] = useState(false);
@@ -16,10 +16,7 @@ export default function ErrorPage({ error, reset }: { error: Error & { digest?: 
     console.error(error);
   }, [error]);
 
-  // When the landing route itself throws every time, neither button here escapes: `reset` re-renders
-  // the tree that just threw, and /login redirects an authenticated session straight back into that
-  // same route (app/login/page.tsx records the same loop). Signing out is the only exit, so it has
-  // to live on this screen — without it the app is unusable and the user cannot even leave.
+  // A permanently broken landing route still needs a sign-out exit even when retry cannot recover.
   const handleSignOut = async () => {
     if (signingOut) return;
     setSigningOut(true);
@@ -35,7 +32,8 @@ export default function ErrorPage({ error, reset }: { error: Error & { digest?: 
       title={th ? 'ไม่สามารถเปิดหน้านี้ได้' : 'We could not open this page'}
       description={th ? 'ระบบหรือการเชื่อมต่ออาจขัดข้องชั่วคราว กรุณาลองใหม่อีกครั้ง' : 'The service or connection may be temporarily unavailable. Please try again.'}
     >
-      <Button type="button" onClick={reset}>{th ? 'ลองอีกครั้ง' : 'Try again'}</Button>
+      {/* Refetch the server page as well; resetting only the boundary can replay its cached failure. */}
+      <Button type="button" onClick={() => window.location.reload()}>{th ? 'ลองอีกครั้ง' : 'Try again'}</Button>
       {/* A plain anchor, not <Link>: a soft navigation re-renders inside the tree that just threw,
           and a full load also drops any stale client chunks left by a redeploy. `home=reset` skips a
           remembered landing that may itself be the page that failed. */}

@@ -51,6 +51,7 @@ export type DocumentLineSummary = {
   correctionBasisAmount?: string;
   taxCategory?: string;
   revenueCategory?: string;
+  revenueCategoryId?: string;
   taxSnapshot?: TransactionTaxSnapshot;
   taxComponents?: TransactionTaxComponentPreview[];
 };
@@ -93,6 +94,7 @@ export type DocumentDetail = DocumentSummary & {
   voidedAt?: string;
   voidReason?: string;
   approvalStatus?: string;
+  submittedByUserId?: string;
   approvedByUserId?: string;
   approvedAt?: string;
   rejectedAt?: string;

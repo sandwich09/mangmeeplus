@@ -1,0 +1,86 @@
+[
+  {
+    "period": "วันนี้",
+    "links": [
+      {
+        "href": "/companies/seed-local-company/dashboard",
+        "text": "มั่งมี"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses?view=confirmed&fromDate=2026-08-28&toDate=2026-08-28",
+        "text": "ค่าใช้จ่ายที่ยืนยันแล้ว274.5 บาท"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses?view=pending",
+        "text": "ใบเสร็จรอตรวจ (ทุกช่วงเวลา)4 รายการ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses?view=unpaid",
+        "text": "ค้างจ่ายที่ยืนยันแล้ว (ทุกช่วงเวลา)2,494 บาท"
+      }
+    ]
+  },
+  {
+    "period": "สัปดาห์นี้",
+    "links": [
+      {
+        "href": "/companies/seed-local-company/dashboard",
+        "text": "มั่งมี"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses?view=confirmed&fromDate=2026-08-24&toDate=2026-08-30",
+        "text": "ค่าใช้จ่ายที่ยืนยันแล้ว2,254 บาท"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses?view=pending",
+        "text": "ใบเสร็จรอตรวจ (ทุกช่วงเวลา)4 รายการ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses?view=unpaid",
+        "text": "ค้างจ่ายที่ยืนยันแล้ว (ทุกช่วงเวลา)2,494 บาท"
+      }
+    ]
+  },
+  {
+    "period": "เดือนนี้",
+    "links": [
+      {
+        "href": "/companies/seed-local-company/dashboard",
+        "text": "มั่งมี"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses?view=confirmed&fromDate=2026-08-01&toDate=2026-08-31",
+        "text": "ค่าใช้จ่ายที่ยืนยันแล้ว36,748 บาท"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses?view=pending",
+        "text": "ใบเสร็จรอตรวจ (ทุกช่วงเวลา)4 รายการ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses?view=unpaid",
+        "text": "ค้างจ่ายที่ยืนยันแล้ว (ทุกช่วงเวลา)2,494 บาท"
+      }
+    ]
+  },
+  {
+    "period": "ไตรมาสนี้",
+    "links": [
+      {
+        "href": "/companies/seed-local-company/dashboard",
+        "text": "มั่งมี"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses?view=confirmed&fromDate=2026-07-01&toDate=2026-09-30",
+        "text": "ค่าใช้จ่ายที่ยืนยันแล้ว36,748 บาท"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses?view=pending",
+        "text": "ใบเสร็จรอตรวจ (ทุกช่วงเวลา)4 รายการ"
+      },
+      {
+        "href": "/companies/seed-local-company/expenses?view=unpaid",
+        "text": "ค้างจ่ายที่ยืนยันแล้ว (ทุกช่วงเวลา)2,494 บาท"
+      }
+    ]
+  }
+]

@@ -34,8 +34,7 @@ import {
   vatRatePreset, vatRatePresetValue, vatTreatmentForPreset, expensePercentToRate, expenseRateToPercent,
   effectiveVatRateLabel, vatModeRequiresRate,
   PAYEE_ENTITY_KIND_LABELS, AI_SUGGESTION_FIELD_LABELS, applyExpenseAiSuggestion, expenseAiSuggestion, expenseAiCategorySuggestion,
-  formatTaxId, taxIdDigits, reviewValues, expenseReviewWithholdsTax, expenseVatSourceValidationMessage,
-} from './expenses.model';
+  formatTaxId, taxIdDigits, reviewValues, expenseReviewWithholdsTax, expenseVatSourceValidationMessage, expenseVatBlockedWayOut } from './expenses.model';
 export { reviewValues } from './expenses.model';
 import type { AiReviewField, ExpenseAiSuggestion, ExpenseSummary, ExpenseDetail, ExpenseDraftReviewValues, ExpenseCategorySummary, ExpenseReviewStepKey, ExpenseCapabilities, ExpensesTab, ManualExpenseItem } from './expenses.model';
 import type { BusinessDocumentClassification, BuyerEntityKind, ExpenseExtractionResult, ExpenseLineVatTreatment, ExpenseVatSourceOverrideInput, ExpenseWhtInput, SubstituteReceiptEvidenceSummary, SubstituteReceiptRuntimePolicy } from '@watchdog-bms/contracts';
@@ -1156,11 +1155,14 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
 
 type EditableReviewLineField = 'description' | 'quantity' | 'unitPrice' | 'discountAmount' | 'vatRate';
 
-export function ExpenseReviewEditSection({ companyId, detail, isMutable, canReview, onSaved, saveRef, onValidationChange, vatOverrideRef }: {
+export function ExpenseReviewEditSection({ companyId, detail, isMutable, canReview, canConfirm, onSaved, saveRef, onValidationChange, vatOverrideRef }: {
   companyId: string;
   detail: ExpenseDetail;
   isMutable: boolean;
   canReview: boolean;
+  /** Owner decision 2026-08-28: accepting the document VAT total rides on confirm, not on review, so
+   *  a confirmer is never shown a refusal with no control that can clear it. */
+  canConfirm: boolean;
   onSaved: () => Promise<void>;
   /** The modal's ถัดไป/chip navigation triggers this save when leaving the details step — no in-section save button. */
   saveRef?: MutableRefObject<(() => Promise<boolean>) | null>;
@@ -1239,6 +1241,8 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   const vatCarrierLines = values.lines
     .map((line, index) => ({ lineNumber: index + 1, description: line.description?.trim() ?? '', vatRate: line.vatRate }))
     .filter((line) => Number(line.vatRate) > 0);
+  // One helper decides what a blocked receipt offers, so "nothing" cannot come back as an answer.
+  const vatWayOut = expenseVatBlockedWayOut({ canConfirm, vatCarrierLineCount: vatCarrierLines.length });
   const [vatOverrideReason, setVatOverrideReason] = useState('');
   const [vatOverrideLineNumber, setVatOverrideLineNumber] = useState<number | null>(null);
 
@@ -1249,10 +1253,12 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   useEffect(() => {
     if (!vatOverrideRef) return;
     const reason = vatOverrideReason.trim();
-    vatOverrideRef.current = vatBlocked && canReview && reason !== '' && vatOverrideLineNumber !== null
+    // Owner decision 2026-08-28: whoever may confirm the expense may also accept the document total.
+    // Gating this on canReview left everyone else staring at a refusal with no control to act on.
+    vatOverrideRef.current = vatBlocked && canConfirm && reason !== '' && vatOverrideLineNumber !== null
       ? { reason, vatLineNumber: vatOverrideLineNumber, expectedUpdatedAt: detail.updatedAt }
       : null;
-  }, [canReview, detail.updatedAt, vatBlocked, vatOverrideLineNumber, vatOverrideReason, vatOverrideRef]);
+  }, [canConfirm, detail.updatedAt, vatBlocked, vatOverrideLineNumber, vatOverrideReason, vatOverrideRef]);
   useEffect(() => { onValidationChange?.(blockingIssueCount, firstBlockingMessage); }, [blockingIssueCount, firstBlockingMessage, onValidationChange]);
 
   const updateLine = (index: number, field: EditableReviewLineField, value: string, vatTreatment?: ExpenseLineVatTreatment | null) => {
@@ -1598,7 +1604,28 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
                     ))}
                   </ul>
                 )}
-                {canReview && vatCarrierLines.length > 0 && (
+                {/* Owner requirement 2026-08-28: a blocked receipt must never end in a blank panel. The
+                    override needs a VAT-bearing line to carry the difference — correct accounting, since
+                    the difference must not land on ผัก/ผลไม้/ค่าขนส่ง — but when no line bears VAT the whole
+                    block used to render nothing at all: a refusal, and no control and no explanation
+                    anywhere on the screen. Both ways out are now named. */}
+                {vatWayOut === 'SET_VAT_RATE_FIRST' && (
+                  <div className="space-y-1 border-t border-gray-100 pt-2">
+                    <p className="text-xs font-semibold text-gray-700">ยังเลือก “ใช้ยอดตามเอกสาร” ไม่ได้ เพราะไม่มีรายการไหนมี VAT</p>
+                    <p className="text-xs text-gray-600">
+                      ส่วนต่าง VAT ต้องลงที่รายการที่เสียภาษี จะลงที่รายการยกเว้น เช่น ผัก ผลไม้ เนื้อสัตว์ ค่าขนส่ง แสตมป์ ไม่ได้
+                      ถ้าใบเสร็จเก็บ VAT จริง ให้ใส่อัตรา VAT ที่รายการที่เสียภาษีก่อน (รายการยกเว้นคงไว้ที่ 0) แล้วช่องเลือกจะขึ้นมาเอง
+                    </p>
+                  </div>
+                )}
+                {vatWayOut === 'NEEDS_CONFIRMER' && (
+                  <div className="space-y-1 border-t border-gray-100 pt-2">
+                    <p className="text-xs text-gray-600">
+                      แก้ไขและบันทึกร่างได้ตามปกติ แต่การยืนยันด้วยยอดตามเอกสารต้องใช้สิทธิ์ยืนยันเอกสาร ให้ส่งต่อผู้ที่มีสิทธิ์นั้นตรวจ
+                    </p>
+                  </div>
+                )}
+                {vatWayOut === 'OVERRIDE_FORM' && (
                   <div className="space-y-2 border-t border-gray-100 pt-2">
                     <p className="text-xs font-semibold text-gray-700">ถ้าตรวจแล้วเอกสารถูกต้อง ให้เลือก “ใช้ยอดตามเอกสาร”</p>
                     <label className="block">
@@ -2489,6 +2516,7 @@ export function ExpensesHubPage({ companyId, userId, permissions, tab = 'list' }
   const branchFilter = useBranchFilter();
   const branchId = branchFilter?.branchId ?? '';
   const createBranchId = useTransactionCreateBranchId();
+  const toast = useToast();
   const caps = expenseCapabilities(permissions);
   // A2: the LINE ticket names one signature. The `?tab=` redirect below already carries every other
   // query param through to the real route, so this only has to read it once it lands.
@@ -2535,11 +2563,23 @@ export function ExpensesHubPage({ companyId, userId, permissions, tab = 'list' }
         <>
           {tab === 'list' && <ExpenseListPage companyId={companyId} caps={caps} userId={userId} onSelect={openListExpense} />}
           {(tab === 'upload' || tab === 'manual') && <>
-            <TransactionBranchField value={createBranchId} />
+            <TransactionBranchField value={createBranchId} invalid={!createBranchId} />
+            {/* Owner report 2026-08-28: with several branches and the all-branches filter on, this panel is
+                disabled — pressing อัปโหลด did nothing and said nothing. The field itself now reads as an
+                error, and pressing the dead panel says why instead of leaving a standing banner on screen.
+                A single-branch company defaults to its branch and never reaches this. */}
+            <div onClickCapture={() => {
+              if (createBranchId) return;
+              toast.error(t('transaction.branch_required_before_create', locale));
+              const select = document.querySelector<HTMLSelectElement>('[data-transaction-branch-select]');
+              select?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              select?.focus();
+            }}>
             <fieldset disabled={!createBranchId} className="min-w-0">
               {tab === 'upload' && <UploadPanel companyId={companyId} branchId={createBranchId} {...(caps.canCreate ? { onNoDocument: () => router.push(`/companies/${companyId}/expenses/substitute-receipts/new`) } : {})} onSuccess={(expenseId, notice) => { storeExtractionNotice(expenseId, notice); openListExpense(expenseId); }} />}
               {tab === 'manual' && <ManualExpensePanel companyId={companyId} branchId={createBranchId} canAttachReceipt={caps.canUploadReceipts && permissions.includes('attachment.create')} onSuccess={openListExpense} />}
             </fieldset>
+            </div>
           </>}
           {tab === 'categories' && <CategoryManagePanel companyId={companyId} />}
           {tab === 'signatures' && <SignaturePanel companyId={companyId} {...(focusSignatureId ? { focusSignatureId } : {})} />}

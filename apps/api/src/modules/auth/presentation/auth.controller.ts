@@ -636,10 +636,14 @@ export class AuthController {
   @ApiResponse({ status: 200, description: 'Current user context' })
   async me(@Req() req: Request & { context: RequestContext }) {
     const { userId, companyId, membershipId, roles, permissions, scopes, authProvider } = req.context;
-    const [user, credential, legalAcceptance] = await Promise.all([
+    const [user, credential, legalAcceptance, membership] = await Promise.all([
       this.prisma.client.user.findUnique({ where: { id: userId }, select: { displayName: true } }),
       this.prisma.client.userCredential.findUnique({ where: { userId }, select: { mustChangePassword: true } }),
       this.legalAcceptance.getStatus(req.context),
+      this.prisma.client.companyMembership.findFirst({
+        where: { id: membershipId, companyId, userId, status: 'ACTIVE' },
+        select: { roles: { where: { role: { key: { in: roles } } }, select: { role: { select: { key: true, name: true } } } } },
+      }),
     ]);
     // AuthGuard exempts /v1/auth/* from the temporary-password block, so this route answers for a
     // blocked session too — and it is the only way such a session can learn that it is blocked.
@@ -651,6 +655,8 @@ export class AuthController {
       companyId,
       membershipId,
       roles,
+      // Display-only metadata for the caller's held roles; role keys still decide authorization.
+      roleNames: Object.fromEntries((membership?.roles ?? []).map(({ role }) => [role.key, role.name])),
       permissions,
       scopes,
       authProvider,

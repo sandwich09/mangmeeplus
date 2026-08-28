@@ -61,7 +61,11 @@ resolve_instance_id() {
   id="$(aws_cmd ec2 describe-instances --region "$region" \
     --filters "Name=tag:Name,Values=${bastion_name}" 'Name=instance-state-name,Values=running' \
     --query 'Reservations[].Instances[].InstanceId' --output text)"
-  case "$(printf '%s' "$id" | wc -w)" in
+  # BSD `wc` right-pads its count ("       1"), GNU `wc` does not. Comparing the raw output made
+  # every macOS workstation fall through to the "more than one instance" branch and refuse to open
+  # a session it should have opened — with the single instance id printed in the error, which reads
+  # like an AWS problem rather than a shell one. Strip the padding before comparing.
+  case "$(printf '%s' "$id" | wc -w | tr -d '[:space:]')" in
     1) printf '%s' "$id" ;;
     0) echo "ERROR: no running instance tagged Name=${bastion_name} in ${region}" >&2; return 1 ;;
     *) echo "ERROR: ${bastion_name} matches more than one running instance: ${id}" >&2; return 1 ;;

@@ -248,7 +248,7 @@ export class CreateEmployeeUseCase {
       return {
         employeeId: duplicateIdentity.id,
         userId: duplicateIdentity.userId,
-        username: duplicateIdentity.user.username ?? '',
+        username: reusedExistingUser ? (duplicateIdentity.user.username ?? '') : username,
         temporaryPassword: reusedExistingUser ? '' : employeePassword,
         mustChangePassword: !reusedExistingUser,
         ...(reusedExistingUser && { reusedExistingAccount: true }),
@@ -510,12 +510,27 @@ export class CreateEmployeeUseCase {
     companyId: string;
     employeeId: string;
     requestingUserId: string;
+    requesterBranchIds?: string[];
     requestId: string;
   }): Promise<CompleteEmployeeDraftResult> {
     await this.prisma.client.$transaction(async (tx) => {
       const draft = await lockEmployeeProfile(tx, cmd.companyId, cmd.employeeId);
       if (draft.status === 'ACTIVE') return;
       if (draft.status !== 'DRAFT') throw new ConflictException('Only an employee draft can be completed.');
+      // A draft starts all-branch until the wizard saves scope. Activation must not bypass that save.
+      if (cmd.requesterBranchIds !== undefined) {
+        const membership = await tx.companyMembership.findUniqueOrThrow({
+          where: { id: draft.membershipId },
+          select: { branchScopeMode: true, defaultBranchId: true, branchScopes: { select: { branchId: true } } },
+        });
+        const branchIds = membership.branchScopeMode === 'DEFAULT_BRANCH_ONLY'
+          ? (membership.defaultBranchId ? [membership.defaultBranchId] : [])
+          : membership.branchScopes.map((scope) => scope.branchId);
+        if (membership.branchScopeMode === 'ALL_BRANCHES' || branchIds.length === 0
+          || [...branchIds, ...(membership.defaultBranchId ? [membership.defaultBranchId] : [])].some((id) => !cmd.requesterBranchIds!.includes(id))) {
+          throw new ForbiddenException("Cannot activate access outside the requester's branch scope.");
+        }
+      }
       await tx.employeeAccessProfile.update({
         where: { id: draft.id },
         data: { status: 'ACTIVE', updatedByUserId: cmd.requestingUserId },
