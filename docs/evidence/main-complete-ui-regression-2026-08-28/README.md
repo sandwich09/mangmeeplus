@@ -15,6 +15,8 @@ Chrome rejected automated file selection with `Not allowed`; the user selected t
 - Integration is the next step. PR330 was rechecked OPEN, develop→main; update it rather than creating a duplicate. No deployment, UAT mutation, real payment or external message in this pass.
 - Original dirty `plan` worktree preserved. No package.json, dependency or database-schema change.
 
+Exact ON keys rechecked after the final UI repeat: `company_settings`, `company_settings.branches`, `company_settings.security`, `dashboard_notifications`, `employee_access`, `employee_access.employees`, `employee_access.overview`, `employee_access.roles`, `expenses`, `expenses.categories`, `expenses.evidence`, `expenses.list`, `expenses.manual`, `expenses.signatures`, `expenses.upload`, `sales_documents`.
+
 ## Findings fixed
 
 | ID | Finding | Fix and actual repeat |
@@ -92,13 +94,14 @@ The BUG-Fxx screenshots distinguish before and after. Earlier screenshots and co
 | API and web `pnpm exec tsc --noEmit` | Both exit0 |
 | Contracts/API builds | Exit0 |
 | Web `NEXT_DIST_DIR=.next-main-complete-qa-build pnpm exec next build --webpack` | Exit0; separate build directory preserves the running dev server |
+| Maintenance pin generator `--check`, pin-sync spec and full `production-image-security.spec.sh` | Passed after refreshing the two generated checksum lines; local/mock checks, no deploy |
 | `git diff --check` | Clean |
 
 Latest logs: `/tmp/mangmee-main-qa-web-final-f31.log`, `web-types-f31.log`, `web-build-f31.log` under the same prefix; unchanged backend verified by `/tmp/mangmee-main-qa-api-final-f29.log` and `api-types-f29.log`. Focused before/after checks are also documented in [task memory](../../agent-memory/main-complete-ui-regression-2026-08-28.md). Tests and database corroboration do not replace UI actions.
 
 ## Integration and boundaries
 
-1. Commit the scoped fixes/evidence, open the develop integration PR, require its actual CI checks, then merge and update existing main PR330. Record exact commits/PR/check results here.
+1. [Develop integration PR331](https://github.com/MangmeeDev/mangmeeplus/pull/331) contains code/evidence commit `c5aee0142686aeb7e3f41f1448b9e32efe299bb7`. Initial CI `33177695687` failed the stale maintenance-pin preflight; later tests were skipped, not passed. The standard generator refreshed only server-session and validator checksums; no gate/policy condition changed. Require the corrected-head CI before merge, then update existing main PR330.
 2. No main merge/deployment is authorized or performed by this task. Deploy workflows are manual; no UAT/production/READY run was dispatched.
 3. Missing applicable Tax Codes, unconfigured OCR, feature-OFF new workflows and physical paper/external delivery are explicit prerequisites or scope exclusions, not claimed successful flows. No known unexpected blocker remains in the exercised local matrix.
 
