@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { completeVatFields, isStaleOcrApply, ocrLineVatRateUnknown, ocrVatSource, ocrWhtInput, ReceiptOcrApplyService, verifyDiscountAmount } from './receipt-ocr-apply.service';
+import { completeVatFields, isStaleOcrApply, ocrLineVatRateUnknown, ocrVatSource, ocrWhtInput, ReceiptOcrApplyService, usableItemLines, verifyDiscountAmount } from './receipt-ocr-apply.service';
 import { calcLineTotals } from '../../domain/logic/expense-totals.logic';
 
 function makeDuplicateRepo(overrides: Record<string, unknown> = {}) {
@@ -952,5 +952,42 @@ describe('ReceiptOcrApplyService.apply', () => {
       25,
     ]);
     assert.equal(statusUpdates.some((update) => 'duplicateStatus' in update), false);
+  });
+});
+
+/**
+ * Per-line VAT (Owner 2026-08-28: "VAT ผสมก่อน ... ให้ความสำคัญกับความถูกต้องมาก").
+ * A UAT survey of 38 real receipts found 3 that price some rows with VAT and others without,
+ * marked with a one-letter code (V taxed; N/P exempt). This boundary re-validates the gateway's
+ * suggestion instead of trusting it, and refuses the whole item block on anything malformed —
+ * losing the split is recoverable, writing a wrong tax base is not.
+ */
+describe('usableItemLines per-row VAT', () => {
+  const row = (over: Record<string, unknown> = {}) => ({
+    description: 'ข้าวผัด', quantity: '1', amount: '100.00', evidenceSignal: 'ข้าวผัด 100.00V', ...over,
+  });
+  const take = (lines: unknown[]) => usableItemLines({ lines } as any);
+
+  it('accepts a mixed bill: a taxed row beside an exempt row', () => {
+    const lines = [row({ vatRate: '0.07' }), row({ description: 'นมสด', vatRate: '0', vatTreatment: 'EXEMPT' })];
+    assert.equal(take(lines).length, 2);
+  });
+
+  it('accepts the ordinary bill unchanged — no per-row fields at all', () => {
+    assert.equal(take([row(), row({ description: 'น้ำเปล่า' })]).length, 2);
+  });
+
+  it('refuses the whole block when a rate is not a 0..1 fraction (7 is not 7%)', () => {
+    assert.equal(take([row({ vatRate: '7' }), row()]).length, 0);
+    assert.equal(take([row({ vatRate: 'seven' }), row()]).length, 0);
+  });
+
+  it('refuses a treatment that is not backed by a zero rate', () => {
+    assert.equal(take([row({ vatTreatment: 'EXEMPT' }), row()]).length, 0);
+    assert.equal(take([row({ vatRate: '0.07', vatTreatment: 'EXEMPT' }), row()]).length, 0);
+  });
+
+  it('refuses an unknown treatment code', () => {
+    assert.equal(take([row({ vatRate: '0', vatTreatment: 'MAYBE' }), row()]).length, 0);
   });
 });

@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { UnauthorizedException, BadRequestException } from '@nestjs/common';
-import { BASE64_MEDIA_ROUTES, LineAiInternalController } from './line-ai-internal.controller';
+import { BASE64_MEDIA_ROUTES, LineAiInternalController, parseReceiptOcrJson } from './line-ai-internal.controller';
 import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
 import type { BusinessDocumentClassification, LineAiTurnRequest } from '@watchdog-bms/contracts';
 import { gateBusinessDocumentClassification, parseBusinessDocumentClassification } from '../../domain/logic/business-document-classification.logic';
@@ -137,9 +137,9 @@ describe('LineAiInternalController', () => {
 
   it('receipt OCR keeps PDFs on the Bedrock document channel', async () => {
     const originalFetch = globalThis.fetch;
-    let typhoonCalled = false;
+    let thirdPartyOcrCalled = false;
     globalThis.fetch = (async (url: any, init: any) => {
-      if (String(url).includes('api.opentyphoon.ai')) typhoonCalled = true;
+      if (String(url).includes('api.opentyphoon.ai')) thirdPartyOcrCalled = true;
       throw new Error('no network in test');
     }) as any;
 
@@ -149,7 +149,6 @@ describe('LineAiInternalController', () => {
           aiGatewayInternalSecret: 'secret',
           modelProvider: 'openai',
           openAiApiKey: 'should-not-be-used',
-          typhoonOcrApiKey: 'typhoon-key',
           aiToolTimeoutMs: 1000,
         } as any,
         { execute: async () => { throw new Error('should not execute'); } } as any,
@@ -163,10 +162,10 @@ describe('LineAiInternalController', () => {
       });
 
       // Only Bedrock has a document channel; anything else must fail typed, not silently
-      // hand the PDF to Typhoon (which accepts image data URIs only).
+      // send the PDF to any image-only third-party OCR endpoint.
       assert.equal(result.status, 'not_configured');
       assert.equal(result.errorCode, 'PDF_PROVIDER_UNSUPPORTED');
-      assert.equal(typhoonCalled, false, 'no third-party OCR vendor is called any more');
+      assert.equal(thirdPartyOcrCalled, false, 'no third-party OCR vendor is called any more');
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -174,15 +173,15 @@ describe('LineAiInternalController', () => {
 
   it('receipt OCR runs two stages: a vision natural_text read then provider field extraction', async () => {
     const originalFetch = globalThis.fetch;
-    let typhoonBody: any = {};
-    let typhoonAuth = '';
+    let stageOneBody: any = {};
+    let stageOneAuth = '';
     let extractionInput = '';
     let extractionInstructions = '';
     globalThis.fetch = (async (url: any, init: any) => {
       const requestedUrl = String(url);
       if (JSON.parse(init.body as string).input?.some?.((item: any) => JSON.stringify(item).includes('input_image'))) {
-        typhoonAuth = init.headers.Authorization;
-        typhoonBody = JSON.parse(init.body);
+        stageOneAuth = init.headers.Authorization;
+        stageOneBody = JSON.parse(init.body);
         return {
           ok: true,
           status: 200,
@@ -237,7 +236,6 @@ describe('LineAiInternalController', () => {
       const controller = new LineAiInternalController(
         {
           aiGatewayInternalSecret: 'secret',
-          typhoonOcrApiKey: 'typhoon-key',
           aiToolTimeoutMs: 1000,
           modelProvider: 'openai',
           openAiApiKey: 'openai-key',
@@ -272,9 +270,9 @@ describe('LineAiInternalController', () => {
       });
       assert.equal(result.classification?.documentKind, 'RECEIPT');
       assert.deepEqual(result.classification?.settlementSignals, ['ใบเสร็จ']);
-      assert.equal(typhoonAuth, 'Bearer openai-key', 'stage 1 reads on the configured provider, not a separate OCR vendor');
-      assert.ok(JSON.stringify(typhoonBody.input).includes('input_image'), 'stage 1 must send the page as vision input');
-      assert.ok(String(typhoonBody.instructions).includes('natural_text'), 'stage 1 keeps the {"natural_text"} read contract');
+      assert.equal(stageOneAuth, 'Bearer openai-key', 'stage 1 reads on the configured provider, not a separate OCR vendor');
+      assert.ok(JSON.stringify(stageOneBody.input).includes('input_image'), 'stage 1 must send the page as vision input');
+      assert.ok(String(stageOneBody.instructions).includes('natural_text'), 'stage 1 keeps the {"natural_text"} read contract');
       assert.ok(extractionInput.includes('ใบเสร็จ ร้านกาแฟ'), 'stage 2 must receive the OCR markdown, not the image');
       assert.ok(extractionInstructions.includes('multiple independent expense transactions'), 'stage 2 must forbid collapsing a multi-entry ledger into one expense');
       assert.ok(extractionInput.includes('cat-meals'), 'stage 2 must receive the bounded active category catalogue');
@@ -317,7 +315,7 @@ describe('LineAiInternalController', () => {
       }) as any;
       const controller = new LineAiInternalController(
         {
-          aiGatewayInternalSecret: 'secret', typhoonOcrApiKey: 'typhoon-key', aiToolTimeoutMs: 1000,
+          aiGatewayInternalSecret: 'secret', aiToolTimeoutMs: 1000,
           modelProvider: 'openai', openAiApiKey: 'openai-key', openAiModel: 'gpt-test',
         } as any,
         { execute: async () => { throw new Error('should not execute'); } } as any,
@@ -388,7 +386,7 @@ describe('LineAiInternalController', () => {
       }) as any;
       const controller = new LineAiInternalController(
         {
-          aiGatewayInternalSecret: 'secret', typhoonOcrApiKey: 'typhoon-key', aiToolTimeoutMs: 1000,
+          aiGatewayInternalSecret: 'secret', aiToolTimeoutMs: 1000,
           modelProvider: 'openai', openAiApiKey: 'openai-key', openAiModel: 'gpt-test',
         } as any,
         { execute: async () => { throw new Error('should not execute'); } } as any,
@@ -445,7 +443,7 @@ describe('LineAiInternalController', () => {
       }) as any;
       const controller = new LineAiInternalController(
         {
-          aiGatewayInternalSecret: 'secret', typhoonOcrApiKey: 'typhoon-key', aiToolTimeoutMs: 1000,
+          aiGatewayInternalSecret: 'secret', aiToolTimeoutMs: 1000,
           modelProvider: 'openai', openAiApiKey: 'openai-key', openAiModel: 'gpt-test',
         } as any,
         { execute: async () => { throw new Error('should not execute'); } } as any,
@@ -490,7 +488,7 @@ describe('LineAiInternalController', () => {
     })) as any;
     try {
       const controller = new LineAiInternalController(
-        { aiGatewayInternalSecret: 'secret', typhoonOcrApiKey: 'typhoon-key', aiToolTimeoutMs: 1000, modelProvider: 'disabled' } as any,
+        { aiGatewayInternalSecret: 'secret', aiToolTimeoutMs: 1000, modelProvider: 'disabled' } as any,
         { execute: async () => { throw new Error('should not execute'); } } as any,
       );
       const result = await controller.receiptOcr('secret', {
@@ -636,7 +634,6 @@ describe('LineAiInternalController', () => {
       const controller = new LineAiInternalController(
         {
           aiGatewayInternalSecret: 'secret',
-          typhoonOcrApiKey: 'typhoon-key',
           aiToolTimeoutMs: 1000,
           modelProvider: 'openai',
           openAiApiKey: 'openai-key',
@@ -653,7 +650,7 @@ describe('LineAiInternalController', () => {
 
       assert.equal(result.status, 'ok');
       assert.equal(result.modelId, 'gpt-test');
-      assert.deepEqual(result.modelLineage?.map((item) => item.provider), ['typhoon', 'openai']);
+      assert.deepEqual(result.modelLineage?.map((item) => item.provider), ['openai', 'openai']);
       assert.deepEqual(result.modelLineage?.map((item) => item.purpose), [
         'bank_statement_ocr_read',
         'bank_statement_extract',
@@ -1129,7 +1126,7 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
     try {
       const controller = new LineAiInternalController(
         {
-          aiGatewayInternalSecret: 'secret', typhoonOcrApiKey: 'typhoon-key', aiToolTimeoutMs: 1000,
+          aiGatewayInternalSecret: 'secret', aiToolTimeoutMs: 1000,
           modelProvider: 'bedrock', bedrockRegion: 'ap-southeast-1', documentAiModelId: 'test-model',
         } as any,
         { execute: async () => { throw new Error('should not execute'); } } as any,
@@ -1162,7 +1159,7 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
     try {
       const controller = new LineAiInternalController(
         {
-          aiGatewayInternalSecret: 'secret', typhoonOcrApiKey: 'typhoon-key', aiToolTimeoutMs: 1000,
+          aiGatewayInternalSecret: 'secret', aiToolTimeoutMs: 1000,
           modelProvider: 'bedrock', bedrockRegion: 'ap-southeast-1', documentAiModelId: 'test-model',
         } as any,
         { execute: async () => { throw new Error('should not execute'); } } as any,
@@ -1190,7 +1187,7 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
     try {
       const controller = new LineAiInternalController(
         {
-          aiGatewayInternalSecret: 'secret', typhoonOcrApiKey: 'typhoon-key', aiToolTimeoutMs: 1000,
+          aiGatewayInternalSecret: 'secret', aiToolTimeoutMs: 1000,
           modelProvider: 'bedrock', bedrockRegion: 'ap-southeast-1', documentAiModelId: 'test-model',
         } as any,
         { execute: async () => { throw new Error('should not execute'); } } as any,
@@ -1213,7 +1210,7 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
     try {
       const controller = new LineAiInternalController(
         {
-          aiGatewayInternalSecret: 'secret', typhoonOcrApiKey: 'typhoon-key', aiToolTimeoutMs: 1000,
+          aiGatewayInternalSecret: 'secret', aiToolTimeoutMs: 1000,
           modelProvider: 'openai', openAiApiKey: 'openai-key', openAiModel: 'gpt-test',
         } as any,
         { execute: async () => { throw new Error('should not execute'); } } as any,
@@ -1320,5 +1317,152 @@ describe('intake route timeout budget', () => {
       restore();
       t.mock.timers.reset();
     }
+  });
+});
+
+/**
+ * Per-row VAT admission (Owner 2026-08-28). A UAT survey of 38 real receipts found three that tax
+ * some rows and not others, always marked on the row itself: `V` on a taxed price, `N` or `P` on an
+ * exempt one. The gateway therefore admits a per-row rate ONLY when that row's evidence span
+ * carries the marker it claims — an unmarked row inherits the document rate, which is what 25 of
+ * the 38 receipts print.
+ */
+describe('receipt OCR per-row VAT', () => {
+  const parse = (lines: unknown[], documentText: string) => parseReceiptOcrJson(
+    JSON.stringify({ fields: { grandTotalAmount: '200.00', lines } }),
+    documentText,
+    new Set<string>(),
+  );
+  const doc = 'ข้าวผัด 100.00V\nนมสด 100.00N';
+
+  it('keeps a marked mixed bill: taxed row keeps its rate, exempt row keeps rate 0 + treatment', () => {
+    const out = parse([
+      { description: 'ข้าวผัด', quantity: '1', amount: '100.00', vatRate: '0.07', evidenceSignal: 'ข้าวผัด 100.00V' },
+      { description: 'นมสด', quantity: '1', amount: '100.00', vatRate: '0', vatTreatment: 'EXEMPT', evidenceSignal: 'นมสด 100.00N' },
+    ], doc);
+    assert.equal(out?.fields?.lines?.length, 2);
+    assert.equal(out?.fields?.lines?.[0]?.vatRate, '0.07');
+    assert.equal(out?.fields?.lines?.[1]?.vatRate, '0');
+    assert.equal(out?.fields?.lines?.[1]?.vatTreatment, 'EXEMPT');
+  });
+
+  it('drops a per-row rate whose evidence span shows no marker — the row inherits the document rate', () => {
+    const plain = 'ข้าวผัด 100.00\nนมสด 100.00';
+    const out = parse([
+      { description: 'ข้าวผัด', quantity: '1', amount: '100.00', vatRate: '0.07', evidenceSignal: 'ข้าวผัด 100.00' },
+      { description: 'นมสด', quantity: '1', amount: '100.00', evidenceSignal: 'นมสด 100.00' },
+    ], plain);
+    assert.equal(out?.fields?.lines?.length, 2);
+    assert.equal(out?.fields?.lines?.[0]?.vatRate, undefined, 'no printed marker, no per-row tax claim');
+  });
+
+  it('never keeps a treatment without a zero rate, and never a rate outside 0..1', () => {
+    const withTreatmentOnTaxedRate = parse([
+      { description: 'ข้าวผัด', quantity: '1', amount: '100.00', vatRate: '0.07', vatTreatment: 'EXEMPT', evidenceSignal: 'ข้าวผัด 100.00V' },
+      { description: 'นมสด', quantity: '1', amount: '100.00', evidenceSignal: 'นมสด 100.00N' },
+    ], doc);
+    assert.equal(withTreatmentOnTaxedRate?.fields?.lines?.[0]?.vatTreatment, undefined);
+    assert.equal(withTreatmentOnTaxedRate?.fields?.lines?.[0]?.vatRate, '0.07');
+
+    const percentNotFraction = parse([
+      { description: 'ข้าวผัด', quantity: '1', amount: '100.00', vatRate: '7', evidenceSignal: 'ข้าวผัด 100.00V' },
+      { description: 'นมสด', quantity: '1', amount: '100.00', evidenceSignal: 'นมสด 100.00N' },
+    ], doc);
+    assert.equal(percentNotFraction?.fields?.lines?.[0]?.vatRate, undefined, '7 is not 7%');
+  });
+
+  it('a zero rate with no treatment is not a silent exemption', () => {
+    const out = parse([
+      { description: 'ข้าวผัด', quantity: '1', amount: '100.00', vatRate: '0', evidenceSignal: 'ข้าวผัด 100.00V' },
+      { description: 'นมสด', quantity: '1', amount: '100.00', evidenceSignal: 'นมสด 100.00N' },
+    ], doc);
+    assert.equal(out?.fields?.lines?.[0]?.vatRate, undefined);
+  });
+});
+
+/**
+ * Reusing the intake read (Owner 2026-08-28, speed work). The intake router already reads the photo
+ * to classify it; UAT measured 12.8s of intake followed by a 16.6s re-read of the identical image.
+ * When that read is forwarded, this route must skip its own — and must still fall back to reading
+ * whenever what arrives is not usable as a page.
+ */
+describe('receipt OCR reuses the intake read', () => {
+  const config = {
+    aiGatewayInternalSecret: 'secret', modelProvider: 'bedrock', bedrockRegion: 'ap-southeast-1',
+    bedrockModelId: 'm', documentAiModelId: 'm', aiToolTimeoutMs: 15_000,
+  } as any;
+  const PAGE = '# ร้านกาแฟ\nลาเต้ 1 65.00\nรวม 65.00';
+
+  /** Counts vision reads (image blocks) separately from text-only extraction calls. */
+  function stubReads() {
+    const original = BedrockRuntimeClient.prototype.send;
+    const calls: string[] = [];
+    (BedrockRuntimeClient.prototype as any).send = async (command: any) => {
+      const content = command.input.messages.at(-1).content;
+      const isRead = content.some((block: any) => block.image || block.document);
+      calls.push(isRead ? 'read' : 'extract');
+      if (isRead) return { output: { message: { content: [{ text: JSON.stringify({ natural_text: PAGE }) }] } } };
+      return { output: { message: { content: [{ text: JSON.stringify({
+        classification: {
+          contentKind: 'DOCUMENT', documentFamily: 'EXPENSE_EVIDENCE', documentKind: 'RECEIPT',
+          businessDirection: 'PURCHASE_EXPENSE', transactionState: 'PAID', confidence: 0.9,
+          evidenceRoles: [], evidenceSignals: ['รวม 65.00'], amountSignals: ['65.00'],
+          settlementSignals: ['รวม 65.00'], missingRequiredSignals: [], contradictionSignals: [],
+          requiresClarification: false,
+        },
+        fields: { vendorName: 'ร้านกาแฟ', grandTotalAmount: '65.00' },
+      }) }] } } };
+    };
+    return { calls, restore: () => { (BedrockRuntimeClient.prototype as any).send = original; } };
+  }
+
+  const request = (over: Record<string, unknown> = {}) => ({
+    requestId: 'req-reuse', companyId: 'company-1', userId: 'user-1',
+    attachment: { id: 'att-1', mimeType: 'image/jpeg', purpose: 'receipt', contentBase64: 'ZmFrZQ==' },
+    ...over,
+  });
+
+  it('skips its own read when the intake hands the page over, and still extracts the same fields', async () => {
+    const bedrock = stubReads();
+    try {
+      const controller = new LineAiInternalController(config, { execute: async () => { throw new Error('x'); } } as any);
+      const result = await controller.receiptOcr('secret', request({ documentText: PAGE }) as any);
+      assert.equal(result.status, 'ok');
+      assert.equal(result.fields?.grandTotalAmount, '65.00');
+      assert.deepEqual(bedrock.calls, ['extract'], 'the image must not be read a second time');
+    } finally { bedrock.restore(); }
+  });
+
+  it('reads the image itself when no intake read is forwarded (unchanged behaviour)', async () => {
+    const bedrock = stubReads();
+    try {
+      const controller = new LineAiInternalController(config, { execute: async () => { throw new Error('x'); } } as any);
+      const result = await controller.receiptOcr('secret', request() as any);
+      assert.equal(result.status, 'ok');
+      assert.deepEqual(bedrock.calls, ['read', 'extract']);
+    } finally { bedrock.restore(); }
+  });
+
+  it('falls back to reading when the forwarded text is too short to be a page', async () => {
+    const bedrock = stubReads();
+    try {
+      const controller = new LineAiInternalController(config, { execute: async () => { throw new Error('x'); } } as any);
+      const result = await controller.receiptOcr('secret', request({ documentText: 'ok' }) as any);
+      assert.equal(result.status, 'ok');
+      assert.deepEqual(bedrock.calls, ['read', 'extract'], 'a caption-length string is not a read');
+    } finally { bedrock.restore(); }
+  });
+
+  it('still cross-checks extraction against the forwarded page, not against itself', async () => {
+    const original = BedrockRuntimeClient.prototype.send;
+    (BedrockRuntimeClient.prototype as any).send = async () => ({ output: { message: { content: [{ text: JSON.stringify({
+      fields: { vendorName: 'ร้านกาแฟ', grandTotalAmount: '9999.00' },
+    }) }] } } });
+    try {
+      const controller = new LineAiInternalController(config, { execute: async () => { throw new Error('x'); } } as any);
+      const result = await controller.receiptOcr('secret', request({ documentText: PAGE }) as any);
+      assert.equal(result.fields?.grandTotalAmount, undefined, 'a total absent from the page cannot survive');
+      assert.ok(result.fields?.missingFields?.includes('grandTotalAmount'));
+    } finally { (BedrockRuntimeClient.prototype as any).send = original; }
   });
 });

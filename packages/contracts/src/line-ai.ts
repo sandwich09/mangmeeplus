@@ -233,6 +233,16 @@ export type ReceiptOcrLineItem = {
   amount: string;
   /** The row's printed per-unit price, when the document actually shows one. */
   unitPrice?: string;
+  /**
+   * This row's own VAT rate, present ONLY when the page marks tax per row (UAT survey 2026-08-28
+   * found 3 of 38 real receipts doing exactly this: a `V` suffix on taxed prices, `N` or `P` on
+   * exempt ones). Absent means "the document-level rate applies", which is what 25 of 38 receipts
+   * print and stays the existing behaviour — never a guess that a row is untaxed.
+   */
+  vatRate?: string;
+  /** Why this row carries no VAT, when the page says so. Mirrors ExpenseLine.vatTreatment and is
+   *  only ever accepted together with a zero `vatRate`. */
+  vatTreatment?: 'ZERO_RATED' | 'EXEMPT' | 'NON_VAT';
   /** One short exact span copied from stage-one OCR text. */
   evidenceSignal: string;
   confidence?: number;
@@ -355,6 +365,13 @@ export type ReceiptOcrRequest = {
   /** API-derived active company/global reporting categories; DATA, never instructions. */
   activeCategories?: Array<{ id: string; name: string }>;
   attachment: LineAiAttachment;
+  /**
+   * Stage-one text for this exact attachment, produced by the intake router's own read of the same
+   * image. When present and usable, receipt OCR skips its own read; the §13 value cross-check runs
+   * against this text exactly as it would against a fresh read, so extraction is still checked
+   * against what the page says rather than against itself.
+   */
+  documentText?: string;
 };
 
 export type ReceiptOcrResponse = {
@@ -752,6 +769,15 @@ export type LineIntakeRoutePlan = {
   reimbursementHints?: LineIntakeReimbursementHints;
   /** Advisory image/document classification; source modules decide the final route. */
   documentClassification?: BusinessDocumentClassification;
+  /**
+   * The page as stage-one text, present only when this intake carried an image and the model was
+   * asked for it. The intake router already reads the photo to classify it, so handing that read
+   * back lets receipt OCR skip reading the SAME image a second time — UAT 2026-08-28 measured
+   * 12.8s of intake followed by a 16.6s re-read of the identical photo. Advisory like every other
+   * field here: receipt OCR re-bounds it and falls back to its own read when it is absent or
+   * unusable, so an older gateway that never sends it keeps today's behaviour exactly.
+   */
+  documentText?: string;
   errorCode?: string;
   /** Ids from this request's `openClarifications` the model judged answered by this message.
    *  Membership-guarded at parse (⊆ the ids sent); the dispatcher consumes ONLY these. */

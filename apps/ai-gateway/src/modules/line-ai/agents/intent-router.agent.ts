@@ -17,6 +17,10 @@ import { parseBusinessDocumentClassification } from '../domain/logic/business-do
  *  ("itemised fuel quantity/litres not shown on this slip") into a code-only field and a perfectly
  *  read PTT fuel-card slip was discarded whole. Same failure shape as the evidenceRoles synonym
  *  bug fixed the day before — this time every sibling field is listed. */
+/** One receipt page of markdown. Matches the 4096-token stage-one read budget the OCR route uses,
+ *  so an intake transcription can stand in for it without truncating a long tax invoice. */
+const MAX_INTAKE_DOCUMENT_TEXT_CHARS = 12_000;
+
 const REASON_CODE_VOCABULARY = BUSINESS_DOCUMENT_REASON_CODES.map((code) => `"${code}"`).join('|');
 
 export const LINE_AI_THAI_BUSINESS_GLOSSARY = [
@@ -243,7 +247,8 @@ Return only compact JSON with this shape:
   "captureHints": { ... }, // only for EXPENSE_DOCUMENT_CAPTURE, see below
   "correctionHints": { ... }, // only for EXPENSE_CAPTURE_CORRECTION, see below${semanticFields}${advisorAnswerField}
   "resolvedClarificationIds": ["id from openClarifications this message answers"],
-  "documentClassification": { ... }${preparedPlanField}
+  "documentClassification": { ... },
+  "documentText": "images only: the page transcribed verbatim as markdown, exactly as you would read it aloud — every number, date and identifier copied character for character, tables kept as tables. Omit entirely when there is no image or the page is unreadable. This is a transcription, never a summary and never your interpretation: do not correct, round, translate or complete anything you cannot see."${preparedPlanField}
 }
 Route meanings:
 - EXPENSE_DOCUMENT_CAPTURE: expense evidence in any language or format: receipt, tax invoice, transfer/payment slip, handwritten cash bill, supplier bill, Shopee/Lazada/TikTok marketplace order screenshot, PDF/photo/file of an expense document, or a short text spend note such as "ค่ากาแฟ 65 บาท" (an amount plus a purpose implies a spend note even with new wording).${captureNotClaim}
@@ -896,6 +901,14 @@ function parseIntakePlan(
     if (raw['documentClassification'] !== undefined && !documentClassification) return null;
     if (intent === 'BUSINESS_DOCUMENT_REFERENCE' && !documentClassification) return null;
 
+    // The page this call already read, handed on so receipt OCR need not read the same image again.
+    // Bounded like every other model string here; anything empty or oversized is simply absent and
+    // the OCR route falls back to its own read.
+    const rawDocumentText = typeof raw['documentText'] === 'string' ? raw['documentText'].trim() : '';
+    const documentText = rawDocumentText && rawDocumentText.length <= MAX_INTAKE_DOCUMENT_TEXT_CHARS
+      ? rawDocumentText
+      : undefined;
+
     const resolvedClarificationIds = parseResolvedClarificationIds(raw['resolvedClarificationIds'], openClarifications);
     const correctionHints = intent === 'EXPENSE_CAPTURE_CORRECTION'
       ? parseCorrectionHints(raw['correctionHints'], recentCapturedExpenses)
@@ -930,6 +943,7 @@ function parseIntakePlan(
       ...(captureHints ? { captureHints } : {}),
       ...(correctionHints ? { correctionHints } : {}),
       ...(documentClassification ? { documentClassification } : {}),
+      ...(documentText ? { documentText } : {}),
       ...(resolvedClarificationIds ? { resolvedClarificationIds } : {}),
       ...semantic,
       ...(reimbursementHints ? { reimbursementHints } : {}),
