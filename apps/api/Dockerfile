@@ -57,6 +57,8 @@ COPY --from=build --chown=node:node /app /app
 RUN cp /etc/ssl/certs/ca-certificates.crt /tmp/ca-certificates.crt \
   && apt-get purge -y --auto-remove fontconfig fonts-noto-core \
   && apt-get purge -y openssl ca-certificates \
+  && apt-get purge -y --allow-remove-essential \
+    util-linux util-linux-extra bsdutils mount libblkid1 libmount1 libsmartcols1 libuuid1 e2fsprogs \
   && apt-get purge -y --allow-remove-essential perl-base \
   && install -m 0644 /tmp/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt \
   && test -s /etc/ssl/certs/ca-certificates.crt \
@@ -83,6 +85,14 @@ LABEL org.opencontainers.image.revision=$GIT_SHA \
 CMD ["sh", "-c", "echo 'release-task requires an explicit one-shot command' >&2; exit 64"]
 
 FROM system AS runner
+# sharp uses its bundled fontconfig; keep font files/config without distro disk-tool dependencies.
+RUN apt-get purge -y --auto-remove fontconfig fontconfig-config libfontconfig1 \
+  && apt-get purge -y --allow-remove-essential \
+    util-linux util-linux-extra bsdutils mount libblkid1 libmount1 libsmartcols1 libuuid1 e2fsprogs \
+  && apt-get purge -y --allow-remove-essential perl-base \
+  && mkdir -p /etc/fonts \
+  && printf '<?xml version="1.0"?>\n<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">\n<fontconfig><dir>/usr/share/fonts</dir><cachedir>/tmp/fontconfig</cachedir></fontconfig>\n' > /etc/fonts/fonts.conf \
+  && test -s /usr/share/fonts/truetype/noto/NotoSansThai-Regular.ttf
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=prod-deps --chown=node:node /app/node_modules ./node_modules
