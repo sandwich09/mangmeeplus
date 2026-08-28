@@ -1382,3 +1382,90 @@ describe('receipt OCR per-row VAT', () => {
     assert.equal(out?.fields?.lines?.[0]?.vatRate, undefined);
   });
 });
+
+/**
+ * Reusing the intake read (Owner 2026-08-28, speed work). The intake router already reads the photo
+ * to classify it; UAT measured 12.8s of intake followed by a 16.6s re-read of the identical image.
+ * When that read is forwarded, this route must skip its own — and must still fall back to reading
+ * whenever what arrives is not usable as a page.
+ */
+describe('receipt OCR reuses the intake read', () => {
+  const config = {
+    aiGatewayInternalSecret: 'secret', modelProvider: 'bedrock', bedrockRegion: 'ap-southeast-1',
+    bedrockModelId: 'm', documentAiModelId: 'm', aiToolTimeoutMs: 15_000,
+  } as any;
+  const PAGE = '# ร้านกาแฟ\nลาเต้ 1 65.00\nรวม 65.00';
+
+  /** Counts vision reads (image blocks) separately from text-only extraction calls. */
+  function stubReads() {
+    const original = BedrockRuntimeClient.prototype.send;
+    const calls: string[] = [];
+    (BedrockRuntimeClient.prototype as any).send = async (command: any) => {
+      const content = command.input.messages.at(-1).content;
+      const isRead = content.some((block: any) => block.image || block.document);
+      calls.push(isRead ? 'read' : 'extract');
+      if (isRead) return { output: { message: { content: [{ text: JSON.stringify({ natural_text: PAGE }) }] } } };
+      return { output: { message: { content: [{ text: JSON.stringify({
+        classification: {
+          contentKind: 'DOCUMENT', documentFamily: 'EXPENSE_EVIDENCE', documentKind: 'RECEIPT',
+          businessDirection: 'PURCHASE_EXPENSE', transactionState: 'PAID', confidence: 0.9,
+          evidenceRoles: [], evidenceSignals: ['รวม 65.00'], amountSignals: ['65.00'],
+          settlementSignals: ['รวม 65.00'], missingRequiredSignals: [], contradictionSignals: [],
+          requiresClarification: false,
+        },
+        fields: { vendorName: 'ร้านกาแฟ', grandTotalAmount: '65.00' },
+      }) }] } } };
+    };
+    return { calls, restore: () => { (BedrockRuntimeClient.prototype as any).send = original; } };
+  }
+
+  const request = (over: Record<string, unknown> = {}) => ({
+    requestId: 'req-reuse', companyId: 'company-1', userId: 'user-1',
+    attachment: { id: 'att-1', mimeType: 'image/jpeg', purpose: 'receipt', contentBase64: 'ZmFrZQ==' },
+    ...over,
+  });
+
+  it('skips its own read when the intake hands the page over, and still extracts the same fields', async () => {
+    const bedrock = stubReads();
+    try {
+      const controller = new LineAiInternalController(config, { execute: async () => { throw new Error('x'); } } as any);
+      const result = await controller.receiptOcr('secret', request({ documentText: PAGE }) as any);
+      assert.equal(result.status, 'ok');
+      assert.equal(result.fields?.grandTotalAmount, '65.00');
+      assert.deepEqual(bedrock.calls, ['extract'], 'the image must not be read a second time');
+    } finally { bedrock.restore(); }
+  });
+
+  it('reads the image itself when no intake read is forwarded (unchanged behaviour)', async () => {
+    const bedrock = stubReads();
+    try {
+      const controller = new LineAiInternalController(config, { execute: async () => { throw new Error('x'); } } as any);
+      const result = await controller.receiptOcr('secret', request() as any);
+      assert.equal(result.status, 'ok');
+      assert.deepEqual(bedrock.calls, ['read', 'extract']);
+    } finally { bedrock.restore(); }
+  });
+
+  it('falls back to reading when the forwarded text is too short to be a page', async () => {
+    const bedrock = stubReads();
+    try {
+      const controller = new LineAiInternalController(config, { execute: async () => { throw new Error('x'); } } as any);
+      const result = await controller.receiptOcr('secret', request({ documentText: 'ok' }) as any);
+      assert.equal(result.status, 'ok');
+      assert.deepEqual(bedrock.calls, ['read', 'extract'], 'a caption-length string is not a read');
+    } finally { bedrock.restore(); }
+  });
+
+  it('still cross-checks extraction against the forwarded page, not against itself', async () => {
+    const original = BedrockRuntimeClient.prototype.send;
+    (BedrockRuntimeClient.prototype as any).send = async () => ({ output: { message: { content: [{ text: JSON.stringify({
+      fields: { vendorName: 'ร้านกาแฟ', grandTotalAmount: '9999.00' },
+    }) }] } } });
+    try {
+      const controller = new LineAiInternalController(config, { execute: async () => { throw new Error('x'); } } as any);
+      const result = await controller.receiptOcr('secret', request({ documentText: PAGE }) as any);
+      assert.equal(result.fields?.grandTotalAmount, undefined, 'a total absent from the page cannot survive');
+      assert.ok(result.fields?.missingFields?.includes('grandTotalAmount'));
+    } finally { (BedrockRuntimeClient.prototype as any).send = original; }
+  });
+});

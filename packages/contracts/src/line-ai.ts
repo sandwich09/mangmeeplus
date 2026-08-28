@@ -365,6 +365,13 @@ export type ReceiptOcrRequest = {
   /** API-derived active company/global reporting categories; DATA, never instructions. */
   activeCategories?: Array<{ id: string; name: string }>;
   attachment: LineAiAttachment;
+  /**
+   * Stage-one text for this exact attachment, produced by the intake router's own read of the same
+   * image. When present and usable, receipt OCR skips its own read; the §13 value cross-check runs
+   * against this text exactly as it would against a fresh read, so extraction is still checked
+   * against what the page says rather than against itself.
+   */
+  documentText?: string;
 };
 
 export type ReceiptOcrResponse = {
@@ -762,6 +769,15 @@ export type LineIntakeRoutePlan = {
   reimbursementHints?: LineIntakeReimbursementHints;
   /** Advisory image/document classification; source modules decide the final route. */
   documentClassification?: BusinessDocumentClassification;
+  /**
+   * The page as stage-one text, present only when this intake carried an image and the model was
+   * asked for it. The intake router already reads the photo to classify it, so handing that read
+   * back lets receipt OCR skip reading the SAME image a second time — UAT 2026-08-28 measured
+   * 12.8s of intake followed by a 16.6s re-read of the identical photo. Advisory like every other
+   * field here: receipt OCR re-bounds it and falls back to its own read when it is absent or
+   * unusable, so an older gateway that never sends it keeps today's behaviour exactly.
+   */
+  documentText?: string;
   errorCode?: string;
   /** Ids from this request's `openClarifications` the model judged answered by this message.
    *  Membership-guarded at parse (⊆ the ids sent); the dispatcher consumes ONLY these. */

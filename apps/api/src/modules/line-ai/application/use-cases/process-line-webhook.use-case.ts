@@ -3819,6 +3819,9 @@ export class ProcessLineWebhookUseCase {
       media,
       routePlan.ocrAdmission === 'admitted',
       routePlan.ocrErrorCode,
+      // The router already read this exact photo; forwarding that read keeps OCR from reading it
+      // a second time (UAT 2026-08-28: a 16.6s duplicate read on every receipt).
+      routePlan.documentText,
     );
     const decision = decideLineBusinessDocument(routePlan, ocr, caption.length > 0);
     // Every LINE OCR attempt is recorded here, before the outcome branches. A failed read routes to
@@ -5049,6 +5052,7 @@ export class ProcessLineWebhookUseCase {
     media: { mimeType: string; contentBase64?: string },
     ocrAlreadyAdmitted = false,
     routeOcrErrorCode?: string,
+    intakeDocumentText?: string,
   ): Promise<ReceiptOcrPreflight> {
     if (!media.contentBase64 || (media.mimeType !== 'image/jpeg' && media.mimeType !== 'image/png' && media.mimeType !== 'application/pdf')) {
       return { status: 'NOT_REQUESTED', fields: null, classification: null };
@@ -5066,6 +5070,7 @@ export class ProcessLineWebhookUseCase {
         userId: ctx.userId,
         activeCategories,
         attachment: { id: attachmentId, mimeType: media.mimeType, purpose: 'receipt', contentBase64: media.contentBase64 },
+        ...(intakeDocumentText ? { documentText: intakeDocumentText } : {}),
         // The lease can now be held briefly by a chat turn that slipped into a gap between this
         // media turn's model calls (busy-wait lane) — wait it out instead of failing the OCR.
       }, { ocrAlreadyAdmitted, busyWaitDeadlineMs: Date.now() + LINE_AI_LIVE_BUSY_WAIT_MS });
