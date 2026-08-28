@@ -30,24 +30,18 @@ const PARITY_PAIRS: Array<{ templateKey: string; systemRole: string }> = [
 // docs/specs/finance-accounting-gaps-spec.md. New drift beyond this list fails the test.
 const KNOWN_PRESET_EXTRAS: Record<string, string[]> = {
   'tpl.x.finance': [
-    // pack.core.basics is auto-applied to every compiled role; FINANCE lacks these self-service keys.
-    'account.identity.link', 'account.identity.unlink',
     // pack.procurement.ap_manage — FINANCE cannot cancel/void purchase orders.
     'procurement.purchase_order.manage',
     // pack.tax.prepare — FINANCE lacks this; among system roles it is ACCOUNTANT/OWNER-level.
     'tax.adjustment.create',
   ],
   'tpl.x.accounting': [
-    // pack.core.basics is auto-applied to every compiled role; ACCOUNTANT lacks these self-service keys.
-    'account.identity.link', 'account.identity.unlink',
     // pack.bank.reconcile_manage — ACCOUNTANT cannot void statement imports (FINANCE-side key).
     'bank.statement.void',
     // pack.expense.review — the system ACCOUNTANT is read/export-only on expenses.
     'expense.ai.verify', 'expense.category.manage', 'expense.duplicate.resolve', 'expense.review',
   ],
   'tpl.x.manager': [
-    // pack.core.basics is auto-applied to every compiled role; MANAGER lacks these self-service keys.
-    'account.identity.link', 'account.identity.unlink',
     // pack.quotation.approve — MANAGER approves quotations but cannot void them.
     'accounting.quotation.void',
     // pack.crm.manage — MANAGER lacks archive/pipeline-configure.

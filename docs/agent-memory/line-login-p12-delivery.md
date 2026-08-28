@@ -1,6 +1,7 @@
 # Agent Memory: line-login-p12-delivery
 
-Status: P12-0 merged (PR #318, develop 749ced8b); P12-1 implemented (web OAuth+PKCE LINE login) — pending review/merge; P12-2..P12-3 not started
+Status: P12-0 + P12-1 **LIVE บน UAT** (2026-08-28: PR #318/#320/#321/#322 → develop; #328 → main; flag PR #333/#334; UAT run 33190617504 success; live-verified: availability true, authorize redirect + PKCE S256 + txn cookie ถูกต้อง); P12-2 (link-after-password) in progress; P12-3 not started
+หมายเหตุ 2026-08-29: หน้า settings/security ถูก feature-disabled (owner 2026-08-05) และไม่มี UI เชื่อม LINE — ข้อความ link-required ของ P12-1 ชี้ทางผิด → P12-2 แทนที่ด้วย flow จริง (password ครั้งเดียว → OAuth รอบสั้น → endpoint ใหม่ `POST auth/line/link/oauth` ที่ใช้ LinkLineIdentityUseCase + nonce; ไม่มี pending-token table)
 Owner: MangmeeDev
 Scope: P12 LINE Login/Link/QR full journey ตาม [spec รวม](../specs/mangmee-line-login-link-journey-spec-th.md) + [four-lane P12](../plans/mangmee-four-lane-gap-closure-plan-th.md#p12--line-loginlinkqr); เป้าหมาย Owner = "พร้อมทั้งหมด": ปุ่ม LINE login (mobile redirect), desktop QR, deep-link handoff จากแชต
 Decisions:

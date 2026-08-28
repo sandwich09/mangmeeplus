@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { internalApiV1Base } from '@/common/api/internal-api-base';
+import { ACCESS_TOKEN_COOKIE, joinCookieChunks } from '@/common/auth/auth-cookies.constants';
 import { generateCsrfToken, setAuthCookies } from '@/common/auth/auth-cookies.server';
 import {
   decodeLineLoginTxn,
@@ -38,6 +39,29 @@ export async function GET(request: NextRequest) {
   // No transaction, no code, or a state that does not match the one this browser started with:
   // the callback did not come from a login this session began.
   if (!txn || !code || !state || state !== txn.state) return redirectToLogin('failed');
+
+  // Two lanes end here. With an active session this is the link-after-password round trip (P12-2):
+  // the user just signed in with a password, so the code is spent by an authenticated API call that
+  // links the nonce-verified LINE identity to that user, and the session cookies stay untouched.
+  // Without a session it is a plain LINE login and the public exchange below issues the tokens.
+  const accessToken = joinCookieChunks((name) => request.cookies.get(name)?.value, ACCESS_TOKEN_COOKIE);
+  if (accessToken) {
+    let linkRes: Response;
+    try {
+      linkRes = await fetch(`${internalApiV1Base()}/auth/line/link/oauth`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ code, codeVerifier: txn.verifier, nonce: txn.nonce }),
+        cache: 'no-store',
+      });
+    } catch {
+      return redirectToLogin('link-failed');
+    }
+    // No fall-through to the public exchange: the authorization code is single-use and already
+    // spent, so a retry there can only fail again — with a less accurate reason for the user.
+    if (!linkRes.ok) return redirectToLogin('link-failed');
+    return clearTxn(NextResponse.redirect(new URL(sanitizeReturnTo(txn.returnTo) ?? '/', origin)));
+  }
 
   let apiRes: Response;
   try {

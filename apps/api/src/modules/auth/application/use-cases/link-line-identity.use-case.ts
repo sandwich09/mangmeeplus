@@ -15,7 +15,7 @@ export class LinkLineIdentityUseCase {
     @Optional() @Inject(AuditService) private readonly audit: AuditService | null = null,
   ) {}
 
-  async execute(input: { userId: string; idToken: string; requestId: string; companyId?: string; allowReassign?: boolean }): Promise<{ linked: true; providerUserId: string }> {
+  async execute(input: { userId: string; idToken: string; requestId: string; companyId?: string; allowReassign?: boolean; expectedNonce?: string }): Promise<{ linked: true; providerUserId: string }> {
     return observeCustomerJourney(
       this.audit,
       {
@@ -27,9 +27,14 @@ export class LinkLineIdentityUseCase {
     );
   }
 
-  private async link(input: { userId: string; idToken: string; requestId: string; companyId?: string; allowReassign?: boolean }): Promise<{ linked: true; providerUserId: string }> {
-    const { userId, idToken, requestId, companyId, allowReassign = false } = input;
-    const { subject: lineUserId } = await this.lineVerifier.verify(idToken);
+  private async link(input: { userId: string; idToken: string; requestId: string; companyId?: string; allowReassign?: boolean; expectedNonce?: string }): Promise<{ linked: true; providerUserId: string }> {
+    const { userId, idToken, requestId, companyId, allowReassign = false, expectedNonce } = input;
+    // The web OAuth lane (P12-2) supplies the nonce it minted, so the ID token must prove it came
+    // from that round trip; the LIFF/link surfaces pass none and stay byte-exact.
+    const { subject: lineUserId } = await this.lineVerifier.verify(
+      idToken,
+      expectedNonce ? { nonce: expectedNonce } : undefined,
+    );
     // Messaging user ids are channel-scoped; LINE Login channel only verifies identity.
     const canonicalChannelId = this.config.lineMessagingChannelId ?? this.config.lineLoginChannelId;
     if (!canonicalChannelId && this.config.isProduction) {
