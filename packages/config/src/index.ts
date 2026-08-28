@@ -379,7 +379,7 @@ export const apiConfigSchema = baseConfigSchema.extend({
     )
     .default(''),
   APPROVED_AI_MODEL_IDS: z.string().default(DEFAULT_APPROVED_AI_MODEL_IDS),
-  APPROVED_AI_PROVIDERS: z.string().default('bedrock,openai,typhoon'),
+  APPROVED_AI_PROVIDERS: z.string().default('bedrock,openai'),
   APPROVED_AI_REGIONS: z.string().default('ap-southeast-1'),
   // envBoolean, not z.coerce.boolean(): coercion makes EVERY non-empty string true, so
   // an operator writing `=false` (as .env.example ships) would silently switch the
@@ -393,7 +393,7 @@ export const apiConfigSchema = baseConfigSchema.extend({
 
 export const aiGatewayConfigSchema = baseConfigSchema.extend({
   APPROVED_AI_MODEL_IDS: z.string().default(DEFAULT_APPROVED_AI_MODEL_IDS),
-  APPROVED_AI_PROVIDERS: z.string().default('bedrock,openai,typhoon'),
+  APPROVED_AI_PROVIDERS: z.string().default('bedrock,openai'),
   APPROVED_AI_REGIONS: z.string().default('ap-southeast-1'),
   // envBoolean, not z.coerce.boolean(): coercion makes EVERY non-empty string true, so
   // an operator writing `=false` (as .env.example ships) would silently switch the
@@ -410,9 +410,6 @@ export const aiGatewayConfigSchema = baseConfigSchema.extend({
   // Owner decision 2026-07-14: document understanding (receipt/bank-statement stage 2)
   // may use a stronger model than chat; unset falls back to BEDROCK_MODEL_ID.
   DOCUMENT_AI_MODEL_ID: z.string().optional(),
-  // Item 09 follow-up: Typhoon OCR is the single receipt/tax-invoice OCR provider.
-  TYPHOON_OCR_API_KEY: z.string().optional(),
-  TYPHOON_PROCESSING_REGION: z.string().optional(),
   AI_GATEWAY_ENABLED: envBoolean.default(false),
   AI_AGENT_REGISTRY_ENABLED: envBoolean.default(false),
   AI_TOOL_POLICY_ENFORCED: envBoolean.default(true),
@@ -627,7 +624,6 @@ export function validateProductionConfig(config: Record<string, unknown>): void 
     'LINE_MESSAGING_CHANNEL_SECRET',
     'LINE_MESSAGING_CHANNEL_ACCESS_TOKEN',
     'OPENAI_API_KEY',
-    'TYPHOON_OCR_API_KEY',
     'S3_SECRET_ACCESS_KEY',
   ]) {
     checkSecret(key, 'third-party');
@@ -865,15 +861,6 @@ export function validateProductionConfig(config: Record<string, unknown>): void 
     }
     if (str(config['DOCUMENT_AI_MODEL_ID']) && !approvedModels.includes(str(config['DOCUMENT_AI_MODEL_ID']))) {
       errors.push('DOCUMENT_AI_MODEL_ID is not approved');
-    }
-    if (!missing('TYPHOON_OCR_API_KEY') && missing('TYPHOON_PROCESSING_REGION')) {
-      errors.push('TYPHOON_PROCESSING_REGION is required when Typhoon OCR is enabled');
-    }
-    if (!missing('TYPHOON_OCR_API_KEY') && !approvedProviders.includes('typhoon')) {
-      errors.push('Typhoon OCR provider is not approved');
-    }
-    if (str(config['TYPHOON_PROCESSING_REGION']) && !approvedRegions.includes(str(config['TYPHOON_PROCESSING_REGION']))) {
-      errors.push('Typhoon OCR processing region is not approved');
     }
     if (str(config['LINE_AI_AGENT_RUNTIME']) === 'agentcore') {
       for (const key of ['AGENTCORE_REGION', 'AGENTCORE_RUNTIME_ARN', 'AGENTCORE_RUNTIME_QUALIFIER',

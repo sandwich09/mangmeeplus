@@ -349,12 +349,9 @@ export class LineAiInternalController {
       rows,
       modelId: extractionModelId ?? configuredModelId(this.config),
       modelLineage: [
-        {
-          provider: 'typhoon',
-          modelId: 'typhoon-ocr',
-          region: this.config.typhoonProcessingRegion ?? 'not-configured',
-          purpose: 'bank_statement_ocr_read',
-        },
+        // The read is the configured vision model now (Owner 2026-08-28), so the lineage must say
+        // so — a stored record claiming a provider we never called is worse than no record.
+        modelLineage(this.config, 'bank_statement_ocr_read', statementReaderModelId),
         modelLineage(this.config, 'bank_statement_extract', extractionModelId),
       ],
     };

@@ -1720,7 +1720,6 @@ ai_container_json() {
     --arg globalProfileApproved "${AI_GLOBAL_INFERENCE_PROFILE_APPROVED:-}" \
     --arg globalProfileApprovalRef "${AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF:-}" \
     --arg openAiProcessingRegion "${OPENAI_PROCESSING_REGION:-}" \
-    --arg typhoonProcessingRegion "${TYPHOON_PROCESSING_REGION:-}" \
     --arg bedrockRegion "${BEDROCK_REGION:-}" \
     --arg bedrockModelId "${BEDROCK_MODEL_ID:-}" \
     --arg documentAiModelId "${DOCUMENT_AI_MODEL_ID:-}" \
@@ -1729,7 +1728,6 @@ ai_container_json() {
     --arg lineAiPreparedSimpleReadEnabled "$SERVING_LINE_AI_PREPARED_SIMPLE_READ_ENABLED" \
     --arg lineAiDeterministicResponseFamilies "$SERVING_LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES" \
     --arg aiSecret "$(secret_arn "${SECRET_PREFIX}/ai-gateway-internal-secret")" \
-    --arg typhoonSecret "$(secret_arn "${SECRET_PREFIX}/typhoon-ocr-api-key" 2>/dev/null || true)" \
     --arg jwtSecret "$(secret_arn "${SECRET_PREFIX}/watchdog-jwt-secret")" \
     --arg publicWebUrl "$public_web_url" \
     --arg jwtAudience "watchdog-bms-${DEPLOY_ENV}" \
@@ -1758,7 +1756,6 @@ ai_container_json() {
         {name:"AI_GLOBAL_INFERENCE_PROFILE_APPROVED", value:$globalProfileApproved},
         {name:"AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF", value:$globalProfileApprovalRef},
         {name:"OPENAI_PROCESSING_REGION", value:$openAiProcessingRegion},
-        {name:"TYPHOON_PROCESSING_REGION", value:$typhoonProcessingRegion},
         {name:"BEDROCK_REGION", value:$bedrockRegion},
         {name:"BEDROCK_MODEL_ID", value:$bedrockModelId},
         {name:"DOCUMENT_AI_MODEL_ID", value:$documentAiModelId},
@@ -1797,7 +1794,6 @@ ai_container_json() {
       ] | map(select(.value != ""))),
       secrets: ([
         {name:"AI_GATEWAY_INTERNAL_SECRET", valueFrom:$aiSecret},
-        {name:"TYPHOON_OCR_API_KEY", valueFrom:$typhoonSecret},
         {name:"WATCHDOG_JWT_SECRET_ARN", valueFrom:$jwtSecret}
       ] | map(select(.valueFrom != "")))
     }'
@@ -1882,36 +1878,6 @@ deploy_ai_gateway() {
   ensure_cluster
   ensure_ai_security_group
   ensure_log_group "/ecs/${RESOURCE_PREFIX}-ai-gateway"
-
-  # Typhoon OCR is the single receipt OCR provider (item 09); ship the key as a prod secret when present.
-  if [ -n "${TYPHOON_OCR_API_KEY:-}" ]; then
-    put_secret "${SECRET_PREFIX}/typhoon-ocr-api-key" "$TYPHOON_OCR_API_KEY"
-  fi
-
-  # M-05: the container carries TYPHOON_OCR_API_KEY whenever that secret exists, and that alone
-  # switches on the production Typhoon rules. The companion values are plain env vars, so an unset
-  # one is dropped by map(select(.value != "")) and only surfaces as a boot failure mid-canary —
-  # after the rollout has already started. Report every gap in one pass so the operator does not
-  # burn one deploy per missing value.
-  if [ -n "$(secret_arn "${SECRET_PREFIX}/typhoon-ocr-api-key" 2>/dev/null || true)" ]; then
-    local typhoon_gaps=""
-    local approved_providers=",${APPROVED_AI_PROVIDERS// /},"
-    local approved_regions=",${APPROVED_AI_REGIONS// /},"
-    if [ -z "${TYPHOON_PROCESSING_REGION:-}" ]; then
-      typhoon_gaps="${typhoon_gaps}  - TYPHOON_PROCESSING_REGION is required when Typhoon OCR is enabled"$'\n'
-    elif [ "${approved_regions#*,${TYPHOON_PROCESSING_REGION},}" = "$approved_regions" ]; then
-      typhoon_gaps="${typhoon_gaps}  - APPROVED_AI_REGIONS must include TYPHOON_PROCESSING_REGION"$'\n'
-    fi
-    if [ "${approved_providers#*,typhoon,}" = "$approved_providers" ]; then
-      typhoon_gaps="${typhoon_gaps}  - APPROVED_AI_PROVIDERS must include 'typhoon'"$'\n'
-    fi
-    if [ -n "$typhoon_gaps" ]; then
-      echo "ERROR: the Typhoon OCR secret exists, so the AI Gateway will fail production config validation:" >&2
-      printf '%s' "$typhoon_gaps" >&2
-      echo "Set these (GitHub repo variables / deploy env), or delete ${SECRET_PREFIX}/typhoon-ocr-api-key to disable Typhoon OCR." >&2
-      exit 1
-    fi
-  fi
 
   local repo="watchdog-bms-ai-gateway"
   local image="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${repo}:ecs-${SHA}"

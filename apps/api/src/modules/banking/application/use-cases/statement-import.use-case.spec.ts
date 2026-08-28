@@ -71,7 +71,7 @@ describe('ExtractStatementFileUseCase', () => {
   function makeUc(overrides: { pdf?: unknown; ai?: unknown; cfg?: unknown; scanner?: unknown } = {}) {
     const repo = makeRepo();
     const pdf = overrides.pdf ?? { extractRows: mock.fn(async () => ({ status: 'ok', rows: [{ postedDate: '2026-07-01', credit: '10.00' }] })) };
-    const ai = overrides.ai ?? { extract: mock.fn(async () => ({ status: 'ok', rows: [{ postedDate: '2026-07-01', credit: '10.00', confidence: 0.9 }], modelId: 'typhoon-ocr' })) };
+    const ai = overrides.ai ?? { extract: mock.fn(async () => ({ status: 'ok', rows: [{ postedDate: '2026-07-01', credit: '10.00', confidence: 0.9 }], modelId: 'global.anthropic.claude-sonnet-4-6' })) };
     const cfg = overrides.cfg ?? config;
     const scanner = overrides.scanner ?? { assertClean: mock.fn(async () => {}) };
     return { uc: new ExtractStatementFileUseCase(repo as any, pdf as any, ai as any, cfg as any, audit as any, scanner as any), pdf, ai, scanner };
@@ -111,15 +111,15 @@ describe('ExtractStatementFileUseCase', () => {
 
   it('routes images through the AI gateway: canonical keys, clamped confidence, model id', async () => {
     const modelLineage = [{
-      provider: 'typhoon',
-      modelId: 'typhoon-ocr',
-      region: 'thailand',
+      provider: 'bedrock',
+      modelId: 'global.anthropic.claude-sonnet-4-6',
+      region: 'ap-southeast-1',
       purpose: 'bank_statement_extract',
     }];
     const ai = {
       extract: mock.fn(async () => ({
         status: 'ok',
-        modelId: 'typhoon-ocr',
+        modelId: 'global.anthropic.claude-sonnet-4-6',
         modelLineage,
         rows: [
           { postedDate: '2026-07-01', description: 'รับโอน', credit: '1500.00', balance: '11500.00', confidence: 0.95 },
@@ -130,7 +130,7 @@ describe('ExtractStatementFileUseCase', () => {
     const { uc } = makeUc({ ai });
     const result = await uc.execute(importCtx, { bankAccountId: 'ba-1', fileBase64: imageBase64, mimeType: 'image/jpeg', fileName: 'statement.jpg' });
     assert.equal(result.sourceKind, 'ocr');
-    assert.equal(result.extractionModelId, 'typhoon-ocr');
+    assert.equal(result.extractionModelId, 'global.anthropic.claude-sonnet-4-6');
     assert.deepEqual(result.extractionModelLineage, modelLineage);
     assert.deepEqual(result.rows[0], { postedDate: '2026-07-01', description: 'รับโอน', credit: '1500.00', balance: '11500.00' });
     assert.deepEqual(result.rowConfidences, [0.95, 1]);
@@ -262,10 +262,10 @@ describe('CommitStatementImportUseCase provenance', () => {
       rows: [{ date: '2026-07-01', description: 'x', credit: '10.00' }],
       provenance: {
         sourceKind: 'ocr',
-        extractionModelId: 'typhoon-ocr',
+        extractionModelId: 'global.anthropic.claude-sonnet-4-6',
         extractionModelLineage: [{
           provider: 'typhoon',
-          modelId: 'typhoon-ocr',
+          modelId: 'global.anthropic.claude-sonnet-4-6',
           region: 'thailand',
           purpose: 'bank_statement_extract',
         }],
@@ -275,10 +275,10 @@ describe('CommitStatementImportUseCase provenance', () => {
     const created = (repo.createStatementImport as any).mock.calls[0].arguments[0];
     assert.deepEqual(created.mappingJson, {
       sourceKind: 'ocr',
-      extractionModelId: 'typhoon-ocr',
+      extractionModelId: 'global.anthropic.claude-sonnet-4-6',
       extractionModelLineage: [{
         provider: 'typhoon',
-        modelId: 'typhoon-ocr',
+        modelId: 'global.anthropic.claude-sonnet-4-6',
         region: 'thailand',
         purpose: 'bank_statement_extract',
       }],
