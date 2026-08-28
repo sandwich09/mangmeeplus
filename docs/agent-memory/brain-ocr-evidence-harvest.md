@@ -86,6 +86,24 @@ Decisions (Owner 2026-08-27 — ตอบ 4 ข้อของ strategy discussi
 - แก้ 2 จุดคู่กัน (PR #314): gateway = attachment → `DOCUMENT_OCR_TIMEOUT_MS` (text-only คงงบแชท 15s ไม่ทำให้แชทช้าลง); api = `LINE_INTAKE_MEDIA_TIMEOUT_MS` 55s เฉพาะ media path (เดิม 30s จะตัดก่อน gateway 45s ทำให้ fix ฝั่ง gateway ไร้ผล)
 - Verify: gateway suite **990/990**, api client/webhook/dispatch เขียว, typecheck ทั้ง 2 app สะอาด; เทสใหม่ 2 เคสใช้ fake timers พิสูจน์ทั้งสองทิศ (มีรูป: ไม่ตายที่ 15.1s แต่ตายในงบ 45s; ข้อความล้วน: ยังตายที่ 15s)
 
+## Release ledger รอบใหญ่ 2026-08-28 00:0x (Owner: "เอาของเข้า main และ deploy UAT + เตรียม script rich menu")
+
+- PR #316 (develop→main, merge `a5139ebe`) บรรทุก 7 PR: #309 เมนู ver2 backend, #310 ปุ่ม copy รหัส, #311 ไฟล์ภาพ, #312 rapid-fire 3 ข้อ, #313 สาขาตาม user, #314 timeout รูป, #315 reason-code vocabulary — **บวกงานที่ Owner push ตรงเข้า develop** (web branch-access view, notification actions, document VAT atomic, warehouse option, check-bill recovery, employee draft deletion + test/docs) ทั้งหมดติดไปด้วยเพราะ deploy ใช้ปลาย develop ไม่ใช่เฉพาะ PR
+- UAT run **33094125934 SUCCESS** candidate `f852acf7702a3fd96ddf13183776486fa7111736`; verified: digest 3 service ตรง, `/v1/health` ok, `LINE_AI_ADVISOR_MODE=social` + debounce 1000 + loading + ledger, AgentCore artifact redeploy qualifier `candidate_uat_f852acf7702a_5a6b2bcd` (สำคัญ: fix timeout+reason-code อยู่ใน gateway/artifact ต้อง redeploy ถึงมีผล)
+- **บทเรียน protocol ที่ยืนยันซ้ำ**: `release_ref` ต้องเป็น commit บน **develop** เสมอ (main = controller เท่านั้น) — Owner ถามยืนยันเรื่องนี้และเข้าใจตรงกันแล้ว
+- Script เมนู LINE: PR #317 `scripts/line-oa/apply-rich-menu.mjs` (merge เข้า develop หลัง deploy 2 นาที — ไม่ต้อง deploy เพราะรัน local); UAT rollback target บันทึกแล้ว `richmenu-a32a4477ff5d6831ecc8e17cf34c6b40` (Ver1, เมนูเดียวบน UAT OA)
+- ค้าง: stage + activate เมนู ver2 (รอ Owner ยืนยันทีละขั้น), Owner retest ทุกเคสที่แก้
+
+## ใบเสร็จอ่านไม่ได้ 07:46 (2026-08-28) → Typhoon OCR ล่ม → เปลี่ยนไปใช้ vision AI
+
+- อาการ: ใบเสร็จง่าย ๆ ภาพชัด ส่ง 07:46:22 → ตอบกลับเป็นคำถามว่าเอกสารอะไร
+- log: intake **ROUTED EXPENSE_DOCUMENT_CAPTURE 0.97 ใน 12.6s** (fix timeout ทำงาน, รูปชัดจริง) → เงียบ 45s → `ai.usage.absent sourceRoute=receipt-ocr` → clarification; gateway ไม่มี log OCR เลย
+- Root cause = **Typhoon OCR image endpoint แขวน** พิสูจน์ตรงกับผู้ให้บริการ: `GET /v1/models` 200 ใน 0.21s, chat ข้อความล้วน 200 ใน 0.26s, ส่งใบเสร็จ 91KB **แขวน 60s**, ส่งรูป **1x1 px (67 bytes) แขวน 40s** → ไม่ใช่ขนาด/ความชัด/คีย์/โควตา แต่เป็น outage ฝั่งเขา; DOCUMENT_OCR_TIMEOUT_MS=45s คือ 45 วิที่เห็นใน log
+- ผลกระทบ: ใบเสร็จ**รูปถ่ายทุกใบ**อ่านไม่ได้ (Owner decision 2026-07-03 = Typhoon ตัวเดียว ไม่มี fallback); PDF ไม่กระทบ (Bedrock)
+- **Owner สั่ง 2026-08-28: "อยากใช้ vision ai"** → PR #320: ถอด Typhoon ออกทั้ง receipt OCR และ bank statement, ใช้ตัวอ่านกลาง `readDocumentText` (vision) ตัวเดียวกับที่ PDF/image-reread ใช้อยู่แล้ว — prompt/parser/cross-check เดิมทุกอย่าง (สัญญา `{"natural_text"}` คงเดิม); PDF ยังบังคับ Bedrock (document block), รูปใช้ provider ที่ config ไว้ (bedrock/openai รองรับ vision ทั้งคู่)
+- ผลพลอยได้: ลบ external dependency ที่ล้มแล้วทำให้ทั้งฟีเจอร์ตาย, รวม 2 เส้นทางอ่านเหลือ 1
+- Verify: gateway suite **994/994** (rewrite 10 เคสที่ยึดสัญญา Typhoon ให้ตรงสัญญา vision — ไม่ปิดทิ้ง), typecheck สะอาด
+
 ## สลิปรูดบัตร PTT อ่านไม่ได้ 23:18 → reason-code vocabulary (Owner สั่งแก้ทั้ง 2 ทาง 2026-08-27 ดึก)
 
 - **ไม่ใช่ timeout** (ต่างจากบิลน้ำมัน 23:04/23:07): log 23:18:28 = `ok:true durationMs 13130` แต่ plan = UNAVAILABLE/UNSUPPORTED/confidence 0 → `ROUTER_JSON_PARSE_FAILED`

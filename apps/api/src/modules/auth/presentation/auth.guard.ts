@@ -50,6 +50,8 @@ const CLOSED_PUBLIC_PATHS = new Set([
   '/v1/auth/platform-access',
   '/v1/auth/login-channels',
   '/v1/auth/password/login',
+  // P12-1: LINE web login is a login endpoint — same gate posture as password login.
+  '/v1/auth/line/login/callback',
   '/v1/auth/session/refresh',
 ]);
 

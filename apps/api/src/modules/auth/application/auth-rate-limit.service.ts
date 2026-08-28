@@ -63,6 +63,18 @@ export class AuthRateLimitService {
     );
   }
 
+  // P12-1: the web LINE login callback presents an unauthenticated one-time code, so the only
+  // key available before identity is resolved is the caller IP — same fail-closed shape as
+  // the password-reset confirm bucket.
+  async assertLineLoginCallbackAllowed(ipAddress: string): Promise<void> {
+    await this.assertWithinLimit(
+      'line-login-callback-ip',
+      ipAddress,
+      this.config.lineLoginCallbackMaxPerIp,
+      this.config.lineLoginCallbackWindowSeconds,
+    );
+  }
+
   async assertCustomerRegisterAllowed(ipAddress: string, lineChannelId: string): Promise<void> {
     await this.assertWithinLimit(
       'customer-register-ip-channel',

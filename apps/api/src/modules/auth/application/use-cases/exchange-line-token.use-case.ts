@@ -1,6 +1,7 @@
-import { ForbiddenException, Inject, Injectable, Optional } from '@nestjs/common';
+import { ForbiddenException, Inject, Injectable, Optional, ServiceUnavailableException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../../../../common/database/prisma.service';
+import { AppConfigService } from '../../../../common/config/app-config.service';
 import { LineLoginVerifierAdapter } from '../../infrastructure/line-login-verifier.adapter';
 import { IssueTokenUseCase, type AuthTokensResult } from './issue-token.use-case';
 import { AuditService } from '../../../audit/application/audit.service';
@@ -16,28 +17,29 @@ export class ExchangeLineTokenUseCase {
   constructor(
     private readonly lineVerifier: LineLoginVerifierAdapter,
     private readonly prisma: PrismaService,
+    private readonly config: AppConfigService,
     private readonly issueToken: IssueTokenUseCase,
     @Optional() @Inject(AuditService) private readonly audit: AuditService | null = null,
   ) {}
 
   // ponytail: channelId from request body is accepted for future multi-channel support,
   //           but LINE token is verified using the server-configured channelId via LineLoginVerifierAdapter
-  async execute(idToken: string, _channelId: string): Promise<ExchangeLineTokenResult> {
+  async execute(idToken: string, _channelId: string, opts?: { expectedNonce?: string }): Promise<ExchangeLineTokenResult> {
     const requestId = randomUUID();
     return observeCustomerJourney(
       this.audit,
       { key: 'line-login', requestId, targetType: 'external_identity' },
-      () => this.exchange(idToken, requestId),
+      () => this.exchange(idToken, requestId, opts?.expectedNonce),
       (result) => result.linked
         ? { outcome: 'linked' }
         : { outcome: 'unlinked', failureClass: 'identity_unlinked' },
     );
   }
 
-  private async exchange(idToken: string, requestId: string): Promise<ExchangeLineTokenResult> {
+  private async exchange(idToken: string, requestId: string, expectedNonce?: string): Promise<ExchangeLineTokenResult> {
     let lineUserId: string;
     try {
-      const verified = await this.lineVerifier.verify(idToken);
+      const verified = await this.lineVerifier.verify(idToken, expectedNonce ? { nonce: expectedNonce } : undefined);
       lineUserId = verified.subject;
     } catch (error) {
       void this.audit?.log({
@@ -51,10 +53,7 @@ export class ExchangeLineTokenUseCase {
       throw error;
     }
 
-    const identity = await this.prisma.client.externalIdentity.findFirst({
-      where: { provider: 'LINE', providerUserId: lineUserId, status: 'ACTIVE' },
-      include: { user: true },
-    });
+    const identity = await this.resolveActiveIdentity(lineUserId);
 
     if (!identity) {
       void this.audit?.log({
@@ -85,5 +84,34 @@ export class ExchangeLineTokenUseCase {
 
     const tokens = await this.issueToken.execute(user.id, 'line');
     return { linked: true, ...tokens };
+  }
+
+  /**
+   * LINE userIds are channel-scoped, so resolve against the canonical
+   * messaging channel first (P12.1). Identities linked before
+   * `providerChannelId` was recorded fall back to the channel-agnostic query
+   * with a warn — same shape as webhook/notification resolution — until the
+   * migration backfill lands.
+   */
+  private async resolveActiveIdentity(lineUserId: string) {
+    const where = { provider: 'LINE' as const, providerUserId: lineUserId, status: 'ACTIVE' as const };
+    const canonicalChannelId = this.config.lineMessagingChannelId;
+    if (!canonicalChannelId) {
+      if (this.config.isProduction) {
+        // P12.1: never resolve identities channel-agnostically in production.
+        throw new ServiceUnavailableException('LINE channel configuration is missing.');
+      }
+      return this.prisma.client.externalIdentity.findFirst({ where, include: { user: true } });
+    }
+    const scoped = await this.prisma.client.externalIdentity.findFirst({
+      where: { ...where, providerChannelId: canonicalChannelId },
+      include: { user: true },
+    });
+    if (scoped) return scoped;
+    const fallback = await this.prisma.client.externalIdentity.findFirst({ where, include: { user: true } });
+    if (fallback) {
+      console.warn(`[line-exchange] line_identity_channel_agnostic_fallback identityId=${fallback.id}`);
+    }
+    return fallback;
   }
 }

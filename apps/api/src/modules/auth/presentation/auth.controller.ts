@@ -40,6 +40,7 @@ import { emitSecurityEvent, SECURITY_EVENT } from '../../../common/logger/securi
 import { PrismaService } from '../../../common/database/prisma.service';
 import { IssueTokenUseCase } from '../application/use-cases/issue-token.use-case';
 import { ExchangeLineTokenUseCase } from '../application/use-cases/exchange-line-token.use-case';
+import { LineLoginCallbackUseCase } from '../application/use-cases/line-login-callback.use-case';
 import { RefreshSessionUseCase } from '../application/use-cases/refresh-session.use-case';
 import { LogoutUseCase } from '../application/use-cases/logout.use-case';
 import { RevokeOtherSessionsUseCase } from '../application/use-cases/revoke-other-sessions.use-case';
@@ -70,6 +71,12 @@ export class EmployeeLineLinkDto {
 export class LineExchangeDto {
   @IsString() @IsNotEmpty() @MaxLength(LINE_ID_TOKEN_MAX_LENGTH) @Matches(LINE_ID_TOKEN_PATTERN) idToken!: string;
   @IsString() @IsNotEmpty() @MaxLength(128) @Matches(LINE_CHANNEL_ID_PATTERN) channelId!: string;
+}
+
+class LineLoginCallbackDto {
+  @IsString() @Matches(/^[\w.-]{10,512}$/) code!: string;
+  @IsString() @Matches(/^[A-Za-z0-9\-._~]{43,128}$/) codeVerifier!: string;
+  @IsString() @Matches(/^[A-Za-z0-9_-]{16,256}$/) nonce!: string;
 }
 
 export class LineLinkDto {
@@ -167,6 +174,7 @@ export class AuthController {
     private readonly confirmEmailVerification: ConfirmEmailVerificationUseCase,
     private readonly authRateLimit: AuthRateLimitService,
     private readonly legalAcceptance: LegalAcceptanceService,
+    private readonly lineLoginCallbackUseCase: LineLoginCallbackUseCase,
     @Optional() @Inject(AuditService) private readonly audit: AuditService | null = null,
   ) {}
 
@@ -290,6 +298,20 @@ export class AuthController {
     // bypasses the hidden login control; employee/account LINE linking is a separate flow.
     void dto;
     throw new ForbiddenException('LINE login is deferred to a future release');
+  }
+
+  @Public()
+  @Post('line/login/callback')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Complete LINE web login: exchange OAuth code, verify ID token, issue first-party tokens' })
+  @ApiBody({ type: LineLoginCallbackDto })
+  @ApiResponse({ status: 200, description: 'Tokens issued or link-required result' })
+  async lineLoginCallback(@Body() dto: LineLoginCallbackDto, @Req() req: Request) {
+    if (!this.config.lineWebLoginEnabled) {
+      throw new ForbiddenException('LINE login is not enabled.');
+    }
+    await this.authRateLimit.assertLineLoginCallbackAllowed(trustedClientIp(req));
+    return this.lineLoginCallbackUseCase.execute({ code: dto.code, codeVerifier: dto.codeVerifier, nonce: dto.nonce });
   }
 
   @Public()

@@ -11,7 +11,7 @@ function makeUseCase(opts: { existing?: any; createThrowsP2002?: boolean } = {})
   const prisma = {
     client: {
       externalIdentity: {
-        findFirst: async () => opts.existing ?? null,
+        findFirst: async () => (opts.existing ? { providerChannelId: 'msg-chan-1', ...opts.existing } : null),
         create: async ({ data }: any) => {
           if (opts.createThrowsP2002) throw Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
           creates.push(data);
