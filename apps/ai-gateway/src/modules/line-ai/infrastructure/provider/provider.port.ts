@@ -6,7 +6,7 @@ import type { ProviderError } from '@watchdog-bms/contracts';
 export type ProviderInput = {
   messages: Array<{ role: 'user' | 'assistant'; text: string }>;
   images?: Array<{ mimeType: 'image/jpeg' | 'image/png'; contentBase64: string }>;
-  /** ponytail: Bedrock Converse document blocks only — Typhoon takes images, not PDFs, so the
+  /** ponytail: Bedrock Converse document blocks only — the image channel above cannot carry a PDF, so the
    *  PDF branch of receipt OCR reads the file here instead. OpenAI ignores these; callers gate
    *  on MODEL_PROVIDER=bedrock rather than the port growing a capability flag. */
   documents?: Array<{ mimeType: 'application/pdf'; contentBase64: string }>;

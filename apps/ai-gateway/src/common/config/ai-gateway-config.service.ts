@@ -45,8 +45,6 @@ export class AiGatewayConfigService {
   get bedrockRegion(): string | undefined { return this.config.BEDROCK_REGION; }
   get bedrockModelId(): string | undefined { return this.config.BEDROCK_MODEL_ID; }
   get documentAiModelId(): string | undefined { return this.config.DOCUMENT_AI_MODEL_ID; }
-  get typhoonOcrApiKey(): string | undefined { return this.config.TYPHOON_OCR_API_KEY; }
-  get typhoonProcessingRegion(): string | undefined { return this.config.TYPHOON_PROCESSING_REGION; }
   get approvedAiModelIds(): string[] { return this.config.APPROVED_AI_MODEL_IDS.split(',').map((value) => value.trim()).filter(Boolean); }
   get approvedAiProviders(): string[] { return this.config.APPROVED_AI_PROVIDERS.split(',').map((value) => value.trim()).filter(Boolean); }
   get approvedAiRegions(): string[] { return this.config.APPROVED_AI_REGIONS.split(',').map((value) => value.trim()).filter(Boolean); }
