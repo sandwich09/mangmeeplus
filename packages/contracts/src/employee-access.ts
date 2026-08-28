@@ -99,6 +99,7 @@ export type CreateEmployeeInput = {
   identityType: EmployeeIdentityType;
   identityNumber: string;
   phoneNumber: string;
+  /** Exactly one role per employee membership. Kept as an array for wire compatibility. */
   roleIds: string[];
   // Set after the owner confirms an `employee_existing_user` prompt: attach a second company
   // membership to the existing account (matched by username) instead of creating a new user.
@@ -124,6 +125,7 @@ export type UpdateEmployeeInput = {
   identityType?: EmployeeIdentityType;
   identityNumber?: string;
   phoneNumber?: string;
+  /** Replaces the assignment with exactly one role; omit for profile-only edits. */
   roleIds?: string[];
   branchScopeMode?: BranchScopeMode;
   defaultBranchId?: string | null;

@@ -208,15 +208,17 @@ describe('CreateEmployeeUseCase', () => {
     assert.equal(verifyPassword('28091998', state.credentials[0].passwordHash), true);
   });
 
-  it('creates every selected role assignment for a multi-role employee', async () => {
+  it('rejects multiple or repeated roles before creating any employee records', async () => {
     const { useCase, state } = makeUseCase({ roles: [
       { id: 'role-staff', key: 'STAFF' },
       { id: 'role-reviewer', key: 'REIMBURSEMENT_REVIEWER' },
     ] });
 
-    await useCase.execute({ ...baseCommand, roleIds: ['role-staff', 'role-reviewer'] });
-
-    assert.deepEqual(state.membershipRoles.map((row) => row.roleId).sort(), ['role-reviewer', 'role-staff']);
+    for (const roleIds of [['role-staff', 'role-reviewer'], ['role-staff', 'role-staff']]) {
+      await assert.rejects(() => useCase.execute({ ...baseCommand, roleIds }), /Exactly one employee role/);
+    }
+    assert.equal(state.users.length, 0);
+    assert.equal(state.membershipRoles.length, 0);
   });
 
   it('issues a single-use LINE link QR package bound to the new user', async () => {
@@ -437,7 +439,7 @@ describe('CreateEmployeeUseCase', () => {
 
   it('rejects when no roles are provided', async () => {
     const { useCase } = makeUseCase();
-    await assert.rejects(() => useCase.execute({ ...baseCommand, roleIds: [] }), /at least one role/i);
+    await assert.rejects(() => useCase.execute({ ...baseCommand, roleIds: [] }), /Exactly one employee role/);
   });
 
   it('prompts to confirm (employee_existing_user) when the username matches an existing account and linkExistingUser is not set', async () => {

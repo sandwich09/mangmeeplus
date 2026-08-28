@@ -2,6 +2,8 @@ import 'reflect-metadata';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { RequestMethod } from '@nestjs/common';
+import { validateSync } from 'class-validator';
+import { CreateEmployeeDto, UpdateEmployeeDto } from '../../presentation/http/employee-access.dtos';
 import { HTTP_CODE_METADATA, METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
 import { REQUIRED_PERMISSIONS_KEY } from '../../../../common/security/permissions.decorator';
 import { EmployeeController } from '../../presentation/http/employee.controller';
@@ -72,6 +74,16 @@ function makePrisma(targetRoleRows: Array<{ role: { key: string; permissions: Ar
 
 const ADMIN_PERMS = ['access.employee.disable', 'access.role.manage'];
 const MANAGER_PERMS = ['access.employee.read', 'access.employee.update', 'access.employee.disable', 'access.role.read'];
+
+it('validates exactly one role at both employee HTTP write boundaries', () => {
+  for (const Dto of [CreateEmployeeDto, UpdateEmployeeDto]) {
+    for (const roleIds of [[], ['sales', 'staff'], ['sales', 'sales']]) {
+      assert.ok(validateSync(Object.assign(new Dto(), { roleIds })).some((error) => error.property === 'roleIds'));
+    }
+    assert.equal(validateSync(Object.assign(new Dto(), { roleIds: ['sales'] })).some((error) => error.property === 'roleIds'), false);
+  }
+  assert.equal(validateSync(new UpdateEmployeeDto()).some((error) => error.property === 'roleIds'), false);
+});
 
 it('binds draft deletion to the existing disable permission and forwards only trusted request context', async () => {
   const handler = EmployeeController.prototype.deleteDraft;

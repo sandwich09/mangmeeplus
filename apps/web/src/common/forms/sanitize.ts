@@ -2,6 +2,11 @@ export function stripDisallowed(value: string): string {
   return value.replace(/\\/g, '').replace(/[\x00-\x09\x0B-\x1F\x7F]/g, '');
 }
 
+/** Keep decimal editing and precision intact; only remove redundant integer leading zeros. */
+export function normalizeDecimalInput(value: string): string {
+  return value.replace(/^0+(?=\d)/, '');
+}
+
 export function findForbiddenChars(value: string): string[] {
   return [...new Set(value.match(/[<>{}|^`]/g) ?? [])];
 }

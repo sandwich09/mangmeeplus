@@ -70,6 +70,11 @@ function makePrisma(opts: {
       },
     },
     membershipRole: {
+      updateMany: async ({ where, data }: any) => {
+        const matches = state.membershipRoles.filter((row) => row.roleId === where.roleId && membershipCompanies.get(row.membershipId) === where.membership.companyId);
+        for (const row of matches) Object.assign(row, data);
+        return { count: matches.length };
+      },
       findMany: async ({ where }: any) => state.membershipRoles
         .filter((row) => row.roleId === where.roleId && membershipCompanies.get(row.membershipId) === where.membership.companyId)
         .map(({ membershipId }) => ({ membershipId })),
@@ -128,7 +133,7 @@ function makePrisma(opts: {
     },
   } as any;
 
-  return { prisma, state };
+  return { prisma, state, tx };
 }
 
 describe('ListRolesUseCase', () => {
@@ -359,6 +364,24 @@ describe('CreateRoleUseCase', () => {
 });
 
 describe('UpdateRoleUseCase', () => {
+  it('never appends a role when an employee assignment changes before the company role fork', async () => {
+    const { prisma, state, tx } = makePrisma({
+      role: { id: 'system-sales', scopeKey: 'system', key: 'SALES', name: 'Sales', isSystem: true },
+      membershipRoles: [{ membershipId: 'membership-1', roleId: 'system-sales', companyId: COMPANY_ID }],
+    });
+    const updateMany = tx.membershipRole.updateMany;
+    tx.membershipRole.updateMany = async (args: any) => {
+      state.membershipRoles[0].roleId = 'staff';
+      return updateMany(args);
+    };
+    await new UpdateRoleUseCase(prisma).execute({
+      companyId: COMPANY_ID, roleId: 'system-sales', name: 'Sales local',
+      requestingUserId: 'owner-1', requestId: 'req-1', isOwner: true,
+    });
+    assert.deepEqual(state.membershipRoles, [{ membershipId: 'membership-1', roleId: 'staff' }]);
+    assert.equal(state.auditLogs.find((row) => row.action === 'access.role.create')?.metadataJson.movedMemberships, 0);
+  });
+
   it('forks an editable system role, replaces requested permissions, and moves only this company', async () => {
     const systemRole = {
       id: 'role-system-admin', companyId: null, scopeKey: 'system', key: 'ADMIN', name: 'Admin',

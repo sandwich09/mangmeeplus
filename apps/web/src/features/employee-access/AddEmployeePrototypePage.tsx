@@ -491,7 +491,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
     }
     if (targetStep === 3) {
       if (!jobTitle.trim()) return { message: 'กรุณากรอกตำแหน่งงาน เช่น พนักงานขาย หรือเจ้าหน้าที่บุคคล', fieldId: 'employee-job-title' };
-      if (roleIds.length === 0) return { message: 'กรุณาเลือกบทบาทและสิทธิ์ระบบอย่างน้อย 1 บทบาท', fieldId: 'employee-role' };
+      if (!editingSelf && !editingProtectedRole && roleIds.length !== 1) return { message: 'กรุณาเลือกบทบาทและสิทธิ์ระบบเพียง 1 บทบาท', fieldId: 'employee-role' };
       if (branchIds.length === 0) return { message: 'กรุณาเลือกอย่างน้อย 1 สาขา', fieldId: 'employee-branches' };
       if (!defaultBranchId || !branchIds.includes(defaultBranchId)) return { message: 'กรุณาเลือกสาขาหลัก', fieldId: 'employee-default-branch' };
     }
@@ -555,6 +555,8 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
       if (editingEmployee) {
         const updated = await updateEmployee(companyId, editingEmployee.id, {
           ...profile,
+          // Profile-only edits must not resubmit legacy roles or mutate self/protected access.
+          ...((editingSelf || editingProtectedRole) ? { roleIds: undefined } : {}),
           ...(branchScopeReadOnly ? {} : branchScope),
           ...(idCard && { identityType: editingEmployee.identityType, identityNumber: idCard }),
         });
@@ -673,13 +675,6 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
     const next = allSelected ? (branches[0] ? [branches[0].id] : []) : allIds;
     setBranchIds(next);
     if (!next.includes(defaultBranchId)) setDefaultBranchId(next[0] ?? '');
-    setError('');
-  }
-
-  function toggleRole(roleId: string) {
-    setRoleIds((current) => current.includes(roleId)
-      ? (current.length === 1 ? current : current.filter((id) => id !== roleId))
-      : [...current, roleId]);
     setError('');
   }
 
@@ -848,15 +843,16 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
               ) : (
                 <div className="flex flex-wrap gap-2.5">
                   {roles.map((item) => (
-                    <button key={item.id} type="button" aria-pressed={roleIds.includes(item.id)} onClick={() => toggleRole(item.id)} className={cx('rounded-[9px] border px-3.5 py-2 text-[14.5px] font-extrabold transition', roleIds.includes(item.id) ? 'border-brand-300 bg-brand-25 text-brand-600' : 'border-gray-200 bg-white text-gray-600 hover:border-brand-200')}>
-                      {roleIds.includes(item.id) ? '✓ ' : '+ '}{item.name}
+                    <button key={item.id} type="button" aria-pressed={roleIds.length === 1 && roleIds[0] === item.id} onClick={() => { setRoleIds([item.id]); setError(''); }} className={cx('rounded-[9px] border px-3.5 py-2 text-[14.5px] font-extrabold transition', roleIds.length === 1 && roleIds[0] === item.id ? 'border-brand-300 bg-brand-25 text-brand-600' : 'border-gray-200 bg-white text-gray-600 hover:border-brand-200')}>
+                      {roleIds.length === 1 && roleIds[0] === item.id ? '✓ ' : ''}{item.name}
                     </button>
                   ))}
                   {roles.length === 0 && <span className="text-sm text-gray-400">ยังไม่มีบทบาทให้เลือก</span>}
                 </div>
               )}
               {errorFieldId === 'employee-role' && <div role="alert" className="mt-2 text-sm font-semibold text-error-600">{error}</div>}
-              <div className="mt-2 text-sm font-medium text-gray-400">เลือกได้มากกว่า 1 บทบาท ระบบจะรวมสิทธิ์จากทุกบทบาท โดยไม่จำเป็นต้องตรงกับชื่อตำแหน่งงาน</div>
+              <div className="mt-2 text-sm font-medium text-gray-400">พนักงานมีได้ 1 บทบาท ไม่จำเป็นต้องตรงกับตำแหน่งงาน หากต้องการเพิ่มสิทธิ์ให้แก้ที่บทบาทและสิทธิ์</div>
+              {roleIds.length > 1 && <p role="status" className="mt-2 text-sm font-semibold text-warning-700">ข้อมูลเดิมมีหลายบทบาท: {selectedRoleNames} ให้ผู้มีสิทธิ์เลือก 1 บทบาทเพื่อแทนที่ทั้งหมด</p>}
 
               <div id="employee-branches" tabIndex={-1} className="mb-2 mt-[18px] text-[15px] font-semibold text-gray-700 outline-none">
                 สาขาที่สังกัด <span className="font-normal text-gray-400">(เลือกได้มากกว่า 1 สาขา)</span>
