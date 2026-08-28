@@ -191,6 +191,10 @@ export const apiConfigSchema = baseConfigSchema.extend({
   SEED_SYSTEM_ADMIN_PASSWORD: z.string().optional(),
   LINE_LOGIN_CHANNEL_ID: z.string().optional(),
   LINE_LOGIN_CHANNEL_SECRET: z.string().optional(),
+  // P12-1 web LINE login (OAuth Authorization Code + PKCE). Default OFF: the login-channels
+  // contract keeps reporting `line` unavailable and the callback endpoint stays 403 until an
+  // environment turns this on with both channel id and secret present.
+  LINE_WEB_LOGIN_ENABLED: envBoolean.default(false),
   LINE_LIFF_ID: z.string().optional(),
   LINE_MESSAGING_CHANNEL_ID: z.string().optional(),
   LINE_MESSAGING_CHANNEL_SECRET: z.string().optional(),
@@ -349,6 +353,8 @@ export const apiConfigSchema = baseConfigSchema.extend({
   EMAIL_VERIFICATION_REQUEST_WINDOW_SECONDS: z.coerce.number().int().positive().default(900),
   EMAIL_VERIFICATION_CONFIRM_MAX_PER_IP: z.coerce.number().int().positive().default(10),
   EMAIL_VERIFICATION_CONFIRM_WINDOW_SECONDS: z.coerce.number().int().positive().default(900),
+  LINE_LOGIN_CALLBACK_MAX_PER_IP: z.coerce.number().int().positive().default(10),
+  LINE_LOGIN_CALLBACK_WINDOW_SECONDS: z.coerce.number().int().positive().default(900),
   // RBAC / tenant
   REQUIRE_COMPANY_CONTEXT: envBoolean.default(true),
   COMPANY_CONTEXT_HEADER: z.string().default('X-Company-Id'),

@@ -19,7 +19,9 @@ type LineVerifyResponse = {
 export class LineLoginVerifierAdapter implements IJwtVerifier {
   constructor(private readonly config: AppConfigService) {}
 
-  async verify(token: string): Promise<{ subject: string; name?: string }> {
+  // `nonce` is optional so every existing caller is unchanged; the web OAuth callback passes
+  // the one it minted, and LINE rejects a token whose nonce claim does not match.
+  async verify(token: string, opts?: { nonce?: string }): Promise<{ subject: string; name?: string }> {
     if (token.length > LINE_ID_TOKEN_MAX_LENGTH || !LINE_ID_TOKEN_PATTERN.test(token)) {
       throw new UnauthorizedException('LINE Login token format is invalid.');
     }
@@ -29,6 +31,7 @@ export class LineLoginVerifierAdapter implements IJwtVerifier {
     }
 
     const body = new URLSearchParams({ id_token: token, client_id: channelId });
+    if (opts?.nonce) body.set('nonce', opts.nonce);
 
     let res: Response;
     try {

@@ -24,22 +24,22 @@ export class ExchangeLineTokenUseCase {
 
   // ponytail: channelId from request body is accepted for future multi-channel support,
   //           but LINE token is verified using the server-configured channelId via LineLoginVerifierAdapter
-  async execute(idToken: string, _channelId: string): Promise<ExchangeLineTokenResult> {
+  async execute(idToken: string, _channelId: string, opts?: { expectedNonce?: string }): Promise<ExchangeLineTokenResult> {
     const requestId = randomUUID();
     return observeCustomerJourney(
       this.audit,
       { key: 'line-login', requestId, targetType: 'external_identity' },
-      () => this.exchange(idToken, requestId),
+      () => this.exchange(idToken, requestId, opts?.expectedNonce),
       (result) => result.linked
         ? { outcome: 'linked' }
         : { outcome: 'unlinked', failureClass: 'identity_unlinked' },
     );
   }
 
-  private async exchange(idToken: string, requestId: string): Promise<ExchangeLineTokenResult> {
+  private async exchange(idToken: string, requestId: string, expectedNonce?: string): Promise<ExchangeLineTokenResult> {
     let lineUserId: string;
     try {
-      const verified = await this.lineVerifier.verify(idToken);
+      const verified = await this.lineVerifier.verify(idToken, expectedNonce ? { nonce: expectedNonce } : undefined);
       lineUserId = verified.subject;
     } catch (error) {
       void this.audit?.log({
