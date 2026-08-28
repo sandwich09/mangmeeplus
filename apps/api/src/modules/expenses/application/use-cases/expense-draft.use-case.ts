@@ -665,7 +665,13 @@ export class ConfirmExpenseUseCase {
           })),
         });
       }
-      requirePerm(ctx, 'expense.review', 'accept the document VAT total over tolerance');
+      // Owner decision 2026-08-28: the named way through is no longer a second permission. Gating it
+      // on `expense.review` on top of the `expense.confirm` this method already required meant that
+      // whoever could not review had NO path at all — the save was refused, the override button was
+      // not rendered for them, and the receipt simply could not be filed. Blocking someone from
+      // recording a real expense is a worse outcome than an accepted difference, which is still
+      // deliberate here: it needs a written reason, the VAT line that carries it, a fresh
+      // expectedUpdatedAt, and it lands in the audit trail with the decider's name.
       if (typeof vatSourceOverride.expectedUpdatedAt !== 'string'
         || new Date(vatSourceOverride.expectedUpdatedAt).getTime() !== r.updatedAt.getTime()) {
         throw new ConflictException({ code: 'EXPENSE_VAT_OVERRIDE_STALE', message: 'Reload and review the current VAT amounts before accepting them.' });

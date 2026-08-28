@@ -48,6 +48,8 @@ export const VALUE_ASSUMPTIONS = {
   twoDigitYearResolvedThaiMonth: 'two_digit_year_resolved_thai_month',
   /** An English month name/abbreviation anchors a two-digit year to ค.ศ. 20xx. */
   twoDigitYearResolvedEnglishMonth: 'two_digit_year_resolved_english_month',
+  /** A fully numeric date whose two-digit year has exactly one era reading a receipt could carry. */
+  twoDigitYearResolvedPlausibleEra: 'two_digit_year_resolved_plausible_era',
   /** Month-year mention without a day; candidate is a period boundary, not a day date. */
   monthPeriodBoundary: 'month_period_boundary',
   /** Candidate is after the injected today – implausible for e.g. an expense date. */
@@ -257,6 +259,22 @@ function resolveYearReadings(rawYear: number, digits: number): YearReading[] {
   return [];
 }
 
+/** A receipt is evidence of something that already happened, and that alone separates the two era
+ *  readings of a two-digit year: "69" is พ.ศ. 2569 (2026) because ค.ศ. 2069 is decades away, while
+ *  "24" is ค.ศ. 2024 because พ.ศ. 2524 is 1981. The window is deliberately loose — it only has to
+ *  tell those apart, never to judge a date as too old. When it does not leave exactly one reading,
+ *  both survive and the date stays ambiguous, which is the answer for a date nobody can pin down. */
+const PLAUSIBLE_EXPENSE_YEARS_BACK = 15;
+
+function plausibleEraReadings(readings: YearReading[], todayIso: string): YearReading[] {
+  if (readings.length <= 1) return readings;
+  const todayYear = Number(todayIso.slice(0, 4));
+  if (!Number.isFinite(todayYear)) return readings;
+  const plausible = readings.filter((r) => r.yearCe <= todayYear && r.yearCe >= todayYear - PLAUSIBLE_EXPENSE_YEARS_BACK);
+  if (plausible.length !== 1) return readings;
+  return [{ ...plausible[0]!, assumptions: [VALUE_ASSUMPTIONS.twoDigitYearResolvedPlausibleEra] }];
+}
+
 function resolveNamedMonthYearReadings(monthName: string, rawYear: number, digits: number): YearReading[] {
   if (digits !== 2) return resolveYearReadings(rawYear, digits);
   if (THAI_MONTH_NAMES.has(monthName.toLowerCase())) {
@@ -430,7 +448,14 @@ export function extractValueCandidates(text: string, todayIso?: string): LineAiV
     } else {
       continue;
     }
-    for (const reading of resolveYearReadings(Number(yearRaw), yearRaw.length === 2 ? 2 : 4)) {
+    const yearReadings = resolveYearReadings(Number(yearRaw), yearRaw.length === 2 ? 2 : 4);
+    // Only when the วัน/เดือน order is already certain. A date whose own order cannot be told apart
+    // (7-6-69) stays out of reach on purpose — owner decision 2026-08-28: leave it blank and let the
+    // person who was there type it, rather than pick one of two readings and look confident.
+    const eraResolved = todayIso && orderAssumptions.length === 0
+      ? plausibleEraReadings(yearReadings, todayIso)
+      : yearReadings;
+    for (const reading of eraResolved) {
       pushDate(start, end, day, month, reading, orderAssumptions);
     }
     recordDateRange(start, end);

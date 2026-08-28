@@ -303,14 +303,23 @@ describe('expense Tax Code confirmation guard', () => {
     );
   });
 
-  it('refuses the document-VAT override without the reviewer permission', async () => {
+  // Owner decision 2026-08-28, from a real dead end: the block above is the only way this receipt
+  // can be filed, and it used to require `expense.review` ON TOP of the `expense.confirm` this call
+  // already demands. Someone holding only confirm was refused the save AND not shown the control that
+  // would clear it — the same reviewer-only strand `substitute-receipt-payer-access` was written for.
+  // Whoever may confirm the expense may now accept the document total; the reason, the carrying line,
+  // the freshness check and the audit entry all stay.
+  it('lets whoever may confirm accept the document VAT total, so nobody is stranded', async () => {
     const repo = { findByIdWithRelations: async () => mismatchedVatRecord } as any;
+    let permissionError: unknown = null;
 
-    await assert.rejects(
-      () => new ConfirmExpenseUseCase(repo, audit, transactionTax, ...numberServices)
-        .execute(ctx(undefined, ['expense.confirm']), 'exp-1', { reason: 'ใบเสร็จพิมพ์ VAT รวมทั้งใบ', vatLineNumber: 1, expectedUpdatedAt: readyRecord.updatedAt.toISOString() }),
-      /Missing permission: expense\.review/,
-    );
+    await new ConfirmExpenseUseCase(repo, audit, transactionTax, ...numberServices)
+      .execute(ctx(undefined, ['expense.confirm']), 'exp-1', { reason: 'ใบเสร็จพิมพ์ VAT รวมทั้งใบ', vatLineNumber: 1, expectedUpdatedAt: readyRecord.updatedAt.toISOString() })
+      .catch((error: unknown) => { permissionError = error; });
+
+    // The mock repo cannot carry the confirm all the way through, so this asserts the one thing that
+    // must never come back: a refusal for holding the wrong permission.
+    assert.doesNotMatch(String((permissionError as Error)?.message ?? ''), /Missing permission/, 'confirm alone must be enough');
   });
 
   it('refuses to hang the difference on a line that bears no VAT', async () => {

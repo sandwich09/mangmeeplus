@@ -20,6 +20,14 @@ import { parseBusinessDocumentClassification } from '../domain/logic/business-do
 /** One receipt page of markdown. Matches the 4096-token stage-one read budget the OCR route uses,
  *  so an intake transcription can stand in for it without truncating a long tax invoice. */
 const MAX_INTAKE_DOCUMENT_TEXT_CHARS = 12_000;
+/** A fused plan on its own fits in 1500 output tokens. A plan that ALSO carries documentText carries a
+ *  whole transcribed page in the same response, and overflow there is not a shorter plan — it is invalid
+ *  JSON that fails closed to UNAVAILABLE, so the picture stops being readable at all (UAT 2026-08-28:
+ *  6/6 photos hit 1500 exactly and every one came back "what is this?"). Images therefore get their own
+ *  budget, sized from the 38 real UAT receipts benchmarked in
+ *  docs/agent-memory/receipt-ocr-model-benchmark.md. Text-only intake keeps the legacy budgets byte for
+ *  byte, so ordinary chat cost is untouched. */
+const INTAKE_DOCUMENT_MAX_TOKENS = 8_000;
 
 const REASON_CODE_VOCABULARY = BUSINESS_DOCUMENT_REASON_CODES.map((code) => `"${code}"`).join('|');
 
@@ -248,7 +256,7 @@ Return only compact JSON with this shape:
   "correctionHints": { ... }, // only for EXPENSE_CAPTURE_CORRECTION, see below${semanticFields}${advisorAnswerField}
   "resolvedClarificationIds": ["id from openClarifications this message answers"],
   "documentClassification": { ... },
-  "documentText": "images only: the page transcribed verbatim as markdown, exactly as you would read it aloud — every number, date and identifier copied character for character, tables kept as tables. Omit entirely when there is no image or the page is unreadable. This is a transcription, never a summary and never your interpretation: do not correct, round, translate or complete anything you cannot see."${preparedPlanField}
+  "documentText": "images only: the page transcribed verbatim as markdown, exactly as you would read it aloud — every number, date and identifier copied character for character, tables kept as tables. Omit entirely when there is no image or the page is unreadable. This is a transcription, never a summary and never your interpretation: do not correct, round, translate or complete anything you cannot see. Keep it under 12000 characters; if the page would need more than that, omit this field entirely rather than stopping mid-transcription — a cut-off answer is unreadable, a missing one is simply read again."${preparedPlanField}
 }
 Route meanings:
 - EXPENSE_DOCUMENT_CAPTURE: expense evidence in any language or format: receipt, tax invoice, transfer/payment slip, handwritten cash bill, supplier bill, Shopee/Lazada/TikTok marketplace order screenshot, PDF/photo/file of an expense document, or a short text spend note such as "ค่ากาแฟ 65 บาท" (an amount plus a purpose implies a spend note even with new wording).${captureNotClaim}
@@ -386,8 +394,9 @@ export class IntentRouterAgent {
       ...(caps.fusedPlan ? { cacheableContext: JSON.stringify({ businessGlossary: LINE_AI_THAI_BUSINESS_GLOSSARY, ...buildFeatureCatalog() }) } : {}),
       messages: [{ role: 'user', text: JSON.stringify(payload) }],
       ...(images.length > 0 ? { images } : {}),
-      // Legacy keeps 1000; only the (larger) fused output needs the bigger bound.
-      maxTokens: caps.fusedPlan ? 1500 : 1000,
+      // Legacy keeps 1000; only the (larger) fused output needs the bigger bound. An image asks for
+      // documentText on top of whichever plan shape is on, so it needs the document budget either way.
+      maxTokens: images.length > 0 ? INTAKE_DOCUMENT_MAX_TOKENS : caps.fusedPlan ? 1500 : 1000,
       usageTag: 'line.intake-route',
     });
 
@@ -405,7 +414,13 @@ export class IntentRouterAgent {
       caps,
     );
     if (!parsed) {
-      return unavailableIntakePlan(request.messageText, 'ROUTER_JSON_PARSE_FAILED');
+      // A response the model ran out of room to finish is not the same failure as a model that answered
+      // badly, and the two need opposite fixes (raise the budget vs. fix the prompt). UAT 2026-08-28 spent
+      // hours reading the second story off the first one's logs, so the two now carry different codes.
+      return unavailableIntakePlan(
+        request.messageText,
+        result.stopReason === 'max_tokens' ? 'ROUTER_OUTPUT_TRUNCATED' : 'ROUTER_JSON_PARSE_FAILED',
+      );
     }
 
     // Semantic veto (trust-boundary guard, not prompt-only): a routed mutation whose bounded semantic fields

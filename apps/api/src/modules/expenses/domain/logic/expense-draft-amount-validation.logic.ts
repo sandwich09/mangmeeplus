@@ -1,9 +1,9 @@
 import Decimal from 'decimal.js';
-import type { ExpenseLineVatTreatment, ExpenseVatMode } from '@watchdog-bms/contracts';
+import { EXPENSE_DECIMAL_18_4_PATTERN as DECIMAL_18_4, type ExpenseLineVatTreatment, type ExpenseVatMode } from '@watchdog-bms/contracts';
 import { calcDocumentTotals, calcLineTotals, type LineTotalsResult } from './expense-totals.logic';
 
-/** PostgreSQL Decimal(18,4): fourteen integer digits and up to four fractional digits. */
-export const EXPENSE_DECIMAL_18_4_PATTERN = /^(?:0|[1-9]\d{0,13})(?:\.\d{1,4})?$/;
+/** Re-exported so existing importers keep working; the rule itself is shared with the review form. */
+export { EXPENSE_DECIMAL_18_4_PATTERN } from '@watchdog-bms/contracts';
 export const EXPENSE_DECIMAL_18_4_MAX = '99999999999999.9999';
 
 const MAX_DECIMAL = new Decimal(EXPENSE_DECIMAL_18_4_MAX);
@@ -24,7 +24,7 @@ export type ExpenseDraftAmountInput = {
 };
 
 function parsedDecimal(value: unknown): Decimal | null {
-  if (typeof value !== 'string' || !EXPENSE_DECIMAL_18_4_PATTERN.test(value)) return null;
+  if (typeof value !== 'string' || !DECIMAL_18_4.test(value)) return null;
   try {
     const parsed = new Decimal(value);
     return parsed.isFinite() && parsed.lte(MAX_DECIMAL) ? parsed : null;
