@@ -2,7 +2,7 @@
 
 ## Acceptance status
 
-**Local default-feature regression matrix passed before PR332; its conflict is now resolved and integrated local checks pass. Exact integrated-head CI/develop integration pending.**
+**Local default-feature regression and integrated-head CI passed; PR331/330 merged through develop/main. UAT33185560295 failed before rollout on an OS-package CVE. The combined CVE fix + LINE web login flag is in progress; this report is local UI evidence, not a completed UAT acceptance claim.** See [release ledger](../../agent-memory/main-ui-qa-uat-release-2026-08-28.md).
 
 The user completed the password change and the requested payment-evidence upload. All ten assignable system roles, Owner and two custom-role variants were exercised through authenticated local UI. Twenty-two additional findings (F10–F31) were fixed and their affected paths repeated. The transfer certificate lifecycle, duplicate-resolution branches and final role/default-feature checks are complete within the explicit matrix below. This is not a claim about every possible role × input permutation or unconfigured external services.
 
@@ -12,7 +12,7 @@ Chrome rejected automated file selection with `Not allowed`; the user selected t
 - Base: `f9f2402d23a4770d3b8570905b7643d9afda1de8`, same tree as develop integration `f734a04373520860bc9a2cc599a1e0e351e5c615`.
 - Local web3000/API3003; isolated database `watchdog_main_qa_20260828`.
 - Primary company still **16 enabled / 44 disabled**. No feature opened to manufacture a pass.
-- Integration is the next step. PR330 was rechecked OPEN, develop→main; update it rather than creating a duplicate. No deployment, UAT mutation, real payment or external message in this pass.
+- PR331/330 integration is complete. The first UAT attempt stopped before service rollout; the release ledger tracks the new combined candidate. No real payment or business message was sent in this UI pass.
 - Original dirty `plan` worktree preserved. No package.json, dependency or database-schema change.
 
 Exact ON keys rechecked after the final UI repeat: `company_settings`, `company_settings.branches`, `company_settings.security`, `dashboard_notifications`, `employee_access`, `employee_access.employees`, `employee_access.overview`, `employee_access.roles`, `expenses`, `expenses.categories`, `expenses.evidence`, `expenses.list`, `expenses.manual`, `expenses.signatures`, `expenses.upload`, `sales_documents`.
