@@ -456,7 +456,8 @@ description, quantity, and unitPrice describe the document AS A WHOLE — they a
 vendorTaxId is the SELLER's Thai 13-digit เลขประจำตัวผู้เสียภาษี (labels: เลขประจำตัวผู้เสียภาษี / เลขประจำตัวผู้เสียภาษีอากร / เลขผู้เสียภาษี / TAX ID / TIN / เลขทะเบียนนิติบุคคล / ทะเบียนเลขที่). It may be printed with dashes or spaces (0-9940-0016-30-11) — return digits only. Look in the header AND the footer: hospitals and POS slips often print it in small type at the bottom. A full tax invoice prints seller AND buyer tax ids — return the seller's (issuer header side), never the buyer's. Never use a phone number.
 documentNumber is the document's own printed running number (labels: เลขที่ / เลขที่ใบเสร็จ / เลขที่เอกสาร / เลขที่ใบกำกับภาษี / No. / Receipt No. / Invoice No. / Bill No.). When the document uses a carbon-book pair, combine เล่มที่ X เลขที่ Y as "X/Y". documentNumber is NEVER the date, and never HN/AN/VN (hospital patient/visit numbers), queue or table numbers, POS terminal/merchant ids (TID/MID), card approval codes, the tax id, or a phone number. If only a date appears where the number should be, omit documentNumber.
 vendorBranchCode is the seller's issuing-branch designation printed next to the tax id: สำนักงานใหญ่ / สนญ / HO / HQ / Head Office → "00000"; สาขาที่ N / Branch N → the branch number as printed.
-lines is optional and contains at most 40 printed item rows in document order. Each entry is {"description":"printed item name","quantity":"printed quantity, \"1\" when the row prints none","amount":"the row's own printed money amount","unitPrice":"the printed per-unit price, only when the row prints one","evidenceSignal":"one short exact OCR span","confidence":0.0}. Return EVERY item row the item block prints: a bill listing two products must return two entries, never one merged entry and never only the first row. amount is the row's money column as printed, which on Thai bills is the extended amount for the whole row, not the per-unit price — พิซซ่า 1 524.00 is quantity "1" and amount "524.00", ปีกไก่ 2 298.00 is quantity "2" and amount "298.00" with unitPrice omitted because 149.00 is nowhere on the bill. Give unitPrice only when that per-unit number is itself printed. The row amounts must add up to the printed subtotal (or the printed total when no subtotal is printed); re-read the item block when they do not. Never put a service charge, delivery fee, VAT, discount, payment, change, or the total row into lines — those belong to additionalCharges, discountAmount, vatAmount, and grandTotalAmount. Omit lines entirely when the item block is unreadable or its rows cannot be told apart.
+lines is optional and contains at most 40 printed item rows in document order. Each entry is {"description":"printed item name","quantity":"printed quantity, \"1\" when the row prints none","amount":"the row's own printed money amount","unitPrice":"the printed per-unit price, only when the row prints one","vatRate":"this row's own VAT rate as a decimal, ONLY when the page marks tax per row","vatTreatment":"ZERO_RATED|EXEMPT|NON_VAT, only together with vatRate \"0\"","evidenceSignal":"one short exact OCR span","confidence":0.0}.
+Per-row VAT (vatRate/vatTreatment) exists ONLY when the page itself marks individual rows, and Thai receipts do this with a one-letter code printed against the row amount: V (or a VAT column tick) means that row is taxed, while N, P, or an explicit ยกเว้นภาษี/ไม่คิด VAT note means it is not. Give vatRate for a row ONLY when such a marker is printed on that row, and quote the marker inside that row's evidenceSignal. A row marked untaxed takes vatRate "0" plus vatTreatment (EXEMPT for ยกเว้น items such as fresh food, ZERO_RATED for 0% supplies, NON_VAT for a non-registered supply). OMIT both fields on every row when the page states VAT once for the whole bill (a header "VAT Included", a single VAT TTL line, or a tax summary at the bottom) — that is the normal case and the document-level rate already covers it. Never infer from the item name that something is exempt: no printed marker means no per-row field. Return EVERY item row the item block prints: a bill listing two products must return two entries, never one merged entry and never only the first row. amount is the row's money column as printed, which on Thai bills is the extended amount for the whole row, not the per-unit price — พิซซ่า 1 524.00 is quantity "1" and amount "524.00", ปีกไก่ 2 298.00 is quantity "2" and amount "298.00" with unitPrice omitted because 149.00 is nowhere on the bill. Give unitPrice only when that per-unit number is itself printed. The row amounts must add up to the printed subtotal (or the printed total when no subtotal is printed); re-read the item block when they do not. Never put a service charge, delivery fee, VAT, discount, payment, change, or the total row into lines — those belong to additionalCharges, discountAmount, vatAmount, and grandTotalAmount. Omit lines entirely when the item block is unreadable or its rows cannot be told apart.
 additionalCharges is optional and contains at most 10 POSITIVE printed charges. Each entry is {"kind":"SERVICE_CHARGE"|"DELIVERY"|"PACKAGING"|"PLATFORM_FEE"|"TIP"|"ROUNDING"|"OTHER","description":"printed label","amount":"positive printed amount","vatRate":"optional decimal fraction including 0","evidenceSignal":"one short exact OCR span","confidence":0.0}. Put discounts, coupons, promotions, and negative rounding only in discountAmount — never duplicate them in additionalCharges. subtotalAmount is the merchandise/service subtotal BEFORE additionalCharges. For VAT_EXCLUDED documents, charge amount is its pre-VAT amount; for VAT_INCLUDED documents, it is its printed VAT-inclusive amount. Include vatRate only when the document explicitly prints or its complete VAT arithmetic proves the rate applies to that charge; use "0" only when the charge is explicitly/provably outside VAT. If charge tax treatment is unclear, omit its vatRate and let ERP reconciliation require review.
 categorySuggestion is optional and has exactly this shape: {"expenseCategoryId":"an id from the active catalogue","confidence":0.0,"evidenceSignals":["short exact OCR span"]}.
 Choose at most one category for the whole document. Use only an expenseCategoryId present in the active catalogue. Base the choice on the document's vendor, business purpose, and purchased items, never on catalogue text alone. evidenceSignals must contain 1-5 short exact spans copied from OCR text, not category names copied from the catalogue. Omit categorySuggestion and add "category" to missingFields when the catalogue is empty or no category is clearly supported. A category is only a reporting dimension: never use it to infer or alter VAT, Tax Code, GL account, payment, or document classification.
@@ -743,7 +744,7 @@ export function applyOcrValueCrossCheck(
   return out;
 }
 
-function parseReceiptOcrJson(
+export function parseReceiptOcrJson(
   text: string,
   documentText: string,
   activeCategoryIds: ReadonlySet<string>,
@@ -784,6 +785,21 @@ function parseReceiptOcrJson(
         const rawUnitPrice = typeof line['unitPrice'] === 'string' ? line['unitPrice'].trim() : undefined;
         const evidenceSignal = typeof line['evidenceSignal'] === 'string' ? line['evidenceSignal'].trim() : '';
         const confidence = line['confidence'];
+        // Per-row VAT is tax data, so it is admitted only when the model both states it AND the
+        // row's own evidence span carries the printed marker it claims to have read. A rate with
+        // no marker in the span, a treatment without a zero rate, or a zero rate without a
+        // treatment are all dropped to "row inherits the document rate" rather than guessed.
+        const rawLineVatRate = typeof line['vatRate'] === 'string' ? line['vatRate'].trim() : undefined;
+        const rawLineVatTreatment = typeof line['vatTreatment'] === 'string' ? line['vatTreatment'].trim() : undefined;
+        const lineVatRateNumber = rawLineVatRate === undefined ? undefined : Number(rawLineVatRate);
+        const vatMarkerInEvidence = /(?:^|[\s\d.,])(?:V|N|P)(?:$|\s)|ยกเว้น|ไม่คิด|VAT/i.test(evidenceSignal);
+        const lineVatRateValid = rawLineVatRate !== undefined
+          && Number.isFinite(lineVatRateNumber) && lineVatRateNumber! >= 0 && lineVatRateNumber! < 1
+          && vatMarkerInEvidence;
+        const lineVatTreatmentValid = rawLineVatTreatment !== undefined
+          && ['ZERO_RATED', 'EXEMPT', 'NON_VAT'].includes(rawLineVatTreatment)
+          && lineVatRateValid && lineVatRateNumber === 0;
+        const acceptLineVat = lineVatRateValid && (lineVatRateNumber !== 0 || lineVatTreatmentValid);
         if (
           !description || description.length > 200
           || !amount || amount.length > 32 || !(Number.parseFloat(amount.replace(/,/g, '')) > 0)
@@ -797,6 +813,8 @@ function parseReceiptOcrJson(
           quantity,
           amount,
           ...(rawUnitPrice !== undefined ? { unitPrice: rawUnitPrice } : {}),
+          ...(acceptLineVat ? { vatRate: rawLineVatRate } : {}),
+          ...(acceptLineVat && lineVatTreatmentValid ? { vatTreatment: rawLineVatTreatment as 'ZERO_RATED' | 'EXEMPT' | 'NON_VAT' } : {}),
           evidenceSignal,
           ...(typeof confidence === 'number' ? { confidence } : {}),
         });
