@@ -44,6 +44,12 @@ function positiveMoney(value: string | undefined): number | undefined {
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
+/** A VAT rate as the contracts express it: a decimal fraction in [0,1), e.g. "0.07" or "0". */
+function isUnitFraction(value: string | undefined): boolean {
+  const n = Number(String(value ?? '').replace(/,/g, ''));
+  return Number.isFinite(n) && n >= 0 && n < 1;
+}
+
 export function ocrVatSource(fields: ReceiptOcrFieldResult): ExpenseVatSourceInput {
   const rawRate = Number(String(fields.vatRate ?? '').replace(/,/g, ''));
   const rawAmount = Number(String(fields.vatAmount ?? '').replace(/,/g, ''));
@@ -211,6 +217,8 @@ type PreparedOcrLine = {
   quantity: string;
   unitPrice: string;
   vatRate: string | null;
+  /** ZERO_RATED / EXEMPT / NON_VAT when the page marked this row untaxed; null otherwise. */
+  vatTreatment?: string | null;
   whtRate: string | null;
   sourceLineText?: string;
   aiLineConfidence?: number;
@@ -291,7 +299,7 @@ function reconciledTotals(
 
 /** Spec §5: the extracted item block, re-validated here because the gateway is a separate service
  *  and its output is a suggestion, never a trusted contract. */
-function usableItemLines(fields: ReceiptOcrFieldResult): NonNullable<ReceiptOcrFieldResult['lines']> {
+export function usableItemLines(fields: ReceiptOcrFieldResult): NonNullable<ReceiptOcrFieldResult['lines']> {
   const lines = fields.lines;
   if (!Array.isArray(lines) || lines.length < 2 || lines.length > MAX_OCR_ITEM_LINES) return [];
   const usable = lines.filter((line) => Boolean(
@@ -299,7 +307,13 @@ function usableItemLines(fields: ReceiptOcrFieldResult): NonNullable<ReceiptOcrF
     && typeof line.description === 'string' && line.description.trim() && line.description.length <= 200
     && typeof line.amount === 'string' && positiveMoney(line.amount)
     && (line.unitPrice === undefined || positiveMoney(line.unitPrice))
-    && (line.quantity === undefined || positiveMoney(line.quantity)),
+    && (line.quantity === undefined || positiveMoney(line.quantity))
+    // Per-row VAT is re-checked here, not trusted: a rate must be a real 0..1 fraction, and a
+    // treatment is only meaningful together with a zero rate (the same pairing the web draft
+    // validator enforces). Anything malformed drops the whole item block to the summary path.
+    && (line.vatRate === undefined || isUnitFraction(line.vatRate))
+    && (line.vatTreatment === undefined
+      || (['ZERO_RATED', 'EXEMPT', 'NON_VAT'].includes(line.vatTreatment) && line.vatRate !== undefined && Number(line.vatRate) === 0)),
   ));
   // Half a bill is not a breakdown of the bill; drop the whole set rather than record a partial one.
   return usable.length === lines.length ? usable : [];
@@ -361,7 +375,12 @@ function prepareOcrLines(
           description: item.description.trim(),
           quantity: qty.toFixed(4),
           unitPrice: unitPrice.toFixed(4),
-          vatRate: defaultLineVatRate(fields),
+          // The document rate is the default, not the law: a row the page itself marked as taxed
+          // or exempt keeps its own rate. Mixed bills reconcile through calcDocumentTotals below,
+          // which compares the summed VAT against the printed VAT and rejects the split if they
+          // disagree — so a wrong per-row reading cannot silently become an accounting record.
+          vatRate: item.vatRate ?? defaultLineVatRate(fields),
+          vatTreatment: item.vatTreatment ?? null,
           whtRate,
           sourceLineText: item.evidenceSignal,
           aiLineConfidence: item.confidence,
@@ -543,6 +562,9 @@ export class ReceiptOcrApplyService {
           lines: prepared.lines.map((line, index) => ({
             ...line,
             vatRate: vat.lines[index]!.vatRate,
+            // Reconciliation may move a row onto the document rate; the treatment only survives
+            // while that row is still genuinely zero-rated.
+            vatTreatment: Number(vat.lines[index]!.vatRate ?? '0') === 0 ? line.vatTreatment ?? null : null,
             whtRate: expenseWhtLineRate(acceptedWhtInput),
             totals: vat.lines[index]!.totals,
           })),
@@ -629,6 +651,9 @@ export class ReceiptOcrApplyService {
           discountAmount: line.totals.discountAmount,
           taxableAmount: line.totals.taxableAmount,
           vatRate: line.vatRate,
+          // Only meaningful with a zero rate (ExpenseLine contract + the web draft validator), so
+          // a reconciled non-zero rate clears it rather than leaving a contradictory pair behind.
+          vatTreatment: line.vatTreatment && Number(line.vatRate ?? '0') === 0 ? line.vatTreatment : null,
           vatAmount: line.totals.vatAmount,
           whtRate: line.whtRate,
           whtAmount: line.totals.whtAmount,

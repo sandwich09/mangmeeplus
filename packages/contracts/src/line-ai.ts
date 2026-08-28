@@ -233,6 +233,16 @@ export type ReceiptOcrLineItem = {
   amount: string;
   /** The row's printed per-unit price, when the document actually shows one. */
   unitPrice?: string;
+  /**
+   * This row's own VAT rate, present ONLY when the page marks tax per row (UAT survey 2026-08-28
+   * found 3 of 38 real receipts doing exactly this: a `V` suffix on taxed prices, `N` or `P` on
+   * exempt ones). Absent means "the document-level rate applies", which is what 25 of 38 receipts
+   * print and stays the existing behaviour — never a guess that a row is untaxed.
+   */
+  vatRate?: string;
+  /** Why this row carries no VAT, when the page says so. Mirrors ExpenseLine.vatTreatment and is
+   *  only ever accepted together with a zero `vatRate`. */
+  vatTreatment?: 'ZERO_RATED' | 'EXEMPT' | 'NON_VAT';
   /** One short exact span copied from stage-one OCR text. */
   evidenceSignal: string;
   confidence?: number;

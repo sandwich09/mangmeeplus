@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { UnauthorizedException, BadRequestException } from '@nestjs/common';
-import { BASE64_MEDIA_ROUTES, LineAiInternalController } from './line-ai-internal.controller';
+import { BASE64_MEDIA_ROUTES, LineAiInternalController, parseReceiptOcrJson } from './line-ai-internal.controller';
 import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
 import type { BusinessDocumentClassification, LineAiTurnRequest } from '@watchdog-bms/contracts';
 import { gateBusinessDocumentClassification, parseBusinessDocumentClassification } from '../../domain/logic/business-document-classification.logic';
@@ -1320,5 +1320,65 @@ describe('intake route timeout budget', () => {
       restore();
       t.mock.timers.reset();
     }
+  });
+});
+
+/**
+ * Per-row VAT admission (Owner 2026-08-28). A UAT survey of 38 real receipts found three that tax
+ * some rows and not others, always marked on the row itself: `V` on a taxed price, `N` or `P` on an
+ * exempt one. The gateway therefore admits a per-row rate ONLY when that row's evidence span
+ * carries the marker it claims — an unmarked row inherits the document rate, which is what 25 of
+ * the 38 receipts print.
+ */
+describe('receipt OCR per-row VAT', () => {
+  const parse = (lines: unknown[], documentText: string) => parseReceiptOcrJson(
+    JSON.stringify({ fields: { grandTotalAmount: '200.00', lines } }),
+    documentText,
+    new Set<string>(),
+  );
+  const doc = 'ข้าวผัด 100.00V\nนมสด 100.00N';
+
+  it('keeps a marked mixed bill: taxed row keeps its rate, exempt row keeps rate 0 + treatment', () => {
+    const out = parse([
+      { description: 'ข้าวผัด', quantity: '1', amount: '100.00', vatRate: '0.07', evidenceSignal: 'ข้าวผัด 100.00V' },
+      { description: 'นมสด', quantity: '1', amount: '100.00', vatRate: '0', vatTreatment: 'EXEMPT', evidenceSignal: 'นมสด 100.00N' },
+    ], doc);
+    assert.equal(out?.fields?.lines?.length, 2);
+    assert.equal(out?.fields?.lines?.[0]?.vatRate, '0.07');
+    assert.equal(out?.fields?.lines?.[1]?.vatRate, '0');
+    assert.equal(out?.fields?.lines?.[1]?.vatTreatment, 'EXEMPT');
+  });
+
+  it('drops a per-row rate whose evidence span shows no marker — the row inherits the document rate', () => {
+    const plain = 'ข้าวผัด 100.00\nนมสด 100.00';
+    const out = parse([
+      { description: 'ข้าวผัด', quantity: '1', amount: '100.00', vatRate: '0.07', evidenceSignal: 'ข้าวผัด 100.00' },
+      { description: 'นมสด', quantity: '1', amount: '100.00', evidenceSignal: 'นมสด 100.00' },
+    ], plain);
+    assert.equal(out?.fields?.lines?.length, 2);
+    assert.equal(out?.fields?.lines?.[0]?.vatRate, undefined, 'no printed marker, no per-row tax claim');
+  });
+
+  it('never keeps a treatment without a zero rate, and never a rate outside 0..1', () => {
+    const withTreatmentOnTaxedRate = parse([
+      { description: 'ข้าวผัด', quantity: '1', amount: '100.00', vatRate: '0.07', vatTreatment: 'EXEMPT', evidenceSignal: 'ข้าวผัด 100.00V' },
+      { description: 'นมสด', quantity: '1', amount: '100.00', evidenceSignal: 'นมสด 100.00N' },
+    ], doc);
+    assert.equal(withTreatmentOnTaxedRate?.fields?.lines?.[0]?.vatTreatment, undefined);
+    assert.equal(withTreatmentOnTaxedRate?.fields?.lines?.[0]?.vatRate, '0.07');
+
+    const percentNotFraction = parse([
+      { description: 'ข้าวผัด', quantity: '1', amount: '100.00', vatRate: '7', evidenceSignal: 'ข้าวผัด 100.00V' },
+      { description: 'นมสด', quantity: '1', amount: '100.00', evidenceSignal: 'นมสด 100.00N' },
+    ], doc);
+    assert.equal(percentNotFraction?.fields?.lines?.[0]?.vatRate, undefined, '7 is not 7%');
+  });
+
+  it('a zero rate with no treatment is not a silent exemption', () => {
+    const out = parse([
+      { description: 'ข้าวผัด', quantity: '1', amount: '100.00', vatRate: '0', evidenceSignal: 'ข้าวผัด 100.00V' },
+      { description: 'นมสด', quantity: '1', amount: '100.00', evidenceSignal: 'นมสด 100.00N' },
+    ], doc);
+    assert.equal(out?.fields?.lines?.[0]?.vatRate, undefined);
   });
 });
