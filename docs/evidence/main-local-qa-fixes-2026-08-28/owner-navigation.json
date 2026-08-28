@@ -1,0 +1,207 @@
+[
+  {
+    "label": "มั่งมี",
+    "href": "/",
+    "headings": [
+      "  - heading \"สวัสดี คุณ Local\" [level=1]"
+    ],
+    "blocked": [],
+    "controls": 10
+  },
+  {
+    "label": "แดชบอร์ด",
+    "href": "/companies/seed-local-company/dashboard",
+    "headings": [
+      "  - heading \"สวัสดี คุณ Local\" [level=1]"
+    ],
+    "blocked": [],
+    "controls": 10
+  },
+  {
+    "label": "เอกสารขายและรับชำระ",
+    "href": "/companies/seed-local-company/sales-documents",
+    "headings": [
+      "  - heading \"เอกสารขายและรับชำระ\" [level=1]",
+      "  - heading \"สร้างเอกสารใหม่\" [level=2]",
+      "  - heading \"เอกสารบัญชี\" [level=1]",
+      "  - heading \"INV-202608-00012\" [level=2]",
+      "  - heading \"ลูกค้าและคู่ค้า\" [level=2]",
+      "  - heading \"รายการรับชำระ\" [level=2]"
+    ],
+    "blocked": [],
+    "controls": 21
+  },
+  {
+    "label": "รายการค่าใช้จ่าย",
+    "href": "/companies/seed-local-company/expenses",
+    "headings": [
+      "  - heading \"รายการค่าใช้จ่าย\" [level=1]"
+    ],
+    "blocked": [],
+    "controls": 13
+  },
+  {
+    "label": "อัปโหลดใบเสร็จ",
+    "href": "/companies/seed-local-company/expenses/upload",
+    "headings": [
+      "  - heading \"อัปโหลดใบเสร็จ\" [level=1]"
+    ],
+    "blocked": [],
+    "controls": 6
+  },
+  {
+    "label": "บันทึกด้วยมือ",
+    "href": "/companies/seed-local-company/expenses/manual",
+    "headings": [
+      "  - heading \"บันทึกด้วยมือ\" [level=1]",
+      "  - heading \"บันทึกค่าใช้จ่ายด้วยมือ\" [level=2]",
+      "  - heading \"ข้อมูลเอกสาร\" [level=3]",
+      "  - heading \"รายการค่าใช้จ่าย\" [level=3]",
+      "  - heading \"สรุปก่อนบันทึก\" [level=3]"
+    ],
+    "blocked": [],
+    "controls": 11
+  },
+  {
+    "label": "หมวดหมู่",
+    "href": "/companies/seed-local-company/expenses/categories",
+    "headings": [
+      "  - heading \"หมวดหมู่\" [level=1]"
+    ],
+    "blocked": [],
+    "controls": 17
+  },
+  {
+    "label": "ลายเซ็นของฉัน",
+    "href": "/companies/seed-local-company/expenses/signatures",
+    "headings": [
+      "  - heading \"ลายเซ็นของฉัน\" [level=1]"
+    ],
+    "blocked": [],
+    "controls": 3
+  },
+  {
+    "label": "ใบรับรองแทนใบเสร็จ",
+    "href": "/companies/seed-local-company/expenses/substitute-receipts",
+    "headings": [
+      "  - heading \"ใบรับรองแทนใบเสร็จรับเงิน\" [level=1]",
+      "  - heading \"งานที่รอดำเนินการ\" [level=2]"
+    ],
+    "blocked": [],
+    "controls": 6
+  },
+  {
+    "label": "ตั้งค่าใบรับรองแทนใบเสร็จ",
+    "href": "/companies/seed-local-company/settings/substitute-receipt",
+    "headings": [
+      "  - heading \"ตั้งค่าใบรับรองแทนใบเสร็จรับเงิน\" [level=1]",
+      "  - heading \"รูปแบบการอนุมัติ\" [level=2]",
+      "  - heading \"ผู้อนุมัติที่ได้รับมอบหมาย\" [level=2]",
+      "  - heading \"หลักฐานเมื่อชำระเงินสด\" [level=2]",
+      "  - heading \"ขอบเขตทางภาษี\" [level=2]",
+      "  - heading \"ก่อนเปิดใช้งานจริง\" [level=2]"
+    ],
+    "blocked": [],
+    "controls": 5
+  },
+  {
+    "label": "หลักฐานทางบัญชี",
+    "href": "/companies/seed-local-company/expenses/evidence",
+    "headings": [
+      "  - heading \"หลักฐานทางบัญชี\" [level=1]"
+    ],
+    "blocked": [],
+    "controls": 10
+  },
+  {
+    "label": "การเบิกจ่าย",
+    "href": "/companies/seed-local-company/reimbursements",
+    "headings": [
+      "  - heading \"การเบิกจ่ายและอนุมัติ\" [level=1]"
+    ],
+    "blocked": [
+      "  - status: ขณะนี้ไม่สามารถสร้างคำขอใหม่ได้ กรุณาติดต่อผู้ดูแลบริษัทเพื่อตรวจสอบการเปิดใช้งานการเบิกจ่ายและสิทธิ์บัญชี · ยังดูประวัติเดิมได้ตามสิทธิ์"
+    ],
+    "controls": 11
+  },
+  {
+    "label": "บทบาทและสิทธิ์",
+    "href": "/companies/seed-local-company/settings/permissions",
+    "headings": [
+      "  - heading \"สิทธิ์การใช้งาน\" [level=1]",
+      "  - heading \"บทบาททั้งหมด\" [level=2]",
+      "  - heading \"สิทธิ์เข้าถึงเมนู — บัญชี\" [level=2]"
+    ],
+    "blocked": [],
+    "controls": 17
+  },
+  {
+    "label": "รายชื่อพนักงาน",
+    "href": "/companies/seed-local-company/settings/access-overview",
+    "headings": [
+      "  - heading \"รายชื่อพนักงาน\" [level=1]",
+      "  - heading \"พนักงานทั้งหมด\" [level=2]",
+      "  - heading \"QA LocalTest20260828\" [level=2]",
+      "  - heading \"สิทธิ์การใช้งานของ QA LocalTest20260828\" [level=2]",
+      "  - heading \"ทั่วไป\" [level=3]",
+      "  - heading \"การเงิน\" [level=3]",
+      "  - heading \"สาขาที่เข้าถึงได้\" [level=2]"
+    ],
+    "blocked": [],
+    "controls": 26
+  },
+  {
+    "label": "เพิ่มพนักงาน",
+    "href": "/companies/seed-local-company/settings/employees",
+    "headings": [
+      "  - heading \"เพิ่มพนักงาน\" [level=1]"
+    ],
+    "blocked": [],
+    "controls": 12
+  },
+  {
+    "label": "ภาพรวมการตั้งค่า",
+    "href": "/companies/seed-local-company/settings",
+    "headings": [
+      "  - heading \"ตั้งค่า\" [level=1]"
+    ],
+    "blocked": [],
+    "controls": 3
+  },
+  {
+    "label": "สาขา",
+    "href": "/companies/seed-local-company/settings/branches",
+    "headings": [
+      "  - heading \"สาขา\" [level=1]"
+    ],
+    "blocked": [],
+    "controls": 8
+  },
+  {
+    "label": "ค่าใช้จ่ายและใบเสร็จ",
+    "href": "/companies/seed-local-company/user-guide/expenses",
+    "headings": [
+      "  - heading \"ค่าใช้จ่ายและใบเสร็จ\" [level=1]"
+    ],
+    "blocked": [],
+    "controls": 13
+  },
+  {
+    "label": "ใบรับรองแทนใบเสร็จรับเงิน",
+    "href": "/companies/seed-local-company/user-guide/substitute-receipts",
+    "headings": [
+      "  - heading \"ใบรับรองแทนใบเสร็จรับเงิน\" [level=1]"
+    ],
+    "blocked": [],
+    "controls": 15
+  },
+  {
+    "label": "การเบิกจ่ายและอนุมัติ",
+    "href": "/companies/seed-local-company/user-guide/reimbursements",
+    "headings": [
+      "  - heading \"การเบิกจ่ายและอนุมัติ\" [level=1]"
+    ],
+    "blocked": [],
+    "controls": 16
+  }
+]

@@ -82,16 +82,22 @@ export function getUnreadCount(companyId: string): Promise<NotificationUnreadCou
   return apiFetch(`/v1/companies/${companyId}/notifications/unread-count`);
 }
 
+export const NOTIFICATIONS_CHANGED_EVENT = 'watchdog:notifications-changed';
+
+function notifyNotificationsChanged(): void {
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(NOTIFICATIONS_CHANGED_EVENT));
+}
+
 export function markRead(companyId: string, notificationId: string): Promise<void> {
-  return apiFetch(`/v1/companies/${companyId}/notifications/${notificationId}/read`, { method: 'POST', body: '{}' });
+  return apiFetch(`/v1/companies/${companyId}/notifications/${notificationId}/read`, { method: 'POST', body: '{}', suppressErrorToast: true }).then(notifyNotificationsChanged);
 }
 
 export function markAllRead(companyId: string): Promise<void> {
-  return apiFetch(`/v1/companies/${companyId}/notifications/read-all`, { method: 'POST', body: '{}' });
+  return apiFetch(`/v1/companies/${companyId}/notifications/read-all`, { method: 'POST', body: '{}', suppressErrorToast: true }).then(notifyNotificationsChanged);
 }
 
 export function dismissNotification(companyId: string, notificationId: string): Promise<void> {
-  return apiFetch(`/v1/companies/${companyId}/notifications/${notificationId}/dismiss`, { method: 'POST', body: '{}' });
+  return apiFetch(`/v1/companies/${companyId}/notifications/${notificationId}/dismiss`, { method: 'POST', body: '{}', suppressErrorToast: true }).then(notifyNotificationsChanged);
 }
 
 // ---- Preferences ----

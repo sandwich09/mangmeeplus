@@ -93,6 +93,7 @@ export type DocumentDetail = DocumentSummary & {
   voidedAt?: string;
   voidReason?: string;
   approvalStatus?: string;
+  submittedByUserId?: string;
   approvedByUserId?: string;
   approvedAt?: string;
   rejectedAt?: string;

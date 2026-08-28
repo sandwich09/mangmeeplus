@@ -1,0 +1,125 @@
+[
+  {
+    "label": "มั่งมี",
+    "href": "/",
+    "headings": [
+      "  - heading \"สวัสดี คุณ วราภรณ์\" [level=1]"
+    ],
+    "blocked": []
+  },
+  {
+    "label": "แดชบอร์ด",
+    "href": "/companies/seed-local-company/dashboard",
+    "headings": [
+      "  - heading \"สวัสดี คุณ วราภรณ์\" [level=1]"
+    ],
+    "blocked": []
+  },
+  {
+    "label": "เอกสารขายและรับชำระ",
+    "href": "/companies/seed-local-company/sales-documents",
+    "headings": [
+      "  - heading \"เอกสารขายและรับชำระ\" [level=1]",
+      "  - heading \"สร้างเอกสารใหม่\" [level=2]",
+      "  - heading \"เอกสารบัญชี\" [level=1]",
+      "  - heading \"INV-202608-00012\" [level=2]",
+      "  - heading \"ลูกค้าและคู่ค้า\" [level=2]",
+      "  - heading \"รายการรับชำระ\" [level=2]"
+    ],
+    "blocked": []
+  },
+  {
+    "label": "รายการค่าใช้จ่าย",
+    "href": "/companies/seed-local-company/expenses",
+    "headings": [
+      "  - heading \"รายการค่าใช้จ่าย\" [level=1]"
+    ],
+    "blocked": []
+  },
+  {
+    "label": "อัปโหลดใบเสร็จ",
+    "href": "/companies/seed-local-company/expenses/upload",
+    "headings": [
+      "  - heading \"อัปโหลดใบเสร็จ\" [level=1]"
+    ],
+    "blocked": []
+  },
+  {
+    "label": "บันทึกด้วยมือ",
+    "href": "/companies/seed-local-company/expenses/manual",
+    "headings": [
+      "  - heading \"บันทึกด้วยมือ\" [level=1]",
+      "  - heading \"บันทึกค่าใช้จ่ายด้วยมือ\" [level=2]",
+      "  - heading \"ข้อมูลเอกสาร\" [level=3]",
+      "  - heading \"รายการค่าใช้จ่าย\" [level=3]",
+      "  - heading \"สรุปก่อนบันทึก\" [level=3]"
+    ],
+    "blocked": []
+  },
+  {
+    "label": "หมวดหมู่",
+    "href": "/companies/seed-local-company/expenses/categories",
+    "headings": [
+      "  - heading \"หมวดหมู่\" [level=1]"
+    ],
+    "blocked": []
+  },
+  {
+    "label": "ลายเซ็นของฉัน",
+    "href": "/companies/seed-local-company/expenses/signatures",
+    "headings": [
+      "  - heading \"ลายเซ็นของฉัน\" [level=1]"
+    ],
+    "blocked": []
+  },
+  {
+    "label": "ใบรับรองแทนใบเสร็จ",
+    "href": "/companies/seed-local-company/expenses/substitute-receipts",
+    "headings": [
+      "  - heading \"ใบรับรองแทนใบเสร็จรับเงิน\" [level=1]"
+    ],
+    "blocked": []
+  },
+  {
+    "label": "หลักฐานทางบัญชี",
+    "href": "/companies/seed-local-company/expenses/evidence",
+    "headings": [
+      "  - heading \"หลักฐานทางบัญชี\" [level=1]"
+    ],
+    "blocked": []
+  },
+  {
+    "label": "การเบิกจ่าย",
+    "href": "/companies/seed-local-company/reimbursements",
+    "headings": [
+      "  - heading \"การเบิกจ่ายและอนุมัติ\" [level=1]"
+    ],
+    "blocked": [
+      "  - status: ขณะนี้ไม่สามารถสร้างคำขอใหม่ได้ กรุณาติดต่อผู้ดูแลบริษัทเพื่อตรวจสอบการเปิดใช้งานการเบิกจ่ายและสิทธิ์บัญชี · ยังดูประวัติเดิมได้ตามสิทธิ์"
+    ]
+  },
+  {
+    "label": "ค่าใช้จ่ายและใบเสร็จ",
+    "href": "/companies/seed-local-company/user-guide/expenses",
+    "headings": [
+      "  - heading \"ค่าใช้จ่ายและใบเสร็จ\" [level=1]"
+    ],
+    "blocked": []
+  },
+  {
+    "label": "ใบรับรองแทนใบเสร็จรับเงิน",
+    "href": "/companies/seed-local-company/user-guide/substitute-receipts",
+    "headings": [
+      "  - heading \"ใบรับรองแทนใบเสร็จรับเงิน\" [level=1]"
+    ],
+    "blocked": []
+  },
+  {
+    "label": "การเบิกจ่ายและอนุมัติ",
+    "href": "/companies/seed-local-company/user-guide/reimbursements",
+    "headings": [
+      "  - heading \"การเบิกจ่ายและอนุมัติ\" [level=1]"
+    ],
+    "blocked": []
+  }
+]

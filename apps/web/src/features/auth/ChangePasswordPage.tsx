@@ -84,7 +84,7 @@ export default function ChangePasswordPage({ homePath = null }: { homePath?: str
       <div className="w-full max-w-sm bg-white rounded-lg border border-gray-200 p-8 space-y-6">
         <div>
           <h1 className="text-xl font-semibold text-gray-900">{t('auth.change.title', locale)}</h1>
-          <p className="text-sm text-gray-500 mt-1">{t('auth.change.subtitle', locale)}</p>
+          <p className="text-sm text-gray-500 mt-1">{t(homePath ? 'auth.change.optional_subtitle' : 'auth.change.subtitle', locale)}</p>
         </div>
         {error && (
           <div className="rounded bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">{error}</div>

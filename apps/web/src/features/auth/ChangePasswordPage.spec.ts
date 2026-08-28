@@ -26,6 +26,12 @@ describe('ChangePasswordPage exits', () => {
     // Blocked session: a home link would just bounce back here, so it is not offered.
     assert.doesNotMatch(await render({ homePath: null }), /กลับหน้าหลัก/);
   });
+
+  it('distinguishes a voluntary change from the forced temporary-password journey', async () => {
+    assert.match(await render({ homePath: '/companies/c1/dashboard' }), /ตั้งรหัสผ่านใหม่เพื่อความปลอดภัยของบัญชี/);
+    assert.doesNotMatch(await render({ homePath: '/companies/c1/dashboard' }), /ต้องเปลี่ยนรหัสผ่านชั่วคราว/);
+    assert.match(await render({ homePath: null }), /ต้องเปลี่ยนรหัสผ่านชั่วคราว/);
+  });
 });
 
 // A date-of-birth temporary password is DDMMYYYY — 8 characters — so the minimum-length rule

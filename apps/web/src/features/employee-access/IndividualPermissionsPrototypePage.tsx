@@ -567,7 +567,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
         </div>
 
         {!selectedEmployee ? (
-          <MangmeeCard className="p-6 text-sm text-gray-400">ยังไม่มีพนักงานในบริษัทนี้</MangmeeCard>
+          <MangmeeCard className="p-6 text-sm text-gray-400">{employees.length === 0 ? 'ยังไม่มีพนักงานในบริษัทนี้' : 'ไม่พบพนักงานที่ตรงกับตัวกรอง กรุณาปรับตัวกรองหรือคำค้นหา'}</MangmeeCard>
         ) : (
           <div className="grid min-w-0 gap-5">
             <MangmeeCard className="relative p-5">
