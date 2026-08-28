@@ -242,12 +242,20 @@ specialized when combining them would enlarge or weaken the common text path.
 - Loading starts best-effort after signature/legal/durable acceptance and before debounce for 1:1
   chats. It must be coalesced per chat and ordered so it can never appear after the final reply.
 - The long-wait status is due 5,000 ms after the last user bubble's durable acceptance, not 5,000 ms
-  after processing start. Its delivery must
+  after processing start. With the loading animation enabled it is REPLACED by the spinner (Owner
+  2026-08-27 "ลดข้อความซ้อน"); with the animation disabled it remains the early fallback signal. Its
+  delivery must
   be atomically cancelled if it has not started. An already-started status delivery is ordered before
   final delivery but may not hold a ready answer indefinitely; use a bounded attempt, then proceed.
   Because a pushed status clears LINE loading, restart loading 300 ms after a successful status when
   the final answer is not ready, then send one best-effort keepalive at 1,300 ms to cover slow device
   delivery. Both loading calls must remain cancellable before the final answer.
+- LINE's loading indicator lives at most 60 s per request while turn timeouts are 120 s, so in BOTH
+  animation modes exactly one slow-turn status is due 55,000 ms after durable acceptance (media: after
+  dispatch, following the immediate ack). Its delivery restarts loading via the same 300/1,300 ms
+  machinery, covering the stretch to the timeout; final delivery cancels it unfired. One per turn,
+  never a second (`lineWaitStages` is the single source of each turn's waiting ladder, and the media
+  ack sets the "normally within 1 minute" expectation).
 - Group chats have no loading indicator and retain a separate measurement cohort.
 - Freeze `LINE_AI_LOADING_ON_ACCEPT_ENABLED` and every flag that can affect buffering, routing, model
   calls, provider reuse, or session affinity for the full 14-day debounce experiment. A flag/config

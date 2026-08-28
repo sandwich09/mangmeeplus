@@ -47,10 +47,22 @@ describe('OCR governance LINE reply UX', () => {
     }
   });
 
-  it('keeps the ordinary clarification copy for unrelated provider failures', () => {
+  it('keeps the ordinary clarification copy when the read did not fail', () => {
     const reply = formatOcrGovernanceClarifyReply('PROVIDER_TIMEOUT');
     assert.match(reply, /^🤔 รูปนี้เป็นอะไรคะ/);
     assert.doesNotMatch(reply, /สิทธิ์อ่านเอกสาร/);
+  });
+
+  it('admits a transient read failure instead of asking "what is this picture?" (owner UX 2026-08-29)', () => {
+    for (const code of ['PROVIDER_TIMEOUT', 'OCR_EMPTY_OUTPUT', undefined]) {
+      const reply = formatOcrGovernanceClarifyReply(code, true);
+      assert.match(reply, /อ่านรูปนี้ไม่สำเร็จ/, 'names the failure, not the photo');
+      assert.match(reply, /รูปยังเก็บไว้ให้และยังไม่ได้บันทึกรายการ/, 'states what happened to the user\'s data');
+      assert.match(reply, /1\) ใบเสร็จ/, 'the numbered manual path survives');
+      assert.doesNotMatch(reply, /OCR_|PROVIDER/i, 'internal codes never reach the customer');
+    }
+    // Governance refusals keep their own lead-in even though their status is also OCR_FAILED.
+    assert.match(formatOcrGovernanceClarifyReply('OCR_FEATURE_DISABLED', true), /ปิดการอ่านเอกสารด้วย AI/);
   });
 });
 
@@ -2050,7 +2062,10 @@ describe('ProcessLineWebhookUseCase', () => {
       messagingChannelId: 'msg-channel-1',
     });
 
-    assert.match(replies[0] ?? '', /เกิดข้อผิดพลาด/);
+    // The failure names the photo and the resend path, with no false "nothing was saved" promise
+    // (the turn may have died after a write) — the duplicate-file warning covers the resend.
+    assert.match(replies[0] ?? '', /ประมวลผลรูปนี้ไม่สำเร็จ/);
+    assert.match(replies[0] ?? '', /ส่งรูปเดิมอีกครั้ง/);
     assert.equal((updates.at(-1) as any).data.status, undefined);
     assert.equal((updates.at(-1) as any).data.processedAt, null);
     assert.equal((updates.at(-1) as any).data.errorCode, 'RETRYABLE_RECEIPT_UPLOAD_ERROR');

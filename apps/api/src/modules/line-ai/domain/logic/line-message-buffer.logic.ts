@@ -57,11 +57,17 @@ export const LINE_BUFFER_ORPHAN_REPROCESS_MS = 2 * 60 * 1000;
 export const LINE_BUFFER_SHUTDOWN_DRAIN_TIMEOUT_MS = 25_000;
 /** Keep quick turns to native loading only; one status appears only for genuinely slow work. */
 export const LINE_WAIT_STATUS_DELAY_MS = 5_000;
+/** LINE's loading indicator lives at most 60 s per request. This slow-turn status lands just before
+ *  that window lapses and its delivery restarts loading, so a turn heading toward the 120 s timeout
+ *  never goes silent between spinner expiry and the terminal answer. */
+export const LINE_WAIT_STATUS_SLOW_DELAY_MS = 55_000;
 /** Let the status bubble reach the device before restoring loading; final delivery can cancel this. */
 export const LINE_LOADING_RESTART_DELAY_MS = 300;
 /** A second best-effort keepalive covers slow device delivery clearing the first restart. */
 export const LINE_LOADING_KEEPALIVE_DELAY_MS = 1_300;
-export const LINE_MEDIA_RECEIVED_TEXT = 'ได้รับรูปแล้วค่ะ 🧾 กำลังอ่านเอกสารอยู่ ระหว่างนี้คุยกับน้องต่อได้เลยนะคะ';
+export const LINE_MEDIA_RECEIVED_TEXT = 'ได้รับรูปแล้วค่ะ 🧾 กำลังอ่านเอกสารอยู่ ปกติไม่เกิน 1 นาที เสร็จแล้วน้องจะสรุปให้เลยนะคะ ระหว่างนี้คุยกับน้องต่อได้เลยค่ะ';
+export const LINE_MEDIA_SLOW_STATUS_TEXT = 'น้องมั่งมียังอ่านเอกสารอยู่นะคะ รูปนี้ใช้เวลานานกว่าปกติ ขออีกสักครู่ค่ะ 🙏';
+export const LINE_SLOW_TURN_STATUS_TEXT = 'น้องมั่งมียังหาคำตอบอยู่นะคะ คำถามนี้ใช้เวลานานกว่าปกติ ขออีกสักครู่ค่ะ 🙏';
 
 const LINE_WAIT_STATUS_RULES: Array<[RegExp, string[]]> = [
   [/รายงาน|report/, ['กำลังจัดเตรียมรายงานให้นะคะ 📄', 'รับเรื่องแล้วค่ะ ขอรวบรวมรายงานให้ครบก่อนนะคะ ✨']],
@@ -95,6 +101,39 @@ export function lineWaitStatusText(messageText: string, turnSeed = messageText):
   const variants = LINE_WAIT_STATUS_RULES.find(([pattern]) => pattern.test(normalized))?.[1]
     ?? LINE_GENERIC_WAIT_STATUSES;
   return stableStatusVariant(variants, turnSeed);
+}
+
+export type LineWaitStage = { delayMs: number; text: string };
+
+/**
+ * Waiting ladder for one dispatched turn (latency spec §10). With the spinner on, quick text turns
+ * stay bubble-free (Owner 2026-08-27 "ลดข้อความซ้อน") and only a genuinely slow turn gets ONE status
+ * before the 60 s loading window lapses; with the spinner off, the topic status at 5 s is the only
+ * early "working" signal and the slow status still follows. Media turns acknowledge immediately in
+ * both modes. Text delays anchor to the last bubble's durable acceptance, not processing start.
+ */
+export function lineWaitStages(input: {
+  kind: 'text' | 'media';
+  messageText: string;
+  seed: string;
+  loadingEnabled: boolean;
+  latestAcceptedAt: number;
+  now: number;
+}): LineWaitStage[] {
+  if (input.kind === 'media') {
+    return [
+      { delayMs: 0, text: LINE_MEDIA_RECEIVED_TEXT },
+      { delayMs: LINE_WAIT_STATUS_SLOW_DELAY_MS, text: LINE_MEDIA_SLOW_STATUS_TEXT },
+    ];
+  }
+  const anchored = (delayMs: number) => Math.max(0, input.latestAcceptedAt + delayMs - input.now);
+  const slowStage = { delayMs: anchored(LINE_WAIT_STATUS_SLOW_DELAY_MS), text: LINE_SLOW_TURN_STATUS_TEXT };
+  return input.loadingEnabled
+    ? [slowStage]
+    : [
+      { delayMs: anchored(LINE_WAIT_STATUS_DELAY_MS), text: lineWaitStatusText(input.messageText, input.seed) },
+      slowStage,
+    ];
 }
 
 export type LineBufferFlushTiming = {

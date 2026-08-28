@@ -7,6 +7,7 @@ import {
   fittingPrefixCount,
   joinGroupText,
   joinedTextLength,
+  lineWaitStages,
   lineWaitStatusText,
   nextFlushDelayMs,
   segmentBatch,
@@ -15,6 +16,10 @@ import {
   LINE_BUFFER_MAX_ITEMS,
   LINE_BUFFER_MAX_TEXT_CHARS,
   LINE_MEDIA_RECEIVED_TEXT,
+  LINE_MEDIA_SLOW_STATUS_TEXT,
+  LINE_SLOW_TURN_STATUS_TEXT,
+  LINE_WAIT_STATUS_DELAY_MS,
+  LINE_WAIT_STATUS_SLOW_DELAY_MS,
 } from './line-message-buffer.logic';
 import type { LineBufferItem, LineBufferTextItem, LineBufferMediaItem } from './line-message-buffer.logic';
 
@@ -124,8 +129,9 @@ describe('capacity rules', () => {
 });
 
 describe('waiting feedback microcopy', () => {
-  it('keeps the receipt acknowledgement truthful', () => {
+  it('keeps the receipt acknowledgement truthful and sets a time expectation', () => {
     assert.match(LINE_MEDIA_RECEIVED_TEXT, /ได้รับรูปแล้ว.*คุยกับน้องต่อได้เลย/);
+    assert.match(LINE_MEDIA_RECEIVED_TEXT, /ไม่เกิน 1 นาที/, 'the ack says how long a read normally takes');
   });
 
   it('selects relevant copy and varies repeated generic turns deterministically', () => {
@@ -139,6 +145,41 @@ describe('waiting feedback microcopy', () => {
     assert.ok(repeated.size > 1, 'repeated generic turns do not show one fixed sentence forever');
     assert.equal(lineWaitStatusText('ขอบคุณนะ', 'same-turn'), lineWaitStatusText('ขอบคุณนะ', 'same-turn'));
     assert.equal([...repeated].some((status) => status.includes('ขอคิดสักครู่')), false);
+  });
+});
+
+describe('lineWaitStages', () => {
+  const base = { messageText: 'ขอสรุปยอดขาย', seed: 'turn-1', latestAcceptedAt: 10_000, now: 10_000 };
+
+  it('media turns ack immediately and add one slow-read status before the spinner window lapses', () => {
+    const stages = lineWaitStages({ ...base, kind: 'media', loadingEnabled: true });
+    assert.deepEqual(stages, [
+      { delayMs: 0, text: LINE_MEDIA_RECEIVED_TEXT },
+      { delayMs: LINE_WAIT_STATUS_SLOW_DELAY_MS, text: LINE_MEDIA_SLOW_STATUS_TEXT },
+    ]);
+    assert.ok(LINE_WAIT_STATUS_SLOW_DELAY_MS < 60_000, 'slow status must land before LINE loading (60 s) expires');
+  });
+
+  it('with the spinner on, a text turn stays bubble-free until the single slow-turn status (Owner 2026-08-27)', () => {
+    assert.deepEqual(lineWaitStages({ ...base, kind: 'text', loadingEnabled: true }), [
+      { delayMs: LINE_WAIT_STATUS_SLOW_DELAY_MS, text: LINE_SLOW_TURN_STATUS_TEXT },
+    ]);
+  });
+
+  it('with the spinner off, the 5 s topic status returns as the fallback and the slow status still follows (spec §10)', () => {
+    const stages = lineWaitStages({ ...base, kind: 'text', loadingEnabled: false });
+    assert.equal(stages.length, 2);
+    assert.equal(stages[0]!.delayMs, LINE_WAIT_STATUS_DELAY_MS);
+    assert.equal(stages[0]!.text, lineWaitStatusText('ขอสรุปยอดขาย', 'turn-1'));
+    assert.deepEqual(stages[1], { delayMs: LINE_WAIT_STATUS_SLOW_DELAY_MS, text: LINE_SLOW_TURN_STATUS_TEXT });
+  });
+
+  it('anchors text delays to durable acceptance, clamped at zero when dispatch starts late', () => {
+    const stages = lineWaitStages({
+      ...base, kind: 'text', loadingEnabled: false, now: 10_000 + LINE_WAIT_STATUS_DELAY_MS + 1_000,
+    });
+    assert.equal(stages[0]!.delayMs, 0, 'an already-due status fires immediately');
+    assert.equal(stages[1]!.delayMs, LINE_WAIT_STATUS_SLOW_DELAY_MS - LINE_WAIT_STATUS_DELAY_MS - 1_000);
   });
 });
 

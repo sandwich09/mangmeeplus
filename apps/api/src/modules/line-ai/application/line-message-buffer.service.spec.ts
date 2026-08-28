@@ -739,7 +739,7 @@ describe('LineMessageBufferService – shutdown and loading animation', () => {
     assert.deepEqual(h.loadingCalls, ['user-1']);
   });
 
-  it('keeps the spinner as the only waiting feedback — no status bubble stacks (Owner 2026-08-27)', async (t) => {
+  it('keeps the spinner as the only feedback until ONE slow-turn status just before it expires (Owner 2026-08-27 + 2026-08-29)', async (t) => {
     t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
     try {
       t.mock.timers.setTime(0);
@@ -773,14 +773,22 @@ describe('LineMessageBufferService – shutdown and loading animation', () => {
       await started;
       assert.deepEqual(h.loadingCalls, ['user-1']);
 
-      t.mock.timers.tick(60_000);
+      t.mock.timers.tick(52_000);
       await settle();
-      assert.equal(h.pushes.length, 0, 'the spinner is the whole waiting story — no status bubble');
-      assert.deepEqual(h.loadingCalls, ['user-1'], 'and no restart machinery runs without one');
+      assert.equal(h.pushes.length, 0, 'quick and ordinary turns stay bubble-free — the spinner is the story');
+
+      t.mock.timers.tick(8_000);
+      await settle();
+      assert.equal(h.pushes.length, 1, 'a genuinely slow turn says so once, before the 60 s spinner lapses');
+      assert.match(h.pushes[0]?.text ?? '', /ยังหาคำตอบอยู่/);
+
+      t.mock.timers.tick(1_300);
+      await settle();
+      assert.deepEqual(h.loadingCalls, ['user-1', 'user-1', 'user-1'], 'the status restarts the spinner to cover the stretch to the 120 s timeout');
 
       releaseTurn();
       await completed;
-      assert.equal(h.pushes.length, 0);
+      assert.equal(h.pushes.length, 1, 'never a second slow status for the same turn');
     } finally {
       t.mock.timers.reset();
     }
@@ -880,9 +888,44 @@ describe('LineMessageBufferService – shutdown and loading animation', () => {
       await settle();
       assert.equal(h.pushes.length, 0);
 
-      t.mock.timers.tick(60_000);
+      t.mock.timers.tick(48_000);
       await settle();
-      assert.equal(h.pushes.length, 0, 'no status bubble even long past the old 5-second mark');
+      assert.equal(h.pushes.length, 0, 'no early status bubble — nothing at the old 5-second mark');
+
+      t.mock.timers.tick(12_000);
+      await settle();
+      assert.equal(h.pushes.length, 1, 'only the anchored slow-turn status appears');
+
+      releaseTurn();
+      await settle();
+    } finally {
+      t.mock.timers.reset();
+    }
+  });
+
+  it('with the animation disabled, the 5 s topic status returns as the fallback feedback (spec §10)', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+    try {
+      t.mock.timers.setTime(0);
+      let releaseTurn!: () => void;
+      const gate = new Promise<void>((resolve) => { releaseTurn = resolve; });
+      const h = makeHarness({
+        debounceMs: 0,
+        loadingEnabled: false,
+        executeImpl: async (event) => {
+          await gate;
+          await event.beforeReply?.();
+        },
+      });
+
+      await h.service.enqueue(textEnv('wait-fallback', 'ช่วยตรวจข้อมูลให้หน่อย'));
+      await settle();
+      assert.deepEqual(h.loadingCalls, [], 'no spinner when the animation flag is off');
+
+      t.mock.timers.tick(5_000);
+      await settle();
+      assert.equal(h.pushes.length, 1, 'the topic status is the only early "working" signal without the spinner');
+      assert.match(h.pushes[0]?.text ?? '', /ตรวจสอบ|เช็กข้อมูล/);
 
       releaseTurn();
       await settle();
