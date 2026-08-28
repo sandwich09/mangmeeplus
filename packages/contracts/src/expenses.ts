@@ -1032,6 +1032,8 @@ export type UpdateSubstituteReceiptPolicyInput = {
 // ---- Accountant shared evidence view ----
 
 export type SharedEvidenceFilter = {
+  /** Optional selection narrows within all server-side filters and permissions; [] matches nothing. */
+  expenseIds?: string[];
   dateField?: 'uploadedAt' | 'expenseDate';
   fromDate?: string;
   toDate?: string;

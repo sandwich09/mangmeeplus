@@ -70,7 +70,7 @@ function documentRow(outputTaxCode: 'O7' | null = null) {
   };
 }
 
-function harness(options: { lockedTax?: boolean; failIssueUpdate?: boolean; outputTaxCode?: 'O7' } = {}) {
+function harness(options: { lockedTax?: boolean; failIssueUpdate?: boolean; outputTaxCode?: 'O7'; source?: ReturnType<typeof documentRow> } = {}) {
   const state = { document: documentRow(options.outputTaxCode ?? null) };
   const client = {
     $transaction: async (work: (tx: any) => Promise<unknown>) => {
@@ -78,7 +78,8 @@ function harness(options: { lockedTax?: boolean; failIssueUpdate?: boolean; outp
       const tx = {
         $executeRaw: async () => 0,
         accountingDocument: {
-          findFirst: async ({ where }: any) => where.id === draft.document.id && where.companyId === draft.document.companyId ? draft.document : null,
+          findFirst: async ({ where }: any) => where.companyId !== draft.document.companyId ? null
+            : where.id === draft.document.id ? draft.document : where.id === options.source?.id ? options.source : null,
           findFirstOrThrow: async () => draft.document,
           findMany: async () => [],
           updateMany: async ({ where, data }: any) => {
@@ -109,6 +110,19 @@ function harness(options: { lockedTax?: boolean; failIssueUpdate?: boolean; outp
 const finalizer = async () => [{ lineId: 'line-1', preview }];
 
 describe('atomic accounting tax issue', () => {
+  it('issues a linked receipt as paid evidence without posting the already-recorded payment twice', async () => {
+    const source = documentRow();
+    Object.assign(source, { id: 'source-invoice', documentType: 'INVOICE', status: 'ISSUED', paymentStatus: 'PAID', paidAmount: '107', outstandingAmount: '0', lines: [] });
+    const { repo, state } = harness({ source });
+    Object.assign(state.document, { documentType: 'RECEIPT', sourceDocumentId: source.id, sourceDocumentType: 'INVOICE', lines: [] });
+    const result = await repo.issueDocument('company-1', 'doc-1', 'REC-001', 'issuer-1', 'RECEIPT', undefined, 'DRAFT', updatedAt);
+    assert.equal(result.document.paymentStatus, 'PAID');
+    assert.equal(result.document.paidAmount, '107');
+    assert.equal(Number(result.document.outstandingAmount), 0);
+    assert.equal(result.document.postingStatus, 'not_required');
+    assert.deepEqual(result.taxPreviews, []);
+  });
+
   it('rejects an O7 compatibility header over an authoritative S/4HANA O1 line before finalization', async () => {
     const { repo, state } = harness({ outputTaxCode: 'O7' });
     let finalized = false;

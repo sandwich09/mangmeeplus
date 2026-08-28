@@ -51,6 +51,7 @@ export type DocumentLineSummary = {
   correctionBasisAmount?: string;
   taxCategory?: string;
   revenueCategory?: string;
+  revenueCategoryId?: string;
   taxSnapshot?: TransactionTaxSnapshot;
   taxComponents?: TransactionTaxComponentPreview[];
 };

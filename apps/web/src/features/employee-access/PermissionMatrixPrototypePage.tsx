@@ -283,6 +283,7 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions }: 
           <div className="mt-4 grid gap-2">
             {roles.map((role) => {
               const active = role.id === selectedRole?.id && mode !== 'create';
+              const disabled = role.status !== 'ACTIVE';
               return (
                 <button
                   key={role.id}
@@ -299,7 +300,7 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions }: 
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-base font-extrabold text-gray-900">{roleDisplayName(role, locale)}</span>
                     <span className="mt-1 block text-sm font-medium text-gray-500">
-                      {staffCountsAvailable ? `${staffCounts[role.id] ?? 0} คน` : role.isSystem ? 'บทบาทมาตรฐาน' : 'บทบาทที่กำหนดเอง'}
+                      {disabled ? 'ปิดใช้งาน' : staffCountsAvailable ? `${staffCounts[role.id] ?? 0} คน` : role.isSystem ? 'บทบาทมาตรฐาน' : 'บทบาทที่กำหนดเอง'}
                     </span>
                   </span>
                   {role.isSystem && <LockIcon className="h-4 w-4 shrink-0 text-amber-500" />}
@@ -352,7 +353,7 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions }: 
                   {selectedRole.description || 'ดู / สร้าง / แก้ไข / ลบ / อนุมัติ ในแต่ละเมนู — ปิด “ดู” = ซ่อนเมนูทั้งหมด'}
                 </p>
               </div>
-              {roleEditable ? (
+              {roleEditable && selectedRole.status === 'ACTIVE' ? (
                 <div className="flex shrink-0 flex-wrap items-center gap-2">
                   <button type="button" className={`${ghostClass} h-9 px-3`} onClick={() => setMode('edit')}>
                     <PencilIcon className="h-4 w-4" />
@@ -368,6 +369,8 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions }: 
                     {openMenuCount} เมนูที่เปิด
                   </span>
                 </div>
+              ) : selectedRole.status !== 'ACTIVE' ? (
+                <span className="inline-flex h-9 shrink-0 items-center rounded-full bg-gray-100 px-4 text-sm font-extrabold text-gray-600">ปิดใช้งาน</span>
               ) : (
                 <div className="inline-flex shrink-0 items-center gap-2 text-sm font-medium text-gray-400">
                   <LockIcon className="h-4 w-4" />

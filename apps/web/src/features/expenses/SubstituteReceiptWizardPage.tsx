@@ -1394,6 +1394,7 @@ export function SubstituteReceiptWizardPage({
     setDetail((current) => current ? { ...current, substituteReceiptEvidence: result } : current);
     setHistory(nextHistory);
     setSupersedeReason('');
+    setActiveStep('done');
     setInfo(t('expenses.substitute_wizard.superseded', locale));
   };
 
@@ -2456,8 +2457,8 @@ export function SubstituteReceiptWizardPage({
           <MangmeeBadge className="mt-4" tone={receiptEvidence.status === 'ISSUED' ? 'brand' : 'slate'}>
             {t(receiptEvidence.status === 'ISSUED' ? 'expenses.substitute_hub.status_issued' : 'expenses.substitute_hub.status_superseded', locale)}
           </MangmeeBadge>
-          <h2 className="mt-4 text-2xl font-extrabold tracking-tight text-gray-900">{t('expenses.substitute_wizard.done_title', locale)}</h2>
-          <p className="mt-2 text-sm leading-6 text-gray-600">{t('expenses.substitute_wizard.done_help', locale)}</p>
+          <h2 className="mt-4 text-2xl font-extrabold tracking-tight text-gray-900">{t(receiptEvidence.status === 'ISSUED' ? 'expenses.substitute_wizard.done_title' : 'expenses.substitute_hub.status_superseded', locale)}</h2>
+          <p className="mt-2 text-sm leading-6 text-gray-600">{t(receiptEvidence.status === 'ISSUED' ? 'expenses.substitute_wizard.done_help' : 'expenses.substitute_wizard.superseded', locale)}</p>
           <p className="mx-auto mt-4 w-fit rounded-xl border border-brand-100 bg-white px-4 py-2 font-mono text-lg font-extrabold text-gray-900 shadow-sm">{receiptEvidence.documentNumber}</p>
           <div className="mt-6 flex flex-wrap justify-center gap-3">
             {receiptEvidence.artifactAttachmentId && (
@@ -2470,15 +2471,15 @@ export function SubstituteReceiptWizardPage({
                 <span className="inline-flex items-center gap-2">{ICON.eye}{t('expenses.substitute_wizard.open_document', locale)}</span>
               </button>
             )}
-            <Link className={ghostClass} href={`/companies/${companyId}/expenses/${encodeURIComponent(detail.id)}`}>{t('expenses.substitute_wizard.back_to_expense', locale)}</Link>
+            <Link className={ghostClass} href={`/companies/${companyId}/expenses/${encodeURIComponent(detail.id)}`}>{t(receiptEvidence.status === 'ISSUED' ? 'expenses.substitute_wizard.back_to_expense' : 'expenses.substitute_wizard.view_expense', locale)}</Link>
           </div>
           {/* The issued file is offered only once it exists; when it does not, say so rather than
               leaving the row of actions one button short with no explanation. */}
-          {!receiptEvidence.artifactAttachmentId && (
+          {receiptEvidence.status === 'ISSUED' && !receiptEvidence.artifactAttachmentId && (
             <p className="mt-4 text-sm font-semibold leading-6 text-warning-700">{t('expenses.substitute_wizard.document_not_ready', locale)}</p>
           )}
         </div>
-        <div className="grid gap-px border-t border-gray-100 bg-gray-100 text-left sm:grid-cols-3">
+        {receiptEvidence.status === 'ISSUED' && <div className="grid gap-px border-t border-gray-100 bg-gray-100 text-left sm:grid-cols-3">
           {([
             ['1', 'expenses.substitute_wizard.done_next_store'],
             ['2', 'expenses.substitute_wizard.done_next_confirm'],
@@ -2489,8 +2490,14 @@ export function SubstituteReceiptWizardPage({
               {t(key, locale)}
             </div>
           ))}
-        </div>
+        </div>}
       </MangmeeCard>
+    </div>
+  );
+
+  // A prepared/certified version may also need correction before anyone can safely sign it.
+  // Keep the existing permission, source-state and reason guards on every wizard stage.
+  const renderVersionHistory = () => receiptEvidence && detail && (
       <details className="rounded-2xl border border-gray-200 bg-white p-4">
         <summary className="cursor-pointer font-bold text-gray-900">{t('expenses.substitute_wizard.history_title', locale)}</summary>
         <div className="mt-4 space-y-3">
@@ -2523,7 +2530,6 @@ export function SubstituteReceiptWizardPage({
           )}
         </div>
       </details>
-    </div>
   );
 
   let content: ReactNode = null;
@@ -2578,6 +2584,7 @@ export function SubstituteReceiptWizardPage({
               />
             </MangmeeCard>
             {content}
+            {renderVersionHistory()}
           </div>
         )}
       </MangmeePage>

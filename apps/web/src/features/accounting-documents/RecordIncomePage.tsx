@@ -539,11 +539,11 @@ function IncomeForm({ companyId, mode, canIssueInvoice, canAttach, onBack }: {
                 </div>
               ) : (
                 <ThemedSelect className={inputClass} value={counterpartyId} onChange={(e) => setCounterpartyId(e.target.value)} aria-label="ลูกค้า">
-                  <option value="">ลูกค้าทั่วไป (ขายเงินสด)</option>
+                  <option value="">ลูกค้าทั่วไป (ไม่ระบุชื่อ)</option>
                   {counterparties.map((counterparty) => <option key={counterparty.id} value={counterparty.id}>{counterparty.displayName}</option>)}
                 </ThemedSelect>
               )}
-              <p className="text-base text-gray-500">ไม่เลือก = ขายเงินสดไม่ระบุชื่อ ระบบไม่สร้างรายชื่อลูกค้าใหม่ให้เอง</p>
+              <p className="text-base text-gray-500">ไม่เลือก = ไม่ระบุชื่อลูกค้า ระบบไม่สร้างรายชื่อลูกค้าใหม่ให้เอง</p>
             </MangmeeCard>
 
             {mode === 'received' && (

@@ -13,6 +13,22 @@ function fakePrisma(rows: Array<{ featureKey: string; enabled: boolean }> = []) 
 }
 
 describe('GetAccessMatrixUseCase', () => {
+  it('shows scoped expense access and own editing without granting review or confirmation', async () => {
+    for (const readKey of ['expense.read_own', 'expense.read_related']) {
+      const role: RoleSummary = {
+        id: 'r-scoped', key: 'scoped', name: 'Scoped expense', isSystem: false, status: 'ACTIVE',
+        permissionKeys: [readKey, 'expense.create', 'expense.update'],
+      };
+      const matrix = await new GetAccessMatrixUseCase(fakeListRoles([role]), fakePrisma()).execute('company-1');
+      assert.equal(matrix.rows[0]!.menus.expenses?.view, true);
+      assert.equal(matrix.rows[0]!.menus.expenses?.create, true);
+      assert.equal(matrix.rows[0]!.menus.expenses?.edit, true);
+      assert.equal(matrix.rows[0]!.menus.expenses?.approve, false);
+      assert.equal(matrix.rows[0]!.menus.expenses?.del, false);
+      assert.deepEqual(role.permissionKeys, [readKey, 'expense.create', 'expense.update']);
+    }
+  });
+
   it('marks system roles locked and projects granted keys to true menu cells', async () => {
     const owner: RoleSummary = {
       id: 'r-owner', key: 'OWNER', name: 'เจ้าของ', isSystem: true, status: 'ACTIVE',

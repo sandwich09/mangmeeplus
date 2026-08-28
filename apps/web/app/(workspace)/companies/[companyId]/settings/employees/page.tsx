@@ -20,6 +20,6 @@ export default async function SettingsEmployeesPage({
     redirect(`/companies/${companyId}/settings/access-overview`);
   }
   return (
-    <AddEmployeePrototypePage companyId={companyId} editEmployeeId={edit} viewerUserId={session?.userId} viewerPermissions={permissions} />
+    <AddEmployeePrototypePage companyId={companyId} editEmployeeId={edit} viewerUserId={session?.userId} viewerPermissions={permissions} viewerBranchIds={session?.scopes?.branchIds} />
   );
 }

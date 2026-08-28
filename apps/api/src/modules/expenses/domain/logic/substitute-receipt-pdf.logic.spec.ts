@@ -15,6 +15,7 @@ import {
 } from './substitute-receipt-pdf.logic';
 import {
   buildSubstituteCertificationText,
+  fitToWidth,
   renderSubstituteReceiptSvg,
   type SubstituteReceiptSnapshot,
 } from './substitute-receipt.logic';
@@ -47,6 +48,24 @@ async function extractPageTexts(bytes: Buffer): Promise<string[]> {
 }
 
 describe('substitute receipt PDF', () => {
+  it('keeps long signer labels inside their columns in the PDF rasterizer', async () => {
+    for (const [center, label] of [
+      [240, 'QACOMPLETE UI Regression · QA LOCAL TEST ONLY — simulated payer'],
+      [615, 'Local Owner · QA LOCAL TEST ONLY — simulated approver'],
+    ] as const) {
+      const svg = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="850" height="80">
+        <rect width="850" height="80" fill="white"/>
+        <text x="${center}" y="40" text-anchor="middle" font-family="Noto Sans Thai, Tahoma, sans-serif" font-size="15"${fitToWidth(label, 270)}>${label}</text>
+      </svg>`);
+      const { data, info } = await sharp(svg).removeAlpha().greyscale().raw().toBuffer({ resolveWithObject: true });
+      const inkColumns = new Set<number>();
+      data.forEach((pixel, index) => { if (pixel < 200) inkColumns.add(index % info.width); });
+      assert.ok(inkColumns.size > 0);
+      assert.ok(Math.min(...inkColumns) >= center - 135, `${label}: overflows the left column edge`);
+      assert.ok(Math.max(...inkColumns) <= center + 135, `${label}: overflows the right column edge`);
+    }
+  });
+
   it('renders Thai ink into a one-page A4 PDF', async () => {
     const { data, info } = await sharp(thaiSvg, { density: 200 }).removeAlpha().greyscale().raw().toBuffer({ resolveWithObject: true });
     const inkRatio = data.reduce((count, pixel) => count + (pixel < 200 ? 1 : 0), 0) / (info.width * info.height);

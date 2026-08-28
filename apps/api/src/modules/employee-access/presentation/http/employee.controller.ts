@@ -69,6 +69,7 @@ export class EmployeeController {
       companyId: ctx.companyId,
       employeeId,
       requestingUserId: ctx.userId,
+      requesterBranchIds: ctx.scopes.branchIds,
       requestId: ctx.requestId,
     });
   }
@@ -86,6 +87,7 @@ export class EmployeeController {
       requesterPermissions: ctx.permissions,
       requesterEntitlementDeniedPermissions: ctx.entitlementDeniedPermissions,
       requesterRoles: ctx.roles,
+      requesterBranchIds: ctx.scopes.branchIds,
     });
   }
 

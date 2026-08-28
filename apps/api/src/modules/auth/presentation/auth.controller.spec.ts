@@ -255,6 +255,10 @@ describe('AuthController me()', () => {
       client: {
         user: { findUnique: async () => ({ displayName: 'Somsak' }) },
         userCredential: { findUnique: async () => (mustChangePassword === null ? null : { mustChangePassword }) },
+        companyMembership: { findFirst: async (query: any) => {
+          assert.deepEqual(query.where, { id: 'm-1', companyId: 'company-1', userId: 'user-1', status: 'ACTIVE' });
+          return { roles: query.select.roles.where.role.key.in.map((key: string) => ({ role: { key, name: key === 'CUSTOM_QA' ? 'QA named role' : 'Owner' } })) };
+        } },
       },
     } as any;
     const legalAcceptance = {
@@ -281,6 +285,12 @@ describe('AuthController me()', () => {
     const result = await makeMeController(false).me(context);
     assert.equal(result.mustChangePassword, false);
     assert.equal(result.legalAcceptanceRequired, true);
+  });
+
+  it('returns names only for roles held by the current user in the exact company membership', async () => {
+    const result = await makeMeController(false).me({ context: { ...context.context, roles: ['OWNER', 'CUSTOM_QA'] } } as any);
+    assert.deepEqual((result as any).roleNames, { OWNER: 'Owner', CUSTOM_QA: 'QA named role' });
+    assert.deepEqual(result.roles, ['OWNER', 'CUSTOM_QA']);
   });
 
   // LINE-only users have no credential row; absent must never read as blocked.

@@ -54,6 +54,10 @@ function makeUseCase(opts: { roles?: Array<{ id: string; key: string; permission
       },
     },
     companyMembership: {
+      findUniqueOrThrow: async ({ where }: any) => ({
+        ...state.memberships.find((item) => item.id === where.id),
+        branchScopes: state.branchScopes.filter((scope) => scope.membershipId === where.id),
+      }),
       create: async ({ data }: any) => {
         const row = { id: `membership-${++sequence}`, ...data };
         state.memberships.push(row);
@@ -338,10 +342,12 @@ describe('CreateEmployeeUseCase', () => {
   it('resumes the same draft identity instead of creating a duplicate employee', async () => {
     const { useCase, state } = makeUseCase();
     const first = await useCase.execute(baseCommand);
-    const resumed = await useCase.execute({ ...baseCommand, displayName: 'Somchai Updated', nickname: 'ชัย' });
+    const resumed = await useCase.execute({ ...baseCommand, username: 'Somchai.Updated', displayName: 'Somchai Updated', nickname: 'ชัย' });
 
     assert.equal(resumed.employeeId, first.employeeId);
     assert.equal(state.users.length, 1);
+    assert.equal(state.users[0].username, 'somchai.updated');
+    assert.equal(resumed.username, state.users[0].username);
     assert.equal(state.profiles.length, 1);
     assert.equal(state.profiles[0].displayName, 'Somchai Updated');
     assert.equal(state.profiles[0].nickname, 'ชัย');
@@ -396,6 +402,24 @@ describe('CreateEmployeeUseCase', () => {
     assert.equal(state.profiles[0].status, 'ACTIVE');
     assert.equal(state.memberships[0].status, 'ACTIVE');
     assert.equal(state.auditLogs.at(-1).metadataJson.transition, 'DRAFT_TO_ACTIVE');
+  });
+
+  it('does not let activation bypass a restricted creator branch assignment', async () => {
+    const { useCase, state } = makeUseCase();
+    const created = await useCase.execute(baseCommand);
+    const cmd = { companyId: COMPANY_ID, employeeId: created.employeeId, requestingUserId: 'manager-1', requesterBranchIds: ['b1'], requestId: 'req-complete' };
+    await assert.rejects(() => useCase.completeDraft(cmd), /outside the requester's branch scope/);
+    assert.equal(state.profiles[0].status, 'DRAFT');
+    assert.equal(state.memberships[0].status, 'DRAFT');
+    Object.assign(state.memberships[0], { branchScopeMode: 'SELECTED_BRANCHES', defaultBranchId: 'b2' });
+    state.branchScopes.push({ membershipId: state.memberships[0].id, branchId: 'b2' });
+    await assert.rejects(() => useCase.completeDraft(cmd), /outside the requester's branch scope/);
+    assert.equal(state.profiles[0].status, 'DRAFT');
+    state.memberships[0].defaultBranchId = 'b1';
+    state.branchScopes[0].branchId = 'b1';
+    await useCase.completeDraft(cmd);
+    assert.equal(state.profiles[0].status, 'ACTIVE');
+    assert.equal(state.memberships[0].status, 'ACTIVE');
   });
 
   it('still rejects the identity after its draft has been completed', async () => {
@@ -478,9 +502,11 @@ describe('CreateEmployeeUseCase', () => {
     await useCase.execute({ ...baseCommand, linkExistingUser: true, email: 'somchai.b@work.co.th' });
 
     // re-submitting the same identity resumes the draft instead of creating a duplicate
-    const resumed = await useCase.execute(baseCommand);
+    const resumed = await useCase.execute({ ...baseCommand, username: 'Must.Not.Replace.Shared.Login' });
 
     assert.equal(resumed.reusedExistingAccount, true);
+    assert.equal(resumed.username, 'somchai.j');
+    assert.equal(state.users[0].username, 'somchai.j');
     assert.equal(resumed.temporaryPassword, '');
     // the shared user row and credential are never touched
     assert.equal(state.credentials.length, 0);

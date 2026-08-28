@@ -24,8 +24,11 @@ function document(status = 'DRAFT') {
 }
 
 describe('UpdateDocumentUseCase', () => {
-  it('lets a document-type editor replace a draft with the loaded version', async () => {
-    const current = document();
+  for (const [documentType, status, permission] of [
+    ['INVOICE', 'DRAFT', 'accounting.invoice.update'],
+    ['QUOTATION', 'REJECTED', 'accounting.quotation.update'],
+  ]) it(`lets a document-type editor revise ${documentType} ${status} with the loaded version`, async () => {
+    const current = { ...document(status), documentType };
     let replacement: any;
     const repo = {
       findDocumentById: mock.fn(async () => current),
@@ -43,7 +46,7 @@ describe('UpdateDocumentUseCase', () => {
       { get: mock.fn(async () => ({ status: 'REGISTERED' })) } as any,
     );
 
-    await useCase.execute(ctx, {
+    await useCase.execute({ ...ctx, permissions: [permission] }, {
       documentId: current.id,
       expectedUpdatedAt: VERSION,
       documentDate: '2026-08-02',
@@ -51,10 +54,23 @@ describe('UpdateDocumentUseCase', () => {
       lines: [{ lineNumber: 1, description: 'Correct description', quantity: '2', unitPrice: '100.00' }],
     });
 
-    assert.equal(replacement.documentType, 'INVOICE');
+    assert.equal(replacement.documentType, documentType);
     assert.equal(replacement.documentDate, '2026-08-02');
     assert.equal(replacement.counterpartyId, 'customer-1');
     assert.equal(replacement.lines[0].description, 'Correct description');
+  });
+
+  it('does not revise a rejected non-quotation or an approved quotation', async () => {
+    for (const [documentType, status] of [['INVOICE', 'REJECTED'], ['QUOTATION', 'APPROVED']]) {
+      const updateDraftDocument = mock.fn(async () => document());
+      const useCase = new UpdateDocumentUseCase({
+        findDocumentById: mock.fn(async () => ({ ...document(status), documentType })), updateDraftDocument,
+      } as any, {} as any, {} as any, {} as any);
+      await assert.rejects(() => useCase.execute({ ...ctx, permissions: ['accounting.document.update'] }, {
+        documentId: 'document-1', expectedUpdatedAt: VERSION, note: 'cannot reopen',
+      }), UnprocessableEntityException);
+      assert.equal(updateDraftDocument.mock.callCount(), 0);
+    }
   });
 
   it('rejects issued evidence before calling the draft mutation', async () => {

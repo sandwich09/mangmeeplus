@@ -51,6 +51,7 @@ import { todayCivilDate } from '@watchdog-bms/contracts';
 import { useToast } from '@/common/components/toast';
 import { useInputPrompt } from '@/common/components/modal';
 import { LoadingState } from '@/common/components/state/LoadingState';
+import { Pagination } from '@/common/components/data-table';
 import { CorrectionNoteSection } from './CorrectionNoteSection';
 import { canCreateIncomeInvoice, canRecordReceivedIncome } from './income-record.logic';
 import { useSalesRootAvailability } from './sales-root-availability';
@@ -157,6 +158,8 @@ function DocumentList({
   onFilterTypeChange: (type: AccountingDocumentType | '') => void;
 }) {
   const [docs, setDocs] = useState<DocumentSummary[]>([]);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const loadAbort = useRef(0);
@@ -168,9 +171,10 @@ function DocumentList({
     setLoading(true);
     setError(null);
     try {
-      const res = await listDocuments(companyId, { documentType: filterType || undefined, branchId });
+      const res = await listDocuments(companyId, { documentType: filterType || undefined, branchId, page });
       if (token !== loadAbort.current) return;
       setDocs(res.data);
+      setTotalPages(Math.max(1, Math.ceil(res.total / res.pageSize)));
       if (!selectedId && res.data[0]) onSelect(res.data[0].id);
     } catch (e) {
       if (token !== loadAbort.current) return;
@@ -180,8 +184,9 @@ function DocumentList({
       if (token === loadAbort.current) setLoading(false);
     }
     // `branch` is deliberately absent: reportBranchForbidden is stable per companyId, which is here.
-  }, [companyId, filterType, branchId, onSelect, selectedId]);
+  }, [companyId, filterType, branchId, onSelect, selectedId, page]);
 
+  useEffect(() => { setPage(1); }, [companyId, filterType, branchId]);
   useEffect(() => { void load(); }, [load, reloadKey]);
 
   return (
@@ -247,6 +252,7 @@ function DocumentList({
         </div>
         </>}
       </div>
+      {totalPages > 1 && <Pagination page={page} totalPages={totalPages} onPageChange={setPage} disabled={loading} />}
     </section>
   );
 }
@@ -254,7 +260,7 @@ function DocumentList({
 function CreateDocumentForm({ companyId, onCreated, allowedDocumentTypes }: { companyId: string; onCreated: (documentId?: string) => void; allowedDocumentTypes: AccountingDocumentType[] }) {
   const toast = useToast();
   const createBranchId = useTransactionCreateBranchId();
-  const docTypes = (['QUOTATION', 'INVOICE', 'BILLING_NOTE', 'RECEIPT', 'TAX_INVOICE'] as AccountingDocumentType[])
+  const docTypes = (['QUOTATION', 'INVOICE', 'BILLING_NOTE', 'TAX_INVOICE'] as AccountingDocumentType[])
     .filter((documentType) => allowedDocumentTypes.includes(documentType));
   const [docType, setDocType] = useState<AccountingDocumentType>(docTypes[0] ?? 'QUOTATION');
   const [vatMode, setVatMode] = useState<AccountingVatMode>('NO_VAT');
@@ -560,6 +566,26 @@ function DocumentDetailPanel({ companyId, documentId, permissions, viewerUserId,
     }
   }
 
+  async function createLinkedReceipt() {
+    if (!detail) return;
+    await run(() => createDocument(companyId, {
+      documentType: 'RECEIPT',
+      documentDate: todayCivilDate(),
+      branchId: detail.branchId,
+      counterpartyId: detail.counterpartyId,
+      sourceDocumentId: detail.id,
+      sourceDocumentType: 'INVOICE',
+      currency: detail.currency,
+      vatMode: detail.vatMode,
+      note: `ใบเสร็จจาก ${detail.documentNumber ?? detail.id}`,
+      lines: detail.lines.map((line) => ({
+        lineNumber: line.lineNumber, description: line.description,
+        quantity: line.quantity, unitPrice: line.unitPrice, discountAmount: line.discountAmount,
+        vatRate: line.vatRate, whtRate: line.whtRate, revenueCategoryId: line.revenueCategoryId,
+      })),
+    }), 'สร้างร่างใบเสร็จจากยอดรับชำระแล้ว กรุณาตรวจและออกเอกสาร');
+  }
+
   async function createLinkedTaxInvoice() {
     if (!detail) return;
     const selections = detail.lines.map((line) => linkedTaxSelections[line.lineNumber]).filter(Boolean) as LinkedTaxSelection[];
@@ -603,7 +629,8 @@ function DocumentDetailPanel({ companyId, documentId, permissions, viewerUserId,
     }), 'สร้างร่างใบกำกับภาษีเรียบร้อยแล้ว');
   }
 
-  const canEdit = detail?.status === 'DRAFT' && canDocumentAction(permissions, detail.documentType, 'update');
+  const isRejectedQuotation = detail?.documentType === 'QUOTATION' && detail.status === 'REJECTED';
+  const canEdit = detail && (detail.status === 'DRAFT' || isRejectedQuotation) && canDocumentAction(permissions, detail.documentType, 'update');
   const canIssue = detail && (detail.documentType === 'QUOTATION' ? detail.status === 'APPROVED' : ['DRAFT', 'APPROVED'].includes(detail.status))
     && canDocumentAction(permissions, detail.documentType, 'issue');
   const canSubmit = detail?.documentType === 'QUOTATION' && detail.status === 'DRAFT'
@@ -615,6 +642,9 @@ function DocumentDetailPanel({ companyId, documentId, permissions, viewerUserId,
   const canConvertToBillingNote = detail?.documentType === 'QUOTATION' && detail.status === 'ISSUED'
     && canDocumentAction(permissions, 'BILLING_NOTE', 'create');
   const canRecordPayment = detail && ['INVOICE', 'BILLING_NOTE', 'DEBIT_NOTE'].includes(detail.documentType) && detail.status === 'ISSUED' && detail.paymentStatus !== 'PAID' && permissions.includes('accounting.payment.create');
+  const canCreateReceipt = detail?.documentType === 'INVOICE' && detail.status === 'ISSUED'
+    && detail.paymentStatus === 'PAID' && Number(detail.outstandingAmount) === 0
+    && canDocumentAction(permissions, 'RECEIPT', 'create');
   const paymentSettles = (Number(paymentAmount) || 0) + (Number(paymentWht) || 0);
   // Seed the withheld field from the document, but only while nothing has been received: after a
   // partial receipt the remaining share of the withholding is a judgement call, not arithmetic.
@@ -631,6 +661,7 @@ function DocumentDetailPanel({ companyId, documentId, permissions, viewerUserId,
   if (!documentId) return <section className="mangmee-card p-4 text-base text-gray-500">เลือกเอกสารเพื่อดูรายละเอียดและดำเนินการ</section>;
   if (loading) return <section className="mangmee-card p-4"><LoadingState label="กำลังโหลด..." /></section>;
   if (!detail) return <section className="mangmee-card p-4">{error && <ErrorBanner message={error} />}</section>;
+  const sourceDocumentId = detail.sourceDocumentId ?? detail.convertedFromDocumentId;
 
   return (
     <section className="mangmee-card space-y-4 p-4">
@@ -642,6 +673,12 @@ function DocumentDetailPanel({ companyId, documentId, permissions, viewerUserId,
         <div className="flex gap-2"><StatusBadge status={detail.status} /><StatusBadge status={detail.paymentStatus} /></div>
       </div>
       {error && <ErrorBanner message={error} />}
+      {isRejectedQuotation && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          <p>เหตุผลปฏิเสธ: {detail.approvalNote || 'ไม่ระบุ'}</p>
+          {canEdit && <p>บันทึกการแก้ไขเพื่อกลับเป็นร่าง แล้วส่งขออนุมัติใหม่</p>}
+        </div>
+      )}
       {editingDraft && (
         <section className="space-y-3 rounded-lg border border-brand-200 bg-brand-25 p-4">
           <div className="grid gap-3 sm:grid-cols-3">
@@ -703,7 +740,7 @@ function DocumentDetailPanel({ companyId, documentId, permissions, viewerUserId,
         <div><dt className="text-gray-500">รหัสภาษี</dt><dd className="font-mono font-medium text-gray-900">{detail.documentType === 'RECEIPT' ? 'ไม่มี — รับชำระเท่านั้น' : `${!detail.taxCodeSummary || detail.taxCodeSummary === 'NONE' ? 'ไม่มี' : detail.taxCodeSummary === 'SINGLE' ? 'รหัสเดียว' : 'หลายรหัส'}${detail.outputTaxCode ? ` · ${detail.outputTaxCode}` : ''}`}</dd></div>
         <div><dt className="text-gray-500">หัก ณ ที่จ่าย</dt><dd className="font-medium text-gray-900">{money(detail.whtAmount)}</dd></div>
         <div><dt className="text-gray-500">สถานะลงบัญชี</dt><dd className="font-medium text-gray-900">{POSTING_STATUS_LABELS[detail.postingStatus] ?? detail.postingStatus}</dd></div>
-        <div><dt className="text-gray-500">เอกสารต้นทาง</dt><dd className="font-medium text-gray-900">{detail.sourceDocumentId ? detail.sourceDocumentId.slice(0, 8) : 'ไม่มี'}</dd></div>
+        <div><dt className="text-gray-500">เอกสารต้นทาง</dt><dd className="font-medium text-gray-900">{sourceDocumentId ? <button type="button" className="text-brand-700 underline" onClick={() => onChanged(sourceDocumentId)} aria-label={`เปิดเอกสารต้นทาง ${sourceDocumentId}`}>{sourceDocumentId.slice(0, 8)}</button> : 'ไม่มี'}</dd></div>
       </dl>
       <div className="overflow-hidden rounded-lg border border-gray-200">
         <div className="mangmee-table-scroll">
@@ -725,7 +762,7 @@ function DocumentDetailPanel({ companyId, documentId, permissions, viewerUserId,
         </div>
       </div>
       <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
-        {canEdit && !editingDraft && <button className={ghostClass} disabled={busy} onClick={beginDraftEdit}>แก้ไขร่าง</button>}
+        {canEdit && !editingDraft && <button className={ghostClass} disabled={busy} onClick={beginDraftEdit}>{isRejectedQuotation ? 'แก้ไขใบเสนอราคาที่ถูกปฏิเสธ' : 'แก้ไขร่าง'}</button>}
         {canCreateSalesRoot && canSubmit && <button className={ghostClass} disabled={busy} onClick={() => run(() => submitQuotationApproval(companyId, detail.id), 'ส่งขออนุมัติเรียบร้อยแล้ว')}>ส่งขออนุมัติ</button>}
         {canApprove && <button className={btnClass} disabled={busy || isOwnApprovalRequest} onClick={() => { if (!isOwnApprovalRequest) void run(() => approveQuotation(companyId, detail.id, 'อนุมัติในหน้าบัญชี'), 'อนุมัติใบเสนอราคาเรียบร้อยแล้ว'); }}>อนุมัติ</button>}
         {canApprove && <button className={dangerClass} disabled={busy} onClick={() => void rejectDocument()}>ปฏิเสธ</button>}
@@ -734,6 +771,7 @@ function DocumentDetailPanel({ companyId, documentId, permissions, viewerUserId,
         {canCreateSalesRoot && canConvertToInvoice && <button className={ghostClass} disabled={busy} onClick={() => run(() => convertDocument(companyId, detail.id, 'INVOICE'), 'แปลงเป็นใบแจ้งหนี้เรียบร้อยแล้ว')}>แปลงเป็นใบแจ้งหนี้</button>}
         {canCreateSalesRoot && canConvertToBillingNote && <button className={ghostClass} disabled={busy} onClick={() => run(() => convertDocument(companyId, detail.id, 'BILLING_NOTE'), 'แปลงเป็นใบวางบิลเรียบร้อยแล้ว')}>แปลงเป็นใบวางบิล</button>}
         {canTaxInvoice && <button className={ghostClass} onClick={() => { setLinkedTaxInvoiceOpen(true); setLinkedTaxSelections({}); setError(null); }}>สร้างใบกำกับภาษี</button>}
+        {canCreateReceipt && <button className={ghostClass} disabled={busy} onClick={() => void createLinkedReceipt()}>สร้างใบเสร็จจากยอดรับชำระ</button>}
         {canVoid && <button className={dangerClass + ' col-span-2 order-last sm:order-none'} disabled={busy} onClick={() => void voidAccountingDocument()}>ยกเลิกเอกสาร</button>}
       </div>
       <CorrectionNoteSection
@@ -831,6 +869,9 @@ function DocumentDetailPanel({ companyId, documentId, permissions, viewerUserId,
 function CounterpartyListPage({ companyId, canCreateSalesRoot }: { companyId: string; canCreateSalesRoot: boolean }) {
   const toast = useToast();
   const [counterparties, setCounterparties] = useState<CounterpartySummary[]>([]);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const loadVersion = useRef(0);
   const [displayName, setDisplayName] = useState('');
   const [taxId, setTaxId] = useState('');
   const [loading, setLoading] = useState(true);
@@ -838,19 +879,24 @@ function CounterpartyListPage({ companyId, canCreateSalesRoot }: { companyId: st
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    const version = ++loadVersion.current;
     setLoading(true);
     setError(null);
     try {
-      const res = await listCounterparties(companyId);
+      const res = await listCounterparties(companyId, { page, pageSize: 20 });
+      if (version !== loadVersion.current) return;
       setCounterparties(res.data);
+      setTotalPages(Math.max(1, Math.ceil(res.total / 20)));
     } catch (e) {
+      if (version !== loadVersion.current) return;
       setError(err(e));
     } finally {
-      setLoading(false);
+      if (version === loadVersion.current) setLoading(false);
     }
-  }, [companyId]);
+  }, [companyId, page]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { setPage(1); }, [companyId]);
+  useEffect(() => { void load(); return () => { loadVersion.current += 1; }; }, [load]);
 
   return (
     <section className="mangmee-card space-y-3 p-4">
@@ -884,30 +930,39 @@ function CounterpartyListPage({ companyId, canCreateSalesRoot }: { companyId: st
           </div>
         ))}
       </div>
+      {totalPages > 1 && <Pagination page={page} totalPages={totalPages} onPageChange={setPage} disabled={loading || busy} />}
     </section>
   );
 }
 
 function PaymentListPage({ companyId, reloadKey }: { companyId: string; reloadKey: number }) {
   const [payments, setPayments] = useState<PaymentSummary[]>([]);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => { setPage(1); }, [companyId]);
   useEffect(() => {
+    let cancelled = false;
     const load = async () => {
       setLoading(true);
       setError(null);
       try {
-        const res = await listPayments(companyId, { direction: 'RECEIVED' });
+        const res = await listPayments(companyId, { direction: 'RECEIVED', page });
+        if (cancelled) return;
         setPayments(res.data);
+        setTotalPages(Math.max(1, Math.ceil(res.total / res.pageSize)));
       } catch (e) {
+        if (cancelled) return;
         setError(err(e));
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
     void load();
-  }, [companyId, reloadKey]);
+    return () => { cancelled = true; };
+  }, [companyId, reloadKey, page]);
 
   return (
     <section className="mangmee-card space-y-3 p-4">
@@ -923,6 +978,7 @@ function PaymentListPage({ companyId, reloadKey }: { companyId: string; reloadKe
           </div>
         ))}
       </div>
+      {totalPages > 1 && <Pagination page={page} totalPages={totalPages} onPageChange={setPage} disabled={loading} />}
     </section>
   );
 }
@@ -954,7 +1010,7 @@ export function AccountingHubPage({ companyId, permissions, viewerUserId }: { co
   const canRecordIncome = permissions.includes('company.vat_registration.read')
     && (canRecordReceivedIncome(permissions) || canCreateIncomeInvoice(permissions));
   const canCreateRootDocument = creatableDocumentTypes.some((type) =>
-    ['QUOTATION', 'INVOICE', 'BILLING_NOTE', 'RECEIPT', 'TAX_INVOICE'].includes(type));
+    ['QUOTATION', 'INVOICE', 'BILLING_NOTE', 'TAX_INVOICE'].includes(type));
   const needsSalesAvailability = canCreateRootDocument || canRecordIncome || canManageCounterparties || canSubmitQuotation;
   const salesAvailability = useSalesRootAvailability(companyId, needsSalesAvailability);
   const canCreateSalesRoot = salesAvailability.state === 'OPEN';
@@ -987,6 +1043,9 @@ export function AccountingHubPage({ companyId, permissions, viewerUserId }: { co
             </MangmeeCard>
           )}
           {canCreateRootDocument && canCreateSalesRoot && <CreateDocumentForm companyId={companyId} onCreated={refresh} allowedDocumentTypes={creatableDocumentTypes} />}
+          {canDocumentAction(permissions, 'RECEIPT', 'create') && (
+            <p className="text-sm text-gray-600">ออกใบเสร็จ: เลือกใบแจ้งหนี้ที่ชำระครบแล้วด้านล่าง หรือใช้ “บันทึกรายรับ” สำหรับรายการรับเงินใหม่</p>
+          )}
           {canReadDocuments && <DocumentList
             key={contentKey}
             companyId={companyId}

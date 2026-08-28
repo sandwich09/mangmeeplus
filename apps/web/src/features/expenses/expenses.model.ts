@@ -980,7 +980,9 @@ export function deriveExpenseAuditChecks(detail: Pick<ExpenseDetail,
   }
 
   if (hasUnresolvedDuplicateWarning(detail.duplicateStatus)) {
-    checks.push({ key: 'duplicate', status: 'warn', label: 'อาจเป็นรายการซ้ำ ต้องตรวจสอบก่อนยืนยัน' });
+    checks.push({ key: 'duplicate', status: 'warn', label: detail.duplicateStatus === 'CONFIRMED_DUPLICATE'
+      ? 'ยืนยันแล้วว่าเป็นรายการซ้ำ ไม่สามารถยืนยันค่าใช้จ่ายซ้ำได้'
+      : 'อาจเป็นรายการซ้ำ ต้องตรวจสอบก่อนยืนยัน' });
   }
 
   return checks;
@@ -1266,7 +1268,8 @@ export function expenseVatBlockedWayOut(
  */
 export type ExpenseConfirmBlocker =
   | 'expenses.confirm_needs_receipt'
-  | 'expenses.resolve_duplicate_first'
+  | 'expenses.duplicate_action_required'
+  | 'expenses.duplicate_confirmed_block'
   | 'expenses.price_mismatch_blocks_confirm'
   | 'expenses.zero_amount_warning'
   | 'expenses.confirm_needs_substitute_signed'
@@ -1276,6 +1279,7 @@ export function expenseConfirmBlocker(input: {
   status: string;
   classificationBlocked: boolean;
   hasDuplicates: boolean;
+  isConfirmedDuplicate?: boolean;
   needsReceiptOrSubstitute: boolean;
   substituteReady: boolean;
   ocrTotalUnacknowledged: boolean;
@@ -1285,11 +1289,12 @@ export function expenseConfirmBlocker(input: {
   if (input.classificationBlocked) {
     return input.classificationBlockMessage ? { literal: input.classificationBlockMessage } : { key: 'expenses.confirm_needs_receipt' };
   }
+  if (input.hasDuplicates && input.isConfirmedDuplicate) return { key: 'expenses.duplicate_confirmed_block' };
   // Attaching the receipt is the one a person can act on immediately, so it is named before the
   // states that need someone else (a signature, a second reviewer).
   if (input.needsReceiptOrSubstitute) return { key: 'expenses.confirm_needs_receipt' };
   if (!input.substituteReady) return { key: 'expenses.confirm_needs_substitute_signed' };
-  if (input.hasDuplicates) return { key: 'expenses.resolve_duplicate_first' };
+  if (input.hasDuplicates) return { key: 'expenses.duplicate_action_required' };
   if (input.ocrTotalUnacknowledged) return { key: 'expenses.price_mismatch_blocks_confirm' };
   if (input.isZeroAmount) return { key: 'expenses.zero_amount_warning' };
   if (input.status !== 'READY_FOR_CONFIRMATION') return { key: 'expenses.confirm_needs_ready_status' };

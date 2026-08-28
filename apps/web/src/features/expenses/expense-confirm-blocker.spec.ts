@@ -20,6 +20,12 @@ describe('a refused confirmation always names its reason', () => {
     assert.equal(b?.key, 'expenses.confirm_needs_receipt', 'not the duplicate or the zero total');
   });
 
+  it('keeps a confirmed duplicate final instead of asking for missing evidence or another resolution', () => {
+    assert.equal(expenseConfirmBlocker({ ...ok, hasDuplicates: true, isConfirmedDuplicate: true, needsReceiptOrSubstitute: true })?.key,
+      'expenses.duplicate_confirmed_block');
+    assert.equal(expenseConfirmBlocker({ ...ok, hasDuplicates: true })?.key, 'expenses.duplicate_action_required');
+  });
+
   it('covers every blocking flag, so no combination can go unexplained', () => {
     const blocked = [
       { ...ok, needsReceiptOrSubstitute: true },
@@ -41,4 +47,3 @@ describe('a refused confirmation always names its reason', () => {
     assert.equal(b?.literal, 'เอกสารนี้ไม่ใช่ค่าใช้จ่าย');
   });
 });
-

@@ -5,6 +5,7 @@ export type WebSession = {
   companyId: string;
   membershipId: string;
   roles: string[];
+  roleNames?: Record<string, string>;
   permissions: string[];
   scopes?: { branchIds?: string[] };
   authProvider: 'watchdog' | 'line' | 'dev';

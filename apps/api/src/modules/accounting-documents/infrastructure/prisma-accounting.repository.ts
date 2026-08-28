@@ -353,10 +353,16 @@ export class PrismaAccountingRepository {
         where: {
           id: documentId,
           companyId: input.companyId,
-          status: 'DRAFT',
+          documentType: input.documentType,
+          status: input.documentType === 'QUOTATION' ? { in: ['DRAFT', 'REJECTED'] } : 'DRAFT',
           updatedAt: expectedUpdatedAt,
         },
         data: {
+          ...(input.documentType === 'QUOTATION' ? {
+            status: 'DRAFT', approvalStatus: null, approvalNote: null,
+            submittedByUserId: null, submittedAt: null, approvedByUserId: null, approvedAt: null,
+            rejectedByUserId: null, rejectedAt: null,
+          } : {}),
           branchId: input.branchId ?? null,
           documentDate: new Date(input.documentDate),
           dueDate: input.dueDate ? new Date(input.dueDate) : null,
@@ -849,12 +855,15 @@ export class PrismaAccountingRepository {
       }
 
       const issuedAt = new Date();
+      // A linked receipt only evidences its fully-paid invoice; the payment already owns posting.
+      const paidReceipt = documentType === 'RECEIPT' && source?.documentType === 'INVOICE';
       const updated = await tx.accountingDocument.updateMany({
         where: { id, companyId, status: expectedStatus, ...(expectedUpdatedAt ? { updatedAt: expectedUpdatedAt } : {}) },
         data: {
           status: 'ISSUED' as any, documentNumber, issuedByUserId, issuedAt,
-          counterpartySnapshotJson: counterpartySnapshot as any, postingStatus: posting as any,
-          paymentStatus: 'UNPAID' as any, updatedByUserId: issuedByUserId,
+          counterpartySnapshotJson: counterpartySnapshot as any, postingStatus: paidReceipt ? 'not_required' : posting as any,
+          paymentStatus: paidReceipt ? 'PAID' : 'UNPAID', updatedByUserId: issuedByUserId,
+          ...(paidReceipt ? { paidAmount: current.grandTotalAmount, outstandingAmount: '0' } : {}),
         },
       });
       if (updated.count !== 1) throw new ConflictException({ code: 'accounting_document_changed', message: 'Document changed during final issue.' });
@@ -870,8 +879,9 @@ export class PrismaAccountingRepository {
     id: string,
     status: AccountingDocumentStatus,
     actorUserId: string,
-    extra?: {
-      approvalStatus?: AccountingQuotationApprovalStatus;
+    extra: {
+      expectedStatus: AccountingDocumentStatus;
+      expectedUpdatedAt: Date;
       approvalNote?: string;
     },
   ): Promise<DocumentRecord> {
@@ -898,8 +908,19 @@ export class PrismaAccountingRepository {
       data.rejectedAt = new Date();
       if (extra?.approvalNote) data.approvalNote = extra.approvalNote;
     }
-    const row = await this.prisma.client.accountingDocument.update({ where: { id }, data: data as any });
-    return this.toDocumentRecord(row);
+    return this.prisma.client.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${id}:accounting-document-lifecycle`}))`;
+      const changed = await tx.accountingDocument.updateMany({
+        where: { id, companyId, status: extra.expectedStatus, updatedAt: extra.expectedUpdatedAt },
+        data: data as any,
+      });
+      if (changed.count !== 1) throw new ConflictException({
+        code: 'accounting_document_changed',
+        message: 'Quotation changed during review. Reload and review before deciding.',
+      });
+      const row = await tx.accountingDocument.findFirstOrThrow({ where: { id, companyId }, include: { lines: true } });
+      return this.toDocumentRecord(row);
+    });
   }
 
   async submitQuotationForApproval(
@@ -1662,9 +1683,10 @@ export class PrismaAccountingRepository {
         reversalEntryNumber, actorUserId,
         memo: `[VOID] ${doc.documentNumber ?? documentId}`, taxPeriodMustBeOpen: taxRelevant,
       });
-      if (reversal.reversed) {
-        await tx.accountingDocument.update({ where: { id: documentId }, data: { postingStatus: 'reversed', postingError: null } });
-      }
+      await tx.accountingDocument.update({
+        where: { id: documentId },
+        data: { postingStatus: reversal.reversed ? 'reversed' : 'not_required', postingError: null },
+      });
       const row = await tx.accountingDocument.findFirstOrThrow({ where: { id: documentId, companyId }, include: { lines: { orderBy: { lineNumber: 'asc' } } } });
       return {
         document: this.toDocumentRecord(row),
@@ -1793,6 +1815,8 @@ export class PrismaAccountingRepository {
 
   private toDocumentRecord(row: any): DocumentRecord {
     const taxKeys = new Set<string>((row.lines ?? []).map((line: any) => line.taxCodeDefinitionId ?? line.externalTaxCodeSnapshot).filter(Boolean));
+    // Older voids retained their pre-void queue state; they are no longer eligible for posting.
+    const obsoletePosting = row.status === 'VOIDED' && ['pending', 'posting_error'].includes(row.postingStatus);
     return {
       id: row.id, companyId: row.companyId, branchId: row.branchId ?? undefined,
       documentType: row.documentType, documentNumber: row.documentNumber ?? undefined,
@@ -1809,8 +1833,8 @@ export class PrismaAccountingRepository {
       unappliedCreditAmount: row.unappliedCreditAmount?.toString() ?? undefined,
       paymentStatus: row.paymentStatus ?? undefined, taxStatus: row.taxStatus ?? undefined,
       taxInvoiceType: row.taxInvoiceType ?? undefined, taxInvoiceId: row.taxInvoiceId ?? undefined,
-      postingStatus: row.postingStatus, journalEntryId: row.journalEntryId ?? undefined,
-      postingError: row.postingError ?? undefined, note: row.note ?? undefined, internalMemo: row.internalMemo ?? undefined,
+      postingStatus: obsoletePosting ? 'not_required' : row.postingStatus, journalEntryId: row.journalEntryId ?? undefined,
+      postingError: obsoletePosting ? undefined : row.postingError ?? undefined, note: row.note ?? undefined, internalMemo: row.internalMemo ?? undefined,
       adjustmentReasonCode: row.adjustmentReasonCode ?? undefined,
       adjustmentReasonText: row.adjustmentReasonText ?? undefined,
       issuedByUserId: row.issuedByUserId ?? undefined, issuedAt: row.issuedAt ?? undefined,

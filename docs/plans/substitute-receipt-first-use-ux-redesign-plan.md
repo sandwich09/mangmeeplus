@@ -146,6 +146,8 @@ Approval still requires `expense.confirm` and the existing company policy. Self-
 
 There are no new mandatory fields for an issued document. Cancelling or revising a current version still requires a supersede reason.
 
+Version history and the existing permission/source-state-checked cancellation controls remain available while a version is `PREPARED` or `PAYER_CERTIFIED`, not only after issuance. A cancelled version shows its cancellation state and retained reason without directing the user to confirm the expense as if the certificate were issued. This does not relax reviewer permission or confirmed-source restrictions.
+
 ## 7. Deterministic readiness assistant
 
 The “ผู้ช่วยตรวจความพร้อม” is a local, deterministic checklist—not an LLM decision-maker.

@@ -873,8 +873,9 @@ describe('CreateAccountantPackageUseCase', () => {
     } as any;
 
     const useCase = new CreateAccountantPackageUseCase(repo, downloadUrl, audit, prisma);
-    const result = await useCase.execute(ctx(['expense.export', 'expense.read', 'attachment.read']), { branchId: 'b1' });
+    const result = await useCase.execute(ctx(['expense.export', 'expense.read', 'attachment.read']), { branchId: 'b1', expenseIds: ['exp-1'] });
     assert.equal(appliedFilter.branchId, 'b1');
+    assert.deepEqual(appliedFilter.expenseIds, ['exp-1']);
     assert.equal(result.indexRows[0]?.branch_code, 'SIAM');
     assert.equal(result.rowCount, 1);
     assert.equal(result.totalMatched, 2);

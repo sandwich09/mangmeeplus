@@ -259,7 +259,7 @@ function colorForRole(role?: RoleSummary): string {
   return ROLE_COLOR_BY_KEY[role.key] ?? '#7A5AF8';
 }
 
-export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUserId, viewerPermissions = [] }: { companyId: string; editEmployeeId?: string; viewerUserId?: string; viewerPermissions?: string[] }) {
+export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUserId, viewerPermissions = [], viewerBranchIds }: { companyId: string; editEmployeeId?: string; viewerUserId?: string; viewerPermissions?: string[]; viewerBranchIds?: string[] }) {
   const locale = useWorkspaceLocale();
   const router = useRouter();
   const toast = useToast();
@@ -328,8 +328,8 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
         setLoadError(localizedErrorMessage(rolesResult.reason, locale, { fallback: 'error.load_failed' }));
       }
       if (branchesResult.status === 'fulfilled') {
-        setBranches(branchesResult.value);
-        const active = branchesResult.value.filter((branch) => branch.status === 'ACTIVE');
+        setBranches(branchesResult.value.filter((branch) => branch.status === 'ACTIVE'));
+        const active = branchesResult.value.filter((branch) => branch.status === 'ACTIVE' && (viewerBranchIds === undefined || viewerBranchIds.includes(branch.id)));
         const initial = active.find((branch) => branch.id === selectedWorkspaceBranch.current)?.id
           ?? (active.length === 1 ? active[0]!.id : '');
         setBranchIds((current) => current.length ? current : initial ? [initial] : []);
@@ -354,9 +354,10 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
         setAddressLine(employee.addressLine ?? '');
         setRoleIds(employee.roles.map((role) => role.id));
         if (branchesResult.status === 'fulfilled') {
+          const activeBranchIds = branchesResult.value.filter((branch) => branch.status === 'ACTIVE').map((branch) => branch.id);
           const selectedBranchIds = employee.branchScopeMode === 'ALL_BRANCHES'
-            ? branchesResult.value.map((branch) => branch.id)
-            : employee.branchScopeBranchIds;
+            ? activeBranchIds
+            : employee.branchScopeBranchIds.filter((id) => activeBranchIds.includes(id));
           setBranchIds(selectedBranchIds);
           setDefaultBranchId(
             employee.defaultBranchId && selectedBranchIds.includes(employee.defaultBranchId)
@@ -427,6 +428,10 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
   // rejects anything narrower — so the picker must not offer the choice.
   const allBranchRoles = selectedRoles.filter((role) => ALL_BRANCH_ROLE_KEYS.includes(role.key));
   const branchPickerLocked = allBranchRoles.length > 0;
+  const branchScopeReadOnly = viewerBranchIds !== undefined && Boolean(editingEmployee && (
+    editingEmployee.branchScopeMode === 'ALL_BRANCHES'
+    || [...editingEmployee.branchScopeBranchIds, ...(editingEmployee.defaultBranchId ? [editingEmployee.defaultBranchId] : [])].some((id) => !viewerBranchIds.includes(id))
+  ));
 
   useEffect(() => {
     if (!branchPickerLocked || branches.length === 0) return;
@@ -541,15 +546,16 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
         subdistrict: tambon.trim() || (editingEmployee ? null : undefined),
         roleIds,
       };
+      const allBranches = viewerBranchIds === undefined && branchIds.length === branches.length;
       const branchScope = {
-        branchScopeMode: branchIds.length === branches.length ? 'ALL_BRANCHES' : 'SELECTED_BRANCHES',
-        branchIds: branchIds.length === branches.length ? [] : branchIds,
+        branchScopeMode: allBranches ? 'ALL_BRANCHES' : 'SELECTED_BRANCHES',
+        branchIds: allBranches ? [] : branchIds,
         defaultBranchId,
       };
       if (editingEmployee) {
         const updated = await updateEmployee(companyId, editingEmployee.id, {
           ...profile,
-          ...branchScope,
+          ...(branchScopeReadOnly ? {} : branchScope),
           ...(idCard && { identityType: editingEmployee.identityType, identityNumber: idCard }),
         });
         setEditingEmployee(updated);
@@ -651,6 +657,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
   }
 
   function toggleBranch(branchId: string) {
+    if (branchScopeReadOnly || branchPickerLocked || (viewerBranchIds !== undefined && !viewerBranchIds.includes(branchId))) return;
     const selected = branchIds.includes(branchId);
     if (selected && branchIds.length === 1) return;
     const next = selected ? branchIds.filter((id) => id !== branchId) : [...branchIds, branchId];
@@ -660,6 +667,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
   }
 
   function toggleAllBranches() {
+    if (branchScopeReadOnly || branchPickerLocked || viewerBranchIds !== undefined) return;
     const allIds = branches.map((b) => b.id);
     const allSelected = allIds.every((id) => branchIds.includes(id));
     const next = allSelected ? (branches[0] ? [branches[0].id] : []) : allIds;
@@ -854,15 +862,15 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
                 สาขาที่สังกัด <span className="font-normal text-gray-400">(เลือกได้มากกว่า 1 สาขา)</span>
               </div>
               <div className="flex flex-wrap gap-2">
-                <button type="button" onClick={toggleAllBranches} disabled={branchPickerLocked} className={cx('inline-flex items-center gap-2 rounded-full border px-3.5 py-2 text-[14.5px] font-extrabold transition', branchIds.length === branches.length && branches.length > 0 ? 'border-brand-300 bg-brand-25 text-brand-600' : 'border-gray-200 bg-white text-gray-500', branchPickerLocked && 'cursor-default')}>
+                <button type="button" onClick={toggleAllBranches} disabled={branchPickerLocked || branchScopeReadOnly || viewerBranchIds !== undefined} className={cx('inline-flex items-center gap-2 rounded-full border px-3.5 py-2 text-[14.5px] font-extrabold transition disabled:cursor-default disabled:opacity-60', branchIds.length === branches.length && branches.length > 0 ? 'border-brand-300 bg-brand-25 text-brand-600' : 'border-gray-200 bg-white text-gray-500')}>
                   <span>{branchIds.length === branches.length && branches.length > 0 ? '✓' : '+'}</span>
                   ทุกสาขา
                 </button>
-                {branches.map((branch) => {
+                {branches.filter((branch) => branchIds.includes(branch.id) || viewerBranchIds === undefined || viewerBranchIds.includes(branch.id)).map((branch) => {
                   const selected = branchIds.includes(branch.id);
                   const last = selected && branchIds.length === 1;
                   return (
-                    <button key={branch.id} type="button" onClick={() => toggleBranch(branch.id)} disabled={last || branchPickerLocked} className={cx('inline-flex items-center gap-2 rounded-full border px-3.5 py-2 text-[14.5px] font-extrabold transition', selected ? 'border-brand-300 bg-brand-25 text-brand-600' : 'border-gray-200 bg-white text-gray-500 hover:border-brand-200', last || branchPickerLocked ? 'cursor-default' : 'cursor-pointer')}>
+                    <button key={branch.id} type="button" onClick={() => toggleBranch(branch.id)} disabled={last || branchPickerLocked || branchScopeReadOnly} className={cx('inline-flex items-center gap-2 rounded-full border px-3.5 py-2 text-[14.5px] font-extrabold transition', selected ? 'border-brand-300 bg-brand-25 text-brand-600' : 'border-gray-200 bg-white text-gray-500 hover:border-brand-200', last || branchPickerLocked || branchScopeReadOnly ? 'cursor-default' : 'cursor-pointer')}>
                       <span className={selected ? 'text-brand-500' : 'text-gray-300'}>{selected ? '✓' : '+'}</span>
                       {branch.name}
                     </button>
@@ -870,6 +878,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
                 })}
               </div>
               {errorFieldId === 'employee-branches' && <div role="alert" className="mt-2 text-sm font-semibold text-error-600">{error}</div>}
+              {viewerBranchIds !== undefined && <p className="mt-2 text-sm text-gray-500">กำหนดได้เฉพาะสาขาที่บัญชีของคุณเข้าถึง หากต้องการเปลี่ยนขอบเขตนอกเหนือจากนี้ กรุณาติดต่อเจ้าของร้าน</p>}
               {branchPickerLocked && (
                 <div className="mt-2 text-sm font-medium text-gray-400">
                   บทบาท {allBranchRoles.map((role) => role.name).join(', ')} ดูแลภาพรวมทั้งบริษัท จึงต้องเห็นข้อมูลทุกสาขา — จำกัดสาขาไม่ได้
@@ -881,6 +890,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
                 </span>
                 <ThemedSelect
                   id="employee-default-branch"
+                  disabled={branchScopeReadOnly}
                   aria-invalid={errorFieldId === 'employee-default-branch'}
                   value={defaultBranchId}
                   onChange={(event) => { setDefaultBranchId(event.target.value); setError(''); }}

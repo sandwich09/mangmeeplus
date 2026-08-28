@@ -23,6 +23,7 @@ export type UpdateEmployeeCommand = UpdateEmployeeInput & {
   requesterPermissions: string[];
   requesterEntitlementDeniedPermissions?: Record<string, string>;
   requesterRoles?: string[];
+  requesterBranchIds?: string[];
   requestId: string;
 };
 
@@ -147,11 +148,27 @@ export class UpdateEmployeeUseCase {
     if (scopeTouched || assignsAllBranchRole) {
       const membership = await this.prisma.client.companyMembership.findUniqueOrThrow({
         where: { id: existing.membershipId },
-        select: { branchScopeMode: true, defaultBranchId: true },
+        select: { branchScopeMode: true, defaultBranchId: true, branchScopes: { select: { branchId: true } } },
       });
       const mode = cmd.branchScopeMode ?? membership.branchScopeMode;
       const defaultBranchId = cmd.defaultBranchId === undefined ? membership.defaultBranchId : cmd.defaultBranchId;
       const referenced = [...new Set([...(cmd.branchIds ?? []), ...(defaultBranchId ? [defaultBranchId] : [])])];
+      if (cmd.requesterBranchIds !== undefined) {
+        const finalBranchIds = mode === 'DEFAULT_BRANCH_ONLY'
+          ? (defaultBranchId ? [defaultBranchId] : [])
+          : cmd.branchIds ?? membership.branchScopes.map((scope) => scope.branchId);
+        if (assignsAllBranchRole || mode === 'ALL_BRANCHES'
+          || [...finalBranchIds, ...referenced].some((id) => !cmd.requesterBranchIds!.includes(id))) {
+          const reason = "Cannot assign access outside the requester's branch scope.";
+          await this.prisma.client.auditLog.create({ data: {
+            companyId: cmd.companyId, actorUserId: cmd.requestingUserId,
+            action: AuditAction.ACCESS_EMPLOYEE_UPDATE, targetType: 'EmployeeAccessProfile',
+            targetId: cmd.employeeId, requestId: cmd.requestId, result: 'DENIED', riskLevel: 'HIGH',
+            metadataJson: { reason, granteeUserId: existing.userId, branchScopeMode: mode, branchIds: finalBranchIds },
+          } });
+          throw new ForbiddenException(reason);
+        }
+      }
       if (scopeTouched) {
         if (referenced.length > 0) {
           const valid = await this.prisma.client.branch.count({

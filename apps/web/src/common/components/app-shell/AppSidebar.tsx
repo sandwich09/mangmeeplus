@@ -32,6 +32,7 @@ type Props = {
   userName?: string;
   /** every role key the session holds (e.g. OWNER) — all of them show in the sidebar footer per the มั่งมี design */
   userRoles?: string[];
+  userRoleNames?: Record<string, string>;
   showAccountSecurity?: boolean;
 };
 
@@ -89,7 +90,7 @@ const roleLabelKey: Record<string, DictionaryKey> = {
   COMPANY_VIEW: 'role.COMPANY_VIEW',
 };
 
-const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, userRoles, showAccountSecurity }) => {
+const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, userRoles, userRoleNames, showAccountSecurity }) => {
   const { isExpanded, isMobileOpen, isHovered, openSubmenu, setIsHovered, setOpenSubmenu, toggleSidebar, toggleSubmenu, closeMobileSidebar } =
     useSidebar();
   const pathname = usePathname();
@@ -131,7 +132,9 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
   // Deduped after translation: two custom role keys both fall back to the same generic label, and
   // "เมนูผู้ใช้ · เมนูผู้ใช้" reads as a bug. First appearance keeps its position.
   const roleLabel = userRoles?.length
-    ? [...new Set(userRoles.map((role) => t(roleLabelKey[role] ?? 'shell.user_menu', locale)))].join(' · ')
+    ? [...new Set(userRoles.map((role) => roleLabelKey[role]
+      ? t(roleLabelKey[role], locale)
+      : userRoleNames?.[role]?.trim() || (locale === 'th' ? 'บทบาทกำหนดเอง' : 'Custom role')))].join(' · ')
     : null;
   const displayUserName = userName === 'นภา' ? 'คุณนภา วงศ์ทอง' : userName;
   const footerLabel = displayUserName ?? roleLabel;

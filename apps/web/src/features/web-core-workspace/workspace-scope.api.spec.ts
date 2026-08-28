@@ -30,4 +30,12 @@ describe('accessContextFingerprint', () => {
       accessContextFingerprint({ ...base, scopes: { branchIds: [] } }),
     );
   });
+
+  it('refreshes display metadata when a held custom role is renamed', () => {
+    const base = { roles: ['CUSTOM_QA'], permissions: ['expense.read'] };
+    assert.notEqual(
+      accessContextFingerprint({ ...base, roleNames: { CUSTOM_QA: 'Before' } }),
+      accessContextFingerprint({ ...base, roleNames: { CUSTOM_QA: 'After' } }),
+    );
+  });
 });
