@@ -20,9 +20,13 @@ import { LINE_AI_AGENT_REGISTRY, LINE_TOOL_REGISTRY, RECEIPT_ADDITIONAL_CHARGE_K
 export const BASE64_MEDIA_ROUTES = /^\/v1\/internal\/ai\/(receipt-ocr|bank-statement-extract|line-intake-route)$/;
 
 // Document OCR needs its own budget: a dense real-photo receipt regularly takes
-// Typhoon past the 15s ERP tool-call timeout (prod failures 2026-07-14), while the
+// document reads past the 15s ERP tool-call timeout (prod failures 2026-07-14), while the
 // API-side ReceiptOcrClient waits up to 60s. Keep under that outer wrapper.
 const DOCUMENT_OCR_TIMEOUT_MS = 45_000;
+/** A forwarded intake read must look like a page, not a caption; and must fit the same budget a
+ *  fresh read would produce. Outside this band the route reads the image itself. */
+const MIN_FORWARDED_DOCUMENT_TEXT_CHARS = 24;
+const MAX_FORWARDED_DOCUMENT_TEXT_CHARS = 12_000;
 const MAX_RECEIPT_CATEGORY_CATALOGUE = 100;
 // Long enough for a full restaurant or grocery bill; past this the item block is a catalogue, not
 // an expense document, and the summary line is the honest answer.
@@ -158,11 +162,23 @@ export class LineAiInternalController {
     // values from — the §13 cross-check below is only meaningful against real read text.
     const isPdf = mimeType === 'application/pdf';
     const readerModelId = body.modelPolicy?.modelId ?? this.config.documentAiModelId;
-    const stageOne = await this.readDocumentText(mimeType, body.attachment.contentBase64, readerModelId, 'receipt');
-    if (!stageOne.ok) return { status: stageOne.status, errorCode: stageOne.errorCode };
-    const stageOneText = stageOne.text;
+    // The intake router reads the very same photo to classify it, so when it hands that read back
+    // this route skips its own (UAT 2026-08-28: 12.8s of intake followed by a 16.6s re-read of the
+    // identical image). Stage 2 and the §13 cross-check are unchanged — they simply run against a
+    // read that already happened. Anything missing or too short to be a page falls back.
+    const forwardedText = typeof body.documentText === 'string' ? body.documentText.trim() : '';
+    const reusedRead = forwardedText.length >= MIN_FORWARDED_DOCUMENT_TEXT_CHARS
+      && forwardedText.length <= MAX_FORWARDED_DOCUMENT_TEXT_CHARS;
+    let stageOneText: string;
+    if (reusedRead) {
+      stageOneText = JSON.stringify({ natural_text: forwardedText });
+    } else {
+      const stageOne = await this.readDocumentText(mimeType, body.attachment.contentBase64, readerModelId, 'receipt');
+      if (!stageOne.ok) return { status: stageOne.status, errorCode: stageOne.errorCode };
+      stageOneText = stageOne.text;
+    }
     let stageOneLineage: AiModelLineage = modelLineage(this.config, 'receipt_ocr_read', readerModelId);
-    const documentText = parseTyphoonNaturalText(stageOneText);
+    const documentText = parseStageOneNaturalText(stageOneText);
     if (!documentText) return { status: 'failed', errorCode: 'OCR_EMPTY_OUTPUT' };
 
     // Stage 2 (understanding): the configured chat provider maps the OCR markdown to
@@ -173,7 +189,7 @@ export class LineAiInternalController {
     let understood = await this.understandReceiptText(provider, documentText, activeCategories);
     if (!understood.ok) return { status: 'failed', errorCode: understood.errorCode };
 
-    // A warped or low-resolution photo can cost Typhoon either the printed total or an explicitly
+    // A warped or low-resolution photo can cost the stage-one read either the printed total or an explicitly
     // signalled VAT amount. Run at most one vision re-read. A replacement total must clear the full
     // gate; recovered VAT must be source-checked by that reading and carry the same exact-cent total.
     // A multi-entry page is intentionally not one expense. Re-reading it to recover a single total
@@ -188,7 +204,7 @@ export class LineAiInternalController {
         maxTokens: 4096,
         usageTag: 'ocr.receipt.image-reread',
       });
-      const rereadText = reread.ok ? parseTyphoonNaturalText(reread.text) : null;
+      const rereadText = reread.ok ? parseStageOneNaturalText(reread.text) : null;
       if (rereadText) {
         const second = await this.understandReceiptText(provider, rereadText, activeCategories);
         if (second.ok && needsTotalReread && hasUsableTotal(second)) {
@@ -311,7 +327,7 @@ export class LineAiInternalController {
       body.attachment.mimeType, body.attachment.contentBase64, statementReaderModelId, 'bank statement',
     );
     if (!statementRead.ok) return { status: statementRead.status, errorCode: statementRead.errorCode };
-    const documentText = parseTyphoonNaturalText(statementRead.text);
+    const documentText = parseStageOneNaturalText(statementRead.text);
     if (!documentText) return { status: 'failed', errorCode: 'OCR_EMPTY_OUTPUT' };
 
     const extractionModelId = body.modelPolicy?.modelId ?? this.config.documentAiModelId;
@@ -392,7 +408,7 @@ function modelLineage(
 }
 
 /** The stage-1 read prompt for every document and media type (Owner 2026-08-28: vision reads).
- *  Keeps the {"natural_text": md} contract the Typhoon era established, so parseTyphoonNaturalText
+ *  Keeps the {"natural_text": md} contract the Typhoon era established, so parseStageOneNaturalText
  *  and the §13 value cross-check stay identical. The verbatim-number rule is load-bearing: a
  *  reformatted figure fails the cross-check and drops the field to NEEDS_REVIEW. */
 const bedrockOcrPrompt = (source: 'PDF' | 'image') => `
@@ -402,7 +418,7 @@ Below is a ${source} of a document. Simply return the markdown representation of
 const MAX_OCR_TEXT_CHARS = 8000;
 
 /** Typhoon replies {"natural_text": md}; tolerate plain markdown, bound length, never return empty. */
-function parseTyphoonNaturalText(text: string): string | null {
+function parseStageOneNaturalText(text: string): string | null {
   let out = text.trim();
   const json = out.match(/\{[\s\S]*\}/)?.[0];
   if (json) {

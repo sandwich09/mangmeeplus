@@ -58,6 +58,22 @@ Owner: thawatchai (สั่ง: ทดสอบข้อ 3 ด้วยใบ�
 
 Verify: gateway suite **998/998**, api receipt-ocr-apply + draft-validation specs ผ่าน, typecheck สะอาดทั้งสอง app; เทสใหม่ 9 เคส (gateway 4 + api 5)
 
+## งานความเร็ว รอบที่ 1: ตัดการอ่านรูปซ้ำ (Owner สั่งต่อจาก VAT ผสม 2026-08-28)
+
+หลักฐาน (UAT log เทิร์น 10:36:36→10:37:15 = **39s**): intake-route **12.8s** (อ่านรูป+classify) → `ocr.receipt.image-read` **16.6s** (อ่านรูป**ใบเดิมซ้ำ**) → extract 6.6s → delivery 0.2s
+
+- เกิดจากการแก้ Typhoon→vision เมื่อเช้า: เดิม intake=Bedrock, OCR stage1=Typhoon (คนละเจ้า ไม่ซ้ำ) พอย้ายมา vision ทั้งคู่ งานเลยซ้อน
+- แก้: intake คืน `documentText` (transcript ที่มันอ่านอยู่แล้ว) → `ReceiptOcrRequest.documentText` → gateway ข้าม stage-1 read เมื่อได้รับ
+- Safety: §13 cross-check ยังทำงานเต็มรูปแบบ (เทสยืนยันว่ายอด 9,999 ที่ไม่อยู่ในหน้า 65.00 ถูกตัดเป็น missingFields), fallback อ่านเองเมื่อไม่มี/สั้นเกิน (<24 ตัวอักษร)/ยาวเกิน 12,000, ไม่แตะ stage 2
+- คาด: 39s → **~22s**; ต้นทุนลดด้วย (อ่านรูป 1 ครั้งแทน 2)
+- Verify: gateway 992/992 (spec รวม 61 เคสในไฟล์ controller), api typecheck สะอาด + suite ที่เกี่ยวเขียว, เทสใหม่ 4 เคส
+
+### Typhoon cleanup (Owner เตือน "ตอนนี้เราไม่ต่อ typhoon แล้วนะ")
+
+- ตรวจแล้ว **ไม่มีการเรียก Typhoon เหลืออยู่จริง** ตั้งแต่ PR #323
+- ลบ dead code: `typhoon-ocr.client.ts` + spec (ไม่มีใคร import), ถอด spec ออกจาก test runner, rename `parseTyphoonNaturalText`→`parseStageOneNaturalText`, แก้คอมเมนต์ที่ยังอ้างชื่อเดิม
+- **ยังค้าง (งาน infra แยก)**: `TYPHOON_OCR_API_KEY`/`TYPHOON_PROCESSING_REGION` ใน config schema + validation, deploy.sh ยัง `put_secret` + ส่ง env + boot-gap check, และ UAT ยังมี `typhoon` ใน `APPROVED_AI_PROVIDERS` (= สิทธิ์ที่ไม่ได้ใช้) — ต้องถอด 4 จุดพร้อมกัน + re-pin
+
 ## Next
 
 - ตัดสินใจเรื่อง Haiku: ใช้เป็น reader เฉพาะชนิดที่พิสูจน์แล้วว่าเท่ากัน (สลิปโอน/ใบกำกับย่อ) และคง Sonnet สำหรับใบกำกับเต็ม/บิลหลายรายการ — intake router บอก documentKind มาก่อนถึง OCR อยู่แล้ว
