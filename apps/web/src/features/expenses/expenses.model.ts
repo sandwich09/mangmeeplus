@@ -1237,3 +1237,66 @@ export function canAccessExpenseTab(tab: ExpensesTab, caps: ExpenseCapabilities)
   };
   return allowed[tab];
 }
+
+/**
+ * What a reviewer is offered when the VAT reconciliation blocks the save.
+ *
+ * Owner requirement 2026-08-28, from a real dead end: a blocked receipt must always tell the person
+ * in front of it what to do next. The difference may only be carried by a line that bears VAT — it
+ * must never land on ยกเว้น rows such as ผัก/ผลไม้/ค่าขนส่ง/แสตมป์ — and when the document has no such
+ * line the override form correctly cannot be shown. That used to render nothing at all: a refusal on
+ * screen, no control, no explanation. This returns the way out for every case, so "nothing" is not
+ * one of the answers the UI can reach.
+ */
+export type ExpenseVatBlockedWayOut = 'OVERRIDE_FORM' | 'SET_VAT_RATE_FIRST' | 'NEEDS_CONFIRMER';
+
+export function expenseVatBlockedWayOut(
+  input: { canConfirm: boolean; vatCarrierLineCount: number },
+): ExpenseVatBlockedWayOut {
+  if (!input.canConfirm) return 'NEEDS_CONFIRMER';
+  return input.vatCarrierLineCount > 0 ? 'OVERRIDE_FORM' : 'SET_VAT_RATE_FIRST';
+}
+
+/**
+ * Why "ยืนยันเอกสาร" is refused, as a dictionary key — or null when it is not.
+ *
+ * Owner requirement 2026-08-28: the reason already existed, but only as the disabled button's
+ * `title`, which is a hover tooltip. Expenses are reviewed on a phone, where nothing hovers, so in
+ * practice the button was simply dead with no explanation anywhere near it. The same chain now
+ * lives in one place, is rendered as text, and is ordered so the reader is told the thing they must
+ * fix FIRST rather than whichever check happened to run first.
+ */
+export type ExpenseConfirmBlocker =
+  | 'expenses.confirm_needs_receipt'
+  | 'expenses.duplicate_action_required'
+  | 'expenses.duplicate_confirmed_block'
+  | 'expenses.price_mismatch_blocks_confirm'
+  | 'expenses.zero_amount_warning'
+  | 'expenses.confirm_needs_substitute_signed'
+  | 'expenses.confirm_needs_ready_status';
+
+export function expenseConfirmBlocker(input: {
+  status: string;
+  classificationBlocked: boolean;
+  hasDuplicates: boolean;
+  isConfirmedDuplicate?: boolean;
+  needsReceiptOrSubstitute: boolean;
+  substituteReady: boolean;
+  ocrTotalUnacknowledged: boolean;
+  isZeroAmount: boolean;
+  classificationBlockMessage?: string | null;
+}): { key: ExpenseConfirmBlocker; literal?: undefined } | { key?: undefined; literal: string } | null {
+  if (input.classificationBlocked) {
+    return input.classificationBlockMessage ? { literal: input.classificationBlockMessage } : { key: 'expenses.confirm_needs_receipt' };
+  }
+  if (input.hasDuplicates && input.isConfirmedDuplicate) return { key: 'expenses.duplicate_confirmed_block' };
+  // Attaching the receipt is the one a person can act on immediately, so it is named before the
+  // states that need someone else (a signature, a second reviewer).
+  if (input.needsReceiptOrSubstitute) return { key: 'expenses.confirm_needs_receipt' };
+  if (!input.substituteReady) return { key: 'expenses.confirm_needs_substitute_signed' };
+  if (input.hasDuplicates) return { key: 'expenses.duplicate_action_required' };
+  if (input.ocrTotalUnacknowledged) return { key: 'expenses.price_mismatch_blocks_confirm' };
+  if (input.isZeroAmount) return { key: 'expenses.zero_amount_warning' };
+  if (input.status !== 'READY_FOR_CONFIRMATION') return { key: 'expenses.confirm_needs_ready_status' };
+  return null;
+}

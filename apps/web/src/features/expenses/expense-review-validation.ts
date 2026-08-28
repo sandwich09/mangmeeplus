@@ -1,5 +1,5 @@
 import type { DictionaryKey } from '@/common/i18n/workspace-dictionary';
-import { validateExpenseWhtInput } from '@watchdog-bms/contracts';
+import { EXPENSE_DECIMAL_18_4_PATTERN, validateExpenseWhtInput } from '@watchdog-bms/contracts';
 import { calculateManualExpenseTotals, expenseReviewWithholdsTax, expenseVatSourceValidationMessage, vatModeRequiresRate, vatRateFromPrintedAmount, type ExpenseDraftReviewValues } from './expenses.model';
 
 export type ExpenseFieldIssue = {
@@ -21,6 +21,7 @@ type ValidationMessageKey =
   | 'expenses.v_quantity_positive'
   | 'expenses.v_number_invalid'
   | 'expenses.v_amount_negative'
+  | 'expenses.v_number_format'
   | 'expenses.v_discount_exceeds'
   | 'expenses.v_rate_range'
   | 'expenses.v_vat_rate_required'
@@ -47,6 +48,17 @@ function numberValue(value: string | null): number | null {
   if (value === null || value.trim() === '') return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
+ * Owner report 2026-08-28: "0400" was accepted here and only refused on save. `Number('0400')` is
+ * 400 — a perfectly finite number — so the form saw nothing wrong, while the server applies the
+ * Decimal(18,4) shape and rejects the leading zero. Both sides now read the same rule from
+ * contracts, and the reviewer is told at the field instead of after pressing save.
+ */
+function malformedDecimal(value: string | null): boolean {
+  if (value === null || value.trim() === '') return false;
+  return !EXPENSE_DECIMAL_18_4_PATTERN.test(value.trim());
 }
 
 function isoDate(value: string): Date | null {
@@ -154,14 +166,19 @@ export function validateExpenseReview(
     const quantity = numberValue(line.quantity);
     if (quantity === null) addIssue(issues, `${prefix}.quantity`, 'error', 'expenses.v_number_invalid');
     else if (quantity <= 0) addIssue(issues, `${prefix}.quantity`, 'error', 'expenses.v_quantity_positive');
+    // Last, so the plainer "not a number" / "must be positive" answers keep their place; this one is
+    // for the value that looks fine to JavaScript and is still not a Decimal(18,4) the server accepts.
+    else if (malformedDecimal(line.quantity)) addIssue(issues, `${prefix}.quantity`, 'error', 'expenses.v_number_format');
 
     const unitPrice = numberValue(line.unitPrice);
     if (unitPrice === null) addIssue(issues, `${prefix}.unitPrice`, 'error', 'expenses.v_number_invalid');
     else if (unitPrice < 0) addIssue(issues, `${prefix}.unitPrice`, 'error', 'expenses.v_amount_negative');
+    else if (malformedDecimal(line.unitPrice)) addIssue(issues, `${prefix}.unitPrice`, 'error', 'expenses.v_number_format');
 
     const discount = numberValue(line.discountAmount);
     if (discount === null) addIssue(issues, `${prefix}.discountAmount`, 'error', 'expenses.v_number_invalid');
     else if (discount < 0) addIssue(issues, `${prefix}.discountAmount`, 'error', 'expenses.v_amount_negative');
+    else if (malformedDecimal(line.discountAmount)) addIssue(issues, `${prefix}.discountAmount`, 'error', 'expenses.v_number_format');
     else if (quantity !== null && quantity > 0 && unitPrice !== null && unitPrice >= 0 && discount > quantity * unitPrice) {
       addIssue(issues, `${prefix}.discountAmount`, 'error', 'expenses.v_discount_exceeds');
     }

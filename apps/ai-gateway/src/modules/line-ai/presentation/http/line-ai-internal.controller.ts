@@ -137,7 +137,12 @@ export class LineAiInternalController {
       createProvider(this.config, hasAttachment ? { timeoutMs: DOCUMENT_OCR_TIMEOUT_MS } : undefined),
     );
     const plan = await router.routeIntake(body);
-    this.logger.log({ msg: 'LINE intake routed', requestId: body.requestId, status: plan.status, intent: plan.intent, confidence: plan.confidence });
+    // errorCode was always computed and never logged, so every failure shape — truncated output, a
+    // provider error, an unparseable answer — reached the operator as the same UNAVAILABLE/UNSUPPORTED line.
+    this.logger.log({
+      msg: 'LINE intake routed', requestId: body.requestId, status: plan.status, intent: plan.intent,
+      confidence: plan.confidence, ...(plan.errorCode ? { errorCode: plan.errorCode } : {}),
+    });
     return plan;
   }
 
@@ -408,8 +413,30 @@ function modelLineage(
  *  Keeps the {"natural_text": md} contract the Typhoon era established, so parseStageOneNaturalText
  *  and the §13 value cross-check stay identical. The verbatim-number rule is load-bearing: a
  *  reformatted figure fails the cross-check and drops the field to NEEDS_REVIEW. */
+/** Benchmarked 2026-08-28 on 37 real UAT receipts against the previous "transcribe the whole page"
+ *  wording, stage two held constant: the read got 24% faster (15.5s -> 11.8s median) for 22% less
+ *  text, and the grand total came out identical 29/37 either way — a difference well inside the 5%
+ *  run-to-run noise the same arm shows against itself. Latency tracks how much the model writes
+ *  (r=0.88 across those receipts), and half a printed receipt is loyalty points, promotions and
+ *  slogans, so this stops paying to transcribe them. What survives is stated as a keep-list rather
+ *  than a "skip the irrelevant" instruction, because the looser wording dropped unlabelled subtotals. */
 const bedrockOcrPrompt = (source: 'PDF' | 'image') => `
-Below is a ${source} of a document. Simply return the markdown representation of this document, presenting tables in markdown format as they naturally appear. Transcribe every number exactly as printed — never reformat, round, convert, or infer a value. If the document contains images, use a placeholder like dummy.png for each image. Your final output must be in JSON format with a single key \`natural_text\` containing the response.
+Below is a ${source} of a document. Return the markdown representation of the parts of this document that carry accounting meaning, presenting tables in markdown format as they naturally appear.
+
+You MUST include, whenever the page shows them — these are never noise:
+- the seller's name, address, tax identification number and branch
+- the buyer's name and tax identification number
+- the document type and its number
+- every date printed on the document
+- every purchased line item with its quantity, unit price and amount, and any per-line tax marker or symbol
+- EVERY money subtotal, including the pre-tax subtotal even when it is unlabelled
+- every discount, service charge, tip, rounding, tax line, withholding line and grand total
+- every tax rate or percentage as printed
+- the payment method, card mask and reference
+
+You may omit only these, and only when they carry no amount that feeds the total: loyalty and points balances, reward tiers, promotional offers and their terms, marketing slogans and greetings, opening hours, survey or app invitations, QR and barcode payloads, and decorative separators.
+
+When unsure whether something matters, include it — omitting a needed figure is far worse than keeping a useless line. Transcribe every number you include exactly as printed: never reformat, round, convert or infer a value. Your final output must be in JSON format with a single key \`natural_text\` containing the response.
 `.trim();
 
 const MAX_OCR_TEXT_CHARS = 8000;
@@ -815,7 +842,12 @@ export function parseReceiptOcrJson(
         const acceptLineVat = lineVatRateValid && (lineVatRateNumber !== 0 || lineVatTreatmentValid);
         if (
           !description || description.length > 200
-          || !amount || amount.length > 32 || !(Number.parseFloat(amount.replace(/,/g, '')) > 0)
+          // A row printed at 0.00 is a real row, not a malformed one: tills print free and included
+          // items that way (BOGO selections, modifiers, complimentary sides). Rejecting it dropped the
+          // row, and because the API keeps an item block only when EVERY row survives, one 0.00 modifier
+          // threw away the whole breakdown — a 5-item Royal Pizza order collapsed to a single
+          // "AI สรุปยอดรวม" line. additionalCharges below stays positive-only: a zero charge is noise.
+          || !amount || amount.length > 32 || !(Number.parseFloat(amount.replace(/,/g, '')) >= 0)
           || quantity.length > 16 || !(Number.parseFloat(quantity.replace(/,/g, '')) > 0)
           || (rawUnitPrice !== undefined && (rawUnitPrice.length > 32 || !(Number.parseFloat(rawUnitPrice.replace(/,/g, '')) > 0)))
           || !evidenceSignal || evidenceSignal.length > 120 || !documentText.includes(evidenceSignal)

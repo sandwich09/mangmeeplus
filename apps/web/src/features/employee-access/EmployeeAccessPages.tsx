@@ -61,6 +61,22 @@ const DROP_REASON_LABEL: Record<string, string> = {
   above_granter_scope: 'คุณยังไม่มีสิทธิ์เพิ่มรายการนี้',
   unknown: 'รายการนี้ไม่พร้อมใช้งาน',
 };
+/**
+ * Owner report 2026-08-28: on the phone, "เพิ่มบทบาท" looked like a dead button. It was not — the
+ * builder opens directly below, past the fold, with nothing moving on screen to say so. Bring what
+ * just appeared into view so the press has a visible result.
+ */
+function useRevealedPanel(open: boolean) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    // After paint, so the panel has a height to scroll to.
+    const id = requestAnimationFrame(() => ref.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    return () => cancelAnimationFrame(id);
+  }, [open]);
+  return ref;
+}
+
 export function RiskBadge({ risk }: { risk: RiskLevel }) {
   if (risk === 'LOW' || risk === 'MEDIUM') return null; // only flag HIGH/CRITICAL to keep the UI calm
   return <span className={`rounded border px-1.5 py-0.5 text-[10px] font-medium ${RISK_STYLE[risk]}`}>{RISK_LABEL[risk]}</span>;
@@ -286,6 +302,7 @@ function EmployeesView({ companyId }: { companyId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [roleCatalogWarning, setRoleCatalogWarning] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const revealedEmployeePanel = useRevealedPanel(showCreate);
   const [handoff, setHandoff] = useState<any | null>(null);
   const [linePackage, setLinePackage] = useState<{ employeeId: string } & any | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -370,12 +387,14 @@ function EmployeesView({ companyId }: { companyId: string }) {
       </div>
 
       {showCreate && (
-        <CreateEmployeeForm
-          companyId={companyId}
-          roles={roles}
-          onCancel={() => setShowCreate(false)}
-          onCreated={(result) => { setShowCreate(false); setHandoff(result); void reload(); }}
-        />
+        <div ref={revealedEmployeePanel}>
+          <CreateEmployeeForm
+            companyId={companyId}
+            roles={roles}
+            onCancel={() => setShowCreate(false)}
+            onCreated={(result) => { setShowCreate(false); setHandoff(result); void reload(); }}
+          />
+        </div>
       )}
 
       {handoff && (
@@ -731,6 +750,7 @@ function RolesView({ companyId }: { companyId: string }) {
   const [smartRolesWarning, setSmartRolesWarning] = useState<string | null>(null);
   const [roleOptionsAvailable, setRoleOptionsAvailable] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
+  const revealedRolePanel = useRevealedPanel(showCreate);
   const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
@@ -813,11 +833,13 @@ function RolesView({ companyId }: { companyId: string }) {
       </div>
 
       {showCreate && canEditRoles && (
+        <div ref={revealedRolePanel}>
         <RoleBuilder
           companyId={companyId} packModules={packModules} allPacks={allPacks} templates={templates} roleOptionsAvailable={roleOptionsAvailable}
           onCancel={() => setShowCreate(false)}
           onSubmit={async (body) => { await createRole(companyId, body); toast.success('สร้างบทบาทแล้ว'); setShowCreate(false); void reload(); }}
         />
+        </div>
       )}
 
       <div className="grid gap-3 lg:grid-cols-2">

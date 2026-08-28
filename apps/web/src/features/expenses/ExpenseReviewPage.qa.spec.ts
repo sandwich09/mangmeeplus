@@ -34,7 +34,9 @@ test('confirmed duplicate copy distinguishes the final decision from an unresolv
   assert.match(source, /const isConfirmedDuplicate = detail\.duplicateStatus === 'CONFIRMED_DUPLICATE'/);
   assert.match(source, /isConfirmedDuplicate \? 'expenses\.duplicate_confirmed_title' : 'expenses\.duplicate_warning_title'/);
   assert.match(source, /isConfirmedDuplicate \? 'expenses\.duplicate_confirmed_block' : 'expenses\.duplicate_action_required'/);
-  assert.equal((source.match(/hasDuplicates \? duplicateBlockMessage/g) ?? []).length, 2);
+  assert.match(source, /hasDuplicates, isConfirmedDuplicate, needsReceiptOrSubstitute/);
+  assert.equal((source.match(/title=\{confirmBlockedText \?\? undefined\}/g) ?? []).length, 2);
+  assert.equal((source.match(/\{confirmBlockedNotice\}/g) ?? []).length, 2);
   assert.match(source, /\{duplicateBlockMessage\}<\/p>/);
   assert.match(workspaceDictionary.th['expenses.duplicate_confirmed_block'], /ไม่สามารถยืนยันค่าใช้จ่ายซ้ำได้/);
   assert.match(workspaceDictionary.en['expenses.duplicate_confirmed_block'], /cannot be confirmed again/);

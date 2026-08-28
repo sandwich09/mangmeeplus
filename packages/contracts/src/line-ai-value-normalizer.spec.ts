@@ -158,10 +158,15 @@ describe('extractValueCandidates – dates (golden set)', () => {
     });
   });
 
-  it('keeps a numeric two-digit date ambiguous because it has no calendar-language anchor', () => {
+  it('numeric two-digit date has no calendar-language anchor, but a receipt still cannot be from 1983', () => {
+    // Owner decision 2026-08-28: the day here is 23, so the วัน/เดือน order is not in question and the
+    // only thing left to settle is the era — which a receipt settles by existing. พ.ศ. 2526 reads as
+    // 1983, four decades before this document could have been issued, so the reading that survives is
+    // the one an expense could actually carry. A date whose ORDER is unknowable stays ambiguous; see
+    // the "7-6-69" suite below.
     const { dates } = extractValueCandidates('23/08/26', TODAY);
-    assert.deepEqual(dates.map((d) => d.isoDate).sort(), ['1983-08-23', '2026-08-23']);
-    assert.ok(dates.every(isAmbiguousDateCandidate));
+    assert.deepEqual(dates.map((d) => d.isoDate).sort(), ['2026-08-23']);
+    assert.ok(dates.every((d) => !isAmbiguousDateCandidate(d)));
   });
 
   it('month-year period: ธันวาคม 2537 → boundary candidates, never a day date', () => {
@@ -231,5 +236,39 @@ describe('formatThaiDate / formatDateClarifyQuestion', () => {
   it('returns null when nothing is ambiguous', () => {
     const { dates } = extractValueCandidates('9/12/2537', TODAY);
     assert.equal(formatDateClarifyQuestion(dates), null);
+  });
+});
+
+// Owner decision 2026-08-28, from a handwritten vegetable bill dated "7-6-69". Two different things
+// were being called ambiguous and both were discarded: which part is the day, and which era the
+// two-digit year belongs to. Only the first is genuinely unknowable — the owner's own words, "7-6
+// could be 7 June or 6 July, leave it blank and let the user type it". The era is not: a receipt
+// records something that already happened, so "69" can only be พ.ศ. 2569 and "24" only ค.ศ. 2024.
+describe('a two-digit year resolves by era only when the day/month order is already certain', () => {
+  const read = (text: string) => extractValueCandidates(text, '2026-08-28').dates
+    .filter((d) => !isAmbiguousDateCandidate(d)).map((d) => d.isoDate);
+
+  it('leaves the owner case blank, because nobody can tell 7 June from 6 July', () => {
+    assert.deepEqual(read('วันที่ 7-6-69'), [], 'no usable reading — the review form asks the person who was there');
+  });
+
+  it('keeps a Thai bill whose day cannot be a month', () => {
+    assert.deepEqual(read('วันที่ 25-6-69'), ['2026-06-25']);
+    assert.deepEqual(read('วันที่ 13/08/69'), ['2026-08-13']);
+  });
+
+  it('reads a western two-digit year as ค.ศ., because พ.ศ. would date it to 1981', () => {
+    assert.deepEqual(read('25/6/24'), ['2024-06-25']);
+    assert.deepEqual(read('25-6-11'), ['2011-06-25']);
+  });
+
+  it('stays blank when neither era could be a receipt', () => {
+    assert.deepEqual(read('25-6-99'), [], 'พ.ศ. 2599 and ค.ศ. 2099 are both ahead of today');
+  });
+
+  it('does not disturb the dates that were already unambiguous', () => {
+    assert.deepEqual(read('วันที่ 15-08-2569'), ['2026-08-15']);
+    assert.deepEqual(read('Date: 14/08/2026'), ['2026-08-14']);
+    assert.deepEqual(read('วันที่ 23 สค 69'), ['2026-08-23']);
   });
 });

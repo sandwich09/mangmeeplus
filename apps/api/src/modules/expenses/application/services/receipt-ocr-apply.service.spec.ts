@@ -471,9 +471,12 @@ describe('ReceiptOcrApplyService.apply', () => {
     assert.equal(applied.record.grandTotalAmount, '904.2000');
   });
 
-  it('falls back to the summary line when the item rows contradict the printed total', async () => {
+  it('falls back to the summary line when the item rows contradict the printed total, and says so', async () => {
     // A misread row must never rewrite what the company recorded; the reviewer sees one line and
     // the printed total, not an invented breakdown that happens to be self-consistent.
+    // Owner requirement 2026-08-28: the fold is still right, but it may no longer be silent — the
+    // rows disagreeing with the total is exactly what an accountant checks first, and a real cash
+    // bill (rows 1,040 / total confirmed 7,040) went through here without anyone being told.
     const applied = await applyFields({
       description: 'อาหาร',
       grandTotalAmount: '822.00',
@@ -484,8 +487,9 @@ describe('ReceiptOcrApplyService.apply', () => {
       ],
     });
 
-    assert.equal(applied.result.chargeReconciliationStatus, 'SUMMARY_LINE');
-    assert.equal(applied.lines.length, 1);
+    assert.equal(applied.result.chargeReconciliationStatus, 'ITEMS_DID_NOT_RECONCILE');
+    assert.equal(applied.result.itemsSumAmount, '722.00', 'the reviewer is given the rows own total, not just told they differ');
+    assert.equal(applied.lines.length, 1, 'the record still follows the printed total');
     assert.equal(applied.line.unitPrice, '822.0000');
     assert.equal(applied.record.grandTotalAmount, '822.0000');
   });
@@ -989,5 +993,37 @@ describe('usableItemLines per-row VAT', () => {
 
   it('refuses an unknown treatment code', () => {
     assert.equal(take([row({ vatRate: '0', vatTreatment: 'MAYBE' }), row()]).length, 0);
+  });
+});
+
+// Owner example 2026-08-28, a Royal Pizza Bravo bill: five paid rows interleaved with the BOGO
+// selections the till prints at 0.00. Because a rejected row discards the WHOLE block, treating a
+// printed zero as malformed turned a 5-item order into one "AI สรุปยอดรวม" line — silently, since
+// the reviewer is never told the breakdown was dropped. A zero is a printed amount.
+describe('usableItemLines keeps a bill whose till prints free rows at 0.00', () => {
+  const paid = (description: string, amount: string) => ({ description, quantity: '1', amount, evidenceSignal: description });
+  const bill = [
+    paid('BOGO 12" Half & half pizza', '499.00'),
+    paid('- Select Classic Pizza: American pepperoni', '0.00'),
+    paid('- Select 1st Pizza: Hawaiian classic', '0.00'),
+    paid('BOGO 12" Half & half pizza', '499.00'),
+    paid('Roasted Wings', '894.00'),
+  ];
+
+  it('keeps every row, including the ones the till printed at zero', () => {
+    assert.equal(usableItemLines({ lines: bill } as any).length, 5);
+  });
+
+  it('keeps a zero unit price too — the expense model already allows free-of-charge lines', () => {
+    const rows = [{ ...paid('Complimentary bread', '0.00'), unitPrice: '0.00' }, paid('Pizza', '499.00')];
+    assert.equal(usableItemLines({ lines: rows } as any).length, 2);
+  });
+
+  it('still refuses an amount that is not a number at all', () => {
+    assert.equal(usableItemLines({ lines: [paid('Pizza', 'ฟรี'), paid('Wings', '894.00')] } as any).length, 0);
+  });
+
+  it('still refuses a negative amount, which no till prints as an item row', () => {
+    assert.equal(usableItemLines({ lines: [paid('Pizza', '-499.00'), paid('Wings', '894.00')] } as any).length, 0);
   });
 });

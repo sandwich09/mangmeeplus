@@ -394,22 +394,32 @@ describe('LineMessageBufferService – batching', () => {
     assert.equal(h.executed[1].messageText, 'ที่ค้างชำระ\nเดือนนี้');
   });
 
-  it('max wait flushes anchored to the first bubble under continuous typing', async () => {
-    const h = makeHarness({ debounceMs: 40, maxWaitMs: 120 });
-    await h.service.enqueue(textEnv('m0', 'm0'));
-    await sleep(30);
-    await h.service.enqueue(textEnv('m1', 'm1'));
-    await sleep(30);
-    await h.service.enqueue(textEnv('m2', 'm2'));
-    await sleep(30);
-    await h.service.enqueue(textEnv('m3', 'm3'));
-    await sleep(250);
-    assert.equal(h.executed.length, 1);
-    assert.equal(h.executed[0].messageText, 'm0\nm1\nm2\nm3');
-    await h.service.enqueue(textEnv('m4', 'm4'));
-    await sleep(80);
-    assert.equal(h.executed.length, 2);
-    assert.equal(h.executed[1].messageText, 'm4');
+  it('max wait flushes anchored to the first bubble under continuous typing', async (t) => {
+    // Wall-clock sleeps can exceed the 40ms debounce under parallel-suite load, changing the input timeline.
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+    try {
+      t.mock.timers.setTime(0);
+      const h = makeHarness({ debounceMs: 40, maxWaitMs: 120 });
+      await h.service.enqueue(textEnv('m0', 'm0'));
+      for (const id of ['m1', 'm2', 'm3']) {
+        t.mock.timers.tick(30);
+        await h.service.enqueue(textEnv(id, id));
+      }
+      t.mock.timers.tick(30);
+      await settle();
+      assert.equal(h.executed.length, 0, 'the inclusive max-wait boundary has not expired');
+      t.mock.timers.tick(1);
+      await settle();
+      assert.equal(h.executed.length, 1);
+      assert.equal(h.executed[0].messageText, 'm0\nm1\nm2\nm3');
+      await h.service.enqueue(textEnv('m4', 'm4'));
+      t.mock.timers.tick(41);
+      await settle();
+      assert.equal(h.executed.length, 2);
+      assert.equal(h.executed[1].messageText, 'm4');
+    } finally {
+      t.mock.timers.reset();
+    }
   });
 
   it('buffers different chats independently', async () => {

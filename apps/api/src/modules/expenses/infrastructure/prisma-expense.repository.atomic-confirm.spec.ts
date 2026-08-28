@@ -177,7 +177,8 @@ describe('document VAT acceptance through real confirmation and tax resolution',
 
   it('refuses missing permissions, missing reason/carrier and obsolete decisions without an audit', async () => {
     for (const change of [
-      (h: ReturnType<typeof documentVatHarness>) => { h.ctx.permissions = ['expense.confirm']; },
+      // `expense.confirm` alone is no longer refused — owner decision 2026-08-28, below. What still
+      // is: reviewing without the right to confirm, and a decision about a snapshot that is gone.
       (h: ReturnType<typeof documentVatHarness>) => { h.ctx.permissions = ['expense.review']; },
       (h: ReturnType<typeof documentVatHarness>) => { h.row.vatCaptureSnapshotJson = null; },
     ]) {
@@ -190,6 +191,20 @@ describe('document VAT acceptance through real confirmation and tax resolution',
       await assert.rejects(() => h.useCase.execute(h.ctx, 'expense-1', { ...decision, expectedUpdatedAt: h.updatedAt.toISOString() }));
       assert.equal(h.audits.length, 0); assert.equal(h.writes.header, 0);
     }
+  });
+
+  // Owner decision 2026-08-28, from a real dead end: requiring `expense.review` on top of the
+  // `expense.confirm` this call already demands meant a confirmer facing a mismatch had no way
+  // through at all — the save was refused and the control that clears it was never rendered for
+  // them. The decision is still deliberate and still audited; it is simply no longer a second role.
+  it('lets a confirmer accept the document VAT total, with the decision still written to the audit', async () => {
+    const h = documentVatHarness();
+    h.ctx.permissions = ['expense.confirm'];
+
+    await h.useCase.execute(h.ctx, 'expense-1', { reason: 'Checked printed VAT', vatLineNumber: 1, expectedUpdatedAt: h.updatedAt.toISOString() });
+
+    assert.equal(h.writes.header, 1, 'the receipt is filed');
+    assert.ok(h.audits.length > 0, 'and who decided it, and why, is on the record');
   });
 
   for (const vatMode of ['VAT_INCLUDED', 'VAT_EXCLUDED'] as const) {

@@ -39,6 +39,14 @@ const MAX_OCR_ADDITIONAL_CHARGES = 10;
 // Mirrors the gateway prompt bound; past this the item block is a catalogue, not an expense.
 const MAX_OCR_ITEM_LINES = 40;
 
+/** A printed money figure that may legitimately be zero: a free or included item row. The expense
+ *  model already allows a zero unit price ("the general expense flow supports free-of-charge lines"),
+ *  so rejecting the row here only served to delete the breakdown around it. */
+function nonNegativeMoney(value: string | undefined): number | undefined {
+  const n = Number(String(value ?? '').replace(/,/g, ''));
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
 function positiveMoney(value: string | undefined): number | undefined {
   const n = Number(String(value ?? '').replace(/,/g, ''));
   return Number.isFinite(n) && n > 0 ? n : undefined;
@@ -210,7 +218,13 @@ export type ReceiptChargeReconciliationStatus =
   | 'SUMMARY_LINE'
   | 'RECONCILED_ITEM_LINES'
   | 'RECONCILED_CHARGE_LINES'
-  | 'FOLDED_INTO_SUMMARY_NEEDS_REVIEW';
+  | 'FOLDED_INTO_SUMMARY_NEEDS_REVIEW'
+  /** The page printed item rows that do NOT add up to its own total. Folding them into one summary
+   *  line is still the right record — the printed total is what was paid — but the disagreement is
+   *  the first thing an accountant checks, and it used to disappear here without a word. A real
+   *  2026-08-28 example: a หจก. cash bill whose rows read 260+350+300+130=1,040 while the total box
+   *  was confirmed by a person as 7,040. One of the two is wrong and nobody was ever told. */
+  | 'ITEMS_DID_NOT_RECONCILE';
 
 type PreparedOcrLine = {
   description: string;
@@ -305,8 +319,10 @@ export function usableItemLines(fields: ReceiptOcrFieldResult): NonNullable<Rece
   const usable = lines.filter((line) => Boolean(
     line
     && typeof line.description === 'string' && line.description.trim() && line.description.length <= 200
-    && typeof line.amount === 'string' && positiveMoney(line.amount)
-    && (line.unitPrice === undefined || positiveMoney(line.unitPrice))
+    // Zero is a printed amount, not a missing one — and since a single rejected row discards the
+    // whole block below, treating a 0.00 modifier as malformed cost the bill its entire breakdown.
+    && typeof line.amount === 'string' && line.amount.trim() !== '' && nonNegativeMoney(line.amount) !== undefined
+    && (line.unitPrice === undefined || nonNegativeMoney(line.unitPrice) !== undefined)
     && (line.quantity === undefined || positiveMoney(line.quantity))
     // Per-row VAT is re-checked here, not trusted: a rate must be a real 0..1 fraction, and a
     // treatment is only meaningful together with a zero rate (the same pairing the web draft
@@ -327,6 +343,8 @@ function prepareOcrLines(
   lines: PreparedOcrLine[];
   totals: ReturnType<typeof calcDocumentTotals>;
   chargesApplied: number;
+  /** Set only with ITEMS_DID_NOT_RECONCILE: what the printed rows actually add up to. */
+  itemsSumAmount?: string;
 } {
   const vatMode = documentVatMode(fields);
   const whtRate = expenseWhtLineRate(ocrWhtInput(fields));
@@ -423,11 +441,20 @@ function prepareOcrLines(
     vatRate: summaryVatRate,
     whtRate,
   }, vatMode, toMoney4(fields.discountAmount));
+  // Rows that were readable but would not reconcile outrank a folded charge: the arithmetic on the
+  // page contradicts itself, which is a stronger signal than a charge the split could not place.
+  const itemsSum = items.length >= 2
+    ? items.reduce((sum, item) => sum + (positiveMoney(item.amount) ?? 0), 0)
+    : undefined;
   return {
-    status: hadChargeSuggestions ? 'FOLDED_INTO_SUMMARY_NEEDS_REVIEW' : 'SUMMARY_LINE',
+    status: itemsSum !== undefined
+      ? 'ITEMS_DID_NOT_RECONCILE'
+      : hadChargeSuggestions ? 'FOLDED_INTO_SUMMARY_NEEDS_REVIEW' : 'SUMMARY_LINE',
     lines: [summary],
     totals: calcDocumentTotals({ lines: [summary.totals] }),
     chargesApplied: 0,
+    // Carried so the reviewer is shown the two numbers, not merely told they disagree.
+    ...(itemsSum !== undefined ? { itemsSumAmount: itemsSum.toFixed(2) } : {}),
   };
 }
 
@@ -455,6 +482,8 @@ type AppliedReceiptCategory = {
 
 type AppliedReceiptResult = AppliedReceiptCategory & {
   chargeReconciliationStatus: ReceiptChargeReconciliationStatus;
+  /** Only with ITEMS_DID_NOT_RECONCILE: what the printed rows add up to, for the reviewer to compare. */
+  itemsSumAmount?: string;
   chargesApplied: number;
 };
 
@@ -671,6 +700,7 @@ export class ReceiptOcrApplyService {
         categoryAutoFilled,
         ...(categorySuggestion ? { categorySuggestion } : {}),
         chargeReconciliationStatus: prepared!.status,
+        ...(prepared!.itemsSumAmount ? { itemsSumAmount: prepared!.itemsSumAmount } : {}),
         chargesApplied: prepared!.chargesApplied,
       };
     });

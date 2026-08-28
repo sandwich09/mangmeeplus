@@ -2,7 +2,7 @@
 
 ## Acceptance status
 
-**Local default-feature regression matrix passed; develop integration awaiting corrected Linux CI.**
+**Local default-feature regression matrix passed before PR332; its conflict is now resolved and integrated local checks pass. Exact integrated-head CI/develop integration pending.**
 
 The user completed the password change and the requested payment-evidence upload. All ten assignable system roles, Owner and two custom-role variants were exercised through authenticated local UI. Twenty-two additional findings (F10–F31) were fixed and their affected paths repeated. The transfer certificate lifecycle, duplicate-resolution branches and final role/default-feature checks are complete within the explicit matrix below. This is not a claim about every possible role × input permutation or unconfigured external services.
 
@@ -56,7 +56,7 @@ Separate test-fixture repair: the real-PostgreSQL reimbursement race suite had8 
 | Dashboard/tasks | Four periods, refresh, all/HO/Siam/Ari, exact pending links including empty queue. Workflow-new remains OFF; no new standalone workflow task claimed. |
 | Notifications | Real payer/approver event, bell/center counts, unread/all, mark/read-all/dismiss, source links including cancelled/stale sources, empty and API-down/recovery. Preferences/rules remain OFF. |
 | Expenses | Manual3line arithmetic, discount/service, included/excluded/mixed VAT, WHT and over-base gate; back/next/save/reload; submit/confirm; reject/restart/edit/resubmit; partial/full/overpayment rejection and void. |
-| UAT example | Existing authorized UAT UI and matching local sample read only; local upload/preview; manual180.00 / includedVAT11.78 after unconfigured-OCR feedback. No OCR-success claim. |
+| UAT example | Existing authorized UAT UI and matching local sample read only; local upload/preview; manual180.00 / includedVAT11.78 after local AI Gateway unavailability feedback. The current reader is Vision AI, not a separate legacy OCR provider; no live AI-read success is claimed. |
 | Signatures | Original QA zigzags only; empty/draw/clear/redraw/save/reload, replace/retire, uploaded image/background removal. No real identity imitated. |
 | Certificates | Cash and transfer source→prepare→payer review/attest/sign→Owner review/sign/issue→actual PDF→source confirmation; Owner-self case; missing prerequisites; pending cancel/revise, version history, source notification state. Transfer missing-proof/unselected-proof gates and user-uploaded proof passed. |
 | Duplicates | Staff created3 same-seller/number/date/42.28 documents through UI. Owner scan, exact source link, empty/short reason, cancel, dismiss, partial dismissal with another candidate, confirmed duplicate and persistent rescan states passed. Staff/Auditor cannot resolve. Concurrent stale save rejected; reload recovered. These are metadata-match cases, not a second binary-checksum upload. |
@@ -83,6 +83,12 @@ The BUG-Fxx screenshots distinguish before and after. Earlier screenshots and co
 
 ## Automated verification
 
+After develop received PR332 (`9efcebf2`), its review-page changes were merged without dropping either side: the visible confirmation-blocker notice and F29 confirmed-duplicate decision now share one helper. Integrated checks: web1251/1251, gateway1001/1001, contracts206/206, required-PostgreSQL API suite exit0, API/web types and API/isolated web builds exit0. Conflict-focused55/55 and LINE-buffer65/65. A timing-sensitive pre-existing batching test was changed to existing mock timers (no production logic change); original assertions remain plus precise boundary assertions.
+
+Actual post-merge Owner next/next confirmed the disabled final-duplicate action and visible reason; role-builder open/cancel and disabled-role state pass. [Owner duplicate](MERGE-331-01-owner-confirmed-duplicate.jpg), [role builder](MERGE-331-02-role-builder.jpg). Staff post-merge repeat is not claimed: its in-app tab is trapped on a connection-error data URL rejected by Browser policy. Earlier full role-matrix evidence remains pre-PR332 evidence, not silently relabeled.
+
+The table below records the preceding complete matrix checkpoint.
+
 | Check | Final result |
 | --- | --- |
 | Web `pnpm test` | 1235passed,257suites,0failed/skipped after F31 |
@@ -103,8 +109,10 @@ Latest logs: `/tmp/mangmee-main-qa-web-final-f31.log`, `web-types-f31.log`, `web
 ## Integration and boundaries
 
 1. [Develop integration PR331](https://github.com/MangmeeDev/mangmeeplus/pull/331) contains code/evidence commit `c5aee0142686aeb7e3f41f1448b9e32efe299bb7`. Initial CI `33177695687` failed the stale maintenance-pin preflight; later tests were skipped, not passed. The standard generator refreshed only server-session and validator checksums; no gate/policy condition changed. Require the corrected-head CI before merge, then update existing main PR330.
+   - [CI33179749488](https://github.com/MangmeeDev/mangmeeplus/actions/runs/33179749488) completed SUCCESS on `3a495c3720c30fb006b9d631943039e57059d30b`. Develop subsequently accepted PR332 and PR331 conflicted in two button hunks of ExpenseReviewPage. The combined source requires its own CI; the old successful run does not certify that merge.
    - CI `33178043014` on69c5e086 passed web1235, but failed the added long-signer raster test because CI lacked the existing runtime font prerequisite. Local Linux DejaVu-only reproduction: payer ink102–377 against allowed105–375; approver475–755 against480–750. With production Noto fonts the same helper yields111–368 and484–746. Add fonts-noto-core/fontconfig and require fc-match to resolve Noto Sans Thai before tests. Bounds and application code remain unchanged; this failed CI is not an acceptance pass.
 2. No main merge/deployment is authorized or performed by this task. Deploy workflows are manual; no UAT/production/READY run was dispatched.
-3. Missing applicable Tax Codes, unconfigured OCR, feature-OFF new workflows and physical paper/external delivery are explicit prerequisites or scope exclusions, not claimed successful flows. No known unexpected blocker remains in the exercised local matrix.
+3. Missing applicable Tax Codes, unconfigured local Vision AI service, feature-OFF new workflows and physical paper/external delivery are explicit prerequisites or scope exclusions, not claimed successful flows. No known unexpected blocker remains in the earlier exercised local matrix.
+4. User clarified one receipt-read unit, not one unit per model call. Existing governance already counts one admitted document/image command and deduplicates transport retries; LINE router/extraction share one admission. Internal `ocr` identifiers are compatibility names. Whether an explicit new manual read of the same receipt should remain1 total is awaiting the user's answer; no speculative quota/billing change or historical backfill was made.
 
-Credentials, raw UAT images, private receipt screenshots and signed download manifests/URLs remain outside the repository. Physical wet-signed paper, live LINE/OCR delivery and real payment integrations are not certified by these local dummy tests.
+Credentials, raw UAT images, private receipt screenshots and signed download manifests/URLs remain outside the repository. Physical wet-signed paper, live LINE/Vision AI delivery and real payment integrations are not certified by these local dummy tests.
