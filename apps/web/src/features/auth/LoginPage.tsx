@@ -25,11 +25,19 @@ const SHOW_DEV_LOGIN = process.env.NODE_ENV !== 'production';
 // Outcome of a LINE web-login round trip, handed back by the BFF as /login?line=<reason>.
 // Thai-only like the other login-page notices that have no dictionary entry yet.
 const LINE_NOTICE_TEXT: Record<string, string> = {
-  'link-required': 'บัญชี LINE นี้ยังไม่ได้เชื่อมกับผู้ใช้ในระบบ กรุณาเข้าสู่ระบบด้วยรหัสผ่าน แล้วเชื่อมบัญชี LINE ในหน้าตั้งค่า',
+  'link-required': 'บัญชี LINE นี้ยังไม่ได้เชื่อมกับผู้ใช้ในระบบ — เข้าสู่ระบบด้วยรหัสผ่านหนึ่งครั้ง แล้วระบบจะเชื่อมบัญชี LINE ให้อัตโนมัติ',
+  'link-failed': 'เชื่อมบัญชี LINE ไม่สำเร็จ (บัญชี LINE นี้อาจถูกเชื่อมกับผู้ใช้อื่นอยู่แล้ว) กรุณาลองใหม่อีกครั้งหรือติดต่อผู้ดูแลระบบ',
   canceled: 'ยกเลิกการเข้าสู่ระบบด้วย LINE แล้ว',
   failed: 'เข้าสู่ระบบด้วย LINE ไม่สำเร็จ กรุณาลองใหม่อีกครั้งหรือเข้าสู่ระบบด้วยรหัสผ่าน',
   unavailable: 'การเข้าสู่ระบบด้วย LINE ยังไม่เปิดใช้งาน',
 };
+
+// Link-after-password (P12-2): re-enter the OAuth round trip once the session exists. LINE has
+// already consented this browser, so it redirects back immediately — and the BFF callback, now
+// seeing an active session, links the verified identity instead of issuing new tokens.
+function lineLinkStartUrl(returnTo: string): string {
+  return `/api/auth/line-login/start?returnTo=${encodeURIComponent(returnTo)}`;
+}
 
 function Wordmark({ className }: { className?: string }) {
   return (
@@ -143,6 +151,10 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
   const [lineLoginAvailable, setLineLoginAvailable] = useState(false);
   const lineNotice = searchParams.get('line');
   const lineNoticeText = lineNotice ? LINE_NOTICE_TEXT[lineNotice] : undefined;
+  const lineNoticeIsAlert = lineNotice === 'failed' || lineNotice === 'link-failed';
+  // Link mode: a verified LINE account with no linked user. One password sign-in, then the
+  // page hands the browser straight back to LINE so the callback can link it.
+  const linkMode = lineNotice === 'link-required';
 
   useEffect(() => {
     let active = true;
@@ -166,7 +178,8 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
     void refreshSessionWithOutcome().then((outcome) => {
       if (!active) return;
       if (outcome === 'restored') {
-        window.location.assign(recoveryReturnUrl(nextPath));
+        const landing = recoveryReturnUrl(nextPath);
+        window.location.assign(linkMode ? lineLinkStartUrl(landing) : landing);
         return;
       }
       if (outcome !== 'signed_out') setSessionRecoveryUnavailable(true);
@@ -219,6 +232,12 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
       }
 
       const target = nextPath ?? result.redirectPath ?? '/';
+      // Only an unblocked session may detour through LINE; a pending legal acceptance keeps its
+      // gate, and the user can simply tap LINE login again afterwards to link.
+      if (linkMode && result.legalAcceptanceRequired === false) {
+        window.location.assign(lineLinkStartUrl(target));
+        return;
+      }
       window.location.assign(result.legalAcceptanceRequired !== false ? legalAcceptancePath(target, result.companyId) : target);
     } catch (nextError) {
       if ((nextError as { code?: unknown }).code === 'platform_access_closed') {
@@ -308,10 +327,10 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
 
           {lineNoticeText ? (
             <div
-              role={lineNotice === 'failed' ? 'alert' : 'status'}
+              role={lineNoticeIsAlert ? 'alert' : 'status'}
               data-line-notice={lineNotice}
               className={`mt-5 rounded-xl border px-4 py-3 text-sm leading-6 ${
-                lineNotice === 'failed'
+                lineNoticeIsAlert
                   ? 'border-red-200 bg-red-50 text-red-700'
                   : 'border-amber-200 bg-amber-50 text-amber-900'
               }`}
@@ -414,7 +433,7 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
             </label>
 
             <Button type="submit" size="lg" className="w-full !rounded-xl shadow-[0_12px_24px_rgba(21,128,61,.3)]" loading={loading}>
-              {t('auth.login.submit', locale)}
+              {linkMode ? 'เข้าสู่ระบบและเชื่อม LINE' : t('auth.login.submit', locale)}
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
             </Button>
           </form>

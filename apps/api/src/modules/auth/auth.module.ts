@@ -9,6 +9,7 @@ import { ResolveRequestContextUseCase } from './application/use-cases/resolve-re
 import { IssueTokenUseCase } from './application/use-cases/issue-token.use-case';
 import { ExchangeLineTokenUseCase } from './application/use-cases/exchange-line-token.use-case';
 import { LineLoginCallbackUseCase } from './application/use-cases/line-login-callback.use-case';
+import { LineLinkOauthUseCase } from './application/use-cases/line-link-oauth.use-case';
 import { RefreshSessionUseCase } from './application/use-cases/refresh-session.use-case';
 import { LogoutUseCase } from './application/use-cases/logout.use-case';
 import { RevokeOtherSessionsUseCase } from './application/use-cases/revoke-other-sessions.use-case';
@@ -72,6 +73,7 @@ export function selectAuthMailer(
     IssueTokenUseCase,
     ExchangeLineTokenUseCase,
     LineLoginCallbackUseCase,
+    LineLinkOauthUseCase,
     RefreshSessionUseCase,
     LogoutUseCase,
     RevokeOtherSessionsUseCase,

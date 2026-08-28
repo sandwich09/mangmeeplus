@@ -216,6 +216,28 @@ describe('LinkLineIdentityUseCase', () => {
     assert.equal(updates[0].data.status, 'ACTIVE');
   });
 
+  it('asks LINE to check the nonce claim only when the web OAuth link supplies one', async () => {
+    const verifyCalls: unknown[][] = [];
+    const recordingVerifier = {
+      verify: async (...args: unknown[]) => { verifyCalls.push(args); return { subject: 'line-user-1' }; },
+    } as any;
+    const prisma = {
+      client: {
+        externalIdentity: { findFirst: async () => null, create: async () => ({}) },
+        companyMembership: { findMany: async () => [ownerMembership()] },
+        lineCompanyContext: { upsert: async () => {} },
+      },
+    } as any;
+    const uc = new LinkLineIdentityUseCase(recordingVerifier, prisma, config);
+
+    await uc.execute({ userId: 'user-1', idToken: 'tok', requestId: 'req-1', expectedNonce: 'n7' });
+    assert.deepEqual(verifyCalls[0], ['tok', { nonce: 'n7' }]);
+
+    // The LIFF/link surfaces mint no nonce, so they must stay byte-exact.
+    await uc.execute({ userId: 'user-1', idToken: 'tok', requestId: 'req-2' });
+    assert.deepEqual(verifyCalls[1], ['tok', undefined]);
+  });
+
   it('fails closed in production when no LINE channel is configured', async () => {
     const prisma = { client: { externalIdentity: { findFirst: async () => null } } } as any;
     const prodConfig = { lineMessagingChannelId: undefined, lineLoginChannelId: undefined, isProduction: true } as any;
