@@ -449,7 +449,7 @@ export const REIMBURSEMENT_SELF_SERVICE_PERMISSIONS = [
 ];
 
 const STAFF_ROLE_GRANTS = [
-  'account.session.read', 'account.password.change', 'ai.tool.invoke', 'line.ai.query',
+  'account.session.read', 'account.password.change', 'account.identity.link', 'account.identity.unlink', 'ai.tool.invoke', 'line.ai.query',
   'accounting.document.read_related',
   'company.branch.read', 'attachment.read', 'attachment.create',
   'dashboard.read', 'notification.read', 'notification.preference.manage',
@@ -469,6 +469,8 @@ export const ROLE_GRANTS: Record<string, string[]> = {
   SYSTEM_ADMIN: [
     'account.session.read',
     'account.password.change',
+    'account.identity.link',
+    'account.identity.unlink',
     'system.company_onboarding.create',
     'system.company_onboarding.read',
     'system.company_onboarding.regenerate_temporary_password',
@@ -498,6 +500,8 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     ...REIMBURSEMENT_SELF_SERVICE_PERMISSIONS,
     'account.session.read',
     'account.password.change',
+    'account.identity.link',
+    'account.identity.unlink',
     'company.setup.read',
     'company.settings.view',
     'dashboard.read',
@@ -628,7 +632,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     ...REPORT_BI_ADMIN_GRANTS,
   ],
   MANAGER: [
-    'account.session.read', 'account.password.change', 'company.setup.read', 'ai.tool.invoke', 'line.ai.query',
+    'account.session.read', 'account.password.change', 'account.identity.link', 'account.identity.unlink', 'company.setup.read', 'ai.tool.invoke', 'line.ai.query',
     'company.branch.read', 'attachment.read', 'attachment.create',
     'inventory.product.read', 'inventory.location.read', 'inventory.movement.read', 'inventory.report.read',
     'dashboard.read', 'notification.read', 'notification.preference.manage',
@@ -691,7 +695,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'access.role.read', 'access.role.operational.assign',
   ],
   SALES: [
-    'account.session.read', 'account.password.change', 'ai.tool.invoke', 'line.ai.query',
+    'account.session.read', 'account.password.change', 'account.identity.link', 'account.identity.unlink', 'ai.tool.invoke', 'line.ai.query',
     'company.branch.read', 'attachment.read', 'attachment.create',
     'inventory.product.read',
     'dashboard.read', 'notification.read', 'notification.preference.manage',
@@ -727,7 +731,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     ...REPORT_BI_OWN_VIEW_GRANTS,
   ],
   INVENTORY: [
-    'account.session.read', 'account.password.change', 'ai.tool.invoke', 'line.ai.query',
+    'account.session.read', 'account.password.change', 'account.identity.link', 'account.identity.unlink', 'ai.tool.invoke', 'line.ai.query',
     'accounting.document.read_related',
     'company.branch.read', 'attachment.read', 'attachment.create',
     'inventory.product.read', 'inventory.location.read', 'inventory.movement.read',
@@ -750,7 +754,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     ...REPORT_BI_OWN_VIEW_GRANTS,
   ],
   FINANCE: [
-    'account.session.read', 'account.password.change', 'company.setup.read', 'ai.tool.invoke', 'line.ai.query',
+    'account.session.read', 'account.password.change', 'account.identity.link', 'account.identity.unlink', 'company.setup.read', 'ai.tool.invoke', 'line.ai.query',
     'company.branch.read', 'attachment.read', 'attachment.create', 'document.sequence.read',
     'inventory.product.read', 'inventory.location.read', 'inventory.movement.read', 'inventory.report.read',
     'dashboard.read', 'notification.read', 'notification.preference.manage',
@@ -829,7 +833,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     ...REPORT_BI_SHARE_EXPORT_GRANTS,
   ],
   ACCOUNTANT: [
-    'account.session.read', 'account.password.change', 'company.setup.read', 'audit.log.read', 'ai.tool.invoke', 'line.ai.query',
+    'account.session.read', 'account.password.change', 'account.identity.link', 'account.identity.unlink', 'company.setup.read', 'audit.log.read', 'ai.tool.invoke', 'line.ai.query',
     'company.branch.read', 'attachment.read', 'attachment.create', 'document.sequence.read', 'outbox.event.read',
     'inventory.product.read', 'inventory.location.read', 'inventory.movement.read', 'inventory.report.read',
     'dashboard.read', 'notification.read', 'notification.preference.manage',
@@ -887,7 +891,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     ...REPORT_BI_SHARE_EXPORT_GRANTS,
   ],
   MARKETING: [
-    'account.session.read', 'account.password.change', 'ai.tool.invoke', 'line.ai.query',
+    'account.session.read', 'account.password.change', 'account.identity.link', 'account.identity.unlink', 'ai.tool.invoke', 'line.ai.query',
     'accounting.document.read_related',
     'company.branch.read', 'attachment.read', 'attachment.create',
     'inventory.product.read',
@@ -910,7 +914,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
   STAFF: STAFF_ROLE_GRANTS,
   AUDITOR_READONLY: [
     ...REIMBURSEMENT_SELF_SERVICE_PERMISSIONS,
-    'account.session.read', 'account.password.change', 'company.setup.read', 'audit.log.read', 'ai.tool.invoke', 'line.ai.query',
+    'account.session.read', 'account.password.change', 'account.identity.link', 'account.identity.unlink', 'company.setup.read', 'audit.log.read', 'ai.tool.invoke', 'line.ai.query',
     'document.sequence.read', 'outbox.event.read',
     'inventory.product.read', 'inventory.location.read', 'inventory.movement.read', 'inventory.report.read',
     'dashboard.read', 'notification.read', 'notification.delivery.read',

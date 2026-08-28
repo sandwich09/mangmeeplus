@@ -41,6 +41,7 @@ import { PrismaService } from '../../../common/database/prisma.service';
 import { IssueTokenUseCase } from '../application/use-cases/issue-token.use-case';
 import { ExchangeLineTokenUseCase } from '../application/use-cases/exchange-line-token.use-case';
 import { LineLoginCallbackUseCase } from '../application/use-cases/line-login-callback.use-case';
+import { LineLinkOauthUseCase } from '../application/use-cases/line-link-oauth.use-case';
 import { RefreshSessionUseCase } from '../application/use-cases/refresh-session.use-case';
 import { LogoutUseCase } from '../application/use-cases/logout.use-case';
 import { RevokeOtherSessionsUseCase } from '../application/use-cases/revoke-other-sessions.use-case';
@@ -175,6 +176,7 @@ export class AuthController {
     private readonly authRateLimit: AuthRateLimitService,
     private readonly legalAcceptance: LegalAcceptanceService,
     private readonly lineLoginCallbackUseCase: LineLoginCallbackUseCase,
+    private readonly lineLinkOauthUseCase: LineLinkOauthUseCase,
     @Optional() @Inject(AuditService) private readonly audit: AuditService | null = null,
   ) {}
 
@@ -406,6 +408,27 @@ export class AuthController {
       idToken: dto.idToken,
       requestId: req.context.requestId,
       companyId: dto.companyId ?? headerCompanyId,
+    });
+  }
+
+  @Post('line/link/oauth')
+  @HttpCode(200)
+  @RequirePermissions('account.identity.link')
+  @ApiOperation({ summary: 'Link LINE identity to current user from a web OAuth code (P12-2)' })
+  @ApiBody({ type: LineLoginCallbackDto })
+  @ApiResponse({ status: 200, description: 'LINE identity linked' })
+  @ApiResponse({ status: 409, description: 'Already linked to another user' })
+  async lineLinkOauth(@Body() dto: LineLoginCallbackDto, @Req() req: Request & { context: RequestContext }) {
+    await this.authRateLimit.assertLineLoginCallbackAllowed(trustedClientIp(req));
+    const headerCompanyIdRaw = req.headers['x-company-id'];
+    const headerCompanyId = Array.isArray(headerCompanyIdRaw) ? headerCompanyIdRaw[0] : headerCompanyIdRaw;
+    return this.lineLinkOauthUseCase.execute({
+      userId: req.context.userId,
+      code: dto.code,
+      codeVerifier: dto.codeVerifier,
+      nonce: dto.nonce,
+      requestId: req.context.requestId,
+      ...(headerCompanyId ? { companyId: headerCompanyId } : {}),
     });
   }
 

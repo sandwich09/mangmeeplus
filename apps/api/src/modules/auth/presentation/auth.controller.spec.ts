@@ -18,7 +18,7 @@ function makeController(config: Record<string, unknown> = {}): AuthController {
   return new AuthController(
     { lineLiffId: '1234567890-test', isLocal: false, ...config } as any,
     stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
-    stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
+    stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
   );
 }
 
@@ -87,7 +87,7 @@ describe('AuthController password reset request', () => {
     } as any;
     const controller = new AuthController(
       stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
-      stub, stub, notifyPasswordResetRequest, stub, stub, stub, stub, stub, rateLimit, stub, stub,
+      stub, stub, notifyPasswordResetRequest, stub, stub, stub, stub, stub, rateLimit, stub, stub, stub,
     );
 
     const body = await controller.requestPasswordResetNotice({ username: 'first' }, {
@@ -121,7 +121,7 @@ describe('AuthController password reset request', () => {
     const notifyPasswordResetRequest = { execute: async () => ({ message: 'generic' }) } as any;
     const controller = new AuthController(
       stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
-      stub, stub, notifyPasswordResetRequest, stub, stub, stub, stub, stub, rateLimit, stub, stub,
+      stub, stub, notifyPasswordResetRequest, stub, stub, stub, stub, stub, rateLimit, stub, stub, stub,
     );
     const req = { headers: {}, socket: { remoteAddress: '198.51.100.9' } } as any;
 
@@ -212,7 +212,7 @@ describe('AI assistant preference (PDPA opt-out)', () => {
     const pref = { execute: async (...args: unknown[]) => { calls.push(args); } } as any;
     const controller = new AuthController(
       stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
-      stub, stub, stub, stub, pref, stub, stub, stub, stub, stub, stub,
+      stub, stub, stub, stub, pref, stub, stub, stub, stub, stub, stub, stub,
     );
 
     await controller.setAiAssistantPreference({ enabled: false } as any, {
@@ -230,7 +230,7 @@ describe('AuthController password change session binding', () => {
     const changePassword = { execute: async (...args: unknown[]) => { calls.push(args); } } as any;
     const controller = new AuthController(
       stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
-      changePassword, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
+      changePassword, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
     );
     const payload = Buffer.from(JSON.stringify({ sid: 'session-current' })).toString('base64url');
 
@@ -266,7 +266,7 @@ describe('AuthController me()', () => {
     } as any;
     return new AuthController(
       stub, prisma, stub, stub, stub, stub, stub, stub, stub, stub,
-      stub, stub, stub, stub, stub, stub, stub, stub, stub, legalAcceptance, stub,
+      stub, stub, stub, stub, stub, stub, stub, stub, stub, legalAcceptance, stub, stub,
     );
   }
 
