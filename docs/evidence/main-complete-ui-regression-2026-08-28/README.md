@@ -2,7 +2,7 @@
 
 ## Acceptance status
 
-**Local default-feature regression matrix passed; develop integration pending.**
+**Local default-feature regression matrix passed; develop integration awaiting corrected Linux CI.**
 
 The user completed the password change and the requested payment-evidence upload. All ten assignable system roles, Owner and two custom-role variants were exercised through authenticated local UI. Twenty-two additional findings (F10–F31) were fixed and their affected paths repeated. The transfer certificate lifecycle, duplicate-resolution branches and final role/default-feature checks are complete within the explicit matrix below. This is not a claim about every possible role × input permutation or unconfigured external services.
 
@@ -95,6 +95,7 @@ The BUG-Fxx screenshots distinguish before and after. Earlier screenshots and co
 | Contracts/API builds | Exit0 |
 | Web `NEXT_DIST_DIR=.next-main-complete-qa-build pnpm exec next build --webpack` | Exit0; separate build directory preserves the running dev server |
 | Maintenance pin generator `--check`, pin-sync spec and full `production-image-security.spec.sh` | Passed after refreshing the two generated checksum lines; local/mock checks, no deploy |
+| Linux PDF font parity | DejaVu-only fallback reproduced signer overflow; production Noto fonts pass the same unchanged raster bounds in two existing local Linux images. Full focused PDF/certificate/voucher suite23/23 on macOS and Linux. CI now installs/verifies the runtime's existing Noto prerequisite; YAML/45-file pins/full security checks pass; corrected-head full CI pending. |
 | `git diff --check` | Clean |
 
 Latest logs: `/tmp/mangmee-main-qa-web-final-f31.log`, `web-types-f31.log`, `web-build-f31.log` under the same prefix; unchanged backend verified by `/tmp/mangmee-main-qa-api-final-f29.log` and `api-types-f29.log`. Focused before/after checks are also documented in [task memory](../../agent-memory/main-complete-ui-regression-2026-08-28.md). Tests and database corroboration do not replace UI actions.
@@ -102,6 +103,7 @@ Latest logs: `/tmp/mangmee-main-qa-web-final-f31.log`, `web-types-f31.log`, `web
 ## Integration and boundaries
 
 1. [Develop integration PR331](https://github.com/MangmeeDev/mangmeeplus/pull/331) contains code/evidence commit `c5aee0142686aeb7e3f41f1448b9e32efe299bb7`. Initial CI `33177695687` failed the stale maintenance-pin preflight; later tests were skipped, not passed. The standard generator refreshed only server-session and validator checksums; no gate/policy condition changed. Require the corrected-head CI before merge, then update existing main PR330.
+   - CI `33178043014` on69c5e086 passed web1235, but failed the added long-signer raster test because CI lacked the existing runtime font prerequisite. Local Linux DejaVu-only reproduction: payer ink102–377 against allowed105–375; approver475–755 against480–750. With production Noto fonts the same helper yields111–368 and484–746. Add fonts-noto-core/fontconfig and require fc-match to resolve Noto Sans Thai before tests. Bounds and application code remain unchanged; this failed CI is not an acceptance pass.
 2. No main merge/deployment is authorized or performed by this task. Deploy workflows are manual; no UAT/production/READY run was dispatched.
 3. Missing applicable Tax Codes, unconfigured OCR, feature-OFF new workflows and physical paper/external delivery are explicit prerequisites or scope exclusions, not claimed successful flows. No known unexpected blocker remains in the exercised local matrix.
 

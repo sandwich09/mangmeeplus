@@ -1,6 +1,6 @@
 # Agent Memory: Complete post-fix UI regression — 2026-08-28
 
-Status: Local default-feature matrix verified; ready for develop integration and existing main PR330 update. User upload, transfer prepare→Staff sign→Owner issue→PDF→source confirmation, duplicate resolution and final role/default-feature repeats passed. F10–F31 fixed with affected-flow repeats. This is bounded local coverage, not all role×input permutations or live external-service certification. No deployment or main merge.
+Status: Local default-feature matrix verified; develop integration held for corrected Linux CI. User upload, transfer prepare→Staff sign→Owner issue→PDF→source confirmation, duplicate resolution and final role/default-feature repeats passed. F10–F31 fixed with affected-flow repeats. This is bounded local coverage, not all role×input permutations or live external-service certification. No deployment or main merge.
 Owner: Codex / root.
 Scope: User explicitly requests completion through UI, including new test employees, switching their roles, tasks/notifications, and scribble-only test signature assets. UAT receipt examples may be retrieved read-only for local testing.
 
@@ -34,10 +34,12 @@ Scope: User explicitly requests completion through UI, including new test employ
 - [x] Responsive 390×844 dashboard/menu/manual-create/delete and role-specific denied/empty/loading/error states. Viewport override reset; this is not an all-device certification.
 - [x] Affected-flow repeats and final role/default-feature matrix reconciled; unconfigured external services, Tax Codes, physical paper and OFF-feature new flows remain explicit exclusions.
 
-## Current UI evidence (partial, not whole-checklist completion)
+## UI and integration evidence
 
 ### Latest checkpoint (supersedes historical pending/session notes below)
 
+- After the CI font prerequisite change: the same23 PDF/substitute-receipt/payment-voucher tests pass on both macOS and local Linux (mounted current source/contracts, existing dependencies, network disabled). CI YAML parses, fc-match resolves exactly Noto Sans Thai, maintenance45-file check and full production-image-security contract suite pass. Logs `/tmp/mangmee-main-qa-pdf-font-parity-focused.log`, `/tmp/mangmee-main-qa-linux-pdf-font-focused.log`, `/tmp/mangmee-main-qa-font-ci-security.log`.
+- CI33178043014 on69c5e086 failed the new long-signer PDF raster test; web1235 passed but the root/API test and downstream steps did not complete successfully. Local Linux reproduction with the exact current compiled helper: DejaVu-only fallback yielded payer x102–377 against105–375 and approver x475–755 against480–750; existing production-image Noto fonts yielded111–368 and484–746, both inside the unchanged bounds. Independent existing API image gives the same passing Noto result. CI had no Noto prerequisite while both runtime Dockerfiles already install fonts-noto-core. Add the same fonts plus fc-match validation before normal CI tests. No raster assertion, application code, runtime image or security gate was relaxed. Await corrected-head CI before integrating PR331.
 - Integration PR331 opened from code/evidence commit `c5aee0142686aeb7e3f41f1448b9e32efe299bb7`. Initial CI `33177695687` stopped at the pre-test stale maintenance-pin check; Typecheck/Test and all later jobs were SKIPPED, not passed. The existing generator updated only the server-session checksum and its validator's workflow checksum (two lines). The45-file `--check` and pin-sync regression pass; no gate condition, release policy or runtime behavior changed. No blind rerun or deploy dispatch.
 - Full local `bash infra/docker/production-image-security.spec.sh` passed after the generated pin refresh (exit0; mock cloud fixtures, no live AWS operation). Log `/tmp/mangmee-main-qa-production-image-security.log`. Main PR330 has autoMergeRequest=null; it must remain unmerged.
 - Final verification after F31: web1235passed/257suites/0failed/skipped; web tsc and isolated webpack production build exit0; next-env generated path restored; git diff --check clean. Backend unchanged since full PostgreSQL-required API suite/types/build success. Logs `/tmp/mangmee-main-qa-web-{final,types,build}-f31.log` and API `*-f29.log`. No package.json/schema/dependency changes.

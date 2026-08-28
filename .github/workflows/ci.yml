@@ -363,6 +363,13 @@ jobs:
         with:
           node-version: '22'
           cache: 'pnpm'
+      - name: Install production PDF fonts
+        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
+        run: |
+          # Match the API runtime font prerequisite; fallback fonts have different text metrics.
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fonts-noto-core fontconfig
+          fc-match -f '%{family}\n' 'Noto Sans Thai' | grep -Fx 'Noto Sans Thai'
       - run: pnpm install --frozen-lockfile
         if: needs.resolve-source.outputs.release_controller_only != 'true'
       - run: pnpm --filter @watchdog-bms/contracts build
