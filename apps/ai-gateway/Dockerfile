@@ -32,7 +32,10 @@ RUN find apps/ai-gateway/dist packages/config/dist packages/contracts/dist -type
   \( -name '*.map' -o -name '*.d.ts' -o -name '*.spec.js' -o -name '*-smoke.js' -o -name '*.md' \) -delete
 
 FROM system AS runner
-RUN apt-get purge -y --allow-remove-essential perl-base
+# No disk/partition tooling in the runtime (util-linux / CVE-2026-53615).
+RUN apt-get purge -y --allow-remove-essential \
+  util-linux util-linux-extra bsdutils mount libblkid1 libmount1 libsmartcols1 libuuid1 e2fsprogs \
+  && apt-get purge -y --allow-remove-essential perl-base
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=prod-deps --chown=node:node /app/node_modules ./node_modules

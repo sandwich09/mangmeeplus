@@ -7,8 +7,32 @@ fixture="$(mktemp -d "${TMPDIR:-/tmp}/watchdog-bms-image-spec.XXXXXX")"
 trap 'rm -rf "$fixture"' EXIT
 
 mkdir -p "$fixture/app/api/dist" "$fixture/app/api/node_modules/.bin"
+mkdir -p "$fixture/var/lib/dpkg"
+printf 'Package: libc6\nStatus: install ok installed\n\n' > "$fixture/var/lib/dpkg/status"
 printf 'console.log("ok")\n' > "$fixture/app/api/dist/main.js"
 "$scanner" --root "$fixture" >/dev/null
+
+# Exercise the exported-image package guard, not only the Dockerfile spelling.
+for package in util-linux util-linux-extra bsdutils mount libblkid1 libmount1 libsmartcols1 libuuid1 e2fsprogs; do
+  printf 'Package: %s\nStatus: install ok installed\n\n' "$package" > "$fixture/var/lib/dpkg/status"
+  if "$scanner" --root "$fixture" >/dev/null 2>&1; then
+    echo "ERROR: scanner accepted unused vulnerable OS package: $package" >&2
+    exit 1
+  fi
+done
+printf 'Status: hold ok installed\nPackage: libblkid1\n\n' > "$fixture/var/lib/dpkg/status"
+if "$scanner" --root "$fixture" >/dev/null 2>&1; then
+  echo 'ERROR: scanner accepted a held vulnerable package' >&2
+  exit 1
+fi
+printf 'Package: libblkid1\nStatus: deinstall ok config-files\n\nPackage: libc6\nStatus: install ok installed\n\n' > "$fixture/var/lib/dpkg/status"
+"$scanner" --root "$fixture" >/dev/null
+rm "$fixture/var/lib/dpkg/status"
+if "$scanner" --root "$fixture" >/dev/null 2>&1; then
+  echo 'ERROR: scanner accepted an image without package inventory' >&2
+  exit 1
+fi
+printf 'Package: libc6\nStatus: install ok installed\n\n' > "$fixture/var/lib/dpkg/status"
 
 assert_rejected() {
   local path="$1"
@@ -187,6 +211,21 @@ grep -Fq 'install -m 0644 /tmp/ca-certificates.crt /etc/ssl/certs/ca-certificate
 grep -Fq '! dpkg-query -W openssl ca-certificates' "$repo_root/infra/api-web/Dockerfile.api-web"
 grep -Fq 'apt-get purge -y --allow-remove-essential perl-base' "$repo_root/apps/ai-gateway/Dockerfile"
 grep -Fq 'apt-get purge -y --allow-remove-essential perl-base' "$repo_root/apps/workers/Dockerfile"
+for dockerfile in apps/api/Dockerfile apps/ai-gateway/Dockerfile apps/workers/Dockerfile \
+  apps/web/Dockerfile apps/web/Dockerfile.lambda infra/api-web/Dockerfile.api-web; do
+  grep -Fq 'util-linux util-linux-extra bsdutils mount libblkid1 libmount1 libsmartcols1 libuuid1 e2fsprogs' "$repo_root/$dockerfile"
+  # util-linux-extra postrm needs the Perl-based init helpers, even in a container.
+  if ! awk '
+    /^FROM / { disk_purged = 0 }
+    /^[[:space:]]*util-linux util-linux-extra / { disk_purged = 1 }
+    /apt-get purge.*perl-base/ { if (!disk_purged) exit 1 }
+  ' "$repo_root/$dockerfile"; then
+    echo "ERROR: disk tools must be purged before perl-base in $dockerfile" >&2
+    exit 1
+  fi
+done
+grep -Fq 'util-linux util-linux-extra bsdutils mount libblkid1 libmount1 libsmartcols1 libuuid1 e2fsprogs' \
+  "$repo_root/infra/security/verify-production-a5-migration-tool.sh"
 uat_publish_policy="$repo_root/infra/uat/github-publish-role-policy.template.json"
 grep -Fq '"ecr:DescribeImageScanFindings"' "$uat_publish_policy"
 grep -Fq '"ecr:StartImageScan"' "$uat_publish_policy"

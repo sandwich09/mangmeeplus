@@ -83,6 +83,7 @@ RUN apt-get update -y \
 # perl-base is purged in THIS layer, after the last apt install rather than with ClamAV above:
 # fontconfig-config's postinst ran ucf, a Perl script, so purging perl first killed the layer with
 # dpkg exit 127. Nothing installs after this, so the purge is safe here.
+# Disk-tool postrm scripts also need Perl/init helpers: purge them before perl-base.
 RUN apt-get update -y \
   && apt-get install -y --no-install-recommends fonts-noto-core \
   && find /usr/share/fonts/truetype/noto -type f ! -name 'NotoSansThai*' ! -name 'NotoSans-Regular*' ! -name 'NotoSans-Bold*' -delete \
@@ -90,6 +91,8 @@ RUN apt-get update -y \
   && printf '<?xml version="1.0"?>\n<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">\n<fontconfig><dir>/usr/share/fonts</dir><cachedir>/tmp/fontconfig</cachedir></fontconfig>\n' > /etc/fonts/fonts.conf \
   && cp /etc/ssl/certs/ca-certificates.crt /tmp/ca-certificates.crt \
   && apt-get purge -y openssl ca-certificates \
+  && apt-get purge -y --allow-remove-essential \
+    util-linux util-linux-extra bsdutils mount libblkid1 libmount1 libsmartcols1 libuuid1 e2fsprogs \
   && apt-get purge -y --allow-remove-essential perl-base \
   && install -m 0644 /tmp/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt \
   && test -s /etc/ssl/certs/ca-certificates.crt \

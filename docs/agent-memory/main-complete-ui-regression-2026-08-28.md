@@ -1,6 +1,6 @@
 # Agent Memory: Complete post-fix UI regression — 2026-08-28
 
-Status: Earlier local matrix and CI33179749488 passed on3a495c37; develop then received PR332 (9efcebf2). PR331 merge conflict is resolved locally, integrated verification in progress before push/integration. User also clarified Vision AI terminology and one receipt-read unit; manual re-read counting policy awaits one precise question. F10–F31 remain in scope. No deployment or main merge.
+Status: Integrated head9244cd69b269c021788b3cce1536463854f6236e passed CI33181806292, including actual Typecheck and Test plus all validation jobs. The latest user instruction explicitly authorizes develop integration, main merge and UAT deployment; this supersedes earlier no-main/no-deploy boundaries. Production deployment/customer-gate mutation remains out of scope. Release ledger: main-ui-qa-uat-release-2026-08-28.md. Manual re-read counting policy remains unanswered; no speculative quota change included.
 Owner: Codex / root.
 Scope: User explicitly requests completion through UI, including new test employees, switching their roles, tasks/notifications, and scribble-only test signature assets. UAT receipt examples may be retrieved read-only for local testing.
 

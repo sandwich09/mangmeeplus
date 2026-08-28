@@ -35,6 +35,30 @@ if [ ! -d "$app" ]; then
   exit 1
 fi
 
+# All runtime targets use Debian; retain its inventory and reject unused disk tooling.
+inventory="$root/var/lib/dpkg/status"
+if [ ! -s "$inventory" ]; then
+  echo "ERROR: production image has no Debian package inventory" >&2
+  exit 1
+fi
+blocked_packages="$(awk '
+  BEGIN { RS = ""; FS = "\n" }
+  {
+    package = ""; installed = 0
+    for (i = 1; i <= NF; i++) {
+      if ($i ~ /^Package: /) package = substr($i, 10)
+      if ($i ~ /^Status: .* installed$/) installed = 1
+    }
+    if (installed && package ~ /^(util-linux|util-linux-extra|bsdutils|mount|libblkid1|libmount1|libsmartcols1|libuuid1|e2fsprogs)$/)
+      print package
+  }
+' "$inventory")"
+if [ -n "$blocked_packages" ]; then
+  echo "ERROR: unused disk-tool packages in production image (CVE-2026-53615):" >&2
+  printf '%s\n' "$blocked_packages" >&2
+  exit 1
+fi
+
 violations="$(
   find "$app" \
     -path '*/node_modules' -prune -o \

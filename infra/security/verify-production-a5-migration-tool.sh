@@ -68,9 +68,10 @@ docker run --rm --read-only --network none --entrypoint sh "$image" -c '
   fi
   test ! -e /sys/class/net/eth0
   test ! -e /usr/bin/perl
-  for package in perl-base libexpat1 fontconfig fontconfig-config; do
+  for package in perl-base libexpat1 fontconfig fontconfig-config \
+    util-linux util-linux-extra bsdutils mount libblkid1 libmount1 libsmartcols1 libuuid1 e2fsprogs; do
     status="$(dpkg-query -W -f="\${Status}" "$package" 2>/dev/null || true)"
-    test "$status" != "install ok installed"
+    case "$status" in *" installed") echo "ERROR: migration-tool contains unused package: $package" >&2; exit 1 ;; esac
   done
 
   export HOME=/tmp TMPDIR=/tmp XDG_CACHE_HOME=/tmp/cache

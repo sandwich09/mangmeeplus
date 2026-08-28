@@ -44,6 +44,9 @@ FROM build AS runtime-artifacts
 RUN find apps/web/.next/standalone -type f -name '*.map' -delete
 
 FROM system AS runner
+RUN apt-get purge -y --allow-remove-essential \
+  util-linux util-linux-extra bsdutils mount libblkid1 libmount1 libsmartcols1 libuuid1 e2fsprogs \
+  && apt-get purge -y --allow-remove-essential perl-base
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
 ENV PORT=3000
