@@ -1,4 +1,8 @@
-import type { DashboardWidget, DashboardFreshness, NotificationSeverity } from './dashboard-notifications.model';
+import type { DashboardWidget, DashboardFreshness, NotificationItem, NotificationSeverity } from './dashboard-notifications.model';
+
+export function visibleNotifications(items: NotificationItem[], filter: 'all' | 'unread'): NotificationItem[] {
+  return filter === 'unread' ? items.filter((item) => !item.read) : items;
+}
 
 export function getWidgetMetricValue(widget: DashboardWidget, metricKey: string): number | string | null {
   return widget.metrics.find((m) => m.key === metricKey)?.value ?? null;

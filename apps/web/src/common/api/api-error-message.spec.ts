@@ -56,6 +56,16 @@ test('translates a known API sentence to Thai', () => {
   );
 });
 
+test('explains duplicate category, branch validation, and quotation self-approval in context', () => {
+  assert.equal(
+    apiErrorMessage(apiError('Category name already exists: Travel', { status: 409 })),
+    'มีหมวดหมู่ชื่อนี้แล้ว กรุณาใช้ชื่ออื่น',
+  );
+  assert.match(apiErrorMessage(apiError('Tax branch code must be 5 digits.', { status: 400 })), /ตัวเลข 5 หลัก/);
+  assert.match(apiErrorMessage(apiError('Tax branch code "00001" already exists in this company.', { status: 409 })), /ถูกใช้ในบริษัทแล้ว/);
+  assert.match(apiErrorMessage(apiError('Sales cannot approve their own quotation issue request', { status: 403 })), /ไม่สามารถอนุมัติใบเสนอราคาของตนเอง/);
+});
+
 test('prefers the error code over the message', () => {
   const message = apiErrorMessage(apiError('Signed substitute evidence locks expense lines.', {
     status: 409, code: 'substitute_evidence_locks_lines',

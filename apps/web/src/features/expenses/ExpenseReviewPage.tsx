@@ -601,7 +601,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
                 )}
                 {detail.status === 'READY_FOR_CONFIRMATION' && (
                   <>
-                    {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => doAction(() => confirmExpense(companyId, expenseId, vatOverrideRef.current ?? undefined), 'ยืนยันและลงบัญชีเรียบร้อยแล้ว')} disabled={actionLoading || !canConfirmExpense} title={classificationBlocked ? classificationBlockMessage : hasDuplicates ? t('expenses.resolve_duplicate_first', locale) : needsReceiptOrSubstitute ? t('expenses.confirm_needs_receipt', locale) : ocrTotalUnacknowledged ? t('expenses.price_mismatch_blocks_confirm', locale) : isZeroAmount ? t('expenses.zero_amount_warning', locale) : !substituteReady ? 'ต้องให้ผู้จ่ายลงนามและผู้อนุมัติออกใบรับรองฉบับสมบูรณ์ก่อนยืนยันรายจ่าย' : undefined}>{t('expenses.confirm_and_post', locale)}</button>}
+                    {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => doAction(() => confirmExpense(companyId, expenseId, vatOverrideRef.current ?? undefined), 'ยืนยันเอกสารเรียบร้อยแล้ว')} disabled={actionLoading || !canConfirmExpense} title={classificationBlocked ? classificationBlockMessage : hasDuplicates ? t('expenses.resolve_duplicate_first', locale) : needsReceiptOrSubstitute ? t('expenses.confirm_needs_receipt', locale) : ocrTotalUnacknowledged ? t('expenses.price_mismatch_blocks_confirm', locale) : isZeroAmount ? t('expenses.zero_amount_warning', locale) : !substituteReady ? 'ต้องให้ผู้จ่ายลงนามและผู้อนุมัติออกใบรับรองฉบับสมบูรณ์ก่อนยืนยันรายจ่าย' : undefined}>{t('expenses.confirm_and_post', locale)}</button>}
                   </>
                 )}
               </>
@@ -611,7 +611,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
         )}
         {approverOnlyActions && (
           <>
-            {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => doAction(() => confirmExpense(companyId, expenseId, vatOverrideRef.current ?? undefined), 'ยืนยันและลงบัญชีเรียบร้อยแล้ว')} disabled={actionLoading || !canConfirmExpense} title={classificationBlocked ? classificationBlockMessage : hasDuplicates ? t('expenses.resolve_duplicate_first', locale) : needsReceiptOrSubstitute ? t('expenses.confirm_needs_receipt', locale) : ocrTotalUnacknowledged ? t('expenses.price_mismatch_blocks_confirm', locale) : isZeroAmount ? t('expenses.zero_amount_warning', locale) : !substituteReady ? 'ต้องให้ผู้จ่ายลงนามและผู้อนุมัติออกใบรับรองฉบับสมบูรณ์ก่อนยืนยันรายจ่าย' : undefined}>{t('expenses.confirm_and_post', locale)}</button>}
+            {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => doAction(() => confirmExpense(companyId, expenseId, vatOverrideRef.current ?? undefined), 'ยืนยันเอกสารเรียบร้อยแล้ว')} disabled={actionLoading || !canConfirmExpense} title={classificationBlocked ? classificationBlockMessage : hasDuplicates ? t('expenses.resolve_duplicate_first', locale) : needsReceiptOrSubstitute ? t('expenses.confirm_needs_receipt', locale) : ocrTotalUnacknowledged ? t('expenses.price_mismatch_blocks_confirm', locale) : isZeroAmount ? t('expenses.zero_amount_warning', locale) : !substituteReady ? 'ต้องให้ผู้จ่ายลงนามและผู้อนุมัติออกใบรับรองฉบับสมบูรณ์ก่อนยืนยันรายจ่าย' : undefined}>{t('expenses.confirm_and_post', locale)}</button>}
           </>
         )}
         {isConfirmed && (

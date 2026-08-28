@@ -346,6 +346,9 @@ const UPLOAD_CONTENT_REJECTED =
 
 /** Full English messages the user can actually hit in the expense/substitute journeys. */
 const MESSAGE_LABELS: Record<string, string> = {
+  'Sales cannot approve their own quotation issue request': 'ผู้ส่งขออนุมัติไม่สามารถอนุมัติใบเสนอราคาของตนเองได้ กรุณาให้ผู้มีสิทธิ์คนอื่นอนุมัติ',
+  'Tax branch code must be 5 digits.': 'รหัสสาขาภาษีต้องเป็นตัวเลข 5 หลัก หรือเว้นว่างหากไม่มี',
+  'Branch code must be 1-20 uppercase alphanumeric characters, underscores, or hyphens.': 'รหัสสาขาต้องยาว 1–20 ตัว ใช้ A–Z, 0–9, ขีดกลาง หรือขีดล่างเท่านั้น',
   'Duplicate value: a record with the same unique field(s) already exists. Fields: companyId, supplierId, supplierDocumentNumber':
     CODE_LABELS['duplicate_supplier_document_number']!,
   'Insufficient permissions.': CODE_LABELS['insufficient_permissions']!,
@@ -518,6 +521,9 @@ const MESSAGE_LABELS: Record<string, string> = {
 
 /** Parameterized sentences (status names, period keys) rendered with their parameter kept visible. */
 const MESSAGE_PATTERNS: ReadonlyArray<[RegExp, (m: RegExpMatchArray) => string]> = [
+  [/^Category name already exists: /, () => 'มีหมวดหมู่ชื่อนี้แล้ว กรุณาใช้ชื่ออื่น'],
+  [/^Tax branch code ".*" already exists in this company\.$/, () => 'รหัสสาขาภาษีนี้ถูกใช้ในบริษัทแล้ว กรุณาตรวจสอบสาขาเดิมหรือใช้รหัสอื่น'],
+  [/^Branch code ".*" already exists in this company\.$/, () => 'รหัสสาขานี้ถูกใช้ในบริษัทแล้ว กรุณาใช้รหัสอื่น'],
   [/^Cannot confirm expense in status (\S+)\.$/,
     (m) => `ยืนยันลงบัญชีไม่ได้ในสถานะปัจจุบัน (${m[1]}) — ต้องตรวจเอกสารจนพร้อมยืนยันก่อน`],
   [/^Cannot prepare substitute evidence in status (\S+)\.$/,

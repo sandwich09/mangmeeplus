@@ -1,4 +1,5 @@
 import BranchSettingsPage from '@/features/branch-settings/BranchSettingsPage';
+import { fetchServerSession } from '@/common/auth/server-session';
 
 export default async function SettingsBranchesPage({
   params,
@@ -6,5 +7,6 @@ export default async function SettingsBranchesPage({
   params: Promise<{ companyId: string }>;
 }) {
   const { companyId } = await params;
-  return <BranchSettingsPage companyId={companyId} />;
+  const session = await fetchServerSession(companyId);
+  return <BranchSettingsPage companyId={companyId} permissions={session?.permissions ?? []} />;
 }

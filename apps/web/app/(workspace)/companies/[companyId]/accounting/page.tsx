@@ -8,5 +8,5 @@ export default async function AccountingPage({
 }) {
   const { companyId } = await params;
   const session = await fetchServerSession(companyId);
-  return <AccountingHubPage companyId={companyId} permissions={session?.permissions ?? []} />;
+  return <AccountingHubPage companyId={companyId} permissions={session?.permissions ?? []} viewerUserId={session?.userId} />;
 }

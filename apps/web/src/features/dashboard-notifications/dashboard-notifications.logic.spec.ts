@@ -4,6 +4,7 @@ import {
   notificationBadgeText,
   severityColor,
   severityLabel,
+  visibleNotifications,
 } from './dashboard-notifications.logic';
 
 describe('notificationBadgeText', () => {
@@ -17,6 +18,19 @@ describe('notificationBadgeText', () => {
     assert.equal(notificationBadgeText(1), '1');
     assert.equal(notificationBadgeText(99), '99');
     assert.equal(notificationBadgeText(100), '99+');
+  });
+});
+
+describe('visibleNotifications', () => {
+  const notification = (id: string, read: boolean) => ({
+    id, companyId: 'c1', triggerKey: 'test', severity: 'info' as const, title: id, body: '', createdAt: '2026-08-28T00:00:00.000Z',
+    sourceModule: 'test', status: 'open' as const, read, deliveryChannels: ['web' as const],
+  });
+
+  it('removes newly-read rows from unread without hiding them from all', () => {
+    const items = [notification('unread', false), notification('read', true)];
+    assert.deepEqual(visibleNotifications(items, 'unread').map((item) => item.id), ['unread']);
+    assert.deepEqual(visibleNotifications(items, 'all').map((item) => item.id), ['unread', 'read']);
   });
 });
 

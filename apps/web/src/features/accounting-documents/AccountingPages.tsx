@@ -217,7 +217,7 @@ function DocumentList({
                 <td className="px-4 py-3 text-sm text-gray-600">{formatThaiDate(doc.documentDate)}</td>
                 <td className="px-4 py-3 text-right text-sm text-gray-900">{money(doc.grandTotalAmount)}</td>
                 <td className="px-4 py-3"><StatusBadge status={doc.paymentStatus} /></td>
-                <td className="px-4 py-3 text-xs text-gray-500">{doc.postingStatus}</td>
+                <td className="px-4 py-3 text-xs text-gray-500">{POSTING_STATUS_LABELS[doc.postingStatus] ?? doc.postingStatus}</td>
               </tr>
             ))}
           </tbody>
@@ -397,7 +397,7 @@ function CreateDocumentForm({ companyId, onCreated, allowedDocumentTypes }: { co
   );
 }
 
-function DocumentDetailPanel({ companyId, documentId, permissions, canCreateSalesRoot, onChanged }: { companyId: string; documentId?: string; permissions: string[]; canCreateSalesRoot: boolean; onChanged: (documentId?: string) => void }) {
+function DocumentDetailPanel({ companyId, documentId, permissions, viewerUserId, canCreateSalesRoot, onChanged }: { companyId: string; documentId?: string; permissions: string[]; viewerUserId?: string; canCreateSalesRoot: boolean; onChanged: (documentId?: string) => void }) {
   const toast = useToast();
   const { promptInput, inputPromptDialog } = useInputPrompt();
   const [detail, setDetail] = useState<DocumentDetail | null>(null);
@@ -604,10 +604,12 @@ function DocumentDetailPanel({ companyId, documentId, permissions, canCreateSale
   }
 
   const canEdit = detail?.status === 'DRAFT' && canDocumentAction(permissions, detail.documentType, 'update');
-  const canIssue = detail && ['DRAFT', 'APPROVED'].includes(detail.status) && canDocumentAction(permissions, detail.documentType, 'issue');
+  const canIssue = detail && (detail.documentType === 'QUOTATION' ? detail.status === 'APPROVED' : ['DRAFT', 'APPROVED'].includes(detail.status))
+    && canDocumentAction(permissions, detail.documentType, 'issue');
   const canSubmit = detail?.documentType === 'QUOTATION' && detail.status === 'DRAFT'
     && permissions.includes('accounting.quotation.submit_approval');
   const canApprove = detail?.documentType === 'QUOTATION' && detail.status === 'PENDING_APPROVAL' && permissions.includes('accounting.quotation.approve');
+  const isOwnApprovalRequest = Boolean(viewerUserId && detail?.submittedByUserId === viewerUserId);
   const canConvertToInvoice = detail?.documentType === 'QUOTATION' && detail.status === 'ISSUED'
     && canDocumentAction(permissions, 'INVOICE', 'create');
   const canConvertToBillingNote = detail?.documentType === 'QUOTATION' && detail.status === 'ISSUED'
@@ -725,8 +727,9 @@ function DocumentDetailPanel({ companyId, documentId, permissions, canCreateSale
       <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
         {canEdit && !editingDraft && <button className={ghostClass} disabled={busy} onClick={beginDraftEdit}>แก้ไขร่าง</button>}
         {canCreateSalesRoot && canSubmit && <button className={ghostClass} disabled={busy} onClick={() => run(() => submitQuotationApproval(companyId, detail.id), 'ส่งขออนุมัติเรียบร้อยแล้ว')}>ส่งขออนุมัติ</button>}
-        {canApprove && <button className={btnClass} disabled={busy} onClick={() => run(() => approveQuotation(companyId, detail.id, 'อนุมัติในหน้าบัญชี'), 'อนุมัติใบเสนอราคาเรียบร้อยแล้ว')}>อนุมัติ</button>}
+        {canApprove && <button className={btnClass} disabled={busy || isOwnApprovalRequest} onClick={() => { if (!isOwnApprovalRequest) void run(() => approveQuotation(companyId, detail.id, 'อนุมัติในหน้าบัญชี'), 'อนุมัติใบเสนอราคาเรียบร้อยแล้ว'); }}>อนุมัติ</button>}
         {canApprove && <button className={dangerClass} disabled={busy} onClick={() => void rejectDocument()}>ปฏิเสธ</button>}
+        {canApprove && isOwnApprovalRequest && <p className="col-span-2 text-sm text-amber-700">ผู้ส่งขออนุมัติไม่สามารถอนุมัติใบเสนอราคาของตนเองได้ กรุณาให้ผู้มีสิทธิ์คนอื่นอนุมัติ</p>}
         {canIssue && <button className={btnClass} disabled={busy} onClick={() => run(() => issueDocument(companyId, detail.id), 'ออกเอกสารเรียบร้อยแล้ว')}>ออกเอกสาร</button>}
         {canCreateSalesRoot && canConvertToInvoice && <button className={ghostClass} disabled={busy} onClick={() => run(() => convertDocument(companyId, detail.id, 'INVOICE'), 'แปลงเป็นใบแจ้งหนี้เรียบร้อยแล้ว')}>แปลงเป็นใบแจ้งหนี้</button>}
         {canCreateSalesRoot && canConvertToBillingNote && <button className={ghostClass} disabled={busy} onClick={() => run(() => convertDocument(companyId, detail.id, 'BILLING_NOTE'), 'แปลงเป็นใบวางบิลเรียบร้อยแล้ว')}>แปลงเป็นใบวางบิล</button>}
@@ -915,7 +918,7 @@ function PaymentListPage({ companyId, reloadKey }: { companyId: string; reloadKe
           <div key={payment.id} className="grid grid-cols-2 gap-3 border-b border-gray-100 px-3 py-2 text-sm last:border-b-0 sm:grid-cols-4">
             <span>{formatThaiDate(payment.paidAt)}</span>
             <span>{PAYMENT_METHOD_LABELS[payment.method]}</span>
-            <span className="text-right">{money(payment.amount)}</span>
+            <span className="text-right">{money(payment.amount)}{Number(payment.unappliedAmount) > 0 && <span className="block text-xs text-amber-700">เครดิตคงเหลือ {money(payment.unappliedAmount)}</span>}</span>
             <span className="text-right text-gray-500">{POSTING_STATUS_LABELS[payment.postingStatus] ?? payment.postingStatus}</span>
           </div>
         ))}
@@ -924,7 +927,7 @@ function PaymentListPage({ companyId, reloadKey }: { companyId: string; reloadKe
   );
 }
 
-export function AccountingHubPage({ companyId, permissions }: { companyId: string; permissions: string[] }) {
+export function AccountingHubPage({ companyId, permissions, viewerUserId }: { companyId: string; permissions: string[]; viewerUserId?: string }) {
   const [selectedId, setSelectedId] = useState<string>();
   const [reloadKey, setReloadKey] = useState(0);
   const [filterType, setFilterType] = useState<AccountingDocumentType | ''>('');
@@ -959,8 +962,8 @@ export function AccountingHubPage({ companyId, permissions }: { companyId: strin
   return (
     <MangmeePage
       eyebrow="การเงินและบัญชี"
-      title="บัญชี"
-      description="จัดการเอกสารบัญชี การออกเอกสาร การรับชำระ และคู่ค้าโดยอ้างอิง backend จริง"
+      title="เอกสารขายและรับชำระ"
+      description="จัดการใบเสนอราคา เอกสารขาย การรับชำระ และข้อมูลคู่ค้า"
       actions={canRecordIncome && canCreateSalesRoot
         ? <a href={`/companies/${companyId}/sales-documents/record-income`} className="mangmee-btn mangmee-btn-primary flex h-11 items-center">+ บันทึกรายรับ</a>
         : undefined}
@@ -995,7 +998,7 @@ export function AccountingHubPage({ companyId, permissions }: { companyId: strin
           />}
         </div>
         <div className="min-w-0 space-y-4">
-          {canReadDocuments && <DocumentDetailPanel companyId={companyId} documentId={selectedId} permissions={permissions} canCreateSalesRoot={canCreateSalesRoot} onChanged={refresh} />}
+          {canReadDocuments && <DocumentDetailPanel companyId={companyId} documentId={selectedId} permissions={permissions} viewerUserId={viewerUserId} canCreateSalesRoot={canCreateSalesRoot} onChanged={refresh} />}
           {canReadCounterparties && <CounterpartyListPage companyId={companyId} canCreateSalesRoot={canManageCounterparties && canCreateSalesRoot} />}
           {canReadPayments && <PaymentListPage companyId={companyId} reloadKey={reloadKey} />}
         </div>

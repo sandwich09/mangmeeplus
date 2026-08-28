@@ -368,6 +368,7 @@ export const workspaceDictionary = {
     // Auth — change password
     'auth.change.title': 'เปลี่ยนรหัสผ่าน',
     'auth.change.subtitle': 'ต้องเปลี่ยนรหัสผ่านชั่วคราวก่อนเริ่มใช้งานระบบ',
+    'auth.change.optional_subtitle': 'ตั้งรหัสผ่านใหม่เพื่อความปลอดภัยของบัญชี',
     'auth.change.current': 'รหัสผ่านปัจจุบัน',
     'auth.change.new': 'รหัสผ่านใหม่',
     'auth.change.submit': 'เปลี่ยนรหัสผ่าน',
@@ -1754,6 +1755,7 @@ export const workspaceDictionary = {
     // Auth — change password
     'auth.change.title': 'Change password',
     'auth.change.subtitle': 'Change your temporary password before continuing.',
+    'auth.change.optional_subtitle': 'Set a new password to keep your account secure.',
     'auth.change.current': 'Current password',
     'auth.change.new': 'New password',
     'auth.change.submit': 'Change password',
