@@ -59,6 +59,9 @@ export class AppConfigService {
   get productionServingMode(): 'live' | 'maintenance_only' | undefined { return this.config.PRODUCTION_SERVING_MODE; }
   get devAuthSecret(): string | undefined { return this.config.DEV_AUTH_SECRET; }
   get lineLoginChannelId(): string | undefined { return this.config.LINE_LOGIN_CHANNEL_ID; }
+  get lineLoginChannelSecret(): string | undefined { return this.config.LINE_LOGIN_CHANNEL_SECRET; }
+  /** P12-1: web LINE login (OAuth code + PKCE). Off = channel hidden and the callback stays 403. */
+  get lineWebLoginEnabled(): boolean { return this.config.LINE_WEB_LOGIN_ENABLED; }
   get lineLiffId(): string | undefined { return this.config.LINE_LIFF_ID; }
   get lineMessagingChannelId(): string | undefined { return this.config.LINE_MESSAGING_CHANNEL_ID; }
   get lineMessagingChannelSecret(): string | undefined { return this.config.LINE_MESSAGING_CHANNEL_SECRET; }
@@ -173,6 +176,8 @@ export class AppConfigService {
   get emailVerificationRequestWindowSeconds(): number { return this.config.EMAIL_VERIFICATION_REQUEST_WINDOW_SECONDS; }
   get emailVerificationConfirmMaxPerIp(): number { return this.config.EMAIL_VERIFICATION_CONFIRM_MAX_PER_IP; }
   get emailVerificationConfirmWindowSeconds(): number { return this.config.EMAIL_VERIFICATION_CONFIRM_WINDOW_SECONDS; }
+  get lineLoginCallbackMaxPerIp(): number { return this.config.LINE_LOGIN_CALLBACK_MAX_PER_IP; }
+  get lineLoginCallbackWindowSeconds(): number { return this.config.LINE_LOGIN_CALLBACK_WINDOW_SECONDS; }
   get aiGatewayInternalUrl(): string { return this.config.AI_GATEWAY_INTERNAL_URL; }
   get aiGatewayInternalSecret(): string | undefined { return this.config.AI_GATEWAY_INTERNAL_SECRET; }
   get aiActorDelegationSigningKey(): Buffer {

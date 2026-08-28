@@ -4,9 +4,11 @@ import { SESClient } from '@aws-sdk/client-ses';
 import { DevJwtVerifierAdapter } from './infrastructure/dev-jwt-verifier.adapter';
 import { WatchdogJwtVerifierAdapter } from './infrastructure/watchdog-jwt-verifier.adapter';
 import { LineLoginVerifierAdapter } from './infrastructure/line-login-verifier.adapter';
+import { LineLoginTokenClient } from './infrastructure/line-login-token.client';
 import { ResolveRequestContextUseCase } from './application/use-cases/resolve-request-context.use-case';
 import { IssueTokenUseCase } from './application/use-cases/issue-token.use-case';
 import { ExchangeLineTokenUseCase } from './application/use-cases/exchange-line-token.use-case';
+import { LineLoginCallbackUseCase } from './application/use-cases/line-login-callback.use-case';
 import { RefreshSessionUseCase } from './application/use-cases/refresh-session.use-case';
 import { LogoutUseCase } from './application/use-cases/logout.use-case';
 import { RevokeOtherSessionsUseCase } from './application/use-cases/revoke-other-sessions.use-case';
@@ -65,9 +67,11 @@ export function selectAuthMailer(
     DevJwtVerifierAdapter,
     WatchdogJwtVerifierAdapter,
     LineLoginVerifierAdapter,
+    LineLoginTokenClient,
     ResolveRequestContextUseCase,
     IssueTokenUseCase,
     ExchangeLineTokenUseCase,
+    LineLoginCallbackUseCase,
     RefreshSessionUseCase,
     LogoutUseCase,
     RevokeOtherSessionsUseCase,

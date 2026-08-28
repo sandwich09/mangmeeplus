@@ -1,6 +1,6 @@
 # Agent Memory: line-login-p12-delivery
 
-Status: P12-0 implemented (inventory + channel-aware lookups) — pending review/merge; P12-1..P12-3 not started
+Status: P12-0 merged (PR #318, develop 749ced8b); P12-1 implemented (web OAuth+PKCE LINE login) — pending review/merge; P12-2..P12-3 not started
 Owner: MangmeeDev
 Scope: P12 LINE Login/Link/QR full journey ตาม [spec รวม](../specs/mangmee-line-login-link-journey-spec-th.md) + [four-lane P12](../plans/mangmee-four-lane-gap-closure-plan-th.md#p12--line-loginlinkqr); เป้าหมาย Owner = "พร้อมทั้งหมด": ปุ่ม LINE login (mobile redirect), desktop QR, deep-link handoff จากแชต
 Decisions:
@@ -8,6 +8,11 @@ Decisions:
 - ลำดับส่งมอบ: P12-0 → P12-1 (mobile OAuth+PKCE) → P12-2 (unlinked link flow) → P12-3a (desktop QR) → P12-3b (deep-link handoff + alert rail ทีหลัง)
 - Q1/Q3/Q4 ของ deep-link handoff ยังไม่ตัดสิน — ข้อเสนอบนโต๊ะ (provider='line' / TTL 15 นาที / assistant ก่อน alert rail) รอ Owner ยืนยันตอน P12-3b เข้าคิว; Q2 = การวัด link-preview ก่อน rollout
 - P12-0 design: inventory เป็น read-only (ไม่ mutate); backfill/dedupe พร้อม batch id + checksums เป็น slice ถัดไป; lookup ใช้ canonical-first + channel-agnostic fallback log warn (shape เดียวกับ webhook/notification resolver เดิม); production fail-closed เมื่อ LINE channel config หาย (ห้าม 'unknown')
+- P12-1 design (2026-08-28): browser → BFF `GET /api/auth/line-login/start` (mint state/nonce/PKCE ใน HttpOnly txn cookie 10 นาที path-scoped) → LINE authorize → BFF `GET /api/auth/line-login/callback` (ตรวจ state, เคลียร์ txn ทุกทาง) → API `POST /v1/auth/line/login/callback` (แลก code ฝั่ง server ด้วย channel secret, verify id_token พร้อม nonce, เข้า ExchangeLineTokenUseCase เดิม) → BFF ตั้ง session cookies ชุดเดียวกับ password login → redirect '/' ให้ session gate เดิม route ต่อ; unlinked → `/login?line=link-required` (P12-2 ทำ flow เชื่อมต่อ)
+- เปิดใช้ด้วย `LINE_WEB_LOGIN_ENABLED` (default OFF ทุก env): ปุ่มบนหน้า login เป็น server-driven ผ่าน login-channels + `/api/auth/line-login/availability`; ปิด flag = ปุ่มหาย + endpoint 403 (rollback ทันที)
+- Gate decision (Fable, 2026-08-28): เพิ่ม `/v1/auth/line/login/callback` เข้า `CLOSED_PUBLIC_PATHS` — LINE login มี posture เท่า password login ทุกสถานะ platform gate (ตอน CLOSED ผู้ใช้ธรรมดายังถูกกันที่ business routes เหมือนเดิม — SYSTEM_ADMIN เท่านั้น)
+- Env invariant: `WEB_BASE_URL` (API env) ต้องเท่ากับ public web origin — API ใช้ประกอบ redirect_uri ตอนแลก code; ถ้าไม่ตรงกับที่ BFF ใช้ (forwarded host) LINE จะปฏิเสธการแลก code; sealed `POST auth/line/exchange` ยังคง 403 (จะเปิดตอน LIFF surface ใน P12-2)
+- `line/exchange` (LIFF surface) ยัง sealed ตามเดิม — เปิดพร้อม P12-2 เมื่อมี surface ใช้จริง
 Open questions:
 - ชื่อ Admin ของ LINE Provider + console evidence (ต้องมีก่อน activation gate)
 - Q1–Q4 handoff (ตอนเข้าคิว P12-3b)

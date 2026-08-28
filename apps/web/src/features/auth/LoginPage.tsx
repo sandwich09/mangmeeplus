@@ -18,12 +18,18 @@ import { formatMessage, localizedErrorMessage } from '@/common/i18n/error-messag
 import { MangmeeLogo } from '@/common/components/brand/MangmeeLogo';
 import { GenericClientNotice } from '@/common/client-support/GenericClientNotice';
 import { loginAsDevOwner, loginWithPassword, refreshSessionWithOutcome } from './auth.api';
-import { buildQrCells, rememberPendingRedirect } from './auth.logic';
+import { rememberPendingRedirect } from './auth.logic';
 
 const SHOW_DEV_LOGIN = process.env.NODE_ENV !== 'production';
-// Deferred until the login-specific OAuth/LIFF callback and durable state session ship.
-// Account-linking LIFF is deliberately not reused as an authentication channel.
-const SHOW_LINE_LOGIN = false;
+
+// Outcome of a LINE web-login round trip, handed back by the BFF as /login?line=<reason>.
+// Thai-only like the other login-page notices that have no dictionary entry yet.
+const LINE_NOTICE_TEXT: Record<string, string> = {
+  'link-required': 'บัญชี LINE นี้ยังไม่ได้เชื่อมกับผู้ใช้ในระบบ กรุณาเข้าสู่ระบบด้วยรหัสผ่าน แล้วเชื่อมบัญชี LINE ในหน้าตั้งค่า',
+  canceled: 'ยกเลิกการเข้าสู่ระบบด้วย LINE แล้ว',
+  failed: 'เข้าสู่ระบบด้วย LINE ไม่สำเร็จ กรุณาลองใหม่อีกครั้งหรือเข้าสู่ระบบด้วยรหัสผ่าน',
+  unavailable: 'การเข้าสู่ระบบด้วย LINE ยังไม่เปิดใช้งาน',
+};
 
 function Wordmark({ className }: { className?: string }) {
   return (
@@ -133,24 +139,23 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
   // WEB-03: which field is wrong, said next to that field. `noValidate` stays — the browser's own
   // bubble is English-only and unstyled — so the form owns the check instead.
   const [fieldErrors, setFieldErrors] = useState<{ identifier?: string; password?: string }>({});
-  // Prototype LINE QR channel (demo-only).
-  const [lineModal, setLineModal] = useState(false);
-  const [lineSeconds, setLineSeconds] = useState(60);
-  const [qrKey, setQrKey] = useState(1);
+  // Server-driven: the button appears only where the API reports the LINE channel available.
+  const [lineLoginAvailable, setLineLoginAvailable] = useState(false);
+  const lineNotice = searchParams.get('line');
+  const lineNoticeText = lineNotice ? LINE_NOTICE_TEXT[lineNotice] : undefined;
 
-  // LINE QR 60s countdown with automatic re-QR on expiry.
   useEffect(() => {
-    if (!lineModal) return;
-    const timer = setTimeout(() => {
-      if (lineSeconds <= 1) {
-        setLineSeconds(60);
-        setQrKey((k) => k + 1);
-      } else {
-        setLineSeconds((s) => s - 1);
-      }
-    }, 1000);
-    return () => clearTimeout(timer);
-  }, [lineModal, lineSeconds]);
+    let active = true;
+    void fetch('/api/auth/line-login/availability')
+      .then((response) => response.json())
+      .then((data: { available?: boolean }) => {
+        if (active) setLineLoginAvailable(Boolean(data?.available));
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
 
   // Restore the session from the refresh cookie, then bounce back through /login so the server
   // route re-validates it and picks the landing path. Only a real 401 is signed-out; a timeout or
@@ -301,6 +306,20 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
             </div>
           ) : null}
 
+          {lineNoticeText ? (
+            <div
+              role={lineNotice === 'failed' ? 'alert' : 'status'}
+              data-line-notice={lineNotice}
+              className={`mt-5 rounded-xl border px-4 py-3 text-sm leading-6 ${
+                lineNotice === 'failed'
+                  ? 'border-red-200 bg-red-50 text-red-700'
+                  : 'border-amber-200 bg-amber-50 text-amber-900'
+              }`}
+            >
+              {lineNoticeText}
+            </div>
+          ) : null}
+
           {error ? (
             <div role="alert" className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
               {error}
@@ -400,7 +419,7 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
             </Button>
           </form>
 
-          {SHOW_LINE_LOGIN ? (
+          {lineLoginAvailable ? (
             <>
               <div className="mt-5 flex items-center gap-3">
                 <div className="h-px flex-1 bg-gray-200" />
@@ -409,11 +428,7 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
               </div>
               <button
                 type="button"
-                onClick={() => {
-                  setLineModal(true);
-                  setLineSeconds(60);
-                  setQrKey((k) => k + 1);
-                }}
+                onClick={() => window.location.assign('/api/auth/line-login/start')}
                 className="mt-4 flex h-12 w-full items-center justify-center gap-2.5 rounded-xl border-[1.5px] border-gray-200 bg-white text-[15.5px] font-semibold text-gray-900 transition hover:border-[#06C755]"
               >
                 <span className="flex h-6 w-6 items-center justify-center rounded-md bg-[#06C755] text-sm font-extrabold text-white">L</span>
@@ -443,76 +458,6 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
           </nav>
         </div>
       </div>
-
-      {lineModal ? (
-        <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-gray-900/55 p-6"
-          role="dialog"
-          aria-modal="true"
-          aria-label="เข้าสู่ระบบด้วย LINE"
-          onClick={() => setLineModal(false)}
-        >
-          <div
-            className="w-[400px] max-w-full overflow-hidden rounded-[20px] bg-white shadow-xl"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="flex items-center gap-3 bg-[#06C755] px-[22px] py-[18px] text-white">
-              <span className="flex h-[30px] w-[30px] items-center justify-center rounded-lg bg-white text-lg font-extrabold text-[#06C755]">L</span>
-              <div className="flex-1">
-                <div className="text-lg font-bold">เข้าสู่ระบบด้วย LINE</div>
-                <div className="text-[13.5px] opacity-90">สแกน QR ด้วยแอป LINE บนมือถือ</div>
-              </div>
-              <button type="button" onClick={() => setLineModal(false)} aria-label="ปิด" className="text-[22px] opacity-90">
-                ✕
-              </button>
-            </div>
-            <div className="px-[22px] py-[26px] text-center">
-              <div className="relative mx-auto w-[236px] rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-                <div aria-hidden className="grid h-[196px] w-[196px]" style={{ gridTemplateColumns: 'repeat(25, 1fr)' }}>
-                  {buildQrCells(qrKey).map((on, index) => (
-                    <div key={index} style={{ background: on ? '#101828' : 'transparent' }} />
-                  ))}
-                </div>
-                <div className="absolute left-1/2 top-1/2 flex h-11 w-11 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-[11px] border-[3px] border-white bg-[#06C755] text-2xl font-extrabold text-white">
-                  L
-                </div>
-              </div>
-
-              <div className="mt-[18px] h-1.5 overflow-hidden rounded-md bg-gray-100">
-                <div
-                  className="h-full rounded-md transition-[width] duration-1000 ease-linear"
-                  style={{ width: `${(lineSeconds / 60) * 100}%`, background: lineSeconds <= 10 ? '#F04438' : '#06C755' }}
-                />
-              </div>
-              <div className="mt-2.5 text-[15px] text-gray-500">
-                QR หมดอายุใน{' '}
-                <span className={`font-bold tabular-nums ${lineSeconds <= 10 ? 'text-red-500' : 'text-gray-700'}`}>
-                  {Math.floor(lineSeconds / 60)}:{String(lineSeconds % 60).padStart(2, '0')}
-                </span>
-              </div>
-
-              {lineSeconds <= 10 ? (
-                <div className="mt-2 text-sm text-red-500">ใกล้หมดเวลา — ระบบจะสร้าง QR ใหม่อัตโนมัติ</div>
-              ) : null}
-
-              <button
-                type="button"
-                onClick={() => {
-                  setLineSeconds(60);
-                  setQrKey((k) => k + 1);
-                }}
-                className="mt-4 inline-flex items-center gap-1.5 text-[15px] font-semibold text-brand-600 hover:text-brand-700"
-              >
-                ↻ สร้าง QR ใหม่
-              </button>
-
-              <div className="mt-[18px] border-t border-gray-100 pt-4 text-[13.5px] leading-relaxed text-gray-400">
-                เปิดแอป LINE → ปุ่มสแกน → สแกน QR นี้ · เมื่อยืนยันบนมือถือแล้วจะเข้าสู่ระบบอัตโนมัติ
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }
