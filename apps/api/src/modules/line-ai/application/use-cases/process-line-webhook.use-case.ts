@@ -148,6 +148,12 @@ const AI_OPT_OUT_REPLY = '🤖 คุณปิดการใช้งานผ�
 export const LEGAL_ACCEPTANCE_REQUIRED_REPLY = '📄 กรุณาเข้าสู่เว็บแอป MangmeePlus เพื่อยอมรับข้อกำหนดการใช้งานและรับทราบนโยบายความเป็นส่วนตัวก่อนใช้งานบริการนี้นะคะ';
 const FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์ใช้งาน LINE AI สำหรับบริษัทนี้ค่ะ';
 const ERROR_REPLY = '⏳ ขออภัยค่ะ เกิดข้อผิดพลาดชั่วคราว กรุณาลองใหม่อีกครั้งนะคะ';
+/** The photo's bytes never arrived from LINE, so "nothing was saved" is provably true — say so,
+ *  and name the photo as the thing to resend (a generic "ลองใหม่" left users unsure what failed). */
+const MEDIA_DOWNLOAD_FAILED_REPLY = '📷 น้องยังรับรูปจาก LINE ไม่สำเร็จค่ะ ยังไม่ได้บันทึกรายการใด ๆ จากรูปนี้นะคะ รบกวนส่งรูปเดิมอีกครั้งค่ะ';
+/** The media turn failed somewhere after the bytes arrived, so the record state is uncertain —
+ *  no "nothing was saved" promise here; the duplicate-file warning covers an honest resend. */
+const MEDIA_PROCESSING_FAILED_REPLY = '📷 ขออภัยค่ะ ระบบประมวลผลรูปนี้ไม่สำเร็จ รบกวนส่งรูปเดิมอีกครั้งนะคะ ถ้ารูปนี้เคยบันทึกไว้แล้ว ระบบจะแจ้งเตือนรายการซ้ำให้ค่ะ';
 const RATE_LIMIT_REPLY = '⏳ ระบบกำลังประมวลผลข้อความก่อนหน้า กรุณารอสักครู่แล้วลองใหม่อีกครั้งนะคะ';
 /** Post-OCR branch ambiguity (multi-branch company, no defaultable head office): the read
  *  succeeded, only the branch decision is missing — send the user to the web picker honestly. */
@@ -189,8 +195,11 @@ const MEDIA_CLARIFY_REPLY = [
 ].join('\n');
 
 /** Keep a governed OCR refusal useful: the attachment remains recoverable and the same simple
- * numbered manual path stays available. Internal route/config names never reach the customer. */
-export function formatOcrGovernanceClarifyReply(errorCode?: string): string {
+ * numbered manual path stays available. Internal route/config names never reach the customer.
+ * `readFailed` marks a transient read failure (timeout/empty/truncated output): the honest lead-in
+ * is "the read failed", not the bare "what is this picture?" that reads as if the photo were the
+ * problem (owner UX review 2026-08-29). */
+export function formatOcrGovernanceClarifyReply(errorCode?: string, readFailed = false): string {
   const notice = errorCode === 'OCR_FEATURE_DISABLED'
     ? '🤖 บริษัทปิดการอ่านเอกสารด้วย AI ไว้ค่ะ ระบบยังเก็บไฟล์นี้ไว้ได้ แต่จะไม่อ่านข้อมูลให้อัตโนมัติ'
     : errorCode === 'OCR_MONTHLY_LIMIT_EXCEEDED'
@@ -199,7 +208,9 @@ export function formatOcrGovernanceClarifyReply(errorCode?: string): string {
         ? '⏳ ระบบตรวจสอบสิทธิ์การอ่านเอกสารไม่ได้ชั่วคราวค่ะ ระบบยังเก็บไฟล์นี้ไว้ได้ แต่จะไม่อ่านข้อมูลให้อัตโนมัติ'
         : errorCode === 'OCR_REQUEST_ALREADY_ADMITTED'
           ? '✅ ระบบรับคำขออ่านเอกสารนี้ไว้แล้วค่ะ เพื่อป้องกันการนับซ้ำ จึงไม่ส่งอ่านซ้ำ'
-          : null;
+          : readFailed
+            ? '📷 น้องอ่านรูปนี้ไม่สำเร็จค่ะ ระบบอ่านเอกสารขัดข้องชั่วคราว รูปยังเก็บไว้ให้และยังไม่ได้บันทึกรายการนะคะ'
+            : null;
   return notice ? `${notice}\n\n${MEDIA_CLARIFY_REPLY}` : MEDIA_CLARIFY_REPLY;
 }
 /** §11 escape: the picture answered a question and is not evidence of anything. Same outcome the
@@ -3457,7 +3468,7 @@ export class ProcessLineWebhookUseCase {
         return { outcome: 'done' };
       }
       this.logger.error({ msg: 'LINE receipt upload error', webhookEventId: event.webhookEventId, error: (err as Error).message });
-      await this.deliverReply(event, ERROR_REPLY).catch(() => {});
+      await this.deliverReply(event, MEDIA_PROCESSING_FAILED_REPLY).catch(() => {});
       await this.releaseWebhookEvent(event.webhookEventId, 'RETRYABLE_RECEIPT_UPLOAD_ERROR');
       return { outcome: 'done' };
     }
@@ -3546,7 +3557,7 @@ export class ProcessLineWebhookUseCase {
 
     const media = await this.downloadLineMedia(event.lineMessageId, event.messageType, event.fileName, event.fileSize);
     if (!media) {
-      await this.deliverReply(event, ERROR_REPLY);
+      await this.deliverReply(event, MEDIA_DOWNLOAD_FAILED_REPLY);
       await this.releaseWebhookEvent(event.webhookEventId, 'RETRYABLE_LINE_MEDIA_DOWNLOAD_FAILED', companyId);
       return;
     }
@@ -3893,7 +3904,7 @@ export class ProcessLineWebhookUseCase {
     }
     if (decision.outcome === 'clarify') {
       const reply = decision.persistMedia
-        ? formatOcrGovernanceClarifyReply(ocr.errorCode)
+        ? formatOcrGovernanceClarifyReply(ocr.errorCode, ocr.status === 'OCR_FAILED')
         : formatBusinessDocumentReply(decision.classification, this.config.webBaseUrl, companyId);
       let terminalStatus = 'clarification_required';
       if (decision.persistMedia && canCaptureExpense) {

@@ -101,6 +101,24 @@ Web is the full product surface for data viewing, approvals, accounting, tax, in
 - Alert cards: concise context, severity, quick "ask AI" prompt, and web detail link.
 - Daily summary: short owner/role-based summary with important exceptions first.
 
+### Waiting, failure, and recovery message map (Owner UX review 2026-08-29)
+
+Every waiting or failure message answers three things: what happened, what state the user's data is
+in (stored / not stored / uncertain), and who acts next. Exactly one party owns each retry — when the
+reply asks the user to resend, the system must not also replay the same input. No turn may go silent
+for more than ~60 s (LINE's loading indicator ceiling) between acceptance and its terminal reply.
+
+| State | Feedback |
+| --- | --- |
+| Media received | Immediate ack: photo received, being read, normally within 1 minute, summary will follow; chatting may continue (`LINE_MEDIA_RECEIVED_TEXT`). |
+| Media download from LINE failed | Bytes never arrived, so say provably: nothing recorded from this photo; resend it (`MEDIA_DOWNLOAD_FAILED_REPLY`). The row is released for LINE redelivery only — the sweep never replays it (single retry owner: the user). |
+| Media turn failed mid-processing | State is uncertain, so no "nothing was saved" promise: processing failed, resend; a duplicate file will be flagged (`MEDIA_PROCESSING_FAILED_REPLY`). |
+| Transient read failure (timeout/empty/truncated) | Admit the read failed — never the bare "what is this picture?": photo kept, nothing recorded, then the numbered manual path (`formatOcrGovernanceClarifyReply` with `readFailed`). Governance refusals keep their own lead-ins. |
+| Slow turn (text or media) | Spinner-only up to `LINE_WAIT_STATUS_SLOW_DELAY_MS` (55 s); then ONE slow-turn status which restarts the spinner to cover the stretch to the 120 s timeout. With the animation disabled, the 5 s topic status remains the early fallback signal (latency spec §10). |
+| AI timeout (120 s) | Terminal, with the next step: this round took too long, send the same question again (`ai_timeout` refusal copy). |
+| Recovered late reply (§8.3 outcome replay) | The push is prefixed with which question it answers (quoted preview for text, "รูป/ไฟล์ที่ส่งไว้ก่อนหน้า" for media); the stored payload itself stays verbatim. A full 5-message payload drops the prefix, never the answer. Legacy input replay recomputes through the normal path and carries no prefix. |
+| Unreadable / multi-document / non-receipt images | Classification-specific copy already tells the user to reshoot or split (`formatBusinessDocumentReply`); unchanged. |
+
 ### Web Admin
 
 - Full data entry and viewing.
@@ -142,6 +160,10 @@ Web is the full product surface for data viewing, approvals, accounting, tax, in
 - [x] Completed LINE AI and receipt/correction replies render as Mangmee-themed Flex cards.
 - [x] Safe tenant links render as tappable URI buttons and are absent as raw URLs from the visible card body.
 - [x] Every completed turn restores a permission-filtered Quick Reply menu with at most 13 actions; clarification turns do not.
+- [x] The media ack states the expected read time; media/text turns that outlive the spinner get exactly one slow-turn status before 60 s.
+- [x] Media failure replies name the photo, state the data's condition truthfully (nothing recorded vs uncertain), and name the resend path.
+- [x] A transient read failure admits the read failed instead of asking "what is this picture?"; the manual numbered path survives.
+- [x] A §8.3 replayed outcome names the question it answers without altering the stored payload.
 
 ## 11. Test Cases
 
