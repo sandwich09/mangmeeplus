@@ -3070,6 +3070,11 @@ export class PrismaExpenseRepository {
   // ─── Accountant shared evidence ─────────────────────────────────────────────
 
   buildSharedEvidenceWhere(companyId: string, filter: SharedEvidenceFilter, scopes?: { branchIds?: string[] }): Record<string, unknown> {
+    if (filter.expenseIds !== undefined && (!Array.isArray(filter.expenseIds)
+      || filter.expenseIds.length > 10000
+      || filter.expenseIds.some((id) => typeof id !== 'string' || !id.trim() || id.length > 200))) {
+      throw new BadRequestException('รายการที่เลือกสำหรับส่งออกไม่ถูกต้อง กรุณาโหลดข้อมูลใหม่');
+    }
     const dateField = filter.dateField === 'expenseDate' ? 'expenseDate' : 'uploadedAt';
     let fromDate = filter.fromDate;
     let toDate = filter.toDate;
@@ -3098,6 +3103,7 @@ export class PrismaExpenseRepository {
     return {
       companyId,
       ...(constrained.length ? { AND: constrained } : {}),
+      ...(filter.expenseIds !== undefined ? { id: { in: filter.expenseIds } } : {}),
       ...(filter.branchId && { branchId: filter.branchId }),
       ...(filter.status && { status: filter.status }),
       ...(filter.sourceDocumentType && { sourceDocumentType: filter.sourceDocumentType }),

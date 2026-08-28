@@ -980,7 +980,9 @@ export function deriveExpenseAuditChecks(detail: Pick<ExpenseDetail,
   }
 
   if (hasUnresolvedDuplicateWarning(detail.duplicateStatus)) {
-    checks.push({ key: 'duplicate', status: 'warn', label: 'อาจเป็นรายการซ้ำ ต้องตรวจสอบก่อนยืนยัน' });
+    checks.push({ key: 'duplicate', status: 'warn', label: detail.duplicateStatus === 'CONFIRMED_DUPLICATE'
+      ? 'ยืนยันแล้วว่าเป็นรายการซ้ำ ไม่สามารถยืนยันค่าใช้จ่ายซ้ำได้'
+      : 'อาจเป็นรายการซ้ำ ต้องตรวจสอบก่อนยืนยัน' });
   }
 
   return checks;

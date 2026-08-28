@@ -1,0 +1,14 @@
+[
+  {
+    "mode": "EXCLUDED_MIXED_WHT3_PERCENT",
+    "ui": " [level=3]\n  - generic: ยอดก่อนหักส่วนลด\n  - generic: ฿260.25\n  - generic: ส่วนลด\n  - generic: \"- ฿10.00\"\n  - generic: ฐานภาษี (ยอดก่อน VAT)\n  - generic: ฿250.25\n  - generic: ภาษีมูลค่าเพิ่ม (VAT แยกจากราคา · หลายอัตรา)\n  - generic: ฿14.00\n  - generic: ยอดรวมทั้งสิ้น\n  - generic: ฿264.25\n  - generic: หัก ณ ที่จ่าย\n  - generic: \"- ฿7.51\"\n  - generic: ยอดที่ต้องชำระจริง (หลังหัก ณ ที่จ่าย)\n  - generic: ยังไม่ชำระ\n  - generic: ฿256.74\n  - button \"ลบ\"\n  - button \"ถัดไป\"\n- button \"Open Next.js Dev Tools\":\n- alert"
+  },
+  {
+    "mode": "INCLUDED_MIXED_WHT3_PERCENT",
+    "ui": " [level=3]\n  - generic: ยอดก่อนหักส่วนลด\n  - generic: ฿260.25\n  - generic: ส่วนลด\n  - generic: \"- ฿10.00\"\n  - generic: ฐานภาษี (ยอดก่อน VAT)\n  - generic: ฿237.17\n  - generic: ภาษีมูลค่าเพิ่ม (VAT รวมในราคา · หลายอัตรา)\n  - generic: ฿13.08\n  - generic: ยอดรวมทั้งสิ้น\n  - generic: ฿250.25\n  - generic: หัก ณ ที่จ่าย\n  - generic: \"- ฿7.12\"\n  - generic: ยอดที่ต้องชำระจริง (หลังหัก ณ ที่จ่าย)\n  - generic: ยังไม่ชำระ\n  - generic: ฿243.13\n  - button \"ลบ\"\n  - button \"ถัดไป\"\n- button \"Open Next.js Dev Tools\":\n- alert"
+  },
+  {
+    "mode": "INCLUDED_MIXED_WHT5_25_BAHT",
+    "ui": " [level=3]\n  - generic: ยอดก่อนหักส่วนลด\n  - generic: ฿260.25\n  - generic: ส่วนลด\n  - generic: \"- ฿10.00\"\n  - generic: ฐานภาษี (ยอดก่อน VAT)\n  - generic: ฿237.17\n  - generic: ภาษีมูลค่าเพิ่ม (VAT รวมในราคา · หลายอัตรา)\n  - generic: ฿13.08\n  - generic: ยอดรวมทั้งสิ้น\n  - generic: ฿250.25\n  - generic: หัก ณ ที่จ่าย\n  - generic: \"- ฿5.25\"\n  - generic: ยอดที่ต้องชำระจริง (หลังหัก ณ ที่จ่าย)\n  - generic: ยังไม่ชำระ\n  - generic: ฿245.00\n  - button \"ลบ\"\n  - button \"ถัดไป\"\n- button \"Open Next.js Dev Tools\":\n- alert"
+  }
+]

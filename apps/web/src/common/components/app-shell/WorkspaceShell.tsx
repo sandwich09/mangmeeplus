@@ -16,6 +16,7 @@ type Props = {
   headerExtras?: React.ReactNode;
   userName?: string;
   userRoles?: string[];
+  userRoleNames?: Record<string, string>;
   showAccountSecurity?: boolean;
   locale: SupportedLocale;
   navItems?: NavItem[];
@@ -30,6 +31,7 @@ function ShellInner({
   headerExtras,
   userName,
   userRoles,
+  userRoleNames,
   showAccountSecurity,
   locale,
   navItems = [],
@@ -57,6 +59,7 @@ function ShellInner({
         locale={locale}
         userName={userName}
         userRoles={userRoles}
+        userRoleNames={userRoleNames}
         showAccountSecurity={showAccountSecurity}
       />
       <Backdrop />
@@ -82,6 +85,7 @@ export function WorkspaceShell({
   headerExtras,
   userName,
   userRoles,
+  userRoleNames,
   showAccountSecurity,
   locale,
   navItems,
@@ -95,6 +99,7 @@ export function WorkspaceShell({
         headerExtras={headerExtras}
         userName={userName}
         userRoles={userRoles}
+        userRoleNames={userRoleNames}
         showAccountSecurity={showAccountSecurity}
         locale={locale}
         navItems={navItems}

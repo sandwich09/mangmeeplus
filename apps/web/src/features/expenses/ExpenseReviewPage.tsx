@@ -468,6 +468,8 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
   const canViewJournal = isConfirmed && caps.canReadLedger && detail.journalEntryId !== null;
   const canCheckDuplicates = canReview && canRunExpenseDuplicateCheck(detail.status);
   const hasDuplicates = hasUnresolvedDuplicateWarning(detail.duplicateStatus);
+  const isConfirmedDuplicate = detail.duplicateStatus === 'CONFIRMED_DUPLICATE';
+  const duplicateBlockMessage = t(isConfirmedDuplicate ? 'expenses.duplicate_confirmed_block' : 'expenses.duplicate_action_required', locale);
   const hasWht = Number(detail.whtAmount) > 0;
   // Spec §7.5: a document that already records VAT keeps showing it, whatever the workspace mode.
   const showsVat = showsTaxCapture(capture.mode, hasRecordedTax([{ vatAmount: detail.vatAmount }, ...detail.lines]));
@@ -601,7 +603,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
                 )}
                 {detail.status === 'READY_FOR_CONFIRMATION' && (
                   <>
-                    {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => doAction(() => confirmExpense(companyId, expenseId, vatOverrideRef.current ?? undefined), 'ยืนยันเอกสารเรียบร้อยแล้ว')} disabled={actionLoading || !canConfirmExpense} title={classificationBlocked ? classificationBlockMessage : hasDuplicates ? t('expenses.resolve_duplicate_first', locale) : needsReceiptOrSubstitute ? t('expenses.confirm_needs_receipt', locale) : ocrTotalUnacknowledged ? t('expenses.price_mismatch_blocks_confirm', locale) : isZeroAmount ? t('expenses.zero_amount_warning', locale) : !substituteReady ? 'ต้องให้ผู้จ่ายลงนามและผู้อนุมัติออกใบรับรองฉบับสมบูรณ์ก่อนยืนยันรายจ่าย' : undefined}>{t('expenses.confirm_and_post', locale)}</button>}
+                    {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => doAction(() => confirmExpense(companyId, expenseId, vatOverrideRef.current ?? undefined), 'ยืนยันเอกสารเรียบร้อยแล้ว')} disabled={actionLoading || !canConfirmExpense} title={classificationBlocked ? classificationBlockMessage : hasDuplicates ? duplicateBlockMessage : needsReceiptOrSubstitute ? t('expenses.confirm_needs_receipt', locale) : ocrTotalUnacknowledged ? t('expenses.price_mismatch_blocks_confirm', locale) : isZeroAmount ? t('expenses.zero_amount_warning', locale) : !substituteReady ? 'ต้องให้ผู้จ่ายลงนามและผู้อนุมัติออกใบรับรองฉบับสมบูรณ์ก่อนยืนยันรายจ่าย' : undefined}>{t('expenses.confirm_and_post', locale)}</button>}
                   </>
                 )}
               </>
@@ -611,7 +613,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
         )}
         {approverOnlyActions && (
           <>
-            {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => doAction(() => confirmExpense(companyId, expenseId, vatOverrideRef.current ?? undefined), 'ยืนยันเอกสารเรียบร้อยแล้ว')} disabled={actionLoading || !canConfirmExpense} title={classificationBlocked ? classificationBlockMessage : hasDuplicates ? t('expenses.resolve_duplicate_first', locale) : needsReceiptOrSubstitute ? t('expenses.confirm_needs_receipt', locale) : ocrTotalUnacknowledged ? t('expenses.price_mismatch_blocks_confirm', locale) : isZeroAmount ? t('expenses.zero_amount_warning', locale) : !substituteReady ? 'ต้องให้ผู้จ่ายลงนามและผู้อนุมัติออกใบรับรองฉบับสมบูรณ์ก่อนยืนยันรายจ่าย' : undefined}>{t('expenses.confirm_and_post', locale)}</button>}
+            {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => doAction(() => confirmExpense(companyId, expenseId, vatOverrideRef.current ?? undefined), 'ยืนยันเอกสารเรียบร้อยแล้ว')} disabled={actionLoading || !canConfirmExpense} title={classificationBlocked ? classificationBlockMessage : hasDuplicates ? duplicateBlockMessage : needsReceiptOrSubstitute ? t('expenses.confirm_needs_receipt', locale) : ocrTotalUnacknowledged ? t('expenses.price_mismatch_blocks_confirm', locale) : isZeroAmount ? t('expenses.zero_amount_warning', locale) : !substituteReady ? 'ต้องให้ผู้จ่ายลงนามและผู้อนุมัติออกใบรับรองฉบับสมบูรณ์ก่อนยืนยันรายจ่าย' : undefined}>{t('expenses.confirm_and_post', locale)}</button>}
           </>
         )}
         {isConfirmed && (
@@ -870,7 +872,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
     .join(' · ');
   const duplicatesCard = hasDuplicates && (
     <MangmeeCard className="space-y-2 border-warning-100 bg-warning-50 p-4">
-      <h3 className="text-sm font-semibold text-warning-700">⚠ {t('expenses.duplicate_warning_title', locale)}</h3>
+      <h3 className="text-sm font-semibold text-warning-700">⚠ {t(isConfirmedDuplicate ? 'expenses.duplicate_confirmed_title' : 'expenses.duplicate_warning_title', locale)}</h3>
       {detail.duplicateStatus === 'POSSIBLE_DUPLICATE' && openDuplicateCandidates.length === 0 && (
         <p className="text-xs text-warning-700">{t('expenses.duplicate_restricted', locale)}</p>
       )}
@@ -885,7 +887,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
             </Link>
             {duplicateReasonText(candidate) && <span className="text-gray-500">{duplicateReasonText(candidate)}</span>}
           </span>
-          <span className="font-semibold text-error-700">{t('expenses.confirm_duplicate', locale)}</span>
+          <span className="font-semibold text-error-700">{t('expenses.duplicate_confirmed_title', locale)}</span>
         </div>
       ))}
       {openDuplicateCandidates.map((d, index) => (
@@ -1155,7 +1157,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
               <div className="space-y-2 px-4 py-3">
               {canMutateDraft && classificationBlocked && <p className={warnNoteClass}>{classificationBlockMessage}</p>}
               {canMutateDraft && detail.status === 'READY_FOR_CONFIRMATION' && isZeroAmount && <p className={warnNoteClass}>{t('expenses.zero_amount_warning', locale)}</p>}
-              {canMutateDraft && detail.status === 'READY_FOR_CONFIRMATION' && hasDuplicates && <p className="text-xs font-semibold text-warning-700">{t('expenses.duplicate_action_required', locale)}</p>}
+              {canMutateDraft && detail.status === 'READY_FOR_CONFIRMATION' && hasDuplicates && <p className="text-xs font-semibold text-warning-700">{duplicateBlockMessage}</p>}
               {showVoid && (
                 <>
                   <div className="text-sm font-medium text-gray-700">{t('expenses.void_reason', locale)}</div>

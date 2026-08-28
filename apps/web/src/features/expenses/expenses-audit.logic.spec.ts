@@ -135,5 +135,6 @@ describe('deriveExpenseAuditChecks', () => {
     assert.equal(c?.status, 'warn');
     assert.equal(c?.label, 'อาจเป็นรายการซ้ำ ต้องตรวจสอบก่อนยืนยัน');
     assert.equal(check({ duplicateStatus: 'CONFIRMED_DUPLICATE' }, 'duplicate')?.status, 'warn');
+    assert.equal(check({ duplicateStatus: 'CONFIRMED_DUPLICATE' }, 'duplicate')?.label, 'ยืนยันแล้วว่าเป็นรายการซ้ำ ไม่สามารถยืนยันค่าใช้จ่ายซ้ำได้');
   });
 });

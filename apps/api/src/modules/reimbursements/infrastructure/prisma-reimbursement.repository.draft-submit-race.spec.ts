@@ -34,6 +34,7 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
   let clients: PrismaClient[] = [];
   let repos: PrismaReimbursementRepository[] = [];
   let companyId = '';
+  let branchId = '';
   let reachable = false;
 
   before(async () => {
@@ -57,6 +58,10 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
       data: { name: TAG, status: 'ACTIVE' },
       select: { id: true },
     })).id;
+    branchId = (await clients[0]!.branch.create({
+      data: { companyId, code: 'QA-RACE', name: TAG },
+      select: { id: true },
+    })).id;
     repos = clients.map((client) => new PrismaReimbursementRepository(
       { client } as any,
       new PrismaDocumentSequenceRepository({ client } as any),
@@ -71,6 +76,7 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
   async function createDraft(suffix: string, attachmentId?: string, amount = '100.0000') {
     const request = await repos[0]!.createRequest({
       companyId,
+      branchId,
       requesterUserId: `${TAG}-user`,
       requesterDisplayNameSnapshot: 'Race User',
       reason: suffix,
@@ -233,6 +239,7 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
     for (let round = 0; round < 8; round += 1) {
       const initial = await repos[0]!.createRequest({
         companyId,
+        branchId,
         requesterUserId: `${TAG}-user`,
         requesterDisplayNameSnapshot: 'Race User',
         reason: 'original',

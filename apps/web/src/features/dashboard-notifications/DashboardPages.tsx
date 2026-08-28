@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState, type SVGProps } from 'react';
+import { useCallback, useEffect, useRef, useState, type SVGProps } from 'react';
 import Link from 'next/link';
 import type { CrmDailyBriefWidget } from '@watchdog-bms/contracts';
 import { getDashboard, generateSnapshot } from './dashboard-notifications.api';
@@ -19,7 +19,7 @@ type DashboardTabPeriodKind = Exclude<DashboardPeriodKind, 'last_month' | 'custo
 
 const PERIOD_TABS: { kind: DashboardTabPeriodKind; labelKey: DictionaryKey }[] = [
   { kind: 'today', labelKey: 'dashboard.period.today' },
-  { kind: 'week', labelKey: 'dashboard.period.last7' },
+  { kind: 'week', labelKey: 'dashboard.period.week' },
   { kind: 'month', labelKey: 'dashboard.period.month' },
   { kind: 'quarter', labelKey: 'dashboard.period.quarter' },
 ];
@@ -213,27 +213,35 @@ export function CompanyDashboardPage({
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
+  const snapshotRequestRef = useRef(0);
 
   const load = useCallback(async (kind: DashboardTabPeriodKind) => {
+    const requestId = ++snapshotRequestRef.current;
     setLoading(true);
+    setRefreshing(false);
+    setSnapshot(null);
     setError(null);
     try {
       const data = await getDashboard(companyId, kind, branchId);
+      if (requestId !== snapshotRequestRef.current) return;
       setSnapshot(data);
     } catch (e) {
+      if (requestId !== snapshotRequestRef.current) return;
       if (isBranchScope403(e, branchId)) { branchFilter?.reportBranchForbidden(); return; }
       setError(t('dashboard.home.load_error', locale));
     } finally {
-      setLoading(false);
+      if (requestId === snapshotRequestRef.current) setLoading(false);
     }
     // `branchFilter` is deliberately absent: reportBranchForbidden is stable per companyId, which is here.
   }, [companyId, locale, branchId]);
 
   useEffect(() => {
     void load(periodKind);
+    return () => { snapshotRequestRef.current += 1; };
   }, [load, periodKind]);
 
   const handleRefresh = async () => {
+    const requestId = ++snapshotRequestRef.current;
     setRefreshing(true);
     setError(null);
     setRefreshToken((n) => n + 1);
@@ -241,12 +249,17 @@ export function CompanyDashboardPage({
       const data = canForceGenerateSnapshot(permissions)
         ? await generateSnapshot(companyId, periodKind, branchId)
         : await getDashboard(companyId, periodKind, branchId);
+      if (requestId !== snapshotRequestRef.current) return;
       setSnapshot(data);
     } catch (e) {
+      if (requestId !== snapshotRequestRef.current) return;
       if (isBranchScope403(e, branchId)) { branchFilter?.reportBranchForbidden(); return; }
       setError(t('dashboard.home.refresh_error', locale));
     } finally {
-      setRefreshing(false);
+      if (requestId === snapshotRequestRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   };
 

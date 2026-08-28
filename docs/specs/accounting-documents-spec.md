@@ -64,6 +64,8 @@ Inventory updates from sales documents are not part of item 08 unless item 05 al
 - Corrections after issue use void, full credit note, full debit note, or reversal-ready event.
 - Tax invoice issue, void, credit note, and debit note actions require audit trail and dedicated permission.
 - A plain receipt represents collection/payment evidence only: it has no output Tax Code and must not emit VAT again when VAT was recognized by an earlier tax invoice.
+- The sales UI creates receipts from fully paid issued invoices, or through the existing atomic received-income bundle; it does not offer an orphan receipt in the root create form. A source-linked receipt is marked paid/evidence-only on issue, with no second payment posting. Existing source-state, branch, permission and duplicate-child guards remain authoritative.
+- Voiding a document with no posted journal clears its obsolete pending/error posting state to `not_required`; a real reversal remains `reversed`. Older voided pending/error rows are presented as no longer requiring posting without rewriting their retained history.
 - A combined receipt/tax invoice must be distinguishable from a plain receipt and must satisfy tax-invoice evidence rules before its lines may carry active company-profile Tax Codes and emit VAT events.
 - Tax Code is authoritative per line. The document header is a derived `NONE`, single-code, or `MIXED` summary and cannot drive calculation/posting/reporting.
 - Credit/debit-note lines inherit the original issued tax-invoice line profile/code/rate/account/report snapshots and reference the original tax invoice rather than another correction document or unrelated duplicate event.
@@ -445,6 +447,7 @@ All protected routes are under `/v1/companies/:companyId/accounting`. Route `com
 GET /counterparties
 - Permission: accounting.counterparty.read
 - Lists counterparties with type/status/search filters.
+- The sales UI exposes pagination for documents, counterparties and payments; it must not silently hide results beyond the API's first page. Document page position resets when company, branch or document-type filters change.
 
 POST /counterparties
 - Permission: accounting.counterparty.manage
@@ -470,7 +473,7 @@ GET /documents/:documentId
 
 PATCH /documents/:documentId
 - Permission: document-type-specific update permission.
-- Updates draft only. Rejects issued/voided/closed records.
+- Updates drafts, or revises a rejected quotation back to `DRAFT` in the same version-checked transaction. Revision clears prior approval authority, retains the rejection in the audit trail, and requires a fresh submission and independent approval before issue. Rejects approved/issued/voided/closed records.
 
 POST /documents/:documentId/submit-approval
 - Permission: accounting.quotation.submit_approval

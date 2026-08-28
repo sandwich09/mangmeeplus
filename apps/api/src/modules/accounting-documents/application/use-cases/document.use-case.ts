@@ -232,8 +232,9 @@ export class UpdateDocumentUseCase {
     if (!hasDocumentPermission(ctx, current.documentType, 'update')) {
       throw new ForbiddenException(`Missing permission: ${permission}`);
     }
-    if (!isDraftEditable(current.status)) {
-      throw new UnprocessableEntityException(`Only DRAFT documents can be edited; document is ${current.status}`);
+    const isRejectedQuotation = current.documentType === 'QUOTATION' && current.status === 'REJECTED';
+    if (!isDraftEditable(current.status) && !isRejectedQuotation) {
+      throw new UnprocessableEntityException(`Only DRAFT documents or REJECTED quotations can be edited; document is ${current.status}`);
     }
     if (Number.isNaN(input.expectedUpdatedAt.getTime())) {
       throw new UnprocessableEntityException('expectedUpdatedAt must be a valid timestamp');
@@ -373,7 +374,10 @@ export class UpdateDocumentUseCase {
       requestId: ctx.requestId,
       result: 'SUCCESS',
       riskLevel: 'MEDIUM',
-      metadataJson: { documentType: updated.documentType, priorUpdatedAt: input.expectedUpdatedAt.toISOString() },
+      metadataJson: {
+        documentType: updated.documentType, priorUpdatedAt: input.expectedUpdatedAt.toISOString(),
+        ...(isRejectedQuotation ? { priorStatus: current.status, status: updated.status, rejectionNote: current.approvalNote } : {}),
+      },
     });
     return updated;
   }
@@ -795,7 +799,9 @@ export class ApproveQuotationUseCase {
     const transitionError = validateStatusTransition(doc.status, 'APPROVED', 'QUOTATION');
     if (transitionError) throw new UnprocessableEntityException(transitionError);
 
-    const updated = await this.repo.updateDocumentStatus(ctx.companyId, documentId, 'APPROVED', ctx.userId, { approvalNote: note });
+    const updated = await this.repo.updateDocumentStatus(ctx.companyId, documentId, 'APPROVED', ctx.userId, {
+      approvalNote: note, expectedStatus: doc.status, expectedUpdatedAt: doc.updatedAt,
+    });
 
     void this.outbox.append('accounting.quotation.approved', 'accounting_document', documentId, {
       companyId: ctx.companyId, actorUserId: ctx.userId, requestId: ctx.requestId,
@@ -823,7 +829,9 @@ export class RejectQuotationUseCase {
     const transitionError = validateStatusTransition(doc.status, 'REJECTED', 'QUOTATION');
     if (transitionError) throw new UnprocessableEntityException(transitionError);
 
-    const updated = await this.repo.updateDocumentStatus(ctx.companyId, documentId, 'REJECTED', ctx.userId, { approvalNote: note });
+    const updated = await this.repo.updateDocumentStatus(ctx.companyId, documentId, 'REJECTED', ctx.userId, {
+      approvalNote: note, expectedStatus: doc.status, expectedUpdatedAt: doc.updatedAt,
+    });
 
     void this.outbox.append('accounting.quotation.rejected', 'accounting_document', documentId, {
       companyId: ctx.companyId, actorUserId: ctx.userId, requestId: ctx.requestId,

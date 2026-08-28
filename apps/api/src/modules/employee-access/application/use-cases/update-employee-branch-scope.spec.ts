@@ -1,6 +1,7 @@
 // 10D: branch scope assignment guards on UpdateEmployeeUseCase.
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import type { UpdateEmployeeInput } from '@watchdog-bms/contracts';
 import { UpdateEmployeeUseCase } from './update-employee.use-case';
 
 const KEY = Buffer.from('a'.repeat(64), 'hex');
@@ -17,6 +18,7 @@ function makePrisma(opts: {
   duplicateIdentity?: boolean;
   otherCompanyMemberships?: number;
   membershipScopeMode?: string;
+  membershipBranchIds?: string[];
 } = {}) {
   const writes = { profileUpdate: undefined as any, userUpdate: undefined as any, membershipUpdate: undefined as any, scopeDeletes: 0, scopeCreates: undefined as any, auditArgs: undefined as any, assignedRoleIds: undefined as any, transactions: 0 };
   const tx = {
@@ -46,7 +48,7 @@ function makePrisma(opts: {
         }),
       },
       companyMembership: {
-        findUniqueOrThrow: async () => ({ branchScopeMode: opts.membershipScopeMode ?? 'ALL_BRANCHES', defaultBranchId: null }),
+        findUniqueOrThrow: async () => ({ branchScopeMode: opts.membershipScopeMode ?? 'ALL_BRANCHES', defaultBranchId: null, branchScopes: (opts.membershipBranchIds ?? []).map((branchId) => ({ branchId })) }),
         count: async () => opts.otherCompanyMemberships ?? 0,
       },
       role: { findMany: async () => opts.candidateRoles ?? [] },
@@ -63,6 +65,30 @@ function makePrisma(opts: {
 const baseCmd = { companyId: 'company-1', employeeId: 'emp-1', requestingUserId: 'admin-1', requesterPermissions: ['access.employee.update', 'access.role.manage'], requestId: 'req-1' };
 
 describe('UpdateEmployeeUseCase branch scope', () => {
+  for (const [name, scope] of [
+    ['another active company branch', { branchScopeMode: 'SELECTED_BRANCHES', branchIds: ['b1', 'b2'] }],
+    ['all branches', { branchScopeMode: 'ALL_BRANCHES', branchIds: [] }],
+    ['an out-of-scope default', { branchScopeMode: 'DEFAULT_BRANCH_ONLY', defaultBranchId: 'b2' }],
+    ['retained out-of-scope rows', { branchScopeMode: 'SELECTED_BRANCHES' }],
+  ] as Array<[string, UpdateEmployeeInput]>) {
+    it(`denies and audits a restricted manager granting ${name}, including to themselves`, async () => {
+      const { prisma, writes } = makePrisma({ validBranchCount: 'defaultBranchId' in scope ? 1 : 2, existingScopeRows: 2, membershipBranchIds: ['b1', 'b2'] });
+      await assert.rejects(
+        () => new UpdateEmployeeUseCase(prisma, CONFIG).execute({ ...baseCmd, requestingUserId: PROFILE.userId, requesterBranchIds: ['b1'], ...scope }),
+        /outside the requester's branch scope/,
+      );
+      assert.equal(writes.transactions, 0);
+      assert.equal(writes.auditArgs.data.result, 'DENIED');
+      assert.equal(writes.auditArgs.data.riskLevel, 'HIGH');
+    });
+  }
+
+  it('preserves a restricted manager assigning only branches they hold', async () => {
+    const { prisma, writes } = makePrisma({ validBranchCount: 1 });
+    await new UpdateEmployeeUseCase(prisma, CONFIG).execute({ ...baseCmd, requesterBranchIds: ['b1'], branchScopeMode: 'SELECTED_BRANCHES', branchIds: ['b1'], defaultBranchId: 'b1' });
+    assert.deepEqual(writes.scopeCreates.data, [{ membershipId: 'mem-1', branchId: 'b1' }]);
+  });
+
   it('rejects branches that are not ACTIVE branches of this company', async () => {
     const { prisma } = makePrisma({ validBranchCount: 1 });
     await assert.rejects(

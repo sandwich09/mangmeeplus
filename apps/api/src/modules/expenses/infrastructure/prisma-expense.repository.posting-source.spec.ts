@@ -71,6 +71,22 @@ describe('PrismaExpenseRepository expense posting-source projection', () => {
 });
 
 describe('PrismaExpenseRepository shared evidence posting state', () => {
+  it('intersects selected export rows with tenant, branch and document filters', () => {
+    const where = makeRepo([]).buildSharedEvidenceWhere('co-1', {
+      expenseIds: ['selected-1', 'outside-scope'], status: 'CONFIRMED', branchId: 'branch-1',
+    } as any, { branchIds: ['branch-1'] });
+    assert.deepEqual(where.id, { in: ['selected-1', 'outside-scope'] });
+    assert.equal(where.companyId, 'co-1');
+    assert.equal(where.branchId, 'branch-1');
+    assert.equal(where.status, 'CONFIRMED');
+    assert.deepEqual(where.AND, [{ OR: [{ branchId: { in: ['branch-1'] } }, { branchId: null }] }]);
+    assert.deepEqual(makeRepo([]).buildSharedEvidenceWhere('co-1', { expenseIds: [] } as any).id, { in: [] });
+  });
+  it('rejects malformed or oversized export selections rather than broadening the export', () => {
+    for (const expenseIds of [null, 'selected-1', [null], [''], Array(10001).fill('id')]) {
+      assert.throws(() => makeRepo([]).buildSharedEvidenceWhere('co-1', { expenseIds } as any), /รายการที่เลือก/);
+    }
+  });
   it('honors the 500-row export contract and uses stable pagination for tied dates', async () => {
     let query: any;
     const repo = new PrismaExpenseRepository({ client: { expenseRecord: {

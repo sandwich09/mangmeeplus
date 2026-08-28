@@ -394,9 +394,10 @@ export function wrapText(value: unknown, maxWidth: number, fontSize?: number): s
   return lines;
 }
 
-/** Text too wide for its column condenses into it instead of running past the rule. */
-export function fitToWidth(value: string, maxWidth: number, fontSize?: number): string {
-  return estimatedWidth(value, fontSize) > maxWidth ? ` textLength="${maxWidth}" lengthAdjust="spacingAndGlyphs"` : '';
+/** Use font sizing supported by both browsers and the PDF rasterizer, which ignores textLength. */
+export function fitToWidth(value: string, maxWidth: number, fontSize = BODY_FONT_SIZE): string {
+  const width = estimatedWidth(value, fontSize);
+  return width > maxWidth ? ` style="font-size:${Math.floor(fontSize * maxWidth / width * 100) / 100}px"` : '';
 }
 
 /**

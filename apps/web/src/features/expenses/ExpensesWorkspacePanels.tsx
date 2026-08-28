@@ -603,6 +603,7 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
   const branchId = branchFilter?.branchId ?? '';
   const branchLabel = useBranchScopeLabel();
   const loadVersion = useRef(0);
+  const exportScopeVersion = useRef(0);
   // Company-level screen with no single document date, so the policy is read for today.
   const showsTax = showsTaxCapture(useExpenseCapturePolicy(companyId).mode);
   const [view, setView] = useState<SharedEvidenceView | null>(null);
@@ -660,14 +661,19 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
     finally { if (version === loadVersion.current) setLoading(false); }
   }, [companyId, branchId, dateField, documentStatus, yearMonth, taxEvidenceStatus, sourceDocumentType, postingStatus]);
   useEffect(() => { void load(); return () => { loadVersion.current += 1; }; }, [load]);
-  useEffect(() => { setConfirmExport(false); setPackageResult(null); setPage(1); }, [branchId]);
+  useEffect(() => {
+    exportScopeVersion.current += 1;
+    setConfirmExport(false); setPackageResult(null); setPage(1);
+  }, [branchId, dateField, yearMonth, documentStatus, taxEvidenceStatus, sourceDocumentType, postingStatus, flagFilter]);
 
   const exportPackage = async () => {
     const version = loadVersion.current;
+    const scopeVersion = exportScopeVersion.current;
     setConfirmExport(false);
     setExporting(true); setError(null);
     try {
       const result = await createAccountantPackage(companyId, {
+        expenseIds: visibleRows.map((row) => row.expenseId),
         ...(branchId ? { branchId } : {}),
         dateField,
         status: documentStatus,
@@ -678,13 +684,13 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
         ...(sourceDocumentType ? { sourceDocumentType } : {}),
         ...(postingStatus ? { postingStatus } : {}),
       });
-      if (version !== loadVersion.current) return;
+      if (version !== loadVersion.current || scopeVersion !== exportScopeVersion.current) return;
       // Same guard as the list page (ebed6dfb): a header-only workbook reads as a broken export.
       if (result.rowCount === 0) { toast.warning('ไม่มีรายการตามตัวกรองในช่วงนี้ จึงยังส่งออกไม่ได้'); return; }
       setPackageResult(result);
       downloadIndexXlsx(result, `expense-index-${yearMonth || 'all'}.xlsx`);
     } catch (e) {
-      if (version !== loadVersion.current) return;
+      if (version !== loadVersion.current || scopeVersion !== exportScopeVersion.current) return;
       if (isBranchScope403(e, branchId)) branchFilter?.reportBranchForbidden();
       setError(err(e));
     }
@@ -736,10 +742,11 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
   };
 
   const rows = view?.rows ?? [];
-  const total = rows.reduce((s, r) => s + Number(r.grandTotalAmount || 0), 0);
   const summary = summarizeEvidenceRows(rows);
   const flagSummary = summarizeEvidenceFlags(rows);
   const visibleRows = filterRowsByFlag(rows, flagFilter);
+  const total = visibleRows.reduce((s, r) => s + Number(r.grandTotalAmount || 0), 0);
+  const exportAttentionCount = summarizeEvidenceRows(visibleRows).attention;
   const filterOptions: Array<{ key: EvidenceFlagKey | 'all' | 'attention'; label: string; count: number }> = [
     { key: 'all', label: 'ทั้งหมด', count: rows.length },
     ...(summary.attention > 0 ? [{ key: 'attention' as const, label: '⚠ ต้องตรวจ', count: summary.attention }] : []),
@@ -770,8 +777,8 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
       {!error && (
         <>
           <div className="flex flex-wrap gap-3">
-            <div className="min-w-[180px] flex-1"><MangmeeStatCard tone="brand" icon={ICON.doc} label={EXPENSE_STATUS_LABELS[documentStatus as keyof typeof EXPENSE_STATUS_LABELS] ?? 'เอกสาร'} value={`${view?.total ?? 0} รายการ`} sub={yearMonth ? formatThaiMonth(yearMonth) : 'ทั้งหมด'} /></div>
-            <div className="min-w-[180px] flex-1"><MangmeeStatCard tone="indigo" icon={ICON.wallet} label="ยอดรวมตามตัวกรอง" value={baht(total)} sub={`${view?.rows.length ?? 0} รายการ`} /></div>
+            <div className="min-w-[180px] flex-1"><MangmeeStatCard tone="brand" icon={ICON.doc} label={EXPENSE_STATUS_LABELS[documentStatus as keyof typeof EXPENSE_STATUS_LABELS] ?? 'เอกสาร'} value={`${visibleRows.length} รายการ`} sub={yearMonth ? formatThaiMonth(yearMonth) : 'ทั้งหมด'} /></div>
+            <div className="min-w-[180px] flex-1"><MangmeeStatCard tone="indigo" icon={ICON.wallet} label="ยอดรวมตามตัวกรอง" value={baht(total)} sub={`${visibleRows.length} รายการ`} /></div>
             {/* Toggles the same 'attention' state the filter chips below use, so the card and the
                 chip row can never disagree about what is currently filtered. */}
             <button type="button" aria-pressed={flagFilter === 'attention'}
@@ -837,11 +844,12 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
           >
             <div className="space-y-3 text-sm">
               <p className="text-gray-600">ระบบจะส่งออกเอกสารตามตัวกรองปัจจุบัน</p>
+              <p className="font-semibold">รายการที่ส่งออก: {visibleRows.length} รายการ · รวมทุกหน้าที่ตรงกับตัวกรอง</p>
               <p className="font-semibold text-gray-900">สาขา: {branchLabel ?? 'กำลังตรวจสอบสาขา'}</p>
               <p className="text-gray-600">{dateField === 'uploadedAt' ? 'วันที่ส่งเข้า' : 'วันที่เอกสาร'}: {yearMonth ? formatThaiMonth(yearMonth) : 'ทุกช่วงเวลา'} · {EXPENSE_STATUS_LABELS[documentStatus as keyof typeof EXPENSE_STATUS_LABELS] ?? documentStatus}</p>
-              {summary.attention > 0 ? (
+              {exportAttentionCount > 0 ? (
                 <div className="rounded-lg border border-warning-100 bg-warning-50 p-3 text-warning-800">
-                  ⚠ พบ {summary.attention} รายการที่มีคำเตือนในหน้าที่โหลด ระบบจะรวมรายการเหล่านี้ในชุดส่งออกด้วย
+                  ⚠ พบ {exportAttentionCount} รายการที่มีคำเตือนในชุดที่เลือก ระบบจะรวมรายการเหล่านี้ในชุดส่งออกด้วย
                 </div>
               ) : (
                 <p className="text-gray-500">หากมีรายการที่มีคำเตือน ระบบจะรวมไว้ในชุดส่งออกด้วย</p>
@@ -1055,7 +1063,7 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
               <p className="font-semibold text-brand-700">✓ สร้างชุดเอกสารแล้ว: {packageResult.rowCount} รายการ, ไฟล์หลักฐาน {packageResult.evidenceManifest.length} ไฟล์</p>
               {packageResult.truncated && <p className="mt-1 font-semibold text-warning-700">⚠ ส่งออก {packageResult.rowCount} จากทั้งหมด {packageResult.totalMatched} รายการ กรุณาแบ่งช่วงเดือนหรือปรับตัวกรองแล้วส่งออกอีกครั้ง</p>}
               {packageResult.skippedEvidence.length > 0 && <p className="mt-1 font-semibold text-warning-700">⚠ ข้ามไฟล์แนบ {packageResult.skippedEvidence.length} ไฟล์ที่คุณไม่มีสิทธิ์เปิด ชุดเอกสารนี้จึงยังไม่ครบ</p>}
-              <p className="mt-1 text-xs text-gray-500">ดาวน์โหลดไฟล์รายการ Excel แล้ว · ไฟล์รายการหลักฐานมีลิงก์ดาวน์โหลดที่ตรวจสิทธิ์รายไฟล์และมีวันหมดอายุ ({formatThaiDateTime(packageResult.generatedAt)})</p>
+              <p className="mt-1 text-xs text-gray-500">ดาวน์โหลดไฟล์รายการ Excel แล้ว · สร้างเมื่อ {formatThaiDateTime(packageResult.generatedAt)} · ลิงก์ดาวน์โหลดตรวจสิทธิ์รายไฟล์และระบุวันหมดอายุในรายการหลักฐาน</p>
               <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                 <span className="text-xs text-gray-500">รายการหลักฐาน (JSON) — ลิงก์ดาวน์โหลดไฟล์แนบทุกไฟล์ มีวันหมดอายุ</span>
                 <button className={ghostClass} onClick={downloadManifest}>ดาวน์โหลดรายการหลักฐาน (JSON)</button>

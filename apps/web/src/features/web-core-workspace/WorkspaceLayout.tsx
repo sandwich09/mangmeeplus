@@ -177,6 +177,7 @@ export default function WorkspaceLayoutClient({ children, companyId, session }: 
         // the global User row, which a company-scoped rename does not always reach.
         userName={stripThaiTitlePrefix(session.displayName) || undefined}
         userRoles={session.roles}
+        userRoleNames={session.roleNames}
         showAccountSecurity={[
           'account.password.change',
           'account.identity.link',
