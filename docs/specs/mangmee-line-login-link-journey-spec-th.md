@@ -58,7 +58,7 @@ QR = opaque public code TTL สั้น single-use bind browser/intent; secret 
 ## 7. คำถาม Owner (ตอนเข้าคิว)
 
 1. Q1–Q4 ของ deep-link handoff spec (provider claim ของ handoff session, link-preview burn, TTL, alert rail)
-2. ยืนยันหลักฐาน LINE Developers Console: Messaging/Login/LIFF Provider เดียวกัน (ใครเป็น Admin ของ Provider — คำถาม §11 ข้อ 17 เดิม)
+2. ยืนยันหลักฐาน LINE Developers Console: Messaging/Login/LIFF Provider เดียวกัน (ใครเป็น Admin ของ Provider — คำถาม §11 ข้อ 17 เดิม) — **Owner ตอบ 2026-08-27: Provider เดียวกันทั้งหมด** (ยืนยันในแชต; หลักฐาน console screenshot + ชื่อ Admin ยังต้องเก็บเป็น deployment evidence ตอน activation gate ตาม P12.1)
 
 ## 8. หลักฐาน LINE ทางการที่เป็น gate
 

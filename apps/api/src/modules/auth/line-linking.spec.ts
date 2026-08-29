@@ -157,19 +157,22 @@ describe('LinkLineIdentityUseCase', () => {
     assert.equal(upserted.length, 0);
   });
 
-  it('explicit companyId with multiple non-owner memberships throws ForbiddenException', async () => {
+  // Owner decision 2026-08-29: linking with an explicit company is login-level. The old rule threw
+  // Forbidden for any multi-company non-owner; membership validation is the boundary that remains.
+  it('explicit companyId with multiple non-owner memberships links and sets that context', async () => {
+    const upserted: any[] = [];
     const prisma = {
       client: {
         externalIdentity: { findFirst: async () => null, create: async () => ({}) },
         companyMembership: { findMany: async () => [staffMembership('co-1'), staffMembership('co-2')] },
-        lineCompanyContext: { upsert: async () => {} },
+        lineCompanyContext: { upsert: async (args: any) => { upserted.push(args); } },
       },
     } as any;
     const uc = new LinkLineIdentityUseCase(lineVerifier, prisma, config);
-    await assert.rejects(
-      () => uc.execute({ userId: 'user-1', idToken: 'tok', requestId: 'req-1', companyId: 'co-2' }),
-      (err: unknown) => { assert.ok(err instanceof ForbiddenException); return true; },
-    );
+    const result = await uc.execute({ userId: 'user-1', idToken: 'tok', requestId: 'req-1', companyId: 'co-2' });
+
+    assert.equal(result.linked, true);
+    assert.equal(upserted[0]?.create.companyId, 'co-2');
   });
 
   it('prefers the canonical-channel row when looking up an existing identity', async () => {

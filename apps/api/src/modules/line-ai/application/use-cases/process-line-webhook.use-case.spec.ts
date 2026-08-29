@@ -1593,19 +1593,66 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(upserts.length, 0);
   });
 
-  it('blocks non-owner multi-company LINE context selection', async () => {
+  // Owner decision 2026-08-29: the assistant used to refuse every multi-company user who was not
+  // OWNER of all of them, so an employee of one company and owner of another had no LINE at all —
+  // not even a picker. Per-company authorization is the permission resolver's and branch ABAC's job.
+  it('offers the company picker to a multi-company user with mixed roles', async () => {
     const { prisma } = makePrisma({
       memberships: [
-        { companyId: 'co-1', roles: [{ role: { key: 'STAFF' } }] },
-        { companyId: 'co-2', roles: [{ role: { key: 'STAFF' } }] },
+        { companyId: 'co-1', company: { name: 'บริษัทหนึ่ง' }, roles: [{ role: { key: 'STAFF', name: 'พนักงาน' } }] },
+        { companyId: 'co-2', company: { name: 'บริษัทสอง' }, roles: [{ role: { key: 'OWNER', name: 'เจ้าของกิจการ' } }] },
       ],
+      lineCompanyContext: null,
+    });
+    const { useCase, sentMessages, getAiGatewayCalled } = makeUseCase(prisma, { permissions: ['line.ai.query'] });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-company-mixed-roles' });
+
+    assert.equal(getAiGatewayCalled(), false);
+    assert.equal(sentMessages[0]?.type, 'flex');
+    assert.match(JSON.stringify(sentMessages[0]), /บริษัทหนึ่ง/);
+    assert.match(JSON.stringify(sentMessages[0]), /\/company co-2/);
+  });
+
+  it('lists every company for a multi-company user with mixed roles', async () => {
+    const { prisma } = makePrisma({
+      displayName: 'สมชาย',
+      memberships: [
+        { companyId: 'co-1', company: { name: 'บริษัทหนึ่ง' }, roles: [{ role: { key: 'STAFF', name: 'พนักงาน' } }] },
+        { companyId: 'co-2', company: { name: 'บริษัทสอง' }, roles: [{ role: { key: 'OWNER', name: 'เจ้าของกิจการ' } }] },
+      ],
+      lineCompanyContext: { companyId: 'co-1' },
+    });
+    const { useCase, sentMessageBatches, getAiGatewayCalled } = makeUseCase(prisma, { permissions: ['line.ai.query'] });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-company-mixed-list', messageText: '/companies' });
+
+    assert.equal(getAiGatewayCalled(), false);
+    // The picker used to be owner-only, so a staff current context got the card and no way to move.
+    assert.equal(sentMessageBatches[0]?.length, 2);
+    const [contextCard, picker] = sentMessageBatches[0]!;
+    assert.match(JSON.stringify(contextCard), /บริษัทหนึ่ง/);
+    assert.match(JSON.stringify(contextCard), /พนักงาน/);
+    assert.match(JSON.stringify(picker), /บริษัทหนึ่ง/);
+    assert.match(JSON.stringify(picker), /บริษัทสอง/);
+  });
+
+  it('switches to a non-owner membership through explicit LINE control command', async () => {
+    const { prisma, upserts, updates } = makePrisma({
+      memberships: [
+        { companyId: 'co-1', company: { name: 'บริษัทหนึ่ง' }, roles: [{ role: { key: 'OWNER', name: 'เจ้าของกิจการ' } }] },
+        { companyId: 'co-2', company: { name: 'บริษัทสอง' }, roles: [{ role: { key: 'STAFF', name: 'พนักงาน' } }] },
+      ],
+      lineCompanyContext: { companyId: 'co-1' },
     });
     const { useCase, replies, getAiGatewayCalled } = makeUseCase(prisma, { permissions: ['line.ai.query'] });
 
-    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-company-non-owner', messageText: '/companies' });
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-company-switch-non-owner', messageText: '/company 2' });
 
     assert.equal(getAiGatewayCalled(), false);
-    assert.match(replies[0] ?? '', /OWNER/);
+    assert.equal((upserts[0] as any).update.companyId, 'co-2');
+    assert.match(replies[0] ?? '', /เปลี่ยนบริษัทเป็น บริษัทสอง/);
+    assert.equal((updates.at(-1) as any).data.companyId, 'co-2');
   });
 
   it('auto-resolves single-company user without LineCompanyContext', async () => {

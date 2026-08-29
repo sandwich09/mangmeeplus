@@ -1,6 +1,6 @@
 # ระบบจ่ายเงินและ Subscription (จำกัดการใช้ใบเสร็จ) — Spec P26
 
-สถานะ: **DRAFT — กลไกครบ, ตารางราคา (§8) รอ Owner อนุมัติก่อนเริ่ม implement**; **คิว: ท้ายสุดของแผนทั้งหมด (คำสั่ง Owner 2026-08-26: "โยก payment subscribe ไว้ตอนท้าย") — ตอบ §10 ข้อ 4 แล้ว**; แผนส่งมอบเขียนตอนเข้าคิว
+สถานะ: **DRAFT — Owner กำหนด price point และแนวทาง EasySlip v2 แล้วเมื่อ 2026-08-29 แต่ quota/trial duration/grace/tax-document owner ยังไม่ครบ จึงยังไม่เริ่ม implement P26**; **คิว: ท้ายสุดของแผนทั้งหมด (คำสั่ง Owner 2026-08-26: "โยก payment subscribe ไว้ตอนท้าย") — ตอบ §10 ข้อ 2 และ 4 แล้ว**; รอบนี้วาง catalog ให้ P10 แสดง paid offer แบบ disabled เท่านั้น
 
 ที่มา: การตัดสินใจ Owner 2026-08-25 — จำกัดการใช้ใบเสร็จต่อบริษัท ใช้ต่อต้อง subscribe; กติกาแม่อยู่ [แผนหลัก P26 + §13.8](../plans/mangmee-brain-2-5-day-priority-plan-th.md)
 
@@ -78,10 +78,14 @@
 - การใช้แพ็กเกจ = คำสั่งที่แปลงเป็น `PUT partner features` ชุดเดียวกับปัจจุบัน (idempotent commandId/CAS/epoch เดิม) โดยตั้ง `grantOrigin: 'package:<key>@<version>'` (คอลัมน์มีอยู่แล้ว) — **ไม่มี path เขียน entitlement ใหม่**
 - onboarding: ช่อง `modulePackage` เปลี่ยนจาก string อิสระเป็นเลือกจาก `BillingPackage` และ seed entitlement ตาม snapshot (contract test เทียบทุก package กับสิทธิ์จริง — ตามวิธีปิดใน §13.3 PLATFORM-01)
 
+<a id="billing-easyslip-v2"></a>
 ### F-BILL-3 ชำระเงินและต่ออายุ
 
-- **Payment provider = การตัดสินใจ Owner (§10 ข้อ 2)** — spec กำหนดเกณฑ์คัดเลือกแทนการเดา: รองรับ PromptPay + บัตร, recurring/renewal, ออกใบเสร็จ/ใบกำกับภาษีอิเล็กทรอนิกส์ฝั่งเราได้, webhook มี signature + retry, มี sandbox
-- Flow: หน้า subscribe (เลือกแพ็กเกจ→ชำระ→ยืนยัน) → webhook ยืนยันเงิน (signature + idempotency ตาม pattern REVENUE-07: unique `(provider, externalTransactionId)` + payload hash) → ต่ออายุ `CompanyBillingState` → ออกเอกสารภาษีฝั่ง Mangmee (ระบบบัญชีของ Mangmee เอง — หลักการ §2.3)
+- **แนวทางเฟสแรกที่ Owner เลือก 2026-08-29:** เงินเข้าบัญชี K BIZ ของ Mangmee ผ่าน Thai QR ที่ล็อกยอดตาม offer; **EasySlip API v2 เป็นผู้ตรวจหลักฐานการโอน ไม่ใช่ payment processor และไม่ถือเงินแทน Mangmee**. ลูกค้าต้องสแกนใหม่ในแต่ละรอบ จึงยังไม่ใช่ card auto-renew.
+- EasySlip boundary ใช้ `POST https://api.easyslip.com/v2/verify/bank` จาก backend เท่านั้น พร้อม `matchAccount=true`, `matchAmount=<expected amount from versioned offer>`, `checkDuplicate=true`, `remark=<paymentAttemptId>`; API token เป็น server secret และ frontend ห้ามเรียก provider โดยตรง. อ้างอิง: [EasySlip v2 image verification](https://document.easyslip.com/en/v2/verify/bank/image).
+- Accept ได้เมื่อ provider success + receiver account match + amount match + not duplicate และ backend insert unique `(provider, transRef)` สำเร็จใน transaction เดียวกับ transition ของ billing state; client amount/provider response ห้ามเป็น source of truth. Provider timeout/unknown → `PAYMENT_REVIEW`, ไม่เปิดสิทธิ์และไม่ทำข้อมูลหาย.
+- Flow เมื่อเปิด paid จริง: เลือกแพ็กเกจ → backend snapshot offer/version/expected satang → แสดง Thai QR ล็อกยอด → upload slip → EasySlip verify → ต่ออายุ `CompanyBillingState` → ออกเอกสารภาษีฝั่ง Mangmee (ระบบบัญชีของ Mangmee เอง — หลักการ §2.3).
+- Integration mode ต้องแยกจากสถานะแพ็กเกจ: `DISABLED` (default; ห้ามสร้าง paid attempt), `TEST` (ใช้ EasySlip tester quota เพื่อทดสอบกับข้อมูลทดสอบ/ผู้ดูแล แต่ห้าม provision จากผล), `LIVE` (เปิดได้หลัง receiver-account, duplicate/replay, outage fallback และ reconciliation gate ผ่าน). การได้ tester quota ฟรีจาก EasySlip **ห้าม**ทำให้ paid offer เปิดเอง.
 - จ่ายไม่สำเร็จ/หมดอายุ: grace period (ค่าจาก §8) → ลดเป็นแพ็กเกจฟรี **ไม่ล็อกข้อมูล** (กติกา §2.2)
 
 ### F-BILL-4 Enforcement อ่อนโยน (เปิดได้เมื่อ §2.1 ครบเท่านั้น)
@@ -115,27 +119,41 @@
 2. `Σ DocumentWorkUnit ต่อเดือน = CompanyDocumentMonthlyUsage.unitCount` (self-check)
 3. quota เต็ม: upload สำเร็จ + draft อยู่ครบ + manual กรอกได้ + ข้อมูลเดิมอ่านได้ (E2E ทั้ง web และ LINE)
 4. package apply = entitlement ตรง snapshot 100% ทุกแพ็กเกจ (contract test PLATFORM-01)
-5. webhook ชำระเงินซ้ำ/replay → สถานะเดิม ไม่ต่ออายุซ้ำ ไม่ออกใบเสร็จซ้ำ
+5. EasySlip response/upload เดิมซ้ำหรือ `transRef` ถูก claim แล้ว → สถานะเดิม ไม่ต่ออายุซ้ำ ไม่ออกใบเสร็จซ้ำ; static price QR ยืนยันยอดและผู้รับได้แต่ผูกตัวผู้ซื้อไม่ได้ จึงต้องมี manual dispute path สำหรับ first-claim conflict
 6. kill switch ปิด → ไม่มีการปฏิเสธใด ๆ ภายใน 1 tick; มิเตอร์ยังนับ
 7. เดือนตัดที่ Bangkok midnight — เคสข้ามเดือน/ปี
 
-## 8. ตารางราคา — **รอ Owner กำหนด (บล็อกการ implement ทั้ง spec)**
+<a id="billing-offer-catalog"></a>
+## 8. Offer catalog สำหรับ auto-register — **อนุมัติ price point/enable state แล้ว; quota และ policy ยังบล็อก P26**
+
+รหัสด้านล่างเป็นรหัสเชิงเทคนิคชั่วคราว ไม่ใช่ชื่อ marketing. `priceSatang` เป็น snapshot จำนวนเต็ม; ห้าม derive จาก label หรือค่าที่ browser ส่งมา. จนกว่าจะตอบ quota/feature snapshot ครบ `requestedOfferKey` ใน P10 ยังเป็น attribution เท่านั้นและห้ามเปิด entitlement.
+
+| offerKey | ราคา/เดือน | priceSatang | เลือกใน auto-register ตอนนี้ | payment mode เมื่อเปิดจริง | quota/feature snapshot |
+|---|---:|---:|---|---|---|
+| `FREE_TRIAL` | ฟรี | 0 | **enabled** | `NONE` — ห้ามเรียก EasySlip | **TBD: ระยะเวลา + จำนวนใบ** |
+| `MONTHLY_259` | 259 บาท | 25,900 | **disabled — แสดง “เร็ว ๆ นี้”** | `THAI_QR_SLIP` + EasySlip v2 | **TBD** |
+| `MONTHLY_599` | 599 บาท | 59,900 | **disabled — แสดง “เร็ว ๆ นี้”** | `THAI_QR_SLIP` + EasySlip v2 | **TBD** |
+| `MONTHLY_999` | 999 บาท | 99,900 | **disabled — แสดง “เร็ว ๆ นี้”** | `THAI_QR_SLIP` + EasySlip v2 | **TBD** |
+| `MONTHLY_1299` | 1,299 บาท | 129,900 | **disabled — แสดง “เร็ว ๆ นี้”** | `THAI_QR_SLIP` + EasySlip v2 | **TBD** |
+
+กติกาปัจจุบัน: UI แสดงทุก offer เพื่อให้ journey เสมือนจริง แต่กดได้เฉพาะ `FREE_TRIAL`; backend ต้อง reject disabled key ด้วย `offer_not_available` และ **ห้าม fallback เป็น Free เงียบ ๆ**. Free ไม่สร้าง payment attempt และไม่ขึ้นกับ EasySlip availability.
+
+ค่าที่ยังต้อง Owner ตอบก่อนเริ่ม P26:
 
 | ช่อง | ค่า |
 |---|---|
-| แพ็กเกจฟรี: อ่านได้กี่ใบ/เดือน | **TBD (Owner)** |
-| แพ็กเกจจ่าย: ชื่อ/ราคา/จำนวนใบ (กี่ tier) | **TBD (Owner)** |
-| ลูกค้าปัจจุบัน + Controlled Beta: จำกัดด้วยหรือ grandfathered (นานเท่าไร) | **TBD (Owner)** |
+| Free trial: ระยะเวลาและอ่านได้กี่ใบ | **TBD (Owner)** |
+| Paid tiers: ชื่อ/จำนวนใบ/feature snapshot | **TBD (Owner)** |
+| ลูกค้าปัจจุบัน + Controlled Beta: จำกัดด้วยหรือ grandfathered | **TBD (Owner)** |
 | Grace period หลังจ่ายไม่สำเร็จ | **TBD (Owner)** |
-| Trial (ผูกกับ P24 §4 ข้อ 1) | **TBD (Owner)** |
 
 ## 9. หน้าจอ (กติกา F-LED-7 ทุกข้อ)
 
-- S1 settings "แพ็กเกจและการใช้งาน" (F-BILL-5), S2 หน้า subscribe/ชำระ (3 ขั้น: เลือก→จ่าย→สำเร็จ; ปุ่มจ่าย disabled จนเลือกแพ็กเกจ+ยอมรับเงื่อนไข), S3 สถานะ quota ใน upload/review/LINE (F-BILL-4 copy ครบ 3 อย่าง), S4 partner console override — รายละเอียด wireframe เขียนในแผนส่งมอบตอนเข้าคิว (หลังราคาอนุมัติ)
+- S0 หน้า auto-register: แสดง catalog §8 ครบ โดย `FREE_TRIAL` เลือกได้ และ paid tiers disabled พร้อมข้อความ “เร็ว ๆ นี้”; disabled control ต้องมีทั้ง visual state และ semantic `disabled`/เหตุผลสำหรับ screen reader. S1 settings "แพ็กเกจและการใช้งาน" (F-BILL-5), S2 หน้า subscribe/ชำระ (3 ขั้น: เลือก→จ่าย→สำเร็จ; ปุ่มจ่าย disabled จนเลือกแพ็กเกจ+ยอมรับเงื่อนไข), S3 สถานะ quota ใน upload/review/LINE (F-BILL-4 copy ครบ 3 อย่าง), S4 partner console override — รายละเอียด wireframe เขียนในแผนส่งมอบตอนเข้าคิวหลัง quota/feature snapshot อนุมัติ
 
 ## 10. คำถามที่ Owner ต้องตอบก่อนเริ่ม implement
 
-1. **ตารางราคา §8 ทั้งตาราง** (ข้อบังคับจากแผนหลัก — "Spec + pricing ที่ Owner อนุมัติ")
-2. **Payment provider**: ให้ผมประเมินเทียบ 3 เจ้าตามเกณฑ์ §F-BILL-3 แล้วเสนอ หรือคุณมีเจ้าที่ใช้อยู่แล้ว?
+1. **ยังเปิด:** quota/feature snapshot, Free trial duration และ policy ที่เหลือใน §8; price point + enable state ตอบแล้ว 2026-08-29
+2. ~~Payment provider~~ → **ตอบแล้ว 2026-08-29:** K BIZ Thai QR + EasySlip API v2 ตรวจสลิป; paid tiers disabled จน integration mode `LIVE` ผ่าน gate
 3. ใบกำกับภาษีค่าบริการฝั่ง Mangmee: ออกในนามบริษัทไหน ใครเป็นผู้ลงนาม/นักบัญชีฝั่ง Mangmee?
 4. ยืนยันคิว: P26 เริ่มหลัง P27 จบ (ตามลำดับ §10 แผนหลัก: P14→P26 อยู่ก่อน "โตต่อได้" สายอื่น)?

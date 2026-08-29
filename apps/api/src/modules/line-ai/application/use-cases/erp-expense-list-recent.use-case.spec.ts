@@ -102,6 +102,16 @@ describe('ExpenseListRecentTool', () => {
     assert.equal(data.truncated, undefined);
     // The listing itself still shows the rejected row — it is real, it just is not spend.
     assert.deepEqual(data.items.map((i: { status: string }) => i.status), ['NEEDS_REVIEW', 'REJECTED']);
+    // No branch asked for, no branch in the link: the web list opens on the same all-branches scope.
+    assert.equal(result.sourceRefs[0]?.webPath, '/companies/c1/expenses');
+  });
+
+  // A branch-scoped answer used to link to the bare expenses page, so the web landed on every
+  // branch and disagreed with the figures the user had just read.
+  it('carries the branch filter into the web link', async () => {
+    const result = await makeTool([expense({})]).execute(baseCtx, { branchId: 'branch-1' });
+
+    assert.equal(result.sourceRefs[0]?.webPath, '/companies/c1/expenses?branchId=branch-1');
   });
 
   it('caps the page loop and flags the answer as truncated', async () => {

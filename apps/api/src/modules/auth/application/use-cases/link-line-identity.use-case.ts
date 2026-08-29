@@ -125,29 +125,21 @@ export class LinkLineIdentityUseCase {
   }
 
   /** Resolve selected company before mutating identity state.
-   *  - explicit companyId: validate active membership; multi-company selection requires OWNER.
+   *  - explicit companyId: validate active membership — any role (Owner decision 2026-08-29:
+   *    linking and company selection are login-level; per-company authorization stays with the
+   *    permission resolver and branch ABAC downstream).
    *  - no companyId, single membership: auto-resolve.
    *  - no companyId, multiple memberships: skip context; webhook prompts selection. */
   private async resolveCompanyId(userId: string, companyId: string | undefined): Promise<string | undefined> {
     const activeMemberships = await this.prisma.client.companyMembership.findMany({
       where: { userId, status: 'ACTIVE', company: { status: 'ACTIVE' } },
-      select: {
-        companyId: true,
-        roles: { select: { role: { select: { key: true } } } },
-      },
+      select: { companyId: true },
     });
 
     if (companyId) {
-      const membership = activeMemberships.find((m) => m.companyId === companyId);
-      if (!membership) {
+      if (!activeMemberships.some((m) => m.companyId === companyId)) {
         throw new ForbiddenException('User is not an active member of the specified company.');
       }
-
-      const isOwner = membership.roles.some((mr) => mr.role.key === 'OWNER');
-      if (activeMemberships.length > 1 && !isOwner) {
-        throw new ForbiddenException('Only OWNER users can select among multiple companies.');
-      }
-
       return companyId;
     }
 

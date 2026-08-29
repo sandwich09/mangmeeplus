@@ -250,7 +250,9 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
       entityType: 'expense_summary',
       asOf,
       permissionChecked: true,
-      webPath: `/companies/${ctx.companyId}/expenses`,
+      // A branch-scoped answer must not deep-link to the all-branches list, or the web view
+      // contradicts the figures the user just read.
+      webPath: `/companies/${ctx.companyId}/expenses${branchId ? `?branchId=${encodeURIComponent(branchId)}` : ''}`,
     }];
     const summary = expenses.reduce((acc, expense) => {
       // Rejected and voided documents are not company expenses, and rejecting leaves
