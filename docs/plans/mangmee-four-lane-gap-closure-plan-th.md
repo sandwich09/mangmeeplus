@@ -130,7 +130,7 @@ Exit P23-1: manifest validation, stale/supersede test, citation/source lineage, 
 <a id="p10--external-signup"></a>
 ## P10 — External Signup
 
-สถานะ: **P10-0 CORE IMPLEMENTED + LOCAL VERIFIED; OFFER/PAYMENT DIRECTION SPECIFIED; PUBLIC INGRESS BLOCKED BY OWNER §8**
+สถานะ: **P10-0 CORE IMPLEMENTED + LOCAL VERIFIED; OWNER AMENDMENT + OFFER/PAYMENT DIRECTION SPECIFIED; PUBLIC INGRESS BLOCKED BY OWNER §8**
 
 Spec: [External Signup Contract](../specs/mangmee-external-signup-contract-spec-th.md).
 
@@ -146,15 +146,21 @@ Spec: [External Signup Contract](../specs/mangmee-external-signup-contract-spec-
 - เปิดเลือกเฉพาะ `FREE_TRIAL`; paid tiers disabled + “เร็ว ๆ นี้”; server reject paid key ด้วย `offer_not_available` และห้าม fallback เป็น Free.
 - Slice นี้เป็น catalog/attribution เท่านั้น: ห้ามสร้าง Billing entitlement, payment attempt, EasySlip call หรือ infer quota/feature ที่ยัง TBD.
 
+### P10-0B — Owner amendment 2026-08-29 (spec-only delta)
+
+- คง P10-0 core ที่มีอยู่ แต่ target flow เพิ่ม optional `businessType/phoneNumber/vatRegistered`, email claim + pending credential hash, `PENDING_REVIEW/REJECTED` และ System Admin approve ครั้งเดียวก่อน provisioning ตาม [External Signup §4](../specs/mangmee-external-signup-contract-spec-th.md#external-signup-owner-amendment).
+- email verified เป็น identity key หลัก; taxId ตรวจเมื่อมีและชนแล้ว review; ชื่อบริษัทซ้ำได้. Delta ต้องมี migration/state/idempotency/security tests ใหม่ ห้ามนับหลักฐาน P10-0 เดิมว่า cover แล้ว.
+- หน้า claim ห้ามเก็บ plaintext/สร้าง User ก่อน approve; Reject ต้องลบ pending hash. คิว approve/reject + dedupe hints + SLA notification ต้อง audit และ idempotent.
+
 ### P10-1 — Signed ingress (blocked)
 
-เริ่มหลัง Owner ยืนยัน website secret model (HMAC vs service JWT), duplicate taxId verification/review policy และ claim TTL/resend/revoke. Route ต้องมี timestamp/nonce, raw-body verification, bounded DTO, fail-closed rate limit, signed status endpoint และ zero-secret response.
+เริ่มหลัง Owner ยืนยัน website secret model (HMAC vs service JWT) และ claim TTL/resend/revoke; duplicate email/taxId/name policy ตอบแล้วใน External Signup §4C. Route ต้องมี timestamp/nonce, raw-body verification, bounded DTO, fail-closed rate limit, signed status endpoint และ zero-secret response.
 
 Exit: concurrency สร้าง request/company/user/membership อย่างละหนึ่ง; duplicate email/taxId deterministic; no temp password/secret; audit/retry reconstruct ได้.
 
 ### P10-2 — Paid activation (planned/disabled; depends on P26)
 
-เริ่มได้ต่อเมื่อ Owner เปิด paid offer และ Billing P26 ผ่าน gate เท่านั้น: payment seam อยู่ก่อน provisioning → สร้าง payment attempt จาก offer snapshot → แสดง K BIZ Thai QR ล็อกยอด → EasySlip v2 verify receiver/amount/duplicate → claim `transRef` ครั้งเดียว → `PAYMENT_VERIFIED` จึง provision. ถ้ามี review/approval gate ต้องผ่านก่อนสร้าง attempt; Free path ต้องไม่ขึ้นกับ provider. **ไม่มี implementation/config/secret/provider call ในรอบบันทึกแผนนี้.**
+เริ่มได้ต่อเมื่อ Owner เปิด paid offer และ Billing P26 ผ่าน gate เท่านั้น: System Admin approve paid → สร้าง payment attempt จาก offer snapshot → แสดง K BIZ Thai QR ล็อกยอด → EasySlip v2 verify receiver/amount/duplicate → claim `transRef` ครั้งเดียว → `PAYMENT_VERIFIED` จึง provision. Free path approve แล้ว provision โดยไม่ขึ้นกับ provider. **ไม่มี implementation/config/secret/provider call ในรอบบันทึกแผนนี้.**
 
 <a id="p11--email-delivery--claim"></a>
 ## P11 — Email Delivery + Claim
