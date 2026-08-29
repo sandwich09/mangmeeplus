@@ -17,6 +17,8 @@ const CODE_LABELS: Record<string, string> = {
   legal_acceptance_not_required: 'บัญชีนี้ไม่ต้องยอมรับเอกสารกฎหมาย',
   platform_access_closed: 'ระบบกำลังปรับปรุง กรุณาลองใหม่ภายหลัง',
   platform_access_open_unavailable: 'ยังเปิดระบบไม่ได้จนกว่า production release จะผ่านการตรวจสอบครบถ้วน',
+  // P12-3b: a spent/expired LINE deep-link handoff — same line the /login notice shows.
+  line_handoff_unavailable: 'ลิงก์นี้หมดอายุหรือถูกใช้ไปแล้ว กรุณาเข้าสู่ระบบเพื่อเปิดรายการนี้',
   // Feature entitlement vs launch availability — two DISTINCT states (spec:65, spec:335).
   // "not enabled" = the company has not turned the feature on.
   feature_not_enabled: 'ยังไม่ได้เปิดฟีเจอร์นี้',
