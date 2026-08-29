@@ -164,8 +164,9 @@ export function buildLineLinkPackage(apiBaseUrl: string, rawToken: string, expir
 }
 
 /** The link URL is a bearer credential: render the QR locally so it never leaves as a
- *  query param to a third-party image service (H-09). */
-function qrSvgDataUrl(text: string): string {
+ *  query param to a third-party image service (H-09). Shared with the P12-3a desktop
+ *  QR login, whose scan URL carries a one-time code under the same rule. */
+export function qrSvgDataUrl(text: string): string {
   const qr = qrcode(0, 'M');
   qr.addData(text);
   qr.make();

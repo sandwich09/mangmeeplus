@@ -795,6 +795,31 @@ model ExternalIdentity {
   @@index([userId, provider, status])
 }
 
+enum LineWebLoginTransactionStatus {
+  PENDING
+  APPROVED
+  CONSUMED
+}
+
+/// P12-3a desktop QR login. Both halves of the transaction are bearer credentials, so only their
+/// sha256 hashes live here: the public code the phone presents when approving, and the browser-bound
+/// desktop secret the polling BFF presents when redeeming. Short TTL, single use — CONSUMED is
+/// terminal, so a replayed secret can never mint a second session.
+model LineWebLoginTransaction {
+  id                String                        @id @default(cuid())
+  publicCodeHash    String                        @unique
+  desktopSecretHash String                        @unique
+  status            LineWebLoginTransactionStatus @default(PENDING)
+  userId            String?
+  returnTo          String?
+  expiresAt         DateTime
+  approvedAt        DateTime?
+  consumedAt        DateTime?
+  createdAt         DateTime                      @default(now())
+
+  @@index([expiresAt])
+}
+
 model LineChannelBinding {
   id                    String        @id @default(cuid())
   companyId             String

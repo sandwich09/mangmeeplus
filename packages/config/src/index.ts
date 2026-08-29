@@ -355,6 +355,11 @@ export const apiConfigSchema = baseConfigSchema.extend({
   EMAIL_VERIFICATION_CONFIRM_WINDOW_SECONDS: z.coerce.number().int().positive().default(900),
   LINE_LOGIN_CALLBACK_MAX_PER_IP: z.coerce.number().int().positive().default(10),
   LINE_LOGIN_CALLBACK_WINDOW_SECONDS: z.coerce.number().int().positive().default(900),
+  LINE_QR_CREATE_MAX_PER_IP: z.coerce.number().int().positive().default(10),
+  LINE_QR_CREATE_WINDOW_SECONDS: z.coerce.number().int().positive().default(300),
+  // The desktop polls every 2.5s for the 180s QR lifetime, so one full transaction costs ~72.
+  LINE_QR_POLL_MAX_PER_IP: z.coerce.number().int().positive().default(90),
+  LINE_QR_POLL_WINDOW_SECONDS: z.coerce.number().int().positive().default(60),
   // RBAC / tenant
   REQUIRE_COMPANY_CONTEXT: envBoolean.default(true),
   COMPANY_CONTEXT_HEADER: z.string().default('X-Company-Id'),

@@ -6,6 +6,13 @@ import { createHash, randomBytes } from 'node:crypto';
 export const LINE_LOGIN_TXN_COOKIE = 'watchdog_line_txn';
 export const LINE_LOGIN_TXN_COOKIE_PATH = '/api/auth/line-login';
 
+/** P12-3a: the desktop's half of a QR login transaction. HttpOnly and path-scoped to the two QR
+ *  routes, so page scripts can never read it and it is not sent anywhere else. Its lifetime is the
+ *  QR TTL plus a small margin — the API row expires on its own schedule regardless. */
+export const LINE_QR_SECRET_COOKIE = 'watchdog_line_qr_secret';
+export const LINE_QR_SECRET_COOKIE_PATH = '/api/auth/line-qr';
+export const LINE_QR_SECRET_COOKIE_MAX_AGE = 200;
+
 export function randomUrlToken(bytes = 32): string {
   return randomBytes(bytes).toString('base64url');
 }

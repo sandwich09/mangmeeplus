@@ -52,6 +52,9 @@ const CLOSED_PUBLIC_PATHS = new Set([
   '/v1/auth/password/login',
   // P12-1: LINE web login is a login endpoint — same gate posture as password login.
   '/v1/auth/line/login/callback',
+  // P12-3a: minting and redeeming a desktop QR transaction are both login steps.
+  '/v1/auth/line/qr/create',
+  '/v1/auth/line/qr/redeem',
   '/v1/auth/session/refresh',
 ]);
 

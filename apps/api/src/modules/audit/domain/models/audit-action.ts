@@ -12,6 +12,9 @@ export const AuditAction = {
   AUTH_PASSWORD_RESET_FAILURE: 'auth.password.reset_failure',
   AUTH_IDENTITY_LINK: 'auth.identity.link',
   AUTH_IDENTITY_UNLINK: 'auth.identity.unlink',
+  /** P12-3a desktop QR login: the phone approved a transaction, and the desktop redeemed it. */
+  AUTH_LINE_QR_APPROVE: 'auth.line_qr.approve',
+  AUTH_LINE_QR_REDEEM: 'auth.line_qr.redeem',
   /** PDPA objection route (M-05 register §3.1): user toggled the LINE AI assistant. */
   AUTH_AI_ASSISTANT_PREFERENCE_UPDATE: 'auth.ai_assistant.preference_update',
   AUTH_COMPANY_SWITCH: 'auth.company.switch',
