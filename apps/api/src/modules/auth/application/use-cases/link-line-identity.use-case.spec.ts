@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { ConflictException, ForbiddenException } from '@nestjs/common';
 import { LinkLineIdentityUseCase } from './link-line-identity.use-case';
 
-function makeUseCase(opts: { existing?: any; createThrowsP2002?: boolean } = {}) {
+function makeUseCase(opts: { existing?: any; createThrowsP2002?: boolean; memberships?: any[] } = {}) {
   const creates: any[] = [];
   const updates: any[] = [];
   const contextUpserts: any[] = [];
@@ -20,7 +20,7 @@ function makeUseCase(opts: { existing?: any; createThrowsP2002?: boolean } = {})
         update: async ({ where, data }: any) => { updates.push({ where, data }); return { id: where.id, ...data }; },
       },
       companyMembership: {
-        findMany: async () => [{ companyId: 'company-1', roles: [{ role: { key: 'OWNER' } }] }],
+        findMany: async () => opts.memberships ?? [{ companyId: 'company-1' }],
       },
       lineCompanyContext: {
         upsert: async (args: any) => { contextUpserts.push(args); },
@@ -110,6 +110,28 @@ describe('LinkLineIdentityUseCase', () => {
     assert.equal(updates.length, 1);
     assert.equal(updates[0].data.userId, 'user-1');
     assert.equal(contextUpserts.length, 1);
+  });
+
+  // Owner decision 2026-08-29: linking with an explicit company is login-level — the old rule
+  // rejected any multi-company user who was not OWNER, so an employee of one company and owner of
+  // another could not link from the first company at all.
+  it('links a multi-company user into a company where they are not OWNER', async () => {
+    const { useCase, contextUpserts } = makeUseCase({
+      memberships: [{ companyId: 'company-1' }, { companyId: 'company-2' }],
+    });
+    const result = await useCase.execute({ ...input, companyId: 'company-1' });
+
+    assert.deepEqual(result, { linked: true, providerUserId: 'line-user-1' });
+    assert.equal(contextUpserts.length, 1);
+    assert.equal(contextUpserts[0].create.companyId, 'company-1');
+  });
+
+  it('rejects an explicit companyId outside the user memberships', async () => {
+    const { useCase, contextUpserts } = makeUseCase({
+      memberships: [{ companyId: 'company-1' }, { companyId: 'company-2' }],
+    });
+    await assert.rejects(() => useCase.execute({ ...input, companyId: 'company-x' }), ForbiddenException);
+    assert.equal(contextUpserts.length, 0);
   });
 
   it('refuses to resurrect a DISABLED identity', async () => {
