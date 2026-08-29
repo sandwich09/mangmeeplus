@@ -325,6 +325,19 @@ export class AccountingSummaryAgent {
         const widgets = data['widgets'];
         pushFacts({ label: 'แดชบอร์ด', value: `${widgets.length} ตัวชี้วัด` });
       } else if (tool.name === 'expense.list_recent') {
+        // Branch the user named could not be resolved: the tool returned the real branch catalog
+        // instead of records. Surface both so the composed answer offers the actual names rather
+        // than reporting zero expenses for a branch that exists under another spelling.
+        if (typeof data['branchUnresolved'] === 'string') {
+          const names = Array.isArray(data['availableBranches'])
+            ? (data['availableBranches'] as Array<Record<string, unknown>>).map((b) => String(b['name'] ?? '')).filter(Boolean)
+            : [];
+          pushFacts({
+            label: 'สาขา',
+            value: `ไม่พบสาขา "${data['branchUnresolved']}"${names.length ? ` สาขาที่มี: ${names.join(', ')}` : ''}`,
+          });
+          continue;
+        }
         const summary = data['summary'] as Record<string, unknown> | undefined;
         const items = Array.isArray(data['items']) ? data['items'] as Array<Record<string, unknown>> : [];
         if (summary) {
