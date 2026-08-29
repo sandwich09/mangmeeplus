@@ -12,7 +12,7 @@ Owner requested 2026-08-29: one employee holds one role at a time; an authorized
 - API create/update accepts the existing roleIds array with exactly one entry when supplied. Empty, duplicate or multiple entries are rejected before mutation. Omitted roleIds on profile-only updates leaves access unchanged.
 - Reuse existing company context, grantability, HR boundaries, self-change/OWNER protections, branch-scope rules and audit. No new permission or per-user permission editor.
 - The existing Roles and Permissions page remains the route for extra capabilities; its UI must explain that a role's permissions affect everyone using that role.
-- Do not silently choose or revoke roles on existing multi-role records. Keep them accurately visible with a warning until an authorized user explicitly selects one. This legacy transition policy was sent to the owner for confirmation; do not run a bulk migration without approval.
+- Do not silently choose or revoke roles on existing multi-role records. Keep them accurately visible with a warning until an authorized user explicitly selects one. The owner confirmed this transition policy on 2026-08-29; do not run a bulk migration.
 
 ## Architecture and boundaries
 
