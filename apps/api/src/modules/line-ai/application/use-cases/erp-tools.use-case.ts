@@ -223,7 +223,7 @@ export function resolvePeriodInput(input: { fromDate?: unknown; toDate?: unknown
 @Injectable()
 export class ExpenseListRecentTool implements ErpReadToolPort {
   toolName = 'expense.list_recent';
-  constructor(private readonly listExpenses: ListExpensesUseCase) {}
+  constructor(private readonly listExpenses: ListExpensesUseCase, private readonly prisma: PrismaService) {}
 
   async execute(ctx: ErpToolContext, input?: { fromDate?: string; toDate?: string; branchId?: string }): Promise<ToolResult> {
     const asOf = now();
@@ -232,7 +232,20 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
       return { toolName: this.toolName, status: 'forbidden', sourceRefs: [], asOf };
     }
     const period = resolvePeriodInput(input);
-    const branchId = typeof input?.branchId === 'string' && input.branchId ? input.branchId : undefined;
+    // The model copies whatever the user said — often the branch NAME, not an id. Resolve either
+    // within this company so the data filter and the web link agree. An unresolvable value keeps
+    // the raw filter (empty result) instead of silently widening to every branch, and never
+    // reaches the link.
+    const requestedBranch = typeof input?.branchId === 'string' && input.branchId.trim() ? input.branchId.trim() : undefined;
+    let branchId = requestedBranch;
+    let linkBranchId: string | undefined;
+    if (requestedBranch) {
+      const branch = await this.prisma.client.branch.findFirst({
+        where: { companyId: ctx.companyId, OR: [{ id: requestedBranch }, { name: requestedBranch }] },
+        select: { id: true },
+      });
+      if (branch) { branchId = branch.id; linkBranchId = branch.id; }
+    }
     const filter = { fromDate: period.fromDate, toDate: period.toDate, ...(branchId && { branchId }) };
     const first = await this.listExpenses.execute(toCtx(ctx), { ...filter, page: 1, pageSize: 100 });
     const pages = [first];
@@ -251,8 +264,9 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
       asOf,
       permissionChecked: true,
       // A branch-scoped answer must not deep-link to the all-branches list, or the web view
-      // contradicts the figures the user just read.
-      webPath: `/companies/${ctx.companyId}/expenses${branchId ? `?branchId=${encodeURIComponent(branchId)}` : ''}`,
+      // contradicts the figures the user just read. Resolved branch ids only — the web filter
+      // matches by id and must not receive a name or a hallucinated value.
+      webPath: `/companies/${ctx.companyId}/expenses${linkBranchId ? `?branchId=${encodeURIComponent(linkBranchId)}` : ''}`,
     }];
     const summary = expenses.reduce((acc, expense) => {
       // Rejected and voided documents are not company expenses, and rejecting leaves

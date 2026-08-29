@@ -22,11 +22,38 @@ const expense = (over: Record<string, unknown>) => ({
   ...over,
 });
 
-function makeTool(data: Array<ReturnType<typeof expense>>) {
+/** Prisma fake resolving branch id-or-name the way the tool's findFirst OR does. */
+function fakePrisma(branches: Array<{ id: string; name: string }> = []) {
+  return {
+    client: {
+      branch: {
+        findFirst: async ({ where }: any) => {
+          const wanted = (where.OR as Array<{ id?: string; name?: string }>).map((c) => c.id ?? c.name);
+          const hit = branches.find((b) => wanted.includes(b.id) || wanted.includes(b.name));
+          return hit ? { id: hit.id } : null;
+        },
+      },
+    },
+  } as any;
+}
+
+function makeTool(data: Array<ReturnType<typeof expense>>, branches?: Array<{ id: string; name: string }>) {
   const listExpenses = {
     execute: async () => ({ data, total: data.length, page: 1, pageSize: 100 }),
   } as any;
-  return new ExpenseListRecentTool(listExpenses);
+  return new ExpenseListRecentTool(listExpenses, fakePrisma(branches));
+}
+
+/** Same tool, but capturing the filter each repository call received. */
+function makeFilterCapturingTool(branches?: Array<{ id: string; name: string }>) {
+  const filters: any[] = [];
+  const listExpenses = {
+    execute: async (_ctx: unknown, filter: any) => {
+      filters.push(filter);
+      return { data: [], total: 0, page: 1, pageSize: 100 };
+    },
+  } as any;
+  return { tool: new ExpenseListRecentTool(listExpenses, fakePrisma(branches)), filters };
 }
 
 /** Repository that reports more rows than it will ever hand back, so the page loop keeps asking. */
@@ -38,7 +65,7 @@ function makePagingTool(reportedTotal: number) {
       return { data: [expense({ id: `e${filter.page}` })], total: reportedTotal, page: filter.page, pageSize: 100 };
     },
   } as any;
-  return { tool: new ExpenseListRecentTool(listExpenses), calls };
+  return { tool: new ExpenseListRecentTool(listExpenses, fakePrisma()), calls };
 }
 
 describe('ExpenseListRecentTool', () => {
@@ -109,9 +136,30 @@ describe('ExpenseListRecentTool', () => {
   // A branch-scoped answer used to link to the bare expenses page, so the web landed on every
   // branch and disagreed with the figures the user had just read.
   it('carries the branch filter into the web link', async () => {
-    const result = await makeTool([expense({})]).execute(baseCtx, { branchId: 'branch-1' });
+    const result = await makeTool([expense({})], [{ id: 'branch-1', name: 'สาขาหนึ่ง' }])
+      .execute(baseCtx, { branchId: 'branch-1' });
 
     assert.equal(result.sourceRefs[0]?.webPath, '/companies/c1/expenses?branchId=branch-1');
+  });
+
+  // Live UAT 2026-08-29: the model passed the branch NAME the user said, the raw value filtered
+  // nothing and reached the link, and the web (correctly) ignored a non-id. Names must resolve.
+  it('resolves a branch name to its id for both the filter and the web link', async () => {
+    const { tool, filters } = makeFilterCapturingTool([{ id: 'branch-1', name: 'สาธุประดิษฐ์' }]);
+    const result = await tool.execute(baseCtx, { branchId: 'สาธุประดิษฐ์' });
+
+    assert.equal(filters[0]?.branchId, 'branch-1');
+    assert.equal(result.sourceRefs[0]?.webPath, '/companies/c1/expenses?branchId=branch-1');
+  });
+
+  it('keeps an unresolvable branch out of the web link but not out of the filter', async () => {
+    const { tool, filters } = makeFilterCapturingTool([{ id: 'branch-1', name: 'สาธุประดิษฐ์' }]);
+    const result = await tool.execute(baseCtx, { branchId: 'สาขาที่ไม่มีจริง' });
+
+    // Raw passthrough keeps today's empty-result behavior instead of silently widening the answer
+    // to every branch; the link stays bare because the web filter matches by id.
+    assert.equal(filters[0]?.branchId, 'สาขาที่ไม่มีจริง');
+    assert.equal(result.sourceRefs[0]?.webPath, '/companies/c1/expenses');
   });
 
   it('caps the page loop and flags the answer as truncated', async () => {
