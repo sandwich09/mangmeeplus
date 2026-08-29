@@ -50,3 +50,24 @@ Verification:
 Next:
 - เวลาสลับบัญชีทดสอบบนมือถือ ต้อง logout ในเบราว์เซอร์ของ LINE ด้วย ไม่ใช่แค่ Safari
 - ถ้าอยากตัดปัญหาให้ขาด ต้องมี session handoff ในลิงก์จาก LINE (ยังไม่ทำ, นอก scope)
+
+## Q2 preview-consumption measurement (handoff plan Phase 1) — PASSED 2026-08-29
+
+วิธีวัด: สร้าง URL รูปแบบจริง `https://uat.mangmeeplus.com/l/<24-byte-base64url ปลอม>` → Owner ส่งเป็นข้อความ
+ธรรมดาผ่าน UAT OA (OA Manager) เข้าแชตทดสอบ → ไม่กดลิงก์ 11 นาที → เฝ้า CloudWatch
+`/ecs/watchdog-bms-uat-api-web` ด้วย filter ทั้ง token substring และ path `handoff/exchange`
+
+ผล (เวลาไทย 2026-08-29):
+- หน้าต่างวัด ~14:05–14:16: **ศูนย์ request** แตะ `/l/<probe>` หรือ `POST /v1/auth/line/handoff/exchange`
+- 14:21:19 — Owner กดลิงก์เป็น positive control: โผล่ทันที 1 บรรทัด
+  `{"method":"POST","path":"/v1/auth/line/handoff/exchange","status":403,"durationMs":7}`
+  (403 = ธง `LINE_WEB_HANDOFF_ENABLED` ยังปิด) — พิสูจน์ว่ากลไก log มองเห็นการเปิดลิงก์จริง
+  ความเงียบในหน้าต่างวัดจึงเป็นเงียบแท้ ไม่ใช่จุดบอด
+- Deploy ที่ใช้วัด: UAT run 33238230057 (candidate 1d1e553c) — โค้ด `/l/` + exchange ขึ้นครบก่อนส่ง probe
+
+Verdict: **LINE ไม่ preview-fetch ลิงก์ในข้อความจาก OA** → เปิดธงได้โดยไม่ต้องใช้ interstitial POST
+mitigation (spec G7 มี fallback ออกแบบไว้ ไม่ได้ใช้)
+
+หมายเหตุ flex-button variant: ปุ่มการ์ด (uri action) ไม่มีกลไก unfurl/preview แบบลิงก์ในข้อความ ความเสี่ยง
+เชิงกลไกต่ำมาก — ให้ยืนยันซ้ำด้วย smoke test ของจริงตอนเปิดธงบน UAT (ลิงก์จากการ์ดคำตอบน้องมั่งมี 1 ครั้ง
+ดู usedAt/audit ก่อน-หลังกด)
