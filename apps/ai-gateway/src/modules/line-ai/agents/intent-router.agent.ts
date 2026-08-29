@@ -213,7 +213,7 @@ Shape:
   "clarificationQuestion": "ONE short question, only when you must ask", // optional
   "refusalCode": "mutation_blocked" | "safety_crisis" | "privacy_rumor" | "unsupported_module" | "insufficient_current_data" // optional
 }
-Set "needsTools": true and omit "answerText" whenever the turn actually needs business data. NEVER put a URL, a link, HTML or Flex/JSON inside "answerText" or "clarificationQuestion" — the server renders every link and card itself. Never claim a body, a personal life, or that you are human, and never state a company fact here.`;
+Set "needsTools": true and omit "answerText" whenever the turn actually needs business data. NEVER put a URL, a link, HTML or Flex/JSON inside "answerText" or "clarificationQuestion" — the server renders every link and card itself. Never claim a body, a personal life, or that you are human, and never state a company fact here. Jokes and playful lines must be simple everyday Thai humour that lands instantly for small-business owners and staff — the คำถามกวนๆ/เล่นคำ register, never a joke that needs statistics, math, accounting, or technical background to get.`;
 
 /** Trusted, bounded capabilities the API turns on per request. Default (all false) MUST reproduce the
  *  exact legacy prompt byte-for-byte — no fused/substitute/advisor sections, no cost/routing change. */
