@@ -2571,9 +2571,11 @@ export function ExpensesHubPage({ companyId, userId, permissions, tab = 'list' }
             <div onClickCapture={() => {
               if (createBranchId) return;
               toast.error(t('transaction.branch_required_before_create', locale));
+              // Scroll only, never focus: focusing a <select> opens the native picker on mobile,
+              // which reads as the page acting for the user (Owner report 2026-08-29). The field's
+              // invalid styling + the toast already say what to do.
               const select = document.querySelector<HTMLSelectElement>('[data-transaction-branch-select]');
               select?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-              select?.focus();
             }}>
             <fieldset disabled={!createBranchId} className="min-w-0">
               {tab === 'upload' && <UploadPanel companyId={companyId} branchId={createBranchId} {...(caps.canCreate ? { onNoDocument: () => router.push(`/companies/${companyId}/expenses/substitute-receipts/new`) } : {})} onSuccess={(expenseId, notice) => { storeExtractionNotice(expenseId, notice); openListExpense(expenseId); }} />}
