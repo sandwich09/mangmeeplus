@@ -130,7 +130,7 @@ Exit P23-1: manifest validation, stale/supersede test, citation/source lineage, 
 <a id="p10--external-signup"></a>
 ## P10 — External Signup
 
-สถานะ: **P10-0 CORE IMPLEMENTED + LOCAL VERIFIED; PUBLIC INGRESS BLOCKED BY OWNER §8**
+สถานะ: **P10-0 CORE IMPLEMENTED + LOCAL VERIFIED; OFFER/PAYMENT DIRECTION SPECIFIED; PUBLIC INGRESS BLOCKED BY OWNER §8**
 
 Spec: [External Signup Contract](../specs/mangmee-external-signup-contract-spec-th.md).
 
@@ -140,11 +140,21 @@ Spec: [External Signup Contract](../specs/mangmee-external-signup-contract-spec-
 - Pure transition tests รวม same-key same-payload, conflict payload, concurrent retry, recover `EMAIL_FAILED/PROVISIONING_FAILED` และ provision once.
 - Provision ผ่าน onboarding application service เดิม; `requestedOfferKey` เป็น attribution only และไม่แตะ Billing/entitlement.
 
+### P10-0A — Offer preview (spec-only; ยังไม่มี UI/payment implementation)
+
+- แสดง `FREE_TRIAL` และ paid 259/599/999/1299 ตาม source of truth [Billing §8](../specs/mangmee-billing-subscription-spec-th.md#billing-offer-catalog).
+- เปิดเลือกเฉพาะ `FREE_TRIAL`; paid tiers disabled + “เร็ว ๆ นี้”; server reject paid key ด้วย `offer_not_available` และห้าม fallback เป็น Free.
+- Slice นี้เป็น catalog/attribution เท่านั้น: ห้ามสร้าง Billing entitlement, payment attempt, EasySlip call หรือ infer quota/feature ที่ยัง TBD.
+
 ### P10-1 — Signed ingress (blocked)
 
 เริ่มหลัง Owner ยืนยัน website secret model (HMAC vs service JWT), duplicate taxId verification/review policy และ claim TTL/resend/revoke. Route ต้องมี timestamp/nonce, raw-body verification, bounded DTO, fail-closed rate limit, signed status endpoint และ zero-secret response.
 
 Exit: concurrency สร้าง request/company/user/membership อย่างละหนึ่ง; duplicate email/taxId deterministic; no temp password/secret; audit/retry reconstruct ได้.
+
+### P10-2 — Paid activation (planned/disabled; depends on P26)
+
+เริ่มได้ต่อเมื่อ Owner เปิด paid offer และ Billing P26 ผ่าน gate เท่านั้น: payment seam อยู่ก่อน provisioning → สร้าง payment attempt จาก offer snapshot → แสดง K BIZ Thai QR ล็อกยอด → EasySlip v2 verify receiver/amount/duplicate → claim `transRef` ครั้งเดียว → `PAYMENT_VERIFIED` จึง provision. ถ้ามี review/approval gate ต้องผ่านก่อนสร้าง attempt; Free path ต้องไม่ขึ้นกับ provider. **ไม่มี implementation/config/secret/provider call ในรอบบันทึกแผนนี้.**
 
 <a id="p11--email-delivery--claim"></a>
 ## P11 — Email Delivery + Claim

@@ -1,6 +1,6 @@
 # Auto-register จากเว็บไซต์ทางการ (External Signup Contract) — Spec P10
 
-สถานะ: **P10-0 CORE IMPLEMENTED + LOCAL VERIFIED** — durable state/idempotency/audit/outbox/provisioning fence พร้อม; public ingress, email claim และ provision จริงยังปิดจน Owner ตอบ §8 และ P11 พร้อม; แผนส่งมอบอยู่ใน [Four-lane Gap Closure Plan](../plans/mangmee-four-lane-gap-closure-plan-th.md#p10--external-signup)
+สถานะ: **P10-0 CORE IMPLEMENTED + LOCAL VERIFIED** — durable state/idempotency/audit/outbox/provisioning fence พร้อม; public ingress, email claim และ provision จริงยังปิดจน Owner ตอบ §8 และ P11 พร้อม; offer preview/EasySlip paid branch เป็น **spec-only และยังไม่มี payment implementation**; แผนส่งมอบอยู่ใน [Four-lane Gap Closure Plan](../plans/mangmee-four-lane-gap-closure-plan-th.md#p10--external-signup)
 
 ที่มา: [แผนหลัก P10 + §13.6](../plans/mangmee-brain-2-5-day-priority-plan-th.md) (flow, states, contract ขั้นต่ำ กำหนดไว้แล้วคำต่อคำ — spec นี้ยกมาเป็นทางการ + ผูกหลักฐานโค้ด); STOP-SHIP ที่ต้องปิด: SIGNUP-01, SIGNUP-02 (§13.3)
 
@@ -51,13 +51,29 @@
 - Rate limit: bucket ใหม่ `official-signup-ip` + `official-signup-email` (normalize lowercase ตามแบบ L-06) — fail-closed; abuse: schema allowlist + audit `source='official-site'`
 - Status: `GET /v1/integrations/official/company-signups/:requestId` (signed เช่นกัน) คืน state ปัจจุบันเท่านั้น
 
+### 3A. Offer preview สำหรับหน้า auto-register — **spec-only 2026-08-29**
+
+- Source of truth ของราคาและ enable state คือ [Billing §8](mangmee-billing-subscription-spec-th.md#billing-offer-catalog): `FREE_TRIAL`, `MONTHLY_259`, `MONTHLY_599`, `MONTHLY_999`, `MONTHLY_1299`.
+- หน้า auto-register แสดงครบทั้ง 5 offer เพื่อให้เห็น journey จริง แต่เลือกได้เฉพาะ `FREE_TRIAL`; paid tiers ต้อง disabled พร้อมข้อความ “เร็ว ๆ นี้” และเหตุผลที่อ่านได้ด้วย assistive technology.
+- Allowlist ฝั่ง server สำหรับการสมัครปัจจุบันรับเฉพาะ `FREE_TRIAL`; ถ้าผู้เรียกส่ง paid key โดยตรงให้คืน `offer_not_available` และ **ห้าม fallback เป็น Free เงียบ ๆ**.
+- แม้รับ `FREE_TRIAL` แล้ว `requestedOfferKey` ยังคงเป็น attribution/audit เท่านั้นตาม §3; P10 ห้ามสร้าง `BillingPackage`, payment attempt, entitlement หรืออนุมาน quota/feature ที่ยังเป็น TBD.
+
 ## 4. Durable state (ตาราง `CompanySignupRequest` ใหม่)
 
 State ตาม §13.6 คำต่อคำ: `RECEIVED → VALIDATED → EMAIL_PENDING → EMAIL_VERIFIED → PROVISIONING → READY → LINE_LINK_PENDING → COMPLETED` + ข้างเคียง `EMAIL_FAILED / PROVISIONING_FAILED / SUSPENDED / EXPIRED`; ทุก transition append audit; email ส่งผ่าน outbox (P11); provisioning เรียก `CreateCompanyOnboardingUseCase` เดิม **ครั้งเดียว** โดยผูก `signupRequestId` กันซ้ำ
 
+### 4A. Paid branch ในอนาคต — **planned/disabled, ไม่เปลี่ยน P10 runtime ปัจจุบัน**
+
+- จุดเสียบ payment อยู่ก่อน `PROVISIONING`: Free ผ่านต่อโดยไม่เรียก EasySlip; paid ที่ Owner เปิดและผ่าน P26 gate แล้วจึงเดิน `PAYMENT_PENDING → PAYMENT_VERIFIED → PROVISIONING`.
+- ถ้า signup มี review/approval gate ต้องผ่าน gate นั้นก่อนสร้าง payment attempt; ผล EasySlip อย่างเดียวห้ามข้าม approval หรือเรียก provisioning.
+- Backend snapshot offer version + ราคาเป็น satang แล้วแสดง K BIZ Thai QR ที่ล็อกยอด; EasySlip API v2 ตรวจ receiver, expected amount และ duplicate slip ตาม [Billing F-BILL-3](mangmee-billing-subscription-spec-th.md#billing-easyslip-v2). `transRef` ต้อง claim ได้ครั้งเดียว.
+- รอบปัจจุบันห้ามเพิ่ม state/schema/API/UI/config/secret/provider call สำหรับ paid payment; การเพิ่ม payment state/table ในอนาคตเป็น migration ของ P26 ไม่ใช่การรื้อ signup/email/idempotency core.
+
 ## 5. หน้าเว็บฝั่งผู้สมัคร (กติกา F-LED-7)
 
 ตาม §13.6A ขั้น 1–2 + checklist 3 ขั้นของ §13.6D: หน้า "กรุณาตรวจอีเมล" ห้ามอ้างว่าสร้างบริษัทสำเร็จ; ทุกข้อความสถานะ mapping ตรงกับ state จริง
+
+ส่วนเลือก offer แสดงรายการตาม §3A: Free เลือกได้; paid แสดงราคาแต่ control disabled + “เร็ว ๆ นี้”; ห้ามแสดง upload slip, payment pending หรือ payment success ใน flow ปัจจุบัน.
 
 ## 6. Gates/tests (ยกจากแผนหลัก §15 แถว "Official signup API" คำต่อคำ)
 
@@ -65,7 +81,7 @@ invalid/expired/replayed signature ถูกปฏิเสธ; same-request con
 
 ## 7. สิ่งที่ไม่ทำ
 
-ช่องทางสมัครอื่น (มือถือ app), การอนุมัติ partner หลายเจ้า (contract รองรับ `source` ไว้), SMS, ราคา/แพ็กเกจ/การเก็บเงิน/การบังคับโควตา
+ช่องทางสมัครอื่น (มือถือ app), การอนุมัติ partner หลายเจ้า (contract รองรับ `source` ไว้), SMS, payment runtime/การเก็บเงินจริง/การบังคับโควตา; ยกเว้น catalog แบบ display-only ใน §3A เพื่อเก็บทิศทางผลิตภัณฑ์
 
 ## 8. คำถาม Owner (จาก §11 แผนหลักข้อ 7–8 ที่ยังไม่ตอบ)
 
