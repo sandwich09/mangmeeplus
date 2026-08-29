@@ -9,7 +9,7 @@
  * At-least-once by construction: a crash between push and ack redelivers — safe because the
  * whole LINE channel is read-only/draft-only and capture drafts dedupe on LINE message ids.
  */
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { LineAiTurnRequest, LineUserContext } from '@watchdog-bms/contracts';
 import { LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES } from '@watchdog-bms/contracts';
@@ -28,6 +28,7 @@ import { loadEntitledFeatureKeys } from '../../../employee-access/application/en
 import { formatRefusal } from '../../domain/logic/line-ai-formatter.logic';
 import { resolveCompanyAiModelPolicy } from '../company-ai-model-policy';
 import { emitLineAiTerminalOutcome, terminalStatusForLineTurn } from '../../domain/logic/line-ai-terminal-outcome.logic';
+import { LineHandoffLinkService } from '../line-handoff-link.service';
 
 export type DrainLineLedgerResult = {
   skipped?: boolean;
@@ -62,6 +63,9 @@ export class DrainLineLedgerUseCase {
     private readonly aiGateway: AiGatewayClient,
     private readonly lineReply: LineReplyAdapter,
     private readonly shadow: LaunchShadowProbe,
+    // P12-3b: the drain has its own send seam, so it needs its own wrap. `@Optional()` and inert
+    // with the flag off, exactly like the webhook's.
+    @Optional() private readonly handoffLinks?: LineHandoffLinkService,
   ) {}
 
   async execute(batchSize = 20, now: Date = new Date()): Promise<DrainLineLedgerResult> {
@@ -177,9 +181,16 @@ export class DrainLineLedgerUseCase {
     const response = await this.aiGateway.requestLineTurn(turnRequest);
 
     const text = formatLineReply(response, this.config.webBaseUrl);
-    const delivery = await this.lineReply.sendPush(entry.chatKey, [
-      buildLineBusinessAnswerMessage(response, text, this.config.webBaseUrl, entry.companyId),
-    ]);
+    // P12-3b: the identity was just re-resolved above (`userContext`), so a drained answer carries
+    // the same handoff a live reply would. `chatKey` is the LINE recipient this push targets.
+    const answer = [buildLineBusinessAnswerMessage(response, text, this.config.webBaseUrl, entry.companyId)];
+    const outgoing = this.handoffLinks
+      ? await this.handoffLinks.wrapOutgoingLineContent(
+        { userId: entry.userId, companyId: entry.companyId, lineUserId: entry.chatKey, surface: 'line_ai_ledger_drain' },
+        answer,
+      )
+      : answer;
+    const delivery = await this.lineReply.sendPush(entry.chatKey, outgoing);
     if (delivery !== 'ok') throw new Error(`LINE_PUSH_${delivery.toUpperCase()}`);
     if (entry.kind === 'turn' && entry.webhookEventId) {
       const [, eventUpdate] = await Promise.all([

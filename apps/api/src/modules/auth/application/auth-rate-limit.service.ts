@@ -96,6 +96,18 @@ export class AuthRateLimitService {
     );
   }
 
+  // P12-3b: the deep-link exchange is unauthenticated and the token IS the credential, so the
+  // caller IP is again the only key available. One tap costs one call; the bucket bounds guessing
+  // without punishing a family behind a single NAT.
+  async assertLineHandoffExchangeAllowed(ipAddress: string): Promise<void> {
+    await this.assertWithinLimit(
+      'line-handoff-exchange-ip',
+      ipAddress,
+      this.config.lineHandoffExchangeMaxPerIp,
+      this.config.lineHandoffExchangeWindowSeconds,
+    );
+  }
+
   async assertCustomerRegisterAllowed(ipAddress: string, lineChannelId: string): Promise<void> {
     await this.assertWithinLimit(
       'customer-register-ip-channel',

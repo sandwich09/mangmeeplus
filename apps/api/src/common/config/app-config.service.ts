@@ -62,6 +62,8 @@ export class AppConfigService {
   get lineLoginChannelSecret(): string | undefined { return this.config.LINE_LOGIN_CHANNEL_SECRET; }
   /** P12-1: web LINE login (OAuth code + PKCE). Off = channel hidden and the callback stays 403. */
   get lineWebLoginEnabled(): boolean { return this.config.LINE_WEB_LOGIN_ENABLED; }
+  /** P12-3b: LINE deep-link session handoff. Off = no token minted, plain links, exchange 403. */
+  get lineWebHandoffEnabled(): boolean { return this.config.LINE_WEB_HANDOFF_ENABLED; }
   get lineLiffId(): string | undefined { return this.config.LINE_LIFF_ID; }
   get lineMessagingChannelId(): string | undefined { return this.config.LINE_MESSAGING_CHANNEL_ID; }
   get lineMessagingChannelSecret(): string | undefined { return this.config.LINE_MESSAGING_CHANNEL_SECRET; }
@@ -182,6 +184,8 @@ export class AppConfigService {
   get lineQrCreateWindowSeconds(): number { return this.config.LINE_QR_CREATE_WINDOW_SECONDS; }
   get lineQrPollMaxPerIp(): number { return this.config.LINE_QR_POLL_MAX_PER_IP; }
   get lineQrPollWindowSeconds(): number { return this.config.LINE_QR_POLL_WINDOW_SECONDS; }
+  get lineHandoffExchangeMaxPerIp(): number { return this.config.LINE_HANDOFF_EXCHANGE_MAX_PER_IP; }
+  get lineHandoffExchangeWindowSeconds(): number { return this.config.LINE_HANDOFF_EXCHANGE_WINDOW_SECONDS; }
   get aiGatewayInternalUrl(): string { return this.config.AI_GATEWAY_INTERNAL_URL; }
   get aiGatewayInternalSecret(): string | undefined { return this.config.AI_GATEWAY_INTERNAL_SECRET; }
   get aiActorDelegationSigningKey(): Buffer {

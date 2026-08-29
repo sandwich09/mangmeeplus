@@ -90,6 +90,7 @@ import { LINE_BUFFER_ORPHAN_REPROCESS_MS } from '../../domain/logic/line-message
 import { resolveCompanyAiModelPolicy } from '../company-ai-model-policy';
 import { emitSecurityEvent, SECURITY_EVENT } from '../../../../common/logger/security-event';
 import { LegalAcceptanceService } from '../../../auth/application/legal-acceptance.service';
+import { LineHandoffLinkService } from '../line-handoff-link.service';
 import {
   classifyLineAiGatewayFailure,
   classifyLineAiTerminalOutcome,
@@ -108,7 +109,13 @@ export type LineTextEvent = {
   pushTargetId?: string;
   /** Internal buffer hook: settle any in-flight pre-reply feedback before the answer. */
   beforeReply?: () => Promise<void>;
+  /** P12-3b: filled in once the turn has resolved WHO it is answering, so the send boundary can
+   *  mint a deep-link handoff. Absent until then — an unlinked prompt has nobody to mint for. */
+  handoff?: LineHandoffRecipient;
 };
+
+/** The identity an outgoing message is addressed to; the only thing a handoff token binds. */
+export type LineHandoffRecipient = { userId: string; companyId: string };
 
 export type LineReceiptUploadEvent = {
   webhookEventId: string;
@@ -123,6 +130,8 @@ export type LineReceiptUploadEvent = {
   pushTargetId?: string;
   /** Resolved at durable acceptance so a later company switch cannot move this receipt. */
   companyIdAtAcceptance?: string;
+  /** P12-3b: see `LineTextEvent.handoff`. */
+  handoff?: LineHandoffRecipient;
   /** Internal buffer hook: settle any in-flight pre-reply feedback before the answer. */
   beforeReply?: () => Promise<void>;
 };
@@ -1098,6 +1107,10 @@ export class ProcessLineWebhookUseCase {
     // the ledger fails open: an absent repository is only ever safe because the flag it is gated on
     // defaults to 'off'. LAST parameter on purpose — the specs wire these positionally.
     @Optional() private readonly intakeState?: LineIntakeStateRepository,
+    // P12-3b: the LINE→web handoff seam at the send boundary. `@Optional()` because it is inert
+    // whenever LINE_WEB_HANDOFF_ENABLED is off, and absent it every link keeps today's plain URL —
+    // the same degrade-to-current-behaviour rule minting failure already follows.
+    @Optional() private readonly handoffLinks?: LineHandoffLinkService,
   ) {}
 
   /**
@@ -1144,7 +1157,7 @@ export class ProcessLineWebhookUseCase {
    * runbook R8 rule 2: "availability problems therefore degrade toward closed, never toward open".
    */
   private async refuseWhenLaunchRouteClosed(
-    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string },
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; handoff?: LineHandoffRecipient },
     actorUserId: string,
     companyId: string,
     requestId: string,
@@ -1252,7 +1265,7 @@ export class ProcessLineWebhookUseCase {
   }
 
   private async refusePendingLegalAcceptance(
-    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string },
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; handoff?: LineHandoffRecipient },
     userId: string,
     companyId: string,
     membershipId: string,
@@ -1374,7 +1387,7 @@ export class ProcessLineWebhookUseCase {
    *  queued batch never ends in silence (spec §10). Push consumes OA quota —
    *  the fallback is counted via the `line_push_fallback_used` log line. */
   private async deliverReply(
-    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string },
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; handoff?: LineHandoffRecipient },
     text: string,
     quickReply?: LineReplyMessage['quickReply'],
   ): Promise<void> {
@@ -1386,7 +1399,7 @@ export class ProcessLineWebhookUseCase {
   }
 
   private async deliverRequiredMessages(
-    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string },
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; handoff?: LineHandoffRecipient },
     messages: LineReplyMessage[],
   ): Promise<void> {
     const result = await this.deliverMessages(event, messages);
@@ -1409,7 +1422,7 @@ export class ProcessLineWebhookUseCase {
   }
 
   private async deliverCompletedReply(
-    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string },
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; handoff?: LineHandoffRecipient },
     text: string,
     companyId: string,
     access: { permissions: string[]; roles: string[] },
@@ -1434,7 +1447,7 @@ export class ProcessLineWebhookUseCase {
   }
 
   private async deliverCompletedReplies(
-    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string },
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; handoff?: LineHandoffRecipient },
     texts: string[],
     companyId: string,
     access: { permissions: string[]; roles: string[] },
@@ -1481,14 +1494,14 @@ export class ProcessLineWebhookUseCase {
    *  is timed once here rather than at one call site — and it stays the NETWORK send (plus its own
    *  delivery bookkeeping), never the message construction, which is the separate `render` stage. */
   private async deliverMessages(
-    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; beforeReply?: () => Promise<void> },
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; beforeReply?: () => Promise<void>; handoff?: LineHandoffRecipient },
     messages: LineReplyMessage[],
   ): Promise<LineDeliveryResult> {
     return this.timeStage(event.webhookEventId, 'line_delivery', () => this.sendMessages(event, messages));
   }
 
   private async sendMessages(
-    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; beforeReply?: () => Promise<void> },
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; beforeReply?: () => Promise<void>; handoff?: LineHandoffRecipient },
     messages: LineReplyMessage[],
   ): Promise<LineDeliveryResult> {
     try {
@@ -1568,12 +1581,27 @@ export class ProcessLineWebhookUseCase {
    *  `line_push_fallback_used` line, and the push result overwrites it — so the value never escapes
    *  and every observable byte of the legacy path is unchanged. */
   private async attemptDelivery(
-    event: { replyToken: string; lineUserId: string; pushTargetId?: string },
+    event: { replyToken: string; lineUserId: string; pushTargetId?: string; handoff?: LineHandoffRecipient },
     messages: LineReplyMessage[],
   ): Promise<LineDeliveryResult> {
+    // P12-3b: the ONE place every reply and its push fallback pass through, so wrapping here covers
+    // every current link-emitting surface and every future one. Inert with the flag off — the same
+    // `messages` array comes back — and a mint failure keeps the plain URL, so nothing here can
+    // cost the user their link. Both sends below use the SAME wrapped payload: re-wrapping for the
+    // fallback would burn a second token for a message the user sees once.
+    //
+    // Deliberately AFTER `recordTurnOutcome`, so the stored payload of record keeps plain links: an
+    // orphan replay lands minutes to hours later, by which time a 15-minute token would be dead and
+    // the replayed answer would carry a link that cannot open. Plain is the honest bytes to store.
+    const outgoing = this.handoffLinks
+      ? await this.handoffLinks.wrapOutgoingLineContent(
+        event.handoff ? { ...event.handoff, lineUserId: event.pushTargetId ?? event.lineUserId, surface: 'line_ai_reply' } : null,
+        messages,
+      )
+      : messages;
     let result: LineDeliveryResult;
     try {
-      result = await this.lineReply.sendReply(event.replyToken, messages);
+      result = await this.lineReply.sendReply(event.replyToken, outgoing);
     } catch (error) {
       this.logger.warn({ msg: 'LINE reply adapter threw unexpectedly', error: (error as Error).message });
       result = 'failed_other';
@@ -1581,7 +1609,7 @@ export class ProcessLineWebhookUseCase {
     if (result === 'failed_token' || (result === 'failed_flex' && !this.config.lineAiFlexTextFallbackEnabled)) {
       this.logger.warn({ msg: 'line_push_fallback_used' });
       try {
-        result = await this.lineReply.sendPush(event.pushTargetId ?? event.lineUserId, messages);
+        result = await this.lineReply.sendPush(event.pushTargetId ?? event.lineUserId, outgoing);
       } catch (error) {
         this.logger.warn({ msg: 'LINE push adapter threw unexpectedly', error: (error as Error).message });
         result = 'failed_other';
@@ -1773,6 +1801,12 @@ export class ProcessLineWebhookUseCase {
       await this.updateEventLog(event.webhookEventId, 'no_membership', LINE_AI_ERROR_CODES.FORBIDDEN);
       return;
     }
+
+    // P12-3b: from here the turn knows WHO it is answering and in which company, so every message
+    // it delivers can carry a deep-link handoff. Set after the permission resolver, never before:
+    // the refusals above (unlinked, opted out, no membership, company picker) have no recipient to
+    // bind and must keep the plain links they send today.
+    event.handoff = { userId: identity.userId, companyId };
 
     // This check is after server-side company/membership resolution and before feature probes,
     // model routing, ERP tools, conversation persistence, or attachment storage.
@@ -3523,6 +3557,10 @@ export class ProcessLineWebhookUseCase {
       await this.updateEventLog(event.webhookEventId, 'no_membership', LINE_AI_ERROR_CODES.FORBIDDEN, companyId);
       return;
     }
+
+    // P12-3b: same rule as the text lane — the recipient is bound only once the resolver has
+    // confirmed this user's access to this company. Refusals above keep today's plain links.
+    event.handoff = { userId: identity.userId, companyId };
 
     // Refuse before downloading bytes, invoking intake/OCR, or creating any attachment/expense.
     if (await this.refusePendingLegalAcceptance(

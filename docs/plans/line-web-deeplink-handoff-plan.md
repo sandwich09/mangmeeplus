@@ -81,9 +81,27 @@ Confirm the spec's evidence still holds and get Q1/Q3 answered before any code.
 
 ### Tasks
 
-- [ ] Re-read spec §3.1 and re-run the two cheap checks: the `/v1/auth/me` 403 count in the retained UAT window, and `WEB_BASE_URL` on the UAT service.
-- [ ] Get the owner decision on Q1 (`provider` claim) and Q3 (TTL per surface). Record both in this plan.
-- [ ] Confirm with the owner whether the alert rail ships in Phase 4 or waits (Q4).
+- [x] Re-read spec §3.1 and re-run the two cheap checks: the `/v1/auth/me` 403 count in the retained UAT window, and `WEB_BASE_URL` on the UAT service.
+- [x] Get the owner decision on Q1 (`provider` claim) and Q3 (TTL per surface). Record both in this plan.
+- [x] Confirm with the owner whether the alert rail ships in Phase 4 or waits (Q4).
+
+### Owner decisions (2026-08-29)
+
+- **Q1 — `provider` claim: `'line'`.** The spec's own recommendation. It is the true origin of the
+  session and keeps the owner-locked rule in `password-reset-line-flow-spec.md` intact. The
+  temporary-password gate still works in the UI because `/auth/me` reports the credential
+  truthfully; the widened **API** exemption (spec G6) is re-opened in a dedicated pass rather than
+  changed quietly here.
+- **Q3 — TTL: 15 minutes for assistant replies.** Matches `LINE_LINK_TOKEN_TTL_MS`. The alert-rail
+  TTL is a separate decision, taken at Phase 5 alongside the rail itself.
+- **Q4 — assistant surfaces ship first; the alert rail follows.** Phase 5 stays gated.
+- **Q2 stays open and blocks ROLLOUT, not build.** Everything built ships behind
+  `LINE_WEB_HANDOFF_ENABLED`, default `false`, so behaviour with the flag off is byte-identical to
+  the release before it. Phase 1's measurement gates turning the flag on, not writing the code.
+- **R3 resolved: new API specs ARE wired into `apps/api/package.json`.** The
+  `spec-suite-coverage.spec.ts` guard fails the suite when a spec file is named by no package.json
+  script, which settles the apparent `AGENTS.md` conflict — the test-list line is the one mandated
+  `package.json` edit and nothing else in that file may change. Precedent: PRs #322, #337, #343.
 
 ### Tests
 
@@ -91,7 +109,7 @@ Confirm the spec's evidence still holds and get Q1/Q3 answered before any code.
 
 ### Exit Criteria
 
-- Q1 and Q3 answered in writing here. R3 resolved or explicitly deferred.
+- Q1 and Q3 answered in writing here. R3 resolved or explicitly deferred. — **Met 2026-08-29.**
 
 ## Phase 1: Measure the preview risk (R1)
 
@@ -99,6 +117,13 @@ Confirm the spec's evidence still holds and get Q1/Q3 answered before any code.
 
 Prove that a one-time link in a LINE message is not consumed before the human taps it. This phase
 gates everything after it, and it is deliberately cheap enough to run before the real model exists.
+
+### Pre-verified 2026-08-29
+
+G3 (base-URL consolidation), G4 (both gates preserve the requested path), G11 (substitute-receipt
+link wrapping) and G12 (dead builder removal) are **already done on `develop`** and were re-checked
+before P12-3b started — none of them is re-opened by this work. `WATCHDOG_WEB_BASE_URL` was never
+implemented and is not introduced: `AppConfigService.webBaseUrl` is the single resolution.
 
 ### Tasks
 

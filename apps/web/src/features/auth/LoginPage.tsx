@@ -32,6 +32,9 @@ const LINE_NOTICE_TEXT: Record<string, string> = {
   unavailable: 'การเข้าสู่ระบบด้วย LINE ยังไม่เปิดใช้งาน',
   // P12-3a: a scanned desktop QR landed on the approve page without a session.
   'qr-approve': 'เข้าสู่ระบบก่อน แล้วระบบจะพากลับไปหน้ายืนยันการเข้าสู่ระบบบนคอมพิวเตอร์',
+  // P12-3b: a LINE deep-link handoff token was expired, already used, or no longer authorised.
+  // Not an error — `next` still carries the record, so signing in finishes the journey.
+  'handoff-expired': 'ลิงก์นี้หมดอายุหรือถูกใช้ไปแล้ว กรุณาเข้าสู่ระบบเพื่อเปิดรายการนี้',
 };
 
 // The LINE OAuth round trip, with the landing path carried across it. Two lanes use it: a plain
