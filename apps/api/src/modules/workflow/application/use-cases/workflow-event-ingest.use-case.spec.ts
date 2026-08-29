@@ -51,6 +51,7 @@ describe('IngestWorkflowEventUseCase', () => {
       'reimbursement_correction_requester',
       'reimbursement_decision_requester',
       'reimbursement_finance_review',
+      'reimbursement_finance_review_pending',
       'reimbursement_payment_recorded',
       'reimbursement_pending_approval',
       'reimbursement_ready_for_payment',
@@ -64,6 +65,7 @@ describe('IngestWorkflowEventUseCase', () => {
       ['reimbursement_pending_approval', 'reimbursement.request_submitted'],
       ['reimbursement_correction_requester', 'reimbursement.correction_requested'],
       ['reimbursement_finance_review', 'reimbursement.finance_review_updated'],
+      ['reimbursement_finance_review_pending', 'reimbursement.approved'],
       ['reimbursement_ready_for_payment', 'reimbursement.ready_for_payment'],
       ['reimbursement_payment_recorded', 'reimbursement.payment_recorded'],
     ] as const) {
@@ -114,13 +116,31 @@ describe('IngestWorkflowEventUseCase', () => {
       .filter((entry) => entry.sourceModule === 'reimbursements' && entry.triggerType === 'EVENT')
       .map((entry) => ({ key: entry.key, cfg: entry.defaultActionJson.find((a) => a.actionType === 'SEND_NOTIFICATION')?.configJson ?? {} }));
 
-    assert.equal(notifications.length, 6);
+    assert.equal(notifications.length, 7);
     for (const { key, cfg } of notifications) {
       assert.equal(typeof cfg['bodyTemplate'], 'string', key);
       assert.notEqual(cfg['bodyTemplate'], cfg['titleTemplate'], key);
       // A body worth pushing carries the figures the title does not.
       assert.match(String(cfg['bodyTemplate']), /\{\{(amount|paidAmount)\}\}/, key);
     }
+  });
+
+  // Live UAT 2026-08-29: approver and requester were notified, the finance desk was not — nothing
+  // subscribed to the claim ARRIVING at finance review, only to finance's own BLOCKED decision.
+  it('notifies finance-review permission holders when an approved claim arrives at their desk', () => {
+    const template = WORKFLOW_TEMPLATE_CATALOG.find((entry) => entry.key === 'reimbursement_finance_review_pending');
+    const cfg = template?.defaultActionJson[0]?.configJson ?? {};
+
+    assert.equal(template?.status, 'AVAILABLE');
+    assert.equal(template?.autoEnable, true);
+    assert.deepEqual(template?.defaultConditionJson, { field: 'status', op: 'EQ', value: 'FINANCE_REVIEW' });
+    assert.equal(
+      ruleMatchesEventType(WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG['reimbursement_finance_review_pending'] ?? {}, 'reimbursement.approved'),
+      true,
+    );
+    assert.deepEqual(cfg['recipientPermissions'], ['reimbursement.finance_review']);
+    assert.equal(cfg['triggerKey'], 'workflow.reimbursement_finance_review');
+    assert.match(String(cfg['deepLinkPathTemplate']), /tab=finance/);
   });
 
   it('routes the finance-review template to finance-review permission holders and stays out of the approve path', () => {

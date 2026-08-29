@@ -32,6 +32,7 @@ export const WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG: Record<string, Record<str
   reimbursement_decision_requester: { eventTypes: ['reimbursement.approved', 'reimbursement.rejected'] },
   reimbursement_correction_requester: { eventType: 'reimbursement.correction_requested' },
   reimbursement_finance_review: { eventType: 'reimbursement.finance_review_updated' },
+  reimbursement_finance_review_pending: { eventType: 'reimbursement.approved' },
   reimbursement_ready_for_payment: { eventType: 'reimbursement.ready_for_payment' },
   reimbursement_payment_recorded: { eventType: 'reimbursement.payment_recorded' },
   vendor_bill_pending_approval: { eventType: 'vendor_bill.submitted' },
@@ -51,6 +52,7 @@ export const WORKFLOW_TEMPLATE_DEFAULT_COOLDOWN_SECONDS: Record<string, number> 
   reimbursement_decision_requester: 0,
   reimbursement_correction_requester: 0,
   reimbursement_finance_review: 0,
+  reimbursement_finance_review_pending: 0,
   reimbursement_ready_for_payment: 0,
   reimbursement_payment_recorded: 0,
 };
@@ -242,6 +244,39 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
           severity: 'action',
           titleTemplate: 'ตรวจสอบการเงินเบิกจ่าย: {{requestNo}}',
           bodyTemplate: 'ผลตรวจสอบ: {{decision}} · ยอด {{amount}} {{currency}}',
+          deepLinkPathTemplate: reimbursementHubLink('finance'),
+        },
+      },
+    ],
+    requiredPermissions: ['reimbursement.finance_review'],
+    requiredSourceModules: ['reimbursements'],
+    defaultEnabled: false,
+    autoEnable: true,
+    status: 'AVAILABLE',
+  },
+  {
+    // Live UAT 2026-08-29: the approver and the requester were notified but the finance desk
+    // learned nothing when a claim ARRIVED — the sibling template above only fires on a BLOCKED
+    // finance decision, i.e. on finance's own action.
+    key: 'reimbursement_finance_review_pending',
+    name: 'Reimbursement awaiting finance review',
+    description: 'Notify everyone who can run finance review when an approved claim arrives at the finance desk.',
+    category: 'finance',
+    sourceModule: 'reimbursements',
+    triggerType: 'EVENT',
+    // `reimbursement.approved` is emitted only when the policy routes the claim to finance review,
+    // but the condition states the arrival explicitly so a wider emit can never widen this rule.
+    defaultConditionJson: { field: 'status', op: 'EQ', value: 'FINANCE_REVIEW' },
+    defaultActionJson: [
+      {
+        actionKey: 'notify_finance_reviewer',
+        actionType: 'SEND_NOTIFICATION',
+        configJson: {
+          triggerKey: 'workflow.reimbursement_finance_review',
+          recipientPermissions: ['reimbursement.finance_review'],
+          severity: 'action',
+          titleTemplate: 'ใบเบิกรอตรวจสอบการเงิน: {{requestNo}}',
+          bodyTemplate: 'ยอด {{amount}} {{currency}} · รอตรวจสอบการเงิน',
           deepLinkPathTemplate: reimbursementHubLink('finance'),
         },
       },
