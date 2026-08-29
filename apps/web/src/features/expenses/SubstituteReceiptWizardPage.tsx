@@ -73,7 +73,7 @@ import {
   inputClass,
 } from './ExpensesUi';
 import { ATTACHMENT_UPLOAD_ACCEPT, IMAGE_UPLOAD_ACCEPT, assertAllowedUploadFile } from '@/common/files/upload-file.logic';
-import { findForbiddenChars, stripDisallowed } from '@/common/forms/sanitize';
+import { findForbiddenChars, normalizeDecimalInput, stripDisallowed } from '@/common/forms/sanitize';
 import {
   clearSubstituteWizardDraft,
   defaultSubstituteReceiptReason,
@@ -1804,7 +1804,7 @@ export function SubstituteReceiptWizardPage({
                     <span className="mb-1 block">{t('expenses.substitute_wizard.unit_price', locale)}<RequiredMark /></span>
                     <div className="relative">
                       <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm font-bold text-gray-500">฿</span>
-                      <input id={manualLineControlId(line.id, 'unitPrice')} className={cx(inputClass, 'pl-8 text-right tabular-nums')} required type="number" inputMode="decimal" min="0.0001" step="0.0001" value={line.unitPrice} aria-invalid={isInvalid('unitPrice') || undefined} aria-describedby={isInvalid('unitPrice') ? lineErrorId : undefined} placeholder="0.00" onChange={(event) => updateManualLine(line.id, { unitPrice: event.target.value })} />
+                      <input id={manualLineControlId(line.id, 'unitPrice')} className={cx(inputClass, 'pl-8 text-right tabular-nums')} required type="number" inputMode="decimal" min="0.0001" step="0.0001" value={line.unitPrice} aria-invalid={isInvalid('unitPrice') || undefined} aria-describedby={isInvalid('unitPrice') ? lineErrorId : undefined} placeholder="0.00" onChange={(event) => updateManualLine(line.id, { unitPrice: normalizeDecimalInput(event.target.value) })} />
                     </div>
                   </label>
                   <div className="rounded-xl bg-gray-50 px-3 py-2 lg:col-span-5 lg:self-end">

@@ -1,6 +1,17 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { findForbiddenChars, REASON_MAX_LENGTH, sanitizeReasonInput, stripDisallowed } from './sanitize';
+import { findForbiddenChars, normalizeDecimalInput, REASON_MAX_LENGTH, sanitizeReasonInput, stripDisallowed } from './sanitize';
+
+describe('decimal input normalization', () => {
+  it('removes redundant leading zeros without rounding or changing decimal editing', () => {
+    for (const [input, expected] of [
+      ['0400', '400'], ['0007', '7'], ['00', '0'], ['000.402', '0.402'],
+      ['', ''], ['0', '0'], ['0.', '0.'], ['0.402', '0.402'], ['0.0042', '0.0042'],
+      ['4.00', '4.00'], ['00099999999999999.9999', '99999999999999.9999'],
+      ['-1', '-1'], ['1e3', '1e3'], ['1.23456', '1.23456'],
+    ]) assert.equal(normalizeDecimalInput(input!), expected, input);
+  });
+});
 
 describe('expense text sanitization', () => {
   it('strips backslashes and control characters but keeps newlines', () => {

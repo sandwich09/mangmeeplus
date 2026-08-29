@@ -1,5 +1,6 @@
 import { test, expect } from './harness/fixtures';
 import { gotoCompany, json, unique } from './harness/e2e-utils';
+import { roleDisplayName } from '../apps/web/src/features/employee-access/role-picker.logic';
 import {
   API_BASE_URL,
   WEB_BASE_URL,
@@ -85,8 +86,9 @@ test.describe('SET — settings', () => {
     await authedPage.getByLabel(/^เบอร์โทรศัพท์/).fill(`08${suffix.slice(-8)}`);
     await authedPage.getByRole('button', { name: /^ถัดไป/ }).click();
 
-    await authedPage.getByRole('button', { name: /Accountant/ }).click();
-    await authedPage.getByRole('button', { name: /Finance/ }).click();
+    await authedPage.getByRole('button', { name: /ฝ่ายบัญชี|Accountant/ }).click();
+    await authedPage.getByRole('button', { name: /ฝ่ายการเงิน|Finance/ }).click();
+    await expect(authedPage.getByRole('button', { name: /ฝ่ายบัญชี|Accountant/ })).toHaveAttribute('aria-pressed', 'false');
     await authedPage.getByLabel(/^ตำแหน่งงาน/).fill('เจ้าหน้าที่บัญชีและการเงิน');
     await authedPage.getByRole('button', { name: /^ถัดไป/ }).click();
     await expect(authedPage.getByText(username).first()).toBeVisible();
@@ -101,7 +103,7 @@ test.describe('SET — settings', () => {
     const employees = await json<Employee[]>(await api.get(`companies/${companyId}/settings/employees`));
     const created = employees.find((item) => item.displayName.includes(firstName) && item.displayName.includes(lastName));
     expect(created).toBeTruthy();
-    expect(created!.roles.map((role) => role.key).sort()).toEqual(['ACCOUNTANT', 'FINANCE']);
+    expect(created!.roles.map((role) => role.key)).toEqual(['FINANCE']);
   });
 
   test('SET-04 @p1 roles page renders system roles and grants', async ({ authedPage, companyId }) => {
@@ -172,7 +174,7 @@ test.describe('SET — settings', () => {
 
   test('SET-08 @p1 access overview renders employee matrix', async ({ authedPage, companyId }) => {
     await gotoCompany(authedPage, companyId, '/settings/access-overview');
-    await expect(authedPage.getByRole('heading', { name: /สิทธิ์รายบุคคล|Individual/i })).toBeVisible();
+    await expect(authedPage.getByRole('heading', { name: 'รายชื่อพนักงาน', exact: true })).toBeVisible();
     await expect(authedPage.getByText(/มายด์|ไนซ์|แพรว|เตย/).first()).toBeVisible();
     await expect(authedPage.getByText(/เมนูที่|สาขาที่เข้าถึงได้|สิทธิ์เฉพาะบุคคล/i).first()).toBeVisible();
 
@@ -181,7 +183,7 @@ test.describe('SET — settings', () => {
     await expect(rows.first()).toBeVisible();
     await expect(summary.getByText('ไม่เห็นเมนูนี้')).toHaveCount(0);
 
-    const countText = await summary.getByText(/^ใช้งานได้ \d+ เมนู$/).innerText();
+    const countText = await summary.getByText(/^แสดงสิทธิ์ \d+ เมนู$/).innerText();
     expect(Number.parseInt(countText.replace(/\D/g, ''), 10)).toBe(await rows.count());
 
     const actions = summary.getByTestId('access-permission-actions');
@@ -220,7 +222,7 @@ test.describe('SET — settings', () => {
     await expect(summary.getByTestId('access-permission-row')).toHaveCount(0);
   });
 
-  test('SET-08B @p1 multi-role summary unions every assigned role without mutating seed data', async ({ authedPage, api, companyId }) => {
+  test('SET-08B @p1 legacy multi-role summary remains accurate until explicitly replaced', async ({ authedPage, api, companyId }) => {
     const [roles, employees, matrix] = await Promise.all([
       json<Role[]>(await api.get(`companies/${companyId}/settings/roles`)),
       json<Employee[]>(await api.get(`companies/${companyId}/settings/employees`)),
@@ -254,25 +256,27 @@ test.describe('SET — settings', () => {
 
     await gotoCompany(authedPage, companyId, '/settings/access-overview');
     const employeeRow = authedPage.locator('button').filter({ hasText: target.displayName }).first();
-    for (const role of assignedRoles) await expect(employeeRow.getByText(role.name, { exact: true })).toBeVisible();
+    for (const role of assignedRoles) await expect(employeeRow.getByText(roleDisplayName(role), { exact: true })).toBeVisible();
     const rowWidth = await employeeRow.evaluate((element) => ({ scrollWidth: element.scrollWidth, clientWidth: element.clientWidth }));
     expect(rowWidth.scrollWidth, 'multi-role employee row must not overflow').toBeLessThanOrEqual(rowWidth.clientWidth + 1);
     const summary = authedPage.getByTestId('access-permission-summary');
-    await expect(summary).toContainText(`สิทธิ์มาจากบทบาท ${assignedRoles.map((role) => role.name).join(', ')}`);
+    await expect(summary).toContainText(`สิทธิ์มาจากบทบาท ${assignedRoles.map(roleDisplayName).join(', ')}`);
     await expect(summary).toContainText('ระบบรวมสิทธิ์จากทุกบทบาท');
-    await expect(summary.getByText(`ใช้งานได้ ${expectedMenuIds.length} เมนู`)).toBeVisible();
+    await expect(summary.getByText(`แสดงสิทธิ์ ${expectedMenuIds.length} เมนู`)).toBeVisible();
+    await expect(authedPage.getByText('ข้อมูลเดิมมีหลายบทบาท ให้ผู้มีสิทธิ์เลือก 1 บทบาทเพื่อแทนที่ทั้งหมด')).toBeVisible();
     await expect(summary.locator(`[data-menu-id="${complementaryMenuId}"]`)).toBeVisible();
   });
 
-  test('SET-08D @p1 edits an active employee to hold multiple roles and persists their union', async ({ authedPage, api, companyId }) => {
+  test('SET-08D @p1 replaces an employee role and refreshes the header, list and permissions', async ({ authedPage, api, companyId }) => {
     const roles = await json<Role[]>(await api.get(`companies/${companyId}/settings/roles`));
     const staff = roles.find((role) => role.key === 'STAFF')!;
     const suffix = Date.now().toString();
-    const displayName = unique('E2E multi-role employee');
+    const displayName = unique('E2E single-role employee');
     const created = await json<CreateEmployeeResult>(await api.post(`companies/${companyId}/settings/employees`, {
       data: {
         displayName,
         legalName: displayName,
+        jobTitle: 'เจ้าหน้าที่ทดสอบ',
         username: `e2e.multi.${suffix}`,
         dateOfBirth: '1990-01-01',
         identityType: 'PASSPORT',
@@ -286,25 +290,44 @@ test.describe('SET — settings', () => {
     await gotoCompany(authedPage, companyId, '/settings/access-overview');
     await authedPage.getByLabel('ค้นหาพนักงาน').fill(displayName);
     await authedPage.getByRole('button', { name: new RegExp(displayName) }).click();
-    await authedPage.locator('button[aria-haspopup="listbox"]').click();
-    await authedPage.getByRole('option', { name: 'Accountant', exact: true }).click();
+    await authedPage.getByRole('combobox', { name: 'เลือกบทบาท', exact: true }).click();
+    await authedPage.getByRole('option', { name: 'พนักงาน', exact: true }).click();
+    await authedPage.getByRole('button', { name: 'เปลี่ยนบทบาทพนักงาน', exact: true }).click();
+    await authedPage.getByRole('option', { name: /ฝ่ายบัญชี|Accountant/ }).click();
     await expect(authedPage.getByText('บันทึกบทบาทพนักงานแล้ว')).toBeVisible();
 
     const employees = await json<Employee[]>(await api.get(`companies/${companyId}/settings/employees`));
     const updated = employees.find((employee) => employee.id === created.employeeId)!;
-    expect(updated.roles.map((role) => role.key).sort()).toEqual(['ACCOUNTANT', 'STAFF']);
-    await expect(authedPage.getByText('ระบบจะรวมสิทธิ์จากทุกบทบาท')).toBeVisible();
+    expect(updated.roles.map((role) => role.key)).toEqual(['ACCOUNTANT']);
+    const header = authedPage.getByTestId('employee-detail-card');
+    await expect(header.getByLabel('บทบาทปัจจุบัน')).toContainText('ฝ่ายบัญชี');
+    await expect(header).toContainText('ตำแหน่งงาน: เจ้าหน้าที่ทดสอบ');
+    await expect(authedPage.getByRole('button', { name: new RegExp(displayName) })).toContainText('ฝ่ายบัญชี');
+    await expect(authedPage.getByTestId('access-permission-summary')).toContainText('สิทธิ์มาจากบทบาท ฝ่ายบัญชี');
+    await expect(authedPage.getByText('ระบบจะรวมสิทธิ์จากทุกบทบาท')).toHaveCount(0);
+    await authedPage.reload();
+    await authedPage.getByLabel('ค้นหาพนักงาน').fill(displayName);
+    await expect(header.getByLabel('บทบาทปัจจุบัน')).toContainText('ฝ่ายบัญชี');
+
+    await authedPage.route(`**/api/v1/companies/${companyId}/settings/employees/${created.employeeId}`, async (route) => {
+      if (route.request().method() !== 'PATCH') return route.continue();
+      await route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ message: 'Forbidden' }) });
+    });
+    await authedPage.getByRole('button', { name: 'เปลี่ยนบทบาทพนักงาน', exact: true }).click();
+    const [denied] = await Promise.all([
+      authedPage.waitForResponse((response) => response.url().endsWith(`/employees/${created.employeeId}`) && response.request().method() === 'PATCH'),
+      authedPage.getByRole('option', { name: 'พนักงาน', exact: true }).click(),
+    ]);
+    expect(denied.status()).toBe(403);
+    await expect(header.getByLabel('บทบาทปัจจุบัน')).toContainText('ฝ่ายบัญชี');
+    await expect(authedPage.getByTestId('access-permission-summary')).toContainText('สิทธิ์มาจากบทบาท ฝ่ายบัญชี');
   });
 
-  test('SET-08E @p1 an isolated multi-role employee gets the permission union in real feature pages', async ({ api, browser, request, companyId }) => {
-    const roles = await json<Role[]>(await api.get(`companies/${companyId}/settings/roles`));
-    const staff = roles.find((role) => role.key === 'STAFF');
-    expect(staff, 'seed must include STAFF').toBeTruthy();
-
+  test('SET-08E @p1 one custom role composes permissions across real feature pages', async ({ api, browser, request, companyId }) => {
     const customRole = await json<Role>(await api.post(`companies/${companyId}/settings/roles`, {
       data: {
         name: unique('E2E cross-feature reviewer'),
-        capabilityPackKeys: ['pack.expense.review', 'pack.reimbursement.review'],
+        capabilityPackKeys: ['pack.expense.self', 'pack.expense.review', 'pack.reimbursement.self', 'pack.reimbursement.review'],
       },
     }));
     const suffix = Date.now().toString();
@@ -317,7 +340,7 @@ test.describe('SET — settings', () => {
         identityType: 'PASSPORT',
         identityNumber: `UNION${suffix}`,
         phoneNumber: `06${suffix.slice(-8)}`,
-        roleIds: [staff!.id, customRole.id],
+        roleIds: [customRole.id],
       },
     }));
     expect(created.mustChangePassword).toBe(true);
@@ -346,7 +369,7 @@ test.describe('SET — settings', () => {
     });
     expect(meResponse.ok(), await meResponse.text()).toBe(true);
     const me = await meResponse.json() as { roles: string[]; permissions: string[] };
-    expect(me.roles).toEqual(expect.arrayContaining(['STAFF', customRole.key]));
+    expect(me.roles).toEqual([customRole.key]);
     expect(me.permissions).toEqual(expect.arrayContaining([
       'expense.create',
       'expense.review',

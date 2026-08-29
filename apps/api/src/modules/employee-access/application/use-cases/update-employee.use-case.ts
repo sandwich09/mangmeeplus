@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import type { EmployeeDetail, UpdateEmployeeInput } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
@@ -42,8 +42,8 @@ export class UpdateEmployeeUseCase {
 
     let roles: Array<{ id: string; key: string }> | undefined;
     let previousRoleIds: string[] = [];
-    if (cmd.roleIds) {
-      if (!cmd.roleIds.length) throw new ForbiddenException('At least one role is required.');
+    if (cmd.roleIds !== undefined) {
+      if (!Array.isArray(cmd.roleIds) || cmd.roleIds.length !== 1) throw new BadRequestException('Exactly one employee role is required.');
       const targetRoles = await this.prisma.client.membershipRole.findMany({
         where: { membershipId: existing.membershipId },
         select: { roleId: true, role: { select: { key: true, isSystem: true } } },

@@ -48,7 +48,7 @@ import { t } from '@/common/i18n/workspace-i18n.logic';
 import type { SupportedLocale, DictionaryKey } from '@/common/i18n/workspace-dictionary';
 import { MangmeeBadge, MangmeeCard, MangmeePage, cx } from '@/common/components/mangmee';
 import { Modal } from '@/common/components/modal';
-import { findForbiddenChars, REASON_MAX_LENGTH, sanitizeReasonInput, stripDisallowed } from '@/common/forms/sanitize';
+import { findForbiddenChars, normalizeDecimalInput, REASON_MAX_LENGTH, sanitizeReasonInput, stripDisallowed } from '@/common/forms/sanitize';
 import {
   ATTACHMENT_UPLOAD_ACCEPT,
   IMAGE_UPLOAD_ACCEPT,
@@ -1748,12 +1748,12 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
             </label>
             <label>
               <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.line_unit_price', locale)}</span>
-              <input type="number" min="0" step="0.0001" className={validationInputClass(unitPriceIssue)} aria-invalid={unitPriceIssue?.severity === 'error' || undefined} value={line.unitPrice} onChange={(e) => updateLine(index, 'unitPrice', e.target.value)} disabled={!isMutable || busy} />
+              <input type="number" min="0" step="0.0001" className={validationInputClass(unitPriceIssue)} aria-invalid={unitPriceIssue?.severity === 'error' || undefined} value={line.unitPrice} onChange={(e) => updateLine(index, 'unitPrice', normalizeDecimalInput(e.target.value))} disabled={!isMutable || busy} />
               <FieldIssueNote issue={unitPriceIssue} />
             </label>
             <label>
               <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.line_discount', locale)}</span>
-              <input type="number" min="0" step="0.0001" className={validationInputClass(discountIssue)} aria-invalid={discountIssue?.severity === 'error' || undefined} value={line.discountAmount} onChange={(e) => updateLine(index, 'discountAmount', e.target.value)} disabled={!isMutable || busy} />
+              <input type="number" min="0" step="0.0001" className={validationInputClass(discountIssue)} aria-invalid={discountIssue?.severity === 'error' || undefined} value={line.discountAmount} onChange={(e) => updateLine(index, 'discountAmount', normalizeDecimalInput(e.target.value))} disabled={!isMutable || busy} />
               <FieldIssueNote issue={discountIssue} />
             </label>
             {/* Spec §19g decision 4: a rate, a preset, or the VAT amount the document prints — all
@@ -2419,8 +2419,8 @@ function ManualExpensePanel({ companyId, branchId, canAttachReceipt, onSuccess }
               <div className="grid gap-3 p-3 sm:grid-cols-3">
                 <label className="sm:col-span-3"><span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.manual_description', locale)}{req}</span><input required className={inputClass} value={item.description} onChange={(event) => setItem(index, { description: stripDisallowed(event.target.value) })} /></label>
                 <label><span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.manual_quantity', locale)}{req}</span><input required type="number" min="0" step="0.0001" className={inputClass} value={item.quantity} onChange={(event) => setItem(index, { quantity: event.target.value })} /></label>
-                <label><span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.manual_unit_price', locale)}{req}</span><input required type="number" min="0" step="0.01" className={inputClass} value={item.unitPrice} onChange={(event) => setItem(index, { unitPrice: event.target.value })} /></label>
-                <label><span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.line_discount', locale)}</span><input type="number" min="0" step="0.01" className={inputClass} value={item.discountAmount} onChange={(event) => setItem(index, { discountAmount: event.target.value })} /></label>
+                <label><span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.manual_unit_price', locale)}{req}</span><input required type="number" min="0" step="0.0001" className={inputClass} value={item.unitPrice} onChange={(event) => setItem(index, { unitPrice: normalizeDecimalInput(event.target.value) })} /></label>
+                <label><span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.line_discount', locale)}</span><input type="number" min="0" step="0.0001" className={inputClass} value={item.discountAmount} onChange={(event) => setItem(index, { discountAmount: normalizeDecimalInput(event.target.value) })} /></label>
               </div>
             </div>
           ))}
