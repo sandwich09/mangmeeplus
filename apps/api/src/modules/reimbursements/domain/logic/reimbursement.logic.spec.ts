@@ -24,6 +24,8 @@ import {
   isSlaRisk,
   redactPayload,
   frozenApprovalAuthority,
+  currentDesk,
+  type CurrentDeskStepFields,
 } from './reimbursement.logic';
 import { parseReimbursementPolicySnapshot } from '../reimbursement.constants';
 
@@ -465,5 +467,76 @@ describe('redaction', () => {
   it('strips sensitive keys from outbox payloads', () => {
     const redacted = redactPayload({ requestId: 'r1', signedUrl: 'https://x', objectKey: 'k', accountNumber: '123', amount: '500' });
     assert.deepEqual(Object.keys(redacted).sort(), ['amount', 'requestId']);
+  });
+});
+
+describe('currentDesk', () => {
+  const pendingStep = (overrides: Partial<CurrentDeskStepFields> = {}): CurrentDeskStepFields => ({
+    sequenceNo: 1, status: 'PENDING', ...overrides,
+  });
+  const names = { 'u-1': 'คุณยุนกิ', 'u-2': 'คุณสมชาย' };
+
+  it('answers the pool desk for every non-approval stage', () => {
+    assert.deepEqual(currentDesk({ status: 'DRAFT' }), { kind: 'REQUESTER' });
+    assert.deepEqual(currentDesk({ status: 'FINANCE_REVIEW' }), { kind: 'FINANCE' });
+    assert.deepEqual(currentDesk({ status: 'READY_FOR_PAYMENT' }), { kind: 'PAYMENT' });
+    assert.deepEqual(currentDesk({ status: 'PARTIALLY_PAID' }), { kind: 'PAYMENT' });
+  });
+
+  it('routes the transient APPROVED state by whether finance review is pending', () => {
+    assert.deepEqual(currentDesk({ status: 'APPROVED', financeReviewStatus: 'PENDING' }), { kind: 'FINANCE' });
+    assert.deepEqual(currentDesk({ status: 'APPROVED', financeReviewStatus: 'NOT_REQUIRED' }), { kind: 'PAYMENT' });
+  });
+
+  it('has no desk once the claim is terminal', () => {
+    for (const status of ['PAID', 'REJECTED', 'CANCELLED', 'VOIDED'] as const) {
+      assert.equal(currentDesk({ status }), undefined);
+    }
+  });
+
+  it('names the frozen assignees of the pending step', () => {
+    const desk = currentDesk({
+      status: 'PENDING_APPROVAL',
+      steps: [pendingStep({ assignedApproverUserIds: ['u-1', 'u-2'] })],
+      names,
+    });
+    assert.deepEqual(desk, { kind: 'APPROVER', names: ['คุณยุนกิ', 'คุณสมชาย'] });
+  });
+
+  it('folds the named approver in without repeating an assignee', () => {
+    const desk = currentDesk({
+      status: 'PENDING_APPROVAL',
+      steps: [pendingStep({ approverUserId: 'u-1', assignedApproverUserIds: ['u-1'] })],
+      names,
+    });
+    assert.deepEqual(desk, { kind: 'APPROVER', names: ['คุณยุนกิ'] });
+  });
+
+  it('takes the lowest live sequenceNo and skips invalidated steps', () => {
+    const desk = currentDesk({
+      status: 'PENDING_APPROVAL',
+      steps: [
+        pendingStep({ sequenceNo: 2, approverUserId: 'u-2' }),
+        pendingStep({ sequenceNo: 1, approverUserId: 'u-1', invalidatedAt: new Date('2026-08-01T00:00:00Z') }),
+      ],
+      names,
+    });
+    assert.deepEqual(desk, { kind: 'APPROVER', names: ['คุณสมชาย'] });
+  });
+
+  it('omits names when nothing resolves, so the client prints the pool instead of a cuid', () => {
+    // A user id with no name loaded, a role-routed step naming nobody, and no step at all.
+    assert.deepEqual(currentDesk({ status: 'PENDING_APPROVAL', steps: [pendingStep({ approverUserId: 'u-9' })], names }), { kind: 'APPROVER' });
+    assert.deepEqual(currentDesk({ status: 'PENDING_APPROVAL', steps: [pendingStep()], names }), { kind: 'APPROVER' });
+    assert.deepEqual(currentDesk({ status: 'PENDING_APPROVAL' }), { kind: 'APPROVER' });
+  });
+
+  it('ignores steps that are no longer pending', () => {
+    const desk = currentDesk({
+      status: 'PENDING_APPROVAL',
+      steps: [pendingStep({ status: 'APPROVED', approverUserId: 'u-1' })],
+      names,
+    });
+    assert.deepEqual(desk, { kind: 'APPROVER' });
   });
 });

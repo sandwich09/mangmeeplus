@@ -87,6 +87,25 @@ export const APPROVAL_STEP_STATUS_LABELS: Record<string, string> = {
 
 export const REQUEST_STATUS_OPTIONS = Object.keys(REQUEST_STATUS_LABELS);
 
+// ---- อยู่ที่ใคร (current desk) ----
+
+/** Pool labels. The APPROVER desk prefers the real names the server resolved. */
+export const CURRENT_DESK_LABELS: Record<string, string> = {
+  REQUESTER: 'ผู้ยื่น',
+  APPROVER: 'ผู้มีสิทธิ์อนุมัติ',
+  FINANCE: 'ฝ่ายการเงิน',
+  PAYMENT: 'ฝ่ายการเงิน (รอบันทึกจ่าย)',
+};
+
+/**
+ * The one line a queue row appends: `อยู่ที่ <this>`. Several assigned approvers read as
+ * "A หรือ B" — any one of them can decide. Null on a terminal claim, which has no desk.
+ */
+export function currentDeskText(desk?: { kind?: string; names?: readonly string[] } | null): string | null {
+  if (!desk?.kind) return null;
+  return desk.names?.length ? desk.names.join(' หรือ ') : CURRENT_DESK_LABELS[desk.kind] ?? null;
+}
+
 // ---- Claim-form signatures ----
 
 export type ClaimSignatureRole = 'REQUESTER' | 'APPROVER' | 'FINANCE_REVIEW' | 'PAYER';

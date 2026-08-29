@@ -8,6 +8,9 @@ import { Decimal } from 'decimal.js';
 import { reimbursementIncurredDateError, todayCivilDate } from '@watchdog-bms/contracts';
 import type {
   ReimbursementRequestStatus,
+  ReimbursementApprovalStepStatus,
+  ReimbursementCurrentDesk,
+  ReimbursementFinanceReviewStatus,
   ReimbursementPaymentMethod,
   ReimbursementPaymentSourceRef,
   ReimbursementReceiptRequirementStatus,
@@ -317,6 +320,55 @@ const ALLOWED_TRANSITIONS: Record<ReimbursementRequestStatus, ReimbursementReque
 
 export function canTransition(from: ReimbursementRequestStatus, to: ReimbursementRequestStatus): boolean {
   return (ALLOWED_TRANSITIONS[from] ?? []).includes(to);
+}
+
+// ---- Current desk (อยู่ที่ใคร) ----
+
+/** The pending-step fields the desk rule reads; nothing else on a step matters here. */
+export type CurrentDeskStepFields = {
+  sequenceNo: number;
+  status: ReimbursementApprovalStepStatus;
+  approverUserId?: string;
+  assignedApproverUserIds?: readonly string[];
+  invalidatedAt?: Date;
+};
+
+/**
+ * Who the ball is with right now, so a queue row can say it in one line.
+ *
+ * Only the approval stage names individuals — it is the one stage where the system truly
+ * assigns people (the frozen assignment snapshot). Finance review and payment are permission
+ * pools, so they answer with the pool and never with a guessed person. Terminal claims
+ * (paid/rejected/cancelled/voided) have no desk at all.
+ */
+export function currentDesk(input: {
+  status: ReimbursementRequestStatus;
+  financeReviewStatus?: ReimbursementFinanceReviewStatus;
+  steps?: readonly CurrentDeskStepFields[];
+  names?: Record<string, string>;
+}): ReimbursementCurrentDesk | undefined {
+  switch (input.status) {
+    case 'DRAFT': return { kind: 'REQUESTER' };
+    case 'FINANCE_REVIEW': return { kind: 'FINANCE' };
+    case 'READY_FOR_PAYMENT':
+    case 'PARTIALLY_PAID': return { kind: 'PAYMENT' };
+    // Transient: approved, waiting for the projection to route it on to one of the two.
+    case 'APPROVED': return { kind: input.financeReviewStatus === 'PENDING' ? 'FINANCE' : 'PAYMENT' };
+    case 'PENDING_APPROVAL': break;
+    default: return undefined;
+  }
+  const step = [...(input.steps ?? [])]
+    .filter((s) => s.status === 'PENDING' && !s.invalidatedAt)
+    .sort((a, b) => a.sequenceNo - b.sequenceNo)[0];
+  const names = [...new Set([
+    ...(step?.assignedApproverUserIds ?? []),
+    ...(step?.approverUserId ? [step.approverUserId] : []),
+  ])]
+    .map((userId) => input.names?.[userId])
+    .filter((name): name is string => !!name);
+  // Nobody resolvable (role-routed step, or names were never loaded): the client prints the
+  // pool label. A cuid on screen is as unusable as no answer at all.
+  return names.length > 0 ? { kind: 'APPROVER', names } : { kind: 'APPROVER' };
 }
 
 // ---- Receipt requirement ----

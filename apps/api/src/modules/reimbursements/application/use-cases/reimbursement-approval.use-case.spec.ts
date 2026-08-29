@@ -573,6 +573,7 @@ describe('ListApprovalQueueUseCase self-approval (audit H-18)', () => {
       findPolicy: async () => policy,
       listRequests: async () => [request],
       findActiveApproverUserIds: async (_c: string, ids: string[]) => new Set(ids),
+      getUserDisplayNames: async (_c: string, ids: string[]) => Object.fromEntries(ids.map((id) => [id, `คุณ ${id}`])),
     } as any;
   }
 
@@ -582,6 +583,8 @@ describe('ListApprovalQueueUseCase self-approval (audit H-18)', () => {
     });
     const items = await new ListApprovalQueueUseCase(queueRepo(assigned)).execute(ctx({ roles: ['STAFF'], permissions: [] }));
     assert.equal(items.length, 1);
+    // The row also says whose desk it is on, from the same frozen assignment.
+    assert.deepEqual(items[0]?.currentDesk, { kind: 'APPROVER', names: ['คุณ approver-1'] });
   });
 
   it('keeps a frozen self-task visible when a later role change removes its exemption', async () => {

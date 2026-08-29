@@ -1884,6 +1884,20 @@ export class PrismaReimbursementRepository {
     return this.toStep(row);
   }
 
+  /**
+   * Live pending steps of the given claims — the "อยู่ที่" desk of a list row. One query for the
+   * whole page, never one per row, and none at all when the page holds no PENDING_APPROVAL claim.
+   * (`listRequests` already includes them when the whole query is filtered to PENDING_APPROVAL.)
+   */
+  async findPendingApprovalSteps(companyId: string, requestIds: string[]): Promise<ReimbursementApprovalStepRecord[]> {
+    if (requestIds.length === 0) return [];
+    const rows = await this.prisma.client.reimbursementApprovalStep.findMany({
+      where: { companyId, reimbursementRequestId: { in: requestIds }, status: 'PENDING', invalidatedAt: null },
+      orderBy: { sequenceNo: 'asc' },
+    });
+    return rows.map((row) => this.toStep(row));
+  }
+
   // ---- Payment ----
 
   async assertClaimPaymentReady(companyId: string, requestId: string): Promise<void> {

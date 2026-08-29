@@ -165,6 +165,9 @@ export class ListApprovalQueueUseCase {
         await this.repo.findActiveApproverUserIds(ctx.companyId, userIds, key || undefined),
       ] as const),
     ));
+    // Every row here is PENDING_APPROVAL, so every desk names people. The ids are already
+    // collected above — one names lookup for the whole queue, no per-row query.
+    const approverNames = await this.repo.getUserDisplayNames(ctx.companyId, [...assignedIdsByBranch.values()].flat());
     const now = new Date();
     return rows.filter((request) => {
       const step = currentApprovalStep(request);
@@ -187,7 +190,7 @@ export class ListApprovalQueueUseCase {
     }).map((r) => {
       const policy = effectivePolicyForRequest(r, currentPolicy);
       const age = r.submittedAt ? ageHours(r.submittedAt, now) : 0;
-      return { ...toRequestSummary(r), ageHours: age, slaRisk: isSlaRisk(age, policy.slaHours) };
+      return { ...toRequestSummary(r, { approverNames }), ageHours: age, slaRisk: isSlaRisk(age, policy.slaHours) };
     });
   }
 }
