@@ -3,6 +3,7 @@
 // metadata so unknown/mistyped fields are rejected at the edge (whitelist + forbidNonWhitelisted).
 import {
   ArrayNotEmpty,
+  ArrayMaxSize,
   IsArray,
   IsBoolean,
   IsDateString,
@@ -46,7 +47,7 @@ export class CreateEmployeeDto implements CreateEmployeeInput {
   @IsIn(['THAI_NATIONAL_ID', 'PASSPORT']) identityType!: EmployeeIdentityType;
   @IsString() @IsNotEmpty() @MaxLength(32) identityNumber!: string;
   @IsString() @IsNotEmpty() @MaxLength(20) phoneNumber!: string;
-  @IsArray() @ArrayNotEmpty() @IsString({ each: true }) roleIds!: string[];
+  @IsArray() @ArrayNotEmpty() @ArrayMaxSize(1) @IsString({ each: true }) roleIds!: string[];
   @IsBoolean() @IsOptional() linkExistingUser?: boolean;
 }
 
@@ -68,7 +69,7 @@ export class UpdateEmployeeDto implements UpdateEmployeeInput {
   @IsIn(['THAI_NATIONAL_ID', 'PASSPORT']) @IsOptional() identityType?: EmployeeIdentityType;
   @IsString() @IsOptional() @IsNotEmpty() @MaxLength(32) identityNumber?: string;
   @IsString() @IsOptional() @IsNotEmpty() @MaxLength(20) phoneNumber?: string;
-  @IsArray() @IsOptional() @ArrayNotEmpty() @IsString({ each: true }) roleIds?: string[];
+  @IsArray() @IsOptional() @ArrayNotEmpty() @ArrayMaxSize(1) @IsString({ each: true }) roleIds?: string[];
   @IsIn(['ALL_BRANCHES', 'SELECTED_BRANCHES', 'DEFAULT_BRANCH_ONLY']) @IsOptional() branchScopeMode?: UpdateEmployeeInput['branchScopeMode'];
   @IsString() @IsOptional() defaultBranchId?: string | null;
   @IsArray() @IsOptional() @IsString({ each: true }) branchIds?: string[];

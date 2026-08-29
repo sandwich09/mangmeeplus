@@ -4,6 +4,27 @@ import { test } from 'node:test';
 
 const source = readFileSync(new URL('./IndividualPermissionsPrototypePage.tsx', import.meta.url), 'utf8');
 
+test('role changes replace rather than append and refresh every card from the saved employee', () => {
+  assert.match(source, /const updated = await updateEmployee\(companyId, selectedEmployee\.id, \{ roleIds: \[roleId\] \}\)/);
+  assert.match(source, /setEmployees\(\(current\) => current\.map\(\(employee\) => employee\.id === updated\.id \? updated : employee\)\)/);
+  assert.match(source, /aria-label="บทบาทปัจจุบัน" aria-live="polite"/);
+  assert.match(source, /setRoleFilter\('all'\)/);
+  assert.doesNotMatch(source, /เลือกได้หลายบทบาท|\.\.\.selectedRoleIds, roleId/);
+  assert.match(source, /ตำแหน่งงาน: \{selectedEmployee\.jobTitle/);
+  assert.match(source, /แก้สิทธิ์ของบทบาท/);
+});
+
+test('wizard and legacy forms select one role and preserve protected profile-only edits', () => {
+  const wizard = readFileSync(new URL('./AddEmployeePrototypePage.tsx', import.meta.url), 'utf8');
+  const legacy = readFileSync(new URL('./EmployeeAccessPages.tsx', import.meta.url), 'utf8');
+  assert.match(wizard, /setRoleIds\(\[item\.id\]\)/);
+  assert.match(wizard, /roleIds\.length !== 1/);
+  assert.match(wizard, /editingSelf \|\| editingProtectedRole\) \? \{ roleIds: undefined \}/);
+  assert.doesNotMatch(wizard, /เลือกได้มากกว่า 1 บทบาท|\.\.\.current, roleId/);
+  assert.match(legacy, /type="radio" name="create-employee-role"/);
+  assert.doesNotMatch(legacy, /\.\.\.prev, r\.id/);
+});
+
 test('employee detail empty state distinguishes company-empty from filter-empty', () => {
   assert.match(source, /employees\.length === 0 \? 'ยังไม่มีพนักงานในบริษัทนี้' : 'ไม่พบพนักงานที่ตรงกับตัวกรอง กรุณาปรับตัวกรองหรือคำค้นหา'/);
 });

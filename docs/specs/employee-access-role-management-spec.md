@@ -273,3 +273,7 @@ Supersedes the temporary-password rules above for newly created employees:
 - Draft resume, Finish, token issue and credential issue must serialize with removal and recheck existence before writing. No pending token or credential reset may be issued for a draft already removed.
 - Freed company identity/phone values can be reused. The preserved login still follows existing-account confirmation and the existing distinct company-email requirement; removal neither silently attaches an account nor resets its password.
 - Confirmation/success text must describe draft removal and retained login accurately. Stale/deleted drafts return actionable not-found feedback; newly activated employees return a draft-specific conflict, not a misleading concurrent-update message.
+
+## 15. Owner Update 2026-08-29 — One Role per Employee
+
+Employee create/role replacement selects exactly one role. Extra capabilities belong in the existing role-permission editor, not another employee role assignment. Keep job title descriptive and separate; show the saved role consistently in the employee header, list and permission summary. Existing grant, self-change, protected-role, branch and audit rules remain. See `docs/specs/employee-single-role-spec.md` for acceptance and the legacy-data transition boundary.

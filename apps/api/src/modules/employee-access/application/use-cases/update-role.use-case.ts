@@ -91,19 +91,12 @@ export class UpdateRoleUseCase {
           });
         }
 
-        const memberships = await tx.membershipRole.findMany({
+        // Update only assignments that still hold the source role. A delete/reinsert from a stale
+        // membership list could add a second role after another manager changes the employee.
+        const movedMemberships = await tx.membershipRole.updateMany({
           where: { roleId: existing.id, membership: { companyId: cmd.companyId } },
-          select: { membershipId: true },
+          data: { roleId: fork.id },
         });
-        if (memberships.length) {
-          await tx.membershipRole.deleteMany({
-            where: { roleId: existing.id, membershipId: { in: memberships.map((row) => row.membershipId) } },
-          });
-          await tx.membershipRole.createMany({
-            data: memberships.map((row) => ({ membershipId: row.membershipId, roleId: fork.id })),
-            skipDuplicates: true,
-          });
-        }
 
         if (forkCreated) {
           await tx.auditLog.create({
@@ -119,7 +112,7 @@ export class UpdateRoleUseCase {
               metadataJson: {
                 forkedFromRoleId: existing.id,
                 key: existing.key,
-                movedMemberships: memberships.length,
+                movedMemberships: movedMemberships.count,
               },
             },
           });

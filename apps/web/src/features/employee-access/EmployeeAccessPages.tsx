@@ -479,7 +479,7 @@ function CreateEmployeeForm({ companyId, roles, onCancel, onCreated }: { company
   const [error, setError] = useState<string | null>(null);
 
   const submit = async () => {
-    if (!roleIds.length) { setError('กรุณาเลือกบทบาทอย่างน้อย 1 บทบาท'); return; }
+    if (roleIds.length !== 1) { setError('กรุณาเลือกบทบาทเพียง 1 บทบาท'); return; }
     setSaving(true); setError(null);
     try {
       const result = await createEmployee(companyId, {
@@ -553,7 +553,7 @@ function CreateEmployeeForm({ companyId, roles, onCancel, onCreated }: { company
               'inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors',
               roleIds.includes(r.id) ? 'border-brand-200 bg-brand-50 text-brand-800' : 'border-gray-200 bg-white text-gray-600 hover:border-brand-200',
             )}>
-              <input type="checkbox" checked={roleIds.includes(r.id)} onChange={(e) => setRoleIds((prev) => e.target.checked ? [...prev, r.id] : prev.filter((id) => id !== r.id))} />
+              <input type="radio" name="create-employee-role" checked={roleIds.length === 1 && roleIds[0] === r.id} onChange={() => setRoleIds([r.id])} />
               {roleDisplayName(r, locale)}
             </label>
           ))}
@@ -605,6 +605,7 @@ function EmployeeDetailPanel({ companyId, employee, roles, onChanged, onHandoff,
   };
 
   const saveEmployee = async () => {
+    if (roleIds.length !== 1) { setError('กรุณาเลือกบทบาทเพียง 1 บทบาท'); return; }
     if (branchScopeMode === 'SELECTED_BRANCHES' && scopeBranchIds.length === 0) {
       setError('เลือกอย่างน้อย 1 สาขาสำหรับขอบเขตแบบเฉพาะสาขา'); return;
     }
@@ -651,7 +652,7 @@ function EmployeeDetailPanel({ companyId, employee, roles, onChanged, onHandoff,
                 'inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors',
                 roleIds.includes(r.id) ? 'border-brand-200 bg-brand-50 text-brand-800' : 'border-gray-200 bg-white text-gray-600 hover:border-brand-200',
               )}>
-                <input type="checkbox" checked={roleIds.includes(r.id)} onChange={(e) => setRoleIds((prev) => e.target.checked ? [...prev, r.id] : prev.filter((id) => id !== r.id))} />
+                <input type="radio" name={`employee-role-${employee.id}`} checked={roleIds.length === 1 && roleIds[0] === r.id} onChange={() => setRoleIds([r.id])} />
                 {roleDisplayName(r, locale)}
               </label>
             ))}

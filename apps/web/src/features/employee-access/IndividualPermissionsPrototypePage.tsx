@@ -334,7 +334,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
     optionCount: roleOptions.length,
   }) || isOperationalRoleTargetReadOnly(viewerPermissions, selectedRoles);
 
-  const selectedRoleNames = selectedEmployee?.roles.map(roleDisplayName).join(', ') ?? '';
+  const selectedRoleNames = selectedEmployee?.roles.map((role) => roleDisplayName(roleById.get(role.id) ?? role)).join(', ') ?? '';
   const allBranchRoles = selectedRoles.filter((role) => ALL_BRANCH_ROLE_KEYS.includes(role.key));
   const branchPickerLocked = allBranchRoles.length > 0;
   const scopeOutsideViewer = viewerBranchIds !== undefined && selectedEmployee && (
@@ -429,15 +429,19 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
     } finally { setResetting(false); }
   }
 
-  async function toggleSelectedRole(roleId: string) {
-    if (!selectedEmployee || rolePickerReadOnly) return;
-    const nextRoleIds = selectedRoleIds.includes(roleId)
-      ? (selectedRoleIds.length === 1 ? selectedRoleIds : selectedRoleIds.filter((id) => id !== roleId))
-      : [...selectedRoleIds, roleId];
-    if (nextRoleIds === selectedRoleIds) return;
+  async function changeSelectedRole(roleId: string) {
+    if (!selectedEmployee || rolePickerReadOnly || busy) return;
+    if (selectedRoleIds.length === 1 && selectedRoleIds[0] === roleId) {
+      setRolePickerOpen(false);
+      return;
+    }
     await withBusy('role', async () => {
       try {
-        await updateEmployee(companyId, selectedEmployee.id, { roleIds: nextRoleIds });
+        const updated = await updateEmployee(companyId, selectedEmployee.id, { roleIds: [roleId] });
+        setEmployees((current) => current.map((employee) => employee.id === updated.id ? updated : employee));
+        setRolePickerOpen(false);
+        // Keep the edited employee visible even when their old role was the active filter.
+        setRoleFilter('all');
       } catch (e) {
         // Permissions can be revoked mid-session: refetch so the picker stops offering what the
         // server now refuses (spec R10). withBusy still renders the generic forbidden message.
@@ -557,7 +561,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
             <div className="mt-5 grid max-h-[min(60vh,640px)] gap-2 overflow-y-auto pr-1 xl:max-h-[calc(100dvh-320px)]">
               {filteredEmployees.map((employee) => (
                 <EmployeeRow
-                  key={employee.id} employee={employee} roles={employee.roles}
+                  key={employee.id} employee={employee} roles={employee.roles.map((role) => roleById.get(role.id) ?? role)}
                   selected={employee.id === activeUserId} onSelect={() => selectEmployee(employee.id)}
                 />
               ))}
@@ -575,12 +579,15 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
         ) : (
           <div className="grid min-w-0 gap-5">
             <MangmeeCard className="relative p-5">
-              <div className="flex flex-wrap items-center justify-between gap-5">
+              <div className="flex flex-wrap items-center justify-between gap-5" data-testid="employee-detail-card">
                 <div className="flex min-w-0 flex-1 items-center gap-4">
                   <EmployeeAvatar employee={selectedEmployee} color={selectedRole ? colorForRole(selectedRole) : '#667085'} active={Boolean(selectedActive)} className="h-[52px] w-[52px] rounded-xl text-lg" />
                   <div className="min-w-0">
                     <div className="flex min-w-0 flex-wrap items-center gap-3">
                       <h2 className="truncate text-xl font-extrabold text-gray-900">{employeeShortName(selectedEmployee)}</h2>
+                      <span className="flex flex-wrap gap-1.5" aria-label="บทบาทปัจจุบัน" aria-live="polite">
+                        {selectedEmployee.roles.map((role) => <RoleBadge key={role.id} role={roleById.get(role.id) ?? role} />)}
+                      </span>
                       {selectedIsDraft && <DraftBadge />}
                     </div>
                     <p className="mt-1 truncate text-sm font-semibold text-gray-600">ตำแหน่งงาน: {selectedEmployee.jobTitle || 'ยังไม่ระบุ'}</p>
@@ -612,6 +619,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                             onClick={() => setRolePickerOpen((open) => !open)}
                             className="inline-flex h-9 max-w-full items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 hover:border-brand-200 hover:bg-brand-25 disabled:cursor-not-allowed disabled:opacity-60"
                             aria-haspopup="listbox"
+                            aria-label="เปลี่ยนบทบาทพนักงาน"
                             aria-expanded={rolePickerOpen}
                           >
                             <span className="max-w-52 truncate text-sm font-extrabold text-gray-700">{selectedRoleNames}</span>
@@ -622,8 +630,8 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                           <div role="listbox" className="absolute left-0 top-10 z-20 w-60 max-w-[min(15rem,80vw)] overflow-hidden rounded-xl border border-gray-200 bg-white py-1 shadow-lg">
                             {roleOptions.map((role) => (
                               <button
-                                key={role.id} type="button" role="option" aria-selected={selectedRoleIds.includes(role.id)} disabled={busy}
-                                onClick={() => void toggleSelectedRole(role.id)}
+                                key={role.id} type="button" role="option" aria-selected={selectedRoleIds.length === 1 && selectedRoleIds[0] === role.id} disabled={busy}
+                                onClick={() => void changeSelectedRole(role.id)}
                                 className={cx('flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm font-extrabold hover:bg-gray-50 disabled:opacity-60', selectedRoleIds.includes(role.id) ? 'text-brand-700' : 'text-gray-700')}
                               >
                                 <span className="min-w-0 truncate">{roleDisplayName(role)}</span>
@@ -637,7 +645,10 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                         ? <p className="mt-1 text-xs font-semibold text-gray-400">บทบาทเจ้าของกิจการเปลี่ยนไม่ได้</p>
                         : isSelfEmployee(selectedEmployee, viewerUserId)
                           ? <p className="mt-1 text-xs font-semibold text-gray-400">บทบาทของตัวเองต้องให้ผู้ดูแลคนอื่นเปลี่ยนให้</p>
-                          : <p className="mt-1 text-xs font-semibold text-gray-400">เลือกได้หลายบทบาท ระบบจะรวมสิทธิ์จากทุกบทบาท</p>}
+                          : <p className="mt-1 text-xs font-semibold text-gray-400">พนักงานมีได้ 1 บทบาท หากต้องการเพิ่มสิทธิ์ให้แก้ที่บทบาทและสิทธิ์</p>}
+                      {selectedEmployee.roles.length > 1 && (
+                        <p role="status" className="mt-1 text-xs font-semibold text-warning-700">ข้อมูลเดิมมีหลายบทบาท ให้ผู้มีสิทธิ์เลือก 1 บทบาทเพื่อแทนที่ทั้งหมด</p>
+                      )}
                     </div>
                   )}
 

@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable } from '@nestjs/common';
 import type { EmployeeCredentialHandoff } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
@@ -74,7 +74,7 @@ export class CreateEmployeeUseCase {
   ) {}
 
   async execute(cmd: CreateEmployeeCommand): Promise<CreateEmployeeResult> {
-    if (!cmd.roleIds.length) throw new ForbiddenException('At least one role is required.');
+    if (!Array.isArray(cmd.roleIds) || cmd.roleIds.length !== 1) throw new BadRequestException('Exactly one employee role is required.');
 
     const roles = await this.prisma.client.role.findMany({
       where: {

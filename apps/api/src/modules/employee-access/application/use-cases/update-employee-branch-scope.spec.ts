@@ -158,20 +158,39 @@ describe('UpdateEmployeeUseCase role assignment guards', () => {
     assert.deepEqual(writes.assignedRoleIds, ['r-sales']);
   });
 
-  it('persists the complete role union instead of replacing it with only the newest role', async () => {
-    const reviewerRole: FakeRole = {
-      id: 'r-reviewer', key: 'REIMBURSEMENT_REVIEWER', isSystem: false,
-      permissions: [{ permission: { key: 'reimbursement.finance_review' } }],
-    };
-    const { prisma, writes } = makePrisma({ candidateRoles: [SALES_ROLE, reviewerRole] });
+  it('rejects empty, multiple, repeated and null roles without mutating access', async () => {
+    const { prisma, writes } = makePrisma();
+    for (const roleIds of [[], ['r-sales', 'r-staff'], ['r-sales', 'r-sales'], null]) {
+      await assert.rejects(
+        () => new UpdateEmployeeUseCase(prisma, CONFIG).execute({ ...baseCmd, roleIds: roleIds as any }),
+        /Exactly one employee role/,
+      );
+    }
+    assert.equal(writes.transactions, 0);
+    assert.equal(writes.assignedRoleIds, undefined);
+  });
 
+  it('replaces legacy multiple roles with the one explicitly selected and audits the removed role', async () => {
+    const { prisma, writes } = makePrisma({ candidateRoles: [SALES_ROLE], targetRoleRows: [
+      { roleId: 'r-sales', role: { key: 'SALES', isSystem: true } },
+      { roleId: 'r-staff', role: { key: 'STAFF', isSystem: true } },
+    ] });
     await new UpdateEmployeeUseCase(prisma, CONFIG).execute({
-      ...baseCmd,
-      requesterPermissions: [...baseCmd.requesterPermissions, 'crm.customer.read', 'reimbursement.finance_review'],
-      roleIds: ['r-sales', 'r-reviewer'],
+      ...baseCmd, requesterPermissions: [...baseCmd.requesterPermissions, 'crm.customer.read'], roleIds: ['r-sales'],
     });
+    assert.deepEqual(writes.assignedRoleIds, ['r-sales']);
+    assert.deepEqual(writes.auditArgs.data.metadataJson.roleDiff, { addedRoleIds: [], removedRoleIds: ['r-staff'] });
+    assert.equal(writes.profileUpdate.data.jobTitle, undefined);
+  });
 
-    assert.deepEqual(writes.assignedRoleIds.sort(), ['r-reviewer', 'r-sales']);
+  it('does not rewrite legacy roles on a profile-only edit', async () => {
+    const { prisma, writes } = makePrisma({ targetRoleRows: [
+      { roleId: 'r-sales', role: { key: 'SALES', isSystem: true } },
+      { roleId: 'r-staff', role: { key: 'STAFF', isSystem: true } },
+    ] });
+    await new UpdateEmployeeUseCase(prisma, CONFIG).execute({ ...baseCmd, jobTitle: 'พนักงานขาย' });
+    assert.equal(writes.assignedRoleIds, undefined);
+    assert.equal(writes.profileUpdate.data.jobTitle, 'พนักงานขาย');
   });
 
   it('allows an update when the resolver proves the disabled-feature role permission belongs to the requester', async () => {

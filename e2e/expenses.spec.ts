@@ -92,6 +92,49 @@ async function createExpenseWithReceipt(api: any, request: any, companyId: strin
 }
 
 test.describe('EXP — expenses + receipts', () => {
+  test('EXP-INPUT @smoke normalizes price and discount zeros while preserving four decimals', async ({ authedPage: page, api, companyId }) => {
+    const { items: branches } = await json<{ items: Array<{ id: string }> }>(
+      await api.get(`companies/${companyId}/branches?status=ACTIVE&pageSize=100`),
+    );
+    expect(branches.length).toBeGreaterThan(0);
+    const branchId = branches[0]!.id;
+    const created = await json<ExpenseSummary>(await api.post(`companies/${companyId}/expenses`, {
+      data: {
+        captureSource: 'WEB_MANUAL', branchId, expenseDate: civilDate(new Date()), vatMode: 'NO_VAT',
+        vendorNameSnapshot: unique('E2E amount input'), inputVatClaimStatus: 'NON_CLAIMABLE',
+        lines: [{ lineNumber: 1, description: 'Decimal input regression', quantity: '1', unitPrice: '1000', discountAmount: '0' }],
+      },
+    }));
+
+    for (const path of ['/expenses/manual', `/expenses/${created.id}`]) {
+      await gotoCompany(page, companyId, path);
+      if (path === '/expenses/manual') await page.getByRole('combobox', { name: 'สาขาของรายการ', exact: true }).selectOption(branchId);
+      const price = page.getByRole('spinbutton', { name: /^ราคาต่อหน่วย/ });
+      const discount = page.getByRole('spinbutton', { name: /^ส่วนลด/ });
+      for (const field of [price, discount]) {
+        await price.fill('1000');
+        await discount.fill('0');
+        await field.fill('');
+        await field.pressSequentially('0400');
+        await expect(field).toHaveValue('400');
+        await field.press('Tab');
+        await expect(field).toHaveValue('400');
+        // Paste-style replacement can normalize to the same state value as before.
+        await field.fill('000400');
+        await expect(field).toHaveValue('400');
+        await field.fill('');
+        await field.pressSequentially('0.402');
+        await expect(field).toHaveValue('0.402');
+        await field.fill('000.0042');
+        await expect(field).toHaveValue('0.0042');
+        expect(await field.evaluate((input) => (input as HTMLInputElement).validity.stepMismatch)).toBe(false);
+        await expect(field).not.toHaveAttribute('aria-invalid', 'true');
+        await field.fill('');
+        await expect(field).toHaveValue('');
+      }
+    }
+  });
+
   test('EXP-01 @smoke expenses list renders filters and table surface', async ({ authedPage, companyId }) => {
     await gotoCompany(authedPage, companyId, '/expenses');
     await expect(authedPage.getByRole('heading', { name: /ค่าใช้จ่าย|Expenses/i })).toBeVisible();
