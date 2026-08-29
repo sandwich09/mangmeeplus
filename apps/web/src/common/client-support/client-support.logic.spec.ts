@@ -48,6 +48,21 @@ describe('compatibility notice routing', () => {
     ]) assert.equal(isCompatibilityExemptPath(path), true, path);
   });
 
+  // P12-3b: the notice puts the requested path in `?next=`, so gating this route would render a
+  // page with a bearer token in its URL. The exchange redirects first; the notice fires there.
+  it('never gates the LINE handoff route, so a token cannot reach a rendered URL', () => {
+    assert.equal(isCompatibilityExemptPath('/l/AbCdEfGhIjKlMnOpQrStUvWxYz012345'), true);
+    assert.equal(shouldShowCompatibilityNotice({
+      pathname: '/l/AbCdEfGhIjKlMnOpQrStUvWxYz012345',
+      method: 'GET',
+      accept: 'text/html,application/xhtml+xml',
+      fetchDestination: 'document',
+      userAgent: IOS_15_LINE,
+    }), false);
+    // The destination it redirects to is still gated, which is where the notice belongs.
+    assert.equal(isCompatibilityExemptPath('/companies/co-1/expenses/exp-1'), false);
+  });
+
   it('gates only safe HTML navigations', () => {
     const base = {
       pathname: '/login',

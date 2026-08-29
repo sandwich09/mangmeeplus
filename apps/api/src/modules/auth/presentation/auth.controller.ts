@@ -45,6 +45,7 @@ import { LineLinkOauthUseCase } from '../application/use-cases/line-link-oauth.u
 import { CreateLineWebLoginTransactionUseCase } from '../application/use-cases/create-line-web-login-transaction.use-case';
 import { ApproveLineWebLoginTransactionUseCase } from '../application/use-cases/approve-line-web-login-transaction.use-case';
 import { RedeemLineWebLoginTransactionUseCase } from '../application/use-cases/redeem-line-web-login-transaction.use-case';
+import { ExchangeLineHandoffTokenUseCase } from '../application/use-cases/exchange-line-handoff-token.use-case';
 import { RefreshSessionUseCase } from '../application/use-cases/refresh-session.use-case';
 import { LogoutUseCase } from '../application/use-cases/logout.use-case';
 import { RevokeOtherSessionsUseCase } from '../application/use-cases/revoke-other-sessions.use-case';
@@ -97,6 +98,12 @@ class LineQrRedeemDto {
 
 class LineQrApproveDto {
   @IsString() @Matches(LINE_QR_CREDENTIAL_PATTERN) publicCode!: string;
+}
+
+/** P12-3b: 24 bytes base64url is 32 characters; the range tolerates a future TTL/size change
+ *  without loosening the alphabet, and anything outside it is refused before a query runs. */
+class LineHandoffExchangeDto {
+  @IsString() @Matches(/^[A-Za-z0-9_-]{20,128}$/) token!: string;
 }
 
 export class LineLinkDto {
@@ -199,6 +206,7 @@ export class AuthController {
     private readonly createLineWebLoginTransaction: CreateLineWebLoginTransactionUseCase,
     private readonly approveLineWebLoginTransaction: ApproveLineWebLoginTransactionUseCase,
     private readonly redeemLineWebLoginTransaction: RedeemLineWebLoginTransactionUseCase,
+    private readonly exchangeLineHandoffToken: ExchangeLineHandoffTokenUseCase,
     @Optional() @Inject(AuditService) private readonly audit: AuditService | null = null,
   ) {}
 
@@ -389,6 +397,27 @@ export class AuthController {
       publicCode: dto.publicCode,
       requestId: req.context.requestId,
     });
+  }
+
+  // ---- P12-3b LINE → web deep-link session handoff (spec §11) ----
+  // Public because that is the point: the token is the only credential and the browser opening the
+  // link may hold no session, or another person's. Deliberately NOT added to CLOSED_PUBLIC_PATHS —
+  // while platform access is CLOSED the exchange must fail closed like every other non-public route
+  // and land the user on /maintenance (spec §14).
+  @Public()
+  @Post('line/handoff/exchange')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Exchange a single-use LINE deep-link handoff token for a first-party session' })
+  @ApiBody({ type: LineHandoffExchangeDto })
+  @ApiResponse({ status: 200, description: 'Tokens issued, with the bound company and target path' })
+  @ApiResponse({ status: 403, description: 'Expired, used, unknown, or no longer authorised' })
+  @ApiResponse({ status: 429, description: 'Too many exchange attempts from this IP' })
+  async lineHandoffExchange(@Body() dto: LineHandoffExchangeDto, @Req() req: Request) {
+    if (!this.config.lineWebHandoffEnabled) {
+      throw new ForbiddenException('LINE login is not enabled.');
+    }
+    await this.authRateLimit.assertLineHandoffExchangeAllowed(trustedClientIp(req));
+    return this.exchangeLineHandoffToken.execute({ token: dto.token });
   }
 
   @Public()

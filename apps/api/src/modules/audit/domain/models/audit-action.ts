@@ -15,6 +15,9 @@ export const AuditAction = {
   /** P12-3a desktop QR login: the phone approved a transaction, and the desktop redeemed it. */
   AUTH_LINE_QR_APPROVE: 'auth.line_qr.approve',
   AUTH_LINE_QR_REDEEM: 'auth.line_qr.redeem',
+  /** P12-3b LINE → web deep-link handoff: a link was minted for a recipient, and a tap spent it. */
+  AUTH_LINE_HANDOFF_ISSUE: 'auth.line_handoff.issue',
+  AUTH_LINE_HANDOFF_EXCHANGE: 'auth.line_handoff.exchange',
   /** PDPA objection route (M-05 register §3.1): user toggled the LINE AI assistant. */
   AUTH_AI_ASSISTANT_PREFERENCE_UPDATE: 'auth.ai_assistant.preference_update',
   AUTH_COMPANY_SWITCH: 'auth.company.switch',

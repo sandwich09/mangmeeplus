@@ -110,6 +110,7 @@ import { LineMessageBufferService } from './application/line-message-buffer.serv
 import { LineIntakeStateRepository } from './infrastructure/line-intake-state.repository';
 // Item 10F: turn ledger (Redis Streams) + reclaim drain
 import { LineAiLedgerService } from './application/line-ai-ledger.service';
+import { LineHandoffLinkService } from './application/line-handoff-link.service';
 import { DrainLineLedgerUseCase } from './application/use-cases/drain-line-ledger.use-case';
 import { RecoverOrphanLineEventsUseCase } from './application/use-cases/recover-orphan-line-events.use-case';
 
@@ -205,6 +206,7 @@ const erpTools = [
     ProcessLineWebhookUseCase,
     LineMessageBufferService,
     LineAiLedgerService,
+    LineHandoffLinkService,
     LineIntakeStateRepository,
     DrainLineLedgerUseCase,
     RecoverOrphanLineEventsUseCase,

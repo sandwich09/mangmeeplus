@@ -195,6 +195,11 @@ export const apiConfigSchema = baseConfigSchema.extend({
   // contract keeps reporting `line` unavailable and the callback endpoint stays 403 until an
   // environment turns this on with both channel id and secret present.
   LINE_WEB_LOGIN_ENABLED: envBoolean.default(false),
+  // P12-3b LINE → web deep-link session handoff. Default OFF: with it off no token is ever minted,
+  // every LINE link keeps the plain URL it has today, and the exchange endpoint stays 403 — so the
+  // observable behaviour is byte-identical to the release before it. Rollout is additionally gated
+  // on the UAT link-preview measurement (spec §17 Q2 / G7).
+  LINE_WEB_HANDOFF_ENABLED: envBoolean.default(false),
   LINE_LIFF_ID: z.string().optional(),
   LINE_MESSAGING_CHANNEL_ID: z.string().optional(),
   LINE_MESSAGING_CHANNEL_SECRET: z.string().optional(),
@@ -360,6 +365,10 @@ export const apiConfigSchema = baseConfigSchema.extend({
   // The desktop polls every 2.5s for the 180s QR lifetime, so one full transaction costs ~72.
   LINE_QR_POLL_MAX_PER_IP: z.coerce.number().int().positive().default(90),
   LINE_QR_POLL_WINDOW_SECONDS: z.coerce.number().int().positive().default(60),
+  // P12-3b: the handoff exchange is unauthenticated and the token is the only credential, so the
+  // bucket bounds guessing. One tap costs one call; the allowance covers a household behind one NAT.
+  LINE_HANDOFF_EXCHANGE_MAX_PER_IP: z.coerce.number().int().positive().default(20),
+  LINE_HANDOFF_EXCHANGE_WINDOW_SECONDS: z.coerce.number().int().positive().default(60),
   // RBAC / tenant
   REQUIRE_COMPANY_CONTEXT: envBoolean.default(true),
   COMPANY_CONTEXT_HEADER: z.string().default('X-Company-Id'),

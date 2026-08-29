@@ -820,6 +820,39 @@ model LineWebLoginTransaction {
   @@index([expiresAt])
 }
 
+enum LineWebHandoffTokenStatus {
+  PENDING
+  USED
+  REVOKED
+  EXPIRED
+}
+
+/// P12-3b LINE → web deep-link session handoff. The row proves WHO a LINE message was sent to, never
+/// what they may do: every permission is re-resolved at page load. Only the sha256 of the 24-byte
+/// secret is stored, so a database reader cannot open the link. Single use — the exchange claims
+/// PENDING → USED atomically before it issues a session, so a second tap can never mint a second one.
+/// `targetPath` is server-stored, not read from the URL at exchange time, and it is bound to
+/// `companyId`: a token minted for company A cannot open company B.
+/// No FK, for the same reason LineWebLoginTransaction has none — this is a pre-session artifact whose
+/// lifetime is minutes and whose deletion must never cascade into user or company rows.
+model LineWebHandoffToken {
+  id          String                    @id @default(cuid())
+  tokenHash   String                    @unique
+  userId      String
+  companyId   String
+  lineUserId  String
+  targetPath  String
+  surface     String
+  status      LineWebHandoffTokenStatus @default(PENDING)
+  expiresAt   DateTime
+  usedAt      DateTime?
+  createdAt   DateTime                  @default(now())
+
+  @@index([userId, status])
+  @@index([companyId, status])
+  @@index([expiresAt])
+}
+
 model LineChannelBinding {
   id                    String        @id @default(cuid())
   companyId             String
