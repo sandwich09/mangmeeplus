@@ -13,6 +13,8 @@ import { LineLinkOauthUseCase } from './application/use-cases/line-link-oauth.us
 import { CreateLineWebLoginTransactionUseCase } from './application/use-cases/create-line-web-login-transaction.use-case';
 import { ApproveLineWebLoginTransactionUseCase } from './application/use-cases/approve-line-web-login-transaction.use-case';
 import { RedeemLineWebLoginTransactionUseCase } from './application/use-cases/redeem-line-web-login-transaction.use-case';
+import { MintLineHandoffTokenUseCase } from './application/use-cases/mint-line-handoff-token.use-case';
+import { ExchangeLineHandoffTokenUseCase } from './application/use-cases/exchange-line-handoff-token.use-case';
 import { RefreshSessionUseCase } from './application/use-cases/refresh-session.use-case';
 import { LogoutUseCase } from './application/use-cases/logout.use-case';
 import { RevokeOtherSessionsUseCase } from './application/use-cases/revoke-other-sessions.use-case';
@@ -80,6 +82,8 @@ export function selectAuthMailer(
     CreateLineWebLoginTransactionUseCase,
     ApproveLineWebLoginTransactionUseCase,
     RedeemLineWebLoginTransactionUseCase,
+    MintLineHandoffTokenUseCase,
+    ExchangeLineHandoffTokenUseCase,
     RefreshSessionUseCase,
     LogoutUseCase,
     RevokeOtherSessionsUseCase,
@@ -120,6 +124,8 @@ export function selectAuthMailer(
       ) => selectAuthMailer(config, disabledMailer, localConsoleMailer, sesMailer),
     },
   ],
-  exports: [AuthGuard, ResolveRequestContextUseCase, LineLoginVerifierAdapter, LineChannelBindingService, AuthRateLimitService, LegalAcceptanceService],
+  // P12-3b: `MintLineHandoffTokenUseCase` is exported so the LINE send boundary in `line-ai` can
+  // mint at delivery time. Minting stays in ERP Core — the AI Gateway never sees a token.
+  exports: [AuthGuard, ResolveRequestContextUseCase, LineLoginVerifierAdapter, LineChannelBindingService, AuthRateLimitService, LegalAcceptanceService, MintLineHandoffTokenUseCase],
 })
 export class AuthModule {}

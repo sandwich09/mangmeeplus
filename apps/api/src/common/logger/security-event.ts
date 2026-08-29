@@ -21,6 +21,13 @@ export const SECURITY_EVENT = {
   attachmentUploadRejected: 'attachment.upload.rejected',
   aiToolInvokeDenied: 'ai.tool.invoke.denied',
   /**
+   * P12-3b: a LINE deep-link handoff token was presented and refused. The token is a bearer
+   * credential in a chat log, so a burst of invalid ones is exactly the shape guessing takes —
+   * the same reason `auth.login.denied` exists. The refusal reason stays in audit; this line
+   * carries only the alarm-shaped name.
+   */
+  authLineHandoffDenied: 'auth.line_handoff.denied',
+  /**
    * M-05 register §6 tenant tripwire: a health-adjacent company (clinic, wellness/spa,
    * medical retail) just onboarded, so the deferred s.41 limb (b) and controller/processor
    * questions must be re-opened. Not a breach — a "come look at this" that would otherwise

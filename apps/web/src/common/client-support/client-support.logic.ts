@@ -65,6 +65,11 @@ const STATIC_FILE = /\.(?:avif|css|gif|ico|jpe?g|js|json|map|png|svg|txt|webmani
 export function isCompatibilityExemptPath(pathname: string): boolean {
   return pathname === '/api'
     || pathname.startsWith('/api/')
+    // P12-3b: `/l/<token>` is a route handler, and the notice would redirect it to
+    // `/unsupported-browser?next=/l/<token>` — an HTML page carrying a bearer token in its URL,
+    // which the handoff spec forbids outright. Exempting it costs the user nothing: the exchange
+    // 303s to the real destination, and the notice fires there instead, on a safe URL.
+    || pathname.startsWith('/l/')
     || pathname.startsWith('/legal/releases/')
     || EXEMPT_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`))
     || STATIC_FILE.test(pathname);
