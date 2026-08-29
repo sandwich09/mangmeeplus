@@ -526,7 +526,11 @@ input[type='date'],
 input[type='month'],
 input[type='time'],
 input[type='datetime-local'],
-input[type='week'] {
+input[type='week'],
+/* Same rule for <select>: a dark-mode device otherwise renders its native picker sheet dark
+   against this light-only app (iOS honors element-level color-scheme on newer versions;
+   older ones keep the system look — that part is OS UI the page cannot style). */
+select {
   color-scheme: light;
 }
 
