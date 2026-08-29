@@ -26,6 +26,7 @@ REIMBURSEMENT_BRIDGE_INPUT="${REIMBURSEMENT_BRIDGE:-false}"
 PARTIAL_INCIDENT_READONLY_INPUT="${PARTIAL_INCIDENT_READONLY:-false}"
 MAINTENANCE_BOOTSTRAP_READONLY_INPUT="${MAINTENANCE_BOOTSTRAP_READONLY:-false}"
 LINE_WEB_LOGIN_ENABLED_INPUT="${LINE_WEB_LOGIN_ENABLED:-}"
+LINE_WEB_HANDOFF_ENABLED_INPUT="${LINE_WEB_HANDOFF_ENABLED:-}"
 LINE_AI_EXACT_GREETING_ENABLED_INPUT="${LINE_AI_EXACT_GREETING_ENABLED:-}"
 LINE_AI_ADVISOR_MODE_INPUT="${LINE_AI_ADVISOR_MODE:-}"
 LINE_AI_LOADING_ON_ACCEPT_ENABLED_INPUT="${LINE_AI_LOADING_ON_ACCEPT_ENABLED:-}"
@@ -110,6 +111,24 @@ case "$LINE_WEB_LOGIN_ENABLED_INPUT" in true|false) ;; *)
 esac
 if [ "$DEPLOY_ENV" = production ] && [ "$LINE_WEB_LOGIN_ENABLED_INPUT" = true ]; then
   echo "ERROR: LINE_WEB_LOGIN_ENABLED=true is not activated for production yet" >&2
+  exit 2
+fi
+# P12-3b LINE→web deep-link handoff. Owner approved 2026-08-29 enabling on UAT after the Q2
+# link-preview measurement PASSED (evidence in line-deeplink-company-access-mismatch.md);
+# production stays off until the P12 activation gate passes, so an explicit production `true`
+# fails closed.
+if [ -z "$LINE_WEB_HANDOFF_ENABLED_INPUT" ]; then
+  if [ "$DEPLOY_ENV" = uat ]; then
+    LINE_WEB_HANDOFF_ENABLED_INPUT=true
+  else
+    LINE_WEB_HANDOFF_ENABLED_INPUT=false
+  fi
+fi
+case "$LINE_WEB_HANDOFF_ENABLED_INPUT" in true|false) ;; *)
+  echo "ERROR: LINE_WEB_HANDOFF_ENABLED must be exactly true or false" >&2; exit 2 ;;
+esac
+if [ "$DEPLOY_ENV" = production ] && [ "$LINE_WEB_HANDOFF_ENABLED_INPUT" = true ]; then
+  echo "ERROR: LINE_WEB_HANDOFF_ENABLED=true is not activated for production yet" >&2
   exit 2
 fi
 # LINE exact standalone greeting 0-call lane (latency spec §11.2; advisor plan Phase 0). Owner
@@ -485,6 +504,7 @@ SERVING_APPROVED_AI_PROVIDERS="${APPROVED_AI_PROVIDERS:-}"
 SERVING_QUEUE_ENABLED=true
 SERVING_MAINTENANCE_ACTIVE=false
 SERVING_LINE_WEB_LOGIN_ENABLED="$LINE_WEB_LOGIN_ENABLED_INPUT"
+SERVING_LINE_WEB_HANDOFF_ENABLED="$LINE_WEB_HANDOFF_ENABLED_INPUT"
 SERVING_LINE_AI_EXACT_GREETING_ENABLED="$LINE_AI_EXACT_GREETING_ENABLED_INPUT"
 SERVING_LINE_AI_ADVISOR_MODE="$LINE_AI_ADVISOR_MODE_INPUT"
 SERVING_LINE_AI_LOADING_ON_ACCEPT_ENABLED="$LINE_AI_LOADING_ON_ACCEPT_ENABLED_INPUT"
@@ -499,6 +519,7 @@ if [ "$PRODUCTION_SERVING_MODE_INPUT" = maintenance_only ]; then
   SERVING_QUEUE_ENABLED=false
   SERVING_MAINTENANCE_ACTIVE=true
   SERVING_LINE_WEB_LOGIN_ENABLED=false
+  SERVING_LINE_WEB_HANDOFF_ENABLED=false
   SERVING_LINE_AI_EXACT_GREETING_ENABLED=false
   SERVING_LINE_AI_ADVISOR_MODE=off
   SERVING_LINE_AI_LOADING_ON_ACCEPT_ENABLED=false
@@ -1528,6 +1549,7 @@ api_container_json() {
     --arg crmAutoReplyEnabled "$SERVING_CRM_AUTO_REPLY_ENABLED" \
     --arg aiEnabled "$SERVING_AI_ENABLED" \
     --arg lineWebLoginEnabled "$SERVING_LINE_WEB_LOGIN_ENABLED" \
+    --arg lineWebHandoffEnabled "$SERVING_LINE_WEB_HANDOFF_ENABLED" \
     --arg lineAiExactGreetingEnabled "$SERVING_LINE_AI_EXACT_GREETING_ENABLED" \
     --arg lineAiAdvisorMode "$SERVING_LINE_AI_ADVISOR_MODE" \
     --arg lineAiLoadingOnAcceptEnabled "$SERVING_LINE_AI_LOADING_ON_ACCEPT_ENABLED" \
@@ -1611,6 +1633,7 @@ api_container_json() {
         {name:"AI_GATEWAY_ENABLED", value:$aiEnabled},
         {name:"LINE_AI_LEDGER_ENABLED", value:$aiEnabled},
         {name:"LINE_WEB_LOGIN_ENABLED", value:$lineWebLoginEnabled},
+        {name:"LINE_WEB_HANDOFF_ENABLED", value:$lineWebHandoffEnabled},
         {name:"LINE_AI_EXACT_GREETING_ENABLED", value:$lineAiExactGreetingEnabled},
         {name:"LINE_AI_ADVISOR_MODE", value:$lineAiAdvisorMode},
         {name:"LINE_AI_LOADING_ON_ACCEPT_ENABLED", value:$lineAiLoadingOnAcceptEnabled},
