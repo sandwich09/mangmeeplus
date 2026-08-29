@@ -1,6 +1,6 @@
 # พนักงานหลายบริษัทบน LINE (Active-Membership Policy) — Spec P13
 
-สถานะ: **BLOCKED BY OWNER POLICY** — architecture/test boundary ครบ แต่ห้ามเปลี่ยน owner-all guard จน Owner ยืนยัน §5; งาน discovery หลัง P12 อ้าง [Four-lane Gap Closure Plan](../plans/mangmee-four-lane-gap-closure-plan-th.md#p13--line-multi-company-staff)
+สถานะ: **CORE IMPLEMENTED 2026-08-29** — Owner ยืนยัน §5 ข้อ 1 ในแชต 2026-08-29 ("พนักงานร้าน A + เจ้าของร้าน B ควรจะใช้ได้เลย") และสั่งลงมือทันที; §2 ข้อ 1–3 ลงโค้ดแล้ว (ถอด owner-all guard ทั้งสองจุด: `process-line-webhook.use-case.ts` resolver+`/companies`/`/company` และ `link-line-identity.use-case.ts` ตอน link พร้อม explicit companyId; picker แสดงทุก ACTIVE membership; permission ยังคำนวณสดต่อ turn ต่อบริษัท ไม่ union) — §2 ข้อ 4–5 ตรวจแล้วเป็นจริงโดยโครงสร้างเดิม: `lineIntakePendingMedia` / intake `stateOwner` / `loadConversationContext` / turn persistence ล้วน key ด้วย `companyId` อยู่แล้ว draft+สื่อค้างของบริษัทหนึ่งจึงไม่โผล่ในอีกบริษัทตอนสลับ. §3 เรื่อง flag `LINE_MULTI_COMPANY_STAFF_ENABLED` ถูก supersede โดยคำสั่งตรงของ Owner (ไม่ gate ด้วย flag); ค้างเป็น follow-up: picker แสดงบทบาท+onboarding copy (§3), regression spec ข้ามบริษัทหลังสลับแบบ explicit (§4), §5 ข้อ 2 ยังไม่ตัดสิน; งาน discovery หลัง P12 อ้าง [Four-lane Gap Closure Plan](../plans/mangmee-four-lane-gap-closure-plan-th.md#p13--line-multi-company-staff)
 
 ที่มา: [แผนหลัก P13 + §13.5 กฎ multi-company](../plans/mangmee-brain-2-5-day-priority-plan-th.md); ปิด MULTI-01, MULTI-02 (§13.3)
 
