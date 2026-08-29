@@ -2,7 +2,7 @@
 
 import { reimbursementIncurredDateError, todayCivilDate } from '@watchdog-bms/contracts';
 import { apiErrorMessage, translateApiError } from '@/common/api/api-error-message';
-import { ERROR_CODE_LABELS } from './reimbursements.model';
+import { CURRENT_DESK_LABELS, currentDeskText, ERROR_CODE_LABELS } from './reimbursements.model';
 
 /**
  * The API answers with stable error codes, sometimes several joined by commas
@@ -222,6 +222,69 @@ export function reimbursementListScope(permissions: readonly string[]): 'related
  */
 export function parseHubTab(value: string | null | undefined, visible: readonly HubTab[] = HUB_TABS): HubTab {
   return visible.includes(value as HubTab) ? (value as HubTab) : (visible[0] ?? 'mine');
+}
+
+// ---- Claim timeline (เส้นทางของใบเบิก) ----
+
+export type ClaimTimelineRow = {
+  key: string;
+  /** done = already happened, current = what the claim is waiting on, future = not reached yet. */
+  state: 'done' | 'current' | 'future';
+  label: string;
+  /** ISO — the drawer formats it; the helper stays free of date formatting. */
+  date?: string;
+};
+
+/**
+ * The claim's journey as a list, built only from what the detail payload already carries.
+ * Steps that cannot apply are left out rather than shown as never-reached: a refusal ends
+ * the journey there, and a claim whose policy path skipped finance review never shows that row.
+ */
+export function buildClaimTimeline(detail: any): ClaimTimelineRow[] {
+  const status = String(detail?.status ?? '');
+  const rows: ClaimTimelineRow[] = [];
+  rows.push(detail?.submittedAt
+    ? { key: 'submit', state: 'done', label: 'ยื่นใบ', date: detail.submittedAt }
+    : { key: 'submit', state: 'current', label: 'รอผู้ยื่นส่งคำขอ' });
+
+  // The waiting row names the same people the queue line does — one resolved list, never two.
+  const waitingFor = currentDeskText(detail?.currentDesk) ?? CURRENT_DESK_LABELS.APPROVER;
+  let refused = status === 'REJECTED';
+  for (const step of [...(detail?.approvalSteps ?? [])].sort((a: any, b: any) => a.sequenceNo - b.sequenceNo)) {
+    if (step.invalidatedAt) continue;
+    const key = `step-${step.id ?? step.sequenceNo}`;
+    const decidedBy = step.decidedByName ?? step.approverName ?? CURRENT_DESK_LABELS.APPROVER;
+    if (step.status === 'APPROVED') rows.push({ key, state: 'done', label: `อนุมัติโดย ${decidedBy}`, date: step.decidedAt });
+    else if (step.status === 'REJECTED') { rows.push({ key, state: 'done', label: `ปฏิเสธโดย ${decidedBy}`, date: step.decidedAt }); refused = true; }
+    else if (step.status === 'PENDING') rows.push({ key, state: 'current', label: `กำลังรอ ${waitingFor} อนุมัติ` });
+  }
+  if (refused) return rows;
+  if (status === 'CANCELLED' || status === 'VOIDED') {
+    return [...rows, { key: 'terminal', state: 'done', label: status === 'CANCELLED' ? 'ยกเลิกคำขอ' : 'เพิกถอนรายการ' }];
+  }
+
+  const financeDone = detail?.financeReviewStatus === 'APPROVED_FOR_PAYMENT' && !!detail?.financeReviewedAt;
+  const waitingFinance = status === 'FINANCE_REVIEW';
+  // NOT_REQUIRED on a claim already past approval means the policy path went straight to payment.
+  const financeSkipped = detail?.financeReviewStatus === 'NOT_REQUIRED'
+    && ['READY_FOR_PAYMENT', 'PARTIALLY_PAID', 'PAID'].includes(status);
+  if (financeDone) {
+    rows.push({
+      key: 'finance',
+      state: 'done',
+      label: detail.financeReviewedByName ? `ฝ่ายการเงินตรวจแล้ว โดย ${detail.financeReviewedByName}` : 'ฝ่ายการเงินตรวจแล้ว',
+      date: detail.financeReviewedAt,
+    });
+  } else if (!financeSkipped) {
+    rows.push({ key: 'finance', state: waitingFinance ? 'current' : 'future', label: waitingFinance ? 'กำลังรอฝ่ายการเงินตรวจ' : 'รอฝ่ายการเงินตรวจ' });
+  }
+
+  const paid = (detail?.payments ?? []).find((p: any) => p.status === 'RECORDED');
+  const waitingPayment = status === 'READY_FOR_PAYMENT' || status === 'PARTIALLY_PAID';
+  rows.push(paid
+    ? { key: 'payment', state: 'done', label: paid.paidByName ? `จ่ายแล้ว โดย ${paid.paidByName}` : 'จ่ายแล้ว', date: paid.paidAt }
+    : { key: 'payment', state: waitingPayment ? 'current' : 'future', label: waitingPayment ? 'กำลังรอฝ่ายการเงินบันทึกจ่าย' : 'รอบันทึกจ่าย' });
+  return rows;
 }
 
 export function formatMoney(v: unknown, currency?: string): string {

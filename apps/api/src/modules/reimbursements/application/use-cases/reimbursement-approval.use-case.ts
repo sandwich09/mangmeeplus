@@ -5,7 +5,8 @@ import { AuditService } from '../../../audit/application/audit.service';
 import { ReimbursementProjectionOrchestratorService } from '../services/reimbursement-projection-orchestrator.service';
 import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
 import type { ReimbursementApprovalStepRecord, ReimbursementRequestRecord } from '../../domain/models/reimbursement.model';
-import { toRequestSummary, toRequestDetail } from '../dto/reimbursement.mapper';
+import { toRequestSummary, detailWithFileNames } from '../dto/reimbursement.mapper';
+import { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
 import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
 import {
   isSelfApproval,
@@ -165,6 +166,9 @@ export class ListApprovalQueueUseCase {
         await this.repo.findActiveApproverUserIds(ctx.companyId, userIds, key || undefined),
       ] as const),
     ));
+    // Every row here is PENDING_APPROVAL, so every desk names people. The ids are already
+    // collected above — one names lookup for the whole queue, no per-row query.
+    const approverNames = await this.repo.getUserDisplayNames(ctx.companyId, [...assignedIdsByBranch.values()].flat());
     const now = new Date();
     return rows.filter((request) => {
       const step = currentApprovalStep(request);
@@ -187,7 +191,7 @@ export class ListApprovalQueueUseCase {
     }).map((r) => {
       const policy = effectivePolicyForRequest(r, currentPolicy);
       const age = r.submittedAt ? ageHours(r.submittedAt, now) : 0;
-      return { ...toRequestSummary(r), ageHours: age, slaRisk: isSlaRisk(age, policy.slaHours) };
+      return { ...toRequestSummary(r, { approverNames }), ageHours: age, slaRisk: isSlaRisk(age, policy.slaHours) };
     });
   }
 }
@@ -198,6 +202,7 @@ export class ApproveReimbursementUseCase {
     private readonly repo: PrismaReimbursementRepository,
     private readonly audit: AuditService,
     private readonly projections: ReimbursementProjectionOrchestratorService,
+    private readonly evidence: ReimbursementEvidenceService,
   ) {}
 
   async execute(ctx: RequestContext, id: string, comment?: string, expectedHash?: string): Promise<ReimbursementRequestDetail> {
@@ -365,7 +370,7 @@ export class ApproveReimbursementUseCase {
     }
 
     const detail = await this.repo.findRequestById(ctx.companyId, id, true);
-    return toRequestDetail(detail!);
+    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, detail!);
   }
 }
 
@@ -374,6 +379,7 @@ export class RejectReimbursementUseCase {
   constructor(
     private readonly repo: PrismaReimbursementRepository,
     private readonly audit: AuditService,
+    private readonly evidence: ReimbursementEvidenceService,
   ) {}
 
   async execute(ctx: RequestContext, id: string, reason: string): Promise<ReimbursementRequestDetail> {
@@ -454,6 +460,6 @@ export class RejectReimbursementUseCase {
     });
 
     const detail = await this.repo.findRequestById(ctx.companyId, id, true);
-    return toRequestDetail(detail!);
+    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, detail!);
   }
 }

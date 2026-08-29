@@ -18,6 +18,10 @@ import type {
   ReimbursementLineRecord,
   ReimbursementClaimSignatureRecord,
 } from '../../domain/models/reimbursement.model';
+import { claimSignatureAckHash, computeReceiptRequirement, currentDesk } from '../../domain/logic/reimbursement.logic';
+import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
+import type { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
+import type { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
 
 const iso = (d?: Date): string | undefined => (d ? d.toISOString() : undefined);
 
@@ -46,8 +50,16 @@ export function toPolicySummary(p: ReimbursementPolicyRecord): ReimbursementPoli
 
 export function toRequestSummary(
   r: ReimbursementRequestRecord,
-  options: { allowMissingReceiptWithReason?: boolean } = {},
+  // `approverNames` is what turns a PENDING_APPROVAL desk from the pool label into named
+  // people; a caller that has not loaded the names simply gets the pool.
+  options: { allowMissingReceiptWithReason?: boolean; approverNames?: Record<string, string> } = {},
 ): ReimbursementRequestSummary {
+  const desk = currentDesk({
+    status: r.status,
+    financeReviewStatus: r.financeReviewStatus,
+    steps: r.approvalSteps,
+    names: options.approverNames,
+  });
   return {
     id: r.id,
     companyId: r.companyId,
@@ -63,6 +75,7 @@ export function toRequestSummary(
     currency: r.currency,
     incurredDate: r.incurredDate.toISOString(),
     status: r.status,
+    ...(desk ? { currentDesk: desk } : {}),
     financeReviewStatus: r.financeReviewStatus,
     paymentStatus: r.paymentStatus,
     duplicateStatus: r.duplicateStatus,
@@ -152,7 +165,8 @@ export function toLineSummary(l: ReimbursementLineRecord, attachmentFileName?: s
 export function detailUserIds(r: ReimbursementRequestRecord): string[] {
   return [
     r.financeReviewedByUserId,
-    ...(r.approvalSteps ?? []).flatMap((s) => [s.approverUserId, s.decisionByUserId]),
+    // The frozen assignees too: they are the people the timeline's "กำลังรอ" row names.
+    ...(r.approvalSteps ?? []).flatMap((s) => [s.approverUserId, s.decisionByUserId, ...(s.assignedApproverUserIds ?? [])]),
     ...(r.payments ?? []).map((p) => p.paidByUserId),
     ...(r.claimSignatures ?? []).map((s) => s.signedByUserId),
   ].filter((id): id is string => !!id);
@@ -192,6 +206,7 @@ export function toRequestDetail(
   return {
     ...toRequestSummary(r, {
       allowMissingReceiptWithReason: extras.allowMissingReceiptWithReason,
+      approverNames: displayNames,
     }),
     lines: (r.lines ?? []).map((l) => toLineSummary(l, l.attachmentId ? lineAttachmentFileNames[l.attachmentId] : undefined)),
     currentApproverUserId: r.currentApproverUserId,
@@ -213,4 +228,43 @@ export function toRequestDetail(
     signatures: (r.claimSignatures ?? []).map((s) => toClaimSignatureSummary(s, displayNames)),
     signedCopies: extras.signedCopies ?? [],
   };
+}
+
+/**
+ * Detail shape shared by EVERY path that returns a claim detail: line receipts resolve to
+ * file names and approver/reviewer/payer/signer ids resolve to display names (one batched
+ * lookup — the drawer must never render a cuid). The decision and payment endpoints keep
+ * their response in the drawer on purpose (a frozen assignee may lose read permission the
+ * moment they decide), so their responses must be as complete as a GET. Lives in the mapper
+ * because the request, approval, and finance use-cases all need it and already import here.
+ */
+export async function detailWithFileNames(
+  repo: PrismaReimbursementRepository,
+  evidence: ReimbursementEvidenceService,
+  companyId: string,
+  req: ReimbursementRequestRecord,
+): Promise<ReimbursementRequestDetail> {
+  const [primaryFileName, lineFileNames, displayNames, signedCopies, policy] = await Promise.all([
+    evidence.getAttachmentFileName(companyId, req.primaryAttachmentId),
+    evidence.getAttachmentFileNames(companyId, (req.lines ?? []).map((line) => line.attachmentId ?? '')),
+    repo.getUserDisplayNames(companyId, detailUserIds(req)),
+    repo.listSignedClaimFormCopies(companyId, req.id),
+    repo.findPolicy(companyId, null).then(effectivePolicy),
+  ]);
+  const requestPolicy = req.status === 'DRAFT' ? policy : effectivePolicyForRequest(req, policy);
+  const receiptRequirementStatus = req.status === 'DRAFT'
+    ? computeReceiptRequirement({
+        requireReceipt: requestPolicy.requireReceipt,
+        allowMissingReceiptWithReason: requestPolicy.allowMissingReceiptWithReason,
+        lines: req.lines ?? [],
+        missingReceiptReason: req.missingReceiptReason,
+      }).status
+    : req.receiptRequirementStatus;
+  // The ack hash is the LIVE claim, not the submit-frozen approval hash: a signer
+  // acknowledges what the form prints right now.
+  return toRequestDetail({ ...req, receiptRequirementStatus }, primaryFileName, lineFileNames, displayNames, {
+    signedCopies: toSignedCopySummaries(signedCopies),
+    claimSignatureAckHash: claimSignatureAckHash(req),
+    allowMissingReceiptWithReason: requestPolicy.allowMissingReceiptWithReason,
+  });
 }

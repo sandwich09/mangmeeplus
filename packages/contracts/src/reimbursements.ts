@@ -236,6 +236,21 @@ export type ReimbursementLineSummary = {
   linkedExpenseId?: string;
 };
 
+// ---- Current desk (อยู่ที่ใคร) ----
+//
+// A claim never said who the ball is with. Individuals are named only for the
+// approval stage — the one stage where the system really does assign people.
+// Every other desk is a permission pool and prints as the pool, never as a
+// guessed person.
+
+export type ReimbursementCurrentDeskKind = 'REQUESTER' | 'APPROVER' | 'FINANCE' | 'PAYMENT';
+
+export type ReimbursementCurrentDesk = {
+  kind: ReimbursementCurrentDeskKind;
+  /** Assigned approver display names; absent for pool desks and when no name resolves. */
+  names?: string[];
+};
+
 // ---- Request ----
 
 export type ReimbursementRequestSummary = {
@@ -253,6 +268,8 @@ export type ReimbursementRequestSummary = {
   currency: string;
   incurredDate: string;
   status: ReimbursementRequestStatus;
+  /** Who the claim is waiting on now. Absent on terminal claims (paid/rejected/cancelled/voided). */
+  currentDesk?: ReimbursementCurrentDesk;
   financeReviewStatus: ReimbursementFinanceReviewStatus;
   paymentStatus: ReimbursementPaymentStatus;
   duplicateStatus: ReimbursementDuplicateStatus;

@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { CASUAL_CONVERSATION_SYSTEM_PROMPT, ResponseComposerAgent } from './response-composer.agent';
+import { CASUAL_CONVERSATION_SYSTEM_PROMPT, ResponseComposerAgent, isJokeRequest } from './response-composer.agent';
+import { MANGMEE_JOKE_BANK } from './mangmee-joke-bank';
 import type { IModelProvider, ProviderOutput } from '../infrastructure/provider/provider.port';
 
 // Stub provider: receives the JSON `{ language, reply }` the language layer sends and returns
@@ -130,6 +131,66 @@ describe('ResponseComposerAgent – Nong Mangmee zero-tool replies', () => {
     };
     const reply = await agent.composeCasual('ขอเรื่องเม้าท์ขำๆ แบบไม่พาดพิงใครหน่อย', provider);
     assert.equal(reply, 'ได้เลยค่ะ 😄 เรื่องคลาสสิกในออฟฟิศ: ใครเอาข้าวเพื่อนออกจากตู้เย็น แล้วไม่มีใครสารภาพสักคน ทั้งที่กล้องวงจรปิดก็อยู่ตรงนั้น!');
+  });
+});
+
+// Owner 2026-08-30: jokes come from a curated bank first, so the model stops reaching for nerd
+// humour. The bank is customer-facing copy — these invariants are what a future curator's new
+// entry has to survive.
+describe('MANGMEE_JOKE_BANK – curated Thai joke bank', () => {
+  const CATEGORIES = ['กวน', 'ซีรีส์', 'วาย', 'ยุทธภพ', 'ไอดอล', 'กระแส'];
+
+  it('is non-empty and every entry is well formed', () => {
+    assert.ok(MANGMEE_JOKE_BANK.length > 0);
+    for (const joke of MANGMEE_JOKE_BANK) {
+      assert.ok(joke.id.trim().length > 0, `empty id: ${JSON.stringify(joke)}`);
+      assert.ok(CATEGORIES.includes(joke.category), `bad category: ${joke.category}`);
+      assert.ok(joke.text.trim().length > 0, `empty text: ${joke.id}`);
+      assert.ok(joke.text.length <= 200, `${joke.id} is ${joke.text.length} chars, over the 200 cap`);
+    }
+  });
+
+  it('has unique ids and no duplicated joke', () => {
+    assert.equal(new Set(MANGMEE_JOKE_BANK.map((joke) => joke.id)).size, MANGMEE_JOKE_BANK.length);
+    assert.equal(new Set(MANGMEE_JOKE_BANK.map((joke) => joke.text)).size, MANGMEE_JOKE_BANK.length);
+  });
+
+  // A category with one or two lines gets repetitive within a single conversation.
+  it('carries at least 4 entries in every category except the deliberately empty กระแส', () => {
+    for (const category of CATEGORIES.filter((c) => c !== 'กระแส')) {
+      const count = MANGMEE_JOKE_BANK.filter((joke) => joke.category === category).length;
+      assert.ok(count >= 4, `${category} has only ${count} entries`);
+    }
+  });
+});
+
+describe('isJokeRequest – gates the bank onto the prompt', () => {
+  it('is true for a Thai or English ask for a joke', () => {
+    for (const text of ['มีมุขอื่นอีกไหม', 'ขอมุกหน่อย', 'เล่าอะไรตลกให้ฟังหน่อย', 'เล่าอะไรฮา', 'ขอเรื่องขำๆ หน่อยค่ะ', 'tell me a joke']) {
+      assert.equal(isJokeRequest(text), true, text);
+    }
+  });
+
+  it('is false for ordinary chit-chat and business asks', () => {
+    for (const text of ['สวัสดีค่ะ', 'ขอบคุณมากนะคะ', 'วันนี้เหนื่อยจัง', 'ค่าใช้จ่ายเดือนนี้เท่าไหร่', 'ยอดขายวันนี้', 'อยากกินชานมไข่มุก']) {
+      assert.equal(isJokeRequest(text), false, text);
+    }
+  });
+
+  it('appends the bank to the casual prompt ONLY when a joke is asked for', async () => {
+    const agent = new ResponseComposerAgent();
+    let seen = '';
+    const provider: IModelProvider = {
+      async generateText(input) {
+        seen = input.systemPrompt ?? '';
+        return { ok: true, text: 'ได้เลยค่ะ 😊' };
+      },
+    };
+    await agent.composeCasual('ขอมุกหน่อย', provider);
+    assert.match(seen, /Joke bank — pick ONE/);
+    assert.ok(seen.includes(MANGMEE_JOKE_BANK[0]!.text), 'bank entries ride the joke turn');
+    await agent.composeCasual('วันนี้อากาศดีนะ', provider);
+    assert.equal(seen, CASUAL_CONVERSATION_SYSTEM_PROMPT, 'ordinary casual turns must not pay for the bank');
   });
 });
 

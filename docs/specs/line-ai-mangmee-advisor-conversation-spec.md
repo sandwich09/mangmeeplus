@@ -515,6 +515,17 @@ prompt-injection isolation และ citation gate
 durable preference เป็น phase ภายหลังแบบ opt-in เท่านั้น เช่นชื่อเรียก ภาษาหลัก และระดับความกระชับ ผู้ใช้ต้อง
 ดู/ลบได้ และ preference ไม่มีวันกลายเป็น business truth หรือ permission
 
+**Owner decision 2026-08-30 — มุกและ fandom banter**
+
+- มุกใช้แบบ hybrid: ดึงจาก curated joke bank (`apps/ai-gateway/src/modules/line-ai/agents/mangmee-joke-bank.ts`)
+  ก่อนเสมอ แล้วปรับถ้อยคำได้เล็กน้อย; improvise ได้เฉพาะเมื่อไม่มีอันไหนเข้ากับจังหวะ และยังต้องอยู่ใน
+  humour register เดิม (คำถามกวนๆ/เล่นคำ ที่เข้าใจทันที ไม่ต้องใช้พื้นฐานสถิติ คณิตศาสตร์ หรือบัญชี)
+- bank ขึ้น prompt เฉพาะเทิร์นที่ผู้ใช้ขอมุกจริง ๆ (`isJokeRequest`) เทิร์น casual ปกติไม่ต้องจ่ายค่า token นี้
+- banter แนว fandom ได้ในระดับ "genre terms" เท่านั้น — ซีรีส์/ละคร, วายไทย, ยุทธภพ/เทพเซียน, ไอดอล —
+  ใช้ trope ไม่ใช่ชื่อจริง; ห้ามเอ่ยชื่อบุคคล วง รายการ หรือแบรนด์จริงขึ้นมาเอง
+- ไม่ใส่ disclaimer ทำนอง "ข้อมูลอาจไม่ล่าสุด" แบบเหมารวม (Owner ปฏิเสธ เพราะทำให้บทสนทนาแข็ง);
+  เคสเสี่ยงเดียวคือผู้ใช้เอ่ยชื่อจริงแล้วถามข่าว/สถานะปัจจุบัน ซึ่ง live-facts rule เดิมครอบคลุมอยู่แล้ว
+
 ## 12. UX and LINE presentation
 
 - first meaningful response คือ metric หลัก ไม่ใช่ bubble `ขอคิดสักครู่`

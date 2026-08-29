@@ -3,6 +3,11 @@ import assert from 'node:assert/strict';
 import { RecordReimbursementPaymentUseCase } from './reimbursement-finance.use-case';
 import { GenerateJournalFromSourceUseCase } from '../../../ledger/application/use-cases/journal.use-case';
 
+// Evidence fake for detailWithFileNames — decision endpoints now return the same hydrated
+// detail as a GET (names + file names), so their specs feed the assembler harmless lookups.
+const fakeDetailEvidence = { getAttachmentFileName: async () => undefined, getAttachmentFileNames: async () => ({}) };
+
+
 // GAP-02 Phase 3: the settlement leg is a real posting source. Record leaves the
 // payment 'pending'; generate posts Dr 2130-01 / Cr 1110-01 and flips 'posted'.
 
@@ -29,6 +34,8 @@ describe('RecordReimbursementPaymentUseCase — postingStatus lifecycle', () => 
     const repo = {
       findRequestById: async (_c: string, _id: string, withRel?: boolean) => (withRel ? { ...req, approvalSteps: [], payments, duplicateCandidates: [] } : req),
       findPolicy: async () => null,
+      getUserDisplayNames: async () => ({}),
+      listSignedClaimFormCopies: async () => [],
       listOpenDuplicateCandidates: async () => [],
       // Preflight before the payment number is reserved; the repository repeats it under the lock.
       assertClaimPaymentReady: async () => undefined,
@@ -43,7 +50,7 @@ describe('RecordReimbursementPaymentUseCase — postingStatus lifecycle', () => 
     const reserve = { execute: async () => ({ id: 'seq-1', documentNumber: 'RBPAY-202602-000001' }) } as any;
     const commit = { execute: async () => undefined } as any;
 
-    const uc = new RecordReimbursementPaymentUseCase(repo, noopAudit, noopOutbox, reserve, commit);
+    const uc = new RecordReimbursementPaymentUseCase(repo, noopAudit, noopOutbox, reserve, commit, fakeDetailEvidence as any);
     const detail: any = await uc.execute(ctx(['reimbursement.payment.record']), 'rb-1', { paidAmount: '500.0000', paymentMethod: 'CASH', paidAt: '2026-02-01T00:00:00.000Z' });
     assert.equal(detail.payments[0].postingStatus, 'pending');
   });

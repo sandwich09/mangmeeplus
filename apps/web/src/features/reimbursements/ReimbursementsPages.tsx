@@ -32,14 +32,14 @@ import {
   FINANCE_REVIEW_LABELS, PAYMENT_METHOD_LABELS, RECEIPT_REQUIREMENT_LABELS, DUPLICATE_STATUS_LABELS,
   APPROVAL_STEP_STATUS_LABELS, REIMBURSEMENT_CREATE_UNAVAILABLE,
   CLAIM_SIGNATURE_ROLES, CLAIM_SIGNATURE_ROLE_LABELS, canUploadSignedCopy, eligibleSignatureRoles,
-  canVoidRecordedPayment, reimbursementOwnActions, reimbursementSubmitReadiness, type ClaimSignatureRole,
+  canVoidRecordedPayment, currentDeskText, reimbursementOwnActions, reimbursementSubmitReadiness, type ClaimSignatureRole,
 } from './reimbursements.model';
 import {
   baht0, dateShort, ICON, KPI, StatCard, ErrorBanner, InfoBanner,
   inputClass, btnClass, ghostClass, dangerClass, successBtn, successBtnStyle,
 } from '../expenses/ExpensesUi';
 import {
-  validatePaymentForm, sumLineAmounts, summariseQueue, matchesSearch, pageBounds,
+  validatePaymentForm, sumLineAmounts, summariseQueue, matchesSearch, pageBounds, buildClaimTimeline,
   formatMoney, parseHubTab, visibleHubTabs, withAssignedApprovalTab, reimbursementListScope, errorText, isStaleApprovalError, diffApprovalFields,
   type ApprovalFieldDiff, type HubTab,
 } from './reimbursements.logic';
@@ -93,6 +93,11 @@ function StatusBadge({ status }: { status: string }) {
 }
 function PaymentBadge({ status }: { status: string }) {
   return <MangmeeBadge tone={PAYMENT_STATUS_TONES[status] ?? 'slate'}>{PAYMENT_STATUS_LABELS[status] ?? status}</MangmeeBadge>;
+}
+/** A claim never said whose desk it sits on. Terminal claims have none, and render nothing. */
+function CurrentDeskLine({ row }: { row: { currentDesk?: { kind?: string; names?: string[] } } }) {
+  const desk = currentDeskText(row.currentDesk);
+  return desk ? <div className="mt-1 truncate text-xs text-gray-500" data-testid="reimbursement-current-desk">อยู่ที่ {desk}</div> : null;
 }
 function RejectDialog({ requestNo, busy, error, onClose, onConfirm }: {
   requestNo?: string;
@@ -847,6 +852,7 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
         r.currency,
         REQUEST_STATUS_LABELS[r.status] ?? r.status,
         PAYMENT_STATUS_LABELS[r.paymentStatus] ?? r.paymentStatus,
+        currentDeskText(r.currentDesk),
       ], query);
     });
   }, [data, statusFilter, query]);
@@ -982,6 +988,7 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
                       <span className="min-w-0 flex-1 truncate text-sm font-semibold text-gray-900">{r.reason}</span>
                     </div>
                     <div className="mt-1 truncate text-xs text-gray-500">ผู้ขอ: {r.requesterDisplayNameSnapshot ?? '—'}</div>
+                    <CurrentDeskLine row={r} />
                     <div className="mt-3 flex items-center justify-between gap-3">
                       <StatusBadge status={r.status} />
                       <span className="shrink-0 text-xs text-gray-500">{shortDate(r.incurredDate)}</span>
@@ -1039,6 +1046,7 @@ function DetailDrawer({ companyId, detail, context, userId, permissions, busy, e
   onRequestVoidPayment: (payment: any) => void;
 }) {
   const lines: any[] = detail.lines ?? [];
+  const timeline = buildClaimTimeline(detail);
   const { canEditDraft, canSubmit, canCancel, canReopen } = reimbursementOwnActions(detail, userId, permissions);
   // Task authority is resolved server-side from the frozen step assignment. Never infer it from
   // the selected tab: a forged deep link must not offer actions, while an assignee whose role was
@@ -1106,6 +1114,24 @@ function DetailDrawer({ companyId, detail, context, userId, permissions, busy, e
                 <div className="mt-1 text-sm text-gray-500">คงค้าง {formatMoney(detail.outstandingAmount, detail.currency)}</div>
               </div>
             </div>
+          </MangmeeCard>
+
+          {/* Where the claim is on its journey — the question the status chip alone never answered. */}
+          <MangmeeCard className="p-4">
+            <h4 className="mb-2 text-sm font-bold text-gray-900">เส้นทางของใบเบิก</h4>
+            <ol className="space-y-2" data-testid="reimbursement-timeline">
+              {timeline.map(step => (
+                <li key={step.key} className="flex items-start gap-2 text-sm">
+                  <span aria-hidden className={cx('shrink-0', step.state === 'done' ? 'text-brand-600' : step.state === 'current' ? 'text-amber-600' : 'text-gray-300')}>
+                    {step.state === 'done' ? '✓' : step.state === 'current' ? '●' : '○'}
+                  </span>
+                  <span className={cx('min-w-0 flex-1', step.state === 'current' ? 'font-semibold text-gray-900' : step.state === 'done' ? 'text-gray-700' : 'text-gray-400')}>
+                    {step.label}
+                  </span>
+                  {step.date && <span className="shrink-0 text-xs tabular-nums text-gray-400">{shortDate(step.date)}</span>}
+                </li>
+              ))}
+            </ol>
           </MangmeeCard>
 
           <MangmeeCard className="p-4">
@@ -1177,13 +1203,17 @@ function DetailDrawer({ companyId, detail, context, userId, permissions, busy, e
                 {CLAIM_SIGNATURE_ROLES.map(role => {
                   const signed = signatures.find((s: any) => s.role === role);
                   return (
-                    <div key={role} className="rounded-xl border border-gray-200 p-3 text-xs">
+                    // min-w-0 + break-words: a long value must wrap inside its own cell — on a
+                    // narrow grid an unbroken string overflowed the card and sat on top of the
+                    // neighbouring slot's ลงนาม button, swallowing its taps.
+                    <div key={role} className="min-w-0 rounded-xl border border-gray-200 p-3 text-xs">
                       <div className="font-semibold text-gray-700">{CLAIM_SIGNATURE_ROLE_LABELS[role]}</div>
                       <div className="mt-2">
                         {signed ? (
                           <>
                             <MangmeeBadge tone="brand">ลงนามแล้ว</MangmeeBadge>
-                            <div className="mt-2 text-gray-600">{signed.signedByName ?? signed.signedByUserId}</div>
+                            {/* Never a cuid: a missing name renders a dash, not the user id. */}
+                            <div className="mt-2 break-words text-gray-600">{signed.signedByName ?? '—'}</div>
                             <div className="text-gray-400">{shortDate(signed.signedAt)}</div>
                           </>
                         ) : <MangmeeBadge tone="slate">ยังไม่ลงนาม</MangmeeBadge>}
@@ -1325,6 +1355,7 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
     r.currency,
     r.ageHours,
     r.slaRisk ? 'เกิน SLA' : '',
+    currentDeskText(r.currentDesk),
   ], query)), [data, query]);
   const bounds = useMemo(() => pageBounds(filteredData.length, page), [filteredData.length, page]);
   const pagedData = useMemo(() => filteredData.slice(bounds.start, bounds.end), [filteredData, bounds]);
@@ -1417,6 +1448,7 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
                     <span className="max-w-[45%] truncate font-mono text-xs text-gray-600">{r.requestNo ?? '—'}</span>
                     <span className="min-w-0 flex-1 truncate text-sm font-semibold text-gray-900">{r.requesterDisplayNameSnapshot}</span>
                   </div>
+                  <CurrentDeskLine row={r} />
                   <div className="mt-3 flex items-center justify-between gap-3">
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
                       <StatusBadge status={r.status} />
@@ -1532,6 +1564,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
     REQUEST_STATUS_LABELS[r.status] ?? r.status,
     FINANCE_REVIEW_LABELS[r.financeReviewStatus] ?? r.financeReviewStatus,
     r.hasDuplicateBlocker ? 'อาจซ้ำ' : '',
+    currentDeskText(r.currentDesk),
   ], query)), [data, query]);
   const bounds = useMemo(() => pageBounds(filteredData.length, page), [filteredData.length, page]);
   const pagedData = useMemo(() => filteredData.slice(bounds.start, bounds.end), [filteredData, bounds]);
@@ -1618,6 +1651,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
                     <span className="max-w-[45%] truncate font-mono text-xs text-gray-600">{r.requestNo ?? '—'}</span>
                     <span className="min-w-0 flex-1 truncate text-sm font-semibold text-gray-900">{r.requesterDisplayNameSnapshot}</span>
                   </div>
+                  <CurrentDeskLine row={r} />
                   <div className="mt-3 flex items-center justify-between gap-3">
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
                       <StatusBadge status={r.status} />
