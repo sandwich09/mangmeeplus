@@ -31,6 +31,10 @@ import {
   UpdateReimbursementDraftUseCase,
 } from './reimbursement-request.use-case';
 
+// Evidence fake for detailWithFileNames — decision endpoints now return the same hydrated
+// detail as a GET (names + file names), so their specs feed the assembler harmless lookups.
+const fakeDetailEvidence = { getAttachmentFileName: async () => undefined, getAttachmentFileNames: async () => ({}) };
+
 const audit = { log: async () => undefined } as any;
 const outbox = { append: async () => undefined } as any;
 const sequence = { execute: async () => ({ id: 'seq-1', documentNumber: 'RBPAY-202601-000001' }) } as any;
@@ -78,7 +82,7 @@ const WRITES = [
     name: 'record a payment',
     permissions: ['reimbursement.payment.record'],
     claim: otherBranchClaim(),
-    run: (repo: any, ctx: any) => new RecordReimbursementPaymentUseCase(repo, audit, outbox, sequence, sequence)
+    run: (repo: any, ctx: any) => new RecordReimbursementPaymentUseCase(repo, audit, outbox, sequence, sequence, fakeDetailEvidence as any)
       .execute(ctx, 'rb-1', {
         paidAmount: '500.00', paymentMethod: 'TRANSFER', paidAt: '2026-01-02T00:00:00.000Z',
       } as any),
@@ -87,7 +91,7 @@ const WRITES = [
     name: 'void a payment and its ledger reversal',
     permissions: ['reimbursement.payment.void'],
     claim: otherBranchClaim(),
-    run: (repo: any, ctx: any) => new VoidReimbursementPaymentUseCase(repo, audit, outbox, sequence, sequence, sequence)
+    run: (repo: any, ctx: any) => new VoidReimbursementPaymentUseCase(repo, audit, outbox, sequence, sequence, sequence, fakeDetailEvidence as any)
       .execute(ctx, 'rb-1', 'pay-1', { reason: 'จ่ายผิด' } as any),
   },
   {
@@ -100,7 +104,7 @@ const WRITES = [
     name: 'finance-review a claim',
     permissions: ['reimbursement.finance_review'],
     claim: otherBranchClaim({ status: 'FINANCE_REVIEW' }),
-    run: (repo: any, ctx: any) => new FinanceReviewReimbursementUseCase(repo, audit, projections)
+    run: (repo: any, ctx: any) => new FinanceReviewReimbursementUseCase(repo, audit, projections, fakeDetailEvidence as any)
       .execute(ctx, 'rb-1', { decision: 'APPROVED_FOR_PAYMENT' } as any),
   },
   {

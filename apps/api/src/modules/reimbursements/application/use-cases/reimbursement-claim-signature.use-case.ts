@@ -19,7 +19,8 @@ import { PrismaAttachmentRepository } from '../../../data-model-core/infrastruct
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import type { ReimbursementRequestRecord } from '../../domain/models/reimbursement.model';
 import { toSignedCopySummaries } from '../dto/reimbursement.mapper';
-import { assertCanReadRequest, claimSignatureAckHash } from './reimbursement-request.use-case';
+import { assertCanReadRequest } from './reimbursement-request.use-case';
+import { claimSignatureAckHash } from '../../domain/logic/reimbursement.logic';
 
 const SIGNATURE_METADATA_TAG = 'reimbursement_claim_signature';
 const SIGNATURE_MAX_BYTES = 2_000_000;

@@ -16,7 +16,8 @@ import { OutboxAppendService } from '../../../data-model-core/application/servic
 import { ReserveDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/reserve-document-number.use-case';
 import { CommitDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/commit-document-number.use-case';
 import { CancelDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/cancel-document-number.use-case';
-import { toRequestSummary, toRequestDetail } from '../dto/reimbursement.mapper';
+import { toRequestSummary, detailWithFileNames } from '../dto/reimbursement.mapper';
+import { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
 import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
 import { ReimbursementProjectionOrchestratorService } from '../services/reimbursement-projection-orchestrator.service';
 import { assertReimbursementBranchInScope } from './reimbursement-branch-scope';
@@ -75,6 +76,7 @@ export class FinanceReviewReimbursementUseCase {
     private readonly repo: PrismaReimbursementRepository,
     private readonly audit: AuditService,
     private readonly projections: ReimbursementProjectionOrchestratorService,
+    private readonly evidence: ReimbursementEvidenceService,
   ) {}
 
   async execute(ctx: RequestContext, id: string, input: FinanceReviewReimbursementInput): Promise<ReimbursementRequestDetail> {
@@ -221,7 +223,7 @@ export class FinanceReviewReimbursementUseCase {
     }
 
     const detail = await this.repo.findRequestById(ctx.companyId, id, true);
-    return toRequestDetail(detail!);
+    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, detail!);
   }
 
   private async recordNonApproval(
@@ -294,6 +296,7 @@ export class RecordReimbursementPaymentUseCase {
     private readonly outbox: OutboxAppendService,
     private readonly reserveNumber: ReserveDocumentNumberUseCase,
     private readonly commitNumber: CommitDocumentNumberUseCase,
+    private readonly evidence: ReimbursementEvidenceService,
   ) {}
 
   async execute(ctx: RequestContext, id: string, input: RecordReimbursementPaymentInput): Promise<ReimbursementRequestDetail> {
@@ -324,7 +327,7 @@ export class RecordReimbursementPaymentUseCase {
       if (!recorded.idempotencyKey.startsWith('legacy:')) {
         await this.ensurePaymentNumber(ctx, paidAt, recorded.idempotencyKey, recorded.id, recorded.paymentNo);
       }
-      return toRequestDetail(req);
+      return detailWithFileNames(this.repo, this.evidence, ctx.companyId, req);
     }
 
     // Friendly preflight before reserving a payment number; the repository
@@ -386,7 +389,7 @@ export class RecordReimbursementPaymentUseCase {
       }, ctx.userId);
     }
 
-    return toRequestDetail(result.request);
+    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, result.request);
   }
 
   private async reservePaymentNumber(
@@ -452,6 +455,7 @@ export class VoidReimbursementPaymentUseCase {
     private readonly reserveNumber: ReserveDocumentNumberUseCase,
     private readonly commitNumber: CommitDocumentNumberUseCase,
     private readonly cancelNumber: CancelDocumentNumberUseCase,
+    private readonly evidence: ReimbursementEvidenceService,
   ) {}
 
   // GAP-02: void is now a true reversal, mirroring VoidExpenseUseCase (H-04).
@@ -519,7 +523,7 @@ export class VoidReimbursementPaymentUseCase {
       data: { requestId, paymentStatus, reversalEntryId: result.reversalEntryId },
     });
 
-    return toRequestDetail(result.request!);
+    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, result.request!);
   }
 }
 

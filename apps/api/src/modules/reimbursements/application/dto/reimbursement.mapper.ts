@@ -18,7 +18,10 @@ import type {
   ReimbursementLineRecord,
   ReimbursementClaimSignatureRecord,
 } from '../../domain/models/reimbursement.model';
-import { currentDesk } from '../../domain/logic/reimbursement.logic';
+import { claimSignatureAckHash, computeReceiptRequirement, currentDesk } from '../../domain/logic/reimbursement.logic';
+import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
+import type { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
+import type { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
 
 const iso = (d?: Date): string | undefined => (d ? d.toISOString() : undefined);
 
@@ -225,4 +228,43 @@ export function toRequestDetail(
     signatures: (r.claimSignatures ?? []).map((s) => toClaimSignatureSummary(s, displayNames)),
     signedCopies: extras.signedCopies ?? [],
   };
+}
+
+/**
+ * Detail shape shared by EVERY path that returns a claim detail: line receipts resolve to
+ * file names and approver/reviewer/payer/signer ids resolve to display names (one batched
+ * lookup — the drawer must never render a cuid). The decision and payment endpoints keep
+ * their response in the drawer on purpose (a frozen assignee may lose read permission the
+ * moment they decide), so their responses must be as complete as a GET. Lives in the mapper
+ * because the request, approval, and finance use-cases all need it and already import here.
+ */
+export async function detailWithFileNames(
+  repo: PrismaReimbursementRepository,
+  evidence: ReimbursementEvidenceService,
+  companyId: string,
+  req: ReimbursementRequestRecord,
+): Promise<ReimbursementRequestDetail> {
+  const [primaryFileName, lineFileNames, displayNames, signedCopies, policy] = await Promise.all([
+    evidence.getAttachmentFileName(companyId, req.primaryAttachmentId),
+    evidence.getAttachmentFileNames(companyId, (req.lines ?? []).map((line) => line.attachmentId ?? '')),
+    repo.getUserDisplayNames(companyId, detailUserIds(req)),
+    repo.listSignedClaimFormCopies(companyId, req.id),
+    repo.findPolicy(companyId, null).then(effectivePolicy),
+  ]);
+  const requestPolicy = req.status === 'DRAFT' ? policy : effectivePolicyForRequest(req, policy);
+  const receiptRequirementStatus = req.status === 'DRAFT'
+    ? computeReceiptRequirement({
+        requireReceipt: requestPolicy.requireReceipt,
+        allowMissingReceiptWithReason: requestPolicy.allowMissingReceiptWithReason,
+        lines: req.lines ?? [],
+        missingReceiptReason: req.missingReceiptReason,
+      }).status
+    : req.receiptRequirementStatus;
+  // The ack hash is the LIVE claim, not the submit-frozen approval hash: a signer
+  // acknowledges what the form prints right now.
+  return toRequestDetail({ ...req, receiptRequirementStatus }, primaryFileName, lineFileNames, displayNames, {
+    signedCopies: toSignedCopySummaries(signedCopies),
+    claimSignatureAckHash: claimSignatureAckHash(req),
+    allowMissingReceiptWithReason: requestPolicy.allowMissingReceiptWithReason,
+  });
 }
