@@ -178,6 +178,10 @@ export class AppConfigService {
   get emailVerificationConfirmWindowSeconds(): number { return this.config.EMAIL_VERIFICATION_CONFIRM_WINDOW_SECONDS; }
   get lineLoginCallbackMaxPerIp(): number { return this.config.LINE_LOGIN_CALLBACK_MAX_PER_IP; }
   get lineLoginCallbackWindowSeconds(): number { return this.config.LINE_LOGIN_CALLBACK_WINDOW_SECONDS; }
+  get lineQrCreateMaxPerIp(): number { return this.config.LINE_QR_CREATE_MAX_PER_IP; }
+  get lineQrCreateWindowSeconds(): number { return this.config.LINE_QR_CREATE_WINDOW_SECONDS; }
+  get lineQrPollMaxPerIp(): number { return this.config.LINE_QR_POLL_MAX_PER_IP; }
+  get lineQrPollWindowSeconds(): number { return this.config.LINE_QR_POLL_WINDOW_SECONDS; }
   get aiGatewayInternalUrl(): string { return this.config.AI_GATEWAY_INTERNAL_URL; }
   get aiGatewayInternalSecret(): string | undefined { return this.config.AI_GATEWAY_INTERNAL_SECRET; }
   get aiActorDelegationSigningKey(): Buffer {

@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { Button } from '@/common/components/button';
@@ -30,14 +30,23 @@ const LINE_NOTICE_TEXT: Record<string, string> = {
   canceled: 'ยกเลิกการเข้าสู่ระบบด้วย LINE แล้ว',
   failed: 'เข้าสู่ระบบด้วย LINE ไม่สำเร็จ กรุณาลองใหม่อีกครั้งหรือเข้าสู่ระบบด้วยรหัสผ่าน',
   unavailable: 'การเข้าสู่ระบบด้วย LINE ยังไม่เปิดใช้งาน',
+  // P12-3a: a scanned desktop QR landed on the approve page without a session.
+  'qr-approve': 'เข้าสู่ระบบก่อน แล้วระบบจะพากลับไปหน้ายืนยันการเข้าสู่ระบบบนคอมพิวเตอร์',
 };
 
-// Link-after-password (P12-2): re-enter the OAuth round trip once the session exists. LINE has
-// already consented this browser, so it redirects back immediately — and the BFF callback, now
-// seeing an active session, links the verified identity instead of issuing new tokens.
-function lineLinkStartUrl(returnTo: string): string {
+// The LINE OAuth round trip, with the landing path carried across it. Two lanes use it: a plain
+// LINE login, and link-after-password (P12-2) — LINE has already consented this browser, so it
+// redirects back immediately and the BFF callback, now seeing an active session, links the
+// verified identity instead of issuing new tokens.
+function lineStartUrl(returnTo: string): string {
   return `/api/auth/line-login/start?returnTo=${encodeURIComponent(returnTo)}`;
 }
+
+// P12-3a desktop QR login. The poll is deliberately slower than the API's per-IP poll bucket
+// allows for one QR lifetime, and a stale QR is refreshed a bounded number of times before the
+// user is asked to act — an unattended tab must not mint transactions forever.
+const QR_POLL_INTERVAL_MS = 2500;
+const MAX_QR_AUTO_RENEWALS = 3;
 
 function Wordmark({ className }: { className?: string }) {
   return (
@@ -149,6 +158,15 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
   const [fieldErrors, setFieldErrors] = useState<{ identifier?: string; password?: string }>({});
   // Server-driven: the button appears only where the API reports the LINE channel available.
   const [lineLoginAvailable, setLineLoginAvailable] = useState(false);
+  // P12-3a desktop QR login. The desktop secret lives in an HttpOnly cookie the BFF sets, so
+  // nothing here holds a credential — only the picture, the countdown and the poll.
+  const [qrOpen, setQrOpen] = useState(false);
+  const [qrImageUrl, setQrImageUrl] = useState<string | null>(null);
+  const [qrSeconds, setQrSeconds] = useState(0);
+  // The TTL the API issued this QR with; kept so the progress bar has a denominator.
+  const [qrTtlSeconds, setQrTtlSeconds] = useState(0);
+  const [qrError, setQrError] = useState<'load' | 'expired' | null>(null);
+  const qrRenewalsRef = useRef(0);
   const lineNotice = searchParams.get('line');
   const lineNoticeText = lineNotice ? LINE_NOTICE_TEXT[lineNotice] : undefined;
   const lineNoticeIsAlert = lineNotice === 'failed' || lineNotice === 'link-failed';
@@ -179,7 +197,7 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
       if (!active) return;
       if (outcome === 'restored') {
         const landing = recoveryReturnUrl(nextPath);
-        window.location.assign(linkMode ? lineLinkStartUrl(landing) : landing);
+        window.location.assign(linkMode ? lineStartUrl(landing) : landing);
         return;
       }
       if (outcome !== 'signed_out') setSessionRecoveryUnavailable(true);
@@ -190,6 +208,89 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const requestQr = useCallback(async () => {
+    setQrImageUrl(null);
+    setQrError(null);
+    try {
+      const response = await fetch('/api/auth/line-qr/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ returnTo: nextPath ?? null }),
+      });
+      const data = (await response.json()) as { qrImageUrl?: string; expiresInSeconds?: number };
+      if (!response.ok || !data.qrImageUrl) throw new Error('qr_unavailable');
+      const ttl = data.expiresInSeconds ?? 180;
+      setQrTtlSeconds(ttl);
+      setQrSeconds(ttl);
+      setQrImageUrl(data.qrImageUrl);
+    } catch {
+      setQrError('load');
+    }
+  }, [nextPath]);
+
+  // A dead QR is replaced automatically a few times, then the user is asked — so a tab left open
+  // overnight stops asking the API for transactions nobody is going to scan.
+  const handleQrExpired = useCallback(() => {
+    setQrImageUrl(null);
+    setQrSeconds(0);
+    if (qrRenewalsRef.current >= MAX_QR_AUTO_RENEWALS) {
+      setQrError('expired');
+      return;
+    }
+    qrRenewalsRef.current += 1;
+    void requestQr();
+  }, [requestQr]);
+
+  // Countdown; reaching zero retires the QR through the same path a server-side expiry takes.
+  useEffect(() => {
+    if (!qrOpen || !qrImageUrl) return;
+    if (qrSeconds <= 0) {
+      handleQrExpired();
+      return;
+    }
+    const timer = setTimeout(() => setQrSeconds((seconds) => seconds - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [qrOpen, qrImageUrl, qrSeconds, handleQrExpired]);
+
+  // Polling runs only while the modal is open with a live QR: closing it stops the interval, and
+  // the password form underneath is never touched (rule 6 — the page never acts for the user).
+  useEffect(() => {
+    if (!qrOpen || !qrImageUrl) return;
+    let active = true;
+    const timer = setInterval(() => {
+      void fetch('/api/auth/line-qr/status', { method: 'POST' })
+        .then((response) => response.json() as Promise<{ status?: string; redirectPath?: string }>)
+        .then((data) => {
+          if (!active) return;
+          if (data.status === 'approved') {
+            window.location.assign(data.redirectPath || '/');
+            return;
+          }
+          if (data.status === 'expired') handleQrExpired();
+        })
+        // A transient poll failure is not an expiry: the countdown still owns the QR's lifetime.
+        .catch(() => {});
+    }, QR_POLL_INTERVAL_MS);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [qrOpen, qrImageUrl, handleQrExpired]);
+
+  const openQrModal = () => {
+    qrRenewalsRef.current = 0;
+    setQrOpen(true);
+    void requestQr();
+  };
+
+  const closeQrModal = () => {
+    setQrOpen(false);
+    setQrImageUrl(null);
+    setQrSeconds(0);
+    setQrTtlSeconds(0);
+    setQrError(null);
+  };
 
   if (sessionRecoveryUnavailable) {
     const retryParams = new URLSearchParams();
@@ -235,7 +336,7 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
       // Only an unblocked session may detour through LINE; a pending legal acceptance keeps its
       // gate, and the user can simply tap LINE login again afterwards to link.
       if (linkMode && result.legalAcceptanceRequired === false) {
-        window.location.assign(lineLinkStartUrl(target));
+        window.location.assign(lineStartUrl(target));
         return;
       }
       window.location.assign(result.legalAcceptanceRequired !== false ? legalAcceptancePath(target, result.companyId) : target);
@@ -447,12 +548,24 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
               </div>
               <button
                 type="button"
-                onClick={() => window.location.assign('/api/auth/line-login/start')}
+                onClick={() => window.location.assign(nextPath ? lineStartUrl(nextPath) : '/api/auth/line-login/start')}
                 className="mt-4 flex h-12 w-full items-center justify-center gap-2.5 rounded-xl border-[1.5px] border-gray-200 bg-white text-[15.5px] font-semibold text-gray-900 transition hover:border-[#06C755]"
               >
                 <span className="flex h-6 w-6 items-center justify-center rounded-md bg-[#06C755] text-sm font-extrabold text-white">L</span>
                 เข้าสู่ระบบด้วย LINE
               </button>
+              {/* Scanning is only useful where the phone is a second device, so the entry point is
+                  desktop-only; on a phone the LINE button above already is the shortest path. */}
+              <div className="mt-3 hidden md:flex">
+                <button
+                  type="button"
+                  onClick={openQrModal}
+                  className="flex h-11 w-full items-center justify-center gap-2 rounded-xl text-[14.5px] font-semibold text-gray-600 transition hover:bg-gray-50 hover:text-gray-900"
+                >
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><path d="M14 14h3v3h-3zM20 14v3M14 20h3M20 20h1" /></svg>
+                  สแกน QR ด้วย LINE เพื่อเข้าสู่เว็บไซต์
+                </button>
+              </div>
             </>
           ) : null}
 
@@ -477,6 +590,87 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
           </nav>
         </div>
       </div>
+
+      {qrOpen ? (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-gray-900/55 p-6"
+          role="dialog"
+          aria-modal="true"
+          aria-label="สแกน QR ด้วย LINE เพื่อเข้าสู่เว็บไซต์"
+          onClick={closeQrModal}
+        >
+          <div
+            className="w-[400px] max-w-full overflow-hidden rounded-[20px] bg-white shadow-xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center gap-3 bg-[#06C755] px-[22px] py-[18px] text-white">
+              <span className="flex h-[30px] w-[30px] items-center justify-center rounded-lg bg-white text-lg font-extrabold text-[#06C755]">L</span>
+              <div className="flex-1">
+                <div className="text-lg font-bold">เข้าสู่ระบบด้วย LINE</div>
+                <div className="text-[13.5px] opacity-90">สแกน QR ด้วยแอป LINE บนมือถือ</div>
+              </div>
+              <button type="button" onClick={closeQrModal} aria-label="ปิด" className="text-[22px] opacity-90">
+                ✕
+              </button>
+            </div>
+            <div className="px-[22px] py-[26px] text-center">
+              {qrError ? (
+                <div role="alert" className="space-y-4">
+                  <p className="text-[15px] leading-7 text-gray-600">
+                    {qrError === 'expired'
+                      ? 'หมดเวลา กดสร้าง QR ใหม่'
+                      : 'สร้าง QR ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง'}
+                  </p>
+                  <Button
+                    type="button"
+                    size="lg"
+                    className="w-full !rounded-xl"
+                    onClick={() => {
+                      qrRenewalsRef.current = 0;
+                      void requestQr();
+                    }}
+                  >
+                    สร้าง QR ใหม่
+                  </Button>
+                </div>
+              ) : (
+                <>
+                  <div className="relative mx-auto flex h-[236px] w-[236px] items-center justify-center rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+                    {qrImageUrl ? (
+                      // Rendered by the API as an inline SVG data URI (H-09): the one-time code
+                      // never travels to an external image service.
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={qrImageUrl} alt="QR สำหรับเข้าสู่ระบบ" className="h-full w-full" />
+                    ) : (
+                      <span className="text-sm text-gray-400">กำลังสร้าง QR…</span>
+                    )}
+                  </div>
+
+                  <div className="mt-[18px] h-1.5 overflow-hidden rounded-md bg-gray-100">
+                    <div
+                      className="h-full rounded-md transition-[width] duration-1000 ease-linear"
+                      style={{
+                        width: `${qrTtlSeconds > 0 ? (qrSeconds / qrTtlSeconds) * 100 : 0}%`,
+                        background: qrSeconds <= 10 ? '#F04438' : '#06C755',
+                      }}
+                    />
+                  </div>
+                  <div className="mt-2.5 text-[15px] text-gray-500">
+                    QR หมดอายุใน{' '}
+                    <span className={`font-bold tabular-nums ${qrSeconds <= 10 ? 'text-red-500' : 'text-gray-700'}`}>
+                      {Math.floor(qrSeconds / 60)}:{String(qrSeconds % 60).padStart(2, '0')}
+                    </span>
+                  </div>
+
+                  <div className="mt-[18px] border-t border-gray-100 pt-4 text-[13.5px] leading-relaxed text-gray-400">
+                    เปิดแอป LINE → ปุ่มสแกน → สแกน QR นี้ · ยืนยันบนมือถือแล้วหน้านี้จะเข้าสู่ระบบให้เอง
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

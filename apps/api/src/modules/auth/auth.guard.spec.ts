@@ -101,7 +101,13 @@ describe('AuthGuard', () => {
 
   it('keeps login/status public but blocks other public routes while customer access is closed', async () => {
     const closed = { getStatus: async () => ({ effectiveState: 'CLOSED' }) } as any;
-    for (const path of ['/v1/auth/password/login', '/v1/auth/platform-access', '/v1/auth/line/login/callback']) {
+    for (const path of [
+      '/v1/auth/password/login',
+      '/v1/auth/platform-access',
+      '/v1/auth/line/login/callback',
+      '/v1/auth/line/qr/create',
+      '/v1/auth/line/qr/redeem',
+    ]) {
       const guard = new AuthGuard(makeReflector(true), failVerifier as any, failVerifier as any, noopResolve, localConfig, noopPrisma, acceptedLegal, closed);
       assert.equal(await guard.canActivate(makeContext({ path })), true);
     }
