@@ -22,15 +22,16 @@ const expense = (over: Record<string, unknown>) => ({
   ...over,
 });
 
-/** Prisma fake resolving branch id-or-name the way the tool's findFirst OR does. */
-function fakePrisma(branches: Array<{ id: string; name: string }> = []) {
+/** Prisma fake for the branch catalog read; honors the ABAC `id: { in }` narrowing the tool sends. */
+function fakePrisma(branches: Array<{ id: string; name: string; code?: string }> = []) {
   return {
     client: {
       branch: {
-        findFirst: async ({ where }: any) => {
-          const wanted = (where.OR as Array<{ id?: string; name?: string }>).map((c) => c.id ?? c.name);
-          const hit = branches.find((b) => wanted.includes(b.id) || wanted.includes(b.name));
-          return hit ? { id: hit.id } : null;
+        findMany: async ({ where }: any) => {
+          const scope: string[] | undefined = where?.id?.in;
+          return branches
+            .filter((b) => !scope || scope.includes(b.id))
+            .map((b) => ({ id: b.id, name: b.name, code: b.code ?? `C-${b.id}` }));
         },
       },
     },
@@ -45,7 +46,7 @@ function makeTool(data: Array<ReturnType<typeof expense>>, branches?: Array<{ id
 }
 
 /** Same tool, but capturing the filter each repository call received. */
-function makeFilterCapturingTool(branches?: Array<{ id: string; name: string }>) {
+function makeFilterCapturingTool(branches?: Array<{ id: string; name: string; code?: string }>) {
   const filters: any[] = [];
   const listExpenses = {
     execute: async (_ctx: unknown, filter: any) => {
@@ -152,14 +153,39 @@ describe('ExpenseListRecentTool', () => {
     assert.equal(result.sourceRefs[0]?.webPath, '/companies/c1/expenses?branchId=branch-1');
   });
 
-  it('keeps an unresolvable branch out of the web link but not out of the filter', async () => {
-    const { tool, filters } = makeFilterCapturingTool([{ id: 'branch-1', name: 'สาธุประดิษฐ์' }]);
-    const result = await tool.execute(baseCtx, { branchId: 'สาขาที่ไม่มีจริง' });
+  it('resolves a branch code the same way', async () => {
+    const { tool, filters } = makeFilterCapturingTool([{ id: 'branch-1', name: 'สาธุประดิษฐ์', code: 'STP' }]);
+    const result = await tool.execute(baseCtx, { branchId: 'STP' });
 
-    // Raw passthrough keeps today's empty-result behavior instead of silently widening the answer
-    // to every branch; the link stays bare because the web filter matches by id.
-    assert.equal(filters[0]?.branchId, 'สาขาที่ไม่มีจริง');
-    assert.equal(result.sourceRefs[0]?.webPath, '/companies/c1/expenses');
+    assert.equal(filters[0]?.branchId, 'branch-1');
+    assert.equal(result.sourceRefs[0]?.webPath, '/companies/c1/expenses?branchId=branch-1');
+  });
+
+  // Typos and partial wording are the model's job to reconcile — the tool hands back the real
+  // catalog instead of answering a confident zero for a branch that exists under another spelling.
+  it('returns the branch catalog instead of records when the branch cannot be resolved', async () => {
+    const { tool, filters } = makeFilterCapturingTool([{ id: 'branch-1', name: 'สาธุประดิษฐ์' }]);
+    const result = await tool.execute(baseCtx, { branchId: 'สาธุประดิด' });
+
+    assert.equal(filters.length, 0);
+    const data = result.data as any;
+    assert.equal(data.branchUnresolved, 'สาธุประดิด');
+    assert.deepEqual(data.availableBranches, [{ id: 'branch-1', name: 'สาธุประดิษฐ์' }]);
+    assert.deepEqual(result.sourceRefs, []);
+  });
+
+  it('keeps branches outside the caller branch scope out of the catalog and unresolvable', async () => {
+    const { tool, filters } = makeFilterCapturingTool([
+      { id: 'branch-1', name: 'สาธุประดิษฐ์' },
+      { id: 'branch-2', name: 'บางนา' },
+    ]);
+    const scopedCtx = { ...baseCtx, branchIds: ['branch-1'] };
+    const result = await tool.execute(scopedCtx, { branchId: 'บางนา' });
+
+    assert.equal(filters.length, 0);
+    const data = result.data as any;
+    assert.equal(data.branchUnresolved, 'บางนา');
+    assert.deepEqual(data.availableBranches, [{ id: 'branch-1', name: 'สาธุประดิษฐ์' }]);
   });
 
   it('caps the page loop and flags the answer as truncated', async () => {

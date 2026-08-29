@@ -232,19 +232,38 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
       return { toolName: this.toolName, status: 'forbidden', sourceRefs: [], asOf };
     }
     const period = resolvePeriodInput(input);
-    // The model copies whatever the user said — often the branch NAME, not an id. Resolve either
-    // within this company so the data filter and the web link agree. An unresolvable value keeps
-    // the raw filter (empty result) instead of silently widening to every branch, and never
-    // reaches the link.
+    // The model copies whatever the user said — a branch name, code, or id, typos included. Exact
+    // id/name/code resolves here; anything else returns the ACTIVE branches in this user's scope
+    // instead of records, so the MODEL does the semantic matching (retry with the right id, or ask)
+    // rather than this tool answering a confident zero for a branch that exists under another
+    // spelling. The catalog respects branch ABAC — a branch-restricted user never sees names
+    // outside their scope, and a name outside that scope stays unresolvable on purpose.
     const requestedBranch = typeof input?.branchId === 'string' && input.branchId.trim() ? input.branchId.trim() : undefined;
-    let branchId = requestedBranch;
-    let linkBranchId: string | undefined;
+    let branchId: string | undefined;
     if (requestedBranch) {
-      const branch = await this.prisma.client.branch.findFirst({
-        where: { companyId: ctx.companyId, OR: [{ id: requestedBranch }, { name: requestedBranch }] },
-        select: { id: true },
+      const branches = await this.prisma.client.branch.findMany({
+        where: {
+          companyId: ctx.companyId,
+          status: 'ACTIVE',
+          ...(ctx.branchIds ? { id: { in: ctx.branchIds } } : {}),
+        },
+        select: { id: true, name: true, code: true },
+        take: 100,
       });
-      if (branch) { branchId = branch.id; linkBranchId = branch.id; }
+      const hit = branches.find((b) => b.id === requestedBranch || b.name === requestedBranch || b.code === requestedBranch);
+      if (!hit) {
+        return {
+          toolName: this.toolName,
+          status: 'ok',
+          data: {
+            branchUnresolved: requestedBranch,
+            availableBranches: branches.map((b) => ({ id: b.id, name: b.name })),
+          },
+          sourceRefs: [],
+          asOf,
+        };
+      }
+      branchId = hit.id;
     }
     const filter = { fromDate: period.fromDate, toDate: period.toDate, ...(branchId && { branchId }) };
     const first = await this.listExpenses.execute(toCtx(ctx), { ...filter, page: 1, pageSize: 100 });
@@ -264,9 +283,9 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
       asOf,
       permissionChecked: true,
       // A branch-scoped answer must not deep-link to the all-branches list, or the web view
-      // contradicts the figures the user just read. Resolved branch ids only — the web filter
-      // matches by id and must not receive a name or a hallucinated value.
-      webPath: `/companies/${ctx.companyId}/expenses${linkBranchId ? `?branchId=${encodeURIComponent(linkBranchId)}` : ''}`,
+      // contradicts the figures the user just read. `branchId` is a resolved id by here — the
+      // unresolved case returned the branch catalog above and never reaches this link.
+      webPath: `/companies/${ctx.companyId}/expenses${branchId ? `?branchId=${encodeURIComponent(branchId)}` : ''}`,
     }];
     const summary = expenses.reduce((acc, expense) => {
       // Rejected and voided documents are not company expenses, and rejecting leaves
