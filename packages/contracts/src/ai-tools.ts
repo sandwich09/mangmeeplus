@@ -347,7 +347,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
   },
   {
     name: 'expense.list_recent',
-    description: 'Read expense totals and bounded records for the current month by default or an explicit date range, including dates, vendors, status, payment status, and web links.',
+    description: 'Read expense totals and bounded records for the current month by default or an explicit date range, including dates, vendors, status, payment status, and web links. Optional branchId scopes one branch and accepts a branch id, exact branch name, or branch code; an unrecognized value returns branchUnresolved with availableBranches to re-pick from (match the user wording to a real name and retry with its id, or ask) instead of records.',
     businessSubjects: ['expense'],
     questionKinds: ['summary', 'list', 'detail'],
     category: 'read_summary',

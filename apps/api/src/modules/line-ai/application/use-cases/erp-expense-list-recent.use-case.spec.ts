@@ -22,11 +22,39 @@ const expense = (over: Record<string, unknown>) => ({
   ...over,
 });
 
-function makeTool(data: Array<ReturnType<typeof expense>>) {
+/** Prisma fake for the branch catalog read; honors the ABAC `id: { in }` narrowing the tool sends. */
+function fakePrisma(branches: Array<{ id: string; name: string; code?: string }> = []) {
+  return {
+    client: {
+      branch: {
+        findMany: async ({ where }: any) => {
+          const scope: string[] | undefined = where?.id?.in;
+          return branches
+            .filter((b) => !scope || scope.includes(b.id))
+            .map((b) => ({ id: b.id, name: b.name, code: b.code ?? `C-${b.id}` }));
+        },
+      },
+    },
+  } as any;
+}
+
+function makeTool(data: Array<ReturnType<typeof expense>>, branches?: Array<{ id: string; name: string }>) {
   const listExpenses = {
     execute: async () => ({ data, total: data.length, page: 1, pageSize: 100 }),
   } as any;
-  return new ExpenseListRecentTool(listExpenses);
+  return new ExpenseListRecentTool(listExpenses, fakePrisma(branches));
+}
+
+/** Same tool, but capturing the filter each repository call received. */
+function makeFilterCapturingTool(branches?: Array<{ id: string; name: string; code?: string }>) {
+  const filters: any[] = [];
+  const listExpenses = {
+    execute: async (_ctx: unknown, filter: any) => {
+      filters.push(filter);
+      return { data: [], total: 0, page: 1, pageSize: 100 };
+    },
+  } as any;
+  return { tool: new ExpenseListRecentTool(listExpenses, fakePrisma(branches)), filters };
 }
 
 /** Repository that reports more rows than it will ever hand back, so the page loop keeps asking. */
@@ -38,7 +66,7 @@ function makePagingTool(reportedTotal: number) {
       return { data: [expense({ id: `e${filter.page}` })], total: reportedTotal, page: filter.page, pageSize: 100 };
     },
   } as any;
-  return { tool: new ExpenseListRecentTool(listExpenses), calls };
+  return { tool: new ExpenseListRecentTool(listExpenses, fakePrisma()), calls };
 }
 
 describe('ExpenseListRecentTool', () => {
@@ -109,9 +137,55 @@ describe('ExpenseListRecentTool', () => {
   // A branch-scoped answer used to link to the bare expenses page, so the web landed on every
   // branch and disagreed with the figures the user had just read.
   it('carries the branch filter into the web link', async () => {
-    const result = await makeTool([expense({})]).execute(baseCtx, { branchId: 'branch-1' });
+    const result = await makeTool([expense({})], [{ id: 'branch-1', name: 'สาขาหนึ่ง' }])
+      .execute(baseCtx, { branchId: 'branch-1' });
 
     assert.equal(result.sourceRefs[0]?.webPath, '/companies/c1/expenses?branchId=branch-1');
+  });
+
+  // Live UAT 2026-08-29: the model passed the branch NAME the user said, the raw value filtered
+  // nothing and reached the link, and the web (correctly) ignored a non-id. Names must resolve.
+  it('resolves a branch name to its id for both the filter and the web link', async () => {
+    const { tool, filters } = makeFilterCapturingTool([{ id: 'branch-1', name: 'สาธุประดิษฐ์' }]);
+    const result = await tool.execute(baseCtx, { branchId: 'สาธุประดิษฐ์' });
+
+    assert.equal(filters[0]?.branchId, 'branch-1');
+    assert.equal(result.sourceRefs[0]?.webPath, '/companies/c1/expenses?branchId=branch-1');
+  });
+
+  it('resolves a branch code the same way', async () => {
+    const { tool, filters } = makeFilterCapturingTool([{ id: 'branch-1', name: 'สาธุประดิษฐ์', code: 'STP' }]);
+    const result = await tool.execute(baseCtx, { branchId: 'STP' });
+
+    assert.equal(filters[0]?.branchId, 'branch-1');
+    assert.equal(result.sourceRefs[0]?.webPath, '/companies/c1/expenses?branchId=branch-1');
+  });
+
+  // Typos and partial wording are the model's job to reconcile — the tool hands back the real
+  // catalog instead of answering a confident zero for a branch that exists under another spelling.
+  it('returns the branch catalog instead of records when the branch cannot be resolved', async () => {
+    const { tool, filters } = makeFilterCapturingTool([{ id: 'branch-1', name: 'สาธุประดิษฐ์' }]);
+    const result = await tool.execute(baseCtx, { branchId: 'สาธุประดิด' });
+
+    assert.equal(filters.length, 0);
+    const data = result.data as any;
+    assert.equal(data.branchUnresolved, 'สาธุประดิด');
+    assert.deepEqual(data.availableBranches, [{ id: 'branch-1', name: 'สาธุประดิษฐ์' }]);
+    assert.deepEqual(result.sourceRefs, []);
+  });
+
+  it('keeps branches outside the caller branch scope out of the catalog and unresolvable', async () => {
+    const { tool, filters } = makeFilterCapturingTool([
+      { id: 'branch-1', name: 'สาธุประดิษฐ์' },
+      { id: 'branch-2', name: 'บางนา' },
+    ]);
+    const scopedCtx = { ...baseCtx, branchIds: ['branch-1'] };
+    const result = await tool.execute(scopedCtx, { branchId: 'บางนา' });
+
+    assert.equal(filters.length, 0);
+    const data = result.data as any;
+    assert.equal(data.branchUnresolved, 'บางนา');
+    assert.deepEqual(data.availableBranches, [{ id: 'branch-1', name: 'สาธุประดิษฐ์' }]);
   });
 
   it('caps the page loop and flags the answer as truncated', async () => {
