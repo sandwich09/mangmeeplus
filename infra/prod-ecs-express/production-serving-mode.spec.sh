@@ -64,6 +64,13 @@ assert_rejected deploy-production-line-web-login-not-activated \
   'LINE_WEB_LOGIN_ENABLED=true is not activated for production yet' \
   env -i PATH="$PATH" DEPLOY_ENV=production PRODUCTION_SERVING_MODE=live \
     LINE_WEB_LOGIN_ENABLED=true bash "$deploy" all
+assert_rejected deploy-invalid-line-web-handoff-boolean \
+  'LINE_WEB_HANDOFF_ENABLED must be exactly true or false' \
+  env -i PATH="$PATH" DEPLOY_ENV=uat LINE_WEB_HANDOFF_ENABLED=yes bash "$deploy" all
+assert_rejected deploy-production-line-web-handoff-not-activated \
+  'LINE_WEB_HANDOFF_ENABLED=true is not activated for production yet' \
+  env -i PATH="$PATH" DEPLOY_ENV=production PRODUCTION_SERVING_MODE=live \
+    LINE_WEB_HANDOFF_ENABLED=true bash "$deploy" all
 assert_rejected deploy-invalid-fused-shadow-boolean \
   'LINE_AI_FUSED_PLAN_SHADOW_ENABLED must be exactly true or false' \
   env -i PATH="$PATH" DEPLOY_ENV=uat LINE_AI_FUSED_PLAN_SHADOW_ENABLED=yes bash "$deploy" all
@@ -177,6 +184,11 @@ grep -Fq '{name:"LINE_AI_LEDGER_ENABLED", value:$aiEnabled}' "$deploy"
 grep -Fq 'LINE_WEB_LOGIN_ENABLED_INPUT="${LINE_WEB_LOGIN_ENABLED:-}"' "$deploy"
 grep -Fq -- '--arg lineWebLoginEnabled "$SERVING_LINE_WEB_LOGIN_ENABLED"' "$deploy"
 test "$(grep -Fc '{name:"LINE_WEB_LOGIN_ENABLED", value:$lineWebLoginEnabled}' "$deploy")" -eq 1
+# P12-3b deep-link handoff: same contract — UAT on (post-Q2), production off and rejects true,
+# api-web container is the only consumer.
+grep -Fq 'LINE_WEB_HANDOFF_ENABLED_INPUT="${LINE_WEB_HANDOFF_ENABLED:-}"' "$deploy"
+grep -Fq -- '--arg lineWebHandoffEnabled "$SERVING_LINE_WEB_HANDOFF_ENABLED"' "$deploy"
+test "$(grep -Fc '{name:"LINE_WEB_HANDOFF_ENABLED", value:$lineWebHandoffEnabled}' "$deploy")" -eq 1
 # Exact-greeting 0-call lane: UAT defaults on, production defaults off and rejects true, and the
 # api-web container is the only consumer of the flag.
 grep -Fq 'LINE_AI_EXACT_GREETING_ENABLED_INPUT="${LINE_AI_EXACT_GREETING_ENABLED:-}"' "$deploy"
