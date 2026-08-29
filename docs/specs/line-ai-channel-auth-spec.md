@@ -39,7 +39,7 @@ Rules:
 
 - LINE proves user identity; WatchDog-BMS owns company membership, roles, permissions, policy rules, and audit.
 - LINE Messaging API user id is channel-scoped and must be linked to an internal user before business data is shown.
-- Normal employee users may have only one active company membership. OWNER users may belong to multiple companies; owner company selection is server-verified through LIFF/web context.
+- Any user of any role may belong to multiple companies and may hold LINE company context; company selection is server-verified through LIFF/web context. (Owner decision 2026-08-29: replaces the earlier rule that only users who were OWNER of every company could select context — per-company authorization stays with the permission resolver and branch ABAC.)
 - WatchDog uses one shared LINE OA in the first pass. The webhook validates the shared channel, then resolves company from linked identity plus selected company context, never from the channel alone.
 - Removing or inactivating a user from a company immediately blocks LINE AI, alerts, deep links, uploads, and AI/tool access to that company's data.
 
@@ -52,17 +52,17 @@ Rules:
 3. If LINE identity is unknown, system validates the invite before linking; self-join without invite is deferred.
 4. System links the LINE identity to the current WatchDog user by creating or confirming `ExternalIdentity`.
 5. System resolves the current web/session company from the post-password-change route or explicit selector and persists it to `LineCompanyContext`.
-6. If OWNER user has multiple companies and no current selected company is available, user chooses company context before LINE AI can answer company-scoped questions.
+6. If a user has multiple companies and no current selected company is available, user chooses company context before LINE AI can answer company-scoped questions.
 7. System confirms link and returns to LINE or web.
 
 Shared OA chat behavior:
 
 - Scanning the same shared LINE OA opens the same LINE chat history. This is expected and must not be used as company context.
 - Company context lives only in WatchDog server state: `ExternalIdentity` plus `LineCompanyContext`, then current active `CompanyMembership` verification on each request.
-- Re-linking the same LINE account from a different OWNER-owned company must update `LineCompanyContext` to the selected company instead of relying on old LINE chat state.
+- Re-linking the same LINE account from a different company the user is an active member of must update `LineCompanyContext` to the selected company instead of relying on old LINE chat state.
 - Re-linking must be idempotent for the same WatchDog user and LINE user. It should refresh selected company context, not fail with a blocking conflict.
-- A normal non-owner employee must not end up with multiple active company contexts. If multiple active memberships exist for a non-owner, deny and audit policy violation.
-- OWNER users can manage shared-OA company context from LINE with control-plane commands: `/companies`, `/company`, or exact `เปลี่ยนบริษัท` lists active OWNER companies and `/company <number-or-companyId>` switches context after server-side membership verification. The immediately following reply may use the displayed bare number within 15 minutes; the server maps it from pending picker state and performs the same membership/OWNER recheck. These commands are not AI classifier keywords.
+- A user holds exactly one selected company context at a time, whatever their role. Multiple active memberships are allowed; the user picks one and every request re-verifies it against current active memberships. (Owner decision 2026-08-29: replaces the earlier deny-and-audit rule for non-owners with multiple memberships.)
+- Multi-company users of any role can manage shared-OA company context from LINE with control-plane commands: `/companies`, `/company`, or exact `เปลี่ยนบริษัท` lists their active companies and `/company <number-or-companyId>` switches context after server-side membership verification — the selection must be one of the user's own ACTIVE memberships. The immediately following reply may use the displayed bare number within 15 minutes; the server maps it from pending picker state and performs the same membership recheck. These commands are not AI classifier keywords.
 
 ### Ask AI About System Data
 

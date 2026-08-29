@@ -1911,6 +1911,7 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
   const requestedView = searchParams.get('view');
   const requestedFrom = searchParams.get('fromDate');
   const requestedTo = searchParams.get('toDate');
+  const requestedBranchId = searchParams.get('branchId');
   const sourceView = requestedView === 'pending' || requestedView === 'unpaid' ? requestedView
     : requestedView === 'confirmed' && isCivilDate(requestedFrom) && isCivilDate(requestedTo) && requestedFrom <= requestedTo ? 'confirmed' : null;
   const toast = useToast();
@@ -1942,6 +1943,17 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
   const focusedHighlight = useRef('');
   const scrolledToHighlight = useRef('');
   const branchFilter = useBranchFilter();
+  // LINE answer deep-links carry ?branchId= — the answer was branch-scoped, so landing must not
+  // silently widen to all branches. Applied once per value, only when the branch is visible to this
+  // user; locked single-branch scopes keep their forced branch.
+  const appliedBranchParam = useRef('');
+  useEffect(() => {
+    if (!requestedBranchId || !branchFilter || branchFilter.locked) return;
+    if (appliedBranchParam.current === requestedBranchId) return;
+    if (!branchFilter.branches.some((b) => b.id === requestedBranchId)) return;
+    appliedBranchParam.current = requestedBranchId;
+    branchFilter.setBranchId(requestedBranchId);
+  }, [requestedBranchId, branchFilter]);
   const branchId = branchFilter?.branchId ?? '';
   const { fromDate, toDate } = sourceView
     ? { fromDate: sourceView === 'confirmed' ? requestedFrom! : undefined, toDate: sourceView === 'confirmed' ? requestedTo! : undefined }

@@ -187,7 +187,6 @@ const EXPENSE_FEATURE_DISABLED_REPLY = '📋 บริษัทนี้ยั�
  */
 const LAUNCH_ROUTE_CLOSED_REPLY = '🔧 ตอนนี้ผู้ช่วยพักให้บริการชั่วคราวค่ะ\nระหว่างนี้ยังใช้งานผ่านเว็บแอปได้ตามปกติ และเราจะกลับมาให้บริการเร็ว ๆ นี้นะคะ';
 const ASSISTANT_TALK_GREETING = 'สวัสดีค่ะ 😊 น้องมั่งมีมาแล้วนะคะ\nวันนี้มีอะไรให้น้องช่วยแบ่งเบาบ้าง บอกได้เลยค่ะ 💚';
-const COMPANY_CONTEXT_FORBIDDEN_REPLY = '🔒 ผู้ใช้หลายบริษัทต้องเป็น OWNER ของทุกบริษัทก่อนเลือกบริบทใน LINE ค่ะ';
 const SIGNATURE_FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์เก็บลายเซ็นประจำตัวผ่าน LINE ค่ะ';
 const SIGNATURE_NEED_IMAGE_REPLY = '✍️ ต้องการอัปโหลดลายเซ็นใช่ไหมคะ กรุณาส่ง "รูปลายเซ็น" เข้ามาในแชทนี้ได้เลยนะคะ\nระบบจะเก็บเป็นลายเซ็นประจำตัวของคุณ ใช้ลงนามได้ทันทีค่ะ';
 const CLARIFY_REPLY = '🤔 น้องมั่งมียังไม่แน่ใจว่าต้องการทำอะไรกับข้อความ/รูปนี้ค่ะ\n• ถ้าเป็นหลักฐานค่าใช้จ่าย (ใบเสร็จ/สลิป/บิล/สกรีนช็อต) ส่งรูปอีกครั้งพร้อมข้อความ เช่น "บันทึกค่าใช้จ่าย"\n• ถ้าต้องการเก็บลายเซ็นประจำตัว ส่งรูปอีกครั้งพร้อมข้อความ เช่น "อัปโหลดลายเซ็น"';
@@ -683,10 +682,6 @@ function canUseAssistantPreview(toolNames: string[] | undefined, permissions: st
   });
 }
 
-function isOwnerMembership(membership: LineCompanyMembership): boolean {
-  return (membership.roles ?? []).some((mr) => mr.role?.key === 'OWNER');
-}
-
 function companyLabel(membership: LineCompanyMembership): string {
   return membership.company?.brandName ?? membership.company?.name ?? 'ไม่ระบุบริษัท';
 }
@@ -1009,12 +1004,17 @@ export function buildCorrectionEvidence(
 }
 
 /** Resolve company for a LINE user using ExternalIdentity + LineCompanyContext (shared-OA flow).
- *  Returns companyId or null if the user has no active membership or needs to select company. */
+ *  Returns companyId or null if the user has no active membership or needs to select company.
+ *
+ *  Owner decision 2026-08-29: a multi-company user of ANY role may hold LINE company context —
+ *  being employee of one company and owner of another used to lock the assistant out entirely.
+ *  The selection is still verified against this user's own ACTIVE memberships below, and
+ *  per-company authorization stays with the permission resolver and branch ABAC downstream. */
 async function resolveCompanyForLineUser(
   prisma: PrismaService,
   userId: string,
   lineUserId: string,
-): Promise<{ companyId: string } | { needsSelection: true } | { policyViolation: true } | null> {
+): Promise<{ companyId: string } | { needsSelection: true } | null> {
   const memberships = await prisma.client.companyMembership.findMany({
     where: { userId, status: 'ACTIVE', company: { status: 'ACTIVE' } },
     select: { companyId: true, roles: { select: { role: { select: { key: true } } } } },
@@ -1023,7 +1023,6 @@ async function resolveCompanyForLineUser(
 
   if (memberships.length === 0) return null;
   if (memberships.length === 1) return { companyId: memberships[0].companyId };
-  if (!memberships.every(isOwnerMembership)) return { policyViolation: true };
 
   // Multi-company user: check for selected context
   const ctx = await prisma.client.lineCompanyContext.findUnique({
@@ -1691,7 +1690,7 @@ export class ProcessLineWebhookUseCase {
     const resolved = event.companyIdAtAcceptance
       ? { companyId: event.companyIdAtAcceptance }
       : await resolveCompanyForLineUser(this.prisma, identity.userId, event.lineUserId);
-    if (!resolved || 'needsSelection' in resolved || 'policyViolation' in resolved) {
+    if (!resolved || 'needsSelection' in resolved) {
       return { status: 'continue' };
     }
 
@@ -1775,11 +1774,6 @@ export class ProcessLineWebhookUseCase {
     if (!resolved) {
       await this.deliverReply(event, UNLINKED_REPLY);
       await this.updateEventLog(event.webhookEventId, 'no_membership', LINE_AI_ERROR_CODES.UNLINKED_USER);
-      return;
-    }
-    if ('policyViolation' in resolved) {
-      await this.deliverReply(event, COMPANY_CONTEXT_FORBIDDEN_REPLY);
-      await this.updateEventLog(event.webhookEventId, 'company_context_forbidden', LINE_AI_ERROR_CODES.FORBIDDEN);
       return;
     }
     if ('needsSelection' in resolved) {
@@ -3168,11 +3162,6 @@ export class ProcessLineWebhookUseCase {
       await this.updateEventLog(event.webhookEventId, 'no_membership', LINE_AI_ERROR_CODES.UNLINKED_USER);
       return;
     }
-    if (memberships.length > 1 && !memberships.every(isOwnerMembership)) {
-      await this.deliverReply(event, COMPANY_CONTEXT_FORBIDDEN_REPLY);
-      await this.updateEventLog(event.webhookEventId, 'company_context_forbidden', LINE_AI_ERROR_CODES.FORBIDDEN);
-      return;
-    }
 
     const current = await this.prisma.client.lineCompanyContext.findUnique({
       where: { lineUserId: event.lineUserId },
@@ -3184,7 +3173,7 @@ export class ProcessLineWebhookUseCase {
       const currentMembership = memberships.find((membership) => membership.companyId === currentCompanyId);
       if (!currentMembership) {
         await this.deliverRequiredMessages(event, [buildCompanyPickerMessage(
-          memberships.filter(isOwnerMembership).map((membership) => ({ companyId: membership.companyId, companyName: companyLabel(membership) })),
+          memberships.map((membership) => ({ companyId: membership.companyId, companyName: companyLabel(membership) })),
           undefined,
           command.page,
         )]);
@@ -3196,10 +3185,9 @@ export class ProcessLineWebhookUseCase {
         displayName,
         roleLabels: companyRoleLabels(currentMembership),
       })];
-      const ownerCompanies = memberships.filter(isOwnerMembership);
-      if (isOwnerMembership(currentMembership) && ownerCompanies.length > 1) {
+      if (memberships.length > 1) {
         messages.push(buildCompanyPickerMessage(
-          ownerCompanies.map((membership) => ({ companyId: membership.companyId, companyName: companyLabel(membership) })),
+          memberships.map((membership) => ({ companyId: membership.companyId, companyName: companyLabel(membership) })),
           currentMembership.companyId,
           command.page,
         ));
@@ -3209,10 +3197,12 @@ export class ProcessLineWebhookUseCase {
       return;
     }
 
+    // `findCompanySelection` only ever returns one of this user's own ACTIVE memberships, so an
+    // index or companyId that is not theirs falls through to the picker below.
     const selected = findCompanySelection(memberships, command.value);
-    if (!selected || !isOwnerMembership(selected)) {
+    if (!selected) {
       await this.deliverRequiredMessages(event, [buildCompanyPickerMessage(
-        memberships.filter(isOwnerMembership).map((membership) => ({ companyId: membership.companyId, companyName: companyLabel(membership) })),
+        memberships.map((membership) => ({ companyId: membership.companyId, companyName: companyLabel(membership) })),
         current?.companyId,
       )]);
       await this.updateEventLog(event.webhookEventId, 'company_context_selection_invalid', LINE_AI_ERROR_CODES.AMBIGUOUS_COMPANY, current?.companyId);
@@ -3540,11 +3530,6 @@ export class ProcessLineWebhookUseCase {
         )]);
       }
       await this.updateEventLog(event.webhookEventId, !resolved ? 'unlinked' : 'needs_company_selection', LINE_AI_ERROR_CODES.UNLINKED_USER);
-      return;
-    }
-    if ('policyViolation' in resolved) {
-      await this.deliverReply(event, COMPANY_CONTEXT_FORBIDDEN_REPLY);
-      await this.updateEventLog(event.webhookEventId, 'company_context_forbidden', LINE_AI_ERROR_CODES.FORBIDDEN);
       return;
     }
     const companyId = resolved.companyId;
