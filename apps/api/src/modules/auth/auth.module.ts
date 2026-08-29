@@ -10,6 +10,9 @@ import { IssueTokenUseCase } from './application/use-cases/issue-token.use-case'
 import { ExchangeLineTokenUseCase } from './application/use-cases/exchange-line-token.use-case';
 import { LineLoginCallbackUseCase } from './application/use-cases/line-login-callback.use-case';
 import { LineLinkOauthUseCase } from './application/use-cases/line-link-oauth.use-case';
+import { CreateLineWebLoginTransactionUseCase } from './application/use-cases/create-line-web-login-transaction.use-case';
+import { ApproveLineWebLoginTransactionUseCase } from './application/use-cases/approve-line-web-login-transaction.use-case';
+import { RedeemLineWebLoginTransactionUseCase } from './application/use-cases/redeem-line-web-login-transaction.use-case';
 import { RefreshSessionUseCase } from './application/use-cases/refresh-session.use-case';
 import { LogoutUseCase } from './application/use-cases/logout.use-case';
 import { RevokeOtherSessionsUseCase } from './application/use-cases/revoke-other-sessions.use-case';
@@ -74,6 +77,9 @@ export function selectAuthMailer(
     ExchangeLineTokenUseCase,
     LineLoginCallbackUseCase,
     LineLinkOauthUseCase,
+    CreateLineWebLoginTransactionUseCase,
+    ApproveLineWebLoginTransactionUseCase,
+    RedeemLineWebLoginTransactionUseCase,
     RefreshSessionUseCase,
     LogoutUseCase,
     RevokeOtherSessionsUseCase,

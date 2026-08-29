@@ -75,6 +75,27 @@ export class AuthRateLimitService {
     );
   }
 
+  // P12-3a: both desktop QR endpoints are unauthenticated, so the caller IP is again the only key.
+  // Minting is rare; polling is not — the desktop asks every 2.5s for the QR's 180s lifetime — so
+  // the two buckets are sized separately instead of sharing one quota.
+  async assertLineQrCreateAllowed(ipAddress: string): Promise<void> {
+    await this.assertWithinLimit(
+      'line-qr-create-ip',
+      ipAddress,
+      this.config.lineQrCreateMaxPerIp,
+      this.config.lineQrCreateWindowSeconds,
+    );
+  }
+
+  async assertLineQrPollAllowed(ipAddress: string): Promise<void> {
+    await this.assertWithinLimit(
+      'line-qr-poll-ip',
+      ipAddress,
+      this.config.lineQrPollMaxPerIp,
+      this.config.lineQrPollWindowSeconds,
+    );
+  }
+
   async assertCustomerRegisterAllowed(ipAddress: string, lineChannelId: string): Promise<void> {
     await this.assertWithinLimit(
       'customer-register-ip-channel',

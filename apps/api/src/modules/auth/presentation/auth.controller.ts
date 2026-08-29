@@ -42,6 +42,9 @@ import { IssueTokenUseCase } from '../application/use-cases/issue-token.use-case
 import { ExchangeLineTokenUseCase } from '../application/use-cases/exchange-line-token.use-case';
 import { LineLoginCallbackUseCase } from '../application/use-cases/line-login-callback.use-case';
 import { LineLinkOauthUseCase } from '../application/use-cases/line-link-oauth.use-case';
+import { CreateLineWebLoginTransactionUseCase } from '../application/use-cases/create-line-web-login-transaction.use-case';
+import { ApproveLineWebLoginTransactionUseCase } from '../application/use-cases/approve-line-web-login-transaction.use-case';
+import { RedeemLineWebLoginTransactionUseCase } from '../application/use-cases/redeem-line-web-login-transaction.use-case';
 import { RefreshSessionUseCase } from '../application/use-cases/refresh-session.use-case';
 import { LogoutUseCase } from '../application/use-cases/logout.use-case';
 import { RevokeOtherSessionsUseCase } from '../application/use-cases/revoke-other-sessions.use-case';
@@ -78,6 +81,22 @@ class LineLoginCallbackDto {
   @IsString() @Matches(/^[\w.-]{10,512}$/) code!: string;
   @IsString() @Matches(/^[A-Za-z0-9\-._~]{43,128}$/) codeVerifier!: string;
   @IsString() @Matches(/^[A-Za-z0-9_-]{16,256}$/) nonce!: string;
+}
+
+// P12-3a: both halves are 24 random bytes rendered base64url; the bound keeps a hostile body from
+// reaching the hash function with something the size of a payload.
+const LINE_QR_CREDENTIAL_PATTERN = /^[A-Za-z0-9_-]{20,128}$/;
+
+class LineQrCreateDto {
+  @IsString() @IsOptional() @MaxLength(512) returnTo?: string;
+}
+
+class LineQrRedeemDto {
+  @IsString() @Matches(LINE_QR_CREDENTIAL_PATTERN) desktopSecret!: string;
+}
+
+class LineQrApproveDto {
+  @IsString() @Matches(LINE_QR_CREDENTIAL_PATTERN) publicCode!: string;
 }
 
 export class LineLinkDto {
@@ -177,6 +196,9 @@ export class AuthController {
     private readonly legalAcceptance: LegalAcceptanceService,
     private readonly lineLoginCallbackUseCase: LineLoginCallbackUseCase,
     private readonly lineLinkOauthUseCase: LineLinkOauthUseCase,
+    private readonly createLineWebLoginTransaction: CreateLineWebLoginTransactionUseCase,
+    private readonly approveLineWebLoginTransaction: ApproveLineWebLoginTransactionUseCase,
+    private readonly redeemLineWebLoginTransaction: RedeemLineWebLoginTransactionUseCase,
     @Optional() @Inject(AuditService) private readonly audit: AuditService | null = null,
   ) {}
 
@@ -314,6 +336,59 @@ export class AuthController {
     }
     await this.authRateLimit.assertLineLoginCallbackAllowed(trustedClientIp(req));
     return this.lineLoginCallbackUseCase.execute({ code: dto.code, codeVerifier: dto.codeVerifier, nonce: dto.nonce });
+  }
+
+  // ---- P12-3a desktop QR login (master plan §13.6E) ----
+  // The QR carries a short-TTL single-use transaction, never the OA add-friend QR and never a
+  // static code (AUTH-03). Scanning only opens the approve page; the phone still authenticates
+  // through the untouched P12-1/P12-2 flow, and only an explicit tap approves.
+
+  @Public()
+  @Post('line/qr/create')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Mint a desktop QR login transaction; returns the QR and the browser-bound secret' })
+  @ApiBody({ type: LineQrCreateDto })
+  @ApiResponse({ status: 200, description: 'Transaction created' })
+  async lineQrCreate(@Body() dto: LineQrCreateDto, @Req() req: Request) {
+    if (!this.config.lineWebLoginEnabled) {
+      throw new ForbiddenException('LINE login is not enabled.');
+    }
+    await this.authRateLimit.assertLineQrCreateAllowed(trustedClientIp(req));
+    return this.createLineWebLoginTransaction.execute({ ...(dto.returnTo ? { returnTo: dto.returnTo } : {}) });
+  }
+
+  @Public()
+  @Post('line/qr/redeem')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Poll a desktop QR transaction; issues first-party tokens once approved' })
+  @ApiBody({ type: LineQrRedeemDto })
+  @ApiResponse({ status: 200, description: 'pending | expired | approved with tokens' })
+  @ApiResponse({ status: 403, description: 'Unknown desktop secret or inactive account' })
+  async lineQrRedeem(@Body() dto: LineQrRedeemDto, @Req() req: Request) {
+    if (!this.config.lineWebLoginEnabled) {
+      throw new ForbiddenException('LINE login is not enabled.');
+    }
+    await this.authRateLimit.assertLineQrPollAllowed(trustedClientIp(req));
+    return this.redeemLineWebLoginTransaction.execute({ desktopSecret: dto.desktopSecret });
+  }
+
+  // Authenticated on purpose: approving is what binds *this* signed-in user to the desktop's
+  // transaction, so it can never be a public endpoint.
+  @Post('line/qr/approve')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Approve a scanned desktop QR login for the current user' })
+  @ApiBody({ type: LineQrApproveDto })
+  @ApiResponse({ status: 200, description: 'Transaction approved' })
+  @ApiResponse({ status: 404, description: 'QR transaction is expired or not found' })
+  async lineQrApprove(@Body() dto: LineQrApproveDto, @Req() req: Request & { context: RequestContext }) {
+    if (!this.config.lineWebLoginEnabled) {
+      throw new ForbiddenException('LINE login is not enabled.');
+    }
+    return this.approveLineWebLoginTransaction.execute({
+      userId: req.context.userId,
+      publicCode: dto.publicCode,
+      requestId: req.context.requestId,
+    });
   }
 
   @Public()
