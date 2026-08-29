@@ -8,6 +8,11 @@ import {
 } from './reimbursement-request.use-case';
 import { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
 
+// Evidence fake for detailWithFileNames — decision endpoints now return the same hydrated
+// detail as a GET (names + file names), so their specs feed the assembler harmless lookups.
+const fakeDetailEvidence = { getAttachmentFileName: async () => undefined, getAttachmentFileNames: async () => ({}) };
+
+
 const noopAudit = { log: async () => undefined } as any;
 const noopOutbox = { append: async () => undefined } as any;
 const readyApproverRoutes = {
@@ -24,7 +29,7 @@ function submitUseCase(repo: any, audit: any, outbox: any, evidence: any) {
 }
 
 function approveUC(repo: any, projections: any = { execute: async () => undefined }, audit: any = noopAudit) {
-  return new ApproveReimbursementUseCase(repo, audit, projections);
+  return new ApproveReimbursementUseCase(repo, audit, projections, fakeDetailEvidence as any);
 }
 
 function ctx(overrides: Partial<any> = {}) {
@@ -65,6 +70,8 @@ function fakeRepo(req: any, policy: any = null, events: any[] = [], activeApprov
     findActiveApproverUserIds: async (_companyId: string, ids: string[]) =>
       new Set(activeApprovers ?? ids),
     findPolicy: async () => policy,
+    getUserDisplayNames: async () => ({}),
+    listSignedClaimFormCopies: async () => [],
     beginApprovalDecisionAtomic: async (data: any) => {
       const step = req.approvalSteps[0];
       step.status = 'APPROVED'; step.decisionByUserId = data.actorUserId; step.decidedAt = data.decidedAt;
@@ -240,14 +247,14 @@ describe('ApproveReimbursementUseCase', () => {
 
 describe('RejectReimbursementUseCase', () => {
   it('requires a non-empty reason', async () => {
-    const uc = new RejectReimbursementUseCase(fakeRepo(baseRequest()), noopAudit);
+    const uc = new RejectReimbursementUseCase(fakeRepo(baseRequest()), noopAudit, fakeDetailEvidence as any);
     await assert.rejects(() => uc.execute(ctx(), 'rb-1', '  '), /rejection_reason_required/);
   });
 
   it('rejects with a reason and moves to REJECTED', async () => {
     const req = baseRequest();
     const events: any[] = [];
-    const uc = new RejectReimbursementUseCase(fakeRepo(req, null, events), noopAudit);
+    const uc = new RejectReimbursementUseCase(fakeRepo(req, null, events), noopAudit, fakeDetailEvidence as any);
     const detail = await uc.execute(ctx(), 'rb-1', 'duplicate receipt');
     assert.equal(detail.status, 'REJECTED');
     assert.equal(req.rejectionReason, 'duplicate receipt');
@@ -259,7 +266,7 @@ describe('RejectReimbursementUseCase', () => {
 
   it('blocks self-rejection by requester', async () => {
     const req = baseRequest({ requesterUserId: 'approver-1', approvalSteps: [{ ...baseRequest().approvalSteps[0], approverRoleSnapshot: 'ACCOUNTANT' }] });
-    const uc = new RejectReimbursementUseCase(fakeRepo(req), noopAudit);
+    const uc = new RejectReimbursementUseCase(fakeRepo(req), noopAudit, fakeDetailEvidence as any);
     await assert.rejects(() => uc.execute(ctx({ roles: ['ACCOUNTANT'] }), 'rb-1', 'reason'), /self_approval_denied/);
   });
 });
@@ -515,6 +522,7 @@ describe('self-approval role exemption (audit H-17)', () => {
       fakeRepo(req) as any,
       { log: async (entry: any) => { entries.push(entry); } } as any,
       { runApprovalProjection: async () => undefined } as any,
+      fakeDetailEvidence as any,
     );
     return { uc, entries };
   }
@@ -564,6 +572,23 @@ describe('self-approval role exemption (audit H-17)', () => {
     const { uc, entries } = auditingUC(baseRequest({ requesterUserId: 'staff-1' }));
     await uc.execute(ctx({ roles: ['OWNER'] }), 'rb-1');
     assert.equal(auditOf(entries).metadataJson.selfApproval, undefined);
+  });
+});
+
+describe('decision responses are as hydrated as a GET', () => {
+  // Live UAT 2026-08-29: the drawer keeps a decision's response on purpose (a frozen assignee
+  // may lose read permission the moment they decide), and that response used to skip the name
+  // lookup — the signature panel then printed a raw cuid that overflowed onto the ลงนาม button.
+  it('returns the approve detail with resolved display names, never bare ids', async () => {
+    const req = baseRequest();
+    const repo = {
+      ...fakeRepo(req),
+      getUserDisplayNames: async (_c: string, ids: string[]) => Object.fromEntries(ids.map((id) => [id, `คุณ ${id}`])),
+    } as any;
+    const uc = new ApproveReimbursementUseCase(repo, noopAudit, { runApprovalProjection: async () => undefined } as any, fakeDetailEvidence as any);
+    const detail = await uc.execute(ctx(), 'rb-1');
+    const actor = req.approvalSteps[0].decisionByUserId;
+    assert.equal(detail.approvalSteps[0]?.decidedByName, `คุณ ${actor}`);
   });
 });
 

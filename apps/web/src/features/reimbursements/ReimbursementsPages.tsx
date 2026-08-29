@@ -1203,13 +1203,17 @@ function DetailDrawer({ companyId, detail, context, userId, permissions, busy, e
                 {CLAIM_SIGNATURE_ROLES.map(role => {
                   const signed = signatures.find((s: any) => s.role === role);
                   return (
-                    <div key={role} className="rounded-xl border border-gray-200 p-3 text-xs">
+                    // min-w-0 + break-words: a long value must wrap inside its own cell — on a
+                    // narrow grid an unbroken string overflowed the card and sat on top of the
+                    // neighbouring slot's ลงนาม button, swallowing its taps.
+                    <div key={role} className="min-w-0 rounded-xl border border-gray-200 p-3 text-xs">
                       <div className="font-semibold text-gray-700">{CLAIM_SIGNATURE_ROLE_LABELS[role]}</div>
                       <div className="mt-2">
                         {signed ? (
                           <>
                             <MangmeeBadge tone="brand">ลงนามแล้ว</MangmeeBadge>
-                            <div className="mt-2 text-gray-600">{signed.signedByName ?? signed.signedByUserId}</div>
+                            {/* Never a cuid: a missing name renders a dash, not the user id. */}
+                            <div className="mt-2 break-words text-gray-600">{signed.signedByName ?? '—'}</div>
                             <div className="text-gray-400">{shortDate(signed.signedAt)}</div>
                           </>
                         ) : <MangmeeBadge tone="slate">ยังไม่ลงนาม</MangmeeBadge>}

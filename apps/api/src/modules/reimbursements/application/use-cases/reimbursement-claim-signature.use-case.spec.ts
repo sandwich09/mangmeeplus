@@ -7,7 +7,7 @@ import {
   SignClaimFormUseCase,
   eligibleClaimSignatureRoles,
 } from './reimbursement-claim-signature.use-case';
-import { claimSignatureAckHash } from './reimbursement-request.use-case';
+import { claimSignatureAckHash } from '../../domain/logic/reimbursement.logic';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 
 // Lane F. The business rule under test is WHO may sign WHICH role: eligibility is

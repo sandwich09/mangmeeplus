@@ -22,7 +22,7 @@ import type {
   ReimbursementLineWriteData,
   ReimbursementRequestRecord,
 } from '../../domain/models/reimbursement.model';
-import { toRequestSummary, toRequestDetail, detailUserIds, toSignedCopySummaries } from '../dto/reimbursement.mapper';
+import { toRequestSummary, toRequestDetail, detailUserIds, toSignedCopySummaries, detailWithFileNames } from '../dto/reimbursement.mapper';
 import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
 import { approverModeForRole, ListReimbursementApproverOptionsUseCase } from './reimbursement-policy.use-case';
 import { approvalDecisionActions } from './reimbursement-approval.use-case';
@@ -99,41 +99,8 @@ export function reimbursementPeriodKey(now: Date = new Date()): string {
   return `${bangkok.getUTCFullYear()}-${String(bangkok.getUTCMonth() + 1).padStart(2, '0')}`;
 }
 
-/**
- * Detail shape shared by the read and submit paths: line receipts resolve to
- * file names and approver/reviewer/payer ids resolve to display names (one
- * batched lookup — the drawer must never render a cuid).
- */
-async function detailWithFileNames(
-  repo: PrismaReimbursementRepository,
-  evidence: ReimbursementEvidenceService,
-  companyId: string,
-  req: ReimbursementRequestRecord,
-): Promise<ReimbursementRequestDetail> {
-  const [primaryFileName, lineFileNames, displayNames, signedCopies, policy] = await Promise.all([
-    evidence.getAttachmentFileName(companyId, req.primaryAttachmentId),
-    evidence.getAttachmentFileNames(companyId, (req.lines ?? []).map((line) => line.attachmentId ?? '')),
-    repo.getUserDisplayNames(companyId, detailUserIds(req)),
-    repo.listSignedClaimFormCopies(companyId, req.id),
-    loadPolicy(repo, companyId),
-  ]);
-  const requestPolicy = req.status === 'DRAFT' ? policy : effectivePolicyForRequest(req, policy);
-  const receiptRequirementStatus = req.status === 'DRAFT'
-    ? computeReceiptRequirement({
-        requireReceipt: requestPolicy.requireReceipt,
-        allowMissingReceiptWithReason: requestPolicy.allowMissingReceiptWithReason,
-        lines: req.lines ?? [],
-        missingReceiptReason: req.missingReceiptReason,
-      }).status
-    : req.receiptRequirementStatus;
-  // The ack hash is the LIVE claim, not the submit-frozen approval hash: a signer
-  // acknowledges what the form prints right now.
-  return toRequestDetail({ ...req, receiptRequirementStatus }, primaryFileName, lineFileNames, displayNames, {
-    signedCopies: toSignedCopySummaries(signedCopies),
-    claimSignatureAckHash: claimSignatureAckHash(req),
-    allowMissingReceiptWithReason: requestPolicy.allowMissingReceiptWithReason,
-  });
-}
+// detailWithFileNames moved to ../dto/reimbursement.mapper so the approval and finance
+// decision endpoints can return the same fully-hydrated detail without an import cycle.
 
 @Injectable()
 export class CreateReimbursementDraftUseCase {
@@ -854,19 +821,4 @@ export async function assertCanReadRequest(
   throw new ForbiddenException('Cannot read this reimbursement');
 }
 
-/**
- * The hash a claim-form signer acknowledges: the claim as it stands NOW, folded
- * exactly like the approval snapshot (header + every line). Distinct from
- * `approvalSnapshotHash`, which is frozen at submit — you sign what you printed.
- */
-export function claimSignatureAckHash(req: ReimbursementRequestRecord): string {
-  return computeSnapshotHash({
-    amount: req.amount,
-    currency: req.currency,
-    categoryKey: req.categoryKey,
-    incurredDate: req.incurredDate.toISOString(),
-    reason: req.reason,
-    primaryAttachmentId: req.primaryAttachmentId,
-    lines: req.lines ?? [],
-  });
-}
+// claimSignatureAckHash moved to ../../domain/logic/reimbursement.logic (pure record hash).

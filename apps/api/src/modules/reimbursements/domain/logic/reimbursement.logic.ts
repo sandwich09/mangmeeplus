@@ -200,6 +200,34 @@ export function computeLegacySnapshotHashV1(fields: ApprovalSnapshotFields): str
 }
 
 /**
+ * The hash a claim-form signer acknowledges: the claim as it stands NOW, folded
+ * exactly like the approval snapshot (header + every line). Distinct from
+ * `approvalSnapshotHash`, which is frozen at submit — you sign what you printed.
+ * Lives here (not in an application use-case) so every detail assembler can share
+ * it without an application-layer import cycle; structural param keeps this file
+ * free of model/Prisma imports.
+ */
+export function claimSignatureAckHash(req: {
+  amount: ApprovalSnapshotFields['amount'];
+  currency: string;
+  categoryKey: string;
+  incurredDate: Date;
+  reason: string;
+  primaryAttachmentId?: string | null;
+  lines?: ApprovalSnapshotFields['lines'];
+}): string {
+  return computeSnapshotHash({
+    amount: req.amount,
+    currency: req.currency,
+    categoryKey: req.categoryKey,
+    incurredDate: req.incurredDate.toISOString(),
+    reason: req.reason,
+    primaryAttachmentId: req.primaryAttachmentId,
+    lines: req.lines ?? [],
+  });
+}
+
+/**
  * Deterministic hash of the approval-sensitive fields frozen at submit time.
  * Every line is folded in lineNo order, so editing one line after submit
  * invalidates the pending approval exactly like editing the total does.

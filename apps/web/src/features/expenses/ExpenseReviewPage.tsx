@@ -1042,12 +1042,14 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
               key: entry.key,
               label: t(STEP_LABEL_KEYS[entry.key], locale),
               // Position decides the color (สรรพากร-style): green up to where the user
-              // stands, gray past it — stepping back grays the steps ahead again. A
-              // flagged step keeps its warning look unless it is the one being worked on.
-              // Display-only on purpose: navigation goes through ถัดไป/ย้อนกลับ.
+              // stands, gray past it — stepping back grays the steps ahead again.
+              // Owner 2026-08-29: the stepper says ORDER and nothing else — never swap a
+              // number for a warning icon (a ⚠ replacing "3" read as a broken stage, not
+              // as "duplicates pending"). Issues speak where they live: the duplicate
+              // chips/panel and the blocking banners. Display-only on purpose: navigation
+              // goes through ถัดไป/ย้อนกลับ.
               state: step === entry.key ? 'current'
-                : entry.state === 'attention' ? 'attention'
-                  : index < stepIndex ? 'done' : 'upcoming',
+                : index < stepIndex ? 'done' : 'upcoming',
             }))} />
           ) : navChips.map((chip) => (
             <button key={chip.key} type="button" onClick={() => chip.ref.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}

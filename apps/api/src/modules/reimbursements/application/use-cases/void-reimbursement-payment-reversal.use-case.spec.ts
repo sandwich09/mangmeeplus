@@ -3,6 +3,11 @@ import assert from 'node:assert/strict';
 import { UnprocessableEntityException } from '@nestjs/common';
 import { VoidReimbursementPaymentUseCase } from './reimbursement-finance.use-case';
 
+// Evidence fake for detailWithFileNames — decision endpoints now return the same hydrated
+// detail as a GET (names + file names), so their specs feed the assembler harmless lookups.
+const fakeDetailEvidence = { getAttachmentFileName: async () => undefined, getAttachmentFileNames: async () => ({}) };
+
+
 // GAP-02 Phase 3 closure evidence: the payment void reserves the reversal entry
 // number only when a posted settlement journal exists, commits it only when a
 // reversal was created, and releases it on failure or when it was unnecessary —
@@ -42,13 +47,16 @@ describe('VoidReimbursementPaymentUseCase (GAP-02 true reversal)', () => {
     s = stubs();
     repo = {
       findRequestById: mock.fn(async () => requestDetail('PARTIALLY_PAID')),
+      findPolicy: async () => null,
+      getUserDisplayNames: async () => ({}),
+      listSignedClaimFormCopies: async () => [],
       findPaymentById: mock.fn(async () => ({ id: 'pay-1', reimbursementRequestId: 'rb-1', status: 'RECORDED', paidAmount: '500.0000' })),
       findPostedGeneratedJournalId: mock.fn(async () => 'je-orig'),
       voidPaymentTrueReversal: mock.fn(async () => ({ request: requestDetail('READY_FOR_PAYMENT'), payment: { id: 'pay-1', status: 'VOIDED' }, reversalEntryId: 'je-rev' })),
     };
   });
 
-  const make = () => new VoidReimbursementPaymentUseCase(repo, s.audit as any, s.outbox as any, s.reserveNumber as any, s.commitNumber as any, s.cancelNumber as any);
+  const make = () => new VoidReimbursementPaymentUseCase(repo, s.audit as any, s.outbox as any, s.reserveNumber as any, s.commitNumber as any, s.cancelNumber as any, fakeDetailEvidence as any);
 
   it('reserves and commits the reversal number when the payment was posted', async () => {
     const detail: any = await make().execute(ctx, 'rb-1', 'pay-1', { reason: 'จ่ายผิดบัญชี' });
