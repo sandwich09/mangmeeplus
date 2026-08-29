@@ -349,10 +349,23 @@ export class ListReimbursementsUseCase {
     const page = filter.page && filter.page > 0 ? filter.page : 1;
     const pageSize = filter.pageSize && filter.pageSize > 0 ? Math.min(filter.pageSize, 100) : 20;
     const start = (page - 1) * pageSize;
+    const items = rows.slice(start, start + pageSize);
+    // "อยู่ที่ …" needs the pending step and its assignees only where a claim is actually waiting
+    // on a person. Two batched lookups for the page — and neither runs when the page has no
+    // PENDING_APPROVAL row (both helpers return empty on an empty id list).
+    const pendingSteps = await this.repo.findPendingApprovalSteps(
+      ctx.companyId,
+      items.filter((row) => row.status === 'PENDING_APPROVAL').map((row) => row.id),
+    );
+    const approverNames = await this.repo.getUserDisplayNames(
+      ctx.companyId,
+      pendingSteps.flatMap((step) => [...(step.assignedApproverUserIds ?? []), ...(step.approverUserId ? [step.approverUserId] : [])]),
+    );
     return {
-      items: rows.slice(start, start + pageSize).map((row) => toRequestSummary(row, {
-        allowMissingReceiptWithReason: policy.allowMissingReceiptWithReason,
-      })),
+      items: items.map((row) => toRequestSummary(
+        { ...row, approvalSteps: pendingSteps.filter((step) => step.reimbursementRequestId === row.id) },
+        { allowMissingReceiptWithReason: policy.allowMissingReceiptWithReason, approverNames },
+      )),
       total: rows.length,
       page,
       pageSize,

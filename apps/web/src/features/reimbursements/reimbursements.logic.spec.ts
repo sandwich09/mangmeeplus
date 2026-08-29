@@ -4,6 +4,7 @@ import {
   paymentReferenceRequired, validatePaymentForm, validateRequestForm, sumLineAmounts, summariseQueue,
   matchesSearch, formatMoney, parseHubTab, visibleHubTabs, reimbursementListScope, errorMessage, errorText,
   isStaleApprovalError, diffApprovalFields, collectReceiptUploadResults, mergeDraftLineEvidence, withAssignedApprovalTab,
+  buildClaimTimeline,
 } from './reimbursements.logic';
 
 const line = (overrides: Record<string, unknown> = {}) => ({
@@ -369,5 +370,83 @@ describe('formatMoney', () => {
     assert.equal(formatMoney('500'), '500.00');
     assert.equal(formatMoney('500', 'THB'), '500.00 บาท');
     assert.equal(formatMoney('500', 'USD'), '500.00 USD');
+  });
+});
+
+describe('buildClaimTimeline', () => {
+  const labels = (detail: any) => buildClaimTimeline(detail).map(row => `${row.state}:${row.label}`);
+
+  it('waits on the requester while the claim is still a draft', () => {
+    assert.deepEqual(labels({ status: 'DRAFT', currentDesk: { kind: 'REQUESTER' } }), [
+      'current:รอผู้ยื่นส่งคำขอ',
+      'future:รอฝ่ายการเงินตรวจ',
+      'future:รอบันทึกจ่าย',
+    ]);
+  });
+
+  it('marks the submitted and approved rows done and highlights the waiting approver', () => {
+    const rows = buildClaimTimeline({
+      status: 'PENDING_APPROVAL',
+      submittedAt: '2026-08-20T03:00:00.000Z',
+      currentDesk: { kind: 'APPROVER', names: ['คุณยุนกิ', 'คุณสมชาย'] },
+      approvalSteps: [
+        { id: 's1', sequenceNo: 1, status: 'APPROVED', decidedByName: 'คุณสมชาย', decidedAt: '2026-08-21T03:00:00.000Z' },
+        { id: 's2', sequenceNo: 2, status: 'PENDING' },
+      ],
+    });
+    assert.deepEqual(rows.map(r => `${r.state}:${r.label}`), [
+      'done:ยื่นใบ',
+      'done:อนุมัติโดย คุณสมชาย',
+      'current:กำลังรอ คุณยุนกิ หรือ คุณสมชาย อนุมัติ',
+      'future:รอฝ่ายการเงินตรวจ',
+      'future:รอบันทึกจ่าย',
+    ]);
+    assert.equal(rows[0]?.date, '2026-08-20T03:00:00.000Z');
+    assert.equal(rows[1]?.date, '2026-08-21T03:00:00.000Z');
+  });
+
+  it('skips invalidated approval steps', () => {
+    const rows = labels({
+      status: 'PENDING_APPROVAL',
+      submittedAt: '2026-08-20T03:00:00.000Z',
+      currentDesk: { kind: 'APPROVER' },
+      approvalSteps: [
+        { id: 's1', sequenceNo: 1, status: 'PENDING', invalidatedAt: '2026-08-21T03:00:00.000Z' },
+        { id: 's2', sequenceNo: 2, status: 'PENDING' },
+      ],
+    });
+    assert.deepEqual(rows.filter(row => row.startsWith('current')), ['current:กำลังรอ ผู้มีสิทธิ์อนุมัติ อนุมัติ']);
+  });
+
+  it('ends the journey at a rejection — no finance or payment row follows', () => {
+    assert.deepEqual(labels({
+      status: 'REJECTED',
+      submittedAt: '2026-08-20T03:00:00.000Z',
+      approvalSteps: [{ id: 's1', sequenceNo: 1, status: 'REJECTED', decidedByName: 'คุณสมชาย', decidedAt: '2026-08-21T03:00:00.000Z' }],
+    }), ['done:ยื่นใบ', 'done:ปฏิเสธโดย คุณสมชาย']);
+  });
+
+  it('ends a cancelled claim on its own terminal row', () => {
+    assert.deepEqual(labels({ status: 'CANCELLED', submittedAt: '2026-08-20T03:00:00.000Z' }), ['done:ยื่นใบ', 'done:ยกเลิกคำขอ']);
+  });
+
+  it('drops the finance row when the policy path went straight to payment', () => {
+    assert.deepEqual(labels({
+      status: 'READY_FOR_PAYMENT',
+      submittedAt: '2026-08-20T03:00:00.000Z',
+      financeReviewStatus: 'NOT_REQUIRED',
+      approvalSteps: [{ id: 's1', sequenceNo: 1, status: 'APPROVED', decidedByName: 'คุณสมชาย' }],
+    }), ['done:ยื่นใบ', 'done:อนุมัติโดย คุณสมชาย', 'current:กำลังรอฝ่ายการเงินบันทึกจ่าย']);
+  });
+
+  it('closes both finance and payment rows on a paid claim', () => {
+    assert.deepEqual(labels({
+      status: 'PAID',
+      submittedAt: '2026-08-20T03:00:00.000Z',
+      financeReviewStatus: 'APPROVED_FOR_PAYMENT',
+      financeReviewedAt: '2026-08-22T03:00:00.000Z',
+      financeReviewedByName: 'คุณมานี',
+      payments: [{ status: 'RECORDED', paidByName: 'คุณมานี', paidAt: '2026-08-23T03:00:00.000Z' }],
+    }), ['done:ยื่นใบ', 'done:ฝ่ายการเงินตรวจแล้ว โดย คุณมานี', 'done:จ่ายแล้ว โดย คุณมานี']);
   });
 });

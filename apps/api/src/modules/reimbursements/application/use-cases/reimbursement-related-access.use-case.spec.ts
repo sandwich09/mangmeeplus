@@ -136,6 +136,8 @@ describe('reimbursement related-view ABAC', () => {
     const useCase = new ListReimbursementsUseCase({
       findPolicy: async () => null,
       listRequests: async (where: any) => { received = where; return []; },
+      findPendingApprovalSteps: async () => [],
+      getUserDisplayNames: async () => ({}),
     } as any);
     const result = await useCase.execute(ctx(), { scope: 'related' });
     assert.deepEqual(result.items, []);

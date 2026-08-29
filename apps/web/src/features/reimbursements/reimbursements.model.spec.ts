@@ -2,6 +2,8 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   APPROVAL_STEP_STATUS_LABELS,
+  CURRENT_DESK_LABELS,
+  currentDeskText,
   canVoidRecordedPayment,
   canUploadSignedCopy,
   reimbursementOwnActions,
@@ -215,5 +217,25 @@ describe('reimbursement status display maps', () => {
       Object.keys(APPROVAL_STEP_STATUS_LABELS).sort(),
       ['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED', 'SKIPPED', 'EXPIRED'].sort(),
     );
+  });
+
+  it('labels every desk kind the server can answer with', () => {
+    assert.deepEqual(Object.keys(CURRENT_DESK_LABELS).sort(), ['REQUESTER', 'APPROVER', 'FINANCE', 'PAYMENT'].sort());
+  });
+});
+
+describe('currentDeskText', () => {
+  it('names the assigned approvers, joined with หรือ', () => {
+    assert.equal(currentDeskText({ kind: 'APPROVER', names: ['คุณยุนกิ'] }), 'คุณยุนกิ');
+    assert.equal(currentDeskText({ kind: 'APPROVER', names: ['คุณยุนกิ', 'คุณสมชาย'] }), 'คุณยุนกิ หรือ คุณสมชาย');
+  });
+
+  it('falls back to the pool label, and stays silent on a terminal claim', () => {
+    assert.equal(currentDeskText({ kind: 'APPROVER' }), 'ผู้มีสิทธิ์อนุมัติ');
+    assert.equal(currentDeskText({ kind: 'REQUESTER' }), 'ผู้ยื่น');
+    assert.equal(currentDeskText({ kind: 'FINANCE' }), 'ฝ่ายการเงิน');
+    assert.equal(currentDeskText({ kind: 'PAYMENT' }), 'ฝ่ายการเงิน (รอบันทึกจ่าย)');
+    assert.equal(currentDeskText(undefined), null);
+    assert.equal(currentDeskText({ kind: 'SOMETHING_NEW' }), null);
   });
 });

@@ -18,6 +18,7 @@ import type {
   ReimbursementLineRecord,
   ReimbursementClaimSignatureRecord,
 } from '../../domain/models/reimbursement.model';
+import { currentDesk } from '../../domain/logic/reimbursement.logic';
 
 const iso = (d?: Date): string | undefined => (d ? d.toISOString() : undefined);
 
@@ -46,8 +47,16 @@ export function toPolicySummary(p: ReimbursementPolicyRecord): ReimbursementPoli
 
 export function toRequestSummary(
   r: ReimbursementRequestRecord,
-  options: { allowMissingReceiptWithReason?: boolean } = {},
+  // `approverNames` is what turns a PENDING_APPROVAL desk from the pool label into named
+  // people; a caller that has not loaded the names simply gets the pool.
+  options: { allowMissingReceiptWithReason?: boolean; approverNames?: Record<string, string> } = {},
 ): ReimbursementRequestSummary {
+  const desk = currentDesk({
+    status: r.status,
+    financeReviewStatus: r.financeReviewStatus,
+    steps: r.approvalSteps,
+    names: options.approverNames,
+  });
   return {
     id: r.id,
     companyId: r.companyId,
@@ -63,6 +72,7 @@ export function toRequestSummary(
     currency: r.currency,
     incurredDate: r.incurredDate.toISOString(),
     status: r.status,
+    ...(desk ? { currentDesk: desk } : {}),
     financeReviewStatus: r.financeReviewStatus,
     paymentStatus: r.paymentStatus,
     duplicateStatus: r.duplicateStatus,
@@ -152,7 +162,8 @@ export function toLineSummary(l: ReimbursementLineRecord, attachmentFileName?: s
 export function detailUserIds(r: ReimbursementRequestRecord): string[] {
   return [
     r.financeReviewedByUserId,
-    ...(r.approvalSteps ?? []).flatMap((s) => [s.approverUserId, s.decisionByUserId]),
+    // The frozen assignees too: they are the people the timeline's "กำลังรอ" row names.
+    ...(r.approvalSteps ?? []).flatMap((s) => [s.approverUserId, s.decisionByUserId, ...(s.assignedApproverUserIds ?? [])]),
     ...(r.payments ?? []).map((p) => p.paidByUserId),
     ...(r.claimSignatures ?? []).map((s) => s.signedByUserId),
   ].filter((id): id is string => !!id);
@@ -192,6 +203,7 @@ export function toRequestDetail(
   return {
     ...toRequestSummary(r, {
       allowMissingReceiptWithReason: extras.allowMissingReceiptWithReason,
+      approverNames: displayNames,
     }),
     lines: (r.lines ?? []).map((l) => toLineSummary(l, l.attachmentId ? lineAttachmentFileNames[l.attachmentId] : undefined)),
     currentApproverUserId: r.currentApproverUserId,

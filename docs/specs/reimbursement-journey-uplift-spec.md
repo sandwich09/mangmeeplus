@@ -193,6 +193,52 @@ Signed-copy round trip:
 
 Out of scope for F: LINE-channel signature capture for claims, approval-state coupling (signatures never gate the state machine), grouped voucher.
 
+### Lane G — "อยู่ที่ใคร" current desk + claim timeline (Owner decision 2026-08-29)
+
+Problem: a claim shows its status but never says who the ball is with. "รออนุมัติ" does not say
+whose desk it sits on, and the drawer shows steps/payments as separate blocks, not as a journey.
+
+G1. Current desk on every queue card — appended to what the card already shows, shortest form,
+**no step numbers or fractions** (Owner explicitly rejected "(ขั้น 1/2)"):
+
+- `อยู่ที่ คุณยุนกิ` — PENDING_APPROVAL, naming the ASSIGNED approvers of the current pending step
+  (several read as `A หรือ B`; any one of them can decide).
+- `อยู่ที่ ฝ่ายการเงิน` — FINANCE_REVIEW.
+- `อยู่ที่ ฝ่ายการเงิน (รอบันทึกจ่าย)` — READY_FOR_PAYMENT / PARTIALLY_PAID.
+- `อยู่ที่ ผู้ยื่น` — DRAFT.
+- Nothing appended on a terminal claim (PAID / REJECTED / CANCELLED / VOIDED).
+
+Pool-vs-person rule: individuals are named ONLY where the system truly assigns individuals — the
+approval step's frozen assignment snapshot. Finance review and payment are permission pools and
+print as the pool, never as a guessed person. When no assignee name resolves (role-routed step, or
+a response path that did not load names) the card prints `ผู้มีสิทธิ์อนุมัติ`, never a cuid.
+
+Contract: additive optional `currentDesk?: { kind: 'REQUESTER' | 'APPROVER' | 'FINANCE' | 'PAYMENT';
+names?: string[] }` on `ReimbursementRequestSummary` (so detail and both queue items inherit it),
+derived by the pure `currentDesk()` in `reimbursement.logic.ts`. APPROVED is transient and routes by
+`financeReviewStatus`: PENDING → FINANCE, otherwise PAYMENT.
+
+Query cost is the constraint, not a new read model:
+
+- Finance queue — every row is FINANCE/PAYMENT by status alone: **zero** extra queries.
+- Approvals queue — `listRequests` already includes the pending steps for a PENDING_APPROVAL query
+  and the use case already collects the assignee ids: **one** batched display-name lookup per queue.
+- Mine queue — **two** batched lookups for the page (pending steps of the page's PENDING_APPROVAL
+  rows, then their names), and neither runs when the page holds no such row.
+- Detail — steps and names are already loaded; computed, not queried. `detailUserIds` widens to
+  include the frozen assignees so the waiting row can name them.
+
+G2. Timeline block in the claim detail drawer (`เส้นทางของใบเบิก`) — the journey as a vertical list
+built by a pure `buildClaimTimeline(detail)` from the detail payload alone: done rows (`✓` + who +
+date), the current waiting row highlighted (`●` + `กำลังรอ …`), future rows dim (`○`). The waiting
+approver row reuses the same resolved `currentDesk` names, so the card line and the timeline can
+never disagree. Rows that cannot apply are omitted rather than shown as never-reached: a rejection
+or cancellation ends the list there, and a claim whose policy path went straight to
+READY_FOR_PAYMENT has no finance-review row.
+
+Out of scope for G: desk history/aging per stage, reassignment from the timeline, LINE rendering of
+the desk line, and a desk column in the desktop tables (the drawer's timeline answers it there).
+
 ## 4. Explicit non-goals (reaffirmed)
 
 - No chat/LINE creation, approval, rejection, or payment of claims. LINE remains read-only + deep links for reimbursements.
