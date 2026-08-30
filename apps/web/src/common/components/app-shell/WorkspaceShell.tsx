@@ -14,6 +14,8 @@ type Props = {
   companyName?: string;
   companyArea?: React.ReactNode;
   headerExtras?: React.ReactNode;
+  /** Full-width strip under the sticky header, above every page: company-wide notices only. */
+  banner?: React.ReactNode;
   userName?: string;
   userRoles?: string[];
   userRoleNames?: Record<string, string>;
@@ -29,6 +31,7 @@ function ShellInner({
   companyName,
   companyArea,
   headerExtras,
+  banner,
   userName,
   userRoles,
   userRoleNames,
@@ -70,6 +73,7 @@ function ShellInner({
           headerExtras={headerExtras}
           locale={locale}
         />
+        {banner}
         <main id="workspace-main" className="mangmee-content">
           <WorkspaceLocaleContext.Provider value={locale}>{children}</WorkspaceLocaleContext.Provider>
         </main>
@@ -83,6 +87,7 @@ export function WorkspaceShell({
   companyName,
   companyArea,
   headerExtras,
+  banner,
   userName,
   userRoles,
   userRoleNames,
@@ -97,6 +102,7 @@ export function WorkspaceShell({
         companyName={companyName}
         companyArea={companyArea}
         headerExtras={headerExtras}
+        banner={banner}
         userName={userName}
         userRoles={userRoles}
         userRoleNames={userRoleNames}

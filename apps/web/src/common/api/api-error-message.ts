@@ -318,6 +318,9 @@ const CODE_LABELS: Record<string, string> = {
   password_reuse: 'รหัสผ่านใหม่ต้องไม่ซ้ำกับรหัสผ่านเดิม',
   current_password_incorrect: 'รหัสผ่านปัจจุบันไม่ถูกต้อง',
   company_access_unavailable: 'คุณไม่มีสิทธิ์เข้าใช้บริษัทนี้แล้ว กรุณาติดต่อเจ้าของร้าน',
+  // P29: the term ended, so business routes are refused on access. Data is intact — the copy must
+  // not read as data loss, and the only move that helps is renewing, not retrying.
+  company_term_expired: 'ร้านนี้ครบกำหนดใช้งานแล้ว ข้อมูลทั้งหมดยังอยู่ครบ ติดต่อต่ออายุเพื่อใช้งานต่อ',
 
   // ---- ยอมรับข้อกำหนดการใช้งาน ----
   legal_acceptance_required: 'ต้องยอมรับข้อกำหนดการใช้งานและรับทราบประกาศความเป็นส่วนตัวก่อนใช้งาน',
