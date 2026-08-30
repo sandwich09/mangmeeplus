@@ -3,6 +3,7 @@ import { COMPANY_BUSINESS_CATEGORIES, type CompanyBusinessCategory } from '@watc
 import { PrismaService } from '../../../common/database/prisma.service';
 import { CreateCompanyOnboardingUseCase } from '../../system-onboarding/application/use-cases/create-company-onboarding.use-case';
 import { CompanySignupCoreService } from './company-signup-core.service';
+import { applyPlanTermPreset } from '../../system-partner-management/application/use-cases/company-plan-term.use-cases';
 import { suggestedUsernameFromEmail } from '../domain/account-claim.logic';
 
 export type ProvisionSignupCommand = {
@@ -87,9 +88,9 @@ export class ProvisionSignupUseCase {
         });
       }
 
-      // P29 term hook: setTermFromPreset(companyId, 'PRO_999', 30)
-      // Deliberately not called here — the trial clock starts at provision (spec §4D ⑤) and the
-      // integrator wires this once P29's service lands.
+      // Trial clock starts at provision, not approval (spec §4D ⑤): PRO preset, 30 days.
+      // applyPlanTermPreset is idempotent — a provisioning retry can never shorten the term.
+      await applyPlanTermPreset(this.prisma, result.companyId, 'PRO_999', 30, request.approvedByUserId ?? null);
 
       await this.core.completeProvisioning({
         requestId: request.id,

@@ -169,16 +169,18 @@ export default function SignupQueuePage() {
           <p>
             ปฏิเสธคำขอของ <span className="font-medium text-gray-900">{rejecting?.companyName}</span> ใช่หรือไม่
           </p>
-          <label className="flex items-start gap-2">
+          {/* The notice email has no sender yet (the event is recorded but no consumer sends it),
+              so the choice stays visible-but-disabled rather than silently doing nothing. */}
+          <label className="flex items-start gap-2 opacity-60" title="ระบบส่งอีเมลแจ้งผลจะเปิดใช้ในรอบถัดไป">
             <input
               type="checkbox"
               className="mt-0.5"
               checked={notifyApplicant}
               onChange={(e) => setNotifyApplicant(e.target.checked)}
-              disabled={busyId !== null}
+              disabled
             />
             <span>
-              ส่งอีเมลแจ้งผู้สมัคร
+              ส่งอีเมลแจ้งผู้สมัคร (เร็ว ๆ นี้)
               <span className="mt-0.5 block text-xs text-gray-500">
                 ค่าเริ่มต้นคือไม่ส่ง เพราะอีเมลนี้ยังไม่ผ่านการยืนยัน ข้อความที่ส่งจะไม่เปิดเผยเหตุผลภายใน
               </span>

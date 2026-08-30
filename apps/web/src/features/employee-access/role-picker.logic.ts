@@ -10,6 +10,11 @@ export function roleDisplayName(role: Pick<RoleSummary, 'key' | 'name'> & { isSy
   return role.isSystem === false ? role.name : THAI_SYSTEM_ROLE_NAMES[role.key] ?? role.name;
 }
 
+/** Thai label for a bare system-role key (company switcher, pickers). Unknown keys pass through. */
+export function roleKeyDisplayName(key: string): string {
+  return THAI_SYSTEM_ROLE_NAMES[key] ?? key;
+}
+
 /** Prevent an older cached API shape from silently becoming an empty role picker. */
 export function isAssignableRoleCatalog(value: unknown): value is AssignableRoleSummary[] {
   return Array.isArray(value) && value.every((role) => (

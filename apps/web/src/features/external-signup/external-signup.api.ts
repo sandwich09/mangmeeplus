@@ -76,10 +76,21 @@ export function getSignupClaimInfo(token: string): Promise<SignupClaimInfoDto> {
   return publicJson<SignupClaimInfoDto>(`/api/v1/public/signup-claims/${encodeURIComponent(token)}`);
 }
 
-export function setSignupClaimPassword(body: SignupClaimSetPasswordBody): Promise<SignupClaimResultDto> {
-  return publicJson<SignupClaimResultDto>('/api/v1/public/signup-claims/set-password', { method: 'POST', body });
+export type SignupClaimSessionResult = SignupClaimResultDto & { sessionEstablished: boolean };
+
+// Both claim actions go through the BFF, which chains the API claim with a server-side password
+// login and stores the session in httpOnly cookies — so the welcome page's LINE button works in
+// one click without asking the user to type the password they set seconds ago.
+export function setSignupClaimPassword(body: SignupClaimSetPasswordBody): Promise<SignupClaimSessionResult> {
+  return publicJson<SignupClaimSessionResult>('/api/auth/signup-claim', {
+    method: 'POST',
+    body: { mode: 'set-password', ...body },
+  });
 }
 
-export function attachSignupClaimToExistingUser(body: SignupClaimAttachBody): Promise<SignupClaimResultDto> {
-  return publicJson<SignupClaimResultDto>('/api/v1/public/signup-claims/attach', { method: 'POST', body });
+export function attachSignupClaimToExistingUser(body: SignupClaimAttachBody): Promise<SignupClaimSessionResult> {
+  return publicJson<SignupClaimSessionResult>('/api/auth/signup-claim', {
+    method: 'POST',
+    body: { mode: 'attach', ...body },
+  });
 }

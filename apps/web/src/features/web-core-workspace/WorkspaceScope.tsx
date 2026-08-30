@@ -6,6 +6,7 @@ import { useCloseOnOutsideClick } from '@/common/hooks/use-close-on-outside-clic
 import { AlertModal } from '@/common/components/modal';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import { t } from '@/common/i18n/workspace-i18n.logic';
+import { roleKeyDisplayName } from '@/features/employee-access/role-picker.logic';
 import { branchDisplayName, branchScopeLabel } from './branch-scope-label.logic';
 import {
   fetchActiveBranches,
@@ -299,10 +300,25 @@ export function CompanySwitcher({ companyId, fallbackName }: { companyId: string
               }`}
               onClick={() => {
                 setOpen(false);
+                // An expired shop routes to its renewal page — its business routes refuse anyway.
+                if (c.expired) {
+                  window.location.assign(`/companies/${c.companyId}/renew`);
+                  return;
+                }
                 if (c.companyId !== companyId) window.location.assign(`/companies/${c.companyId}/dashboard`);
               }}
             >
               {c.companyName}
+              {c.roles.length > 0 ? (
+                <span className="mt-0.5 block text-xs font-normal text-gray-400">
+                  {c.roles.map(roleKeyDisplayName).join(' · ')}
+                </span>
+              ) : null}
+              {c.expired ? (
+                <span className="ml-1.5 rounded-full border border-red-200 bg-red-50 px-1.5 py-0.5 text-xs font-medium text-red-600">
+                  หมดอายุ
+                </span>
+              ) : null}
               {c.companyId === companyId ? ' ✓' : ''}
             </button>
           ))}

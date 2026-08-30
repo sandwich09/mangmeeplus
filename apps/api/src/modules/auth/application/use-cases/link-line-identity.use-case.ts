@@ -62,7 +62,7 @@ export class LinkLineIdentityUseCase {
 
     if (existing?.status === 'ACTIVE') {
       if (existing.userId !== userId) {
-        if (!allowReassign) throw new ConflictException('LINE account already linked to another user.');
+        if (!allowReassign) throw new ConflictException({ code: 'line_linked_elsewhere', message: 'LINE account already linked to another user.' });
         await this.prisma.client.externalIdentity.update({
           where: { id: existing.id },
           data: { userId, linkedAt: new Date() },
@@ -103,7 +103,7 @@ export class LinkLineIdentityUseCase {
         // create. Surface the same conflict as the read path. Safe to catch here —
         // this create runs outside any transaction.
         if ((err as { code?: string }).code === 'P2002') {
-          throw new ConflictException('LINE account already linked to another user.');
+          throw new ConflictException({ code: 'line_linked_elsewhere', message: 'LINE account already linked to another user.' });
         }
         throw err;
       }

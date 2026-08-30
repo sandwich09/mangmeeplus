@@ -38,6 +38,7 @@ function harness(options: {
   const advances: any[] = [];
   const completed: any[] = [];
   const failures: any[] = [];
+  const planTermUpserts: any[] = [];
 
   const request = { ...REQUEST, ...(options.request ?? {}) };
 
@@ -45,6 +46,7 @@ function harness(options: {
     client: {
       user: { findUnique: async () => (options.existingOwnerEmail === undefined ? null : { email: options.existingOwnerEmail }) },
       company: { update: async (args: any) => { companyUpdates.push(args); return {}; } },
+      companyPlanTerm: { upsert: async (args: any) => { planTermUpserts.push(args); return {}; } },
       companySignupRequest: { update: (args: any) => { requestUpdates.push(args); return Promise.resolve({}); } },
       auditLog: { create: (args: any) => { audits.push(args); return Promise.resolve({}); } },
       $transaction: async (ops: any[]) => Promise.all(ops),
@@ -74,9 +76,25 @@ function harness(options: {
 
   return {
     useCase: new ProvisionSignupUseCase(prisma, core, onboarding),
-    onboardingCalls, companyUpdates, requestUpdates, audits, advances, completed, failures,
+    onboardingCalls, companyUpdates, requestUpdates, audits, advances, completed, failures, planTermUpserts,
   };
 }
+
+describe('provisioning applies the PRO trial term (P29 T3)', () => {
+  it('upserts a PRO_999 30-day term after the company exists, before completion', async () => {
+    const h = harness();
+    await h.useCase.execute(CMD);
+    assert.equal(h.planTermUpserts.length, 1);
+    const args = h.planTermUpserts[0];
+    assert.equal(args.where.companyId, 'co-1');
+    assert.equal(args.create.tierKey, 'PRO_999');
+    const start = new Date(args.create.termStartAt).getTime();
+    const end = new Date(args.create.termEndsAt).getTime();
+    assert.equal(end - start, 30 * 24 * 60 * 60 * 1000);
+    // Idempotent by design: update side must not shorten an existing term.
+    assert.deepEqual(args.update, {});
+  });
+});
 
 describe('mapBusinessCategory', () => {
   it('honours an exact enum match and never guesses free text', () => {

@@ -1,6 +1,6 @@
 # แผนส่งมอบ Auto-register จากเว็บไซต์ทางการ — P10
 
-สถานะ: **P10-0 เสร็จและ verify บน local; แผนปรับเป็น Slice A–E ตาม Flow B (Owner amendment v2 2026-08-30); ยังไม่เริ่ม implement slice ใด**
+สถานะ: **Slice A+B+C IMPLEMENTED บน branch `codex/auto-register-round1` (2026-08-30, Opus implements / Fable supervises+integrates); flag `EXTERNAL_SIGNUP_ENABLED` ปิดทุก env; Slice D (SES ops) รอ Owner ตาม [runbook](../runbooks/ses-email-setup.md); Slice E รอ SES + UAT ตาม [test plan](mangmee-auto-register-uat-test-plan-th.md)**
 
 Source of truth: [External Signup Contract Spec](../specs/mangmee-external-signup-contract-spec-th.md) (Flow B) + [Email Delivery/Claim Spec P11](../specs/mangmee-email-delivery-claim-spec-th.md)
 

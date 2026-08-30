@@ -47,9 +47,10 @@ function ClaimCard({ token, info }: { token: string; info: SignupClaimInfoDto })
 
   const companyName = info.companyName ?? 'ร้านของคุณ';
 
-  const finish = (result: SignupClaimResultDto) => {
+  const finish = (result: SignupClaimResultDto & { sessionEstablished?: boolean }) => {
     rememberClaimedCompany(result);
-    window.location.assign('/signup/welcome');
+    // Company exists either way; without a session the welcome page's LINE step needs a login first.
+    window.location.assign(result.sessionEstablished === false ? '/login?next=%2Fsignup%2Fwelcome' : '/signup/welcome');
   };
 
   const handleSetPassword = async (event: React.FormEvent) => {

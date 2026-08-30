@@ -797,20 +797,34 @@ export class AuthController {
   @ApiOperation({ summary: 'List active company memberships of the current user' })
   @ApiResponse({ status: 200, description: 'Active memberships in active companies' })
   async myCompanies(@Req() req: Request & { context: RequestContext }) {
+    // Term-expired companies stay listed (P29 §4B): the owner must still find the shop to renew
+    // it. Only term-driven disables qualify — an admin-disabled company stays hidden as before.
     const memberships = await this.prisma.client.companyMembership.findMany({
-      where: { userId: req.context.userId, status: 'ACTIVE', company: { status: 'ACTIVE' } },
+      where: {
+        userId: req.context.userId,
+        status: 'ACTIVE',
+        OR: [
+          { company: { status: 'ACTIVE' } },
+          { company: { status: 'DISABLED', planTerm: { termDisabledAt: { not: null } } } },
+        ],
+      },
       select: {
         companyId: true,
-        company: { select: { name: true } },
+        company: { select: { name: true, status: true, planTerm: { select: { termEndsAt: true } } } },
         roles: { select: { role: { select: { key: true } } } },
       },
       orderBy: { createdAt: 'asc' },
     });
+    const now = Date.now();
     return {
       data: memberships.map((m) => ({
         companyId: m.companyId,
         companyName: m.company.name,
         roles: m.roles.map((r) => r.role.key),
+        // Exact-hour truth, not sweep truth: an ACTIVE company past its term is already expired.
+        expired:
+          m.company.status === 'DISABLED' ||
+          (m.company.planTerm ? m.company.planTerm.termEndsAt.getTime() <= now : false),
       })),
     };
   }

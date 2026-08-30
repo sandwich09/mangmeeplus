@@ -1,6 +1,6 @@
 # แผนส่งมอบ Company Plan Limits & Term — P29
 
-สถานะ: **SPEC/PLAN LOCKED 2026-08-30; ห้าม implement จนกว่า Owner สั่ง** (คำสั่งเดียวกับ P10 Flow B: spec+plan ก่อน)
+สถานะ: **T1+T2+T3 IMPLEMENTED บน branch `codex/auto-register-round1` (2026-08-30)** — enforcement มีผลเฉพาะบริษัทที่มี term row; ลูกค้าเดิมไม่มี row = ไม่กระทบ (พิสูจน์ด้วยเทสต์); follow-up ที่จดไว้: ข้อความ LINE ตอนหมดอายุยังเป็น generic (จุดแก้อยู่ process-line-webhook — สงวนไว้รอบถัดไป), DRAFT membership ไม่นับโควตาที่นั่ง (completeDraft ไม่มี gate), notification preference เดิมของ user อาจกรอง trigger ใหม่ (LINE push)
 
 Source of truth: [P29 Spec](../specs/mangmee-company-plan-term-spec-th.md) + [Billing §8 catalog 2026-08-30](../specs/mangmee-billing-subscription-spec-th.md#billing-offer-catalog)
 
