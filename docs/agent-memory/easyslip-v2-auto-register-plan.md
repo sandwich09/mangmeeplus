@@ -25,3 +25,8 @@ Verification:
 - Commit นี้ไม่มี schema/API/UI/config/dependency implementation
 Next:
 - ยังไม่ implement payment; เริ่ม P26 เฉพาะเมื่อ Owner สั่งและตอบ open questions/gates ที่เกี่ยวข้องแล้ว
+
+
+## Superseded note 2026-08-30
+
+Offer catalog 259/599/999/1299 ที่อ้างในไฟล์นี้ถูกแทนด้วยชุดจากเว็บ official (Owner ยืนยัน "อันล่าสุด"): STARTER 249 / BASIC 499 / PRO 999 (trial ฟรีผูกกับ PRO) / ENTERPRISE 1,999 — ดู Billing §8 ฉบับปัจจุบัน. แนวทาง EasySlip/payment ใน plan นี้ยังใช้ได้ แต่ mapping ราคา/key ต้องอ่านจาก Billing §8 เท่านั้น.

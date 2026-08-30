@@ -142,8 +142,8 @@ Spec: [External Signup Contract](../specs/mangmee-external-signup-contract-spec-
 
 ### P10-0A — Offer preview (spec-only; ยังไม่มี UI/payment implementation)
 
-- แสดง `FREE_TRIAL` และ paid 259/599/999/1299 ตาม source of truth [Billing §8](../specs/mangmee-billing-subscription-spec-th.md#billing-offer-catalog).
-- เปิดเลือกเฉพาะ `FREE_TRIAL`; paid tiers disabled + “เร็ว ๆ นี้”; server reject paid key ด้วย `offer_not_available` และห้าม fallback เป็น Free.
+- แสดง 4 tier ชุด 2026-08-30 (STARTER 249 / BASIC 499 / PRO 999 / ENTERPRISE 1,999) ตาม source of truth [Billing §8](../specs/mangmee-billing-subscription-spec-th.md#billing-offer-catalog); trial ผูกกับ PRO.
+- เปิดเลือกเฉพาะ `PRO_TRIAL`; tier อื่น disabled + “เร็ว ๆ นี้”; server reject key อื่นด้วย `offer_not_available` และห้าม fallback เป็น trial.
 - Slice นี้เป็น catalog/attribution เท่านั้น: ห้ามสร้าง Billing entitlement, payment attempt, EasySlip call หรือ infer quota/feature ที่ยัง TBD.
 
 ### P10-0B — Owner amendment v2 2026-08-30 "Flow B" (spec-only delta; แทนลำดับ 2026-08-29)

@@ -19,7 +19,7 @@ Source of truth: [External Signup Contract Spec](../specs/mangmee-external-signu
 - Delta migration: เพิ่มค่า enum `PENDING_REVIEW`, `REJECTED` + field `pendingPasswordHash`, `attachUserId` (nullable ทั้งคู่) — additive เท่านั้น; transition map ใหม่ตาม spec §4 + test ชุดใหม่ (ห้ามนับหลักฐาน P10-0)
 - `POST /v1/public/company-signups` + `GET /v1/public/company-signups/:requestId` แบบ `@Public()` ตาม precedent customer-line-register: DTO bounded/pattern (payload spec §3 รวม `businessType`/`phoneNumber`/`vatRegistered`), rate limit fail-closed bucket `public-signup-ip`/`public-signup-email` ก่อน use case, ตอบ `202 {requestId}`/state allowlist เท่านั้น
 - Validation ที่ VALIDATED: schema + normalize + MX lookup (`dns.promises.resolveMx` + timeout) + dedupe hints (email→User/คำขอเดิม, taxId→Company) → เข้าคิว `PENDING_REVIEW` ทันที ไม่มีเมลออก
-- หน้าเว็บ `/signup` + หน้าเช็คสถานะ (mobile-first 390px, offer preview 5 แพ็กเกจตาม spec §3A — Free เลือกได้อย่างเดียว), ข้อความหลัง submit ห้ามอ้างสร้างบริษัทสำเร็จ
+- หน้าเว็บ `/signup` + หน้าเช็คสถานะ (mobile-first 390px, offer preview 4 tier ตาม spec §3A ชุด 2026-08-30 — `PRO_TRIAL` เลือกได้อย่างเดียว), ข้อความหลัง submit ห้ามอ้างสร้างบริษัทสำเร็จ
 - Gate: idempotent replay/409, MX fail message, rate-limit hit, state โผล่ในคิวถูกต้อง, ไม่มี secret ใน response
 
 ## Slice B — Claim + token (พร้อมเริ่มด้วย provider `local-console`; email จริงรอ Slice D)
