@@ -64,10 +64,10 @@
 
 ### 3A. Offer preview สำหรับหน้า auto-register — **spec-only 2026-08-29**
 
-- Source of truth ของราคาและ enable state คือ [Billing §8](mangmee-billing-subscription-spec-th.md#billing-offer-catalog): `FREE_TRIAL`, `MONTHLY_259`, `MONTHLY_599`, `MONTHLY_999`, `MONTHLY_1299`.
-- หน้า auto-register แสดงครบทั้ง 5 offer เพื่อให้เห็น journey จริง แต่เลือกได้เฉพาะ `FREE_TRIAL`; paid tiers ต้อง disabled พร้อมข้อความ “เร็ว ๆ นี้” และเหตุผลที่อ่านได้ด้วย assistive technology.
-- Allowlist ฝั่ง server สำหรับการสมัครปัจจุบันรับเฉพาะ `FREE_TRIAL`; ถ้าผู้เรียกส่ง paid key โดยตรงให้คืน `offer_not_available` และ **ห้าม fallback เป็น Free เงียบ ๆ**.
-- แม้รับ `FREE_TRIAL` แล้ว `requestedOfferKey` ยังคงเป็น attribution/audit เท่านั้นตาม §3; P10 ห้ามสร้าง `BillingPackage`, payment attempt, entitlement หรืออนุมาน quota/feature ที่ยังเป็น TBD.
+- Source of truth ของราคาและ enable state คือ [Billing §8](mangmee-billing-subscription-spec-th.md#billing-offer-catalog) ชุด 2026-08-30 (ตรงเว็บ official): `PRO_TRIAL` (ทดลองใช้ฟรีบน PRO), `STARTER_249`, `BASIC_499`, `PRO_999`, `ENTERPRISE_1999`.
+- หน้า auto-register แสดงครบ 4 tier (เริ่มต้น/เติบโต/มืออาชีพ/ธุรกิจ) ให้เห็น journey จริง แต่เลือกได้เฉพาะ `PRO_TRIAL` — trial ผูกกับแพ็กเกจ PRO ตามเว็บ ("สามารถเริ่มต้นด้วยแพ็กเกจ PRO ทดลองใช้ฟรี"); tier อื่น disabled พร้อมข้อความ “เร็ว ๆ นี้” และเหตุผลที่อ่านได้ด้วย assistive technology.
+- Allowlist ฝั่ง server สำหรับการสมัครปัจจุบันรับเฉพาะ `PRO_TRIAL`; ถ้าผู้เรียกส่ง key อื่นโดยตรงให้คืน `offer_not_available` และ **ห้าม fallback เป็น trial เงียบ ๆ**.
+- แม้รับ `PRO_TRIAL` แล้ว `requestedOfferKey` ยังคงเป็น attribution/audit เท่านั้นตาม §3; P10 ห้ามสร้าง `BillingPackage`, payment attempt, entitlement หรืออนุมาน quota enforcement (ตัวเลขประกาศต่อ tier อยู่ Billing §8; การบังคับเป็น P26).
 
 <a id="external-signup-owner-amendment"></a>
 ## 4. Durable state — **target Flow B (amendment v2 2026-08-30); delta ยังไม่ implement**
@@ -136,7 +136,7 @@ Enum เดิมใช้ซ้ำได้ทั้งชุด (`EMAIL_PENDIN
 
 ตาม §13.6A + checklist ของ §13.6D ปรับเข้า Flow B: หน้าหลังกด submit บอกว่า "ได้รับคำขอแล้ว กำลังตรวจสอบ — เราจะส่งอีเมลเมื่ออนุมัติ" **ห้ามอ้างว่าสร้างบริษัทสำเร็จและห้ามสัญญาเวลาอนุมัติ**; หน้าเช็คสถานะ mapping ตรง state จริง (§3 allowlist) + ปุ่มขอส่งเมลตั้งรหัสซ้ำเมื่ออยู่ EMAIL_PENDING; ฟอร์ม mobile-first 390px ตามผู้ใช้จริง (ผู้ใช้ 40+, ปุ่ม/ฟอนต์ใหญ่)
 
-ส่วนเลือก offer แสดงรายการตาม §3A: Free เลือกได้; paid แสดงราคาแต่ control disabled + “เร็ว ๆ นี้”; ห้ามแสดง upload slip, payment pending หรือ payment success ใน flow ปัจจุบัน.
+ส่วนเลือก offer แสดงรายการตาม §3A (4 tier ชุด 2026-08-30): `PRO_TRIAL` เลือกได้; tier อื่นแสดงราคาแต่ control disabled + “เร็ว ๆ นี้”; ห้ามแสดง upload slip, payment pending หรือ payment success ใน flow ปัจจุบัน.
 
 ## 6. Gates/tests (ยกจากแผนหลัก §15 แถว "Official signup API" คำต่อคำ)
 
@@ -152,5 +152,5 @@ invalid/expired/replayed signature ถูกปฏิเสธ; same-request con
 2. ~~Claim TTL/resend~~ → **ตอบแล้ว 2026-08-30 (§4B):** 7 วัน (ค่าเริ่มต้น ปรับได้); ผู้สมัคร resend เองจากหน้าเช็คสถานะแบบจำกัดความถี่; System Admin revoke/resend ได้จากคิว
 3. ~~นโยบาย duplicate~~ → **ตอบแล้ว 2026-08-29 + ขยาย 2026-08-30 (§4C):** email ซ้ำได้ = คนเดิมหลายบริษัท attach ตอน claim; taxId ชนแล้ว review; ชื่อบริษัทซ้ำได้
 4. ~~ลำดับ approve/claim + ข้อความ reject~~ → **ตอบแล้ว 2026-08-30 (§4, §4D):** Flow B; reject ค่าเริ่มต้นเงียบ + แอดมินเลือกแจ้งเป็นรายกรณี; SLA เตือนคิวเริ่มที่ 24 ชม.
-5. **ยังเปิด (ไม่ block โค้ด):** ตัวเลข trial — ระยะเวลา (แนะนำ 30 วัน), โควตาใบเสร็จ/เดือน (Owner เคยระบุ 15), งบ AI ต่อเดือน — รอบนี้เป็นการบันทึก/แสดงผลเท่านั้น การบังคับจริงเป็นงาน P26
+5. **อัปเดต 2026-08-30 — เหลือบางส่วน (ไม่ block โค้ด):** โควตา trial ประกาศแล้วผ่านเว็บ official = สิทธิ์เท่า PRO (5 สาขา · 10 คน · อ่านสลิป 100 ใบ/เดือน — แทนตัวเลข 15 ใบเดิม); ยังเปิด: ระยะเวลา trial (แนะนำ 30 วัน), นโยบาย "100 ร้านแรก", จบ trial แล้วเกิดอะไร, งบ AI ต่อเดือน — รอบนี้บันทึก/แสดงผลเท่านั้น การบังคับจริงเป็นงาน P26
 6. **ยังเปิด (block เฉพาะ email จริง):** SES operations ตาม P11 §5 ข้อ 1–2 — โดเมนผู้ส่ง (แนะนำ `no-reply@mangmeeplus.com`; DNS อยู่ Cloudflare ต้องให้ Owner วาง records หรือเปิดสิทธิ์), region (แนะนำ ap-southeast-1), สิทธิ์ IAM ให้ตั้งค่า SES + ขอออกจาก SES sandbox (AWS ใช้เวลา ~1 วัน)

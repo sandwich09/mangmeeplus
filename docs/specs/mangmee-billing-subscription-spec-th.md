@@ -1,6 +1,6 @@
 # ระบบจ่ายเงินและ Subscription (จำกัดการใช้ใบเสร็จ) — Spec P26
 
-สถานะ: **DRAFT — Owner กำหนด price point และแนวทาง EasySlip v2 แล้วเมื่อ 2026-08-29 แต่ quota/trial duration/grace/tax-document owner ยังไม่ครบ จึงยังไม่เริ่ม implement P26**; **คิว: ท้ายสุดของแผนทั้งหมด (คำสั่ง Owner 2026-08-26: "โยก payment subscribe ไว้ตอนท้าย") — ตอบ §10 ข้อ 2 และ 4 แล้ว**; รอบนี้วาง catalog ให้ P10 แสดง paid offer แบบ disabled เท่านั้น
+สถานะ: **DRAFT — price point ชุดล่าสุด 2026-08-30 จากเว็บ official (STARTER 249 / BASIC 499 / PRO 999 trial / ENTERPRISE 1,999 — แทนชุด 2026-08-29); quota ต่อ tier ประกาศแล้ว แต่ trial duration/grace/tax-document owner ยังไม่ครบ จึงยังไม่เริ่ม implement P26**; **คิว: ท้ายสุดของแผนทั้งหมด (คำสั่ง Owner 2026-08-26: "โยก payment subscribe ไว้ตอนท้าย") — ตอบ §10 ข้อ 2 และ 4 แล้ว**; รอบนี้วาง catalog ให้ P10 แสดง paid offer แบบ disabled เท่านั้น
 
 ที่มา: การตัดสินใจ Owner 2026-08-25 — จำกัดการใช้ใบเสร็จต่อบริษัท ใช้ต่อต้อง subscribe; กติกาแม่อยู่ [แผนหลัก P26 + §13.8](../plans/mangmee-brain-2-5-day-priority-plan-th.md)
 
@@ -124,32 +124,33 @@
 7. เดือนตัดที่ Bangkok midnight — เคสข้ามเดือน/ปี
 
 <a id="billing-offer-catalog"></a>
-## 8. Offer catalog สำหรับ auto-register — **อนุมัติ price point/enable state แล้ว; quota และ policy ยังบล็อก P26**
+## 8. Offer catalog สำหรับ auto-register — **แทนที่ด้วยชุด 2026-08-30 จากเว็บ official (Owner ยืนยัน "อันล่าสุด"); quota ต่อ tier ประกาศแล้ว, duration/policy ยังบล็อก P26**
 
-รหัสด้านล่างเป็นรหัสเชิงเทคนิคชั่วคราว ไม่ใช่ชื่อ marketing. `priceSatang` เป็น snapshot จำนวนเต็ม; ห้าม derive จาก label หรือค่าที่ browser ส่งมา. จนกว่าจะตอบ quota/feature snapshot ครบ `requestedOfferKey` ใน P10 ยังเป็น attribution เท่านั้นและห้ามเปิด entitlement.
+Source: ภาพ Package + ข้อมูลจริงบนเว็บ `official.mangmeeplus.com` (repo `MangmeeDev/mangmee_web` commit `9d51823`) — ทั้งสองแหล่งตรงกัน; ชุดนี้แทน catalog 259/599/999/1299 เดิม (2026-08-29) ทั้งชุด. รหัสด้านล่างเป็นรหัสเชิงเทคนิคชั่วคราว ไม่ใช่ชื่อ marketing. `priceSatang` เป็น snapshot จำนวนเต็ม; ห้าม derive จาก label หรือค่าที่ browser ส่งมา. จนกว่า trial duration/policy ครบ `requestedOfferKey` ใน P10 ยังเป็น attribution เท่านั้นและห้ามเปิด entitlement.
 
-| offerKey | ราคา/เดือน | priceSatang | เลือกใน auto-register ตอนนี้ | payment mode เมื่อเปิดจริง | quota/feature snapshot |
-|---|---:|---:|---|---|---|
-| `FREE_TRIAL` | ฟรี | 0 | **enabled** | `NONE` — ห้ามเรียก EasySlip | **TBD: ระยะเวลา + จำนวนใบ** |
-| `MONTHLY_259` | 259 บาท | 25,900 | **disabled — แสดง “เร็ว ๆ นี้”** | `THAI_QR_SLIP` + EasySlip v2 | **TBD** |
-| `MONTHLY_599` | 599 บาท | 59,900 | **disabled — แสดง “เร็ว ๆ นี้”** | `THAI_QR_SLIP` + EasySlip v2 | **TBD** |
-| `MONTHLY_999` | 999 บาท | 99,900 | **disabled — แสดง “เร็ว ๆ นี้”** | `THAI_QR_SLIP` + EasySlip v2 | **TBD** |
-| `MONTHLY_1299` | 1,299 บาท | 129,900 | **disabled — แสดง “เร็ว ๆ นี้”** | `THAI_QR_SLIP` + EasySlip v2 | **TBD** |
+| offerKey | ชื่อบนเว็บ | ราคา/เดือน | priceSatang | เลือกใน auto-register ตอนนี้ | payment mode เมื่อเปิดจริง | quota/feature snapshot (จากเว็บ 2026-08-30) |
+|---|---|---:|---:|---|---|---|
+| `PRO_TRIAL` | มืออาชีพ (PRO) — **ทดลองใช้ฟรี** | ฟรี (ปกติ 999) | 0 | **enabled — ทางเข้าเดียว** | `NONE` — ห้ามเรียก EasySlip | สิทธิ์เท่า `PRO_999`: 5 สาขา · พนักงาน 10 คน · อ่านสลิป 100 ใบ/เดือน · บันทึกค่าใช้จ่าย+ใบเสร็จครบวงจร; **ระยะเวลา trial TBD (Owner)** |
+| `STARTER_249` | เริ่มต้น (STARTER) | 249 บาท | 24,900 | **disabled — แสดง “เร็ว ๆ นี้”** | `THAI_QR_SLIP` + EasySlip v2 | 1 สาขา · พนักงาน 2 คน · อ่านสลิป 30 ใบ/เดือน |
+| `BASIC_499` | เติบโต (BASIC) | 499 บาท | 49,900 | **disabled — แสดง “เร็ว ๆ นี้”** | `THAI_QR_SLIP` + EasySlip v2 | 2 สาขา · พนักงาน 5 คน · อ่านสลิป 50 ใบ/เดือน |
+| `PRO_999` | มืออาชีพ (PRO) | 999 บาท | 99,900 | **disabled — เข้าผ่าน trial เท่านั้นตอนนี้** | `THAI_QR_SLIP` + EasySlip v2 | 5 สาขา · พนักงาน 10 คน · อ่านสลิป 100 ใบ/เดือน · บันทึกค่าใช้จ่าย+ใบเสร็จครบวงจร |
+| `ENTERPRISE_1999` | ธุรกิจ (ENTERPRISE) | 1,999 บาท (*Custom) | 199,900 | **disabled — แสดง “เร็ว ๆ นี้”/ติดต่อทีมงาน** | `THAI_QR_SLIP` + EasySlip v2 หรือ custom | 10 สาขา · พนักงาน 30 คน · อ่านสลิป 2,000 ใบ/เดือน · ภ.ง.ด. 53 + หนังสือรับรอง 50 ทวิ · ทีมดูแลตอบใน 1 วันทำการ |
 
-กติกาปัจจุบัน: UI แสดงทุก offer เพื่อให้ journey เสมือนจริง แต่กดได้เฉพาะ `FREE_TRIAL`; backend ต้อง reject disabled key ด้วย `offer_not_available` และ **ห้าม fallback เป็น Free เงียบ ๆ**. Free ไม่สร้าง payment attempt และไม่ขึ้นกับ EasySlip availability.
+กติกาปัจจุบัน: UI แสดงครบ 4 tier เพื่อให้ journey เสมือนจริง แต่กดได้เฉพาะ `PRO_TRIAL` (**trial ผูกกับแพ็กเกจ PRO — ไม่มี free tier แยกอีกต่อไป**); backend ต้อง reject key อื่นด้วย `offer_not_available` และ **ห้าม fallback เป็น trial เงียบ ๆ**. Trial ไม่สร้าง payment attempt และไม่ขึ้นกับ EasySlip availability. Quota ต่อ tier ข้างบนเป็นตัวเลขประกาศ (marketing commitment) — การบังคับจริงยังเป็นงาน P26.
 
 ค่าที่ยังต้อง Owner ตอบก่อนเริ่ม P26:
 
 | ช่อง | ค่า |
 |---|---|
-| Free trial: ระยะเวลาและอ่านได้กี่ใบ | **TBD (Owner)** |
-| Paid tiers: ชื่อ/จำนวนใบ/feature snapshot | **TBD (Owner)** |
+| Trial (PRO): ระยะเวลา | **TBD (Owner)** — แนะนำ 30 วัน |
+| Trial: จำกัด "100 ร้านแรก" ตาม og-image ของเว็บจริงไหม และครบแล้วเกิดอะไร | **TBD (Owner)** |
+| จบ trial แล้วเกิดอะไร (ลดสิทธิ์เหลือเท่าไหน/พักบัญชี/ต้องเลือกจ่าย) | **TBD (Owner)** |
 | ลูกค้าปัจจุบัน + Controlled Beta: จำกัดด้วยหรือ grandfathered | **TBD (Owner)** |
 | Grace period หลังจ่ายไม่สำเร็จ | **TBD (Owner)** |
 
 ## 9. หน้าจอ (กติกา F-LED-7 ทุกข้อ)
 
-- S0 หน้า auto-register: แสดง catalog §8 ครบ โดย `FREE_TRIAL` เลือกได้ และ paid tiers disabled พร้อมข้อความ “เร็ว ๆ นี้”; disabled control ต้องมีทั้ง visual state และ semantic `disabled`/เหตุผลสำหรับ screen reader. S1 settings "แพ็กเกจและการใช้งาน" (F-BILL-5), S2 หน้า subscribe/ชำระ (3 ขั้น: เลือก→จ่าย→สำเร็จ; ปุ่มจ่าย disabled จนเลือกแพ็กเกจ+ยอมรับเงื่อนไข), S3 สถานะ quota ใน upload/review/LINE (F-BILL-4 copy ครบ 3 อย่าง), S4 partner console override — รายละเอียด wireframe เขียนในแผนส่งมอบตอนเข้าคิวหลัง quota/feature snapshot อนุมัติ
+- S0 หน้า auto-register: แสดง catalog §8 ครบ 4 tier โดย `PRO_TRIAL` (ทดลองใช้ฟรีบนแพ็กเกจ PRO) เลือกได้ และ tier อื่น disabled พร้อมข้อความ “เร็ว ๆ นี้”; disabled control ต้องมีทั้ง visual state และ semantic `disabled`/เหตุผลสำหรับ screen reader. S1 settings "แพ็กเกจและการใช้งาน" (F-BILL-5), S2 หน้า subscribe/ชำระ (3 ขั้น: เลือก→จ่าย→สำเร็จ; ปุ่มจ่าย disabled จนเลือกแพ็กเกจ+ยอมรับเงื่อนไข), S3 สถานะ quota ใน upload/review/LINE (F-BILL-4 copy ครบ 3 อย่าง), S4 partner console override — รายละเอียด wireframe เขียนในแผนส่งมอบตอนเข้าคิวหลัง quota/feature snapshot อนุมัติ
 
 ## 10. คำถามที่ Owner ต้องตอบก่อนเริ่ม implement
 
