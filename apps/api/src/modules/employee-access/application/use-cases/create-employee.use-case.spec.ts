@@ -10,10 +10,14 @@ import { verifyPassword } from '../../../auth/domain/logic/password-credential.l
 const KEY = Buffer.from('a'.repeat(64), 'hex');
 const COMPANY_ID = 'company-1';
 
-function makeUseCase(opts: { roles?: Array<{ id: string; key: string; permissions?: Array<{ permission: { key: string } }> }>; existingIdentity?: boolean; existingPhone?: boolean; existingUsers?: Array<{ id: string; username: string; status?: string; email?: string }> } = {}) {
+function makeUseCase(opts: { roles?: Array<{ id: string; key: string; permissions?: Array<{ permission: { key: string } }> }>; existingIdentity?: boolean; existingPhone?: boolean; existingUsers?: Array<{ id: string; username: string; status?: string; email?: string }>; planTerm?: { employeeLimit: number } | null; activeMemberships?: number } = {}) {
   const roles = (opts.roles ?? [{ id: 'role-sales', key: 'SALES' }]).map((role) => ({ ...role, permissions: role.permissions ?? [] }));
   const state = { users: [] as any[], credentials: [] as any[], memberships: [] as any[], membershipRoles: [] as any[], profiles: [] as any[], auditLogs: [] as any[], lineLinkTokens: [] as any[], branchScopes: [] as any[] };
   for (const u of opts.existingUsers ?? []) state.users.push({ status: 'ACTIVE', ...u });
+  // P29 seat cap: pre-existing ACTIVE employees of this company.
+  for (let seat = 0; seat < (opts.activeMemberships ?? 0); seat++) {
+    state.memberships.push({ id: `seat-${seat}`, companyId: COMPANY_ID, userId: `seat-user-${seat}`, status: 'ACTIVE' });
+  }
   let sequence = 0;
   const controls = { beforeTransaction: undefined as (() => Promise<void>) | undefined, locks: [] as string[][] };
   const findProfile = async ({ where, include }: any) => {
@@ -133,11 +137,19 @@ function makeUseCase(opts: { roles?: Array<{ id: string; key: string; permission
           return state.users.find((u) => (u.username ?? '').toLowerCase() === String(uname).toLowerCase()) ?? null;
         },
       },
+      // P29: `planTerm: null` (the default) is a grandfathered company — every pre-existing test
+      // below runs with no seat cap, exactly as a pre-P29 customer does.
+      companyPlanTerm: { findUnique: async () => opts.planTerm ?? null },
       companyMembership: {
-        count: async ({ where }: any) =>
-          state.memberships.filter(
+        count: async ({ where }: any) => {
+          // P29 seat count: ACTIVE non-SYSTEM_ADMIN memberships of one company.
+          if (typeof where.companyId === 'string' && where.status === 'ACTIVE') {
+            return state.memberships.filter((m) => m.companyId === where.companyId && m.status === 'ACTIVE').length;
+          }
+          return state.memberships.filter(
             (m) => m.userId === where.userId && (where.companyId?.not ? m.companyId !== where.companyId.not : true),
-          ).length,
+          ).length;
+        },
       },
       employeeAccessProfile: {
         findMany: async ({ where }: any) => state.profiles.filter((row) => row.companyId === where.companyId).map(profileWithRelations),
@@ -578,6 +590,54 @@ describe('CreateEmployeeUseCase job title', () => {
     assert.equal(state.profiles.length, 1);
     assert.equal(state.profiles[0].jobTitle, 'หัวหน้าฝ่ายขาย');
     assert.deepEqual(state.membershipRoles.map((row) => row.roleId), ['role-sales']);
+  });
+});
+
+describe('CreateEmployeeUseCase P29 seat cap', () => {
+  it('a company with no plan-term row is unlimited', async () => {
+    const { useCase, state } = makeUseCase({ planTerm: null, activeMemberships: 99 });
+    await useCase.execute(baseCommand);
+    assert.equal(state.profiles.length, 1);
+  });
+
+  it('under the limit still creates', async () => {
+    const { useCase, state } = makeUseCase({ planTerm: { employeeLimit: 2 }, activeMemberships: 1 });
+    await useCase.execute(baseCommand);
+    assert.equal(state.profiles.length, 1);
+  });
+
+  it('at the limit throws 422 with the Thai package message and writes nothing', async () => {
+    const { useCase, state } = makeUseCase({ planTerm: { employeeLimit: 2 }, activeMemberships: 2 });
+    await assert.rejects(
+      () => useCase.execute(baseCommand),
+      (err: any) => {
+        assert.equal(err.getResponse().statusCode, 422);
+        assert.equal(err.getResponse().message, 'แพ็กเกจปัจจุบันเพิ่มพนักงานได้สูงสุด 2 คน — ติดต่อผู้ดูแลเพื่อปรับแพ็กเกจ');
+        return true;
+      },
+    );
+    assert.equal(state.profiles.length, 0);
+    assert.equal(state.users.length, 0);
+  });
+
+  it('already OVER the limit blocks only the new employee; existing ones are untouched', async () => {
+    const { useCase, state } = makeUseCase({ planTerm: { employeeLimit: 1 }, activeMemberships: 5 });
+    await assert.rejects(() => useCase.execute(baseCommand), (err: any) => err.getResponse().statusCode === 422);
+    assert.equal(state.memberships.length, 5);
+    assert.equal(state.profiles.length, 0);
+  });
+
+  it('resuming an existing DRAFT is never blocked — it adds no seat', async () => {
+    const { useCase, state } = makeUseCase({ planTerm: { employeeLimit: 2 }, activeMemberships: 1 });
+    await useCase.execute(baseCommand);
+    assert.equal(state.profiles.length, 1);
+
+    // Now at the cap (1 seeded ACTIVE + the cap is 2): a NEW employee would be refused, but this
+    // is the same person's draft coming back through the wizard.
+    state.memberships.push({ id: 'seat-extra', companyId: COMPANY_ID, userId: 'seat-user-extra', status: 'ACTIVE' });
+    await useCase.execute({ ...baseCommand, displayName: 'Somchai Jaidee II' });
+    assert.equal(state.profiles.length, 1);
+    assert.equal(state.profiles[0].displayName, 'Somchai Jaidee II');
   });
 });
 

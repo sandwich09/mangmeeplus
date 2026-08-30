@@ -1,0 +1,232 @@
+import { Injectable } from '@nestjs/common';
+import { PrismaService } from '../../../../common/database/prisma.service';
+import { CreateOrUpdateNotificationEventUseCase } from '../../../dashboard-notifications/application/use-cases/notification.use-cases';
+import {
+  LADDER_SENT_COLUMN,
+  WARNING_LADDER_DAYS,
+  derivePlanTermState,
+  expiredMessageTh,
+  warningLadderPoint,
+  warningMessageTh,
+} from '../../domain/logic/plan-term.logic';
+import { PartnerLifecycleTransitionUseCase } from './partner-lifecycle-transition.use-case';
+
+/** Trigger keys — must also be listed in IMPLEMENTED_TRIGGER_KEYS or LINE delivery is suppressed. */
+export const PLAN_TERM_EXPIRING_TRIGGER = 'plan_term_expiring';
+export const PLAN_TERM_EXPIRED_TRIGGER = 'plan_term_expired';
+
+const SWEEP_BATCH_LIMIT = 200;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export type PlanTermSweepResult = {
+  expired: number;
+  warned: number;
+  failures: number;
+};
+
+/**
+ * P29 §4B. Runs every ~5 minutes. Two independent passes, both idempotent and both bounded.
+ *
+ * The sweep is NOT the enforcement: the on-access check in AuthGuard already refuses an expired
+ * company to the millisecond. This pass exists to flip the visible status, stamp `termDisabledAt`
+ * (which is what makes a renew re-enable the company), and tell people.
+ *
+ * Companies with no `CompanyPlanTerm` row are never selected by either query, so a grandfathered
+ * customer is untouched by every line below.
+ */
+@Injectable()
+export class PlanTermSweepUseCase {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly lifecycle: PartnerLifecycleTransitionUseCase,
+    private readonly notifications: CreateOrUpdateNotificationEventUseCase,
+  ) {}
+
+  async execute(limit = SWEEP_BATCH_LIMIT): Promise<PlanTermSweepResult> {
+    const now = new Date();
+    const expiry = await this.sweepExpiry(now, limit);
+    const warnings = await this.sweepWarnings(now, limit);
+    return {
+      expired: expiry.count,
+      warned: warnings.count,
+      failures: expiry.failures + warnings.failures,
+    };
+  }
+
+  /**
+   * ACTIVE companies past their deadline → DISABLED through the same use-case the admin console
+   * uses, so timestamps and the audit action are identical whoever pulled the lever.
+   *
+   * Order matters. The stamp is claimed FIRST, then the transition, then the notification:
+   * a crash between stamp and transition leaves a company ACTIVE-but-stamped, which the next
+   * sweep re-selects and finishes (and which the on-access check already blocks meanwhile).
+   * Transitioning first would risk the opposite — DISABLED without `termDisabledAt`, a company
+   * a renew would refuse to re-enable.
+   */
+  private async sweepExpiry(now: Date, limit: number): Promise<{ count: number; failures: number }> {
+    const due = await this.prisma.client.companyPlanTerm.findMany({
+      where: { termEndsAt: { lte: now }, company: { status: 'ACTIVE' } },
+      select: { companyId: true, company: { select: { name: true } } },
+      orderBy: { termEndsAt: 'asc' },
+      take: limit,
+    });
+
+    let count = 0;
+    let failures = 0;
+    for (const row of due) {
+      try {
+        // CAS claim: exactly one sweep pass owns the notification for this expiry.
+        const claimed = await this.prisma.client.companyPlanTerm.updateMany({
+          where: { companyId: row.companyId, expiredNotifiedAt: null },
+          data: { expiredNotifiedAt: now, termDisabledAt: now },
+        });
+
+        await this.lifecycle.execute({
+          companyId: row.companyId,
+          targetStatus: 'DISABLED',
+          reason: 'term_expired',
+          // No admin pulled this lever. `actorUserId` is a real FK, so a synthetic id would break
+          // the insert — the reason field is what names the actor here.
+          requestingAdminUserId: null,
+          requestId: `plan-term-sweep-${row.companyId}-${now.getTime()}`,
+        });
+        count += 1;
+
+        if (claimed.count === 1) {
+          await this.notify(row.companyId, row.company.name, {
+            trigger: PLAN_TERM_EXPIRED_TRIGGER,
+            severity: 'critical',
+            title: 'ร้านครบกำหนดใช้งาน',
+            body: expiredMessageTh(row.company.name),
+            periodKey: `expired:${now.toISOString().slice(0, 10)}`,
+          });
+        }
+      } catch (error) {
+        failures += 1;
+        logSweepFailure('plan_term_expiry_failed', row.companyId, error);
+      }
+    }
+    return { count, failures };
+  }
+
+  /** 7 / 3 / 1 days out, OWNER only, exactly once per point per term (a renew clears the flags). */
+  private async sweepWarnings(now: Date, limit: number): Promise<{ count: number; failures: number }> {
+    const widest = Math.max(...WARNING_LADDER_DAYS);
+    const upcoming = await this.prisma.client.companyPlanTerm.findMany({
+      where: {
+        termEndsAt: { gt: now, lte: new Date(now.getTime() + widest * DAY_MS) },
+        company: { status: 'ACTIVE' },
+      },
+      select: {
+        companyId: true,
+        termEndsAt: true,
+        warningDays: true,
+        warn7SentAt: true,
+        warn3SentAt: true,
+        warn1SentAt: true,
+        company: { select: { name: true } },
+      },
+      orderBy: { termEndsAt: 'asc' },
+      take: limit,
+    });
+
+    let count = 0;
+    let failures = 0;
+    for (const row of upcoming) {
+      const point = warningLadderPoint(row.termEndsAt, now);
+      if (point === null) continue;
+      const column = LADDER_SENT_COLUMN[point];
+      if (row[column] !== null) continue;
+
+      try {
+        // Same CAS shape as the expiry claim: two overlapping sweep passes send once between them.
+        const claimed = await this.prisma.client.companyPlanTerm.updateMany({
+          where: { companyId: row.companyId, [column]: null },
+          data: { [column]: now },
+        });
+        if (claimed.count !== 1) continue;
+
+        const { daysLeft } = derivePlanTermState(row.termEndsAt, row.warningDays, now);
+        await this.notify(row.companyId, row.company.name, {
+          trigger: PLAN_TERM_EXPIRING_TRIGGER,
+          severity: 'action',
+          title: 'ใกล้ครบกำหนดใช้งาน',
+          body: warningMessageTh(row.company.name, row.termEndsAt, daysLeft),
+          periodKey: `${row.termEndsAt.toISOString()}:${point}`,
+        });
+        count += 1;
+      } catch (error) {
+        failures += 1;
+        logSweepFailure('plan_term_warning_failed', row.companyId, error);
+      }
+    }
+    return { count, failures };
+  }
+
+  /**
+   * Two audiences, one machinery. The company's OWNERs get WEB + LINE through the notification
+   * event of their OWN company; System Admins get the same news as a dashboard notification inside
+   * the platform company they are members of — a recipient is only ever created for a user who
+   * holds an ACTIVE membership in the event's company, so the two cannot be one event.
+   */
+  private async notify(
+    companyId: string,
+    companyName: string,
+    message: { trigger: string; severity: string; title: string; body: string; periodKey: string },
+  ): Promise<void> {
+    const owners = await this.prisma.client.companyMembership.findMany({
+      where: { companyId, status: 'ACTIVE', roles: { some: { role: { key: 'OWNER' } } } },
+      select: { userId: true },
+    });
+    if (owners.length > 0) {
+      await this.notifications.execute({
+        companyId,
+        triggerKey: message.trigger,
+        sourceModule: 'plan_term',
+        sourceType: 'company_plan_term',
+        sourceId: companyId,
+        severity: message.severity,
+        title: message.title,
+        body: message.body,
+        deepLinkHref: `/companies/${companyId}/dashboard`,
+        recipientUserIds: owners.map((owner) => owner.userId),
+        periodKey: message.periodKey,
+      });
+    }
+
+    const admins = await this.prisma.client.companyMembership.findMany({
+      where: { status: 'ACTIVE', roles: { some: { role: { key: 'SYSTEM_ADMIN' } } } },
+      select: { companyId: true, userId: true },
+    });
+    const byAdminCompany = new Map<string, string[]>();
+    for (const admin of admins) {
+      byAdminCompany.set(admin.companyId, [...(byAdminCompany.get(admin.companyId) ?? []), admin.userId]);
+    }
+    for (const [adminCompanyId, userIds] of byAdminCompany) {
+      await this.notifications.execute({
+        companyId: adminCompanyId,
+        triggerKey: message.trigger,
+        sourceModule: 'plan_term',
+        sourceType: 'company_plan_term',
+        // The AFFECTED company, so one admin event per customer rather than one per sweep.
+        sourceId: companyId,
+        severity: message.severity,
+        title: `${message.title}: ${companyName}`,
+        body: message.body,
+        deepLinkHref: `/system/partners/${companyId}`,
+        recipientUserIds: userIds,
+        periodKey: message.periodKey,
+      });
+    }
+  }
+}
+
+// One company's failure never aborts the batch; the row keeps its unsent state and the next
+// pass retries it.
+function logSweepFailure(event: string, companyId: string, error: unknown): void {
+  console.error(JSON.stringify({
+    event,
+    companyId,
+    error: error instanceof Error ? error.message : String(error),
+  }));
+}

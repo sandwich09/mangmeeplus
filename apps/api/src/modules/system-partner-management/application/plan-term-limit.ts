@@ -1,0 +1,47 @@
+import { UnprocessableEntityException } from '@nestjs/common';
+import { branchLimitMessageTh, employeeLimitMessageTh } from '../domain/logic/plan-term.logic';
+
+/**
+ * P29 §4D — the two create-side quota gates.
+ *
+ * Both are deliberately shaped the same way and both fail OPEN when the company has no
+ * `CompanyPlanTerm` row: a company that predates P29 is grandfathered unlimited (spec §2 rule 7)
+ * and must not notice this code exists. Nothing here ever touches an existing branch, membership
+ * or employee — a company already over a newly-lowered limit keeps everything it has and is only
+ * blocked from adding more (spec §2 rule 2).
+ */
+type LimitPrisma = {
+  client: {
+    companyPlanTerm: { findUnique(args: unknown): Promise<{ branchLimit: number; employeeLimit: number } | null> };
+    branch: { count(args: unknown): Promise<number> };
+    companyMembership: { count(args: unknown): Promise<number> };
+  };
+};
+
+async function planLimits(prisma: LimitPrisma, companyId: string) {
+  return prisma.client.companyPlanTerm.findUnique({
+    where: { companyId },
+    select: { branchLimit: true, employeeLimit: true },
+  });
+}
+
+export async function assertBranchLimit(prisma: LimitPrisma, companyId: string): Promise<void> {
+  const term = await planLimits(prisma, companyId);
+  if (!term) return; // no term row = unlimited
+  const active = await prisma.client.branch.count({ where: { companyId, status: 'ACTIVE' } });
+  if (active >= term.branchLimit) {
+    throw new UnprocessableEntityException(branchLimitMessageTh(term.branchLimit));
+  }
+}
+
+export async function assertEmployeeLimit(prisma: LimitPrisma, companyId: string): Promise<void> {
+  const term = await planLimits(prisma, companyId);
+  if (!term) return; // no term row = unlimited
+  // SYSTEM_ADMIN memberships are platform staff, never a seat the company bought.
+  const active = await prisma.client.companyMembership.count({
+    where: { companyId, status: 'ACTIVE', roles: { none: { role: { key: 'SYSTEM_ADMIN' } } } },
+  });
+  if (active >= term.employeeLimit) {
+    throw new UnprocessableEntityException(employeeLimitMessageTh(term.employeeLimit));
+  }
+}

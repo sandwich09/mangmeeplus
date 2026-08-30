@@ -29,6 +29,9 @@ function makeUCs() {
     resetMemberPassword: { execute: async () => ({ userId: 'u-1', temporaryPassword: 'tmp', expiresAt: '' }) } as any,
     revealMemberPassword: { execute: async () => ({ temporaryPassword: 'tmp' }) } as any,
     setMemberContact: { execute: async () => ({ updated: true }) } as any,
+    getPlanTerm: { execute: async () => ({ term: null }) } as any,
+    setPlanTerm: { execute: async () => ({ term: { companyId: 'co-1', tierKey: 'STARTER_249' } }) } as any,
+    renewPlanTerm: { execute: async () => ({ term: { companyId: 'co-1', renewCount: 1 } }) } as any,
   };
 }
 
@@ -40,6 +43,7 @@ function makeCtrl(overrides: Partial<ReturnType<typeof makeUCs>> = {}) {
     uc.setMemberContact,
     // VAT registration: delegated to the company's own service, not re-implemented here.
     { put: async () => ({ version: 1, resultKind: 'APPLIED', replayed: false }) } as any,
+    uc.getPlanTerm, uc.setPlanTerm, uc.renewPlanTerm,
   );
 }
 

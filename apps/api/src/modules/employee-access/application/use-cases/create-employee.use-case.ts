@@ -15,6 +15,7 @@ import {
   roleGrantViolation,
 } from '../../domain/logic/employee-access.logic';
 import { encryptCredential } from '../../../system-partner-management/domain/logic/credential-cipher.logic';
+import { assertEmployeeLimit } from '../../../system-partner-management/application/plan-term-limit';
 import { lockEmployeeProfile } from '../lock-employee-profile';
 
 export type CreateEmployeeCommand = {
@@ -255,6 +256,12 @@ export class CreateEmployeeUseCase {
         lineLink: buildLineLinkPackage(cmd.apiBaseUrl, lineLinkToken.rawToken, lineLinkToken.expiresAt, this.config.lineLiffId),
       };
     }
+
+    // P29 §4D. Deliberately below the draft-resume branch above: resuming a draft adds no seat, so
+    // a company at its cap can still finish an employee it had already started. Everything from
+    // here creates a NEW membership. Existing employees are never touched, and a company with no
+    // plan-term row is unlimited.
+    await assertEmployeeLimit(this.prisma, cmd.companyId);
 
     // Cross-company reuse: when the chosen username already belongs to an active account
     // (e.g. the owner of another company), attach a new membership to THAT user instead of
