@@ -27,6 +27,9 @@ const SHOW_DEV_LOGIN = process.env.NODE_ENV !== 'production';
 const LINE_NOTICE_TEXT: Record<string, string> = {
   'link-required': 'บัญชี LINE นี้ยังไม่ได้เชื่อมกับผู้ใช้ในระบบ — เข้าสู่ระบบด้วยรหัสผ่านหนึ่งครั้ง แล้วระบบจะเชื่อมบัญชี LINE ให้อัตโนมัติ',
   'link-failed': 'เชื่อมบัญชี LINE ไม่สำเร็จ (บัญชี LINE นี้อาจถูกเชื่อมกับผู้ใช้อื่นอยู่แล้ว) กรุณาลองใหม่อีกครั้งหรือติดต่อผู้ดูแลระบบ',
+  // The link lane normally sends this back to the page that started it; a request with no usable
+  // returnTo lands here instead, so the certain version of the message has to exist on this page.
+  'link-conflict': 'บัญชี LINE นี้เชื่อมกับผู้ใช้อื่นในระบบอยู่แล้ว จึงเชื่อมกับบัญชีนี้ไม่ได้ กรุณาติดต่อผู้ดูแลระบบ',
   canceled: 'ยกเลิกการเข้าสู่ระบบด้วย LINE แล้ว',
   failed: 'เข้าสู่ระบบด้วย LINE ไม่สำเร็จ กรุณาลองใหม่อีกครั้งหรือเข้าสู่ระบบด้วยรหัสผ่าน',
   unavailable: 'การเข้าสู่ระบบด้วย LINE ยังไม่เปิดใช้งาน',
@@ -172,7 +175,7 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
   const qrRenewalsRef = useRef(0);
   const lineNotice = searchParams.get('line');
   const lineNoticeText = lineNotice ? LINE_NOTICE_TEXT[lineNotice] : undefined;
-  const lineNoticeIsAlert = lineNotice === 'failed' || lineNotice === 'link-failed';
+  const lineNoticeIsAlert = lineNotice === 'failed' || lineNotice === 'link-failed' || lineNotice === 'link-conflict';
   // Link mode: a verified LINE account with no linked user. One password sign-in, then the
   // page hands the browser straight back to LINE so the callback can link it.
   const linkMode = lineNotice === 'link-required';

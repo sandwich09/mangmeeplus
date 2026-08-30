@@ -19,7 +19,7 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import type { Request } from 'express';
-import { ALL_FEATURE_ENTITLEMENT_KEYS, VAT_FACT_STATUSES, type VatFactStatus } from '@watchdog-bms/contracts';
+import { ALL_FEATURE_ENTITLEMENT_KEYS, PLAN_TIER_PRESETS, VAT_FACT_STATUSES, type PlanTierKey, type VatFactStatus } from '@watchdog-bms/contracts';
 import { RequirePermissions } from '../../../../common/security/permissions.decorator';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import { ListPartnersUseCase } from '../../application/use-cases/list-partners.use-case';
@@ -35,6 +35,15 @@ import { ListPartnerMembersUseCase } from '../../application/use-cases/list-part
 import { PartnerMemberLineUnlinkUseCase } from '../../application/use-cases/partner-member-line-unlink.use-case';
 import { PartnerMemberPasswordResetUseCase } from '../../application/use-cases/partner-member-password-reset.use-case';
 import { PartnerMemberPasswordRevealUseCase } from '../../application/use-cases/partner-member-password-reveal.use-case';
+import { SetPartnerMemberContactUseCase } from '../../application/use-cases/set-partner-member-contact.use-case';
+import {
+  GetCompanyPlanTermUseCase,
+  RenewCompanyPlanTermUseCase,
+  SetCompanyPlanTermUseCase,
+} from '../../application/use-cases/company-plan-term.use-cases';
+
+/** Derived from the frozen catalog so the DTO can never drift from the presets it validates. */
+const PLAN_TIER_KEYS = Object.keys(PLAN_TIER_PRESETS) as PlanTierKey[];
 
 class UpdateProfileBodyDto {
   @IsString() @IsOptional() name?: string;
@@ -43,6 +52,11 @@ class UpdateProfileBodyDto {
   @IsString() @IsOptional() locale?: string;
   @IsString() @IsOptional() phone?: string;
   @IsString() @IsOptional() email?: string;
+}
+
+class MemberContactBodyDto {
+  @IsString() @IsOptional() @MaxLength(254) email?: string;
+  @IsString() @IsOptional() @MaxLength(20) phoneNumber?: string;
 }
 
 class LifecycleBodyDto {
@@ -101,6 +115,23 @@ export class SetPartnerVatRegistrationBodyDto {
   @Type(() => Number) @IsInt() @Min(0) expectedVersion!: number;
 }
 
+// P29. `termStartAt`/`termDays` are honoured only when the row is created; the use-case is the
+// authority on that, this DTO only fences the shapes. Upper bounds keep a typo from writing a
+// 10-year term or a five-digit branch cap.
+export class SetPlanTermBodyDto {
+  @IsIn(PLAN_TIER_KEYS) tierKey!: PlanTierKey;
+  @IsInt() @Min(1) @Max(10_000) branchLimit!: number;
+  @IsInt() @Min(1) @Max(10_000) employeeLimit!: number;
+  @IsInt() @Min(1) @Max(1_000_000) monthlySlipLimit!: number;
+  @IsString() @IsOptional() @IsNotEmpty() termStartAt?: string;
+  @IsInt() @IsOptional() @Min(1) @Max(3_650) termDays?: number;
+  @IsInt() @IsOptional() @Min(1) @Max(365) warningDays?: number;
+}
+
+export class RenewPlanTermBodyDto {
+  @IsInt() @IsOptional() @Min(1) @Max(3_650) days?: number;
+}
+
 type AuthedRequest = Request & { context: RequestContext };
 
 @Controller('system/partners')
@@ -118,7 +149,11 @@ export class PartnerController {
     private readonly unlinkMemberLine: PartnerMemberLineUnlinkUseCase,
     private readonly resetMemberPassword: PartnerMemberPasswordResetUseCase,
     private readonly revealMemberPassword: PartnerMemberPasswordRevealUseCase,
+    private readonly setMemberContact: SetPartnerMemberContactUseCase,
     private readonly vatRegistration: CompanyVatRegistrationUseCase,
+    private readonly getPlanTerm: GetCompanyPlanTermUseCase,
+    private readonly setPlanTerm: SetCompanyPlanTermUseCase,
+    private readonly renewPlanTerm: RenewCompanyPlanTermUseCase,
   ) {}
 
   @Get()
@@ -255,6 +290,28 @@ export class PartnerController {
     });
   }
 
+  @Patch(':partnerCompanyId/members/:memberUserId/contact')
+  @RequirePermissions('system.partner_member.manage')
+  @ApiOperation({ summary: 'Set member contact email and mobile (admin backfill; email becomes a login identifier)' })
+  @ApiResponse({ status: 200 })
+  @ApiResponse({ status: 404 })
+  @ApiResponse({ status: 409, description: 'Email already used by another user' })
+  setContact(
+    @Param('partnerCompanyId') companyId: string,
+    @Param('memberUserId') memberUserId: string,
+    @Body() dto: MemberContactBodyDto,
+    @Req() req: AuthedRequest,
+  ) {
+    return this.setMemberContact.execute({
+      companyId,
+      memberUserId,
+      email: dto.email,
+      phoneNumber: dto.phoneNumber,
+      requestingAdminUserId: req.context.userId,
+      requestId: req.context.requestId,
+    });
+  }
+
   @Put(':partnerCompanyId/features')
   @RequirePermissions('system.partner_feature.manage')
   @ApiOperation({ summary: 'Set partner feature entitlements' })
@@ -346,4 +403,54 @@ export class PartnerController {
     return this.getAiUsage.execute(companyId);
   }
 
+  // ---- P29 plan limits & term ----
+  // Read rides the dashboard permission like every other partner read; the two writes reuse
+  // `system.partner_company.update`, the same key the profile PATCH above is gated on. No new
+  // permission key: an operator who may edit a partner's profile may set its package.
+
+  @Get(':partnerCompanyId/plan-term')
+  @RequirePermissions('system.partner_dashboard.read')
+  @ApiOperation({ summary: 'Get plan limits and usage term ({ term: null } for grandfathered companies)' })
+  @ApiResponse({ status: 200 })
+  planTerm(@Param('partnerCompanyId') companyId: string) {
+    return this.getPlanTerm.execute(companyId);
+  }
+
+  @Put(':partnerCompanyId/plan-term')
+  @RequirePermissions('system.partner_company.update')
+  @ApiOperation({ summary: 'Create or update plan limits and term (dates are set on create only)' })
+  @ApiResponse({ status: 200 })
+  @ApiResponse({ status: 404 })
+  @ApiResponse({ status: 422, description: 'Unknown tierKey or a limit that is not a positive whole number' })
+  setPlanTermConfig(
+    @Param('partnerCompanyId') companyId: string,
+    @Body() dto: SetPlanTermBodyDto,
+    @Req() req: AuthedRequest,
+  ) {
+    return this.setPlanTerm.execute({
+      companyId,
+      ...dto,
+      requestingAdminUserId: req.context.userId,
+      requestId: req.context.requestId,
+    });
+  }
+
+  @Post(':partnerCompanyId/plan-term/renew')
+  @HttpCode(200)
+  @RequirePermissions('system.partner_company.update')
+  @ApiOperation({ summary: 'Extend the usage term; re-enables a company only if the term expiry disabled it' })
+  @ApiResponse({ status: 200 })
+  @ApiResponse({ status: 404, description: 'Company has no term row to renew' })
+  renewPlanTermConfig(
+    @Param('partnerCompanyId') companyId: string,
+    @Body() dto: RenewPlanTermBodyDto,
+    @Req() req: AuthedRequest,
+  ) {
+    return this.renewPlanTerm.execute({
+      companyId,
+      days: dto.days,
+      requestingAdminUserId: req.context.userId,
+      requestId: req.context.requestId,
+    });
+  }
 }

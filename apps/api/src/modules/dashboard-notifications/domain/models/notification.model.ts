@@ -137,6 +137,10 @@ export const IMPLEMENTED_TRIGGER_KEYS: string[] = [
   // every time, and the preferences screen offers only implemented keys so nobody could opt in
   // either. The notification existed and could never be delivered.
   'report_ready',
+  // P29 plan term. Both must live here or the preference gate drops the LINE push — the ladder
+  // and the expiry notice are the only warning an owner gets before the shop is suspended.
+  'plan_term_expiring',
+  'plan_term_expired',
 ];
 
 // Future triggers — disabled until source module exists

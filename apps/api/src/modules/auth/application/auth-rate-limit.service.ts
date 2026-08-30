@@ -3,6 +3,16 @@ import { AppConfigService } from '../../../common/config/app-config.service';
 import { RedisRateLimitService } from '../../../common/security/redis-rate-limit.service';
 import { emitSecurityEvent, SECURITY_EVENT } from '../../../common/logger/security-event';
 
+// P10 public signup buckets. One hour of window for all of them; the counts differ by how
+// expensive the action is downstream (an email send costs SES reputation, a status read costs a row).
+const PUBLIC_SIGNUP_WINDOW_SECONDS = 3600;
+const PUBLIC_SIGNUP_MAX_PER_IP = 10;
+const PUBLIC_SIGNUP_MAX_PER_EMAIL = 5;
+const PUBLIC_SIGNUP_READ_MAX_PER_IP = 60;
+const PUBLIC_SIGNUP_RESEND_MAX_PER_IP = 10;
+const PUBLIC_SIGNUP_RESEND_MAX_PER_REQUEST = 3;
+const PUBLIC_SIGNUP_CLAIM_MAX_PER_IP = 20;
+
 @Injectable()
 export class AuthRateLimitService {
   private readonly logger = new Logger(AuthRateLimitService.name);
@@ -106,6 +116,39 @@ export class AuthRateLimitService {
       this.config.lineHandoffExchangeMaxPerIp,
       this.config.lineHandoffExchangeWindowSeconds,
     );
+  }
+
+  /**
+   * P10 §3: the public signup form is unauthenticated, so both buckets are fail-closed like every
+   * other credential-adjacent bucket here. The limits are constants rather than env knobs — nothing
+   * operational wants them tuned per environment, and `EXTERNAL_SIGNUP_ENABLED` is the real switch.
+   */
+  async assertPublicSignupAllowed(ipAddress: string, contactEmail: string): Promise<void> {
+    await this.assertWithinLimit('public-signup-ip', ipAddress, PUBLIC_SIGNUP_MAX_PER_IP, PUBLIC_SIGNUP_WINDOW_SECONDS);
+    // Lowercased so case permutations of one address share a single quota (L-06).
+    await this.assertWithinLimit(
+      'public-signup-email',
+      contactEmail.trim().toLowerCase(),
+      PUBLIC_SIGNUP_MAX_PER_EMAIL,
+      PUBLIC_SIGNUP_WINDOW_SECONDS,
+    );
+  }
+
+  /** Status polling and claim-link reads: cheap, but still a public enumeration surface. */
+  async assertPublicSignupReadAllowed(ipAddress: string): Promise<void> {
+    await this.assertWithinLimit('public-signup-read-ip', ipAddress, PUBLIC_SIGNUP_READ_MAX_PER_IP, PUBLIC_SIGNUP_WINDOW_SECONDS);
+  }
+
+  /** Applicant-triggered resend (spec §4D ②) — per request as well as per IP, so one applicant
+   *  cannot mail-bomb their own inbox and burn SES reputation. */
+  async assertPublicSignupResendAllowed(ipAddress: string, requestId: string): Promise<void> {
+    await this.assertWithinLimit('public-signup-resend-ip', ipAddress, PUBLIC_SIGNUP_RESEND_MAX_PER_IP, PUBLIC_SIGNUP_WINDOW_SECONDS);
+    await this.assertWithinLimit('public-signup-resend-request', requestId, PUBLIC_SIGNUP_RESEND_MAX_PER_REQUEST, PUBLIC_SIGNUP_WINDOW_SECONDS);
+  }
+
+  /** Claim submission carries a password, so it gets its own bucket separate from the reads. */
+  async assertSignupClaimSubmitAllowed(ipAddress: string): Promise<void> {
+    await this.assertWithinLimit('public-signup-claim-ip', ipAddress, PUBLIC_SIGNUP_CLAIM_MAX_PER_IP, PUBLIC_SIGNUP_WINDOW_SECONDS);
   }
 
   async assertCustomerRegisterAllowed(ipAddress: string, lineChannelId: string): Promise<void> {

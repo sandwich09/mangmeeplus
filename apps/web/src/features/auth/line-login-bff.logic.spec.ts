@@ -66,6 +66,9 @@ describe('line-login-bff.logic', () => {
       nonce: 'nonce-1',
       code_challenge: 'challenge-1',
       code_challenge_method: 'S256',
+      // P10 §4F: LINE shows the add-friend option on its own consent screen, so linking the
+      // account and following the OA are one step. 'normal' asks; it never adds without consent.
+      bot_prompt: 'normal',
     });
     // The redirect must survive as one encoded parameter, not leak its own query into LINE's.
     assert.match(url.search, /redirect_uri=https%3A%2F%2Fapp\.example\.com%2Fapi%2Fauth%2Fline-login%2Fcallback/);

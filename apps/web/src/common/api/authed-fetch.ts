@@ -17,6 +17,8 @@ const REFRESH_ENDPOINT = '/api/auth/refresh';
 const REFRESH_ROTATED = 204;
 const MUTATING_METHOD = /^(POST|PUT|PATCH|DELETE)$/i;
 const LEGAL_ACCEPTANCE_REQUIRED_CODE = 'legal_acceptance_required';
+/** P29: the company's usage term ended, so every business route is refused until it is renewed. */
+const COMPANY_TERM_EXPIRED_CODE = 'company_term_expired';
 export const ACCESS_CONTEXT_STALE_EVENT = 'watchdog:access-context-stale';
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
@@ -90,14 +92,24 @@ function redirectToLegalAcceptance(): void {
   window.location.assign(legalAcceptancePath(pathname + search));
 }
 
-async function isLegalAcceptanceRejection(res: Response): Promise<boolean> {
-  if (res.status !== 403) return false;
+async function rejectionCode(res: Response): Promise<string | null> {
+  if (res.status !== 403) return null;
   try {
     const body = (await res.clone().json()) as { code?: unknown };
-    return body.code === LEGAL_ACCEPTANCE_REQUIRED_CODE;
+    return typeof body.code === 'string' ? body.code : null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+// Same shape as the legal-acceptance gate: a stable code, not a translated sentence, so every raw
+// and JSON call routes out consistently instead of each screen inventing its own dead end.
+function redirectToCompanyRenewal(): void {
+  if (typeof window === 'undefined') return;
+  const { pathname } = window.location;
+  const companyId = /^\/companies\/([^/]+)/.exec(pathname)?.[1];
+  if (!companyId || pathname.startsWith(`/companies/${companyId}/renew`)) return;
+  window.location.assign(`/companies/${companyId}/renew`);
 }
 
 // The stable code is emitted only by the middleware CSRF gate — a valid session whose double-submit
@@ -148,7 +160,9 @@ export async function authedFetch(path: string, init?: RequestInit, fetchImpl: F
   }
   // The API uses a stable code rather than a translated message, so every raw and JSON call is
   // caught consistently. Preserve the current same-app destination for the post-acceptance return.
-  if (await isLegalAcceptanceRejection(res)) redirectToLegalAcceptance();
+  const code = await rejectionCode(res);
+  if (code === LEGAL_ACCEPTANCE_REQUIRED_CODE) redirectToLegalAcceptance();
+  else if (code === COMPANY_TERM_EXPIRED_CODE) redirectToCompanyRenewal();
   return res;
 }
 

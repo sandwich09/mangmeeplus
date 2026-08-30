@@ -1,6 +1,6 @@
 # แผนส่งมอบ Auto-register จากเว็บไซต์ทางการ — P10
 
-สถานะ: **P10-0 เสร็จและ verify บน local; แผนปรับเป็น Slice A–E ตาม Flow B (Owner amendment v2 2026-08-30); ยังไม่เริ่ม implement slice ใด**
+สถานะ: **Slice A+B+C IMPLEMENTED บน branch `codex/auto-register-round1` (2026-08-30, Opus implements / Fable supervises+integrates); flag `EXTERNAL_SIGNUP_ENABLED` ปิดทุก env; Slice D (SES ops) รอ Owner ตาม [runbook](../runbooks/ses-email-setup.md); Slice E รอ SES + UAT ตาม [test plan](mangmee-auto-register-uat-test-plan-th.md)**
 
 Source of truth: [External Signup Contract Spec](../specs/mangmee-external-signup-contract-spec-th.md) (Flow B) + [Email Delivery/Claim Spec P11](../specs/mangmee-email-delivery-claim-spec-th.md)
 
@@ -41,7 +41,7 @@ Source of truth: [External Signup Contract Spec](../specs/mangmee-external-signu
 
 - ยืนยันโดเมนผู้ส่ง + DKIM/SPF/DMARC (DNS อยู่ Cloudflare — Owner วาง records หรือเปิดทาง), region ap-southeast-1, configuration set + bounce/complaint event → ธง `EMAIL_FAILED` ในคิว, ขอออกจาก SES sandbox (lead time ~1 วัน — เริ่มก่อนโค้ดเสร็จ)
 - สลับ `EMAIL_PROVIDER=ses` ใน UAT ก่อน แล้วพิสูจน์ inbox จริง + DKIM pass + bounce round-trip ตาม P11 §4
-- **ผู้ใช้เดิมไม่มีอีเมลในระบบ** (login ด้วยอีเมลจึงไม่ได้ทั้งที่ backend รองรับ): เพิ่ม UI "เพิ่ม/ยืนยันอีเมล" ในหน้าตั้งค่าบัญชี (route `account/email` + resend มีอยู่แล้ว รอ SES เปิด) + บังคับอีเมล unique ต่อ user ตอนเขียน (กัน login กำกวม) — ส่งมอบพร้อม/หลัง Slice D
+- **ผู้ใช้เดิมไม่มีอีเมลในระบบ**: ✅ ปิดบางส่วนแล้ว 2026-08-30 — Partner console เพิ่มช่อง email+mobile ต่อ member (`PATCH .../members/:id/contact`, `User.email` unique เดิม + `User.phoneNumber` ใหม่, audit HIGH; Owner กรอกย้อนหลังเอง ไม่มี script migrate) → login ด้วยอีเมลใช้ได้ทันทีที่กรอก; ที่เหลือของ Slice D: UI "เพิ่ม/ยืนยันอีเมล" ฝั่งผู้ใช้เอง (รอ SES) — admin-entered email ไม่ตั้ง `emailVerifiedAt` (การยืนยันจริงยังเป็นของ flow ยืนยัน)
 
 ## Slice E — Rollout
 

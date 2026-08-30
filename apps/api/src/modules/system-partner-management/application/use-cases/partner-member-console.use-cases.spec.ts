@@ -1,10 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { NotFoundException } from '@nestjs/common';
+import { ConflictException, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { ListPartnerMembersUseCase } from './list-partner-members.use-case';
 import { PartnerMemberLineUnlinkUseCase } from './partner-member-line-unlink.use-case';
 import { PartnerMemberPasswordResetUseCase } from './partner-member-password-reset.use-case';
 import { PartnerMemberPasswordRevealUseCase } from './partner-member-password-reveal.use-case';
+import { SetPartnerMemberContactUseCase } from './set-partner-member-contact.use-case';
 import { encryptCredential } from '../../domain/logic/credential-cipher.logic';
 import { verifyPassword } from '../../../auth/domain/logic/password-credential.logic';
 
@@ -15,10 +16,12 @@ function makePrisma(opts: {
   member?: boolean;
   identity?: boolean;
   credential?: { tempPasswordEncrypted?: string | null } | null;
+  emailClash?: boolean;
 } = {}) {
   const audits: any[] = [];
   const credentialUpdates: any[] = [];
   const identityUpdates: any[] = [];
+  const userUpdates: any[] = [];
   const ops = {
     companyMembership: {
       findFirst: async () =>
@@ -36,9 +39,14 @@ function makePrisma(opts: {
     },
     auditLog: { create: async (args: any) => { audits.push(args.data); return {}; } },
     company: { findUnique: async () => ({ id: 'co-1' }) },
+    user: {
+      findFirst: async () => (opts.emailClash ? { id: 'other-user' } : null),
+      findUnique: async () => ({ email: 'old@example.com', phoneNumber: null }),
+      update: async (args: any) => { userUpdates.push(args); return {}; },
+    },
   };
   const client = { ...ops, $transaction: async (arg: any) => (typeof arg === 'function' ? arg(ops) : Promise.all(arg)) };
-  return { prisma: { client } as any, audits, credentialUpdates, identityUpdates };
+  return { prisma: { client } as any, audits, credentialUpdates, identityUpdates, userUpdates };
 }
 
 const cmd = { companyId: 'co-1', memberUserId: 'user-1', requestingAdminUserId: 'admin-1', requestId: 'req-1' };
@@ -128,5 +136,52 @@ describe('ListPartnerMembersUseCase', () => {
     assert.deepEqual(item.roles, ['OWNER']);
     assert.equal(item.credential?.hasTempPassword, true);
     assert.ok(!JSON.stringify(result).includes('"v":1'));
+  });
+});
+
+describe('SetPartnerMemberContactUseCase', () => {
+  it('normalizes and saves email + phone with a HIGH audit of booleans only', async () => {
+    const { prisma, audits, userUpdates } = makePrisma();
+    const result = await new SetPartnerMemberContactUseCase(prisma).execute({
+      ...cmd, email: '  Somsri@Example.COM ', phoneNumber: ' 098-256-5628 ',
+    });
+    assert.deepEqual(result, { updated: true });
+    assert.equal(userUpdates.length, 1);
+    assert.deepEqual(userUpdates[0].data, { email: 'somsri@example.com', phoneNumber: '098-256-5628' });
+    assert.equal(audits.length, 1);
+    assert.equal(audits[0].action, 'system.partner_member.contact_update');
+    assert.equal(audits[0].riskLevel, 'HIGH');
+    assert.equal(audits[0].metadataJson.emailChanged, true);
+    assert.equal(Object.values(audits[0].metadataJson).some((v) => typeof v === 'string' && v.includes('@')), false);
+  });
+
+  it('empty strings clear both fields', async () => {
+    const { prisma, userUpdates } = makePrisma();
+    await new SetPartnerMemberContactUseCase(prisma).execute({ ...cmd, email: '', phoneNumber: '' });
+    assert.deepEqual(userUpdates[0].data, { email: null, phoneNumber: null });
+  });
+
+  it('rejects a member outside the company', async () => {
+    const { prisma } = makePrisma({ member: false });
+    await assert.rejects(
+      () => new SetPartnerMemberContactUseCase(prisma).execute({ ...cmd, email: 'a@b.co' }),
+      NotFoundException,
+    );
+  });
+
+  it('rejects an email already used by another user', async () => {
+    const { prisma } = makePrisma({ emailClash: true });
+    await assert.rejects(
+      () => new SetPartnerMemberContactUseCase(prisma).execute({ ...cmd, email: 'taken@example.com' }),
+      ConflictException,
+    );
+  });
+
+  it('rejects malformed email and phone, and a no-op command', async () => {
+    const { prisma } = makePrisma();
+    const uc = new SetPartnerMemberContactUseCase(prisma);
+    await assert.rejects(() => uc.execute({ ...cmd, email: 'not-an-email' }), UnprocessableEntityException);
+    await assert.rejects(() => uc.execute({ ...cmd, phoneNumber: 'abc' }), UnprocessableEntityException);
+    await assert.rejects(() => uc.execute({ ...cmd }), UnprocessableEntityException);
   });
 });

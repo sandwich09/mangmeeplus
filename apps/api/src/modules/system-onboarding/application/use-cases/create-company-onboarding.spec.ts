@@ -152,6 +152,9 @@ function makePrisma(opts: {
   ownerRoleFound?: boolean;
 }) {
   const ownerRole = opts.ownerRoleFound ?? true ? { id: 'role-owner' } : null;
+  // P29 §4A: the post-commit default-term write. Recorded, never asserted-on by the pre-existing
+  // tests — a failure here must never change the onboarding result.
+  const planTermUpserts: any[] = [];
   const txResult = {
     company: { id: 'co-1' },
     owner: { id: 'owner-1' },
@@ -159,6 +162,7 @@ function makePrisma(opts: {
     run: { id: 'run-1' },
   };
   return {
+    planTermUpserts: () => planTermUpserts,
     client: {
       user: {
         findUnique: async () => opts.existingUsername ? { id: 'existing' } : null,
@@ -169,6 +173,8 @@ function makePrisma(opts: {
       role: {
         findUnique: async () => ownerRole,
       },
+      companyPlanTerm: { upsert: async (args: any) => { planTermUpserts.push(args); return args.create; } },
+      auditLog: { create: async () => ({}) },
       $transaction: async (fn: (tx: any) => Promise<any>) => {
         const chart = chartBootstrapTx('co-1');
         const tx = {
@@ -740,7 +746,9 @@ function externalSignupHarness() {
 const signupInput = {
   externalSignupId: 'official-001', companyName: 'บริษัท ตัวอย่าง จำกัด', taxId: '0105555000012',
   ownerDisplayName: 'คุณสมชาย', contactEmail: 'Owner@Example.com', consentVersion: 'terms-2026-08',
-  referralCode: 'creator-a', requestedOfferKey: 'starter',
+  // Only PRO_TRIAL is sellable (spec §3A); the pre-catalog placeholder this used to carry is now
+  // rejected by the offer allowlist, which is the intended behaviour.
+  referralCode: 'creator-a', requestedOfferKey: 'PRO_TRIAL',
 };
 
 describe('P10-0 external signup core', () => {
@@ -789,11 +797,12 @@ describe('P10-0 external signup core', () => {
     const h = externalSignupHarness();
     const received = await h.service.receive(signupInput, 'state-0');
     await h.service.advance(received.request.id, 'VALIDATED', 'state-1');
+    await h.service.advance(received.request.id, 'PENDING_REVIEW', 'state-1b');
     await h.service.advance(received.request.id, 'EMAIL_PENDING', 'state-2');
     const replay = await h.service.advance(received.request.id, 'EMAIL_PENDING', 'state-3');
     assert.equal(replay.replayed, true);
-    assert.equal(h.audits.length, 3);
-    assert.equal(h.outbox.length, 3);
+    assert.equal(h.audits.length, 4);
+    assert.equal(h.outbox.length, 4);
     const evidence = JSON.stringify({ audits: h.audits, outbox: h.outbox });
     for (const privateValue of [signupInput.companyName, signupInput.contactEmail.toLowerCase(), signupInput.taxId]) {
       assert.equal(evidence.includes(privateValue), false);
@@ -804,6 +813,7 @@ describe('P10-0 external signup core', () => {
     const h = externalSignupHarness();
     const received = await h.service.receive(signupInput, 'provision-0');
     await h.service.advance(received.request.id, 'VALIDATED', 'provision-1');
+    await h.service.advance(received.request.id, 'PENDING_REVIEW', 'provision-1b');
     await h.service.advance(received.request.id, 'EMAIL_PENDING', 'provision-2');
     await h.service.advance(received.request.id, 'EMAIL_VERIFIED', 'provision-3');
     const claims = await Promise.all(Array.from({ length: 6 }, (_, index) =>
@@ -821,13 +831,16 @@ describe('P10-0 external signup core', () => {
     });
     assert.equal(complete.request.state, 'READY');
     assert.equal(replay.replayed, true);
-    assert.equal(h.outbox.filter((event) => event.eventType === 'company_signup.state_changed').length, 5);
+    // VALIDATED, PENDING_REVIEW, EMAIL_PENDING, EMAIL_VERIFIED, PROVISIONING, READY — the Flow B
+    // admin gate adds one transition to the P10-0 count.
+    assert.equal(h.outbox.filter((event) => event.eventType === 'company_signup.state_changed').length, 6);
   });
 
   it('recovers EMAIL_FAILED and PROVISIONING_FAILED with a fresh fenced attempt', async () => {
     const h = externalSignupHarness();
     const received = await h.service.receive(signupInput, 'recover-0');
     await h.service.advance(received.request.id, 'VALIDATED', 'recover-1');
+    await h.service.advance(received.request.id, 'PENDING_REVIEW', 'recover-1b');
     await h.service.advance(received.request.id, 'EMAIL_PENDING', 'recover-2');
     await h.service.advance(received.request.id, 'EMAIL_FAILED', 'recover-3', 'provider_unavailable');
     await h.service.advance(received.request.id, 'EMAIL_PENDING', 'recover-4');
@@ -859,6 +872,8 @@ describe('CreateCompanyOnboardingUseCase attachExistingOwner', () => {
         },
         company: { findFirst: async () => null },
         role: { findUnique: async () => ({ id: 'role-owner' }) },
+        // P29: the post-commit default-term write (asserted in its own describe block below).
+        companyPlanTerm: { upsert: async (args: any) => args.create },
         externalIdentity: { findFirst: async () => (opts.ownerHasLine ? { id: 'ident-1' } : null) },
         $transaction: async (fn: (tx: any) => Promise<any>) => {
           const chart = chartBootstrapTx('co-2');
@@ -958,6 +973,8 @@ describe('CreateCompanyOnboardingUseCase tax identity capture', () => {
         user: { findUnique: async () => null },
         company: { findFirst: async () => null },
         role: { findUnique: async () => ({ id: 'role-owner' }) },
+        // P29: the post-commit default-term write (asserted in its own describe block below).
+        companyPlanTerm: { upsert: async (args: any) => args.create },
         $transaction: async (fn: (tx: any) => Promise<any>) => {
           const chart = chartBootstrapTx('co-1');
           return fn({
@@ -1048,6 +1065,8 @@ describe('CreateCompanyOnboardingUseCase PDPA tenant tripwire', () => {
         user: { findUnique: async () => null },
         company: { findFirst: async () => null },
         role: { findUnique: async () => ({ id: 'role-owner' }) },
+        // P29: the post-commit default-term write (asserted in its own describe block below).
+        companyPlanTerm: { upsert: async (args: any) => args.create },
         $transaction: async (fn: (tx: any) => Promise<any>) => {
           const chart = chartBootstrapTx('co-health-1');
           const tx = {
@@ -1134,5 +1153,37 @@ describe('CreateCompanyOnboardingUseCase PDPA tenant tripwire', () => {
     assert.equal(captured.companyArgs.data.businessCategory, 'CLINIC');
     // The durable half: log retention expires, the audit row does not.
     assert.equal(captured.auditArgs.data.metadataJson.businessCategory, 'CLINIC');
+  });
+});
+
+describe('CreateCompanyOnboardingUseCase P29 default term', () => {
+  it('gives every admin-created company STARTER for exactly 30 days', async () => {
+    const prisma = makePrisma({});
+    await new CreateCompanyOnboardingUseCase(prisma, configMock).execute(makeCmd());
+
+    assert.equal(prisma.planTermUpserts().length, 1);
+    const args = prisma.planTermUpserts()[0];
+    assert.deepEqual(args.where, { companyId: 'co-1' });
+    assert.equal(args.create.tierKey, 'STARTER_249');
+    assert.equal(args.create.branchLimit, 1);
+    assert.equal(args.create.employeeLimit, 2);
+    assert.equal(args.create.monthlySlipLimit, 30);
+    assert.equal(args.create.warningDays, 7);
+    assert.equal(
+      args.create.termEndsAt.getTime() - args.create.termStartAt.getTime(),
+      30 * 24 * 60 * 60 * 1000,
+    );
+    // Idempotent: re-running provisioning must not restart or shorten an existing term.
+    assert.deepEqual(args.update, {});
+  });
+
+  it('a failed term write NEVER fails the onboarding', async () => {
+    const prisma = makePrisma({});
+    prisma.client.companyPlanTerm.upsert = async () => { throw new Error('db down'); };
+
+    const result = await new CreateCompanyOnboardingUseCase(prisma, configMock).execute(makeCmd());
+    // The company exists and is usable — a company with no term row is unlimited, not broken.
+    assert.equal(result.companyId, 'co-1');
+    assert.equal(result.onboardingRunId, 'run-1');
   });
 });

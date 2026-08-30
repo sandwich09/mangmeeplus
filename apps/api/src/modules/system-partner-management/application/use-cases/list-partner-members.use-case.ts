@@ -24,6 +24,8 @@ export class ListPartnerMembersUseCase {
             id: true,
             displayName: true,
             username: true,
+            email: true,
+            phoneNumber: true,
             externalIdentities: {
               where: { provider: 'LINE', status: 'ACTIVE' },
               select: { id: true },
@@ -42,6 +44,8 @@ export class ListPartnerMembersUseCase {
         userId: m.user.id,
         displayName: m.user.displayName,
         username: m.user.username ?? undefined,
+        email: m.user.email ?? undefined,
+        phoneNumber: m.user.phoneNumber ?? undefined,
         membershipStatus: m.status as PartnerMembersDto['items'][number]['membershipStatus'],
         roles: m.roles.map((r) => r.role.key),
         lineLinked: m.user.externalIdentities.length > 0,

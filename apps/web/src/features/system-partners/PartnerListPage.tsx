@@ -208,12 +208,23 @@ export default function PartnerListPage() {
                           <LineContextBadge health={p.lineContextHealth} />
                         </td>
                         <td className="px-4 py-3">
-                          <Link
-                            href={`/system/partners/${p.id}`}
-                            className="text-brand-700 hover:text-brand-800 text-xs font-medium"
-                          >
-                            View
-                          </Link>
+                          <div className="flex items-center gap-3">
+                            <Link
+                              href={`/system/partners/${p.id}`}
+                              className="text-brand-700 hover:text-brand-800 text-xs font-medium"
+                            >
+                              View
+                            </Link>
+                            {/* No term chip column: the list projection carries no plan-term data
+                                (list-partners.use-case selects company columns only), and widening
+                                it is a backend change this screen must not force. */}
+                            <Link
+                              href={`/system/partners/${p.id}`}
+                              className="text-brand-700 hover:text-brand-800 text-xs font-medium"
+                            >
+                              แพ็กเกจ
+                            </Link>
+                          </div>
                         </td>
                       </tr>
                     ))

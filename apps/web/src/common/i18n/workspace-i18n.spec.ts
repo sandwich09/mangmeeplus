@@ -12,11 +12,13 @@ describe('workspace-i18n', () => {
     assert.match(t('expenses.substitute_wizard.payment_evidence_required', 'th'), /เช็กบิล.*ทุกวิธีชำระ.*เงินสด.*รายการทั่วไป/);
     assert.match(t('expenses.substitute_wizard.payment_evidence_required', 'en'), /Check bills.*every payment method.*cash.*Ordinary expenses/);
   });
-  it('names username consistently in the login label and required-field message in both locales', () => {
-    assert.equal(t('auth.login.identifier', 'th'), 'ชื่อผู้ใช้');
-    assert.equal(t('auth.login.error.identifier_required', 'th'), 'กรุณากรอกชื่อผู้ใช้');
-    assert.equal(t('auth.login.identifier', 'en'), 'Username');
-    assert.equal(t('auth.login.error.identifier_required', 'en'), 'Enter your username.');
+  // P10: the same box has always accepted the email as well, and an owner arriving from the claim
+  // email has only ever been told their email. The label and the required-field message name both.
+  it('names both accepted identifiers in the login label and required-field message, in both locales', () => {
+    assert.equal(t('auth.login.identifier', 'th'), 'ชื่อผู้ใช้ หรือ อีเมล');
+    assert.equal(t('auth.login.error.identifier_required', 'th'), 'กรุณากรอกชื่อผู้ใช้ หรืออีเมล');
+    assert.equal(t('auth.login.identifier', 'en'), 'Username or email');
+    assert.equal(t('auth.login.error.identifier_required', 'en'), 'Enter your username or email.');
   });
 
   it('returns Thai string for th locale', () => {

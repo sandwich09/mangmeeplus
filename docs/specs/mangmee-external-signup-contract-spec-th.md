@@ -1,6 +1,6 @@
 # Auto-register จากเว็บไซต์ทางการ (External Signup Contract) — Spec P10
 
-สถานะ: **P10-0 CORE IMPLEMENTED + LOCAL VERIFIED; target flow ล็อกเป็น Flow B (amendment v2 2026-08-30)** — durable state/idempotency/audit/outbox/provisioning fence พร้อม; public ingress, admin queue, claim และ provision จริงยังไม่ implement; ตัวปลดล็อกที่เหลือคือ SES operations (P11 §5 ข้อ 1–2) และตัวเลข trial (แสดงผลเท่านั้น ไม่ block โค้ด); offer preview/EasySlip paid branch เป็น **spec-only และยังไม่มี payment implementation**; แผนส่งมอบอยู่ใน [แผน P10](../plans/mangmee-external-signup-plan-th.md) และ [Four-lane Gap Closure Plan](../plans/mangmee-four-lane-gap-closure-plan-th.md#p10--external-signup)
+สถานะ: **IMPLEMENTATION IN PROGRESS 2026-08-30 (Owner สั่งลุยทุก slice; Opus implements / Fable supervises); Flow B locked** — durable state/idempotency/audit/outbox/provisioning fence พร้อม; public ingress, admin queue, claim และ provision จริงยังไม่ implement; ตัวปลดล็อกที่เหลือคือ SES operations (P11 §5 ข้อ 1–2) และตัวเลข trial (แสดงผลเท่านั้น ไม่ block โค้ด); offer preview/EasySlip paid branch เป็น **spec-only และยังไม่มี payment implementation**; แผนส่งมอบอยู่ใน [แผน P10](../plans/mangmee-external-signup-plan-th.md) และ [Four-lane Gap Closure Plan](../plans/mangmee-four-lane-gap-closure-plan-th.md#p10--external-signup)
 
 > **Owner amendment v2 2026-08-30 ("Flow B" — ยืนยันในแชต, แทนลำดับของ amendment 2026-08-29):**
 > ① **อนุมัติก่อน แล้วค่อยยืนยันอีเมล**: ฟอร์ม → ระบบตรวจอัตโนมัติ (schema + MX + rate limit + dedupe hints) → เข้าคิว System Admin ทันที → อนุมัติแล้วจึงส่งอีเมล **ฉบับเดียว** "อนุมัติแล้ว กดตั้งรหัสเพื่อเริ่มใช้งาน" → การกดลิงก์ = พิสูจน์ความเป็นเจ้าของอีเมล + ตั้งรหัส (หรือ login บัญชีเดิม) → provision ตอนนั้น (§4, §4A)
@@ -95,7 +95,7 @@ Enum เดิมใช้ซ้ำได้ทั้งชุด (`EMAIL_PENDIN
 
 ### 4B. หน้า claim หลังอนุมัติ = พิสูจน์อีเมล + ตั้งรหัส **หรือ login บัญชีเดิม**
 
-- Claim token: hash-only + single-use + atomic + TTL **7 วัน** (ค่าเริ่มต้นที่ Owner รับ 2026-08-30; ปรับได้) + resend ได้จากหน้าเช็คสถานะแบบจำกัดความถี่ (token ใหม่ revoke เก่า) ตาม P11 F-EM-3.
+- Claim token: hash-only + single-use + atomic + TTL **72 ชั่วโมง** (Owner เคาะ 2026-08-30 แทนค่า 7 วันเดิม; ปรับได้) + resend ได้จากหน้าเช็คสถานะแบบจำกัดความถี่ (token ใหม่ revoke เก่า) ตาม P11 F-EM-3.
 - หน้า claim มี **ทางแยกบังคับถาม**: "มีบัญชี Mangmee อยู่แล้วหรือยัง (เช่น เป็นพนักงานในระบบ)?"
   - **ยังไม่มี** → ตั้งรหัสใหม่: เก็บ **hash เท่านั้น** บน `CompanySignupRequest.pendingPasswordHash` (policy เดียวกับ `UserCredential`) → PROVISIONING สร้าง User + `UserCredential` (`mustChangePassword=false`) + เขียน `User.email`/`emailVerifiedAt` → ลบ hash จากคำขอเมื่อสำเร็จ; username เริ่มจาก local-part ของ email แก้ได้ที่หน้านี้.
   - **มีแล้ว** → login ด้วยรหัสเดิมหรือ LINE (P12) บนหน้านั้น → เก็บ `attachUserId` → PROVISIONING **ผูกบริษัทใหม่เข้า User เดิม** (ไม่สร้าง User ใหม่) + เขียน email/`emailVerifiedAt` ให้บัญชีนั้นถ้ายังไม่มี; ไม่มีขั้นตั้งรหัสเลย.
@@ -116,7 +116,7 @@ Enum เดิมใช้ซ้ำได้ทั้งชุด (`EMAIL_PENDIN
 - **Reject ค่าเริ่มต้น = เงียบ** (ไม่ส่งเมล เพราะอีเมลยังไม่พิสูจน์ — กันระบบกลายเป็นเครื่องยิงสแปมใส่เมลคนอื่น); แอดมินเลือก "ปฏิเสธพร้อมแจ้ง" ได้เป็นรายกรณี ข้อความไม่เปิดเหตุผลภายใน.
 - เมลอนุมัติ bounce → state `EMAIL_FAILED` + ติดธงในคิว → แอดมินโทรตามด้วย `phoneNumber` จากฟอร์ม แล้วแก้อีเมล/ส่งใหม่ได้ (การแก้อีเมลบนคำขอ = audit + reset เป็น EMAIL_PENDING ใหม่).
 - ผู้สมัครใช้รหัสที่ตั้งเอง ไม่ส่ง temporary password ทุกกรณี.
-- **กรณีไม่มา claim (Owner 2026-08-30):** ① ก่อนลิงก์หมดอายุ 2 วัน ส่งเมลเตือน 1 ฉบับ exactly-once (ออก token ใหม่ revoke เก่า ตามกติกา mint-at-send) ② ลิงก์หมดอายุแล้วการอนุมัติ**ยังคงอยู่**: ผู้สมัครกด "ขอลิงก์ใหม่" จากหน้าเช็คสถานะ หรือแอดมิน resend จากคิว → กลับ `EMAIL_PENDING` พร้อม token ใหม่ ไม่ต้องยื่น/อนุมัติซ้ำ ③ คิวแสดงธง "อนุมัติแล้ว ยังไม่เริ่มใช้งาน N วัน" ให้โทรตามด้วยเบอร์จากฟอร์ม ④ เกิน **30 วันหลังอนุมัติ** (config ได้) โดยไม่มี claim → `EXPIRED` ถาวร ต้องสมัครใหม่ ⑤ นาฬิกา trial 30 วันเริ่มนับตอน **provision (หลัง claim)** ไม่ใช่ตอนอนุมัติ — มา claim ช้าไม่เสียวันใช้งาน (สอดคล้อง P29 T3).
+- **กรณีไม่มา claim (Owner 2026-08-30):** ① ก่อนลิงก์หมดอายุ 24 ชั่วโมง ส่งเมลเตือน 1 ฉบับ exactly-once (ออก token ใหม่ revoke เก่า ตามกติกา mint-at-send) ② ลิงก์หมดอายุแล้วการอนุมัติ**ยังคงอยู่**: ผู้สมัครกด "ขอลิงก์ใหม่" จากหน้าเช็คสถานะ หรือแอดมิน resend จากคิว → กลับ `EMAIL_PENDING` พร้อม token ใหม่ ไม่ต้องยื่น/อนุมัติซ้ำ ③ คิวแสดงธง "อนุมัติแล้ว ยังไม่เริ่มใช้งาน N วัน" ให้โทรตามด้วยเบอร์จากฟอร์ม ④ เกิน **30 วันหลังอนุมัติ** (config ได้) โดยไม่มี claim → คำขอย้ายไปมุมมองพัก (พ้นคิวหลัก) แต่ **แอดมิน reissue ลิงก์ได้เสมอ ไม่มีทางตันให้สมัครใหม่** (Owner 2026-08-30: เขาสมัครแล้ว มีข้อมูลแล้ว — และในอนาคต paid tier อาจจ่ายเงินแล้ว); self-serve resend ของผู้สมัครจำกัดที่ 30 วันแรก หลังจากนั้นผ่านแอดมิน ⑤ นาฬิกา trial 30 วันเริ่มนับตอน **provision (หลัง claim)** ไม่ใช่ตอนอนุมัติ — มา claim ช้าไม่เสียวันใช้งาน (สอดคล้อง P29 T3).
 
 ### 4E. Paid branch ในอนาคต — **planned/disabled**
 
@@ -150,7 +150,7 @@ invalid/expired/replayed signature ถูกปฏิเสธ; same-request con
 ## 8. คำถาม Owner
 
 1. ~~HMAC หรือ service JWT~~ → **ปิดแล้ว 2026-08-30 (§3):** ingress หลักเป็นหน้า public ในแอปเราเอง ไม่ต้องมี secret; signed API เลื่อนเป็น future
-2. ~~Claim TTL/resend~~ → **ตอบแล้ว 2026-08-30 (§4B):** 7 วัน (ค่าเริ่มต้น ปรับได้); ผู้สมัคร resend เองจากหน้าเช็คสถานะแบบจำกัดความถี่; System Admin revoke/resend ได้จากคิว
+2. ~~Claim TTL/resend~~ → **ตอบแล้ว 2026-08-30 (§4B):** 72 ชั่วโมง (Owner ยืนยันรอบสอง — เท่าแนวเดิมของจดหมาย Gmail); ผู้สมัคร resend เองจากหน้าเช็คสถานะแบบจำกัดความถี่; System Admin revoke/resend ได้จากคิว
 3. ~~นโยบาย duplicate~~ → **ตอบแล้ว 2026-08-29 + ขยาย 2026-08-30 (§4C):** email ซ้ำได้ = คนเดิมหลายบริษัท attach ตอน claim; taxId ชนแล้ว review; ชื่อบริษัทซ้ำได้
 4. ~~ลำดับ approve/claim + ข้อความ reject~~ → **ตอบแล้ว 2026-08-30 (§4, §4D):** Flow B; reject ค่าเริ่มต้นเงียบ + แอดมินเลือกแจ้งเป็นรายกรณี; SLA เตือนคิวเริ่มที่ 24 ชม.
 5. **อัปเดต 2026-08-30 รอบสอง:** โควตา trial = PRO (5 สาขา · 10 คน · 100 ใบ/เดือน); ระยะเวลา = default 30 วันชั่วโมงจริง + ไม่ต่อ = disable บริษัท → กลไกทั้งหมดอยู่ [P29 Company Plan Term](mangmee-company-plan-term-spec-th.md) (provision ตอน approve ตั้ง preset PRO+30 วัน — P29 plan T3); ยังเปิด: นโยบาย "100 ร้านแรก", งบ AI ต่อเดือน
