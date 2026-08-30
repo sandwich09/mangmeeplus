@@ -21,10 +21,27 @@ import { PartnerMemberPasswordResetUseCase } from './application/use-cases/partn
 import { PartnerMemberPasswordRevealUseCase } from './application/use-cases/partner-member-password-reveal.use-case';
 import { DataModelCoreModule } from '../data-model-core/data-model-core.module';
 import { LedgerModule } from '../ledger/ledger.module.js';
+import { DashboardNotificationsModule } from '../dashboard-notifications/dashboard-notifications.module';
+import { PlanTermInternalController, PlanTermNoticeController } from './presentation/http/plan-term.controller';
+import {
+  GetCompanyPlanTermUseCase,
+  GetPlanTermNoticeUseCase,
+  RenewCompanyPlanTermUseCase,
+  SetCompanyPlanTermUseCase,
+} from './application/use-cases/company-plan-term.use-cases';
+import { PlanTermSweepUseCase } from './application/use-cases/plan-term-sweep.use-case';
 
 @Module({
-  imports: [LedgerModule, DataModelCoreModule],
-  controllers: [PartnerController, SystemLineController, SystemAiBudgetController],
+  // DashboardNotificationsModule supplies CreateOrUpdateNotificationEventUseCase for the P29
+  // warning ladder and expiry notices (WEB + LINE, owners and system admins).
+  imports: [LedgerModule, DataModelCoreModule, DashboardNotificationsModule],
+  controllers: [
+    PartnerController,
+    SystemLineController,
+    SystemAiBudgetController,
+    PlanTermNoticeController,
+    PlanTermInternalController,
+  ],
   providers: [
     ListPartnersUseCase,
     GetPartnerDetailUseCase,
@@ -43,6 +60,13 @@ import { LedgerModule } from '../ledger/ledger.module.js';
     SetPartnerMemberContactUseCase,
     PartnerMemberPasswordResetUseCase,
     PartnerMemberPasswordRevealUseCase,
+    GetCompanyPlanTermUseCase,
+    SetCompanyPlanTermUseCase,
+    RenewCompanyPlanTermUseCase,
+    GetPlanTermNoticeUseCase,
+    PlanTermSweepUseCase,
   ],
+  // Signup provisioning (P10 Slice C) calls setTermFromPreset on this use-case.
+  exports: [SetCompanyPlanTermUseCase],
 })
 export class SystemPartnerManagementModule {}

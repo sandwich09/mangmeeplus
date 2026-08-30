@@ -69,13 +69,17 @@ const noopResolve = {
 } as any;
 // L-05: every authenticated token now carries a sid, so the guard always resolves a session.
 // ponytail: null credential keeps the mustChangePassword block inactive unless a test asks for it.
-function prismaFor(sessionUserId: string, credential: unknown = null) {
+// P29: `planTerm: null` — no CompanyPlanTerm row — is the default here on purpose. It is how
+// every company that predates P29 reads, and every pre-existing test below therefore proves the
+// term check leaves them alone.
+function prismaFor(sessionUserId: string, credential: unknown = null, planTerm: { termEndsAt: Date } | null = null) {
   return {
     client: {
       authSession: {
         findUnique: async () => ({ userId: sessionUserId, status: 'ACTIVE', expiresAt: new Date(Date.now() + 60_000) }),
       },
       userCredential: { findUnique: async () => credential },
+      companyPlanTerm: { findUnique: async () => planTerm },
     },
   } as any;
 }
@@ -386,6 +390,80 @@ describe('AuthGuard', () => {
         },
       );
     }
+  });
+
+  // ---- P29 on-access term expiry ----
+
+  it('blocks business routes of an expired company with company_term_expired', async () => {
+    const expiredPrisma = prismaFor('test-sub', null, { termEndsAt: new Date(Date.now() - 1000) });
+    const guard = new AuthGuard(
+      makeReflector(false), noopVerifier as any, failVerifier as any, noopResolve,
+      localConfig, expiredPrisma, acceptedLegal,
+    );
+    await assert.rejects(
+      () => guard.canActivate(makeContext({ authHeader: 'Bearer valid.token', path: '/v1/companies/c1/expenses' })),
+      (error: unknown) => {
+        assert.ok(error instanceof ForbiddenException);
+        assert.equal((error.getResponse() as any).code, 'company_term_expired');
+        return true;
+      },
+    );
+  });
+
+  it('blocks on the exact hour: one millisecond before termEndsAt still passes', async () => {
+    const notYet = prismaFor('test-sub', null, { termEndsAt: new Date(Date.now() + 1000) });
+    const guard = new AuthGuard(
+      makeReflector(false), noopVerifier as any, failVerifier as any, noopResolve,
+      localConfig, notYet, acceptedLegal,
+    );
+    assert.equal(await guard.canActivate(makeContext({
+      authHeader: 'Bearer valid.token', path: '/v1/companies/c1/expenses',
+    })), true);
+  });
+
+  it('keeps login, me, the company switcher, logout and the notice endpoint working when expired', async () => {
+    const expiredPrisma = prismaFor('test-sub', null, { termEndsAt: new Date(Date.now() - 1000) });
+    for (const path of [
+      '/v1/auth/me',
+      '/v1/auth/me/companies',
+      '/v1/auth/logout',
+      '/v1/auth/password/change',
+      '/v1/plan-term/notice',
+    ]) {
+      const guard = new AuthGuard(
+        makeReflector(false), noopVerifier as any, failVerifier as any, noopResolve,
+        localConfig, expiredPrisma, acceptedLegal,
+      );
+      assert.equal(await guard.canActivate(makeContext({ authHeader: 'Bearer valid.token', path })), true, path);
+    }
+  });
+
+  it('a company with NO term row is untouched by the expiry check', async () => {
+    // noopPrisma returns planTerm=null, i.e. every customer that predates P29.
+    const guard = new AuthGuard(
+      makeReflector(false), noopVerifier as any, failVerifier as any, noopResolve,
+      localConfig, noopPrisma, acceptedLegal,
+    );
+    assert.equal(await guard.canActivate(makeContext({
+      authHeader: 'Bearer valid.token', path: '/v1/companies/c1/expenses',
+    })), true);
+  });
+
+  it('SYSTEM_ADMIN is never locked out by a term expiry — the console that fixes it must stay reachable', async () => {
+    const expiredPrisma = prismaFor('test-sub', null, { termEndsAt: new Date(Date.now() - 1000) });
+    const adminResolve = {
+      execute: async () => ({
+        requestId: 'req-1', authSubject: 'test-sub', userId: 'admin-1', companyId: 'system-company',
+        membershipId: 'membership-1', roles: ['SYSTEM_ADMIN'], permissions: [], scopes: {},
+      }),
+    } as any;
+    const guard = new AuthGuard(
+      makeReflector(false), noopVerifier as any, failVerifier as any, adminResolve,
+      localConfig, expiredPrisma, acceptedLegal,
+    );
+    assert.equal(await guard.canActivate(makeContext({
+      authHeader: 'Bearer valid.token', path: '/v1/system/partners/co-1/plan-term',
+    })), true);
   });
 
   it('blocks protected business routes with a stable legal_acceptance_required response', async () => {

@@ -18,6 +18,8 @@ import { normalizeTaxId } from '../../../data-model-core/domain/logic/company-le
 import { hashPassword } from '../../../auth/domain/logic/password-credential.logic';
 import { encryptCredential } from '../../../system-partner-management/domain/logic/credential-cipher.logic';
 import { DEFAULT_ENABLED_FEATURE_KEYS } from '../../../system-partner-management/domain/feature-registry';
+import { applyPlanTermPreset } from '../../../system-partner-management/application/use-cases/company-plan-term.use-cases';
+import { DEFAULT_TERM_DAYS, ONBOARDING_DEFAULT_TIER } from '../../../system-partner-management/domain/logic/plan-term.logic';
 import { PrismaWorkflowRepository } from '../../../workflow/infrastructure/prisma-workflow.repository';
 import { autoEnableWorkflowTemplatesForCompany } from '../../../workflow/application/use-cases/workflow-template.use-case';
 import {
@@ -378,6 +380,47 @@ export class CreateCompanyOnboardingUseCase {
 
       return { run, company, owner, handoffUrl, chartOfAccounts, taxConfiguration, expenseCategories };
     }, { maxWait: 5_000, timeout: 15_000 });
+
+    // P29 §4A: every admin-created company starts on STARTER for 30 days. Deliberately AFTER the
+    // commit and never inside it — a company that exists with no term row is unlimited and fully
+    // usable, so a failed term write must not roll back a completed onboarding. The upsert is
+    // idempotent, so a retry of this endpoint cannot shorten an already-set term.
+    try {
+      await applyPlanTermPreset(
+        this.prisma,
+        result.company.id,
+        ONBOARDING_DEFAULT_TIER,
+        DEFAULT_TERM_DAYS,
+        cmd.requestingAdminUserId,
+      );
+    } catch (error) {
+      // The audit is best-effort too: onboarding has already committed, and nothing after this
+      // point may turn a completed handover into a 500.
+      try {
+        await this.prisma.client.auditLog.create({
+          data: {
+            companyId: result.company.id,
+            actorUserId: cmd.requestingAdminUserId,
+            action: 'system.company_plan_term.set',
+            targetType: 'company_plan_term',
+            targetId: result.company.id,
+            requestId: cmd.requestId,
+            result: 'FAILED',
+            riskLevel: 'HIGH',
+            metadataJson: {
+              reason: 'onboarding_default_term_write_failed',
+              tierKey: ONBOARDING_DEFAULT_TIER,
+              termDays: DEFAULT_TERM_DAYS,
+              error: error instanceof Error ? error.message : String(error),
+            },
+          },
+        });
+      } catch {
+        new Logger(CreateCompanyOnboardingUseCase.name).error(
+          `Default plan term not written for company ${result.company.id}; company is unlimited until an admin sets one.`,
+        );
+      }
+    }
 
     // M-05 register §6 tenant tripwire. The register defers the s.41 limb (b) "large scale"
     // and controller/processor questions on the assumption that tenants stay general

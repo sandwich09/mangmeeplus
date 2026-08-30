@@ -152,6 +152,9 @@ function makePrisma(opts: {
   ownerRoleFound?: boolean;
 }) {
   const ownerRole = opts.ownerRoleFound ?? true ? { id: 'role-owner' } : null;
+  // P29 §4A: the post-commit default-term write. Recorded, never asserted-on by the pre-existing
+  // tests — a failure here must never change the onboarding result.
+  const planTermUpserts: any[] = [];
   const txResult = {
     company: { id: 'co-1' },
     owner: { id: 'owner-1' },
@@ -159,6 +162,7 @@ function makePrisma(opts: {
     run: { id: 'run-1' },
   };
   return {
+    planTermUpserts: () => planTermUpserts,
     client: {
       user: {
         findUnique: async () => opts.existingUsername ? { id: 'existing' } : null,
@@ -169,6 +173,8 @@ function makePrisma(opts: {
       role: {
         findUnique: async () => ownerRole,
       },
+      companyPlanTerm: { upsert: async (args: any) => { planTermUpserts.push(args); return args.create; } },
+      auditLog: { create: async () => ({}) },
       $transaction: async (fn: (tx: any) => Promise<any>) => {
         const chart = chartBootstrapTx('co-1');
         const tx = {
@@ -859,6 +865,8 @@ describe('CreateCompanyOnboardingUseCase attachExistingOwner', () => {
         },
         company: { findFirst: async () => null },
         role: { findUnique: async () => ({ id: 'role-owner' }) },
+        // P29: the post-commit default-term write (asserted in its own describe block below).
+        companyPlanTerm: { upsert: async (args: any) => args.create },
         externalIdentity: { findFirst: async () => (opts.ownerHasLine ? { id: 'ident-1' } : null) },
         $transaction: async (fn: (tx: any) => Promise<any>) => {
           const chart = chartBootstrapTx('co-2');
@@ -958,6 +966,8 @@ describe('CreateCompanyOnboardingUseCase tax identity capture', () => {
         user: { findUnique: async () => null },
         company: { findFirst: async () => null },
         role: { findUnique: async () => ({ id: 'role-owner' }) },
+        // P29: the post-commit default-term write (asserted in its own describe block below).
+        companyPlanTerm: { upsert: async (args: any) => args.create },
         $transaction: async (fn: (tx: any) => Promise<any>) => {
           const chart = chartBootstrapTx('co-1');
           return fn({
@@ -1048,6 +1058,8 @@ describe('CreateCompanyOnboardingUseCase PDPA tenant tripwire', () => {
         user: { findUnique: async () => null },
         company: { findFirst: async () => null },
         role: { findUnique: async () => ({ id: 'role-owner' }) },
+        // P29: the post-commit default-term write (asserted in its own describe block below).
+        companyPlanTerm: { upsert: async (args: any) => args.create },
         $transaction: async (fn: (tx: any) => Promise<any>) => {
           const chart = chartBootstrapTx('co-health-1');
           const tx = {
@@ -1134,5 +1146,37 @@ describe('CreateCompanyOnboardingUseCase PDPA tenant tripwire', () => {
     assert.equal(captured.companyArgs.data.businessCategory, 'CLINIC');
     // The durable half: log retention expires, the audit row does not.
     assert.equal(captured.auditArgs.data.metadataJson.businessCategory, 'CLINIC');
+  });
+});
+
+describe('CreateCompanyOnboardingUseCase P29 default term', () => {
+  it('gives every admin-created company STARTER for exactly 30 days', async () => {
+    const prisma = makePrisma({});
+    await new CreateCompanyOnboardingUseCase(prisma, configMock).execute(makeCmd());
+
+    assert.equal(prisma.planTermUpserts().length, 1);
+    const args = prisma.planTermUpserts()[0];
+    assert.deepEqual(args.where, { companyId: 'co-1' });
+    assert.equal(args.create.tierKey, 'STARTER_249');
+    assert.equal(args.create.branchLimit, 1);
+    assert.equal(args.create.employeeLimit, 2);
+    assert.equal(args.create.monthlySlipLimit, 30);
+    assert.equal(args.create.warningDays, 7);
+    assert.equal(
+      args.create.termEndsAt.getTime() - args.create.termStartAt.getTime(),
+      30 * 24 * 60 * 60 * 1000,
+    );
+    // Idempotent: re-running provisioning must not restart or shorten an existing term.
+    assert.deepEqual(args.update, {});
+  });
+
+  it('a failed term write NEVER fails the onboarding', async () => {
+    const prisma = makePrisma({});
+    prisma.client.companyPlanTerm.upsert = async () => { throw new Error('db down'); };
+
+    const result = await new CreateCompanyOnboardingUseCase(prisma, configMock).execute(makeCmd());
+    // The company exists and is usable — a company with no term row is unlimited, not broken.
+    assert.equal(result.companyId, 'co-1');
+    assert.equal(result.onboardingRunId, 'run-1');
   });
 });

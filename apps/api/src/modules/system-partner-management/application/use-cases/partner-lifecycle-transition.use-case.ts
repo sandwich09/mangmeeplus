@@ -5,7 +5,8 @@ export type PartnerLifecycleCommand = {
   companyId: string;
   targetStatus: 'ACTIVE' | 'DISABLED' | 'ARCHIVED';
   reason?: string;
-  requestingAdminUserId: string;
+  /** null = no human pulled the lever (P29 term-expiry sweep); `reason` names the actor instead. */
+  requestingAdminUserId: string | null;
   requestId: string;
 };
 

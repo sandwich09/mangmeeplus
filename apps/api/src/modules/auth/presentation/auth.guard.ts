@@ -41,6 +41,20 @@ function isLegalAcceptanceExempt(path: string): boolean {
   return LEGAL_ACCEPTANCE_EXEMPT_PATHS.has(cleanRequestPath(path));
 }
 
+/**
+ * P29 §4B on-access expiry check. Everything under `/v1/auth/` keeps working after the deadline —
+ * login, `me`, the company switcher (`me/companies`), password change, logout — and so does the
+ * customer's own read of why they are blocked. Without these the expired company would be a dead
+ * end with no way in and nothing to explain it.
+ */
+const TERM_EXPIRY_EXEMPT_PREFIX = '/v1/auth/';
+const TERM_EXPIRY_EXEMPT_PATHS = new Set(['/v1/auth', '/v1/plan-term/notice']);
+
+function isTermExpiryExempt(path: string): boolean {
+  const cleanPath = cleanRequestPath(path);
+  return TERM_EXPIRY_EXEMPT_PATHS.has(cleanPath) || cleanPath.startsWith(TERM_EXPIRY_EXEMPT_PREFIX);
+}
+
 function isInternalWorkerPath(path: string): boolean {
   const cleanPath = cleanRequestPath(path);
   return cleanPath === '/v1/internal' || cleanPath.startsWith('/v1/internal/');
@@ -203,6 +217,25 @@ export class AuthGuard implements CanActivate {
       });
       if (credential?.mustChangePassword) {
         throw new ForbiddenException('Password change required before accessing business modules.');
+      }
+    }
+
+    // P29: the deadline binds to the hour, so it is checked here rather than left to the 5-minute
+    // sweep — a company is refused the instant `now` reaches `termEndsAt`, even while its status
+    // still reads ACTIVE. A company with no CompanyPlanTerm row (every customer that predates
+    // P29) matches nothing here and is completely unaffected. SYSTEM_ADMIN is exempt for the same
+    // reason it is exempt from the platform-closed gate above: the console that fixes an expiry
+    // must not be lockable by one.
+    if (!isTermExpiryExempt(reqPath) && !req.context.roles.includes('SYSTEM_ADMIN')) {
+      const term = await this.prisma.client.companyPlanTerm.findUnique({
+        where: { companyId: req.context.companyId },
+        select: { termEndsAt: true },
+      });
+      if (term && term.termEndsAt <= new Date()) {
+        throw new ForbiddenException({
+          code: 'company_term_expired',
+          message: 'This company\'s usage term has ended. Contact the administrator to renew.',
+        });
       }
     }
 
