@@ -97,22 +97,18 @@ case "$MAINTENANCE_BOOTSTRAP_READONLY_INPUT" in true|false) ;; *)
   echo "ERROR: MAINTENANCE_BOOTSTRAP_READONLY must be exactly true or false" >&2; exit 2 ;;
 esac
 # P12-1 web LINE login (OAuth Authorization Code + PKCE; LINE Login journey spec). Owner approved
-# 2026-08-28 enabling on UAT for live verification; production stays off until the P12 activation
-# gate passes, so an explicit production `true` fails closed.
+# 2026-08-28 enabled on UAT for live verification. 2026-08-30: the P12 activation gate PASSED —
+# Owner-provided LINE console evidence (provider Mangmeeplus 2005422657, Admin role, Messaging API
+# + LINE Login channels under the same provider, login channel 2011037668 Published, production
+# callback https://mangmeeplus.com/api/auth/line-login/callback registered; recorded in
+# docs/agent-memory/line-login-p12-delivery.md) — so LINE web login now defaults ON in BOTH
+# environments. LINE_WEB_HANDOFF_ENABLED below stays production-off (staged rollout).
 if [ -z "$LINE_WEB_LOGIN_ENABLED_INPUT" ]; then
-  if [ "$DEPLOY_ENV" = uat ]; then
-    LINE_WEB_LOGIN_ENABLED_INPUT=true
-  else
-    LINE_WEB_LOGIN_ENABLED_INPUT=false
-  fi
+  LINE_WEB_LOGIN_ENABLED_INPUT=true
 fi
 case "$LINE_WEB_LOGIN_ENABLED_INPUT" in true|false) ;; *)
   echo "ERROR: LINE_WEB_LOGIN_ENABLED must be exactly true or false" >&2; exit 2 ;;
 esac
-if [ "$DEPLOY_ENV" = production ] && [ "$LINE_WEB_LOGIN_ENABLED_INPUT" = true ]; then
-  echo "ERROR: LINE_WEB_LOGIN_ENABLED=true is not activated for production yet" >&2
-  exit 2
-fi
 # P12-3b LINE→web deep-link handoff. Owner approved 2026-08-29 enabling on UAT after the Q2
 # link-preview measurement PASSED (evidence in line-deeplink-company-access-mismatch.md);
 # production stays off until the P12 activation gate passes, so an explicit production `true`
