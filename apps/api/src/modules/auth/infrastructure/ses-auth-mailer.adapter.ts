@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { SendEmailCommand, type SESClient } from '@aws-sdk/client-ses';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import type { AccountClaimEmailInput, AuthEmailLinkInput, AuthMailerPort } from '../domain/ports/auth-mailer.port';
+import { accountClaimLogoUrl, renderAccountClaimEmail } from './account-claim-email.template';
 
 export const SES_EMAIL_CLIENT_TOKEN = 'SES_EMAIL_CLIENT_TOKEN';
 type SesEmailClient = Pick<SESClient, 'send'>;
@@ -78,23 +79,15 @@ function renderLinkEmail(input: AuthEmailLinkInput, baseUrl: string, kind: Exclu
 }
 
 function renderClaimEmail(input: AccountClaimEmailInput, baseUrl: string): RenderedEmail {
-  const actionUrl = link(baseUrl, '/claim-account', input.rawToken);
-  const lineOaAddUrl = lineOaUrl(input.lineOaAddUrl);
-  const expires = formatExpiry(input.expiresAt);
-  const paragraphs = [
-    `อีเมลที่ใช้สมัคร: ${input.toEmail}`,
-    `กิจการ: ${input.companyName}`,
-    `ลิงก์นี้ใช้ได้ครั้งเดียวและหมดอายุ ${expires} น.`,
-    'ขั้นตอนนี้ใช้ยืนยันอีเมลและตั้งรหัสผ่าน Mangmee — ไม่ใช่รหัสผ่านของ LINE',
-  ];
-  const oa = `หลังตั้งรหัสสำเร็จ คุณสามารถเพิ่มเพื่อน LINE มั่งมีได้ที่ ${lineOaAddUrl}`;
-  return {
-    subject: 'ยืนยันอีเมลและตั้งรหัสผ่าน Mangmee',
-    text: `ยืนยันอีเมลและตั้งรหัสผ่าน Mangmee\n\n${paragraphs.join('\n')}\n\nเปิดลิงก์: ${actionUrl}\n\n${oa}`,
-    html: layout('ยืนยันอีเมลและตั้งรหัสผ่าน Mangmee', paragraphs, 'ยืนยันอีเมลและตั้งรหัส', actionUrl, {
-      label: 'เพิ่มเพื่อน LINE มั่งมีหลังตั้งรหัสสำเร็จ', url: lineOaAddUrl,
-    }),
-  };
+  return renderAccountClaimEmail({
+    companyName: input.companyName,
+    toEmail: input.toEmail,
+    expiresAt: input.expiresAt,
+    claimUrl: link(baseUrl, '/claim-account', input.rawToken),
+    // An unset OA link drops the add-friend line rather than failing the send (see the template).
+    lineOaAddUrl: input.lineOaAddUrl ? lineOaUrl(input.lineOaAddUrl) : '',
+    ...(accountClaimLogoUrl() ? { logoUrl: accountClaimLogoUrl()! } : {}),
+  });
 }
 
 @Injectable()

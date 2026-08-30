@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import type { AccountClaimEmailInput, AuthEmailLinkInput, AuthMailerPort } from '../domain/ports/auth-mailer.port';
+import { renderAccountClaimEmail } from './account-claim-email.template';
 
 @Injectable()
 export class LocalConsoleAuthMailerAdapter implements AuthMailerPort {
@@ -22,13 +23,24 @@ export class LocalConsoleAuthMailerAdapter implements AuthMailerPort {
     });
   }
 
+  // Renders the same Owner-locked copy SES sends, so a local run shows the real letter rather
+  // than a field dump — the subject and body here and in production come from one module.
   async sendAccountClaim(input: AccountClaimEmailInput): Promise<void> {
+    const claimUrl = this.buildUrl('/claim-account', input.rawToken);
+    const rendered = renderAccountClaimEmail({
+      companyName: input.companyName,
+      toEmail: input.toEmail,
+      expiresAt: input.expiresAt,
+      claimUrl,
+      lineOaAddUrl: input.lineOaAddUrl,
+    });
     console.info('[auth-mailer] account_claim', {
       toEmail: input.toEmail,
       companyName: input.companyName,
       expiresAt: input.expiresAt.toISOString(),
-      claimUrl: this.buildUrl('/claim-account', input.rawToken),
-      lineOaAddUrl: input.lineOaAddUrl,
+      claimUrl,
+      subject: rendered.subject,
+      body: rendered.text,
     });
   }
 
