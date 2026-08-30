@@ -1,6 +1,6 @@
 # Agent Memory: line-rich-menu-v2
 
-Status: Repository implementation and verification complete on 2026-08-21; PR, deploy, LINE activation, and device UAT pending.
+Status: **UAT OA ACTIVATED 2026-08-30** — default rich menu is now `richmenu-3b499d4557775e8cf236409fe68b6028` (validate/create/upload/set-default via Messaging API per the console-setup runbook; previous default `richmenu-bf590764d063eda623f5325c95049b50` kept as rollback, not deleted). Production OA (มั่งมี Plus) already runs V2 (activated outside this repo trail — Owner screenshot evidence 2026-08-30). Device UAT: Owner eyeballing. Gotcha: LINE set-default POST needs `Content-Length: 0` (bodyless -X POST gets HTTP 411).
 
 Owner: thawatchai
 
