@@ -29,3 +29,10 @@ Artifacts:
 - Spec updates: `auth-endpoints.spec.ts` (exchange block), `line-linking.spec.ts`
 Verification: (บันทึกผลเมื่อรัน) `pnpm exec tsx --test src/scripts/line-identity-inventory.logic.spec.ts src/modules/auth/line-linking.spec.ts src/modules/auth/auth-endpoints.spec.ts` + `pnpm exec tsc --noEmit` ใน apps/api
 Next: merge เข้า develop → รัน inventory กับ UAT DB (ผ่าน SSM tunnel ตาม runbook) เก็บ baseline classification → เริ่ม P12-1 (OAuth+PKCE + BFF route `/api/auth/line-login` + เปลี่ยน SHOW_LINE_LOGIN เป็น env flag)
+
+## Production activation ledger (2026-08-30)
+
+- Activation gate closed with Owner console evidence: provider Mangmeeplus (2005422657), login channel 2011037668 Published, callback `https://mangmeeplus.com/api/auth/line-login/callback` registered.
+- `LINE_WEB_LOGIN_ENABLED` default flipped to true for both environments and production fail-closed removed (PR #363/#365, commit 9c4688af; serving-mode spec now proves activation via contract greps).
+- Release ledger: UAT_RUN_ID=33295907104 → READY_RUN_ID=33296767728 (live, OWNER_OVERRIDE ref `OWNER-DIRECTIVE-2026-08-30-LINE-LOGIN-LIVE`) → PROD_RUN_ID=33297313023 `PROMOTED_LIVE` (source f987d08c).
+- Live verification: `https://mangmeeplus.com/api/auth/line-login/start` → 302 to LINE OAuth with client_id 2011037668 and the registered callback (mirrors UAT with its own channel 2010784350). Customer gate stayed OPEN.
