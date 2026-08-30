@@ -33,7 +33,7 @@ Source of truth: [External Signup Contract Spec](../specs/mangmee-external-signu
 
 - หน้า System Admin: list คำขอ + ผล MX/dedupe hints/ธง bounce + map `businessType` → enum + Approve/Reject idempotent + audit; Reject ค่าเริ่มต้นเงียบ + ตัวเลือก "แจ้งผู้สมัคร" รายกรณี; แจ้งเตือน dashboard เมื่อค้างเกิน 24 ชม.
 - Approve → EMAIL_PENDING (ยิง outbox event); ไม่ provision ที่จุดนี้
-- Provisioning adapter หลัง claim: เรียก `CreateCompanyOnboardingUseCase` เดิมผ่าน provisioning claim ที่ P10-0 มีแล้ว; เพิ่มการเขียน `User.email`/`emailVerifiedAt`; เส้น `attachUserId` = ผูก membership เข้า User เดิมไม่สร้างใหม่; ตรวจว่าไม่มี app-level unique ชื่อบริษัทขวาง; ลบ `pendingPasswordHash` เมื่อสำเร็จ
+- Provisioning adapter หลัง claim: เรียก `CreateCompanyOnboardingUseCase` เดิมผ่าน provisioning claim ที่ P10-0 มีแล้ว; เพิ่มการเขียน `User.email`/`emailVerifiedAt`; เส้น `attachUserId` = ผูก membership เข้า User เดิมไม่สร้างใหม่; ตรวจว่าไม่มี app-level unique ชื่อบริษัทขวาง; ลบ `pendingPasswordHash` เมื่อสำเร็จ; ตั้ง term row preset PRO + 30 วันตาม [P29 plan T3](mangmee-company-plan-term-plan-th.md)
 - หน้าสำเร็จ + ขั้น LINE ตาม spec §4F (ปุ่ม OAuth/QR จาก P12, add-friend OA, ข้ามได้) + dialog merge เมื่อ LINE ชนบัญชีอื่น (รวม/ไว้ก่อน — ไม่มีตัวเลือกย้าย LINE) + label บทบาทใน company picker (web + LINE)
 - Gate: same-request concurrency = Company/User/Membership อย่างละหนึ่ง; attach ไม่สร้าง User ซ้ำ; merge ย้าย membership + ปิดบัญชีว่างโดย audit เดิมอยู่ครบ; reject ลบ hash ไม่ทิ้ง User กำพร้า
 
