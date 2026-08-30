@@ -58,7 +58,7 @@
 
 - เมล claim ส่ง **หลัง System Admin อนุมัติเท่านั้น** (P10 state `PENDING_REVIEW → EMAIL_PENDING`) และเป็นอีเมล**ฉบับเดียว**ของ flow — ไม่มีเมลยืนยันแยกก่อนคิว และไม่มีเมล "เปิดใช้แล้ว" แยกอีกฉบับ
 - **Token mint-at-send (Owner รับข้อเสนอ 2026-08-30 — ปิด §5 ข้อ 3):** outbox event `email.account_claim.requested` พก `signupRequestId` เท่านั้น ไม่มี token; consumer ใน workers เป็นผู้มินท์ token ตอนจะส่งจริง → เขียน hash ลง `AccountClaimToken` → ประกอบ raw link ใส่เมลครั้งเดียวแล้วทิ้ง — raw token ไม่เคยแตะ DB/outbox/log; retry หรือ resend = มินท์ใหม่ + revoke เก่า
-- ตาราง `AccountClaimToken` (hash unique, TTL **7 วัน** — ค่าเริ่มต้นที่ Owner รับ 2026-08-30 ปรับได้, single-use atomic claim H-09, ขอใหม่ revoke เก่า — กติกาเดียวกับ reset token)
+- ตาราง `AccountClaimToken` (hash unique, TTL **72 ชั่วโมง** — Owner เคาะ 2026-08-30 ปรับได้, single-use atomic claim H-09, ขอใหม่ revoke เก่า — กติกาเดียวกับ reset token)
 - Token ที่หมดอายุ ใช้ไปแล้ว หรือไม่รู้จัก (expired/used/unknown) ต้องตอบข้อความ public ทั่วไปเดียวกัน; Phase 2 acceptance ต้องตรวจทั้งสามกรณี ตาม [canonical plan เดิม:37](https://github.com/MangmeeDev/mangmeeplus/blob/384d72a5720a58efde943831124e85765ebbc5cb/docs/plans/mangmee-email-delivery-claim-plan-th.md#L37). เป็นข้อกำหนดเดิม ไม่เลือก TTL/token representation หรือเปิด route ใหม่.
 - หน้า claim (public, CSP/no-store ตามแบบ LIFF pages): ยืนยัน email (`emailVerifiedAt` เขียนที่นี่ — จุดแรกที่ระบบเขียน email อย่างเป็นทางการ) → **ทางแยกบังคับถาม "มีบัญชีอยู่แล้วหรือยัง"** ตาม P10 §4B: ยังไม่มี → ตั้งรหัส (policy เดิม); มีแล้ว → login ด้วยรหัสเดิม/LINE แล้ว attach บริษัทใหม่เข้าบัญชีเดิมโดยไม่ตั้งรหัส → provision (P10 state PROVISIONING→READY) → success + ปุ่ม "เพิ่มเพื่อนและเชื่อม LINE" (P12 — กติกา merge เมื่อ LINE ชนบัญชีอื่นอยู่ที่ P10 §4F)
 - Claim ใช้กับ onboarding ภายในด้วย (PLATFORM-02: เปลี่ยน handoff จาก copy รหัสเป็น claim link) — admin flow เดิมคงอยู่เป็น fallback
@@ -72,7 +72,7 @@ SES delivery ถึง inbox ทดสอบ, DKIM ผ่าน, bounce/complain
 1. **ยังเปิด (บล็อก live delivery):** โดเมนผู้ส่ง (`SES_FROM_ADDRESS`) — แนะนำ `no-reply@mangmeeplus.com`; ข้อเท็จจริง 2026-08-30: DNS ของ mangmeeplus.com อยู่ **Cloudflare** (ไม่ใช่ Route53) → Owner ต้องวาง DKIM/SPF/DMARC records เองหรือเปิดทางให้ทำแทน
 2. **ยังเปิด (บล็อก live delivery):** SES region — แนะนำ ap-southeast-1; ข้อเท็จจริง 2026-08-30: IAM user ฝั่ง dev ไม่มีสิทธิ์ SES ใด ๆ (ยังไม่เคยตั้งค่า SES ในบัญชี = ยังอยู่ sandbox) → ต้องเพิ่มสิทธิ์หรือ Owner กด console ตามขั้นตอน + ยื่นขอ production access (AWS ใช้เวลา ~1 วัน) — ควรเริ่มก่อนงานโค้ดเสร็จ
 3. ~~กลไกกัน raw token ใน outbox~~ → **ตอบแล้ว 2026-08-30 (F-EM-3):** consumer mint-at-send, event พกแค่ `signupRequestId`, hash-only คงเดิม, resend = มินท์ใหม่+revoke เก่า
-4. ~~Claim TTL / สิทธิ์ resend-revoke~~ → **ตอบแล้ว 2026-08-30 (F-EM-3 + P10 §4B/§8):** 7 วัน; ผู้สมัคร resend จากหน้าเช็คสถานะ (จำกัดความถี่); System Admin resend/revoke จากคิว; ไม่ยืม TTL ของ reset/verify
+4. ~~Claim TTL / สิทธิ์ resend-revoke~~ → **ตอบแล้ว 2026-08-30 (F-EM-3 + P10 §4B/§8):** 72 ชั่วโมง; ผู้สมัคร resend จากหน้าเช็คสถานะ (จำกัดความถี่); System Admin resend/revoke จากคิว; ไม่ยืม TTL ของ reset/verify
 
 ## 6. หลักฐานภายนอกที่ต้องตรวจซ้ำตอน implement
 
