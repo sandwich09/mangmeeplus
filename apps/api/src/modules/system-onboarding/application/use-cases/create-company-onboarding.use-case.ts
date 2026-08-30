@@ -61,6 +61,25 @@ export type CreateCompanyOnboardingCommand = {
   ownerDisplayName: string;
   ownerUsername: string;
   attachExistingOwner?: boolean; // true = ownerUsername must be an existing ACTIVE user; no new user/password
+  /**
+   * P10 Flow B (spec §4B): the owner proved the mailbox by opening the claim link, so this path
+   * carries a verified email and a self-chosen password instead of the admin handover's temporary
+   * one. Present only from the claim endpoint — the admin console never sets it.
+   */
+  claimedOwner?: {
+    /** Verified at the claim link; written with `emailVerifiedAt` in the same transaction. */
+    email: string;
+    phoneNumber?: string;
+    /** Self-chosen password, already hashed. Absent when attaching to an existing account. */
+    passwordHash?: string;
+    /** Attach by id rather than username — a claim-time account may have no username at all. */
+    attachUserId?: string;
+  };
+  /**
+   * Spec §4C: shop names legitimately repeat, and the DB has no unique on `Company.name`. Only the
+   * public signup path sets this; the admin console keeps the guard that catches its own typos.
+   */
+  allowDuplicateCompanyName?: boolean;
   modulePackage?: string;
   lineOaAddUrl?: string;
   lineLinkUrl?: string;
@@ -101,7 +120,8 @@ export class CreateCompanyOnboardingUseCase {
   ) {}
 
   async execute(cmd: CreateCompanyOnboardingCommand): Promise<CreateCompanyOnboardingResult> {
-    const attach = cmd.attachExistingOwner === true;
+    const attachUserId = cmd.claimedOwner?.attachUserId;
+    const attach = cmd.attachExistingOwner === true || attachUserId !== undefined;
     // Same normalisation and rule as CompanyIdentityUseCase.patch — one definition of what a valid
     // tax id is, so a number accepted here can never be one the identity screen would reject.
     const taxId = cmd.taxId === undefined ? undefined : normalizeTaxId(cmd.taxId);
@@ -110,12 +130,20 @@ export class CreateCompanyOnboardingUseCase {
     }
     // Pre-transaction uniqueness checks (best-effort; conflict catch inside tx covers races)
     const [existingUser, existingCompany] = await Promise.all([
-      this.prisma.client.user.findUnique({ where: { username: cmd.ownerUsername }, select: { id: true, status: true } }),
-      this.prisma.client.company.findFirst({ where: { name: cmd.companyName }, select: { id: true } }),
+      attachUserId
+        ? this.prisma.client.user.findUnique({ where: { id: attachUserId }, select: { id: true, status: true } })
+        : this.prisma.client.user.findUnique({ where: { username: cmd.ownerUsername }, select: { id: true, status: true } }),
+      cmd.allowDuplicateCompanyName
+        ? Promise.resolve(null)
+        : this.prisma.client.company.findFirst({ where: { name: cmd.companyName }, select: { id: true } }),
     ]);
     if (!attach && existingUser) throw new ConflictException(`Username "${cmd.ownerUsername}" is already taken.`);
     if (attach && (!existingUser || existingUser.status !== 'ACTIVE')) {
-      throw new ConflictException(`Username "${cmd.ownerUsername}" does not match an active user to attach.`);
+      throw new ConflictException(
+        attachUserId
+          ? 'The account to attach is not an active user.'
+          : `Username "${cmd.ownerUsername}" does not match an active user to attach.`,
+      );
     }
     if (existingCompany) throw new ConflictException(`Company name "${cmd.companyName}" is already taken.`);
     // Same guard and message the VAT endpoint uses, so both answer paths reject the same strings.
@@ -137,7 +165,9 @@ export class CreateCompanyOnboardingUseCase {
       : false;
     const issueLineLink = !ownerHasLine;
 
-    const tempPassword = attach ? undefined : generateTempPassword();
+    // A claim-verified owner sets their own password at the link, so no temporary one is ever
+    // minted, encrypted or handed over for this path (spec §2 rule 4: no temp password, ever).
+    const tempPassword = attach || cmd.claimedOwner?.passwordHash ? undefined : generateTempPassword();
     const passwordHash = tempPassword ? hashPassword(tempPassword) : undefined;
     const expiresAt = new Date(Date.now() + TEMP_PASSWORD_TTL_MS);
     // Owner QR travels with the credential handoff and lives 72h like the temporary password; regenerate-temporary-password reissues it.
@@ -177,11 +207,41 @@ export class CreateCompanyOnboardingUseCase {
         });
       }
 
+      const claimed = cmd.claimedOwner;
       const owner = attach
         ? (await tx.user.findUniqueOrThrow({ where: { id: existingUser!.id } }))
         : await tx.user.create({
-            data: { displayName: cmd.ownerDisplayName, username: cmd.ownerUsername, status: 'ACTIVE' },
+            data: {
+              displayName: cmd.ownerDisplayName,
+              username: cmd.ownerUsername,
+              status: 'ACTIVE',
+              // Written here, in the company transaction, so a unique-email clash can never leave a
+              // company behind with no owner contact — the whole create fails together.
+              ...(claimed ? { email: claimed.email, emailVerifiedAt: new Date() } : {}),
+              ...(claimed?.phoneNumber ? { phoneNumber: claimed.phoneNumber } : {}),
+            },
           });
+
+      // Attach path: adopt the verified email only when the account has none. An account that
+      // already carries a different address keeps it — this flow proves one mailbox, and it is not
+      // evidence that the other one is wrong (spec §4B).
+      if (attach && claimed && !owner.email) {
+        await tx.user.update({
+          where: { id: owner.id },
+          data: { email: claimed.email, emailVerifiedAt: new Date() },
+        });
+      }
+
+      if (claimed?.passwordHash && !attach) {
+        await tx.userCredential.create({
+          data: {
+            userId: owner.id,
+            passwordHash: claimed.passwordHash,
+            status: 'ACTIVE',
+            mustChangePassword: false,
+          },
+        });
+      }
 
       if (passwordHash && tempPassword) {
         await tx.userCredential.create({
