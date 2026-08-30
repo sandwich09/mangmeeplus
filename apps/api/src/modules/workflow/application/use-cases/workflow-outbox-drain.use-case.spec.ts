@@ -78,10 +78,17 @@ describe('DrainWorkflowOutboxUseCase', () => {
     assert.equal(result.reclaimed, 2);
   });
 
-  it('never claims exact-version cleanup work owned by the S3 cleanup worker', async () => {
+  it('never claims work owned by a dedicated consumer', async () => {
     const { drain, claims } = makeDrain();
     await drain.execute();
-    assert.deepEqual(claims[0].excludeEventTypes, ['storage.object_version_cleanup.requested']);
+    // Each of these has its own claim/settle loop. Claiming one here would "publish" it as a
+    // workflow event and the real consumer would never see it — for the signup claim email that
+    // means an approved applicant silently never receives the only email this flow sends.
+    assert.deepEqual(claims[0].excludeEventTypes, [
+      'storage.object_version_cleanup.requested',
+      'email.account_claim.requested',
+      'email.signup_rejected.requested',
+    ]);
   });
 
   it('logs DEAD rows each sweep at HIGH risk (no handler exists yet)', async () => {
