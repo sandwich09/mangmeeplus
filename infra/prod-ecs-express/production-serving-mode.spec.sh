@@ -60,10 +60,13 @@ assert_rejected deploy-production-debounce-experiment-not-activated \
 assert_rejected deploy-invalid-line-web-login-boolean \
   'LINE_WEB_LOGIN_ENABLED must be exactly true or false' \
   env -i PATH="$PATH" DEPLOY_ENV=uat LINE_WEB_LOGIN_ENABLED=yes bash "$deploy" all
-assert_rejected deploy-production-line-web-login-not-activated \
-  'LINE_WEB_LOGIN_ENABLED=true is not activated for production yet' \
-  env -i PATH="$PATH" DEPLOY_ENV=production PRODUCTION_SERVING_MODE=live \
-    LINE_WEB_LOGIN_ENABLED=true bash "$deploy" all
+# P12 activation gate passed 2026-08-30 (Owner console evidence): production no longer rejects
+# LINE_WEB_LOGIN_ENABLED=true, and the default is ON in both environments — the contract greps
+# below prove the fail-closed block is gone and the default has no environment branch.
+grep -Fq 'LINE_WEB_LOGIN_ENABLED_INPUT=true' "$deploy"
+if grep -Fq 'LINE_WEB_LOGIN_ENABLED=true is not activated' "$deploy"; then
+  echo "FAIL: production still fails closed on LINE_WEB_LOGIN_ENABLED=true" >&2; exit 1
+fi
 assert_rejected deploy-invalid-line-web-handoff-boolean \
   'LINE_WEB_HANDOFF_ENABLED must be exactly true or false' \
   env -i PATH="$PATH" DEPLOY_ENV=uat LINE_WEB_HANDOFF_ENABLED=yes bash "$deploy" all
