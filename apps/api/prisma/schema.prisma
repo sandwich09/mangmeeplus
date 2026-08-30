@@ -553,6 +553,7 @@ model User {
   username                String?                  @unique
   email                   String?                  @unique
   emailVerifiedAt         DateTime?
+  phoneNumber             String?
   status                  UserStatus               @default(ACTIVE)
   isSystemProtected       Boolean                  @default(false)
   // PDPA objection route (M-05 register §3.1): set = this user opted out of the LINE
@@ -836,17 +837,17 @@ enum LineWebHandoffTokenStatus {
 /// No FK, for the same reason LineWebLoginTransaction has none — this is a pre-session artifact whose
 /// lifetime is minutes and whose deletion must never cascade into user or company rows.
 model LineWebHandoffToken {
-  id          String                    @id @default(cuid())
-  tokenHash   String                    @unique
-  userId      String
-  companyId   String
-  lineUserId  String
-  targetPath  String
-  surface     String
-  status      LineWebHandoffTokenStatus @default(PENDING)
-  expiresAt   DateTime
-  usedAt      DateTime?
-  createdAt   DateTime                  @default(now())
+  id         String                    @id @default(cuid())
+  tokenHash  String                    @unique
+  userId     String
+  companyId  String
+  lineUserId String
+  targetPath String
+  surface    String
+  status     LineWebHandoffTokenStatus @default(PENDING)
+  expiresAt  DateTime
+  usedAt     DateTime?
+  createdAt  DateTime                  @default(now())
 
   @@index([userId, status])
   @@index([companyId, status])

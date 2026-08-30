@@ -35,6 +35,7 @@ import { ListPartnerMembersUseCase } from '../../application/use-cases/list-part
 import { PartnerMemberLineUnlinkUseCase } from '../../application/use-cases/partner-member-line-unlink.use-case';
 import { PartnerMemberPasswordResetUseCase } from '../../application/use-cases/partner-member-password-reset.use-case';
 import { PartnerMemberPasswordRevealUseCase } from '../../application/use-cases/partner-member-password-reveal.use-case';
+import { SetPartnerMemberContactUseCase } from '../../application/use-cases/set-partner-member-contact.use-case';
 
 class UpdateProfileBodyDto {
   @IsString() @IsOptional() name?: string;
@@ -43,6 +44,11 @@ class UpdateProfileBodyDto {
   @IsString() @IsOptional() locale?: string;
   @IsString() @IsOptional() phone?: string;
   @IsString() @IsOptional() email?: string;
+}
+
+class MemberContactBodyDto {
+  @IsString() @IsOptional() @MaxLength(254) email?: string;
+  @IsString() @IsOptional() @MaxLength(20) phoneNumber?: string;
 }
 
 class LifecycleBodyDto {
@@ -118,6 +124,7 @@ export class PartnerController {
     private readonly unlinkMemberLine: PartnerMemberLineUnlinkUseCase,
     private readonly resetMemberPassword: PartnerMemberPasswordResetUseCase,
     private readonly revealMemberPassword: PartnerMemberPasswordRevealUseCase,
+    private readonly setMemberContact: SetPartnerMemberContactUseCase,
     private readonly vatRegistration: CompanyVatRegistrationUseCase,
   ) {}
 
@@ -250,6 +257,28 @@ export class PartnerController {
     return this.revealMemberPassword.execute({
       companyId,
       memberUserId,
+      requestingAdminUserId: req.context.userId,
+      requestId: req.context.requestId,
+    });
+  }
+
+  @Patch(':partnerCompanyId/members/:memberUserId/contact')
+  @RequirePermissions('system.partner_member.manage')
+  @ApiOperation({ summary: 'Set member contact email and mobile (admin backfill; email becomes a login identifier)' })
+  @ApiResponse({ status: 200 })
+  @ApiResponse({ status: 404 })
+  @ApiResponse({ status: 409, description: 'Email already used by another user' })
+  setContact(
+    @Param('partnerCompanyId') companyId: string,
+    @Param('memberUserId') memberUserId: string,
+    @Body() dto: MemberContactBodyDto,
+    @Req() req: AuthedRequest,
+  ) {
+    return this.setMemberContact.execute({
+      companyId,
+      memberUserId,
+      email: dto.email,
+      phoneNumber: dto.phoneNumber,
       requestingAdminUserId: req.context.userId,
       requestId: req.context.requestId,
     });

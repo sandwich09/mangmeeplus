@@ -28,6 +28,7 @@ function makeUCs() {
     unlinkMemberLine: { execute: async () => ({ unlinked: true }) } as any,
     resetMemberPassword: { execute: async () => ({ userId: 'u-1', temporaryPassword: 'tmp', expiresAt: '' }) } as any,
     revealMemberPassword: { execute: async () => ({ temporaryPassword: 'tmp' }) } as any,
+    setMemberContact: { execute: async () => ({ updated: true }) } as any,
   };
 }
 
@@ -36,6 +37,7 @@ function makeCtrl(overrides: Partial<ReturnType<typeof makeUCs>> = {}) {
   return new PartnerController(
     uc.listPartners, uc.getDetail, uc.updateProfile, uc.lifecycle, uc.setFeatures, uc.setAiModel, uc.setOcrConfig,
     uc.getAiUsage, uc.listMembers, uc.unlinkMemberLine, uc.resetMemberPassword, uc.revealMemberPassword,
+    uc.setMemberContact,
     // VAT registration: delegated to the company's own service, not re-implemented here.
     { put: async () => ({ version: 1, resultKind: 'APPLIED', replayed: false }) } as any,
   );

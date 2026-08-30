@@ -107,6 +107,8 @@ export type PartnerMemberDto = {
   userId: string;
   displayName: string;
   username?: string;
+  email?: string;
+  phoneNumber?: string;
   membershipStatus: PartnerMembershipStatus;
   roles: string[];
   lineLinked: boolean;

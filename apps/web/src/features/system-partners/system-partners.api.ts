@@ -191,6 +191,18 @@ export async function unlinkPartnerMemberLine(companyId: string, memberUserId: s
   });
 }
 
+export async function setPartnerMemberContact(
+  companyId: string,
+  memberUserId: string,
+  body: { email: string; phoneNumber: string },
+): Promise<{ updated: true }> {
+  return apiFetch<{ updated: true }>(`/v1/system/partners/${companyId}/members/${memberUserId}/contact`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+    suppressErrorToast: true,
+  });
+}
+
 export async function resetPartnerMemberPassword(
   companyId: string,
   memberUserId: string,

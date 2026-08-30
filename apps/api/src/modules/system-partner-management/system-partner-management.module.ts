@@ -16,6 +16,7 @@ import { SetPartnerLineCredentialUseCase } from './application/use-cases/set-par
 import { SetSharedLineCredentialUseCase } from './application/use-cases/set-shared-line-credential.use-case';
 import { ListPartnerMembersUseCase } from './application/use-cases/list-partner-members.use-case';
 import { PartnerMemberLineUnlinkUseCase } from './application/use-cases/partner-member-line-unlink.use-case';
+import { SetPartnerMemberContactUseCase } from './application/use-cases/set-partner-member-contact.use-case';
 import { PartnerMemberPasswordResetUseCase } from './application/use-cases/partner-member-password-reset.use-case';
 import { PartnerMemberPasswordRevealUseCase } from './application/use-cases/partner-member-password-reveal.use-case';
 import { DataModelCoreModule } from '../data-model-core/data-model-core.module';
@@ -39,6 +40,7 @@ import { LedgerModule } from '../ledger/ledger.module.js';
     SetSharedLineCredentialUseCase,
     ListPartnerMembersUseCase,
     PartnerMemberLineUnlinkUseCase,
+    SetPartnerMemberContactUseCase,
     PartnerMemberPasswordResetUseCase,
     PartnerMemberPasswordRevealUseCase,
   ],

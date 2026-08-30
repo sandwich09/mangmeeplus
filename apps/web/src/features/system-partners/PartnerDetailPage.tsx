@@ -31,6 +31,7 @@ import {
   getPartnerMembers,
   unlinkPartnerMemberLine,
   resetPartnerMemberPassword,
+  setPartnerMemberContact,
   revealPartnerMemberTempPassword,
 } from './system-partners.api';
 import type {
@@ -331,6 +332,26 @@ function MembersSection({
     void loadMembers();
   }, [companyId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const [contactEditing, setContactEditing] = useState<{ userId: string; email: string; phoneNumber: string } | null>(null);
+
+  const handleSaveContact = async () => {
+    if (!contactEditing) return;
+    setBusyUserId(contactEditing.userId);
+    try {
+      await setPartnerMemberContact(companyId, contactEditing.userId, {
+        email: contactEditing.email.trim(),
+        phoneNumber: contactEditing.phoneNumber.trim(),
+      });
+      showToast('Contact saved.', 'success');
+      setContactEditing(null);
+      await loadMembers();
+    } catch (err) {
+      showToast(apiErrorMessage(err), 'error');
+    } finally {
+      setBusyUserId(null);
+    }
+  };
+
   const toggleReveal = async (member: PartnerMemberDto) => {
     if (revealed[member.userId] !== undefined) {
       setRevealed((prev) => {
@@ -422,6 +443,45 @@ function MembersSection({
                     <td className="py-2.5 pr-4">
                       <div className="font-medium text-gray-900">{m.displayName}</div>
                       {m.username && <div className="text-xs font-mono text-gray-500">{m.username}</div>}
+                      {contactEditing?.userId === m.userId ? (
+                        <div className="mt-1.5 space-y-1.5">
+                          <input
+                            value={contactEditing.email}
+                            onChange={(e) => setContactEditing((p) => (p ? { ...p, email: e.target.value } : p))}
+                            placeholder="email"
+                            className="block w-48 rounded border border-gray-300 px-2 py-1 text-xs"
+                          />
+                          <input
+                            value={contactEditing.phoneNumber}
+                            onChange={(e) => setContactEditing((p) => (p ? { ...p, phoneNumber: e.target.value } : p))}
+                            placeholder="mobile"
+                            className="block w-48 rounded border border-gray-300 px-2 py-1 text-xs"
+                          />
+                          <div className="flex gap-1.5">
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => void handleSaveContact()}
+                              className="rounded bg-gray-900 px-2.5 py-1 text-xs font-medium text-white disabled:opacity-50"
+                            >
+                              Save
+                            </button>
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => setContactEditing(null)}
+                              className="rounded border border-gray-300 px-2.5 py-1 text-xs text-gray-600"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          {m.email && <div className="text-xs text-gray-500">{m.email}</div>}
+                          {m.phoneNumber && <div className="text-xs text-gray-500">{m.phoneNumber}</div>}
+                        </>
+                      )}
                       {m.membershipStatus !== 'ACTIVE' && (
                         <span className="text-xs text-yellow-600">{m.membershipStatus}</span>
                       )}
@@ -467,6 +527,16 @@ function MembersSection({
                     </td>
                     <td className="py-2.5">
                       <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          className="rounded border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                          disabled={busy}
+                          onClick={() =>
+                            setContactEditing({ userId: m.userId, email: m.email ?? '', phoneNumber: m.phoneNumber ?? '' })
+                          }
+                        >
+                          Edit contact
+                        </button>
                         <button
                           type="button"
                           className="rounded border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
