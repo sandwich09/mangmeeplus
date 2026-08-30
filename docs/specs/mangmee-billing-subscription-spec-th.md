@@ -142,11 +142,11 @@ Source: ภาพ Package + ข้อมูลจริงบนเว็บ `of
 
 | ช่อง | ค่า |
 |---|---|
-| Trial (PRO): ระยะเวลา | **TBD (Owner)** — แนะนำ 30 วัน |
+| Trial (PRO): ระยะเวลา | **ตอบแล้ว 2026-08-30:** default 30 วัน (ชั่วโมงจริง) config ต่อบริษัทได้ — กลไกอยู่ [P29 Company Plan Term](mangmee-company-plan-term-spec-th.md) |
 | Trial: จำกัด "100 ร้านแรก" ตาม og-image ของเว็บจริงไหม และครบแล้วเกิดอะไร | **TBD (Owner)** |
-| จบ trial แล้วเกิดอะไร (ลดสิทธิ์เหลือเท่าไหน/พักบัญชี/ต้องเลือกจ่าย) | **TBD (Owner)** |
-| ลูกค้าปัจจุบัน + Controlled Beta: จำกัดด้วยหรือ grandfathered | **TBD (Owner)** |
-| Grace period หลังจ่ายไม่สำเร็จ | **TBD (Owner)** |
+| จบ trial แล้วเกิดอะไร | **ตอบแล้ว 2026-08-30:** ไม่ต่อ = disable บริษัทตรงเวลาวัน-ชั่วโมงจริงที่ครบกำหนด (ข้อมูลไม่หาย, renew โดยแอดมินแล้วกลับมาใช้ได้) — [P29](mangmee-company-plan-term-spec-th.md) §4B–4C |
+| ลูกค้าปัจจุบัน + Controlled Beta: จำกัดด้วยหรือ grandfathered | **โครงสร้างตอบแล้ว (P29 หลักการ 7):** ไม่มี term row = ไม่จำกัด จนกว่าแอดมินตั้งเอง — รอ Owner ยืนยัน (P29 §8 ข้อ 4) |
+| Grace period หลังจ่ายไม่สำเร็จ | **TBD (Owner)** — เกี่ยวเมื่อ P26 payment มา |
 
 ## 9. หน้าจอ (กติกา F-LED-7 ทุกข้อ)
 
