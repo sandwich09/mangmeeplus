@@ -26,7 +26,7 @@ Source of truth: [External Signup Contract Spec](../specs/mangmee-external-signu
 
 - ตาราง `AccountClaimToken` (hash unique, single-use atomic H-09, TTL 7 วัน, resend = mint ใหม่ revoke เก่า) + outbox event `email.account_claim.requested` (พกแค่ `signupRequestId`) + consumer mint-at-send ใน workers ตาม P11 F-EM-3
 - หน้า claim: expired/used/unknown ตอบ public message เดียวกัน; ทางแยก "มีบัญชีอยู่แล้วหรือยัง" — ใหม่ → ตั้งรหัส (hash ลง `pendingPasswordHash`); มีแล้ว → login รหัสเดิม/LINE (P12) → เก็บ `attachUserId`
-- Resend จากหน้าเช็คสถานะ (จำกัดความถี่ เฉพาะ EMAIL_PENDING)
+- Resend จากหน้าเช็คสถานะ (จำกัดความถี่ — ใช้ได้ทั้ง EMAIL_PENDING และหลังลิงก์หมดอายุตาม spec §4D กรณีไม่มา claim) + เมลเตือน exactly-once ก่อนหมดอายุ 2 วัน + ธง "ยังไม่เริ่มใช้งาน N วัน" ในคิว + EXPIRED ถาวรหลัง 30 วัน
 - Gate: hash-only (สแกนว่า raw token ไม่แตะ DB/outbox/log), single-use/replay/expiry/concurrency, ทางแยกทั้งสองเส้นจบที่ EMAIL_VERIFIED พร้อมข้อมูลถูกช่อง
 
 ## Slice C — คิวแอดมิน + provisioning (พร้อมเริ่ม)
@@ -34,13 +34,14 @@ Source of truth: [External Signup Contract Spec](../specs/mangmee-external-signu
 - หน้า System Admin: list คำขอ + ผล MX/dedupe hints/ธง bounce + map `businessType` → enum + Approve/Reject idempotent + audit; Reject ค่าเริ่มต้นเงียบ + ตัวเลือก "แจ้งผู้สมัคร" รายกรณี; แจ้งเตือน dashboard เมื่อค้างเกิน 24 ชม.
 - Approve → EMAIL_PENDING (ยิง outbox event); ไม่ provision ที่จุดนี้
 - Provisioning adapter หลัง claim: เรียก `CreateCompanyOnboardingUseCase` เดิมผ่าน provisioning claim ที่ P10-0 มีแล้ว; เพิ่มการเขียน `User.email`/`emailVerifiedAt`; เส้น `attachUserId` = ผูก membership เข้า User เดิมไม่สร้างใหม่; ตรวจว่าไม่มี app-level unique ชื่อบริษัทขวาง; ลบ `pendingPasswordHash` เมื่อสำเร็จ; ตั้ง term row preset PRO + 30 วันตาม [P29 plan T3](mangmee-company-plan-term-plan-th.md)
-- หน้าสำเร็จ + ขั้น LINE ตาม spec §4F (ปุ่ม OAuth/QR จาก P12, add-friend OA, ข้ามได้) + dialog merge เมื่อ LINE ชนบัญชีอื่น (รวม/ไว้ก่อน — ไม่มีตัวเลือกย้าย LINE) + label บทบาทใน company picker (web + LINE)
+- หน้าสำเร็จ + ขั้น LINE ตาม spec §4F (ปุ่ม OAuth/QR จาก P12, add-friend OA, ข้ามได้) + dialog merge เมื่อ LINE ชนบัญชีอื่น (รวม/ไว้ก่อน — ไม่มีตัวเลือกย้าย LINE) + label บทบาทใน company picker (web + LINE) + เปลี่ยน label ช่อง login เป็น "ชื่อผู้ใช้ หรือ อีเมล" (backend รับอีเมลอยู่แล้ว) — mockup 3 จอรับรองโดย Owner อยู่ที่ scratchpad `mangmee-claim-success-mockup.html`
 - Gate: same-request concurrency = Company/User/Membership อย่างละหนึ่ง; attach ไม่สร้าง User ซ้ำ; merge ย้าย membership + ปิดบัญชีว่างโดย audit เดิมอยู่ครบ; reject ลบ hash ไม่ทิ้ง User กำพร้า
 
 ## Slice D — Email จริงผ่าน SES (ops คู่ขนาน — **ติด Owner ตาม P11 §5 ข้อ 1–2**)
 
 - ยืนยันโดเมนผู้ส่ง + DKIM/SPF/DMARC (DNS อยู่ Cloudflare — Owner วาง records หรือเปิดทาง), region ap-southeast-1, configuration set + bounce/complaint event → ธง `EMAIL_FAILED` ในคิว, ขอออกจาก SES sandbox (lead time ~1 วัน — เริ่มก่อนโค้ดเสร็จ)
 - สลับ `EMAIL_PROVIDER=ses` ใน UAT ก่อน แล้วพิสูจน์ inbox จริง + DKIM pass + bounce round-trip ตาม P11 §4
+- **ผู้ใช้เดิมไม่มีอีเมลในระบบ** (login ด้วยอีเมลจึงไม่ได้ทั้งที่ backend รองรับ): เพิ่ม UI "เพิ่ม/ยืนยันอีเมล" ในหน้าตั้งค่าบัญชี (route `account/email` + resend มีอยู่แล้ว รอ SES เปิด) + บังคับอีเมล unique ต่อ user ตอนเขียน (กัน login กำกวม) — ส่งมอบพร้อม/หลัง Slice D
 
 ## Slice E — Rollout
 
