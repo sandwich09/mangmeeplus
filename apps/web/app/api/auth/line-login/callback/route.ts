@@ -46,6 +46,18 @@ export async function GET(request: NextRequest) {
   // Without a session it is a plain LINE login and the public exchange below issues the tokens.
   const accessToken = joinCookieChunks((name) => request.cookies.get(name)?.value, ACCESS_TOKEN_COOKIE);
   if (accessToken) {
+    // This lane always starts from a page the user is already signed in to, so its failure belongs
+    // back on that page: /login redirects an authenticated session straight past the notice, which
+    // is why a failed link used to end in silence. A 409 is the "this LINE belongs to another
+    // account" case, kept distinct so the page can offer the merge choice (spec §4F).
+    const backToStart = (reason: string) => {
+      const target = sanitizeReturnTo(txn.returnTo);
+      if (!target) return redirectToLogin(reason);
+      const url = new URL(target, origin);
+      url.searchParams.set('line', reason);
+      return clearTxn(NextResponse.redirect(url));
+    };
+
     let linkRes: Response;
     try {
       linkRes = await fetch(`${internalApiV1Base()}/auth/line/link/oauth`, {
@@ -55,11 +67,11 @@ export async function GET(request: NextRequest) {
         cache: 'no-store',
       });
     } catch {
-      return redirectToLogin('link-failed');
+      return backToStart('link-failed');
     }
     // No fall-through to the public exchange: the authorization code is single-use and already
     // spent, so a retry there can only fail again — with a less accurate reason for the user.
-    if (!linkRes.ok) return redirectToLogin('link-failed');
+    if (!linkRes.ok) return backToStart(linkRes.status === 409 ? 'link-conflict' : 'link-failed');
     return clearTxn(NextResponse.redirect(new URL(sanitizeReturnTo(txn.returnTo) ?? '/', origin)));
   }
 

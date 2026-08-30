@@ -1,0 +1,306 @@
+'use client';
+
+import Link from 'next/link';
+import { useEffect, useState } from 'react';
+import type { PublicCompanySignupBody } from '@watchdog-bms/contracts';
+import { Button } from '@/common/components/button';
+import { SwitchField, TextField } from '@/common/components/field';
+import { trimmed } from '@/common/forms/trim';
+import { getSignupAvailability, submitCompanySignup } from './external-signup.api';
+import { SignupBrandHeader, SignupClosedNotice } from './SignupChrome';
+import {
+  offerLimitsLabel,
+  SELECTABLE_OFFER_KEY,
+  SIGNUP_CONSENT_VERSION,
+  SIGNUP_OFFERS,
+  signupSubmitErrorMessage,
+  validateSignupForm,
+  type SignupFieldErrors,
+  type SignupFormValues,
+} from './signup.logic';
+
+const EMPTY_FORM: SignupFormValues = {
+  companyName: '',
+  ownerDisplayName: '',
+  contactEmail: '',
+  phoneNumber: '',
+  businessType: '',
+  vatRegistered: false,
+  taxId: '',
+  consentAccepted: false,
+};
+
+function OfferCards() {
+  return (
+    <fieldset className="space-y-2.5">
+      <legend className="mb-2 text-[15px] font-semibold text-gray-800">แพ็กเกจ</legend>
+      {SIGNUP_OFFERS.map((offer) => {
+        const selected = offer.selectable;
+        const reasonId = `offer-${offer.tierKey}-reason`;
+        return (
+          <label
+            key={offer.tierKey}
+            data-offer={offer.tierKey}
+            className={`flex items-start gap-3 rounded-xl border p-3.5 ${
+              selected ? 'cursor-default border-[#046B29] bg-[#F2F9F4]' : 'border-gray-200 bg-gray-50 opacity-70'
+            }`}
+          >
+            {/* A real radio group, so the one choice and the three refusals are in the accessible
+                tree — the greyed-out styling alone says nothing to a screen reader. */}
+            <input
+              type="radio"
+              name="requestedOffer"
+              value={offer.offerKey}
+              checked={selected}
+              disabled={!selected}
+              readOnly
+              aria-describedby={offer.unavailableReason ? reasonId : undefined}
+              className="mt-0.5 h-5 w-5 shrink-0 accent-[#046B29]"
+            />
+            <span className="min-w-0 flex-1">
+              <span className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                <span className="text-[15.5px] font-bold text-gray-900">{offer.nameTh}</span>
+                <span className="text-[15px] font-semibold text-gray-700">{offer.priceLabel}</span>
+                {offer.badge ? (
+                  <span className="rounded-md bg-[#046B29] px-2 py-0.5 text-[12px] font-bold text-white">{offer.badge}</span>
+                ) : (
+                  <span className="rounded-md bg-gray-200 px-2 py-0.5 text-[12px] font-semibold text-gray-600">เร็ว ๆ นี้</span>
+                )}
+              </span>
+              <span className="mt-1 block text-[13px] leading-6 text-gray-500">{offerLimitsLabel(offer)}</span>
+              {offer.unavailableReason ? <span id={reasonId} className="sr-only">{offer.unavailableReason}</span> : null}
+            </span>
+          </label>
+        );
+      })}
+      <p className="pt-1 text-[13px] leading-6 text-gray-500">
+        ตอนนี้เปิดให้สมัครแพ็กเกจมืออาชีพ แบบทดลองใช้ฟรีก่อน แพ็กเกจอื่นจะเปิดเร็ว ๆ นี้
+      </p>
+    </fieldset>
+  );
+}
+
+function SubmittedView({ requestId }: { requestId: string }) {
+  return (
+    <div className="space-y-5" role="status">
+      <span className="flex h-14 w-14 items-center justify-center rounded-full bg-[#E7F4EC] text-[#046B29]">
+        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4Z" /></svg>
+      </span>
+      <div className="space-y-2">
+        <h1 className="text-[22px] font-extrabold text-gray-900">ได้รับคำขอแล้ว กำลังตรวจสอบ</h1>
+        <p className="text-[15px] leading-7 text-gray-600">
+          เราจะส่งอีเมลให้คุณเมื่ออนุมัติ ในอีเมลจะมีลิงก์สำหรับตั้งรหัสผ่าน แล้วจึงเริ่มใช้งานได้
+        </p>
+      </div>
+      <Link
+        href={`/signup/status/${encodeURIComponent(requestId)}`}
+        className="flex h-12 w-full items-center justify-center rounded-xl border-[1.5px] border-gray-200 bg-white text-[15.5px] font-semibold text-gray-900 hover:border-[#046B29]"
+      >
+        ตรวจสอบสถานะคำขอ
+      </Link>
+      <p className="text-[13px] leading-6 text-gray-500">
+        เก็บลิงก์หน้านี้ไว้ตรวจสถานะได้ตลอด หากอีเมลไม่มาภายใน 2 วัน กดขอส่งอีเมลใหม่ได้จากหน้าตรวจสอบสถานะ
+      </p>
+    </div>
+  );
+}
+
+export default function SignupPage() {
+  // Minted once per form session and reused verbatim on every retry — the server treats it as the
+  // idempotency key, so a second tap after a timeout must not create a second request.
+  const [externalSignupId] = useState(() => crypto.randomUUID());
+  const [availability, setAvailability] = useState<'loading' | 'open' | 'closed'>('loading');
+  const [values, setValues] = useState<SignupFormValues>(EMPTY_FORM);
+  const [fieldErrors, setFieldErrors] = useState<SignupFieldErrors>({});
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [requestId, setRequestId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void getSignupAvailability()
+      .then((result) => {
+        if (active) setAvailability(result.enabled ? 'open' : 'closed');
+      })
+      // An availability call that cannot answer must not present a form whose submit will fail.
+      .catch(() => {
+        if (active) setAvailability('closed');
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const set = <K extends keyof SignupFormValues>(key: K, value: SignupFormValues[K]) => {
+    setValues((previous) => ({ ...previous, [key]: value }));
+    if (fieldErrors[key]) setFieldErrors((previous) => ({ ...previous, [key]: undefined }));
+  };
+
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const errors = validateSignupForm(values);
+    setFieldErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      setError(null);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    const body: PublicCompanySignupBody = {
+      externalSignupId,
+      companyName: trimmed(values.companyName),
+      ownerDisplayName: trimmed(values.ownerDisplayName),
+      contactEmail: trimmed(values.contactEmail),
+      phoneNumber: values.phoneNumber.replace(/[^0-9]/g, ''),
+      ...(trimmed(values.businessType) ? { businessType: trimmed(values.businessType) } : {}),
+      vatRegistered: values.vatRegistered,
+      ...(values.vatRegistered && values.taxId.replace(/[^0-9]/g, '')
+        ? { taxId: values.taxId.replace(/[^0-9]/g, '') }
+        : {}),
+      consentVersion: SIGNUP_CONSENT_VERSION,
+      requestedOfferKey: SELECTABLE_OFFER_KEY,
+    };
+    try {
+      const result = await submitCompanySignup(body);
+      setRequestId(result.requestId);
+    } catch (cause) {
+      // The MX rejection (422) arrives here as a server sentence about the address; showing it
+      // verbatim is the whole point — a generic line would hide the typo the user must fix.
+      setError(signupSubmitErrorMessage(cause));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (availability === 'loading') {
+    return (
+      <div className="flex min-h-dvh items-center justify-center bg-gray-50 p-4">
+        <p className="text-sm text-gray-500">กำลังโหลด…</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-dvh bg-gray-50">
+      <SignupBrandHeader />
+      <main className="mx-auto w-full max-w-md px-4 py-6 sm:max-w-lg sm:py-10">
+        <div className="rounded-2xl border border-gray-200 bg-white p-5 sm:p-8">
+          {availability === 'closed' ? (
+            <SignupClosedNotice />
+          ) : requestId ? (
+            <SubmittedView requestId={requestId} />
+          ) : (
+            <>
+              <h1 className="text-[22px] font-extrabold leading-9 text-gray-900">สมัครใช้งานมั่งมีพลัส</h1>
+              <p className="mt-1.5 text-[15px] leading-7 text-gray-600">
+                กรอกข้อมูลร้านของคุณ ทีมงานจะตรวจสอบ แล้วส่งอีเมลให้ตั้งรหัสผ่าน
+              </p>
+
+              {error ? (
+                <div role="alert" className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[15px] leading-7 text-red-700">
+                  {error}
+                </div>
+              ) : null}
+
+              <form onSubmit={handleSubmit} className="mt-6 space-y-4" noValidate>
+                <TextField
+                  label="ชื่อร้าน หรือบริษัท"
+                  name="companyName"
+                  value={values.companyName}
+                  onChange={(event) => set('companyName', event.target.value)}
+                  error={fieldErrors.companyName}
+                  autoComplete="organization"
+                />
+                <TextField
+                  label="ชื่อผู้ติดต่อ"
+                  name="ownerDisplayName"
+                  value={values.ownerDisplayName}
+                  onChange={(event) => set('ownerDisplayName', event.target.value)}
+                  error={fieldErrors.ownerDisplayName}
+                  autoComplete="name"
+                />
+                <TextField
+                  label="อีเมล"
+                  name="contactEmail"
+                  type="email"
+                  inputMode="email"
+                  hint="ใช้รับลิงก์ตั้งรหัสผ่าน กรุณาตรวจตัวสะกดให้ถูกต้อง"
+                  value={values.contactEmail}
+                  onChange={(event) => set('contactEmail', event.target.value)}
+                  error={fieldErrors.contactEmail}
+                  autoComplete="email"
+                />
+                <TextField
+                  label="เบอร์โทรมือถือ"
+                  name="phoneNumber"
+                  type="tel"
+                  inputMode="numeric"
+                  hint="ใช้ติดต่อกลับกรณีอีเมลส่งไม่ถึง"
+                  value={values.phoneNumber}
+                  onChange={(event) => set('phoneNumber', event.target.value)}
+                  error={fieldErrors.phoneNumber}
+                  autoComplete="tel"
+                />
+                <TextField
+                  label="ประเภทธุรกิจ"
+                  name="businessType"
+                  hint="เช่น ร้านขายของชำ ร้านอาหาร ร้านวัสดุก่อสร้าง"
+                  value={values.businessType}
+                  onChange={(event) => set('businessType', event.target.value)}
+                />
+
+                <div className="space-y-3 rounded-xl border border-gray-200 p-3.5">
+                  <SwitchField
+                    label="ร้านจดทะเบียน VAT แล้ว"
+                    name="vatRegistered"
+                    checked={values.vatRegistered}
+                    onChange={(event) => set('vatRegistered', event.target.checked)}
+                  />
+                  {values.vatRegistered ? (
+                    <TextField
+                      label="เลขประจำตัวผู้เสียภาษี"
+                      name="taxId"
+                      inputMode="numeric"
+                      hint="13 หลัก ไม่ต้องกรอกก็ได้ กรอกภายหลังได้"
+                      value={values.taxId}
+                      onChange={(event) => set('taxId', event.target.value)}
+                      error={fieldErrors.taxId}
+                    />
+                  ) : null}
+                </div>
+
+                <OfferCards />
+
+                <div className="space-y-1.5 pt-1">
+                  <SwitchField
+                    label="ยอมรับข้อกำหนดการใช้งาน และรับทราบประกาศความเป็นส่วนตัว"
+                    name="consentAccepted"
+                    checked={values.consentAccepted}
+                    onChange={(event) => set('consentAccepted', event.target.checked)}
+                    error={fieldErrors.consentAccepted}
+                  />
+                  <p className="pl-[3.25rem] text-[13px] text-gray-500 sm:pl-7">
+                    อ่าน{' '}
+                    <Link href="/terms" target="_blank" className="font-semibold text-[#046B29] underline">ข้อกำหนดการใช้งาน</Link>
+                    {' '}และ{' '}
+                    <Link href="/privacy" target="_blank" className="font-semibold text-[#046B29] underline">ประกาศความเป็นส่วนตัว</Link>
+                  </p>
+                </div>
+
+                <Button type="submit" size="lg" className="w-full !rounded-xl" loading={loading}>
+                  ส่งคำขอสมัคร
+                </Button>
+              </form>
+            </>
+          )}
+        </div>
+
+        <p className="mt-5 text-center text-[13.5px] text-gray-500">
+          มีบัญชีอยู่แล้ว?{' '}
+          <Link href="/login" className="font-semibold text-[#046B29] underline">เข้าสู่ระบบ</Link>
+        </p>
+      </main>
+    </div>
+  );
+}
