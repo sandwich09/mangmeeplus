@@ -33,6 +33,9 @@ export function buildLineAuthorizeUrl(input: {
     nonce: input.nonce,
     code_challenge: input.codeChallenge,
     code_challenge_method: 'S256',
+    // P10 §4F: puts the add-friend checkbox on LINE's own consent screen, so linking and following
+    // the OA are one step instead of two. 'normal' asks; it never adds the friend without consent.
+    bot_prompt: 'normal',
   });
   return `https://access.line.me/oauth2/v2.1/authorize?${params.toString()}`;
 }
