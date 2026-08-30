@@ -39,17 +39,9 @@ assert_rejected deploy-invalid-bootstrap-boolean \
 assert_rejected deploy-invalid-exact-greeting-boolean \
   'LINE_AI_EXACT_GREETING_ENABLED must be exactly true or false' \
   env -i PATH="$PATH" DEPLOY_ENV=uat LINE_AI_EXACT_GREETING_ENABLED=yes bash "$deploy" all
-assert_rejected deploy-production-exact-greeting-not-activated \
-  'LINE_AI_EXACT_GREETING_ENABLED=true is not activated for production yet' \
-  env -i PATH="$PATH" DEPLOY_ENV=production PRODUCTION_SERVING_MODE=live \
-    LINE_AI_EXACT_GREETING_ENABLED=true bash "$deploy" all
 assert_rejected deploy-invalid-loading-on-accept-boolean \
   'LINE_AI_LOADING_ON_ACCEPT_ENABLED must be exactly true or false' \
   env -i PATH="$PATH" DEPLOY_ENV=uat LINE_AI_LOADING_ON_ACCEPT_ENABLED=yes bash "$deploy" all
-assert_rejected deploy-production-loading-on-accept-not-activated \
-  'LINE_AI_LOADING_ON_ACCEPT_ENABLED=true is not activated for production yet' \
-  env -i PATH="$PATH" DEPLOY_ENV=production PRODUCTION_SERVING_MODE=live \
-    LINE_AI_LOADING_ON_ACCEPT_ENABLED=true bash "$deploy" all
 assert_rejected deploy-invalid-debounce-experiment-boolean \
   'LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED must be exactly true or false' \
   env -i PATH="$PATH" DEPLOY_ENV=uat LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED=yes bash "$deploy" all
@@ -67,35 +59,39 @@ grep -Fq 'LINE_WEB_LOGIN_ENABLED_INPUT=true' "$deploy"
 if grep -Fq 'LINE_WEB_LOGIN_ENABLED=true is not activated' "$deploy"; then
   echo "FAIL: production still fails closed on LINE_WEB_LOGIN_ENABLED=true" >&2; exit 1
 fi
+# Owner parity decision 2026-08-30: production runs the same conversational and speed lanes as
+# UAT. The contract greps prove every aligned flag defaults ON with no environment branch and no
+# production fail-closed block; only the debounce EXPERIMENT keeps its production rejection above.
+for aligned in LINE_WEB_HANDOFF_ENABLED LINE_AI_EXACT_GREETING_ENABLED \
+    LINE_AI_LOADING_ON_ACCEPT_ENABLED LINE_AI_FUSED_PLAN_SHADOW_ENABLED \
+    LINE_AI_PREPARED_SIMPLE_READ_ENABLED; do
+  grep -Fq "${aligned}_INPUT=true" "$deploy"
+  if grep -Fq "${aligned}=true is not activated" "$deploy"; then
+    echo "FAIL: production still fails closed on ${aligned}=true" >&2; exit 1
+  fi
+done
+grep -Fq 'LINE_AI_ADVISOR_MODE_INPUT=social' "$deploy"
+if grep -Fq 'LINE_AI_ADVISOR_MODE=$LINE_AI_ADVISOR_MODE_INPUT is not activated' "$deploy"; then
+  echo "FAIL: production still fails closed on advisor mode" >&2; exit 1
+fi
+grep -Fq 'LINE_AI_BUFFER_DEBOUNCE_MS_INPUT=1000' "$deploy"
+grep -Fq 'sales.get_sales_summary::single_metric' "$deploy"
+if grep -Fq 'LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES is not activated' "$deploy"; then
+  echo "FAIL: production still fails closed on deterministic families" >&2; exit 1
+fi
 assert_rejected deploy-invalid-line-web-handoff-boolean \
   'LINE_WEB_HANDOFF_ENABLED must be exactly true or false' \
   env -i PATH="$PATH" DEPLOY_ENV=uat LINE_WEB_HANDOFF_ENABLED=yes bash "$deploy" all
-assert_rejected deploy-production-line-web-handoff-not-activated \
-  'LINE_WEB_HANDOFF_ENABLED=true is not activated for production yet' \
-  env -i PATH="$PATH" DEPLOY_ENV=production PRODUCTION_SERVING_MODE=live \
-    LINE_WEB_HANDOFF_ENABLED=true bash "$deploy" all
 assert_rejected deploy-invalid-fused-shadow-boolean \
   'LINE_AI_FUSED_PLAN_SHADOW_ENABLED must be exactly true or false' \
   env -i PATH="$PATH" DEPLOY_ENV=uat LINE_AI_FUSED_PLAN_SHADOW_ENABLED=yes bash "$deploy" all
-assert_rejected deploy-production-fused-shadow-not-activated \
-  'LINE_AI_FUSED_PLAN_SHADOW_ENABLED=true is not activated for production yet' \
-  env -i PATH="$PATH" DEPLOY_ENV=production PRODUCTION_SERVING_MODE=live \
-    LINE_AI_FUSED_PLAN_SHADOW_ENABLED=true bash "$deploy" all
 assert_rejected deploy-invalid-prepared-simple-read-boolean \
   'LINE_AI_PREPARED_SIMPLE_READ_ENABLED must be exactly true or false' \
   env -i PATH="$PATH" DEPLOY_ENV=uat LINE_AI_PREPARED_SIMPLE_READ_ENABLED=yes bash "$deploy" all
-assert_rejected deploy-production-prepared-simple-read-not-activated \
-  'LINE_AI_PREPARED_SIMPLE_READ_ENABLED=true is not activated for production yet' \
-  env -i PATH="$PATH" DEPLOY_ENV=production PRODUCTION_SERVING_MODE=live \
-    LINE_AI_PREPARED_SIMPLE_READ_ENABLED=true bash "$deploy" all
 assert_rejected deploy-invalid-deterministic-families-charset \
   'LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES must be a comma-separated allowlist of' \
   env -i PATH="$PATH" DEPLOY_ENV=uat \
     LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES='sales.get_sales_summary::single_metric bad' bash "$deploy" all
-assert_rejected deploy-production-deterministic-families-not-activated \
-  'LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES is not activated for production yet' \
-  env -i PATH="$PATH" DEPLOY_ENV=production PRODUCTION_SERVING_MODE=live \
-    LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES='sales.get_sales_summary::single_metric' bash "$deploy" all
 assert_rejected deploy-bootstrap-flag-missing \
   'maintenance_only requires an immutable quiesced all-target bootstrap' \
   env -i PATH="$PATH" DEPLOY_ENV=production PRODUCTION_SERVING_MODE=maintenance_only \
