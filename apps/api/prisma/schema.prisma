@@ -411,6 +411,7 @@ model Company {
   // Item 10A
   onboardingRuns                    CompanyOnboardingRun[]
   signupRequests                    CompanySignupRequest[]
+  planTerm                          CompanyPlanTerm?
   activatedAt                       DateTime?
   disabledAt                        DateTime?
   archivedAt                        DateTime?
@@ -553,6 +554,7 @@ model User {
   username                String?                  @unique
   email                   String?                  @unique
   emailVerifiedAt         DateTime?
+  phoneNumber             String?
   status                  UserStatus               @default(ACTIVE)
   isSystemProtected       Boolean                  @default(false)
   // PDPA objection route (M-05 register §3.1): set = this user opted out of the LINE
@@ -836,17 +838,17 @@ enum LineWebHandoffTokenStatus {
 /// No FK, for the same reason LineWebLoginTransaction has none — this is a pre-session artifact whose
 /// lifetime is minutes and whose deletion must never cascade into user or company rows.
 model LineWebHandoffToken {
-  id          String                    @id @default(cuid())
-  tokenHash   String                    @unique
-  userId      String
-  companyId   String
-  lineUserId  String
-  targetPath  String
-  surface     String
-  status      LineWebHandoffTokenStatus @default(PENDING)
-  expiresAt   DateTime
-  usedAt      DateTime?
-  createdAt   DateTime                  @default(now())
+  id         String                    @id @default(cuid())
+  tokenHash  String                    @unique
+  userId     String
+  companyId  String
+  lineUserId String
+  targetPath String
+  surface    String
+  status     LineWebHandoffTokenStatus @default(PENDING)
+  expiresAt  DateTime
+  usedAt     DateTime?
+  createdAt  DateTime                  @default(now())
 
   @@index([userId, status])
   @@index([companyId, status])
@@ -2810,6 +2812,7 @@ enum OnboardingRunStatus {
 enum CompanySignupState {
   RECEIVED
   VALIDATED
+  PENDING_REVIEW
   EMAIL_PENDING
   EMAIL_VERIFIED
   PROVISIONING
@@ -2820,6 +2823,7 @@ enum CompanySignupState {
   PROVISIONING_FAILED
   SUSPENDED
   EXPIRED
+  REJECTED
 }
 
 model ChartOfAccount {
@@ -3050,6 +3054,16 @@ model CompanySignupRequest {
   state                 CompanySignupState @default(RECEIVED)
   version               Int                @default(0)
   failureCode           String?
+  businessType          String?
+  phoneNumber           String?
+  vatRegistered         Boolean?
+  mxValid               Boolean?
+  pendingPasswordHash   String?
+  attachUserId          String?
+  approvedAt            DateTime?
+  approvedByUserId      String?
+  claimEmailLastSentAt  DateTime?
+  claimReminderSentAt   DateTime?
   provisioningAttemptId String?            @unique
   provisioningStartedAt DateTime?
   companyId             String?
@@ -3059,11 +3073,55 @@ model CompanySignupRequest {
   company               Company?           @relation(fields: [companyId], references: [id], onDelete: SetNull)
   owner                 User?              @relation(fields: [ownerUserId], references: [id], onDelete: SetNull)
 
+  claimTokens AccountClaimToken[]
+
   @@index([state, updatedAt])
   @@index([contactEmail])
   @@index([taxId])
   @@index([companyId])
   @@index([ownerUserId])
+}
+
+model AccountClaimToken {
+  id              String               @id @default(cuid())
+  signupRequestId String
+  tokenHash       String               @unique
+  expiresAt       DateTime
+  usedAt          DateTime?
+  revokedAt       DateTime?
+  createdAt       DateTime             @default(now())
+  signupRequest   CompanySignupRequest @relation(fields: [signupRequestId], references: [id], onDelete: Cascade)
+
+  @@index([signupRequestId])
+  @@index([expiresAt])
+}
+
+// P29 — admin-managed plan limits and usage term (docs/specs/mangmee-company-plan-term-spec-th.md).
+// A company WITHOUT a row is legacy/grandfathered: no expiry, no limits, until an admin sets one.
+model CompanyPlanTerm {
+  id                String    @id @default(cuid())
+  companyId         String    @unique
+  tierKey           String
+  branchLimit       Int
+  employeeLimit     Int
+  monthlySlipLimit  Int
+  termStartAt       DateTime
+  termEndsAt        DateTime
+  warningDays       Int       @default(7)
+  renewCount        Int       @default(0)
+  lastRenewedAt     DateTime?
+  termDisabledAt    DateTime?
+  warn7SentAt       DateTime?
+  warn3SentAt       DateTime?
+  warn1SentAt       DateTime?
+  expiredNotifiedAt DateTime?
+  createdByUserId   String?
+  updatedByUserId   String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  company           Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([termEndsAt])
 }
 
 // ---- Item 10A: Partner Management ----

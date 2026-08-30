@@ -130,7 +130,7 @@ Exit P23-1: manifest validation, stale/supersede test, citation/source lineage, 
 <a id="p10--external-signup"></a>
 ## P10 — External Signup
 
-สถานะ: **P10-0 CORE IMPLEMENTED + LOCAL VERIFIED; OWNER AMENDMENT + OFFER/PAYMENT DIRECTION SPECIFIED; PUBLIC INGRESS BLOCKED BY OWNER §8**
+สถานะ: **P10-0 CORE IMPLEMENTED + LOCAL VERIFIED; FLOW B LOCKED (Owner amendment v2 2026-08-30); public ingress ปลดล็อกแล้ว (in-app page — ไม่ต้องมี website secret); เหลือ SES ops + ตัวเลข trial ตาม P10 §8**
 
 Spec: [External Signup Contract](../specs/mangmee-external-signup-contract-spec-th.md).
 
@@ -142,19 +142,19 @@ Spec: [External Signup Contract](../specs/mangmee-external-signup-contract-spec-
 
 ### P10-0A — Offer preview (spec-only; ยังไม่มี UI/payment implementation)
 
-- แสดง `FREE_TRIAL` และ paid 259/599/999/1299 ตาม source of truth [Billing §8](../specs/mangmee-billing-subscription-spec-th.md#billing-offer-catalog).
-- เปิดเลือกเฉพาะ `FREE_TRIAL`; paid tiers disabled + “เร็ว ๆ นี้”; server reject paid key ด้วย `offer_not_available` และห้าม fallback เป็น Free.
+- แสดง 4 tier ชุด 2026-08-30 (STARTER 249 / BASIC 499 / PRO 999 / ENTERPRISE 1,999) ตาม source of truth [Billing §8](../specs/mangmee-billing-subscription-spec-th.md#billing-offer-catalog); trial ผูกกับ PRO.
+- เปิดเลือกเฉพาะ `PRO_TRIAL`; tier อื่น disabled + “เร็ว ๆ นี้”; server reject key อื่นด้วย `offer_not_available` และห้าม fallback เป็น trial.
 - Slice นี้เป็น catalog/attribution เท่านั้น: ห้ามสร้าง Billing entitlement, payment attempt, EasySlip call หรือ infer quota/feature ที่ยัง TBD.
 
-### P10-0B — Owner amendment 2026-08-29 (spec-only delta)
+### P10-0B — Owner amendment v2 2026-08-30 "Flow B" (spec-only delta; แทนลำดับ 2026-08-29)
 
-- คง P10-0 core ที่มีอยู่ แต่ target flow เพิ่ม optional `businessType/phoneNumber/vatRegistered`, email claim + pending credential hash, `PENDING_REVIEW/REJECTED` และ System Admin approve ครั้งเดียวก่อน provisioning ตาม [External Signup §4](../specs/mangmee-external-signup-contract-spec-th.md#external-signup-owner-amendment).
-- email verified เป็น identity key หลัก; taxId ตรวจเมื่อมีและชนแล้ว review; ชื่อบริษัทซ้ำได้. Delta ต้องมี migration/state/idempotency/security tests ใหม่ ห้ามนับหลักฐาน P10-0 เดิมว่า cover แล้ว.
-- หน้า claim ห้ามเก็บ plaintext/สร้าง User ก่อน approve; Reject ต้องลบ pending hash. คิว approve/reject + dedupe hints + SLA notification ต้อง audit และ idempotent.
+- ลำดับใหม่: ฟอร์ม → ตรวจอัตโนมัติ (schema+MX+rate limit+dedupe hints) → `PENDING_REVIEW` ทันที → approve → เมล **ฉบับเดียว** → claim (ตั้งรหัส หรือ login บัญชีเดิมแล้ว attach) → provisioning ตาม [External Signup §4](../specs/mangmee-external-signup-contract-spec-th.md#external-signup-owner-amendment); field delta = `businessType/phoneNumber/vatRegistered` + `pendingPasswordHash` + `attachUserId` + enum `PENDING_REVIEW/REJECTED`.
+- email ซ้ำได้ = คนเดิมหลายบริษัท (attach หลังพิสูจน์ mailbox เท่านั้น); taxId ตรวจเมื่อมีและชนแล้ว review; ชื่อบริษัทซ้ำได้. Delta ต้องมี migration/state/idempotency/security tests ใหม่ ห้ามนับหลักฐาน P10-0 เดิมว่า cover แล้ว.
+- ไม่มี Company/User ก่อน claim; Reject ค่าเริ่มต้นเงียบ + ลบ pending hash; ขั้น LINE + merge dialog + role labels ตาม spec §4F. คิว approve/reject + hints + SLA notification ต้อง audit และ idempotent.
 
-### P10-1 — Signed ingress (blocked)
+### P10-1 — Public in-app ingress (ปลดล็อกแล้ว 2026-08-30)
 
-เริ่มหลัง Owner ยืนยัน website secret model (HMAC vs service JWT) และ claim TTL/resend/revoke; duplicate email/taxId/name policy ตอบแล้วใน External Signup §4C. Route ต้องมี timestamp/nonce, raw-body verification, bounded DTO, fail-closed rate limit, signed status endpoint และ zero-secret response.
+Owner เลือกหน้า public บนเว็บแอปเราเองแทน signed API จากเว็บ official (spec §3) — ไม่มี website secret; signed integration เป็น future/optional. Route ตาม precedent customer-line-register: bounded DTO, fail-closed rate limit, `202 {requestId}`, status endpoint allowlist, zero-secret response; MX lookup ที่ VALIDATED. งานแบ่งเป็น Slice A–E ใน [แผน P10](mangmee-external-signup-plan-th.md).
 
 Exit: concurrency สร้าง request/company/user/membership อย่างละหนึ่ง; duplicate email/taxId deterministic; no temp password/secret; audit/retry reconstruct ได้.
 

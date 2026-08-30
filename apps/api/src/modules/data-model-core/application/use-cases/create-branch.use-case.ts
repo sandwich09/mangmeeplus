@@ -4,6 +4,8 @@ import type { BranchRecord } from '../../domain/models/branch.model';
 import { validateBranchCode, validateTaxBranchCode } from '../../domain/logic/branch.logic';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import { AuditService } from '../../../audit/application/audit.service';
+import { PrismaService } from '../../../../common/database/prisma.service';
+import { assertBranchLimit } from '../../../system-partner-management/application/plan-term-limit';
 
 export type CreateBranchCommand = {
   code: string;
@@ -20,6 +22,7 @@ export class CreateBranchUseCase {
   constructor(
     private readonly branches: PrismaBranchRepository,
     private readonly audit: AuditService,
+    private readonly prisma: PrismaService,
   ) {}
 
   async execute(ctx: RequestContext, cmd: CreateBranchCommand): Promise<BranchRecord> {
@@ -31,6 +34,10 @@ export class CreateBranchUseCase {
       });
       throw new ForbiddenException();
     }
+
+    // P29 §4D: caps the count of NEW branches only. Existing branches are never touched, and a
+    // company with no plan-term row is unlimited.
+    await assertBranchLimit(this.prisma, ctx.companyId);
 
     const codeErr = validateBranchCode(cmd.code);
     if (codeErr) throw new BadRequestException(codeErr);

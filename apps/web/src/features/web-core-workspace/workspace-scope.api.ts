@@ -3,7 +3,7 @@
 // no localStorage bearer token, no cross-origin call.
 import { authedApiFetch } from '@/common/api/authed-fetch';
 
-export type MyCompany = { companyId: string; companyName: string; roles: string[] };
+export type MyCompany = { companyId: string; companyName: string; roles: string[]; expired?: boolean };
 
 export async function fetchMyCompanies(): Promise<MyCompany[]> {
   const body = await authedApiFetch<{ data: MyCompany[] }>('/v1/auth/me/companies');

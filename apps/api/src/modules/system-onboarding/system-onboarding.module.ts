@@ -13,5 +13,8 @@ import { SystemOnboardingController } from './presentation/http/system-onboardin
     RegenerateTemporaryPasswordUseCase,
     ReissueOwnerLineLinkUseCase,
   ],
+  // Exported for the P10 signup provisioning path: company creation has exactly one owner service
+  // (spec §2 rule 5), so the claim flow reuses this rather than growing a second one.
+  exports: [CreateCompanyOnboardingUseCase],
 })
 export class SystemOnboardingModule {}

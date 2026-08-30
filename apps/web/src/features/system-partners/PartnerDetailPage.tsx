@@ -4,9 +4,12 @@ import {
   FEATURE_CATALOG,
   FEATURE_PACKAGE_PRESETS,
   MENU_ENTITLEMENT_BINDINGS,
+  PLAN_TIER_PRESETS,
+  type CompanyPlanTermDto,
   type FeaturePackagePresetKey,
   type MenuEntitlementBinding,
   type PartnerFeatureEntitlementDto,
+  type PlanTierKey,
 } from '@watchdog-bms/contracts';
 import Link from 'next/link';
 import { BackLink } from '@/common/components/app-shell/BackLink';
@@ -29,8 +32,12 @@ import {
   setPartnerVatRegistration,
   getPartnerAiUsage,
   getPartnerMembers,
+  getPartnerPlanTerm,
+  setPartnerPlanTerm,
+  renewPartnerPlanTerm,
   unlinkPartnerMemberLine,
   resetPartnerMemberPassword,
+  setPartnerMemberContact,
   revealPartnerMemberTempPassword,
 } from './system-partners.api';
 import type {
@@ -54,6 +61,16 @@ import {
   satangToBaht,
   satangToBahtInput,
 } from './ai-budget.logic';
+import {
+  parseDaysInput,
+  parseLimitInput,
+  planTermDisabledChip,
+  planTermLimitsText,
+  planTermStatusChip,
+  renewedEndsAt,
+  type PlanTermChip,
+  type PlanTermChipTone,
+} from './plan-term.logic';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import {
   applyPreset,
@@ -331,6 +348,26 @@ function MembersSection({
     void loadMembers();
   }, [companyId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const [contactEditing, setContactEditing] = useState<{ userId: string; email: string; phoneNumber: string } | null>(null);
+
+  const handleSaveContact = async () => {
+    if (!contactEditing) return;
+    setBusyUserId(contactEditing.userId);
+    try {
+      await setPartnerMemberContact(companyId, contactEditing.userId, {
+        email: contactEditing.email.trim(),
+        phoneNumber: contactEditing.phoneNumber.trim(),
+      });
+      showToast('Contact saved.', 'success');
+      setContactEditing(null);
+      await loadMembers();
+    } catch (err) {
+      showToast(apiErrorMessage(err), 'error');
+    } finally {
+      setBusyUserId(null);
+    }
+  };
+
   const toggleReveal = async (member: PartnerMemberDto) => {
     if (revealed[member.userId] !== undefined) {
       setRevealed((prev) => {
@@ -422,6 +459,45 @@ function MembersSection({
                     <td className="py-2.5 pr-4">
                       <div className="font-medium text-gray-900">{m.displayName}</div>
                       {m.username && <div className="text-xs font-mono text-gray-500">{m.username}</div>}
+                      {contactEditing?.userId === m.userId ? (
+                        <div className="mt-1.5 space-y-1.5">
+                          <input
+                            value={contactEditing.email}
+                            onChange={(e) => setContactEditing((p) => (p ? { ...p, email: e.target.value } : p))}
+                            placeholder="email"
+                            className="block w-48 rounded border border-gray-300 px-2 py-1 text-xs"
+                          />
+                          <input
+                            value={contactEditing.phoneNumber}
+                            onChange={(e) => setContactEditing((p) => (p ? { ...p, phoneNumber: e.target.value } : p))}
+                            placeholder="mobile"
+                            className="block w-48 rounded border border-gray-300 px-2 py-1 text-xs"
+                          />
+                          <div className="flex gap-1.5">
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => void handleSaveContact()}
+                              className="rounded bg-gray-900 px-2.5 py-1 text-xs font-medium text-white disabled:opacity-50"
+                            >
+                              Save
+                            </button>
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => setContactEditing(null)}
+                              className="rounded border border-gray-300 px-2.5 py-1 text-xs text-gray-600"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          {m.email && <div className="text-xs text-gray-500">{m.email}</div>}
+                          {m.phoneNumber && <div className="text-xs text-gray-500">{m.phoneNumber}</div>}
+                        </>
+                      )}
                       {m.membershipStatus !== 'ACTIVE' && (
                         <span className="text-xs text-yellow-600">{m.membershipStatus}</span>
                       )}
@@ -467,6 +543,16 @@ function MembersSection({
                     </td>
                     <td className="py-2.5">
                       <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          className="rounded border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                          disabled={busy}
+                          onClick={() =>
+                            setContactEditing({ userId: m.userId, email: m.email ?? '', phoneNumber: m.phoneNumber ?? '' })
+                          }
+                        >
+                          Edit contact
+                        </button>
                         <button
                           type="button"
                           className="rounded border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
@@ -1469,6 +1555,306 @@ function AiUsageBudgetSection({
 
 // -- main page
 
+// -- plan limits & usage term (P29)
+
+const PLAN_TERM_CHIP_CLASS: Record<PlanTermChipTone, string> = {
+  neutral: 'bg-gray-100 text-gray-600 border-gray-200',
+  success: 'bg-green-50 text-green-700 border-green-200',
+  warning: 'bg-yellow-50 text-yellow-700 border-yellow-200',
+  danger: 'bg-red-50 text-red-700 border-red-200',
+};
+
+function PlanTermBadge({ chip }: { chip: PlanTermChip }) {
+  return (
+    <span className={`inline-flex rounded-full border px-2.5 py-0.5 text-xs font-semibold ${PLAN_TERM_CHIP_CLASS[chip.tone]}`}>
+      {chip.label}
+    </span>
+  );
+}
+
+function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: {
+  companyId: string;
+  companyStatus: PartnerStatus;
+  fieldsLocked: boolean;
+  showToast: (message: string, variant: 'success' | 'error') => void;
+}) {
+  // undefined = still loading; null = grandfathered company with no term row.
+  const [term, setTerm] = useState<CompanyPlanTermDto | null | undefined>(undefined);
+  const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [renewOpen, setRenewOpen] = useState(false);
+  const [renewDays, setRenewDays] = useState('30');
+  const [renewing, setRenewing] = useState(false);
+
+  const [tierKey, setTierKey] = useState<PlanTierKey>('STARTER_249');
+  const [branchLimit, setBranchLimit] = useState('');
+  const [employeeLimit, setEmployeeLimit] = useState('');
+  const [monthlySlipLimit, setMonthlySlipLimit] = useState('');
+  const [warningDays, setWarningDays] = useState('7');
+  const [termDays, setTermDays] = useState('30');
+
+  const load = async () => {
+    try {
+      setTerm((await getPartnerPlanTerm(companyId)).term);
+      setError(null);
+    } catch (err) {
+      const e = err as Error & { status?: number };
+      setError(e.status === 403 ? 'คุณไม่มีสิทธิ์ดูแพ็กเกจของบริษัทนี้' : apiErrorMessage(err));
+    }
+  };
+
+  useEffect(() => {
+    void load();
+  }, [companyId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const applyTierPreset = (key: PlanTierKey) => {
+    const preset = PLAN_TIER_PRESETS[key];
+    setTierKey(key);
+    setBranchLimit(String(preset.branchLimit));
+    setEmployeeLimit(String(preset.employeeLimit));
+    setMonthlySlipLimit(String(preset.monthlySlipLimit));
+  };
+
+  const startEditing = () => {
+    if (term) {
+      setTierKey(term.tierKey);
+      setBranchLimit(String(term.branchLimit));
+      setEmployeeLimit(String(term.employeeLimit));
+      setMonthlySlipLimit(String(term.monthlySlipLimit));
+      setWarningDays(String(term.warningDays));
+    } else {
+      // First-time setup starts from STARTER for 30 days (§4A) — every field stays editable.
+      applyTierPreset('STARTER_249');
+      setWarningDays('7');
+      setTermDays('30');
+    }
+    setEditing(true);
+  };
+
+  const handleSave = async () => {
+    const branch = parseLimitInput(branchLimit);
+    const employee = parseLimitInput(employeeLimit);
+    const slips = parseLimitInput(monthlySlipLimit);
+    const warn = parseLimitInput(warningDays);
+    const days = parseDaysInput(termDays);
+    if (branch === null || employee === null || slips === null || warn === null) {
+      showToast('จำนวนสาขา พนักงาน สลิป และวันแจ้งเตือน ต้องเป็นจำนวนเต็มตั้งแต่ 0 ขึ้นไป', 'error');
+      return;
+    }
+    if (!term && days === null) {
+      showToast('จำนวนวันที่ใช้งานต้องเป็นจำนวนเต็มมากกว่า 0', 'error');
+      return;
+    }
+    setSaving(true);
+    try {
+      const result = await setPartnerPlanTerm(companyId, {
+        tierKey,
+        branchLimit: branch,
+        employeeLimit: employee,
+        monthlySlipLimit: slips,
+        warningDays: warn,
+        // An existing row keeps its start date; termDays only applies to the first one (§4A).
+        ...(term ? {} : { termDays: days ?? undefined }),
+      });
+      setTerm(result.term);
+      setEditing(false);
+      showToast('บันทึกแพ็กเกจและอายุการใช้งานแล้ว', 'success');
+    } catch (err) {
+      showToast(apiErrorMessage(err), 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRenew = async () => {
+    const days = parseDaysInput(renewDays);
+    if (days === null) {
+      showToast('จำนวนวันที่ต่ออายุต้องเป็นจำนวนเต็มมากกว่า 0', 'error');
+      return;
+    }
+    setRenewing(true);
+    try {
+      const result = await renewPartnerPlanTerm(companyId, { days });
+      setTerm(result.term);
+      setRenewOpen(false);
+      showToast('ต่ออายุการใช้งานแล้ว', 'success');
+    } catch (err) {
+      showToast(apiErrorMessage(err), 'error');
+    } finally {
+      setRenewing(false);
+    }
+  };
+
+  // Renew restores a company the sweep disabled, but never one an admin disabled by hand (§4C).
+  const adminDisabled = companyStatus === 'DISABLED' && !term?.termDisabledAt;
+  const previewDays = parseDaysInput(renewDays);
+
+  return (
+    <SectionCard title="แพ็กเกจและอายุการใช้งาน">
+      {error ? (
+        <p className="text-sm text-red-600">{error}</p>
+      ) : term === undefined ? (
+        <div className="h-16 animate-pulse rounded border border-gray-100" />
+      ) : (
+        <>
+          {term === null && !editing && (
+            <div className="space-y-3">
+              <p className="text-sm text-gray-600">
+                ลูกค้าเดิม — ยังไม่กำหนดแพ็กเกจ/อายุการใช้งาน (ใช้ได้ไม่จำกัด)
+              </p>
+              <button type="button" className={btnPrimary} onClick={startEditing} disabled={fieldsLocked}>
+                ตั้งแพ็กเกจและอายุการใช้งาน
+              </button>
+            </div>
+          )}
+
+          {term !== null && (
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <PlanTermBadge chip={planTermStatusChip(term)} />
+                {planTermDisabledChip(term) && <PlanTermBadge chip={planTermDisabledChip(term)!} />}
+                <span className="text-sm font-medium text-gray-900">{PLAN_TIER_PRESETS[term.tierKey].labelTh}</span>
+              </div>
+
+              <p className="text-sm text-gray-700">{planTermLimitsText(term)}</p>
+              <p className="text-xs text-gray-500">
+                จำนวนสลิปเป็นค่าประกาศของแพ็กเกจ ยังไม่ตัดจริง
+              </p>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <ReadOnlyField label="เริ่มใช้งาน" value={formatDate(term.termStartAt)} />
+                <ReadOnlyField label="ครบกำหนด" value={formatDate(term.termEndsAt)} />
+                <ReadOnlyField label="แจ้งเตือนล่วงหน้า" value={`${term.warningDays} วัน`} />
+                <ReadOnlyField
+                  label="ต่ออายุแล้ว"
+                  value={term.renewCount === 0 ? 'ยังไม่เคยต่ออายุ' : `${term.renewCount} ครั้ง — ล่าสุด ${formatDate(term.lastRenewedAt)}`}
+                />
+              </div>
+
+              {!editing && (
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <button type="button" className={btnSecondary} onClick={startEditing} disabled={fieldsLocked}>
+                    แก้ไขแพ็กเกจ
+                  </button>
+                  {/* Deliberately not gated by fieldsLocked: renewing a company the expiry sweep
+                      disabled is the recovery path (§4C), so it has to stay reachable while
+                      DISABLED. The dialog warns when the disable came from an admin instead. */}
+                  <button
+                    type="button"
+                    className={btnPrimary}
+                    onClick={() => { setRenewDays('30'); setRenewOpen(true); }}
+                  >
+                    ต่ออายุ
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {editing && (
+            <div className="mt-2 space-y-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3">
+              <div>
+                <label className="mb-1 block text-xs text-gray-500">แพ็กเกจ</label>
+                <ThemedSelect
+                  className={inputClass}
+                  value={tierKey}
+                  disabled={saving}
+                  onChange={(e) => applyTierPreset(e.target.value as PlanTierKey)}
+                >
+                  {(Object.keys(PLAN_TIER_PRESETS) as PlanTierKey[]).map((key) => (
+                    <option key={key} value={key}>{PLAN_TIER_PRESETS[key].labelTh}</option>
+                  ))}
+                </ThemedSelect>
+                <p className="mt-1 text-xs text-gray-500">
+                  เลือกแพ็กเกจแล้วระบบจะเติมตัวเลขให้ ปรับรายช่องต่อได้ตามที่ตกลงกับลูกค้า
+                </p>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div>
+                  <label className="mb-1 block text-xs text-gray-500">จำนวนสาขา</label>
+                  <input className={inputClass} inputMode="numeric" value={branchLimit} disabled={saving}
+                    onChange={(e) => setBranchLimit(e.target.value)} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-gray-500">จำนวนพนักงาน</label>
+                  <input className={inputClass} inputMode="numeric" value={employeeLimit} disabled={saving}
+                    onChange={(e) => setEmployeeLimit(e.target.value)} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-gray-500">สลิปต่อเดือน</label>
+                  <input className={inputClass} inputMode="numeric" value={monthlySlipLimit} disabled={saving}
+                    onChange={(e) => setMonthlySlipLimit(e.target.value)} />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs text-gray-500">แจ้งเตือนล่วงหน้า (วัน)</label>
+                  <input className={inputClass} inputMode="numeric" value={warningDays} disabled={saving}
+                    onChange={(e) => setWarningDays(e.target.value)} />
+                </div>
+                {!term && (
+                  <div>
+                    <label className="mb-1 block text-xs text-gray-500">จำนวนวันที่ใช้งาน</label>
+                    <input className={inputClass} inputMode="numeric" value={termDays} disabled={saving}
+                      onChange={(e) => setTermDays(e.target.value)} />
+                    <p className="mt-1 text-xs text-gray-500">นับจากเวลาที่บันทึก แก้ไขวันหมดอายุภายหลังได้ด้วยการต่ออายุ</p>
+                  </div>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <button type="button" className={btnPrimary} onClick={handleSave} disabled={saving}>
+                  {saving ? 'กำลังบันทึก...' : 'บันทึก'}
+                </button>
+                <button type="button" className={btnSecondary} onClick={() => setEditing(false)} disabled={saving}>
+                  ยกเลิก
+                </button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {term && (
+        <Modal
+          open={renewOpen}
+          title="ต่ออายุการใช้งาน"
+          size="sm"
+          onClose={() => setRenewOpen(false)}
+          footer={(
+            <>
+              <button type="button" className={btnSecondary} onClick={() => setRenewOpen(false)} disabled={renewing}>
+                ยกเลิก
+              </button>
+              <button type="button" className={btnPrimary} onClick={handleRenew} disabled={renewing}>
+                {renewing ? 'กำลังต่ออายุ...' : 'ต่ออายุ'}
+              </button>
+            </>
+          )}
+        >
+          <div className="space-y-3">
+            <div>
+              <label className="mb-1 block text-xs text-gray-500">จำนวนวันที่ต่อ</label>
+              <input className={inputClass} inputMode="numeric" value={renewDays} disabled={renewing}
+                onChange={(e) => setRenewDays(e.target.value)} />
+            </div>
+            <p className="text-sm text-gray-600">
+              {previewDays === null
+                ? 'กรุณากรอกจำนวนวันเป็นจำนวนเต็มมากกว่า 0'
+                : `ครบกำหนดใหม่ ${formatDate(renewedEndsAt(term.termEndsAt, previewDays).toISOString())}`}
+            </p>
+            {adminDisabled && (
+              <div className="rounded border border-yellow-200 bg-yellow-50 px-3 py-2 text-sm text-yellow-800">
+                บริษัทนี้ถูกปิดโดยแอดมิน การต่ออายุจะไม่เปิดใช้งานอัตโนมัติ
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
+    </SectionCard>
+  );
+}
+
 export default function PartnerDetailPage({ companyId }: { companyId: string }) {
   const toast = useToast();
   const [detail, setDetail] = useState<PartnerCompanyDetailDto | null>(null);
@@ -1805,6 +2191,15 @@ export default function PartnerDetailPage({ companyId }: { companyId: string }) 
             onSaved={load}
           />
         </SectionCard>
+
+        {/* Plan limits & usage term (P29) */}
+        <PlanTermSection
+          key={companyId}
+          companyId={companyId}
+          companyStatus={currentStatus}
+          fieldsLocked={fieldsLocked}
+          showToast={showToast}
+        />
 
         {/* Members: credentials + LINE link administration */}
         <MembersSection companyId={companyId} showToast={showToast} />

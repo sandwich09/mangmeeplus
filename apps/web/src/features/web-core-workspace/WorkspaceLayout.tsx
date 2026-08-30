@@ -18,6 +18,7 @@ import {
   canAccessWorkspacePath,
 } from './web-core-workspace.logic';
 import { BranchFilterProvider, BranchSelector, CompanySwitcher } from './WorkspaceScope';
+import { PlanTermBanner } from '@/features/plan-term/PlanTermBanner';
 import { accessContextFingerprint, fetchMyContext, type MyContext } from './workspace-scope.api';
 import { MenuFilterProvider } from './MenuFilterScope';
 import { NotificationBell } from '@/features/dashboard-notifications/NotificationBell';
@@ -172,6 +173,7 @@ export default function WorkspaceLayoutClient({ children, companyId, session }: 
           </div>
         }
         headerExtras={session.permissions.includes('notification.read') ? <NotificationBell companyId={companyId} locale={locale} /> : undefined}
+        banner={<PlanTermBanner companyId={companyId} />}
         // Owner decision 2026-08-15: the shell shows the person, not their คำนำหน้า. Stripped at the
         // shell boundary so the sidebar name and both avatar initials agree — the session name is
         // the global User row, which a company-scoped rename does not always reach.

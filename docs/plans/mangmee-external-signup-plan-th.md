@@ -1,64 +1,52 @@
 # แผนส่งมอบ Auto-register จากเว็บไซต์ทางการ — P10
 
-สถานะ: **P10-0 เสร็จและ verify บน local; P10-1 เป็นต้นไปรอ Owner decisions ใน spec §8**
+สถานะ: **Slice A+B+C IMPLEMENTED บน branch `codex/auto-register-round1` (2026-08-30, Opus implements / Fable supervises+integrates); flag `EXTERNAL_SIGNUP_ENABLED` ปิดทุก env; Slice D (SES ops) รอ Owner ตาม [runbook](../runbooks/ses-email-setup.md); Slice E รอ SES + UAT ตาม [test plan](mangmee-auto-register-uat-test-plan-th.md)**
 
-Source of truth: [External Signup Contract Spec](../specs/mangmee-external-signup-contract-spec-th.md)
+Source of truth: [External Signup Contract Spec](../specs/mangmee-external-signup-contract-spec-th.md) (Flow B) + [Email Delivery/Claim Spec P11](../specs/mangmee-email-delivery-claim-spec-th.md)
 
 ## เป้าหมายและเส้นแบ่ง
 
-รับคำขอจากเว็บไซต์ให้เป็น durable state ก่อนทำ side effect, retry ได้โดยไม่สร้าง Company/User/Membership ซ้ำ และ provision หลัง email claim สำเร็จเท่านั้น งานนี้ไม่ให้ package/offer เปิด entitlement และไม่รวม subscription/payment
+รับคำขอจากหน้า public ในแอปให้เป็น durable state ก่อนทำ side effect, retry ได้โดยไม่สร้าง Company/User/Membership ซ้ำ, ลำดับด่าน = **System Admin อนุมัติ → email claim → provision** และอีเมลออกฉบับเดียวเฉพาะรายที่อนุมัติ งานนี้ไม่ให้ package/offer เปิด entitlement, ไม่รวม subscription/payment, และไม่บังคับโควตา trial (P26)
 
-Public API ต้องยังไม่มีจน auth, replay window และ duplicate identity policy ถูกตัดสินครบ การมี core provider ใน DI ไม่เท่ากับเปิด feature
+## Phase 0 — Durable core (เสร็จ — หลักฐานท้ายไฟล์)
 
-## Phase 0 — Durable core (เสร็จ)
+- [x] `CompanySignupRequest` + state/version + unique `externalSignupId` + provisioning attempt fence
+- [x] normalize/hash payload, idempotency replay/409, advisory lock + CAS, one-winner provisioning
+- [x] audit/outbox ทุก transition แบบไม่มี PII; module ไม่มี public route
 
-- [x] เพิ่ม `CompanySignupRequest` + state/version + unique `externalSignupId` และ provisioning attempt fence แบบ additive migration
-- [x] normalize email/tax ID และ hash canonical payload ก่อน idempotency comparison
-- [x] same key/same payload replay; same key/different payload `409`
-- [x] transaction advisory lock + unique constraint สำหรับ concurrent receive; version CAS สำหรับ transition
-- [x] explicit state graph รวม retry จาก `EMAIL_FAILED` และ `PROVISIONING_FAILED`
-- [x] one-winner provisioning claim, attempt-fenced complete/fail และบันทึกเวลาเริ่มเพื่อ reconcile unknown outcome
-- [x] append audit/outbox ทุก durable transition โดย evidence payload ไม่มี PII
-- [x] module ไม่มี controller/public route
+## Slice A — ประตูเข้า + ฟอร์ม + คิวเข้า state (พร้อมเริ่ม ไม่ติดอะไร)
 
-Gate: Prisma validate/generate/migration deploy/status, focused test, full API test/typecheck/boot และ real-PostgreSQL concurrency smoke ต้องผ่าน
+- Delta migration: เพิ่มค่า enum `PENDING_REVIEW`, `REJECTED` + field `pendingPasswordHash`, `attachUserId` (nullable ทั้งคู่) — additive เท่านั้น; transition map ใหม่ตาม spec §4 + test ชุดใหม่ (ห้ามนับหลักฐาน P10-0)
+- `POST /v1/public/company-signups` + `GET /v1/public/company-signups/:requestId` แบบ `@Public()` ตาม precedent customer-line-register: DTO bounded/pattern (payload spec §3 รวม `businessType`/`phoneNumber`/`vatRegistered`), rate limit fail-closed bucket `public-signup-ip`/`public-signup-email` ก่อน use case, ตอบ `202 {requestId}`/state allowlist เท่านั้น
+- Validation ที่ VALIDATED: schema + normalize + MX lookup (`dns.promises.resolveMx` + timeout) + dedupe hints (email→User/คำขอเดิม, taxId→Company) → เข้าคิว `PENDING_REVIEW` ทันที ไม่มีเมลออก
+- หน้าเว็บ `/signup` + หน้าเช็คสถานะ (mobile-first 390px, offer preview 4 tier ตาม spec §3A ชุด 2026-08-30 — `PRO_TRIAL` เลือกได้อย่างเดียว), ข้อความหลัง submit ห้ามอ้างสร้างบริษัทสำเร็จ
+- Gate: idempotent replay/409, MX fail message, rate-limit hit, state โผล่ในคิวถูกต้อง, ไม่มี secret ใน response
 
-## Phase 1 — Signed official-site ingress (BLOCKED)
+## Slice B — Claim + token (พร้อมเริ่มด้วย provider `local-console`; email จริงรอ Slice D)
 
-ต้องได้ Owner decision เรื่อง HMAC หรือ service JWT ก่อน แล้วจึงทำ:
+- ตาราง `AccountClaimToken` (hash unique, single-use atomic H-09, TTL 7 วัน, resend = mint ใหม่ revoke เก่า) + outbox event `email.account_claim.requested` (พกแค่ `signupRequestId`) + consumer mint-at-send ใน workers ตาม P11 F-EM-3
+- หน้า claim: expired/used/unknown ตอบ public message เดียวกัน; ทางแยก "มีบัญชีอยู่แล้วหรือยัง" — ใหม่ → ตั้งรหัส (hash ลง `pendingPasswordHash`); มีแล้ว → login รหัสเดิม/LINE (P12) → เก็บ `attachUserId`
+- Resend จากหน้าเช็คสถานะ (จำกัดความถี่ — ใช้ได้ทั้ง EMAIL_PENDING และหลังลิงก์หมดอายุตาม spec §4D กรณีไม่มา claim) + เมลเตือน exactly-once ก่อนหมดอายุ 2 วัน + ธง "ยังไม่เริ่มใช้งาน N วัน" ในคิว + EXPIRED ถาวรหลัง 30 วัน
+- Gate: hash-only (สแกนว่า raw token ไม่แตะ DB/outbox/log), single-use/replay/expiry/concurrency, ทางแยกทั้งสองเส้นจบที่ EMAIL_VERIFIED พร้อมข้อมูลถูกช่อง
 
-- DTO allowlist/bounds, raw-body signature หรือ JWT audience/issuer, timestamp skew และ nonce single-use
-- fail-closed rate limit แยก IP/email โดย key ที่ไม่เก็บ email ดิบใน telemetry
-- `POST` ตอบ `202 { requestId }` และ signed `GET` คืน state ที่ allowlist เท่านั้น
-- secret rotation, invalid/expired/replayed signature tests และ response-secret scan
+## Slice C — คิวแอดมิน + provisioning (พร้อมเริ่ม)
 
-ห้าม reuse System Admin cookie/API key และห้ามเปิด route แบบชั่วคราวระหว่างรอคำตอบ
+- หน้า System Admin: list คำขอ + ผล MX/dedupe hints/ธง bounce + map `businessType` → enum + Approve/Reject idempotent + audit; Reject ค่าเริ่มต้นเงียบ + ตัวเลือก "แจ้งผู้สมัคร" รายกรณี; แจ้งเตือน dashboard เมื่อค้างเกิน 24 ชม.
+- Approve → EMAIL_PENDING (ยิง outbox event); ไม่ provision ที่จุดนี้
+- Provisioning adapter หลัง claim: เรียก `CreateCompanyOnboardingUseCase` เดิมผ่าน provisioning claim ที่ P10-0 มีแล้ว; เพิ่มการเขียน `User.email`/`emailVerifiedAt`; เส้น `attachUserId` = ผูก membership เข้า User เดิมไม่สร้างใหม่; ตรวจว่าไม่มี app-level unique ชื่อบริษัทขวาง; ลบ `pendingPasswordHash` เมื่อสำเร็จ; ตั้ง term row preset PRO + 30 วันตาม [P29 plan T3](mangmee-company-plan-term-plan-th.md)
+- หน้าสำเร็จ + ขั้น LINE ตาม spec §4F (ปุ่ม OAuth/QR จาก P12, add-friend OA, ข้ามได้) + dialog merge เมื่อ LINE ชนบัญชีอื่น (รวม/ไว้ก่อน — ไม่มีตัวเลือกย้าย LINE) + label บทบาทใน company picker (web + LINE) + เปลี่ยน label ช่อง login เป็น "ชื่อผู้ใช้ หรือ อีเมล" (backend รับอีเมลอยู่แล้ว) — mockup 3 จอรับรองโดย Owner อยู่ที่ scratchpad `mangmee-claim-success-mockup.html`
+- Gate: same-request concurrency = Company/User/Membership อย่างละหนึ่ง; attach ไม่สร้าง User ซ้ำ; merge ย้าย membership + ปิดบัญชีว่างโดย audit เดิมอยู่ครบ; reject ลบ hash ไม่ทิ้ง User กำพร้า
 
-## Phase 2 — Validation และ identity collision (BLOCKED)
+## Slice D — Email จริงผ่าน SES (ops คู่ขนาน — **ติด Owner ตาม P11 §5 ข้อ 1–2**)
 
-ต้องได้ Owner decision เรื่อง email/tax-ID collision และ `businessCategory` ก่อน:
+- ยืนยันโดเมนผู้ส่ง + DKIM/SPF/DMARC (DNS อยู่ Cloudflare — Owner วาง records หรือเปิดทาง), region ap-southeast-1, configuration set + bounce/complaint event → ธง `EMAIL_FAILED` ในคิว, ขอออกจาก SES sandbox (lead time ~1 วัน — เริ่มก่อนโค้ดเสร็จ)
+- สลับ `EMAIL_PROVIDER=ses` ใน UAT ก่อน แล้วพิสูจน์ inbox จริง + DKIM pass + bounce round-trip ตาม P11 §4
+- **ผู้ใช้เดิมไม่มีอีเมลในระบบ**: ✅ ปิดบางส่วนแล้ว 2026-08-30 — Partner console เพิ่มช่อง email+mobile ต่อ member (`PATCH .../members/:id/contact`, `User.email` unique เดิม + `User.phoneNumber` ใหม่, audit HIGH; Owner กรอกย้อนหลังเอง ไม่มี script migrate) → login ด้วยอีเมลใช้ได้ทันทีที่กรอก; ที่เหลือของ Slice D: UI "เพิ่ม/ยืนยันอีเมล" ฝั่งผู้ใช้เอง (รอ SES) — admin-entered email ไม่ตั้ง `emailVerifiedAt` (การยืนยันจริงยังเป็นของ flow ยืนยัน)
 
-- exact external key ใช้ idempotency; normalized email/tax ID ใช้ deterministic attach/review เท่านั้น
-- name similarity ไม่สร้าง/attach/merge อัตโนมัติ
-- persist review reason/state โดยไม่รั่ว PII ใน audit/metric
-- integration tests สำหรับ existing user, existing company tax ID, concurrent collision และ deny path
+## Slice E — Rollout
 
-## Phase 3 — Email-verified provisioning (ขึ้นกับ P11)
-
-- P11 สร้าง/ยืนยัน owner credential ก่อน; ไม่มี temporary password
-- adapter เรียก onboarding application boundary เดิมเฉพาะผู้ถือ provisioning claim
-- ผูก `signupRequestId`/attempt กับผล Company+Owner และ complete durable state แบบ idempotent
-- unknown outcome ที่ค้าง `PROVISIONING` ต้อง reconcile ผลเดิมก่อน retry; ห้าม blind retry สร้างบริษัทซ้ำ
-- provider email ล่มเปลี่ยนเฉพาะ email state/outbox; ห้าม rollback signup/company ที่ commit แล้ว
-
-Gate: same-request concurrency ต้องมี Company/User/Membership อย่างละหนึ่ง, stale worker mutate ไม่ได้, audit/source refs ครบ และไม่มี secret ใน response/log
-
-## Phase 4 — Journey/rollout (ขึ้นกับ P12/P9/P25)
-
-- หน้า “กรุณาตรวจอีเมล” และ status mapping ตาม durable state; ข้อความ/ปุ่มขนาดเหมาะกับผู้ใช้ 40+
-- success → OA กลาง/LIFF handoff โดยไม่ส่ง password หรือ personal QR ใน email
-- desktop 1440×900 และ mobile 390×844: keyboard/focus/loading/error/expired/resend path ไม่มี overflow หรือ console error
-- ผูก P9 funnel/alarms และรัน P25/UAT gate ก่อนเปิด Marketing; external-signup flag คง OFF จนหลักฐานครบ
+- Flag `EXTERNAL_SIGNUP_ENABLED` default OFF ทุก env → UAT e2e ครบวง (สมัคร→อนุมัติ→เมล→claim ทั้งสองทางแยก→LINE ทั้ง link/merge/ไว้ก่อน) → production ตาม runbook V2 → ค่อยชี้ลิงก์จากเว็บ official + rich menu
+- ตัวเลข trial (P10 §8 ข้อ 5) ใส่เป็น config แสดงผลก่อนเปิดจริง
 
 ## Verification evidence P10-0 (2026-08-26)
 

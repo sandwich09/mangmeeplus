@@ -1,6 +1,6 @@
 # Email Delivery และ Claim Account — Spec P11
 
-สถานะ: **PARTIAL — Phase 0 disabled-safe provider foundation MERGED DEVELOP `d8d9808e` ผ่าน PR #290** (2026-08-27T05:08:55Z); exact-head CI `33040896057` SUCCESS บน `6f85339d`. Phase 1 durable claim send รอ secret-lifecycle decision และ live delivery รอ Owner/operations §5. ดู [แผน P11](../plans/mangmee-email-delivery-claim-plan-th.md); ไม่ใช่การเปิด email/claim หรือปิด EMAIL-01.
+สถานะ: **PARTIAL — Phase 0 disabled-safe provider foundation MERGED DEVELOP `d8d9808e` ผ่าน PR #290** (2026-08-27T05:08:55Z); exact-head CI `33040896057` SUCCESS บน `6f85339d`. Phase 1 durable claim send ปลดล็อกแล้ว (secret-lifecycle ตัดสินเป็น mint-at-send — §5 ข้อ 3, 2026-08-30) และปรับเข้า P10 Flow B; live delivery ยังรอ Owner/operations §5 ข้อ 1–2. ดู [แผน P11](../plans/mangmee-email-delivery-claim-plan-th.md); ไม่ใช่การเปิด email/claim หรือปิด EMAIL-01.
 
 ที่มา: [แผนหลัก P11 + §13.6](../plans/mangmee-brain-2-5-day-priority-plan-th.md); STOP-SHIP: EMAIL-01 (§13.3); AUTH-02 (credential ชุดเดียว) บังคับกับหน้า claim
 
@@ -54,11 +54,13 @@
 - Event `email.account_claim.requested` (companyId null ได้) → consumer ใหม่ (workers) เรียก adapter; retry/backoff/DEAD ตาม outbox กลไกเดิม; `eventKey` = `email:claim:<signupRequestId>` กันส่งซ้ำ
 - Bounce/complaint: SES event destination เขียนสถานะกลับ `CompanySignupRequest.EMAIL_FAILED`, เพิ่ม address ลง suppression policy ของบัญชีเมื่อเข้าเงื่อนไข, และโชว์ใน System Admin (ตาม §13.4 ข้อ 3 "แสดงว่าอีเมลส่งแล้ว/ตีกลับ/รอ retry"); ห้าม retry hard bounce/complaint แบบไม่จำกัด
 
-### F-EM-3 Claim flow
+### F-EM-3 Claim flow — **อัปเดตตาม P10 Flow B (Owner 2026-08-30)**
 
-- ตาราง `AccountClaimToken` (hash unique, TTL จาก §8 ของ P10 spec, single-use atomic claim H-09, ขอใหม่ revoke เก่า — กติกาเดียวกับ reset token)
+- เมล claim ส่ง **หลัง System Admin อนุมัติเท่านั้น** (P10 state `PENDING_REVIEW → EMAIL_PENDING`) และเป็นอีเมล**ฉบับเดียว**ของ flow — ไม่มีเมลยืนยันแยกก่อนคิว และไม่มีเมล "เปิดใช้แล้ว" แยกอีกฉบับ
+- **Token mint-at-send (Owner รับข้อเสนอ 2026-08-30 — ปิด §5 ข้อ 3):** outbox event `email.account_claim.requested` พก `signupRequestId` เท่านั้น ไม่มี token; consumer ใน workers เป็นผู้มินท์ token ตอนจะส่งจริง → เขียน hash ลง `AccountClaimToken` → ประกอบ raw link ใส่เมลครั้งเดียวแล้วทิ้ง — raw token ไม่เคยแตะ DB/outbox/log; retry หรือ resend = มินท์ใหม่ + revoke เก่า
+- ตาราง `AccountClaimToken` (hash unique, TTL **72 ชั่วโมง** — Owner เคาะ 2026-08-30 ปรับได้, single-use atomic claim H-09, ขอใหม่ revoke เก่า — กติกาเดียวกับ reset token)
 - Token ที่หมดอายุ ใช้ไปแล้ว หรือไม่รู้จัก (expired/used/unknown) ต้องตอบข้อความ public ทั่วไปเดียวกัน; Phase 2 acceptance ต้องตรวจทั้งสามกรณี ตาม [canonical plan เดิม:37](https://github.com/MangmeeDev/mangmeeplus/blob/384d72a5720a58efde943831124e85765ebbc5cb/docs/plans/mangmee-email-delivery-claim-plan-th.md#L37). เป็นข้อกำหนดเดิม ไม่เลือก TTL/token representation หรือเปิด route ใหม่.
-- หน้า claim (public, CSP/no-store ตามแบบ LIFF pages): ยืนยัน email (`emailVerifiedAt` เขียนที่นี่ — จุดแรกที่ระบบเขียน email อย่างเป็นทางการ) → ตั้งรหัส (policy เดิม) → provision (P10 state PROVISIONING→READY) → success + ปุ่ม "เพิ่มเพื่อนและเชื่อม LINE" (ต่อ P12)
+- หน้า claim (public, CSP/no-store ตามแบบ LIFF pages): ยืนยัน email (`emailVerifiedAt` เขียนที่นี่ — จุดแรกที่ระบบเขียน email อย่างเป็นทางการ) → **ทางแยกบังคับถาม "มีบัญชีอยู่แล้วหรือยัง"** ตาม P10 §4B: ยังไม่มี → ตั้งรหัส (policy เดิม); มีแล้ว → login ด้วยรหัสเดิม/LINE แล้ว attach บริษัทใหม่เข้าบัญชีเดิมโดยไม่ตั้งรหัส → provision (P10 state PROVISIONING→READY) → success + ปุ่ม "เพิ่มเพื่อนและเชื่อม LINE" (P12 — กติกา merge เมื่อ LINE ชนบัญชีอื่นอยู่ที่ P10 §4F)
 - Claim ใช้กับ onboarding ภายในด้วย (PLATFORM-02: เปลี่ยน handoff จาก copy รหัสเป็น claim link) — admin flow เดิมคงอยู่เป็น fallback
 
 ## 4. Gates/tests (ยกจาก §15 แถว Email/Claim คำต่อคำ)
@@ -67,10 +69,10 @@ SES delivery ถึง inbox ทดสอบ, DKIM ผ่าน, bounce/complain
 
 ## 5. คำถาม Owner
 
-1. โดเมนผู้ส่ง (`SES_FROM_ADDRESS`) ใช้โดเมนไหน ใครถือ DNS (ต้องตั้ง DKIM)
-2. SES อยู่ region ไหน (แนะนำ ap-southeast-1 ใกล้ผู้ใช้)
-3. Raw claim link จะข้าม durable outbox อย่างไรโดยยังรักษา hash-only: dedicated encrypted delivery envelope + short retention หรือ deterministic signed token + versioned signing-key lifecycle; ต้องระบุ rotation/retry/retention/deletion/log redaction/revocation ก่อน Phase 1 ไม่เลือกแทน Owner
-4. Claim TTL และผู้มีสิทธิ์ resend/revoke ตาม P10 §8; ยังไม่ยืม TTL ของ reset/verify มาใช้กับ claim โดยอัตโนมัติ
+1. **ยังเปิด (บล็อก live delivery):** โดเมนผู้ส่ง (`SES_FROM_ADDRESS`) — แนะนำ `no-reply@mangmeeplus.com`; ข้อเท็จจริง 2026-08-30: DNS ของ mangmeeplus.com อยู่ **Cloudflare** (ไม่ใช่ Route53) → Owner ต้องวาง DKIM/SPF/DMARC records เองหรือเปิดทางให้ทำแทน
+2. **ยังเปิด (บล็อก live delivery):** SES region — แนะนำ ap-southeast-1; ข้อเท็จจริง 2026-08-30: IAM user ฝั่ง dev ไม่มีสิทธิ์ SES ใด ๆ (ยังไม่เคยตั้งค่า SES ในบัญชี = ยังอยู่ sandbox) → ต้องเพิ่มสิทธิ์หรือ Owner กด console ตามขั้นตอน + ยื่นขอ production access (AWS ใช้เวลา ~1 วัน) — ควรเริ่มก่อนงานโค้ดเสร็จ
+3. ~~กลไกกัน raw token ใน outbox~~ → **ตอบแล้ว 2026-08-30 (F-EM-3):** consumer mint-at-send, event พกแค่ `signupRequestId`, hash-only คงเดิม, resend = มินท์ใหม่+revoke เก่า
+4. ~~Claim TTL / สิทธิ์ resend-revoke~~ → **ตอบแล้ว 2026-08-30 (F-EM-3 + P10 §4B/§8):** 72 ชั่วโมง; ผู้สมัคร resend จากหน้าเช็คสถานะ (จำกัดความถี่); System Admin resend/revoke จากคิว; ไม่ยืม TTL ของ reset/verify
 
 ## 6. หลักฐานภายนอกที่ต้องตรวจซ้ำตอน implement
 

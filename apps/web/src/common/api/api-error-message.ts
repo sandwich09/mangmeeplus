@@ -318,6 +318,10 @@ const CODE_LABELS: Record<string, string> = {
   password_reuse: 'รหัสผ่านใหม่ต้องไม่ซ้ำกับรหัสผ่านเดิม',
   current_password_incorrect: 'รหัสผ่านปัจจุบันไม่ถูกต้อง',
   company_access_unavailable: 'คุณไม่มีสิทธิ์เข้าใช้บริษัทนี้แล้ว กรุณาติดต่อเจ้าของร้าน',
+  // P29: the term ended, so business routes are refused on access. Data is intact — the copy must
+  // not read as data loss, and the only move that helps is renewing, not retrying.
+  company_term_expired: 'ร้านนี้ครบกำหนดใช้งานแล้ว ข้อมูลทั้งหมดยังอยู่ครบ ติดต่อต่ออายุเพื่อใช้งานต่อ',
+  line_linked_elsewhere: 'LINE นี้เชื่อมกับบัญชีอื่นอยู่แล้ว เลือกได้ว่าจะรวมเป็นบัญชีเดียวหรือใช้แยกกันต่อ',
 
   // ---- ยอมรับข้อกำหนดการใช้งาน ----
   legal_acceptance_required: 'ต้องยอมรับข้อกำหนดการใช้งานและรับทราบประกาศความเป็นส่วนตัวก่อนใช้งาน',
@@ -336,6 +340,13 @@ const CODE_LABELS: Record<string, string> = {
     'มีการบันทึกสถานะจดทะเบียน VAT ล่วงหน้าไว้แล้ว กรุณาเลือกว่าจะแทนที่รายการเดิมหรือไม่',
   vat_registration_backdated_crosses_filed_period:
     'วันที่จดทะเบียน VAT ย้อนหลังคร่อมงวดที่ยื่นแบบไปแล้ว กรุณาตรวจสอบกับผู้ทำบัญชีก่อนบันทึก',
+
+  // ---- คิวคำขอสมัครใช้งาน (P10 Flow B) ----
+  // ทั้งสองโค้ดมาจาก company-signup-core.service และโผล่ที่ปุ่มอนุมัติ/ปฏิเสธ/ส่งลิงก์ใหม่ในคิว
+  // ทางแก้เดียวกันคือโหลดคิวใหม่ ข้อความจึงชี้ไปที่คิว ไม่ใช่ให้กดซ้ำ
+  company_signup_request_not_found: 'ไม่พบคำขอสมัครนี้แล้ว กรุณาโหลดคิวคำขอใหม่',
+  company_signup_concurrent_transition:
+    'คำขอนี้ถูกดำเนินการโดยผู้ดูแลคนอื่นระหว่างทำรายการ กรุณาโหลดคิวคำขอใหม่แล้วตรวจสถานะล่าสุด',
 };
 
 // Several upload rejections differ only in which check caught the file; the user's next move is

@@ -64,6 +64,9 @@ export class AppConfigService {
   get lineWebLoginEnabled(): boolean { return this.config.LINE_WEB_LOGIN_ENABLED; }
   /** P12-3b: LINE deep-link session handoff. Off = no token minted, plain links, exchange 403. */
   get lineWebHandoffEnabled(): boolean { return this.config.LINE_WEB_HANDOFF_ENABLED; }
+  /** P10 Flow B: public self-service signup. Off = form closed and POST 403; already-issued
+   *  status and claim links stay readable so an approved applicant is never stranded mid-flow. */
+  get externalSignupEnabled(): boolean { return this.config.EXTERNAL_SIGNUP_ENABLED; }
   get lineLiffId(): string | undefined { return this.config.LINE_LIFF_ID; }
   get lineMessagingChannelId(): string | undefined { return this.config.LINE_MESSAGING_CHANNEL_ID; }
   get lineMessagingChannelSecret(): string | undefined { return this.config.LINE_MESSAGING_CHANNEL_SECRET; }

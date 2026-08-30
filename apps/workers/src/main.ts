@@ -12,6 +12,8 @@ import { startCrmTrustWorker } from './modules/crm-inbox/crm-trust-worker.js';
 import { startLineAiLedgerWorker } from './modules/line-ai-ledger/line-ai-ledger-worker.js';
 import { startCrmCampaignWorker } from './modules/crm-inbox/crm-campaign-worker.js';
 import { startExpenseAutoPostWorker } from './modules/expense-auto-post/expense-auto-post-worker.js';
+import { startPlanTermSweepWorker } from './modules/plan-term-sweep/plan-term-sweep-worker.js';
+import { startSignupClaimEmailWorker, startSignupClaimReminderWorker } from './modules/signup-claim-email/signup-claim-email-worker.js';
 
 // Registered before anything that can reject: a full Redis takes every worker down at boot, and
 // without this Node prints the whole BullMQ error object on the way out. One bounded line instead.
@@ -56,6 +58,12 @@ const workers: Worker[] = [];
 if (config.QUEUE_ENABLED) {
   workers.push(startNotificationWorker(config.REDIS_URL));
   workerLog('info', { event: 'notification_worker_started' });
+  workers.push(startPlanTermSweepWorker(config.REDIS_URL));
+  workerLog('info', { event: 'plan_term_sweep_worker_started' });
+  workers.push(startSignupClaimEmailWorker(config.REDIS_URL));
+  workerLog('info', { event: 'signup_claim_email_worker_started' });
+  workers.push(startSignupClaimReminderWorker(config.REDIS_URL));
+  workerLog('info', { event: 'signup_claim_reminder_worker_started' });
   workers.push(startWorkflowWorker(config.REDIS_URL, {
     internalApiUrl: config.INTERNAL_API_URL,
     workerToken: config.WORKER_INTERNAL_TOKEN ?? '',
