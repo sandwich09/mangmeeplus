@@ -195,6 +195,7 @@ export const apiConfigSchema = baseConfigSchema.extend({
   // contract keeps reporting `line` unavailable and the callback endpoint stays 403 until an
   // environment turns this on with both channel id and secret present.
   LINE_WEB_LOGIN_ENABLED: envBoolean.default(false),
+  EXTERNAL_SIGNUP_ENABLED: envBoolean.default(false),
   // P12-3b LINE → web deep-link session handoff. Default OFF: with it off no token is ever minted,
   // every LINE link keeps the plain URL it has today, and the exchange endpoint stays 403 — so the
   // observable behaviour is byte-identical to the release before it. Rollout is additionally gated
