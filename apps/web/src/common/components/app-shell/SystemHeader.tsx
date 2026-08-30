@@ -8,6 +8,7 @@ import { AlertModal } from '@/common/components/modal';
 const SECTIONS = [
   { href: '/system/platform-access', label: 'เปิด–ปิดระบบ' },
   { href: '/system/partners', label: 'พาร์ทเนอร์' },
+  { href: '/system/signup-requests', label: 'คำขอสมัครใช้งาน' },
   { href: '/system/company-onboardings/new', label: 'เปิดบริษัทใหม่' },
   { href: '/system/data-rights', label: 'สิทธิข้อมูล' },
   // Audit H-14: the shared LINE credential screen is hidden until it can actually rotate a

@@ -25,6 +25,10 @@ import type {
   PartnerMembersDto,
   PartnerMemberPasswordResetDto,
   PartnerMemberTempPasswordDto,
+  CompanyPlanTermDto,
+  CompanyPlanTermViewDto,
+  RenewCompanyPlanTermBody,
+  SetCompanyPlanTermBody,
 } from '@watchdog-bms/contracts';
 import { authedApiFetch as apiFetch } from '@/common/api/authed-fetch';
 
@@ -55,6 +59,10 @@ export type {
   PartnerMembersDto,
   PartnerMemberPasswordResetDto,
   PartnerMemberTempPasswordDto,
+  CompanyPlanTermDto,
+  CompanyPlanTermViewDto,
+  RenewCompanyPlanTermBody,
+  SetCompanyPlanTermBody,
 };
 
 /** Response of the lifecycle endpoint — status + timestamps only, NOT the full detail. */
@@ -221,6 +229,33 @@ export async function revealPartnerMemberTempPassword(
     `/v1/system/partners/${companyId}/members/${memberUserId}/password/reveal`,
     { method: 'POST', suppressErrorToast: true },
   );
+}
+
+/** `term` is null for a grandfathered company: no plan limits and no end date until an admin sets one. */
+export async function getPartnerPlanTerm(companyId: string): Promise<CompanyPlanTermViewDto> {
+  return apiFetch<CompanyPlanTermViewDto>(`/v1/system/partners/${companyId}/plan-term`);
+}
+
+export async function setPartnerPlanTerm(
+  companyId: string,
+  body: SetCompanyPlanTermBody,
+): Promise<CompanyPlanTermViewDto> {
+  return apiFetch<CompanyPlanTermViewDto>(`/v1/system/partners/${companyId}/plan-term`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+    suppressErrorToast: true,
+  });
+}
+
+export async function renewPartnerPlanTerm(
+  companyId: string,
+  body: RenewCompanyPlanTermBody,
+): Promise<CompanyPlanTermViewDto> {
+  return apiFetch<CompanyPlanTermViewDto>(`/v1/system/partners/${companyId}/plan-term/renew`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+    suppressErrorToast: true,
+  });
 }
 
 export async function setSharedLineCredential(
