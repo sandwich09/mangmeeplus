@@ -1,5 +1,17 @@
 # Agent Memory: line-rich-menu-v2
 
+> **SUPERSEDED 2026-08-30 (Owner in chat): the puppy-artwork "V2 Ver1" profile in this repo is the OLD design.**
+> The Owner's current design is the FLAT six-tile menu (Promotion Package/FREE ribbon, บริษัทของฉัน MY COMPANY,
+> ถ่ายใบเสร็จ, คุยกับน้องมั่งมี, สรุปค่าใช้จ่าย, ติดต่อเรา; channel resource name "MangmeePlus Ver2").
+> Live state after the 2026-08-30 sync: UAT default `richmenu-bf590764d063eda623f5325c95049b50` (flat),
+> production default `richmenu-195f5413dd79dc955758ad5158d2fc5b` (flat, copied from UAT definition+image via
+> Messaging API). Rollbacks retained, not deleted: UAT puppy `richmenu-3b499d4557775e8cf236409fe68b6028`,
+> production puppy `richmenu-cd142e64254bc1e62ebb3fb2b8efa8ed`.
+> Follow-up: import the flat design (definition + bitmap) into the repo as the current versioned profile and
+> retire the puppy bitmap/manifest; the sections below describe the superseded puppy profile.
+> Gotcha (kept from the first activation): LINE set-default POST needs `Content-Length: 0` — bodyless -X POST gets HTTP 411.
+
+
 Status: Repository implementation and verification complete on 2026-08-21; PR, deploy, LINE activation, and device UAT pending.
 
 Owner: thawatchai
