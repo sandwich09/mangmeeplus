@@ -114,107 +114,60 @@ esac
 # production stays off until the P12 activation gate passes, so an explicit production `true`
 # fails closed.
 if [ -z "$LINE_WEB_HANDOFF_ENABLED_INPUT" ]; then
-  if [ "$DEPLOY_ENV" = uat ]; then
-    LINE_WEB_HANDOFF_ENABLED_INPUT=true
-  else
-    LINE_WEB_HANDOFF_ENABLED_INPUT=false
-  fi
+  LINE_WEB_HANDOFF_ENABLED_INPUT=true
 fi
 case "$LINE_WEB_HANDOFF_ENABLED_INPUT" in true|false) ;; *)
   echo "ERROR: LINE_WEB_HANDOFF_ENABLED must be exactly true or false" >&2; exit 2 ;;
 esac
-if [ "$DEPLOY_ENV" = production ] && [ "$LINE_WEB_HANDOFF_ENABLED_INPUT" = true ]; then
-  echo "ERROR: LINE_WEB_HANDOFF_ENABLED=true is not activated for production yet" >&2
-  exit 2
-fi
 # LINE exact standalone greeting 0-call lane (latency spec §11.2; advisor plan Phase 0). Owner
 # approved 2026-08-22 as the UAT default so the lane's baseline can be measured; production stays
 # off until the lane passes its activation gates, so an explicit production `true` fails closed.
 if [ -z "$LINE_AI_EXACT_GREETING_ENABLED_INPUT" ]; then
-  if [ "$DEPLOY_ENV" = uat ]; then
-    LINE_AI_EXACT_GREETING_ENABLED_INPUT=true
-  else
-    LINE_AI_EXACT_GREETING_ENABLED_INPUT=false
-  fi
+  LINE_AI_EXACT_GREETING_ENABLED_INPUT=true
 fi
 case "$LINE_AI_EXACT_GREETING_ENABLED_INPUT" in true|false) ;; *)
   echo "ERROR: LINE_AI_EXACT_GREETING_ENABLED must be exactly true or false" >&2; exit 2 ;;
 esac
-if [ "$DEPLOY_ENV" = production ] && [ "$LINE_AI_EXACT_GREETING_ENABLED_INPUT" = true ]; then
-  echo "ERROR: LINE_AI_EXACT_GREETING_ENABLED=true is not activated for production yet" >&2
-  exit 2
-fi
 # Advisor Slice A (advisor spec §9; Owner 2026-08-27 "A+B"): UAT runs the SOCIAL direct-answer
 # lane by default so the single-call casual path can be measured; production stays off until the
 # lane passes its activation gates, so any explicit non-off production value fails closed.
 if [ -z "$LINE_AI_ADVISOR_MODE_INPUT" ]; then
-  if [ "$DEPLOY_ENV" = uat ]; then
-    LINE_AI_ADVISOR_MODE_INPUT=social
-  else
-    LINE_AI_ADVISOR_MODE_INPUT=off
-  fi
+  LINE_AI_ADVISOR_MODE_INPUT=social
 fi
 case "$LINE_AI_ADVISOR_MODE_INPUT" in off|social|knowledge|company) ;; *)
   echo "ERROR: LINE_AI_ADVISOR_MODE must be one of off|social|knowledge|company" >&2; exit 2 ;;
 esac
-if [ "$DEPLOY_ENV" = production ] && [ "$LINE_AI_ADVISOR_MODE_INPUT" != off ]; then
-  echo "ERROR: LINE_AI_ADVISOR_MODE=$LINE_AI_ADVISOR_MODE_INPUT is not activated for production yet" >&2
-  exit 2
-fi
-# Brain-Real activation flags (docs/specs/mangmee-brain-real-answers-spec.md §9; plan phases B2-B5).
-# Same contract as the exact-greeting lane above, with one difference: these default OFF/empty in BOTH
-# environments. A UAT cycle turns exactly one lane on by passing the variable on the deploy invocation;
-# production is hard-blocked until that lane passes its activation gates, so an explicit production
-# value fails closed rather than shipping an unmeasured lane to customers.
-# Speed-lane UAT defaults (Owner 2026-08-27, activation ladder B2/B4/B5-Ph7): UAT turns the
-# measured lanes on by default so the evening canary needs no special invocation; an explicit
-# variable still overrides, and every production=true case below keeps failing closed.
+# Brain-Real lanes (docs/specs/mangmee-brain-real-answers-spec.md §9). Owner 2026-08-30 parity
+# decision after a week of UAT measurement: production now runs the SAME conversational and
+# speed lanes as UAT (loading-on-accept, fused-plan shadow, prepared-simple-read, deterministic
+# families, 1000 ms debounce, advisor social, exact greeting, web handoff). Only the debounce
+# cohort EXPERIMENT stays production-blocked below. Explicit variables still override.
 if [ -z "$LINE_AI_LOADING_ON_ACCEPT_ENABLED_INPUT" ]; then
-  if [ "$DEPLOY_ENV" = uat ]; then
-    LINE_AI_LOADING_ON_ACCEPT_ENABLED_INPUT=true
-  else
-    LINE_AI_LOADING_ON_ACCEPT_ENABLED_INPUT=false
-  fi
+  LINE_AI_LOADING_ON_ACCEPT_ENABLED_INPUT=true
 fi
 if [ -z "$LINE_AI_FUSED_PLAN_SHADOW_ENABLED_INPUT" ]; then
-  if [ "$DEPLOY_ENV" = uat ]; then
-    LINE_AI_FUSED_PLAN_SHADOW_ENABLED_INPUT=true
-  else
-    LINE_AI_FUSED_PLAN_SHADOW_ENABLED_INPUT=false
-  fi
+  LINE_AI_FUSED_PLAN_SHADOW_ENABLED_INPUT=true
 fi
 if [ -z "$LINE_AI_PREPARED_SIMPLE_READ_ENABLED_INPUT" ]; then
-  if [ "$DEPLOY_ENV" = uat ]; then
-    LINE_AI_PREPARED_SIMPLE_READ_ENABLED_INPUT=true
-  else
-    LINE_AI_PREPARED_SIMPLE_READ_ENABLED_INPUT=false
-  fi
+  LINE_AI_PREPARED_SIMPLE_READ_ENABLED_INPUT=true
 fi
 # Debounce: Owner selected 1,000 ms as the primary candidate (spec decision 2026-08-22);
 # UAT runs it as the canary default, production keeps the shipped 2,000 ms until the
 # cohort gates pass. Numeric-only; the app clamps its own bounds.
 if [ -z "$LINE_AI_BUFFER_DEBOUNCE_MS_INPUT" ]; then
-  if [ "$DEPLOY_ENV" = uat ]; then
-    LINE_AI_BUFFER_DEBOUNCE_MS_INPUT=1000
-  else
-    LINE_AI_BUFFER_DEBOUNCE_MS_INPUT=2000
-  fi
+  LINE_AI_BUFFER_DEBOUNCE_MS_INPUT=1000
 fi
 case "$LINE_AI_BUFFER_DEBOUNCE_MS_INPUT" in ''|*[!0-9]*)
   echo "ERROR: LINE_AI_BUFFER_DEBOUNCE_MS must be a positive integer (milliseconds)" >&2; exit 2 ;;
 esac
 # The four compiled families (prepared-simple-read-formatter.ts) — UAT only; unknown keys can
 # only narrow, never widen, and production still refuses any non-empty allowlist below.
-if [ -z "$LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES_INPUT" ] && [ "$DEPLOY_ENV" = uat ]; then
+if [ -z "$LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES_INPUT" ]; then
   LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES_INPUT="sales.get_sales_summary::single_metric,expense.list_recent::single_metric,accounting.get_summary::list,expense.get_daily_closing::single_metric"
 fi
 case "$LINE_AI_LOADING_ON_ACCEPT_ENABLED_INPUT" in true|false) ;; *)
   echo "ERROR: LINE_AI_LOADING_ON_ACCEPT_ENABLED must be exactly true or false" >&2; exit 2 ;;
 esac
-if [ "$DEPLOY_ENV" = production ] && [ "$LINE_AI_LOADING_ON_ACCEPT_ENABLED_INPUT" = true ]; then
-  echo "ERROR: LINE_AI_LOADING_ON_ACCEPT_ENABLED=true is not activated for production yet" >&2
-  exit 2
-fi
 case "$LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED_INPUT" in true|false) ;; *)
   echo "ERROR: LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED must be exactly true or false" >&2; exit 2 ;;
 esac
@@ -225,17 +178,9 @@ fi
 case "$LINE_AI_FUSED_PLAN_SHADOW_ENABLED_INPUT" in true|false) ;; *)
   echo "ERROR: LINE_AI_FUSED_PLAN_SHADOW_ENABLED must be exactly true or false" >&2; exit 2 ;;
 esac
-if [ "$DEPLOY_ENV" = production ] && [ "$LINE_AI_FUSED_PLAN_SHADOW_ENABLED_INPUT" = true ]; then
-  echo "ERROR: LINE_AI_FUSED_PLAN_SHADOW_ENABLED=true is not activated for production yet" >&2
-  exit 2
-fi
 case "$LINE_AI_PREPARED_SIMPLE_READ_ENABLED_INPUT" in true|false) ;; *)
   echo "ERROR: LINE_AI_PREPARED_SIMPLE_READ_ENABLED must be exactly true or false" >&2; exit 2 ;;
 esac
-if [ "$DEPLOY_ENV" = production ] && [ "$LINE_AI_PREPARED_SIMPLE_READ_ENABLED_INPUT" = true ]; then
-  echo "ERROR: LINE_AI_PREPARED_SIMPLE_READ_ENABLED=true is not activated for production yet" >&2
-  exit 2
-fi
 # Family keys are `${tool}::${answerShape}` (apps/ai-gateway/.../prepared-simple-read-formatter.ts),
 # comma-separated. Reject anything outside that charset here: the value is interpolated into a task
 # definition, and a stray quote/space/newline would either break the JSON or smuggle an entry past the
@@ -245,10 +190,6 @@ if [ -n "$LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES_INPUT" ]; then
   if [[ ! "$LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES_INPUT" =~ ^[A-Za-z0-9.:,_-]+$ ]]; then
     echo "ERROR: LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES must be a comma-separated allowlist of" >&2
     echo "       family keys (letters, digits, '.', ':', ',', '_', '-' only)" >&2
-    exit 2
-  fi
-  if [ "$DEPLOY_ENV" = production ]; then
-    echo "ERROR: LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES is not activated for production yet" >&2
     exit 2
   fi
 fi
