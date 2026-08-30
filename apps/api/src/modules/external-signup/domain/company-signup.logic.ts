@@ -2,11 +2,14 @@ import { canonicalFingerprint } from '../../../common/security/canonical-fingerp
 import { normalizeTaxId } from '../../data-model-core/domain/logic/company-legal-identity.logic';
 
 export const COMPANY_SIGNUP_STATES = [
-  'RECEIVED', 'VALIDATED', 'EMAIL_PENDING', 'EMAIL_VERIFIED', 'PROVISIONING', 'READY',
-  'LINE_LINK_PENDING', 'COMPLETED', 'EMAIL_FAILED', 'PROVISIONING_FAILED', 'SUSPENDED', 'EXPIRED',
+  'RECEIVED', 'VALIDATED', 'PENDING_REVIEW', 'EMAIL_PENDING', 'EMAIL_VERIFIED', 'PROVISIONING', 'READY',
+  'LINE_LINK_PENDING', 'COMPLETED', 'EMAIL_FAILED', 'PROVISIONING_FAILED', 'SUSPENDED', 'EXPIRED', 'REJECTED',
 ] as const;
 
 export type CompanySignupState = (typeof COMPANY_SIGNUP_STATES)[number];
+
+/** Spec §3A: the form shows four tiers but only the PRO trial is selectable server-side. */
+export const SELECTABLE_SIGNUP_OFFER_KEYS: readonly string[] = ['PRO_TRIAL'];
 
 export type CompanySignupInput = Readonly<{
   externalSignupId: string;
@@ -17,6 +20,9 @@ export type CompanySignupInput = Readonly<{
   consentVersion: string;
   referralCode?: string;
   requestedOfferKey?: string;
+  businessType?: string;
+  phoneNumber?: string;
+  vatRegistered?: boolean;
 }>;
 
 export type NormalizedCompanySignupInput = Readonly<{
@@ -28,11 +34,18 @@ export type NormalizedCompanySignupInput = Readonly<{
   consentVersion: string;
   referralCode: string | null;
   requestedOfferKey: string | null;
+  businessType: string | null;
+  phoneNumber: string | null;
+  vatRegistered: boolean | null;
 }>;
 
+// Flow B (spec §4): review comes before the single claim email, so VALIDATED can only reach
+// EMAIL_PENDING through PENDING_REVIEW — the admin gate is unskippable by construction (SIGNUP-02).
+// EXPIRED keeps one way out: spec §4D ④ "no dead end" — an admin may reissue a claim link at any age.
 const TRANSITIONS: Readonly<Record<CompanySignupState, readonly CompanySignupState[]>> = {
   RECEIVED: ['VALIDATED', 'SUSPENDED'],
-  VALIDATED: ['EMAIL_PENDING', 'SUSPENDED'],
+  VALIDATED: ['PENDING_REVIEW', 'SUSPENDED'],
+  PENDING_REVIEW: ['EMAIL_PENDING', 'REJECTED', 'SUSPENDED'],
   EMAIL_PENDING: ['EMAIL_VERIFIED', 'EMAIL_FAILED', 'SUSPENDED', 'EXPIRED'],
   EMAIL_FAILED: ['EMAIL_PENDING', 'SUSPENDED', 'EXPIRED'],
   EMAIL_VERIFIED: ['PROVISIONING', 'SUSPENDED'],
@@ -42,13 +55,20 @@ const TRANSITIONS: Readonly<Record<CompanySignupState, readonly CompanySignupSta
   LINE_LINK_PENDING: ['COMPLETED', 'SUSPENDED'],
   COMPLETED: [],
   SUSPENDED: [],
-  EXPIRED: [],
+  EXPIRED: ['EMAIL_PENDING'],
+  REJECTED: [],
 };
+
+const PHONE_PATTERN = /^[0-9+\-() ]{6,20}$/;
 
 function bounded(value: string, field: string, max: number): string {
   const normalized = value.trim();
   if (!normalized || normalized.length > max) throw new Error(`invalid_${field}`);
   return normalized;
+}
+
+function optional(value: string | undefined, field: string, max: number): string | null {
+  return value?.trim() ? bounded(value, field, max) : null;
 }
 
 export function normalizeCompanySignupInput(input: CompanySignupInput): NormalizedCompanySignupInput {
@@ -58,6 +78,16 @@ export function normalizeCompanySignupInput(input: CompanySignupInput): Normaliz
   const contactEmail = bounded(input.contactEmail, 'contactEmail', 320).toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail)) throw new Error('invalid_contactEmail');
 
+  const phoneNumber = optional(input.phoneNumber, 'phoneNumber', 20);
+  if (phoneNumber !== null && !PHONE_PATTERN.test(phoneNumber)) throw new Error('invalid_phoneNumber');
+
+  // Spec §3A: an unknown or not-yet-sellable offer key is rejected outright — never a silent
+  // fallback to the trial, because the key is attribution evidence the Owner reads later.
+  const requestedOfferKey = optional(input.requestedOfferKey, 'requestedOfferKey', 128);
+  if (requestedOfferKey !== null && !SELECTABLE_SIGNUP_OFFER_KEYS.includes(requestedOfferKey)) {
+    throw new Error('offer_not_available');
+  }
+
   return {
     externalSignupId: bounded(input.externalSignupId, 'externalSignupId', 128),
     companyName: bounded(input.companyName, 'companyName', 200),
@@ -65,8 +95,11 @@ export function normalizeCompanySignupInput(input: CompanySignupInput): Normaliz
     ownerDisplayName: bounded(input.ownerDisplayName, 'ownerDisplayName', 160),
     contactEmail,
     consentVersion: bounded(input.consentVersion, 'consentVersion', 64),
-    referralCode: input.referralCode?.trim() ? bounded(input.referralCode, 'referralCode', 128) : null,
-    requestedOfferKey: input.requestedOfferKey?.trim() ? bounded(input.requestedOfferKey, 'requestedOfferKey', 128) : null,
+    referralCode: optional(input.referralCode, 'referralCode', 128),
+    requestedOfferKey,
+    businessType: optional(input.businessType, 'businessType', 120),
+    phoneNumber,
+    vatRegistered: input.vatRegistered ?? null,
   };
 }
 

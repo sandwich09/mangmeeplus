@@ -126,6 +126,8 @@ export function selectAuthMailer(
   ],
   // P12-3b: `MintLineHandoffTokenUseCase` is exported so the LINE send boundary in `line-ai` can
   // mint at delivery time. Minting stays in ERP Core — the AI Gateway never sees a token.
-  exports: [AuthGuard, ResolveRequestContextUseCase, LineLoginVerifierAdapter, LineChannelBindingService, AuthRateLimitService, LegalAcceptanceService, MintLineHandoffTokenUseCase],
+  // AUTH_MAILER_TOKEN is exported so the P10 claim-email consumer sends through the one selected
+  // adapter (disabled / local-console / ses) rather than constructing a second SES client.
+  exports: [AuthGuard, ResolveRequestContextUseCase, LineLoginVerifierAdapter, LineChannelBindingService, AuthRateLimitService, LegalAcceptanceService, MintLineHandoffTokenUseCase, AUTH_MAILER_TOKEN],
 })
 export class AuthModule {}

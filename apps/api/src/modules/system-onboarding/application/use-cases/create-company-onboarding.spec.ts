@@ -746,7 +746,9 @@ function externalSignupHarness() {
 const signupInput = {
   externalSignupId: 'official-001', companyName: 'บริษัท ตัวอย่าง จำกัด', taxId: '0105555000012',
   ownerDisplayName: 'คุณสมชาย', contactEmail: 'Owner@Example.com', consentVersion: 'terms-2026-08',
-  referralCode: 'creator-a', requestedOfferKey: 'starter',
+  // Only PRO_TRIAL is sellable (spec §3A); the pre-catalog placeholder this used to carry is now
+  // rejected by the offer allowlist, which is the intended behaviour.
+  referralCode: 'creator-a', requestedOfferKey: 'PRO_TRIAL',
 };
 
 describe('P10-0 external signup core', () => {
@@ -795,11 +797,12 @@ describe('P10-0 external signup core', () => {
     const h = externalSignupHarness();
     const received = await h.service.receive(signupInput, 'state-0');
     await h.service.advance(received.request.id, 'VALIDATED', 'state-1');
+    await h.service.advance(received.request.id, 'PENDING_REVIEW', 'state-1b');
     await h.service.advance(received.request.id, 'EMAIL_PENDING', 'state-2');
     const replay = await h.service.advance(received.request.id, 'EMAIL_PENDING', 'state-3');
     assert.equal(replay.replayed, true);
-    assert.equal(h.audits.length, 3);
-    assert.equal(h.outbox.length, 3);
+    assert.equal(h.audits.length, 4);
+    assert.equal(h.outbox.length, 4);
     const evidence = JSON.stringify({ audits: h.audits, outbox: h.outbox });
     for (const privateValue of [signupInput.companyName, signupInput.contactEmail.toLowerCase(), signupInput.taxId]) {
       assert.equal(evidence.includes(privateValue), false);
@@ -810,6 +813,7 @@ describe('P10-0 external signup core', () => {
     const h = externalSignupHarness();
     const received = await h.service.receive(signupInput, 'provision-0');
     await h.service.advance(received.request.id, 'VALIDATED', 'provision-1');
+    await h.service.advance(received.request.id, 'PENDING_REVIEW', 'provision-1b');
     await h.service.advance(received.request.id, 'EMAIL_PENDING', 'provision-2');
     await h.service.advance(received.request.id, 'EMAIL_VERIFIED', 'provision-3');
     const claims = await Promise.all(Array.from({ length: 6 }, (_, index) =>
@@ -827,13 +831,16 @@ describe('P10-0 external signup core', () => {
     });
     assert.equal(complete.request.state, 'READY');
     assert.equal(replay.replayed, true);
-    assert.equal(h.outbox.filter((event) => event.eventType === 'company_signup.state_changed').length, 5);
+    // VALIDATED, PENDING_REVIEW, EMAIL_PENDING, EMAIL_VERIFIED, PROVISIONING, READY — the Flow B
+    // admin gate adds one transition to the P10-0 count.
+    assert.equal(h.outbox.filter((event) => event.eventType === 'company_signup.state_changed').length, 6);
   });
 
   it('recovers EMAIL_FAILED and PROVISIONING_FAILED with a fresh fenced attempt', async () => {
     const h = externalSignupHarness();
     const received = await h.service.receive(signupInput, 'recover-0');
     await h.service.advance(received.request.id, 'VALIDATED', 'recover-1');
+    await h.service.advance(received.request.id, 'PENDING_REVIEW', 'recover-1b');
     await h.service.advance(received.request.id, 'EMAIL_PENDING', 'recover-2');
     await h.service.advance(received.request.id, 'EMAIL_FAILED', 'recover-3', 'provider_unavailable');
     await h.service.advance(received.request.id, 'EMAIL_PENDING', 'recover-4');
