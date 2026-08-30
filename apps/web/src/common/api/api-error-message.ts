@@ -339,6 +339,13 @@ const CODE_LABELS: Record<string, string> = {
     'มีการบันทึกสถานะจดทะเบียน VAT ล่วงหน้าไว้แล้ว กรุณาเลือกว่าจะแทนที่รายการเดิมหรือไม่',
   vat_registration_backdated_crosses_filed_period:
     'วันที่จดทะเบียน VAT ย้อนหลังคร่อมงวดที่ยื่นแบบไปแล้ว กรุณาตรวจสอบกับผู้ทำบัญชีก่อนบันทึก',
+
+  // ---- คิวคำขอสมัครใช้งาน (P10 Flow B) ----
+  // ทั้งสองโค้ดมาจาก company-signup-core.service และโผล่ที่ปุ่มอนุมัติ/ปฏิเสธ/ส่งลิงก์ใหม่ในคิว
+  // ทางแก้เดียวกันคือโหลดคิวใหม่ ข้อความจึงชี้ไปที่คิว ไม่ใช่ให้กดซ้ำ
+  company_signup_request_not_found: 'ไม่พบคำขอสมัครนี้แล้ว กรุณาโหลดคิวคำขอใหม่',
+  company_signup_concurrent_transition:
+    'คำขอนี้ถูกดำเนินการโดยผู้ดูแลคนอื่นระหว่างทำรายการ กรุณาโหลดคิวคำขอใหม่แล้วตรวจสถานะล่าสุด',
 };
 
 // Several upload rejections differ only in which check caught the file; the user's next move is
