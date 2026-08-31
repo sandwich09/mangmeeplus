@@ -49,6 +49,20 @@ assert_rejected deploy-production-debounce-experiment-not-activated \
   'LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED=true is not activated for production yet' \
   env -i PATH="$PATH" DEPLOY_ENV=production PRODUCTION_SERVING_MODE=live \
     LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED=true bash "$deploy" all
+assert_rejected deploy-invalid-external-signup-boolean \
+  'EXTERNAL_SIGNUP_ENABLED must be exactly true or false' \
+  env -i PATH="$PATH" DEPLOY_ENV=uat EXTERNAL_SIGNUP_ENABLED=yes bash "$deploy" all
+assert_rejected deploy-production-external-signup-not-activated \
+  'EXTERNAL_SIGNUP_ENABLED=true is not activated for production yet' \
+  env -i PATH="$PATH" DEPLOY_ENV=production PRODUCTION_SERVING_MODE=live \
+    EXTERNAL_SIGNUP_ENABLED=true bash "$deploy" all
+assert_rejected deploy-invalid-email-provider \
+  'EMAIL_PROVIDER must be exactly disabled or ses for cloud deploys' \
+  env -i PATH="$PATH" DEPLOY_ENV=uat EMAIL_PROVIDER=local-console bash "$deploy" all
+assert_rejected deploy-production-ses-not-activated \
+  'EMAIL_PROVIDER=ses is not activated for production yet' \
+  env -i PATH="$PATH" DEPLOY_ENV=production PRODUCTION_SERVING_MODE=live \
+    EMAIL_PROVIDER=ses bash "$deploy" all
 assert_rejected deploy-invalid-line-web-login-boolean \
   'LINE_WEB_LOGIN_ENABLED must be exactly true or false' \
   env -i PATH="$PATH" DEPLOY_ENV=uat LINE_WEB_LOGIN_ENABLED=yes bash "$deploy" all
