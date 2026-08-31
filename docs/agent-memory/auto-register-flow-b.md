@@ -40,3 +40,14 @@ Next:
 - Smoke PASS: availability enabled:true; /signup renders; real submission via browser (ร้านทดสอบระบบ มั่งมี (UAT), contact@mangmeeplus.com, PRO_TRIAL) → requestId `cmtgzg42a000x4k5xje8ot9mg` status PENDING_REVIEW; status page 200. SES env on api-web verified (provider=ses, ap-southeast-1, from contact@mangmeeplus.com); SES sandbox allows @mangmeeplus.com recipients; production access under AWS review.
 - Handoff: Owner approves the queued request in system console → verifies SES claim email → runs docs/plans/mangmee-auto-register-uat-test-plan-th.md (5 rounds).
 - Next code batch (one PR per CI-cost rule): workers 404 backoff; new-signup LINE+dashboard notification to Owner (no notification exists today — queue page only); rejection-notice email consumer; DMARC TXT record.
+
+## Update 2026-08-31 (2): round-3 hardening batch (Owner order: items 1-13 except production)
+
+One integration branch `codex/round3-hardening` merged four reviewed workstreams (each spec-verified, all typechecks + boot green):
+- **Account merge live (spec §4F)**: AccountMergeTicket (hash-only, 15 min) minted on the web link 409; POST /v1/auth/account-merge moves ACTIVE memberships (+EmployeeAccessProfile.userId), moves email when target has none, DISABLES + session-revokes the emptied account, auto-signs-in as the merged account. Welcome dialog primary is live; sidebar LINE entry returns to /signup/welcome.
+- **Workers 404 backoff root-cause**: shared postInternal + missing-endpoint gate (5-min backoff, warn once) across 7 timer callers; notification-worker intentionally ungated (per-record 404s must reach the DLQ).
+- **P29 LINE + caps**: expired-company OWNER gets the renewal reply on both webhook entry points (status plan_term_expired, excluded from AI-failure alarm); employee cap enforced at completeDraft AND re-enable.
+- **Signup pipeline**: PENDING_REVIEW → dashboard + LINE push to system admins (dedup per request); opt-in rejection email (reason ≤500, escaped, outbox-driven); 30-day silent-after-approve sweep → EXPIRED (reissue still allowed); SES bounce/complaint SNS endpoint (signature-verified, fail-closed) → EMAIL_FAILED via claimEmailSesMessageId.
+- Wiring: deploy.sh env EMAIL_LOGO_URL / SES_CONFIGURATION_SET / SES_EVENTS_TOPIC_ARN (UAT on, production empty = fail closed), pins re-synced; 4 new spec files registered in apps/api test list.
+- Post-deploy ops still owed: SNS HTTPS subscription per runbook ses-email-setup.md ขั้นที่ 6 (subscribe the ECS origin, NOT the custom domain), then simulator bounce proof.
+- Done outside the repo: Cloudflare DMARC Management enabled (p=none, dashboard reports); mangmee_web branch `signup-cta` ready (do NOT upload until production signup activates); SES production access still under AWS review.
