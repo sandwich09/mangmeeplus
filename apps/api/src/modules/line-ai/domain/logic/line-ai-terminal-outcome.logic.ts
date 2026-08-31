@@ -31,6 +31,11 @@ const PERMISSION_REFUSAL_STATUSES = new Set([
   'forbidden',
   'legal_acceptance_required',
   'no_membership',
+  // P29: the company's plan term ran out and the sweep disabled it. A kept status of its own so the
+  // durable row can tell "term expired" from "never a member", but a refusal like the rest — an
+  // expired subscription answered correctly is not an AI outage on the alarm that watches
+  // `failed_terminal`.
+  'plan_term_expired',
   'unlinked',
 ]);
 const DELIVERED_STATUSES = new Set([

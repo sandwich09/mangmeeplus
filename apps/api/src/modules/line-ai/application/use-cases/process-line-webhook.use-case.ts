@@ -90,6 +90,7 @@ import { LINE_BUFFER_ORPHAN_REPROCESS_MS } from '../../domain/logic/line-message
 import { resolveCompanyAiModelPolicy } from '../company-ai-model-policy';
 import { emitSecurityEvent, SECURITY_EVENT } from '../../../../common/logger/security-event';
 import { LegalAcceptanceService } from '../../../auth/application/legal-acceptance.service';
+import { expiredLineOwnerMessageTh } from '../../../system-partner-management/domain/logic/plan-term.logic';
 import { LineHandoffLinkService } from '../line-handoff-link.service';
 import {
   classifyLineAiGatewayFailure,
@@ -1038,6 +1039,30 @@ async function resolveCompanyForLineUser(
   return { companyId: ctx.companyId };
 }
 
+/** P29: a company disabled by the plan-term sweep drops out of `resolveCompanyForLineUser` above —
+ *  that query takes ACTIVE companies only — so everyone in it currently lands on the generic
+ *  unlinked reply. Owner locked a better answer for the one person who can act on it (spec §renew:
+ *  "ตอบสุภาพ ชวนติดต่อ ยืนยัน แจ้งเฉพาะ OWNER"); staff keep the generic reply and see no package
+ *  detail, exactly as the web banner rule works.
+ *
+ *  Predicate is the same pair the company switcher uses (`auth.controller.ts`): company DISABLED
+ *  AND `planTerm.termDisabledAt` set. The second half is what separates a term expiry from a
+ *  disable an admin ordered by hand, which must keep the generic reply. Read live on every turn and
+ *  never cached, so a renewed company — back to ACTIVE with `termDisabledAt` cleared — stops
+ *  matching on the very next message with nothing to invalidate. */
+async function ownsTermExpiredCompany(prisma: PrismaService, userId: string): Promise<boolean> {
+  const owned = await prisma.client.companyMembership.findFirst({
+    where: {
+      userId,
+      status: 'ACTIVE',
+      company: { status: 'DISABLED', planTerm: { termDisabledAt: { not: null } } },
+      roles: { some: { role: { key: 'OWNER' } } },
+    },
+    select: { companyId: true },
+  });
+  return owned !== null;
+}
+
 /** ai_line_assistant entitlement gate — the partner-detail feature toggle. Companies with no
  *  entitlement rows at all are legacy fail-open, same convention as loadEntitledFeatureKeys. */
 export async function lineAssistantDisabled(prisma: PrismaService, companyId: string): Promise<boolean> {
@@ -1395,6 +1420,22 @@ export class ProcessLineWebhookUseCase {
       ...(quickReply ? { quickReply } : {}),
     }]);
     if (result !== 'ok') throw new Error(`LINE_DELIVERY_${result.toUpperCase()}`);
+  }
+
+  /** P29: answer the OWNER of a term-expired company with the renewal invitation instead of the
+   *  generic "we cannot find your company" reply. Returns true when it has answered the turn.
+   *
+   *  Every caller sits on the `no company resolved` branch, which is reached before the permission
+   *  resolver, the entitlement read, the router and the model — so an expired company costs one
+   *  indexed membership lookup and not a single token. */
+  private async replyIfTermExpiredOwner(
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; handoff?: LineHandoffRecipient },
+    userId: string,
+  ): Promise<boolean> {
+    if (!await ownsTermExpiredCompany(this.prisma, userId)) return false;
+    await this.deliverReply(event, expiredLineOwnerMessageTh());
+    await this.updateEventLog(event.webhookEventId, 'plan_term_expired', LINE_AI_ERROR_CODES.FORBIDDEN);
+    return true;
   }
 
   private async deliverRequiredMessages(
@@ -1772,6 +1813,7 @@ export class ProcessLineWebhookUseCase {
     // 4. Resolve company from membership + LineCompanyContext (NOT channel binding)
     const resolved = await resolveCompanyForLineUser(this.prisma, identity.userId, event.lineUserId);
     if (!resolved) {
+      if (await this.replyIfTermExpiredOwner(event, identity.userId)) return;
       await this.deliverReply(event, UNLINKED_REPLY);
       await this.updateEventLog(event.webhookEventId, 'no_membership', LINE_AI_ERROR_CODES.UNLINKED_USER);
       return;
@@ -3522,6 +3564,9 @@ export class ProcessLineWebhookUseCase {
       : await resolveCompanyForLineUser(this.prisma, identity.userId, event.lineUserId);
     if (!resolved || 'needsSelection' in resolved) {
       if (!resolved) {
+        // A photo sent to an expired shop is still a message from its owner, and this branch is the
+        // same "no company resolved" dead end the text turn hits.
+        if (await this.replyIfTermExpiredOwner(event, identity.userId)) return;
         await this.deliverReply(event, RECEIPT_LINK_REPLY);
       } else {
         const memberships = await this.listLineCompanies(identity.userId);

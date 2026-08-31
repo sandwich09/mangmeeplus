@@ -130,6 +130,21 @@ export function expiredMessageTh(companyName: string): string {
   return `ร้าน ${companyName} ครบกำหนดใช้งานแล้ว ระบบพักการใช้งานชั่วคราว ข้อมูลทั้งหมดยังอยู่ครบ — ติดต่อ ${PLAN_TERM_CONTACT_PHONE} หรืออีเมล ${PLAN_TERM_CONTACT_EMAIL}`;
 }
 
+/**
+ * The LINE answer for the OWNER of a term-expired company (spec §renew, Owner 2026-08-30: "ตอบสุภาพ
+ * ชวนติดต่อ แจ้งเฉพาะ OWNER"). Staff never see this — they keep the generic unavailable reply and no
+ * package detail. Says the three things an owner needs in one screen: it ended, the data is safe,
+ * and the two ways back. Kept beside the other plan-term copy so the contact details have one home.
+ */
+export function expiredLineOwnerMessageTh(): string {
+  return [
+    '🔴 ร้านของคุณครบกำหนดใช้งานแล้ว ระบบพักการใช้งานชั่วคราวค่ะ',
+    'ข้อมูลทั้งหมดยังอยู่ครบ ไม่ได้หายไปไหนนะคะ',
+    'ต่ออายุได้เองที่เว็บแอป เข้าสู่ระบบแล้วจะเห็นหน้าต่ออายุทันที',
+    `หรือติดต่อเรา โทร ${PLAN_TERM_CONTACT_PHONE} หรืออีเมล ${PLAN_TERM_CONTACT_EMAIL}`,
+  ].join('\n');
+}
+
 export function branchLimitMessageTh(limit: number): string {
   return `แพ็กเกจปัจจุบันสร้างได้สูงสุด ${limit} สาขา — ติดต่อผู้ดูแลเพื่อปรับแพ็กเกจ`;
 }

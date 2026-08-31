@@ -26,6 +26,8 @@ describe('LINE AI terminal outcome logic', () => {
     assert.equal(classifyLineAiTerminalOutcome('duplicate_media_pending'), 'intentional_noop');
     assert.equal(classifyLineAiTerminalOutcome('safety_crisis'), 'intentional_noop');
     assert.equal(classifyLineAiTerminalOutcome('forbidden'), 'permission_refusal');
+    // P29: an expired plan answered with the renewal invitation is a refusal, not an outage.
+    assert.equal(classifyLineAiTerminalOutcome('plan_term_expired'), 'permission_refusal');
     assert.equal(classifyLineAiTerminalOutcome('feature_disabled'), 'feature_disabled');
     // The P3 kill switch: a distinct status, but NOT a `failed_terminal` — closing the route on
     // purpose must not read as an AI outage on the alarm that watches that class.
