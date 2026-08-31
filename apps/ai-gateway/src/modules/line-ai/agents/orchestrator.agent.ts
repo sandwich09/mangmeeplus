@@ -13,7 +13,7 @@ import type { AgentRunResult } from './agent-types';
 import { IntentRouterAgent, ROUTER_ENABLED_TOOLS, isSubjectCompatible, isZeroToolIntent } from './intent-router.agent';
 import { AccountingSummaryAgent, ALLOWED_TOOLS as ACCOUNTING_ALLOWED_TOOLS } from './accounting-summary.agent';
 import { InventoryAgent, ALLOWED_TOOLS as INVENTORY_ALLOWED_TOOLS } from './inventory.agent';
-import { ResponseComposerAgent, featureDisabledReply } from './response-composer.agent';
+import { isJokeRequest, ResponseComposerAgent, featureDisabledReply } from './response-composer.agent';
 import { normalizePlanToolAccess, removeRuntimeBlockedTools } from './tool-availability';
 import { preparedSimpleReadEligibility, preparedFamilyKey, type PreparedSimpleReadContext } from '../domain/logic/prepared-simple-read.logic';
 import { activePreparedFamilies, formatPreparedSimpleRead, preparedTerminalReply } from './prepared-simple-read-formatter';
@@ -354,6 +354,29 @@ export class OrchestratorAgent {
     const access = normalizePlanToolAccess(routedPlan, req.messageText, req.userContext);
     let plan = access.plan;
     const featureDisabledTools = [...access.featureDisabledTools];
+    // A joke request the router refused as out-of-scope is a misroute, not a refusal to honour: the
+    // composer owns a curated bank for exactly this turn (Owner decision 2026-08-29/30), and prompt
+    // wording alone proved non-deterministic on production (2026-08-31: "ขอมุขตลกหน่อย" →
+    // unsupported_module). Deterministic rescue, bounded hard: only when the message asks for a
+    // joke, nothing routed a tool, and every refusal is the out-of-scope kind — a safety, privacy,
+    // mutation or permission refusal is never overridden, and any business clause keeps the
+    // business path untouched.
+    const onlyOutOfScopeRefusals = plan.refusals.every((refusal) => refusal.reason === 'unsupported_module');
+    const routedAnyTool = plan.intents.some((intent) => intent.requiredTools.length > 0);
+    // A ROUTABLE plan whose intents were emptied is NOT rescueable: that shape comes out of the
+    // permission/feature stripping above, and a joke phrase must never repaint a permission
+    // situation as small talk (`every` on an empty list is vacuously true — guard the length).
+    if (isJokeRequest(req.messageText) && !routedAnyTool && onlyOutOfScopeRefusals
+      && (plan.status === 'UNROUTABLE'
+        || (plan.intents.length > 0
+          && plan.intents.every((intent) => intent.intent === 'unknown' || intent.intent === 'casual_conversation')))) {
+      plan = {
+        ...plan,
+        status: 'ROUTABLE',
+        intents: [{ intent: 'casual_conversation', subject: 'unknown', agent: 'general', priority: 1, requiredTools: [], missingContext: [] }],
+        refusals: [],
+      };
+    }
     const zeroToolIntent = plan.intents.length === 1 && isZeroToolIntent(plan.intents[0]?.intent)
       ? plan.intents[0].intent
       : undefined;
