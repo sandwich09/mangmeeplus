@@ -257,3 +257,39 @@ export type SetSharedLineCredentialDto = {
 
 /** @deprecated alias for SetSharedLineCredentialDto */
 export type SetPartnerLineCredentialDto = SetSharedLineCredentialDto;
+
+// ── System console user lookup ────────────────────────────────────────────────
+// One email can own several companies (signup attach) and two accounts can be merged
+// (AccountMergeTicket), so the console needs a person-centric read next to its per-company ones.
+
+export type SystemUserMembershipDto = {
+  companyId: string;
+  companyName: string;
+  companyStatus: PartnerCompanyStatus;
+  membershipStatus: PartnerMembershipStatus;
+  roleKeys: string[];
+};
+
+/** `merged_into`: this account's companies moved out into `otherUserId` and it was disabled.
+ *  `received_merge`: `otherUserId`'s companies moved in here. */
+export type SystemUserMergeTrailDto = {
+  direction: 'merged_into' | 'received_merge';
+  otherUserId: string;
+  at: string;
+};
+
+export type SystemUserLookupItemDto = {
+  userId: string;
+  displayName: string;
+  username?: string;
+  email?: string;
+  status: 'ACTIVE' | 'SUSPENDED' | 'DISABLED';
+  /** An ACTIVE LINE ExternalIdentity is on record. */
+  lineLinked: boolean;
+  /** Non-ACTIVE memberships are included on purpose: a DISABLED duplicate left behind by a
+   *  merge is part of the story the admin is trying to read. The UI labels them. */
+  memberships: SystemUserMembershipDto[];
+  mergeTrail: SystemUserMergeTrailDto[];
+};
+
+export type SystemUserLookupDto = { items: SystemUserLookupItemDto[] };

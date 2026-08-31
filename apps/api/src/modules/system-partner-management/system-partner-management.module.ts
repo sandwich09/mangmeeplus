@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { PartnerController } from './presentation/http/partner.controller';
 import { SystemLineController } from './presentation/http/system-line.controller';
 import { SystemAiBudgetController } from './presentation/http/system-ai-budget.controller';
+import { SystemUserLookupController } from './presentation/http/system-user-lookup.controller';
+import { LookupUsersUseCase } from './application/use-cases/lookup-users.use-case';
 import { ListPartnersUseCase } from './application/use-cases/list-partners.use-case';
 import { GetPartnerDetailUseCase } from './application/use-cases/get-partner-detail.use-case';
 import { UpdatePartnerProfileUseCase } from './application/use-cases/update-partner-profile.use-case';
@@ -39,6 +41,7 @@ import { PlanTermSweepUseCase } from './application/use-cases/plan-term-sweep.us
     PartnerController,
     SystemLineController,
     SystemAiBudgetController,
+    SystemUserLookupController,
     PlanTermNoticeController,
     PlanTermInternalController,
   ],
@@ -56,6 +59,7 @@ import { PlanTermSweepUseCase } from './application/use-cases/plan-term-sweep.us
     SetPartnerLineCredentialUseCase,
     SetSharedLineCredentialUseCase,
     ListPartnerMembersUseCase,
+    LookupUsersUseCase,
     PartnerMemberLineUnlinkUseCase,
     SetPartnerMemberContactUseCase,
     PartnerMemberPasswordResetUseCase,
