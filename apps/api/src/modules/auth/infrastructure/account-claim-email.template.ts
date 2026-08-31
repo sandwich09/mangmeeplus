@@ -71,7 +71,7 @@ export function renderAccountClaimEmail(input: AccountClaimCopyInput): RenderedE
     'เรียน คุณลูกค้าคนพิเศษ',
     '',
     'ขอขอบพระคุณที่ท่านให้ความไว้วางใจสมัครใช้งานระบบมั่งมีพลัส (MangmeePlus)',
-    'ขณะนี้คำขอเปิดใช้งานของท่านได้รับการอนุมัติแล้ว ท่านสามารถเริ่มต้นใช้งานได้ทันทีตามขั้นตอนด้านล่าง',
+    'ขณะนี้คำขอเปิดใช้งานของท่านได้รับการอนุมัติแล้ว ท่านสามารถเริ่มต้นใช้งานได้ทันทีตามขั้นตอนด้านล่างนี้',
     '',
     '[ เข้าสู่ระบบ ]',
     'ตั้งรหัสผ่านและเข้าสู่ระบบที่ลิงก์นี้:',
@@ -98,20 +98,21 @@ export function renderAccountClaimEmail(input: AccountClaimCopyInput): RenderedE
 
 function renderHtml(input: AccountClaimCopyInput, expires: string): string {
   const claimUrl = escapeHtml(input.claimUrl);
-  const masthead = input.logoUrl
-    ? `<p style="margin:0 0 20px"><img src="${escapeHtml(input.logoUrl)}" alt="มั่งมีพลัส" height="40" style="height:40px;max-width:100%;border:0"></p>`
+  // Owner 2026-08-31: the logo lives INSIDE the signature block — between the website line and the
+  // tagline — not as a top masthead.
+  const signatureLogo = input.logoUrl
+    ? `<img src="${escapeHtml(input.logoUrl)}" alt="มั่งมีพลัส" height="40" style="display:block;height:40px;max-width:100%;border:0;margin:10px 0">`
     : '';
   return `<!doctype html><html lang="th"><body style="margin:0;background:#f4f7f5;color:#17352b;font-family:Arial,sans-serif">`
     + `<main style="max-width:600px;margin:0 auto;padding:32px 20px">`
     + `<section style="background:#fff;border-radius:16px;padding:28px;font-size:17px;line-height:1.7">`
-    + masthead
     + `<p style="margin:0 0 16px">เรียน คุณลูกค้าคนพิเศษ</p>`
-    + `<p style="margin:0 0 16px">ขอขอบพระคุณที่ท่านให้ความไว้วางใจสมัครใช้งานระบบมั่งมีพลัส (MangmeePlus) `
-    + `ขณะนี้คำขอเปิดใช้งานของท่านได้รับการอนุมัติแล้ว ท่านสามารถเริ่มต้นใช้งานได้ทันทีตามขั้นตอนด้านล่าง</p>`
+    + `<p style="margin:0 0 16px">ขอขอบพระคุณที่ท่านให้ความไว้วางใจสมัครใช้งานระบบมั่งมีพลัส (MangmeePlus)<br>`
+    + `ขณะนี้คำขอเปิดใช้งานของท่านได้รับการอนุมัติแล้ว ท่านสามารถเริ่มต้นใช้งานได้ทันทีตามขั้นตอนด้านล่างนี้</p>`
     + section('เข้าสู่ระบบ')
     + `<p style="margin:0 0 16px"><a href="${claimUrl}" style="display:inline-block;background:#13795b;color:#fff;text-decoration:none;font-size:18px;font-weight:700;padding:14px 22px;border-radius:10px">ตั้งรหัสผ่านและเข้าสู่ระบบ</a></p>`
     + `<p style="margin:0 0 20px;color:#53665f;font-size:15px">หากปุ่มเปิดไม่ได้ ให้คัดลอกลิงก์นี้ไปวางในเบราว์เซอร์:<br><span style="word-break:break-all">${claimUrl}</span></p>`
-    + section(`บัญชีสำหรับเข้าใช้งานร้าน ${input.companyName}`)
+    + section(`บัญชีสำหรับเข้าใช้งานร้าน ${input.companyName}`, '#17352b')
     + `<p style="margin:0 0 8px">อีเมลผู้ใช้งาน: ${escapeHtml(input.toEmail)}</p>`
     + `<p style="margin:0 0 20px">รหัสผ่าน: ท่านเป็นผู้กำหนดด้วยตนเองในขั้นตอนตั้งรหัสผ่าน ระบบไม่มีการส่งรหัสผ่านชั่วคราวทางอีเมล</p>`
     + section('หมายเหตุ')
@@ -121,10 +122,12 @@ function renderHtml(input: AccountClaimCopyInput, expires: string): string {
     + `<li style="margin:0 0 6px">หากมีข้อสงสัย ติดต่อ <a href="mailto:${SUPPORT_EMAIL}" style="color:#13795b">${SUPPORT_EMAIL}</a></li>`
     + `</ul>`
     + `<p style="margin:24px 0 0;color:#53665f;font-size:15px">ขอแสดงความนับถือ<br><strong style="color:#17352b">${COMPANY_LEGAL_NAME}</strong><br>${COMPANY_PHONE}<br>`
-    + `เว็บไซต์ <a href="${COMPANY_SITE}" style="color:#13795b;font-weight:700;text-decoration:none">${COMPANY_SITE_LABEL}</a><br>${COMPANY_TAGLINE}</p>`
+    + `เว็บไซต์ <a href="${COMPANY_SITE}" style="color:#13795b;font-weight:700;text-decoration:none">${COMPANY_SITE_LABEL}</a></p>`
+    + signatureLogo
+    + `<p style="margin:0;color:#53665f;font-size:15px">${COMPANY_TAGLINE}</p>`
     + `</section></main></body></html>`;
 }
 
-function section(title: string): string {
-  return `<h2 style="font-size:18px;margin:0 0 10px;color:#13795b">${escapeHtml(title)}</h2>`;
+function section(title: string, color = '#13795b'): string {
+  return `<h2 style="font-size:18px;margin:0 0 10px;color:${color}">${escapeHtml(title)}</h2>`;
 }

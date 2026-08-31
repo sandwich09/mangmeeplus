@@ -76,6 +76,30 @@ describe('account claim email copy', () => {
     assert.ok(!html.includes('>https://official.mangmeeplus.com</a>'));
   });
 
+  it('splits the opening line and closes it with ด้านล่างนี้ (Owner 2026-08-31)', () => {
+    const { text, html } = renderAccountClaimEmail(INPUT);
+    assert.ok(text.includes('ตามขั้นตอนด้านล่างนี้'));
+    assert.ok(html.includes('(MangmeePlus)<br>'), 'approval sentence starts on its own line');
+    assert.ok(html.includes('ตามขั้นตอนด้านล่างนี้'));
+  });
+
+  it('places the logo inside the signature between the website line and the tagline', () => {
+    const { html } = renderAccountClaimEmail({ ...INPUT, logoUrl: 'https://cdn.example.com/logo.png' });
+    const site = html.indexOf('official.mangmeeplus.com</a>');
+    const logo = html.indexOf('<img');
+    const tagline = html.indexOf('ให้ธุรกิจของคุณ มั่งมี ไปด้วยกัน');
+    assert.ok(site > -1 && logo > -1 && tagline > -1);
+    assert.ok(site < logo && logo < tagline, 'order must be website -> logo -> tagline');
+    assert.equal((html.match(/<img/g) ?? []).length, 1, 'no top masthead remains');
+  });
+
+  it('renders the account-section heading bold black while the others stay green', () => {
+    const { html } = renderAccountClaimEmail(INPUT);
+    assert.ok(html.includes('color:#17352b">บัญชีสำหรับเข้าใช้งานร้าน ร้านมั่งมี</h2>'));
+    assert.ok(html.includes('color:#13795b">เข้าสู่ระบบ</h2>'));
+    assert.ok(html.includes('color:#13795b">หมายเหตุ</h2>'));
+  });
+
   it('states the 72h single-use rule with a Thai-formatted expiry', () => {
     const { text } = renderAccountClaimEmail(INPUT);
     assert.ok(text.includes('ใช้ได้ครั้งเดียว'));
