@@ -88,6 +88,7 @@ describe('DrainWorkflowOutboxUseCase', () => {
       'storage.object_version_cleanup.requested',
       'email.account_claim.requested',
       'email.signup_rejected.requested',
+      'notify.signup_pending_review.requested',
     ]);
   });
 

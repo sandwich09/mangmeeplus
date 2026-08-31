@@ -1,7 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { AppConfigService } from '../../../common/config/app-config.service';
-import type { AccountClaimEmailInput, AuthEmailLinkInput, AuthMailerPort } from '../domain/ports/auth-mailer.port';
+import type {
+  AccountClaimEmailInput, AuthEmailLinkInput, AuthMailerPort, SignupRejectionEmailInput,
+} from '../domain/ports/auth-mailer.port';
 import { renderAccountClaimEmail } from './account-claim-email.template';
+import { renderSignupRejectionEmail } from './signup-rejection-email.template';
 
 @Injectable()
 export class LocalConsoleAuthMailerAdapter implements AuthMailerPort {
@@ -39,6 +42,19 @@ export class LocalConsoleAuthMailerAdapter implements AuthMailerPort {
       companyName: input.companyName,
       expiresAt: input.expiresAt.toISOString(),
       claimUrl,
+      subject: rendered.subject,
+      body: rendered.text,
+    });
+  }
+
+  async sendSignupRejection(input: SignupRejectionEmailInput): Promise<void> {
+    const rendered = renderSignupRejectionEmail({
+      companyName: input.companyName,
+      ...(input.reason ? { reason: input.reason } : {}),
+    });
+    console.info('[auth-mailer] signup_rejection', {
+      toEmail: input.toEmail,
+      companyName: input.companyName,
       subject: rendered.subject,
       body: rendered.text,
     });

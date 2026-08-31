@@ -1,9 +1,10 @@
 import { Body, Controller, Get, HttpCode, Param, Post, Req } from '@nestjs/common';
 import { ApiOperation, ApiResponse } from '@nestjs/swagger';
-import { IsBoolean, IsIn, IsOptional } from 'class-validator';
+import { IsBoolean, IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
 import type { Request } from 'express';
-import type {
-  AdminSignupDecisionDto, AdminSignupQueueDto, AdminSignupReissueDto,
+import {
+  SIGNUP_REJECTION_REASON_MAX_LENGTH,
+  type AdminSignupDecisionDto, type AdminSignupQueueDto, type AdminSignupReissueDto,
 } from '@watchdog-bms/contracts';
 import { RequirePermissions } from '../../../../common/security/permissions.decorator';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
@@ -12,6 +13,9 @@ import { SignupAdminQueueUseCase } from '../../application/signup-admin-queue.us
 export class SignupDecisionRequestDto {
   @IsIn(['APPROVE', 'REJECT']) action!: 'APPROVE' | 'REJECT';
   @IsBoolean() @IsOptional() notifyApplicant?: boolean;
+  // Plain text, bounded: it is copied verbatim into an email body, so it gets the same treatment as
+  // any other free-text field crossing a trust boundary. The template escapes it on render.
+  @IsString() @MaxLength(SIGNUP_REJECTION_REASON_MAX_LENGTH) @IsOptional() rejectionReason?: string;
 }
 
 /**

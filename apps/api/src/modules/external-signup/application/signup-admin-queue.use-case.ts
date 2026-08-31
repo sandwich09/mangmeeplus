@@ -97,9 +97,11 @@ export class SignupAdminQueueUseCase {
     await this.tokens.revokeAll(requestId);
     // Spec §4D: silent by default — the address is unverified, so an unsolicited notice would make
     // the platform a spam cannon aimed at whoever the applicant typed.
-    if (body.notifyApplicant) await this.claimEmail.enqueueRejectionNotice(requestId);
+    if (body.notifyApplicant) await this.claimEmail.enqueueRejectionNotice(requestId, body.rejectionReason);
     await this.audit(requestId, adminUserId, correlationRequestId, 'signup.request.rejected', {
       notifyApplicant: body.notifyApplicant === true,
+      // The paragraph itself stays out of evidence — it is copy for one inbox, not an audit fact.
+      hadRejectionReason: Boolean(body.rejectionReason?.trim()),
     });
     return { requestId, state: 'REJECTED' };
   }

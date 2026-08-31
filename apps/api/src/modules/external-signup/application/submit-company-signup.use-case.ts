@@ -2,6 +2,7 @@ import { Injectable, Optional, UnprocessableEntityException } from '@nestjs/comm
 import { resolveMx } from 'node:dns/promises';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { CompanySignupCoreService } from './company-signup-core.service';
+import { SignupAdminNotifyService } from './signup-admin-notify.service';
 import type { CompanySignupInput } from '../domain/company-signup.logic';
 
 /** Spec §3: MX is looked up with a timeout, and a slow resolver must not hold the form open. */
@@ -16,6 +17,7 @@ export class SubmitCompanySignupUseCase {
   constructor(
     private readonly prisma: PrismaService,
     private readonly core: CompanySignupCoreService,
+    private readonly adminNotify: SignupAdminNotifyService,
     /**
      * Test seam. `@Optional()` is required, not decorative: a plain default parameter still leaves
      * a third entry in the constructor metadata and Nest fails to resolve it at boot.
@@ -47,6 +49,10 @@ export class SubmitCompanySignupUseCase {
 
     await this.core.advance(request.id, 'VALIDATED', correlationRequestId);
     await this.core.advance(request.id, 'PENDING_REVIEW', correlationRequestId);
+    // Spec §4C: the queue is now the only thing standing between this application and a company, so
+    // the operators are told. One outbox row in the same database — the dashboard row and the LINE
+    // push happen in the drain, where an outage can only delay them, never fail this submit.
+    await this.adminNotify.enqueue(request.id);
     return { requestId: request.id };
   }
 
