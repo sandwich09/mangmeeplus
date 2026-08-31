@@ -139,4 +139,20 @@ describe('CreateBranchUseCase', () => {
     assert.equal(repo.create.mock.calls.length, 0);
     assert.equal(repo.update.mock.calls.length, 0);
   });
+  it('refuses a second active head office', async () => {
+    const repo = makeRepo({ countActiveHeadOffice: mock.fn(async () => 1) });
+    const uc = new CreateBranchUseCase(repo as any, makeAudit() as any, makePrisma());
+    await assert.rejects(
+      () => uc.execute(makeCtx(['company.branch.manage']), validCmd),
+      (e: any) => e instanceof ConflictException && (e.getResponse() as any).code === 'branch_head_office_exists',
+    );
+    assert.equal((repo.create.mock.calls as any[]).length, 0);
+  });
+
+  it('still allows an ordinary branch when a head office exists', async () => {
+    const repo = makeRepo({ countActiveHeadOffice: mock.fn(async () => 1) });
+    const uc = new CreateBranchUseCase(repo as any, makeAudit() as any, makePrisma());
+    await uc.execute(makeCtx(['company.branch.manage']), { code: 'B1', name: 'Siam', type: 'BRANCH' });
+    assert.equal((repo.create.mock.calls as any[]).length, 1);
+  });
 });

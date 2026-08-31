@@ -66,6 +66,11 @@ the three unrouted prototype components, and the two pre-existing test failures 
 **Risk:** `branches.length === 0` is also the legitimate state for a company with no ACTIVE branch
 rows. Rendering nothing there is correct — there is no branch to name.
 
+**Narrowed 2026-08-31 (Owner decision D3):** for a customer company this is now an illegal state, not
+a legitimate one — branch administration refuses any transition leaving zero active branches. The
+empty case survives only for the platform tenant, which has no branch rows. The rendering decision
+above is unchanged; only its justification narrows.
+
 **Check:** unit test on `useBranchScopeLabel` covering unresolved / all / selected / locked.
 
 ## 6. Phase 2 — Chips stop lying, without over-claiming (D3)

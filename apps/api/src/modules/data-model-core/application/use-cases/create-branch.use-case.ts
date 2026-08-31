@@ -39,6 +39,17 @@ export class CreateBranchUseCase {
     // company with no plan-term row is unlimited.
     await assertBranchLimit(this.prisma, ctx.companyId);
 
+    // Owner decision 2026-08-31 (D4): one head office per company. Thai filing gives the head
+    // office tax branch code 00000, and the 2026-08-29 branch backfill resolves a company by its
+    // single active head office — a second one would make both ambiguous. Checked against ACTIVE
+    // only, so a company can still create a replacement after retiring the old one.
+    if (cmd.type === 'HEAD_OFFICE' && (await this.branches.countActiveHeadOffice(ctx.companyId)) > 0) {
+      throw new ConflictException({
+        code: 'branch_head_office_exists',
+        message: 'This company already has an active head office branch.',
+      });
+    }
+
     const codeErr = validateBranchCode(cmd.code);
     if (codeErr) throw new BadRequestException(codeErr);
 
