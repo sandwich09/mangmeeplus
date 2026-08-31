@@ -29,7 +29,7 @@ import {
   deriveExpenseAuditChecks, deriveExpenseReviewSteps, initialExpenseReviewStep, expenseSubstituteReceiptReady, expenseNeedsReceiptOrSubstitute, expenseCapabilities,
   calculateManualExpenseTotals, buildManualExpenseLines, canAccessExpenseTab, canDeleteExpense, expenseDeleteErrorMessage,
   expenseDeleteTargetLabel, firstFilled, isExpensePending, summarizeExpenseKpis,
-  isBlockedCheckBillClassification, lateDocumentDays,
+  isBlockedCheckBillClassification, lateDocumentDays, expenseClassificationConfirmBlocker,
   POSTING_STATUS_LABELS, aiGrandTotalValue, expenseAiFieldProvenance, expenseRatePercent, expenseDocumentWhtRate,
   vatRatePreset, vatRatePresetValue, vatTreatmentForPreset, expensePercentToRate, expenseRateToPercent,
   effectiveVatRateLabel, vatModeRequiresRate,
@@ -506,7 +506,7 @@ function CheckBillGuidanceCard({ companyId, expenseId, canReview, receiptUploadi
   );
 }
 
-export function DocumentReviewSection({ companyId, detail, isMutable, canReview, canConfirm, userId, canSelfApprove, onSaved, onOpenFile, onAttachPrimaryReceipt, receiptUploading = false, dirtyRef }: { companyId: string; detail: ExpenseDetail; isMutable: boolean; canReview: boolean; canConfirm: boolean; userId: string; canSelfApprove: boolean; onSaved: () => Promise<void>; onOpenFile: (file: { name: string; mimeType: string; url: string; hideOpenNewTab?: boolean; onViewed?: () => void }) => void; onAttachPrimaryReceipt?: (file: File) => Promise<void>; receiptUploading?: boolean; dirtyRef?: MutableRefObject<boolean> }) {
+export function DocumentReviewSection({ companyId, detail, isMutable, canReview, canConfirm, userId, canSelfApprove, onSaved, onOpenFile, onAttachPrimaryReceipt, receiptUploading = false, onDirtyChange }: { companyId: string; detail: ExpenseDetail; isMutable: boolean; canReview: boolean; canConfirm: boolean; userId: string; canSelfApprove: boolean; onSaved: () => Promise<void>; onOpenFile: (file: { name: string; mimeType: string; url: string; hideOpenNewTab?: boolean; onViewed?: () => void }) => void; onAttachPrimaryReceipt?: (file: File) => Promise<void>; receiptUploading?: boolean; onDirtyChange?: (dirty: boolean) => void }) {
   const locale = useWorkspaceLocale();
   const toast = useToast();
   const [docType, setDocType] = useState(detail.sourceDocumentType);
@@ -616,17 +616,18 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
   );
   const dirty = docType !== detail.sourceDocumentType || taxStatus !== detail.taxEvidenceStatus || categoryId !== (detail.expenseCategoryId ?? '');
   const aiCategorySuggestion = expenseAiCategorySuggestion(detail.aiVerificationSummaryJson);
-  // Live dirtiness for the parent's ถัดไป guard — only while the บันทึกการตรวจ button exists
-  // (a read-only viewer has nothing to save and must never be blocked).
+  // Live dirtiness for the parent's ถัดไป gate — only while the บันทึกการตรวจ button exists
+  // (a read-only viewer has nothing to save and must never be blocked). State, not a ref: the
+  // parent has to re-render to disable ถัดไป, which a ref cannot make it do (Owner report
+  // 2026-08-29 — the button stayed live and the click was refused in silence).
   useEffect(() => {
-    if (!dirtyRef) return;
-    dirtyRef.current = isMutable && canReview && dirty;
-    return () => { dirtyRef.current = false; };
-  });
+    onDirtyChange?.(isMutable && canReview && dirty);
+  }, [onDirtyChange, isMutable, canReview, dirty]);
   const classificationReviewState = deriveExpenseClassificationReviewState(detail.aiVerificationSummaryJson, canReview);
   const classificationBlocked = classificationReviewState.blocked;
   const checkBillBlocked = isBlockedCheckBillClassification(detail.aiVerificationSummaryJson);
-  const canResolveClassification = classificationReviewState.showFinanceOverride && docType !== 'NEEDS_REVIEW' && classificationOverrideReason.trim().length > 0 && classificationOverrideReason.trim().length <= 500;
+  const classificationConfirmBlocker = expenseClassificationConfirmBlocker({ sourceDocumentType: docType, reason: classificationOverrideReason });
+  const canResolveClassification = classificationReviewState.showFinanceOverride && classificationConfirmBlocker === null;
   const saveDocumentReview = (next?: { docType: ExpenseDetail['sourceDocumentType']; taxStatus: ExpenseDetail['taxEvidenceStatus'] }) => {
     const nextDocType = next?.docType ?? docType;
     const nextTaxStatus = next?.taxStatus ?? taxStatus;
@@ -912,6 +913,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
               <div className="mb-1 text-xs font-medium text-gray-600">{t('expenses.non_expense_override_reason', locale)}</div>
               <textarea className={inputClass} rows={2} maxLength={500} value={classificationOverrideReason} onChange={(e) => setClassificationOverrideReason(stripDisallowed(e.target.value))} placeholder={t('expenses.non_expense_override_reason_placeholder', locale)} />
               <button className={cx(btnClass, 'mt-2')} disabled={busy || !canResolveClassification} onClick={() => run(overrideClassification, 'ยืนยันการจัดประเภทรายการเรียบร้อยแล้ว')}>{t('expenses.non_expense_override_action', locale)}</button>
+              {classificationConfirmBlocker && <p className="mt-1 text-xs font-medium text-warning-700">{t(classificationConfirmBlocker, locale)}</p>}
             </div>
           </details>
         ) : (
@@ -976,6 +978,11 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
         <div className="flex flex-wrap items-center gap-2">
           <button className={btnClass} disabled={busy || !dirty} onClick={() => run(saveDocumentReview, 'บันทึกการตรวจเอกสารเรียบร้อยแล้ว')}>{t('expenses.doc_review_save', locale)}</button>
           {classificationReviewState.showFinanceOverride && !checkBillBlocked && <button className={btnClass} disabled={busy || !canResolveClassification} onClick={() => run(overrideClassification, 'ยืนยันการจัดประเภทรายการเรียบร้อยแล้ว')}>{t('expenses.non_expense_override_action', locale)}</button>}
+          {/* `w-full` puts the reason on its own line of the wrapping row, under the buttons —
+              a disabled button on a phone has no tooltip to fall back on. */}
+          {classificationReviewState.showFinanceOverride && !checkBillBlocked && classificationConfirmBlocker && (
+            <p className="w-full text-xs font-medium text-warning-700">{t(classificationConfirmBlocker, locale)}</p>
+          )}
           {!classificationBlocked && (!evidence || evidence.status === 'SUPERSEDED') && (
             <>
               <Link className={ghostClass} href={substituteReceiptPreparationHref(companyId, detail.id, detail.aiVerificationSummaryJson)}>
@@ -2583,11 +2590,12 @@ export function ExpensesHubPage({ companyId, userId, permissions, tab = 'list' }
             <div onClickCapture={() => {
               if (createBranchId) return;
               toast.error(t('transaction.branch_required_before_create', locale));
-              // Scroll only, never focus: focusing a <select> opens the native picker on mobile,
-              // which reads as the page acting for the user (Owner report 2026-08-29). The field's
-              // invalid styling + the toast already say what to do.
-              const select = document.querySelector<HTMLSelectElement>('[data-transaction-branch-select]');
-              select?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              // Scroll only, never focus: focusing the control opens its picker, which reads as the
+              // page acting for the user (Owner report 2026-08-29). The field's invalid styling and
+              // the toast already say what to do. The tag now sits on the field wrapper — the
+              // control itself is a ThemedSelect, not a <select>.
+              const field = document.querySelector<HTMLElement>('[data-transaction-branch-select]');
+              field?.scrollIntoView({ behavior: 'smooth', block: 'center' });
             }}>
             <fieldset disabled={!createBranchId} className="min-w-0">
               {tab === 'upload' && <UploadPanel companyId={companyId} branchId={createBranchId} {...(caps.canCreate ? { onNoDocument: () => router.push(`/companies/${companyId}/expenses/substitute-receipts/new`) } : {})} onSuccess={(expenseId, notice) => { storeExtractionNotice(expenseId, notice); openListExpense(expenseId); }} />}

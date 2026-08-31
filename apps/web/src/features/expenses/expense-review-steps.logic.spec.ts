@@ -1,6 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { deriveExpenseReviewSteps, expenseAiMissingFields, initialExpenseReviewStep } from './expenses.model';
+import {
+  deriveExpenseReviewSteps, expenseAiMissingFields, initialExpenseReviewStep,
+  expenseClassificationConfirmBlocker, expenseEvidenceStepBlocker, shouldRereadReplacedReceipt,
+} from './expenses.model';
 
 type StepsInput = Parameters<typeof deriveExpenseReviewSteps>[0];
 
@@ -136,5 +139,114 @@ describe('initialExpenseReviewStep', () => {
     const steps = deriveExpenseReviewSteps({ ...base, vendorNameSnapshot: null }, true);
     assert.equal(initialExpenseReviewStep(steps, 'READY_FOR_CONFIRMATION'), 'data');
     assert.equal(initialExpenseReviewStep(steps, 'DRAFT'), 'data');
+  });
+});
+
+// Owner report 2026-08-29 (UAT, company "test sand"): on step 2 the AI had classified the file as
+// NOT an expense document. The reviewer changed ประเภทเอกสาร, pressed ยืนยันว่าเป็นหลักฐานค่าใช้จ่าย,
+// then pressed ถัดไป — which was enabled and did nothing. The cause was two different flags: the
+// button's `disabled` read `checkBillBlocked` only, while the navigation refused on an unsaved-edits
+// ref the button never saw, and the classification block — the thing the yellow banner names —
+// gated neither. Both now read `expenseEvidenceStepBlocker`, so "enabled" means "moves".
+describe('step 2 (ภาษีและเอกสาร) enablement truth table', () => {
+  const clear = { checkBillBlocked: false, classificationBlocked: false, canReview: true, unsavedReview: false };
+
+  it('lets ถัดไป through only when nothing is outstanding', () => {
+    assert.equal(expenseEvidenceStepBlocker(clear), null);
+  });
+
+  it('holds ถัดไป while the AI classification block is unresolved — the bug the Owner hit', () => {
+    assert.equal(
+      expenseEvidenceStepBlocker({ ...clear, classificationBlocked: true }),
+      'expenses.evidence_next_needs_classification',
+    );
+  });
+
+  it('names the person who has to act when the reader cannot confirm the type themselves', () => {
+    assert.equal(
+      expenseEvidenceStepBlocker({ ...clear, classificationBlocked: true, canReview: false }),
+      'expenses.evidence_next_waiting_finance',
+    );
+  });
+
+  it('continues once the document type is confirmed — the confirm clears the same flag ถัดไป checks', () => {
+    // What the override writes server-side is `classificationBlocked` going false; nothing else on
+    // step 2 changes. That must be enough to move on, or the confirm is a dead end.
+    assert.equal(expenseEvidenceStepBlocker({ ...clear, classificationBlocked: false }), null);
+  });
+
+  it('asks for the review to be saved before leaving the step, and never in silence', () => {
+    assert.equal(expenseEvidenceStepBlocker({ ...clear, unsavedReview: true }), 'expenses.doc_review_unsaved_next');
+  });
+
+  it('routes a check bill to its own recovery card first', () => {
+    assert.equal(
+      expenseEvidenceStepBlocker({ ...clear, checkBillBlocked: true, classificationBlocked: true, unsavedReview: true }),
+      'expenses.check_bill_workflow_blocked',
+    );
+  });
+
+  it('names the AI block before the unsaved edits — resolve what the banner shows, then save', () => {
+    assert.equal(
+      expenseEvidenceStepBlocker({ ...clear, classificationBlocked: true, unsavedReview: true }),
+      'expenses.evidence_next_needs_classification',
+    );
+  });
+
+  it('every blocked state has a reason to print, so a disabled ถัดไป is never mute', () => {
+    for (const checkBillBlocked of [false, true]) {
+      for (const classificationBlocked of [false, true]) {
+        for (const canReview of [false, true]) {
+          for (const unsavedReview of [false, true]) {
+            const input = { checkBillBlocked, classificationBlocked, canReview, unsavedReview };
+            const blocker = expenseEvidenceStepBlocker(input);
+            const blocked = checkBillBlocked || classificationBlocked || unsavedReview;
+            assert.equal(blocker !== null, blocked, `wrong gate for ${JSON.stringify(input)}`);
+          }
+        }
+      }
+    }
+  });
+});
+
+describe('ยืนยันว่าเป็นหลักฐานค่าใช้จ่าย says what it is waiting for', () => {
+  it('asks for a real document type first — “รอตรวจสอบ” is what the AI already said', () => {
+    assert.equal(
+      expenseClassificationConfirmBlocker({ sourceDocumentType: 'NEEDS_REVIEW', reason: 'ตรวจแล้ว' }),
+      'expenses.non_expense_confirm_needs_doc_type',
+    );
+  });
+
+  it('asks for the reason, which on a phone sits far above the button', () => {
+    assert.equal(
+      expenseClassificationConfirmBlocker({ sourceDocumentType: 'TAX_INVOICE', reason: '   ' }),
+      'expenses.non_expense_confirm_needs_reason',
+    );
+    assert.equal(
+      expenseClassificationConfirmBlocker({ sourceDocumentType: 'TAX_INVOICE', reason: 'ก'.repeat(501) }),
+      'expenses.non_expense_confirm_needs_reason',
+    );
+  });
+
+  it('clears once both are supplied', () => {
+    assert.equal(expenseClassificationConfirmBlocker({ sourceDocumentType: 'TAX_INVOICE', reason: 'ตรวจเทียบกับบิลแล้ว' }), null);
+  });
+});
+
+// Owner report 2026-08-29 (UAT): เปลี่ยนไฟล์ใบเสร็จ swapped the file but the draft kept showing the
+// numbers read off the FIRST file — only the upload page ever called the extraction endpoint.
+describe('a replaced receipt is re-read the way the first upload is', () => {
+  it('re-reads while the record is still a draft', () => {
+    assert.equal(shouldRereadReplacedReceipt({ status: 'DRAFT', canExtract: true }), true);
+    assert.equal(shouldRereadReplacedReceipt({ status: 'NEEDS_REVIEW', canExtract: true }), true);
+  });
+
+  it('leaves a record already sent for confirmation alone — the read overwrites vendor, date and number', () => {
+    assert.equal(shouldRereadReplacedReceipt({ status: 'READY_FOR_CONFIRMATION', canExtract: true }), false);
+    assert.equal(shouldRereadReplacedReceipt({ status: 'CONFIRMED', canExtract: true }), false);
+  });
+
+  it('never asks for a read the user has no permission to request', () => {
+    assert.equal(shouldRereadReplacedReceipt({ status: 'DRAFT', canExtract: false }), false);
   });
 });
