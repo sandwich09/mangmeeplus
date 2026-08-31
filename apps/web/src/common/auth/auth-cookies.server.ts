@@ -28,7 +28,8 @@ const SECURE =
     ? process.env['AUTH_COOKIE_SECURE'] === 'true'
     : process.env.NODE_ENV === 'production' && process.env['APP_ENV'] !== 'local';
 
-function httpOnlyFlags() {
+/** Exported so short-lived BFF cookies (the §4F merge ticket) get the same flags, not a copy. */
+export function httpOnlyFlags() {
   return { httpOnly: true, secure: SECURE, sameSite: 'lax' as const };
 }
 
