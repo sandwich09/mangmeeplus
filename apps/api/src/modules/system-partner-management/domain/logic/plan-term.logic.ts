@@ -23,6 +23,7 @@ export const LADDER_SENT_COLUMN: Record<WarningLadderDay, 'warn7SentAt' | 'warn3
 };
 
 export const PLAN_TERM_CONTACT_PHONE = '098-256-5628';
+const PLAN_TERM_CONTACT_EMAIL = 'contact@mangmeeplus.com';
 export const DEFAULT_TERM_DAYS = 30;
 export const DEFAULT_WARNING_DAYS = 7;
 /** Preset used for every company an admin creates through onboarding (spec §4A). */
@@ -122,11 +123,11 @@ export function formatThaiDateTime(value: Date): string {
 }
 
 export function warningMessageTh(companyName: string, termEndsAt: Date, daysLeft: number): string {
-  return `ร้าน ${companyName} จะครบกำหนดใช้งานวันที่ ${formatThaiDateTime(termEndsAt)} (อีก ${daysLeft} วัน) — ติดต่อต่ออายุได้ที่ ${PLAN_TERM_CONTACT_PHONE}`;
+  return `ร้าน ${companyName} จะครบกำหนดใช้งานวันที่ ${formatThaiDateTime(termEndsAt)} (อีก ${daysLeft} วัน) — ติดต่อ ${PLAN_TERM_CONTACT_PHONE} หรืออีเมล ${PLAN_TERM_CONTACT_EMAIL}`;
 }
 
 export function expiredMessageTh(companyName: string): string {
-  return `ร้าน ${companyName} ครบกำหนดใช้งานแล้ว ระบบพักการใช้งานชั่วคราว ข้อมูลทั้งหมดยังอยู่ครบ — ติดต่อต่ออายุได้ที่ ${PLAN_TERM_CONTACT_PHONE}`;
+  return `ร้าน ${companyName} ครบกำหนดใช้งานแล้ว ระบบพักการใช้งานชั่วคราว ข้อมูลทั้งหมดยังอยู่ครบ — ติดต่อ ${PLAN_TERM_CONTACT_PHONE} หรืออีเมล ${PLAN_TERM_CONTACT_EMAIL}`;
 }
 
 export function branchLimitMessageTh(limit: number): string {

@@ -122,13 +122,13 @@ describe('Thai copy', () => {
     const message = warningMessageTh('ร้านทดสอบ', END, 3);
     assert.match(message, /^ร้าน ร้านทดสอบ จะครบกำหนดใช้งานวันที่ /);
     assert.match(message, /\(อีก 3 วัน\)/);
-    assert.match(message, /098-256-5628$/);
+    assert.match(message, /ติดต่อ 098-256-5628 หรืออีเมล contact@mangmeeplus\.com$/);
   });
 
   it('expired copy promises the data is still there', () => {
     const message = expiredMessageTh('ร้านทดสอบ');
     assert.match(message, /ข้อมูลทั้งหมดยังอยู่ครบ/);
-    assert.match(message, /098-256-5628$/);
+    assert.match(message, /ติดต่อ 098-256-5628 หรืออีเมล contact@mangmeeplus\.com$/);
   });
 
   it('limit copy states the cap and where to go', () => {
