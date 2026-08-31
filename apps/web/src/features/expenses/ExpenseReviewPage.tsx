@@ -45,6 +45,7 @@ import {
   baht, btnClass, dangerClass, dateShort, err, ErrorBanner, ghostClass, ICON,
   InfoBanner, inputClass, StatusBadge, successBtn, successBtnStyle, TAX_TONE,
 } from './ExpensesUi';
+import { ForeignCurrencyNotice } from './ForeignCurrencyNotice';
 import { generateSourceJournal } from '../ledger/ledger.api';
 import { hasRecordedTax, showsTaxCapture, useExpenseCapturePolicy } from './expense-capture-policy';
 
@@ -681,6 +682,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
       {notice && (notice.tone === 'error' ? <ErrorBanner message={notice.message} /> : !aiMap && <InfoBanner message={notice.message} />)}
       {!notice && storedNonExpenseNotice && <InfoBanner message={storedNonExpenseNotice.message} />}
       {storedClassificationOverrideNotice && <InfoBanner message={storedClassificationOverrideNotice} />}
+      <ForeignCurrencyNotice summary={aiMap} />
     </>
   );
   const postingCard = isConfirmed ? (

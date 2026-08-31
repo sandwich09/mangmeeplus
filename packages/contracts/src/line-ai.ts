@@ -265,6 +265,14 @@ export type ReceiptOcrFieldResult = {
   whtRate?: string;
   whtAmount?: string;
   grandTotalAmount?: string;
+  /**
+   * ISO 4217 code of the money PRINTED ON THE DOCUMENT, when the page shows one (a ฿/$/€/¥ symbol,
+   * a printed code, or plainly Thai wording). Absent means the page did not say — no reader may
+   * assume THB from absence. This is read-only evidence for the reviewer: the ERP stays THB-based,
+   * the amounts above are still copied verbatim, and NOTHING converts them (UAT 2026-08-29: a
+   * $200.00 USD invoice was recorded as 200 บาท, silently wrong by the exchange rate).
+   */
+  currency?: string;
   vatMode?: 'NO_VAT' | 'VAT_INCLUDED' | 'VAT_EXCLUDED' | 'EXEMPT' | 'NEEDS_REVIEW';
   /** Printed item rows in document order, when the item block is legible. The single
    *  description/quantity/unitPrice above stays the whole-document summary the draft uses whenever

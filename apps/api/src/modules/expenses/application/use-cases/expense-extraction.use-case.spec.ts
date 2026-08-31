@@ -230,6 +230,28 @@ describe('RequestReceiptExtractionUseCase', () => {
     assert.equal(JSON.stringify(result).includes('objectKey'), false);
   });
 
+  // Owner 2026-08-29: a $200.00 USD invoice was recorded as 200 บาท. The read now reports the
+  // document's currency, and it must reach the draft the review page reads — inside the extraction
+  // JSON the whole field result already rides in, with the amount still copied, never converted.
+  it('carries the document currency onto the draft without converting the amount', async () => {
+    const fields = { vendorName: 'Acme Inc.', grandTotalAmount: '200.00', currency: 'USD', confidence: 0.9 };
+    const { useCase, updates } = makeUseCase({
+      gatewayResult: {
+        status: 'ok',
+        fields,
+        classification: classification('TAX_INVOICE', { amountSignals: ['200.00'] }),
+      },
+    });
+
+    const result = await useCase.execute(ctx(['expense.ocr.request']), 'expense-1');
+
+    assert.equal(result.status, 'ok');
+    assert.equal(updates[0].aiVerificationSummaryJson.recognizedFields.currency, 'USD');
+    assert.equal(updates[0].aiVerificationSummaryJson.recognizedFields.grandTotalAmount, '200.00');
+    // No FX anywhere: the record keeps its own THB-based currency column untouched.
+    assert.equal('currency' in updates[0], false);
+  });
+
   it('removes category from missing fields when the shared apply service accepts a suggestion', async () => {
     const fields = {
       grandTotalAmount: '321.00',
