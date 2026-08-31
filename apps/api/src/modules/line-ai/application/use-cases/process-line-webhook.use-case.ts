@@ -797,6 +797,12 @@ function formatPaypersReply(
   if (options.hasDuplicate) {
     parts.push('', '⚠️ พบไฟล์ที่อาจซ้ำกับรายการที่มีอยู่ – กรุณาตรวจสอบก่อนยืนยัน');
   }
+  // The total printed above is the DOCUMENT's own figure and nothing converted it, so a non-baht
+  // document must say so here too (UAT 2026-08-29: $200.00 USD was recorded as 200 บาท). THB and an
+  // unread currency push nothing and keep this reply byte-identical.
+  if (options.fields?.currency && options.fields.currency !== 'THB') {
+    parts.push('', `⚠️ เอกสารนี้เป็นสกุลเงิน ${options.fields.currency} – ยอดที่อ่านได้อาจไม่ใช่จำนวนเงินบาท กรุณาตรวจและแก้ยอดเป็นเงินบาทก่อนบันทึก`);
+  }
   parts.push('', `✅ ตรวจสอบและยืนยันในเว็บแอป:\n${link}`);
   return parts.join('\n');
 }

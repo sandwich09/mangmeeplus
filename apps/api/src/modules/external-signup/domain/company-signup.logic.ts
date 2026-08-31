@@ -15,7 +15,8 @@ export type CompanySignupInput = Readonly<{
   externalSignupId: string;
   companyName: string;
   taxId?: string;
-  ownerDisplayName: string;
+  ownerFirstName: string;
+  ownerLastName: string;
   contactEmail: string;
   consentVersion: string;
   referralCode?: string;
@@ -29,6 +30,8 @@ export type NormalizedCompanySignupInput = Readonly<{
   externalSignupId: string;
   companyName: string;
   taxId: string | null;
+  ownerFirstName: string;
+  ownerLastName: string;
   ownerDisplayName: string;
   contactEmail: string;
   consentVersion: string;
@@ -92,7 +95,11 @@ export function normalizeCompanySignupInput(input: CompanySignupInput): Normaliz
     externalSignupId: bounded(input.externalSignupId, 'externalSignupId', 128),
     companyName: bounded(input.companyName, 'companyName', 200),
     taxId,
-    ownerDisplayName: bounded(input.ownerDisplayName, 'ownerDisplayName', 160),
+    ownerFirstName: bounded(input.ownerFirstName, 'ownerFirstName', 80),
+    ownerLastName: bounded(input.ownerLastName, 'ownerLastName', 80),
+    // Owner 2026-08-31: the form collects first and last name separately and BOTH are stored; the
+    // joined display name keeps every downstream reader (queue, provisioning, emails) unchanged.
+    ownerDisplayName: `${bounded(input.ownerFirstName, 'ownerFirstName', 80)} ${bounded(input.ownerLastName, 'ownerLastName', 80)}`,
     contactEmail,
     consentVersion: bounded(input.consentVersion, 'consentVersion', 64),
     referralCode: optional(input.referralCode, 'referralCode', 128),

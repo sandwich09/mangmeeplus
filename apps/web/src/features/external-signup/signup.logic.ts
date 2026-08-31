@@ -57,13 +57,13 @@ export const SELECTABLE_OFFER_KEY: SignupOfferKey = 'PRO_TRIAL';
 
 export type SignupFormValues = {
   companyName: string;
-  ownerDisplayName: string;
+  ownerFirstName: string;
+  ownerLastName: string;
   contactEmail: string;
   phoneNumber: string;
   businessType: string;
   vatRegistered: boolean;
   taxId: string;
-  consentAccepted: boolean;
 };
 
 export type SignupFieldErrors = Partial<Record<keyof SignupFormValues, string>>;
@@ -82,10 +82,23 @@ export function isThaiMobile(value: string): boolean {
   return /^0\d{9}$/.test(value.replace(/[^0-9]/g, ''));
 }
 
+/** What the field may hold, so `isThaiMobile` and `maxLength` cannot drift apart. */
+export const MOBILE_DIGITS = 10;
+
+/**
+ * Owner UAT 2026-08-31: the field accepted an 11th digit and only complained after submit. Typing
+ * is capped at the same 10 digits the validation demands, and the separators the user may paste in
+ * are dropped rather than eating into the cap.
+ */
+export function clampMobileInput(value: string): string {
+  return value.replace(/[^0-9]/g, '').slice(0, MOBILE_DIGITS);
+}
+
 export function validateSignupForm(values: SignupFormValues): SignupFieldErrors {
   const errors: SignupFieldErrors = {};
   if (!values.companyName.trim()) errors.companyName = 'กรุณากรอกชื่อร้านหรือบริษัท';
-  if (!values.ownerDisplayName.trim()) errors.ownerDisplayName = 'กรุณากรอกชื่อผู้ติดต่อ';
+  if (!values.ownerFirstName.trim()) errors.ownerFirstName = 'กรุณากรอกชื่อ';
+  if (!values.ownerLastName.trim()) errors.ownerLastName = 'กรุณากรอกนามสกุล';
 
   const email = values.contactEmail.trim();
   if (!email) errors.contactEmail = 'กรุณากรอกอีเมล';
@@ -102,9 +115,6 @@ export function validateSignupForm(values: SignupFormValues): SignupFieldErrors 
     errors.taxId = 'เลขประจำตัวผู้เสียภาษีต้องเป็นตัวเลข 13 หลัก';
   }
 
-  if (!values.consentAccepted) {
-    errors.consentAccepted = 'กรุณายอมรับข้อกำหนดการใช้งาน และประกาศความเป็นส่วนตัว ก่อนส่งคำขอ';
-  }
   return errors;
 }
 

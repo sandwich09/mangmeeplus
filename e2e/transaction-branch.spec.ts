@@ -1,9 +1,12 @@
 import { civilDate } from '@watchdog-bms/contracts';
 import { test, expect } from './harness/fixtures';
-import { gotoCompany, json, unique } from './harness/e2e-utils';
+import { branchOptionName as branchName, chooseThemedOption, gotoCompany, json, unique } from './harness/e2e-utils';
 
 type Branch = { id: string; name: string; type: string };
-const branchName = (branch: Branch) => branch.name + (branch.type === 'HEAD_OFFICE' ? ' (สำนักงานใหญ่)' : '');
+// Owner report 2026-08-29 (UAT): the source-branch control drew the unstyled OS popup on the
+// upload page, so it is a ThemedSelect now — a details/summary combobox, not a real <select>.
+// Its value is the text on the trigger, and options only exist in the DOM while it is open.
+const UNSET_BRANCH = 'กรุณาเลือกสาขาของรายการ';
 const draft = () => ({
   captureSource: 'WEB_MANUAL', expenseDate: civilDate(new Date()), vatMode: 'NO_VAT', inputVatClaimStatus: 'NON_CLAIMABLE',
   lines: [{ lineNumber: 1, description: unique('QA source branch'), quantity: '1', unitPrice: '1' }],
@@ -45,18 +48,18 @@ for (const width of [390, 1280]) {
     const field = page.getByRole('combobox', { name: 'สาขาของรายการ', exact: true });
     const description = page.getByRole('textbox', { name: 'รายละเอียดค่าใช้จ่าย', exact: true });
     await expect(field).toBeEnabled();
-    await expect(field).toHaveValue('');
+    await expect(field).toHaveText(UNSET_BRANCH);
     await expect(description).toBeDisabled();
     await page.screenshot({ path: info.outputPath(`manual-${width}-needs-selection.png`), fullPage: true });
-    await field.selectOption(chosen.id);
+    await chooseThemedOption(page, field, branchName(chosen));
     await description.fill('ทดสอบเลือกสาขา — ยังไม่บันทึก');
-    await field.selectOption('');
+    await chooseThemedOption(page, field, UNSET_BRANCH);
     await expect(description).toBeDisabled();
-    await field.selectOption(chosen.id);
+    await chooseThemedOption(page, field, branchName(chosen));
     await expect(description).toHaveValue('ทดสอบเลือกสาขา — ยังไม่บันทึก');
     await page.screenshot({ path: info.outputPath(`manual-${width}-selected.png`), fullPage: true });
     await gotoCompany(page, companyId, '/expenses/upload');
-    await expect(page.getByRole('combobox', { name: 'สาขาของรายการ', exact: true })).toHaveValue(chosen.id);
+    await expect(page.getByRole('combobox', { name: 'สาขาของรายการ', exact: true })).toHaveText(branchName(chosen));
     await expect(page.getByRole('textbox', { name: 'เช่น ค่ากาแฟทีมงาน', exact: true })).toBeEnabled();
     await page.screenshot({ path: info.outputPath(`upload-${width}-inherited.png`), fullPage: true });
     expect(errors).toEqual([]);
@@ -72,9 +75,9 @@ for (const width of [390, 1280]) {
     await gotoCompany(page, companyId, '/expenses/manual');
     const field = page.getByRole('combobox', { name: 'สาขาของรายการ', exact: true });
     await expect(field).toBeEnabled();
-    await expect(field).toHaveValue('');
+    await expect(field).toHaveText(UNSET_BRANCH);
     await expect(page.getByRole('textbox', { name: 'รายละเอียดค่าใช้จ่าย', exact: true })).toBeDisabled();
-    await field.selectOption(chosen.id);
+    await chooseThemedOption(page, field, branchName(chosen));
     await page.getByRole('textbox', { name: 'รายละเอียดค่าใช้จ่าย', exact: true }).fill(unique('QA branch UI'));
     await page.getByRole('spinbutton', { name: 'ราคาต่อหน่วย', exact: true }).fill('1');
     await page.screenshot({ path: info.outputPath(`manual-${width}-selected.png`), fullPage: true });
@@ -96,7 +99,7 @@ for (const width of [390, 1280]) {
       await page.screenshot({ path: info.outputPath(`manual-${width}-saved.png`), fullPage: true });
       expect(errors).toEqual([]);
       await gotoCompany(page, companyId, '/expenses/upload');
-      await expect(page.getByRole('combobox', { name: 'สาขาของรายการ', exact: true })).toHaveValue(chosen.id);
+      await expect(page.getByRole('combobox', { name: 'สาขาของรายการ', exact: true })).toHaveText(branchName(chosen));
       await page.screenshot({ path: info.outputPath(`upload-${width}-inherited.png`), fullPage: true });
     } finally {
       expect((await api.delete(`companies/${companyId}/expenses/${created.id}`)).ok()).toBeTruthy();
@@ -112,10 +115,10 @@ for (const width of [390, 1280]) {
     expect(chosen, 'the seeded multi-branch fixture is present').toBeTruthy();
     await gotoCompany(page, companyId, '/expenses/upload');
     const field = page.getByRole('combobox', { name: 'สาขาของรายการ', exact: true });
-    await expect(field).toHaveValue('');
+    await expect(field).toHaveText(UNSET_BRANCH);
     const submit = page.getByRole('button', { name: 'ให้ AI อ่านใบเสร็จ', exact: true });
     await expect(submit).toBeDisabled();
-    await field.selectOption(chosen.id);
+    await chooseThemedOption(page, field, branchName(chosen));
     // Synthetic PNG proves transport/storage, not OCR accuracy; no external AI is mocked as success.
     const bytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
     await page.locator('input[type="file"]').first().setInputFiles({ name: `branch-proof-${width}.png`, mimeType: 'image/png', buffer: bytes });
@@ -158,8 +161,12 @@ test('a single available branch defaults in the entry form (controlled branch-li
     await route.fulfill({ response, json: { ...body, items: [chosen], total: 1 } });
   });
   await gotoCompany(page, companyId, '/expenses/manual');
-  await expect(page.getByRole('combobox', { name: 'สาขาของรายการ', exact: true })).toHaveValue(chosen.id);
+  const field = page.getByRole('combobox', { name: 'สาขาของรายการ', exact: true });
+  await expect(field).toHaveText(branchName(chosen));
   await expect(page.getByRole('textbox', { name: 'รายละเอียดค่าใช้จ่าย', exact: true })).toBeEnabled();
+  // ThemedSelect's list is portaled and only exists while open, so the branch has to be on screen
+  // to be counted — the point of the assertion is that exactly one real branch is offered.
+  await field.click();
   await expect(page.getByRole('option', { name: branchName(chosen), exact: true })).toHaveCount(1);
   await page.screenshot({ path: info.outputPath('single-available-branch-default.png'), fullPage: true });
 });

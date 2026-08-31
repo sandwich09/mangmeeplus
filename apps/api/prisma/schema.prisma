@@ -3076,6 +3076,8 @@ model CompanySignupRequest {
   companyName            String
   taxId                  String?
   ownerDisplayName       String
+  ownerFirstName         String?
+  ownerLastName          String?
   contactEmail           String
   consentVersion         String
   referralCode           String?

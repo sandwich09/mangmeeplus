@@ -27,6 +27,33 @@ const ctx = {
   authProvider: 'line',
 } as any;
 
+/**
+ * Attachment collaborators for CompleteReceiptUploadUseCase's replace path.
+ * `primaries` are the ACTIVE `expense.receipt.primary` links the expense already holds.
+ */
+function receiptRetirement(options: { primaries?: string[]; sharedLinks?: Record<string, number>; holds?: string[] } = {}) {
+  const unlinked: string[] = [];
+  const softDeleted: string[] = [];
+  const tx = {
+    attachmentLink: {
+      findMany: async ({ where }: any) => (options.primaries ?? [])
+        .filter((id) => id !== where.attachmentId.not)
+        .map((attachmentId) => ({ attachmentId })),
+      count: async ({ where }: any) => options.sharedLinks?.[where.attachmentId] ?? 0,
+      deleteMany: async ({ where }: any) => { unlinked.push(where.attachmentId); return { count: 1 }; },
+    },
+  };
+  return {
+    attachments: {
+      findSubstituteEvidenceRetentionHold: async ({ id }: any) => ((options.holds ?? []).includes(id) ? { evidenceId: 'ev-1' } : null),
+      markDeleted: async ({ id }: any) => { softDeleted.push(id); return { id, status: 'DELETED' }; },
+    } as any,
+    prisma: { client: { $transaction: async (run: any) => run(tx) } } as any,
+    unlinked,
+    softDeleted,
+  };
+}
+
 describe('receipt upload use cases', () => {
   it('allows LINE receipt upload permission to create LINE upload draft', async () => {
     const created: any[] = [];
@@ -129,6 +156,7 @@ describe('receipt upload use cases', () => {
 
   it('allows LINE receipt upload permission to complete own upload', async () => {
     const updates: any[] = [];
+    const retirement = receiptRetirement();
     const uc = new CompleteReceiptUploadUseCase(
       {
         findById: async () => ({ id: 'expense-1', status: 'DRAFT', createdByUserId: 'user-1', duplicateStatus: 'NO_MATCH' }),
@@ -153,6 +181,8 @@ describe('receipt upload use cases', () => {
       { execute: async () => ({ id: 'att-1' }) } as any,
       { log: async () => undefined } as any,
       { append: async () => undefined } as any,
+      retirement.attachments,
+      retirement.prisma,
     );
 
     await uc.execute(ctx, { expenseId: 'expense-1', attachmentId: 'att-1', byteSize: 123 });
@@ -190,11 +220,14 @@ describe('receipt upload use cases', () => {
           return { ...input };
         },
       } as any;
+      const retirement = receiptRetirement();
       const uc = new CompleteReceiptUploadUseCase(
         repo,
         { execute: async () => ({ id: 'att-1', checksumSha256: 'a'.repeat(64) }) } as any,
         { log: async () => undefined } as any,
         { append: async () => undefined } as any,
+        retirement.attachments,
+        retirement.prisma,
       );
 
       const result = await uc.execute(
@@ -207,6 +240,92 @@ describe('receipt upload use cases', () => {
       assert.equal(updates.some((update) => 'duplicateStatus' in update), false);
       assert.equal(result.duplicateStatus, 'POSSIBLE_DUPLICATE');
     }
+  });
+
+  // Owner report 2026-08-29 (UAT): "เปลี่ยนไฟล์ใบเสร็จ" appended — the wrong file stayed on the
+  // record and the new one showed up as page 2 of 2, both ACTIVE primaries.
+  describe('replacing the primary receipt', () => {
+    const completeReplace = (options: {
+      status?: string;
+      primaries?: string[];
+      sharedLinks?: Record<string, number>;
+      holds?: string[];
+    } = {}) => {
+      const audits: any[] = [];
+      const retirement = receiptRetirement(options);
+      const uc = new CompleteReceiptUploadUseCase(
+        {
+          findById: async () => ({ id: 'expense-1', status: options.status ?? 'NEEDS_REVIEW', createdByUserId: 'user-1', duplicateStatus: 'NO_MATCH' }),
+          runDuplicateCheck: async () => ({ openCandidates: 0, duplicateStatus: 'NO_MATCH' }),
+          findByIdWithRelations: async () => ({
+            id: 'expense-1', primaryAttachmentId: 'att-new', attachments: [],
+            vendorDocumentNumber: null, vendorTaxIdSnapshot: null, expenseDate: new Date(),
+            grandTotalAmount: '0', vendorCounterpartyId: null,
+          }),
+          findNearDuplicates: async () => [],
+          findExpenseIdsByAttachmentChecksum: async () => [],
+          createDuplicateCandidate: async () => undefined,
+          linkAttachment: async () => undefined,
+          updateExpense: async (input: any) => ({ id: input.id }),
+        } as any,
+        { execute: async () => ({ id: 'att-new' }) } as any,
+        { log: async (entry: any) => { audits.push(entry); } } as any,
+        { append: async () => undefined } as any,
+        retirement.attachments,
+        retirement.prisma,
+      );
+      return { uc, retirement, audits };
+    };
+
+    const run = (harness: ReturnType<typeof completeReplace>) => harness.uc.execute(
+      { ...ctx, permissions: ['expense.receipt.upload', 'expense.receipt.line_upload', 'attachment.create'] },
+      { expenseId: 'expense-1', attachmentId: 'att-new', purpose: 'expense.receipt.primary', byteSize: 123 },
+    );
+
+    it('retires the file it replaces while the record is still a draft — unlinked and soft-deleted, never hard-deleted', async () => {
+      const harness = completeReplace({ status: 'NEEDS_REVIEW', primaries: ['att-old', 'att-new'] });
+      await run(harness);
+      assert.deepEqual(harness.retirement.unlinked, ['att-old'], 'the replaced receipt leaves the expense');
+      assert.deepEqual(harness.retirement.softDeleted, ['att-old'], 'the object is soft-deleted, so the bytes and the row survive');
+      const complete = harness.audits.find((entry) => entry.action === 'expense.upload.complete');
+      assert.deepEqual(complete?.metadataJson?.replacedAttachmentIds, ['att-old'], 'the swap is on the audit trail');
+    });
+
+    it('leaves an approver-visible record alone — a receipt already sent for confirmation keeps its files', async () => {
+      const harness = completeReplace({ status: 'READY_FOR_CONFIRMATION', primaries: ['att-old', 'att-new'] });
+      await run(harness);
+      assert.deepEqual(harness.retirement.unlinked, []);
+      assert.deepEqual(harness.retirement.softDeleted, []);
+      const complete = harness.audits.find((entry) => entry.action === 'expense.upload.complete');
+      assert.equal(complete?.metadataJson?.replacedAttachmentIds, undefined);
+    });
+
+    it('keeps a file a certified substitute receipt retains, and one another record also links', async () => {
+      const held = completeReplace({ primaries: ['att-old', 'att-new'], holds: ['att-old'] });
+      await run(held);
+      assert.deepEqual(held.retirement.softDeleted, [], 'retention hold wins over the replace');
+
+      const shared = completeReplace({ primaries: ['att-old', 'att-new'], sharedLinks: { 'att-old': 1 } });
+      await run(shared);
+      assert.deepEqual(shared.retirement.softDeleted, [], 'a file another record points at is not ours to retire');
+    });
+
+    it('does nothing on a first upload — there is no earlier receipt to retire', async () => {
+      const harness = completeReplace({ status: 'DRAFT', primaries: ['att-new'] });
+      await run(harness);
+      assert.deepEqual(harness.retirement.unlinked, []);
+      assert.deepEqual(harness.retirement.softDeleted, []);
+    });
+
+    it('leaves supporting and payment evidence untouched — only the primary slot is replaced', async () => {
+      const harness = completeReplace({ primaries: ['att-old', 'att-new'] });
+      await harness.uc.execute(
+        { ...ctx, permissions: ['expense.receipt.upload', 'expense.receipt.line_upload', 'attachment.create'] },
+        { expenseId: 'expense-1', attachmentId: 'att-new', purpose: 'expense.receipt.supporting', byteSize: 123 },
+      );
+      assert.deepEqual(harness.retirement.unlinked, []);
+      assert.deepEqual(harness.retirement.softDeleted, []);
+    });
   });
 
   it('flags a visually equivalent primary receipt when its verified bytes changed', async () => {

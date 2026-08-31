@@ -1381,6 +1381,49 @@ describe('receipt OCR per-row VAT', () => {
 });
 
 /**
+ * Foreign-currency detection (Owner 2026-08-29). A $200.00 USD invoice was read on UAT and recorded
+ * as 200 บาท — silently wrong by the exchange rate. The read now reports the document's own
+ * currency so the reviewer is warned; nothing here converts an amount, and an unread currency must
+ * stay absent rather than defaulting to THB.
+ */
+describe('receipt OCR document currency', () => {
+  const doc = 'INVOICE\nConsulting service\nTOTAL USD 200.00';
+  const parse = (fields: Record<string, unknown>) => parseReceiptOcrJson(
+    JSON.stringify({ fields: { grandTotalAmount: '200.00', ...fields } }),
+    doc,
+    new Set<string>(),
+  );
+
+  it('keeps an ISO code and normalizes its case and padding', () => {
+    assert.equal(parse({ currency: 'USD' })?.fields?.currency, 'USD');
+    assert.equal(parse({ currency: ' usd ' })?.fields?.currency, 'USD');
+    assert.equal(parse({ currency: 'THB' })?.fields?.currency, 'THB');
+    assert.equal(parse({ currency: 'EUR' })?.fields?.currency, 'EUR');
+  });
+
+  it('leaves an unread currency absent instead of defaulting to THB', () => {
+    assert.equal(parse({})?.fields?.currency, undefined);
+    assert.equal(parse({ currency: 'UNKNOWN' })?.fields?.currency, undefined, 'UNKNOWN is not a code');
+    assert.equal(parse({ currency: '' })?.fields?.currency, undefined);
+    assert.equal(parse({ currency: '$' })?.fields?.currency, undefined, 'a symbol is not a code');
+    assert.equal(parse({ currency: 'US Dollars' })?.fields?.currency, undefined);
+    assert.equal(parse({ currency: 'ดอลลาร์' })?.fields?.currency, undefined);
+  });
+
+  it('survives the §13 cross-check, which never sees "USD" printed on a symbol-only page', () => {
+    const symbolOnly = 'INVOICE\nConsulting service\nTOTAL $200.00';
+    const parsed = parseReceiptOcrJson(
+      JSON.stringify({ fields: { grandTotalAmount: '200.00', currency: 'USD' } }),
+      symbolOnly,
+      new Set<string>(),
+    );
+    const checked = applyOcrValueCrossCheck(parsed!.fields!, symbolOnly);
+    assert.equal(checked.currency, 'USD');
+    assert.equal(checked.grandTotalAmount, '200.00', 'the printed figure is copied, never converted');
+  });
+});
+
+/**
  * Reusing the intake read (Owner 2026-08-28, speed work). The intake router already reads the photo
  * to classify it; UAT measured 12.8s of intake followed by a 16.6s re-read of the identical image.
  * When that read is forwarded, this route must skip its own — and must still fall back to reading

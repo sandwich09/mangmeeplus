@@ -1802,6 +1802,31 @@ describe('LINE intake dispatch – media path', () => {
     assert.match(h.replies[0] ?? '', /สลิปโอนเงิน/);
   });
 
+  // Owner 2026-08-29: a $200.00 USD invoice was recorded as 200 บาท. The reply prints the DOCUMENT's
+  // own figure and nothing converts it, so a non-baht document has to say so here too. THB and an
+  // unread currency must leave the reply exactly as it was.
+  it('warns in the LINE reply when the document is not in baht, and changes nothing otherwise', async () => {
+    const replyFor = async (currency?: string) => {
+      const h = makeHarness({
+        permissions: ['expense.receipt.line_upload'],
+        routePlan: { status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.95 },
+        receiptOcrResult: validReceiptOcr({
+          fields: {
+            vendorName: 'ร้านทดสอบ', documentNumber: 'R-1', grandTotalAmount: '120.00', confidence: 0.98,
+            ...(currency ? { currency } : {}),
+          },
+        }),
+        prisma: makePrisma().prisma,
+      });
+      await h.useCase.executeReceiptUpload(MEDIA_EVENT);
+      return h.replies[0] ?? '';
+    };
+    assert.match(await replyFor('USD'), /เอกสารนี้เป็นสกุลเงิน USD/);
+    const baseline = await replyFor();
+    assert.equal(baseline.includes('สกุลเงิน'), false, 'an unread currency says nothing');
+    assert.equal(await replyFor('THB'), baseline, 'a baht document is byte-identical to before');
+  });
+
   it('starts the durable all-question workflow after a receipt OCR capture when the flag is on', async () => {
     const starts: any[] = [];
     const { prisma, recordUpdates } = makePrisma();

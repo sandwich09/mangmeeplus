@@ -26,10 +26,10 @@ import {
   AI_MISSING_FIELD_LABELS, AI_SUMMARY_STATUS_LABELS, ATTACHMENT_PURPOSE_LABELS, isWetSignedScanAttachment,
   CAPTURE_SOURCE_LABELS, EXPENSE_VAT_MODE_LABELS, PAYMENT_METHOD_LABELS, POSTING_STATUS_LABELS,
   SOURCE_DOCUMENT_TYPE_LABELS, TAX_EVIDENCE_STATUS_LABELS, deriveExpenseAuditChecks,
-  deriveExpenseClassificationReviewState, deriveExpenseReviewSteps, expenseAiMissingFields, expenseCapabilities,
+  deriveExpenseClassificationReviewState, deriveExpenseReviewSteps, expenseAiMissingFields, expenseCapabilities, expenseEvidenceStepBlocker,
   expenseNeedsReceiptOrSubstitute, expenseSubstituteReceiptReady, expenseValueLabel,
   canRunExpenseDuplicateCheck, hasAiGrandTotalMismatch, hasUnresolvedDuplicateWarning, initialExpenseReviewStep, needsAiTotalAcknowledgement,
-  MIME_TYPE_LABELS, canDeleteExpense, effectiveVatRateLabel, expenseDeleteErrorMessage, firstFilled, isBlockedCheckBillClassification,
+  MIME_TYPE_LABELS, canDeleteExpense, effectiveVatRateLabel, expenseDeleteErrorMessage, firstFilled, shouldRereadReplacedReceipt, isBlockedCheckBillClassification,
   postingErrorText, vatModeRequiresRate, expensePaymentAttempt, classifyExpensePaymentFailure,
   expenseConfirmBlocker,
 } from './expenses.model';
@@ -45,6 +45,7 @@ import {
   baht, btnClass, dangerClass, dateShort, err, ErrorBanner, ghostClass, ICON,
   InfoBanner, inputClass, StatusBadge, successBtn, successBtnStyle, TAX_TONE,
 } from './ExpensesUi';
+import { ForeignCurrencyNotice } from './ForeignCurrencyNotice';
 import { generateSourceJournal } from '../ledger/ledger.api';
 import { hasRecordedTax, showsTaxCapture, useExpenseCapturePolicy } from './expense-capture-policy';
 
@@ -106,8 +107,9 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
   // Details-step edits are saved by navigation (ถัดไป/ย้อนกลับ/chips), not an in-section save button.
   const reviewSaveRef = useRef<(() => Promise<boolean>) | null>(null);
   // Evidence-step edits save only via the explicit บันทึกการตรวจ button (the save can cascade —
-  // e.g. clearing tax codes), so navigation must not save them; it must refuse to skip past them.
-  const evidenceDirtyRef = useRef(false);
+  // e.g. clearing tax codes), so navigation must not save them; ถัดไป disables until they are saved.
+  // State, not a ref: the button has to re-render to go grey.
+  const [evidenceDirty, setEvidenceDirty] = useState(false);
   // Plan 13.11.B: the VAT card owns "ใช้ยอดตามเอกสาร" (it is where the numbers and the pointed line
   // are), but the decision only takes effect on this page's confirm. Null unless a reviewer has both
   // named the VAT line taking the difference and written a reason.
@@ -132,12 +134,6 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
       setStepSaving(true);
       const saved = await reviewSaveRef.current().finally(() => setStepSaving(false));
       if (!saved) return; // stay on the step — the section shows the error
-    }
-    // ถัดไป past unsaved evidence edits would submit stale values while everything reads green —
-    // stay and name the button. Going back keeps the edits (sections hide, not unmount).
-    if (step === 'evidence' && key === 'review' && !substituteLocked && evidenceDirtyRef.current) {
-      toast.warning(t('expenses.doc_review_unsaved_next', locale));
-      return;
     }
     setStep(key);
   };
@@ -361,12 +357,21 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
 
   // Manually-entered expenses start with no file; confirmation needs a receipt in
   // the primary slot (supporting evidence does not satisfy that rule).
+  //
+  // Owner report 2026-08-29 (UAT): เปลี่ยนไฟล์ใบเสร็จ swapped the file and left the draft showing
+  // the OLD file's numbers — the upload page runs the AI read itself (ExpensesPages `handleUpload`
+  // → requestExpenseExtraction) and this path never did. While the record is still a draft the new
+  // primary now goes through the same read, so the fields the reviewer checks belong to the file on
+  // screen. Past drafting the record keeps today's behaviour: an approver's numbers are not
+  // rewritten under them. The server retires the file being replaced (CompleteReceiptUploadUseCase).
   const attachPrimaryReceipt = async (file: File, branchId: string | null) => {
+    const reread = shouldRereadReplacedReceipt({ status: detail?.status ?? '', canExtract });
     setReceiptUploading(true); setError(null);
     try {
       await uploadExpenseEvidenceFile(companyId, expenseId, branchId, file, 'expense.receipt.primary');
       await load(); onRefresh();
       toast.success(t('expenses.receipt_attached', locale));
+      if (reread) await extractAgain();
     } catch (e) { setError(err(e)); } finally { setReceiptUploading(false); }
   };
 
@@ -480,6 +485,13 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
   const classificationBlocked = deriveExpenseClassificationReviewState(aiMap, canReview).blocked;
   const checkBillBlocked = isBlockedCheckBillClassification(aiMap);
   const classificationBlockMessage = t(checkBillBlocked ? 'expenses.check_bill_workflow_blocked' : 'expenses.non_expense_workflow_blocked', locale);
+  // An issued certificate locks the material fields server-side, so บันทึกการตรวจ would 409 there —
+  // unsaved edits must not be able to strand such a record on step 2.
+  const substituteLocked = detail.substituteReceiptEvidence?.status === 'ISSUED';
+  // One truth for step 2: what disables ถัดไป is what is printed under it. See expenses.model.
+  const evidenceStepBlocker = expenseEvidenceStepBlocker({
+    checkBillBlocked, classificationBlocked, canReview, unsavedReview: evidenceDirty && !substituteLocked,
+  });
   const substituteReady = expenseSubstituteReceiptReady(detail);
   const needsReceiptOrSubstitute = expenseNeedsReceiptOrSubstitute(detail);
   const ocrTotalUnacknowledged = needsAiTotalAcknowledgement(detail);
@@ -627,7 +639,14 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
                 )}
               </>
             )}
-            {stepIndex < steps.length - 1 && <button className={btnClass} disabled={stepSaving || (step === 'data' && dataErrorCount !== 0) || (step === 'evidence' && checkBillBlocked)} aria-describedby={step === 'data' && validationBlockMessage ? `expense-review-block-${detail.id}` : undefined} title={step === 'data' ? validationBlockMessage : step === 'evidence' && checkBillBlocked ? classificationBlockMessage : undefined} onClick={() => void goToStep(steps[stepIndex + 1].key)}>{stepSaving && step === 'data' ? t('expenses.saving', locale) : t('expenses.step_next', locale)}</button>}
+            {stepIndex < steps.length - 1 && <button className={btnClass} disabled={stepSaving || (step === 'data' && dataErrorCount !== 0) || (step === 'evidence' && evidenceStepBlocker !== null)} aria-describedby={step === 'data' && validationBlockMessage ? `expense-review-block-${detail.id}` : step === 'evidence' && evidenceStepBlocker ? `expense-review-evidence-block-${detail.id}` : undefined} title={step === 'data' ? validationBlockMessage : undefined} onClick={() => void goToStep(steps[stepIndex + 1].key)}>{stepSaving && step === 'data' ? t('expenses.saving', locale) : t('expenses.step_next', locale)}</button>}
+            {/* Owner 2026-08-29: ถัดไป used to stay live and refuse the move with a toast at the top
+                of the screen while the button sits in the bottom bar. Same condition, said in place. */}
+            {step === 'evidence' && evidenceStepBlocker && (
+              <p id={`expense-review-evidence-block-${detail.id}`} role="status" className="max-w-lg text-sm font-medium text-warning-700 sm:w-full sm:text-right">
+                {t(evidenceStepBlocker, locale)}
+              </p>
+            )}
           </>
         )}
         {approverOnlyActions && (
@@ -681,6 +700,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
       {notice && (notice.tone === 'error' ? <ErrorBanner message={notice.message} /> : !aiMap && <InfoBanner message={notice.message} />)}
       {!notice && storedNonExpenseNotice && <InfoBanner message={storedNonExpenseNotice.message} />}
       {storedClassificationOverrideNotice && <InfoBanner message={storedClassificationOverrideNotice} />}
+      <ForeignCurrencyNotice summary={aiMap} />
     </>
   );
   const postingCard = isConfirmed ? (
@@ -792,7 +812,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
       onOpenFile={showPreview}
       onAttachPrimaryReceipt={canMutateDraft ? (file) => attachPrimaryReceipt(file, detail.branchId) : undefined}
       receiptUploading={receiptUploading}
-      dirtyRef={evidenceDirtyRef}
+      onDirtyChange={setEvidenceDirty}
     />
   );
   // A total that disagrees with its own receipt reaches the ledger only through a named decision:
@@ -992,9 +1012,13 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
 
   // Shared by the desktop empty-viewer pane and the small-screen strip: the viewer
   // pane is lg-only, so mobile needs its own way into the primary-receipt slot.
+  // The AI read that follows a replace runs inside `receiptUploading`, and the reading step is the
+  // slow one (10–20s) — the label says which of the two is happening, since the step-1 cover loader
+  // is not on screen when the replace is pressed from step 2 or 3.
+  const uploadBusyLabel = t(extractionLoading ? 'expenses.ai_reading' : 'expenses.uploading', locale);
   const receiptFileInput = (label: string) => canMutateDraft && (
     <label className="cursor-pointer">
-      <span className={cx(ghostClass, 'inline-flex')}>{receiptUploading ? t('expenses.uploading', locale) : label}</span>
+      <span className={cx(ghostClass, 'inline-flex')}>{receiptUploading ? uploadBusyLabel : label}</span>
       <input
         className="hidden"
         type="file"
@@ -1011,7 +1035,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
   const replaceReceiptControl = receiptFileInput(t('expenses.replace_receipt', locale));
   const attachReceiptControl = canMutateDraft && (
     <label className="cursor-pointer">
-      <span className={cx(ghostClass, 'inline-flex')}>{receiptUploading ? t('expenses.uploading', locale) : t('expenses.attach_receipt', locale)}</span>
+      <span className={cx(ghostClass, 'inline-flex')}>{receiptUploading ? uploadBusyLabel : t('expenses.attach_receipt', locale)}</span>
       <input
         className="hidden"
         type="file"

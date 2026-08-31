@@ -133,7 +133,8 @@ function makeCmd(overrides: Partial<Parameters<CreateCompanyOnboardingUseCase['e
   return {
     companyName: 'Acme Co',
     businessCategory: 'RETAIL',
-    ownerDisplayName: 'John Doe',
+    ownerFirstName: 'John',
+    ownerLastName: 'Doe',
     ownerUsername: 'john.doe',
     requestingAdminUserId: 'admin-1',
     requestId: 'req-1',
@@ -771,7 +772,8 @@ function externalSignupHarness() {
 
 const signupInput = {
   externalSignupId: 'official-001', companyName: 'บริษัท ตัวอย่าง จำกัด', taxId: '0105555000012',
-  ownerDisplayName: 'คุณสมชาย', contactEmail: 'Owner@Example.com', consentVersion: 'terms-2026-08',
+  ownerFirstName: 'คุณสมชาย',
+  ownerLastName: 'ทดสอบ', contactEmail: 'Owner@Example.com', consentVersion: 'terms-2026-08',
   // Only PRO_TRIAL is sellable (spec §3A); the pre-catalog placeholder this used to carry is now
   // rejected by the offer allowlist, which is the intended behaviour.
   referralCode: 'creator-a', requestedOfferKey: 'PRO_TRIAL',

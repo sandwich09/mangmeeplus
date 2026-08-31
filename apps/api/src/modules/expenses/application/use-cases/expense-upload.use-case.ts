@@ -1,5 +1,7 @@
 import { Injectable, ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
+import { PrismaAttachmentRepository } from '../../../data-model-core/infrastructure/repositories/prisma-attachment.repository';
+import { PrismaService } from '../../../../common/database/prisma.service';
 import { CreateUploadIntentUseCase } from '../../../data-model-core/application/use-cases/create-upload-intent.use-case';
 import { CompleteAttachmentUploadUseCase } from '../../../data-model-core/application/use-cases/complete-attachment-upload.use-case';
 import { AuditService } from '../../../audit/application/audit.service';
@@ -118,6 +120,8 @@ export class CompleteReceiptUploadUseCase {
     private readonly completeUpload: CompleteAttachmentUploadUseCase,
     private readonly audit: AuditService,
     private readonly outbox: OutboxAppendService,
+    private readonly attachments: PrismaAttachmentRepository,
+    private readonly prisma: PrismaService,
   ) {}
 
   async execute(
@@ -161,7 +165,9 @@ export class CompleteReceiptUploadUseCase {
 
     // Set primary attachment if this is the primary receipt
     let updated = expense;
+    let retiredAttachmentIds: string[] = [];
     if (purpose === 'expense.receipt.primary') {
+      retiredAttachmentIds = await this.retireReplacedPrimaryReceipts(ctx, expense, cmd.attachmentId);
       updated = await this.repo.updateExpense({
         id: cmd.expenseId,
         companyId: ctx.companyId,
@@ -178,7 +184,7 @@ export class CompleteReceiptUploadUseCase {
       companyId: ctx.companyId, actorUserId: ctx.userId,
       action: 'expense.upload.complete', targetType: 'expense_record', targetId: cmd.expenseId,
       requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'MEDIUM',
-      metadataJson: { attachmentId: cmd.attachmentId, purpose },
+      metadataJson: { attachmentId: cmd.attachmentId, purpose, ...(retiredAttachmentIds.length > 0 && { replacedAttachmentIds: retiredAttachmentIds }) },
     });
     void this.outbox.append('expense.receipt_uploaded', 'expense_record', cmd.expenseId, {
       companyId: ctx.companyId, aggregateType: 'expense_record', aggregateId: cmd.expenseId, requestId: ctx.requestId,
@@ -186,6 +192,53 @@ export class CompleteReceiptUploadUseCase {
     });
 
     return updated;
+  }
+
+  /**
+   * "เปลี่ยนไฟล์ใบเสร็จ" REPLACES the receipt while the record is still being drafted.
+   *
+   * Owner report 2026-08-29 (UAT): re-uploading appended — `linkAttachment` only ever creates a row,
+   * so the wrong file stayed on the record (the new one showed as page 2 of 2) and both remained
+   * ACTIVE primaries. Retiring means: drop this expense's link, then soft-delete the object the same
+   * way `DeleteExpenseUseCase` detaches attachments (row and bytes retained, `deletedAt` stamped) —
+   * nothing is hard-deleted.
+   *
+   * Deliberately narrow, because the fallback is exactly today's append:
+   * - DRAFT/NEEDS_REVIEW only. Once the record is with an approver, a receipt they have already seen
+   *   must not disappear under them.
+   * - A file a certified substitute receipt retains, or one another record also links, is left alone.
+   */
+  private async retireReplacedPrimaryReceipts(
+    ctx: RequestContext,
+    expense: { id: string; status: string },
+    keepAttachmentId: string,
+  ): Promise<string[]> {
+    if (expense.status !== 'DRAFT' && expense.status !== 'NEEDS_REVIEW') return [];
+    const link = { companyId: ctx.companyId, targetType: 'expense.record', targetId: expense.id };
+    return this.prisma.client.$transaction(async (tx) => {
+      const stale = await tx.attachmentLink.findMany({
+        where: {
+          ...link,
+          purpose: 'expense.receipt.primary',
+          attachmentId: { not: keepAttachmentId },
+          attachment: { companyId: ctx.companyId, status: 'ACTIVE' },
+        },
+        select: { attachmentId: true },
+      });
+      const retired: string[] = [];
+      for (const { attachmentId } of stale) {
+        const sharedLinks = await tx.attachmentLink.count({
+          where: { companyId: ctx.companyId, attachmentId, NOT: { targetType: link.targetType, targetId: link.targetId } },
+        });
+        if (sharedLinks > 0) continue;
+        const hold = await this.attachments.findSubstituteEvidenceRetentionHold({ id: attachmentId, companyId: ctx.companyId }, tx);
+        if (hold) continue;
+        await tx.attachmentLink.deleteMany({ where: { ...link, attachmentId } });
+        await this.attachments.markDeleted({ id: attachmentId, companyId: ctx.companyId }, tx);
+        retired.push(attachmentId);
+      }
+      return retired;
+    });
   }
 }
 

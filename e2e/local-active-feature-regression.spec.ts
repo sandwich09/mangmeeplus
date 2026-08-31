@@ -1,5 +1,5 @@
 import { test, expect } from './harness/fixtures';
-import { gotoCompany, json } from './harness/e2e-utils';
+import { branchOptionName, chooseThemedOption, gotoCompany, json } from './harness/e2e-utils';
 
 type Branch = { id: string; name: string; type: string; code: string };
 const escaped = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -89,7 +89,8 @@ test('mobile save refusal focuses a readable error and keeps typed data (control
   await page.setViewportSize({ width: 390, height: 844 });
   const { items } = await json<{ items: Branch[] }>(await api.get(`companies/${companyId}/branches?status=ACTIVE&pageSize=100`));
   await gotoCompany(page, companyId, '/expenses/manual');
-  await page.getByRole('combobox', { name: 'สาขาของรายการ', exact: true }).selectOption(items[0]!.id);
+  // Source branch is a ThemedSelect now, not a native <select> — open, then click the option.
+  await chooseThemedOption(page, page.getByRole('combobox', { name: 'สาขาของรายการ', exact: true }), branchOptionName(items[0]!));
   const description = page.getByRole('textbox', { name: 'รายละเอียดค่าใช้จ่าย', exact: true });
   await description.fill('ทดสอบรักษาข้อมูลเมื่อบันทึกไม่สำเร็จ');
   await page.getByRole('spinbutton', { name: 'ราคาต่อหน่วย', exact: true }).fill('1');

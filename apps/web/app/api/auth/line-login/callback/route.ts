@@ -95,7 +95,15 @@ export async function GET(request: NextRequest) {
     if (!linkRes.ok) return backToStart('link-failed');
     // A link that succeeded means there is nothing left to merge; drop any ticket an earlier
     // conflict left behind rather than leaving a live offer in the browser.
-    const linked = clearTxn(NextResponse.redirect(new URL(sanitizeReturnTo(txn.returnTo) ?? '/', origin)));
+    //
+    // `line=linked` is what makes the success visible: the page that started this round trip is
+    // reached again with no other signal, so without it the connect panel simply re-renders and
+    // pressing the button reopens LINE — the loop Owner hit on UAT 2026-08-31. The API answers a
+    // same-user relink with the same 200 (link-line-identity.use-case.ts, ACTIVE + same userId),
+    // so a repeat press lands on the same success state rather than another silent bounce.
+    const linkedUrl = new URL(sanitizeReturnTo(txn.returnTo) ?? '/', origin);
+    linkedUrl.searchParams.set('line', 'linked');
+    const linked = clearTxn(NextResponse.redirect(linkedUrl));
     linked.cookies.set(ACCOUNT_MERGE_COOKIE, '', { ...httpOnlyFlags(), path: ACCOUNT_MERGE_COOKIE_PATH, maxAge: 0 });
     return linked;
   }
