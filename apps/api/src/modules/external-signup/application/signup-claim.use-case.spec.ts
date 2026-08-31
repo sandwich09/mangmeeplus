@@ -87,7 +87,18 @@ describe('SignupClaimUseCase.info', () => {
     assert.equal(info.companyName, 'ร้านมั่งมี');
     assert.equal(info.maskedEmail, 'so***@example.com');
     assert.equal(info.suggestedUsername, 'somchai');
+    assert.equal(info.emailMatchesExistingUser, false);
     // The full address never reaches an unauthenticated page.
+    assert.equal(JSON.stringify(info).includes('somchai@example.com'), false);
+  });
+
+  // Owner UAT 2026-08-31: without this the page offered a password form that `setPassword` can
+  // only answer with `email_already_registered_use_existing_account`, i.e. a dead end.
+  it('flags a contact email that already owns an account, as a boolean and nothing more', async () => {
+    const info = await harness({ emailOwner: { id: 'existing-user' } }).useCase.info(RAW_TOKEN);
+    assert.equal(info.emailMatchesExistingUser, true);
+    // Boolean only: no user id, username or full address rides along with the hint.
+    assert.equal(JSON.stringify(info).includes('existing-user'), false);
     assert.equal(JSON.stringify(info).includes('somchai@example.com'), false);
   });
 

@@ -7,7 +7,8 @@ import type { CompanySignupInput } from '../domain/company-signup.logic';
 const INPUT: CompanySignupInput = {
   externalSignupId: '0f9b1d2e-3c4a-4b5c-8d7e-1f2a3b4c5d6e',
   companyName: 'ร้านมั่งมี',
-  ownerDisplayName: 'สมชาย ใจดี',
+  ownerFirstName: 'สมชาย',
+  ownerLastName: 'ใจดี',
   contactEmail: 'somchai@example.com',
   consentVersion: 'v1',
 };

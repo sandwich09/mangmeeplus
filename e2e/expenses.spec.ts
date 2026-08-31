@@ -2,7 +2,7 @@ import { deflateSync, crc32 } from 'node:zlib';
 import { randomBytes } from 'node:crypto';
 import { addCivilDays, civilDate, type ExpenseDetail as FullExpenseDetail, type IncomeExpenseLedgerSummary } from '@watchdog-bms/contracts';
 import { test, expect } from './harness/fixtures';
-import { gotoCompany, json, unique } from './harness/e2e-utils';
+import { branchOptionName, chooseThemedOption, gotoCompany, json, unique } from './harness/e2e-utils';
 
 type ExpenseSummary = { id: string; status: string; grandTotalAmount: string; updatedAt: string };
 type ExpenseList = { data: ExpenseSummary[] };
@@ -93,7 +93,7 @@ async function createExpenseWithReceipt(api: any, request: any, companyId: strin
 
 test.describe('EXP — expenses + receipts', () => {
   test('EXP-INPUT @smoke normalizes price and discount zeros while preserving four decimals', async ({ authedPage: page, api, companyId }) => {
-    const { items: branches } = await json<{ items: Array<{ id: string }> }>(
+    const { items: branches } = await json<{ items: Array<{ id: string; name: string; type: string }> }>(
       await api.get(`companies/${companyId}/branches?status=ACTIVE&pageSize=100`),
     );
     expect(branches.length).toBeGreaterThan(0);
@@ -108,7 +108,8 @@ test.describe('EXP — expenses + receipts', () => {
 
     for (const path of ['/expenses/manual', `/expenses/${created.id}`]) {
       await gotoCompany(page, companyId, path);
-      if (path === '/expenses/manual') await page.getByRole('combobox', { name: 'สาขาของรายการ', exact: true }).selectOption(branchId);
+      // Source branch is a ThemedSelect now, not a native <select> — open, then click the option.
+      if (path === '/expenses/manual') await chooseThemedOption(page, page.getByRole('combobox', { name: 'สาขาของรายการ', exact: true }), branchOptionName(branches[0]!));
       const price = page.getByRole('spinbutton', { name: /^ราคาต่อหน่วย/ });
       const discount = page.getByRole('spinbutton', { name: /^ส่วนลด/ });
       for (const field of [price, discount]) {

@@ -9,6 +9,8 @@ import { trimmed } from '@/common/forms/trim';
 import { getSignupAvailability, submitCompanySignup } from './external-signup.api';
 import { SignupBrandHeader, SignupClosedNotice } from './SignupChrome';
 import {
+  clampMobileInput,
+  MOBILE_DIGITS,
   offerLimitsLabel,
   SELECTABLE_OFFER_KEY,
   SIGNUP_CONSENT_VERSION,
@@ -21,13 +23,13 @@ import {
 
 const EMPTY_FORM: SignupFormValues = {
   companyName: '',
-  ownerDisplayName: '',
+  ownerFirstName: '',
+  ownerLastName: '',
   contactEmail: '',
   phoneNumber: '',
   businessType: '',
   vatRegistered: false,
   taxId: '',
-  consentAccepted: false,
 };
 
 function OfferCards() {
@@ -150,7 +152,8 @@ export default function SignupPage() {
     const body: PublicCompanySignupBody = {
       externalSignupId,
       companyName: trimmed(values.companyName),
-      ownerDisplayName: trimmed(values.ownerDisplayName),
+      ownerFirstName: trimmed(values.ownerFirstName),
+      ownerLastName: trimmed(values.ownerLastName),
       contactEmail: trimmed(values.contactEmail),
       phoneNumber: values.phoneNumber.replace(/[^0-9]/g, ''),
       ...(trimmed(values.businessType) ? { businessType: trimmed(values.businessType) } : {}),
@@ -212,14 +215,25 @@ export default function SignupPage() {
                   error={fieldErrors.companyName}
                   autoComplete="organization"
                 />
-                <TextField
-                  label="ชื่อผู้ติดต่อ"
-                  name="ownerDisplayName"
-                  value={values.ownerDisplayName}
-                  onChange={(event) => set('ownerDisplayName', event.target.value)}
-                  error={fieldErrors.ownerDisplayName}
-                  autoComplete="name"
-                />
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-3">
+                  <TextField
+                    label="ชื่อ"
+                    name="ownerFirstName"
+                    value={values.ownerFirstName}
+                    onChange={(event) => set('ownerFirstName', event.target.value)}
+                    error={fieldErrors.ownerFirstName}
+                    autoComplete="given-name"
+                  />
+                  <TextField
+                    label="นามสกุล"
+                    name="ownerLastName"
+                    value={values.ownerLastName}
+                    onChange={(event) => set('ownerLastName', event.target.value)}
+                    error={fieldErrors.ownerLastName}
+                    autoComplete="family-name"
+                  />
+                </div>
+                <p className="-mt-3 text-[13px] leading-6 text-gray-500">ชื่อนี้จะแสดงเป็นชื่อผู้ใช้งานหลักของร้านหลังเข้าสู่ระบบ</p>
                 <TextField
                   label="อีเมล"
                   name="contactEmail"
@@ -232,13 +246,14 @@ export default function SignupPage() {
                   autoComplete="email"
                 />
                 <TextField
-                  label="เบอร์โทรมือถือ"
+                  label="เบอร์มือถือ"
                   name="phoneNumber"
                   type="tel"
                   inputMode="numeric"
                   hint="ใช้ติดต่อกลับกรณีอีเมลส่งไม่ถึง"
+                  maxLength={MOBILE_DIGITS}
                   value={values.phoneNumber}
-                  onChange={(event) => set('phoneNumber', event.target.value)}
+                  onChange={(event) => set('phoneNumber', clampMobileInput(event.target.value))}
                   error={fieldErrors.phoneNumber}
                   autoComplete="tel"
                 />
@@ -251,12 +266,26 @@ export default function SignupPage() {
                 />
 
                 <div className="space-y-3 rounded-xl border border-gray-200 p-3.5">
-                  <SwitchField
-                    label="ร้านจดทะเบียน VAT แล้ว"
-                    name="vatRegistered"
-                    checked={values.vatRegistered}
-                    onChange={(event) => set('vatRegistered', event.target.checked)}
-                  />
+                  <fieldset>
+                    <legend className="text-sm font-semibold text-gray-800">การจดทะเบียน VAT</legend>
+                    <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:gap-6">
+                      {([
+                        { value: false, label: 'ยังไม่จดทะเบียน VAT' },
+                        { value: true, label: 'จดทะเบียน VAT แล้ว' },
+                      ] as const).map((choice) => (
+                        <label key={String(choice.value)} className="flex items-center gap-2 text-[15px] text-gray-800">
+                          <input
+                            type="radio"
+                            name="vatRegistered"
+                            className="h-4 w-4 accent-brand-600"
+                            checked={values.vatRegistered === choice.value}
+                            onChange={() => set('vatRegistered', choice.value)}
+                          />
+                          {choice.label}
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
                   {values.vatRegistered ? (
                     <TextField
                       label="เลขประจำตัวผู้เสียภาษี"
@@ -272,21 +301,16 @@ export default function SignupPage() {
 
                 <OfferCards />
 
-                <div className="space-y-1.5 pt-1">
-                  <SwitchField
-                    label="ยอมรับข้อกำหนดการใช้งาน และรับทราบประกาศความเป็นส่วนตัว"
-                    name="consentAccepted"
-                    checked={values.consentAccepted}
-                    onChange={(event) => set('consentAccepted', event.target.checked)}
-                    error={fieldErrors.consentAccepted}
-                  />
-                  <p className="pl-[3.25rem] text-[13px] text-gray-500 sm:pl-7">
-                    อ่าน{' '}
-                    <Link href="/terms" target="_blank" className="font-semibold text-[#046B29] underline">ข้อกำหนดการใช้งาน</Link>
-                    {' '}และ{' '}
-                    <Link href="/privacy" target="_blank" className="font-semibold text-[#046B29] underline">ประกาศความเป็นส่วนตัว</Link>
-                  </p>
-                </div>
+                {/* Owner 2026-08-31: the binding acceptance (with display-challenge evidence) happens
+                    in-app on first login, so this form only SHOWS the documents — no checkbox to tick.
+                    consentVersion still rides the submit as the record of what was displayed here. */}
+                <p className="pt-1 text-[13.5px] leading-6 text-gray-600">
+                  เมื่อกดส่งคำขอ ถือว่าท่านได้อ่านและรับทราบ{' '}
+                  <Link href="/terms" target="_blank" className="font-semibold text-[#046B29] underline">ข้อกำหนดการใช้งาน</Link>
+                  {' '}และ{' '}
+                  <Link href="/privacy" target="_blank" className="font-semibold text-[#046B29] underline">ประกาศความเป็นส่วนตัว</Link>
+                  {' '}แล้ว โดยจะมีขั้นตอนยืนยันการยอมรับอีกครั้งเมื่อเข้าสู่ระบบครั้งแรก
+                </p>
 
                 <Button type="submit" size="lg" className="w-full !rounded-xl" loading={loading}>
                   ส่งคำขอสมัคร

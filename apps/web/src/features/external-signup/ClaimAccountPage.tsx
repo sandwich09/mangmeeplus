@@ -35,7 +35,14 @@ function UnusableLinkView() {
 }
 
 function ClaimCard({ token, info }: { token: string; info: SignupClaimInfoDto }) {
-  const [mode, setMode] = useState<'set-password' | 'existing-account'>('set-password');
+  // `setPassword` refuses a duplicate email before it even consumes the token
+  // (signup-claim.use-case.ts: `email_already_registered_use_existing_account`), so for this
+  // applicant the password form has no legal outcome. The page leads with the one lane that works
+  // instead of letting them fill a form that can only fail (Owner UAT 2026-08-31).
+  const emailHasAccount = info.emailMatchesExistingUser === true;
+  const [mode, setMode] = useState<'set-password' | 'existing-account'>(
+    emailHasAccount ? 'existing-account' : 'set-password',
+  );
   const [username, setUsername] = useState(info.suggestedUsername ?? '');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -166,7 +173,9 @@ function ClaimCard({ token, info }: { token: string; info: SignupClaimInfoDto })
         <>
           <h1 className="mt-4 text-[22px] font-extrabold leading-9 text-gray-900">เข้าสู่ระบบด้วยบัญชีเดิม</h1>
           <p className="mt-1.5 text-[15px] leading-7 text-gray-600">
-            ร้านใหม่จะรวมอยู่ในบัญชีเดิม สลับร้านได้ ไม่ต้องจำรหัสหลายชุด
+            {emailHasAccount
+              ? `อีเมลนี้มีบัญชีมั่งมีพลัสอยู่แล้ว ให้เข้าสู่ระบบด้วยบัญชีเดิม เพื่อผูก ${companyName} เข้ากับบัญชีเดิม`
+              : 'ร้านใหม่จะรวมอยู่ในบัญชีเดิม สลับร้านได้ ไม่ต้องจำรหัสหลายชุด'}
           </p>
 
           <form onSubmit={handleAttach} className="mt-6 space-y-4" noValidate>
@@ -193,16 +202,28 @@ function ClaimCard({ token, info }: { token: string; info: SignupClaimInfoDto })
             </Button>
           </form>
 
-          <button
-            type="button"
-            onClick={() => {
-              setMode('set-password');
-              setError(null);
-            }}
-            className="mt-4 w-full text-[14.5px] font-semibold text-gray-600 underline hover:text-gray-900"
-          >
-            ย้อนกลับไปตั้งรหัสผ่านใหม่
-          </button>
+          {/* Offered only when a new account is actually reachable. For a duplicate email the
+              server refuses that branch, so a link back to it would be a link to a dead end. */}
+          {emailHasAccount ? (
+            <p className="mt-4 text-[13px] leading-6 text-gray-500">
+              จำรหัสผ่านบัญชีเดิมไม่ได้?{' '}
+              <Link href="/forgot-password" target="_blank" className="font-semibold text-[#046B29] underline">
+                ตั้งรหัสผ่านใหม่
+              </Link>
+              {' '}แล้วกลับมาที่หน้านี้อีกครั้ง
+            </p>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                setMode('set-password');
+                setError(null);
+              }}
+              className="mt-4 w-full text-[14.5px] font-semibold text-gray-600 underline hover:text-gray-900"
+            >
+              ย้อนกลับไปตั้งรหัสผ่านใหม่
+            </button>
+          )}
         </>
       )}
     </>

@@ -1300,3 +1300,69 @@ export function expenseConfirmBlocker(input: {
   if (input.status !== 'READY_FOR_CONFIRMATION') return { key: 'expenses.confirm_needs_ready_status' };
   return null;
 }
+
+/**
+ * Why "ถัดไป" on step 2 (ภาษีและเอกสาร) is refused, as a dictionary key — or null when the user may go on.
+ *
+ * Owner report 2026-08-29 (UAT, company "test sand"): the button's `disabled` read one flag
+ * (`checkBillBlocked`) while `goToStep` refused the move on another the button never saw
+ * (`evidenceDirtyRef`), and the AI classification block — the thing the yellow banner and
+ * ส่งตรวจสอบ both name — gated neither. So ถัดไป could be pressed and simply not move.
+ * The button's enabled state, the reason printed under it, and the navigation guard all read
+ * this one function now, so an enabled ถัดไป always moves and a disabled one always says why.
+ *
+ * Order is the order the user must act in: resolve what the AI flagged, then save what was typed.
+ */
+export type ExpenseEvidenceStepBlocker =
+  | 'expenses.check_bill_workflow_blocked'
+  | 'expenses.evidence_next_needs_classification'
+  | 'expenses.evidence_next_waiting_finance'
+  | 'expenses.doc_review_unsaved_next';
+
+export function expenseEvidenceStepBlocker(input: {
+  checkBillBlocked: boolean;
+  classificationBlocked: boolean;
+  canReview: boolean;
+  unsavedReview: boolean;
+}): ExpenseEvidenceStepBlocker | null {
+  if (input.checkBillBlocked) return 'expenses.check_bill_workflow_blocked';
+  if (input.classificationBlocked) {
+    return input.canReview ? 'expenses.evidence_next_needs_classification' : 'expenses.evidence_next_waiting_finance';
+  }
+  if (input.unsavedReview) return 'expenses.doc_review_unsaved_next';
+  return null;
+}
+
+/**
+ * Whether replacing the primary receipt re-runs the AI read that first upload runs.
+ *
+ * Owner report 2026-08-29 (UAT): เปลี่ยนไฟล์ใบเสร็จ swapped the file and left the draft holding the
+ * OLD file's numbers, because only the upload page ever called the extraction endpoint. Re-reading
+ * overwrites vendor name/tax id/document number/date from the new file, which is the point on a
+ * draft and unacceptable once the record is with an approver — so it stops at the draft statuses.
+ */
+export function shouldRereadReplacedReceipt(input: { status: string; canExtract: boolean }): boolean {
+  return input.canExtract && (input.status === 'DRAFT' || input.status === 'NEEDS_REVIEW');
+}
+
+/**
+ * Why "ยืนยันว่าเป็นหลักฐานค่าใช้จ่าย" is refused — the same chain that used to live inline as a
+ * boolean, so the disabled button can print the missing piece instead of sitting dead. The reason
+ * box is far above the button on a phone, which is exactly how the Owner reached a button that
+ * looked pressable and did nothing.
+ */
+export type ExpenseClassificationConfirmBlocker =
+  | 'expenses.non_expense_confirm_needs_doc_type'
+  | 'expenses.non_expense_confirm_needs_reason';
+
+export function expenseClassificationConfirmBlocker(input: {
+  sourceDocumentType: string;
+  reason: string;
+}): ExpenseClassificationConfirmBlocker | null {
+  if (input.sourceDocumentType === 'NEEDS_REVIEW') return 'expenses.non_expense_confirm_needs_doc_type';
+  const reason = input.reason.trim();
+  // The 500 ceiling matches the textarea's maxLength and the server's limit; a paste past it lands
+  // on the same line as an empty box — write a reason that fits.
+  if (reason.length === 0 || reason.length > 500) return 'expenses.non_expense_confirm_needs_reason';
+  return null;
+}
