@@ -8,6 +8,7 @@ import { Worker, type Job } from 'bullmq';
 import { attachDeadLetterQueue, createQueue } from '../../common/queue.js';
 import { WORKFLOW_QUEUE, type WorkflowJobPayload } from './workflow-jobs.js';
 import { workerLog } from '../../common/log.js';
+import { postInternal, throwIfNotOk } from '../../common/internal-api.js';
 import {
   createObjectVersionCleanupS3Client,
   drainObjectVersionCleanup,
@@ -56,14 +57,13 @@ async function processJob(
   cleanupConfig: ObjectVersionCleanupWorkerConfig,
   cleanupS3: ReturnType<typeof createObjectVersionCleanupS3Client>,
 ): Promise<void> {
-  const apiBase = process.env['INTERNAL_API_URL'] ?? 'http://localhost:3001/v1';
-  const workerToken = process.env['WORKER_INTERNAL_TOKEN'] ?? '';
-  const headers = { 'Content-Type': 'application/json', 'X-Worker-Token': workerToken };
-
   const request = (path: string, body: Record<string, unknown>) =>
-    fetch(`${apiBase}/internal/workflow/${path}`, { method: 'POST', headers, body: JSON.stringify(body) });
+    postInternal(`/internal/workflow/${path}`, { body });
 
-  let res: Response;
+  // `null` = the endpoint is not deployed yet, so there is nothing to report this tick. Every kind
+  // below is an idempotent repeatable sweep, and the next tick after the api catches up does the
+  // whole backlog.
+  let res: Response | null;
   switch (payload.kind) {
     case 'outbox.drain':
       res = await request('outbox/drain', {});
@@ -90,10 +90,8 @@ async function processJob(
       return;
   }
 
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`Workflow internal endpoint returned ${res.status}: ${body.slice(0, 200)}`);
-  }
+  if (!res) return;
+  await throwIfNotOk(res, 'Workflow internal endpoint');
   // Mirrors notification_job_completed. Without it a workflow job that drained events but fired
   // nothing left no trace anywhere; the endpoint's own counts ({claimed, published, ...}) are the
   // cheapest way to see whether the pipe is moving.

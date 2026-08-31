@@ -8,6 +8,7 @@ import { Worker, type Job } from 'bullmq';
 import { attachDeadLetterQueue, createQueue } from '../../common/queue.js';
 import { workerLog } from '../../common/log.js';
 import { scheduleWithRetry } from '../../common/retry-schedule.js';
+import { postInternal, throwIfNotOk } from '../../common/internal-api.js';
 
 export const LINE_AI_LEDGER_QUEUE = 'line-ai-ledger';
 export type LineAiLedgerJobPayload = { kind: 'ledger.drain' };
@@ -60,16 +61,12 @@ async function processJob(payload: LineAiLedgerJobPayload): Promise<void> {
 }
 
 async function callInternal(route: 'drain' | 'sweep-orphan-events'): Promise<void> {
-  const apiBase = process.env['INTERNAL_API_URL'] ?? 'http://localhost:3001/v1';
-  const workerToken = process.env['WORKER_INTERNAL_TOKEN'] ?? '';
-  const res = await fetch(`${apiBase}/internal/ai/line-ledger/${route}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Worker-Token': workerToken },
-    body: JSON.stringify({ batchSize: 20 }),
-    signal: AbortSignal.timeout(INTERNAL_API_TIMEOUT_MS),
+  // Two routes on a 60s timer is enough on its own to carry the canary RollbackAlarm past 1% 4xx
+  // during a rolling deploy, so a not-yet-deployed route is skipped rather than thrown — `processJob`
+  // re-throws any rejection into the `failed` handler, which logs at error level and retries.
+  const res = await postInternal(`/internal/ai/line-ledger/${route}`, {
+    body: { batchSize: 20 },
+    timeoutMs: INTERNAL_API_TIMEOUT_MS,
   });
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`LINE AI ${route} endpoint returned ${res.status}: ${body.slice(0, 200)}`);
-  }
+  if (res) await throwIfNotOk(res, `LINE AI ${route} endpoint`);
 }

@@ -9,6 +9,7 @@ import { Worker, type Job } from 'bullmq';
 import { attachDeadLetterQueue, createQueue } from '../../common/queue.js';
 import { workerLog } from '../../common/log.js';
 import { scheduleWithRetry } from '../../common/retry-schedule.js';
+import { postInternal, throwIfNotOk } from '../../common/internal-api.js';
 
 export const AI_DRAFT_QUEUE = 'ai-draft';
 export type AiDraftJobPayload = { kind: 'draft.drain' };
@@ -54,16 +55,9 @@ async function processJob(payload: AiDraftJobPayload): Promise<void> {
     workerLog('warn', { event: 'unknown_ai_draft_job_kind', payload });
     return;
   }
-  const apiBase = process.env['INTERNAL_API_URL'] ?? 'http://localhost:3001/v1';
-  const workerToken = process.env['WORKER_INTERNAL_TOKEN'] ?? '';
-  const res = await fetch(`${apiBase}/internal/ai/draft-requests/drain`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Worker-Token': workerToken },
-    body: JSON.stringify({ batchSize: 20 }),
-    signal: AbortSignal.timeout(INTERNAL_API_TIMEOUT_MS),
+  const res = await postInternal('/internal/ai/draft-requests/drain', {
+    body: { batchSize: 20 },
+    timeoutMs: INTERNAL_API_TIMEOUT_MS,
   });
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`AI draft drain endpoint returned ${res.status}: ${body.slice(0, 200)}`);
-  }
+  if (res) await throwIfNotOk(res, 'AI draft drain endpoint');
 }
