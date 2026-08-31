@@ -34,6 +34,8 @@ type Props = {
   userRoles?: string[];
   userRoleNames?: Record<string, string>;
   showAccountSecurity?: boolean;
+  /** Bottom-of-sidebar slot above the user block (plan-term card). Hidden on the icon-only rail. */
+  footerExtras?: React.ReactNode;
 };
 
 type MenuIconProps = {
@@ -90,7 +92,7 @@ const roleLabelKey: Record<string, DictionaryKey> = {
   COMPANY_VIEW: 'role.COMPANY_VIEW',
 };
 
-const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, userRoles, userRoleNames, showAccountSecurity }) => {
+const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, userRoles, userRoleNames, showAccountSecurity, footerExtras }) => {
   const { isExpanded, isMobileOpen, isHovered, openSubmenu, setIsHovered, setOpenSubmenu, toggleSidebar, toggleSubmenu, closeMobileSidebar } =
     useSidebar();
   const pathname = usePathname();
@@ -424,6 +426,10 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
           </div>
         </nav>
       </div>
+
+      {footerExtras && (isExpanded || isHovered || isMobileOpen) && (
+        <div className="shrink-0 px-1">{footerExtras}</div>
+      )}
 
       {/* User identity and account actions stay together at the bottom of the navigation. */}
       {footerLabel && (
