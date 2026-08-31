@@ -63,7 +63,6 @@ export type SignupFormValues = {
   businessType: string;
   vatRegistered: boolean;
   taxId: string;
-  consentAccepted: boolean;
 };
 
 export type SignupFieldErrors = Partial<Record<keyof SignupFormValues, string>>;
@@ -102,9 +101,6 @@ export function validateSignupForm(values: SignupFormValues): SignupFieldErrors 
     errors.taxId = 'เลขประจำตัวผู้เสียภาษีต้องเป็นตัวเลข 13 หลัก';
   }
 
-  if (!values.consentAccepted) {
-    errors.consentAccepted = 'กรุณายอมรับข้อกำหนดการใช้งาน และประกาศความเป็นส่วนตัว ก่อนส่งคำขอ';
-  }
   return errors;
 }
 

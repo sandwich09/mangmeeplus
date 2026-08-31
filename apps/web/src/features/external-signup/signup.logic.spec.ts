@@ -21,7 +21,6 @@ const validForm: SignupFormValues = {
   businessType: 'ร้านขายของชำ',
   vatRegistered: false,
   taxId: '',
-  consentAccepted: true,
 };
 
 describe('signup form validation', () => {
@@ -36,13 +35,11 @@ describe('signup form validation', () => {
       ownerDisplayName: '',
       contactEmail: '',
       phoneNumber: '',
-      consentAccepted: false,
     });
     assert.match(errors.companyName!, /ชื่อร้าน/);
     assert.match(errors.ownerDisplayName!, /ผู้ติดต่อ/);
     assert.match(errors.contactEmail!, /อีเมล/);
     assert.match(errors.phoneNumber!, /เบอร์โทร/);
-    assert.match(errors.consentAccepted!, /ยอมรับ/);
   });
 
   // The MX check is the server's job (422): a local rule that guesses would reject addresses the

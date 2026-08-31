@@ -27,7 +27,6 @@ const EMPTY_FORM: SignupFormValues = {
   businessType: '',
   vatRegistered: false,
   taxId: '',
-  consentAccepted: false,
 };
 
 function OfferCards() {
@@ -287,21 +286,16 @@ export default function SignupPage() {
 
                 <OfferCards />
 
-                <div className="space-y-1.5 pt-1">
-                  <SwitchField
-                    label="ยอมรับข้อกำหนดการใช้งาน และรับทราบประกาศความเป็นส่วนตัว"
-                    name="consentAccepted"
-                    checked={values.consentAccepted}
-                    onChange={(event) => set('consentAccepted', event.target.checked)}
-                    error={fieldErrors.consentAccepted}
-                  />
-                  <p className="pl-[3.25rem] text-[13px] text-gray-500 sm:pl-7">
-                    อ่าน{' '}
-                    <Link href="/terms" target="_blank" className="font-semibold text-[#046B29] underline">ข้อกำหนดการใช้งาน</Link>
-                    {' '}และ{' '}
-                    <Link href="/privacy" target="_blank" className="font-semibold text-[#046B29] underline">ประกาศความเป็นส่วนตัว</Link>
-                  </p>
-                </div>
+                {/* Owner 2026-08-31: the binding acceptance (with display-challenge evidence) happens
+                    in-app on first login, so this form only SHOWS the documents — no checkbox to tick.
+                    consentVersion still rides the submit as the record of what was displayed here. */}
+                <p className="pt-1 text-[13.5px] leading-6 text-gray-600">
+                  เมื่อกดส่งคำขอ ถือว่าท่านได้อ่านและรับทราบ{' '}
+                  <Link href="/terms" target="_blank" className="font-semibold text-[#046B29] underline">ข้อกำหนดการใช้งาน</Link>
+                  {' '}และ{' '}
+                  <Link href="/privacy" target="_blank" className="font-semibold text-[#046B29] underline">ประกาศความเป็นส่วนตัว</Link>
+                  {' '}แล้ว โดยจะมีขั้นตอนยืนยันการยอมรับอีกครั้งเมื่อเข้าสู่ระบบครั้งแรก
+                </p>
 
                 <Button type="submit" size="lg" className="w-full !rounded-xl" loading={loading}>
                   ส่งคำขอสมัคร
