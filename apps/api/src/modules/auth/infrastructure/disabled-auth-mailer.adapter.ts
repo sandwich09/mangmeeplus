@@ -7,5 +7,5 @@ export class DisabledAuthMailerAdapter implements AuthMailerPort {
 
   async sendPasswordResetLink(_input: AuthEmailLinkInput): Promise<void> {}
 
-  async sendAccountClaim(_input: AccountClaimEmailInput): Promise<void> {}
+  async sendAccountClaim(_input: AccountClaimEmailInput): Promise<string | null> { return null; }
 }

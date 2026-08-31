@@ -59,6 +59,7 @@ function harness(options: { request?: any; sendFails?: boolean } = {}) {
     sendAccountClaim: async (input: any) => {
       if (options.sendFails) throw new Error('SES unavailable');
       sent.push(input);
+      return 'ses-message-1';
     },
   } as any;
 
@@ -143,9 +144,11 @@ describe('SignupClaimEmailService.drain', () => {
     );
     assert.equal(h.sent[0].rawToken, 'raw-token-for-signup-1');
     assert.equal(h.sent[0].toEmail, 'somchai@example.com');
-    // The only write back to the request is the send timestamp — the raw token goes nowhere.
+    // The only writes back to the request are the send timestamp and the SES message id that a
+    // later bounce/complaint event will arrive with — the raw token goes nowhere.
     assert.equal(h.updates.length, 1);
     assert.ok(h.updates[0].data.claimEmailLastSentAt instanceof Date);
+    assert.equal(h.updates[0].data.claimEmailSesMessageId, 'ses-message-1');
     assert.equal(JSON.stringify(h.updates).includes('raw-token'), false);
     assert.deepEqual(h.published[0], {
       id: 'evt-1', claimToken: 'lease-1', expectedEventType: ACCOUNT_CLAIM_EMAIL_EVENT_TYPE,

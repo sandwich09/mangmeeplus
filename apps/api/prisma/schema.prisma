@@ -3040,38 +3040,41 @@ model CompanyOnboardingRun {
 // P10 external-signup core. Public ingress remains absent until the owner chooses its signing and
 // duplicate-identity policy. requestedOfferKey is attribution only; it grants no entitlement.
 model CompanySignupRequest {
-  id                    String             @id @default(cuid())
-  source                String             @default("official-site")
-  externalSignupId      String             @unique
-  payloadHash           String
-  companyName           String
-  taxId                 String?
-  ownerDisplayName      String
-  contactEmail          String
-  consentVersion        String
-  referralCode          String?
-  requestedOfferKey     String?
-  state                 CompanySignupState @default(RECEIVED)
-  version               Int                @default(0)
-  failureCode           String?
-  businessType          String?
-  phoneNumber           String?
-  vatRegistered         Boolean?
-  mxValid               Boolean?
-  pendingPasswordHash   String?
-  attachUserId          String?
-  approvedAt            DateTime?
-  approvedByUserId      String?
-  claimEmailLastSentAt  DateTime?
-  claimReminderSentAt   DateTime?
-  provisioningAttemptId String?            @unique
-  provisioningStartedAt DateTime?
-  companyId             String?
-  ownerUserId           String?
-  createdAt             DateTime           @default(now())
-  updatedAt             DateTime           @updatedAt
-  company               Company?           @relation(fields: [companyId], references: [id], onDelete: SetNull)
-  owner                 User?              @relation(fields: [ownerUserId], references: [id], onDelete: SetNull)
+  id                     String             @id @default(cuid())
+  source                 String             @default("official-site")
+  externalSignupId       String             @unique
+  payloadHash            String
+  companyName            String
+  taxId                  String?
+  ownerDisplayName       String
+  contactEmail           String
+  consentVersion         String
+  referralCode           String?
+  requestedOfferKey      String?
+  state                  CompanySignupState @default(RECEIVED)
+  version                Int                @default(0)
+  failureCode            String?
+  businessType           String?
+  phoneNumber            String?
+  vatRegistered          Boolean?
+  mxValid                Boolean?
+  pendingPasswordHash    String?
+  attachUserId           String?
+  approvedAt             DateTime?
+  approvedByUserId       String?
+  claimEmailLastSentAt   DateTime?
+  // SES MessageId of the last claim email. The only join key an SNS bounce/complaint event carries
+  // back to this row (spec §4D); unique because SES never reuses a MessageId.
+  claimEmailSesMessageId String?            @unique
+  claimReminderSentAt    DateTime?
+  provisioningAttemptId  String?            @unique
+  provisioningStartedAt  DateTime?
+  companyId              String?
+  ownerUserId            String?
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+  company                Company?           @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  owner                  User?              @relation(fields: [ownerUserId], references: [id], onDelete: SetNull)
 
   claimTokens AccountClaimToken[]
 
