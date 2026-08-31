@@ -35,6 +35,10 @@ LINE_AI_FUSED_PLAN_SHADOW_ENABLED_INPUT="${LINE_AI_FUSED_PLAN_SHADOW_ENABLED:-}"
 LINE_AI_PREPARED_SIMPLE_READ_ENABLED_INPUT="${LINE_AI_PREPARED_SIMPLE_READ_ENABLED:-}"
 LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES_INPUT="${LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES:-}"
 LINE_AI_BUFFER_DEBOUNCE_MS_INPUT="${LINE_AI_BUFFER_DEBOUNCE_MS:-}"
+EXTERNAL_SIGNUP_ENABLED_INPUT="${EXTERNAL_SIGNUP_ENABLED:-}"
+EMAIL_PROVIDER_INPUT="${EMAIL_PROVIDER:-}"
+SES_REGION_INPUT="${SES_REGION:-ap-southeast-1}"
+SES_FROM_ADDRESS_INPUT="${SES_FROM_ADDRESS:-}"
 PRODUCTION_SERVING_MODE_INPUT="${PRODUCTION_SERVING_MODE:-}"
 RELEASE_MODE_INPUT="${RELEASE_MODE:-}"
 LOG_RETENTION_DAYS="${LOG_RETENTION_DAYS:-14}"
@@ -174,6 +178,33 @@ esac
 if [ "$DEPLOY_ENV" = production ] && [ "$LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED_INPUT" = true ]; then
   echo "ERROR: LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED=true is not activated for production yet" >&2
   exit 2
+fi
+# Auto-register + real claim email (P10/P11) — UAT-first rollout 2026-08-31: UAT defaults ON with
+# SES, production stays fail-closed on both until the Owner orders the production email round.
+if [ -z "$EXTERNAL_SIGNUP_ENABLED_INPUT" ]; then
+  if [ "$DEPLOY_ENV" = uat ]; then EXTERNAL_SIGNUP_ENABLED_INPUT=true; else EXTERNAL_SIGNUP_ENABLED_INPUT=false; fi
+fi
+case "$EXTERNAL_SIGNUP_ENABLED_INPUT" in true|false) ;; *)
+  echo "ERROR: EXTERNAL_SIGNUP_ENABLED must be exactly true or false" >&2; exit 2 ;;
+esac
+if [ "$DEPLOY_ENV" = production ] && [ "$EXTERNAL_SIGNUP_ENABLED_INPUT" = true ]; then
+  echo "ERROR: EXTERNAL_SIGNUP_ENABLED=true is not activated for production yet" >&2
+  exit 2
+fi
+if [ -z "$EMAIL_PROVIDER_INPUT" ]; then
+  if [ "$DEPLOY_ENV" = uat ]; then EMAIL_PROVIDER_INPUT=ses; else EMAIL_PROVIDER_INPUT=disabled; fi
+fi
+case "$EMAIL_PROVIDER_INPUT" in disabled|ses) ;; *)
+  echo "ERROR: EMAIL_PROVIDER must be exactly disabled or ses for cloud deploys" >&2; exit 2 ;;
+esac
+if [ "$DEPLOY_ENV" = production ] && [ "$EMAIL_PROVIDER_INPUT" = ses ]; then
+  echo "ERROR: EMAIL_PROVIDER=ses is not activated for production yet" >&2
+  exit 2
+fi
+if [ "$EMAIL_PROVIDER_INPUT" = ses ] && [ -z "$SES_FROM_ADDRESS_INPUT" ]; then
+  if [ "$DEPLOY_ENV" = uat ]; then SES_FROM_ADDRESS_INPUT="contact@mangmeeplus.com"; else
+    echo "ERROR: SES_FROM_ADDRESS is required when EMAIL_PROVIDER=ses" >&2; exit 2
+  fi
 fi
 case "$LINE_AI_FUSED_PLAN_SHADOW_ENABLED_INPUT" in true|false) ;; *)
   echo "ERROR: LINE_AI_FUSED_PLAN_SHADOW_ENABLED must be exactly true or false" >&2; exit 2 ;;
@@ -449,6 +480,8 @@ SERVING_LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED="$LINE_AI_DEBOUNCE_EXPERIMENT_ENABLE
 SERVING_LINE_AI_FUSED_PLAN_SHADOW_ENABLED="$LINE_AI_FUSED_PLAN_SHADOW_ENABLED_INPUT"
 SERVING_LINE_AI_PREPARED_SIMPLE_READ_ENABLED="$LINE_AI_PREPARED_SIMPLE_READ_ENABLED_INPUT"
 SERVING_LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES="$LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES_INPUT"
+SERVING_EXTERNAL_SIGNUP_ENABLED="$EXTERNAL_SIGNUP_ENABLED_INPUT"
+SERVING_EMAIL_PROVIDER="$EMAIL_PROVIDER_INPUT"
 if [ "$PRODUCTION_SERVING_MODE_INPUT" = maintenance_only ]; then
   SERVING_CRM_AUTO_REPLY_ENABLED=false
   SERVING_AI_ENABLED=false
@@ -464,6 +497,8 @@ if [ "$PRODUCTION_SERVING_MODE_INPUT" = maintenance_only ]; then
   SERVING_LINE_AI_FUSED_PLAN_SHADOW_ENABLED=false
   SERVING_LINE_AI_PREPARED_SIMPLE_READ_ENABLED=false
   SERVING_LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES=""
+  SERVING_EXTERNAL_SIGNUP_ENABLED=false
+  SERVING_EMAIL_PROVIDER=disabled
 fi
 if [ "$DEPLOY_ENV" = production ] && [ "$PRODUCTION_SERVING_MODE_INPUT" = live ] \
   && { [ "$TARGET" = all ] || [ "$TARGET" = ai-gateway ]; }; then
@@ -825,6 +860,13 @@ EOF
     --policy-arn arn:aws:iam::aws:policy/service-role/AmazonECSInfrastructureRoleforExpressGatewayServices >/dev/null 2>&1 || true
 
   ensure_role "$API_TASK_ROLE" '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ecs-tasks.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
+  # SES send rights ride the same provider gate as the runtime env: no ses provider, no policy
+  # statement — production gains nothing until its email round is activated above.
+  SES_POLICY_STATEMENT=""
+  if [ "$SERVING_EMAIL_PROVIDER" = ses ]; then
+    SES_POLICY_STATEMENT=",
+    { \"Effect\": \"Allow\", \"Action\": [\"ses:SendEmail\",\"ses:SendRawEmail\"], \"Resource\": [\"arn:aws:ses:${REGION}:${ACCOUNT_ID}:identity/mangmeeplus.com\", \"arn:aws:ses:${REGION}:${ACCOUNT_ID}:configuration-set/mangmee-transactional\"] }"
+  fi
   cat > /tmp/watchdog-bms-ecs-api-task-policy.json <<EOF
 {
   "Version": "2012-10-17",
@@ -832,7 +874,7 @@ EOF
     { "Effect": "Allow", "Action": ["secretsmanager:GetSecretValue"], "Resource": "arn:aws:secretsmanager:${REGION}:${ACCOUNT_ID}:secret:${SECRET_PREFIX}/*" },
     { "Effect": "Allow", "Action": ["ssm:GetParameter"], "Resource": "arn:aws:ssm:${REGION}:${ACCOUNT_ID}:parameter${PARAM_PREFIX}/*" },
     { "Effect": "Allow", "Action": ["s3:ListBucketVersions","s3:GetBucketObjectLockConfiguration"], "Resource": "arn:aws:s3:::${S3_BUCKET}" },
-    { "Effect": "Allow", "Action": ["s3:GetObject","s3:GetObjectVersion","s3:GetObjectRetention","s3:GetObjectLegalHold","s3:PutObject","s3:DeleteObject"], "Resource": "arn:aws:s3:::${S3_BUCKET}/*" }
+    { "Effect": "Allow", "Action": ["s3:GetObject","s3:GetObjectVersion","s3:GetObjectRetention","s3:GetObjectLegalHold","s3:PutObject","s3:DeleteObject"], "Resource": "arn:aws:s3:::${S3_BUCKET}/*" }${SES_POLICY_STATEMENT}
   ]
 }
 EOF
@@ -1492,6 +1534,10 @@ api_container_json() {
     --arg lineAiLoadingOnAcceptEnabled "$SERVING_LINE_AI_LOADING_ON_ACCEPT_ENABLED" \
     --arg lineAiBufferDebounceMs "$LINE_AI_BUFFER_DEBOUNCE_MS_INPUT" \
     --arg lineAiDebounceExperimentEnabled "$SERVING_LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED" \
+    --arg externalSignupEnabled "$SERVING_EXTERNAL_SIGNUP_ENABLED" \
+    --arg emailProvider "$SERVING_EMAIL_PROVIDER" \
+    --arg sesRegion "$SES_REGION_INPUT" \
+    --arg sesFromAddress "$SES_FROM_ADDRESS_INPUT" \
     --arg lineAiFusedPlanShadowEnabled "$SERVING_LINE_AI_FUSED_PLAN_SHADOW_ENABLED" \
     --arg lineAiPreparedSimpleReadEnabled "$SERVING_LINE_AI_PREPARED_SIMPLE_READ_ENABLED" \
     --arg crmAiMinConfidence "${CRM_AI_MIN_CONFIDENCE:-0.7}" \
@@ -1576,6 +1622,10 @@ api_container_json() {
         {name:"LINE_AI_LOADING_ON_ACCEPT_ENABLED", value:$lineAiLoadingOnAcceptEnabled},
         {name:"LINE_AI_BUFFER_DEBOUNCE_MS", value:$lineAiBufferDebounceMs},
         {name:"LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED", value:$lineAiDebounceExperimentEnabled},
+        {name:"EXTERNAL_SIGNUP_ENABLED", value:$externalSignupEnabled},
+        {name:"EMAIL_PROVIDER", value:$emailProvider},
+        {name:"SES_REGION", value:$sesRegion},
+        {name:"SES_FROM_ADDRESS", value:$sesFromAddress},
         {name:"LINE_AI_FUSED_PLAN_SHADOW_ENABLED", value:$lineAiFusedPlanShadowEnabled},
         {name:"LINE_AI_PREPARED_SIMPLE_READ_ENABLED", value:$lineAiPreparedSimpleReadEnabled},
         {name:"WATCHDOG_JWT_ISSUER", value:$publicWebUrl},

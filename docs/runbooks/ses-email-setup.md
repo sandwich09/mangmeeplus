@@ -40,11 +40,12 @@ SES → Account dashboard → **Request production access**: Mail type `Transact
 - ทดสอบจริงบน UAT: สมัคร → อนุมัติ → เมลเข้ากล่องจริง → DKIM = pass ใน header → กดลิงก์ตั้งรหัสสำเร็จ → ทดสอบ bounce ด้วย `bounce@simulator.amazonses.com`
 - แล้วค่อยเปิด production ตาม release ปกติ
 
-## เช็คลิสต์สั้น (ไว้ติ๊ก)
+## เช็คลิสต์ — ผลจริง 2026-08-31 (Fable ทำผ่าน Chrome ของ Owner)
 
-- [ ] ขั้น 0: สิทธิ์ AWS (ทาง A หรือ B)
-- [ ] ขั้น 1: สร้าง domain identity + Easy DKIM
-- [ ] ขั้น 2: วาง CNAME 3 รายการใน Cloudflare (DNS only) + DMARC
-- [ ] ขั้น 3: configuration set + SNS bounce/complaint
-- [ ] ขั้น 4: ยื่นขอ production access (รอ ~1 วัน)
-- [ ] ขั้น 5: ตั้ง env UAT → ทดสอบ inbox/DKIM/bounce → ค่อยไป production
+- [x] ขั้น 0: Owner login console ใน Chrome ให้ (ทาง B)
+- [x] ขั้น 1: identity `mangmeeplus.com` + Easy DKIM RSA_2048 → **Verified / DKIM Successful**
+- [x] ขั้น 2: CNAME 3 รายการใน Cloudflare (DNS only) — DMARC TXT ยังไม่ใส่ (dialog Cloudflare งอแง; optional ไม่กระทบการส่ง — follow-up เล็ก)
+- [x] ขั้น 3: configuration set `mangmee-transactional` + SNS `mangmee-ses-events` (Deliveries/Hard bounces/Complaints)
+- [x] ขั้น 4: ยื่น production access แล้ว — **Under review** (~24 ชม.; ระหว่างนี้ sandbox ส่งหา @mangmeeplus.com และ simulator ได้)
+- [x] ขั้น 5 (ฝั่ง repo): deploy.sh UAT = EMAIL_PROVIDER=ses + SES_FROM_ADDRESS=contact@mangmeeplus.com + EXTERNAL_SIGNUP_ENABLED=true; production fail-closed ทั้งคู่; สิทธิ์ ses:SendEmail ผูกกับ provider gate ใน task-role policy ที่ deploy.sh เขียนเอง
+- หมายเหตุ: อย่าแก้ policy `watchdog-bms-uat-api-runtime` ใน console — deploy.sh เขียนทับทุกรอบ ให้แก้ที่ deploy.sh เท่านั้น

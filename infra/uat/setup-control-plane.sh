@@ -150,7 +150,8 @@ jq -n --arg region "$region" --arg account "$account_id" '{
     {Effect:"Allow",Action:["secretsmanager:GetSecretValue"],Resource:("arn:aws:secretsmanager:"+$region+":"+$account+":secret:watchdog-bms/uat/*")},
     {Effect:"Allow",Action:["ssm:GetParameter"],Resource:("arn:aws:ssm:"+$region+":"+$account+":parameter/watchdog-bms/uat/*")},
     {Effect:"Allow",Action:["s3:ListBucketVersions","s3:GetBucketObjectLockConfiguration"],Resource:("arn:aws:s3:::watchdog-bms-uat-"+$account)},
-    {Effect:"Allow",Action:["s3:GetObject","s3:GetObjectVersion","s3:GetObjectRetention","s3:GetObjectLegalHold","s3:PutObject","s3:DeleteObject"],Resource:("arn:aws:s3:::watchdog-bms-uat-"+$account+"/*")}
+    {Effect:"Allow",Action:["s3:GetObject","s3:GetObjectVersion","s3:GetObjectRetention","s3:GetObjectLegalHold","s3:PutObject","s3:DeleteObject"],Resource:("arn:aws:s3:::watchdog-bms-uat-"+$account+"/*")},
+    {Effect:"Allow",Action:["ses:SendEmail","ses:SendRawEmail"],Resource:[("arn:aws:ses:"+$region+":"+$account+":identity/mangmeeplus.com"),("arn:aws:ses:"+$region+":"+$account+":configuration-set/mangmee-transactional")]}
   ]
 }' > "$tmp_dir/api-policy.json"
 aws_cmd iam put-role-policy --role-name "$api_role" --policy-name watchdog-bms-uat-api-runtime --policy-document "file://$tmp_dir/api-policy.json"
