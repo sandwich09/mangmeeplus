@@ -8,7 +8,9 @@ import {
 } from '@nestjs/common';
 import { PrismaBranchRepository } from '../../infrastructure/repositories/prisma-branch.repository';
 import type { BranchRecord } from '../../domain/models/branch.model';
-import { canArchiveBranch, validateTaxBranchCode } from '../../domain/logic/branch.logic';
+import { canLeaveActiveBranch, validateTaxBranchCode } from '../../domain/logic/branch.logic';
+import { assertNoInFlightReimbursements } from '../../../reimbursements/application/branch-in-flight';
+import { PrismaService } from '../../../../common/database/prisma.service';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import { AuditService } from '../../../audit/application/audit.service';
 
@@ -27,6 +29,7 @@ export class UpdateBranchUseCase {
   constructor(
     private readonly branches: PrismaBranchRepository,
     private readonly audit: AuditService,
+    private readonly prisma: PrismaService,
   ) {}
 
   async execute(ctx: RequestContext, cmd: UpdateBranchCommand): Promise<BranchRecord> {
@@ -42,11 +45,20 @@ export class UpdateBranchUseCase {
     const existing = await this.branches.findById({ id: cmd.branchId, companyId: ctx.companyId });
     if (!existing) throw new NotFoundException('Branch not found.');
 
-    if (cmd.status === 'ARCHIVED') {
-      const count = await this.branches.countActiveHeadOffice(ctx.companyId);
-      const err = canArchiveBranch(existing, count);
+    // Any exit from ACTIVE, not just ARCHIVED: `DISABLED` reaches the identical end state and is a
+    // plain dropdown choice on the branch settings page, so guarding one and not the other left the
+    // rule reachable in two clicks. Re-activating (`status: 'ACTIVE'`) and edits that leave status
+    // untouched are unaffected.
+    if (cmd.status && cmd.status !== 'ACTIVE' && existing.status === 'ACTIVE') {
+      const [headOffices, active] = await Promise.all([
+        this.branches.countActiveHeadOffice(ctx.companyId),
+        this.branches.countActive(ctx.companyId),
+      ]);
       // Carry a stable code so the web can render this business rule in Thai.
-      if (err) throw new UnprocessableEntityException({ code: 'branch_head_office_required', message: err });
+      const refusal = canLeaveActiveBranch(existing, headOffices, active);
+      if (refusal) throw new UnprocessableEntityException(refusal);
+      // Checked last: it costs a query, and the two structural rules above are cheaper to fail on.
+      await assertNoInFlightReimbursements(this.prisma, ctx.companyId, existing.id);
     }
 
     if (cmd.taxBranchCode != null) {

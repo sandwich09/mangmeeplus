@@ -79,6 +79,10 @@ export class PrismaBranchRepository implements BranchRepositoryPort {
     return { items: rows.map((r) => this.toRecord(r)), total, page, pageSize };
   }
 
+  async countActive(companyId: string): Promise<number> {
+    return this.prisma.client.branch.count({ where: { companyId, status: 'ACTIVE' } });
+  }
+
   async countActiveHeadOffice(companyId: string): Promise<number> {
     return this.prisma.client.branch.count({
       where: { companyId, type: 'HEAD_OFFICE', status: 'ACTIVE' },

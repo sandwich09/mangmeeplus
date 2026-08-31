@@ -1,7 +1,7 @@
 'use client';
 // 10D: Settings > สาขา — manage branches used as the in-page data scope dimension.
 import { useCallback, useEffect, useState } from 'react';
-import { apiErrorMessage } from '@/common/api/api-error-message';
+import { apiErrorCode, apiErrorMessage } from '@/common/api/api-error-message';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { useToast } from '@/common/components/toast';
 import { taxBranchCodeError } from './branch-form.logic';
@@ -31,6 +31,7 @@ function errMsg(e: unknown): string {
   return apiErrorMessage(e);
 }
 
+
 const EMPTY_FORM: CreateBranchInput = { code: '', name: '', type: 'BRANCH', taxBranchCode: '' };
 
 export default function BranchSettingsPage({ companyId, permissions = [] }: { companyId: string; permissions?: readonly string[] }) {
@@ -39,6 +40,8 @@ export default function BranchSettingsPage({ companyId, permissions = [] }: { co
   const [branches, setBranches] = useState<Branch[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Kept beside the message so the banner can offer the way out, not just state the rule.
+  const [errorCode, setErrorCode] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState<CreateBranchInput>(EMPTY_FORM);
   const [editing, setEditing] = useState<Branch | null>(null);
@@ -48,11 +51,11 @@ export default function BranchSettingsPage({ companyId, permissions = [] }: { co
 
   const load = useCallback(async () => {
     setLoading(true);
-    setError(null);
+    setError(null); setErrorCode(null);
     try {
       setBranches(await listBranches(companyId));
     } catch (e) {
-      setError(errMsg(e));
+      setError(errMsg(e)); setErrorCode(apiErrorCode(e));
     } finally {
       setLoading(false);
     }
@@ -63,7 +66,7 @@ export default function BranchSettingsPage({ companyId, permissions = [] }: { co
   const submitCreate = async () => {
     if (!canManage || busy || createTaxError || !form.code.trim() || !form.name.trim()) return;
     setBusy(true);
-    setError(null);
+    setError(null); setErrorCode(null);
     try {
       await createBranch(companyId, {
         code: form.code.trim().toUpperCase(),
@@ -76,7 +79,7 @@ export default function BranchSettingsPage({ companyId, permissions = [] }: { co
       await load();
       toast.success('สร้างสาขาเรียบร้อยแล้ว');
     } catch (e) {
-      setError(errMsg(e));
+      setError(errMsg(e)); setErrorCode(apiErrorCode(e));
     } finally {
       setBusy(false);
     }
@@ -85,7 +88,7 @@ export default function BranchSettingsPage({ companyId, permissions = [] }: { co
   const submitEdit = async () => {
     if (!canManage || busy || !editing || editTaxError || !editing.name.trim()) return;
     setBusy(true);
-    setError(null);
+    setError(null); setErrorCode(null);
     try {
       await updateBranch(companyId, editing.id, {
         name: editing.name.trim(),
@@ -98,7 +101,7 @@ export default function BranchSettingsPage({ companyId, permissions = [] }: { co
       await load();
       toast.success('บันทึกการแก้ไขสาขาเรียบร้อยแล้ว');
     } catch (e) {
-      setError(errMsg(e));
+      setError(errMsg(e)); setErrorCode(apiErrorCode(e));
     } finally {
       setBusy(false);
     }
@@ -121,7 +124,21 @@ export default function BranchSettingsPage({ companyId, permissions = [] }: { co
         </button>}
       </div>
 
-      {error && <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
+      {error && (
+        <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {error}
+          {/* Owner decision 2026-08-31: refusing the only active branch must offer the replacement
+              in the same step, rather than leaving the operator to work out the order themselves. */}
+          {errorCode === 'branch_last_active_required' && canManage && !creating && (
+            <button
+              className="ml-2 font-medium underline"
+              onClick={() => { setCreating(true); setEditing(null); setError(null); setErrorCode(null); }}
+            >
+              สร้างสาขาใหม่ก่อน
+            </button>
+          )}
+        </div>
+      )}
 
       {canManage && creating && (
         <div className="grid gap-3 rounded-lg border border-gray-200 bg-white p-4 sm:grid-cols-2 lg:grid-cols-4">

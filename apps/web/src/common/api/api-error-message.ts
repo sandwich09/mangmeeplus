@@ -73,7 +73,10 @@ const CODE_LABELS: Record<string, string> = {
   coa_posting_readiness_incomplete: 'ผังบัญชีหรือกฎลงบัญชียังไม่พร้อมสำหรับการลงบัญชีอัตโนมัติ',
   expense_settled_via_reimbursement:
     'รายการนี้มาจากการเบิกคืนพนักงาน ระบบจะบันทึกการชำระให้อัตโนมัติเมื่อบันทึกจ่ายใบเบิก — ไม่ต้องบันทึกชำระที่หน้านี้',
-  branch_head_office_required: 'เก็บถาวรสาขานี้ไม่ได้ — บริษัทต้องมีสำนักงานใหญ่ที่ใช้งานอยู่อย่างน้อย 1 สาขา',
+  branch_head_office_required: 'ปิดสาขานี้ไม่ได้ — บริษัทต้องมีสำนักงานใหญ่ที่ใช้งานอยู่อย่างน้อย 1 สาขา',
+  branch_last_active_required: 'ปิดสาขานี้ไม่ได้ — บริษัทต้องมีสาขาที่ใช้งานอยู่อย่างน้อย 1 สาขา สร้างสาขาใหม่ก่อนแล้วค่อยปิดสาขานี้',
+  branch_has_open_reimbursements: 'ปิดสาขานี้ไม่ได้ — ยังมีใบเบิกของสาขานี้ค้างอยู่ ต้องจ่ายหรือปิดใบเบิกให้เรียบร้อยก่อน',
+  branch_head_office_exists: 'บริษัทนี้มีสำนักงานใหญ่อยู่แล้ว หนึ่งบริษัทมีสำนักงานใหญ่ได้เพียงแห่งเดียว',
   ledger_account_invalid_for_bank: 'บัญชีที่ผูกกับธนาคารต้องเป็นบัญชีของบริษัทที่ใช้งานและลงรายการได้',
   output_tax_code_line_mismatch: 'Tax Code ที่หัวเอกสารไม่ตรงกับรายการภาษี กรุณาตรวจ Tax Code ก่อนบันทึก',
   posting_rule_missing: 'ยังไม่มีกฎลงบัญชีที่ผ่านการตรวจสำหรับเอกสารนี้ จึงยังไม่สร้างรายการบัญชี',
@@ -626,6 +629,24 @@ const SUBSTITUTE_ERROR_LABELS_EN: Record<string, string> = {
   tax_evidence_nonclaimable: 'Substitute receipts cannot support input VAT claims. Use non-claimable supporting evidence or request a replacement tax invoice.',
 };
 
+/**
+ * The stable error code a caught error carries, or null.
+ *
+ * A Nest `UnprocessableEntityException({ code })` arrives with the code on the response body, so it
+ * can sit either on the error or one level down in `details`. Callers that branch on a code use this
+ * rather than reading `.code` themselves — a screen that checked only the top level would silently
+ * stop reacting the day the shape changed, and the message below would still translate correctly,
+ * hiding the break.
+ */
+export function apiErrorCode(e: unknown): string | null {
+  const error = e as { code?: unknown; details?: unknown } | null | undefined;
+  const details = error?.details && typeof error.details === 'object'
+    ? error.details as { code?: unknown }
+    : undefined;
+  const code = error?.code ?? details?.code;
+  return typeof code === 'string' ? code : null;
+}
+
 /** Customer copy for a caught error; raw API diagnostics remain on the original object. */
 export function apiErrorMessage(e: unknown, locale: 'th' | 'en' = 'th'): string {
   const error = e as {
@@ -639,7 +660,7 @@ export function apiErrorMessage(e: unknown, locale: 'th' | 'en' = 'th'): string 
   const details = error?.details && typeof error.details === 'object'
     ? error.details as typeof error
     : undefined;
-  const code = error?.code ?? details?.code;
+  const code = apiErrorCode(e);
   if (typeof code === 'string') {
     if (locale === 'en' && SUBSTITUTE_ERROR_LABELS_EN[code]) return SUBSTITUTE_ERROR_LABELS_EN[code]!;
     const byCode = translateApiError(code);

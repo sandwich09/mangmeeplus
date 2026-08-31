@@ -17,9 +17,31 @@ export function validateTaxBranchCode(code: string): string | null {
   return null;
 }
 
-export function canArchiveBranch(branch: BranchRecord, activeHeadOfficeCount: number): string | null {
+export type BranchLeaveActiveRefusal = { code: string; message: string };
+
+/**
+ * Why a branch may not leave `ACTIVE` — archived or merely disabled, the harm is identical.
+ *
+ * Both rules exist because they fail in different shapes. The head-office rule protects the tax
+ * identity a company files under; the last-active rule protects its ability to record anything at
+ * all, because `resolveTransactionBranchId` cannot default a branch that does not exist and every
+ * transactional create in every module then returns TRANSACTION_BRANCH_REQUIRED — with the branch
+ * picker offering nothing to pick. A company whose branches are all `type = BRANCH` is caught only
+ * by the second rule, which is why one is not folded into the other.
+ *
+ * Owner decision 2026-08-31 (D3): a company with zero ACTIVE branches is not a legal state. The
+ * platform tenant is exempt by having no branch rows at all, so it never reaches this function.
+ */
+export function canLeaveActiveBranch(
+  branch: BranchRecord,
+  activeHeadOfficeCount: number,
+  activeBranchCount: number,
+): BranchLeaveActiveRefusal | null {
   if (branch.type === 'HEAD_OFFICE' && activeHeadOfficeCount <= 1) {
-    return 'Cannot archive the only active head office branch.';
+    return { code: 'branch_head_office_required', message: 'Cannot deactivate the only active head office branch.' };
+  }
+  if (activeBranchCount <= 1) {
+    return { code: 'branch_last_active_required', message: 'Cannot deactivate the only active branch in this company.' };
   }
   return null;
 }
