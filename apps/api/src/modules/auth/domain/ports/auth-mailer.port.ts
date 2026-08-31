@@ -17,6 +17,11 @@ export type SignupRejectionEmailInput = Readonly<{
 export interface AuthMailerPort {
   sendEmailVerification(input: AuthEmailLinkInput): Promise<void>;
   sendPasswordResetLink(input: AuthEmailLinkInput): Promise<void>;
-  sendAccountClaim(input: AccountClaimEmailInput): Promise<void>;
+  /**
+   * Returns the provider message id, or null when the provider has none. Only the claim email
+   * needs it: it is the join key an SES bounce/complaint event uses to find the signup request
+   * (spec §4D). The others have no recovery path that could use one.
+   */
+  sendAccountClaim(input: AccountClaimEmailInput): Promise<string | null>;
   sendSignupRejection(input: SignupRejectionEmailInput): Promise<void>;
 }

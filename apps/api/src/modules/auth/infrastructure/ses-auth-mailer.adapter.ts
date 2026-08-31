@@ -81,6 +81,17 @@ function renderLinkEmail(input: AuthEmailLinkInput, baseUrl: string, kind: Exclu
   };
 }
 
+/**
+ * SES configuration set that publishes delivery/bounce/complaint events to SNS. Read from the
+ * environment rather than `AppConfigService` for the same reason `accountClaimLogoUrl` is: it is a
+ * per-environment operational name with a safe absent default, and adding it to the shared config
+ * schema would touch a package every app boots. Absent = the send carries no configuration set,
+ * exactly the behaviour before this existed.
+ */
+export function sesConfigurationSet(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  return env.SES_CONFIGURATION_SET?.trim() || undefined;
+}
+
 function renderClaimEmail(input: AccountClaimEmailInput, baseUrl: string): RenderedEmail {
   return renderAccountClaimEmail({
     companyName: input.companyName,
@@ -108,8 +119,8 @@ export class SesAuthMailerAdapter implements AuthMailerPort {
     await this.send(input.toEmail, 'password_reset', renderLinkEmail(input, this.baseUrl(), 'password_reset'));
   }
 
-  async sendAccountClaim(input: AccountClaimEmailInput): Promise<void> {
-    await this.send(input.toEmail, 'account_claim', renderClaimEmail(input, this.baseUrl()));
+  async sendAccountClaim(input: AccountClaimEmailInput): Promise<string | null> {
+    return this.send(input.toEmail, 'account_claim', renderClaimEmail(input, this.baseUrl()));
   }
 
   // No `baseUrl()` here on purpose: the rejection letter carries no link, so a missing WEB_BASE_URL
@@ -122,10 +133,11 @@ export class SesAuthMailerAdapter implements AuthMailerPort {
     }));
   }
 
-  private async send(toEmail: string, kind: EmailKind, rendered: RenderedEmail): Promise<void> {
+  private async send(toEmail: string, kind: EmailKind, rendered: RenderedEmail): Promise<string | null> {
     const fromAddress = this.config.sesFromAddress;
     if (!fromAddress) throw new Error('SES_FROM_ADDRESS is required for SES email delivery.');
-    await this.client.send(new SendEmailCommand({
+    const configurationSet = sesConfigurationSet();
+    const result = await this.client.send(new SendEmailCommand({
       Source: fromAddress,
       Destination: { ToAddresses: [toEmail] },
       Message: {
@@ -136,7 +148,11 @@ export class SesAuthMailerAdapter implements AuthMailerPort {
         },
       },
       Tags: [{ Name: 'message_type', Value: kind }],
+      // Without this the account has no event destination for the send, so a hard bounce is
+      // invisible to the product (spec §4D). Omitted when unset — the pre-existing behaviour.
+      ...(configurationSet ? { ConfigurationSetName: configurationSet } : {}),
     }));
+    return result?.MessageId ?? null;
   }
 
   private baseUrl(): string {

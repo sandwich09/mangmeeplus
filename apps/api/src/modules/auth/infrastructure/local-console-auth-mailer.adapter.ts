@@ -28,7 +28,7 @@ export class LocalConsoleAuthMailerAdapter implements AuthMailerPort {
 
   // Renders the same Owner-locked copy SES sends, so a local run shows the real letter rather
   // than a field dump — the subject and body here and in production come from one module.
-  async sendAccountClaim(input: AccountClaimEmailInput): Promise<void> {
+  async sendAccountClaim(input: AccountClaimEmailInput): Promise<string | null> {
     const claimUrl = this.buildUrl('/claim-account', input.rawToken);
     const rendered = renderAccountClaimEmail({
       companyName: input.companyName,
@@ -45,6 +45,8 @@ export class LocalConsoleAuthMailerAdapter implements AuthMailerPort {
       subject: rendered.subject,
       body: rendered.text,
     });
+    // No provider, so no message id — the bounce feedback path is SES-only (spec §4D).
+    return null;
   }
 
   async sendSignupRejection(input: SignupRejectionEmailInput): Promise<void> {

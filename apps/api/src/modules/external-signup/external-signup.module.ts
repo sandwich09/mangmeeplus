@@ -13,7 +13,10 @@ import { SignupAdminQueueUseCase } from './application/signup-admin-queue.use-ca
 import { SignupClaimEmailService } from './application/signup-claim-email.service';
 import { SignupClaimUseCase } from './application/signup-claim.use-case';
 import { SubmitCompanySignupUseCase } from './application/submit-company-signup.use-case';
+import { SesEventsUseCase, SNS_HTTP_GET_TOKEN } from './application/ses-event.use-case';
+import { fetchSnsText } from './infrastructure/sns-signature';
 import { PublicCompanySignupController } from './presentation/http/public-company-signup.controller';
+import { PublicSesEventsController } from './presentation/http/public-ses-events.controller';
 import { SignupClaimEmailInternalController } from './presentation/http/signup-claim-email-internal.controller';
 import { SystemSignupRequestController } from './presentation/http/system-signup-request.controller';
 
@@ -25,6 +28,7 @@ import { SystemSignupRequestController } from './presentation/http/system-signup
   imports: [AuthModule, DashboardNotificationsModule, DataModelCoreModule, SystemOnboardingModule, LoggerModule],
   controllers: [
     PublicCompanySignupController,
+    PublicSesEventsController,
     SystemSignupRequestController,
     SignupClaimEmailInternalController,
   ],
@@ -38,6 +42,10 @@ import { SystemSignupRequestController } from './presentation/http/system-signup
     SignupAdminQueueUseCase,
     SignupAdminNotifyService,
     SignupClaimEmailService,
+    SesEventsUseCase,
+    // The one outbound GET the SNS path makes (signing certificate, subscription confirmation),
+    // injected like the SES client is, so a spec can drive it without network.
+    { provide: SNS_HTTP_GET_TOKEN, useValue: fetchSnsText },
   ],
   exports: [CompanySignupCoreService],
 })

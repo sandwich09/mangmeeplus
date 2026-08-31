@@ -252,17 +252,18 @@ export class SignupClaimEmailService {
     if (request.state !== 'EMAIL_PENDING') return;
 
     const { rawToken, expiresAt } = await this.tokens.mint(request.id);
-    await this.mailer.sendAccountClaim({
+    const messageId = await this.mailer.sendAccountClaim({
       toEmail: request.contactEmail,
       companyName: request.companyName,
       rawToken,
       expiresAt,
       lineOaAddUrl: officialLineOaAddUrl(),
     });
-    // Only after a successful send: this timestamp is what the reminder sweep counts from.
+    // Only after a successful send: this timestamp is what the reminder sweep counts from, and the
+    // SES message id is the only handle a later bounce/complaint event has on this row (spec §4D).
     await this.prisma.client.companySignupRequest.update({
       where: { id: request.id },
-      data: { claimEmailLastSentAt: new Date() },
+      data: { claimEmailLastSentAt: new Date(), claimEmailSesMessageId: messageId },
     });
   }
 
