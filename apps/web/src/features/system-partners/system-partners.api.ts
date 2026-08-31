@@ -29,6 +29,10 @@ import type {
   CompanyPlanTermViewDto,
   RenewCompanyPlanTermBody,
   SetCompanyPlanTermBody,
+  SystemUserLookupDto,
+  SystemUserLookupItemDto,
+  SystemUserMembershipDto,
+  SystemUserMergeTrailDto,
 } from '@watchdog-bms/contracts';
 import { authedApiFetch as apiFetch } from '@/common/api/authed-fetch';
 
@@ -63,6 +67,10 @@ export type {
   CompanyPlanTermViewDto,
   RenewCompanyPlanTermBody,
   SetCompanyPlanTermBody,
+  SystemUserLookupDto,
+  SystemUserLookupItemDto,
+  SystemUserMembershipDto,
+  SystemUserMergeTrailDto,
 };
 
 /** Response of the lifecycle endpoint — status + timestamps only, NOT the full detail. */
@@ -184,6 +192,14 @@ export async function setPlatformAiBudget(dto: SetPlatformAiBudgetDto): Promise<
   return apiFetch<PlatformAiBudgetDto>('/v1/system/ai-budget', {
     method: 'PUT',
     body: JSON.stringify(dto),
+    suppressErrorToast: true,
+  });
+}
+
+/** Person-centric lookup across every company: one email can own several, and merged accounts
+ *  leave a trail the per-company screens cannot show. */
+export async function lookupUsers(q: string): Promise<SystemUserLookupDto> {
+  return apiFetch<SystemUserLookupDto>(`/v1/system/users/lookup?q=${encodeURIComponent(q)}`, {
     suppressErrorToast: true,
   });
 }
