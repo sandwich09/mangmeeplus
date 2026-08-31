@@ -6,7 +6,7 @@ import type { PublicSignupStatusDto } from '@watchdog-bms/contracts';
 import { Button } from '@/common/components/button';
 import { getSignupStatus, resendSignupClaimEmail } from './external-signup.api';
 import { SignupBrandHeader } from './SignupChrome';
-import { SIGNUP_SUPPORT_PHONE, signupStatusCopy, signupSubmitErrorMessage } from './signup.logic';
+import { SIGNUP_SUPPORT_EMAIL, SIGNUP_SUPPORT_PHONE, signupStatusCopy, signupSubmitErrorMessage } from './signup.logic';
 
 const TONE_CLASS = {
   info: 'border-gray-200 bg-gray-50 text-gray-700',
@@ -114,10 +114,16 @@ export default function SignupStatusPage({ requestId }: { requestId: string }) {
             </>
           )}
 
+          {/* Owner UAT 2026-08-31: a phone number alone strands anyone who cannot call — the same
+              mailbox the expired-request copy already points at is offered here too. */}
           <p className="border-t border-gray-100 pt-4 text-[13.5px] leading-6 text-gray-500">
             ต้องการความช่วยเหลือ โทร{' '}
             <a href={`tel:${SIGNUP_SUPPORT_PHONE.replace(/-/g, '')}`} className="font-semibold text-[#046B29] underline">
               {SIGNUP_SUPPORT_PHONE}
+            </a>
+            {' '}หรืออีเมล{' '}
+            <a href={`mailto:${SIGNUP_SUPPORT_EMAIL}`} className="font-semibold text-[#046B29] underline">
+              {SIGNUP_SUPPORT_EMAIL}
             </a>
           </p>
         </div>

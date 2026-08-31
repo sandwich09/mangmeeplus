@@ -1,7 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  clampMobileInput,
   isThaiMobile,
+  MOBILE_DIGITS,
   offerLimitsLabel,
   SELECTABLE_OFFER_KEY,
   SIGNUP_CONSENT_VERSION,
@@ -60,6 +62,19 @@ describe('signup form validation', () => {
     assert.ok(validateSignupForm({ ...validForm, phoneNumber: '12345678901' }).phoneNumber);
     assert.equal(isThaiMobile('0912345678'), true);
     assert.equal(isThaiMobile('1912345678'), false);
+  });
+
+  // Owner UAT 2026-08-31: the field took an 11th digit and only complained at submit.
+  it('caps what the phone field can hold at ten digits, whatever is typed or pasted', () => {
+    assert.equal(clampMobileInput('0812345678'), '0812345678');
+    assert.equal(clampMobileInput('08123456789'), '0812345678');
+    assert.equal(clampMobileInput('081-234-5678'), '0812345678');
+    // Separators must not eat into the cap: a dashed number still yields all ten digits.
+    assert.equal(clampMobileInput('081 234 5678').length, MOBILE_DIGITS);
+    assert.equal(clampMobileInput('+66812345678'), '6681234567');
+    assert.equal(clampMobileInput(''), '');
+    // Whatever survives the clamp is exactly what the submit-time rule accepts.
+    assert.equal(isThaiMobile(clampMobileInput('08123456789')), true);
   });
 
   it('checks the tax id only when it is VAT-registered and filled', () => {
@@ -149,6 +164,26 @@ describe('submit error copy', () => {
   it('still prefers a mapped code over any sentence', () => {
     const rateLimited = Object.assign(new Error('Too many requests'), { status: 429 });
     assert.match(signupSubmitErrorMessage(rateLimited), /ถี่เกินไป/);
+  });
+
+  // Owner UAT 2026-08-31: an applicant whose email already had an account filled the claim form and
+  // got the generic 409 line — a wrong cause and no way forward. Both claim-page conflicts name
+  // themselves now, and neither may fall back to the concurrency copy.
+  it('names the two claim conflicts instead of blaming a concurrent edit', () => {
+    const duplicateEmail = Object.assign(new Error('email_already_registered_use_existing_account'), { status: 409 });
+    assert.match(signupSubmitErrorMessage(duplicateEmail), /อีเมลนี้มีบัญชีมั่งมีพลัสอยู่แล้ว/);
+    assert.match(signupSubmitErrorMessage(duplicateEmail), /เข้าสู่ระบบด้วยบัญชีเดิม/);
+    assert.doesNotMatch(signupSubmitErrorMessage(duplicateEmail), /ข้อมูลถูกเปลี่ยนแปลงระหว่างทำรายการ/);
+
+    const takenUsername = Object.assign(new Error('username_taken'), { status: 409 });
+    assert.match(signupSubmitErrorMessage(takenUsername), /ชื่อผู้ใช้นี้ถูกใช้แล้ว/);
+    assert.doesNotMatch(signupSubmitErrorMessage(takenUsername), /ข้อมูลถูกเปลี่ยนแปลงระหว่างทำรายการ/);
+
+    // Unrelated 409s keep the reviewed generic copy — this is a mapping, not a relabelling.
+    assert.match(
+      signupSubmitErrorMessage(Object.assign(new Error('Conflict'), { status: 409 })),
+      /ข้อมูลถูกเปลี่ยนแปลงระหว่างทำรายการ/,
+    );
   });
 });
 

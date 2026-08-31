@@ -9,6 +9,8 @@ import { trimmed } from '@/common/forms/trim';
 import { getSignupAvailability, submitCompanySignup } from './external-signup.api';
 import { SignupBrandHeader, SignupClosedNotice } from './SignupChrome';
 import {
+  clampMobileInput,
+  MOBILE_DIGITS,
   offerLimitsLabel,
   SELECTABLE_OFFER_KEY,
   SIGNUP_CONSENT_VERSION,
@@ -249,8 +251,9 @@ export default function SignupPage() {
                   type="tel"
                   inputMode="numeric"
                   hint="ใช้ติดต่อกลับกรณีอีเมลส่งไม่ถึง"
+                  maxLength={MOBILE_DIGITS}
                   value={values.phoneNumber}
-                  onChange={(event) => set('phoneNumber', event.target.value)}
+                  onChange={(event) => set('phoneNumber', clampMobileInput(event.target.value))}
                   error={fieldErrors.phoneNumber}
                   autoComplete="tel"
                 />

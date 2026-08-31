@@ -46,6 +46,12 @@ export type SignupClaimInfoDto = {
   maskedEmail?: string;
   suggestedUsername?: string;
   expiresAt?: string;
+  /**
+   * True when this request's contact email already belongs to a user. Boolean only — the page
+   * already shows the masked address and learns nothing new about the account. Without it the page
+   * offered a "set a password" form that `setPassword` refuses outright for a duplicate email.
+   */
+  emailMatchesExistingUser?: boolean;
 };
 
 export type SignupClaimSetPasswordBody = {

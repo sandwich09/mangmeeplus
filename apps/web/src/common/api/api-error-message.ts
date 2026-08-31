@@ -19,6 +19,12 @@ const CODE_LABELS: Record<string, string> = {
   platform_access_open_unavailable: 'ยังเปิดระบบไม่ได้จนกว่า production release จะผ่านการตรวจสอบครบถ้วน',
   // P12-3b: a spent/expired LINE deep-link handoff — same line the /login notice shows.
   line_handoff_unavailable: 'ลิงก์นี้หมดอายุหรือถูกใช้ไปแล้ว กรุณาเข้าสู่ระบบเพื่อเปิดรายการนี้',
+  // P10 claim page. Both are 409s the applicant can act on, and both used to collapse into the
+  // generic "ข้อมูลถูกเปลี่ยนแปลงระหว่างทำรายการ" — which named neither the cause nor a way out
+  // (Owner UAT 2026-08-31: an applicant with an existing account hit a dead end here).
+  email_already_registered_use_existing_account:
+    'อีเมลนี้มีบัญชีมั่งมีพลัสอยู่แล้ว กรุณาเข้าสู่ระบบด้วยบัญชีเดิมเพื่อผูกร้านใหม่',
+  username_taken: 'ชื่อผู้ใช้นี้ถูกใช้แล้ว กรุณาตั้งชื่อผู้ใช้อื่น',
   // Feature entitlement vs launch availability — two DISTINCT states (spec:65, spec:335).
   // "not enabled" = the company has not turned the feature on.
   feature_not_enabled: 'ยังไม่ได้เปิดฟีเจอร์นี้',
