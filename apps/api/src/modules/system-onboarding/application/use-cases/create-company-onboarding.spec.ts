@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { ConflictException, Logger, NotFoundException } from '@nestjs/common';
 import { CreateCompanyOnboardingUseCase } from './create-company-onboarding.use-case';
 import { verifyPassword } from '../../../auth/domain/logic/password-credential.logic';
-import { ALL_FEATURE_ENTITLEMENT_KEYS } from '@watchdog-bms/contracts';
+import { ALL_FEATURE_ENTITLEMENT_KEYS, FEATURE_PACKAGE_PRESETS } from '@watchdog-bms/contracts';
 import { WORKFLOW_TEMPLATE_CATALOG } from '../../../workflow/domain/workflow-template-catalog';
 import { APPROVED_FEATURE_KEYS } from '../../../system-partner-management/domain/feature-registry';
 import { resolveTransactionTaxPreview } from '../../../tax/domain/logic/transaction-tax.logic';
@@ -504,6 +504,32 @@ describe('CreateCompanyOnboardingUseCase', () => {
     assert.equal(branchData.isVatEstablishment, true);
     assert.equal(vatStateData.version, 0);
     assert.ok(vatStateData.companyId);
+  });
+
+  // Owner decision (UAT round 1): self-signup shops start on the "เริ่มต้น" preset — the same rows
+  // the admin console's preset button submits — so a trial shop opens without the CRM group.
+  it("modulePackage 'starter' seeds exactly the admin console starter preset", async () => {
+    const prisma = makePrisma({});
+    let entitlementRows: Array<{ featureKey: string; enabled: boolean }> | undefined;
+    const inner = prisma.client.$transaction;
+    prisma.client.$transaction = async (fn: (tx: any) => Promise<any>, opts?: any) =>
+      inner.call(prisma.client, async (tx: any) => {
+        const passthrough = tx.companyFeatureEntitlement.createMany;
+        tx.companyFeatureEntitlement = {
+          createMany: async (args: any) => { entitlementRows = args.data; return passthrough(args); },
+        };
+        return fn(tx);
+      }, opts);
+    await new CreateCompanyOnboardingUseCase(prisma, configMock).execute({ ...makeCmd(), modulePackage: 'starter' } as any);
+
+    assert.ok(entitlementRows, 'entitlement rows are still seeded');
+    assert.equal(entitlementRows.length, ALL_FEATURE_ENTITLEMENT_KEYS.length, 'still one explicit row per canonical key');
+    const starter = new Set<string>(FEATURE_PACKAGE_PRESETS.starter.featureKeys);
+    for (const row of entitlementRows) {
+      assert.equal(row.enabled, starter.has(row.featureKey), `row ${row.featureKey} must mirror the preset`);
+    }
+    assert.equal(entitlementRows.find((row) => row.featureKey === 'crm')?.enabled, false, 'CRM stays off on starter');
+    assert.equal(entitlementRows.find((row) => row.featureKey === 'expenses')?.enabled, true, 'expenses stays on');
   });
 
   // The VAT question is asked once, where the company is created. An admin who does not know

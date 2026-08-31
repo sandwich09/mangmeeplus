@@ -34,6 +34,7 @@ const SUPPORT_EMAIL = 'contact@mangmeeplus.com';
 const COMPANY_LEGAL_NAME = 'บริษัท มั่งมียั่งยืน จำกัด';
 const COMPANY_PHONE = 'โทร. 098-256-5628';
 const COMPANY_SITE = 'https://official.mangmeeplus.com';
+const COMPANY_SITE_LABEL = 'official.mangmeeplus.com';
 const COMPANY_TAGLINE = 'ให้ธุรกิจของคุณ มั่งมี ไปด้วยกัน';
 
 const TRIAL_BENEFITS = [
@@ -105,7 +106,7 @@ export function renderAccountClaimEmail(input: AccountClaimCopyInput): RenderedE
     'ขอแสดงความนับถือ',
     COMPANY_LEGAL_NAME,
     COMPANY_PHONE,
-    COMPANY_SITE,
+    `เว็บไซต์ ${COMPANY_SITE}`,
     COMPANY_TAGLINE,
   ].join('\n');
 
@@ -148,8 +149,8 @@ function renderHtml(input: AccountClaimCopyInput, expires: string): string {
     + section('สิทธิพิเศษสำหรับท่าน')
     + `<p style="margin:0 0 8px">แพ็กเกจ PRO ทดลองใช้ฟรี 30 วัน</p>`
     + `<ul style="margin:0 0 20px;padding-left:20px">${benefits}</ul>`
-    + `<p style="margin:24px 0 0;color:#53665f;font-size:15px">ขอแสดงความนับถือ<br>${COMPANY_LEGAL_NAME}<br>${COMPANY_PHONE}<br>`
-    + `<a href="${COMPANY_SITE}" style="color:#13795b">${COMPANY_SITE}</a><br>${COMPANY_TAGLINE}</p>`
+    + `<p style="margin:24px 0 0;color:#53665f;font-size:15px">ขอแสดงความนับถือ<br><strong style="color:#17352b">${COMPANY_LEGAL_NAME}</strong><br>${COMPANY_PHONE}<br>`
+    + `เว็บไซต์ <a href="${COMPANY_SITE}" style="color:#13795b;font-weight:700;text-decoration:none">${COMPANY_SITE_LABEL}</a><br>${COMPANY_TAGLINE}</p>`
     + `</section></main></body></html>`;
 }
 
