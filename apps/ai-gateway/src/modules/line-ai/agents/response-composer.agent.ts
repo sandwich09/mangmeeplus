@@ -84,11 +84,13 @@ export const CASUAL_CONVERSATION_SYSTEM_PROMPT = [
   'Return only the reply text in the user language: no preamble, quotes, markdown fences, JSON, or raw URL.',
 ].join('\n');
 
-// Owner 2026-08-30 (hybrid bank): the model draws from the curated bank FIRST and only improvises
-// when nothing fits. Appended ONLY to a turn that actually asks for a joke — an ordinary casual
-// turn must not pay for ~30 extra lines of prompt. Built once at module load, not per turn.
+// Owner 2026-08-31 (50/50 hybrid, supersedes the bank-first order of 2026-08-30): when the moment
+// carries real material, the model COMPOSES a fresh joke from it — the bank is the tone and quality
+// bar; a cold, material-less ask draws from the bank. Appended ONLY to a turn that actually asks
+// for a joke — an ordinary casual turn must not pay for ~30 extra lines of prompt. Built once at
+// module load, not per turn.
 const JOKE_BANK_SECTION = [
-  'Joke bank — pick ONE that fits the moment, adapt wording lightly, never repeat one already used in conversationContext, improvise in the same register only if none fits:',
+  'Joke bank — hybrid: when the conversation or the ask gives you real material (their day, a theme in conversationContext, a fandom vibe), COMPOSE a fresh joke from that moment; the bank below is your tone and quality bar. When the ask is plain with nothing to riff on, pick ONE from the bank that fits and adapt its wording lightly. Either way never repeat a joke already used in conversationContext, and a composed joke obeys every bank rule: everyday Thai that lands instantly, warm, no nerd or statistics humour, no real person, group, show, or brand name:',
   ...MANGMEE_JOKE_BANK.map((joke) => `${joke.id}: ${joke.text}`),
 ].join('\n');
 

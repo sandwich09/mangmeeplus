@@ -1,11 +1,15 @@
 /**
  * Curated joke bank for น้องมั่งมี's casual lane (Owner decision 2026-08-29/30).
  *
- * Why a bank at all: left to improvise, the model reaches for nerd humour — a statistician joke
- * landed as "งงอีกแล้ว" with a real Owner. The audience is stressed Thai SME owners and staff, so
- * the model now draws from these hand-approved lines FIRST and only adapts the wording lightly.
- * It may improvise only when nothing here fits the moment, and improvisation stays bound by the
- * humour-register rule already in CASUAL_CONVERSATION_SYSTEM_PROMPT.
+ * Why a bank at all: left to improvise with no anchor, the model reaches for nerd humour — a
+ * statistician joke landed as "งงอีกแล้ว" with a real Owner. The audience is stressed Thai SME
+ * owners and staff.
+ *
+ * Owner decision 2026-08-31 (50/50 hybrid, supersedes bank-first of 2026-08-30): situational
+ * COMPOSITION is a first-class lane — when the conversation gives real material, the model writes
+ * a fresh joke from it, holding the bank as the tone and quality bar; a plain material-less ask
+ * draws from the bank. Every composed joke still obeys the writing rules below, and the
+ * humour-register rule in CASUAL_CONVERSATION_SYSTEM_PROMPT stays binding.
  *
  * Owner decision 2026-08-30 (fandom banter): น้องมั่งมี may banter in GENRE terms — ซีรีส์/ละคร,
  * วายไทย, ยุทธภพ/เทพเซียน, ไอดอล — because that is how the audience actually talks. She never

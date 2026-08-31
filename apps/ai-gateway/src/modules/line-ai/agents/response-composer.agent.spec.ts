@@ -209,7 +209,9 @@ describe('isJokeRequest – gates the bank onto the prompt', () => {
       },
     };
     await agent.composeCasual('ขอมุกหน่อย', provider);
-    assert.match(seen, /Joke bank — pick ONE/);
+    assert.match(seen, /Joke bank — hybrid/);
+    // Owner 2026-08-31: composition from the moment is first-class, the bank is the quality bar.
+    assert.match(seen, /COMPOSE a fresh joke/);
     assert.ok(seen.includes(MANGMEE_JOKE_BANK[0]!.text), 'bank entries ride the joke turn');
     await agent.composeCasual('วันนี้อากาศดีนะ', provider);
     assert.equal(seen, CASUAL_CONVERSATION_SYSTEM_PROMPT, 'ordinary casual turns must not pay for the bank');
