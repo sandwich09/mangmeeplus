@@ -3,6 +3,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import {
   ALL_FEATURE_ENTITLEMENT_KEYS,
   civilDateToUtcDate,
+  FEATURE_PACKAGE_PRESETS,
   isCivilDate,
   isHealthAdjacentBusinessCategory,
   parentFeatureKey,
@@ -82,6 +83,11 @@ export type CreateCompanyOnboardingCommand = {
    * public signup path sets this; the admin console keeps the guard that catches its own typos.
    */
   allowDuplicateCompanyName?: boolean;
+  /**
+   * 'starter' seeds the same feature set as the admin console's "เริ่มต้น" preset button
+   * (FEATURE_PACKAGE_PRESETS.starter) instead of DEFAULT_ENABLED_FEATURE_KEYS. Any other value is
+   * recorded on the run but keeps the standard seeding, so existing console callers are unchanged.
+   */
   modulePackage?: string;
   lineOaAddUrl?: string;
   lineLinkUrl?: string;
@@ -352,10 +358,18 @@ export class CreateCompanyOnboardingUseCase {
       // resolver strips disabled features' permissions) and never reads as the legacy fail-open
       // sentinel. A submenu inherits its parent's package decision, which is what the runtime
       // evaluator would have computed for it anyway.
+      // modulePackage 'starter' mirrors the admin console's "เริ่มต้น" preset button exactly:
+      // enabled iff the key is in the preset (the preset lists submenus explicitly, so membership
+      // is the whole decision — same rows applyPreset would submit).
+      const starterKeys = cmd.modulePackage === 'starter'
+        ? new Set<string>(FEATURE_PACKAGE_PRESETS.starter.featureKeys)
+        : null;
       const entitlementRows = ALL_FEATURE_ENTITLEMENT_KEYS.map((featureKey) => ({
         companyId: company.id,
         featureKey,
-        enabled: DEFAULT_ENABLED_FEATURE_KEYS.includes(parentFeatureKey(featureKey)),
+        enabled: starterKeys
+          ? starterKeys.has(featureKey)
+          : DEFAULT_ENABLED_FEATURE_KEYS.includes(parentFeatureKey(featureKey)),
         updatedBySystemAdminUserId: cmd.requestingAdminUserId,
       }));
       await tx.companyFeatureEntitlement.createMany({ data: entitlementRows });

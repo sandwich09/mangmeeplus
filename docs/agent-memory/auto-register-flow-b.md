@@ -31,3 +31,12 @@ Next:
 
 - Owner answers P11 §5.1–2 (start SES ops in parallel — longest lead time) and trial numbers when ready.
 - Implementation order on approval to build: Slice A (migration delta + public routes + form/status pages) → B (claim token + page, console provider) → C (admin queue + provisioning adapter + LINE/merge/role labels) → D (SES live, parallel ops) → E (flag default-off, UAT e2e, production per V2 runbook).
+
+## Update 2026-08-31: UAT live + first smoke PASS
+
+- Status: Slices A–D **deployed to UAT and working end-to-end up to the approve gate**. Candidate `b2cc9d1a` (all services) + hotfix `8fc26b20` (api-web only, deploy run 33371408927).
+- Deploy saga: wave order (workers before api-web) caused a 404 storm from new workers timers hitting the old api → RollbackAlarm auto-rolled api-web twice. Resolution: restore old workers image, deploy per-service api-web → workers. Two held release ops recovered via recover-release-intent.yml. Durable fix required before production all-target round: workers callInternal 404 backoff (mixed-version tolerance).
+- Post-deploy bug found+fixed: `/signup`, `/signup/welcome`, `/claim-account` were prerendered → CSP nonce missing → pages dead. PR #385 (force-dynamic, verify-email pattern) → #386 → deployed. Probe: `curl -sD - <url> | grep x-nextjs-prerender` must be empty.
+- Smoke PASS: availability enabled:true; /signup renders; real submission via browser (ร้านทดสอบระบบ มั่งมี (UAT), contact@mangmeeplus.com, PRO_TRIAL) → requestId `cmtgzg42a000x4k5xje8ot9mg` status PENDING_REVIEW; status page 200. SES env on api-web verified (provider=ses, ap-southeast-1, from contact@mangmeeplus.com); SES sandbox allows @mangmeeplus.com recipients; production access under AWS review.
+- Handoff: Owner approves the queued request in system console → verifies SES claim email → runs docs/plans/mangmee-auto-register-uat-test-plan-th.md (5 rounds).
+- Next code batch (one PR per CI-cost rule): workers 404 backoff; new-signup LINE+dashboard notification to Owner (no notification exists today — queue page only); rejection-notice email consumer; DMARC TXT record.

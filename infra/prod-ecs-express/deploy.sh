@@ -1538,6 +1538,7 @@ api_container_json() {
     --arg emailProvider "$SERVING_EMAIL_PROVIDER" \
     --arg sesRegion "$SES_REGION_INPUT" \
     --arg sesFromAddress "$SES_FROM_ADDRESS_INPUT" \
+    --arg emailLogoUrl "${EMAIL_LOGO_URL:-${public_web_url}/brand/logo-mangmeeyangyuen.png}" \
     --arg lineAiFusedPlanShadowEnabled "$SERVING_LINE_AI_FUSED_PLAN_SHADOW_ENABLED" \
     --arg lineAiPreparedSimpleReadEnabled "$SERVING_LINE_AI_PREPARED_SIMPLE_READ_ENABLED" \
     --arg crmAiMinConfidence "${CRM_AI_MIN_CONFIDENCE:-0.7}" \
@@ -1626,6 +1627,7 @@ api_container_json() {
         {name:"EMAIL_PROVIDER", value:$emailProvider},
         {name:"SES_REGION", value:$sesRegion},
         {name:"SES_FROM_ADDRESS", value:$sesFromAddress},
+        {name:"EMAIL_LOGO_URL", value:$emailLogoUrl},
         {name:"LINE_AI_FUSED_PLAN_SHADOW_ENABLED", value:$lineAiFusedPlanShadowEnabled},
         {name:"LINE_AI_PREPARED_SIMPLE_READ_ENABLED", value:$lineAiPreparedSimpleReadEnabled},
         {name:"WATCHDOG_JWT_ISSUER", value:$publicWebUrl},
