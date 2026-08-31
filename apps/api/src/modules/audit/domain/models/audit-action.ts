@@ -12,6 +12,8 @@ export const AuditAction = {
   AUTH_PASSWORD_RESET_FAILURE: 'auth.password.reset_failure',
   AUTH_IDENTITY_LINK: 'auth.identity.link',
   AUTH_IDENTITY_UNLINK: 'auth.identity.unlink',
+  /** Spec §4F: one account's companies and email moved into the account that owns its LINE identity. */
+  AUTH_ACCOUNT_MERGE: 'auth.account.merge',
   /** P12-3a desktop QR login: the phone approved a transaction, and the desktop redeemed it. */
   AUTH_LINE_QR_APPROVE: 'auth.line_qr.approve',
   AUTH_LINE_QR_REDEEM: 'auth.line_qr.redeem',

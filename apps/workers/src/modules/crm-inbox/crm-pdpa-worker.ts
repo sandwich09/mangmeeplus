@@ -8,6 +8,7 @@
 import { Worker, type Job } from 'bullmq';
 import { attachDeadLetterQueue, createQueue } from '../../common/queue.js';
 import { workerLog } from '../../common/log.js';
+import { postInternal, throwIfNotOk } from '../../common/internal-api.js';
 
 const CRM_PDPA_QUEUE = 'crm-pdpa';
 // Once a day — retention windows move in months, so a daily sweep is ample.
@@ -45,38 +46,23 @@ async function scheduleRepeatableJobs(redisUrl: string): Promise<void> {
 }
 
 async function processErasureCases(): Promise<void> {
-  const apiBase = process.env['INTERNAL_API_URL'] ?? 'http://localhost:3001/v1';
-  const workerToken = process.env['WORKER_INTERNAL_TOKEN'] ?? '';
-  const res = await fetch(`${apiBase}/internal/crm/pdpa-erasure-process`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Worker-Token': workerToken },
-    body: '{}',
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`CRM PDPA erasure endpoint returned ${res.status}: ${body.slice(0, 200)}`);
-  }
+  const res = await postInternal('/internal/crm/pdpa-erasure-process');
+  if (!res) return;
+  await throwIfNotOk(res, 'CRM PDPA erasure endpoint');
   const result = await res.json().catch(() => ({}));
   workerLog('info', { event: 'crm_pdpa_erasure_run', ...result });
 }
 
 async function runPurgeUntilDrained(): Promise<void> {
-  const apiBase = process.env['INTERNAL_API_URL'] ?? 'http://localhost:3001/v1';
-  const workerToken = process.env['WORKER_INTERNAL_TOKEN'] ?? '';
   let totalText = 0;
   let totalMedia = 0;
   let totalAiTurns = 0;
   let totalAiConversations = 0;
   for (let pass = 0; pass < MAX_PASSES_PER_RUN; pass += 1) {
-    const res = await fetch(`${apiBase}/internal/crm/pdpa-purge`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Worker-Token': workerToken },
-      body: '{}',
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      throw new Error(`CRM PDPA purge endpoint returned ${res.status}: ${body.slice(0, 200)}`);
-    }
+    const res = await postInternal('/internal/crm/pdpa-purge');
+    // Not deployed yet: stop the pass loop rather than spinning it MAX_PASSES times on nothing.
+    if (!res) break;
+    await throwIfNotOk(res, 'CRM PDPA purge endpoint');
     const { textPurged = 0, mediaPurged = 0, aiTurnsPurged = 0, aiConversationsPurged = 0 } = (await res.json().catch(() => ({}))) as {
       textPurged?: number;
       mediaPurged?: number;

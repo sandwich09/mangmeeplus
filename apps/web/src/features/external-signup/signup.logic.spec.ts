@@ -110,6 +110,19 @@ describe('public status copy', () => {
     assert.match(signupStatusCopy('EXPIRED').body, /ขอลิงก์ใหม่/);
   });
 
+  it('stops promising a self-serve link once the 30-day sweep parked the request', () => {
+    // Spec §4D ④: the approval survives and an admin can always reissue, so this points at the
+    // phone and the mailbox — it never tells the applicant to start over.
+    const copy = signupStatusCopy('EXPIRED', false);
+    assert.match(copy.body, /คำขอหมดอายุ/);
+    assert.match(copy.body, /098-256-5628/);
+    assert.match(copy.body, /contact@mangmeeplus\.com/);
+    assert.doesNotMatch(copy.body, /ขอลิงก์ใหม่|สมัครใหม่/);
+    assert.doesNotMatch(`${copy.title} ${copy.body}`, /\+/);
+    // The resendable case is unchanged.
+    assert.match(signupStatusCopy('EXPIRED', true).body, /ขอลิงก์ใหม่/);
+  });
+
   it('never renders a "+" in owner-facing copy', () => {
     for (const status of ['CHECKING', 'PENDING_REVIEW', 'AWAITING_CLAIM', 'READY', 'REJECTED', 'EXPIRED'] as const) {
       const copy = signupStatusCopy(status);

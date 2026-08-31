@@ -28,6 +28,14 @@ src/modules/external-signup/application/signup-claim-email.service.spec.ts
 src/modules/auth/infrastructure/account-claim-email.template.spec.ts
 ```
 
+SES bounce/complaint round (36 further tests, all passing):
+
+```
+src/modules/external-signup/infrastructure/sns-signature.spec.ts
+src/modules/external-signup/application/ses-event.use-case.spec.ts
+src/modules/auth/infrastructure/ses-auth-mailer.adapter.spec.ts
+```
+
 **apps/workers** (4 tests)
 
 ```
@@ -70,9 +78,13 @@ and it is a deliberate deviation from a literal "workers module consumes the out
 | `EXTERNAL_SIGNUP_ENABLED` | `AppConfigService.externalSignupEnabled` | already in `packages/config` (default `false`) | Off = availability reports `{enabled:false}` and `POST /v1/public/company-signups` is 403. Status and claim routes stay **open** so an approved applicant is never stranded by a flag flip. |
 | `LINE_OA_ADD_URL` | `officialLineOaAddUrl()` in `signup-claim-email.service.ts` (`process.env`) | optional | Unset = the claim email drops the add-friend line; everything else sends. Not added to `packages/config` on purpose — public URL, safe empty default. |
 | `EMAIL_LOGO_URL` | `accountClaimLogoUrl()` in `account-claim-email.template.ts` (`process.env`) | optional | HTTPS only; a non-HTTPS or malformed value is ignored, never thrown. Unset = no masthead image. |
+| `SES_CONFIGURATION_SET` | `sesConfigurationSet()` in `ses-auth-mailer.adapter.ts` (`process.env`) | optional | Unset = the send carries no configuration set, i.e. exactly the behaviour before this round, and **no bounce/complaint event is ever published**. Set to `mangmee-transactional` to turn the feedback loop on. |
+| `SES_EVENTS_TOPIC_ARN` | `expectedSesEventsTopicArn()` in `ses-event.use-case.ts` (`process.env`) | **fail-closed** | Unset = `POST /v1/public/ses-events` refuses every message with 403, including subscription confirmations. Set to `arn:aws:sns:ap-southeast-1:311414082667:mangmee-ses-events` (UAT and production may differ). |
 
-Per the UAT-flags rule, `EXTERNAL_SIGNUP_ENABLED` reaches UAT only via a `deploy.sh` jq block —
-that file is out of scope here and still needs its edit plus a re-pin.
+Per the UAT-flags rule, `EXTERNAL_SIGNUP_ENABLED`, `SES_CONFIGURATION_SET` and
+`SES_EVENTS_TOPIC_ARN` reach UAT only via a `deploy.sh` jq block — that file is out of scope here
+and still needs its edit plus a re-pin. **No IAM change is needed:** the `ses:SendEmail` statement
+`deploy.sh` already writes lists `configuration-set/mangmee-transactional` alongside the identity.
 
 Live email additionally needs `EMAIL_PROVIDER=ses` plus the P11 §5 SES operations (sender domain,
 DKIM/SPF/DMARC on Cloudflare, region, sandbox exit). Until then `EMAIL_PROVIDER=disabled` makes the
@@ -84,7 +96,9 @@ whole flow a no-op send: the outbox event is still published, so nothing retries
 |---|---|---|
 | `apps/api/src/app.module.ts` | **none** | already imports the module |
 | `apps/api/src/common/config/app-config.service.ts` | `externalSignupEnabled` getter | the env existed in `packages/config`; only the API-side getter was missing |
-| `apps/api/src/modules/auth/application/auth-rate-limit.service.ts` | 4 new fail-closed bucket methods, constants only | no new env vars |
+| `apps/api/src/modules/auth/application/auth-rate-limit.service.ts` | 4 new fail-closed bucket methods, constants only; the SES round added a 5th (`assertSesEventsAllowed`) | no new env vars |
+| `apps/api/src/main.ts` | one route-scoped `json()` parser for `/v1/public/ses-events` | SNS posts `text/plain`, which the global JSON parser skips; its 256 KB cap (SNS's own maximum) is that endpoint's body-size guard |
+| `apps/api/src/modules/auth/domain/ports/auth-mailer.port.ts` + all three adapters | `sendAccountClaim` returns the provider message id | the SES `MessageId` is the only join key a bounce event carries back to the request row |
 | `apps/api/src/modules/auth/auth.module.ts` | export `AUTH_MAILER_TOKEN` | so the consumer sends through the one selected adapter instead of building a second SES client |
 | `apps/api/src/modules/auth/infrastructure/{ses,local-console}-auth-mailer.adapter.ts` | claim template now delegates to the shared module | Owner-locked copy, SES/console parity by construction |
 | `apps/api/src/modules/system-onboarding/system-onboarding.module.ts` | export `CreateCompanyOnboardingUseCase` | spec §2 rule 5: one company-creation service |
@@ -118,10 +132,12 @@ at provision, not at approval (spec §4D ⑤).
 
 ## 8. Known gaps — deliberate, and each needs a decision
 
-1. **No `EMAIL_PENDING → EXPIRED` sweep.** Token expiry is enforced at claim time, so an unclaimed
-   request sits in `EMAIL_PENDING` with a dead link. That is benign — `canResendClaim` is true there,
-   so the applicant can self-serve — but nothing ever moves a request into `EXPIRED`. The state and
-   its way back (`EXPIRED → EMAIL_PENDING`) are implemented and tested for whenever a sweep lands.
+1. ~~**No `EMAIL_PENDING → EXPIRED` sweep.**~~ **Closed.** `SignupClaimEmailService.sweepExpiredApprovals()`
+   parks approvals older than `CLAIM_EXPIRY_AFTER_APPROVAL_DAYS` (30, spec §4D ④) that never reached
+   a claim. It rides the existing 15-minute `reminder-sweep` timer — no new worker, no new endpoint —
+   transitions through `core.advance(… 'EXPIRED', 'claim_not_started')` so the advisory lock, version
+   CAS, audit row and outbox evidence all apply, and is bounded at 100 rows per pass. Admin reissue
+   from `EXPIRED` already had no age limit and is unchanged.
 2. **`businessType` never becomes a real category.** Free Thai text is not machine-mappable, so
    anything without an exact enum match provisions as `OTHER` — including a clinic. The frozen
    `AdminSignupDecisionBody` has no field for an admin to choose the category, so this round has no
@@ -131,9 +147,32 @@ at provision, not at approval (spec §4D ⑤).
 3. **Provisioning retry loses the chosen username.** It is passed through the claim request rather
    than persisted (there is no column, and the schema is frozen). A retry after
    `PROVISIONING_FAILED` falls back to the email local part.
-4. **Bounce/complaint → `EMAIL_FAILED` is not wired.** The queue reads and displays the state, and
-   reissue works from it, but nothing writes it yet; that needs the SES event destination (P11 F-EM-2).
-5. **No rejection-notice email template.** `enqueueRejectionNotice` publishes
-   `email.signup_rejected.requested` and the event is excluded from the generic drain, but no
-   consumer sends it. Rejection is silent by default, so this only matters once an admin ticks
-   "notify". Until a consumer exists those events sit `PENDING`.
+4. ~~**Bounce/complaint → `EMAIL_FAILED` is not wired.**~~ **Closed.** `POST /v1/public/ses-events`
+   consumes the SNS subscription for the `mangmee-transactional` configuration set: hard bounces and
+   complaints move `EMAIL_PENDING → EMAIL_FAILED`, which is exactly the state the queue already
+   flags and both resend paths already accept. Needs the two env vars in §4 and the SNS subscription
+   in `docs/runbooks/ses-email-setup.md`; until then the endpoint is fail-closed and sends carry no
+   configuration set, so behaviour is unchanged.
+5. ~~**No rejection-notice email template.**~~ **Closed.** `signup-rejection-email.template.ts` sits
+   next to the claim template and shares its section helper and signature block; the drain now
+   dispatches `email.signup_rejected.requested` to `mailer.sendSignupRejection()`. The admin's
+   optional paragraph rides in the outbox payload (`AdminSignupDecisionBody.rejectionReason`, bounded
+   by `SIGNUP_REJECTION_REASON_MAX_LENGTH`); a send failure marks only the outbox row FAILED and
+   never touches the `REJECTED` state.
+
+## 9. Admin announcement (Item 1, added after the P10 round)
+
+Reaching `PENDING_REVIEW` appends one platform-level outbox row (`companyId` null) —
+`notify.signup_pending_review.requested`, keyed on the request id, so a resubmit announces once. The
+same drain consumes it through `SignupAdminNotifyService.notify()`, which:
+
+- creates a dashboard notification for every ACTIVE `SYSTEM_ADMIN` via the shared
+  `CreateOrUpdateNotificationEventUseCase` (hence the new `DashboardNotificationsModule` import), and
+- pushes the Owner copy to each admin's ACTIVE linked LINE identity through
+  `auth/infrastructure/system-line-push.ts`, best-effort — a failed push is logged, never thrown.
+
+Dedup has one source: the notification use case answers `skipped` while its own alert is cooling
+down, and the LINE fan-out only runs when that call actually opened a row, so a redelivered event
+pushes nothing. `signup_pending_review` is deliberately **absent** from `IMPLEMENTED_TRIGGER_KEYS`,
+which keeps the rail's own LINE channel suppressed for this trigger — otherwise the operators would
+get the same message twice.

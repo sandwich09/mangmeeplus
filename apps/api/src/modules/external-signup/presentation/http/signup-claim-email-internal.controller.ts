@@ -30,9 +30,16 @@ export class SignupClaimEmailInternalController {
     return this.claimEmail.drain(body?.batchSize);
   }
 
+  /**
+   * Both claim-clock sweeps ride this one timer: the 24h-before-expiry reminder and the 30-day
+   * park (spec §4D ① and ④). They read the same rows on the same schedule, and the scan worker
+   * ignores the response body — a second timer would only be a second thing to deploy.
+   */
   @Post('reminder-sweep')
-  reminderSweep(@Headers('x-worker-token') token: string | undefined) {
+  async reminderSweep(@Headers('x-worker-token') token: string | undefined) {
     assertWorkerToken(token);
-    return this.claimEmail.sweepReminders();
+    const reminders = await this.claimEmail.sweepReminders();
+    const expiry = await this.claimEmail.sweepExpiredApprovals();
+    return { ...reminders, ...expiry };
   }
 }

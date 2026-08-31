@@ -2,7 +2,13 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { internalApiV1Base } from '@/common/api/internal-api-base';
 import { ACCESS_TOKEN_COOKIE, joinCookieChunks } from '@/common/auth/auth-cookies.constants';
-import { generateCsrfToken, setAuthCookies } from '@/common/auth/auth-cookies.server';
+import { generateCsrfToken, httpOnlyFlags, setAuthCookies } from '@/common/auth/auth-cookies.server';
+import {
+  ACCOUNT_MERGE_COOKIE,
+  ACCOUNT_MERGE_COOKIE_MAX_AGE,
+  ACCOUNT_MERGE_COOKIE_PATH,
+  encodeAccountMergeCookie,
+} from '@/features/auth/account-merge-bff.logic';
 import {
   decodeLineLoginTxn,
   LINE_LOGIN_TXN_COOKIE,
@@ -71,8 +77,27 @@ export async function GET(request: NextRequest) {
     }
     // No fall-through to the public exchange: the authorization code is single-use and already
     // spent, so a retry there can only fail again — with a less accurate reason for the user.
-    if (!linkRes.ok) return backToStart(linkRes.status === 409 ? 'link-conflict' : 'link-failed');
-    return clearTxn(NextResponse.redirect(new URL(sanitizeReturnTo(txn.returnTo) ?? '/', origin)));
+    if (linkRes.status === 409) {
+      // Spec §4F: the API mints a merge ticket for exactly this conflict. It rides an HttpOnly
+      // cookie to the dialog — never the redirect URL, which would put a bearer credential in
+      // browser history, referrers and access logs.
+      const conflict = (await linkRes.json().catch(() => ({}))) as { mergeTicket?: unknown; existingAccount?: unknown };
+      const res = backToStart('link-conflict');
+      if (typeof conflict.mergeTicket === 'string') {
+        res.cookies.set(
+          ACCOUNT_MERGE_COOKIE,
+          encodeAccountMergeCookie({ ticket: conflict.mergeTicket, existingAccount: conflict.existingAccount }),
+          { ...httpOnlyFlags(), path: ACCOUNT_MERGE_COOKIE_PATH, maxAge: ACCOUNT_MERGE_COOKIE_MAX_AGE },
+        );
+      }
+      return res;
+    }
+    if (!linkRes.ok) return backToStart('link-failed');
+    // A link that succeeded means there is nothing left to merge; drop any ticket an earlier
+    // conflict left behind rather than leaving a live offer in the browser.
+    const linked = clearTxn(NextResponse.redirect(new URL(sanitizeReturnTo(txn.returnTo) ?? '/', origin)));
+    linked.cookies.set(ACCOUNT_MERGE_COOKIE, '', { ...httpOnlyFlags(), path: ACCOUNT_MERGE_COOKIE_PATH, maxAge: 0 });
+    return linked;
   }
 
   let apiRes: Response;

@@ -8,6 +8,7 @@ import { Worker, type Job } from 'bullmq';
 import { attachDeadLetterQueue, createQueue } from '../../common/queue.js';
 import { workerLog } from '../../common/log.js';
 import { scheduleWithRetry } from '../../common/retry-schedule.js';
+import { postInternal, throwIfNotOk } from '../../common/internal-api.js';
 
 const CRM_INBOX_QUEUE = 'crm-inbox';
 const SLA_SCAN_INTERVAL_MS = 60_000;
@@ -70,16 +71,6 @@ async function scheduleRepeatableJobs(redisUrl: string): Promise<void> {
 }
 
 async function postScan(path: 'sla-breach-scan' | 'new-conversation-scan' | 'inbox-retry-scan' | 'autonomy-retry-scan' | 'booking-reminder-scan' | 'booking-proposal-sweep'): Promise<void> {
-  const apiBase = process.env['INTERNAL_API_URL'] ?? 'http://localhost:3001/v1';
-  const workerToken = process.env['WORKER_INTERNAL_TOKEN'] ?? '';
-  const res = await fetch(`${apiBase}/internal/crm/${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Worker-Token': workerToken },
-    body: '{}',
-    signal: AbortSignal.timeout(INTERNAL_API_TIMEOUT_MS),
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`CRM ${path} endpoint returned ${res.status}: ${body.slice(0, 200)}`);
-  }
+  const res = await postInternal(`/internal/crm/${path}`, { timeoutMs: INTERNAL_API_TIMEOUT_MS });
+  if (res) await throwIfNotOk(res, `CRM ${path} endpoint`);
 }

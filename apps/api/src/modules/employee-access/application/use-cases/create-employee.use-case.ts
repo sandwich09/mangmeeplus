@@ -524,6 +524,20 @@ export class CreateEmployeeUseCase {
       const draft = await lockEmployeeProfile(tx, cmd.companyId, cmd.employeeId);
       if (draft.status === 'ACTIVE') return;
       if (draft.status !== 'DRAFT') throw new ConflictException('Only an employee draft can be completed.');
+      // P29 §4D, the other half of the gate on execute(). `execute` only ever writes DRAFT rows and
+      // the seat count only counts ACTIVE ones, so the seat is really bought HERE — without this a
+      // company at its cap could stack up drafts and Finish every one of them.
+      //
+      // Counting is the same rule as the create path (ACTIVE, non-SYSTEM_ADMIN memberships of this
+      // company) and the draft being completed is deliberately NOT inside it: its membership is
+      // still DRAFT until the update below. So `active >= employeeLimit` rejects exactly when this
+      // completion would be the one to pass the limit — at limit 2 with 2 seats taken, the third
+      // Finish fails; with 1 taken it succeeds and lands on 2. No off-by-one either way.
+      //
+      // Placed after the `status === 'ACTIVE'` early return so re-Finishing an already-active
+      // employee stays idempotent at the cap, and run on `tx` so it sits inside the row lock the
+      // line above took — two concurrent Finishes cannot both read the same pre-flip count.
+      await assertEmployeeLimit({ client: tx }, cmd.companyId);
       // A draft starts all-branch until the wizard saves scope. Activation must not bypass that save.
       if (cmd.requesterBranchIds !== undefined) {
         const membership = await tx.companyMembership.findUniqueOrThrow({

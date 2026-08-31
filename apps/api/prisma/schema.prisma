@@ -575,6 +575,9 @@ model User {
   signupRequestsOwned     CompanySignupRequest[]
   // Item 10C
   employeeAccessProfiles  EmployeeAccessProfile[]
+  // Spec §4F account merge (both sides of one ticket).
+  mergeTicketsAsNew       AccountMergeTicket[]     @relation("AccountMergeTicketNewUser")
+  mergeTicketsAsExisting  AccountMergeTicket[]     @relation("AccountMergeTicketExistingUser")
 }
 
 model UserCredential {
@@ -795,6 +798,32 @@ model ExternalIdentity {
 
   @@unique([provider, providerChannelId, providerUserId])
   @@index([userId, provider, status])
+}
+
+/// Spec §4F account merge. Minted only when a web link attempt has already proved control of a LINE
+/// account that an ACTIVE identity gives to a *different* user, so holding one is proof of that one
+/// conflict and nothing else — the spend re-checks the session owner, the target's status and the
+/// membership set from scratch. Hash-only at rest like every other auth token in this module, so a
+/// database reader cannot merge anything. `consumedAt` is the CAS: it moves off null exactly once,
+/// inside the merge transaction, which is what makes a double-clicked confirm idempotent rather
+/// than a second merge.
+model AccountMergeTicket {
+  id                 String    @id @default(cuid())
+  tokenHash          String    @unique
+  /// Signed-in caller: the account whose companies move out and which is DISABLED at the end.
+  newUserId          String
+  /// Owner of the ACTIVE LINE identity: the account everything moves into.
+  existingUserId     String
+  lineProviderUserId String
+  requestId          String
+  expiresAt          DateTime
+  consumedAt         DateTime?
+  createdAt          DateTime  @default(now())
+  newUser            User      @relation("AccountMergeTicketNewUser", fields: [newUserId], references: [id], onDelete: Cascade)
+  existingUser       User      @relation("AccountMergeTicketExistingUser", fields: [existingUserId], references: [id], onDelete: Cascade)
+
+  @@index([newUserId, consumedAt])
+  @@index([expiresAt])
 }
 
 enum LineWebLoginTransactionStatus {
@@ -3040,38 +3069,41 @@ model CompanyOnboardingRun {
 // P10 external-signup core. Public ingress remains absent until the owner chooses its signing and
 // duplicate-identity policy. requestedOfferKey is attribution only; it grants no entitlement.
 model CompanySignupRequest {
-  id                    String             @id @default(cuid())
-  source                String             @default("official-site")
-  externalSignupId      String             @unique
-  payloadHash           String
-  companyName           String
-  taxId                 String?
-  ownerDisplayName      String
-  contactEmail          String
-  consentVersion        String
-  referralCode          String?
-  requestedOfferKey     String?
-  state                 CompanySignupState @default(RECEIVED)
-  version               Int                @default(0)
-  failureCode           String?
-  businessType          String?
-  phoneNumber           String?
-  vatRegistered         Boolean?
-  mxValid               Boolean?
-  pendingPasswordHash   String?
-  attachUserId          String?
-  approvedAt            DateTime?
-  approvedByUserId      String?
-  claimEmailLastSentAt  DateTime?
-  claimReminderSentAt   DateTime?
-  provisioningAttemptId String?            @unique
-  provisioningStartedAt DateTime?
-  companyId             String?
-  ownerUserId           String?
-  createdAt             DateTime           @default(now())
-  updatedAt             DateTime           @updatedAt
-  company               Company?           @relation(fields: [companyId], references: [id], onDelete: SetNull)
-  owner                 User?              @relation(fields: [ownerUserId], references: [id], onDelete: SetNull)
+  id                     String             @id @default(cuid())
+  source                 String             @default("official-site")
+  externalSignupId       String             @unique
+  payloadHash            String
+  companyName            String
+  taxId                  String?
+  ownerDisplayName       String
+  contactEmail           String
+  consentVersion         String
+  referralCode           String?
+  requestedOfferKey      String?
+  state                  CompanySignupState @default(RECEIVED)
+  version                Int                @default(0)
+  failureCode            String?
+  businessType           String?
+  phoneNumber            String?
+  vatRegistered          Boolean?
+  mxValid                Boolean?
+  pendingPasswordHash    String?
+  attachUserId           String?
+  approvedAt             DateTime?
+  approvedByUserId       String?
+  claimEmailLastSentAt   DateTime?
+  // SES MessageId of the last claim email. The only join key an SNS bounce/complaint event carries
+  // back to this row (spec §4D); unique because SES never reuses a MessageId.
+  claimEmailSesMessageId String?            @unique
+  claimReminderSentAt    DateTime?
+  provisioningAttemptId  String?            @unique
+  provisioningStartedAt  DateTime?
+  companyId              String?
+  ownerUserId            String?
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+  company                Company?           @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  owner                  User?              @relation(fields: [ownerUserId], references: [id], onDelete: SetNull)
 
   claimTokens AccountClaimToken[]
 

@@ -36,6 +36,21 @@ function LineLinkButton({ className = '' }: { className?: string }) {
   );
 }
 
+type MergeOffer = { ready: boolean; existingAccount?: { displayName: string; companyNames: string[] } };
+
+const MERGE_ERROR_DEFAULT = 'รวมบัญชีไม่สำเร็จ ลองใหม่อีกครั้ง หรือติดต่อ 098-256-5628';
+const MERGE_EXPIRED = 'คำขอรวมบัญชีหมดอายุแล้ว กดปุ่ม เชื่อมกับ LINE อีกครั้ง แล้วเลือกรวมบัญชี';
+const MERGE_ERROR_TH: Record<string, string> = {
+  merge_ticket_missing: MERGE_EXPIRED,
+  merge_ticket_invalid: MERGE_EXPIRED,
+  merge_ticket_expired: MERGE_EXPIRED,
+  merge_ticket_not_yours: 'บัญชีที่เข้าใช้อยู่ไม่ตรงกับคำขอนี้ กรุณาเข้าสู่ระบบใหม่แล้วลองอีกครั้ง',
+  session_expired: 'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่แล้วลองอีกครั้ง',
+  merge_in_progress: 'กำลังรวมบัญชีอยู่ กรุณารอสักครู่แล้วเปิดหน้านี้ใหม่',
+  merge_target_unavailable: 'บัญชีเดิมใช้งานไม่ได้ในตอนนี้ ติดต่อ 098-256-5628',
+  merge_not_needed: 'สองบัญชีนี้เป็นบัญชีเดียวกันอยู่แล้ว ไม่ต้องรวม',
+};
+
 /**
  * Shown every time a link attempt hits an account that already owns this LINE (spec §4F: the offer
  * repeats, it is not a one-shot). Only two ways out — merge, or leave both accounts standing.
@@ -43,13 +58,48 @@ function LineLinkButton({ className = '' }: { className?: string }) {
  */
 function MergeDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [declined, setDeclined] = useState(false);
+  const [offer, setOffer] = useState<MergeOffer | null>(null);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // The ticket lives in an HttpOnly cookie, so only the server can say whether an offer is live.
+  // A cookie that has expired is not an error — the user simply presses the LINE button again.
+  useEffect(() => {
+    if (!open) return undefined;
+    let active = true;
+    void fetch('/api/auth/account-merge/ticket', { cache: 'no-store' })
+      .then((res) => res.json())
+      .then((data: MergeOffer) => { if (active) setOffer(data); })
+      .catch(() => { if (active) setOffer({ ready: false }); });
+    return () => { active = false; };
+  }, [open]);
+
+  const confirmMerge = async () => {
+    setPending(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/auth/account-merge', { method: 'POST', cache: 'no-store' });
+      const data = (await res.json().catch(() => ({}))) as { merged?: boolean; code?: string };
+      if (res.ok && data.merged) {
+        // Full navigation, not a router push: the session cookies now belong to the other account.
+        window.location.assign('/');
+        return;
+      }
+      setError((data.code && MERGE_ERROR_TH[data.code]) ?? MERGE_ERROR_DEFAULT);
+    } catch {
+      setError(MERGE_ERROR_DEFAULT);
+    }
+    setPending(false);
+  };
+
+  const existing = offer?.ready ? offer.existingAccount : undefined;
 
   return (
     <Modal
       open={open}
       size="sm"
       title="LINE นี้เชื่อมกับบัญชีอื่นอยู่แล้ว"
-      onClose={onClose}
+      onClose={pending ? () => {} : onClose}
       footer={
         declined ? (
           <Button type="button" size="lg" className="w-full !rounded-xl" onClick={onClose}>
@@ -57,17 +107,23 @@ function MergeDialog({ open, onClose }: { open: boolean; onClose: () => void }) 
           </Button>
         ) : (
           <div className="flex w-full flex-col gap-2.5">
-            {/* Merging moves the new company's membership onto the existing user. No API does that
-                yet (there is no merge endpoint and the OAuth link path never sets allowReassign),
-                so the recommended path is announced but not offered. */}
-            <span title="เร็ว ๆ นี้" className="w-full">
-              <Button type="button" size="lg" className="w-full !rounded-xl" disabled>
-                รวมเป็นบัญชีเดียว (แนะนำ)
-              </Button>
-            </span>
-            <p className="text-center text-[12.5px] text-gray-500">การรวมบัญชีจะเปิดให้ใช้เร็ว ๆ นี้</p>
-            <Button type="button" size="lg" variant="secondary" className="w-full !rounded-xl" onClick={() => setDeclined(true)}>
-              ยังไม่รวมตอนนี้
+            <Button
+              type="button"
+              size="lg"
+              className="w-full !rounded-xl"
+              disabled={!offer?.ready || pending}
+              loading={pending}
+              onClick={confirmMerge}
+            >
+              รวมเข้าบัญชีเดิม
+            </Button>
+            <p className="text-center text-[12.5px] leading-6 text-gray-500">
+              {offer?.ready
+                ? 'ร้านของบัญชีนี้จะย้ายไปอยู่กับบัญชีเดิม แล้วใช้ LINE เข้าใช้งานได้ทุกร้าน'
+                : MERGE_EXPIRED}
+            </p>
+            <Button type="button" size="lg" variant="secondary" className="w-full !rounded-xl" disabled={pending} onClick={() => setDeclined(true)}>
+              ไว้ก่อน
             </Button>
           </div>
         )
@@ -78,9 +134,31 @@ function MergeDialog({ open, onClose }: { open: boolean; onClose: () => void }) 
           ร้านใหม่เข้าใช้ทางเว็บด้วยอีเมล และรหัสผ่าน ส่วน LINE ยังใช้กับร้านเดิมตามเดิม เปลี่ยนใจมารวมทีหลังได้
         </p>
       ) : (
-        <p className="text-[15px] leading-7 text-gray-700">
-          บัญชี LINE นี้ถูกใช้กับผู้ใช้อีกคนในระบบมั่งมีพลัสอยู่แล้ว จึงยังเชื่อมกับร้านใหม่นี้ไม่ได้
-        </p>
+        <>
+          <p className="text-[15px] leading-7 text-gray-700">
+            บัญชี LINE นี้ถูกใช้กับผู้ใช้อีกคนในระบบมั่งมีพลัสอยู่แล้ว จึงยังเชื่อมกับร้านใหม่นี้ไม่ได้
+          </p>
+          {/* Naming the other account is what makes the choice answerable. It is bounded to a
+              display name and shop names — the LINE account the user just proved they control. */}
+          {existing ? (
+            <div className="mt-3.5 rounded-xl border border-gray-200 bg-gray-50 p-3.5">
+              <p className="text-[12.5px] font-semibold text-gray-500">บัญชีเดิมที่จะรวมเข้าไป</p>
+              <p className="mt-1 text-[15px] font-extrabold text-gray-900">{existing.displayName || 'บัญชีผู้ใช้เดิม'}</p>
+              {existing.companyNames.length > 0 ? (
+                <ul className="mt-1.5 space-y-1">
+                  {existing.companyNames.map((name) => (
+                    <li key={name} className="text-[14px] leading-6 text-gray-700">{name}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
+          {error ? (
+            <p role="alert" className="mt-3.5 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3 text-[14px] leading-6 text-amber-900">
+              {error}
+            </p>
+          ) : null}
+        </>
       )}
     </Modal>
   );
@@ -122,10 +200,17 @@ function Welcome() {
       <main className="mx-auto w-full max-w-md px-4 py-6 lg:max-w-4xl lg:py-12">
         <div className="lg:grid lg:grid-cols-[1.1fr_0.9fr] lg:gap-6">
           <div className="rounded-2xl border border-gray-200 bg-white p-5 sm:p-8">
-            <span className="flex h-16 w-16 items-center justify-center rounded-full bg-[#E7F4EC] text-[#046B29]">
-              <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M20 6 9 17l-5-5" /></svg>
-            </span>
-            <h1 className="mt-4 text-[24px] font-extrabold leading-9 text-gray-900">{companyName} พร้อมใช้งานแล้ว</h1>
+            {/* The green check and the "ready" headline are claims about a signup that just
+                finished. Reached from the sidebar menu instead, this page is only the LINE step,
+                so both give way to a neutral title. */}
+            {handoff ? (
+              <span className="flex h-16 w-16 items-center justify-center rounded-full bg-[#E7F4EC] text-[#046B29]">
+                <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M20 6 9 17l-5-5" /></svg>
+              </span>
+            ) : null}
+            <h1 className="mt-4 text-[24px] font-extrabold leading-9 text-gray-900">
+              {handoff ? `${companyName} พร้อมใช้งานแล้ว` : 'เชื่อมบัญชี LINE'}
+            </h1>
             {/* Hidden entirely when the term is unknown: a made-up date is worse than no date. */}
             {trialEndsAt ? (
               <p className="mt-2 text-[15px] leading-7 text-gray-600">

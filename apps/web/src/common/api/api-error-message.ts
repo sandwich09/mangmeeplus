@@ -325,6 +325,14 @@ const CODE_LABELS: Record<string, string> = {
   // not read as data loss, and the only move that helps is renewing, not retrying.
   company_term_expired: 'ร้านนี้ครบกำหนดใช้งานแล้ว ข้อมูลทั้งหมดยังอยู่ครบ ติดต่อ 098-256-5628 เพื่อใช้งานต่อ',
   line_linked_elsewhere: 'LINE นี้เชื่อมกับบัญชีอื่นอยู่แล้ว เลือกได้ว่าจะรวมเป็นบัญชีเดียวหรือใช้แยกกันต่อ',
+  // Spec §4F account merge — same copy the welcome dialog's own map shows, so the message reads
+  // identically wherever the code surfaces.
+  merge_ticket_invalid: 'คำขอรวมบัญชีหมดอายุแล้ว กดปุ่มเชื่อมบัญชี LINE อีกครั้งเพื่อเริ่มใหม่',
+  merge_ticket_expired: 'คำขอรวมบัญชีหมดอายุแล้ว กดปุ่มเชื่อมบัญชี LINE อีกครั้งเพื่อเริ่มใหม่',
+  merge_ticket_not_yours: 'บัญชีที่เข้าใช้อยู่ไม่ตรงกับคำขอนี้ กรุณาเข้าสู่ระบบใหม่แล้วลองอีกครั้ง',
+  merge_in_progress: 'กำลังรวมบัญชีอยู่ กรุณารอสักครู่แล้วเปิดหน้านี้ใหม่',
+  merge_target_unavailable: 'บัญชีเดิมใช้งานไม่ได้ในตอนนี้ ติดต่อ 098-256-5628',
+  merge_not_needed: 'สองบัญชีนี้เป็นบัญชีเดียวกันอยู่แล้ว ไม่ต้องรวม',
 
   // ---- ยอมรับข้อกำหนดการใช้งาน ----
   legal_acceptance_required: 'ต้องยอมรับข้อกำหนดการใช้งานและรับทราบประกาศความเป็นส่วนตัวก่อนใช้งาน',

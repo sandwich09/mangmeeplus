@@ -1,12 +1,15 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { SendEmailCommand, type SESClient } from '@aws-sdk/client-ses';
 import { AppConfigService } from '../../../common/config/app-config.service';
-import type { AccountClaimEmailInput, AuthEmailLinkInput, AuthMailerPort } from '../domain/ports/auth-mailer.port';
+import type {
+  AccountClaimEmailInput, AuthEmailLinkInput, AuthMailerPort, SignupRejectionEmailInput,
+} from '../domain/ports/auth-mailer.port';
 import { accountClaimLogoUrl, renderAccountClaimEmail } from './account-claim-email.template';
+import { renderSignupRejectionEmail } from './signup-rejection-email.template';
 
 export const SES_EMAIL_CLIENT_TOKEN = 'SES_EMAIL_CLIENT_TOKEN';
 type SesEmailClient = Pick<SESClient, 'send'>;
-type EmailKind = 'email_verification' | 'password_reset' | 'account_claim';
+type EmailKind = 'email_verification' | 'password_reset' | 'account_claim' | 'signup_rejection';
 type RenderedEmail = Readonly<{ subject: string; text: string; html: string }>;
 type SecondaryAction = Readonly<{ label: string; url: string }>;
 
@@ -33,15 +36,6 @@ function httpsUrl(value: string, field: string): string {
   try { url = new URL(value); } catch { throw new Error(`${field} must be a valid HTTPS URL.`); }
   if (url.protocol !== 'https:') throw new Error(`${field} must use HTTPS.`);
   return url.toString();
-}
-
-function lineOaUrl(value: string): string {
-  const normalized = httpsUrl(value, 'lineOaAddUrl');
-  const hostname = new URL(normalized).hostname.toLowerCase();
-  if (hostname !== 'lin.ee' && hostname !== 'line.me' && !hostname.endsWith('.line.me')) {
-    throw new Error('lineOaAddUrl must use an official LINE host.');
-  }
-  return normalized;
 }
 
 function layout(
@@ -78,14 +72,23 @@ function renderLinkEmail(input: AuthEmailLinkInput, baseUrl: string, kind: Exclu
   };
 }
 
+/**
+ * SES configuration set that publishes delivery/bounce/complaint events to SNS. Read from the
+ * environment rather than `AppConfigService` for the same reason `accountClaimLogoUrl` is: it is a
+ * per-environment operational name with a safe absent default, and adding it to the shared config
+ * schema would touch a package every app boots. Absent = the send carries no configuration set,
+ * exactly the behaviour before this existed.
+ */
+export function sesConfigurationSet(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  return env.SES_CONFIGURATION_SET?.trim() || undefined;
+}
+
 function renderClaimEmail(input: AccountClaimEmailInput, baseUrl: string): RenderedEmail {
   return renderAccountClaimEmail({
     companyName: input.companyName,
     toEmail: input.toEmail,
     expiresAt: input.expiresAt,
     claimUrl: link(baseUrl, '/claim-account', input.rawToken),
-    // An unset OA link drops the add-friend line rather than failing the send (see the template).
-    lineOaAddUrl: input.lineOaAddUrl ? lineOaUrl(input.lineOaAddUrl) : '',
     ...(accountClaimLogoUrl() ? { logoUrl: accountClaimLogoUrl()! } : {}),
   });
 }
@@ -105,14 +108,25 @@ export class SesAuthMailerAdapter implements AuthMailerPort {
     await this.send(input.toEmail, 'password_reset', renderLinkEmail(input, this.baseUrl(), 'password_reset'));
   }
 
-  async sendAccountClaim(input: AccountClaimEmailInput): Promise<void> {
-    await this.send(input.toEmail, 'account_claim', renderClaimEmail(input, this.baseUrl()));
+  async sendAccountClaim(input: AccountClaimEmailInput): Promise<string | null> {
+    return this.send(input.toEmail, 'account_claim', renderClaimEmail(input, this.baseUrl()));
   }
 
-  private async send(toEmail: string, kind: EmailKind, rendered: RenderedEmail): Promise<void> {
+  // No `baseUrl()` here on purpose: the rejection letter carries no link, so a missing WEB_BASE_URL
+  // must not be the reason an applicant never hears back.
+  async sendSignupRejection(input: SignupRejectionEmailInput): Promise<void> {
+    await this.send(input.toEmail, 'signup_rejection', renderSignupRejectionEmail({
+      companyName: input.companyName,
+      ...(input.reason ? { reason: input.reason } : {}),
+      ...(accountClaimLogoUrl() ? { logoUrl: accountClaimLogoUrl()! } : {}),
+    }));
+  }
+
+  private async send(toEmail: string, kind: EmailKind, rendered: RenderedEmail): Promise<string | null> {
     const fromAddress = this.config.sesFromAddress;
     if (!fromAddress) throw new Error('SES_FROM_ADDRESS is required for SES email delivery.');
-    await this.client.send(new SendEmailCommand({
+    const configurationSet = sesConfigurationSet();
+    const result = await this.client.send(new SendEmailCommand({
       Source: fromAddress,
       Destination: { ToAddresses: [toEmail] },
       Message: {
@@ -123,7 +137,11 @@ export class SesAuthMailerAdapter implements AuthMailerPort {
         },
       },
       Tags: [{ Name: 'message_type', Value: kind }],
+      // Without this the account has no event destination for the send, so a hard bounce is
+      // invisible to the product (spec §4D). Omitted when unset — the pre-existing behaviour.
+      ...(configurationSet ? { ConfigurationSetName: configurationSet } : {}),
     }));
+    return result?.MessageId ?? null;
   }
 
   private baseUrl(): string {

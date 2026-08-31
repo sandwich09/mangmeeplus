@@ -49,3 +49,28 @@ SES → Account dashboard → **Request production access**: Mail type `Transact
 - [x] ขั้น 4: ยื่น production access แล้ว — **Under review** (~24 ชม.; ระหว่างนี้ sandbox ส่งหา @mangmeeplus.com และ simulator ได้)
 - [x] ขั้น 5 (ฝั่ง repo): deploy.sh UAT = EMAIL_PROVIDER=ses + SES_FROM_ADDRESS=contact@mangmeeplus.com + EXTERNAL_SIGNUP_ENABLED=true; production fail-closed ทั้งคู่; สิทธิ์ ses:SendEmail ผูกกับ provider gate ใน task-role policy ที่ deploy.sh เขียนเอง
 - หมายเหตุ: อย่าแก้ policy `watchdog-bms-uat-api-runtime` ใน console — deploy.sh เขียนทับทุกรอบ ให้แก้ที่ deploy.sh เท่านั้น
+
+## ขั้นที่ 6 — ต่อ consumer ตีกลับ/ร้องเรียน (P11 F-EM-2, ทำหลัง deploy)
+
+ก่อนขั้นนี้ เมลที่ hard bounce ยังนับว่า "ส่งแล้ว" เพราะการส่งไม่ได้แนบ configuration set และไม่มีใครอ่าน SNS
+หลังขั้นนี้ bounce ถาวร/complaint จะดัน `CompanySignupRequest` จาก `EMAIL_PENDING` → `EMAIL_FAILED`
+(ติดธงในคิวแอดมิน + resend/reissue เดิมใช้ได้ทันที ตาม spec §4D)
+
+1. **env (ผ่าน deploy.sh เท่านั้น — pinned file, integrator เป็นคนใส่ + re-pin):**
+   - `SES_CONFIGURATION_SET=mangmee-transactional` — ถ้าไม่ใส่ การส่งจะไม่แนบ configuration set และ **จะไม่มี event ออกมาเลย**
+   - `SES_EVENTS_TOPIC_ARN=arn:aws:sns:ap-southeast-1:311414082667:mangmee-ses-events` — ถ้าไม่ใส่ endpoint จะ **ปฏิเสธทุกข้อความ 403 (fail closed)** รวมถึงการยืนยัน subscription; UAT/production ใส่คนละค่าได้
+   - ไม่ต้องแก้ IAM: statement `ses:SendEmail` ที่ deploy.sh เขียน ระบุ `configuration-set/mangmee-transactional` ไว้แล้ว
+2. **สร้าง subscription (ทำหลัง deploy รอบที่มี env แล้ว):** SNS → topic `mangmee-ses-events` → Create subscription →
+   Protocol **HTTPS** → Endpoint = `<origin>/v1/public/ses-events` → Create
+   - **`<origin>` ต้องเป็น ECS Express URL จาก SSM** `/watchdog-bms/<env>/ecs-express-api-web-url`
+     ไม่ใช่ custom domain — เหตุผลเดียวกับ LINE webhook: custom domain ตอบ GET ได้ แต่ POST ได้ `REQUEST_TIMEOUT`
+     (ดู `cloud-environment-operations.md` → Employee LINE webhook) และการยืนยัน subscription ของ SNS เป็น POST
+   - เส้นทางผ่าน Next proxy (`https://<domain>/api/v1/public/ses-events`) ก็ถึงปลายทางเดียวกัน แต่เพิ่ม hop โดยไม่จำเป็น
+   - endpoint **ยืนยันเองอัตโนมัติ**: มันตรวจลายเซ็น SNS + TopicArn ก่อน แล้วค่อย GET `SubscribeURL` ให้ ไม่ต้องกดอะไรใน console
+   - ถ้า subscription ค้าง `PendingConfirmation`: แปลว่า `SES_EVENTS_TOPIC_ARN` ยังไม่ตรง/ยังไม่ deploy หรือ endpoint ยังไม่ถึง → ดู log `ses.sns.signature_invalid` / 403 ใน CloudWatch แล้ว **Request confirmation** ซ้ำ
+3. **ตรวจของจริงบน UAT:** สมัคร → อนุมัติ โดยใช้อีเมล `bounce@simulator.amazonses.com` → คำขอต้องเปลี่ยนเป็น `EMAIL_FAILED`
+   ภายในไม่กี่วินาที + มี audit `signup.claim_email.bounced` (เก็บผู้รับที่ตีกลับ + diagnosticCode ตัดที่ 200 ตัวอักษร)
+   → กด resend/แก้อีเมล แล้วต้องกลับเข้า `EMAIL_PENDING` ได้
+   - `complaint@simulator.amazonses.com` = เส้นทาง complaint (audit `signup.claim_email.complaint`)
+   - `ooto@simulator.amazonses.com` = bounce ชั่วคราว → ต้อง **ไม่** เปลี่ยน state (log อย่างเดียว)
+   - Delivery event ปกติถูกละเว้นเงียบ ๆ (debug log) — SNS ได้ 200 ทุกกรณีที่รับไว้ เพื่อไม่ให้ retry วนซ้ำ

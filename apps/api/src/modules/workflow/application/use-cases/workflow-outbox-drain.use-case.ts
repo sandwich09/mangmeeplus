@@ -9,6 +9,7 @@ import {
   ACCOUNT_CLAIM_EMAIL_EVENT_TYPE,
   SIGNUP_REJECTION_NOTICE_EVENT_TYPE,
 } from '../../../external-signup/application/signup-claim-email.service';
+import { SIGNUP_PENDING_REVIEW_EVENT_TYPE } from '../../../external-signup/application/signup-admin-notify.service';
 
 const WORKER_ID = 'workflow-outbox-drain';
 const OUTBOX_DEAD_EVENT = 'outbox.dead_rows';
@@ -81,9 +82,12 @@ export class DrainWorkflowOutboxUseCase {
       excludeEventTypes: [
         OBJECT_VERSION_CLEANUP_EVENT_TYPE,
         // Reserved for their own consumers. Without these the generic drain would claim a claim
-        // email and "publish" it as a workflow event — the applicant would never receive it.
+        // email and "publish" it as a workflow event — the applicant would never receive it. The
+        // admin announcement carries no companyId at all, so this drain would mark it published
+        // without doing anything and the operators would never be told.
         ACCOUNT_CLAIM_EMAIL_EVENT_TYPE,
         SIGNUP_REJECTION_NOTICE_EVENT_TYPE,
+        SIGNUP_PENDING_REVIEW_EVENT_TYPE,
       ],
     });
     const sweep = this.shadow.startSweep('outbox.drain');

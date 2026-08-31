@@ -47,7 +47,9 @@ function harness(options: { request?: any; requests?: any[]; users?: any[]; comp
   const tokens = { revokeAll: async (id: string) => { revoked.push(id); return 2; } } as any;
   const claimEmail = {
     enqueue: async (id: string, reason: string) => { enqueued.push({ id, reason }); },
-    enqueueRejectionNotice: async (id: string) => { enqueued.push({ id, reason: 'rejection-notice' }); },
+    enqueueRejectionNotice: async (id: string, rejectionReason?: string) => {
+      enqueued.push({ id, reason: 'rejection-notice', rejectionReason });
+    },
   } as any;
 
   return {
@@ -153,14 +155,36 @@ describe('SignupAdminQueueUseCase.decide — reject', () => {
     assert.deepEqual(h.revoked, ['signup-1']);
     // The address is unverified, so no unsolicited mail leaves by default.
     assert.deepEqual(h.enqueued, []);
-    assert.equal(h.audits[0].data.metadataJson.notifyApplicant, false);
+    assert.deepEqual(h.audits[0].data.metadataJson, { notifyApplicant: false, hadRejectionReason: false });
+  });
+
+  it('ignores a reason the admin typed and then unticked the notice for', async () => {
+    const h = harness();
+    await h.useCase.decide(
+      'signup-1', { action: 'REJECT', rejectionReason: 'ข้อมูลไม่ครบ' }, 'admin-1', 'req-1',
+    );
+    assert.deepEqual(h.enqueued, [], 'a reason alone must not turn a silent reject into an email');
   });
 
   it('sends a notice only when the admin asks for one', async () => {
     const h = harness();
     await h.useCase.decide('signup-1', { action: 'REJECT', notifyApplicant: true }, 'admin-1', 'req-1');
-    assert.deepEqual(h.enqueued, [{ id: 'signup-1', reason: 'rejection-notice' }]);
-    assert.equal(h.audits[0].data.metadataJson.notifyApplicant, true);
+    assert.deepEqual(h.enqueued, [{ id: 'signup-1', reason: 'rejection-notice', rejectionReason: undefined }]);
+    assert.deepEqual(h.audits[0].data.metadataJson, { notifyApplicant: true, hadRejectionReason: false });
+  });
+
+  it('passes the admin paragraph through and records only that one existed', async () => {
+    const h = harness();
+    await h.useCase.decide(
+      'signup-1', { action: 'REJECT', notifyApplicant: true, rejectionReason: 'ข้อมูลบริษัทไม่ครบ' },
+      'admin-1', 'req-1',
+    );
+    assert.deepEqual(h.enqueued, [
+      { id: 'signup-1', reason: 'rejection-notice', rejectionReason: 'ข้อมูลบริษัทไม่ครบ' },
+    ]);
+    assert.deepEqual(h.audits[0].data.metadataJson, { notifyApplicant: true, hadRejectionReason: true });
+    // Copy written for one inbox is not an audit fact.
+    assert.equal(JSON.stringify(h.audits).includes('ข้อมูลบริษัทไม่ครบ'), false);
   });
 
   it('is idempotent on repeat', async () => {

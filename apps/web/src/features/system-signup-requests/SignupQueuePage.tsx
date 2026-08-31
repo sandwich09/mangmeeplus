@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { SIGNUP_REJECTION_REASON_MAX_LENGTH } from '@watchdog-bms/contracts';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import { Modal, useConfirm } from '@/common/components/modal';
 import { Button } from '@/common/components/button';
@@ -69,6 +70,7 @@ export default function SignupQueuePage() {
   // because the applicant's mailbox is still unproven at this point).
   const [rejecting, setRejecting] = useState<AdminSignupQueueItemDto | null>(null);
   const [notifyApplicant, setNotifyApplicant] = useState(false);
+  const [rejectionReason, setRejectionReason] = useState('');
 
   const load = async () => {
     setLoading(true);
@@ -112,7 +114,12 @@ export default function SignupQueuePage() {
     const item = rejecting;
     setBusyId(item.requestId);
     try {
-      await decideSignupRequest(item.requestId, { action: 'REJECT', notifyApplicant });
+      const reason = notifyApplicant ? rejectionReason.trim() : '';
+      await decideSignupRequest(item.requestId, {
+        action: 'REJECT',
+        notifyApplicant,
+        ...(reason ? { rejectionReason: reason } : {}),
+      });
       toast.success(notifyApplicant ? 'ปฏิเสธคำขอและแจ้งผู้สมัครแล้ว' : 'ปฏิเสธคำขอแล้ว');
       setRejecting(null);
       await load();
@@ -169,23 +176,44 @@ export default function SignupQueuePage() {
           <p>
             ปฏิเสธคำขอของ <span className="font-medium text-gray-900">{rejecting?.companyName}</span> ใช่หรือไม่
           </p>
-          {/* The notice email has no sender yet (the event is recorded but no consumer sends it),
-              so the choice stays visible-but-disabled rather than silently doing nothing. */}
-          <label className="flex items-start gap-2 opacity-60" title="ระบบส่งอีเมลแจ้งผลจะเปิดใช้ในรอบถัดไป">
+          {/* Spec §4D: default OFF. The applicant's mailbox is still unproven at this point, so an
+              unsolicited notice would make the platform a spam cannon aimed at whoever they typed. */}
+          <label className="flex items-start gap-2">
             <input
               type="checkbox"
-              className="mt-0.5"
+              className="mt-1 h-4 w-4"
               checked={notifyApplicant}
               onChange={(e) => setNotifyApplicant(e.target.checked)}
-              disabled
+              disabled={busyId !== null}
             />
             <span>
-              ส่งอีเมลแจ้งผู้สมัคร (เร็ว ๆ นี้)
+              ส่งอีเมลแจ้งผู้สมัคร
               <span className="mt-0.5 block text-xs text-gray-500">
                 ค่าเริ่มต้นคือไม่ส่ง เพราะอีเมลนี้ยังไม่ผ่านการยืนยัน ข้อความที่ส่งจะไม่เปิดเผยเหตุผลภายใน
               </span>
             </span>
           </label>
+
+          {notifyApplicant && (
+            <div className="space-y-1.5">
+              <label htmlFor="signup-rejection-reason" className="block text-sm font-medium text-gray-700">
+                ข้อความถึงผู้สมัคร (ไม่บังคับ)
+              </label>
+              <textarea
+                id="signup-rejection-reason"
+                rows={3}
+                maxLength={SIGNUP_REJECTION_REASON_MAX_LENGTH}
+                value={rejectionReason}
+                onChange={(e) => setRejectionReason(e.target.value)}
+                disabled={busyId !== null}
+                placeholder="เช่น ข้อมูลบริษัทไม่ครบ ติดต่อทีมงานเพื่อส่งใหม่ได้"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-brand-400 focus:outline-none disabled:bg-gray-50"
+              />
+              <p className="text-xs text-gray-500">
+                เว้นว่างได้ ถ้าเว้นว่าง อีเมลจะแจ้งผลอย่างเดียว ไม่ระบุเหตุผล ({rejectionReason.length}/{SIGNUP_REJECTION_REASON_MAX_LENGTH})
+              </p>
+            </div>
+          )}
         </div>
       </Modal>
 
@@ -294,7 +322,7 @@ export default function SignupQueuePage() {
                                   <button
                                     type="button"
                                     disabled={busy}
-                                    onClick={() => { setNotifyApplicant(false); setRejecting(item); }}
+                                    onClick={() => { setNotifyApplicant(false); setRejectionReason(''); setRejecting(item); }}
                                     className={`${rowActionClass} border-red-200 bg-red-50 text-red-600 hover:bg-red-100`}
                                   >
                                     ปฏิเสธ
