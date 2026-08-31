@@ -72,6 +72,9 @@ export class ProvisionSignupUseCase {
         },
         // Spec §4C: two shops may legitimately share a name; only the admin console keeps the guard.
         allowDuplicateCompanyName: true,
+        // Owner decision (UAT round 1): a self-signed-up trial shop starts on the "เริ่มต้น" menu
+        // preset; the admin can widen it later from the partner console.
+        modulePackage: 'starter',
         // The approving admin is the actor of record for everything this provisioning creates.
         requestingAdminUserId: request.approvedByUserId ?? request.id,
         requestId: cmd.correlationRequestId,

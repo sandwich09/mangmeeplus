@@ -59,13 +59,20 @@ describe('account claim email copy', () => {
       'ขอแสดงความนับถือ',
       'บริษัท มั่งมียั่งยืน จำกัด',
       'โทร. 098-256-5628',
-      'https://official.mangmeeplus.com',
+      'เว็บไซต์ https://official.mangmeeplus.com',
       'ให้ธุรกิจของคุณ มั่งมี ไปด้วยกัน',
       'contact@mangmeeplus.com',
       'ไม่ใช่รหัสผ่านของ LINE',
     ]) {
       assert.ok(text.includes(section), `missing section: ${section}`);
     }
+  });
+
+  it('renders the Owner-picked signature: bold legal name and a short site label', () => {
+    const { html } = renderAccountClaimEmail(INPUT);
+    assert.ok(html.includes('<strong style="color:#17352b">บริษัท มั่งมียั่งยืน จำกัด</strong>'));
+    assert.ok(html.includes('>official.mangmeeplus.com</a>'));
+    assert.ok(!html.includes('>https://official.mangmeeplus.com</a>'));
   });
 
   it('states the 72h single-use rule with a Thai-formatted expiry', () => {
