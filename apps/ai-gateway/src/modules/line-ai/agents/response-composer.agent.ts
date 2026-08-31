@@ -245,6 +245,34 @@ export function isJokeRequest(messageText: string): boolean {
   return /มุข|มุก|ตลก|ขำ|ฮา|joke/iu.test(messageText.replace(/ไข่มุก/gu, ''));
 }
 
+/**
+ * Strict form for the orchestrator's refusal-rescue ONLY: it must match a sentence that ASKS for a
+ * joke, never a business sentence that merely contains a joke-ish substring. Thai has no word
+ * boundaries, so the loose test above reads มุกดาหาร (the province), ฮาร์ดแวร์, ฮานอย and the given
+ * name ขำ as jokes — harmless when it only picks a system prompt, wrong when it can flip an
+ * out-of-scope refusal into a punchline (probe run 2026-08-31, see orchestrator spec). ไข่มุก and
+ * มุกดา* are stripped first; every alternative then anchors a request verb or a joke-noun phrase.
+ */
+export function isExplicitJokeAsk(messageText: string): boolean {
+  const text = messageText.replace(/ไข่มุก/gu, '').replace(/มุกดา(?:หาร)?/gu, '');
+  return new RegExp(
+    [
+      '(?:ขอ|เล่า|เล่น|มี|ฟัง|อยากฟัง)\\s*มุ[ขก]',
+      'มุ[ขก]\\s*(?:ตลก|ขำ|ฮา|หน่อย|ใหม่|มา|ให้ฟัง)',
+      'อีกมุ[ขก]',
+      '(?:ขอ|เล่า|มี|พูด|อยากฟัง)\\s*(?:เรื่อง|อะไร)?\\s*ตลก',
+      'ตลก\\s*(?:หน่อย|ให้ฟัง|มา)',
+      '(?:เรื่อง|อะไร)\\s*ขำ',
+      'ขำ\\s*ๆ',
+      'ขำขำ',
+      'อะไร\\s*ฮา',
+      'ฮา\\s*(?:หน่อย|ๆ\\s*หน่อย)',
+      '\\bjokes?\\b',
+    ].join('|'),
+    'iu',
+  ).test(text);
+}
+
 function isProductRecommendationQuestion(messageText: string): boolean {
   return /(?:ควร|น่าจะ|แนะนำ|เลือก).{0,24}(?:ขาย|ลงร้าน)|(?:ขาย|ลงร้าน).{0,12}(?:อะไร|ไร|ตัวไหน|สินค้าไหน).{0,8}(?:ดี|ควร)|(?:เติม|เอา).{0,20}(?:มาขาย|ขายดี)|what\s+(?:product|item)s?\s+should\s+(?:i|we)\s+sell/iu.test(messageText);
 }

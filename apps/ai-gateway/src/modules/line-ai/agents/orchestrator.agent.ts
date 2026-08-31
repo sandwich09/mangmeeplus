@@ -13,7 +13,7 @@ import type { AgentRunResult } from './agent-types';
 import { IntentRouterAgent, ROUTER_ENABLED_TOOLS, isSubjectCompatible, isZeroToolIntent } from './intent-router.agent';
 import { AccountingSummaryAgent, ALLOWED_TOOLS as ACCOUNTING_ALLOWED_TOOLS } from './accounting-summary.agent';
 import { InventoryAgent, ALLOWED_TOOLS as INVENTORY_ALLOWED_TOOLS } from './inventory.agent';
-import { isJokeRequest, ResponseComposerAgent, featureDisabledReply } from './response-composer.agent';
+import { isExplicitJokeAsk, ResponseComposerAgent, featureDisabledReply } from './response-composer.agent';
 import { normalizePlanToolAccess, removeRuntimeBlockedTools } from './tool-availability';
 import { preparedSimpleReadEligibility, preparedFamilyKey, type PreparedSimpleReadContext } from '../domain/logic/prepared-simple-read.logic';
 import { activePreparedFamilies, formatPreparedSimpleRead, preparedTerminalReply } from './prepared-simple-read-formatter';
@@ -366,7 +366,7 @@ export class OrchestratorAgent {
     // A ROUTABLE plan whose intents were emptied is NOT rescueable: that shape comes out of the
     // permission/feature stripping above, and a joke phrase must never repaint a permission
     // situation as small talk (`every` on an empty list is vacuously true — guard the length).
-    if (isJokeRequest(req.messageText) && !routedAnyTool && onlyOutOfScopeRefusals
+    if (isExplicitJokeAsk(req.messageText) && !routedAnyTool && onlyOutOfScopeRefusals
       && (plan.status === 'UNROUTABLE'
         || (plan.intents.length > 0
           && plan.intents.every((intent) => intent.intent === 'unknown' || intent.intent === 'casual_conversation')))) {

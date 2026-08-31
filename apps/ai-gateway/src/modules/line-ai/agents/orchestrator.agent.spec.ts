@@ -112,9 +112,10 @@ function planFor(messageText: string) {
   if (/สต็อก/.test(messageText)) {
     return { status: 'ROUTABLE', language: 'th', intents: [{ intent: 'read_detail', subject: 'inventory', agent: 'inventory', priority: 1, requiredTools: ['inventory.list_low_stock'], missingContext: [] }], refusals: [], requiresHumanReview: false };
   }
-  if (/ขอมุข|เล่ามุข/.test(messageText)) {
+  if (/ขอมุข|เล่ามุข|มุกดาหาร|ฮาร์ดแวร์|ฮานอย/.test(messageText)) {
     // Production 2026-08-31: the live router classified a plain joke request this way. The
-    // orchestrator's deterministic rescue must turn it into the casual lane.
+    // orchestrator's deterministic rescue must turn ONLY the real joke ask into the casual lane —
+    // the province/hardware/Hanoi probes share the refusal shape and must keep it.
     return { status: 'UNROUTABLE', language: 'th', intents: [], refusals: [{ request: messageText, reason: 'unsupported_module' }], requiresHumanReview: false };
   }
   return { status: 'ROUTABLE', language: 'th', intents: [{ intent: 'read_summary', subject: 'ledger', agent: 'accounting', priority: 1, requiredTools: ['ledger.get_financial_summary'], missingContext: [] }], refusals: [], requiresHumanReview: false };
@@ -284,6 +285,19 @@ describe('OrchestratorAgent', () => {
     // The reply is composed (the harness's casual canned line), never the unsupported template.
     assert.ok(!result.replyText.includes('นอกขอบเขตระบบ'), 'unsupported template must not appear');
     assert.match(result.replyText, /น้องมั่งมี/);
+  });
+
+  it('keeps the honest refusal for out-of-scope questions that merely contain joke-ish substrings', async () => {
+    const orchestrator = new OrchestratorAgent(makeOkErpTools(), makeConfig());
+    // มุกดาหาร (the province), ฮาร์ดแวร์ and ฮานอย all contain มุก/ฮา; the loose composer test reads
+    // them as jokes (probe run 2026-08-31). The rescue must not: a refused shipping/price/travel
+    // question keeps its refusal instead of getting a punchline.
+    for (const message of ['ส่งของไปมุกดาหารกี่บาท', 'ราคาฮาร์ดแวร์เท่าไหร่', 'ไปฮานอยยังไง']) {
+      const result = await orchestrator.run(makeReq(message));
+      assert.equal(result.plan.status, 'UNROUTABLE', message);
+      assert.notEqual(result.plan.intents[0]?.intent, 'casual_conversation', message);
+      assert.match(result.replyText, /นอกขอบเขตระบบ/, message);
+    }
   });
 
   it('never rescues a joke wrapped around a protected refusal or a business clause', async () => {
