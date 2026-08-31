@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { formatThaiDate } from '@/common/i18n/thai-date';
 import { fetchPlanTermNotice, type PlanTermNotice } from './plan-term.api';
-import { PLAN_TERM_RENEW_PHONE } from './plan-term.logic';
+import { PLAN_TERM_CONTACT_EMAIL, PLAN_TERM_RENEW_PHONE } from './plan-term.logic';
 
 /**
  * The one page an expired company can open (P29 §4B). The owner is told exactly what happened and
@@ -52,7 +52,13 @@ export default function CompanyTermExpiredPage() {
             href={`tel:${PLAN_TERM_RENEW_PHONE.replace(/-/g, '')}`}
             className="mt-5 flex h-12 w-full items-center justify-center rounded-xl bg-[#046B29] text-[16px] font-bold text-white"
           >
-            ติดต่อต่ออายุ โทร {PLAN_TERM_RENEW_PHONE}
+            ติดต่อ {PLAN_TERM_RENEW_PHONE}
+          </a>
+          <a
+            href={`mailto:${PLAN_TERM_CONTACT_EMAIL}`}
+            className="mt-2.5 flex h-12 w-full items-center justify-center rounded-xl border-[1.5px] border-gray-300 text-[14.5px] font-bold text-gray-700"
+          >
+            อีเมล {PLAN_TERM_CONTACT_EMAIL}
           </a>
         </div>
       ) : (

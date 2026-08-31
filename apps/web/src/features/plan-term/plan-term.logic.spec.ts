@@ -1,3 +1,4 @@
+import { cardCollapsed, warningBucket, warningProgressPercent } from './plan-term.logic';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { isRenewalPath, planTermView, renewalPathFor } from './plan-term.logic';
@@ -48,5 +49,29 @@ describe('renewal path', () => {
     assert.equal(isRenewalPath('/companies/abc123/renew/'), true);
     assert.equal(isRenewalPath('/companies/abc123/renewals'), false);
     assert.equal(isRenewalPath('/companies/abc123/dashboard'), false);
+  });
+});
+
+describe('sidebar warning card', () => {
+  it('maps days left onto the 7/3/1 ladder', () => {
+    assert.equal(warningBucket(7), '7');
+    assert.equal(warningBucket(4), '7');
+    assert.equal(warningBucket(3), '3');
+    assert.equal(warningBucket(2), '3');
+    assert.equal(warningBucket(1), '1');
+    assert.equal(warningBucket(0), '1');
+  });
+
+  it('stays collapsed only within the same ladder step, so each new step re-opens the card', () => {
+    assert.equal(cardCollapsed('7', '7'), true);
+    assert.equal(cardCollapsed('7', '3'), false);
+    assert.equal(cardCollapsed(null, '7'), false);
+    assert.equal(cardCollapsed('3', '1'), false);
+  });
+
+  it('keeps the time-left bar visible even on the last day', () => {
+    assert.equal(warningProgressPercent(7), 100);
+    assert.equal(warningProgressPercent(3), 43);
+    assert.ok(warningProgressPercent(0) >= 6);
   });
 });

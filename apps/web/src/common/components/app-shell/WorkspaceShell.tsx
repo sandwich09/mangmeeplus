@@ -16,6 +16,8 @@ type Props = {
   headerExtras?: React.ReactNode;
   /** Full-width strip under the sticky header, above every page: company-wide notices only. */
   banner?: React.ReactNode;
+  /** Rendered at the bottom of the sidebar, above the user block (e.g. the plan-term card). */
+  sidebarFooter?: React.ReactNode;
   userName?: string;
   userRoles?: string[];
   userRoleNames?: Record<string, string>;
@@ -32,6 +34,7 @@ function ShellInner({
   companyArea,
   headerExtras,
   banner,
+  sidebarFooter,
   userName,
   userRoles,
   userRoleNames,
@@ -64,6 +67,7 @@ function ShellInner({
         userRoles={userRoles}
         userRoleNames={userRoleNames}
         showAccountSecurity={showAccountSecurity}
+        footerExtras={sidebarFooter}
       />
       <Backdrop />
       <div className={`flex min-h-dvh min-w-0 flex-1 flex-col transition-all duration-300 ease-in-out ${mainContentMargin}`}>
@@ -88,6 +92,7 @@ export function WorkspaceShell({
   companyArea,
   headerExtras,
   banner,
+  sidebarFooter,
   userName,
   userRoles,
   userRoleNames,
@@ -103,6 +108,7 @@ export function WorkspaceShell({
         companyArea={companyArea}
         headerExtras={headerExtras}
         banner={banner}
+        sidebarFooter={sidebarFooter}
         userName={userName}
         userRoles={userRoles}
         userRoleNames={userRoleNames}

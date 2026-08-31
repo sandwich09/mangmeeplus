@@ -320,7 +320,7 @@ const CODE_LABELS: Record<string, string> = {
   company_access_unavailable: 'คุณไม่มีสิทธิ์เข้าใช้บริษัทนี้แล้ว กรุณาติดต่อเจ้าของร้าน',
   // P29: the term ended, so business routes are refused on access. Data is intact — the copy must
   // not read as data loss, and the only move that helps is renewing, not retrying.
-  company_term_expired: 'ร้านนี้ครบกำหนดใช้งานแล้ว ข้อมูลทั้งหมดยังอยู่ครบ ติดต่อต่ออายุเพื่อใช้งานต่อ',
+  company_term_expired: 'ร้านนี้ครบกำหนดใช้งานแล้ว ข้อมูลทั้งหมดยังอยู่ครบ ติดต่อ 098-256-5628 เพื่อใช้งานต่อ',
   line_linked_elsewhere: 'LINE นี้เชื่อมกับบัญชีอื่นอยู่แล้ว เลือกได้ว่าจะรวมเป็นบัญชีเดียวหรือใช้แยกกันต่อ',
 
   // ---- ยอมรับข้อกำหนดการใช้งาน ----
