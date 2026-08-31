@@ -48,6 +48,12 @@ export class SignupClaimUseCase {
     const found = await this.tokens.peek(rawToken);
     if (!found) return { valid: false };
     const { token, request } = found;
+    // Same lookup `setPassword` makes below. Answering it here is what lets the page lead with the
+    // attach branch instead of offering a password form whose submit can only 409.
+    const emailOwner = await this.prisma.client.user.findUnique({
+      where: { email: request.contactEmail },
+      select: { id: true },
+    });
     return {
       valid: true,
       companyName: request.companyName,
@@ -56,6 +62,7 @@ export class SignupClaimUseCase {
         ? { suggestedUsername: suggestedUsernameFromEmail(request.contactEmail)! }
         : {}),
       expiresAt: token.expiresAt.toISOString(),
+      emailMatchesExistingUser: !!emailOwner,
     };
   }
 

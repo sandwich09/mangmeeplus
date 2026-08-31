@@ -26,7 +26,8 @@ const PHONE_PATTERN = /^[0-9+\-() ]{6,20}$/;
 export class PublicCompanySignupDto {
   @IsString() @IsNotEmpty() @MaxLength(128) @Matches(/^[A-Za-z0-9_:-]+$/) externalSignupId!: string;
   @IsString() @IsNotEmpty() @MaxLength(200) companyName!: string;
-  @IsString() @IsNotEmpty() @MaxLength(160) ownerDisplayName!: string;
+  @IsString() @IsNotEmpty() @MaxLength(80) ownerFirstName!: string;
+  @IsString() @IsNotEmpty() @MaxLength(80) ownerLastName!: string;
   @IsEmail() @MaxLength(254) contactEmail!: string;
   @IsString() @IsOptional() @Matches(PHONE_PATTERN) phoneNumber?: string;
   @IsString() @IsOptional() @MaxLength(120) businessType?: string;
@@ -94,7 +95,8 @@ export class PublicCompanySignupController {
       {
         externalSignupId: dto.externalSignupId,
         companyName: dto.companyName,
-        ownerDisplayName: dto.ownerDisplayName,
+        ownerFirstName: dto.ownerFirstName,
+        ownerLastName: dto.ownerLastName,
         contactEmail: dto.contactEmail,
         ...(dto.phoneNumber ? { phoneNumber: dto.phoneNumber } : {}),
         ...(dto.businessType ? { businessType: dto.businessType } : {}),

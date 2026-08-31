@@ -193,6 +193,7 @@ function Welcome() {
 
   const companyName = handoff?.companyName ?? 'ร้านของคุณ';
   const homePath = handoff?.homePath ?? '/';
+  const lineLinked = lineOutcome === 'linked';
 
   return (
     <div className="min-h-dvh bg-gray-50">
@@ -224,44 +225,71 @@ function Welcome() {
               </div>
             ) : null}
 
-            <section className="mt-6 rounded-xl border border-gray-200 bg-gray-50 p-4 sm:p-5">
-              <h2 className="text-[17px] font-extrabold text-gray-900">ขั้นตอนสุดท้าย — เชื่อมกับ LINE</h2>
-              <p className="mt-1.5 text-[14.5px] leading-7 text-gray-600">
-                กดปุ่มเดียว ระบบพาไปยืนยันในแอป LINE และเพิ่มเพื่อน “น้องมั่งมี” ให้ในคราวเดียว
-              </p>
-              <ul className="mt-3.5 space-y-2">
-                {BULLETS.map((bullet) => (
-                  <li key={bullet} className="flex items-start gap-2.5 text-[14.5px] leading-7 text-gray-700">
-                    <span aria-hidden className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: LINE_GREEN }} />
-                    {bullet}
-                  </li>
-                ))}
-              </ul>
-              <div className="mt-4">
-                <LineLinkButton />
-              </div>
-            </section>
+            {/* The one screen that says the link worked. Reached with no `line` param the page
+                cannot tell a fresh visit from a completed round trip, so it used to re-offer the
+                connect panel and the button reopened LINE (Owner UAT 2026-08-31). */}
+            {lineLinked ? (
+              <section role="status" className="mt-6 rounded-xl border border-[#B6E0C4] bg-[#F2F9F4] p-4 sm:p-5">
+                <span className="flex h-12 w-12 items-center justify-center rounded-full bg-white text-[#046B29]">
+                  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M20 6 9 17l-5-5" /></svg>
+                </span>
+                <h2 className="mt-3 text-[17px] font-extrabold text-gray-900">เชื่อมบัญชี LINE สำเร็จแล้ว</h2>
+                <p className="mt-1.5 text-[14.5px] leading-7 text-gray-600">
+                  ส่งรูปใบเสร็จเข้าแชต “น้องมั่งมี” ได้เลย และครั้งหน้าเข้าเว็บด้วย LINE ได้ ไม่ต้องพิมพ์รหัส
+                </p>
+                <a
+                  href="/"
+                  className="mt-4 flex h-12 w-full items-center justify-center rounded-xl bg-[#046B29] text-[15.5px] font-semibold text-white"
+                >
+                  เข้าใช้งาน
+                </a>
+              </section>
+            ) : (
+              <>
+                <section className="mt-6 rounded-xl border border-gray-200 bg-gray-50 p-4 sm:p-5">
+                  <h2 className="text-[17px] font-extrabold text-gray-900">ขั้นตอนสุดท้าย — เชื่อมกับ LINE</h2>
+                  <p className="mt-1.5 text-[14.5px] leading-7 text-gray-600">
+                    กดปุ่มเดียว ระบบพาไปยืนยันในแอป LINE และเพิ่มเพื่อน “น้องมั่งมี” ให้ในคราวเดียว
+                  </p>
+                  <ul className="mt-3.5 space-y-2">
+                    {BULLETS.map((bullet) => (
+                      <li key={bullet} className="flex items-start gap-2.5 text-[14.5px] leading-7 text-gray-700">
+                        <span aria-hidden className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: LINE_GREEN }} />
+                        {bullet}
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="mt-4">
+                    <LineLinkButton />
+                  </div>
+                </section>
 
-            <a href={homePath} className="mt-5 block text-center text-[14.5px] font-semibold text-gray-600 underline hover:text-gray-900">
-              ไว้ทีหลัง — เข้าใช้งานเลย
-            </a>
+                <a href={homePath} className="mt-5 block text-center text-[14.5px] font-semibold text-gray-600 underline hover:text-gray-900">
+                  ไว้ทีหลัง — เข้าใช้งานเลย
+                </a>
+              </>
+            )}
           </div>
 
           {/* Desktop column. P12 ships a QR only for *login* (it hands the scanner a session); there
-              is no link-mode QR to reuse, and minting one here would let a scan sign someone in. */}
-          <aside className="mt-5 hidden rounded-2xl border border-gray-200 bg-white p-6 lg:mt-0 lg:block">
-            <h2 className="text-[17px] font-extrabold text-gray-900">ทำบนมือถือได้เลย</h2>
-            <p className="mt-2 text-[14.5px] leading-7 text-gray-600">
-              การเชื่อม LINE ต้องยืนยันในแอป LINE บนมือถือ กดปุ่มด้านซ้ายบนเครื่องนี้ได้ ถ้ามีแอป LINE
-              หรือเปิดหน้านี้บนมือถือแล้วกดเชื่อมก็ได้เหมือนกัน
-            </p>
-            <div className="mt-4">
-              <LineLinkButton />
-            </div>
-            <p className="mt-4 text-[13px] leading-6 text-gray-500">
-              ข้ามขั้นตอนนี้ไปก่อนได้ เชื่อม LINE ทีหลังจากหน้าตั้งค่าได้ตลอด
-            </p>
-          </aside>
+              is no link-mode QR to reuse, and minting one here would let a scan sign someone in.
+              Gone once the link succeeded — a second "connect" button beside a success notice is
+              exactly the contradiction that made the loop unreadable. */}
+          {lineLinked ? null : (
+            <aside className="mt-5 hidden rounded-2xl border border-gray-200 bg-white p-6 lg:mt-0 lg:block">
+              <h2 className="text-[17px] font-extrabold text-gray-900">ทำบนมือถือได้เลย</h2>
+              <p className="mt-2 text-[14.5px] leading-7 text-gray-600">
+                การเชื่อม LINE ต้องยืนยันในแอป LINE บนมือถือ กดปุ่มด้านซ้ายบนเครื่องนี้ได้ ถ้ามีแอป LINE
+                หรือเปิดหน้านี้บนมือถือแล้วกดเชื่อมก็ได้เหมือนกัน
+              </p>
+              <div className="mt-4">
+                <LineLinkButton />
+              </div>
+              <p className="mt-4 text-[13px] leading-6 text-gray-500">
+                ข้ามขั้นตอนนี้ไปก่อนได้ เชื่อม LINE ทีหลังจากหน้าตั้งค่าได้ตลอด
+              </p>
+            </aside>
+          )}
         </div>
       </main>
 
