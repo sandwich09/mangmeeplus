@@ -53,7 +53,7 @@ Return only valid JSON with this shape:
 Allowed agents: general, accounting, tax, cfo, inventory, notifications, sales, crm.
 Allowed subjects: ${LINE_AI_BUSINESS_SUBJECTS.join(', ')}.
 Two zero-tool intents are allowed only for a pure non-business turn:
-- casual_conversation: greetings, thanks, light banter, feelings, or a question about Nong Mangmee's identity/personality. Use subject="unknown", agent="general", requiredTools=[].
+- casual_conversation: greetings, thanks, light banter, feelings, a request for a joke or a playful line (มุข, มุก, ตลก, ขำ, ฮา, "tell me a joke" — the reply side owns a curated joke bank, so route it, never refuse it as out-of-scope), or a question about Nong Mangmee's identity/personality. Use subject="unknown", agent="general", requiredTools=[].
 - capability_help: the user asks what Nong Mangmee can do or how to use the assistant (for example "ทำอะไรได้บ้าง", "ช่วยอะไรได้บ้าง", "how can you help"). Use subject="unknown", agent="general", requiredTools=[].
 Safety crisis overrides every other request. If the user directly expresses wanting to die, suicide, self-harm, or not wanting to live, return UNROUTABLE with intents=[], refusal reason="safety_crisis", and requiresHumanReview=true. Do this even when the same message also asks for business data.
 Harmless office banter may be casual_conversation. Do not guess, repeat, or expand rumours about an identifiable person's private relationship, health, or other sensitive private life. Refuse that clause with reason="privacy_rumor"; preserve any permitted business clause as PARTIAL.
