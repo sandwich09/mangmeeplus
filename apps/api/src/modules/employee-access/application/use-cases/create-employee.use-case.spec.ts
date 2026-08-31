@@ -31,7 +31,23 @@ function makeUseCase(opts: { roles?: Array<{ id: string; key: string; permission
     membership: { ...state.memberships.find((m) => m.id === row.membershipId), roles: state.membershipRoles.filter((m) => m.membershipId === row.membershipId).map((m) => ({ role: roles.find((r) => r.id === m.roleId) })), branchScopes: [] },
   });
 
+  // P29: `planTerm: null` (the default) is a grandfathered company — every pre-existing test below
+  // runs with no seat cap, exactly as a pre-P29 customer does. Shared by both clients on purpose:
+  // execute() runs the seat gate on `prisma.client` and completeDraft() runs it on `tx` inside the
+  // row lock, and the two must count seats identically or the gate has a hole between them.
+  const companyPlanTermFake = { findUnique: async () => opts.planTerm ?? null };
+  const countMemberships = async ({ where }: any) => {
+    // P29 seat count: ACTIVE non-SYSTEM_ADMIN memberships of one company.
+    if (typeof where.companyId === 'string' && where.status === 'ACTIVE') {
+      return state.memberships.filter((m) => m.companyId === where.companyId && m.status === 'ACTIVE').length;
+    }
+    return state.memberships.filter(
+      (m) => m.userId === where.userId && (where.companyId?.not ? m.companyId !== where.companyId.not : true),
+    ).length;
+  };
+
   const tx = {
+    companyPlanTerm: companyPlanTermFake,
     $queryRaw: async (strings: TemplateStringsArray, ...values: string[]) => {
       assert.match(strings.join('?'), /FROM "EmployeeAccessProfile" WHERE "id" = \? AND "companyId" = \? FOR UPDATE/);
       controls.locks.push(values);
@@ -58,6 +74,7 @@ function makeUseCase(opts: { roles?: Array<{ id: string; key: string; permission
       },
     },
     companyMembership: {
+      count: countMemberships,
       findUniqueOrThrow: async ({ where }: any) => ({
         ...state.memberships.find((item) => item.id === where.id),
         branchScopes: state.branchScopes.filter((scope) => scope.membershipId === where.id),
@@ -137,20 +154,8 @@ function makeUseCase(opts: { roles?: Array<{ id: string; key: string; permission
           return state.users.find((u) => (u.username ?? '').toLowerCase() === String(uname).toLowerCase()) ?? null;
         },
       },
-      // P29: `planTerm: null` (the default) is a grandfathered company — every pre-existing test
-      // below runs with no seat cap, exactly as a pre-P29 customer does.
-      companyPlanTerm: { findUnique: async () => opts.planTerm ?? null },
-      companyMembership: {
-        count: async ({ where }: any) => {
-          // P29 seat count: ACTIVE non-SYSTEM_ADMIN memberships of one company.
-          if (typeof where.companyId === 'string' && where.status === 'ACTIVE') {
-            return state.memberships.filter((m) => m.companyId === where.companyId && m.status === 'ACTIVE').length;
-          }
-          return state.memberships.filter(
-            (m) => m.userId === where.userId && (where.companyId?.not ? m.companyId !== where.companyId.not : true),
-          ).length;
-        },
-      },
+      companyPlanTerm: companyPlanTermFake,
+      companyMembership: { count: countMemberships },
       employeeAccessProfile: {
         findMany: async ({ where }: any) => state.profiles.filter((row) => row.companyId === where.companyId).map(profileWithRelations),
         findFirst: async ({ where }: any) => {
@@ -638,6 +643,96 @@ describe('CreateEmployeeUseCase P29 seat cap', () => {
     await useCase.execute({ ...baseCommand, displayName: 'Somchai Jaidee II' });
     assert.equal(state.profiles.length, 1);
     assert.equal(state.profiles[0].displayName, 'Somchai Jaidee II');
+  });
+});
+
+/**
+ * execute() writes DRAFT rows and the seat count only counts ACTIVE ones, so a cap enforced only on
+ * create is no cap at all: stack up drafts under the limit, then Finish every one of them. The gate
+ * has to sit on the transition that actually buys the seat.
+ */
+describe('CreateEmployeeUseCase P29 seat cap on completeDraft', () => {
+  const finish = (employeeId: string) => ({
+    companyId: COMPANY_ID,
+    employeeId,
+    requestingUserId: 'admin-1',
+    requestId: 'req-complete',
+  });
+
+  it('a company with no plan-term row completes drafts unlimited', async () => {
+    const { useCase, state } = makeUseCase({ planTerm: null, activeMemberships: 99 });
+    const created = await useCase.execute(baseCommand);
+
+    await useCase.completeDraft(finish(created.employeeId));
+
+    assert.equal(state.profiles[0].status, 'ACTIVE');
+    assert.equal(state.memberships.at(-1).status, 'ACTIVE');
+  });
+
+  it('under the cap completes, and the completed draft is the seat that lands on the limit', async () => {
+    // Limit 2, one seat already taken. The draft is still DRAFT when the gate reads the count, so
+    // it sees 1 < 2 and lets this completion be the second seat — not an off-by-one refusal.
+    const { useCase, state } = makeUseCase({ planTerm: { employeeLimit: 2 }, activeMemberships: 1 });
+    const created = await useCase.execute(baseCommand);
+
+    const completed = await useCase.completeDraft(finish(created.employeeId));
+
+    assert.equal(completed.status, 'ACTIVE');
+    assert.equal(state.profiles[0].status, 'ACTIVE');
+    assert.equal(state.memberships.filter((m: any) => m.status === 'ACTIVE').length, 2);
+  });
+
+  it('at the cap refuses the completion with the same 422 the create path throws', async () => {
+    const { useCase, state } = makeUseCase({ planTerm: { employeeLimit: 2 }, activeMemberships: 1 });
+    const created = await useCase.execute(baseCommand);
+    // The company fills its last seat elsewhere while this draft sits in the wizard.
+    state.memberships.push({ id: 'seat-late', companyId: COMPANY_ID, userId: 'seat-user-late', status: 'ACTIVE' });
+
+    await assert.rejects(
+      () => useCase.completeDraft(finish(created.employeeId)),
+      (err: any) => {
+        assert.equal(err.getResponse().statusCode, 422);
+        assert.equal(err.getResponse().message, 'แพ็กเกจปัจจุบันเพิ่มพนักงานได้สูงสุด 2 คน — ติดต่อผู้ดูแลเพื่อปรับแพ็กเกจ');
+        return true;
+      },
+    );
+    // The draft survives the refusal; the customer raises the plan and finishes it later.
+    assert.equal(state.profiles[0].status, 'DRAFT');
+    assert.equal(state.memberships.find((m: any) => m.id === state.profiles[0].membershipId).status, 'DRAFT');
+  });
+
+  it('closes the stacked-draft loophole: drafts created under the cap cannot all be finished', async () => {
+    const { useCase, state } = makeUseCase({ planTerm: { employeeLimit: 1 }, activeMemberships: 0 });
+    const first = await useCase.execute(baseCommand);
+    const second = await useCase.execute({
+      ...baseCommand,
+      displayName: 'Malee Rakdee',
+      username: 'malee.r',
+      identityNumber: '9-8765-43210-98-7',
+      phoneNumber: '0898765432',
+    });
+    assert.equal(state.profiles.length, 2, 'both drafts are created: neither consumed a seat yet');
+
+    await useCase.completeDraft(finish(first.employeeId));
+    await assert.rejects(
+      () => useCase.completeDraft(finish(second.employeeId)),
+      (err: any) => err.getResponse().statusCode === 422,
+    );
+
+    assert.equal(state.memberships.filter((m: any) => m.status === 'ACTIVE').length, 1);
+  });
+
+  it('keeps Finish idempotent at the cap for an already-active employee', async () => {
+    // The gate sits below the `status === 'ACTIVE'` early return, so a repeated Finish — a double
+    // click, a retried request — must not start failing once the company reaches its limit.
+    const { useCase, state } = makeUseCase({ planTerm: { employeeLimit: 1 }, activeMemberships: 0 });
+    const created = await useCase.execute(baseCommand);
+    await useCase.completeDraft(finish(created.employeeId));
+
+    await useCase.completeDraft(finish(created.employeeId));
+
+    assert.equal(state.profiles[0].status, 'ACTIVE');
+    assert.equal(state.memberships.filter((m: any) => m.status === 'ACTIVE').length, 1);
   });
 });
 
