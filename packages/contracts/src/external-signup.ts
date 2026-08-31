@@ -94,11 +94,19 @@ export type AdminSignupQueueItemDto = {
 
 export type AdminSignupQueueDto = { items: AdminSignupQueueItemDto[] };
 
+/** Bounded because the admin's paragraph travels through the outbox and into an inbox. */
+export const SIGNUP_REJECTION_REASON_MAX_LENGTH = 500;
+
 export type AdminSignupDecisionBody = {
   /** Idempotency: repeat with same requestId is a no-op returning current state. */
   action: 'APPROVE' | 'REJECT';
   /** REJECT only: send a notice email (default silent). */
   notifyApplicant?: boolean;
+  /**
+   * REJECT only, and only meaningful with `notifyApplicant`. The admin's own paragraph for the
+   * applicant to read — plain text, bounded. The internal review reason is never disclosed.
+   */
+  rejectionReason?: string;
 };
 
 export type AdminSignupDecisionDto = { requestId: string; state: string };

@@ -1,9 +1,11 @@
 import { Module } from '@nestjs/common';
 import { LoggerModule } from '../../common/logger/logger.module';
 import { AuthModule } from '../auth/auth.module';
+import { DashboardNotificationsModule } from '../dashboard-notifications/dashboard-notifications.module';
 import { DataModelCoreModule } from '../data-model-core/data-model-core.module';
 import { SystemOnboardingModule } from '../system-onboarding/system-onboarding.module';
 import { CompanySignupCoreService } from './application/company-signup-core.service';
+import { SignupAdminNotifyService } from './application/signup-admin-notify.service';
 import { AccountClaimTokenService } from './application/account-claim-token.service';
 import { PublicSignupStatusUseCase } from './application/public-signup-status.use-case';
 import { ProvisionSignupUseCase } from './application/provision-signup.use-case';
@@ -19,7 +21,8 @@ import { SystemSignupRequestController } from './presentation/http/system-signup
   // AuthModule: the rate limiter and the mailer port. DataModelCoreModule: the outbox repository.
   // SystemOnboardingModule: the one service allowed to create a company (spec §2 rule 5).
   // LoggerModule: LOGGER_TOKEN for the claim-email send-failure event.
-  imports: [AuthModule, DataModelCoreModule, SystemOnboardingModule, LoggerModule],
+  // DashboardNotificationsModule: the notification event use case the admin announcement reuses.
+  imports: [AuthModule, DashboardNotificationsModule, DataModelCoreModule, SystemOnboardingModule, LoggerModule],
   controllers: [
     PublicCompanySignupController,
     SystemSignupRequestController,
@@ -33,6 +36,7 @@ import { SystemSignupRequestController } from './presentation/http/system-signup
     SignupClaimUseCase,
     ProvisionSignupUseCase,
     SignupAdminQueueUseCase,
+    SignupAdminNotifyService,
     SignupClaimEmailService,
   ],
   exports: [CompanySignupCoreService],

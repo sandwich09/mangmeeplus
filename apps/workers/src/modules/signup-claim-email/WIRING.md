@@ -32,7 +32,13 @@ src/modules/signup-claim-email/signup-claim-email-worker.spec.ts
 | Export | Queue / jobId | Interval | Endpoint | API service |
 |---|---|---|---|---|
 | `startSignupClaimEmailWorker` | `signup-claim-email` | 30s | `POST /v1/internal/signup-claim-email/drain` | `SignupClaimEmailService.drain()` |
-| `startSignupClaimReminderWorker` | `signup-claim-reminder` | 15 min | `POST /v1/internal/signup-claim-email/reminder-sweep` | `SignupClaimEmailService.sweepReminders()` |
+| `startSignupClaimReminderWorker` | `signup-claim-reminder` | 15 min | `POST /v1/internal/signup-claim-email/reminder-sweep` | `SignupClaimEmailService.sweepReminders()` **and** `sweepExpiredApprovals()` |
+
+The drain endpoint now covers all three signup outbox types — the claim email, the opt-in rejection
+notice and the new-application announcement to the platform admins — through one claim/settle loop.
+The reminder timer likewise runs both claim-clock sweeps: the 24h reminder and the 30-day park
+(spec §4D ① and ④). Neither needed a new queue: `startScanWorker` ignores the response body, so both
+endpoints simply return more fields than before.
 
 Separate queues and jobIds are required: BullMQ's scheduler upserts by jobId, so sharing one would
 silently leave a single timer running. The spec asserts this.

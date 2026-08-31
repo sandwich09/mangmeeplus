@@ -11,6 +11,13 @@ export const CLAIM_TOKEN_TTL_HOURS = 72;
  */
 export const SELF_SERVE_RESEND_WINDOW_DAYS = 30;
 
+/**
+ * Spec §4D ④: past this age an approved-but-unclaimed request is swept to `EXPIRED` and drops out
+ * of the main queue. Same boundary as the self-serve window by design — the day the applicant can
+ * no longer revive the request themselves is the day it stops sitting in the operators' list.
+ */
+export const CLAIM_EXPIRY_AFTER_APPROVAL_DAYS = SELF_SERVE_RESEND_WINDOW_DAYS;
+
 /** Spec §4D ①: one reminder, 24h before the link dies. */
 export const CLAIM_REMINDER_AFTER_HOURS = CLAIM_TOKEN_TTL_HOURS - 24;
 

@@ -118,10 +118,12 @@ at provision, not at approval (spec §4D ⑤).
 
 ## 8. Known gaps — deliberate, and each needs a decision
 
-1. **No `EMAIL_PENDING → EXPIRED` sweep.** Token expiry is enforced at claim time, so an unclaimed
-   request sits in `EMAIL_PENDING` with a dead link. That is benign — `canResendClaim` is true there,
-   so the applicant can self-serve — but nothing ever moves a request into `EXPIRED`. The state and
-   its way back (`EXPIRED → EMAIL_PENDING`) are implemented and tested for whenever a sweep lands.
+1. ~~**No `EMAIL_PENDING → EXPIRED` sweep.**~~ **Closed.** `SignupClaimEmailService.sweepExpiredApprovals()`
+   parks approvals older than `CLAIM_EXPIRY_AFTER_APPROVAL_DAYS` (30, spec §4D ④) that never reached
+   a claim. It rides the existing 15-minute `reminder-sweep` timer — no new worker, no new endpoint —
+   transitions through `core.advance(… 'EXPIRED', 'claim_not_started')` so the advisory lock, version
+   CAS, audit row and outbox evidence all apply, and is bounded at 100 rows per pass. Admin reissue
+   from `EXPIRED` already had no age limit and is unchanged.
 2. **`businessType` never becomes a real category.** Free Thai text is not machine-mappable, so
    anything without an exact enum match provisions as `OTHER` — including a clinic. The frozen
    `AdminSignupDecisionBody` has no field for an admin to choose the category, so this round has no
@@ -133,7 +135,26 @@ at provision, not at approval (spec §4D ⑤).
    `PROVISIONING_FAILED` falls back to the email local part.
 4. **Bounce/complaint → `EMAIL_FAILED` is not wired.** The queue reads and displays the state, and
    reissue works from it, but nothing writes it yet; that needs the SES event destination (P11 F-EM-2).
-5. **No rejection-notice email template.** `enqueueRejectionNotice` publishes
-   `email.signup_rejected.requested` and the event is excluded from the generic drain, but no
-   consumer sends it. Rejection is silent by default, so this only matters once an admin ticks
-   "notify". Until a consumer exists those events sit `PENDING`.
+5. ~~**No rejection-notice email template.**~~ **Closed.** `signup-rejection-email.template.ts` sits
+   next to the claim template and shares its section helper and signature block; the drain now
+   dispatches `email.signup_rejected.requested` to `mailer.sendSignupRejection()`. The admin's
+   optional paragraph rides in the outbox payload (`AdminSignupDecisionBody.rejectionReason`, bounded
+   by `SIGNUP_REJECTION_REASON_MAX_LENGTH`); a send failure marks only the outbox row FAILED and
+   never touches the `REJECTED` state.
+
+## 9. Admin announcement (Item 1, added after the P10 round)
+
+Reaching `PENDING_REVIEW` appends one platform-level outbox row (`companyId` null) —
+`notify.signup_pending_review.requested`, keyed on the request id, so a resubmit announces once. The
+same drain consumes it through `SignupAdminNotifyService.notify()`, which:
+
+- creates a dashboard notification for every ACTIVE `SYSTEM_ADMIN` via the shared
+  `CreateOrUpdateNotificationEventUseCase` (hence the new `DashboardNotificationsModule` import), and
+- pushes the Owner copy to each admin's ACTIVE linked LINE identity through
+  `auth/infrastructure/system-line-push.ts`, best-effort — a failed push is logged, never thrown.
+
+Dedup has one source: the notification use case answers `skipped` while its own alert is cooling
+down, and the LINE fan-out only runs when that call actually opened a row, so a redelivered event
+pushes nothing. `signup_pending_review` is deliberately **absent** from `IMPLEMENTED_TRIGGER_KEYS`,
+which keeps the rail's own LINE channel suppressed for this trigger — otherwise the operators would
+get the same message twice.

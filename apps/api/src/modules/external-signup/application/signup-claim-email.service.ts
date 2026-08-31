@@ -1,21 +1,40 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { SIGNUP_REJECTION_REASON_MAX_LENGTH } from '@watchdog-bms/contracts';
 import { LOGGER_TOKEN, type AppLogger } from '../../../common/logger/logger.service';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { PrismaOutboxRepository } from '../../data-model-core/infrastructure/repositories/prisma-outbox.repository';
 import { AUTH_MAILER_TOKEN, type AuthMailerPort } from '../../auth/domain/ports/auth-mailer.port';
 import { AccountClaimTokenService } from './account-claim-token.service';
-import { CLAIM_REMINDER_AFTER_HOURS } from '../domain/account-claim.logic';
+import { CompanySignupCoreService } from './company-signup-core.service';
+import { SIGNUP_PENDING_REVIEW_EVENT_TYPE, SignupAdminNotifyService } from './signup-admin-notify.service';
+import { CLAIM_EXPIRY_AFTER_APPROVAL_DAYS, CLAIM_REMINDER_AFTER_HOURS } from '../domain/account-claim.logic';
 
 /** P11 F-EM-2. Reserved for this consumer: the generic workflow drain must exclude it. */
 export const ACCOUNT_CLAIM_EMAIL_EVENT_TYPE = 'email.account_claim.requested';
 export const SIGNUP_REJECTION_NOTICE_EVENT_TYPE = 'email.signup_rejected.requested';
 const CLAIM_EMAIL_WORKER_ID = 'signup-claim-email-worker';
 
+/**
+ * Every signup side effect this drain owns. One claim, one lease, one settle path — a second timer
+ * would buy nothing but a second thing to forget to deploy. Anything listed here must also be
+ * excluded from the generic workflow drain, or that drain claims it and "publishes" it into a void.
+ */
+const SIGNUP_OUTBOX_EVENT_TYPES = [
+  ACCOUNT_CLAIM_EMAIL_EVENT_TYPE,
+  SIGNUP_REJECTION_NOTICE_EVENT_TYPE,
+  SIGNUP_PENDING_REVIEW_EVENT_TYPE,
+] as const;
+
+/** Reason recorded on the state row when the 30-day sweep parks an unclaimed approval (§4D ④). */
+export const CLAIM_EXPIRY_FAILURE_CODE = 'claim_not_started';
+const EXPIRY_SWEEP_ACTOR = 'signup-expiry-sweep';
+
 /** Why an email is being queued. Only `approve` uses the spec's bare dedupe key. */
 export type ClaimEmailReason = 'approve' | 'resend' | 'reissue' | 'reminder';
 
 export type ClaimEmailDrainResult = {
   claimed: number;
+  /** Events handled, not emails: the same counter covers the admin announcement's fan-out. */
   sent: number;
   failed: number;
   reclaimed: number;
@@ -28,6 +47,8 @@ export class SignupClaimEmailService {
     private readonly prisma: PrismaService,
     private readonly outbox: PrismaOutboxRepository,
     private readonly tokens: AccountClaimTokenService,
+    private readonly core: CompanySignupCoreService,
+    private readonly adminNotify: SignupAdminNotifyService,
     @Inject(AUTH_MAILER_TOKEN) private readonly mailer: AuthMailerPort,
     @Inject(LOGGER_TOKEN) private readonly logger: AppLogger,
   ) {}
@@ -59,8 +80,13 @@ export class SignupClaimEmailService {
     });
   }
 
-  /** Spec §4D: an optional, per-case rejection notice. Body deliberately reveals no reason. */
-  async enqueueRejectionNotice(signupRequestId: string, now = new Date()): Promise<void> {
+  /**
+   * Spec §4D: an optional, per-case rejection notice. The letter never discloses the internal
+   * review reason — `reason` is the admin's own paragraph, written for the applicant to read, and
+   * it rides in the payload because it is the one thing the consumer cannot look up.
+   */
+  async enqueueRejectionNotice(signupRequestId: string, reason?: string, now = new Date()): Promise<void> {
+    const trimmed = reason?.trim().slice(0, SIGNUP_REJECTION_REASON_MAX_LENGTH) || undefined;
     await this.outbox.append({
       eventType: SIGNUP_REJECTION_NOTICE_EVENT_TYPE,
       aggregateType: 'CompanySignupRequest',
@@ -70,7 +96,7 @@ export class SignupClaimEmailService {
       payloadJson: {
         schemaVersion: 1,
         occurredAt: now.toISOString(),
-        data: { signupRequestId },
+        data: { signupRequestId, ...(trimmed ? { reason: trimmed } : {}) },
       },
     });
   }
@@ -84,7 +110,7 @@ export class SignupClaimEmailService {
     const events = await this.outbox.claimBatch({
       batchSize,
       claimedBy: CLAIM_EMAIL_WORKER_ID,
-      eventTypes: [ACCOUNT_CLAIM_EMAIL_EVENT_TYPE],
+      eventTypes: [...SIGNUP_OUTBOX_EVENT_TYPES],
     });
 
     let sent = 0;
@@ -93,23 +119,38 @@ export class SignupClaimEmailService {
       const signupRequestId = readSignupRequestId(event.payloadJson);
       try {
         if (!signupRequestId) throw new Error('missing_signup_request_id');
-        await this.sendClaimEmail(signupRequestId);
+        await this.handle(event.eventType, signupRequestId, event.payloadJson);
         sent += 1;
-        await this.settle(event.id, event.claimToken ?? null, null);
+        await this.settle(event.id, event.claimToken ?? null, event.eventType, null);
       } catch (error) {
         failed += 1;
         const code = errorCode(error);
         this.logger.error({
           event: 'signup.claim_email.send_failed',
           riskLevel: 'HIGH',
+          eventType: event.eventType,
           signupRequestId,
           outboxEventId: event.id,
           errorCode: code,
         }, 'signup.claim_email.send_failed');
-        await this.settle(event.id, event.claimToken ?? null, code);
+        await this.settle(event.id, event.claimToken ?? null, event.eventType, code);
       }
     }
     return { claimed: events.length, sent, failed, reclaimed, dead };
+  }
+
+  /** Dispatch by event type. An unknown type throws, so it fails loudly instead of silently. */
+  private async handle(
+    eventType: string,
+    signupRequestId: string,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    if (eventType === ACCOUNT_CLAIM_EMAIL_EVENT_TYPE) return this.sendClaimEmail(signupRequestId);
+    if (eventType === SIGNUP_REJECTION_NOTICE_EVENT_TYPE) {
+      return this.sendRejectionEmail(signupRequestId, readRejectionReason(payload));
+    }
+    if (eventType === SIGNUP_PENDING_REVIEW_EVENT_TYPE) return this.adminNotify.notify(signupRequestId);
+    throw new Error(`unhandled_signup_event_type:${eventType}`);
   }
 
   /**
@@ -141,6 +182,66 @@ export class SignupClaimEmailService {
     return { queued };
   }
 
+  /**
+   * Spec §4D ④: an approval nobody acted on goes quiet after 30 days and leaves the main queue.
+   * It is a park, not a dead end — `EXPIRED` keeps its one transition back to `EMAIL_PENDING`, and
+   * the admin reissue path has no age limit at all.
+   *
+   * Idempotent and bounded: the transition runs through the core's advisory lock and version CAS, a
+   * row already `EXPIRED` is a replay, and one pass never moves more than `take`. A row that raced
+   * another writer is skipped rather than aborting the batch.
+   */
+  async sweepExpiredApprovals(now = new Date(), take = 100): Promise<{ expired: number }> {
+    const cutoff = new Date(now.getTime() - CLAIM_EXPIRY_AFTER_APPROVAL_DAYS * 86_400_000);
+    const due = await this.prisma.client.companySignupRequest.findMany({
+      where: {
+        state: { in: ['EMAIL_PENDING', 'EMAIL_FAILED'] },
+        approvedAt: { not: null, lt: cutoff },
+      },
+      select: { id: true },
+      take,
+    });
+
+    let expired = 0;
+    for (const request of due) {
+      try {
+        const { replayed } = await this.core.advance(
+          request.id, 'EXPIRED', EXPIRY_SWEEP_ACTOR, CLAIM_EXPIRY_FAILURE_CODE,
+        );
+        if (!replayed) expired += 1;
+      } catch (error) {
+        // A concurrent claim or reissue won the row. Nothing to fix: the next sweep re-reads state.
+        this.logger.warn({
+          event: 'signup.claim_expiry.skipped',
+          signupRequestId: request.id,
+          errorCode: errorCode(error),
+        }, 'signup.claim_expiry.skipped');
+      }
+    }
+    return { expired };
+  }
+
+  /**
+   * Spec §4D: the opt-in rejection notice. Deliberately does NOT touch state — the request is
+   * already `REJECTED` and a bounced or refused notice must never undo that decision. A failure
+   * here surfaces as the drain's log line and a FAILED outbox row, nothing else.
+   */
+  private async sendRejectionEmail(signupRequestId: string, reason?: string): Promise<void> {
+    const request = await this.prisma.client.companySignupRequest.findUnique({
+      where: { id: signupRequestId },
+      select: { state: true, contactEmail: true, companyName: true },
+    });
+    if (!request) throw new Error('signup_request_not_found');
+    // Only a rejection may produce a rejection letter; a revived request must not receive one.
+    if (request.state !== 'REJECTED') return;
+
+    await this.mailer.sendSignupRejection({
+      toEmail: request.contactEmail,
+      companyName: request.companyName,
+      ...(reason ? { reason } : {}),
+    });
+  }
+
   private async sendClaimEmail(signupRequestId: string): Promise<void> {
     const request = await this.prisma.client.companySignupRequest.findUnique({
       where: { id: signupRequestId },
@@ -166,14 +267,15 @@ export class SignupClaimEmailService {
   }
 
   /** A lost lease means another claimer owns the row; log it, never throw (P0-4). */
-  private async settle(id: string, claimToken: string | null, errorCode: string | null): Promise<void> {
+  private async settle(
+    id: string,
+    claimToken: string | null,
+    expectedEventType: string,
+    errorCode: string | null,
+  ): Promise<void> {
     const written = errorCode
-      ? await this.outbox.markFailed({
-        id, claimToken, error: errorCode, expectedEventType: ACCOUNT_CLAIM_EMAIL_EVENT_TYPE,
-      })
-      : await this.outbox.markPublished({
-        id, claimToken, expectedEventType: ACCOUNT_CLAIM_EMAIL_EVENT_TYPE,
-      });
+      ? await this.outbox.markFailed({ id, claimToken, error: errorCode, expectedEventType })
+      : await this.outbox.markPublished({ id, claimToken, expectedEventType });
     if (!written) {
       this.logger.warn({ event: 'signup.claim_email.lost_lease', outboxEventId: id }, 'signup.claim_email.lost_lease');
     }
@@ -197,9 +299,17 @@ export function officialLineOaAddUrl(env: NodeJS.ProcessEnv = process.env): stri
 }
 
 function readSignupRequestId(payload: Record<string, unknown>): string | null {
+  return readPayloadString(payload, 'signupRequestId');
+}
+
+function readRejectionReason(payload: Record<string, unknown>): string | undefined {
+  return readPayloadString(payload, 'reason') ?? undefined;
+}
+
+function readPayloadString(payload: Record<string, unknown>, key: string): string | null {
   const data = payload?.data;
   if (!data || typeof data !== 'object') return null;
-  const value = (data as Record<string, unknown>).signupRequestId;
+  const value = (data as Record<string, unknown>)[key];
   return typeof value === 'string' && value ? value : null;
 }
 

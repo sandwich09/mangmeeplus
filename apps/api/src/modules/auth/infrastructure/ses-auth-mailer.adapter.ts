@@ -1,12 +1,15 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { SendEmailCommand, type SESClient } from '@aws-sdk/client-ses';
 import { AppConfigService } from '../../../common/config/app-config.service';
-import type { AccountClaimEmailInput, AuthEmailLinkInput, AuthMailerPort } from '../domain/ports/auth-mailer.port';
+import type {
+  AccountClaimEmailInput, AuthEmailLinkInput, AuthMailerPort, SignupRejectionEmailInput,
+} from '../domain/ports/auth-mailer.port';
 import { accountClaimLogoUrl, renderAccountClaimEmail } from './account-claim-email.template';
+import { renderSignupRejectionEmail } from './signup-rejection-email.template';
 
 export const SES_EMAIL_CLIENT_TOKEN = 'SES_EMAIL_CLIENT_TOKEN';
 type SesEmailClient = Pick<SESClient, 'send'>;
-type EmailKind = 'email_verification' | 'password_reset' | 'account_claim';
+type EmailKind = 'email_verification' | 'password_reset' | 'account_claim' | 'signup_rejection';
 type RenderedEmail = Readonly<{ subject: string; text: string; html: string }>;
 type SecondaryAction = Readonly<{ label: string; url: string }>;
 
@@ -107,6 +110,16 @@ export class SesAuthMailerAdapter implements AuthMailerPort {
 
   async sendAccountClaim(input: AccountClaimEmailInput): Promise<void> {
     await this.send(input.toEmail, 'account_claim', renderClaimEmail(input, this.baseUrl()));
+  }
+
+  // No `baseUrl()` here on purpose: the rejection letter carries no link, so a missing WEB_BASE_URL
+  // must not be the reason an applicant never hears back.
+  async sendSignupRejection(input: SignupRejectionEmailInput): Promise<void> {
+    await this.send(input.toEmail, 'signup_rejection', renderSignupRejectionEmail({
+      companyName: input.companyName,
+      ...(input.reason ? { reason: input.reason } : {}),
+      ...(accountClaimLogoUrl() ? { logoUrl: accountClaimLogoUrl()! } : {}),
+    }));
   }
 
   private async send(toEmail: string, kind: EmailKind, rendered: RenderedEmail): Promise<void> {
