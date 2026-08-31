@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  validateBranchCode, validateTaxBranchCode, canArchiveBranch, resolveBranchIds,
+  validateBranchCode, validateTaxBranchCode, canLeaveActiveBranch, resolveBranchIds,
   isBranchInScope, branchScopeWhere, resolveCreateBranchId,
 } from './branch.logic';
 import type { BranchRecord } from '../models/branch.model';
@@ -28,15 +28,31 @@ describe('branch.logic', () => {
     it('rejects <5 digits', () => assert.notEqual(validateTaxBranchCode('1234'), null));
   });
 
-  describe('canArchiveBranch', () => {
-    it('allows archiving a non-head-office branch', () => {
-      assert.equal(canArchiveBranch(stubBranch({ type: 'BRANCH' }), 1), null);
+  describe('canLeaveActiveBranch', () => {
+    it('allows deactivating a non-head-office branch when others stay active', () => {
+      assert.equal(canLeaveActiveBranch(stubBranch({ type: 'BRANCH' }), 1, 3), null);
     });
-    it('blocks archiving the only head office', () => {
-      assert.notEqual(canArchiveBranch(stubBranch({ type: 'HEAD_OFFICE' }), 1), null);
+    it('blocks deactivating the only head office', () => {
+      assert.equal(
+        canLeaveActiveBranch(stubBranch({ type: 'HEAD_OFFICE' }), 1, 3)?.code,
+        'branch_head_office_required',
+      );
     });
-    it('allows archiving one of multiple head offices', () => {
-      assert.equal(canArchiveBranch(stubBranch({ type: 'HEAD_OFFICE' }), 2), null);
+    it('allows deactivating one of multiple head offices', () => {
+      assert.equal(canLeaveActiveBranch(stubBranch({ type: 'HEAD_OFFICE' }), 2, 3), null);
+    });
+    it('blocks deactivating the last active branch even with no head office involved', () => {
+      // The company whose only branch is type BRANCH is invisible to the head-office rule.
+      assert.equal(
+        canLeaveActiveBranch(stubBranch({ type: 'BRANCH' }), 0, 1)?.code,
+        'branch_last_active_required',
+      );
+    });
+    it('reports the head-office rule first when both would refuse', () => {
+      assert.equal(
+        canLeaveActiveBranch(stubBranch({ type: 'HEAD_OFFICE' }), 1, 1)?.code,
+        'branch_head_office_required',
+      );
     });
   });
 

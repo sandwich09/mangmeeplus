@@ -329,6 +329,12 @@ Coverage is calculated from current active branches and membership scope:
 
 With no active branches, an active eligible holder makes the company-central route COMPLETE.
 
+> **Owner decision 2026-08-31 (D3):** for a customer company that state is no longer reachable — a
+> company always keeps one undeletable ACTIVE head office, and branch administration now refuses any
+> transition that would leave zero active branches. The rule above is retained because it still
+> describes the platform tenant, which holds no branch rows at all. Do not build customer-facing
+> behaviour on the assumption that a customer company can have no active branch.
+
 ### 6.3 Revalidation points
 
 Options load, policy save/reactivation, submission, queue read, mutation transaction, notification recipient resolution, task creation, and SLA scan use the same routing service and current security facts.
