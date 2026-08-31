@@ -1,7 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { AppConfigService } from '../../../common/config/app-config.service';
-import type { AccountClaimEmailInput, AuthEmailLinkInput, AuthMailerPort } from '../domain/ports/auth-mailer.port';
+import type {
+  AccountClaimEmailInput, AuthEmailLinkInput, AuthMailerPort, SignupRejectionEmailInput,
+} from '../domain/ports/auth-mailer.port';
 import { renderAccountClaimEmail } from './account-claim-email.template';
+import { renderSignupRejectionEmail } from './signup-rejection-email.template';
 
 @Injectable()
 export class LocalConsoleAuthMailerAdapter implements AuthMailerPort {
@@ -25,20 +28,34 @@ export class LocalConsoleAuthMailerAdapter implements AuthMailerPort {
 
   // Renders the same Owner-locked copy SES sends, so a local run shows the real letter rather
   // than a field dump — the subject and body here and in production come from one module.
-  async sendAccountClaim(input: AccountClaimEmailInput): Promise<void> {
+  async sendAccountClaim(input: AccountClaimEmailInput): Promise<string | null> {
     const claimUrl = this.buildUrl('/claim-account', input.rawToken);
     const rendered = renderAccountClaimEmail({
       companyName: input.companyName,
       toEmail: input.toEmail,
       expiresAt: input.expiresAt,
       claimUrl,
-      lineOaAddUrl: input.lineOaAddUrl,
     });
     console.info('[auth-mailer] account_claim', {
       toEmail: input.toEmail,
       companyName: input.companyName,
       expiresAt: input.expiresAt.toISOString(),
       claimUrl,
+      subject: rendered.subject,
+      body: rendered.text,
+    });
+    // No provider, so no message id — the bounce feedback path is SES-only (spec §4D).
+    return null;
+  }
+
+  async sendSignupRejection(input: SignupRejectionEmailInput): Promise<void> {
+    const rendered = renderSignupRejectionEmail({
+      companyName: input.companyName,
+      ...(input.reason ? { reason: input.reason } : {}),
+    });
+    console.info('[auth-mailer] signup_rejection', {
+      toEmail: input.toEmail,
+      companyName: input.companyName,
       subject: rendered.subject,
       body: rendered.text,
     });

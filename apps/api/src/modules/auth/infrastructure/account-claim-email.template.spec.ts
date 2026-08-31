@@ -5,13 +5,16 @@ import {
   accountClaimLogoUrl,
   renderAccountClaimEmail,
 } from './account-claim-email.template';
+import {
+  SIGNUP_REJECTION_SUBJECT,
+  renderSignupRejectionEmail,
+} from './signup-rejection-email.template';
 
 const INPUT = {
   companyName: 'ร้านมั่งมี',
   toEmail: 'somchai@example.com',
   expiresAt: new Date('2026-09-03T10:00:00.000Z'),
   claimUrl: 'https://app.mangmeeplus.com/claim-account?token=abc123',
-  lineOaAddUrl: 'https://lin.ee/mangmee',
 };
 
 describe('account claim email copy', () => {
@@ -54,8 +57,6 @@ describe('account claim email copy', () => {
       '[ เข้าสู่ระบบ ]',
       '[ บัญชีสำหรับเข้าใช้งานร้าน ร้านมั่งมี ]',
       '[ หมายเหตุ ]',
-      '[ เชื่อมบัญชี LINE ]',
-      '[ สิทธิพิเศษสำหรับท่าน ]',
       'ขอแสดงความนับถือ',
       'บริษัท มั่งมียั่งยืน จำกัด',
       'โทร. 098-256-5628',
@@ -83,12 +84,13 @@ describe('account claim email copy', () => {
     assert.match(text, /หมดอายุ .*17:00 น\./);
   });
 
-  it('lists the PRO trial entitlements the Owner locked', () => {
+  it('carries neither the trial-benefits block nor the LINE invitation (Owner order 2026-08-31)', () => {
     const { text, html } = renderAccountClaimEmail(INPUT);
-    assert.ok(text.includes('แพ็กเกจ PRO ทดลองใช้ฟรี 30 วัน'));
-    for (const benefit of ['5 สาขา', 'พนักงาน 10 คน', 'อ่านสลิปอัตโนมัติ 100 ใบ/เดือน', 'บันทึกค่าใช้จ่ายและใบเสร็จครบวงจร']) {
-      assert.ok(text.includes(benefit), `missing benefit: ${benefit}`);
-      assert.ok(html.includes(benefit), `missing benefit in html: ${benefit}`);
+    const body = `${text}\n${html}`;
+    // Package terms and the LINE step are communicated in-app, never by email. Guard both blocks
+    // against quietly coming back.
+    for (const banned of ['สิทธิพิเศษ', 'ทดลองใช้ฟรี', 'เชื่อมบัญชี LINE', 'เพิ่มเพื่อน LINE']) {
+      assert.equal(body.includes(banned), false, `banned copy present: ${banned}`);
     }
   });
 
@@ -98,14 +100,6 @@ describe('account claim email copy', () => {
     assert.ok(html.includes('หากปุ่มเปิดไม่ได้'));
     assert.equal(html.split(INPUT.claimUrl).length - 1, 2, 'link appears as href and as fallback text');
     assert.ok(text.includes(INPUT.claimUrl));
-  });
-
-  it('drops the add-friend line rather than failing when no OA link is configured', () => {
-    const { text, html } = renderAccountClaimEmail({ ...INPUT, lineOaAddUrl: '' });
-    // The section survives — the in-app LINE step still happens — but the dead link does not.
-    assert.ok(text.includes('[ เชื่อมบัญชี LINE ]'));
-    assert.equal(text.includes('เพิ่มเพื่อน LINE มั่งมีพลัส:'), false);
-    assert.equal(html.includes('เพิ่มเพื่อน LINE มั่งมีพลัส'), false);
   });
 
   it('escapes a company name that contains markup', () => {
@@ -127,5 +121,94 @@ describe('account claim email copy', () => {
 
     assert.equal(renderAccountClaimEmail(INPUT).html.includes('<img'), false);
     assert.ok(renderAccountClaimEmail({ ...INPUT, logoUrl: 'https://cdn.example.com/logo.png' }).html.includes('<img'));
+  });
+});
+
+/**
+ * The rejection notice is the other letter this flow can send, and it shares this file's rules and
+ * signature block. Covered here rather than in a file of its own because `apps/api/package.json`'s
+ * test list is explicit — an unregistered spec would silently never run.
+ */
+describe('signup rejection email copy', () => {
+  const REJECT = { companyName: 'ร้านมั่งมี' };
+
+  it('uses the Owner-locked subject', () => {
+    assert.equal(SIGNUP_REJECTION_SUBJECT, 'ผลการพิจารณาคำขอสมัครใช้งานมั่งมีพลัส (MangmeePlus)');
+    assert.equal(renderSignupRejectionEmail(REJECT).subject, SIGNUP_REJECTION_SUBJECT);
+  });
+
+  it('never prints a plus sign in customer-facing copy', () => {
+    const { subject, text, html } = renderSignupRejectionEmail({ ...REJECT, reason: 'ข้อมูลไม่ครบ' });
+    assert.equal(subject.includes('+'), false);
+    assert.equal(text.includes('+'), false);
+    assert.equal(html.includes('+'), false);
+  });
+
+  it('thanks the applicant, states the outcome, and invites a conversation', () => {
+    const { text } = renderSignupRejectionEmail(REJECT);
+    for (const section of [
+      'เรียน ผู้สมัครใช้งานระบบมั่งมีพลัส',
+      'ขอขอบพระคุณ',
+      'ร้านมั่งมี',
+      '[ ผลการพิจารณา ]',
+      'ยังไม่ได้รับการอนุมัติในรอบนี้',
+      '[ หากต้องการพูดคุยเพิ่มเติม ]',
+      'โทร. 098-256-5628',
+      'contact@mangmeeplus.com',
+      'ขอแสดงความนับถือ',
+    ]) {
+      assert.ok(text.includes(section), `missing section: ${section}`);
+    }
+  });
+
+  it('includes the admin paragraph only when one was written', () => {
+    const withReason = renderSignupRejectionEmail({ ...REJECT, reason: 'เอกสารทะเบียนยังไม่ครบ' });
+    assert.ok(withReason.text.includes('[ ข้อมูลเพิ่มเติมจากทีมงาน ]'));
+    assert.ok(withReason.text.includes('เอกสารทะเบียนยังไม่ครบ'));
+    assert.ok(withReason.html.includes('เอกสารทะเบียนยังไม่ครบ'));
+
+    for (const reason of [undefined, '', '   ', '\n\n']) {
+      const bare = renderSignupRejectionEmail({ ...REJECT, ...(reason === undefined ? {} : { reason }) });
+      assert.equal(bare.text.includes('ข้อมูลเพิ่มเติมจากทีมงาน'), false, `reason=${JSON.stringify(reason)}`);
+      assert.equal(bare.html.includes('ข้อมูลเพิ่มเติมจากทีมงาน'), false, `reason=${JSON.stringify(reason)}`);
+    }
+  });
+
+  it('keeps a multi-line reason as separate paragraphs', () => {
+    const { text, html } = renderSignupRejectionEmail({ ...REJECT, reason: 'บรรทัดหนึ่ง\n\nบรรทัดสอง' });
+    assert.ok(text.includes('บรรทัดหนึ่ง\nบรรทัดสอง'));
+    assert.equal((html.match(/บรรทัด/g) ?? []).length, 2);
+  });
+
+  it('renders the same signature block as the claim email', () => {
+    const { html, text } = renderSignupRejectionEmail(REJECT);
+    assert.ok(html.includes('<strong style="color:#17352b">บริษัท มั่งมียั่งยืน จำกัด</strong>'));
+    assert.ok(html.includes('>official.mangmeeplus.com</a>'));
+    assert.ok(!html.includes('>https://official.mangmeeplus.com</a>'));
+    assert.ok(text.includes('เว็บไซต์ https://official.mangmeeplus.com'));
+    assert.ok(text.includes('ให้ธุรกิจของคุณ มั่งมี ไปด้วยกัน'));
+  });
+
+  it('carries no link, no token and no password — it closes a request, it opens nothing', () => {
+    const { text, html } = renderSignupRejectionEmail({ ...REJECT, reason: 'ข้อมูลไม่ครบ' });
+    const body = `${text}\n${html}`;
+    assert.equal(/claim-account|reset-password|token=/.test(body), false);
+    assert.equal(body.includes('รหัสผ่าน'), false);
+    assert.equal(body.includes('QR'), false);
+  });
+
+  it('escapes markup in the company name and in the admin paragraph', () => {
+    const { html } = renderSignupRejectionEmail({
+      companyName: 'ร้าน <script>alert(1)</script>',
+      reason: '<img onerror=x>',
+    });
+    assert.equal(html.includes('<script>'), false);
+    assert.equal(html.includes('<img onerror'), false);
+    assert.ok(html.includes('&lt;script&gt;'));
+  });
+
+  it('shows the masthead only when an HTTPS logo is configured', () => {
+    assert.equal(renderSignupRejectionEmail(REJECT).html.includes('<img'), false);
+    assert.ok(renderSignupRejectionEmail({ ...REJECT, logoUrl: 'https://cdn.example.com/logo.png' }).html.includes('<img'));
   });
 });

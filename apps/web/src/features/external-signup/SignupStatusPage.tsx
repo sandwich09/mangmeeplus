@@ -49,7 +49,7 @@ export default function SignupStatusPage({ requestId }: { requestId: string }) {
     }
   };
 
-  const copy = status ? signupStatusCopy(status.status) : null;
+  const copy = status ? signupStatusCopy(status.status, status.canResendClaim) : null;
 
   return (
     <div className="min-h-dvh bg-gray-50">

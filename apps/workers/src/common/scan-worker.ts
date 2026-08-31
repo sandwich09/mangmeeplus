@@ -1,5 +1,6 @@
 import { Worker, type Job } from 'bullmq';
 import { workerLog } from './log.js';
+import { postInternal, throwIfNotOk } from './internal-api.js';
 import { attachDeadLetterQueue, createQueue, defaultJobOptions } from './queue.js';
 
 export function startScanWorker<T>(opts: {
@@ -57,15 +58,6 @@ async function scheduleScan(opts: {
 }
 
 async function callInternal(path: string): Promise<void> {
-  const apiBase = process.env['INTERNAL_API_URL'] ?? 'http://localhost:3001/v1';
-  const workerToken = process.env['WORKER_INTERNAL_TOKEN'] ?? '';
-  const res = await fetch(`${apiBase}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Worker-Token': workerToken },
-    body: '{}',
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`Scan endpoint returned ${res.status}: ${body.slice(0, 200)}`);
-  }
+  const res = await postInternal(path);
+  if (res) await throwIfNotOk(res, 'Scan endpoint');
 }

@@ -12,6 +12,10 @@ const PUBLIC_SIGNUP_READ_MAX_PER_IP = 60;
 const PUBLIC_SIGNUP_RESEND_MAX_PER_IP = 10;
 const PUBLIC_SIGNUP_RESEND_MAX_PER_REQUEST = 3;
 const PUBLIC_SIGNUP_CLAIM_MAX_PER_IP = 20;
+// SES publishes one event per send (delivery as well as bounce/complaint) and SNS delivers them
+// from a small pool of AWS addresses, so this bucket sits far above the applicant-facing ones —
+// it exists to bound an unsigned flood, not to shape legitimate AWS traffic.
+const SES_EVENTS_MAX_PER_IP = 600;
 
 @Injectable()
 export class AuthRateLimitService {
@@ -149,6 +153,11 @@ export class AuthRateLimitService {
   /** Claim submission carries a password, so it gets its own bucket separate from the reads. */
   async assertSignupClaimSubmitAllowed(ipAddress: string): Promise<void> {
     await this.assertWithinLimit('public-signup-claim-ip', ipAddress, PUBLIC_SIGNUP_CLAIM_MAX_PER_IP, PUBLIC_SIGNUP_WINDOW_SECONDS);
+  }
+
+  /** SNS callbacks for SES delivery/bounce/complaint events (external-signup spec §4D). */
+  async assertSesEventsAllowed(ipAddress: string): Promise<void> {
+    await this.assertWithinLimit('ses-events-ip', ipAddress, SES_EVENTS_MAX_PER_IP, PUBLIC_SIGNUP_WINDOW_SECONDS);
   }
 
   async assertCustomerRegisterAllowed(ipAddress: string, lineChannelId: string): Promise<void> {

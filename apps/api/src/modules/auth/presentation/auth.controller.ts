@@ -42,6 +42,7 @@ import { IssueTokenUseCase } from '../application/use-cases/issue-token.use-case
 import { ExchangeLineTokenUseCase } from '../application/use-cases/exchange-line-token.use-case';
 import { LineLoginCallbackUseCase } from '../application/use-cases/line-login-callback.use-case';
 import { LineLinkOauthUseCase } from '../application/use-cases/line-link-oauth.use-case';
+import { AccountMergeUseCase } from '../application/use-cases/account-merge.use-case';
 import { CreateLineWebLoginTransactionUseCase } from '../application/use-cases/create-line-web-login-transaction.use-case';
 import { ApproveLineWebLoginTransactionUseCase } from '../application/use-cases/approve-line-web-login-transaction.use-case';
 import { RedeemLineWebLoginTransactionUseCase } from '../application/use-cases/redeem-line-web-login-transaction.use-case';
@@ -82,6 +83,12 @@ class LineLoginCallbackDto {
   @IsString() @Matches(/^[\w.-]{10,512}$/) code!: string;
   @IsString() @Matches(/^[A-Za-z0-9\-._~]{43,128}$/) codeVerifier!: string;
   @IsString() @Matches(/^[A-Za-z0-9_-]{16,256}$/) nonce!: string;
+}
+
+// Spec §4F: 32 random bytes rendered base64url (secure-token.logic.ts). Bounded so a hostile body
+// cannot reach the hash function with something the size of a payload.
+class AccountMergeDto {
+  @IsString() @Matches(/^[A-Za-z0-9_-]{40,128}$/) ticket!: string;
 }
 
 // P12-3a: both halves are 24 random bytes rendered base64url; the bound keeps a hostile body from
@@ -203,6 +210,7 @@ export class AuthController {
     private readonly legalAcceptance: LegalAcceptanceService,
     private readonly lineLoginCallbackUseCase: LineLoginCallbackUseCase,
     private readonly lineLinkOauthUseCase: LineLinkOauthUseCase,
+    private readonly accountMergeUseCase: AccountMergeUseCase,
     private readonly createLineWebLoginTransaction: CreateLineWebLoginTransactionUseCase,
     private readonly approveLineWebLoginTransaction: ApproveLineWebLoginTransactionUseCase,
     private readonly redeemLineWebLoginTransaction: RedeemLineWebLoginTransactionUseCase,
@@ -533,6 +541,26 @@ export class AuthController {
       nonce: dto.nonce,
       requestId: req.context.requestId,
       ...(headerCompanyId ? { companyId: headerCompanyId } : {}),
+    });
+  }
+
+  // Spec §4F "รวมเข้าบัญชีเดิม". The ticket only exists because this same session already proved
+  // control of the other account's LINE identity, so no extra permission gates it — every account
+  // may merge itself away. The response is a session for the *existing* account.
+  @Post('account-merge')
+  @HttpCode(200)
+  @RequirePermissions('account.identity.link')
+  @ApiOperation({ summary: 'Merge this account into the one that owns the conflicting LINE identity (spec §4F)' })
+  @ApiBody({ type: AccountMergeDto })
+  @ApiResponse({ status: 200, description: 'Accounts merged; tokens are for the existing account' })
+  @ApiResponse({ status: 403, description: 'Ticket belongs to another session' })
+  @ApiResponse({ status: 409, description: 'Ticket expired, already running, or target unavailable' })
+  async accountMerge(@Body() dto: AccountMergeDto, @Req() req: Request & { context: RequestContext }) {
+    await this.authRateLimit.assertLineLoginCallbackAllowed(trustedClientIp(req));
+    return this.accountMergeUseCase.execute({
+      userId: req.context.userId,
+      ticket: dto.ticket,
+      requestId: req.context.requestId,
     });
   }
 

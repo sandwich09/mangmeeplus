@@ -16,6 +16,7 @@ function harness(options: { replayed?: boolean; state?: string; mx?: 'ok' | 'emp
   const updates: any[] = [];
   const advances: any[] = [];
   const lookups: string[] = [];
+  const announced: string[] = [];
 
   const prisma = {
     client: { companySignupRequest: { update: async (args: any) => { updates.push(args); return {}; } } },
@@ -37,7 +38,13 @@ function harness(options: { replayed?: boolean; state?: string; mx?: 'ok' | 'emp
     return [{ exchange: 'mx.example.com', priority: 10 }];
   };
 
-  return { useCase: new SubmitCompanySignupUseCase(prisma, core, mxResolver), updates, advances, lookups };
+  // Item 1: the admin announcement is one outbox append, so a dead LINE OA cannot fail a submit.
+  const adminNotify = { enqueue: async (id: string) => { announced.push(id); } } as any;
+
+  return {
+    useCase: new SubmitCompanySignupUseCase(prisma, core, adminNotify, mxResolver),
+    updates, advances, lookups, announced,
+  };
 }
 
 describe('SubmitCompanySignupUseCase', () => {
@@ -53,6 +60,8 @@ describe('SubmitCompanySignupUseCase', () => {
       { id: 'signup-1', state: 'VALIDATED' },
       { id: 'signup-1', state: 'PENDING_REVIEW' },
     ]);
+    // Spec §4C: reaching the queue is what the operators have to hear about.
+    assert.deepEqual(h.announced, ['signup-1']);
   });
 
   it('rejects a domain that accepts no mail, and queues nothing', async () => {
@@ -66,6 +75,7 @@ describe('SubmitCompanySignupUseCase', () => {
       // The failed check is recorded, but the application never reaches an admin.
       assert.equal(h.updates[0].data.mxValid, false);
       assert.deepEqual(h.advances, []);
+      assert.deepEqual(h.announced, [], 'nothing reached an admin, so nobody is told');
     }
   });
 
@@ -87,6 +97,7 @@ describe('SubmitCompanySignupUseCase', () => {
     assert.deepEqual(h.lookups, []);
     assert.deepEqual(h.updates, []);
     assert.deepEqual(h.advances, []);
+    assert.deepEqual(h.announced, [], 'a resubmit must not announce the same application twice');
   });
 
   it('finishes a replay that never got past RECEIVED', async () => {

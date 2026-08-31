@@ -16,12 +16,6 @@ export type AccountClaimCopyInput = Readonly<{
   expiresAt: Date;
   /** Fully-built claim URL. The caller owns URL policy (SES demands HTTPS; local console does not). */
   claimUrl: string;
-  /**
-   * Central OA add-friend link — never a personal token (LINE-ONBOARD-01). Empty when the OA link
-   * is not configured: the add-friend line is then dropped rather than the send failing, because
-   * this is the applicant's only email and the in-app LINE step still happens after they claim.
-   */
-  lineOaAddUrl: string;
   /** Optional masthead image, only ever an HTTPS URL. See `accountClaimLogoUrl()`. */
   logoUrl?: string;
 }>;
@@ -37,12 +31,9 @@ const COMPANY_SITE = 'https://official.mangmeeplus.com';
 const COMPANY_SITE_LABEL = 'official.mangmeeplus.com';
 const COMPANY_TAGLINE = 'ให้ธุรกิจของคุณ มั่งมี ไปด้วยกัน';
 
-const TRIAL_BENEFITS = [
-  '5 สาขา',
-  'พนักงาน 10 คน',
-  'อ่านสลิปอัตโนมัติ 100 ใบ/เดือน',
-  'บันทึกค่าใช้จ่ายและใบเสร็จครบวงจร',
-] as const;
+// Owner order 2026-08-31: the trial-benefits block and the LINE-invitation block were removed from
+// this letter on purpose — package terms and the LINE step are communicated in-app, never by email.
+// Do not re-add either section here.
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => ({
@@ -95,14 +86,6 @@ export function renderAccountClaimEmail(input: AccountClaimCopyInput): RenderedE
     'รหัสผ่านนี้ใช้สำหรับเข้าเว็บมั่งมีพลัส ไม่ใช่รหัสผ่านของ LINE',
     `หากมีข้อสงสัย ติดต่อ ${SUPPORT_EMAIL}`,
     '',
-    '[ เชื่อมบัญชี LINE ]',
-    'หลังตั้งรหัสผ่านเรียบร้อย ระบบจะชวนท่านเชื่อมบัญชี LINE เพื่อใช้งานผ่านแชตได้สะดวกขึ้น',
-    ...(input.lineOaAddUrl ? [`เพิ่มเพื่อน LINE มั่งมีพลัส: ${input.lineOaAddUrl}`] : []),
-    '',
-    '[ สิทธิพิเศษสำหรับท่าน ]',
-    'แพ็กเกจ PRO ทดลองใช้ฟรี 30 วัน',
-    TRIAL_BENEFITS.join(' · '),
-    '',
     'ขอแสดงความนับถือ',
     COMPANY_LEGAL_NAME,
     COMPANY_PHONE,
@@ -118,10 +101,6 @@ function renderHtml(input: AccountClaimCopyInput, expires: string): string {
   const masthead = input.logoUrl
     ? `<p style="margin:0 0 20px"><img src="${escapeHtml(input.logoUrl)}" alt="มั่งมีพลัส" height="40" style="height:40px;max-width:100%;border:0"></p>`
     : '';
-  const benefits = TRIAL_BENEFITS
-    .map((benefit) => `<li style="margin:0 0 6px">${escapeHtml(benefit)}</li>`)
-    .join('');
-
   return `<!doctype html><html lang="th"><body style="margin:0;background:#f4f7f5;color:#17352b;font-family:Arial,sans-serif">`
     + `<main style="max-width:600px;margin:0 auto;padding:32px 20px">`
     + `<section style="background:#fff;border-radius:16px;padding:28px;font-size:17px;line-height:1.7">`
@@ -141,14 +120,6 @@ function renderHtml(input: AccountClaimCopyInput, expires: string): string {
     + `<li style="margin:0 0 6px">รหัสผ่านนี้ใช้สำหรับเข้าเว็บมั่งมีพลัส ไม่ใช่รหัสผ่านของ LINE</li>`
     + `<li style="margin:0 0 6px">หากมีข้อสงสัย ติดต่อ <a href="mailto:${SUPPORT_EMAIL}" style="color:#13795b">${SUPPORT_EMAIL}</a></li>`
     + `</ul>`
-    + section('เชื่อมบัญชี LINE')
-    + `<p style="margin:0 0 ${input.lineOaAddUrl ? '8px' : '20px'}">หลังตั้งรหัสผ่านเรียบร้อย ระบบจะชวนท่านเชื่อมบัญชี LINE เพื่อใช้งานผ่านแชตได้สะดวกขึ้น</p>`
-    + (input.lineOaAddUrl
-      ? `<p style="margin:0 0 20px"><a href="${escapeHtml(input.lineOaAddUrl)}" style="color:#13795b;font-weight:700">เพิ่มเพื่อน LINE มั่งมีพลัส</a></p>`
-      : '')
-    + section('สิทธิพิเศษสำหรับท่าน')
-    + `<p style="margin:0 0 8px">แพ็กเกจ PRO ทดลองใช้ฟรี 30 วัน</p>`
-    + `<ul style="margin:0 0 20px;padding-left:20px">${benefits}</ul>`
     + `<p style="margin:24px 0 0;color:#53665f;font-size:15px">ขอแสดงความนับถือ<br><strong style="color:#17352b">${COMPANY_LEGAL_NAME}</strong><br>${COMPANY_PHONE}<br>`
     + `เว็บไซต์ <a href="${COMPANY_SITE}" style="color:#13795b;font-weight:700;text-decoration:none">${COMPANY_SITE_LABEL}</a><br>${COMPANY_TAGLINE}</p>`
     + `</section></main></body></html>`;

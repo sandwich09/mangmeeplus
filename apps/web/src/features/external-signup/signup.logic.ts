@@ -15,6 +15,7 @@ export const SIGNUP_CONSENT_VERSION =
   `terms-${CURRENT_LEGAL_DOCUMENTS.terms.version}-privacy-${CURRENT_LEGAL_DOCUMENTS.privacy.version}`;
 
 export const SIGNUP_SUPPORT_PHONE = '098-256-5628';
+export const SIGNUP_SUPPORT_EMAIL = 'contact@mangmeeplus.com';
 
 // ── Offer cards (spec §3A, Billing §8 catalog 2026-08-30) ──
 
@@ -159,7 +160,25 @@ const STATUS_COPY: Record<PublicSignupStatusKey, SignupStatusCopy> = {
   },
 };
 
-export function signupStatusCopy(status: PublicSignupStatusKey): SignupStatusCopy {
+/**
+ * Spec §4D ④: 30 days after approval the request is swept out of the main queue and the applicant
+ * can no longer resend to themselves. The approval still stands and an admin can always reissue, so
+ * this says who to call — it never tells them to apply again.
+ */
+const EXPIRED_NEEDS_STAFF_COPY: SignupStatusCopy = {
+  title: 'คำขอหมดอายุแล้ว',
+  body: `คำขอหมดอายุ ติดต่อ ${SIGNUP_SUPPORT_PHONE} หรืออีเมล ${SIGNUP_SUPPORT_EMAIL} เพื่อเปิดใช้อีกครั้ง`,
+  tone: 'warning',
+};
+
+export function signupStatusCopy(
+  status: PublicSignupStatusKey,
+  /** From `PublicSignupStatusDto.canResendClaim`. Default keeps the self-serve wording. */
+  canResendClaim = true,
+): SignupStatusCopy {
+  // Without this the page kept offering "กดขอลิงก์ใหม่ได้เลย" next to a button that is no longer
+  // rendered — the one state where the honest answer is a phone number.
+  if (status === 'EXPIRED' && !canResendClaim) return EXPIRED_NEEDS_STAFF_COPY;
   return STATUS_COPY[status] ?? STATUS_COPY.CHECKING;
 }
 

@@ -206,6 +206,15 @@ if [ "$EMAIL_PROVIDER_INPUT" = ses ] && [ -z "$SES_FROM_ADDRESS_INPUT" ]; then
     echo "ERROR: SES_FROM_ADDRESS is required when EMAIL_PROVIDER=ses" >&2; exit 2
   fi
 fi
+# Bounce/complaint feedback (spec §4D): both ride the ses provider gate. Empty values keep todays
+# behaviour exactly — sends carry no configuration set and /v1/public/ses-events refuses everything
+# (fail closed), so production stays inert until its email round is activated above.
+SES_CONFIGURATION_SET_VALUE="${SES_CONFIGURATION_SET:-}"
+SES_EVENTS_TOPIC_ARN_VALUE="${SES_EVENTS_TOPIC_ARN:-}"
+if [ "$EMAIL_PROVIDER_INPUT" = ses ]; then
+  SES_CONFIGURATION_SET_VALUE="${SES_CONFIGURATION_SET_VALUE:-mangmee-transactional}"
+  SES_EVENTS_TOPIC_ARN_VALUE="${SES_EVENTS_TOPIC_ARN_VALUE:-arn:aws:sns:${SES_REGION_INPUT}:311414082667:mangmee-ses-events}"
+fi
 case "$LINE_AI_FUSED_PLAN_SHADOW_ENABLED_INPUT" in true|false) ;; *)
   echo "ERROR: LINE_AI_FUSED_PLAN_SHADOW_ENABLED must be exactly true or false" >&2; exit 2 ;;
 esac
@@ -1539,6 +1548,8 @@ api_container_json() {
     --arg sesRegion "$SES_REGION_INPUT" \
     --arg sesFromAddress "$SES_FROM_ADDRESS_INPUT" \
     --arg emailLogoUrl "${EMAIL_LOGO_URL:-${public_web_url}/brand/logo-mangmeeyangyuen.png}" \
+    --arg sesConfigurationSet "$SES_CONFIGURATION_SET_VALUE" \
+    --arg sesEventsTopicArn "$SES_EVENTS_TOPIC_ARN_VALUE" \
     --arg lineAiFusedPlanShadowEnabled "$SERVING_LINE_AI_FUSED_PLAN_SHADOW_ENABLED" \
     --arg lineAiPreparedSimpleReadEnabled "$SERVING_LINE_AI_PREPARED_SIMPLE_READ_ENABLED" \
     --arg crmAiMinConfidence "${CRM_AI_MIN_CONFIDENCE:-0.7}" \
@@ -1628,6 +1639,8 @@ api_container_json() {
         {name:"SES_REGION", value:$sesRegion},
         {name:"SES_FROM_ADDRESS", value:$sesFromAddress},
         {name:"EMAIL_LOGO_URL", value:$emailLogoUrl},
+        {name:"SES_CONFIGURATION_SET", value:$sesConfigurationSet},
+        {name:"SES_EVENTS_TOPIC_ARN", value:$sesEventsTopicArn},
         {name:"LINE_AI_FUSED_PLAN_SHADOW_ENABLED", value:$lineAiFusedPlanShadowEnabled},
         {name:"LINE_AI_PREPARED_SIMPLE_READ_ENABLED", value:$lineAiPreparedSimpleReadEnabled},
         {name:"WATCHDOG_JWT_ISSUER", value:$publicWebUrl},

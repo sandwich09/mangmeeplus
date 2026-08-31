@@ -447,9 +447,11 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
               )}
               {/* Owner UAT round 1: the welcome page was the only LINE-link entry; a user who skips
                   it had no way back. Full navigation (not a client Link) — the BFF start route
-                  302s to LINE and must own the request. */}
+                  302s to LINE and must own the request. returnTo is the welcome page rather than
+                  the current path because that is the only page carrying the spec §4F merge
+                  dialog: a conflict has to land where the user can answer it. */}
               <a
-                href={`/api/auth/line-login/start?returnTo=${encodeURIComponent(pathname || '/')}`}
+                href={`/api/auth/line-login/start?returnTo=${encodeURIComponent('/signup/welcome')}`}
                 className="block w-full px-4 py-3 text-left text-sm font-medium text-gray-700 hover:bg-brand-25 hover:text-brand-700"
                 onClick={() => setUserMenuOpen(false)}
               >
