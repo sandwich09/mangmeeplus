@@ -84,11 +84,13 @@ export const CASUAL_CONVERSATION_SYSTEM_PROMPT = [
   'Return only the reply text in the user language: no preamble, quotes, markdown fences, JSON, or raw URL.',
 ].join('\n');
 
-// Owner 2026-08-30 (hybrid bank): the model draws from the curated bank FIRST and only improvises
-// when nothing fits. Appended ONLY to a turn that actually asks for a joke — an ordinary casual
-// turn must not pay for ~30 extra lines of prompt. Built once at module load, not per turn.
+// Owner 2026-08-31 (50/50 hybrid, supersedes the bank-first order of 2026-08-30): when the moment
+// carries real material, the model COMPOSES a fresh joke from it — the bank is the tone and quality
+// bar; a cold, material-less ask draws from the bank. Appended ONLY to a turn that actually asks
+// for a joke — an ordinary casual turn must not pay for ~30 extra lines of prompt. Built once at
+// module load, not per turn.
 const JOKE_BANK_SECTION = [
-  'Joke bank — pick ONE that fits the moment, adapt wording lightly, never repeat one already used in conversationContext, improvise in the same register only if none fits:',
+  'Joke bank — hybrid: when the conversation or the ask gives you real material (their day, a theme in conversationContext, a fandom vibe), COMPOSE a fresh joke from that moment; the bank below is your tone and quality bar. When the ask is plain with nothing to riff on, pick ONE from the bank that fits and adapt its wording lightly. Either way never repeat a joke already used in conversationContext, and a composed joke obeys every bank rule: everyday Thai that lands instantly, warm, no nerd or statistics humour, no real person, group, show, or brand name:',
   ...MANGMEE_JOKE_BANK.map((joke) => `${joke.id}: ${joke.text}`),
 ].join('\n');
 
@@ -243,6 +245,34 @@ export function featureDisabledReply(toolNames: readonly string[], language: str
  *  ไข่มุก (bubble tea pearls) is the one everyday word that would otherwise match มุก. */
 export function isJokeRequest(messageText: string): boolean {
   return /มุข|มุก|ตลก|ขำ|ฮา|joke/iu.test(messageText.replace(/ไข่มุก/gu, ''));
+}
+
+/**
+ * Strict form for the orchestrator's refusal-rescue ONLY: it must match a sentence that ASKS for a
+ * joke, never a business sentence that merely contains a joke-ish substring. Thai has no word
+ * boundaries, so the loose test above reads มุกดาหาร (the province), ฮาร์ดแวร์, ฮานอย and the given
+ * name ขำ as jokes — harmless when it only picks a system prompt, wrong when it can flip an
+ * out-of-scope refusal into a punchline (probe run 2026-08-31, see orchestrator spec). ไข่มุก and
+ * มุกดา* are stripped first; every alternative then anchors a request verb or a joke-noun phrase.
+ */
+export function isExplicitJokeAsk(messageText: string): boolean {
+  const text = messageText.replace(/ไข่มุก/gu, '').replace(/มุกดา(?:หาร)?/gu, '');
+  return new RegExp(
+    [
+      '(?:ขอ|เล่า|เล่น|มี|ฟัง|อยากฟัง)\\s*มุ[ขก]',
+      'มุ[ขก]\\s*(?:ตลก|ขำ|ฮา|หน่อย|ใหม่|มา|ให้ฟัง)',
+      'อีกมุ[ขก]',
+      '(?:ขอ|เล่า|มี|พูด|อยากฟัง)\\s*(?:เรื่อง|อะไร)?\\s*ตลก',
+      'ตลก\\s*(?:หน่อย|ให้ฟัง|มา)',
+      '(?:เรื่อง|อะไร)\\s*ขำ',
+      'ขำ\\s*ๆ',
+      'ขำขำ',
+      'อะไร\\s*ฮา',
+      'ฮา\\s*(?:หน่อย|ๆ\\s*หน่อย)',
+      '\\bjokes?\\b',
+    ].join('|'),
+    'iu',
+  ).test(text);
 }
 
 function isProductRecommendationQuestion(messageText: string): boolean {

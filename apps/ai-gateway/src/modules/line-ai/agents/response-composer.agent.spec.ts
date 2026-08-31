@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { CASUAL_CONVERSATION_SYSTEM_PROMPT, ResponseComposerAgent, isJokeRequest } from './response-composer.agent';
+import { CASUAL_CONVERSATION_SYSTEM_PROMPT, ResponseComposerAgent, isExplicitJokeAsk, isJokeRequest } from './response-composer.agent';
 import { MANGMEE_JOKE_BANK } from './mangmee-joke-bank';
 import type { IModelProvider, ProviderOutput } from '../infrastructure/provider/provider.port';
 
@@ -177,6 +177,28 @@ describe('isJokeRequest – gates the bank onto the prompt', () => {
     }
   });
 
+  // The strict form backs the orchestrator's refusal-rescue, where a false positive turns an honest
+  // refusal into a punchline. Probe run 2026-08-31: the loose test reads all five "leak" lines below
+  // as jokes; the strict one must not, while still catching every real ask the loose one catches.
+  it('isExplicitJokeAsk catches every real joke ask', () => {
+    for (const text of [
+      'ขอมุขตลกหน่อย', 'เล่ามุขให้ฟังหน่อย', 'มีมุขตลกไหม', 'เล่นมุขหน่อย', 'อีกมุขนึง', 'ขอมุกหน่อย',
+      'ขอเรื่องตลกหน่อย', 'เล่าอะไรตลกให้ฟังหน่อย', 'ขอเรื่องขำๆ', 'มีอะไรฮาไหม', 'tell me a joke',
+    ]) {
+      assert.equal(isExplicitJokeAsk(text), true, text);
+    }
+  });
+
+  it('isExplicitJokeAsk refuses the Thai substring collisions the loose test leaks', () => {
+    for (const text of [
+      'ส่งของไปมุกดาหารกี่บาท', 'ลูกค้าที่มุกดาหารสั่งของ', 'ราคาฮาร์ดแวร์เท่าไหร่', 'ไปฮานอยยังไง',
+      'พนักงานชื่อขำลาป่วย', 'ขายมุกประดับได้ไหม', 'ชานมไข่มุกเหลือกี่แก้ว',
+      'ค่าใช้จ่ายเดือนนี้เท่าไหร่', 'สวัสดีครับ', 'อากาศวันนี้เป็นไง',
+    ]) {
+      assert.equal(isExplicitJokeAsk(text), false, text);
+    }
+  });
+
   it('appends the bank to the casual prompt ONLY when a joke is asked for', async () => {
     const agent = new ResponseComposerAgent();
     let seen = '';
@@ -187,7 +209,9 @@ describe('isJokeRequest – gates the bank onto the prompt', () => {
       },
     };
     await agent.composeCasual('ขอมุกหน่อย', provider);
-    assert.match(seen, /Joke bank — pick ONE/);
+    assert.match(seen, /Joke bank — hybrid/);
+    // Owner 2026-08-31: composition from the moment is first-class, the bank is the quality bar.
+    assert.match(seen, /COMPOSE a fresh joke/);
     assert.ok(seen.includes(MANGMEE_JOKE_BANK[0]!.text), 'bank entries ride the joke turn');
     await agent.composeCasual('วันนี้อากาศดีนะ', provider);
     assert.equal(seen, CASUAL_CONVERSATION_SYSTEM_PROMPT, 'ordinary casual turns must not pay for the bank');
