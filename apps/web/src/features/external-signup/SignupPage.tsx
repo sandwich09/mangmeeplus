@@ -21,7 +21,8 @@ import {
 
 const EMPTY_FORM: SignupFormValues = {
   companyName: '',
-  ownerDisplayName: '',
+  ownerFirstName: '',
+  ownerLastName: '',
   contactEmail: '',
   phoneNumber: '',
   businessType: '',
@@ -149,7 +150,8 @@ export default function SignupPage() {
     const body: PublicCompanySignupBody = {
       externalSignupId,
       companyName: trimmed(values.companyName),
-      ownerDisplayName: trimmed(values.ownerDisplayName),
+      ownerFirstName: trimmed(values.ownerFirstName),
+      ownerLastName: trimmed(values.ownerLastName),
       contactEmail: trimmed(values.contactEmail),
       phoneNumber: values.phoneNumber.replace(/[^0-9]/g, ''),
       ...(trimmed(values.businessType) ? { businessType: trimmed(values.businessType) } : {}),
@@ -211,15 +213,25 @@ export default function SignupPage() {
                   error={fieldErrors.companyName}
                   autoComplete="organization"
                 />
-                <TextField
-                  label="ชื่อผู้ติดต่อ"
-                  name="ownerDisplayName"
-                  hint="ชื่อนี้จะแสดงเป็นชื่อผู้ใช้งานหลักของร้านหลังเข้าสู่ระบบ"
-                  value={values.ownerDisplayName}
-                  onChange={(event) => set('ownerDisplayName', event.target.value)}
-                  error={fieldErrors.ownerDisplayName}
-                  autoComplete="name"
-                />
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-3">
+                  <TextField
+                    label="ชื่อ"
+                    name="ownerFirstName"
+                    value={values.ownerFirstName}
+                    onChange={(event) => set('ownerFirstName', event.target.value)}
+                    error={fieldErrors.ownerFirstName}
+                    autoComplete="given-name"
+                  />
+                  <TextField
+                    label="นามสกุล"
+                    name="ownerLastName"
+                    value={values.ownerLastName}
+                    onChange={(event) => set('ownerLastName', event.target.value)}
+                    error={fieldErrors.ownerLastName}
+                    autoComplete="family-name"
+                  />
+                </div>
+                <p className="-mt-3 text-[13px] leading-6 text-gray-500">ชื่อนี้จะแสดงเป็นชื่อผู้ใช้งานหลักของร้านหลังเข้าสู่ระบบ</p>
                 <TextField
                   label="อีเมล"
                   name="contactEmail"

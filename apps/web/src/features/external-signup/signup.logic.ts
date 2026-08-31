@@ -57,7 +57,8 @@ export const SELECTABLE_OFFER_KEY: SignupOfferKey = 'PRO_TRIAL';
 
 export type SignupFormValues = {
   companyName: string;
-  ownerDisplayName: string;
+  ownerFirstName: string;
+  ownerLastName: string;
   contactEmail: string;
   phoneNumber: string;
   businessType: string;
@@ -84,7 +85,8 @@ export function isThaiMobile(value: string): boolean {
 export function validateSignupForm(values: SignupFormValues): SignupFieldErrors {
   const errors: SignupFieldErrors = {};
   if (!values.companyName.trim()) errors.companyName = 'กรุณากรอกชื่อร้านหรือบริษัท';
-  if (!values.ownerDisplayName.trim()) errors.ownerDisplayName = 'กรุณากรอกชื่อผู้ติดต่อ';
+  if (!values.ownerFirstName.trim()) errors.ownerFirstName = 'กรุณากรอกชื่อ';
+  if (!values.ownerLastName.trim()) errors.ownerLastName = 'กรุณากรอกนามสกุล';
 
   const email = values.contactEmail.trim();
   if (!email) errors.contactEmail = 'กรุณากรอกอีเมล';

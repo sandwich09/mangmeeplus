@@ -15,7 +15,8 @@ import {
 
 const validForm: SignupFormValues = {
   companyName: 'ร้านสมชายค้าส่ง',
-  ownerDisplayName: 'สมชาย ใจดี',
+  ownerFirstName: 'สมชาย',
+  ownerLastName: 'ใจดี',
   contactEmail: 'somchai@gmail.com',
   phoneNumber: '0812345678',
   businessType: 'ร้านขายของชำ',
@@ -32,12 +33,14 @@ describe('signup form validation', () => {
     const errors = validateSignupForm({
       ...validForm,
       companyName: '   ',
-      ownerDisplayName: '',
+      ownerFirstName: '',
+      ownerLastName: '  ',
       contactEmail: '',
       phoneNumber: '',
     });
     assert.match(errors.companyName!, /ชื่อร้าน/);
-    assert.match(errors.ownerDisplayName!, /ผู้ติดต่อ/);
+    assert.match(errors.ownerFirstName!, /ชื่อ/);
+    assert.match(errors.ownerLastName!, /นามสกุล/);
     assert.match(errors.contactEmail!, /อีเมล/);
     assert.match(errors.phoneNumber!, /เบอร์โทร/);
   });

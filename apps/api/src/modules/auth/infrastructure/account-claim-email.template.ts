@@ -112,7 +112,8 @@ function renderHtml(input: AccountClaimCopyInput, expires: string): string {
     + section('เข้าสู่ระบบ')
     + `<p style="margin:0 0 16px"><a href="${claimUrl}" style="display:inline-block;background:#13795b;color:#fff;text-decoration:none;font-size:18px;font-weight:700;padding:14px 22px;border-radius:10px">ตั้งรหัสผ่านและเข้าสู่ระบบ</a></p>`
     + `<p style="margin:0 0 20px;color:#53665f;font-size:15px">หากปุ่มเปิดไม่ได้ ให้คัดลอกลิงก์นี้ไปวางในเบราว์เซอร์:<br><span style="word-break:break-all">${claimUrl}</span></p>`
-    + section(`บัญชีสำหรับเข้าใช้งานร้าน ${input.companyName}`, '#17352b')
+    // Owner 2026-08-31: label bold black, the shop name itself green.
+    + `<h2 style="font-size:18px;margin:0 0 10px;color:#17352b">บัญชีสำหรับเข้าใช้งานร้าน <span style="color:#13795b">${escapeHtml(input.companyName)}</span></h2>`
     + `<p style="margin:0 0 8px">อีเมลผู้ใช้งาน: ${escapeHtml(input.toEmail)}</p>`
     + `<p style="margin:0 0 20px">รหัสผ่าน: ท่านเป็นผู้กำหนดด้วยตนเองในขั้นตอนตั้งรหัสผ่าน ระบบไม่มีการส่งรหัสผ่านชั่วคราวทางอีเมล</p>`
     + section('หมายเหตุ')
@@ -128,6 +129,6 @@ function renderHtml(input: AccountClaimCopyInput, expires: string): string {
     + `</section></main></body></html>`;
 }
 
-function section(title: string, color = '#13795b'): string {
-  return `<h2 style="font-size:18px;margin:0 0 10px;color:${color}">${escapeHtml(title)}</h2>`;
+function section(title: string): string {
+  return `<h2 style="font-size:18px;margin:0 0 10px;color:#13795b">${escapeHtml(title)}</h2>`;
 }

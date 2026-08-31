@@ -8,7 +8,8 @@ export type PublicCompanySignupBody = {
   /** Client-minted UUID, reused verbatim on retry (idempotency key). */
   externalSignupId: string;
   companyName: string;
-  ownerDisplayName: string;
+  ownerFirstName: string;
+  ownerLastName: string;
   contactEmail: string;
   phoneNumber?: string;
   businessType?: string;

@@ -93,9 +93,9 @@ describe('account claim email copy', () => {
     assert.equal((html.match(/<img/g) ?? []).length, 1, 'no top masthead remains');
   });
 
-  it('renders the account-section heading bold black while the others stay green', () => {
+  it('renders the account heading black with a green shop name; other headings stay green', () => {
     const { html } = renderAccountClaimEmail(INPUT);
-    assert.ok(html.includes('color:#17352b">บัญชีสำหรับเข้าใช้งานร้าน ร้านมั่งมี</h2>'));
+    assert.ok(html.includes('color:#17352b">บัญชีสำหรับเข้าใช้งานร้าน <span style="color:#13795b">ร้านมั่งมี</span></h2>'));
     assert.ok(html.includes('color:#13795b">เข้าสู่ระบบ</h2>'));
     assert.ok(html.includes('color:#13795b">หมายเหตุ</h2>'));
   });
