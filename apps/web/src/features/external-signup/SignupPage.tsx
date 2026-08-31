@@ -215,6 +215,7 @@ export default function SignupPage() {
                 <TextField
                   label="ชื่อผู้ติดต่อ"
                   name="ownerDisplayName"
+                  hint="ชื่อนี้จะแสดงเป็นชื่อผู้ใช้งานหลักของร้านหลังเข้าสู่ระบบ"
                   value={values.ownerDisplayName}
                   onChange={(event) => set('ownerDisplayName', event.target.value)}
                   error={fieldErrors.ownerDisplayName}
@@ -232,7 +233,7 @@ export default function SignupPage() {
                   autoComplete="email"
                 />
                 <TextField
-                  label="เบอร์โทรมือถือ"
+                  label="เบอร์มือถือ"
                   name="phoneNumber"
                   type="tel"
                   inputMode="numeric"
@@ -251,12 +252,26 @@ export default function SignupPage() {
                 />
 
                 <div className="space-y-3 rounded-xl border border-gray-200 p-3.5">
-                  <SwitchField
-                    label="ร้านจดทะเบียน VAT แล้ว"
-                    name="vatRegistered"
-                    checked={values.vatRegistered}
-                    onChange={(event) => set('vatRegistered', event.target.checked)}
-                  />
+                  <fieldset>
+                    <legend className="text-sm font-semibold text-gray-800">การจดทะเบียน VAT</legend>
+                    <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:gap-6">
+                      {([
+                        { value: false, label: 'ยังไม่จดทะเบียน VAT' },
+                        { value: true, label: 'จดทะเบียน VAT แล้ว' },
+                      ] as const).map((choice) => (
+                        <label key={String(choice.value)} className="flex items-center gap-2 text-[15px] text-gray-800">
+                          <input
+                            type="radio"
+                            name="vatRegistered"
+                            className="h-4 w-4 accent-brand-600"
+                            checked={values.vatRegistered === choice.value}
+                            onChange={() => set('vatRegistered', choice.value)}
+                          />
+                          {choice.label}
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
                   {values.vatRegistered ? (
                     <TextField
                       label="เลขประจำตัวผู้เสียภาษี"
