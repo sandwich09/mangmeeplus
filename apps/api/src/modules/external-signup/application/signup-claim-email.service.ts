@@ -257,7 +257,6 @@ export class SignupClaimEmailService {
       companyName: request.companyName,
       rawToken,
       expiresAt,
-      lineOaAddUrl: officialLineOaAddUrl(),
     });
     // Only after a successful send: this timestamp is what the reminder sweep counts from, and the
     // SES message id is the only handle a later bounce/complaint event has on this row (spec §4D).
@@ -288,15 +287,6 @@ export function claimEmailEventKey(signupRequestId: string, reason: ClaimEmailRe
   if (reason === 'approve') return base;
   if (reason === 'reminder') return `${base}:reminder`;
   return `${base}:${reason}:${Math.floor(now.getTime() / 60_000)}`;
-}
-
-/**
- * Central OA add-friend link. Read from the environment rather than the shared config schema: it is
- * a public URL with a safe empty default, and an unset value simply drops one line from the email
- * instead of blocking the only message an approved applicant receives.
- */
-export function officialLineOaAddUrl(env: NodeJS.ProcessEnv = process.env): string {
-  return env.LINE_OA_ADD_URL?.trim() ?? '';
 }
 
 function readSignupRequestId(payload: Record<string, unknown>): string | null {

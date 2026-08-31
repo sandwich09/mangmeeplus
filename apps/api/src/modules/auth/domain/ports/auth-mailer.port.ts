@@ -3,7 +3,6 @@ export const AUTH_MAILER_TOKEN = 'AUTH_MAILER_TOKEN';
 export type AuthEmailLinkInput = Readonly<{ toEmail: string; rawToken: string; expiresAt: Date }>;
 export type AccountClaimEmailInput = AuthEmailLinkInput & Readonly<{
   companyName: string;
-  lineOaAddUrl: string;
 }>;
 
 /** Spec §4D: opt-in, per case. No link and no token — this letter closes a request, it opens nothing. */

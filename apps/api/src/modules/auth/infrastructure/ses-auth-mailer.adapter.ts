@@ -38,15 +38,6 @@ function httpsUrl(value: string, field: string): string {
   return url.toString();
 }
 
-function lineOaUrl(value: string): string {
-  const normalized = httpsUrl(value, 'lineOaAddUrl');
-  const hostname = new URL(normalized).hostname.toLowerCase();
-  if (hostname !== 'lin.ee' && hostname !== 'line.me' && !hostname.endsWith('.line.me')) {
-    throw new Error('lineOaAddUrl must use an official LINE host.');
-  }
-  return normalized;
-}
-
 function layout(
   title: string,
   paragraphs: readonly string[],
@@ -98,8 +89,6 @@ function renderClaimEmail(input: AccountClaimEmailInput, baseUrl: string): Rende
     toEmail: input.toEmail,
     expiresAt: input.expiresAt,
     claimUrl: link(baseUrl, '/claim-account', input.rawToken),
-    // An unset OA link drops the add-friend line rather than failing the send (see the template).
-    lineOaAddUrl: input.lineOaAddUrl ? lineOaUrl(input.lineOaAddUrl) : '',
     ...(accountClaimLogoUrl() ? { logoUrl: accountClaimLogoUrl()! } : {}),
   });
 }

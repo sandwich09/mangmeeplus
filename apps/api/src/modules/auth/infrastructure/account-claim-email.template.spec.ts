@@ -15,7 +15,6 @@ const INPUT = {
   toEmail: 'somchai@example.com',
   expiresAt: new Date('2026-09-03T10:00:00.000Z'),
   claimUrl: 'https://app.mangmeeplus.com/claim-account?token=abc123',
-  lineOaAddUrl: 'https://lin.ee/mangmee',
 };
 
 describe('account claim email copy', () => {
@@ -58,8 +57,6 @@ describe('account claim email copy', () => {
       '[ เข้าสู่ระบบ ]',
       '[ บัญชีสำหรับเข้าใช้งานร้าน ร้านมั่งมี ]',
       '[ หมายเหตุ ]',
-      '[ เชื่อมบัญชี LINE ]',
-      '[ สิทธิพิเศษสำหรับท่าน ]',
       'ขอแสดงความนับถือ',
       'บริษัท มั่งมียั่งยืน จำกัด',
       'โทร. 098-256-5628',
@@ -87,12 +84,13 @@ describe('account claim email copy', () => {
     assert.match(text, /หมดอายุ .*17:00 น\./);
   });
 
-  it('lists the PRO trial entitlements the Owner locked', () => {
+  it('carries neither the trial-benefits block nor the LINE invitation (Owner order 2026-08-31)', () => {
     const { text, html } = renderAccountClaimEmail(INPUT);
-    assert.ok(text.includes('แพ็กเกจ PRO ทดลองใช้ฟรี 30 วัน'));
-    for (const benefit of ['5 สาขา', 'พนักงาน 10 คน', 'อ่านสลิปอัตโนมัติ 100 ใบ/เดือน', 'บันทึกค่าใช้จ่ายและใบเสร็จครบวงจร']) {
-      assert.ok(text.includes(benefit), `missing benefit: ${benefit}`);
-      assert.ok(html.includes(benefit), `missing benefit in html: ${benefit}`);
+    const body = `${text}\n${html}`;
+    // Package terms and the LINE step are communicated in-app, never by email. Guard both blocks
+    // against quietly coming back.
+    for (const banned of ['สิทธิพิเศษ', 'ทดลองใช้ฟรี', 'เชื่อมบัญชี LINE', 'เพิ่มเพื่อน LINE']) {
+      assert.equal(body.includes(banned), false, `banned copy present: ${banned}`);
     }
   });
 
@@ -102,14 +100,6 @@ describe('account claim email copy', () => {
     assert.ok(html.includes('หากปุ่มเปิดไม่ได้'));
     assert.equal(html.split(INPUT.claimUrl).length - 1, 2, 'link appears as href and as fallback text');
     assert.ok(text.includes(INPUT.claimUrl));
-  });
-
-  it('drops the add-friend line rather than failing when no OA link is configured', () => {
-    const { text, html } = renderAccountClaimEmail({ ...INPUT, lineOaAddUrl: '' });
-    // The section survives — the in-app LINE step still happens — but the dead link does not.
-    assert.ok(text.includes('[ เชื่อมบัญชี LINE ]'));
-    assert.equal(text.includes('เพิ่มเพื่อน LINE มั่งมีพลัส:'), false);
-    assert.equal(html.includes('เพิ่มเพื่อน LINE มั่งมีพลัส'), false);
   });
 
   it('escapes a company name that contains markup', () => {

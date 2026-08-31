@@ -35,7 +35,6 @@ export class LocalConsoleAuthMailerAdapter implements AuthMailerPort {
       toEmail: input.toEmail,
       expiresAt: input.expiresAt,
       claimUrl,
-      lineOaAddUrl: input.lineOaAddUrl,
     });
     console.info('[auth-mailer] account_claim', {
       toEmail: input.toEmail,

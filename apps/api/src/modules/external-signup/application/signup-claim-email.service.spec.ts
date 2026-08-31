@@ -6,7 +6,6 @@ import {
   SIGNUP_REJECTION_NOTICE_EVENT_TYPE,
   SignupClaimEmailService,
   claimEmailEventKey,
-  officialLineOaAddUrl,
 } from './signup-claim-email.service';
 import {
   SIGNUP_PENDING_REVIEW_EVENT_TYPE,
@@ -276,17 +275,6 @@ describe('SignupClaimEmailService.drain', () => {
     assert.equal(result.sent, 1, 'the event is settled, not retried forever');
     assert.equal(h.sent.length, 0, 'but no email is sent');
     assert.equal(h.published.length, 1);
-  });
-});
-
-describe('officialLineOaAddUrl', () => {
-  it('is empty when unset, so the email drops one line instead of failing', () => {
-    assert.equal(officialLineOaAddUrl({} as NodeJS.ProcessEnv), '');
-    assert.equal(officialLineOaAddUrl({ LINE_OA_ADD_URL: '  ' } as NodeJS.ProcessEnv), '');
-    assert.equal(
-      officialLineOaAddUrl({ LINE_OA_ADD_URL: ' https://lin.ee/mangmee ' } as NodeJS.ProcessEnv),
-      'https://lin.ee/mangmee',
-    );
   });
 });
 

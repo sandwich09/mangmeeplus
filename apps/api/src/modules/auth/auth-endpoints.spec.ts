@@ -1104,7 +1104,7 @@ describe('P11 SES auth mailer provider boundary', () => {
       const input = { toEmail: 'owner@example.com', rawToken: 'secret-token', expiresAt: new Date() };
       await disabled.sendEmailVerification(input);
       await disabled.sendPasswordResetLink(input);
-      await disabled.sendAccountClaim({ ...input, companyName: 'Acme', lineOaAddUrl: 'https://lin.ee/example' });
+      await disabled.sendAccountClaim({ ...input, companyName: 'Acme' });
     } finally {
       console.info = previous;
     }
@@ -1159,7 +1159,7 @@ describe('P11 SES auth mailer provider boundary', () => {
     await mailer.sendPasswordResetLink({ toEmail: 'owner@example.com', rawToken: 'reset+/=', expiresAt });
     await mailer.sendAccountClaim({
       toEmail: 'owner@example.com', rawToken: 'claim+/=', expiresAt,
-      companyName: 'บริษัท <script>alert(1)</script> จำกัด', lineOaAddUrl: 'https://lin.ee/mangmee',
+      companyName: 'บริษัท <script>alert(1)</script> จำกัด',
     });
 
     assert.equal(commands.length, 3);
@@ -1180,7 +1180,8 @@ describe('P11 SES auth mailer provider boundary', () => {
     assert.match(inputs[2].Message.Body.Text.Data, /ไม่ใช่รหัสผ่านของ LINE/);
     assert.match(inputs[2].Message.Body.Html.Data, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
     assert.doesNotMatch(inputs[2].Message.Body.Html.Data, /<script>/);
-    assert.match(inputs[2].Message.Body.Html.Data, /href="https:\/\/lin\.ee\/mangmee"/);
+    // Owner order 2026-08-31: no OA add-friend link in the claim letter — the LINE step lives in-app.
+    assert.doesNotMatch(inputs[2].Message.Body.Html.Data, /lin\.ee/);
     assert.doesNotMatch(JSON.stringify(inputs[2]), /temporaryPassword|taxId|qrImage|passwordHash/);
   });
 
@@ -1196,20 +1197,6 @@ describe('P11 SES auth mailer provider boundary', () => {
 
   it('rejects non-HTTPS claim and application links before sending', async () => {
     const { mailer, commands } = sesMailer();
-    await assert.rejects(
-      () => mailer.sendAccountClaim({
-        toEmail: 'owner@example.com', rawToken: 'token', expiresAt: new Date(),
-        companyName: 'Acme', lineOaAddUrl: 'javascript:alert(1)',
-      }),
-      /lineOaAddUrl must use HTTPS/,
-    );
-    await assert.rejects(
-      () => mailer.sendAccountClaim({
-        toEmail: 'owner@example.com', rawToken: 'token', expiresAt: new Date(),
-        companyName: 'Acme', lineOaAddUrl: 'https://attacker.example/line-lookalike',
-      }),
-      /lineOaAddUrl must use an official LINE host/,
-    );
     const insecure = new SesAuthMailerAdapter(config({ sesWebBaseUrl: 'http://app.example.com' }), { send: async () => ({}) } as any);
     await assert.rejects(
       () => insecure.sendEmailVerification({ toEmail: 'owner@example.com', rawToken: 'token', expiresAt: new Date() }),

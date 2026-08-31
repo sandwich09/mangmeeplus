@@ -7,7 +7,6 @@ const CLAIM_INPUT = {
   companyName: 'ร้านมั่งมี',
   rawToken: 'raw-token-value',
   expiresAt: new Date('2026-09-03T04:00:00.000Z'),
-  lineOaAddUrl: '',
 };
 
 function harness(response: { MessageId?: string } = { MessageId: 'ses-message-1' }) {
