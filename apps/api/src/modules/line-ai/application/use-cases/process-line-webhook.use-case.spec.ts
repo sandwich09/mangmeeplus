@@ -146,8 +146,13 @@ function makePrisma(opts: {
 	  turnOutcomeUnavailable?: boolean;
 	  /** Allow the first N outcome upserts, fail the rest — the partial-failure seam §14.3 needs. */
 	  turnOutcomeFailAfter?: number;
+	  /** P29: memberships in companies the plan-term sweep disabled. Deliberately separate from
+	   *  `memberships`, because the real query drops non-ACTIVE companies — that is exactly why the
+	   *  people in them reach the "no company" branch where the term-expired probe lives. */
+	  termExpiredMemberships?: Array<{ companyId: string; roles?: Array<{ role: { key: string } }> }>;
 	} = {}) {
-	  const { identityUserId = 'user-1', displayName = 'พิม', identityChannelId = 'msg-channel-1', aiAssistantOptOutAt = null, memberships = [{ companyId: 'company-1' }], lineCompanyContext = null, previousEventLog = null, recentTurns = [], entitlements = [], branches = [], branchFindManyFn, turnOutcomeUnavailable = false, turnOutcomeFailAfter } = opts;
+	  const { identityUserId = 'user-1', displayName = 'พิม', identityChannelId = 'msg-channel-1', aiAssistantOptOutAt = null, memberships = [{ companyId: 'company-1' }], lineCompanyContext = null, previousEventLog = null, recentTurns = [], entitlements = [], branches = [], branchFindManyFn, turnOutcomeUnavailable = false, turnOutcomeFailAfter, termExpiredMemberships = [] } = opts;
+  const termExpiredRows = termExpiredMemberships.map((row) => ({ roles: [{ role: { key: 'OWNER' } }], ...row }));
   const turnOutcomeWrites: any[] = [];
   const turnOutcomeUpdates: any[] = [];
   const identityQueries: any[] = [];
@@ -203,6 +208,17 @@ function makePrisma(opts: {
       },
       companyMembership: {
         findMany: async () => membershipRows,
+        // P29 term-expired probe, reached only when no ACTIVE company resolved. Honours both halves
+        // of the real predicate: the company must be DISABLED-by-term, and the role filter must
+        // match — a staff-only expired company answers null exactly as Postgres would.
+        findFirst: async (args: any) => {
+          const where = args?.where ?? {};
+          if (where.company?.status !== 'DISABLED') return null;
+          const requiredRole = where.roles?.some?.role?.key;
+          const row = termExpiredRows.find((candidate) =>
+            !requiredRole || candidate.roles.some((assigned) => assigned.role.key === requiredRole));
+          return row ? { companyId: row.companyId } : null;
+        },
         // LINE default-branch lookup (Owner 2026-08-27): no assigned branch in this harness.
         findUnique: async () => null,
       },
@@ -1285,6 +1301,69 @@ describe('ProcessLineWebhookUseCase', () => {
     await useCase.execute(BASE_EVENT);
 
     assert.match(replies[0] ?? '', /เชื่อมต่อ/);
+  });
+
+  // P29 §renew. A term-expired company is DISABLED, so it never resolves as company context and
+  // everyone in it lands on the generic unlinked reply — which tells an owner to connect an account
+  // that is already connected. Owner locked the renewal invitation here, OWNER only.
+  describe('term-expired company', () => {
+    it('invites the OWNER to renew, naming both ways back and no AI call', async () => {
+      const { prisma, updates } = makePrisma({
+        memberships: [],
+        termExpiredMemberships: [{ companyId: 'company-1' }],
+      });
+      const { useCase, replies, getAiGatewayCalled } = makeUseCase(prisma);
+
+      await useCase.execute(BASE_EVENT);
+
+      assert.match(replies[0] ?? '', /ครบกำหนดใช้งานแล้ว/);
+      assert.match(replies[0] ?? '', /ข้อมูลทั้งหมดยังอยู่ครบ/);
+      assert.match(replies[0] ?? '', /ต่ออายุได้เองที่เว็บแอป/);
+      assert.match(replies[0] ?? '', /098-256-5628/);
+      assert.match(replies[0] ?? '', /contact@mangmeeplus\.com/);
+      assert.equal(getAiGatewayCalled(), false, 'an expired company must cost no model call');
+      assert.equal((updates.at(-1) as any).data.status, 'plan_term_expired');
+    });
+
+    it('leaves staff of the same expired company on the existing generic reply', async () => {
+      const { prisma, updates } = makePrisma({
+        memberships: [],
+        termExpiredMemberships: [{ companyId: 'company-1', roles: [{ role: { key: 'SALES' } }] }],
+      });
+      const { useCase, replies } = makeUseCase(prisma);
+
+      await useCase.execute(BASE_EVENT);
+
+      assert.match(replies[0] ?? '', /เชื่อมต่อ/, 'staff keep the generic reply');
+      assert.doesNotMatch(replies[0] ?? '', /098-256-5628/, 'and are shown no package or contact detail');
+      assert.equal((updates.at(-1) as any).data.status, 'no_membership');
+    });
+
+    it('leaves an owner with no expired company on the existing generic reply', async () => {
+      // The probe must not answer for an ordinary unlinked user, nor for a company an admin
+      // disabled by hand — that one carries no `termDisabledAt` and never reaches this row.
+      const { prisma } = makePrisma({ memberships: [], termExpiredMemberships: [] });
+      const { useCase, replies } = makeUseCase(prisma);
+
+      await useCase.execute(BASE_EVENT);
+
+      assert.match(replies[0] ?? '', /เชื่อมต่อ/);
+    });
+
+    it('never runs the probe for a company that is still active', async () => {
+      // Renewal restores the company to ACTIVE, so it resolves as context again and the turn takes
+      // the normal path. Reading live state is what makes that work with nothing to invalidate.
+      const probes: unknown[] = [];
+      const { prisma } = makePrisma({ memberships: [{ companyId: 'company-1' }] });
+      const findFirst = prisma.client.companyMembership.findFirst;
+      prisma.client.companyMembership.findFirst = async (args: any) => { probes.push(args); return findFirst(args); };
+      const { useCase, replies } = makeUseCase(prisma);
+
+      await useCase.execute(BASE_EVENT);
+
+      assert.deepEqual(probes, [], 'an active company never reaches the term-expired branch');
+      assert.doesNotMatch(replies.join('\n'), /ครบกำหนดใช้งานแล้ว/);
+    });
   });
 
   it('sends company-selector reply when multi-company user has no LineCompanyContext', async () => {
