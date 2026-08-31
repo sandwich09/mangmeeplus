@@ -8,7 +8,7 @@
     "dev": "tsx watch src/main.ts",
     "lint": "tsc --noEmit",
     "start": "node dist/apps/workers/src/main.js",
-    "test": "tsx --test src/common/log.spec.ts src/common/retry-schedule.spec.ts src/common/queue.spec.ts src/modules/outbox/outbox-smoke.spec.ts src/modules/notifications/notification-jobs.spec.ts src/modules/expense-auto-post/expense-auto-post-worker.spec.ts src/modules/object-version-cleanup/object-version-cleanup-worker.spec.ts src/modules/plan-term-sweep/plan-term-sweep-worker.spec.ts src/modules/signup-claim-email/signup-claim-email-worker.spec.ts",
+    "test": "tsx --test src/common/log.spec.ts src/common/retry-schedule.spec.ts src/common/queue.spec.ts src/common/scan-worker.spec.ts src/modules/outbox/outbox-smoke.spec.ts src/modules/notifications/notification-jobs.spec.ts src/modules/expense-auto-post/expense-auto-post-worker.spec.ts src/modules/object-version-cleanup/object-version-cleanup-worker.spec.ts src/modules/plan-term-sweep/plan-term-sweep-worker.spec.ts src/modules/signup-claim-email/signup-claim-email-worker.spec.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
