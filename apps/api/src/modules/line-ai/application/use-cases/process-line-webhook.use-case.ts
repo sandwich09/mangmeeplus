@@ -82,7 +82,7 @@ import { LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERRO
 import { LineAiLedgerService, ledgerKey, type LedgerEntry } from '../line-ai-ledger.service';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
 import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, isCapabilityQuestion, staffMenuCommand, PENDING_APPROVAL_ITEM_LIMIT, type ApprovalSurfaceKey, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
-import { buildExpenseDraftCardMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
+import { buildExpenseDraftCardMessage, buildLegalAcceptanceRequiredMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
 import { advisorDirectAnswerText } from '../../domain/logic/line-advisor-direct-answer.logic';
 import { capabilityFollowUpReply, isDeliveredCapabilityFollowUp, isNextStepQuestionText } from '../../domain/logic/line-ai-capability-follow-up.logic';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
@@ -155,7 +155,7 @@ const UNLINKED_REPLY = '🔗 กรุณาเชื่อมต่อบัญ
 // PDPA objection route (M-05 register §3.1): the user opted out of AI processing, so the
 // turn stops here — before any model, tool, or gateway involvement. Deterministic text.
 const AI_OPT_OUT_REPLY = '🤖 คุณปิดการใช้งานผู้ช่วย AI ไว้ ข้อความนี้จึงไม่ถูกประมวลผลด้วย AI ค่ะ\nเปิดใช้งานอีกครั้งได้ที่ เว็บแอป → ตั้งค่า → ความปลอดภัย นะคะ';
-export const LEGAL_ACCEPTANCE_REQUIRED_REPLY = '📄 กรุณาเข้าสู่เว็บแอป MangmeePlus เพื่อยอมรับข้อกำหนดการใช้งานและรับทราบนโยบายความเป็นส่วนตัวก่อนใช้งานบริการนี้นะคะ';
+export { LEGAL_ACCEPTANCE_REQUIRED_REPLY } from '../../domain/logic/line-business-card.logic';
 const FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์ใช้งาน LINE AI สำหรับบริษัทนี้ค่ะ';
 const ERROR_REPLY = '⏳ ขออภัยค่ะ เกิดข้อผิดพลาดชั่วคราว กรุณาลองใหม่อีกครั้งนะคะ';
 /** The photo's bytes never arrived from LINE, so "nothing was saved" is provably true — say so,
@@ -1301,7 +1301,11 @@ export class ProcessLineWebhookUseCase {
     membershipId: string,
   ): Promise<boolean> {
     if (!await this.legalAcceptance.isRequired({ userId, companyId, membershipId })) return false;
-    await this.deliverReply(event, LEGAL_ACCEPTANCE_REQUIRED_REPLY);
+    // Card, not plain text: the button lands on the company home, and `event.handoff` is already
+    // bound at both call sites, so the delivery seam turns it into a one-tap login link.
+    await this.deliverRequiredMessages(event, [
+      buildLegalAcceptanceRequiredMessage(this.config.webBaseUrl, companyId),
+    ]);
     await this.updateEventLog(
       event.webhookEventId,
       'legal_acceptance_required',
