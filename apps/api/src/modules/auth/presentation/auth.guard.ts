@@ -35,6 +35,11 @@ const LEGAL_ACCEPTANCE_EXEMPT_PATHS = new Set([
   '/v1/auth/legal-acceptance',
   '/v1/auth/password/change',
   '/v1/auth/logout',
+  // P12-3a: approving a desktop QR is a LOGIN handshake, not business-module use. UAT 2026-09-01:
+  // a freshly-claimed account (whose binding acceptance deliberately happens in-app, after login)
+  // got 403 here, the phone page read it as "QR หมดอายุ" and the desktop timed out. The redeemed
+  // desktop session still walks into this same acceptance gate itself, so nothing is bypassed.
+  '/v1/auth/line/qr/approve',
 ]);
 
 function isLegalAcceptanceExempt(path: string): boolean {
