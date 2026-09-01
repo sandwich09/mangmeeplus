@@ -874,7 +874,7 @@ EOF
   SES_POLICY_STATEMENT=""
   if [ "$SERVING_EMAIL_PROVIDER" = ses ]; then
     SES_POLICY_STATEMENT=",
-    { \"Effect\": \"Allow\", \"Action\": [\"ses:SendEmail\",\"ses:SendRawEmail\"], \"Resource\": [\"arn:aws:ses:${REGION}:${ACCOUNT_ID}:identity/mangmeeplus.com\", \"arn:aws:ses:${REGION}:${ACCOUNT_ID}:configuration-set/mangmee-transactional\"] }"
+    { \"Effect\": \"Allow\", \"Action\": [\"ses:SendEmail\",\"ses:SendRawEmail\"], \"Resource\": \"*\", \"Condition\": { \"StringEquals\": { \"ses:FromAddress\": \"${SES_FROM_ADDRESS_INPUT}\" } } }"
   fi
   cat > /tmp/watchdog-bms-ecs-api-task-policy.json <<EOF
 {
