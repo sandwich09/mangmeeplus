@@ -492,6 +492,10 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
   const evidenceStepBlocker = expenseEvidenceStepBlocker({
     checkBillBlocked, classificationBlocked, canReview, unsavedReview: evidenceDirty && !substituteLocked,
   });
+  // Owner 2026-09-01: while the AI read is in flight (a fresh read or the replace-file re-read),
+  // the on-screen values are about to be overwritten — editing them or pressing ถัดไป races the
+  // result. One flag covers both lanes and drives the field cover AND the footer buttons.
+  const aiReading = extractionLoading || receiptUploading;
   const substituteReady = expenseSubstituteReceiptReady(detail);
   const needsReceiptOrSubstitute = expenseNeedsReceiptOrSubstitute(detail);
   const ocrTotalUnacknowledged = needsAiTotalAcknowledgement(detail);
@@ -639,10 +643,14 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
                 )}
               </>
             )}
-            {stepIndex < steps.length - 1 && <button className={btnClass} disabled={stepSaving || (step === 'data' && dataErrorCount !== 0) || (step === 'evidence' && evidenceStepBlocker !== null)} aria-describedby={step === 'data' && validationBlockMessage ? `expense-review-block-${detail.id}` : step === 'evidence' && evidenceStepBlocker ? `expense-review-evidence-block-${detail.id}` : undefined} title={step === 'data' ? validationBlockMessage : undefined} onClick={() => void goToStep(steps[stepIndex + 1].key)}>{stepSaving && step === 'data' ? t('expenses.saving', locale) : t('expenses.step_next', locale)}</button>}
+            {stepIndex < steps.length - 1 && <button className={btnClass} disabled={aiReading || stepSaving || (step === 'data' && dataErrorCount !== 0) || (step === 'evidence' && evidenceStepBlocker !== null)} aria-describedby={step === 'data' && validationBlockMessage ? `expense-review-block-${detail.id}` : step === 'evidence' && evidenceStepBlocker ? `expense-review-evidence-block-${detail.id}` : undefined} title={step === 'data' ? validationBlockMessage : undefined} onClick={() => void goToStep(steps[stepIndex + 1].key)}>{stepSaving && step === 'data' ? t('expenses.saving', locale) : t('expenses.step_next', locale)}</button>}
             {/* Owner 2026-08-29: ถัดไป used to stay live and refuse the move with a toast at the top
                 of the screen while the button sits in the bottom bar. Same condition, said in place. */}
-            {step === 'evidence' && evidenceStepBlocker && (
+            {aiReading ? (
+              <p role="status" className="max-w-lg text-sm font-medium text-warning-700 sm:w-full sm:text-right">
+                {t('expenses.ai_reading', locale)}
+              </p>
+            ) : step === 'evidence' && evidenceStepBlocker && (
               <p id={`expense-review-evidence-block-${detail.id}`} role="status" className="max-w-lg text-sm font-medium text-warning-700 sm:w-full sm:text-right">
                 {t(evidenceStepBlocker, locale)}
               </p>
@@ -1186,7 +1194,8 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
                 {guided ? (
                   <>
                     <div className={cx('space-y-4', step === 'data' ? undefined : 'hidden')}>
-                      <CoverLoader active={extractionLoading} scope="section" label={t('expenses.ai_reading', locale)}>
+                      <CoverLoader active={aiReading} scope="section" label={t('expenses.ai_reading', locale)}>
+                        <fieldset disabled={aiReading} className="min-w-0">
                         <div className="space-y-4">
                           {noticesBlock}
                           {aiPrefillBanner}
@@ -1199,6 +1208,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
                             </button>
                           )}
                         </div>
+                      </fieldset>
                       </CoverLoader>
                       {vendorCard}
                       {moneyCard}

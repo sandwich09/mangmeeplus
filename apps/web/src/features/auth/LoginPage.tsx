@@ -1,6 +1,7 @@
 'use client';
 
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { withLineExternalBrowser } from '@/common/auth/line-in-app-browser.logic';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { Button } from '@/common/components/button';
@@ -554,7 +555,7 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
               </div>
               <button
                 type="button"
-                onClick={() => window.location.assign(nextPath ? lineStartUrl(nextPath) : '/api/auth/line-login/start')}
+                onClick={() => window.location.assign(withLineExternalBrowser(nextPath ? lineStartUrl(nextPath) : '/api/auth/line-login/start', navigator.userAgent))}
                 className="mt-4 flex h-12 w-full items-center justify-center gap-2.5 rounded-xl border-[1.5px] border-gray-200 bg-white text-[15.5px] font-semibold text-gray-900 transition hover:border-[#06C755]"
               >
                 <span className="flex h-6 w-6 items-center justify-center rounded-md bg-[#06C755] text-sm font-extrabold text-white">L</span>
