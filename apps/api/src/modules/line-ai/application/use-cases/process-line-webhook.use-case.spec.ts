@@ -610,7 +610,7 @@ describe('ProcessLineWebhookUseCase', () => {
 
   it('refuses employee text before model routing while legal acceptance is pending', async () => {
     const { prisma, updates } = makePrisma();
-    const { useCase, replies, intakeRequests, getAiGatewayCalled } = makeUseCase(prisma, {
+    const { useCase, replies, sentMessages, intakeRequests, getAiGatewayCalled } = makeUseCase(prisma, {
       permissions: ['line.ai.query'],
       legalAcceptanceRequired: true,
     });
@@ -620,6 +620,9 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(getAiGatewayCalled(), false);
     assert.equal(intakeRequests.length, 0);
     assert.match(replies[0] ?? '', /ยอมรับข้อกำหนดการใช้งาน/);
+    // Card with the company-home button; the delivery seam upgrades that URL to a login handoff.
+    assert.equal((sentMessages[0] as any)?.type, 'flex');
+    assert.match(JSON.stringify(sentMessages[0]), /https:\/\/app\.example\.com\/companies\//);
     assert.equal((updates.at(-1) as any).data.status, 'legal_acceptance_required');
   });
 

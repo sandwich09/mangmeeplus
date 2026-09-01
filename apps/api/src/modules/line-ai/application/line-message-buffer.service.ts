@@ -19,11 +19,9 @@ import { PrismaService } from '../../../common/database/prisma.service';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import { AuditService } from '../../audit/application/audit.service';
 import { LineReplyAdapter, type LineDeliveryResult } from '../infrastructure/line-reply.adapter';
-import {
-  LEGAL_ACCEPTANCE_REQUIRED_REPLY,
-  ProcessLineWebhookUseCase,
-} from './use-cases/process-line-webhook.use-case';
+import { ProcessLineWebhookUseCase } from './use-cases/process-line-webhook.use-case';
 import type { LineTextEvent, LineReceiptUploadEvent } from './use-cases/process-line-webhook.use-case';
+import { buildLegalAcceptanceRequiredMessage } from '../domain/logic/line-business-card.logic';
 import { hashMessagePreview, parseLineCompanyCommand } from '../domain/logic/line-ai-classifier.logic';
 import { staffMenuCommand } from '../domain/logic/line-staff-menu.logic';
 import {
@@ -169,7 +167,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
     if (legal.status === 'required' && !companyCommand) {
       const shouldReply = await this.claimPendingLegalAcceptance(envelope, legal.companyId);
       if (shouldReply) {
-        const delivery = await this.deliverLegalAcceptanceReply(envelope);
+        const delivery = await this.deliverLegalAcceptanceReply(envelope, legal.companyId);
         if (delivery !== 'ok') {
           const released = await this.prisma.client.lineWebhookEventLog.updateMany({
             where: { webhookEventId: envelope.item.webhookEventId, status: 'response_ready' },
@@ -283,8 +281,13 @@ export class LineMessageBufferService implements OnModuleDestroy {
     return updated.count === 1;
   }
 
-  private async deliverLegalAcceptanceReply(envelope: LineBufferEnvelope): Promise<LineDeliveryResult> {
-    const messages = [this.lineReply.buildTextMessage(LEGAL_ACCEPTANCE_REQUIRED_REPLY)];
+  private async deliverLegalAcceptanceReply(
+    envelope: LineBufferEnvelope,
+    companyId: string | undefined,
+  ): Promise<LineDeliveryResult> {
+    // Pre-claim lane sends the card with a plain (unwrapped) link — still the login page. The
+    // altText carries the original sentence, so a text downgrade reads exactly as before.
+    const messages = [buildLegalAcceptanceRequiredMessage(this.config.webBaseUrl, companyId)];
     let result: LineDeliveryResult = await this.lineReply
       .sendReply(envelope.item.replyToken, messages)
       .catch(() => 'failed_other' as const);

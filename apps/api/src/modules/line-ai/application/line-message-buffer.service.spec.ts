@@ -42,6 +42,7 @@ function makeHarness(opts: {
   const executed: any[] = [];
   const receipts: Array<{ event: any; caption?: string }> = [];
   const replies: string[] = [];
+  const replyMessages: any[] = [];
   const replyTokens: string[] = [];
   const pushes: Array<{ to: string; text: string }> = [];
   const loadingCalls: string[] = [];
@@ -92,6 +93,7 @@ function makeHarness(opts: {
   } as any;
 
   const config = {
+    webBaseUrl: 'https://app.example.com',
     lineAiBufferDebounceMs: opts.debounceMs ?? 20,
     lineAiBufferMaxWaitMs: opts.maxWaitMs ?? 500,
     // Loading-on-accept is a SUB-feature of the master animation flag (both must be on). For test
@@ -107,13 +109,14 @@ function makeHarness(opts: {
 
   const lineReply = {
     buildTextMessage: (text: string) => ({ type: 'text', text }),
-    sendReply: async (token: string, messages: Array<{ text: string }>) => {
+    sendReply: async (token: string, messages: Array<{ text?: string; altText?: string }>) => {
       replyTokens.push(token);
-      replies.push(messages[0]?.text ?? '');
+      replyMessages.push(messages[0]);
+      replies.push(messages[0]?.text ?? messages[0]?.altText ?? '');
       return opts.replyResult ?? 'ok';
     },
-    sendPush: async (to: string, messages: Array<{ text: string }>) => {
-      pushes.push({ to, text: messages[0]?.text ?? '' });
+    sendPush: async (to: string, messages: Array<{ text?: string; altText?: string }>) => {
+      pushes.push({ to, text: messages[0]?.text ?? messages[0]?.altText ?? '' });
       return opts.pushResult ?? 'ok';
     },
     startLoadingAnimation: async (chatId: string) => {
@@ -150,7 +153,7 @@ function makeHarness(opts: {
     warn: (entry: unknown) => serviceLogs.push(entry),
     error: (entry: unknown) => serviceLogs.push(entry),
   };
-  return { service, rows, executed, receipts, replies, replyTokens, pushes, loadingCalls, auditLogs, serviceLogs, preflightCalls };
+  return { service, rows, executed, receipts, replies, replyMessages, replyTokens, pushes, loadingCalls, auditLogs, serviceLogs, preflightCalls };
 }
 
 let uniq = 0;
@@ -192,6 +195,8 @@ describe('LineMessageBufferService – legal acceptance pre-storage gate', () =>
     assert.equal(h.loadingCalls.length, 0);
     assert.deepEqual(h.replyTokens, ['rt-legal-text']);
     assert.match(h.replies[0] ?? '', /ยอมรับข้อกำหนดการใช้งาน/);
+    assert.equal(h.replyMessages[0]?.type, 'flex');
+    assert.match(JSON.stringify(h.replyMessages[0]), /https:\/\/app\.example\.com\/companies\/company-1/);
     assert.deepEqual(Object.keys(h.preflightCalls[0] ?? {}).sort(), ['lineUserId', 'messagingChannelId']);
   });
 
