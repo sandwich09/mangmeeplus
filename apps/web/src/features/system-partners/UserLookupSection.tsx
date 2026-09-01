@@ -124,7 +124,7 @@ function UserCard({ user }: { user: SystemUserLookupItemDto }) {
   );
 }
 
-export default function UserLookupPage() {
+export default function UserLookupSection() {
   const [term, setTerm] = useState('');
   const [users, setUsers] = useState<SystemUserLookupItemDto[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -153,57 +153,55 @@ export default function UserLookupPage() {
   };
 
   return (
-    <div className="min-h-dvh bg-gray-50 p-4 lg:p-6">
-      <div className="mx-auto max-w-4xl space-y-4">
-        <div>
-          <h1 className="text-xl font-semibold text-gray-900">ค้นหาผู้ใช้</h1>
-          <p className="mt-0.5 text-sm text-gray-500">
-            ดูผู้ใช้รายคน พร้อมบริษัททั้งหมดที่ผูกอยู่ บทบาท การเชื่อม LINE และประวัติการรวมบัญชี
-          </p>
-        </div>
-
-        <form onSubmit={handleSubmit} className="flex flex-col gap-2 sm:flex-row">
-          <label htmlFor="user-lookup-q" className="sr-only">คำค้นหาผู้ใช้</label>
-          <input
-            id="user-lookup-q"
-            type="search"
-            value={term}
-            onChange={(e) => setTerm(e.target.value)}
-            maxLength={120}
-            placeholder="อีเมล ชื่อผู้ใช้ หรือชื่อ"
-            className="h-11 w-full rounded-lg border border-gray-300 px-3 text-sm text-gray-900 focus:border-brand-400 focus:outline-none sm:h-10"
-          />
-          <Button type="submit" loading={loading} className="sm:w-auto">
-            ค้นหา
-          </Button>
-        </form>
-
-        {error && (
-          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {error}
-          </div>
-        )}
-
-        {loading && (
-          <div className="space-y-2" aria-hidden>
-            {[...Array(2)].map((_, i) => (
-              <div key={i} className="h-24 animate-pulse rounded-lg border border-gray-200 bg-white" />
-            ))}
-          </div>
-        )}
-
-        {!loading && !error && users !== null && (
-          users.length === 0 ? (
-            <p className="rounded-lg border border-gray-200 bg-white px-4 py-12 text-center text-sm text-gray-400">
-              ไม่พบผู้ใช้ที่ตรงกับคำค้น
-            </p>
-          ) : (
-            <div className="space-y-3">
-              {users.map((user) => <UserCard key={user.userId} user={user} />)}
-            </div>
-          )
-        )}
+    <section className="space-y-4 rounded-lg border border-gray-200 bg-white p-4">
+      <div>
+        <h2 className="text-base font-semibold text-gray-900">ค้นหาผู้ใช้</h2>
+        <p className="mt-0.5 text-sm text-gray-500">
+          ดูผู้ใช้รายคน พร้อมบริษัททั้งหมดที่ผูกอยู่ บทบาท การเชื่อม LINE และประวัติการรวมบัญชี
+        </p>
       </div>
-    </div>
+
+      <form onSubmit={handleSubmit} className="flex flex-col gap-2 sm:flex-row">
+        <label htmlFor="user-lookup-q" className="sr-only">คำค้นหาผู้ใช้</label>
+        <input
+          id="user-lookup-q"
+          type="search"
+          value={term}
+          onChange={(e) => setTerm(e.target.value)}
+          maxLength={120}
+          placeholder="อีเมล ชื่อผู้ใช้ หรือชื่อ"
+          className="h-11 w-full rounded-lg border border-gray-300 px-3 text-sm text-gray-900 focus:border-brand-400 focus:outline-none sm:h-10"
+        />
+        <Button type="submit" loading={loading} className="sm:w-auto">
+          ค้นหา
+        </Button>
+      </form>
+
+      {error && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {error}
+        </div>
+      )}
+
+      {loading && (
+        <div className="space-y-2" aria-hidden>
+          {[...Array(2)].map((_, i) => (
+            <div key={i} className="h-24 animate-pulse rounded-lg border border-gray-200 bg-white" />
+          ))}
+        </div>
+      )}
+
+      {!loading && !error && users !== null && (
+        users.length === 0 ? (
+          <p className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-12 text-center text-sm text-gray-400">
+            ไม่พบผู้ใช้ที่ตรงกับคำค้น
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {users.map((user) => <UserCard key={user.userId} user={user} />)}
+          </div>
+        )
+      )}
+    </section>
   );
 }
