@@ -30,6 +30,15 @@ export function rememberPendingRedirect(
   );
 }
 
+// The LINE OAuth round trip, with the landing path carried across it. Three lanes use it: a plain
+// LINE login, link-after-password (P12-2) — LINE has already consented this browser, so it
+// redirects back immediately and the BFF callback, now seeing an active session, links the
+// verified identity instead of issuing new tokens — and the scanned desktop-QR approve page, which
+// sends the phone through the same round trip and back to the code it was asked to confirm.
+export function lineStartUrl(returnTo: string): string {
+  return `/api/auth/line-login/start?returnTo=${encodeURIComponent(returnTo)}`;
+}
+
 // ---- Phone-OTP + LINE-QR login channels (prototype parity; no backend contract yet) ----
 
 /** Thai mobile number: exactly 10 digits starting with 0. */
