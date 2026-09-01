@@ -297,6 +297,37 @@ export function buildReimbursementHandoffMessage(webBaseUrl: string | undefined,
   };
 }
 
+/** The one sentence both legal-gate reply paths carry. Kept verbatim as the card's altText so the
+ *  chat-list preview, the push notification, and a Flex→text downgrade all read as the same words
+ *  the old plain-text reply sent. */
+export const LEGAL_ACCEPTANCE_REQUIRED_REPLY = '📄 กรุณาเข้าสู่เว็บแอป MangmeePlus เพื่อยอมรับข้อกำหนดการใช้งานและรับทราบนโยบายความเป็นส่วนตัวก่อนใช้งานบริการนี้นะคะ';
+
+/** Legal-gate refusal card. The button opens the company home; the web session gate walks the user
+ *  from there through the forced password change and the acceptance screen, so no deeper path is
+ *  needed. The webhook lane wraps the URI into a one-tap login handoff at the delivery seam; the
+ *  buffer pre-claim lane sends it plain, which still lands on the login page. No companyId (a
+ *  pre-claim turn that resolved none) or an untrusted base leaves the card without a button, same
+ *  policy as every sibling card. */
+export function buildLegalAcceptanceRequiredMessage(
+  webBaseUrl: string | undefined,
+  companyId: string | undefined,
+): LineReplyMessage {
+  const text = 'บัญชีของคุณผูก LINE เรียบร้อยแล้ว เหลืออีกขั้นเดียวค่ะ: เข้าเว็บแอป MangmeePlus '
+    + 'เพื่อยอมรับข้อกำหนดการใช้งานและรับทราบนโยบายความเป็นส่วนตัว เสร็จแล้วกลับมาใช้งานผ่าน LINE ได้ทันทีนะคะ';
+  return {
+    type: 'flex',
+    altText: preview(LEGAL_ACCEPTANCE_REQUIRED_REPLY, 400),
+    contents: bubble({
+      title: 'ยอมรับข้อกำหนดก่อนเริ่มใช้งาน',
+      badge: '📄 รอยอมรับข้อกำหนด',
+      text,
+      ...(companyId ? {
+        webLink: { label: 'เข้าเว็บแอปเพื่อยอมรับข้อกำหนด', path: `/companies/${encodeURIComponent(companyId)}` },
+      } : {}),
+    }, webBaseUrl, companyId ?? ''),
+  };
+}
+
 /** Renderer only: presentation is structured by the trusted gateway; raw model Flex JSON is never accepted. */
 export function buildLineBusinessAnswerMessage(
   response: LineAiTurnResponse,
