@@ -36,13 +36,19 @@ test('hashing is stable, non-reversible in shape, and separates distinct values'
 });
 
 test('scan url is the /line-qr page for that code, with a single separator', () => {
-  assert.equal(lineWebQrScanUrl('https://app.example.test', 'abc'), 'https://app.example.test/line-qr/abc');
-  assert.equal(lineWebQrScanUrl('https://app.example.test/', 'abc'), 'https://app.example.test/line-qr/abc');
-  assert.equal(lineWebQrScanUrl('https://app.example.test///', 'abc'), 'https://app.example.test/line-qr/abc');
+  assert.equal(lineWebQrScanUrl('https://app.example.test', 'abc'), 'https://app.example.test/line-qr/abc?openExternalBrowser=1');
+  assert.equal(lineWebQrScanUrl('https://app.example.test/', 'abc'), 'https://app.example.test/line-qr/abc?openExternalBrowser=1');
+  assert.equal(lineWebQrScanUrl('https://app.example.test///', 'abc'), 'https://app.example.test/line-qr/abc?openExternalBrowser=1');
+});
+
+// UAT 2026-09-01: without it, a scan inside LINE opens the approve page in LINE's in-app browser,
+// which carries none of Safari's cookies, so the signed-in phone still sees a signed-out page.
+test('scan url carries the LINE in-app browser escape', () => {
+  assert.ok(lineWebQrScanUrl('https://app.example.test', 'abc').endsWith('?openExternalBrowser=1'));
 });
 
 test('scan url escapes the code so it cannot break out of the path segment', () => {
-  assert.equal(lineWebQrScanUrl('https://app.example.test', 'a/b?c'), 'https://app.example.test/line-qr/a%2Fb%3Fc');
+  assert.equal(lineWebQrScanUrl('https://app.example.test', 'a/b?c'), 'https://app.example.test/line-qr/a%2Fb%3Fc?openExternalBrowser=1');
 });
 
 test('the QR image is a self-rendered inline data URI, never a third-party image URL (H-09)', () => {
