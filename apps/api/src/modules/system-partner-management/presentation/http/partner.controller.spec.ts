@@ -26,6 +26,7 @@ function makeUCs() {
     getAiUsage: { execute: async () => ({ current: null, previous: null, budget: { effectiveSatang: 5_000_000, overrideSatang: null, defaultSatang: 5_000_000, ceilingSatang: 50_000_000 }, topTags: [] }) } as any,
     listMembers: { execute: async () => ({ items: [] }) } as any,
     unlinkMemberLine: { execute: async () => ({ unlinked: true }) } as any,
+    issueMemberLineLinkToken: { execute: async (cmd: any) => ({ lineLink: { linkUrl: 'https://liff.line.me/x/employee?token=t', qrImageUrl: 'data:image/svg+xml;base64,x', expiresAt: '', cmd } }) } as any,
     resetMemberPassword: { execute: async () => ({ userId: 'u-1', temporaryPassword: 'tmp', expiresAt: '' }) } as any,
     revealMemberPassword: { execute: async () => ({ temporaryPassword: 'tmp' }) } as any,
     setMemberContact: { execute: async () => ({ updated: true }) } as any,
@@ -39,7 +40,8 @@ function makeCtrl(overrides: Partial<ReturnType<typeof makeUCs>> = {}) {
   const uc = { ...makeUCs(), ...overrides };
   return new PartnerController(
     uc.listPartners, uc.getDetail, uc.updateProfile, uc.lifecycle, uc.setFeatures, uc.setAiModel, uc.setOcrConfig,
-    uc.getAiUsage, uc.listMembers, uc.unlinkMemberLine, uc.resetMemberPassword, uc.revealMemberPassword,
+    uc.getAiUsage, uc.listMembers, uc.unlinkMemberLine, uc.issueMemberLineLinkToken,
+    uc.resetMemberPassword, uc.revealMemberPassword,
     uc.setMemberContact,
     // VAT registration: delegated to the company's own service, not re-implemented here.
     { put: async () => ({ version: 1, resultKind: 'APPLIED', replayed: false }) } as any,
@@ -218,11 +220,24 @@ describe('PartnerController', () => {
       ['setOcrConfiguration', 'system.partner_ai_model.manage'],
       // Read-only meter: reuses the partner detail read permission, no new permission (spec §7.7).
       ['aiUsage', 'system.partner_dashboard.read'],
+      // Issuing a bearer QR is a member-management action, gated like unlink and password reset.
+      ['issueLineLinkToken', 'system.partner_member.manage'],
     ];
     for (const [method, perm] of cases) {
       const perms: string[] | undefined = Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, proto[method] as object);
       assert.ok(perms && perms.includes(perm), `${method} missing @RequirePermissions('${perm}')`);
     }
+  });
+
+  it('issueLineLinkToken() passes both ids and the trusted api base to the use case', async () => {
+    // The whole point of this route: it is keyed by ids the members table already holds,
+    // so an expired QR no longer needs the onboarding run id from the production database.
+    const req = { ...makeReq(), protocol: 'https', get: () => 'api.example.com', headers: {} } as any;
+    const result = await makeCtrl().issueLineLinkToken('co-1', 'user-9', req) as any;
+    assert.equal(result.lineLink.cmd.companyId, 'co-1');
+    assert.equal(result.lineLink.cmd.memberUserId, 'user-9');
+    assert.equal(result.lineLink.cmd.requestingAdminUserId, 'admin-1');
+    assert.ok(result.lineLink.cmd.apiBaseUrl.startsWith('https://'), result.lineLink.cmd.apiBaseUrl);
   });
 
   it('the platform AI budget routes carry the same manage permission on read and write', () => {

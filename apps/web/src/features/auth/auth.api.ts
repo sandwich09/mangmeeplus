@@ -24,6 +24,9 @@ export type AccountSecurityState = {
   pendingEmailExpiresAt: string | null;
   /** PDPA objection route (M-05 §3.1): set = LINE AI assistant opted out for this user. */
   aiAssistantOptOutAt: string | null;
+  /** Self-service LINE link: an ACTIVE LINE identity exists for this user. */
+  lineLinked: boolean;
+  lineLinkedAt: string | null;
 };
 
 // Same-origin public client: /api/auth/* hits the BFF route handlers (cookie set/clear),

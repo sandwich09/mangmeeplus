@@ -21,6 +21,11 @@ export const workspaceDictionary = {
     'shell.workspace': 'มั่งมี',
     'shell.signing_out': 'กำลังออกจากระบบ...',
     'shell.signout_failed': 'ออกจากระบบไม่สำเร็จ กรุณาตรวจสอบการเชื่อมต่อแล้วลองอีกครั้ง',
+    // Self-service LINE link (sidebar user menu)
+    'shell.line_link.action': 'เชื่อมบัญชี LINE',
+    'shell.line_link.linked_title': 'บัญชี LINE',
+    'shell.line_link.badge_unlinked': 'ยังไม่ได้เชื่อม',
+    'shell.line_link.badge_linked': 'เชื่อมแล้ว',
     // Dashboard
     'dashboard.title': 'แดชบอร์ด',
     'dashboard.welcome': 'ยินดีต้อนรับ',
@@ -1432,6 +1437,10 @@ export const workspaceDictionary = {
     'shell.workspace': 'มั่งมี',
     'shell.signing_out': 'Signing out...',
     'shell.signout_failed': 'Sign out failed. Check your connection and try again.',
+    'shell.line_link.action': 'Link LINE account',
+    'shell.line_link.linked_title': 'LINE account',
+    'shell.line_link.badge_unlinked': 'Not linked',
+    'shell.line_link.badge_linked': 'Linked',
     'dashboard.title': 'Dashboard',
     'dashboard.welcome': 'Welcome',
     'dashboard.placeholder': 'Business summary metrics will appear here.',
