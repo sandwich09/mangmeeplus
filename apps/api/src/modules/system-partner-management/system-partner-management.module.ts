@@ -21,6 +21,7 @@ import { PartnerMemberLineUnlinkUseCase } from './application/use-cases/partner-
 import { SetPartnerMemberContactUseCase } from './application/use-cases/set-partner-member-contact.use-case';
 import { PartnerMemberPasswordResetUseCase } from './application/use-cases/partner-member-password-reset.use-case';
 import { PartnerMemberPasswordRevealUseCase } from './application/use-cases/partner-member-password-reveal.use-case';
+import { PartnerMemberLineLinkTokenUseCase } from './application/use-cases/partner-member-line-link-token.use-case';
 import { DataModelCoreModule } from '../data-model-core/data-model-core.module';
 import { LedgerModule } from '../ledger/ledger.module.js';
 import { DashboardNotificationsModule } from '../dashboard-notifications/dashboard-notifications.module';
@@ -64,6 +65,7 @@ import { PlanTermSweepUseCase } from './application/use-cases/plan-term-sweep.us
     SetPartnerMemberContactUseCase,
     PartnerMemberPasswordResetUseCase,
     PartnerMemberPasswordRevealUseCase,
+    PartnerMemberLineLinkTokenUseCase,
     GetCompanyPlanTermUseCase,
     SetCompanyPlanTermUseCase,
     RenewCompanyPlanTermUseCase,

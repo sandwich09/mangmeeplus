@@ -33,6 +33,7 @@ import type {
   SystemUserLookupItemDto,
   SystemUserMembershipDto,
   SystemUserMergeTrailDto,
+  EmployeeLineLinkPackage,
 } from '@watchdog-bms/contracts';
 import { authedApiFetch as apiFetch } from '@/common/api/authed-fetch';
 
@@ -71,6 +72,7 @@ export type {
   SystemUserLookupItemDto,
   SystemUserMembershipDto,
   SystemUserMergeTrailDto,
+  EmployeeLineLinkPackage,
 };
 
 /** Response of the lifecycle endpoint — status + timestamps only, NOT the full detail. */
@@ -225,6 +227,17 @@ export async function setPartnerMemberContact(
     body: JSON.stringify(body),
     suppressErrorToast: true,
   });
+}
+
+/** Fresh LINE-link QR for a member. Password untouched; any prior pending QR is revoked. */
+export async function issuePartnerMemberLineLinkToken(
+  companyId: string,
+  memberUserId: string,
+): Promise<{ lineLink: EmployeeLineLinkPackage }> {
+  return apiFetch<{ lineLink: EmployeeLineLinkPackage }>(
+    `/v1/system/partners/${companyId}/members/${memberUserId}/line-link-token`,
+    { method: 'POST', suppressErrorToast: true },
+  );
 }
 
 export async function resetPartnerMemberPassword(
