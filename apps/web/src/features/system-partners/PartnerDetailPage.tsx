@@ -22,6 +22,7 @@ import { useToast } from '@/common/components/toast';
 import { formatThaiDateTime, formatThaiMonth } from '@/common/i18n/thai-date';
 import { useEffect, useRef, useState } from 'react';
 import { WORKSPACE_ICON_NODES } from '@/features/web-core-workspace/design-icons';
+import { QrLinkCard } from '@/features/employee-access/EmployeeAccessPages';
 import {
   getPartnerDetail,
   updatePartnerProfile,
@@ -36,6 +37,7 @@ import {
   setPartnerPlanTerm,
   renewPartnerPlanTerm,
   unlinkPartnerMemberLine,
+  issuePartnerMemberLineLinkToken,
   resetPartnerMemberPassword,
   setPartnerMemberContact,
   revealPartnerMemberTempPassword,
@@ -45,6 +47,7 @@ import type {
   LineContextHealth,
   PartnerAiUsageDto,
   PartnerMemberDto,
+  EmployeeLineLinkPackage,
 } from './system-partners.api';
 import {
   budgetBarClass,
@@ -332,6 +335,8 @@ function MembersSection({
   // userId -> revealed plaintext; absent = masked. Kept client-side only.
   const [revealed, setRevealed] = useState<Record<string, string>>({});
   const [busyUserId, setBusyUserId] = useState<string | null>(null);
+  // Shown once, below the table. Never persisted: the link is a bearer credential.
+  const [issuedQr, setIssuedQr] = useState<{ displayName: string; lineLink: EmployeeLineLinkPackage } | null>(null);
   const { confirm, confirmDialog } = useConfirm();
 
   const loadMembers = async () => {
@@ -402,6 +407,25 @@ function MembersSection({
       setRevealed((prev) => ({ ...prev, [member.userId]: result.temporaryPassword }));
       showToast('New temporary password issued.', 'success');
       await loadMembers();
+    } catch (err) {
+      showToast(apiErrorMessage(err), 'error');
+    } finally {
+      setBusyUserId(null);
+    }
+  };
+
+  const handleIssueLineQr = async (member: PartnerMemberDto) => {
+    if (member.lineLinked && !(await confirm({
+      title: 'Issue LINE QR',
+      message: `"${member.displayName}" is already linked. A new QR lets them link a different LINE account, and the current one stops working. Continue?`,
+      confirmLabel: 'Issue QR',
+      cancelLabel: 'Cancel',
+    }))) return;
+    setBusyUserId(member.userId);
+    try {
+      const result = await issuePartnerMemberLineLinkToken(companyId, member.userId);
+      setIssuedQr({ displayName: member.displayName, lineLink: result.lineLink });
+      showToast('LINE link QR issued.', 'success');
     } catch (err) {
       showToast(apiErrorMessage(err), 'error');
     } finally {
@@ -563,6 +587,14 @@ function MembersSection({
                         </button>
                         <button
                           type="button"
+                          className="rounded border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                          disabled={busy}
+                          onClick={() => void handleIssueLineQr(m)}
+                        >
+                          Issue LINE QR
+                        </button>
+                        <button
+                          type="button"
                           className="rounded border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-100 disabled:opacity-50"
                           disabled={busy || !m.lineLinked}
                           onClick={() => void handleUnlinkLine(m)}
@@ -576,6 +608,31 @@ function MembersSection({
               })}
             </tbody>
           </table>
+        </div>
+      )}
+      {issuedQr && (
+        <div className="mt-4 space-y-2 rounded border border-green-200 bg-green-50 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-semibold text-green-900">
+              LINE link QR for {issuedQr.displayName} — send the link to them in chat
+            </p>
+            <button
+              type="button"
+              className="text-xs font-medium text-gray-500 underline hover:text-gray-700"
+              onClick={() => setIssuedQr(null)}
+            >
+              Hide
+            </button>
+          </div>
+          <p className="text-xs text-gray-600">
+            Single use, valid 72 hours, bound to this member only. Their password is unchanged.
+            They do not need to log in — opening the link in LINE finishes the link.
+          </p>
+          <QrLinkCard
+            linkUrl={issuedQr.lineLink.linkUrl}
+            qrImageUrl={issuedQr.lineLink.qrImageUrl}
+            expiresAt={issuedQr.lineLink.expiresAt}
+          />
         </div>
       )}
       {confirmDialog}

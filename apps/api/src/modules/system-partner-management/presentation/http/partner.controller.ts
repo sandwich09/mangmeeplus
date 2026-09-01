@@ -21,6 +21,7 @@ import { Type } from 'class-transformer';
 import type { Request } from 'express';
 import { ALL_FEATURE_ENTITLEMENT_KEYS, PLAN_TIER_PRESETS, VAT_FACT_STATUSES, type PlanTierKey, type VatFactStatus } from '@watchdog-bms/contracts';
 import { RequirePermissions } from '../../../../common/security/permissions.decorator';
+import { trustedPublicApiBase } from '../../../../common/http/public-api-base';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import { ListPartnersUseCase } from '../../application/use-cases/list-partners.use-case';
 import { GetPartnerDetailUseCase } from '../../application/use-cases/get-partner-detail.use-case';
@@ -35,6 +36,7 @@ import { ListPartnerMembersUseCase } from '../../application/use-cases/list-part
 import { PartnerMemberLineUnlinkUseCase } from '../../application/use-cases/partner-member-line-unlink.use-case';
 import { PartnerMemberPasswordResetUseCase } from '../../application/use-cases/partner-member-password-reset.use-case';
 import { PartnerMemberPasswordRevealUseCase } from '../../application/use-cases/partner-member-password-reveal.use-case';
+import { PartnerMemberLineLinkTokenUseCase } from '../../application/use-cases/partner-member-line-link-token.use-case';
 import { SetPartnerMemberContactUseCase } from '../../application/use-cases/set-partner-member-contact.use-case';
 import {
   GetCompanyPlanTermUseCase,
@@ -147,6 +149,7 @@ export class PartnerController {
     private readonly getAiUsage: GetPartnerAiUsageUseCase,
     private readonly listMembers: ListPartnerMembersUseCase,
     private readonly unlinkMemberLine: PartnerMemberLineUnlinkUseCase,
+    private readonly issueMemberLineLinkToken: PartnerMemberLineLinkTokenUseCase,
     private readonly resetMemberPassword: PartnerMemberPasswordResetUseCase,
     private readonly revealMemberPassword: PartnerMemberPasswordRevealUseCase,
     private readonly setMemberContact: SetPartnerMemberContactUseCase,
@@ -249,6 +252,29 @@ export class PartnerController {
       memberUserId,
       requestingAdminUserId: req.context.userId,
       requestId: req.context.requestId,
+    });
+  }
+
+  // The members table already shows "Not linked"; this is the action that fixes it from the
+  // same screen. Without it an expired owner QR is only reissuable through the onboarding run
+  // id, which is unrecoverable outside the production database.
+  @Post(':partnerCompanyId/members/:memberUserId/line-link-token')
+  @HttpCode(200)
+  @RequirePermissions('system.partner_member.manage')
+  @ApiOperation({ summary: 'Issue a fresh LINE-link QR for a member (72h, single use, revokes prior pending QRs)' })
+  @ApiResponse({ status: 200 })
+  @ApiResponse({ status: 404, description: 'No active membership for this member in this company' })
+  issueLineLinkToken(
+    @Param('partnerCompanyId') companyId: string,
+    @Param('memberUserId') memberUserId: string,
+    @Req() req: AuthedRequest,
+  ) {
+    return this.issueMemberLineLinkToken.execute({
+      companyId,
+      memberUserId,
+      requestingAdminUserId: req.context.userId,
+      requestId: req.context.requestId,
+      apiBaseUrl: trustedPublicApiBase(req),
     });
   }
 
