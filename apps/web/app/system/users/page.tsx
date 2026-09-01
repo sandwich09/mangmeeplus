@@ -1,5 +1,6 @@
-import UserLookupPage from '@/features/system-partners/UserLookupPage';
+import { redirect } from 'next/navigation';
 
+// User lookup merged into the partners page; keep old bookmarks/links working.
 export default function SystemUsersRoute() {
-  return <UserLookupPage />;
+  redirect('/system/partners');
 }

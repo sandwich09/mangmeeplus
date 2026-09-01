@@ -7,6 +7,7 @@ import { apiErrorMessage } from '@/common/api/api-error-message';
 import { useEffect, useState } from 'react';
 import { listPartners } from './system-partners.api';
 import type { PartnerCompanySummaryDto, LineContextHealth } from './system-partners.api';
+import UserLookupSection from './UserLookupSection';
 
 // -- status badge
 
@@ -128,6 +129,10 @@ export default function PartnerListPage() {
             Onboard New Partner
           </Link>
         </div>
+
+        {/* User lookup lives on this page (not its own tab): partner support starts from either a
+            company or a person, so both entry points sit on the console root. */}
+        <UserLookupSection />
 
         {/* Filter bar */}
         <div className="flex items-center gap-3">
