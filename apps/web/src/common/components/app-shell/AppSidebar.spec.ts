@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isActiveNavSubItem, type SidebarSubItemRef } from './app-sidebar.logic';
+import { isActiveNavSubItem, lineLinkMenuRow, type SidebarSubItemRef } from './app-sidebar.logic';
 
 const shellDir = dirname(fileURLToPath(import.meta.url));
 
@@ -47,7 +47,42 @@ describe('workspace account menu placement', () => {
 
     assert.match(sidebarSource, /id="sidebar-user-menu"/);
     assert.match(sidebarSource, /shell\.reset_password/);
+    // One LINE row, not two: the OAuth start action carries the lineLinkMenuRow state gate.
+    assert.match(sidebarSource, /lineLinkMenuRow/);
+    assert.match(sidebarSource, /line-login\/start/);
+    assert.doesNotMatch(sidebarSource, /issueSelfLineLinkToken/);
     assert.match(sidebarSource, /logoutCurrentSession/);
     assert.doesNotMatch(headerSource, /shell\.user_menu|shell\.reset_password|logoutCurrentSession/);
+  });
+});
+
+describe('lineLinkMenuRow', () => {
+  it('keeps the row disabled while the lazy account-security fetch is in flight', () => {
+    // "Unknown" must not read as "not linked": in the fetch window an already-linked user
+    // could otherwise start the re-link the owner directive forbids. The row still renders
+    // immediately — the menu never blocks on the call — it just is not clickable yet.
+    assert.deepEqual(lineLinkMenuRow(null), {
+      labelKey: 'shell.line_link.action',
+      badgeKey: null,
+      disabled: true,
+    });
+  });
+
+  it('offers the link action with the amber not-linked badge', () => {
+    assert.deepEqual(lineLinkMenuRow({ lineLinked: false }), {
+      labelKey: 'shell.line_link.action',
+      badgeKey: 'shell.line_link.badge_unlinked',
+      disabled: false,
+    });
+  });
+
+  it('renders an already-linked account as a disabled row (owner directive 2026-09-01)', () => {
+    // Re-link and unlink stay admin-console actions: an accidental tap here would sever a
+    // working identity and burn LINE OA push quota.
+    assert.deepEqual(lineLinkMenuRow({ lineLinked: true }), {
+      labelKey: 'shell.line_link.linked_title',
+      badgeKey: 'shell.line_link.badge_linked',
+      disabled: true,
+    });
   });
 });

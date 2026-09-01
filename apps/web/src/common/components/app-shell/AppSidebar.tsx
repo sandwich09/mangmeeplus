@@ -4,7 +4,7 @@ import { withLineExternalBrowser } from '@/common/auth/line-in-app-browser.logic
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useSidebar } from './SidebarContext';
-import { isActiveNavSubItem } from './app-sidebar.logic';
+import { isActiveNavSubItem, lineLinkMenuRow } from './app-sidebar.logic';
 import { ChevronDownIcon, HorizontalDotsIcon } from '@/common/icons';
 import { MangmeeLogo } from '@/common/components/brand/MangmeeLogo';
 import { Button } from '@/common/components/button';
@@ -13,6 +13,7 @@ import { AlertModal, Modal } from '@/common/components/modal';
 import type { DictionaryKey, SupportedLocale } from '@/common/i18n/workspace-dictionary';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import { logoutCurrentSession } from '@/common/auth/session';
+import { getAccountSecurityState, type AccountSecurityState } from '@/features/auth/auth.api';
 import { useCloseOnOutsideClick } from '@/common/hooks/use-close-on-outside-click';
 import { useIsDesktop, useMediaQuery } from '@/common/hooks/use-media-query';
 
@@ -122,6 +123,7 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
   const [signOutOpen, setSignOutOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [signOutFailed, setSignOutFailed] = useState(false);
+  const [accountSecurity, setAccountSecurity] = useState<AccountSecurityState | null>(null);
   const activeItemRef = useRef<HTMLElement | null>(null);
   const navScrollRef = useRef<HTMLDivElement | null>(null);
   const userMenuRef = useRef<HTMLDivElement | null>(null);
@@ -157,6 +159,15 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
       setSignOutFailed(true);
     }
   };
+
+  const lineLinkRow = lineLinkMenuRow(accountSecurity);
+
+  // Lazy: the link state is only needed once the menu is on screen, so the shell never pays for
+  // it on mount. The menu item itself renders from permissions alone — the badge just appears.
+  useEffect(() => {
+    if (!userMenuOpen || !showAccountSecurity || accountSecurity) return;
+    void getAccountSecurityState().then(setAccountSecurity).catch(() => undefined);
+  }, [accountSecurity, showAccountSecurity, userMenuOpen]);
 
   const isActive = (path: string) => path === pathname;
   const isActiveItem = (nav: NavItem) => {
@@ -446,23 +457,36 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
                   {t('shell.reset_password', locale)}
                 </Link>
               )}
-              {/* Owner UAT round 1: the welcome page was the only LINE-link entry; a user who skips
-                  it had no way back. Full navigation (not a client Link) — the BFF start route
-                  302s to LINE and must own the request. returnTo is the welcome page rather than
-                  the current path because that is the only page carrying the spec §4F merge
-                  dialog: a conflict has to land where the user can answer it. */}
-              <a
-                href={`/api/auth/line-login/start?returnTo=${encodeURIComponent('/signup/welcome')}`}
-                className="block w-full px-4 py-3 text-left text-sm font-medium text-gray-700 hover:bg-brand-25 hover:text-brand-700"
-                onClick={(event) => {
+              {/* One LINE-link row, two lineages merged: the ACTION is the production-proven
+                  LINE-login OAuth start (Owner UAT round 1 — full navigation because the BFF
+                  302s to LINE; returnTo is the welcome page because that is the only page
+                  carrying the spec §4F merge dialog; withLineExternalBrowser keeps the OAuth
+                  cookie and callback in one browser). The STATE is the self-link work: a lazy
+                  account-security fetch drives the badge, and the row is DISABLED until the
+                  state lands and permanently once linked (owner directive 2026-09-01 — an
+                  accidental tap must not start a re-link and burn LINE OA push quota). */}
+              <button
+                type="button"
+                disabled={lineLinkRow.disabled}
+                onClick={lineLinkRow.disabled ? undefined : () => {
                   setUserMenuOpen(false);
-                  // LINE in-app browser: keep the OAuth cookie and callback in one browser.
-                  event.preventDefault();
                   window.location.assign(withLineExternalBrowser(`/api/auth/line-login/start?returnTo=${encodeURIComponent('/signup/welcome')}`, navigator.userAgent));
                 }}
+                className={`flex w-full items-center justify-between gap-2 px-4 py-3 text-left text-sm font-medium ${
+                  lineLinkRow.disabled
+                    ? 'cursor-not-allowed text-gray-400'
+                    : 'text-gray-700 hover:bg-brand-25 hover:text-brand-700'
+                }`}
               >
-                {t('shell.link_line', locale)}
-              </a>
+                <span>{t(lineLinkRow.labelKey, locale)}</span>
+                {lineLinkRow.badgeKey && (
+                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                    lineLinkRow.badgeKey === 'shell.line_link.badge_linked' ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'
+                  }`}>
+                    {t(lineLinkRow.badgeKey, locale)}
+                  </span>
+                )}
+              </button>
               <button
                 type="button"
                 className="w-full px-4 py-3 text-left text-sm font-medium text-gray-700 hover:bg-red-50 hover:text-red-700"

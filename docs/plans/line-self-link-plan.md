@@ -16,23 +16,23 @@ Delivery: single branch with slice A (admin console QR button, already implement
    Wire provider in `auth.module.ts`.
 4. **Account security state** — add `lineLinked` / `lineLinkedAt` to
    `get-account-security-state.use-case.ts` (query `externalIdentity` ACTIVE LINE for user, additive).
-5. **Permissions** — in `permission-registry.ts`, add `account.identity.link` + `account.identity.unlink`
-   to every role block carrying `account.password.change` that lacks them (MANAGER, FINANCE, ACCOUNTANT,
-   STAFF/`STAFF_ROLE_GRANTS`; check AUDITOR_READONLY and any others by the same rule).
+5. **Permissions** — in `permission-registry.ts`, add `account.identity.link` (only — unlink is not
+   widened, spec §5) to every role block carrying `account.password.change` that lacks it (MANAGER,
+   FINANCE, ACCOUNTANT, STAFF/`STAFF_ROLE_GRANTS`; check AUDITOR_READONLY and others by the same rule).
 6. **Rate limit** — only if `AuthRateLimitService` offers a one-line per-user fit; otherwise skip and note.
 
 ## Phase 2 — Web
 
 7. **API client** `auth.api.ts` — `issueSelfLineLinkToken(): Promise<EmployeeLineLinkPackage>`;
-   extend `AccountSecurityState` type.
+   extend `AccountSecurityState` type. (No unlink client fn — see step 8.)
 8. **Sidebar** `AppSidebar.tsx` — menu item between Reset password and sign-out, rendered when
    `showAccountSecurity` (same flag as Reset password — it already keys on the link permissions).
    Status badge from a lazy `getAccountSecurityState()` fired when the menu opens. Click →
    - not linked, mobile: mint → `window.location.href = linkUrl`
    - not linked, desktop: mint → QR modal (reuse `Modal` from `@/common/components/modal` like the
      sign-out confirm; render `qrImageUrl` + "สร้าง QR ใหม่" + expiry note; poll state ~5s while open)
-   - linked: manage modal (linked-at, เปลี่ยนบัญชี LINE → mint flow, ยกเลิกการเชื่อม → confirm +
-     `POST /v1/auth/line/unlink` via new `unlinkLine()` in auth.api)
+   - linked: item DISABLED, no click action (Owner 2026-09-01 — protect LINE OA push quota); no
+     unlink client fn, no manage modal
    Mobile/desktop split: same mechanism the sidebar uses for the drawer (do not invent a new breakpoint).
 9. **i18n** — th/en keys in `workspace-dictionary.ts` (`shell.line_link.*`).
 
@@ -50,7 +50,7 @@ spec-suite-coverage guard enforces it; this is the sanctioned package.json excep
 ## Phase 4 — Verify
 
 15. `pnpm --filter @watchdog-bms/api test`, both typechecks, `pnpm --filter @watchdog-bms/web test`.
-16. Manual: dev stack, link + relink + unlink journey; record results in task memory.
+16. Manual: dev stack, link journey + linked-state disabled item; record results in task memory.
 
 ## Guardrails for the implementer
 

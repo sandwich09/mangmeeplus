@@ -197,6 +197,18 @@ describe('permission-registry', () => {
     }
   });
 
+  // Self-service LINE link (line-self-link spec §5): every role that may change its own password
+  // may also link its own LINE account — strictly ctx.userId-scoped, and employees are the ones
+  // who hit the 15-minute QR expiry. `account.identity.unlink` is deliberately NOT widened
+  // (owner directive 2026-09-01): the sidebar shows an already-linked account as a disabled row,
+  // so unlink stays an admin-console action and the grant would be unused surface.
+  it('every role that can change its own password can link its own LINE account', () => {
+    for (const [role, grants] of Object.entries(ROLE_GRANTS)) {
+      if (!grants.includes('account.password.change')) continue;
+      assert.ok(grants.includes('account.identity.link'), `Role ${role} cannot link its own LINE account`);
+    }
+  });
+
   it('STAFF keeps dashboard access when the dashboard menu starts requiring dashboard.read', () => {
     assert.ok(ROLE_GRANTS.STAFF.includes('dashboard.read'));
   });
