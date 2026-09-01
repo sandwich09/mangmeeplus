@@ -496,6 +496,22 @@ describe('AuthGuard', () => {
     })), true);
   });
 
+  it('lets a pending-acceptance user approve a desktop QR login (UAT 2026-09-01)', async () => {
+    // Approving the QR is a login handshake: the redeemed desktop session walks into this same
+    // legal gate itself, so exempting the approve bypasses nothing. Before this, a freshly-claimed
+    // account (binding acceptance deliberately happens in-app, after login) got 403 here and the
+    // phone page read it as "QR หมดอายุ".
+    const pendingLegal = { isRequired: async () => true } as any;
+    const guard = new AuthGuard(
+      makeReflector(false), noopVerifier as any, failVerifier as any, noopResolve,
+      localConfig, noopPrisma, pendingLegal,
+    );
+    assert.equal(await guard.canActivate(makeContext({
+      authHeader: 'Bearer valid.token',
+      path: '/v1/auth/line/qr/approve',
+    })), true);
+  });
+
   it('does not exempt unrelated authenticated /v1/auth mutations from the legal gate', async () => {
     const pendingLegal = { isRequired: async () => true } as any;
     for (const path of ['/v1/auth/account/ai-assistant', '/v1/auth/line/link']) {

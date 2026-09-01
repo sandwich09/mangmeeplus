@@ -961,9 +961,9 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
                           <td className="whitespace-nowrap text-right text-xs font-semibold tabular-nums">{amount === 0 ? <span className="font-normal text-gray-400">—</span> : amount.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</td>
                           {showsTax && <td className="whitespace-nowrap text-xs" title={r.taxEvidenceReasonCode ? TAX_EVIDENCE_REASON_LABELS[r.taxEvidenceReasonCode] : undefined}><MangmeeBadge tone={TAX_EVIDENCE_TONE[r.taxEvidenceStatus]}>{expenseValueLabel(TAX_EVIDENCE_STATUS_LABELS, r.taxEvidenceStatus, 'รอตรวจหลักฐานภาษี')}</MangmeeBadge></td>}
                           <td className="text-xs">
-                            {actionFlags.length > 0 && <div className="flex flex-wrap gap-1.5">{actionFlags.map((flag) => (
+                            {actionFlags.length > 0 ? <div className="flex flex-wrap gap-1.5">{actionFlags.map((flag) => (
                               <MangmeeBadge key={flag.key} tone={flag.severity === 'warn' ? 'amber' : 'slate'} className="whitespace-nowrap">{flag.label}</MangmeeBadge>
-                            ))}</div>}
+                            ))}</div> : <span className="text-gray-400">—</span>}
                           </td>
                           <td className="w-px whitespace-nowrap text-xs">
                             {canPostLedger && r.pendingPostingSourceType ? (

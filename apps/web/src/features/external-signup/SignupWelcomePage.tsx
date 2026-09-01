@@ -1,6 +1,7 @@
 'use client';
 
 import { Suspense, useEffect, useState } from 'react';
+import { withLineExternalBrowser } from '@/common/auth/line-in-app-browser.logic';
 import { useSearchParams } from 'next/navigation';
 import { Button } from '@/common/components/button';
 import { Modal } from '@/common/components/modal';
@@ -25,6 +26,12 @@ function LineLinkButton({ className = '' }: { className?: string }) {
   return (
     <a
       href={LINE_LINK_URL}
+      onClick={(event) => {
+        // LINE in-app browser: force the whole OAuth round trip into the system browser, or the
+        // transaction cookie and the callback land in different browsers (UAT 2026-09-01).
+        event.preventDefault();
+        window.location.assign(withLineExternalBrowser(LINE_LINK_URL, navigator.userAgent));
+      }}
       className={`flex h-12 w-full items-center justify-center gap-2.5 rounded-xl text-[16px] font-bold text-white ${className}`}
       style={{ backgroundColor: LINE_GREEN }}
     >

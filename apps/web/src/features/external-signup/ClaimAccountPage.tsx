@@ -83,7 +83,12 @@ function ClaimCard({ token, info }: { token: string; info: SignupClaimInfoDto })
     try {
       finish(await attachSignupClaimToExistingUser({ token, identifier: trimmed(identifier), password: existingPassword }));
     } catch (cause) {
-      setError(signupSubmitErrorMessage(cause));
+      // Owner UAT 2026-09-01: an attach 401 is a wrong username/password — there is no ambient
+      // session on this lane, so the shared 401 fallback ("เซสชันหมดอายุ") told the wrong story.
+      // Same wording the login page uses for its own 401.
+      setError((cause as { status?: number })?.status === 401
+        ? 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง'
+        : signupSubmitErrorMessage(cause));
       setLoading(false);
     }
   };

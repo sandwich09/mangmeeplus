@@ -1,5 +1,6 @@
 'use client';
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { withLineExternalBrowser } from '@/common/auth/line-in-app-browser.logic';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useSidebar } from './SidebarContext';
@@ -453,7 +454,12 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
               <a
                 href={`/api/auth/line-login/start?returnTo=${encodeURIComponent('/signup/welcome')}`}
                 className="block w-full px-4 py-3 text-left text-sm font-medium text-gray-700 hover:bg-brand-25 hover:text-brand-700"
-                onClick={() => setUserMenuOpen(false)}
+                onClick={(event) => {
+                  setUserMenuOpen(false);
+                  // LINE in-app browser: keep the OAuth cookie and callback in one browser.
+                  event.preventDefault();
+                  window.location.assign(withLineExternalBrowser(`/api/auth/line-login/start?returnTo=${encodeURIComponent('/signup/welcome')}`, navigator.userAgent));
+                }}
               >
                 {t('shell.link_line', locale)}
               </a>
