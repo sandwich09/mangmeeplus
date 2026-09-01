@@ -19,7 +19,7 @@ import { formatMessage, localizedErrorMessage } from '@/common/i18n/error-messag
 import { MangmeeLogo } from '@/common/components/brand/MangmeeLogo';
 import { GenericClientNotice } from '@/common/client-support/GenericClientNotice';
 import { loginAsDevOwner, loginWithPassword, refreshSessionWithOutcome } from './auth.api';
-import { rememberPendingRedirect } from './auth.logic';
+import { lineStartUrl, rememberPendingRedirect } from './auth.logic';
 
 const SHOW_DEV_LOGIN = process.env.NODE_ENV !== 'production';
 
@@ -40,14 +40,6 @@ const LINE_NOTICE_TEXT: Record<string, string> = {
   // Not an error — `next` still carries the record, so signing in finishes the journey.
   'handoff-expired': 'ลิงก์นี้หมดอายุหรือถูกใช้ไปแล้ว กรุณาเข้าสู่ระบบเพื่อเปิดรายการนี้',
 };
-
-// The LINE OAuth round trip, with the landing path carried across it. Two lanes use it: a plain
-// LINE login, and link-after-password (P12-2) — LINE has already consented this browser, so it
-// redirects back immediately and the BFF callback, now seeing an active session, links the
-// verified identity instead of issuing new tokens.
-function lineStartUrl(returnTo: string): string {
-  return `/api/auth/line-login/start?returnTo=${encodeURIComponent(returnTo)}`;
-}
 
 // P12-3a desktop QR login. The poll is deliberately slower than the API's per-IP poll bucket
 // allows for one QR lifetime, and a stale QR is refreshed a bounded number of times before the
@@ -390,6 +382,31 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
     );
   }
 
+  // P12-3a: the qr-approve lane arrives from a phone that just scanned a LINE QR, so LINE is the
+  // shortest way back — it leads and the password form drops below the divider. Every other lane
+  // keeps the password form first. Both positions use the same button, so `next` still rides the
+  // LINE round trip and still escapes the LINE in-app browser.
+  const qrApproveLead = lineNotice === 'qr-approve' && lineLoginAvailable;
+
+  const orDivider = (
+    <div className="mt-5 flex items-center gap-3">
+      <div className="h-px flex-1 bg-gray-200" />
+      <span className="text-[13px] text-gray-400">หรือ</span>
+      <div className="h-px flex-1 bg-gray-200" />
+    </div>
+  );
+
+  const lineLoginButton = (
+    <button
+      type="button"
+      onClick={() => window.location.assign(withLineExternalBrowser(nextPath ? lineStartUrl(nextPath) : '/api/auth/line-login/start', navigator.userAgent))}
+      className="mt-4 flex h-12 w-full items-center justify-center gap-2.5 rounded-xl border-[1.5px] border-gray-200 bg-white text-[15.5px] font-semibold text-gray-900 transition hover:border-[#06C755]"
+    >
+      <span className="flex h-6 w-6 items-center justify-center rounded-md bg-[#06C755] text-sm font-extrabold text-white">L</span>
+      เข้าสู่ระบบด้วย LINE
+    </button>
+  );
+
   return (
     <div className="flex min-h-dvh">
       <HeroPanel locale={locale} />
@@ -451,6 +468,13 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
             <div role="alert" className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
               {error}
             </div>
+          ) : null}
+
+          {qrApproveLead ? (
+            <>
+              {lineLoginButton}
+              {orDivider}
+            </>
           ) : null}
 
           <form onSubmit={handleSubmit} className="mt-6 space-y-4" noValidate>
@@ -548,19 +572,12 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
 
           {lineLoginAvailable ? (
             <>
-              <div className="mt-5 flex items-center gap-3">
-                <div className="h-px flex-1 bg-gray-200" />
-                <span className="text-[13px] text-gray-400">หรือ</span>
-                <div className="h-px flex-1 bg-gray-200" />
-              </div>
-              <button
-                type="button"
-                onClick={() => window.location.assign(withLineExternalBrowser(nextPath ? lineStartUrl(nextPath) : '/api/auth/line-login/start', navigator.userAgent))}
-                className="mt-4 flex h-12 w-full items-center justify-center gap-2.5 rounded-xl border-[1.5px] border-gray-200 bg-white text-[15.5px] font-semibold text-gray-900 transition hover:border-[#06C755]"
-              >
-                <span className="flex h-6 w-6 items-center justify-center rounded-md bg-[#06C755] text-sm font-extrabold text-white">L</span>
-                เข้าสู่ระบบด้วย LINE
-              </button>
+              {qrApproveLead ? null : (
+                <>
+                  {orDivider}
+                  {lineLoginButton}
+                </>
+              )}
               {/* Scanning is only useful where the phone is a second device, so the entry point is
                   desktop-only; on a phone the LINE button above already is the shortest path. */}
               <div className="mt-3 hidden md:flex">

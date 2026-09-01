@@ -5,6 +5,7 @@ import {
   buildQrCells,
   companyAccessDescription,
   isValidThaiMobile,
+  lineStartUrl,
   readTokenParam,
   signInAgainPath,
   validatePasswordConfirmation,
@@ -66,6 +67,13 @@ describe('auth.logic', () => {
       '/login?next=%2Fcompanies%2Fc1%2Fexpenses%2Fe1%3Ftab%3Dsignatures',
     );
     assert.equal(signInAgainPath('/companies/c1/dashboard'), '/login?next=%2Fcompanies%2Fc1%2Fdashboard');
+  });
+
+  it('carries the landing path across the LINE round trip, encoded once', () => {
+    assert.equal(lineStartUrl('/line-qr/abc'), '/api/auth/line-login/start?returnTo=%2Fline-qr%2Fabc');
+    // A QR code is base64url, so `-` and `_` must survive; anything else stays escaped.
+    assert.equal(lineStartUrl('/line-qr/a-b_c'), '/api/auth/line-login/start?returnTo=%2Fline-qr%2Fa-b_c');
+    assert.equal(lineStartUrl('/x?a=1&b=2'), '/api/auth/line-login/start?returnTo=%2Fx%3Fa%3D1%26b%3D2');
   });
 
   it('names the blocked company without duplicating the Thai company prefix', () => {

@@ -24,9 +24,17 @@ export function hashLineWebQrValue(raw: string): string {
   return createHash('sha256').update(raw).digest('hex');
 }
 
-/** The page the phone opens after scanning; the code is a path segment, not a query param. */
+/**
+ * The page the phone opens after scanning; the code is a path segment, not a query param.
+ *
+ * `openExternalBrowser=1` is LINE's documented escape — the same one the web app already applies to
+ * the LINE login button. Scanning from inside LINE otherwise opens the approve page in LINE's
+ * in-app browser, which shares no cookies with Safari/Chrome, so a phone that is signed in still
+ * reads as signed out (UAT 2026-09-01). Other QR scanners ignore the param, and the approve route
+ * takes the code from the path only.
+ */
 export function lineWebQrScanUrl(webBase: string, publicCode: string): string {
-  return `${webBase.replace(/\/+$/, '')}/line-qr/${encodeURIComponent(publicCode)}`;
+  return `${webBase.replace(/\/+$/, '')}/line-qr/${encodeURIComponent(publicCode)}?openExternalBrowser=1`;
 }
 
 /** Rendered locally (H-09): a one-time login code must never be handed to an external QR service. */
