@@ -391,7 +391,7 @@ describe('reimbursement intake cards — server-owned, never rendered from model
 
 describe('receipt quota card (P10-L §3.7/§7)', () => {
   it('sends the two §7 buttons as chat commands, not links out of the conversation', () => {
-    const message = buildReceiptQuotaExceededMessage('ช่วงทดลองอ่านใบเสร็จให้ได้ 15 ใบ ตอนนี้ครบแล้วค่ะ ดูแพ็กเกจที่ใหญ่ขึ้นได้เลย');
+    const message = buildReceiptQuotaExceededMessage('ช่วงทดลองให้ AI อ่านรูปได้ 15 ครั้ง ตอนนี้ครบแล้วค่ะ (ใบเสร็จ 1 ใบ = 1 ครั้ง) ดูแพ็กเกจที่ใหญ่ขึ้นได้เลย');
     assert.equal(message.type, 'flex');
     const bubble = message.contents as any;
     assert.deepEqual(bubble.footer.contents.map((button: any) => button.action), [
@@ -402,7 +402,7 @@ describe('receipt quota card (P10-L §3.7/§7)', () => {
   });
 
   it('keeps the spoken sentence as altText, so the chat preview reads as the same words', () => {
-    const text = 'ช่วงทดลองอ่านใบเสร็จให้ได้ 10 ใบ ตอนนี้ครบแล้วค่ะ ดูแพ็กเกจที่ใหญ่ขึ้นได้เลย';
+    const text = 'ช่วงทดลองให้ AI อ่านรูปได้ 10 ครั้ง ตอนนี้ครบแล้วค่ะ (ใบเสร็จ 1 ใบ = 1 ครั้ง) ดูแพ็กเกจที่ใหญ่ขึ้นได้เลย';
     const message = buildReceiptQuotaExceededMessage(text);
     assert.equal(message.type, 'flex');
     assert.equal((message as { altText: string }).altText, text);

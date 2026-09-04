@@ -431,7 +431,7 @@ describe('RequestReceiptExtractionUseCase', () => {
           assert.equal(body.count, 15);
           assert.equal(body.limit, 15);
           assert.match(body.monthKey, /^\d{4}-\d{2}$/);
-          assert.match(body.message, /15 ใบ/);
+          assert.match(body.message, /15 ครั้ง/);
           return true;
         },
       );
@@ -448,7 +448,7 @@ describe('RequestReceiptExtractionUseCase', () => {
         () => useCase.execute(ctx(['expense.ocr.request']), 'expense-1'),
         (error: any) => {
           assert.equal(error.getResponse().limit, 10);
-          assert.match(error.getResponse().message, /10 ใบ/);
+          assert.match(error.getResponse().message, /10 ครั้ง/);
           return true;
         },
       );

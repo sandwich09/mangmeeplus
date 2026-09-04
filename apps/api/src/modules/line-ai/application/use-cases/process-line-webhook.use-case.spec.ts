@@ -2109,7 +2109,8 @@ describe('ProcessLineWebhookUseCase', () => {
       assert.equal(intents, 0, 'and no expense record for a receipt nobody read');
       const card = sentMessages[0];
       assert.equal(card.type, 'flex');
-      assert.match(card.altText, /ช่วงทดลองอ่านใบเสร็จให้ได้ 15 ใบ ตอนนี้ครบแล้วค่ะ/);
+      assert.match(card.altText, /ช่วงทดลองให้ AI อ่านรูปได้ 15 ครั้ง ตอนนี้ครบแล้วค่ะ/);
+      assert.match(card.altText, /ใบเสร็จ 1 ใบ = 1 ครั้ง/, 'the promise says what a receipt actually costs');
       assert.deepEqual(
         card.contents.footer.contents.map((button: any) => button.action.label),
         ['ดูแพ็กเกจ', 'ขอเปลี่ยนแพ็กเกจ'],
@@ -2147,7 +2148,7 @@ describe('ProcessLineWebhookUseCase', () => {
 
       await sendReceipt(useCase, 'warmup-11');
 
-      assert.match(sentMessages[0].altText, /10 ใบ/);
+      assert.match(sentMessages[0].altText, /10 ครั้ง/);
       assert.doesNotMatch(sentMessages[0].altText, /15/);
     });
 
@@ -2158,7 +2159,7 @@ describe('ProcessLineWebhookUseCase', () => {
 
         await sendReceipt(useCase, `counter-${tierKey}`);
 
-        assert.equal(/ใบที่ 3 จาก 15 ในช่วงทดลอง/.test(replies.join('\n')), expected, tierKey);
+        assert.equal(/อ่านครั้งที่ 3 จาก 15 ในช่วงทดลอง/.test(replies.join('\n')), expected, tierKey);
       }
     });
 

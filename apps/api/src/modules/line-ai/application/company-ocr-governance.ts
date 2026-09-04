@@ -46,7 +46,7 @@ export const RECEIPT_QUOTA_ERROR_CODE: CompanyOcrErrorCode = 'RECEIPT_QUOTA_EXCE
 /**
  * What the reply needs to name a number: how many document reads this company/month has, and the
  * ceiling its plan allows. Read from the SAME aggregate the admission increments, so the trial's
- * "ใบที่ n จาก 15" and the admin console can never disagree.
+ * "อ่านครั้งที่ n จาก 15" and the admin console can never disagree.
  */
 export async function receiptQuotaSnapshot(
   prisma: PrismaService,

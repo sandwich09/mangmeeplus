@@ -33,20 +33,24 @@ export function effectiveMonthlySlipLimit(term: ReceiptQuotaTerm | null, now: Da
 }
 
 /**
- * Spec §7 row "ชนโควตา 15 ใบ", with the number read from the term rather than written into the
- * sentence: a warm-up shop meets this at 10 and a STARTER shop at 30, and all three must say the
- * truth about their own ceiling.
+ * Spec §7 row "ชนโควตา 15 ใบ", worded as AI IMAGE READS rather than receipts.
+ *
+ * The ceiling is enforced by `admitCompanyOcr`, which admits every image the assistant reads —
+ * a receipt, but also a signature photo or a picture sent with a question. Promising "15 receipts"
+ * while charging for all of them is a promise the system does not keep, so the copy counts what is
+ * actually counted and says what a receipt costs. The number comes from the term, never the
+ * sentence: a warm-up shop meets this at 10 and a STARTER shop at 30.
  */
 export function receiptQuotaExceededTextTh(limit: number): string {
-  return `ช่วงทดลองอ่านใบเสร็จให้ได้ ${limit} ใบ ตอนนี้ครบแล้วค่ะ ดูแพ็กเกจที่ใหญ่ขึ้นได้เลย`;
+  return `ช่วงทดลองให้ AI อ่านรูปได้ ${limit} ครั้ง ตอนนี้ครบแล้วค่ะ (ใบเสร็จ 1 ใบ = 1 ครั้ง) ดูแพ็กเกจที่ใหญ่ขึ้นได้เลย`;
 }
 
-/** The follow-up receipts in the same month: the card went out once, so these get one line. */
+/** The follow-up images in the same month: the card went out once, so these get one line. */
 export function receiptQuotaExceededShortTextTh(limit: number): string {
-  return `อ่านใบเสร็จครบ ${limit} ใบของเดือนนี้แล้วค่ะ พิมพ์ "ขอเปลี่ยนแพ็กเกจ" ได้เลยนะคะ`;
+  return `ให้ AI อ่านรูปครบ ${limit} ครั้งของเดือนนี้แล้วค่ะ พิมพ์ "ขอเปลี่ยนแพ็กเกจ" ได้เลยนะคะ`;
 }
 
 /** §15.1: one extra line on the success reply, for the free-trial tier only. */
 export function trialReceiptCounterLineTh(count: number, limit: number): string {
-  return `ใบที่ ${count} จาก ${limit} ในช่วงทดลอง`;
+  return `อ่านครั้งที่ ${count} จาก ${limit} ในช่วงทดลอง`;
 }

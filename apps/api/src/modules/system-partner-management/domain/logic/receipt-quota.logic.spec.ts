@@ -58,22 +58,36 @@ describe('effective monthly slip limit (P10-L §15.1)', () => {
 
 describe('receipt quota copy (spec §7)', () => {
   it('carries the ACTUAL ceiling, not a hard-coded 15', () => {
-    assert.match(receiptQuotaExceededTextTh(15), /15 ใบ/);
+    assert.match(receiptQuotaExceededTextTh(15), /15 ครั้ง/);
     // The warm-up wall is 10, and a shop that meets it must not be told it read 15.
-    assert.match(receiptQuotaExceededTextTh(10), /10 ใบ/);
+    assert.match(receiptQuotaExceededTextTh(10), /10 ครั้ง/);
     assert.doesNotMatch(receiptQuotaExceededTextTh(10), /15/);
-    assert.match(receiptQuotaExceededShortTextTh(30), /30 ใบ/);
+    assert.match(receiptQuotaExceededShortTextTh(30), /30 ครั้ง/);
   });
 
   it('says the §7 sentence, and the short follow-up points at the package-change command', () => {
     assert.equal(
       receiptQuotaExceededTextTh(15),
-      'ช่วงทดลองอ่านใบเสร็จให้ได้ 15 ใบ ตอนนี้ครบแล้วค่ะ ดูแพ็กเกจที่ใหญ่ขึ้นได้เลย',
+      'ช่วงทดลองให้ AI อ่านรูปได้ 15 ครั้ง ตอนนี้ครบแล้วค่ะ (ใบเสร็จ 1 ใบ = 1 ครั้ง) ดูแพ็กเกจที่ใหญ่ขึ้นได้เลย',
     );
     assert.match(receiptQuotaExceededShortTextTh(15), /ขอเปลี่ยนแพ็กเกจ/);
   });
 
   it('numbers the trial counter line n of limit', () => {
-    assert.equal(trialReceiptCounterLineTh(3, 15), 'ใบที่ 3 จาก 15 ในช่วงทดลอง');
+    assert.equal(trialReceiptCounterLineTh(3, 15), 'อ่านครั้งที่ 3 จาก 15 ในช่วงทดลอง');
+  });
+
+  it('counts AI IMAGE READS, never receipts — the ceiling charges both', () => {
+    // `admitCompanyOcr` admits every image the assistant reads, including a signature photo or a
+    // picture sent with a question. Promising receipts while charging for reads is a promise the
+    // system does not keep, so no customer-facing sentence may count in receipts.
+    for (const text of [
+      receiptQuotaExceededTextTh(15),
+      receiptQuotaExceededShortTextTh(15),
+      trialReceiptCounterLineTh(3, 15),
+    ]) {
+      assert.doesNotMatch(text, /\d+ ใบ(?!\s*=)/, text);
+      assert.doesNotMatch(text, /\+/, 'the "+" character is not used in customer copy');
+    }
   });
 });

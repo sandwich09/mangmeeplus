@@ -338,8 +338,10 @@ const VIEW_PACKAGES_COMMAND = 'โปรโมชั่น';
 const PACKAGE_CHANGE_COMMAND = 'ขอเปลี่ยนแพ็กเกจ';
 
 /**
- * Spec §3.7 / §7 row "ชนโควตา 15 ใบ" — the reply to the receipt that hit the monthly ceiling.
+ * Spec §3.7 / §7 row "ชนโควตา 15 ใบ" — the reply to the image that hit the monthly ceiling.
  *
+ * The wording counts AI IMAGE READS, not receipts, because that is what `admitCompanyOcr` charges:
+ * a signature photo or a picture sent with a question spends the same allowance a receipt does.
  * Both buttons send a text command rather than opening a URL: the shop owner is in the chat with a
  * photo they just sent, and "ดูแพ็กเกจ" is defined by the spec as a PULL of the promotion card that
  * already exists in this lane — a web link would leave the conversation to show the same thing.
@@ -350,7 +352,7 @@ export function buildReceiptQuotaExceededMessage(text: string): LineReplyMessage
     type: 'flex',
     altText: preview(text, 400),
     contents: bubble(
-      { title: 'โควตาอ่านใบเสร็จเดือนนี้ครบแล้ว', badge: '📄 ครบโควตาเดือนนี้', text },
+      { title: 'โควตาให้ AI อ่านรูปเดือนนี้ครบแล้ว', badge: '📄 ครบโควตาเดือนนี้', text },
       undefined,
       '',
       [

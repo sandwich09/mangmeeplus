@@ -63,9 +63,11 @@ const CODE_LABELS: Record<string, string> = {
   entitlement_command_conflict: 'คำขอนี้ถูกใช้ไปแล้วด้วยข้อมูลอื่น กรุณาเปิดใหม่แล้วลองอีกครั้ง',
   entitlement_set_version_conflict: 'แพ็กเกจถูกแก้ไขโดยผู้อื่นระหว่างบันทึก กรุณาเปิดใหม่แล้วลองอีกครั้ง',
   ocr_config_version_conflict: 'การตั้งค่า OCR ถูกแก้ไขโดยผู้ดูแลคนอื่น ระบบยังไม่ได้บันทึก กรุณาโหลดค่าล่าสุดแล้วตรวจสอบอีกครั้ง',
-  // P10-L §15.1: the monthly slip ceiling. The receipt itself was saved — only the AI read was
-  // refused — so the copy says what still works before it says what to do about the ceiling.
-  receipt_quota_exceeded: 'อ่านใบเสร็จด้วย AI ครบโควตาของเดือนนี้แล้ว ยังกรอกรายการเองได้ตามปกติ หรือขอเปลี่ยนแพ็กเกจเพื่อเพิ่มจำนวนใบเสร็จได้เลย',
+  // P10-L §15.1: the monthly AI image-read ceiling. Worded as reads, not receipts, because the
+  // admission charges every image the assistant looks at. The receipt itself was saved — only the
+  // read was refused — so the copy says what still works before it says what to do about the
+  // ceiling. No number: the browser's ApiError keeps only `code`, and a wrong count is worse than none.
+  receipt_quota_exceeded: 'โควตาให้ AI อ่านรูปของเดือนนี้ครบแล้ว (ใบเสร็จ 1 ใบ = 1 ครั้ง) ยังกรอกรายการเองได้ตามปกติ หรือขอเปลี่ยนแพ็กเกจเพื่อเพิ่มจำนวนครั้งได้เลย',
   entitlement_features_required: 'เลือกอย่างน้อยหนึ่งฟีเจอร์ก่อนบันทึก',
   entitlement_feature_invalid: 'ข้อมูลฟีเจอร์ไม่ถูกต้อง กรุณาโหลดหน้าใหม่',
   entitlement_feature_batch_too_large: 'จำนวนฟีเจอร์เกินรายการที่ระบบรองรับ กรุณาโหลดหน้าใหม่',
