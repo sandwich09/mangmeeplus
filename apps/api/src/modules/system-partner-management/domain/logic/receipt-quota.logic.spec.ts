@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  displayReceiptQuotaLimit,
   effectiveMonthlySlipLimit,
   receiptQuotaExceededShortTextTh,
   receiptQuotaExceededTextTh,
@@ -103,5 +104,41 @@ describe('receipt quota copy (spec §7)', () => {
       assert.doesNotMatch(text, /\d+ ใบ(?!\s*=)/, text);
       assert.doesNotMatch(text, /\+/, 'the "+" character is not used in customer copy');
     }
+  });
+});
+
+
+/**
+ * Residual-4: `planLimit ?? 0` would have printed "อ่านรูปได้ 0 ครั้ง" if the term row disappeared
+ * between the admission and the reply — a broken-looking sentence shown to the one customer least
+ * willing to forgive it.
+ */
+describe('printed ceiling fallback', () => {
+  it('prefers the live plan limit', () => {
+    assert.equal(displayReceiptQuotaLimit(10, 'FREE_TRIAL_15'), 10, 'warm-up ceiling wins over the preset');
+  });
+
+  it('falls back to the tier preset when the term row is gone or zeroed', () => {
+    assert.equal(displayReceiptQuotaLimit(null, 'FREE_TRIAL_15'), 15);
+    assert.equal(displayReceiptQuotaLimit(0, 'STARTER_249'), 30, 'zero is never a ceiling worth printing');
+  });
+
+  it('gives up on the number rather than inventing one', () => {
+    assert.equal(displayReceiptQuotaLimit(null, null), null);
+    assert.equal(displayReceiptQuotaLimit(null, 'TIER_THAT_NEVER_EXISTED'), null);
+  });
+
+  it('drops the number from the copy instead of printing zero', () => {
+    for (const tierKey of [TRIAL_COUNTER_TIER_KEY, 'STARTER_249']) {
+      const text = receiptQuotaExceededTextTh(null, tierKey);
+      // The fixed "ใบเสร็จ 1 ใบ = 1 ครั้ง" rate clause stays; only the CEILING loses its number.
+      assert.doesNotMatch(text, /อ่านรูปได้ \d+ ครั้ง/, tierKey);
+      assert.doesNotMatch(text, /0 ครั้ง/, tierKey);
+      assert.match(text, /ครบตามจำนวน/, tierKey);
+      assert.doesNotMatch(receiptQuotaExceededShortTextTh(null, tierKey), /\bครบ \d+ ครั้ง/, tierKey);
+    }
+    // And the trial still owns its own word in the numberless form.
+    assert.match(receiptQuotaExceededTextTh(null, TRIAL_COUNTER_TIER_KEY), /ช่วงทดลอง/);
+    assert.doesNotMatch(receiptQuotaExceededTextTh(null, 'STARTER_249'), /ทดลอง/);
   });
 });

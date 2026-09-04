@@ -10,7 +10,7 @@ import { observeCustomerJourney } from '../../../../common/observability/custome
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { bangkokMonthKey } from '../../../line-ai/application/company-ai-usage-meter';
 import { receiptQuotaSnapshot, RECEIPT_QUOTA_ERROR_CODE } from '../../../line-ai/application/company-ocr-governance';
-import { receiptQuotaExceededTextTh } from '../../../system-partner-management/domain/logic/receipt-quota.logic';
+import { displayReceiptQuotaLimit, receiptQuotaExceededTextTh } from '../../../system-partner-management/domain/logic/receipt-quota.logic';
 
 const SUPPORTED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'application/pdf']);
 const MAX_EXTRACTION_BYTES = 10_000_000;
@@ -130,12 +130,16 @@ export class RequestReceiptExtractionUseCase {
       // "the read failed, try again", and trying again is the one thing that cannot work here.
       if (response.errorCode === RECEIPT_QUOTA_ERROR_CODE) {
         await this.auditOutcome(ctx, expenseId, 'receipt_quota_exceeded', attachment.id, 0, undefined, undefined, response.errorCode);
-        const { usedCount, planLimit } = await receiptQuotaSnapshot(this.prisma, ctx.companyId);
+        const { usedCount, planLimit, tierKey } = await receiptQuotaSnapshot(this.prisma, ctx.companyId);
+        const shownLimit = displayReceiptQuotaLimit(planLimit, tierKey);
         throw new ConflictException({
           code: 'receipt_quota_exceeded',
-          message: receiptQuotaExceededTextTh(planLimit ?? 0),
+          // `tierKey` decides the sentence: a FREE_TRIAL_15 shop hears about its trial, a paying
+          // tier hears about its package. Dropping it gave every shop the paying-tier wording.
+          message: receiptQuotaExceededTextTh(shownLimit, tierKey),
           count: usedCount,
           limit: planLimit,
+          tierKey,
           monthKey: bangkokMonthKey(),
         });
       }

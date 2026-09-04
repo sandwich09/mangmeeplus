@@ -5,6 +5,8 @@
  * and stays unlimited (P29 spec §2 rule 7). Enforcing the ceiling is the first limit every EXISTING
  * shop would ever meet, so "no row" must never become "no receipts".
  */
+import { PLAN_TIER_PRESETS } from '@watchdog-bms/contracts';
+import { isPlanTierKey } from './plan-term.logic';
 
 /** Only the four columns the ceiling depends on, so callers select nothing they do not use. */
 export type ReceiptQuotaTerm = {
@@ -41,10 +43,17 @@ export function effectiveMonthlySlipLimit(term: ReceiptQuotaTerm | null, now: Da
  * actually counted and says what a receipt costs. The number comes from the term, never the
  * sentence: a warm-up shop meets this at 10 and a STARTER shop at 30.
  */
-export function receiptQuotaExceededTextTh(limit: number, tierKey?: string | null): string {
-  return tierKey === TRIAL_COUNTER_TIER_KEY
-    ? `ช่วงทดลองให้ AI อ่านรูปได้ ${limit} ครั้ง ตอนนี้ครบแล้วค่ะ (ใบเสร็จ 1 ใบ = 1 ครั้ง) ดูแพ็กเกจที่ใหญ่ขึ้นได้เลย`
-    : `แพ็กเกจของคุณให้ AI อ่านรูปได้ ${limit} ครั้งต่อเดือน ตอนนี้ครบแล้วค่ะ (ใบเสร็จ 1 ใบ = 1 ครั้ง) ดูแพ็กเกจที่ใหญ่ขึ้นได้เลย`;
+export function receiptQuotaExceededTextTh(limit: number | null, tierKey?: string | null): string {
+  const trial = tierKey === TRIAL_COUNTER_TIER_KEY;
+  const tail = '(ใบเสร็จ 1 ใบ = 1 ครั้ง) ดูแพ็กเกจที่ใหญ่ขึ้นได้เลย';
+  if (limit === null) {
+    return trial
+      ? `ช่วงทดลองให้ AI อ่านรูปครบตามจำนวนที่กำหนดแล้วค่ะ ${tail}`
+      : `แพ็กเกจของคุณให้ AI อ่านรูปครบตามจำนวนของเดือนนี้แล้วค่ะ ${tail}`;
+  }
+  return trial
+    ? `ช่วงทดลองให้ AI อ่านรูปได้ ${limit} ครั้ง ตอนนี้ครบแล้วค่ะ ${tail}`
+    : `แพ็กเกจของคุณให้ AI อ่านรูปได้ ${limit} ครั้งต่อเดือน ตอนนี้ครบแล้วค่ะ ${tail}`;
 }
 
 /**
@@ -53,9 +62,23 @@ export function receiptQuotaExceededTextTh(limit: number, tierKey?: string | nul
  * "ช่วงทดลอง" is the free trial's word and nobody else's — a STARTER_249 shop that meets its own
  * 30 is a paying customer, and telling it the trial ran out is both wrong and a reason to churn.
  */
-export function receiptQuotaExceededShortTextTh(limit: number, tierKey?: string | null): string {
+export function receiptQuotaExceededShortTextTh(limit: number | null, tierKey?: string | null): string {
   const scope = tierKey === TRIAL_COUNTER_TIER_KEY ? 'ในช่วงทดลอง' : 'ของแพ็กเกจเดือนนี้';
-  return `ให้ AI อ่านรูปครบ ${limit} ครั้ง${scope}แล้วค่ะ พิมพ์ "ขอเปลี่ยนแพ็กเกจ" ได้เลยนะคะ`;
+  const amount = limit === null ? 'ครบจำนวน' : `ครบ ${limit} ครั้ง`;
+  return `ให้ AI อ่านรูป${amount}${scope}แล้วค่ะ พิมพ์ "ขอเปลี่ยนแพ็กเกจ" ได้เลยนะคะ`;
+}
+
+/**
+ * The ceiling to PRINT, which is not always the ceiling that was enforced.
+ *
+ * `planLimit` is the truth. If the term row disappeared between the admission and the reply (an
+ * admin retiring a tier mid-turn), the tier's own preset is the next best fact; only when both are
+ * gone does the copy drop the number entirely. Never zero: "อ่านรูปได้ 0 ครั้ง" reads as a broken
+ * product to the one customer least willing to forgive it.
+ */
+export function displayReceiptQuotaLimit(planLimit: number | null, tierKey?: string | null): number | null {
+  if (planLimit !== null && planLimit > 0) return planLimit;
+  return isPlanTierKey(tierKey) ? PLAN_TIER_PRESETS[tierKey].monthlySlipLimit : null;
 }
 
 /** §15.1: one extra line on the success reply, for the free-trial tier only. */

@@ -92,6 +92,7 @@ import { emitSecurityEvent, SECURITY_EVENT } from '../../../../common/logger/sec
 import { LegalAcceptanceService } from '../../../auth/application/legal-acceptance.service';
 import { expiredLineOwnerMessageTh } from '../../../system-partner-management/domain/logic/plan-term.logic';
 import {
+  displayReceiptQuotaLimit,
   receiptQuotaExceededShortTextTh,
   receiptQuotaExceededTextTh,
   trialReceiptCounterLineTh,
@@ -5182,8 +5183,14 @@ export class ProcessLineWebhookUseCase {
     userId: string,
   ): Promise<string> {
     const monthKey = bangkokMonthKey();
-    const { planLimit, tierKey } = await receiptQuotaSnapshot(this.prisma, companyId, monthKey);
-    const limit = planLimit ?? 0;
+    // A snapshot failure must not lose the turn: the shop is owed an answer for the photo it just
+    // sent, and the numberless copy below is a true sentence without it.
+    const snapshot = await receiptQuotaSnapshot(this.prisma, companyId, monthKey).catch((error) => {
+      this.logger.warn({ msg: 'receipt.quota.snapshot_failed', companyId, monthKey, error: (error as Error).message });
+      return { usedCount: 0, planLimit: null, tierKey: null };
+    });
+    const { planLimit, tierKey } = snapshot;
+    const limit = displayReceiptQuotaLimit(planLimit, tierKey);
     const first = await claimReceiptQuotaNotice(this.prisma, companyId, monthKey);
     const text = first
       ? receiptQuotaExceededTextTh(limit, tierKey)
