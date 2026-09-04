@@ -59,6 +59,9 @@ function makeUseCase(options: {
   attachment?: Record<string, unknown> | null;
   gatewayResult?: Record<string, unknown>;
   applyResult?: Record<string, unknown>;
+  /** P10-L §15.1: what `receiptQuotaSnapshot` reads back when naming the numbers in a 409. */
+  planTerm?: { tierKey: string; monthlySlipLimit: number; warmupUntil?: Date | null; warmupSlipLimit?: number | null } | null;
+  used?: number;
 } = {}) {
   const updates: any[] = [];
   const applyCalls: any[] = [];
@@ -95,7 +98,17 @@ function makeUseCase(options: {
   const audit = {
     log: mock.fn(async (entry: any) => { audits.push(entry); }),
   };
-  const useCase = new RequestReceiptExtractionUseCase(repo as any, storage as any, client as any, applyService as any, audit as any);
+  const prisma = {
+    client: {
+      companyOcrMonthlyUsage: { findUnique: async () => options.used === undefined ? null : { usedCount: options.used } },
+      companyPlanTerm: {
+        findUnique: async () => options.planTerm
+          ? { warmupUntil: null, warmupSlipLimit: null, ...options.planTerm }
+          : null,
+      },
+    },
+  } as any;
+  const useCase = new RequestReceiptExtractionUseCase(repo as any, storage as any, client as any, applyService as any, audit as any, prisma);
   return { useCase, repo, storage, client, updates, applyCalls, audits };
 }
 
@@ -398,6 +411,70 @@ describe('RequestReceiptExtractionUseCase', () => {
     assert.equal(storage.getObject.mock.callCount(), 0);
     assert.equal(client.extract.mock.callCount(), 0);
   });
+
+  // P10-L §15.1 / review G-01. The ceiling is decided by `admitCompanyOcr` inside the OCR client;
+  // this use case only has to turn its refusal into something the upload screen can act on.
+  describe('receipt quota answer', () => {
+    const quotaRefused = { status: 'failed', errorCode: 'RECEIPT_QUOTA_EXCEEDED' };
+    const freeTrial = { tierKey: 'FREE_TRIAL_15', monthlySlipLimit: 15 };
+
+    it('answers 409 receipt_quota_exceeded, carrying the numbers the banner needs', async () => {
+      const { useCase } = makeUseCase({ gatewayResult: quotaRefused, planTerm: freeTrial, used: 15 });
+
+      await assert.rejects(
+        () => useCase.execute(ctx(['expense.ocr.request']), 'expense-1'),
+        (error: any) => {
+          assert.equal(error.name, 'ConflictException');
+          assert.equal(error.getStatus(), 409);
+          const body = error.getResponse();
+          assert.equal(body.code, 'receipt_quota_exceeded');
+          assert.equal(body.count, 15);
+          assert.equal(body.limit, 15);
+          assert.match(body.monthKey, /^\d{4}-\d{2}$/);
+          assert.match(body.message, /15 ใบ/);
+          return true;
+        },
+      );
+    });
+
+    it('names the warm-up ceiling while that window is open', async () => {
+      const { useCase } = makeUseCase({
+        gatewayResult: quotaRefused,
+        planTerm: { ...freeTrial, warmupUntil: new Date(Date.now() + 86_400_000), warmupSlipLimit: 10 },
+        used: 10,
+      });
+
+      await assert.rejects(
+        () => useCase.execute(ctx(['expense.ocr.request']), 'expense-1'),
+        (error: any) => {
+          assert.equal(error.getResponse().limit, 10);
+          assert.match(error.getResponse().message, /10 ใบ/);
+          return true;
+        },
+      );
+    });
+
+    it('audits the refusal rather than logging it as an extraction failure', async () => {
+      const { useCase, audits } = makeUseCase({ gatewayResult: quotaRefused, planTerm: freeTrial, used: 15 });
+
+      await useCase.execute(ctx(['expense.ocr.request']), 'expense-1').catch(() => undefined);
+
+      const quotaAudit = audits.find((entry) => entry.metadataJson?.status === 'receipt_quota_exceeded');
+      assert.ok(quotaAudit, 'the refusal is auditable on its own name');
+      assert.equal(quotaAudit.metadataJson.errorCode, 'RECEIPT_QUOTA_EXCEEDED');
+    });
+
+    it('leaves every OTHER gateway failure on its existing "try again" path', async () => {
+      const { useCase } = makeUseCase({
+        gatewayResult: { status: 'failed', errorCode: 'OCR_MONTHLY_LIMIT_EXCEEDED' }, planTerm: freeTrial, used: 15,
+      });
+
+      assert.deepEqual(
+        await useCase.execute(ctx(['expense.ocr.request']), 'expense-1'),
+        { status: 'failed', errorCode: 'OCR_MONTHLY_LIMIT_EXCEEDED' },
+      );
+    });
+  });
 });
 
 describe('ReceiptOcrClient failure boundary', () => {
@@ -430,6 +507,10 @@ describe('ReceiptOcrClient failure boundary', () => {
         upsert: async () => ({ usedCount: ++usedCount }),
         updateMany: async () => { usedCount -= 1; return { count: 1 }; },
       },
+      // P10-L §15.1: no CompanyPlanTerm row = grandfathered unlimited, so every ops-brake
+      // expectation in this block is unchanged by the commercial layer above it.
+      companyPlanTerm: { findUnique: async () => null },
+      auditLog: { findFirst: async () => null },
     };
     const prisma = {
       client: {
@@ -517,6 +598,8 @@ describe('ReceiptOcrClient failure boundary', () => {
       companyOcrUsageEvent: { findUnique: async () => null },
       companyAiConfiguration: { findUnique: async () => ({ ocrEnabled: false, ocrMonthlyLimit: 10 }) },
       companyOcrMonthlyUsage: { findUnique: async () => null },
+      companyPlanTerm: { findUnique: async () => null },
+      auditLog: { findFirst: async () => null },
     };
     const prisma = {
       client: {

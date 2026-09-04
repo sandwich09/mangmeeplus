@@ -7,6 +7,10 @@ import { isStaleOcrApply, ocrLineVatRateUnknown, ReceiptOcrApplyService } from '
 import { deriveTaxEvidence, isExpenseExtractionEligible, sourceDocumentTypeFromClassification, toSourceDocumentType } from '../../domain/logic/expense-document.logic';
 import type { AiModelLineage, BusinessDocumentClassification, ExpenseExtractionResult, RequestContext } from '@watchdog-bms/contracts';
 import { observeCustomerJourney } from '../../../../common/observability/customer-journey-audit';
+import { PrismaService } from '../../../../common/database/prisma.service';
+import { bangkokMonthKey } from '../../../line-ai/application/company-ai-usage-meter';
+import { receiptQuotaSnapshot, RECEIPT_QUOTA_ERROR_CODE } from '../../../line-ai/application/company-ocr-governance';
+import { receiptQuotaExceededTextTh } from '../../../system-partner-management/domain/logic/receipt-quota.logic';
 
 const SUPPORTED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'application/pdf']);
 const MAX_EXTRACTION_BYTES = 10_000_000;
@@ -55,6 +59,8 @@ export class RequestReceiptExtractionUseCase {
     private readonly client: ReceiptOcrClient,
     private readonly applyService: ReceiptOcrApplyService,
     private readonly audit: AuditService,
+    // Read-only here: the counter is owned by `admitCompanyOcr`, and this only names its numbers.
+    private readonly prisma: PrismaService,
   ) {}
 
   async execute(ctx: RequestContext, expenseId: string): Promise<ExpenseExtractionResult> {
@@ -117,6 +123,22 @@ export class RequestReceiptExtractionUseCase {
           contentBase64: object.bytes.toString('base64'),
         },
       });
+
+      // P10-L §15.1 (review G-01): the shop's plan ran out of receipts. `admitCompanyOcr` refused
+      // before any provider ran, so nothing was spent and nothing needs releasing — this only has to
+      // answer. A 409 with a code, not one of the `failed` outcomes: those all render as
+      // "the read failed, try again", and trying again is the one thing that cannot work here.
+      if (response.errorCode === RECEIPT_QUOTA_ERROR_CODE) {
+        await this.auditOutcome(ctx, expenseId, 'receipt_quota_exceeded', attachment.id, 0, undefined, undefined, response.errorCode);
+        const { usedCount, planLimit } = await receiptQuotaSnapshot(this.prisma, ctx.companyId);
+        throw new ConflictException({
+          code: 'receipt_quota_exceeded',
+          message: receiptQuotaExceededTextTh(planLimit ?? 0),
+          count: usedCount,
+          limit: planLimit,
+          monthKey: bangkokMonthKey(),
+        });
+      }
 
       if (response.status !== 'ok') {
         const status = response.status === 'not_configured' ? 'not_configured' : 'failed';
@@ -209,6 +231,9 @@ export class RequestReceiptExtractionUseCase {
       await this.auditOutcome(ctx, expenseId, 'ok', attachment.id, Object.keys(response.fields).length, response.classification, response.modelLineage);
       return { status: 'ok', fields: response.fields, missingFields, classification: response.classification };
     } catch (error) {
+      // The quota answer is a decision, not a failure: letting it fall into `failed` below would
+      // turn a 409 the upload screen acts on into "the read failed, try again".
+      if (error instanceof ConflictException) throw error;
       this.logger.warn({ msg: 'Receipt OCR extraction failed', expenseId, error: (error as Error).message });
       return this.finish(ctx, expenseId, 'failed', attachment.id);
     }
