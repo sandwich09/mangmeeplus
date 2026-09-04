@@ -84,6 +84,17 @@
 - SUSPEND UI สำหรับแถว COMPLETED ที่ auto-approve + แท็บ "อนุมัติอัตโนมัติ 14 วัน" (route `/system/signup-requests/auto-approved` มีแล้ว ไม่มีหน้าเว็บใช้)
 - Test-fake (`line-signup-auto-free.integration.spec.ts`) ไม่มี row locking — เทสต์ที่พึ่ง blocking semantics ต้องใช้ Postgres จริง
 
+**คำตอบจาก L-C (ลงแล้ว 23781780, 2026-09-05 — รอรีวิว):**
+
+- ระงับแบบเจาะจง: ทำแล้วตามข้อแรก — `decide(SUSPEND)` ยังปฏิเสธ `PROVISIONING` ทุกกรณี ยกเว้น `staleProvisioning && companyId === null` (`companyId?` เพิ่มใน `AdminSignupQueueItemDto` แบบ additive) เพราะ stamp อยู่ในธุรกรรมเดียวกับการสร้างบริษัท → ไม่มี companyId = ไม่มีบริษัทให้ค้าง
+- ขอบ `PROVISIONING → SUSPENDED`: **เก็บ** — กลับมาเรียกถึงได้ผ่านทางเดียวข้างบนเท่านั้น
+- Flow B ใช้กติกาเดียวกัน (ไม่แยก source): ระงับระหว่างสร้างยังห้ามเหมือนเดิม
+- **Flow B กู้แถวค้าง: ตัดสินใจ "ไม่สร้าง" ใน L-C** — เหตุผล: `REISSUABLE_STATES` = `EMAIL_PENDING | EMAIL_FAILED | EXPIRED` ทำให้ reissue 409 ที่ `PROVISIONING_FAILED`/`READY` และ `EMAIL_PENDING` ไม่ใช่ขอบที่ถูกกฎหมายจาก `PROVISIONING_FAILED` ในตาราง official-site; ผู้สมัครกู้เองไม่ได้เพราะ claim token ถูกใช้แล้ว (`usedAt`) — จะเปิดต้องเพิ่มขอบ transition หรือ action retry เฉพาะ Flow B (งานจริง ไม่ใช่สลับ flag) → นอกขอบเขต; ระหว่างนี้กู้ด้วยมือ (เปิดแถวใน DB ดูว่าครึ่งไหน commit แล้วปิดงานเอง); คาดความถี่ ≈ 0 เพราะ Flow B provision จาก claim page ใน request เดียว
+- `LINE_SIGNUP_ADMIN_ALERT_BUDGET_EXHAUSTED_PER_DAY` + ops alerts: ทำแล้ว (`signup-ops-alert.service.ts`, 5 จุด: cap อัตโนมัติ, push 429, provisioning ล้ม, stale re-claim, งบ AI หมด ≥ N/วัน นับจาก sweep 15 นาที) ใช้ราง push แอดมินของ L-B, key = วัน Bangkok, ต่อ config + deploy.sh (ทั้งสอง env = 5) + grep contract (10 ตัวแปร) + pins
+- SUSPEND UI สำหรับแถว COMPLETED + แท็บ "อนุมัติอัตโนมัติ 14 วัน" + แท็บ "คำขอเปลี่ยนแพ็กเกจ" (โหลดแบบ lazy, 403 ไม่ทำให้หน้าพัง): ทำแล้ว
+- เพิ่มนอกคำสั่ง: `GET /system/partners/:partnerCompanyId/timeline` (คำนวณจากแถวที่มีอยู่ ไม่มีตารางใหม่; บรรทัด "ทำไม AI ปฏิเสธ" คำนวณจากสถานะปัจจุบัน), `POST …/line-message` (SEC-05), `POST …/plan-term/end-warmup`, ป้าย LINE ใน `/system/users`, "ลูกค้าใช้ LINE เท่านั้น" บนหน้า onboarding แอดมิน (A-04, console ส่ง boolean → `ownerAuth.kind = 'line-link-later'`); package-change APPROVE เรียก `SetCompanyPlanTermUseCase` ตัวเดิม (H-01: จุดเขียน tier จุดเดียว) ภายใต้ `system.partner_company.update`
+- ค้าง Owner: ปุ่ม rich menu "เปิดร้านใหม่ ทดลองฟรี" (คำถามท้าย runbook rich menu)
+
 ## Slice L-C — admin + support + flags (web + infra)
 
 **Branch** `codex/line-signup-c-admin`
