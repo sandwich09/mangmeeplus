@@ -6,7 +6,6 @@ import { featureTemporarilyUnavailable } from '../../../employee-access/applicat
 import { ReceiptOcrApplyService } from '../../../expenses/application/services/receipt-ocr-apply.service';
 import { absoluteWebLink, webBaseUrlFromEnv, webLink } from '../../../../common/http/web-link';
 import { LineSubstituteReceiptContinuationUseCase } from '../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case';
-import { bangkokMonthKey } from '../company-ai-usage-meter';
 
 const JPEG_BYTES = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
 const CLEAN_SCANNER = { assertClean: async () => undefined } as any;
@@ -151,51 +150,8 @@ function makePrisma(opts: {
 	   *  `memberships`, because the real query drops non-ACTIVE companies — that is exactly why the
 	   *  people in them reach the "no company" branch where the term-expired probe lives. */
 	  termExpiredMemberships?: Array<{ companyId: string; roles?: Array<{ role: { key: string } }> }>;
-	  /** P10-L §15.1: the plan term the slip ceiling is read from. Absent = grandfathered unlimited,
-	   *  which is what every pre-existing test in this file is, so none of them change behaviour. */
-	  planTerm?: { tierKey: string; monthlySlipLimit: number; warmupUntil?: Date | null; warmupSlipLimit?: number | null; quotaNoticeSentMonthKey?: string | null } | null;
-	  /** Receipts already read this Bangkok month. */
-	  receiptsUsed?: number;
 	} = {}) {
-	  const { identityUserId = 'user-1', displayName = 'พิม', identityChannelId = 'msg-channel-1', aiAssistantOptOutAt = null, memberships = [{ companyId: 'company-1' }], lineCompanyContext = null, previousEventLog = null, recentTurns = [], entitlements = [], branches = [], branchFindManyFn, turnOutcomeUnavailable = false, turnOutcomeFailAfter, termExpiredMemberships = [], planTerm = null, receiptsUsed = 0 } = opts;
-  // P10-L §15.1 slip counter, shaped exactly like the repository's own fake.
-  const receiptCounts = new Map<string, number>([[`company-1|${bangkokMonthKey()}`, receiptsUsed]]);
-  const receiptEntries = new Map<string, { companyId: string; monthKey: string; status: string }>();
-  let quotaNoticeSentMonthKey = planTerm?.quotaNoticeSentMonthKey ?? null;
-  const receiptKey = (companyId: string, monthKey: string) => `${companyId}|${monthKey}`;
-  const receiptUsageTables = {
-    companyReceiptUsageEntry: {
-      findUnique: async ({ where }: any) => receiptEntries.get(where.requestId) ?? null,
-      create: async ({ data }: any) => { receiptEntries.set(data.requestId, { ...data }); return data; },
-      update: async ({ where, data }: any) => {
-        receiptEntries.set(where.requestId, { ...receiptEntries.get(where.requestId)!, ...data });
-        return data;
-      },
-    },
-    companyReceiptUsage: {
-      findUnique: async ({ where }: any) => {
-        const key = receiptKey(where.companyId_monthKey.companyId, where.companyId_monthKey.monthKey);
-        return receiptCounts.has(key) ? { count: receiptCounts.get(key)! } : null;
-      },
-      upsert: async ({ where }: any) => {
-        const key = receiptKey(where.companyId_monthKey.companyId, where.companyId_monthKey.monthKey);
-        if (!receiptCounts.has(key)) receiptCounts.set(key, 0);
-        return { count: receiptCounts.get(key)! };
-      },
-      updateMany: async ({ where }: any) => {
-        const key = receiptKey(where.companyId, where.monthKey);
-        const current = receiptCounts.get(key) ?? 0;
-        if (where.count?.lt !== undefined && current >= where.count.lt) return { count: 0 };
-        if (where.count?.gt !== undefined) {
-          if (current <= where.count.gt) return { count: 0 };
-          receiptCounts.set(key, current - 1);
-          return { count: 1 };
-        }
-        receiptCounts.set(key, current + 1);
-        return { count: 1 };
-      },
-    },
-  };
+	  const { identityUserId = 'user-1', displayName = 'พิม', identityChannelId = 'msg-channel-1', aiAssistantOptOutAt = null, memberships = [{ companyId: 'company-1' }], lineCompanyContext = null, previousEventLog = null, recentTurns = [], entitlements = [], branches = [], branchFindManyFn, turnOutcomeUnavailable = false, turnOutcomeFailAfter, termExpiredMemberships = [] } = opts;
   const termExpiredRows = termExpiredMemberships.map((row) => ({ roles: [{ role: { key: 'OWNER' } }], ...row }));
   const turnOutcomeWrites: any[] = [];
   const turnOutcomeUpdates: any[] = [];
@@ -221,32 +177,7 @@ function makePrisma(opts: {
           create: async ({ data }: any) => { markerWrites.push(data); },
           findMany: async () => [],
         },
-        ...receiptUsageTables,
       }),
-      ...receiptUsageTables,
-      // `consumeReceiptQuota` runs outside a transaction, so the client-level model needs updateMany.
-      companyReceiptUsageEntry: {
-        ...receiptUsageTables.companyReceiptUsageEntry,
-        updateMany: async ({ where, data }: any) => {
-          const entry = receiptEntries.get(where.requestId);
-          if (!entry || entry.status !== where.status) return { count: 0 };
-          receiptEntries.set(where.requestId, { ...entry, ...data });
-          return { count: 1 };
-        },
-      },
-      companyPlanTerm: {
-        findUnique: async () => planTerm && {
-          tierKey: planTerm.tierKey,
-          monthlySlipLimit: planTerm.monthlySlipLimit,
-          warmupUntil: planTerm.warmupUntil ?? null,
-          warmupSlipLimit: planTerm.warmupSlipLimit ?? null,
-        },
-        updateMany: async ({ data }: any) => {
-          if (!planTerm || quotaNoticeSentMonthKey === data.quotaNoticeSentMonthKey) return { count: 0 };
-          quotaNoticeSentMonthKey = data.quotaNoticeSentMonthKey;
-          return { count: 1 };
-        },
-      },
       lineWebhookEventLog: {
         // Only the §8.3 outcome write reads this with a `select`; every other caller wants the whole
         // row and must keep seeing "no previous event".
@@ -335,13 +266,7 @@ function makePrisma(opts: {
       },
     },
   } as any;
-  return {
-    prisma, createdLogs, updates, upserts, aiTurns, aiTurnUpdates, toolInvocations, markerWrites,
-    branchFindManyCalls, identityQueries, turnOutcomeWrites, turnOutcomeUpdates,
-    receiptCount: () => receiptCounts.get(receiptKey('company-1', bangkokMonthKey())) ?? 0,
-    receiptEntries,
-    quotaNoticeSentMonthKey: () => quotaNoticeSentMonthKey,
-  };
+  return { prisma, createdLogs, updates, upserts, aiTurns, aiTurnUpdates, toolInvocations, markerWrites, branchFindManyCalls, identityQueries, turnOutcomeWrites, turnOutcomeUpdates };
 }
 
 function makeUseCase(
@@ -2113,151 +2038,6 @@ describe('ProcessLineWebhookUseCase', () => {
 
     assert.deepEqual(signatureCreated, [], 'a routed receipt must never become a signature asset');
     assert.equal(receiptIntents, 1, 'the expense capture the router asked for must still happen');
-  });
-
-  // P10-L §15.1 / review G-01: until this slice, `monthlySlipLimit` was a number nothing read — a
-  // "free trial, 15 receipts" that had no ceiling at all. These pin the whole ladder: it blocks,
-  // it says so once, it counts even when it does not block, and it never touches a legacy shop.
-  describe('monthly receipt quota', () => {
-    const FREE_TRIAL = { tierKey: 'FREE_TRIAL_15', monthlySlipLimit: 15 } as const;
-    const captureUseCase = (prisma: any, over: Record<string, unknown> = {}) => {
-      const made = makeUseCase(prisma, {
-        permissions: ['expense.receipt.line_upload', 'expense.receipt.upload', 'attachment.create', 'expense.create'],
-        intakeRouteFn: () => ROUTED_EXPENSE_DOCUMENT,
-        receiptOcrFn: () => ({ status: 'ok', classification: receiptClassification('500.00'), fields: { grandTotalAmount: '500.00' } }),
-        initReceiptUpload: { execute: async () => ({ expenseId: 'exp-1', attachmentId: 'att-1' }) },
-        completeReceiptUpload: { execute: async () => ({ id: 'exp-1', duplicateStatus: 'NONE' }) },
-        config: { receiptQuotaEnforced: true },
-        ...over,
-      });
-      (made.useCase as any).downloadLineMedia = async () => ({
-        fileName: 'receipt.jpg', mimeType: 'image/jpeg', byteSize: JPEG_BYTES.byteLength,
-        checksumSha256: 'hash', contentBase64: JPEG_BYTES.toString('base64'), bytes: JPEG_BYTES,
-      });
-      (made.useCase as any).uploadLineMedia = async () => undefined;
-      return made;
-    };
-    const sendReceipt = (useCase: any, id: string) => useCase.executeReceiptUpload({
-      webhookEventId: `evt-${id}`, lineUserId: 'line-user-secret', replyToken: `reply-${id}`,
-      lineMessageId: `line-msg-${id}`, messageType: 'image', messagingChannelId: 'msg-channel-1',
-    });
-
-    it('refuses receipt 16 of 15 with the §7 card, before any OCR call or expense', async () => {
-      const state = makePrisma({ planTerm: FREE_TRIAL, receiptsUsed: 15 });
-      let ocrCalls = 0;
-      let intents = 0;
-      const { useCase, sentMessages } = captureUseCase(state.prisma, {
-        receiptOcrFn: () => { ocrCalls += 1; return { status: 'ok', classification: receiptClassification('1.00'), fields: {} }; },
-        initReceiptUpload: { execute: async () => { intents += 1; return { expenseId: 'exp-1', attachmentId: 'att-1' }; } },
-      });
-
-      await sendReceipt(useCase, 'quota-16');
-
-      assert.equal(ocrCalls, 0, 'a shop at its ceiling must cost no provider time');
-      assert.equal(intents, 0, 'and must not create an expense record either');
-      assert.equal(state.receiptCount(), 15, 'a refused receipt does not raise the count');
-      const card = sentMessages[0];
-      assert.equal(card.type, 'flex');
-      assert.match(card.altText, /ช่วงทดลองอ่านใบเสร็จให้ได้ 15 ใบ ตอนนี้ครบแล้วค่ะ/);
-      assert.deepEqual(
-        card.contents.footer.contents.map((button: any) => button.action.label),
-        ['ดูแพ็กเกจ', 'ขอเปลี่ยนแพ็กเกจ'],
-      );
-    });
-
-    it('sends the card ONCE per month; the next over-quota receipt gets one line (spec §3.7)', async () => {
-      const state = makePrisma({ planTerm: FREE_TRIAL, receiptsUsed: 15 });
-      const { useCase, sentMessages } = captureUseCase(state.prisma);
-
-      await sendReceipt(useCase, 'quota-a');
-      await sendReceipt(useCase, 'quota-b');
-
-      assert.equal(state.quotaNoticeSentMonthKey(), bangkokMonthKey());
-      assert.equal(sentMessages[0].type, 'flex', 'the first wall hit is the card');
-      assert.equal(sentMessages[1].type, 'text', 'the second is not another sales card');
-      assert.match(sentMessages[1].text, /ขอเปลี่ยนแพ็กเกจ/);
-    });
-
-    it('uses the WARM-UP ceiling while the window is open, and says that number', async () => {
-      const state = makePrisma({
-        planTerm: { ...FREE_TRIAL, warmupUntil: new Date(Date.now() + 86_400_000), warmupSlipLimit: 10 },
-        receiptsUsed: 10,
-      });
-      const { useCase, sentMessages } = captureUseCase(state.prisma);
-
-      await sendReceipt(useCase, 'warmup-11');
-
-      assert.match(sentMessages[0].altText, /10 ใบ/);
-      assert.doesNotMatch(sentMessages[0].altText, /15/);
-    });
-
-    it('counts but never blocks while RECEIPT_QUOTA_ENFORCED is off', async () => {
-      const state = makePrisma({ planTerm: FREE_TRIAL, receiptsUsed: 15 });
-      let ocrCalls = 0;
-      const { useCase } = captureUseCase(state.prisma, {
-        config: { receiptQuotaEnforced: false },
-        receiptOcrFn: () => { ocrCalls += 1; return { status: 'ok', classification: receiptClassification('500.00'), fields: { grandTotalAmount: '500.00' } }; },
-      });
-
-      await sendReceipt(useCase, 'unenforced');
-
-      assert.equal(ocrCalls, 1, 'production counts for a month before it ever refuses');
-      assert.equal(state.receiptCount(), 16, 'and the count still rises past the ceiling');
-    });
-
-    it('never blocks a legacy shop that has no plan term row', async () => {
-      const state = makePrisma({ receiptsUsed: 9_999 });
-      let ocrCalls = 0;
-      const { useCase } = captureUseCase(state.prisma, {
-        receiptOcrFn: () => { ocrCalls += 1; return { status: 'ok', classification: receiptClassification('500.00'), fields: { grandTotalAmount: '500.00' } }; },
-      });
-
-      await sendReceipt(useCase, 'legacy');
-
-      assert.equal(ocrCalls, 1, 'grandfathered companies must not notice this code exists');
-    });
-
-    it('appends the trial counter line for FREE_TRIAL_15 and for no other tier', async () => {
-      for (const [tierKey, expected] of [['FREE_TRIAL_15', true], ['STARTER_249', false]] as const) {
-        const state = makePrisma({ planTerm: { tierKey, monthlySlipLimit: 15 }, receiptsUsed: 2 });
-        const { useCase, replies } = captureUseCase(state.prisma);
-
-        await sendReceipt(useCase, `counter-${tierKey}`);
-
-        const said = replies.join('\n');
-        assert.equal(/ใบที่ 3 จาก 15 ในช่วงทดลอง/.test(said), expected, tierKey);
-        assert.equal(state.receiptCount(), 3, tierKey);
-        assert.equal(state.receiptEntries.get('line:line-msg-counter-' + tierKey)?.status, 'CONSUMED', tierKey);
-      }
-    });
-
-    it('gives the slip back when the read fails, so an outage never eats a trial receipt', async () => {
-      const state = makePrisma({ planTerm: FREE_TRIAL, receiptsUsed: 2 });
-      const { useCase } = captureUseCase(state.prisma, {
-        receiptOcrFn: () => ({ status: 'failed', errorCode: 'PROVIDER_TIMEOUT' }),
-      });
-
-      await sendReceipt(useCase, 'ocr-failed');
-
-      assert.equal(state.receiptCount(), 2, 'the reservation was returned');
-      assert.equal(state.receiptEntries.get('line:line-msg-ocr-failed')?.status, 'RELEASED');
-    });
-
-    it('charges ONE slip for a redelivered photo (new webhook id, same LINE message id)', async () => {
-      const state = makePrisma({ planTerm: FREE_TRIAL, receiptsUsed: 0 });
-      const { useCase } = captureUseCase(state.prisma);
-
-      await useCase.executeReceiptUpload({
-        webhookEventId: 'evt-redeliver-1', lineUserId: 'line-user-secret', replyToken: 'reply-1',
-        lineMessageId: 'line-msg-same', messageType: 'image', messagingChannelId: 'msg-channel-1',
-      });
-      await useCase.executeReceiptUpload({
-        webhookEventId: 'evt-redeliver-2', lineUserId: 'line-user-secret', replyToken: 'reply-2',
-        lineMessageId: 'line-msg-same', messageType: 'image', messagingChannelId: 'msg-channel-1',
-      });
-
-      assert.equal(state.receiptCount(), 1, 'one picture is one receipt, however many times LINE sends it');
-    });
   });
 
   // A3 answer half + F9. Certification resolves signatures through a PNG/JPEG-only lookup, so a PDF
