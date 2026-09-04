@@ -10,6 +10,7 @@ import {
   companyOcrErrorCode,
   isOcrPreProviderHttpStatus,
   isOcrPreProviderRefusal,
+  isOcrRetryableProviderFailure,
   releaseCompanyOcrAdmission,
 } from '../../line-ai/application/company-ocr-governance';
 
@@ -84,13 +85,20 @@ export class ReceiptOcrClient {
     });
     if (!admission.allowed) return { status: 'failed', errorCode: companyOcrErrorCode(admission) };
     const result = await this.extractAdmitted(request, modelPolicy, budgetMonthKey);
-    if (isOcrPreProviderRefusal(result)) {
+    // Two reasons to hand the read back. `isOcrPreProviderRefusal` proves no provider ran.
+    // `isOcrRetryableProviderFailure` does not — but the upload screen retries it under a fresh
+    // request id, which buys a second admission, so keeping this one charges a 15-read trial twice
+    // for one flaky upload (P10-L §15.1 residual-1).
+    if (isOcrPreProviderRefusal(result) || isOcrRetryableProviderFailure(result)) {
       const released = await releaseCompanyOcrAdmission(this.prisma, {
         companyId: request.companyId,
         sourceRoute: 'receipt-ocr-web',
         requestId: request.requestId,
       });
-      if (!released) return { status: 'failed', errorCode: 'OCR_QUOTA_UNAVAILABLE' };
+      // A pre-provider refusal that cannot be compensated must not look like a free read. A
+      // retryable failure keeps its own error: the retry will admit afresh either way, and
+      // replacing a truthful "the gateway is down" with a quota word would misdirect the shop.
+      if (!released && isOcrPreProviderRefusal(result)) return { status: 'failed', errorCode: 'OCR_QUOTA_UNAVAILABLE' };
     }
     return result;
   }

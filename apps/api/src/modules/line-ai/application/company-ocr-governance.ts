@@ -86,6 +86,24 @@ export const isOcrPreProviderHttpStatus = (status: number): boolean =>
   status === 400 || status === 401 || status === 403 || status === 404;
 
 /**
+ * A failure the WEB caller will retry under a fresh request id, and therefore a fresh admission.
+ *
+ * Deliberately the same classification `expenseExtractionRetryMode` uses to return `'new_request'`
+ * (apps/web/.../expense-upload.logic.ts): `status: 'failed'` with a code that is not `OCR_*`. An
+ * `OCR_*` code is a decision this system already made — disabled, over limit, duplicate — and a
+ * retry cannot change it, so those keep their admission.
+ *
+ * Unlike `isOcrPreProviderRefusal` this does NOT prove the provider stayed unread: a 5xx or a
+ * timeout may well have cost a real call. Releasing anyway is a deliberate trade under P10-L §15.1
+ * — the retry buys its own admission a second later, so holding this one bills one flaky minute of
+ * ours as two of the customer's fifteen. Under-counting our own spend is the cheaper error, and the
+ * AI budget meter still records what the provider actually cost.
+ */
+export function isOcrRetryableProviderFailure(response: { status?: string; errorCode?: string }): boolean {
+  return response.status === 'failed' && !(response.errorCode ?? '').startsWith('OCR_');
+}
+
+/**
  * Spec §3.7: the quota card is a service message sent ONCE when the ceiling is actually hit, not a
  * daily nag. The claim IS the conditional write, so two receipts that hit the wall in the same
  * second still produce one card.
