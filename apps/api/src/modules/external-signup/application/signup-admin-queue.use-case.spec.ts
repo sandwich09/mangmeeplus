@@ -24,7 +24,14 @@ const REQUEST = {
   pendingPasswordHash: 'scrypt$salt$hash',
 };
 
-function harness(options: { request?: any; requests?: any[]; users?: any[]; companies?: any[] } = {}) {
+function harness(options: {
+  request?: any;
+  requests?: any[];
+  users?: any[];
+  companies?: any[];
+  companiesByPhone?: Array<{ phone: string; name: string }>;
+  membershipsByPhone?: Array<{ user: { phoneNumber: string | null }; company: { name: string } }>;
+} = {}) {
   const audits: any[] = [];
   const updates: any[] = [];
   const advances: any[] = [];
@@ -42,7 +49,13 @@ function harness(options: { request?: any; requests?: any[]; users?: any[]; comp
         update: async (args: any) => { updates.push(args); return {}; },
       },
       user: { findMany: async (args: any) => { userQueries.push(args); return options.users ?? []; } },
-      company: { findMany: async () => options.companies ?? [] },
+      company: {
+        findMany: async (args: any) => (args?.where?.phone
+          ? options.companiesByPhone ?? []
+          : options.companies ?? []),
+      },
+      // Review A-01: the second phone rail — a member of an existing shop carries the number.
+      companyMembership: { findMany: async () => options.membershipsByPhone ?? [] },
       auditLog: { create: async (args: any) => { audits.push(args); return {}; } },
     },
   } as any;
@@ -100,6 +113,47 @@ describe('SignupAdminQueueUseCase.list', () => {
     assert.equal(items[0]!.emailMatchesExistingUser, false);
     assert.equal(items[0]!.taxIdMatchesCompanyName, undefined);
     assert.equal(items[0]!.daysSinceApproval, undefined);
+  });
+
+  // Review A-01. The commonest duplicate is a customer an admin set up by hand who then applies
+  // from LINE as if they were new; approving that opens a SECOND shop for one person.
+  it('warns when the phone on the form already reaches a shop of ours', async () => {
+    const h = harness({
+      requests: [{ ...REQUEST }],
+      companiesByPhone: [{ phone: '0982565628', name: 'ร้านเดิมของนิด' }],
+    });
+    const { items } = await h.useCase.list(NOW);
+    assert.equal(items[0]!.phoneMatchesCompanyName, 'ร้านเดิมของนิด');
+  });
+
+  it('finds the shop through its OWNER phone too, not only the company profile', async () => {
+    const h = harness({
+      requests: [{ ...REQUEST }],
+      membershipsByPhone: [{ user: { phoneNumber: '0982565628' }, company: { name: 'ร้านของสมชาย' } }],
+    });
+    const { items } = await h.useCase.list(NOW);
+    assert.equal(items[0]!.phoneMatchesCompanyName, 'ร้านของสมชาย');
+  });
+
+  it('omits the phone hint when nothing matches, and when no phone was given', async () => {
+    const matched = await harness({ requests: [{ ...REQUEST }] }).useCase.list(NOW);
+    assert.equal(matched.items[0]!.phoneMatchesCompanyName, undefined);
+
+    const noPhone = await harness({
+      requests: [{ ...REQUEST, phoneNumber: null }],
+      companiesByPhone: [{ phone: '0982565628', name: 'ร้านเดิมของนิด' }],
+    }).useCase.list(NOW);
+    assert.equal(noPhone.items[0]!.phoneMatchesCompanyName, undefined);
+  });
+
+  // The page needs it to know a targeted suspend strands nothing, and the operator needs it to
+  // know which partner page to open.
+  it('carries the shop this application built, once it has built one', async () => {
+    const withShop = await harness({ requests: [{ ...REQUEST, companyId: 'co-9' }] }).useCase.list(NOW);
+    assert.equal(withShop.items[0]!.companyId, 'co-9');
+
+    const withoutShop = await harness({ requests: [{ ...REQUEST, companyId: null }] }).useCase.list(NOW);
+    assert.equal(withoutShop.items[0]!.companyId, undefined);
   });
 
   it('never leaks the stored password hash into the queue payload', async () => {
@@ -345,17 +399,42 @@ describe('SignupAdminQueueUseCase.decide — suspend', () => {
   // Review MEDIUM-2: SUSPENDED is terminal. A row mid-provisioning may already have a company whose
   // trial guards never ran — suspending it would leave an unlimited shop with the application shut
   // behind it — and against a live attempt it races work still in flight.
-  it('refuses to suspend a provisioning run at either freshness', async () => {
-    for (const ageMs of [1_000, STALE_PROVISIONING_MS + 1_000]) {
+  it('refuses to suspend a LIVE provisioning run, however fresh or stale it looks', async () => {
+    for (const [ageMs, companyId] of [
+      [1_000, null], // still running: racing work in flight
+      [1_000, 'co-1'], // still running and a shop already exists
+      [STALE_PROVISIONING_MS + 1_000, 'co-1'], // abandoned, but the shop it built is standing
+    ] as const) {
       const h = harness({
-        request: { ...LINE_REQUEST, state: 'PROVISIONING', provisioningStartedAt: new Date(NOW.getTime() - ageMs) },
+        request: {
+          ...LINE_REQUEST, state: 'PROVISIONING', companyId,
+          provisioningStartedAt: new Date(NOW.getTime() - ageMs),
+        },
       });
       await assert.rejects(
         () => h.useCase.decide('signup-1', { action: 'SUSPEND' }, 'admin-1', 'req-1', URLS, NOW),
         /suspend_not_allowed_in_flight/,
       );
-      assert.deepEqual(h.advances, [], `age ${ageMs}ms must not settle the row`);
+      assert.deepEqual(h.advances, [], `age ${ageMs}ms / company ${companyId} must not settle the row`);
     }
+  });
+
+  // Plan note (L-A review rounds 5–6): the ONE safe targeted suspend. `companyId` is stamped inside
+  // the company transaction, so its absence on an abandoned attempt means no company was ever
+  // created — there is nothing to strand, and without this the row is a dead end whose only exit is
+  // opening a shop the operator has already decided not to want.
+  it('allows a targeted suspend of an abandoned attempt that never built a shop', async () => {
+    const h = harness({
+      request: {
+        ...LINE_REQUEST, state: 'PROVISIONING', companyId: null,
+        provisioningStartedAt: new Date(NOW.getTime() - STALE_PROVISIONING_MS - 1_000),
+      },
+    });
+    const result = await h.useCase.decide('signup-1', { action: 'SUSPEND' }, 'admin-1', 'req-1', URLS, NOW);
+
+    assert.deepEqual(result, { requestId: 'signup-1', state: 'SUSPENDED' });
+    assert.deepEqual(h.advances, [{ id: 'signup-1', state: 'SUSPENDED', failureCode: 'admin_suspended' }]);
+    assert.equal(h.audits[0].data.metadataJson.fromState, 'PROVISIONING');
   });
 
   it('is a no-op when the application is already suspended', async () => {

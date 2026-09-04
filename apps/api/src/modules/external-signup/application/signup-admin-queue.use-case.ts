@@ -71,16 +71,49 @@ export class SignupAdminQueueUseCase {
     // P10-L: a `line-oa` row has no address, and `in: [null]` is not a query Prisma will accept.
     const emails = [...new Set(requests.map((r) => r.contactEmail).filter((email): email is string => !!email))];
     const taxIds = [...new Set(requests.map((r) => r.taxId).filter((id): id is string => !!id))];
-    const [users, companies] = await Promise.all([
+    const phones = [...new Set(requests.map((r) => r.phoneNumber).filter((phone): phone is string => !!phone))];
+    const [users, companies, phoneMatches] = await Promise.all([
       this.prisma.client.user.findMany({ where: { email: { in: emails } }, select: { email: true } }),
       taxIds.length
         ? this.prisma.client.company.findMany({ where: { taxId: { in: taxIds } }, select: { taxId: true, name: true } })
         : Promise.resolve([]),
+      this.companiesReachableByPhone(phones),
     ]);
     const knownEmails = new Set(users.map((u) => u.email));
     const companyByTaxId = new Map(companies.map((c) => [c.taxId, c.name]));
 
-    return { items: requests.map((request) => toQueueItem(request, knownEmails, companyByTaxId, now)) };
+    return { items: requests.map((request) => toQueueItem(request, knownEmails, companyByTaxId, phoneMatches, now)) };
+  }
+
+  /**
+   * Review A-01: the number on the form already reaches a shop we opened. The commonest shape is a
+   * customer an admin set up by hand who then applies from LINE as if they were new — approving
+   * that opens a SECOND shop for one person, and nobody notices until they call.
+   *
+   * Two rails, because a phone lives in two places: on the company profile, and on the member's own
+   * user record. A hint only: the operator calls the number, the system decides nothing.
+   */
+  private async companiesReachableByPhone(phones: string[]): Promise<Map<string, string>> {
+    if (phones.length === 0) return new Map();
+    const [byCompany, byMember] = await Promise.all([
+      this.prisma.client.company.findMany({
+        where: { phone: { in: phones } },
+        select: { phone: true, name: true },
+      }),
+      this.prisma.client.companyMembership.findMany({
+        where: { status: 'ACTIVE', user: { phoneNumber: { in: phones } } },
+        select: { user: { select: { phoneNumber: true } }, company: { select: { name: true } } },
+      }),
+    ]);
+    const matches = new Map<string, string>();
+    // Company profile first: it names the shop directly, and a member row only implies it.
+    for (const row of byMember) {
+      if (row.user.phoneNumber) matches.set(row.user.phoneNumber, row.company.name);
+    }
+    for (const row of byCompany) {
+      if (row.phone) matches.set(row.phone, row.name);
+    }
+    return matches;
   }
 
   /**
@@ -95,7 +128,9 @@ export class SignupAdminQueueUseCase {
       take: 200,
     });
     // These rows are all COMPLETED, so none of the queue's dedupe hints apply to them.
-    return { items: requests.map((request) => toQueueItem(request, new Set<string | null>(), new Map(), now)) };
+    return {
+      items: requests.map((request) => toQueueItem(request, new Set<string | null>(), new Map(), new Map(), now)),
+    };
   }
 
   /**
@@ -115,7 +150,7 @@ export class SignupAdminQueueUseCase {
     const request = await this.findOrThrow(requestId);
     const lineOa = request.source === SIGNUP_SOURCE_LINE_OA;
 
-    if (body.action === 'SUSPEND') return this.suspend(request, adminUserId, correlationRequestId);
+    if (body.action === 'SUSPEND') return this.suspend(request, adminUserId, correlationRequestId, now);
 
     if (body.action === 'APPROVE') {
       // A LINE application may also be approved out of PROVISIONING_FAILED or READY: those ARE the
@@ -249,13 +284,22 @@ export class SignupAdminQueueUseCase {
     request: CompanySignupRequest,
     adminUserId: string,
     correlationRequestId: string,
+    now: Date,
   ): Promise<AdminSignupDecisionDto> {
     if (request.state === 'SUSPENDED') return { requestId: request.id, state: request.state };
-    // Never mid-provisioning. SUSPENDED is terminal, so suspending a row whose company may already
-    // exist but whose trial guards have not run leaves an UNLIMITED shop with its application shut
-    // behind it — and against a live attempt it races work still in flight. The close-out first,
-    // then suspend the settled row if that is still what the admin wants.
-    if (request.state === 'PROVISIONING') throw new ConflictException('suspend_not_allowed_in_flight');
+    // Never mid-provisioning while anything could still exist behind it. SUSPENDED is terminal, so
+    // suspending a row whose company may already exist but whose trial guards have not run leaves
+    // an UNLIMITED shop with its application shut behind it — and against a live attempt it races
+    // work still in flight.
+    //
+    // The one safe exception (plan note, L-A review rounds 5–6): an ABANDONED attempt that never
+    // stamped a `companyId`. The stamp happens inside the company transaction, so no company id
+    // means no company — there is nothing to strand, and the row is otherwise a dead end an
+    // operator can only clear by opening a shop they have already decided not to want.
+    if (request.state === 'PROVISIONING'
+      && !(isStaleProvisioning(request, now) && request.companyId === null)) {
+      throw new ConflictException('suspend_not_allowed_in_flight');
+    }
     await this.core.advance(request.id, 'SUSPENDED', correlationRequestId, 'admin_suspended');
     await this.tokens.revokeAll(request.id);
     await this.prisma.client.companySignupRequest.update({
@@ -304,9 +348,11 @@ function toQueueItem(
   request: CompanySignupRequest,
   knownEmails: Set<string | null>,
   companyByTaxId: Map<string | null, string>,
+  companyByPhone: Map<string, string>,
   now: Date,
 ): AdminSignupQueueItemDto {
   const taxIdMatch = request.taxId ? companyByTaxId.get(request.taxId) : undefined;
+  const phoneMatch = request.phoneNumber ? companyByPhone.get(request.phoneNumber) : undefined;
   const approvalAge = daysSinceApproval(request.approvedAt, now);
   return {
     requestId: request.id,
@@ -327,9 +373,15 @@ function toQueueItem(
     source: request.source,
     ...(request.lineDisplayName ? { lineDisplayName: request.lineDisplayName } : {}),
     ...(request.autoApproved ? { autoApproved: true } : {}),
+    // Decided at submit from the verified ID token, so by the time an operator reads it this is a
+    // fact about what approving WILL do, not something they are being asked to choose (spec §5).
+    ...(request.attachUserId ? { attachesToExistingAccount: true } : {}),
     // Whether a PROVISIONING row is still being worked on or was abandoned. The server owns this
     // judgement because it owns the clock the fence uses; the page must not guess it.
     ...(isStaleProvisioning(request, now) ? { staleProvisioning: true } : {}),
+    // Whether this application built a shop yet. The page needs it to know that a targeted suspend
+    // strands nothing, and the operator needs it to know which link to open.
+    ...(request.companyId ? { companyId: request.companyId } : {}),
     ...(request.legalAcceptedAt ? { legalAcceptedAt: request.legalAcceptedAt.toISOString() } : {}),
     createdAt: request.createdAt.toISOString(),
     ...(request.approvedAt ? { approvedAt: request.approvedAt.toISOString() } : {}),
@@ -338,6 +390,7 @@ function toQueueItem(
     // claim page, never by the admin from this flag.
     emailMatchesExistingUser: knownEmails.has(request.contactEmail),
     ...(taxIdMatch ? { taxIdMatchesCompanyName: taxIdMatch } : {}),
+    ...(phoneMatch ? { phoneMatchesCompanyName: phoneMatch } : {}),
     ...(approvalAge !== undefined ? { daysSinceApproval: approvalAge } : {}),
     emailDeliveryFailed: request.state === 'EMAIL_FAILED',
   };
