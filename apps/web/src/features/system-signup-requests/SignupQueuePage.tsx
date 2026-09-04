@@ -19,6 +19,7 @@ import {
   filterSignupQueue,
   signupBusinessSummary,
   signupHintChips,
+  isLineSignup,
   signupIdleChip,
   signupStateChip,
   SIGNUP_QUEUE_TABS,
@@ -90,17 +91,22 @@ export default function SignupQueuePage() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleApprove = async (item: AdminSignupQueueItemDto) => {
+    // P10-L: a LINE application has no address, so approving it opens the shop immediately and the
+    // customer hears about it in LINE. Promising an email here would be a promise nothing keeps.
+    const fromLine = isLineSignup(item);
     const accepted = await confirm({
       title: 'อนุมัติคำขอ',
-      message: `อนุมัติและส่งอีเมลตั้งรหัสให้ ${item.contactEmail ?? item.ownerDisplayName} ใช่หรือไม่`,
-      confirmLabel: 'อนุมัติและส่งอีเมล',
+      message: fromLine
+        ? `อนุมัติและเปิดร้าน ${item.companyName} ให้ทันที (ลูกค้าจะได้รับแจ้งทาง LINE) ใช่หรือไม่`
+        : `อนุมัติและส่งอีเมลตั้งรหัสให้ ${item.contactEmail ?? item.ownerDisplayName} ใช่หรือไม่`,
+      confirmLabel: fromLine ? 'อนุมัติและเปิดร้าน' : 'อนุมัติและส่งอีเมล',
       variant: 'primary',
     });
     if (!accepted) return;
     setBusyId(item.requestId);
     try {
       await decideSignupRequest(item.requestId, { action: 'APPROVE' });
-      toast.success('อนุมัติแล้ว ระบบกำลังส่งอีเมลตั้งรหัส');
+      toast.success(fromLine ? 'อนุมัติแล้ว เปิดร้านให้เรียบร้อย' : 'อนุมัติแล้ว ระบบกำลังส่งอีเมลตั้งรหัส');
       await load();
     } catch (err) {
       toast.error(apiErrorMessage(err));
@@ -289,8 +295,17 @@ export default function SignupQueuePage() {
                       return (
                         <tr key={item.requestId} className="align-top hover:bg-gray-50">
                           <td className="px-4 py-3">
-                            <p className="font-medium text-gray-900">{item.companyName}</p>
-                            <p className="text-xs text-gray-500">{item.ownerDisplayName}</p>
+                            <p className="font-medium text-gray-900">
+                              {item.companyName}
+                              {isLineSignup(item) && (
+                                <span className="ml-2 rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-semibold text-green-800">
+                                  LINE
+                                </span>
+                              )}
+                            </p>
+                            <p className="text-xs text-gray-500">
+                              {item.lineDisplayName ?? item.ownerDisplayName}
+                            </p>
                           </td>
                           <td className="px-4 py-3">
                             <p className="text-gray-700">{item.contactEmail ?? '—'}</p>

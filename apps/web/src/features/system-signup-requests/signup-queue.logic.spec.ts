@@ -5,6 +5,7 @@ import {
   canApproveSignup,
   canReissueSignup,
   filterSignupQueue,
+  isLineSignup,
   signupBusinessSummary,
   signupHintChips,
   signupIdleChip,
@@ -25,7 +26,23 @@ function item(overrides: Partial<AdminSignupQueueItemDto> = {}): AdminSignupQueu
   };
 }
 
+// P10-L: approving a LINE application opens the shop immediately and tells the customer in LINE.
+// The page's confirm copy branches on this, because promising an email here promises nothing.
+describe('isLineSignup', () => {
+  it('is true only for the LINE source, and safe on a row from before the field existed', () => {
+    assert.equal(isLineSignup(item({ source: 'line-oa' })), true);
+    assert.equal(isLineSignup(item({ source: 'official-site' })), false);
+    assert.equal(isLineSignup(item()), false);
+  });
+});
+
 describe('signupStateChip', () => {
+  it('tells the operator a failed provisioning can be retried from the queue', () => {
+    // Review HIGH-2: the row is visible now, so it needs a label that says what to do with it.
+    assert.match(signupStateChip('PROVISIONING_FAILED').label, /ลองใหม่/);
+    assert.equal(signupStateChip('PROVISIONING_FAILED').tone, 'danger');
+  });
+
   it('labels every state the queue acts on', () => {
     assert.equal(signupStateChip('PENDING_REVIEW').label, 'รออนุมัติ');
     assert.equal(signupStateChip('EMAIL_PENDING').label, 'ส่งเมลแล้ว รอตั้งรหัส');

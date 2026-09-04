@@ -74,7 +74,11 @@ export class PublicLineSignupController {
       legal: dto.legal,
       ...(req.headers['user-agent'] ? { userAgent: String(req.headers['user-agent']) } : {}),
       correlationRequestId: requestIdOf(req),
-      webBaseUrl: webAppBase(req),
+      // NOT derived from Origin here, unlike the other public signup routes: this request comes
+      // from a LIFF page the API itself serves, so the Origin is the API host — and an AUTO_FREE
+      // submit persists this base as the owner's handoff URL. The configured web origin is the
+      // only value that is right; header derivation stays as the local-dev fallback.
+      webBaseUrl: this.config.webBaseUrl ?? webAppBase(req),
       apiBaseUrl: publicApiBase(req),
     });
   }

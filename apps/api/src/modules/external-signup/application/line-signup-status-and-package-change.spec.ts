@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { UnauthorizedException, UnprocessableEntityException } from '@nestjs/common';
+import { ForbiddenException, UnauthorizedException, UnprocessableEntityException } from '@nestjs/common';
 import { GetLineSignupStatusUseCase } from './get-line-signup-status.use-case';
 import { PackageChangeRequestUseCase } from './package-change-request.use-case';
 
@@ -58,11 +58,22 @@ describe('GetLineSignupStatusUseCase', () => {
   });
 });
 
-function packageHarness(options: { createThrows?: unknown; openRow?: any; rows?: any[] } = {}) {
+function packageHarness(options: {
+  createThrows?: unknown;
+  openRow?: any;
+  rows?: any[];
+  /** Roles the caller holds in the company; no membership at all when null. */
+  roles?: string[] | null;
+} = {}) {
   const audits: any[] = [];
   const rows: any[] = [];
   const prisma = {
     client: {
+      companyMembership: {
+        findFirst: async () => (options.roles === null
+          ? null
+          : { roles: (options.roles ?? ['OWNER']).map((key) => ({ role: { key } })) }),
+      },
       packageChangeRequest: {
         findFirst: async () => options.openRow ?? null,
         findMany: async () => options.rows ?? [],
@@ -100,6 +111,25 @@ describe('PackageChangeRequestUseCase', () => {
     assert.equal(h.audits[0].data.action, 'signup.line.package_change_requested');
     // Asking is not granting: nothing here writes a plan term.
     assert.equal(JSON.stringify(h.rows).includes('monthlySlipLimit'), false);
+  });
+
+  // Review LOW-2: the route's `company.setup.manage` permission is also held by a default ADMIN,
+  // but spec §4 puts this decision with the OWNER — it is about what the shop PAYS.
+  it('refuses a member who can edit settings but does not own the shop', async () => {
+    for (const roles of [['ADMIN'], ['MANAGER', 'FINANCE'], []]) {
+      const h = packageHarness({ roles });
+      await assert.rejects(() => h.useCase.create(cmd), (error: unknown) => {
+        assert.ok(error instanceof ForbiddenException);
+        assert.match(JSON.stringify((error as ForbiddenException).getResponse()), /owner_role_required/);
+        return true;
+      });
+      assert.deepEqual(h.audits, [], String(roles));
+    }
+  });
+
+  it('refuses a caller with no active membership in the company at all', async () => {
+    const h = packageHarness({ roles: null });
+    await assert.rejects(() => h.useCase.create(cmd), ForbiddenException);
   });
 
   it('refuses a tier that is not in the catalog', async () => {

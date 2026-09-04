@@ -17,8 +17,14 @@ const STATE_CHIP: Record<string, Chip> = {
   EMAIL_FAILED: { label: 'เมลตีกลับ', tone: 'danger' },
   EXPIRED: { label: 'ลิงก์หมดอายุ', tone: 'warning' },
   REJECTED: { label: 'ปฏิเสธแล้ว', tone: 'neutral' },
+  PROVISIONING_FAILED: { label: 'เปิดร้านไม่สำเร็จ กดอนุมัติเพื่อลองใหม่', tone: 'danger' },
   COMPLETED: { label: 'เปิดใช้งานแล้ว', tone: 'success' },
 };
+
+/** P10-L: the source decides what approving DOES, so the page has to be able to ask. */
+export function isLineSignup(item: AdminSignupQueueItemDto): boolean {
+  return item.source === 'line-oa';
+}
 
 /** `state` is a plain string in the contract, so an unknown value must still render. */
 export function signupStateChip(state: string): Chip {

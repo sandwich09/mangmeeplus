@@ -1,4 +1,4 @@
-import { Injectable, UnprocessableEntityException } from '@nestjs/common';
+import { ForbiddenException, Injectable, UnprocessableEntityException } from '@nestjs/common';
 import { PLAN_TIER_PRESETS, type PackageChangeRequestDto } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
 
@@ -26,6 +26,10 @@ export class PackageChangeRequestUseCase {
     if (!Object.hasOwn(PLAN_TIER_PRESETS, cmd.requestedTierKey)) {
       throw new UnprocessableEntityException(`tierKey "${cmd.requestedTierKey}" is not a known plan tier.`);
     }
+    // Spec §4: OWNER of the company, not merely someone who can edit its settings. The route's
+    // permission is `company.setup.manage`, which a default ADMIN also holds — asking to change
+    // what the shop PAYS is the owner's decision, so the role is checked as well as the permission.
+    await this.assertOwner(cmd.companyId, cmd.requestedByUserId);
 
     try {
       const created = await this.prisma.client.$transaction(async (tx) => {
@@ -63,6 +67,17 @@ export class PackageChangeRequestUseCase {
       });
       if (!open) throw error;
       return toDto(open);
+    }
+  }
+
+  /** Same membership shape `LegalAcceptanceService.loadMembership` reads: active in an active company. */
+  private async assertOwner(companyId: string, userId: string): Promise<void> {
+    const membership = await this.prisma.client.companyMembership.findFirst({
+      where: { companyId, userId, status: 'ACTIVE', company: { status: 'ACTIVE' } },
+      select: { roles: { select: { role: { select: { key: true } } } } },
+    });
+    if (!membership?.roles.some((entry) => entry.role.key === 'OWNER')) {
+      throw new ForbiddenException('owner_role_required');
     }
   }
 
