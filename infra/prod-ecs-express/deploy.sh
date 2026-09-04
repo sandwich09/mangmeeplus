@@ -226,31 +226,32 @@ if [ "$DEPLOY_ENV" = production ] && [ "$RECEIPT_QUOTA_ENFORCED_INPUT" = true ];
   echo "ERROR: RECEIPT_QUOTA_ENFORCED=true is not activated for production yet" >&2
   exit 2
 fi
-# The remaining P10-L knobs are shaped, not gated: an unknown value fails the API's own schema at
-# boot, so it is rejected here instead of taking a task revision down on start.
+# The remaining P10-L knobs are shaped, not gated. Each pattern is the EXACT counterpart of its
+# `apiConfigSchema` rule (packages/config/src/index.ts): anything this lets through and zod does not
+# is a task revision that crash-loops on boot instead of a deploy that stops here.
 case "$LINE_SIGNUP_APPROVAL_MODE_INPUT" in MANUAL|AUTO_FREE) ;; *)
   echo "ERROR: LINE_SIGNUP_APPROVAL_MODE must be exactly MANUAL or AUTO_FREE" >&2; exit 2 ;;
 esac
+# `nonnegative()` — 0 is a legal daily cap (it means "queue everything").
 case "$LINE_SIGNUP_AUTO_DAILY_CAP_INPUT" in ''|*[!0-9]*)
   echo "ERROR: LINE_SIGNUP_AUTO_DAILY_CAP must be a non-negative integer" >&2; exit 2 ;;
 esac
-case "$LINE_SIGNUP_WARMUP_SLIPS_INPUT" in ''|*[!0-9]*)
-  echo "ERROR: LINE_SIGNUP_WARMUP_SLIPS must be a positive integer" >&2; exit 2 ;;
-esac
-case "$LINE_FREE_AI_BUDGET_SATANG_INPUT" in ''|*[!0-9]*)
-  echo "ERROR: LINE_FREE_AI_BUDGET_SATANG must be a positive integer (satang)" >&2; exit 2 ;;
-esac
-case "$LINE_SIGNUP_ADMIN_REMINDER_MINUTES_INPUT" in ''|*[!0-9]*)
-  echo "ERROR: LINE_SIGNUP_ADMIN_REMINDER_MINUTES must be a positive integer" >&2; exit 2 ;;
-esac
-case "$LINE_SIGNUP_BUSINESS_DAYS_INPUT" in
-  MON-*|TUE-*|WED-*|THU-*|FRI-*|SAT-*|SUN-*) ;;
-  *) echo "ERROR: LINE_SIGNUP_BUSINESS_DAYS must look like MON-SAT" >&2; exit 2 ;;
-esac
-case "$LINE_SIGNUP_BUSINESS_HOURS_INPUT" in
-  [0-2][0-9]:[0-5][0-9]-[0-2][0-9]:[0-5][0-9]) ;;
-  *) echo "ERROR: LINE_SIGNUP_BUSINESS_HOURS must look like 09:00-18:00" >&2; exit 2 ;;
-esac
+# `positive()` — 0 fails zod, so it must fail here too. A ceiling of zero would also mean a trial
+# shop whose very first receipt is refused.
+assert_positive_int() {
+  case "$2" in ''|*[!0-9]*) ;; *) [ "$2" -gt 0 ] && return 0 ;; esac
+  echo "ERROR: $1 must be a positive integer" >&2
+  exit 2
+}
+assert_positive_int LINE_SIGNUP_WARMUP_SLIPS "$LINE_SIGNUP_WARMUP_SLIPS_INPUT"
+assert_positive_int LINE_FREE_AI_BUDGET_SATANG "$LINE_FREE_AI_BUDGET_SATANG_INPUT"
+assert_positive_int LINE_SIGNUP_ADMIN_REMINDER_MINUTES "$LINE_SIGNUP_ADMIN_REMINDER_MINUTES_INPUT"
+if [[ ! "$LINE_SIGNUP_BUSINESS_DAYS_INPUT" =~ ^(MON|TUE|WED|THU|FRI|SAT|SUN)-(MON|TUE|WED|THU|FRI|SAT|SUN)$ ]]; then
+  echo "ERROR: LINE_SIGNUP_BUSINESS_DAYS must look like MON-SAT" >&2; exit 2
+fi
+if [[ ! "$LINE_SIGNUP_BUSINESS_HOURS_INPUT" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]-([01][0-9]|2[0-3]):[0-5][0-9]$ ]]; then
+  echo "ERROR: LINE_SIGNUP_BUSINESS_HOURS must look like 09:00-18:00" >&2; exit 2
+fi
 if [ -z "$EMAIL_PROVIDER_INPUT" ]; then
   if [ "$DEPLOY_ENV" = uat ]; then EMAIL_PROVIDER_INPUT=ses; else EMAIL_PROVIDER_INPUT=disabled; fi
 fi

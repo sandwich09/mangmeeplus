@@ -82,6 +82,37 @@ assert_rejected deploy-invalid-line-signup-daily-cap \
 assert_rejected deploy-invalid-line-signup-business-hours \
   'LINE_SIGNUP_BUSINESS_HOURS must look like 09:00-18:00' \
   env -i PATH="$PATH" DEPLOY_ENV=uat LINE_SIGNUP_BUSINESS_HOURS=9-6 bash "$deploy" all
+# A2-01: every shape below passed the first (looser) validators and would have crash-looped the api
+# task on `apiConfigSchema` instead. These are the exact zod rules, so the deploy stops here.
+assert_rejected deploy-line-signup-business-days-not-a-weekday \
+  'LINE_SIGNUP_BUSINESS_DAYS must look like MON-SAT' \
+  env -i PATH="$PATH" DEPLOY_ENV=uat LINE_SIGNUP_BUSINESS_DAYS=MON-GARBAGE bash "$deploy" all
+assert_rejected deploy-line-signup-business-days-single-day \
+  'LINE_SIGNUP_BUSINESS_DAYS must look like MON-SAT' \
+  env -i PATH="$PATH" DEPLOY_ENV=uat LINE_SIGNUP_BUSINESS_DAYS=MON bash "$deploy" all
+assert_rejected deploy-line-signup-business-hours-impossible-clock \
+  'LINE_SIGNUP_BUSINESS_HOURS must look like 09:00-18:00' \
+  env -i PATH="$PATH" DEPLOY_ENV=uat LINE_SIGNUP_BUSINESS_HOURS=29:59-29:59 bash "$deploy" all
+assert_rejected deploy-line-signup-business-hours-hour-24 \
+  'LINE_SIGNUP_BUSINESS_HOURS must look like 09:00-18:00' \
+  env -i PATH="$PATH" DEPLOY_ENV=uat LINE_SIGNUP_BUSINESS_HOURS=24:00-18:00 bash "$deploy" all
+# zod says positive(), so 0 is not a legal warm-up ceiling, budget or reminder delay. A zero
+# warm-up would refuse a trial shop's very first receipt.
+assert_rejected deploy-line-signup-warmup-slips-zero \
+  'LINE_SIGNUP_WARMUP_SLIPS must be a positive integer' \
+  env -i PATH="$PATH" DEPLOY_ENV=uat LINE_SIGNUP_WARMUP_SLIPS=0 bash "$deploy" all
+assert_rejected deploy-line-free-ai-budget-zero \
+  'LINE_FREE_AI_BUDGET_SATANG must be a positive integer' \
+  env -i PATH="$PATH" DEPLOY_ENV=uat LINE_FREE_AI_BUDGET_SATANG=0 bash "$deploy" all
+assert_rejected deploy-line-signup-admin-reminder-zero \
+  'LINE_SIGNUP_ADMIN_REMINDER_MINUTES must be a positive integer' \
+  env -i PATH="$PATH" DEPLOY_ENV=uat LINE_SIGNUP_ADMIN_REMINDER_MINUTES=0 bash "$deploy" all
+assert_rejected deploy-line-signup-warmup-slips-not-a-number \
+  'LINE_SIGNUP_WARMUP_SLIPS must be a positive integer' \
+  env -i PATH="$PATH" DEPLOY_ENV=uat LINE_SIGNUP_WARMUP_SLIPS=ten bash "$deploy" all
+# 0 IS legal for the daily cap (`nonnegative()`): it means "queue every application".
+grep -Fq 'LINE_SIGNUP_AUTO_DAILY_CAP must be a non-negative integer' "$deploy" \
+  || { echo 'FAIL: LINE_SIGNUP_AUTO_DAILY_CAP lost its validator'; exit 1; }
 # Every P10-L switch reaches the api task definition, or UAT silently runs the shipped defaults
 # (shadow mode for the ceiling) and proves nothing.
 for p10l_var in LINE_SIGNUP_ENABLED LINE_SIGNUP_APPROVAL_MODE LINE_SIGNUP_AUTO_DAILY_CAP \
