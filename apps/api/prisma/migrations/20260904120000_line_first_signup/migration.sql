@@ -29,15 +29,16 @@ CREATE INDEX "CompanySignupRequest_lineChannelId_lineProviderUserId_state_idx"
 -- two fast taps on the LIFF button race the read otherwise. Partial unique indexes have no Prisma
 -- syntax, so this lives here and the schema carries a pointer comment.
 --
--- PROVISIONING_FAILED counts as OPEN. A failed provisioning may have committed the owner and the
--- ExternalIdentity before failing, so a re-submit would find that identity, take the attach path,
--- and open a SECOND company for the same shop. The state is recoverable — an admin approves the
--- row again and the idempotent fence retries it — so the account stays fenced until it settles.
+-- PROVISIONING_FAILED and READY count as OPEN. In both, the owner and the ExternalIdentity may
+-- already exist while the application has not settled — so a re-submit would find that identity,
+-- take the attach path, and open a SECOND company for the same shop. Both are recoverable (an
+-- admin re-approves a failed row; a READY row finishes on its next provisioning call), so the
+-- account stays fenced until it reaches COMPLETED, REJECTED or SUSPENDED.
 -- Keep this list identical to LINE_OPEN_APPLICATION_STATES in
 -- `src/modules/external-signup/domain/company-signup.logic.ts`; a spec asserts the two agree.
 CREATE UNIQUE INDEX "CompanySignupRequest_line_open_key"
   ON "CompanySignupRequest"("lineChannelId", "lineProviderUserId")
-  WHERE "state" IN ('RECEIVED', 'VALIDATED', 'PENDING_REVIEW', 'PROVISIONING', 'PROVISIONING_FAILED');
+  WHERE "state" IN ('RECEIVED', 'VALIDATED', 'PENDING_REVIEW', 'PROVISIONING', 'PROVISIONING_FAILED', 'READY');
 
 -- LEGAL-LIFF-01: the LIFF clickwrap is replayed into this table during provisioning, before anyone
 -- has logged in, so there is genuinely no session token to name. Written-only column; no reader

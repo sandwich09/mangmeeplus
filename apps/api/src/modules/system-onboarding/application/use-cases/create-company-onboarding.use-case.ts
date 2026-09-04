@@ -120,6 +120,18 @@ export type CreateCompanyOnboardingCommand = {
    */
   planTier?: PlanTierKey;
   planDays?: number;
+  /**
+   * P10-0: stamp `CompanySignupRequest.companyId` INSIDE this transaction. Without it there is a
+   * window between "the company committed" and "the fence recorded which company" — and a
+   * provisioning that dies in that window leaves a retry with no way to find what it already
+   * built, so it builds it again and hits the ExternalIdentity unique constraint forever.
+   */
+  linkSignupRequestId?: string;
+  /**
+   * Who/what decided this shop should exist, copied into the onboarding audit row. An operator id
+   * alone cannot say "a machine approved this and the directory named me" (review MEDIUM-B).
+   */
+  provisioningContext?: { source: string; autoApproved: boolean; operatorResolvedFromDirectory: boolean };
   lineOaAddUrl?: string;
   lineLinkUrl?: string;
   requestingAdminUserId: string;
@@ -258,6 +270,16 @@ export class CreateCompanyOnboardingUseCase {
           where: { companyId: company.id },
           create: { companyId: company.id, taxId, updatedByUserId: cmd.requestingAdminUserId },
           update: { taxId, updatedByUserId: cmd.requestingAdminUserId },
+        });
+      }
+
+      // Written here, with the company, so "which company did this application create" is never a
+      // question the database cannot answer (review HIGH-A). The fence still moves the STATE
+      // afterwards; this only removes the possibility of an orphaned company.
+      if (cmd.linkSignupRequestId) {
+        await tx.companySignupRequest.update({
+          where: { id: cmd.linkSignupRequestId },
+          data: { companyId: company.id },
         });
       }
 
@@ -525,6 +547,9 @@ export class CreateCompanyOnboardingUseCase {
             taxReportRuleCount: taxConfiguration.reportRuleCount,
             expenseCategoryTemplateKey: expenseCategories.templateKey,
             expenseCategoryCount: expenseCategories.categoryCount,
+            // Review MEDIUM-B: without these the company's own trail says a named human created an
+            // auto-approved shop, with nothing pointing at the machine decision behind it.
+            ...(cmd.provisioningContext ?? {}),
           },
         },
       });

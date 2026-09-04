@@ -4,6 +4,7 @@ import type { AdminSignupQueueItemDto } from '@watchdog-bms/contracts';
 import {
   canApproveSignup,
   canReissueSignup,
+  canSuspendSignup,
   filterSignupQueue,
   isLineSignup,
   signupBusinessSummary,
@@ -33,6 +34,32 @@ describe('isLineSignup', () => {
     assert.equal(isLineSignup(item({ source: 'line-oa' })), true);
     assert.equal(isLineSignup(item({ source: 'official-site' })), false);
     assert.equal(isLineSignup(item()), false);
+  });
+});
+
+// Review HIGH-B: the chip told the operator to press approve, the button was not rendered, and
+// the "มีปัญหา" tab did not list the row. Three halves of one feature that never met.
+describe('a failed provisioning is actionable, not just labelled', () => {
+  const failed = (source = 'line-oa') => item({ state: 'PROVISIONING_FAILED', source });
+
+  it('offers approve as the retry, but only for the source whose API accepts it', () => {
+    assert.equal(canApproveSignup('PROVISIONING_FAILED', failed()), true);
+    // Flow B has no retry an admin could reach — approve, reject and reissue all 409.
+    assert.equal(canApproveSignup('PROVISIONING_FAILED', failed('official-site')), false);
+    assert.equal(canApproveSignup('PROVISIONING_FAILED'), false, 'no item, no claim');
+    assert.equal(canApproveSignup('PENDING_REVIEW'), true, 'the ordinary case is unchanged');
+  });
+
+  it('lists the row under the problem tab, where an operator would look for it', () => {
+    const items = [failed(), item({ state: 'PENDING_REVIEW' })];
+    assert.deepEqual(filterSignupQueue(items, 'PROBLEM').map((i) => i.state), ['PROVISIONING_FAILED']);
+  });
+
+  it('offers suspend on a LINE row and nowhere else', () => {
+    assert.equal(canSuspendSignup(failed()), true);
+    assert.equal(canSuspendSignup(item({ state: 'COMPLETED', source: 'line-oa' })), true);
+    assert.equal(canSuspendSignup(item({ state: 'PENDING_REVIEW' })), false, 'web form');
+    assert.equal(canSuspendSignup(item({ state: 'SUSPENDED', source: 'line-oa' })), false, 'already stopped');
   });
 });
 

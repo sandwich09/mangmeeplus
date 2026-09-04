@@ -7,7 +7,8 @@ import {
   type AdminSignupDecisionDto, type AdminSignupQueueDto, type AdminSignupReissueDto,
 } from '@watchdog-bms/contracts';
 import { RequirePermissions } from '../../../../common/security/permissions.decorator';
-import { trustedPublicApiBase, webAppBase } from '../../../../common/http/public-api-base';
+import { requiredWebAppBase, trustedPublicApiBase } from '../../../../common/http/public-api-base';
+import { AppConfigService } from '../../../../common/config/app-config.service';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import { SignupAdminQueueUseCase } from '../../application/signup-admin-queue.use-case';
 
@@ -31,7 +32,10 @@ export class SignupDecisionRequestDto {
  */
 @Controller('system/signup-requests')
 export class SystemSignupRequestController {
-  constructor(private readonly queue: SignupAdminQueueUseCase) {}
+  constructor(
+    private readonly queue: SignupAdminQueueUseCase,
+    private readonly config: AppConfigService,
+  ) {}
 
   @Get()
   @RequirePermissions('system.company_onboarding.read')
@@ -60,8 +64,10 @@ export class SystemSignupRequestController {
   ): Promise<AdminSignupDecisionDto> {
     // Approving a LINE application provisions it inline, and provisioning needs the bases it puts
     // in the owner handoff. Passed for every decision so the queue never has to ask twice.
+    // The web base is the configured one, never the caller's Origin (review L-1): this URL is
+    // PERSISTED as the owner's way back into their shop, and the header is client-suppliable.
     return this.queue.decide(requestId, dto, req.context.userId, req.context.requestId, {
-      webBaseUrl: webAppBase(req),
+      webBaseUrl: requiredWebAppBase(this.config.sesWebBaseUrl),
       apiBaseUrl: trustedPublicApiBase(req),
     });
   }

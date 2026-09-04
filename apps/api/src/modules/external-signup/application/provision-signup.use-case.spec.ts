@@ -14,8 +14,11 @@ const REQUEST = {
   taxId: '0105555000012',
   pendingPasswordHash: 'scrypt$salt$hash',
   attachUserId: null as string | null,
-  approvedByUserId: 'admin-1',
+  approvedByUserId: 'admin-1' as string | null,
+  autoApproved: false,
+  source: 'official-site',
   companyId: null as string | null,
+  ownerUserId: null as string | null,
 };
 
 const CMD = {
@@ -30,6 +33,8 @@ function harness(options: {
   claimed?: boolean;
   existingOwnerEmail?: string | null;
   onboardingFails?: Error;
+  /** Empty = an installation with no platform operator at all. */
+  systemAdmins?: Array<{ companyId: string; userId: string }>;
 } = {}) {
   const onboardingCalls: any[] = [];
   const companyUpdates: any[] = [];
@@ -83,9 +88,12 @@ function harness(options: {
   } as any;
 
   const config = { lineSignupWarmupSlips: 10, lineFreeAiBudgetSatang: 8000 } as any;
+  const adminDirectory = {
+    activeSystemAdmins: async () => (options.systemAdmins ?? [{ companyId: 'sys', userId: 'sysadmin-1' }]),
+  } as any;
 
   return {
-    useCase: new ProvisionSignupUseCase(prisma, core, onboarding, config),
+    useCase: new ProvisionSignupUseCase(prisma, core, onboarding, config, adminDirectory),
     onboardingCalls, companyUpdates, requestUpdates, audits, advances, completed, failures, planTermUpserts,
     planTermUpdates, aiConfigUpserts, lineContexts,
   };
@@ -162,6 +170,8 @@ describe('ProvisionSignupUseCase — new-user path', () => {
     assert.equal(audit.riskLevel, 'HIGH');
     assert.deepEqual(audit.metadataJson, {
       companyId: 'co-1', ownerUserId: 'user-1', attachedToExistingUser: false, emailKeptExisting: false,
+      // Review MEDIUM-B: still ids and booleans only, now including what decided this.
+      source: 'official-site', autoApproved: false, operatorResolvedFromDirectory: false,
     });
     const evidence = JSON.stringify(h.audits);
     for (const pii of ['somchai@example.com', 'ร้านมั่งมี', '0105555000012', 'scrypt$']) {
@@ -297,6 +307,50 @@ describe('ProvisionSignupUseCase — LINE-first source', () => {
       await assert.rejects(() => h.useCase.execute(CMD), /line_signup_evidence_missing/);
       assert.equal(h.onboardingCalls.length, 0);
     }
+  });
+});
+
+// Review MEDIUM-A: this id lands in two foreign keys to User. The request id was never a valid
+// answer, and the claim path (which passes no actor) is how a Flow B row reaches here without one.
+describe('ProvisionSignupUseCase — who counts as the operator', () => {
+  it('prefers an explicit caller, then the approving admin, then any platform operator', async () => {
+    const explicit = harness({ request: { approvedByUserId: 'admin-1' } });
+    await explicit.useCase.execute({ ...CMD, actorUserId: 'caller-1' });
+    assert.equal(explicit.onboardingCalls[0].requestingAdminUserId, 'caller-1');
+
+    const approved = harness({ request: { approvedByUserId: 'admin-1' } });
+    await approved.useCase.execute(CMD);
+    assert.equal(approved.onboardingCalls[0].requestingAdminUserId, 'admin-1');
+
+    // The claim path passes no actor, and a row whose approval stamp never landed has none either.
+    const directory = harness({ request: { approvedByUserId: null } });
+    await directory.useCase.execute(CMD);
+    assert.equal(directory.onboardingCalls[0].requestingAdminUserId, 'sysadmin-1');
+    assert.equal(directory.onboardingCalls[0].provisioningContext.operatorResolvedFromDirectory, true);
+  });
+
+  it('refuses by name instead of letting a foreign key reject the request id', async () => {
+    const h = harness({ request: { approvedByUserId: null }, systemAdmins: [] });
+    await assert.rejects(() => h.useCase.execute(CMD), /signup_operator_unresolved/);
+    assert.equal(h.onboardingCalls.length, 0);
+    // Never the request id: it is not a user id and the columns it lands in are FKs to User.
+    assert.equal(JSON.stringify(h.onboardingCalls).includes('signup-1'), false);
+  });
+
+  // Review MEDIUM-B: `actorUserId` on the audit names a human. Without these three, the company's
+  // own trail says that human created an auto-approved shop and nothing points at the machine.
+  it('records what actually decided the shop should exist', async () => {
+    const h = harness({ request: { ...LINE_REQUEST, approvedByUserId: null, autoApproved: true } });
+    await h.useCase.execute(CMD);
+
+    const metadata = h.audits[0].data.metadataJson;
+    assert.equal(metadata.source, 'line-oa');
+    assert.equal(metadata.autoApproved, true);
+    assert.equal(metadata.operatorResolvedFromDirectory, true);
+    // Onboarding's own audit carries the same three, so the company-side trail is not blind.
+    assert.deepEqual(h.onboardingCalls[0].provisioningContext, {
+      source: 'line-oa', autoApproved: true, operatorResolvedFromDirectory: true,
+    });
   });
 });
 

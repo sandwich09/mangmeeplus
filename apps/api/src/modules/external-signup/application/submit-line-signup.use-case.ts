@@ -59,7 +59,11 @@ export class SubmitLineSignupUseCase {
   async execute(cmd: SubmitLineSignupCommand, now = new Date()): Promise<LineSignupSubmitAcceptedDto> {
     // Identity first: nothing below may run on a claim the token did not prove (SEC-01).
     const verified = await this.lineIdToken.verify(cmd.idToken);
-    // Charged only now, because only now do we know whose quota this is (spec §9).
+    // Charged only now, because only now do we know whose quota this is (spec §9). The attempt
+    // bucket is spent here and the creation bucket only checked — a customer fixing a typo must
+    // not lose one of their three shops for the day, but a never-succeeding account must still
+    // stop costing us verification round trips (review L-4, MEDIUM-1).
+    await this.rateLimit.assertLineSignupAttemptAllowed(verified.providerUserId);
     await this.rateLimit.assertLineSignupUserAllowed(verified.providerUserId);
 
     // LEGAL-LIFF-01: the acceptance time is the server's, never the client's (spec §3.2).

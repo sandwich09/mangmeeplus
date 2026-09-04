@@ -77,7 +77,8 @@ describe('PublicLineSignupController — the flag is the rollback', () => {
     const h = harness(true, null);
     await assert.rejects(() => h.controller.create(BODY, REQ), (error: unknown) => {
       assert.ok(error instanceof ServiceUnavailableException, 'a deployment fault, not a caller fault');
-      assert.match(JSON.stringify((error as ServiceUnavailableException).getResponse()), /line_signup_web_base_url_missing/);
+      // One shared helper, one code — the admin approve path raises the same (review L-1).
+      assert.match(JSON.stringify((error as ServiceUnavailableException).getResponse()), /web_base_url_not_configured/);
       return true;
     });
     assert.deepEqual(h.submits, [], 'nothing is created with a link that cannot work');

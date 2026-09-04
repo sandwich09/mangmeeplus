@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { CreateCompanyOnboardingUseCase } from '../../system-onboarding/application/use-cases/create-company-onboarding.use-case';
 import { LegalAcceptanceService } from '../../auth/application/legal-acceptance.service';
 import { currentLegalRelease } from '../../auth/application/legal-acceptance.service';
+import { LINE_OPEN_APPLICATION_STATES } from '../domain/company-signup.logic';
 import { CompanySignupCoreService } from './company-signup-core.service';
 import { ProvisionSignupUseCase } from './provision-signup.use-case';
 import { SubmitLineSignupUseCase } from './submit-line-signup.use-case';
@@ -23,6 +24,7 @@ function fakePrisma(options: { systemAdmins?: string[] } = {}) {
   const legalRows: any[] = [];
   const aiConfigs = new Map<string, any>();
   const onboardingRuns: any[] = [];
+  const memberships: any[] = [];
   const lineContexts = new Map<string, any>();
   let seq = 0;
 
@@ -81,7 +83,16 @@ function fakePrisma(options: { systemAdmins?: string[] } = {}) {
     }),
     role: auto('role', { findUnique: async () => ({ id: 'role-owner' }) }),
     company: auto('company', { create: async () => ({ id: 'co-1' }) }),
-    companyMembership: auto('companyMembership', { create: async () => ({ id: 'mem-1' }) }),
+    companyMembership: auto('companyMembership', {
+      create: async ({ data }: any) => {
+        const row = { id: `mem-${(seq += 1)}`, ...data };
+        memberships.push(row);
+        return row;
+      },
+      // The recovery path reads the owner back from the membership onboarding created, so the
+      // fake has to remember it — otherwise a passing retry test would prove nothing.
+      findFirst: async ({ where }: any) => memberships.find((m) => m.companyId === where.companyId) ?? null,
+    }),
     externalIdentity: auto('externalIdentity', {
       findFirst: async () => null,
       create: async ({ data }: any) => { identities.push(data); return { id: 'ext-1' }; },
@@ -178,13 +189,14 @@ function harness(options: { systemAdmins?: string[]; config?: Record<string, unk
   const core = new CompanySignupCoreService(store.prisma);
   const legal = new LegalAcceptanceService(store.prisma, { log: async () => undefined } as any);
   const onboarding = new CreateCompanyOnboardingUseCase(store.prisma, config, legal);
-  const provision = new ProvisionSignupUseCase(store.prisma, core, onboarding, config);
   const notified: string[] = [];
   const adminNotify = {
     activeSystemAdmins: async () => (options.systemAdmins ?? ['sysadmin-1']).map((userId) => ({ companyId: 'sys', userId })),
     enqueue: async (id: string) => { notified.push(id); },
   } as any;
+  const provision = new ProvisionSignupUseCase(store.prisma, core, onboarding, config, adminNotify);
   const rateLimit = {
+    assertLineSignupAttemptAllowed: async () => undefined,
     assertLineSignupUserAllowed: async () => undefined,
     recordLineSignupUser: async () => undefined,
   } as any;
@@ -194,6 +206,7 @@ function harness(options: { systemAdmins?: string[]; config?: Record<string, unk
 
   return {
     submit: new SubmitLineSignupUseCase(store.prisma, config, core, lineIdToken, rateLimit, adminNotify, provision),
+    provision,
     store,
     notified,
   };
@@ -250,6 +263,96 @@ describe('AUTO_FREE end to end (review HIGH-1)', () => {
     assert.equal(result.state, 'PENDING_REVIEW');
     assert.deepEqual(h.store.onboardingRuns, []);
     assert.ok(h.store.audits.some((a) => a.action === 'signup.line.auto_approve_capped'));
+  });
+});
+
+/**
+ * Review HIGH-A/HIGH-C, and the reason the earlier retry spec was green while the bug was real: it
+ * mocked `provision`. These drive submit → core → provisioning → onboarding for real and kill the
+ * process at each point AFTER the company has committed.
+ */
+describe('a provisioning that dies in its tail is recoverable (review HIGH-A / HIGH-C)', () => {
+  /**
+   * Fails the first call that matches, then behaves normally — a transient tail failure. The
+   * predicate matters: `updateMany` backs EVERY state transition, so an untargeted break fires at
+   * RECEIVED → VALIDATED and never reaches the tail this is about.
+   */
+  function breakOnce(store: any, model: string, method: string, when: (args: any) => boolean, message = 'connection reset') {
+    const original = store.prisma.client[model][method];
+    let fired = false;
+    store.prisma.client[model][method] = async (args: any) => {
+      if (!fired && when(args)) { fired = true; throw new Error(message); }
+      return original(args);
+    };
+  }
+
+  /** The audit transaction, which runs after the fence has already moved the row to READY. */
+  const isAuditTailWrite = (args: any) => args?.data?.pendingPasswordHash === null;
+
+  it('retries to COMPLETED with one company and one identity after completeProvisioning dies', async () => {
+    const h = harness();
+    // The CAS that moves PROVISIONING → READY: the first write after the company transaction.
+    breakOnce(h.store, 'companySignupRequest', 'updateMany', (args) => args?.data?.state === 'READY');
+
+    await assert.rejects(() => h.submit.execute(CMD, NOW), /connection reset/);
+    const request = [...h.store.requests.values()][0];
+    assert.equal(request.state, 'PROVISIONING_FAILED');
+    // The company exists and the row already knows which one — that is what makes recovery possible.
+    assert.equal(request.companyId, 'co-1');
+    assert.equal(h.store.identities.length, 1);
+
+    // The admin retry. Before the fix this re-ran onboarding and died on the identity unique index.
+    await h.provision.execute({
+      requestId: request.id,
+      actorUserId: 'sysadmin-1',
+      correlationRequestId: 'req-2',
+      webBaseUrl: CMD.webBaseUrl,
+      apiBaseUrl: CMD.apiBaseUrl,
+    });
+
+    assert.equal(request.state, 'COMPLETED');
+    assert.equal(h.store.onboardingRuns.length, 1, 'exactly one company was ever built');
+    assert.equal(h.store.identities.length, 1, 'and exactly one LINE identity');
+  });
+
+  it('finishes a row stranded at READY instead of parking it there forever', async () => {
+    const h = harness();
+    // Dies in the audit tail, so the fence has already recorded READY. `failProvisioning` then
+    // cannot move it (the attempt no longer holds PROVISIONING), and the row stops there.
+    breakOnce(h.store, 'companySignupRequest', 'update', isAuditTailWrite);
+
+    await assert.rejects(() => h.submit.execute(CMD, NOW), /connection reset/);
+    const request = [...h.store.requests.values()][0];
+    assert.equal(request.state, 'READY');
+    assert.equal(request.companyId, 'co-1');
+    // Review HIGH-C: READY is an OPEN state, so this customer's LINE account is still fenced —
+    // which is the only reason the stranding is safe rather than a second-company bug.
+    assert.ok(LINE_OPEN_APPLICATION_STATES.includes('READY'));
+
+    await h.provision.execute({
+      requestId: request.id,
+      actorUserId: 'sysadmin-1',
+      correlationRequestId: 'req-2',
+      webBaseUrl: CMD.webBaseUrl,
+      apiBaseUrl: CMD.apiBaseUrl,
+    });
+
+    assert.equal(request.state, 'COMPLETED');
+    assert.equal(h.store.onboardingRuns.length, 1, 'the shop is finished, not rebuilt');
+    assert.equal(h.store.identities.length, 1);
+  });
+
+  it('reports the real failure rather than the fence release that could not run', async () => {
+    const h = harness();
+    // Same shape as above: by the time this throws the row is READY, so the `failProvisioning` in
+    // the catch raises `provisioning_attempt_mismatch` — which used to be all the caller ever saw.
+    breakOnce(h.store, 'companySignupRequest', 'update', isAuditTailWrite, 'the original cause');
+
+    await assert.rejects(() => h.submit.execute(CMD, NOW), (error: Error) => {
+      assert.match(error.message, /the original cause/);
+      assert.doesNotMatch(error.message, /provisioning_attempt_mismatch/);
+      return true;
+    });
   });
 });
 

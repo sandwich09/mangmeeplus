@@ -75,6 +75,17 @@ describe('AuthRateLimitService LINE-first signup buckets', () => {
     await service.assertLineSignupIpAllowed('2.2.2.2');
   });
 
+  // Review L-4: the creation bucket deliberately ignores failures, so something has to bound what
+  // an account that never succeeds can cost. Separate quota, so a customer fixing a form is fine.
+  it('caps attempts per LINE account independently of the creation quota', async () => {
+    const service = makeService();
+    for (let attempt = 0; attempt < 20; attempt += 1) await service.assertLineSignupAttemptAllowed('Uline-1');
+    await assert.rejects(service.assertLineSignupAttemptAllowed('Uline-1'), /Too many requests/);
+    // Twenty attempts have not touched the three-a-day creation quota.
+    await service.assertLineSignupUserAllowed('Uline-1');
+    await service.assertLineSignupAttemptAllowed('Uline-2');
+  });
+
   it('fails closed when the counter store is unreachable', async () => {
     const service = new AuthRateLimitService(
       config,
@@ -83,6 +94,7 @@ describe('AuthRateLimitService LINE-first signup buckets', () => {
     );
     await assert.rejects(service.assertLineSignupUserAllowed('Uline-1'));
     await assert.rejects(service.assertLineSignupIpAllowed('1.1.1.1'));
+    await assert.rejects(service.assertLineSignupAttemptAllowed('Uline-1'));
   });
 });
 

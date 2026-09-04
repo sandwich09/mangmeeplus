@@ -16,6 +16,7 @@ import {
 import {
   canApproveSignup,
   canReissueSignup,
+  canSuspendSignup,
   filterSignupQueue,
   signupBusinessSummary,
   signupHintChips,
@@ -136,6 +137,28 @@ export default function SignupQueuePage() {
     }
   };
 
+  // Spec §3.7: stopping a shop AUTO_FREE let through. The API has accepted SUSPEND since L-A;
+  // until now nothing could reach it.
+  const handleSuspend = async (item: AdminSignupQueueItemDto) => {
+    const accepted = await confirm({
+      title: 'ระงับคำขอ',
+      message: `ระงับร้าน ${item.companyName} ใช่หรือไม่ ร้านจะถูกหยุดไว้จนกว่าทีมงานจะตรวจสอบ`,
+      confirmLabel: 'ระงับ',
+      variant: 'danger',
+    });
+    if (!accepted) return;
+    setBusyId(item.requestId);
+    try {
+      await decideSignupRequest(item.requestId, { action: 'SUSPEND' });
+      toast.success('ระงับคำขอแล้ว');
+      await load();
+    } catch (err) {
+      toast.error(apiErrorMessage(err));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const handleReissue = async (item: AdminSignupQueueItemDto) => {
     const accepted = await confirm({
       title: 'ส่งลิงก์ตั้งรหัสใหม่',
@@ -227,7 +250,8 @@ export default function SignupQueuePage() {
         <div>
           <h1 className="text-xl font-semibold text-gray-900">คำขอสมัครใช้งาน</h1>
           <p className="mt-0.5 text-sm text-gray-500">
-            ตรวจและอนุมัติร้านที่สมัครเข้ามาเอง อนุมัติแล้วระบบจะส่งอีเมลให้ผู้สมัครตั้งรหัสผ่านเอง
+            ตรวจและอนุมัติร้านที่สมัครเข้ามาเอง อนุมัติแล้วระบบจะส่งลิงก์ตั้งรหัสผ่านทางอีเมล
+            หรือเปิดร้านให้ทันทีสำหรับคำขอที่มาจาก LINE
           </p>
         </div>
 
@@ -324,7 +348,7 @@ export default function SignupQueuePage() {
                           <td className="px-4 py-3 text-xs text-gray-500">{formatThaiDateTime(item.createdAt)}</td>
                           <td className="px-4 py-3">
                             <div className="flex flex-wrap gap-2">
-                              {canApproveSignup(item.state) && (
+                              {canApproveSignup(item.state, item) && (
                                 <>
                                   <button
                                     type="button"
@@ -332,7 +356,7 @@ export default function SignupQueuePage() {
                                     onClick={() => void handleApprove(item)}
                                     className={`${rowActionClass} border-green-300 bg-green-50 text-green-700 hover:bg-green-100`}
                                   >
-                                    {busy ? 'กำลังทำรายการ...' : 'อนุมัติ'}
+                                    {busy ? 'กำลังทำรายการ...' : item.state === 'PROVISIONING_FAILED' ? 'ลองเปิดร้านอีกครั้ง' : 'อนุมัติ'}
                                   </button>
                                   <button
                                     type="button"
@@ -354,7 +378,18 @@ export default function SignupQueuePage() {
                                   {busy ? 'กำลังทำรายการ...' : 'ส่งลิงก์ใหม่'}
                                 </button>
                               )}
-                              {!canApproveSignup(item.state) && !canReissueSignup(item.state) && (
+                              {canSuspendSignup(item) && (
+                                <button
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={() => void handleSuspend(item)}
+                                  className={`${rowActionClass} border-orange-300 bg-orange-50 text-orange-700 hover:bg-orange-100`}
+                                >
+                                  ระงับ
+                                </button>
+                              )}
+                              {!canApproveSignup(item.state, item) && !canReissueSignup(item.state)
+                                && !canSuspendSignup(item) && (
                                 <span className="text-xs text-gray-400">—</span>
                               )}
                             </div>

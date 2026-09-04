@@ -6,6 +6,7 @@ import { PrismaService } from '../../../common/database/prisma.service';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import { CreateCompanyOnboardingUseCase } from '../../system-onboarding/application/use-cases/create-company-onboarding.use-case';
 import { CompanySignupCoreService } from './company-signup-core.service';
+import { SignupAdminNotifyService } from './signup-admin-notify.service';
 import { suggestedUsernameFromEmail } from '../domain/account-claim.logic';
 import { SIGNUP_SOURCE_LINE_OA } from '../domain/company-signup.logic';
 
@@ -43,6 +44,8 @@ export class ProvisionSignupUseCase {
     private readonly core: CompanySignupCoreService,
     private readonly onboarding: CreateCompanyOnboardingUseCase,
     private readonly config: AppConfigService,
+    /** The same active-SYSTEM_ADMIN lookup AUTO_FREE uses to name an operator of record. */
+    private readonly adminDirectory: SignupAdminNotifyService,
   ) {}
 
   async execute(cmd: ProvisionSignupCommand): Promise<ProvisionSignupResult> {
@@ -50,9 +53,17 @@ export class ProvisionSignupUseCase {
     // claimed=false and simply reads back what the winner already created.
     const claim = await this.core.claimProvisioning(cmd.requestId, cmd.correlationRequestId);
     const request = claim.request;
+    // P10-L §6: which owner shape applies is decided by the row's source, once, here.
+    const lineOa = request.source === SIGNUP_SOURCE_LINE_OA;
 
     if (!claim.claimed) {
       if (!request.companyId) throw new ConflictException('signup_provisioning_in_progress');
+      // Review HIGH-C: a LINE row stranded at READY has a finished company and one missing hop —
+      // a failure between `completeProvisioning` and this advance used to park it there forever,
+      // where the open-application fence also kept its LINE account locked out.
+      if (lineOa && request.state === 'READY') {
+        await this.core.advance(request.id, 'COMPLETED', cmd.correlationRequestId);
+      }
       return {
         companyId: request.companyId,
         companyName: request.companyName,
@@ -67,36 +78,18 @@ export class ProvisionSignupUseCase {
     // Spec §4B: an attached account that already carries a different address keeps it. Recorded as
     // a boolean so an admin can see the decision happened without the addresses entering evidence.
     const emailKeptExisting = Boolean(existingOwner?.email && existingOwner.email !== request.contactEmail);
-    // P10-L §6: which owner shape applies is decided by the row's source, once, here.
-    const lineOa = request.source === SIGNUP_SOURCE_LINE_OA;
 
     try {
-      const result = await this.onboarding.execute({
-        companyName: request.companyName,
-        businessCategory: mapBusinessCategory(request.businessType),
-        ...(request.taxId ? { taxId: request.taxId } : {}),
-        ownerDisplayName: request.ownerDisplayName,
-        ...(lineOa ? this.lineOwnerShape(request) : this.emailOwnerShape(request, cmd.username)),
-        // Spec §4C: two shops may legitimately share a name; only the admin console keeps the guard.
-        allowDuplicateCompanyName: true,
-        // Owner decision (UAT round 1): a self-signed-up trial shop starts on the "เริ่มต้น" menu
-        // preset; the admin can widen it later from the partner console.
-        modulePackage: 'starter',
-        // Trial clock starts at provision, not approval (spec §4D ⑤): 30 days either way. The LINE
-        // shop gets the 15-slip free trial (Owner 2026-09-04), the web form its PRO trial.
-        // Review B-01: named HERE rather than upserted afterwards — onboarding creates the term
-        // row, and a second `applyPlanTermPreset` against an existing row is a no-op.
-        planTier: lineOa ? 'FREE_TRIAL_15' : 'PRO_999',
-        planDays: 30,
-        // The approving admin is the actor of record for everything this provisioning creates.
-        // AUTO_FREE leaves `approvedByUserId` null on the row (spec §5), so the caller resolves a
-        // real operator instead. The request id is NOT a fallback: it is not a user id, and the
-        // two foreign keys onboarding writes it into would reject it.
-        requestingAdminUserId: request.approvedByUserId ?? cmd.actorUserId ?? request.id,
-        requestId: cmd.correlationRequestId,
-        webBaseUrl: cmd.webBaseUrl,
-        apiBaseUrl: cmd.apiBaseUrl,
-      });
+      // Review MEDIUM-A: this id lands in two foreign keys to User, so an operator that cannot be
+      // resolved has to fail here, by name, rather than at the constraint with a Prisma code.
+      const operator = await this.resolveOperator(request, cmd);
+      // Review HIGH-A: a previous attempt may have committed the company and died before the fence
+      // caught up. `companyId` is stamped inside the onboarding transaction, so its presence here
+      // means exactly that — re-running onboarding would try to create the owner's ExternalIdentity
+      // a second time and fail on the unique constraint for as long as anyone kept retrying.
+      const result = request.companyId
+        ? await this.adoptExistingCompany(request.companyId, request)
+        : await this.createCompany(request, cmd, lineOa, operator);
 
       if (lineOa) await this.applyLineTrialGuards(result.companyId, request, cmd.correlationRequestId);
 
@@ -139,6 +132,11 @@ export class ProvisionSignupUseCase {
               ownerUserId: result.ownerId,
               attachedToExistingUser: result.attachedExistingOwner,
               emailKeptExisting,
+              // Review MEDIUM-B: `actorUserId` above names a human. These three say whether that
+              // human actually decided anything, or was named by the directory for a machine.
+              source: request.source,
+              autoApproved: request.autoApproved,
+              operatorResolvedFromDirectory: operator.fromDirectory,
             },
           },
         }),
@@ -156,14 +154,98 @@ export class ProvisionSignupUseCase {
       };
     } catch (error) {
       // Release the fence so an admin retry can claim it again, then surface the original failure.
-      await this.core.failProvisioning({
-        requestId: request.id,
-        attemptId: claim.attemptId!,
-        failureCode: failureCodeOf(error),
-        correlationRequestId: cmd.correlationRequestId,
-      });
+      // Review HIGH-C: `failProvisioning` asserts the attempt still holds the fence, and a failure
+      // that happened AFTER the row moved on throws `provisioning_attempt_mismatch` from in here —
+      // replacing the reason anyone is looking. The release is best-effort; the cause is not.
+      try {
+        await this.core.failProvisioning({
+          requestId: request.id,
+          attemptId: claim.attemptId!,
+          failureCode: failureCodeOf(error),
+          correlationRequestId: cmd.correlationRequestId,
+        });
+      } catch (releaseError) {
+        new Logger(ProvisionSignupUseCase.name).error(
+          `Fence release failed for signup ${request.id}: ${messageOf(releaseError)}`,
+        );
+      }
       throw error;
     }
+  }
+
+  /**
+   * Review MEDIUM-A: explicit caller → the admin who approved → any active platform operator, and
+   * an outright failure if none of the three answers. There is deliberately no fallback to the
+   * request id: it is not a user id, and the columns it would land in are foreign keys to User.
+   */
+  private async resolveOperator(
+    request: SignupRow,
+    cmd: ProvisionSignupCommand,
+  ): Promise<{ userId: string; fromDirectory: boolean }> {
+    const explicit = cmd.actorUserId ?? request.approvedByUserId;
+    if (explicit) return { userId: explicit, fromDirectory: false };
+    const [operator] = await this.adminDirectory.activeSystemAdmins();
+    if (operator) return { userId: operator.userId, fromDirectory: true };
+    throw new ConflictException('signup_operator_unresolved');
+  }
+
+  private createCompany(
+    request: SignupRow,
+    cmd: ProvisionSignupCommand,
+    lineOa: boolean,
+    operator: { userId: string; fromDirectory: boolean },
+  ) {
+    return this.onboarding.execute({
+      companyName: request.companyName,
+      businessCategory: mapBusinessCategory(request.businessType),
+      ...(request.taxId ? { taxId: request.taxId } : {}),
+      ownerDisplayName: request.ownerDisplayName,
+      ...(lineOa ? this.lineOwnerShape(request) : this.emailOwnerShape(request, cmd.username)),
+      // Spec §4C: two shops may legitimately share a name; only the admin console keeps the guard.
+      allowDuplicateCompanyName: true,
+      // Owner decision (UAT round 1): a self-signed-up trial shop starts on the "เริ่มต้น" menu
+      // preset; the admin can widen it later from the partner console.
+      modulePackage: 'starter',
+      // Trial clock starts at provision, not approval (spec §4D ⑤): 30 days either way. The LINE
+      // shop gets the 15-slip free trial (Owner 2026-09-04), the web form its PRO trial.
+      // Review B-01: named HERE rather than upserted afterwards — onboarding creates the term
+      // row, and a second `applyPlanTermPreset` against an existing row is a no-op.
+      planTier: lineOa ? 'FREE_TRIAL_15' : 'PRO_999',
+      planDays: 30,
+      requestingAdminUserId: operator.userId,
+      // Closes the "company exists, nothing records which" window (review HIGH-A).
+      linkSignupRequestId: request.id,
+      provisioningContext: {
+        source: request.source,
+        autoApproved: request.autoApproved,
+        operatorResolvedFromDirectory: operator.fromDirectory,
+      },
+      requestId: cmd.correlationRequestId,
+      webBaseUrl: cmd.webBaseUrl,
+      apiBaseUrl: cmd.apiBaseUrl,
+    });
+  }
+
+  /**
+   * The recovery half of review HIGH-A. The company committed on an earlier attempt, so the only
+   * thing left is to walk the fence forward over it. The owner is read back from the membership
+   * onboarding created rather than re-derived, because that row IS what onboarding decided.
+   */
+  private async adoptExistingCompany(companyId: string, request: SignupRow) {
+    const ownerUserId = request.ownerUserId ?? (await this.prisma.client.companyMembership.findFirst({
+      where: { companyId, status: 'ACTIVE', roles: { some: { role: { key: 'OWNER' } } } },
+      orderBy: { createdAt: 'asc' },
+      select: { userId: true },
+    }))?.userId;
+    if (!ownerUserId) {
+      // A company with no owner is not something to finish provisioning over.
+      throw new ConflictException('signup_provisioned_company_has_no_owner');
+    }
+    return {
+      companyId,
+      ownerId: ownerUserId,
+      attachedExistingOwner: request.attachUserId !== null,
+    };
   }
 
   /**
@@ -329,8 +411,16 @@ const TRIAL_DAYS = 30;
 /** The subset of `CompanySignupRequest` provisioning reads. */
 type SignupRow = {
   id: string;
+  state: string;
   source: string;
+  autoApproved: boolean;
+  approvedByUserId: string | null;
+  companyId: string | null;
+  ownerUserId: string | null;
   companyName: string;
+  ownerDisplayName: string;
+  businessType: string | null;
+  taxId: string | null;
   contactEmail: string | null;
   phoneNumber: string | null;
   attachUserId: string | null;
@@ -360,7 +450,10 @@ export function mapBusinessCategory(businessType: string | null): CompanyBusines
     : 'OTHER';
 }
 
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function failureCodeOf(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.toLowerCase().replace(/[^a-z0-9_.:-]+/g, '_').slice(0, 64) || 'provisioning_failed';
+  return messageOf(error).toLowerCase().replace(/[^a-z0-9_.:-]+/g, '_').slice(0, 64) || 'provisioning_failed';
 }

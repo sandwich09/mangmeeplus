@@ -99,7 +99,8 @@ function harness() {
   } as any;
   const legal = { recordFromEvidence: async () => ({ written: false }) } as any;
   const onboarding = new CreateCompanyOnboardingUseCase(prisma, CONFIG, legal);
-  return { useCase: new ProvisionSignupUseCase(prisma, core, onboarding, CONFIG), planTerms };
+  const adminDirectory = { activeSystemAdmins: async () => [{ companyId: 'sys', userId: 'sysadmin-1' }] } as any;
+  return { useCase: new ProvisionSignupUseCase(prisma, core, onboarding, CONFIG, adminDirectory), planTerms };
 }
 
 describe('B-01 pre-flight: the tier a signup provisioning actually writes', () => {

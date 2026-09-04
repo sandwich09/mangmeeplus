@@ -15,15 +15,17 @@ import { ProvisionSignupUseCase } from './provision-signup.use-case';
 import { daysSinceApproval } from '../domain/account-claim.logic';
 import { SIGNUP_SOURCE_LINE_OA, type CompanySignupState } from '../domain/company-signup.logic';
 
+/** Everything an admin still has a decision or an action to take on (spec §4C, §4D). */
+const QUEUE_STATES: readonly CompanySignupState[] = ['PENDING_REVIEW', 'EMAIL_PENDING', 'EMAIL_FAILED', 'EXPIRED'];
+
 /**
- * Everything an admin still has a decision or an action to take on (spec §4C, §4D).
- * PROVISIONING_FAILED belongs here: the fence releases on failure precisely so the row can be
- * retried, and a row nobody can see is a row nobody retries — for a LINE application that also
- * leaves the customer's LINE account fenced with no way out.
+ * Review MEDIUM-D: a failed provisioning is shown for the LINE source ONLY. There the fence
+ * releases precisely so an admin can retry, and an unseen row also leaves the customer's LINE
+ * account fenced by the open-application index with no way out. A web-form row in that state has
+ * no retry an admin could reach — approve, reject and reissue all 409 — so listing it would be an
+ * invitation to three dead ends. Flow B retry semantics are L-C.
  */
-const QUEUE_STATES: readonly CompanySignupState[] = [
-  'PENDING_REVIEW', 'EMAIL_PENDING', 'EMAIL_FAILED', 'EXPIRED', 'PROVISIONING_FAILED',
-];
+const LINE_ONLY_QUEUE_STATE: CompanySignupState = 'PROVISIONING_FAILED';
 
 /** Spec §4D ④: an approved request never dead-ends, so reissue has no age limit. */
 const REISSUABLE_STATES: readonly CompanySignupState[] = ['EMAIL_PENDING', 'EMAIL_FAILED', 'EXPIRED'];
@@ -43,7 +45,12 @@ export class SignupAdminQueueUseCase {
 
   async list(now = new Date()): Promise<AdminSignupQueueDto> {
     const requests = await this.prisma.client.companySignupRequest.findMany({
-      where: { state: { in: QUEUE_STATES as CompanySignupState[] } },
+      where: {
+        OR: [
+          { state: { in: QUEUE_STATES as CompanySignupState[] } },
+          { state: LINE_ONLY_QUEUE_STATE, source: SIGNUP_SOURCE_LINE_OA },
+        ],
+      },
       orderBy: [{ state: 'asc' }, { createdAt: 'asc' }],
       take: 200,
     });

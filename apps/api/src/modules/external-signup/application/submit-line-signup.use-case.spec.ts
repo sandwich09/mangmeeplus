@@ -30,6 +30,7 @@ function harness(options: {
   /** null = a verified token that carries no profile name, which LINE permits. */
   displayName?: string | null;
   systemAdmins?: string[];
+  attemptBucketFull?: boolean;
 } = {}) {
   const created: any[] = [];
   const advances: any[] = [];
@@ -79,8 +80,13 @@ function harness(options: {
     },
   } as any;
 
-  // Inspect and consume are separate calls, exactly as they are for the login buckets.
+  // Inspect and consume are separate calls, exactly as they are for the login buckets. The attempt
+  // bucket is charged on every try; the creation bucket only on one that produced an application.
   const rateLimit = {
+    assertLineSignupAttemptAllowed: async (key: string) => {
+      userQuotas.push(`attempt:${key}`);
+      if (options.attemptBucketFull) throw new Error('Too many requests');
+    },
     assertLineSignupUserAllowed: async (key: string) => { userQuotas.push(`inspect:${key}`); },
     recordLineSignupUser: async (key: string) => { userQuotas.push(`consume:${key}`); },
   } as any;
@@ -137,7 +143,7 @@ describe('SubmitLineSignupUseCase — identity and clickwrap', () => {
     assert.equal(row.lineDisplayName, 'นิด');
     // DATA-MIN-01: display name and typed fields only, never a picture.
     assert.equal(JSON.stringify(row).toLowerCase().includes('picture'), false);
-    assert.deepEqual(h.userQuotas, ['inspect:Uline-1', 'consume:Uline-1']);
+    assert.deepEqual(h.userQuotas, ['attempt:Uline-1', 'inspect:Uline-1', 'consume:Uline-1']);
   });
 
   // Review MEDIUM-1: the bucket is three shops a DAY. Consuming it on a rejected submit turns
@@ -147,7 +153,8 @@ describe('SubmitLineSignupUseCase — identity and clickwrap', () => {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       await assert.rejects(() => h.useCase.execute({ ...CMD, phoneNumber: '12345' }, NOW));
     }
-    assert.deepEqual(h.userQuotas, ['inspect:Uline-1', 'inspect:Uline-1', 'inspect:Uline-1']);
+    assert.deepEqual(h.userQuotas.filter((q: string) => q.startsWith('inspect')).length, 3);
+    assert.equal(h.userQuotas.filter((q: string) => q.startsWith('consume')).length, 0);
 
     // The fourth attempt is the one that gets it right, and it must still go through.
     const result = await h.useCase.execute(CMD, NOW);
@@ -155,12 +162,22 @@ describe('SubmitLineSignupUseCase — identity and clickwrap', () => {
     assert.deepEqual(h.userQuotas.at(-1), 'consume:Uline-1');
   });
 
+  // Review L-4: with the creation bucket no longer charging failures, one account could otherwise
+  // drive unbounded ID-token verifications. The attempt bucket is what bounds that.
+  it('stops an account that never succeeds, without touching its creation quota', async () => {
+    const h = harness({ attemptBucketFull: true });
+    await assert.rejects(() => h.useCase.execute(CMD, NOW), /Too many requests/);
+    // Charged before the creation bucket is even consulted, and nothing was created.
+    assert.deepEqual(h.userQuotas, ['attempt:Uline-1']);
+    assert.deepEqual(h.created, []);
+  });
+
   it('refuses a re-submit while a previous provisioning is still recoverable', async () => {
     // The partial unique index counts PROVISIONING_FAILED as open (review HIGH-2): re-submitting
     // there would take the attach path off the half-committed identity and open a SECOND company.
     const h = harness({ createThrows: Object.assign(new Error('unique'), { code: 'P2002' }) });
     await assert.rejects(() => h.useCase.execute(CMD, NOW), /line_signup_already_pending/);
-    assert.deepEqual(h.userQuotas, ['inspect:Uline-1'], 'and a refused submit costs nothing');
+    assert.deepEqual(h.userQuotas, ['attempt:Uline-1', 'inspect:Uline-1'], 'no creation quota spent');
   });
 
   it('labels an owner whose LINE token carries no profile name', async () => {

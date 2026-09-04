@@ -24,6 +24,10 @@ const SES_EVENTS_MAX_PER_IP = 600;
 const LINE_SIGNUP_WINDOW_SECONDS = 3600;
 const LINE_SIGNUP_DAY_SECONDS = 86_400;
 const LINE_SIGNUP_MAX_PER_USER_PER_DAY = 3;
+// Review L-4: the creation bucket above deliberately does not charge a failed submit, which on its
+// own would let one account drive unbounded ID-token verifications. This one charges every attempt
+// that got as far as a verified token, sized so a person correcting a form never notices it.
+const LINE_SIGNUP_ATTEMPT_MAX_PER_USER = 20;
 const LINE_SIGNUP_MAX_PER_IP = 20;
 const LINE_SIGNUP_READ_MAX_PER_IP = 60;
 const LINE_LIFF_SESSION_MAX_PER_USER = 30;
@@ -186,6 +190,20 @@ export class AuthRateLimitService {
       lineProviderUserId,
       LINE_SIGNUP_MAX_PER_USER_PER_DAY,
       LINE_SIGNUP_DAY_SECONDS,
+    );
+  }
+
+  /**
+   * Charged on EVERY attempt by a verified LINE account, successful or not (review L-4). Bounds
+   * what a never-succeeding account can cost without touching the creation quota a real customer
+   * needs to fix a typo.
+   */
+  async assertLineSignupAttemptAllowed(lineProviderUserId: string): Promise<void> {
+    await this.assertWithinLimit(
+      'line-signup-attempt-user',
+      lineProviderUserId,
+      LINE_SIGNUP_ATTEMPT_MAX_PER_USER,
+      LINE_SIGNUP_WINDOW_SECONDS,
     );
   }
 

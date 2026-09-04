@@ -71,10 +71,12 @@ export const SIGNUP_SOURCE_LINE_OA = 'line-oa';
  * clause MUST agree — a spec asserts they do — because a state missing from the index is a state
  * in which a re-submit silently opens a SECOND application, and for a row whose provisioning half
  * committed (the ExternalIdentity exists) that means a SECOND company through the attach path.
- * PROVISIONING_FAILED is in the set for exactly that reason: it is recoverable, not finished.
+ * PROVISIONING_FAILED and READY are in the set for exactly that reason: both are states in which
+ * the shop may already exist and the application has not settled. Only COMPLETED, REJECTED and
+ * SUSPENDED free the LINE account to apply again.
  */
 export const LINE_OPEN_APPLICATION_STATES: readonly CompanySignupState[] = [
-  'RECEIVED', 'VALIDATED', 'PENDING_REVIEW', 'PROVISIONING', 'PROVISIONING_FAILED',
+  'RECEIVED', 'VALIDATED', 'PENDING_REVIEW', 'PROVISIONING', 'PROVISIONING_FAILED', 'READY',
 ];
 
 // P10-L §5. The LINE source proves a real person with a server-verified LIFF ID token instead of a

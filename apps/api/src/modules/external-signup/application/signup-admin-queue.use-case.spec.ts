@@ -31,12 +31,13 @@ function harness(options: { request?: any; requests?: any[]; users?: any[]; comp
   const revoked: string[] = [];
   const userQueries: any[] = [];
   const provisioned: any[] = [];
+  const requestQueries: any[] = [];
 
   const prisma = {
     client: {
       companySignupRequest: {
         findUnique: async () => (options.request === undefined ? { ...REQUEST } : options.request),
-        findMany: async () => options.requests ?? [],
+        findMany: async (args: any) => { requestQueries.push(args); return options.requests ?? []; },
         update: async (args: any) => { updates.push(args); return {}; },
       },
       user: { findMany: async (args: any) => { userQueries.push(args); return options.users ?? []; } },
@@ -63,7 +64,7 @@ function harness(options: { request?: any; requests?: any[]; users?: any[]; comp
 
   return {
     useCase: new SignupAdminQueueUseCase(prisma, core, tokens, claimEmail, provision),
-    audits, updates, advances, enqueued, revoked, userQueries, provisioned,
+    audits, updates, advances, enqueued, revoked, userQueries, provisioned, requestQueries,
   };
 }
 
@@ -183,6 +184,18 @@ describe('SignupAdminQueueUseCase.decide — LINE-first source', () => {
     const { items } = await h.useCase.list(NOW);
     assert.equal(items.length, 1);
     assert.equal(items[0]!.state, 'PROVISIONING_FAILED');
+  });
+
+  // Review MEDIUM-D: only for THIS source. A web-form row in the same state has no retry an admin
+  // could reach — approve, reject and reissue all 409 — so listing it offers three dead ends.
+  it('asks for that state only on the LINE source, leaving the web form byte-identical', async () => {
+    const h = harness({ requests: [] });
+    await h.useCase.list(NOW);
+
+    assert.deepEqual(h.requestQueries[0].where.OR, [
+      { state: { in: ['PENDING_REVIEW', 'EMAIL_PENDING', 'EMAIL_FAILED', 'EXPIRED'] } },
+      { state: 'PROVISIONING_FAILED', source: 'line-oa' },
+    ]);
   });
 
   it('retries provisioning when an admin approves a failed LINE application', async () => {

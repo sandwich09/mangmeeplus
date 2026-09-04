@@ -65,8 +65,16 @@ export function signupBusinessSummary(item: AdminSignupQueueItemDto): string {
   return shown.length ? shown.join(' · ') : '—';
 }
 
-export function canApproveSignup(state: string): boolean {
-  return state === 'PENDING_REVIEW';
+export function canApproveSignup(state: string, item?: AdminSignupQueueItemDto): boolean {
+  if (state === 'PENDING_REVIEW') return true;
+  // P10-L: for a LINE application, approving a failed provisioning IS the retry — the API accepts
+  // it and the fence makes it idempotent. The queue said so on the chip before it allowed it.
+  return state === 'PROVISIONING_FAILED' && item !== undefined && isLineSignup(item);
+}
+
+/** Only a LINE application can be suspended: spec §3.7 is about stopping an auto-approved shop. */
+export function canSuspendSignup(item: AdminSignupQueueItemDto): boolean {
+  return isLineSignup(item) && item.state !== 'SUSPENDED' && item.state !== 'REJECTED';
 }
 
 /** Approval survives an expired link (spec §4D ②) — reissue is the way back, never a re-application. */
@@ -90,6 +98,8 @@ export function filterSignupQueue(
   if (tab === 'ALL') return items;
   if (tab === 'PENDING_REVIEW') return items.filter((i) => i.state === 'PENDING_REVIEW');
   if (tab === 'AWAITING_CLAIM') return items.filter((i) => i.state === 'EMAIL_PENDING' && !i.emailDeliveryFailed);
-  // A bounce flag counts as a problem even if the state has not flipped to EMAIL_FAILED yet.
-  return items.filter((i) => i.state === 'EMAIL_FAILED' || i.state === 'EXPIRED' || i.emailDeliveryFailed);
+  // A bounce flag counts as a problem even if the state has not flipped to EMAIL_FAILED yet, and a
+  // provisioning that failed is the most actionable problem of the lot.
+  return items.filter((i) => i.state === 'EMAIL_FAILED' || i.state === 'EXPIRED'
+    || i.state === 'PROVISIONING_FAILED' || i.emailDeliveryFailed);
 }
