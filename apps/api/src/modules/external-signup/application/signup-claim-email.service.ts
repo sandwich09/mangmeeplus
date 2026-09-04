@@ -234,6 +234,9 @@ export class SignupClaimEmailService {
     if (!request) throw new Error('signup_request_not_found');
     // Only a rejection may produce a rejection letter; a revived request must not receive one.
     if (request.state !== 'REJECTED') return;
+    // P10-L: a LINE application has no address. Its rejection is a LINE push, not a letter, so
+    // there is nothing to send here and nothing to retry — returning is the whole handling.
+    if (!request.contactEmail) return;
 
     await this.mailer.sendSignupRejection({
       toEmail: request.contactEmail,
@@ -250,6 +253,9 @@ export class SignupClaimEmailService {
     if (!request) throw new Error('signup_request_not_found');
     // A request that moved on (claimed, rejected, suspended) must not receive a stale link.
     if (request.state !== 'EMAIL_PENDING') return;
+    // Belt and braces: a `line-oa` application can never reach EMAIL_PENDING (its transition table
+    // has no EMAIL_* edge), so an addressless row here would be a bug — mint no token for it.
+    if (!request.contactEmail) return;
 
     const { rawToken, expiresAt } = await this.tokens.mint(request.id);
     const messageId = await this.mailer.sendAccountClaim({

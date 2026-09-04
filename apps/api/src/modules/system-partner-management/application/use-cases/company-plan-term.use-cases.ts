@@ -155,19 +155,6 @@ export class SetCompanyPlanTermUseCase {
 
     return { term: toPlanTermDto(saved as PlanTermRow, now) };
   }
-
-  /**
-   * Provisioning entry point (signup Flow B / P10 Slice C): create the term row from a catalog
-   * preset. Exported through the module so provisioning can inject this use-case.
-   */
-  async setTermFromPreset(
-    companyId: string,
-    tierKey: PlanTierKey,
-    days: number,
-    actorUserId: string | null,
-  ): Promise<void> {
-    return applyPlanTermPreset(this.prisma, companyId, tierKey, days, actorUserId);
-  }
 }
 
 /**

@@ -12,17 +12,22 @@ import { LineAiTurnUseCase } from '../../application/use-cases/line-ai-turn.use-
 import { createProvider } from '../../infrastructure/provider/provider.factory';
 import { IntentRouterAgent } from '../../agents/intent-router.agent';
 import { gateBusinessDocumentClassification, parseBusinessDocumentClassification } from '../../domain/logic/business-document-classification.logic';
-import { LINE_AI_AGENT_REGISTRY, LINE_TOOL_REGISTRY, RECEIPT_ADDITIONAL_CHARGE_KINDS, asIntakeRouterCapabilities, extractValueCandidates, isAmbiguousDateCandidate, mapThaiDigits, VALUE_ASSUMPTIONS, type AiModelLineage, type LineAiTurnRequest, type LineAiTurnResponse, type LineIntakeRoutePlan, type LineIntakeRouteRequest, type ReceiptOcrRequest, type ReceiptOcrResponse, type BankStatementAiExtractRequest, type BankStatementAiExtractResponse, type BankStatementAiExtractRow } from '@watchdog-bms/contracts';
+import { AI_DOCUMENT_OCR_TIMEOUT_MS, LINE_AI_AGENT_REGISTRY, LINE_TOOL_REGISTRY, RECEIPT_ADDITIONAL_CHARGE_KINDS, asIntakeRouterCapabilities, extractValueCandidates, isAmbiguousDateCandidate, mapThaiDigits, VALUE_ASSUMPTIONS, type AiModelLineage, type LineAiTurnRequest, type LineAiTurnResponse, type LineIntakeRoutePlan, type LineIntakeRouteRequest, type ReceiptOcrRequest, type ReceiptOcrResponse, type BankStatementAiExtractRequest, type BankStatementAiExtractResponse, type BankStatementAiExtractRow } from '@watchdog-bms/contracts';
 
 // JSON bodies on these routes carry base64 media and need main.ts's 16mb parser
 // (UPLOAD_MAX_BYTES 10MB inflates to ~13.7MB in base64); every other route stays at
 // HTTP_BODY_LIMIT. A media-carrying route missing here 413s on real camera photos.
 export const BASE64_MEDIA_ROUTES = /^\/v1\/internal\/ai\/(receipt-ocr|bank-statement-extract|line-intake-route)$/;
 
-// Document OCR needs its own budget: a dense real-photo receipt regularly takes
-// document reads past the 15s ERP tool-call timeout (prod failures 2026-07-14), while the
-// API-side ReceiptOcrClient waits up to 60s. Keep under that outer wrapper.
-const DOCUMENT_OCR_TIMEOUT_MS = 45_000;
+// Document OCR needs its own budget: a dense real-photo receipt regularly takes document reads
+// past the 15s ERP tool-call timeout (prod failures 2026-07-14).
+//
+// The old note here said the API-side client "waits up to 60s" and to keep under it. Both halves
+// were wrong: the receipt clients wait `AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS`, and this route can chain
+// FOUR calls at this budget (read, understand, vision re-read, understand again) — 180s, which no
+// 60s wrapper could ever contain. The caller now derives its ceiling from this same constant, so
+// the wrapper is guaranteed to outlast the chain instead of racing it.
+const DOCUMENT_OCR_TIMEOUT_MS = AI_DOCUMENT_OCR_TIMEOUT_MS;
 /** A forwarded intake read must look like a page, not a caption; and must fit the same budget a
  *  fresh read would produce. Outside this band the route reads the image itself. */
 const MIN_FORWARDED_DOCUMENT_TEXT_CHARS = 24;

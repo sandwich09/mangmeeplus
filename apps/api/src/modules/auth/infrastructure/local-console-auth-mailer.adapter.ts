@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import type {
-  AccountClaimEmailInput, AuthEmailLinkInput, AuthMailerPort, SignupRejectionEmailInput,
+  AccountClaimEmailInput, AuthEmailLinkInput, AuthMailerPort, LineSignupWelcomeEmailInput,
+  PackageChangeNoticeEmailInput, SignupRejectionEmailInput,
 } from '../domain/ports/auth-mailer.port';
 import { renderAccountClaimEmail } from './account-claim-email.template';
 import { renderSignupRejectionEmail } from './signup-rejection-email.template';
@@ -58,6 +59,18 @@ export class LocalConsoleAuthMailerAdapter implements AuthMailerPort {
       companyName: input.companyName,
       subject: rendered.subject,
       body: rendered.text,
+    });
+  }
+
+  // H-02 hooks. There is no letter to render yet — the Thai copy for both is Owner-owned and not
+  // in the spec §7 message table — so a local run just shows that the hook fired and with what.
+  async sendLineSignupWelcome(input: LineSignupWelcomeEmailInput): Promise<void> {
+    console.info('[auth-mailer] line_signup_welcome', { toEmail: input.toEmail, companyName: input.companyName });
+  }
+
+  async sendPackageChangeNotice(input: PackageChangeNoticeEmailInput): Promise<void> {
+    console.info('[auth-mailer] package_change_notice', {
+      toEmail: input.toEmail, companyName: input.companyName, tierKey: input.tierKey,
     });
   }
 

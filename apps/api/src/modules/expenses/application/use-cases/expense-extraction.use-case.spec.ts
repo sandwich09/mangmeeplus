@@ -59,6 +59,9 @@ function makeUseCase(options: {
   attachment?: Record<string, unknown> | null;
   gatewayResult?: Record<string, unknown>;
   applyResult?: Record<string, unknown>;
+  /** P10-L §15.1: what `receiptQuotaSnapshot` reads back when naming the numbers in a 409. */
+  planTerm?: { tierKey: string; monthlySlipLimit: number; warmupUntil?: Date | null; warmupSlipLimit?: number | null } | null;
+  used?: number;
 } = {}) {
   const updates: any[] = [];
   const applyCalls: any[] = [];
@@ -95,7 +98,17 @@ function makeUseCase(options: {
   const audit = {
     log: mock.fn(async (entry: any) => { audits.push(entry); }),
   };
-  const useCase = new RequestReceiptExtractionUseCase(repo as any, storage as any, client as any, applyService as any, audit as any);
+  const prisma = {
+    client: {
+      companyOcrMonthlyUsage: { findUnique: async () => options.used === undefined ? null : { usedCount: options.used } },
+      companyPlanTerm: {
+        findUnique: async () => options.planTerm
+          ? { warmupUntil: null, warmupSlipLimit: null, ...options.planTerm }
+          : null,
+      },
+    },
+  } as any;
+  const useCase = new RequestReceiptExtractionUseCase(repo as any, storage as any, client as any, applyService as any, audit as any, prisma);
   return { useCase, repo, storage, client, updates, applyCalls, audits };
 }
 
@@ -398,6 +411,124 @@ describe('RequestReceiptExtractionUseCase', () => {
     assert.equal(storage.getObject.mock.callCount(), 0);
     assert.equal(client.extract.mock.callCount(), 0);
   });
+
+  // P10-L §15.1 / review G-01. The ceiling is decided by `admitCompanyOcr` inside the OCR client;
+  // this use case only has to turn its refusal into something the upload screen can act on.
+  describe('receipt quota answer', () => {
+    const quotaRefused = { status: 'failed', errorCode: 'RECEIPT_QUOTA_EXCEEDED' };
+    const freeTrial = { tierKey: 'FREE_TRIAL_15', monthlySlipLimit: 15 };
+
+    it('answers 409 receipt_quota_exceeded, carrying the numbers the banner needs', async () => {
+      const { useCase } = makeUseCase({ gatewayResult: quotaRefused, planTerm: freeTrial, used: 15 });
+
+      await assert.rejects(
+        () => useCase.execute(ctx(['expense.ocr.request']), 'expense-1'),
+        (error: any) => {
+          assert.equal(error.name, 'ConflictException');
+          assert.equal(error.getStatus(), 409);
+          const body = error.getResponse();
+          assert.equal(body.code, 'receipt_quota_exceeded');
+          assert.equal(body.count, 15);
+          assert.equal(body.limit, 15);
+          assert.equal(body.tierKey, 'FREE_TRIAL_15');
+          assert.match(body.monthKey, /^\d{4}-\d{2}$/);
+          // A2-02: `tierKey` was dropped, so a trial shop was handed the paying-tier sentence.
+          assert.equal(
+            body.message,
+            'ช่วงทดลองให้ AI อ่านรูปได้ 15 ครั้ง ตอนนี้ครบแล้วค่ะ (ใบเสร็จ 1 ใบ = 1 ครั้ง) ดูแพ็กเกจที่ใหญ่ขึ้นได้เลย',
+          );
+          return true;
+        },
+      );
+    });
+
+    it('gives a PAYING tier its own sentence, not the trial one', async () => {
+      const { useCase } = makeUseCase({
+        gatewayResult: quotaRefused,
+        planTerm: { tierKey: 'STARTER_249', monthlySlipLimit: 30 },
+        used: 30,
+      });
+
+      await assert.rejects(
+        () => useCase.execute(ctx(['expense.ocr.request']), 'expense-1'),
+        (error: any) => {
+          assert.equal(
+            error.getResponse().message,
+            'แพ็กเกจของคุณให้ AI อ่านรูปได้ 30 ครั้งต่อเดือน ตอนนี้ครบแล้วค่ะ (ใบเสร็จ 1 ใบ = 1 ครั้ง) ดูแพ็กเกจที่ใหญ่ขึ้นได้เลย',
+          );
+          return true;
+        },
+      );
+    });
+
+    it('falls back to the tier preset rather than printing "0 ครั้ง" (residual-4)', async () => {
+      // The term row vanished between the admission and the reply. The tier still knows its own
+      // ceiling, and 15 is a true number where 0 would read as a broken product.
+      const { useCase } = makeUseCase({ gatewayResult: quotaRefused, planTerm: null, used: 15 });
+      const { useCase: tiered } = makeUseCase({
+        gatewayResult: quotaRefused,
+        planTerm: { tierKey: 'FREE_TRIAL_15', monthlySlipLimit: 0 },
+        used: 15,
+      });
+
+      await assert.rejects(
+        () => tiered.execute(ctx(['expense.ocr.request']), 'expense-1'),
+        (error: any) => {
+          assert.match(error.getResponse().message, /15 ครั้ง/);
+          assert.doesNotMatch(error.getResponse().message, /0 ครั้ง/);
+          return true;
+        },
+      );
+      // Nothing left to read the ceiling from at all: the sentence drops the number, never prints 0.
+      await assert.rejects(
+        () => useCase.execute(ctx(['expense.ocr.request']), 'expense-1'),
+        (error: any) => {
+          // The fixed "ใบเสร็จ 1 ใบ = 1 ครั้ง" rate clause stays; it is the CEILING that has no number.
+          assert.doesNotMatch(error.getResponse().message, /อ่านรูปได้ \d+ ครั้ง/);
+          assert.match(error.getResponse().message, /ครบตามจำนวน/);
+          return true;
+        },
+      );
+    });
+
+    it('names the warm-up ceiling while that window is open', async () => {
+      const { useCase } = makeUseCase({
+        gatewayResult: quotaRefused,
+        planTerm: { ...freeTrial, warmupUntil: new Date(Date.now() + 86_400_000), warmupSlipLimit: 10 },
+        used: 10,
+      });
+
+      await assert.rejects(
+        () => useCase.execute(ctx(['expense.ocr.request']), 'expense-1'),
+        (error: any) => {
+          assert.equal(error.getResponse().limit, 10);
+          assert.match(error.getResponse().message, /10 ครั้ง/);
+          return true;
+        },
+      );
+    });
+
+    it('audits the refusal rather than logging it as an extraction failure', async () => {
+      const { useCase, audits } = makeUseCase({ gatewayResult: quotaRefused, planTerm: freeTrial, used: 15 });
+
+      await useCase.execute(ctx(['expense.ocr.request']), 'expense-1').catch(() => undefined);
+
+      const quotaAudit = audits.find((entry) => entry.metadataJson?.status === 'receipt_quota_exceeded');
+      assert.ok(quotaAudit, 'the refusal is auditable on its own name');
+      assert.equal(quotaAudit.metadataJson.errorCode, 'RECEIPT_QUOTA_EXCEEDED');
+    });
+
+    it('leaves every OTHER gateway failure on its existing "try again" path', async () => {
+      const { useCase } = makeUseCase({
+        gatewayResult: { status: 'failed', errorCode: 'OCR_MONTHLY_LIMIT_EXCEEDED' }, planTerm: freeTrial, used: 15,
+      });
+
+      assert.deepEqual(
+        await useCase.execute(ctx(['expense.ocr.request']), 'expense-1'),
+        { status: 'failed', errorCode: 'OCR_MONTHLY_LIMIT_EXCEEDED' },
+      );
+    });
+  });
 });
 
 describe('ReceiptOcrClient failure boundary', () => {
@@ -430,6 +561,10 @@ describe('ReceiptOcrClient failure boundary', () => {
         upsert: async () => ({ usedCount: ++usedCount }),
         updateMany: async () => { usedCount -= 1; return { count: 1 }; },
       },
+      // P10-L §15.1: no CompanyPlanTerm row = grandfathered unlimited, so every ops-brake
+      // expectation in this block is unchanged by the commercial layer above it.
+      companyPlanTerm: { findUnique: async () => null },
+      auditLog: { findFirst: async () => null },
     };
     const prisma = {
       client: {
@@ -470,6 +605,58 @@ describe('ReceiptOcrClient failure boundary', () => {
       assert.deepEqual(await client.extract(request), {
         status: 'failed', errorCode: 'AI_GATEWAY_ERROR_503',
       });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  // P10-L §15.1 residual-1. `expenseExtractionRetryMode` sends a non-`OCR_` failure back under a
+  // FRESH request id, which buys a second admission — so holding the first one billed a flaky
+  // minute of ours as two of a 15-read trial's reads.
+  it('charges ONE read when a flaky provider call is retried', async () => {
+    __resetCompanyAiBudgetCache();
+    const originalFetch = globalThis.fetch;
+    const config = {
+      aiGatewayInternalSecret: 'internal-secret', aiGatewayInternalUrl: 'http://ai.invalid',
+      aiMonthlyBudgetSatang: 1_000_000, isProduction: false,
+    } as any;
+    try {
+      const state = readyPrisma();
+      const client = new ReceiptOcrClient(config, undefined, state.prisma);
+
+      globalThis.fetch = mock.fn(async () => new Response('', { status: 503 })) as any;
+      assert.deepEqual(await client.extract(request), { status: 'failed', errorCode: 'AI_GATEWAY_ERROR_503' });
+      assert.equal(state.usedCount(), 0, 'the flaky attempt handed its read back');
+      assert.equal(state.events.length, 0, 'and left no fence behind for the retry to trip on');
+
+      // The upload screen's 'new_request' retry, with a fresh id, exactly as the browser sends it.
+      __resetCompanyAiBudgetCache();
+      globalThis.fetch = mock.fn(async () => new Response(JSON.stringify({ status: 'ok', fields: {} }))) as any;
+      const retried = await new ReceiptOcrClient(config, undefined, state.prisma)
+        .extract({ ...request, requestId: `${request.requestId}-retry` });
+      assert.equal(retried.status, 'ok');
+      assert.equal(state.usedCount(), 1, 'one upload, one read — not two');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('still keeps the read when the failure is a decision this system already made', async () => {
+    // `OCR_*` codes are refusals a retry cannot change, so they are NOT compensated — that is the
+    // line between "our flakiness" and "the answer".
+    __resetCompanyAiBudgetCache();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mock.fn(async () => new Response(JSON.stringify({
+      status: 'failed', errorCode: 'OCR_EMPTY_OUTPUT',
+    }))) as any;
+    try {
+      const state = readyPrisma();
+      const client = new ReceiptOcrClient({
+        aiGatewayInternalSecret: 'internal-secret', aiGatewayInternalUrl: 'http://ai.invalid',
+        aiMonthlyBudgetSatang: 1_000_000, isProduction: false,
+      } as any, undefined, state.prisma);
+      assert.equal((await client.extract(request)).errorCode, 'OCR_EMPTY_OUTPUT');
+      assert.equal(state.usedCount(), 1, 'the provider read the image and said it was empty');
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -517,6 +704,8 @@ describe('ReceiptOcrClient failure boundary', () => {
       companyOcrUsageEvent: { findUnique: async () => null },
       companyAiConfiguration: { findUnique: async () => ({ ocrEnabled: false, ocrMonthlyLimit: 10 }) },
       companyOcrMonthlyUsage: { findUnique: async () => null },
+      companyPlanTerm: { findUnique: async () => null },
+      auditLog: { findFirst: async () => null },
     };
     const prisma = {
       client: {

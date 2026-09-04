@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import type { AiModelPolicy, ReceiptOcrRequest, ReceiptOcrResponse } from '@watchdog-bms/contracts';
+import { AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS } from '@watchdog-bms/contracts';
 import { RedisRateLimitService } from '../../../common/security/redis-rate-limit.service';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { resolveCompanyAiModelPolicy } from '../../line-ai/application/company-ai-model-policy';
@@ -10,10 +11,15 @@ import {
   companyOcrErrorCode,
   isOcrPreProviderHttpStatus,
   isOcrPreProviderRefusal,
+  isOcrRetryableProviderFailure,
   releaseCompanyOcrAdmission,
 } from '../../line-ai/application/company-ocr-governance';
 
-const EXTRACT_TIMEOUT_MS = 120_000;
+// 4 x 45s of gateway provider chain + 15s margin. MUST outlast the gateway: aborting first returns
+// AI_GATEWAY_UNREACHABLE, which releases the OCR admission as a retryable failure AND loses the
+// response body that carries the usage the meter bills from — so the provider spend would land on
+// neither meter, and the trial AI budget is calibrated from both.
+const EXTRACT_TIMEOUT_MS = AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS;
 
 @Injectable()
 export class ReceiptOcrClient {
@@ -66,18 +72,38 @@ export class ReceiptOcrClient {
     const admission = await admitCompanyOcr(this.prisma, {
       companyId: request.companyId,
       sourceRoute: 'receipt-ocr-web',
+      // TODO(P10-L follow-up): the LINE lane fences on `attachment.id`, so one photo is one read
+      // however often it is redelivered. The web lane deliberately fences on `requestId` instead,
+      // and it CANNOT simply switch: two live flows mint a fresh id for the same attachment on
+      // purpose — `expenseExtractionRetryMode` → 'new_request' (expense-upload.logic.ts:27, driven
+      // at ExpensesPages.tsx:321) retries a transient gateway failure, and the review screen's
+      // re-read (ExpenseReviewPage.tsx:392) sends no id at all. Fencing on the attachment would
+      // answer both with `OCR_REQUEST_ALREADY_ADMITTED` forever, turning one bad provider call into
+      // a receipt that can never be read. The gap that leaves is a shop re-pressing "อ่านใบเสร็จ"
+      // to spend its own monthly allowance — visible, self-inflicted and bounded by the ceiling.
+      // Closing it properly needs a per-attachment read budget (e.g. N re-reads per attachment,
+      // then duplicate), which is its own decision and its own slice.
       requestId: request.requestId,
       monthKey: budgetMonthKey,
+      // P10-L §15.1: the plan slip ceiling is always measured here; this flag decides whether it refuses.
+      enforceReceiptQuota: this.config.receiptQuotaEnforced,
     });
     if (!admission.allowed) return { status: 'failed', errorCode: companyOcrErrorCode(admission) };
     const result = await this.extractAdmitted(request, modelPolicy, budgetMonthKey);
-    if (isOcrPreProviderRefusal(result)) {
+    // Two reasons to hand the read back. `isOcrPreProviderRefusal` proves no provider ran.
+    // `isOcrRetryableProviderFailure` does not — but the upload screen retries it under a fresh
+    // request id, which buys a second admission, so keeping this one charges a 15-read trial twice
+    // for one flaky upload (P10-L §15.1 residual-1).
+    if (isOcrPreProviderRefusal(result) || isOcrRetryableProviderFailure(result)) {
       const released = await releaseCompanyOcrAdmission(this.prisma, {
         companyId: request.companyId,
         sourceRoute: 'receipt-ocr-web',
         requestId: request.requestId,
       });
-      if (!released) return { status: 'failed', errorCode: 'OCR_QUOTA_UNAVAILABLE' };
+      // A pre-provider refusal that cannot be compensated must not look like a free read. A
+      // retryable failure keeps its own error: the retry will admit afresh either way, and
+      // replacing a truthful "the gateway is down" with a quota word would misdirect the shop.
+      if (!released && isOcrPreProviderRefusal(result)) return { status: 'failed', errorCode: 'OCR_QUOTA_UNAVAILABLE' };
     }
     return result;
   }

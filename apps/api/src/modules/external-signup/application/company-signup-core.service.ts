@@ -10,6 +10,7 @@ import {
   type CompanySignupInput,
   type CompanySignupState,
   type NormalizedCompanySignupInput,
+  isStaleProvisioning,
 } from '../domain/company-signup.logic';
 
 const SERVICE_ACTOR = 'official-signup-core';
@@ -47,6 +48,26 @@ export class CompanySignupCoreService {
     });
   }
 
+  /**
+   * P10-L: create a request whose fields a source-specific use-case already normalised. Flow B's
+   * `receive` above cannot serve the LINE form — it demands an email, a consent version and two
+   * name halves that form never asks for — but the RECEIVED evidence and outbox row must be
+   * identical, so they come from the same private writer.
+   *
+   * No advisory lock: the "one open application per LINE account" fence is the partial unique
+   * index (review B-05), and a unique violation here aborts this transaction for the caller to map.
+   */
+  async receiveNormalized(
+    data: Prisma.CompanySignupRequestUncheckedCreateInput,
+    correlationRequestId: string,
+  ): Promise<CompanySignupRequest> {
+    return this.prisma.client.$transaction(async (tx) => {
+      const request = await tx.companySignupRequest.create({ data });
+      await this.appendEvidence(tx, request, null, 'RECEIVED', correlationRequestId);
+      return request;
+    });
+  }
+
   async advance(
     requestId: string,
     toState: Exclude<CompanySignupState, 'RECEIVED'>,
@@ -57,22 +78,32 @@ export class CompanySignupCoreService {
     return this.changeState(requestId, toState, correlationRequestId, failureCode);
   }
 
-  async claimProvisioning(requestId: string, correlationRequestId: string): Promise<ProvisionClaim> {
+  async claimProvisioning(requestId: string, correlationRequestId: string, now = new Date()): Promise<ProvisionClaim> {
     return this.prisma.client.$transaction(async (tx) => {
       await this.lock(tx, requestId);
       const current = await this.findOrThrow(tx, requestId);
-      if (current.state === 'PROVISIONING' || current.state === 'READY'
-        || current.state === 'LINE_LINK_PENDING' || current.state === 'COMPLETED') {
+      if (current.state === 'READY' || current.state === 'LINE_LINK_PENDING' || current.state === 'COMPLETED') {
         return { request: current, claimed: false, attemptId: null };
       }
-      if (!canTransitionCompanySignup(current.state as CompanySignupState, 'PROVISIONING')) {
+      // A PROVISIONING row means someone is mid-flight — unless nobody is. Re-claiming an abandoned
+      // one is safe because the retry adopts an already-created company rather than building a
+      // second (review MEDIUM-3, HIGH-A), and the conditional stamp inside the onboarding
+      // transaction makes even an overlapping pair produce exactly one company.
+      const stale = isStaleProvisioning(current, now);
+      if (current.state === 'PROVISIONING' && !stale) {
+        return { request: current, claimed: false, attemptId: null };
+      }
+      if (!stale && !canTransitionCompanySignup(current.state as CompanySignupState, 'PROVISIONING', current.source)) {
         throw new ConflictException(`invalid_signup_transition:${current.state}:PROVISIONING`);
       }
       const attemptId = randomUUID();
       const request = await this.casUpdate(tx, current, {
-        state: 'PROVISIONING', failureCode: null, provisioningAttemptId: attemptId, provisioningStartedAt: new Date(),
+        state: 'PROVISIONING', failureCode: null, provisioningAttemptId: attemptId, provisioningStartedAt: now,
       });
-      await this.appendEvidence(tx, request, current.state as CompanySignupState, 'PROVISIONING', correlationRequestId);
+      await this.appendEvidence(
+        tx, request, current.state as CompanySignupState, 'PROVISIONING', correlationRequestId,
+        stale ? 'signup.provisioning.reclaimed_stale' : undefined,
+      );
       return { request, claimed: true, attemptId };
     });
   }
@@ -134,7 +165,9 @@ export class CompanySignupCoreService {
       if (current.state === toState && current.failureCode === normalizedFailure) {
         return { request: current, replayed: true };
       }
-      if (!canTransitionCompanySignup(current.state as CompanySignupState, toState)) {
+      // P10-L: the table is chosen by the row's own source, so a LINE application can never take an
+      // EMAIL_* edge and the web form can never take the AUTO_FREE shortcut.
+      if (!canTransitionCompanySignup(current.state as CompanySignupState, toState, current.source)) {
         throw new ConflictException(`invalid_signup_transition:${current.state}:${toState}`);
       }
       if (isCompanySignupFailureState(toState) && !normalizedFailure) {
@@ -184,12 +217,14 @@ export class CompanySignupCoreService {
     fromState: CompanySignupState | null,
     toState: CompanySignupState,
     correlationRequestId: string,
+    /** Names the transition when it is not an ordinary one — a stale fence takeover, say. */
+    action?: string,
   ): Promise<void> {
     const failed = isCompanySignupFailureState(toState);
     await tx.auditLog.create({
       data: {
         actorType: 'SERVICE', actorRefId: SERVICE_ACTOR,
-        action: fromState ? 'signup.request.transition' : 'signup.request.received',
+        action: action ?? (fromState ? 'signup.request.transition' : 'signup.request.received'),
         targetType: 'company_signup_request', targetId: request.id, requestId: correlationRequestId,
         result: failed ? 'FAILED' : 'SUCCESS',
         riskLevel: toState === 'PROVISIONING' || toState === 'READY' ? 'HIGH' : 'MEDIUM',

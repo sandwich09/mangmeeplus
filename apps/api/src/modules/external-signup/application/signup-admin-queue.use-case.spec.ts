@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { SignupAdminQueueUseCase } from './signup-admin-queue.use-case';
+import { STALE_PROVISIONING_MS } from '../domain/company-signup.logic';
 
 const NOW = new Date('2026-09-01T00:00:00.000Z');
 
@@ -29,21 +30,29 @@ function harness(options: { request?: any; requests?: any[]; users?: any[]; comp
   const advances: any[] = [];
   const enqueued: any[] = [];
   const revoked: string[] = [];
+  const userQueries: any[] = [];
+  const provisioned: any[] = [];
+  const requestQueries: any[] = [];
 
   const prisma = {
     client: {
       companySignupRequest: {
         findUnique: async () => (options.request === undefined ? { ...REQUEST } : options.request),
-        findMany: async () => options.requests ?? [],
+        findMany: async (args: any) => { requestQueries.push(args); return options.requests ?? []; },
         update: async (args: any) => { updates.push(args); return {}; },
       },
-      user: { findMany: async () => options.users ?? [] },
+      user: { findMany: async (args: any) => { userQueries.push(args); return options.users ?? []; } },
       company: { findMany: async () => options.companies ?? [] },
       auditLog: { create: async (args: any) => { audits.push(args); return {}; } },
     },
   } as any;
 
-  const core = { advance: async (id: string, state: string) => { advances.push({ id, state }); return {}; } } as any;
+  const core = {
+    advance: async (id: string, state: string, _corr: string, failureCode?: string) => {
+      advances.push({ id, state, ...(failureCode ? { failureCode } : {}) });
+      return {};
+    },
+  } as any;
   const tokens = { revokeAll: async (id: string) => { revoked.push(id); return 2; } } as any;
   const claimEmail = {
     enqueue: async (id: string, reason: string) => { enqueued.push({ id, reason }); },
@@ -52,9 +61,11 @@ function harness(options: { request?: any; requests?: any[]; users?: any[]; comp
     },
   } as any;
 
+  const provision = { execute: async (cmd: any) => { provisioned.push(cmd); return {}; } } as any;
+
   return {
-    useCase: new SignupAdminQueueUseCase(prisma, core, tokens, claimEmail),
-    audits, updates, advances, enqueued, revoked,
+    useCase: new SignupAdminQueueUseCase(prisma, core, tokens, claimEmail, provision),
+    audits, updates, advances, enqueued, revoked, userQueries, provisioned, requestQueries,
   };
 }
 
@@ -89,6 +100,271 @@ describe('SignupAdminQueueUseCase.list', () => {
     const h = harness({ requests: [{ ...REQUEST }] });
     const { items } = await h.useCase.list(NOW);
     assert.equal(JSON.stringify(items).includes('scrypt$'), false);
+  });
+
+  // Review B-03: the LINE source has no address at all. `in: [null]` is not a query Prisma accepts,
+  // and a blank string in the DTO would read to an operator as "we have an address, it is empty".
+  it('lists an addressless LINE application without querying a null email', async () => {
+    const h = harness({
+      requests: [
+        { ...REQUEST, id: 'signup-line', source: 'line-oa', contactEmail: null, mxValid: null, taxId: null },
+        { ...REQUEST },
+      ],
+    });
+    const { items } = await h.useCase.list(NOW);
+
+    assert.equal(items.length, 2);
+    assert.equal(items[0]!.contactEmail, undefined);
+    assert.equal(items[0]!.emailMatchesExistingUser, false);
+    assert.deepEqual(h.userQueries[0].where.email.in, ['somchai@example.com']);
+  });
+});
+
+// P10-L §5/§8. What "approve" MEANS depends on the source: the web form still has a mailbox to
+// prove, a LINE application proved its human at submit and goes straight to provisioning.
+const LINE_REQUEST = {
+  ...REQUEST,
+  source: 'line-oa',
+  contactEmail: null,
+  mxValid: null,
+  taxId: null,
+  pendingPasswordHash: null,
+  lineDisplayName: 'นิด',
+  autoApproved: false,
+  legalAcceptedAt: new Date('2026-08-31T04:00:00.000Z'),
+};
+const URLS = { webBaseUrl: 'https://app.example.com', apiBaseUrl: 'https://api.example.com/v1' };
+
+describe('SignupAdminQueueUseCase.decide — LINE-first source', () => {
+  it('provisions on approval instead of queueing a claim email nobody can receive', async () => {
+    const h = harness({ request: LINE_REQUEST });
+    const result = await h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1', URLS);
+
+    assert.deepEqual(result, { requestId: 'signup-1', state: 'COMPLETED' });
+    assert.deepEqual(h.enqueued, [], 'no letter is queued for an application with no address');
+    assert.deepEqual(h.advances, [], 'provisioning owns the PROVISIONING transition, not advance');
+    assert.equal(h.provisioned[0].requestId, 'signup-1');
+    // The stamp lands before provisioning, which reads it as the actor for what it creates.
+    assert.equal(h.updates[0].data.approvedByUserId, 'admin-1');
+  });
+
+  it('refuses to provision without the bases the owner handoff needs', async () => {
+    const h = harness({ request: LINE_REQUEST });
+    await assert.rejects(
+      () => h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1'),
+      /signup_provisioning_urls_required/,
+    );
+    assert.deepEqual(h.provisioned, []);
+  });
+
+  // Review HIGH-1: READY looked settled and was not. Treating it as done meant the queue never
+  // listed the row, approve returned early without provisioning, and the customer's LINE account
+  // stayed fenced by the open-application index with no admin path at all.
+  it('finishes a READY application instead of calling it done', async () => {
+    const h = harness({ request: { ...LINE_REQUEST, state: 'READY', companyId: 'co-1' } });
+    const result = await h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1', URLS);
+
+    assert.equal(h.provisioned.length, 1, 'the finish path has to actually be called');
+    assert.equal(h.provisioned[0].requestId, 'signup-1');
+    assert.equal(result.state, 'COMPLETED');
+  });
+
+  it('tells the page which provisioning rows are abandoned and which are live', async () => {
+    const h = harness({
+      requests: [
+        { ...LINE_REQUEST, id: 'stale', state: 'PROVISIONING', provisioningStartedAt: new Date(NOW.getTime() - STALE_PROVISIONING_MS - 1_000) },
+        { ...LINE_REQUEST, id: 'live', state: 'PROVISIONING', provisioningStartedAt: new Date(NOW.getTime() - 1_000) },
+      ],
+    });
+    const { items } = await h.useCase.list(NOW);
+
+    // The server owns the clock the fence uses, so the page must not have to guess this.
+    assert.equal(items[0]!.staleProvisioning, true);
+    assert.equal(items[1]!.staleProvisioning, undefined);
+  });
+
+  it('lists a READY LINE application so an admin can reach it', async () => {
+    const h = harness({ requests: [{ ...LINE_REQUEST, state: 'READY' }] });
+    const { items } = await h.useCase.list(NOW);
+    assert.equal(items.length, 1);
+    assert.deepEqual(h.requestQueries[0].where.OR[1], {
+      state: { in: ['PROVISIONING_FAILED', 'READY', 'PROVISIONING'] }, source: 'line-oa',
+    });
+  });
+
+  // Review HIGH-1 (fourth pass): the stale re-claim in the fence was unreachable because the queue
+  // refused to approve a PROVISIONING row at all. These assert at the DECIDE level, which is the
+  // only level an admin can actually reach — the previous test called provision.execute directly
+  // and so proved nothing about reachability.
+  it('finishes an abandoned provisioning run when an admin approves it', async () => {
+    const h = harness({
+      request: {
+        ...LINE_REQUEST,
+        state: 'PROVISIONING',
+        provisioningStartedAt: new Date(NOW.getTime() - STALE_PROVISIONING_MS - 1_000),
+      },
+    });
+    const result = await h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1', URLS, NOW);
+
+    assert.equal(h.provisioned.length, 1, 'the fence would re-claim it, so the queue must offer it');
+    assert.equal(result.state, 'COMPLETED');
+  });
+
+  it('refuses while a provisioning run is plausibly still going', async () => {
+    const h = harness({
+      request: {
+        ...LINE_REQUEST,
+        state: 'PROVISIONING',
+        provisioningStartedAt: new Date(NOW.getTime() - 1_000),
+      },
+    });
+    const result = await h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1', URLS, NOW);
+
+    assert.equal(result.state, 'PROVISIONING');
+    assert.deepEqual(h.provisioned, [], 'a live run keeps the fence');
+  });
+
+  it('treats a second tap on a finished application as a no-op', async () => {
+    const h = harness({ request: { ...LINE_REQUEST, state: 'COMPLETED' } });
+    const result = await h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1', URLS);
+    assert.equal(result.state, 'COMPLETED');
+    assert.deepEqual(h.provisioned, [], 'COMPLETED must not provision twice');
+  });
+
+  // Review LOW-3: the approval stamp records WHEN this application was decided. Closing a row that
+  // is already past its decision must not rewrite that history.
+  it('stamps the approval once, and says what a later close actually did', async () => {
+    const first = harness({ request: LINE_REQUEST });
+    await first.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1', URLS);
+    assert.equal(first.updates[0].data.approvedByUserId, 'admin-1');
+    assert.equal(first.audits[0].data.metadataJson.finishedStrandedRow, false);
+
+    for (const [state, expected] of [['PROVISIONING_FAILED', 'retryOfFailedProvisioning'], ['READY', 'finishedStrandedRow']] as const) {
+      const h = harness({ request: { ...LINE_REQUEST, state } });
+      await h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-2', 'req-2', URLS);
+      assert.deepEqual(h.updates, [], `${state} must not rewrite the approval stamp`);
+      assert.equal(h.audits[0].data.metadataJson[expected], true);
+      assert.equal(h.audits[0].data.metadataJson.fromState, state);
+    }
+  });
+
+  it('rejects without queueing a letter to an address that does not exist', async () => {
+    const h = harness({ request: LINE_REQUEST });
+    const result = await h.useCase.decide(
+      'signup-1', { action: 'REJECT', notifyApplicant: true }, 'admin-1', 'req-1', URLS,
+    );
+
+    assert.equal(result.state, 'REJECTED');
+    assert.deepEqual(h.enqueued, [], 'the LINE rejection is a push, sent by the messaging slice');
+    assert.deepEqual(h.advances, [{ id: 'signup-1', state: 'REJECTED' }]);
+  });
+
+  // Review HIGH-2: the fence releases on failure precisely so the row can be retried. A row nobody
+  // can see is a row nobody retries, and for a LINE application that also leaves the customer's
+  // LINE account fenced by the open-application index with no way out.
+  it('surfaces a failed provisioning in the queue instead of stranding it', async () => {
+    const h = harness({ requests: [{ ...LINE_REQUEST, state: 'PROVISIONING_FAILED' }] });
+    const { items } = await h.useCase.list(NOW);
+    assert.equal(items.length, 1);
+    assert.equal(items[0]!.state, 'PROVISIONING_FAILED');
+  });
+
+  // Review MEDIUM-D: only for THIS source. A web-form row in the same state has no retry an admin
+  // could reach — approve, reject and reissue all 409 — so listing it offers three dead ends.
+  it('asks for that state only on the LINE source, leaving the web form byte-identical', async () => {
+    const h = harness({ requests: [] });
+    await h.useCase.list(NOW);
+
+    assert.deepEqual(h.requestQueries[0].where.OR, [
+      { state: { in: ['PENDING_REVIEW', 'EMAIL_PENDING', 'EMAIL_FAILED', 'EXPIRED'] } },
+      { state: { in: ['PROVISIONING_FAILED', 'READY', 'PROVISIONING'] }, source: 'line-oa' },
+    ]);
+  });
+
+  it('retries provisioning when an admin approves a failed LINE application', async () => {
+    const h = harness({ request: { ...LINE_REQUEST, state: 'PROVISIONING_FAILED', autoApproved: true } });
+    const result = await h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1', URLS);
+
+    assert.equal(result.state, 'COMPLETED');
+    assert.equal(h.provisioned[0].requestId, 'signup-1');
+    // The retry is what gives an AUTO_FREE row that failed a real operator of record.
+    assert.equal(h.provisioned[0].actorUserId, 'admin-1');
+    // Review LOW-3: a retry does not rewrite when the application was decided.
+    assert.deepEqual(h.updates, []);
+    assert.equal(h.audits[0].data.metadataJson.retryOfFailedProvisioning, true);
+  });
+
+  it('does not offer that retry to the web form, whose approval means something else', async () => {
+    const h = harness({ request: { ...REQUEST, state: 'PROVISIONING_FAILED' } });
+    await assert.rejects(
+      () => h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1', URLS),
+      /invalid_signup_decision:PROVISIONING_FAILED/,
+    );
+  });
+
+  it('shows the operator which source a row came from', async () => {
+    const h = harness({ requests: [LINE_REQUEST] });
+    const { items } = await h.useCase.list(NOW);
+
+    assert.equal(items[0]!.source, 'line-oa');
+    assert.equal(items[0]!.lineDisplayName, 'นิด');
+    assert.equal(items[0]!.legalAcceptedAt, '2026-08-31T04:00:00.000Z');
+    assert.equal(items[0]!.contactEmail, undefined);
+  });
+});
+
+describe('SignupAdminQueueUseCase.decide — suspend', () => {
+  it('stops an auto-approved shop after the fact and revokes anything outstanding', async () => {
+    const h = harness({ request: { ...LINE_REQUEST, state: 'COMPLETED', autoApproved: true } });
+    const result = await h.useCase.decide('signup-1', { action: 'SUSPEND' }, 'admin-1', 'req-1', URLS);
+
+    assert.deepEqual(result, { requestId: 'signup-1', state: 'SUSPENDED' });
+    // A failure state needs a reason code, and the reason is that an admin said so.
+    assert.deepEqual(h.advances, [{ id: 'signup-1', state: 'SUSPENDED', failureCode: 'admin_suspended' }]);
+    assert.deepEqual(h.revoked, ['signup-1']);
+    assert.equal(h.updates[0].data.pendingPasswordHash, null);
+    const audit = h.audits[0].data;
+    assert.equal(audit.action, 'signup.line.suspended');
+    assert.equal(audit.metadataJson.wasAutoApproved, true);
+    assert.equal(audit.metadataJson.fromState, 'COMPLETED');
+  });
+
+  // Review MEDIUM-2: SUSPENDED is terminal. A row mid-provisioning may already have a company whose
+  // trial guards never ran — suspending it would leave an unlimited shop with the application shut
+  // behind it — and against a live attempt it races work still in flight.
+  it('refuses to suspend a provisioning run at either freshness', async () => {
+    for (const ageMs of [1_000, STALE_PROVISIONING_MS + 1_000]) {
+      const h = harness({
+        request: { ...LINE_REQUEST, state: 'PROVISIONING', provisioningStartedAt: new Date(NOW.getTime() - ageMs) },
+      });
+      await assert.rejects(
+        () => h.useCase.decide('signup-1', { action: 'SUSPEND' }, 'admin-1', 'req-1', URLS, NOW),
+        /suspend_not_allowed_in_flight/,
+      );
+      assert.deepEqual(h.advances, [], `age ${ageMs}ms must not settle the row`);
+    }
+  });
+
+  it('is a no-op when the application is already suspended', async () => {
+    const h = harness({ request: { ...LINE_REQUEST, state: 'SUSPENDED' } });
+    const result = await h.useCase.decide('signup-1', { action: 'SUSPEND' }, 'admin-1', 'req-1', URLS);
+
+    assert.equal(result.state, 'SUSPENDED');
+    assert.deepEqual(h.advances, []);
+    assert.deepEqual(h.audits, []);
+  });
+});
+
+describe('SignupAdminQueueUseCase.listAutoApproved', () => {
+  it('shows what the machine let through, without inventing dedupe hints for it', async () => {
+    const h = harness({ requests: [{ ...LINE_REQUEST, state: 'COMPLETED', autoApproved: true }] });
+    const { items } = await h.useCase.listAutoApproved(14, NOW);
+
+    assert.equal(items.length, 1);
+    assert.equal(items[0]!.autoApproved, true);
+    // These rows are settled, so the queue's "is this a duplicate" hints do not apply.
+    assert.equal(items[0]!.emailMatchesExistingUser, false);
+    assert.equal(items[0]!.taxIdMatchesCompanyName, undefined);
   });
 });
 

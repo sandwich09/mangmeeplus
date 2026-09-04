@@ -36,7 +36,9 @@ export class SubmitCompanySignupUseCase {
 
     // MX only proves the domain accepts mail. Mailbox ownership is proven at the claim link, never
     // here — so this check exists to catch typos at the form, not to authorise anything (§3).
-    const mxValid = await this.hasMailExchanger(request.contactEmail);
+    // The address is guaranteed by `normalizeCompanySignupInput`; this path is Flow B only, and the
+    // LINE source has its own submit use-case that never enters here (spec §5).
+    const mxValid = await this.hasMailExchanger(request.contactEmail ?? '');
     await this.prisma.client.companySignupRequest.update({
       where: { id: request.id },
       data: { mxValid },
