@@ -93,11 +93,10 @@ function harness(options: Options = {}) {
     sesWebBaseUrl: options.webBaseUrl ?? 'https://app.mangmeeplus.com',
   } as any;
 
-  const controller = new PartnerController(
-    ...(Array.from({ length: 17 }, () => ({ execute: async () => ({}) })) as any),
-  ) as any;
-  // Only the three P10-L tools are exercised here; the pre-existing 17 are covered by
-  // partner.controller.spec.ts and stay as inert stand-ins above.
+  // Only the three P10-L tools are exercised here; every pre-existing dependency is covered by
+  // partner.controller.spec.ts, so this builds the instance without inventing stand-ins for them —
+  // a stand-in list would silently need updating every time that constructor grows.
+  const controller = Object.create(PartnerController.prototype) as any;
   controller.endWarmup = new EndPlanTermWarmupUseCase(prisma);
   controller.timeline = new GetPartnerTimelineUseCase(prisma, config);
   controller.lineMessage = new SendPartnerLineMessageUseCase(prisma, config);
