@@ -1,25 +1,72 @@
+/**
+ * What one push attempt did. `retryAfterSeconds` is LINE's own answer to "when may I try again",
+ * and it is the only honest schedule for a 429 — a fixed backoff either wastes the window or
+ * hammers it (review G-07).
+ */
+export type LinePushOutcome = { ok: true } | { ok: false; error: string; retryAfterSeconds?: number };
+
+const LINE_PUSH_URL = 'https://api.line.me/v2/bot/message/push';
+const LINE_PUSH_TIMEOUT_MS = 5_000;
+
+/** LINE sends whole seconds; anything else is a header we do not understand and must not act on. */
+export function parseLineRetryAfterSeconds(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const seconds = Number(value);
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : undefined;
+}
+
+/**
+ * The one place this codebase talks to LINE's push endpoint.
+ *
+ * Never throws. A 429 comes back with LINE's `retry-after`, and a 409 carrying
+ * `x-line-accepted-request-id` is a SUCCESS — it means an earlier attempt with the same retry key
+ * already landed, so treating it as a failure would send the message twice.
+ */
+export async function pushLineMessages(input: {
+  token: string;
+  lineUserId: string;
+  messages: unknown[];
+  /** Same key on every retry of one logical message; LINE dedupes on it. */
+  retryKey?: string;
+  url?: string;
+  timeoutMs?: number;
+}): Promise<LinePushOutcome> {
+  try {
+    const res = await fetch(input.url ?? LINE_PUSH_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${input.token}`,
+        ...(input.retryKey ? { 'X-Line-Retry-Key': input.retryKey } : {}),
+      },
+      body: JSON.stringify({ to: input.lineUserId, messages: input.messages }),
+      signal: AbortSignal.timeout(input.timeoutMs ?? LINE_PUSH_TIMEOUT_MS),
+    });
+    if (res.ok || (res.status === 409 && Boolean(res.headers.get('x-line-accepted-request-id')))) {
+      return { ok: true };
+    }
+    const retryAfterSeconds = res.status === 429
+      ? parseLineRetryAfterSeconds(res.headers.get('retry-after'))
+      : undefined;
+    return {
+      ok: false,
+      error: res.status === 401 ? 'invalid_access_token' : `line_api_${res.status}`,
+      ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }),
+    };
+  } catch {
+    return { ok: false, error: 'line_api_unreachable' };
+  }
+}
+
 /** Push messages through the system LINE OA (same channel the internal
  *  notification rail uses). Best-effort: never throws, and never logs message
  *  content or the recipient — callers pass temporary passwords and reset
  *  notices through here. Failures are logged status-only so a dead OA is not
  *  silently read as "employee has no LINE linked". */
 export async function pushSystemLineMessages(token: string, lineUserId: string, messages: unknown[]): Promise<boolean> {
-  try {
-    const res = await fetch('https://api.line.me/v2/bot/message/push', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ to: lineUserId, messages }),
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!res.ok) console.warn('[system-line-push] LINE push failed', res.status);
-    return res.ok;
-  } catch {
-    console.warn('[system-line-push] LINE push error');
-    return false;
-  }
+  const outcome = await pushLineMessages({ token, lineUserId, messages });
+  if (!outcome.ok) console.warn('[system-line-push] LINE push failed', outcome.error);
+  return outcome.ok;
 }
 
 export async function pushSystemLineMessage(token: string, lineUserId: string, text: string): Promise<boolean> {

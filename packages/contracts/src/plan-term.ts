@@ -52,3 +52,20 @@ export const PLAN_TIER_PRESETS: Record<PlanTierKey, { labelTh: string; branchLim
   PRO_999: { labelTh: 'มืออาชีพ (PRO)', branchLimit: 5, employeeLimit: 10, monthlySlipLimit: 100 },
   ENTERPRISE_1999: { labelTh: 'ธุรกิจ (ENTERPRISE)', branchLimit: 10, employeeLimit: 30, monthlySlipLimit: 2000 },
 };
+
+/** Catalog order, cheapest first — the order a shop moves through, not an alphabetical accident. */
+const PLAN_TIER_LADDER: readonly PlanTierKey[] = [
+  'FREE_TRIAL_15', 'STARTER_249', 'BASIC_499', 'PRO_999', 'ENTERPRISE_1999',
+];
+
+/**
+ * P10-L §3.7. A package-change request opened from a LINE button carries no chosen tier — the
+ * customer tapped "ask", not "buy". This names the next step up as the STARTING POINT the admin
+ * calls about; the tier itself still only changes through the partner page. A shop already at the
+ * top, or with no term row at all, starts at the tier that is the honest first paid step.
+ */
+export function nextPlanTierKey(current: string | null | undefined): PlanTierKey {
+  const index = PLAN_TIER_LADDER.indexOf(current as PlanTierKey);
+  if (index < 0) return 'STARTER_249';
+  return PLAN_TIER_LADDER[Math.min(index + 1, PLAN_TIER_LADDER.length - 1)]!;
+}

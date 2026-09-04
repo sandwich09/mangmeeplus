@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { parseLineRetryAfterSeconds, pushLineMessages } from '../../auth/infrastructure/system-line-push';
 
 // Single wrapper around the LINE Messaging API for company OA channels.
 // All LINE HTTP calls in the crm-inbox module go through here; callers get
@@ -108,30 +109,17 @@ export class LineMessagingAdapter {
     text: string,
     retryKey: string,
   ): Promise<LinePushResult> {
-    try {
-      const res = await fetch(`${LINE_API_BASE}/message/push`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-          'X-Line-Retry-Key': retryKey,
-        },
-        body: JSON.stringify({ to: providerUserId, messages: [{ type: 'text', text }] }),
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      });
-      const alreadyAccepted = res.status === 409 && Boolean(res.headers.get('x-line-accepted-request-id'));
-      if (!res.ok && !alreadyAccepted) {
-        const retryAfterSeconds = res.status === 429 ? parseRetryAfterSeconds(res.headers.get('retry-after')) : undefined;
-        return {
-          ok: false,
-          error: res.status === 401 ? 'invalid_access_token' : `line_api_${res.status}`,
-          ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }),
-        };
-      }
-      return { ok: true };
-    } catch {
-      return { ok: false, error: 'line_api_unreachable' };
-    }
+    // One push implementation for the whole codebase (G-07): 429 + retry-after and the 409
+    // already-accepted arm both live in `pushLineMessages`, so this lane and the system rail can
+    // never disagree about what LINE just said.
+    return pushLineMessages({
+      token: accessToken,
+      lineUserId: providerUserId,
+      messages: [{ type: 'text', text }],
+      retryKey,
+      url: `${LINE_API_BASE}/message/push`,
+      timeoutMs: REQUEST_TIMEOUT_MS,
+    });
   }
 
   /** Uses a single-use LINE webhook reply token for one text message. */
@@ -147,7 +135,7 @@ export class LineMessagingAdapter {
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
       if (!res.ok) {
-        const retryAfterSeconds = res.status === 429 ? parseRetryAfterSeconds(res.headers.get('retry-after')) : undefined;
+        const retryAfterSeconds = res.status === 429 ? parseLineRetryAfterSeconds(res.headers.get('retry-after')) : undefined;
         return {
           ok: false,
           error: res.status === 400
@@ -206,8 +194,4 @@ export class LineMessagingAdapter {
   }
 }
 
-function parseRetryAfterSeconds(value: string | null): number | undefined {
-  if (!value) return undefined;
-  const seconds = Number(value);
-  return Number.isFinite(seconds) && seconds > 0 ? seconds : undefined;
-}
+

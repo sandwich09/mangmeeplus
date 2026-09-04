@@ -122,12 +122,20 @@ export function formatThaiDateTime(value: Date): string {
   return `${THAI_DATE.format(value)} เวลา ${THAI_TIME.format(value)} น.`;
 }
 
+/**
+ * P10-L §3.7. These messages travel the dashboard notification rail, which renders one fixed
+ * "open in the web app" button — so the second way out is offered as WORDS, and the words are the
+ * command: `staffMenuCommand` answers "ขอเปลี่ยนแพ็กเกจ" typed into the chat. One sentence, no new
+ * rail, and no change to the P29 state machine.
+ */
+export const PACKAGE_CHANGE_HINT_TH = 'หรือพิมพ์ ขอเปลี่ยนแพ็กเกจ ในแชท LINE นี้ ทีมงานจะติดต่อกลับให้ค่ะ';
+
 export function warningMessageTh(companyName: string, termEndsAt: Date, daysLeft: number): string {
-  return `ร้าน ${companyName} จะครบกำหนดใช้งานวันที่ ${formatThaiDateTime(termEndsAt)} (อีก ${daysLeft} วัน) — ติดต่อ ${PLAN_TERM_CONTACT_PHONE} หรืออีเมล ${PLAN_TERM_CONTACT_EMAIL}`;
+  return `ร้าน ${companyName} จะครบกำหนดใช้งานวันที่ ${formatThaiDateTime(termEndsAt)} (อีก ${daysLeft} วัน) — ติดต่อ ${PLAN_TERM_CONTACT_PHONE} หรืออีเมล ${PLAN_TERM_CONTACT_EMAIL} ${PACKAGE_CHANGE_HINT_TH}`;
 }
 
 export function expiredMessageTh(companyName: string): string {
-  return `ร้าน ${companyName} ครบกำหนดใช้งานแล้ว ระบบพักการใช้งานชั่วคราว ข้อมูลทั้งหมดยังอยู่ครบ — ติดต่อ ${PLAN_TERM_CONTACT_PHONE} หรืออีเมล ${PLAN_TERM_CONTACT_EMAIL}`;
+  return `ร้าน ${companyName} ครบกำหนดใช้งานแล้ว ระบบพักการใช้งานชั่วคราว ข้อมูลทั้งหมดยังอยู่ครบ — ติดต่อ ${PLAN_TERM_CONTACT_PHONE} หรืออีเมล ${PLAN_TERM_CONTACT_EMAIL} ${PACKAGE_CHANGE_HINT_TH}`;
 }
 
 /**
@@ -142,6 +150,7 @@ export function expiredLineOwnerMessageTh(): string {
     'ข้อมูลทั้งหมดยังอยู่ครบ ไม่ได้หายไปไหนนะคะ',
     'ต่ออายุได้เองที่เว็บแอป เข้าสู่ระบบแล้วจะเห็นหน้าต่ออายุทันที',
     `หรือติดต่อเรา โทร ${PLAN_TERM_CONTACT_PHONE} หรืออีเมล ${PLAN_TERM_CONTACT_EMAIL}`,
+    PACKAGE_CHANGE_HINT_TH,
   ].join('\n');
 }
 

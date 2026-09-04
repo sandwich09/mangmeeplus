@@ -320,10 +320,12 @@ describe('promotion menu (rich menu v2 ver2)', () => {
 
   // P10-L §3.7: the quota card prints "ขอเปลี่ยนแพ็กเกจ" on a button and the follow-up text tells
   // the shop to type it. Both were dead until L-B; they now pull the promotion card.
-  it('answers the quota card\'s package-change command instead of ignoring it', () => {
-    assert.equal(staffMenuCommand('ขอเปลี่ยนแพ็กเกจ'), 'promotion');
-    assert.equal(staffMenuCommand(' ขอเปลี่ยนแพ็กเกจ '), 'promotion', 'the button sends it verbatim');
+  // L-B replaced the L-A2 alias: the command now OPENS a request instead of showing the poster.
+  it('routes the quota card\'s package-change command to the real request, not the poster', () => {
+    assert.equal(staffMenuCommand('ขอเปลี่ยนแพ็กเกจ'), 'package_change');
+    assert.equal(staffMenuCommand(' ขอเปลี่ยนแพ็กเกจ '), 'package_change', 'the button sends it verbatim');
     assert.equal(staffMenuCommand('ขอเปลี่ยนแพ็กเกจได้ไหม'), null, 'still a whole-message command');
+    assert.equal(staffMenuCommand('โปรโมชั่น'), 'promotion', 'the poster keeps its own pull command');
   });
 
   it('builds the poster card from the web asset base and survives a missing base URL', () => {

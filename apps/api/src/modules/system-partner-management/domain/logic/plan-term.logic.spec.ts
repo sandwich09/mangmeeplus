@@ -1,7 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { staffMenuCommand } from '../../../line-ai/domain/logic/line-staff-menu.logic';
 import {
   DAY_MS,
+  PACKAGE_CHANGE_HINT_TH,
   addDays,
   branchLimitMessageTh,
   derivePlanTermState,
@@ -122,13 +124,19 @@ describe('Thai copy', () => {
     const message = warningMessageTh('ร้านทดสอบ', END, 3);
     assert.match(message, /^ร้าน ร้านทดสอบ จะครบกำหนดใช้งานวันที่ /);
     assert.match(message, /\(อีก 3 วัน\)/);
-    assert.match(message, /ติดต่อ 098-256-5628 หรืออีเมล contact@mangmeeplus\.com$/);
+    assert.match(message, /ติดต่อ 098-256-5628 หรืออีเมล contact@mangmeeplus\.com/);
+    // P10-L §3.7: a phone number is not a way out for someone who lives in LINE. The words are the
+    // command, so the sentence IS the button on a rail that renders only one fixed button.
+    assert.ok(message.endsWith(PACKAGE_CHANGE_HINT_TH));
   });
 
   it('expired copy promises the data is still there', () => {
     const message = expiredMessageTh('ร้านทดสอบ');
     assert.match(message, /ข้อมูลทั้งหมดยังอยู่ครบ/);
-    assert.match(message, /ติดต่อ 098-256-5628 หรืออีเมล contact@mangmeeplus\.com$/);
+    assert.match(message, /ติดต่อ 098-256-5628 หรืออีเมล contact@mangmeeplus\.com/);
+    assert.ok(message.endsWith(PACKAGE_CHANGE_HINT_TH));
+    // The hint has to be the command the matcher answers, or it is a sentence that goes nowhere.
+    assert.equal(staffMenuCommand('ขอเปลี่ยนแพ็กเกจ'), 'package_change');
   });
 
   it('limit copy states the cap and where to go', () => {
