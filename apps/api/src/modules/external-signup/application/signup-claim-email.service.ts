@@ -8,7 +8,8 @@ import { AccountClaimTokenService } from './account-claim-token.service';
 import { CompanySignupCoreService } from './company-signup-core.service';
 import { SIGNUP_PENDING_REVIEW_EVENT_TYPE, SignupAdminNotifyService } from './signup-admin-notify.service';
 import {
-  LINE_SIGNUP_PUSH_EVENT_TYPE, LineSignupNotifyService, type LineSignupPushKind,
+  LINE_SIGNUP_PUSH_EVENT_TYPE, LINE_SUPPORT_NOTICE_EVENT_TYPE, LinePushThrottledError,
+  LineSignupNotifyService, type LineSignupPushKind,
 } from './line-signup-notify.service';
 import { CLAIM_EXPIRY_AFTER_APPROVAL_DAYS, CLAIM_REMINDER_AFTER_HOURS } from '../domain/account-claim.logic';
 
@@ -29,6 +30,7 @@ const SIGNUP_OUTBOX_EVENT_TYPES = [
   // P10-L: the LINE pushes ride the same lease, timer and settle path. A second drain would buy
   // nothing but a second thing to forget to deploy.
   LINE_SIGNUP_PUSH_EVENT_TYPE,
+  LINE_SUPPORT_NOTICE_EVENT_TYPE,
 ] as const;
 
 /** Reason recorded on the state row when the 30-day sweep parks an unclaimed approval (§4D ④). */
@@ -125,8 +127,14 @@ export class SignupClaimEmailService {
     for (const event of events) {
       const signupRequestId = readSignupRequestId(event.payloadJson);
       try {
-        if (!signupRequestId) throw new Error('missing_signup_request_id');
-        await this.handle(event.eventType, signupRequestId, event.payloadJson);
+        // A support alert belongs to a PERSON, not to an application — it may have no signup row at
+        // all (an unlinked stranger asking for help), so it is dispatched before the id check.
+        if (event.eventType === LINE_SUPPORT_NOTICE_EVENT_TYPE) {
+          await this.lineNotify.deliverSupportNotice(readPayloadString(event.payloadJson, 'companyId'));
+        } else {
+          if (!signupRequestId) throw new Error('missing_signup_request_id');
+          await this.handle(event.eventType, signupRequestId, event.payloadJson);
+        }
         sent += 1;
         await this.settle(event.id, event.claimToken ?? null, event.eventType, null);
       } catch (error) {
@@ -140,7 +148,7 @@ export class SignupClaimEmailService {
           outboxEventId: event.id,
           errorCode: code,
         }, 'signup.claim_email.send_failed');
-        await this.settle(event.id, event.claimToken ?? null, event.eventType, code);
+        await this.settle(event.id, event.claimToken ?? null, event.eventType, code, error);
       }
     }
     return { claimed: events.length, sent, failed, reclaimed, dead };
@@ -290,9 +298,24 @@ export class SignupClaimEmailService {
     claimToken: string | null,
     expectedEventType: string,
     errorCode: string | null,
+    error?: unknown,
   ): Promise<void> {
+    // G-07: LINE answering "not now, come back in N seconds" is a schedule, not a failure. Honour
+    // it, and do not spend one of the row's five attempts — the OA's monthly quota resets on its
+    // own timescale, and the default 2^n ladder would DEAD the "your shop is ready" push in about
+    // two minutes for a condition nothing was wrong with.
+    const throttle = error instanceof LinePushThrottledError ? error : null;
     const written = errorCode
-      ? await this.outbox.markFailed({ id, claimToken, error: errorCode, expectedEventType })
+      ? await this.outbox.markFailed({
+        id,
+        claimToken,
+        error: errorCode,
+        expectedEventType,
+        ...(throttle ? {
+          nextAvailableAt: new Date(Date.now() + throttle.retryAfterSeconds * 1000),
+          countsTowardMax: false,
+        } : {}),
+      })
       : await this.outbox.markPublished({ id, claimToken, expectedEventType });
     if (!written) {
       this.logger.warn({ event: 'signup.claim_email.lost_lease', outboxEventId: id }, 'signup.claim_email.lost_lease');

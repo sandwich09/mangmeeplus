@@ -164,8 +164,11 @@ export class PrismaOutboxRepository implements OutboxRepositoryPort {
       select: { attempts: true, eventType: true },
     });
     if (!row || (input.expectedEventType && row.eventType !== input.expectedEventType)) return false;
-    const nextAttempts = row.attempts + 1;
-    const isDead = nextAttempts >= MAX_OUTBOX_ATTEMPTS;
+    // A throttle is not an attempt: the row keeps its budget and comes back when the provider said
+    // to. Everything else spends one of the five and climbs the ladder.
+    const countsTowardMax = input.countsTowardMax !== false;
+    const nextAttempts = countsTowardMax ? row.attempts + 1 : row.attempts;
+    const isDead = countsTowardMax && nextAttempts >= MAX_OUTBOX_ATTEMPTS;
     const backoffMs = Math.min(Math.pow(2, nextAttempts) * 1000, 300_000);
     const nextAvailableAt = input.nextAvailableAt ?? new Date(Date.now() + backoffMs);
 

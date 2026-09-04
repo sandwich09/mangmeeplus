@@ -12,7 +12,7 @@ import {
   SignupAdminNotifyService,
   signupPendingReviewMessage,
 } from './signup-admin-notify.service';
-import { LINE_SIGNUP_PUSH_EVENT_TYPE } from './line-signup-notify.service';
+import { LINE_SIGNUP_PUSH_EVENT_TYPE, LINE_SUPPORT_NOTICE_EVENT_TYPE, LinePushThrottledError } from './line-signup-notify.service';
 
 const NOW = new Date('2026-09-01T12:00:00.000Z');
 
@@ -86,13 +86,19 @@ function harness(options: { request?: any; sendFails?: boolean } = {}) {
   const adminNotify = { notify: async (id: string) => { notified.push(id); } } as any;
 
   const lineDelivered: Array<{ id: string; kind: string }> = [];
+  let lineFailure: unknown = null;
   const lineNotify = {
-    deliver: async (id: string, kind: string) => { lineDelivered.push({ id, kind }); },
+    deliver: async (id: string, kind: string) => {
+      if (lineFailure) throw lineFailure;
+      lineDelivered.push({ id, kind });
+    },
+    deliverSupportNotice: async () => undefined,
   } as any;
 
   const service = new SignupClaimEmailService(prisma, outbox, tokens, core, adminNotify, lineNotify, mailer, logger);
   return {
     service, appended, sent, rejections, notified, claims, published, failed, updates, minted, logs, lineDelivered,
+    lineFails: (error: unknown) => { lineFailure = error; },
     queue: (events: any[]) => { claimable = events; },
   };
 }
@@ -222,6 +228,58 @@ describe('SignupClaimEmailService.drain', () => {
     });
   });
 
+  // G-07 / MEDIUM-5. LINE answers a monthly-quota 429 with a retry-after measured in hours. The
+  // default ladder is 2^n seconds and DEADs at five attempts — about two minutes — which would
+  // throw away "ร้านของคุณพร้อมใช้แล้ว" for a condition that fixes itself.
+  it('reschedules a throttled push at LINE\'s own time and spends none of its attempts', async () => {
+    const h = harness();
+    h.lineFails(new LinePushThrottledError('line_api_429', 3600));
+    h.queue([event({
+      id: 'evt-push', eventType: LINE_SIGNUP_PUSH_EVENT_TYPE,
+      payloadJson: { schemaVersion: 1, data: { signupRequestId: 'signup-1', kind: 'approved' } },
+    })]);
+
+    const before = Date.now();
+    await h.service.drain();
+
+    assert.equal(h.failed.length, 1);
+    assert.equal(h.failed[0].countsTowardMax, false, 'a throttle is not one of the five attempts');
+    const scheduled = (h.failed[0].nextAvailableAt as Date).getTime();
+    assert.ok(scheduled >= before + 3_600_000, 'and it waits exactly as long as LINE asked');
+    assert.ok(scheduled <= Date.now() + 3_600_000);
+  });
+
+  it('survives a sustained quota outage without ever going DEAD', async () => {
+    // Five drains — one more than the ladder needs to terminalize an ordinary failure.
+    const h = harness();
+    h.lineFails(new LinePushThrottledError('line_api_429', 60));
+    for (let pass = 0; pass < 5; pass += 1) {
+      h.queue([event({
+        id: 'evt-push', eventType: LINE_SIGNUP_PUSH_EVENT_TYPE,
+        payloadJson: { schemaVersion: 1, data: { signupRequestId: 'signup-1', kind: 'approved' } },
+      })]);
+      await h.service.drain();
+    }
+
+    assert.equal(h.failed.length, 5);
+    assert.ok(h.failed.every((row: any) => row.countsTowardMax === false), 'none of them spend an attempt');
+    // The repository is what turns that into "never DEAD"; asserted directly on the ladder below.
+  });
+
+  it('still spends an attempt on a failure that is NOT a throttle', async () => {
+    const h = harness();
+    h.lineFails(new Error('line_api_500'));
+    h.queue([event({
+      id: 'evt-push', eventType: LINE_SIGNUP_PUSH_EVENT_TYPE,
+      payloadJson: { schemaVersion: 1, data: { signupRequestId: 'signup-1', kind: 'approved' } },
+    })]);
+
+    await h.service.drain();
+
+    assert.equal(h.failed[0].countsTowardMax, undefined, 'the default ladder still owns real failures');
+    assert.equal(h.failed[0].nextAvailableAt, undefined);
+  });
+
   it('fails a LINE push row that names no kind instead of guessing one', async () => {
     const h = harness();
     h.queue([event({
@@ -248,6 +306,7 @@ describe('SignupClaimEmailService.drain', () => {
       SIGNUP_REJECTION_NOTICE_EVENT_TYPE,
       SIGNUP_PENDING_REVIEW_EVENT_TYPE,
       LINE_SIGNUP_PUSH_EVENT_TYPE,
+      LINE_SUPPORT_NOTICE_EVENT_TYPE,
     ]);
   });
 

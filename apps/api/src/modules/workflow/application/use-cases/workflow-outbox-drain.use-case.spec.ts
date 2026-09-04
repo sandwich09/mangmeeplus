@@ -92,6 +92,7 @@ describe('DrainWorkflowOutboxUseCase', () => {
       // P10-L: the LINE pushes belong to the signup drain, which sends them through the messaging
       // adapter; publishing one as a workflow event would lose the shop's "you are live" message.
       'push.line_signup.requested',
+      'notify.line_support_request.requested',
     ]);
   });
 

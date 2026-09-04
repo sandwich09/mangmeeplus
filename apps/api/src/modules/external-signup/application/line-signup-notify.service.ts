@@ -4,15 +4,30 @@ import { LOGGER_TOKEN, type AppLogger } from '../../../common/logger/logger.serv
 import { PrismaService } from '../../../common/database/prisma.service';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import { PrismaOutboxRepository } from '../../data-model-core/infrastructure/repositories/prisma-outbox.repository';
-import { pushLineMessages, pushSystemLineMessage } from '../../auth/infrastructure/system-line-push';
+import { pushLineMessages } from '../../auth/infrastructure/system-line-push';
 import { buildProfileGuardNudgeCard } from '../../line-ai/domain/logic/line-business-card.logic';
+import { bangkokDayKey } from '../domain/business-hours.logic';
 import { SIGNUP_SOURCE_LINE_OA } from '../domain/company-signup.logic';
+import { SIGNUP_QUEUE_PATH, SignupAdminNotifyService } from './signup-admin-notify.service';
 
 /**
  * Reserved for the signup drain, like its two siblings: the generic workflow drain must exclude
  * every one of these or it claims them and publishes them into a void.
  */
 export const LINE_SIGNUP_PUSH_EVENT_TYPE = 'push.line_signup.requested';
+/** §7/§8 "ติดต่อเจ้าหน้าที่" — the operators being told a human is waiting. */
+export const LINE_SUPPORT_NOTICE_EVENT_TYPE = 'notify.line_support_request.requested';
+
+/**
+ * LINE said "not now, come back at T" rather than "this failed". Carries LINE's own schedule so the
+ * drain can honour it instead of climbing a ladder that would DEAD the row inside two minutes.
+ */
+export class LinePushThrottledError extends Error {
+  constructor(message: string, readonly retryAfterSeconds: number) {
+    super(message);
+    this.name = 'LinePushThrottledError';
+  }
+}
 
 /** Which message the queued push is. Also the audit/telemetry name L-D counts by. */
 export type LineSignupPushKind = 'approved' | 'attached' | 'rejected' | 'profile_guard';
@@ -55,6 +70,8 @@ export class LineSignupNotifyService {
     private readonly prisma: PrismaService,
     private readonly outbox: PrismaOutboxRepository,
     private readonly config: AppConfigService,
+    /** The operator directory and the admin LINE fan-out already live here; L-16: one copy. */
+    private readonly adminNotify: SignupAdminNotifyService,
     @Inject(LOGGER_TOKEN) private readonly logger: AppLogger,
   ) {}
 
@@ -130,8 +147,54 @@ export class LineSignupNotifyService {
         errorCode: outcome.error,
         ...(outcome.retryAfterSeconds === undefined ? {} : { retryAfterSeconds: outcome.retryAfterSeconds }),
       }, 'signup.line.push_failed');
+      // The OA's monthly message quota answers 429 with a retry-after measured in hours. That is
+      // the one failure this row must OUTLIVE: "ร้านของคุณพร้อมใช้แล้ว" is the message the whole
+      // flow exists to send, and a quota outage must not turn it into a DEAD outbox row.
+      if (outcome.retryAfterSeconds !== undefined) {
+        throw new LinePushThrottledError(outcome.error, outcome.retryAfterSeconds);
+      }
       throw new Error(outcome.error);
     }
+  }
+
+  /**
+   * §7/§8. Queued rather than pushed inline, for two reasons: the customer has already been
+   * answered and must not wait on the operator rail, and the outbox key is what makes "at most one
+   * alert per shop per day" — and per unlinked stranger per day — a database fact.
+   */
+  async enqueueSupportRequest(lineUserId: string, companyId: string | null, now = new Date()): Promise<void> {
+    await this.outbox.append({
+      eventType: LINE_SUPPORT_NOTICE_EVENT_TYPE,
+      aggregateType: 'LineSupportRequest',
+      aggregateId: companyId ?? 'unlinked',
+      // A shop is named by its id; a stranger by a short hash of their LINE id, which keeps the raw
+      // id out of a table the whole platform can read (the audit rail redacts it for the same reason).
+      eventKey: `notify:line_support:${companyId ?? `anon:${shortHash(lineUserId)}`}:${bangkokDayKey(now)}`,
+      priority: 'HIGH',
+      payloadJson: {
+        schemaVersion: 1,
+        occurredAt: now.toISOString(),
+        data: { ...(companyId ? { companyId } : {}) },
+      },
+    });
+  }
+
+  /** Consumer for the above. Best-effort per admin; a dead OA is logged, never retried forever. */
+  async deliverSupportNotice(companyId: string | null): Promise<void> {
+    const admins = await this.adminNotify.activeSystemAdmins();
+    if (admins.length === 0) return;
+    const company = companyId
+      ? await this.prisma.client.company.findUnique({ where: { id: companyId }, select: { name: true } })
+      : null;
+    const base = (this.config.sesWebBaseUrl ?? '').replace(/\/+$/, '');
+    // No company yet means the person is somewhere in the signup funnel, so the queue is the page
+    // an operator can actually act on.
+    const href = companyId ? `${base}/system/partners/${companyId}` : `${base}${SIGNUP_QUEUE_PATH}`;
+    const who = company?.name ?? (companyId ?? 'ผู้ที่ยังไม่ได้เปิดร้าน');
+    await this.adminNotify.pushToLinkedAdmins(
+      admins.map((admin) => admin.userId),
+      `📮 ลูกค้าขอคุยกับเจ้าหน้าที่: ${who}\n${href}`,
+    );
   }
 
   /**
@@ -167,25 +230,43 @@ export class LineSignupNotifyService {
    */
   async sweepProfileGuardNudges(now = new Date(), take = 100): Promise<{ queued: number }> {
     const cutoff = new Date(now.getTime() - PROFILE_GUARD_AFTER_DAYS * 86_400_000);
-    const due = await this.prisma.client.companySignupRequest.findMany({
+    const unNudged = {
+      source: SIGNUP_SOURCE_LINE_OA,
+      state: 'COMPLETED' as const,
+      profileGuardNudgedAt: null,
+      companyId: { not: null },
+      // A phone given at signup already answers the question the card asks (§3.2).
+      phoneNumber: null,
+    };
+    const select = { id: true, companyId: true, approvedAt: true, createdAt: true } as const;
+    // Two bounded reads rather than one, because the two ways a row becomes due are not the same
+    // question. The day-7 branch is expressible in SQL, so it is asked in SQL and ordered
+    // oldest-first: without that, a batch of shops that opened this morning could fill `take` every
+    // pass and a shop that has been waiting eight days would never be looked at.
+    const timeDue = await this.prisma.client.companySignupRequest.findMany({
       where: {
-        source: SIGNUP_SOURCE_LINE_OA,
-        state: 'COMPLETED',
-        profileGuardNudgedAt: null,
-        companyId: { not: null },
-        // A phone given at signup already answers the question the card asks (§3.2).
-        phoneNumber: null,
+        ...unNudged,
+        // `approvedAt` IS the moment this shop opened: for this source, approval and provisioning
+        // are the same step (§5). `createdAt` only covers a row that somehow lost its stamp.
+        OR: [{ approvedAt: { lte: cutoff } }, { approvedAt: null, createdAt: { lte: cutoff } }],
       },
-      select: { id: true, companyId: true, approvedAt: true, createdAt: true },
+      orderBy: [{ approvedAt: 'asc' }, { createdAt: 'asc' }],
+      select,
       take,
+    });
+    // The five-reads branch is a count in another table, so it cannot be a WHERE clause. Bounded and
+    // ordered the same way; anything it misses becomes unconditionally due above within the week.
+    const maybeReadDue = timeDue.length >= take ? [] : await this.prisma.client.companySignupRequest.findMany({
+      where: { ...unNudged, approvedAt: { gt: cutoff } },
+      orderBy: [{ approvedAt: 'asc' }],
+      select,
+      take: take - timeDue.length,
     });
 
     let queued = 0;
-    for (const request of due) {
-      // `approvedAt` IS the moment this shop opened: for this source, approval and provisioning
-      // are the same step (§5). No row is possible without it once the state is COMPLETED.
-      const since = request.approvedAt ?? request.createdAt;
-      if (!(since <= cutoff || await this.hasEnoughReads(request.companyId!))) continue;
+    for (const request of [...timeDue, ...maybeReadDue]) {
+      const timeQualified = (request.approvedAt ?? request.createdAt) <= cutoff;
+      if (!timeQualified && !await this.hasEnoughReads(request.companyId!)) continue;
       if (await this.ownerAlreadyRecoverable(request.companyId!)) {
         // Nothing to ask for. Stamped anyway so the sweep stops reconsidering this row every 15 min.
         await this.prisma.client.companySignupRequest.updateMany({
@@ -224,41 +305,15 @@ export class LineSignupNotifyService {
     return Boolean(owner?.user.email || owner?.user.phoneNumber);
   }
 
-  /**
-   * §7/§8 "ติดต่อเจ้าหน้าที่". Tells the operators a human is waiting, with the page they answer
-   * from. Best-effort by contract: the customer has already had their reply, and a LINE outage on
-   * the operator side must not turn their message into a webhook redelivery loop.
-   */
-  async notifySupportRequest(companyId: string, lineUserId: string): Promise<void> {
-    const token = this.config.lineMessagingChannelAccessToken;
-    if (!token) return;
-    const admins = await this.prisma.client.companyMembership.findMany({
-      where: {
-        status: 'ACTIVE',
-        user: { status: 'ACTIVE' },
-        roles: { some: { role: { key: 'SYSTEM_ADMIN' } } },
-      },
-      select: { userId: true },
-    });
-    if (admins.length === 0) return;
-    const company = await this.prisma.client.company.findUnique({
-      where: { id: companyId },
-      select: { name: true },
-    });
-    const base = (this.config.sesWebBaseUrl ?? '').replace(/\/+$/, '');
-    const text = `📮 ลูกค้าขอคุยกับเจ้าหน้าที่: ${company?.name ?? companyId}\n${base}/system/partners/${companyId}`;
-    const identities = await this.prisma.client.externalIdentity.findMany({
-      where: { userId: { in: admins.map((admin) => admin.userId) }, provider: 'LINE', status: 'ACTIVE' },
-      select: { providerUserId: true },
-    });
-    for (const providerUserId of new Set(identities.map((identity) => identity.providerUserId))) {
-      // Never to the customer's own thread, whatever the identity table says.
-      if (providerUserId === lineUserId) continue;
-      if (!await pushSystemLineMessage(token, providerUserId, text)) {
-        this.logger.warn({ event: 'signup.line.support_notify_failed', riskLevel: 'LOW' }, 'signup.line.support_notify_failed');
-      }
-    }
-  }
+}
+
+/**
+ * A LINE user id is a durable identifier for a person. The outbox is readable platform-wide, so the
+ * once-per-day latch is keyed on a truncated digest instead — enough to be unique per person per
+ * day, not enough to be an identifier anyone can join on.
+ */
+function shortHash(value: string): string {
+  return createHash('sha256').update(value, 'utf8').digest('hex').slice(0, 16);
 }
 
 export function lineSignupPushEventKey(signupRequestId: string, kind: LineSignupPushKind): string {
