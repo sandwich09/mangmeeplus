@@ -1,0 +1,52 @@
+/**
+ * P10-L §15.1 (review G-01) — the effective monthly slip ceiling and the copy that announces it.
+ *
+ * Shaped like `plan-term-limit.ts`: a company with NO `CompanyPlanTerm` row is legacy/grandfathered
+ * and stays unlimited (P29 spec §2 rule 7). Enforcing the ceiling is the first limit every EXISTING
+ * shop would ever meet, so "no row" must never become "no receipts".
+ */
+
+/** Only the four columns the ceiling depends on, so callers select nothing they do not use. */
+export type ReceiptQuotaTerm = {
+  tierKey: string;
+  monthlySlipLimit: number;
+  warmupUntil: Date | null;
+  warmupSlipLimit: number | null;
+};
+
+/** The tier whose reply carries the trial counter line (§15.1). No other tier's copy changes. */
+export const TRIAL_COUNTER_TIER_KEY = 'FREE_TRIAL_15';
+
+/**
+ * `min(monthlySlipLimit, warmupSlipLimit)` inside the warm-up window, `monthlySlipLimit` after it,
+ * `null` (unlimited) with no term row.
+ *
+ * The window is half-open — `now < warmupUntil` — so the instant the warm-up ends the tier's own
+ * ceiling applies, and a term whose warm-up columns are unset is simply the tier's ceiling.
+ */
+export function effectiveMonthlySlipLimit(term: ReceiptQuotaTerm | null, now: Date): number | null {
+  if (!term) return null;
+  const warmupActive = term.warmupUntil !== null
+    && term.warmupSlipLimit !== null
+    && now.getTime() < term.warmupUntil.getTime();
+  return warmupActive ? Math.min(term.monthlySlipLimit, term.warmupSlipLimit!) : term.monthlySlipLimit;
+}
+
+/**
+ * Spec §7 row "ชนโควตา 15 ใบ", with the number read from the term rather than written into the
+ * sentence: a warm-up shop meets this at 10 and a STARTER shop at 30, and all three must say the
+ * truth about their own ceiling.
+ */
+export function receiptQuotaExceededTextTh(limit: number): string {
+  return `ช่วงทดลองอ่านใบเสร็จให้ได้ ${limit} ใบ ตอนนี้ครบแล้วค่ะ ดูแพ็กเกจที่ใหญ่ขึ้นได้เลย`;
+}
+
+/** The follow-up receipts in the same month: the card went out once, so these get one line. */
+export function receiptQuotaExceededShortTextTh(limit: number): string {
+  return `อ่านใบเสร็จครบ ${limit} ใบของเดือนนี้แล้วค่ะ พิมพ์ "ขอเปลี่ยนแพ็กเกจ" ได้เลยนะคะ`;
+}
+
+/** §15.1: one extra line on the success reply, for the free-trial tier only. */
+export function trialReceiptCounterLineTh(count: number, limit: number): string {
+  return `ใบที่ ${count} จาก ${limit} ในช่วงทดลอง`;
+}
