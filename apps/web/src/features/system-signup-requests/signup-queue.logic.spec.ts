@@ -7,6 +7,7 @@ import {
   canRejectSignup,
   canReissueSignup,
   canSuspendSignup,
+  suspendLeavesShopRunning,
   filterSignupQueue,
   isFinishingStrandedRow,
   isLineSignup,
@@ -95,12 +96,38 @@ describe('a failed provisioning is actionable, not just labelled', () => {
     assert.equal(isFinishingStrandedRow('PENDING_REVIEW'), false);
   });
 
-  it('lists both recoverable rows under the problem tab, where an operator would look', () => {
-    const items = [failed(), ready(), item({ state: 'PENDING_REVIEW' })];
+  it('lists every recoverable row under the problem tab, where an operator would look', () => {
+    const stale = item({ state: 'PROVISIONING', source: 'line-oa', staleProvisioning: true });
+    const live = item({ state: 'PROVISIONING', source: 'line-oa' });
+    const items = [failed(), ready(), stale, live, item({ state: 'PENDING_REVIEW' })];
+    // An abandoned run is the one an operator most needs to find; a live one is not a problem yet.
     assert.deepEqual(
       filterSignupQueue(items, 'PROBLEM').map((i) => i.state),
-      ['PROVISIONING_FAILED', 'READY'],
+      ['PROVISIONING_FAILED', 'READY', 'PROVISIONING'],
     );
+    assert.equal(filterSignupQueue(items, 'PROBLEM').includes(live), false);
+  });
+
+  // Review MEDIUM-2: SUSPENDED is terminal, so suspending mid-provisioning strands a shop that may
+  // already exist but whose trial guards never ran — an unlimited shop with its application shut.
+  it('never offers ระงับ while a provisioning run is in flight, at either freshness', () => {
+    for (const staleProvisioning of [true, false]) {
+      assert.equal(
+        canSuspendSignup(item({ state: 'PROVISIONING', source: 'line-oa', staleProvisioning })),
+        false,
+        `staleProvisioning=${staleProvisioning}`,
+      );
+    }
+    // The settled rows still offer it.
+    assert.equal(canSuspendSignup(failed()), true);
+    assert.equal(canSuspendSignup(item({ state: 'COMPLETED', source: 'line-oa' })), true);
+  });
+
+  it('says the shop keeps running when suspending only settles the application', () => {
+    for (const state of ['PROVISIONING_FAILED', 'READY', 'COMPLETED']) {
+      assert.equal(suspendLeavesShopRunning(state), true, state);
+    }
+    assert.equal(suspendLeavesShopRunning('PENDING_REVIEW'), false);
   });
 
   it('offers suspend on a LINE row and nowhere else', () => {

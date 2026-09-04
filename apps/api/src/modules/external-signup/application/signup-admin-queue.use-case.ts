@@ -246,6 +246,11 @@ export class SignupAdminQueueUseCase {
     correlationRequestId: string,
   ): Promise<AdminSignupDecisionDto> {
     if (request.state === 'SUSPENDED') return { requestId: request.id, state: request.state };
+    // Never mid-provisioning. SUSPENDED is terminal, so suspending a row whose company may already
+    // exist but whose trial guards have not run leaves an UNLIMITED shop with its application shut
+    // behind it — and against a live attempt it races work still in flight. The close-out first,
+    // then suspend the settled row if that is still what the admin wants.
+    if (request.state === 'PROVISIONING') throw new ConflictException('suspend_not_allowed_in_flight');
     await this.core.advance(request.id, 'SUSPENDED', correlationRequestId, 'admin_suspended');
     await this.tokens.revokeAll(request.id);
     await this.prisma.client.companySignupRequest.update({

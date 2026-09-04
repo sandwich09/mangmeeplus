@@ -77,11 +77,14 @@ export const SIGNUP_SOURCE_LINE_OA = 'line-oa';
  */
 /**
  * How long a PROVISIONING row may sit untouched before another caller may take the fence from it.
- * The onboarding transaction is capped at 15s (`create-company-onboarding.use-case.ts`), so this is
- * that ceiling plus room for the post-commit tail — comfortably longer than any live attempt, and
- * short enough that a killed task does not strand a customer for a working day.
+ *
+ * The onboarding transaction is capped at 15s (`create-company-onboarding.use-case.ts`), but that
+ * is only the middle of the run: provisioning then applies trial guards, a VAT update, the fence
+ * completion, an audit transaction and a final advance, each its own round trip, and a cold start
+ * pays for all of it at once. 90s left no real margin over that tail. Three minutes is still far
+ * shorter than a working day, which is what the alternative — no recovery at all — used to cost.
  */
-export const STALE_PROVISIONING_MS = 90_000;
+export const STALE_PROVISIONING_MS = 180_000;
 
 /**
  * "Nobody is actually holding this fence." Nothing releases it when the process holding it dies

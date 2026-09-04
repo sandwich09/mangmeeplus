@@ -82,8 +82,9 @@ export function canApproveSignup(state: string, item?: AdminSignupQueueItemDto):
   // are idempotent behind the fence, and both leave the customer's LINE account locked until done.
   if (item === undefined || !isLineSignup(item)) return false;
   if (state === 'PROVISIONING_FAILED' || state === 'READY') return true;
-  // An abandoned run is the third recovery. A live one is not: the API answers 409 for it, so
-  // offering the button would be a lie the same way the READY chip was.
+  // An abandoned run is the third recovery. A live one is not: the API answers 200 with the row
+  // still PROVISIONING (its idempotency path), so a button here would promise a close-out that
+  // did not happen — the same shape of lie the READY chip used to tell.
   return state === 'PROVISIONING' && item.staleProvisioning === true;
 }
 
@@ -106,7 +107,18 @@ export function isFinishingStrandedRow(state: string): boolean {
 
 /** Only a LINE application can be suspended: spec §3.7 is about stopping an auto-approved shop. */
 export function canSuspendSignup(item: AdminSignupQueueItemDto): boolean {
-  return isLineSignup(item) && item.state !== 'SUSPENDED' && item.state !== 'REJECTED';
+  if (!isLineSignup(item)) return false;
+  // Never mid-provisioning, at either freshness. SUSPENDED is terminal, so suspending here strands
+  // a shop that may already exist but whose trial guards never ran — an UNLIMITED shop, with the
+  // application closed behind it — and on a live run it races the attempt still in flight. The one
+  // action those rows offer is the close-out.
+  if (item.state === 'PROVISIONING') return false;
+  return item.state !== 'SUSPENDED' && item.state !== 'REJECTED';
+}
+
+/** True when suspending leaves a shop already standing, so the copy must not imply it stops it. */
+export function suspendLeavesShopRunning(state: string): boolean {
+  return state === 'PROVISIONING_FAILED' || state === 'READY' || state === 'COMPLETED';
 }
 
 /** Approval survives an expired link (spec §4D ②) — reissue is the way back, never a re-application. */
@@ -131,7 +143,10 @@ export function filterSignupQueue(
   if (tab === 'PENDING_REVIEW') return items.filter((i) => i.state === 'PENDING_REVIEW');
   if (tab === 'AWAITING_CLAIM') return items.filter((i) => i.state === 'EMAIL_PENDING' && !i.emailDeliveryFailed);
   // A bounce flag counts as a problem even if the state has not flipped to EMAIL_FAILED yet, and a
-  // provisioning that failed is the most actionable problem of the lot.
+  // provisioning that failed is the most actionable problem of the lot. An ABANDONED run belongs
+  // here too — it is the one an operator most needs to find — while a live one is not a problem.
   return items.filter((i) => i.state === 'EMAIL_FAILED' || i.state === 'EXPIRED'
-    || i.state === 'PROVISIONING_FAILED' || i.state === 'READY' || i.emailDeliveryFailed);
+    || i.state === 'PROVISIONING_FAILED' || i.state === 'READY'
+    || (i.state === 'PROVISIONING' && i.staleProvisioning === true)
+    || i.emailDeliveryFailed);
 }

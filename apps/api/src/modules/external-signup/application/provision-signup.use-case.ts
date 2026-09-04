@@ -114,7 +114,7 @@ export class ProvisionSignupUseCase {
         attemptId: claim.attemptId!,
         companyId: result.companyId,
         ownerUserId: result.ownerId,
-      correlationRequestId: cmd.correlationRequestId,
+        correlationRequestId: cmd.correlationRequestId,
       });
 
       await this.prisma.client.$transaction([
@@ -125,7 +125,9 @@ export class ProvisionSignupUseCase {
         }),
         this.prisma.client.auditLog.create({
           data: {
-            actorUserId: request.approvedByUserId ?? undefined,
+            // The operator of record, which for an AUTO_FREE close-out is the directory-resolved
+            // one — `approvedByUserId` is null there by design, and left this row with no actor.
+            actorUserId: operator.userId,
             companyId: result.companyId,
             action: 'signup.request.provisioned',
             targetType: 'company_signup_request',

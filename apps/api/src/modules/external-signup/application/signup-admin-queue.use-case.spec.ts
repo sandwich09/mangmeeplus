@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { SignupAdminQueueUseCase } from './signup-admin-queue.use-case';
+import { STALE_PROVISIONING_MS } from '../domain/company-signup.logic';
 
 const NOW = new Date('2026-09-01T00:00:00.000Z');
 
@@ -171,7 +172,7 @@ describe('SignupAdminQueueUseCase.decide — LINE-first source', () => {
   it('tells the page which provisioning rows are abandoned and which are live', async () => {
     const h = harness({
       requests: [
-        { ...LINE_REQUEST, id: 'stale', state: 'PROVISIONING', provisioningStartedAt: new Date(NOW.getTime() - 120_000) },
+        { ...LINE_REQUEST, id: 'stale', state: 'PROVISIONING', provisioningStartedAt: new Date(NOW.getTime() - STALE_PROVISIONING_MS - 1_000) },
         { ...LINE_REQUEST, id: 'live', state: 'PROVISIONING', provisioningStartedAt: new Date(NOW.getTime() - 1_000) },
       ],
     });
@@ -200,7 +201,7 @@ describe('SignupAdminQueueUseCase.decide — LINE-first source', () => {
       request: {
         ...LINE_REQUEST,
         state: 'PROVISIONING',
-        provisioningStartedAt: new Date(NOW.getTime() - 120_000),
+        provisioningStartedAt: new Date(NOW.getTime() - STALE_PROVISIONING_MS - 1_000),
       },
     });
     const result = await h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1', URLS, NOW);
@@ -326,6 +327,22 @@ describe('SignupAdminQueueUseCase.decide — suspend', () => {
     assert.equal(audit.action, 'signup.line.suspended');
     assert.equal(audit.metadataJson.wasAutoApproved, true);
     assert.equal(audit.metadataJson.fromState, 'COMPLETED');
+  });
+
+  // Review MEDIUM-2: SUSPENDED is terminal. A row mid-provisioning may already have a company whose
+  // trial guards never ran — suspending it would leave an unlimited shop with the application shut
+  // behind it — and against a live attempt it races work still in flight.
+  it('refuses to suspend a provisioning run at either freshness', async () => {
+    for (const ageMs of [1_000, STALE_PROVISIONING_MS + 1_000]) {
+      const h = harness({
+        request: { ...LINE_REQUEST, state: 'PROVISIONING', provisioningStartedAt: new Date(NOW.getTime() - ageMs) },
+      });
+      await assert.rejects(
+        () => h.useCase.decide('signup-1', { action: 'SUSPEND' }, 'admin-1', 'req-1', URLS, NOW),
+        /suspend_not_allowed_in_flight/,
+      );
+      assert.deepEqual(h.advances, [], `age ${ageMs}ms must not settle the row`);
+    }
   });
 
   it('is a no-op when the application is already suspended', async () => {

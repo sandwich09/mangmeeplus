@@ -1,9 +1,10 @@
 import { describe, it } from 'node:test';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import assert from 'node:assert/strict';
 import { CreateCompanyOnboardingUseCase } from '../../system-onboarding/application/use-cases/create-company-onboarding.use-case';
 import { LegalAcceptanceService } from '../../auth/application/legal-acceptance.service';
 import { currentLegalRelease } from '../../auth/application/legal-acceptance.service';
-import { LINE_OPEN_APPLICATION_STATES } from '../domain/company-signup.logic';
+import { LINE_OPEN_APPLICATION_STATES, STALE_PROVISIONING_MS } from '../domain/company-signup.logic';
 import { CompanySignupCoreService } from './company-signup-core.service';
 import { ProvisionSignupUseCase } from './provision-signup.use-case';
 import { SubmitLineSignupUseCase } from './submit-line-signup.use-case';
@@ -27,6 +28,38 @@ function fakePrisma(options: { systemAdmins?: string[] } = {}) {
   const memberships: any[] = [];
   const lineContexts = new Map<string, any>();
   let seq = 0;
+
+  /**
+   * Per-transaction undo. A global snapshot was wrong: with two transactions interleaved, restoring
+   * one rolls back the OTHER's committed writes too, and the race test then passed only because it
+   * asserted on a detached object. `AsyncLocalStorage` attributes each write to the transaction
+   * that made it, across awaits, so a rollback touches only that transaction's own keys.
+   */
+  const txUndo = new AsyncLocalStorage<Array<() => void>>();
+  /** Call BEFORE mutating `map[key]`, so the prior value can be put back exactly. */
+  const willWrite = (map: Map<string, any>, key: string) => {
+    const log = txUndo.getStore();
+    if (!log) return;
+    const had = map.has(key);
+    const prior = had ? { ...map.get(key) } : null;
+    log.push(() => {
+      if (!had) { map.delete(key); return; }
+      const current = map.get(key);
+      if (!current) { map.set(key, prior); return; }
+      // Restored in place: a caller still holding the row sees the rollback, as it would in Prisma.
+      for (const field of Object.keys(current)) delete current[field];
+      Object.assign(current, prior);
+    });
+  };
+  /** Append-only lists: undo removes the exact item, never a concurrent transaction's. */
+  const trackedPush = <T>(list: T[], item: T): T => {
+    list.push(item);
+    txUndo.getStore()?.push(() => {
+      const at = list.indexOf(item);
+      if (at >= 0) list.splice(at, 1);
+    });
+    return item;
+  };
 
   /** The two columns onboarding writes an operator id into are both FKs to User. */
   const assertUser = (id: unknown, column: string) => {
@@ -55,6 +88,7 @@ function fakePrisma(options: { systemAdmins?: string[] } = {}) {
     companySignupRequest: auto('companySignupRequest', {
       create: async ({ data }: any) => {
         const row = { id: `signup-${(seq += 1)}`, state: 'RECEIVED', version: 0, ...data };
+        willWrite(requests, row.id);
         requests.set(row.id, row);
         return row;
       },
@@ -64,7 +98,10 @@ function fakePrisma(options: { systemAdmins?: string[] } = {}) {
       count: async ({ where }: any) => [...requests.values()].filter((row) =>
         row.autoApproved === where.autoApproved && row.source === where.source
         && row.createdAt >= where.createdAt.gte).length,
-      update: async ({ where, data }: any) => Object.assign(requests.get(where.id), data),
+      update: async ({ where, data }: any) => {
+        willWrite(requests, where.id);
+        return Object.assign(requests.get(where.id), data);
+      },
       // Two conditional updates share this: the state/version CAS the fence uses, and the
       // `companyId: null` stamp that decides which of two overlapping runs keeps its company.
       // Both are "update only if the row still looks like this", so both are matched here.
@@ -74,6 +111,7 @@ function fakePrisma(options: { systemAdmins?: string[] } = {}) {
         if (where.state !== undefined && row.state !== where.state) return { count: 0 };
         if (where.version !== undefined && row.version !== where.version) return { count: 0 };
         if (where.companyId === null && row.companyId != null) return { count: 0 };
+        willWrite(requests, where.id);
         Object.assign(row, data);
         if (where.version !== undefined) row.version = where.version + 1;
         return { count: 1 };
@@ -91,8 +129,7 @@ function fakePrisma(options: { systemAdmins?: string[] } = {}) {
     company: auto('company', { create: async () => ({ id: 'co-1' }) }),
     companyMembership: auto('companyMembership', {
       create: async ({ data }: any) => {
-        const row = { id: `mem-${(seq += 1)}`, ...data };
-        memberships.push(row);
+        const row = trackedPush(memberships, { id: `mem-${(seq += 1)}`, ...data });
         return row;
       },
       // The recovery path reads the owner back from the membership onboarding created, so the
@@ -101,28 +138,29 @@ function fakePrisma(options: { systemAdmins?: string[] } = {}) {
     }),
     externalIdentity: auto('externalIdentity', {
       findFirst: async () => null,
-      create: async ({ data }: any) => { identities.push(data); return { id: 'ext-1' }; },
+      create: async ({ data }: any) => { trackedPush(identities, data); return { id: 'ext-1' }; },
     }),
     legalDocumentActionRecord: auto('legalDocumentActionRecord', {
       count: async () => legalRows.length,
-      createMany: async ({ data }: any) => { legalRows.push(...data); return { count: data.length }; },
+      createMany: async ({ data }: any) => { for (const row of data) trackedPush(legalRows, row); return { count: data.length }; },
     }),
     companyOnboardingRun: auto('companyOnboardingRun', {
       create: async ({ data }: any) => {
         assertUser(data.createdBySystemAdminUserId, 'CompanyOnboardingRun_createdBySystemAdminUserId_fkey');
-        onboardingRuns.push(data);
+        trackedPush(onboardingRuns, data);
         return { id: 'run-1', ...data };
       },
     }),
     auditLog: auto('auditLog', {
       create: async ({ data }: any) => {
         assertUser(data.actorUserId, 'AuditLog_actorUserId_fkey');
-        audits.push(data);
+        trackedPush(audits, data);
         return { id: `audit-${(seq += 1)}` };
       },
     }),
     companyPlanTerm: auto('companyPlanTerm', {
       upsert: async ({ where, create, update }: any) => {
+        willWrite(planTerms, where.companyId);
         const existing = planTerms.get(where.companyId);
         if (!existing) { planTerms.set(where.companyId, { ...create }); return planTerms.get(where.companyId); }
         Object.assign(existing, update ?? {});
@@ -135,14 +173,14 @@ function fakePrisma(options: { systemAdmins?: string[] } = {}) {
       },
     }),
     companyAiConfiguration: auto('companyAiConfiguration', {
-      upsert: async ({ where, create }: any) => { aiConfigs.set(where.companyId, create); return create; },
+      upsert: async ({ where, create }: any) => { willWrite(aiConfigs, where.companyId); aiConfigs.set(where.companyId, create); return create; },
     }),
     lineCompanyContext: auto('lineCompanyContext', {
-      upsert: async ({ where, create }: any) => { lineContexts.set(where.lineUserId, create); return create; },
+      upsert: async ({ where, create }: any) => { willWrite(lineContexts, where.lineUserId); lineContexts.set(where.lineUserId, create); return create; },
     }),
     chartOfAccount: auto('chartOfAccount', {
       createMany: async ({ data }: any) => {
-        for (const row of data) chartRows.push({ id: `coa-${chartRows.length}`, ...row });
+        for (const row of data) trackedPush(chartRows, { id: `coa-${chartRows.length}`, ...row });
         return { count: data.length };
       },
       findMany: async (args: any) => chartRows.filter((r) => r.companyId === (args?.where?.companyId ?? null)),
@@ -150,34 +188,21 @@ function fakePrisma(options: { systemAdmins?: string[] } = {}) {
     }),
   };
 
-  /**
-   * Everything the store holds, so a transaction can be rolled back. Without this the fake commits
-   * partial work on a throw and "written inside the SAME transaction" is not a claim any test can
-   * make — the `companyId` stamp could be moved outside the tx and every test would stay green.
-   */
-  const stores = () => [requests, planTerms, aiConfigs, lineContexts] as Map<string, any>[];
-  const arrays = () => [chartRows, audits, identities, legalRows, onboardingRuns, memberships];
-  const snapshot = () => ({
-    maps: stores().map((m) => new Map([...m].map(([k, v]) => [k, { ...v }]))),
-    lists: arrays().map((a) => [...a]),
-  });
-  const restore = (snap: ReturnType<typeof snapshot>) => {
-    stores().forEach((m, i) => { m.clear(); for (const [k, v] of snap.maps[i]!) m.set(k, v); });
-    arrays().forEach((a, i) => { a.length = 0; a.push(...snap.lists[i]!); });
-  };
-
   const client: any = new Proxy({}, {
     get: (_t, prop: string) => {
       if (prop === '$transaction') {
         return async (arg: any) => {
           if (typeof arg !== 'function') return Promise.all(arg);
-          const before = snapshot();
-          try {
-            return await arg(client);
-          } catch (error) {
-            restore(before);
-            throw error;
-          }
+          // Only THIS transaction's writes are undone, so an interleaved winner keeps its own.
+          const undo: Array<() => void> = [];
+          return txUndo.run(undo, async () => {
+            try {
+              return await arg(client);
+            } catch (error) {
+              for (const step of undo.reverse()) step();
+              throw error;
+            }
+          });
         };
       }
       if (prop === '$executeRaw') return async () => 0;
@@ -188,7 +213,7 @@ function fakePrisma(options: { systemAdmins?: string[] } = {}) {
 
   return {
     prisma: { client } as any,
-    requests, planTerms, audits, identities, legalRows, aiConfigs, onboardingRuns, lineContexts,
+    requests, planTerms, audits, identities, legalRows, aiConfigs, onboardingRuns, lineContexts, memberships,
   };
 }
 
@@ -269,6 +294,9 @@ describe('AUTO_FREE end to end (review HIGH-1)', () => {
     const provisioned = h.store.audits.find((a) => a.action === 'signup.request.provisioned');
     assert.equal(provisioned.metadataJson.operatorResolvedFromDirectory, true);
     assert.equal(provisioned.metadataJson.autoApproved, true);
+    // Review LOW-4: this used to read `approvedByUserId ?? undefined`, which on an AUTO row is
+    // null — leaving the one HIGH-risk audit of the whole flow with no actor at all.
+    assert.equal(provisioned.actorUserId, 'sysadmin-1');
     const onboarded = h.store.audits.find((a) => a.action === 'system.company_onboarding.create');
     assert.equal(onboarded.metadataJson.operatorResolvedFromDirectory, true);
     assert.equal(onboarded.metadataJson.source, 'line-oa');
@@ -453,25 +481,40 @@ describe('two overlapping provisioning runs still produce one company (review ME
     apiBaseUrl: 'https://api.example.com/v1',
   });
 
-  for (const [label, order] of [['A stamps first', ['A', 'B']], ['B stamps first', ['B', 'A']]] as const) {
+  // Which run reaches the stamp first is decided by a real head start, so the two cases are
+  // genuinely different runs — the previous version mapped over ['A','B'] and ignored the element,
+  // so both "orderings" executed the identical body and only one of them was ever exercised.
+  const headStart = async (ticks: number, run: () => Promise<unknown>) => {
+    for (let tick = 0; tick < ticks; tick += 1) await Promise.resolve();
+    return run();
+  };
+
+  for (const [label, delays] of [['A stamps first', [0, 4]], ['B stamps first', [4, 0]]] as const) {
     it(`lets only one run keep its company when ${label}`, async () => {
       // A FRESH store: both runs race from the overlap window, with no company yet. (Racing after
       // a completed submit only proved the fake reuses one company id for every create.)
       const h = harness();
-      const request = { id: 'signup-race', state: 'PROVISIONING', version: 0, companyId: null } as any;
-      h.store.requests.set(request.id, request);
+      const requestId = 'signup-race';
+      h.store.requests.set(requestId, { id: requestId, state: 'PROVISIONING', version: 0, companyId: null });
 
       const legal = new LegalAcceptanceService(h.store.prisma, { log: async () => undefined } as any);
       const onboarding = new CreateCompanyOnboardingUseCase(h.store.prisma, CONFIG, legal);
-      const results = await Promise.allSettled(order.map(() => onboarding.execute(onboardingCmd(request.id))));
+      const results = await Promise.allSettled(
+        delays.map((ticks) => headStart(ticks, () => onboarding.execute(onboardingCmd(requestId)))),
+      );
 
-      const won = results.filter((r) => r.status === 'fulfilled');
-      const lost = results.filter((r) => r.status === 'rejected');
-      assert.equal(won.length, 1, 'exactly one run may keep a company');
-      assert.match(String((lost[0] as PromiseRejectedResult).reason), /signup_already_provisioned/);
+      // The run with no head start is the one that reaches the stamp first.
+      const expectedWinner = delays.indexOf(0);
+      assert.equal(results[expectedWinner]!.status, 'fulfilled', `${label}: that run must keep its company`);
+      const loser = results[1 - expectedWinner]!;
+      assert.equal(loser.status, 'rejected');
+      assert.match(String((loser as PromiseRejectedResult).reason), /signup_already_provisioned/);
+      // Re-read from the store: asserting on a detached reference is how the global-snapshot
+      // rollback bug hid — it wiped the winner's write while the local object still looked right.
+      assert.equal(h.store.requests.get(requestId).companyId, 'co-1', 'and the row names the winner');
       // The loser threw at the stamp, before it wrote anything else: one onboarding run exists.
       assert.equal(h.store.onboardingRuns.length, 1);
-      assert.equal(request.companyId, 'co-1', 'and the row names the winner');
+      assert.equal(h.store.memberships.length, 1, 'and one owner membership, not two');
     });
   }
 });
@@ -496,7 +539,7 @@ describe('a fence nobody is holding can be taken (review MEDIUM-3)', () => {
     await h.submit.execute(CMD, NOW);
     const request = [...h.store.requests.values()][0];
     // Nothing releases the fence when the process holding it dies, and there is no sweep.
-    Object.assign(request, { state: 'PROVISIONING', provisioningStartedAt: new Date(NOW.getTime() - 120_000) });
+    Object.assign(request, { state: 'PROVISIONING', provisioningStartedAt: new Date(NOW.getTime() - STALE_PROVISIONING_MS - 1_000) });
     const attemptBefore = request.provisioningAttemptId;
 
     const claim = await claimAgain(h, request.id, NOW);
@@ -510,7 +553,7 @@ describe('a fence nobody is holding can be taken (review MEDIUM-3)', () => {
     await h.submit.execute(CMD, NOW);
     const request = [...h.store.requests.values()][0];
     // The crash shape MEDIUM-3 describes: mid-flight forever, but the company did commit.
-    Object.assign(request, { state: 'PROVISIONING', provisioningStartedAt: new Date(NOW.getTime() - 120_000) });
+    Object.assign(request, { state: 'PROVISIONING', provisioningStartedAt: new Date(NOW.getTime() - STALE_PROVISIONING_MS - 1_000) });
 
     await h.provision.execute({
       requestId: request.id,

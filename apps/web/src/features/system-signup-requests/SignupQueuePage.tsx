@@ -24,6 +24,7 @@ import {
   signupHintChips,
   isFinishingStrandedRow,
   isLineSignup,
+  suspendLeavesShopRunning,
   signupIdleChip,
   signupStateChip,
   SIGNUP_QUEUE_TABS,
@@ -113,10 +114,16 @@ export default function SignupQueuePage() {
     if (!accepted) return;
     setBusyId(item.requestId);
     try {
-      await decideSignupRequest(item.requestId, { action: 'APPROVE' });
-      toast.success(finishing
-        ? 'ปิดงานเรียบร้อย'
-        : fromLine ? 'อนุมัติแล้ว เปิดร้านให้เรียบร้อย' : 'อนุมัติแล้ว ระบบกำลังส่งอีเมลตั้งรหัส');
+      // The API answers 200 with the CURRENT state, so a close-out that found the run still going
+      // comes back as PROVISIONING. Reporting that as done would be the same lie the chip told.
+      const decided = await decideSignupRequest(item.requestId, { action: 'APPROVE' });
+      if (decided.state === 'PROVISIONING') {
+        toast.warning('ยังเปิดร้านอยู่ รอสักครู่แล้วลองใหม่');
+      } else {
+        toast.success(finishing
+          ? 'ปิดงานเรียบร้อย'
+          : fromLine ? 'อนุมัติแล้ว เปิดร้านให้เรียบร้อย' : 'อนุมัติแล้ว ระบบกำลังส่งอีเมลตั้งรหัส');
+      }
       await load();
     } catch (err) {
       toast.error(apiErrorMessage(err));
@@ -149,9 +156,13 @@ export default function SignupQueuePage() {
   // Spec §3.7: stopping a shop AUTO_FREE let through. The API has accepted SUSPEND since L-A;
   // until now nothing could reach it.
   const handleSuspend = async (item: AdminSignupQueueItemDto) => {
+    // Suspending settles the APPLICATION. Where the shop already exists, saying "the shop will be
+    // stopped" would be false — closing it is a separate action on the partner page.
     const accepted = await confirm({
       title: 'ระงับคำขอ',
-      message: `ระงับร้าน ${item.companyName} ใช่หรือไม่ ร้านจะถูกหยุดไว้จนกว่าทีมงานจะตรวจสอบ`,
+      message: suspendLeavesShopRunning(item.state)
+        ? `หยุดคำขอของร้าน ${item.companyName} ใช่หรือไม่ (ร้านที่เปิดไปแล้วยังใช้ได้ ต้องไปปิดที่หน้าพาร์ทเนอร์)`
+        : `ระงับร้าน ${item.companyName} ใช่หรือไม่ ร้านจะถูกหยุดไว้จนกว่าทีมงานจะตรวจสอบ`,
       confirmLabel: 'ระงับ',
       variant: 'danger',
     });
