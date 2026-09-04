@@ -123,19 +123,36 @@ export function formatThaiDateTime(value: Date): string {
 }
 
 /**
- * P10-L §3.7. These messages travel the dashboard notification rail, which renders one fixed
- * "open in the web app" button — so the second way out is offered as WORDS, and the words are the
- * command: `staffMenuCommand` answers "ขอเปลี่ยนแพ็กเกจ" typed into the chat. One sentence, no new
- * rail, and no change to the P29 state machine.
+ * P10-L §3.7. The notification rail renders one fixed "open in the web app" button, so the second
+ * way out is offered as WORDS — and the words are the command: `staffMenuCommand` answers
+ * "ขอเปลี่ยนแพ็กเกจ" typed into the chat.
+ *
+ * Appended ONLY when the owner actually has a linked LINE account. The same body is what the web
+ * dashboard renders, and telling a Flow B or admin-created customer to type into a LINE chat they
+ * have never opened is an instruction they cannot follow.
  */
 export const PACKAGE_CHANGE_HINT_TH = 'หรือพิมพ์ ขอเปลี่ยนแพ็กเกจ ในแชท LINE นี้ ทีมงานจะติดต่อกลับให้ค่ะ';
 
-export function warningMessageTh(companyName: string, termEndsAt: Date, daysLeft: number): string {
-  return `ร้าน ${companyName} จะครบกำหนดใช้งานวันที่ ${formatThaiDateTime(termEndsAt)} (อีก ${daysLeft} วัน) — ติดต่อ ${PLAN_TERM_CONTACT_PHONE} หรืออีเมล ${PLAN_TERM_CONTACT_EMAIL} ${PACKAGE_CHANGE_HINT_TH}`;
+const withHint = (message: string, lineLinked: boolean) =>
+  (lineLinked ? `${message} ${PACKAGE_CHANGE_HINT_TH}` : message);
+
+export function warningMessageTh(
+  companyName: string,
+  termEndsAt: Date,
+  daysLeft: number,
+  lineLinked = false,
+): string {
+  return withHint(
+    `ร้าน ${companyName} จะครบกำหนดใช้งานวันที่ ${formatThaiDateTime(termEndsAt)} (อีก ${daysLeft} วัน) — ติดต่อ ${PLAN_TERM_CONTACT_PHONE} หรืออีเมล ${PLAN_TERM_CONTACT_EMAIL}`,
+    lineLinked,
+  );
 }
 
-export function expiredMessageTh(companyName: string): string {
-  return `ร้าน ${companyName} ครบกำหนดใช้งานแล้ว ระบบพักการใช้งานชั่วคราว ข้อมูลทั้งหมดยังอยู่ครบ — ติดต่อ ${PLAN_TERM_CONTACT_PHONE} หรืออีเมล ${PLAN_TERM_CONTACT_EMAIL} ${PACKAGE_CHANGE_HINT_TH}`;
+export function expiredMessageTh(companyName: string, lineLinked = false): string {
+  return withHint(
+    `ร้าน ${companyName} ครบกำหนดใช้งานแล้ว ระบบพักการใช้งานชั่วคราว ข้อมูลทั้งหมดยังอยู่ครบ — ติดต่อ ${PLAN_TERM_CONTACT_PHONE} หรืออีเมล ${PLAN_TERM_CONTACT_EMAIL}`,
+    lineLinked,
+  );
 }
 
 /**
@@ -150,7 +167,8 @@ export function expiredLineOwnerMessageTh(): string {
     'ข้อมูลทั้งหมดยังอยู่ครบ ไม่ได้หายไปไหนนะคะ',
     'ต่ออายุได้เองที่เว็บแอป เข้าสู่ระบบแล้วจะเห็นหน้าต่ออายุทันที',
     `หรือติดต่อเรา โทร ${PLAN_TERM_CONTACT_PHONE} หรืออีเมล ${PLAN_TERM_CONTACT_EMAIL}`,
-    PACKAGE_CHANGE_HINT_TH,
+    // No typed-command hint here: this reply is delivered with a real "ขอเปลี่ยนแพ็กเกจ" quick
+    // reply attached, and a sentence telling someone to type what a button already offers is noise.
   ].join('\n');
 }
 
