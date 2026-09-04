@@ -10,7 +10,9 @@ import {
 } from '@watchdog-bms/contracts';
 import {
   LegalAcceptanceService,
+  currentLegalRelease,
   legalDisplayChallenge,
+  legalEvidenceMatchesCurrentRelease,
   legalReleaseScopeRef,
 } from './legal-acceptance.service';
 
@@ -494,5 +496,106 @@ describe('LegalAcceptanceService', () => {
 
     assert.equal(status.required, false);
     assert.equal(status.acceptedAt, '2026-08-15T02:00:00.000Z');
+  });
+});
+
+// ── P10-L LEGAL-LIFF-01: clickwrap collected on LIFF, replayed at provisioning ──
+
+const EVIDENCE_AT = new Date('2026-09-04T03:21:00.000Z');
+
+function liffEvidence(overrides: Record<string, unknown> = {}) {
+  const release = currentLegalRelease('th');
+  return { ...release, locale: 'th', userAgent: 'LINE/14 iOS', legalAcceptedAt: EVIDENCE_AT, ...overrides } as any;
+}
+
+function recordingTx() {
+  const created: any[] = [];
+  return {
+    created,
+    tx: {
+      legalDocumentActionRecord: {
+        count: async () => created.length,
+        createMany: async ({ data }: any) => { created.push(...data); return { count: data.length }; },
+      },
+    } as any,
+  };
+}
+
+describe('currentLegalRelease', () => {
+  it('names the release with the same pair hash legalReleaseScopeRef folds in', () => {
+    const release = currentLegalRelease('th');
+    assert.equal(release.documentVersion, CURRENT_LEGAL_DOCUMENTS.terms.version);
+    assert.match(release.statementSha256, /^[a-f0-9]{64}$/);
+    assert.match(release.displayChallenge, /^[a-f0-9]{64}$/);
+  });
+
+  it('is not interchangeable with the in-app membership challenge or with another locale', () => {
+    assert.notEqual(currentLegalRelease('th').displayChallenge, currentLegalRelease('en').displayChallenge);
+    assert.notEqual(currentLegalRelease('th').displayChallenge, INPUT.displayChallenge);
+  });
+
+  it('accepts only evidence that matches the current release in every field', () => {
+    assert.equal(legalEvidenceMatchesCurrentRelease(liffEvidence()), true);
+    for (const field of ['documentVersion', 'statementSha256', 'releaseFingerprintSha256', 'displayChallenge']) {
+      assert.equal(legalEvidenceMatchesCurrentRelease(liffEvidence({ [field]: 'stale' })), false, field);
+    }
+    assert.equal(legalEvidenceMatchesCurrentRelease(liffEvidence({ locale: 'fr' })), false);
+  });
+});
+
+describe('LegalAcceptanceService.recordFromEvidence', () => {
+  const service = () => new LegalAcceptanceService({ client: {} } as any, { log: async () => undefined } as any);
+  const input = (evidence = liffEvidence()) => ({
+    userId: ACTOR.userId, companyId: ACTOR.companyId, membershipId: ACTOR.membershipId,
+    evidence, requestId: 'provisioning-req-1',
+  });
+
+  it('writes a coherent pair the in-app gate reads as already accepted', async () => {
+    const { tx, created } = recordingTx();
+    assert.deepEqual(await service().recordFromEvidence(tx, input()), { written: true });
+    assert.equal(created.length, 2, 'a single row would leave the gate shut');
+
+    // The whole point (spec §11): this owner must NOT be sent to /legal-acceptance, so the
+    // "send a receipt right now" promise in the ready message is true.
+    const prisma = {
+      client: {
+        companyMembership: { findFirst: async () => membership(['OWNER']) },
+        legalDocumentActionRecord: { findMany: async () => created },
+      },
+    } as any;
+    const status = await new LegalAcceptanceService(prisma, { log: async () => undefined } as any).getStatus(ACTOR);
+    assert.equal(status.required, false);
+    assert.equal(status.acceptedAt, EVIDENCE_AT.toISOString());
+  });
+
+  it('stamps the moment the shop owner tapped accept, not the provisioning clock', async () => {
+    const { tx, created } = recordingTx();
+    await service().recordFromEvidence(tx, input());
+    for (const row of created) {
+      assert.equal(row.acceptedAt.getTime(), EVIDENCE_AT.getTime());
+      assert.equal(row.authProvider, 'LINE');
+      assert.equal(row.sessionTokenId, null, 'nobody has logged in yet');
+      assert.equal(row.actorCapacity, 'AUTHORIZED_REPRESENTATIVE');
+      assert.deepEqual(row.rolesJson, ['OWNER']);
+      assert.equal(row.userAgent, 'LINE/14 iOS');
+    }
+  });
+
+  it('leaves an existing acceptance alone — a retry or a second shop writes nothing', async () => {
+    const { tx, created } = recordingTx();
+    await service().recordFromEvidence(tx, input());
+    const before = created.length;
+    assert.deepEqual(await service().recordFromEvidence(tx, input()), {
+      written: false, reason: 'already_recorded',
+    });
+    assert.equal(created.length, before);
+  });
+
+  it('writes nothing when the release moved between submit and provisioning', async () => {
+    const { tx, created } = recordingTx();
+    assert.deepEqual(await service().recordFromEvidence(tx, input(liffEvidence({ documentVersion: 'v2' }))), {
+      written: false, reason: 'release_changed',
+    });
+    assert.equal(created.length, 0, 'stale evidence is not evidence for the current text');
   });
 });

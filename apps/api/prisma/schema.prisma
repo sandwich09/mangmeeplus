@@ -645,7 +645,9 @@ model LegalDocumentActionRecord {
   actorCapacity            LegalAcceptanceCapacity
   rolesJson                Json
   authProvider             String
-  sessionTokenId           String
+  // P10-L: null when the acceptance happened before any session existed — the LIFF signup clickwrap
+  // is replayed into this table during provisioning, when nobody has logged in yet.
+  sessionTokenId           String?
   requestId                String
   locale                   String
   displayChallenge         String

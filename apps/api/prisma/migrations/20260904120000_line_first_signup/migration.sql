@@ -32,6 +32,11 @@ CREATE UNIQUE INDEX "CompanySignupRequest_line_open_key"
   ON "CompanySignupRequest"("lineChannelId", "lineProviderUserId")
   WHERE "state" IN ('RECEIVED', 'VALIDATED', 'PENDING_REVIEW', 'PROVISIONING');
 
+-- LEGAL-LIFF-01: the LIFF clickwrap is replayed into this table during provisioning, before anyone
+-- has logged in, so there is genuinely no session token to name. Written-only column; no reader
+-- branches on it.
+ALTER TABLE "LegalDocumentActionRecord" ALTER COLUMN "sessionTokenId" DROP NOT NULL;
+
 -- P10-L §9 warm-up cap and the once-a-month quota notice marker.
 ALTER TABLE "CompanyPlanTerm"
   ADD COLUMN "warmupUntil" TIMESTAMP(3),
