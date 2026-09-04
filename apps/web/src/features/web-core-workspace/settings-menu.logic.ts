@@ -14,6 +14,16 @@ export type SettingsMenuItem = {
 };
 
 export const SETTINGS_MENU_ITEMS: readonly SettingsMenuItem[] = [
+  // P10-L §15.4: the one place a shop opened from LINE can fill in everything the signup form
+  // never asked for. First on purpose — for those customers it is the only entry that applies.
+  {
+    key: 'company-profile',
+    href: '/settings/profile',
+    title: 'ข้อมูลร้านและบัญชีของฉัน',
+    desc: 'ชื่อจดทะเบียน เลขผู้เสียภาษี ที่อยู่ และอีเมล เบอร์ รหัสผ่านสำรองของคุณ',
+    iconKey: 'LockIcon',
+    tone: 'brand',
+  },
   {
     key: 'line-oa',
     href: '/settings/line-oa',
