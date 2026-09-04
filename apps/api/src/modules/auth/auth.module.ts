@@ -16,6 +16,7 @@ import { ApproveLineWebLoginTransactionUseCase } from './application/use-cases/a
 import { RedeemLineWebLoginTransactionUseCase } from './application/use-cases/redeem-line-web-login-transaction.use-case';
 import { MintLineHandoffTokenUseCase } from './application/use-cases/mint-line-handoff-token.use-case';
 import { ExchangeLineHandoffTokenUseCase } from './application/use-cases/exchange-line-handoff-token.use-case';
+import { ExchangeLiffSessionUseCase } from './application/use-cases/exchange-liff-session.use-case';
 import { RefreshSessionUseCase } from './application/use-cases/refresh-session.use-case';
 import { LogoutUseCase } from './application/use-cases/logout.use-case';
 import { RevokeOtherSessionsUseCase } from './application/use-cases/revoke-other-sessions.use-case';
@@ -88,6 +89,7 @@ export function selectAuthMailer(
     RedeemLineWebLoginTransactionUseCase,
     MintLineHandoffTokenUseCase,
     ExchangeLineHandoffTokenUseCase,
+    ExchangeLiffSessionUseCase,
     RefreshSessionUseCase,
     LogoutUseCase,
     RevokeOtherSessionsUseCase,
