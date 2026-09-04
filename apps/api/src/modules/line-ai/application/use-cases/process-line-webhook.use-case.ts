@@ -97,7 +97,7 @@ import {
   trialReceiptCounterLineTh,
   TRIAL_COUNTER_TIER_KEY,
 } from '../../../system-partner-management/domain/logic/receipt-quota.logic';
-import { claimReceiptQuotaNotice, receiptQuotaSnapshot, RECEIPT_QUOTA_ERROR_CODE } from '../company-ocr-governance';
+import { claimReceiptQuotaNotice, receiptQuotaSnapshot, releaseReceiptQuotaNotice, RECEIPT_QUOTA_ERROR_CODE } from '../company-ocr-governance';
 import { bangkokMonthKey } from '../company-ai-usage-meter';
 import { LineHandoffLinkService } from '../line-handoff-link.service';
 import {
@@ -5182,16 +5182,30 @@ export class ProcessLineWebhookUseCase {
     userId: string,
   ): Promise<string> {
     const monthKey = bangkokMonthKey();
-    const { planLimit } = await receiptQuotaSnapshot(this.prisma, companyId, monthKey);
+    const { planLimit, tierKey } = await receiptQuotaSnapshot(this.prisma, companyId, monthKey);
     const limit = planLimit ?? 0;
     const first = await claimReceiptQuotaNotice(this.prisma, companyId, monthKey);
-    const text = first ? receiptQuotaExceededTextTh(limit) : receiptQuotaExceededShortTextTh(limit);
-    if (first) await this.deliverRequiredMessages(event, [buildReceiptQuotaExceededMessage(text)]);
-    else await this.deliverReply(event, text);
+    const text = first
+      ? receiptQuotaExceededTextTh(limit, tierKey)
+      : receiptQuotaExceededShortTextTh(limit, tierKey);
+    let delivered = true;
+    try {
+      if (first) await this.deliverRequiredMessages(event, [buildReceiptQuotaExceededMessage(text)]);
+      else await this.deliverReply(event, text);
+    } catch (error) {
+      // The month is claimed BEFORE the send, which is what makes the card exactly-once. If the send
+      // then fails — an expired reply token, a push 429 — the claim has spent the shop's only card of
+      // the month on a message nobody received, and the next receipt would get the terse follow-up
+      // for a card it never saw. Give the month back so the next one can carry it.
+      delivered = false;
+      if (first) await releaseReceiptQuotaNotice(this.prisma, companyId, monthKey);
+      this.logger.warn({ msg: 'receipt.quota.card_delivery_failed', companyId, monthKey, error: (error as Error).message });
+    }
     await this.audit.log({
       companyId, actorUserId: userId, action: 'plan.receipt_quota.blocked', targetType: 'LineWebhookEvent',
-      targetId: event.webhookEventId, requestId: event.webhookEventId, result: 'DENIED', riskLevel: 'LOW',
-      metadataJson: { channel: 'line', monthKey, planLimit, cardSent: first },
+      targetId: event.webhookEventId, requestId: event.webhookEventId,
+      result: delivered ? 'DENIED' : 'FAILED', riskLevel: 'LOW',
+      metadataJson: { channel: 'line', monthKey, planLimit, tierKey, cardSent: first && delivered, delivered },
     });
     return text;
   }

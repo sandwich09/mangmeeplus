@@ -94,6 +94,26 @@ export const isOcrPreProviderHttpStatus = (status: number): boolean =>
  * is NULL — not true — for a NULL column, and a shop that has never been notified is exactly the
  * row this has to match.
  */
+/**
+ * Undo a claim whose card never reached the shop (F5). Narrow on purpose — it only clears the month
+ * it claimed, so a concurrent turn that has already moved the marker to a LATER month is not
+ * rewound. Best-effort: a failure leaves the month claimed, which costs one card, not correctness.
+ */
+export async function releaseReceiptQuotaNotice(
+  prisma: PrismaService,
+  companyId: string,
+  monthKey: string,
+): Promise<void> {
+  try {
+    await prisma.client.companyPlanTerm.updateMany({
+      where: { companyId, quotaNoticeSentMonthKey: monthKey },
+      data: { quotaNoticeSentMonthKey: null },
+    });
+  } catch (error) {
+    logger.warn({ msg: 'receipt.quota.notice_release_failed', companyId, monthKey, error: (error as Error).message });
+  }
+}
+
 export async function claimReceiptQuotaNotice(
   prisma: PrismaService,
   companyId: string,
@@ -234,11 +254,14 @@ const planWouldBlockKey = (companyId: string, monthKey: string) => `plan-quota-$
 /**
  * Rollout evidence for the month production runs `RECEIPT_QUOTA_ENFORCED=false` (spec §15.1: the
  * flag exists because this ceiling is the first limit every EXISTING shop would ever meet). Every
- * read past the plan ceiling is logged; the first one each month also leaves an audit row, so
- * "how many shops would this have stopped, and when" is answerable before the switch is thrown.
+ * read past the plan ceiling is logged; the first one each month also leaves an audit row.
  *
  * Post-commit and swallowing, exactly like `AuditService.log(entry)` without a tx: the admission is
- * already durable, and observability must never turn a granted read into a refusal.
+ * already durable, and observability must never turn a granted read into a refusal. That makes the
+ * row BEST-EFFORT — the dedupe read commits before the write, and there is no unique constraint
+ * behind it, so a company can end up with more than one row in a month. Read the rollout as
+ * `count(distinct "companyId")` over `action = 'plan.receipt_quota.would_block'`, never as a row
+ * count, and treat a missing row as "not proven", not as "did not happen".
  */
 async function recordPlanQuotaWouldBlock(
   prisma: PrismaService,

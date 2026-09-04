@@ -65,12 +65,24 @@ describe('receipt quota copy (spec §7)', () => {
     assert.match(receiptQuotaExceededShortTextTh(30), /30 ครั้ง/);
   });
 
-  it('says the §7 sentence, and the short follow-up points at the package-change command', () => {
+  it('says the §7 sentence for the trial, and the follow-up points at the package-change command', () => {
     assert.equal(
-      receiptQuotaExceededTextTh(15),
+      receiptQuotaExceededTextTh(15, TRIAL_COUNTER_TIER_KEY),
       'ช่วงทดลองให้ AI อ่านรูปได้ 15 ครั้ง ตอนนี้ครบแล้วค่ะ (ใบเสร็จ 1 ใบ = 1 ครั้ง) ดูแพ็กเกจที่ใหญ่ขึ้นได้เลย',
     );
-    assert.match(receiptQuotaExceededShortTextTh(15), /ขอเปลี่ยนแพ็กเกจ/);
+    assert.match(receiptQuotaExceededShortTextTh(15, TRIAL_COUNTER_TIER_KEY), /ขอเปลี่ยนแพ็กเกจ/);
+  });
+
+  // A STARTER_249 shop that meets its own 30 is a PAYING customer. Telling it the trial ran out is
+  // both false and a reason to churn.
+  it('says "ช่วงทดลอง" for the free trial and for nobody else', () => {
+    for (const tierKey of ['STARTER_249', 'PRO_999', null, undefined]) {
+      assert.doesNotMatch(receiptQuotaExceededTextTh(30, tierKey), /ทดลอง/, String(tierKey));
+      assert.doesNotMatch(receiptQuotaExceededShortTextTh(30, tierKey), /ทดลอง/, String(tierKey));
+      assert.match(receiptQuotaExceededTextTh(30, tierKey), /แพ็กเกจของคุณให้ AI อ่านรูปได้ 30 ครั้งต่อเดือน/, String(tierKey));
+    }
+    assert.match(receiptQuotaExceededTextTh(15, TRIAL_COUNTER_TIER_KEY), /ช่วงทดลอง/);
+    assert.match(receiptQuotaExceededShortTextTh(15, TRIAL_COUNTER_TIER_KEY), /ในช่วงทดลอง/);
   });
 
   it('numbers the trial counter line n of limit', () => {
@@ -82,8 +94,10 @@ describe('receipt quota copy (spec §7)', () => {
     // picture sent with a question. Promising receipts while charging for reads is a promise the
     // system does not keep, so no customer-facing sentence may count in receipts.
     for (const text of [
-      receiptQuotaExceededTextTh(15),
-      receiptQuotaExceededShortTextTh(15),
+      receiptQuotaExceededTextTh(15, TRIAL_COUNTER_TIER_KEY),
+      receiptQuotaExceededShortTextTh(15, TRIAL_COUNTER_TIER_KEY),
+      receiptQuotaExceededTextTh(30, 'STARTER_249'),
+      receiptQuotaExceededShortTextTh(30, 'STARTER_249'),
       trialReceiptCounterLineTh(3, 15),
     ]) {
       assert.doesNotMatch(text, /\d+ ใบ(?!\s*=)/, text);

@@ -2152,6 +2152,45 @@ describe('ProcessLineWebhookUseCase', () => {
       assert.doesNotMatch(sentMessages[0].altText, /15/);
     });
 
+    it('never tells a PAYING tier it is on a trial', async () => {
+      const state = makePrisma({ planTerm: { tierKey: 'STARTER_249', monthlySlipLimit: 30 }, receiptsUsed: 30 });
+      const { useCase, sentMessages } = captureUseCase(state.prisma, { intakeRouteFn: () => QUOTA_DENIED_ROUTE });
+
+      await sendReceipt(useCase, 'starter-31');
+
+      assert.doesNotMatch(sentMessages[0].altText, /ทดลอง/, 'a STARTER shop bought this, it is not trialling');
+      assert.match(sentMessages[0].altText, /แพ็กเกจของคุณให้ AI อ่านรูปได้ 30 ครั้งต่อเดือน/);
+    });
+
+    // F5: the month is claimed BEFORE the send so the card is exactly-once. A failed send would
+    // otherwise spend the shop's only card of the month on a message nobody received.
+    it('gives the month back when the card cannot be delivered', async () => {
+      const state = makePrisma({ planTerm: FREE_TRIAL, receiptsUsed: 15 });
+      const delivered: any[] = [];
+      let turn = 0;
+      // Reply token expired AND the push fallback is throttled — the only shape where the card
+      // truly never lands, since a failed reply alone still reaches the shop by push.
+      const { useCase } = captureUseCase(state.prisma, {
+        intakeRouteFn: () => QUOTA_DENIED_ROUTE,
+        sendReplyFn: async (_token: string, messages: any[]) => {
+          if (turn === 0) return 'failed_token';
+          delivered.push(messages[0]);
+          return 'ok';
+        },
+        sendPushFn: async () => 'failed_other',
+      });
+
+      await sendReceipt(useCase, 'undelivered');
+      assert.equal(state.quotaNoticeSentMonthKey(), null, 'a card nobody received does not spend the month');
+
+      // The next image this month therefore still gets the full card, not the terse follow-up.
+      turn = 1;
+      await sendReceipt(useCase, 'retry');
+      assert.equal(state.quotaNoticeSentMonthKey(), bangkokMonthKey());
+      assert.equal(delivered[0].type, 'flex');
+      assert.match(delivered[0].altText, /ช่วงทดลองให้ AI อ่านรูปได้ 15 ครั้ง/);
+    });
+
     it('appends the trial counter line for FREE_TRIAL_15 and for no other tier', async () => {
       for (const [tierKey, expected] of [['FREE_TRIAL_15', true], ['STARTER_249', false]] as const) {
         const state = makePrisma({ planTerm: { tierKey, monthlySlipLimit: 15 }, receiptsUsed: 3 });

@@ -66,6 +66,17 @@ export class ReceiptOcrClient {
     const admission = await admitCompanyOcr(this.prisma, {
       companyId: request.companyId,
       sourceRoute: 'receipt-ocr-web',
+      // TODO(P10-L follow-up): the LINE lane fences on `attachment.id`, so one photo is one read
+      // however often it is redelivered. The web lane deliberately fences on `requestId` instead,
+      // and it CANNOT simply switch: two live flows mint a fresh id for the same attachment on
+      // purpose — `expenseExtractionRetryMode` → 'new_request' (expense-upload.logic.ts:27, driven
+      // at ExpensesPages.tsx:321) retries a transient gateway failure, and the review screen's
+      // re-read (ExpenseReviewPage.tsx:392) sends no id at all. Fencing on the attachment would
+      // answer both with `OCR_REQUEST_ALREADY_ADMITTED` forever, turning one bad provider call into
+      // a receipt that can never be read. The gap that leaves is a shop re-pressing "อ่านใบเสร็จ"
+      // to spend its own monthly allowance — visible, self-inflicted and bounded by the ceiling.
+      // Closing it properly needs a per-attachment read budget (e.g. N re-reads per attachment,
+      // then duplicate), which is its own decision and its own slice.
       requestId: request.requestId,
       monthKey: budgetMonthKey,
       // P10-L §15.1: the plan slip ceiling is always measured here; this flag decides whether it refuses.

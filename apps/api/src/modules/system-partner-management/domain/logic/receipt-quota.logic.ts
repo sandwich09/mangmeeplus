@@ -41,13 +41,21 @@ export function effectiveMonthlySlipLimit(term: ReceiptQuotaTerm | null, now: Da
  * actually counted and says what a receipt costs. The number comes from the term, never the
  * sentence: a warm-up shop meets this at 10 and a STARTER shop at 30.
  */
-export function receiptQuotaExceededTextTh(limit: number): string {
-  return `ช่วงทดลองให้ AI อ่านรูปได้ ${limit} ครั้ง ตอนนี้ครบแล้วค่ะ (ใบเสร็จ 1 ใบ = 1 ครั้ง) ดูแพ็กเกจที่ใหญ่ขึ้นได้เลย`;
+export function receiptQuotaExceededTextTh(limit: number, tierKey?: string | null): string {
+  return tierKey === TRIAL_COUNTER_TIER_KEY
+    ? `ช่วงทดลองให้ AI อ่านรูปได้ ${limit} ครั้ง ตอนนี้ครบแล้วค่ะ (ใบเสร็จ 1 ใบ = 1 ครั้ง) ดูแพ็กเกจที่ใหญ่ขึ้นได้เลย`
+    : `แพ็กเกจของคุณให้ AI อ่านรูปได้ ${limit} ครั้งต่อเดือน ตอนนี้ครบแล้วค่ะ (ใบเสร็จ 1 ใบ = 1 ครั้ง) ดูแพ็กเกจที่ใหญ่ขึ้นได้เลย`;
 }
 
-/** The follow-up images in the same month: the card went out once, so these get one line. */
-export function receiptQuotaExceededShortTextTh(limit: number): string {
-  return `ให้ AI อ่านรูปครบ ${limit} ครั้งของเดือนนี้แล้วค่ะ พิมพ์ "ขอเปลี่ยนแพ็กเกจ" ได้เลยนะคะ`;
+/**
+ * The follow-up images in the same month: the card went out once, so these get one line.
+ *
+ * "ช่วงทดลอง" is the free trial's word and nobody else's — a STARTER_249 shop that meets its own
+ * 30 is a paying customer, and telling it the trial ran out is both wrong and a reason to churn.
+ */
+export function receiptQuotaExceededShortTextTh(limit: number, tierKey?: string | null): string {
+  const scope = tierKey === TRIAL_COUNTER_TIER_KEY ? 'ในช่วงทดลอง' : 'ของแพ็กเกจเดือนนี้';
+  return `ให้ AI อ่านรูปครบ ${limit} ครั้ง${scope}แล้วค่ะ พิมพ์ "ขอเปลี่ยนแพ็กเกจ" ได้เลยนะคะ`;
 }
 
 /** §15.1: one extra line on the success reply, for the free-trial tier only. */
