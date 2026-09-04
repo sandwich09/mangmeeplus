@@ -142,6 +142,7 @@ export class AiGatewayClient {
         // the provider input identity, so it is the durable request fence and never burns quota twice.
         requestId: request.attachment.id,
         monthKey: budgetMonthKey,
+        enforceReceiptQuota: this.config.receiptQuotaEnforced,
       });
       if (!admission.allowed) return { status: 'failed', errorCode: companyOcrErrorCode(admission) };
     }
@@ -226,6 +227,9 @@ export class AiGatewayClient {
       sourceRoute: 'receipt-ocr-line',
       requestId: mediaId,
       monthKey: budgetMonthKey,
+      // The LINE lane's ONE document-read admission: the receipt OCR below runs with
+      // `ocrAlreadyAdmitted`, so if the plan ceiling is not applied here it is not applied at all.
+      enforceReceiptQuota: this.config.receiptQuotaEnforced,
     });
     if (!admission.allowed) {
       return {

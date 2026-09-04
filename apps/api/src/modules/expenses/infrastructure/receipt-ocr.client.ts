@@ -68,6 +68,8 @@ export class ReceiptOcrClient {
       sourceRoute: 'receipt-ocr-web',
       requestId: request.requestId,
       monthKey: budgetMonthKey,
+      // P10-L §15.1: the plan slip ceiling is always measured here; this flag decides whether it refuses.
+      enforceReceiptQuota: this.config.receiptQuotaEnforced,
     });
     if (!admission.allowed) return { status: 'failed', errorCode: companyOcrErrorCode(admission) };
     const result = await this.extractAdmitted(request, modelPolicy, budgetMonthKey);

@@ -40,7 +40,17 @@ const usage = (over: Partial<AiUsageEntry> = {}): AiUsageEntry => ({
 
 type OcrEvent = { id: string; companyId: string; monthKey: string; sourceRoute: string; requestId: string };
 
-function fakeOcrPrisma(input: { enabled?: boolean; limit?: number | null; used?: number } = {}) {
+function fakeOcrPrisma(input: {
+  enabled?: boolean;
+  limit?: number | null;
+  used?: number;
+  /** P10-L §15.1 plan ceiling. Absent = no `CompanyPlanTerm` row = grandfathered unlimited, which is
+   *  what every ops-brake case below is, so none of their expectations move. */
+  planTerm?: { tierKey: string; monthlySlipLimit: number; warmupUntil?: Date | null; warmupSlipLimit?: number | null } | null;
+  enforceReceiptQuota?: boolean;
+  auditedThisMonth?: boolean;
+} = {}) {
+  const auditWrites: any[] = [];
   const events: OcrEvent[] = [];
   let usedCount = input.used ?? 0;
   let queue = Promise.resolve();
@@ -78,6 +88,14 @@ function fakeOcrPrisma(input: { enabled?: boolean; limit?: number | null; used?:
         return { count: 1 };
       },
     },
+    companyPlanTerm: {
+      findUnique: async () => input.planTerm
+        ? { warmupUntil: null, warmupSlipLimit: null, ...input.planTerm }
+        : null,
+    },
+    auditLog: {
+      findFirst: async () => input.auditedThisMonth ? { id: 'audit-1' } : null,
+    },
   };
   const prisma = {
     client: {
@@ -86,9 +104,11 @@ function fakeOcrPrisma(input: { enabled?: boolean; limit?: number | null; used?:
         queue = result.then(() => undefined, () => undefined);
         return result;
       },
+      // Post-commit rollout evidence for the shadow-mode plan ceiling; never inside the transaction.
+      auditLog: { create: async ({ data }: any) => { auditWrites.push(data); return data; } },
     },
   } as any;
-  return { prisma, events, usedCount: () => usedCount, lockCalls: () => lockCalls, lockKeys };
+  return { prisma, events, usedCount: () => usedCount, lockCalls: () => lockCalls, lockKeys, auditWrites };
 }
 
 const baseOcrAdmission = {
@@ -270,6 +290,149 @@ describe('company OCR admission', () => {
         { client: clients[0] } as any,
         { ...releasedInput, monthKey },
       )).allowed, true, 'a released pre-provider refusal must be retryable');
+    } finally {
+      if (companyId) await clients[0]!.company.deleteMany({ where: { id: companyId } });
+      await Promise.all(clients.map((client) => client.$disconnect().catch(() => undefined)));
+    }
+  });
+});
+
+/**
+ * P10-L §15.1 / review G-01. `CompanyPlanTerm.monthlySlipLimit` was a number nothing read — a
+ * "free trial, 15 receipts" with no ceiling. It is layered onto THIS admission rather than counted
+ * beside it: two monthly counters would give support and the admin console two different
+ * "receipts this month" numbers for the same shop.
+ */
+describe('company OCR admission — commercial plan ceiling', () => {
+  const FREE_TRIAL = { tierKey: 'FREE_TRIAL_15', monthlySlipLimit: 15 };
+  const enforced = { ...baseOcrAdmission, enforceReceiptQuota: true };
+
+  it('refuses receipt 16 of 15 as plan_exceeded, with its own code and no usage event', async () => {
+    const state = fakeOcrPrisma({ planTerm: FREE_TRIAL, used: 15 });
+    const result = await admitCompanyOcr(state.prisma, enforced);
+
+    assert.deepEqual(result, {
+      allowed: false, reason: 'plan_exceeded', usedCount: 15, monthlyLimit: 15, tierKey: 'FREE_TRIAL_15',
+    });
+    assert.equal(companyOcrErrorCode(result as any), 'RECEIPT_QUOTA_EXCEEDED');
+    assert.equal(state.events.length, 0, 'a refused read is not a document read');
+    assert.equal(state.usedCount(), 15);
+  });
+
+  it('applies to both receipt routes and NEVER to a bank statement', async () => {
+    for (const sourceRoute of ['receipt-ocr-web', 'receipt-ocr-line'] as const) {
+      const blocked = fakeOcrPrisma({ planTerm: FREE_TRIAL, used: 15 });
+      assert.equal((await admitCompanyOcr(blocked.prisma, { ...enforced, sourceRoute })).allowed, false, sourceRoute);
+    }
+    // A statement import is an accounting job, not one of the receipts the shop bought.
+    const statements = fakeOcrPrisma({ planTerm: FREE_TRIAL, used: 15 });
+    const result = await admitCompanyOcr(statements.prisma, { ...enforced, sourceRoute: 'bank-statement-extract' });
+    assert.equal(result.allowed, true);
+    assert.equal(statements.usedCount(), 16);
+  });
+
+  it('lets the OPS brake keep its own code and copy when it is the lower ceiling', async () => {
+    // ocrMonthlyLimit 10 < plan 15: this is the platform stopping spend, not the shop running out.
+    const state = fakeOcrPrisma({ limit: 10, used: 10, planTerm: FREE_TRIAL });
+    const result = await admitCompanyOcr(state.prisma, enforced);
+
+    assert.deepEqual(result, { allowed: false, reason: 'exceeded', usedCount: 10, monthlyLimit: 10 });
+    assert.equal(companyOcrErrorCode(result as any), 'OCR_MONTHLY_LIMIT_EXCEEDED');
+  });
+
+  it('lets the PLAN ceiling bind when it is the lower of the two', async () => {
+    const state = fakeOcrPrisma({ limit: 50, used: 15, planTerm: FREE_TRIAL });
+    const result = await admitCompanyOcr(state.prisma, enforced);
+
+    assert.equal(result.allowed, false);
+    assert.equal((result as any).reason, 'plan_exceeded');
+    assert.equal((result as any).monthlyLimit, 15, 'the refusal names the ceiling that actually bound');
+  });
+
+  it('uses the warm-up ceiling inside its window and the tier ceiling outside it', async () => {
+    const warmup = (warmupUntil: Date) => ({ ...FREE_TRIAL, warmupUntil, warmupSlipLimit: 10 });
+
+    const inside = fakeOcrPrisma({ planTerm: warmup(new Date(Date.now() + 60_000)), used: 10 });
+    assert.equal((await admitCompanyOcr(inside.prisma, enforced)).allowed, false, 'warm-up caps at 10');
+
+    // One minute past the window the trial's own 15 applies, so the 11th receipt goes through.
+    const outside = fakeOcrPrisma({ planTerm: warmup(new Date(Date.now() - 60_000)), used: 10 });
+    assert.equal((await admitCompanyOcr(outside.prisma, enforced)).allowed, true);
+  });
+
+  it('never blocks a company with no plan term row', async () => {
+    // A shop that predates P29 is grandfathered; the day enforcement is switched on must not be the
+    // day it discovers a ceiling it never bought.
+    const state = fakeOcrPrisma({ used: 9_999 });
+    assert.equal((await admitCompanyOcr(state.prisma, enforced)).allowed, true);
+  });
+
+  it('counts and audits but never blocks while RECEIPT_QUOTA_ENFORCED is off', async () => {
+    const state = fakeOcrPrisma({ planTerm: FREE_TRIAL, used: 15 });
+    const result = await admitCompanyOcr(state.prisma, { ...baseOcrAdmission, enforceReceiptQuota: false });
+
+    assert.equal(result.allowed, true, 'production counts for a month before it refuses anything');
+    assert.equal(state.usedCount(), 16);
+    assert.equal(state.auditWrites.length, 1, 'the rollout gets one durable row per company-month');
+    assert.equal(state.auditWrites[0]!.action, 'plan.receipt_quota.would_block');
+    assert.equal(state.auditWrites[0]!.requestId, 'plan-quota-co-1-2026-08');
+    assert.deepEqual(state.auditWrites[0]!.metadataJson, {
+      monthKey: '2026-08', sourceRoute: 'receipt-ocr-web', usedCount: 15, planLimit: 15, tierKey: 'FREE_TRIAL_15',
+    });
+  });
+
+  it('does not write a second would-block row in the same month', async () => {
+    const state = fakeOcrPrisma({ planTerm: FREE_TRIAL, used: 15, auditedThisMonth: true });
+    assert.equal((await admitCompanyOcr(state.prisma, baseOcrAdmission)).allowed, true);
+    assert.deepEqual(state.auditWrites, []);
+  });
+
+  it('does not audit a shop that is merely near its ceiling', async () => {
+    const state = fakeOcrPrisma({ planTerm: FREE_TRIAL, used: 14 });
+    assert.equal((await admitCompanyOcr(state.prisma, baseOcrAdmission)).allowed, true);
+    assert.deepEqual(state.auditWrites, []);
+  });
+
+  it('real PostgreSQL: the plan ceiling admits only one of two concurrent reads at limit-1', async (t) => {
+    const databaseUrl = process.env.DATABASE_URL?.trim();
+    if (!databaseUrl) return t.skip('DATABASE_URL is not set');
+
+    const clients = [
+      new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl }) }),
+      new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl }) }),
+    ];
+    let companyId = '';
+    const monthKey = '2099-09';
+    try {
+      await Promise.all(clients.map((client) => client.$queryRaw`SELECT 1`));
+      companyId = (await clients[0]!.company.create({
+        data: { name: `plan-quota-race-${process.pid}-${randomUUID()}`, status: 'ACTIVE' },
+        select: { id: true },
+      })).id;
+      const now = new Date();
+      await clients[0]!.companyPlanTerm.create({
+        data: {
+          companyId, tierKey: 'FREE_TRIAL_15', branchLimit: 1, employeeLimit: 3, monthlySlipLimit: 15,
+          termStartAt: now, termEndsAt: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000),
+        },
+      });
+      await clients[0]!.companyOcrMonthlyUsage.create({ data: { companyId, monthKey, usedCount: 14 } });
+
+      const results = await Promise.all(clients.map((client, index) => admitCompanyOcr(
+        { client } as any,
+        {
+          companyId, monthKey, sourceRoute: 'receipt-ocr-web',
+          requestId: `plan-race-${index}-${randomUUID()}`, enforceReceiptQuota: true,
+        },
+      )));
+
+      assert.equal(results.filter((result) => result.allowed).length, 1);
+      assert.equal(results.filter((result) => !result.allowed && result.reason === 'plan_exceeded').length, 1);
+      assert.equal((await clients[0]!.companyOcrMonthlyUsage.findUniqueOrThrow({
+        where: { companyId_monthKey: { companyId, monthKey } },
+        select: { usedCount: true },
+      })).usedCount, 15);
+      assert.equal(await clients[0]!.companyOcrUsageEvent.count({ where: { companyId, monthKey } }), 1);
     } finally {
       if (companyId) await clients[0]!.company.deleteMany({ where: { id: companyId } });
       await Promise.all(clients.map((client) => client.$disconnect().catch(() => undefined)));

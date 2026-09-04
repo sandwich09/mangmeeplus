@@ -189,6 +189,10 @@ describe('AiGatewayClient OCR governance', () => {
         upsert: async () => ({ usedCount: ++usedCount }),
         updateMany: async () => { usedCount -= 1; return { count: 1 }; },
       },
+      // P10-L §15.1: no CompanyPlanTerm row = grandfathered unlimited, so the ops-brake behaviour
+      // every case in this file asserts is unchanged by the commercial ceiling layered above it.
+      companyPlanTerm: { findUnique: async () => null },
+      auditLog: { findFirst: async () => null },
     };
     const prisma = {
       client: {
@@ -213,6 +217,8 @@ describe('AiGatewayClient OCR governance', () => {
       companyOcrUsageEvent: { findUnique: async () => null },
       companyAiConfiguration: { findUnique: async () => ({ ocrEnabled: false, ocrMonthlyLimit: 10 }) },
       companyOcrMonthlyUsage: { findUnique: async () => null },
+      companyPlanTerm: { findUnique: async () => null },
+      auditLog: { findFirst: async () => null },
     };
     const prisma = {
       client: {
