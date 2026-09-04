@@ -62,6 +62,31 @@ const TRANSITIONS: Readonly<Record<CompanySignupState, readonly CompanySignupSta
   REJECTED: [],
 };
 
+export const SIGNUP_SOURCE_OFFICIAL_SITE = 'official-site';
+export const SIGNUP_SOURCE_LINE_OA = 'line-oa';
+
+// P10-L §5. The LINE source proves a real person with a server-verified LIFF ID token instead of a
+// mailbox, so it has NO EMAIL_* edge at all — SIGNUP-02 is satisfied by the token, and an EMAIL_*
+// state here could only mean a bug that mailed a shop with no address. AUTO_FREE is the extra
+// VALIDATED → PROVISIONING edge; COMPLETED → SUSPENDED is how an admin stops an auto-approved shop
+// after the fact (§3.7). LINE_LINK_PENDING is skipped: the identity is linked inside provisioning.
+const LINE_OA_TRANSITIONS: Readonly<Record<CompanySignupState, readonly CompanySignupState[]>> = {
+  RECEIVED: ['VALIDATED', 'SUSPENDED'],
+  VALIDATED: ['PENDING_REVIEW', 'PROVISIONING', 'SUSPENDED'],
+  PENDING_REVIEW: ['PROVISIONING', 'REJECTED', 'SUSPENDED'],
+  EMAIL_PENDING: [],
+  EMAIL_FAILED: [],
+  EMAIL_VERIFIED: [],
+  PROVISIONING: ['READY', 'PROVISIONING_FAILED', 'SUSPENDED'],
+  PROVISIONING_FAILED: ['PROVISIONING', 'SUSPENDED'],
+  READY: ['COMPLETED', 'SUSPENDED'],
+  LINE_LINK_PENDING: [],
+  COMPLETED: ['SUSPENDED'],
+  SUSPENDED: [],
+  EXPIRED: [],
+  REJECTED: [],
+};
+
 const PHONE_PATTERN = /^[0-9+\-() ]{6,20}$/;
 
 function bounded(value: string, field: string, max: number): string {
@@ -114,8 +139,23 @@ export function companySignupPayloadHash(input: NormalizedCompanySignupInput): s
   return canonicalFingerprint(input);
 }
 
-export function canTransitionCompanySignup(from: CompanySignupState, to: CompanySignupState): boolean {
-  return TRANSITIONS[from].includes(to);
+/**
+ * Which table applies is decided by the row's `source` and nothing else. An unknown source falls
+ * back to the web form's table, which is the stricter of the two — a mis-tagged row can only lose
+ * moves, never gain the AUTO_FREE shortcut.
+ */
+export function signupTransitionTable(
+  source: string,
+): Readonly<Record<CompanySignupState, readonly CompanySignupState[]>> {
+  return source === SIGNUP_SOURCE_LINE_OA ? LINE_OA_TRANSITIONS : TRANSITIONS;
+}
+
+export function canTransitionCompanySignup(
+  from: CompanySignupState,
+  to: CompanySignupState,
+  source: string = SIGNUP_SOURCE_OFFICIAL_SITE,
+): boolean {
+  return signupTransitionTable(source)[from].includes(to);
 }
 
 export function isCompanySignupFailureState(state: CompanySignupState): boolean {

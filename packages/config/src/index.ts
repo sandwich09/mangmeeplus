@@ -201,6 +201,26 @@ export const apiConfigSchema = baseConfigSchema.extend({
   // observable behaviour is byte-identical to the release before it. Rollout is additionally gated
   // on the UAT link-preview measurement (spec §17 Q2 / G7).
   LINE_WEB_HANDOFF_ENABLED: envBoolean.default(false),
+  // P10-L LINE-first signup. Default OFF everywhere: with it off the LIFF endpoints answer 403
+  // `line_signup_disabled` and no `line-oa` row can be created, which is the whole rollback.
+  LINE_SIGNUP_ENABLED: envBoolean.default(false),
+  // MANUAL = every application waits for the admin queue. AUTO_FREE skips the queue up to the daily
+  // cap. An unknown value FAILS the schema rather than degrading to the more permissive mode.
+  LINE_SIGNUP_APPROVAL_MODE: z.enum(['MANUAL', 'AUTO_FREE']).default('MANUAL'),
+  LINE_SIGNUP_AUTO_DAILY_CAP: z.coerce.number().int().nonnegative().default(20),
+  // First-week slip ceiling for a LINE trial shop, below its tier's own limit (spec §9).
+  LINE_SIGNUP_WARMUP_SLIPS: z.coerce.number().int().positive().default(10),
+  // Per-shop AI spend cap for a free trial, in satang. 8000 = ฿80/month, Owner 2026-09-04 from the
+  // production meter: a stop, not an expected bill (a normal trial shop spends ฿15–25).
+  LINE_FREE_AI_BUDGET_SATANG: z.coerce.number().int().positive().default(8000),
+  LINE_SIGNUP_ADMIN_REMINDER_MINUTES: z.coerce.number().int().positive().default(60),
+  // Asia/Bangkok office window the "within a business day" promise is measured against.
+  // Days are a MON..SUN range; hours are HH:MM-HH:MM on a 24h clock.
+  LINE_SIGNUP_BUSINESS_DAYS: z.string().regex(/^(MON|TUE|WED|THU|FRI|SAT|SUN)-(MON|TUE|WED|THU|FRI|SAT|SUN)$/).default('MON-SAT'),
+  LINE_SIGNUP_BUSINESS_HOURS: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d-([01]\d|2[0-3]):[0-5]\d$/).default('09:00-18:00'),
+  // Review G-01: the monthly slip ceiling has never been enforced anywhere, so switching it on is
+  // the first time EVERY existing shop meets a limit. Separate from the signup flag on purpose.
+  RECEIPT_QUOTA_ENFORCED: envBoolean.default(false),
   LINE_LIFF_ID: z.string().optional(),
   LINE_MESSAGING_CHANNEL_ID: z.string().optional(),
   LINE_MESSAGING_CHANNEL_SECRET: z.string().optional(),

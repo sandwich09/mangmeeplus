@@ -65,7 +65,7 @@ export class CompanySignupCoreService {
         || current.state === 'LINE_LINK_PENDING' || current.state === 'COMPLETED') {
         return { request: current, claimed: false, attemptId: null };
       }
-      if (!canTransitionCompanySignup(current.state as CompanySignupState, 'PROVISIONING')) {
+      if (!canTransitionCompanySignup(current.state as CompanySignupState, 'PROVISIONING', current.source)) {
         throw new ConflictException(`invalid_signup_transition:${current.state}:PROVISIONING`);
       }
       const attemptId = randomUUID();
@@ -134,7 +134,9 @@ export class CompanySignupCoreService {
       if (current.state === toState && current.failureCode === normalizedFailure) {
         return { request: current, replayed: true };
       }
-      if (!canTransitionCompanySignup(current.state as CompanySignupState, toState)) {
+      // P10-L: the table is chosen by the row's own source, so a LINE application can never take an
+      // EMAIL_* edge and the web form can never take the AUTO_FREE shortcut.
+      if (!canTransitionCompanySignup(current.state as CompanySignupState, toState, current.source)) {
         throw new ConflictException(`invalid_signup_transition:${current.state}:${toState}`);
       }
       if (isCompanySignupFailureState(toState) && !normalizedFailure) {
