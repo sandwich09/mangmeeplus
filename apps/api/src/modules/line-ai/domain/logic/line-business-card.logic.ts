@@ -20,7 +20,8 @@ const preview = (value: string, max: number) => {
   return characters.length > max ? `${characters.slice(0, max - 1).join('')}…` : characters.join('');
 };
 
-type SafeButton = { label: string; uri: string };
+/** A URI button, or one that sends a text command the webhook already answers (`โปรโมชั่น`). */
+type SafeButton = { label: string; uri: string } | { label: string; text: string };
 
 /** A labelled fact on its own line of the card body. §10.1 asks the expense/reimbursement summaries to
  *  be STRUCTURED rows rather than one wrapped paragraph, so the reader sees each fact separately. */
@@ -102,7 +103,9 @@ function bubble(
         type: 'box', layout: 'vertical', spacing: 'sm', paddingAll: '12px',
         contents: buttons.map((button) => ({
           type: 'button', style: 'primary', color: THEME.brandDark,
-          action: { type: 'uri', label: bounded(button.label, 40), uri: button.uri },
+          action: 'uri' in button
+            ? { type: 'uri', label: bounded(button.label, 40), uri: button.uri }
+            : { type: 'message', label: bounded(button.label, 40), text: button.text },
         })),
       },
     } : {}),
@@ -325,6 +328,36 @@ export function buildLegalAcceptanceRequiredMessage(
         webLink: { label: 'เข้าเว็บแอปเพื่อยอมรับข้อกำหนด', path: `/companies/${encodeURIComponent(companyId)}` },
       } : {}),
     }, webBaseUrl, companyId ?? ''),
+  };
+}
+
+/** The command the webhook already answers with the promotion card (`staffMenuCommand` → `promotion`). */
+const VIEW_PACKAGES_COMMAND = 'โปรโมชั่น';
+/** TODO(L-B): wire this text (or a postback) to the package-change request use case the L-A branch
+ *  added; until the dispatcher exists it falls through to the ordinary assistant turn. */
+const PACKAGE_CHANGE_COMMAND = 'ขอเปลี่ยนแพ็กเกจ';
+
+/**
+ * Spec §3.7 / §7 row "ชนโควตา 15 ใบ" — the reply to the receipt that hit the monthly ceiling.
+ *
+ * Both buttons send a text command rather than opening a URL: the shop owner is in the chat with a
+ * photo they just sent, and "ดูแพ็กเกจ" is defined by the spec as a PULL of the promotion card that
+ * already exists in this lane — a web link would leave the conversation to show the same thing.
+ * The limit is passed in, never written into the sentence: a warm-up shop meets this wall at 10.
+ */
+export function buildReceiptQuotaExceededMessage(text: string): LineReplyMessage {
+  return {
+    type: 'flex',
+    altText: preview(text, 400),
+    contents: bubble(
+      { title: 'โควตาอ่านใบเสร็จเดือนนี้ครบแล้ว', badge: '📄 ครบโควตาเดือนนี้', text },
+      undefined,
+      '',
+      [
+        { label: 'ดูแพ็กเกจ', text: VIEW_PACKAGES_COMMAND },
+        { label: 'ขอเปลี่ยนแพ็กเกจ', text: PACKAGE_CHANGE_COMMAND },
+      ],
+    ),
   };
 }
 
