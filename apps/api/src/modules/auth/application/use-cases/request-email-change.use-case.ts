@@ -19,7 +19,7 @@ export class RequestEmailChangeUseCase {
 
   async execute(input: {
     userId: string;
-    currentPassword: string;
+    currentPassword?: string;
     newEmail: string;
     requestId?: string;
   }): Promise<{ email: string; expiresAt: string }> {
@@ -30,10 +30,15 @@ export class RequestEmailChangeUseCase {
     });
     const credential = user?.credential;
 
-    if (!user || !credential || credential.status === 'DISABLED') {
+    if (!user || credential?.status === 'DISABLED') {
       throw new UnauthorizedException('Current password is incorrect.');
     }
-    if (!verifyPassword(input.currentPassword, credential.passwordHash)) {
+    // A LINE-first owner (P10-L §15.4) has no `UserCredential` at all: nothing was ever issued to
+    // them, so there is no password to re-prove and the authenticated session is the only evidence
+    // they can offer. Demanding one here is what made the recovery email — the whole point of
+    // §3.6 progressive profiling — unreachable for exactly the accounts that need it most.
+    // The password check stays mandatory the moment a credential exists.
+    if (credential && !verifyPassword(input.currentPassword ?? '', credential.passwordHash)) {
       throw new BadRequestException(CURRENT_PASSWORD_INCORRECT);
     }
 
@@ -46,7 +51,12 @@ export class RequestEmailChangeUseCase {
       select: { id: true },
     });
     if (duplicate) {
-      throw new ConflictException('This email is already being used by another account.');
+      // Coded so the caller can offer the §4F account-merge path instead of a dead end. The
+      // message is unchanged for callers that only read `message`.
+      throw new ConflictException({
+        code: 'email_belongs_to_other_account',
+        message: 'This email is already being used by another account.',
+      });
     }
 
     const rawToken = generateRawToken();

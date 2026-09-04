@@ -31,6 +31,7 @@ import { NotifyPasswordResetRequestUseCase } from './application/use-cases/notif
 import { GetAccountSecurityStateUseCase } from './application/use-cases/get-account-security-state.use-case';
 import { SetAiAssistantPreferenceUseCase } from './application/use-cases/set-ai-assistant-preference.use-case';
 import { RequestEmailChangeUseCase } from './application/use-cases/request-email-change.use-case';
+import { AccountProfileUseCase } from './application/use-cases/account-profile.use-case';
 import { ResendEmailVerificationUseCase } from './application/use-cases/resend-email-verification.use-case';
 import { ConfirmEmailVerificationUseCase } from './application/use-cases/confirm-email-verification.use-case';
 import { AuthRateLimitService } from './application/auth-rate-limit.service';
@@ -104,6 +105,7 @@ export function selectAuthMailer(
     GetAccountSecurityStateUseCase,
     SetAiAssistantPreferenceUseCase,
     RequestEmailChangeUseCase,
+    AccountProfileUseCase,
     ResendEmailVerificationUseCase,
     ConfirmEmailVerificationUseCase,
     AuthRateLimitService,

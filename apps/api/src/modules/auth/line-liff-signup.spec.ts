@@ -19,7 +19,7 @@ function makeController(config: Record<string, unknown> = {}): AuthController {
     { lineLiffId: '1234567890-test', isLocal: false, sesWebBaseUrl: WEB_BASE, ...config } as any,
     stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
     stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
-    stub, stub, stub, stub, stub, stub,
+    stub, stub, stub, stub, stub, stub, stub,
   );
 }
 
@@ -116,8 +116,10 @@ describe('POST /v1/auth/line/liff/session (the surface)', () => {
       stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
       stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
       stub, stub, stub, stub, stub,
-      // The LIFF session exchange is the last constructor parameter before the optional audit.
+      // Position 28: `exchangeLiffSession`. `accountProfile` (L-E) follows it, then the optional
+      // audit — see the arity guard in auth.controller.spec.ts before touching this row.
       { execute: async (cmd: any) => { calls.push(cmd); return { handoffUrl: `${WEB_BASE}/l/RAWTOKEN` }; } } as any,
+      stub,
     );
 
     const first = await controller.lineLiffSession({ idToken: 'a.b.c' } as any);

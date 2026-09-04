@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { runInNewContext } from 'node:vm';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { BadRequestException, HttpException, UnauthorizedException, ValidationPipe } from '@nestjs/common';
 import { HEADERS_METADATA } from '@nestjs/common/constants';
 import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../../../common/pipes/validation-pipe.options';
@@ -19,9 +21,39 @@ function makeController(config: Record<string, unknown> = {}): AuthController {
     { lineLiffId: '1234567890-test', isLocal: false, ...config } as any,
     stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
     stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
-    stub, stub, stub, stub, stub, stub,
+    stub, stub, stub, stub, stub, stub, stub,
   );
 }
+
+/**
+ * Every construction below is positional, so a new constructor parameter silently shifts whatever
+ * a test placed by hand — `rateLimit` lands on `legalAcceptance` and the test still "passes" while
+ * exercising nothing. Two branches each grew the last stub row from five entries to six
+ * independently, and the merged constructor needed seven; nothing said so, because a missing
+ * trailing argument is `undefined` and the suites run through tsx, which does not typecheck.
+ *
+ * This pins the arity and the positions the tests below actually depend on. If it fails, do NOT
+ * pad the rows until it goes green — re-read the constructor and re-count by name.
+ */
+describe('AuthController constructor shape', () => {
+  const NAMED_POSITIONS: ReadonlyArray<readonly [number, string]> = [
+    [2, 'prisma'], [11, 'changePassword'], [13, 'notifyPasswordResetRequest'],
+    [15, 'setAiAssistantPreferenceUseCase'], [19, 'authRateLimit'], [20, 'legalAcceptance'],
+  ];
+
+  it('has the arity and the parameter order the positional stubs assume', () => {
+    const source = readFileSync(join(__dirname, 'auth.controller.ts'), 'utf8');
+    const start = source.indexOf('constructor(', source.indexOf('export class AuthController'));
+    const params = [...source.slice(start, source.indexOf(') {}', start)).matchAll(/private readonly (\w+):/g)]
+      .map((match) => match[1]!);
+
+    assert.equal(params.length, 30, 'constructor arity changed: re-count the stub rows BY NAME');
+    assert.equal(params.at(-1), 'audit', 'the optional audit param must stay last');
+    for (const [position, name] of NAMED_POSITIONS) {
+      assert.equal(params[position - 1], name, `parameter #${position} moved; the stub rows now place a fake on the wrong dependency`);
+    }
+  });
+});
 
 function request(url: string) {
   return {
@@ -91,7 +123,7 @@ describe('AuthController password reset request', () => {
     const controller = new AuthController(
       stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
       stub, stub, notifyPasswordResetRequest, stub, stub, stub, stub, stub, rateLimit, stub, stub, stub,
-      stub, stub, stub, stub, stub, stub,
+      stub, stub, stub, stub, stub, stub, stub,
     );
 
     const body = await controller.requestPasswordResetNotice({ username: 'first' }, {
@@ -126,7 +158,7 @@ describe('AuthController password reset request', () => {
     const controller = new AuthController(
       stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
       stub, stub, notifyPasswordResetRequest, stub, stub, stub, stub, stub, rateLimit, stub, stub, stub,
-      stub, stub, stub, stub, stub, stub,
+      stub, stub, stub, stub, stub, stub, stub,
     );
     const req = { headers: {}, socket: { remoteAddress: '198.51.100.9' } } as any;
 
@@ -218,7 +250,7 @@ describe('AI assistant preference (PDPA opt-out)', () => {
     const controller = new AuthController(
       stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
       stub, stub, stub, stub, pref, stub, stub, stub, stub, stub, stub, stub,
-      stub, stub, stub, stub, stub, stub,
+      stub, stub, stub, stub, stub, stub, stub,
     );
 
     await controller.setAiAssistantPreference({ enabled: false } as any, {
@@ -237,7 +269,7 @@ describe('AuthController password change session binding', () => {
     const controller = new AuthController(
       stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
       changePassword, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
-      stub, stub, stub, stub, stub, stub,
+      stub, stub, stub, stub, stub, stub, stub,
     );
     const payload = Buffer.from(JSON.stringify({ sid: 'session-current' })).toString('base64url');
 
@@ -274,7 +306,7 @@ describe('AuthController me()', () => {
     return new AuthController(
       stub, prisma, stub, stub, stub, stub, stub, stub, stub, stub,
       stub, stub, stub, stub, stub, stub, stub, stub, stub, legalAcceptance, stub, stub,
-      stub, stub, stub, stub, stub, stub,
+      stub, stub, stub, stub, stub, stub, stub,
     );
   }
 
