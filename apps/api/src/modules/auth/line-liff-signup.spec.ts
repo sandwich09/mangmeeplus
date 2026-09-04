@@ -4,6 +4,7 @@ import { runInNewContext } from 'node:vm';
 import { ForbiddenException, ServiceUnavailableException } from '@nestjs/common';
 import { HEADERS_METADATA } from '@nestjs/common/constants';
 import { LIFF_PAGE_SCRIPT } from '../../common/security/liff-page.security';
+import { IS_PUBLIC_ROUTE_KEY } from '../../common/security/public.decorator';
 import { currentLegalRelease } from './application/legal-acceptance.service';
 import { AuthController } from './presentation/auth.controller';
 import { ExchangeLiffSessionUseCase } from './application/use-cases/exchange-liff-session.use-case';
@@ -85,6 +86,34 @@ describe('P10-L LIFF signup page', () => {
     assert.ok(html.includes('data-liff-mode="start"'));
     assert.ok(html.includes('id="open-web"'), 'a tappable fallback when openWindow is refused');
     assert.ok(html.includes('/v1/auth/line/link-page/signup'), 'needsSignup has somewhere to go');
+  });
+});
+
+describe('POST /v1/auth/line/liff/session (the surface)', () => {
+  it('passes the token through and omits companyId until the picker answers', async () => {
+    const calls: any[] = [];
+    const stub = {} as any;
+    const controller = new AuthController(
+      { lineLiffId: '1234567890-test', sesWebBaseUrl: WEB_BASE } as any,
+      stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
+      stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
+      stub, stub, stub, stub, stub,
+      // The LIFF session exchange is the last constructor parameter before the optional audit.
+      { execute: async (cmd: any) => { calls.push(cmd); return { handoffUrl: `${WEB_BASE}/l/RAWTOKEN` }; } } as any,
+    );
+
+    const first = await controller.lineLiffSession({ idToken: 'a.b.c' } as any);
+    assert.deepEqual(first, { handoffUrl: `${WEB_BASE}/l/RAWTOKEN` });
+    assert.deepEqual(calls[0], { idToken: 'a.b.c' }, 'no companyId key at all on the first call');
+
+    await controller.lineLiffSession({ idToken: 'a.b.c', companyId: 'co-2' } as any);
+    assert.deepEqual(calls[1], { idToken: 'a.b.c', companyId: 'co-2' });
+  });
+
+  it('is reachable with no session, at the path spec §4 names', () => {
+    // The ID token IS the credential here: a page with no cookie has to be able to call this.
+    assert.equal(Reflect.getMetadata('path', AuthController.prototype.lineLiffSession), 'line/liff/session');
+    assert.equal(Reflect.getMetadata(IS_PUBLIC_ROUTE_KEY, AuthController.prototype.lineLiffSession), true);
   });
 });
 

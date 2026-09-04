@@ -205,6 +205,37 @@ describe('SignupClaimEmailService.drain', () => {
     });
   });
 
+  it('routes a LINE push row to the push sender, carrying the kind the row names', async () => {
+    const h = harness();
+    h.queue([event({
+      id: 'evt-push', eventType: LINE_SIGNUP_PUSH_EVENT_TYPE,
+      payloadJson: { schemaVersion: 1, data: { signupRequestId: 'signup-1', kind: 'approved' } },
+    })]);
+
+    const result = await h.service.drain();
+
+    assert.equal(result.sent, 1);
+    assert.deepEqual(h.lineDelivered, [{ id: 'signup-1', kind: 'approved' }]);
+    // Settled against its OWN type, so a mis-typed CAS cannot publish someone else's work.
+    assert.deepEqual(h.published[0], {
+      id: 'evt-push', claimToken: 'lease-1', expectedEventType: LINE_SIGNUP_PUSH_EVENT_TYPE,
+    });
+  });
+
+  it('fails a LINE push row that names no kind instead of guessing one', async () => {
+    const h = harness();
+    h.queue([event({
+      id: 'evt-push', eventType: LINE_SIGNUP_PUSH_EVENT_TYPE,
+      payloadJson: { schemaVersion: 1, data: { signupRequestId: 'signup-1' } },
+    })]);
+
+    const result = await h.service.drain();
+
+    assert.equal(result.failed, 1);
+    assert.deepEqual(h.lineDelivered, []);
+    assert.equal(h.failed[0].error, 'missing_line_push_kind');
+  });
+
   it('claims exactly the signup event types the workflow drain excludes', async () => {
     const h = harness();
     h.queue([event()]);
