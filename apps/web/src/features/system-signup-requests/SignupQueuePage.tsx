@@ -8,9 +8,13 @@ import { Button } from '@/common/components/button';
 import { useToast } from '@/common/components/toast';
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
 import {
+  decidePackageChangeRequest,
   decideSignupRequest,
+  listAutoApprovedSignups,
+  listPackageChangeRequests,
   listSignupRequests,
   reissueSignupClaim,
+  type AdminPackageChangeItemDto,
   type AdminSignupQueueItemDto,
 } from './signup-requests.api';
 import {
@@ -20,6 +24,8 @@ import {
   canReissueSignup,
   canSuspendSignup,
   filterSignupQueue,
+  rejectNotifyDefault,
+  rejectNotifyLabel,
   signupBusinessSummary,
   signupHintChips,
   isFinishingStrandedRow,
@@ -27,6 +33,7 @@ import {
   suspendLeavesShopRunning,
   signupIdleChip,
   signupStateChip,
+  tabLoadsOwnList,
   SIGNUP_QUEUE_TABS,
   type Chip,
   type ChipTone,
@@ -68,15 +75,22 @@ export default function SignupQueuePage() {
   const toast = useToast();
   const { confirm, confirmDialog } = useConfirm();
   const [items, setItems] = useState<AdminSignupQueueItemDto[]>([]);
+  // The two tabs that read their own endpoint. `null` = not fetched yet, so the tab shows no count
+  // rather than a confident zero, and a 403 on either cannot break the main queue.
+  const [autoItems, setAutoItems] = useState<AdminSignupQueueItemDto[] | null>(null);
+  const [packageItems, setPackageItems] = useState<AdminPackageChangeItemDto[] | null>(null);
+  const [tabError, setTabError] = useState<string | null>(null);
   const [tab, setTab] = useState<SignupQueueTab>('ALL');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  // Reject needs its own dialog: the notify checkbox defaults OFF (spec §4D — silent reject,
-  // because the applicant's mailbox is still unproven at this point).
+  // Reject needs its own dialog. The default follows the RAIL: silent for the web form (spec §4D —
+  // the mailbox is unproven), on for LINE (§8 — the chat is the applicant's own, and silence there
+  // is a shop wondering forever).
   const [rejecting, setRejecting] = useState<AdminSignupQueueItemDto | null>(null);
   const [notifyApplicant, setNotifyApplicant] = useState(false);
   const [rejectionReason, setRejectionReason] = useState('');
+  const [packageNote, setPackageNote] = useState('');
 
   const load = async () => {
     setLoading(true);
@@ -89,6 +103,24 @@ export default function SignupQueuePage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Lazily, on first visit: an operator who lacks the partner permission would otherwise 403 the
+  // whole page just by opening the queue.
+  const loadTab = async (next: SignupQueueTab) => {
+    setTabError(null);
+    try {
+      if (next === 'AUTO_APPROVED') setAutoItems((await listAutoApprovedSignups()).items);
+      if (next === 'PACKAGE_CHANGE') setPackageItems((await listPackageChangeRequests()).items);
+    } catch (err) {
+      const e = err as Error & { status?: number };
+      setTabError(e.status === 403 ? 'คุณไม่มีสิทธิ์ดูรายการนี้' : apiErrorMessage(err));
+    }
+  };
+
+  const selectTab = (next: SignupQueueTab) => {
+    setTab(next);
+    if (tabLoadsOwnList(next)) void loadTab(next);
   };
 
   useEffect(() => {
@@ -146,6 +178,7 @@ export default function SignupQueuePage() {
       toast.success(notifyApplicant ? 'ปฏิเสธคำขอและแจ้งผู้สมัครแล้ว' : 'ปฏิเสธคำขอแล้ว');
       setRejecting(null);
       await load();
+      if (tabLoadsOwnList(tab)) await loadTab(tab);
     } catch (err) {
       toast.error(apiErrorMessage(err));
     } finally {
@@ -172,6 +205,33 @@ export default function SignupQueuePage() {
       await decideSignupRequest(item.requestId, { action: 'SUSPEND' });
       toast.success('ระงับคำขอแล้ว');
       await load();
+      if (tabLoadsOwnList(tab)) await loadTab(tab);
+    } catch (err) {
+      toast.error(apiErrorMessage(err));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  // §8 "คำขอเปลี่ยนแพ็กเกจ". APPROVE moves the tier through the partner plan-term writer; the
+  // operator can still open the partner page instead when the move needs a conversation first.
+  const handlePackageDecision = async (item: AdminPackageChangeItemDto, action: 'APPROVE' | 'REJECT') => {
+    const accepted = await confirm({
+      title: action === 'APPROVE' ? 'อนุมัติเปลี่ยนแพ็กเกจ' : 'ไม่อนุมัติคำขอ',
+      message: action === 'APPROVE'
+        ? `เปลี่ยนแพ็กเกจของร้าน ${item.companyName} เป็น ${item.requestedTierKey} และแจ้งลูกค้าทางไลน์ ใช่หรือไม่`
+        : `ปิดคำขอของร้าน ${item.companyName} โดยไม่เปลี่ยนแพ็กเกจ ใช่หรือไม่`,
+      confirmLabel: action === 'APPROVE' ? 'เปลี่ยนแพ็กเกจ' : 'ไม่อนุมัติ',
+      variant: action === 'APPROVE' ? 'primary' : 'danger',
+    });
+    if (!accepted) return;
+    setBusyId(item.id);
+    try {
+      const note = packageNote.trim();
+      await decidePackageChangeRequest(item.id, { action, ...(note ? { note } : {}) });
+      toast.success(action === 'APPROVE' ? 'เปลี่ยนแพ็กเกจและแจ้งลูกค้าแล้ว' : 'ปิดคำขอแล้ว');
+      setPackageNote('');
+      await loadTab('PACKAGE_CHANGE');
     } catch (err) {
       toast.error(apiErrorMessage(err));
     } finally {
@@ -199,7 +259,14 @@ export default function SignupQueuePage() {
     }
   };
 
-  const visible = filterSignupQueue(items, tab);
+  const visible = tab === 'AUTO_APPROVED' ? (autoItems ?? []) : filterSignupQueue(items, tab);
+
+  /** Only the tabs that filter the main queue can show a count before they are opened. */
+  const tabCount = (key: SignupQueueTab): number | null => {
+    if (key === 'AUTO_APPROVED') return autoItems?.length ?? null;
+    if (key === 'PACKAGE_CHANGE') return packageItems?.length ?? null;
+    return filterSignupQueue(items, key).length;
+  };
 
   return (
     <div className="min-h-dvh bg-gray-50 p-6">
@@ -225,8 +292,10 @@ export default function SignupQueuePage() {
           <p>
             ปฏิเสธคำขอของ <span className="font-medium text-gray-900">{rejecting?.companyName}</span> ใช่หรือไม่
           </p>
-          {/* Spec §4D: default OFF. The applicant's mailbox is still unproven at this point, so an
-              unsolicited notice would make the platform a spam cannon aimed at whoever they typed. */}
+          {/* The default follows the rail. Spec §4D: OFF for the web form, because the mailbox is
+              still unproven and an unsolicited notice would make the platform a spam cannon aimed
+              at whoever they typed. §8: ON for LINE, because the chat is the applicant's own and
+              the alternative is a shop that never hears anything again. */}
           <label className="flex items-start gap-2">
             <input
               type="checkbox"
@@ -236,14 +305,19 @@ export default function SignupQueuePage() {
               disabled={busyId !== null}
             />
             <span>
-              ส่งอีเมลแจ้งผู้สมัคร
+              {rejecting ? rejectNotifyLabel(rejecting) : 'ส่งอีเมลแจ้งผู้สมัคร'}
               <span className="mt-0.5 block text-xs text-gray-500">
-                ค่าเริ่มต้นคือไม่ส่ง เพราะอีเมลนี้ยังไม่ผ่านการยืนยัน ข้อความที่ส่งจะไม่เปิดเผยเหตุผลภายใน
+                {rejecting && isLineSignup(rejecting)
+                  ? 'ค่าเริ่มต้นคือส่ง เพราะลูกค้าเปิดแชทนี้เอง ข้อความที่ส่งจะไม่เปิดเผยเหตุผลภายใน'
+                  : 'ค่าเริ่มต้นคือไม่ส่ง เพราะอีเมลนี้ยังไม่ผ่านการยืนยัน ข้อความที่ส่งจะไม่เปิดเผยเหตุผลภายใน'}
               </span>
             </span>
           </label>
 
-          {notifyApplicant && (
+          {/* The paragraph rides the EMAIL rail only. A LINE rejection sends the fixed §7 copy,
+              which already carries the phone number and the address to come back on — offering a
+              box here would promise the shop a message that never travels. */}
+          {notifyApplicant && rejecting && !isLineSignup(rejecting) && (
             <div className="space-y-1.5">
               <label htmlFor="signup-rejection-reason" className="block text-sm font-medium text-gray-700">
                 ข้อความถึงผู้สมัคร (ไม่บังคับ)
@@ -279,13 +353,13 @@ export default function SignupQueuePage() {
         <div className="flex flex-wrap items-center gap-2">
           {SIGNUP_QUEUE_TABS.map((t) => {
             const active = tab === t.key;
-            const count = filterSignupQueue(items, t.key).length;
+            const count = tabCount(t.key);
             return (
               <button
                 key={t.key}
                 type="button"
                 aria-pressed={active}
-                onClick={() => setTab(t.key)}
+                onClick={() => selectTab(t.key)}
                 className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${
                   active
                     ? 'border-brand-200 bg-brand-50 text-brand-700'
@@ -293,7 +367,7 @@ export default function SignupQueuePage() {
                 }`}
               >
                 {t.label}
-                <span className="ml-1.5 text-xs text-gray-400">{count}</span>
+                {count !== null && <span className="ml-1.5 text-xs text-gray-400">{count}</span>}
               </button>
             );
           })}
@@ -308,7 +382,100 @@ export default function SignupQueuePage() {
           </div>
         )}
 
-        {!error && (
+        {tabError && (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {tabError}
+          </div>
+        )}
+
+        {/* §8 "คำขอเปลี่ยนแพ็กเกจ": its own shape — a shop, a move, and who asked. */}
+        {tab === 'PACKAGE_CHANGE' && !tabError && (
+          <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
+            <div className="space-y-1.5 border-b border-gray-100 px-4 py-3">
+              <label htmlFor="package-change-note" className="block text-sm font-medium text-gray-700">
+                ข้อความถึงร้าน (ไม่บังคับ)
+              </label>
+              <input
+                id="package-change-note"
+                maxLength={200}
+                value={packageNote}
+                onChange={(e) => setPackageNote(e.target.value)}
+                disabled={busyId !== null}
+                placeholder="เช่น เริ่มรอบใหม่วันนี้นะคะ"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-brand-400 focus:outline-none disabled:bg-gray-50"
+              />
+              <p className="text-xs text-gray-500">ต่อท้ายข้อความที่ระบบส่งให้ร้านทางไลน์</p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200 text-left text-sm">
+                <thead className="bg-gray-50 text-xs font-medium uppercase text-gray-500">
+                  <tr>
+                    <th className="px-4 py-3">ร้าน</th>
+                    <th className="px-4 py-3">แพ็กเกจที่ขอ</th>
+                    <th className="px-4 py-3">ผู้ขอ</th>
+                    <th className="px-4 py-3">เวลา</th>
+                    <th className="px-4 py-3">การทำงาน</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 text-gray-700">
+                  {(packageItems ?? []).length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-4 py-12 text-center text-sm text-gray-400">
+                        ไม่มีคำขอเปลี่ยนแพ็กเกจที่รออยู่
+                      </td>
+                    </tr>
+                  ) : (packageItems ?? []).map((item) => {
+                    const busy = busyId === item.id;
+                    return (
+                      <tr key={item.id} className="align-top hover:bg-gray-50">
+                        <td className="px-4 py-3">
+                          <p className="font-medium text-gray-900">{item.companyName}</p>
+                          {item.note && <p className="mt-0.5 text-xs text-gray-500">{item.note}</p>}
+                        </td>
+                        <td className="px-4 py-3 text-xs text-gray-600">
+                          {item.currentTierKey ? `${item.currentTierKey} → ` : ''}{item.requestedTierKey}
+                        </td>
+                        <td className="px-4 py-3 text-xs text-gray-600">{item.requestedByDisplayName ?? '—'}</td>
+                        <td className="px-4 py-3 text-xs text-gray-500">{formatThaiDateTime(item.createdAt)}</td>
+                        <td className="px-4 py-3">
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => void handlePackageDecision(item, 'APPROVE')}
+                              className={`${rowActionClass} border-green-300 bg-green-50 text-green-700 hover:bg-green-100`}
+                            >
+                              {busy ? 'กำลังทำรายการ...' : 'เปลี่ยนแพ็กเกจให้'}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => void handlePackageDecision(item, 'REJECT')}
+                              className={`${rowActionClass} border-red-200 bg-red-50 text-red-600 hover:bg-red-100`}
+                            >
+                              ไม่อนุมัติ
+                            </button>
+                            {/* The move sometimes needs a conversation and a term date first —
+                                that lives on the partner page, which is also where the tier
+                                writer this button calls actually lives. */}
+                            <a
+                              href={`/system/partners/${item.companyId}`}
+                              className={`${rowActionClass} border-gray-300 bg-white text-gray-700 hover:bg-gray-50`}
+                            >
+                              เปิดหน้าพาร์ทเนอร์
+                            </a>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {!error && tab !== 'PACKAGE_CHANGE' && (
           <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200 text-left text-sm">
@@ -353,7 +520,25 @@ export default function SignupQueuePage() {
                           </td>
                           <td className="px-4 py-3">
                             <p className="text-gray-700">{item.contactEmail ?? '—'}</p>
-                            <p className="text-xs text-gray-500">{item.phoneNumber ?? '—'}</p>
+                            {/* §8: an admin reads this queue on a phone. A number that is only text
+                                is a number they have to retype into the dialler. */}
+                            {item.phoneNumber ? (
+                              <a
+                                href={`tel:${item.phoneNumber}`}
+                                className="text-xs text-brand-700 underline underline-offset-2"
+                              >
+                                {item.phoneNumber}
+                              </a>
+                            ) : (
+                              <p className="text-xs text-gray-500">—</p>
+                            )}
+                            {/* LEGAL-LIFF-01: the binding acceptance happened before this row
+                                existed, and its time is the evidence an operator may be asked for. */}
+                            {item.legalAcceptedAt && (
+                              <p className="mt-0.5 text-xs text-gray-400">
+                                ยอมรับข้อกำหนด {formatThaiDateTime(item.legalAcceptedAt)}
+                              </p>
+                            )}
                           </td>
                           <td className="px-4 py-3 text-xs text-gray-500">{signupBusinessSummary(item)}</td>
                           <td className="px-4 py-3">
@@ -386,7 +571,11 @@ export default function SignupQueuePage() {
                                 <button
                                   type="button"
                                   disabled={busy}
-                                  onClick={() => { setNotifyApplicant(false); setRejectionReason(''); setRejecting(item); }}
+                                  onClick={() => {
+                                    setNotifyApplicant(rejectNotifyDefault(item));
+                                    setRejectionReason('');
+                                    setRejecting(item);
+                                  }}
                                   className={`${rowActionClass} border-red-200 bg-red-50 text-red-600 hover:bg-red-100`}
                                 >
                                   ปฏิเสธ

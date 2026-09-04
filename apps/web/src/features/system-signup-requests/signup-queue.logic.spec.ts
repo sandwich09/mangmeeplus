@@ -15,6 +15,10 @@ import {
   signupHintChips,
   signupIdleChip,
   signupStateChip,
+  rejectNotifyDefault,
+  rejectNotifyLabel,
+  tabLoadsOwnList,
+  SIGNUP_QUEUE_TABS,
 } from './signup-queue.logic';
 
 function item(overrides: Partial<AdminSignupQueueItemDto> = {}): AdminSignupQueueItemDto {
@@ -238,5 +242,67 @@ describe('filterSignupQueue', () => {
     const flagged = item({ requestId: 'e', state: 'EMAIL_PENDING', emailDeliveryFailed: true });
     assert.deepEqual(filterSignupQueue([flagged], 'PROBLEM').map((i) => i.requestId), ['e']);
     assert.deepEqual(filterSignupQueue([flagged], 'AWAITING_CLAIM'), []);
+  });
+});
+
+
+// Review A-01. The commonest duplicate is a customer an admin opened a shop for by hand, who then
+// applies from LINE as if they were new — approving that gives one person two shops.
+describe('signupHintChips — the phone duplicate hint', () => {
+  it('names the shop the number already reaches', () => {
+    const chips = signupHintChips(item({ phoneMatchesCompanyName: 'ร้านเดิมของนิด' }));
+    assert.ok(chips.some((chip) => chip.label === 'อาจซ้ำกับร้าน ร้านเดิมของนิด'));
+    assert.equal(chips.find((chip) => chip.label.startsWith('อาจซ้ำ'))!.tone, 'warning');
+  });
+
+  it('says nothing when no shop matches', () => {
+    assert.equal(signupHintChips(item()).some((chip) => chip.label.startsWith('อาจซ้ำ')), false);
+  });
+
+  // Decided at submit from the verified ID token, so by the time it is read this is a fact about
+  // what approving WILL do — not something the operator is being asked to choose.
+  it('says when approving adds a second shop to an account that already exists', () => {
+    const chips = signupHintChips(item({ source: 'line-oa', attachesToExistingAccount: true }));
+    assert.ok(chips.some((chip) => chip.label === 'LINE นี้มีบัญชีอยู่แล้ว จะเพิ่มเป็นร้านที่ 2'));
+    assert.equal(signupHintChips(item({ source: 'line-oa' })).length, 0);
+  });
+});
+
+// §8 vs §4D: the default follows the rail, because the two rails fail in opposite directions.
+describe('rejectNotifyDefault', () => {
+  it('is ON for a LINE application: the chat is the applicant own, and silence is a shop wondering', () => {
+    assert.equal(rejectNotifyDefault(item({ source: 'line-oa' })), true);
+    assert.equal(rejectNotifyLabel(item({ source: 'line-oa' })), 'แจ้งทางไลน์');
+  });
+
+  it('is OFF for the web form: the mailbox is unproven and the notice would be unsolicited', () => {
+    assert.equal(rejectNotifyDefault(item({ source: 'official-site' })), false);
+    assert.equal(rejectNotifyDefault(item()), false);
+    assert.equal(rejectNotifyLabel(item()), 'ส่งอีเมลแจ้งผู้สมัคร');
+  });
+});
+
+describe('queue tabs', () => {
+  it('offers the two P10-L tabs, and marks the ones that read their own endpoint', () => {
+    const keys = SIGNUP_QUEUE_TABS.map((tab) => tab.key);
+    assert.ok(keys.includes('AUTO_APPROVED'));
+    assert.ok(keys.includes('PACKAGE_CHANGE'));
+    assert.equal(SIGNUP_QUEUE_TABS.find((tab) => tab.key === 'AUTO_APPROVED')!.label, 'อนุมัติอัตโนมัติ 14 วัน');
+
+    assert.equal(tabLoadsOwnList('AUTO_APPROVED'), true);
+    assert.equal(tabLoadsOwnList('PACKAGE_CHANGE'), true);
+    for (const key of ['ALL', 'PENDING_REVIEW', 'AWAITING_CLAIM', 'PROBLEM'] as const) {
+      assert.equal(tabLoadsOwnList(key), false, `${key} filters the queue already in memory`);
+    }
+  });
+
+  // The auto-approved rows are COMPLETED line-oa applications, and ระงับ is the one action §3.7
+  // gives an operator over a shop the machine let through.
+  it('leaves ระงับ as the only action on an auto-approved row', () => {
+    const row = item({ source: 'line-oa', state: 'COMPLETED', autoApproved: true });
+    assert.equal(canSuspendSignup(row), true);
+    assert.equal(canApproveSignup(row.state, row), false);
+    assert.equal(canRejectSignup(row.state), false);
+    assert.equal(canReissueSignup(row.state), false);
   });
 });

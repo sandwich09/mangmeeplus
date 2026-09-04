@@ -39,7 +39,13 @@ export class SendPartnerLineMessageUseCase {
     if (!company) throw new NotFoundException(`Partner company "${cmd.companyId}" not found.`);
 
     const check = checkShopMessage(cmd.text, shopMessageAllowedHosts(this.config.sesWebBaseUrl));
-    if (!check.ok) throw new UnprocessableEntityException(`partner_line_message_${check.reason}`);
+    if (!check.ok) {
+      // Spelled out rather than interpolated: the web's Thai-coverage spec scans for LITERAL codes,
+      // and a code it cannot see is a code that reaches an operator as raw snake_case.
+      if (check.reason === 'empty') throw new UnprocessableEntityException('partner_line_message_empty');
+      if (check.reason === 'too_long') throw new UnprocessableEntityException('partner_line_message_too_long');
+      throw new UnprocessableEntityException('partner_line_message_external_link');
+    }
 
     const token = this.config.lineMessagingChannelAccessToken;
     if (!token) throw new UnprocessableEntityException('line_messaging_channel_not_configured');

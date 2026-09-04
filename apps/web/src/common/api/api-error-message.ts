@@ -337,6 +337,14 @@ const CODE_LABELS: Record<string, string> = {
   // P29: the term ended, so business routes are refused on access. Data is intact — the copy must
   // not read as data loss, and the only move that helps is renewing, not retrying.
   company_term_expired: 'ร้านนี้ครบกำหนดใช้งานแล้ว ข้อมูลทั้งหมดยังอยู่ครบ ติดต่อ 098-256-5628 เพื่อใช้งานต่อ',
+
+  // ---- P10-L §8 admin support tools (system console; the reader is an operator, not a shop) ----
+  // SEC-05: each says what to change, because the operator has the message in front of them.
+  partner_line_message_empty: 'ยังไม่ได้พิมพ์ข้อความ',
+  partner_line_message_too_long: 'ข้อความยาวเกิน 500 ตัวอักษร กรุณาย่อให้สั้นลง',
+  partner_line_message_external_link: 'ใส่ลิงก์ได้เฉพาะเว็บของเราและ LIFF เท่านั้น กรุณาลบลิงก์ภายนอกออก',
+  line_messaging_channel_not_configured: 'ยังไม่ได้ตั้งค่าช่องทาง LINE ของระบบ จึงส่งข้อความไม่ได้',
+  package_change_request_not_found: 'ไม่พบคำขอเปลี่ยนแพ็กเกจนี้ อาจถูกดำเนินการไปแล้ว กรุณาโหลดหน้าใหม่',
   line_linked_elsewhere: 'LINE นี้เชื่อมกับบัญชีอื่นอยู่แล้ว เลือกได้ว่าจะรวมเป็นบัญชีเดียวหรือใช้แยกกันต่อ',
   // Spec §4F account merge — same copy the welcome dialog's own map shows, so the message reads
   // identically wherever the code surfaces.

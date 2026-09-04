@@ -34,6 +34,10 @@ import type {
   SystemUserMembershipDto,
   SystemUserMergeTrailDto,
   EmployeeLineLinkPackage,
+  PartnerTimelineDto,
+  PartnerTimelineEntryDto,
+  PartnerLineMessageBody,
+  PartnerLineMessageResultDto,
 } from '@watchdog-bms/contracts';
 import { authedApiFetch as apiFetch } from '@/common/api/authed-fetch';
 
@@ -73,6 +77,10 @@ export type {
   SystemUserMembershipDto,
   SystemUserMergeTrailDto,
   EmployeeLineLinkPackage,
+  PartnerTimelineDto,
+  PartnerTimelineEntryDto,
+  PartnerLineMessageBody,
+  PartnerLineMessageResultDto,
 };
 
 /** Response of the lifecycle endpoint — status + timestamps only, NOT the full detail. */
@@ -271,6 +279,33 @@ export async function setPartnerPlanTerm(
 ): Promise<CompanyPlanTermViewDto> {
   return apiFetch<CompanyPlanTermViewDto>(`/v1/system/partners/${companyId}/plan-term`, {
     method: 'PUT',
+    body: JSON.stringify(body),
+    suppressErrorToast: true,
+  });
+}
+
+/** P10-L §9 "ตรวจแล้ว": ends the first-week ceiling early. Idempotent on a warm-up already past. */
+export async function endPartnerPlanTermWarmup(companyId: string): Promise<CompanyPlanTermViewDto> {
+  return apiFetch<CompanyPlanTermViewDto>(`/v1/system/partners/${companyId}/plan-term/end-warmup`, {
+    method: 'POST',
+    suppressErrorToast: true,
+  });
+}
+
+/** P10-L §8: one shop's story, assembled server-side from rows that already exist. */
+export async function getPartnerTimeline(companyId: string): Promise<PartnerTimelineDto> {
+  return apiFetch<PartnerTimelineDto>(`/v1/system/partners/${companyId}/timeline`, {
+    suppressErrorToast: true,
+  });
+}
+
+/** SEC-05: one operator-written LINE message to this shop's OWNERs. Bounded and audited server-side. */
+export async function sendPartnerLineMessage(
+  companyId: string,
+  body: PartnerLineMessageBody,
+): Promise<PartnerLineMessageResultDto> {
+  return apiFetch<PartnerLineMessageResultDto>(`/v1/system/partners/${companyId}/line-message`, {
+    method: 'POST',
     body: JSON.stringify(body),
     suppressErrorToast: true,
   });
