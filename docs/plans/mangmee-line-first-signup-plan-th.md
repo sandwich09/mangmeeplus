@@ -83,7 +83,7 @@
 | คิว | `apps/web/src/features/system-signup-requests/SignupQueuePage.tsx` (+ api) | ป้าย LINE, ชื่อ LINE, legalAcceptedAt, autoApproved filter, ปุ่มระงับ, toggle แจ้งตอน reject (default on), แท็บคำขอเปลี่ยนแพ็กเกจ |
 | Partner page | `apps/web/src/features/system-partners/PartnerDetailPage.tsx` | Timeline ต่อร้าน; กล่อง "ส่งข้อความถึงร้าน" (confirm + audit); ปุ่ม "ตรวจแล้ว" ปลด warm-up |
 | Users lookup | `system-partner-management/application/use-cases/lookup-users.use-case.ts` + `apps/web/src/features/system-users/*` | ค้นชื่อ LINE; แสดง LINE-only user |
-| Flags/infra | `infra/prod-ecs-express/deploy.sh` (LINE_SIGNUP_* defaults UAT/prod + prod hard-stop เมื่อ `LINE_SIGNUP_ENABLED=true`), `infra/security/sync-production-maintenance-release-pins.mjs` re-sync | production-serving-mode.spec.sh ต้อง PASS |
+| Flags/infra | **ย้ายไปทำใน L-A2 แล้ว (2026-09-05, รีวิว L-A2 F1):** `infra/prod-ecs-express/deploy.sh` ต่อ `LINE_SIGNUP_*` + `RECEIPT_QUOTA_ENFORCED` (UAT true / prod false + hard-stop) + pins re-sync — L-C เหลือแค่ตรวจว่าค่า UAT ตรง spec §10 | production-serving-mode.spec.sh ต้อง PASS |
 | Docs | `docs/runbooks/line-first-signup-support-playbook.md` (4 ticket + กู้บัญชี 5 ขั้น), `docs/runbooks/line-rich-menu-v2-console-setup.md` (ปุ่ม "เปิดร้านใหม่ ทดลองฟรี" → LIFF signup URL) | Owner ทำ rich menu ใน console |
 | UAT deploy | chain เดิม (PR → develop → main → deploy-uat `target=all`) | บันทึก run id ใน agent-memory |
 
