@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ForbiddenException, UnauthorizedException } from '@nestjs/common';
+import { ForbiddenException, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { PublicLineSignupController } from './public-line-signup.controller';
 
 // The LIFF page is served BY the API, so this request's Origin is the API host — never the web app.
@@ -12,8 +12,12 @@ const REQ = {
 } as any;
 const BODY = { idToken: 'aaaa.bbbb.cccc', companyName: 'ร้านมั่งมี', legal: {} } as any;
 
-/** `webBaseUrl: null` stands for WEB_BASE_URL being unset, which is the local-dev shape. */
-function harness(enabled: boolean, webBaseUrl: string | null = 'https://app.mangmeeplus.com') {
+/**
+ * `sesWebBaseUrl: null` stands for WEB_BASE_URL being unset. `webBaseUrl` is set to the API origin
+ * throughout, because that is what the loose accessor returns when only PUBLIC_BASE_URL exists —
+ * so any test that passes by reading it is reading the wrong one.
+ */
+function harness(enabled: boolean, sesWebBaseUrl: string | null = 'https://app.mangmeeplus.com') {
   const calls: string[] = [];
   const submits: any[] = [];
   const rateLimit = {
@@ -26,7 +30,11 @@ function harness(enabled: boolean, webBaseUrl: string | null = 'https://app.mang
   const status = { execute: async () => { calls.push('status'); return null; } } as any;
   return {
     controller: new PublicLineSignupController(
-      { lineSignupEnabled: enabled, webBaseUrl: webBaseUrl ?? undefined } as any, rateLimit, submit, status,
+      {
+        lineSignupEnabled: enabled,
+        sesWebBaseUrl: sesWebBaseUrl ?? undefined,
+        webBaseUrl: 'https://api.example.com',
+      } as any, rateLimit, submit, status,
     ),
     calls,
     submits,
@@ -53,20 +61,26 @@ describe('PublicLineSignupController — the flag is the rollback', () => {
     assert.deepEqual(h.calls, ['ip', 'submit']);
   });
 
-  // Review LOW-1: an AUTO_FREE submit persists this base as the owner's handoff URL, and the
-  // Origin here is the API that served the LIFF page — a shop whose "open my dashboard" link
-  // points at the API host is a shop nobody can open.
-  it('takes the web base from configuration, not from the API Origin that served the page', async () => {
+  // Review LOW-1: an AUTO_FREE submit persists this base as the owner's handoff URL. Two wrong
+  // answers were available — the Origin (the API that served the LIFF page) and the loose
+  // `webBaseUrl` accessor (which falls back to the API's own PUBLIC_BASE_URL) — and either one
+  // stores an "open my shop" link nobody can follow. Only WEB_BASE_URL is right.
+  it('takes the web base from the strict WEB_BASE_URL accessor and nothing else', async () => {
     const h = harness(true);
     await h.controller.create(BODY, REQ);
     assert.equal(h.submits[0].webBaseUrl, 'https://app.mangmeeplus.com');
-    assert.notEqual(h.submits[0].webBaseUrl, REQ.headers.origin);
+    assert.notEqual(h.submits[0].webBaseUrl, REQ.headers.origin, 'not the Origin header');
+    assert.notEqual(h.submits[0].webBaseUrl, 'https://api.example.com', 'not the loose accessor');
   });
 
-  it('falls back to header derivation only when no web origin is configured (local dev)', async () => {
+  it('refuses the submit when WEB_BASE_URL is unset rather than storing an API-host link', async () => {
     const h = harness(true, null);
-    await h.controller.create(BODY, REQ);
-    assert.equal(h.submits[0].webBaseUrl, 'https://api.example.com');
+    await assert.rejects(() => h.controller.create(BODY, REQ), (error: unknown) => {
+      assert.ok(error instanceof ServiceUnavailableException, 'a deployment fault, not a caller fault');
+      assert.match(JSON.stringify((error as ServiceUnavailableException).getResponse()), /line_signup_web_base_url_missing/);
+      return true;
+    });
+    assert.deepEqual(h.submits, [], 'nothing is created with a link that cannot work');
   });
 
   it('refuses a status read whose header is not even token-shaped', async () => {

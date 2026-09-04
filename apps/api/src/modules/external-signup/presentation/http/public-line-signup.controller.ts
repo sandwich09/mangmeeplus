@@ -1,5 +1,6 @@
 import {
-  Body, Controller, ForbiddenException, Get, Headers, HttpCode, Post, Req, UnauthorizedException,
+  Body, Controller, ForbiddenException, Get, Headers, HttpCode, Post, Req,
+  ServiceUnavailableException, UnauthorizedException,
 } from '@nestjs/common';
 import { ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { IsNotEmpty, IsObject, IsOptional, IsString, Matches, MaxLength, ValidateNested } from 'class-validator';
@@ -7,7 +8,7 @@ import { Type } from 'class-transformer';
 import type { Request } from 'express';
 import type { LineSignupStatusDto, LineSignupSubmitAcceptedDto } from '@watchdog-bms/contracts';
 import { AppConfigService } from '../../../../common/config/app-config.service';
-import { publicApiBase, webAppBase } from '../../../../common/http/public-api-base';
+import { publicApiBase } from '../../../../common/http/public-api-base';
 import { Public } from '../../../../common/security/public.decorator';
 import { LINE_ID_TOKEN_MAX_LENGTH, LINE_ID_TOKEN_PATTERN } from '../../../../common/security/liff-page.security';
 import { trustedClientIp } from '../../../../common/security/trusted-client-ip';
@@ -74,11 +75,7 @@ export class PublicLineSignupController {
       legal: dto.legal,
       ...(req.headers['user-agent'] ? { userAgent: String(req.headers['user-agent']) } : {}),
       correlationRequestId: requestIdOf(req),
-      // NOT derived from Origin here, unlike the other public signup routes: this request comes
-      // from a LIFF page the API itself serves, so the Origin is the API host — and an AUTO_FREE
-      // submit persists this base as the owner's handoff URL. The configured web origin is the
-      // only value that is right; header derivation stays as the local-dev fallback.
-      webBaseUrl: this.config.webBaseUrl ?? webAppBase(req),
+      webBaseUrl: this.webBaseUrl(),
       apiBaseUrl: publicApiBase(req),
     });
   }
@@ -103,6 +100,25 @@ export class PublicLineSignupController {
   /** Mirrors `external_signup_disabled`: the switch is the rollback, so it answers before any work. */
   private assertEnabled(): void {
     if (!this.config.lineSignupEnabled) throw new ForbiddenException('line_signup_disabled');
+  }
+
+  /**
+   * Where the shop owner's handoff link must land. Deliberately NOT `config.webBaseUrl`, which
+   * falls back to `PUBLIC_BASE_URL` — the API's own origin — and deliberately not the request
+   * Origin either, because this request comes from a LIFF page the API itself serves. Both would
+   * quietly persist an API-host link as the owner's "open my shop" URL on an AUTO_FREE submit.
+   *
+   * `sesWebBaseUrl` is `WEB_BASE_URL` and nothing else: the same accessor SES uses for exactly
+   * this reason. Unset is a deployment fault, not a caller fault, so it refuses rather than
+   * storing a link nobody can follow. UAT and production both set it, and the flow is flag-gated
+   * on top of that, so this cannot fire where it would matter.
+   */
+  private webBaseUrl(): string {
+    const configured = this.config.sesWebBaseUrl;
+    if (!configured) {
+      throw new ServiceUnavailableException('line_signup_web_base_url_missing');
+    }
+    return configured;
   }
 }
 
