@@ -318,6 +318,14 @@ describe('promotion menu (rich menu v2 ver2)', () => {
     assert.equal(staffMenuCommand('โปรโมชั่นอะไรดี'), null);
   });
 
+  // P10-L §3.7: the quota card prints "ขอเปลี่ยนแพ็กเกจ" on a button and the follow-up text tells
+  // the shop to type it. Both were dead until L-B; they now pull the promotion card.
+  it('answers the quota card\'s package-change command instead of ignoring it', () => {
+    assert.equal(staffMenuCommand('ขอเปลี่ยนแพ็กเกจ'), 'promotion');
+    assert.equal(staffMenuCommand(' ขอเปลี่ยนแพ็กเกจ '), 'promotion', 'the button sends it verbatim');
+    assert.equal(staffMenuCommand('ขอเปลี่ยนแพ็กเกจได้ไหม'), null, 'still a whole-message command');
+  });
+
   it('builds the poster card from the web asset base and survives a missing base URL', () => {
     const withBase = JSON.stringify(buildPromotionCard('https://app.example.com/'));
     assert.match(withBase, /https:\/\/app\.example\.com\/assets\/line\/mangmeeplus-package-promo-1080x1350\.png/);

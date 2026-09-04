@@ -447,6 +447,10 @@ export function staffMenuCommand(text: string): 'main' | 'query' | 'approval' | 
   if (normalized === 'บริการของเรา') return 'services';
   if (normalized === 'ติดต่อเรา') return 'contact';
   if (normalized === 'คุยกับน้องมั่งมี') return 'talk';
-  if (normalized === 'โปรโมชั่น' || normalized === 'แพ็กเกจ') return 'promotion';
+  // `ขอเปลี่ยนแพ็กเกจ` is printed on the quota card's button AND the follow-up text tells the shop
+  // to type it, so it must answer something today. Until L-B wires the real package-change request
+  // it lands on the promotion card, which is the same thing the "ดูแพ็กเกจ" button pulls — a shop
+  // that asks to upgrade sees the packages instead of being ignored.
+  if (normalized === 'โปรโมชั่น' || normalized === 'แพ็กเกจ' || normalized === 'ขอเปลี่ยนแพ็กเกจ') return 'promotion';
   return null;
 }

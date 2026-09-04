@@ -1,7 +1,7 @@
 // P29 — admin-managed company plan limits & usage term.
 // Spec: docs/specs/mangmee-company-plan-term-spec-th.md.
 
-export type PlanTierKey = 'STARTER_249' | 'BASIC_499' | 'PRO_999' | 'ENTERPRISE_1999';
+export type PlanTierKey = 'FREE_TRIAL_15' | 'STARTER_249' | 'BASIC_499' | 'PRO_999' | 'ENTERPRISE_1999';
 
 /** Derived, never stored: ACTIVE (green) / WARNING (yellow) / EXPIRED (red). */
 export type PlanTermDerivedState = 'ACTIVE' | 'WARNING' | 'EXPIRED';
@@ -44,6 +44,9 @@ export type RenewCompanyPlanTermBody = {
 
 /** Per-tier defaults for the admin preset dropdown — single source: Billing §8 catalog 2026-08-30. */
 export const PLAN_TIER_PRESETS: Record<PlanTierKey, { labelTh: string; branchLimit: number; employeeLimit: number; monthlySlipLimit: number }> = {
+  // P10-L: the LINE-first trial (Owner 2026-09-04 — 15 slips, 30 days). Not sellable on the public
+  // web form, which pins its own allowed keys; an admin can still hand it out from the partner page.
+  FREE_TRIAL_15: { labelTh: 'ทดลองใช้ฟรี', branchLimit: 1, employeeLimit: 2, monthlySlipLimit: 15 },
   STARTER_249: { labelTh: 'เริ่มต้น (STARTER)', branchLimit: 1, employeeLimit: 2, monthlySlipLimit: 30 },
   BASIC_499: { labelTh: 'เติบโต (BASIC)', branchLimit: 2, employeeLimit: 5, monthlySlipLimit: 50 },
   PRO_999: { labelTh: 'มืออาชีพ (PRO)', branchLimit: 5, employeeLimit: 10, monthlySlipLimit: 100 },

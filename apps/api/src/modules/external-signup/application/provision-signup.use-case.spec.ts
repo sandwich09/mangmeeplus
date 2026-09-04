@@ -14,8 +14,11 @@ const REQUEST = {
   taxId: '0105555000012',
   pendingPasswordHash: 'scrypt$salt$hash',
   attachUserId: null as string | null,
-  approvedByUserId: 'admin-1',
+  approvedByUserId: 'admin-1' as string | null,
+  autoApproved: false,
+  source: 'official-site',
   companyId: null as string | null,
+  ownerUserId: null as string | null,
 };
 
 const CMD = {
@@ -30,6 +33,8 @@ function harness(options: {
   claimed?: boolean;
   existingOwnerEmail?: string | null;
   onboardingFails?: Error;
+  /** Empty = an installation with no platform operator at all. */
+  systemAdmins?: Array<{ companyId: string; userId: string }>;
 } = {}) {
   const onboardingCalls: any[] = [];
   const companyUpdates: any[] = [];
@@ -39,6 +44,9 @@ function harness(options: {
   const completed: any[] = [];
   const failures: any[] = [];
   const planTermUpserts: any[] = [];
+  const planTermUpdates: any[] = [];
+  const aiConfigUpserts: any[] = [];
+  const lineContexts: any[] = [];
 
   const request = { ...REQUEST, ...(options.request ?? {}) };
 
@@ -46,7 +54,12 @@ function harness(options: {
     client: {
       user: { findUnique: async () => (options.existingOwnerEmail === undefined ? null : { email: options.existingOwnerEmail }) },
       company: { update: async (args: any) => { companyUpdates.push(args); return {}; } },
-      companyPlanTerm: { upsert: async (args: any) => { planTermUpserts.push(args); return {}; } },
+      companyPlanTerm: {
+        upsert: async (args: any) => { planTermUpserts.push(args); return {}; },
+        update: async (args: any) => { planTermUpdates.push(args); return {}; },
+      },
+      companyAiConfiguration: { upsert: async (args: any) => { aiConfigUpserts.push(args); return {}; } },
+      lineCompanyContext: { upsert: async (args: any) => { lineContexts.push(args); return {}; } },
       companySignupRequest: { update: (args: any) => { requestUpdates.push(args); return Promise.resolve({}); } },
       auditLog: { create: (args: any) => { audits.push(args); return Promise.resolve({}); } },
       $transaction: async (ops: any[]) => Promise.all(ops),
@@ -74,25 +87,27 @@ function harness(options: {
     },
   } as any;
 
+  const config = { lineSignupWarmupSlips: 10, lineFreeAiBudgetSatang: 8000 } as any;
+  const adminDirectory = {
+    activeSystemAdmins: async () => (options.systemAdmins ?? [{ companyId: 'sys', userId: 'sysadmin-1' }]),
+  } as any;
+
   return {
-    useCase: new ProvisionSignupUseCase(prisma, core, onboarding),
+    useCase: new ProvisionSignupUseCase(prisma, core, onboarding, config, adminDirectory),
     onboardingCalls, companyUpdates, requestUpdates, audits, advances, completed, failures, planTermUpserts,
+    planTermUpdates, aiConfigUpserts, lineContexts,
   };
 }
 
 describe('provisioning applies the PRO trial term (P29 T3)', () => {
-  it('upserts a PRO_999 30-day term after the company exists, before completion', async () => {
+  it('names the PRO_999 30-day term on the onboarding command, not by a second upsert', async () => {
     const h = harness();
     await h.useCase.execute(CMD);
-    assert.equal(h.planTermUpserts.length, 1);
-    const args = h.planTermUpserts[0];
-    assert.equal(args.where.companyId, 'co-1');
-    assert.equal(args.create.tierKey, 'PRO_999');
-    const start = new Date(args.create.termStartAt).getTime();
-    const end = new Date(args.create.termEndsAt).getTime();
-    assert.equal(end - start, 30 * 24 * 60 * 60 * 1000);
-    // Idempotent by design: update side must not shorten an existing term.
-    assert.deepEqual(args.update, {});
+    // Review B-01: onboarding writes the term row, so this use-case must NOT upsert its own —
+    // `applyPlanTermPreset` leaves an existing row alone and the intended tier would be lost.
+    assert.equal(h.planTermUpserts.length, 0);
+    assert.equal(h.onboardingCalls[0].planTier, 'PRO_999');
+    assert.equal(h.onboardingCalls[0].planDays, 30);
   });
 });
 
@@ -155,6 +170,8 @@ describe('ProvisionSignupUseCase — new-user path', () => {
     assert.equal(audit.riskLevel, 'HIGH');
     assert.deepEqual(audit.metadataJson, {
       companyId: 'co-1', ownerUserId: 'user-1', attachedToExistingUser: false, emailKeptExisting: false,
+      // Review MEDIUM-B: still ids and booleans only, now including what decided this.
+      source: 'official-site', autoApproved: false, operatorResolvedFromDirectory: false,
     });
     const evidence = JSON.stringify(h.audits);
     for (const pii of ['somchai@example.com', 'ร้านมั่งมี', '0105555000012', 'scrypt$']) {
@@ -194,6 +211,170 @@ describe('ProvisionSignupUseCase — attach path', () => {
     });
     await h.useCase.execute(CMD);
     assert.equal(h.audits[0].data.metadataJson.emailKeptExisting, false);
+  });
+});
+
+describe('ProvisionSignupUseCase — contactEmail is nullable now (review B-03)', () => {
+  it('refuses the email-owner shape rather than provisioning a company with a null address', async () => {
+    const h = harness({ request: { contactEmail: null } });
+    await assert.rejects(() => h.useCase.execute(CMD), /signup_contact_email_missing/);
+    assert.equal(h.onboardingCalls.length, 0);
+    // The fence is released, so an admin who fixes the row can retry the same application.
+    assert.equal(h.failures.length, 1);
+  });
+});
+
+// P10-L §6. A LINE application creates a shop with NO username, NO email and NO credential; the
+// verified LINE identity is the account, and the clickwrap the owner gave on LIFF rides along.
+const LINE_REQUEST = {
+  source: 'line-oa',
+  contactEmail: null,
+  pendingPasswordHash: null,
+  taxId: null,
+  vatRegistered: null,
+  lineProviderUserId: 'Uline-1',
+  lineChannelId: 'channel-1',
+  lineDisplayName: 'นิด',
+  legalDocumentVersion: 'v3',
+  legalStatementSha256: 'a'.repeat(64),
+  legalReleaseFingerprintSha256: 'b'.repeat(64),
+  legalDisplayChallenge: 'c'.repeat(64),
+  legalLocale: 'th',
+  legalUserAgent: 'LINE/14 iOS',
+  legalAcceptedAt: new Date('2026-09-04T03:21:00.000Z'),
+};
+
+describe('ProvisionSignupUseCase — LINE-first source', () => {
+  it('hands onboarding the LINE owner shape and the free trial preset', async () => {
+    const h = harness({ request: LINE_REQUEST });
+    await h.useCase.execute(CMD);
+
+    const cmd = h.onboardingCalls[0];
+    assert.deepEqual(cmd.ownerAuth, {
+      kind: 'line', providerUserId: 'Uline-1', channelId: 'channel-1', displayName: 'นิด',
+    });
+    assert.equal(cmd.ownerUsername, undefined, 'no username exists for a LINE-first owner');
+    assert.equal(cmd.claimedOwner, undefined, 'and therefore no email-owner shape');
+    assert.equal(cmd.planTier, 'FREE_TRIAL_15');
+    assert.equal(cmd.planDays, 30);
+    // Spec §6: the acceptance time is the one from the application, not the provisioning clock.
+    assert.equal(cmd.legalAcceptance.legalAcceptedAt.toISOString(), '2026-09-04T03:21:00.000Z');
+    assert.equal(cmd.legalAcceptance.displayChallenge, 'c'.repeat(64));
+  });
+
+  it('caps the first week, the AI spend and the LINE company context', async () => {
+    const h = harness({ request: LINE_REQUEST });
+    await h.useCase.execute(CMD);
+
+    // §9 warm-up: seven days, and the slip ceiling comes from config, not a literal. Upserted
+    // rather than updated (review HIGH-3): onboarding writes the term post-commit best-effort, so
+    // it may not be there, and a bare update would raise P2025 on a shop that already exists.
+    const term = h.planTermUpserts[0];
+    assert.equal(term.where.companyId, 'co-1');
+    assert.equal(term.update.warmupSlipLimit, 10);
+    assert.ok(term.update.warmupUntil.getTime() - Date.now() > 6.5 * 24 * 3600_000);
+    // The create side is the full free-trial term, so a missing row is repaired, not half-written.
+    assert.equal(term.create.tierKey, 'FREE_TRIAL_15');
+    assert.equal(term.create.monthlySlipLimit, 15);
+    assert.equal(term.create.termEndsAt.getTime() - term.create.termStartAt.getTime(), 30 * 24 * 3600_000);
+    // Review G-06: without this the trial shop would spend the platform default budget.
+    assert.equal(h.aiConfigUpserts[0].create.monthlyBudgetSatang, 8000);
+    assert.equal(h.aiConfigUpserts[0].update.monthlyBudgetSatang, 8000);
+    // Review B-06: the first receipt must land in the shop just opened, not in a company picker.
+    assert.equal(h.lineContexts[0].where.lineUserId, 'Uline-1');
+    assert.equal(h.lineContexts[0].create.companyId, 'co-1');
+    assert.equal(h.lineContexts[0].update.companyId, 'co-1');
+  });
+
+  it('finishes at COMPLETED instead of parking at the LINE link step', async () => {
+    const h = harness({ request: LINE_REQUEST });
+    await h.useCase.execute(CMD);
+    assert.deepEqual(h.advances, [{ id: 'signup-1', state: 'COMPLETED' }]);
+  });
+
+  it('opens a second shop on the same account when the LINE user already owns one', async () => {
+    const h = harness({ request: { ...LINE_REQUEST, attachUserId: 'user-9' }, existingOwnerEmail: null });
+    const result = await h.useCase.execute(CMD);
+
+    assert.equal(h.onboardingCalls[0].claimedOwner.attachUserId, 'user-9');
+    assert.equal(h.onboardingCalls[0].claimedOwner.email, undefined, 'attach by identity, not address');
+    assert.equal(result.attachedToExistingUser, true);
+  });
+
+  it('fails the fence rather than creating half an account from a corrupt row', async () => {
+    for (const missing of [{ lineProviderUserId: null }, { lineChannelId: null }, { legalAcceptedAt: null }]) {
+      const h = harness({ request: { ...LINE_REQUEST, ...missing } });
+      await assert.rejects(() => h.useCase.execute(CMD), /line_signup_evidence_missing/);
+      assert.equal(h.onboardingCalls.length, 0);
+    }
+  });
+});
+
+// Review MEDIUM-A: this id lands in two foreign keys to User. The request id was never a valid
+// answer, and the claim path (which passes no actor) is how a Flow B row reaches here without one.
+describe('ProvisionSignupUseCase — who counts as the operator', () => {
+  it('prefers an explicit caller, then the approving admin, then any platform operator', async () => {
+    const explicit = harness({ request: { approvedByUserId: 'admin-1' } });
+    await explicit.useCase.execute({ ...CMD, actorUserId: 'caller-1' });
+    assert.equal(explicit.onboardingCalls[0].requestingAdminUserId, 'caller-1');
+
+    const approved = harness({ request: { approvedByUserId: 'admin-1' } });
+    await approved.useCase.execute(CMD);
+    assert.equal(approved.onboardingCalls[0].requestingAdminUserId, 'admin-1');
+
+    // The claim path passes no actor, and a row whose approval stamp never landed has none either.
+    const directory = harness({ request: { approvedByUserId: null } });
+    await directory.useCase.execute(CMD);
+    assert.equal(directory.onboardingCalls[0].requestingAdminUserId, 'sysadmin-1');
+    assert.equal(directory.onboardingCalls[0].provisioningContext.operatorResolvedFromDirectory, true);
+  });
+
+  it('refuses by name instead of letting a foreign key reject the request id', async () => {
+    const h = harness({ request: { approvedByUserId: null }, systemAdmins: [] });
+    await assert.rejects(() => h.useCase.execute(CMD), /signup_operator_unresolved/);
+    assert.equal(h.onboardingCalls.length, 0);
+    // Never the request id: it is not a user id and the columns it lands in are FKs to User.
+    assert.equal(JSON.stringify(h.onboardingCalls).includes('signup-1'), false);
+  });
+
+  // Review MEDIUM-B: `actorUserId` on the audit names a human. Without these three, the company's
+  // own trail says that human created an auto-approved shop and nothing points at the machine.
+  it('records what actually decided the shop should exist', async () => {
+    const h = harness({ request: { ...LINE_REQUEST, approvedByUserId: null, autoApproved: true } });
+    await h.useCase.execute(CMD);
+
+    const metadata = h.audits[0].data.metadataJson;
+    assert.equal(metadata.source, 'line-oa');
+    assert.equal(metadata.autoApproved, true);
+    assert.equal(metadata.operatorResolvedFromDirectory, true);
+    // Onboarding's own audit carries the same three, so the company-side trail is not blind.
+    assert.deepEqual(h.onboardingCalls[0].provisioningContext, {
+      source: 'line-oa', autoApproved: true, operatorResolvedFromDirectory: true,
+    });
+  });
+});
+
+// Review LOW-3: the adopt path skips onboarding, and onboarding is where the plan term is written.
+// A recovered web shop with no CompanyPlanTerm reads as unlimited, not as a trial.
+describe('ProvisionSignupUseCase — recovering an already-created company', () => {
+  it('gives a recovered web shop the term onboarding would have written', async () => {
+    const h = harness({ request: { companyId: 'co-1', ownerUserId: 'user-1' } });
+    await h.useCase.execute(CMD);
+
+    assert.equal(h.onboardingCalls.length, 0, 'the company already exists');
+    assert.equal(h.planTermUpserts.length, 1);
+    assert.equal(h.planTermUpserts[0].create.tierKey, 'PRO_999');
+    // Idempotent: a term the admin already set is never shortened by a retry.
+    assert.deepEqual(h.planTermUpserts[0].update, {});
+  });
+
+  it('leaves a recovered LINE shop to its own trial guards', async () => {
+    const h = harness({ request: { ...LINE_REQUEST, companyId: 'co-1', ownerUserId: 'user-1' } });
+    await h.useCase.execute(CMD);
+
+    // The trial guards upsert FREE_TRIAL_15 themselves; a PRO_999 preset here would race them.
+    assert.equal(h.planTermUpserts.length, 1);
+    assert.equal(h.planTermUpserts[0].create.tierKey, 'FREE_TRIAL_15');
   });
 });
 

@@ -4,7 +4,8 @@ import { IsBoolean, IsIn, IsNotEmpty, IsOptional, IsString, MaxLength, ValidateN
 import { Type } from 'class-transformer';
 import type { Request } from 'express';
 import { COMPANY_BUSINESS_CATEGORIES, VAT_FACT_STATUSES, type CompanyBusinessCategory, type VatFactStatus } from '@watchdog-bms/contracts';
-import { trustedPublicApiBase } from '../../../../common/http/public-api-base';
+import { requiredWebAppBase, trustedPublicApiBase } from '../../../../common/http/public-api-base';
+import { AppConfigService } from '../../../../common/config/app-config.service';
 import { RequirePermissions } from '../../../../common/security/permissions.decorator';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import { CreateCompanyOnboardingUseCase } from '../../application/use-cases/create-company-onboarding.use-case';
@@ -38,15 +39,6 @@ class CreateOnboardingDto {
   @IsString() @IsOptional() lineLinkUrl?: string;
 }
 
-// ponytail: web base from Origin header (local dev) or x-forwarded-proto/host (production proxy)
-function webAppBase(req: Request): string {
-  const origin = req.headers['origin'] as string | undefined;
-  if (origin) return origin;
-  const proto = (req.headers['x-forwarded-proto'] as string | undefined)?.split(',')[0]?.trim() ?? req.protocol ?? 'http';
-  const host = (req.headers['x-forwarded-host'] as string | undefined)?.split(',')[0]?.trim() ?? req.get('host') ?? 'localhost:3000';
-  return `${proto}://${host}`;
-}
-
 @Controller('system/company-onboardings')
 export class SystemOnboardingController {
   constructor(
@@ -54,6 +46,7 @@ export class SystemOnboardingController {
     private readonly getOnboarding: GetCompanyOnboardingUseCase,
     private readonly regeneratePassword: RegenerateTemporaryPasswordUseCase,
     private readonly reissueOwnerLineLink: ReissueOwnerLineLinkUseCase,
+    private readonly config: AppConfigService,
   ) {}
 
   @Post()
@@ -79,7 +72,9 @@ export class SystemOnboardingController {
       lineLinkUrl: dto.lineLinkUrl,
       requestingAdminUserId: req.context.userId,
       requestId: req.context.requestId,
-      webBaseUrl: webAppBase(req),
+      // Persisted on the onboarding run as the owner's handoff, so it is the configured web origin
+      // and never a header the caller controls (review MEDIUM-2).
+      webBaseUrl: requiredWebAppBase(this.config.sesWebBaseUrl),
       apiBaseUrl: trustedPublicApiBase(req),
     });
   }

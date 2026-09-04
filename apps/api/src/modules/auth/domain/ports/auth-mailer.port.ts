@@ -13,6 +13,19 @@ export type SignupRejectionEmailInput = Readonly<{
   reason?: string;
 }>;
 
+/**
+ * P10-L §15.3 (H-02). A LINE-first shop has NO address at signup, so both of these are letters the
+ * product cannot send yet — they exist as a port seam so the day an address arrives (through the
+ * "in case you lose LINE" prompt or the profile page) and a provider is ready, only the adapters
+ * change. Every adapter treats them as no-ops today; see each one for why.
+ */
+export type LineSignupWelcomeEmailInput = Readonly<{ toEmail: string; companyName: string }>;
+export type PackageChangeNoticeEmailInput = Readonly<{
+  toEmail: string;
+  companyName: string;
+  tierKey: string;
+}>;
+
 export interface AuthMailerPort {
   sendEmailVerification(input: AuthEmailLinkInput): Promise<void>;
   sendPasswordResetLink(input: AuthEmailLinkInput): Promise<void>;
@@ -23,4 +36,6 @@ export interface AuthMailerPort {
    */
   sendAccountClaim(input: AccountClaimEmailInput): Promise<string | null>;
   sendSignupRejection(input: SignupRejectionEmailInput): Promise<void>;
+  sendLineSignupWelcome(input: LineSignupWelcomeEmailInput): Promise<void>;
+  sendPackageChangeNotice(input: PackageChangeNoticeEmailInput): Promise<void>;
 }

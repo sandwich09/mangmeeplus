@@ -111,6 +111,9 @@ describe('SignupClaimUseCase.info', () => {
       { label: 'revoked', token: { usedAt: null, revokedAt: new Date(), expiresAt: live, signupRequest: REQUEST } },
       { label: 'expired', token: { usedAt: null, revokedAt: null, expiresAt: new Date(Date.now() - 1_000), signupRequest: REQUEST } },
       { label: 'wrong state', token: { usedAt: null, revokedAt: null, expiresAt: live, signupRequest: { ...REQUEST, state: 'REJECTED' } } },
+      // Review B-03: the whole claim page is built on an address. A row without one (only a
+      // `line-oa` application, which can never mint a token) is unusable, not a half-rendered page.
+      { label: 'no address', token: { usedAt: null, revokedAt: null, expiresAt: live, signupRequest: { ...REQUEST, contactEmail: null } } },
     ];
     for (const { label, token } of cases) {
       const info = await harness({ token }).useCase.info(RAW_TOKEN);

@@ -17,6 +17,7 @@ import {
   type LegalAcceptanceLocale,
   type LegalAcceptanceStatusResponse,
 } from '@watchdog-bms/contracts';
+import type { Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { AuditService } from '../../audit/application/audit.service';
 
@@ -157,6 +158,76 @@ export function legalReleaseScopeRef(
   return `user:${userId}:release:${releaseHash}`;
 }
 
+/**
+ * P10-L (LEGAL-LIFF-01). The in-app challenge is bound to a membership, and a LIFF signup has no
+ * account yet — so this is the same idea at RELEASE scope: it changes whenever the artifacts, their
+ * versions or any displayed sentence change, which is exactly what "the text you agreed to" means
+ * before there is a company to bind it to. Never interchangeable with `legalDisplayChallenge`:
+ * a different domain-separation prefix keeps one from being replayed as the other.
+ */
+const LEGAL_LIFF_RELEASE_CHALLENGE_V1 = 'MANGMEEPLUS_LEGAL_LIFF_RELEASE_CHALLENGE_V1';
+
+export type CurrentLegalRelease = Readonly<{
+  documentVersion: string;
+  statementSha256: string;
+  releaseFingerprintSha256: string;
+  displayChallenge: string;
+}>;
+
+/** What a LIFF page embeds and echoes back, and the only values a submit is allowed to store. */
+export type LegalSignupEvidence = Readonly<{
+  documentVersion: string;
+  statementSha256: string;
+  releaseFingerprintSha256: string;
+  displayChallenge: string;
+  locale: string;
+  userAgent?: string | null;
+  /** Server clock at submit — never the client's (spec §3.2). */
+  legalAcceptedAt: Date;
+}>;
+
+function statementBlock(locale: LegalAcceptanceLocale): string {
+  const statements = legalAcceptanceStatements(locale);
+  return [statements.terms, statements.privacy, statements.deletion].join('\n');
+}
+
+export function currentLegalRelease(locale: LegalAcceptanceLocale = 'th'): CurrentLegalRelease {
+  const block = statementBlock(locale);
+  // The same pair hash `legalReleaseScopeRef` folds into its scope: one number for "this exact
+  // pair of immutable artifacts", so the two can never disagree about what a release is.
+  const releaseFingerprintSha256 = sha256(JSON.stringify([
+    CURRENT_LEGAL_DOCUMENTS.terms.artifactSha256,
+    CURRENT_LEGAL_DOCUMENTS.privacy.artifactSha256,
+  ]));
+  const documentVersion = CURRENT_LEGAL_DOCUMENTS.terms.version;
+  return {
+    documentVersion,
+    statementSha256: sha256(block),
+    releaseFingerprintSha256,
+    displayChallenge: sha256(JSON.stringify([
+      LEGAL_LIFF_RELEASE_CHALLENGE_V1,
+      locale,
+      LEGAL_ACCEPTANCE_STATEMENT_VERSION,
+      legalStatementTemplateFingerprint(),
+      documentVersion,
+      CURRENT_LEGAL_DOCUMENTS.privacy.version,
+      releaseFingerprintSha256,
+      LEGAL_DATA_DELETION_HREF,
+      block,
+    ])),
+  };
+}
+
+/** All four values, or none: a partial match is a stale page, not a negotiation. */
+export function legalEvidenceMatchesCurrentRelease(evidence: LegalSignupEvidence): boolean {
+  if (evidence.locale !== 'th' && evidence.locale !== 'en') return false;
+  const release = currentLegalRelease(evidence.locale);
+  return evidence.documentVersion === release.documentVersion
+    && evidence.statementSha256 === release.statementSha256
+    && evidence.releaseFingerprintSha256 === release.releaseFingerprintSha256
+    && evidence.displayChallenge === release.displayChallenge;
+}
+
 function latestAcceptedAt(records: CurrentAcceptanceRecord[]): string | null {
   if (records.length !== 2) return null;
   return new Date(Math.max(...records.map((record) => record.acceptedAt.getTime()))).toISOString();
@@ -211,6 +282,101 @@ export class LegalAcceptanceService {
 
   async isRequired(locator: LegalAcceptanceLocator): Promise<boolean> {
     return (await this.getStatus(locator)).required;
+  }
+
+  /** What a pre-account surface (the LIFF signup page) must display and echo back. */
+  currentRelease(locale: LegalAcceptanceLocale = 'th'): CurrentLegalRelease {
+    return currentLegalRelease(locale);
+  }
+
+  /**
+   * P10-L §6: replay clickwrap evidence captured on LIFF into the SAME table the in-app gate
+   * reads, inside the provisioning transaction, so a shop created from LINE can send a receipt
+   * immediately instead of meeting an acceptance card the flow already collected.
+   *
+   * Two rows, not one: `getStatus` only counts an acceptance when a coherent terms/privacy PAIR
+   * exists under one batch, so writing a single row would leave the gate shut — the customer-facing
+   * promise "send a receipt right now" would be a lie. The row contents are built here rather than
+   * copied from the request, because the coherence check recomputes `sha256(statementText)` per row.
+   *
+   * Idempotent: an existing record for this user and release is left alone (a second shop for the
+   * same owner, or a provisioning retry). A release that moved between submit and provisioning
+   * writes NOTHING — the stale evidence is not evidence for the current text, and the ordinary
+   * legal gate then does its job at first login.
+   */
+  async recordFromEvidence(
+    tx: Prisma.TransactionClient,
+    input: {
+      userId: string;
+      companyId: string;
+      membershipId: string;
+      evidence: LegalSignupEvidence;
+      requestId: string;
+    },
+  ): Promise<{ written: boolean; reason?: 'release_changed' | 'already_recorded' }> {
+    if (!legalEvidenceMatchesCurrentRelease(input.evidence)) return { written: false, reason: 'release_changed' };
+    const locale = input.evidence.locale as LegalAcceptanceLocale;
+
+    const scopeRef = legalReleaseScopeRef(input.userId);
+    // Read-then-write rather than catching P2002: a unique violation inside a Postgres transaction
+    // aborts the whole provisioning, and "this owner already accepted" is not a failure.
+    const [alreadyRecorded, priorAcceptances] = await Promise.all([
+      tx.legalDocumentActionRecord.count({ where: { scopeRef } }),
+      tx.legalDocumentActionRecord.count({ where: { acceptedByUserId: input.userId } }),
+    ]);
+    if (alreadyRecorded > 0) return { written: false, reason: 'already_recorded' };
+
+    const statements = legalAcceptanceStatements(locale);
+    const termsStatement = statements.terms;
+    // Same pairing as `accept()`: the deletion procedure is a live page with no frozen artifact, so
+    // its acknowledgment is evidenced on the privacy row it belongs to.
+    const privacyStatement = `${statements.privacy}\n${statements.deletion}`;
+    const common = {
+      batchId: randomUUID(),
+      scopeRef,
+      statementVersion: LEGAL_ACCEPTANCE_STATEMENT_VERSION,
+      acceptedByUserId: input.userId,
+      companyId: input.companyId,
+      membershipId: input.membershipId,
+      actorCapacity: legalAcceptanceCapacity(['OWNER']),
+      rolesJson: ['OWNER'],
+      // Distinct from the session values this column otherwise carries ('watchdog', 'line', 'dev'):
+      // those name how someone was logged in, and nobody was logged in here. This names the surface
+      // the clickwrap was given on, which is what a PDPA reader has to be able to tell apart.
+      // `getStatus` never filters on this column, so widening it changes no acceptance decision.
+      authProvider: 'LINE_LIFF_SIGNUP',
+      // There is no session: the shop is being created, and nobody has logged in yet.
+      sessionTokenId: null,
+      requestId: input.requestId,
+      locale,
+      displayChallenge: input.evidence.displayChallenge,
+      surface: priorAcceptances > 0 ? 'MATERIAL_UPDATE' as const : 'FIRST_ACCEPTANCE' as const,
+      userAgent: input.evidence.userAgent?.slice(0, 512) ?? null,
+      // Spec §6: the moment the shop owner tapped accept, NOT the moment we provisioned.
+      acceptedAt: input.evidence.legalAcceptedAt,
+    };
+
+    await tx.legalDocumentActionRecord.createMany({
+      data: [
+        {
+          ...common,
+          ...TERMS_ACTION,
+          artifactUrl: CURRENT_LEGAL_DOCUMENTS.terms.href,
+          releaseFingerprintSha256: CURRENT_LEGAL_DOCUMENTS.terms.artifactSha256,
+          statementText: termsStatement,
+          statementSha256: sha256(termsStatement),
+        },
+        {
+          ...common,
+          ...PRIVACY_ACTION,
+          artifactUrl: CURRENT_LEGAL_DOCUMENTS.privacy.href,
+          releaseFingerprintSha256: CURRENT_LEGAL_DOCUMENTS.privacy.artifactSha256,
+          statementText: privacyStatement,
+          statementSha256: sha256(privacyStatement),
+        },
+      ],
+    });
+    return { written: true };
   }
 
   async accept(

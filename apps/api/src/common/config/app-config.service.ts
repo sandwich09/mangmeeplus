@@ -67,6 +67,20 @@ export class AppConfigService {
   /** P10 Flow B: public self-service signup. Off = form closed and POST 403; already-issued
    *  status and claim links stay readable so an approved applicant is never stranded mid-flow. */
   get externalSignupEnabled(): boolean { return this.config.EXTERNAL_SIGNUP_ENABLED; }
+  /** P10-L: LINE-first signup. Off = the LIFF endpoints 403 `line_signup_disabled` and no
+   *  `line-oa` application can be created; shops already provisioned are ordinary companies. */
+  get lineSignupEnabled(): boolean { return this.config.LINE_SIGNUP_ENABLED; }
+  get lineSignupApprovalMode(): 'MANUAL' | 'AUTO_FREE' { return this.config.LINE_SIGNUP_APPROVAL_MODE; }
+  get lineSignupAutoDailyCap(): number { return this.config.LINE_SIGNUP_AUTO_DAILY_CAP; }
+  get lineSignupWarmupSlips(): number { return this.config.LINE_SIGNUP_WARMUP_SLIPS; }
+  /** Per-shop AI spend cap for a free trial, in satang (spec §10). */
+  get lineFreeAiBudgetSatang(): number { return this.config.LINE_FREE_AI_BUDGET_SATANG; }
+  get lineSignupAdminReminderMinutes(): number { return this.config.LINE_SIGNUP_ADMIN_REMINDER_MINUTES; }
+  get lineSignupBusinessDays(): string { return this.config.LINE_SIGNUP_BUSINESS_DAYS; }
+  get lineSignupBusinessHours(): string { return this.config.LINE_SIGNUP_BUSINESS_HOURS; }
+  /** Review G-01: enforcing the monthly slip ceiling is a first for every existing shop, so it
+   *  gets its own switch rather than riding on the signup flag. */
+  get receiptQuotaEnforced(): boolean { return this.config.RECEIPT_QUOTA_ENFORCED; }
   get lineLiffId(): string | undefined { return this.config.LINE_LIFF_ID; }
   get lineMessagingChannelId(): string | undefined { return this.config.LINE_MESSAGING_CHANNEL_ID; }
   get lineMessagingChannelSecret(): string | undefined { return this.config.LINE_MESSAGING_CHANNEL_SECRET; }

@@ -56,6 +56,74 @@ assert_rejected deploy-production-external-signup-not-activated \
   'EXTERNAL_SIGNUP_ENABLED=true is not activated for production yet' \
   env -i PATH="$PATH" DEPLOY_ENV=production PRODUCTION_SERVING_MODE=live \
     EXTERNAL_SIGNUP_ENABLED=true bash "$deploy" all
+# P10-L (spec §10/§15.7). Two independent production gates: the signup flow, and the receipt
+# ceiling — the latter separately because switching it on is the first limit EVERY existing shop
+# would ever meet and it needs its own announcement (review G-01).
+assert_rejected deploy-invalid-line-signup-boolean \
+  'LINE_SIGNUP_ENABLED must be exactly true or false' \
+  env -i PATH="$PATH" DEPLOY_ENV=uat LINE_SIGNUP_ENABLED=yes bash "$deploy" all
+assert_rejected deploy-production-line-signup-not-activated \
+  'LINE_SIGNUP_ENABLED=true is not activated for production yet' \
+  env -i PATH="$PATH" DEPLOY_ENV=production PRODUCTION_SERVING_MODE=live \
+    LINE_SIGNUP_ENABLED=true bash "$deploy" all
+assert_rejected deploy-invalid-receipt-quota-boolean \
+  'RECEIPT_QUOTA_ENFORCED must be exactly true or false' \
+  env -i PATH="$PATH" DEPLOY_ENV=uat RECEIPT_QUOTA_ENFORCED=yes bash "$deploy" all
+assert_rejected deploy-production-receipt-quota-not-activated \
+  'RECEIPT_QUOTA_ENFORCED=true is not activated for production yet' \
+  env -i PATH="$PATH" DEPLOY_ENV=production PRODUCTION_SERVING_MODE=live \
+    RECEIPT_QUOTA_ENFORCED=true bash "$deploy" all
+assert_rejected deploy-invalid-line-signup-approval-mode \
+  'LINE_SIGNUP_APPROVAL_MODE must be exactly MANUAL or AUTO_FREE' \
+  env -i PATH="$PATH" DEPLOY_ENV=uat LINE_SIGNUP_APPROVAL_MODE=auto bash "$deploy" all
+assert_rejected deploy-invalid-line-signup-daily-cap \
+  'LINE_SIGNUP_AUTO_DAILY_CAP must be a non-negative integer' \
+  env -i PATH="$PATH" DEPLOY_ENV=uat LINE_SIGNUP_AUTO_DAILY_CAP=twenty bash "$deploy" all
+assert_rejected deploy-invalid-line-signup-business-hours \
+  'LINE_SIGNUP_BUSINESS_HOURS must look like 09:00-18:00' \
+  env -i PATH="$PATH" DEPLOY_ENV=uat LINE_SIGNUP_BUSINESS_HOURS=9-6 bash "$deploy" all
+# A2-01: every shape below passed the first (looser) validators and would have crash-looped the api
+# task on `apiConfigSchema` instead. These are the exact zod rules, so the deploy stops here.
+assert_rejected deploy-line-signup-business-days-not-a-weekday \
+  'LINE_SIGNUP_BUSINESS_DAYS must look like MON-SAT' \
+  env -i PATH="$PATH" DEPLOY_ENV=uat LINE_SIGNUP_BUSINESS_DAYS=MON-GARBAGE bash "$deploy" all
+assert_rejected deploy-line-signup-business-days-single-day \
+  'LINE_SIGNUP_BUSINESS_DAYS must look like MON-SAT' \
+  env -i PATH="$PATH" DEPLOY_ENV=uat LINE_SIGNUP_BUSINESS_DAYS=MON bash "$deploy" all
+assert_rejected deploy-line-signup-business-hours-impossible-clock \
+  'LINE_SIGNUP_BUSINESS_HOURS must look like 09:00-18:00' \
+  env -i PATH="$PATH" DEPLOY_ENV=uat LINE_SIGNUP_BUSINESS_HOURS=29:59-29:59 bash "$deploy" all
+assert_rejected deploy-line-signup-business-hours-hour-24 \
+  'LINE_SIGNUP_BUSINESS_HOURS must look like 09:00-18:00' \
+  env -i PATH="$PATH" DEPLOY_ENV=uat LINE_SIGNUP_BUSINESS_HOURS=24:00-18:00 bash "$deploy" all
+# zod says positive(), so 0 is not a legal warm-up ceiling, budget or reminder delay. A zero
+# warm-up would refuse a trial shop's very first receipt.
+assert_rejected deploy-line-signup-warmup-slips-zero \
+  'LINE_SIGNUP_WARMUP_SLIPS must be a positive integer' \
+  env -i PATH="$PATH" DEPLOY_ENV=uat LINE_SIGNUP_WARMUP_SLIPS=0 bash "$deploy" all
+assert_rejected deploy-line-free-ai-budget-zero \
+  'LINE_FREE_AI_BUDGET_SATANG must be a positive integer' \
+  env -i PATH="$PATH" DEPLOY_ENV=uat LINE_FREE_AI_BUDGET_SATANG=0 bash "$deploy" all
+assert_rejected deploy-line-signup-admin-reminder-zero \
+  'LINE_SIGNUP_ADMIN_REMINDER_MINUTES must be a positive integer' \
+  env -i PATH="$PATH" DEPLOY_ENV=uat LINE_SIGNUP_ADMIN_REMINDER_MINUTES=0 bash "$deploy" all
+assert_rejected deploy-line-signup-warmup-slips-not-a-number \
+  'LINE_SIGNUP_WARMUP_SLIPS must be a positive integer' \
+  env -i PATH="$PATH" DEPLOY_ENV=uat LINE_SIGNUP_WARMUP_SLIPS=ten bash "$deploy" all
+# 0 IS legal for the daily cap (`nonnegative()`): it means "queue every application".
+grep -Fq 'LINE_SIGNUP_AUTO_DAILY_CAP must be a non-negative integer' "$deploy" \
+  || { echo 'FAIL: LINE_SIGNUP_AUTO_DAILY_CAP lost its validator'; exit 1; }
+# Every P10-L switch reaches the api task definition, or UAT silently runs the shipped defaults
+# (shadow mode for the ceiling) and proves nothing.
+for p10l_var in LINE_SIGNUP_ENABLED LINE_SIGNUP_APPROVAL_MODE LINE_SIGNUP_AUTO_DAILY_CAP \
+  LINE_SIGNUP_WARMUP_SLIPS LINE_FREE_AI_BUDGET_SATANG LINE_SIGNUP_ADMIN_REMINDER_MINUTES \
+  LINE_SIGNUP_BUSINESS_DAYS LINE_SIGNUP_BUSINESS_HOURS RECEIPT_QUOTA_ENFORCED; do
+  grep -Fq "{name:\"${p10l_var}\", value:\$" "$deploy" \
+    || { echo "FAIL: ${p10l_var} is never written to the task definition"; exit 1; }
+done
+# L-A reads the handoff base from WEB_BASE_URL only, so the api container must carry it.
+grep -Fq '{name:"WEB_BASE_URL", value:$publicWebUrl}' "$deploy" \
+  || { echo 'FAIL: WEB_BASE_URL is not exported to the api task definition'; exit 1; }
 assert_rejected deploy-invalid-email-provider \
   'EMAIL_PROVIDER must be exactly disabled or ses for cloud deploys' \
   env -i PATH="$PATH" DEPLOY_ENV=uat EMAIL_PROVIDER=local-console bash "$deploy" all
