@@ -11,14 +11,18 @@ import { PrismaService } from '../../../common/database/prisma.service';
 import { CompanySignupCoreService } from './company-signup-core.service';
 import { AccountClaimTokenService } from './account-claim-token.service';
 import { SignupClaimEmailService } from './signup-claim-email.service';
+import { ProvisionSignupUseCase } from './provision-signup.use-case';
 import { daysSinceApproval } from '../domain/account-claim.logic';
-import type { CompanySignupState } from '../domain/company-signup.logic';
+import { SIGNUP_SOURCE_LINE_OA, type CompanySignupState } from '../domain/company-signup.logic';
 
 /** Everything an admin still has a decision or an action to take on (spec §4C, §4D). */
 const QUEUE_STATES: readonly CompanySignupState[] = ['PENDING_REVIEW', 'EMAIL_PENDING', 'EMAIL_FAILED', 'EXPIRED'];
 
 /** Spec §4D ④: an approved request never dead-ends, so reissue has no age limit. */
 const REISSUABLE_STATES: readonly CompanySignupState[] = ['EMAIL_PENDING', 'EMAIL_FAILED', 'EXPIRED'];
+
+/** A LINE approval provisions inline, so a repeated tap lands on one of these, not on a conflict. */
+const SETTLED_STATES: readonly CompanySignupState[] = ['PROVISIONING', 'READY', 'COMPLETED'];
 
 @Injectable()
 export class SignupAdminQueueUseCase {
@@ -27,6 +31,7 @@ export class SignupAdminQueueUseCase {
     private readonly core: CompanySignupCoreService,
     private readonly tokens: AccountClaimTokenService,
     private readonly claimEmail: SignupClaimEmailService,
+    private readonly provision: ProvisionSignupUseCase,
   ) {}
 
   async list(now = new Date()): Promise<AdminSignupQueueDto> {
@@ -55,24 +60,63 @@ export class SignupAdminQueueUseCase {
   }
 
   /**
-   * Approve or reject. Idempotent by contract: repeating the same decision returns the current
-   * state and queues no second email, because the approve path's outbox key is the request id.
+   * P10-L §8 / review B-09: an auto-approved application never enters the queue, so an admin needs
+   * a way to look at what the machine let through. Read-only and time-boxed.
+   */
+  async listAutoApproved(days = 14, now = new Date()): Promise<AdminSignupQueueDto> {
+    const since = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+    const requests = await this.prisma.client.companySignupRequest.findMany({
+      where: { autoApproved: true, createdAt: { gte: since } },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+    });
+    // These rows are all COMPLETED, so none of the queue's dedupe hints apply to them.
+    return { items: requests.map((request) => toQueueItem(request, new Set<string | null>(), new Map(), now)) };
+  }
+
+  /**
+   * Approve, reject or suspend. Idempotent by contract: repeating the same decision returns the
+   * current state and queues no second email, because the approve path's outbox key is the request
+   * id. What "approve" MEANS depends on the source: a web application still has a mailbox to prove,
+   * a LINE application proved its human at submit and goes straight to provisioning (spec §5).
    */
   async decide(
     requestId: string,
     body: AdminSignupDecisionBody,
     adminUserId: string,
     correlationRequestId: string,
+    urls?: { webBaseUrl: string; apiBaseUrl: string },
   ): Promise<AdminSignupDecisionDto> {
     const request = await this.findOrThrow(requestId);
+    const lineOa = request.source === SIGNUP_SOURCE_LINE_OA;
+
+    if (body.action === 'SUSPEND') return this.suspend(request, adminUserId, correlationRequestId);
 
     if (body.action === 'APPROVE') {
       if (request.state !== 'PENDING_REVIEW') {
         // Already approved is a no-op; anything else is a real conflict the admin should see.
         if (request.state === 'EMAIL_PENDING') return { requestId, state: request.state };
+        if (lineOa && SETTLED_STATES.includes(request.state as CompanySignupState)) {
+          return { requestId, state: request.state };
+        }
         throw new ConflictException(`invalid_signup_decision:${request.state}`);
       }
       const approvedAt = new Date();
+      if (lineOa) {
+        // No claim email exists for this source, so approval IS provisioning. The stamp lands
+        // first: provisioning reads `approvedByUserId` as the actor for everything it creates.
+        await this.prisma.client.companySignupRequest.update({
+          where: { id: requestId },
+          data: { approvedAt, approvedByUserId: adminUserId },
+        });
+        await this.audit(requestId, adminUserId, correlationRequestId, 'signup.request.approved', {
+          source: request.source,
+          hadPhoneNumber: request.phoneNumber !== null,
+        });
+        if (!urls) throw new ConflictException('signup_provisioning_urls_required');
+        await this.provision.execute({ requestId, correlationRequestId, ...urls });
+        return { requestId, state: 'COMPLETED' };
+      }
       await this.core.advance(requestId, 'EMAIL_PENDING', correlationRequestId);
       await this.prisma.client.companySignupRequest.update({
         where: { id: requestId },
@@ -97,8 +141,11 @@ export class SignupAdminQueueUseCase {
     });
     await this.tokens.revokeAll(requestId);
     // Spec §4D: silent by default — the address is unverified, so an unsolicited notice would make
-    // the platform a spam cannon aimed at whoever the applicant typed.
-    if (body.notifyApplicant) await this.claimEmail.enqueueRejectionNotice(requestId, body.rejectionReason);
+    // the platform a spam cannon aimed at whoever the applicant typed. A LINE application has no
+    // address at all: its rejection travels as a LINE push (spec §7), which L-B sends.
+    if (body.notifyApplicant && request.contactEmail) {
+      await this.claimEmail.enqueueRejectionNotice(requestId, body.rejectionReason);
+    }
     await this.audit(requestId, adminUserId, correlationRequestId, 'signup.request.rejected', {
       notifyApplicant: body.notifyApplicant === true,
       // The paragraph itself stays out of evidence — it is copy for one inbox, not an audit fact.
@@ -136,6 +183,34 @@ export class SignupAdminQueueUseCase {
       revokedTokenCount: revoked,
     });
     return { requestId, state: 'EMAIL_PENDING', claimEmailQueued: true };
+  }
+
+  /**
+   * P10-L §3.7: stopping an application an admin does not want to keep — most often one AUTO_FREE
+   * let through. Reachable from more states than approve or reject, because the reason to stop can
+   * arrive at any point, including after the shop exists.
+   *
+   * Scope note: this settles the APPLICATION. Disabling the company itself stays with the partner
+   * lifecycle control an admin already has; the free-trial AI budget is what bounds spend meanwhile.
+   */
+  private async suspend(
+    request: CompanySignupRequest,
+    adminUserId: string,
+    correlationRequestId: string,
+  ): Promise<AdminSignupDecisionDto> {
+    if (request.state === 'SUSPENDED') return { requestId: request.id, state: request.state };
+    await this.core.advance(request.id, 'SUSPENDED', correlationRequestId, 'admin_suspended');
+    await this.tokens.revokeAll(request.id);
+    await this.prisma.client.companySignupRequest.update({
+      where: { id: request.id },
+      data: { pendingPasswordHash: null },
+    });
+    await this.audit(request.id, adminUserId, correlationRequestId, 'signup.line.suspended', {
+      source: request.source,
+      fromState: request.state,
+      wasAutoApproved: request.autoApproved,
+    });
+    return { requestId: request.id, state: 'SUSPENDED' };
   }
 
   private async findOrThrow(requestId: string): Promise<CompanySignupRequest> {
@@ -190,6 +265,12 @@ function toQueueItem(
     ...(request.taxId ? { taxId: request.taxId } : {}),
     ...(request.requestedOfferKey ? { requestedOfferKey: request.requestedOfferKey } : {}),
     ...(request.mxValid !== null ? { mxValid: request.mxValid } : {}),
+    // P10-L §8: the operator has to be able to tell the two sources apart at a glance, and a LINE
+    // row shows a LINE name and an acceptance time where a web row shows an address and MX.
+    source: request.source,
+    ...(request.lineDisplayName ? { lineDisplayName: request.lineDisplayName } : {}),
+    ...(request.autoApproved ? { autoApproved: true } : {}),
+    ...(request.legalAcceptedAt ? { legalAcceptedAt: request.legalAcceptedAt.toISOString() } : {}),
     createdAt: request.createdAt.toISOString(),
     ...(request.approvedAt ? { approvedAt: request.approvedAt.toISOString() } : {}),
     ...(request.claimEmailLastSentAt ? { claimEmailLastSentAt: request.claimEmailLastSentAt.toISOString() } : {}),

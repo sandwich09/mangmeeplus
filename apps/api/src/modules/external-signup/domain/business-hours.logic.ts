@@ -60,6 +60,11 @@ function bangkokParts(instant: Date): { dayName: string; minutes: number; midnig
   };
 }
 
+/** Bangkok midnight of the day `now` falls on. The boundary a per-day cap is counted from. */
+export function bangkokDayStart(now: Date): Date {
+  return new Date(bangkokParts(now).midnightUtcMs);
+}
+
 export function isBusinessHours(now: Date, config: BusinessHoursConfig): boolean {
   const window = parseBusinessHours(config);
   const { dayName, minutes } = bangkokParts(now);

@@ -10,7 +10,7 @@ import type {
   PublicCompanySignupAcceptedDto, PublicSignupStatusDto, SignupClaimInfoDto, SignupClaimResultDto,
 } from '@watchdog-bms/contracts';
 import { AppConfigService } from '../../../../common/config/app-config.service';
-import { publicApiBase } from '../../../../common/http/public-api-base';
+import { publicApiBase, webAppBase } from '../../../../common/http/public-api-base';
 import { Public } from '../../../../common/security/public.decorator';
 import { trustedClientIp } from '../../../../common/security/trusted-client-ip';
 import { AuthRateLimitService } from '../../../auth/application/auth-rate-limit.service';
@@ -200,13 +200,4 @@ function assertIdShape(requestId: string): void {
     // 404-shaped, so a probe cannot tell a malformed id from one that simply does not exist.
     throw new HttpException('company_signup_request_not_found', HttpStatus.NOT_FOUND);
   }
-}
-
-// Same derivation the system onboarding controller uses for handoff links.
-function webAppBase(req: Request): string {
-  const origin = req.headers['origin'] as string | undefined;
-  if (origin) return origin;
-  const proto = (req.headers['x-forwarded-proto'] as string | undefined)?.split(',')[0]?.trim() ?? req.protocol ?? 'http';
-  const host = (req.headers['x-forwarded-host'] as string | undefined)?.split(',')[0]?.trim() ?? req.get('host') ?? 'localhost:3000';
-  return `${proto}://${host}`;
 }

@@ -4,7 +4,7 @@ import { IsBoolean, IsIn, IsNotEmpty, IsOptional, IsString, MaxLength, ValidateN
 import { Type } from 'class-transformer';
 import type { Request } from 'express';
 import { COMPANY_BUSINESS_CATEGORIES, VAT_FACT_STATUSES, type CompanyBusinessCategory, type VatFactStatus } from '@watchdog-bms/contracts';
-import { trustedPublicApiBase } from '../../../../common/http/public-api-base';
+import { trustedPublicApiBase, webAppBase } from '../../../../common/http/public-api-base';
 import { RequirePermissions } from '../../../../common/security/permissions.decorator';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import { CreateCompanyOnboardingUseCase } from '../../application/use-cases/create-company-onboarding.use-case';
@@ -36,15 +36,6 @@ class CreateOnboardingDto {
   @IsString() @IsOptional() modulePackage?: string;
   @IsString() @IsOptional() lineOaAddUrl?: string;
   @IsString() @IsOptional() lineLinkUrl?: string;
-}
-
-// ponytail: web base from Origin header (local dev) or x-forwarded-proto/host (production proxy)
-function webAppBase(req: Request): string {
-  const origin = req.headers['origin'] as string | undefined;
-  if (origin) return origin;
-  const proto = (req.headers['x-forwarded-proto'] as string | undefined)?.split(',')[0]?.trim() ?? req.protocol ?? 'http';
-  const host = (req.headers['x-forwarded-host'] as string | undefined)?.split(',')[0]?.trim() ?? req.get('host') ?? 'localhost:3000';
-  return `${proto}://${host}`;
 }
 
 @Controller('system/company-onboardings')

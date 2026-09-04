@@ -7,11 +7,14 @@ import {
   type AdminSignupDecisionDto, type AdminSignupQueueDto, type AdminSignupReissueDto,
 } from '@watchdog-bms/contracts';
 import { RequirePermissions } from '../../../../common/security/permissions.decorator';
+import { trustedPublicApiBase, webAppBase } from '../../../../common/http/public-api-base';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import { SignupAdminQueueUseCase } from '../../application/signup-admin-queue.use-case';
 
 export class SignupDecisionRequestDto {
-  @IsIn(['APPROVE', 'REJECT']) action!: 'APPROVE' | 'REJECT';
+  // SUSPEND (P10-L §3.7) stops an application an admin does not want to keep, most often one
+  // AUTO_FREE let through.
+  @IsIn(['APPROVE', 'REJECT', 'SUSPEND']) action!: 'APPROVE' | 'REJECT' | 'SUSPEND';
   @IsBoolean() @IsOptional() notifyApplicant?: boolean;
   // Plain text, bounded: it is copied verbatim into an email body, so it gets the same treatment as
   // any other free-text field crossing a trust boundary. The template escapes it on render.
@@ -37,6 +40,13 @@ export class SystemSignupRequestController {
     return this.queue.list();
   }
 
+  @Get('auto-approved')
+  @RequirePermissions('system.company_onboarding.read')
+  @ApiOperation({ summary: 'Applications AUTO_FREE approved without an admin, for after-the-fact review' })
+  listAutoApproved(): Promise<AdminSignupQueueDto> {
+    return this.queue.listAutoApproved();
+  }
+
   @Post(':requestId/decision')
   @HttpCode(200)
   @RequirePermissions('system.company_onboarding.create')
@@ -48,7 +58,12 @@ export class SystemSignupRequestController {
     @Body() dto: SignupDecisionRequestDto,
     @Req() req: Request & { context: RequestContext },
   ): Promise<AdminSignupDecisionDto> {
-    return this.queue.decide(requestId, dto, req.context.userId, req.context.requestId);
+    // Approving a LINE application provisions it inline, and provisioning needs the bases it puts
+    // in the owner handoff. Passed for every decision so the queue never has to ask twice.
+    return this.queue.decide(requestId, dto, req.context.userId, req.context.requestId, {
+      webBaseUrl: webAppBase(req),
+      apiBaseUrl: trustedPublicApiBase(req),
+    });
   }
 
   @Post(':requestId/reissue-claim')

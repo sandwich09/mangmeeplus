@@ -47,6 +47,26 @@ export class CompanySignupCoreService {
     });
   }
 
+  /**
+   * P10-L: create a request whose fields a source-specific use-case already normalised. Flow B's
+   * `receive` above cannot serve the LINE form — it demands an email, a consent version and two
+   * name halves that form never asks for — but the RECEIVED evidence and outbox row must be
+   * identical, so they come from the same private writer.
+   *
+   * No advisory lock: the "one open application per LINE account" fence is the partial unique
+   * index (review B-05), and a unique violation here aborts this transaction for the caller to map.
+   */
+  async receiveNormalized(
+    data: Prisma.CompanySignupRequestUncheckedCreateInput,
+    correlationRequestId: string,
+  ): Promise<CompanySignupRequest> {
+    return this.prisma.client.$transaction(async (tx) => {
+      const request = await tx.companySignupRequest.create({ data });
+      await this.appendEvidence(tx, request, null, 'RECEIVED', correlationRequestId);
+      return request;
+    });
+  }
+
   async advance(
     requestId: string,
     toState: Exclude<CompanySignupState, 'RECEIVED'>,

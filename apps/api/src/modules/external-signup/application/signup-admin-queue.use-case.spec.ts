@@ -30,6 +30,7 @@ function harness(options: { request?: any; requests?: any[]; users?: any[]; comp
   const enqueued: any[] = [];
   const revoked: string[] = [];
   const userQueries: any[] = [];
+  const provisioned: any[] = [];
 
   const prisma = {
     client: {
@@ -44,7 +45,12 @@ function harness(options: { request?: any; requests?: any[]; users?: any[]; comp
     },
   } as any;
 
-  const core = { advance: async (id: string, state: string) => { advances.push({ id, state }); return {}; } } as any;
+  const core = {
+    advance: async (id: string, state: string, _corr: string, failureCode?: string) => {
+      advances.push({ id, state, ...(failureCode ? { failureCode } : {}) });
+      return {};
+    },
+  } as any;
   const tokens = { revokeAll: async (id: string) => { revoked.push(id); return 2; } } as any;
   const claimEmail = {
     enqueue: async (id: string, reason: string) => { enqueued.push({ id, reason }); },
@@ -53,9 +59,11 @@ function harness(options: { request?: any; requests?: any[]; users?: any[]; comp
     },
   } as any;
 
+  const provision = { execute: async (cmd: any) => { provisioned.push(cmd); return {}; } } as any;
+
   return {
-    useCase: new SignupAdminQueueUseCase(prisma, core, tokens, claimEmail),
-    audits, updates, advances, enqueued, revoked, userQueries,
+    useCase: new SignupAdminQueueUseCase(prisma, core, tokens, claimEmail, provision),
+    audits, updates, advances, enqueued, revoked, userQueries, provisioned,
   };
 }
 
@@ -107,6 +115,113 @@ describe('SignupAdminQueueUseCase.list', () => {
     assert.equal(items[0]!.contactEmail, undefined);
     assert.equal(items[0]!.emailMatchesExistingUser, false);
     assert.deepEqual(h.userQueries[0].where.email.in, ['somchai@example.com']);
+  });
+});
+
+// P10-L §5/§8. What "approve" MEANS depends on the source: the web form still has a mailbox to
+// prove, a LINE application proved its human at submit and goes straight to provisioning.
+const LINE_REQUEST = {
+  ...REQUEST,
+  source: 'line-oa',
+  contactEmail: null,
+  mxValid: null,
+  taxId: null,
+  pendingPasswordHash: null,
+  lineDisplayName: 'นิด',
+  autoApproved: false,
+  legalAcceptedAt: new Date('2026-08-31T04:00:00.000Z'),
+};
+const URLS = { webBaseUrl: 'https://app.example.com', apiBaseUrl: 'https://api.example.com/v1' };
+
+describe('SignupAdminQueueUseCase.decide — LINE-first source', () => {
+  it('provisions on approval instead of queueing a claim email nobody can receive', async () => {
+    const h = harness({ request: LINE_REQUEST });
+    const result = await h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1', URLS);
+
+    assert.deepEqual(result, { requestId: 'signup-1', state: 'COMPLETED' });
+    assert.deepEqual(h.enqueued, [], 'no letter is queued for an application with no address');
+    assert.deepEqual(h.advances, [], 'provisioning owns the PROVISIONING transition, not advance');
+    assert.equal(h.provisioned[0].requestId, 'signup-1');
+    // The stamp lands before provisioning, which reads it as the actor for what it creates.
+    assert.equal(h.updates[0].data.approvedByUserId, 'admin-1');
+  });
+
+  it('refuses to provision without the bases the owner handoff needs', async () => {
+    const h = harness({ request: LINE_REQUEST });
+    await assert.rejects(
+      () => h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1'),
+      /signup_provisioning_urls_required/,
+    );
+    assert.deepEqual(h.provisioned, []);
+  });
+
+  it('treats a second tap on an already-provisioned application as a no-op', async () => {
+    for (const state of ['PROVISIONING', 'READY', 'COMPLETED']) {
+      const h = harness({ request: { ...LINE_REQUEST, state } });
+      const result = await h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1', URLS);
+      assert.equal(result.state, state);
+      assert.deepEqual(h.provisioned, [], `${state} must not provision twice`);
+    }
+  });
+
+  it('rejects without queueing a letter to an address that does not exist', async () => {
+    const h = harness({ request: LINE_REQUEST });
+    const result = await h.useCase.decide(
+      'signup-1', { action: 'REJECT', notifyApplicant: true }, 'admin-1', 'req-1', URLS,
+    );
+
+    assert.equal(result.state, 'REJECTED');
+    assert.deepEqual(h.enqueued, [], 'the LINE rejection is a push, sent by the messaging slice');
+    assert.deepEqual(h.advances, [{ id: 'signup-1', state: 'REJECTED' }]);
+  });
+
+  it('shows the operator which source a row came from', async () => {
+    const h = harness({ requests: [LINE_REQUEST] });
+    const { items } = await h.useCase.list(NOW);
+
+    assert.equal(items[0]!.source, 'line-oa');
+    assert.equal(items[0]!.lineDisplayName, 'นิด');
+    assert.equal(items[0]!.legalAcceptedAt, '2026-08-31T04:00:00.000Z');
+    assert.equal(items[0]!.contactEmail, undefined);
+  });
+});
+
+describe('SignupAdminQueueUseCase.decide — suspend', () => {
+  it('stops an auto-approved shop after the fact and revokes anything outstanding', async () => {
+    const h = harness({ request: { ...LINE_REQUEST, state: 'COMPLETED', autoApproved: true } });
+    const result = await h.useCase.decide('signup-1', { action: 'SUSPEND' }, 'admin-1', 'req-1', URLS);
+
+    assert.deepEqual(result, { requestId: 'signup-1', state: 'SUSPENDED' });
+    // A failure state needs a reason code, and the reason is that an admin said so.
+    assert.deepEqual(h.advances, [{ id: 'signup-1', state: 'SUSPENDED', failureCode: 'admin_suspended' }]);
+    assert.deepEqual(h.revoked, ['signup-1']);
+    assert.equal(h.updates[0].data.pendingPasswordHash, null);
+    const audit = h.audits[0].data;
+    assert.equal(audit.action, 'signup.line.suspended');
+    assert.equal(audit.metadataJson.wasAutoApproved, true);
+    assert.equal(audit.metadataJson.fromState, 'COMPLETED');
+  });
+
+  it('is a no-op when the application is already suspended', async () => {
+    const h = harness({ request: { ...LINE_REQUEST, state: 'SUSPENDED' } });
+    const result = await h.useCase.decide('signup-1', { action: 'SUSPEND' }, 'admin-1', 'req-1', URLS);
+
+    assert.equal(result.state, 'SUSPENDED');
+    assert.deepEqual(h.advances, []);
+    assert.deepEqual(h.audits, []);
+  });
+});
+
+describe('SignupAdminQueueUseCase.listAutoApproved', () => {
+  it('shows what the machine let through, without inventing dedupe hints for it', async () => {
+    const h = harness({ requests: [{ ...LINE_REQUEST, state: 'COMPLETED', autoApproved: true }] });
+    const { items } = await h.useCase.listAutoApproved(14, NOW);
+
+    assert.equal(items.length, 1);
+    assert.equal(items[0]!.autoApproved, true);
+    // These rows are settled, so the queue's "is this a duplicate" hints do not apply.
+    assert.equal(items[0]!.emailMatchesExistingUser, false);
+    assert.equal(items[0]!.taxIdMatchesCompanyName, undefined);
   });
 });
 
