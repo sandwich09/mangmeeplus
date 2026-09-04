@@ -70,10 +70,20 @@ export class PackageChangeRequestUseCase {
     }
   }
 
-  /** Same membership shape `LegalAcceptanceService.loadMembership` reads: active in an active company. */
+  /**
+   * An ACTIVE membership, held by an OWNER, in a company that is ACTIVE or DISABLED.
+   *
+   * DISABLED belongs here (P10-L §3.7): a trial that ran out leaves the company DISABLED, and the
+   * expiry message this flow sends carries a "ขอเปลี่ยนแพ็กเกจ" button — a shop that cannot ask
+   * precisely when it most needs to would make that button decorative. Opening a queue row changes
+   * nothing by itself; the tier still moves only through the partner page.
+   *
+   * SUSPENDED and ARCHIVED stay out: those are an operator's decision, and the way back is a
+   * conversation with the operator, not a request in the same queue.
+   */
   private async assertOwner(companyId: string, userId: string): Promise<void> {
     const membership = await this.prisma.client.companyMembership.findFirst({
-      where: { companyId, userId, status: 'ACTIVE', company: { status: 'ACTIVE' } },
+      where: { companyId, userId, status: 'ACTIVE', company: { status: { in: ['ACTIVE', 'DISABLED'] } } },
       select: { roles: { select: { role: { select: { key: true } } } } },
     });
     if (!membership?.roles.some((entry) => entry.role.key === 'OWNER')) {
