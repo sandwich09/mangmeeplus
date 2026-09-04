@@ -1,0 +1,15 @@
+# Agent Memory: LINE-first signup (P10-L)
+
+Status: SPEC DRAFT v1 written 2026-09-04 (`docs/specs/mangmee-line-first-signup-spec-th.md`); awaiting Owner multi-angle review; no code.
+Owner: Owner (product) / Claude Fable (spec + control) / Opus (implementation when ordered)
+Scope: Customer adds LINE OA → LIFF 1-field signup (ชื่อร้าน) → MANUAL or AUTO_FREE approval → provision with LINE identity linked in the same tx → LINE push with central LIFF "start" button → handoff minted at tap → legal acceptance → first receipt. No email/password at signup (progressive later). Companion to P10; Flow B web form stays.
+Decisions:
+- 2026-09-04 Owner agreed in principle to the UX/BA review: no password step, no email at signup (progressive profiling), auto-approve Free or at least remove dead wait, expectation-setting via LINE, staff door separated, soft rejection with a path.
+- SIGNUP-02 reinterpreted for source `line-oa`: proof of a real person = server-verified LIFF ID token (replaces mailbox proof); provisioning right after approval, no claim step.
+- LINE-ONBOARD-01 kept strictly: every LINE button is a central LIFF URL without personal tokens; handoff (15 min) minted at tap via new `POST /v1/auth/line/liff/session`.
+- Reuse: `attachUserId` for "LINE already has an account" (set at submit), `CreateCompanyOnboardingUseCase` with additive `ownerAuth` input, existing LIFF page pattern (API-served HTML + `LIFF_PAGE_SCRIPT`), existing legal gate, existing admin queue/notify, `CompanyOnboardingRun` still created (reissue button works).
+- Resend (email fallback after SES denial 2026-09-04) is parked; this flow makes onboarding independent of email.
+Open questions: spec §13 (Free tier quotas/expiry, MANUAL vs AUTO_FREE day one, reject-notify default, businessType chip, LINE profile display, auto daily cap, customer-facing SLA).
+Artifacts: spec above; fact sheet basis = worktree develop `91957572` (Explore sweep 2026-09-04); branch `codex/line-first-signup-spec` (docs only, unpushed).
+Verification: none yet (docs only). Gates listed in spec §11.
+Next: Owner answers §13 + further angles (security, ops, support, pricing) → spec v2 → implementation plan → Slice L-A.
