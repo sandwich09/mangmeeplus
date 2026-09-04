@@ -48,9 +48,11 @@ describe('P10-L LIFF signup page', () => {
     const release = currentLegalRelease('th');
 
     assertOnlyExternalScripts(html);
-    // The version and the challenge are what the submit is checked against: a page that showed a
-    // different release than it echoes back would be evidence of an agreement nobody saw.
-    assert.ok(html.includes(release.displayChallenge), 'challenge must be embedded');
+    // The four values the submit is checked against. Asserted as the ATTRIBUTES the script reads,
+    // not merely as text present somewhere on the page: the challenge is also printed in the legal
+    // block, so a plain `includes` would still pass while the attribute the form posts was stale —
+    // and a stale challenge is evidence of an agreement to text nobody was shown.
+    assert.ok(html.includes(`data-legal-challenge="${release.displayChallenge}"`), 'challenge attribute');
     assert.ok(html.includes(`data-legal-version="${release.documentVersion}"`));
     assert.ok(html.includes(`data-legal-statement="${release.statementSha256}"`));
     assert.ok(html.includes(`data-legal-release="${release.releaseFingerprintSha256}"`));
@@ -78,6 +80,22 @@ describe('P10-L LIFF signup page', () => {
     // Owner copy rule: write "และ". Checked on the rendered body, where the customer reads it.
     const body = makeController().lineSignupPage(request()).split('<body')[1]!;
     assert.ok(!body.includes('+'), 'no plus sign anywhere a customer can see');
+  });
+
+  // L-12. The two legal links are what makes the acceptance binding, and the API origin does not
+  // serve /terms or /privacy — a page rendered against it would collect agreement to two 404s.
+  // Refusing is the same rule the session exchange follows for a URL it cannot point anywhere.
+  it('refuses to render rather than pointing the legal links at the API origin', () => {
+    assert.throws(
+      () => makeController({ sesWebBaseUrl: undefined }).lineSignupPage(request()),
+      ServiceUnavailableException,
+    );
+
+    const html = makeController().lineSignupPage(request());
+    assert.ok(html.includes(`href="${WEB_BASE}/terms"`), 'the WEB origin, spelled out');
+    assert.ok(html.includes(`href="${WEB_BASE}/privacy"`));
+    assert.equal(html.includes('href="https://api.example.test'), false);
+    assert.equal(html.includes('href="/terms"'), false, 'never a bare path against the API host');
   });
 
   it('renders the start page with an external-browser fallback link', () => {
@@ -119,38 +137,51 @@ describe('POST /v1/auth/line/liff/session (the surface)', () => {
 
 describe('P10-L LIFF client script', () => {
   /** Runs the shared script in a sandbox with the DOM the signup page provides. */
-  function runSignupScript(statusBody: string) {
+  const CHALLENGE = 'c'.repeat(64);
+
+  function runSignupScript(statusBody: string, responses: Array<{ status: number; body: string }> = []) {
+    const handlers: Record<string, Array<() => unknown>> = {};
+    const listen = (key: string) => (_event: string, handler: () => unknown) => {
+      (handlers[key] ??= []).push(handler);
+    };
     const elements: Record<string, Record<string, any>> = {
       status: { textContent: '' },
       detail: { textContent: '' },
       greeting: { textContent: '' },
-      link: { disabled: true, addEventListener() {} },
+      link: { disabled: true, addEventListener: listen('link') },
       'client-notice': { hidden: true },
       'liff-content': { hidden: false },
       'pending-text': { textContent: '' },
+      'done-text': { textContent: '' },
+      'company-name': { value: 'ร้านนิด' },
+      'phone-number': { value: '' },
     };
+    const closeButtons = [{ addEventListener: listen('close') }];
     const views = [
       { id: 'form-view', hidden: true },
       { id: 'done-view', hidden: true },
       { id: 'pending-view', hidden: true },
     ];
     const calls: Array<{ url: string; init: any }> = [];
+    let closed = 0;
     runInNewContext(LIFF_PAGE_SCRIPT, {
       document: {
         body: {
           dataset: {
             liffMode: 'signup', liffId: '1234567890-test', apiBase: 'https://api.example.test/v1',
-            legalVersion: 'v3', legalStatement: 'a', legalRelease: 'b', legalChallenge: 'c', legalLocale: 'th',
+            legalVersion: 'v3', legalStatement: 'a', legalRelease: 'b', legalChallenge: CHALLENGE, legalLocale: 'th',
           },
         },
         getElementById: (id: string) => elements[id] ?? views.find((view) => view.id === id) ?? null,
-        querySelectorAll: () => views,
+        querySelectorAll: (selector: string) => (selector === '[data-close]' ? closeButtons : views),
       },
       liff: {
         init: async () => {},
         isLoggedIn: () => true,
         getDecodedIDToken: () => ({ exp: Math.floor(Date.now() / 1000) + 3600, name: 'นิด' }),
         getIDToken: () => 'aaa.bbb.ccc',
+        closeWindow: () => { closed += 1; },
+        openWindow: () => {},
       },
       navigator: { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Line/14.0.0' },
       location: { href: 'https://api.example.test/v1/auth/line/link-page/signup', origin: 'https://api.example.test', search: '' },
@@ -161,10 +192,18 @@ describe('P10-L LIFF client script', () => {
       setTimeout,
       fetch: async (url: string, init: any) => {
         calls.push({ url, init });
+        const scripted = responses[calls.length - 1];
+        if (scripted) return { ok: scripted.status < 400, status: scripted.status, text: async () => scripted.body };
         return { ok: true, status: 200, text: async () => statusBody };
       },
     });
-    return { elements, views, calls };
+    return {
+      elements, views, calls, handlers,
+      closed: () => closed,
+      click: async (key: string) => {
+        for (const handler of handlers[key] ?? []) await handler();
+      },
+    };
   }
 
   const settle = () => new Promise((resolve) => { setImmediate(resolve); });
@@ -181,6 +220,59 @@ describe('P10-L LIFF client script', () => {
     assert.equal(views.find((view) => view.id === 'form-view')!.hidden, false);
     assert.equal(elements['link']!.disabled, false, 'the button only unlocks once the form is up');
     assert.equal(elements['greeting']!.textContent, 'สวัสดีคุณ นิด');
+  });
+
+  it('posts the challenge ATTRIBUTE the page was rendered with, not a value from anywhere else', async () => {
+    const h = runSignupScript('null', [
+      { status: 200, body: 'null' },
+      { status: 202, body: JSON.stringify({ requestId: 'r1', state: 'PENDING_REVIEW', existingAccount: false, businessHours: true }) },
+    ]);
+    await settle();
+    await settle();
+    await h.click('link');
+    await settle();
+
+    const submit = h.calls[1]!;
+    assert.equal(submit.url, 'https://api.example.test/v1/public/line-signups');
+    const body = JSON.parse(submit.init.body);
+    // LEGAL-LIFF-01: the four values are the evidence, and the server refuses anything that is not
+    // the release it is serving. A page that posted a different challenge than it rendered would be
+    // recording agreement to text nobody saw.
+    assert.equal(body.legal.displayChallenge, CHALLENGE);
+    assert.deepEqual(body.legal, {
+      documentVersion: 'v3', statementSha256: 'a', releaseFingerprintSha256: 'b',
+      displayChallenge: CHALLENGE, locale: 'th',
+    });
+    assert.equal(body.companyName, 'ร้านนิด');
+    assert.equal(h.views.find((view) => view.id === 'done-view')!.hidden, false);
+  });
+
+  it('reads status once more on a 409, so the waiting card names the shop (L-10)', async () => {
+    const h = runSignupScript('null', [
+      { status: 200, body: 'null' },
+      { status: 409, body: JSON.stringify({ message: 'line_signup_already_pending' }) },
+      { status: 200, body: JSON.stringify({ requestId: 'r1', state: 'PENDING_REVIEW', companyName: 'ร้านเดิม', businessHours: false }) },
+    ]);
+    await settle();
+    await settle();
+    await h.click('link');
+    await settle();
+    await settle();
+
+    assert.equal(h.calls.length, 3, 'open read, submit, one re-read — still no timer');
+    assert.equal(h.calls[2]!.url, 'https://api.example.test/v1/public/line-signups/me');
+    assert.match(h.elements['pending-text']!.textContent, /ร้าน ร้านเดิม/);
+    assert.match(h.elements['pending-text']!.textContent, /นอกเวลาทำการ/);
+    assert.match(h.elements['pending-text']!.textContent, /จันทร์–เสาร์ 9:00–18:00/, 'the §7 wording, once');
+  });
+
+  it('closes the LIFF window from the ปิด button (L-9)', async () => {
+    const h = runSignupScript('null');
+    await settle();
+    await settle();
+    await h.click('close');
+
+    assert.equal(h.closed(), 1, 'a LIFF page has no chrome to close itself with');
   });
 
   it('shows the waiting card instead of the form when an application is already open', async () => {

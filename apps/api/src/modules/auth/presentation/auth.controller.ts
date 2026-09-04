@@ -41,7 +41,7 @@ import {
   type ExchangeLiffSessionResult,
 } from '../application/use-cases/exchange-liff-session.use-case';
 import { accessTokenFromCookies } from './auth-cookie.constants';
-import { publicApiBase } from '../../../common/http/public-api-base';
+import { publicApiBase, requiredWebAppBase } from '../../../common/http/public-api-base';
 import { RequirePermissions } from '../../../common/security/permissions.decorator';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import { emitSecurityEvent, SECURITY_EVENT } from '../../../common/logger/security-event';
@@ -500,7 +500,10 @@ export class AuthController {
   lineSignupPage(@Req() req: Request): string {
     const release = currentLegalRelease('th');
     const statements = legalAcceptanceStatements('th');
-    const webBase = (this.config.sesWebBaseUrl ?? '').replace(/\/+$/, '');
+    // Not the API origin, and not a silent empty string: these two links are what makes the
+    // acceptance binding, so an environment that cannot serve them refuses the page (503) the same
+    // way the session exchange refuses to build a handoff URL it cannot point anywhere.
+    const webBase = requiredWebAppBase(this.config.sesWebBaseUrl).replace(/\/+$/, '');
     return liffPageHtml({
       title: 'เปิดร้านใหม่ ทดลองใช้ฟรี',
       data: {

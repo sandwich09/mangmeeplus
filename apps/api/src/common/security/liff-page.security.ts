@@ -97,6 +97,8 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
   // One sentence for every "we cannot do this right now", so a flag that is off and a service that
   // is down read the same to a shop owner — neither is their problem to diagnose.
   const UNAVAILABLE_TH = 'ตอนนี้ระบบยังเปิดให้สมัครทางนี้ไม่ได้ค่ะ ลองใหม่อีกครั้งภายหลัง หรือทักหาทีมงานได้เลยนะคะ';
+  /** Spec §7 writes the window exactly this way. One copy, so the page and the LINE cards agree. */
+  const BUSINESS_HOURS_TH = '(จันทร์–เสาร์ 9:00–18:00)';
   /** States in which an application is still travelling — the page shows status, not the form. */
   const OPEN_SIGNUP_STATES = ['RECEIVED', 'VALIDATED', 'PENDING_REVIEW', 'PROVISIONING', 'READY', 'PROVISIONING_FAILED'];
   const START_REASON_TH = {
@@ -313,14 +315,8 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     for (let index = 0; index < views.length; index += 1) views[index].hidden = views[index].id !== viewId;
   }
 
-  /** P10-L §3.2. One read on open — never a timer: the answer arrives in the chat, not on this page. */
-  async function openSignup() {
-    if (!await initLiff()) return;
-    const idToken = currentIdToken();
-    if (!idToken) return;
-    const decoded = liff.getDecodedIDToken();
-    const greetingEl = document.getElementById('greeting');
-    if (greetingEl && decoded && decoded.name) greetingEl.textContent = 'สวัสดีคุณ ' + decoded.name;
+  /** One read, on demand. Never on a timer: the answer arrives in the chat, not on this page. */
+  async function readSignupStatus(idToken) {
     const res = await fetch(apiBase + '/public/line-signups/me', {
       method: 'GET',
       cache: 'no-store',
@@ -329,9 +325,20 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     if (res.status === 403) throw new Error(UNAVAILABLE_TH);
     const text = await res.text();
     if (!res.ok) throw new Error(refusalCode(text) || ('อ่านสถานะไม่สำเร็จ: ' + res.status));
-    const status = text ? JSON.parse(text) : null;
+    return text ? JSON.parse(text) : null;
+  }
+
+  /** P10-L §3.2. One read on open, then the form or the waiting card. */
+  async function openSignup() {
+    if (!await initLiff()) return;
+    const idToken = currentIdToken();
+    if (!idToken) return;
+    const decoded = liff.getDecodedIDToken();
+    const greetingEl = document.getElementById('greeting');
+    if (greetingEl && decoded && decoded.name) greetingEl.textContent = 'สวัสดีคุณ ' + decoded.name;
+    const status = await readSignupStatus(idToken);
     if (status && OPEN_SIGNUP_STATES.indexOf(status.state) >= 0) {
-      showPending(status.companyName, status.businessHours);
+      showPending(status);
       return;
     }
     setStatus('');
@@ -340,11 +347,14 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     actionBtn.disabled = false;
   }
 
-  function showPending(companyName, businessHours) {
+  function showPending(status) {
+    const companyName = status && status.companyName ? status.companyName : '';
     const shop = companyName ? 'ร้าน ' + companyName + ' ' : '';
-    document.getElementById('pending-text').textContent = businessHours
-      ? 'ได้รับคำขอเปิด' + shop + 'แล้วค่ะ ทีมงานกำลังตรวจสอบ ปกติดำเนินการให้ภายในวันทำการ (จันทร์ ถึง เสาร์ 9:00 ถึง 18:00) พร้อมเมื่อไหร่จะแจ้งในแชทนี้นะคะ'
-      : 'ได้รับคำขอเปิด' + shop + 'แล้วค่ะ ตอนนี้อยู่นอกเวลาทำการ ทีมงานจะดูให้ในวันทำการถัดไป (จันทร์ ถึง เสาร์ 9:00 ถึง 18:00) นะคะ';
+    // businessHours is the SERVER's answer for the Bangkok clock; a page left open since yesterday
+    // must not narrate hours it worked out itself.
+    document.getElementById('pending-text').textContent = status && status.businessHours
+      ? 'ได้รับคำขอเปิด' + shop + 'แล้วค่ะ ทีมงานกำลังตรวจสอบ ปกติดำเนินการให้ภายในวันทำการ ' + BUSINESS_HOURS_TH + ' พร้อมเมื่อไหร่จะแจ้งในแชทนี้นะคะ'
+      : 'ได้รับคำขอเปิด' + shop + 'แล้วค่ะ ตอนนี้อยู่นอกเวลาทำการ ทีมงานจะดูให้ในวันทำการถัดไป ' + BUSINESS_HOURS_TH + ' นะคะ';
     setStatus('');
     showOnly('pending-view');
   }
@@ -387,7 +397,9 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
       // fresh page carries the text this customer will actually be agreeing to.
       if (code === 'legal_release_changed') throw new Error('ข้อกำหนดมีฉบับใหม่แล้วค่ะ กรุณาปิดหน้านี้แล้วเปิดใหม่อีกครั้งนะคะ');
       if (code === 'line_signup_already_pending') {
-        showPending('', true);
+        // A second tab, or a submit that raced the open read. One more read — not a poll — so the
+        // waiting card names the shop and the real business-hours answer instead of guessing both.
+        showPending(await readSignupStatus(idToken));
         return;
       }
     }
@@ -396,8 +408,8 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     document.getElementById('done-text').textContent = accepted.existingAccount
       ? 'เพิ่มร้านที่ 2 ให้บัญชีของคุณแล้วค่ะ พร้อมเมื่อไหร่เราจะส่งข้อความในแชทนี้นะคะ'
       : (accepted.businessHours
-        ? 'ได้รับแล้วค่ะ ทีมงานกำลังตรวจสอบ ปกติดำเนินการให้ภายในวันทำการ (จันทร์ ถึง เสาร์ 9:00 ถึง 18:00) พร้อมใช้เมื่อไหร่เราจะส่งข้อความในแชทนี้นะคะ'
-        : 'ได้รับแล้วค่ะ ตอนนี้อยู่นอกเวลาทำการ ทีมงานจะดูให้ในวันทำการถัดไป (จันทร์ ถึง เสาร์ 9:00 ถึง 18:00) พร้อมใช้เมื่อไหร่เราจะส่งข้อความในแชทนี้นะคะ');
+        ? 'ได้รับแล้วค่ะ ทีมงานกำลังตรวจสอบ ปกติดำเนินการให้ภายในวันทำการ ' + BUSINESS_HOURS_TH + ' พร้อมใช้เมื่อไหร่เราจะส่งข้อความในแชทนี้นะคะ'
+        : 'ได้รับแล้วค่ะ ตอนนี้อยู่นอกเวลาทำการ ทีมงานจะดูให้ในวันทำการถัดไป ' + BUSINESS_HOURS_TH + ' พร้อมใช้เมื่อไหร่เราจะส่งข้อความในแชทนี้นะคะ');
     setStatus('');
     showOnly('done-view');
   }
@@ -491,6 +503,18 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
   }
 
   if (actionBtn) actionBtn.addEventListener('click', run);
+  // The "ปิด" buttons on the done and waiting cards. Without this they were decoration: a LIFF page
+  // has no browser chrome to close it with, so the customer was left staring at a finished screen.
+  const closeButtons = document.querySelectorAll('[data-close]');
+  for (let index = 0; index < closeButtons.length; index += 1) {
+    closeButtons[index].addEventListener('click', function () {
+      try {
+        liff.closeWindow();
+      } catch {
+        // Opened outside the LINE client (a shared link, a desktop browser): nothing to close.
+      }
+    });
+  }
   if (mode !== 'customer') void run();
 })();
 `;

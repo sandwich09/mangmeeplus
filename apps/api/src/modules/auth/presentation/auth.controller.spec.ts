@@ -61,6 +61,8 @@ function runLiffClientGate(userAgent: string) {
     document: {
       body: { dataset: { liffMode: 'customer', liffId: '', apiBase: '', devMode: 'false', oaAddUrl: '' } },
       getElementById: (id: string) => elements[id] ?? null,
+      // The signup/waiting cards' "ปิด" buttons are bound by selector; this page has none.
+      querySelectorAll: () => [],
     },
     navigator: { userAgent },
     location: { href: 'https://api.example.test/v1/auth/line/customer-register-page', origin: 'https://api.example.test', search: '' },
