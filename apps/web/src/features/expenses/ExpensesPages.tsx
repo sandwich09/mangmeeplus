@@ -73,6 +73,7 @@ import { hasRecordedTax, showsTaxCapture, useExpenseCapturePolicy } from './expe
 import { evaluateExpensePrerequisites, mayApproveSubstituteReceipt, payerWrittenMissingReason, resolveWizardSignatureSource } from './substitute-receipt-wizard.model';
 import { civilPeriodKey, todayCivilDate, isCivilDate } from '@watchdog-bms/contracts';
 import { useToast } from '@/common/components/toast';
+import { apiErrorCode } from '@/common/api/api-error-message';
 
 // The upload copy promises "about 10–20 seconds"; past that the honest message is the queue one.
 const QUEUE_BUSY_AFTER_MS = 8_000;
@@ -214,6 +215,10 @@ function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { company
   const [extracting, setExtracting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fileNotice, setFileNotice] = useState<string | null>(null);
+  // P10-L §15.1: the shop hit its monthly slip ceiling. Latched for the rest of the visit, because
+  // the next receipt this month meets the same wall — offering the button again would only sell
+  // another upload that cannot be read.
+  const [quotaBlocked, setQuotaBlocked] = useState<string | null>(null);
   // P4: past the advertised 10–20s read time, a spinner reads as "the system is down" when in fact
   // the queue is just long. Say which one it is.
   const [queueBusy, setQueueBusy] = useState(false);
@@ -317,8 +322,16 @@ function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { company
           notice = extractionNotice(result, locale);
         }
       } catch (e) {
-        notice = (await recoveredNotice())
-          ?? { tone: 'error', message: `${t('expenses.upload_extract_failed_prefix', locale)} — ${err(e)} ${t('expenses.upload_extract_failed_suffix', locale)}` };
+        // The receipt is saved either way; only the AI read was refused, so the quota answer is its
+        // own notice rather than the generic "extraction failed, try again" the user cannot act on.
+        if (apiErrorCode(e) === 'receipt_quota_exceeded') {
+          const message = err(e, locale);
+          setQuotaBlocked(message);
+          notice = { tone: 'error', message };
+        } else {
+          notice = (await recoveredNotice())
+            ?? { tone: 'error', message: `${t('expenses.upload_extract_failed_prefix', locale)} — ${err(e)} ${t('expenses.upload_extract_failed_suffix', locale)}` };
+        }
       }
       onSuccess(intent.expenseId, notice);
     } catch (e) { setError(err(e)); }
@@ -356,6 +369,7 @@ function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { company
       </div>
 
       <MangmeeCard className="p-6">
+        {quotaBlocked && <div className="mb-4"><ErrorBanner message={quotaBlocked} /></div>}
         {error && <div className="mb-4"><ErrorBanner message={error} focus /></div>}
         {/* Phones get the camera, not a dropzone. A phone has no drag, no file manager and no
             click, so the desktop copy below ("ลากไฟล์มาวาง หรือคลิกเพื่อเลือก") is an instruction the
@@ -408,7 +422,7 @@ function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { company
           <span className="flex h-10 w-10 items-center justify-center rounded-[10px]" style={{ background: '#F4EBFF', color: '#7A5AF8' }}>{ICON.sparkle}</span>
           <p className="text-sm leading-relaxed text-gray-600">{t('expenses.upload_ai_strip_before', locale)}<b className="text-gray-800">{t('expenses.upload_ai_strip_bold', locale)}</b>{t('expenses.upload_ai_strip_after', locale)}</p>
         </div>
-        <button className={cx(btnClass, 'mt-5 h-12 w-full text-base')} onClick={handleUpload} disabled={loading || preparing}>
+        <button className={cx(btnClass, 'mt-5 h-12 w-full text-base')} onClick={handleUpload} disabled={loading || preparing || quotaBlocked !== null}>
           <span className="inline-flex items-center justify-center gap-2">
             {(preparing || loading || extracting) && <InlineSpinner />}
             {extracting ? t('expenses.ai_reading', locale) : preparing ? t('expenses.upload_preparing', locale) : loading ? t('expenses.uploading', locale) : t('expenses.upload_cta', locale)}

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { RequestReceiptExtractionUseCase } from './expense-extraction.use-case';
 import { ReceiptOcrClient } from '../../infrastructure/receipt-ocr.client';
 import type { RequestContext } from '@watchdog-bms/contracts';
-import { __resetCompanyAiBudgetCache } from '../../../line-ai/application/company-ai-usage-meter';
+import { __resetCompanyAiBudgetCache, bangkokMonthKey } from '../../../line-ai/application/company-ai-usage-meter';
 
 const baseExpense = {
   id: 'expense-1',
@@ -54,11 +54,67 @@ function ctx(permissions: string[], userId = 'user-1'): RequestContext {
   };
 }
 
+/**
+ * In-memory stand-in for the P10-L slip counter (spec §15.1). `term: undefined` means no
+ * `CompanyPlanTerm` row, which is the grandfathered-unlimited case every pre-existing test here is,
+ * so their behaviour is unchanged by the counter's arrival.
+ */
+function fakeQuotaPrisma(options: { term?: Record<string, unknown> | null; used?: number } = {}) {
+  const counts = new Map<string, number>();
+  const entries = new Map<string, { companyId: string; monthKey: string; status: string }>();
+  if (options.used !== undefined) counts.set(`company-1|${bangkokMonthKey()}`, options.used);
+  const key = (companyId: string, monthKey: string) => `${companyId}|${monthKey}`;
+  const tx = {
+    companyReceiptUsageEntry: {
+      findUnique: async ({ where }: any) => entries.get(where.requestId) ?? null,
+      create: async ({ data }: any) => { entries.set(data.requestId, { ...data }); return data; },
+      update: async ({ where, data }: any) => {
+        entries.set(where.requestId, { ...entries.get(where.requestId)!, ...data });
+        return data;
+      },
+    },
+    companyReceiptUsage: {
+      findUnique: async ({ where }: any) => {
+        const k = key(where.companyId_monthKey.companyId, where.companyId_monthKey.monthKey);
+        return counts.has(k) ? { count: counts.get(k)! } : null;
+      },
+      upsert: async ({ where }: any) => {
+        const k = key(where.companyId_monthKey.companyId, where.companyId_monthKey.monthKey);
+        if (!counts.has(k)) counts.set(k, 0);
+        return { count: counts.get(k)! };
+      },
+      updateMany: async ({ where }: any) => {
+        const k = key(where.companyId, where.monthKey);
+        const current = counts.get(k) ?? 0;
+        if (where.count?.lt !== undefined && current >= where.count.lt) return { count: 0 };
+        counts.set(k, current + (where.count?.gt !== undefined ? -1 : 1));
+        return { count: 1 };
+      },
+    },
+  };
+  const client = {
+    $transaction: <T>(fn: (value: typeof tx) => Promise<T>): Promise<T> => fn(tx),
+    companyPlanTerm: { findUnique: async () => options.term ?? null },
+    companyReceiptUsageEntry: {
+      updateMany: async ({ where, data }: any) => {
+        const entry = entries.get(where.requestId);
+        if (!entry || entry.status !== where.status) return { count: 0 };
+        entries.set(where.requestId, { ...entry, ...data });
+        return { count: 1 };
+      },
+    },
+  };
+  return { prisma: { client } as any, entries, count: () => counts.get(`company-1|${bangkokMonthKey()}`) ?? 0 };
+}
+
 function makeUseCase(options: {
   expense?: Record<string, unknown> | null;
   attachment?: Record<string, unknown> | null;
   gatewayResult?: Record<string, unknown>;
   applyResult?: Record<string, unknown>;
+  planTerm?: Record<string, unknown> | null;
+  used?: number;
+  quotaEnforced?: boolean;
 } = {}) {
   const updates: any[] = [];
   const applyCalls: any[] = [];
@@ -95,8 +151,15 @@ function makeUseCase(options: {
   const audit = {
     log: mock.fn(async (entry: any) => { audits.push(entry); }),
   };
-  const useCase = new RequestReceiptExtractionUseCase(repo as any, storage as any, client as any, applyService as any, audit as any);
-  return { useCase, repo, storage, client, updates, applyCalls, audits };
+  const quota = fakeQuotaPrisma({
+    ...(options.planTerm !== undefined ? { term: options.planTerm } : {}),
+    ...(options.used !== undefined ? { used: options.used } : {}),
+  });
+  const config = { receiptQuotaEnforced: options.quotaEnforced === true } as any;
+  const useCase = new RequestReceiptExtractionUseCase(
+    repo as any, storage as any, client as any, applyService as any, audit as any, quota.prisma, config,
+  );
+  return { useCase, repo, storage, client, updates, applyCalls, audits, quota };
 }
 
 describe('RequestReceiptExtractionUseCase', () => {
@@ -397,6 +460,76 @@ describe('RequestReceiptExtractionUseCase', () => {
     );
     assert.equal(storage.getObject.mock.callCount(), 0);
     assert.equal(client.extract.mock.callCount(), 0);
+  });
+});
+
+// P10-L §15.1 / review G-01. The web lane charges the same counter as LINE, and answers a refusal
+// with a code the upload screen can branch on rather than one of the `failed` extraction outcomes —
+// those all read as "try again", which is the one thing that cannot work here.
+describe('RequestReceiptExtractionUseCase monthly receipt quota', () => {
+  const okGateway = { status: 'ok', fields: { vendorName: 'ร้านค้า', grandTotalAmount: '321.00' }, classification: classification() };
+  const freeTrial = { tierKey: 'FREE_TRIAL_15', monthlySlipLimit: 15, warmupUntil: null, warmupSlipLimit: null };
+
+  it('answers 409 receipt_quota_exceeded with the numbers, before fetching a single byte', async () => {
+    const { useCase, storage, client, quota } = makeUseCase({
+      gatewayResult: okGateway, planTerm: freeTrial, used: 15, quotaEnforced: true,
+    });
+
+    await assert.rejects(
+      () => useCase.execute(ctx(['expense.ocr.request']), 'expense-1'),
+      (error: any) => {
+        assert.equal(error.name, 'ConflictException');
+        assert.equal(error.getStatus(), 409);
+        const body = error.getResponse();
+        assert.equal(body.code, 'receipt_quota_exceeded');
+        assert.equal(body.count, 15);
+        assert.equal(body.limit, 15);
+        assert.equal(body.monthKey, bangkokMonthKey());
+        assert.match(body.message, /15 ใบ/);
+        return true;
+      },
+    );
+    assert.equal(storage.getObject.mock.callCount(), 0);
+    assert.equal(client.extract.mock.callCount(), 0);
+    assert.equal(quota.count(), 15, 'a refused read does not raise the count');
+  });
+
+  it('consumes the slip on a successful read and releases it on a failed one', async () => {
+    const ok = makeUseCase({ gatewayResult: okGateway, planTerm: freeTrial, used: 3, quotaEnforced: true });
+    await ok.useCase.execute(ctx(['expense.ocr.request']), 'expense-1');
+    assert.equal(ok.quota.count(), 4);
+    assert.equal(ok.quota.entries.get('web:request-1')?.status, 'CONSUMED');
+
+    const failed = makeUseCase({
+      gatewayResult: { status: 'failed', errorCode: 'PROVIDER_TIMEOUT' }, planTerm: freeTrial, used: 3, quotaEnforced: true,
+    });
+    await failed.useCase.execute(ctx(['expense.ocr.request']), 'expense-1');
+    assert.equal(failed.quota.count(), 3, 'an outage must not eat a receipt the shop paid for');
+    assert.equal(failed.quota.entries.get('web:request-1')?.status, 'RELEASED');
+  });
+
+  it('counts but never blocks while RECEIPT_QUOTA_ENFORCED is off', async () => {
+    const { useCase, client, quota } = makeUseCase({ gatewayResult: okGateway, planTerm: freeTrial, used: 15 });
+
+    assert.equal((await useCase.execute(ctx(['expense.ocr.request']), 'expense-1')).status, 'ok');
+    assert.equal(client.extract.mock.callCount(), 1);
+    assert.equal(quota.count(), 16);
+  });
+
+  it('leaves a company with no plan term row unlimited', async () => {
+    const { useCase, client } = makeUseCase({ gatewayResult: okGateway, used: 9_999, quotaEnforced: true });
+
+    assert.equal((await useCase.execute(ctx(['expense.ocr.request']), 'expense-1')).status, 'ok');
+    assert.equal(client.extract.mock.callCount(), 1);
+  });
+
+  it('does not charge an unsupported file, which never reaches a provider', async () => {
+    const { useCase, quota } = makeUseCase({
+      attachment: { ...baseAttachment, mimeType: 'image/gif' }, planTerm: freeTrial, quotaEnforced: true,
+    });
+
+    assert.deepEqual(await useCase.execute(ctx(['expense.ocr.request']), 'expense-1'), { status: 'unsupported' });
+    assert.equal(quota.count(), 0);
   });
 });
 

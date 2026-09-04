@@ -7,6 +7,16 @@ import { isStaleOcrApply, ocrLineVatRateUnknown, ReceiptOcrApplyService } from '
 import { deriveTaxEvidence, isExpenseExtractionEligible, sourceDocumentTypeFromClassification, toSourceDocumentType } from '../../domain/logic/expense-document.logic';
 import type { AiModelLineage, BusinessDocumentClassification, ExpenseExtractionResult, RequestContext } from '@watchdog-bms/contracts';
 import { observeCustomerJourney } from '../../../../common/observability/customer-journey-audit';
+import { AppConfigService } from '../../../../common/config/app-config.service';
+import { PrismaService } from '../../../../common/database/prisma.service';
+import { bangkokMonthKey } from '../../../line-ai/application/company-ai-usage-meter';
+import { effectiveMonthlySlipLimit, receiptQuotaExceededTextTh } from '../../../system-partner-management/domain/logic/receipt-quota.logic';
+import {
+  consumeReceiptQuota,
+  loadReceiptQuotaTerm,
+  releaseReceiptQuota,
+  reserveReceiptQuota,
+} from '../../../system-partner-management/infrastructure/prisma-company-receipt-usage.repository';
 
 const SUPPORTED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'application/pdf']);
 const MAX_EXTRACTION_BYTES = 10_000_000;
@@ -55,6 +65,8 @@ export class RequestReceiptExtractionUseCase {
     private readonly client: ReceiptOcrClient,
     private readonly applyService: ReceiptOcrApplyService,
     private readonly audit: AuditService,
+    private readonly prisma: PrismaService,
+    private readonly config: AppConfigService,
   ) {}
 
   async execute(ctx: RequestContext, expenseId: string): Promise<ExpenseExtractionResult> {
@@ -97,6 +109,22 @@ export class RequestReceiptExtractionUseCase {
       return this.finish(ctx, expenseId, 'unsupported', attachment.id);
     }
 
+    // P10-L §15.1 (review G-01): the plan-term slip ceiling, charged before the bytes are fetched and
+    // before any provider call — and OUTSIDE the try below, because a refusal is a 409 the upload
+    // screen acts on, not one of the `failed` outcomes that block swallows into an extraction notice.
+    const quotaRequestId = `web:${ctx.requestId}`;
+    const quota = await this.reserveWebReceiptQuota(ctx.companyId, quotaRequestId);
+    if (!quota.allowed) {
+      await this.auditOutcome(ctx, expenseId, 'receipt_quota_exceeded', attachment.id);
+      throw new ConflictException({
+        code: 'receipt_quota_exceeded',
+        message: receiptQuotaExceededTextTh(quota.limit ?? 0),
+        count: quota.count,
+        limit: quota.limit,
+        monthKey: quota.monthKey,
+      });
+    }
+
     try {
       const object = await this.storage.getObject({
         bucket: attachment.bucket,
@@ -117,6 +145,11 @@ export class RequestReceiptExtractionUseCase {
           contentBase64: object.bytes.toString('base64'),
         },
       });
+
+      // Only a read that reached the provider spends the slip; a refusal or outage gives it back, so
+      // a retry of the same upload is not charged twice for one receipt.
+      if (response.status === 'ok') await consumeReceiptQuota(this.prisma, quotaRequestId);
+      else await releaseReceiptQuota(this.prisma, quotaRequestId);
 
       if (response.status !== 'ok') {
         const status = response.status === 'not_configured' ? 'not_configured' : 'failed';
@@ -210,8 +243,25 @@ export class RequestReceiptExtractionUseCase {
       return { status: 'ok', fields: response.fields, missingFields, classification: response.classification };
     } catch (error) {
       this.logger.warn({ msg: 'Receipt OCR extraction failed', expenseId, error: (error as Error).message });
+      // Idempotent: a slip already consumed above is left alone, so only a reservation that never
+      // became a read is given back.
+      await releaseReceiptQuota(this.prisma, quotaRequestId);
       return this.finish(ctx, expenseId, 'failed', attachment.id);
     }
+  }
+
+  /** P10-L §15.1 — same seam and same flag as the LINE lane; see `reserveLineReceiptQuota`. */
+  private async reserveWebReceiptQuota(companyId: string, requestId: string) {
+    const monthKey = bangkokMonthKey();
+    const term = await loadReceiptQuotaTerm(this.prisma, companyId);
+    const reservation = await reserveReceiptQuota(this.prisma, {
+      companyId,
+      monthKey,
+      requestId,
+      limit: effectiveMonthlySlipLimit(term, new Date()),
+      enforce: this.config.receiptQuotaEnforced,
+    });
+    return { ...reservation, monthKey };
   }
 
   private async finish(
