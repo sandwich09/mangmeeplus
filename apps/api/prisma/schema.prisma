@@ -422,6 +422,8 @@ model Company {
   aiMonthlyUsage                    CompanyAiMonthlyUsage[]
   ocrUsageEvents                    CompanyOcrUsageEvent[]
   ocrMonthlyUsage                   CompanyOcrMonthlyUsage[]
+  receiptUsage                      CompanyReceiptUsage[]
+  receiptUsageEntries               CompanyReceiptUsageEntry[]
   integrationCredentials            CompanyIntegrationCredential[]
   // Item 11
   companyTaxProfile                 CompanyTaxProfile?
@@ -3369,6 +3371,46 @@ model CompanyOcrMonthlyUsage {
   company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@unique([companyId, monthKey])
+}
+
+// P10-L §15.1 (review G-01) — the COMMERCIAL slip ceiling: `CompanyPlanTerm.monthlySlipLimit`, which
+// nothing enforced before this table existed. Deliberately NOT the same counter as
+// `CompanyOcrMonthlyUsage`: that one is the platform-admin OCR guardrail
+// (`CompanyAiConfiguration.ocrMonthlyLimit`, an ops brake on spend), while this one is the number of
+// receipts the shop actually bought. They have different owners, different limits and different
+// customer-facing copy, so one row cannot answer both questions.
+model CompanyReceiptUsage {
+  id        String   @id @default(cuid())
+  companyId String
+  monthKey  String // 'YYYY-MM', Asia/Bangkok
+  count     Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, monthKey])
+}
+
+enum CompanyReceiptUsageStatus {
+  RESERVED
+  CONSUMED
+  RELEASED
+}
+
+// One row per receipt-read REQUEST, so a redelivery of the same LINE photo (or a retried web
+// extraction) finds its own prior reservation instead of paying for a second slip. `requestId` is
+// caller-namespaced (`line:<lineMessageId>` / `web:<requestId>`) and globally unique.
+model CompanyReceiptUsageEntry {
+  id        String                    @id @default(cuid())
+  companyId String
+  monthKey  String
+  requestId String                    @unique
+  status    CompanyReceiptUsageStatus @default(RESERVED)
+  createdAt DateTime                  @default(now())
+  updatedAt DateTime                  @updatedAt
+  company   Company                   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, monthKey])
 }
 
 model CompanyIntegrationCredential {
