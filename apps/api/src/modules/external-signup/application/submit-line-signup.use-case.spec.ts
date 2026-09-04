@@ -96,9 +96,13 @@ function harness(options: {
   } as any;
   const provision = { execute: async (cmd: any) => { provisioned.push(cmd); return {}; } } as any;
 
+  // §15.6: the daily-cap alert is raised, not sent — recorded so the trigger can be asserted.
+  const alerts: string[] = [];
+  const opsAlerts = { raise: async (kind: string) => { alerts.push(kind); } } as any;
+
   return {
-    useCase: new SubmitLineSignupUseCase(prisma, config, core, lineIdToken, rateLimit, adminNotify, provision),
-    created, advances, audits, updates, notified, provisioned, userQuotas, capCounts, locks,
+    useCase: new SubmitLineSignupUseCase(prisma, config, core, lineIdToken, rateLimit, adminNotify, provision, opsAlerts),
+    created, advances, audits, updates, notified, provisioned, userQuotas, capCounts, locks, alerts,
   };
 }
 

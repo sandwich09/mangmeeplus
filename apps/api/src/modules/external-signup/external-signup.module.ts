@@ -7,6 +7,7 @@ import { SystemOnboardingModule } from '../system-onboarding/system-onboarding.m
 import { CompanySignupCoreService } from './application/company-signup-core.service';
 import { SignupAdminNotifyService } from './application/signup-admin-notify.service';
 import { LineSignupNotifyService } from './application/line-signup-notify.service';
+import { SignupOpsAlertService } from './application/signup-ops-alert.service';
 import { AccountClaimTokenService } from './application/account-claim-token.service';
 import { PublicSignupStatusUseCase } from './application/public-signup-status.use-case';
 import { ProvisionSignupUseCase } from './application/provision-signup.use-case';
@@ -53,6 +54,7 @@ import { SystemSignupRequestController } from './presentation/http/system-signup
     SignupAdminQueueUseCase,
     SignupAdminNotifyService,
     LineSignupNotifyService,
+    SignupOpsAlertService,
     SignupClaimEmailService,
     SesEventsUseCase,
     // The one outbound GET the SNS path makes (signing certificate, subscription confirmation),

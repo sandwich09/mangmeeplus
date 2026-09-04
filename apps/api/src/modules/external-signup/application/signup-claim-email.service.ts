@@ -11,6 +11,9 @@ import {
   LINE_SIGNUP_PUSH_EVENT_TYPE, LINE_SUPPORT_NOTICE_EVENT_TYPE, LinePushThrottledError,
   LineSignupNotifyService, type LineSignupPushKind,
 } from './line-signup-notify.service';
+import {
+  SIGNUP_OPS_ALERT_EVENT_TYPE, SignupOpsAlertService, type SignupOpsAlertKind,
+} from './signup-ops-alert.service';
 import { CLAIM_EXPIRY_AFTER_APPROVAL_DAYS, CLAIM_REMINDER_AFTER_HOURS } from '../domain/account-claim.logic';
 
 /** P11 F-EM-2. Reserved for this consumer: the generic workflow drain must exclude it. */
@@ -31,6 +34,8 @@ const SIGNUP_OUTBOX_EVENT_TYPES = [
   // nothing but a second thing to forget to deploy.
   LINE_SIGNUP_PUSH_EVENT_TYPE,
   LINE_SUPPORT_NOTICE_EVENT_TYPE,
+  // §15.6 ops alerts: same reasoning again. The only one of these not tied to an application.
+  SIGNUP_OPS_ALERT_EVENT_TYPE,
 ] as const;
 
 /** Reason recorded on the state row when the 30-day sweep parks an unclaimed approval (§4D ④). */
@@ -58,6 +63,7 @@ export class SignupClaimEmailService {
     private readonly core: CompanySignupCoreService,
     private readonly adminNotify: SignupAdminNotifyService,
     private readonly lineNotify: LineSignupNotifyService,
+    private readonly opsAlerts: SignupOpsAlertService,
     @Inject(AUTH_MAILER_TOKEN) private readonly mailer: AuthMailerPort,
     @Inject(LOGGER_TOKEN) private readonly logger: AppLogger,
   ) {}
@@ -129,8 +135,14 @@ export class SignupClaimEmailService {
       try {
         // A support alert belongs to a PERSON, not to an application — it may have no signup row at
         // all (an unlinked stranger asking for help), so it is dispatched before the id check.
+        // §15.6's ops alert belongs to a DAY, for the same reason and with the same exemption.
         if (event.eventType === LINE_SUPPORT_NOTICE_EVENT_TYPE) {
           await this.lineNotify.deliverSupportNotice(readPayloadString(event.payloadJson, 'companyId'));
+        } else if (event.eventType === SIGNUP_OPS_ALERT_EVENT_TYPE) {
+          const kind = readPayloadString(event.payloadJson, 'kind');
+          const dayKey = readPayloadString(event.payloadJson, 'dayKey');
+          if (!kind || !dayKey) throw new Error('missing_ops_alert_kind');
+          await this.opsAlerts.deliver(kind as SignupOpsAlertKind, dayKey);
         } else {
           if (!signupRequestId) throw new Error('missing_signup_request_id');
           await this.handle(event.eventType, signupRequestId, event.payloadJson);

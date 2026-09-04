@@ -130,9 +130,9 @@ export class SignupAdminNotifyService {
   /**
    * Best-effort by contract: a LINE outage is logged, never thrown back into the drain.
    *
-   * Public because the LINE-first flow's support alert has the same audience, the same channel and
-   * the same "one message per admin, never two" rule (L-16) — a second copy would be a second place
-   * to forget the de-duplication by identity row.
+   * Public because the LINE-first flow's support alert and the §15.6 ops alerts both send on this
+   * exact rail, with the same audience and the same "one message per admin, never two" rule (L-16)
+   * — a second copy would be a second place to forget the de-duplication by identity row.
    */
   async pushToLinkedAdmins(userIds: string[], text: string): Promise<void> {
     const token = this.config.lineMessagingChannelAccessToken;

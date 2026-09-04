@@ -252,8 +252,11 @@ function harness(options: { systemAdmins?: string[]; config?: Record<string, unk
   } as any;
   // P10-L: the ready push is enqueued, so the AUTO_FREE path can be asserted end to end without LINE.
   const linePushes: Array<{ id: string; kind: string }> = [];
+  // §15.6: the ops rail is a fake here — the alert conditions have their own spec.
+  const alerts: string[] = [];
   const lineNotify = { enqueue: async (id: string, kind: string) => { linePushes.push({ id, kind }); } } as any;
-  const provision = new ProvisionSignupUseCase(store.prisma, core, onboarding, config, adminNotify, lineNotify);
+  const opsAlerts = { raise: async (kind: string) => { alerts.push(kind); } } as any;
+  const provision = new ProvisionSignupUseCase(store.prisma, core, onboarding, config, adminNotify, lineNotify, opsAlerts);
   const rateLimit = {
     assertLineSignupAttemptAllowed: async () => undefined,
     assertLineSignupUserAllowed: async () => undefined,
@@ -264,11 +267,12 @@ function harness(options: { systemAdmins?: string[]; config?: Record<string, unk
   } as any;
 
   return {
-    submit: new SubmitLineSignupUseCase(store.prisma, config, core, lineIdToken, rateLimit, adminNotify, provision),
+    submit: new SubmitLineSignupUseCase(store.prisma, config, core, lineIdToken, rateLimit, adminNotify, provision, opsAlerts),
     provision,
     core,
     store,
     notified,
+    alerts,
   };
 }
 

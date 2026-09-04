@@ -96,10 +96,14 @@ function harness(options: {
   const linePushes: Array<{ id: string; kind: string }> = [];
   const lineNotify = { enqueue: async (id: string, kind: string) => { linePushes.push({ id, kind }); } } as any;
 
+  // §15.6: an ops alert is raised on a failed or re-claimed provisioning; recorded, never sent.
+  const alerts: string[] = [];
+  const opsAlerts = { raise: async (kind: string) => { alerts.push(kind); } } as any;
+
   return {
-    useCase: new ProvisionSignupUseCase(prisma, core, onboarding, config, adminDirectory, lineNotify),
+    useCase: new ProvisionSignupUseCase(prisma, core, onboarding, config, adminDirectory, lineNotify, opsAlerts),
     onboardingCalls, companyUpdates, requestUpdates, audits, advances, completed, failures, planTermUpserts,
-    planTermUpdates, aiConfigUpserts, lineContexts, linePushes,
+    planTermUpdates, aiConfigUpserts, lineContexts, linePushes, alerts,
   };
 }
 

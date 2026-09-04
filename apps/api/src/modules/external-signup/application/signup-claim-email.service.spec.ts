@@ -13,6 +13,7 @@ import {
   signupPendingReviewMessage,
 } from './signup-admin-notify.service';
 import { LINE_SIGNUP_PUSH_EVENT_TYPE, LINE_SUPPORT_NOTICE_EVENT_TYPE, LinePushThrottledError } from './line-signup-notify.service';
+import { SIGNUP_OPS_ALERT_EVENT_TYPE } from './signup-ops-alert.service';
 
 const NOW = new Date('2026-09-01T12:00:00.000Z');
 
@@ -95,9 +96,16 @@ function harness(options: { request?: any; sendFails?: boolean } = {}) {
     deliverSupportNotice: async () => undefined,
   } as any;
 
-  const service = new SignupClaimEmailService(prisma, outbox, tokens, core, adminNotify, lineNotify, mailer, logger);
+  // §15.6: the ops alert is the one drained event with no application behind it.
+  const opsDelivered: Array<{ kind: string; dayKey: string }> = [];
+  const opsAlerts = {
+    deliver: async (kind: string, dayKey: string) => { opsDelivered.push({ kind, dayKey }); },
+  } as any;
+
+  const service = new SignupClaimEmailService(prisma, outbox, tokens, core, adminNotify, lineNotify, opsAlerts, mailer, logger);
   return {
-    service, appended, sent, rejections, notified, claims, published, failed, updates, minted, logs, lineDelivered,
+    service, appended, sent, rejections, notified, claims, published, failed, updates, minted, logs,
+    lineDelivered, opsDelivered,
     lineFails: (error: unknown) => { lineFailure = error; },
     queue: (events: any[]) => { claimable = events; },
   };
@@ -307,7 +315,23 @@ describe('SignupClaimEmailService.drain', () => {
       SIGNUP_PENDING_REVIEW_EVENT_TYPE,
       LINE_SIGNUP_PUSH_EVENT_TYPE,
       LINE_SUPPORT_NOTICE_EVENT_TYPE,
+      SIGNUP_OPS_ALERT_EVENT_TYPE,
     ]);
+  });
+
+  // §15.6: the only event on this drain with no application behind it, so the "every row carries a
+  // signupRequestId" rule cannot apply to it — and that rule used to run before dispatch.
+  it('delivers an ops alert that carries a day instead of an application', async () => {
+    const h = harness();
+    h.queue([{
+      id: 'evt-ops', eventType: SIGNUP_OPS_ALERT_EVENT_TYPE, claimToken: 'tok',
+      payloadJson: { data: { kind: 'auto_cap_reached', dayKey: '2026-09-05' } },
+    }]);
+    await h.service.drain();
+
+    assert.deepEqual(h.opsDelivered, [{ kind: 'auto_cap_reached', dayKey: '2026-09-05' }]);
+    assert.equal(h.published[0].id, 'evt-ops', 'and it settles like every other row');
+    assert.deepEqual(h.failed, []);
   });
 
   it('routes each signup event type to its own handler', async () => {
@@ -412,7 +436,7 @@ describe('SignupClaimEmailService.sweepReminders', () => {
     } as any;
     const outbox = { append: async (input: any) => { enqueued.push(input.eventKey); return input; } } as any;
     const service = new SignupClaimEmailService(
-      prisma, outbox, {} as any, {} as any, {} as any, {} as any, {} as any, { error: () => {}, warn: () => {} } as any,
+      prisma, outbox, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, { error: () => {}, warn: () => {} } as any,
     );
     return { service, enqueued, marks };
   }
@@ -461,7 +485,7 @@ describe('SignupClaimEmailService.sweepExpiredApprovals', () => {
       },
     } as any;
     const service = new SignupClaimEmailService(
-      prisma, {} as any, {} as any, core, {} as any, {} as any, {} as any,
+      prisma, {} as any, {} as any, core, {} as any, {} as any, {} as any, {} as any,
       { error: (f: any) => logs.push(f), warn: (f: any) => logs.push(f) } as any,
     );
     return { service, queries, advanced, logs };

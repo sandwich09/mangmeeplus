@@ -8,6 +8,7 @@ import { CreateCompanyOnboardingUseCase } from '../../system-onboarding/applicat
 import { CompanySignupCoreService } from './company-signup-core.service';
 import { SignupAdminNotifyService } from './signup-admin-notify.service';
 import { LineSignupNotifyService } from './line-signup-notify.service';
+import { SignupOpsAlertService } from './signup-ops-alert.service';
 import { applyPlanTermPreset } from '../../system-partner-management/application/use-cases/company-plan-term.use-cases';
 import { suggestedUsernameFromEmail } from '../domain/account-claim.logic';
 import { SIGNUP_SOURCE_LINE_OA } from '../domain/company-signup.logic';
@@ -55,6 +56,7 @@ export class ProvisionSignupUseCase {
     /** The same active-SYSTEM_ADMIN lookup AUTO_FREE uses to name an operator of record. */
     private readonly adminDirectory: SignupAdminNotifyService,
     private readonly lineNotify: LineSignupNotifyService,
+    private readonly opsAlerts: SignupOpsAlertService,
   ) {}
 
   async execute(cmd: ProvisionSignupCommand): Promise<ProvisionSignupResult> {
@@ -80,6 +82,10 @@ export class ProvisionSignupUseCase {
         attachedToExistingUser: request.attachUserId !== null,
       };
     }
+
+    // §15.6 (c): taking the fence from an abandoned attempt means a shop sat half-open long enough
+    // for the clock to give up on it. Worth an operator's attention even though this call recovers.
+    if (claim.reclaimedStale) await this.opsAlerts.raise('provisioning_failed');
 
     const attachUserId = request.attachUserId;
     const existingOwner = attachUserId
@@ -182,6 +188,9 @@ export class ProvisionSignupUseCase {
           `Fence release failed for signup ${request.id}: ${messageOf(releaseError)}`,
         );
       }
+      // §15.6 (c): a shop that was told "we will open it" and was not. The customer is waiting and
+      // the row needs a human, so this is the one failure class that must not stay in the logs.
+      await this.opsAlerts.raise('provisioning_failed');
       throw error;
     }
   }

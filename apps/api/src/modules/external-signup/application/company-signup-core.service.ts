@@ -17,7 +17,13 @@ const SERVICE_ACTOR = 'official-signup-core';
 const SPECIAL_PROVISIONING_STATES = new Set<CompanySignupState>(['PROVISIONING', 'READY', 'PROVISIONING_FAILED']);
 
 type ReceiveResult = Readonly<{ request: CompanySignupRequest; replayed: boolean }>;
-type ProvisionClaim = Readonly<{ request: CompanySignupRequest; claimed: boolean; attemptId: string | null }>;
+type ProvisionClaim = Readonly<{
+  request: CompanySignupRequest;
+  claimed: boolean;
+  attemptId: string | null;
+  /** True when this claim took the fence from an abandoned attempt (§15.6: an ops-visible event). */
+  reclaimedStale?: boolean;
+}>;
 
 @Injectable()
 export class CompanySignupCoreService {
@@ -104,7 +110,7 @@ export class CompanySignupCoreService {
         tx, request, current.state as CompanySignupState, 'PROVISIONING', correlationRequestId,
         stale ? 'signup.provisioning.reclaimed_stale' : undefined,
       );
-      return { request, claimed: true, attemptId };
+      return { request, claimed: true, attemptId, reclaimedStale: stale };
     });
   }
 

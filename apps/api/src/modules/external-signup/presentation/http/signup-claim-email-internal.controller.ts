@@ -5,6 +5,7 @@ import { Public } from '../../../../common/security/public.decorator';
 import { assertWorkerToken } from '../../../../common/security/worker-token';
 import { SignupClaimEmailService } from '../../application/signup-claim-email.service';
 import { LineSignupNotifyService } from '../../application/line-signup-notify.service';
+import { SignupOpsAlertService } from '../../application/signup-ops-alert.service';
 
 export class SignupClaimEmailDrainDto {
   // A class, not an inline type: only a DTO class reaches the global ValidationPipe, so this is
@@ -23,6 +24,7 @@ export class SignupClaimEmailInternalController {
   constructor(
     private readonly claimEmail: SignupClaimEmailService,
     private readonly lineNotify: LineSignupNotifyService,
+    private readonly opsAlerts: SignupOpsAlertService,
   ) {}
 
   @Post('drain')
@@ -47,6 +49,13 @@ export class SignupClaimEmailInternalController {
     const reminders = await this.claimEmail.sweepReminders();
     const expiry = await this.claimEmail.sweepExpiredApprovals();
     const profileGuard = await this.lineNotify.sweepProfileGuardNudges();
-    return { ...reminders, ...expiry, profileGuardQueued: profileGuard.queued };
+    // §15.6 (d) rides here too: "how many trial shops burned their AI budget today" is a question
+    // about state, and this is the timer that already asks state questions on a 15-minute cadence.
+    const trialBudgets = await this.opsAlerts.sweepTrialBudgets();
+    return {
+      ...reminders, ...expiry,
+      profileGuardQueued: profileGuard.queued,
+      trialBudgetsExhausted: trialBudgets.exhausted,
+    };
   }
 }

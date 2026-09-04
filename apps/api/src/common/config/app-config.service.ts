@@ -76,6 +76,10 @@ export class AppConfigService {
   /** Per-shop AI spend cap for a free trial, in satang (spec §10). */
   get lineFreeAiBudgetSatang(): number { return this.config.LINE_FREE_AI_BUDGET_SATANG; }
   get lineSignupAdminReminderMinutes(): number { return this.config.LINE_SIGNUP_ADMIN_REMINDER_MINUTES; }
+  /** §15.6: trial shops that must exhaust their AI budget in one Bangkok day before ops is told. */
+  get lineSignupAdminAlertBudgetExhaustedPerDay(): number {
+    return this.config.LINE_SIGNUP_ADMIN_ALERT_BUDGET_EXHAUSTED_PER_DAY;
+  }
   get lineSignupBusinessDays(): string { return this.config.LINE_SIGNUP_BUSINESS_DAYS; }
   get lineSignupBusinessHours(): string { return this.config.LINE_SIGNUP_BUSINESS_HOURS; }
   /** Review G-01: enforcing the monthly slip ceiling is a first for every existing shop, so it

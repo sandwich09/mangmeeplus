@@ -107,6 +107,13 @@ assert_rejected deploy-line-free-ai-budget-zero \
 assert_rejected deploy-line-signup-admin-reminder-zero \
   'LINE_SIGNUP_ADMIN_REMINDER_MINUTES must be a positive integer' \
   env -i PATH="$PATH" DEPLOY_ENV=uat LINE_SIGNUP_ADMIN_REMINDER_MINUTES=0 bash "$deploy" all
+# L-C §15.6: an alert threshold of 0 would fire on a day nothing happened, so zod says positive().
+assert_rejected deploy-line-signup-alert-threshold-zero \
+  'LINE_SIGNUP_ADMIN_ALERT_BUDGET_EXHAUSTED_PER_DAY must be a positive integer' \
+  env -i PATH="$PATH" DEPLOY_ENV=uat LINE_SIGNUP_ADMIN_ALERT_BUDGET_EXHAUSTED_PER_DAY=0 bash "$deploy" all
+assert_rejected deploy-line-signup-alert-threshold-not-a-number \
+  'LINE_SIGNUP_ADMIN_ALERT_BUDGET_EXHAUSTED_PER_DAY must be a positive integer' \
+  env -i PATH="$PATH" DEPLOY_ENV=uat LINE_SIGNUP_ADMIN_ALERT_BUDGET_EXHAUSTED_PER_DAY=five bash "$deploy" all
 assert_rejected deploy-line-signup-warmup-slips-not-a-number \
   'LINE_SIGNUP_WARMUP_SLIPS must be a positive integer' \
   env -i PATH="$PATH" DEPLOY_ENV=uat LINE_SIGNUP_WARMUP_SLIPS=ten bash "$deploy" all
@@ -117,7 +124,8 @@ grep -Fq 'LINE_SIGNUP_AUTO_DAILY_CAP must be a non-negative integer' "$deploy" \
 # (shadow mode for the ceiling) and proves nothing.
 for p10l_var in LINE_SIGNUP_ENABLED LINE_SIGNUP_APPROVAL_MODE LINE_SIGNUP_AUTO_DAILY_CAP \
   LINE_SIGNUP_WARMUP_SLIPS LINE_FREE_AI_BUDGET_SATANG LINE_SIGNUP_ADMIN_REMINDER_MINUTES \
-  LINE_SIGNUP_BUSINESS_DAYS LINE_SIGNUP_BUSINESS_HOURS RECEIPT_QUOTA_ENFORCED; do
+  LINE_SIGNUP_BUSINESS_DAYS LINE_SIGNUP_BUSINESS_HOURS RECEIPT_QUOTA_ENFORCED \
+  LINE_SIGNUP_ADMIN_ALERT_BUDGET_EXHAUSTED_PER_DAY; do
   grep -Fq "{name:\"${p10l_var}\", value:\$" "$deploy" \
     || { echo "FAIL: ${p10l_var} is never written to the task definition"; exit 1; }
 done

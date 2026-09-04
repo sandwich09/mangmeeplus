@@ -57,6 +57,8 @@ function harness(options: {
     return { ok: true, status: 200, headers: { get: () => null } };
   }) as any;
 
+  // §15.6: a failed push raises the once-a-day ops alert; recorded here rather than sent.
+  const alerts: string[] = [];
   const service = new LineSignupNotifyService(
     prisma,
     { append: async (input: any) => { appended.push(input); } } as any,
@@ -65,9 +67,13 @@ function harness(options: {
       activeSystemAdmins: async () => options.admins ?? [{ companyId: 'sys', userId: 'admin-1' }],
       pushToLinkedAdmins: async (userIds: string[], text: string) => { adminPushes.push({ userIds, text }); },
     } as any,
+    { raise: async (kind: string) => { alerts.push(kind); } } as any,
     { warn: (fields: any) => logs.push(fields), error: (fields: any) => logs.push(fields) } as any,
   );
-  return { service, appended, marks, logs, pushes, adminPushes, queries, restore: () => { globalThis.fetch = original; } };
+  return {
+    service, appended, marks, logs, pushes, adminPushes, queries, alerts,
+    restore: () => { globalThis.fetch = original; },
+  };
 }
 
 const completed = (overrides: Record<string, unknown> = {}) => ({

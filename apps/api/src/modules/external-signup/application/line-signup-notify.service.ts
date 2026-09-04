@@ -9,6 +9,7 @@ import { buildProfileGuardNudgeCard } from '../../line-ai/domain/logic/line-busi
 import { bangkokDayKey } from '../domain/business-hours.logic';
 import { SIGNUP_SOURCE_LINE_OA } from '../domain/company-signup.logic';
 import { SIGNUP_QUEUE_PATH, SignupAdminNotifyService } from './signup-admin-notify.service';
+import { SignupOpsAlertService } from './signup-ops-alert.service';
 
 /**
  * Reserved for the signup drain, like its two siblings: the generic workflow drain must exclude
@@ -72,6 +73,7 @@ export class LineSignupNotifyService {
     private readonly config: AppConfigService,
     /** The operator directory and the admin LINE fan-out already live here; L-16: one copy. */
     private readonly adminNotify: SignupAdminNotifyService,
+    private readonly opsAlerts: SignupOpsAlertService,
     @Inject(LOGGER_TOKEN) private readonly logger: AppLogger,
   ) {}
 
@@ -147,6 +149,10 @@ export class LineSignupNotifyService {
         errorCode: outcome.error,
         ...(outcome.retryAfterSeconds === undefined ? {} : { retryAfterSeconds: outcome.retryAfterSeconds }),
       }, 'signup.line.push_failed');
+      // §15.6 (b): a rate limit (429) or a dead OA means customers are not hearing that their shop
+      // is open, and nothing else in the system says so out loud. Raised BEFORE the throttle throw
+      // below, which returns early — a quota outage is exactly the day ops most needs telling.
+      await this.opsAlerts.raise('line_push_failed');
       // The OA's monthly message quota answers 429 with a retry-after measured in hours. That is
       // the one failure this row must OUTLIVE: "ร้านของคุณพร้อมใช้แล้ว" is the message the whole
       // flow exists to send, and a quota outage must not turn it into a DEAD outbox row.
