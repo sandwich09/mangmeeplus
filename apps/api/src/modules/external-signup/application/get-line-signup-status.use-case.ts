@@ -23,9 +23,9 @@ export class GetLineSignupStatusUseCase {
   async execute(idToken: string, now = new Date()): Promise<LineSignupStatusDto> {
     const verified = await this.lineIdToken.verify(idToken);
     // This route also verifies an ID token, and its own bucket is keyed on IP alone — so one
-    // account behind changing addresses could drive unbounded verifications here instead. Same
-    // per-account attempt quota as submit, charged once the token says whose it is.
-    await this.rateLimit.assertLineSignupAttemptAllowed(verified.providerUserId);
+    // account behind changing addresses could drive unbounded verifications here. Its OWN quota,
+    // not the submit one: reading a status must never cost a customer the ability to apply.
+    await this.rateLimit.assertLineSignupReadUserAllowed(verified.providerUserId);
     const request = await this.prisma.client.companySignupRequest.findFirst({
       where: {
         source: SIGNUP_SOURCE_LINE_OA,

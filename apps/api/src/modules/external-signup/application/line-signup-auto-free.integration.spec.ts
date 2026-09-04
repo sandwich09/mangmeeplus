@@ -65,11 +65,17 @@ function fakePrisma(options: { systemAdmins?: string[] } = {}) {
         row.autoApproved === where.autoApproved && row.source === where.source
         && row.createdAt >= where.createdAt.gte).length,
       update: async ({ where, data }: any) => Object.assign(requests.get(where.id), data),
-      // The real CAS: only a caller holding the current state and version wins.
+      // Two conditional updates share this: the state/version CAS the fence uses, and the
+      // `companyId: null` stamp that decides which of two overlapping runs keeps its company.
+      // Both are "update only if the row still looks like this", so both are matched here.
       updateMany: async ({ where, data }: any) => {
         const row = requests.get(where.id);
-        if (!row || row.state !== where.state || row.version !== where.version) return { count: 0 };
-        Object.assign(row, { ...data, version: row.version + 1 });
+        if (!row) return { count: 0 };
+        if (where.state !== undefined && row.state !== where.state) return { count: 0 };
+        if (where.version !== undefined && row.version !== where.version) return { count: 0 };
+        if (where.companyId === null && row.companyId != null) return { count: 0 };
+        Object.assign(row, data);
+        if (where.version !== undefined) row.version = where.version + 1;
         return { count: 1 };
       },
     }),
@@ -256,6 +262,16 @@ describe('AUTO_FREE end to end (review HIGH-1)', () => {
     const approved = h.store.audits.find((a) => a.action === 'signup.line.auto_approved');
     assert.equal(approved.actorRefId, 'line-signup-auto-approve');
     assert.equal(approved.actorUserId, undefined);
+
+    // Review LOW-1: both audit rows must say the named human did not decide this. Asserted through
+    // the REAL submit path, which passes an actor explicitly — the shape production actually makes,
+    // and the one under which the previous derivation silently answered false.
+    const provisioned = h.store.audits.find((a) => a.action === 'signup.request.provisioned');
+    assert.equal(provisioned.metadataJson.operatorResolvedFromDirectory, true);
+    assert.equal(provisioned.metadataJson.autoApproved, true);
+    const onboarded = h.store.audits.find((a) => a.action === 'system.company_onboarding.create');
+    assert.equal(onboarded.metadataJson.operatorResolvedFromDirectory, true);
+    assert.equal(onboarded.metadataJson.source, 'line-oa');
   });
 
   it('opens the shop with no credential and the clickwrap already recorded', async () => {
@@ -414,6 +430,50 @@ describe('the company link is written inside the company transaction', () => {
     assert.deepEqual(h.store.onboardingRuns, []);
     assert.deepEqual(h.store.identities, [], 'and so did the owner identity');
   });
+});
+
+/**
+ * Review MEDIUM-1. The advisory lock only covers the claim, so a stale re-claim can put two
+ * provisioning runs in flight for one application. On the LINE ATTACH path nothing else would stop
+ * a second Company: no ExternalIdentity is created and duplicate names are legal. The conditional
+ * stamp inside the onboarding transaction is what makes the loser create nothing at all.
+ */
+describe('two overlapping provisioning runs still produce one company (review MEDIUM-1)', () => {
+  /** Drives onboarding directly, which is where the stamp and the rollback both live. */
+  const onboardingCmd = (requestId: string) => ({
+    companyName: 'ร้านมั่งมี',
+    businessCategory: 'RETAIL' as const,
+    ownerDisplayName: 'นิด',
+    ownerAuth: { kind: 'line' as const, providerUserId: 'Uline-1', channelId: 'channel-1' },
+    allowDuplicateCompanyName: true,
+    linkSignupRequestId: requestId,
+    requestingAdminUserId: 'sysadmin-1',
+    requestId: 'req-1',
+    webBaseUrl: 'https://app.example.com',
+    apiBaseUrl: 'https://api.example.com/v1',
+  });
+
+  for (const [label, order] of [['A stamps first', ['A', 'B']], ['B stamps first', ['B', 'A']]] as const) {
+    it(`lets only one run keep its company when ${label}`, async () => {
+      // A FRESH store: both runs race from the overlap window, with no company yet. (Racing after
+      // a completed submit only proved the fake reuses one company id for every create.)
+      const h = harness();
+      const request = { id: 'signup-race', state: 'PROVISIONING', version: 0, companyId: null } as any;
+      h.store.requests.set(request.id, request);
+
+      const legal = new LegalAcceptanceService(h.store.prisma, { log: async () => undefined } as any);
+      const onboarding = new CreateCompanyOnboardingUseCase(h.store.prisma, CONFIG, legal);
+      const results = await Promise.allSettled(order.map(() => onboarding.execute(onboardingCmd(request.id))));
+
+      const won = results.filter((r) => r.status === 'fulfilled');
+      const lost = results.filter((r) => r.status === 'rejected');
+      assert.equal(won.length, 1, 'exactly one run may keep a company');
+      assert.match(String((lost[0] as PromiseRejectedResult).reason), /signup_already_provisioned/);
+      // The loser threw at the stamp, before it wrote anything else: one onboarding run exists.
+      assert.equal(h.store.onboardingRuns.length, 1);
+      assert.equal(request.companyId, 'co-1', 'and the row names the winner');
+    });
+  }
 });
 
 describe('a fence nobody is holding can be taken (review MEDIUM-3)', () => {

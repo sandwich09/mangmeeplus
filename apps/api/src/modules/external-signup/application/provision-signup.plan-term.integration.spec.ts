@@ -53,6 +53,11 @@ function fakePrisma() {
       findMany: async (args: any) => chartRows.filter((row) => row.companyId === (args?.where?.companyId ?? null)),
       count: async (args: any) => chartRows.filter((row) => row.companyId === (args?.where?.companyId ?? null)).length,
     }),
+    // The conditional link stamp inside the onboarding transaction (review MEDIUM-1): unlinked
+    // here, so it takes the row. A generic 0-rows stub would make onboarding think it lost a race.
+    companySignupRequest: autoModel('companySignupRequest', {
+      updateMany: async ({ where }: any) => ({ count: where?.companyId === null ? 1 : 0 }),
+    }),
     role: autoModel('role', { findUnique: async () => ({ id: 'role-owner' }) }),
     company: autoModel('company', { create: async () => ({ id: 'co-1' }) }),
     companyMembership: autoModel('companyMembership', { create: async () => ({ id: 'mem-1' }) }),

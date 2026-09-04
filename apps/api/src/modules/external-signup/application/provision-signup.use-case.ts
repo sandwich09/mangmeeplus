@@ -22,6 +22,12 @@ export type ProvisionSignupCommand = {
    * are foreign keys to User. Passing anything that is not a real user id fails with P2003.
    */
   actorUserId?: string;
+  /**
+   * Whether `actorUserId` was found in the operator directory rather than named by a decision.
+   * Only the caller knows: AUTO_FREE looks one up before calling, an admin decision names itself.
+   * Absent means "this use-case decides", which is what the claim path wants.
+   */
+  operatorFromDirectory?: boolean;
   correlationRequestId: string;
   webBaseUrl: string;
   apiBaseUrl: string;
@@ -183,13 +189,13 @@ export class ProvisionSignupUseCase {
     request: SignupRow,
     cmd: ProvisionSignupCommand,
   ): Promise<{ userId: string; fromDirectory: boolean }> {
-    // Review LOW-1: the flag is a property of the ROW, not of who happened to call. AUTO_FREE
-    // resolves the operator up front and passes it explicitly, so asking "did I look it up?" here
-    // answered false on every real auto-approved run. What it means is "no admin decision named
-    // an operator, so one was found for us" — and that is exactly an unapproved row.
-    const fromDirectory = request.approvedByUserId === null;
-    const explicit = cmd.actorUserId ?? request.approvedByUserId;
-    if (explicit) return { userId: explicit, fromDirectory };
+    // Review LOW-1: asking "did I look it up?" here answered false on every real AUTO_FREE run,
+    // because submit looks the operator up before calling. Only the caller knows where its actor
+    // came from, so it says; a row approved by an admin named itself and is never from a directory.
+    if (cmd.actorUserId) {
+      return { userId: cmd.actorUserId, fromDirectory: cmd.operatorFromDirectory === true };
+    }
+    if (request.approvedByUserId) return { userId: request.approvedByUserId, fromDirectory: false };
     const [operator] = await this.adminDirectory.activeSystemAdmins();
     if (operator) return { userId: operator.userId, fromDirectory: true };
     throw new ConflictException('signup_operator_unresolved');

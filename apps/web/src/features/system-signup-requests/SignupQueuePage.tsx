@@ -22,6 +22,7 @@ import {
   filterSignupQueue,
   signupBusinessSummary,
   signupHintChips,
+  isFinishingStrandedRow,
   isLineSignup,
   signupIdleChip,
   signupStateChip,
@@ -95,21 +96,27 @@ export default function SignupQueuePage() {
 
   const handleApprove = async (item: AdminSignupQueueItemDto) => {
     // P10-L: a LINE application has no address, so approving it opens the shop immediately and the
-    // customer hears about it in LINE. Promising an email here would be a promise nothing keeps.
+    // customer hears about it in LINE. Promising an email here would be a promise nothing keeps —
+    // and for a row whose shop already exists, so would promising to open one (review LOW-2).
     const fromLine = isLineSignup(item);
+    const finishing = fromLine && isFinishingStrandedRow(item.state);
     const accepted = await confirm({
-      title: 'อนุมัติคำขอ',
-      message: fromLine
-        ? `อนุมัติและเปิดร้าน ${item.companyName} ให้ทันที (ลูกค้าจะได้รับแจ้งทาง LINE) ใช่หรือไม่`
-        : `อนุมัติและส่งอีเมลตั้งรหัสให้ ${item.contactEmail ?? item.ownerDisplayName} ใช่หรือไม่`,
-      confirmLabel: fromLine ? 'อนุมัติและเปิดร้าน' : 'อนุมัติและส่งอีเมล',
+      title: finishing ? 'ปิดงานคำขอ' : 'อนุมัติคำขอ',
+      message: finishing
+        ? `ปิดงานให้ร้าน ${item.companyName} ที่เปิดค้างอยู่ ใช่หรือไม่`
+        : fromLine
+          ? `อนุมัติและเปิดร้าน ${item.companyName} ให้ทันที (ลูกค้าจะได้รับแจ้งทาง LINE) ใช่หรือไม่`
+          : `อนุมัติและส่งอีเมลตั้งรหัสให้ ${item.contactEmail ?? item.ownerDisplayName} ใช่หรือไม่`,
+      confirmLabel: finishing ? 'ปิดงาน' : fromLine ? 'อนุมัติและเปิดร้าน' : 'อนุมัติและส่งอีเมล',
       variant: 'primary',
     });
     if (!accepted) return;
     setBusyId(item.requestId);
     try {
       await decideSignupRequest(item.requestId, { action: 'APPROVE' });
-      toast.success(fromLine ? 'อนุมัติแล้ว เปิดร้านให้เรียบร้อย' : 'อนุมัติแล้ว ระบบกำลังส่งอีเมลตั้งรหัส');
+      toast.success(finishing
+        ? 'ปิดงานเรียบร้อย'
+        : fromLine ? 'อนุมัติแล้ว เปิดร้านให้เรียบร้อย' : 'อนุมัติแล้ว ระบบกำลังส่งอีเมลตั้งรหัส');
       await load();
     } catch (err) {
       toast.error(apiErrorMessage(err));
@@ -340,7 +347,7 @@ export default function SignupQueuePage() {
                           <td className="px-4 py-3 text-xs text-gray-500">{signupBusinessSummary(item)}</td>
                           <td className="px-4 py-3">
                             <div className="flex flex-wrap gap-1">
-                              <ChipBadge chip={signupStateChip(item.state)} />
+                              <ChipBadge chip={signupStateChip(item.state, item)} />
                               {idle && <ChipBadge chip={idle} />}
                               {hints.map((chip) => (
                                 <ChipBadge key={chip.label} chip={chip} />

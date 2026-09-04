@@ -27,8 +27,17 @@ export function isLineSignup(item: AdminSignupQueueItemDto): boolean {
   return item.source === 'line-oa';
 }
 
-/** `state` is a plain string in the contract, so an unknown value must still render. */
-export function signupStateChip(state: string): Chip {
+/**
+ * `state` is a plain string in the contract, so an unknown value must still render. PROVISIONING
+ * reads two ways and the difference is the whole point: still running (wait) versus abandoned
+ * (act). The server decides which — it owns the clock the fence uses.
+ */
+export function signupStateChip(state: string, item?: AdminSignupQueueItemDto): Chip {
+  if (state === 'PROVISIONING') {
+    return item?.staleProvisioning
+      ? { label: 'เปิดร้านค้างอยู่ กดปิดงานเพื่อทำต่อ', tone: 'danger' }
+      : { label: 'กำลังเปิดร้าน', tone: 'info' };
+  }
   return STATE_CHIP[state] ?? { label: state, tone: 'neutral' };
 }
 
@@ -72,7 +81,10 @@ export function canApproveSignup(state: string, item?: AdminSignupQueueItemDto):
   // READY means the shop was built and the last step did not land, so approving closes it. Both
   // are idempotent behind the fence, and both leave the customer's LINE account locked until done.
   if (item === undefined || !isLineSignup(item)) return false;
-  return state === 'PROVISIONING_FAILED' || state === 'READY';
+  if (state === 'PROVISIONING_FAILED' || state === 'READY') return true;
+  // An abandoned run is the third recovery. A live one is not: the API answers 409 for it, so
+  // offering the button would be a lie the same way the READY chip was.
+  return state === 'PROVISIONING' && item.staleProvisioning === true;
 }
 
 /** Rejecting only makes sense before a decision: the API answers 409 in every other state. */
@@ -83,8 +95,13 @@ export function canRejectSignup(state: string): boolean {
 /** What the approve button DOES here, so the operator is not told "approve" for a recovery. */
 export function approveLabel(state: string): string {
   if (state === 'PROVISIONING_FAILED') return 'ลองเปิดร้านอีกครั้ง';
-  if (state === 'READY') return 'ปิดงาน';
+  if (state === 'READY' || state === 'PROVISIONING') return 'ปิดงาน';
   return 'อนุมัติ';
+}
+
+/** True when approving CLOSES a shop that already exists rather than deciding a new application. */
+export function isFinishingStrandedRow(state: string): boolean {
+  return state === 'PROVISIONING_FAILED' || state === 'READY' || state === 'PROVISIONING';
 }
 
 /** Only a LINE application can be suspended: spec §3.7 is about stopping an auto-approved shop. */

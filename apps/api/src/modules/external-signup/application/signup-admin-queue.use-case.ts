@@ -13,7 +13,7 @@ import { AccountClaimTokenService } from './account-claim-token.service';
 import { SignupClaimEmailService } from './signup-claim-email.service';
 import { ProvisionSignupUseCase } from './provision-signup.use-case';
 import { daysSinceApproval } from '../domain/account-claim.logic';
-import { SIGNUP_SOURCE_LINE_OA, type CompanySignupState } from '../domain/company-signup.logic';
+import { SIGNUP_SOURCE_LINE_OA, isStaleProvisioning, type CompanySignupState } from '../domain/company-signup.logic';
 
 /** Everything an admin still has a decision or an action to take on (spec §4C, §4D). */
 const QUEUE_STATES: readonly CompanySignupState[] = ['PENDING_REVIEW', 'EMAIL_PENDING', 'EMAIL_FAILED', 'EXPIRED'];
@@ -25,7 +25,7 @@ const QUEUE_STATES: readonly CompanySignupState[] = ['PENDING_REVIEW', 'EMAIL_PE
  * could reach — approve, reject and reissue all 409 — so listing it would be an invitation to
  * three dead ends. Flow B retry semantics are L-C.
  */
-const LINE_ONLY_QUEUE_STATES: readonly CompanySignupState[] = ['PROVISIONING_FAILED', 'READY'];
+const LINE_ONLY_QUEUE_STATES: readonly CompanySignupState[] = ['PROVISIONING_FAILED', 'READY', 'PROVISIONING'];
 
 /** Spec §4D ④: an approved request never dead-ends, so reissue has no age limit. */
 const REISSUABLE_STATES: readonly CompanySignupState[] = ['EMAIL_PENDING', 'EMAIL_FAILED', 'EXPIRED'];
@@ -108,6 +108,7 @@ export class SignupAdminQueueUseCase {
     adminUserId: string,
     correlationRequestId: string,
     urls?: { webBaseUrl: string; apiBaseUrl: string },
+    now = new Date(),
   ): Promise<AdminSignupDecisionDto> {
     const request = await this.findOrThrow(requestId);
     const lineOa = request.source === SIGNUP_SOURCE_LINE_OA;
@@ -118,8 +119,12 @@ export class SignupAdminQueueUseCase {
       // A LINE application may also be approved out of PROVISIONING_FAILED or READY: those ARE the
       // retry and the finish, and the P10-0 fence makes both idempotent — a second attempt either
       // completes the shop the first one started or fails again, never creating a second one.
+      // An abandoned PROVISIONING row is approvable too: the fence will re-claim it, and the queue
+      // has to agree with the fence about what abandoned means or it offers a recovery the fence
+      // refuses (or, as first shipped, refuses one the fence would have allowed).
       const approvable = lineOa
         ? LINE_APPROVABLE_STATES.includes(request.state as CompanySignupState)
+          || isStaleProvisioning(request, now)
         : request.state === 'PENDING_REVIEW';
       if (!approvable) {
         // Already approved is a no-op; anything else is a real conflict the admin should see.
@@ -131,20 +136,32 @@ export class SignupAdminQueueUseCase {
       }
       const approvedAt = new Date();
       if (lineOa) {
-        // No claim email exists for this source, so approval IS provisioning. The stamp lands
-        // first: provisioning reads `approvedByUserId` as the actor for everything it creates —
-        // which is also how retrying a failed AUTO_FREE row acquires a real operator.
-        await this.prisma.client.companySignupRequest.update({
-          where: { id: requestId },
-          data: { approvedAt, approvedByUserId: adminUserId },
-        });
+        // No claim email exists for this source, so approval IS provisioning.
+        // Review LOW-3: the approval stamp records WHEN this application was decided, so only a
+        // first decision writes it. Closing a row that is already past the decision — a retry or a
+        // stranded one — must not rewrite that history; the audit says what this call actually did.
+        const firstDecision = request.state === 'PENDING_REVIEW';
+        if (firstDecision) {
+          await this.prisma.client.companySignupRequest.update({
+            where: { id: requestId },
+            data: { approvedAt, approvedByUserId: adminUserId },
+          });
+        }
         await this.audit(requestId, adminUserId, correlationRequestId, 'signup.request.approved', {
           source: request.source,
           hadPhoneNumber: request.phoneNumber !== null,
+          fromState: request.state,
           retryOfFailedProvisioning: request.state === 'PROVISIONING_FAILED',
+          finishedStrandedRow: !firstDecision && request.state !== 'PROVISIONING_FAILED',
         });
         if (!urls) throw new ConflictException('signup_provisioning_urls_required');
-        await this.provision.execute({ requestId, actorUserId: adminUserId, correlationRequestId, ...urls });
+        await this.provision.execute({
+          requestId,
+          actorUserId: adminUserId,
+          operatorFromDirectory: false,
+          correlationRequestId,
+          ...urls,
+        });
         return { requestId, state: 'COMPLETED' };
       }
       await this.core.advance(requestId, 'EMAIL_PENDING', correlationRequestId);
@@ -300,6 +317,9 @@ function toQueueItem(
     source: request.source,
     ...(request.lineDisplayName ? { lineDisplayName: request.lineDisplayName } : {}),
     ...(request.autoApproved ? { autoApproved: true } : {}),
+    // Whether a PROVISIONING row is still being worked on or was abandoned. The server owns this
+    // judgement because it owns the clock the fence uses; the page must not guess it.
+    ...(isStaleProvisioning(request, now) ? { staleProvisioning: true } : {}),
     ...(request.legalAcceptedAt ? { legalAcceptedAt: request.legalAcceptedAt.toISOString() } : {}),
     createdAt: request.createdAt.toISOString(),
     ...(request.approvedAt ? { approvedAt: request.approvedAt.toISOString() } : {}),

@@ -276,11 +276,19 @@ export class CreateCompanyOnboardingUseCase {
       // Written here, with the company, so "which company did this application create" is never a
       // question the database cannot answer (review HIGH-A). The fence still moves the STATE
       // afterwards; this only removes the possibility of an orphaned company.
+      //
+      // CONDITIONAL on purpose (review MEDIUM-1). The advisory lock only covers the claim, so two
+      // provisioning runs for one application can overlap — and on the LINE attach path nothing
+      // else stops a second Company (no ExternalIdentity is created, and duplicate names are
+      // legal). Whichever run stamps first wins the row; the loser's `updateMany` matches nothing
+      // and this throw rolls its ENTIRE transaction back, so it creates nothing at all. Its retry
+      // then finds the winner's company and adopts it.
       if (cmd.linkSignupRequestId) {
-        await tx.companySignupRequest.update({
-          where: { id: cmd.linkSignupRequestId },
+        const linked = await tx.companySignupRequest.updateMany({
+          where: { id: cmd.linkSignupRequestId, companyId: null },
           data: { companyId: company.id },
         });
+        if (linked.count !== 1) throw new ConflictException('signup_already_provisioned');
       }
 
       const claimed = cmd.claimedOwner;

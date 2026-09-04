@@ -90,6 +90,11 @@ export type AdminSignupQueueItemDto = {
   lineDisplayName?: string;
   /** True when AUTO_FREE approved this without an admin; the row is here for after-the-fact review. */
   autoApproved?: boolean;
+  /**
+   * A PROVISIONING row nobody is working on any more (the process holding the fence died). Decided
+   * server-side against the same clock the fence uses, so the queue and the fence cannot disagree.
+   */
+  staleProvisioning?: boolean;
   legalAcceptedAt?: string;
   phoneNumber?: string;
   businessType?: string;

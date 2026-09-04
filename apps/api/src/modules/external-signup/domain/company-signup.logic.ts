@@ -75,6 +75,32 @@ export const SIGNUP_SOURCE_LINE_OA = 'line-oa';
  * the shop may already exist and the application has not settled. Only COMPLETED, REJECTED and
  * SUSPENDED free the LINE account to apply again.
  */
+/**
+ * How long a PROVISIONING row may sit untouched before another caller may take the fence from it.
+ * The onboarding transaction is capped at 15s (`create-company-onboarding.use-case.ts`), so this is
+ * that ceiling plus room for the post-commit tail — comfortably longer than any live attempt, and
+ * short enough that a killed task does not strand a customer for a working day.
+ */
+export const STALE_PROVISIONING_MS = 90_000;
+
+/**
+ * "Nobody is actually holding this fence." Nothing releases it when the process holding it dies
+ * (an ECS task replaced mid-transaction, a transaction that timed out) and there is no sweep, so
+ * without this a row sits at PROVISIONING forever.
+ *
+ * Shared on purpose: the fence and the admin queue MUST agree on what abandoned means, or one of
+ * them offers a recovery the other refuses — which is exactly how the first version of this shipped
+ * as unreachable code.
+ */
+export function isStaleProvisioning(
+  request: { state: string; provisioningStartedAt: Date | null },
+  now: Date,
+): boolean {
+  return request.state === 'PROVISIONING'
+    && request.provisioningStartedAt !== null
+    && now.getTime() - request.provisioningStartedAt.getTime() > STALE_PROVISIONING_MS;
+}
+
 export const LINE_OPEN_APPLICATION_STATES: readonly CompanySignupState[] = [
   'RECEIVED', 'VALIDATED', 'PENDING_REVIEW', 'PROVISIONING', 'PROVISIONING_FAILED', 'READY',
 ];

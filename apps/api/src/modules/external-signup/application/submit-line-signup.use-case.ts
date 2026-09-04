@@ -145,6 +145,8 @@ export class SubmitLineSignupUseCase {
         await this.provision.execute({
           requestId,
           actorUserId: actorUserId!,
+          // Nobody decided this shop should exist; an operator was found to stand for the machine.
+          operatorFromDirectory: true,
           correlationRequestId: cmd.correlationRequestId,
           webBaseUrl: cmd.webBaseUrl,
           apiBaseUrl: cmd.apiBaseUrl,

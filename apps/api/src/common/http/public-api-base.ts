@@ -7,23 +7,13 @@ export function publicApiBase(req: Request): string {
   return `${proto}://${host}/v1`;
 }
 
-/** Where the WEB app lives, for a handoff link the caller will follow themselves: the Origin
- *  header in local dev, the proxy headers in production. Never for a link carrying a credential —
- *  those use `trustedPublicApiBase` below, because these headers are client-suppliable. */
-export function webAppBase(req: Request): string {
-  const origin = req.headers['origin'] as string | undefined;
-  if (origin) return origin;
-  const proto = (req.headers['x-forwarded-proto'] as string | undefined)?.split(',')[0]?.trim() ?? req.protocol ?? 'http';
-  const host = (req.headers['x-forwarded-host'] as string | undefined)?.split(',')[0]?.trim() ?? req.get('host') ?? 'localhost:3000';
-  return `${proto}://${host}`;
-}
-
 /**
- * For a frontend link this request will PERSIST — an owner handoff URL, say. `webAppBase` above
- * reads client-suppliable headers and `AppConfigService.webBaseUrl` falls back to PUBLIC_BASE_URL,
- * the API's own origin; either can store a link nobody can follow. Pass `config.sesWebBaseUrl`,
- * which is WEB_BASE_URL and nothing else. Unset is a deployment fault, so it refuses rather than
- * guessing — UAT and production both set it.
+ * Where the WEB app lives, for a frontend link this request will PERSIST — an owner handoff URL,
+ * say. There used to be a header-derived version of this; every caller had the same bug, so it is
+ * gone. `AppConfigService.webBaseUrl` is not the answer either: it falls back to PUBLIC_BASE_URL,
+ * the API's own origin. Pass `config.sesWebBaseUrl`, which is WEB_BASE_URL and nothing else.
+ * Unset is a deployment fault, so it refuses rather than guessing — every deployed environment
+ * sets it, and `infra/docker/compose.local.yml` defaults it for local runs.
  */
 export function requiredWebAppBase(configuredWebBaseUrl: string | undefined): string {
   if (!configuredWebBaseUrl) throw new ServiceUnavailableException('web_base_url_not_configured');

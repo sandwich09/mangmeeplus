@@ -86,6 +86,16 @@ describe('AuthRateLimitService LINE-first signup buckets', () => {
     await service.assertLineSignupAttemptAllowed('Uline-2');
   });
 
+  // Review LOW-4: reading a status must never cost a customer the ability to apply.
+  it('keeps status reads on their own quota, away from the submit buckets', async () => {
+    const service = makeService();
+    for (let read = 0; read < 60; read += 1) await service.assertLineSignupReadUserAllowed('Uline-1');
+    await assert.rejects(service.assertLineSignupReadUserAllowed('Uline-1'), /Too many requests/);
+    // Sixty reads have spent neither the attempt nor the creation quota.
+    await service.assertLineSignupAttemptAllowed('Uline-1');
+    await service.assertLineSignupUserAllowed('Uline-1');
+  });
+
   it('fails closed when the counter store is unreachable', async () => {
     const service = new AuthRateLimitService(
       config,
@@ -95,6 +105,7 @@ describe('AuthRateLimitService LINE-first signup buckets', () => {
     await assert.rejects(service.assertLineSignupUserAllowed('Uline-1'));
     await assert.rejects(service.assertLineSignupIpAllowed('1.1.1.1'));
     await assert.rejects(service.assertLineSignupAttemptAllowed('Uline-1'));
+    await assert.rejects(service.assertLineSignupReadUserAllowed('Uline-1'));
   });
 });
 

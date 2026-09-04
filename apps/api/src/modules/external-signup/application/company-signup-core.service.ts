@@ -10,17 +10,10 @@ import {
   type CompanySignupInput,
   type CompanySignupState,
   type NormalizedCompanySignupInput,
+  isStaleProvisioning,
 } from '../domain/company-signup.logic';
 
 const SERVICE_ACTOR = 'official-signup-core';
-
-/**
- * How long a PROVISIONING row may sit untouched before another caller may take the fence from it.
- * The onboarding transaction is capped at 15s (`create-company-onboarding.use-case.ts`), so this is
- * that ceiling plus room for the post-commit tail — comfortably longer than any live attempt, and
- * short enough that a killed task does not strand a customer for a working day.
- */
-const STALE_PROVISIONING_MS = 90_000;
 const SPECIAL_PROVISIONING_STATES = new Set<CompanySignupState>(['PROVISIONING', 'READY', 'PROVISIONING_FAILED']);
 
 type ReceiveResult = Readonly<{ request: CompanySignupRequest; replayed: boolean }>;
@@ -92,14 +85,11 @@ export class CompanySignupCoreService {
       if (current.state === 'READY' || current.state === 'LINE_LINK_PENDING' || current.state === 'COMPLETED') {
         return { request: current, claimed: false, attemptId: null };
       }
-      // A PROVISIONING row means someone is mid-flight — unless nobody is. Nothing releases the
-      // fence when the process holding it disappears (an ECS task replaced mid-transaction, a
-      // transaction that timed out), and there is no sweep, so without this the row is stuck at
-      // PROVISIONING forever. Re-claiming is safe because the retry adopts an already-created
-      // company rather than building a second one (review MEDIUM-3, HIGH-A).
-      const stale = current.state === 'PROVISIONING'
-        && current.provisioningStartedAt !== null
-        && now.getTime() - current.provisioningStartedAt.getTime() > STALE_PROVISIONING_MS;
+      // A PROVISIONING row means someone is mid-flight — unless nobody is. Re-claiming an abandoned
+      // one is safe because the retry adopts an already-created company rather than building a
+      // second (review MEDIUM-3, HIGH-A), and the conditional stamp inside the onboarding
+      // transaction makes even an overlapping pair produce exactly one company.
+      const stale = isStaleProvisioning(current, now);
       if (current.state === 'PROVISIONING' && !stale) {
         return { request: current, claimed: false, attemptId: null };
       }

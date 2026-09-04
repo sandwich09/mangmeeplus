@@ -168,21 +168,82 @@ describe('SignupAdminQueueUseCase.decide — LINE-first source', () => {
     assert.equal(result.state, 'COMPLETED');
   });
 
+  it('tells the page which provisioning rows are abandoned and which are live', async () => {
+    const h = harness({
+      requests: [
+        { ...LINE_REQUEST, id: 'stale', state: 'PROVISIONING', provisioningStartedAt: new Date(NOW.getTime() - 120_000) },
+        { ...LINE_REQUEST, id: 'live', state: 'PROVISIONING', provisioningStartedAt: new Date(NOW.getTime() - 1_000) },
+      ],
+    });
+    const { items } = await h.useCase.list(NOW);
+
+    // The server owns the clock the fence uses, so the page must not have to guess this.
+    assert.equal(items[0]!.staleProvisioning, true);
+    assert.equal(items[1]!.staleProvisioning, undefined);
+  });
+
   it('lists a READY LINE application so an admin can reach it', async () => {
     const h = harness({ requests: [{ ...LINE_REQUEST, state: 'READY' }] });
     const { items } = await h.useCase.list(NOW);
     assert.equal(items.length, 1);
     assert.deepEqual(h.requestQueries[0].where.OR[1], {
-      state: { in: ['PROVISIONING_FAILED', 'READY'] }, source: 'line-oa',
+      state: { in: ['PROVISIONING_FAILED', 'READY', 'PROVISIONING'] }, source: 'line-oa',
     });
   });
 
-  it('treats a second tap on an already-provisioned application as a no-op', async () => {
-    for (const state of ['PROVISIONING', 'COMPLETED']) {
+  // Review HIGH-1 (fourth pass): the stale re-claim in the fence was unreachable because the queue
+  // refused to approve a PROVISIONING row at all. These assert at the DECIDE level, which is the
+  // only level an admin can actually reach — the previous test called provision.execute directly
+  // and so proved nothing about reachability.
+  it('finishes an abandoned provisioning run when an admin approves it', async () => {
+    const h = harness({
+      request: {
+        ...LINE_REQUEST,
+        state: 'PROVISIONING',
+        provisioningStartedAt: new Date(NOW.getTime() - 120_000),
+      },
+    });
+    const result = await h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1', URLS, NOW);
+
+    assert.equal(h.provisioned.length, 1, 'the fence would re-claim it, so the queue must offer it');
+    assert.equal(result.state, 'COMPLETED');
+  });
+
+  it('refuses while a provisioning run is plausibly still going', async () => {
+    const h = harness({
+      request: {
+        ...LINE_REQUEST,
+        state: 'PROVISIONING',
+        provisioningStartedAt: new Date(NOW.getTime() - 1_000),
+      },
+    });
+    const result = await h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1', URLS, NOW);
+
+    assert.equal(result.state, 'PROVISIONING');
+    assert.deepEqual(h.provisioned, [], 'a live run keeps the fence');
+  });
+
+  it('treats a second tap on a finished application as a no-op', async () => {
+    const h = harness({ request: { ...LINE_REQUEST, state: 'COMPLETED' } });
+    const result = await h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1', URLS);
+    assert.equal(result.state, 'COMPLETED');
+    assert.deepEqual(h.provisioned, [], 'COMPLETED must not provision twice');
+  });
+
+  // Review LOW-3: the approval stamp records WHEN this application was decided. Closing a row that
+  // is already past its decision must not rewrite that history.
+  it('stamps the approval once, and says what a later close actually did', async () => {
+    const first = harness({ request: LINE_REQUEST });
+    await first.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1', URLS);
+    assert.equal(first.updates[0].data.approvedByUserId, 'admin-1');
+    assert.equal(first.audits[0].data.metadataJson.finishedStrandedRow, false);
+
+    for (const [state, expected] of [['PROVISIONING_FAILED', 'retryOfFailedProvisioning'], ['READY', 'finishedStrandedRow']] as const) {
       const h = harness({ request: { ...LINE_REQUEST, state } });
-      const result = await h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1', URLS);
-      assert.equal(result.state, state);
-      assert.deepEqual(h.provisioned, [], `${state} must not provision twice`);
+      await h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-2', 'req-2', URLS);
+      assert.deepEqual(h.updates, [], `${state} must not rewrite the approval stamp`);
+      assert.equal(h.audits[0].data.metadataJson[expected], true);
+      assert.equal(h.audits[0].data.metadataJson.fromState, state);
     }
   });
 
@@ -215,7 +276,7 @@ describe('SignupAdminQueueUseCase.decide — LINE-first source', () => {
 
     assert.deepEqual(h.requestQueries[0].where.OR, [
       { state: { in: ['PENDING_REVIEW', 'EMAIL_PENDING', 'EMAIL_FAILED', 'EXPIRED'] } },
-      { state: { in: ['PROVISIONING_FAILED', 'READY'] }, source: 'line-oa' },
+      { state: { in: ['PROVISIONING_FAILED', 'READY', 'PROVISIONING'] }, source: 'line-oa' },
     ]);
   });
 
@@ -227,7 +288,8 @@ describe('SignupAdminQueueUseCase.decide — LINE-first source', () => {
     assert.equal(h.provisioned[0].requestId, 'signup-1');
     // The retry is what gives an AUTO_FREE row that failed a real operator of record.
     assert.equal(h.provisioned[0].actorUserId, 'admin-1');
-    assert.equal(h.updates[0].data.approvedByUserId, 'admin-1');
+    // Review LOW-3: a retry does not rewrite when the application was decided.
+    assert.deepEqual(h.updates, []);
     assert.equal(h.audits[0].data.metadataJson.retryOfFailedProvisioning, true);
   });
 

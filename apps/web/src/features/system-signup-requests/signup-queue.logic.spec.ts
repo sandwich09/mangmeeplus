@@ -8,6 +8,7 @@ import {
   canReissueSignup,
   canSuspendSignup,
   filterSignupQueue,
+  isFinishingStrandedRow,
   isLineSignup,
   signupBusinessSummary,
   signupHintChips,
@@ -70,6 +71,28 @@ describe('a failed provisioning is actionable, not just labelled', () => {
     assert.equal(approveLabel('PENDING_REVIEW'), 'อนุมัติ');
     assert.equal(approveLabel('PROVISIONING_FAILED'), 'ลองเปิดร้านอีกครั้ง');
     assert.equal(approveLabel('READY'), 'ปิดงาน');
+    assert.equal(approveLabel('PROVISIONING'), 'ปิดงาน');
+  });
+
+  // Review HIGH-1 (fourth pass): an abandoned run is the third recovery; a live one is not, and
+  // offering the button for it would repeat the READY mistake in a new place.
+  it('offers the button for an abandoned provisioning run and not a live one', () => {
+    const stale = item({ state: 'PROVISIONING', source: 'line-oa', staleProvisioning: true });
+    const live = item({ state: 'PROVISIONING', source: 'line-oa' });
+    assert.equal(canApproveSignup('PROVISIONING', stale), true);
+    assert.equal(canApproveSignup('PROVISIONING', live), false);
+    // And the chip says which is which, so the operator is not left guessing.
+    assert.match(signupStateChip('PROVISIONING', stale).label, /ปิดงาน/);
+    assert.equal(signupStateChip('PROVISIONING', live).label, 'กำลังเปิดร้าน');
+    assert.equal(signupStateChip('PROVISIONING', live).tone, 'info');
+  });
+
+  // Review LOW-2: the dialog said "open the shop" for rows whose shop already exists.
+  it('knows when approving closes an existing shop rather than deciding a new one', () => {
+    for (const state of ['PROVISIONING_FAILED', 'READY', 'PROVISIONING']) {
+      assert.equal(isFinishingStrandedRow(state), true, state);
+    }
+    assert.equal(isFinishingStrandedRow('PENDING_REVIEW'), false);
   });
 
   it('lists both recoverable rows under the problem tab, where an operator would look', () => {
@@ -103,7 +126,9 @@ describe('signupStateChip', () => {
   });
 
   it('renders an unknown state instead of blanking the cell', () => {
-    assert.deepEqual(signupStateChip('PROVISIONING'), { label: 'PROVISIONING', tone: 'neutral' });
+    // PROVISIONING used to stand in for "unknown" here; it has meaning now, so this needs a state
+    // the queue genuinely does not know about.
+    assert.deepEqual(signupStateChip('SOME_FUTURE_STATE'), { label: 'SOME_FUTURE_STATE', tone: 'neutral' });
   });
 });
 

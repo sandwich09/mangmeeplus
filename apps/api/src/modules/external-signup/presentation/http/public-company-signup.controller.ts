@@ -181,7 +181,7 @@ export class PublicCompanySignupController {
         password: dto.password,
         correlationRequestId: requestIdOf(req),
         // Persisted as the owner handoff: never the applicant-controlled Origin (review MEDIUM-2).
-      webBaseUrl: requiredWebAppBase(this.config.sesWebBaseUrl),
+        webBaseUrl: requiredWebAppBase(this.config.sesWebBaseUrl),
         apiBaseUrl: publicApiBase(req),
       });
     } catch (error) {

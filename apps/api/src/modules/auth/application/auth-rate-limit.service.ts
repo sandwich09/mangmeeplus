@@ -28,6 +28,9 @@ const LINE_SIGNUP_MAX_PER_USER_PER_DAY = 3;
 // own would let one account drive unbounded ID-token verifications. This one charges every attempt
 // that got as far as a verified token, sized so a person correcting a form never notices it.
 const LINE_SIGNUP_ATTEMPT_MAX_PER_USER = 20;
+// Reading a status is not attempting a signup, so it gets its own, roomier quota: spending the
+// submit bucket on reads would let a status screen lock a customer out of applying (review LOW-4).
+const LINE_SIGNUP_READ_MAX_PER_USER = 60;
 const LINE_SIGNUP_MAX_PER_IP = 20;
 const LINE_SIGNUP_READ_MAX_PER_IP = 60;
 const LINE_LIFF_SESSION_MAX_PER_USER = 30;
@@ -203,6 +206,16 @@ export class AuthRateLimitService {
       'line-signup-attempt-user',
       lineProviderUserId,
       LINE_SIGNUP_ATTEMPT_MAX_PER_USER,
+      LINE_SIGNUP_WINDOW_SECONDS,
+    );
+  }
+
+  /** Per-account quota for status reads, which also verify an ID token (review LOW-4). */
+  async assertLineSignupReadUserAllowed(lineProviderUserId: string): Promise<void> {
+    await this.assertWithinLimit(
+      'line-signup-read-user',
+      lineProviderUserId,
+      LINE_SIGNUP_READ_MAX_PER_USER,
       LINE_SIGNUP_WINDOW_SECONDS,
     );
   }

@@ -25,10 +25,13 @@ function statusHarness(row: any, verifyThrows?: Error, attemptBucketFull = false
   } as any;
   const attempts: string[] = [];
   const rateLimit = {
-    assertLineSignupAttemptAllowed: async (key: string) => {
+    // Its OWN bucket (review LOW-4): spending the submit quota on reads would let a status screen
+    // lock a customer out of applying.
+    assertLineSignupReadUserAllowed: async (key: string) => {
       attempts.push(key);
       if (attemptBucketFull) throw new Error('Too many requests');
     },
+    assertLineSignupAttemptAllowed: async () => { throw new Error('reads must not spend the submit quota'); },
   } as any;
   return { useCase: new GetLineSignupStatusUseCase(prisma, CONFIG, lineIdToken, rateLimit), queries, attempts };
 }
@@ -60,7 +63,7 @@ describe('GetLineSignupStatusUseCase', () => {
 
   // Residual risk from L-4: this route verifies an ID token too, and its own bucket is IP-only —
   // so one account behind changing addresses could drive the verifications submit no longer allows.
-  it('charges the per-account attempt quota once the token says whose it is', async () => {
+  it('charges its own per-account read quota, never the submit one', async () => {
     const h = statusHarness({ id: 'signup-1', state: 'PENDING_REVIEW', companyName: 'ร้าน', companyId: null });
     await h.useCase.execute('aaaa.bbbb.cccc', NOW);
     assert.deepEqual(h.attempts, ['Uline-1']);
