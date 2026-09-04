@@ -1,6 +1,6 @@
 # Agent Memory: LINE-first signup (P10-L)
 
-Status: SPEC DRAFT v1 written 2026-09-04 (`docs/specs/mangmee-line-first-signup-spec-th.md`); awaiting Owner multi-angle review; no code.
+Status: SPEC DRAFT v2 2026-09-04 (`docs/specs/mangmee-line-first-signup-spec-th.md`) — v1 UX/BA + v2 security/support/ROI angles folded in; Owner decided: legal acceptance on LIFF at signup (LEGAL-LIFF-01), OA already Verified, promotions pull-only (no broadcast → no marketing consent), payment manual at first; 8 open questions in §13; no code.
 Owner: Owner (product) / Claude Fable (spec + control) / Opus (implementation when ordered)
 Scope: Customer adds LINE OA → LIFF 1-field signup (ชื่อร้าน) → MANUAL or AUTO_FREE approval → provision with LINE identity linked in the same tx → LINE push with central LIFF "start" button → handoff minted at tap → legal acceptance → first receipt. No email/password at signup (progressive later). Companion to P10; Flow B web form stays.
 Decisions:
