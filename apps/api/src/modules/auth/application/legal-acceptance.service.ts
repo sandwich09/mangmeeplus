@@ -340,7 +340,11 @@ export class LegalAcceptanceService {
       membershipId: input.membershipId,
       actorCapacity: legalAcceptanceCapacity(['OWNER']),
       rolesJson: ['OWNER'],
-      authProvider: 'LINE',
+      // Distinct from the session values this column otherwise carries ('watchdog', 'line', 'dev'):
+      // those name how someone was logged in, and nobody was logged in here. This names the surface
+      // the clickwrap was given on, which is what a PDPA reader has to be able to tell apart.
+      // `getStatus` never filters on this column, so widening it changes no acceptance decision.
+      authProvider: 'LINE_LIFF_SIGNUP',
       // There is no session: the shop is being created, and nobody has logged in yet.
       sessionTokenId: null,
       requestId: input.requestId,

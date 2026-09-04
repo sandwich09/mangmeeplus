@@ -174,9 +174,24 @@ export class AuthRateLimitService {
     await this.assertWithinLimit('line-signup-ip', ipAddress, LINE_SIGNUP_MAX_PER_IP, LINE_SIGNUP_WINDOW_SECONDS);
   }
 
-  /** Charged only AFTER the token proves which LINE account is asking (spec §9). */
+  /**
+   * Checked only AFTER the token proves which LINE account is asking (spec §9), and — like the
+   * login buckets above — CHECKED here but not spent: three shops a day is generous, three typos
+   * in one sitting is not, and consuming on a rejected submit would lock a real customer out of
+   * their own signup for 24 hours. `recordLineSignupUser` is what spends it.
+   */
   async assertLineSignupUserAllowed(lineProviderUserId: string): Promise<void> {
-    await this.assertWithinLimit(
+    await this.assertOnly(
+      'line-signup-user',
+      lineProviderUserId,
+      LINE_SIGNUP_MAX_PER_USER_PER_DAY,
+      LINE_SIGNUP_DAY_SECONDS,
+    );
+  }
+
+  /** Spent once an application actually exists. */
+  async recordLineSignupUser(lineProviderUserId: string): Promise<void> {
+    await this.record(
       'line-signup-user',
       lineProviderUserId,
       LINE_SIGNUP_MAX_PER_USER_PER_DAY,

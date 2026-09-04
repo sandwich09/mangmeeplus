@@ -3141,7 +3141,9 @@ model CompanySignupRequest {
   // One open application per LINE account is enforced by a PARTIAL unique index that Prisma cannot
   // express; it lives in the migration SQL as
   // "CompanySignupRequest_line_open_key" ON ("lineChannelId","lineProviderUserId")
-  //   WHERE "state" IN ('RECEIVED','VALIDATED','PENDING_REVIEW','PROVISIONING').
+  //   WHERE "state" IN ('RECEIVED','VALIDATED','PENDING_REVIEW','PROVISIONING','PROVISIONING_FAILED').
+  // PROVISIONING_FAILED is OPEN because a half-committed provisioning already owns the identity;
+  // the list is mirrored in LINE_OPEN_APPLICATION_STATES and a spec asserts the two agree.
 }
 
 /// P10-L §15.3 (H-01): a shop asking to move tier. Today an admin reads the row and changes the

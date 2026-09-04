@@ -29,6 +29,7 @@ function harness(options: {
   createThrows?: unknown;
   /** null = a verified token that carries no profile name, which LINE permits. */
   displayName?: string | null;
+  systemAdmins?: string[];
 } = {}) {
   const created: any[] = [];
   const advances: any[] = [];
@@ -38,16 +39,21 @@ function harness(options: {
   const provisioned: any[] = [];
   const userQuotas: string[] = [];
 
-  const prisma = {
-    client: {
-      externalIdentity: { findFirst: async () => options.identity ?? null },
-      companySignupRequest: {
-        count: async () => options.approvedToday ?? 0,
-        update: async (args: any) => { updates.push(args); return {}; },
-      },
-      auditLog: { create: async (args: any) => { audits.push(args); return {}; } },
+  const capCounts: any[] = [];
+  const locks: unknown[][] = [];
+  const client: any = {
+    externalIdentity: { findFirst: async () => options.identity ?? null },
+    companySignupRequest: {
+      count: async (args: any) => { capCounts.push(args); return options.approvedToday ?? 0; },
+      update: async (args: any) => { updates.push(args); return {}; },
     },
-  } as any;
+    auditLog: { create: async (args: any) => { audits.push(args); return {}; } },
+    // The cap is claimed inside a transaction holding an advisory lock; the fake records both so a
+    // spec can prove the serialisation exists rather than trusting the comment above it.
+    $executeRaw: async (_strings: TemplateStringsArray, ...values: unknown[]) => { locks.push(values); return 0; },
+    $transaction: async (fn: any) => fn(client),
+  };
+  const prisma = { client } as any;
 
   const config = {
     lineSignupApprovalMode: options.approvalMode ?? 'MANUAL',
@@ -73,15 +79,20 @@ function harness(options: {
     },
   } as any;
 
+  // Inspect and consume are separate calls, exactly as they are for the login buckets.
   const rateLimit = {
-    assertLineSignupUserAllowed: async (key: string) => { userQuotas.push(key); },
+    assertLineSignupUserAllowed: async (key: string) => { userQuotas.push(`inspect:${key}`); },
+    recordLineSignupUser: async (key: string) => { userQuotas.push(`consume:${key}`); },
   } as any;
-  const adminNotify = { enqueue: async (id: string) => { notified.push(id); } } as any;
+  const adminNotify = {
+    activeSystemAdmins: async () => (options.systemAdmins ?? ['sysadmin-1']).map((userId) => ({ companyId: 'sys', userId })),
+    enqueue: async (id: string) => { notified.push(id); },
+  } as any;
   const provision = { execute: async (cmd: any) => { provisioned.push(cmd); return {}; } } as any;
 
   return {
     useCase: new SubmitLineSignupUseCase(prisma, config, core, lineIdToken, rateLimit, adminNotify, provision),
-    created, advances, audits, updates, notified, provisioned, userQuotas,
+    created, advances, audits, updates, notified, provisioned, userQuotas, capCounts, locks,
   };
 }
 
@@ -126,7 +137,30 @@ describe('SubmitLineSignupUseCase — identity and clickwrap', () => {
     assert.equal(row.lineDisplayName, 'นิด');
     // DATA-MIN-01: display name and typed fields only, never a picture.
     assert.equal(JSON.stringify(row).toLowerCase().includes('picture'), false);
-    assert.deepEqual(h.userQuotas, ['Uline-1']);
+    assert.deepEqual(h.userQuotas, ['inspect:Uline-1', 'consume:Uline-1']);
+  });
+
+  // Review MEDIUM-1: the bucket is three shops a DAY. Consuming it on a rejected submit turns
+  // three typos into a 24-hour lockout for a customer who has not opened anything yet.
+  it('spends the daily bucket only once an application actually exists', async () => {
+    const h = harness();
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await assert.rejects(() => h.useCase.execute({ ...CMD, phoneNumber: '12345' }, NOW));
+    }
+    assert.deepEqual(h.userQuotas, ['inspect:Uline-1', 'inspect:Uline-1', 'inspect:Uline-1']);
+
+    // The fourth attempt is the one that gets it right, and it must still go through.
+    const result = await h.useCase.execute(CMD, NOW);
+    assert.equal(result.state, 'PENDING_REVIEW');
+    assert.deepEqual(h.userQuotas.at(-1), 'consume:Uline-1');
+  });
+
+  it('refuses a re-submit while a previous provisioning is still recoverable', async () => {
+    // The partial unique index counts PROVISIONING_FAILED as open (review HIGH-2): re-submitting
+    // there would take the attach path off the half-committed identity and open a SECOND company.
+    const h = harness({ createThrows: Object.assign(new Error('unique'), { code: 'P2002' }) });
+    await assert.rejects(() => h.useCase.execute(CMD, NOW), /line_signup_already_pending/);
+    assert.deepEqual(h.userQuotas, ['inspect:Uline-1'], 'and a refused submit costs nothing');
   });
 
   it('labels an owner whose LINE token carries no profile name', async () => {
@@ -180,7 +214,33 @@ describe('SubmitLineSignupUseCase — where the application goes', () => {
     assert.deepEqual(h.notified, [], 'and no admin is woken up');
     assert.equal(h.updates[0].data.autoApproved, true);
     assert.equal(h.provisioned[0].requestId, 'signup-1');
+    // Review HIGH-1: onboarding writes this id into two foreign keys, so it has to be a real user.
+    assert.equal(h.provisioned[0].actorUserId, 'sysadmin-1');
     assert.equal(h.audits.at(-1).data.actorRefId, 'line-signup-auto-approve');
+  });
+
+  // Review MEDIUM-2: count-then-write lets N concurrent submits all read `cap - 1` and all pass,
+  // which is the day the free AI budget is spent N times over.
+  it('claims the daily slot under an advisory lock, counting only today Bangkok rows', async () => {
+    const h = harness({ approvalMode: 'AUTO_FREE' });
+    await h.useCase.execute(CMD, NOW);
+
+    assert.deepEqual(h.locks, [['line-signup-auto-cap:2026-09-03']], 'count and mark are serialised');
+    const where = h.capCounts[0].where;
+    assert.equal(where.source, 'line-oa');
+    assert.equal(where.autoApproved, true);
+    // Bangkok midnight of 2026-09-03 is 2026-09-02T17:00Z.
+    assert.equal(where.createdAt.gte.toISOString(), '2026-09-02T17:00:00.000Z');
+  });
+
+  it('sends the application to the queue when no SYSTEM_ADMIN can act as operator', async () => {
+    const h = harness({ approvalMode: 'AUTO_FREE', systemAdmins: [] });
+    const result = await h.useCase.execute(CMD, NOW);
+
+    assert.equal(result.state, 'PENDING_REVIEW');
+    assert.deepEqual(h.provisioned, []);
+    assert.deepEqual(h.updates, [], 'and no cap slot is burned discovering that');
+    assert.equal(h.audits.at(-1).data.action, 'signup.line.auto_approve_no_actor');
   });
 
   it('falls back to the queue once the daily cap is spent (spec §9 item 3)', async () => {

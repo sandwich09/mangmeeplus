@@ -557,15 +557,21 @@ describe('LegalAcceptanceService.recordFromEvidence', () => {
 
     // The whole point (spec §11): this owner must NOT be sent to /legal-acceptance, so the
     // "send a receipt right now" promise in the ready message is true.
+    let recordWhere: any;
     const prisma = {
       client: {
         companyMembership: { findFirst: async () => membership(['OWNER']) },
-        legalDocumentActionRecord: { findMany: async () => created },
+        legalDocumentActionRecord: {
+          findMany: async (args: any) => { recordWhere = args.where; return created; },
+        },
       },
     } as any;
     const status = await new LegalAcceptanceService(prisma, { log: async () => undefined } as any).getStatus(ACTOR);
     assert.equal(status.required, false);
     assert.equal(status.acceptedAt, EVIDENCE_AT.toISOString());
+    // Review LOW-3: naming the surface in `authProvider` must not change an acceptance decision —
+    // the validity query filters on user and content hashes, never on this column.
+    assert.equal(JSON.stringify(recordWhere).includes('authProvider'), false);
   });
 
   it('stamps the moment the shop owner tapped accept, not the provisioning clock', async () => {
@@ -573,7 +579,10 @@ describe('LegalAcceptanceService.recordFromEvidence', () => {
     await service().recordFromEvidence(tx, input());
     for (const row of created) {
       assert.equal(row.acceptedAt.getTime(), EVIDENCE_AT.getTime());
-      assert.equal(row.authProvider, 'LINE');
+      // Review LOW-3: distinct from the session values this column otherwise carries ('watchdog',
+      // 'line', 'dev'). Those name how someone logged in; nobody logged in here, and a PDPA reader
+      // has to be able to tell the LIFF clickwrap apart from an in-app one.
+      assert.equal(row.authProvider, 'LINE_LIFF_SIGNUP');
       assert.equal(row.sessionTokenId, null, 'nobody has logged in yet');
       assert.equal(row.actorCapacity, 'AUTHORIZED_REPRESENTATIVE');
       assert.deepEqual(row.rolesJson, ['OWNER']);

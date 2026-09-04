@@ -65,6 +65,11 @@ export function bangkokDayStart(now: Date): Date {
   return new Date(bangkokParts(now).midnightUtcMs);
 }
 
+/** 'YYYY-MM-DD' on the Bangkok wall clock — the name of the day a per-day cap belongs to. */
+export function bangkokDayKey(now: Date): string {
+  return new Date(now.getTime() + BANGKOK_OFFSET_MS).toISOString().slice(0, 10);
+}
+
 export function isBusinessHours(now: Date, config: BusinessHoursConfig): boolean {
   const window = parseBusinessHours(config);
   const { dayName, minutes } = bangkokParts(now);

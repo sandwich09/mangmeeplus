@@ -175,6 +175,36 @@ describe('SignupAdminQueueUseCase.decide — LINE-first source', () => {
     assert.deepEqual(h.advances, [{ id: 'signup-1', state: 'REJECTED' }]);
   });
 
+  // Review HIGH-2: the fence releases on failure precisely so the row can be retried. A row nobody
+  // can see is a row nobody retries, and for a LINE application that also leaves the customer's
+  // LINE account fenced by the open-application index with no way out.
+  it('surfaces a failed provisioning in the queue instead of stranding it', async () => {
+    const h = harness({ requests: [{ ...LINE_REQUEST, state: 'PROVISIONING_FAILED' }] });
+    const { items } = await h.useCase.list(NOW);
+    assert.equal(items.length, 1);
+    assert.equal(items[0]!.state, 'PROVISIONING_FAILED');
+  });
+
+  it('retries provisioning when an admin approves a failed LINE application', async () => {
+    const h = harness({ request: { ...LINE_REQUEST, state: 'PROVISIONING_FAILED', autoApproved: true } });
+    const result = await h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1', URLS);
+
+    assert.equal(result.state, 'COMPLETED');
+    assert.equal(h.provisioned[0].requestId, 'signup-1');
+    // The retry is what gives an AUTO_FREE row that failed a real operator of record.
+    assert.equal(h.provisioned[0].actorUserId, 'admin-1');
+    assert.equal(h.updates[0].data.approvedByUserId, 'admin-1');
+    assert.equal(h.audits[0].data.metadataJson.retryOfFailedProvisioning, true);
+  });
+
+  it('does not offer that retry to the web form, whose approval means something else', async () => {
+    const h = harness({ request: { ...REQUEST, state: 'PROVISIONING_FAILED' } });
+    await assert.rejects(
+      () => h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1', URLS),
+      /invalid_signup_decision:PROVISIONING_FAILED/,
+    );
+  });
+
   it('shows the operator which source a row came from', async () => {
     const h = harness({ requests: [LINE_REQUEST] });
     const { items } = await h.useCase.list(NOW);

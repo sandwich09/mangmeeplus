@@ -65,6 +65,18 @@ const TRANSITIONS: Readonly<Record<CompanySignupState, readonly CompanySignupSta
 export const SIGNUP_SOURCE_OFFICIAL_SITE = 'official-site';
 export const SIGNUP_SOURCE_LINE_OA = 'line-oa';
 
+/**
+ * Review B-05: "one open application per LINE account", enforced by the partial unique index in
+ * `migrations/20260904120000_line_first_signup/migration.sql`. This list and that index's WHERE
+ * clause MUST agree — a spec asserts they do — because a state missing from the index is a state
+ * in which a re-submit silently opens a SECOND application, and for a row whose provisioning half
+ * committed (the ExternalIdentity exists) that means a SECOND company through the attach path.
+ * PROVISIONING_FAILED is in the set for exactly that reason: it is recoverable, not finished.
+ */
+export const LINE_OPEN_APPLICATION_STATES: readonly CompanySignupState[] = [
+  'RECEIVED', 'VALIDATED', 'PENDING_REVIEW', 'PROVISIONING', 'PROVISIONING_FAILED',
+];
+
 // P10-L §5. The LINE source proves a real person with a server-verified LIFF ID token instead of a
 // mailbox, so it has NO EMAIL_* edge at all — SIGNUP-02 is satisfied by the token, and an EMAIL_*
 // state here could only mean a bug that mailed a shop with no address. AUTO_FREE is the extra

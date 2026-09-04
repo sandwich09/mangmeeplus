@@ -10,7 +10,7 @@ import {
   legalEvidenceMatchesCurrentRelease,
   type LegalSignupEvidence,
 } from '../../auth/application/legal-acceptance.service';
-import { bangkokDayStart, isBusinessHours } from '../domain/business-hours.logic';
+import { bangkokDayKey, bangkokDayStart, isBusinessHours } from '../domain/business-hours.logic';
 import { SIGNUP_SOURCE_LINE_OA } from '../domain/company-signup.logic';
 import {
   lineExternalSignupId,
@@ -96,6 +96,9 @@ export class SubmitLineSignupUseCase {
       evidence,
       correlationRequestId: cmd.correlationRequestId,
     });
+    // Spent only now that an application exists: a mistyped phone number must not cost this
+    // customer one of their three shops for the day.
+    await this.rateLimit.recordLineSignupUser(verified.providerUserId);
 
     await this.core.advance(request.id, 'VALIDATED', cmd.correlationRequestId);
     await this.audit(request.id, 'signup.line.submitted', cmd.correlationRequestId, {
@@ -115,39 +118,71 @@ export class SubmitLineSignupUseCase {
 
   /**
    * MANUAL sends every application to the admin queue. AUTO_FREE skips it and provisions inline —
-   * the same shape the web claim page uses — but only under the daily cap: past it an application
-   * falls back to MANUAL rather than opening the spend tap wider (spec §9 item 3).
+   * the same shape the web claim page uses — but only when it can name a real operator AND only
+   * under the daily cap: either way it falls back to MANUAL rather than opening the spend tap
+   * wider (spec §9 item 3).
    */
   private async decideAndRun(requestId: string, cmd: SubmitLineSignupCommand, now: Date): Promise<string> {
     if (this.config.lineSignupApprovalMode === 'AUTO_FREE') {
-      const approvedToday = await this.prisma.client.companySignupRequest.count({
-        where: { source: SIGNUP_SOURCE_LINE_OA, autoApproved: true, createdAt: { gte: bangkokDayStart(now) } },
-      });
-      if (approvedToday < this.config.lineSignupAutoDailyCap) {
-        await this.prisma.client.companySignupRequest.update({
-          where: { id: requestId },
-          data: { autoApproved: true, approvedAt: now },
-        });
+      // Resolved BEFORE a cap slot is taken: onboarding writes this id into two foreign keys, so
+      // an installation with no SYSTEM_ADMIN cannot auto-provision at all and must not burn a slot
+      // discovering that. `approvedByUserId` stays null on the row — the spec's record of "no admin
+      // decided this" — and the operator is named only where a real user id is required.
+      const actorUserId = (await this.adminNotify.activeSystemAdmins())[0]?.userId ?? null;
+      const slot = actorUserId === null
+        ? { claimed: false as const, approvedToday: 0 }
+        : await this.claimAutoApproveSlot(requestId, now);
+
+      if (slot.claimed) {
         await this.audit(requestId, 'signup.line.auto_approved', cmd.correlationRequestId, {
-          approvedToday, dailyCap: this.config.lineSignupAutoDailyCap,
+          approvedToday: slot.approvedToday, dailyCap: this.config.lineSignupAutoDailyCap,
         });
         // VALIDATED → PROVISIONING → READY → COMPLETED, all inside this call.
         await this.provision.execute({
           requestId,
+          actorUserId: actorUserId!,
           correlationRequestId: cmd.correlationRequestId,
           webBaseUrl: cmd.webBaseUrl,
           apiBaseUrl: cmd.apiBaseUrl,
         });
         return 'COMPLETED';
       }
-      await this.audit(requestId, 'signup.line.auto_approve_capped', cmd.correlationRequestId, {
-        approvedToday, dailyCap: this.config.lineSignupAutoDailyCap,
-      });
+      await this.audit(
+        requestId,
+        actorUserId === null ? 'signup.line.auto_approve_no_actor' : 'signup.line.auto_approve_capped',
+        cmd.correlationRequestId,
+        { approvedToday: slot.approvedToday, dailyCap: this.config.lineSignupAutoDailyCap },
+      );
     }
 
     await this.core.advance(requestId, 'PENDING_REVIEW', cmd.correlationRequestId);
     await this.adminNotify.enqueue(requestId);
     return 'PENDING_REVIEW';
+  }
+
+  /**
+   * Counting and then marking in two statements lets N concurrent submits all read `cap - 1` and
+   * all go through, which is exactly the day the free AI budget gets spent N times over. The same
+   * advisory lock the signup core uses for its own state fence serialises the pair, keyed on the
+   * Bangkok day the cap is counted in.
+   */
+  private async claimAutoApproveSlot(
+    requestId: string,
+    now: Date,
+  ): Promise<{ claimed: boolean; approvedToday: number }> {
+    const lockKey = `line-signup-auto-cap:${bangkokDayKey(now)}`;
+    return this.prisma.client.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`;
+      const approvedToday = await tx.companySignupRequest.count({
+        where: { source: SIGNUP_SOURCE_LINE_OA, autoApproved: true, createdAt: { gte: bangkokDayStart(now) } },
+      });
+      if (approvedToday >= this.config.lineSignupAutoDailyCap) return { claimed: false, approvedToday };
+      await tx.companySignupRequest.update({
+        where: { id: requestId },
+        data: { autoApproved: true, approvedAt: now },
+      });
+      return { claimed: true, approvedToday };
+    });
   }
 
   private async create(input: {

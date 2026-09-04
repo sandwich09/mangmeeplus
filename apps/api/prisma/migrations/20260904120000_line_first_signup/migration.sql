@@ -28,9 +28,16 @@ CREATE INDEX "CompanySignupRequest_lineChannelId_lineProviderUserId_state_idx"
 -- Review B-05: "one open application per LINE account" is a DB fact, not a use-case convention —
 -- two fast taps on the LIFF button race the read otherwise. Partial unique indexes have no Prisma
 -- syntax, so this lives here and the schema carries a pointer comment.
+--
+-- PROVISIONING_FAILED counts as OPEN. A failed provisioning may have committed the owner and the
+-- ExternalIdentity before failing, so a re-submit would find that identity, take the attach path,
+-- and open a SECOND company for the same shop. The state is recoverable — an admin approves the
+-- row again and the idempotent fence retries it — so the account stays fenced until it settles.
+-- Keep this list identical to LINE_OPEN_APPLICATION_STATES in
+-- `src/modules/external-signup/domain/company-signup.logic.ts`; a spec asserts the two agree.
 CREATE UNIQUE INDEX "CompanySignupRequest_line_open_key"
   ON "CompanySignupRequest"("lineChannelId", "lineProviderUserId")
-  WHERE "state" IN ('RECEIVED', 'VALIDATED', 'PENDING_REVIEW', 'PROVISIONING');
+  WHERE "state" IN ('RECEIVED', 'VALIDATED', 'PENDING_REVIEW', 'PROVISIONING', 'PROVISIONING_FAILED');
 
 -- LEGAL-LIFF-01: the LIFF clickwrap is replayed into this table during provisioning, before anyone
 -- has logged in, so there is genuinely no session token to name. Written-only column; no reader

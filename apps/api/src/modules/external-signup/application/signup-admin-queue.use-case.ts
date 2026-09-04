@@ -15,8 +15,15 @@ import { ProvisionSignupUseCase } from './provision-signup.use-case';
 import { daysSinceApproval } from '../domain/account-claim.logic';
 import { SIGNUP_SOURCE_LINE_OA, type CompanySignupState } from '../domain/company-signup.logic';
 
-/** Everything an admin still has a decision or an action to take on (spec §4C, §4D). */
-const QUEUE_STATES: readonly CompanySignupState[] = ['PENDING_REVIEW', 'EMAIL_PENDING', 'EMAIL_FAILED', 'EXPIRED'];
+/**
+ * Everything an admin still has a decision or an action to take on (spec §4C, §4D).
+ * PROVISIONING_FAILED belongs here: the fence releases on failure precisely so the row can be
+ * retried, and a row nobody can see is a row nobody retries — for a LINE application that also
+ * leaves the customer's LINE account fenced with no way out.
+ */
+const QUEUE_STATES: readonly CompanySignupState[] = [
+  'PENDING_REVIEW', 'EMAIL_PENDING', 'EMAIL_FAILED', 'EXPIRED', 'PROVISIONING_FAILED',
+];
 
 /** Spec §4D ④: an approved request never dead-ends, so reissue has no age limit. */
 const REISSUABLE_STATES: readonly CompanySignupState[] = ['EMAIL_PENDING', 'EMAIL_FAILED', 'EXPIRED'];
@@ -93,7 +100,12 @@ export class SignupAdminQueueUseCase {
     if (body.action === 'SUSPEND') return this.suspend(request, adminUserId, correlationRequestId);
 
     if (body.action === 'APPROVE') {
-      if (request.state !== 'PENDING_REVIEW') {
+      // A LINE application may also be approved out of PROVISIONING_FAILED: that IS the retry, and
+      // the P10-0 fence makes it idempotent — a second attempt either finishes the shop the first
+      // one started or fails again, but never creates a second one.
+      const approvable = request.state === 'PENDING_REVIEW'
+        || (lineOa && request.state === 'PROVISIONING_FAILED');
+      if (!approvable) {
         // Already approved is a no-op; anything else is a real conflict the admin should see.
         if (request.state === 'EMAIL_PENDING') return { requestId, state: request.state };
         if (lineOa && SETTLED_STATES.includes(request.state as CompanySignupState)) {
@@ -104,7 +116,8 @@ export class SignupAdminQueueUseCase {
       const approvedAt = new Date();
       if (lineOa) {
         // No claim email exists for this source, so approval IS provisioning. The stamp lands
-        // first: provisioning reads `approvedByUserId` as the actor for everything it creates.
+        // first: provisioning reads `approvedByUserId` as the actor for everything it creates —
+        // which is also how retrying a failed AUTO_FREE row acquires a real operator.
         await this.prisma.client.companySignupRequest.update({
           where: { id: requestId },
           data: { approvedAt, approvedByUserId: adminUserId },
@@ -112,9 +125,10 @@ export class SignupAdminQueueUseCase {
         await this.audit(requestId, adminUserId, correlationRequestId, 'signup.request.approved', {
           source: request.source,
           hadPhoneNumber: request.phoneNumber !== null,
+          retryOfFailedProvisioning: request.state === 'PROVISIONING_FAILED',
         });
         if (!urls) throw new ConflictException('signup_provisioning_urls_required');
-        await this.provision.execute({ requestId, correlationRequestId, ...urls });
+        await this.provision.execute({ requestId, actorUserId: adminUserId, correlationRequestId, ...urls });
         return { requestId, state: 'COMPLETED' };
       }
       await this.core.advance(requestId, 'EMAIL_PENDING', correlationRequestId);

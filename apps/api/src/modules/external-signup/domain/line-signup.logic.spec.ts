@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { LINE_OPEN_APPLICATION_STATES } from './company-signup.logic';
 import {
   lineExternalSignupId,
   normalizeLineCompanyName,
@@ -53,6 +54,32 @@ describe('lineExternalSignupId', () => {
     assert.equal(id, 'line:channel-1:Uline-1:0f9b1d2e-3c4a-4b5c-8d7e-1f2a3b4c5d6e');
     // The column is bounded at 128; a real channel id, LINE user id and uuid stay far inside it.
     assert.ok(lineExternalSignupId('1234567890', `U${'a'.repeat(32)}`, 'x'.repeat(36)).length < 128);
+  });
+});
+
+// Review HIGH-2/B-05. The open-application fence is a partial unique index, which Prisma cannot
+// express — so the states it covers live in SQL and are mirrored in TypeScript. A state present in
+// one and missing from the other is the whole bug: a re-submit opens a SECOND application, and for
+// a half-committed provisioning (the ExternalIdentity already exists) a SECOND company.
+describe('the open-application index and LINE_OPEN_APPLICATION_STATES agree', () => {
+  const migration = readFileSync(
+    join(__dirname, '../../../../prisma/migrations/20260904120000_line_first_signup/migration.sql'),
+    'utf8',
+  );
+
+  it('lists exactly the same states in the same set', () => {
+    const where = /CompanySignupRequest_line_open_key"[\s\S]*?WHERE "state" IN \(([^)]*)\)/.exec(migration);
+    assert.ok(where, 'the partial unique index must exist in the migration');
+    const inSql = where![1]!.split(',').map((s) => s.trim().replace(/'/g, '')).sort();
+    assert.deepEqual(inSql, [...LINE_OPEN_APPLICATION_STATES].sort());
+  });
+
+  it('treats a failed provisioning as still open, because it is recoverable', () => {
+    assert.ok(LINE_OPEN_APPLICATION_STATES.includes('PROVISIONING_FAILED'));
+    // Settled states must NOT fence the account: the customer may open a second shop later.
+    for (const settled of ['COMPLETED', 'REJECTED', 'SUSPENDED'] as const) {
+      assert.equal(LINE_OPEN_APPLICATION_STATES.includes(settled), false, settled);
+    }
   });
 });
 

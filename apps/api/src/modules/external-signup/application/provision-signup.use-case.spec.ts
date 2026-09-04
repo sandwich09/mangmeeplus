@@ -256,11 +256,17 @@ describe('ProvisionSignupUseCase — LINE-first source', () => {
     const h = harness({ request: LINE_REQUEST });
     await h.useCase.execute(CMD);
 
-    // §9 warm-up: seven days, and the slip ceiling comes from config, not a literal.
-    const term = h.planTermUpdates[0];
+    // §9 warm-up: seven days, and the slip ceiling comes from config, not a literal. Upserted
+    // rather than updated (review HIGH-3): onboarding writes the term post-commit best-effort, so
+    // it may not be there, and a bare update would raise P2025 on a shop that already exists.
+    const term = h.planTermUpserts[0];
     assert.equal(term.where.companyId, 'co-1');
-    assert.equal(term.data.warmupSlipLimit, 10);
-    assert.ok(term.data.warmupUntil.getTime() - Date.now() > 6.5 * 24 * 3600_000);
+    assert.equal(term.update.warmupSlipLimit, 10);
+    assert.ok(term.update.warmupUntil.getTime() - Date.now() > 6.5 * 24 * 3600_000);
+    // The create side is the full free-trial term, so a missing row is repaired, not half-written.
+    assert.equal(term.create.tierKey, 'FREE_TRIAL_15');
+    assert.equal(term.create.monthlySlipLimit, 15);
+    assert.equal(term.create.termEndsAt.getTime() - term.create.termStartAt.getTime(), 30 * 24 * 3600_000);
     // Review G-06: without this the trial shop would spend the platform default budget.
     assert.equal(h.aiConfigUpserts[0].create.monthlyBudgetSatang, 8000);
     assert.equal(h.aiConfigUpserts[0].update.monthlyBudgetSatang, 8000);

@@ -49,9 +49,17 @@ describe('AuthRateLimitService password login', () => {
 // P10-L §9 / review SEC-02: the new buckets must inherit the default fail-closed policy — none of
 // them may quietly opt into `degrade-to-local`, which only the blunt global IP bucket is allowed.
 describe('AuthRateLimitService LINE-first signup buckets', () => {
-  it('caps applications per LINE account at three, independently of the caller IP', async () => {
+  // Review MEDIUM-1: this bucket CHECKS but does not spend, exactly like the login buckets. Three
+  // shops a day is generous; three typos in one sitting must not cost a customer their whole day.
+  it('caps applications per LINE account at three, counting only the ones that got created', async () => {
     const service = makeService();
-    for (let attempt = 0; attempt < 3; attempt += 1) await service.assertLineSignupUserAllowed('Uline-1');
+    // A rejected submit checks and moves on, however many times.
+    for (let attempt = 0; attempt < 10; attempt += 1) await service.assertLineSignupUserAllowed('Uline-1');
+
+    for (let created = 0; created < 3; created += 1) {
+      await service.assertLineSignupUserAllowed('Uline-1');
+      await service.recordLineSignupUser('Uline-1');
+    }
     await assert.rejects(service.assertLineSignupUserAllowed('Uline-1'), /Too many requests/);
     // Another LINE account behind the same NAT is untouched.
     await service.assertLineSignupUserAllowed('Uline-2');

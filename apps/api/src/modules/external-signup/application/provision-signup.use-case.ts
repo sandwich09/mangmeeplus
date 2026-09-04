@@ -1,5 +1,7 @@
-import { ConflictException, Injectable } from '@nestjs/common';
-import { COMPANY_BUSINESS_CATEGORIES, type CompanyBusinessCategory } from '@watchdog-bms/contracts';
+import { ConflictException, Injectable, Logger } from '@nestjs/common';
+import {
+  COMPANY_BUSINESS_CATEGORIES, PLAN_TIER_PRESETS, type CompanyBusinessCategory,
+} from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import { CreateCompanyOnboardingUseCase } from '../../system-onboarding/application/use-cases/create-company-onboarding.use-case';
@@ -11,6 +13,13 @@ export type ProvisionSignupCommand = {
   requestId: string;
   /** Chosen at the claim page. Absent on an admin retry, where the email local part is the default. */
   username?: string;
+  /**
+   * Who onboarding records as the operator of everything it creates. Required when the request has
+   * no `approvedByUserId` — an AUTO_FREE application, by design (spec §5) — because that id lands
+   * in `CompanyOnboardingRun.createdBySystemAdminUserId` and `AuditLog.actorUserId`, both of which
+   * are foreign keys to User. Passing anything that is not a real user id fails with P2003.
+   */
+  actorUserId?: string;
   correlationRequestId: string;
   webBaseUrl: string;
   apiBaseUrl: string;
@@ -80,14 +89,16 @@ export class ProvisionSignupUseCase {
         planTier: lineOa ? 'FREE_TRIAL_15' : 'PRO_999',
         planDays: 30,
         // The approving admin is the actor of record for everything this provisioning creates.
-        // AUTO_FREE leaves no admin, so the application itself is the actor of record.
-        requestingAdminUserId: request.approvedByUserId ?? request.id,
+        // AUTO_FREE leaves `approvedByUserId` null on the row (spec §5), so the caller resolves a
+        // real operator instead. The request id is NOT a fallback: it is not a user id, and the
+        // two foreign keys onboarding writes it into would reject it.
+        requestingAdminUserId: request.approvedByUserId ?? cmd.actorUserId ?? request.id,
         requestId: cmd.correlationRequestId,
         webBaseUrl: cmd.webBaseUrl,
         apiBaseUrl: cmd.apiBaseUrl,
       });
 
-      if (lineOa) await this.applyLineTrialGuards(result.companyId, request);
+      if (lineOa) await this.applyLineTrialGuards(result.companyId, request, cmd.correlationRequestId);
 
       // Spec §3: the form's VAT answer is stored as company state only. No `VatFact` is written,
       // because the form never asked for an effectiveFrom and the fact would be a guess.
@@ -212,39 +223,108 @@ export class ProvisionSignupUseCase {
   /**
    * The three things a free LINE trial needs that an ordinary company does not (spec §6, §9;
    * review G-06, B-06). All idempotent, so a provisioning retry re-applies the same values.
+   *
+   * Every one of them runs AFTER the company transaction has committed, and each is guarded
+   * separately: onboarding writes the plan term post-commit best-effort by its own design, so this
+   * may legitimately arrive with no term row at all, and one write failing must neither roll back a
+   * finished shop nor skip the other two — the AI budget in particular is the money stop.
    */
-  private async applyLineTrialGuards(companyId: string, request: SignupRow): Promise<void> {
+  private async applyLineTrialGuards(companyId: string, request: SignupRow, requestId: string): Promise<void> {
     const now = new Date();
-    await this.prisma.client.companyPlanTerm.update({
-      where: { companyId },
-      data: {
-        // Anti-abuse: a brand-new free shop may read fewer slips in its first week than its tier
-        // allows, until the window passes or an admin marks it checked.
-        warmupUntil: new Date(now.getTime() + WARMUP_DAYS * 24 * 60 * 60 * 1000),
-        warmupSlipLimit: this.config.lineSignupWarmupSlips,
-      },
-    });
+    const preset = PLAN_TIER_PRESETS.FREE_TRIAL_15;
+    const warmup = {
+      // Anti-abuse: a brand-new free shop may read fewer slips in its first week than its tier
+      // allows, until the window passes or an admin marks it checked.
+      warmupUntil: new Date(now.getTime() + WARMUP_DAYS * DAY_MS),
+      warmupSlipLimit: this.config.lineSignupWarmupSlips,
+    };
+
+    await this.bestEffort(companyId, requestId, 'plan_term_warmup', () =>
+      // Upsert, not update: the term row is written by onboarding after ITS transaction commits and
+      // is explicitly allowed to be missing (a company with no term is unlimited, not broken), so
+      // an update here would raise P2025 on a provisioning that has already created the shop.
+      this.prisma.client.companyPlanTerm.upsert({
+        where: { companyId },
+        create: {
+          companyId,
+          tierKey: 'FREE_TRIAL_15',
+          branchLimit: preset.branchLimit,
+          employeeLimit: preset.employeeLimit,
+          monthlySlipLimit: preset.monthlySlipLimit,
+          termStartAt: now,
+          termEndsAt: new Date(now.getTime() + TRIAL_DAYS * DAY_MS),
+          ...warmup,
+        },
+        // Dates and tier are left exactly as onboarding set them: this never shortens a term.
+        update: warmup,
+      }),
+    );
+
     // Review G-06: without this a free trial shop spends the PLATFORM default AI budget. Same
     // upsert shape `set-partner-ai-model` uses, so there is one way this row comes into being.
-    await this.prisma.client.companyAiConfiguration.upsert({
-      where: { companyId },
-      create: { companyId, monthlyBudgetSatang: this.config.lineFreeAiBudgetSatang },
-      update: { monthlyBudgetSatang: this.config.lineFreeAiBudgetSatang },
-    });
+    await this.bestEffort(companyId, requestId, 'ai_budget', () =>
+      this.prisma.client.companyAiConfiguration.upsert({
+        where: { companyId },
+        create: { companyId, monthlyBudgetSatang: this.config.lineFreeAiBudgetSatang },
+        update: { monthlyBudgetSatang: this.config.lineFreeAiBudgetSatang },
+      }),
+    );
+
     // Review B-06: an owner with a second shop otherwise meets a company picker instead of the shop
     // they just opened. Same upsert the LINE link use-case does when it resolves a company.
     if (request.lineProviderUserId) {
-      await this.prisma.client.lineCompanyContext.upsert({
-        where: { lineUserId: request.lineProviderUserId },
-        create: { lineUserId: request.lineProviderUserId, companyId, selectedAt: now },
-        update: { companyId, selectedAt: now },
-      });
+      const lineUserId = request.lineProviderUserId;
+      await this.bestEffort(companyId, requestId, 'line_company_context', () =>
+        this.prisma.client.lineCompanyContext.upsert({
+          where: { lineUserId },
+          create: { lineUserId, companyId, selectedAt: now },
+          update: { companyId, selectedAt: now },
+        }),
+      );
+    }
+  }
+
+  /**
+   * The company exists by the time these run, so nothing here may turn a finished shop into a 500.
+   * A failure is recorded as evidence an operator can act on and then swallowed — the same posture
+   * onboarding takes for its own post-commit term write.
+   */
+  private async bestEffort(
+    companyId: string,
+    requestId: string,
+    step: string,
+    write: () => Promise<unknown>,
+  ): Promise<void> {
+    try {
+      await write();
+    } catch (error) {
+      try {
+        await this.prisma.client.auditLog.create({
+          data: {
+            companyId,
+            action: 'signup.line.trial_guards_failed',
+            targetType: 'company_signup_request',
+            targetId: requestId,
+            requestId,
+            result: 'FAILED',
+            riskLevel: 'HIGH',
+            metadataJson: { step, error: error instanceof Error ? error.message : String(error) },
+          },
+        });
+      } catch {
+        new Logger(ProvisionSignupUseCase.name).error(
+          `LINE trial guard "${step}" not applied for company ${companyId}; check the plan term and AI budget by hand.`,
+        );
+      }
     }
   }
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
 /** Spec §9: the warm-up window is a week; only the slip ceiling inside it is configurable. */
 const WARMUP_DAYS = 7;
+/** Owner 2026-09-04: the LINE trial runs 30 days, the same length onboarding was told to write. */
+const TRIAL_DAYS = 30;
 
 /** The subset of `CompanySignupRequest` provisioning reads. */
 type SignupRow = {
