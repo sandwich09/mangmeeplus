@@ -39,6 +39,9 @@ function harness(options: {
   const completed: any[] = [];
   const failures: any[] = [];
   const planTermUpserts: any[] = [];
+  const planTermUpdates: any[] = [];
+  const aiConfigUpserts: any[] = [];
+  const lineContexts: any[] = [];
 
   const request = { ...REQUEST, ...(options.request ?? {}) };
 
@@ -46,7 +49,12 @@ function harness(options: {
     client: {
       user: { findUnique: async () => (options.existingOwnerEmail === undefined ? null : { email: options.existingOwnerEmail }) },
       company: { update: async (args: any) => { companyUpdates.push(args); return {}; } },
-      companyPlanTerm: { upsert: async (args: any) => { planTermUpserts.push(args); return {}; } },
+      companyPlanTerm: {
+        upsert: async (args: any) => { planTermUpserts.push(args); return {}; },
+        update: async (args: any) => { planTermUpdates.push(args); return {}; },
+      },
+      companyAiConfiguration: { upsert: async (args: any) => { aiConfigUpserts.push(args); return {}; } },
+      lineCompanyContext: { upsert: async (args: any) => { lineContexts.push(args); return {}; } },
       companySignupRequest: { update: (args: any) => { requestUpdates.push(args); return Promise.resolve({}); } },
       auditLog: { create: (args: any) => { audits.push(args); return Promise.resolve({}); } },
       $transaction: async (ops: any[]) => Promise.all(ops),
@@ -74,9 +82,12 @@ function harness(options: {
     },
   } as any;
 
+  const config = { lineSignupWarmupSlips: 10, lineFreeAiBudgetSatang: 8000 } as any;
+
   return {
-    useCase: new ProvisionSignupUseCase(prisma, core, onboarding),
+    useCase: new ProvisionSignupUseCase(prisma, core, onboarding, config),
     onboardingCalls, companyUpdates, requestUpdates, audits, advances, completed, failures, planTermUpserts,
+    planTermUpdates, aiConfigUpserts, lineContexts,
   };
 }
 
@@ -198,7 +209,88 @@ describe('ProvisionSignupUseCase — contactEmail is nullable now (review B-03)'
     const h = harness({ request: { contactEmail: null } });
     await assert.rejects(() => h.useCase.execute(CMD), /signup_contact_email_missing/);
     assert.equal(h.onboardingCalls.length, 0);
-    assert.equal(h.failures.length, 0, 'the guard runs before the fence is claimed for work');
+    // The fence is released, so an admin who fixes the row can retry the same application.
+    assert.equal(h.failures.length, 1);
+  });
+});
+
+// P10-L §6. A LINE application creates a shop with NO username, NO email and NO credential; the
+// verified LINE identity is the account, and the clickwrap the owner gave on LIFF rides along.
+const LINE_REQUEST = {
+  source: 'line-oa',
+  contactEmail: null,
+  pendingPasswordHash: null,
+  taxId: null,
+  vatRegistered: null,
+  lineProviderUserId: 'Uline-1',
+  lineChannelId: 'channel-1',
+  lineDisplayName: 'นิด',
+  legalDocumentVersion: 'v3',
+  legalStatementSha256: 'a'.repeat(64),
+  legalReleaseFingerprintSha256: 'b'.repeat(64),
+  legalDisplayChallenge: 'c'.repeat(64),
+  legalLocale: 'th',
+  legalUserAgent: 'LINE/14 iOS',
+  legalAcceptedAt: new Date('2026-09-04T03:21:00.000Z'),
+};
+
+describe('ProvisionSignupUseCase — LINE-first source', () => {
+  it('hands onboarding the LINE owner shape and the free trial preset', async () => {
+    const h = harness({ request: LINE_REQUEST });
+    await h.useCase.execute(CMD);
+
+    const cmd = h.onboardingCalls[0];
+    assert.deepEqual(cmd.ownerAuth, {
+      kind: 'line', providerUserId: 'Uline-1', channelId: 'channel-1', displayName: 'นิด',
+    });
+    assert.equal(cmd.ownerUsername, undefined, 'no username exists for a LINE-first owner');
+    assert.equal(cmd.claimedOwner, undefined, 'and therefore no email-owner shape');
+    assert.equal(cmd.planTier, 'FREE_TRIAL_15');
+    assert.equal(cmd.planDays, 30);
+    // Spec §6: the acceptance time is the one from the application, not the provisioning clock.
+    assert.equal(cmd.legalAcceptance.legalAcceptedAt.toISOString(), '2026-09-04T03:21:00.000Z');
+    assert.equal(cmd.legalAcceptance.displayChallenge, 'c'.repeat(64));
+  });
+
+  it('caps the first week, the AI spend and the LINE company context', async () => {
+    const h = harness({ request: LINE_REQUEST });
+    await h.useCase.execute(CMD);
+
+    // §9 warm-up: seven days, and the slip ceiling comes from config, not a literal.
+    const term = h.planTermUpdates[0];
+    assert.equal(term.where.companyId, 'co-1');
+    assert.equal(term.data.warmupSlipLimit, 10);
+    assert.ok(term.data.warmupUntil.getTime() - Date.now() > 6.5 * 24 * 3600_000);
+    // Review G-06: without this the trial shop would spend the platform default budget.
+    assert.equal(h.aiConfigUpserts[0].create.monthlyBudgetSatang, 8000);
+    assert.equal(h.aiConfigUpserts[0].update.monthlyBudgetSatang, 8000);
+    // Review B-06: the first receipt must land in the shop just opened, not in a company picker.
+    assert.equal(h.lineContexts[0].where.lineUserId, 'Uline-1');
+    assert.equal(h.lineContexts[0].create.companyId, 'co-1');
+    assert.equal(h.lineContexts[0].update.companyId, 'co-1');
+  });
+
+  it('finishes at COMPLETED instead of parking at the LINE link step', async () => {
+    const h = harness({ request: LINE_REQUEST });
+    await h.useCase.execute(CMD);
+    assert.deepEqual(h.advances, [{ id: 'signup-1', state: 'COMPLETED' }]);
+  });
+
+  it('opens a second shop on the same account when the LINE user already owns one', async () => {
+    const h = harness({ request: { ...LINE_REQUEST, attachUserId: 'user-9' }, existingOwnerEmail: null });
+    const result = await h.useCase.execute(CMD);
+
+    assert.equal(h.onboardingCalls[0].claimedOwner.attachUserId, 'user-9');
+    assert.equal(h.onboardingCalls[0].claimedOwner.email, undefined, 'attach by identity, not address');
+    assert.equal(result.attachedToExistingUser, true);
+  });
+
+  it('fails the fence rather than creating half an account from a corrupt row', async () => {
+    for (const missing of [{ lineProviderUserId: null }, { lineChannelId: null }, { legalAcceptedAt: null }]) {
+      const h = harness({ request: { ...LINE_REQUEST, ...missing } });
+      await assert.rejects(() => h.useCase.execute(CMD), /line_signup_evidence_missing/);
+      assert.equal(h.onboardingCalls.length, 0);
+    }
   });
 });
 

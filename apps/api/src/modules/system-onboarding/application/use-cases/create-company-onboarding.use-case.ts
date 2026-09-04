@@ -18,6 +18,10 @@ import { AppConfigService } from '../../../../common/config/app-config.service';
 import { emitSecurityEvent, SECURITY_EVENT } from '../../../../common/logger/security-event';
 import { normalizeTaxId } from '../../../data-model-core/domain/logic/company-legal-identity.logic';
 import { hashPassword } from '../../../auth/domain/logic/password-credential.logic';
+import {
+  LegalAcceptanceService,
+  type LegalSignupEvidence,
+} from '../../../auth/application/legal-acceptance.service';
 import { encryptCredential } from '../../../system-partner-management/domain/logic/credential-cipher.logic';
 import { DEFAULT_ENABLED_FEATURE_KEYS } from '../../../system-partner-management/domain/feature-registry';
 import { applyPlanTermPreset } from '../../../system-partner-management/application/use-cases/company-plan-term.use-cases';
@@ -63,16 +67,35 @@ export type CreateCompanyOnboardingCommand = {
    */
   taxId?: string;
   ownerDisplayName: string;
-  ownerUsername: string;
+  /** Required for every owner shape except `ownerAuth: { kind: 'line' }`, which has no username. */
+  ownerUsername?: string;
   attachExistingOwner?: boolean; // true = ownerUsername must be an existing ACTIVE user; no new user/password
+  /**
+   * P10-L §6. How the owner will get back in. `password` (the default, and what every existing
+   * caller means by saying nothing) is unchanged in every byte. `line` is the LINE-first shop:
+   * no username, no email, NO UserCredential and therefore no temporary password to leak
+   * (LINE-ONBOARD-01) — the LINE identity created in this same transaction IS the credential.
+   */
+  ownerAuth?:
+    | { kind: 'password' }
+    | { kind: 'line'; providerUserId: string; channelId: string; displayName?: string };
+  /**
+   * Clickwrap evidence collected before this account existed (on LIFF), replayed into
+   * `LegalDocumentActionRecord` inside this transaction so the owner is not stopped by the
+   * acceptance gate on their very first receipt.
+   */
+  legalAcceptance?: LegalSignupEvidence;
   /**
    * P10 Flow B (spec §4B): the owner proved the mailbox by opening the claim link, so this path
    * carries a verified email and a self-chosen password instead of the admin handover's temporary
    * one. Present only from the claim endpoint — the admin console never sets it.
    */
   claimedOwner?: {
-    /** Verified at the claim link; written with `emailVerifiedAt` in the same transaction. */
-    email: string;
+    /**
+     * Verified at the claim link; written with `emailVerifiedAt` in the same transaction. Absent
+     * on the LINE-first attach path, where the proof is a LINE identity and there is no address.
+     */
+    email?: string;
     phoneNumber?: string;
     /** Self-chosen password, already hashed. Absent when attaching to an existing account. */
     passwordHash?: string;
@@ -109,7 +132,8 @@ export type CreateCompanyOnboardingResult = {
   onboardingRunId: string;
   companyId: string;
   ownerId: string;
-  username: string;
+  /** null for a LINE-first owner: there is no username to hand over, by design. */
+  username: string | null;
   attachedExistingOwner: boolean;
   temporaryPassword?: string; // shown once; never logged; absent in attach mode (owner keeps existing password)
   handoffUrl: string;
@@ -133,11 +157,18 @@ export class CreateCompanyOnboardingUseCase {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: AppConfigService,
+    private readonly legal: LegalAcceptanceService,
   ) {}
 
   async execute(cmd: CreateCompanyOnboardingCommand): Promise<CreateCompanyOnboardingResult> {
     const attachUserId = cmd.claimedOwner?.attachUserId;
     const attach = cmd.attachExistingOwner === true || attachUserId !== undefined;
+    const lineOwner = cmd.ownerAuth?.kind === 'line' ? cmd.ownerAuth : null;
+    // Every pre-existing caller reaches here: the console DTO validates the username at the HTTP
+    // boundary and provisioning derives one, so this only catches a new caller that forgot.
+    if (!lineOwner && !attach && !cmd.ownerUsername) {
+      throw new UnprocessableEntityException('ownerUsername is required unless the owner signs in with LINE');
+    }
     // Same normalisation and rule as CompanyIdentityUseCase.patch — one definition of what a valid
     // tax id is, so a number accepted here can never be one the identity screen would reject.
     const taxId = cmd.taxId === undefined ? undefined : normalizeTaxId(cmd.taxId);
@@ -148,7 +179,11 @@ export class CreateCompanyOnboardingUseCase {
     const [existingUser, existingCompany] = await Promise.all([
       attachUserId
         ? this.prisma.client.user.findUnique({ where: { id: attachUserId }, select: { id: true, status: true } })
-        : this.prisma.client.user.findUnique({ where: { username: cmd.ownerUsername }, select: { id: true, status: true } }),
+        // A LINE-first owner has no username to collide with; the ExternalIdentity unique slot is
+        // what stops a second account for the same LINE person, and it is checked in the transaction.
+        : cmd.ownerUsername === undefined
+          ? Promise.resolve(null)
+          : this.prisma.client.user.findUnique({ where: { username: cmd.ownerUsername }, select: { id: true, status: true } }),
       cmd.allowDuplicateCompanyName
         ? Promise.resolve(null)
         : this.prisma.client.company.findFirst({ where: { name: cmd.companyName }, select: { id: true } }),
@@ -179,11 +214,14 @@ export class CreateCompanyOnboardingUseCase {
           select: { id: true },
         })) !== null
       : false;
-    const issueLineLink = !ownerHasLine;
+    // A LINE-first owner is linked by this very transaction, so a QR to link them would be a QR to
+    // link what is already linked. An admin can still reissue one later for account recovery (§9).
+    const issueLineLink = !ownerHasLine && !lineOwner;
 
     // A claim-verified owner sets their own password at the link, so no temporary one is ever
     // minted, encrypted or handed over for this path (spec §2 rule 4: no temp password, ever).
-    const tempPassword = attach || cmd.claimedOwner?.passwordHash ? undefined : generateTempPassword();
+    // A LINE-first owner has no credential at all — LINE-ONBOARD-01.
+    const tempPassword = attach || cmd.claimedOwner?.passwordHash || lineOwner ? undefined : generateTempPassword();
     const passwordHash = tempPassword ? hashPassword(tempPassword) : undefined;
     const expiresAt = new Date(Date.now() + TEMP_PASSWORD_TTL_MS);
     // Owner QR travels with the credential handoff and lives 72h like the temporary password; regenerate-temporary-password reissues it.
@@ -229,11 +267,13 @@ export class CreateCompanyOnboardingUseCase {
         : await tx.user.create({
             data: {
               displayName: cmd.ownerDisplayName,
-              username: cmd.ownerUsername,
+              // Spec §6: a LINE-first owner has no username and no email. Both columns are already
+              // nullable and unique, so null is a real value here, not a placeholder.
+              username: cmd.ownerUsername ?? null,
               status: 'ACTIVE',
               // Written here, in the company transaction, so a unique-email clash can never leave a
               // company behind with no owner contact — the whole create fails together.
-              ...(claimed ? { email: claimed.email, emailVerifiedAt: new Date() } : {}),
+              ...(claimed?.email ? { email: claimed.email, emailVerifiedAt: new Date() } : {}),
               ...(claimed?.phoneNumber ? { phoneNumber: claimed.phoneNumber } : {}),
             },
           });
@@ -241,7 +281,7 @@ export class CreateCompanyOnboardingUseCase {
       // Attach path: adopt the verified email only when the account has none. An account that
       // already carries a different address keeps it — this flow proves one mailbox, and it is not
       // evidence that the other one is wrong (spec §4B).
-      if (attach && claimed && !owner.email) {
+      if (attach && claimed?.email && !owner.email) {
         await tx.user.update({
           where: { id: owner.id },
           data: { email: claimed.email, emailVerifiedAt: new Date() },
@@ -279,6 +319,35 @@ export class CreateCompanyOnboardingUseCase {
       await tx.membershipRole.create({
         data: { membershipId: membership.id, roleId: ownerRole.id },
       });
+
+      // Spec §6: the LINE identity is the credential, so it is created HERE — in the same
+      // transaction as the company and the membership. A unique violation means this LINE account
+      // already belongs to someone, which §5 should have caught and turned into an attach; letting
+      // it abort the transaction is correct, because half a shop is worse than none.
+      if (lineOwner && !attach) {
+        await tx.externalIdentity.create({
+          data: {
+            userId: owner.id,
+            provider: 'LINE',
+            providerUserId: lineOwner.providerUserId,
+            providerChannelId: lineOwner.channelId,
+            status: 'ACTIVE',
+            linkedAt: new Date(),
+          },
+        });
+      }
+
+      // LEGAL-LIFF-01: the acceptance the owner already gave on LIFF, written where the in-app gate
+      // reads it, so their first receipt is not blocked by a card they have already answered.
+      if (cmd.legalAcceptance) {
+        await this.legal.recordFromEvidence(tx, {
+          userId: owner.id,
+          companyId: company.id,
+          membershipId: membership.id,
+          evidence: cmd.legalAcceptance,
+          requestId: cmd.requestId,
+        });
+      }
 
       if (lineLinkToken) {
         await tx.employeeLineLinkToken.create({
@@ -536,7 +605,7 @@ export class CreateCompanyOnboardingUseCase {
       onboardingRunId: result.run.id,
       companyId: result.company.id,
       ownerId: result.owner.id,
-      username: cmd.ownerUsername,
+      username: cmd.ownerUsername ?? null,
       attachedExistingOwner: attach,
       ...(tempPassword && { temporaryPassword: tempPassword }),
       handoffUrl: result.handoffUrl,
