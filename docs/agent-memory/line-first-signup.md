@@ -1,6 +1,6 @@
 # Agent Memory: LINE-first signup (P10-L)
 
-Status: SPEC DRAFT v2 2026-09-04 (`docs/specs/mangmee-line-first-signup-spec-th.md`) — v1 UX/BA + v2 security/support/ROI angles folded in; Owner decided: legal acceptance on LIFF at signup (LEGAL-LIFF-01), OA already Verified, promotions pull-only (no broadcast → no marketing consent), payment manual at first; 8 open questions in §13; no code.
+Status: SPEC v3 + PLAN DRAFT 2026-09-04 — Owner answered all 8 questions (see spec §13 table); only `LINE_FREE_AI_BUDGET_SATANG` pending the prod AiUsageEvent meter pull (script `scratchpad/prod-ai-cost.sh` ready; needs Owner go because the bastion session emails a security alert). Previous: SPEC DRAFT v2 2026-09-04 (`docs/specs/mangmee-line-first-signup-spec-th.md`) — v1 UX/BA + v2 security/support/ROI angles folded in; Owner decided: legal acceptance on LIFF at signup (LEGAL-LIFF-01), OA already Verified, promotions pull-only (no broadcast → no marketing consent), payment manual at first; 8 open questions in §13; no code.
 Owner: Owner (product) / Claude Fable (spec + control) / Opus (implementation when ordered)
 Scope: Customer adds LINE OA → LIFF 1-field signup (ชื่อร้าน) → MANUAL or AUTO_FREE approval → provision with LINE identity linked in the same tx → LINE push with central LIFF "start" button → handoff minted at tap → legal acceptance → first receipt. No email/password at signup (progressive later). Companion to P10; Flow B web form stays.
 Decisions:
@@ -9,7 +9,8 @@ Decisions:
 - LINE-ONBOARD-01 kept strictly: every LINE button is a central LIFF URL without personal tokens; handoff (15 min) minted at tap via new `POST /v1/auth/line/liff/session`.
 - Reuse: `attachUserId` for "LINE already has an account" (set at submit), `CreateCompanyOnboardingUseCase` with additive `ownerAuth` input, existing LIFF page pattern (API-served HTML + `LIFF_PAGE_SCRIPT`), existing legal gate, existing admin queue/notify, `CompanyOnboardingRun` still created (reissue button works).
 - Resend (email fallback after SES denial 2026-09-04) is parked; this flow makes onboarding independent of email.
-Open questions: spec §13 (Free tier quotas/expiry, MANUAL vs AUTO_FREE day one, reject-notify default, businessType chip, LINE profile display, auto daily cap, customer-facing SLA).
+- 2026-09-04 Owner Q1 answer: Free = **15 slips + expires in 30 days** → a trial term, not a permanent tier → reuse P29 plan-term machinery (7/3/1 warnings, expiry → company DISABLED + expired-owner LINE reply) instead of a new far-future FREE preset; upgrade wall = 15 slips OR day 30, whichever first. Push budget consequence: ≈6 pushes per user lifecycle (approved, day-7 nudge, P29 7/3/1, expired) → OA free plan (~500/mo) covers ≈80 signups/month; beyond that the ~฿1,500/mo OA plan.
+Open questions: spec §13 (Q2–Q8 explained to Owner in plain language 2026-09-04, awaiting answers) (Free tier quotas/expiry, MANUAL vs AUTO_FREE day one, reject-notify default, businessType chip, LINE profile display, auto daily cap, customer-facing SLA).
 Artifacts: spec above; fact sheet basis = worktree develop `91957572` (Explore sweep 2026-09-04); branch `codex/line-first-signup-spec` (docs only, unpushed).
 Verification: none yet (docs only). Gates listed in spec §11.
 Next: Owner answers §13 + further angles (security, ops, support, pricing) → spec v2 → implementation plan → Slice L-A.
