@@ -36,6 +36,17 @@ LINE_AI_PREPARED_SIMPLE_READ_ENABLED_INPUT="${LINE_AI_PREPARED_SIMPLE_READ_ENABL
 LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES_INPUT="${LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES:-}"
 LINE_AI_BUFFER_DEBOUNCE_MS_INPUT="${LINE_AI_BUFFER_DEBOUNCE_MS:-}"
 EXTERNAL_SIGNUP_ENABLED_INPUT="${EXTERNAL_SIGNUP_ENABLED:-}"
+# P10-L LINE-first signup (spec §10/§15.7). Empty = "decide from DEPLOY_ENV below", the same shape
+# EXTERNAL_SIGNUP_ENABLED uses, so a UAT deploy needs no flag and production cannot drift open.
+LINE_SIGNUP_ENABLED_INPUT="${LINE_SIGNUP_ENABLED:-}"
+LINE_SIGNUP_APPROVAL_MODE_INPUT="${LINE_SIGNUP_APPROVAL_MODE:-MANUAL}"
+LINE_SIGNUP_AUTO_DAILY_CAP_INPUT="${LINE_SIGNUP_AUTO_DAILY_CAP:-20}"
+LINE_SIGNUP_WARMUP_SLIPS_INPUT="${LINE_SIGNUP_WARMUP_SLIPS:-10}"
+LINE_FREE_AI_BUDGET_SATANG_INPUT="${LINE_FREE_AI_BUDGET_SATANG:-8000}"
+LINE_SIGNUP_ADMIN_REMINDER_MINUTES_INPUT="${LINE_SIGNUP_ADMIN_REMINDER_MINUTES:-60}"
+LINE_SIGNUP_BUSINESS_DAYS_INPUT="${LINE_SIGNUP_BUSINESS_DAYS:-MON-SAT}"
+LINE_SIGNUP_BUSINESS_HOURS_INPUT="${LINE_SIGNUP_BUSINESS_HOURS:-09:00-18:00}"
+RECEIPT_QUOTA_ENFORCED_INPUT="${RECEIPT_QUOTA_ENFORCED:-}"
 EMAIL_PROVIDER_INPUT="${EMAIL_PROVIDER:-}"
 SES_REGION_INPUT="${SES_REGION:-ap-southeast-1}"
 SES_FROM_ADDRESS_INPUT="${SES_FROM_ADDRESS:-}"
@@ -191,6 +202,55 @@ if [ "$DEPLOY_ENV" = production ] && [ "$EXTERNAL_SIGNUP_ENABLED_INPUT" = true ]
   echo "ERROR: EXTERNAL_SIGNUP_ENABLED=true is not activated for production yet" >&2
   exit 2
 fi
+# P10-L LINE-first signup (spec §10) and the receipt ceiling (§15.7). Both default ON for UAT and
+# fail-closed for production, and both are hard-stopped on production until the Owner orders it —
+# RECEIPT_QUOTA_ENFORCED separately from the signup flag, because it is the first limit EVERY
+# existing shop would ever meet and it needs its own seven-day announcement (review G-01).
+if [ -z "$LINE_SIGNUP_ENABLED_INPUT" ]; then
+  if [ "$DEPLOY_ENV" = uat ]; then LINE_SIGNUP_ENABLED_INPUT=true; else LINE_SIGNUP_ENABLED_INPUT=false; fi
+fi
+case "$LINE_SIGNUP_ENABLED_INPUT" in true|false) ;; *)
+  echo "ERROR: LINE_SIGNUP_ENABLED must be exactly true or false" >&2; exit 2 ;;
+esac
+if [ "$DEPLOY_ENV" = production ] && [ "$LINE_SIGNUP_ENABLED_INPUT" = true ]; then
+  echo "ERROR: LINE_SIGNUP_ENABLED=true is not activated for production yet" >&2
+  exit 2
+fi
+if [ -z "$RECEIPT_QUOTA_ENFORCED_INPUT" ]; then
+  if [ "$DEPLOY_ENV" = uat ]; then RECEIPT_QUOTA_ENFORCED_INPUT=true; else RECEIPT_QUOTA_ENFORCED_INPUT=false; fi
+fi
+case "$RECEIPT_QUOTA_ENFORCED_INPUT" in true|false) ;; *)
+  echo "ERROR: RECEIPT_QUOTA_ENFORCED must be exactly true or false" >&2; exit 2 ;;
+esac
+if [ "$DEPLOY_ENV" = production ] && [ "$RECEIPT_QUOTA_ENFORCED_INPUT" = true ]; then
+  echo "ERROR: RECEIPT_QUOTA_ENFORCED=true is not activated for production yet" >&2
+  exit 2
+fi
+# The remaining P10-L knobs are shaped, not gated: an unknown value fails the API's own schema at
+# boot, so it is rejected here instead of taking a task revision down on start.
+case "$LINE_SIGNUP_APPROVAL_MODE_INPUT" in MANUAL|AUTO_FREE) ;; *)
+  echo "ERROR: LINE_SIGNUP_APPROVAL_MODE must be exactly MANUAL or AUTO_FREE" >&2; exit 2 ;;
+esac
+case "$LINE_SIGNUP_AUTO_DAILY_CAP_INPUT" in ''|*[!0-9]*)
+  echo "ERROR: LINE_SIGNUP_AUTO_DAILY_CAP must be a non-negative integer" >&2; exit 2 ;;
+esac
+case "$LINE_SIGNUP_WARMUP_SLIPS_INPUT" in ''|*[!0-9]*)
+  echo "ERROR: LINE_SIGNUP_WARMUP_SLIPS must be a positive integer" >&2; exit 2 ;;
+esac
+case "$LINE_FREE_AI_BUDGET_SATANG_INPUT" in ''|*[!0-9]*)
+  echo "ERROR: LINE_FREE_AI_BUDGET_SATANG must be a positive integer (satang)" >&2; exit 2 ;;
+esac
+case "$LINE_SIGNUP_ADMIN_REMINDER_MINUTES_INPUT" in ''|*[!0-9]*)
+  echo "ERROR: LINE_SIGNUP_ADMIN_REMINDER_MINUTES must be a positive integer" >&2; exit 2 ;;
+esac
+case "$LINE_SIGNUP_BUSINESS_DAYS_INPUT" in
+  MON-*|TUE-*|WED-*|THU-*|FRI-*|SAT-*|SUN-*) ;;
+  *) echo "ERROR: LINE_SIGNUP_BUSINESS_DAYS must look like MON-SAT" >&2; exit 2 ;;
+esac
+case "$LINE_SIGNUP_BUSINESS_HOURS_INPUT" in
+  [0-2][0-9]:[0-5][0-9]-[0-2][0-9]:[0-5][0-9]) ;;
+  *) echo "ERROR: LINE_SIGNUP_BUSINESS_HOURS must look like 09:00-18:00" >&2; exit 2 ;;
+esac
 if [ -z "$EMAIL_PROVIDER_INPUT" ]; then
   if [ "$DEPLOY_ENV" = uat ]; then EMAIL_PROVIDER_INPUT=ses; else EMAIL_PROVIDER_INPUT=disabled; fi
 fi
@@ -490,6 +550,8 @@ SERVING_LINE_AI_FUSED_PLAN_SHADOW_ENABLED="$LINE_AI_FUSED_PLAN_SHADOW_ENABLED_IN
 SERVING_LINE_AI_PREPARED_SIMPLE_READ_ENABLED="$LINE_AI_PREPARED_SIMPLE_READ_ENABLED_INPUT"
 SERVING_LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES="$LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES_INPUT"
 SERVING_EXTERNAL_SIGNUP_ENABLED="$EXTERNAL_SIGNUP_ENABLED_INPUT"
+SERVING_LINE_SIGNUP_ENABLED="$LINE_SIGNUP_ENABLED_INPUT"
+SERVING_RECEIPT_QUOTA_ENFORCED="$RECEIPT_QUOTA_ENFORCED_INPUT"
 SERVING_EMAIL_PROVIDER="$EMAIL_PROVIDER_INPUT"
 if [ "$PRODUCTION_SERVING_MODE_INPUT" = maintenance_only ]; then
   SERVING_CRM_AUTO_REPLY_ENABLED=false
@@ -507,6 +569,10 @@ if [ "$PRODUCTION_SERVING_MODE_INPUT" = maintenance_only ]; then
   SERVING_LINE_AI_PREPARED_SIMPLE_READ_ENABLED=false
   SERVING_LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES=""
   SERVING_EXTERNAL_SIGNUP_ENABLED=false
+  # A quiesced runtime takes no new shops and refuses no receipts: both P10-L switches go dark with
+  # every other customer-facing one.
+  SERVING_LINE_SIGNUP_ENABLED=false
+  SERVING_RECEIPT_QUOTA_ENFORCED=false
   SERVING_EMAIL_PROVIDER=disabled
 fi
 if [ "$DEPLOY_ENV" = production ] && [ "$PRODUCTION_SERVING_MODE_INPUT" = live ] \
@@ -1544,6 +1610,15 @@ api_container_json() {
     --arg lineAiBufferDebounceMs "$LINE_AI_BUFFER_DEBOUNCE_MS_INPUT" \
     --arg lineAiDebounceExperimentEnabled "$SERVING_LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED" \
     --arg externalSignupEnabled "$SERVING_EXTERNAL_SIGNUP_ENABLED" \
+    --arg lineSignupEnabled "$SERVING_LINE_SIGNUP_ENABLED" \
+    --arg lineSignupApprovalMode "$LINE_SIGNUP_APPROVAL_MODE_INPUT" \
+    --arg lineSignupAutoDailyCap "$LINE_SIGNUP_AUTO_DAILY_CAP_INPUT" \
+    --arg lineSignupWarmupSlips "$LINE_SIGNUP_WARMUP_SLIPS_INPUT" \
+    --arg lineFreeAiBudgetSatang "$LINE_FREE_AI_BUDGET_SATANG_INPUT" \
+    --arg lineSignupAdminReminderMinutes "$LINE_SIGNUP_ADMIN_REMINDER_MINUTES_INPUT" \
+    --arg lineSignupBusinessDays "$LINE_SIGNUP_BUSINESS_DAYS_INPUT" \
+    --arg lineSignupBusinessHours "$LINE_SIGNUP_BUSINESS_HOURS_INPUT" \
+    --arg receiptQuotaEnforced "$SERVING_RECEIPT_QUOTA_ENFORCED" \
     --arg emailProvider "$SERVING_EMAIL_PROVIDER" \
     --arg sesRegion "$SES_REGION_INPUT" \
     --arg sesFromAddress "$SES_FROM_ADDRESS_INPUT" \
@@ -1635,6 +1710,15 @@ api_container_json() {
         {name:"LINE_AI_BUFFER_DEBOUNCE_MS", value:$lineAiBufferDebounceMs},
         {name:"LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED", value:$lineAiDebounceExperimentEnabled},
         {name:"EXTERNAL_SIGNUP_ENABLED", value:$externalSignupEnabled},
+        {name:"LINE_SIGNUP_ENABLED", value:$lineSignupEnabled},
+        {name:"LINE_SIGNUP_APPROVAL_MODE", value:$lineSignupApprovalMode},
+        {name:"LINE_SIGNUP_AUTO_DAILY_CAP", value:$lineSignupAutoDailyCap},
+        {name:"LINE_SIGNUP_WARMUP_SLIPS", value:$lineSignupWarmupSlips},
+        {name:"LINE_FREE_AI_BUDGET_SATANG", value:$lineFreeAiBudgetSatang},
+        {name:"LINE_SIGNUP_ADMIN_REMINDER_MINUTES", value:$lineSignupAdminReminderMinutes},
+        {name:"LINE_SIGNUP_BUSINESS_DAYS", value:$lineSignupBusinessDays},
+        {name:"LINE_SIGNUP_BUSINESS_HOURS", value:$lineSignupBusinessHours},
+        {name:"RECEIPT_QUOTA_ENFORCED", value:$receiptQuotaEnforced},
         {name:"EMAIL_PROVIDER", value:$emailProvider},
         {name:"SES_REGION", value:$sesRegion},
         {name:"SES_FROM_ADDRESS", value:$sesFromAddress},
