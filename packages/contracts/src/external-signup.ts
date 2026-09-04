@@ -91,10 +91,21 @@ export type AdminSignupQueueItemDto = {
   /** True when AUTO_FREE approved this without an admin; the row is here for after-the-fact review. */
   autoApproved?: boolean;
   /**
+   * This LINE account already belongs to an active user (spec §5 `attachUserId`), so approving adds
+   * a SECOND shop to that account rather than creating a new one. Decided at submit from the
+   * verified ID token — a fact by then, not a hint the admin has to act on.
+   */
+  attachesToExistingAccount?: boolean;
+  /**
    * A PROVISIONING row nobody is working on any more (the process holding the fence died). Decided
    * server-side against the same clock the fence uses, so the queue and the fence cannot disagree.
    */
   staleProvisioning?: boolean;
+  /**
+   * The shop this application built, once it has built one. Absent means no company exists yet —
+   * which is precisely what makes an abandoned PROVISIONING row safe to suspend (plan note L-C).
+   */
+  companyId?: string;
   legalAcceptedAt?: string;
   phoneNumber?: string;
   businessType?: string;
@@ -108,6 +119,12 @@ export type AdminSignupQueueItemDto = {
   /** Dedupe hints — booleans/labels only, decided at claim time per spec §4C. */
   emailMatchesExistingUser: boolean;
   taxIdMatchesCompanyName?: string;
+  /**
+   * Review A-01: the phone on this application already reaches a shop we opened — most often one an
+   * admin set up by hand for the same person, who is now applying as if they were new. The name of
+   * that shop, so the operator can call before opening a second one. A hint, never a block.
+   */
+  phoneMatchesCompanyName?: string;
   daysSinceApproval?: number;
   emailDeliveryFailed: boolean;
 };
@@ -188,3 +205,51 @@ export type PackageChangeRequestDto = {
   createdAt: string;
   decidedAt?: string;
 };
+
+/** The same row seen from the admin queue: it adds who and which shop, which the owner already knows. */
+export type AdminPackageChangeItemDto = PackageChangeRequestDto & {
+  companyName: string;
+  /** What the shop is on today, so the operator sees the move rather than only the destination. */
+  currentTierKey?: string;
+  requestedByDisplayName?: string;
+};
+
+export type AdminPackageChangeQueueDto = { items: AdminPackageChangeItemDto[] };
+
+export type AdminPackageChangeDecisionBody = {
+  /** APPROVE moves the tier through the one plan-term writer; REJECT only closes the row. */
+  action: 'APPROVE' | 'REJECT';
+  /** Optional line for the shop, appended to the LINE notice. Bounded like every crossing paragraph. */
+  note?: string;
+};
+
+export type AdminPackageChangeDecisionDto = { id: string; status: PackageChangeRequestStatus };
+
+/** Bounded because the admin's paragraph is pushed verbatim into a customer's LINE chat (SEC-05). */
+export const PARTNER_LINE_MESSAGE_MAX_LENGTH = 500;
+
+export type PartnerLineMessageBody = { text: string };
+
+export type PartnerLineMessageResultDto = {
+  /** How many linked OWNER identities the message reached. 0 means nobody has LINE linked. */
+  delivered: number;
+};
+
+/** One event on a shop's timeline (§8). Assembled from rows that already exist — no new log table. */
+export type PartnerTimelineEntryDto = {
+  /** Stable key the page maps to an icon/label; unknown values still render by `label`. */
+  kind:
+    | 'signup_submitted'
+    | 'signup_approved'
+    | 'legal_accepted'
+    | 'first_web_entry'
+    | 'first_receipt'
+    | 'last_activity'
+    | 'package_change'
+    | 'ai_refusal';
+  label: string;
+  at?: string;
+  detail?: string;
+};
+
+export type PartnerTimelineDto = { entries: PartnerTimelineEntryDto[] };

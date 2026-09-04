@@ -19,6 +19,12 @@ export type CompanyPlanTermDto = {
   lastRenewedAt?: string;
   /** Set when the sweep auto-disabled the company for term expiry (admin-disable never sets this). */
   termDisabledAt?: string;
+  /**
+   * P10-L §9: while this is in the future a LINE trial shop is held to `warmupSlipLimit` instead of
+   * its tier's own ceiling. Absent means no warm-up — every shop that did not come from LINE.
+   */
+  warmupUntil?: string;
+  warmupSlipLimit?: number;
   derivedState: PlanTermDerivedState;
   daysLeft: number;
 };
