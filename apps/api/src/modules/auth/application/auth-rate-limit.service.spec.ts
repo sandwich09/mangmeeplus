@@ -46,6 +46,38 @@ describe('AuthRateLimitService password login', () => {
   });
 });
 
+// P10-L §9 / review SEC-02: the new buckets must inherit the default fail-closed policy — none of
+// them may quietly opt into `degrade-to-local`, which only the blunt global IP bucket is allowed.
+describe('AuthRateLimitService LINE-first signup buckets', () => {
+  it('caps applications per LINE account at three, independently of the caller IP', async () => {
+    const service = makeService();
+    for (let attempt = 0; attempt < 3; attempt += 1) await service.assertLineSignupUserAllowed('Uline-1');
+    await assert.rejects(service.assertLineSignupUserAllowed('Uline-1'), /Too many requests/);
+    // Another LINE account behind the same NAT is untouched.
+    await service.assertLineSignupUserAllowed('Uline-2');
+  });
+
+  it('keeps a separate quota per IP, per read and per session exchange', async () => {
+    const service = makeService();
+    for (let attempt = 0; attempt < 20; attempt += 1) await service.assertLineSignupIpAllowed('1.1.1.1');
+    await assert.rejects(service.assertLineSignupIpAllowed('1.1.1.1'), /Too many requests/);
+    // Spending the submit bucket must not close the door on reading a status or opening a session.
+    await service.assertLineSignupReadAllowed('1.1.1.1');
+    await service.assertLineLiffSessionAllowed('Uline-1');
+    await service.assertLineSignupIpAllowed('2.2.2.2');
+  });
+
+  it('fails closed when the counter store is unreachable', async () => {
+    const service = new AuthRateLimitService(
+      config,
+      // A store that cannot answer: the default policy must refuse rather than wave it through.
+      { consume: async () => { throw new Error('redis down'); } } as never,
+    );
+    await assert.rejects(service.assertLineSignupUserAllowed('Uline-1'));
+    await assert.rejects(service.assertLineSignupIpAllowed('1.1.1.1'));
+  });
+});
+
 describe('AuthRateLimitService customer register', () => {
   it('blocks by IP plus LINE channel after the configured limit', async () => {
     const service = makeService();

@@ -17,6 +17,17 @@ const PUBLIC_SIGNUP_CLAIM_MAX_PER_IP = 20;
 // it exists to bound an unsigned flood, not to shape legitimate AWS traffic.
 const SES_EVENTS_MAX_PER_IP = 600;
 
+// P10-L §9. Same fail-closed policy and the same "constants, not env knobs" reasoning as the web
+// signup buckets above: `LINE_SIGNUP_ENABLED` is the operational switch, not the limits.
+// Per-LINE-account is the tightest one because it is the only key tied to a verified human, and
+// three shops a day is already generous for a person who owns shops.
+const LINE_SIGNUP_WINDOW_SECONDS = 3600;
+const LINE_SIGNUP_DAY_SECONDS = 86_400;
+const LINE_SIGNUP_MAX_PER_USER_PER_DAY = 3;
+const LINE_SIGNUP_MAX_PER_IP = 20;
+const LINE_SIGNUP_READ_MAX_PER_IP = 60;
+const LINE_LIFF_SESSION_MAX_PER_USER = 30;
+
 @Injectable()
 export class AuthRateLimitService {
   private readonly logger = new Logger(AuthRateLimitService.name);
@@ -153,6 +164,39 @@ export class AuthRateLimitService {
   /** Claim submission carries a password, so it gets its own bucket separate from the reads. */
   async assertSignupClaimSubmitAllowed(ipAddress: string): Promise<void> {
     await this.assertWithinLimit('public-signup-claim-ip', ipAddress, PUBLIC_SIGNUP_CLAIM_MAX_PER_IP, PUBLIC_SIGNUP_WINDOW_SECONDS);
+  }
+
+  /**
+   * P10-L: the caller IP is all that is known BEFORE the ID token is verified, so it bounds the
+   * cost of the verification round trip itself.
+   */
+  async assertLineSignupIpAllowed(ipAddress: string): Promise<void> {
+    await this.assertWithinLimit('line-signup-ip', ipAddress, LINE_SIGNUP_MAX_PER_IP, LINE_SIGNUP_WINDOW_SECONDS);
+  }
+
+  /** Charged only AFTER the token proves which LINE account is asking (spec §9). */
+  async assertLineSignupUserAllowed(lineProviderUserId: string): Promise<void> {
+    await this.assertWithinLimit(
+      'line-signup-user',
+      lineProviderUserId,
+      LINE_SIGNUP_MAX_PER_USER_PER_DAY,
+      LINE_SIGNUP_DAY_SECONDS,
+    );
+  }
+
+  /** Status polling from the LIFF page and the LINE status card: cheap, still enumerable. */
+  async assertLineSignupReadAllowed(ipAddress: string): Promise<void> {
+    await this.assertWithinLimit('line-signup-read-ip', ipAddress, LINE_SIGNUP_READ_MAX_PER_IP, LINE_SIGNUP_WINDOW_SECONDS);
+  }
+
+  /** Declared here with the rest of the family; the LIFF session exchange that spends it is L-B. */
+  async assertLineLiffSessionAllowed(lineProviderUserId: string): Promise<void> {
+    await this.assertWithinLimit(
+      'line-liff-session-user',
+      lineProviderUserId,
+      LINE_LIFF_SESSION_MAX_PER_USER,
+      LINE_SIGNUP_WINDOW_SECONDS,
+    );
   }
 
   /** SNS callbacks for SES delivery/bounce/complaint events (external-signup spec §4D). */
