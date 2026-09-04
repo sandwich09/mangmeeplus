@@ -1,6 +1,31 @@
 # Implementation Plan — LINE-first Signup (P10-L)
 
-สถานะ: **DRAFT 2026-09-04** — คู่กับ spec v3 [mangmee-line-first-signup-spec-th.md](../specs/mangmee-line-first-signup-spec-th.md); เริ่ม Slice L-A เมื่อ Owner สั่ง (หลังเห็นตัวเลขต้นทุนต่อใบ)
+สถานะ: **v2 2026-09-04 (หลัง Review รอบ 1)** — คู่กับ spec v4 [mangmee-line-first-signup-spec-th.md](../specs/mangmee-line-first-signup-spec-th.md) §15 และ [review round 1](mangmee-line-first-signup-review-round-1-th.md); Owner สั่งเริ่ม implement หลังรีวิว (2026-09-04) — ลำดับ **L-A (pre-flight B-01) → L-A2 → L-B → L-C → L-E → UAT → L-D**
+
+## 0a. Pre-flight ใน L-A (ต้องทำก่อนเขียนของใหม่ — หลักฐานจาก review B-01)
+
+- [ ] เขียน integration test: provision ผ่าน `ProvisionSignupUseCase` จริง (ไม่ mock onboarding) แล้วอ่าน `CompanyPlanTerm.tierKey` — คาดว่าได้ `STARTER_249` แทน `PRO_999` (บั๊ก) ถ้าใช่ → แก้: `CreateCompanyOnboardingCommand.planTier?/planDays?` ให้ onboarding เขียน tier ครั้งเดียว; provision-signup ส่ง tier แทนการเรียก `applyPlanTermPreset` ซ้ำ; อัปเดต `provision-signup.use-case.spec.ts:84-90` และ `create-company-onboarding.spec.ts:1195-1198` ให้ทดสอบเส้นจริง
+- [ ] grep ผู้อ่าน `contactEmail` ทุกตัวตาม review B-03 และใส่ null-guard/ทางแยก source ก่อน migration nullable
+
+## 0b. Slice L-A2 — ตัวนับสลิป (ใหม่, review G-01) — branch `codex/line-signup-a2-receipt-quota`
+
+| งาน | ไฟล์หลัก | หมายเหตุ |
+|---|---|---|
+| ตาราง + repo | `schema.prisma` `CompanyReceiptUsage` + migration; `apps/api/src/modules/system-partner-management/infrastructure/prisma-company-receipt-usage.repository.ts` (CAS pattern จาก `prisma-crm-channel-cap.repository.ts`) | unique (companyId, monthKey); `tryConsume(companyId, monthKey, limit, requestId)` idempotent ต่อ requestId |
+| บังคับ | จุดก่อนเรียก OCR ทาง LINE (`line-intake` ใน `process-line-webhook.use-case.ts`) และเว็บ (`expense-upload.use-case.ts`/extraction) | อ่าน `CompanyPlanTerm` + warm-up; flag `RECEIPT_QUOTA_ENFORCED` |
+| Copy | `line-business-card.logic.ts` การ์ดชนโควตา; web แบนเนอร์ใน `ExpensesHubPage` upload tab | ครั้งเดียว/เดือน ทาง LINE (เก็บ `quotaNoticeSentMonthKey` บน `CompanyPlanTerm`) |
+| บรรทัด "ใบที่ n/15" | reply หลังอ่านสำเร็จ (เฉพาะ `FREE_TRIAL_15`) | |
+| Tests | CAS ชนกัน 2 request พร้อมกัน → นับ 1 ครั้ง; ใบที่ 16 ถูกปฏิเสธทั้ง LINE และเว็บ; warm-up 10 ใบ; flag off = ไม่บังคับแต่ยังนับ | |
+
+## 0c. Slice L-E — ข้อมูลร้านและบัญชีของฉัน (ใหม่, review G-02) — branch `codex/line-signup-e-profile`
+
+| งาน | ไฟล์หลัก | หมายเหตุ |
+|---|---|---|
+| หน้าเว็บ | `apps/web/app/(workspace)/companies/[companyId]/settings/profile/page.tsx` + `features/company-profile/CompanyProfilePage.tsx`; เมนูใน `settings-menu.logic.ts` | ใช้ `PATCH /companies/:id/identity`, `PUT vat-registration` เดิม; perm `company.legal_identity.manage` |
+| บัญชีของฉัน | endpoint ใหม่ `PATCH /v1/auth/me/contact` (phone), `POST /v1/auth/me/password/set` (สร้าง credential ครั้งแรก — ถ้าไม่มี), reuse email-verification request | LINE-only user ตั้งรหัสสำรองได้ |
+| เช็คลิสต์ | การ์ดบน dashboard OWNER (`features/dashboard/...`) อ่านสถานะจาก `GET /companies/:id/identity` + `GET /v1/auth/me` | ไม่บล็อก; ซ่อนเมื่อครบ |
+| prompt ตามบริบท | จุดออกเอกสารภาษี (ถ้ามีในรอบนี้ — ไม่งั้นแค่ลิงก์ไปหน้า profile) | เล็ก |
+| Tests | web specs idiom เดิม; api: set-password ครั้งแรกไม่ทับของเดิม, phone validator | |
 กติกา: Opus 5 implement / Fable 5 คุม-รีวิว-ทดสอบซ้ำ; แต่ละ slice = branch เดียว → PR → develop → main → deploy UAT (production ปิดด้วย flag จนกว่า Owner สั่ง); ponytail full mode; ห้ามแตะ `package.json` นอกจาก dependency; ไฟล์ pinned (`deploy.sh`, `auth.guard.ts`, `auth.module.ts`) แก้แล้วต้อง re-sync pins
 ฐานโค้ด: develop `91957572` (fact sweep 2026-09-04)
 

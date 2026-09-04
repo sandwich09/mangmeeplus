@@ -1,6 +1,6 @@
 # Auto-register จาก LINE OA (LINE-first Signup) — Spec P10-L
 
-สถานะ: **v3 — 2026-09-04 (Owner ตอบครบทุกข้อ; เหลือตัวเลขงบ AI ต่อร้านที่จะเติมจากมิเตอร์ prod)** — พร้อมเขียน implementation plan; ยังไม่ implement
+สถานะ: **v4 — 2026-09-04 (หลัง Review รอบ 1 — [mangmee-line-first-signup-review-round-1-th.md](../plans/mangmee-line-first-signup-review-round-1-th.md))** — งบ AI 8,000 สตางค์เคาะแล้ว; deltas ของ v4 อยู่ใน §15 (มีผลเหนือข้อความ §1–§13 เมื่อขัดกัน); implementation เริ่ม Slice L-A
 เจ้าของ: Owner (มั่งมีพลัส) / ผู้เขียน: Claude (Fable)
 ความสัมพันธ์: **companion ของ P10** ([mangmee-external-signup-contract-spec-th.md](mangmee-external-signup-contract-spec-th.md)) — P10 §4F จดไว้แล้วว่า "ฟอร์มเวอร์ชัน LIFF สำหรับคนสมัครจาก rich menu — รู้ตัวตน LINE ตั้งแต่กรอก" คืองานอนาคต; เอกสารนี้คือการทำงานชิ้นนั้นให้เป็นสัญญา โดย**ไม่หัก**กฎ P10/P11/P12 ที่ production แล้ว
 เกี่ยวข้อง: P11 email claim, P12 LINE login/handoff ([line-web-deeplink-handoff-spec.md](line-web-deeplink-handoff-spec.md)), P29 plan term (`packages/contracts/src/plan-term.ts`), แผนหลัก §13.6 + LINE-ONBOARD-01 + AUTH-02, rich menu v2 ([line-rich-menu-v2-spec.md](line-rich-menu-v2-spec.md)), legal acceptance (challenge-evidence model ใน `legal-acceptance.service.ts`)
@@ -306,3 +306,42 @@ Paid tier / ชำระเงินอัตโนมัติ (P10 §4E/P26 �
 - ป้าย "ไม่บังคับ" ดีกว่าดอกจันบังคับ ~25% (Baymard 2024) — [สรุปโดย Brixon](https://brixongroup.com/en/lead-forms-in-b2b-the-perfect-balancing-act-between-data-depth-and-conversion-rate)
 - Onboarding: one-tap/SSO, ข้ามได้, progressive disclosure, ค่าเริ่มต้นฉลาด — [Appcues](https://www.appcues.com/blog/mobile-onboarding-best-practices)
 - บทเรียนภายใน: LINE in-app browser คุกกี้แยกจาก Safari/Chrome (QR fix 2026-09-01) → ทุกลิงก์เข้าเว็บจาก LINE ต้องเปิดภายนอก; พนักงานไม่มีอีเมล → กับดักบัญชีซ้ำ (P10 §4F) → ประตู "ฉันเป็นพนักงาน"; ด่านยอมรับข้อกำหนดปฏิเสธ AI จนกว่าจะยอมรับ (`refusePendingLegalAcceptance`) → ต้องยอมรับตั้งแต่ LIFF ไม่งั้น "ส่งใบเสร็จได้เลย" เป็นคำโกหก
+
+## 15. Deltas จาก Review รอบ 1 (v4 — มีผลเหนือ §1–§13 เมื่อขัดกัน)
+
+อ้างอิง ID จาก [review round 1](../plans/mangmee-line-first-signup-review-round-1-th.md) (หลักฐาน file:line อยู่ที่นั่น)
+
+**15.1 ตัวนับสลิป (G-01) — ของใหม่ที่ขาดไม่ได้**
+- ระบบเดิม**ไม่มี**ตัวนับ/การบังคับ `monthlySlipLimit` เลย → สร้าง `CompanyReceiptUsage { companyId, monthKey('YYYY-MM' Asia/Bangkok), count, updatedAt } @@unique([companyId, monthKey])`; เพิ่มค่าแบบ CAS (pattern `prisma-crm-channel-cap.repository.ts`) **ก่อน**เรียก OCR ทั้งทาง LINE (`line-intake`) และเว็บ (upload use-case); นับ "ครั้งที่ขออ่านใบเสร็จ" (ไม่นับ retry ที่ล้มเหลวซ้ำ — ใช้ requestId เดียวกันไม่เพิ่ม)
+- เพดานมีผล = `min(planTerm.monthlySlipLimit, warmupSlipLimit ถ้า now < warmupUntil)`; เกิน → LINE: reply การ์ด "ช่วงทดลองอ่านให้ได้ 15 ใบ ครบแล้วค่ะ" + ปุ่มดูแพ็กเกจ/ขอเปลี่ยนแพ็กเกจ (ครั้งเดียวต่อเดือน); เว็บ: แบนเนอร์ + ปุ่มอัปโหลดปิด + ลิงก์ขอเปลี่ยนแพ็กเกจ
+- **flag แยก `RECEIPT_QUOTA_ENFORCED`** (UAT `true`, production `false` จนกว่า Owner สั่ง) เพราะการบังคับมีผลกับลูกค้าเดิมทุกร้านเป็นครั้งแรก — เปิด prod พร้อมประกาศล่วงหน้า 7 วัน (§4 review ข้อ 1)
+- reply หลังอ่านใบเสร็จสำเร็จเพิ่ม 1 บรรทัด: "ใบที่ n จาก 15 ในช่วงทดลอง" (เฉพาะ tier `FREE_TRIAL_15`)
+
+**15.2 บั๊กเดิมที่ต้องแก้ก่อน/พร้อมกัน**
+- **B-01 (ต้องสงสัย)** `applyPlanTermPreset` upsert `update:{}` + onboarding เขียน `STARTER_249` ก่อน → tier ที่ provision-signup ตั้งใจ (`PRO_999`) และของ LINE (`FREE_TRIAL_15`) อาจไม่ถูกเขียน → pre-flight: integration test พิสูจน์; แก้ด้วย `planTier?/planDays?` ใน `CreateCompanyOnboardingCommand` ให้ onboarding เขียน tier ที่ถูกครั้งเดียว; provision-signup ไม่เรียกซ้ำ
+- **G-03** webhook รับ `follow` → การ์ด 3 ประตู; **G-04** postback dispatcher (`action=<name>&…`, intent เท่านั้น, ตรวจสิทธิ์ฝั่งเซิร์ฟเวอร์ — SEC-04)
+- **G-05** reply เฉพาะ `AI_MONTHLY_BUDGET_EXCEEDED`: "โควตา AI ช่วงทดลองเดือนนี้ครบแล้วค่ะ" + ปุ่มขอเปลี่ยนแพ็กเกจ (แก้ให้ทุกร้าน ไม่ใช่แค่ LINE)
+- **G-06** provisioning source line-oa ตั้ง `CompanyAiConfiguration.monthlyBudgetSatang = LINE_FREE_AI_BUDGET_SATANG` (8000)
+- **B-05** `externalSignupId` ที่ server mint (`line:<channel>:<userId>:<uuid>`) + **partial unique index** `(lineChannelId, lineProviderUserId) WHERE state IN ('RECEIVED','VALIDATED','PENDING_REVIEW','PROVISIONING')` แทนการเช็คใน use-case อย่างเดียว
+- **B-06** provisioning source line-oa `upsertCompanyContext(lineUserId → companyId ใหม่)` ให้ใบเสร็จใบแรกเข้าร้านที่เพิ่งเปิด (reuse `link-line-identity.use-case.ts:157-165`)
+- **B-07** handoff target = `/companies/<id>/expenses/upload` (path ที่มีอยู่); legal gate ทำงานหลัง landing เอง
+- **B-02/B-03/B-04** ตาม §5/§6 (TRANSITIONS แยก source, `contactEmail?`, `ownerAuth`) — ตรวจผู้อ่าน `contactEmail` ทุกตัวตามรายการใน review
+
+**15.3 ตะขอเตรียมพร้อม (ทำ schema/port รอบนี้ ไม่ทำระบบ)**
+- **H-01 จ่ายเงิน:** `PackageChangeRequest` เพิ่ม nullable `amountSatang`, `offerSnapshotJson`, `paymentState (NONE|PENDING|VERIFIED|FAILED) default NONE`, `paymentRef`, `slipAttachmentId`, `verifiedAt`; การเปลี่ยน tier ผ่าน `PUT /system/partners/:id/plan-term` เดิมเท่านั้น
+- **H-02 อีเมล:** `AuthMailerPort` เพิ่ม `sendLineSignupWelcome({ toEmail, companyName })` และ `sendPackageChangeNotice({ toEmail, companyName, tierKey })` — no-op ใน Disabled/LocalConsole และใน SES ขณะ sandbox; ส่งเฉพาะเมื่อ User มี `emailVerifiedAt`
+- **H-03/H-04** ตามตาราง review 1D
+
+**15.4 Slice ใหม่ L-E "ข้อมูลร้านและบัญชีของฉัน" (G-02) — เส้นทาง "กรอกที่เหลือทีหลัง"**
+- หน้าเดียวใต้ตั้งค่า (OWNER): ส่วนร้าน = ชื่อจดทะเบียน/เลขภาษี/ที่อยู่ (API `PATCH /companies/:id/identity` เดิม, perm `company.legal_identity.manage`) + สถานะ VAT (`PUT vat-registration` เดิม); ส่วนบัญชีของฉัน = อีเมล (ขอยืนยันผ่าน `EmailVerificationToken` เดิม; ซ้ำกับ User อื่น → เสนอ merge ตาม P10 §4F), เบอร์มือถือ, ตั้งรหัสผ่านสำรอง (สร้าง `UserCredential` ครั้งแรก — endpoint ใหม่ถ้ายังไม่มี)
+- **การ์ดเช็คลิสต์ความครบ** บน dashboard ของ OWNER (ไม่บล็อก): เลขภาษี/ชื่อจดทะเบียน · ที่อยู่ · อีเมลกันหลุด · รหัสผ่านสำรอง — แต่ละข้อลิงก์ไปหน้าเดียวกัน; ซ่อนเมื่อครบ
+- prompt ตามบริบท: จะออกเอกสารภาษี → ขอเลขภาษีตรงนั้น (modal เล็ก) — ไม่ถามล่วงหน้า
+- ใช้ได้กับลูกค้าจาก Flow B และที่แอดมินเปิดให้ด้วย (ทุกช่องทางไม่มีหน้านี้มาก่อน)
+
+**15.5 ฝั่ง admin (A-01…A-05)** ตามตาราง review 1E — เพิ่มจาก §8: hint **เบอร์ซ้ำกับร้านเดิม**, แท็บ "อนุมัติอัตโนมัติ 14 วัน", ตัวเลือก "ลูกค้าใช้ LINE เท่านั้น" ในหน้าเปิดบริษัทใหม่ (ไม่ออก temp password)
+
+**15.6 Ops/monitoring (SDLC)** แจ้ง SYSTEM_ADMIN ผ่าน notify pattern เดิม เมื่อ: ชนเพดาน auto/วัน, push 429, provisioning ล้มเหลว, งบ AI ร้านทดลองหมดเกิน N ราย/วัน; push ของ flow นี้ผ่าน adapter ที่จัดการ 429/retry-after (G-07); นับ push/เดือนจาก outbox → หน้าปัด L-D; เพิ่ม signal rows ใน customer-journey catalog (G-08)
+
+**15.7 Config เพิ่ม:** `RECEIPT_QUOTA_ENFORCED` (UAT true / prod false), `LINE_SIGNUP_ADMIN_ALERT_BUDGET_EXHAUSTED_PER_DAY` (default 5)
+
+**15.8 ลำดับ slice ใหม่:** L-A (รวม pre-flight B-01) → L-A2 ตัวนับสลิป → L-B → L-C → L-E → UAT รอบแรก → L-D (ก่อน AUTO_FREE บน prod)
