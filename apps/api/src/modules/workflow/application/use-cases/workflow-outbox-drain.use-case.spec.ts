@@ -89,6 +89,9 @@ describe('DrainWorkflowOutboxUseCase', () => {
       'email.account_claim.requested',
       'email.signup_rejected.requested',
       'notify.signup_pending_review.requested',
+      // P10-L: the LINE pushes belong to the signup drain, which sends them through the messaging
+      // adapter; publishing one as a workflow event would lose the shop's "you are live" message.
+      'push.line_signup.requested',
     ]);
   });
 

@@ -92,10 +92,14 @@ function harness(options: {
     activeSystemAdmins: async () => (options.systemAdmins ?? [{ companyId: 'sys', userId: 'sysadmin-1' }]),
   } as any;
 
+  // P10-L: the "your shop is ready" push is QUEUED here, so the spec records keys rather than sends.
+  const linePushes: Array<{ id: string; kind: string }> = [];
+  const lineNotify = { enqueue: async (id: string, kind: string) => { linePushes.push({ id, kind }); } } as any;
+
   return {
-    useCase: new ProvisionSignupUseCase(prisma, core, onboarding, config, adminDirectory),
+    useCase: new ProvisionSignupUseCase(prisma, core, onboarding, config, adminDirectory, lineNotify),
     onboardingCalls, companyUpdates, requestUpdates, audits, advances, completed, failures, planTermUpserts,
-    planTermUpdates, aiConfigUpserts, lineContexts,
+    planTermUpdates, aiConfigUpserts, lineContexts, linePushes,
   };
 }
 
@@ -375,6 +379,36 @@ describe('ProvisionSignupUseCase — recovering an already-created company', () 
     // The trial guards upsert FREE_TRIAL_15 themselves; a PRO_999 preset here would race them.
     assert.equal(h.planTermUpserts.length, 1);
     assert.equal(h.planTermUpserts[0].create.tierKey, 'FREE_TRIAL_15');
+  });
+});
+
+describe('P10-L: the one push a new shop is owed (§3.4/§7)', () => {
+  it('queues it on the normal finish, and names the attach case correctly', async () => {
+    const fresh = harness({ request: LINE_REQUEST });
+    await fresh.useCase.execute(CMD);
+    assert.deepEqual(fresh.linePushes, [{ id: 'signup-1', kind: 'approved' }]);
+
+    const second = harness({ request: { ...LINE_REQUEST, attachUserId: 'user-9' } });
+    await second.useCase.execute(CMD);
+    assert.deepEqual(second.linePushes, [{ id: 'signup-1', kind: 'attached' }]);
+  });
+
+  it('queues it from the stranded-row close-out too, so a dead process costs nobody their message', async () => {
+    // The fence lost its holder between completeProvisioning and the final advance. Closing the row
+    // finishes the hop AND owes the same message — under the same outbox key, so the two paths
+    // together still deliver exactly one.
+    const h = harness({ claimed: false, request: { ...LINE_REQUEST, companyId: 'co-1', state: 'READY' } });
+    await h.useCase.execute(CMD);
+
+    assert.equal(h.onboardingCalls.length, 0, 'no second company');
+    assert.deepEqual(h.advances.at(-1), { id: 'signup-1', state: 'COMPLETED' });
+    assert.deepEqual(h.linePushes, [{ id: 'signup-1', kind: 'approved' }]);
+  });
+
+  it('stays silent for a web application, which has an email rail of its own', async () => {
+    const h = harness();
+    await h.useCase.execute(CMD);
+    assert.deepEqual(h.linePushes, []);
   });
 });
 

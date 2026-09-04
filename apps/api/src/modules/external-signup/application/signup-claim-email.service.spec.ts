@@ -12,6 +12,7 @@ import {
   SignupAdminNotifyService,
   signupPendingReviewMessage,
 } from './signup-admin-notify.service';
+import { LINE_SIGNUP_PUSH_EVENT_TYPE } from './line-signup-notify.service';
 
 const NOW = new Date('2026-09-01T12:00:00.000Z');
 
@@ -84,9 +85,14 @@ function harness(options: { request?: any; sendFails?: boolean } = {}) {
   const core = { advance: async () => ({ replayed: false }) } as any;
   const adminNotify = { notify: async (id: string) => { notified.push(id); } } as any;
 
-  const service = new SignupClaimEmailService(prisma, outbox, tokens, core, adminNotify, mailer, logger);
+  const lineDelivered: Array<{ id: string; kind: string }> = [];
+  const lineNotify = {
+    deliver: async (id: string, kind: string) => { lineDelivered.push({ id, kind }); },
+  } as any;
+
+  const service = new SignupClaimEmailService(prisma, outbox, tokens, core, adminNotify, lineNotify, mailer, logger);
   return {
-    service, appended, sent, rejections, notified, claims, published, failed, updates, minted, logs,
+    service, appended, sent, rejections, notified, claims, published, failed, updates, minted, logs, lineDelivered,
     queue: (events: any[]) => { claimable = events; },
   };
 }
@@ -210,6 +216,7 @@ describe('SignupClaimEmailService.drain', () => {
       ACCOUNT_CLAIM_EMAIL_EVENT_TYPE,
       SIGNUP_REJECTION_NOTICE_EVENT_TYPE,
       SIGNUP_PENDING_REVIEW_EVENT_TYPE,
+      LINE_SIGNUP_PUSH_EVENT_TYPE,
     ]);
   });
 
@@ -315,7 +322,7 @@ describe('SignupClaimEmailService.sweepReminders', () => {
     } as any;
     const outbox = { append: async (input: any) => { enqueued.push(input.eventKey); return input; } } as any;
     const service = new SignupClaimEmailService(
-      prisma, outbox, {} as any, {} as any, {} as any, {} as any, { error: () => {}, warn: () => {} } as any,
+      prisma, outbox, {} as any, {} as any, {} as any, {} as any, {} as any, { error: () => {}, warn: () => {} } as any,
     );
     return { service, enqueued, marks };
   }
@@ -364,7 +371,7 @@ describe('SignupClaimEmailService.sweepExpiredApprovals', () => {
       },
     } as any;
     const service = new SignupClaimEmailService(
-      prisma, {} as any, {} as any, core, {} as any, {} as any,
+      prisma, {} as any, {} as any, core, {} as any, {} as any, {} as any,
       { error: (f: any) => logs.push(f), warn: (f: any) => logs.push(f) } as any,
     );
     return { service, queries, advanced, logs };

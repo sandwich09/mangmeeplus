@@ -12,6 +12,7 @@ import { CompanySignupCoreService } from './company-signup-core.service';
 import { AccountClaimTokenService } from './account-claim-token.service';
 import { SignupClaimEmailService } from './signup-claim-email.service';
 import { ProvisionSignupUseCase } from './provision-signup.use-case';
+import { LineSignupNotifyService } from './line-signup-notify.service';
 import { daysSinceApproval } from '../domain/account-claim.logic';
 import { SIGNUP_SOURCE_LINE_OA, isStaleProvisioning, type CompanySignupState } from '../domain/company-signup.logic';
 
@@ -49,6 +50,7 @@ export class SignupAdminQueueUseCase {
     private readonly tokens: AccountClaimTokenService,
     private readonly claimEmail: SignupClaimEmailService,
     private readonly provision: ProvisionSignupUseCase,
+    private readonly lineNotify: LineSignupNotifyService,
   ) {}
 
   async list(now = new Date()): Promise<AdminSignupQueueDto> {
@@ -190,8 +192,11 @@ export class SignupAdminQueueUseCase {
     // Spec §4D: silent by default — the address is unverified, so an unsolicited notice would make
     // the platform a spam cannon aimed at whoever the applicant typed. A LINE application has no
     // address at all: its rejection travels as a LINE push (spec §7), which L-B sends.
-    if (body.notifyApplicant && request.contactEmail) {
-      await this.claimEmail.enqueueRejectionNotice(requestId, body.rejectionReason);
+    if (body.notifyApplicant) {
+      // P10-L §7: a LINE application has no address, so its rejection travels as the one push §7
+      // specifies. Same toggle, same default, one branch for which rail carries it.
+      if (lineOa) await this.lineNotify.enqueue(requestId, 'rejected');
+      else if (request.contactEmail) await this.claimEmail.enqueueRejectionNotice(requestId, body.rejectionReason);
     }
     await this.audit(requestId, adminUserId, correlationRequestId, 'signup.request.rejected', {
       notifyApplicant: body.notifyApplicant === true,

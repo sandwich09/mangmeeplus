@@ -7,6 +7,9 @@ import { AUTH_MAILER_TOKEN, type AuthMailerPort } from '../../auth/domain/ports/
 import { AccountClaimTokenService } from './account-claim-token.service';
 import { CompanySignupCoreService } from './company-signup-core.service';
 import { SIGNUP_PENDING_REVIEW_EVENT_TYPE, SignupAdminNotifyService } from './signup-admin-notify.service';
+import {
+  LINE_SIGNUP_PUSH_EVENT_TYPE, LineSignupNotifyService, type LineSignupPushKind,
+} from './line-signup-notify.service';
 import { CLAIM_EXPIRY_AFTER_APPROVAL_DAYS, CLAIM_REMINDER_AFTER_HOURS } from '../domain/account-claim.logic';
 
 /** P11 F-EM-2. Reserved for this consumer: the generic workflow drain must exclude it. */
@@ -23,6 +26,9 @@ const SIGNUP_OUTBOX_EVENT_TYPES = [
   ACCOUNT_CLAIM_EMAIL_EVENT_TYPE,
   SIGNUP_REJECTION_NOTICE_EVENT_TYPE,
   SIGNUP_PENDING_REVIEW_EVENT_TYPE,
+  // P10-L: the LINE pushes ride the same lease, timer and settle path. A second drain would buy
+  // nothing but a second thing to forget to deploy.
+  LINE_SIGNUP_PUSH_EVENT_TYPE,
 ] as const;
 
 /** Reason recorded on the state row when the 30-day sweep parks an unclaimed approval (§4D ④). */
@@ -49,6 +55,7 @@ export class SignupClaimEmailService {
     private readonly tokens: AccountClaimTokenService,
     private readonly core: CompanySignupCoreService,
     private readonly adminNotify: SignupAdminNotifyService,
+    private readonly lineNotify: LineSignupNotifyService,
     @Inject(AUTH_MAILER_TOKEN) private readonly mailer: AuthMailerPort,
     @Inject(LOGGER_TOKEN) private readonly logger: AppLogger,
   ) {}
@@ -150,6 +157,11 @@ export class SignupClaimEmailService {
       return this.sendRejectionEmail(signupRequestId, readRejectionReason(payload));
     }
     if (eventType === SIGNUP_PENDING_REVIEW_EVENT_TYPE) return this.adminNotify.notify(signupRequestId);
+    if (eventType === LINE_SIGNUP_PUSH_EVENT_TYPE) {
+      const kind = readPayloadString(payload, 'kind');
+      if (!kind) throw new Error('missing_line_push_kind');
+      return this.lineNotify.deliver(signupRequestId, kind as LineSignupPushKind);
+    }
     throw new Error(`unhandled_signup_event_type:${eventType}`);
   }
 

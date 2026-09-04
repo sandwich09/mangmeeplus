@@ -250,7 +250,10 @@ function harness(options: { systemAdmins?: string[]; config?: Record<string, unk
     activeSystemAdmins: async () => (options.systemAdmins ?? ['sysadmin-1']).map((userId) => ({ companyId: 'sys', userId })),
     enqueue: async (id: string) => { notified.push(id); },
   } as any;
-  const provision = new ProvisionSignupUseCase(store.prisma, core, onboarding, config, adminNotify);
+  // P10-L: the ready push is enqueued, so the AUTO_FREE path can be asserted end to end without LINE.
+  const linePushes: Array<{ id: string; kind: string }> = [];
+  const lineNotify = { enqueue: async (id: string, kind: string) => { linePushes.push({ id, kind }); } } as any;
+  const provision = new ProvisionSignupUseCase(store.prisma, core, onboarding, config, adminNotify, lineNotify);
   const rateLimit = {
     assertLineSignupAttemptAllowed: async () => undefined,
     assertLineSignupUserAllowed: async () => undefined,

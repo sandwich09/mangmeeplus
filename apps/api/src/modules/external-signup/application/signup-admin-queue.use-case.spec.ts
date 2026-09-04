@@ -63,8 +63,14 @@ function harness(options: { request?: any; requests?: any[]; users?: any[]; comp
 
   const provision = { execute: async (cmd: any) => { provisioned.push(cmd); return {}; } } as any;
 
+  // P10-L: a LINE rejection rides the push rail, not the mailer — recorded in the same list so the
+  // "one notice, on the right rail" assertions stay in one place.
+  const lineNotify = {
+    enqueue: async (id: string, kind: string) => { enqueued.push({ id, reason: `line-push:${kind}` }); },
+  } as any;
+
   return {
-    useCase: new SignupAdminQueueUseCase(prisma, core, tokens, claimEmail, provision),
+    useCase: new SignupAdminQueueUseCase(prisma, core, tokens, claimEmail, provision, lineNotify),
     audits, updates, advances, enqueued, revoked, userQueries, provisioned, requestQueries,
   };
 }
@@ -248,15 +254,22 @@ describe('SignupAdminQueueUseCase.decide — LINE-first source', () => {
     }
   });
 
-  it('rejects without queueing a letter to an address that does not exist', async () => {
+  it('sends the rejection on the rail this source actually has (P10-L §7)', async () => {
     const h = harness({ request: LINE_REQUEST });
     const result = await h.useCase.decide(
       'signup-1', { action: 'REJECT', notifyApplicant: true }, 'admin-1', 'req-1', URLS,
     );
 
     assert.equal(result.state, 'REJECTED');
-    assert.deepEqual(h.enqueued, [], 'the LINE rejection is a push, sent by the messaging slice');
+    // Exactly one notice, and it is the LINE push: the applicant has no address for a letter.
+    assert.deepEqual(h.enqueued, [{ id: 'signup-1', reason: 'line-push:rejected' }]);
     assert.deepEqual(h.advances, [{ id: 'signup-1', state: 'REJECTED' }]);
+  });
+
+  it('sends nothing when the admin cleared the notify toggle', async () => {
+    const h = harness({ request: LINE_REQUEST });
+    await h.useCase.decide('signup-1', { action: 'REJECT' }, 'admin-1', 'req-1', URLS);
+    assert.deepEqual(h.enqueued, [], 'silent by default stays silent on this rail too');
   });
 
   // Review HIGH-2: the fence releases on failure precisely so the row can be retried. A row nobody

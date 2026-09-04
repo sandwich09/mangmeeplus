@@ -7,6 +7,7 @@ import { AppConfigService } from '../../../common/config/app-config.service';
 import { CreateCompanyOnboardingUseCase } from '../../system-onboarding/application/use-cases/create-company-onboarding.use-case';
 import { CompanySignupCoreService } from './company-signup-core.service';
 import { SignupAdminNotifyService } from './signup-admin-notify.service';
+import { LineSignupNotifyService } from './line-signup-notify.service';
 import { applyPlanTermPreset } from '../../system-partner-management/application/use-cases/company-plan-term.use-cases';
 import { suggestedUsernameFromEmail } from '../domain/account-claim.logic';
 import { SIGNUP_SOURCE_LINE_OA } from '../domain/company-signup.logic';
@@ -53,6 +54,7 @@ export class ProvisionSignupUseCase {
     private readonly config: AppConfigService,
     /** The same active-SYSTEM_ADMIN lookup AUTO_FREE uses to name an operator of record. */
     private readonly adminDirectory: SignupAdminNotifyService,
+    private readonly lineNotify: LineSignupNotifyService,
   ) {}
 
   async execute(cmd: ProvisionSignupCommand): Promise<ProvisionSignupResult> {
@@ -70,6 +72,7 @@ export class ProvisionSignupUseCase {
       // where the open-application fence also kept its LINE account locked out.
       if (lineOa && request.state === 'READY') {
         await this.core.advance(request.id, 'COMPLETED', cmd.correlationRequestId);
+        await this.announceReady(request);
       }
       return {
         companyId: request.companyId,
@@ -155,6 +158,7 @@ export class ProvisionSignupUseCase {
       // request parks at LINE_LINK_PENDING. A LINE application has nothing left to link — the
       // identity was created inside the company transaction — so it finishes (§5).
       await this.core.advance(request.id, lineOa ? 'COMPLETED' : 'LINE_LINK_PENDING', cmd.correlationRequestId);
+      if (lineOa) await this.announceReady({ ...request, attachUserId: result.attachedExistingOwner ? request.attachUserId : null });
 
       return {
         companyId: result.companyId,
@@ -273,6 +277,19 @@ export class ProvisionSignupUseCase {
       ownerId: ownerUserId,
       attachedExistingOwner: request.attachUserId !== null,
     };
+  }
+
+  /**
+   * P10-L §3.4/§7. The one push a new shop is owed, queued the moment the application reaches
+   * COMPLETED — from EITHER path: the normal finish, and the close-out of a row a dead process
+   * left stranded at READY. Both write the same outbox key, so a retry, a double-tapped approval
+   * and a re-claimed fence between them still produce exactly one message.
+   *
+   * Queued, never sent here: this runs after the company exists, and a LINE outage must not fail a
+   * provisioning that already succeeded.
+   */
+  private async announceReady(request: { id: string; attachUserId: string | null }): Promise<void> {
+    await this.lineNotify.enqueue(request.id, request.attachUserId ? 'attached' : 'approved');
   }
 
   /**
