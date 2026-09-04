@@ -7,7 +7,7 @@ import { DenyByDefaultGuard } from '../../../../common/security/deny-by-default.
 import { REQUIRED_ANY_PERMISSIONS_KEY, REQUIRED_PERMISSIONS_KEY } from '../../../../common/security/permissions.decorator';
 import { AuthController } from '../../presentation/auth.controller';
 import { verifyPassword } from '../../domain/logic/password-credential.logic';
-import { AccountProfileUseCase, PASSWORD_ALREADY_SET, USERNAME_TAKEN, INVALID_PHONE_NUMBER } from './account-profile.use-case';
+import { AccountProfileUseCase } from './account-profile.use-case';
 import { RequestEmailChangeUseCase } from './request-email-change.use-case';
 import { ConfirmEmailVerificationUseCase } from './confirm-email-verification.use-case';
 import { GetAccountSecurityStateUseCase } from './get-account-security-state.use-case';
@@ -102,7 +102,7 @@ describe('AccountProfileUseCase — first password', () => {
     await assert.rejects(
       () => new AccountProfileUseCase(prisma, audit).setInitialPassword('user-line', 'attacker-password', undefined, 'req-1'),
       (error: unknown) => error instanceof ConflictException
-        && (error.getResponse() as Row)['code'] === PASSWORD_ALREADY_SET,
+        && (error.getResponse() as Row)['code'] === 'password_already_set',
     );
     assert.equal(credentials[0]!['passwordHash'], 'scrypt$a$b', 'the existing hash must be untouched');
   });
@@ -115,7 +115,7 @@ describe('AccountProfileUseCase — first password', () => {
 
     await assert.rejects(
       () => useCase.setInitialPassword('user-line', 'backup-password', 'Somchai', 'req-1'),
-      (error: unknown) => error instanceof ConflictException && (error.getResponse() as Row)['code'] === USERNAME_TAKEN,
+      (error: unknown) => error instanceof ConflictException && (error.getResponse() as Row)['code'] === 'username_taken',
     );
 
     await useCase.setInitialPassword('user-line', 'backup-password', ' MangMee.Shop ', 'req-2');
@@ -149,7 +149,7 @@ describe('AccountProfileUseCase — recovery phone', () => {
       await assert.rejects(
         () => new AccountProfileUseCase(prisma, audit).setPhoneNumber('user-line', bad, 'req-1'),
         (error: unknown) => error instanceof BadRequestException
-          && (error.getResponse() as Row)['code'] === INVALID_PHONE_NUMBER,
+          && (error.getResponse() as Row)['code'] === 'invalid_phone_number',
         bad,
       );
     }

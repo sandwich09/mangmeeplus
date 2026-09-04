@@ -5,10 +5,8 @@ import { normalizeThaiMobile } from '../../../external-signup/domain/line-signup
 import { AuditService } from '../../../audit/application/audit.service';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
 
-/** Stable codes the web maps to Thai copy, so a rejection names the rule that fired. */
-export const INVALID_PHONE_NUMBER = 'invalid_phone_number';
-export const PASSWORD_ALREADY_SET = 'password_already_set';
-export const USERNAME_TAKEN = 'username_taken';
+// Codes are written as literals, not constants, because `api-error-coverage.spec.ts` scans this
+// source for `code: '…'` to prove every one of them has Thai copy. A constant hides them from it.
 
 const USERNAME_PATTERN = /^[a-z0-9._-]{4,64}$/;
 
@@ -32,7 +30,7 @@ export class AccountProfileUseCase {
     try {
       normalized = normalizeThaiMobile(phoneNumber);
     } catch {
-      throw new BadRequestException({ code: INVALID_PHONE_NUMBER, message: 'phoneNumber must be a 10-digit Thai mobile number.' });
+      throw new BadRequestException({ code: 'invalid_phone_number', message: 'phoneNumber must be a 10-digit Thai mobile number.' });
     }
 
     const updated = await this.prisma.client.user.updateMany({
@@ -73,14 +71,14 @@ export class AccountProfileUseCase {
     });
     if (!user || user.status !== 'ACTIVE') throw new NotFoundException('User not found.');
     if (user.credential) {
-      throw new ConflictException({ code: PASSWORD_ALREADY_SET, message: 'This account already has a password. Use change password instead.' });
+      throw new ConflictException({ code: 'password_already_set', message: 'This account already has a password. Use change password instead.' });
     }
     if (desiredUsername !== null && desiredUsername !== user.username) {
       const taken = await this.prisma.client.user.findFirst({
         where: { username: desiredUsername, id: { not: userId } },
         select: { id: true },
       });
-      if (taken) throw new ConflictException({ code: USERNAME_TAKEN, message: 'This username is already taken.' });
+      if (taken) throw new ConflictException({ code: 'username_taken', message: 'This username is already taken.' });
     }
 
     const passwordHash = hashPassword(password);
@@ -102,9 +100,9 @@ export class AccountProfileUseCase {
       if (target) {
         const fields = Array.isArray(target) ? target.map(String) : [String(target)];
         if (fields.some((field) => field.includes('username'))) {
-          throw new ConflictException({ code: USERNAME_TAKEN, message: 'This username is already taken.' });
+          throw new ConflictException({ code: 'username_taken', message: 'This username is already taken.' });
         }
-        throw new ConflictException({ code: PASSWORD_ALREADY_SET, message: 'This account already has a password. Use change password instead.' });
+        throw new ConflictException({ code: 'password_already_set', message: 'This account already has a password. Use change password instead.' });
       }
       throw error;
     }
