@@ -19,7 +19,14 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import type { Request } from 'express';
-import { ALL_FEATURE_ENTITLEMENT_KEYS, PLAN_TIER_PRESETS, VAT_FACT_STATUSES, type PlanTierKey, type VatFactStatus } from '@watchdog-bms/contracts';
+import {
+  ALL_FEATURE_ENTITLEMENT_KEYS,
+  PARTNER_LINE_MESSAGE_MAX_LENGTH,
+  PLAN_TIER_PRESETS,
+  VAT_FACT_STATUSES,
+  type PlanTierKey,
+  type VatFactStatus,
+} from '@watchdog-bms/contracts';
 import { RequirePermissions } from '../../../../common/security/permissions.decorator';
 import { trustedPublicApiBase } from '../../../../common/http/public-api-base';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
@@ -39,10 +46,13 @@ import { PartnerMemberPasswordRevealUseCase } from '../../application/use-cases/
 import { PartnerMemberLineLinkTokenUseCase } from '../../application/use-cases/partner-member-line-link-token.use-case';
 import { SetPartnerMemberContactUseCase } from '../../application/use-cases/set-partner-member-contact.use-case';
 import {
+  EndPlanTermWarmupUseCase,
   GetCompanyPlanTermUseCase,
   RenewCompanyPlanTermUseCase,
   SetCompanyPlanTermUseCase,
 } from '../../application/use-cases/company-plan-term.use-cases';
+import { GetPartnerTimelineUseCase } from '../../application/use-cases/get-partner-timeline.use-case';
+import { SendPartnerLineMessageUseCase } from '../../application/use-cases/send-partner-line-message.use-case';
 
 /** Derived from the frozen catalog so the DTO can never drift from the presets it validates. */
 const PLAN_TIER_KEYS = Object.keys(PLAN_TIER_PRESETS) as PlanTierKey[];
@@ -134,6 +144,12 @@ export class RenewPlanTermBodyDto {
   @IsInt() @IsOptional() @Min(1) @Max(3_650) days?: number;
 }
 
+// SEC-05. Bounded here AND in the use-case: this DTO fences the shape, the use-case owns the rule
+// (trimmed length, our-domains-only links) so the HTTP boundary and the audit cannot disagree.
+export class PartnerLineMessageBodyDto {
+  @IsString() @IsNotEmpty() @MaxLength(PARTNER_LINE_MESSAGE_MAX_LENGTH) text!: string;
+}
+
 type AuthedRequest = Request & { context: RequestContext };
 
 @Controller('system/partners')
@@ -157,6 +173,9 @@ export class PartnerController {
     private readonly getPlanTerm: GetCompanyPlanTermUseCase,
     private readonly setPlanTerm: SetCompanyPlanTermUseCase,
     private readonly renewPlanTerm: RenewCompanyPlanTermUseCase,
+    private readonly endWarmup: EndPlanTermWarmupUseCase,
+    private readonly timeline: GetPartnerTimelineUseCase,
+    private readonly lineMessage: SendPartnerLineMessageUseCase,
   ) {}
 
   @Get()
@@ -475,6 +494,57 @@ export class PartnerController {
     return this.renewPlanTerm.execute({
       companyId,
       days: dto.days,
+      requestingAdminUserId: req.context.userId,
+      requestId: req.context.requestId,
+    });
+  }
+
+  // P10-L §9 "ตรวจแล้ว". Same permission as the other two term writes: an operator who may set a
+  // package may lift the first-week ceiling they were the reason for.
+  @Post(':partnerCompanyId/plan-term/end-warmup')
+  @HttpCode(200)
+  @RequirePermissions('system.partner_company.update')
+  @ApiOperation({ summary: 'End the LINE trial warm-up ceiling early (idempotent)' })
+  @ApiResponse({ status: 200 })
+  @ApiResponse({ status: 404, description: 'Company has no term row' })
+  endPlanTermWarmup(
+    @Param('partnerCompanyId') companyId: string,
+    @Req() req: AuthedRequest,
+  ) {
+    return this.endWarmup.execute({
+      companyId,
+      requestingAdminUserId: req.context.userId,
+      requestId: req.context.requestId,
+    });
+  }
+
+  // ---- P10-L §8 support tools ----
+
+  // Reading a shop's story is reading its onboarding, so it rides the onboarding read permission
+  // rather than a new key — the same reasoning the signup queue is gated on.
+  @Get(':partnerCompanyId/timeline')
+  @RequirePermissions('system.company_onboarding.read')
+  @ApiOperation({ summary: 'Key events for one shop, assembled from existing audit and meter rows' })
+  @ApiResponse({ status: 200 })
+  @ApiResponse({ status: 404 })
+  partnerTimeline(@Param('partnerCompanyId') companyId: string) {
+    return this.timeline.execute(companyId);
+  }
+
+  @Post(':partnerCompanyId/line-message')
+  @HttpCode(200)
+  @RequirePermissions('system.partner_company.update')
+  @ApiOperation({ summary: 'Push one operator-written LINE message to this shop OWNERs (SEC-05)' })
+  @ApiResponse({ status: 200, description: 'How many linked owner identities it reached' })
+  @ApiResponse({ status: 422, description: 'Empty, too long, links outside our own domains, or no LINE channel' })
+  sendLineMessage(
+    @Param('partnerCompanyId') companyId: string,
+    @Body() dto: PartnerLineMessageBodyDto,
+    @Req() req: AuthedRequest,
+  ) {
+    return this.lineMessage.execute({
+      companyId,
+      text: dto.text,
       requestingAdminUserId: req.context.userId,
       requestId: req.context.requestId,
     });

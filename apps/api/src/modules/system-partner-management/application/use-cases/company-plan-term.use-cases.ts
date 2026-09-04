@@ -20,6 +20,8 @@ import { PartnerLifecycleTransitionUseCase } from './partner-lifecycle-transitio
 
 export const PLAN_TERM_SET_ACTION = 'system.company_plan_term.set';
 export const PLAN_TERM_RENEW_ACTION = 'system.company_plan_term.renew';
+/** P10-L §9: an operator looked at the shop and lifted its first-week ceiling early. */
+export const PLAN_TERM_WARMUP_END_ACTION = 'system.company_plan_term.warmup_ended';
 /** 403 code the web client routes to the renewal page on (spec §4B). */
 export const COMPANY_TERM_EXPIRED_CODE = 'company_term_expired';
 
@@ -35,6 +37,10 @@ const TERM_SELECT = {
   renewCount: true,
   lastRenewedAt: true,
   termDisabledAt: true,
+  // P10-L §9: the operator has to see whether a trial shop is still inside its first-week ceiling
+  // before deciding to lift it ("ตรวจแล้ว"), so the read carries it like any other limit.
+  warmupUntil: true,
+  warmupSlipLimit: true,
 } as const;
 
 function positiveInt(value: unknown, field: string): number {
@@ -296,6 +302,64 @@ export class RenewCompanyPlanTermUseCase {
       });
     }
 
+    return { term: toPlanTermDto(saved as PlanTermRow, now) };
+  }
+}
+
+/**
+ * P10-L §9 "ตรวจแล้ว". The warm-up ceiling exists to bound the damage of a shop nobody has looked
+ * at yet; once an operator HAS looked, keeping it on is only friction. Ending it early is a
+ * one-column write, so the whole recovery is `warmupUntil = now` — the counter reads `now <
+ * warmupUntil` and stops applying it (L-A2), with no second flag to keep in step.
+ *
+ * Idempotent: a warm-up already over is left exactly where it was, and a company with no term row
+ * (grandfathered) has no warm-up to end.
+ */
+@Injectable()
+export class EndPlanTermWarmupUseCase {
+  constructor(private readonly prisma: PrismaService) {}
+
+  async execute(cmd: {
+    companyId: string;
+    requestingAdminUserId: string;
+    requestId: string;
+  }): Promise<CompanyPlanTermViewDto> {
+    const now = new Date();
+    const existing = await this.prisma.client.companyPlanTerm.findUnique({
+      where: { companyId: cmd.companyId },
+      select: TERM_SELECT,
+    });
+    if (!existing) throw new NotFoundException(`Company "${cmd.companyId}" has no plan term.`);
+    // Already past, or never had one: nothing to lift and nothing to record.
+    if (!existing.warmupUntil || existing.warmupUntil.getTime() <= now.getTime()) {
+      return { term: toPlanTermDto(existing as PlanTermRow, now) };
+    }
+
+    const saved = await this.prisma.client.$transaction(async (tx) => {
+      const row = await tx.companyPlanTerm.update({
+        where: { companyId: cmd.companyId },
+        data: { warmupUntil: now, updatedByUserId: cmd.requestingAdminUserId },
+        select: TERM_SELECT,
+      });
+      await tx.auditLog.create({
+        data: {
+          companyId: cmd.companyId,
+          actorUserId: cmd.requestingAdminUserId,
+          action: PLAN_TERM_WARMUP_END_ACTION,
+          targetType: 'company_plan_term',
+          targetId: cmd.companyId,
+          requestId: cmd.requestId,
+          result: 'SUCCESS',
+          riskLevel: 'HIGH',
+          metadataJson: {
+            fromWarmupUntil: existing.warmupUntil!.toISOString(),
+            warmupSlipLimit: existing.warmupSlipLimit ?? null,
+            monthlySlipLimit: existing.monthlySlipLimit,
+          },
+        },
+      });
+      return row;
+    });
     return { term: toPlanTermDto(saved as PlanTermRow, now) };
   }
 }

@@ -85,6 +85,9 @@ export type PlanTermRow = {
   renewCount: number;
   lastRenewedAt: Date | null;
   termDisabledAt: Date | null;
+  /** P10-L §9 warm-up ceiling; absent on every row written before L-A's migration. */
+  warmupUntil?: Date | null;
+  warmupSlipLimit?: number | null;
 };
 
 export function toPlanTermDto(row: PlanTermRow, now: Date): CompanyPlanTermDto {
@@ -101,6 +104,8 @@ export function toPlanTermDto(row: PlanTermRow, now: Date): CompanyPlanTermDto {
     renewCount: row.renewCount,
     ...(row.lastRenewedAt ? { lastRenewedAt: row.lastRenewedAt.toISOString() } : {}),
     ...(row.termDisabledAt ? { termDisabledAt: row.termDisabledAt.toISOString() } : {}),
+    ...(row.warmupUntil ? { warmupUntil: row.warmupUntil.toISOString() } : {}),
+    ...(row.warmupSlipLimit ? { warmupSlipLimit: row.warmupSlipLimit } : {}),
     derivedState,
     daysLeft,
   };
