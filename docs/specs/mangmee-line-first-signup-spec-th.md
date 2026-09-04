@@ -343,6 +343,8 @@ Paid tier / ชำระเงินอัตโนมัติ (P10 §4E/P26 �
 
 **15.6 Ops/monitoring (SDLC)** แจ้ง SYSTEM_ADMIN ผ่าน notify pattern เดิม เมื่อ: ชนเพดาน auto/วัน, push 429, provisioning ล้มเหลว, งบ AI ร้านทดลองหมดเกิน N ราย/วัน; push ของ flow นี้ผ่าน adapter ที่จัดการ 429/retry-after (G-07); นับ push/เดือนจาก outbox → หน้าปัด L-D; เพิ่ม signal rows ใน customer-journey catalog (G-08)
 
-**15.7 Config เพิ่ม:** `RECEIPT_QUOTA_ENFORCED` (UAT true / prod false), `LINE_SIGNUP_ADMIN_ALERT_BUDGET_EXHAUSTED_PER_DAY` (default 5)
+**15.7 Config เพิ่ม:** `RECEIPT_QUOTA_ENFORCED` (UAT true / prod false — ต่อใน deploy.sh แล้วใน L-A2), `LINE_SIGNUP_ADMIN_ALERT_BUDGET_EXHAUSTED_PER_DAY` (default 5 — **ยังไม่มีในโค้ด/deploy.sh; เป็นของ L-C พร้อมระบบแจ้งเตือน ops §15.6**)
+
+**15.9 ข้อสังเกตจากรีวิว L-A2 (2026-09-05, ยอมรับ/บันทึก):** ฝั่ง LINE เมื่อ provider timeout/5xx ระบบ**คง**การนับไว้ (gateway อาจทำงานต่อจนได้ draft — คืนแล้วจะกลายเป็นอ่านฟรี) ส่วนฝั่งเว็บคืนให้เพราะเว็บ retry ด้วย id ใหม่เอง → ลูกค้าทดลองทาง LINE อาจเสีย 1 ใน 15 จากความล้มเหลวที่ไม่ได้ก่อ (เฝ้าดูใน UAT; ถ้าเกิดจริงบ่อย ค่อยทำ per-attachment read budget); เว็บ fence ด้วย requestId → กด "อ่านใบเสร็จ" ซ้ำเองใช้โควตาตัวเอง (ปุ่มปิดระหว่างอ่านอยู่แล้ว); หลักฐาน rollout ของโหมดเงาอ่านเป็น `count(distinct companyId)`
 
 **15.8 ลำดับ slice ใหม่:** L-A (รวม pre-flight B-01) → L-A2 ตัวนับสลิป → L-B → L-C → L-E → UAT รอบแรก → L-D (ก่อน AUTO_FREE บน prod)
