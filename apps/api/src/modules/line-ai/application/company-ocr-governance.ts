@@ -93,11 +93,17 @@ export const isOcrPreProviderHttpStatus = (status: number): boolean =>
  * `OCR_*` code is a decision this system already made — disabled, over limit, duplicate — and a
  * retry cannot change it, so those keep their admission.
  *
- * Unlike `isOcrPreProviderRefusal` this does NOT prove the provider stayed unread: a 5xx or a
- * timeout may well have cost a real call. Releasing anyway is a deliberate trade under P10-L §15.1
- * — the retry buys its own admission a second later, so holding this one bills one flaky minute of
- * ours as two of the customer's fifteen. Under-counting our own spend is the cheaper error, and the
- * AI budget meter still records what the provider actually cost.
+ * Unlike `isOcrPreProviderRefusal` this does NOT prove the provider stayed unread: a 5xx may well
+ * have cost a real call. Releasing anyway is a deliberate trade under P10-L §15.1 — the retry buys
+ * its own admission a second later, so holding this one bills one flaky minute of ours as two of
+ * the customer's fifteen, and under-counting our own spend is the cheaper error.
+ *
+ * It once claimed the AI budget meter "still records what the provider actually cost". That is only
+ * true when a RESPONSE came back: `recordCompanyAiUsage` reads its numbers off the body. A caller
+ * that aborts the connection first has no body to read, so nothing is metered at all — which is
+ * exactly why `AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS` is derived to outlast the gateway's whole chain
+ * rather than race it. Within that guarantee a transport timeout means the gateway is gone, and a
+ * gateway that is gone spent nothing.
  */
 export function isOcrRetryableProviderFailure(response: { status?: string; errorCode?: string }): boolean {
   return response.status === 'failed' && !(response.errorCode ?? '').startsWith('OCR_');

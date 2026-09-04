@@ -4198,10 +4198,13 @@ export class ProcessLineWebhookUseCase {
       questionText: caption,
     })];
     // §15.1: the free trial — and only that tier — sees how much of its 15 is left. Both numbers come
-    // from the admission's own aggregate, so this line and the admin console cannot disagree.
+    // from the admission's own aggregate, read for the month the ADMISSION was counted in rather
+    // than off the clock: this reply is built seconds later, and on the night of the 31st those
+    // seconds land in the next month, where the aggregate is empty and the line would announce
+    // "อ่านครั้งที่ 1 จาก 15" to a shop that just spent its last read.
     // Swallowed on failure: the receipt is already captured and its reply is what the shop is waiting
     // for, so a counter that cannot be read loses its line, never the answer.
-    const trial = await receiptQuotaSnapshot(this.prisma, companyId).catch(() => null);
+    const trial = await receiptQuotaSnapshot(this.prisma, companyId, routePlan.ocrMonthKey).catch(() => null);
     if (trial?.tierKey === TRIAL_COUNTER_TIER_KEY && trial.planLimit !== null) {
       const last = replyTexts.length - 1;
       replyTexts[last] = `${replyTexts[last]}\n${trialReceiptCounterLineTh(trial.usedCount, trial.planLimit)}`;

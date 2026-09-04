@@ -228,6 +228,7 @@ export * from './reports.js';
 
 // ---- LINE AI Read-Only Assistant (Item 07) ----
 export * from './ai-lineage.js';
+export * from './ai-timeouts.js';
 export * from './line-ai.js';
 export * from './line-ai-prepared-plan.js';
 export * from './line-ai-advisor-answer.js';

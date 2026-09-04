@@ -1,6 +1,13 @@
 import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import {
+  AI_DOCUMENT_OCR_TIMEOUT_MS,
+  AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS,
+  AI_RECEIPT_OCR_MAX_PROVIDER_CALLS,
+} from '@watchdog-bms/contracts';
 import { Logger } from '@nestjs/common';
 import { PrismaPg } from '@prisma/adapter-pg';
 import type { AiUsageEntry } from '@watchdog-bms/contracts';
@@ -1082,5 +1089,58 @@ describe('admission lanes', () => {
     assert.match(keys[1]!, /:media$/);
     assert.ok(!keys[2]!.endsWith(':chat') && !keys[2]!.endsWith(':media'), 'legacy callers keep the combined lease');
     assert.equal(keys[0]!.replace(/:chat$/, ''), keys[2]!, 'lanes only SUFFIX the legacy key');
+  });
+});
+
+
+/**
+ * The caller must outlast the gateway, not race it.
+ *
+ * `/internal/ai/receipt-ocr` chains up to four provider calls at `DOCUMENT_OCR_TIMEOUT_MS` each
+ * (read, understand, vision re-read, understand again) = 180s, while both API-side clients used to
+ * abort at 120s. That abort returns AI_GATEWAY_UNREACHABLE, which on the web lane refunds the OCR
+ * admission as a retryable failure AND — because `recordCompanyAiUsage` reads its numbers off the
+ * response body that never arrived — writes no AiUsageEvent at all. Real provider spend then misses
+ * BOTH meters, and the trial AI budget is calibrated from exactly those meters.
+ */
+describe('AI gateway timeout budget', () => {
+  // `__dirname` (not import.meta): this package compiles as CommonJS.
+  const appsRoot = join(__dirname, '..', '..', '..', '..', '..');
+  const gatewaySource = readFileSync(
+    join(appsRoot, 'ai-gateway/src/modules/line-ai/presentation/http/line-ai-internal.controller.ts'),
+    'utf8',
+  );
+
+  it('waits strictly longer than the gateway chain worst case', () => {
+    const worstCase = AI_RECEIPT_OCR_MAX_PROVIDER_CALLS * AI_DOCUMENT_OCR_TIMEOUT_MS;
+    assert.equal(worstCase, 180_000, 'four provider calls at the document budget');
+    assert.ok(
+      AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS > worstCase,
+      `client ${AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS}ms must exceed the ${worstCase}ms chain`,
+    );
+    assert.equal(AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS, 195_000, '180s chain plus a 15s transport margin');
+  });
+
+  it('is the SAME constant the gateway budgets each provider call with', () => {
+    // A gateway that quietly re-hardcodes its own number puts the two back out of step, and the
+    // arithmetic above would keep passing while the real chain outgrew the real client.
+    assert.match(gatewaySource, /const DOCUMENT_OCR_TIMEOUT_MS = AI_DOCUMENT_OCR_TIMEOUT_MS;/);
+    assert.doesNotMatch(gatewaySource, /const DOCUMENT_OCR_TIMEOUT_MS = \d/);
+  });
+
+  it('is what BOTH receipt callers actually pass to AbortSignal', () => {
+    for (const path of [
+      'api/src/modules/expenses/infrastructure/receipt-ocr.client.ts',
+      'api/src/modules/line-ai/infrastructure/ai-gateway.client.ts',
+    ]) {
+      const source = readFileSync(join(appsRoot, path), 'utf8');
+      assert.match(source, /_TIMEOUT_MS = AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS;/, path);
+      assert.doesNotMatch(source, /(?:EXTRACT|RECEIPT_OCR)_TIMEOUT_MS = \d/, path);
+    }
+  });
+
+  it('leaves the four-call chain visible in the gateway, so the count cannot drift unnoticed', () => {
+    const perCallBudgets = gatewaySource.match(/timeoutMs: DOCUMENT_OCR_TIMEOUT_MS/g) ?? [];
+    assert.ok(perCallBudgets.length >= 3, 'read, extract and re-read providers all carry the budget');
   });
 });

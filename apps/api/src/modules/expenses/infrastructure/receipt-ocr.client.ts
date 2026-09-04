@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import type { AiModelPolicy, ReceiptOcrRequest, ReceiptOcrResponse } from '@watchdog-bms/contracts';
+import { AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS } from '@watchdog-bms/contracts';
 import { RedisRateLimitService } from '../../../common/security/redis-rate-limit.service';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { resolveCompanyAiModelPolicy } from '../../line-ai/application/company-ai-model-policy';
@@ -14,7 +15,11 @@ import {
   releaseCompanyOcrAdmission,
 } from '../../line-ai/application/company-ocr-governance';
 
-const EXTRACT_TIMEOUT_MS = 120_000;
+// 4 x 45s of gateway provider chain + 15s margin. MUST outlast the gateway: aborting first returns
+// AI_GATEWAY_UNREACHABLE, which releases the OCR admission as a retryable failure AND loses the
+// response body that carries the usage the meter bills from — so the provider spend would land on
+// neither meter, and the trial AI budget is calibrated from both.
+const EXTRACT_TIMEOUT_MS = AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS;
 
 @Injectable()
 export class ReceiptOcrClient {

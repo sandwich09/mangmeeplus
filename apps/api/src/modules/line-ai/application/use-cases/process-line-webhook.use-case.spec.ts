@@ -2202,6 +2202,31 @@ describe('ProcessLineWebhookUseCase', () => {
       }
     });
 
+    it('counts in the month the ADMISSION landed in, not the month the reply is built in', async () => {
+      // A receipt admitted at 23:59 on the 31st is answered a few seconds into the 1st. Reading a
+      // fresh clock there would hit the NEW month's empty aggregate and tell a shop that just spent
+      // its last read that it was on read 1 of 15.
+      const admissionMonth = '2026-08';
+      assert.notEqual(admissionMonth, bangkokMonthKey(), 'the fixture must not be the current month');
+      const state = makePrisma({ planTerm: FREE_TRIAL, receiptsUsed: 15 });
+      const monthsRead: Array<string | undefined> = [];
+      (state.prisma.client as any).companyOcrMonthlyUsage = {
+        findUnique: async ({ where }: any) => {
+          monthsRead.push(where.companyId_monthKey.monthKey);
+          return { usedCount: 15 };
+        },
+      };
+      const { useCase, replies } = captureUseCase(state.prisma, {
+        intakeRouteFn: () => ({ ...ROUTED_EXPENSE_DOCUMENT, ocrAdmission: 'admitted', ocrMonthKey: admissionMonth }),
+      });
+
+      await sendReceipt(useCase, 'month-boundary');
+
+      assert.ok(monthsRead.includes(admissionMonth), `read ${JSON.stringify(monthsRead)}, wanted ${admissionMonth}`);
+      assert.ok(!monthsRead.includes(bangkokMonthKey()), 'never the wall-clock month');
+      assert.match(replies.join('\n'), /อ่านครั้งที่ 15 จาก 15 ในช่วงทดลอง/);
+    });
+
     it('says nothing about a counter for a legacy shop with no plan term', async () => {
       const state = makePrisma({ receiptsUsed: 3 });
       const { useCase, replies } = captureUseCase(state.prisma);

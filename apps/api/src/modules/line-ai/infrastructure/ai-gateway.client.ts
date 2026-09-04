@@ -5,6 +5,7 @@
 import { HttpException, HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import {
+  AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS,
   LINE_TOOL_REGISTRY,
   LINE_AI_ACTOR_DELEGATIONS_PER_TOOL,
   hasToolFeature,
@@ -37,7 +38,10 @@ const LINE_INTAKE_TIMEOUT_MS = 30_000;
  *  caller must outlast it — otherwise the HTTP client aborts first and the provider-side fix is
  *  invisible. Kept strictly above the gateway budget plus request overhead (UAT 2026-08-27). */
 const LINE_INTAKE_MEDIA_TIMEOUT_MS = 55_000;
-const RECEIPT_OCR_TIMEOUT_MS = 120_000;
+// Same endpoint and same four-call chain as the web lane, so the same ceiling. Aborting early here
+// keeps the admission (this lane has no fresh-admission retry) but still loses the usage body, so
+// the spend would miss the AI meter the trial budget is calibrated from.
+const RECEIPT_OCR_TIMEOUT_MS = AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS;
 
 export class AiGatewayRequestError extends Error {
   constructor(
@@ -53,6 +57,13 @@ export class AiGatewayRequestError extends Error {
 export type GovernedLineIntakeRoutePlan = LineIntakeRoutePlan & {
   /** Present only when a content-bearing LINE media request crossed the OCR governance seam. */
   ocrAdmission?: 'admitted' | 'denied';
+  /**
+   * The Bangkok month the admission was counted in, pinned by the budget lease rather than read off
+   * the clock. The reply is built seconds later, and on the night of the 31st those seconds can land
+   * in the next month — a fresh `bangkokMonthKey()` would then read the NEW month's aggregate and
+   * tell a trial shop it was on read 1 of 15 immediately after spending its last one.
+   */
+  ocrMonthKey?: string;
   /** Prevents a denied/uncertain intake route from making a second image-provider call downstream. */
   ocrErrorCode?: string;
 };
@@ -253,11 +264,11 @@ export class AiGatewayClient {
           // the image afresh instead of turning a router-only outage into a manual-only receipt.
           return released
             ? { ...plan, ocrAdmission: 'denied', ocrErrorCode: undefined }
-            : { ...plan, ocrAdmission: 'admitted', ocrErrorCode: 'OCR_QUOTA_UNAVAILABLE' };
+            : { ...plan, ocrAdmission: 'admitted', ocrErrorCode: 'OCR_QUOTA_UNAVAILABLE', ocrMonthKey: admission.monthKey };
         }
-        return { ...plan, ocrAdmission: 'admitted', ocrErrorCode: 'OCR_ROUTE_UNAVAILABLE' };
+        return { ...plan, ocrAdmission: 'admitted', ocrErrorCode: 'OCR_ROUTE_UNAVAILABLE', ocrMonthKey: admission.monthKey };
       }
-      return { ...plan, ocrAdmission: 'admitted' };
+      return { ...plan, ocrAdmission: 'admitted', ocrMonthKey: admission.monthKey };
     } catch (error) {
       const status = error instanceof AiGatewayRequestError ? error.httpStatus : undefined;
       const refusal = status !== undefined && isOcrPreProviderHttpStatus(status);
@@ -279,6 +290,7 @@ export class AiGatewayClient {
       return {
         status: 'UNAVAILABLE', intent: 'UNSUPPORTED', language: 'th', confidence: 0,
         errorCode: 'ROUTER_UNREACHABLE', ocrAdmission: 'admitted', ocrErrorCode: 'OCR_ROUTE_UNAVAILABLE',
+        ocrMonthKey: admission.monthKey,
       };
     }
   }
