@@ -4,9 +4,11 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  AI_BANK_STATEMENT_MAX_PROVIDER_CALLS,
   AI_DOCUMENT_OCR_TIMEOUT_MS,
   AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS,
   AI_RECEIPT_OCR_MAX_PROVIDER_CALLS,
+  aiGatewayClientTimeoutMs,
 } from '@watchdog-bms/contracts';
 import { Logger } from '@nestjs/common';
 import { PrismaPg } from '@prisma/adapter-pg';
@@ -1137,6 +1139,22 @@ describe('AI gateway timeout budget', () => {
       assert.match(source, /_TIMEOUT_MS = AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS;/, path);
       assert.doesNotMatch(source, /(?:EXTRACT|RECEIPT_OCR)_TIMEOUT_MS = \d/, path);
     }
+  });
+
+  it('covers the bank statement route on the same rule, at its own chain depth', () => {
+    // Two calls, not four (read then extract), so 105s rather than 195s — but the same rule, because
+    // an early abort loses the same usage body. This route sits outside the plan slip ceiling, so
+    // there is no admission to refund; the unmetered spend is identical either way.
+    const worstCase = AI_BANK_STATEMENT_MAX_PROVIDER_CALLS * AI_DOCUMENT_OCR_TIMEOUT_MS;
+    assert.equal(worstCase, 90_000);
+    assert.ok(
+      aiGatewayClientTimeoutMs(AI_BANK_STATEMENT_MAX_PROVIDER_CALLS) > worstCase,
+      'the banking client must outlast its own chain',
+    );
+
+    const source = readFileSync(join(appsRoot, 'api/src/modules/banking/infrastructure/statement-ai-extract.client.ts'), 'utf8');
+    assert.match(source, /EXTRACT_TIMEOUT_MS = aiGatewayClientTimeoutMs\(AI_BANK_STATEMENT_MAX_PROVIDER_CALLS\);/);
+    assert.doesNotMatch(source, /EXTRACT_TIMEOUT_MS = \d/, 'a re-hardcoded number puts it back out of step');
   });
 
   it('leaves the four-call chain visible in the gateway, so the count cannot drift unnoticed', () => {
