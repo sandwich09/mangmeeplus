@@ -29,6 +29,7 @@ function harness(options: { request?: any; requests?: any[]; users?: any[]; comp
   const advances: any[] = [];
   const enqueued: any[] = [];
   const revoked: string[] = [];
+  const userQueries: any[] = [];
 
   const prisma = {
     client: {
@@ -37,7 +38,7 @@ function harness(options: { request?: any; requests?: any[]; users?: any[]; comp
         findMany: async () => options.requests ?? [],
         update: async (args: any) => { updates.push(args); return {}; },
       },
-      user: { findMany: async () => options.users ?? [] },
+      user: { findMany: async (args: any) => { userQueries.push(args); return options.users ?? []; } },
       company: { findMany: async () => options.companies ?? [] },
       auditLog: { create: async (args: any) => { audits.push(args); return {}; } },
     },
@@ -54,7 +55,7 @@ function harness(options: { request?: any; requests?: any[]; users?: any[]; comp
 
   return {
     useCase: new SignupAdminQueueUseCase(prisma, core, tokens, claimEmail),
-    audits, updates, advances, enqueued, revoked,
+    audits, updates, advances, enqueued, revoked, userQueries,
   };
 }
 
@@ -89,6 +90,23 @@ describe('SignupAdminQueueUseCase.list', () => {
     const h = harness({ requests: [{ ...REQUEST }] });
     const { items } = await h.useCase.list(NOW);
     assert.equal(JSON.stringify(items).includes('scrypt$'), false);
+  });
+
+  // Review B-03: the LINE source has no address at all. `in: [null]` is not a query Prisma accepts,
+  // and a blank string in the DTO would read to an operator as "we have an address, it is empty".
+  it('lists an addressless LINE application without querying a null email', async () => {
+    const h = harness({
+      requests: [
+        { ...REQUEST, id: 'signup-line', source: 'line-oa', contactEmail: null, mxValid: null, taxId: null },
+        { ...REQUEST },
+      ],
+    });
+    const { items } = await h.useCase.list(NOW);
+
+    assert.equal(items.length, 2);
+    assert.equal(items[0]!.contactEmail, undefined);
+    assert.equal(items[0]!.emailMatchesExistingUser, false);
+    assert.deepEqual(h.userQueries[0].where.email.in, ['somchai@example.com']);
   });
 });
 

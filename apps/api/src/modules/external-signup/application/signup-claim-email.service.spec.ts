@@ -242,6 +242,28 @@ describe('SignupClaimEmailService.drain', () => {
     assert.deepEqual(h.rejections, []);
   });
 
+  // Review B-03: `contactEmail` is nullable now. Neither letter may be attempted for a row without
+  // one — no token is minted and no send is retried forever.
+  it('mints no claim token and sends no letter for an application with no address', async () => {
+    const h = harness({ request: { id: 'signup-1', state: 'EMAIL_PENDING', contactEmail: null, companyName: 'X' } });
+    h.queue([event()]);
+    const result = await h.service.drain();
+
+    assert.equal(result.sent, 1, 'the event settles rather than retrying forever');
+    assert.deepEqual(h.sent, []);
+    assert.deepEqual(h.minted, []);
+    assert.deepEqual(h.updates, []);
+  });
+
+  it('sends no rejection letter for an application with no address', async () => {
+    const h = harness({ request: { id: 'signup-1', state: 'REJECTED', contactEmail: null, companyName: 'X' } });
+    h.queue([event({ eventType: SIGNUP_REJECTION_NOTICE_EVENT_TYPE })]);
+    const result = await h.service.drain();
+
+    assert.equal(result.sent, 1);
+    assert.deepEqual(h.rejections, []);
+  });
+
   it('fails a redelivered event with an unknown type instead of settling it silently', async () => {
     const h = harness();
     h.queue([event({ eventType: 'email.something_else.requested' })]);

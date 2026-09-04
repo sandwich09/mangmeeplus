@@ -55,6 +55,11 @@ export class ProvisionSignupUseCase {
     // Spec §4B: an attached account that already carries a different address keeps it. Recorded as
     // a boolean so an admin can see the decision happened without the addresses entering evidence.
     const emailKeptExisting = Boolean(existingOwner?.email && existingOwner.email !== request.contactEmail);
+    // Review B-03: `contactEmail` is nullable now that a source without a mailbox exists. This
+    // branch is the address-bearing one and everything below reads the address, so it is asserted
+    // here once rather than defended eight times.
+    const contactEmail = request.contactEmail;
+    if (!contactEmail) throw new ConflictException('signup_contact_email_missing');
 
     try {
       const result = await this.onboarding.execute({
@@ -62,9 +67,9 @@ export class ProvisionSignupUseCase {
         businessCategory: mapBusinessCategory(request.businessType),
         ...(request.taxId ? { taxId: request.taxId } : {}),
         ownerDisplayName: request.ownerDisplayName,
-        ownerUsername: cmd.username ?? suggestedUsernameFromEmail(request.contactEmail) ?? request.contactEmail,
+        ownerUsername: cmd.username ?? suggestedUsernameFromEmail(contactEmail) ?? contactEmail,
         claimedOwner: {
-          email: request.contactEmail,
+          email: contactEmail,
           ...(request.phoneNumber ? { phoneNumber: request.phoneNumber } : {}),
           ...(attachUserId ? { attachUserId } : {}),
           ...(!attachUserId && request.pendingPasswordHash ? { passwordHash: request.pendingPasswordHash } : {}),

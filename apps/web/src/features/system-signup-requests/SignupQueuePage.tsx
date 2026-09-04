@@ -92,7 +92,7 @@ export default function SignupQueuePage() {
   const handleApprove = async (item: AdminSignupQueueItemDto) => {
     const accepted = await confirm({
       title: 'อนุมัติคำขอ',
-      message: `อนุมัติและส่งอีเมลตั้งรหัสให้ ${item.contactEmail} ใช่หรือไม่`,
+      message: `อนุมัติและส่งอีเมลตั้งรหัสให้ ${item.contactEmail ?? item.ownerDisplayName} ใช่หรือไม่`,
       confirmLabel: 'อนุมัติและส่งอีเมล',
       variant: 'primary',
     });
@@ -133,7 +133,7 @@ export default function SignupQueuePage() {
   const handleReissue = async (item: AdminSignupQueueItemDto) => {
     const accepted = await confirm({
       title: 'ส่งลิงก์ตั้งรหัสใหม่',
-      message: `ส่งลิงก์ตั้งรหัสใหม่ให้ ${item.contactEmail} ใช่หรือไม่ ลิงก์เดิมจะใช้ไม่ได้ทันที`,
+      message: `ส่งลิงก์ตั้งรหัสใหม่ให้ ${item.contactEmail ?? item.ownerDisplayName} ใช่หรือไม่ ลิงก์เดิมจะใช้ไม่ได้ทันที`,
       confirmLabel: 'ส่งลิงก์ใหม่',
       variant: 'primary',
     });
@@ -293,7 +293,7 @@ export default function SignupQueuePage() {
                             <p className="text-xs text-gray-500">{item.ownerDisplayName}</p>
                           </td>
                           <td className="px-4 py-3">
-                            <p className="text-gray-700">{item.contactEmail}</p>
+                            <p className="text-gray-700">{item.contactEmail ?? '—'}</p>
                             <p className="text-xs text-gray-500">{item.phoneNumber ?? '—'}</p>
                           </td>
                           <td className="px-4 py-3 text-xs text-gray-500">{signupBusinessSummary(item)}</td>

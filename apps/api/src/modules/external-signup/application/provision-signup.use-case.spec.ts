@@ -193,6 +193,15 @@ describe('ProvisionSignupUseCase — attach path', () => {
   });
 });
 
+describe('ProvisionSignupUseCase — contactEmail is nullable now (review B-03)', () => {
+  it('refuses the email-owner shape rather than provisioning a company with a null address', async () => {
+    const h = harness({ request: { contactEmail: null } });
+    await assert.rejects(() => h.useCase.execute(CMD), /signup_contact_email_missing/);
+    assert.equal(h.onboardingCalls.length, 0);
+    assert.equal(h.failures.length, 0, 'the guard runs before the fence is claimed for work');
+  });
+});
+
 describe('ProvisionSignupUseCase — fencing', () => {
   it('reads back the winner instead of provisioning twice', async () => {
     const h = harness({ claimed: false, request: { companyId: 'co-1', state: 'READY' } });

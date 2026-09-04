@@ -39,7 +39,8 @@ export class SignupAdminQueueUseCase {
 
     // Two batched lookups rather than per-row queries: the hints are the whole point of the queue,
     // and an admin opening it should not pay N round-trips for N applications.
-    const emails = [...new Set(requests.map((r) => r.contactEmail))];
+    // P10-L: a `line-oa` row has no address, and `in: [null]` is not a query Prisma will accept.
+    const emails = [...new Set(requests.map((r) => r.contactEmail).filter((email): email is string => !!email))];
     const taxIds = [...new Set(requests.map((r) => r.taxId).filter((id): id is string => !!id))];
     const [users, companies] = await Promise.all([
       this.prisma.client.user.findMany({ where: { email: { in: emails } }, select: { email: true } }),
@@ -180,7 +181,9 @@ function toQueueItem(
     state: request.state,
     companyName: request.companyName,
     ownerDisplayName: request.ownerDisplayName,
-    contactEmail: request.contactEmail,
+    // Omitted rather than blanked when the application came from LINE: the queue shows "—" and no
+    // reader can mistake an empty string for a real address (review B-03).
+    ...(request.contactEmail ? { contactEmail: request.contactEmail } : {}),
     ...(request.phoneNumber ? { phoneNumber: request.phoneNumber } : {}),
     ...(request.businessType ? { businessType: request.businessType } : {}),
     ...(request.vatRegistered !== null ? { vatRegistered: request.vatRegistered } : {}),

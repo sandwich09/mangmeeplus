@@ -412,6 +412,7 @@ model Company {
   onboardingRuns                    CompanyOnboardingRun[]
   signupRequests                    CompanySignupRequest[]
   planTerm                          CompanyPlanTerm?
+  packageChangeRequests             PackageChangeRequest[]
   activatedAt                       DateTime?
   disabledAt                        DateTime?
   archivedAt                        DateTime?
@@ -3078,7 +3079,9 @@ model CompanySignupRequest {
   ownerDisplayName       String
   ownerFirstName         String?
   ownerLastName          String?
-  contactEmail           String
+  // P10-L: nullable because a `line-oa` application never asks for an address. Flow B still
+  // requires one at its own validator; the DB no longer pretends every source has a mailbox.
+  contactEmail           String?
   consentVersion         String
   referralCode           String?
   requestedOfferKey      String?
@@ -3102,6 +3105,24 @@ model CompanySignupRequest {
   provisioningStartedAt  DateTime?
   companyId              String?
   ownerUserId            String?
+  // ---- P10-L LINE-first signup (spec §5) ----
+  // Identity of the LINE account that filled the LIFF form, proved by a server-verified ID token.
+  // No picture column exists or may be added: DATA-MIN-01 stores the display name and nothing else.
+  lineProviderUserId     String?
+  lineChannelId          String?
+  lineDisplayName        String?
+  // Clickwrap evidence captured on LIFF and replayed into a LegalDocumentActionRecord at
+  // provisioning (LEGAL-LIFF-01). Written once at submit; never edited afterwards.
+  legalDocumentVersion          String?
+  legalStatementSha256          String?
+  legalReleaseFingerprintSha256 String?
+  legalDisplayChallenge         String?
+  legalLocale                   String?
+  legalUserAgent                String?
+  legalAcceptedAt               DateTime?
+  // AUTO_FREE approved this with no admin in the loop; approvedByUserId stays null.
+  autoApproved           Boolean            @default(false)
+  adminReminderSentAt    DateTime?
   createdAt              DateTime           @default(now())
   updatedAt              DateTime           @updatedAt
   company                Company?           @relation(fields: [companyId], references: [id], onDelete: SetNull)
@@ -3114,6 +3135,38 @@ model CompanySignupRequest {
   @@index([taxId])
   @@index([companyId])
   @@index([ownerUserId])
+  @@index([lineChannelId, lineProviderUserId, state])
+  // One open application per LINE account is enforced by a PARTIAL unique index that Prisma cannot
+  // express; it lives in the migration SQL as
+  // "CompanySignupRequest_line_open_key" ON ("lineChannelId","lineProviderUserId")
+  //   WHERE "state" IN ('RECEIVED','VALIDATED','PENDING_REVIEW','PROVISIONING').
+}
+
+/// P10-L §15.3 (H-01): a shop asking to move tier. Today an admin reads the row and changes the
+/// tier through `PUT /system/partners/:id/plan-term` — the one place a tier may change. The payment
+/// columns are the hook for P26/EasySlip: all nullable, none read by any code in this release.
+model PackageChangeRequest {
+  id                String    @id @default(cuid())
+  companyId         String
+  requestedByUserId String
+  requestedTierKey  String
+  status            String    @default("OPEN")
+  note              String?
+  decidedByUserId   String?
+  decidedAt         DateTime?
+  amountSatang      Int?
+  offerSnapshotJson Json?
+  paymentState      String    @default("NONE")
+  paymentRef        String?
+  slipAttachmentId  String?
+  verifiedAt        DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  company           Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, status])
+  // One OPEN request per company, enforced by a PARTIAL unique index in the migration SQL:
+  // "PackageChangeRequest_company_open_key" ON ("companyId") WHERE "status" = 'OPEN'.
 }
 
 model AccountClaimToken {
@@ -3149,6 +3202,13 @@ model CompanyPlanTerm {
   warn3SentAt       DateTime?
   warn1SentAt       DateTime?
   expiredNotifiedAt DateTime?
+  // P10-L §9: a LINE trial shop is capped harder for its first week than its tier allows, until an
+  // admin marks it checked or the window passes. The effective cap is
+  // min(monthlySlipLimit, warmupSlipLimit when now < warmupUntil) — enforced by the counter (L-A2).
+  warmupUntil       DateTime?
+  warmupSlipLimit   Int?
+  /// 'YYYY-MM' (Asia/Bangkok) of the month whose quota notice already went out — exactly-once.
+  quotaNoticeSentMonthKey String?
   createdByUserId   String?
   updatedByUserId   String?
   createdAt         DateTime  @default(now())
