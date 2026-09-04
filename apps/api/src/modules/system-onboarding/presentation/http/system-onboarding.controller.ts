@@ -32,7 +32,16 @@ class CreateOnboardingDto {
   // screen, so the two can never disagree about what a valid tax id is.
   @IsString() @IsOptional() @MaxLength(32) taxId?: string;
   @IsString() @IsNotEmpty() ownerDisplayName!: string;
-  @IsString() @IsNotEmpty() ownerUsername!: string;
+  // Optional ONLY for `ownerLinesOnly` below; the use-case re-checks and refuses without either
+  // (review A-04). Every existing caller keeps sending it and behaves byte-identically.
+  @IsString() @IsOptional() @IsNotEmpty() ownerUsername?: string;
+  /**
+   * A-04: "ลูกค้าใช้ LINE เท่านั้น". No username, no temporary password — the owner LINE-link QR
+   * this endpoint already returns is the whole handover, and the identity is created when they
+   * scan it. A boolean rather than the full `ownerAuth` union, because the console has exactly one
+   * of the three shapes to offer and the other two are not its to choose.
+   */
+  @IsBoolean() @IsOptional() ownerLineOnly?: boolean;
   @IsBoolean() @IsOptional() attachExistingOwner?: boolean;
   @IsString() @IsOptional() modulePackage?: string;
   @IsString() @IsOptional() lineOaAddUrl?: string;
@@ -65,7 +74,9 @@ export class SystemOnboardingController {
       ...(dto.taxId ? { taxId: dto.taxId } : {}),
       ...(dto.vatRegistration && { vatRegistration: dto.vatRegistration as any }),
       ownerDisplayName: dto.ownerDisplayName,
-      ownerUsername: dto.ownerUsername,
+      ...(dto.ownerUsername ? { ownerUsername: dto.ownerUsername } : {}),
+      // A-04. Absent for every existing caller, so the default `password` path is untouched.
+      ...(dto.ownerLineOnly ? { ownerAuth: { kind: 'line-link-later' as const } } : {}),
       attachExistingOwner: dto.attachExistingOwner,
       modulePackage: dto.modulePackage,
       lineOaAddUrl: dto.lineOaAddUrl,

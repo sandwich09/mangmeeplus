@@ -75,10 +75,16 @@ export type CreateCompanyOnboardingCommand = {
    * caller means by saying nothing) is unchanged in every byte. `line` is the LINE-first shop:
    * no username, no email, NO UserCredential and therefore no temporary password to leak
    * (LINE-ONBOARD-01) — the LINE identity created in this same transaction IS the credential.
+   *
+   * `line-link-later` (review A-04) is the admin console's version of the same idea: the operator
+   * knows the customer lives on LINE but has no ID token to bind — so the account is created with
+   * no username and no credential, and the owner LINE-link QR this use-case already issues is the
+   * ONLY way in. It is the temporary password that never existed rather than one nobody used.
    */
   ownerAuth?:
     | { kind: 'password' }
-    | { kind: 'line'; providerUserId: string; channelId: string; displayName?: string };
+    | { kind: 'line'; providerUserId: string; channelId: string; displayName?: string }
+    | { kind: 'line-link-later' };
   /**
    * Clickwrap evidence collected before this account existed (on LIFF), replayed into
    * `LegalDocumentActionRecord` inside this transaction so the owner is not stopped by the
@@ -176,9 +182,13 @@ export class CreateCompanyOnboardingUseCase {
     const attachUserId = cmd.claimedOwner?.attachUserId;
     const attach = cmd.attachExistingOwner === true || attachUserId !== undefined;
     const lineOwner = cmd.ownerAuth?.kind === 'line' ? cmd.ownerAuth : null;
+    // A LINE-only owner the admin console opens: no identity to bind yet, so the only differences
+    // from the default path are "no username" and "no temporary password". Everything else — the
+    // owner LINE-link QR included — is the path that already exists.
+    const lineLinkLater = cmd.ownerAuth?.kind === 'line-link-later';
     // Every pre-existing caller reaches here: the console DTO validates the username at the HTTP
     // boundary and provisioning derives one, so this only catches a new caller that forgot.
-    if (!lineOwner && !attach && !cmd.ownerUsername) {
+    if (!lineOwner && !lineLinkLater && !attach && !cmd.ownerUsername) {
       throw new UnprocessableEntityException('ownerUsername is required unless the owner signs in with LINE');
     }
     // Same normalisation and rule as CompanyIdentityUseCase.patch — one definition of what a valid
@@ -233,7 +243,9 @@ export class CreateCompanyOnboardingUseCase {
     // A claim-verified owner sets their own password at the link, so no temporary one is ever
     // minted, encrypted or handed over for this path (spec §2 rule 4: no temp password, ever).
     // A LINE-first owner has no credential at all — LINE-ONBOARD-01.
-    const tempPassword = attach || cmd.claimedOwner?.passwordHash || lineOwner ? undefined : generateTempPassword();
+    const tempPassword = attach || cmd.claimedOwner?.passwordHash || lineOwner || lineLinkLater
+      ? undefined
+      : generateTempPassword();
     const passwordHash = tempPassword ? hashPassword(tempPassword) : undefined;
     const expiresAt = new Date(Date.now() + TEMP_PASSWORD_TTL_MS);
     // Owner QR travels with the credential handoff and lives 72h like the temporary password; regenerate-temporary-password reissues it.

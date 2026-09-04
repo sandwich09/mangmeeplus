@@ -1251,6 +1251,28 @@ describe('CreateCompanyOnboardingUseCase P29 default term', () => {
     assert.equal(JSON.stringify(result).includes('Uline-1'), false, 'no LINE id in the handover payload');
   });
 
+  // Review A-04. Same "no username, no credential" shape as the LIFF owner above, but the identity
+  // does NOT exist yet — so the owner LINE-link QR this use-case already issues becomes the only
+  // way in, and the customer links by scanning it through the flow that already exists.
+  it('creates a LINE-only owner the admin console opens, with the QR as the whole handover', async () => {
+    const prisma = makePrisma({});
+    legalRecords.length = 0;
+    const result = await new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock).execute(makeCmd({
+      ownerUsername: undefined,
+      ownerAuth: { kind: 'line-link-later' },
+    }));
+
+    assert.equal(prisma.userCreates()[0].data.username, null);
+    assert.deepEqual(prisma.credentialCreates(), [], 'no credential, so no temporary password exists');
+    assert.equal(result.temporaryPassword, undefined);
+    assert.equal(result.username, null);
+    // Nothing is linked yet, so the QR that links them must still be issued (unlike `kind: line`).
+    assert.equal(prisma.lineTokenCreates().length, 1);
+    assert.ok(result.ownerLineLink, 'the QR IS the handover for this shape');
+    assert.deepEqual(prisma.identityCreates(), [], 'the identity appears when they scan, not before');
+    assert.deepEqual(legalRecords, [], 'and no acceptance is fabricated on their behalf');
+  });
+
   it('leaves the password owner shape untouched in every byte', async () => {
     const prisma = makePrisma({});
     legalRecords.length = 0;

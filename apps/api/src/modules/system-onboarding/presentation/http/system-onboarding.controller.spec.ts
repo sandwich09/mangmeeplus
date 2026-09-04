@@ -40,3 +40,24 @@ describe('SystemOnboardingController — the handoff base it persists', () => {
     assert.deepEqual(h.calls, []);
   });
 });
+
+// Review A-04. The console's third owner shape: the customer lives on LINE, so there is no username
+// to hand over and no temporary password to leak — the owner LINE-link QR is the whole handover.
+describe('SystemOnboardingController — "ลูกค้าใช้ LINE เท่านั้น"', () => {
+  it('asks for the line-link-later owner and sends no username', async () => {
+    const h = harness();
+    await h.controller.create(
+      { companyName: 'ร้านนิด', businessCategory: 'RETAIL', ownerDisplayName: 'นิด', ownerLineOnly: true } as any,
+      REQ,
+    );
+    assert.deepEqual(h.calls[0].ownerAuth, { kind: 'line-link-later' });
+    assert.equal('ownerUsername' in h.calls[0], false, 'an absent username is not an empty one');
+  });
+
+  it('leaves the default password path byte-identical when the option is off', async () => {
+    const h = harness();
+    await h.controller.create(DTO, REQ);
+    assert.equal('ownerAuth' in h.calls[0], false);
+    assert.equal(h.calls[0].ownerUsername, 'somchai');
+  });
+});
