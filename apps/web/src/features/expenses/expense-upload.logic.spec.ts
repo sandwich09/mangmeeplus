@@ -6,9 +6,14 @@ import {
   detectReceiptImageByteKind,
   expenseExtractionRetryMode,
   expenseExtractionRetryRequestId,
+  bangkokMonthKey,
+  isReceiptQuotaBlocked,
+  RECEIPT_QUOTA_ERROR_CODE,
   RECEIPT_UPLOAD_ACCEPT,
   SIGNATURE_UPLOAD_ACCEPT,
 } from './expense-upload.logic';
+import { apiErrorCode, apiErrorMessage } from '@/common/api/api-error-message';
+import { mapResponseToApiError } from '@/common/api/api-error.logic';
 
 describe('classifyUploadFile', () => {
   const cases = [
@@ -94,5 +99,60 @@ describe('detectReceiptImageByteKind', () => {
 
   it('does not pass a truncated JPEG through to the backend', () => {
     assert.equal(detectReceiptImageByteKind(Uint8Array.from([0xff, 0xd8, 0x00, 0x01])), 'unknown');
+  });
+});
+
+
+/**
+ * P10-L §15.1 (review F3). The upload panel latched the quota answer and then called `onSuccess`,
+ * which routes to the review screen — the panel unmounted and took the banner and the disabled
+ * button with it, so neither ever painted and the shop could walk back and upload again.
+ */
+describe('receipt quota latch', () => {
+  const latch = { monthKey: '2026-09', message: 'โควตาให้ AI อ่านรูปของเดือนนี้ครบแล้ว' };
+
+  it('blocks for the rest of the month it was raised in', () => {
+    assert.equal(isReceiptQuotaBlocked(latch, '2026-09-05'), true);
+    assert.equal(isReceiptQuotaBlocked(latch, '2026-09-30'), true, 'still the same ceiling on the last day');
+  });
+
+  it('clears itself when the month rolls over, with no reload', () => {
+    // The ceiling resets on the 1st; a latch that outlived its month would lock a paying shop out.
+    assert.equal(isReceiptQuotaBlocked(latch, '2026-10-01'), false);
+    assert.equal(isReceiptQuotaBlocked(latch, '2026-08-31'), false, 'a clock moved backwards unblocks too');
+  });
+
+  it('never blocks when nothing was latched', () => {
+    assert.equal(isReceiptQuotaBlocked(null, '2026-09-05'), false);
+  });
+
+  it('stamps the month from the company civil date the upload form already uses', () => {
+    assert.equal(bangkokMonthKey('2026-09-05'), '2026-09');
+    assert.equal(bangkokMonthKey('2026-01-31'), '2026-01');
+  });
+
+  it('recognises the API answer that raises it, end to end through the error mapper', async () => {
+    // The 409 the extraction use case throws. `mapResponseToApiError` keeps only `code`, which is
+    // exactly why the latch stamps the month itself instead of reading `monthKey` off the body.
+    const response = new Response(
+      JSON.stringify({
+        statusCode: 409,
+        code: RECEIPT_QUOTA_ERROR_CODE,
+        message: 'plan ceiling reached',
+        count: 15,
+        limit: 15,
+        monthKey: '2026-09',
+      }),
+      { status: 409, headers: { 'Content-Type': 'application/json' } },
+    );
+    const error = await mapResponseToApiError(response);
+
+    assert.equal(apiErrorCode(error), RECEIPT_QUOTA_ERROR_CODE);
+    assert.equal((error as unknown as { monthKey?: string }).monthKey, undefined);
+    // The banner shows reviewed Thai copy, never the server's own sentence.
+    const shown = apiErrorMessage(error);
+    assert.match(shown, /โควตาให้ AI อ่านรูป/);
+    assert.doesNotMatch(shown, /plan ceiling reached/);
+    assert.doesNotMatch(shown, /receipt_quota_exceeded/);
   });
 });

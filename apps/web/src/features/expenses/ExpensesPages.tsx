@@ -58,7 +58,8 @@ import {
 import { TransactionTaxLineSelector } from '@/features/tax/TransactionTaxLineSelector';
 import { taxDefinitionRateForSource } from '@/features/tax/transaction-tax.model';
 import {
-  classifyUploadFile, HeicDecodeError, MAX_PDF_EXTRACTION_BYTES, prepareReceiptFile, RECEIPT_UPLOAD_ACCEPT,
+  bangkokMonthKey, classifyUploadFile, HeicDecodeError, isReceiptQuotaBlocked, MAX_PDF_EXTRACTION_BYTES,
+  prepareReceiptFile, RECEIPT_QUOTA_ERROR_CODE, RECEIPT_UPLOAD_ACCEPT, type ReceiptQuotaLatch,
   expenseExtractionRetryMode,
   expenseExtractionRetryRequestId,
 } from './expense-upload.logic';
@@ -215,10 +216,13 @@ function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { company
   const [extracting, setExtracting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fileNotice, setFileNotice] = useState<string | null>(null);
-  // P10-L §15.1: the shop hit its monthly slip ceiling. Latched for the rest of the visit, because
-  // the next receipt this month meets the same wall — offering the button again would only sell
-  // another upload that cannot be read.
-  const [quotaBlocked, setQuotaBlocked] = useState<string | null>(null);
+  // P10-L §15.1: the shop hit its monthly AI image-read ceiling. Latched with the month it happened
+  // in, because the next image this month meets the same wall — but the ceiling resets on the 1st,
+  // so a latch from last month must stop blocking without a reload.
+  const [quotaLatch, setQuotaLatch] = useState<ReceiptQuotaLatch | null>(null);
+  /** The draft the refused read left behind, so the shop can still go and type it in. */
+  const [blockedExpenseId, setBlockedExpenseId] = useState<string | null>(null);
+  const quotaBlocked = isReceiptQuotaBlocked(quotaLatch, todayCivilDate());
   // P4: past the advertised 10–20s read time, a spinner reads as "the system is down" when in fact
   // the queue is just long. Say which one it is.
   const [queueBusy, setQueueBusy] = useState(false);
@@ -322,16 +326,17 @@ function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { company
           notice = extractionNotice(result, locale);
         }
       } catch (e) {
-        // The receipt is saved either way; only the AI read was refused, so the quota answer is its
-        // own notice rather than the generic "extraction failed, try again" the user cannot act on.
-        if (apiErrorCode(e) === 'receipt_quota_exceeded') {
-          const message = err(e, locale);
-          setQuotaBlocked(message);
-          notice = { tone: 'error', message };
-        } else {
-          notice = (await recoveredNotice())
-            ?? { tone: 'error', message: `${t('expenses.upload_extract_failed_prefix', locale)} — ${err(e)} ${t('expenses.upload_extract_failed_suffix', locale)}` };
+        // The receipt IS saved; only the AI read was refused. Staying on the upload tab is the
+        // point: `onSuccess` routes to the review screen, which would unmount this panel and take
+        // the banner and the disabled button with it — the shop would land on an empty draft with
+        // no idea why nothing was read, and could walk straight back and upload again.
+        if (apiErrorCode(e) === RECEIPT_QUOTA_ERROR_CODE) {
+          setQuotaLatch({ monthKey: bangkokMonthKey(todayCivilDate()), message: err(e, locale) });
+          setBlockedExpenseId(intent.expenseId);
+          return;
         }
+        notice = (await recoveredNotice())
+          ?? { tone: 'error', message: `${t('expenses.upload_extract_failed_prefix', locale)} — ${err(e)} ${t('expenses.upload_extract_failed_suffix', locale)}` };
       }
       onSuccess(intent.expenseId, notice);
     } catch (e) { setError(err(e)); }
@@ -369,7 +374,22 @@ function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { company
       </div>
 
       <MangmeeCard className="p-6">
-        {quotaBlocked && <div className="mb-4"><ErrorBanner message={quotaBlocked} /></div>}
+        {quotaBlocked && (
+          <div role="alert" className="mb-4 rounded-xl border border-[#FECDCA] bg-error-50 px-4 py-3 text-sm text-error-700">
+            <p className="font-medium">⚠ {quotaLatch!.message}</p>
+            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 font-semibold">
+              {/* Until L-E ships the plan/profile page, settings is the closest existing route that
+                  is TRUE for this shop — `/renew` renders the P29 expired-term screen, and this shop
+                  has not expired, it has run out of reads. */}
+              <Link href={`/companies/${companyId}/settings`} className="underline">ขอเปลี่ยนแพ็กเกจ</Link>
+              {blockedExpenseId && (
+                <Link href={`/companies/${companyId}/expenses/${blockedExpenseId}`} className="underline">
+                  กรอกใบเสร็จที่เพิ่งอัปโหลดเอง
+                </Link>
+              )}
+            </div>
+          </div>
+        )}
         {error && <div className="mb-4"><ErrorBanner message={error} focus /></div>}
         {/* Phones get the camera, not a dropzone. A phone has no drag, no file manager and no
             click, so the desktop copy below ("ลากไฟล์มาวาง หรือคลิกเพื่อเลือก") is an instruction the
@@ -422,7 +442,7 @@ function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { company
           <span className="flex h-10 w-10 items-center justify-center rounded-[10px]" style={{ background: '#F4EBFF', color: '#7A5AF8' }}>{ICON.sparkle}</span>
           <p className="text-sm leading-relaxed text-gray-600">{t('expenses.upload_ai_strip_before', locale)}<b className="text-gray-800">{t('expenses.upload_ai_strip_bold', locale)}</b>{t('expenses.upload_ai_strip_after', locale)}</p>
         </div>
-        <button className={cx(btnClass, 'mt-5 h-12 w-full text-base')} onClick={handleUpload} disabled={loading || preparing || quotaBlocked !== null}>
+        <button className={cx(btnClass, 'mt-5 h-12 w-full text-base')} onClick={handleUpload} disabled={loading || preparing || quotaBlocked}>
           <span className="inline-flex items-center justify-center gap-2">
             {(preparing || loading || extracting) && <InlineSpinner />}
             {extracting ? t('expenses.ai_reading', locale) : preparing ? t('expenses.upload_preparing', locale) : loading ? t('expenses.uploading', locale) : t('expenses.upload_cta', locale)}
