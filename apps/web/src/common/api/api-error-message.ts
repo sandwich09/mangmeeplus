@@ -19,6 +19,8 @@ const CODE_LABELS: Record<string, string> = {
   platform_access_open_unavailable: 'ยังเปิดระบบไม่ได้จนกว่า production release จะผ่านการตรวจสอบครบถ้วน',
   // P12-3b: a spent/expired LINE deep-link handoff — same line the /login notice shows.
   line_handoff_unavailable: 'ลิงก์นี้หมดอายุหรือถูกใช้ไปแล้ว กรุณาเข้าสู่ระบบเพื่อเปิดรายการนี้',
+  // P10-L §3.5: the LIFF start page asks for a session and the handoff route is switched off.
+  line_web_handoff_disabled: 'ตอนนี้เปิดหน้าเว็บจาก LINE ไม่ได้ กรุณาเข้าสู่ระบบที่เว็บแอปโดยตรง',
   // P10 claim page. Both are 409s the applicant can act on, and both used to collapse into the
   // generic "ข้อมูลถูกเปลี่ยนแปลงระหว่างทำรายการ" — which named neither the cause nor a way out
   // (Owner UAT 2026-08-31: an applicant with an existing account hit a dead end here).

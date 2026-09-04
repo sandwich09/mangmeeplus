@@ -188,7 +188,6 @@ function makePrisma(opts: {
       // P10-L: the unlinked path now answers with the door card, which first asks whether this
       // LINE account already has an application travelling. These fixtures have none.
       companySignupRequest: { findFirst: async () => null },
-      lineCompanyContext: { findUnique: async () => null, updateMany: async () => ({ count: 0 }) },
       lineWebhookEventLog: {
         // Only the §8.3 outcome write reads this with a `select`; every other caller wants the whole
         // row and must keep seeing "no previous event".
@@ -236,6 +235,8 @@ function makePrisma(opts: {
       lineCompanyContext: {
         findUnique: async () => lineCompanyContext,
         upsert: async (args: unknown) => { upserts.push(args); return args; },
+        // P10-L §8: the support pause is stamped here. No row in these fixtures, so no pause.
+        updateMany: async () => ({ count: 0 }),
       },
       companyFeatureEntitlement: {
         findMany: async () => entitlements,
