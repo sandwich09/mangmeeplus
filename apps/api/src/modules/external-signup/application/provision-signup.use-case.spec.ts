@@ -81,18 +81,14 @@ function harness(options: {
 }
 
 describe('provisioning applies the PRO trial term (P29 T3)', () => {
-  it('upserts a PRO_999 30-day term after the company exists, before completion', async () => {
+  it('names the PRO_999 30-day term on the onboarding command, not by a second upsert', async () => {
     const h = harness();
     await h.useCase.execute(CMD);
-    assert.equal(h.planTermUpserts.length, 1);
-    const args = h.planTermUpserts[0];
-    assert.equal(args.where.companyId, 'co-1');
-    assert.equal(args.create.tierKey, 'PRO_999');
-    const start = new Date(args.create.termStartAt).getTime();
-    const end = new Date(args.create.termEndsAt).getTime();
-    assert.equal(end - start, 30 * 24 * 60 * 60 * 1000);
-    // Idempotent by design: update side must not shorten an existing term.
-    assert.deepEqual(args.update, {});
+    // Review B-01: onboarding writes the term row, so this use-case must NOT upsert its own —
+    // `applyPlanTermPreset` leaves an existing row alone and the intended tier would be lost.
+    assert.equal(h.planTermUpserts.length, 0);
+    assert.equal(h.onboardingCalls[0].planTier, 'PRO_999');
+    assert.equal(h.onboardingCalls[0].planDays, 30);
   });
 });
 

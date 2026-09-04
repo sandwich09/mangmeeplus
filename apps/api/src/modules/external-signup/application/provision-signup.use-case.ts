@@ -3,7 +3,6 @@ import { COMPANY_BUSINESS_CATEGORIES, type CompanyBusinessCategory } from '@watc
 import { PrismaService } from '../../../common/database/prisma.service';
 import { CreateCompanyOnboardingUseCase } from '../../system-onboarding/application/use-cases/create-company-onboarding.use-case';
 import { CompanySignupCoreService } from './company-signup-core.service';
-import { applyPlanTermPreset } from '../../system-partner-management/application/use-cases/company-plan-term.use-cases';
 import { suggestedUsernameFromEmail } from '../domain/account-claim.logic';
 
 export type ProvisionSignupCommand = {
@@ -75,6 +74,11 @@ export class ProvisionSignupUseCase {
         // Owner decision (UAT round 1): a self-signed-up trial shop starts on the "เริ่มต้น" menu
         // preset; the admin can widen it later from the partner console.
         modulePackage: 'starter',
+        // Trial clock starts at provision, not approval (spec §4D ⑤): PRO preset, 30 days.
+        // Review B-01: named HERE rather than upserted afterwards — onboarding creates the term
+        // row, and a second `applyPlanTermPreset` against an existing row is a no-op.
+        planTier: 'PRO_999',
+        planDays: 30,
         // The approving admin is the actor of record for everything this provisioning creates.
         requestingAdminUserId: request.approvedByUserId ?? request.id,
         requestId: cmd.correlationRequestId,
@@ -90,10 +94,6 @@ export class ProvisionSignupUseCase {
           data: { vatRegistered: request.vatRegistered },
         });
       }
-
-      // Trial clock starts at provision, not approval (spec §4D ⑤): PRO preset, 30 days.
-      // applyPlanTermPreset is idempotent — a provisioning retry can never shorten the term.
-      await applyPlanTermPreset(this.prisma, result.companyId, 'PRO_999', 30, request.approvedByUserId ?? null);
 
       await this.core.completeProvisioning({
         requestId: request.id,

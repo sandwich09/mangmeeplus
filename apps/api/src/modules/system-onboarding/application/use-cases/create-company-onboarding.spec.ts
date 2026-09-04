@@ -1205,6 +1205,23 @@ describe('CreateCompanyOnboardingUseCase P29 default term', () => {
     assert.deepEqual(args.update, {});
   });
 
+  // Review B-01: the tier is decided HERE or nowhere. `applyPlanTermPreset` leaves an existing row
+  // alone, so a provisioning caller that upserted its own preset afterwards was silently ignored.
+  it('writes the preset a provisioning caller named instead of the console default', async () => {
+    const prisma = makePrisma({});
+    await new CreateCompanyOnboardingUseCase(prisma, configMock)
+      .execute(makeCmd({ planTier: 'PRO_999', planDays: 30 }));
+
+    assert.equal(prisma.planTermUpserts().length, 1);
+    const args = prisma.planTermUpserts()[0];
+    assert.equal(args.create.tierKey, 'PRO_999');
+    assert.equal(args.create.monthlySlipLimit, 100);
+    assert.equal(
+      args.create.termEndsAt.getTime() - args.create.termStartAt.getTime(),
+      30 * 24 * 60 * 60 * 1000,
+    );
+  });
+
   it('a failed term write NEVER fails the onboarding', async () => {
     const prisma = makePrisma({});
     prisma.client.companyPlanTerm.upsert = async () => { throw new Error('db down'); };

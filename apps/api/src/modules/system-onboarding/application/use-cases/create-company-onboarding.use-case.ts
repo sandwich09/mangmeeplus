@@ -10,6 +10,7 @@ import {
   type CivilDate,
   type CompanyBusinessCategory,
   type EmployeeLineLinkPackage,
+  type PlanTierKey,
   type VatFactStatus,
 } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
@@ -89,6 +90,13 @@ export type CreateCompanyOnboardingCommand = {
    * recorded on the run but keeps the standard seeding, so existing console callers are unchanged.
    */
   modulePackage?: string;
+  /**
+   * Review B-01: the plan term is written ONCE, here, because `applyPlanTermPreset` upserts with an
+   * empty `update` — a caller that wrote its own tier after this use-case returned was silently
+   * overruled by the row this one had already created. Absent = the admin-console default.
+   */
+  planTier?: PlanTierKey;
+  planDays?: number;
   lineOaAddUrl?: string;
   lineLinkUrl?: string;
   requestingAdminUserId: string;
@@ -455,16 +463,19 @@ export class CreateCompanyOnboardingUseCase {
       return { run, company, owner, handoffUrl, chartOfAccounts, taxConfiguration, expenseCategories };
     }, { maxWait: 5_000, timeout: 15_000 });
 
-    // P29 §4A: every admin-created company starts on STARTER for 30 days. Deliberately AFTER the
-    // commit and never inside it — a company that exists with no term row is unlimited and fully
-    // usable, so a failed term write must not roll back a completed onboarding. The upsert is
-    // idempotent, so a retry of this endpoint cannot shorten an already-set term.
+    // P29 §4A: every admin-created company starts on STARTER for 30 days, and a provisioning caller
+    // may name a different preset. Deliberately AFTER the commit and never inside it — a company
+    // that exists with no term row is unlimited and fully usable, so a failed term write must not
+    // roll back a completed onboarding. The upsert is idempotent, so a retry of this endpoint
+    // cannot shorten an already-set term.
+    const planTier = cmd.planTier ?? ONBOARDING_DEFAULT_TIER;
+    const planDays = cmd.planDays ?? DEFAULT_TERM_DAYS;
     try {
       await applyPlanTermPreset(
         this.prisma,
         result.company.id,
-        ONBOARDING_DEFAULT_TIER,
-        DEFAULT_TERM_DAYS,
+        planTier,
+        planDays,
         cmd.requestingAdminUserId,
       );
     } catch (error) {
@@ -483,8 +494,8 @@ export class CreateCompanyOnboardingUseCase {
             riskLevel: 'HIGH',
             metadataJson: {
               reason: 'onboarding_default_term_write_failed',
-              tierKey: ONBOARDING_DEFAULT_TIER,
-              termDays: DEFAULT_TERM_DAYS,
+              tierKey: planTier,
+              termDays: planDays,
               error: error instanceof Error ? error.message : String(error),
             },
           },
