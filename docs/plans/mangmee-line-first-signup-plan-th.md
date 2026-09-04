@@ -74,6 +74,16 @@
 
 **Tests:** webhook 7 เคส (spec §11), liff/session 3 เคส, reminders exactly-once, push budget; LIFF HTML snapshot ไม่มี inline script นอก `LIFF_PAGE_SCRIPT`
 
+## บันทึกสำหรับ L-C จากรีวิว L-A รอบ 5–6 (2026-09-05)
+
+- แอดมิน**หยุด**คำขอที่ค้าง `PROVISIONING` และยังไม่มีบริษัทไม่ได้แล้ว (ระงับถูกปิดทุกความสดเพื่อกันร้านไร้เพดาน) — ทางเดินตอนนี้: รอ stale → ปิดงาน (สร้างร้าน) → ระงับแถวที่ settle แล้ว → ปิดบริษัทที่หน้าพาร์ทเนอร์; ถ้าจะเปิด "ระงับแบบเจาะจง" ต้องเพิ่ม `companyId?` ใน `AdminSignupQueueItemDto` (additive) และอนุญาตเฉพาะ `staleProvisioning && companyId == null`
+- ขอบ `PROVISIONING → SUSPENDED` ในตาราง transition ทั้งสองไม่มีใครเรียกถึงแล้ว — ตัดสินใจเก็บหรือลบให้ชัด (อย่าปล่อยเป็น "recovery ที่ไม่มีใครเรียก" ซึ่งเป็น pattern ที่รีวิว 5 รอบเจอซ้ำ)
+- `decide(SUSPEND)` ปฏิเสธ PROVISIONING แบบไม่แยก source — L-C ตัดสินว่า Flow B ต้องการกติกาเดียวกันไหม
+- **Flow B ยังไม่มีหน้าจอกู้แถวค้าง** (`LINE_ONLY_QUEUE_STATES` จำกัด PROVISIONING/PROVISIONING_FAILED/READY ไว้ที่ line-oa) — fence re-claim ทำงานเฉพาะเมื่อผู้สมัครเปิดลิงก์ claim ซ้ำ; L-C เลือกเปิดให้เว็บด้วยหรือทำ sweep
+- `LINE_SIGNUP_ADMIN_ALERT_BUDGET_EXHAUSTED_PER_DAY` + ระบบแจ้งเตือน ops (§15.6) ยังไม่มีในโค้ด — ทำใน L-C พร้อมต่อ deploy.sh + grep contract ใน serving-mode spec
+- SUSPEND UI สำหรับแถว COMPLETED ที่ auto-approve + แท็บ "อนุมัติอัตโนมัติ 14 วัน" (route `/system/signup-requests/auto-approved` มีแล้ว ไม่มีหน้าเว็บใช้)
+- Test-fake (`line-signup-auto-free.integration.spec.ts`) ไม่มี row locking — เทสต์ที่พึ่ง blocking semantics ต้องใช้ Postgres จริง
+
 ## Slice L-C — admin + support + flags (web + infra)
 
 **Branch** `codex/line-signup-c-admin`
