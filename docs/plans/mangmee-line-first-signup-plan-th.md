@@ -11,8 +11,8 @@
 
 | งาน | ไฟล์หลัก | หมายเหตุ |
 |---|---|---|
-| ตาราง + repo | `schema.prisma` `CompanyReceiptUsage` + migration; `apps/api/src/modules/system-partner-management/infrastructure/prisma-company-receipt-usage.repository.ts` (CAS pattern จาก `prisma-crm-channel-cap.repository.ts`) | unique (companyId, monthKey); `tryConsume(companyId, monthKey, limit, requestId)` idempotent ต่อ requestId |
-| บังคับ | จุดก่อนเรียก OCR ทาง LINE (`line-intake` ใน `process-line-webhook.use-case.ts`) และเว็บ (`expense-upload.use-case.ts`/extraction) | อ่าน `CompanyPlanTerm` + warm-up; flag `RECEIPT_QUOTA_ENFORCED` |
+| **ไม่มีตารางใหม่** (แก้ 2026-09-05) | ใช้ seam เดิม `admitCompanyOcr` (`line-ai/application/company-ocr-governance.ts`) ที่นับ `CompanyOcrMonthlyUsage` อยู่แล้ว | ซ้อน `planLimit = effectiveReceiptQuota(planTerm)` (helper `receipt-quota.logic.ts`) เข้าใน transaction เดิม เฉพาะ route `receipt-ocr-web`/`receipt-ocr-line`; effective = min(ocrMonthlyLimit, planLimit); variant ใหม่ `plan_exceeded` → code `RECEIPT_QUOTA_EXCEEDED` |
+| บังคับ | จุดเดียว = OCR client (`receipt-ocr.client.ts` เรียก `admitCompanyOcr`) ครอบทั้ง LINE และเว็บ | `RECEIPT_QUOTA_ENFORCED=false` = คำนวณ+audit `plan.receipt_quota.would_block` แต่ไม่บล็อก; ต้องพิสูจน์ว่าไม่มี path ใบเสร็จทาง LINE ที่ข้าม client |
 | Copy | `line-business-card.logic.ts` การ์ดชนโควตา; web แบนเนอร์ใน `ExpensesHubPage` upload tab | ครั้งเดียว/เดือน ทาง LINE (เก็บ `quotaNoticeSentMonthKey` บน `CompanyPlanTerm`) |
 | บรรทัด "ใบที่ n/15" | reply หลังอ่านสำเร็จ (เฉพาะ `FREE_TRIAL_15`) | |
 | Tests | CAS ชนกัน 2 request พร้อมกัน → นับ 1 ครั้ง; ใบที่ 16 ถูกปฏิเสธทั้ง LINE และเว็บ; warm-up 10 ใบ; flag off = ไม่บังคับแต่ยังนับ | |
