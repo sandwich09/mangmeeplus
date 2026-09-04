@@ -185,6 +185,10 @@ function makePrisma(opts: {
           findMany: async () => [],
         },
       }),
+      // P10-L: the unlinked path now answers with the door card, which first asks whether this
+      // LINE account already has an application travelling. These fixtures have none.
+      companySignupRequest: { findFirst: async () => null },
+      lineCompanyContext: { findUnique: async () => null, updateMany: async () => ({ count: 0 }) },
       lineWebhookEventLog: {
         // Only the §8.3 outcome write reads this with a `select`; every other caller wants the whole
         // row and must keep seeing "no previous event".
@@ -446,7 +450,9 @@ describe('ProcessLineWebhookUseCase', () => {
     });
 
     assert.equal(settled, true);
-    assert.match(replies[0] ?? '', /เชื่อมต่อบัญชี/);
+    // The refusal an unrecognised account gets is the door card now (§3.1); what this test is
+    // about is that the waiting-feedback settle ran BEFORE it, whatever the refusal says.
+    assert.match(replies[0] ?? '', /ยินดีต้อนรับสู่มั่งมีพลัส/);
   });
 
   // A LINE userId only means anything within one messaging channel, so an unscoped lookup could
@@ -469,7 +475,7 @@ describe('ProcessLineWebhookUseCase', () => {
     await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-unlinked' });
 
     assert.equal(identityQueries.length, 2);
-    assert.match(replies[0] ?? '', /กรุณาเชื่อมต่อบัญชี/);
+    assert.match(replies[0] ?? '', /ยินดีต้อนรับสู่มั่งมีพลัส/);
     assert.equal((updates.at(-1) as any).data.status, 'unlinked');
   });
 
@@ -1309,13 +1315,17 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal((updates.at(-1) as any).data.status, 'forbidden');
   });
 
-  it('sends UNLINKED reply when ExternalIdentity not found', async () => {
+  // P10-L §3.1 replaced this one dead end with the three doors: a stranger with no account cannot
+  // act on "link your account", and the shop they might open is the whole point of the flow. Every
+  // OTHER unlinked-shaped refusal below (no membership, resolver failure) keeps the old reply.
+  it('answers an unrecognised LINE account with the signup doors', async () => {
     const { prisma } = makePrisma({ identityUserId: null });
     const { useCase, replies } = makeUseCase(prisma);
 
     await useCase.execute(BASE_EVENT);
 
-    assert.match(replies[0] ?? '', /เชื่อมต่อ/);
+    assert.match(replies[0] ?? '', /ยินดีต้อนรับสู่มั่งมีพลัส/);
+    assert.equal(/เชื่อมต่อบัญชี/.test(replies[0] ?? ''), false);
   });
 
   it('sends UNLINKED reply when user has no active company memberships', async () => {

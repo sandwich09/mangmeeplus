@@ -16,6 +16,8 @@ import { DataModelCoreModule } from '../data-model-core/data-model-core.module';
 import { CrmModule } from '../crm/crm.module';
 import { CrmInboxModule } from '../crm-inbox/crm-inbox.module';
 import { FeatureLaunchModule } from '../feature-launch/feature-launch.module';
+// P10-L: the LINE surface opens package-change requests and tells operators about support requests.
+import { ExternalSignupModule } from '../external-signup/external-signup.module';
 
 // Infrastructure
 import { LineReplyAdapter } from './infrastructure/line-reply.adapter';
@@ -197,6 +199,7 @@ const erpTools = [
     CrmInboxModule,
     // Supplies the shadow probe for the employee LINE webhook and the AI ledger drain (plan §3 F1).
     FeatureLaunchModule,
+    ExternalSignupModule,
   ],
   controllers: [InternalToolsController, LineAiLedgerInternalController, LineWebhookController],
   providers: [

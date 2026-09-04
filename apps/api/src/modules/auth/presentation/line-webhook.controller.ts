@@ -6,6 +6,7 @@ import { AppConfigService } from '../../../common/config/app-config.service';
 import { emitSecurityEvent, SECURITY_EVENT } from '../../../common/logger/security-event';
 import { verifyLineWebhookSignature } from '../infrastructure/line-webhook-verifier';
 import { LineMessageBufferService } from '../../line-ai/application/line-message-buffer.service';
+import { LINE_FOLLOW_EVENT_TEXT, linePostbackCommandText } from '../../line-ai/domain/logic/line-staff-menu.logic';
 
 type LineMessageEvent = {
   type: string;
@@ -74,7 +75,13 @@ export class LineWebhookController {
       const chatId = event.source.groupId ?? event.source.roomId ?? lineUserId;
       const timestamp = typeof event.timestamp === 'number' ? event.timestamp : Date.now();
       try {
-        if (event.type === 'postback' && event.postback?.data === 'action=line-rich-talk') {
+        // P10-L G-03: adding the friend has a reply token and used to match no arm at all, so with
+        // the OA's own Greeting switched off a new customer got silence. A synthetic item carries
+        // it into the same lane a typed message uses, where §3.1 decides door card or status card.
+        const synthetic = event.type === 'follow'
+          ? LINE_FOLLOW_EVENT_TEXT
+          : event.type === 'postback' ? linePostbackCommandText(event.postback?.data) : null;
+        if (synthetic) {
           await this.messageBuffer.enqueue({
             chatId,
             lineUserId,
@@ -83,7 +90,7 @@ export class LineWebhookController {
               kind: 'text',
               webhookEventId: event.webhookEventId ?? `${lineUserId}-${Date.now()}`,
               replyToken: event.replyToken,
-              text: 'คุยกับน้องมั่งมี',
+              text: synthetic,
               timestamp,
             },
           });

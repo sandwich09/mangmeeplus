@@ -14,9 +14,9 @@ export const LINE_AI_TERMINAL_CLASSES = [
 
 export type LineAiTerminalClass = (typeof LINE_AI_TERMINAL_CLASSES)[number];
 export type LineAiGatewayFailureOutcome = {
-  status: 'ai_error' | 'provider_unavailable' | 'rate_limited';
+  status: 'ai_error' | 'provider_unavailable' | 'rate_limited' | 'ai_budget_exceeded';
   errorCode: string;
-  replyKind: 'timeout' | 'unavailable' | 'rate_limited';
+  replyKind: 'timeout' | 'unavailable' | 'rate_limited' | 'budget_exceeded';
 };
 
 const NON_TERMINAL_STATUSES = new Set(['received', 'processing', 'response_ready']);
@@ -106,6 +106,16 @@ export function classifyLineAiGatewayFailure(error: unknown): LineAiGatewayFailu
     : undefined;
   const code = (error as { code?: unknown })?.code
     ?? (response && typeof response === 'object' ? (response as { code?: unknown }).code : undefined);
+  // G-05: the monthly budget running out is NOT congestion. It used to collapse into `rate_limited`,
+  // whose reply asks the shop to wait and try again — advice that can never work this month, and
+  // that invites more spending attempts. It gets its own outcome and its own answer.
+  if (status === 429 && code === 'AI_MONTHLY_BUDGET_EXCEEDED') {
+    return {
+      status: 'ai_budget_exceeded',
+      errorCode: LINE_AI_ERROR_CODES.RATE_LIMITED,
+      replyKind: 'budget_exceeded',
+    };
+  }
   if (status === 429 && code !== 'AI_BUDGET_UNAVAILABLE') {
     return { status: 'rate_limited', errorCode: LINE_AI_ERROR_CODES.RATE_LIMITED, replyKind: 'rate_limited' };
   }

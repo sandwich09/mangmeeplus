@@ -78,11 +78,17 @@ import { ListApprovalQueueUseCase } from '../../../reimbursements/application/us
 import { ListPurchaseRequestsUseCase } from '../../../procurement/application/use-cases/purchase-request.use-case';
 import { ListPurchaseOrdersUseCase } from '../../../procurement/application/use-cases/purchase-order.use-case';
 import type { BusinessDocumentClassification, LineExpenseDraftRouteContext, LineUserContext, LineAiTurnRequest, LineAiTurnResponse, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeRoutePlan, LineIntakeSubstituteContext, ReceiptOcrFieldResult, RequestContext } from '@watchdog-bms/contracts';
-import { LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, asIntakeRouteIntent, extractValueCandidates, hasToolPermissions, todayCivilDate } from '@watchdog-bms/contracts';
+import { LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, nextPlanTierKey, asIntakeRouteIntent, extractValueCandidates, hasToolPermissions, todayCivilDate } from '@watchdog-bms/contracts';
 import { LineAiLedgerService, ledgerKey, type LedgerEntry } from '../line-ai-ledger.service';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
-import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, isCapabilityQuestion, staffMenuCommand, PENDING_APPROVAL_ITEM_LIMIT, type ApprovalSurfaceKey, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
-import { buildExpenseDraftCardMessage, buildLegalAcceptanceRequiredMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildReceiptQuotaExceededMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
+import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, isCapabilityQuestion, staffMenuCommand, PACKAGE_CHANGE_COMMAND, PENDING_APPROVAL_ITEM_LIMIT, type ApprovalSurfaceKey, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
+import { buildAiBudgetExceededMessage, buildExpenseDraftCardMessage, buildLegalAcceptanceRequiredMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildReceiptQuotaExceededMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, buildSignupDoorCard, buildSignupStatusCard, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
+// P10-L: the LINE surface opens a package-change request and tells the operators about a support
+// request; both live in the signup module, which owns those rules and their audit.
+import { PackageChangeRequestUseCase } from '../../../external-signup/application/package-change-request.use-case';
+import { LineSignupNotifyService } from '../../../external-signup/application/line-signup-notify.service';
+import { isBusinessHours } from '../../../external-signup/domain/business-hours.logic';
+import { SIGNUP_SOURCE_LINE_OA } from '../../../external-signup/domain/company-signup.logic';
 import { advisorDirectAnswerText } from '../../domain/logic/line-advisor-direct-answer.logic';
 import { capabilityFollowUpReply, isDeliveredCapabilityFollowUp, isNextStepQuestionText } from '../../domain/logic/line-ai-capability-follow-up.logic';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
@@ -161,6 +167,27 @@ export type LineLegalAcceptancePreflight =
   | { status: 'required'; companyId: string };
 
 const UNLINKED_REPLY = '🔗 กรุณาเชื่อมต่อบัญชี มั่งมีพลัส กับ LINE ก่อนใช้งานนะคะ\nเปิดเว็บแอปเพื่อเชื่อมต่อได้เลยค่ะ';
+// ── P10-L §7 copy. Owner-editable; no plus sign anywhere a customer reads (write "และ"). ──
+/** The staff door of §3.1: the employee link is issued by the owner, never self-served. */
+const EMPLOYEE_DOOR_REPLY = '👋 ยินดีต้อนรับค่ะ ถ้าคุณเป็นพนักงาน ให้เจ้าของร้านเปิดเมนู "พนักงาน" ในเว็บแอป '
+  + 'แล้วส่งลิงก์เชื่อม LINE มาให้นะคะ กดลิงก์นั้นครั้งเดียวก็ใช้งานได้เลยค่ะ (ไม่ต้องสมัครร้านใหม่นะคะ)';
+const STAFF_CONTACT_REPLY = '📮 รับเรื่องแล้วค่ะ ทีมงานจะตอบในแชทนี้ในเวลาทำการ (จันทร์–เสาร์ 9:00–18:00) นะคะ';
+/** Sent while a support pause is running, in place of every assistant answer (§8). */
+const SUPPORT_PAUSED_REPLY = '📮 ทีมงานรับเรื่องแล้วค่ะ กำลังดูให้อยู่ เดี๋ยวตอบในแชทนี้นะคะ';
+const PACKAGE_CHANGE_ACCEPTED_REPLY = '📦 รับคำขอแล้วค่ะ ทีมงานจะติดต่อกลับในเวลาทำการ (จันทร์–เสาร์ 9:00–18:00) นะคะ';
+const PACKAGE_CHANGE_NOT_OWNER_REPLY = '📦 การเปลี่ยนแพ็กเกจต้องให้เจ้าของร้านเป็นคนขอนะคะ รบกวนแจ้งเจ้าของร้านให้พิมพ์ '
+  + '"ขอเปลี่ยนแพ็กเกจ" ในแชทนี้ได้เลยค่ะ';
+const PACKAGE_CHANGE_UNAVAILABLE_REPLY = '📦 ตอนนี้เปิดคำขอเปลี่ยนแพ็กเกจให้ไม่ได้ค่ะ รบกวนติดต่อทีมงานที่ 098-256-5628 นะคะ';
+/** What the admin queue shows for a request that came from a chat button with no tier chosen. */
+const PACKAGE_CHANGE_LINE_NOTE = 'ขอผ่าน LINE ยังไม่ได้เลือกแพ็กเกจ ทีมงานคุยกับร้านแล้วปรับได้';
+const PROFILE_GUARD_ACCEPTED_REPLY = '🔐 ได้เลยค่ะ ใส่อีเมลหรือเบอร์ไว้ในหน้าตั้งค่าได้ที่ลิงก์นี้นะคะ';
+const PROFILE_GUARD_LATER_REPLY = '👍 ได้ค่ะ ไว้พร้อมเมื่อไหร่พิมพ์ "ตั้งค่า" มาได้เลยนะคะ';
+/** §8: 24 hours, self-expiring — nobody has to remember to switch the assistant back on. */
+const SUPPORT_PAUSE_MS = 24 * 60 * 60 * 1000;
+/** The states in which an application is still travelling, so the door shows status (§3.1/§5). */
+const OPEN_LINE_SIGNUP_STATES = [
+  'RECEIVED', 'VALIDATED', 'PENDING_REVIEW', 'PROVISIONING', 'PROVISIONING_FAILED', 'READY',
+] as const;
 // PDPA objection route (M-05 register §3.1): the user opted out of AI processing, so the
 // turn stops here — before any model, tool, or gateway involvement. Deterministic text.
 const AI_OPT_OUT_REPLY = '🤖 คุณปิดการใช้งานผู้ช่วย AI ไว้ ข้อความนี้จึงไม่ถูกประมวลผลด้วย AI ค่ะ\nเปิดใช้งานอีกครั้งได้ที่ เว็บแอป → ตั้งค่า → ความปลอดภัย นะคะ';
@@ -1150,6 +1177,12 @@ export class ProcessLineWebhookUseCase {
     // whenever LINE_WEB_HANDOFF_ENABLED is off, and absent it every link keeps today's plain URL —
     // the same degrade-to-current-behaviour rule minting failure already follows.
     @Optional() private readonly handoffLinks?: LineHandoffLinkService,
+    // P10-L §3.7. Absent, "ขอเปลี่ยนแพ็กเกจ" answers that the request could not be opened rather
+    // than pretending it was — the shop must never be told a queue row exists when none does.
+    @Optional() private readonly packageChange?: PackageChangeRequestUseCase,
+    // P10-L §7/§8. Absent, "ติดต่อเจ้าหน้าที่" still pauses the assistant and still answers the
+    // customer; only the admin fan-out is lost, which is the part that already logs its failures.
+    @Optional() private readonly signupNotify?: LineSignupNotifyService,
   ) {}
 
   /**
@@ -1452,9 +1485,172 @@ export class ProcessLineWebhookUseCase {
     userId: string,
   ): Promise<boolean> {
     if (!await ownsTermExpiredCompany(this.prisma, userId)) return false;
-    await this.deliverReply(event, expiredLineOwnerMessageTh());
+    // §3.7: the expiry message gains the one button that leads somewhere. A quick reply rather than
+    // a card, so the existing text reply keeps its exact words and only gains an action.
+    await this.deliverReply(event, expiredLineOwnerMessageTh(), {
+      items: [{ type: 'action', action: { type: 'message', label: PACKAGE_CHANGE_COMMAND, text: PACKAGE_CHANGE_COMMAND } }],
+    });
     await this.updateEventLog(event.webhookEventId, 'plan_term_expired', LINE_AI_ERROR_CODES.FORBIDDEN);
     return true;
+  }
+
+  /**
+   * P10-L §3.1. One card answers the door, and an application already travelling replaces it with
+   * its status — so a customer who applied ten minutes ago is never invited to apply again.
+   *
+   * Read from the application table directly, like every other state this turn reads: the row is
+   * keyed by the same (channel, LINE user) pair the identity lookup above uses.
+   */
+  private async entryDoorMessage(lineUserId: string): Promise<LineReplyMessage> {
+    const pending = await this.prisma.client.companySignupRequest.findFirst({
+      where: {
+        source: SIGNUP_SOURCE_LINE_OA,
+        lineProviderUserId: lineUserId,
+        lineChannelId: this.config.lineMessagingChannelId ?? undefined,
+        state: { in: [...OPEN_LINE_SIGNUP_STATES] },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { companyName: true },
+    });
+    if (!pending) return buildSignupDoorCard(this.config.lineLiffId);
+    return buildSignupStatusCard(pending.companyName, isBusinessHours(new Date(), {
+      days: this.config.lineSignupBusinessDays,
+      hours: this.config.lineSignupBusinessHours,
+    }));
+  }
+
+  /** §15.1: "ช่วงทดลอง" is only true of the trial tier; every other shop hears about its package. */
+  private async isTrialTier(companyId: string): Promise<boolean> {
+    const term = await this.prisma.client.companyPlanTerm.findUnique({
+      where: { companyId },
+      select: { tierKey: true },
+    });
+    return term?.tierKey === 'FREE_TRIAL_15';
+  }
+
+  /** True while a support pause set by `ติดต่อเจ้าหน้าที่` is still running (§8, 24h, self-expiring). */
+  private async assistantPaused(lineUserId: string): Promise<boolean> {
+    const context = await this.prisma.client.lineCompanyContext.findUnique({
+      where: { lineUserId },
+      select: { aiPausedUntil: true },
+    });
+    return !!context?.aiPausedUntil && context.aiPausedUntil.getTime() > Date.now();
+  }
+
+  /**
+   * P10-L §7/§8. The OA has Chat switched off, so "a human will answer" has to mean something the
+   * system enforces: the assistant stops for 24 hours and the operators are told, with a link to the
+   * partner page they answer from.
+   *
+   * Public by design — someone whose account is broken enough to need a person may well not resolve
+   * to one. The pause is only recorded when there IS a context row to hang it on, which is exactly
+   * the case where an assistant would otherwise keep answering over the top of support.
+   */
+  private async handleStaffContact(event: LineTextEvent, requestId: string): Promise<void> {
+    const paused = await this.pauseAssistant(event.lineUserId);
+    await this.deliverReply(event, STAFF_CONTACT_REPLY);
+    if (paused) {
+      // Best-effort by contract: the customer has already been answered, and a LINE outage on the
+      // operator side must not turn their message into a redelivery loop.
+      await this.signupNotify?.notifySupportRequest(paused.companyId, event.lineUserId);
+    }
+    await this.audit.log({
+      action: 'signup.line.support_requested',
+      ...(paused ? { companyId: paused.companyId } : {}),
+      targetType: 'line_user',
+      requestId,
+      result: 'SUCCESS',
+      riskLevel: 'LOW',
+      metadataJson: { paused: paused !== null },
+    });
+    await this.updateEventLog(event.webhookEventId, 'support_requested');
+  }
+
+  /** Stamps the pause on the existing per-LINE-user context row; no row means no assistant to stop. */
+  private async pauseAssistant(lineUserId: string): Promise<{ companyId: string } | null> {
+    const updated = await this.prisma.client.lineCompanyContext.updateMany({
+      where: { lineUserId },
+      data: { aiPausedUntil: new Date(Date.now() + SUPPORT_PAUSE_MS) },
+    });
+    if (updated.count !== 1) return null;
+    return this.prisma.client.lineCompanyContext.findUnique({
+      where: { lineUserId },
+      select: { companyId: true },
+    });
+  }
+
+  /**
+   * P10-L §3.7. Opens a package-change request for the shop this owner runs. Everything the request
+   * depends on is re-derived here (SEC-04): the button carries an intent and no ids, so a forged
+   * postback can only ever ask for what the sender could already ask for by typing.
+   */
+  private async handlePackageChangeRequest(
+    event: LineTextEvent,
+    userId: string,
+    requestId: string,
+  ): Promise<void> {
+    // ACTIVE first, then DISABLED: the expiry message carries this button, and that shop is the one
+    // most likely to press it.
+    const owned = await this.prisma.client.companyMembership.findFirst({
+      where: {
+        userId,
+        status: 'ACTIVE',
+        company: { status: { in: ['ACTIVE', 'DISABLED'] } },
+        roles: { some: { role: { key: 'OWNER' } } },
+      },
+      orderBy: [{ company: { status: 'asc' } }, { createdAt: 'asc' }],
+      select: { companyId: true, company: { select: { planTerm: { select: { tierKey: true } } } } },
+    });
+    if (!owned) {
+      await this.deliverReply(event, PACKAGE_CHANGE_NOT_OWNER_REPLY);
+      await this.updateEventLog(event.webhookEventId, 'package_change_denied', LINE_AI_ERROR_CODES.FORBIDDEN);
+      return;
+    }
+    if (!this.packageChange) {
+      await this.deliverReply(event, PACKAGE_CHANGE_UNAVAILABLE_REPLY);
+      await this.updateEventLog(event.webhookEventId, 'package_change_unavailable');
+      return;
+    }
+    // Nobody picked a tier in a chat button, so the request opens at the next step up from where the
+    // shop is now and says so in the note — a starting point for the call, never a decision.
+    await this.packageChange.create({
+      companyId: owned.companyId,
+      requestedByUserId: userId,
+      requestedTierKey: nextPlanTierKey(owned.company.planTerm?.tierKey),
+      note: PACKAGE_CHANGE_LINE_NOTE,
+      requestId,
+    });
+    await this.deliverReply(event, PACKAGE_CHANGE_ACCEPTED_REPLY);
+    await this.updateEventLog(event.webhookEventId, 'package_change_requested', undefined, owned.companyId);
+  }
+
+  /** §3.6 day-7 nudge. "ใส่เลย" gets the settings link (the delivery seam turns it into one tap). */
+  private async handleProfileGuardAnswer(
+    event: LineTextEvent,
+    userId: string,
+    accepted: boolean,
+  ): Promise<void> {
+    if (!accepted) {
+      await this.deliverReply(event, PROFILE_GUARD_LATER_REPLY);
+      await this.updateEventLog(event.webhookEventId, 'profile_guard_declined');
+      return;
+    }
+    const membership = await this.prisma.client.companyMembership.findFirst({
+      where: { userId, status: 'ACTIVE', company: { status: 'ACTIVE' } },
+      orderBy: { createdAt: 'asc' },
+      select: { companyId: true },
+    });
+    if (!membership) {
+      await this.deliverReply(event, UNLINKED_REPLY);
+      await this.updateEventLog(event.webhookEventId, 'profile_guard_no_company', LINE_AI_ERROR_CODES.UNLINKED_USER);
+      return;
+    }
+    // Setting `handoff` here is what lets the seam mint a one-tap link for the URL below; the
+    // refusals above deliberately keep the plain link they always sent.
+    event.handoff = { userId, companyId: membership.companyId };
+    const link = `${(this.config.webBaseUrl ?? '').replace(/\/+$/, '')}/companies/${membership.companyId}/settings`;
+    await this.deliverReply(event, `${PROFILE_GUARD_ACCEPTED_REPLY}\n${link}`);
+    await this.updateEventLog(event.webhookEventId, 'profile_guard_accepted', undefined, membership.companyId);
   }
 
   private async deliverRequiredMessages(
@@ -1778,6 +1974,24 @@ export class ProcessLineWebhookUseCase {
     // Public deterministic command: the verified controller and event claim already ran, but no
     // identity, company, acceptance, permission, entitlement, or model read is needed.
     const publicCommand = staffMenuCommand(event.messageText);
+    // P10-L §3.1 (G-03). Adding the friend is the first thing that happens and, with the OA's own
+    // Greeting switched off, used to produce nothing at all.
+    if (publicCommand === 'follow') {
+      await this.deliverRequiredMessages(event, [await this.entryDoorMessage(event.lineUserId)]);
+      await this.updateEventLog(event.webhookEventId, 'line_follow');
+      return;
+    }
+    // The staff door (§3.1): closes the trap where an employee with no email signs their shop up a
+    // second time. Public because nobody arriving here has an account yet by definition.
+    if (publicCommand === 'employee') {
+      await this.deliverReply(event, EMPLOYEE_DOOR_REPLY);
+      await this.updateEventLog(event.webhookEventId, 'line_employee_door');
+      return;
+    }
+    if (publicCommand === 'staff_contact') {
+      await this.handleStaffContact(event, requestId);
+      return;
+    }
     if (publicCommand === 'contact') {
       await this.deliverRequiredMessages(event, [buildContactCard()]);
       await this.updateEventLog(event.webhookEventId, 'staff_menu_contact');
@@ -1808,9 +2022,30 @@ export class ProcessLineWebhookUseCase {
     const identity = await this.resolveLineIdentity(event);
 
     if (!identity || identity.user.status !== 'ACTIVE') {
-      await this.deliverReply(event, UNLINKED_REPLY);
+      // P10-L §3.1: the plain "link your account first" line was a dead end for the one person who
+      // has no account to link. The same card the door sends, so both entrances agree.
+      await this.deliverRequiredMessages(event, [await this.entryDoorMessage(event.lineUserId)]);
       await this.audit.log({ action: 'ai.line.unlinked_access', targetType: 'line_user', requestId, result: 'DENIED', riskLevel: 'LOW', metadataJson: { lineUserId: '[REDACTED]' } });
       await this.updateEventLog(event.webhookEventId, 'unlinked', LINE_AI_ERROR_CODES.UNLINKED_USER);
+      return;
+    }
+
+    // P10-L §8: while a human is handling this thread the assistant stays out of it. Checked right
+    // after identity, so every path below — commands, receipts, AI turns — is covered by one gate.
+    if (await this.assistantPaused(event.lineUserId)) {
+      await this.deliverReply(event, SUPPORT_PAUSED_REPLY);
+      await this.updateEventLog(event.webhookEventId, 'support_paused');
+      return;
+    }
+
+    // P10-L §3.7. Needs an identity but NOT a resolvable active company: a shop whose trial expired
+    // is DISABLED, and asking to change package is exactly what that shop is here to do.
+    if (publicCommand === 'package_change') {
+      await this.handlePackageChangeRequest(event, identity.userId, requestId);
+      return;
+    }
+    if (publicCommand === 'profile_guard' || publicCommand === 'profile_guard_later') {
+      await this.handleProfileGuardAnswer(event, identity.userId, publicCommand === 'profile_guard');
       return;
     }
 
@@ -3067,6 +3302,23 @@ export class ProcessLineWebhookUseCase {
     } catch (err) {
       this.logger.error({ msg: 'AI Gateway error', requestId, error: (err as Error).message });
       const failure = classifyLineAiGatewayFailure(err);
+      // G-05: the month's AI budget is spent. Waiting cannot fix it, so this is the one gateway
+      // failure that gets a card instead of a "try again" line — and the one that must NOT leave a
+      // ledger entry for the reclaim worker to keep retrying against a closed admission.
+      if (failure.replyKind === 'budget_exceeded') {
+        await this.deliverRequiredMessages(event, [
+          buildAiBudgetExceededMessage(await this.isTrialTier(companyId)),
+        ]);
+        if (ledgerTurnId && this.ledger) {
+          await this.ledger.ack(
+            { key: ledgerKey(companyId, chatKey), id: ledgerTurnId, companyId, turnId: requestId, kind: 'turn' },
+            'refused',
+            { reason: 'ai_monthly_budget_exceeded' },
+          );
+        }
+        await this.updateEventLog(event.webhookEventId, failure.status, failure.errorCode, companyId);
+        return;
+      }
       await this.deliverReply(
         event,
         failure.replyKind === 'timeout'
