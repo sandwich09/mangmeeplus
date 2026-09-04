@@ -156,8 +156,29 @@ describe('SignupAdminQueueUseCase.decide — LINE-first source', () => {
     assert.deepEqual(h.provisioned, []);
   });
 
+  // Review HIGH-1: READY looked settled and was not. Treating it as done meant the queue never
+  // listed the row, approve returned early without provisioning, and the customer's LINE account
+  // stayed fenced by the open-application index with no admin path at all.
+  it('finishes a READY application instead of calling it done', async () => {
+    const h = harness({ request: { ...LINE_REQUEST, state: 'READY', companyId: 'co-1' } });
+    const result = await h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1', URLS);
+
+    assert.equal(h.provisioned.length, 1, 'the finish path has to actually be called');
+    assert.equal(h.provisioned[0].requestId, 'signup-1');
+    assert.equal(result.state, 'COMPLETED');
+  });
+
+  it('lists a READY LINE application so an admin can reach it', async () => {
+    const h = harness({ requests: [{ ...LINE_REQUEST, state: 'READY' }] });
+    const { items } = await h.useCase.list(NOW);
+    assert.equal(items.length, 1);
+    assert.deepEqual(h.requestQueries[0].where.OR[1], {
+      state: { in: ['PROVISIONING_FAILED', 'READY'] }, source: 'line-oa',
+    });
+  });
+
   it('treats a second tap on an already-provisioned application as a no-op', async () => {
-    for (const state of ['PROVISIONING', 'READY', 'COMPLETED']) {
+    for (const state of ['PROVISIONING', 'COMPLETED']) {
       const h = harness({ request: { ...LINE_REQUEST, state } });
       const result = await h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1', URLS);
       assert.equal(result.state, state);
@@ -194,7 +215,7 @@ describe('SignupAdminQueueUseCase.decide — LINE-first source', () => {
 
     assert.deepEqual(h.requestQueries[0].where.OR, [
       { state: { in: ['PENDING_REVIEW', 'EMAIL_PENDING', 'EMAIL_FAILED', 'EXPIRED'] } },
-      { state: 'PROVISIONING_FAILED', source: 'line-oa' },
+      { state: { in: ['PROVISIONING_FAILED', 'READY'] }, source: 'line-oa' },
     ]);
   });
 

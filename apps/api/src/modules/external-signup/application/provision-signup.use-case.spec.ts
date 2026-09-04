@@ -354,6 +354,30 @@ describe('ProvisionSignupUseCase — who counts as the operator', () => {
   });
 });
 
+// Review LOW-3: the adopt path skips onboarding, and onboarding is where the plan term is written.
+// A recovered web shop with no CompanyPlanTerm reads as unlimited, not as a trial.
+describe('ProvisionSignupUseCase — recovering an already-created company', () => {
+  it('gives a recovered web shop the term onboarding would have written', async () => {
+    const h = harness({ request: { companyId: 'co-1', ownerUserId: 'user-1' } });
+    await h.useCase.execute(CMD);
+
+    assert.equal(h.onboardingCalls.length, 0, 'the company already exists');
+    assert.equal(h.planTermUpserts.length, 1);
+    assert.equal(h.planTermUpserts[0].create.tierKey, 'PRO_999');
+    // Idempotent: a term the admin already set is never shortened by a retry.
+    assert.deepEqual(h.planTermUpserts[0].update, {});
+  });
+
+  it('leaves a recovered LINE shop to its own trial guards', async () => {
+    const h = harness({ request: { ...LINE_REQUEST, companyId: 'co-1', ownerUserId: 'user-1' } });
+    await h.useCase.execute(CMD);
+
+    // The trial guards upsert FREE_TRIAL_15 themselves; a PRO_999 preset here would race them.
+    assert.equal(h.planTermUpserts.length, 1);
+    assert.equal(h.planTermUpserts[0].create.tierKey, 'FREE_TRIAL_15');
+  });
+});
+
 describe('ProvisionSignupUseCase — fencing', () => {
   it('reads back the winner instead of provisioning twice', async () => {
     const h = harness({ claimed: false, request: { companyId: 'co-1', state: 'READY' } });

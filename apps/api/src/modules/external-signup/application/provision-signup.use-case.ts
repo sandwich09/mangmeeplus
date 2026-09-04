@@ -7,6 +7,7 @@ import { AppConfigService } from '../../../common/config/app-config.service';
 import { CreateCompanyOnboardingUseCase } from '../../system-onboarding/application/use-cases/create-company-onboarding.use-case';
 import { CompanySignupCoreService } from './company-signup-core.service';
 import { SignupAdminNotifyService } from './signup-admin-notify.service';
+import { applyPlanTermPreset } from '../../system-partner-management/application/use-cases/company-plan-term.use-cases';
 import { suggestedUsernameFromEmail } from '../domain/account-claim.logic';
 import { SIGNUP_SOURCE_LINE_OA } from '../domain/company-signup.logic';
 
@@ -88,7 +89,7 @@ export class ProvisionSignupUseCase {
       // means exactly that — re-running onboarding would try to create the owner's ExternalIdentity
       // a second time and fail on the unique constraint for as long as anyone kept retrying.
       const result = request.companyId
-        ? await this.adoptExistingCompany(request.companyId, request)
+        ? await this.adoptExistingCompany(request.companyId, request, lineOa, operator)
         : await this.createCompany(request, cmd, lineOa, operator);
 
       if (lineOa) await this.applyLineTrialGuards(result.companyId, request, cmd.correlationRequestId);
@@ -182,8 +183,13 @@ export class ProvisionSignupUseCase {
     request: SignupRow,
     cmd: ProvisionSignupCommand,
   ): Promise<{ userId: string; fromDirectory: boolean }> {
+    // Review LOW-1: the flag is a property of the ROW, not of who happened to call. AUTO_FREE
+    // resolves the operator up front and passes it explicitly, so asking "did I look it up?" here
+    // answered false on every real auto-approved run. What it means is "no admin decision named
+    // an operator, so one was found for us" — and that is exactly an unapproved row.
+    const fromDirectory = request.approvedByUserId === null;
     const explicit = cmd.actorUserId ?? request.approvedByUserId;
-    if (explicit) return { userId: explicit, fromDirectory: false };
+    if (explicit) return { userId: explicit, fromDirectory };
     const [operator] = await this.adminDirectory.activeSystemAdmins();
     if (operator) return { userId: operator.userId, fromDirectory: true };
     throw new ConflictException('signup_operator_unresolved');
@@ -231,7 +237,12 @@ export class ProvisionSignupUseCase {
    * thing left is to walk the fence forward over it. The owner is read back from the membership
    * onboarding created rather than re-derived, because that row IS what onboarding decided.
    */
-  private async adoptExistingCompany(companyId: string, request: SignupRow) {
+  private async adoptExistingCompany(
+    companyId: string,
+    request: SignupRow,
+    lineOa: boolean,
+    operator: { userId: string },
+  ) {
     const ownerUserId = request.ownerUserId ?? (await this.prisma.client.companyMembership.findFirst({
       where: { companyId, status: 'ACTIVE', roles: { some: { role: { key: 'OWNER' } } } },
       orderBy: { createdAt: 'asc' },
@@ -240,6 +251,14 @@ export class ProvisionSignupUseCase {
     if (!ownerUserId) {
       // A company with no owner is not something to finish provisioning over.
       throw new ConflictException('signup_provisioned_company_has_no_owner');
+    }
+    // Review LOW-3: skipping onboarding also skips its post-commit plan term, so a recovered web
+    // shop would have no CompanyPlanTerm at all — which reads as unlimited, not as a trial. The
+    // preset is the same one the create path names, and the upsert leaves an existing row alone.
+    // A LINE shop needs nothing here: its trial guards already upsert the term.
+    if (!lineOa) {
+      await this.bestEffort(companyId, request.id, 'plan_term_adopted', () =>
+        applyPlanTermPreset(this.prisma, companyId, 'PRO_999', 30, operator.userId));
     }
     return {
       companyId,

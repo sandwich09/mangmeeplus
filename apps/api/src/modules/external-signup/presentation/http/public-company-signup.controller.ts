@@ -10,7 +10,7 @@ import type {
   PublicCompanySignupAcceptedDto, PublicSignupStatusDto, SignupClaimInfoDto, SignupClaimResultDto,
 } from '@watchdog-bms/contracts';
 import { AppConfigService } from '../../../../common/config/app-config.service';
-import { publicApiBase, webAppBase } from '../../../../common/http/public-api-base';
+import { publicApiBase, requiredWebAppBase } from '../../../../common/http/public-api-base';
 import { Public } from '../../../../common/security/public.decorator';
 import { trustedClientIp } from '../../../../common/security/trusted-client-ip';
 import { AuthRateLimitService } from '../../../auth/application/auth-rate-limit.service';
@@ -156,7 +156,8 @@ export class PublicCompanySignupController {
       username: dto.username,
       password: dto.password,
       correlationRequestId: requestIdOf(req),
-      webBaseUrl: webAppBase(req),
+      // Persisted as the owner handoff: never the applicant-controlled Origin (review MEDIUM-2).
+      webBaseUrl: requiredWebAppBase(this.config.sesWebBaseUrl),
       apiBaseUrl: publicApiBase(req),
     });
   }
@@ -179,7 +180,8 @@ export class PublicCompanySignupController {
         identifier: dto.identifier,
         password: dto.password,
         correlationRequestId: requestIdOf(req),
-        webBaseUrl: webAppBase(req),
+        // Persisted as the owner handoff: never the applicant-controlled Origin (review MEDIUM-2).
+      webBaseUrl: requiredWebAppBase(this.config.sesWebBaseUrl),
         apiBaseUrl: publicApiBase(req),
       });
     } catch (error) {

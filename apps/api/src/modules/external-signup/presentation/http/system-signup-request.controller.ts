@@ -62,14 +62,15 @@ export class SystemSignupRequestController {
     @Body() dto: SignupDecisionRequestDto,
     @Req() req: Request & { context: RequestContext },
   ): Promise<AdminSignupDecisionDto> {
-    // Approving a LINE application provisions it inline, and provisioning needs the bases it puts
-    // in the owner handoff. Passed for every decision so the queue never has to ask twice.
-    // The web base is the configured one, never the caller's Origin (review L-1): this URL is
+    // Only APPROVE provisions, and only provisioning needs a handoff base. Resolving it for every
+    // decision made an unset WEB_BASE_URL a 503 on REJECT and SUSPEND too (review L-4) — and
+    // SUSPEND is the emergency stop, which must never depend on a link being configurable.
+    // The base is the configured one, never the caller's Origin (review L-1): this URL is
     // PERSISTED as the owner's way back into their shop, and the header is client-suppliable.
-    return this.queue.decide(requestId, dto, req.context.userId, req.context.requestId, {
-      webBaseUrl: requiredWebAppBase(this.config.sesWebBaseUrl),
-      apiBaseUrl: trustedPublicApiBase(req),
-    });
+    const urls = dto.action === 'APPROVE'
+      ? { webBaseUrl: requiredWebAppBase(this.config.sesWebBaseUrl), apiBaseUrl: trustedPublicApiBase(req) }
+      : undefined;
+    return this.queue.decide(requestId, dto, req.context.userId, req.context.requestId, urls);
   }
 
   @Post(':requestId/reissue-claim')

@@ -13,6 +13,14 @@ import {
 } from '../domain/company-signup.logic';
 
 const SERVICE_ACTOR = 'official-signup-core';
+
+/**
+ * How long a PROVISIONING row may sit untouched before another caller may take the fence from it.
+ * The onboarding transaction is capped at 15s (`create-company-onboarding.use-case.ts`), so this is
+ * that ceiling plus room for the post-commit tail — comfortably longer than any live attempt, and
+ * short enough that a killed task does not strand a customer for a working day.
+ */
+const STALE_PROVISIONING_MS = 90_000;
 const SPECIAL_PROVISIONING_STATES = new Set<CompanySignupState>(['PROVISIONING', 'READY', 'PROVISIONING_FAILED']);
 
 type ReceiveResult = Readonly<{ request: CompanySignupRequest; replayed: boolean }>;
@@ -77,22 +85,35 @@ export class CompanySignupCoreService {
     return this.changeState(requestId, toState, correlationRequestId, failureCode);
   }
 
-  async claimProvisioning(requestId: string, correlationRequestId: string): Promise<ProvisionClaim> {
+  async claimProvisioning(requestId: string, correlationRequestId: string, now = new Date()): Promise<ProvisionClaim> {
     return this.prisma.client.$transaction(async (tx) => {
       await this.lock(tx, requestId);
       const current = await this.findOrThrow(tx, requestId);
-      if (current.state === 'PROVISIONING' || current.state === 'READY'
-        || current.state === 'LINE_LINK_PENDING' || current.state === 'COMPLETED') {
+      if (current.state === 'READY' || current.state === 'LINE_LINK_PENDING' || current.state === 'COMPLETED') {
         return { request: current, claimed: false, attemptId: null };
       }
-      if (!canTransitionCompanySignup(current.state as CompanySignupState, 'PROVISIONING', current.source)) {
+      // A PROVISIONING row means someone is mid-flight — unless nobody is. Nothing releases the
+      // fence when the process holding it disappears (an ECS task replaced mid-transaction, a
+      // transaction that timed out), and there is no sweep, so without this the row is stuck at
+      // PROVISIONING forever. Re-claiming is safe because the retry adopts an already-created
+      // company rather than building a second one (review MEDIUM-3, HIGH-A).
+      const stale = current.state === 'PROVISIONING'
+        && current.provisioningStartedAt !== null
+        && now.getTime() - current.provisioningStartedAt.getTime() > STALE_PROVISIONING_MS;
+      if (current.state === 'PROVISIONING' && !stale) {
+        return { request: current, claimed: false, attemptId: null };
+      }
+      if (!stale && !canTransitionCompanySignup(current.state as CompanySignupState, 'PROVISIONING', current.source)) {
         throw new ConflictException(`invalid_signup_transition:${current.state}:PROVISIONING`);
       }
       const attemptId = randomUUID();
       const request = await this.casUpdate(tx, current, {
-        state: 'PROVISIONING', failureCode: null, provisioningAttemptId: attemptId, provisioningStartedAt: new Date(),
+        state: 'PROVISIONING', failureCode: null, provisioningAttemptId: attemptId, provisioningStartedAt: now,
       });
-      await this.appendEvidence(tx, request, current.state as CompanySignupState, 'PROVISIONING', correlationRequestId);
+      await this.appendEvidence(
+        tx, request, current.state as CompanySignupState, 'PROVISIONING', correlationRequestId,
+        stale ? 'signup.provisioning.reclaimed_stale' : undefined,
+      );
       return { request, claimed: true, attemptId };
     });
   }
@@ -206,12 +227,14 @@ export class CompanySignupCoreService {
     fromState: CompanySignupState | null,
     toState: CompanySignupState,
     correlationRequestId: string,
+    /** Names the transition when it is not an ordinary one — a stale fence takeover, say. */
+    action?: string,
   ): Promise<void> {
     const failed = isCompanySignupFailureState(toState);
     await tx.auditLog.create({
       data: {
         actorType: 'SERVICE', actorRefId: SERVICE_ACTOR,
-        action: fromState ? 'signup.request.transition' : 'signup.request.received',
+        action: action ?? (fromState ? 'signup.request.transition' : 'signup.request.received'),
         targetType: 'company_signup_request', targetId: request.id, requestId: correlationRequestId,
         result: failed ? 'FAILED' : 'SUCCESS',
         riskLevel: toState === 'PROVISIONING' || toState === 'READY' ? 'HIGH' : 'MEDIUM',

@@ -44,4 +44,15 @@ describe('SystemSignupRequestController — the handoff base an approval persist
     );
     assert.deepEqual(h.decisions, []);
   });
+
+  // Review L-4: only APPROVE provisions, so only APPROVE needs a handoff base. Resolving it for
+  // every decision made an unset WEB_BASE_URL break the emergency stop as well.
+  it('still rejects and suspends when no web origin is configured', async () => {
+    for (const action of ['REJECT', 'SUSPEND'] as const) {
+      const h = harness(null);
+      const result = await h.controller.decide('signup-1', { action } as any, REQ);
+      assert.equal(result.requestId, 'signup-1');
+      assert.equal(h.decisions[0][4], undefined, 'no handoff base is needed or resolved');
+    }
+  });
 });

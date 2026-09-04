@@ -14,7 +14,9 @@ import {
   type AdminSignupQueueItemDto,
 } from './signup-requests.api';
 import {
+  approveLabel,
   canApproveSignup,
+  canRejectSignup,
   canReissueSignup,
   canSuspendSignup,
   filterSignupQueue,
@@ -356,17 +358,21 @@ export default function SignupQueuePage() {
                                     onClick={() => void handleApprove(item)}
                                     className={`${rowActionClass} border-green-300 bg-green-50 text-green-700 hover:bg-green-100`}
                                   >
-                                    {busy ? 'กำลังทำรายการ...' : item.state === 'PROVISIONING_FAILED' ? 'ลองเปิดร้านอีกครั้ง' : 'อนุมัติ'}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    disabled={busy}
-                                    onClick={() => { setNotifyApplicant(false); setRejectionReason(''); setRejecting(item); }}
-                                    className={`${rowActionClass} border-red-200 bg-red-50 text-red-600 hover:bg-red-100`}
-                                  >
-                                    ปฏิเสธ
+                                    {busy ? 'กำลังทำรายการ...' : approveLabel(item.state)}
                                   </button>
                                 </>
+                              )}
+                              {/* Rejecting is only a decision before one has been made; every other
+                                  state answers 409, so the button used to be a dead end. */}
+                              {canRejectSignup(item.state) && (
+                                <button
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={() => { setNotifyApplicant(false); setRejectionReason(''); setRejecting(item); }}
+                                  className={`${rowActionClass} border-red-200 bg-red-50 text-red-600 hover:bg-red-100`}
+                                >
+                                  ปฏิเสธ
+                                </button>
                               )}
                               {canReissueSignup(item.state) && (
                                 <button
@@ -388,8 +394,8 @@ export default function SignupQueuePage() {
                                   ระงับ
                                 </button>
                               )}
-                              {!canApproveSignup(item.state, item) && !canReissueSignup(item.state)
-                                && !canSuspendSignup(item) && (
+                              {!canApproveSignup(item.state, item) && !canRejectSignup(item.state)
+                                && !canReissueSignup(item.state) && !canSuspendSignup(item) && (
                                 <span className="text-xs text-gray-400">—</span>
                               )}
                             </div>

@@ -2,7 +2,9 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { AdminSignupQueueItemDto } from '@watchdog-bms/contracts';
 import {
+  approveLabel,
   canApproveSignup,
+  canRejectSignup,
   canReissueSignup,
   canSuspendSignup,
   filterSignupQueue,
@@ -42,17 +44,40 @@ describe('isLineSignup', () => {
 describe('a failed provisioning is actionable, not just labelled', () => {
   const failed = (source = 'line-oa') => item({ state: 'PROVISIONING_FAILED', source });
 
+  const ready = (source = 'line-oa') => item({ state: 'READY', source });
+
   it('offers approve as the retry, but only for the source whose API accepts it', () => {
     assert.equal(canApproveSignup('PROVISIONING_FAILED', failed()), true);
+    // Review HIGH-1: READY is the other recovery — the shop exists, the last step did not land.
+    assert.equal(canApproveSignup('READY', ready()), true);
     // Flow B has no retry an admin could reach — approve, reject and reissue all 409.
     assert.equal(canApproveSignup('PROVISIONING_FAILED', failed('official-site')), false);
+    assert.equal(canApproveSignup('READY', ready('official-site')), false);
     assert.equal(canApproveSignup('PROVISIONING_FAILED'), false, 'no item, no claim');
     assert.equal(canApproveSignup('PENDING_REVIEW'), true, 'the ordinary case is unchanged');
   });
 
-  it('lists the row under the problem tab, where an operator would look for it', () => {
-    const items = [failed(), item({ state: 'PENDING_REVIEW' })];
-    assert.deepEqual(filterSignupQueue(items, 'PROBLEM').map((i) => i.state), ['PROVISIONING_FAILED']);
+  // Review MEDIUM-1: the reject button used to render inside the approve block, so it appeared on
+  // exactly the rows where `decide(REJECT)` answers 409.
+  it('offers reject only before a decision has been made', () => {
+    assert.equal(canRejectSignup('PENDING_REVIEW'), true);
+    for (const state of ['PROVISIONING_FAILED', 'READY', 'COMPLETED', 'EMAIL_PENDING']) {
+      assert.equal(canRejectSignup(state), false, state);
+    }
+  });
+
+  it('says what the approve button will actually do', () => {
+    assert.equal(approveLabel('PENDING_REVIEW'), 'อนุมัติ');
+    assert.equal(approveLabel('PROVISIONING_FAILED'), 'ลองเปิดร้านอีกครั้ง');
+    assert.equal(approveLabel('READY'), 'ปิดงาน');
+  });
+
+  it('lists both recoverable rows under the problem tab, where an operator would look', () => {
+    const items = [failed(), ready(), item({ state: 'PENDING_REVIEW' })];
+    assert.deepEqual(
+      filterSignupQueue(items, 'PROBLEM').map((i) => i.state),
+      ['PROVISIONING_FAILED', 'READY'],
+    );
   });
 
   it('offers suspend on a LINE row and nowhere else', () => {

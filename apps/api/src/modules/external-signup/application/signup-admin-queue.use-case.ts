@@ -19,19 +19,27 @@ import { SIGNUP_SOURCE_LINE_OA, type CompanySignupState } from '../domain/compan
 const QUEUE_STATES: readonly CompanySignupState[] = ['PENDING_REVIEW', 'EMAIL_PENDING', 'EMAIL_FAILED', 'EXPIRED'];
 
 /**
- * Review MEDIUM-D: a failed provisioning is shown for the LINE source ONLY. There the fence
- * releases precisely so an admin can retry, and an unseen row also leaves the customer's LINE
- * account fenced by the open-application index with no way out. A web-form row in that state has
- * no retry an admin could reach — approve, reject and reissue all 409 — so listing it would be an
- * invitation to three dead ends. Flow B retry semantics are L-C.
+ * Review MEDIUM-D: shown for the LINE source ONLY. There the fence releases precisely so an admin
+ * can retry, and an unseen row also leaves the customer's LINE account fenced by the
+ * open-application index with no way out. A web-form row in either state has no retry an admin
+ * could reach — approve, reject and reissue all 409 — so listing it would be an invitation to
+ * three dead ends. Flow B retry semantics are L-C.
  */
-const LINE_ONLY_QUEUE_STATE: CompanySignupState = 'PROVISIONING_FAILED';
+const LINE_ONLY_QUEUE_STATES: readonly CompanySignupState[] = ['PROVISIONING_FAILED', 'READY'];
 
 /** Spec §4D ④: an approved request never dead-ends, so reissue has no age limit. */
 const REISSUABLE_STATES: readonly CompanySignupState[] = ['EMAIL_PENDING', 'EMAIL_FAILED', 'EXPIRED'];
 
-/** A LINE approval provisions inline, so a repeated tap lands on one of these, not on a conflict. */
-const SETTLED_STATES: readonly CompanySignupState[] = ['PROVISIONING', 'READY', 'COMPLETED'];
+/**
+ * A LINE approval provisions inline, so a repeated tap lands on one of these, not on a conflict.
+ * READY is deliberately NOT here: it looks settled and is not — the shop exists but the
+ * application has not closed, and treating it as done left the customer's LINE account fenced by
+ * the open-application index with no way for an admin to finish it.
+ */
+const SETTLED_STATES: readonly CompanySignupState[] = ['PROVISIONING', 'COMPLETED'];
+
+/** States a LINE application can be approved out of: the first decision, and the two recoveries. */
+const LINE_APPROVABLE_STATES: readonly CompanySignupState[] = ['PENDING_REVIEW', 'PROVISIONING_FAILED', 'READY'];
 
 @Injectable()
 export class SignupAdminQueueUseCase {
@@ -48,7 +56,7 @@ export class SignupAdminQueueUseCase {
       where: {
         OR: [
           { state: { in: QUEUE_STATES as CompanySignupState[] } },
-          { state: LINE_ONLY_QUEUE_STATE, source: SIGNUP_SOURCE_LINE_OA },
+          { state: { in: LINE_ONLY_QUEUE_STATES as CompanySignupState[] }, source: SIGNUP_SOURCE_LINE_OA },
         ],
       },
       orderBy: [{ state: 'asc' }, { createdAt: 'asc' }],
@@ -107,11 +115,12 @@ export class SignupAdminQueueUseCase {
     if (body.action === 'SUSPEND') return this.suspend(request, adminUserId, correlationRequestId);
 
     if (body.action === 'APPROVE') {
-      // A LINE application may also be approved out of PROVISIONING_FAILED: that IS the retry, and
-      // the P10-0 fence makes it idempotent — a second attempt either finishes the shop the first
-      // one started or fails again, but never creates a second one.
-      const approvable = request.state === 'PENDING_REVIEW'
-        || (lineOa && request.state === 'PROVISIONING_FAILED');
+      // A LINE application may also be approved out of PROVISIONING_FAILED or READY: those ARE the
+      // retry and the finish, and the P10-0 fence makes both idempotent — a second attempt either
+      // completes the shop the first one started or fails again, never creating a second one.
+      const approvable = lineOa
+        ? LINE_APPROVABLE_STATES.includes(request.state as CompanySignupState)
+        : request.state === 'PENDING_REVIEW';
       if (!approvable) {
         // Already approved is a no-op; anything else is a real conflict the admin should see.
         if (request.state === 'EMAIL_PENDING') return { requestId, state: request.state };

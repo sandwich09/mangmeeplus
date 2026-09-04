@@ -4,7 +4,8 @@ import { IsBoolean, IsIn, IsNotEmpty, IsOptional, IsString, MaxLength, ValidateN
 import { Type } from 'class-transformer';
 import type { Request } from 'express';
 import { COMPANY_BUSINESS_CATEGORIES, VAT_FACT_STATUSES, type CompanyBusinessCategory, type VatFactStatus } from '@watchdog-bms/contracts';
-import { trustedPublicApiBase, webAppBase } from '../../../../common/http/public-api-base';
+import { requiredWebAppBase, trustedPublicApiBase } from '../../../../common/http/public-api-base';
+import { AppConfigService } from '../../../../common/config/app-config.service';
 import { RequirePermissions } from '../../../../common/security/permissions.decorator';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import { CreateCompanyOnboardingUseCase } from '../../application/use-cases/create-company-onboarding.use-case';
@@ -45,6 +46,7 @@ export class SystemOnboardingController {
     private readonly getOnboarding: GetCompanyOnboardingUseCase,
     private readonly regeneratePassword: RegenerateTemporaryPasswordUseCase,
     private readonly reissueOwnerLineLink: ReissueOwnerLineLinkUseCase,
+    private readonly config: AppConfigService,
   ) {}
 
   @Post()
@@ -70,7 +72,9 @@ export class SystemOnboardingController {
       lineLinkUrl: dto.lineLinkUrl,
       requestingAdminUserId: req.context.userId,
       requestId: req.context.requestId,
-      webBaseUrl: webAppBase(req),
+      // Persisted on the onboarding run as the owner's handoff, so it is the configured web origin
+      // and never a header the caller controls (review MEDIUM-2).
+      webBaseUrl: requiredWebAppBase(this.config.sesWebBaseUrl),
       apiBaseUrl: trustedPublicApiBase(req),
     });
   }

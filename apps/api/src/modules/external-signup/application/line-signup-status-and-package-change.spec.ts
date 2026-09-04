@@ -8,7 +8,7 @@ const NOW = new Date('2026-09-03T10:00:00+07:00');
 
 const CONFIG = { lineSignupBusinessDays: 'MON-SAT', lineSignupBusinessHours: '09:00-18:00' } as any;
 
-function statusHarness(row: any, verifyThrows?: Error) {
+function statusHarness(row: any, verifyThrows?: Error, attemptBucketFull = false) {
   const queries: any[] = [];
   const prisma = {
     client: {
@@ -23,7 +23,14 @@ function statusHarness(row: any, verifyThrows?: Error) {
       return { providerUserId: 'Uline-1', channelId: 'channel-1' };
     },
   } as any;
-  return { useCase: new GetLineSignupStatusUseCase(prisma, CONFIG, lineIdToken), queries };
+  const attempts: string[] = [];
+  const rateLimit = {
+    assertLineSignupAttemptAllowed: async (key: string) => {
+      attempts.push(key);
+      if (attemptBucketFull) throw new Error('Too many requests');
+    },
+  } as any;
+  return { useCase: new GetLineSignupStatusUseCase(prisma, CONFIG, lineIdToken, rateLimit), queries, attempts };
 }
 
 describe('GetLineSignupStatusUseCase', () => {
@@ -49,6 +56,20 @@ describe('GetLineSignupStatusUseCase', () => {
 
   it('answers null for a LINE account that never applied', async () => {
     assert.equal(await statusHarness(null).useCase.execute('aaaa.bbbb.cccc', NOW), null);
+  });
+
+  // Residual risk from L-4: this route verifies an ID token too, and its own bucket is IP-only —
+  // so one account behind changing addresses could drive the verifications submit no longer allows.
+  it('charges the per-account attempt quota once the token says whose it is', async () => {
+    const h = statusHarness({ id: 'signup-1', state: 'PENDING_REVIEW', companyName: 'ร้าน', companyId: null });
+    await h.useCase.execute('aaaa.bbbb.cccc', NOW);
+    assert.deepEqual(h.attempts, ['Uline-1']);
+  });
+
+  it('reads nothing once that quota is spent', async () => {
+    const h = statusHarness(null, undefined, true);
+    await assert.rejects(() => h.useCase.execute('aaaa.bbbb.cccc', NOW), /Too many requests/);
+    assert.deepEqual(h.queries, []);
   });
 
   it('reads nothing when the token does not verify', async () => {

@@ -3,6 +3,7 @@ import type { LineSignupStatusDto } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import { LineIdTokenService } from '../../auth/application/line-id-token.service';
+import { AuthRateLimitService } from '../../auth/application/auth-rate-limit.service';
 import { isBusinessHours } from '../domain/business-hours.logic';
 import { SIGNUP_SOURCE_LINE_OA } from '../domain/company-signup.logic';
 
@@ -16,10 +17,15 @@ export class GetLineSignupStatusUseCase {
     private readonly prisma: PrismaService,
     private readonly config: AppConfigService,
     private readonly lineIdToken: LineIdTokenService,
+    private readonly rateLimit: AuthRateLimitService,
   ) {}
 
   async execute(idToken: string, now = new Date()): Promise<LineSignupStatusDto> {
     const verified = await this.lineIdToken.verify(idToken);
+    // This route also verifies an ID token, and its own bucket is keyed on IP alone — so one
+    // account behind changing addresses could drive unbounded verifications here instead. Same
+    // per-account attempt quota as submit, charged once the token says whose it is.
+    await this.rateLimit.assertLineSignupAttemptAllowed(verified.providerUserId);
     const request = await this.prisma.client.companySignupRequest.findFirst({
       where: {
         source: SIGNUP_SOURCE_LINE_OA,

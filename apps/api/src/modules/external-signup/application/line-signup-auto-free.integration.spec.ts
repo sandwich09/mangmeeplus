@@ -144,10 +144,35 @@ function fakePrisma(options: { systemAdmins?: string[] } = {}) {
     }),
   };
 
+  /**
+   * Everything the store holds, so a transaction can be rolled back. Without this the fake commits
+   * partial work on a throw and "written inside the SAME transaction" is not a claim any test can
+   * make — the `companyId` stamp could be moved outside the tx and every test would stay green.
+   */
+  const stores = () => [requests, planTerms, aiConfigs, lineContexts] as Map<string, any>[];
+  const arrays = () => [chartRows, audits, identities, legalRows, onboardingRuns, memberships];
+  const snapshot = () => ({
+    maps: stores().map((m) => new Map([...m].map(([k, v]) => [k, { ...v }]))),
+    lists: arrays().map((a) => [...a]),
+  });
+  const restore = (snap: ReturnType<typeof snapshot>) => {
+    stores().forEach((m, i) => { m.clear(); for (const [k, v] of snap.maps[i]!) m.set(k, v); });
+    arrays().forEach((a, i) => { a.length = 0; a.push(...snap.lists[i]!); });
+  };
+
   const client: any = new Proxy({}, {
     get: (_t, prop: string) => {
       if (prop === '$transaction') {
-        return async (arg: any) => (typeof arg === 'function' ? arg(client) : Promise.all(arg));
+        return async (arg: any) => {
+          if (typeof arg !== 'function') return Promise.all(arg);
+          const before = snapshot();
+          try {
+            return await arg(client);
+          } catch (error) {
+            restore(before);
+            throw error;
+          }
+        };
       }
       if (prop === '$executeRaw') return async () => 0;
       models[prop] ??= auto(prop);
@@ -207,6 +232,7 @@ function harness(options: { systemAdmins?: string[]; config?: Record<string, unk
   return {
     submit: new SubmitLineSignupUseCase(store.prisma, config, core, lineIdToken, rateLimit, adminNotify, provision),
     provision,
+    core,
     store,
     notified,
   };
@@ -353,6 +379,90 @@ describe('a provisioning that dies in its tail is recoverable (review HIGH-A / H
       assert.doesNotMatch(error.message, /provisioning_attempt_mismatch/);
       return true;
     });
+  });
+});
+
+describe('the company link is written inside the company transaction', () => {
+  // The discriminating probe. A rollback test alone cannot tell "inside" from "just after": when
+  // the transaction throws, a post-transaction stamp is skipped too, so both look identical. This
+  // reads the row from INSIDE the still-open transaction, where only an in-tx write is visible.
+  it('has already linked the request by the time the rest of the transaction runs', async () => {
+    const h = harness();
+    let linkedDuringTransaction: string | undefined;
+    const realCreate = h.store.prisma.client.companyOnboardingRun.create;
+    h.store.prisma.client.companyOnboardingRun.create = async (args: any) => {
+      linkedDuringTransaction = [...h.store.requests.values()][0]?.companyId;
+      return realCreate(args);
+    };
+
+    await h.submit.execute(CMD, NOW);
+    assert.equal(linkedDuringTransaction, 'co-1', 'the stamp must commit WITH the company, not after it');
+  });
+
+  it('leaves no company and no link when onboarding rolls back after the stamp', async () => {
+    const h = harness();
+    // The stamp happens early in the transaction; this dies later in the same one. If the write
+    // were ever moved outside the tx, the request would keep a companyId for a company that does
+    // not exist — and the retry would adopt a ghost.
+    h.store.prisma.client.companyOnboardingRun.create = async () => {
+      throw new Error('task replaced mid-transaction');
+    };
+
+    await assert.rejects(() => h.submit.execute(CMD, NOW), /task replaced/);
+    const request = [...h.store.requests.values()][0];
+    assert.equal(request.companyId, undefined, 'the link rolled back with the company');
+    assert.deepEqual(h.store.onboardingRuns, []);
+    assert.deepEqual(h.store.identities, [], 'and so did the owner identity');
+  });
+});
+
+describe('a fence nobody is holding can be taken (review MEDIUM-3)', () => {
+  const claimAgain = (h: ReturnType<typeof harness>, id: string, now: Date) =>
+    h.core.claimProvisioning(id, 'req-2', now);
+
+  it('refuses while an attempt is plausibly still running', async () => {
+    const h = harness();
+    await h.submit.execute(CMD, NOW);
+    const request = [...h.store.requests.values()][0];
+    // Put it back mid-flight, one second old.
+    Object.assign(request, { state: 'PROVISIONING', provisioningStartedAt: new Date(NOW.getTime() - 1_000) });
+
+    const claim = await claimAgain(h, request.id, NOW);
+    assert.equal(claim.claimed, false, 'a live attempt keeps the fence');
+  });
+
+  it('re-claims a row whose holder disappeared, and records that it did', async () => {
+    const h = harness();
+    await h.submit.execute(CMD, NOW);
+    const request = [...h.store.requests.values()][0];
+    // Nothing releases the fence when the process holding it dies, and there is no sweep.
+    Object.assign(request, { state: 'PROVISIONING', provisioningStartedAt: new Date(NOW.getTime() - 120_000) });
+    const attemptBefore = request.provisioningAttemptId;
+
+    const claim = await claimAgain(h, request.id, NOW);
+    assert.equal(claim.claimed, true);
+    assert.notEqual(claim.attemptId, attemptBefore, 'a new attempt owns it now');
+    assert.ok(h.store.audits.some((a) => a.action === 'signup.provisioning.reclaimed_stale'));
+  });
+
+  it('adopts the company the dead attempt had already committed', async () => {
+    const h = harness();
+    await h.submit.execute(CMD, NOW);
+    const request = [...h.store.requests.values()][0];
+    // The crash shape MEDIUM-3 describes: mid-flight forever, but the company did commit.
+    Object.assign(request, { state: 'PROVISIONING', provisioningStartedAt: new Date(NOW.getTime() - 120_000) });
+
+    await h.provision.execute({
+      requestId: request.id,
+      actorUserId: 'sysadmin-1',
+      correlationRequestId: 'req-2',
+      webBaseUrl: CMD.webBaseUrl,
+      apiBaseUrl: CMD.apiBaseUrl,
+    });
+
+    assert.equal(request.state, 'COMPLETED');
+    assert.equal(h.store.onboardingRuns.length, 1, 'no second company was built');
+    assert.equal(h.store.identities.length, 1);
   });
 });
 

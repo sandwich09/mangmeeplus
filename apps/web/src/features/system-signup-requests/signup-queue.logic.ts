@@ -18,6 +18,7 @@ const STATE_CHIP: Record<string, Chip> = {
   EXPIRED: { label: 'ลิงก์หมดอายุ', tone: 'warning' },
   REJECTED: { label: 'ปฏิเสธแล้ว', tone: 'neutral' },
   PROVISIONING_FAILED: { label: 'เปิดร้านไม่สำเร็จ กดอนุมัติเพื่อลองใหม่', tone: 'danger' },
+  READY: { label: 'เปิดร้านแล้ว รอปิดงาน กดอนุมัติเพื่อปิดงาน', tone: 'warning' },
   COMPLETED: { label: 'เปิดใช้งานแล้ว', tone: 'success' },
 };
 
@@ -67,9 +68,23 @@ export function signupBusinessSummary(item: AdminSignupQueueItemDto): string {
 
 export function canApproveSignup(state: string, item?: AdminSignupQueueItemDto): boolean {
   if (state === 'PENDING_REVIEW') return true;
-  // P10-L: for a LINE application, approving a failed provisioning IS the retry — the API accepts
-  // it and the fence makes it idempotent. The queue said so on the chip before it allowed it.
-  return state === 'PROVISIONING_FAILED' && item !== undefined && isLineSignup(item);
+  // P10-L: for a LINE application, approving is also the RECOVERY. PROVISIONING_FAILED retries;
+  // READY means the shop was built and the last step did not land, so approving closes it. Both
+  // are idempotent behind the fence, and both leave the customer's LINE account locked until done.
+  if (item === undefined || !isLineSignup(item)) return false;
+  return state === 'PROVISIONING_FAILED' || state === 'READY';
+}
+
+/** Rejecting only makes sense before a decision: the API answers 409 in every other state. */
+export function canRejectSignup(state: string): boolean {
+  return state === 'PENDING_REVIEW';
+}
+
+/** What the approve button DOES here, so the operator is not told "approve" for a recovery. */
+export function approveLabel(state: string): string {
+  if (state === 'PROVISIONING_FAILED') return 'ลองเปิดร้านอีกครั้ง';
+  if (state === 'READY') return 'ปิดงาน';
+  return 'อนุมัติ';
 }
 
 /** Only a LINE application can be suspended: spec §3.7 is about stopping an auto-approved shop. */
@@ -101,5 +116,5 @@ export function filterSignupQueue(
   // A bounce flag counts as a problem even if the state has not flipped to EMAIL_FAILED yet, and a
   // provisioning that failed is the most actionable problem of the lot.
   return items.filter((i) => i.state === 'EMAIL_FAILED' || i.state === 'EXPIRED'
-    || i.state === 'PROVISIONING_FAILED' || i.emailDeliveryFailed);
+    || i.state === 'PROVISIONING_FAILED' || i.state === 'READY' || i.emailDeliveryFailed);
 }
