@@ -3,6 +3,7 @@ import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import {
   EMPLOYEE_DOOR_COMMAND,
   PACKAGE_CHANGE_COMMAND,
+  STAFF_CONTACT_COMMAND,
   PROFILE_GUARD_COMMAND,
   PROFILE_GUARD_LATER_COMMAND,
   VIEW_PACKAGES_COMMAND,
@@ -355,9 +356,10 @@ export function buildLegalAcceptanceRequiredMessage(
  * A missing LIFF id (unconfigured env) drops that door rather than sending a broken link — the same
  * fail-open policy every other card here uses for an unusable URL.
  */
-export function buildSignupDoorCard(liffId: string | undefined): LineReplyMessage {
+export function buildSignupDoorCard(liffId: string | undefined, webBaseUrl?: string): LineReplyMessage {
   const liff = liffId && LIFF_ID_PATTERN.test(liffId) ? liffId : undefined;
   const text = 'สวัสดีค่ะ ยินดีต้อนรับสู่มั่งมีพลัส เลือกทางที่ตรงกับคุณได้เลยค่ะ';
+  const linkUrl = existingAccountLinkUrl(webBaseUrl);
   return {
     type: 'flex',
     altText: preview(text, 400),
@@ -370,14 +372,40 @@ export function buildSignupDoorCard(liffId: string | undefined): LineReplyMessag
       [
         ...(liff ? [{ label: 'เปิดร้านใหม่ ทดลองฟรี', uri: `https://liff.line.me/${liff}/signup` }] : []),
         { label: EMPLOYEE_DOOR_COMMAND, text: EMPLOYEE_DOOR_COMMAND },
-        ...(liff ? [{ label: 'มีบัญชีอยู่แล้ว เชื่อม LINE', uri: `https://liff.line.me/${liff}` }] : []),
+        ...(linkUrl ? [{ label: 'มีบัญชีอยู่แล้ว เชื่อม LINE', uri: linkUrl }] : []),
+        // §7: the one door that reaches a person. Without it the keyword is typing-only and the
+        // people most likely to need it are the ones least likely to guess it.
+        { label: STAFF_CONTACT_COMMAND, text: STAFF_CONTACT_COMMAND },
       ],
     ),
   };
 }
 
+/**
+ * P12 link mode, NOT the LIFF account link-page: that page asks `getWatchDogToken()` for
+ * `localStorage['watchdog_access_token']`, a key nothing in the product writes any more, so every
+ * tap ended on "WatchDog session missing. Login to WatchDog first." — in English, on a Thai card.
+ *
+ * `line=link-required` is the notice `LoginPage` renders for exactly this case: sign in once with a
+ * password and the page hands the browser back to LINE, which links the account. `next=/` because
+ * the session gate resolves the company itself; a card is built before anyone is identified.
+ * `openExternalBrowser=1` is hardcoded (as `line-web-qr.logic.ts` does) because a Flex URI is a
+ * static string — the client-side UA helper cannot run here, and the login cookie has to land in
+ * the same browser that finishes the round trip.
+ */
+function existingAccountLinkUrl(webBaseUrl: string | undefined): string | undefined {
+  if (!webBaseUrl) return undefined;
+  try {
+    const base = new URL(webBaseUrl);
+    if (base.protocol !== 'https:' && base.protocol !== 'http:') return undefined;
+    return `${base.origin}/login?line=link-required&next=%2F&openExternalBrowser=1`;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Only what LINE itself accepts in a LIFF URL: `<channel digits>-<id>`. */
-const LIFF_ID_PATTERN = /^[0-9]{4,20}-[A-Za-z0-9]{1,32}$/;
+export const LIFF_ID_PATTERN = /^[0-9]{4,20}-[A-Za-z0-9]{1,32}$/;
 
 /**
  * P10-L §3.1/§7. The door card becomes this one while an application is travelling: the same three
@@ -391,7 +419,13 @@ export function buildSignupStatusCard(companyName: string, businessHours: boolea
   return {
     type: 'flex',
     altText: preview(text, 400),
-    contents: bubble({ title: 'ได้รับคำขอแล้ว', badge: '⏳ กำลังตรวจสอบ', text }, undefined, '', []),
+    contents: bubble(
+      { title: 'ได้รับคำขอแล้ว', badge: '⏳ กำลังตรวจสอบ', text },
+      undefined,
+      '',
+      // Waiting is exactly when someone wants a person, so this card carries the door too (§7).
+      [{ label: STAFF_CONTACT_COMMAND, text: STAFF_CONTACT_COMMAND }],
+    ),
   };
 }
 

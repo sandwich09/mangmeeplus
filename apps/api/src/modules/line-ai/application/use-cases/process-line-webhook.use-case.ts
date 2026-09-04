@@ -82,7 +82,7 @@ import { LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERRO
 import { LineAiLedgerService, ledgerKey, type LedgerEntry } from '../line-ai-ledger.service';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
 import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, isCapabilityQuestion, staffMenuCommand, PACKAGE_CHANGE_COMMAND, PENDING_APPROVAL_ITEM_LIMIT, type ApprovalSurfaceKey, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
-import { buildAiBudgetExceededMessage, buildExpenseDraftCardMessage, buildLegalAcceptanceRequiredMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildReceiptQuotaExceededMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, buildSignupDoorCard, buildSignupStatusCard, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
+import { buildAiBudgetExceededMessage, buildExpenseDraftCardMessage, buildLegalAcceptanceRequiredMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildReceiptQuotaExceededMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, buildSignupDoorCard, buildSignupStatusCard, LIFF_ID_PATTERN, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
 // P10-L: the LINE surface opens a package-change request and tells the operators about a support
 // request; both live in the signup module, which owns those rules and their audit.
 import { PackageChangeRequestUseCase } from '../../../external-signup/application/package-change-request.use-case';
@@ -171,6 +171,9 @@ const UNLINKED_REPLY = '🔗 กรุณาเชื่อมต่อบัญ
 /** The staff door of §3.1: the employee link is issued by the owner, never self-served. */
 const EMPLOYEE_DOOR_REPLY = '👋 ยินดีต้อนรับค่ะ ถ้าคุณเป็นพนักงาน ให้เจ้าของร้านเปิดเมนู "พนักงาน" ในเว็บแอป '
   + 'แล้วส่งลิงก์เชื่อม LINE มาให้นะคะ กดลิงก์นั้นครั้งเดียวก็ใช้งานได้เลยค่ะ (ไม่ต้องสมัครร้านใหม่นะคะ)';
+/** L-17: the greeting for someone the system already knows. Short on purpose — they came back. */
+const WELCOME_BACK_REPLY = '👋 ยินดีต้อนรับกลับมานะคะ ส่งรูปใบเสร็จ หรือถามยอดขายในแชทนี้ได้เลยค่ะ '
+  + 'ถ้าต้องการคุยกับทีมงาน พิมพ์ ติดต่อเจ้าหน้าที่ ได้เลยนะคะ';
 const STAFF_CONTACT_REPLY = '📮 รับเรื่องแล้วค่ะ ทีมงานจะตอบในแชทนี้ในเวลาทำการ (จันทร์–เสาร์ 9:00–18:00) นะคะ';
 /** Sent while a support pause is running, in place of every assistant answer (§8). */
 const SUPPORT_PAUSED_REPLY = '📮 ทีมงานรับเรื่องแล้วค่ะ กำลังดูให้อยู่ เดี๋ยวตอบในแชทนี้นะคะ';
@@ -1502,21 +1505,48 @@ export class ProcessLineWebhookUseCase {
    * keyed by the same (channel, LINE user) pair the identity lookup above uses.
    */
   private async entryDoorMessage(lineUserId: string): Promise<LineReplyMessage> {
-    const pending = await this.prisma.client.companySignupRequest.findFirst({
+    const pending = await this.findOpenLineSignup(lineUserId);
+    if (!pending) return this.doorCard();
+    return buildSignupStatusCard(pending.companyName, isBusinessHours(new Date(), {
+      days: this.config.lineSignupBusinessDays,
+      hours: this.config.lineSignupBusinessHours,
+    }));
+  }
+
+  /**
+   * A LINE user id only means anything WITHIN one messaging channel, so an unset channel id must
+   * read as "no rows", never as "any channel" — an absent Prisma filter silently matches every row.
+   */
+  private async findOpenLineSignup(lineUserId: string): Promise<{ companyName: string } | null> {
+    const lineChannelId = this.config.lineMessagingChannelId;
+    if (!lineChannelId) return null;
+    return this.prisma.client.companySignupRequest.findFirst({
       where: {
         source: SIGNUP_SOURCE_LINE_OA,
         lineProviderUserId: lineUserId,
-        lineChannelId: this.config.lineMessagingChannelId ?? undefined,
+        lineChannelId,
         state: { in: [...OPEN_LINE_SIGNUP_STATES] },
       },
       orderBy: { createdAt: 'desc' },
       select: { companyName: true },
     });
-    if (!pending) return buildSignupDoorCard(this.config.lineLiffId);
-    return buildSignupStatusCard(pending.companyName, isBusinessHours(new Date(), {
-      days: this.config.lineSignupBusinessDays,
-      hours: this.config.lineSignupBusinessHours,
-    }));
+  }
+
+  /**
+   * The three doors, with the LIFF id checked once. An id that cannot be a LIFF id would silently
+   * cost the card two of its three doors, so it says so at ERROR rather than degrading quietly —
+   * the staff door still works, which is why the card is still worth sending.
+   */
+  private doorCard(): LineReplyMessage {
+    const liffId = this.config.lineLiffId;
+    if (!liffId || !LIFF_ID_PATTERN.test(liffId)) {
+      this.logger.error({
+        msg: 'line.signup.liff_id_unusable',
+        riskLevel: 'HIGH',
+        configured: Boolean(liffId),
+      });
+    }
+    return buildSignupDoorCard(liffId, this.config.sesWebBaseUrl);
   }
 
   /** §15.1: "ช่วงทดลอง" is only true of the trial tier; every other shop hears about its package. */
@@ -1549,10 +1579,15 @@ export class ProcessLineWebhookUseCase {
   private async handleStaffContact(event: LineTextEvent, requestId: string): Promise<void> {
     const paused = await this.pauseAssistant(event.lineUserId);
     await this.deliverReply(event, STAFF_CONTACT_REPLY);
-    if (paused) {
-      // Best-effort by contract: the customer has already been answered, and a LINE outage on the
-      // operator side must not turn their message into a redelivery loop.
-      await this.signupNotify?.notifySupportRequest(paused.companyId, event.lineUserId);
+    // Told REGARDLESS of whether there was an assistant to pause. An unlinked prospect has no
+    // context row, and that is precisely the person most likely to need a human — answering them
+    // "รับเรื่องแล้ว" while telling nobody was the worst of both.
+    //
+    // Once per shop per day, and once per stranger per day, on the outbox key. A linked customer
+    // who asks again while the pause is still running is already in the queue, so only the
+    // not-paused → paused transition is worth an alert.
+    if (!paused || paused.transitioned) {
+      await this.signupNotify?.enqueueSupportRequest(event.lineUserId, paused?.companyId ?? null);
     }
     await this.audit.log({
       action: 'signup.line.support_requested',
@@ -1561,22 +1596,32 @@ export class ProcessLineWebhookUseCase {
       requestId,
       result: 'SUCCESS',
       riskLevel: 'LOW',
-      metadataJson: { paused: paused !== null },
+      metadataJson: { paused: paused !== null, alreadyPaused: paused ? !paused.transitioned : false },
     });
     await this.updateEventLog(event.webhookEventId, 'support_requested');
   }
 
-  /** Stamps the pause on the existing per-LINE-user context row; no row means no assistant to stop. */
-  private async pauseAssistant(lineUserId: string): Promise<{ companyId: string } | null> {
+  /**
+   * Stamps the pause on the existing per-LINE-user context row. No row means there is no assistant
+   * to stop — the alert still goes out, it just carries no company.
+   *
+   * `transitioned` is read before the write rather than derived from it, because the write is
+   * unconditional (a lapsed pause must be extended). Two messages racing can both read "not
+   * paused"; the outbox key is what makes that one alert rather than two.
+   */
+  private async pauseAssistant(lineUserId: string): Promise<{ companyId: string; transitioned: boolean } | null> {
+    const before = await this.prisma.client.lineCompanyContext.findUnique({
+      where: { lineUserId },
+      select: { companyId: true, aiPausedUntil: true },
+    });
+    if (!before) return null;
     const updated = await this.prisma.client.lineCompanyContext.updateMany({
       where: { lineUserId },
       data: { aiPausedUntil: new Date(Date.now() + SUPPORT_PAUSE_MS) },
     });
     if (updated.count !== 1) return null;
-    return this.prisma.client.lineCompanyContext.findUnique({
-      where: { lineUserId },
-      select: { companyId: true },
-    });
+    const wasPaused = !!before.aiPausedUntil && before.aiPausedUntil.getTime() > Date.now();
+    return { companyId: before.companyId, transitioned: !wasPaused };
   }
 
   /**
@@ -1648,7 +1693,12 @@ export class ProcessLineWebhookUseCase {
     // Setting `handoff` here is what lets the seam mint a one-tap link for the URL below; the
     // refusals above deliberately keep the plain link they always sent.
     event.handoff = { userId, companyId: membership.companyId };
-    const link = `${(this.config.webBaseUrl ?? '').replace(/\/+$/, '')}/companies/${membership.companyId}/settings`;
+    // The L-E profile page, anchored at the account section — the card asked for an email or a
+    // phone, so it must land on the field, not on a dashboard the customer then has to search.
+    // Inside `/companies/<id>/`, which is what makes the handoff mint accept it.
+    // ponytail: literal until L-E exports the path constant from packages/contracts; swap at integration.
+    const link = `${(this.config.webBaseUrl ?? '').replace(/\/+$/, '')}`
+      + `/companies/${membership.companyId}/settings/profile#account`;
     await this.deliverReply(event, `${PROFILE_GUARD_ACCEPTED_REPLY}\n${link}`);
     await this.updateEventLog(event.webhookEventId, 'profile_guard_accepted', undefined, membership.companyId);
   }
@@ -1974,13 +2024,6 @@ export class ProcessLineWebhookUseCase {
     // Public deterministic command: the verified controller and event claim already ran, but no
     // identity, company, acceptance, permission, entitlement, or model read is needed.
     const publicCommand = staffMenuCommand(event.messageText);
-    // P10-L §3.1 (G-03). Adding the friend is the first thing that happens and, with the OA's own
-    // Greeting switched off, used to produce nothing at all.
-    if (publicCommand === 'follow') {
-      await this.deliverRequiredMessages(event, [await this.entryDoorMessage(event.lineUserId)]);
-      await this.updateEventLog(event.webhookEventId, 'line_follow');
-      return;
-    }
     // The staff door (§3.1): closes the trap where an employee with no email signs their shop up a
     // second time. Public because nobody arriving here has an account yet by definition.
     if (publicCommand === 'employee') {
@@ -2023,10 +2066,20 @@ export class ProcessLineWebhookUseCase {
 
     if (!identity || identity.user.status !== 'ACTIVE') {
       // P10-L §3.1: the plain "link your account first" line was a dead end for the one person who
-      // has no account to link. The same card the door sends, so both entrances agree.
+      // has no account to link. The same card the door sends, so both entrances agree — and a
+      // `follow` from a stranger lands here too, which is what makes G-03 an answer.
       await this.deliverRequiredMessages(event, [await this.entryDoorMessage(event.lineUserId)]);
       await this.audit.log({ action: 'ai.line.unlinked_access', targetType: 'line_user', requestId, result: 'DENIED', riskLevel: 'LOW', metadataJson: { lineUserId: '[REDACTED]' } });
-      await this.updateEventLog(event.webhookEventId, 'unlinked', LINE_AI_ERROR_CODES.UNLINKED_USER);
+      await this.updateEventLog(event.webhookEventId, publicCommand === 'follow' ? 'line_follow' : 'unlinked', LINE_AI_ERROR_CODES.UNLINKED_USER);
+      return;
+    }
+
+    // L-17: a customer who already has a shop and re-adds the OA is not a prospect. Answering them
+    // with "open a new shop / I am staff / link an existing account" reads as though the system has
+    // forgotten them — and the second door invites a duplicate signup.
+    if (publicCommand === 'follow') {
+      await this.deliverReply(event, WELCOME_BACK_REPLY);
+      await this.updateEventLog(event.webhookEventId, 'line_follow_known');
       return;
     }
 

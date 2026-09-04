@@ -10,6 +10,8 @@ import { buildSignupDoorCard, buildSignupStatusCard, buildAiBudgetExceededMessag
 import { classifyLineAiGatewayFailure } from './domain/logic/line-ai-terminal-outcome.logic';
 import { ProcessLineWebhookUseCase } from './application/use-cases/process-line-webhook.use-case';
 
+const WEB_BASE = 'https://app.example.test';
+
 // ── Controller: the two event kinds that used to fall off the end of the arms (G-03, G-04) ──
 
 function sign(rawBody: Buffer, secret: string): string {
@@ -87,20 +89,41 @@ describe('P10-L webhook intake (G-03/G-04)', () => {
 // ── Cards ──
 
 describe('P10-L door and status cards (§3.1/§7)', () => {
-  it('offers three doors, and drops the LIFF ones rather than sending a broken link', () => {
-    const card = JSON.stringify(buildSignupDoorCard('1234567890-abcdef'));
+  it('offers four ways on, including one that reaches a person', () => {
+    const card = JSON.stringify(buildSignupDoorCard('1234567890-abcdef', WEB_BASE));
     assert.match(card, /เปิดร้านใหม่ ทดลองฟรี/);
     assert.match(card, /https:\/\/liff\.line\.me\/1234567890-abcdef\/signup/);
-    assert.match(card, /https:\/\/liff\.line\.me\/1234567890-abcdef"/, 'the account link page is the LIFF root');
     assert.match(card, /ฉันเป็นพนักงาน/);
+    assert.match(card, /ติดต่อเจ้าหน้าที่/, 'the keyword must be tappable, not only typeable');
     assert.match(card, /บัญชีทางการที่ยืนยันแล้ว/, 'the verified shield guards against a fake OA (§9)');
+  });
 
-    const unconfigured = JSON.stringify(buildSignupDoorCard(undefined));
-    assert.equal(unconfigured.includes('liff.line.me'), false);
-    assert.match(unconfigured, /ฉันเป็นพนักงาน/, 'the staff door needs no LIFF id and must survive');
+  // The old door pointed at the LIFF account link-page, whose client reads a `watchdog_access_token`
+  // from localStorage — a key nothing writes any more. Every tap ended on an English "WatchDog
+  // session missing", which is the opposite of what the door promises.
+  it('sends "I already have an account" to the P12 link login, in the external browser', () => {
+    const card = JSON.stringify(buildSignupDoorCard('1234567890-abcdef', WEB_BASE));
+
+    assert.match(card, /มีบัญชีอยู่แล้ว เชื่อม LINE/);
+    assert.ok(card.includes(`${WEB_BASE}/login?line=link-required&next=%2F&openExternalBrowser=1`));
+    // Never the LIFF root: that is the dead page this door used to open.
+    assert.equal(card.includes('"https://liff.line.me/1234567890-abcdef"'), false);
+  });
+
+  it('drops a door it cannot build rather than sending a broken link', () => {
+    const noWeb = JSON.stringify(buildSignupDoorCard('1234567890-abcdef', undefined));
+    assert.equal(noWeb.includes('/login?line=link-required'), false);
+    assert.match(noWeb, /เปิดร้านใหม่ ทดลองฟรี/, 'the other doors survive');
+
+    const noLiff = JSON.stringify(buildSignupDoorCard(undefined, WEB_BASE));
+    assert.equal(noLiff.includes('liff.line.me'), false);
+    assert.match(noLiff, /ฉันเป็นพนักงาน/, 'the staff door needs no LIFF id and must survive');
+    assert.match(noLiff, /ติดต่อเจ้าหน้าที่/, 'and so must the one that reaches a person');
 
     // A LIFF id that is not a LIFF id must not be pasted into a URL.
-    assert.equal(JSON.stringify(buildSignupDoorCard('javascript:alert(1)')).includes('liff.line.me'), false);
+    assert.equal(JSON.stringify(buildSignupDoorCard('javascript:alert(1)', WEB_BASE)).includes('liff.line.me'), false);
+    // Neither must a web base that is not an http(s) origin.
+    assert.equal(JSON.stringify(buildSignupDoorCard(undefined, 'javascript:alert(1)')).includes('login?line='), false);
   });
 
   it('says the right thing inside and outside business hours', () => {
@@ -108,6 +131,8 @@ describe('P10-L door and status cards (§3.1/§7)', () => {
     assert.match(open, /ทีมงานกำลังตรวจสอบ/);
     assert.match(open, /ร้าน ร้านนิด/);
     assert.equal(open.includes('นอกเวลาทำการ'), false);
+    // Waiting is when someone most wants a person, so this card carries that door too.
+    assert.match(open, /ติดต่อเจ้าหน้าที่/);
 
     const closed = JSON.stringify(buildSignupStatusCard('ร้านนิด', false));
     assert.match(closed, /นอกเวลาทำการ/);
@@ -150,6 +175,9 @@ function harness(options: {
   ownerMembership?: any;
   context?: { companyId: string; aiPausedUntil: Date | null } | null;
   contextUpdateCount?: number;
+  /** Absent means LINE_MESSAGING_CHANNEL_ID is unset (L-19). */
+  channelId?: string;
+  liffId?: string;
 } = {}) {
   const replies: any[] = [];
   const eventLog: any[] = [];
@@ -158,6 +186,7 @@ function harness(options: {
   const supportNotices: any[] = [];
   const contextUpdates: any[] = [];
   const membershipQueries: any[] = [];
+  const errors: any[] = [];
 
   const prisma = {
     client: {
@@ -193,11 +222,12 @@ function harness(options: {
   const useCase = new ProcessLineWebhookUseCase(
     prisma,
     {
-      lineLiffId: '1234567890-abcdef',
-      lineMessagingChannelId: 'msg-channel-1',
+      lineLiffId: 'liffId' in options ? options.liffId : '1234567890-abcdef',
+      lineMessagingChannelId: 'channelId' in options ? options.channelId : 'msg-channel-1',
       lineSignupBusinessDays: 'MON-SAT',
       lineSignupBusinessHours: '09:00-18:00',
       webBaseUrl: 'https://app.example.test',
+      sesWebBaseUrl: 'https://app.example.test',
     } as any,
     {} as any,
     { log: async (entry: any) => { audits.push(entry); } } as any,
@@ -214,10 +244,12 @@ function harness(options: {
     // before the two P10-L collaborators, which the constructor deliberately keeps last.
     ...Array.from({ length: 17 }, () => undefined),
     { create: async (cmd: any) => { packageChanges.push(cmd); return { id: 'pcr-1' }; } } as any,
-    { notifySupportRequest: async (companyId: string, lineUserId: string) => { supportNotices.push({ companyId, lineUserId }); } } as any,
+    { enqueueSupportRequest: async (lineUserId: string, companyId: string | null) => { supportNotices.push({ companyId, lineUserId }); } } as any,
   );
 
-  return { useCase, replies, eventLog, audits, packageChanges, supportNotices, contextUpdates, membershipQueries };
+  // The use case builds its own Logger; capture what it writes at ERROR.
+  (useCase as any).logger = { error: (entry: any) => errors.push(entry), warn: () => {}, log: () => {} };
+  return { useCase, replies, eventLog, audits, packageChanges, supportNotices, contextUpdates, membershipQueries, errors };
 }
 
 const event = (text: string) => ({
@@ -247,6 +279,42 @@ describe('P10-L webhook doors', () => {
 
     assert.match(rendered(h), /ได้รับคำขอเปิดร้าน ร้านนิด/);
     assert.equal(rendered(h).includes('เปิดร้านใหม่ ทดลองฟรี'), false, 'never invite a second application');
+  });
+
+  // L-17: a customer who already has a shop and re-adds the OA is not a prospect. The three doors
+  // would read as though the system had forgotten them — and door one invites a duplicate signup.
+  it('welcomes back a LINE account it already knows, instead of offering to open a shop', async () => {
+    const h = harness({
+      identity: { userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } },
+    });
+    await h.useCase.execute(event(LINE_FOLLOW_EVENT_TEXT));
+
+    assert.match(rendered(h), /ยินดีต้อนรับกลับมา/);
+    assert.equal(rendered(h).includes('เปิดร้านใหม่ ทดลองฟรี'), false, 'never invite a second shop');
+    assert.match(rendered(h), /ติดต่อเจ้าหน้าที่/, 'the way to a person still travels with it');
+    assert.equal(outcome(h), 'line_follow_known');
+  });
+
+  // L-19. A LINE user id only means anything WITHIN one messaging channel. An absent Prisma filter
+  // matches every row, so an unset channel id would let one OA's application decide another's card.
+  it('fails closed on an unconfigured channel rather than matching any application', async () => {
+    const h = harness({ pendingSignup: { companyName: 'ร้านของคนอื่น' }, channelId: undefined });
+    await h.useCase.execute(event(LINE_FOLLOW_EVENT_TEXT));
+
+    assert.match(rendered(h), /เปิดร้านใหม่ ทดลองฟรี/, 'the doors, never a stranger\'s status');
+    assert.equal(rendered(h).includes('ร้านของคนอื่น'), false);
+  });
+
+  // Residual: an unusable LIFF id costs the card two of its three doors. That must be visible in the
+  // logs rather than a card that quietly stopped offering signup.
+  it('says so at ERROR when the LIFF id is unusable, and still sends the doors that work', async () => {
+    const h = harness({ pendingSignup: null, liffId: 'not-a-liff-id' });
+    await h.useCase.execute(event(LINE_FOLLOW_EVENT_TEXT));
+
+    assert.equal(h.errors.filter((entry) => entry.msg === 'line.signup.liff_id_unusable').length, 1);
+    assert.equal(rendered(h).includes('liff.line.me'), false);
+    assert.match(rendered(h), /ฉันเป็นพนักงาน/, 'the doors that need no LIFF id still work');
+    assert.match(rendered(h), /ติดต่อเจ้าหน้าที่/);
   });
 
   it('answers an unlinked message with the same door card, not a dead-end line', async () => {
@@ -280,12 +348,25 @@ describe('P10-L contact-staff pause (§8)', () => {
     assert.deepEqual(h.supportNotices, [{ companyId: 'co-1', lineUserId: 'Uline-1' }]);
   });
 
-  it('still answers the customer when there is no context row to pause', async () => {
+  // The worst outcome this flow can produce: telling a stranger "รับเรื่องแล้ว" and telling nobody.
+  // An unlinked prospect has no context row, and is exactly who most needs a person.
+  it('tells the operators even when there is no shop to pause', async () => {
     const h = harness({ context: null });
     await h.useCase.execute(event(STAFF_CONTACT_COMMAND));
 
     assert.match(rendered(h), /รับเรื่องแล้วค่ะ/);
-    assert.deepEqual(h.supportNotices, [], 'no company resolved means no partner page to point at');
+    assert.deepEqual(h.supportNotices, [{ companyId: null, lineUserId: 'Uline-1' }]);
+  });
+
+  // MEDIUM-6: a customer who asks twice inside the same pause is already in the queue. The alert
+  // fires on the not-paused → paused transition; the daily outbox key is the durable second guard.
+  it('does not re-alert while the pause it already opened is still running', async () => {
+    const h = harness({ context: { companyId: 'co-1', aiPausedUntil: new Date(Date.now() + 3_600_000) } });
+    await h.useCase.execute(event(STAFF_CONTACT_COMMAND));
+
+    assert.match(rendered(h), /รับเรื่องแล้วค่ะ/, 'the customer is still answered');
+    assert.deepEqual(h.supportNotices, []);
+    assert.ok(h.contextUpdates[0].data.aiPausedUntil, 'and the pause is extended, not left to lapse');
   });
 
   it('holds the assistant back while the pause runs, and lets go once it expires', async () => {
@@ -365,7 +446,11 @@ describe('P10-L day-7 nudge answers (§3.6)', () => {
     const h = harness({ identity, ownerMembership: { companyId: 'co-1' } });
     await h.useCase.execute(event(PROFILE_GUARD_COMMAND));
 
-    assert.match(rendered(h), /https:\/\/app\.example\.test\/companies\/co-1\/settings/);
+    // The L-E profile page, anchored at the account section: the card asked for an email or a
+    // phone, so the tap must land on that field rather than on a dashboard to search from.
+    assert.match(rendered(h), /https:\/\/app\.example\.test\/companies\/co-1\/settings\/profile#account/);
+    // Inside the tenant root, which is the only shape the handoff mint will accept.
+    assert.match(rendered(h), /\/companies\/co-1\//);
     assert.equal(outcome(h), 'profile_guard_accepted');
   });
 

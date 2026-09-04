@@ -2866,6 +2866,7 @@ function makeLedgerUseCase(prisma: any, opts: {
   } as any;
   const aiGatewayRequests: any[] = [];
   const intakeRequests: any[] = [];
+  const sentMessages: any[] = [];
   const useCase = new ProcessLineWebhookUseCase(
     prisma,
     { webBaseUrl: 'https://app.example.com', ...(opts.config ?? {}) } as any,
@@ -2886,7 +2887,11 @@ function makeLedgerUseCase(prisma: any, opts: {
     } as any,
     {
       buildTextMessage: (text: string) => ({ type: 'text', text }),
-      sendReply: async () => { events.push('delivery'); return opts.deliveryResult ?? 'ok'; },
+      sendReply: async (_token: string, messages: any[]) => {
+        events.push('delivery');
+        sentMessages.push(...messages);
+        return opts.deliveryResult ?? 'ok';
+      },
       sendPush: async () => 'ok',
     } as any,
     { apply: async () => ({ candidatesCreated: 0 }) } as any,
@@ -2897,13 +2902,69 @@ function makeLedgerUseCase(prisma: any, opts: {
     undefined, undefined, undefined, undefined, undefined, undefined,
     ledger,
   );
-  return { useCase, events, ledgerCalls, aiGatewayRequests, intakeRequests };
+  return { useCase, events, ledgerCalls, aiGatewayRequests, intakeRequests, sentMessages };
 }
 
 const LEDGER_TURN_RESPONSE = {
   requestId: 'req-ai', replyText: 'ตอบแล้ว', sourceRefs: [], sourceLabels: [], webLinks: [],
   intent: 'read_summary', agent: 'general', refused: false, toolsInvoked: [], durationMs: 1,
 };
+
+/**
+ * G-05. The month's AI budget running out used to be classified as `rate_limited`, whose reply is
+ * "⏳ ระบบกำลังประมวลผลข้อความก่อนหน้า" — advice that cannot work this month, and that invites the
+ * shop to send again and spend more. It also left the turn entry unacked, so the reclaim worker
+ * kept re-running it against an admission that can never open.
+ */
+describe('ProcessLineWebhookUseCase – the monthly AI budget is not congestion (G-05)', () => {
+  const budgetExceeded = () => {
+    const error: any = new Error('AI_MONTHLY_BUDGET_EXCEEDED');
+    error.getStatus = () => 429;
+    error.getResponse = () => ({ code: 'AI_MONTHLY_BUDGET_EXCEEDED' });
+    throw error;
+  };
+
+  it('answers with the budget card, never the wait-and-retry line', async () => {
+    const { prisma, updates } = makePrisma();
+    const h = makeLedgerUseCase(prisma, { aiGatewayFn: budgetExceeded });
+
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-budget', messageText: 'ยอดขายวันนี้' });
+
+    const rendered = JSON.stringify(h.sentMessages);
+    assert.match(rendered, /โควตา AI ของแพ็กเกจเดือนนี้ครบแล้วค่ะ/);
+    assert.match(rendered, /ขอเปลี่ยนแพ็กเกจ/, 'and the one action that fixes it');
+    assert.equal(rendered.includes('กำลังประมวลผลข้อความก่อนหน้า'), false, 'the congestion copy must not appear');
+    assert.equal(rendered.includes('น้องมั่งมีกำลังตอบข้อความก่อนหน้าอยู่'), false);
+    assert.equal((updates.at(-1) as any).data.status, 'ai_budget_exceeded');
+  });
+
+  it('acks the turn as refused, so the reclaim worker stops re-running a closed admission', async () => {
+    const { prisma } = makePrisma();
+    const h = makeLedgerUseCase(prisma, { aiGatewayFn: budgetExceeded });
+
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-budget-2', messageText: 'ยอดขายวันนี้' });
+
+    assert.deepEqual(h.ledgerCalls.acks.map((ack) => ack.outcome), ['refused']);
+  });
+
+  it('leaves an ordinary 429 exactly as it was — this is a fix, not a re-classification', async () => {
+    const { prisma, updates } = makePrisma();
+    const h = makeLedgerUseCase(prisma, {
+      aiGatewayFn: () => {
+        const error: any = new Error('busy');
+        error.getStatus = () => 429;
+        error.getResponse = () => ({ code: 'AI_BUDGET_BUSY' });
+        throw error;
+      },
+    });
+
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-busy', messageText: 'ยอดขายวันนี้' });
+
+    assert.match(JSON.stringify(h.sentMessages), /กำลังตอบข้อความก่อนหน้าอยู่/);
+    assert.equal((updates.at(-1) as any).data.status, 'rate_limited');
+    assert.deepEqual(h.ledgerCalls.acks, [], 'the reclaim worker still owns this one');
+  });
+});
 
 describe('ProcessLineWebhookUseCase – ledger wiring (item 10F)', () => {
   it('appends before the gateway and acknowledges only after confirmed delivery', async () => {
