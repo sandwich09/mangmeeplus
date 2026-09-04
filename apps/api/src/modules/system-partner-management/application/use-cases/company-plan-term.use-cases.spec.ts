@@ -8,7 +8,8 @@ import {
   SetCompanyPlanTermUseCase,
   applyPlanTermPreset,
 } from './company-plan-term.use-cases';
-import { DAY_MS } from '../../domain/logic/plan-term.logic';
+import { DAY_MS, isPlanTierKey } from '../../domain/logic/plan-term.logic';
+import { SELECTABLE_SIGNUP_OFFER_KEYS } from '../../../external-signup/domain/company-signup.logic';
 
 const COMPANY = 'co-1';
 const NOW_ISH = () => new Date();
@@ -178,6 +179,20 @@ describe('applyPlanTermPreset', () => {
     assert.equal(args.create.termEndsAt.getTime() - args.create.termStartAt.getTime(), 30 * DAY_MS);
     // Empty update = an already-provisioned company keeps the term it has.
     assert.deepEqual(args.update, {});
+  });
+
+  // Review B-08, both sides: the admin preset dropdown derives from PLAN_TIER_PRESETS, so the LINE
+  // trial appears there automatically (an admin may hand it out), while the public web form pins
+  // its own offer keys and therefore cannot sell it.
+  it('carries the LINE-first trial preset without opening it to the public form', async () => {
+    const prisma = makePrisma({ term: null });
+    await applyPlanTermPreset(prisma, COMPANY, 'FREE_TRIAL_15', 30, null);
+    const args = prisma.upsertArgs();
+    assert.equal(args.create.branchLimit, 1);
+    assert.equal(args.create.employeeLimit, 2);
+    assert.equal(args.create.monthlySlipLimit, 15);
+    assert.ok(isPlanTierKey('FREE_TRIAL_15'));
+    assert.equal(SELECTABLE_SIGNUP_OFFER_KEYS.includes('FREE_TRIAL_15'), false);
   });
 });
 

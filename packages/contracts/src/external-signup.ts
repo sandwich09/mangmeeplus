@@ -82,7 +82,15 @@ export type AdminSignupQueueItemDto = {
   state: string;
   companyName: string;
   ownerDisplayName: string;
-  contactEmail: string;
+  /** P10-L: absent on a `line-oa` application — that flow never asks for an address (spec §5). */
+  contactEmail?: string;
+  /** 'official-site' (Flow B) or 'line-oa' (P10-L). Absent reads as the legacy web form. */
+  source?: string;
+  /** LINE profile name at submit time. No picture is ever stored (DATA-MIN-01). */
+  lineDisplayName?: string;
+  /** True when AUTO_FREE approved this without an admin; the row is here for after-the-fact review. */
+  autoApproved?: boolean;
+  legalAcceptedAt?: string;
   phoneNumber?: string;
   businessType?: string;
   vatRegistered?: boolean;
@@ -105,8 +113,9 @@ export type AdminSignupQueueDto = { items: AdminSignupQueueItemDto[] };
 export const SIGNUP_REJECTION_REASON_MAX_LENGTH = 500;
 
 export type AdminSignupDecisionBody = {
-  /** Idempotency: repeat with same requestId is a no-op returning current state. */
-  action: 'APPROVE' | 'REJECT';
+  /** Idempotency: repeat with same requestId is a no-op returning current state.
+   *  SUSPEND (P10-L §8) stops an auto-approved application an admin does not want to keep. */
+  action: 'APPROVE' | 'REJECT' | 'SUSPEND';
   /** REJECT only: send a notice email (default silent). */
   notifyApplicant?: boolean;
   /**
@@ -119,3 +128,58 @@ export type AdminSignupDecisionBody = {
 export type AdminSignupDecisionDto = { requestId: string; state: string };
 
 export type AdminSignupReissueDto = { requestId: string; state: string; claimEmailQueued: boolean };
+
+// ── P10-L LINE-first signup (spec docs/specs/mangmee-line-first-signup-spec-th.md) ──
+
+/**
+ * The clickwrap evidence the LIFF page echoes back with the form. Every value is re-checked
+ * against the CURRENT release server-side before it is stored — the client cannot choose which
+ * legal text it agreed to (LEGAL-LIFF-01). `acceptedAt` is the server's clock, never the client's.
+ */
+export type LineSignupLegalEvidenceDto = {
+  documentVersion: string;
+  statementSha256: string;
+  releaseFingerprintSha256: string;
+  displayChallenge: string;
+  locale: string;
+};
+
+export type LineSignupSubmitDto = {
+  /** LIFF ID token. The ONLY identity input; the profile the client shows is never trusted. */
+  idToken: string;
+  companyName: string;
+  /** Thai mobile, 10 digits starting 0. Optional by design (spec §3.2). */
+  phoneNumber?: string;
+  referralCode?: string;
+  legal: LineSignupLegalEvidenceDto;
+};
+
+export type LineSignupSubmitAcceptedDto = {
+  requestId: string;
+  state: string;
+  /** True when this LINE account already belongs to an active user — the shop becomes their 2nd. */
+  existingAccount: boolean;
+  /** Asia/Bangkok business hours right now; decides which waiting message the client shows. */
+  businessHours: boolean;
+};
+
+export type LineSignupStatusDto = {
+  requestId: string;
+  state: string;
+  companyName: string;
+  businessHours: boolean;
+  /** Set once the shop exists, so the LIFF page can send the owner straight into it. */
+  companyId?: string;
+} | null;
+
+export type PackageChangeRequestStatus = 'OPEN' | 'APPROVED' | 'REJECTED' | 'CANCELLED';
+
+export type PackageChangeRequestDto = {
+  id: string;
+  companyId: string;
+  requestedTierKey: string;
+  status: PackageChangeRequestStatus;
+  note?: string;
+  createdAt: string;
+  decidedAt?: string;
+};
