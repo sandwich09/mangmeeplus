@@ -360,3 +360,70 @@ describe('amount fields reject the shapes the server rejects', () => {
     for (const good of ['400', '0.400', '0', '4.00', '1234.5678']) assert.equal(formatIssues(good).length, 0, good);
   });
 });
+
+/**
+ * Spec §5.1 as the reviewer meets it: an additional charge is one printed amount that sits after
+ * the goods, and only ปัดเศษ may be a deduction. The API refuses a payload that breaks any of these,
+ * so catching it here is the difference between a field note and a 400 after pressing save.
+ */
+describe('additional charge lines', () => {
+  const withLines = (lines: ExpenseDraftReviewValues['lines']): ExpenseDraftReviewValues =>
+    ({ ...validValues(), vatMode: 'VAT_EXCLUDED', lines });
+  const product = (overrides: Partial<ExpenseDraftReviewValues['lines'][number]> = {}) => ({
+    ...validValues().lines[0]!, description: 'อาหาร', quantity: '1', unitPrice: '1520', discountAmount: '0', vatRate: '0.07', ...overrides,
+  });
+  const charge = (overrides: Partial<ExpenseDraftReviewValues['lines'][number]> = {}) =>
+    product({ description: 'ค่าบริการ 10%', chargeKind: 'SERVICE_CHARGE', unitPrice: '152', ...overrides });
+  const fields = (values: ExpenseDraftReviewValues) =>
+    validateExpenseReview(values, { today: '2026-09-05' }).filter((issue) => issue.severity === 'error').map((issue) => issue.field);
+
+  it('accepts goods followed by a service charge', () => {
+    assert.deepEqual(fields(withLines([product(), charge()])), []);
+  });
+
+  it('accepts a negative ปัดเศษ row and refuses a negative charge of any other kind', () => {
+    assert.deepEqual(fields(withLines([product(), charge({ chargeKind: 'ROUNDING', unitPrice: '-0.50', vatRate: '0' })])), []);
+    const issues = validateExpenseReview(withLines([product(), charge({ unitPrice: '-0.50' })]), { today: '2026-09-05' });
+    assert.equal(issues.find((issue) => issue.field === 'lines.1.unitPrice')?.messageKey, 'expenses.v_charge_amount_positive');
+    // A zero charge is not an amount a document printed either.
+    assert.equal(
+      validateExpenseReview(withLines([product(), charge({ unitPrice: '0' })]), { today: '2026-09-05' })
+        .find((issue) => issue.field === 'lines.1.unitPrice')?.messageKey,
+      'expenses.v_charge_amount_positive',
+    );
+  });
+
+  it('keeps the plain negative-amount message on an ordinary product line', () => {
+    assert.equal(
+      validateExpenseReview(withLines([product({ unitPrice: '-1' })]), { today: '2026-09-05' })
+        .find((issue) => issue.field === 'lines.0.unitPrice')?.messageKey,
+      'expenses.v_amount_negative',
+    );
+  });
+
+  it('refuses a charge with a quantity, and a charge above a product', () => {
+    assert.equal(
+      validateExpenseReview(withLines([product(), charge({ quantity: '2', unitPrice: '76' })]), { today: '2026-09-05' })
+        .find((issue) => issue.field === 'lines.1.quantity')?.messageKey,
+      'expenses.v_charge_quantity_one',
+    );
+    assert.equal(
+      validateExpenseReview(withLines([charge(), product()]), { today: '2026-09-05' })
+        .find((issue) => issue.field === 'lines.0.chargeKind')?.messageKey,
+      'expenses.v_charge_order',
+    );
+  });
+
+  it('counts the charge into the total the AI figure is compared against', () => {
+    // 1,520 goods + 152 charge + 7% VAT = 1,789.04. Without the charge in the total the reviewer
+    // would be warned that a correctly entered bill disagrees with the receipt.
+    assert.deepEqual(
+      validateExpenseReview(withLines([product(), charge()]), { today: '2026-09-05', aiGrandTotal: '1789.04' }),
+      [],
+    );
+    assert.equal(
+      validateExpenseReview(withLines([product(), charge()]), { today: '2026-09-05', aiGrandTotal: '1626.40' })[0]?.messageKey,
+      'expenses.v_total_mismatch',
+    );
+  });
+});

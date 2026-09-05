@@ -41,3 +41,24 @@ test('confirmed duplicate copy distinguishes the final decision from an unresolv
   assert.match(workspaceDictionary.th['expenses.duplicate_confirmed_block'], /ไม่สามารถยืนยันค่าใช้จ่ายซ้ำได้/);
   assert.match(workspaceDictionary.en['expenses.duplicate_confirmed_block'], /cannot be confirmed again/);
 });
+
+/**
+ * Spec §5.1: the goods subtotal stops including the additional charges, so the money card only adds
+ * up if it shows them — between the discount and the tax base, in the order the arithmetic runs.
+ * Dropping the row would leave a card whose numbers silently disagree with themselves.
+ */
+test('the money card shows the additional charges between the discount and the tax base', () => {
+  const rows = [...source.matchAll(/<MoneyRow label=\{t\('(expenses\.[a-z_]+)'/g)].map((match) => match[1]);
+  assert.deepEqual(rows.slice(0, 4), [
+    'expenses.subtotal', 'expenses.discount', 'expenses.charges_total', 'expenses.taxable_base_ex_vat',
+  ]);
+  assert.match(source, /const chargesTotal = \(detail\.charges \?\? \[\]\)\.reduce/);
+  assert.match(source, /\{chargesTotal !== 0 && <MoneyRow/, 'a zero-charge bill keeps the card it had');
+  for (const locale of ['th', 'en'] as const) {
+    assert.ok(workspaceDictionary[locale]['expenses.charges_total'].trim().length > 0);
+  }
+  // Customer-facing Thai carries no "+" characters (spec §3).
+  for (const key of ['expenses.charges_total', 'expenses.charges_section', 'expenses.add_charge', 'expenses.no_charges'] as const) {
+    assert.doesNotMatch(workspaceDictionary.th[key], /\+/, key);
+  }
+});

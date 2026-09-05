@@ -44,3 +44,32 @@ test('the quota banner offers the two things the shop can still do', () => {
   assert.match(source, /href=\{`\/companies\/\$\{companyId\}\/expenses\/\$\{blockedExpenseId\}`\}/);
   assert.doesNotMatch(source, /\/companies\/\$\{companyId\}\/renew/);
 });
+
+/**
+ * Spec §5.1. Two rules the type system cannot hold. First, an additional charge must sort after
+ * every product line, so adding a PRODUCT has to insert before the charges — appending it would
+ * build the one payload shape the API refuses, and the reviewer would meet the refusal only on
+ * save. Second, the charge rows render as their own group, not as more goods lines.
+ */
+test('adding a product inserts it before the charges, and adding a charge appends', () => {
+  assert.match(source, /const firstCharge = v\.lines\.findIndex\(\(line\) => line\.chargeKind != null\);/);
+  assert.match(source, /const at = chargeKind !== null \|\| firstCharge < 0 \? v\.lines\.length : firstCharge;/);
+  // The VAT source is keyed by line number, so an insert in the middle has to shift it.
+  assert.match(source, /lineNumber: sourceLine\.lineNumber > at \? sourceLine\.lineNumber \+ 1 : sourceLine\.lineNumber/);
+  assert.match(source, /onClick=\{\(\) => insertLine\(null\)\}/);
+  assert.match(source, /onClick=\{\(\) => insertLine\('SERVICE_CHARGE'\)\}/);
+});
+
+test('charge rows render in their own group, keyed by the shared array index', () => {
+  assert.match(source, /const productEntries = entries\.filter\(\(entry\) => entry\.line\.chargeKind == null\);/);
+  assert.match(source, /const chargeEntries = entries\.filter\(\(entry\) => entry\.line\.chargeKind != null\);/);
+  assert.match(source, /\{productEntries\.map\(\(\{ line, index \}\) => \{/);
+  assert.match(source, /\{chargeEntries\.map\(\(\{ line, index \}\) => \{/);
+  assert.match(source, /t\('expenses\.charges_section', locale\)/);
+  assert.match(source, /t\('expenses\.add_charge', locale\)/);
+  // One column: at 390px a select beside a money field left neither readable.
+  assert.match(source, /<div className="grid grid-cols-1 gap-3">/);
+  // No `min="0"` on the charge amount — ปัดเศษ is printed as a deduction and the validator, not the
+  // browser, is what refuses a minus sign on every other kind.
+  assert.match(source, /<input type="number" step="0\.0001" className=\{validationInputClass\(amountIssue \?\? quantityIssue\)\}/);
+});

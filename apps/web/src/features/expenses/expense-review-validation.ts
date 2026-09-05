@@ -1,6 +1,6 @@
 import type { DictionaryKey } from '@/common/i18n/workspace-dictionary';
 import { EXPENSE_DECIMAL_18_4_PATTERN, validateExpenseWhtInput } from '@watchdog-bms/contracts';
-import { calculateManualExpenseTotals, expenseReviewWithholdsTax, expenseVatSourceValidationMessage, vatModeRequiresRate, vatRateFromPrintedAmount, type ExpenseDraftReviewValues } from './expenses.model';
+import { EXPENSE_LINE_CHARGE_KINDS, calculateManualExpenseTotals, expenseChargeKindAllowsNegative, expenseReviewWithholdsTax, expenseVatSourceValidationMessage, vatModeRequiresRate, vatRateFromPrintedAmount, type ExpenseDraftReviewValues } from './expenses.model';
 
 export type ExpenseFieldIssue = {
   field: string;
@@ -32,7 +32,10 @@ type ValidationMessageKey =
   | 'expenses.v_wht_exceeds_base'
   | 'expenses.v_total_mismatch'
   | 'expenses.v_total_zero'
-  | 'expenses.v_payee_kind_required';
+  | 'expenses.v_payee_kind_required'
+  | 'expenses.v_charge_amount_positive'
+  | 'expenses.v_charge_quantity_one'
+  | 'expenses.v_charge_order';
 
 function addIssue(
   issues: ExpenseFieldIssue[],
@@ -67,16 +70,23 @@ function isoDate(value: string): Date | null {
   return Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value ? null : parsed;
 }
 
-function computedTotals(values: ExpenseDraftReviewValues): { subtotal: number; grandTotal: number } | null {
+/**
+ * Spec §5.1: `subtotal` is the goods total, `charges` the additional-charge rows, and the tax base
+ * is `subtotal - discount + charges` — the same split the server stores, so what the reviewer is
+ * shown adding up is what gets written. A negative amount is allowed only on a ROUNDING row.
+ */
+function computedTotals(values: ExpenseDraftReviewValues): { subtotal: number; charges: number; grandTotal: number } | null {
   let subtotal = 0;
+  let charges = 0;
   let grandTotal = 0;
   for (const line of values.lines) {
     const quantity = numberValue(line.quantity);
     const unitPrice = numberValue(line.unitPrice);
     const discount = numberValue(line.discountAmount);
     const enteredVatRate = numberValue(line.vatRate);
-    if (quantity === null || quantity <= 0 || unitPrice === null || unitPrice < 0
-      || discount === null || discount < 0 || discount > quantity * unitPrice
+    const signed = line.chargeKind != null && expenseChargeKindAllowsNegative(line.chargeKind);
+    if (quantity === null || quantity <= 0 || unitPrice === null || (!signed && unitPrice < 0)
+      || discount === null || discount < 0 || discount > Math.max(quantity * unitPrice, 0)
       || (line.vatRate.trim() !== '' && (enteredVatRate === null || enteredVatRate < 0 || enteredVatRate > 1))) return null;
 
     const afterDiscount = quantity * unitPrice - discount;
@@ -86,10 +96,11 @@ function computedTotals(values: ExpenseDraftReviewValues): { subtotal: number; g
       vatRate: line.vatRate,
       vatMode: values.vatMode,
     });
-    subtotal += totals.subtotal;
+    if (line.chargeKind == null) subtotal += totals.subtotal;
+    else charges += totals.subtotal;
     grandTotal += totals.grandTotal;
   }
-  return { subtotal, grandTotal };
+  return { subtotal, charges, grandTotal };
 }
 
 function differsByMoreThanCent(left: number, right: number): boolean {
@@ -157,6 +168,9 @@ export function validateExpenseReview(
   }
 
   if (values.lines.length === 0) addIssue(issues, 'lines', 'error', 'expenses.v_lines_required');
+  // The whole array decides the ordering rule, so a charge written above a product is caught even
+  // when the product comes later in the payload.
+  const lastProductIndex = values.lines.reduce((last, line, index) => (line.chargeKind == null ? index : last), -1);
   values.lines.forEach((line, index) => {
     const prefix = `lines.${index}`;
     const description = line.description.trim();
@@ -170,10 +184,24 @@ export function validateExpenseReview(
     // for the value that looks fine to JavaScript and is still not a Decimal(18,4) the server accepts.
     else if (malformedDecimal(line.quantity)) addIssue(issues, `${prefix}.quantity`, 'error', 'expenses.v_number_format');
 
+    // §5.1: a charge row is one printed amount — quantity 1, the amount in the price box, positive
+    // unless it is the ROUNDING row, and always sorting after the goods. The API refuses a payload
+    // that breaks any of these; the reviewer is told here instead of after pressing save.
+    const chargeKind = line.chargeKind ?? null;
+    const signedCharge = chargeKind !== null && expenseChargeKindAllowsNegative(chargeKind);
+    if (chargeKind !== null) {
+      if (!(EXPENSE_LINE_CHARGE_KINDS as readonly string[]).includes(chargeKind)
+        || (quantity !== null && quantity !== 1)) {
+        addIssue(issues, `${prefix}.quantity`, 'error', 'expenses.v_charge_quantity_one');
+      }
+      if (index < lastProductIndex) addIssue(issues, `${prefix}.chargeKind`, 'error', 'expenses.v_charge_order');
+    }
+
     const unitPrice = numberValue(line.unitPrice);
     if (unitPrice === null) addIssue(issues, `${prefix}.unitPrice`, 'error', 'expenses.v_number_invalid');
-    else if (unitPrice < 0) addIssue(issues, `${prefix}.unitPrice`, 'error', 'expenses.v_amount_negative');
-    else if (malformedDecimal(line.unitPrice)) addIssue(issues, `${prefix}.unitPrice`, 'error', 'expenses.v_number_format');
+    else if (unitPrice < 0 && !signedCharge) addIssue(issues, `${prefix}.unitPrice`, 'error', chargeKind === null ? 'expenses.v_amount_negative' : 'expenses.v_charge_amount_positive');
+    else if (chargeKind !== null && !signedCharge && unitPrice <= 0) addIssue(issues, `${prefix}.unitPrice`, 'error', 'expenses.v_charge_amount_positive');
+    else if (malformedDecimal(signedCharge ? line.unitPrice.replace(/^-/, '') : line.unitPrice)) addIssue(issues, `${prefix}.unitPrice`, 'error', 'expenses.v_number_format');
 
     const discount = numberValue(line.discountAmount);
     if (discount === null) addIssue(issues, `${prefix}.discountAmount`, 'error', 'expenses.v_number_invalid');

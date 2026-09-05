@@ -13,6 +13,8 @@ import type {
   ExpenseWhtInput,
   ExpenseWhtCapture,
   ExpenseLineVatTreatment,
+  ExpenseLineChargeKind,
+  ExpenseChargeSummary,
   RecordExpensePaymentInput,
 } from '@watchdog-bms/contracts';
 import {
@@ -20,6 +22,7 @@ import {
   SOURCE_DOCUMENT_TYPE_LABELS, TAX_EVIDENCE_STATUS_LABELS, SIGNATURE_ASSET_STATUS_LABELS,
   isExpenseCancelled, isExpenseDeletableState, isExpensePending, isNonExpenseClassificationBlocking, isCheckBillClassification,
   effectiveVatRateLabel, vatModeRequiresRate, civilDate, civilDateToUtcDate, civilPeriodKey, isCivilDate,
+  EXPENSE_LINE_CHARGE_KINDS, EXPENSE_LINE_CHARGE_KIND_LABELS, expenseChargeKindAllowsNegative,
 } from '@watchdog-bms/contracts';
 export { isExpensePending } from '@watchdog-bms/contracts';
 import { apiErrorMessage } from '@/common/api/api-error-message';
@@ -66,12 +69,15 @@ export type {
   AccountantPackageResult, EvidenceManifestEntry,
   SubstituteReceiptEvidenceSummary,
   ExpensePaymentSummary,
+  ExpenseLineChargeKind,
+  ExpenseChargeSummary,
 };
 
 export {
   EXPENSE_STATUS_LABELS, EXPENSE_PAYMENT_STATUS_LABELS, EXPENSE_VAT_MODE_LABELS,
   SOURCE_DOCUMENT_TYPE_LABELS, TAX_EVIDENCE_STATUS_LABELS, SIGNATURE_ASSET_STATUS_LABELS,
   effectiveVatRateLabel, vatModeRequiresRate,
+  EXPENSE_LINE_CHARGE_KINDS, EXPENSE_LINE_CHARGE_KIND_LABELS, expenseChargeKindAllowsNegative,
 };
 
 /** Deterministic light-background removal for signature previews:
@@ -378,6 +384,8 @@ export type ExpenseDetail = ExpenseSummary & {
     id: string;
     lineNumber: number;
     description: string;
+    /** Non-null makes this an additional-charge row rather than a product row (spec §5.1). */
+    chargeKind?: ExpenseLineChargeKind | null;
     quantity: string;
     unitPrice: string;
     discountAmount: string;
@@ -396,6 +404,9 @@ export type ExpenseDetail = ExpenseSummary & {
     taxSnapshot?: TransactionTaxSnapshot;
     taxComponents?: TransactionTaxComponentPreview[];
   }>;
+  /** The charge rows, already grouped and labelled by the API — the money card reads this rather
+   *  than re-deriving the rule on the client. */
+  charges: ExpenseChargeSummary[];
   attachments: Array<{
     id: string;
     purpose: string;
@@ -433,6 +444,9 @@ export type ExpenseDraftReviewValues = {
   whtInput?: ExpenseWhtInput;
   lines: Array<{
     description: string;
+    /** §5.1: charge rows live in the same array as products and always sort after them, so the
+     *  line numbers the payload sends already satisfy the server's ordering rule. */
+    chargeKind?: ExpenseLineChargeKind | null;
     quantity: string;
     unitPrice: string;
     discountAmount: string;
@@ -460,6 +474,7 @@ export function reviewValues(detail: ExpenseDetail): ExpenseDraftReviewValues {
     ...(detail.whtInputJson && { whtInput: { inputType: detail.whtInputJson.inputType, value: detail.whtInputJson.value } }),
     lines: detail.lines.map((line) => ({
       description: line.description,
+      chargeKind: line.chargeKind ?? null,
       quantity: line.quantity,
       unitPrice: line.unitPrice,
       discountAmount: line.discountAmount,
@@ -523,6 +538,9 @@ export function buildExpenseDraftReviewPayload(values: ExpenseDraftReviewValues)
     lines: values.lines.map((line, index) => ({
       lineNumber: index + 1,
       description: line.description.trim(),
+      // Present only on a charge row, like every other optional line field here: an absent value and
+      // an explicit null both store null, so a product line's payload is byte-identical to before.
+      ...(line.chargeKind && { chargeKind: line.chargeKind }),
       quantity: line.quantity,
       unitPrice: line.unitPrice,
       discountAmount: line.discountAmount,

@@ -763,6 +763,8 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
       </MangmeeCard>
     </div>
   );
+  // One number for the whole group: the charge rows the API already grouped and labelled.
+  const chargesTotal = (detail.charges ?? []).reduce((sum, charge) => sum + Number(charge.amount), 0);
   const moneyCard = (
     <div ref={moneyRef} className="scroll-mt-24">
       <MangmeeCard className="p-4">
@@ -770,6 +772,10 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
         <div className="mt-2">
           <MoneyRow label={t('expenses.subtotal', locale)} value={detail.subtotalAmount} />
           {Number(detail.discountAmount) > 0 && <MoneyRow label={t('expenses.discount', locale)} value={detail.discountAmount} negative />}
+          {/* Spec §5.1: the goods subtotal no longer includes the additional charges, so the column
+              only adds up if they are shown — between the discount and the tax base, which is the
+              order the arithmetic runs in (subtotal − discount + charges = base). */}
+          {chargesTotal !== 0 && <MoneyRow label={t('expenses.charges_total', locale)} value={chargesTotal.toFixed(4)} />}
           {showsVat && <MoneyRow label={t('expenses.taxable_base_ex_vat', locale)} value={detail.taxableAmount} muted />}
           {/* Spec §19g decision 3: mode + the rate the lines actually carry, so "VAT ฿0.00" can no
               longer sit under a label that claims 7%. */}
