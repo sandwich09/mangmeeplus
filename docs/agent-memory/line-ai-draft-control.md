@@ -475,3 +475,95 @@ for any preview that was cancelled or expired.
 3. **`canCorrectAmount` retained** with no production caller: slice B's fix-up is still adding a charge-line refusal to it, and deleting it here would conflict. Delete after B lands if nothing picks it up.
 4. **The pg spec's CI step creates `watchdog_bms` itself**, because PR #428's step is not on this base. On rebase the two should collapse into one — add the spec path to #428's step and drop this one.
 5. **`scrubRecordText` lives in `packages/contracts`** so both apps share one copy. Slice C's review is widening a gateway-local `safeText` for the same reason; at rebase they must collapse onto this one rather than diverge.
+
+### D.8 Adversarial review round (2026-09-06) — every finding closed
+
+The reviewer confirmed the design (preview never writes, the CAS is real, the postback is
+intent-only, the mutations were red) and then found fifteen things wrong with it. All are fixed on
+this branch; the two that were genuinely load-bearing are worth reading.
+
+**H1 was a blocker, and no existing test could have caught it.** The five draft tools shared a
+constructor on an undecorated abstract base. `emitDecoratorMetadata` — swc's and TypeScript's alike
+— writes `design:paramtypes` only for the class that DECLARES a constructor, so the `@Injectable()`
+subclasses emitted none, Nest would have built them with zero arguments, and the first
+`expense.draft.*` call in the built image would have died on an undefined use case. Every spec in
+the repo hand-constructs these classes and would have stayed green through it; the controller spec's
+61 plain fakes never touch the real ones. Each concrete class now declares its own constructor, and
+`erp-draft-update-tools.di.spec.ts` fails if one stops.
+
+The runnable assertion is constructor ARITY, not `Reflect.getMetadata`. The repo's test runner is
+tsx/esbuild, which does not implement `emitDecoratorMetadata` at all — it reports ABSENT for every
+class, including correctly wired ones, so a metadata assertion could only ever produce a false
+alarm. Arity is compiler-independent and fails for exactly this mistake.
+
+**H2 was the scrubber eating the answer.** Masking every non-money digit run meant the confirm card
+could not state a date, a VAT rate, a deleted line's amount or a two-digit line number:
+"วันที่เอกสาร: …-…-… → …-…-…". A diff row now declares `kind` (`text` | `identifier` | `money` |
+`date` | `plain`), and only `text` — OCR/user free text — is scrubbed. Dates render Buddhist-era
+Thai, and the preview carries the record as TYPED fields instead of one pre-joined label, so a
+renderer never has to guess which half of a string was untrusted.
+
+Deviation recorded: spec J3.1 writes the date as `03/09/2569`; the card uses `3 ก.ย. 2569`, the
+shape every other LINE reply in this repo already uses. Same Buddhist era, consistent channel.
+
+**H3** — `scrubRecordIdentifier` had re-opened the hole it was added to close: it kept ASCII `.` and
+`\p{N}` admits Thai and fullwidth digits, so `ยอดใหม่ 1789.04 บาท` and `192.168.1.1/pay` passed
+through untouched. It is now defined by SHAPE — digits folded first, then ONE token of ≤ 32
+characters matching `[\p{L}\p{M}0-9][\p{L}\p{M}0-9\-/_#]*`, `.` excluded on purpose — and anything
+else returns null so the card prints "ยังไม่ระบุ".
+
+**M5 vs F11 was a genuine conflict, resolved explicitly.** F11 asked for a shape-based link rule
+(no TLD allowlist); M5 asked that `ABC Co.Ltd`, `St.Louis Hospital` and `TAX.INV` survive. Those are
+the same shape as `evil.xyz` — one dot, no path — so shape alone cannot separate them. The rule now
+is: scheme/`www.`, a path, or two-plus dots with every label ≥ 2 characters removes a link with no
+list involved; the ambiguous one-dot case is decided by a compact TLD list used ONLY as a
+tiebreaker. Residual, accepted: a novel single-label TLD with no other signal survives as text.
+The alternative silently eats real vendor names off receipts.
+
+**M9 — flag-off was not a rollback.** `amount` had been removed from the five-field correction lane
+unconditionally, so turning `LINE_AI_DRAFT_EDIT_ENABLED` off would have left a lane that silently
+stopped applying the single-line amount correction it used to apply. The removal is now gated on
+the flag, and the lane has its first spec (`line-correction.use-case.spec.ts`), which runs BOTH
+positions. The two confirm phrases are likewise commands only while the flag is on.
+
+Also fixed: M6 (grounding text bounded at the sender, and accept-and-truncate at the DTO — an
+unbounded forward would 400 every ERP tool call of a turn whose message ran long), M7 (the ledger
+called an unanswered proposal an applied correction — now a named function so the claim is
+testable), M8 (the `ambiguous_line` clarify told the user to type "บรรทัด 2 เป็น 500" and nothing
+parsed it, so UAT J3.7 was an infinite loop), L10–L15 and R2.
+
+**H4** — no ci.yml step here at all: develop's "Identity, username and LINE-signup specs against
+PostgreSQL" step already runs `CREATE DATABASE watchdog_bms`, and a second one would fail the job at
+rebase. The one-line hunk to add this spec to that step is in
+`<scratchpad>/agent-a01dbfd25bc868c9b/ci-rebase-hunk.txt`; until then the pg spec runs on demand
+against an isolated `watchdog_bms_sliced`.
+
+### D.9 Mutation table after the review — 22 rows, every one verified red
+
+| # | Mutation | Killed by |
+|---|---|---|
+| h1 | A concrete draft tool stops declaring its constructor | `erp-draft-update-tools.di.spec.ts` |
+| h2 | Scrub the diff's server-generated values again | card spec — "prints a real date on a set_header card" |
+| h3 | Admit `.` to the identifier charset | contracts scrubber spec |
+| m1 | Apply without the `updatedAt` CAS | eval `draft-confirm-after-record-moved`; pg spec |
+| m2 | The dry run commits instead of rolling back | every eval row's `expectedApplyCount: 0` |
+| m3 | Preview not bound to chat/user | eval `draft-preview-from-another-chat` |
+| m4 | Status guard accepts CONFIRMED/VOIDED | eval `draft-confirmed-record-edit`; pg spec |
+| m5 | Executor ignores the flag | controller spec |
+| m5b | A bare host needs no corroboration | contracts spec — "keeps real text that merely contains a dot" |
+| m6 | Grounding dropped | logic spec; eval injection row |
+| m7 | Scrubber narrowed to ASCII digits | contracts spec; api eval |
+| m7b | The ledger calls a proposal an applied correction | card spec — "never records a draft-lane turn as an applied correction" |
+| m8 | Postback carries `previewId` | card spec (SEC-04) |
+| m8b | Forget the "บรรทัด N เป็น X" parser | logic spec — the J3.7 clarify answer |
+| m9 | Link detection back to a TLD allowlist | contracts spec |
+| m9b | Remove `amount` from the correction lane whatever the flag says | `line-correction.use-case.spec.ts` |
+| m10 | A money run drops the whole label instead of masking | contracts spec — the 7-Eleven vendor |
+| m11 | `\p{M}` removed from the identifier charset | contracts spec — "ใบกำกับ-12" |
+| l10 | A second tap forgets the apply and denies the edit | eval — "answers a second tap as already applied" |
+| l12 | The card promises a window the store does not enforce | eval — the TTL assertion |
+| l13 | An unbounded charge percent | logic spec — "bounds a charge percent to (0, 100]" |
+| r2 | The preview key stops being per chat | eval — "keys the pending preview by company AND chat" |
+
+Process note for whoever reuses `mutations.sh`: it restores with `git checkout --`, so it now
+REFUSES to run on a dirty tree. It silently ate an uncommitted scrubber change once.
