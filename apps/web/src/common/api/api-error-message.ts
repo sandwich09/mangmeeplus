@@ -400,6 +400,9 @@ const CODE_LABELS: Record<string, string> = {
   // ทั้งสองโค้ดมาจาก company-signup-core.service และโผล่ที่ปุ่มอนุมัติ/ปฏิเสธ/ส่งลิงก์ใหม่ในคิว
   // ทางแก้เดียวกันคือโหลดคิวใหม่ ข้อความจึงชี้ไปที่คิว ไม่ใช่ให้กดซ้ำ
   company_signup_request_not_found: 'ไม่พบคำขอสมัครนี้แล้ว กรุณาโหลดคิวคำขอใหม่',
+  // R07/F6: the MX lookup could not answer, which says nothing about the address the applicant
+  // typed. It may not read as a typo — the only correct instruction is to send the same form again.
+  email_domain_check_unavailable: 'ตรวจอีเมลไม่ได้ชั่วคราว กรุณากดส่งคำขออีกครั้ง ลองใหม่ในอีกสักครู่',
   company_signup_concurrent_transition:
     'คำขอนี้ถูกดำเนินการโดยผู้ดูแลคนอื่นระหว่างทำรายการ กรุณาโหลดคิวคำขอใหม่แล้วตรวจสถานะล่าสุด',
 };

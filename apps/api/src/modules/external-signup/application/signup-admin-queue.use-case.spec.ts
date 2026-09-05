@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { ConflictException, NotFoundException } from '@nestjs/common';
-import { SignupAdminQueueUseCase } from './signup-admin-queue.use-case';
+import { SignupAdminQueueUseCase, encodeQueueCursor } from './signup-admin-queue.use-case';
 import { STALE_PROVISIONING_MS } from '../domain/company-signup.logic';
 
 const NOW = new Date('2026-09-01T00:00:00.000Z');
@@ -37,6 +37,10 @@ function harness(options: {
    * What those accounts already belong to, oldest first. `owner: false` is an employee membership —
    * their EMPLOYER's shop, which must never be named as a trial this applicant already had.
    */
+  /** R13: `groupBy(['state','source'])` rows behind the tab counts. */
+  stateCounts?: Array<{ state: string; source: string; _count: { _all: number } }>;
+  /** R13: abandoned PROVISIONING runs, which no state count can see (the clock decides). */
+  staleProvisioningCount?: number;
   priorMemberships?: Array<{
     userId: string;
     owner: boolean;
@@ -60,6 +64,9 @@ function harness(options: {
         findUnique: async () => (options.request === undefined ? { ...REQUEST } : options.request),
         findMany: async (args: any) => { requestQueries.push(args); return options.requests ?? []; },
         update: async (args: any) => { updates.push(args); return {}; },
+        // R13: the tab counts are read from the whole table, never from the page just fetched.
+        groupBy: async () => options.stateCounts ?? [],
+        count: async () => options.staleProvisioningCount ?? 0,
       },
       user: { findMany: async (args: any) => { userQueries.push(args); return options.users ?? []; } },
       company: {
@@ -315,6 +322,62 @@ const LINE_REQUEST = {
   legalAcceptedAt: new Date('2026-08-31T04:00:00.000Z'),
 };
 const URLS = { webBaseUrl: 'https://app.example.com', apiBaseUrl: 'https://api.example.com/v1' };
+
+// R10: the PDPA health tripwire is dead for Thai free text ("คลินิก" maps to OTHER), so the enum is
+// chosen by the human who is already reading that word — at review, never by a heuristic.
+describe('SignupAdminQueueUseCase.decide — business category at review', () => {
+  it('stores the category the admin picked alongside the approval', async () => {
+    const h = harness();
+    await h.useCase.decide(
+      'signup-1', { action: 'APPROVE', businessCategory: 'CLINIC' }, 'admin-1', 'req-1', URLS,
+    );
+    // R08: the approval facts ride the state transition's own transaction, so the category the
+    // reviewer picked commits with the state and the letter or not at all.
+    const approval = h.advances.find((a: any) => a.state === 'EMAIL_PENDING');
+    assert.equal(approval.data.businessCategory, 'CLINIC');
+    assert.equal(approval.data.approvedByUserId, 'admin-1');
+    // And it is evidence: a health-category decision an operator made has to be auditable.
+    const auditRow = h.audits.find((a) => a.data.action === 'signup.request.approved');
+    assert.equal(auditRow.data.metadataJson.businessCategory, 'CLINIC');
+  });
+
+  it('leaves the column alone when review did not pick one', async () => {
+    const h = harness();
+    await h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1', URLS);
+    const approval = h.advances.find((a: any) => a.state === 'EMAIL_PENDING');
+    assert.equal('businessCategory' in approval.data, false);
+  });
+
+  // F3: the enum re-check is the line that decides whether a PDPA safeguard can be armed by a
+  // string nobody validated. Replacing it with `body.businessCategory ?? null` must not pass.
+  it('refuses a category the enum does not know, at the use case and not only at the DTO', async () => {
+    const h = harness();
+    await h.useCase.decide(
+      'signup-1', { action: 'APPROVE', businessCategory: 'HOSPITAL' }, 'admin-1', 'req-1', URLS,
+    );
+    const written = h.advances.find((a: any) => a.state === 'EMAIL_PENDING');
+    assert.equal('businessCategory' in written.data, false, 'nothing unvalidated is stored');
+    const auditRow = h.audits.find((a) => a.data.action === 'signup.request.approved');
+    assert.equal(auditRow.data.metadataJson.businessCategory, null);
+    // Same for an empty string and for a case that only LOOKS like the enum.
+    for (const bad of ['', 'clinic', ' CLINIC ']) {
+      const other = harness();
+      await other.useCase.decide(
+        'signup-1', { action: 'APPROVE', businessCategory: bad }, 'admin-1', 'req-1', URLS,
+      );
+      const badWrite = other.advances.find((a: any) => a.state === 'EMAIL_PENDING');
+      assert.equal('businessCategory' in badWrite.data, false, bad);
+    }
+  });
+
+  it('carries the choice into a LINE approval, which provisions inline', async () => {
+    const h = harness({ request: LINE_REQUEST });
+    await h.useCase.decide(
+      'signup-1', { action: 'APPROVE', businessCategory: 'WELLNESS_SPA' }, 'admin-1', 'req-1', URLS,
+    );
+    assert.equal(h.updates[0].data.businessCategory, 'WELLNESS_SPA');
+  });
+});
 
 describe('SignupAdminQueueUseCase.decide — LINE-first source', () => {
   it('provisions on approval instead of queueing a claim email nobody can receive', async () => {
@@ -572,6 +635,153 @@ describe('SignupAdminQueueUseCase.decide — suspend', () => {
   });
 });
 
+// R13: the queue read 200 rows and the page filtered and counted whatever came back — so a backlog
+// past 200 was invisible, a tab could show "ไม่มีคำขอในกลุ่มนี้" over rows the database was holding,
+// and REJECTED/SUSPENDED applications could not be found at all.
+describe('SignupAdminQueueUseCase.list — filtering, paging and counts', () => {
+  // Review F2 moved PROVISIONING_FAILED to every source; READY and a live PROVISIONING stay
+  // LINE-only, because a web row in either has no action an admin could take.
+  const queueWhereForDefaultTab = () => ({
+    OR: [
+      { state: { in: ['PENDING_REVIEW', 'EMAIL_PENDING', 'EMAIL_FAILED', 'EXPIRED', 'PROVISIONING_FAILED'] } },
+      { state: { in: ['READY', 'PROVISIONING'] }, source: 'line-oa' },
+    ],
+  });
+  const page = (n: number) => Array.from({ length: n }, (_, i) => ({
+    ...REQUEST,
+    id: `signup-${i + 1}`,
+    createdAt: new Date(NOW.getTime() - (n - i) * 60_000),
+  }));
+
+  it('asks the database for one tab rather than filtering a truncated page in the browser', async () => {
+    const h = harness({ requests: [] });
+    await h.useCase.list(NOW, { tab: 'PENDING_REVIEW' });
+    assert.deepEqual(h.requestQueries[0].where, { state: 'PENDING_REVIEW' });
+
+    const claim = harness({ requests: [] });
+    await claim.useCase.list(NOW, { tab: 'AWAITING_CLAIM' });
+    assert.deepEqual(claim.requestQueries[0].where, { state: 'EMAIL_PENDING' });
+  });
+
+  it('offers an archive so a rejected or suspended application can still be found', async () => {
+    const h = harness({ requests: [] });
+    await h.useCase.list(NOW, { tab: 'ARCHIVED' });
+    assert.deepEqual(h.requestQueries[0].where, { state: { in: ['REJECTED', 'SUSPENDED', 'EXPIRED'] } });
+  });
+
+  it('hands back a cursor when more rows exist, and nothing when they do not', async () => {
+    const rows = page(6);
+    const full = harness({ requests: rows });
+    const first = await full.useCase.list(NOW, { limit: 5 });
+    assert.equal(first.items.length, 5, 'the extra row is a probe, never rendered');
+    assert.equal(first.nextCursor, encodeQueueCursor(rows[4]!.createdAt, rows[4]!.id));
+    assert.equal(full.requestQueries[0].take, 6);
+
+    const last = harness({ requests: page(3) });
+    const rest = await last.useCase.list(NOW, { limit: 5 });
+    assert.equal(rest.items.length, 3);
+    assert.equal(rest.nextCursor, null);
+  });
+
+  // F10: the cursor carries the ORDERING VALUES, not a row to look up. A row-id cursor is resolved
+  // by Prisma against the same filtered query, so a row that left the tab between pages (an admin
+  // approved it, a sweep parked it) makes the next page come back empty — and the operator sees a
+  // tab that has silently stopped, with no way on but a reload.
+  it('continues from the ordering values, so a row leaving the tab cannot strand the page', async () => {
+    const h = harness({ requests: page(2) });
+    const at = new Date('2026-08-30T10:00:00.000Z');
+    const cursor = encodeQueueCursor(at, 'signup-40');
+    await h.useCase.list(NOW, { cursor, limit: 5 });
+
+    const where = h.requestQueries[0].where;
+    // Never a row lookup: nothing here has to still exist, or still match the tab.
+    assert.equal(h.requestQueries[0].cursor, undefined);
+    assert.equal(h.requestQueries[0].skip, undefined);
+    // The tab predicate first, the page boundary second — the default tab has an `OR` of its own,
+    // so the boundary is identified by position, not by "the clause with an OR in it".
+    assert.deepEqual(where.AND[0], queueWhereForDefaultTab());
+    assert.deepEqual(where.AND[1].OR, [
+      { createdAt: { gt: at } },
+      { createdAt: at, id: { gt: 'signup-40' } },
+    ]);
+    // Deterministic ordering, or a cursor can skip or repeat rows between pages.
+    assert.deepEqual(h.requestQueries[0].orderBy, [{ createdAt: 'asc' }, { id: 'asc' }]);
+  });
+
+  it('hands back a cursor made of the last row values, and ignores a corrupt one', async () => {
+    const rows = page(6);
+    const h = harness({ requests: rows });
+    const first = await h.useCase.list(NOW, { limit: 5 });
+    assert.equal(first.nextCursor, encodeQueueCursor(rows[4]!.createdAt, rows[4]!.id));
+
+    // A cursor that cannot be read is the first page, never a crash and never an empty tab.
+    const garbled = harness({ requests: page(2) });
+    await garbled.useCase.list(NOW, { cursor: 'not-a-cursor', limit: 5 });
+    assert.equal(garbled.requestQueries[0].where.AND, undefined);
+  });
+
+  it('caps what one page may ask for, whatever the caller sends', async () => {
+    const h = harness({ requests: [] });
+    await h.useCase.list(NOW, { limit: 100_000 });
+    assert.ok(h.requestQueries[0].take <= 201, `asked for ${h.requestQueries[0].take}`);
+  });
+
+  // F5: the "มีปัญหา" tab exists to surface rows an operator must act on, and an ABANDONED
+  // provisioning run is the one they most need to find. It is decided by the clock, not by a
+  // state, so it has to be part of the tab's predicate — otherwise the tab's own count (which
+  // does include it) promises rows the list can never show.
+  it('puts abandoned provisioning runs on the problem tab, agreeing with its count', async () => {
+    const h = harness({ requests: [] });
+    await h.useCase.list(NOW, { tab: 'PROBLEM' });
+
+    const branches = h.requestQueries[0].where.OR;
+    const stale = branches.find((b: any) => b.provisioningStartedAt);
+    assert.ok(stale, 'the problem tab must ask for abandoned runs, not only for failed states');
+    assert.equal(stale.state, 'PROVISIONING');
+    assert.equal(stale.source, 'line-oa');
+    // The same clock the fence uses, or the queue and the fence disagree about what abandoned is.
+    assert.equal(NOW.getTime() - (stale.provisioningStartedAt.lt as Date).getTime(), STALE_PROVISIONING_MS);
+    // And the states that are problems by state alone are still there. Review F2 made a failed
+    // provisioning an EVERY-source row, so it is asked for by state — not behind the LINE filter,
+    // which would have hidden a Flow B failure from the one tab that exists to surface it.
+    assert.deepEqual(branches[0], { state: { in: ['EMAIL_FAILED', 'EXPIRED', 'PROVISIONING_FAILED'] } });
+    assert.deepEqual(branches[1], { state: { in: ['READY'] }, source: 'line-oa' });
+  });
+
+  it('counts the WHOLE queue, not the page it just read', async () => {
+    const h = harness({
+      requests: page(2),
+      stateCounts: [
+        { state: 'PENDING_REVIEW', source: 'official-site', _count: { _all: 240 } },
+        { state: 'EMAIL_PENDING', source: 'official-site', _count: { _all: 31 } },
+        { state: 'EMAIL_FAILED', source: 'official-site', _count: { _all: 4 } },
+        { state: 'EXPIRED', source: 'official-site', _count: { _all: 7 } },
+        { state: 'PROVISIONING_FAILED', source: 'line-oa', _count: { _all: 2 } },
+        // F2: a Flow B provisioning failure is a queue row too, so it is counted like one.
+        { state: 'PROVISIONING_FAILED', source: 'official-site', _count: { _all: 6 } },
+        { state: 'READY', source: 'line-oa', _count: { _all: 1 } },
+        // 8 runs in flight, 5 of them abandoned by the clock: the 3 live ones are in the queue and
+        // are NOT a problem, which is the one distinction a state count cannot make on its own.
+        { state: 'PROVISIONING', source: 'line-oa', _count: { _all: 8 } },
+        // A web-form row in a LINE-only state is not in the queue, so it is in no count either.
+        { state: 'READY', source: 'official-site', _count: { _all: 99 } },
+        { state: 'REJECTED', source: 'official-site', _count: { _all: 12 } },
+        { state: 'SUSPENDED', source: 'line-oa', _count: { _all: 3 } },
+      ],
+      staleProvisioningCount: 5,
+    });
+    const { counts } = await h.useCase.list(NOW);
+
+    assert.equal(counts!.PENDING_REVIEW, 240);
+    assert.equal(counts!.AWAITING_CLAIM, 31);
+    // Bounced, expired, failed provisioning, stranded READY, and the abandoned runs.
+    assert.equal(counts!.PROBLEM, 4 + 7 + 2 + 6 + 1 + 5);
+    assert.equal(counts!.ARCHIVED, 12 + 3 + 7);
+    // Everything actionable, live provisioning runs included, and nothing that is not in the queue.
+    assert.equal(counts!.ALL, 240 + 31 + 4 + 7 + 2 + 6 + 1 + 8);
+  });
+});
+
 describe('SignupAdminQueueUseCase.listAutoApproved', () => {
   it('shows what the machine let through, without inventing dedupe hints for it', async () => {
     const h = harness({ requests: [{ ...LINE_REQUEST, state: 'COMPLETED', autoApproved: true }] });
@@ -681,7 +891,9 @@ describe('SignupAdminQueueUseCase.decide — approve', () => {
     assert.equal(audit.riskLevel, 'HIGH');
     assert.equal(audit.actorUserId, 'admin-1');
     assert.equal(audit.targetId, 'signup-1');
-    assert.deepEqual(audit.metadataJson, { hadTaxId: true, mxValid: true });
+    // R10: null records that this reviewer did not pick a category — an enum key or nothing, and
+    // never the applicant's own words, which are the PII this row must not carry.
+    assert.deepEqual(audit.metadataJson, { hadTaxId: true, mxValid: true, businessCategory: null });
     // Applicant PII must never reach evidence.
     const evidence = JSON.stringify(h.audits);
     for (const pii of ['somchai@example.com', 'ร้านมั่งมี', '0105555000012', '0982565628']) {

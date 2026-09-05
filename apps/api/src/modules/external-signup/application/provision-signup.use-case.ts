@@ -226,7 +226,10 @@ export class ProvisionSignupUseCase {
   ) {
     return this.onboarding.execute({
       companyName: request.companyName,
-      businessCategory: mapBusinessCategory(request.businessType),
+      // R10: the enum the reviewer chose wins over the free-text mapping, which reads "คลินิก" as
+      // OTHER and leaves the PDPA health tripwire dead for anyone who answered in Thai.
+      businessCategory: reviewedBusinessCategory(request.businessCategory)
+        ?? mapBusinessCategory(request.businessType),
       ...(request.taxId ? { taxId: request.taxId } : {}),
       ownerDisplayName: request.ownerDisplayName,
       ...(lineOa ? this.lineOwnerShape(request) : this.emailOwnerShape(request, cmd.username)),
@@ -512,6 +515,8 @@ type SignupRow = {
   companyName: string;
   ownerDisplayName: string;
   businessType: string | null;
+  /** R10: the enum an admin picked at review; null means "use the free-text mapping". */
+  businessCategory: string | null;
   taxId: string | null;
   contactEmail: string | null;
   phoneNumber: string | null;
@@ -540,6 +545,17 @@ export function mapBusinessCategory(businessType: string | null): CompanyBusines
   return (COMPANY_BUSINESS_CATEGORIES as readonly string[]).includes(candidate)
     ? (candidate as CompanyBusinessCategory)
     : 'OTHER';
+}
+
+/**
+ * R10: the category an admin picked at review, stored as TEXT so a value the enum later drops can
+ * still be read back. Anything the enum does not know is NOT a licence to invent one — the caller
+ * falls back to the mapping, which is the conservative OTHER.
+ */
+export function reviewedBusinessCategory(stored: string | null): CompanyBusinessCategory | null {
+  return stored && (COMPANY_BUSINESS_CATEGORIES as readonly string[]).includes(stored)
+    ? (stored as CompanyBusinessCategory)
+    : null;
 }
 
 function messageOf(error: unknown): string {

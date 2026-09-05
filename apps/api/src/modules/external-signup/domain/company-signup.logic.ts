@@ -126,6 +126,15 @@ export function isStaleProvisioning(
     && now.getTime() - request.provisioningStartedAt.getTime() > STALE_PROVISIONING_MS;
 }
 
+/**
+ * The states in which a LINE account is FENCED out of applying again (the partial unique index
+ * `CompanySignupRequest_line_open_key` mirrors this list, and a spec asserts they agree).
+ *
+ * `RECEIVED` is in this set, and `SignupClaimEmailService.sweepAbandonedIntake` is source-blind, so
+ * that sweep also releases a LINE fence left stuck at `RECEIVED` by an attempt that never got any
+ * further. That is the correct outcome and worth saying out loud: an application that got nowhere
+ * for a week is not a reason to keep its owner locked out of applying again.
+ */
 export const LINE_OPEN_APPLICATION_STATES: readonly CompanySignupState[] = [
   'RECEIVED', 'VALIDATED', 'PENDING_REVIEW', 'PROVISIONING', 'PROVISIONING_FAILED', 'READY',
 ];

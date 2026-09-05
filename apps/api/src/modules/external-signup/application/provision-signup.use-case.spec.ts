@@ -224,6 +224,37 @@ describe('mapBusinessCategory', () => {
   });
 });
 
+/**
+ * R10. The mapping above is right to refuse a guess, but it left the PDPA health tripwire dead for
+ * every Thai applicant: someone who types "คลินิก" becomes OTHER, and the onboarding safeguard that
+ * exists for clinics never fires — while the admin approving the row is looking straight at the
+ * word. So the admin picks the enum at review, and THAT is what provisioning uses.
+ */
+describe('the business category chosen at review', () => {
+  it('reaches onboarding instead of the free-text mapping', async () => {
+    const h = harness({ request: { businessType: 'คลินิก', businessCategory: 'CLINIC' } });
+    await h.useCase.execute(CMD);
+    assert.equal(h.onboardingCalls[0].businessCategory, 'CLINIC');
+  });
+
+  it('falls back to the mapping when review left it alone', async () => {
+    const h = harness({ request: { businessType: 'ร้านค้าปลีก', businessCategory: null } });
+    await h.useCase.execute(CMD);
+    assert.equal(h.onboardingCalls[0].businessCategory, 'OTHER');
+    const exact = harness({ request: { businessType: 'RETAIL', businessCategory: null } });
+    await exact.useCase.execute(CMD);
+    assert.equal(exact.onboardingCalls[0].businessCategory, 'RETAIL');
+  });
+
+  // A stored value the enum does not know is not a licence to invent one — the tripwire must never
+  // be armed or disarmed by a string nobody validated.
+  it('ignores a stored value that is not in the enum', async () => {
+    const h = harness({ request: { businessType: 'คลินิก', businessCategory: 'HOSPITAL' } });
+    await h.useCase.execute(CMD);
+    assert.equal(h.onboardingCalls[0].businessCategory, 'OTHER');
+  });
+});
+
 describe('ProvisionSignupUseCase — new-user path', () => {
   it('provisions through the onboarding service with the self-chosen password', async () => {
     const h = harness();

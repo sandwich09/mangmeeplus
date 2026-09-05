@@ -46,6 +46,26 @@ test('an unopened tab shows no count rather than a confident zero', () => {
   assert.match(source, /\{count !== null && <span/);
 });
 
+test('R13: the tab is asked of the server, not applied to whatever 200 rows arrived', () => {
+  // The queue read 200 rows and the browser filtered them, so a tab could show nothing while the
+  // database held a backlog, and every count was a count of the truncation.
+  assert.match(source, /const page = await listSignupRequests\(\{ tab: tabLoadsOwnList\(forTab\) \? 'ALL' : forTab \}\)/);
+  assert.doesNotMatch(source, /listSignupRequests\(\)/);
+  assert.doesNotMatch(source, /filterSignupQueue/);
+});
+
+test('R13: there is a way past the first page, and it continues rather than restarts', () => {
+  assert.match(source, /nextCursor/);
+  assert.match(source, /โหลดเพิ่ม/);
+  // Appends — a "load more" that replaces the list is a pager that loses what you were reading.
+  assert.match(source, /setItems\(\(current\) => \[\.\.\.current, \.\.\.page\.items\]\)/);
+});
+
+test('R13: "no applications here" is only said when the server counted zero', () => {
+  assert.match(source, /const emptyForReal =/);
+  assert.match(source, /ไม่มีคำขอในกลุ่มนี้/);
+});
+
 test('a tab failure does not stay up over another tab', () => {
   assert.match(source, /const selectTab = \(next: SignupQueueTab\) => \{[\s\S]{0,400}setTabError\(null\)/);
 });
@@ -63,6 +83,37 @@ test('the package-change tab offers the decision AND the partner page', () => {
   assert.match(source, /handlePackageDecision\(item, 'APPROVE'\)/);
   assert.match(source, /handlePackageDecision\(item, 'REJECT'\)/);
   assert.match(source, /href=\{`\/system\/partners\/\$\{item\.companyId\}`\}/);
+});
+
+test('R10: approving asks for the business category the mapping could not read', () => {
+  // "คลินิก" maps to OTHER, so the PDPA health tripwire never fired for a Thai applicant even
+  // though the operator was reading the word. The dialog defaults to the server's mapping and
+  // refuses to approve while a row the mapping could not read has no choice on it.
+  assert.match(source, /const \[approving, setApproving\] = useState<AdminSignupQueueItemDto \| null>\(null\)/);
+  assert.match(source, /requiresCategoryChoice\(approving\)/);
+  assert.match(source, /COMPANY_BUSINESS_CATEGORIES\.map/);
+  assert.match(source, /setBusinessCategory\(item\.businessCategory/);
+  assert.match(source, /businessCategory: businessCategory/);
+  // F2: "อื่น ๆ" is confirmed, never refused — every Thai answer maps to OTHER, so refusing it
+  // meant a genuinely-other shop could not be approved at all.
+  assert.match(source, /approveBlockedOnCategory\(approving, businessCategory, confirmedOther\)/);
+  assert.match(source, /ตรวจแล้ว เป็นอื่น ๆ/);
+  assert.match(source, /setConfirmedOther\(false\)/);
+});
+
+test('the queue survives a 390px phone, which is where an operator reads it', () => {
+  // §8: this queue is worked from a phone. Every table is the thing that overflows, so each one
+  // scrolls inside its own box rather than pushing the page sideways.
+  const tables = [...source.matchAll(/<table\b/g)].length;
+  const scrollers = [...source.matchAll(/overflow-x-auto/g)].length;
+  assert.ok(tables > 0 && scrollers >= tables, `${tables} tables, ${scrollers} scroll containers`);
+  // The new controls are full-width-safe: no fixed pixel widths anywhere on the page.
+  for (const [, , px] of source.matchAll(/\b((?:min-)?w)-\[(\d+)px\]/g)) {
+    assert.ok(Number(px) <= 358, `a ${px}px fixed width does not fit a 390px screen`);
+  }
+  // Height is INV-10's job (src/common/styles/viewport-units.spec.ts) for the whole app; naming
+  // the banned class here is what that scanner reads as a violation.
+  assert.match(source, /\bmin-h-dvh\b/);
 });
 
 test('a package decision is confirmed before it moves what a customer pays', () => {

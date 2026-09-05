@@ -1,7 +1,7 @@
 // Pure presentation rules for the auto-register review queue (P10 Flow B, spec §4C/§4D).
 // Kept out of the page so the state/hint/filter decisions stay testable under `pnpm test`.
 
-import type { AdminSignupQueueItemDto } from '@watchdog-bms/contracts';
+import type { AdminSignupQueueItemDto, CompanyBusinessCategory } from '@watchdog-bms/contracts';
 
 /** Chip tone; the page owns the Tailwind classes for each. */
 export type ChipTone = 'neutral' | 'info' | 'warning' | 'danger' | 'success';
@@ -111,6 +111,44 @@ export function signupHintChips(item: AdminSignupQueueItemDto): Chip[] {
   return chips;
 }
 
+/**
+ * R10. `businessType` is free text in the applicant's own language and the PDPA health tripwire
+ * reads the closed enum, so "คลินิก" mapped to OTHER and the safeguard never fired for the people
+ * it exists for. When the mapping could not read what the applicant wrote, the reviewer — who is
+ * looking straight at that word — has to say which category it is. Nothing guesses from the text.
+ *
+ * An empty `businessType` is not a failed mapping: OTHER is then the true answer, and asking would
+ * be asking the operator to invent one.
+ */
+export function requiresCategoryChoice(item: AdminSignupQueueItemDto): boolean {
+  return (item.businessCategory ?? 'OTHER') === 'OTHER' && Boolean(item.businessType?.trim());
+}
+
+/**
+ * F2: what stops an approval, and what does not. The first cut refused OTHER outright whenever the
+ * mapping had failed — but EVERY Thai answer maps to OTHER, so a shop that genuinely is "other"
+ * ("ร้านตัดผม") could not be approved at all. The reviewer confirms that choice instead: the
+ * tripwire still gets a decision rather than a default, and the honest answer stays reachable.
+ */
+export function approveBlockedOnCategory(
+  item: AdminSignupQueueItemDto,
+  chosen: string,
+  confirmedOther: boolean,
+): boolean {
+  return requiresCategoryChoice(item) && chosen === 'OTHER' && !confirmedOther;
+}
+
+/** Same wording the manual onboarding form uses, so one category reads the same in both places. */
+export const BUSINESS_CATEGORY_LABELS: Record<CompanyBusinessCategory, string> = {
+  RETAIL: 'ค้าปลีก (Retail)',
+  TRADING: 'ค้าส่ง / เทรดดิ้ง (Trading / wholesale)',
+  SERVICE: 'บริการทั่วไป (General service)',
+  CLINIC: 'คลินิก / สถานพยาบาล (Clinic)',
+  WELLNESS_SPA: 'สปา / เวลเนส (Spa / wellness)',
+  MEDICAL_RETAIL: 'ร้านขายยา / เวชภัณฑ์ (Pharmacy / medical retail)',
+  OTHER: 'อื่น ๆ (Other)',
+};
+
 /** Business-type / VAT / tax id, joined only for the parts the applicant actually filled in. */
 export function signupBusinessSummary(item: AdminSignupQueueItemDto): string {
   const parts = [item.businessType, item.vatRegistered === undefined ? undefined : item.vatRegistered ? 'จด VAT' : 'ไม่จด VAT', item.taxId];
@@ -203,7 +241,9 @@ export function rejectNotifyLabel(item: AdminSignupQueueItemDto): string {
   return isLineSignup(item) ? 'แจ้งทางไลน์' : 'ส่งอีเมลแจ้งผู้สมัคร';
 }
 
-export type SignupQueueTab = 'ALL' | 'PENDING_REVIEW' | 'AWAITING_CLAIM' | 'PROBLEM' | 'AUTO_APPROVED' | 'PACKAGE_CHANGE';
+export type SignupQueueTab =
+  | 'ALL' | 'PENDING_REVIEW' | 'AWAITING_CLAIM' | 'PROBLEM' | 'ARCHIVED'
+  | 'AUTO_APPROVED' | 'PACKAGE_CHANGE';
 
 /** Review B-09 / §8: 14 days of what AUTO_FREE let through, for after-the-fact review. */
 export const AUTO_APPROVED_REVIEW_DAYS = 14;
@@ -213,6 +253,9 @@ export const SIGNUP_QUEUE_TABS: { key: SignupQueueTab; label: string }[] = [
   { key: 'PENDING_REVIEW', label: 'รออนุมัติ' },
   { key: 'AWAITING_CLAIM', label: 'รอตั้งรหัส' },
   { key: 'PROBLEM', label: 'มีปัญหา' },
+  // R13: a rejected, suspended or expired application appeared on no list at all, so "where did
+  // that application go" had no answer anywhere in the console.
+  { key: 'ARCHIVED', label: 'ปิดไปแล้ว' },
   { key: 'AUTO_APPROVED', label: `อนุมัติอัตโนมัติ ${AUTO_APPROVED_REVIEW_DAYS} วัน` },
   { key: 'PACKAGE_CHANGE', label: 'คำขอเปลี่ยนแพ็กเกจ' },
 ];
@@ -222,18 +265,20 @@ export function tabLoadsOwnList(tab: SignupQueueTab): boolean {
   return tab === 'AUTO_APPROVED' || tab === 'PACKAGE_CHANGE';
 }
 
-export function filterSignupQueue(
-  items: AdminSignupQueueItemDto[],
+// R13: what each tab holds is decided by the API now (`queueWhere` in signup-admin-queue.use-case),
+// because filtering here could only ever filter the page that happened to arrive — which is how a
+// tab came to report "no applications in this group" over a backlog the database was holding.
+
+/**
+ * F4: whether "ไม่มีคำขอในกลุ่มนี้" is TRUE. It is a claim about the database, so it may only be
+ * made when the server counted this tab and counted zero. An empty screen with no count behind it
+ * is a load that did not answer — the same sentence would then mean the opposite of what it says.
+ */
+export function queueEmptyForReal(
+  visible: readonly AdminSignupQueueItemDto[],
+  counts: Record<string, number> | null,
   tab: SignupQueueTab,
-): AdminSignupQueueItemDto[] {
-  if (tab === 'ALL') return items;
-  if (tab === 'PENDING_REVIEW') return items.filter((i) => i.state === 'PENDING_REVIEW');
-  if (tab === 'AWAITING_CLAIM') return items.filter((i) => i.state === 'EMAIL_PENDING' && !i.emailDeliveryFailed);
-  // A bounce flag counts as a problem even if the state has not flipped to EMAIL_FAILED yet, and a
-  // provisioning that failed is the most actionable problem of the lot. An ABANDONED run belongs
-  // here too — it is the one an operator most needs to find — while a live one is not a problem.
-  return items.filter((i) => i.state === 'EMAIL_FAILED' || i.state === 'EXPIRED'
-    || i.state === 'PROVISIONING_FAILED' || i.state === 'READY'
-    || (i.state === 'PROVISIONING' && i.staleProvisioning === true)
-    || i.emailDeliveryFailed);
+): boolean {
+  if (visible.length > 0) return false;
+  return counts?.[tab] === 0;
 }

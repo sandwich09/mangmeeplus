@@ -33,14 +33,25 @@ export type PublicCompanySignupBody = {
 
 export type PublicCompanySignupAcceptedDto = { requestId: string };
 
-/** Coarse public states — never expose internal review detail. */
-export type PublicSignupStatusKey =
-  | 'CHECKING'        // RECEIVED/VALIDATED
-  | 'PENDING_REVIEW'  // waiting for admin
-  | 'AWAITING_CLAIM'  // approved, claim email sent (EMAIL_PENDING)
-  | 'READY'           // provisioned (EMAIL_VERIFIED..COMPLETED)
-  | 'REJECTED'
-  | 'EXPIRED';
+/**
+ * Coarse public states — never expose internal review detail. Coarse is not the same as untrue:
+ * R11 added the three keys below because the page was telling applicants that a shop existed, that
+ * a rescue was under way, or that an email had been delivered, in states where none of that had
+ * happened. A key added here needs Thai copy behind it in `apps/web`'s signup logic.
+ */
+export const PUBLIC_SIGNUP_STATUS_KEYS = [
+  'CHECKING',         // RECEIVED/VALIDATED
+  'PENDING_REVIEW',   // waiting for admin
+  'AWAITING_CLAIM',   // approved, claim email sent (EMAIL_PENDING)
+  'EMAIL_FAILED',     // the claim email bounced — nothing is on its way
+  'PREPARING',        // mailbox proved, shop being built (EMAIL_VERIFIED/PROVISIONING)
+  'PREPARING_FAILED', // the build stopped and nothing retries by itself
+  'READY',            // provisioned (READY/LINE_LINK_PENDING/COMPLETED)
+  'REJECTED',
+  'EXPIRED',
+] as const;
+
+export type PublicSignupStatusKey = (typeof PUBLIC_SIGNUP_STATUS_KEYS)[number];
 
 export type PublicSignupStatusDto = {
   requestId: string;
@@ -129,6 +140,12 @@ export type AdminSignupQueueItemDto = {
   vatRegistered?: boolean;
   taxId?: string;
   requestedOfferKey?: string;
+  /**
+   * R10: what `businessType` maps to today — the stored review choice when one was made, otherwise
+   * the exact-match mapping. The server owns the mapping, so the approve dialog can DEFAULT to it
+   * and can tell that a row with free text answering OTHER is one the reviewer has to decide.
+   */
+  businessCategory?: string;
   mxValid?: boolean;
   createdAt: string;
   approvedAt?: string;
@@ -161,7 +178,20 @@ export type AdminSignupQueueItemDto = {
   failureCode?: string;
 };
 
-export type AdminSignupQueueDto = { items: AdminSignupQueueItemDto[] };
+export type AdminSignupQueueDto = {
+  items: AdminSignupQueueItemDto[];
+  /**
+   * R13: pass back as `?cursor=` for the next page. `null`/absent means this was the last page —
+   * the queue used to read 200 rows with no way past them, so a backlog simply disappeared.
+   */
+  nextCursor?: string | null;
+  /**
+   * R13: how many rows each tab holds IN THE DATABASE, keyed by tab. Counted server-side because
+   * the page can only ever count what it was given, which is how a tab came to say "no
+   * applications in this group" over rows that were there.
+   */
+  counts?: Record<string, number>;
+};
 
 /** Bounded because the admin's paragraph travels through the outbox and into an inbox. */
 export const SIGNUP_REJECTION_REASON_MAX_LENGTH = 500;
@@ -170,6 +200,14 @@ export type AdminSignupDecisionBody = {
   /** Idempotency: repeat with same requestId is a no-op returning current state.
    *  SUSPEND (P10-L §8) stops an auto-approved application an admin does not want to keep. */
   action: 'APPROVE' | 'REJECT' | 'SUSPEND';
+  /**
+   * R10, APPROVE only. `businessType` on the form is free text in the applicant's own language and
+   * the PDPA health tripwire reads the CLOSED enum — "คลินิก" maps to OTHER, so the safeguard never
+   * fired for the people it exists for. The reviewer who is already reading that word picks the
+   * enum here; nothing guesses it, and omitting it keeps the exact-match mapping.
+   * A `CompanyBusinessCategory` (company-profile.ts); the server re-checks membership.
+   */
+  businessCategory?: string;
   /** REJECT only: send a notice email (default silent). */
   notifyApplicant?: boolean;
   /**

@@ -30,7 +30,7 @@ export class LocalConsoleAuthMailerAdapter implements AuthMailerPort {
   // Renders the same Owner-locked copy SES sends, so a local run shows the real letter rather
   // than a field dump — the subject and body here and in production come from one module.
   async sendAccountClaim(input: AccountClaimEmailInput): Promise<string | null> {
-    const claimUrl = this.buildUrl('/claim-account', input.rawToken);
+    const claimUrl = this.buildUrl('/claim-account', input.rawToken, input.signupRequestId);
     const rendered = renderAccountClaimEmail({
       companyName: input.companyName,
       toEmail: input.toEmail,
@@ -84,10 +84,12 @@ export class LocalConsoleAuthMailerAdapter implements AuthMailerPort {
     return true;
   }
 
-  private buildUrl(pathname: string, token: string): string {
+  private buildUrl(pathname: string, token: string, signupRequestId?: string): string {
     const baseUrl = this.config.webBaseUrl ?? 'http://localhost:3000';
     const url = new URL(pathname, baseUrl);
     url.searchParams.set('token', token);
+    // R12: same recovery param the SES letter carries, so a local run exercises the real link.
+    if (signupRequestId) url.searchParams.set('r', signupRequestId);
     return url.toString();
   }
 }
