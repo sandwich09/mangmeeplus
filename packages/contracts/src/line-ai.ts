@@ -126,6 +126,17 @@ export type LineUserContext = {
   locationIds?: string[];
   locale: string;
   conversationId?: string;
+  /**
+   * Spec §5.5: the chat this turn belongs to, as the SAME salted hash the intake lane stores on a
+   * LINE-captured record (`chatKeyHashOf`). It is what lets a read tool resolve "บิลเมื่อกี้" to the
+   * record captured in THIS chat instead of any record the user owns, so the explain tool and the
+   * correction lane share one provenance rule.
+   *
+   * DATA, never authorization: company, membership, permissions and branch scope are re-resolved
+   * server-side from the actor delegation, so the worst a wrong value can do is narrow (or, at
+   * most, widen to another of the SAME user's own chats) which of their own records is explained.
+   */
+  chatKeyHash?: string;
 };
 
 /** Single source of truth for the short-term LINE memory window (api loader, gateway prompts,

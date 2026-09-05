@@ -1124,7 +1124,11 @@ describe('ProcessLineWebhookUseCase', () => {
       silent(useCase);
       await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-fwd-off', messageText: 'ยอดขายวันนี้เท่าไหร่' });
       assert.equal(aiGatewayRequests[0]?.preparedPlan, undefined, 'default off → prepared plan not forwarded');
-      assert.equal(aiGatewayRequests[0]?.intakeIntent, undefined, 'default off → no provenance bound');
+      // S-3: the TRUSTED outer route intent is bound on EVERY turn now — it is what lets the
+      // orchestrator tell an in-system business question from an out-of-scope one (evidence E4).
+      // It activates no lane on its own: the prepared simple-read lane additionally requires
+      // `preparedPlan`, which the assertion above shows is still absent with the flags off.
+      assert.equal(aiGatewayRequests[0]?.intakeIntent, 'BUSINESS_READ_QUESTION', 'trusted provenance is always bound');
     }
 
     // Phase 4 alone (prepared-simple-read on, shadow OFF): forwarded — the two lanes are independent.
