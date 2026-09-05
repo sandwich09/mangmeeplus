@@ -325,6 +325,29 @@ describe('CaptureLineExpenseNoteUseCase', () => {
     assert.equal(creates.length, 2);
   });
 
+  // Spec `line-ai-draft-control-spec-th.md` §5.2. `expenseDate` falls back to today when the note
+  // named no date, and with the conversation off there is nobody asking for one — so the flag is
+  // the only thing standing between a placeholder and a value that reads as a fact.
+  it('flags an unstated date as missing, so today is never a silent answer', async () => {
+    const { repo, updates } = makeRepo();
+    const useCase = new CaptureLineExpenseNoteUseCase(repo, createDraft, audit, outbox);
+
+    await useCase.execute(ctx(['expense.receipt.line_upload'], 'line'), {
+      messageText: 'ค่าอาหาร 65 บาท',
+      captureHints: { amount: '65', expenseCategoryId: 'cat-meals' },
+      lineMessageId: 'msg-nodate', lineEventId: 'evt-nodate',
+    });
+    assert.ok(updates.at(-1).aiVerificationSummaryJson.missingFields.includes('expenseDate'));
+
+    await useCase.execute(ctx(['expense.receipt.line_upload'], 'line'), {
+      messageText: 'ค่าอาหาร 65 บาท วันที่ 1 ส.ค. 2569',
+      captureHints: { amount: '65', expenseCategoryId: 'cat-meals', expenseDate: '2026-08-01' },
+      lineMessageId: 'msg-dated', lineEventId: 'evt-dated',
+    });
+    assert.equal(updates.at(-1).aiVerificationSummaryJson.missingFields.includes('expenseDate'), false,
+      'a date the note actually stated raises nothing');
+  });
+
   it('DEFAULT-OFF reports NO typed fields, so the dispatcher asks the exact previous question', async () => {
     const { repo } = makeRepo();
     const useCase = new CaptureLineExpenseNoteUseCase(repo, {

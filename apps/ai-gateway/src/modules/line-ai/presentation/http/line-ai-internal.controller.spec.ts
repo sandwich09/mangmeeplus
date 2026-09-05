@@ -699,6 +699,33 @@ describe('applyOcrValueCrossCheck (item 10F)', () => {
     assert.equal(out.grandTotalAmount, '60');
   });
 
+  // Spec `line-ai-draft-control-spec-th.md` §5.2. Receipt mode makes a Thai `03/09/69` usable, but
+  // only by applying the DD/MM convention and choosing an era. The ISO string cannot carry that, so
+  // the assumptions travel beside it — without them the API reports the date as plainly stated and
+  // the card prints "3 ก.ย. 2569" as fact.
+  it('carries what the reading had to assume, beside the date it produced', () => {
+    const out = applyOcrValueCrossCheck({ missingFields: ['expenseDate'] }, 'ใบเสร็จ BHC\nวันที่ 03/09/69\nรวม 1,789.04', '2026-09-30');
+    assert.equal(out.expenseDate, '2026-09-03', 'the Thai DD/MM convention makes it readable at all');
+    assert.deepEqual(out.expenseDateAssumptions, ['order_assumed_day_month', 'two_digit_year_resolved_plausible_era']);
+  });
+
+  it('carries no assumptions for a date the page stated outright', () => {
+    const out = applyOcrValueCrossCheck({ expenseDate: '2026-08-23' }, 'วันที่ 23 ส.ค. 69\nTOTAL 333.00', '2026-09-30');
+    assert.equal(out.expenseDate, '2026-08-23');
+    assert.equal((out.expenseDateAssumptions ?? []).includes('order_assumed_day_month'), false,
+      'a named month leaves nothing to guess about the order');
+  });
+
+  it('clears the assumptions with the date it can no longer support', () => {
+    const out = applyOcrValueCrossCheck(
+      { expenseDate: '2026-09-03', expenseDateAssumptions: ['order_assumed_day_month'] },
+      'ใบเสร็จ ไม่มีวันที่ รวม 60.00',
+      '2026-09-30',
+    );
+    assert.equal(out.expenseDate, undefined);
+    assert.equal(out.expenseDateAssumptions, undefined, 'assumptions about a dropped date are noise');
+  });
+
   it('drops values against an ambiguous printed date (9/11/37) – review decides', () => {
     const out = applyOcrValueCrossCheck({ expenseDate: '1994-11-09' }, 'ใบเสร็จ 9/11/37 รวม 60.00');
     assert.equal(out.expenseDate, undefined);

@@ -75,6 +75,10 @@ export type LedgerEntry = {
   clarifyQuestion?: string;
   /** Intake route the clarified request was on — inherited deterministically on the answer. */
   clarifyForIntent?: LineIntakeRouteIntent;
+  /** The TRUSTED intake route this turn was on, carried so a reclaimed turn reaches the gateway with
+   *  the same provenance the live turn had. Without it a drained turn loses the only thing that can
+   *  tell "in the system, not on LINE yet" from "out of scope" (spec §5.3). Re-validated on read. */
+  intakeIntent?: LineIntakeRouteIntent;
   /** Correction-target shortlist the question named; wording snapshot only, never authorization. */
   candidateExpenseIds?: string[];
   /** The already-stored file this question was asked about (see LineAiOpenClarification). */
@@ -141,6 +145,7 @@ export function fieldsToEntry(key: string, id: string, fields: string[]): Ledger
     ...(map['state'] === 'pending' || map['state'] === 'waiting_user' ? { state: map['state'] } : {}),
     ...(map['clarifyQuestion'] ? { clarifyQuestion: map['clarifyQuestion'] } : {}),
     ...(asIntakeRouteIntent(map['clarifyForIntent']) ? { clarifyForIntent: asIntakeRouteIntent(map['clarifyForIntent']) } : {}),
+    ...(asIntakeRouteIntent(map['intakeIntent']) ? { intakeIntent: asIntakeRouteIntent(map['intakeIntent']) } : {}),
     ...(candidateExpenseIds.length > 0 ? { candidateExpenseIds } : {}),
     ...(pendingMedia ? { pendingMedia } : {}),
     ...(valueCandidates ? { valueCandidates } : {}),
@@ -211,6 +216,7 @@ export class LineAiLedgerService implements OnModuleDestroy {
     userId: string;
     text: string;
     valueCandidates?: LineAiValueCandidates;
+    intakeIntent?: LineIntakeRouteIntent;
     now?: Date;
   }): Promise<string | null> {
     return this.append(input.companyId, input.chatKey, {
@@ -221,6 +227,7 @@ export class LineAiLedgerService implements OnModuleDestroy {
       text: input.text,
       state: 'pending',
       ...(input.valueCandidates ? { valueCandidates: JSON.stringify(input.valueCandidates) } : {}),
+      ...(input.intakeIntent ? { intakeIntent: input.intakeIntent } : {}),
     }, input.now ?? new Date(), input.turnId);
   }
 

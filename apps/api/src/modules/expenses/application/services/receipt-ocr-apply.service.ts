@@ -4,8 +4,11 @@ import { Prisma } from '../../../../generated/prisma/client';
 import Decimal from 'decimal.js';
 import {
   EXPENSE_LINE_CHARGE_KIND_LABELS,
+  isAssumedDateReading,
   RECEIPT_ADDITIONAL_CHARGE_KINDS,
   RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE,
+  todayCivilDate,
+  type ExpenseDocumentDateStatus,
   type ExpenseLineChargeKind,
   type ExpenseVatMode,
   type ExpenseVatCaptureSnapshotV1,
@@ -34,6 +37,67 @@ function validDate(value: string | undefined | null): Date | undefined {
 
 function validVatMode(value: string | undefined): 'NO_VAT' | 'VAT_INCLUDED' | 'VAT_EXCLUDED' | 'EXEMPT' | 'NEEDS_REVIEW' | undefined {
   return value === 'NO_VAT' || value === 'VAT_INCLUDED' || value === 'VAT_EXCLUDED' || value === 'EXEMPT' || value === 'NEEDS_REVIEW' ? value : undefined;
+}
+
+/** Spec §5.1/§5.2: the reasons this service can raise, in the words the reviewer reads. They travel
+ *  back on the outcome instead of being written here, because the LINE and web capture paths each
+ *  compose (and overwrite) `aiVerificationSummaryJson` after this service returns. */
+export const RECEIPT_REVIEW_REASONS = {
+  dateUnverified: 'วันที่บนเอกสารยังอ่านไม่ได้ – ใช้วันที่ส่งไว้ก่อน',
+  dateImplausible: 'วันที่ผิดปกติ',
+  chargeVatUnknown: 'ค่าใช้จ่ายเพิ่มยังไม่รู้ VAT – ตรวจก่อนยืนยัน',
+  chargesFolded: 'ค่าใช้จ่ายเพิ่มถูกรวมในยอดเดียว – ตรวจก่อนยืนยัน',
+  whtWithCharges: 'ตรวจฐานหัก ณ ที่จ่ายกับค่าบริการ',
+} as const;
+
+/** How far a printed date may sit from today before it is evidence of a misread rather than a date.
+ *  A receipt can be issued a day ahead across a timezone, never a year ahead; and a bill older than
+ *  two years is outside every filing window this ERP works in, so it is worth a human look. */
+const DATE_MAX_FUTURE_DAYS = 1;
+const DATE_MAX_PAST_YEARS = 2;
+
+export type ReceiptDateReview = {
+  /** The four-state answer every surface renders from (contracts `ExpenseDocumentDateStatus`). */
+  status: ExpenseDocumentDateStatus;
+  /** The stored `expenseDate` came off the document and is plausible. */
+  verified: boolean;
+  /** Spec §5.2: the reading applied the Thai DD/MM convention or chose an era. Still a usable date
+   *  — it stays on the record and does NOT force review — but every surface must say it was read
+   *  rather than stated, or the receipt mode has only replaced one confident wrong answer. */
+  assumed: boolean;
+  /** The `VALUE_ASSUMPTIONS` markers behind `assumed`, kept as the field-level evidence. */
+  assumptions?: string[];
+  reason?: string;
+};
+
+/**
+ * Spec §5.2. `ExpenseRecord.expenseDate` is NOT NULL, so a receipt whose date nobody could read
+ * still carries the day it was sent. That placeholder is fine; passing it off as a reading is not.
+ * UAT 2026-09-03: a bill printing 03/09/69 was stored with today's date while the LINE card said
+ * "วันที่: ยังไม่ระบุ", and no field anywhere held both facts at once.
+ *
+ * Three outcomes, not two: unread and implausible are review; a date the reader had to INFER part
+ * of is kept and flagged. Forcing review on an assumed reading would have made receipt mode
+ * pointless — every Thai `DD/MM/YY` bill would land in review exactly as if the date were unread.
+ */
+export function reviewReceiptDate(
+  expenseDate: string | undefined,
+  todayIso: string,
+  assumptions?: readonly string[],
+): ReceiptDateReview {
+  const read = validDate(expenseDate);
+  if (!read) return { status: 'unverified', verified: false, assumed: false, reason: RECEIPT_REVIEW_REASONS.dateUnverified };
+  const assumed = isAssumedDateReading(assumptions);
+  const flags = assumed ? { assumed: true, assumptions: [...assumptions!] } : { assumed: false };
+  const ok = { status: assumed ? ('assumed' as const) : ('verified' as const), verified: true, ...flags };
+  const today = validDate(todayIso);
+  if (!today) return ok;
+  const latest = new Date(today.getTime() + DATE_MAX_FUTURE_DAYS * 86_400_000);
+  const earliest = new Date(today);
+  earliest.setUTCFullYear(earliest.getUTCFullYear() - DATE_MAX_PAST_YEARS);
+  return read > latest || read < earliest
+    ? { status: 'implausible', verified: false, ...flags, reason: RECEIPT_REVIEW_REASONS.dateImplausible }
+    : ok;
 }
 
 const VAT_TOLERANCE = 0.05;
@@ -257,6 +321,8 @@ type PreparedOcrLine = {
   /** ZERO_RATED / EXEMPT / NON_VAT when the page marked this row untaxed; null otherwise. */
   vatTreatment?: string | null;
   whtRate: string | null;
+  /** The row carries a tax position the document did not prove, so it must not read as reviewed. */
+  needsReview?: boolean;
   sourceLineText?: string;
   aiLineConfidence?: number;
   totals: ReturnType<typeof calcLineTotals>;
@@ -394,12 +460,21 @@ function prepareOcrLines(
   chargesApplied: number;
   /** Set only with ITEMS_DID_NOT_RECONCILE: what the printed rows actually add up to. */
   itemsSumAmount?: string;
+  /** Spec §5.1 review reasons the charge rules raised, in the reviewer's words. */
+  chargeReviewReasons: string[];
 } {
   const vatMode = documentVatMode(fields);
   const whtRate = expenseWhtLineRate(ocrWhtInput(fields));
   const hadChargeSuggestions = Array.isArray(fields.additionalCharges) && fields.additionalCharges.length > 0;
   const charges = Array.isArray(fields.additionalCharges) && fields.additionalCharges.length <= MAX_OCR_ADDITIONAL_CHARGES
     ? fields.additionalCharges.filter((charge) => {
+        // Spec §5.1 says `ROUNDING` is the one kind a document may print negative and every other
+        // kind must be positive. Only the second half is enforced: `calcLineTotals` clamps a
+        // document discount with `min(discount, lineSubtotal)`, which on a negative subtotal
+        // cancels the row to zero — a negative rounding line would be dropped from the total
+        // rather than applied, which is worse than not accepting it.
+        // ponytail: `positiveMoney` for every kind; allow negative ROUNDING once `calcLineTotals`
+        // stops clamping against a negative subtotal (a shared money path — slice B territory).
         const amount = positiveMoney(charge.amount);
         const rate = charge.vatRate === undefined ? undefined : Number(charge.vatRate);
         return Boolean(
@@ -413,16 +488,59 @@ function prepareOcrLines(
       })
     : [];
   const printedSubtotal = positiveMoney(fields.subtotalAmount);
-  const chargeLines = () => charges.map((charge) => prepareLine({
+  // Spec §5.1: withholding is computed on a base the payer and payee agreed, and a service charge
+  // is not automatically part of it. Nothing here decides that — it asks the person who can.
+  const whtReason = charges.length > 0 && ocrWhtInput(fields) ? [RECEIPT_REVIEW_REASONS.whtWithCharges] : [];
+  /**
+   * Two readings of the same printed rows. `document` taxes each charge at the rate the page carries;
+   * `unproven` leaves it null. Which one is right is not a property of the charge — it is whether the
+   * document's own printed totals ADD UP with the charge taxed, and only `reconciledTotals` below can
+   * answer that. Deciding it up-front (as the first cut did, on whether a rate string existed) nulled
+   * the rate on a bill whose printed VAT proved it, broke reconciliation, and folded the charge away
+   * entirely: a slip printing 100.00 + 10.00 with VAT 7.70 recorded a 100.00 total and no charge.
+   */
+  const chargeLines = (reading: 'document' | 'unproven') => charges.map((charge) => prepareLine({
     description: chargeDescription(charge),
     chargeKind: charge.kind,
     quantity: '1.0000',
     unitPrice: toMoney4(charge.amount),
-    vatRate: charge.vatRate ?? defaultLineVatRate(fields),
-    whtRate,
+    vatRate: reading === 'document' ? charge.vatRate ?? defaultLineVatRate(fields) : charge.vatRate ?? null,
+    // Spec §5.1: never spread the document's WHT rate onto a charge row. Doing so withheld tax on a
+    // base nobody computed — and on a ROUNDING row, on money that was never a payment at all.
+    whtRate: null,
+    needsReview: reading === 'unproven' && charge.vatRate === undefined,
     sourceLineText: chargeSourceLineText(charge),
     aiLineConfidence: charge.confidence,
   }, vatMode));
+
+  /**
+   * The printed totals did not add up with the charges taxed at the document rate, so nothing proves
+   * that rate. Spec §5.1 forbids keeping the guess — but dropping the whole split is worse: the
+   * charge is a row the page really printed, and folding it deletes it from the record. Keep every
+   * row, leave the charge un-rated and in review, and name the VAT the arithmetic could not explain
+   * so the reviewer sees the actual gap instead of being told only that something is wrong.
+   */
+  const unprovenCharges = (base: PreparedOcrLine[]) => {
+    const lines = [...base, ...chargeLines('unproven')];
+    const totals = calcDocumentTotals({ lines: lines.map((line) => line.totals) });
+    // The one thing that may NOT move is what the company paid. Un-rating the charge lowers the
+    // computed VAT, so this split is only honest while it still reaches the printed grand total;
+    // a page whose own figures contradict each other by more than its charges' VAT is a different
+    // problem, and the summary fold below records the printed total for it, as it always has.
+    if (!closeEnough(totals.grandTotalAmount, fields.grandTotalAmount)) return null;
+    const printedVat = positiveMoney(fields.vatAmount);
+    const remainder = printedVat === undefined ? 0 : printedVat - Number(totals.vatAmount);
+    const reason = Math.abs(remainder) > VAT_TOLERANCE
+      ? `${RECEIPT_REVIEW_REASONS.chargeVatUnknown} (VAT ที่อธิบายไม่ได้ ${remainder.toFixed(2)})`
+      : RECEIPT_REVIEW_REASONS.chargeVatUnknown;
+    return {
+      status: 'RECONCILED_CHARGE_LINES' as const,
+      lines,
+      totals,
+      chargesApplied: charges.length,
+      chargeReviewReasons: [reason, ...whtReason],
+    };
+  };
 
   // Spec §5/§569: one draft line per printed item row when the document's own arithmetic proves the
   // split, so a two-item bill stops collapsing into a single "AI สรุปยอดรวม" line. Tried before the
@@ -457,10 +575,16 @@ function prepareOcrLines(
           // matching and the whole split falls back to the summary line below.
         }, vatMode, index === 0 ? toMoney4(fields.discountAmount) : '0');
       }),
-      ...chargeLines(),
     ];
-    const totals = reconciledTotals(candidate, fields);
-    if (totals) return { status: 'RECONCILED_ITEM_LINES', lines: candidate, totals, chargesApplied: charges.length };
+    const proven = [...candidate, ...chargeLines('document')];
+    const totals = reconciledTotals(proven, fields);
+    // The printed totals adding up WITH the charges taxed is the proof §5.1 asks for — no guess and
+    // nothing to review. Only when they do not does the charge rate become an open question.
+    if (totals) return { status: 'RECONCILED_ITEM_LINES', lines: proven, totals, chargesApplied: charges.length, chargeReviewReasons: whtReason };
+    if (charges.length > 0) {
+      const unproven = unprovenCharges(candidate);
+      if (unproven) return { ...unproven, status: 'RECONCILED_ITEM_LINES' as const };
+    }
   }
 
   if (charges.length > 0 && printedSubtotal) {
@@ -469,7 +593,7 @@ function prepareOcrLines(
     const baseUnit = modelUnit && Math.abs(modelUnit * qty - printedSubtotal) <= VAT_TOLERANCE
       ? modelUnit
       : printedSubtotal / qty;
-    const candidate = [
+    const base = [
       prepareLine({
         description: fields.description ?? 'รายการตามใบเสร็จ (AI สรุปยอดรวม)',
         quantity: qty.toFixed(4),
@@ -477,10 +601,12 @@ function prepareOcrLines(
         vatRate: defaultLineVatRate(fields),
         whtRate,
       }, vatMode, toMoney4(fields.discountAmount)),
-      ...chargeLines(),
     ];
-    const totals = reconciledTotals(candidate, fields);
-    if (totals) return { status: 'RECONCILED_CHARGE_LINES', lines: candidate, totals, chargesApplied: charges.length };
+    const proven = [...base, ...chargeLines('document')];
+    const totals = reconciledTotals(proven, fields);
+    if (totals) return { status: 'RECONCILED_CHARGE_LINES', lines: proven, totals, chargesApplied: charges.length, chargeReviewReasons: whtReason };
+    const unproven = unprovenCharges(base);
+    if (unproven) return unproven;
   }
 
   const summaryVatRate = summaryLineVatRate(fields);
@@ -503,6 +629,11 @@ function prepareOcrLines(
     lines: [summary],
     totals: calcDocumentTotals({ lines: [summary.totals] }),
     chargesApplied: 0,
+    // Reached with charges only when the page printed no subtotal to build a base line from, so
+    // they really are folded into the summary. That is still a fact the reviewer has to be told in
+    // words — returning [] here left `aiVerificationStatus` at PARTIAL on a draft that had just
+    // swallowed a printed service charge.
+    chargeReviewReasons: charges.length > 0 ? [RECEIPT_REVIEW_REASONS.chargesFolded, ...whtReason] : [],
     // Carried so the reviewer is shown the two numbers, not merely told they disagree.
     ...(itemsSum !== undefined ? { itemsSumAmount: itemsSum.toFixed(2) } : {}),
   };
@@ -535,6 +666,20 @@ type AppliedReceiptResult = AppliedReceiptCategory & {
   /** Only with ITEMS_DID_NOT_RECONCILE: what the printed rows add up to, for the reviewer to compare. */
   itemsSumAmount?: string;
   chargesApplied: number;
+  /** Spec §5.1/§5.2: readable reasons this draft must be reviewed, for the caller to put in
+   *  `aiVerificationSummaryJson` and in its own reply. Returned rather than written here because
+   *  both capture paths compose that JSON themselves after this service returns. */
+  reviewReasons: string[];
+  /** Spec §5.2: false when the stored `expenseDate` is the upload-day placeholder rather than a date
+   *  read off the document, or is so far from today that it reads as a misreading. */
+  dateVerified: boolean;
+  /** Spec §5.2: the date IS off the document and plausible, but the reader had to infer the
+   *  วัน/เดือน order or the era to get there. Not a review trigger — a label every surface shows. */
+  dateAssumed: boolean;
+  /** The four-state answer every surface renders from — card, review page, list, export. */
+  dateStatus: ExpenseDocumentDateStatus;
+  /** The `VALUE_ASSUMPTIONS` markers behind `dateAssumed`, for the field-level evidence. */
+  dateAssumptions?: string[];
 };
 
 /** The applied result, or — when the record moved under the OCR round trip — the same shape with
@@ -566,13 +711,24 @@ export class ReceiptOcrApplyService {
     ctx: { companyId: string; userId: string; scopes?: { branchIds?: string[] } },
     expenseId: string,
     fields: ReceiptOcrFieldResult,
-    options: { fallbackCategorySuggestion?: ReceiptCategoryFallback; expectedUpdatedAt?: Date } = {},
+    options: { fallbackCategorySuggestion?: ReceiptCategoryFallback; expectedUpdatedAt?: Date; todayIso?: string } = {},
   ): Promise<ReceiptOcrApplyOutcome> {
     const completed = completeVatFields(verifyDiscountAmount(fields));
     const lineTotal = receiptFallbackLineTotal(completed);
     let prepared = lineTotal ? prepareOcrLines(completed, lineTotal) : null;
+    const dateReview = reviewReceiptDate(
+      completed.expenseDate,
+      options.todayIso ?? todayCivilDate(),
+      completed.expenseDateAssumptions,
+    );
+    const reviewReasons = [
+      ...(dateReview.reason ? [dateReview.reason] : []),
+      ...(prepared?.chargeReviewReasons ?? []),
+    ];
     const data: Record<string, unknown> = {
-      aiVerificationStatus: 'PARTIAL',
+      // Spec §5.2: an unread date is not a partial read, it is a value nobody has confirmed. Leaving
+      // this at PARTIAL let a draft carrying the upload day pass as if the page had been read.
+      aiVerificationStatus: reviewReasons.length > 0 ? 'NEEDS_REVIEW' : 'PARTIAL',
       aiVerifiedFieldsJson: fields, // provenance: the original AI output, never the completed one
       aiVerificationConfidence: fields.confidence,
       aiVerifiedAt: new Date(),
@@ -633,7 +789,13 @@ export class ReceiptOcrApplyService {
           capturedAt: keepReviewerSource ? prior.source.capturedAt : undefined,
         });
         const whtInput = ocrWhtInput(fields);
-        const whtError = applyExpenseWhtInput(vat, whtInput);
+        // Spec §5.1: the printed withholding belongs to the rows it was withheld against. A charge
+        // row is excluded from the allocation, not merely stripped of its rate afterwards — sharing
+        // the amount with it and then zeroing the row would quietly lose part of the printed WHT.
+        const chargeLineNumbers = new Set(prepared.lines
+          .map((line, index) => (line.chargeKind != null ? index + 1 : 0))
+          .filter((lineNumber) => lineNumber > 0));
+        const whtError = applyExpenseWhtInput(vat, whtInput, chargeLineNumbers);
         // Invalid printed WHT stays review evidence, never a negative payable or inferred rate.
         const acceptedWhtInput = whtError ? null : whtInput;
         prepared = {
@@ -645,7 +807,9 @@ export class ReceiptOcrApplyService {
             // Reconciliation may move a row onto the document rate; the treatment only survives
             // while that row is still genuinely zero-rated.
             vatTreatment: Number(vat.lines[index]!.vatRate ?? '0') === 0 ? line.vatTreatment ?? null : null,
-            whtRate: expenseWhtLineRate(acceptedWhtInput),
+            // Spec §5.1: the accepted WHT rate goes on the rows it was withheld against. A charge
+            // row keeps null here for the same reason it was never given one above.
+            whtRate: line.chargeKind != null ? null : expenseWhtLineRate(acceptedWhtInput),
             totals: vat.lines[index]!.totals,
           })),
         };
@@ -717,6 +881,11 @@ export class ReceiptOcrApplyService {
           ...(categorySuggestion ? { categorySuggestion } : {}),
           chargeReconciliationStatus: 'SUMMARY_LINE',
           chargesApplied: 0,
+          reviewReasons,
+          dateVerified: dateReview.verified,
+          dateAssumed: dateReview.assumed,
+          dateStatus: dateReview.status,
+          ...(dateReview.assumptions ? { dateAssumptions: dateReview.assumptions } : {}),
         };
       }
       await tx.expenseLine.deleteMany({ where: { expenseId } });
@@ -743,7 +912,9 @@ export class ReceiptOcrApplyService {
           expenseCategoryId: effectiveCategory?.id ?? currentExpense?.expenseCategoryId ?? null,
           sourceLineText: line.sourceLineText,
           aiLineConfidence: line.aiLineConfidence,
-          reviewStatus: line.sourceLineText ? 'SUGGESTED' : 'REVIEWED',
+          // Spec §5.1: a charge row whose VAT the page never proved is not a suggestion to accept
+          // at a glance — it is a tax position that must be decided before the record is confirmed.
+          reviewStatus: line.needsReview ? 'NEEDS_REVIEW' : line.sourceLineText ? 'SUGGESTED' : 'REVIEWED',
         } });
       }
       return {
@@ -754,6 +925,11 @@ export class ReceiptOcrApplyService {
         chargeReconciliationStatus: prepared!.status,
         ...(prepared!.itemsSumAmount ? { itemsSumAmount: prepared!.itemsSumAmount } : {}),
         chargesApplied: prepared!.chargesApplied,
+        reviewReasons,
+        dateVerified: dateReview.verified,
+        dateAssumed: dateReview.assumed,
+        dateStatus: dateReview.status,
+        ...(dateReview.assumptions ? { dateAssumptions: dateReview.assumptions } : {}),
       };
     });
     if (appliedCategory === 'stale') {

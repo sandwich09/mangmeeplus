@@ -41,7 +41,11 @@ describe('deriveExpenseReviewSteps', () => {
   });
 
   it('keeps the data step done while AI-missing flags are outstanding — the filled values are what count', () => {
-    assert.equal(stepState({ aiVerificationSummaryJson: { status: 'OCR_EXTRACTED_NEEDS_REVIEW', missingFields: ['expenseDate'] } }, 'data'), 'done');
+    // `expenseDate` is the ONE exception, and spec §5.2 is why: it is NOT NULL, so an unread date
+    // still holds the upload day. "The filled value" is a value the server invented, not one a
+    // person supplied, and every other field on this step fails visibly when it is empty.
+    assert.equal(stepState({ aiVerificationSummaryJson: { status: 'OCR_EXTRACTED_NEEDS_REVIEW', missingFields: ['expenseDate'] } }, 'data'), 'pending');
+    assert.equal(stepState({ aiVerificationSummaryJson: { status: 'OCR_EXTRACTED_NEEDS_REVIEW', dateStatus: 'assumed' } }, 'data'), 'done', 'a date read off the bill is a real date');
     assert.equal(stepState({ aiVerificationSummaryJson: { status: 'OCR_EXTRACTED_NEEDS_REVIEW', missingFields: ['vendorName', 'amount'] } }, 'data'), 'done');
     assert.equal(stepState({ aiVerificationSummaryJson: { status: 'OCR_EXTRACTED_NEEDS_REVIEW', missingFields: ['receipt_evidence'] } }, 'data'), 'done');
     assert.equal(stepState({ aiVerificationSummaryJson: { status: 'OCR_EXTRACTED_NEEDS_REVIEW', missingFields: [] } }, 'data'), 'done');
@@ -113,7 +117,9 @@ describe('deriveExpenseReviewSteps', () => {
   it('marks a complete draft done on every step, outstanding AI flags included', () => {
     const steps = deriveExpenseReviewSteps({
       ...base,
-      aiVerificationSummaryJson: { status: 'OCR_EXTRACTED_NEEDS_REVIEW', missingFields: ['expenseDate', 'amount'] },
+      // §5.2: `amount` is a flag over a value the form really holds; the date is not, so this
+      // fixture uses a flag whose field the reviewer can actually see is filled.
+      aiVerificationSummaryJson: { status: 'OCR_EXTRACTED_NEEDS_REVIEW', missingFields: ['amount'] },
     }, true);
     assert.deepEqual(steps.map((step) => step.state), ['done', 'done', 'done']);
   });

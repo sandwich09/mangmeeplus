@@ -79,7 +79,7 @@ import { ListApprovalQueueUseCase } from '../../../reimbursements/application/us
 import { ListPurchaseRequestsUseCase } from '../../../procurement/application/use-cases/purchase-request.use-case';
 import { ListPurchaseOrdersUseCase } from '../../../procurement/application/use-cases/purchase-order.use-case';
 import type { BusinessDocumentClassification, LineExpenseDraftRouteContext, LineUserContext, LineAiTurnRequest, LineAiTurnResponse, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeRoutePlan, LineIntakeSubstituteContext, ReceiptOcrFieldResult, RequestContext } from '@watchdog-bms/contracts';
-import { LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, nextPlanTierKey, asIntakeRouteIntent, extractValueCandidates, hasToolPermissions, todayCivilDate } from '@watchdog-bms/contracts';
+import { LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, nextPlanTierKey, asIntakeRouteIntent, civilDateToUtcDate, extractValueCandidates, hasToolPermissions, todayCivilDate, type ExpenseDocumentDateStatus } from '@watchdog-bms/contracts';
 import { LineAiLedgerService, ledgerKey, type LedgerEntry } from '../line-ai-ledger.service';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
 import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, isCapabilityQuestion, staffMenuCommand, PACKAGE_CHANGE_COMMAND, PENDING_APPROVAL_ITEM_LIMIT, type ApprovalSurfaceKey, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
@@ -661,7 +661,11 @@ export function formatLineReply(response: LineAiTurnResponse, webBaseUrl: string
   }
   const firstLink = response.webLinks[0];
   if (firstLink) {
-    lines.push(`เปิดดู: ${firstLink.label} ${absoluteWebLink(webBaseUrl, firstLink.path)}`);
+    const url = absoluteWebLink(webBaseUrl, firstLink.path);
+    // `absoluteWebLink` returns the path unchanged when no base URL is configured, and a bare
+    // "/companies/…" in a LINE message is not a link — it is a string nobody can open. Say the
+    // words instead; the reply is still true, it just stops pretending to be actionable.
+    lines.push(/^https?:\/\//i.test(url) ? `เปิดดู: ${firstLink.label} ${url}` : `เปิดเว็บมั่งมีพลัส: ${firstLink.label}`);
   }
   return lines.join('\n');
 }
@@ -675,7 +679,10 @@ export function toAiTurnIntent(rawIntent: string, refusalReason?: string): (type
   const up = (rawIntent ?? '').toUpperCase();
   if ((AI_TURN_INTENTS as readonly string[]).includes(up)) return up as (typeof AI_TURN_INTENTS)[number];
   if (refusalReason === 'mutation_blocked') return 'MUTATION_REQUEST';
-  if (refusalReason === 'feature_disabled' || refusalReason === 'unsupported_module') return 'UNSUPPORTED_MODULE';
+  // `unsupported_yet` maps here too: the Prisma `AiTurnIntent` enum has no member for it, and the
+  // split that matters — what the customer was told — lives on the refusal reason and the terminal
+  // status, not on this analytics-side intent.
+  if (refusalReason === 'feature_disabled' || refusalReason === 'unsupported_module' || refusalReason === 'unsupported_yet') return 'UNSUPPORTED_MODULE';
   if (refusalReason && /forbidden|permission/i.test(refusalReason)) return 'FORBIDDEN';
   return 'UNKNOWN';
 }
@@ -797,14 +804,45 @@ function isReceiptItemQuestion(text: string): boolean {
   return /(?:ซื้อ|จ่าย|ค่า|มี|รายการ).{0,12}(?:สินค้า|อะไร|รายการ)|(?:สินค้า|ของ|รายการ).{0,12}(?:อะไร|บ้าง|ไหน)|what\s+(?:items?|products?).*(?:bill|receipt)|what.*(?:bill|receipt).*(?:for|contain)/iu.test(text);
 }
 
+function moneyLabel(value: string): string {
+  const amount = Number(toMoney4(value));
+  return Number.isFinite(amount)
+    ? amount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : value;
+}
+
+/** Spec §5.1: products and additional charges are two different things on a bill, and a card that
+ *  prints "service charge 10%" among the food reads as if the shop sold a dish by that name (UAT
+ *  2026-09-03). Charges come from the OCR `additionalCharges` block, which is where they were
+ *  identified — slice B moves the marker onto the persisted `chargeKind` column. */
 function receiptItemLines(fields: ReceiptOcrFieldResult | null | undefined): string[] {
-  return (fields?.lines ?? []).slice(0, 10).map((line) => {
-    const amount = Number(toMoney4(line.amount));
-    const amountLabel = Number.isFinite(amount)
-      ? amount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-      : line.amount;
-    return `• ${line.description} × ${line.quantity} – ${amountLabel}`;
-  });
+  const items = (fields?.lines ?? []).slice(0, 10)
+    .map((line) => `• ${line.description} × ${line.quantity} – ${moneyLabel(line.amount)}`);
+  const charges = (fields?.additionalCharges ?? []).slice(0, 10)
+    .map((charge) => `• ${charge.description} – ${moneyLabel(charge.amount)}`);
+  return charges.length > 0 ? [...items, 'ค่าใช้จ่ายเพิ่ม:', ...charges] : items;
+}
+
+/**
+ * Spec §5.2. Four states, not two — and keying the copy on whether a date STRING is present (which
+ * is what "ยังไม่ระบุ or the date" did) gets three of them wrong: the upload-day placeholder is a
+ * present string, so is a misread 2019 date, and so is a reading that only works because the reader
+ * chose the วัน/เดือน order. All three printed as plain fact. The status comes from the apply
+ * service's own review, never from the presence of a value.
+ */
+export function receiptCardDateLine(
+  expenseDate: string | undefined,
+  status: ExpenseDocumentDateStatus,
+): string {
+  const printed = formatReplyDate(expenseDate);
+  if (status === 'unverified' || !printed) {
+    // Both halves: true about the reading AND about the record. UAT 2026-09-03 stored today's date
+    // on a bill printing 03/09/69 and the sender had no way to know, nor to fix it from the chat.
+    return 'ยังไม่ระบุ — ใช้วันที่ส่งไว้ก่อน พิมพ์ "วันที่ 3/9/69" เพื่อแก้';
+  }
+  if (status === 'implausible') return `${printed} (ผิดปกติ ตรวจในเว็บ)`;
+  if (status === 'assumed') return `${printed} (อ่านจากบิล แบบ วัน/เดือน)`;
+  return printed;
 }
 
 /** Same user-facing date shape as the web app, e.g. 25 ก.ค. 2569. */
@@ -817,11 +855,11 @@ function formatReplyDate(value: string | undefined): string | undefined {
   return Number.isNaN(date.getTime()) ? value : THAI_DATE_REPLY_FORMATTER.format(date);
 }
 
-function formatPaypersReply(
+export function formatPaypersReply(
   webBaseUrl: string | undefined,
   companyId: string,
   expenseId: string,
-  options: { hasDuplicate?: boolean; textOnly?: boolean; amount?: string | null; fields?: ReceiptOcrFieldResult | null; categoryName?: string | null; sourceDocumentType?: string | null; questionText?: string } = {},
+  options: { hasDuplicate?: boolean; textOnly?: boolean; amount?: string | null; fields?: ReceiptOcrFieldResult | null; categoryName?: string | null; sourceDocumentType?: string | null; questionText?: string; dateStatus?: ExpenseDocumentDateStatus } = {},
 ): string {
   const link = absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses/${expenseId}`);
   const amountValue = options.fields?.grandTotalAmount ?? options.amount;
@@ -834,11 +872,25 @@ function formatPaypersReply(
     `• ประเภทเอกสาร – ${docType ?? 'รอตรวจสอบ'}`,
     `• ยอดรวม – ${amount}`,
     `• ผู้ขาย/ผู้รับเงิน – ${options.fields?.vendorName ?? 'ยังไม่ระบุ'}`,
-    `• วันที่เอกสาร – ${formatReplyDate(options.fields?.expenseDate) ?? 'ยังไม่ระบุ'}`,
+    `• วันที่เอกสาร – ${receiptCardDateLine(options.fields?.expenseDate, options.dateStatus ?? (options.fields?.expenseDate ? 'verified' : 'unverified'))}`,
     `• เลขที่เอกสาร – ${options.fields?.documentNumber ?? 'ยังไม่ระบุ'}`,
     `• VAT / WHT / ภาษีซื้อ – ${options.fields?.vatAmount ? `VAT ${Number(toMoney4(options.fields.vatAmount)).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : 'รอตรวจสอบ'}`,
     `• หมวดหมู่ค่าใช้จ่าย – ${options.categoryName ?? 'ยังไม่ระบุ'}`,
   ];
+  // Journey J1 step 1: additional charges belong on the DEFAULT card, not only when the sender
+  // happens to ask what was on the bill. A service charge is money the shop added — the row a
+  // reviewer questions first — and folding it into "ยอดรวม" is how the BHC 152.00 went unseen.
+  // ponytail: read from the OCR `additionalCharges` block; slice B swaps this for the persisted
+  // `chargeKind` column, one call site.
+  const charges = options.fields?.additionalCharges ?? [];
+  if (charges.length > 0) {
+    const total = charges.reduce((sum, charge) => sum + Number(toMoney4(charge.amount)), 0);
+    parts.push(
+      '',
+      `➕ ค่าใช้จ่ายเพิ่ม (${charges.length} รายการ รวม ${total.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}):`,
+      ...charges.slice(0, 10).map((charge) => `• ${charge.description} – ${moneyLabel(charge.amount)}`),
+    );
+  }
   if (options.questionText && isReceiptItemQuestion(options.questionText)) {
     const itemLines = receiptItemLines(options.fields);
     parts.push('', '🛒 รายการที่อ่านได้จากบิล:', ...(itemLines.length > 0
@@ -981,14 +1033,27 @@ export function formatNextStepGuidanceReply(
 /** Phase 1 correction outcome: point at the right record, create nothing. Copy depends on what
  *  the caller may actually do in web — ACCOUNTANT/MARKETING can capture via LINE but hold no
  *  `expense.update`, so promising them an edit would be a lie. */
+/** Guidance reasons whose cause the customer can act on. Anything else keeps the generic copy —
+ *  an internal reason string must never leak into a reply. */
+const CORRECTION_GUIDANCE_REASON_LINES: Record<string, string> = {
+  empty_note: '📝 ไม่พบข้อความหมายเหตุในข้อความนี้ค่ะ จึงยังไม่ได้บันทึกอะไรไว้',
+};
+
 export function formatCorrectionGuidanceReply(
   webBaseUrl: string | undefined,
   companyId: string,
   candidates: LineIntakeCorrectionCandidate[],
   canEdit: boolean,
+  reason?: string,
 ): string {
   const listLink = absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses`);
   const action = canEdit ? 'เปิดแก้ไขในเว็บแอป' : 'เปิดตรวจสอบ และส่งต่อผู้มีสิทธิ์แก้ไข';
+  const named = reason ? CORRECTION_GUIDANCE_REASON_LINES[reason] : undefined;
+  if (named && candidates.length === 1) {
+    return [named, '', `รายการล่าสุด: ${candidates[0].label}`, `${action}:`,
+      absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses/${candidates[0].id}`)].join('\n');
+  }
+  if (named) return [named, `${action}: ${listLink}`].join('\n');
   if (candidates.length === 0) {
     return [
       '📝 ยังไม่พบรายการที่บันทึกไว้ล่าสุดในแชทนี้ที่แก้ไขได้',
@@ -1024,25 +1089,58 @@ const CORRECTION_FIELD_LABELS: Record<string, string> = {
   documentNumber: 'เลขที่เอกสาร', note: 'รายละเอียด',
 };
 
-/** Confirmation names old → new per field, so the user can see exactly what changed. */
+/**
+ * Spec §5.3: money this lane cannot touch. A service charge, a VAT figure or the total of an
+ * itemised bill needs the draft-edit tools (slice S-4). Until those exist the honest answer is that
+ * the amounts were NOT changed, and where they can be — UAT 2026-09-03: "จากบิลเมื่อกี้มี service
+ * charge 10% นะ แก้ไขได้ใช่ไหม" was answered "แก้ไขรายการเดิมให้แล้ว" after writing one sentence
+ * into `note`, and the owner had every reason to believe the bill now carried the 152.00.
+ */
+export function mentionsUnchangeableMoney(text: string): boolean {
+  return /ค่าบริการ|เซอร์วิส|service\s*charge|vat|ภาษี|ค่าส่ง|ค่าจัดส่ง|ค่าธรรมเนียม|ทิป|ส่วนลด|ยอด|ราคา|บาท/iu
+    .test(normalizeLineText(text));
+}
+
+/** Confirmation names exactly what changed per field — and, for the note, that a note is all that
+ *  changed. Nothing here may describe a write the lane did not make. */
 export function formatCorrectionAppliedReply(
   webBaseUrl: string | undefined,
   companyId: string,
   expenseId: string,
   fields: Record<string, { from: string | null; to: string }>,
+  messageText = '',
+  noteOutcome?: 'truncated' | 'duplicate',
 ): string {
+  const link = absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses/${expenseId}`);
+  const changed = Object.keys(fields);
+  const noteOnly = changed.length > 0 && changed.every((field) => field === 'note');
   const changes = Object.entries(fields).map(([field, change]) => {
     const label = CORRECTION_FIELD_LABELS[field] ?? field;
+    if (field === 'note') {
+      // Spec §5.3: say what the write DID. "บันทึกหมายเหตุไว้" over a note that filled up, or over
+      // a sentence already sitting at the end of it, is the same class of lie the header was.
+      if (noteOutcome === 'duplicate') return `• หมายเหตุนี้บันทึกไว้อยู่แล้ว: ${change.to}`;
+      if (noteOutcome === 'truncated') return `• บันทึกหมายเหตุไว้ (ตัดบางส่วน): ${change.to}`;
+      return `• บันทึกหมายเหตุไว้: ${change.to}`;
+    }
     const from = field === 'expenseDate' ? formatReplyDate(change.from ?? undefined) : change.from;
     const to = field === 'expenseDate' ? formatReplyDate(change.to) : change.to;
-    return `• ${label}: ${from ?? 'ยังไม่ระบุ'} → ${to}`;
+    return `• เปลี่ยน${label} จาก ${from ?? 'ยังไม่ระบุ'} เป็น ${to}`;
   });
   return [
-    '✅ แก้ไขรายการเดิมให้แล้ว (ไม่ได้สร้างรายการใหม่)',
+    noteOnly
+      ? '📝 บันทึกหมายเหตุไว้ให้แล้วค่ะ (ยังไม่ได้แก้ตัวเลขในรายการ)'
+      : '✅ แก้ไขรายการเดิมให้แล้ว (ไม่ได้สร้างรายการใหม่)',
     '',
     ...changes,
+    // Only when the lane did not in fact change an amount — a message that asked for a total and got
+    // one needs no caveat.
+    ...(noteOutcome === 'truncated' ? ['', 'หมายเหตุใกล้เต็ม แก้เพิ่มในเว็บได้เลยค่ะ'] : []),
+    ...(!fields['amount'] && mentionsUnchangeableMoney(messageText)
+      ? ['', 'ยังไม่ได้แก้ยอด ค่าบริการ หรือ VAT ให้นะคะ — แก้ตัวเลขเหล่านี้ได้ในเว็บค่ะ']
+      : []),
     '',
-    `ตรวจสอบในเว็บแอป:\n${absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses/${expenseId}`)}`,
+    `ตรวจสอบในเว็บแอป:\n${link}`,
   ].join('\n');
 }
 
@@ -3392,11 +3490,11 @@ export class ProcessLineWebhookUseCase {
       let reply: string;
       if (applied.status === 'applied') {
         await this.ackConsumed(correctionPlan, 'correction_apply');
-        reply = formatCorrectionAppliedReply(this.config.webBaseUrl, companyId, applied.expenseId, applied.fields);
+        reply = formatCorrectionAppliedReply(this.config.webBaseUrl, companyId, applied.expenseId, applied.fields, normalizedText, applied.noteOutcome);
       } else if (applied.status === 'clarify') {
         reply = CORRECTION_DIRECTION_CLARIFY_REPLY;
       } else {
-        reply = formatCorrectionGuidanceReply(this.config.webBaseUrl, companyId, recentCapturedExpenses, canEdit);
+        reply = formatCorrectionGuidanceReply(this.config.webBaseUrl, companyId, recentCapturedExpenses, canEdit, applied.reason);
         await this.consumeClarifications(companyId, chatKey, identity.userId, openWaiting, routePlan.resolvedClarificationIds, 'correction_guidance');
       }
       const expenseDraftInterruption = applied.status === 'clarify' ? undefined : await interruptExpenseDraft();
@@ -3546,6 +3644,9 @@ export class ProcessLineWebhookUseCase {
           companyId, chatKey, turnId: requestId, webhookEventId: event.webhookEventId,
           userId: identity.userId, text: normalizedText,
           ...(valueCandidates && { valueCandidates }),
+          // Carried so a reclaimed turn reaches the gateway with the SAME trusted provenance the
+          // live turn had — otherwise a drained E4 turn is told it is out of scope (spec §5.3).
+          ...(turnRequest.intakeIntent ? { intakeIntent: turnRequest.intakeIntent } : {}),
         })
       : null;
 
@@ -4610,6 +4711,14 @@ export class ProcessLineWebhookUseCase {
     }
     let effectiveCategory = hintedCategory;
     let categorySuggestion: ReceiptCategorySuggestion | undefined;
+    // Spec §5.2: `expenseDate` was seeded with the upload day above because the column is NOT NULL.
+    // Until the apply below says the document's own date was read and is plausible, that value is a
+    // placeholder — and the card, the summary JSON and the review form all have to say so.
+    let dateVerified = false;
+    let dateStatus: ExpenseDocumentDateStatus = 'unverified';
+    let dateAssumptions: string[] | undefined;
+    let reviewReasons: string[] = [];
+    let chargeReconciliation: { status: string; chargesApplied: number; itemsSumAmount?: string } | undefined;
     if (ocrFields) {
       const applyOutcome = await this.receiptOcrApply.apply(ctx, intent.expenseId, ocrFields, {
         ...(hintedCategory
@@ -4624,6 +4733,19 @@ export class ProcessLineWebhookUseCase {
       // Stale means a correction landed during the OCR round trip; keep the draft as captured.
       const duplicateResult = isStaleOcrApply(applyOutcome) ? null : applyOutcome;
       hasDuplicate ||= (duplicateResult?.candidatesCreated ?? 0) > 0;
+      reviewReasons = duplicateResult?.reviewReasons ?? [];
+      dateVerified = duplicateResult?.dateVerified ?? false;
+      dateStatus = duplicateResult?.dateStatus ?? 'unverified';
+      dateAssumptions = duplicateResult?.dateAssumptions;
+      // Same shape the web upload path stores, so `ExpenseReviewPage`'s charge banners fire for a
+      // LINE draft too — they were written for the web lane and a LINE draft never carried the key.
+      chargeReconciliation = duplicateResult
+        ? {
+            status: duplicateResult.chargeReconciliationStatus,
+            chargesApplied: duplicateResult.chargesApplied,
+            ...(duplicateResult.itemsSumAmount ? { itemsSumAmount: duplicateResult.itemsSumAmount } : {}),
+          }
+        : undefined;
       categorySuggestion = duplicateResult?.categorySuggestion;
       effectiveCategory = duplicateResult?.categoryId
         ? {
@@ -4637,6 +4759,9 @@ export class ProcessLineWebhookUseCase {
       ?? ['vendor', 'expenseDate', 'documentNumber', 'grandTotalAmount', 'vatAmount', 'category']);
     if (effectiveCategory?.id) missingFields.delete('category');
     else missingFields.add('category');
+    // Spec §5.2: an unverified date is a missing one, whatever the column holds. This is the flag the
+    // web review form already reads (`expenseAiMissingFields`), so no second mechanism is invented.
+    if (!dateVerified) missingFields.add('expenseDate');
 
     await this.prisma.client.expenseRecord.update({
       where: { id: intent.expenseId },
@@ -4676,6 +4801,15 @@ export class ProcessLineWebhookUseCase {
           // category survives the LINE intake instead of being dropped after apply.
           ...(categorySuggestion ? { categorySuggestion } : {}),
           missingFields: [...missingFields].slice(0, 20),
+          // Spec §5.1/§5.2: the same readable reasons the web upload path stores, so a draft captured
+          // over LINE and one uploaded in the browser explain themselves the same way.
+          ...(reviewReasons.length > 0 ? { reviewReasons } : {}),
+          ...(chargeReconciliation ? { chargeReconciliation } : {}),
+          // Field-level evidence for the date: the four-state answer plus what the reader had to
+          // infer to produce it (§5.2). `assumed` is NOT a review trigger — it is the label the
+          // card, the review page, the list and the export all render.
+          dateStatus,
+          ...(dateAssumptions ? { expenseDateAssumptions: dateAssumptions } : {}),
           duplicateWarning: hasDuplicate,
           nextAction: 'review_in_web',
         },
@@ -4705,6 +4839,9 @@ export class ProcessLineWebhookUseCase {
       sourceDocumentType: hintedDocType !== 'NEEDS_REVIEW' ? hintedDocType : undefined,
       categoryName: effectiveCategory?.name || null,
       questionText: caption,
+      // Spec §5.2: the card says what the stored date IS — read, assumed, placeholder or absurd —
+      // instead of printing whatever string happens to be there as though the page stated it.
+      dateStatus,
     })];
     // §15.1: the free trial — and only that tier — sees how much of its 15 is left. Both numbers come
     // from the admission's own aggregate, read for the month the ADMISSION was counted in rather
@@ -5627,7 +5764,12 @@ export class ProcessLineWebhookUseCase {
   ): Promise<{ expenseId: string; hasDuplicate: boolean }> {
     const expense = await this.expenseRepo!.createExpense({
       companyId, branchId: await this.expenseRepo!.resolveCreateBranchId(companyId, scopes),
-      captureSource: 'LINE_UPLOAD', expenseDate: new Date(), currency: 'THB',
+      // Same placeholder rule as the direct-media path above: a CALENDAR day, not the instant the
+      // photo arrived. A full timestamp in a date column hides the row from the list's day filter,
+      // and the UTC day is yesterday for anyone sending a receipt before 07:00 Bangkok. This lane
+      // already marks the draft NEEDS_REVIEW with `expenseDate` in `missingFields`, so the value
+      // is honest about being a placeholder — it just was not the right placeholder.
+      captureSource: 'LINE_UPLOAD', expenseDate: civilDateToUtcDate(todayCivilDate()), currency: 'THB',
       vatMode: 'NO_VAT', inputVatClaimStatus: 'NEEDS_REVIEW', note: 'LINE receipt (clarified)',
       createdByUserId: userId, lineMessageId: pending.lineMessageId, lineEventId,
       subtotalAmount: '0', discountAmount: '0', taxableAmount: '0', vatAmount: '0',

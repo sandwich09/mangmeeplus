@@ -272,3 +272,57 @@ describe('a two-digit year resolves by era only when the day/month order is alre
     assert.deepEqual(read('วันที่ 23 สค 69'), ['2026-08-23']);
   });
 });
+
+// Spec `line-ai-draft-control-spec-th.md` §5.2/§11, from UAT 2026-09-03: a BHC bill printing
+// "03/09/69" recorded no date at all, because chat's 2026-08-28 rule (never guess the วัน/เดือน
+// order) also blocked the era. A receipt has nobody to ask and Thai receipts print DD/MM, so
+// `documentContext: 'receipt'` resolves both — and says so with an assumption on every candidate.
+describe('receipt mode reads a printed Thai DD/MM date, with the assumption recorded', () => {
+  const TODAY = '2026-09-30';
+  const receipt = (text: string) => extractValueCandidates(text, TODAY, { documentContext: 'receipt' }).dates
+    .filter((d) => !isAmbiguousDateCandidate(d));
+  const iso = (text: string) => receipt(text).map((d) => d.isoDate);
+  const chat = (text: string) => extractValueCandidates(text, TODAY).dates
+    .filter((d) => !isAmbiguousDateCandidate(d)).map((d) => d.isoDate);
+
+  const table: Array<[string, string[], string[]]> = [
+    // printed span            expected ISO      expected assumptions on the single reading
+    ['03/09/69', ['2026-09-03'], ['order_assumed_day_month', 'two_digit_year_resolved_plausible_era']],
+    ['3/9/69', ['2026-09-03'], ['order_assumed_day_month', 'two_digit_year_resolved_plausible_era']],
+    ['12/09/69', ['2026-09-12'], ['order_assumed_day_month', 'two_digit_year_resolved_plausible_era']],
+    // 13 cannot be a month, so the order was never in doubt and no order assumption is recorded.
+    ['13/09/69', ['2026-09-13'], ['two_digit_year_resolved_plausible_era']],
+    ['9/3/2569', ['2026-03-09'], ['order_assumed_day_month', 'era_read_be']],
+    ['2026-09-03', ['2026-09-03'], ['era_resolved_ce']],
+    ['03-09-2569', ['2026-09-03'], ['order_assumed_day_month', 'era_read_be']],
+    ['', [], []],
+    // 31 ก.พ. is not a day the calendar has; an invalid date is no date, in either mode.
+    ['31/02/69', [], []],
+  ];
+
+  for (const [text, expected, assumptions] of table) {
+    it(`reads ${text === '' ? '(empty)' : text} as ${expected.join(',') || '(no date)'}`, () => {
+      assert.deepEqual(iso(text), expected);
+      if (expected.length > 0) assert.deepEqual(receipt(text)[0]!.assumptions, assumptions);
+    });
+  }
+
+  it('picks the era nearest today when the plausibility window leaves both', () => {
+    // พ.ศ. 2599 → 2056 and ค.ศ. 2099 are both ahead of today, so the window narrows nothing.
+    // Chat leaves it blank; a receipt takes the nearer reading and flags it, and the resolved date
+    // still trips the caller's future-date guard rather than passing as read-off-the-page fact.
+    assert.deepEqual(iso('25-6-99'), ['2056-06-25']);
+    assert.ok(receipt('25-6-99')[0]!.assumptions.includes('future_date'));
+    assert.deepEqual(chat('25-6-99'), []);
+  });
+
+  it('leaves chat mode byte-for-byte as it was', () => {
+    assert.deepEqual(chat('03/09/69'), [], 'chat still refuses the order it cannot tell apart');
+    assert.deepEqual(chat('วันที่ 7-6-69'), []);
+    assert.deepEqual(chat('13/09/69'), ['2026-09-13']);
+    assert.deepEqual(
+      extractValueCandidates('จ่าย 250 บาท วันที่ 7-6-69', TODAY),
+      extractValueCandidates('จ่าย 250 บาท วันที่ 7-6-69', TODAY, { documentContext: 'chat' }),
+    );
+  });
+});

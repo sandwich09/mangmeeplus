@@ -31,7 +31,7 @@ import {
   canRunExpenseDuplicateCheck, hasAiGrandTotalMismatch, hasUnresolvedDuplicateWarning, initialExpenseReviewStep, needsAiTotalAcknowledgement,
   MIME_TYPE_LABELS, canDeleteExpense, effectiveVatRateLabel, expenseDeleteErrorMessage, firstFilled, shouldRereadReplacedReceipt, isBlockedCheckBillClassification,
   postingErrorText, vatModeRequiresRate, expensePaymentAttempt, classifyExpensePaymentFailure,
-  expenseConfirmBlocker,
+  expenseConfirmBlocker, expenseDocumentDateStatus, EXPENSE_DATE_STATUS_LABELS,
 } from './expenses.model';
 import type { ExpenseDetail, ExpenseReviewStepKey, ExpensePaymentAttempt, ExpensePaymentFailure } from './expenses.model';
 import { todayCivilDate, isCivilDate, type BusinessDocumentClassification, type ExpenseVatSourceOverrideInput, type ExpensePaymentMethod } from '@watchdog-bms/contracts';
@@ -921,6 +921,22 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
       {(aiMap?.['chargeReconciliation'] as { status?: string } | undefined)?.status === 'FOLDED_INTO_SUMMARY_NEEDS_REVIEW' && (
         <span className="rounded-full border border-warning-100 bg-warning-50 px-2 py-0.5 font-medium text-warning-700">
           {t('expenses.ai_charges_folded', locale)}
+        </span>
+      )}
+      {/* Spec §5.1/§5.2: the server's own words for what it could not decide — an unread date, a
+          charge whose VAT nothing proved, a withholding base worth checking. These are the reasons
+          behind the flags above, and without them the reviewer sees a warning with no cause. */}
+      {(Array.isArray(aiMap?.['reviewReasons']) ? aiMap['reviewReasons'] : [])
+        .filter((reason): reason is string => typeof reason === 'string')
+        .slice(0, 4)
+        .map((reason, index) => (
+          <span key={`reason-${index}`} className="rounded-full border border-warning-100 bg-warning-50 px-2 py-0.5 font-medium text-warning-700">
+            {reason}
+          </span>
+        ))}
+      {expenseDocumentDateStatus(aiMap) === 'assumed' && (
+        <span className="rounded-full border border-[#A4BCFD] bg-white px-2 py-0.5 font-medium text-[#3538CD]">
+          {EXPENSE_DATE_STATUS_LABELS.assumed}
         </span>
       )}
       {canExtract && (

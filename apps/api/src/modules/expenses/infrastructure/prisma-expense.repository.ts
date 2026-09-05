@@ -21,7 +21,7 @@ import type {
   ExpenseVatSourceOverrideInput,
   ExpenseLineChargeKind,
 } from '@watchdog-bms/contracts';
-import { civilDate, civilDateToUtcDate, civilDayRangeToUtc, civilPeriodKey, coerceCivilDate, exclusiveEndOfDay, expenseLineCharges, isCivilDate, EXPENSE_PAYMENT_METHODS } from '@watchdog-bms/contracts';
+import { civilDate, civilDateToUtcDate, civilDayRangeToUtc, civilPeriodKey, coerceCivilDate, exclusiveEndOfDay, expenseDocumentDateStatus, expenseLineCharges, isCivilDate, EXPENSE_PAYMENT_METHODS } from '@watchdog-bms/contracts';
 import { expenseTaxSourceChecksum } from '../domain/logic/expense-status.logic';
 import { nextExpensePostingSource } from '../domain/logic/expense-auto-post.logic';
 import { calcPaymentAmounts, derivePaymentStatus, SETTLE_EPSILON } from '../domain/logic/expense-totals.logic';
@@ -130,6 +130,10 @@ function mapExpense(r: any): ExpenseRecord {
     vendorSnapshotJson: r.vendorSnapshotJson ?? null,
     aiVerifiedFieldsJson: r.aiVerifiedFieldsJson ?? null,
     aiVerificationSummaryJson: r.aiVerificationSummaryJson ?? null,
+    // Spec §5.2: derived here, once, so a list row can say whether its date was read off the
+    // document or is the upload-day placeholder. Every consumer would otherwise have to re-derive
+    // it from the summary JSON, and the list does not even load that.
+    dateStatus: expenseDocumentDateStatus(r.aiVerificationSummaryJson),
     vatCaptureSnapshotJson: r.vatCaptureSnapshotJson ?? null,
     whtInputJson: r.whtInputJson ?? null,
   };

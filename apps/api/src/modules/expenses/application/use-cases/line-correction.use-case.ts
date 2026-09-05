@@ -23,7 +23,7 @@ import {
   type ClarificationConsumption,
 } from '../../../line-ai/application/line-ai-consumption-marker';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
-import { canCorrectAmount, evaluateCorrectionHints, type CorrectionEvidence } from '../../domain/logic/line-correction.logic';
+import { appendUserNote, canCorrectAmount, evaluateCorrectionHints, type CorrectionEvidence } from '../../domain/logic/line-correction.logic';
 import { reconcileExpenseDuplicateCandidates } from '../services/expense-duplicate-detection';
 import { UpdateExpenseDraftUseCase } from './expense-draft.use-case';
 
@@ -37,7 +37,15 @@ const CORRECTIONS_MIRROR_CAP = 20;
 export type AppliedCorrectionField = { from: string | null; to: string };
 
 export type LineCorrectionOutcome =
-  | { status: 'applied'; expenseId: string; fields: Partial<Record<LineCorrectionField, AppliedCorrectionField>>; replayed?: boolean }
+  | {
+      status: 'applied';
+      expenseId: string;
+      fields: Partial<Record<LineCorrectionField, AppliedCorrectionField>>;
+      replayed?: boolean;
+      /** Set when the note write did not do the plain thing the reply would otherwise claim
+       *  (spec §5.3): the note filled up, or this sentence was already its newest segment. */
+      noteOutcome?: 'truncated' | 'duplicate';
+    }
   | { status: 'clarify'; field: LineCorrectionField }
   | { status: 'guidance'; reason: string };
 
@@ -107,12 +115,17 @@ export class CorrectLineCapturedExpenseUseCase {
       }
 
       const { fields } = evaluated;
+      // Spec §5.3: work out what the note append actually achieves BEFORE promising it in a reply.
+      const noteAppend = fields.note ? appendUserNote(record.note, fields.note.to) : undefined;
+      if (noteAppend?.outcome === 'empty') return { status: 'guidance', reason: 'empty_note' };
       await this.updateDraft.execute(ctx, target.expenseId, {
         expectedUpdatedAt: record.updatedAt.toISOString(),
         ...(fields.expenseDate ? { expenseDate: fields.expenseDate.to } : {}),
         ...(fields.vendorName ? { vendorNameSnapshot: fields.vendorName.to } : {}),
         ...(fields.documentNumber ? { vendorDocumentNumber: fields.documentNumber.to } : {}),
-        ...(fields.note ? { note: fields.note.to } : {}),
+        // Spec §5.3: append, never overwrite — the provenance note ("LINE receipt upload") is how
+        // anyone later knows this record came from a photo in a chat.
+        ...(noteAppend ? { note: noteAppend.note } : {}),
         ...(fields.amount ? { lines: this.amountOnlyLine(record, fields.amount.to) } : {}),
       }, { db: tx, suppressGenericAudit: true });
 
@@ -127,7 +140,9 @@ export class CorrectLineCapturedExpenseUseCase {
         companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.line_correction.apply',
         targetType: 'expense_record', targetId: target.expenseId, requestId: ctx.requestId,
         result: 'SUCCESS', riskLevel: 'MEDIUM',
-        metadataJson: { lineMessageIdHash: input.lineMessageIdHash, fields },
+        // Spec §7: `fields.note.to` is what the user typed, not what the column now holds — the
+        // audit has to say the write was an append or a reader would take it for a replacement.
+        metadataJson: { lineMessageIdHash: input.lineMessageIdHash, fields, ...(noteAppend ? { noteAppend: noteAppend.outcome } : {}) },
       }, tx);
 
       await tx.outboxEvent.create({
@@ -142,7 +157,10 @@ export class CorrectLineCapturedExpenseUseCase {
       });
       if (input.consumption) await markClarificationsConsumed(tx, input.consumption);
 
-      return { status: 'applied', expenseId: target.expenseId, fields };
+      return {
+        status: 'applied', expenseId: target.expenseId, fields,
+        ...(noteAppend && noteAppend.outcome !== 'appended' ? { noteOutcome: noteAppend.outcome } : {}),
+      };
     });
   }
 

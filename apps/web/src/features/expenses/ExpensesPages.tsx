@@ -29,7 +29,7 @@ import {
   deriveExpenseAuditChecks, deriveExpenseReviewSteps, initialExpenseReviewStep, expenseSubstituteReceiptReady, expenseNeedsReceiptOrSubstitute, expenseCapabilities,
   calculateManualExpenseTotals, buildManualExpenseLines, canAccessExpenseTab, canDeleteExpense, expenseDeleteErrorMessage,
   expenseDeleteTargetLabel, firstFilled, isExpensePending, summarizeExpenseKpis,
-  isBlockedCheckBillClassification, lateDocumentDays, expenseClassificationConfirmBlocker,
+  isBlockedCheckBillClassification, lateDocumentDays, EXPENSE_DATE_STATUS_LABELS, expenseClassificationConfirmBlocker,
   POSTING_STATUS_LABELS, aiGrandTotalValue, expenseAiFieldProvenance, expenseRatePercent, expenseDocumentWhtRate,
   vatRatePreset, vatRatePresetValue, vatTreatmentForPreset, expensePercentToRate, expenseRateToPercent,
   effectiveVatRateLabel, vatModeRequiresRate,
@@ -91,10 +91,24 @@ function periodRange(gran: Gran, month: string, day: string): { fromDate: string
 }
 
 function LateDocumentBadge({ expense, locale }: { expense: ExpenseSummary; locale: SupportedLocale }) {
+  // Spec §5.2: "late" is document date vs upload date. When the document date IS the upload date's
+  // placeholder the comparison measures nothing — it can only ever say "not late", which is a
+  // reassurance about a date nobody read. Say what is actually wrong instead.
+  const status = expense.dateStatus ?? 'verified';
+  if (status === 'unverified' || status === 'implausible') {
+    return <MangmeeBadge tone="amber">{EXPENSE_DATE_STATUS_LABELS[status]}</MangmeeBadge>;
+  }
   const days = lateDocumentDays(expense);
   return days === null
     ? null
     : <MangmeeBadge tone="amber">{messageWithParams(t('expenses.late_document_days', locale), { days: String(days) })}</MangmeeBadge>;
+}
+
+/** Spec §5.2: a row whose date was READ but only by choosing the DD/MM order says so, quietly. */
+function DocumentDateBadge({ expense }: { expense: ExpenseSummary }) {
+  return expense.dateStatus === 'assumed'
+    ? <MangmeeBadge tone="sky">{EXPENSE_DATE_STATUS_LABELS.assumed}</MangmeeBadge>
+    : null;
 }
 
 export type ExtractionNotice = { tone: 'info' | 'error'; message: string };
@@ -2362,6 +2376,7 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
                           <div className="mt-0.5 text-xs text-gray-500"><span className="font-semibold">{t('expenses.intake_date', locale)}:</span> {dateShort(e.uploadedAt)}</div>
                           <div className="mt-1 flex flex-wrap gap-1">
                             <LateDocumentBadge expense={e} locale={locale} />
+                            <DocumentDateBadge expense={e} />
                             <MangmeeBadge tone="slate">{expenseValueLabel(CAPTURE_SOURCE_LABELS, e.captureSource, 'ช่องทางอื่น')}</MangmeeBadge>
                           </div>
                         </div>
@@ -2399,6 +2414,7 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
                   <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                     <StatusBadge status={e.status} />
                     <LateDocumentBadge expense={e} locale={locale} />
+                    <DocumentDateBadge expense={e} />
                   </div>
                   <div className="mt-3 text-right text-lg font-bold tabular-nums text-gray-900">{baht(e.grandTotalAmount)}</div>
                 </button>

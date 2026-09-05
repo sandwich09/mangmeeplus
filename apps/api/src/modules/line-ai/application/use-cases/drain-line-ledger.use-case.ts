@@ -177,6 +177,9 @@ export class DrainLineLedgerUseCase {
       // Same entitlement set the live webhook sends, so a drained turn cannot describe the
       // assistant's capabilities differently from a turn answered in the moment.
       ...(entitledFeatureKeys && { entitledFeatureKeys: [...entitledFeatureKeys] }),
+      // ...and the same trusted intake provenance, for the same reason (spec §5.3): a reclaimed
+      // business turn that lost it gets the "out of scope" answer the live turn would not have given.
+      ...(entry.intakeIntent ? { intakeIntent: entry.intakeIntent } : {}),
     };
     const response = await this.aiGateway.requestLineTurn(turnRequest);
 

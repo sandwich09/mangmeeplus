@@ -17,6 +17,13 @@ The repo already solves the mirror problem on the output side: `response-compose
 3. Canonical date convention for this channel is day/month/year with Buddhist-era year (วัน/เดือน/ปี พ.ศ.) — the interpretation default and the display form for clarify/assumption text (rendered with Thai month names, e.g. "9 ธ.ค. 2537"). Deterministic disambiguation runs in order: explicit slot labels / month names / day > 12 lock the reading; year ≥ 2400 → พ.ศ., a year implausible as พ.ศ. → ค.ศ. (assumption recorded); remaining positional ambiguity defaults to day/month (assumption recorded).
 4. Discovery policy (money and dates alike): unambiguous → auto with recorded assumptions; materially ambiguous (2-digit years, multiple surviving readings, implausible-for-context dates) → ONE bounded clarify naming the concrete choices; unmappable → value dropped to `missingFields` + NEEDS_REVIEW. Never guess.
 5. Wire and storage formats do not change: tools and Prisma keep ISO-8601 CE (`YYYY-MM-DD`); exactly one tested BE↔CE/ISO conversion helper crosses the boundary.
+6. **Document context (amendment 2026-09-05, `line-ai-draft-control-spec-th.md` §5.2).** `extractValueCandidates` takes `documentContext: 'receipt' | 'chat'`, defaulting to `'chat'`. In `'receipt'` mode a `D/M/YY` whose two leading parts are both ≤ 12 is read as day/month (with `orderAssumedDayMonth`, exactly as decision 3 already says) AND its two-digit era is resolved through the existing plausibility window — nearest today when the window leaves both readings, flagged `twoDigitYearResolvedPlausibleEra`. `'chat'` is byte-for-byte unchanged.
+7. **A stored date always says which of four things it is (amendment 2026-09-05, §5.2).** `ExpenseRecord.expenseDate` is NOT NULL, so "there is a value" carries no information. `ExpenseDocumentDateStatus` carries it instead, and the reading's assumptions travel with the date on `ReceiptOcrFieldResult.expenseDateAssumptions` so this can be decided at all:
+   - `verified` — the page stated it plainly. Nothing shown.
+   - `assumed` — read off the page, but the reader applied the DD/MM convention or chose an era. **The date is kept and the record is NOT sent to review**; every surface labels it (card "อ่านจากบิล แบบ วัน/เดือน", web "อ่านจากบิล", export `document_date_status`). Forcing review here would make receipt mode pointless — every Thai `DD/MM/YY` bill would land in review exactly as if its date were unread.
+   - `unverified` — never read; the value is the upload-day placeholder. `aiVerificationStatus: NEEDS_REVIEW`, `expenseDate` in `missingFields`, a readable reason, and the card says "ยังไม่ระบุ — ใช้วันที่ส่งไว้ก่อน" with the words to correct it.
+   - `implausible` — read, but more than one day ahead of today or more than two years behind. Review, reason `วันที่ผิดปกติ`.
+   Only the last two are review. The flag is always present.
 
 ## Consequences
 
@@ -26,9 +33,14 @@ The repo already solves the mirror problem on the output side: `response-compose
 - Thai-first UX: clarifies and assumption notes read naturally (พ.ศ., Thai months); every auto-interpretation is auditable via recorded assumptions on drafts.
 - Model work shrinks to what it is good at — picking which candidate is the amount/date — aligning with the no-keyword-list, guardrails-only owner rule.
 
+### Why the receipt mode does not violate the 2026-08-28 chat decision
+
+The 2026-08-28 owner decision ("7-6-69 could be 7 June or 6 July — leave it blank and let the user type it") is about **a person who is present and can be asked**. Its whole justification is that asking is cheap and cheaper than being confidently wrong. A printed receipt has nobody to ask: the OCR path deliberately does not clarify (decision 4's discovery step has no addressee there), so refusing to read the date does not produce a question — it produces a record with today's date and no explanation, which is the exact failure the decision was meant to prevent. The receipt mode therefore keeps every guarantee the chat rule provides — the assumption is recorded, the record is `NEEDS_REVIEW`, the reviewer sees the flag — and only removes the outcome that helps nobody. Chat text keeps the 2026-08-28 rule unchanged, and a regression test asserts chat and receipt readings differ on `03/09/69`.
+
 ### Trade-offs
 
 - D/M + พ.ศ. defaults can mis-read genuinely MM/DD or CE foreign documents — accepted by owner; assumptions are recorded and the NEEDS_REVIEW/human-review path catches them.
+- Receipt mode reads a date a person could not have been asked about. Its answer is always assumption-flagged — on the record, the card, the review page, the list and the export — and the sanity window above catches a reading that lands in the wrong decade. It is deliberately NOT sent to review on that basis alone: a flag a reviewer can see beats a queue nobody works through.
 - The normalizer grammar (Thai number words, currency tokens) needs maintenance as new wordings appear — bounded by golden tests; unknown tokens degrade safely to review, never to guesses.
 - Image-sourced values cannot be verified against pixels — mitigated by cross-checking capture hints against normalizer output over the OCR text.
 

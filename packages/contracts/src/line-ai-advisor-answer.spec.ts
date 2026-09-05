@@ -7,7 +7,7 @@ import {
 } from './line-ai-advisor-answer.js';
 import {
   ADVISOR_REFUSAL_CODES, ADVISOR_TONE_PREFACES, asIntakeRouteIntent, asIntakeRouterCapabilities,
-  LINE_INTAKE_ROUTE_INTENTS, MANGMEE_CONVERSATION_MODES,
+  isBusinessIntakeIntent, LINE_INTAKE_ROUTE_INTENTS, MANGMEE_CONVERSATION_MODES,
 } from './line-ai.js';
 import type { AdvisorRefusalCode, AdvisorTonePreface, MangmeeConversationMode, PreparedAdvisorAnswer } from './line-ai.js';
 
@@ -217,13 +217,23 @@ describe('advisor route contract – membership at every receiver boundary', () 
     assert.equal(asIntakeRouteIntent('ADVISOR'), undefined);
   });
 
+  // Spec `line-ai-draft-control-spec-th.md` §5.3: which intake outcomes mean "this turn is about
+  // the company's own records", so a refusal on one reads "not on LINE yet" and not "out of scope".
+  it('treats every intake outcome except CLARIFY and UNSUPPORTED as business', () => {
+    for (const intent of LINE_INTAKE_ROUTE_INTENTS) {
+      assert.equal(isBusinessIntakeIntent(intent), intent !== 'CLARIFY' && intent !== 'UNSUPPORTED', intent);
+    }
+    assert.equal(isBusinessIntakeIntent(undefined), false, 'no provenance is not a business claim');
+    assert.equal(isBusinessIntakeIntent('BUSINESS'), false, 'and neither is an unknown string');
+  });
+
   it('the runtime mode/tone/refusal mirrors match their types exactly', () => {
     const modes: readonly MangmeeConversationMode[] = MANGMEE_CONVERSATION_MODES;
     const tones: readonly AdvisorTonePreface[] = ADVISOR_TONE_PREFACES;
     const codes: readonly AdvisorRefusalCode[] = ADVISOR_REFUSAL_CODES;
     assert.deepEqual([...modes], ['SOCIAL_CHAT', 'BUSINESS_ADVISOR', 'COMPANY_INSIGHT', 'LIVE_QUERY', 'ACTION_OR_HANDOFF', 'SAFETY_OR_PRIVACY']);
     assert.deepEqual([...tones], ['none', 'acknowledge_stress', 'acknowledge_good_news']);
-    assert.deepEqual([...codes], ['mutation_blocked', 'safety_crisis', 'privacy_rumor', 'unsupported_module', 'insufficient_current_data']);
+    assert.deepEqual([...codes], ['mutation_blocked', 'safety_crisis', 'privacy_rumor', 'unsupported_module', 'unsupported_yet', 'insufficient_current_data']);
   });
 
   it('ONLY a literal boolean true activates the trusted advisor capability', () => {

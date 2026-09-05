@@ -60,7 +60,11 @@ describe('accountant index is independent of expense capture mode', () => {
       sum(row.subtotal_amount, row.additional_charges_amount, row.vat_amount) - Number(row.discount_amount),
       Number(row.grand_total_amount),
     );
-    assert.equal(ACCOUNTANT_INDEX_COLUMNS[ACCOUNTANT_INDEX_COLUMNS.length - 1], 'additional_charges_amount');
+    // Both slices appended a column rather than inserting one, which is what keeps every existing
+    // consumer's offsets intact — the point of the original assertion. Slice A's
+    // `document_date_status` sorts after this one by name, so the pair sits at the tail in that
+    // order and nothing before them moved.
+    assert.deepEqual(ACCOUNTANT_INDEX_COLUMNS.slice(-2), ['additional_charges_amount', 'document_date_status']);
   });
 
   it('writes the CSV in the full fixed column order, tax columns included', () => {

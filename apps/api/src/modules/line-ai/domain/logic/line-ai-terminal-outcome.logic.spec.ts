@@ -44,6 +44,10 @@ describe('LINE AI terminal outcome logic', () => {
     assert.equal(terminalStatusForLineTurn({ refused: true, refusalReason: 'tool_unavailable' }), 'unavailable_delivered');
     assert.equal(terminalStatusForLineTurn({ refused: true, refusalReason: 'feature_disabled' }), 'feature_disabled');
     assert.equal(terminalStatusForLineTurn({ refused: true, refusalReason: 'unsupported_module' }), 'unsupported_module');
+    // Spec §5.3: its own status, so the durable row can tell "we do not cover that" from "not on
+    // LINE yet" — and so it never falls to `refused_untyped`, which reads as an AI outage below.
+    assert.equal(terminalStatusForLineTurn({ refused: true, refusalReason: 'unsupported_yet' }), 'unsupported_yet');
+    assert.equal(classifyLineAiTerminalOutcome('unsupported_yet'), 'feature_disabled');
     assert.equal(terminalStatusForLineTurn({ refused: true, refusalReason: 'mutation_blocked' }), 'forbidden');
     assert.equal(terminalStatusForLineTurn({ refused: true, refusalReason: 'ambiguous_company' }), 'needs_company_selection');
     assert.equal(terminalStatusForLineTurn({ refused: true, refusalReason: 'safety_crisis' }), 'safety_crisis');

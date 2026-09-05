@@ -67,7 +67,9 @@ export function classifyLineAiTerminalOutcome(
   // distinct STATUS so the durable row and the audit trail can tell a planned CLOSE from a company
   // that never enabled the feature — but classified here as `feature_disabled` so a drill does not
   // register as an outage on the AI-failure alarm.
-  if (status === 'feature_disabled' || status === 'unsupported_module' || status === 'launch_route_closed') return 'feature_disabled';
+  // `unsupported_yet` (spec §5.3) is the same operational class as `unsupported_module`: the turn
+  // was answered honestly and nothing failed. Only the sentence the customer read differs.
+  if (status === 'feature_disabled' || status === 'unsupported_module' || status === 'unsupported_yet' || status === 'launch_route_closed') return 'feature_disabled';
   if (status === 'ai_timeout' || /TIMEOUT/.test(errorCode ?? '')) return 'timeout';
   if (status === 'unavailable_delivered' || status === 'provider_unavailable') return 'provider_unavailable';
   if (CLARIFICATION_STATUSES.has(status)) return 'clarification';
@@ -86,6 +88,10 @@ export function terminalStatusForLineTurn(input: {
   if (input.refusalReason === 'tool_unavailable') return 'unavailable_delivered';
   if (input.refusalReason === 'feature_disabled') return 'feature_disabled';
   if (input.refusalReason === 'unsupported_module') return 'unsupported_module';
+  // A distinct STATUS so the durable row can tell "we do not cover that" from "not on LINE yet" —
+  // the second is a backlog signal. Without this the reason falls to `refused_untyped`, which
+  // `classifyLineAiTerminalOutcome` reads as `failed_terminal`, i.e. a false AI-outage alarm.
+  if (input.refusalReason === 'unsupported_yet') return 'unsupported_yet';
   if (input.refusalReason === 'ambiguous_company') return 'needs_company_selection';
   if (input.refusalReason === 'safety_crisis' || input.refusalReason === 'privacy_rumor') {
     return input.refusalReason;

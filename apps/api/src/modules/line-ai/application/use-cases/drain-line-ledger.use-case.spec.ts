@@ -115,12 +115,15 @@ describe('DrainLineLedgerUseCase (item 10F)', () => {
   it('follows up a pending sub_request: re-resolves permissions, runs the turn, pushes, acks', async () => {
     const candidates = { amounts: [{ span: 'หกสิบ', value: '60' }], dates: [] };
     const { useCase, acks, pushes, turnRequests } = makeUseCase({
-      claims: [{ entry: entry({ valueCandidates: candidates as never }), deliveryCount: 2, idleMs: 5000 }],
+      claims: [{ entry: entry({ valueCandidates: candidates as never, intakeIntent: 'BUSINESS_READ_QUESTION' as never }), deliveryCount: 2, idleMs: 5000 }],
     });
     const result = await useCase.execute(20, NOW);
     assert.equal(result.followedUp, 1);
     assert.equal(turnRequests[0].messageText, 'ยอดค้างซัพพลายเออร์');
     assert.deepEqual(turnRequests[0].valueCandidates, candidates);
+    // Spec §5.3: the other half of the ledger round-trip. A reclaimed business turn that lost its
+    // trusted provenance gets the "out of scope" answer the live turn would never have given.
+    assert.equal(turnRequests[0].intakeIntent, 'BUSINESS_READ_QUESTION');
     assert.equal(turnRequests[0].userContext.lineUserId, '[REDACTED]');
     assert.deepEqual(turnRequests[0].userContext.entitlementDeniedPermissions, { 'inventory.report.read': 'inventory' });
     assert.deepEqual(turnRequests[0].userContext.entitledFeatureKeys, ['ai_line_assistant']);

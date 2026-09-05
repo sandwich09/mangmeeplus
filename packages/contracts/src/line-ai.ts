@@ -69,6 +69,14 @@ export type LineAiRefusalReason =
   | 'safety_crisis'
   | 'privacy_rumor'
   | 'unsupported_module'
+  /**
+   * In the system, not on LINE yet — a different sentence from `unsupported_module`, which means
+   * the subject is outside the product altogether. UAT 2026-09-03: "ทำไม service charge คิดแยกเป็น
+   * อีกรายการ" was a question about the sender's own expense record and was answered "อยู่นอกขอบเขต
+   * ระบบ", because no LINE tool could answer it yet. Chosen from the TRUSTED intake provenance
+   * (`LineAiTurnRequest.intakeIntent`), never from the model's own reading of the message.
+   */
+  | 'unsupported_yet'
   | 'forbidden'
   | 'unlinked_user'
   | 'ambiguous_company'
@@ -265,6 +273,14 @@ export type ReceiptOcrFieldResult = {
   vendorBranchCode?: string;
   documentNumber?: string;
   expenseDate?: string;
+  /**
+   * `VALUE_ASSUMPTIONS` markers the deterministic reading of `expenseDate` carried (spec §5.2).
+   * A receipt printing `03/09/69` yields a perfectly usable `2026-09-03` — but only because the
+   * reader applied the Thai DD/MM convention and picked one of two eras. Without this field the
+   * ISO date arrives looking like something the page stated outright, and the draft, the card and
+   * the review form all present a reading as a fact. Absent means the page said it plainly.
+   */
+  expenseDateAssumptions?: string[];
   description?: string;
   quantity?: string;
   unitPrice?: string;
@@ -457,6 +473,20 @@ export function asIntakeRouteIntent(value: unknown): LineIntakeRouteIntent | und
   return typeof value === 'string' && LINE_INTAKE_ROUTE_INTENT_SET.has(value)
     ? (value as LineIntakeRouteIntent)
     : undefined;
+}
+
+/** The two intake outcomes that are NOT about the company's own records: one the router could not
+ *  place, and one it placed outside the product. Listed as the exception so a new member of
+ *  {@link LINE_INTAKE_ROUTE_INTENTS} — every one of which so far is an expense, a document, a
+ *  reading or an advisory turn — is business without a second edit here. */
+const NON_BUSINESS_INTAKE_INTENTS: readonly LineIntakeRouteIntent[] = ['CLARIFY', 'UNSUPPORTED'];
+
+/** True when the API's own intake routing already placed this turn inside the business (spec
+ *  §5.3). A refusal on such a turn means "LINE cannot do this yet" (`unsupported_yet`), never
+ *  "that subject is outside the system" (`unsupported_module`). */
+export function isBusinessIntakeIntent(value: unknown): boolean {
+  const intent = asIntakeRouteIntent(value);
+  return intent !== undefined && !NON_BUSINESS_INTAKE_INTENTS.includes(intent);
 }
 
 // ─── Semantic expense-vs-reimbursement contract (uat-correctness-latency spec §7) ─────────────
@@ -725,6 +755,8 @@ export const ADVISOR_REFUSAL_CODES = [
   'safety_crisis',
   'privacy_rumor',
   'unsupported_module',
+  /** Same split as {@link LineAiRefusalReason}: in the system, not on LINE yet. */
+  'unsupported_yet',
   'insufficient_current_data',
 ] as const;
 export type AdvisorRefusalCode = (typeof ADVISOR_REFUSAL_CODES)[number];

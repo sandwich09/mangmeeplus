@@ -181,6 +181,9 @@ const COPY = {
   th: {
     mutation: '⚠️ ขออภัยค่ะ น้องมั่งมีไม่สามารถดำเนินการนี้ผ่าน LINE ได้\nกรุณาเปิดเว็บแอปเพื่อดำเนินการต่อนะคะ',
     unsupported: '📋 ขออภัยค่ะ น้องมั่งมีตอบได้เฉพาะข้อมูลในระบบธุรกิจที่เชื่อมต่ออยู่เท่านั้น\nคำถามนี้อยู่นอกขอบเขตระบบ จึงไม่สามารถให้ข้อมูลที่น่าเชื่อถือได้ค่ะ',
+    // Spec §5.3: the sibling of `unsupported` — the subject IS in the system, LINE just cannot do
+    // it yet. Telling someone their own bill is "outside the system" is the wrong answer twice over.
+    unsupportedYet: '📋 เรื่องนี้อยู่ในระบบ แต่น้องมั่งมียังทำผ่าน LINE ไม่ได้ในตอนนี้ค่ะ\nทำได้ในเว็บนะคะ',
     forbidden: '🔒 คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้ค่ะ',
     crisis: 'น้องมั่งมีเป็นห่วงความปลอดภัยของคุณนะคะ ตอนนี้คุณอยู่ในที่ปลอดภัยและมีคนที่ไว้ใจอยู่ใกล้ๆ ไหมคะ\nถ้าไหว โทรสายด่วนสุขภาพจิต 1323 (24 ชั่วโมง) หรือบอกคนที่ไว้ใจให้อยู่กับคุณตอนนี้ค่ะ\nถ้ามีอันตรายทันทีหรืออาจทำร้ายตัวเอง โทร 1669 หรือไปห้องฉุกเฉินที่ใกล้ที่สุดเดี๋ยวนี้นะคะ',
     privacyRumor: 'น้องมั่งมีไม่ขอเดาหรือขยายข่าวลือเกี่ยวกับชีวิตส่วนตัวของคนอื่นนะคะ',
@@ -195,6 +198,7 @@ const COPY = {
   en: {
     mutation: '⚠️ Sorry, Nong Mangmee cannot perform this action through LINE.\nPlease open the web app to continue.',
     unsupported: '📋 Sorry, Nong Mangmee can only answer from connected business data.\nThis question is outside the system scope, so I cannot provide reliable information.',
+    unsupportedYet: '📋 This is in the system, but Nong Mangmee cannot do it through LINE yet.\nIt can be done in the web app.',
     forbidden: '🔒 You do not have permission to access this information.',
     crisis: 'Nong Mangmee is concerned about your safety. Are you somewhere safe, with someone you trust nearby?\nIf you can, call Thailand’s Mental Health Hotline 1323 (24 hours) or ask someone you trust to stay with you now.\nIf you may hurt yourself or are in immediate danger, call 1669 or go to the nearest emergency department now.',
     privacyRumor: 'Nong Mangmee won’t guess or spread rumours about another person’s private life.',
@@ -324,7 +328,7 @@ export class ResponseComposerAgent {
     outputs: SpecialistOutput[],
     messageText = '',
     locale = 'th-TH',
-    availability: { featureDisabledTools?: readonly string[] } = {},
+    options: { featureDisabledTools?: readonly string[]; companyId?: string } = {},
   ): ComposedReply {
     const language = detectReplyLanguage(messageText, plan.language, locale);
     const copy = COPY[language];
@@ -335,11 +339,26 @@ export class ResponseComposerAgent {
       if (reasons.includes('privacy_rumor')) return empty(copy.privacyRumor);
       if (reasons.includes('mutation_blocked')) return empty(copy.mutation);
       if (reasons.some((reason) => reason.startsWith('feature_disabled'))) {
-        const disabled = featureDisabledReply(availability.featureDisabledTools ?? [], language);
+        const disabled = featureDisabledReply(options.featureDisabledTools ?? [], language);
         return empty(reasons.some((reason) => /forbidden|permission/i.test(reason)) ? `${disabled}\n${copy.forbidden}` : disabled);
       }
       if (reasons.includes('tool_unavailable')) return empty(copy.unavailable);
       if (reasons.some((reason) => /forbidden|permission/i.test(reason))) return empty(copy.forbidden);
+      // Spec §5.3: checked BEFORE the out-of-scope catch-all below, which is the wrong sentence for
+      // a turn the API's intake already placed inside the business. The link is what makes the
+      // answer useful — "do it in the web app" with no way there is barely an answer.
+      if (reasons.includes('unsupported_yet')) {
+        return {
+          replyText: copy.unsupportedYet,
+          sourceRefs: [],
+          webLinks: options.companyId
+            // The expenses list, not the workspace root: every turn that reaches this code was
+            // about the company's own records. ponytail: slice C's explain tool resolves a specific
+            // record — point at that id here once it does.
+            ? [{ label: language === 'th' ? 'เปิดรายการในเว็บ' : 'Open records in the web app', path: `/companies/${options.companyId}/expenses` }]
+            : [],
+        };
+      }
       if (isProductRecommendationQuestion(messageText)) return empty(unsupportedRecommendationReply(language));
       return empty(copy.unsupported);
     }

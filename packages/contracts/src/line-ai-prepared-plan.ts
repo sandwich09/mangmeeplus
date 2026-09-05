@@ -56,9 +56,9 @@ const INTENTS = new Set<AgentIntentItem['intent']>([
 const AGENTS = new Set<AgentIntentItem['agent']>(LINE_AI_AGENT_REGISTRY.map((agent) => agent.agent));
 const SUBJECTS = new Set<AgentIntentItem['subject']>(LINE_AI_BUSINESS_SUBJECTS);
 const REFUSAL_REASONS = new Set<AgentRefusal['reason']>([
-  'mutation_blocked', 'safety_crisis', 'privacy_rumor', 'unsupported_module', 'forbidden',
-  'unlinked_user', 'ambiguous_company', 'tool_unavailable', 'feature_disabled', 'ai_timeout',
-  'line_delivery_failure',
+  'mutation_blocked', 'safety_crisis', 'privacy_rumor', 'unsupported_module', 'unsupported_yet',
+  'forbidden', 'unlinked_user', 'ambiguous_company', 'tool_unavailable', 'feature_disabled',
+  'ai_timeout', 'line_delivery_failure',
 ]);
 
 /**

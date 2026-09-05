@@ -87,7 +87,9 @@ function planFor(messageText: string) {
   if (/ชำระ|pay/i.test(messageText)) {
     return { status: 'UNROUTABLE', language: /[A-Za-z]/.test(messageText) ? 'en' : 'th', intents: [], refusals: [{ request: messageText, reason: 'mutation_blocked' }], requiresHumanReview: false };
   }
-  if (/ภาษี|อากาศ/.test(messageText)) {
+  // "service charge" is the owner's UAT E4 turn: a question about his own expense record that the
+  // router had no tool for, so it refused it as out-of-scope — the misroute `unsupported_yet` fixes.
+  if (/ภาษี|อากาศ|service charge/i.test(messageText)) {
     return { status: 'UNROUTABLE', language: 'th', intents: [], refusals: [{ request: messageText, reason: 'unsupported_module' }], requiresHumanReview: false };
   }
   if (/พี่เอแอบคบ/.test(messageText)) {
@@ -588,6 +590,57 @@ describe('OrchestratorAgent', () => {
     assert.equal(result.plan.status, 'UNROUTABLE');
     assert.equal(called, false, 'should not invoke ERP tools for out-of-scope chat');
     assert.ok(result.replyText.includes('ตอบได้เฉพาะข้อมูลในระบบธุรกิจ'));
+  });
+
+  // Spec `line-ai-draft-control-spec-th.md` §5.3, case E4 from the UAT log of 2026-09-03. The owner
+  // asked why the service charge on HIS OWN bill was a separate line. Intake routed it
+  // BUSINESS_READ_QUESTION (0.55); no LINE tool could answer, and he was told the question was
+  // outside the system. It is not — his expense record is the system.
+  //
+  // Slice C (S-3) shipped the answer, and §5.3 is explicit that the test must not walk backwards:
+  // "กรณี E4 ต้องได้คำตอบจริงจาก S-3 และในระหว่างที่ S-3 ยังไม่ขึ้นต้องได้ unsupported_yet".
+  // So E4 itself is now the explain lane's, and `unsupported_yet` is what remains for a business
+  // turn the explain tool cannot take — which is J4's "ช่วยออกใบกำกับภาษีให้หน่อย".
+  describe('E4: a business turn with no tool is "not yet", not "out of scope"', () => {
+    const OWNER_QUESTION = 'ทำไม service charge คิดแยกเป็นอีกรายการ';
+    /** In the system, about no particular record — nothing for `preferExplainRecordPlan` to take. */
+    const NOT_ON_LINE_YET = 'ช่วยออกใบกำกับภาษีให้หน่อย';
+    const runText = (text: string, intakeIntent?: any) => new OrchestratorAgent(
+      { invoke: async () => ({ toolName: 'x', status: 'ok', sourceRefs: [], asOf: '' }) } as any,
+      makeConfig(),
+    ).run({ ...makeReq(text), ...(intakeIntent ? { intakeIntent } : {}) });
+    const run = (intakeIntent?: any) => runText(NOT_ON_LINE_YET, intakeIntent);
+
+    it('hands the owner question to the explain lane rather than refusing it at all', async () => {
+      const result = await runText(OWNER_QUESTION, 'BUSINESS_READ_QUESTION');
+      assert.deepEqual(result.plan.refusals, [], 'S-3 answers E4 now — a refusal here would be the regression');
+      assert.equal(result.plan.intents[0]?.requiredTools[0], 'expense.explain_record');
+    });
+
+    it('answers "ยังทำผ่าน LINE ไม่ได้" with a web link, not "นอกขอบเขต"', async () => {
+      const result = await run('BUSINESS_READ_QUESTION');
+      assert.equal(result.plan.refusals[0]?.reason, 'unsupported_yet');
+      assert.match(result.replyText, /เรื่องนี้อยู่ในระบบ แต่น้องมั่งมียังทำผ่าน LINE ไม่ได้/);
+      assert.equal(result.replyText.includes('นอกขอบเขตระบบ'), false);
+      assert.deepEqual(result.webLinks, [{ label: 'เปิดรายการในเว็บ', path: '/companies/company-1/expenses' }]);
+    });
+
+    it('keeps the out-of-scope answer when intake did not call the turn business', async () => {
+      for (const intake of [undefined, 'UNSUPPORTED', 'CLARIFY']) {
+        const result = await run(intake);
+        assert.equal(result.plan.refusals[0]?.reason, 'unsupported_module', String(intake));
+        assert.match(result.replyText, /นอกขอบเขตระบบ/, String(intake));
+      }
+    });
+
+    it('never repaints a safety, privacy, permission or mutation refusal', async () => {
+      const mutation = await new OrchestratorAgent(
+        { invoke: async () => ({ toolName: 'x', status: 'ok', sourceRefs: [], asOf: '' }) } as any,
+        makeConfig(),
+      ).run({ ...makeReq('ชำระเงินให้หน่อย'), intakeIntent: 'BUSINESS_READ_QUESTION' });
+      assert.equal(mutation.plan.refusals[0]?.reason, 'mutation_blocked');
+      assert.match(mutation.replyText, /ไม่สามารถดำเนินการนี้ผ่าน LINE/);
+    });
   });
 
   it('free-form model refusal reason still returns out-of-scope copy', async () => {

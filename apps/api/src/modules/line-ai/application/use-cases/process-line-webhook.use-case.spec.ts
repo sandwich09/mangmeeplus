@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { LINE_AI_CONTEXT_MAX_TURNS, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
-import { branchScopeFallbackLabel, chatKeyHashOf, classifyPendingMediaReply, formatCheckBillDraftCreatedReply, formatGroundedReceiptFollowUp, formatOcrGovernanceClarifyReply, isAffirmativeText, isGroundedReceiptFollowUp, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent } from './process-line-webhook.use-case';
+import { branchScopeFallbackLabel, chatKeyHashOf, classifyPendingMediaReply, formatCheckBillDraftCreatedReply, formatCorrectionAppliedReply, formatGroundedReceiptFollowUp, formatOcrGovernanceClarifyReply, formatPaypersReply, isAffirmativeText, isGroundedReceiptFollowUp, mentionsUnchangeableMoney, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent } from './process-line-webhook.use-case';
 import { featureTemporarilyUnavailable } from '../../../employee-access/application/entitlement.helper';
 import { ReceiptOcrApplyService } from '../../../expenses/application/services/receipt-ocr-apply.service';
 import { absoluteWebLink, webBaseUrlFromEnv, webLink } from '../../../../common/http/web-link';
@@ -1151,6 +1151,48 @@ describe('ProcessLineWebhookUseCase', () => {
       await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-fwd-p3', messageText: 'ยอดขายวันนี้เท่าไหร่' });
       assert.ok(aiGatewayRequests[0]?.preparedPlan, 'shadow on → forwarded for comparison');
     }
+  });
+
+  /**
+   * Spec `line-ai-draft-control-spec-th.md` §5.3, case E4, replayed end to end from the UAT log of
+   * 2026-09-03. The owner asked why the service charge on his own bill was a separate line. The
+   * intake router placed it BUSINESS_READ_QUESTION at 0.55 — too low to propose a tool, so it
+   * emitted NO prepared plan — and the API only bound `intakeIntent` inside the prepared-plan
+   * block. The gateway therefore never learned the turn was business, and the owner was told his
+   * own expense record was outside the system.
+   */
+  it('carries the trusted intake provenance for a business turn the router had no plan for (E4)', async () => {
+    const { prisma } = makePrisma();
+    const { useCase, replies, aiGatewayRequests } = makeUseCase(prisma, {
+      permissions: ['line.ai.query'],
+      // Exactly the shape the router emits for E4: routed, business, low confidence, NO preparedPlan.
+      intakeRouteFn: () => ({ status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.55 }),
+      // The gateway answers with the copy it composes once it sees the provenance.
+      aiGatewayFn: (request: any) => {
+        const business = request.intakeIntent === 'BUSINESS_READ_QUESTION';
+        return {
+          requestId: 'req-e4',
+          replyText: business
+            ? '📋 เรื่องนี้อยู่ในระบบ แต่น้องมั่งมียังทำผ่าน LINE ไม่ได้ในตอนนี้ค่ะ\nทำได้ในเว็บนะคะ'
+            : '📋 ขออภัยค่ะ น้องมั่งมีตอบได้เฉพาะข้อมูลในระบบธุรกิจที่เชื่อมต่ออยู่เท่านั้น\nคำถามนี้อยู่นอกขอบเขตระบบ จึงไม่สามารถให้ข้อมูลที่น่าเชื่อถือได้ค่ะ',
+          sourceRefs: [], sourceLabels: [], webLinks: [],
+          intent: 'unsupported_module', agent: 'general',
+          refused: true, refusalReason: business ? 'unsupported_yet' : 'unsupported_module',
+          toolsInvoked: [], toolCalls: [], modelCallCount: 1, modelLineage: [], usage: [], durationMs: 10,
+        };
+      },
+    });
+    (useCase as any).logger = { log: () => undefined, warn: () => undefined, error: () => undefined };
+
+    await useCase.execute({
+      ...BASE_EVENT, webhookEventId: 'evt-e4',
+      messageText: 'ทำไม service charge คิดแยกเป็นอีกรายการ',
+    });
+
+    assert.equal(aiGatewayRequests[0]?.preparedPlan, undefined, 'the router had no confident tool, so no plan');
+    assert.equal(aiGatewayRequests[0]?.intakeIntent, 'BUSINESS_READ_QUESTION', 'and the provenance still reaches the gateway');
+    assert.match(replies.join('\n'), /เรื่องนี้อยู่ในระบบ แต่น้องมั่งมียังทำผ่าน LINE ไม่ได้/);
+    assert.equal(replies.join('\n').includes('นอกขอบเขตระบบ'), false, 'his own expense record is not out of scope');
   });
 
   it('does not mark an employee answer completed when reply token and push both fail', async () => {
@@ -3287,6 +3329,109 @@ describe('LINE grounded receipt item follow-up', () => {
   it('states honestly when no printed item rows were readable', () => {
     const reply = formatGroundedReceiptFollowUp(undefined, 'company-1', expenseWithLines([]), undefined, 'บิลนี้ซื้ออะไร');
     assert.match(reply, /ยังอ่านรายการสินค้า.*ไม่ได้ชัดเจน/);
+  });
+
+  // Spec `line-ai-draft-control-spec-th.md` §5.1. The BHC bill: "Service charge 10%" was printed
+  // among the food, so the card read as if the shop sold a dish by that name (UAT 2026-09-03).
+  it('lists additional charges under their own heading, not among the products', () => {
+    const expense = expenseWithLines([{ description: 'ข้าวผัด', quantity: '2', amount: '300.00', evidenceSignal: 'ข้าวผัด 2 300' }]);
+    expense.aiVerificationSummaryJson.recognizedFields.additionalCharges = [
+      { kind: 'SERVICE_CHARGE', description: 'ค่าบริการ 10%', amount: '152.00', evidenceSignal: 'Service charge 10%' },
+    ];
+    const reply = formatGroundedReceiptFollowUp('https://app.test', 'company-1', expense, undefined, 'บิลนี้ซื้ออะไรบ้าง');
+    assert.match(reply, /ข้าวผัด × 2 – 300\.00/);
+    assert.match(reply, /ค่าใช้จ่ายเพิ่ม:\n• ค่าบริการ 10% – 152\.00/, 'the charge sits under its own heading, below the products');
+  });
+});
+
+// Spec `line-ai-draft-control-spec-th.md` §5.3, replaying the owner's real UAT turn of 2026-09-03:
+// "จากบิลเมื่อกี้มี service charge 10% นะ แก้ไขได้ใช่ไหม" wrote one sentence into `note`, changed no
+// money at all, and was answered "แก้ไขรายการเดิมให้แล้ว".
+describe('LINE correction reply says what actually changed', () => {
+  const OWNER_TURN = 'จากบิลเมื่อกี้มี service charge 10% นะ แก้ไขได้ใช่ไหม';
+  const reply = (fields: Record<string, { from: string | null; to: string }>, text = '') =>
+    formatCorrectionAppliedReply('https://app.test', 'company-1', 'expense-1', fields, text);
+
+  it('never claims to have edited the record when only a note was written', () => {
+    const out = reply({ note: { from: 'LINE receipt upload', to: OWNER_TURN } }, OWNER_TURN);
+    assert.equal(out.includes('แก้ไขรายการเดิมให้แล้ว'), false, 'nothing on the record was edited');
+    assert.match(out, /บันทึกหมายเหตุไว้/);
+    assert.match(out, /ยังไม่ได้แก้ยอด ค่าบริการ หรือ VAT/, 'the money question has to be answered, not skipped');
+    assert.match(out, /https:\/\/app\.test\/companies\/company-1\/expenses\/expense-1/);
+  });
+
+  it('names old and new per field for the changes it did make', () => {
+    const out = reply({
+      vendorName: { from: 'BHC', to: 'BHC สาขาลาดพร้าว' },
+      expenseDate: { from: '2026-09-01T00:00:00.000Z', to: '2026-09-03' },
+    }, 'ร้าน BHC สาขาลาดพร้าว วันที่ 3/9/69');
+    assert.match(out, /✅ แก้ไขรายการเดิมให้แล้ว/);
+    assert.match(out, /• เปลี่ยนผู้ขาย\/ผู้รับเงิน จาก BHC เป็น BHC สาขาลาดพร้าว/);
+    assert.match(out, /• เปลี่ยนวันที่เอกสาร จาก 1 ก\.ย\. 2569 เป็น 3 ก\.ย\. 2569/);
+    assert.equal(out.includes('ยังไม่ได้แก้ยอด'), false, 'this turn asked for no money at all');
+  });
+
+  it('adds no caveat when the amount it was asked for is the amount it changed', () => {
+    const out = reply({ amount: { from: '500.00', to: '590.00' } }, 'แก้ยอดเป็น 590 บาท');
+    assert.match(out, /• เปลี่ยนยอดรวม จาก 500\.00 เป็น 590\.00/);
+    assert.equal(out.includes('ยังไม่ได้แก้ยอด'), false);
+  });
+
+  it('recognizes the money words this lane cannot act on', () => {
+    for (const text of ['มี service charge 10%', 'ค่าบริการ 152 บาท', 'VAT ผิด', 'ภาษีไม่ถูก', 'ค่าส่ง 40']) {
+      assert.equal(mentionsUnchangeableMoney(text), true, text);
+    }
+    assert.equal(mentionsUnchangeableMoney('ร้าน BHC สาขาลาดพร้าว'), false);
+  });
+});
+
+// Spec §5.2. The record keeps the upload day because the column is NOT NULL; the card has to say
+// that is what it is, and how to fix it from the chat the sender is already in.
+describe('receipt capture card: an unread date says so', () => {
+  const card = (fields: Record<string, unknown> | null) =>
+    formatPaypersReply('https://app.test', 'company-1', 'expense-1', { fields: fields as never });
+
+  it('names the placeholder and the way to correct it', () => {
+    const reply = card({ grandTotalAmount: '1789.04' });
+    assert.match(reply, /• วันที่เอกสาร – ยังไม่ระบุ — ใช้วันที่ส่งไว้ก่อน พิมพ์ "วันที่ 3\/9\/69" เพื่อแก้/);
+  });
+
+  it('prints a date the document proved with no caveat at all', () => {
+    const reply = card({ grandTotalAmount: '1789.04', expenseDate: '2026-09-03' });
+    assert.match(reply, /• วันที่เอกสาร – 3 ก\.ย\. 2569/);
+    assert.equal(reply.includes('ใช้วันที่ส่งไว้ก่อน'), false);
+  });
+
+  // Keying the copy on whether a date STRING exists gets three of the four states wrong: the
+  // upload-day placeholder, a misread 2019 date and an assumed DD/MM reading are all present
+  // strings, and all three printed as plain fact.
+  it('says which of the four things the stored date actually is', () => {
+    const withStatus = (status: 'verified' | 'assumed' | 'unverified' | 'implausible', expenseDate?: string) =>
+      formatPaypersReply('https://app.test', 'company-1', 'expense-1', { fields: { grandTotalAmount: '1789.04', ...(expenseDate ? { expenseDate } : {}) } as never, dateStatus: status });
+
+    assert.match(withStatus('assumed', '2026-09-03'), /• วันที่เอกสาร – 3 ก\.ย\. 2569 \(อ่านจากบิล แบบ วัน\/เดือน\)/);
+    assert.match(withStatus('implausible', '2019-01-05'), /• วันที่เอกสาร – 5 ม\.ค\. 2562 \(ผิดปกติ ตรวจในเว็บ\)/);
+    assert.match(withStatus('unverified', '2026-09-05'), /• วันที่เอกสาร – ยังไม่ระบุ — ใช้วันที่ส่งไว้ก่อน/);
+    assert.match(withStatus('verified', '2026-09-03'), /• วันที่เอกสาร – 3 ก\.ย\. 2569$/m);
+  });
+
+  // Journey J1 step 1: a service charge is money the shop added and the row a reviewer questions
+  // first. It was only ever shown when the sender happened to ask what was on the bill.
+  it('lists the additional charges on the default card, with a count and a total', () => {
+    const reply = formatPaypersReply('https://app.test', 'company-1', 'expense-1', {
+      fields: {
+        grandTotalAmount: '1789.04',
+        additionalCharges: [
+          { kind: 'SERVICE_CHARGE', description: 'ค่าบริการ 10%', amount: '152.00', evidenceSignal: 'Service charge 10%' },
+        ],
+      } as never,
+    });
+    assert.match(reply, /➕ ค่าใช้จ่ายเพิ่ม \(1 รายการ รวม 152\.00\):/);
+    assert.match(reply, /• ค่าบริการ 10% – 152\.00/);
+  });
+
+  it('adds no charges block to a bill that printed none', () => {
+    assert.equal(card({ grandTotalAmount: '580.00' }).includes('ค่าใช้จ่ายเพิ่ม'), false);
   });
 });
 
