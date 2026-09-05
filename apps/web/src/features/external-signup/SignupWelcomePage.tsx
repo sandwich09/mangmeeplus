@@ -310,7 +310,7 @@ function Welcome() {
                 worse than no date. */}
             {trialEndsAt ? (
               <p className="mt-2 text-[15px] leading-7 text-gray-600">
-                {/* F1: named the PRO package while provisioning writes the free trial. The
+                {/* F1: named a paid tier while provisioning writes the free trial. The
                     wording table's "what happens after" rides the same line, so the date never
                     stands alone implying a renewal. */}
                 ทดลองใช้ฟรี ถึง {formatThaiDate(trialEndsAt)} — {SIGNUP_TRIAL_AFTER}
