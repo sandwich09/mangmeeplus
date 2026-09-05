@@ -500,7 +500,13 @@ describe('IntentRouterAgent – draft edit routing (S-4)', () => {
       let catalog = '';
       const router = new IntentRouterAgent({
         generateText: async (input: ProviderInput) => {
-          catalog = `${input.cacheableContext ?? ''}${input.userPrompt ?? ''}${input.systemPrompt ?? ''}`;
+          // Everything model-visible this turn: the cacheable catalog block, the system prompt and
+          // every message text. If the tool name is in none of them, the model was never offered it.
+          catalog = [
+            input.cacheableContext ?? '',
+            input.systemPrompt ?? '',
+            ...input.messages.map((message) => message.text),
+          ].join('\n');
           return { ok: true as const, text: JSON.stringify({
             status: 'ROUTABLE', language: 'th',
             intents: [{ intent: 'read_detail', subject: 'expense', agent: 'accounting', priority: 1, requiredTools: ['expense.draft.add_charge'], missingContext: [] }],

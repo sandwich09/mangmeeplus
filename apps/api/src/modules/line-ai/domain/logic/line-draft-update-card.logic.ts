@@ -30,10 +30,18 @@ function money(value: string): string {
     : '—';
 }
 
-/** A diff value is either a server number or already-scrubbed record text; bound it once more so
- *  this builder is safe no matter who calls it. */
+/**
+ * A diff value is either a figure the SERVER computed or free text a receipt printed. A pure money
+ * literal passes through — it is the answer — and everything else is scrubbed again here, so this
+ * builder is safe no matter who calls it. Deciding by SHAPE rather than by field name means a new
+ * diff field cannot accidentally opt out of the scrubber.
+ */
+const MONEY_LITERAL = /^-?\d[\d,]*(\.\d{1,2})?$/;
+
 function cell(value: string | null): string {
-  return value === null ? 'ยังไม่ระบุ' : scrubRecordText(value, 60) || '—';
+  if (value === null) return 'ยังไม่ระบุ';
+  const text = value.trim();
+  return MONEY_LITERAL.test(text) ? text : scrubRecordText(value, 60) || '—';
 }
 
 /** "จะเพิ่มค่าบริการ 10% = 152.00 ให้บิล BHC 03/09/2569 ยอดรวมใหม่ 1,789.04 ค่ะ" — the one line the
@@ -42,7 +50,9 @@ export function draftUpdateHeadline(preview: LineDraftUpdatePreview): string {
   const changes = preview.diff.slice(0, MAX_DIFF_ROWS)
     .map((entry) => `${entry.label}: ${cell(entry.before)} → ${cell(entry.after)}`)
     .join(' · ');
-  return `จะแก้ ${preview.recordLabel} — ${changes}`;
+  // The label is built from structured fields, but the vendor name inside it is still OCR text —
+  // so it is bounded here too rather than trusted because an earlier layer already scrubbed it.
+  return `จะแก้ ${cell(preview.recordLabel)} — ${changes}`;
 }
 
 export function buildDraftUpdatePreviewCard(preview: LineDraftUpdatePreview): LineReplyMessage {
@@ -71,7 +81,7 @@ export function buildDraftUpdatePreviewCard(preview: LineDraftUpdatePreview): Li
         paddingAll: '16px',
         contents: [
           { type: 'text', text: 'ยืนยันการแก้ไขรายการ', weight: 'bold', size: 'lg', color: '#101828', wrap: true },
-          { type: 'text', text: preview.recordLabel, size: 'sm', color: '#475467', wrap: true },
+          { type: 'text', text: cell(preview.recordLabel), size: 'sm', color: '#475467', wrap: true },
           { type: 'separator', margin: 'md' },
           ...rows,
           ...(hidden > 0 ? [{ type: 'text' as const, text: `และอีก ${hidden} รายการ`, size: 'xs' as const, color: '#667085' }] : []),

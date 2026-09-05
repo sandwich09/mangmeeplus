@@ -28,9 +28,19 @@ function record(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
 
+/**
+ * A diff value is either a figure the SERVER computed or free text a receipt printed. A pure money
+ * literal passes through — it is the answer — and everything else is scrubbed, which is what stops
+ * a line description from printing a total nobody calculated. Deciding by shape rather than by
+ * field name means a new diff field cannot accidentally opt out of the scrubber.
+ */
+const MONEY_LITERAL = /^-?\d[\d,]*(\.\d{1,2})?$/;
+
 function cell(value: unknown): string {
   if (value === null || value === undefined) return 'ยังไม่ระบุ';
-  return scrubRecordText(String(value), 60) || '—';
+  const text = String(value);
+  if (MONEY_LITERAL.test(text.trim())) return text.trim();
+  return scrubRecordText(text, 60) || '—';
 }
 
 /**

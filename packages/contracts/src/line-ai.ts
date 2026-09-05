@@ -804,31 +804,66 @@ export type LineDraftUpdatePostback = {
 };
 
 /**
- * Every free-text field on a captured record — vendor name, document number, line description,
- * a charge label the OCR wrote — is text an ATTACKER PUT ON A PIECE OF PAPER. It reaches a card,
+ * Every free-text field on a captured record - vendor name, document number, line description,
+ * a charge label the OCR wrote - is text an ATTACKER PUT ON A PIECE OF PAPER. It reaches a card,
  * a reply and an audit payload, so it is scrubbed once, here, and both apps import this copy: the
  * API renders the confirm card, the gateway renders the answer, and a second implementation is how
- * one of them ends up printing "ยอดรวมใหม่ 9,999.00" that the server never computed.
+ * one of them ends up printing a total the server never computed.
  *
- * What it removes, in order: control characters and bidi overrides (a right-to-left mark can make
- * a number read backwards), URLs and bare domains, money-shaped and percent-shaped runs (so only
- * the server's own figures can look like figures), then whitespace runs; finally it is truncated.
+ * The alphabet is deliberately wider than ASCII. A guard written against `\\d` and `\\b` passes every
+ * one of these, all of which render as a convincing total on a Thai phone:
+ *
+ *   ๙๙,๙๙๙.๐๐        Thai numerals
+ *   ９９，９９９．００   fullwidth digits with fullwidth comma and period
+ *   99,999            integer-only, no decimal point
+ *   evil.example.com  a bare domain with no scheme and no "www."
+ *   ร้านabcwww.evil.com   `\\b` does not fire between a Thai letter and a Latin one
+ *
+ * Order matters: control characters and bidi overrides go first (a right-to-left mark can make a
+ * number read backwards), then links, then anything digit-shaped in any of the three digit
+ * alphabets, then whitespace runs; finally it is truncated.
  *
  * It is a DISPLAY guard, not an escape: it never makes untrusted text safe to obey, and no caller
  * may treat scrubbed text as an instruction.
  */
+/** Latin, Thai and fullwidth digits - the three alphabets a Thai receipt can print a total in. */
+const SCRUB_DIGIT = '0-9\u0e50-\u0e59\uff10-\uff19';
+/** Grouping and decimal marks, including their fullwidth and Arabic twins. */
+const SCRUB_SEPARATOR = ',.\uff0c\uff0e\u066b\u066c';
+const SCRUB_REPLACEMENT = '▪';
+
 export function scrubRecordText(value: string | null | undefined, maxLength = 60): string {
   if (typeof value !== 'string') return '';
+  const digit = `[${SCRUB_DIGIT}]`;
+  const digitOrSep = `[${SCRUB_DIGIT}${SCRUB_SEPARATOR}]`;
   return value
     // eslint-disable-next-line no-control-regex
     .replace(/[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, ' ')
-    .replace(/\b(?:https?:\/\/|www\.)\S+/gi, '')
-    .replace(/\b[\w-]+\.(?:com|net|org|co|io|th|link|xyz)\b\S*/gi, '')
-    .replace(/\d[\d,]*\.\d{2}\b/g, '▪')
-    .replace(/\d+(?:\.\d+)?\s*%/g, '▪')
+    // Any scheme-or-www link, then any BARE host with a plausible TLD. No `\\b`: it does not fire
+    // between a Thai letter and a Latin one, which is exactly where a smuggled host hides.
+    .replace(/(?:https?:\/\/|www\.)\S+/gi, '')
+    .replace(/[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.(?:com|net|org|co|io|th|ly|link|xyz|app|info|site|shop|top|live)(?:\/\S*)?/gi, '')
+    // Anything digit-shaped, in any of the three alphabets: grouped, decimal, percent, or a bare
+    // run of two or more. Only the server's own figures may look like figures.
+    .replace(new RegExp(`${digit}${digitOrSep}*\\s*(?:%|％|เปอร์เซ็น(?:ต์)?)`, 'gu'), SCRUB_REPLACEMENT)
+    .replace(new RegExp(`${digit}${digitOrSep}*${digit}`, 'gu'), SCRUB_REPLACEMENT)
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, maxLength);
+}
+
+/**
+ * Digits normalised to ASCII, so a comparison against a server figure cannot be fooled by the
+ * alphabet it was written in. Callers that must compare untrusted text with a computed number
+ * normalise BOTH sides through this.
+ */
+export function normalizeScrubDigits(value: string): string {
+  return value.replace(new RegExp(`[${SCRUB_DIGIT}]`, 'gu'), (character) => {
+    const code = character.codePointAt(0)!;
+    if (code >= 0x0e50 && code <= 0x0e59) return String(code - 0x0e50);
+    if (code >= 0xff10 && code <= 0xff19) return String(code - 0xff10);
+    return character;
+  }).replace(/[\uff0c\u066c]/g, ',').replace(/[\uff0e\u066b]/g, '.');
 }
 
 /** Why a draft edit could not even be previewed. Each maps to one deterministic Thai reply. */

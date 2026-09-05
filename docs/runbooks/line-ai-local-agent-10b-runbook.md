@@ -76,7 +76,31 @@ AWS_SDK_LOAD_CONFIG=true
 AI_FINAL_MUTATION_ENABLED=false
 AI_MAX_TOOL_CALLS=8
 AI_TOOL_TIMEOUT_MS=15000
+
+# S-4 draft edit over LINE (draft-control spec §5.4/§8). Set on BOTH services or not at all:
+# the API is the authoritative executor and the AI Gateway decides whether the five
+# `expense.draft.*` tools are offered to the model in the first place. Default off everywhere;
+# `deploy.sh` turns it on for UAT and leaves production off until the Owner signs off J1–J4.
+LINE_AI_DRAFT_EDIT_ENABLED=false
 ```
+
+### LINE feature flags in one place
+
+| Flag | Container(s) | Default | What it turns on |
+|---|---|---|---|
+| `LINE_AI_AGENT_ORCHESTRATION_ENABLED` | ai-gateway | off | The agent/tool loop at all |
+| `LINE_AI_ADVISOR_MODE` | api-web | `off` | Advisor conversation lanes (`social`/`knowledge`/`company`) |
+| `LINE_AI_FUSED_PLAN_SHADOW_ENABLED` | ai-gateway | off | Phase-3 shadow comparison of the fused intake plan |
+| `LINE_AI_PREPARED_SIMPLE_READ_ENABLED` | ai-gateway | off | Phase-4 one-call deterministic simple read |
+| `LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED` | api-web | off | Multi-turn expense draft collection |
+| `LINE_AI_DRAFT_EDIT_ENABLED` | **api-web + ai-gateway** | off | S-4: edit a captured draft over LINE (preview card → ยืนยัน → apply) |
+| `AI_FINAL_MUTATION_ENABLED` | api-web + ai-gateway | off | The final-mutation kill switch. It does NOT gate `LINE_AI_DRAFT_EDIT_ENABLED` — a draft-edit tool only previews |
+
+Turning `LINE_AI_DRAFT_EDIT_ENABLED` off restores the pre-S-4 behaviour exactly: the five
+`draft_update` tools disappear from the catalog the model is offered, the API executor refuses the
+category with reason `LINE_DRAFT_EDIT_DISABLED`, the webhook renders no preview card, and a
+`ยืนยันการแก้ไข` postback answers "there is nothing pending". No data is left behind — a pending
+preview lives only in Redis under `line-ai:draft-preview:<companyId>:<chatKeyHash>` for 600s.
 
 For safe no-model local run (tests only, no Bedrock calls):
 ```bash

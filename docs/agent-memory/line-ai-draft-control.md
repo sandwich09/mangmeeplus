@@ -1,6 +1,6 @@
 # Agent Memory: line-ai-draft-control
 
-Status: docs approved (Owner 2026-09-05, 5 decisions) → building slices A/B in parallel, then C, then D
+Status: docs approved (Owner 2026-09-05, 5 decisions) → A/B/C built, D built on C; single UAT deploy pending
 Owner: Owner (product) · Fable (control) · Opus (implementation)
 Scope: spec `docs/specs/line-ai-draft-control-spec-th.md`, plan `docs/plans/line-ai-draft-control-plan-th.md`
 Decisions: service charge first-class (chargeKind), no silent today-date, receipt-mode BE dates with recorded assumptions, `unsupported_yet` refusal split from `unsupported_module`, LINE draft edits behind preview+confirm postback and `LINE_AI_DRAFT_EDIT_ENABLED` (default off), one UAT deploy after everything.
@@ -8,6 +8,7 @@ Open questions: Q1 (no-VAT-evidence charge → NEEDS_REVIEW), Q2 (edit allowed u
 Artifacts: branches `codex/line-ai-truth-and-dates` (A), `codex/expense-charge-kind` (B), `codex/line-ai-explain-record` (C), `codex/line-ai-draft-edit` (D)
 Verification: per slice — api fixed-list, typecheck, prisma validate, pins --check, web test/build when web touched, mutation table, security eval (D), local LINE-fake drive (J2–J4)
 Next: A + B implementation → review → PR develop; C after B; D after C; single develop→main PR; UAT deploy on Owner order.
+Next (D): rebase onto the final A/B/C heads, then reviewer pass; the Owner's UAT script is section D.5.
 
 ## Slice B — `codex/expense-charge-kind` (S-1, service charge first-class)
 
@@ -297,3 +298,125 @@ Round-2 blockers verified closed by the reviewer's own probes; five narrow items
 Gap found while proving N4, pre-existing and NOT fixed here: a broken (rather than absent) `DATABASE_URL` makes those four suites fail instead of skip. Worth its own change — the guards test for a missing URL, not an unusable one.
 
 Tooling note after two collisions on the shared box: this agent's helpers now live under `<scratchpad>/agent-aade5f5a0d0d0f4df/`, and `mutate.sh` reverts only the one file its patch reports touching (the old `git checkout -- .` ate uncommitted test files once). Full suites run behind `/tmp/mangmee-heavy.lock` (mkdir to acquire, nothing written inside). Never `pkill` on a bare `tsc`/`node --test` pattern — match the worktree path.
+
+Amended by slice D: `amountEditableOverLine` is no longer a hard `false`. It follows
+`LINE_AI_DRAFT_EDIT_ENABLED` — with S-4 on, the draft tools really do change money on exactly
+the receipts this tool explains, so the answer says so; with S-4 off the reasoning above stands
+unchanged. The flag decides, never the copy. See D.1.
+
+## Slice D — `codex/line-ai-draft-edit` (S-4, แก้ draft ผ่าน LINE)
+
+Status: implemented on top of C (`ca37d6a1`), gates green, pushed; not reviewed, no PR.
+
+### D.1 What it does
+
+**Two beats, always.** A model — or the deterministic correction lane — can only ever produce a
+PREVIEW; the write is a `ยืนยัน` postback that no model can send.
+
+- **PREVIEW** (`LineDraftUpdateUseCase.preview`) resolves the record through the ONE shared
+  chat-provenance rule slice C extracted (`line-recent-capture.ts`), guards status ∈
+  `DRAFT | NEEDS_REVIEW | READY_FOR_CONFIRMATION`, re-checks branch scope and `expense.update`,
+  grounds every number against the turn's evidence or the record, then produces the resulting
+  totals by running the REAL `UpdateExpenseDraftUseCase` inside a transaction it throws out of.
+  That last choice is the load-bearing one: re-deriving the arithmetic is how a card ends up
+  promising a total the apply would not produce, and a rolled-back run of the actual write path
+  cannot disagree with itself. It also proves the validators, the VAT reconciliation, the tax-code
+  resolution and the §5.1 totals identity all pass *before* the user is asked anything.
+- **APPLY** (`.apply`) is reachable only from the confirm postback. The postback carries
+  `action=draft-update-confirm` and no ids (P10-L SEC-04); the server looks the preview up by
+  company + chat, re-checks `{companyId, userId, chatKeyHash}` and refuses unless the record's
+  `updatedAt` is still the one the preview was computed against. Then the same use case runs for
+  real, in one transaction, with `expense.line_ai.draft_update` written inside it.
+
+**Five tools** (`draft_update`, a new `ToolCategory`): `expense.draft.set_header`, `set_line`,
+`add_charge`, `remove_line`, `set_vat_mode`. `requiredPermissions: ['expense.update']` — exactly
+what `expense.controller.ts` `updateDraft` takes, so LINE is never a cheaper way to edit than the
+web form. Every input reserves `recordType` (spec §4).
+
+**Correction lane migration.** `amount` left the five-field lane and `amountOnlyLine` is deleted.
+An `amount` hint becomes `set_line` with no `lineNumber`; the use case fills it with the record's
+only line or refuses `ambiguous_line`, which renders as the same "บรรทัดไหน" clarify as before.
+Header corrections (date/vendor/docNo/note) stay ONE step — that is today's behaviour, they change
+no money, and the honest per-field reply slice A introduced is unchanged.
+
+**The card** is built API-side (`line-draft-update-card.logic.ts`) because only the API may print
+buttons whose postbacks it must later re-derive. The gateway renders the same preview as
+deterministic Thai text (`draft-update-formatter.ts`) so a Flex-less delivery still explains the
+choice, and so no model sentence ever states this money.
+
+### D.2 Flag
+
+`LINE_AI_DRAFT_EDIT_ENABLED`, default off, on **both** containers — the API executor is
+authoritative, the gateway decides whether the five tools are in the catalog the model is offered
+at all ("refused later" would still have advertised an ability the deployment does not have).
+`deploy.sh` defaults it true for UAT and false for production; maintenance mode quiesces it.
+Contract greps live in `production-serving-mode.spec.sh`; maintenance-release pins re-synced.
+
+Off is byte-for-byte the pre-S-4 behaviour: tools absent from the catalog, executor refuses the
+category with `LINE_DRAFT_EDIT_DISABLED`, no preview card, and a stray confirm postback answers
+"there is nothing pending".
+
+### D.3 Boundaries and known gaps
+
+- **No apply without a postback, ever.** That is the single invariant the frozen eval states, and
+  every row asserts `expectedApplyCount: 0` — including the row that legitimately previews.
+- A preview needs a SHARED store. Without Redis in production none is offered (the confirm would
+  reach a task that never saw it, and the user would be told "รายการเปลี่ยนไปแล้ว" for a change
+  nobody made). Outside production a per-process map keeps the local LINE-fake harness able to
+  drive J3.
+- The Redis key uses the chat **hash**, not the raw chat id as the spec wrote it — same uniqueness,
+  and it keeps raw LINE/group ids out of a store the tool lane can reach. Recorded as a deliberate
+  deviation.
+- Grounding on the GATEWAY lane needs the user's message at the ERP boundary, so
+  `ErpToolContext.groundingText` forwards it verbatim (bounded at the transport, sent only while
+  the flag is on). It authorises nothing and is not stored. Without it, only numbers already on the
+  record ground — strictly safer, but it would refuse a legitimate "เพิ่มค่าบริการ 10%".
+- Deliberately NOT added: a deterministic router rescue for draft edits. The primary journey (J3)
+  is the webhook's own allowlist detector, which runs only on a turn the intake router already
+  classified as a correction of THIS chat's record; the gateway lane relies on the prompt hint.
+  A rescue that guesses "this looks like an edit" is the wrong thing to make eager.
+- `canCorrectAmount` is retained with no production caller — slice B's fix-up is still adding a
+  charge-line refusal to it. Delete it after that lands if nothing else picks it up.
+- `scrubRecordText` lives in `packages/contracts` so BOTH apps share one copy. Slice C's review is
+  widening a gateway-local `safeText` for the same reason; at rebase the two must collapse onto
+  this one rather than diverging.
+
+### D.4 Mutation table (each must turn a test red)
+
+| # | Mutation | Test that fails |
+|---|---|---|
+| 1 | Apply without checking `updatedAt` (drop the CAS compare) | `line-draft-update.pg.spec.ts` — "a moved record is refused, never re-based" |
+| 2 | Apply without the confirm postback (let the tool adapter call `.apply`) | `line-draft-update.security.spec.ts` — `draft-grounded-request-previews-but-does-not-write` (applies ≠ 0) |
+| 3 | Preview key not bound to the chat (drop `chatKeyHash` from the load check) | `line-draft-update.security.spec.ts` — `draft-preview-from-another-chat` |
+| 4 | Status guard removed (`EDITABLE_STATUSES` accepts CONFIRMED) | `line-draft-update.security.spec.ts` — `draft-confirmed-record-edit`; `line-draft-update.pg.spec.ts` — "a confirmed record is never touched" |
+| 5 | Flag ignored (`classificationDenial` admits `draft_update` unconditionally) | `internal-tools.controller.spec.ts` — "refuses every draft_update tool while LINE_AI_DRAFT_EDIT_ENABLED is off"; `intent-router.agent.spec.ts` — "offers the five draft tools in the catalog only when the flag is on" |
+| 6 | Grounding dropped (accept any model-supplied amount) | `line-draft-update.logic.spec.ts` — "refuses a number nobody said and the record does not hold"; eval `draft-injection-in-ocr-text-orders-edit` |
+| 7 | Scrubber narrowed back to ASCII digits | `line-ai-record-text.spec.ts` — Thai/fullwidth totals; eval `draft-injection-thai-numeral-total` |
+| 8 | Postback carries `previewId` | `line-draft-update-card.logic.spec.ts` — "carries an intent and no ids (SEC-04)" |
+
+### D.5 UAT script for the Owner (J1–J4)
+
+Prerequisite: UAT runs the candidate with `LINE_AI_DRAFT_EDIT_ENABLED=true` on **both** api-web and
+ai-gateway (read it back from the task definitions before starting). Use the BHC restaurant bill —
+1,520.00 of food, service charge 10%, VAT 7%.
+
+| # | Type / do this | Expect exactly |
+|---|---|---|
+| J1.1 | Send the BHC bill photo | Summary card: ร้าน, **วันที่ 03/09/2569 อ่านจากบิล**, 3 รายการสินค้า, **ค่าบริการ 10% 152.00** in its own group, VAT 117.04, รวม 1,789.04, สถานะ "ร่าง รอตรวจ" |
+| J1.2 | Open the web link on the card | Review page shows a "ค่าใช้จ่ายเพิ่ม" group separate from products, and a ค่าบริการ row between ส่วนลด and VAT |
+| J2 | "ทำไม service charge คิดแยกเป็นอีกรายการ" | A real answer with the arithmetic (สินค้า 1,520.00, ค่าบริการ 152.00, ฐานภาษี 1,672.00, VAT 7% 117.04, รวม 1,789.04). **Never** "อยู่นอกขอบเขตระบบ" |
+| J3.1 | Send a NEW bill with no service charge, then "จากบิลเมื่อกี้มี service charge 10% นะ" | A confirm card naming the bill, `ค่าบริการ: ยังไม่ระบุ → 152.00`, **ยอดรวมใหม่** and the previous total, and two buttons [ยืนยัน] [ยกเลิก]. Nothing saved yet — the web page still shows the old total |
+| J3.2 | Press **ยืนยัน** | "แก้ให้แล้วค่ะ: ค่าบริการ 152.00 · ยอดรวม 1,789.04 · ดูในเว็บ: <link>". Open the link: the charge is a ค่าใช้จ่ายเพิ่ม row, subtotal stays goods-only, ฐานภาษี = subtotal − discount + charges, รวม = ฐานภาษี + VAT |
+| J3.2b | Press **ยกเลิก** on a fresh preview instead | "ยกเลิกแล้วค่ะ ยังไม่ได้แก้อะไรในรายการนะคะ" and the web page is unchanged |
+| J3.3 | On the ORIGINAL BHC bill (OCR wrote service charge as a product line), type "เพิ่มค่าบริการ 10%" | It refuses to duplicate: "บิลนี้มี ค่าบริการ เป็นรายการสินค้าอยู่แล้ว (บรรทัด N) … พิมพ์ 'ย้ายบรรทัด N เป็นช่องค่าบริการ'". Type that, confirm: the row moves and the total does NOT change |
+| J3.4 | Confirm a record in the web, then type "เพิ่มค่าบริการ 10%" in LINE | "รายการนี้ยืนยันไปแล้ว แก้ผ่าน LINE ไม่ได้ค่ะ ไปที่เว็บ <link> เพื่อยกเลิกหรือแก้" — not an out-of-scope refusal |
+| J3.5 | Get a preview card, edit the SAME record in the web, then press ยืนยัน | "รายการเปลี่ยนไปแล้ว ขอดูใหม่นะคะ" plus the link, and the web edit survives untouched |
+| J3.6 | Press ยืนยัน again ~11 minutes after a card | "ไม่พบรายการที่รอยืนยันในแชทนี้ค่ะ (อาจหมดเวลาไปแล้ว)…" |
+| J3.7 | "แก้ยอดเป็น 500" on a multi-line bill | "บิลนี้มีหลายบรรทัดค่ะ ขอทราบว่าต้องการแก้บรรทัดไหนนะคะ" — then "บรรทัด 2 เป็น 500" previews that line only |
+| J4 | "ช่วยออกใบกำกับภาษีให้หน่อย" | "เรื่องนี้ทำได้ในเว็บค่ะ น้องมั่งมียังทำผ่าน LINE ไม่ได้ในตอนนี้: <link>" (`unsupported_yet`, from slice A) |
+| Neg-1 | "ลบบรรทัด 2 ของบิลร้านอื่น" | No preview card. The lane must not act on a third-party phrasing |
+| Neg-2 | As a MARKETING/ACCOUNTANT user (no `expense.update`), "เพิ่มค่าบริการ 10%" | "คุณยังไม่มีสิทธิ์แก้รายการค่าใช้จ่ายค่ะ …" and no card |
+
+After the run, check in the web audit/history that each applied edit left an
+`expense.line_ai.draft_update` row naming the fields and both totals, and that no such row exists
+for any preview that was cancelled or expired.
