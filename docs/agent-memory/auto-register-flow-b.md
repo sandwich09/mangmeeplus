@@ -64,7 +64,9 @@ Owner decisions ที่บันทึกรอบนี้:
 - **แพ็กเกจตอนสมัคร (2026-09-05):** ไม่มีการเลือกแพ็กเกจที่หน้าสมัครอีกต่อไป ทุก self-signup — ทั้งฟอร์มเว็บและ LINE — ได้ **free trial เดียวกัน** (`FREE_TRIAL_15`, 30 วัน, 15 สลิป/เดือน) เดิมฟอร์มเว็บให้ `PRO_999` ทั้งที่หน้าเว็บโฆษณาว่าทดลองฟรี `requestedOfferKey` เหลือไว้เป็นหลักฐาน attribution เท่านั้น (รับค่าใน catalog, ค่าอื่นทิ้ง, ไม่ปฏิเสธคำขอ) — คิว admin ไม่ได้แสดงคีย์นี้ จึงไม่มี DTO ต้องแก้
 - **merge ที่สิทธิ์ทับกัน (R05):** fail closed ด้วย `account_merge_role_conflict` เมื่อสอง membership ของร้านเดียวกันมี role ไม่ตรงกัน หรือ membership ฝั่งปลายทางไม่ ACTIVE และบังคับ invariant "ต้องเหลือ ACTIVE OWNER อย่างน้อยหนึ่งคนต่อร้าน" ก่อนปิด membership ใด ๆ พร้อม preview รายร้าน (`POST /v1/auth/account-merge/preview`) ที่บอกว่าร้านไหนย้าย ร้านไหนติด และหลังรวมแล้วเข้าสู่ระบบด้วยอะไร
 
-Schema delta: `CompanySignupRequest.claimWindowStartedAt` (nullable, additive migration `20260905170000_signup_claim_activation_window` พร้อม backfill จาก `approvedAt`) — R09 ต้องการนาฬิกาที่ reissue รีสตาร์ทได้ โดยไม่แตะ `approvedAt` ซึ่งเป็น audit fact
+Schema delta: `CompanySignupRequest.claimWindowStartedAt` (nullable, additive migration `20260905173000_signup_claim_activation_window` พร้อม backfill จาก `approvedAt`) — R09 ต้องการนาฬิกาที่ reissue รีสตาร์ทได้ โดยไม่แตะ `approvedAt` ซึ่งเป็น audit fact
+
+ชื่อ migration ตั้งเป็น `173000` เพื่อไม่ให้ prefix ชนกับ `20260905170000_line_support_request` บน `codex/line-support-request` (คนละตาราง: อันนั้นสร้าง enum และตาราง `LineSupportRequest` ใหม่, อันนี้เพิ่มคอลัมน์บน `CompanySignupRequest` — additive ทั้งคู่ ลำดับไหนก่อนก็ได้) ลำดับที่จะ apply จริงคือ `170000_line_support_request` → `173000_signup_claim_activation_window` → `180000_line_support_request_notified_at`
 
 Verification (รอบสุดท้ายบน `43fd6d05`): api 6537 tests / 1323 suites / 6438 pass / 0 fail / 99 skipped; web 1489 tests / 322 suites / 1489 pass / 0 fail; `apps/web` build ผ่าน; `pnpm -r typecheck` ผ่าน; `prisma validate` ผ่าน; maintenance pins `--check` = current; pg spec ใหม่ `signup-provisioning-recovery.pg.spec.ts` (5 tests) รันบน docker postgres จริงและถูกเพิ่มใน ci.yml pg step แบบ invocation ของตัวเอง
 
@@ -72,5 +74,5 @@ Follow-ups ที่ยังไม่ทำ:
 
 - ALB / Cloudflare access log ยังบันทึก path เดิม (R01 ชั้น infra) — งาน ops ไม่ใช่โค้ดนี้
 - `apps/web/app/api/auth/login/route.ts` มีอาการ R06 เหมือนกัน แต่อยู่ใน maintenance pins จึงไม่แตะ
-- free trial ทางเว็บยังไม่ได้ AI budget/warm-up ของ LINE (`applyLineTrialGuards` รันเฉพาะ `line-oa`) — ต้องมี Owner decision
+- ~~free trial ทางเว็บยังไม่ได้ AI budget/warm-up ของ LINE~~ **ปิดแล้ว 2026-09-05 (Owner follow-up):** `applyLineTrialGuards` → `applyTrialGuards` รันทั้งสอง source โดยดูจาก `SIGNUP_TRIAL_TIER` ไม่ใช่ source — ร้านจากฟอร์มเว็บได้ AI budget cap, warm-up 7 วัน และ term 30 วันชุดเดียวกับ LINE; `LineCompanyContext` และ LINE push ยังเป็นของ LINE เท่านั้น (gate ด้วย `lineProviderUserId`); `adoptExistingCompany` ไม่เขียน plan term ของตัวเองอีกแล้ว — มี writer เดียว. env keys ยังชื่อ `lineSignupWarmupSlips` / `lineFreeAiBudgetSatang` (การเปลี่ยนชื่อต้องแก้ deploy.sh จึงไม่ทำในรอบนี้)
 - P2 ทั้งหมด (R07, R10–R13) และ integration matrix ท้ายรายงาน

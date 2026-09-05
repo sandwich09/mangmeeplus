@@ -116,12 +116,18 @@ describe('provisioning applies the free-trial term (P29 T3; Owner 2026-09-05)', 
   it('names the free-trial 30-day term on the onboarding command, not by a second upsert', async () => {
     const h = harness();
     await h.useCase.execute(CMD);
-    // Review B-01: onboarding writes the term row, so this use-case must NOT upsert its own —
-    // `applyPlanTermPreset` leaves an existing row alone and the intended tier would be lost.
-    assert.equal(h.planTermUpserts.length, 0);
+    // Review B-01: onboarding is TOLD the tier rather than having one upserted over it afterwards,
+    // because an upsert against an existing row cannot change a tier that is already wrong.
     // Review R02: one trial for both sources. The web form used to grant PRO_999 here.
     assert.equal(h.onboardingCalls[0].planTier, 'FREE_TRIAL_15');
     assert.equal(h.onboardingCalls[0].planDays, 30);
+    // The single upsert that follows is the warm-up guard, and its `update` side touches nothing
+    // but the warm-up — no tier, no dates, so it can never contradict what onboarding wrote.
+    assert.equal(h.planTermUpserts.length, 1);
+    assert.deepEqual(
+      Object.keys(h.planTermUpserts[0].update).sort(),
+      ['warmupSlipLimit', 'warmupUntil'],
+    );
   });
 });
 
@@ -431,10 +437,18 @@ describe('ProvisionSignupUseCase — recovering an already-created company', () 
     await h.useCase.execute(CMD);
 
     assert.equal(h.onboardingCalls.length, 0, 'the company already exists');
+    // Owner 2026-09-05: one writer for the trial's shape, so the recovered shop is repaired by the
+    // same guard upsert both sources use rather than by a second web-only preset call.
     assert.equal(h.planTermUpserts.length, 1);
     assert.equal(h.planTermUpserts[0].create.tierKey, 'FREE_TRIAL_15');
-    // Idempotent: a term the admin already set is never shortened by a retry.
-    assert.deepEqual(h.planTermUpserts[0].update, {});
+    assert.equal(h.planTermUpserts[0].create.monthlySlipLimit, 15);
+    // Idempotent: a term the admin already set keeps its tier and its dates through a retry.
+    assert.deepEqual(
+      Object.keys(h.planTermUpserts[0].update).sort(),
+      ['warmupSlipLimit', 'warmupUntil'],
+    );
+    // And the recovered shop is capped like every other trial shop.
+    assert.equal(h.aiConfigUpserts[0]?.update.monthlyBudgetSatang, 8000);
   });
 
   it('leaves a recovered LINE shop to its own trial guards', async () => {

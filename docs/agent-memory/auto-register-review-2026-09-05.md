@@ -245,5 +245,5 @@ node /tmp/mangmee-auto-register-review-20260905/browser-probe.cjs
 
 - **R01 ชั้น infra:** ALB / Cloudflare access log ก็บันทึก path เดิมด้วย ลิงก์ claim ที่ส่งไปแล้วก่อนรอบนี้จึงเคยผ่าน log ชั้นนั้น — เป็นงาน infra (log retention / redaction ที่ edge) ไม่ได้อยู่ในโค้ดนี้
 - **`apps/web/app/api/auth/login/route.ts`** มีอาการ R06 แบบเดียวกัน แต่ไฟล์นี้อยู่ใน maintenance pins ของ production deploy จึงไม่แตะในรอบนี้
-- **AI budget ของ free trial ทาง web:** `applyLineTrialGuards` (warm-up + `companyAiConfiguration`) ยังรันเฉพาะ source `line-oa` ตามเดิม การเปลี่ยน tier รอบนี้ไม่ได้ทำให้แย่ลง แต่ตอนนี้ร้านจากฟอร์มเว็บก็เป็น free trial แล้ว จึงควรมี Owner decision ว่าจะให้ AI budget เท่ากับ LINE หรือไม่
+- ~~**AI budget ของ free trial ทาง web**~~ **ปิดแล้ว 2026-09-05:** Owner ยืนยันว่า "trial เดียวกัน" หมายถึงสินค้าเดียวกัน จึงเปลี่ยน `applyLineTrialGuards` → `applyTrialGuards` ให้รันทั้งสอง source โดยดู `SIGNUP_TRIAL_TIER` แทน source — AI budget cap, เพดานสลิปสัปดาห์แรก และ term 30 วัน เหมือนกันทั้งคู่; `LineCompanyContext` และ LINE push ยังเป็นของ LINE เท่านั้น
 - **P2 ทั้งหมด (R07, R10–R13)** และ integration matrix ท้ายรายงาน

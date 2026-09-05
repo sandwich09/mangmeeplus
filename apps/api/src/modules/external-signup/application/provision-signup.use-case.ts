@@ -9,7 +9,6 @@ import { CompanySignupCoreService } from './company-signup-core.service';
 import { SignupAdminNotifyService } from './signup-admin-notify.service';
 import { LineSignupNotifyService } from './line-signup-notify.service';
 import { SignupOpsAlertService } from './signup-ops-alert.service';
-import { applyPlanTermPreset } from '../../system-partner-management/application/use-cases/company-plan-term.use-cases';
 import { suggestedUsernameFromEmail } from '../domain/account-claim.logic';
 import { SIGNUP_SOURCE_LINE_OA } from '../domain/company-signup.logic';
 
@@ -104,10 +103,13 @@ export class ProvisionSignupUseCase {
       // means exactly that — re-running onboarding would try to create the owner's ExternalIdentity
       // a second time and fail on the unique constraint for as long as anyone kept retrying.
       const result = request.companyId
-        ? await this.adoptExistingCompany(request.companyId, request, lineOa, operator)
+        ? await this.adoptExistingCompany(request.companyId, request)
         : await this.createCompany(request, cmd, lineOa, operator);
 
-      if (lineOa) await this.applyLineTrialGuards(result.companyId, request, cmd.correlationRequestId);
+      // Owner 2026-09-05: one trial, one set of guards, whichever form the shop came in through.
+      // This also repairs the term for a recovered shop, which is why adopting no longer writes
+      // its own — there is exactly one writer of the trial's shape now.
+      await this.applyTrialGuards(result.companyId, request, cmd.correlationRequestId);
 
       // Spec §3: the form's VAT answer is stored as company state only. No `VatFact` is written,
       // because the form never asked for an effectiveFrom and the fact would be a guess.
@@ -260,12 +262,7 @@ export class ProvisionSignupUseCase {
    * thing left is to walk the fence forward over it. The owner is read back from the membership
    * onboarding created rather than re-derived, because that row IS what onboarding decided.
    */
-  private async adoptExistingCompany(
-    companyId: string,
-    request: SignupRow,
-    lineOa: boolean,
-    operator: { userId: string },
-  ) {
+  private async adoptExistingCompany(companyId: string, request: SignupRow) {
     const ownerUserId = request.ownerUserId ?? (await this.prisma.client.companyMembership.findFirst({
       where: { companyId, status: 'ACTIVE', roles: { some: { role: { key: 'OWNER' } } } },
       orderBy: { createdAt: 'asc' },
@@ -275,14 +272,9 @@ export class ProvisionSignupUseCase {
       // A company with no owner is not something to finish provisioning over.
       throw new ConflictException('signup_provisioned_company_has_no_owner');
     }
-    // Review LOW-3: skipping onboarding also skips its post-commit plan term, so a recovered web
-    // shop would have no CompanyPlanTerm at all — which reads as unlimited, not as a trial. The
-    // preset is the same one the create path names, and the upsert leaves an existing row alone.
-    // A LINE shop needs nothing here: its trial guards already upsert the term.
-    if (!lineOa) {
-      await this.bestEffort(companyId, request.id, 'plan_term_adopted', () =>
-        applyPlanTermPreset(this.prisma, companyId, SIGNUP_TRIAL_TIER, TRIAL_DAYS, operator.userId));
-    }
+    // Review LOW-3 used to be answered here with a second plan-term writer for the web path only.
+    // `applyTrialGuards` now runs on BOTH paths and its upsert creates the full trial term when the
+    // row is missing, so a recovered shop is repaired by the one writer instead of two.
     return {
       companyId,
       ownerId: ownerUserId,
@@ -369,15 +361,21 @@ export class ProvisionSignupUseCase {
   }
 
   /**
-   * The three things a free LINE trial needs that an ordinary company does not (spec §6, §9;
-   * review G-06, B-06). All idempotent, so a provisioning retry re-applies the same values.
+   * The things a free trial needs that a paid company does not (spec §6, §9; review G-06, B-06).
+   * All idempotent, so a provisioning retry re-applies the same values.
+   *
+   * Owner 2026-09-05: keyed on `SIGNUP_TRIAL_TIER`, not on the source. Every shop this flow opens
+   * is on the same trial, so it gets the same first-week receipt ceiling and the same AI budget cap
+   * — a web-form shop used to get the tier and spend the PLATFORM default budget. The one guard
+   * that stays source-specific is `LineCompanyContext`, which points a LINE conversation at a shop:
+   * a web-form applicant has no LINE account yet, and its own `lineProviderUserId` says so.
    *
    * Every one of them runs AFTER the company transaction has committed, and each is guarded
    * separately: onboarding writes the plan term post-commit best-effort by its own design, so this
    * may legitimately arrive with no term row at all, and one write failing must neither roll back a
    * finished shop nor skip the other two — the AI budget in particular is the money stop.
    */
-  private async applyLineTrialGuards(companyId: string, request: SignupRow, requestId: string): Promise<void> {
+  private async applyTrialGuards(companyId: string, request: SignupRow, requestId: string): Promise<void> {
     const now = new Date();
     const preset = PLAN_TIER_PRESETS[SIGNUP_TRIAL_TIER];
     const warmup = {
@@ -387,7 +385,7 @@ export class ProvisionSignupUseCase {
       warmupSlipLimit: this.config.lineSignupWarmupSlips,
     };
 
-    await this.bestEffort(companyId, requestId, 'plan_term_warmup', () =>
+    await this.bestEffort(companyId, requestId, 'plan_term_warmup', request.source, () =>
       // Upsert, not update: the term row is written by onboarding after ITS transaction commits and
       // is explicitly allowed to be missing (a company with no term is unlimited, not broken), so
       // an update here would raise P2025 on a provisioning that has already created the shop.
@@ -410,7 +408,7 @@ export class ProvisionSignupUseCase {
 
     // Review G-06: without this a free trial shop spends the PLATFORM default AI budget. Same
     // upsert shape `set-partner-ai-model` uses, so there is one way this row comes into being.
-    await this.bestEffort(companyId, requestId, 'ai_budget', () =>
+    await this.bestEffort(companyId, requestId, 'ai_budget', request.source, () =>
       this.prisma.client.companyAiConfiguration.upsert({
         where: { companyId },
         create: { companyId, monthlyBudgetSatang: this.config.lineFreeAiBudgetSatang },
@@ -422,7 +420,7 @@ export class ProvisionSignupUseCase {
     // they just opened. Same upsert the LINE link use-case does when it resolves a company.
     if (request.lineProviderUserId) {
       const lineUserId = request.lineProviderUserId;
-      await this.bestEffort(companyId, requestId, 'line_company_context', () =>
+      await this.bestEffort(companyId, requestId, 'line_company_context', request.source, () =>
         this.prisma.client.lineCompanyContext.upsert({
           where: { lineUserId },
           create: { lineUserId, companyId, selectedAt: now },
@@ -445,6 +443,8 @@ export class ProvisionSignupUseCase {
     companyId: string,
     requestId: string,
     step: string,
+    /** Which form the shop came in through, now that these guards serve both (Owner 2026-09-05). */
+    source: string,
     write: () => Promise<unknown>,
   ): Promise<void> {
     try {
@@ -454,18 +454,20 @@ export class ProvisionSignupUseCase {
         await this.prisma.client.auditLog.create({
           data: {
             companyId,
+            // The name predates these guards serving both sources. Left alone because it is a
+            // searchable audit fact in live logs; `source` in the metadata says which flow it was.
             action: 'signup.line.trial_guards_failed',
             targetType: 'company_signup_request',
             targetId: requestId,
             requestId,
             result: 'FAILED',
             riskLevel: 'HIGH',
-            metadataJson: { step, error: error instanceof Error ? error.message : String(error) },
+            metadataJson: { step, source, error: error instanceof Error ? error.message : String(error) },
           },
         });
       } catch {
         new Logger(ProvisionSignupUseCase.name).error(
-          `LINE trial guard "${step}" not applied for company ${companyId}; check the plan term and AI budget by hand.`,
+          `Trial guard "${step}" not applied for company ${companyId}; check the plan term and AI budget by hand.`,
         );
       }
     }
