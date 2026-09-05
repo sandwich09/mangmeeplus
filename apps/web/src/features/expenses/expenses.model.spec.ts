@@ -14,6 +14,7 @@ import {
   substituteReceiptPreparationHref,
   deriveExpenseClassificationReviewState,
   expenseAiFieldProvenance,
+  expenseAiMissingFields,
   expenseAiSuggestion,
   expenseAiCategorySuggestion,
   applyExpenseAiSuggestion,
@@ -284,6 +285,20 @@ describe('expenses.model', () => {
     assert.deepEqual(expenseAiFieldProvenance(summary, 'vendorTaxIdSnapshot'), { recognized: false, missing: true });
     assert.deepEqual(expenseAiFieldProvenance(summary, 'category'), { recognized: false, missing: true });
     assert.equal(expenseAiFieldProvenance(null, 'vendorNameSnapshot'), null);
+  });
+
+  // Spec `line-ai-draft-control-spec-th.md` §5.2(ง). The date column is NOT NULL, so an unread date
+  // still stores the upload day — a value every non-empty check passes. The server now flags it in
+  // `missingFields`, and this is the chain that turns that flag into "ต้องกรอกเอง: วันที่รายจ่าย" on
+  // the review page. No new web mechanism: the flag reuses the one the page already reads.
+  it('shows an unverified expense date as a field the reviewer must confirm', () => {
+    const summary = { recognizedFields: {}, missingFields: ['expenseDate', 'category'] };
+    assert.deepEqual(expenseAiFieldProvenance(summary, 'expenseDate'), { recognized: false, missing: true });
+    assert.ok(expenseAiMissingFields(summary, 'data').includes('expenseDate'), 'and it belongs to the data step, not evidence');
+    assert.equal(AI_MISSING_FIELD_LABELS['expenseDate'], 'วันที่รายจ่าย');
+
+    const verified = { recognizedFields: {}, missingFields: ['category'] };
+    assert.deepEqual(expenseAiMissingFields(verified, 'data'), [], 'a date read off the document raises nothing');
   });
 
   it('formats fraction rates as a display-only percentage with at most two decimals', () => {

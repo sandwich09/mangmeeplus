@@ -239,3 +239,25 @@ correctable record at deploy — they would silently stop matching. There is als
 LINE-id hash to adopt: `shortLineIdHash` is the same unsalted sha256/16, and the CRM-inbox
 `pdpa-hmac-v2` scheme is a versioned, key-rotated identifier with its own migration path. Fixing this
 properly needs a dual-read migration (write v2, read v1∪v2, backfill, drop v1) — its own change.
+
+## Slice A — `codex/line-ai-truth-and-dates` (S-0 + S-2), 2026-09-05
+
+Status: implemented, pushed, NOT PR'd (branched from `origin/develop` c7b1d138).
+
+Delivered, all six plan §2-A items:
+
+1. No silent today-date. `receipt-ocr-apply.service.ts` gained `reviewReceiptDate` + `RECEIPT_REVIEW_REASONS`; an unread date (or one > today+1d / < today−2y) sets `aiVerificationStatus: NEEDS_REVIEW` and returns `{ dateVerified, reviewReasons }` on the outcome. Both capture paths (LINE webhook, web `expense-extraction.use-case`) add `expenseDate` to `missingFields` and store `reviewReasons` in `aiVerificationSummaryJson`. The LINE card says `ยังไม่ระบุ — ใช้วันที่ส่งไว้ก่อน พิมพ์ "วันที่ 3/9/69" เพื่อแก้`. **No web change was needed**: `expenseAiMissingFields` → `aiPrefillBanner` already renders `ต้องกรอกเอง: วันที่รายจ่าย` off `missingFields`, and `expenseDate` is already in `AI_DATA_STEP_FIELDS`.
+2. Receipt-mode BE dates. `extractValueCandidates(text, todayIso, { documentContext })`; `'receipt'` resolves the era through `plausibleEraReadings` even when the day/month order was assumed, taking the reading nearest today when the window leaves both. Wired at the ONE place the date was actually being dropped: `applyOcrValueCrossCheck` in the gateway, which sees the printed OCR text. `ReceiptOcrFieldResult.expenseDate` stays ISO — no raw string needed on the wire.
+3. Correction honesty. `appendUserNote` (append, ` · ` separator, 500-char cap, redelivery-idempotent) + audit `noteAppend: true`; `formatCorrectionAppliedReply` names each change, says `บันทึกหมายเหตุไว้` for a note, and adds the `ยังไม่ได้แก้ยอด` sentence + web link when the message mentioned money the lane cannot change.
+4. `unsupported_yet` in `LineAiRefusalReason` AND `ADVISOR_REFUSAL_CODES`, plus every silent-drop mirror (prepared-plan parser, AgentCore boundary set, router prompt + advisor schema, composer copy ladder th/en with a `/companies/<id>` webLink, API refusal table, both terminal-outcome switches, `toAiTurnIntent`). Chosen from `isBusinessIntakeIntent(req.intakeIntent)` — new helper in contracts, derived from `LINE_INTAKE_ROUTE_INTENTS` minus `CLARIFY`/`UNSUPPORTED`.
+5. Charge tax rules. A charge row takes its own or the document's PRINTED rate, never `defaultLineVatRate`'s invented 7%; unproven → `vatRate: null`, `vatTreatment: null`, line `reviewStatus: NEEDS_REVIEW`, record reason. WHT never lands on a charge row and is no longer diluted by one (`applyExpenseWhtInput` takes `excludedLineNumbers`). Card groups charges under `ค่าใช้จ่ายเพิ่ม`.
+6. Docs: this file, ADR 0011 (decisions 6+7 and a "why it does not violate 2026-08-28" section), capture-correction spec (note append + reply honesty + AC 10a), advisor spec (refusal code).
+
+Gaps left for slice B or later (deliberate, see the final report):
+
+- **Negative `ROUNDING` charges are still rejected.** `calcLineTotals` clamps a document discount with `min(discount, lineSubtotal)`, which on a negative subtotal cancels the row to zero, so the printed rounding would be silently dropped from the total instead of applied. The protective half of §5.1 (no other kind may be negative) IS enforced. Fixing it means changing a shared money helper — belongs with the `chargeKind` column in B.
+- **`ExpenseRecord.status` is not forced to NEEDS_REVIEW.** It is already NEEDS_REVIEW on every path when apply runs (`CompleteReceiptUploadUseCase` moves DRAFT→NEEDS_REVIEW first); the one exception is the flag-gated draft-conversation lane, which holds DRAFT on purpose so `startFromReceipt` can run and ASK for the missing date. Forcing it there would return NOT_FOUND and kill that conversation. `aiVerificationStatus` carries the signal instead.
+- **`expenseAiFieldProvenance` (`apps/web/.../expenses.model.ts:708`) can never render the 🤖 "recognized" badge**: it expects `summary.recognizedFields` to be a `string[]` of field names, and every producer writes the `ReceiptOcrFieldResult` OBJECT. The `missing` half works, which is the half slice A relies on. Pre-existing, untouched, worth a separate fix.
+- `line-ai-classifier.logic.ts` (API) was left alone: `classifyIntent`/`chooseAgent` there have no production caller — the live twin is the gateway's `line-ai-turn.logic.ts`, whose deterministic path now splits on the intake intent.
+- `LineAiIntent` and the Prisma `AiTurnIntent` enum gained no member; `unsupported_yet` maps to `UNSUPPORTED_MODULE` for analytics. The customer-visible split lives on the refusal reason and the terminal status.
+- `chargeKind` deliberately NOT added (slice B owns it). The interim marker is the in-memory `PreparedOcrLine.isAdditionalCharge` flag plus the OCR `additionalCharges` block for the card — B can rebase over this and swap both for the column.

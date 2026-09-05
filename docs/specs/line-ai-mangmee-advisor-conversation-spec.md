@@ -401,9 +401,18 @@ type PreparedAdvisorAnswer = {
     | 'safety_crisis'
     | 'privacy_rumor'
     | 'unsupported_module'
+    /** เพิ่ม 2026-09-05 (`line-ai-draft-control-spec-th.md` §5.3): เรื่องอยู่ในระบบ แต่ LINE ยังทำไม่ได้ */
+    | 'unsupported_yet'
     | 'insufficient_current_data';
 };
 ```
+
+`unsupported_yet` (2026-09-05) แยก "ยังไม่รองรับผ่าน LINE" ออกจาก "นอกขอบเขตระบบ" — `unsupported_module`
+คงไว้สำหรับเรื่องที่ผลิตภัณฑ์ไม่ครอบคลุมจริง ๆ เท่านั้น รหัสนี้ถูกเลือกจาก `LineAiTurnRequest.intakeIntent`
+ที่ API ผูกมาเอง (trusted) ไม่ใช่จากที่โมเดลอ่านข้อความ — orchestrator แปลง `unsupported_module` ทุกตัวเป็น
+`unsupported_yet` เมื่อ `isBusinessIntakeIntent(intakeIntent)` เป็นจริง และไม่แตะ refusal ชนิด safety /
+privacy / permission / mutation เลย copy: "เรื่องนี้อยู่ในระบบ แต่น้องมั่งมียังทำผ่าน LINE ไม่ได้ในตอนนี้ค่ะ
+ทำได้ในเว็บนะคะ" พร้อมลิงก์ `/companies/<companyId>` บน `webLinks` (หลักฐาน: UAT 2026-09-03 กรณี E4)
 
 เพิ่ม outer intake intent เดียว `ADVISOR_CONVERSATION` สำหรับ social/general/business/company advice ที่ไม่มี
 attachment, continuation หรือ live tool need `routeIntake()` call เดิมเป็นผู้สร้างทั้ง intent และ `advisorAnswer`
