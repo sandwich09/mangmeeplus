@@ -608,7 +608,7 @@ describe('OrchestratorAgent', () => {
       assert.equal(result.plan.refusals[0]?.reason, 'unsupported_yet');
       assert.match(result.replyText, /เรื่องนี้อยู่ในระบบ แต่น้องมั่งมียังทำผ่าน LINE ไม่ได้/);
       assert.equal(result.replyText.includes('นอกขอบเขตระบบ'), false);
-      assert.deepEqual(result.webLinks, [{ label: 'เปิดเว็บแอป', path: '/companies/company-1' }]);
+      assert.deepEqual(result.webLinks, [{ label: 'เปิดรายการในเว็บ', path: '/companies/company-1/expenses' }]);
     });
 
     it('keeps the out-of-scope answer when intake did not call the turn business', async () => {

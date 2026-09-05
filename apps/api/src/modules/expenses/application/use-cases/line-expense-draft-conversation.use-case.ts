@@ -1,6 +1,7 @@
 import { ConflictException, Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { ExpenseCategorySummary, LineExpenseDraftRouteContext, LineIntakeCaptureHints, ReceiptOcrFieldResult, RequestContext } from '@watchdog-bms/contracts';
+import { withPurposeNote } from '../../domain/logic/line-correction.logic';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
 import { UpdateExpenseDraftUseCase } from './expense-draft.use-case';
 import {
@@ -357,7 +358,9 @@ export class LineExpenseDraftConversationUseCase {
       expectedUpdatedAt: expectedRevision,
       ...(state.header.expenseDate ? { expenseDate: state.header.expenseDate } : {}),
       ...(state.header.vendorName ? { vendorNameSnapshot: state.header.vendorName } : {}),
-      ...(state.header.businessPurpose ? { note: state.header.businessPurpose } : {}),
+      // Spec §5.3: the purpose gets its OWN segment and replaces the previous one, so refining the
+      // answer never stacks and never takes the provenance note ("LINE receipt upload") with it.
+      ...(state.header.businessPurpose ? { note: withPurposeNote(expense!.note, state.header.businessPurpose) } : {}),
       ...(materialize ? { lines } : {}),
     }, {
       requireExpectedUpdatedAt: true,

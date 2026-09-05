@@ -305,7 +305,7 @@ export class LineAiTurnUseCase {
       if (outOfScope && businessIntake) {
         return {
           ...this.buildRefusedResponse(req, 'unsupported_yet', UNSUPPORTED_YET_REPLY, startMs, intent, agent),
-          webLinks: [{ label: 'เปิดเว็บแอป', path: `/companies/${req.userContext.companyId}` }],
+          webLinks: [{ label: 'เปิดรายการในเว็บ', path: `/companies/${req.userContext.companyId}/expenses` }],
         };
       }
       const replyText = intent === 'mutation_request' ? MUTATION_REPLY : outOfScope ? UNSUPPORTED_REPLY : FORBIDDEN_REPLY;

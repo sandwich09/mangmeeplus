@@ -1,3 +1,4 @@
+import { expenseDocumentDateStatus } from '@watchdog-bms/contracts';
 import {
   ACCOUNTANT_INDEX_COLUMNS,
   ACCOUNTANT_INDEX_COLUMN_LABELS,
@@ -18,6 +19,9 @@ import { buildXlsx, type XlsxCell } from '../../../../common/export/xlsx.logic';
 import { safeCsvCell } from '../../../../common/export/csv.logic';
 
 export type AccountantIndexSource = {
+  /** Spec §5.2: the source of `document_date_status`. Optional — a caller that has no AI summary
+   *  (a manual entry) yields `verified`, which is what a hand-typed date is. */
+  aiVerificationSummaryJson?: Record<string, unknown> | null;
   companyName: string;
   companyTaxId: string | null;
   branchCode: string | null;
@@ -140,6 +144,9 @@ export function buildAccountantIndexRow(source: AccountantIndexSource): Accounta
     web_url: source.webUrl,
     notes: source.notes ?? '',
     additional_charges_amount: source.additionalChargesAmount,
+    // Spec §5.2: the accountant reads `document_date` beside this, so a placeholder can never pass
+    // for a printed date in the one artefact that leaves the system.
+    document_date_status: expenseDocumentDateStatus(source.aiVerificationSummaryJson),
   };
 }
 

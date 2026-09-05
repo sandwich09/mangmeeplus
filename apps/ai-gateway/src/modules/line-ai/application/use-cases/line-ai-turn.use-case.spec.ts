@@ -96,7 +96,7 @@ describe('LineAiTurnUseCase – feature flag routing', () => {
       const resp = await ask('BUSINESS_READ_QUESTION');
       assert.equal(resp.refusalReason, 'unsupported_yet');
       assert.match(resp.replyText, /เรื่องนี้อยู่ในระบบ แต่น้องมั่งมียังทำผ่าน LINE ไม่ได้/);
-      assert.deepEqual(resp.webLinks, [{ label: 'เปิดเว็บแอป', path: '/companies/company-1' }]);
+      assert.deepEqual(resp.webLinks, [{ label: 'เปิดรายการในเว็บ', path: '/companies/company-1/expenses' }]);
     });
 
     it('keeps the out-of-scope copy when no trusted intake provenance says business', async () => {

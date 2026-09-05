@@ -152,14 +152,62 @@ export function evaluateCorrectionHints(
  *  correction ADDS what the user said. Bounded, because a chat can send messages all day. */
 export const LINE_NOTE_MAX_CHARS = 500;
 export const LINE_NOTE_USER_PREFIX = 'ผู้ใช้แจ้ง: ';
+export const LINE_NOTE_SEPARATOR = ' · ';
+/** Below this there is no room for a segment worth reading, so the append is refused outright
+ *  rather than recording "ผู้ใช้แจ้ง: …" and calling it a note. */
+const MIN_APPEND_CHARS = LINE_NOTE_USER_PREFIX.length + 8;
 
-export function appendUserNote(existing: string | null | undefined, text: string): string {
-  const addition = `${LINE_NOTE_USER_PREFIX}${text.trim()}`;
+/**
+ * `appended` — recorded in full. `truncated` — recorded, but the note filled up and the tail was
+ * cut, which the reply has to say. `duplicate` — the same sentence is already the newest segment
+ * (a LINE redelivery, or the user repeating themselves), so nothing changed. `empty` — there was
+ * no sentence to record at all.
+ *
+ * The reply claims "บันทึกหมายเหตุไว้"; each of these is a case where a plain `slice(0, 500)` made
+ * that claim false — silently dropping the whole new segment once the note was full, and silently
+ * skipping any sentence that happened to appear anywhere in the existing note.
+ */
+export type NoteAppendResult = { outcome: 'appended' | 'truncated' | 'duplicate'; note: string } | { outcome: 'empty' };
+
+export function appendUserNote(existing: string | null | undefined, text: string): NoteAppendResult {
+  const trimmed = (text ?? '').trim();
+  if (!trimmed) return { outcome: 'empty' };
+  const addition = `${LINE_NOTE_USER_PREFIX}${trimmed}`;
   const base = (existing ?? '').trim();
-  // Re-sending the same sentence (a LINE redelivery, or the user repeating themselves) must not
-  // stack copies of it — the note is read by a person, not replayed by a machine.
-  if (!base || base.includes(addition)) return (base || addition).slice(0, LINE_NOTE_MAX_CHARS);
-  return `${base} · ${addition}`.slice(0, LINE_NOTE_MAX_CHARS);
+  if (!base) {
+    return addition.length <= LINE_NOTE_MAX_CHARS
+      ? { outcome: 'appended', note: addition }
+      : { outcome: 'truncated', note: `${addition.slice(0, LINE_NOTE_MAX_CHARS - 1)}…` };
+  }
+  // Only the NEWEST segment counts as a repeat. Matching anywhere in the note (what `includes` did)
+  // silently discarded "ค่าอาหาร" from someone whose note already mentioned ค่าอาหาร an hour ago.
+  const segments = base.split(LINE_NOTE_SEPARATOR);
+  if (segments[segments.length - 1] === addition) return { outcome: 'duplicate', note: base };
+  const joined = `${base}${LINE_NOTE_SEPARATOR}${addition}`;
+  if (joined.length <= LINE_NOTE_MAX_CHARS) return { outcome: 'appended', note: joined };
+  const room = LINE_NOTE_MAX_CHARS - base.length - LINE_NOTE_SEPARATOR.length;
+  // Nothing legible fits: keep the note as it stands and let the reply send the user to the web.
+  if (room < MIN_APPEND_CHARS) return { outcome: 'truncated', note: base };
+  return { outcome: 'truncated', note: `${base}${LINE_NOTE_SEPARATOR}${addition.slice(0, room - 1)}…` };
+}
+
+export const LINE_NOTE_PURPOSE_PREFIX = 'วัตถุประสงค์: ';
+
+/**
+ * The draft conversation COLLECTS a business purpose over several turns and, with no purpose column
+ * to put it in, stores it in the header note — by overwriting it, which destroyed the
+ * `'LINE receipt upload'` provenance the moment the user answered the first question.
+ *
+ * Appending like a correction is wrong here too: this is one field being refined, so a second
+ * answer must REPLACE the first rather than stack beside it. Hence its own segment, rewritten in
+ * place, with everything else (provenance first) untouched.
+ */
+export function withPurposeNote(existing: string | null | undefined, purpose: string): string {
+  const segment = `${LINE_NOTE_PURPOSE_PREFIX}${(purpose ?? '').trim()}`;
+  const kept = (existing ?? '').split(LINE_NOTE_SEPARATOR)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0 && !part.startsWith(LINE_NOTE_PURPOSE_PREFIX));
+  return [...kept, segment].join(LINE_NOTE_SEPARATOR).slice(0, LINE_NOTE_MAX_CHARS);
 }
 
 /** Amount lives on the lines, and `UpdateExpenseDraftUseCase` replaces the whole line set — so a

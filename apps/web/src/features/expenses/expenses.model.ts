@@ -17,6 +17,7 @@ import type {
   ExpenseChargeSummary,
   ExpenseTotalsIdentity,
   RecordExpensePaymentInput,
+  ExpenseDocumentDateStatus,
 } from '@watchdog-bms/contracts';
 import {
   EXPENSE_STATUS_LABELS, EXPENSE_PAYMENT_STATUS_LABELS, EXPENSE_VAT_MODE_LABELS,
@@ -24,6 +25,7 @@ import {
   isExpenseCancelled, isExpenseDeletableState, isExpensePending, isNonExpenseClassificationBlocking, isCheckBillClassification,
   effectiveVatRateLabel, vatModeRequiresRate, civilDate, civilDateToUtcDate, civilPeriodKey, isCivilDate,
   EXPENSE_LINE_CHARGE_KINDS, EXPENSE_LINE_CHARGE_KIND_LABELS, expenseChargeKindAllowsNegative,
+  expenseDocumentDateStatus, expenseDateIsReadable,
 } from '@watchdog-bms/contracts';
 export { isExpensePending } from '@watchdog-bms/contracts';
 import { apiErrorMessage } from '@/common/api/api-error-message';
@@ -321,6 +323,8 @@ export type ExpenseSummary = {
   sourceDocumentType: SourceDocumentType;
   taxEvidenceStatus: TaxEvidenceStatus;
   expenseCategoryId: string | null;
+  /** Spec §5.2: whether `expenseDate` was read off the document or is the upload-day placeholder. */
+  dateStatus?: ExpenseDocumentDateStatus;
   uploadedAt: string;
   createdByUserId: string;
   createdAt: string;
@@ -804,16 +808,38 @@ export const AI_REVIEW_FIELD_KEYS = {
 
 export type AiReviewField = keyof typeof AI_REVIEW_FIELD_KEYS;
 
+// Spec §5.2: one implementation in contracts, shared with the API list mapper, so the web and the
+// server can never disagree about what a stored date is.
+export { expenseDocumentDateStatus, expenseDateIsReadable } from '@watchdog-bms/contracts';
+
+export const EXPENSE_DATE_STATUS_LABELS: Record<ExpenseDocumentDateStatus, string | null> = {
+  verified: null,
+  assumed: 'อ่านจากบิล',
+  unverified: 'ยังไม่ยืนยันวันที่',
+  implausible: 'วันที่ผิดปกติ',
+};
+
 export function expenseAiFieldProvenance(
   summary: Record<string, unknown> | null,
   field: AiReviewField,
 ): { recognized: boolean; missing: boolean } | null {
   if (!summary) return null;
   const aliases: readonly string[] = AI_REVIEW_FIELD_KEYS[field];
-  const recognizedFields = Array.isArray(summary['recognizedFields']) ? summary['recognizedFields'] : [];
+  // Every producer writes `recognizedFields` as the `ReceiptOcrFieldResult` OBJECT — the field
+  // names are its KEYS. Reading it as a `string[]` made `recognized` permanently false, so the 🤖
+  // badge this function exists to drive has never rendered. A key present but empty is not a
+  // reading, so the value has to be there too.
+  const raw = summary['recognizedFields'];
+  const recognizedFields = Array.isArray(raw)
+    ? raw.filter((value): value is string => typeof value === 'string')
+    : raw && typeof raw === 'object'
+      ? Object.entries(raw as Record<string, unknown>)
+        .filter(([, value]) => value !== undefined && value !== null && value !== '')
+        .map(([key]) => key)
+      : [];
   const missingFields = Array.isArray(summary['missingFields']) ? summary['missingFields'] : [];
   return {
-    recognized: recognizedFields.some((value) => typeof value === 'string' && aliases.includes(value)),
+    recognized: recognizedFields.some((value) => aliases.includes(value)),
     missing: missingFields.some((value) => typeof value === 'string' && aliases.includes(value)),
   };
 }
@@ -1008,7 +1034,8 @@ export type ExpenseAuditCheck = { key: string; status: 'pass' | 'warn' | 'info';
 
 export function deriveExpenseAuditChecks(detail: Pick<ExpenseDetail,
   'sourceDocumentType' | 'vendorTaxIdSnapshot' | 'vendorNameSnapshot' | 'vendorDocumentNumber' | 'expenseDate'
-  | 'vatMode' | 'taxableAmount' | 'vatAmount' | 'taxEvidenceStatus' | 'taxEvidenceReasonCode' | 'duplicateStatus'>
+  | 'vatMode' | 'taxableAmount' | 'vatAmount' | 'taxEvidenceStatus' | 'taxEvidenceReasonCode' | 'duplicateStatus'
+  | 'aiVerificationSummaryJson'>
   & { lines: Array<Pick<ExpenseDetail['lines'][number], 'vatRate' | 'taxableAmount'>> }): ExpenseAuditCheck[] {
   const checks: ExpenseAuditCheck[] = [];
 
@@ -1034,9 +1061,12 @@ export function deriveExpenseAuditChecks(detail: Pick<ExpenseDetail,
     ? { key: 'document_number', status: 'pass', label: 'มีเลขที่เอกสารอ้างอิง' }
     : { key: 'document_number', status: 'warn', label: 'ยังไม่มีเลขที่เอกสารอ้างอิง' });
 
-  checks.push(detail.expenseDate
-    ? { key: 'document_date', status: 'pass', label: 'มีวันที่เอกสาร' }
-    : { key: 'document_date', status: 'warn', label: 'ยังไม่ระบุวันที่เอกสาร' });
+  // Spec §5.2: `expenseDate` is NOT NULL, so "there is a value" was never the question — an unread
+  // receipt stores the upload day and this check happily called that "มีวันที่เอกสาร".
+  const documentDateStatus = expenseDocumentDateStatus(detail.aiVerificationSummaryJson);
+  checks.push(detail.expenseDate && documentDateStatus !== 'unverified' && documentDateStatus !== 'implausible'
+    ? { key: 'document_date', status: 'pass', label: documentDateStatus === 'assumed' ? 'มีวันที่เอกสาร (อ่านจากบิล)' : 'มีวันที่เอกสาร' }
+    : { key: 'document_date', status: 'warn', label: documentDateStatus === 'implausible' ? 'วันที่เอกสารผิดปกติ' : 'ยังไม่ระบุวันที่เอกสาร' });
 
   if (vatModeRequiresRate(detail.vatMode) && Number(detail.taxableAmount) > 0) {
     // Spec §19g decision 5: compare against the document's OWN rate. Measuring every document
@@ -1154,7 +1184,9 @@ export function deriveExpenseReviewSteps(
   // Real field values decide this step, not the AI flags: a value the user (or upload) supplied is
   // present whether or not OCR read it, and the blue "AI อ่านได้ไม่ครบ" banner already names the
   // fields worth a second look. Gating the tick on the flags left a filled-in step showing ⚠.
-  const dataDone = (detail.vendorNameSnapshot ?? '').trim() !== '' && Boolean(detail.expenseDate) && detail.lines.length > 0;
+  // §5.2 again: an upload-day placeholder passes `Boolean(expenseDate)` and ticked step 1 as done.
+  const dateReadable = expenseDateIsReadable(detail.aiVerificationSummaryJson);
+  const dataDone = (detail.vendorNameSnapshot ?? '').trim() !== '' && Boolean(detail.expenseDate) && dateReadable && detail.lines.length > 0;
   const evidenceState: ExpenseReviewStepState = detail.taxEvidenceStatus !== 'NEEDS_REVIEW' && !classificationBlocked && substituteReady && !needsReceiptOrSubstitute && aiMissingEvidence.length === 0
     ? 'done'
     : classificationBlocked || !substituteReady || needsReceiptOrSubstitute ? 'attention' : 'pending';

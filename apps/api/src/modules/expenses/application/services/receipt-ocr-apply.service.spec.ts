@@ -769,6 +769,8 @@ describe('ReceiptOcrApplyService.apply', () => {
       // Spec §5.2: these fields read no date, so this outcome says so — the draft carries the
       // upload day and the caller has to tell the reviewer that is what it is.
       dateVerified: false,
+      dateAssumed: false,
+      dateStatus: 'unverified',
       reviewReasons: ['วันที่บนเอกสารยังอ่านไม่ได้ – ใช้วันที่ส่งไว้ก่อน'],
     });
   });
@@ -1092,13 +1094,13 @@ describe('reviewReceiptDate (spec §5.2)', () => {
   const TODAY = '2026-09-05';
 
   it('calls an unread date what it is, so the placeholder cannot pass as a reading', () => {
-    assert.deepEqual(reviewReceiptDate(undefined, TODAY), { verified: false, reason: RECEIPT_REVIEW_REASONS.dateUnverified });
-    assert.deepEqual(reviewReceiptDate('03/09/69', TODAY), { verified: false, reason: RECEIPT_REVIEW_REASONS.dateUnverified });
+    assert.deepEqual(reviewReceiptDate(undefined, TODAY), { status: 'unverified', verified: false, assumed: false, reason: RECEIPT_REVIEW_REASONS.dateUnverified });
+    assert.deepEqual(reviewReceiptDate('03/09/69', TODAY), { status: 'unverified', verified: false, assumed: false, reason: RECEIPT_REVIEW_REASONS.dateUnverified });
   });
 
   it('accepts a date the document proved', () => {
-    assert.deepEqual(reviewReceiptDate('2026-09-03', TODAY), { verified: true });
-    assert.deepEqual(reviewReceiptDate('2026-09-06', TODAY), { verified: true }, 'one day ahead crosses a timezone, it is not a misread');
+    assert.deepEqual(reviewReceiptDate('2026-09-03', TODAY), { status: 'verified', verified: true, assumed: false });
+    assert.deepEqual(reviewReceiptDate('2026-09-06', TODAY), { status: 'verified', verified: true, assumed: false }, 'one day ahead crosses a timezone, it is not a misread');
   });
 
   it('flags a date too far from today to be this receipt', () => {
@@ -1125,6 +1127,32 @@ describe('apply: an unverified date forces review instead of passing silently (s
     assert.equal(record.aiVerificationStatus, 'PARTIAL');
     assert.equal(result.dateVerified, true);
     assert.deepEqual(result.reviewReasons, []);
+  });
+
+  // Spec §5.2 (H2). Receipt mode makes `03/09/69` usable — but only by choosing the วัน/เดือน order
+  // and an era. The date stays on the record and does NOT force review; what it must never do is
+  // pass as something the page stated outright.
+  it('keeps an assumed reading, flags it, and does not force review', async () => {
+    const { record, result } = await applyFields({
+      grandTotalAmount: '580.00',
+      expenseDate: '2026-09-03',
+      expenseDateAssumptions: ['order_assumed_day_month', 'two_digit_year_resolved_plausible_era'],
+    }, null, {}, TODAY);
+    assert.equal(record.expenseDate.toISOString().slice(0, 10), '2026-09-03');
+    assert.equal(record.aiVerificationStatus, 'PARTIAL', 'an assumed date is a label, not a defect');
+    assert.equal(result.dateVerified, true);
+    assert.equal(result.dateAssumed, true);
+    assert.equal(result.dateStatus, 'assumed');
+    assert.deepEqual(result.dateAssumptions, ['order_assumed_day_month', 'two_digit_year_resolved_plausible_era']);
+    assert.deepEqual(result.reviewReasons, []);
+  });
+
+  it('does not call a plainly printed date assumed', async () => {
+    const { result } = await applyFields({
+      grandTotalAmount: '580.00', expenseDate: '2026-09-03', expenseDateAssumptions: ['era_read_be'],
+    }, null, {}, TODAY);
+    assert.equal(result.dateStatus, 'verified', 'พ.ศ. 2569 IS what the page printed — nothing was inferred');
+    assert.equal(result.dateAssumed, false);
   });
 
   it('still stores an out-of-range date, but never as a fact', async () => {
@@ -1180,6 +1208,41 @@ describe('apply: additional-charge tax rules (spec §5.1)', () => {
     assert.equal(product.whtRate, '0.0300', 'the printed rate still applies to what it was withheld on');
     assert.equal(product.whtAmount, '45.6000', 'and the whole printed withholding lands on that base');
     assert.deepEqual(result.reviewReasons, [RECEIPT_REVIEW_REASONS.whtWithCharges]);
+  });
+
+  // The regression the first cut of §5.1 introduced. Nulling a charge's rate up-front broke
+  // reconciliation, the whole split folded, and the charge — with its money — disappeared: a slip
+  // printing 100.00 + 10.00 with VAT 7.70 recorded a 100.00 total instead of 117.70.
+  it('keeps the charge and the total when the printed VAT proves base + charges', async () => {
+    const slip = {
+      vatMode: 'VAT_EXCLUDED' as const, expenseDate: '2026-09-03',
+      subtotalAmount: '100.00', vatAmount: '7.70', grandTotalAmount: '117.70',
+      quantity: '1', unitPrice: '100.00',
+      additionalCharges: [charge({ description: 'ค่าบริการ', amount: '10.00' })],
+    };
+    const { lines, record, result } = await applyFields(slip, null, {}, TODAY);
+    assert.equal(result.chargesApplied, 1, 'the charge is a printed row and must survive');
+    assert.equal(record.grandTotalAmount, '117.7000', 'and what was paid must not move');
+    const row = lines.find((l: any) => l.description === 'ค่าบริการ');
+    assert.equal(row.vatRate, '0.0700', '7.70 over 110.00 IS the proof — no guess, nothing to review');
+    assert.deepEqual(result.reviewReasons, []);
+  });
+
+  it('keeps an unexplained charge as a reviewable line rather than deleting it', async () => {
+    // The page prints a VAT its own base + charge cannot produce at any single rate (7.00 explains
+    // the goods alone). Keep both rows, un-rate the charge, and name the gap.
+    const slip = {
+      vatMode: 'VAT_EXCLUDED' as const, expenseDate: '2026-09-03',
+      subtotalAmount: '100.00', vatAmount: '7.00',
+      quantity: '1', unitPrice: '100.00',
+      additionalCharges: [charge({ description: 'ค่าบริการ', amount: '10.00' })],
+    };
+    const { lines, result } = await applyFields(slip, null, {}, TODAY);
+    assert.equal(result.chargesApplied, 1);
+    const row = lines.find((l: any) => l.description === 'ค่าบริการ');
+    assert.equal(row.vatRate ?? null, null);
+    assert.equal(row.reviewStatus, 'NEEDS_REVIEW');
+    assert.ok(result.reviewReasons.some((reason: string) => reason.startsWith(RECEIPT_REVIEW_REASONS.chargeVatUnknown)));
   });
 
   it('keeps every kind other than ROUNDING positive', async () => {

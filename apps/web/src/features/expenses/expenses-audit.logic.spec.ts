@@ -16,6 +16,7 @@ const base: AuditInput = {
   taxEvidenceStatus: 'USABLE_FOR_TAX',
   taxEvidenceReasonCode: null,
   duplicateStatus: 'NO_MATCH',
+  aiVerificationSummaryJson: null,
   lines: [{ taxableAmount: '100.00', vatRate: '0.07' }],
 };
 

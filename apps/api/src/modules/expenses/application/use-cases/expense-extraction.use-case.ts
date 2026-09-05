@@ -234,8 +234,11 @@ export class RequestReceiptExtractionUseCase {
             // Shown to the reviewer beside the printed total when the two disagree.
             ...(duplicateResult.itemsSumAmount ? { itemsSumAmount: duplicateResult.itemsSumAmount } : {}),
           },
-          // Spec §5.1/§5.2: the reasons in the reviewer's own words, beside the field flags above.
+          // Spec §5.1/§5.2: the reasons in the reviewer's own words, beside the field flags above,
+          // and the four-state answer for the document date the whole UI renders from.
           ...(duplicateResult.reviewReasons.length > 0 ? { reviewReasons: duplicateResult.reviewReasons } : {}),
+          ...(duplicateResult.dateStatus ? { dateStatus: duplicateResult.dateStatus } : {}),
+          ...(duplicateResult.dateAssumptions ? { expenseDateAssumptions: duplicateResult.dateAssumptions } : {}),
           nextAction: 'review_in_web',
         },
       });

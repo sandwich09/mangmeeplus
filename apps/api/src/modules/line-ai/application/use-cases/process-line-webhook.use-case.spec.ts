@@ -1153,6 +1153,48 @@ describe('ProcessLineWebhookUseCase', () => {
     }
   });
 
+  /**
+   * Spec `line-ai-draft-control-spec-th.md` §5.3, case E4, replayed end to end from the UAT log of
+   * 2026-09-03. The owner asked why the service charge on his own bill was a separate line. The
+   * intake router placed it BUSINESS_READ_QUESTION at 0.55 — too low to propose a tool, so it
+   * emitted NO prepared plan — and the API only bound `intakeIntent` inside the prepared-plan
+   * block. The gateway therefore never learned the turn was business, and the owner was told his
+   * own expense record was outside the system.
+   */
+  it('carries the trusted intake provenance for a business turn the router had no plan for (E4)', async () => {
+    const { prisma } = makePrisma();
+    const { useCase, replies, aiGatewayRequests } = makeUseCase(prisma, {
+      permissions: ['line.ai.query'],
+      // Exactly the shape the router emits for E4: routed, business, low confidence, NO preparedPlan.
+      intakeRouteFn: () => ({ status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.55 }),
+      // The gateway answers with the copy it composes once it sees the provenance.
+      aiGatewayFn: (request: any) => {
+        const business = request.intakeIntent === 'BUSINESS_READ_QUESTION';
+        return {
+          requestId: 'req-e4',
+          replyText: business
+            ? '📋 เรื่องนี้อยู่ในระบบ แต่น้องมั่งมียังทำผ่าน LINE ไม่ได้ในตอนนี้ค่ะ\nทำได้ในเว็บนะคะ'
+            : '📋 ขออภัยค่ะ น้องมั่งมีตอบได้เฉพาะข้อมูลในระบบธุรกิจที่เชื่อมต่ออยู่เท่านั้น\nคำถามนี้อยู่นอกขอบเขตระบบ จึงไม่สามารถให้ข้อมูลที่น่าเชื่อถือได้ค่ะ',
+          sourceRefs: [], sourceLabels: [], webLinks: [],
+          intent: 'unsupported_module', agent: 'general',
+          refused: true, refusalReason: business ? 'unsupported_yet' : 'unsupported_module',
+          toolsInvoked: [], toolCalls: [], modelCallCount: 1, modelLineage: [], usage: [], durationMs: 10,
+        };
+      },
+    });
+    (useCase as any).logger = { log: () => undefined, warn: () => undefined, error: () => undefined };
+
+    await useCase.execute({
+      ...BASE_EVENT, webhookEventId: 'evt-e4',
+      messageText: 'ทำไม service charge คิดแยกเป็นอีกรายการ',
+    });
+
+    assert.equal(aiGatewayRequests[0]?.preparedPlan, undefined, 'the router had no confident tool, so no plan');
+    assert.equal(aiGatewayRequests[0]?.intakeIntent, 'BUSINESS_READ_QUESTION', 'and the provenance still reaches the gateway');
+    assert.match(replies.join('\n'), /เรื่องนี้อยู่ในระบบ แต่น้องมั่งมียังทำผ่าน LINE ไม่ได้/);
+    assert.equal(replies.join('\n').includes('นอกขอบเขตระบบ'), false, 'his own expense record is not out of scope');
+  });
+
   it('does not mark an employee answer completed when reply token and push both fail', async () => {
     const { prisma, updates, aiTurnUpdates } = makePrisma();
     const { useCase } = makeUseCase(prisma, {

@@ -8,6 +8,7 @@ import {
   type ReceiptOcrFieldResult,
 } from './line-ai.js';
 import type { BuyerEntityKind } from './company-tax-identity.js';
+import type { ExpenseDocumentDateStatus } from './line-ai-value-normalizer.js';
 
 export type ExpenseStatus = 'DRAFT' | 'EXTRACTING' | 'NEEDS_REVIEW' | 'READY_FOR_CONFIRMATION' | 'CONFIRMED' | 'REJECTED' | 'VOIDED';
 export type ExtractionStatus = 'NOT_REQUESTED' | 'NOT_CONFIGURED' | 'QUEUED' | 'PROCESSING' | 'SUCCEEDED' | 'PARTIAL' | 'FAILED';
@@ -595,6 +596,13 @@ export type ExpenseSummary = {
   sourceDocumentType: SourceDocumentType;
   taxEvidenceStatus: TaxEvidenceStatus;
   expenseCategoryId: string | null;
+  /**
+   * Spec §5.2: what `expenseDate` actually IS. The column is NOT NULL, so a list row showing a date
+   * says nothing about whether anyone read it off the document — a receipt whose date failed to
+   * parse shows the upload day, indistinguishable from a date the page printed. Derived from
+   * `aiVerificationSummaryJson`; absent on rows captured before §5.2, which read as `verified`.
+   */
+  dateStatus?: ExpenseDocumentDateStatus;
   uploadedAt: string;
   createdByUserId: string;
   createdAt: string;
@@ -1221,6 +1229,10 @@ export const ACCOUNTANT_INDEX_COLUMNS = [
   // additional charges out of `subtotal_amount`; without this column the row stopped adding up for
   // an accountant reading it (`subtotal − discount + charges + vat = grand_total`).
   'additional_charges_amount',
+  // Spec §5.2, after the one above by name. An accountant reading this file cannot otherwise tell
+  // a document date the receipt printed from the upload day a failed read left behind — both are
+  // just a date in `document_date`.
+  'document_date_status',
 ] as const;
 
 export type AccountantIndexColumn = (typeof ACCOUNTANT_INDEX_COLUMNS)[number];
@@ -1271,6 +1283,7 @@ export const ACCOUNTANT_INDEX_COLUMN_LABELS: Record<AccountantIndexColumn, strin
   web_url: 'ลิงก์เปิดในระบบ',
   notes: 'หมายเหตุ',
   additional_charges_amount: 'ค่าใช้จ่ายเพิ่ม',
+  document_date_status: 'สถานะวันที่เอกสาร',
 };
 
 /** Everyday view: what a non-accountant needs to read the export at a glance. */

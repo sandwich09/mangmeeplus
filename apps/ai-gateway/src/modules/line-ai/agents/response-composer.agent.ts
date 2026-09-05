@@ -352,7 +352,10 @@ export class ResponseComposerAgent {
           replyText: copy.unsupportedYet,
           sourceRefs: [],
           webLinks: options.companyId
-            ? [{ label: language === 'th' ? 'เปิดเว็บแอป' : 'Open the web app', path: `/companies/${options.companyId}` }]
+            // The expenses list, not the workspace root: every turn that reaches this code was
+            // about the company's own records. ponytail: slice C's explain tool resolves a specific
+            // record — point at that id here once it does.
+            ? [{ label: language === 'th' ? 'เปิดรายการในเว็บ' : 'Open records in the web app', path: `/companies/${options.companyId}/expenses` }]
             : [],
         };
       }

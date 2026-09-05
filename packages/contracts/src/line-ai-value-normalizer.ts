@@ -62,6 +62,54 @@ const AMBIGUITY_MARKERS: ReadonlySet<string> = new Set([
   VALUE_ASSUMPTIONS.ambiguousTwoDigitYear,
 ]);
 
+/** Markers that mean the reader INFERRED part of this date rather than reading it off the page:
+ *  the วัน/เดือน order, and which era a two-digit year belongs to (spec §5.2). A date carrying one
+ *  is usable and stays on the record — but every surface that shows it must say it was read, not
+ *  stated, or the receipt mode would simply have replaced one confident wrong answer with another. */
+const ASSUMED_READING_MARKERS: ReadonlySet<string> = new Set([
+  VALUE_ASSUMPTIONS.orderAssumedDayMonth,
+  VALUE_ASSUMPTIONS.twoDigitYearResolvedPlausibleEra,
+]);
+
+export function isAssumedDateReading(assumptions: readonly string[] | undefined): boolean {
+  return (assumptions ?? []).some((assumption) => ASSUMED_READING_MARKERS.has(assumption));
+}
+
+/**
+ * What the stored document date on an expense actually is (spec §5.2). The column is NOT NULL, so
+ * "there is a value" says nothing — these four say everything a reader needs:
+ *   `verified`    the page stated it plainly;
+ *   `assumed`     read off the page, but the reader chose the วัน/เดือน order or the era;
+ *   `unverified`  never read — the value is the upload-day placeholder;
+ *   `implausible` read, but too far from today to be this receipt.
+ * Only `unverified` and `implausible` mean review; `assumed` is a label, not a problem.
+ */
+export const EXPENSE_DOCUMENT_DATE_STATUSES = ['verified', 'assumed', 'unverified', 'implausible'] as const;
+export type ExpenseDocumentDateStatus = (typeof EXPENSE_DOCUMENT_DATE_STATUSES)[number];
+
+/**
+ * Read the status off a stored `aiVerificationSummaryJson`. Shared by the API list mapper and every
+ * web surface so they can never disagree about what a date is. Capture paths write `dateStatus`;
+ * `missingFields` is the fallback for rows written before §5.2, and a row with neither is a legacy
+ * draft nobody can say anything about — it reads `verified`, exactly as it did before.
+ */
+export function expenseDocumentDateStatus(
+  summary: Record<string, unknown> | null | undefined,
+): ExpenseDocumentDateStatus {
+  const stored = summary?.['dateStatus'];
+  if (typeof stored === 'string' && (EXPENSE_DOCUMENT_DATE_STATUSES as readonly string[]).includes(stored)) {
+    return stored as ExpenseDocumentDateStatus;
+  }
+  const missing = summary?.['missingFields'];
+  return Array.isArray(missing) && missing.some((value) => value === 'expenseDate') ? 'unverified' : 'verified';
+}
+
+/** True when the date on the record came off the document — assumed counts, a placeholder does not. */
+export function expenseDateIsReadable(summary: Record<string, unknown> | null | undefined): boolean {
+  const status = expenseDocumentDateStatus(summary);
+  return status === 'verified' || status === 'assumed';
+}
+
 /** True when the candidate needs discovery before any auto-capture use. */
 export function isAmbiguousDateCandidate(candidate: LineAiDateCandidate): boolean {
   return candidate.assumptions.some((a) => AMBIGUITY_MARKERS.has(a));

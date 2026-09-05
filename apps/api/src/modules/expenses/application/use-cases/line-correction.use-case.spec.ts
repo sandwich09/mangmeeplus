@@ -70,7 +70,7 @@ describe('LINE correction: the note is appended, never overwritten (spec §5.3)'
     await useCase.execute(ctx(), noteTurn());
 
     const applied = audits.find((entry) => entry.action === 'expense.line_correction.apply');
-    assert.equal(applied.metadataJson.noteAppend, true);
+    assert.equal(applied.metadataJson.noteAppend, 'appended', 'and WHICH append — a truncated one is not the same event');
   });
 
   it('changes no money at all — that is the whole point of the honest reply', async () => {
@@ -88,5 +88,50 @@ describe('LINE correction: the note is appended, never overwritten (spec §5.3)'
 
     assert.ok(draftUpdates[0].note.length <= 500);
     assert.ok(draftUpdates[0].note.startsWith('LINE receipt upload'));
+  });
+
+  // The cap, the repeat check and the empty case are each a way the reply's "บันทึกหมายเหตุไว้"
+  // could be false while the code reported success.
+  it('records as much of a note as fits and says it was cut', async () => {
+    const { useCase, draftUpdates } = harness({ note: 'LINE receipt upload'.padEnd(460, '!') });
+
+    const outcome = await useCase.execute(ctx(), noteTurn());
+
+    assert.equal(outcome.status, 'applied');
+    assert.equal((outcome as { noteOutcome?: string }).noteOutcome, 'truncated');
+    assert.ok(draftUpdates[0].note.length <= 500);
+    assert.ok(draftUpdates[0].note.includes('ผู้ใช้แจ้ง: จากบิลเมื่อกี้'), 'the beginning of what he said is kept');
+    assert.ok(draftUpdates[0].note.endsWith('…'), 'and the cut is visible');
+  });
+
+  it('appends a sentence that merely appears earlier in the note', async () => {
+    const { useCase, draftUpdates } = harness({ note: `LINE receipt upload · ผู้ใช้แจ้ง: ${OWNER_TURN} · ผู้ใช้แจ้ง: ร้าน BHC` });
+
+    const outcome = await useCase.execute(ctx(), noteTurn());
+
+    assert.equal((outcome as { noteOutcome?: string }).noteOutcome, undefined, 'not a repeat — it is not the newest segment');
+    assert.equal(draftUpdates[0].note.split(' · ').length, 4);
+  });
+
+  it('reports a redelivered sentence as already recorded instead of stacking it', async () => {
+    const { useCase, draftUpdates } = harness({ note: `LINE receipt upload · ผู้ใช้แจ้ง: ${OWNER_TURN}` });
+
+    const outcome = await useCase.execute(ctx(), noteTurn());
+
+    assert.equal((outcome as { noteOutcome?: string }).noteOutcome, 'duplicate');
+    assert.equal(draftUpdates[0].note.split('ผู้ใช้แจ้ง:').length - 1, 1, 'exactly one copy');
+  });
+
+  it('records nothing, and says so, when the message carried no note text', async () => {
+    const { useCase, draftUpdates } = harness();
+
+    const outcome = await useCase.execute(ctx(), {
+      ...noteTurn(),
+      hints: { note: { to: '   ' } } as never,
+      evidence: [{ text: '   ', todayIso: TODAY }],
+    });
+
+    assert.equal(outcome.status, 'guidance');
+    assert.deepEqual(draftUpdates, [], 'nothing was written');
   });
 });

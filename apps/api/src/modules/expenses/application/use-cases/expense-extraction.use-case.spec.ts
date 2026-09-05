@@ -95,6 +95,8 @@ function makeUseCase(options: {
         // omits them lets the caller read `undefined` where production reads a decision.
         reviewReasons: [],
         dateVerified: true,
+        dateAssumed: false,
+        dateStatus: 'verified',
         ...options.applyResult,
       };
     }),
@@ -222,6 +224,9 @@ describe('RequestReceiptExtractionUseCase', () => {
       missingFields: ['documentNumber', 'category'],
       duplicateWarning: false,
       chargeReconciliation: { status: 'SUMMARY_LINE', chargesApplied: 0 },
+      // Spec §5.2: stored on every capture so the list, the review page and the export can each
+      // say what the date is without re-deriving it.
+      dateStatus: 'verified',
       nextAction: 'review_in_web',
     });
     assert.deepEqual(audits.find((entry) => entry.action === 'expense.ocr.request'), {

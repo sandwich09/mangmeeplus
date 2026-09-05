@@ -273,6 +273,14 @@ export type ReceiptOcrFieldResult = {
   vendorBranchCode?: string;
   documentNumber?: string;
   expenseDate?: string;
+  /**
+   * `VALUE_ASSUMPTIONS` markers the deterministic reading of `expenseDate` carried (spec §5.2).
+   * A receipt printing `03/09/69` yields a perfectly usable `2026-09-03` — but only because the
+   * reader applied the Thai DD/MM convention and picked one of two eras. Without this field the
+   * ISO date arrives looking like something the page stated outright, and the draft, the card and
+   * the review form all present a reading as a fact. Absent means the page said it plainly.
+   */
+  expenseDateAssumptions?: string[];
   description?: string;
   quantity?: string;
   unitPrice?: string;

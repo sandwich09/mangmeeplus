@@ -716,27 +716,38 @@ export function applyOcrValueCrossCheck(
       .filter((candidate) => hasReceiptDateLabel(documentText, candidate.span, RECEIPT_TRANSACTION_DATE_LABEL_RE))
       .map((candidate) => candidate.isoDate),
   );
-  if (transactionDates.size === 1) {
-    out.expenseDate = [...transactionDates][0]!;
+  // Spec §5.2: the reading and WHAT IT ASSUMED travel together. Receipt mode makes `03/09/69`
+  // usable by applying the Thai DD/MM convention and choosing an era — real inferences, and the
+  // ISO string alone cannot carry them, so every consumer downstream would take the date for
+  // something the page stated outright. Set beside `expenseDate` on every branch that sets it,
+  // and cleared on every branch that drops it.
+  const acceptDate = (isoDate: string): void => {
+    out.expenseDate = isoDate;
+    const assumptions = [...new Set(usableDates.filter((d) => d.isoDate === isoDate).flatMap((d) => d.assumptions))];
+    if (assumptions.length > 0) out.expenseDateAssumptions = assumptions;
+    else delete out.expenseDateAssumptions;
     missing.delete('expenseDate');
-  } else if (transactionDates.size > 1) {
+  };
+  const dropDate = (): void => {
     delete out.expenseDate;
+    delete out.expenseDateAssumptions;
     missing.add('expenseDate');
+  };
+  if (transactionDates.size === 1) {
+    acceptDate([...transactionDates][0]!);
+  } else if (transactionDates.size > 1) {
+    dropDate();
   } else if (out.expenseDate) {
-    if (!usableDates.some((d) => d.isoDate === out.expenseDate)) {
-      delete out.expenseDate;
-      missing.add('expenseDate');
-    }
+    if (usableDates.some((d) => d.isoDate === out.expenseDate)) acceptDate(out.expenseDate);
+    else dropDate();
   } else {
     const labeledDates = new Set(
       usableDates
         .filter((candidate) => hasExplicitReceiptDateLabel(documentText, candidate.span))
         .map((candidate) => candidate.isoDate),
     );
-    if (labeledDates.size === 1) {
-      out.expenseDate = [...labeledDates][0]!;
-      missing.delete('expenseDate');
-    }
+    if (labeledDates.size === 1) acceptDate([...labeledDates][0]!);
+    else delete out.expenseDateAssumptions;
   }
 
   // §19j: identity string fields survive only as values the document provably prints.
