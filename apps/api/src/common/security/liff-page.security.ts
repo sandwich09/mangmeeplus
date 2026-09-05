@@ -17,13 +17,36 @@ export function validLineChannelId(value: string | null): string {
 /**
  * The one look every API-served LIFF page has had since the first one. Extracted so that adding a
  * page is writing a body, not copying a stylesheet — the P10-L pages are the third and fourth.
+ *
+ * The มั่งมี palette is the same six values the LINE flex cards use (`line-business-card.logic.ts`),
+ * restated rather than imported so a security helper does not depend on a feature module. Sized for
+ * a phone held in LINE: 16px body, 48px controls (below that iOS zooms the page on focus), and no
+ * external font — the system Thai face is already on the device (Owner 2026-09-05).
  */
-const LIFF_PAGE_STYLE = `body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;padding:24px;line-height:1.5;color:#111827;background:#f9fafb}
-    main{max-width:520px;margin:auto;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:20px}
-    button,a.btn{border:0;border-radius:6px;background:#16a34a;color:white;padding:10px 14px;font-weight:600;display:inline-block;text-decoration:none}
+const LIFF_PAGE_STYLE = `:root{--brand:#22C55E;--brand-dark:#15803D;--ink:#101828;--muted:#475467;--line:#E3EBE5;--ground:#F5F8F6}
+    *{box-sizing:border-box}
+    body{font-family:-apple-system,"Noto Sans Thai","Sarabun",sans-serif;margin:0;padding:0 0 32px;line-height:1.6;font-size:16px;color:var(--ink);background:var(--ground)}
+    header.brand{display:flex;align-items:center;gap:8px;padding:10px 16px;background:var(--brand);color:#fff;font-size:17px;font-weight:700}
+    header.brand svg{width:28px;height:28px;flex:none}
+    main{max-width:520px;width:calc(100% - 24px);margin:16px auto;background:#fff;border:1px solid var(--line);border-radius:12px;padding:20px}
+    h1{font-size:20px;margin:0 0 8px}
+    h2{font-size:18px;margin:0 0 8px}
+    a{color:var(--brand-dark)}
+    button,a.btn{border:0;border-radius:12px;background:var(--brand);color:#fff;min-height:48px;padding:12px 20px;font:inherit;font-weight:700;width:100%;display:block;text-align:center;text-decoration:none;cursor:pointer}
+    a.btn+a.btn{margin-top:8px}
     [hidden]{display:none!important}
     button:disabled{opacity:.5}
-    pre{white-space:pre-wrap;background:#f3f4f6;border-radius:6px;padding:12px}`;
+    pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--ground);border:1px solid var(--line);border-radius:8px;padding:12px;font-size:13px;color:var(--muted)}
+    pre:empty{display:none}`;
+
+/** The coin-with-sprout mark from the มั่งมี Brand Kit — the same paths `MangmeeLogo.tsx` draws. */
+const MANGMEE_HEADER_HTML = `<header class="brand"><svg viewBox="0 0 48 48" fill="none" aria-hidden="true">
+      <path d="M24 23c0-6 0-9 0-12" stroke="#FCD34D" stroke-width="2.6" stroke-linecap="round" />
+      <path d="M24 15c-1.6-3-4.4-4-7.6-3.6 .4 3.4 3.2 4.8 6 4.6" fill="#86EFAC" />
+      <path d="M24 13c1.6-2.6 4.2-3.4 7-3 -.3 3-2.8 4.2-5.4 4" fill="#BBF7D0" />
+      <circle cx="24" cy="31" r="11" fill="#FCD34D" stroke="#FBBF24" stroke-width="1.5" />
+      <path d="M24 26v10M22 28h3.2a2 2 0 0 1 0 4H22m0 0h3.6a2 2 0 0 1 0 4H22" stroke="#B45309" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+    </svg><span>มั่งมีพลัส</span></header>`;
 
 /**
  * Assembles one of these pages. `data` values are escaped here, so no caller can smuggle an extra
@@ -55,6 +78,7 @@ export function liffPageHtml(input: {
   </style>
 </head>
 <body${attrs}>
+  ${MANGMEE_HEADER_HTML}
   <main>
     ${LIFF_CLIENT_NOTICE_HTML}
     <div id="liff-content">
@@ -124,6 +148,13 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
    * tapped from a browser — so the hint names that first.
    */
   const SIGNUP_INIT_FAIL_TH = 'เปิดหน้าสมัครไม่สำเร็จ';
+  /**
+   * The phone is required since Owner 2026-09-05. One sentence for the empty field and for a number
+   * the server refused, because the fix is the same either way — and the server's two codes map onto
+   * it so a client-side rule that drifts still reads as the same instruction.
+   */
+  const PHONE_TH = 'กรุณาใส่เบอร์มือถือ 10 หลัก ขึ้นต้นด้วย 0';
+  const PHONE_CODES = ['line_signup_phone_required', 'line_signup_phone_invalid'];
 
   function compareVersion(actual, minimum) {
     const length = Math.max(actual.length, minimum.length);
@@ -365,9 +396,10 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     const shop = companyName ? 'ร้าน ' + companyName + ' ' : '';
     // businessHours is the SERVER's answer for the Bangkok clock; a page left open since yesterday
     // must not narrate hours it worked out itself.
+    // Same rule as the done card: the heading is "ได้รับแล้ว", so the body never says it again.
     document.getElementById('pending-text').textContent = status && status.businessHours
-      ? 'ได้รับคำขอเปิด' + shop + 'แล้วค่ะ ทีมงานกำลังตรวจสอบ ปกติดำเนินการให้ภายในวันทำการ ' + BUSINESS_HOURS_TH + ' พร้อมเมื่อไหร่จะแจ้งในแชทนี้นะคะ'
-      : 'ได้รับคำขอเปิด' + shop + 'แล้วค่ะ ตอนนี้อยู่นอกเวลาทำการ ทีมงานจะดูให้ในวันทำการถัดไป ' + BUSINESS_HOURS_TH + ' นะคะ';
+      ? 'คำขอเปิด' + shop + 'เข้าระบบแล้วค่ะ ทีมงานกำลังตรวจสอบ ปกติดำเนินการให้ภายในวันทำการ ' + BUSINESS_HOURS_TH + ' พร้อมเมื่อไหร่จะแจ้งในแชทนี้นะคะ'
+      : 'คำขอเปิด' + shop + 'เข้าระบบแล้วค่ะ ตอนนี้อยู่นอกเวลาทำการ ทีมงานจะดูให้ในวันทำการถัดไป ' + BUSINESS_HOURS_TH + ' นะคะ';
     setStatus('');
     showOnly('pending-view');
   }
@@ -376,9 +408,7 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     const companyName = (document.getElementById('company-name').value || '').trim();
     if (!companyName) throw new Error('กรุณากรอกชื่อร้านก่อนนะคะ');
     const phoneNumber = (document.getElementById('phone-number').value || '').replace(/[^0-9]/g, '');
-    if (phoneNumber && !/^0[0-9]{9}$/.test(phoneNumber)) {
-      throw new Error('เบอร์มือถือต้องเป็นตัวเลข 10 หลัก ขึ้นต้นด้วย 0 นะคะ');
-    }
+    if (!/^0[0-9]{9}$/.test(phoneNumber)) throw new Error(PHONE_TH);
     const referralCode = validReferralCode(query.get('ref'));
     const idToken = currentIdToken();
     if (!idToken) return;
@@ -389,7 +419,7 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
       body: JSON.stringify({
         idToken,
         companyName,
-        ...(phoneNumber ? { phoneNumber } : {}),
+        phoneNumber,
         ...(referralCode ? { referralCode } : {}),
         // Echoed exactly as this page rendered them: the server refuses anything that is not the
         // release it is serving right now (LEGAL-LIFF-01).
@@ -421,13 +451,18 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
         return;
       }
     }
-    if (!res.ok) throw new Error(refusalCode(text) || ('ส่งคำขอไม่สำเร็จ: ' + res.status));
+    const refusal = refusalCode(text);
+    // The one field the customer can see and fix. Both codes read as the same instruction.
+    if (PHONE_CODES.indexOf(refusal) >= 0) throw new Error(PHONE_TH);
+    if (!res.ok) throw new Error(refusal || ('ส่งคำขอไม่สำเร็จ: ' + res.status));
     const accepted = JSON.parse(text);
+    // The card's own heading already says "ได้รับแล้ว", so the body says what happens next and
+    // nothing else — repeating the heading was the first thing the Owner read twice (2026-09-05).
     document.getElementById('done-text').textContent = accepted.existingAccount
       ? 'เพิ่มร้านที่ 2 ให้บัญชีของคุณแล้วค่ะ พร้อมเมื่อไหร่เราจะส่งข้อความในแชทนี้นะคะ'
       : (accepted.businessHours
-        ? 'ได้รับแล้วค่ะ ทีมงานกำลังตรวจสอบ ปกติดำเนินการให้ภายในวันทำการ ' + BUSINESS_HOURS_TH + ' พร้อมใช้เมื่อไหร่เราจะส่งข้อความในแชทนี้นะคะ'
-        : 'ได้รับแล้วค่ะ ตอนนี้อยู่นอกเวลาทำการ ทีมงานจะดูให้ในวันทำการถัดไป ' + BUSINESS_HOURS_TH + ' พร้อมใช้เมื่อไหร่เราจะส่งข้อความในแชทนี้นะคะ');
+        ? 'ทีมงานกำลังตรวจสอบ ปกติดำเนินการให้ภายในวันทำการ ' + BUSINESS_HOURS_TH + ' พร้อมใช้เมื่อไหร่เราจะส่งข้อความในแชทนี้นะคะ'
+        : 'ตอนนี้อยู่นอกเวลาทำการ ทีมงานจะดูให้ในวันทำการถัดไป ' + BUSINESS_HOURS_TH + ' พร้อมใช้เมื่อไหร่เราจะส่งข้อความในแชทนี้นะคะ');
     setStatus('');
     showOnly('done-view');
   }

@@ -531,11 +531,14 @@ export class AuthController {
         'legal-challenge': release.displayChallenge,
         'legal-locale': 'th',
       },
-      style: 'label{display:block;margin-top:12px;font-weight:600}'
-        + '\n    input{width:100%;box-sizing:border-box;padding:10px;border:1px solid #d1d5db;border-radius:6px;font-size:16px}'
-        + '\n    .legal{margin-top:16px;padding:12px;background:#f3f4f6;border-radius:6px;font-size:14px}'
+      style: 'label{display:block;margin-top:16px;margin-bottom:6px;font-weight:600}'
+        + '\n    input{width:100%;min-height:48px;padding:12px;border:1px solid var(--line);border-radius:10px;font-size:16px;font-family:inherit;color:var(--ink)}'
+        + '\n    .legal{margin-top:20px;padding:12px;background:var(--ground);border:1px solid var(--line);border-radius:10px;font-size:14px}'
         + '\n    .legal li{margin-bottom:6px}'
-        + '\n    .fine{color:#4b5563;font-size:14px}',
+        + '\n    .fine{color:var(--muted);font-size:14px}'
+        // The challenge is 64 hex characters of legal evidence, so it may not be cut off — it wraps
+        // mid-string instead, at its own size, in its own block (Owner 2026-09-05, 390px phone).
+        + '\n    .challenge{margin:4px 0 0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--muted);overflow-wrap:anywhere;word-break:break-all}',
       content: `      <h1>เปิดร้านใหม่ ทดลองใช้ฟรี</h1>
       <p id="greeting"></p>
       <p id="status">กำลังเตรียมหน้าให้ค่ะ</p>
@@ -546,8 +549,8 @@ export class AuthController {
       <section id="form-view" data-view hidden>
         <label for="company-name">ชื่อร้าน</label>
         <input id="company-name" type="text" maxlength="${LINE_SIGNUP_COMPANY_NAME_MAX}" autocomplete="organization" />
-        <label for="phone-number">เบอร์มือถือ (ไม่บังคับ)</label>
-        <input id="phone-number" type="tel" inputmode="numeric" maxlength="10" autocomplete="tel-national" />
+        <label for="phone-number">เบอร์มือถือ</label>
+        <input id="phone-number" type="tel" inputmode="tel" maxlength="10" autocomplete="tel-national" required />
         <section class="legal">
           <p>${escapeHtml(CURRENT_LEGAL_DOCUMENTS.terms.titleTh)} และ${escapeHtml(CURRENT_LEGAL_DOCUMENTS.privacy.titleTh)} ${escapeHtml(CURRENT_LEGAL_DOCUMENTS.terms.displayVersionTh)}</p>
           <ul>
@@ -557,10 +560,11 @@ export class AuthController {
           </ul>
           <p><a href="${escapeHtml(`${webBase}${CURRENT_LEGAL_DOCUMENTS.terms.latestHref}`)}" target="_blank" rel="noopener">อ่านข้อกำหนดการใช้งาน</a></p>
           <p><a href="${escapeHtml(`${webBase}${CURRENT_LEGAL_DOCUMENTS.privacy.latestHref}`)}" target="_blank" rel="noopener">อ่านประกาศความเป็นส่วนตัว</a></p>
-          <p class="fine">รหัสอ้างอิงฉบับที่แสดง: ${escapeHtml(release.displayChallenge)}</p>
+          <p class="fine">รหัสอ้างอิงฉบับที่แสดง:</p>
+          <p class="challenge">${escapeHtml(release.displayChallenge)}</p>
         </section>
         <p><button id="link" disabled>ยอมรับและเริ่มทดลองใช้ฟรี</button></p>
-        <p class="fine">ทดลองฟรี 30 วัน ให้ AI อ่านรูปได้ 15 ครั้ง ไม่ต้องใส่บัตร</p>
+        <p class="fine">ทดลองฟรี 30 วัน ให้ AI อ่านรูปได้ 15 ครั้ง</p>
       </section>
       <section id="done-view" data-view hidden>
         <h2>ได้รับแล้ว</h2>

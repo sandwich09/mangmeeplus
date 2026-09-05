@@ -60,14 +60,51 @@ describe('P10-L LIFF signup page', () => {
     assert.ok(html.includes(`${WEB_BASE}/terms`) && html.includes(`${WEB_BASE}/privacy`));
   });
 
-  it('asks for a shop name and an optional phone, and promises the trial in the Owner wording', () => {
+  it('asks for a shop name and a REQUIRED phone, and promises the trial in the Owner wording', () => {
     const html = makeController().lineSignupPage(request());
 
     assert.ok(html.includes('id="company-name"'));
-    assert.ok(html.includes('inputmode="numeric"'), 'the phone field opens a number keypad');
-    assert.ok(html.includes('เบอร์มือถือ (ไม่บังคับ)'), 'optional label, not a required asterisk');
+    assert.ok(html.includes('inputmode="tel"'), 'the phone field opens a phone keypad');
+    assert.ok(/<input id="phone-number"[^>]*\brequired\b/.test(html), 'the phone field is required (Owner 2026-09-05)');
+    assert.ok(html.includes('<label for="phone-number">เบอร์มือถือ</label>'), 'the bare label, no optional tag');
+    assert.equal(html.includes('ไม่บังคับ'), false, 'the phone is no longer optional');
     assert.ok(html.includes('ยอมรับและเริ่มทดลองใช้ฟรี'));
-    assert.ok(html.includes('ทดลองฟรี 30 วัน ให้ AI อ่านรูปได้ 15 ครั้ง ไม่ต้องใส่บัตร'));
+    assert.ok(html.includes('ทดลองฟรี 30 วัน ให้ AI อ่านรูปได้ 15 ครั้ง'));
+    assert.equal(html.includes('ไม่ต้องใส่บัตร'), false, 'dropped from the trial line (Owner 2026-09-05)');
+  });
+
+  /**
+   * The challenge is 64 hex characters and the Owner's phone rendered it off the right edge. It is
+   * legal evidence, so it may not be shortened — it wraps instead, in a block of its own.
+   */
+  it('lets the 64-hex reference wrap instead of running off a 390px screen', () => {
+    const html = makeController().lineSignupPage(request());
+    const challenge = currentLegalRelease('th').displayChallenge;
+
+    assert.ok(html.includes(`<p class="challenge">${challenge}</p>`), 'its own block, whole');
+    const rule = /\.challenge\{([^}]*)\}/.exec(html);
+    assert.ok(rule, 'the .challenge rule must be served with the page');
+    for (const declaration of ['overflow-wrap:anywhere', 'word-break:break-all', 'font-size:12px', 'monospace']) {
+      assert.ok(rule![1]!.includes(declaration), declaration);
+    }
+    // 64 hex at 12px monospace is ~7.2px/char ≈ 461px — wider than a 390px phone minus padding, so
+    // the wrap is what keeps it on screen rather than a lucky font size.
+    assert.ok(challenge.length * 7.2 > 390, 'the string really is wider than the screen');
+  });
+
+  it('wears the มั่งมี header and palette on every page it serves', () => {
+    for (const html of [
+      makeController().lineSignupPage(request()),
+      makeController().lineStartPage(request()),
+    ]) {
+      assert.ok(html.includes('<header class="brand">'), 'a slim brand bar above the card');
+      assert.ok(html.includes('<span>มั่งมีพลัส</span>'));
+      assert.ok(html.includes('<svg viewBox="0 0 48 48"'), 'the coin-with-sprout mark, inline — no image request');
+      assert.ok(html.includes('--brand:#22C55E'), 'the same green the LINE flex cards use');
+      assert.ok(html.includes('--ink:#101828') && html.includes('--line:#E3EBE5'));
+      assert.ok(html.includes('"Noto Sans Thai"') && !html.includes('fonts.googleapis'), 'system Thai stack, no web font');
+      assert.ok(html.includes('min-height:48px'), 'thumb-sized controls');
+    }
   });
 
   it('keeps the LIFF CSP and writes no plus sign into customer copy', () => {
@@ -75,6 +112,8 @@ describe('P10-L LIFF signup page', () => {
     const scriptSrc = csp.split(';').map((part) => part.trim()).find((part) => part.startsWith('script-src'))!;
     assert.ok(!scriptSrc.includes("'unsafe-inline'"), 'script-src must never admit inline code');
     assert.equal(scriptSrc, "script-src 'self' https://static.line-scdn.net");
+    // The theme brought no new origin with it: the logo is inline SVG, the type is the system stack.
+    assert.equal(csp.split(';').map((part) => part.trim()).find((part) => part.startsWith('img-src')), "img-src 'self' data:");
     assert.equal(responseHeaders(AuthController.prototype.lineSignupPage)['referrer-policy'], 'no-referrer');
 
     // Owner copy rule: write "และ". Checked on the rendered body, where the customer reads it.
@@ -144,7 +183,7 @@ describe('P10-L LIFF client script', () => {
   function runSignupScript(
     statusBody: string,
     responses: Array<{ status: number; body: string }> = [],
-    options: { initFails?: Error } = {},
+    options: { initFails?: Error; phone?: string } = {},
   ) {
     const handlers: Record<string, Array<() => unknown>> = {};
     const listen = (key: string) => (_event: string, handler: () => unknown) => {
@@ -161,7 +200,7 @@ describe('P10-L LIFF client script', () => {
       'pending-text': { textContent: '' },
       'done-text': { textContent: '' },
       'company-name': { value: 'ร้านนิด' },
-      'phone-number': { value: '' },
+      'phone-number': { value: options.phone ?? '081-234-5678' },
     };
     const closeButtons = [{ addEventListener: listen('close') }];
     const views = [
@@ -252,7 +291,45 @@ describe('P10-L LIFF client script', () => {
       displayChallenge: CHALLENGE, locale: 'th',
     });
     assert.equal(body.companyName, 'ร้านนิด');
+    assert.equal(body.phoneNumber, '0812345678', 'sent as digits, however the owner spaced it');
     assert.equal(h.views.find((view) => view.id === 'done-view')!.hidden, false);
+    // The card's heading already reads "ได้รับแล้ว"; the body must not say it a second time.
+    assert.equal(h.elements['done-text']!.textContent.startsWith('ได้รับแล้วค่ะ'), false);
+    assert.match(h.elements['done-text']!.textContent, /^ทีมงานกำลังตรวจสอบ/);
+  });
+
+  describe('the phone is required (Owner 2026-09-05)', () => {
+    const PHONE_TH = 'กรุณาใส่เบอร์มือถือ 10 หลัก ขึ้นต้นด้วย 0';
+
+    it('refuses to send at all when the field is blank or not a Thai mobile', async () => {
+      for (const phone of ['', '   ', '812345678', '08123456789', '021234567']) {
+        const h = runSignupScript('null', [{ status: 200, body: 'null' }], { phone });
+        await settle();
+        await settle();
+        await h.click('link');
+        await settle();
+
+        assert.equal(h.calls.length, 1, `${phone || '(blank)'} must cost no submit`);
+        assert.equal(h.elements.detail!.textContent, PHONE_TH, phone);
+      }
+    });
+
+    it('maps both server codes onto the same sentence beside the field', async () => {
+      for (const code of ['line_signup_phone_required', 'line_signup_phone_invalid']) {
+        const h = runSignupScript('null', [
+          { status: 200, body: 'null' },
+          { status: 400, body: JSON.stringify({ message: code }) },
+        ]);
+        await settle();
+        await settle();
+        await h.click('link');
+        await settle();
+
+        assert.equal(h.elements.detail!.textContent, PHONE_TH, code);
+        // Never the raw code: a shop owner cannot act on "line_signup_phone_invalid".
+        assert.equal(h.elements.detail!.textContent.includes(code), false, code);
+      }
+    });
   });
 
   it('reads status once more on a 409, so the waiting card names the shop (L-10)', async () => {
@@ -272,6 +349,8 @@ describe('P10-L LIFF client script', () => {
     assert.match(h.elements['pending-text']!.textContent, /ร้าน ร้านเดิม/);
     assert.match(h.elements['pending-text']!.textContent, /นอกเวลาทำการ/);
     assert.match(h.elements['pending-text']!.textContent, /จันทร์–เสาร์ 9:00–18:00/, 'the §7 wording, once');
+    // Same rule as the done card: the waiting card's heading is "ได้รับแล้ว" too.
+    assert.equal(h.elements['pending-text']!.textContent.startsWith('ได้รับ'), false);
   });
 
   /**
