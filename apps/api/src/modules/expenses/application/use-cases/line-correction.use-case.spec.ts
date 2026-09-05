@@ -1,13 +1,15 @@
 /**
- * Two rules on one class, kept in one file because they are one class:
+ * Spec `line-ai-draft-control-spec-th.md` §5.3, replaying the owner's real UAT turn of 2026-09-03.
  *
- *  1. (slice A) the note is APPENDED, never overwritten, and the reply says what happened;
- *  2. (slice D) `amount` belongs to this lane only while `LINE_AI_DRAFT_EDIT_ENABLED` is OFF.
+ * He sent a BHC bill and then typed "จากบิลเมื่อกี้มี service charge 10% นะ แก้ไขได้ใช่ไหม". The lane
+ * wrote that sentence OVER the note — destroying "LINE receipt upload", the only record that the
+ * draft came from a photo in a chat — changed no money at all, and answered "แก้ไขรายการเดิมให้แล้ว".
+ * These tests pin the two halves of the fix: the note is appended, and the reply says what happened.
  *
- * The second exists because S-4 first removed `amount` unconditionally, which would have made
- * the flag a one-way door rather than a rollback: switching it off would have left a lane that
- * silently stopped applying a correction it used to apply. Only a test that runs BOTH positions
- * can say otherwise.
+ * Slice D adds a second rule to the same class below: `amount` belongs to this lane ONLY while
+ * `LINE_AI_DRAFT_EDIT_ENABLED` is off. It is tested in BOTH flag positions, because S-4 first
+ * removed `amount` unconditionally — which would have made the flag a one-way door rather than a
+ * rollback, silently dropping a correction this lane used to apply.
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -136,6 +138,8 @@ describe('LINE correction: the note is appended, never overwritten (spec §5.3)'
 
     assert.equal(outcome.status, 'guidance');
     assert.deepEqual(draftUpdates, [], 'nothing was written');
+  });
+});
 
 const NOW = new Date('2026-09-05T10:00:00.000Z');
 
@@ -238,3 +242,5 @@ describe('LINE correction lane — the amount field across the S-4 flag', () => 
       assert.equal(outcome.status, 'guidance');
       assert.equal((outcome as any).reason, 'missing_update_permission');
     }
+  });
+});
