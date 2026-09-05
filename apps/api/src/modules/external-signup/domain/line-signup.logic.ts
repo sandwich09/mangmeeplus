@@ -1,6 +1,7 @@
 /**
- * P10-L §3.2 / §5. The LINE form is one required field plus an optional phone number, so its
- * normalisation is its own small thing rather than a branch inside Flow B's `normalizeCompanySignupInput`
+ * P10-L §3.2 / §5. The LINE form is two required fields — shop name and mobile number (Owner
+ * 2026-09-05) — so its normalisation is its own small thing rather than a branch inside Flow B's
+ * `normalizeCompanySignupInput`
  * — that one demands an email, a consent version and two name halves this form never asks for.
  */
 

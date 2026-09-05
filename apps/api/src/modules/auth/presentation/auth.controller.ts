@@ -480,7 +480,7 @@ export class AuthController {
         'oa-add-url': oaAddUrl,
       },
       content: `      <h1>มั่งมี Plus LINE Link</h1>
-      <p id="status">Ready</p>
+      <p id="status" class="notice notice-info">Ready</p>
       <button id="link">Link LINE account</button>
       <pre id="detail"></pre>`,
     });
@@ -541,7 +541,8 @@ export class AuthController {
         + '\n    .challenge{margin:4px 0 0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--muted);overflow-wrap:anywhere;word-break:break-all}',
       content: `      <h1>เปิดร้านใหม่ ทดลองใช้ฟรี</h1>
       <p id="greeting"></p>
-      <p id="status">กำลังเตรียมหน้าให้ค่ะ</p>
+      <p id="status" class="notice notice-info">กำลังเตรียมหน้าให้ค่ะ</p>
+      <p><button id="notice-action" hidden></button></p>
       <section id="retry-view" data-view hidden>
         <p>กรุณาเปิดลิงก์นี้จากแอป LINE นะคะ ถ้าเปิดจากเบราว์เซอร์ปกติจะยังสมัครไม่ได้ค่ะ</p>
         <p><button id="retry">ลองอีกครั้ง</button></p>
@@ -549,8 +550,10 @@ export class AuthController {
       <section id="form-view" data-view hidden>
         <label for="company-name">ชื่อร้าน</label>
         <input id="company-name" type="text" maxlength="${LINE_SIGNUP_COMPANY_NAME_MAX}" autocomplete="organization" />
+        <p id="company-name-error" class="field-error" hidden></p>
         <label for="phone-number">เบอร์มือถือ</label>
         <input id="phone-number" type="tel" inputmode="tel" maxlength="10" autocomplete="tel-national" required />
+        <p id="phone-number-error" class="field-error" hidden></p>
         <section class="legal">
           <p>${escapeHtml(CURRENT_LEGAL_DOCUMENTS.terms.titleTh)} และ${escapeHtml(CURRENT_LEGAL_DOCUMENTS.privacy.titleTh)} ${escapeHtml(CURRENT_LEGAL_DOCUMENTS.terms.displayVersionTh)}</p>
           <ul>
@@ -603,7 +606,7 @@ export class AuthController {
       },
       style: '#companies button{display:block;width:100%;margin-top:8px}',
       content: `      <h1>เริ่มใช้งาน</h1>
-      <p id="status">กำลังเปิดหน้าเว็บให้ค่ะ</p>
+      <p id="status" class="notice notice-info">กำลังเปิดหน้าเว็บให้ค่ะ</p>
       <div id="companies" hidden></div>
       <p><a id="open-web" class="btn" hidden>เปิดหน้าเว็บ</a></p>
       <p><a id="go-signup" class="btn" href="/v1/auth/line/link-page/signup" hidden>เปิดร้านใหม่ ทดลองฟรี</a></p>
@@ -734,7 +737,7 @@ export class AuthController {
         'oa-add-url': oaAddUrl,
       },
       content: `      <h1>Link your LINE account</h1>
-      <p id="status">Ready</p>
+      <p id="status" class="notice notice-info">Ready</p>
       <button id="link">Link LINE account</button>
       <a id="open-line" class="btn" hidden>Open LINE</a>
       <pre id="detail"></pre>`,

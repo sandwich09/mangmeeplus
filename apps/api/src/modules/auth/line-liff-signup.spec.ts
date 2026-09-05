@@ -112,6 +112,31 @@ describe('P10-L LIFF signup page', () => {
     assert.match(pages[0]!, /pre\{[^}]*background:var\(--ground\)[^}]*border:1px solid var\(--line\)/);
   });
 
+  /**
+   * The tones live in the shared stylesheet, so every page `liffPageHtml` builds gets them — the
+   * customer-register page in crm-inbox included, since the review moved it onto the same builder.
+   */
+  it('serves the four message tones, at reading size, on every page', async () => {
+    const c = makeController();
+    for (const html of [c.lineSignupPage(request()), c.lineStartPage(request()), await c.lineLinkPage(request()), await c.employeeLineLinkPage(request())]) {
+      for (const tone of ['info', 'success', 'warning', 'error']) {
+        assert.ok(html.includes('.notice-' + tone + '{background:'), tone);
+        assert.ok(html.includes('.notice-' + tone + '::before{content:'), `${tone} carries an icon, so tone is not colour alone`);
+      }
+      // Reading size in the page's own face — the grey monospace box is for technical text only.
+      assert.match(html, /\.notice\{[^}]*font-size:16px/);
+      assert.match(html, /\.notice\{[^}]*white-space:pre-line/, 'advice renders as a second line');
+      assert.ok(html.includes('.field-error{'), 'and a field can carry its own message');
+      assert.ok(html.includes('input[aria-invalid="true"]{'));
+    }
+    // The signup page is the only one with fields, so it is the only one that needs the targets.
+    const signup = c.lineSignupPage(request());
+    assert.ok(signup.includes('<p id="phone-number-error" class="field-error" hidden></p>'));
+    assert.ok(signup.includes('<p id="company-name-error" class="field-error" hidden></p>'));
+    assert.ok(signup.includes('<button id="notice-action" hidden></button>'), 'the reload affordance');
+    assert.ok(signup.includes('<p id="status" class="notice notice-info">'), 'the first paint is already a notice');
+  });
+
   it('wears the มั่งมี header and palette on every page it serves', () => {
     for (const html of [
       makeController().lineSignupPage(request()),
@@ -203,24 +228,39 @@ describe('P10-L LIFF client script', () => {
   function runSignupScript(
     statusBody: string,
     responses: Array<{ status: number; body: string }> = [],
-    options: { initFails?: Error; phone?: string } = {},
+    options: { initFails?: Error; phone?: string; companyName?: string; fetchThrows?: Error } = {},
   ) {
     const handlers: Record<string, Array<() => unknown>> = {};
     const listen = (key: string) => (_event: string, handler: () => unknown) => {
       (handlers[key] ??= []).push(handler);
     };
+    /** Enough of an input to answer the three questions a field error has to be judged on. */
+    const focused: string[] = [];
+    const input = (id: string, value: string) => {
+      const attributes: Record<string, string> = {};
+      return {
+        value,
+        attributes,
+        focus: () => { focused.push(id); },
+        setAttribute: (name: string, attributeValue: string) => { attributes[name] = attributeValue; },
+        removeAttribute: (name: string) => { delete attributes[name]; },
+      };
+    };
     const elements: Record<string, Record<string, any>> = {
-      status: { textContent: '' },
+      status: { textContent: '', className: '' },
       detail: { textContent: '' },
       greeting: { textContent: '' },
-      link: { disabled: true, addEventListener: listen('link') },
+      link: { disabled: true, textContent: 'ยอมรับและเริ่มทดลองใช้ฟรี', addEventListener: listen('link') },
       retry: { addEventListener: listen('retry') },
+      'notice-action': { hidden: true, textContent: '', addEventListener: listen('notice-action') },
       'client-notice': { hidden: true },
       'liff-content': { hidden: false },
       'pending-text': { textContent: '' },
       'done-text': { textContent: '' },
-      'company-name': { value: 'ร้านนิด' },
-      'phone-number': { value: options.phone ?? '081-234-5678' },
+      'company-name': input('company-name', options.companyName ?? 'ร้านนิด'),
+      'company-name-error': { textContent: '', hidden: true },
+      'phone-number': input('phone-number', options.phone ?? '081-234-5678'),
+      'phone-number-error': { textContent: '', hidden: true },
     };
     const closeButtons = [{ addEventListener: listen('close') }];
     const views = [
@@ -261,12 +301,15 @@ describe('P10-L LIFF client script', () => {
         calls.push({ url, init });
         const scripted = responses[calls.length - 1];
         if (scripted) return { ok: scripted.status < 400, status: scripted.status, text: async () => scripted.body };
+        if (options.fetchThrows && calls.length > 1) throw options.fetchThrows;
         return { ok: true, status: 200, text: async () => statusBody };
       },
     });
     return {
       elements, views, calls, handlers,
       closed: () => closed,
+      focused,
+      tone: () => String(elements['status']!.className).replace('notice notice-', ''),
       click: async (key: string) => {
         for (const handler of handlers[key] ?? []) await handler();
       },
@@ -355,10 +398,17 @@ describe('P10-L LIFF client script', () => {
     assert.match(h.elements['done-text']!.textContent, /^ทีมงานกำลังตรวจสอบ/);
   });
 
-  describe('the phone is required (Owner 2026-09-05)', () => {
-    const PHONE_TH = 'กรุณาใส่เบอร์มือถือ 10 หลัก ขึ้นต้นด้วย 0';
+  /**
+   * Review BLOCKER 1. The phone error used to be thrown as a bare Error, so it landed in the summary
+   * ("ส่งคำขอไม่สำเร็จ", scrolled off the top at tap time) and in #detail (below the fold) — the one
+   * moment the customer needed it, it was off-screen in both directions. These assertions are all
+   * geometry-independent: WHICH element holds the text, what the input is marked with, where focus
+   * went. Any of them would have caught the original defect.
+   */
+  describe('the phone is required, and says so next to the field (Owner 2026-09-05)', () => {
+    const PHONE_RULE_TH = 'ใส่เบอร์มือถือ 10 หลัก ขึ้นต้นด้วย 0 เช่น 0812345678';
 
-    it('refuses to send at all when the field is blank or not a Thai mobile', async () => {
+    it('refuses to send, marks the input, moves focus and warns — never "failed to submit"', async () => {
       for (const phone of ['', '   ', '812345678', '08123456789', '021234567']) {
         const h = runSignupScript('null', [{ status: 200, body: 'null' }], { phone });
         await settle();
@@ -366,12 +416,25 @@ describe('P10-L LIFF client script', () => {
         await h.click('link');
         await settle();
 
-        assert.equal(h.calls.length, 1, `${phone || '(blank)'} must cost no submit`);
-        assert.equal(h.elements.detail!.textContent, PHONE_TH, phone);
+        const label = phone.trim() || '(blank)';
+        assert.equal(h.calls.length, 1, `${label} must cost no submit`);
+        // The message is beside the field, not in the technical box at the bottom of the page.
+        assert.equal(h.elements['phone-number-error']!.textContent, PHONE_RULE_TH, label);
+        assert.equal(h.elements['phone-number-error']!.hidden, false, label);
+        assert.equal(h.elements.detail!.textContent, '', `${label}: never the monospace box`);
+        assert.equal(h.elements['phone-number']!.attributes['aria-invalid'], 'true', label);
+        assert.deepEqual(h.focused, ['phone-number'], `${label}: the caret goes to the field`);
+        // Nothing was sent, so the summary must not claim a submit failed.
+        assert.equal(h.tone(), 'warning', label);
+        assert.equal(h.elements.status!.textContent.includes('ส่งคำขอไม่สำเร็จ'), false, label);
+        assert.match(h.elements.status!.textContent, /^กรอกเบอร์มือถือให้ครบก่อนนะคะ/, label);
+        // The button invites the retry it just asked for.
+        assert.equal(h.elements.link!.disabled, false, label);
+        assert.equal(h.elements.link!.textContent, 'ยอมรับและเริ่มทดลองใช้ฟรี', label);
       }
     });
 
-    it('maps both server codes onto the same sentence beside the field', async () => {
+    it('does the same for the server codes, and never shows the raw code', async () => {
       for (const code of ['line_signup_phone_required', 'line_signup_phone_invalid']) {
         const h = runSignupScript('null', [
           { status: 200, body: 'null' },
@@ -382,10 +445,111 @@ describe('P10-L LIFF client script', () => {
         await h.click('link');
         await settle();
 
-        assert.equal(h.elements.detail!.textContent, PHONE_TH, code);
-        // Never the raw code: a shop owner cannot act on "line_signup_phone_invalid".
-        assert.equal(h.elements.detail!.textContent.includes(code), false, code);
+        assert.equal(h.tone(), 'warning', code);
+        assert.equal(h.elements['phone-number-error']!.textContent, PHONE_RULE_TH, code);
+        assert.equal(h.elements['phone-number']!.attributes['aria-invalid'], 'true', code);
+        assert.deepEqual(h.focused, ['phone-number'], code);
+        assert.equal(JSON.stringify(h.elements.status!.textContent).includes(code), false, code);
+        assert.equal(h.elements.link!.disabled, false, code);
       }
+    });
+
+    it('marks the shop name instead when that is the empty one', async () => {
+      const h = runSignupScript('null', [{ status: 200, body: 'null' }], { companyName: '  ' });
+      await settle();
+      await settle();
+      await h.click('link');
+      await settle();
+
+      assert.equal(h.calls.length, 1);
+      assert.deepEqual(h.focused, ['company-name']);
+      assert.equal(h.elements['company-name']!.attributes['aria-invalid'], 'true');
+      // Only the offending field is marked — the phone is fine and must not be reddened with it.
+      assert.equal(h.elements['phone-number']!.attributes['aria-invalid'], undefined);
+      assert.equal(h.elements['phone-number-error']!.hidden, true);
+    });
+  });
+
+  /** Owner 2026-09-05: "warning สีเหลือง / ส่งไม่สำเร็จสีแดง พร้อมคำแนะนำว่าอะไรผิดด้วย". */
+  describe('every refusal says what went wrong and what to do next, in the right tone', () => {
+    const submitWith = async (status: number, body: string, options = {}) => {
+      const h = runSignupScript('null', [{ status: 200, body: 'null' }, { status, body }], options);
+      await settle();
+      await settle();
+      await h.click('link');
+      await settle();
+      return h;
+    };
+
+    it('turns a known code into error tone plus guidance, and re-enables the button', async () => {
+      const h = await submitWith(403, JSON.stringify({ message: 'line_signup_disabled' }));
+
+      assert.equal(h.tone(), 'error');
+      assert.match(h.elements.status!.textContent, /ตอนนี้ยังเปิดให้สมัครทางนี้ไม่ได้/, 'what went wrong');
+      assert.match(h.elements.status!.textContent, /ลองใหม่อีกครั้งภายหลัง/, 'what to do next');
+      assert.match(h.elements.status!.textContent, /098-256-5628/, 'the support line the LINE copy already gives');
+      assert.match(h.elements.status!.textContent, /\n/, 'advice sits on its own line');
+      assert.equal(h.elements.link!.disabled, false);
+      assert.equal(h.elements.link!.textContent, 'ยอมรับและเริ่มทดลองใช้ฟรี', 'the original label is back');
+    });
+
+    it('treats a rate limit as a warning and repeats the wait the server named', async () => {
+      const h = await submitWith(429, JSON.stringify({ message: 'Too many requests.', retryAfterSeconds: 42 }));
+
+      assert.equal(h.tone(), 'warning');
+      assert.match(h.elements.status!.textContent, /ส่งบ่อยเกินไป/);
+      assert.match(h.elements.status!.textContent, /42 วินาที/, 'retryAfterSeconds is worth repeating');
+      assert.equal(h.elements.link!.disabled, false);
+    });
+
+    it('offers a reload — not a blind resubmit — when the release moved under the page', async () => {
+      const h = await submitWith(409, JSON.stringify({ message: 'legal_release_changed' }));
+
+      assert.equal(h.tone(), 'warning');
+      assert.match(h.elements.status!.textContent, /ข้อกำหนดมีฉบับใหม่แล้ว/);
+      assert.equal(h.elements['notice-action']!.hidden, false, 'the fix needs a fresh render from the server');
+      assert.equal(h.elements['notice-action']!.textContent, 'โหลดหน้าใหม่');
+    });
+
+    it('falls back to the generic error for a code it has never heard of', async () => {
+      const h = await submitWith(500, JSON.stringify({ message: 'line_signup_something_new' }));
+
+      assert.equal(h.tone(), 'error');
+      assert.match(h.elements.status!.textContent, /ระบบขัดข้อง ส่งคำขอไม่สำเร็จ/);
+      assert.match(h.elements.status!.textContent, /098-256-5628/);
+      // The invented code never reaches the customer, and no field is blamed for a server fault.
+      assert.equal(h.elements.status!.textContent.includes('line_signup_something_new'), false);
+      assert.equal(h.elements['phone-number']!.attributes['aria-invalid'], undefined);
+      assert.deepEqual(h.focused, []);
+    });
+
+    it('reads a dropped connection as a warning worth retrying, not a refusal', async () => {
+      const h = runSignupScript('null', [{ status: 200, body: 'null' }], { fetchThrows: new Error('Failed to fetch') });
+      await settle();
+      await settle();
+      await h.click('link');
+      await settle();
+
+      assert.equal(h.tone(), 'warning');
+      assert.match(h.elements.status!.textContent, /เชื่อมต่อไม่สำเร็จ/);
+      assert.match(h.elements.status!.textContent, /ลองใหม่/);
+      assert.equal(h.elements.link!.disabled, false);
+    });
+
+    it('shows success in the success tone', async () => {
+      const h = runSignupScript('null', [
+        { status: 200, body: 'null' },
+        { status: 202, body: JSON.stringify({ requestId: 'r1', state: 'PENDING_REVIEW', existingAccount: false, businessHours: true }) },
+      ]);
+      await settle();
+      await settle();
+      await h.click('link');
+      await settle();
+
+      // The done CARD carries the words; the notice itself is cleared, so it paints nothing.
+      assert.equal(h.elements.status!.textContent, '');
+      assert.equal(h.elements.status!.hidden, true);
+      assert.equal(h.views.find((view) => view.id === 'done-view')!.hidden, false);
     });
   });
 
@@ -411,9 +575,14 @@ describe('P10-L LIFF client script', () => {
   });
 
   /**
-   * The two refusals a shop owner cannot fix from this page. Before the code map they arrived as
-   * the bare string `line_signup_account_blocked` under "ส่งคำขอไม่สำเร็จ" — a machine word and no
-   * way forward for someone whose account is suspended.
+   * The two refusals a shop owner cannot fix from this page (from codex/line-signup-stale-identity).
+   * Before the code map they arrived as the bare string `line_signup_account_blocked` under
+   * "ส่งคำขอไม่สำเร็จ" — a machine word and no way forward for someone whose account is suspended.
+   *
+   * That branch threw a bare Error, which put the support phone and email in #detail: the grey
+   * MONOSPACE box, which this batch reserved for technical text. The copy is unchanged and the
+   * intent is unchanged; it now lands in the red notice where a customer will actually read it, so
+   * these assertions moved from #detail to #status.
    */
   for (const code of ['line_signup_account_blocked', 'line_signup_identity_disabled']) {
     it(`answers ${code} with the support phone and email`, async () => {
@@ -427,10 +596,17 @@ describe('P10-L LIFF client script', () => {
       await settle();
 
       assert.equal(h.calls.length, 2, 'a refusal is final: no re-read, no retry loop');
-      assert.match(h.elements.detail!.textContent, /098-256-5628/);
-      assert.match(h.elements.detail!.textContent, /contact@mangmeeplus\.com/);
-      assert.doesNotMatch(h.elements.detail!.textContent, /line_signup_/, 'never the raw code');
+      assert.equal(h.tone(), 'error', 'nothing here is retryable');
+      assert.match(h.elements.status!.textContent, /098-256-5628/);
+      assert.match(h.elements.status!.textContent, /contact@mangmeeplus\.com/);
+      assert.doesNotMatch(h.elements.status!.textContent, /line_signup_/, 'never the raw code');
+      // The support sentence is for the customer, so it must NOT be hidden away in the grey box.
+      assert.equal(h.elements.detail!.textContent, '', 'not the technical box');
+      assert.equal(h.elements.detail!.hidden, true);
       assert.equal(h.views.find((view) => view.id === 'done-view')!.hidden, true);
+      // A blocked account is not a field the customer can correct.
+      assert.equal(h.elements['phone-number']!.attributes['aria-invalid'], undefined);
+      assert.deepEqual(h.focused, []);
     });
   }
 
@@ -471,10 +647,13 @@ describe('P10-L LIFF client script', () => {
       const h = runSignupScript('null', [], { initFails: new Error('LIFF init failed') });
       await settleTwice();
 
-      assert.equal(h.elements.status!.textContent, 'เปิดหน้าสมัครไม่สำเร็จ');
-      assert.notEqual(h.elements.status!.textContent, 'ส่งคำขอไม่สำเร็จ', 'nothing was submitted');
+      assert.match(h.elements.status!.textContent, /^เปิดหน้าสมัครไม่สำเร็จ/);
+      assert.match(h.elements.status!.textContent, /แตะเมนูใน LINE อีกครั้ง/, 'and what to do about it');
+      assert.equal(h.tone(), 'error');
+      assert.equal(h.elements.status!.textContent.includes('ส่งคำขอไม่สำเร็จ'), false, 'nothing was submitted');
       assert.equal(h.views.find((view) => view.id === 'retry-view')!.hidden, false);
       assert.equal(h.views.find((view) => view.id === 'form-view')!.hidden, true);
+      // This one really is technical — a raw SDK message — so #detail is exactly where it belongs.
       assert.match(h.elements.detail!.textContent, /LIFF init failed/, 'the reason stays readable');
     });
 
@@ -487,7 +666,11 @@ describe('P10-L LIFF client script', () => {
       await h.click('link');
       await settleTwice();
 
-      assert.equal(h.elements.status!.textContent, 'ส่งคำขอไม่สำเร็จ');
+      // A submit that reached the server and was refused: the error tone, the generic guidance, and
+      // no retry-view — that view is only for a page that never opened.
+      assert.equal(h.tone(), 'error');
+      assert.match(h.elements.status!.textContent, /ส่งคำขอไม่สำเร็จ/);
+      assert.equal(h.elements.status!.textContent.includes('เปิดหน้าสมัครไม่สำเร็จ'), false);
       assert.equal(h.views.find((view) => view.id === 'retry-view')!.hidden, true);
     });
   });

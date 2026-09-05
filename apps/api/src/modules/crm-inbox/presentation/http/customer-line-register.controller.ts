@@ -8,8 +8,8 @@ import { Public } from '../../../../common/security/public.decorator';
 import { trustedClientIp } from '../../../../common/security/trusted-client-ip';
 import {
   escapeHtml,
-  LIFF_CLIENT_NOTICE_HTML,
   LIFF_PAGE_CSP,
+  liffPageHtml,
   LINE_CHANNEL_ID_PATTERN,
   LINE_ID_TOKEN_MAX_LENGTH,
   LINE_ID_TOKEN_PATTERN,
@@ -70,38 +70,28 @@ export class CustomerLineRegisterController {
     const lineChannelId = validLineChannelId(new URLSearchParams(req.url.split('?')[1] ?? '').get('lineChannelId'));
     const channel = lineChannelId ? await this.inboxRepo.findActiveChannelByLineChannelId(lineChannelId) : null;
     const company = channel ? await this.aiContext.findCompany(channel.companyId) : null;
-    const companyDisplayName = escapeHtml(company ? company.brandName ?? company.name : 'มั่งมีพลัส');
-    return `<!doctype html>
-<html lang="th">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>${companyDisplayName} LINE Customer Registration</title>
-  <style>
-    body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;padding:24px;line-height:1.5;color:#111827;background:#f9fafb}
-    main{max-width:560px;margin:auto;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:20px}
-    button,a.btn{border:0;border-radius:6px;background:#16a34a;color:white;padding:10px 14px;font-weight:600;display:inline-block;text-decoration:none}
-    [hidden]{display:none!important}
-    button:disabled{opacity:.5}
-    pre{white-space:pre-wrap;background:#f3f4f6;border-radius:6px;padding:12px}
-    label{display:flex;gap:8px;align-items:flex-start;margin:12px 0}
-  </style>
-</head>
-<body data-liff-mode="customer" data-liff-id="${escapeHtml(liffId)}" data-api-base="${escapeHtml(apiBase)}">
-  <main>
-    ${LIFF_CLIENT_NOTICE_HTML}
-    <div id="liff-content">
-      <h1>ลงทะเบียนลูกค้า LINE — ${companyDisplayName}</h1>
-      <pre>${escapeHtml(PDPA_CONSENT_NOTICE_TEXT)}</pre>
+    const companyName = company ? company.brandName ?? company.name : 'มั่งมีพลัส';
+    // Same builder as the other four LIFF pages, so this one inherits the มั่งมี theme, the message
+    // tones and the "an empty container paints nothing" rule instead of carrying a stale copy of an
+    // older stylesheet. Headers, CSP, ids and copy are all unchanged (review SHOULD-FIX 3).
+    return liffPageHtml({
+      title: `${companyName} LINE Customer Registration`,
+      data: {
+        'liff-mode': 'customer',
+        'liff-id': liffId,
+        'api-base': apiBase,
+      },
+      // The consent notice is long-form legal text, so it opts out of the shared `pre` rule: reading
+      // size and reading colour, in the page's own face rather than monospace.
+      style: 'label{display:flex;gap:8px;align-items:flex-start;margin:12px 0}'
+        + '\n    #consent{width:22px;height:22px;min-height:0;flex:none}'
+        + '\n    .consent-notice{font-family:inherit;font-size:14px;color:var(--ink);max-height:40vh;overflow-y:auto}',
+      content: `      <h1>ลงทะเบียนลูกค้า LINE — ${escapeHtml(companyName)}</h1>
+      <pre class="consent-notice">${escapeHtml(PDPA_CONSENT_NOTICE_TEXT)}</pre>
       <label><input id="consent" type="checkbox" required /> <span>ยินยอมตามประกาศความเป็นส่วนตัวนี้</span></label>
-      <p id="status">Ready</p>
+      <p id="status" class="notice notice-info">Ready</p>
       <button id="register">Register</button>
-      <pre id="detail"></pre>
-    </div>
-  </main>
-  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-  <script src="/v1/auth/line/link-page.js"></script>
-</body>
-</html>`;
+      <pre id="detail"></pre>`,
+    });
   }
 }
