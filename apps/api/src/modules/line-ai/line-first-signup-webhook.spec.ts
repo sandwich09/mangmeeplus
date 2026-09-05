@@ -130,6 +130,9 @@ describe('P10-L door and status cards (§3.1/§7)', () => {
     const open = JSON.stringify(buildSignupStatusCard('ร้านนิด', true));
     assert.match(open, /ทีมงานกำลังตรวจสอบ/);
     assert.match(open, /ร้าน ร้านนิด/);
+    // The bubble's title is already "ได้รับคำขอแล้ว" — the body must not open with it too
+    // (Owner 2026-09-05), and it says the same thing the LIFF waiting card says.
+    assert.match(open, /"text":"คำขอเปิดร้าน ร้านนิด เข้าระบบแล้วค่ะ/);
     assert.equal(open.includes('นอกเวลาทำการ'), false);
     // Waiting is when someone most wants a person, so this card carries that door too.
     assert.match(open, /ติดต่อเจ้าหน้าที่/);
@@ -295,7 +298,8 @@ describe('P10-L webhook doors', () => {
     const h = harness({ pendingSignup: { companyName: 'ร้านนิด' } });
     await h.useCase.execute(event(LINE_FOLLOW_EVENT_TEXT));
 
-    assert.match(rendered(h), /ได้รับคำขอเปิดร้าน ร้านนิด/);
+    assert.match(rendered(h), /ได้รับคำขอแล้ว/, 'the bubble title');
+    assert.match(rendered(h), /คำขอเปิดร้าน ร้านนิด เข้าระบบแล้วค่ะ/, 'the body names the shop without repeating the title');
     assert.equal(rendered(h).includes('เปิดร้านใหม่ ทดลองฟรี'), false, 'never invite a second application');
   });
 
