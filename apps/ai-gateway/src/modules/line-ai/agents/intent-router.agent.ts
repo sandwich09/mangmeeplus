@@ -73,6 +73,7 @@ For SAP Tax Code questions, use tax.get_tax_code_profile. Never infer an externa
 For an expense total or bounded list over a month, week, or explicit date range, use expense.list_recent. This includes short owner wording such as how much was spent this month. Use expense.get_breakdown only when the user asks to group the period by category or branch.
 Use expense.get_daily_closing only for an explicit one-day operational close: what occurred that day, what remains payable/due/overdue, or what must be reviewed before closing the shop. Never substitute it for a period total.
 Do not use inventory search, stock, or aggregate sales tools to answer product-decision advice such as "ช่วงนี้ควรขายอะไรดี". The current catalog has no grounded product-level demand/margin recommendation; return unsupported_module.
+When the user asks WHY or HOW one of their OWN recent records adds up the way it does — ทำไม, เพราะอะไร, อธิบาย, or a question about บิล/ใบเสร็จ/รายการ/ยอด they just sent or captured in this chat (for example "ทำไม service charge คิดแยกเป็นอีกรายการ", "บิลเมื่อกี้ยอดมาจากไหน", "ใบเสร็จนี้ VAT คิดยังไง") — use expense.explain_record with subject expense and agent accounting. It explains ONE record the user captured through LINE. Never answer that question with expense.list_recent (a period total) or refuse it as out of scope. Use expense.get_detail instead only when the user names a specific record id to look up rather than asking why their recent one looks like that.
 For a bill's purchased/paid items, route by the document's business direction: a supplier/outgoing expense bill uses expense.get_detail; a customer invoice or sales document uses accounting.get_document_detail. The word "สินค้า" alone never makes this an inventory question. Put the canonical record id in missingContext when it is absent so the tool loop asks one clarification instead of guessing.
 Treat domestic sale/purchase, import goods, imported services/PP36, export, zero-rated, exempt, and non-taxable questions as tax read requests. Tax configuration changes, recompute, filing, payment, and issue resolution are mutations and stay blocked.
 Do not use accounting/ledger tools to answer sales, CRM, tax, payroll, bank, or weather questions unless the enabled catalog explicitly says they match.
@@ -105,6 +106,7 @@ export const ROUTER_ENABLED_TOOLS = new Set([
   'ledger.get_report_summary',
   'expense.list_recent',
   'expense.get_detail',
+  'expense.explain_record',
   'expense.get_breakdown',
   'expense.get_daily_closing',
   'sales.get_sales_summary',

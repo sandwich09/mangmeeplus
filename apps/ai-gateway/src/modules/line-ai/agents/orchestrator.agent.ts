@@ -17,6 +17,7 @@ import { isExplicitJokeAsk, ResponseComposerAgent, featureDisabledReply } from '
 import { normalizePlanToolAccess, removeRuntimeBlockedTools } from './tool-availability';
 import { preparedSimpleReadEligibility, preparedFamilyKey, type PreparedSimpleReadContext } from '../domain/logic/prepared-simple-read.logic';
 import { activePreparedFamilies, formatPreparedSimpleRead, preparedTerminalReply } from './prepared-simple-read-formatter';
+import { formatExpenseExplainReply } from './expense-explain-formatter';
 import { CoverageCriticAgent } from './coverage-critic.agent';
 import { ErpToolClient, type ErpToolContext } from '../infrastructure/erp-tool.client';
 import { AiGatewayConfigService } from '../../../common/config/ai-gateway-config.service';
@@ -293,6 +294,58 @@ export function buildAnswerPresentation(
   };
 }
 
+/**
+ * "Why does MY bill look like this?" — the deterministic half of spec §5.5.
+ *
+ * Two conditions, both required, so an ordinary period question is never hijacked:
+ *   1. the message names one of the user's own captured documents (บิล / ใบเสร็จ / ใบกำกับ /
+ *      รายการ / ค่าบริการ / service charge), and
+ *   2. it asks WHY or points at a RECENT one (ทำไม / เพราะอะไร / อธิบาย / เมื่อกี้ / ล่าสุด / เพิ่ง…).
+ *
+ * "ค่าใช้จ่ายเดือนนี้เท่าไหร่" and "ยอดขายวันนี้ทำไมตก" fail (1); "รายการค่าใช้จ่ายเดือนนี้มีอะไรบ้าง"
+ * fails (2). The Owner's E4 sentence passes both on รายการ + ทำไม.
+ */
+export function asksAboutOwnRecord(messageText: string): boolean {
+  const text = messageText.normalize('NFC');
+  return /บิล|ใบเสร็จ|ใบกำกับ|รายการ|ค่าบริการ|service\s*charge/iu.test(text)
+    && /ทำไม|เพราะอะไร|อธิบาย|เมื่อกี้|เมื่อครู่|ล่าสุด|เพิ่งส่ง|ที่ส่งไป|ที่เพิ่ง/u.test(text);
+}
+
+/**
+ * Deterministic rescue for evidence E4: an intake-trusted BUSINESS_READ_QUESTION about the user's
+ * own record reached the model router, came back with no tool (agent `general`, zero tools) and was
+ * answered with the out-of-scope copy. The intake route is API-bound provenance, so when it says
+ * "this is a business read" and the sentence points at the caller's own record, the plan is replaced
+ * with the one read that answers it.
+ *
+ * Bounded hard: only on that trusted provenance, only when the router did not already route this
+ * tool, and NEVER over a safety/privacy/mutation refusal — those keep their own outcome. It grants
+ * no authority: permissions, entitlement and branch scope are still checked downstream, and a caller
+ * without the read permission reaches PERMISSION_DENIED instead of an answer.
+ */
+export function preferExplainRecordPlan(plan: AgentIntentPlan, req: LineAiTurnRequest): AgentIntentPlan {
+  if (req.intakeIntent !== 'BUSINESS_READ_QUESTION') return plan;
+  if (!asksAboutOwnRecord(req.messageText)) return plan;
+  if (plan.intents.some((intent) => intent.requiredTools.includes(EXPLAIN_RECORD_TOOL))) return plan;
+  if (plan.refusals.some((refusal) => refusal.reason === 'safety_crisis'
+    || refusal.reason === 'privacy_rumor' || refusal.reason === 'mutation_blocked')) return plan;
+  return {
+    ...plan,
+    status: 'ROUTABLE',
+    intents: [{ intent: 'read_detail', subject: 'expense', agent: 'accounting', priority: 1, requiredTools: [EXPLAIN_RECORD_TOOL], missingContext: [] }],
+    refusals: [],
+  };
+}
+
+export const EXPLAIN_RECORD_TOOL = 'expense.explain_record';
+
+/** The deterministic explain answer for this turn, when one of the gathered reads was an explain
+ *  whose result the formatter could fully verify. `undefined` keeps the ordinary composed path. */
+function explainedRecordReply(toolData: Array<{ tool: string; data: unknown }>): string | undefined {
+  const entry = toolData.find((item) => item.tool === EXPLAIN_RECORD_TOOL);
+  return entry ? formatExpenseExplainReply(entry.data) : undefined;
+}
+
 /** The tool must be in the OWNING specialist's allowlist (domain isolation) — mirrors createSpecialist:
  *  inventory → InventoryAgent, every other agent → AccountingSummaryAgent. */
 function specialistAllowsTool(agent: LineAiAgent, toolName: string): boolean {
@@ -334,6 +387,9 @@ export class OrchestratorAgent {
       branchIds: req.userContext.branchIds,
       locationIds: req.userContext.locationIds,
       locale: req.userContext.locale,
+      // Spec §5.5: "the record this chat captured" is resolved by the ERP tool, so the chat has to
+      // reach it. Opaque hash, never the raw LINE id, and never an authorization input.
+      chatKeyHash: req.userContext.chatKeyHash,
       actorDelegations: req.actorDelegations,
     };
 
@@ -352,7 +408,9 @@ export class OrchestratorAgent {
     const routedPlan = await router.route(req.messageText, false, req.conversationContext, req.openClarifications);
     this.maybeShadowComparePreparedPlan(req, routedPlan);
     const access = normalizePlanToolAccess(routedPlan, req.messageText, req.userContext);
-    let plan = access.plan;
+    // Spec §5.5 / evidence E4: a trusted business-read intake about the caller's own record must
+    // reach the explain tool even when the model router returned no tool at all.
+    let plan = preferExplainRecordPlan(access.plan, req);
     const featureDisabledTools = [...access.featureDisabledTools];
     // A joke request the router refused as out-of-scope is a misroute, not a refusal to honour: the
     // composer owns a curated bank for exactly this turn (Owner decision 2026-08-29/30), and prompt
@@ -458,6 +516,10 @@ export class OrchestratorAgent {
       // asks ONE clarifying question instead of guessing; the follow-up turn resolves it via
       // conversationContext.
       replyText = askUserQuestion;
+    } else if (explainedRecordReply(toolData)) {
+      // Spec §5.5: an explain answer is rendered by the deterministic Thai template only. No model
+      // call, so no sentence can restate someone's money in a number the tool did not return.
+      replyText = explainedRecordReply(toolData)!;
     } else if (plan.status !== 'UNROUTABLE' && toolData.length > 0) {
       replyText = await composer.composeAnswer(req.messageText, toolData, composed.replyText, provider, {
         planLanguage: plan.language,
