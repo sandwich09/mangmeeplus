@@ -306,7 +306,13 @@ unchanged. The flag decides, never the copy. See D.1.
 
 ## Slice D — `codex/line-ai-draft-edit` (S-4, แก้ draft ผ่าน LINE)
 
-Status: implemented on top of C (`ca37d6a1`), gates green, pushed; not reviewed, no PR.
+Status: implemented on top of C (`ca37d6a1`), gates green, pushed at `579f16b5`; not reviewed, no PR.
+
+Gates (2026-09-06): api fixed list 6508 tests / 0 fail / 99 skipped · ai-gateway 1048 / 0 fail ·
+contracts 217 / 0 fail · config 141 / 0 fail · api+gateway+contracts typecheck clean ·
+prisma validate ok · maintenance pins `--check` **status=current** (after the deploy.sh edit) ·
+`production-serving-mode.spec.sh` PASS · pg spec 1/1 on an isolated `watchdog_bms_sliced` database ·
+no TODO / `@ts-ignore` in the slice.
 
 ### D.1 What it does
 
@@ -427,3 +433,32 @@ ai-gateway (read it back from the task definitions before starting). Use the BHC
 After the run, check in the web audit/history that each applied edit left an
 `expense.line_ai.draft_update` row naming the fields and both totals, and that no such row exists
 for any preview that was cancelled or expired.
+
+### D.6 Impact sweep (spec §9), row by row
+
+| Area | Verdict |
+|---|---|
+| OCR apply (`receipt-ocr-apply.service.ts`) | **Not affected.** D only reads what B (chargeKind) and A (charge VAT/WHT rules) write there. No line in that file is touched. |
+| correction lane (`line-correction.use-case.ts`) | **Changed.** `amount` removed from the allowed fields, `amountOnlyLine` deleted, and the clarification ack now records a proposal as guidance rather than as an apply. Note-append and the per-field honest reply (slice A) are untouched. |
+| substitute receipt continuation | **Not affected.** D copies lines only *within one record* (`storedLineToInput`), and that copier preserves `chargeKind`, WHT rate, category, account hint and the tax-code snapshot — asserted by "preserves every field of an untouched line". |
+| reimbursement → expense | **Not affected.** D never builds a line from another source record. |
+| VAT capture / input VAT claim | **Same path as the web.** Every D write goes through `UpdateExpenseDraftUseCase`, so `validateExpenseDraftAmounts`, `reconcileExpenseVat`, `validateExpenseVatSourceInput` and the claim rules run exactly as on the web PATCH. `set_vat_mode` moves the mode/rate through that same code. A charge whose VAT the products do not prove gets no rate and a visible warning — 7% is never assumed (§5.1). |
+| WHT | **Not affected.** D never sets `whtInput` and never spreads WHT onto a charge row; each line's `whtRate` is copied unchanged. |
+| ledger / journal, reports, CSV export | **Not affected.** At the repository boundary a LINE draft edit is byte-identical to a web draft edit; D introduces no new column, line shape or posting rule. |
+| web list / detail / validation / QA specs | **Not affected.** No web file is touched. |
+| LINE summary card / status row | **Not affected.** The capture card stays slice A's; D adds a separate confirm card. |
+| read tools + security eval | `expense.get_detail` unchanged. `expense.explain_record` now reports `amountEditableOverLine` from the flag instead of a hardcoded `false` — with S-4 on, the answer stops saying money cannot be changed over LINE, because it can. Eval: 12 frozen rows, every one `expectedApplyCount: 0`. |
+| AI usage / cost (`AiUsageEvent`) | **Metered like a read tool, no new model call.** All five tools are `sensitiveAudit: true`, so the executor writes `AI_TOOL_INVOKE` per call, and the turn's `AiUsageEntry` rows are unchanged in kind. The preview is pure server work and the reply is a deterministic template, so an edit turn costs one extra tool round trip — not another LLM call. |
+| quota (`RECEIPT_QUOTA_ENFORCED`) | **Not consumed.** The only claim sites are the OCR/extraction branch (`claimReceiptQuotaNotice`, `RequestReceiptExtractionUseCase`); no draft-edit path reaches them. Verified by grep. |
+| PDPA | **No new personal data.** The apply audit payload is exactly `{previewId, webhookEventId, tool, before, after, diff}` — asserted by key name in the pg spec — so no image, no raw LINE id, no message text. The Redis preview holds ids, the chat **hash**, the patch and the already-scrubbed diff, TTL 600 s, deleted on apply or cancel. `groundingText` is request-scoped: used for one substring check, never stored, never logged. |
+| outbox / drain | **None needed, none added.** Double-apply is prevented twice: the webhook event claim is the outer dedup layer as today, and a replayed confirm finds either no preview (deleted) or a moved `updatedAt`. No workflow template subscribes to anything new. |
+| docs | capture-correction spec (tools + the `amount` supersession), LINE runbook (flag table + what "off" restores), this memory (D.1–D.6). |
+| **web shows LINE-made edits?** | **Gap, pre-existing, not introduced here.** `ExpenseReviewPage` has no audit/history panel — `deriveExpenseAuditChecks` is a validation checklist, and nothing in the web renders `aiVerificationSummaryJson.corrections[]`. So a LINE edit is invisible in the web today for the *correction* lane too. D deliberately writes no `corrections[]` mirror for draft applies: with no reader it would be write-only data, and the `expense.line_ai.draft_update` audit row is the durable record. Whoever builds the history panel should read the audit log and cover both lanes.
+
+### D.7 Left out, with reasons
+
+1. **No deterministic router rescue** for draft edits. The primary journey is the webhook's own allowlist detector, which runs only on a turn already classified as a correction of THIS chat's record. A rescue that guesses "this looks like an edit" is the wrong thing to make eager on a write path.
+2. **No `corrections[]` JSON mirror** on a draft apply — no reader exists (see the web row above).
+3. **`canCorrectAmount` retained** with no production caller: slice B's fix-up is still adding a charge-line refusal to it, and deleting it here would conflict. Delete after B lands if nothing picks it up.
+4. **The pg spec's CI step creates `watchdog_bms` itself**, because PR #428's step is not on this base. On rebase the two should collapse into one — add the spec path to #428's step and drop this one.
+5. **`scrubRecordText` lives in `packages/contracts`** so both apps share one copy. Slice C's review is widening a gateway-local `safeText` for the same reason; at rebase they must collapse onto this one rather than diverge.
