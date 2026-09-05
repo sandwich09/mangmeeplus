@@ -238,6 +238,24 @@ describe('POST /system/partners/:id/line-message — SEC-05', () => {
     assert.deepEqual(h.audits, [], 'nothing was said, so nothing is recorded as said');
   });
 
+  // B-1: the operator writes the whitespace, so "one token to the next space" was a rule they
+  // controlled. Every one of these renders the second URL live in the customer's chat.
+  it('refuses a second URL glued onto one of ours', async () => {
+    for (const glue of ['"', '<', '`', '\u200b']) {
+      const h = harness();
+      await assert.rejects(
+        () => h.controller.sendLineMessage(
+          'co-1',
+          { text: `\u0e14\u0e39\u0e17\u0e35\u0e48 https://app.mangmeeplus.com/x${glue}https://evil.test/pay` },
+          REQ,
+        ),
+        (error: Error) => /partner_line_message_external_link/.test(error.message),
+      );
+      assert.deepEqual(pushes, [], `glue ${JSON.stringify(glue)} must never reach LINE`);
+      assert.deepEqual(h.audits, [], 'and nothing is recorded as said');
+    }
+  });
+
   it('refuses a link outside our own domains', async () => {
     const h = harness();
     await assert.rejects(

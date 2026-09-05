@@ -82,6 +82,9 @@ function harness(options: {
 
   const config = {
     lineMessagingChannelAccessToken: options.token === undefined ? 'token-1' : options.token ?? undefined,
+    // Without this the SEC-05 allow-list is LIFF-only, and a note naming our own web app would be
+    // refused for the wrong reason — hiding whether the glued-URL rule works at all.
+    sesWebBaseUrl: 'https://app.mangmeeplus.com',
   } as any;
   const logs: any[] = [];
   const useCase = new PackageChangeDecisionUseCase(prisma, setPlanTerm, config, {
@@ -241,6 +244,16 @@ describe('POST /system/package-change-requests/:id/decision — REJECT', () => {
       assert.deepEqual(h.planTermCalls, [], 'and the tier does not move on a refused note');
       assert.deepEqual(pushes, []);
     }
+
+    // The control: the SAME first URL on its own is fine, so the refusals above are caused by the
+    // glued second one and not by the allow-list rejecting our own web app.
+    const control = harness();
+    await control.controller.decide(
+      'pcr-1',
+      { action: 'APPROVE', note: 'ดูที่ https://app.mangmeeplus.com/x ค่ะ' },
+      REQ,
+    );
+    assert.equal(control.planTermCalls.length, 1);
   });
 
   it('refuses the same paragraph the message box refuses, with the same code', async () => {
