@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { LINE_AI_CONTEXT_MAX_TURNS, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
-import { branchScopeFallbackLabel, chatKeyHashOf, classifyPendingMediaReply, formatCheckBillDraftCreatedReply, formatGroundedReceiptFollowUp, formatOcrGovernanceClarifyReply, isAffirmativeText, isGroundedReceiptFollowUp, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent } from './process-line-webhook.use-case';
+import { branchScopeFallbackLabel, chatKeyHashOf, classifyPendingMediaReply, formatCheckBillDraftCreatedReply, formatCorrectionAppliedReply, formatGroundedReceiptFollowUp, formatOcrGovernanceClarifyReply, formatPaypersReply, isAffirmativeText, isGroundedReceiptFollowUp, mentionsUnchangeableMoney, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent } from './process-line-webhook.use-case';
 import { featureTemporarilyUnavailable } from '../../../employee-access/application/entitlement.helper';
 import { ReceiptOcrApplyService } from '../../../expenses/application/services/receipt-ocr-apply.service';
 import { absoluteWebLink, webBaseUrlFromEnv, webLink } from '../../../../common/http/web-link';
@@ -3287,6 +3287,77 @@ describe('LINE grounded receipt item follow-up', () => {
   it('states honestly when no printed item rows were readable', () => {
     const reply = formatGroundedReceiptFollowUp(undefined, 'company-1', expenseWithLines([]), undefined, 'บิลนี้ซื้ออะไร');
     assert.match(reply, /ยังอ่านรายการสินค้า.*ไม่ได้ชัดเจน/);
+  });
+
+  // Spec `line-ai-draft-control-spec-th.md` §5.1. The BHC bill: "Service charge 10%" was printed
+  // among the food, so the card read as if the shop sold a dish by that name (UAT 2026-09-03).
+  it('lists additional charges under their own heading, not among the products', () => {
+    const expense = expenseWithLines([{ description: 'ข้าวผัด', quantity: '2', amount: '300.00', evidenceSignal: 'ข้าวผัด 2 300' }]);
+    expense.aiVerificationSummaryJson.recognizedFields.additionalCharges = [
+      { kind: 'SERVICE_CHARGE', description: 'ค่าบริการ 10%', amount: '152.00', evidenceSignal: 'Service charge 10%' },
+    ];
+    const reply = formatGroundedReceiptFollowUp('https://app.test', 'company-1', expense, undefined, 'บิลนี้ซื้ออะไรบ้าง');
+    assert.match(reply, /ข้าวผัด × 2 – 300\.00/);
+    assert.match(reply, /ค่าใช้จ่ายเพิ่ม:\n• ค่าบริการ 10% – 152\.00/, 'the charge sits under its own heading, below the products');
+  });
+});
+
+// Spec `line-ai-draft-control-spec-th.md` §5.3, replaying the owner's real UAT turn of 2026-09-03:
+// "จากบิลเมื่อกี้มี service charge 10% นะ แก้ไขได้ใช่ไหม" wrote one sentence into `note`, changed no
+// money at all, and was answered "แก้ไขรายการเดิมให้แล้ว".
+describe('LINE correction reply says what actually changed', () => {
+  const OWNER_TURN = 'จากบิลเมื่อกี้มี service charge 10% นะ แก้ไขได้ใช่ไหม';
+  const reply = (fields: Record<string, { from: string | null; to: string }>, text = '') =>
+    formatCorrectionAppliedReply('https://app.test', 'company-1', 'expense-1', fields, text);
+
+  it('never claims to have edited the record when only a note was written', () => {
+    const out = reply({ note: { from: 'LINE receipt upload', to: OWNER_TURN } }, OWNER_TURN);
+    assert.equal(out.includes('แก้ไขรายการเดิมให้แล้ว'), false, 'nothing on the record was edited');
+    assert.match(out, /บันทึกหมายเหตุไว้/);
+    assert.match(out, /ยังไม่ได้แก้ยอด ค่าบริการ หรือ VAT/, 'the money question has to be answered, not skipped');
+    assert.match(out, /https:\/\/app\.test\/companies\/company-1\/expenses\/expense-1/);
+  });
+
+  it('names old and new per field for the changes it did make', () => {
+    const out = reply({
+      vendorName: { from: 'BHC', to: 'BHC สาขาลาดพร้าว' },
+      expenseDate: { from: '2026-09-01T00:00:00.000Z', to: '2026-09-03' },
+    }, 'ร้าน BHC สาขาลาดพร้าว วันที่ 3/9/69');
+    assert.match(out, /✅ แก้ไขรายการเดิมให้แล้ว/);
+    assert.match(out, /• เปลี่ยนผู้ขาย\/ผู้รับเงิน จาก BHC เป็น BHC สาขาลาดพร้าว/);
+    assert.match(out, /• เปลี่ยนวันที่เอกสาร จาก 1 ก\.ย\. 2569 เป็น 3 ก\.ย\. 2569/);
+    assert.equal(out.includes('ยังไม่ได้แก้ยอด'), false, 'this turn asked for no money at all');
+  });
+
+  it('adds no caveat when the amount it was asked for is the amount it changed', () => {
+    const out = reply({ amount: { from: '500.00', to: '590.00' } }, 'แก้ยอดเป็น 590 บาท');
+    assert.match(out, /• เปลี่ยนยอดรวม จาก 500\.00 เป็น 590\.00/);
+    assert.equal(out.includes('ยังไม่ได้แก้ยอด'), false);
+  });
+
+  it('recognizes the money words this lane cannot act on', () => {
+    for (const text of ['มี service charge 10%', 'ค่าบริการ 152 บาท', 'VAT ผิด', 'ภาษีไม่ถูก', 'ค่าส่ง 40']) {
+      assert.equal(mentionsUnchangeableMoney(text), true, text);
+    }
+    assert.equal(mentionsUnchangeableMoney('ร้าน BHC สาขาลาดพร้าว'), false);
+  });
+});
+
+// Spec §5.2. The record keeps the upload day because the column is NOT NULL; the card has to say
+// that is what it is, and how to fix it from the chat the sender is already in.
+describe('receipt capture card: an unread date says so', () => {
+  const card = (fields: Record<string, unknown> | null) =>
+    formatPaypersReply('https://app.test', 'company-1', 'expense-1', { fields: fields as never });
+
+  it('names the placeholder and the way to correct it', () => {
+    const reply = card({ grandTotalAmount: '1789.04' });
+    assert.match(reply, /• วันที่เอกสาร – ยังไม่ระบุ — ใช้วันที่ส่งไว้ก่อน พิมพ์ "วันที่ 3\/9\/69" เพื่อแก้/);
+  });
+
+  it('prints a date the document proved with no caveat at all', () => {
+    const reply = card({ grandTotalAmount: '1789.04', expenseDate: '2026-09-03' });
+    assert.match(reply, /• วันที่เอกสาร – 3 ก\.ย\. 2569/);
+    assert.equal(reply.includes('ใช้วันที่ส่งไว้ก่อน'), false);
   });
 });
 

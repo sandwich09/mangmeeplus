@@ -146,6 +146,22 @@ export function evaluateCorrectionHints(
   return { status: 'applicable', fields };
 }
 
+/** Spec `line-ai-draft-control-spec-th.md` §5.3. The header note is provenance before it is
+ *  anything else: "LINE receipt upload" is how anyone later knows where the record came from, and a
+ *  correction used to overwrite it with whatever sentence the user typed (UAT 2026-09-03). A
+ *  correction ADDS what the user said. Bounded, because a chat can send messages all day. */
+export const LINE_NOTE_MAX_CHARS = 500;
+export const LINE_NOTE_USER_PREFIX = 'ผู้ใช้แจ้ง: ';
+
+export function appendUserNote(existing: string | null | undefined, text: string): string {
+  const addition = `${LINE_NOTE_USER_PREFIX}${text.trim()}`;
+  const base = (existing ?? '').trim();
+  // Re-sending the same sentence (a LINE redelivery, or the user repeating themselves) must not
+  // stack copies of it — the note is read by a person, not replayed by a machine.
+  if (!base || base.includes(addition)) return (base || addition).slice(0, LINE_NOTE_MAX_CHARS);
+  return `${base} · ${addition}`.slice(0, LINE_NOTE_MAX_CHARS);
+}
+
 /** Amount lives on the lines, and `UpdateExpenseDraftUseCase` replaces the whole line set — so a
  *  correction may only rewrite it where that set is the single trivial line a text note creates.
  *  On an OCR-parsed receipt the same write would erase itemisation and tax selections. */

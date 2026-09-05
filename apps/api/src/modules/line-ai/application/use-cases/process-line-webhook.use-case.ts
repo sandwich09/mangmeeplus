@@ -832,7 +832,7 @@ function formatReplyDate(value: string | undefined): string | undefined {
   return Number.isNaN(date.getTime()) ? value : THAI_DATE_REPLY_FORMATTER.format(date);
 }
 
-function formatPaypersReply(
+export function formatPaypersReply(
   webBaseUrl: string | undefined,
   companyId: string,
   expenseId: string,
@@ -1039,25 +1039,50 @@ const CORRECTION_FIELD_LABELS: Record<string, string> = {
   documentNumber: 'เลขที่เอกสาร', note: 'รายละเอียด',
 };
 
-/** Confirmation names old → new per field, so the user can see exactly what changed. */
+/**
+ * Spec §5.3: money this lane cannot touch. A service charge, a VAT figure or the total of an
+ * itemised bill needs the draft-edit tools (slice S-4). Until those exist the honest answer is that
+ * the amounts were NOT changed, and where they can be — UAT 2026-09-03: "จากบิลเมื่อกี้มี service
+ * charge 10% นะ แก้ไขได้ใช่ไหม" was answered "แก้ไขรายการเดิมให้แล้ว" after writing one sentence
+ * into `note`, and the owner had every reason to believe the bill now carried the 152.00.
+ */
+export function mentionsUnchangeableMoney(text: string): boolean {
+  return /ค่าบริการ|เซอร์วิส|service\s*charge|vat|ภาษี|ค่าส่ง|ค่าจัดส่ง|ค่าธรรมเนียม|ทิป|ส่วนลด|ยอด|ราคา|บาท/iu
+    .test(normalizeLineText(text));
+}
+
+/** Confirmation names exactly what changed per field — and, for the note, that a note is all that
+ *  changed. Nothing here may describe a write the lane did not make. */
 export function formatCorrectionAppliedReply(
   webBaseUrl: string | undefined,
   companyId: string,
   expenseId: string,
   fields: Record<string, { from: string | null; to: string }>,
+  messageText = '',
 ): string {
+  const link = absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses/${expenseId}`);
+  const changed = Object.keys(fields);
+  const noteOnly = changed.length > 0 && changed.every((field) => field === 'note');
   const changes = Object.entries(fields).map(([field, change]) => {
     const label = CORRECTION_FIELD_LABELS[field] ?? field;
+    if (field === 'note') return `• บันทึกหมายเหตุไว้: ${change.to}`;
     const from = field === 'expenseDate' ? formatReplyDate(change.from ?? undefined) : change.from;
     const to = field === 'expenseDate' ? formatReplyDate(change.to) : change.to;
-    return `• ${label}: ${from ?? 'ยังไม่ระบุ'} → ${to}`;
+    return `• เปลี่ยน${label} จาก ${from ?? 'ยังไม่ระบุ'} เป็น ${to}`;
   });
   return [
-    '✅ แก้ไขรายการเดิมให้แล้ว (ไม่ได้สร้างรายการใหม่)',
+    noteOnly
+      ? '📝 บันทึกหมายเหตุไว้ให้แล้วค่ะ (ยังไม่ได้แก้ตัวเลขในรายการ)'
+      : '✅ แก้ไขรายการเดิมให้แล้ว (ไม่ได้สร้างรายการใหม่)',
     '',
     ...changes,
+    // Only when the lane did not in fact change an amount — a message that asked for a total and got
+    // one needs no caveat.
+    ...(!fields['amount'] && mentionsUnchangeableMoney(messageText)
+      ? ['', 'ยังไม่ได้แก้ยอด ค่าบริการ หรือ VAT ให้นะคะ — แก้ตัวเลขเหล่านี้ได้ในเว็บค่ะ']
+      : []),
     '',
-    `ตรวจสอบในเว็บแอป:\n${absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses/${expenseId}`)}`,
+    `ตรวจสอบในเว็บแอป:\n${link}`,
   ].join('\n');
 }
 
@@ -3407,7 +3432,7 @@ export class ProcessLineWebhookUseCase {
       let reply: string;
       if (applied.status === 'applied') {
         await this.ackConsumed(correctionPlan, 'correction_apply');
-        reply = formatCorrectionAppliedReply(this.config.webBaseUrl, companyId, applied.expenseId, applied.fields);
+        reply = formatCorrectionAppliedReply(this.config.webBaseUrl, companyId, applied.expenseId, applied.fields, normalizedText);
       } else if (applied.status === 'clarify') {
         reply = CORRECTION_DIRECTION_CLARIFY_REPLY;
       } else {
