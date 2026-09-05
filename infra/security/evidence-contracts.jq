@@ -1282,48 +1282,49 @@ def e0_h3_validator_paths: [
 
 # Every ECR finding the Owner has waived, one row per finding, carrying the exact evidence the
 # signed artifact must reproduce. Mirrors infra/docker/ecr-scan-blocking-findings.jq: that policy
-# decides what a scan may waive, this table decides what the signed evidence may claim. Severity,
-# package and version live PER ROW so the 2026-09 CRITICAL openssl row cannot loosen the 2026-08
-# HIGH-only rows nor the zlib row, and each batch carries its own approval and expiry so they
-# lapse independently. Rows 1-4: 2026-08 batch, expires 2026-09-10. Rows 5-6: 2026-09 batch,
-# expires 2026-09-19.
+# decides what a scan may waive, this table decides what the signed evidence may claim — the two
+# row sets must stay identical field for field. Severity, package and version live PER ROW so the
+# CRITICAL openssl row cannot loosen the HIGH-only rows nor the zlib row.
+#
+# Renewed 2026-09-05 to 2026-10-05T00:00:00Z (epoch 1791158400) under Owner approval
+# CHAT-OWNER-DIRECTIVE-2026-09-05-CVE-WAIVER-RENEWAL-2026-10-05: the 2026-08 batch (was 1788998400)
+# and the 2026-09 batch (was 1789776000) now share one expiry, so an evidence artifact still
+# claiming either old epoch fails row equality. security-tracker.debian.org, read 2026-09-05:
+# bookworm openssl 3.0.20-1~deb12u2 stays `vulnerable` for CVE-2026-54874, CVE-2026-63072,
+# CVE-2026-63076 and CVE-2026-75803 with no bookworm fix, and CVE-2026-85091 has no fixed zlib in
+# any suite. Row AWS-ECR-CVE-2026-14456-OPENSSL-PRE35-MAPPING was retired the same day: ECR stopped
+# reporting the finding and the tracker records bookworm openssl as not-affected.
 def e0_ecr_waiver_rows: [
-  { id: "AWS-ECR-CVE-2026-14456-OPENSSL-PRE35-MAPPING", cve: "CVE-2026-14456",
-    severity: "HIGH", packageName: "openssl", packageVersion: "3.0.20-1~deb12u2",
-    providerStatement: "The issue is present since OpenSSL 3.5 when the QUIC server implementation was added.",
-    reachabilityEvidence: "Provider states the issue begins in OpenSSL 3.5 QUIC server; the scanned package is 3.0.20.",
-    approvedBy: "CHAT-OWNER-DIRECTIVE-2026-08-27-FIX-ALL-UNTIL-DEPLOY-SUCCEEDS",
-    expiresAtEpoch: 1788998400 },
   { id: "AWS-ECR-CVE-2026-54874-OPENSSL-DTLS-UNUSED", cve: "CVE-2026-54874",
     severity: "HIGH", packageName: "openssl", packageVersion: "3.0.20-1~deb12u2",
     providerStatement: "Receiving a DTLS record for a future epoch while a handshake is in progress",
     reachabilityEvidence: "No process in the image speaks DTLS; the runtime is Node 22 with bundled OpenSSL 3.5.7 and the Debian package enters only as a ca-certificates dependency.",
-    approvedBy: "CHAT-OWNER-DIRECTIVE-2026-08-27-FIX-ALL-UNTIL-DEPLOY-SUCCEEDS",
-    expiresAtEpoch: 1788998400 },
+    approvedBy: "CHAT-OWNER-DIRECTIVE-2026-09-05-CVE-WAIVER-RENEWAL-2026-10-05",
+    expiresAtEpoch: 1791158400 },
   { id: "AWS-ECR-CVE-2026-63072-OPENSSL-CMS-UNUSED", cve: "CVE-2026-63072",
     severity: "HIGH", packageName: "openssl", packageVersion: "3.0.20-1~deb12u2",
     providerStatement: "reachable from the public CMS_decrypt() function",
     reachabilityEvidence: "No process in the image calls CMS_decrypt and the openssl CLI is never executed (repo-verified 2026-08-27).",
-    approvedBy: "CHAT-OWNER-DIRECTIVE-2026-08-27-FIX-ALL-UNTIL-DEPLOY-SUCCEEDS",
-    expiresAtEpoch: 1788998400 },
+    approvedBy: "CHAT-OWNER-DIRECTIVE-2026-09-05-CVE-WAIVER-RENEWAL-2026-10-05",
+    expiresAtEpoch: 1791158400 },
   { id: "AWS-ECR-CVE-2026-63076-OPENSSL-CMP-UNUSED", cve: "CVE-2026-63076",
     severity: "HIGH", packageName: "openssl", packageVersion: "3.0.20-1~deb12u2",
     providerStatement: "CMP is a specialized feature that an application must explicitly enable.",
     reachabilityEvidence: "No process in the image enables CMP and the openssl CLI is never executed (repo-verified 2026-08-27).",
-    approvedBy: "CHAT-OWNER-DIRECTIVE-2026-08-27-FIX-ALL-UNTIL-DEPLOY-SUCCEEDS",
-    expiresAtEpoch: 1788998400 },
+    approvedBy: "CHAT-OWNER-DIRECTIVE-2026-09-05-CVE-WAIVER-RENEWAL-2026-10-05",
+    expiresAtEpoch: 1791158400 },
   { id: "AWS-ECR-CVE-2026-75803-OPENSSL-EVP-CIPHER-UNUSED", cve: "CVE-2026-75803",
     severity: "CRITICAL", packageName: "openssl", packageVersion: "3.0.20-1~deb12u2",
     providerStatement: "for AES-OCB and ChaCha20-Poly1305 ciphers it skipped the AEAD tag verification when an empty ciphertext was passed to the function",
     reachabilityEvidence: "The runtime is Node 22 with its own bundled OpenSSL, not the Debian libssl; the Debian openssl package enters only as a hard dependency of ca-certificates and, in the api image, of the ClamAV 1.5.3 .deb. No process in any image calls EVP_Cipher() on an attacker-supplied AEAD ciphertext: ClamAV uses OpenSSL for hashing and database signature checks, and TLS records always carry content plus tag, never an empty ciphertext. FIPS is not in use.",
-    approvedBy: "CHAT-OWNER-DIRECTIVE-2026-09-05-UAT-DEPLOY-WAIVER",
-    expiresAtEpoch: 1789776000 },
+    approvedBy: "CHAT-OWNER-DIRECTIVE-2026-09-05-CVE-WAIVER-RENEWAL-2026-10-05",
+    expiresAtEpoch: 1791158400 },
   { id: "AWS-ECR-CVE-2026-85091-ZLIB-PRE131-MAPPING", cve: "CVE-2026-85091",
     severity: "HIGH", packageName: "zlib", packageVersion: "1.2.13.dfsg-1",
     providerStatement: "when processing non-blocking gzwrite() operations with stale external buffer pointers",
     reachabilityEvidence: "Provider states the affected range is zlib 1.3.1.2 through 1.3.2 while the scanned Debian package is 1.2.13. Node bundles its own zlib, and no process in any image writes gzip streams through the system zlib non-blocking gzwrite()/gzprintf() API (repo-verified 2026-09-05).",
-    approvedBy: "CHAT-OWNER-DIRECTIVE-2026-09-05-UAT-DEPLOY-WAIVER",
-    expiresAtEpoch: 1789776000 }
+    approvedBy: "CHAT-OWNER-DIRECTIVE-2026-09-05-CVE-WAIVER-RENEWAL-2026-10-05",
+    expiresAtEpoch: 1791158400 }
 ];
 
 # The record minus its two scan-derived fields must equal its allowlist row exactly, so id, cve,
