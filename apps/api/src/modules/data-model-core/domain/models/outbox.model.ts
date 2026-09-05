@@ -57,4 +57,13 @@ export type MarkOutboxFailedInput = {
   nextAvailableAt?: Date;
   claimToken?: string | null;
   expectedEventType?: string;
+  /**
+   * Whether this outcome spends one of the row's five attempts. Default true.
+   *
+   * `false` is for a provider that said "not now, come back at T" rather than "this failed": a
+   * LINE 429 against a monthly OA quota would otherwise DEAD the row in five 2^n steps — about two
+   * minutes — and throw away a message the customer is owed for a condition that resolves on its
+   * own. Only ever safe together with `nextAvailableAt`, which is what bounds the retry rate.
+   */
+  countsTowardMax?: boolean;
 };

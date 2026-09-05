@@ -214,6 +214,10 @@ export const apiConfigSchema = baseConfigSchema.extend({
   // production meter: a stop, not an expected bill (a normal trial shop spends ฿15–25).
   LINE_FREE_AI_BUDGET_SATANG: z.coerce.number().int().positive().default(8000),
   LINE_SIGNUP_ADMIN_REMINDER_MINUTES: z.coerce.number().int().positive().default(60),
+  // §15.6/§15.7: how many trial shops must exhaust their AI budget in one Bangkok day before the
+  // operators are told. One shop is a customer being enthusiastic; five is a pricing or abuse
+  // signal. Positive on purpose — 0 would alert on a day nothing happened.
+  LINE_SIGNUP_ADMIN_ALERT_BUDGET_EXHAUSTED_PER_DAY: z.coerce.number().int().positive().default(5),
   // Asia/Bangkok office window the "within a business day" promise is measured against.
   // Days are a MON..SUN range; hours are HH:MM-HH:MM on a 24h clock.
   LINE_SIGNUP_BUSINESS_DAYS: z.string().regex(/^(MON|TUE|WED|THU|FRI|SAT|SUN)-(MON|TUE|WED|THU|FRI|SAT|SUN)$/).default('MON-SAT'),

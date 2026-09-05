@@ -155,7 +155,11 @@ export class LineMessageBufferService implements OnModuleDestroy {
     // employee message never crosses the durable-payload boundary.
     const companyCommand = envelope.item.kind === 'text' && !!parseLineCompanyCommand(envelope.item.text);
     const publicCommand = envelope.item.kind === 'text' && staffMenuCommand(envelope.item.text);
+    // P10-L: the door commands join the bypass for the same reason the first three are on it — the
+    // reply carries no company data, and a greeting or "I am staff" must answer before there is an
+    // account to have accepted anything.
     const legal = publicCommand === 'contact' || publicCommand === 'talk' || publicCommand === 'promotion'
+      || publicCommand === 'follow' || publicCommand === 'employee' || publicCommand === 'staff_contact'
       ? { status: 'continue' as const, companyId: undefined }
       : await this.processWebhook.preflightLegalAcceptance({
           lineUserId: envelope.lineUserId,

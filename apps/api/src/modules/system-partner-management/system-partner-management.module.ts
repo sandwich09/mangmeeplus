@@ -25,19 +25,26 @@ import { PartnerMemberLineLinkTokenUseCase } from './application/use-cases/partn
 import { DataModelCoreModule } from '../data-model-core/data-model-core.module';
 import { LedgerModule } from '../ledger/ledger.module.js';
 import { DashboardNotificationsModule } from '../dashboard-notifications/dashboard-notifications.module';
+import { LoggerModule } from '../../common/logger/logger.module';
 import { PlanTermInternalController, PlanTermNoticeController } from './presentation/http/plan-term.controller';
 import {
+  EndPlanTermWarmupUseCase,
   GetCompanyPlanTermUseCase,
   GetPlanTermNoticeUseCase,
   RenewCompanyPlanTermUseCase,
   SetCompanyPlanTermUseCase,
 } from './application/use-cases/company-plan-term.use-cases';
 import { PlanTermSweepUseCase } from './application/use-cases/plan-term-sweep.use-case';
+import { GetPartnerTimelineUseCase } from './application/use-cases/get-partner-timeline.use-case';
+import { SendPartnerLineMessageUseCase } from './application/use-cases/send-partner-line-message.use-case';
+import { PackageChangeDecisionUseCase } from './application/use-cases/package-change-decision.use-case';
+import { SystemPackageChangeController } from './presentation/http/system-package-change.controller';
 
 @Module({
   // DashboardNotificationsModule supplies CreateOrUpdateNotificationEventUseCase for the P29
   // warning ladder and expiry notices (WEB + LINE, owners and system admins).
-  imports: [LedgerModule, DataModelCoreModule, DashboardNotificationsModule],
+  // LoggerModule: LOGGER_TOKEN for the best-effort LINE notice the package-change decision sends.
+  imports: [LedgerModule, DataModelCoreModule, DashboardNotificationsModule, LoggerModule],
   controllers: [
     PartnerController,
     SystemLineController,
@@ -45,6 +52,7 @@ import { PlanTermSweepUseCase } from './application/use-cases/plan-term-sweep.us
     SystemUserLookupController,
     PlanTermNoticeController,
     PlanTermInternalController,
+    SystemPackageChangeController,
   ],
   providers: [
     ListPartnersUseCase,
@@ -70,7 +78,11 @@ import { PlanTermSweepUseCase } from './application/use-cases/plan-term-sweep.us
     SetCompanyPlanTermUseCase,
     RenewCompanyPlanTermUseCase,
     GetPlanTermNoticeUseCase,
+    EndPlanTermWarmupUseCase,
     PlanTermSweepUseCase,
+    GetPartnerTimelineUseCase,
+    SendPartnerLineMessageUseCase,
+    PackageChangeDecisionUseCase,
   ],
   // Nothing outside this module needs a plan-term writer: onboarding is the single place a term
   // row is created (review B-01), and it calls `applyPlanTermPreset` directly.

@@ -44,6 +44,9 @@ LINE_SIGNUP_AUTO_DAILY_CAP_INPUT="${LINE_SIGNUP_AUTO_DAILY_CAP:-20}"
 LINE_SIGNUP_WARMUP_SLIPS_INPUT="${LINE_SIGNUP_WARMUP_SLIPS:-10}"
 LINE_FREE_AI_BUDGET_SATANG_INPUT="${LINE_FREE_AI_BUDGET_SATANG:-8000}"
 LINE_SIGNUP_ADMIN_REMINDER_MINUTES_INPUT="${LINE_SIGNUP_ADMIN_REMINDER_MINUTES:-60}"
+# §15.6: how many trial shops must exhaust their AI budget in one Bangkok day before ops is told.
+# Same value in both environments — it is an ops threshold, not a customer-facing switch.
+LINE_SIGNUP_ADMIN_ALERT_BUDGET_EXHAUSTED_PER_DAY_INPUT="${LINE_SIGNUP_ADMIN_ALERT_BUDGET_EXHAUSTED_PER_DAY:-5}"
 LINE_SIGNUP_BUSINESS_DAYS_INPUT="${LINE_SIGNUP_BUSINESS_DAYS:-MON-SAT}"
 LINE_SIGNUP_BUSINESS_HOURS_INPUT="${LINE_SIGNUP_BUSINESS_HOURS:-09:00-18:00}"
 RECEIPT_QUOTA_ENFORCED_INPUT="${RECEIPT_QUOTA_ENFORCED:-}"
@@ -246,6 +249,7 @@ assert_positive_int() {
 assert_positive_int LINE_SIGNUP_WARMUP_SLIPS "$LINE_SIGNUP_WARMUP_SLIPS_INPUT"
 assert_positive_int LINE_FREE_AI_BUDGET_SATANG "$LINE_FREE_AI_BUDGET_SATANG_INPUT"
 assert_positive_int LINE_SIGNUP_ADMIN_REMINDER_MINUTES "$LINE_SIGNUP_ADMIN_REMINDER_MINUTES_INPUT"
+assert_positive_int LINE_SIGNUP_ADMIN_ALERT_BUDGET_EXHAUSTED_PER_DAY "$LINE_SIGNUP_ADMIN_ALERT_BUDGET_EXHAUSTED_PER_DAY_INPUT"
 if [[ ! "$LINE_SIGNUP_BUSINESS_DAYS_INPUT" =~ ^(MON|TUE|WED|THU|FRI|SAT|SUN)-(MON|TUE|WED|THU|FRI|SAT|SUN)$ ]]; then
   echo "ERROR: LINE_SIGNUP_BUSINESS_DAYS must look like MON-SAT" >&2; exit 2
 fi
@@ -1617,6 +1621,7 @@ api_container_json() {
     --arg lineSignupWarmupSlips "$LINE_SIGNUP_WARMUP_SLIPS_INPUT" \
     --arg lineFreeAiBudgetSatang "$LINE_FREE_AI_BUDGET_SATANG_INPUT" \
     --arg lineSignupAdminReminderMinutes "$LINE_SIGNUP_ADMIN_REMINDER_MINUTES_INPUT" \
+    --arg lineSignupAdminAlertBudgetExhaustedPerDay "$LINE_SIGNUP_ADMIN_ALERT_BUDGET_EXHAUSTED_PER_DAY_INPUT" \
     --arg lineSignupBusinessDays "$LINE_SIGNUP_BUSINESS_DAYS_INPUT" \
     --arg lineSignupBusinessHours "$LINE_SIGNUP_BUSINESS_HOURS_INPUT" \
     --arg receiptQuotaEnforced "$SERVING_RECEIPT_QUOTA_ENFORCED" \
@@ -1717,6 +1722,7 @@ api_container_json() {
         {name:"LINE_SIGNUP_WARMUP_SLIPS", value:$lineSignupWarmupSlips},
         {name:"LINE_FREE_AI_BUDGET_SATANG", value:$lineFreeAiBudgetSatang},
         {name:"LINE_SIGNUP_ADMIN_REMINDER_MINUTES", value:$lineSignupAdminReminderMinutes},
+        {name:"LINE_SIGNUP_ADMIN_ALERT_BUDGET_EXHAUSTED_PER_DAY", value:$lineSignupAdminAlertBudgetExhaustedPerDay},
         {name:"LINE_SIGNUP_BUSINESS_DAYS", value:$lineSignupBusinessDays},
         {name:"LINE_SIGNUP_BUSINESS_HOURS", value:$lineSignupBusinessHours},
         {name:"RECEIPT_QUOTA_ENFORCED", value:$receiptQuotaEnforced},

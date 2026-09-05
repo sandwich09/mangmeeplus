@@ -223,6 +223,45 @@ describe('PrismaOutboxRepository', () => {
       assert.equal(updateArg.data.status, 'DEAD');
       assert.equal(updateArg.data.attempts, 5);
     });
+
+    /**
+     * G-07. A provider that says "not now, come back at T" has not failed — it has scheduled. A LINE
+     * 429 against the OA's MONTHLY message quota retries for hours, and the ordinary ladder would
+     * DEAD the row after five 2^n steps (about two minutes), throwing away a message the customer
+     * is owed for a condition that resolves on its own.
+     */
+    it('does not spend an attempt on a throttle, so a quota outage cannot DEAD the row', async () => {
+      const at = new Date(now.getTime() + 3_600_000);
+      // Already at the last attempt an ordinary failure would ever get.
+      const row = { ...baseRow, attempts: 4 };
+      const updateManyFn = mock.fn(async () => ({ count: 1 }));
+      const { repo } = makeRepo({
+        findUnique: mock.fn(async () => row),
+        updateMany: updateManyFn,
+      });
+
+      await repo.markFailed({ id: 'out-1', error: 'line_api_429', nextAvailableAt: at, countsTowardMax: false });
+
+      const updateArg = (updateManyFn.mock.calls as any[])[0]?.arguments[0];
+      assert.equal(updateArg.data.status, 'FAILED', 'a throttled row stays retryable at the DEAD threshold');
+      assert.equal(updateArg.data.attempts, 4, 'and keeps its budget');
+      assert.deepEqual(updateArg.data.availableAt, at, 'waiting exactly as long as the provider asked');
+    });
+
+    it('honours an explicit schedule while still spending the attempt by default', async () => {
+      const at = new Date(now.getTime() + 900_000);
+      const updateManyFn = mock.fn(async () => ({ count: 1 }));
+      const { repo } = makeRepo({
+        findUnique: mock.fn(async () => ({ ...baseRow, attempts: 1 })),
+        updateMany: updateManyFn,
+      });
+
+      await repo.markFailed({ id: 'out-1', error: 'timeout', nextAvailableAt: at });
+
+      const updateArg = (updateManyFn.mock.calls as any[])[0]?.arguments[0];
+      assert.equal(updateArg.data.attempts, 2);
+      assert.deepEqual(updateArg.data.availableAt, at);
+    });
   });
 
   // F1.5b P0-4. The behaviour is proven against a real database in

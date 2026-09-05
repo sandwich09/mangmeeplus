@@ -19,7 +19,7 @@ function makeController(config: Record<string, unknown> = {}): AuthController {
     { lineLiffId: '1234567890-test', isLocal: false, ...config } as any,
     stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
     stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
-    stub, stub, stub, stub, stub,
+    stub, stub, stub, stub, stub, stub,
   );
 }
 
@@ -61,6 +61,8 @@ function runLiffClientGate(userAgent: string) {
     document: {
       body: { dataset: { liffMode: 'customer', liffId: '', apiBase: '', devMode: 'false', oaAddUrl: '' } },
       getElementById: (id: string) => elements[id] ?? null,
+      // The signup/waiting cards' "ปิด" buttons are bound by selector; this page has none.
+      querySelectorAll: () => [],
     },
     navigator: { userAgent },
     location: { href: 'https://api.example.test/v1/auth/line/customer-register-page', origin: 'https://api.example.test', search: '' },
@@ -89,7 +91,7 @@ describe('AuthController password reset request', () => {
     const controller = new AuthController(
       stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
       stub, stub, notifyPasswordResetRequest, stub, stub, stub, stub, stub, rateLimit, stub, stub, stub,
-      stub, stub, stub, stub, stub,
+      stub, stub, stub, stub, stub, stub,
     );
 
     const body = await controller.requestPasswordResetNotice({ username: 'first' }, {
@@ -124,7 +126,7 @@ describe('AuthController password reset request', () => {
     const controller = new AuthController(
       stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
       stub, stub, notifyPasswordResetRequest, stub, stub, stub, stub, stub, rateLimit, stub, stub, stub,
-      stub, stub, stub, stub, stub,
+      stub, stub, stub, stub, stub, stub,
     );
     const req = { headers: {}, socket: { remoteAddress: '198.51.100.9' } } as any;
 
@@ -216,7 +218,7 @@ describe('AI assistant preference (PDPA opt-out)', () => {
     const controller = new AuthController(
       stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
       stub, stub, stub, stub, pref, stub, stub, stub, stub, stub, stub, stub,
-      stub, stub, stub, stub, stub,
+      stub, stub, stub, stub, stub, stub,
     );
 
     await controller.setAiAssistantPreference({ enabled: false } as any, {
@@ -235,7 +237,7 @@ describe('AuthController password change session binding', () => {
     const controller = new AuthController(
       stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
       changePassword, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
-      stub, stub, stub, stub, stub,
+      stub, stub, stub, stub, stub, stub,
     );
     const payload = Buffer.from(JSON.stringify({ sid: 'session-current' })).toString('base64url');
 
@@ -272,7 +274,7 @@ describe('AuthController me()', () => {
     return new AuthController(
       stub, prisma, stub, stub, stub, stub, stub, stub, stub, stub,
       stub, stub, stub, stub, stub, stub, stub, stub, stub, legalAcceptance, stub, stub,
-      stub, stub, stub, stub, stub,
+      stub, stub, stub, stub, stub, stub,
     );
   }
 

@@ -1,5 +1,13 @@
 import { type LineAiAnswerCard, type LineAiTurnResponse } from '@watchdog-bms/contracts';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
+import {
+  EMPLOYEE_DOOR_COMMAND,
+  PACKAGE_CHANGE_COMMAND,
+  STAFF_CONTACT_COMMAND,
+  PROFILE_GUARD_COMMAND,
+  PROFILE_GUARD_LATER_COMMAND,
+  VIEW_PACKAGES_COMMAND,
+} from './line-staff-menu.logic';
 
 const THEME = {
   brand: '#22C55E',
@@ -20,8 +28,15 @@ const preview = (value: string, max: number) => {
   return characters.length > max ? `${characters.slice(0, max - 1).join('')}…` : characters.join('');
 };
 
-/** A URI button, or one that sends a text command the webhook already answers (`โปรโมชั่น`). */
-type SafeButton = { label: string; uri: string } | { label: string; text: string };
+/**
+ * A URI button, one that sends a text command the webhook already answers (`โปรโมชั่น`), or one
+ * that posts a bare intent back (P10-L G-04). Postback `data` never carries an id or any state —
+ * see `linePostbackCommandText`, which is the only thing that reads it.
+ */
+type SafeButton =
+  | { label: string; uri: string }
+  | { label: string; text: string }
+  | { label: string; data: string };
 
 /** A labelled fact on its own line of the card body. §10.1 asks the expense/reimbursement summaries to
  *  be STRUCTURED rows rather than one wrapped paragraph, so the reader sees each fact separately. */
@@ -105,7 +120,9 @@ function bubble(
           type: 'button', style: 'primary', color: THEME.brandDark,
           action: 'uri' in button
             ? { type: 'uri', label: bounded(button.label, 40), uri: button.uri }
-            : { type: 'message', label: bounded(button.label, 40), text: button.text },
+            : 'data' in button
+              ? { type: 'postback', label: bounded(button.label, 40), data: button.data }
+              : { type: 'message', label: bounded(button.label, 40), text: button.text },
         })),
       },
     } : {}),
@@ -331,11 +348,135 @@ export function buildLegalAcceptanceRequiredMessage(
   };
 }
 
-/** The command the webhook already answers with the promotion card (`staffMenuCommand` → `promotion`). */
-const VIEW_PACKAGES_COMMAND = 'โปรโมชั่น';
-/** TODO(L-B): wire this text (or a postback) to the package-change request use case the L-A branch
- *  added; until the dispatcher exists it falls through to the ordinary assistant turn. */
-const PACKAGE_CHANGE_COMMAND = 'ขอเปลี่ยนแพ็กเกจ';
+/**
+ * P10-L §3.1 — the three doors. Everyone who reaches the OA without an account sees exactly this
+ * card, whether they typed something or just added the friend, so there is one answer to "what is
+ * this and what do I do" instead of a dead end.
+ *
+ * A missing LIFF id (unconfigured env) drops that door rather than sending a broken link — the same
+ * fail-open policy every other card here uses for an unusable URL.
+ */
+export function buildSignupDoorCard(liffId: string | undefined, webBaseUrl?: string): LineReplyMessage {
+  const liff = liffId && LIFF_ID_PATTERN.test(liffId) ? liffId : undefined;
+  const text = 'สวัสดีค่ะ ยินดีต้อนรับสู่มั่งมีพลัส เลือกทางที่ตรงกับคุณได้เลยค่ะ';
+  const linkUrl = existingAccountLinkUrl(webBaseUrl);
+  return {
+    type: 'flex',
+    altText: preview(text, 400),
+    contents: bubble(
+      // Owner asked for the verified shield on this card (spec §9): it is the one card a stranger
+      // sees, so it is the one place a fake OA would be imitating.
+      { title: 'มั่งมีพลัส ✅', badge: 'บัญชีทางการที่ยืนยันแล้ว', text },
+      undefined,
+      '',
+      [
+        ...(liff ? [{ label: 'เปิดร้านใหม่ ทดลองฟรี', uri: `https://liff.line.me/${liff}/signup` }] : []),
+        { label: EMPLOYEE_DOOR_COMMAND, text: EMPLOYEE_DOOR_COMMAND },
+        ...(linkUrl ? [{ label: 'มีบัญชีอยู่แล้ว เชื่อม LINE', uri: linkUrl }] : []),
+        // §7: the one door that reaches a person. Without it the keyword is typing-only and the
+        // people most likely to need it are the ones least likely to guess it.
+        { label: STAFF_CONTACT_COMMAND, text: STAFF_CONTACT_COMMAND },
+      ],
+    ),
+  };
+}
+
+/**
+ * P12 link mode, NOT the LIFF account link-page: that page asks `getWatchDogToken()` for
+ * `localStorage['watchdog_access_token']`, a key nothing in the product writes any more, so every
+ * tap ended on "WatchDog session missing. Login to WatchDog first." — in English, on a Thai card.
+ *
+ * `line=link-required` is the notice `LoginPage` renders for exactly this case: sign in once with a
+ * password and the page hands the browser back to LINE, which links the account. `next=/` because
+ * the session gate resolves the company itself; a card is built before anyone is identified.
+ * `openExternalBrowser=1` is hardcoded (as `line-web-qr.logic.ts` does) because a Flex URI is a
+ * static string — the client-side UA helper cannot run here, and the login cookie has to land in
+ * the same browser that finishes the round trip.
+ */
+function existingAccountLinkUrl(webBaseUrl: string | undefined): string | undefined {
+  if (!webBaseUrl) return undefined;
+  try {
+    const base = new URL(webBaseUrl);
+    if (base.protocol !== 'https:' && base.protocol !== 'http:') return undefined;
+    return `${base.origin}/login?line=link-required&next=%2F&openExternalBrowser=1`;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Only what LINE itself accepts in a LIFF URL: `<channel digits>-<id>`. */
+export const LIFF_ID_PATTERN = /^[0-9]{4,20}-[A-Za-z0-9]{1,32}$/;
+
+/**
+ * P10-L §3.1/§7. The door card becomes this one while an application is travelling: the same three
+ * sentences the LIFF page shows, so the customer never gets two different answers to "where is it".
+ */
+export function buildSignupStatusCard(companyName: string, businessHours: boolean): LineReplyMessage {
+  const shop = companyName.trim() ? `ร้าน ${bounded(companyName, 60)} ` : '';
+  const text = businessHours
+    ? `ได้รับคำขอเปิด${shop}แล้วค่ะ ทีมงานกำลังตรวจสอบ ปกติดำเนินการให้ภายในวันทำการ (จันทร์–เสาร์ 9:00–18:00) พร้อมเมื่อไหร่จะแจ้งในแชทนี้นะคะ`
+    : `ได้รับคำขอเปิด${shop}แล้วค่ะ ตอนนี้อยู่นอกเวลาทำการ ทีมงานจะดูให้ในวันทำการถัดไป (จันทร์–เสาร์ 9:00–18:00) นะคะ`;
+  return {
+    type: 'flex',
+    altText: preview(text, 400),
+    contents: bubble(
+      { title: 'ได้รับคำขอแล้ว', badge: '⏳ กำลังตรวจสอบ', text },
+      undefined,
+      '',
+      // Waiting is exactly when someone wants a person, so this card carries the door too (§7).
+      [{ label: STAFF_CONTACT_COMMAND, text: STAFF_CONTACT_COMMAND }],
+    ),
+  };
+}
+
+/**
+ * P10-L G-05. The monthly AI budget running out used to answer "กำลังประมวลผลข้อความก่อนหน้า",
+ * which is not merely unhelpful — it invites the shop to send again, spending more. This says what
+ * happened and offers the one action that fixes it.
+ *
+ * "ช่วงทดลอง" appears only for the trial tier; a paying shop is told about its package instead.
+ */
+export function buildAiBudgetExceededMessage(trialTier: boolean): LineReplyMessage {
+  const text = trialTier
+    ? 'โควตา AI ของแพ็กเกจเดือนนี้ครบแล้วค่ะ ช่วงทดลองมีงบให้ AI ช่วยตอบจำกัดต่อเดือน เดือนหน้าเริ่มใหม่ '
+      + 'หรือขอเปลี่ยนแพ็กเกจเพื่อใช้ต่อได้เลยนะคะ'
+    : 'โควตา AI ของแพ็กเกจเดือนนี้ครบแล้วค่ะ เดือนหน้าเริ่มใหม่ หรือขอเปลี่ยนแพ็กเกจเพื่อใช้ต่อได้เลยนะคะ';
+  return {
+    type: 'flex',
+    altText: preview(text, 400),
+    contents: bubble(
+      { title: 'โควตา AI เดือนนี้ครบแล้ว', badge: '💚 ครบโควตาเดือนนี้', text },
+      undefined,
+      '',
+      [
+        { label: 'ดูแพ็กเกจ', text: VIEW_PACKAGES_COMMAND },
+        { label: PACKAGE_CHANGE_COMMAND, text: PACKAGE_CHANGE_COMMAND },
+      ],
+    ),
+  };
+}
+
+/**
+ * P10-L §3.6 "กันหลุด". The one nudge a LINE-only shop gets, on day 7 or after five reads. Both
+ * buttons are postbacks: the answer is an intent, and neither belongs in the chat transcript as a
+ * message the shop owner appears to have typed.
+ */
+export function buildProfileGuardNudgeCard(): LineReplyMessage {
+  const text = 'ใช้มาครบสัปดาห์แล้วค่ะ 👍 ใส่อีเมลหรือเบอร์ไว้หน่อยไหมคะ เผื่อเปลี่ยนมือถือแล้ว LINE หลุด จะได้กู้ร้านคืนได้';
+  return {
+    type: 'flex',
+    altText: preview(text, 400),
+    contents: bubble(
+      { title: 'กันร้านหลุด', badge: '🔐 เผื่อเปลี่ยนมือถือ', text },
+      undefined,
+      '',
+      [
+        { label: PROFILE_GUARD_COMMAND, data: 'action=profile-guard' },
+        { label: PROFILE_GUARD_LATER_COMMAND, data: 'action=profile-guard-later' },
+      ],
+    ),
+  };
+}
 
 /**
  * Spec §3.7 / §7 row "ชนโควตา 15 ใบ" — the reply to the image that hit the monthly ceiling.

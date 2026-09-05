@@ -1,6 +1,6 @@
 import { Body, Controller, Get, HttpCode, Param, Post, Req } from '@nestjs/common';
 import { ApiOperation, ApiResponse } from '@nestjs/swagger';
-import { IsBoolean, IsIn, IsNotEmpty, IsOptional, IsString, MaxLength, ValidateNested } from 'class-validator';
+import { IsBoolean, IsIn, IsNotEmpty, IsOptional, IsString, MaxLength, ValidateIf, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import type { Request } from 'express';
 import { COMPANY_BUSINESS_CATEGORIES, VAT_FACT_STATUSES, type CompanyBusinessCategory, type VatFactStatus } from '@watchdog-bms/contracts';
@@ -20,7 +20,9 @@ class VatRegistrationAnswerDto {
   @IsString() @IsNotEmpty() effectiveFrom!: string;
 }
 
-class CreateOnboardingDto {
+// Exported for the DTO boundary spec: the ValidateIf below is what keeps a forgotten username a
+// 400 from the global pipe, and only the real pipe can prove it.
+export class CreateOnboardingDto {
   @IsString() @IsNotEmpty() companyName!: string;
   // Optional on purpose: an admin who does not know leaves it out and the company stays UNKNOWN.
   @ValidateNested() @Type(() => VatRegistrationAnswerDto) @IsOptional() vatRegistration?: VatRegistrationAnswerDto;
@@ -32,7 +34,18 @@ class CreateOnboardingDto {
   // screen, so the two can never disagree about what a valid tax id is.
   @IsString() @IsOptional() @MaxLength(32) taxId?: string;
   @IsString() @IsNotEmpty() ownerDisplayName!: string;
-  @IsString() @IsNotEmpty() ownerUsername!: string;
+  // Required exactly as before UNLESS `ownerLineOnly` is set: `ValidateIf` keeps the missing-field
+  // answer a 400 from the global pipe rather than turning it into the use-case's 422 for every
+  // existing caller that forgets it (review A-04 follow-up).
+  @ValidateIf((dto: CreateOnboardingDto) => dto.ownerLineOnly !== true)
+  @IsString() @IsNotEmpty() ownerUsername?: string;
+  /**
+   * A-04: "ลูกค้าใช้ LINE เท่านั้น". No username, no temporary password — the owner LINE-link QR
+   * this endpoint already returns is the whole handover, and the identity is created when they
+   * scan it. A boolean rather than the full `ownerAuth` union, because the console has exactly one
+   * of the three shapes to offer and the other two are not its to choose.
+   */
+  @IsBoolean() @IsOptional() ownerLineOnly?: boolean;
   @IsBoolean() @IsOptional() attachExistingOwner?: boolean;
   @IsString() @IsOptional() modulePackage?: string;
   @IsString() @IsOptional() lineOaAddUrl?: string;
@@ -65,7 +78,9 @@ export class SystemOnboardingController {
       ...(dto.taxId ? { taxId: dto.taxId } : {}),
       ...(dto.vatRegistration && { vatRegistration: dto.vatRegistration as any }),
       ownerDisplayName: dto.ownerDisplayName,
-      ownerUsername: dto.ownerUsername,
+      ...(dto.ownerUsername ? { ownerUsername: dto.ownerUsername } : {}),
+      // A-04. Absent for every existing caller, so the default `password` path is untouched.
+      ...(dto.ownerLineOnly ? { ownerAuth: { kind: 'line-link-later' as const } } : {}),
       attachExistingOwner: dto.attachExistingOwner,
       modulePackage: dto.modulePackage,
       lineOaAddUrl: dto.lineOaAddUrl,

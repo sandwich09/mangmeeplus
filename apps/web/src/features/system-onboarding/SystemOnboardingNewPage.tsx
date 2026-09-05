@@ -39,7 +39,8 @@ type HandoffResult = {
   onboardingRunId: string;
   companyId: string;
   ownerId: string;
-  username: string;
+  /** null for a LINE-only owner: there is no username to hand over, by design (spec §6). */
+  username: string | null;
   attachedExistingOwner?: boolean;
   temporaryPassword?: string; // absent in attach-existing-owner mode
   handoffUrl: string;
@@ -239,6 +240,15 @@ function MaintenanceCard({ prefillRunId }: { prefillRunId: string }) {
   );
 }
 
+/**
+ * Review A-04. The console has three owner shapes and only two used to have copy. A LINE-only shop
+ * has no username by design, which is exactly how it is told apart from an attach — where the
+ * existing account's username comes back.
+ */
+function lineOnlyHandoff(result: HandoffResult): boolean {
+  return result.username === null && !result.temporaryPassword;
+}
+
 function HandoffPackage({ result }: { result: HandoffResult }) {
   return (
     <div className="space-y-4">
@@ -246,6 +256,12 @@ function HandoffPackage({ result }: { result: HandoffResult }) {
         <div className="rounded border border-amber-300 bg-amber-50 px-4 py-3">
           <p className="text-sm font-semibold text-amber-900">
             This password will not be shown again. Copy it now and hand it to the customer through a secure channel.
+          </p>
+        </div>
+      ) : lineOnlyHandoff(result) ? (
+        <div className="rounded bg-green-50 border border-green-200 px-4 py-3">
+          <p className="text-sm font-semibold text-green-700">
+            ลูกค้าใช้ LINE เท่านั้น — ไม่มีชื่อผู้ใช้และรหัสผ่านชั่วคราว ส่งมอบด้วย QR เชื่อม LINE ด้านล่าง (ใช้ได้ครั้งเดียว อายุ 72 ชั่วโมง)
           </p>
         </div>
       ) : (
@@ -257,7 +273,7 @@ function HandoffPackage({ result }: { result: HandoffResult }) {
       )}
       <div className="space-y-2">
         <HandoffField label="Company Dashboard URL" value={result.handoffUrl} />
-        <HandoffField label="Login Username" value={result.username} />
+        {result.username && <HandoffField label="Login Username" value={result.username} />}
         {result.temporaryPassword && <HandoffField label="TEMPORARY PASSWORD (shown once only)" value={result.temporaryPassword} />}
         {result.ownerLineLink && <OwnerLineLinkCard lineLink={result.ownerLineLink} />}
         {result.lineAddUrl && <HandoffField label="LINE OA Add URL" value={result.lineAddUrl} />}
@@ -286,6 +302,10 @@ function HandoffPackage({ result }: { result: HandoffResult }) {
                 <li>Sign in to the web dashboard with the username and temporary password above.</li>
                 <li>Change your password when prompted before accessing any module.</li>
               </>
+            ) : lineOnlyHandoff(result) ? (
+              // There is nothing to sign in WITH yet: scanning the QR is what creates the identity,
+              // and after that the LINE buttons carry them into the web.
+              <li>สแกน QR เชื่อม LINE ด้านบนด้วยบัญชี LINE ของเจ้าของร้าน แล้วเข้าใช้งานผ่านปุ่มในแชทได้เลย</li>
             ) : (
               <li>Sign in to the web dashboard with the existing username and password.</li>
             )}
@@ -317,6 +337,9 @@ export default function SystemOnboardingNewPage() {
   const [ownerDisplayName, setOwnerDisplayName] = useState('');
   const [ownerUsername, setOwnerUsername] = useState('');
   const [attachExistingOwner, setAttachExistingOwner] = useState(false);
+  // Review A-04: the customer lives on LINE, so there is no username to hand over and no temporary
+  // password to leak — the owner LINE-link QR below is the whole handover.
+  const [ownerLineOnly, setOwnerLineOnly] = useState(false);
   const [modulePackage, setModulePackage] = useState('');
   const [lineOaAddUrl, setLineOaAddUrl] = useState('');
   const [lineLinkUrl, setLineLinkUrl] = useState('');
@@ -360,7 +383,8 @@ export default function SystemOnboardingNewPage() {
             },
           } : {}),
           ownerDisplayName: attachExistingOwner && !ownerDisplayName ? ownerUsername : ownerDisplayName,
-          ownerUsername,
+          // Omitted, not blanked, for a LINE-only owner: the column is null by design (spec §6).
+          ...(ownerLineOnly ? { ownerLineOnly: true } : { ownerUsername }),
           ...(attachExistingOwner ? { attachExistingOwner: true } : {}),
           ...(modulePackage ? { modulePackage } : {}),
           ...(lineOaAddUrl ? { lineOaAddUrl } : {}),
@@ -479,20 +503,40 @@ export default function SystemOnboardingNewPage() {
                 <input
                   type="checkbox"
                   checked={attachExistingOwner}
-                  onChange={(e) => setAttachExistingOwner(e.target.checked)}
+                  onChange={(e) => { setAttachExistingOwner(e.target.checked); if (e.target.checked) setOwnerLineOnly(false); }}
                 />
                 Attach to an existing owner username (no new user or password; owner switches companies from the header / LINE)
               </label>
+              {/* Review A-04. Mutually exclusive with attach-existing: that path reuses an account
+                  which already has whatever credential it has. */}
+              {!attachExistingOwner && (
+                <label className="flex items-start gap-2 rounded border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700">
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={ownerLineOnly}
+                    onChange={(e) => setOwnerLineOnly(e.target.checked)}
+                  />
+                  <span>
+                    ลูกค้าใช้ LINE เท่านั้น / Customer signs in with LINE only
+                    <span className="mt-0.5 block text-xs text-gray-500">
+                      ไม่ออกชื่อผู้ใช้และรหัสผ่านชั่วคราว ส่งมอบด้วย QR เชื่อม LINE ของเจ้าของร้านอย่างเดียว (อายุ 72 ชั่วโมง)
+                    </span>
+                  </span>
+                </label>
+              )}
               {!attachExistingOwner && (
                 <div>
                   <label className={labelClass}>Owner Display Name *</label>
                   <input className={inputClass} required value={ownerDisplayName} onChange={(e) => setOwnerDisplayName(e.target.value)} />
                 </div>
               )}
-              <div>
-                <label className={labelClass}>{attachExistingOwner ? 'Existing Owner Username *' : 'Owner Username *'}</label>
-                <input className={inputClass} required value={ownerUsername} onChange={(e) => setOwnerUsername(e.target.value)} />
-              </div>
+              {!ownerLineOnly && (
+                <div>
+                  <label className={labelClass}>{attachExistingOwner ? 'Existing Owner Username *' : 'Owner Username *'}</label>
+                  <input className={inputClass} required value={ownerUsername} onChange={(e) => setOwnerUsername(e.target.value)} />
+                </div>
+              )}
               <button type="submit" className={btnClass} disabled={loading}>
                 {loading ? 'Creating…' : 'Create Onboarding'}
               </button>

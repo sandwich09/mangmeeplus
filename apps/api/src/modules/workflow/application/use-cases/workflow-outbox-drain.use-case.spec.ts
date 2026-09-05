@@ -89,6 +89,13 @@ describe('DrainWorkflowOutboxUseCase', () => {
       'email.account_claim.requested',
       'email.signup_rejected.requested',
       'notify.signup_pending_review.requested',
+      // P10-L: the LINE pushes belong to the signup drain, which sends them through the messaging
+      // adapter; publishing one as a workflow event would lose the shop's "you are live" message.
+      'push.line_signup.requested',
+      'notify.line_support_request.requested',
+      // §15.6 ops alerts ride the same drain. Claimed here, the operators would simply never be
+      // told the day the machine stopped approving or a customer's push failed.
+      'notify.signup_ops_alert.requested',
     ]);
   });
 

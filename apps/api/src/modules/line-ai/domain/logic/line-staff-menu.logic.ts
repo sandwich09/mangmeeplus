@@ -1,6 +1,24 @@
 import type { LineQuickReplyItem, LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import { FEATURE_CATALOG } from '@watchdog-bms/contracts';
 
+/**
+ * P10-L. The exact words on a button ARE the command, so the label and the matcher can never drift:
+ * both read these. Every one of them is also typeable — the quota card's follow-up text tells a shop
+ * owner to type "ขอเปลี่ยนแพ็กเกจ", and that has to keep working.
+ */
+export const PACKAGE_CHANGE_COMMAND = 'ขอเปลี่ยนแพ็กเกจ';
+export const VIEW_PACKAGES_COMMAND = 'โปรโมชั่น';
+export const EMPLOYEE_DOOR_COMMAND = 'ฉันเป็นพนักงาน';
+export const STAFF_CONTACT_COMMAND = 'ติดต่อเจ้าหน้าที่';
+export const PROFILE_GUARD_COMMAND = 'ใส่เลย';
+export const PROFILE_GUARD_LATER_COMMAND = 'ไว้ก่อน';
+/**
+ * The synthetic text a `follow` event travels as (G-03). It is a menu command on purpose: the
+ * buffer routes anything `staffMenuCommand` recognises down the command lane, so a greeting is
+ * answered on its own instead of being merged into whatever the customer types next.
+ */
+export const LINE_FOLLOW_EVENT_TEXT = 'เพิ่มเพื่อนใหม่';
+
 export type StaffMenuContext = {
   displayName: string;
   roleLabel: string;
@@ -193,6 +211,9 @@ export function buildPromotionCard(assetBaseUrl: string | undefined): LineReplyM
       ] },
       footer: { type: 'box', layout: 'vertical', spacing: 'sm', contents: [
         { type: 'button', style: 'primary', color: '#22C55E', action: { type: 'uri', label: 'ทดลองใช้ฟรี', uri: 'https://official.mangmeeplus.com/' } },
+        // Spec §3.7: the promotion card is a PULL, so the one thing it must let the reader do is
+        // ask — the request lands in the admin queue rather than changing anything by itself.
+        { type: 'button', style: 'secondary', action: { type: 'message', label: PACKAGE_CHANGE_COMMAND, text: PACKAGE_CHANGE_COMMAND } },
         { type: 'button', style: 'secondary', action: { type: 'message', label: 'คุยกับทีมงาน', text: 'ติดต่อเรา' } },
       ] },
     },
@@ -250,6 +271,10 @@ export function buildContactCard(): LineReplyMessage {
         { type: 'button', style: 'secondary', action: { type: 'clipboard', label: 'คัดลอกอีเมล', clipboardText: 'contact@mangmeeplus.com' } },
         { type: 'button', style: 'secondary', action: { type: 'uri', label: 'โทร 098-256-5628', uri: 'tel:0982565628' } },
         { type: 'button', style: 'primary', color: '#22C55E', action: { type: 'uri', label: 'เว็บไซต์อย่างเป็นทางการ', uri: 'https://official.mangmeeplus.com/' } },
+        // P10-L §7. The rich menu's contact tile sends "ติดต่อเรา", which lands here — so without
+        // this button the keyword that actually reaches a person was typing-only, and nobody could
+        // discover it. Chat, not a phone call, is the channel these customers already live in.
+        { type: 'button', style: 'secondary', action: { type: 'message', label: STAFF_CONTACT_COMMAND, text: STAFF_CONTACT_COMMAND } },
       ] },
     },
   };
@@ -438,7 +463,14 @@ export function buildPendingApprovalCard(context: StaffMenuContext, pending: Pen
   };
 }
 
-export function staffMenuCommand(text: string): 'main' | 'query' | 'approval' | 'receipt' | 'services' | 'contact' | 'talk' | 'promotion' | null {
+export type StaffMenuCommand =
+  | 'main' | 'query' | 'approval' | 'receipt' | 'services' | 'contact' | 'talk' | 'promotion'
+  // P10-L §3.7/§7. The four commands the LINE-first flow answers. All exact whole-string matches,
+  // because every one of them is printed on a button — a customer never has to spell them.
+  | 'package_change' | 'employee' | 'staff_contact' | 'profile_guard' | 'profile_guard_later'
+  | 'follow';
+
+export function staffMenuCommand(text: string): StaffMenuCommand | null {
   const normalized = text.trim().replace(/[📊✅📷🎁]/gu, '').trim();
   if (normalized === 'เมนูหลัก') return 'main';
   if (normalized === 'ถามข้อมูล') return 'query';
@@ -447,10 +479,37 @@ export function staffMenuCommand(text: string): 'main' | 'query' | 'approval' | 
   if (normalized === 'บริการของเรา') return 'services';
   if (normalized === 'ติดต่อเรา') return 'contact';
   if (normalized === 'คุยกับน้องมั่งมี') return 'talk';
-  // `ขอเปลี่ยนแพ็กเกจ` is printed on the quota card's button AND the follow-up text tells the shop
-  // to type it, so it must answer something today. Until L-B wires the real package-change request
-  // it lands on the promotion card, which is the same thing the "ดูแพ็กเกจ" button pulls — a shop
-  // that asks to upgrade sees the packages instead of being ignored.
-  if (normalized === 'โปรโมชั่น' || normalized === 'แพ็กเกจ' || normalized === 'ขอเปลี่ยนแพ็กเกจ') return 'promotion';
+  if (normalized === PACKAGE_CHANGE_COMMAND) return 'package_change';
+  if (normalized === EMPLOYEE_DOOR_COMMAND) return 'employee';
+  if (normalized === STAFF_CONTACT_COMMAND) return 'staff_contact';
+  if (normalized === PROFILE_GUARD_COMMAND) return 'profile_guard';
+  if (normalized === PROFILE_GUARD_LATER_COMMAND) return 'profile_guard_later';
+  if (normalized === LINE_FOLLOW_EVENT_TEXT) return 'follow';
+  if (normalized === 'โปรโมชั่น' || normalized === 'แพ็กเกจ') return 'promotion';
   return null;
+}
+
+/**
+ * P10-L G-04 / SEC-04. A postback carries INTENT and nothing else: a bare action name, no company
+ * id, no request id, no state. Each one resolves to a command the text lane already answers, so the
+ * single place that re-checks membership, role and company state stays the only place that decides
+ * anything — a forged `data` value can therefore reach no further than a typed message could.
+ */
+const POSTBACK_ACTIONS: Readonly<Record<string, string>> = {
+  'line-rich-talk': 'คุยกับน้องมั่งมี',
+  'package-change': PACKAGE_CHANGE_COMMAND,
+  'profile-guard': PROFILE_GUARD_COMMAND,
+  'profile-guard-later': PROFILE_GUARD_LATER_COMMAND,
+};
+
+/** `action=<name>&…`; unknown or absent actions answer null so the event is dropped, not guessed. */
+export function linePostbackCommandText(data: string | undefined): string | null {
+  if (!data) return null;
+  let action: string | null;
+  try {
+    action = new URLSearchParams(data).get('action');
+  } catch {
+    return null;
+  }
+  return (action && POSTBACK_ACTIONS[action]) ?? null;
 }

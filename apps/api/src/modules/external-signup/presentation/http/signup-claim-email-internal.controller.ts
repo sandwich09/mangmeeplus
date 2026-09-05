@@ -4,6 +4,8 @@ import { IsInt, IsOptional, Max, Min } from 'class-validator';
 import { Public } from '../../../../common/security/public.decorator';
 import { assertWorkerToken } from '../../../../common/security/worker-token';
 import { SignupClaimEmailService } from '../../application/signup-claim-email.service';
+import { LineSignupNotifyService } from '../../application/line-signup-notify.service';
+import { SignupOpsAlertService } from '../../application/signup-ops-alert.service';
 
 export class SignupClaimEmailDrainDto {
   // A class, not an inline type: only a DTO class reaches the global ValidationPipe, so this is
@@ -19,7 +21,11 @@ export class SignupClaimEmailDrainDto {
 @Public()
 @Controller('internal/signup-claim-email')
 export class SignupClaimEmailInternalController {
-  constructor(private readonly claimEmail: SignupClaimEmailService) {}
+  constructor(
+    private readonly claimEmail: SignupClaimEmailService,
+    private readonly lineNotify: LineSignupNotifyService,
+    private readonly opsAlerts: SignupOpsAlertService,
+  ) {}
 
   @Post('drain')
   drain(
@@ -31,15 +37,29 @@ export class SignupClaimEmailInternalController {
   }
 
   /**
-   * Both claim-clock sweeps ride this one timer: the 24h-before-expiry reminder and the 30-day
-   * park (spec §4D ① and ④). They read the same rows on the same schedule, and the scan worker
-   * ignores the response body — a second timer would only be a second thing to deploy.
+   * Every signup clock rides this one timer: the 24h-before-expiry reminder, the 30-day park (spec
+   * §4D ① and ④) and P10-L's day-7 "กันหลุด" nudge (§3.6). They read the same table on the same
+   * 15-minute schedule, and the scan worker ignores the response body — a second timer would only
+   * be a second thing to deploy and forget. Each sweep claims its own rows, so one throwing does
+   * not silently skip the others' work on the next pass.
    */
   @Post('reminder-sweep')
   async reminderSweep(@Headers('x-worker-token') token: string | undefined) {
     assertWorkerToken(token);
     const reminders = await this.claimEmail.sweepReminders();
     const expiry = await this.claimEmail.sweepExpiredApprovals();
-    return { ...reminders, ...expiry };
+    const profileGuard = await this.lineNotify.sweepProfileGuardNudges();
+    // §15.6 (d) rides here too: "how many trial shops burned their AI budget today" is a question
+    // about state, and this is the timer that already asks state questions on a 15-minute cadence.
+    const trialBudgets = await this.opsAlerts.sweepTrialBudgets();
+    // L-B follow-up (a): a throttled push never terminalizes, so `countDead()` never sees it and
+    // nothing else would ever notice a shop's "พร้อมใช้แล้ว" stuck behind the OA quota.
+    const stuckPushes = await this.opsAlerts.sweepStuckPushes();
+    return {
+      ...reminders, ...expiry,
+      profileGuardQueued: profileGuard.queued,
+      trialBudgetsExhausted: trialBudgets.exhausted,
+      stuckPushes: stuckPushes.stuck,
+    };
   }
 }

@@ -60,8 +60,18 @@ export function signupHintChips(item: AdminSignupQueueItemDto): Chip[] {
   if (item.emailMatchesExistingUser) {
     chips.push({ label: 'อีเมลตรงกับบัญชีเดิม ระบบจะผูกให้ตอนยืนยัน', tone: 'info' });
   }
+  // P10-L §8: this LINE account already belongs to somebody, so approving adds a shop to THEIR
+  // account instead of creating a new one. The operator's next click depends on knowing which.
+  if (item.attachesToExistingAccount) {
+    chips.push({ label: 'LINE นี้มีบัญชีอยู่แล้ว จะเพิ่มเป็นร้านที่ 2', tone: 'info' });
+  }
   if (item.taxIdMatchesCompanyName) {
     chips.push({ label: `เลขภาษีตรงกับ ${item.taxIdMatchesCompanyName}`, tone: 'warning' });
+  }
+  // Review A-01: the number on the form already reaches a shop of ours — most often one an admin
+  // opened by hand for the same person. Advisory: the operator calls, the system decides nothing.
+  if (item.phoneMatchesCompanyName) {
+    chips.push({ label: `อาจซ้ำกับร้าน ${item.phoneMatchesCompanyName}`, tone: 'warning' });
   }
   if (item.mxValid === true) chips.push({ label: 'โดเมนอีเมลตรวจแล้ว', tone: 'neutral' });
   if (item.mxValid === false) chips.push({ label: 'โดเมนอีเมลมีปัญหา', tone: 'danger' });
@@ -105,20 +115,35 @@ export function isFinishingStrandedRow(state: string): boolean {
   return state === 'PROVISIONING_FAILED' || state === 'READY' || state === 'PROVISIONING';
 }
 
-/** Only a LINE application can be suspended: spec §3.7 is about stopping an auto-approved shop. */
+/**
+ * Only a LINE application can be suspended: spec §3.7 is about stopping an auto-approved shop.
+ *
+ * READY is never offered — the shop EXISTS and the application has not closed, so suspending
+ * strands an ACTIVE company whose trial guards may never have run and frees the LINE account to
+ * apply again. The action a READY row wants is the close-out.
+ *
+ * PROVISIONING is offered in exactly ONE case, the same one the API allows under its own lock
+ * (plan note, L-C): an ABANDONED attempt that never stamped a `companyId`. That stamp happens
+ * inside the company transaction, so no company id means nothing was built and nothing can be
+ * stranded — and without the button that row is a dead end whose only other exit is opening a shop
+ * the operator has already decided not to want. A live run, or an abandoned one that DID build a
+ * shop, still shows only the close-out.
+ */
 export function canSuspendSignup(item: AdminSignupQueueItemDto): boolean {
   if (!isLineSignup(item)) return false;
-  // Never mid-provisioning, at either freshness. SUSPENDED is terminal, so suspending here strands
-  // a shop that may already exist but whose trial guards never ran — an UNLIMITED shop, with the
-  // application closed behind it — and on a live run it races the attempt still in flight. The one
-  // action those rows offer is the close-out.
-  if (item.state === 'PROVISIONING') return false;
+  if (item.state === 'READY') return false;
+  if (item.state === 'PROVISIONING') return isAbandonedEmptyAttempt(item);
   return item.state !== 'SUSPENDED' && item.state !== 'REJECTED';
+}
+
+/** The one suspendable PROVISIONING row: given up on by the clock, and with no shop behind it. */
+export function isAbandonedEmptyAttempt(item: AdminSignupQueueItemDto): boolean {
+  return item.state === 'PROVISIONING' && item.staleProvisioning === true && !item.companyId;
 }
 
 /** True when suspending leaves a shop already standing, so the copy must not imply it stops it. */
 export function suspendLeavesShopRunning(state: string): boolean {
-  return state === 'PROVISIONING_FAILED' || state === 'READY' || state === 'COMPLETED';
+  return state === 'PROVISIONING_FAILED' || state === 'COMPLETED';
 }
 
 /** Approval survives an expired link (spec §4D ②) — reissue is the way back, never a re-application. */
@@ -126,14 +151,39 @@ export function canReissueSignup(state: string): boolean {
   return state === 'EMAIL_PENDING' || state === 'EMAIL_FAILED' || state === 'EXPIRED';
 }
 
-export type SignupQueueTab = 'ALL' | 'PENDING_REVIEW' | 'AWAITING_CLAIM' | 'PROBLEM';
+/**
+ * P10-L §8: rejecting a LINE application defaults to TELLING the applicant, the opposite of the
+ * web form's default. Flow B stays silent because the address is unproven and an unsolicited email
+ * would make the platform a spam cannon; a LINE application has no address at all — its rejection
+ * travels back down the chat the person opened, where silence is just a shop wondering forever.
+ */
+export function rejectNotifyDefault(item: AdminSignupQueueItemDto): boolean {
+  return isLineSignup(item);
+}
+
+/** What the notify toggle promises, since the two sources travel on different rails. */
+export function rejectNotifyLabel(item: AdminSignupQueueItemDto): string {
+  return isLineSignup(item) ? 'แจ้งทางไลน์' : 'ส่งอีเมลแจ้งผู้สมัคร';
+}
+
+export type SignupQueueTab = 'ALL' | 'PENDING_REVIEW' | 'AWAITING_CLAIM' | 'PROBLEM' | 'AUTO_APPROVED' | 'PACKAGE_CHANGE';
+
+/** Review B-09 / §8: 14 days of what AUTO_FREE let through, for after-the-fact review. */
+export const AUTO_APPROVED_REVIEW_DAYS = 14;
 
 export const SIGNUP_QUEUE_TABS: { key: SignupQueueTab; label: string }[] = [
   { key: 'ALL', label: 'ทั้งหมด' },
   { key: 'PENDING_REVIEW', label: 'รออนุมัติ' },
   { key: 'AWAITING_CLAIM', label: 'รอตั้งรหัส' },
   { key: 'PROBLEM', label: 'มีปัญหา' },
+  { key: 'AUTO_APPROVED', label: `อนุมัติอัตโนมัติ ${AUTO_APPROVED_REVIEW_DAYS} วัน` },
+  { key: 'PACKAGE_CHANGE', label: 'คำขอเปลี่ยนแพ็กเกจ' },
 ];
+
+/** The two tabs that read their own endpoint rather than filtering the main queue. */
+export function tabLoadsOwnList(tab: SignupQueueTab): boolean {
+  return tab === 'AUTO_APPROVED' || tab === 'PACKAGE_CHANGE';
+}
 
 export function filterSignupQueue(
   items: AdminSignupQueueItemDto[],

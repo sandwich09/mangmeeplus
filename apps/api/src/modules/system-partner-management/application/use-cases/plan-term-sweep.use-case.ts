@@ -97,7 +97,7 @@ export class PlanTermSweepUseCase {
             trigger: PLAN_TERM_EXPIRED_TRIGGER,
             severity: 'critical',
             title: 'ร้านครบกำหนดใช้งาน',
-            body: expiredMessageTh(row.company.name),
+            body: (lineLinked) => expiredMessageTh(row.company.name, lineLinked),
             periodKey: `expired:${now.toISOString().slice(0, 10)}`,
           });
         }
@@ -151,7 +151,7 @@ export class PlanTermSweepUseCase {
           trigger: PLAN_TERM_EXPIRING_TRIGGER,
           severity: 'action',
           title: 'ใกล้ครบกำหนดใช้งาน',
-          body: warningMessageTh(row.company.name, row.termEndsAt, daysLeft),
+          body: (lineLinked) => warningMessageTh(row.company.name, row.termEndsAt, daysLeft, lineLinked),
           periodKey: `${row.termEndsAt.toISOString()}:${point}`,
         });
         count += 1;
@@ -169,15 +169,43 @@ export class PlanTermSweepUseCase {
    * the platform company they are members of — a recipient is only ever created for a user who
    * holds an ACTIVE membership in the event's company, so the two cannot be one event.
    */
+  /**
+   * Whether any OWNER of this shop can act on a LINE instruction. Deliberately provider-only and
+   * not channel-scoped: an identity linked before LINE_MESSAGING_CHANNEL_ID was configured carries
+   * a different channel id but the customer does chat with this OA — the same looser lookup the
+   * notification LINE rail falls back to before it gives up.
+   */
+  private async ownerHasLinkedLine(userIds: string[]): Promise<boolean> {
+    const identity = await this.prisma.client.externalIdentity.findFirst({
+      where: { userId: { in: userIds }, provider: 'LINE', status: 'ACTIVE' },
+      select: { id: true },
+    });
+    return identity !== null;
+  }
+
   private async notify(
     companyId: string,
     companyName: string,
-    message: { trigger: string; severity: string; title: string; body: string; periodKey: string },
+    message: {
+      trigger: string;
+      severity: string;
+      title: string;
+      /**
+       * Composed here rather than passed in, because whether the copy may name a LINE command
+       * depends on something only this method knows: whether an OWNER of this shop actually has a
+       * linked LINE account (P10-L §3.7). The same body reaches the web dashboard.
+       */
+      body: (lineLinked: boolean) => string;
+      periodKey: string;
+    },
   ): Promise<void> {
     const owners = await this.prisma.client.companyMembership.findMany({
       where: { companyId, status: 'ACTIVE', roles: { some: { role: { key: 'OWNER' } } } },
       select: { userId: true },
     });
+    // One extra query per notified shop, on a sweep that runs a handful of rows a day.
+    const lineLinked = owners.length > 0 && await this.ownerHasLinkedLine(owners.map((owner) => owner.userId));
+    const body = message.body(lineLinked);
     if (owners.length > 0) {
       await this.notifications.execute({
         companyId,
@@ -187,7 +215,7 @@ export class PlanTermSweepUseCase {
         sourceId: companyId,
         severity: message.severity,
         title: message.title,
-        body: message.body,
+        body,
         deepLinkHref: `/companies/${companyId}/dashboard`,
         recipientUserIds: owners.map((owner) => owner.userId),
         periodKey: message.periodKey,
@@ -212,7 +240,7 @@ export class PlanTermSweepUseCase {
         sourceId: companyId,
         severity: message.severity,
         title: `${message.title}: ${companyName}`,
-        body: message.body,
+        body,
         deepLinkHref: `/system/partners/${companyId}`,
         recipientUserIds: userIds,
         periodKey: message.periodKey,

@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { LOGGER_TOKEN, type AppLogger } from '../../../common/logger/logger.service';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { AppConfigService } from '../../../common/config/app-config.service';
@@ -6,6 +7,7 @@ import { webLink } from '../../../common/http/web-link';
 import { PrismaOutboxRepository } from '../../data-model-core/infrastructure/repositories/prisma-outbox.repository';
 import { CreateOrUpdateNotificationEventUseCase } from '../../dashboard-notifications/application/use-cases/notification.use-cases';
 import { pushSystemLineMessage } from '../../auth/infrastructure/system-line-push';
+import { SIGNUP_SOURCE_LINE_OA } from '../domain/company-signup.logic';
 
 /**
  * Spec §4C: a new application reaches the System Admin queue immediately, so the operators have to
@@ -20,8 +22,14 @@ export const SIGNUP_QUEUE_PATH = '/system/signup-requests';
 const SIGNUP_PENDING_REVIEW_TRIGGER = 'signup_pending_review';
 
 /** Owner copy. No plus sign anywhere in user-facing text: write "และ". */
-export function signupPendingReviewMessage(companyName: string): string {
-  return `มีคำขอสมัครใหม่: ${companyName} — เปิดคิวเพื่ออนุมัติ`;
+export function signupPendingReviewMessage(companyName: string, source?: string): string {
+  // P10-L §8: the operator has to know which queue tab and which contact rail this row belongs to
+  // before opening it — a LINE application has no email to reply to.
+  return `มีคำขอสมัครใหม่${sourceTag(source)}: ${companyName} — เปิดคิวเพื่ออนุมัติ`;
+}
+
+function sourceTag(source: string | undefined): string {
+  return source === SIGNUP_SOURCE_LINE_OA ? ' จาก LINE' : '';
 }
 
 @Injectable()
@@ -68,7 +76,7 @@ export class SignupAdminNotifyService {
   async notify(signupRequestId: string): Promise<void> {
     const request = await this.prisma.client.companySignupRequest.findUnique({
       where: { id: signupRequestId },
-      select: { id: true, state: true, companyName: true },
+      select: { id: true, state: true, companyName: true, source: true },
     });
     if (!request) throw new Error('signup_request_not_found');
     // Approved, rejected or withdrawn before the drain ran: the queue no longer needs announcing.
@@ -77,7 +85,7 @@ export class SignupAdminNotifyService {
     const admins = await this.activeSystemAdmins();
     if (admins.length === 0) return;
 
-    const message = signupPendingReviewMessage(request.companyName);
+    const message = signupPendingReviewMessage(request.companyName, request.source);
     let opened = false;
     // Grouped by company because the notification rail is company-scoped; in practice every system
     // admin sits in the one WatchDog System company, so this is a single call.
@@ -89,7 +97,7 @@ export class SignupAdminNotifyService {
         sourceType: 'company_signup_request',
         sourceId: request.id,
         severity: 'action',
-        title: `มีคำขอสมัครใหม่: ${request.companyName}`,
+        title: `มีคำขอสมัครใหม่${sourceTag(request.source)}: ${request.companyName}`,
         body: 'เปิดคิวเพื่ออนุมัติ',
         deepLinkHref: SIGNUP_QUEUE_PATH,
         recipientUserIds: userIds,
@@ -120,8 +128,23 @@ export class SignupAdminNotifyService {
     });
   }
 
-  /** Best-effort by contract: a LINE outage is logged, never thrown back into the drain. */
-  private async pushToLinkedAdmins(userIds: string[], text: string): Promise<void> {
+  /**
+   * Best-effort by contract: a LINE outage is logged, never thrown back into the drain.
+   *
+   * Public because the LINE-first flow's support alert and the §15.6 ops alerts both send on this
+   * exact rail, with the same audience and the same "one message per admin, never two" rule (L-16)
+   * — a second copy would be a second place to forget the de-duplication by identity row.
+   */
+  async pushToLinkedAdmins(
+    userIds: string[],
+    text: string,
+    /**
+     * A LINE identity to leave out, given as the short hash the outbox carries rather than the raw
+     * id (the payload stays PII-free by design). An operator who is ALSO the person asking for help
+     * must not receive "a customer wants to talk to us" in the very chat they wrote it in.
+     */
+    options?: { skipProviderUserIdHash?: string },
+  ): Promise<void> {
     const token = this.config.lineMessagingChannelAccessToken;
     if (!token) return;
     const identities = await this.prisma.client.externalIdentity.findMany({
@@ -130,6 +153,8 @@ export class SignupAdminNotifyService {
     });
     // One admin may hold more than one identity row; the operator wants one message, not two.
     for (const providerUserId of new Set(identities.map((identity) => identity.providerUserId))) {
+      if (options?.skipProviderUserIdHash
+        && shortLineIdHash(providerUserId) === options.skipProviderUserIdHash) continue;
       const delivered = await pushSystemLineMessage(token, providerUserId, text);
       if (!delivered) {
         this.logger.warn(
@@ -139,6 +164,14 @@ export class SignupAdminNotifyService {
       }
     }
   }
+}
+
+/**
+ * The identity fingerprint the support-notice outbox row carries instead of a raw LINE id, so an
+ * exclusion can be honoured at delivery without the id ever entering a table the platform reads.
+ */
+export function shortLineIdHash(value: string): string {
+  return createHash('sha256').update(value, 'utf8').digest('hex').slice(0, 16);
 }
 
 function groupByCompany(rows: Array<{ companyId: string; userId: string }>): Map<string, string[]> {

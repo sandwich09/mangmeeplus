@@ -146,3 +146,57 @@ the LINE camera client-side).
 3. "ทำอะไรได้บ้าง" returns the curated six-function card, not a model answer; "ใบกำกับภาษีใช้ยังไง" still
    reaches the AI route.
 4. Poster image loads inside LINE (public HTTPS web asset) on both iOS and Android.
+
+---
+
+# P10-L "เปิดร้านใหม่ ทดลองฟรี" — the LINE-first signup entry (2026-09-05, Slice L-C)
+
+Console work, no code. The button opens the LIFF signup form:
+
+```
+https://liff.line.me/<LINE_LIFF_ID>/signup
+```
+
+`<LINE_LIFF_ID>` is the SAME id every other LIFF page uses (`LINE_LIFF_ID`, AUTH-02) — this is a
+sub-path of one LIFF app, not a second one to register. Nothing personal travels in the URL
+(LINE-ONBOARD-01): the handoff is minted when the form is submitted, server-side.
+
+## The LIFF endpoint URL must stay `.../v1/auth/line/link-page`
+
+`liff.login` only redirects to URLs **inside the registered endpoint URL's scope**, so the LIFF app's
+endpoint stays:
+
+```
+https://<api-host>/v1/auth/line/link-page
+```
+
+and the signup page lives UNDER it, at `.../v1/auth/line/link-page/signup`. Pointing the registered
+endpoint at `.../v1/auth/line/signup-page` (the name spec §4 gives the contract, kept as an alias)
+would take every OTHER LIFF page out of scope — account link, employee link, start — and break them
+all. Do not change it to match a tile.
+
+## Which tile
+
+The Ver2 grid is full (six tiles, one bitmap). Two options, Owner's call:
+
+1. **Re-point the Promotion tile** — it already reads `โปรโมชั่น` and answers with the poster card
+   whose first button is `ทดลองใช้ฟรี → https://official.mangmeeplus.com/`. Changing THAT button to
+   the LIFF URL above is a card-copy change in `buildPromotionCard`, not a rich-menu change, and
+   needs no new bitmap.
+2. **A Ver3 profile** with its own bitmap and a dedicated `เปิดร้านใหม่ ทดลองฟรี` tile, applied with
+   the same staged sequence (`status` → `stage` → deploy → `activate`) and Ver2 as the rollback
+   target.
+
+Either way the rich menu is a SECONDARY door. The primary one needs no console work at all: an
+unlinked LINE user who messages the OA — or simply adds it as a friend (`follow`) — already gets the
+three-door card, whose first button is this same LIFF signup URL. Rich menu tiles are shown to
+everyone, including shops that already have an account, so the tile is a convenience, never the
+path this flow depends on.
+
+## Check after activation
+
+1. A LINE account with NO linked shop taps the tile: the one-field form opens inside LINE, shows the
+   person's LINE display name, and the accept block renders its statement and challenge.
+2. A LINE account that ALREADY has a shop taps it: the form still opens and submits — the result is
+   a SECOND shop for that account (spec §5), not an error.
+3. The tile URL contains no token and no name; only `?ref=<code>` is ever appended (§3.2).

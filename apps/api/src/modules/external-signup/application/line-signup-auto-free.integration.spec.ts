@@ -250,7 +250,13 @@ function harness(options: { systemAdmins?: string[]; config?: Record<string, unk
     activeSystemAdmins: async () => (options.systemAdmins ?? ['sysadmin-1']).map((userId) => ({ companyId: 'sys', userId })),
     enqueue: async (id: string) => { notified.push(id); },
   } as any;
-  const provision = new ProvisionSignupUseCase(store.prisma, core, onboarding, config, adminNotify);
+  // P10-L: the ready push is enqueued, so the AUTO_FREE path can be asserted end to end without LINE.
+  const linePushes: Array<{ id: string; kind: string }> = [];
+  // §15.6: the ops rail is a fake here — the alert conditions have their own spec.
+  const alerts: string[] = [];
+  const lineNotify = { enqueue: async (id: string, kind: string) => { linePushes.push({ id, kind }); } } as any;
+  const opsAlerts = { raise: async (kind: string) => { alerts.push(kind); } } as any;
+  const provision = new ProvisionSignupUseCase(store.prisma, core, onboarding, config, adminNotify, lineNotify, opsAlerts);
   const rateLimit = {
     assertLineSignupAttemptAllowed: async () => undefined,
     assertLineSignupUserAllowed: async () => undefined,
@@ -261,11 +267,12 @@ function harness(options: { systemAdmins?: string[]; config?: Record<string, unk
   } as any;
 
   return {
-    submit: new SubmitLineSignupUseCase(store.prisma, config, core, lineIdToken, rateLimit, adminNotify, provision),
+    submit: new SubmitLineSignupUseCase(store.prisma, config, core, lineIdToken, rateLimit, adminNotify, provision, opsAlerts),
     provision,
     core,
     store,
     notified,
+    alerts,
   };
 }
 
@@ -333,6 +340,14 @@ describe('AUTO_FREE end to end (review HIGH-1)', () => {
     assert.equal(result.state, 'PENDING_REVIEW');
     assert.deepEqual(h.store.onboardingRuns, []);
     assert.ok(h.store.audits.some((a) => a.action === 'signup.line.auto_approve_capped'));
+    // §15.6 (a), driven end to end through submit rather than from a stubbed decision.
+    assert.deepEqual(h.alerts, ['auto_cap_reached']);
+  });
+
+  it('tells nobody about a cap that was never reached', async () => {
+    const h = harness({ config: { lineSignupAutoDailyCap: 20 } });
+    await h.submit.execute(CMD, NOW);
+    assert.deepEqual(h.alerts, []);
   });
 });
 
