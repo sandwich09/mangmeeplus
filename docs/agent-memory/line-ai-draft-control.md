@@ -66,9 +66,29 @@ quarantined in `spec-suite-coverage.spec.ts` before this change, and un-quaranti
 `package.json` script edit plus an Owner call on the format, so it was left alone.
 
 Merge order (agreed with the coordinator): **B merges into develop FIRST.** Slice A then rebases onto
-develop-with-B and collapses its `isAdditionalCharge` into `chargeKind != null`; slice C rebases onto
-B rather than merging C's older copy of B's history. The B/A conflicts are one import line each in
-`receipt-ocr-apply.service.ts` and its spec, plus this memory file — the service bodies auto-merge.
+develop-with-B; slice C rebases onto B rather than merging C's older copy of B's history.
+
+B vs A (`8bef1a4c`) is **12 conflict hunks across 9 files**, and it is NOT all mechanical:
+
+- `receipt-ocr-apply.service.ts` (2 hunks) — the import list is trivial, but the `chargeLines()`
+  body needs a real resolution. A rewrote it around a `reading: 'document' | 'unproven'` parameter
+  with `needsReview`, `whtRate: null` and `isAdditionalCharge: true`; B changed the same rows to
+  carry `chargeKind`, a Thai description, and the richer `sourceLineText`. Keep A's signature and
+  tax rules, keep B's three field changes, and collapse `isAdditionalCharge` into
+  `chargeKind != null` at both read sites (the WHT allocation set and the per-line `whtRate`).
+- `packages/contracts/src/expenses.ts` (2) and `.github/workflows/ci.yml` (2) — both branches append
+  (an accountant-index column plus label; a pg-spec invocation). Keep both; A's own comment already
+  says to order `document_date_status` after B's `additional_charges_amount`.
+- `expense-export.logic.ts`, `prisma-expense.repository.ts`, `expenses.model.ts`,
+  `receipt-ocr-apply.service.spec.ts`, `ExpensesPages.qa.spec.ts`, this file (1 each) — import lists
+  and both-appended blocks. Keep both.
+
+Follow-up (not this slice): make `chargeKind` REQUIRED on `updateExpenseDraft` lines once no caller
+omits it. Every first-party caller already states it on every row, so the only thing the optional
+field still buys is the legacy/third-party fallback — and that fallback carries one documented
+collision: omitting the field while renaming a product to a stored charge row's exact description
+inherits that kind, because the wire format has no row identity. Making the field required deletes
+the fallback and the collision together.
 
 Known gap (§10, deliberate): additional charges still post to the record's expense category — no
 separate "ค่าบริการ" account and no report by charge kind.

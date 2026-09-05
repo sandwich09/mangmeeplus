@@ -321,8 +321,17 @@ export class UpdateExpenseDraftUseCase {
       // answered 200 — and the totals identity agreed, because it is derived from those same wrong
       // kinds. A description that matches exactly one stored row is the row; anything else (a new
       // row, a renamed one, or a duplicate description) resolves to null rather than a guess.
-      // Callers that mean to keep a kind through a rename send it, and every first-party caller now
-      // sends the field on every row.
+      //
+      // ONE COLLISION SURVIVES, deliberately: a caller that omits the field AND gives a product the
+      // exact description of a stored charge row inherits that row's kind. Nothing distinguishes
+      // that from "this IS the charge row, renamed nowhere" without an identity the wire format does
+      // not carry. It is far narrower than the line-number version — it needs a byte-exact
+      // description collision rather than any insert — and no first-party caller can reach it: the
+      // web form, the LINE draft-collection lane and the OCR apply all state `chargeKind` on every
+      // row. The fix is to make the field required once no caller omits it (see
+      // `docs/agent-memory/line-ai-draft-control.md`); until then this is the legacy/third-party
+      // fallback, and `expense-draft-amount-validation.use-case.spec.ts` pins the behaviour so it
+      // cannot widen unnoticed.
       //
       // Read here, before validation so the shape rules and the totals see what will be stored,
       // after the cheap guards above so a rejected request never pays for it, and on the caller's

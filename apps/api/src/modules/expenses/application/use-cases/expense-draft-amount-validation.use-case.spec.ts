@@ -348,6 +348,31 @@ describe('chargeKind across a renumbering PATCH', () => {
     assert.deepEqual(upserted.map((line) => line.chargeKind), [null], 'ambiguous is not an identity');
   });
 
+  /**
+   * The one collision description-matching cannot resolve, pinned so it cannot widen unnoticed: a
+   * caller that omits the field AND renames a product to a stored charge row's exact description
+   * inherits that kind. Nothing on the wire distinguishes it from "this is that charge row". Far
+   * narrower than the line-number version it replaced — a byte-exact description collision rather
+   * than any insert — and unreachable from the web form, the LINE lane or the OCR apply, which all
+   * state `chargeKind` on every row. Sending the field explicitly is the escape hatch, and making
+   * it required is the follow-up.
+   */
+  it('still inherits a kind when a legacy caller renames a product onto a charge description', async () => {
+    const { useCase, upserted } = setupWithStored(stored);
+    await useCase.execute({ ...ctx, permissions: ['expense.update'] }, 'expense-1', {
+      lines: [{ lineNumber: 1, description: 'service charge', quantity: '1', unitPrice: '120', vatRate: '0.07' }],
+    } as any);
+    assert.deepEqual(upserted.map((line) => line.chargeKind), ['SERVICE_CHARGE'],
+      'documented residual: the wire format carries no row identity to tell this from a rename');
+
+    // The escape hatch every first-party caller already takes.
+    const explicit = setupWithStored(stored);
+    await explicit.useCase.execute({ ...ctx, permissions: ['expense.update'] }, 'expense-1', {
+      lines: [{ lineNumber: 1, description: 'service charge', chargeKind: null, quantity: '1', unitPrice: '120', vatRate: '0.07' }],
+    } as any);
+    assert.deepEqual(explicit.upserted.map((line) => line.chargeKind), [null]);
+  });
+
   it('keeps the kind on a charge-only record whose single row is unmoved', async () => {
     const { useCase, upserted, updated } = setupWithStored([[1, { chargeKind: 'SERVICE_CHARGE', description: 'service charge' }]]);
     await useCase.execute({ ...ctx, permissions: ['expense.update'] }, 'expense-1', {
