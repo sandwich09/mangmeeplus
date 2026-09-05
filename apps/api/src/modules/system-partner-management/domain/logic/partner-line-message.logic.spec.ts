@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { PARTNER_LINE_MESSAGE_MAX_LENGTH } from '@watchdog-bms/contracts';
 import {
+  LIFF_HOST,
   baseUrlHost,
   checkShopMessage,
   shopMessageAllowedHosts,
@@ -64,10 +65,49 @@ describe('checkShopMessage — SEC-05', () => {
     assert.equal((result as any).host, 'app.mangmeeplus.com.evil.test');
   });
 
-  it('is not fooled by a userinfo prefix that hides the real host', () => {
-    // `https://app.mangmeeplus.com@evil.test/` goes to evil.test. The token is host-shaped either
-    // way, and the segment before the `@` is not a host we allow when read on its own.
-    assert.equal(checkShopMessage('https://app.mangmeeplus.com@evil.test/', ALLOWED).ok, false);
+  // HIGH-1. Every one of these reads as OUR host to anything that splits on the first `:` and as
+  // `evil.test` to LINE, to a browser, and to the person who taps it.
+  it('is not fooled by userinfo that hides the real host', () => {
+    for (const bypass of [
+      'https://app.mangmeeplus.com@evil.test/',
+      'https://app.mangmeeplus.com:x@evil.test/pay',
+      'https://app.mangmeeplus.com:443@evil.test/pay',
+      // Same trick without a scheme, which LINE auto-links just the same.
+      'app.mangmeeplus.com:443@evil.test/pay',
+      // Two `@`: the LAST one decides the host.
+      'https://a@app.mangmeeplus.com@evil.test/pay',
+    ]) {
+      const result = checkShopMessage(`ดูที่ ${bypass} ค่ะ`, ALLOWED);
+      assert.equal(result.ok, false, `${bypass} must be refused`);
+      assert.equal((result as any).host, 'evil.test', `${bypass} resolves to evil.test`);
+    }
+  });
+
+  it('still allows userinfo and a port on a host that IS ours', () => {
+    assert.equal(checkShopMessage('https://user:pw@app.mangmeeplus.com/expenses', ALLOWED).ok, true);
+    assert.equal(checkShopMessage('https://app.mangmeeplus.com:443/expenses', ALLOWED).ok, true);
+    // A root-dotted name is the same host to a resolver, so it must be to us.
+    assert.equal(checkShopMessage('https://app.mangmeeplus.com./expenses', ALLOWED).ok, true);
+  });
+
+  // MEDIUM-5: the old rule required an ASCII-letter TLD, so neither of these was even LOOKED at.
+  it('refuses an IP literal, whatever the allow-list contains', () => {
+    const v4 = checkShopMessage('โอนที่ http://203.0.113.9/pay ค่ะ', ALLOWED);
+    assert.equal((v4 as any).reason, 'external_link');
+    assert.equal((v4 as any).host, '203.0.113.9');
+    assert.equal(checkShopMessage('http://[2001:db8::1]/pay', ALLOWED).ok, false);
+    // Even when someone configures WEB_BASE_URL as an address, a bare IP stays refused: "our host"
+    // is a name, and an address in a customer message is never one.
+    assert.equal(checkShopMessage('http://203.0.113.9/pay', ['203.0.113.9', LIFF_HOST]).ok, false);
+  });
+
+  it('refuses an internationalised domain by its punycode host', () => {
+    const cyrillic = checkShopMessage('https://мангми.рф/pay', ALLOWED);
+    assert.equal((cyrillic as any).reason, 'external_link');
+    assert.equal((cyrillic as any).host, 'xn--80agpnce.xn--p1ai');
+    const thai = checkShopMessage('https://ตัวอย่าง.ไทย/pay', ALLOWED);
+    assert.equal((thai as any).reason, 'external_link');
+    assert.match((thai as any).host, /^xn--/);
   });
 
   it('does not mistake ordinary punctuation or numbers for a link', () => {

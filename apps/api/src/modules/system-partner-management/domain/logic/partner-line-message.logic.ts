@@ -13,11 +13,23 @@ export type ShopMessageCheck =
 export const LIFF_HOST = 'liff.line.me';
 
 /**
- * Anything host-shaped: `https://a.b/c`, `www.a.b`, or a bare `a.b/c`. Deliberately wider than a
- * strict URL grammar — LINE auto-links bare domains, so a bare domain is a link to the person
- * reading it, whatever a parser would say.
+ * An explicit link, taken WHOLE and handed to the URL parser — never pattern-matched for its host.
+ * `\S+` on purpose: `https://app.mangmeeplus.com:443@evil.test/pay` must arrive here in one piece,
+ * because the only thing that reads it correctly is the same parser the tapper's browser uses.
  */
-const HOST_SHAPED = /(?:https?:\/\/)?(?:[a-z0-9-]+\.)+[a-z]{2,}(?:[:/?#]\S*)?/gi;
+const SCHEME_URL = /https?:\/\/\S+/gi;
+
+/**
+ * A bare host LINE auto-links for the reader (`a.b`, `www.a.b/c`), so it is a link whatever a
+ * strict URL grammar would say. ASCII labels only: `\p{L}` here would match Thai prose around an
+ * ordinary full stop and refuse honest sentences. An INTERNATIONALISED bare domain therefore is not
+ * matched — but with a scheme it is, via `SCHEME_URL` above, which is how one would have to be
+ * written to be tappable anyway.
+ */
+const BARE_HOST = /(?:[a-z0-9-]+\.)+[a-z]{2,}(?:[:/?#]\S*)?/gi;
+
+/** Dotted-quad; the bracketed IPv6 form is caught by the `[` prefix `new URL` leaves on it. */
+const IPV4 = /^\d{1,3}(?:\.\d{1,3}){3}$/;
 
 /** Host of a configured base URL, lowercased and without a port. Unset/garbage yields nothing. */
 export function baseUrlHost(baseUrl: string | undefined): string | null {
@@ -40,18 +52,38 @@ export function checkShopMessage(raw: string, allowedHosts: readonly string[]): 
   if (!text) return { ok: false, reason: 'empty' };
   if (text.length > PARTNER_LINE_MESSAGE_MAX_LENGTH) return { ok: false, reason: 'too_long' };
 
-  for (const match of text.matchAll(HOST_SHAPED)) {
-    const host = hostOf(match[0]);
+  for (const token of [...text.matchAll(SCHEME_URL), ...text.matchAll(BARE_HOST)]) {
+    const host = hostOf(token[0]);
+    // Not parseable as a host at all — nothing a tap could reach, so nothing to fence.
+    if (host === null) continue;
+    // An IP literal is never one of ours by name, and treating one as "allowed" would depend on
+    // WEB_BASE_URL happening to be an address rather than a name. Refused outright.
+    if (isIpLiteral(host)) return { ok: false, reason: 'external_link', host };
     // An email address is not a link, and ours is the only one an operator would type; still, the
-    // host rule decides it — `contact@mangmeeplus.com` passes because the host is ours.
+    // host rule decides it — `contact@app.mangmeeplus.com` passes because the host is ours.
     if (!allowedHosts.includes(host)) return { ok: false, reason: 'external_link', host };
   }
   return { ok: true, text };
 }
 
-function hostOf(token: string): string {
-  return token
-    .replace(/^https?:\/\//i, '')
-    .split(/[:/?#]/)[0]!
-    .toLowerCase();
+/**
+ * The host a TAP actually reaches, decided by the same parser the reader's browser uses.
+ *
+ * Splitting this by hand is how the first version shipped a bypass: `app.mangmeeplus.com:443@evil.
+ * test/pay` reads as our host to a regex that stops at the first `:`, and as `evil.test` to every
+ * browser and to LINE. Userinfo, ports, trailing dots and IDN → punycode are all this function's
+ * job, and `new URL` already does all four correctly.
+ */
+function hostOf(token: string): string | null {
+  const candidate = /^https?:\/\//i.test(token) ? token : `https://${token}`;
+  try {
+    // `hostname` is already lower-cased and punycode-encoded; only the root dot is left to strip.
+    return new URL(candidate).hostname.toLowerCase().replace(/\.$/, '');
+  } catch {
+    return null;
+  }
+}
+
+function isIpLiteral(hostname: string): boolean {
+  return IPV4.test(hostname) || hostname.startsWith('[');
 }
