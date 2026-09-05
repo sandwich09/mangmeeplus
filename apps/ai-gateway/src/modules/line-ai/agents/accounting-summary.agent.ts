@@ -4,11 +4,10 @@
  */
 import type { AgentContext } from './agent-types';
 import type { AgentIntentItem, SpecialistOutput, AgentFact, AgentToolCall } from '@watchdog-bms/contracts';
-import { LINE_TOOL_REGISTRY } from '@watchdog-bms/contracts';
+import { LINE_DRAFT_UPDATE_TOOLS, LINE_TOOL_REGISTRY } from '@watchdog-bms/contracts';
 import type { ErpToolClient } from '../infrastructure/erp-tool.client';
 import { formatExpenseExplainReply } from './expense-explain-formatter';
 import { formatDraftUpdateReply } from './draft-update-formatter';
-import { LINE_DRAFT_UPDATE_TOOLS } from '@watchdog-bms/contracts';
 
 export const ALLOWED_TOOLS = new Set([
   'accounting.get_summary',

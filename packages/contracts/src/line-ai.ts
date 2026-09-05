@@ -891,11 +891,17 @@ const SCRUB_INVISIBLE = /[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u
  */
 const SCRUB_SCHEME_LINK = /(?:https?:\/\/|www\.)\S+/gi;
 /**
+ * The LABEL side accepts any Unicode letter while the suffix stays ASCII. A phone linkifies
+ * `caf\u00e9.com` and `ร้านค้า.com` exactly like `abc.com`, and an ASCII-only label silently let both
+ * through — there was no `[a-z0-9-]` character immediately before the dot for the pattern to bite
+ * on. Keeping the SUFFIX ASCII is what stops a Thai phrase containing a full stop from reading as
+ * a host.
+ *
  * Corroborated by shape alone: a path, or two-plus dots where EVERY label is at least two
  * characters. The label-length rule is what keeps `S.P.C.` and `บริษัท A.B.C.` - real abbreviations
  * a Thai receipt prints - out of the host branch, since no registrable host is a run of initials.
  */
-const SCRUB_BARE_HOST = /[a-z0-9-]{2,}(?:\.[a-z0-9-]{2,}){2,}(?![a-z0-9-])\S*|[a-z0-9-]+\.[a-z]{2,24}\/\S*/gi;
+const SCRUB_BARE_HOST = /[\p{L}0-9-]{2,}(?:\.[\p{L}0-9-]{2,}){2,}(?![\p{L}0-9-])\S*|[\p{L}0-9-]+\.[a-z]{2,24}\/\S*/giu;
 /**
  * The genuinely ambiguous case, and the only place a TLD list earns its keep: ONE dot, no path.
  * `evil.xyz` and `Co.Ltd` are the same shape, so shape cannot separate them — and both mistakes
@@ -907,7 +913,17 @@ const SCRUB_BARE_HOST = /[a-z0-9-]{2,}(?:\.[a-z0-9-]{2,}){2,}(?![a-z0-9-])\S*|[a
  * about. A novel single-label TLD with no other signal survives as text — recorded as accepted,
  * because the alternative silently eats "Co.Ltd", "St.Louis" and "TAX.INV" off real receipts.
  */
-const SCRUB_AMBIGUOUS_HOST = /[a-z0-9-]+\.(?:com|net|org|io|co|ru|cn|th|dev|ai|zip|mov|xyz|app|link|click|top|shop|site|live|info|biz|online|store|icu|vip|ly|me|tv|cc|gg|to|sh|st)(?![a-z\p{L}])/giu;
+/**
+ * The list is ordered generic-then-country and kept flat on purpose: it is read as a set, and a
+ * missing entry is a live link printed verbatim on a card.
+ *
+ * `id` is DELIBERATELY ABSENT. It is a real ccTLD, but `TAX.ID`, `REF.ID`, `DOC.ID` and
+ * `CUST.ID` are ordinary tokens on a receipt and in a document number, and this rule fires on
+ * exactly that shape — one dot, no path, nothing after the suffix. Stripping a customer's tax
+ * id off the card is a certain bug; `something.id` as a bare host with no other signal is a
+ * word. Revisit only with a real path or second-dot signal in front of it.
+ */
+const SCRUB_AMBIGUOUS_HOST = /[\p{L}0-9-]+\.(?:com|net|org|io|co|ru|cn|th|dev|ai|zip|mov|xyz|app|link|click|top|shop|site|live|info|biz|online|store|icu|vip|ly|me|tv|cc|gg|to|sh|st|uk|jp|de|fr|in|us|ca|au|it|pl|nl|es|br|kr|sg|my|vn|ph)(?![a-z\p{L}])/giu;
 
 export type ScrubOptions = {
   /** `mask` (default) keeps the label and replaces the figure; `drop` empties the whole value. */
@@ -927,10 +943,13 @@ export function scrubRecordText(
   // deliberate floor: Thai shops number their branches, so "ร้าน 7-Eleven สาขา 12" has to keep its
   // name, and nothing that short reads as a total beside a grouped figure like 1,789.04.
   const groupedSource = `${digit}${digitOrSep}+${digit}|${digit}{3,}`;
-  // NFC first: Thai writes vowel signs and tone marks as separate combining code points, so a
-  // decomposed string slips past a pattern written against the composed form. NFC, never NFKC —
-  // NFKC rewrites Thai text in ways this channel has been bitten by before. Digits are folded in
-  // the same pass, so every pattern below can be written once, in ASCII.
+  // NFC first, so one spelling of a character cannot dodge a pattern written against another.
+  // It does NOT do much for Thai — Thai vowel signs and tone marks have no canonical composition,
+  // so NFC leaves them exactly as they are, and the `\p{M}` in the identifier charset is what
+  // actually carries them. What NFC does buy is Latin: a decomposed `e` + U+0301 becomes `é`, so
+  // `caf\u00e9.com` and `cafe\u0301.com` are the same string by the time the link rule sees them.
+  // NFC, never NFKC — NFKC rewrites Thai in ways this channel has been bitten by before. Digits
+  // fold in the same pass, so every pattern below is written once, in ASCII.
   const linkless = normalizeScrubDigits(value.normalize('NFC'))
     .replace(SCRUB_INVISIBLE, ' ')
     .replace(SCRUB_SCHEME_LINK, ' ')

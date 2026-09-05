@@ -820,3 +820,62 @@ The mutation runner now refuses to start unless every anchor is present AND uniq
 (`mut.py --check-anchors`). It caught one stale anchor immediately: the scrubber collapse had moved
 the line `m10` targets. `replace(..., 1)` takes the first match, so a duplicated fragment would
 mutate a line the row was never about and the "RED" it produced would prove nothing.
+
+### D.15 Round-4 review fix-ups (2026-09-06)
+
+Merged `origin/develop` `1102944a` into the branch first (plain merge, conflict-free) because
+pull-request CI takes `ci.yml` from the merge ref: develop's #438 added a DI-guard step calling
+`apps/api/scripts/check-di-metadata.mjs`, which did not exist on a branch based on A. Nothing in
+slice D was wrong; the branch simply predated #437/#438. The guard then passed on the merged tree —
+`794 files, 870 decorated classes, 820 with constructor dependencies, all carry design:paramtypes`
+— which is an independent confirmation of the H1 fix from round 1.
+
+**Fixed**
+
+1. **ccTLDs in the link tiebreaker (MEDIUM).** `evil.uk/.jp/.de/.fr/.in/.us/.ca/.au/.it/.pl/.nl/
+   .es/.br/.kr/.sg/.my/.vn/.ph` printed verbatim on a card while `.io/.th/.ru/.zip` were stripped —
+   a phone linkifies all of them. Eighteen added; a contracts test WALKS the list rather than
+   sampling it, because the failure mode is one missing entry and a spot check is how a missing
+   entry survives.
+   **`id` deliberately left out**, and pinned as a decision: `TAX.ID`, `REF.ID`, `DOC.ID` and
+   `CUST.ID` are ordinary receipt and document-number tokens with exactly the shape this rule fires
+   on. Losing a customer's tax id off the card is a certain bug; a bare `something.id` with no path
+   or second dot is a word.
+2. **The document-number scrub was unpinned at both call sites** — swapping `identifier()` (diff
+   builder) or `scrubRecordIdentifier` (gateway renderer) for the raw value left every suite green.
+   A negative assertion at each: `A0042 ยอดจริง 88,888.00 โอนที่ evil.example.com` must render as
+   `ยังไม่ระบุ`/`—`, never verbatim. A third assertion was added at the API card renderer, which the
+   review did not name but has the identical branch.
+3. **`.normalize('NFC')` pinned, and its comment corrected.** The old comment claimed NFC mattered
+   for Thai; it does not — Thai vowel signs and tone marks have no canonical composition, and the
+   `\p{M}` in the identifier charset is what actually carries them. NFC earns its place on Latin,
+   which the new test pins: `cafe` + U+0301 must scrub identically to `café`.
+   **That test found a separate real hole**: the host label charset was ASCII, so `café.com` and
+   `ร้านค้า.com` were never stripped — there was no `[a-z0-9-]` character immediately before the dot
+   for the pattern to bite on. The label side now accepts any Unicode letter; the SUFFIX stays ASCII,
+   which is what still stops a Thai phrase containing a full stop from reading as a host.
+5. Gateway comment on `groundingText` said the API rejects an over-long value. It truncates, on
+   purpose — a length rejection under `forbidNonWhitelisted` would 400 every ERP tool call of a turn
+   whose message ran long. Both ends truncate at the same bound.
+6. `line-ai-capture-correction-spec.md` claimed every frozen row is `expectedApplyCount: 0`. One is
+   not, by design: `applied_named_edit` expects 2.
+7. **`POSTBACK_ACTIONS` was not flag-gated (LOW, but the sharpest of these).** With
+   `LINE_AI_DRAFT_EDIT_ENABLED` off, no card carries those buttons, so the only thing that can send
+   one is a forgery — and it resolved to a command, went down the text lane, and reached a PAID AI
+   turn. Before S-4 it resolved to null and was dropped. The two draft actions now sit in their own
+   map behind the flag, which the webhook controller passes; the parameter defaults to `false` so a
+   caller not yet taught about the flag keeps the safer behaviour. Tested in both positions, with
+   the non-draft actions and the typed-text lane asserted unchanged.
+8. Two imports from `@watchdog-bms/contracts` in `accounting-summary.agent.ts` merged into one.
+
+**Recorded, deliberately NOT changed**
+
+- **Finding 4 — the `|${digit}{3,}` alternative in `groupedSource` is dead.** `${digit}${digitOrSep}+${digit}`
+  already matches any run of three or more digits (the middle class includes digits), so the second
+  alternative can never be the one that fires. It is a no-op, not a bug: removing it changes no
+  behaviour and would only make the intent — "grouped, decimal, or a bare run of three" — harder to
+  read at the point of use. Left as documentation.
+- **Finding 9 — `192.168.1.1/pay` scrubs to `…/pay`.** The host is removed (the point); the path
+  fragment survives because the money rule masks the dotted quad first and the link rule then has no
+  host left to anchor on. Cosmetic: no host, no tappable link, no figure. Not worth a rule that
+  would have to understand paths.

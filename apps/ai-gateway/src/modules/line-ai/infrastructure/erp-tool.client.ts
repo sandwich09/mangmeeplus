@@ -13,8 +13,11 @@ import type { ToolPolicy } from '../../../common/ai/tool-policy.model';
 // Kept so a future not-yet-wired tool can short-circuit to unsupported_module instead of HTTP 404.
 const UNIMPLEMENTED_TOOLS = new Set<string>();
 
-/** The API's `InternalToolContextDto` caps `groundingText` at this length and rejects anything
- *  longer, so the sender truncates rather than letting one long message 400 a whole turn. */
+/** The bound both sides agree on. The API does NOT reject a longer value — it truncates at the
+ *  same length (`internal-tools.controller.ts`, `GROUNDING_TEXT_MAX_CHARS`), deliberately, because
+ *  a length rejection under `forbidNonWhitelisted` would 400 every ERP tool call of a turn whose
+ *  LINE message happened to run long. The sender truncates too, so the wire carries what the
+ *  receiver will keep and neither end depends on the other's mercy. */
 export const GROUNDING_TEXT_MAX = 1000;
 
 export type ErpToolContext = {

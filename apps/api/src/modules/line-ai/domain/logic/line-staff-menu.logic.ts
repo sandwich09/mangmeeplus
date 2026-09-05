@@ -519,14 +519,30 @@ const POSTBACK_ACTIONS: Readonly<Record<string, string>> = {
   'package-change': PACKAGE_CHANGE_COMMAND,
   'profile-guard': PROFILE_GUARD_COMMAND,
   'profile-guard-later': PROFILE_GUARD_LATER_COMMAND,
-  // S-4: the confirm/cancel buttons carry an intent and no ids. The server re-derives which
-  // preview they answer from the chat, so a forged or replayed `data` reaches nothing.
+};
+
+/**
+ * S-4: the confirm/cancel buttons carry an intent and no ids. The server re-derives which preview
+ * they answer from the chat, so a forged or replayed `data` reaches nothing.
+ *
+ * Gated on the flag, and this is the point: with S-4 off no card carries these buttons, so the only
+ * thing that can send one is a forgery. Resolving it to a command anyway sent the event down the
+ * text lane and into a PAID AI turn — before S-4 it resolved to null and was dropped. Flag off must
+ * mean dropped again.
+ */
+const DRAFT_POSTBACK_ACTIONS: Readonly<Record<string, string>> = {
   'draft-update-confirm': DRAFT_UPDATE_CONFIRM_COMMAND,
   'draft-update-cancel': DRAFT_UPDATE_CANCEL_COMMAND,
 };
 
-/** `action=<name>&…`; unknown or absent actions answer null so the event is dropped, not guessed. */
-export function linePostbackCommandText(data: string | undefined): string | null {
+/**
+ * `action=<name>&…`; unknown or absent actions answer null so the event is dropped, not guessed.
+ *
+ * `draftEditEnabled` decides whether the two S-4 actions resolve at all. It defaults to false so a
+ * caller that has not been taught about the flag keeps the pre-S-4 behaviour — dropped — rather
+ * than the more permissive one.
+ */
+export function linePostbackCommandText(data: string | undefined, draftEditEnabled = false): string | null {
   if (!data) return null;
   let action: string | null;
   try {
@@ -534,5 +550,7 @@ export function linePostbackCommandText(data: string | undefined): string | null
   } catch {
     return null;
   }
-  return (action && POSTBACK_ACTIONS[action]) ?? null;
+  if (!action) return null;
+  if (draftEditEnabled && DRAFT_POSTBACK_ACTIONS[action]) return DRAFT_POSTBACK_ACTIONS[action]!;
+  return POSTBACK_ACTIONS[action] ?? null;
 }

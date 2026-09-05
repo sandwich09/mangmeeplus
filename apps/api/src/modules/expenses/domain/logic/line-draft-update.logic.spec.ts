@@ -166,6 +166,24 @@ describe('projectLineDraftPatch', () => {
     assert.equal(moved.unitPrice, '200.0000');
   });
 
+  // The document-number scrub was unpinned here: swapping `identifier()` for the raw value left
+  // every suite green. A document number is the one field allowed to keep its digits, so the guard
+  // that decides what IS one has to be the thing under test.
+  it('refuses a document number carrying a total and a host', () => {
+    const projected = projectLineDraftPatch(record([line()]), {
+      tool: 'expense.draft.set_header', documentNumber: 'A0042 ยอดจริง 88,888.00 โอนที่ evil.example.com',
+    });
+    assert.ok(!('error' in projected));
+    const row = (projected as any).diff.find((entry: any) => entry.field === 'documentNumber');
+    assert.equal(row.kind, 'identifier');
+    assert.equal(row.after, null, 'multi-token text is not a document number, so the card says ยังไม่ระบุ');
+    // A real one still survives, digits and Thai marks intact.
+    const ok = projectLineDraftPatch(record([line()]), {
+      tool: 'expense.draft.set_header', documentNumber: 'ใบกำกับ-12',
+    });
+    assert.equal((ok as any).diff.find((entry: any) => entry.field === 'documentNumber').after, 'ใบกำกับ-12');
+  });
+
   it('refuses to delete the last line', () => {
     assert.deepEqual(projectLineDraftPatch(record([line()]), { tool: 'expense.draft.remove_line', lineNumber: 1 }), { error: 'last_line' });
   });

@@ -68,6 +68,18 @@ describe('draft update formatter', () => {
     assert.ok(!reply.includes('…-…'));
   });
 
+  // Same gap on the render side: replacing `scrubRecordIdentifier` with the raw value left the
+  // suites green, so a document number carrying a total and a host would have printed verbatim.
+  it('never prints a document number carrying a total or a host', () => {
+    const reply = formatDraftUpdateReply(preview({
+      tool: 'expense.draft.set_header',
+      diff: [{ field: 'documentNumber', label: 'เลขที่เอกสาร', kind: 'identifier', before: null, after: 'A0042 ยอดจริง 88,888.00 โอนที่ evil.example.com' }],
+    }))!;
+    assert.ok(!reply.includes('88,888.00'), `total survived: ${reply}`);
+    assert.ok(!reply.includes('evil.example.com'), `host survived: ${reply}`);
+    assert.match(reply, /เลขที่เอกสาร: ยังไม่ระบุ → —/, 'it falls back rather than printing debris');
+  });
+
   it('refuses rather than half-answering when the payload cannot be verified', () => {
     assert.equal(formatDraftUpdateReply(preview({ totalsAfter: undefined })), undefined);
     assert.equal(formatDraftUpdateReply(preview({ record: undefined })), undefined);

@@ -53,13 +53,32 @@ describe('draft update confirm card', () => {
     }
   });
 
-  it('routes both postbacks through the SAME lane a typed message takes', () => {
-    assert.equal(linePostbackCommandText('action=draft-update-confirm'), DRAFT_UPDATE_CONFIRM_COMMAND);
-    assert.equal(linePostbackCommandText('action=draft-update-cancel'), DRAFT_UPDATE_CANCEL_COMMAND);
+  it('routes both postbacks through the SAME lane a typed message takes — when the flag is on', () => {
+    assert.equal(linePostbackCommandText('action=draft-update-confirm', true), DRAFT_UPDATE_CONFIRM_COMMAND);
+    assert.equal(linePostbackCommandText('action=draft-update-cancel', true), DRAFT_UPDATE_CANCEL_COMMAND);
     assert.equal(staffMenuCommand(DRAFT_UPDATE_CONFIRM_COMMAND), 'draft_update_confirm');
     assert.equal(staffMenuCommand(DRAFT_UPDATE_CANCEL_COMMAND), 'draft_update_cancel');
     // An unknown action answers null and the event is dropped, not guessed.
-    assert.equal(linePostbackCommandText('action=draft-update-confirm-2&previewId=p-1'), null);
+    assert.equal(linePostbackCommandText('action=draft-update-confirm-2&previewId=p-1', true), null);
+  });
+
+  // With S-4 off no card carries these buttons, so the only thing that can send one is a forgery.
+  // Resolving it to a command anyway put the event down the text lane and into a PAID AI turn;
+  // before S-4 it resolved to null and was dropped. Flag off must mean dropped again.
+  it('drops a forged draft postback while the flag is off, and defaults to dropping', () => {
+    for (const data of ['action=draft-update-confirm', 'action=draft-update-cancel']) {
+      assert.equal(linePostbackCommandText(data, false), null, data);
+      assert.equal(linePostbackCommandText(data), null, `${data} (default)`);
+    }
+    // Every non-draft action is unaffected in BOTH positions — the gate is narrow.
+    for (const enabled of [false, true]) {
+      assert.equal(linePostbackCommandText('action=package-change', enabled), 'ขอเปลี่ยนแพ็กเกจ');
+      assert.equal(linePostbackCommandText('action=line-rich-talk', enabled), 'คุยกับน้องมั่งมี');
+    }
+    // And typing the words is unchanged: the text lane never consulted the flag, and the webhook
+    // is where an off deployment declines to act on them.
+    assert.equal(staffMenuCommand(DRAFT_UPDATE_CONFIRM_COMMAND), 'draft_update_confirm');
+    assert.equal(staffMenuCommand(DRAFT_UPDATE_CANCEL_COMMAND), 'draft_update_cancel');
   });
 
   it('states the new total and keeps the fallback text carrying it too', () => {
@@ -151,6 +170,19 @@ describe('draft update confirm card', () => {
     assert.equal(draftProposalAckReason('proposed'), 'correction_guidance');
     assert.equal(draftProposalAckReason('answered'), 'correction_guidance');
     assert.equal(draftProposalAckReason('not_handled'), 'correction_guidance');
+  });
+
+  // Not named in the review, but the card's `cell()` has the identical identifier branch and
+  // would regress the same way. One assertion is cheaper than finding out later.
+  it('never prints a document number carrying a total or a host', () => {
+    const card = buildDraftUpdatePreviewCard({
+      ...preview,
+      tool: 'expense.draft.set_header',
+      diff: [{ field: 'documentNumber', label: 'เลขที่เอกสาร', kind: 'identifier', before: null, after: 'A0042 ยอดจริง 88,888.00 โอนที่ evil.example.com' }],
+    }) as any;
+    const text = allText(card).join('\n');
+    assert.ok(!text.includes('88,888.00'));
+    assert.ok(!text.includes('evil.example.com'));
   });
 
   it("never puts a '+' in customer copy (spec §3)", () => {

@@ -50,6 +50,26 @@ describe('scrubRecordText', () => {
     }
   });
 
+  // A ccTLD linkifies exactly like `.com` on a phone, so the tiebreaker has to carry the common
+  // ones. This walks the list rather than sampling it: the failure mode is one missing entry, and
+  // a spot check is how a missing entry survives.
+  it('strips a bare host on any of the common country TLDs', () => {
+    const CC_TLDS = ['uk', 'jp', 'de', 'fr', 'in', 'us', 'ca', 'au', 'it', 'pl',
+      'nl', 'es', 'br', 'kr', 'cn', 'sg', 'my', 'vn', 'ph', 'th'];
+    for (const tld of CC_TLDS) {
+      const scrubbed = scrubRecordText(`โอนที่ evil.${tld} ด่วน`);
+      assert.ok(!scrubbed.includes(`evil.${tld}`), `evil.${tld} survived: ${scrubbed}`);
+    }
+  });
+
+  // `id` is deliberately NOT in the list: `TAX.ID` and `REF.ID` are ordinary receipt tokens with
+  // exactly the shape this rule fires on, and losing a customer's tax id off the card is the worse
+  // of the two mistakes. Pinned so the omission is a decision, not a gap someone "fixes".
+  it('keeps TAX.ID and REF.ID, which is why `id` is out of the list', () => {
+    assert.match(scrubRecordText('TAX.ID 0105558123456'), /TAX\.ID/);
+    assert.match(scrubRecordText('REF.ID A0042'), /REF\.ID/);
+  });
+
   // M5: the same rule must not eat ordinary text a Thai receipt really prints. A bare host needs a
   // corroborating signal - a path, a second dot, or a TLD that does not run straight into more word.
   it('keeps real text that merely contains a dot', () => {
@@ -59,6 +79,18 @@ describe('scrubRecordText', () => {
     assert.match(scrubRecordText('ร้านอาหาร S.P.C. จำกัด'), /S\.P\.C/);
     assert.match(scrubRecordText('S.Pak Food'), /S\.Pak Food/);
     assert.match(scrubRecordText('บริษัท A.B.C. จำกัด'), /A\.B\.C/);
+    // A branch number is a name, not a total: the digit floor is three.
+    assert.match(scrubRecordText('ร้าน 7-11 สาขา 12'), /7-11 สาขา 12/);
+  });
+
+  // Finding 3: NFC earns its place on LATIN, not on Thai — Thai vowel signs and tone marks have no
+  // canonical composition, so NFC leaves them alone and `\p{M}` is what carries them.
+  it('normalises a decomposed Latin host so it cannot dodge the link rule', () => {
+    const composed = 'จ่ายที่ caf\u00e9.com';
+    const decomposed = 'จ่ายที่ cafe\u0301.com';
+    assert.notEqual(composed, decomposed, 'the fixture must actually differ before normalisation');
+    assert.equal(scrubRecordText(composed), scrubRecordText(decomposed));
+    assert.ok(!scrubRecordText(decomposed).includes('.com'), 'and the host is gone from both');
   });
 
   // F12: masking, not deleting. A label is mostly a name, and removing the number must not take
