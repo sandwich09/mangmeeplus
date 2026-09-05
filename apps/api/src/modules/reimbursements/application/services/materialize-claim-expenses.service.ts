@@ -1,6 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnprocessableEntityException } from '@nestjs/common';
 import type { ReimbursementRequestRecord, MaterializeClaimExpenseItem } from '../../domain/models/reimbursement.model';
 import { normalizeReimbursementAmount } from '../../domain/logic/reimbursement.logic';
+import { expenseTotalsIdentityError } from '../../../expenses/domain/logic/expense-totals.logic';
 
 /**
  * Pure mapping for the caller-owned projection transaction. Every claim line
@@ -12,7 +13,7 @@ export class MaterializeClaimExpensesService {
   buildItems(request: ReimbursementRequestRecord): MaterializeClaimExpenseItem[] {
     const vendorNameSnapshot = `เบิกคืนพนักงาน: ${request.requesterDisplayNameSnapshot}`;
     const lineCount = (request.lines ?? []).length;
-    return (request.lines ?? []).map((line) => {
+    return (request.lines ?? []).map((line): MaterializeClaimExpenseItem => {
       // Single line, no VAT: Decimal-safe satang normalization keeps the claim
       // and its expense projection byte-equivalent even at storage boundaries.
       const amount = normalizeReimbursementAmount(line.amount);
@@ -72,6 +73,21 @@ export class MaterializeClaimExpensesService {
           lineTotalAmount: amount,
         },
       };
-    });
+    })
+      // Expense §5.1: this is one of the few writers that fills the expense HEADER totals from its
+      // own figure rather than deriving them from the line it also writes. The two are equal by
+      // construction today, and the assertion is here so they cannot quietly stop being — a
+      // projection whose header disagrees with its single line is an employee payable nobody can
+      // reconcile. A claim line never carries a chargeKind: it is the claim's own amount, not a
+      // service charge on a receipt.
+      .map((item) => {
+        const error = expenseTotalsIdentityError({
+          vatMode: 'NO_VAT',
+          totals: item,
+          lines: [{ ...item.line, chargeKind: null }],
+        });
+        if (error) throw new UnprocessableEntityException(`reimbursement_projection_totals_mismatch: ${error}`);
+        return item;
+      });
   }
 }

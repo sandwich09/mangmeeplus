@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { calcLineTotals, calcDocumentTotals, calcPaymentAmounts, derivePaymentStatus } from './expense-totals.logic';
+import { calcLineTotals, calcDocumentTotals, calcPaymentAmounts, derivePaymentStatus, expenseTotalsIdentityError } from './expense-totals.logic';
 import { acceptExpenseVatSource, reconcileExpenseVat, validateExpenseVatSourceInput, vatSourceFromSnapshot } from './expense-vat-reconciliation.logic';
 import { expenseVatReconciliationMessage } from '@watchdog-bms/contracts';
 import Decimal from 'decimal.js';
@@ -332,6 +332,81 @@ describe('calcDocumentTotals', () => {
     const r = calcDocumentTotals({ lines });
     assert.equal(r.subtotalAmount, '0.3000');
     assert.equal(r.grandTotalAmount, '0.3000');
+  });
+});
+
+/** Spec §5.1: an additional charge is one printed amount that belongs in the tax base and NOT in
+ *  the goods subtotal. The UAT 2026-09-03 BHC bill is the worked example throughout. */
+describe('additional charge lines in the document totals', () => {
+  const food = calcLineTotals({ quantity: '1', unitPrice: '1520', vatRate: '0.07', vatMode: 'VAT_EXCLUDED' });
+  const serviceCharge = calcLineTotals({ quantity: '1', unitPrice: '152', vatRate: '0.07', vatMode: 'VAT_EXCLUDED' });
+  const bill = [{ ...food, chargeKind: null }, { ...serviceCharge, chargeKind: 'SERVICE_CHARGE' as const }];
+
+  it('keeps the charge out of subtotal and inside taxable, VAT and grand total', () => {
+    const r = calcDocumentTotals({ lines: bill });
+    assert.equal(r.subtotalAmount, '1520.0000');
+    assert.equal(r.taxableAmount, '1672.0000');
+    assert.equal(r.vatAmount, '117.0400');
+    assert.equal(r.grandTotalAmount, '1789.0400');
+    assert.equal(expenseTotalsIdentityError({ vatMode: 'VAT_EXCLUDED', lines: bill, totals: r }), null);
+  });
+
+  it('counts a row with no charge kind as goods, exactly as before', () => {
+    const asProducts = bill.map((line) => ({ ...line, chargeKind: null }));
+    assert.equal(calcDocumentTotals({ lines: asProducts }).subtotalAmount, '1672.0000');
+  });
+
+  it('carries a negative ROUNDING row without eating it as a discount', () => {
+    const rounding = calcLineTotals({ quantity: '1', unitPrice: '-0.50', vatMode: 'NO_VAT' });
+    assert.equal(rounding.lineSubtotalAmount, '-0.5000');
+    assert.equal(rounding.discountAmount, '0.0000');
+    assert.equal(rounding.lineTotalAmount, '-0.5000');
+    const lines = [{ ...calcLineTotals({ quantity: '1', unitPrice: '100.50', vatMode: 'NO_VAT' }), chargeKind: null },
+      { ...rounding, chargeKind: 'ROUNDING' as const }];
+    const r = calcDocumentTotals({ lines });
+    assert.equal(r.subtotalAmount, '100.5000');
+    assert.equal(r.grandTotalAmount, '100.0000');
+    assert.equal(expenseTotalsIdentityError({ vatMode: 'NO_VAT', lines, totals: r }), null);
+  });
+});
+
+describe('expenseTotalsIdentityError', () => {
+  const food = { ...calcLineTotals({ quantity: '1', unitPrice: '1520', vatRate: '0.07', vatMode: 'VAT_EXCLUDED' }), chargeKind: null };
+  const charge = { ...calcLineTotals({ quantity: '1', unitPrice: '152', vatRate: '0.07', vatMode: 'VAT_EXCLUDED' }), chargeKind: 'SERVICE_CHARGE' as const };
+  const lines = [food, charge];
+  const good = calcDocumentTotals({ lines });
+  const check = (totals: Partial<typeof good>, vatMode: 'VAT_EXCLUDED' | 'VAT_INCLUDED' = 'VAT_EXCLUDED') =>
+    expenseTotalsIdentityError({ vatMode, lines, totals: { ...good, ...totals } });
+
+  it('accepts totals that satisfy every equation', () => {
+    assert.equal(check({}), null);
+  });
+
+  it('rejects a subtotal that swallowed the charge', () => {
+    assert.match(check({ subtotalAmount: '1672.0000' })!, /subtotal/);
+  });
+
+  it('rejects VAT that is not the sum of the line VAT', () => {
+    assert.match(check({ vatAmount: '100.0000' })!, /VAT/);
+  });
+
+  it('rejects a grand total that is not taxable plus VAT', () => {
+    assert.match(check({ grandTotalAmount: '1800.0000' })!, /grand total/);
+  });
+
+  it('rejects a tax base that dropped the charge', () => {
+    assert.match(check({ taxableAmount: '1520.0000', grandTotalAmount: '1637.0400' })!, /additional charges/);
+  });
+
+  it('leaves the base equation alone under VAT_INCLUDED, where subtotal is the gross figure', () => {
+    // The other three still bind, which is what keeps the charge rows pinned into the record.
+    assert.equal(check({ taxableAmount: '1520.0000', grandTotalAmount: '1637.0400' }, 'VAT_INCLUDED'), null);
+    assert.match(check({ subtotalAmount: '1672.0000' }, 'VAT_INCLUDED')!, /subtotal/);
+  });
+
+  it('forgives satang inside the recorded VAT capture tolerance', () => {
+    assert.equal(check({ subtotalAmount: '1520.0400' }), null);
+    assert.match(check({ subtotalAmount: '1520.0600' })!, /subtotal/);
   });
 });
 

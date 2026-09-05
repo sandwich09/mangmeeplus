@@ -3,12 +3,15 @@ import { PrismaService } from '../../../../common/database/prisma.service';
 import { Prisma } from '../../../../generated/prisma/client';
 import Decimal from 'decimal.js';
 import {
+  EXPENSE_LINE_CHARGE_KIND_LABELS,
   RECEIPT_ADDITIONAL_CHARGE_KINDS,
   RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE,
+  type ExpenseLineChargeKind,
   type ExpenseVatMode,
   type ExpenseVatCaptureSnapshotV1,
   type ExpenseVatSourceInput,
   type ExpenseWhtCapture,
+  type ReceiptOcrAdditionalCharge,
   type ReceiptOcrFieldResult,
   validateExpenseWhtInput,
 } from '@watchdog-bms/contracts';
@@ -214,6 +217,24 @@ function deriveUnitPrice(fields: ReceiptOcrFieldResult, lineTotal: string, lineV
   return (subtotal / qty).toFixed(4);
 }
 
+/**
+ * The single line's amount when the page printed no grand total. `subtotalAmount` alone under-totals
+ * a bill that prints its charges separately — a restaurant slip reading 1,520 + 152 service charge
+ * with no "TOTAL" box recorded 1,520 and the service charge vanished. Rebuild it the way §5.1 says
+ * the record adds up: goods − discount + charges (+ VAT when the page printed one).
+ */
+export function receiptFallbackLineTotal(fields: ReceiptOcrFieldResult): string | undefined {
+  if (fields.grandTotalAmount) return fields.grandTotalAmount;
+  const subtotal = positiveMoney(fields.subtotalAmount);
+  if (subtotal === undefined) return undefined;
+  const charges = (Array.isArray(fields.additionalCharges) ? fields.additionalCharges : [])
+    .reduce((sum, charge) => sum + (Number(toMoney4(charge.amount)) || 0), 0);
+  // VAT_INCLUDED already has the tax inside the printed figures; adding it again double-counts.
+  const vat = validVatMode(fields.vatMode) === 'VAT_INCLUDED' ? 0 : nonNegativeMoney(fields.vatAmount) ?? 0;
+  const total = subtotal - (nonNegativeMoney(fields.discountAmount) ?? 0) + charges + vat;
+  return total > 0 ? total.toFixed(4) : undefined;
+}
+
 export type ReceiptChargeReconciliationStatus =
   | 'SUMMARY_LINE'
   | 'RECONCILED_ITEM_LINES'
@@ -228,6 +249,8 @@ export type ReceiptChargeReconciliationStatus =
 
 type PreparedOcrLine = {
   description: string;
+  /** Set only on an additional-charge row (spec S-1); product rows leave it null. */
+  chargeKind?: ExpenseLineChargeKind | null;
   quantity: string;
   unitPrice: string;
   vatRate: string | null;
@@ -238,6 +261,32 @@ type PreparedOcrLine = {
   aiLineConfidence?: number;
   totals: ReturnType<typeof calcLineTotals>;
 };
+
+/**
+ * Spec §5.1: an additional-charge row is named in Thai by its kind, keeping the percent the document
+ * printed when the extractor read one ("ค่าบริการ 10%"). The percent may be in either field — the
+ * extractor sometimes puts it in its own wording ("Service charge 10%") and sometimes only in the
+ * quoted span — so both are read, description first.
+ */
+function chargeDescription(charge: ReceiptOcrAdditionalCharge): string {
+  const label = EXPENSE_LINE_CHARGE_KIND_LABELS[charge.kind];
+  const percent = /(\d{1,2}(?:\.\d{1,2})?)\s*%/.exec(`${charge.description} ${charge.evidenceSignal}`)?.[1];
+  return percent ? `${label} ${percent}%` : label;
+}
+
+/**
+ * Renaming the row in Thai must not lose what the extractor called it, so `sourceLineText` — the
+ * same column an item row uses for its own source text — carries whichever of the two says more.
+ * The quoted OCR span usually reproduces the printed row ("Service charge 100.00") and therefore
+ * already contains the wording plus the amount; when it does not, the extractor's own wording
+ * ("Service charge 10%") is the only place the row's printed name survives. Either way the whole
+ * raw extractor result is still stored verbatim in `aiVerifiedFieldsJson` for provenance.
+ */
+function chargeSourceLineText(charge: ReceiptOcrAdditionalCharge): string {
+  const wording = charge.description.trim();
+  const span = charge.evidenceSignal.trim();
+  return span.includes(wording) ? span : wording || span;
+}
 
 function documentVatMode(fields: ReceiptOcrFieldResult): ExpenseVatMode {
   return validVatMode(fields.vatMode) ?? 'NO_VAT';
@@ -302,7 +351,7 @@ function reconciledTotals(
   candidate: PreparedOcrLine[],
   fields: ReceiptOcrFieldResult,
 ): ReturnType<typeof calcDocumentTotals> | null {
-  const totals = calcDocumentTotals({ lines: candidate.map((line) => line.totals) });
+  const totals = calcDocumentTotals({ lines: candidate.map((line) => ({ ...line.totals, chargeKind: line.chargeKind ?? null })) });
   // Mixed per-line VAT rates make the document's single printed taxable base incomparable.
   const taxableIsComparable = new Set(candidate.map((line) => line.vatRate ?? '')).size <= 1;
   const ok = closeEnough(totals.grandTotalAmount, fields.grandTotalAmount)
@@ -365,12 +414,13 @@ function prepareOcrLines(
     : [];
   const printedSubtotal = positiveMoney(fields.subtotalAmount);
   const chargeLines = () => charges.map((charge) => prepareLine({
-    description: charge.description,
+    description: chargeDescription(charge),
+    chargeKind: charge.kind,
     quantity: '1.0000',
     unitPrice: toMoney4(charge.amount),
     vatRate: charge.vatRate ?? defaultLineVatRate(fields),
     whtRate,
-    sourceLineText: charge.evidenceSignal,
+    sourceLineText: chargeSourceLineText(charge),
     aiLineConfidence: charge.confidence,
   }, vatMode));
 
@@ -519,7 +569,7 @@ export class ReceiptOcrApplyService {
     options: { fallbackCategorySuggestion?: ReceiptCategoryFallback; expectedUpdatedAt?: Date } = {},
   ): Promise<ReceiptOcrApplyOutcome> {
     const completed = completeVatFields(verifyDiscountAmount(fields));
-    const lineTotal = completed.grandTotalAmount ?? completed.subtotalAmount;
+    const lineTotal = receiptFallbackLineTotal(completed);
     let prepared = lineTotal ? prepareOcrLines(completed, lineTotal) : null;
     const data: Record<string, unknown> = {
       aiVerificationStatus: 'PARTIAL',
@@ -568,6 +618,7 @@ export class ReceiptOcrApplyService {
           vatMode: vatMode ?? 'NO_VAT',
           lines: prepared.lines.map((line, index) => ({
             lineNumber: index + 1,
+            chargeKind: line.chargeKind ?? null,
             quantity: line.quantity,
             unitPrice: line.unitPrice,
             discountAmount: line.totals.discountAmount,
@@ -675,6 +726,7 @@ export class ReceiptOcrApplyService {
           expenseId,
           lineNumber: index + 1,
           description: line.description,
+          chargeKind: line.chargeKind ?? null,
           quantity: line.quantity,
           unitPrice: line.unitPrice,
           discountAmount: line.totals.discountAmount,

@@ -73,6 +73,10 @@ describe('LINE expense draft conversation logic', () => {
     assert.deepEqual(answer.state.unresolvedQuestions, []);
     assert.match(formatLineExpenseDraftReply({ state: answer.state, categories, acceptedFields: answer.acceptedFields }), /1\) กระดาษ A4/u);
     assert.equal(materializedLineExpenseDraftItems(answer.state).length, 2);
+    // Expense §5.1: everything this lane collects is goods, and it SAYS so. An absent chargeKind
+    // tells `updateExpenseDraft` to keep whatever that row already had, which is not what a
+    // freshly collected item means.
+    assert.deepEqual(materializedLineExpenseDraftItems(answer.state).map((item) => item.chargeKind), [null, null]);
   });
 
   it('accepts the suggested category from segment text with a colon separator (สระอำ must survive normalization)', () => {

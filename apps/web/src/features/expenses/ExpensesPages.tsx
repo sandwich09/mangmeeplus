@@ -34,9 +34,11 @@ import {
   vatRatePreset, vatRatePresetValue, vatTreatmentForPreset, expensePercentToRate, expenseRateToPercent,
   effectiveVatRateLabel, vatModeRequiresRate,
   PAYEE_ENTITY_KIND_LABELS, AI_SUGGESTION_FIELD_LABELS, applyExpenseAiSuggestion, expenseAiSuggestion, expenseAiCategorySuggestion,
+  EXPENSE_LINE_CHARGE_KINDS, EXPENSE_LINE_CHARGE_KIND_LABELS,
+  insertExpenseReviewLine, removeExpenseReviewLine, applyChargeKindChange,
   formatTaxId, taxIdDigits, reviewValues, expenseReviewWithholdsTax, expenseVatSourceValidationMessage, expenseVatBlockedWayOut } from './expenses.model';
 export { reviewValues } from './expenses.model';
-import type { AiReviewField, ExpenseAiSuggestion, ExpenseSummary, ExpenseDetail, ExpenseDraftReviewValues, ExpenseCategorySummary, ExpenseReviewStepKey, ExpenseCapabilities, ExpensesTab, ManualExpenseItem } from './expenses.model';
+import type { AiReviewField, ExpenseAiSuggestion, ExpenseSummary, ExpenseDetail, ExpenseDraftReviewValues, ExpenseCategorySummary, ExpenseLineChargeKind, ExpenseReviewStepKey, ExpenseCapabilities, ExpensesTab, ManualExpenseItem } from './expenses.model';
 import type { BusinessDocumentClassification, BuyerEntityKind, ExpenseExtractionResult, ExpenseLineVatTreatment, ExpenseVatSourceOverrideInput, ExpenseWhtInput, SubstituteReceiptEvidenceSummary, SubstituteReceiptRuntimePolicy } from '@watchdog-bms/contracts';
 import { expenseVatReconciliationMessage, isBlockingExpenseVatReconciliation, isCheckBillClassification, substituteReceiptRequiresPaymentEvidence } from '@watchdog-bms/contracts';
 import { CategoryManagePanel, SignaturePanel, SignatureThumb, EvidencePanel, IconBtn } from './ExpensesWorkspacePanels';
@@ -1311,6 +1313,25 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
     }));
   };
 
+  // The line-array rules live in `expenses.model.ts` so they are tested by being run, not by
+  // matching this file's source.
+  const insertLine = (chargeKind: ExpenseLineChargeKind | null) => {
+    setVatSourceDirty(true);
+    setValues((v) => insertExpenseReviewLine(v, chargeKind));
+  };
+
+  const removeLine = (index: number) => {
+    setVatSourceDirty(true);
+    setVatEditors({});
+    setValues((v) => removeExpenseReviewLine(v, index));
+  };
+
+  /** Rendered as two groups but stored as one array, so `index` stays the line number the issues,
+   *  the VAT source and the saved payload all agree on. */
+  const entries = values.lines.map((line, index) => ({ line, index }));
+  const productEntries = entries.filter((entry) => entry.line.chargeKind == null);
+  const chargeEntries = entries.filter((entry) => entry.line.chargeKind != null);
+
   const setVatSourceType = (inputType: 'RATE' | 'AMOUNT' | 'BOTH' | 'NONE' | 'LINES') => {
     setVatSourceDirty(true);
     setValues((state) => ({
@@ -1729,11 +1750,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-4">
         <h4 className="font-semibold text-gray-800">{t('expenses.line_items', locale)}</h4>
         {isMutable && (
-          <button type="button" className={ghostClass} disabled={busy} onClick={() => { setVatSourceDirty(true); setValues((v) => ({
-            ...v,
-            lines: [...v.lines, { description: '', quantity: '1', unitPrice: '0', discountAmount: '0', vatRate: '', vatTreatment: null, whtRate: v.whtInput ? null : expenseDocumentWhtRate(v.lines) || null, expenseCategoryId: null, accountHintKey: null, taxCategory: null, taxCodeDefinitionId: null, externalTaxCode: null, transactionContext: 'DOMESTIC_PURCHASE' }],
-            ...(v.vatSource?.lines?.length && { vatSource: { ...v.vatSource, lines: [...v.vatSource.lines, { lineNumber: v.lines.length + 1, inputType: 'NONE' as const }] } }),
-          })); }}>{t('expenses.add_line', locale)}</button>
+          <button type="button" className={ghostClass} disabled={busy} onClick={() => insertLine(null)}>{t('expenses.add_line', locale)}</button>
         )}
       </div>
 
@@ -1743,7 +1760,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
           <FieldIssueNote issue={linesIssue} />
         </div>
       )}
-      {values.lines.map((line, index) => {
+      {productEntries.map(({ line, index }) => {
         const descriptionIssue = fieldIssue(issues, `lines.${index}.description`);
         const quantityIssue = fieldIssue(issues, `lines.${index}.quantity`);
         const unitPriceIssue = fieldIssue(issues, `lines.${index}.unitPrice`);
@@ -1757,18 +1774,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
         <div key={index} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <span className="text-xs font-semibold text-gray-600">{t('expenses.line_number', locale)} {index + 1}</span>
-            {isMutable && <button type="button" className="flex h-8 w-8 items-center justify-center rounded-lg text-error-500 transition hover:bg-error-50 disabled:cursor-not-allowed disabled:opacity-50" disabled={busy} onClick={() => { setVatSourceDirty(true); setVatEditors({}); setValues((v) => ({
-              ...v,
-              lines: v.lines.filter((_, lineIndex) => lineIndex !== index),
-              ...(v.vatSource?.lines?.length && {
-                vatSource: {
-                  ...v.vatSource,
-                  lines: v.vatSource.lines
-                    .filter((sourceLine) => sourceLine.lineNumber !== index + 1)
-                    .map((sourceLine) => ({ ...sourceLine, lineNumber: sourceLine.lineNumber > index + 1 ? sourceLine.lineNumber - 1 : sourceLine.lineNumber })),
-                },
-              }),
-            })); }} title={t('expenses.delete', locale)} aria-label={`${t('expenses.delete_line_aria', locale)} ${index + 1}`}>{ICON.trash}</button>}
+            {isMutable && <button type="button" className="flex h-8 w-8 items-center justify-center rounded-lg text-error-500 transition hover:bg-error-50 disabled:cursor-not-allowed disabled:opacity-50" disabled={busy} onClick={() => removeLine(index)} title={t('expenses.delete', locale)} aria-label={`${t('expenses.delete_line_aria', locale)} ${index + 1}`}>{ICON.trash}</button>}
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {/* A textarea, not an input: on a phone the single line clipped the description at the
@@ -1861,6 +1867,111 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
               onChange={(id, definition) => setValues((current) => ({ ...current, lines: current.lines.map((item, lineIndex) => lineIndex === index ? { ...item, taxCodeDefinitionId: id || null, externalTaxCode: definition?.externalCode ?? null, vatRate: definition ? taxDefinitionRateForSource(definition.rate, 'expense') : '', vatTreatment: definition && Number(definition.rate) === 0 ? item.vatTreatment : null } : item) }))}
             />
           </div> : <p className="mt-3 text-xs text-gray-500">รหัสภาษีซื้อในประเทศเลือกได้เมื่อเอกสารถูกจัดประเภทเป็นใบกำกับภาษีเท่านั้น</p>}
+        </div>
+        );
+      })}
+
+      {/* Spec §5.1: the additional charges are their own group below the goods, because a service
+          charge is not a thing that was bought. One printed amount each, so the card asks for the
+          kind and the amount and nothing else; quantity stays 1 and the VAT treatment follows the
+          document through the same preset the goods rows use. Single column: at 390px a two-up
+          select and money field left neither readable. */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-4">
+        <h4 className="font-semibold text-gray-800">{t('expenses.charges_section', locale)}</h4>
+        {isMutable && (
+          <button type="button" className={ghostClass} disabled={busy} onClick={() => insertLine('SERVICE_CHARGE')}>{t('expenses.add_charge', locale)}</button>
+        )}
+      </div>
+
+      {chargeEntries.length === 0 && (
+        <p className="rounded-xl bg-gray-50 px-3 py-4 text-center text-xs text-gray-500">{t('expenses.no_charges', locale)}</p>
+      )}
+      {chargeEntries.map(({ line, index }) => {
+        const chargeKind = line.chargeKind!;
+        const amountIssue = fieldIssue(issues, `lines.${index}.unitPrice`);
+        const quantityIssue = fieldIssue(issues, `lines.${index}.quantity`);
+        const orderIssue = fieldIssue(issues, `lines.${index}.chargeKind`);
+        const vatRateIssue = fieldIssue(issues, `lines.${index}.vatRate`);
+        const showCustomRate = vatRatePreset(line.vatRate, line.vatTreatment) === 'custom' || vatEditors[index]?.custom === true;
+        const linePreset = showCustomRate ? 'custom' : vatRatePreset(line.vatRate, line.vatTreatment);
+        return (
+        <div key={`charge-${index}`} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <span className="text-xs font-semibold text-gray-600">{t('expenses.line_number', locale)} {index + 1}</span>
+            {isMutable && <button type="button" className="flex h-8 w-8 items-center justify-center rounded-lg text-error-500 transition hover:bg-error-50 disabled:cursor-not-allowed disabled:opacity-50" disabled={busy} onClick={() => removeLine(index)} title={t('expenses.delete', locale)} aria-label={`${t('expenses.delete_charge_aria', locale)} ${index + 1}`}>{ICON.trash}</button>}
+          </div>
+          <div className="grid grid-cols-1 gap-3">
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-600" htmlFor={`expense-charge-kind-${detail.id}-${index}`}>{t('expenses.charge_kind', locale)}</label>
+              <ThemedSelect
+                id={`expense-charge-kind-${detail.id}-${index}`}
+                className={validationInputClass(orderIssue)}
+                value={chargeKind}
+                onChange={(e) => {
+                  const next = e.target.value as ExpenseLineChargeKind;
+                  setVatSourceDirty(true);
+                  // The reviewer's own wording wins; only the untouched default follows the kind.
+                  setValues((current) => ({
+                    ...current,
+                    lines: current.lines.map((item, lineIndex) => lineIndex === index ? applyChargeKindChange(item, next) : item),
+                  }));
+                }}
+                disabled={!isMutable || busy}
+              >
+                {EXPENSE_LINE_CHARGE_KINDS.map((kind) => (
+                  <option key={kind} value={kind}>{EXPENSE_LINE_CHARGE_KIND_LABELS[kind]}</option>
+                ))}
+              </ThemedSelect>
+              <FieldIssueNote issue={orderIssue} />
+            </div>
+            <label>
+              <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.line_description', locale)}</span>
+              <input type="text" className={inputClass} value={line.description} onChange={(e) => updateLine(index, 'description', stripDisallowed(e.target.value))} disabled={!isMutable || busy} />
+            </label>
+            <label>
+              <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.charge_amount', locale)}</span>
+              {/* No `min`: ปัดเศษ is the one kind a bill prints as a deduction, and the validator is
+                  what refuses a minus sign on any other kind. */}
+              <input type="number" step="0.0001" className={validationInputClass(amountIssue ?? quantityIssue)} aria-invalid={amountIssue?.severity === 'error' || undefined} value={line.unitPrice} onChange={(e) => updateLine(index, 'unitPrice', normalizeDecimalInput(e.target.value))} disabled={!isMutable || busy} />
+              <FieldIssueNote issue={amountIssue ?? quantityIssue} />
+            </label>
+            {showsVatCard && <div>
+              <span className="mb-1 flex items-center gap-1.5 text-xs font-medium text-gray-600">
+                <label htmlFor={`expense-charge-vat-${detail.id}-${index}`}>{t('expenses.line_vat_rate', locale)}</label>
+                <InfoTip label={t('expenses.tip_open', locale)} text={t('expenses.tip_vat_rate', locale)} />
+              </span>
+              <ThemedSelect
+                id={`expense-charge-vat-${detail.id}-${index}`}
+                className={validationInputClass(vatRateIssue)}
+                aria-invalid={vatRateIssue?.severity === 'error' || undefined}
+                value={linePreset}
+                onChange={(e) => {
+                  const preset = e.target.value;
+                  setVatEditors((current) => ({ ...current, [index]: { custom: preset === 'custom' } }));
+                  updateLine(index, 'vatRate', vatRatePresetValue(preset, line.vatRate), vatTreatmentForPreset(preset));
+                }}
+                disabled={!isMutable || busy}
+              >
+                <option value="standard">{t('expenses.vat_rate_preset_standard', locale)}</option>
+                <option value="exempt">{t('expenses.vat_rate_preset_exempt', locale)}</option>
+                <option value="zero">{t('expenses.vat_rate_preset_zero', locale)}</option>
+                <option value="nonVat">{t('expenses.vat_rate_preset_non_vat', locale)}</option>
+                {linePreset === 'unknownZero' && <option value="unknownZero">{t('expenses.vat_rate_preset_unknown_zero', locale)}</option>}
+                <option value="custom">{t('expenses.vat_rate_preset_custom', locale)}</option>
+                {!showCustomRate && line.vatRate.trim() === '' && <option value="unset">{t('expenses.vat_rate_preset_unset', locale)}</option>}
+              </ThemedSelect>
+              <FieldIssueNote issue={vatRateIssue} />
+              {showCustomRate && (
+                <label className="mt-2 block">
+                  <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.line_vat_percent', locale)}</span>
+                  <input type="number" min="0" max="99.9999" step="0.0001" className={inputClass}
+                    value={expenseRateToPercent(line.vatRate)}
+                    onChange={(e) => updateLine(index, 'vatRate', expensePercentToRate(e.target.value))}
+                    disabled={!isMutable || busy} />
+                </label>
+              )}
+            </div>}
+          </div>
         </div>
         );
       })}

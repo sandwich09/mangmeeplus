@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { ExpenseDraftReviewValues } from './expenses.model';
 import { validateExpenseReview } from './expense-review-validation';
+import { applyChargeKindChange, buildExpenseDraftReviewPayload, insertExpenseReviewLine, removeExpenseReviewLine } from './expenses.model';
 
 const validValues = (): ExpenseDraftReviewValues => ({
   vendorNameSnapshot: 'บริษัท ตัวอย่าง จำกัด',
@@ -358,5 +359,155 @@ describe('amount fields reject the shapes the server rejects', () => {
 
   it('still accepts what a person legitimately types', () => {
     for (const good of ['400', '0.400', '0', '4.00', '1234.5678']) assert.equal(formatIssues(good).length, 0, good);
+  });
+});
+
+/**
+ * Spec §5.1 as the reviewer meets it: an additional charge is one printed amount that sits after
+ * the goods, and only ปัดเศษ may be a deduction. The API refuses a payload that breaks any of these,
+ * so catching it here is the difference between a field note and a 400 after pressing save.
+ */
+describe('additional charge lines', () => {
+  const withLines = (lines: ExpenseDraftReviewValues['lines']): ExpenseDraftReviewValues =>
+    ({ ...validValues(), vatMode: 'VAT_EXCLUDED', lines });
+  const product = (overrides: Partial<ExpenseDraftReviewValues['lines'][number]> = {}) => ({
+    ...validValues().lines[0]!, description: 'อาหาร', quantity: '1', unitPrice: '1520', discountAmount: '0', vatRate: '0.07', ...overrides,
+  });
+  const charge = (overrides: Partial<ExpenseDraftReviewValues['lines'][number]> = {}) =>
+    product({ description: 'ค่าบริการ 10%', chargeKind: 'SERVICE_CHARGE', unitPrice: '152', ...overrides });
+  const fields = (values: ExpenseDraftReviewValues) =>
+    validateExpenseReview(values, { today: '2026-09-05' }).filter((issue) => issue.severity === 'error').map((issue) => issue.field);
+
+  it('accepts goods followed by a service charge', () => {
+    assert.deepEqual(fields(withLines([product(), charge()])), []);
+  });
+
+  it('accepts a negative ปัดเศษ row and refuses a negative charge of any other kind', () => {
+    assert.deepEqual(fields(withLines([product(), charge({ chargeKind: 'ROUNDING', unitPrice: '-0.50', vatRate: '0' })])), []);
+    const issues = validateExpenseReview(withLines([product(), charge({ unitPrice: '-0.50' })]), { today: '2026-09-05' });
+    assert.equal(issues.find((issue) => issue.field === 'lines.1.unitPrice')?.messageKey, 'expenses.v_charge_amount_positive');
+  });
+
+  it('refuses a zero charge of any kind, ปัดเศษ included', () => {
+    for (const chargeKind of ['SERVICE_CHARGE', 'ROUNDING'] as const) {
+      assert.equal(
+        validateExpenseReview(withLines([product(), charge({ chargeKind, unitPrice: '0', vatRate: '0' })]), { today: '2026-09-05' })
+          .find((issue) => issue.field === 'lines.1.unitPrice')?.messageKey,
+        'expenses.v_charge_amount_positive',
+        chargeKind,
+      );
+    }
+  });
+
+  it('keeps the plain negative-amount message on an ordinary product line', () => {
+    assert.equal(
+      validateExpenseReview(withLines([product({ unitPrice: '-1' })]), { today: '2026-09-05' })
+        .find((issue) => issue.field === 'lines.0.unitPrice')?.messageKey,
+      'expenses.v_amount_negative',
+    );
+  });
+
+  it('refuses a charge with a quantity, and a charge above a product', () => {
+    assert.equal(
+      validateExpenseReview(withLines([product(), charge({ quantity: '2', unitPrice: '76' })]), { today: '2026-09-05' })
+        .find((issue) => issue.field === 'lines.1.quantity')?.messageKey,
+      'expenses.v_charge_quantity_one',
+    );
+    assert.equal(
+      validateExpenseReview(withLines([charge(), product()]), { today: '2026-09-05' })
+        .find((issue) => issue.field === 'lines.0.chargeKind')?.messageKey,
+      'expenses.v_charge_order',
+    );
+  });
+
+  it('counts the charge into the total the AI figure is compared against', () => {
+    // 1,520 goods + 152 charge + 7% VAT = 1,789.04. Without the charge in the total the reviewer
+    // would be warned that a correctly entered bill disagrees with the receipt.
+    assert.deepEqual(
+      validateExpenseReview(withLines([product(), charge()]), { today: '2026-09-05', aiGrandTotal: '1789.04' }),
+      [],
+    );
+    assert.equal(
+      validateExpenseReview(withLines([product(), charge()]), { today: '2026-09-05', aiGrandTotal: '1626.40' })[0]?.messageKey,
+      'expenses.v_total_mismatch',
+    );
+  });
+});
+
+/**
+ * Spec §5.1 line ordering, exercised rather than asserted against the page's source. An additional
+ * charge must sort after every product, so adding a PRODUCT inserts it before the charges: appending
+ * would build the one payload shape the API refuses, and the reviewer would only meet the refusal on
+ * save. `vatSource.lines` is keyed by line number, so it has to shift with the insert.
+ */
+describe('review line ordering', () => {
+  const base = (): ExpenseDraftReviewValues => ({
+    ...validValues(),
+    vatMode: 'VAT_EXCLUDED',
+    lines: [
+      { ...validValues().lines[0]!, description: 'อาหาร', unitPrice: '1520', vatRate: '0.07' },
+      { ...validValues().lines[0]!, description: 'ค่าบริการ 10%', chargeKind: 'SERVICE_CHARGE', unitPrice: '152', vatRate: '0.07' },
+    ],
+  });
+
+  it('inserts a new product before the charges and appends a new charge', () => {
+    const withProduct = insertExpenseReviewLine(base(), null);
+    assert.deepEqual(withProduct.lines.map((line) => line.chargeKind ?? null), [null, null, 'SERVICE_CHARGE']);
+    assert.equal(withProduct.lines[1]!.description, '');
+
+    const withCharge = insertExpenseReviewLine(base(), 'DELIVERY');
+    assert.deepEqual(withCharge.lines.map((line) => line.chargeKind ?? null), [null, 'SERVICE_CHARGE', 'DELIVERY']);
+    assert.equal(withCharge.lines[2]!.description, 'ค่าส่ง', 'the new row is named by its kind');
+  });
+
+  it('produces a payload the API ordering rule accepts, whatever was added last', () => {
+    let values = base();
+    for (const kind of [null, 'DELIVERY', null, 'TIP'] as const) values = insertExpenseReviewLine(values, kind);
+    const payload = buildExpenseDraftReviewPayload(values);
+    const firstCharge = payload.lines!.findIndex((line) => line.chargeKind);
+    const lastProduct = payload.lines!.reduce((last, line, index) => (line.chargeKind ? last : index), -1);
+    assert.ok(firstCharge > lastProduct, `charges must follow products: ${JSON.stringify(payload.lines!.map((l) => l.chargeKind ?? null))}`);
+    assert.deepEqual(payload.lines!.map((line) => line.lineNumber), [1, 2, 3, 4, 5, 6]);
+  });
+
+  /**
+   * The payload states `chargeKind` on EVERY row, product rows included. The server reads an absent
+   * kind as "keep what this row had", and adding a goods line renumbers everything under it — so a
+   * payload that omits the field on products let a newly typed ของหวาน inherit the service charge it
+   * displaced, and the save answered 200.
+   */
+  it('states the charge kind on every line, not only on the charges', () => {
+    const payload = buildExpenseDraftReviewPayload(insertExpenseReviewLine(base(), null));
+    assert.deepEqual(payload.lines!.map((line) => line.chargeKind), [null, null, 'SERVICE_CHARGE']);
+    for (const line of payload.lines!) {
+      assert.ok('chargeKind' in line, `line ${line.lineNumber} must carry the field even when null`);
+    }
+  });
+
+  it('keeps vatSource line numbers pointing at the same rows across an insert and a remove', () => {
+    const withSource: ExpenseDraftReviewValues = {
+      ...base(),
+      vatSource: { inputType: 'RATE', lines: [
+        { lineNumber: 1, inputType: 'RATE', vatRatePercent: '7' },
+        { lineNumber: 2, inputType: 'RATE', vatRatePercent: '7' },
+      ] },
+    };
+    // A product goes in at index 1, so the charge that was line 2 becomes line 3.
+    const inserted = insertExpenseReviewLine(withSource, null);
+    assert.deepEqual(inserted.vatSource!.lines!.map((line) => line.lineNumber), [1, 2, 3]);
+    assert.equal(inserted.vatSource!.lines!.find((line) => line.lineNumber === 3)!.vatRatePercent, '7');
+    assert.equal(inserted.vatSource!.lines!.find((line) => line.lineNumber === 2)!.inputType, 'NONE', 'the new row starts with no source');
+
+    const removed = removeExpenseReviewLine(inserted, 1);
+    assert.deepEqual(removed.vatSource!.lines!.map((line) => line.lineNumber), [1, 2]);
+    assert.deepEqual(removed.lines.map((line) => line.chargeKind ?? null), [null, 'SERVICE_CHARGE']);
+  });
+
+  it('renames an untouched charge row with its kind and leaves the reviewer wording alone', () => {
+    const untouched = { ...base().lines[1]!, description: 'ค่าบริการ' };
+    assert.equal(applyChargeKindChange(untouched, 'DELIVERY').description, 'ค่าส่ง');
+    assert.equal(applyChargeKindChange({ ...untouched, description: '' }, 'TIP').description, 'ทิป');
+    // Read off a bill, so it is not the default and must survive.
+    assert.equal(applyChargeKindChange({ ...untouched, description: 'ค่าบริการ 10%' }, 'DELIVERY').description, 'ค่าบริการ 10%');
   });
 });

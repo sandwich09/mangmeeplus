@@ -180,9 +180,12 @@ export class ExpenseGetDetailTool implements ErpReadToolPort<{ expenseId?: strin
           paymentStatus: expense.paymentStatus, duplicateStatus: expense.duplicateStatus,
           taxEvidenceStatus: expense.taxEvidenceStatus, postingStatus: expense.postingStatus,
           lines: expense.lines.slice(0, 10).map((line) => ({
-            description: line.description, quantity: line.quantity,
+            description: line.description, chargeKind: line.chargeKind ?? null, quantity: line.quantity,
             unitPrice: line.unitPrice, lineTotalAmount: line.lineTotalAmount,
           })),
+          // Spec §5.1: the additional charges as their own group, so an answer about a bill can say
+          // "ค่าบริการ 152.00" instead of reading a charge back as one more product line.
+          charges: expense.charges,
           attachmentCount: expense.attachments.length,
         },
         sourceRefs: [source(ctx, asOf, expense.expenseNumber ?? 'ค่าใช้จ่าย', 'expenses', 'expense', expense.id, `/companies/${ctx.companyId}/expenses/${expense.id}`)],

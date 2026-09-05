@@ -173,6 +173,7 @@ export class CreateAccountantPackageUseCase {
       description: r.note,
       quantity: null,
       subtotalAmount: r.subtotalAmount,
+      additionalChargesAmount: r.additionalChargesAmount,
       discountAmount: r.discountAmount,
       taxableAmount: r.taxableAmount,
       vatAmount: r.vatAmount,

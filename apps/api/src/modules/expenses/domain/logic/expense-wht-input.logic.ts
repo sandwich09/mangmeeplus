@@ -1,6 +1,6 @@
 import Decimal from 'decimal.js';
-import type { ExpenseWhtInput } from '@watchdog-bms/contracts';
-import { calcDocumentTotals, type DocumentTotalsResult, type LineTotalsResult } from './expense-totals.logic';
+import type { ExpenseLineChargeKind, ExpenseWhtInput } from '@watchdog-bms/contracts';
+import { calcDocumentTotals, documentTotalsLines, type DocumentTotalsResult, type LineTotalsResult } from './expense-totals.logic';
 
 /** Convert explicit percent once; amount-only source has no asserted tax rate. */
 export function expenseWhtLineRate(input: ExpenseWhtInput | null | undefined, legacyRate?: string | null): string | null {
@@ -11,7 +11,7 @@ export function expenseWhtLineRate(input: ExpenseWhtInput | null | undefined, le
 /** Apply WHT only after VAT reconciliation has fixed the accepted pre-VAT bases.
  * Mutates the prepared accounting result, keeping one accepted set of money fields. */
 export function applyExpenseWhtInput(
-  result: { lines: Array<{ lineNumber: number; totals: LineTotalsResult }>; totals: DocumentTotalsResult },
+  result: { lines: Array<{ lineNumber: number; chargeKind?: ExpenseLineChargeKind | null; totals: LineTotalsResult }>; totals: DocumentTotalsResult },
   input: ExpenseWhtInput | null | undefined,
 ): string | null {
   if (!input) return null;
@@ -36,6 +36,6 @@ export function applyExpenseWhtInput(
       share.line.totals.whtAmount = share.cents.div(100).toFixed(4);
     }
   }
-  result.totals = calcDocumentTotals({ lines: result.lines.map((line) => line.totals) });
+  result.totals = calcDocumentTotals({ lines: documentTotalsLines(result.lines) });
   return null;
 }

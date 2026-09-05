@@ -23,6 +23,7 @@ const nonVatExpense = {
   vendorDocumentNumber: null, categoryName: 'ค่าอาหารและเครื่องดื่ม', accountHintKey: null,
   description: 'กาแฟ', quantity: '1',
   subtotalAmount: '65.00', discountAmount: '0.00', taxableAmount: '65.00',
+  additionalChargesAmount: '0',
   vatAmount: '0.00', whtAmount: '0.00', grandTotalAmount: '65.00',
   netPayableAmount: '65.00', paidAmount: '65.00', outstandingAmount: '0.00',
   paymentMethod: 'CASH', paidAt: '2026-08-05', paymentReference: null,
@@ -39,6 +40,27 @@ describe('accountant index is independent of expense capture mode', () => {
     }
     assert.equal(row.vat_amount, '0.00');
     assert.equal(row.tax_evidence_status, 'NOT_TAX_EVIDENCE');
+  });
+
+  /**
+   * Expense spec §5.1 moved the additional charges out of `subtotal_amount`. An accountant reads
+   * this file by adding the columns up, so without a charges column a BHC-style bill would show
+   * 1,520 goods against a 1,789.04 total with 269.04 unaccounted for. The column is TRAILING so
+   * every existing position-based consumer keeps its offsets.
+   */
+  it('keeps the row additive once the charges leave the goods subtotal', () => {
+    const row = buildAccountantIndexRow({
+      ...nonVatExpense,
+      subtotalAmount: '1520.00', discountAmount: '0.00', additionalChargesAmount: '152.00',
+      taxableAmount: '1672.00', vatAmount: '117.04', grandTotalAmount: '1789.04',
+    });
+    const sum = (...values: string[]) => values.reduce((total, value) => total + Number(value), 0);
+    assert.equal(row.additional_charges_amount, '152.00');
+    assert.equal(
+      sum(row.subtotal_amount, row.additional_charges_amount, row.vat_amount) - Number(row.discount_amount),
+      Number(row.grand_total_amount),
+    );
+    assert.equal(ACCOUNTANT_INDEX_COLUMNS[ACCOUNTANT_INDEX_COLUMNS.length - 1], 'additional_charges_amount');
   });
 
   it('writes the CSV in the full fixed column order, tax columns included', () => {
