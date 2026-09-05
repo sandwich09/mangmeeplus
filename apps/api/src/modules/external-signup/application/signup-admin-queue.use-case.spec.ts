@@ -639,10 +639,12 @@ describe('SignupAdminQueueUseCase.decide — suspend', () => {
 // past 200 was invisible, a tab could show "ไม่มีคำขอในกลุ่มนี้" over rows the database was holding,
 // and REJECTED/SUSPENDED applications could not be found at all.
 describe('SignupAdminQueueUseCase.list — filtering, paging and counts', () => {
+  // Review F2 moved PROVISIONING_FAILED to every source; READY and a live PROVISIONING stay
+  // LINE-only, because a web row in either has no action an admin could take.
   const queueWhereForDefaultTab = () => ({
     OR: [
-      { state: { in: ['PENDING_REVIEW', 'EMAIL_PENDING', 'EMAIL_FAILED', 'EXPIRED'] } },
-      { state: { in: ['PROVISIONING_FAILED', 'READY', 'PROVISIONING'] }, source: 'line-oa' },
+      { state: { in: ['PENDING_REVIEW', 'EMAIL_PENDING', 'EMAIL_FAILED', 'EXPIRED', 'PROVISIONING_FAILED'] } },
+      { state: { in: ['READY', 'PROVISIONING'] }, source: 'line-oa' },
     ],
   });
   const page = (n: number) => Array.from({ length: n }, (_, i) => ({
@@ -739,8 +741,11 @@ describe('SignupAdminQueueUseCase.list — filtering, paging and counts', () => 
     assert.equal(stale.source, 'line-oa');
     // The same clock the fence uses, or the queue and the fence disagree about what abandoned is.
     assert.equal(NOW.getTime() - (stale.provisioningStartedAt.lt as Date).getTime(), STALE_PROVISIONING_MS);
-    // And the states that are problems by state alone are still there.
-    assert.deepEqual(branches[0], { state: { in: ['EMAIL_FAILED', 'EXPIRED'] } });
+    // And the states that are problems by state alone are still there. Review F2 made a failed
+    // provisioning an EVERY-source row, so it is asked for by state — not behind the LINE filter,
+    // which would have hidden a Flow B failure from the one tab that exists to surface it.
+    assert.deepEqual(branches[0], { state: { in: ['EMAIL_FAILED', 'EXPIRED', 'PROVISIONING_FAILED'] } });
+    assert.deepEqual(branches[1], { state: { in: ['READY'] }, source: 'line-oa' });
   });
 
   it('counts the WHOLE queue, not the page it just read', async () => {
@@ -752,6 +757,8 @@ describe('SignupAdminQueueUseCase.list — filtering, paging and counts', () => 
         { state: 'EMAIL_FAILED', source: 'official-site', _count: { _all: 4 } },
         { state: 'EXPIRED', source: 'official-site', _count: { _all: 7 } },
         { state: 'PROVISIONING_FAILED', source: 'line-oa', _count: { _all: 2 } },
+        // F2: a Flow B provisioning failure is a queue row too, so it is counted like one.
+        { state: 'PROVISIONING_FAILED', source: 'official-site', _count: { _all: 6 } },
         { state: 'READY', source: 'line-oa', _count: { _all: 1 } },
         // 8 runs in flight, 5 of them abandoned by the clock: the 3 live ones are in the queue and
         // are NOT a problem, which is the one distinction a state count cannot make on its own.
@@ -768,10 +775,10 @@ describe('SignupAdminQueueUseCase.list — filtering, paging and counts', () => 
     assert.equal(counts!.PENDING_REVIEW, 240);
     assert.equal(counts!.AWAITING_CLAIM, 31);
     // Bounced, expired, failed provisioning, stranded READY, and the abandoned runs.
-    assert.equal(counts!.PROBLEM, 4 + 7 + 2 + 1 + 5);
+    assert.equal(counts!.PROBLEM, 4 + 7 + 2 + 6 + 1 + 5);
     assert.equal(counts!.ARCHIVED, 12 + 3 + 7);
     // Everything actionable, live provisioning runs included, and nothing that is not in the queue.
-    assert.equal(counts!.ALL, 240 + 31 + 4 + 7 + 2 + 1 + 8);
+    assert.equal(counts!.ALL, 240 + 31 + 4 + 7 + 2 + 6 + 1 + 8);
   });
 });
 

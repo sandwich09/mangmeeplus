@@ -66,9 +66,17 @@ const LINE_APPROVABLE_STATES: readonly CompanySignupState[] = ['PENDING_REVIEW',
  */
 const ARCHIVED_STATES: readonly CompanySignupState[] = ['REJECTED', 'SUSPENDED', 'EXPIRED'];
 
-/** The bounced/expired/failed rows the "มีปัญหา" tab exists for, minus the time-based one. */
-const PROBLEM_STATES: readonly CompanySignupState[] = ['EMAIL_FAILED', 'EXPIRED'];
-const LINE_PROBLEM_STATES: readonly CompanySignupState[] = ['PROVISIONING_FAILED', 'READY'];
+/**
+ * The bounced/expired/failed rows the "มีปัญหา" tab exists for, minus the time-based one.
+ *
+ * `PROBLEM_STATES` follows `QUEUE_STATES`: review F2 made `PROVISIONING_FAILED` an every-source
+ * row, so leaving it on the LINE-only list here would have listed a Flow B failure in the ALL tab
+ * and hidden it from the one tab an operator opens to find exactly that — while the tab's own
+ * count included it. `READY` stays LINE-only: a web row's close-out is the applicant's own
+ * welcome page, not an admin action.
+ */
+const PROBLEM_STATES: readonly CompanySignupState[] = ['EMAIL_FAILED', 'EXPIRED', 'PROVISIONING_FAILED'];
+const LINE_PROBLEM_STATES: readonly CompanySignupState[] = ['READY'];
 
 /**
  * R13. One page of the queue. Defaults chosen for the operator, not the database: 50 rows is more
@@ -178,8 +186,10 @@ export class SignupAdminQueueUseCase {
     const pendingReview = total('PENDING_REVIEW');
     // The web filter reads EMAIL_PENDING without a bounce flag; a bounce IS the EMAIL_FAILED state.
     const awaitingClaim = total('EMAIL_PENDING');
+    // Counted exactly the way `queueWhere('PROBLEM')` asks for them, or the tab promises rows the
+    // list cannot show: F2 made PROVISIONING_FAILED every-source, READY is still LINE-only.
     const problem = total('EMAIL_FAILED') + total('EXPIRED')
-      + total('PROVISIONING_FAILED', true) + total('READY', true)
+      + total('PROVISIONING_FAILED') + total('READY', true)
       + staleProvisioning;
     return {
       // Everything actionable: the same set `queueWhere(undefined)` returns, counted whole. A live

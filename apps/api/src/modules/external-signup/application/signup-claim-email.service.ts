@@ -291,6 +291,11 @@ export class SignupClaimEmailService {
    *
    * `AccountClaimToken` cascades, and a RECEIVED row has none anyway — a token is only minted at
    * `EMAIL_PENDING`, which is several states away.
+   *
+   * Source-blind by design: `RECEIVED` is one of `LINE_OPEN_APPLICATION_STATES`, so deleting a
+   * week-old row also releases a LINE account fenced out of applying again by an attempt that got
+   * nowhere. That is the outcome we want — the fence exists to stop two live applications, not to
+   * lock someone out over one that died at intake.
    */
   async sweepAbandonedIntake(now = new Date()): Promise<{ purgedIntake: number }> {
     const cutoff = new Date(now.getTime() - INTAKE_RETENTION_DAYS * 86_400_000);

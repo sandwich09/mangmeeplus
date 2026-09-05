@@ -34,8 +34,11 @@ export class SignupQueueQueryDto {
   // Unknown values are not an error — the use case falls through to the whole actionable queue —
   // but the set is closed so a caller cannot invent a filter the counts do not know about.
   @IsIn(['ALL', 'PENDING_REVIEW', 'AWAITING_CLAIM', 'PROBLEM', 'ARCHIVED']) @IsOptional() tab?: string;
-  // A cuid from a previous page, never something the operator types.
-  @IsString() @MaxLength(64) @Matches(/^[A-Za-z0-9_-]+$/) @IsOptional() cursor?: string;
+  // Minted by `encodeQueueCursor`, never typed: base64url of `<ISO createdAt>|<cuid>`, which is 67
+  // characters for a cuid today. The bound was 64 while the cursor was a bare id, so F10's change
+  // of shape turned every "load more" into a 400 before the query reached the use case. 128 leaves
+  // room for a longer id without becoming an unbounded query parameter.
+  @IsString() @MaxLength(128) @Matches(/^[A-Za-z0-9_-]+$/) @IsOptional() cursor?: string;
   @IsNumberString() @IsOptional() limit?: string;
 }
 
