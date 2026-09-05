@@ -4,6 +4,9 @@ import { hashPassword } from '../../domain/logic/password-credential.logic';
 import { normalizeThaiMobile } from '../../../external-signup/domain/line-signup.logic';
 import { AuditService } from '../../../audit/application/audit.service';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
+import { AppConfigService } from '../../../../common/config/app-config.service';
+import { revokeActiveSessions } from '../../domain/logic/session-revocation.logic';
+import { notifyAccountSecurityChange, PASSWORD_SET_NOTICE } from '../account-security-notice';
 
 // Codes are written as literals, not constants, because `api-error-coverage.spec.ts` scans this
 // source for `code: '…'` to prove every one of them has Thai copy. A constant hides them from it.
@@ -22,6 +25,7 @@ export class AccountProfileUseCase {
   constructor(
     private readonly prisma: PrismaService,
     @Optional() @Inject(AuditService) private readonly audit: AuditService | null = null,
+    @Optional() @Inject(AppConfigService) private readonly config: AppConfigService | null = null,
   ) {}
 
   /** Blank clears the number: "I would rather you did not keep it" is a legitimate answer (§9 DATA-MIN-01). */
@@ -59,7 +63,13 @@ export class AccountProfileUseCase {
    * change-password route instead — this one cannot overwrite a password, so it can safely
    * skip the current-password proof that a LINE-first user is unable to give.
    */
-  async setInitialPassword(userId: string, password: string, username: string | undefined, requestId?: string): Promise<void> {
+  async setInitialPassword(
+    userId: string,
+    password: string,
+    username: string | undefined,
+    requestId?: string,
+    currentTokenId?: string,
+  ): Promise<{ username: string | null }> {
     const desiredUsername = username?.trim().toLowerCase() || null;
     if (desiredUsername !== null && !USERNAME_PATTERN.test(desiredUsername)) {
       throw new BadRequestException('username must be 4-64 characters of a-z, 0-9, dot, dash or underscore.');
@@ -67,15 +77,38 @@ export class AccountProfileUseCase {
 
     const user = await this.prisma.client.user.findUnique({
       where: { id: userId },
-      select: { id: true, status: true, username: true, credential: { select: { id: true } } },
+      select: { id: true, status: true, username: true, email: true, emailVerifiedAt: true, credential: { select: { id: true } } },
     });
     if (!user || user.status !== 'ACTIVE') throw new NotFoundException('User not found.');
     if (user.credential) {
       throw new ConflictException({ code: 'password_already_set', message: 'This account already has a password. Use change password instead.' });
     }
+
+    // `PasswordLoginUseCase` finds the account by username OR verified email. A LINE-first owner
+    // has neither, so a password saved without a username would be a credential nobody can ever
+    // log in with — and the second attempt answers 409 `password_already_set`, so they could not
+    // even fix it. Refuse up front rather than store a dead credential.
+    const hasLoginIdentifier = user.username !== null || (user.email !== null && user.emailVerifiedAt !== null);
+    if (desiredUsername === null && !hasLoginIdentifier) {
+      throw new BadRequestException({
+        code: 'username_required',
+        message: 'Set a username: this account has no verified email to log in with.',
+      });
+    }
+
     if (desiredUsername !== null && desiredUsername !== user.username) {
+      // Case-insensitively, and against email too: the login lookup accepts either, so a username
+      // equal to somebody's address would make one login name resolve to two accounts. The DB
+      // unique index is case-SENSITIVE, so this check is the only thing standing between
+      // "somchai" and "Somchai" becoming two login names for two different people.
       const taken = await this.prisma.client.user.findFirst({
-        where: { username: desiredUsername, id: { not: userId } },
+        where: {
+          id: { not: userId },
+          OR: [
+            { username: { equals: desiredUsername, mode: 'insensitive' } },
+            { email: { equals: desiredUsername, mode: 'insensitive' } },
+          ],
+        },
         select: { id: true },
       });
       if (taken) throw new ConflictException({ code: 'username_taken', message: 'This username is already taken.' });
@@ -90,6 +123,10 @@ export class AccountProfileUseCase {
         if (desiredUsername !== null && desiredUsername !== user.username) {
           await tx.user.update({ where: { id: userId }, data: { username: desiredUsername } });
         }
+        // Same rule as ChangePassword, same transaction: a new way into the account invalidates
+        // every session that was open before it. If a stolen session set this password, revoking
+        // is what stops it from also being the session that keeps using the account.
+        await revokeActiveSessions(tx.authSession, { userId, ...(currentTokenId ? { exceptTokenId: currentTokenId } : {}) });
       });
     } catch (error) {
       // `UserCredential.userId` and `User.username` are both unique, so the database — not the
@@ -117,5 +154,13 @@ export class AccountProfileUseCase {
       riskLevel: 'HIGH',
       metadataJson: { usernameSet: desiredUsername !== null },
     });
+
+    // Out of band and after the commit: LINE is the only channel a LINE-first owner has, so this
+    // is the only way they can find out that a password now exists on their account.
+    await notifyAccountSecurityChange(this.prisma, this.config?.lineMessagingChannelAccessToken, userId, PASSWORD_SET_NOTICE);
+
+    // The stored form, which is what they must type at the login box — it is lower-cased here and
+    // `PasswordLoginUseCase` matches the username case-sensitively.
+    return { username: desiredUsername ?? user.username };
   }
 }

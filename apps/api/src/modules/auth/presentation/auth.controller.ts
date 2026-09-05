@@ -959,18 +959,27 @@ export class AuthController {
   @ApiBody({ type: SetMyContactDto })
   @ApiResponse({ status: 200, description: 'Contact number updated' })
   async setMyContact(@Body() dto: SetMyContactDto, @Req() req: Request & { context: RequestContext }) {
+    await this.authRateLimit.assertAccountProfileWriteAllowed(req.context.userId);
     return this.accountProfile.setPhoneNumber(req.context.userId, dto.phoneNumber, req.context.requestId);
   }
 
   @Post('me/password/set')
-  @HttpCode(204)
+  @HttpCode(200)
   @RequirePermissions('account.password.change')
   @ApiOperation({ summary: 'Set the first password for an account that has none' })
   @ApiBody({ type: SetFirstPasswordDto })
-  @ApiResponse({ status: 204, description: 'Password set' })
+  @ApiResponse({ status: 200, description: 'Password set; answers the stored username' })
+  @ApiResponse({ status: 400, description: 'This account has no verified email, so a username is required' })
   @ApiResponse({ status: 409, description: 'This account already has a password' })
-  async setMyFirstPassword(@Body() dto: SetFirstPasswordDto, @Req() req: Request & { context: RequestContext }): Promise<void> {
-    await this.accountProfile.setInitialPassword(req.context.userId, dto.password, dto.username, req.context.requestId);
+  async setMyFirstPassword(@Body() dto: SetFirstPasswordDto, @Req() req: Request & { context: RequestContext }) {
+    // `username_taken` makes this an enumeration oracle for anyone holding one valid session.
+    await this.authRateLimit.assertAccountProfileWriteAllowed(req.context.userId);
+    // Same session identity ChangePassword uses, so the caller's own tab survives the revocation.
+    const tokenId = extractSid(req);
+    if (!tokenId) throw new UnauthorizedException('Cannot identify session.');
+    return this.accountProfile.setInitialPassword(
+      req.context.userId, dto.password, dto.username, req.context.requestId, tokenId,
+    );
   }
 
   @Get('me/companies')

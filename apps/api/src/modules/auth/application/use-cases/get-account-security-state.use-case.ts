@@ -15,6 +15,11 @@ export type AccountSecurityState = {
   /** P10-L §3.6 "กันหลุด" contact number, held on the user, not an OTP factor. */
   phoneNumber: string | null;
   /**
+   * The other half of what `PasswordLoginUseCase` looks accounts up by. A LINE-first account has
+   * neither this nor a verified email, which is why setting a first password must collect one.
+   */
+  username: string | null;
+  /**
    * Whether a `UserCredential` exists at all. A LINE-first account has none, which is what
    * decides between "set a backup password" and "change your password" — not `mustChangePassword`.
    */
@@ -31,7 +36,7 @@ export class GetAccountSecurityStateUseCase {
       this.prisma.client.user.findUnique({
         where: { id: userId },
         select: {
-          email: true, emailVerifiedAt: true, aiAssistantOptOutAt: true, phoneNumber: true,
+          email: true, emailVerifiedAt: true, aiAssistantOptOutAt: true, phoneNumber: true, username: true,
           credential: { select: { id: true } },
         },
       }),
@@ -60,6 +65,7 @@ export class GetAccountSecurityStateUseCase {
       lineLinked: lineIdentity != null,
       lineLinkedAt: lineIdentity?.linkedAt.toISOString() ?? null,
       phoneNumber: user?.phoneNumber ?? null,
+      username: user?.username ?? null,
       hasPassword: user?.credential != null,
     };
   }

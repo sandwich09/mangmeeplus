@@ -3,12 +3,15 @@ import { PrismaService } from '../../../../common/database/prisma.service';
 import { hashToken } from '../../domain/logic/secure-token.logic';
 import { AuditService } from '../../../audit/application/audit.service';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
+import { AppConfigService } from '../../../../common/config/app-config.service';
+import { EMAIL_VERIFIED_NOTICE, notifyAccountSecurityChange } from '../account-security-notice';
 
 @Injectable()
 export class ConfirmEmailVerificationUseCase {
   constructor(
     private readonly prisma: PrismaService,
     @Optional() @Inject(AuditService) private readonly audit: AuditService | null = null,
+    @Optional() @Inject(AppConfigService) private readonly config: AppConfigService | null = null,
   ) {}
 
   async execute(input: { token: string; requestId?: string }): Promise<{ email: string; verifiedAt: string }> {
@@ -88,6 +91,11 @@ export class ConfirmEmailVerificationUseCase {
       riskLevel: 'MEDIUM',
       metadataJson: { email: token.newEmail },
     });
+
+    // This route is public — anyone holding the emailed link can spend it — and for a LINE-first
+    // owner the new address is a second way to reach the account. LINE is the only channel that
+    // can tell them it happened, since the notice cannot go to the mailbox that just changed.
+    await notifyAccountSecurityChange(this.prisma, this.config?.lineMessagingChannelAccessToken, token.userId, EMAIL_VERIFIED_NOTICE);
 
     return { email: token.newEmail, verifiedAt: verifiedAt.toISOString() };
   }
