@@ -23,6 +23,7 @@ import {
   EXPENSE_LINE_CHARGE_KINDS,
   EXPENSE_LINE_CHARGE_KIND_LABELS,
   expenseChargeKindAllowsNegative,
+  scrubRecordIdentifier,
   scrubRecordText,
   type CreateExpenseDraftInput,
   type ExpenseLineChargeKind,
@@ -284,6 +285,13 @@ const text = (value: string | null | undefined): string | null => {
   return scrubbed === '' ? null : scrubbed;
 };
 
+/** A document number is the one free-text field whose DIGITS are the value, so masking them the
+ *  way a name is masked would leave "ใบเสร็จ-…" and tell the reader nothing (slice C review F13). */
+const identifier = (value: string | null | undefined): string | null => {
+  const scrubbed = scrubRecordIdentifier(value, 40);
+  return scrubbed === '' ? null : scrubbed;
+};
+
 /**
  * Turn one patch into the replacement line set plus the diff a confirm card prints.
  *
@@ -304,7 +312,7 @@ export function projectLineDraftPatch(
       diff.push({ field: 'expenseDate', label: 'วันที่เอกสาร', before: record.expenseDate.toISOString().slice(0, 10), after: patch.expenseDate });
     }
     if (patch.vendorName) diff.push({ field: 'vendorName', label: 'ผู้ขาย/ผู้รับเงิน', before: text(record.vendorNameSnapshot), after: text(patch.vendorName) });
-    if (patch.documentNumber) diff.push({ field: 'documentNumber', label: 'เลขที่เอกสาร', before: text(record.vendorDocumentNumber), after: text(patch.documentNumber) });
+    if (patch.documentNumber) diff.push({ field: 'documentNumber', label: 'เลขที่เอกสาร', before: identifier(record.vendorDocumentNumber), after: identifier(patch.documentNumber) });
     if (patch.noteAppend) diff.push({ field: 'note', label: 'หมายเหตุ', before: text(record.note), after: text(patch.noteAppend) });
     // Header-only: the stored lines ride along untouched so the use case's whole-set replacement is
     // a no-op on them rather than a deletion.

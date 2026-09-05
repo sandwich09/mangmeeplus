@@ -8,7 +8,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeScrubDigits, scrubRecordText } from './line-ai.js';
+import { normalizeScrubDigits, scrubRecordIdentifier, scrubRecordText } from './line-ai.js';
 
 const noDigits = (text: string) => assert.ok(!/[0-9๐-๙０-９]/u.test(text), `digits survived: ${text}`);
 
@@ -37,6 +37,31 @@ describe('scrubRecordText', () => {
     }
   });
 
+  // F11: the registry grows faster than any list in this file ever will, so the rule is a SHAPE.
+  it('removes a host on a TLD no allowlist would have contained', () => {
+    for (const text of ['evil.xyz', 'evil.app', 'evil.ru', 'pay-now.click/abc', 'shop.co.uk']) {
+      const scrubbed = scrubRecordText(`โอนที่ ${text} ด่วน`);
+      assert.ok(!/evil|pay-now|shop\./.test(scrubbed), `link survived: ${scrubbed}`);
+    }
+  });
+
+  // F12: masking, not deleting. A label is mostly a name, and removing the number must not take
+  // the name with it.
+  it('keeps a shop name while masking the number beside it', () => {
+    const scrubbed = scrubRecordText('ร้าน 7-Eleven สาขา 123');
+    assert.match(scrubbed, /7-Eleven/, 'the name is what the reader needs');
+    assert.ok(!scrubbed.includes('123'), 'the number is still gone');
+    assert.match(scrubbed, /…/, 'and a mask says something was removed');
+  });
+
+  it('drops the whole value only when the caller asks, for a sentence a hole would misread', () => {
+    assert.equal(scrubRecordText('ยอดรวมใหม่ 9,999.00 บาท', 60, { onMoney: 'drop' }), '');
+    assert.equal(scrubRecordText('ค่าอาหารกลางวัน', 60, { onMoney: 'drop' }), 'ค่าอาหารกลางวัน');
+    // The drop test must not depend on what was tested before it (no shared regex lastIndex).
+    assert.equal(scrubRecordText('ค่าบริการ 90%', 60, { onMoney: 'drop' }), '');
+    assert.equal(scrubRecordText('ค่าบริการ 90%', 60, { onMoney: 'drop' }), '');
+  });
+
   it('removes bidi overrides that can make a number read backwards', () => {
     assert.ok(!/[‪-‮⁦-⁩]/u.test(scrubRecordText('ค่าอาหาร‮abc')));
   });
@@ -55,5 +80,31 @@ describe('normalizeScrubDigits', () => {
     assert.equal(normalizeScrubDigits('๙๙,๙๙๙.๐๐'), '99,999.00');
     assert.equal(normalizeScrubDigits('９９，９９９．００'), '99,999.00');
     assert.equal(normalizeScrubDigits('1,789.04'), '1,789.04');
+  });
+});
+
+// F13: a document number is the one field whose DIGITS are the value. Thai tone marks and vowel
+// signs are separate combining code points, so a class of \p{L}\p{N} alone hands back mangled Thai.
+describe('scrubRecordIdentifier', () => {
+  it('keeps a Thai document number whole, marks and digits included', () => {
+    assert.equal(scrubRecordIdentifier('ใบกำกับ-12'), 'ใบกำกับ-12');
+    assert.equal(scrubRecordIdentifier('ใบเสร็จ-001'), 'ใบเสร็จ-001');
+    assert.equal(scrubRecordIdentifier('INV/2026/0912'), 'INV/2026/0912');
+  });
+
+  it('still removes links, control characters and anything outside an identifier', () => {
+    assert.ok(!scrubRecordIdentifier('INV-1 evil.xyz').includes('evil'));
+    assert.equal(scrubRecordIdentifier('INV\u202e-1'), 'INV -1');
+    assert.ok(!scrubRecordIdentifier('INV-1 <b>x</b>').includes('<'));
+  });
+
+  it('drops the thousands separator, so an identifier can never take a total\'s shape', () => {
+    assert.equal(scrubRecordIdentifier('9,999.00'), '9999.00');
+  });
+
+  it('bounds length and handles absent values', () => {
+    assert.equal(scrubRecordIdentifier('A'.repeat(80), 32).length, 32);
+    assert.equal(scrubRecordIdentifier(null), '');
+    assert.equal(scrubRecordIdentifier(undefined), '');
   });
 });

@@ -13,7 +13,7 @@
  * pending preview from the chat that pressed the button, so a forged postback can reach no further
  * than typing the same words could.
  */
-import { scrubRecordText, type LineDraftUpdatePreview } from '@watchdog-bms/contracts';
+import { scrubRecordIdentifier, scrubRecordText, type LineDraftUpdatePreview } from '@watchdog-bms/contracts';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import { absoluteWebLink } from '../../../../common/http/web-link';
 
@@ -38,17 +38,21 @@ function money(value: string): string {
  */
 const MONEY_LITERAL = /^-?\d[\d,]*(\.\d{1,2})?$/;
 
-function cell(value: string | null): string {
+function cell(value: string | null, field?: string): string {
   if (value === null) return 'ยังไม่ระบุ';
   const text = value.trim();
-  return MONEY_LITERAL.test(text) ? text : scrubRecordText(value, 60) || '—';
+  if (MONEY_LITERAL.test(text)) return text;
+  // A document number's DIGITS are its value, so re-masking it here would undo the identifier
+  // scrub the diff already applied and print "ใบกำกับ-…" (slice C review F13).
+  const scrubbed = field === 'documentNumber' ? scrubRecordIdentifier(value, 40) : scrubRecordText(value, 60);
+  return scrubbed || '—';
 }
 
 /** "จะเพิ่มค่าบริการ 10% = 152.00 ให้บิล BHC 03/09/2569 ยอดรวมใหม่ 1,789.04 ค่ะ" — the one line the
  *  card leads with, built from the diff rather than written per tool. */
 export function draftUpdateHeadline(preview: LineDraftUpdatePreview): string {
   const changes = preview.diff.slice(0, MAX_DIFF_ROWS)
-    .map((entry) => `${entry.label}: ${cell(entry.before)} → ${cell(entry.after)}`)
+    .map((entry) => `${entry.label}: ${cell(entry.before, entry.field)} → ${cell(entry.after, entry.field)}`)
     .join(' · ');
   // The label is built from structured fields, but the vendor name inside it is still OCR text —
   // so it is bounded here too rather than trusted because an earlier layer already scrubbed it.
@@ -62,7 +66,7 @@ export function buildDraftUpdatePreviewCard(preview: LineDraftUpdatePreview): Li
     layout: 'vertical' as const,
     contents: [
       { type: 'text' as const, text: entry.label, size: 'xs' as const, color: '#667085', wrap: true },
-      { type: 'text' as const, text: `${cell(entry.before)} → ${cell(entry.after)}`, size: 'sm' as const, color: '#101828', wrap: true },
+      { type: 'text' as const, text: `${cell(entry.before, entry.field)} → ${cell(entry.after, entry.field)}`, size: 'sm' as const, color: '#101828', wrap: true },
     ],
   }));
   const hidden = Math.max(preview.diff.length - MAX_DIFF_ROWS, 0);
@@ -152,7 +156,7 @@ export function draftUpdateAppliedReply(
   preview: LineDraftUpdatePreview,
 ): string {
   const changes = preview.diff.slice(0, MAX_DIFF_ROWS)
-    .map((entry) => `${entry.label} ${cell(entry.after)}`)
+    .map((entry) => `${entry.label} ${cell(entry.after, entry.field)}`)
     .join(' · ');
   return [
     `✅ แก้ให้แล้วค่ะ: ${changes} · ยอดรวม ${money(preview.totalsAfter.grandTotalAmount)}`,

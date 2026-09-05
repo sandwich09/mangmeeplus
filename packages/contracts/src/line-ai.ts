@@ -816,12 +816,16 @@ export type LineDraftUpdatePostback = {
  *   ๙๙,๙๙๙.๐๐        Thai numerals
  *   ９９，９９９．００   fullwidth digits with fullwidth comma and period
  *   99,999            integer-only, no decimal point
- *   evil.example.com  a bare domain with no scheme and no "www."
  *   ร้านabcwww.evil.com   `\\b` does not fire between a Thai letter and a Latin one
  *
- * Order matters: control characters and bidi overrides go first (a right-to-left mark can make a
- * number read backwards), then links, then anything digit-shaped in any of the three digit
- * alphabets, then whitespace runs; finally it is truncated.
+ * Links are matched by SHAPE, never by a list of known TLDs (slice C review F11): `evil.xyz`,
+ * `evil.app` and `evil.ru` all walked past an allowlist, and the registry grows faster than any
+ * list in this file ever will. "Something dot two-or-more letters" is the rule.
+ *
+ * Money-shaped runs are MASKED, not dropped (F12). A label is mostly a name, and deleting the
+ * whole field to remove a number takes the name with it - "ร้าน 7-Eleven สาขา 123" has to keep
+ * saying which shop it is. Callers rendering a free-text SENTENCE, where a hole reads as though
+ * the system said something it did not, pass `onMoney: 'drop'` and get an empty string instead.
  *
  * It is a DISPLAY guard, not an escape: it never makes untrusted text safe to obey, and no caller
  * may treat scrubbed text as an instruction.
@@ -830,23 +834,68 @@ export type LineDraftUpdatePostback = {
 const SCRUB_DIGIT = '0-9\u0e50-\u0e59\uff10-\uff19';
 /** Grouping and decimal marks, including their fullwidth and Arabic twins. */
 const SCRUB_SEPARATOR = ',.\uff0c\uff0e\u066b\u066c';
-const SCRUB_REPLACEMENT = '▪';
+/** What a masked figure looks like. An ellipsis reads as "something was here", which is the
+ *  honest thing for a reader to conclude. */
+export const SCRUB_MASK = '…';
 
-export function scrubRecordText(value: string | null | undefined, maxLength = 60): string {
+/** Control characters and the bidi overrides that can make a number read backwards. */
+// eslint-disable-next-line no-control-regex
+const SCRUB_INVISIBLE = /[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g;
+/** A scheme-or-www link, then ANY bare host: "something dot two-or-more-letters", no allowlist,
+ *  and no leading `\\b` - it does not fire between a Thai letter and a Latin one, which is exactly
+ *  where a smuggled host hides. */
+const SCRUB_LINK = /(?:https?:\/\/|www\.)\S+|(?:\S*\.)?[a-z0-9-]+\.[a-z]{2,24}\b\S*/gi;
+
+export type ScrubOptions = {
+  /** `mask` (default) keeps the label and replaces the figure; `drop` empties the whole value. */
+  onMoney?: 'mask' | 'drop';
+};
+
+export function scrubRecordText(
+  value: string | null | undefined,
+  maxLength = 60,
+  options: ScrubOptions = {},
+): string {
   if (typeof value !== 'string') return '';
   const digit = `[${SCRUB_DIGIT}]`;
   const digitOrSep = `[${SCRUB_DIGIT}${SCRUB_SEPARATOR}]`;
+  const percentSource = `${digit}${digitOrSep}*\\s*(?:%|％|เปอร์เซ็น(?:ต์)?)`;
+  const groupedSource = `${digit}${digitOrSep}*${digit}`;
+  const linkless = value.replace(SCRUB_INVISIBLE, ' ').replace(SCRUB_LINK, ' ');
+  // Fresh non-global regexes for the test: a `g` regex carries `lastIndex` between calls, so
+  // reusing the replace ones here would make the answer depend on what was tested before it.
+  if (options.onMoney === 'drop'
+    && (new RegExp(percentSource, 'u').test(linkless) || new RegExp(groupedSource, 'u').test(linkless))) {
+    return '';
+  }
+  return linkless
+    .replace(new RegExp(percentSource, 'gu'), SCRUB_MASK)
+    .replace(new RegExp(groupedSource, 'gu'), SCRUB_MASK)
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLength);
+}
+
+/**
+ * A document number is not prose: its DIGITS are the value. Masking them the way a label is
+ * masked leaves "ใบเสร็จ-…", which tells the reader nothing and is the F13 bug.
+ *
+ * So an identifier keeps letters, digits and the few separators a document number really uses,
+ * and drops everything else. `\\p{M}` is in the class on purpose: Thai tone marks and vowel signs
+ * are separate combining code points, so a class of `\\p{L}\\p{N}` alone deletes the marks out of
+ * "ใบกำกับ-12" and hands back mangled Thai.
+ *
+ * The thousands separator is deliberately NOT kept. A real document number has no commas, and
+ * without them nothing here can take the shape of a printed total.
+ */
+export function scrubRecordIdentifier(value: string | null | undefined, maxLength = 32): string {
+  if (typeof value !== 'string') return '';
   return value
-    // eslint-disable-next-line no-control-regex
-    .replace(/[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, ' ')
-    // Any scheme-or-www link, then any BARE host with a plausible TLD. No `\\b`: it does not fire
-    // between a Thai letter and a Latin one, which is exactly where a smuggled host hides.
-    .replace(/(?:https?:\/\/|www\.)\S+/gi, '')
-    .replace(/[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.(?:com|net|org|co|io|th|ly|link|xyz|app|info|site|shop|top|live)(?:\/\S*)?/gi, '')
-    // Anything digit-shaped, in any of the three alphabets: grouped, decimal, percent, or a bare
-    // run of two or more. Only the server's own figures may look like figures.
-    .replace(new RegExp(`${digit}${digitOrSep}*\\s*(?:%|％|เปอร์เซ็น(?:ต์)?)`, 'gu'), SCRUB_REPLACEMENT)
-    .replace(new RegExp(`${digit}${digitOrSep}*${digit}`, 'gu'), SCRUB_REPLACEMENT)
+    .replace(SCRUB_INVISIBLE, ' ')
+    .replace(SCRUB_LINK, ' ')
+    // Deleted, not spaced: turning "9,999.00" into "9 999.00" would hand back something that
+    // still reads as a printed total in a locale that groups with spaces.
+    .replace(/[^\p{L}\p{M}\p{N}\-_/#. ]/gu, '')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, maxLength);

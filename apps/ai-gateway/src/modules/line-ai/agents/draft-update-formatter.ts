@@ -13,7 +13,7 @@
  * print buttons whose postbacks it must later re-derive (SEC-04). The text says what pressing them
  * means, so a Flex-less delivery still explains the choice.
  */
-import { scrubRecordText } from '@watchdog-bms/contracts';
+import { scrubRecordIdentifier, scrubRecordText } from '@watchdog-bms/contracts';
 
 const MAX_ROWS = 5;
 
@@ -36,11 +36,13 @@ function record(value: unknown): Record<string, unknown> | undefined {
  */
 const MONEY_LITERAL = /^-?\d[\d,]*(\.\d{1,2})?$/;
 
-function cell(value: unknown): string {
+function cell(value: unknown, field?: unknown): string {
   if (value === null || value === undefined) return 'ยังไม่ระบุ';
   const text = String(value);
   if (MONEY_LITERAL.test(text.trim())) return text.trim();
-  return scrubRecordText(text, 60) || '—';
+  // A document number's DIGITS are its value: masking them would print "ใบกำกับ-…" (F13).
+  const scrubbed = field === 'documentNumber' ? scrubRecordIdentifier(text, 40) : scrubRecordText(text, 60);
+  return scrubbed || '—';
 }
 
 /**
@@ -75,7 +77,7 @@ export function formatDraftUpdateReply(data: unknown): string | undefined {
   const rows = diff.slice(0, MAX_ROWS).map((entry) => {
     const row = record(entry);
     if (!row) return undefined;
-    return `• ${cell(row['label'])}: ${cell(row['before'])} → ${cell(row['after'])}`;
+    return `• ${cell(row['label'])}: ${cell(row['before'], row['field'])} → ${cell(row['after'], row['field'])}`;
   });
   if (rows.some((row) => row === undefined)) return undefined;
 
