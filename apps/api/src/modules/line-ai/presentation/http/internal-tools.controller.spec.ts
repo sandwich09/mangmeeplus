@@ -515,7 +515,7 @@ describe('InternalToolsController — L-08 mutation classification at the ERP ex
       audit,
       fakeResolver({ permissions: options.permissions }),
       fakeDelegation(),
-      ...(options.tools ?? Array.from({ length: 55 }, () => OK_TOOL)),
+      ...(options.tools ?? Array.from({ length: 56 }, () => OK_TOOL)),
     );
     return { controller, events };
   }
@@ -645,7 +645,7 @@ describe('InternalToolsController — L-08 mutation classification at the ERP ex
   it('every wired read tool keeps working — walked from the registry, not a hardcoded list', async () => {
     const { controller } = build({ permissions: [AI] });
     const wired = [...((controller as any).toolMap as Map<string, unknown>).keys()];
-    assert.equal(wired.length, 55, 'the wired read-tool surface must not shrink');
+    assert.equal(wired.length, 56, 'the wired read-tool surface must not shrink');
 
     for (const toolName of wired) {
       const meta = LINE_TOOL_REGISTRY.find((entry) => entry.name === toolName)!;

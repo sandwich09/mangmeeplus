@@ -374,6 +374,28 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     requiredInputFields: ['expenseId'],
   },
   {
+    // Spec §5.5 (S-3): the answer to "ทำไมยอดนี้ถึงเป็นแบบนี้" about a record THIS chat captured.
+    // It reads one record and returns the header, the line groups, the totals identity as real
+    // numbers, what the AI assumed or could not verify, and what may still be changed over LINE —
+    // never a period total and never a list, which stay with expense.list_recent.
+    name: 'expense.explain_record',
+    description: 'Explain ONE expense record this user captured through LINE: vendor, date, document number, status, product lines, additional charges such as service charge, discount, the totals identity as real numbers, the values the reader assumed, and how to change it. Use for a "why/how is this bill made up" question about the user\'s own recent record (ทำไม, บิลเมื่อกี้, ใบเสร็จนี้). Never use it for a period total or a list.',
+    businessSubjects: ['expense'],
+    questionKinds: ['detail', 'explain'],
+    category: 'read_detail',
+    requiredPermissions: [],
+    anyOfPermissions: ['expense.read', 'expense.review', 'expense.read_related', 'expense.read_own'],
+    sourceModule: 'expenses',
+    supportedAgents: ['accounting', 'cfo', 'general'],
+    sensitiveAudit: true,
+    requiresErpPermissionCheck: true,
+    // FLAT primitives on purpose: the orchestrator's tool-input sanitizer keeps only whitelisted
+    // primitive values, so a nested `recordRef` object from the model wire would be dropped. The
+    // API adapter accepts BOTH this pair and the spec's nested `{ recordRef: { kind, value } }`.
+    // Every field is optional: with none, the tool explains the newest record of THIS chat.
+    optionalInputFields: ['recordType', 'recordRefKind', 'recordRefValue'],
+  },
+  {
     name: 'expense.get_daily_closing',
     description: 'Read a one-day operational expense-closing checklist only: occurred, paid, outstanding, due, overdue, review, evidence, duplicate, and bounded details by currency. Do not use for week, month, or date-range totals.',
     businessSubjects: ['expense'],
