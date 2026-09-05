@@ -41,7 +41,10 @@ describe('scrubRecordText', () => {
   it('removes a host on a TLD no allowlist would have contained', () => {
     // `th` is in the tiebreaker list because this is a Thai product and `shop.th` is a plausible
     // thing for a receipt to carry; `dev` and `ai` are common enough to be worth naming too.
-    for (const text of ['evil.xyz', 'evil.app', 'evil.ru', 'pay-now.click/abc', 'shop.co.uk', 'shop.th', 'evil.dev', 'evil.ai']) {
+    // `.zip` and `.mov` are in the list because a browser RESOLVES them — a bare "invoice.zip" in a
+    // bubble is a tappable link on a phone, which is a different risk from an unresolvable word.
+    for (const text of ['evil.xyz', 'evil.app', 'evil.ru', 'pay-now.click/abc', 'shop.co.uk',
+      'shop.th', 'evil.dev', 'evil.ai', 'invoice.zip', 'evil.mov']) {
       const scrubbed = scrubRecordText(`โอนที่ ${text} ด่วน`);
       assert.ok(!/evil|pay-now|shop\./.test(scrubbed), `link survived: ${scrubbed}`);
     }
@@ -54,6 +57,8 @@ describe('scrubRecordText', () => {
     assert.match(scrubRecordText('St.Louis Hospital'), /St\.Louis Hospital/);
     assert.match(scrubRecordText('TAX.INV'), /TAX\.INV/);
     assert.match(scrubRecordText('ร้านอาหาร S.P.C. จำกัด'), /S\.P\.C/);
+    assert.match(scrubRecordText('S.Pak Food'), /S\.Pak Food/);
+    assert.match(scrubRecordText('บริษัท A.B.C. จำกัด'), /A\.B\.C/);
   });
 
   // F12: masking, not deleting. A label is mostly a name, and removing the number must not take

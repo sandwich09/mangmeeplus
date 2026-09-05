@@ -334,6 +334,37 @@ describe('OrchestratorAgent', () => {
     assert.ok(result.replyText.includes('cannot perform this action through LINE'));
   });
 
+  // S-4 / M6, through the REAL path: the API's DTO caps `groundingText` and a longer value would
+  // 400 every ERP tool call of that turn, so the SENDER truncates. Re-deriving the slice inside a
+  // test proves nothing about `run()`; this drives the orchestrator and reads what it emitted.
+  it('bounds the grounding text it forwards, and sends none while the draft lane is off', async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const erpTools = {
+      invoke: async (_tool: any, ctx: any) => {
+        seen.push(ctx);
+        return { toolName: 'inventory.list_low_stock', status: 'ok', data: { count: 0 }, sourceRefs: [], asOf: new Date().toISOString() };
+      },
+    } as any;
+    const long = `ดูสต็อกสินค้าใกล้หมด ${'ก'.repeat(3000)}`;
+
+    const withLane = new OrchestratorAgent(erpTools, makeConfig({ lineAiDraftEditEnabled: true }));
+    await withLane.run(makeReq(long));
+    assert.ok(seen.length > 0, 'the turn must actually reach a tool call');
+    assert.equal(
+      (seen[0]!['groundingText'] as string).length,
+      1000,
+      'the orchestrator must truncate before sending, not rely on the receiver',
+    );
+    assert.ok(long.length > 1000, 'the fixture has to exceed the cap for this to mean anything');
+
+    // Flag off: the field is absent entirely, so an off deployment's wire is byte-identical.
+    seen.length = 0;
+    const withoutLane = new OrchestratorAgent(erpTools, makeConfig({ lineAiDraftEditEnabled: false }));
+    await withoutLane.run(makeReq(long));
+    assert.ok(seen.length > 0);
+    assert.equal(seen[0]!['groundingText'], undefined);
+  });
+
   it('inventory query only invokes inventory-allowlisted tools', async () => {
     const calledTools: string[] = [];
     const erpTools = {

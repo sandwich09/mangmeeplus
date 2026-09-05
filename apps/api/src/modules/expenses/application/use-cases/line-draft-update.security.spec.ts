@@ -45,6 +45,8 @@ function build(options: {
   /** Free text an attacker printed on the receipt, which the diff and the card will render. */
   lineDescription?: string;
   vendorName?: string;
+  /** Extra stored lines, for cases that need more than the single product row. */
+  extraLines?: unknown[];
   /** Make the real write path refuse, the way a broken totals identity does. */
   updateThrows?: Error;
 } = {}) {
@@ -55,7 +57,8 @@ function build(options: {
     vendorNameSnapshot: options.vendorName ?? 'BHC', vendorDocumentNumber: null,
     expenseDate: new Date('2026-09-03T00:00:00.000Z'),
     subtotalAmount: '1520', discountAmount: '0', taxableAmount: '1520',
-    vatAmount: '106.4', grandTotalAmount: '1626.4', lines: [line(options.lineDescription)], charges: [],
+    vatAmount: '106.4', grandTotalAmount: '1626.4',
+    lines: [line(options.lineDescription), ...(options.extraLines ?? [])], charges: [],
   };
   // `writes` counts calls into the write path; `applies` counts only the ones whose transaction
   // COMMITTED. The preview deliberately calls the real write path and then throws out of the
@@ -302,6 +305,28 @@ describe('LINE draft edit — frozen security eval', () => {
       Math.abs(windowMs - 600_000) < 5_000,
       `expiresAt must promise the 600s the store enforces, got ${windowMs}ms`,
     );
+  });
+
+  // L14 / R5: `taxable = subtotal - discount + charges` is what the reconciliation adds, so a
+  // charge row contributes its subtotal MINUS its own discount. Asserting `chargesAmount` only on
+  // an undiscounted charge let the subtraction be deleted with every test still green.
+  it('subtracts a charge line\'s own discount from the charges total', async () => {
+    const discounted = {
+      id: 'l2', lineNumber: 2, description: 'Service Charge', quantity: '1', unitPrice: '200',
+      discountAmount: '50', taxableAmount: '150', vatRate: '0.07', vatAmount: '10.5',
+      whtRate: null, whtAmount: '0', lineSubtotalAmount: '200', lineTotalAmount: '160.5',
+      expenseCategoryId: null, accountHintKey: null, taxCategory: null, sourceLineText: null,
+      aiLineConfidence: null, reviewStatus: 'SUGGESTED' as const,
+    };
+    const harness = build({ extraLines: [discounted] });
+    const outcome = await harness.useCase.preview(ctx(), {
+      ...charge('ย้ายบรรทัด 2 เป็นช่องค่าบริการ'),
+      tool: 'expense.draft.set_line',
+      input: { lineNumber: 2, chargeKind: 'SERVICE_CHARGE' },
+    });
+    assert.equal(outcome.status, 'preview');
+    // 200 printed, 50 discounted off it: the charge puts 150 into the tax base, not 200.
+    assert.equal((outcome as any).preview.totalsAfter.chargesAmount, '150.00');
   });
 
   // L10: a person whose confirm looks slow taps again. Telling them nothing was pending would deny

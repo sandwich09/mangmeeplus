@@ -473,7 +473,15 @@ for any preview that was cancelled or expired.
 
 1. **No deterministic router rescue** for draft edits. The primary journey is the webhook's own allowlist detector, which runs only on a turn already classified as a correction of THIS chat's record. A rescue that guesses "this looks like an edit" is the wrong thing to make eager on a write path.
 2. **No `corrections[]` JSON mirror** on a draft apply — no reader exists (see the web row above).
-3. **`canCorrectAmount` retained** with no production caller: slice B's fix-up is still adding a charge-line refusal to it, and deleting it here would conflict. Delete after B lands if nothing picks it up.
+3. **`canCorrectAmount` is live again, and B's charge refusal is already in it.** The entry that
+   said "no production caller, delete after B lands" was stale twice over. B landed the refusal on
+   develop (`line-correction.logic.ts:152-164`): a record whose single line IS an additional charge
+   is refused, because rewriting it as a product row would silently reclassify a service charge as
+   goods and move it out of the charge total. And M9 gave the function a caller again — the
+   flag-off path of `CorrectLineCapturedExpenseUseCase` uses it to decide whether a single-line
+   amount correction may still apply. Keep it.
+   Rebase note: B's version widens the line type with `chargeKind?: string | null`, so the call
+   site here must pass lines carrying it; the records this lane loads already do.
 4. **The pg spec's CI step creates `watchdog_bms` itself**, because PR #428's step is not on this base. On rebase the two should collapse into one — add the spec path to #428's step and drop this one.
 5. **`scrubRecordText` lives in `packages/contracts`** so both apps share one copy. Slice C's review is widening a gateway-local `safeText` for the same reason; at rebase they must collapse onto this one rather than diverge.
 
