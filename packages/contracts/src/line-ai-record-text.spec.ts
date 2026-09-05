@@ -123,6 +123,80 @@ describe('scrubRecordText', () => {
   });
 });
 
+// B1 corpus. The host rules are two passes and their ORDER is the fix, so both ends are pinned in
+// one place: every hostile string must lose its link AND keep the words around it, and every benign
+// string a Thai receipt really prints must come through untouched.
+//
+// The regression this replaces: widening the label charset to `\p{L}` to catch `café.com` made the
+// Latin run in `ร้านabcbit.ly` start after the Thai combining mark, so the scrubber returned `ร้`
+// and ate the shop's name. Adding `\p{M}` swallowed the word entirely. Neither shows up unless the
+// benign half of the corpus is asserted too.
+describe('scrubRecordText — host corpus, both ends', () => {
+  it('strips the host and keeps the words around it', () => {
+    const HOSTILE: Array<[input: string, expected: string]> = [
+      // Slice C's F10 expectation, exactly.
+      ['ร้านabcbit.ly/x9 สาขาสอง', 'ร้าน สาขาสอง'],
+      ['ร้าน ร้านค้า.com', 'ร้าน'],
+      ['ร้าน ร้านค้า.example.com', 'ร้าน'],
+      ['จ่ายที่ café.com', 'จ่ายที่'],
+      ['ร้าน münchen.de', 'ร้าน'],
+      ['ร้าน 東京.jp', 'ร้าน'],
+      ['ร้านabcwww.evil.com', 'ร้าน'],
+      ['go to my-shop.top now', 'go to now'],
+      ['โอนที่ bit.ly/x9 ด่วน', 'โอนที่ ด่วน'],
+      ['โอนที่ evil.example.com ด่วน', 'โอนที่ ด่วน'],
+    ];
+    for (const [input, expected] of HOSTILE) {
+      assert.equal(scrubRecordText(input), expected, `hostile: ${input}`);
+    }
+  });
+
+  it('strips a bare host on every tiebreaker TLD, with the surrounding words intact', () => {
+    const TLDS = ['com', 'net', 'org', 'io', 'co', 'ru', 'cn', 'th', 'dev', 'ai', 'zip', 'mov',
+      'xyz', 'app', 'link', 'click', 'top', 'shop', 'site', 'live', 'info', 'biz', 'online',
+      'store', 'icu', 'vip', 'ly', 'me', 'tv', 'cc', 'gg', 'to', 'sh', 'st',
+      'uk', 'jp', 'de', 'fr', 'in', 'us', 'ca', 'au', 'it', 'pl', 'nl', 'es', 'br', 'kr',
+      'sg', 'my', 'vn', 'ph'];
+    for (const tld of TLDS) {
+      assert.equal(scrubRecordText(`ร้าน evil.${tld} สาขา`), 'ร้าน สาขา', `TLD ${tld}`);
+    }
+    // And the IDN pass reaches the same list.
+    for (const tld of ['com', 'de', 'jp', 'th']) {
+      assert.equal(scrubRecordText(`ร้าน ร้านค้า.${tld} สาขา`), 'ร้าน สาขา', `IDN TLD ${tld}`);
+    }
+  });
+
+  it('leaves a real Thai receipt alone', () => {
+    // Byte-identical: nothing in these strings is a host or a figure.
+    const UNCHANGED = [
+      'ร้าน กก.ขข.คค บางนา',
+      'บริษัท เอ.บี.ซี. จำกัด',
+      'บจก. ครัวคุณแม่',
+      'ห้างหุ้นส่วน ส.สมชาย จำกัด',
+      'โรงพยาบาล เซนต์หลุยส์ ตึก ก.',
+      'สาขา ลาดพร้าว.วังหิน.โชคชัย',
+      'ABC Co.Ltd',
+      'St.Louis Hospital',
+      'TAX.INV',
+      'S.P.C.',
+      'A.B.C.',
+      'ร้าน 7-11 สาขา 12',
+      'ร้านสะดวกซื้อ สาขา 12',
+    ];
+    for (const input of UNCHANGED) {
+      assert.equal(scrubRecordText(input), input, `benign: ${input}`);
+    }
+  });
+
+  it('keeps the NAME on a benign string whose number the money rule masks', () => {
+    // These carry a run of three or more digits, which is masked by design (§F12) — the assertion
+    // is that the link rules took nothing, not that the string is byte-identical.
+    assert.match(scrubRecordText('ปตท. สาขา 088'), /^ปตท\. สาขา …$/u);
+    assert.match(scrubRecordText('TAX.ID 0105558123456'), /^TAX\.ID …$/u);
+    assert.match(scrubRecordText('REF.ID A0042'), /^REF\.ID A…$/u);
+  });
+});
+
 describe('normalizeScrubDigits', () => {
   it('folds Thai and fullwidth digits and separators onto ASCII, so a comparison cannot be fooled', () => {
     assert.equal(normalizeScrubDigits('๙๙,๙๙๙.๐๐'), '99,999.00');

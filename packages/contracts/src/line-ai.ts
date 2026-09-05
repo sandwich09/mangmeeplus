@@ -889,41 +889,86 @@ const SCRUB_INVISIBLE = /[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u
  * and `\b` does not fire between a Thai letter and a Latin one, which is exactly where a smuggled
  * host hides (`ร้านabcwww.evil.com`).
  */
-const SCRUB_SCHEME_LINK = /(?:https?:\/\/|www\.)\S+/gi;
 /**
- * The LABEL side accepts any Unicode letter while the suffix stays ASCII. A phone linkifies
- * `caf\u00e9.com` and `ร้านค้า.com` exactly like `abc.com`, and an ASCII-only label silently let both
- * through — there was no `[a-z0-9-]` character immediately before the dot for the pattern to bite
- * on. Keeping the SUFFIX ASCII is what stops a Thai phrase containing a full stop from reading as
- * a host.
+ * A scheme is a hard signal wherever it appears, so `https?://` needs no boundary. `www.` does: in
+ * `ร้านabcwww.evil.com` it sits mid-token, and matching there strips `www.evil.com` and hands back
+ * `ร้านabc` — half a host glued to the shop's name. Guarded, it declines, and the corroborated
+ * pass below takes `abcwww.evil.com` whole from the Thai→Latin boundary.
  *
- * Corroborated by shape alone: a path, or two-plus dots where EVERY label is at least two
- * characters. The label-length rule is what keeps `S.P.C.` and `บริษัท A.B.C.` - real abbreviations
- * a Thai receipt prints - out of the host branch, since no registrable host is a run of initials.
+ * Declared as a getter rather than a literal because it shares the boundary with the passes below,
+ * which is defined after it.
  */
-const SCRUB_BARE_HOST = /[\p{L}0-9-]{2,}(?:\.[\p{L}0-9-]{2,}){2,}(?![\p{L}0-9-])\S*|[\p{L}0-9-]+\.[a-z]{2,24}\/\S*/giu;
+const scrubSchemeLink = (): RegExp => new RegExp(`https?:\\/\\/\\S+|${SCRUB_ASCII_BOUNDARY}www\\.\\S+`, 'giu');
+/** The tiebreaker suffixes, shared by the ASCII and the IDN pass so the two can never disagree.
+ *
+ * Ordered generic-then-country and kept flat on purpose: it is read as a set, and a missing entry
+ * is a live link printed verbatim on a card.
+ *
+ * `id` is DELIBERATELY ABSENT. It is a real ccTLD, but `TAX.ID`, `REF.ID`, `DOC.ID` and `CUST.ID`
+ * are ordinary tokens on a receipt and in a document number, and these rules fire on exactly that
+ * shape. Stripping a customer's tax id off the card is a certain bug; `something.id` as a bare host
+ * with no other signal is a word. Revisit only with a path or second-dot signal in front of it.
+ */
+const SCRUB_TLDS = 'com|net|org|io|co|ru|cn|th|dev|ai|zip|mov|xyz|app|link|click|top|shop|site|live'
+  + '|info|biz|online|store|icu|vip|ly|me|tv|cc|gg|to|sh|st'
+  + '|uk|jp|de|fr|in|us|ca|au|it|pl|nl|es|br|kr|sg|my|vn|ph';
+
+/**
+ * PASS (a), ASCII labels. The label may only START at a script boundary: the character before it
+ * must not be a Latin letter, a combining mark, or a digit.
+ *
+ * That lookbehind is the whole lesson of B1. Thai writes its tone marks and vowel signs as separate
+ * combining code points, so in `ร้านabcbit.ly` the Latin run that reaches the dot begins inside the
+ * Thai word; without the boundary this pass strips `านabcbit.ly` and hands back `ร้`. The class is
+ * `\\p{Script=Latin}`, not `[A-Za-z]`: `ü` is a Latin letter that the ASCII range does not contain,
+ * and with the narrower test `münchen.de` was clipped to `mü`. Thai→Latin
+ * counts AS a boundary (Thai letters are not Latin), which is exactly what lets `abcbit.ly/x9` go
+ * while `ร้าน` stays. In Latin the same rule stops `münchen.de` being clipped to `mü`.
+ *
+ * A label may also not start immediately after a DOT. Without that, `ร้านค้า.example.com` lost only
+ * its `example.com` tail to this pass and left `ร้านค้า.` behind as residue — an ASCII label sitting
+ * in the middle of an IDN host is not a host of its own, and leaving pass (b) the whole token is
+ * the only way it can take the whole token.
+ */
+const SCRUB_ASCII_BOUNDARY = '(?<![\\p{Script=Latin}\\p{M}0-9])(?<!\\.)';
+/** Corroborated by shape: a path, or two-plus dots where EVERY label is at least two characters.
+ *  Both labels stay ASCII, which is what keeps `กก.ขข.คค` and `เอ.บี.ซี.` out of the host branch —
+ *  no registrable host is a run of Thai initials. */
+const SCRUB_BARE_HOST = new RegExp(
+  `${SCRUB_ASCII_BOUNDARY}[a-z0-9-]{2,}(?:\\.[a-z0-9-]{2,}){2,}(?![a-z0-9-])\\S*`
+  + `|${SCRUB_ASCII_BOUNDARY}[a-z0-9-]+\\.[a-z]{2,24}\\/\\S*`,
+  'giu',
+);
 /**
  * The genuinely ambiguous case, and the only place a TLD list earns its keep: ONE dot, no path.
- * `evil.xyz` and `Co.Ltd` are the same shape, so shape cannot separate them — and both mistakes
- * are real. Deleting `ABC Co.Ltd` down to `ABC` loses the vendor's name off the card; leaving
- * `evil.xyz` prints a host a reader might type into a browser.
- *
- * So the list is a TIEBREAKER for this one case, never the primary rule: anything with a scheme, a
- * path or a second dot is already gone above regardless of its TLD, which is what F11 was really
- * about. A novel single-label TLD with no other signal survives as text — recorded as accepted,
- * because the alternative silently eats "Co.Ltd", "St.Louis" and "TAX.INV" off real receipts.
+ * `evil.xyz` and `Co.Ltd` are the same shape, so shape cannot separate them — and both mistakes are
+ * real. Deleting `ABC Co.Ltd` down to `ABC` loses the vendor's name; leaving `evil.xyz` prints a
+ * host a reader might tap. Anything with a scheme, a path or a second dot is already gone above,
+ * whatever its TLD, so the list only ever decides this one shape.
  */
+const SCRUB_AMBIGUOUS_HOST = new RegExp(
+  `${SCRUB_ASCII_BOUNDARY}[a-z0-9-]+\\.(?:${SCRUB_TLDS})(?![a-z\\p{L}])`,
+  'giu',
+);
+
 /**
- * The list is ordered generic-then-country and kept flat on purpose: it is read as a set, and a
- * missing entry is a live link printed verbatim on a card.
+ * PASS (b), IDN labels — `ร้านค้า.com`, `café.com`, `münchen.de`, `東京.jp`. A phone linkifies every
+ * one of them, and pass (a) cannot see them: there is no ASCII character immediately before the dot
+ * for it to bite on.
  *
- * `id` is DELIBERATELY ABSENT. It is a real ccTLD, but `TAX.ID`, `REF.ID`, `DOC.ID` and
- * `CUST.ID` are ordinary tokens on a receipt and in a document number, and this rule fires on
- * exactly that shape — one dot, no path, nothing after the suffix. Stripping a customer's tax
- * id off the card is a certain bug; `something.id` as a bare host with no other signal is a
- * word. Revisit only with a real path or second-dot signal in front of it.
+ * Anchored at a HARD boundary (start of string, whitespace, or punctuation) and never mid-word,
+ * because a mid-word match is precisely the bug this replaces. The inner labels and the suffix stay
+ * ASCII: that is what stops an all-Thai dotted phrase — `กก.ขข.คค`, `ลาดพร้าว.วังหิน.โชคชัย` — from
+ * reading as a host.
+ *
+ * Runs AFTER pass (a). On `ร้านabcbit.ly/x9` this pattern would otherwise match `ร้านabcbit.ly/x9`
+ * whole and take the shop's name with it; by the time it runs, pass (a) has already removed the
+ * link and left the name alone.
  */
-const SCRUB_AMBIGUOUS_HOST = /[\p{L}0-9-]+\.(?:com|net|org|io|co|ru|cn|th|dev|ai|zip|mov|xyz|app|link|click|top|shop|site|live|info|biz|online|store|icu|vip|ly|me|tv|cc|gg|to|sh|st|uk|jp|de|fr|in|us|ca|au|it|pl|nl|es|br|kr|sg|my|vn|ph)(?![a-z\p{L}])/giu;
+const SCRUB_IDN_HOST = new RegExp(
+  `(?<=^|[\\s\\p{P}])[\\p{L}\\p{M}0-9-]+(?:\\.[a-z0-9-]+)*\\.(?:${SCRUB_TLDS})(?![a-z\\p{L}])\\S*`,
+  'giu',
+);
 
 export type ScrubOptions = {
   /** `mask` (default) keeps the label and replaces the figure; `drop` empties the whole value. */
@@ -952,9 +997,11 @@ export function scrubRecordText(
   // fold in the same pass, so every pattern below is written once, in ASCII.
   const linkless = normalizeScrubDigits(value.normalize('NFC'))
     .replace(SCRUB_INVISIBLE, ' ')
-    .replace(SCRUB_SCHEME_LINK, ' ')
+    .replace(scrubSchemeLink(), ' ')
+    // (a) then (b): see SCRUB_IDN_HOST. Reversing these two eats the Thai word before the link.
     .replace(SCRUB_BARE_HOST, ' ')
-    .replace(SCRUB_AMBIGUOUS_HOST, ' ');
+    .replace(SCRUB_AMBIGUOUS_HOST, ' ')
+    .replace(SCRUB_IDN_HOST, ' ');
   // Fresh non-global regexes for the test: a `g` regex carries `lastIndex` between calls, so
   // reusing the replace ones here would make the answer depend on what was tested before it.
   if (options.onMoney === 'drop'
