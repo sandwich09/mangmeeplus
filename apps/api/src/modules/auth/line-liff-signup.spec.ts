@@ -641,6 +641,11 @@ describe('P10-L LIFF client script', () => {
       assert.match(h.elements.status!.textContent, /098-256-5628/);
       assert.match(h.elements.status!.textContent, /contact@mangmeeplus\.com/);
       assert.doesNotMatch(h.elements.status!.textContent, /line_signup_/, 'never the raw code');
+      // The support contact alone does not prove the mapping fired: GENERIC_ERROR's advice also
+      // carries the phone and the email, so dropping either entry would still satisfy the two
+      // assertions above. These two pin THIS refusal's own sentence instead.
+      assert.match(h.elements.status!.textContent, /^บัญชี LINE นี้เปิดร้านใหม่ไม่ได้ค่ะ/);
+      assert.doesNotMatch(h.elements.status!.textContent, /ระบบขัดข้อง/, 'not the generic fallback');
       // The support sentence is for the customer, so it must NOT be hidden away in the grey box.
       assert.equal(h.elements.detail!.textContent, '', 'not the technical box');
       assert.equal(h.elements.detail!.hidden, true);

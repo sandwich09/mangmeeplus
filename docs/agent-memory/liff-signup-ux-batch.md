@@ -140,14 +140,31 @@ so no new origin and no `img-src` edit were needed (`img-src 'self' data:` was a
   4. pin the tone class to `notice-info` → **12** tests fail across the phone, tone and
      init-failure suites.
 
-## Next
+## Round 6 — rebase onto develop f44b0519 (`codex/line-signup-stale-identity`, PR #428)
 
-STEP 2, on the coordinator's go, once `codex/line-signup-stale-identity` is in develop: rebase onto
-origin/develop. Two conflicts are expected — `apps/api/package.json` `scripts.test` (keep BOTH
-appended spec paths) and `submitSignup`'s refusal block (keep `signupGuidance()`, and add the
-sibling's 409 codes `line_signup_identity_disabled` and `line_signup_account_blocked` as error-tone
-guidance entries carrying its `SIGNUP_BLOCKED_TH` sentence, so that copy stops being a bare `Error`
-landing in the technical box). Re-run the full gates after.
+Two conflicts, both in `liff-page.security.ts`; `apps/api/package.json` did **not** conflict — the
+sibling changed no package.json, so the `liff-page-contrast.spec.ts` path applied cleanly.
+
+1. **`submitSignup`'s refusal block.** The sibling had added two bare-`Error` branches for its new
+   409s. Resolution keeps this branch's `signupGuidance()` structure and moves those two codes into
+   `SIGNUP_GUIDANCE` as error-tone entries carrying `SIGNUP_BLOCKED_TH` verbatim — so the support
+   sentence lands in the red notice a customer reads instead of the grey monospace `#detail` box.
+   The sibling's own two tests moved their assertions from `#detail` to `#status` for the same
+   reason; copy and intent unchanged.
+2. **The guidance map itself**, where round 5's `line_signup_evidence_missing` and the two new
+   entries landed on the same line. Both sides kept.
+
+`SIGNUP_BLOCKED_TH` is used whole as the entry's `text` with **no** `advice`: the sentence is
+already "what went wrong AND who to call", so splitting it would have repeated a clause.
+
+**The first version of the mutation check passed, and that was the finding.** Dropping
+`line_signup_account_blocked` still satisfied the sibling's assertions, because they only looked
+for the phone and the email — and `GENERIC_ERROR`'s advice contains both, so the generic fallback
+was indistinguishable from the real mapping. The tests now pin this refusal's own opening clause
+and assert it is *not* the generic copy; dropping either entry then fails exactly its own test.
+
+Everything else from the sibling is untouched: the only diff left in `submit-line-signup.use-case.ts`
+against develop is this branch's required-phone work, and its `repeatTrial` audit field survives.
 - **Screenshots at 390×664 and 375×667** (the reviewer is right that this IS achievable): render the
   HTML to a file, serve the directory with `python3 -m http.server` on 127.0.0.1, and drive
   `http://127.0.0.1:<port>/…`. Confirmed there: the warning notice is yellow with the rule under the
