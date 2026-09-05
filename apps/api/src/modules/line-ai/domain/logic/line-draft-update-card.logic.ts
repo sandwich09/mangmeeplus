@@ -13,7 +13,7 @@
  * pending preview from the chat that pressed the button, so a forged postback can reach no further
  * than typing the same words could.
  */
-import { scrubRecordIdentifier, scrubRecordText, type LineDraftUpdatePreview } from '@watchdog-bms/contracts';
+import { scrubRecordIdentifier, scrubRecordText, type LineDraftUpdateDiffField, type LineDraftUpdatePreview } from '@watchdog-bms/contracts';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import { absoluteWebLink } from '../../../../common/http/web-link';
 
@@ -31,32 +31,58 @@ function money(value: string): string {
 }
 
 /**
- * A diff value is either a figure the SERVER computed or free text a receipt printed. A pure money
- * literal passes through — it is the answer — and everything else is scrubbed again here, so this
- * builder is safe no matter who calls it. Deciding by SHAPE rather than by field name means a new
- * diff field cannot accidentally opt out of the scrubber.
+ * Render one diff value according to WHERE IT CAME FROM, which the row states.
+ *
+ * Scrubbing everything was the bug: a card that says "วันที่เอกสาร: …-…-…" and "อัตรา VAT: …" has
+ * destroyed the only thing it exists to communicate. `text` is the attacker's and is scrubbed;
+ * `identifier` keeps its digits (they ARE the value); `money`, `date` and `plain` are figures and
+ * labels this server produced and are printed as they are, bounded.
  */
-const MONEY_LITERAL = /^-?\d[\d,]*(\.\d{1,2})?$/;
-
-function cell(value: string | null, field?: string): string {
+function cell(value: string | null, kind: LineDraftUpdateDiffField['kind'] = 'text'): string {
   if (value === null) return 'ยังไม่ระบุ';
-  const text = value.trim();
-  if (MONEY_LITERAL.test(text)) return text;
-  // A document number's DIGITS are its value, so re-masking it here would undo the identifier
-  // scrub the diff already applied and print "ใบกำกับ-…" (slice C review F13).
-  const scrubbed = field === 'documentNumber' ? scrubRecordIdentifier(value, 40) : scrubRecordText(value, 60);
-  return scrubbed || '—';
+  switch (kind) {
+    case 'text':
+      return scrubRecordText(value, 60) || '—';
+    case 'identifier':
+      // Null means "not a document number at all" — a value that could read as a total or a host.
+      return scrubRecordIdentifier(value, 40) ?? '—';
+    case 'date':
+      return formatThaiDate(value);
+    case 'money':
+      return money(value);
+    case 'plain':
+      // Server-generated, but still bounded: a constant that grew unexpectedly must not blow up a bubble.
+      return value.slice(0, 60);
+  }
+}
+
+/** The same Buddhist-era shape every other LINE reply uses, e.g. 3 ก.ย. 2569. */
+const THAI_DATE = new Intl.DateTimeFormat('th-TH', { timeZone: 'Asia/Bangkok', day: 'numeric', month: 'short', year: 'numeric' });
+
+export function formatThaiDate(isoDate: string): string {
+  const parsed = new Date(`${isoDate.slice(0, 10)}T00:00:00.000Z`);
+  return Number.isNaN(parsed.getTime()) ? isoDate.slice(0, 20) : THAI_DATE.format(parsed);
+}
+
+/**
+ * The record this edit targets, composed from typed fields. The vendor name already arrived
+ * scrubbed from the use case; it is scrubbed again here because this builder is exported and the
+ * next caller may not be. The date and status are the server's and are formatted, never masked.
+ */
+export function formatRecordLabel(record: LineDraftUpdatePreview['record']): string {
+  const vendor = scrubRecordText(record.vendorName, 40);
+  return [vendor || 'ไม่ระบุผู้ขาย', formatThaiDate(record.expenseDate), record.statusLabel.slice(0, 40)].join(' · ');
 }
 
 /** "จะเพิ่มค่าบริการ 10% = 152.00 ให้บิล BHC 03/09/2569 ยอดรวมใหม่ 1,789.04 ค่ะ" — the one line the
  *  card leads with, built from the diff rather than written per tool. */
 export function draftUpdateHeadline(preview: LineDraftUpdatePreview): string {
   const changes = preview.diff.slice(0, MAX_DIFF_ROWS)
-    .map((entry) => `${entry.label}: ${cell(entry.before, entry.field)} → ${cell(entry.after, entry.field)}`)
+    .map((entry) => `${entry.label}: ${cell(entry.before, entry.kind)} → ${cell(entry.after, entry.kind)}`)
     .join(' · ');
   // The label is built from structured fields, but the vendor name inside it is still OCR text —
   // so it is bounded here too rather than trusted because an earlier layer already scrubbed it.
-  return `จะแก้ ${cell(preview.recordLabel)} — ${changes}`;
+  return `จะแก้ ${formatRecordLabel(preview.record)} — ${changes}`;
 }
 
 export function buildDraftUpdatePreviewCard(preview: LineDraftUpdatePreview): LineReplyMessage {
@@ -66,7 +92,7 @@ export function buildDraftUpdatePreviewCard(preview: LineDraftUpdatePreview): Li
     layout: 'vertical' as const,
     contents: [
       { type: 'text' as const, text: entry.label, size: 'xs' as const, color: '#667085', wrap: true },
-      { type: 'text' as const, text: `${cell(entry.before, entry.field)} → ${cell(entry.after, entry.field)}`, size: 'sm' as const, color: '#101828', wrap: true },
+      { type: 'text' as const, text: `${cell(entry.before, entry.kind)} → ${cell(entry.after, entry.kind)}`, size: 'sm' as const, color: '#101828', wrap: true },
     ],
   }));
   const hidden = Math.max(preview.diff.length - MAX_DIFF_ROWS, 0);
@@ -85,7 +111,7 @@ export function buildDraftUpdatePreviewCard(preview: LineDraftUpdatePreview): Li
         paddingAll: '16px',
         contents: [
           { type: 'text', text: 'ยืนยันการแก้ไขรายการ', weight: 'bold', size: 'lg', color: '#101828', wrap: true },
-          { type: 'text', text: cell(preview.recordLabel), size: 'sm', color: '#475467', wrap: true },
+          { type: 'text', text: formatRecordLabel(preview.record), size: 'sm', color: '#475467', wrap: true },
           { type: 'separator', margin: 'md' },
           ...rows,
           ...(hidden > 0 ? [{ type: 'text' as const, text: `และอีก ${hidden} รายการ`, size: 'xs' as const, color: '#667085' }] : []),
@@ -156,7 +182,7 @@ export function draftUpdateAppliedReply(
   preview: LineDraftUpdatePreview,
 ): string {
   const changes = preview.diff.slice(0, MAX_DIFF_ROWS)
-    .map((entry) => `${entry.label} ${cell(entry.after, entry.field)}`)
+    .map((entry) => `${entry.label} ${cell(entry.after, entry.kind)}`)
     .join(' · ');
   return [
     `✅ แก้ให้แล้วค่ะ: ${changes} · ยอดรวม ${money(preview.totalsAfter.grandTotalAmount)}`,

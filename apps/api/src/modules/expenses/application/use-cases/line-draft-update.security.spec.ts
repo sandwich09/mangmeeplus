@@ -208,9 +208,10 @@ const CASES: Record<string, (h: Harness) => Promise<void>> = {
     // would actually be shown.
     const outcome = await h.useCase.preview(ctx(), charge('จากบิลเมื่อกี้มี service charge 10% นะ'));
     assert.equal(outcome.status, 'preview');
-    const label = (outcome as any).preview.recordLabel as string;
-    assert.ok(!label.includes('evil.com'), 'a bare host glued to Thai letters is still a link');
-    assert.match(label, /2026-09-03/, 'and the structured fields still identify the bill');
+    const vendor = (outcome as any).preview.record.vendorName as string | null;
+    assert.ok(!(vendor ?? '').includes('evil.com'), 'a bare host glued to Thai letters is still a link');
+    // The date is the SERVER'S field and is handed over intact — a renderer formats it (H2).
+    assert.equal((outcome as any).preview.record.expenseDate, '2026-09-03');
   },
   'draft-grounded-request-previews-but-does-not-write': async (h) => {
     const outcome = await h.useCase.preview(ctx(), charge('จากบิลเมื่อกี้มี service charge 10% นะ'));

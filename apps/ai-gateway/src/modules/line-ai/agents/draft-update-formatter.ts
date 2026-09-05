@@ -29,20 +29,38 @@ function record(value: unknown): Record<string, unknown> | undefined {
 }
 
 /**
- * A diff value is either a figure the SERVER computed or free text a receipt printed. A pure money
- * literal passes through — it is the answer — and everything else is scrubbed, which is what stops
- * a line description from printing a total nobody calculated. Deciding by shape rather than by
- * field name means a new diff field cannot accidentally opt out of the scrubber.
+ * Render one diff value by WHERE IT CAME FROM, which the row states. Scrubbing everything was the
+ * bug: an answer that says "วันที่เอกสาร: …-…-…" has destroyed the thing it exists to say. Only
+ * `text` is the attacker's; `identifier` keeps its digits; the rest are the server's own figures.
  */
-const MONEY_LITERAL = /^-?\d[\d,]*(\.\d{1,2})?$/;
-
-function cell(value: unknown, field?: unknown): string {
+function cell(value: unknown, kind: unknown = 'text'): string {
   if (value === null || value === undefined) return 'ยังไม่ระบุ';
   const text = String(value);
-  if (MONEY_LITERAL.test(text.trim())) return text.trim();
-  // A document number's DIGITS are its value: masking them would print "ใบกำกับ-…" (F13).
-  const scrubbed = field === 'documentNumber' ? scrubRecordIdentifier(text, 40) : scrubRecordText(text, 60);
-  return scrubbed || '—';
+  switch (kind) {
+    case 'identifier': return scrubRecordIdentifier(text, 40) ?? '—';
+    case 'date': return formatThaiDate(text);
+    case 'money': return money(text) ?? '—';
+    case 'plain': return text.slice(0, 60);
+    default: return scrubRecordText(text, 60) || '—';
+  }
+}
+
+/** The same Buddhist-era shape every other LINE reply uses, e.g. 3 ก.ย. 2569. */
+const THAI_DATE = new Intl.DateTimeFormat('th-TH', { timeZone: 'Asia/Bangkok', day: 'numeric', month: 'short', year: 'numeric' });
+
+function formatThaiDate(isoDate: string): string {
+  const parsed = new Date(`${isoDate.slice(0, 10)}T00:00:00.000Z`);
+  return Number.isNaN(parsed.getTime()) ? isoDate.slice(0, 20) : THAI_DATE.format(parsed);
+}
+
+/** The record this edit targets, from typed fields — the vendor name arrived already scrubbed. */
+function recordLabel(record: Record<string, unknown> | undefined): string | undefined {
+  if (!record) return undefined;
+  const date = record['expenseDate'];
+  if (typeof date !== 'string') return undefined;
+  const vendor = typeof record['vendorName'] === 'string' ? scrubRecordText(record['vendorName'], 40) : '';
+  const status = typeof record['statusLabel'] === 'string' ? record['statusLabel'].slice(0, 40) : '';
+  return [vendor || 'ไม่ระบุผู้ขาย', formatThaiDate(date), status].filter(Boolean).join(' · ');
 }
 
 /**
@@ -77,15 +95,20 @@ export function formatDraftUpdateReply(data: unknown): string | undefined {
   const rows = diff.slice(0, MAX_ROWS).map((entry) => {
     const row = record(entry);
     if (!row) return undefined;
-    return `• ${cell(row['label'])}: ${cell(row['before'], row['field'])} → ${cell(row['after'], row['field'])}`;
+    // The label is server-generated (a constant, sometimes with a line number in it) and is
+    // printed as-is; only the values are classified.
+    const label = typeof row['label'] === 'string' ? row['label'].slice(0, 60) : '';
+    return `• ${label}: ${cell(row['before'], row['kind'])} → ${cell(row['after'], row['kind'])}`;
   });
   if (rows.some((row) => row === undefined)) return undefined;
 
   const warnings = Array.isArray(preview['warnings'])
     ? (preview['warnings'] as unknown[]).slice(0, 2).map((warning) => `⚠️ ${scrubRecordText(String(warning), 160)}`)
     : [];
+  const label = recordLabel(record(preview['record']));
+  if (!label) return undefined;
   return [
-    `จะแก้ ${cell(preview['recordLabel'])} ตามนี้นะคะ`,
+    `จะแก้ ${label} ตามนี้นะคะ`,
     ...rows as string[],
     `ยอดรวมใหม่ ${after} (เดิม ${before})`,
     ...warnings,

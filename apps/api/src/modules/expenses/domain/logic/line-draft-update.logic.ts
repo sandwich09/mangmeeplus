@@ -287,10 +287,7 @@ const text = (value: string | null | undefined): string | null => {
 
 /** A document number is the one free-text field whose DIGITS are the value, so masking them the
  *  way a name is masked would leave "ใบเสร็จ-…" and tell the reader nothing (slice C review F13). */
-const identifier = (value: string | null | undefined): string | null => {
-  const scrubbed = scrubRecordIdentifier(value, 40);
-  return scrubbed === '' ? null : scrubbed;
-};
+const identifier = (value: string | null | undefined): string | null => scrubRecordIdentifier(value, 40);
 
 /**
  * Turn one patch into the replacement line set plus the diff a confirm card prints.
@@ -309,18 +306,18 @@ export function projectLineDraftPatch(
 
   if (patch.tool === 'expense.draft.set_header') {
     if (patch.expenseDate) {
-      diff.push({ field: 'expenseDate', label: 'วันที่เอกสาร', before: record.expenseDate.toISOString().slice(0, 10), after: patch.expenseDate });
+      diff.push({ field: 'expenseDate', label: 'วันที่เอกสาร', kind: 'date', before: record.expenseDate.toISOString().slice(0, 10), after: patch.expenseDate });
     }
-    if (patch.vendorName) diff.push({ field: 'vendorName', label: 'ผู้ขาย/ผู้รับเงิน', before: text(record.vendorNameSnapshot), after: text(patch.vendorName) });
-    if (patch.documentNumber) diff.push({ field: 'documentNumber', label: 'เลขที่เอกสาร', before: identifier(record.vendorDocumentNumber), after: identifier(patch.documentNumber) });
-    if (patch.noteAppend) diff.push({ field: 'note', label: 'หมายเหตุ', before: text(record.note), after: text(patch.noteAppend) });
+    if (patch.vendorName) diff.push({ field: 'vendorName', label: 'ผู้ขาย/ผู้รับเงิน', kind: 'text', before: text(record.vendorNameSnapshot), after: text(patch.vendorName) });
+    if (patch.documentNumber) diff.push({ field: 'documentNumber', label: 'เลขที่เอกสาร', kind: 'identifier', before: identifier(record.vendorDocumentNumber), after: identifier(patch.documentNumber) });
+    if (patch.noteAppend) diff.push({ field: 'note', label: 'หมายเหตุ', kind: 'text', before: text(record.note), after: text(patch.noteAppend) });
     // Header-only: the stored lines ride along untouched so the use case's whole-set replacement is
     // a no-op on them rather than a deletion.
     return { lines: renumber(current), diff, warnings };
   }
 
   if (patch.tool === 'expense.draft.set_vat_mode') {
-    diff.push({ field: 'vatMode', label: 'โหมด VAT', before: record.vatMode, after: patch.vatMode });
+    diff.push({ field: 'vatMode', label: 'โหมด VAT', kind: 'plain', before: record.vatMode, after: patch.vatMode });
     const rate = patch.rate === undefined ? undefined : normalizeRate(patch.rate);
     if (patch.rate !== undefined && rate === undefined) return { error: 'invalid_vat_rate' };
     const next = current.map((line) => ({
@@ -330,7 +327,7 @@ export function projectLineDraftPatch(
       // is the instruction, so the stale treatment is cleared rather than failing validation.
       ...(rate !== undefined && !new Decimal(rate).isZero() ? { vatTreatment: null } : {}),
     }));
-    if (rate !== undefined) diff.push({ field: 'vatRate', label: 'อัตรา VAT', before: ratePercentLabel(record.lines[0]?.vatRate ?? null), after: ratePercentLabel(rate) });
+    if (rate !== undefined) diff.push({ field: 'vatRate', label: 'อัตรา VAT', kind: 'plain', before: ratePercentLabel(record.lines[0]?.vatRate ?? null), after: ratePercentLabel(rate) });
     return { lines: renumber(next), diff, warnings };
   }
 
@@ -338,10 +335,20 @@ export function projectLineDraftPatch(
     const target = record.lines.find((line) => line.lineNumber === patch.lineNumber);
     if (!target) return { error: 'line_not_found' };
     if (record.lines.length === 1) return { error: 'last_line' };
+    // Two rows, not one joined string: the description is the attacker's and the amount is the
+    // server's, and a renderer cannot apply two different rules to halves of one value.
     diff.push({
-      field: `line.${patch.lineNumber}`,
+      field: `line.${patch.lineNumber}.description`,
       label: `ลบบรรทัด ${patch.lineNumber}${target.chargeKind ? ` (${EXPENSE_LINE_CHARGE_KIND_LABELS[target.chargeKind]})` : ''}`,
-      before: `${text(target.description) ?? 'รายการ'} · ${money(target.lineSubtotalAmount)}`,
+      kind: 'text',
+      before: text(target.description) ?? 'รายการ',
+      after: null,
+    });
+    diff.push({
+      field: `line.${patch.lineNumber}.amount`,
+      label: `ยอดบรรทัด ${patch.lineNumber} ที่จะหายไป`,
+      kind: 'money',
+      before: money(target.lineSubtotalAmount),
       after: null,
     });
     return { lines: renumber(current.filter((line) => line.lineNumber !== patch.lineNumber)), diff, warnings };
@@ -354,11 +361,11 @@ export function projectLineDraftPatch(
       if (line.lineNumber !== patch.lineNumber) return line;
       const updated: DraftLineInput = { ...line };
       if (patch.description !== undefined) {
-        diff.push({ field: `line.${patch.lineNumber}.description`, label: `บรรทัด ${patch.lineNumber} รายละเอียด`, before: text(target.description), after: text(patch.description) });
+        diff.push({ field: `line.${patch.lineNumber}.description`, label: `บรรทัด ${patch.lineNumber} รายละเอียด`, kind: 'text', before: text(target.description), after: text(patch.description) });
         updated.description = patch.description;
       }
       if (patch.amount !== undefined) {
-        diff.push({ field: `line.${patch.lineNumber}.amount`, label: `บรรทัด ${patch.lineNumber} จำนวนเงิน`, before: money(target.lineSubtotalAmount), after: money(patch.amount) });
+        diff.push({ field: `line.${patch.lineNumber}.amount`, label: `บรรทัด ${patch.lineNumber} จำนวนเงิน`, kind: 'money', before: money(target.lineSubtotalAmount), after: money(patch.amount) });
         // The amount a person states is the row's printed total, so it lands on a quantity-1 row.
         // A multi-unit product line keeps its unit price semantics only when it stays at qty 1;
         // anything else would silently reinterpret "แก้ยอดเป็น 500" as a unit price.
@@ -367,7 +374,7 @@ export function projectLineDraftPatch(
         updated.discountAmount = '0';
       }
       if (patch.vatTreatment !== undefined) {
-        diff.push({ field: `line.${patch.lineNumber}.vatTreatment`, label: `บรรทัด ${patch.lineNumber} VAT`, before: target.vatTreatment ?? null, after: patch.vatTreatment });
+        diff.push({ field: `line.${patch.lineNumber}.vatTreatment`, label: `บรรทัด ${patch.lineNumber} VAT`, kind: 'plain', before: target.vatTreatment ?? null, after: patch.vatTreatment });
         updated.vatTreatment = patch.vatTreatment;
         // An explicit zero treatment requires an explicit zero rate (validateExpenseLineVatTreatments).
         if (patch.vatTreatment !== null) updated.vatRate = '0';
@@ -376,6 +383,7 @@ export function projectLineDraftPatch(
         diff.push({
           field: `line.${patch.lineNumber}.chargeKind`,
           label: `บรรทัด ${patch.lineNumber} ย้ายเป็นช่องค่าใช้จ่ายเพิ่ม`,
+          kind: 'plain',
           before: target.chargeKind ? EXPENSE_LINE_CHARGE_KIND_LABELS[target.chargeKind] : 'รายการสินค้า',
           after: patch.chargeKind ? EXPENSE_LINE_CHARGE_KIND_LABELS[patch.chargeKind] : 'รายการสินค้า',
         });
@@ -413,7 +421,7 @@ export function projectLineDraftPatch(
   if (vatRate === null) {
     warnings.push('ใบเสร็จไม่ได้บอก VAT ของค่าใช้จ่ายเพิ่ม ระบบจะตั้งเป็นรอตรวจสอบ ไม่เดา 7% ให้ค่ะ');
   }
-  diff.push({ field: `charge.${patch.kind}`, label, before: null, after: money(chargeAmount) });
+  diff.push({ field: `charge.${patch.kind}`, label, kind: 'money', before: null, after: money(chargeAmount) });
   return {
     lines: renumber([
       ...current,

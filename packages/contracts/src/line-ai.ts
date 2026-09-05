@@ -751,13 +751,30 @@ export const LINE_DRAFT_UPDATE_TOOLS = [
 ] as const;
 export type LineDraftUpdateTool = (typeof LINE_DRAFT_UPDATE_TOOLS)[number];
 
+/**
+ * Where a diff value CAME FROM, which is the only thing that decides whether a renderer may scrub
+ * it. Getting this wrong in either direction is a bug with teeth:
+ *
+ * - `text` is OCR/user free text — a vendor name, a line description. An attacker wrote it, so it
+ *   is scrubbed, and a money-shaped run inside it is masked.
+ * - `identifier` is a document number, whose DIGITS are its value; it gets the identifier scrub
+ *   instead, which keeps them.
+ * - `money`, `date`, `plain` are SERVER-GENERATED — amounts this server computed, an ISO date it
+ *   read off the record, an enum label from a constant. Scrubbing them is how a confirm card ends
+ *   up saying "วันที่เอกสาร: …-…-…" and "อัตรา VAT: …", which is worse than useless: the whole
+ *   point of the card is to state what will change.
+ */
+export type LineDraftValueKind = 'text' | 'identifier' | 'money' | 'date' | 'plain';
+
 /** One field the pending edit would change, as the confirm card states it. `before` is `null` when
  *  the record holds nothing today ("ยังไม่ระบุ"); `after` is null only for a cleared field. */
 export type LineDraftUpdateDiffField = {
   /** Stable machine name (`expenseDate`, `line.2.amount`, `charge.SERVICE_CHARGE`, …). */
   field: string;
-  /** Thai label the card prints. Deterministic — never model text. */
+  /** Thai label the card prints. Server-generated from a constant — never model text, never scrubbed. */
   label: string;
+  /** Decides how a renderer may treat `before`/`after`. See {@link LineDraftValueKind}. */
+  kind: LineDraftValueKind;
   before: string | null;
   after: string | null;
 };
@@ -785,8 +802,19 @@ export type LineDraftUpdatePreview = {
   previewId: string;
   recordType: LineDraftRecordType;
   expenseId: string;
-  /** Human summary of the record the edit targets, e.g. "BHC · 03/09/2569". Structured fields only. */
-  recordLabel: string;
+  /**
+   * The record the edit targets, as TYPED fields rather than one pre-joined sentence. A renderer
+   * needs to format the date for its own audience (the LINE channel prints Buddhist-era Thai), and
+   * it must not have to guess which half of a joined string was untrusted: `vendorName` is the one
+   * attacker-controlled part and arrives already scrubbed, the rest is the server's own.
+   */
+  record: {
+    vendorName: string | null;
+    /** ISO `YYYY-MM-DD`, read off the record. */
+    expenseDate: string;
+    /** Thai status label from `EXPENSE_STATUS_LABELS`. */
+    statusLabel: string;
+  };
   /** The tool that proposed this edit; the card copy is chosen from it. */
   tool: LineDraftUpdateTool;
   diff: LineDraftUpdateDiffField[];
@@ -841,10 +869,41 @@ export const SCRUB_MASK = '…';
 /** Control characters and the bidi overrides that can make a number read backwards. */
 // eslint-disable-next-line no-control-regex
 const SCRUB_INVISIBLE = /[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g;
-/** A scheme-or-www link, then ANY bare host: "something dot two-or-more-letters", no allowlist,
- *  and no leading `\\b` - it does not fire between a Thai letter and a Latin one, which is exactly
- *  where a smuggled host hides. */
-const SCRUB_LINK = /(?:https?:\/\/|www\.)\S+|(?:\S*\.)?[a-z0-9-]+\.[a-z]{2,24}\b\S*/gi;
+/**
+ * Links, in two passes.
+ *
+ * The first is unambiguous: anything with a scheme or a `www.` is a link, whole token.
+ *
+ * The second finds a BARE host, and it has to thread a needle. Matching "something dot letters"
+ * alone deletes ordinary text a Thai receipt really prints - `ABC Co.Ltd` became `ABC`,
+ * `St.Louis Hospital` became `Hospital`, `TAX.INV` vanished entirely. So a bare host must ALSO
+ * carry a corroborating signal: a path (`bit.ly/x9`), or a second dot (`evil.example.com`), or a
+ * TLD that is NOT immediately followed by another letter - which is what separates `evil.xyz` from
+ * `Co.Ltd`, where the "TLD" runs straight into more word.
+ *
+ * No allowlist of TLDs, and no leading `\b`: the registry grows faster than any list in this file,
+ * and `\b` does not fire between a Thai letter and a Latin one, which is exactly where a smuggled
+ * host hides (`ร้านabcwww.evil.com`).
+ */
+const SCRUB_SCHEME_LINK = /(?:https?:\/\/|www\.)\S+/gi;
+/**
+ * Corroborated by shape alone: a path, or two-plus dots where EVERY label is at least two
+ * characters. The label-length rule is what keeps `S.P.C.` and `บริษัท A.B.C.` - real abbreviations
+ * a Thai receipt prints - out of the host branch, since no registrable host is a run of initials.
+ */
+const SCRUB_BARE_HOST = /[a-z0-9-]{2,}(?:\.[a-z0-9-]{2,}){2,}(?![a-z0-9-])\S*|[a-z0-9-]+\.[a-z]{2,24}\/\S*/gi;
+/**
+ * The genuinely ambiguous case, and the only place a TLD list earns its keep: ONE dot, no path.
+ * `evil.xyz` and `Co.Ltd` are the same shape, so shape cannot separate them — and both mistakes
+ * are real. Deleting `ABC Co.Ltd` down to `ABC` loses the vendor's name off the card; leaving
+ * `evil.xyz` prints a host a reader might type into a browser.
+ *
+ * So the list is a TIEBREAKER for this one case, never the primary rule: anything with a scheme, a
+ * path or a second dot is already gone above regardless of its TLD, which is what F11 was really
+ * about. A novel single-label TLD with no other signal survives as text — recorded as accepted,
+ * because the alternative silently eats "Co.Ltd", "St.Louis" and "TAX.INV" off real receipts.
+ */
+const SCRUB_AMBIGUOUS_HOST = /[a-z0-9-]+\.(?:com|net|org|io|co|ru|cn|xyz|app|link|click|top|shop|site|live|info|biz|online|store|icu|vip|ly|me|tv|cc|gg|to|sh|st)(?![a-z\p{L}])/giu;
 
 export type ScrubOptions = {
   /** `mask` (default) keeps the label and replaces the figure; `drop` empties the whole value. */
@@ -861,7 +920,11 @@ export function scrubRecordText(
   const digitOrSep = `[${SCRUB_DIGIT}${SCRUB_SEPARATOR}]`;
   const percentSource = `${digit}${digitOrSep}*\\s*(?:%|％|เปอร์เซ็น(?:ต์)?)`;
   const groupedSource = `${digit}${digitOrSep}*${digit}`;
-  const linkless = value.replace(SCRUB_INVISIBLE, ' ').replace(SCRUB_LINK, ' ');
+  const linkless = value
+    .replace(SCRUB_INVISIBLE, ' ')
+    .replace(SCRUB_SCHEME_LINK, ' ')
+    .replace(SCRUB_BARE_HOST, ' ')
+    .replace(SCRUB_AMBIGUOUS_HOST, ' ');
   // Fresh non-global regexes for the test: a `g` regex carries `lastIndex` between calls, so
   // reusing the replace ones here would make the answer depend on what was tested before it.
   if (options.onMoney === 'drop'
@@ -878,27 +941,31 @@ export function scrubRecordText(
 
 /**
  * A document number is not prose: its DIGITS are the value. Masking them the way a label is
- * masked leaves "ใบเสร็จ-…", which tells the reader nothing and is the F13 bug.
+ * masked leaves "ใบเสร็จ-…", which tells the reader nothing.
  *
- * So an identifier keeps letters, digits and the few separators a document number really uses,
- * and drops everything else. `\\p{M}` is in the class on purpose: Thai tone marks and vowel signs
- * are separate combining code points, so a class of `\\p{L}\\p{N}` alone deletes the marks out of
- * "ใบกำกับ-12" and hands back mangled Thai.
+ * So an identifier is defined by SHAPE, not by subtraction: ONE token, no spaces, at most
+ * `maxLength` characters, starting with a letter or digit and continuing with letters, digits,
+ * `-`, `/`, `_` or `#`. Anything else answers null and the caller prints "ยังไม่ระบุ".
  *
- * The thousands separator is deliberately NOT kept. A real document number has no commas, and
- * without them nothing here can take the shape of a printed total.
+ * `.` is deliberately NOT in the charset. Admitting it admits `99.999,00`, `1789.04` and
+ * `192.168.1.1/pay` - the exact money and host shapes the label scrubber exists to remove, walked
+ * straight through the field that is allowed to keep its digits. No real document number needs a
+ * dot badly enough to reopen that hole.
+ *
+ * `\\p{M}` is in the class on purpose: Thai tone marks and vowel signs are separate combining code
+ * points, so `\\p{L}\\p{N}` alone deletes the marks out of "ใบกำกับ-12" and hands back mangled Thai.
+ * Digits are folded to ASCII first, so a Thai- or fullwidth-numeral identifier cannot smuggle a
+ * different alphabet past a later comparison.
  */
-export function scrubRecordIdentifier(value: string | null | undefined, maxLength = 32): string {
-  if (typeof value !== 'string') return '';
-  return value
+const IDENTIFIER_SHAPE = /^[\p{L}\p{M}0-9][\p{L}\p{M}0-9\-/_#]*$/u;
+
+export function scrubRecordIdentifier(value: string | null | undefined, maxLength = 32): string | null {
+  if (typeof value !== 'string') return null;
+  const token = normalizeScrubDigits(value)
     .replace(SCRUB_INVISIBLE, ' ')
-    .replace(SCRUB_LINK, ' ')
-    // Deleted, not spaced: turning "9,999.00" into "9 999.00" would hand back something that
-    // still reads as a printed total in a locale that groups with spaces.
-    .replace(/[^\p{L}\p{M}\p{N}\-_/#. ]/gu, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, maxLength);
+    .trim();
+  if (token.length === 0 || token.length > maxLength) return null;
+  return IDENTIFIER_SHAPE.test(token) ? token : null;
 }
 
 /**

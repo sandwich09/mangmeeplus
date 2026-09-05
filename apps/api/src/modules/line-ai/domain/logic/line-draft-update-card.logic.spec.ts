@@ -22,9 +22,9 @@ const preview: LineDraftUpdatePreview = {
   previewId: 'p-1',
   recordType: 'expense',
   expenseId: 'exp-1',
-  recordLabel: 'BHC · 2026-09-03 · รอตรวจสอบ',
+  record: { vendorName: 'BHC', expenseDate: '2026-09-03', statusLabel: 'รอตรวจสอบ' },
   tool: 'expense.draft.add_charge',
-  diff: [{ field: 'charge.SERVICE_CHARGE', label: 'ค่าบริการ', before: null, after: '152.00' }],
+  diff: [{ field: 'charge.SERVICE_CHARGE', label: 'ค่าบริการ', kind: 'money', before: null, after: '152.00' }],
   totalsBefore: { subtotalAmount: '1520', discountAmount: '0', chargesAmount: '0.00', taxableAmount: '1520', vatAmount: '106.40', grandTotalAmount: '1626.40' },
   totalsAfter: { subtotalAmount: '1520', discountAmount: '0', chargesAmount: '152.00', taxableAmount: '1672', vatAmount: '117.04', grandTotalAmount: '1789.04' },
   warnings: [],
@@ -68,12 +68,65 @@ describe('draft update confirm card', () => {
     assert.ok(allText(card.contents.body).some((text) => text.includes('เดิม 1,626.40')));
   });
 
-  it('scrubs a money- or link-shaped record label, but keeps the server figures', () => {
-    const hostile = { ...preview, recordLabel: 'จ่ายไปที่ 9,999.00 http://evil.example' };
+  it('scrubs a money- or link-shaped vendor name, but keeps the server figures', () => {
+    const hostile = { ...preview, record: { ...preview.record, vendorName: 'จ่ายไปที่ 9,999.00 http://evil.example' } };
     const text = allText(buildDraftUpdatePreviewCard(hostile)).join('\n');
     assert.ok(!text.includes('9,999.00'));
     assert.ok(!text.includes('evil.example'));
     assert.ok(text.includes('1,789.04'));
+  });
+
+  // H2: the card exists to STATE the change. Scrubbing the server's own values turned
+  // "วันที่เอกสาร: 3 ก.ย. 2569" into "…-…-…", which is worse than saying nothing.
+  it('prints a real date on a set_header card (spec J3.1)', () => {
+    const card = buildDraftUpdatePreviewCard({
+      ...preview,
+      tool: 'expense.draft.set_header',
+      diff: [{ field: 'expenseDate', label: 'วันที่เอกสาร', kind: 'date', before: '2026-09-01', after: '2026-09-03' }],
+    }) as any;
+    const text = allText(card).join('\n');
+    assert.match(text, /1 ก\.ย\. 2569/, 'the date it holds today');
+    assert.match(text, /3 ก\.ย\. 2569/, 'and the date it would hold');
+    assert.ok(!text.includes('…-…'), 'never a masked date');
+    // The record line names the bill in Buddhist-era Thai too, not an ISO string.
+    assert.match(text, /BHC · 3 ก\.ย\. 2569 · รอตรวจสอบ/);
+  });
+
+  it('prints the real line number and amount on a remove_line card', () => {
+    const card = buildDraftUpdatePreviewCard({
+      ...preview,
+      tool: 'expense.draft.remove_line',
+      diff: [
+        { field: 'line.12.description', label: 'ลบบรรทัด 12', kind: 'text', before: 'อาหาร', after: null },
+        { field: 'line.12.amount', label: 'ยอดบรรทัด 12 ที่จะหายไป', kind: 'money', before: '152.00', after: null },
+      ],
+    }) as any;
+    const text = allText(card).join('\n');
+    assert.match(text, /ลบบรรทัด 12/, 'a two-digit line number survives in the label');
+    assert.match(text, /152\.00/, 'and the amount that would disappear is stated');
+  });
+
+  it('prints a VAT rate and mode without masking them', () => {
+    const card = buildDraftUpdatePreviewCard({
+      ...preview,
+      tool: 'expense.draft.set_vat_mode',
+      diff: [
+        { field: 'vatMode', label: 'โหมด VAT', kind: 'plain', before: 'NO_VAT', after: 'VAT_EXCLUDED' },
+        { field: 'vatRate', label: 'อัตรา VAT', kind: 'plain', before: null, after: '7%' },
+      ],
+    }) as any;
+    const text = allText(card).join('\n');
+    assert.match(text, /7%/);
+    assert.match(text, /VAT_EXCLUDED/);
+  });
+
+  it('keeps a document number\'s digits, which ARE its value', () => {
+    const card = buildDraftUpdatePreviewCard({
+      ...preview,
+      tool: 'expense.draft.set_header',
+      diff: [{ field: 'documentNumber', label: 'เลขที่เอกสาร', kind: 'identifier', before: null, after: 'ใบกำกับ-12' }],
+    }) as any;
+    assert.match(allText(card).join('\n'), /ใบกำกับ-12/);
   });
 
   it('says what changed, then links the record', () => {

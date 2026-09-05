@@ -19,9 +19,9 @@ const preview = (over: Record<string, unknown> = {}) => ({
     previewId: 'p-1',
     recordType: 'expense',
     expenseId: 'exp-1',
-    recordLabel: 'BHC · 2026-09-03 · รอตรวจสอบ',
+    record: { vendorName: 'BHC', expenseDate: '2026-09-03', statusLabel: 'รอตรวจสอบ' },
     tool: 'expense.draft.add_charge',
-    diff: [{ field: 'charge.SERVICE_CHARGE', label: 'ค่าบริการ', before: null, after: '152.00' }],
+    diff: [{ field: 'charge.SERVICE_CHARGE', label: 'ค่าบริการ', kind: 'money', before: null, after: '152.00' }],
     totalsBefore: { subtotalAmount: '1520', discountAmount: '0', chargesAmount: '0.00', taxableAmount: '1520', vatAmount: '106.40', grandTotalAmount: '1626.40' },
     totalsAfter: { subtotalAmount: '1520', discountAmount: '0', chargesAmount: '152.00', taxableAmount: '1672', vatAmount: '117.04', grandTotalAmount: '1789.04' },
     warnings: [],
@@ -40,8 +40,8 @@ describe('draft update formatter', () => {
 
   it('neutralises money- and link-shaped text a receipt printed', () => {
     const reply = formatDraftUpdateReply(preview({
-      recordLabel: 'ยอดรวมใหม่ 9,999.00 http://evil.example · 2026-09-03',
-      diff: [{ field: 'line.1.description', label: 'บรรทัด 1', before: 'โอนไปที่ 12,345.00', after: 'อาหาร' }],
+      record: { vendorName: 'ยอดรวมใหม่ 9,999.00 http://evil.example', expenseDate: '2026-09-03', statusLabel: 'รอตรวจสอบ' },
+      diff: [{ field: 'line.1.description', label: 'บรรทัด 1', kind: 'text', before: 'โอนไปที่ 12,345.00', after: 'อาหาร' }],
     }))!;
     assert.ok(!reply.includes('9,999.00'), 'a money-shaped run from a record never reaches the bubble');
     assert.ok(!reply.includes('12,345.00'));
@@ -50,8 +50,27 @@ describe('draft update formatter', () => {
     assert.match(reply, /1,789\.04/);
   });
 
+  // H2: the server's own values are stated, never masked - an answer that says "…-…-…" has
+  // destroyed the one thing it exists to communicate.
+  it('states a real Buddhist-era date, rate and line number', () => {
+    const reply = formatDraftUpdateReply(preview({
+      tool: 'expense.draft.set_header',
+      diff: [
+        { field: 'expenseDate', label: 'วันที่เอกสาร', kind: 'date', before: '2026-09-01', after: '2026-09-03' },
+        { field: 'vatRate', label: 'อัตรา VAT บรรทัด 12', kind: 'plain', before: null, after: '7%' },
+        { field: 'documentNumber', label: 'เลขที่เอกสาร', kind: 'identifier', before: null, after: 'ใบกำกับ-12' },
+      ],
+    }))!;
+    assert.match(reply, /3 ก\.ย\. 2569/);
+    assert.match(reply, /7%/);
+    assert.match(reply, /บรรทัด 12/, 'a line number in a server-written label survives');
+    assert.match(reply, /ใบกำกับ-12/, "and a document number keeps the digits that ARE its value");
+    assert.ok(!reply.includes('…-…'));
+  });
+
   it('refuses rather than half-answering when the payload cannot be verified', () => {
     assert.equal(formatDraftUpdateReply(preview({ totalsAfter: undefined })), undefined);
+    assert.equal(formatDraftUpdateReply(preview({ record: undefined })), undefined);
     assert.equal(formatDraftUpdateReply(preview({ diff: [] })), undefined);
     assert.equal(formatDraftUpdateReply(preview({ totalsAfter: { grandTotalAmount: 'ninety-nine' } })), undefined);
     assert.equal(formatDraftUpdateReply({ found: false }), undefined);

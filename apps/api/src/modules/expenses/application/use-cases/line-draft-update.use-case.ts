@@ -196,7 +196,7 @@ export class LineDraftUpdateUseCase {
       previewId: randomUUID(),
       recordType: 'expense',
       expenseId: target.id,
-      recordLabel: recordLabel(target),
+      record: recordFields(target),
       tool: input.tool,
       diff: projected.diff,
       totalsBefore: totalsOf(target),
@@ -420,16 +420,18 @@ function chargesTotal(lines: readonly DraftLineInput[]): string {
     .toFixed(2);
 }
 
-/** Structured fields plus ONE scrubbed name, because a card that cannot say which bill it means is
- *  not a confirmation. The vendor name is OCR text an attacker printed, so it goes through the
- *  shared scrubber before it can reach a card, a reply or an audit payload. */
-function recordLabel(record: ExpenseRecordWithRelations): string {
-  const vendor = scrubRecordText(record.vendorNameSnapshot, 40);
-  return [
-    vendor || 'ไม่ระบุผู้ขาย',
-    record.expenseDate.toISOString().slice(0, 10),
-    EXPENSE_STATUS_LABELS[record.status],
-  ].join(' · ');
+/**
+ * The record as TYPED fields, so a renderer can format the date for its own audience and never has
+ * to guess which half of a joined string was untrusted. The vendor name is the ONE attacker-written
+ * part — OCR text off a receipt — so it is scrubbed here, once, before it can reach a card, a reply
+ * or an audit payload. The date and status are the server's own and are handed over verbatim.
+ */
+function recordFields(record: ExpenseRecordWithRelations): LineDraftUpdatePreview['record'] {
+  return {
+    vendorName: scrubRecordText(record.vendorNameSnapshot, 40) || null,
+    expenseDate: record.expenseDate.toISOString().slice(0, 10),
+    statusLabel: EXPENSE_STATUS_LABELS[record.status],
+  };
 }
 
 /** Nest wraps a string or an object; either way the reply only ever shows a stable reason code. */

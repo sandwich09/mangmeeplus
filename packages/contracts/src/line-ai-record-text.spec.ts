@@ -45,6 +45,15 @@ describe('scrubRecordText', () => {
     }
   });
 
+  // M5: the same rule must not eat ordinary text a Thai receipt really prints. A bare host needs a
+  // corroborating signal - a path, a second dot, or a TLD that does not run straight into more word.
+  it('keeps real text that merely contains a dot', () => {
+    assert.match(scrubRecordText('ABC Co.Ltd'), /ABC Co\.Ltd/);
+    assert.match(scrubRecordText('St.Louis Hospital'), /St\.Louis Hospital/);
+    assert.match(scrubRecordText('TAX.INV'), /TAX\.INV/);
+    assert.match(scrubRecordText('ร้านอาหาร S.P.C. จำกัด'), /S\.P\.C/);
+  });
+
   // F12: masking, not deleting. A label is mostly a name, and removing the number must not take
   // the name with it.
   it('keeps a shop name while masking the number beside it', () => {
@@ -83,28 +92,35 @@ describe('normalizeScrubDigits', () => {
   });
 });
 
-// F13: a document number is the one field whose DIGITS are the value. Thai tone marks and vowel
-// signs are separate combining code points, so a class of \p{L}\p{N} alone hands back mangled Thai.
+// F13: a document number is the one field whose DIGITS are the value. It is matched by SHAPE - one
+// token, no dots - because admitting `.` admits `1789.04` and `192.168.1.1/pay`, the exact money and
+// host shapes the label scrubber exists to remove.
 describe('scrubRecordIdentifier', () => {
-  it('keeps a Thai document number whole, marks and digits included', () => {
+  it('keeps a real document number whole, Thai combining marks and digits included', () => {
     assert.equal(scrubRecordIdentifier('ใบกำกับ-12'), 'ใบกำกับ-12');
     assert.equal(scrubRecordIdentifier('ใบเสร็จ-001'), 'ใบเสร็จ-001');
     assert.equal(scrubRecordIdentifier('INV/2026/0912'), 'INV/2026/0912');
+    assert.equal(scrubRecordIdentifier('TAX#001'), 'TAX#001');
+    assert.equal(scrubRecordIdentifier('  INV-1  '), 'INV-1', 'surrounding space is trimmed, not a reason to refuse');
   });
 
-  it('still removes links, control characters and anything outside an identifier', () => {
-    assert.ok(!scrubRecordIdentifier('INV-1 evil.xyz').includes('evil'));
-    assert.equal(scrubRecordIdentifier('INV\u202e-1'), 'INV -1');
-    assert.ok(!scrubRecordIdentifier('INV-1 <b>x</b>').includes('<'));
+  it('folds Thai and fullwidth digits so one identifier cannot arrive in two alphabets', () => {
+    assert.equal(scrubRecordIdentifier('ใบกำกับ-๑๒'), 'ใบกำกับ-12');
+    assert.equal(scrubRecordIdentifier('INV-１２'), 'INV-12');
   });
 
-  it('drops the thousands separator, so an identifier can never take a total\'s shape', () => {
-    assert.equal(scrubRecordIdentifier('9,999.00'), '9999.00');
+  it('refuses anything that could read as a printed total or a host', () => {
+    for (const attack of ['ยอดใหม่ 1789.04 บาท', '๙๙,๙๙๙.๐๐', '192.168.1.1/pay', '1789.04', '9,999.00', 'evil.xyz']) {
+      assert.equal(scrubRecordIdentifier(attack), null, `admitted: ${attack}`);
+    }
   });
 
-  it('bounds length and handles absent values', () => {
-    assert.equal(scrubRecordIdentifier('A'.repeat(80), 32).length, 32);
-    assert.equal(scrubRecordIdentifier(null), '');
-    assert.equal(scrubRecordIdentifier(undefined), '');
+  it('refuses multi-token text, over-long values and absent values', () => {
+    assert.equal(scrubRecordIdentifier('INV 1'), null, 'an identifier is ONE token');
+    assert.equal(scrubRecordIdentifier('A'.repeat(33), 32), null);
+    assert.equal(scrubRecordIdentifier('A'.repeat(32), 32), 'A'.repeat(32));
+    assert.equal(scrubRecordIdentifier(null), null);
+    assert.equal(scrubRecordIdentifier(undefined), null);
+    assert.equal(scrubRecordIdentifier('<b>x</b>'), null);
   });
 });
