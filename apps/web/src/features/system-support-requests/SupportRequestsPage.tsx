@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import { useConfirm } from '@/common/components/modal';
 import { useToast } from '@/common/components/toast';
@@ -8,6 +8,7 @@ import { formatThaiDateTime } from '@/common/i18n/thai-date';
 import {
   listSupportRequests,
   markSupportRequestAnswered,
+  publishSupportOpenCount,
   resumeSupportRequestAi,
   type SupportRequestItemDto,
 } from './support-requests.api';
@@ -20,6 +21,7 @@ import {
   supportAnswerLabel,
   supportClosedReasonTh,
   supportStatusChip,
+  waitedLabelTh,
   waitedForTh,
   type Chip,
   type ChipTone,
@@ -123,23 +125,45 @@ export default function SupportRequestsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  /**
+   * Which read is allowed to write state. Tab switches and post-action reloads overlap, and without
+   * this the slower of two in-flight reads wins — showing the previous tab's rows under the new
+   * tab's heading. A counter rather than only an AbortController because an abort is best-effort:
+   * a response already in flight still resolves, and this is what makes it harmless.
+   */
+  const readSeq = useRef(0);
+  const inFlight = useRef<AbortController | null>(null);
 
   const load = async (next: SupportQueueTab = tab) => {
+    const seq = ++readSeq.current;
+    inFlight.current?.abort();
+    const controller = new AbortController();
+    inFlight.current = controller;
     setLoading(true);
     setError(null);
     try {
-      const result = await listSupportRequests(next);
+      const result = await listSupportRequests(next, { signal: controller.signal });
+      if (seq !== readSeq.current) return;
       setItems(result.items);
       setOpenCount(result.openCount);
+      // One number, one source: the nav badge above this page reads what we just read.
+      publishSupportOpenCount(result.openCount);
     } catch (err) {
+      if (seq !== readSeq.current) return;
       const e = err as Error & { status?: number };
+      // Cleared, not left standing: rows under a permission error read as "the queue is empty",
+      // and rows from the previous tab under a failed switch read as this tab's contents.
+      setItems([]);
       setError(e.status === 403 ? 'คุณไม่มีสิทธิ์ดูคำขอคุยกับเจ้าหน้าที่' : apiErrorMessage(err));
     } finally {
-      setLoading(false);
+      if (seq === readSeq.current) setLoading(false);
     }
   };
 
-  useEffect(() => { void load('OPEN'); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    void load('OPEN');
+    return () => inFlight.current?.abort();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectTab = (next: SupportQueueTab) => {
     setTab(next);
@@ -228,6 +252,9 @@ export default function SupportRequestsPage() {
           </div>
         )}
 
+        {/* Gated on `!error` like the signup queue: an empty table under a permission banner says
+            "there is nothing waiting", which is the one thing a 403 does not tell us. */}
+        {!error && (
         <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200 text-left text-sm">
@@ -268,11 +295,21 @@ export default function SupportRequestsPage() {
                         )}
                       </td>
                       <td className="px-4 py-3 text-xs text-gray-600">
-                        <p className="font-medium text-gray-900">{waitedForTh(item.requestedAt)}</p>
+                        {/* The clock stops when somebody answered or the request closed: a
+                            settled row that keeps counting reads as a customer still waiting. */}
+                        <p className="text-gray-500">{waitedLabelTh(item)}</p>
+                        <p className="font-medium text-gray-900">{waitedForTh(item)}</p>
                         <p className="mt-0.5 text-gray-500">{formatThaiDateTime(item.requestedAt)}</p>
                       </td>
-                      <td className="px-4 py-3 text-xs text-gray-600">
-                        {item.lastMessageText ? `“${item.lastMessageText}”` : '—'}
+                      {/* 200 characters of Thai in an unconstrained cell pushed the action column
+                          off a 390px screen. Bounded, clamped and breakable; the full text is on
+                          the title attribute for anyone who needs it. */}
+                      <td className="max-w-[16rem] px-4 py-3 text-xs text-gray-600">
+                        {item.lastMessageText ? (
+                          <span className="line-clamp-2 block break-words" title={item.lastMessageText}>
+                            “{item.lastMessageText}”
+                          </span>
+                        ) : '—'}
                       </td>
                       <td className="px-4 py-3">
                         <ChipBadge chip={notifiedSummary(item)} />
@@ -292,6 +329,7 @@ export default function SupportRequestsPage() {
             </table>
           </div>
         </div>
+        )}
       </div>
     </div>
   );

@@ -10,6 +10,8 @@ import {
   supportClosedReasonTh,
   supportStatusChip,
   waitedForTh,
+  waitedLabelTh,
+  type Chip,
 } from './support-requests.logic';
 
 const item = (over: Record<string, unknown> = {}) => ({
@@ -20,12 +22,13 @@ const item = (over: Record<string, unknown> = {}) => ({
   requestedAt: '2026-09-05T02:00:00.000Z',
   lineNotifiedCount: 0,
   emailSent: true,
+  notifyState: 'notified' as const,
   ...over,
 }) as any;
 
 describe('the support inbox reads waiting time in the largest honest unit', () => {
   const now = new Date('2026-09-05T02:00:00.000Z');
-  const at = (ms: number) => waitedForTh(new Date(now.getTime() - ms).toISOString(), now);
+  const at = (ms: number) => waitedForTh(item({ requestedAt: new Date(now.getTime() - ms).toISOString() }), now);
 
   it('says minutes for the first hour, because "0 ชั่วโมง" reads as "just now"', () => {
     assert.equal(at(20_000), 'เมื่อสักครู่');
@@ -37,8 +40,42 @@ describe('the support inbox reads waiting time in the largest honest unit', () =
   });
 
   it('refuses to invent a duration from a clock it cannot read', () => {
-    assert.equal(waitedForTh('not-a-date', now), '—');
-    assert.equal(waitedForTh('2026-09-06T00:00:00.000Z', now), '—', 'a future stamp is not "-1 นาที"');
+    assert.equal(waitedForTh(item({ requestedAt: 'not-a-date' }), now), '—');
+    assert.equal(waitedForTh(item({ requestedAt: '2026-09-06T00:00:00.000Z' }), now), '—',
+      'a future stamp is not "-1 นาที"');
+  });
+
+  // A settled row that keeps counting reads as a customer still waiting — the one thing this
+  // column exists to say, said wrongly.
+  it('stops the clock when the request was answered or closed, and renames the column', () => {
+    const answered = item({
+      status: 'ANSWERED',
+      requestedAt: '2026-09-05T00:00:00.000Z',
+      answeredAt: '2026-09-05T00:30:00.000Z',
+    });
+    const muchLater = new Date('2026-09-09T00:00:00.000Z');
+    assert.equal(waitedForTh(answered, muchLater), '30 นาที', 'not four days');
+    assert.equal(waitedLabelTh(answered), 'ใช้เวลา');
+
+    const closed = item({
+      status: 'CLOSED',
+      requestedAt: '2026-09-05T00:00:00.000Z',
+      closedAt: '2026-09-05T02:00:00.000Z',
+    });
+    assert.equal(waitedForTh(closed, muchLater), '2 ชั่วโมง');
+    assert.equal(waitedLabelTh(closed), 'ใช้เวลา');
+
+    assert.equal(waitedLabelTh(item()), 'รอมานาน', 'an open request is still waiting');
+  });
+
+  // Answering is when the waiting ended; the close that follows it is bookkeeping.
+  it('prefers answeredAt over closedAt when a request has both', () => {
+    const both = item({
+      requestedAt: '2026-09-05T00:00:00.000Z',
+      answeredAt: '2026-09-05T00:10:00.000Z',
+      closedAt: '2026-09-05T06:00:00.000Z',
+    });
+    assert.equal(waitedForTh(both, now), '10 นาที');
   });
 });
 
@@ -58,9 +95,18 @@ describe('what the inbox says reached a person', () => {
   });
 
   it('flags only the reading that means nobody was told', () => {
-    const chip = notifiedSummary(item({ lineNotifiedCount: 0, emailSent: false }));
+    const chip = notifiedSummary(item({ notifyState: 'unreachable', lineNotifiedCount: 0, emailSent: false }));
     assert.equal(chip.tone, 'danger');
     assert.match(chip.label, /เห็นที่หน้านี้เท่านั้น/, 'and says where the request still is');
+  });
+
+  // The counters hold their defaults until the outbox drain runs, so 0/false on a fresh row is
+  // "not yet", not "failed" — and the red chip flashing for the seconds in between would teach an
+  // operator that the red chip means nothing.
+  it('says "กำลังแจ้ง" while the drain has not run, whatever the counters read', () => {
+    const chip: Chip = notifiedSummary(item({ notifyState: 'queued', lineNotifiedCount: 0, emailSent: false }));
+    assert.equal(chip.tone, 'info', 'not danger — the drain simply has not run');
+    assert.match(chip.label, /กำลังแจ้ง/);
   });
 });
 

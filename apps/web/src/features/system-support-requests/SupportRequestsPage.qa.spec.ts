@@ -33,6 +33,44 @@ test('loading and empty states exist, so an empty inbox never reads as a broken 
   assert.match(page, /ไม่มีคำขอในกลุ่มนี้/);
 });
 
+// A 403 used to render "ไม่มีคำขอในกลุ่มนี้" UNDER the permission banner — telling an operator
+// the queue is empty is the one thing a permission error does not know.
+test('an error replaces the table rather than sitting above an empty one', () => {
+  assert.match(page, /\{!error && \(/);
+  assert.match(page, /setItems\(\[\]\);/, 'and the previous tab\'s rows do not survive a failure');
+});
+
+// Two overlapping reads (a tab switch during a post-action reload) used to let the SLOWER one
+// win, painting the previous tab's rows under the new tab's heading.
+test('only the newest read may write state', () => {
+  assert.match(page, /const seq = \+\+readSeq\.current;/);
+  assert.match(page, /if \(seq !== readSeq\.current\) return;/);
+  assert.match(page, /inFlight\.current\?\.abort\(\);/);
+});
+
+// One number, one source: answering a request must not leave the header badge above this very
+// page still claiming somebody is waiting.
+test('every count the page reads is published to the nav badge', () => {
+  assert.match(page, /publishSupportOpenCount\(result\.openCount\);/);
+});
+
+// 200 characters of Thai in an unconstrained <td> pushed the action column off a 390px screen.
+test('the last-message column is bounded, clamped and breakable at 390px', () => {
+  assert.match(page, /max-w-\[16rem\]/);
+  assert.match(page, /line-clamp-2 block break-words/);
+  assert.match(page, /title=\{item\.lastMessageText\}/, 'the full text stays reachable');
+  // The table is the only thing allowed to scroll sideways; the page body never does.
+  assert.match(page, /overflow-x-auto/);
+  assert.equal(/overflow-x-scroll/.test(page), false);
+});
+
+// A settled request that keeps counting reads as a customer still waiting.
+test('the waiting clock stops, and the column renames itself when it does', () => {
+  assert.match(page, /waitedLabelTh\(item\)/);
+  assert.match(page, /waitedForTh\(item\)/);
+  assert.equal(/waitedForTh\(item\.requestedAt\)/.test(page), false);
+});
+
 // The customer's chat changes the moment "ให้ AI ทำงานต่อ" lands.
 test('resuming the assistant asks first', () => {
   assert.match(page, /const ok = await confirm\(\{/);
@@ -48,6 +86,14 @@ test('the table scrolls inside its own box rather than widening the page on a ph
 // blank the header, and must never render a confident zero it has not actually measured.
 test('the system nav carries an OPEN count that tolerates its own 403', () => {
   assert.match(header, /คำขอคุยกับเจ้าหน้าที่/);
-  assert.match(header, /\.catch\(\(\) => \{ if \(!cancelled\) setOpenCount\(null\); \}\)/);
+  assert.match(header, /setOpenCount\(null\)/, 'a failure renders no badge, never a confident zero');
   assert.match(header, /openSupportCount !== null && openSupportCount > 0/);
+});
+
+// The badge is the primary notification channel, so it may not go stale the moment somebody acts:
+// `[pathname]` alone never fires when a request is answered from this very page.
+test('the badge listens to the page as well as to navigation, and asks the cheap endpoint', () => {
+  assert.match(header, /subscribeSupportOpenCount\(setOpenCount\)/);
+  assert.match(header, /getSupportOpenCount\(/);
+  assert.equal(/listSupportRequests/.test(header), false, 'a 200-row read is not a badge');
 });

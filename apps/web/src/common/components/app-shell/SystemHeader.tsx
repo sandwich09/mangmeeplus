@@ -4,28 +4,37 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { logoutCurrentSession } from '@/common/auth/session';
 import { AlertModal } from '@/common/components/modal';
-import { listSupportRequests } from '@/features/system-support-requests/support-requests.api';
+import {
+  getSupportOpenCount, subscribeSupportOpenCount,
+} from '@/features/system-support-requests/support-requests.api';
 
 /** The one section that has to shout. See `useOpenSupportCount` below. */
 const SUPPORT_REQUESTS_HREF = '/system/support-requests';
 
 /**
  * line-support-request-spec-th §2.2 delta (Owner 2026-09-05): operators are not LINE-linked, so
- * this badge — not a push — is how anyone learns a customer is waiting. It therefore has to be
- * quiet about its own failures: a 403 (the count rides `system.partner_company.update`, which not
- * every system admin holds) or an outage leaves `null`, which renders no badge at all rather than
- * a confident zero.
+ * this badge — not a push — is how anyone learns a customer is waiting.
+ *
+ * Two sources, deliberately, because navigation is not the only thing that changes the number:
+ *  - a fetch on mount and on every navigation, over the cheap `/count` endpoint (the header asks on
+ *    every page, and answering that with the 200-row queue read was a page nobody renders);
+ *  - a subscription to the inbox page, which publishes every count IT reads — including the one
+ *    after "ตอบแล้ว" or "ให้ AI ทำงานต่อ". Without it, answering a request left the badge in the
+ *    header directly above still claiming somebody was waiting, because the path had not changed.
+ *
+ * Quiet about its own failures throughout: a 403 (not every system admin holds
+ * `system.partner_company.update`) or an outage leaves `null`, which renders no badge at all
+ * rather than a confident zero.
  */
 function useOpenSupportCount(pathname: string): number | null {
   const [openCount, setOpenCount] = useState<number | null>(null);
+  useEffect(() => subscribeSupportOpenCount(setOpenCount), []);
   useEffect(() => {
-    let cancelled = false;
-    listSupportRequests('OPEN')
-      .then((result) => { if (!cancelled) setOpenCount(result.openCount); })
-      .catch(() => { if (!cancelled) setOpenCount(null); });
-    return () => { cancelled = true; };
-    // Re-read on navigation: answering a request from this very page must not leave the badge
-    // claiming somebody is still waiting.
+    const controller = new AbortController();
+    getSupportOpenCount({ signal: controller.signal })
+      .then((result) => { if (!controller.signal.aborted) setOpenCount(result.open); })
+      .catch(() => { if (!controller.signal.aborted) setOpenCount(null); });
+    return () => controller.abort();
   }, [pathname]);
   return openCount;
 }
