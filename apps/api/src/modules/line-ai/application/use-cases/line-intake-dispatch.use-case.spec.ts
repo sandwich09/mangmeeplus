@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ConflictException } from '@nestjs/common';
+import { ConflictException, UnprocessableEntityException } from '@nestjs/common';
 import { resolveTransactionBranchId } from '../../../data-model-core/application/services/transaction-branch';
 import { chatKeyHashOf, ProcessLineWebhookUseCase, putLineMediaUpload, classifyPendingMediaReply, splitPendingMediaReply, isExactStandaloneGreeting } from './process-line-webhook.use-case';
 import { isDeliveredCapabilityFollowUp, isNextStepQuestionText } from '../../domain/logic/line-ai-capability-follow-up.logic';
@@ -44,11 +44,18 @@ function replyAssertionText(message: unknown): string {
   return strings.join('\n');
 }
 
-function makePrisma() {
+function makePrisma(opts: {
+  /** The company's ACTIVE branch table, as the LINE default rule and the create resolver both read
+   *  it. Empty (the default) keeps every pre-existing test on the legacy single-branch double. */
+  branches?: Array<{ id: string; type: string }>;
+  /** `CompanyMembership.defaultBranchId` — "สาขาที่ user นั้นอยู่" (Owner 2026-08-27). */
+  memberDefaultBranchId?: string | null;
+} = {}) {
   const updates: any[] = [];
   const recordUpdates: any[] = [];
   const turnCreates: any[] = [];
   const pendingMediaRows: any[] = [];
+  const branchRows = opts.branches ?? [];
   const prisma = {
     client: {
       // Consumption markers commit with the terminal outcome; the fake runs the callback inline.
@@ -63,14 +70,16 @@ function makePrisma() {
         updateMany: async (args: any) => { updates.push(args); return { count: 1 }; },
       },
       // LINE default-branch lookup (Owner 2026-08-27): no branches = no default, legacy behavior.
-      branch: { findMany: async () => [] },
+      branch: {
+        findMany: async (args: any) => branchRows.filter((row) => !args?.where?.id?.in || args.where.id.in.includes(row.id)),
+      },
       externalIdentity: {
         findFirst: async () => ({ userId: 'user-1', user: { status: 'ACTIVE' } }),
       },
       companyMembership: {
         findMany: async () => [{ companyId: 'company-1', company: { name: 'c1', brandName: null }, roles: [{ role: { key: 'OWNER' } }] }],
-        // LINE default-branch lookup (Owner 2026-08-27): no assigned branch in this harness.
-        findUnique: async () => null,
+        // LINE default-branch lookup (Owner 2026-08-27): no assigned branch unless a test sets one.
+        findUnique: async () => (opts.memberDefaultBranchId ? { defaultBranchId: opts.memberDefaultBranchId } : null),
       },
       lineCompanyContext: { findUnique: async () => null, upsert: async (args: unknown) => args },
       companyFeatureEntitlement: { findMany: async () => [] },
@@ -126,6 +135,8 @@ type Harness = {
   linkAttachmentCalls: any[];
   updateExpenseCalls: any[];
   substituteCalls: any[];
+  /** `startFromCheckBill` inputs — the PAID_NO_RECEIPT lane's own continuation seam. */
+  checkBillStarts: any[];
   mediaContextCalls: any[];
   attachMediaCalls: any[];
   linkScanCalls: any[];
@@ -198,6 +209,7 @@ function makeHarness(opts: {
   const linkAttachmentCalls: any[] = [];
   const updateExpenseCalls: any[] = [];
   const substituteCalls: any[] = [];
+  const checkBillStarts: any[] = [];
   const mediaContextCalls: any[] = [];
   const attachMediaCalls: any[] = [];
   const linkScanCalls: any[] = [];
@@ -209,11 +221,32 @@ function makeHarness(opts: {
   if (opts.conversationTurns) prisma.client.aiTurn.findMany = async () => opts.conversationTurns;
   if (opts.entitlementRows) prisma.client.companyFeatureEntitlement.findMany = async () => opts.entitlementRows;
 
+  // ONE branch table for the whole harness: the LINE default rule reads it through prisma and the
+  // create resolver re-validates the pick against the same rows, so a test can never assert a
+  // default the production resolver would refuse. An empty prisma branch table means a test that
+  // never declared one — those keep the legacy single-branch double below.
+  const legacyBranchIds = opts.scopes?.branchIds ?? ['branch-1'];
+  const branchDb = {
+    branch: {
+      findMany: async (args: any) => {
+        const rows: Array<{ id: string }> = await prisma.client.branch.findMany({});
+        return rows.length > 0
+          ? rows.filter((row) => !args?.where?.id?.in || args.where.id.in.includes(row.id))
+          : (args?.where?.id?.in ?? legacyBranchIds).map((id: string) => ({ id }));
+      },
+      // `assertActiveTransactionBranch` re-reads the picked branch: a default the rule chose must
+      // still exist and be ACTIVE here, or the create refuses exactly as production would.
+      findFirst: async (args: any) => {
+        const rows: Array<{ id: string }> = await prisma.client.branch.findMany({});
+        const ids = rows.length > 0 ? rows.map((row) => row.id) : legacyBranchIds;
+        return ids.includes(args?.where?.id) ? { id: args.where.id } : null;
+      },
+    },
+  } as any;
   // expenseRepo doubles as the repository the REAL capture use case reads and writes through.
   const expenseRepo = {
-    resolveCreateBranchId: async (companyId: string, scopes: { branchIds?: string[] }) => resolveTransactionBranchId({
-      branch: { findMany: async () => (scopes.branchIds ?? ['branch-1']).map((id) => ({ id })) },
-    } as any, companyId, scopes),
+    resolveCreateBranchId: async (companyId: string, scopes: { branchIds?: string[] }, selectedBranchId?: string | null) =>
+      resolveTransactionBranchId(branchDb, companyId, scopes, selectedBranchId),
     listCategories: async () => [{ id: 'cat-meals', name: 'ค่าอาหาร' }],
     listRecentLineCaptures: async (input: any) => { candidateQueries.push(input); return opts.recentCaptures ?? []; },
     listLineSubstituteContinuationRows: async () => opts.substituteContinuationRows ?? [],
@@ -375,6 +408,10 @@ function makeHarness(opts: {
           return opts.substituteMediaContext;
         },
         hasPendingIssueDecision: async () => false,
+        startFromCheckBill: async (_ctx: any, input: any) => {
+          checkBillStarts.push(input);
+          return { handled: true, status: 'OPEN', expenseId: input.expenseId, acceptedFields: [], blockers: [], replyText: '' };
+        },
         attachMedia: async (_ctx: any, input: any) => {
           attachMediaCalls.push(input);
           return { replyText: `📎 แนบแล้ว ${input.purpose}` };
@@ -397,7 +434,7 @@ function makeHarness(opts: {
     uploads.push({ intent, media });
     if (opts.uploadThrows) throw new Error('storage PUT failed');
   };
-  return { useCase, replies, captured, signatureCreated, routeRequests, turnRequests, ocrRequests, uploads, initCalls, completeCalls, createUploadIntentCalls, completeAttachmentCalls, createExpenseCalls, linkAttachmentCalls, updateExpenseCalls, candidateQueries, correctionCalls, substituteCalls, mediaContextCalls, attachMediaCalls, linkScanCalls, receiptContinuationCalls, draftsCreated, sentMessages, ledgerAcks };
+  return { useCase, replies, captured, signatureCreated, routeRequests, turnRequests, ocrRequests, uploads, initCalls, completeCalls, createUploadIntentCalls, completeAttachmentCalls, createExpenseCalls, linkAttachmentCalls, updateExpenseCalls, candidateQueries, correctionCalls, substituteCalls, checkBillStarts, mediaContextCalls, attachMediaCalls, linkScanCalls, receiptContinuationCalls, draftsCreated, sentMessages, ledgerAcks };
 }
 
 const TEXT_EVENT = {
@@ -3679,5 +3716,156 @@ describe('LINE advisor – ADVISOR_CONVERSATION falls through to the existing tu
     assert.equal(h.turnRequests[0].intakeIntent, 'UNSUPPORTED', 'the route\'s own intent, never another lane\'s');
     assert.equal(h.turnRequests[0].preparedPlan, undefined);
     assert.match(h.replies[0], /turn-answer/);
+  });
+});
+
+/**
+ * UAT 2026-09-05 (LINE OA uat-mangmeeplus, build 1399bb83). A restaurant check bill was parked with
+ * the payment question; answering "1" (จ่ายแล้ว แต่ไม่ได้ใบเสร็จ) failed TWICE with the transient
+ * "เกิดข้อผิดพลาดชั่วคราว กรุณาลองใหม่" copy — `line_substitute_media_answer_failed`,
+ * `กรุณาเลือกสาขาของรายการก่อนบันทึก`. The company has several branches and the pending-media lane
+ * never got the LINE branch default the DIRECT photo path has had since 2026-08-27 (commit 88aef194).
+ */
+describe('LINE capture branch default – every LINE-originated draft (UAT 2026-09-05)', () => {
+  const MULTI_BRANCH = [
+    { id: 'hq', type: 'HEAD_OFFICE' },
+    { id: 'silom', type: 'BRANCH' },
+    { id: 'ari', type: 'BRANCH' },
+  ];
+  /** No head office to fall back on and no membership default: the rule has nothing left to pick. */
+  const AMBIGUOUS_BRANCHES = [
+    { id: 'silom', type: 'BRANCH' },
+    { id: 'ari', type: 'BRANCH' },
+  ];
+  const CAPTURE_PERMISSIONS = ['expense.receipt.line_upload', 'expense.receipt.upload', 'expense.review', 'line.ai.query'];
+  const CAPTURE_PLAN = { status: 'ROUTED' as const, intent: 'EXPENSE_DOCUMENT_CAPTURE' as const, language: 'th', confidence: 0.95 };
+  const CHECK_BILL_ANSWER = { ...TEXT_EVENT, webhookEventId: 'evt-check-bill-answer', messageText: '1' };
+  const askedCheckBill = () => ({
+    kind: 'CHECK_BILL_ACTION',
+    chatKeyHash: chatKeyHashOf(CHECK_BILL_ANSWER),
+    ocrFields: { grandTotalAmount: '853.00', vendorName: 'Grand Lobby Bar' },
+  });
+  const blockedContinuation = {
+    handled: true, status: 'BLOCKED', workflowId: 'workflow-1', expenseId: 'expense-clarified-1',
+    acceptedFields: [], blockers: [], pendingQuestion: 'ค่าใช้จ่ายนี้ใช้ทำอะไรคะ?',
+    replyText: '📄 ใบรับรองแทนใบเสร็จรับเงิน',
+  };
+
+  /** The exact UAT turn: the parked check bill, answered "1". */
+  async function answerPaidNoReceipt(prismaOpts: Parameters<typeof makePrisma>[0] = {}) {
+    const { prisma, pendingMediaRows, updates } = makePrisma(prismaOpts);
+    seedPendingRow(pendingMediaRows, { askedQuestionJson: askedCheckBill() });
+    const h = makeHarness({ permissions: CAPTURE_PERMISSIONS, prisma, substituteResult: blockedContinuation });
+    await h.useCase.execute(CHECK_BILL_ANSWER);
+    return { ...h, pendingMediaRows, updates };
+  }
+
+  it('(a) defaults the draft to the sender OWN branch and completes the turn', async () => {
+    const h = await answerPaidNoReceipt({ branches: MULTI_BRANCH, memberDefaultBranchId: 'silom' });
+
+    assert.equal(h.createExpenseCalls.length, 1, 'the answer creates exactly one draft');
+    assert.equal(h.createExpenseCalls[0].branchId, 'silom', 'the user own branch, not a guess');
+    assert.equal(h.checkBillStarts.length, 1, 'the substitute continuation starts from the new draft');
+    assert.equal(h.pendingMediaRows[0].status, 'RESOLVED_RECEIPT');
+    assert.doesNotMatch(h.replies.join('\n'), /เกิดข้อผิดพลาดชั่วคราว/, 'never the transient copy');
+    assert.match(h.replies.join('\n'), /สร้างร่างค่าใช้จ่าย 1 รายการแล้ว/);
+  });
+
+  it('(b) falls back to the sole ACTIVE head office when the member has no default branch', async () => {
+    const h = await answerPaidNoReceipt({ branches: MULTI_BRANCH });
+
+    assert.equal(h.createExpenseCalls.length, 1);
+    assert.equal(h.createExpenseCalls[0].branchId, 'hq');
+    assert.equal(h.pendingMediaRows[0].status, 'RESOLVED_RECEIPT');
+  });
+
+  it('(c) answers honestly and writes nothing when the branch is still ambiguous', async () => {
+    const h = await answerPaidNoReceipt({ branches: AMBIGUOUS_BRANCHES });
+
+    assert.equal(h.createExpenseCalls.length, 0, 'no accounting record is created on a guess');
+    assert.equal(h.pendingMediaRows[0].status, 'PENDING', 'the bytes stay answerable');
+    const reply = h.replies.join('\n');
+    assert.doesNotMatch(reply, /เกิดข้อผิดพลาดชั่วคราว/, 'a retry reproduces this exactly — never "temporary"');
+    assert.match(reply, /หลายสาขา/, 'says WHY nothing was saved');
+    assert.match(reply, /เว็บ/, 'points at the place with a branch picker');
+    // Same terminal state the DIRECT photo path records for the same refusal (2026-08-27).
+    assert.equal(h.updates.at(-1)?.data.status, 'clarification_required');
+    assert.equal(h.updates.at(-1)?.data.errorCode, 'RECEIPT_BRANCH_SELECTION_REQUIRED');
+  });
+
+  it('(c2) maps a stale default branch (TRANSACTION_BRANCH_INVALID) to the same honest copy', async () => {
+    // The membership still points at a branch that was deactivated after it was assigned: the LINE
+    // rule skips it, the company is multi-branch, and the create resolver refuses with the OTHER
+    // deterministic code. Both are data states a retry reproduces, so both get real copy.
+    const { prisma, pendingMediaRows, updates } = makePrisma({ branches: AMBIGUOUS_BRANCHES });
+    seedPendingRow(pendingMediaRows, { askedQuestionJson: askedCheckBill() });
+    const h = makeHarness({ permissions: CAPTURE_PERMISSIONS, prisma, substituteResult: blockedContinuation });
+    (h.useCase as any).expenseRepo.resolveCreateBranchId = async () => {
+      throw new UnprocessableEntityException({ code: 'TRANSACTION_BRANCH_INVALID', message: 'ไม่พบสาขาที่ใช้งานได้ในบริษัทนี้' });
+    };
+
+    await h.useCase.execute(CHECK_BILL_ANSWER);
+
+    assert.equal(h.createExpenseCalls.length, 0);
+    assert.equal(pendingMediaRows[0].status, 'PENDING');
+    assert.doesNotMatch(h.replies.join('\n'), /เกิดข้อผิดพลาดชั่วคราว/);
+    assert.equal(updates.at(-1)?.data.errorCode, 'RECEIPT_BRANCH_SELECTION_REQUIRED');
+  });
+
+  it('(c3) keeps the generic transient copy for a failure that is NOT a known data state', async () => {
+    const { prisma, pendingMediaRows, updates } = makePrisma({ branches: MULTI_BRANCH, memberDefaultBranchId: 'silom' });
+    seedPendingRow(pendingMediaRows, { askedQuestionJson: askedCheckBill() });
+    const h = makeHarness({ permissions: CAPTURE_PERMISSIONS, prisma, substituteResult: blockedContinuation });
+    (h.useCase as any).expenseRepo.createExpense = async () => { throw new Error('connection terminated'); };
+
+    await h.useCase.execute(CHECK_BILL_ANSWER);
+
+    assert.match(h.replies.join('\n'), /เกิดข้อผิดพลาดชั่วคราว/, 'an unknown fault really may pass on a retry');
+    assert.equal(updates.at(-1)?.data.status, 'substitute_media_answer_failed');
+  });
+
+  it('(d) the RECEIPT-05 "confirmed receipt" answer takes the same default', async () => {
+    const { prisma, pendingMediaRows } = makePrisma({ branches: MULTI_BRANCH, memberDefaultBranchId: 'ari' });
+    seedPendingRow(pendingMediaRows);
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'line.ai.query'],
+      routePlan: { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9 },
+      prisma,
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-clarified-branch', messageText: 'ใช่ ใบเสร็จ' });
+
+    assert.equal(h.createExpenseCalls.length, 1);
+    assert.equal(h.createExpenseCalls[0].branchId, 'ari');
+    assert.equal(pendingMediaRows[0].status, 'RESOLVED_RECEIPT');
+  });
+
+  it('(e) parity: the DIRECT photo path still picks the same branch', async () => {
+    const { prisma } = makePrisma({ branches: MULTI_BRANCH, memberDefaultBranchId: 'silom' });
+    const h = makeHarness({
+      permissions: CAPTURE_PERMISSIONS, prisma, routePlan: CAPTURE_PLAN, receiptOcrResult: validReceiptOcr(),
+    });
+
+    await h.useCase.executeReceiptUpload(MEDIA_EVENT);
+
+    assert.equal(h.initCalls.length, 1);
+    assert.equal(h.initCalls[0].branchId, 'silom');
+  });
+
+  it('(f) the LINE text-expense note takes the same default instead of failing on ambiguity', async () => {
+    const { prisma } = makePrisma({ branches: MULTI_BRANCH, memberDefaultBranchId: 'silom' });
+    const h = makeHarness({
+      permissions: CAPTURE_PERMISSIONS, prisma, realCapture: true,
+      routePlan: {
+        ...CAPTURE_PLAN,
+        captureHints: { amount: '65', description: 'ค่ากาแฟ 65 บาท' },
+      } as any,
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-text-branch', messageText: 'ค่ากาแฟ 65 บาท' });
+
+    assert.equal(h.captured[0]?.branchId, 'silom', 'the dispatcher hands the LINE default down');
+    assert.equal(h.draftsCreated.length, 1, 'the REAL capture use case reached CreateExpenseDraftUseCase');
+    assert.equal(h.draftsCreated[0].branchId, 'silom', 'and forwards it to the draft');
   });
 });

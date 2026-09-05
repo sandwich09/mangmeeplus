@@ -222,8 +222,31 @@ const MEDIA_DOWNLOAD_FAILED_REPLY = '📷 น้องยังรับรู�
 const MEDIA_PROCESSING_FAILED_REPLY = '📷 ขออภัยค่ะ ระบบประมวลผลรูปนี้ไม่สำเร็จ รบกวนส่งรูปเดิมอีกครั้งนะคะ ถ้ารูปนี้เคยบันทึกไว้แล้ว ระบบจะแจ้งเตือนรายการซ้ำให้ค่ะ';
 const RATE_LIMIT_REPLY = '⏳ ระบบกำลังประมวลผลข้อความก่อนหน้า กรุณารอสักครู่แล้วลองใหม่อีกครั้งนะคะ';
 /** Post-OCR branch ambiguity (multi-branch company, no defaultable head office): the read
- *  succeeded, only the branch decision is missing — send the user to the web picker honestly. */
-const RECEIPT_BRANCH_REQUIRED_REPLY = '🧾 อ่านใบเสร็จได้แล้วค่ะ แต่บริษัทมีหลายสาขาและน้องเลือกให้เองไม่ได้ รบกวนบันทึกผ่านเว็บแล้วเลือกสาขานะคะ';
+ *  succeeded, only the branch decision is missing — send the user to the web picker honestly.
+ *  Says "เอกสาร", not "ใบเสร็จ": the same refusal now answers the check-bill lane, where calling
+ *  the document a receipt is exactly the claim the whole question exists to avoid. */
+const RECEIPT_BRANCH_REQUIRED_REPLY = '🧾 อ่านเอกสารได้แล้วค่ะ แต่บริษัทมีหลายสาขาและน้องเลือกให้เองไม่ได้ '
+  + 'จึงยังไม่ได้บันทึกรายการนะคะ\nรบกวนบันทึกผ่านเว็บแอปแล้วเลือกสาขา หรือให้ผู้ดูแลตั้งสาขาประจำตัวให้คุณ '
+  + 'แล้วส่งรูปเดิมเข้ามาใหม่ได้เลยค่ะ';
+/**
+ * The deterministic half of a capture failure. These codes describe a DATA state — the company's
+ * branches, or this member's assignment — so the next attempt reproduces them byte for byte, and
+ * `ERROR_REPLY`'s "ชั่วคราว … ลองใหม่" is simply false (UAT 2026-09-05: the same check bill answered
+ * "1" twice, the same refusal twice, both dressed as temporary). Anything not listed here stays
+ * unknown, keeps the transient copy, and keeps its retry.
+ *
+ * One map for every LINE capture lane, so the pending-media answer and the direct photo cannot
+ * disagree about what a branch refusal means or which terminal status it records.
+ */
+export function lineCaptureFailureReply(error: unknown): { reply: string; status: string; errorCode: string } | undefined {
+  const code = error instanceof HttpException
+    ? (error.getResponse() as { code?: string } | undefined)?.code
+    : undefined;
+  if (code === 'TRANSACTION_BRANCH_REQUIRED' || code === 'TRANSACTION_BRANCH_INVALID') {
+    return { reply: RECEIPT_BRANCH_REQUIRED_REPLY, status: 'clarification_required', errorCode: 'RECEIPT_BRANCH_SELECTION_REQUIRED' };
+  }
+  return undefined;
+}
 /** Sent INSTEAD of RATE_LIMIT_REPLY when the turn's ledger entry exists: the reclaim drain WILL
  *  answer it, so telling the user to resend would produce a double answer (UAT 2026-08-27). */
 const BUSY_FOLLOW_UP_REPLY = '⏳ น้องมั่งมีกำลังตอบข้อความก่อนหน้าอยู่ค่ะ ข้อความนี้รับไว้แล้ว เดี๋ยวตามมาตอบให้เองนะคะ ไม่ต้องส่งซ้ำค่ะ';
@@ -2599,9 +2622,7 @@ export class ProcessLineWebhookUseCase {
       } catch (error) {
         // Nothing here may reach the dispatcher's generic failure reply: the sender would lose both
         // their answer and the explanation. Keep the bytes, say it plainly, end the turn.
-        this.logger.warn({ msg: 'line_substitute_media_answer_failed', requestId, error: (error as Error).message });
-        await this.deliverReply(event, ERROR_REPLY);
-        await this.updateEventLog(event.webhookEventId, 'substitute_media_answer_failed', undefined, companyId);
+        await this.replyPendingMediaFailure(event, companyId, requestId, error);
         return;
       }
       if (substituteAnswer?.outcome === 'handled') {
@@ -2620,10 +2641,18 @@ export class ProcessLineWebhookUseCase {
           ? 'ambiguous' as const
           : splitReply?.decision ?? classifyPendingMediaReply(normalizedText);
       if (decision === 'receipt') {
-        await this.resolvePendingMediaAsReceipt(
-          event, requestId, identity.userId, companyId, resolvedAccess, pendingMedia, normalizedText,
-          splitReply?.remainder,
-        );
+        try {
+          await this.resolvePendingMediaAsReceipt(
+            event, requestId, identity.userId, companyId, resolvedAccess, pendingMedia, normalizedText,
+            splitReply?.remainder,
+          );
+        } catch (error) {
+          // Same rule as the answer above: a data state the sender can fix gets its own sentence and
+          // leaves the row PENDING; anything else is still a real fault and belongs to the dispatcher.
+          if (!lineCaptureFailureReply(error)) throw error;
+          await this.replyPendingMediaFailure(event, companyId, requestId, error);
+          return;
+        }
         await this.ackMediaClarification(companyId, event, identity.userId, pendingMedia.id, 'acked');
         return;
       }
@@ -3360,6 +3389,8 @@ export class ProcessLineWebhookUseCase {
       }
 
       let captured: Awaited<ReturnType<CaptureLineExpenseNoteUseCase['execute']>>;
+      // Resolved OUTSIDE `timeStage`: the stage measures the capture, not this lookup.
+      const captureBranchId = await this.resolveLineCaptureBranchId(companyId, ctx.membershipId, ctx.scopes ?? {});
       try {
         captured = await this.timeStage(event.webhookEventId, 'capture_execute', () => this.captureExpenseNote!.execute(ctx, {
           messageText: normalizedText,
@@ -3373,6 +3404,9 @@ export class ProcessLineWebhookUseCase {
             .map((item) => item.text),
           lineMessageId: event.lineMessageId ?? event.webhookEventId,
           lineEventId: event.webhookEventId,
+          // Same LINE branch rule the photo lanes use — a text note in a multi-branch company hit
+          // the identical TRANSACTION_BRANCH_REQUIRED dead end.
+          branchId: captureBranchId,
           draftConversationEnabled: expenseDraftConversationEnabled,
           // Phase 1B (§8.1): grounded `businessPurpose` may satisfy completeness ONLY behind the semantic
           // primary guard. 'off'/'shadow' never sets it, so the completeness expansion cannot ship alone —
@@ -4155,11 +4189,11 @@ export class ProcessLineWebhookUseCase {
     } catch (err) {
       // Branch ambiguity is a data-setup state, not a transient fault: say what to do instead of
       // the "ชั่วคราว ลองใหม่" copy that retries into the identical failure (Owner 2026-08-27).
-      const response = (err as { getResponse?: () => unknown }).getResponse?.() as { code?: string } | undefined;
-      if (response?.code === 'TRANSACTION_BRANCH_REQUIRED' || response?.code === 'TRANSACTION_BRANCH_INVALID') {
+      const deterministic = lineCaptureFailureReply(err);
+      if (deterministic) {
         this.logger.warn({ msg: 'LINE receipt upload needs branch selection', webhookEventId: event.webhookEventId });
-        await this.deliverReply(event, RECEIPT_BRANCH_REQUIRED_REPLY).catch(() => {});
-        await this.updateEventLog(event.webhookEventId, 'clarification_required', 'RECEIPT_BRANCH_SELECTION_REQUIRED');
+        await this.deliverReply(event, deterministic.reply).catch(() => {});
+        await this.updateEventLog(event.webhookEventId, deterministic.status, deterministic.errorCode);
         return { outcome: 'done' };
       }
       this.logger.error({ msg: 'LINE receipt upload error', webhookEventId: event.webhookEventId, error: (err as Error).message });
@@ -4647,21 +4681,7 @@ export class ProcessLineWebhookUseCase {
     }
     if (decision.outcome !== 'expense') return;
 
-    // Owner 2026-08-27: never lose a successfully-read receipt to branch ambiguity. LINE has no
-    // branch picker, so default the USER'S OWN branch (membership defaultBranchId — "สาขาที่ user
-    // นั้นอยู่"), else the single in-scope branch, else the sole head office; the init use case
-    // re-validates scope and ACTIVE status, and the review lane keeps the branch editable.
-    const [branchCandidates, membership] = await Promise.all([
-      this.prisma.client.branch.findMany({
-        where: { companyId: ctx.companyId, status: 'ACTIVE', ...(ctx.scopes?.branchIds ? { id: { in: ctx.scopes.branchIds } } : {}) },
-        select: { id: true, type: true },
-        take: 20,
-      }),
-      ctx.membershipId
-        ? this.prisma.client.companyMembership.findUnique({ where: { id: ctx.membershipId }, select: { defaultBranchId: true } })
-        : Promise.resolve(null),
-    ]);
-    const defaultBranchId = pickLineDefaultBranchId(branchCandidates, membership?.defaultBranchId);
+    const defaultBranchId = await this.resolveLineCaptureBranchId(ctx.companyId, ctx.membershipId, ctx.scopes ?? {});
     const intent = await this.initReceiptUpload.execute(ctx, {
       ...(defaultBranchId ? { branchId: defaultBranchId } : {}),
       originalFileName: media.fileName,
@@ -5129,6 +5149,27 @@ export class ProcessLineWebhookUseCase {
     return { outcome: 'done' };
   }
 
+  /** A pending-media answer that could not be honoured. The row is left PENDING either way — the
+   *  sender still owns those bytes — but a KNOWN data state gets copy it can act on and the same
+   *  terminal status the direct photo path records, instead of a "temporary" claim that the very
+   *  next identical attempt disproves (UAT 2026-09-05). */
+  private async replyPendingMediaFailure(
+    event: LineTextEvent, companyId: string, requestId: string, error: unknown,
+  ): Promise<void> {
+    const deterministic = lineCaptureFailureReply(error);
+    this.logger.warn({
+      msg: deterministic ? 'line_pending_media_answer_needs_setup' : 'line_substitute_media_answer_failed',
+      requestId, ...(deterministic && { errorCode: deterministic.errorCode }), error: (error as Error).message,
+    });
+    await this.deliverReply(event, deterministic?.reply ?? ERROR_REPLY);
+    await this.updateEventLog(
+      event.webhookEventId,
+      deterministic?.status ?? 'substitute_media_answer_failed',
+      deterministic?.errorCode,
+      companyId,
+    );
+  }
+
   private async resolvePendingRow(id: string, status: 'RESOLVED_RECEIPT' | 'RESOLVED_ILLUSTRATION' | 'RESOLVED_SIGNATURE'): Promise<void> {
     await this.prisma.client.lineIntakePendingMedia.updateMany({ where: { id, status: 'PENDING' }, data: { status } });
   }
@@ -5324,6 +5365,7 @@ export class ProcessLineWebhookUseCase {
         pending,
         access.scopes,
         chatKeyHashOf(event),
+        access.membershipId,
       ));
     }
     if (asked.ocrFields) await this.receiptOcrApply.apply(ctx, expenseId, asked.ocrFields);
@@ -5549,12 +5591,15 @@ export class ProcessLineWebhookUseCase {
       companyId: ctx.companyId, userId: ctx.userId, chatKeyHash: chatKeyHashOf(event), scopes: ctx.scopes ?? {},
     });
     if (hasActiveSubstituteContinuation(openRows)) return undefined;
+    // Resolved OUTSIDE `timeStage`: the stage measures the capture, not this lookup.
+    const branchId = await this.resolveLineCaptureBranchId(ctx.companyId, ctx.membershipId, ctx.scopes ?? {});
     try {
       return await this.timeStage(event.webhookEventId, 'capture_execute', () => this.captureExpenseNote!.execute(ctx, {
         messageText: normalizedText,
         captureHints: { amount, description },
         lineMessageId: event.lineMessageId ?? event.webhookEventId,
         lineEventId: event.webhookEventId,
+        branchId,
         // The substitute continuation owns this conversation's next question; a second draft-
         // conversation thread would ask the same user two different ones in the same reply.
         draftConversationEnabled: false,
@@ -5608,6 +5653,7 @@ export class ProcessLineWebhookUseCase {
         pending,
         access.scopes,
         chatKeyHashOf(event),
+        access.membershipId,
       ));
     }
     let reply = formatPaypersReply(this.config.webBaseUrl, companyId, expenseId, { hasDuplicate });
@@ -5751,6 +5797,35 @@ export class ProcessLineWebhookUseCase {
     for (const entry of plan?.entries ?? []) await this.ledger?.ack(entry, 'acked', { outcome });
   }
 
+  /**
+   * Owner 2026-08-27: never lose a successfully-read document to branch ambiguity. LINE has no
+   * branch picker, so default the USER'S OWN branch (membership defaultBranchId — "สาขาที่ user
+   * นั้นอยู่"), else the single in-scope branch, else the sole head office; the create path
+   * re-validates scope and ACTIVE status, and the review lane keeps the branch editable.
+   *
+   * ONE rule for every LINE-originated record — the direct photo, the clarified pending media (the
+   * check bill answered "จ่ายแล้ว ไม่ได้ใบเสร็จ") and the text note. The pending-media lane never
+   * had it, which is exactly what killed the UAT check bill on 2026-09-05. `undefined` means still
+   * ambiguous: the caller answers honestly instead of guessing a branch into an accounting record.
+   */
+  private async resolveLineCaptureBranchId(
+    companyId: string,
+    membershipId: string | undefined,
+    scopes: { branchIds?: string[] },
+  ): Promise<string | undefined> {
+    const [branchCandidates, membership] = await Promise.all([
+      this.prisma.client.branch.findMany({
+        where: { companyId, status: 'ACTIVE', ...(scopes.branchIds ? { id: { in: scopes.branchIds } } : {}) },
+        select: { id: true, type: true },
+        take: 20,
+      }),
+      membershipId
+        ? this.prisma.client.companyMembership.findUnique({ where: { id: membershipId }, select: { defaultBranchId: true } })
+        : Promise.resolve(null),
+    ]);
+    return pickLineDefaultBranchId(branchCandidates, membership?.defaultBranchId);
+  }
+
   /** RECEIPT-05: build the reviewable expense draft from the attachment persisted at clarify
    *  time. OCR still waits for web review; byte and visual dedupe use attachment metadata. */
   private async createReceiptDraftFromPendingMedia(
@@ -5761,9 +5836,15 @@ export class ProcessLineWebhookUseCase {
     pending: { attachmentId: string; lineMessageId: string; mimeType: string },
     scopes: { branchIds?: string[] },
     chatKeyHash?: string,
+    membershipId?: string,
   ): Promise<{ expenseId: string; hasDuplicate: boolean }> {
     const expense = await this.expenseRepo!.createExpense({
-      companyId, branchId: await this.expenseRepo!.resolveCreateBranchId(companyId, scopes),
+      companyId,
+      // Same LINE branch rule the direct photo path uses; `resolveCreateBranchId` still re-validates
+      // scope and ACTIVE status, and still refuses when the rule found nothing to pick.
+      branchId: await this.expenseRepo!.resolveCreateBranchId(
+        companyId, scopes, await this.resolveLineCaptureBranchId(companyId, membershipId, scopes),
+      ),
       // Same placeholder rule as the direct-media path above: a CALENDAR day, not the instant the
       // photo arrived. A full timestamp in a date column hides the row from the list's day filter,
       // and the UTC day is yesterday for anyone sending a receipt before 07:00 Bangkok. This lane
