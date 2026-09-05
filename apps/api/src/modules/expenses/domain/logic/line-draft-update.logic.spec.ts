@@ -241,6 +241,21 @@ describe('detectLineDraftEditRequest', () => {
     });
   });
 
+  // Slice A pins E4 to `expense.explain_record` with zero refusals, and J4 to `unsupported_yet`.
+  // Both sentences contain words this detector cares about - E4 literally says "service charge" -
+  // so the two turns are asserted here rather than assumed: a draft-edit lane that quietly stole
+  // either would break A's tests from the outside and be hard to attribute.
+  it("leaves slice A's E4 and J4 turns alone", () => {
+    assert.equal(detectLineDraftEditRequest('ทำไม service charge คิดแยกเป็นอีกรายการ'), null,
+      'E4 asks WHY and names no amount - it is a read, and A answers it with expense.explain_record');
+    assert.equal(detectLineDraftEditRequest('ช่วยออกใบกำกับภาษีให้หน่อย'), null,
+      'J4 is unsupported_yet, not an edit');
+    // But the owner's real UAT turn, which DOES name a percent, is a draft edit.
+    assert.deepEqual(detectLineDraftEditRequest('จากบิลเมื่อกี้มี service charge 10% นะ แก้ไขได้ใช่ไหม'), {
+      tool: 'expense.draft.add_charge', input: { kind: 'SERVICE_CHARGE', percentOfSubtotal: '10' },
+    });
+  });
+
   it('is an allowlist: an ordinary sentence routes nowhere', () => {
     assert.equal(detectLineDraftEditRequest('ขอบคุณครับ'), null);
     assert.equal(detectLineDraftEditRequest('ยอดรวมเดือนนี้เท่าไหร่'), null);

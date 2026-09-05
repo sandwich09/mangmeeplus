@@ -472,6 +472,13 @@ jobs:
           RECEIPT_TRUTH_TEST_DATABASE_URL="$DATABASE_URL" \
             pnpm --filter @watchdog-bms/api exec tsx --test \
             src/modules/expenses/receipt-truth.pg.spec.ts
+          # S-4 draft edit: only a real database can show that the PREVIEW transaction is genuinely
+          # rolled back — a fake would "roll back" a write it never performed. Its own invocation,
+          # like every spec above: the runner interleaves files, and this one seeds a company and a
+          # user of its own.
+          LINE_DRAFT_EDIT_TEST_DATABASE_URL="$DATABASE_URL" \
+            pnpm --filter @watchdog-bms/api exec tsx --test \
+            src/modules/expenses/line-draft-update.pg.spec.ts
       - run: pnpm test
         if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
       - name: P27, OCR, and expense payment integrity against PostgreSQL

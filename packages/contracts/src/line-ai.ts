@@ -862,6 +862,10 @@ export type LineDraftUpdatePostback = {
 const SCRUB_DIGIT = '0-9\u0e50-\u0e59\uff10-\uff19';
 /** Grouping and decimal marks, including their fullwidth and Arabic twins. */
 const SCRUB_SEPARATOR = ',.\uff0c\uff0e\u066b\u066c';
+/** Fullwidth punctuation folded to ASCII, so one set of patterns covers every alphabet the OCR
+ *  can hand us. `\uff05` (fullwidth %) and `\u3000` (ideographic space) are here because a
+ *  pattern written in ASCII does not see them. */
+const SCRUB_FOLD: Readonly<Record<string, string>> = { '\uff0c': ',', '\uff0e': '.', '\uff05': '%', '\u3000': ' ', '\u066b': '.', '\u066c': ',' };
 /** What a masked figure looks like. An ellipsis reads as "something was here", which is the
  *  honest thing for a reader to conclude. */
 export const SCRUB_MASK = '…';
@@ -918,9 +922,16 @@ export function scrubRecordText(
   if (typeof value !== 'string') return '';
   const digit = `[${SCRUB_DIGIT}]`;
   const digitOrSep = `[${SCRUB_DIGIT}${SCRUB_SEPARATOR}]`;
-  const percentSource = `${digit}${digitOrSep}*\\s*(?:%|％|เปอร์เซ็น(?:ต์)?)`;
-  const groupedSource = `${digit}${digitOrSep}*${digit}`;
-  const linkless = value
+  const percentSource = `${digit}${digitOrSep}*\\s*(?:%|เปอร์เซ็น(?:ต์)?)`;
+  // Grouped (`99,999`), decimal (`99999.00`), or any bare run of THREE or more. Three is the
+  // deliberate floor: Thai shops number their branches, so "ร้าน 7-Eleven สาขา 12" has to keep its
+  // name, and nothing that short reads as a total beside a grouped figure like 1,789.04.
+  const groupedSource = `${digit}${digitOrSep}+${digit}|${digit}{3,}`;
+  // NFC first: Thai writes vowel signs and tone marks as separate combining code points, so a
+  // decomposed string slips past a pattern written against the composed form. NFC, never NFKC —
+  // NFKC rewrites Thai text in ways this channel has been bitten by before. Digits are folded in
+  // the same pass, so every pattern below can be written once, in ASCII.
+  const linkless = normalizeScrubDigits(value.normalize('NFC'))
     .replace(SCRUB_INVISIBLE, ' ')
     .replace(SCRUB_SCHEME_LINK, ' ')
     .replace(SCRUB_BARE_HOST, ' ')
@@ -931,12 +942,15 @@ export function scrubRecordText(
     && (new RegExp(percentSource, 'u').test(linkless) || new RegExp(groupedSource, 'u').test(linkless))) {
     return '';
   }
-  return linkless
+  const scrubbed = linkless
+    // Percent first: `999%` would otherwise lose its digits to the money rule and leave a bare `%`.
     .replace(new RegExp(percentSource, 'gu'), SCRUB_MASK)
     .replace(new RegExp(groupedSource, 'gu'), SCRUB_MASK)
     .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, maxLength);
+    .trim();
+  // Nothing but punctuation left is not a name — the caller's neutral fallback reads better than
+  // printed debris.
+  return /[\p{L}\p{N}]/u.test(scrubbed) ? scrubbed.slice(0, maxLength) : '';
 }
 
 /**
@@ -979,7 +993,7 @@ export function normalizeScrubDigits(value: string): string {
     if (code >= 0x0e50 && code <= 0x0e59) return String(code - 0x0e50);
     if (code >= 0xff10 && code <= 0xff19) return String(code - 0xff10);
     return character;
-  }).replace(/[\uff0c\u066c]/g, ',').replace(/[\uff0e\u066b]/g, '.');
+  }).replace(/[\uff0c\uff0e\uff05\u3000\u066b\u066c]/gu, (character) => SCRUB_FOLD[character] ?? character);
 }
 
 /** Why a draft edit could not even be previewed. Each maps to one deterministic Thai reply. */
