@@ -30,21 +30,57 @@ def openssl_waiver_table: [
 def openssl_waiver_expiry: 1788998400;
 def openssl_waiver_approval: "CHAT-OWNER-DIRECTIVE-2026-08-27-FIX-ALL-UNTIL-DEPLOY-SUCCEEDS";
 
-def matched_openssl_waiver_row:
+# Waived 2026-09-05: two NEW base-image findings Debian has not fixed either — security-tracker lists
+# bookworm openssl 3.0.20-1~deb12u2 and zlib 1:1.2.13.dfsg-1 as still vulnerable, and the newest
+# upstream node:22-bookworm-slim digest ships the same two packages, so bumping the pinned base does
+# not clear them. Same rules as the four above: exact CVE plus a provider-statement anchor, with the
+# severity, package and version carried per row so the CRITICAL row cannot loosen the HIGH-only ones.
+# Any drift in package, version, severity or statement stays blocking. Separate expiry def so these
+# two expire independently of the four above.
+def debian_2026_09_waiver_table: [
+  { id: "AWS-ECR-CVE-2026-75803-OPENSSL-EVP-CIPHER-UNUSED",
+    cve: "CVE-2026-75803",
+    severity: "CRITICAL",
+    package: "openssl",
+    version: "3.0.20-1~deb12u2",
+    anchor: "for AES-OCB and ChaCha20-Poly1305 ciphers it skipped the AEAD tag verification when an empty ciphertext was passed to the function",
+    reachabilityEvidence: "The runtime is Node 22 with its own bundled OpenSSL, not the Debian libssl; the Debian openssl package enters only as a hard dependency of ca-certificates and, in the api image, of the ClamAV 1.5.3 .deb. No process in any image calls EVP_Cipher() on an attacker-supplied AEAD ciphertext: ClamAV uses OpenSSL for hashing and database signature checks, and TLS records always carry content plus tag, never an empty ciphertext. FIPS is not in use." },
+  { id: "AWS-ECR-CVE-2026-85091-ZLIB-PRE131-MAPPING",
+    cve: "CVE-2026-85091",
+    severity: "HIGH",
+    package: "zlib",
+    version: "1.2.13.dfsg-1",
+    anchor: "when processing non-blocking gzwrite() operations with stale external buffer pointers",
+    reachabilityEvidence: "Provider states the affected range is zlib 1.3.1.2 through 1.3.2 while the scanned Debian package is 1.2.13. Node bundles its own zlib, and no process in any image writes gzip streams through the system zlib non-blocking gzwrite()/gzprintf() API (repo-verified 2026-09-05)." }
+];
+
+def debian_2026_09_waiver_expiry: 1789776000;
+def debian_2026_09_waiver_approval: "CHAT-OWNER-DIRECTIVE-2026-09-05-UAT-DEPLOY-WAIVER";
+
+# One matchable table. The four 2026-08 rows are all HIGH openssl 3.0.20-1~deb12u2 under the shared
+# expiry and approval, so those constants are attached here rather than repeated on every row.
+def waiver_table:
+  [openssl_waiver_table[] | . + {
+      severity: "HIGH", package: "openssl", version: "3.0.20-1~deb12u2",
+      expiry: openssl_waiver_expiry, approval: openssl_waiver_approval }]
+  + [debian_2026_09_waiver_table[] | . + {
+      expiry: debian_2026_09_waiver_expiry, approval: debian_2026_09_waiver_approval }];
+
+def matched_waiver_row:
   . as $finding
-  | [openssl_waiver_table[]
+  | [waiver_table[]
       | . as $row
       | select($row.cve == $finding.name
-          and $finding.severity == "HIGH"
-          and ($finding | finding_attribute("package_name")) == "openssl"
-          and ($finding | finding_attribute("package_version")) == "3.0.20-1~deb12u2"
+          and $finding.severity == $row.severity
+          and ($finding | finding_attribute("package_name")) == $row.package
+          and ($finding | finding_attribute("package_version")) == $row.version
           and (($finding.description // "") | contains($row.anchor)))][0];
 
-def openssl_unreachable_waiver:
-  (matched_openssl_waiver_row != null) and now < openssl_waiver_expiry;
+def unreachable_waiver:
+  matched_waiver_row as $row | $row != null and now < $row.expiry;
 
 def waiver_record($digest):
-  matched_openssl_waiver_row as $row
+  matched_waiver_row as $row
   | {
       id: $row.id,
       cve: .name,
@@ -54,8 +90,8 @@ def waiver_record($digest):
       scannedDigest: $digest,
       reachabilityEvidence: $row.reachabilityEvidence,
       compensatingControl: "Exact CVE, severity, package, version and provider statement match; all mismatches remain blocking.",
-      approvedBy: openssl_waiver_approval,
-      expiresAtEpoch: openssl_waiver_expiry,
+      approvedBy: $row.approval,
+      expiresAtEpoch: $row.expiry,
       providerStatement: $row.anchor
     };
 
@@ -67,8 +103,8 @@ def waiver_record($digest):
   }) as $raw
 | ([($scan.findings // [])[], ($scan.enhancedFindings // [])[]]
     | map(select(.severity == "CRITICAL" or .severity == "HIGH"))) as $severe
-| ($severe | map(select(openssl_unreachable_waiver))) as $waived
-| ($severe | map(select((openssl_unreachable_waiver) | not))) as $blocking
+| ($severe | map(select(unreachable_waiver))) as $waived
+| ($severe | map(select((unreachable_waiver) | not))) as $blocking
 | {
     rawSeverityCounts: $raw,
     expectedSevereCount: ($raw.CRITICAL + $raw.HIGH),
