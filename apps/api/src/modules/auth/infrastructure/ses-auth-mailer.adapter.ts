@@ -2,7 +2,8 @@ import { Inject, Injectable } from '@nestjs/common';
 import { SendEmailCommand, type SESClient } from '@aws-sdk/client-ses';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import type {
-  AccountClaimEmailInput, AuthEmailLinkInput, AuthMailerPort, SignupRejectionEmailInput,
+  AccountClaimEmailInput, AuthEmailLinkInput, AuthMailerPort, LineSignupWelcomeEmailInput,
+  PackageChangeNoticeEmailInput, SignupRejectionEmailInput,
 } from '../domain/ports/auth-mailer.port';
 import { accountClaimLogoUrl, renderAccountClaimEmail } from './account-claim-email.template';
 import { renderSignupRejectionEmail } from './signup-rejection-email.template';
@@ -121,6 +122,17 @@ export class SesAuthMailerAdapter implements AuthMailerPort {
       ...(accountClaimLogoUrl() ? { logoUrl: accountClaimLogoUrl()! } : {}),
     }));
   }
+
+  /**
+   * H-02 hooks, deliberately inert. Not because the plumbing is hard, but because there is nothing
+   * truthful to send: the Thai copy for both letters is Owner-owned and neither appears in the
+   * spec §7 message table, and a LINE-first shop has no verified address at signup anyway. TODO
+   * (Phase 2, when a mail provider is approved): render an Owner-signed template here and send only
+   * for a User with `emailVerifiedAt`.
+   */
+  async sendLineSignupWelcome(_input: LineSignupWelcomeEmailInput): Promise<void> {}
+
+  async sendPackageChangeNotice(_input: PackageChangeNoticeEmailInput): Promise<void> {}
 
   private async send(toEmail: string, kind: EmailKind, rendered: RenderedEmail): Promise<string | null> {
     const fromAddress = this.config.sesFromAddress;

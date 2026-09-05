@@ -62,6 +62,74 @@ const TRANSITIONS: Readonly<Record<CompanySignupState, readonly CompanySignupSta
   REJECTED: [],
 };
 
+export const SIGNUP_SOURCE_OFFICIAL_SITE = 'official-site';
+export const SIGNUP_SOURCE_LINE_OA = 'line-oa';
+
+/**
+ * Review B-05: "one open application per LINE account", enforced by the partial unique index in
+ * `migrations/20260904120000_line_first_signup/migration.sql`. This list and that index's WHERE
+ * clause MUST agree — a spec asserts they do — because a state missing from the index is a state
+ * in which a re-submit silently opens a SECOND application, and for a row whose provisioning half
+ * committed (the ExternalIdentity exists) that means a SECOND company through the attach path.
+ * PROVISIONING_FAILED and READY are in the set for exactly that reason: both are states in which
+ * the shop may already exist and the application has not settled. Only COMPLETED, REJECTED and
+ * SUSPENDED free the LINE account to apply again.
+ */
+/**
+ * How long a PROVISIONING row may sit untouched before another caller may take the fence from it.
+ *
+ * The onboarding transaction is capped at 15s (`create-company-onboarding.use-case.ts`), but that
+ * is only the middle of the run: provisioning then applies trial guards, a VAT update, the fence
+ * completion, an audit transaction and a final advance, each its own round trip, and a cold start
+ * pays for all of it at once. 90s left no real margin over that tail. Three minutes is still far
+ * shorter than a working day, which is what the alternative — no recovery at all — used to cost.
+ */
+export const STALE_PROVISIONING_MS = 180_000;
+
+/**
+ * "Nobody is actually holding this fence." Nothing releases it when the process holding it dies
+ * (an ECS task replaced mid-transaction, a transaction that timed out) and there is no sweep, so
+ * without this a row sits at PROVISIONING forever.
+ *
+ * Shared on purpose: the fence and the admin queue MUST agree on what abandoned means, or one of
+ * them offers a recovery the other refuses — which is exactly how the first version of this shipped
+ * as unreachable code.
+ */
+export function isStaleProvisioning(
+  request: { state: string; provisioningStartedAt: Date | null },
+  now: Date,
+): boolean {
+  return request.state === 'PROVISIONING'
+    && request.provisioningStartedAt !== null
+    && now.getTime() - request.provisioningStartedAt.getTime() > STALE_PROVISIONING_MS;
+}
+
+export const LINE_OPEN_APPLICATION_STATES: readonly CompanySignupState[] = [
+  'RECEIVED', 'VALIDATED', 'PENDING_REVIEW', 'PROVISIONING', 'PROVISIONING_FAILED', 'READY',
+];
+
+// P10-L §5. The LINE source proves a real person with a server-verified LIFF ID token instead of a
+// mailbox, so it has NO EMAIL_* edge at all — SIGNUP-02 is satisfied by the token, and an EMAIL_*
+// state here could only mean a bug that mailed a shop with no address. AUTO_FREE is the extra
+// VALIDATED → PROVISIONING edge; COMPLETED → SUSPENDED is how an admin stops an auto-approved shop
+// after the fact (§3.7). LINE_LINK_PENDING is skipped: the identity is linked inside provisioning.
+const LINE_OA_TRANSITIONS: Readonly<Record<CompanySignupState, readonly CompanySignupState[]>> = {
+  RECEIVED: ['VALIDATED', 'SUSPENDED'],
+  VALIDATED: ['PENDING_REVIEW', 'PROVISIONING', 'SUSPENDED'],
+  PENDING_REVIEW: ['PROVISIONING', 'REJECTED', 'SUSPENDED'],
+  EMAIL_PENDING: [],
+  EMAIL_FAILED: [],
+  EMAIL_VERIFIED: [],
+  PROVISIONING: ['READY', 'PROVISIONING_FAILED', 'SUSPENDED'],
+  PROVISIONING_FAILED: ['PROVISIONING', 'SUSPENDED'],
+  READY: ['COMPLETED', 'SUSPENDED'],
+  LINE_LINK_PENDING: [],
+  COMPLETED: ['SUSPENDED'],
+  SUSPENDED: [],
+  EXPIRED: [],
+  REJECTED: [],
+};
+
 const PHONE_PATTERN = /^[0-9+\-() ]{6,20}$/;
 
 function bounded(value: string, field: string, max: number): string {
@@ -114,8 +182,23 @@ export function companySignupPayloadHash(input: NormalizedCompanySignupInput): s
   return canonicalFingerprint(input);
 }
 
-export function canTransitionCompanySignup(from: CompanySignupState, to: CompanySignupState): boolean {
-  return TRANSITIONS[from].includes(to);
+/**
+ * Which table applies is decided by the row's `source` and nothing else. An unknown source falls
+ * back to the web form's table, which is the stricter of the two — a mis-tagged row can only lose
+ * moves, never gain the AUTO_FREE shortcut.
+ */
+export function signupTransitionTable(
+  source: string,
+): Readonly<Record<CompanySignupState, readonly CompanySignupState[]>> {
+  return source === SIGNUP_SOURCE_LINE_OA ? LINE_OA_TRANSITIONS : TRANSITIONS;
+}
+
+export function canTransitionCompanySignup(
+  from: CompanySignupState,
+  to: CompanySignupState,
+  source: string = SIGNUP_SOURCE_OFFICIAL_SITE,
+): boolean {
+  return signupTransitionTable(source)[from].includes(to);
 }
 
 export function isCompanySignupFailureState(state: CompanySignupState): boolean {

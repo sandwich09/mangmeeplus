@@ -103,13 +103,19 @@ export class SignupAdminNotifyService {
     await this.pushToLinkedAdmins(admins.map((admin) => admin.userId), `${message}\n${webLink(SIGNUP_QUEUE_PATH)}`);
   }
 
-  private async activeSystemAdmins(): Promise<Array<{ companyId: string; userId: string }>> {
+  /**
+   * Public because it is also the answer to "who is the operator of record" for an application no
+   * admin touched: an AUTO_FREE provisioning still has to name a real user in the onboarding run
+   * and its audit rows, both of which are foreign keys. Ordered so that answer is stable.
+   */
+  async activeSystemAdmins(): Promise<Array<{ companyId: string; userId: string }>> {
     return this.prisma.client.companyMembership.findMany({
       where: {
         status: 'ACTIVE',
         user: { status: 'ACTIVE' },
         roles: { some: { role: { key: 'SYSTEM_ADMIN' } } },
       },
+      orderBy: { userId: 'asc' },
       select: { companyId: true, userId: true },
     });
   }

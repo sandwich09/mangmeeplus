@@ -7,11 +7,15 @@ import {
   type AdminSignupDecisionDto, type AdminSignupQueueDto, type AdminSignupReissueDto,
 } from '@watchdog-bms/contracts';
 import { RequirePermissions } from '../../../../common/security/permissions.decorator';
+import { requiredWebAppBase, trustedPublicApiBase } from '../../../../common/http/public-api-base';
+import { AppConfigService } from '../../../../common/config/app-config.service';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import { SignupAdminQueueUseCase } from '../../application/signup-admin-queue.use-case';
 
 export class SignupDecisionRequestDto {
-  @IsIn(['APPROVE', 'REJECT']) action!: 'APPROVE' | 'REJECT';
+  // SUSPEND (P10-L §3.7) stops an application an admin does not want to keep, most often one
+  // AUTO_FREE let through.
+  @IsIn(['APPROVE', 'REJECT', 'SUSPEND']) action!: 'APPROVE' | 'REJECT' | 'SUSPEND';
   @IsBoolean() @IsOptional() notifyApplicant?: boolean;
   // Plain text, bounded: it is copied verbatim into an email body, so it gets the same treatment as
   // any other free-text field crossing a trust boundary. The template escapes it on render.
@@ -28,13 +32,23 @@ export class SignupDecisionRequestDto {
  */
 @Controller('system/signup-requests')
 export class SystemSignupRequestController {
-  constructor(private readonly queue: SignupAdminQueueUseCase) {}
+  constructor(
+    private readonly queue: SignupAdminQueueUseCase,
+    private readonly config: AppConfigService,
+  ) {}
 
   @Get()
   @RequirePermissions('system.company_onboarding.read')
   @ApiOperation({ summary: 'List signup applications awaiting review or claim' })
   list(): Promise<AdminSignupQueueDto> {
     return this.queue.list();
+  }
+
+  @Get('auto-approved')
+  @RequirePermissions('system.company_onboarding.read')
+  @ApiOperation({ summary: 'Applications AUTO_FREE approved without an admin, for after-the-fact review' })
+  listAutoApproved(): Promise<AdminSignupQueueDto> {
+    return this.queue.listAutoApproved();
   }
 
   @Post(':requestId/decision')
@@ -48,7 +62,15 @@ export class SystemSignupRequestController {
     @Body() dto: SignupDecisionRequestDto,
     @Req() req: Request & { context: RequestContext },
   ): Promise<AdminSignupDecisionDto> {
-    return this.queue.decide(requestId, dto, req.context.userId, req.context.requestId);
+    // Only APPROVE provisions, and only provisioning needs a handoff base. Resolving it for every
+    // decision made an unset WEB_BASE_URL a 503 on REJECT and SUSPEND too (review L-4) — and
+    // SUSPEND is the emergency stop, which must never depend on a link being configurable.
+    // The base is the configured one, never the caller's Origin (review L-1): this URL is
+    // PERSISTED as the owner's way back into their shop, and the header is client-suppliable.
+    const urls = dto.action === 'APPROVE'
+      ? { webBaseUrl: requiredWebAppBase(this.config.sesWebBaseUrl), apiBaseUrl: trustedPublicApiBase(req) }
+      : undefined;
+    return this.queue.decide(requestId, dto, req.context.userId, req.context.requestId, urls);
   }
 
   @Post(':requestId/reissue-claim')

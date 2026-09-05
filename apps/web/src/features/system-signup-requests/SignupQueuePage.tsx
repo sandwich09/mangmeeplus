@@ -14,11 +14,17 @@ import {
   type AdminSignupQueueItemDto,
 } from './signup-requests.api';
 import {
+  approveLabel,
   canApproveSignup,
+  canRejectSignup,
   canReissueSignup,
+  canSuspendSignup,
   filterSignupQueue,
   signupBusinessSummary,
   signupHintChips,
+  isFinishingStrandedRow,
+  isLineSignup,
+  suspendLeavesShopRunning,
   signupIdleChip,
   signupStateChip,
   SIGNUP_QUEUE_TABS,
@@ -90,17 +96,34 @@ export default function SignupQueuePage() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleApprove = async (item: AdminSignupQueueItemDto) => {
+    // P10-L: a LINE application has no address, so approving it opens the shop immediately and the
+    // customer hears about it in LINE. Promising an email here would be a promise nothing keeps —
+    // and for a row whose shop already exists, so would promising to open one (review LOW-2).
+    const fromLine = isLineSignup(item);
+    const finishing = fromLine && isFinishingStrandedRow(item.state);
     const accepted = await confirm({
-      title: 'อนุมัติคำขอ',
-      message: `อนุมัติและส่งอีเมลตั้งรหัสให้ ${item.contactEmail} ใช่หรือไม่`,
-      confirmLabel: 'อนุมัติและส่งอีเมล',
+      title: finishing ? 'ปิดงานคำขอ' : 'อนุมัติคำขอ',
+      message: finishing
+        ? `ปิดงานให้ร้าน ${item.companyName} ที่เปิดค้างอยู่ ใช่หรือไม่`
+        : fromLine
+          ? `อนุมัติและเปิดร้าน ${item.companyName} ให้ทันที (ลูกค้าจะได้รับแจ้งทาง LINE) ใช่หรือไม่`
+          : `อนุมัติและส่งอีเมลตั้งรหัสให้ ${item.contactEmail ?? item.ownerDisplayName} ใช่หรือไม่`,
+      confirmLabel: finishing ? 'ปิดงาน' : fromLine ? 'อนุมัติและเปิดร้าน' : 'อนุมัติและส่งอีเมล',
       variant: 'primary',
     });
     if (!accepted) return;
     setBusyId(item.requestId);
     try {
-      await decideSignupRequest(item.requestId, { action: 'APPROVE' });
-      toast.success('อนุมัติแล้ว ระบบกำลังส่งอีเมลตั้งรหัส');
+      // The API answers 200 with the CURRENT state, so a close-out that found the run still going
+      // comes back as PROVISIONING. Reporting that as done would be the same lie the chip told.
+      const decided = await decideSignupRequest(item.requestId, { action: 'APPROVE' });
+      if (decided.state === 'PROVISIONING') {
+        toast.warning('ยังเปิดร้านอยู่ รอสักครู่แล้วลองใหม่');
+      } else {
+        toast.success(finishing
+          ? 'ปิดงานเรียบร้อย'
+          : fromLine ? 'อนุมัติแล้ว เปิดร้านให้เรียบร้อย' : 'อนุมัติแล้ว ระบบกำลังส่งอีเมลตั้งรหัส');
+      }
       await load();
     } catch (err) {
       toast.error(apiErrorMessage(err));
@@ -130,10 +153,36 @@ export default function SignupQueuePage() {
     }
   };
 
+  // Spec §3.7: stopping a shop AUTO_FREE let through. The API has accepted SUSPEND since L-A;
+  // until now nothing could reach it.
+  const handleSuspend = async (item: AdminSignupQueueItemDto) => {
+    // Suspending settles the APPLICATION. Where the shop already exists, saying "the shop will be
+    // stopped" would be false — closing it is a separate action on the partner page.
+    const accepted = await confirm({
+      title: 'ระงับคำขอ',
+      message: suspendLeavesShopRunning(item.state)
+        ? `หยุดคำขอของร้าน ${item.companyName} ใช่หรือไม่ (ร้านที่เปิดไปแล้วยังใช้ได้ ต้องไปปิดที่หน้าพาร์ทเนอร์)`
+        : `ระงับร้าน ${item.companyName} ใช่หรือไม่ ร้านจะถูกหยุดไว้จนกว่าทีมงานจะตรวจสอบ`,
+      confirmLabel: 'ระงับ',
+      variant: 'danger',
+    });
+    if (!accepted) return;
+    setBusyId(item.requestId);
+    try {
+      await decideSignupRequest(item.requestId, { action: 'SUSPEND' });
+      toast.success('ระงับคำขอแล้ว');
+      await load();
+    } catch (err) {
+      toast.error(apiErrorMessage(err));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const handleReissue = async (item: AdminSignupQueueItemDto) => {
     const accepted = await confirm({
       title: 'ส่งลิงก์ตั้งรหัสใหม่',
-      message: `ส่งลิงก์ตั้งรหัสใหม่ให้ ${item.contactEmail} ใช่หรือไม่ ลิงก์เดิมจะใช้ไม่ได้ทันที`,
+      message: `ส่งลิงก์ตั้งรหัสใหม่ให้ ${item.contactEmail ?? item.ownerDisplayName} ใช่หรือไม่ ลิงก์เดิมจะใช้ไม่ได้ทันที`,
       confirmLabel: 'ส่งลิงก์ใหม่',
       variant: 'primary',
     });
@@ -221,7 +270,8 @@ export default function SignupQueuePage() {
         <div>
           <h1 className="text-xl font-semibold text-gray-900">คำขอสมัครใช้งาน</h1>
           <p className="mt-0.5 text-sm text-gray-500">
-            ตรวจและอนุมัติร้านที่สมัครเข้ามาเอง อนุมัติแล้วระบบจะส่งอีเมลให้ผู้สมัครตั้งรหัสผ่านเอง
+            ตรวจและอนุมัติร้านที่สมัครเข้ามาเอง อนุมัติแล้วระบบจะส่งลิงก์ตั้งรหัสผ่านทางอีเมล
+            หรือเปิดร้านให้ทันทีสำหรับคำขอที่มาจาก LINE
           </p>
         </div>
 
@@ -289,17 +339,26 @@ export default function SignupQueuePage() {
                       return (
                         <tr key={item.requestId} className="align-top hover:bg-gray-50">
                           <td className="px-4 py-3">
-                            <p className="font-medium text-gray-900">{item.companyName}</p>
-                            <p className="text-xs text-gray-500">{item.ownerDisplayName}</p>
+                            <p className="font-medium text-gray-900">
+                              {item.companyName}
+                              {isLineSignup(item) && (
+                                <span className="ml-2 rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-semibold text-green-800">
+                                  LINE
+                                </span>
+                              )}
+                            </p>
+                            <p className="text-xs text-gray-500">
+                              {item.lineDisplayName ?? item.ownerDisplayName}
+                            </p>
                           </td>
                           <td className="px-4 py-3">
-                            <p className="text-gray-700">{item.contactEmail}</p>
+                            <p className="text-gray-700">{item.contactEmail ?? '—'}</p>
                             <p className="text-xs text-gray-500">{item.phoneNumber ?? '—'}</p>
                           </td>
                           <td className="px-4 py-3 text-xs text-gray-500">{signupBusinessSummary(item)}</td>
                           <td className="px-4 py-3">
                             <div className="flex flex-wrap gap-1">
-                              <ChipBadge chip={signupStateChip(item.state)} />
+                              <ChipBadge chip={signupStateChip(item.state, item)} />
                               {idle && <ChipBadge chip={idle} />}
                               {hints.map((chip) => (
                                 <ChipBadge key={chip.label} chip={chip} />
@@ -309,7 +368,7 @@ export default function SignupQueuePage() {
                           <td className="px-4 py-3 text-xs text-gray-500">{formatThaiDateTime(item.createdAt)}</td>
                           <td className="px-4 py-3">
                             <div className="flex flex-wrap gap-2">
-                              {canApproveSignup(item.state) && (
+                              {canApproveSignup(item.state, item) && (
                                 <>
                                   <button
                                     type="button"
@@ -317,17 +376,21 @@ export default function SignupQueuePage() {
                                     onClick={() => void handleApprove(item)}
                                     className={`${rowActionClass} border-green-300 bg-green-50 text-green-700 hover:bg-green-100`}
                                   >
-                                    {busy ? 'กำลังทำรายการ...' : 'อนุมัติ'}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    disabled={busy}
-                                    onClick={() => { setNotifyApplicant(false); setRejectionReason(''); setRejecting(item); }}
-                                    className={`${rowActionClass} border-red-200 bg-red-50 text-red-600 hover:bg-red-100`}
-                                  >
-                                    ปฏิเสธ
+                                    {busy ? 'กำลังทำรายการ...' : approveLabel(item.state)}
                                   </button>
                                 </>
+                              )}
+                              {/* Rejecting is only a decision before one has been made; every other
+                                  state answers 409, so the button used to be a dead end. */}
+                              {canRejectSignup(item.state) && (
+                                <button
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={() => { setNotifyApplicant(false); setRejectionReason(''); setRejecting(item); }}
+                                  className={`${rowActionClass} border-red-200 bg-red-50 text-red-600 hover:bg-red-100`}
+                                >
+                                  ปฏิเสธ
+                                </button>
                               )}
                               {canReissueSignup(item.state) && (
                                 <button
@@ -339,7 +402,18 @@ export default function SignupQueuePage() {
                                   {busy ? 'กำลังทำรายการ...' : 'ส่งลิงก์ใหม่'}
                                 </button>
                               )}
-                              {!canApproveSignup(item.state) && !canReissueSignup(item.state) && (
+                              {canSuspendSignup(item) && (
+                                <button
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={() => void handleSuspend(item)}
+                                  className={`${rowActionClass} border-orange-300 bg-orange-50 text-orange-700 hover:bg-orange-100`}
+                                >
+                                  ระงับ
+                                </button>
+                              )}
+                              {!canApproveSignup(item.state, item) && !canRejectSignup(item.state)
+                                && !canReissueSignup(item.state) && !canSuspendSignup(item) && (
                                 <span className="text-xs text-gray-400">—</span>
                               )}
                             </div>

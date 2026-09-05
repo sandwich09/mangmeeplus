@@ -38,6 +38,29 @@ export const expenseExtractionRetryRequestId = (
   freshRequestId: string,
 ): string => mode === 'same_request' ? originalRequestId : freshRequestId;
 
+/**
+ * P10-L §15.1: the shop's monthly AI image-read ceiling, latched on the upload panel.
+ *
+ * The 409 body carries the server's `monthKey`, but `mapResponseToApiError` keeps only `code`, so
+ * the latch stamps the Bangkok month itself — the same `Asia/Bangkok` civil day the date field
+ * already defaults to, and the same month the server counts in.
+ */
+export type ReceiptQuotaLatch = { monthKey: string; message: string };
+
+export const RECEIPT_QUOTA_ERROR_CODE = 'receipt_quota_exceeded';
+
+/** `YYYY-MM` in the company timezone, from the civil date this screen already uses. */
+export const bangkokMonthKey = (today: string): string => today.slice(0, 7);
+
+/**
+ * True while the latch still speaks for the month on the clock. A latch from last month is stale —
+ * the ceiling resets on the 1st, so the banner must clear and the button must come back without a
+ * reload. Anything unparseable is treated as stale rather than blocking the shop forever.
+ */
+export function isReceiptQuotaBlocked(latch: ReceiptQuotaLatch | null, today: string): boolean {
+  return latch !== null && latch.monthKey === bangkokMonthKey(today);
+}
+
 export class HeicDecodeError extends Error {
   constructor() {
     super('HEIC_DECODE_UNSUPPORTED');

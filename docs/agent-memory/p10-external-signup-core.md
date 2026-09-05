@@ -31,3 +31,35 @@ Verification:
 - Browser QA is not applicable to P10-0 because this phase deliberately adds no controller, route, or page; the DI boot regression covers application integration.
 Next:
 - Commit/push/PR P10-0. Do not expose ingress until all four Owner questions are resolved.
+
+## 2026-09-05 — P10-L relaxes "never blindly provision again" (branch `codex/line-signup-a-core`)
+
+The invariant above still holds in substance, but its literal reading ("a `PROVISIONING` row is
+never re-claimed") was itself a defect: nothing releases the fence when the process holding it
+dies — an ECS task replaced mid-transaction, a transaction past its 15s cap — and there is no
+sweep, so such a row stayed `PROVISIONING` forever with no operator path at all. Adversarial review
+of the LINE-first slice found this and two failures with the same shape.
+
+What changed, and why re-provisioning is no longer blind:
+
+1. **The outcome is knowable now.** `CreateCompanyOnboardingUseCase` stamps
+   `CompanySignupRequest.companyId` INSIDE its own transaction
+   (`linkSignupRequestId`), so "which company did this application create" is a
+   question the database can always answer. There is no window where a company exists and the
+   row does not say so.
+2. **Reconcile-before-retry is now code, not a rule.** `ProvisionSignupUseCase.adoptExistingCompany`
+   takes over whenever `companyId` is set: it skips onboarding entirely and walks the fence forward
+   over the company that already exists.
+3. **Stale re-claim.** `claimProvisioning` may take the fence from a `PROVISIONING` row older than
+   `STALE_PROVISIONING_MS` (90s = the 15s transaction ceiling plus tail), auditing
+   `signup.provisioning.reclaimed_stale`. A fresh row still answers "in progress". The predicate
+   `isStaleProvisioning` is shared with the admin queue so the fence and the queue cannot disagree
+   about what abandoned means — they did, twice, and each time the recovery shipped unreachable.
+4. **Overlap is safe at the DB level.** The advisory lock only covers the claim, so two runs can
+   overlap. The in-transaction stamp is conditional (`updateMany where companyId: null`); the loser
+   matches 0 rows and throws, rolling its whole transaction back, so it creates nothing. This
+   matters most on the LINE attach path, where no `ExternalIdentity` is created and duplicate
+   company names are legal — nothing else would have stopped a second Company.
+
+So: still never provision a second company for one application; but a request stuck in
+`PROVISIONING` with no live holder is now recoverable rather than terminal.

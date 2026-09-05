@@ -72,7 +72,8 @@ import { PlanTermSweepUseCase } from './application/use-cases/plan-term-sweep.us
     GetPlanTermNoticeUseCase,
     PlanTermSweepUseCase,
   ],
-  // Signup provisioning (P10 Slice C) calls setTermFromPreset on this use-case.
-  exports: [SetCompanyPlanTermUseCase],
+  // Nothing outside this module needs a plan-term writer: onboarding is the single place a term
+  // row is created (review B-01), and it calls `applyPlanTermPreset` directly.
+  exports: [],
 })
 export class SystemPartnerManagementModule {}

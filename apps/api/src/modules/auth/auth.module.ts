@@ -44,6 +44,7 @@ import { LocalConsoleAuthMailerAdapter } from './infrastructure/local-console-au
 import { SES_EMAIL_CLIENT_TOKEN, SesAuthMailerAdapter } from './infrastructure/ses-auth-mailer.adapter';
 import { AppConfigService } from '../../common/config/app-config.service';
 import { LegalAcceptanceService } from './application/legal-acceptance.service';
+import { LineIdTokenService } from './application/line-id-token.service';
 import { PlatformAccessService } from './application/platform-access.service';
 import { PublicPlatformAccessController, SystemPlatformAccessController } from './presentation/platform-access.controller';
 
@@ -74,6 +75,7 @@ export function selectAuthMailer(
     DevJwtVerifierAdapter,
     WatchdogJwtVerifierAdapter,
     LineLoginVerifierAdapter,
+    LineIdTokenService,
     LineLoginTokenClient,
     ResolveRequestContextUseCase,
     IssueTokenUseCase,
@@ -130,6 +132,8 @@ export function selectAuthMailer(
   // mint at delivery time. Minting stays in ERP Core — the AI Gateway never sees a token.
   // AUTH_MAILER_TOKEN is exported so the P10 claim-email consumer sends through the one selected
   // adapter (disabled / local-console / ses) rather than constructing a second SES client.
-  exports: [AuthGuard, ResolveRequestContextUseCase, LineLoginVerifierAdapter, LineChannelBindingService, AuthRateLimitService, LegalAcceptanceService, MintLineHandoffTokenUseCase, AUTH_MAILER_TOKEN],
+  // `LineIdTokenService` is exported so the LINE-first signup surfaces verify an ID token through
+  // the same audience/channel policy the employee-link and web-login lanes already use (SEC-01).
+  exports: [AuthGuard, ResolveRequestContextUseCase, LineLoginVerifierAdapter, LineIdTokenService, LineChannelBindingService, AuthRateLimitService, LegalAcceptanceService, MintLineHandoffTokenUseCase, AUTH_MAILER_TOKEN],
 })
 export class AuthModule {}

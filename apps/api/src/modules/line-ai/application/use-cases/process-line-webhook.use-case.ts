@@ -82,7 +82,7 @@ import { LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERRO
 import { LineAiLedgerService, ledgerKey, type LedgerEntry } from '../line-ai-ledger.service';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
 import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, isCapabilityQuestion, staffMenuCommand, PENDING_APPROVAL_ITEM_LIMIT, type ApprovalSurfaceKey, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
-import { buildExpenseDraftCardMessage, buildLegalAcceptanceRequiredMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
+import { buildExpenseDraftCardMessage, buildLegalAcceptanceRequiredMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildReceiptQuotaExceededMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
 import { advisorDirectAnswerText } from '../../domain/logic/line-advisor-direct-answer.logic';
 import { capabilityFollowUpReply, isDeliveredCapabilityFollowUp, isNextStepQuestionText } from '../../domain/logic/line-ai-capability-follow-up.logic';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
@@ -91,6 +91,15 @@ import { resolveCompanyAiModelPolicy } from '../company-ai-model-policy';
 import { emitSecurityEvent, SECURITY_EVENT } from '../../../../common/logger/security-event';
 import { LegalAcceptanceService } from '../../../auth/application/legal-acceptance.service';
 import { expiredLineOwnerMessageTh } from '../../../system-partner-management/domain/logic/plan-term.logic';
+import {
+  displayReceiptQuotaLimit,
+  receiptQuotaExceededShortTextTh,
+  receiptQuotaExceededTextTh,
+  trialReceiptCounterLineTh,
+  TRIAL_COUNTER_TIER_KEY,
+} from '../../../system-partner-management/domain/logic/receipt-quota.logic';
+import { claimReceiptQuotaNotice, receiptQuotaSnapshot, releaseReceiptQuotaNotice, RECEIPT_QUOTA_ERROR_CODE } from '../company-ocr-governance';
+import { bangkokMonthKey } from '../company-ai-usage-meter';
 import { LineHandoffLinkService } from '../line-handoff-link.service';
 import {
   classifyLineAiGatewayFailure,
@@ -3912,6 +3921,23 @@ export class ProcessLineWebhookUseCase {
       // a second time (UAT 2026-08-28: a 16.6s duplicate read on every receipt).
       routePlan.documentText,
     );
+
+    // P10-L §15.1 (review G-01): the shop's plan ran out of receipts. `admitCompanyOcr` is the one
+    // place that decides this — for a LINE photo it decides at the intake router, whose refusal
+    // `tryExtractReceiptFields` forwards here as the same code — so this branch only has to answer,
+    // never to count. Answered before `decideLineBusinessDocument` because the generic OCR-governance
+    // clarify ("what is this picture?") is the wrong reply to a shop that needs a bigger package.
+    if (ocr.errorCode === RECEIPT_QUOTA_ERROR_CODE) {
+      const refusal = await this.deliverReceiptQuotaRefusal(event, companyId, identity.userId);
+      await this.persistIntakeTurn({
+        userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
+        userMessagePreview: `[ผู้ใช้ส่งรูป/ไฟล์เอกสารค่าใช้จ่าย]${captionSuffix}`,
+        replyText: refusal, intent: 'EVIDENCE_CAPTURE', refused: true,
+      });
+      await this.updateEventLog(event.webhookEventId, 'receipt_quota_exceeded', RECEIPT_QUOTA_ERROR_CODE, companyId);
+      return;
+    }
+
     const decision = decideLineBusinessDocument(routePlan, ocr, caption.length > 0);
     // Every LINE OCR attempt is recorded here, before the outcome branches. A failed read routes to
     // `clarify` and returns below without ever creating an expense, so auditing further down (as this
@@ -4164,13 +4190,25 @@ export class ProcessLineWebhookUseCase {
         ...(draftSuggestedCategoryId ? { suggestedCategoryId: draftSuggestedCategoryId } : {}),
       })
       : undefined;
-    const replyTexts = receiptDraft?.replyTexts.length ? receiptDraft.replyTexts : [formatPaypersReply(this.config.webBaseUrl, companyId, intent.expenseId, {
+    const replyTexts = receiptDraft?.replyTexts.length ? [...receiptDraft.replyTexts] : [formatPaypersReply(this.config.webBaseUrl, companyId, intent.expenseId, {
       hasDuplicate,
       fields: ocrFields,
       sourceDocumentType: hintedDocType !== 'NEEDS_REVIEW' ? hintedDocType : undefined,
       categoryName: effectiveCategory?.name || null,
       questionText: caption,
     })];
+    // §15.1: the free trial — and only that tier — sees how much of its 15 is left. Both numbers come
+    // from the admission's own aggregate, read for the month the ADMISSION was counted in rather
+    // than off the clock: this reply is built seconds later, and on the night of the 31st those
+    // seconds land in the next month, where the aggregate is empty and the line would announce
+    // "อ่านครั้งที่ 1 จาก 15" to a shop that just spent its last read.
+    // Swallowed on failure: the receipt is already captured and its reply is what the shop is waiting
+    // for, so a counter that cannot be read loses its line, never the answer.
+    const trial = await receiptQuotaSnapshot(this.prisma, companyId, routePlan.ocrMonthKey).catch(() => null);
+    if (trial?.tierKey === TRIAL_COUNTER_TIER_KEY && trial.planLimit !== null) {
+      const last = replyTexts.length - 1;
+      replyTexts[last] = `${replyTexts[last]}\n${trialReceiptCounterLineTh(trial.usedCount, trial.planLimit)}`;
+    }
     if (receiptDraft?.replyTexts.length) {
       await this.deliverCompletedReplies(event, replyTexts, companyId, access,
         expenseDraftCardFacts(intent.expenseId, {
@@ -5133,6 +5171,53 @@ export class ProcessLineWebhookUseCase {
       },
     });
     return hasDuplicate;
+  }
+
+  /**
+   * Spec §3.7: "ข้อความบริการ ส่ง 1 ครั้งตอนชนจริง — ไม่เตือนซ้ำรายวัน". The card with the two
+   * buttons goes out once per Bangkok month, claimed on `CompanyPlanTerm.quotaNoticeSentMonthKey`;
+   * every later receipt that meets the same wall gets one line, so a shop that keeps sending photos
+   * is answered but not re-sold to. The ceiling in the copy is the shop's OWN — a warm-up trial
+   * meets this at 10, not 15. Returns what was said, for the turn record.
+   */
+  private async deliverReceiptQuotaRefusal(
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; handoff?: LineHandoffRecipient },
+    companyId: string,
+    userId: string,
+  ): Promise<string> {
+    const monthKey = bangkokMonthKey();
+    // A snapshot failure must not lose the turn: the shop is owed an answer for the photo it just
+    // sent, and the numberless copy below is a true sentence without it.
+    const snapshot = await receiptQuotaSnapshot(this.prisma, companyId, monthKey).catch((error) => {
+      this.logger.warn({ msg: 'receipt.quota.snapshot_failed', companyId, monthKey, error: (error as Error).message });
+      return { usedCount: 0, planLimit: null, tierKey: null };
+    });
+    const { planLimit, tierKey } = snapshot;
+    const limit = displayReceiptQuotaLimit(planLimit, tierKey);
+    const first = await claimReceiptQuotaNotice(this.prisma, companyId, monthKey);
+    const text = first
+      ? receiptQuotaExceededTextTh(limit, tierKey)
+      : receiptQuotaExceededShortTextTh(limit, tierKey);
+    let delivered = true;
+    try {
+      if (first) await this.deliverRequiredMessages(event, [buildReceiptQuotaExceededMessage(text)]);
+      else await this.deliverReply(event, text);
+    } catch (error) {
+      // The month is claimed BEFORE the send, which is what makes the card exactly-once. If the send
+      // then fails — an expired reply token, a push 429 — the claim has spent the shop's only card of
+      // the month on a message nobody received, and the next receipt would get the terse follow-up
+      // for a card it never saw. Give the month back so the next one can carry it.
+      delivered = false;
+      if (first) await releaseReceiptQuotaNotice(this.prisma, companyId, monthKey);
+      this.logger.warn({ msg: 'receipt.quota.card_delivery_failed', companyId, monthKey, error: (error as Error).message });
+    }
+    await this.audit.log({
+      companyId, actorUserId: userId, action: 'plan.receipt_quota.blocked', targetType: 'LineWebhookEvent',
+      targetId: event.webhookEventId, requestId: event.webhookEventId,
+      result: delivered ? 'DENIED' : 'FAILED', riskLevel: 'LOW',
+      metadataJson: { channel: 'line', monthKey, planLimit, tierKey, cardSent: first && delivered, delivered },
+    });
+    return text;
   }
 
   private async tryExtractReceiptFields(

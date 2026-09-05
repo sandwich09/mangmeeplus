@@ -7,6 +7,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import type { AiModelPolicy, BankStatementAiExtractRequest, BankStatementAiExtractResponse } from '@watchdog-bms/contracts';
+import { AI_BANK_STATEMENT_MAX_PROVIDER_CALLS, aiGatewayClientTimeoutMs } from '@watchdog-bms/contracts';
 import { RedisRateLimitService } from '../../../common/security/redis-rate-limit.service';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { resolveCompanyAiModelPolicy } from '../../line-ai/application/company-ai-model-policy';
@@ -19,7 +20,12 @@ import {
   releaseCompanyOcrAdmission,
 } from '../../line-ai/application/company-ocr-governance';
 
-const EXTRACT_TIMEOUT_MS = 60_000;
+// 2 x 45s of gateway provider chain (stage-1 read, then one extraction call) + 15s margin. Same
+// rule as the receipt callers: aborting before the gateway finishes loses the response body that
+// `recordCompanyAiUsage` bills from, so the provider spend would be paid for and never metered.
+// This route is outside the plan slip ceiling, so there is no admission to refund — but the money
+// leak is identical, and 60s could not contain a 90s chain.
+const EXTRACT_TIMEOUT_MS = aiGatewayClientTimeoutMs(AI_BANK_STATEMENT_MAX_PROVIDER_CALLS);
 
 @Injectable()
 export class StatementAiExtractClient {

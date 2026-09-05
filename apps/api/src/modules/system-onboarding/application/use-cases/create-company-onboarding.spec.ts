@@ -19,6 +19,13 @@ import {
 
 const configMock = { credentialEncryptionKey: Buffer.alloc(32, 7) } as any;
 
+// P10-L: onboarding replays LIFF clickwrap evidence through this service inside its transaction.
+// The password path never passes `legalAcceptance`, so for every pre-existing test it is unused.
+const legalRecords: any[] = [];
+const legalMock = {
+  recordFromEvidence: async (_tx: any, input: any) => { legalRecords.push(input); return { written: true }; },
+} as any;
+
 // Onboarding auto-enables the autoEnable workflow templates in the same transaction, through
 // PrismaWorkflowRepository over `tx`. These are the model calls that repository makes.
 function workflowTx(createdRules: any[] = []) {
@@ -156,6 +163,11 @@ function makePrisma(opts: {
   // P29 §4A: the post-commit default-term write. Recorded, never asserted-on by the pre-existing
   // tests — a failure here must never change the onboarding result.
   const planTermUpserts: any[] = [];
+  // P10-L: the LINE-first owner shape is defined by what is NOT written, so these are captured.
+  const userCreates: any[] = [];
+  const credentialCreates: any[] = [];
+  const identityCreates: any[] = [];
+  const lineTokenCreates: any[] = [];
   const txResult = {
     company: { id: 'co-1' },
     owner: { id: 'owner-1' },
@@ -164,6 +176,10 @@ function makePrisma(opts: {
   };
   return {
     planTermUpserts: () => planTermUpserts,
+    userCreates: () => userCreates,
+    credentialCreates: () => credentialCreates,
+    identityCreates: () => identityCreates,
+    lineTokenCreates: () => lineTokenCreates,
     client: {
       user: {
         findUnique: async () => opts.existingUsername ? { id: 'existing' } : null,
@@ -182,11 +198,12 @@ function makePrisma(opts: {
             ...expenseCategoryTx(),
           company: { create: async () => txResult.company, update: chart.companyUpdate },
           chartOfAccount: chart.chartOfAccount,
-          user: { create: async () => txResult.owner },
-          userCredential: { create: async () => ({}) },
+          user: { create: async (args: any) => { userCreates.push(args); return txResult.owner; } },
+          userCredential: { create: async (args: any) => { credentialCreates.push(args); return {}; } },
           companyMembership: { create: async () => ({ id: 'mem-1' }) },
           membershipRole: { create: async () => ({}) },
-          employeeLineLinkToken: { create: async () => ({}) },
+          employeeLineLinkToken: { create: async (args: any) => { lineTokenCreates.push(args); return {}; } },
+          externalIdentity: { create: async (args: any) => { identityCreates.push(args); return { id: 'ext-1' }; } },
           branch: { create: async () => ({}) },
           companyVatRegistrationState: { create: async () => ({}) },
           ...entitlementTx(),
@@ -204,7 +221,7 @@ function makePrisma(opts: {
 describe('CreateCompanyOnboardingUseCase', () => {
   it('throws ConflictException when username already exists', async () => {
     const prisma = makePrisma({ existingUsername: true });
-    const useCase = new CreateCompanyOnboardingUseCase(prisma, configMock);
+    const useCase = new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock);
     await assert.rejects(
       () => useCase.execute(makeCmd()),
       (err: unknown) => { assert.ok(err instanceof ConflictException); return true; },
@@ -213,7 +230,7 @@ describe('CreateCompanyOnboardingUseCase', () => {
 
   it('throws ConflictException when company name already exists', async () => {
     const prisma = makePrisma({ existingCompany: true });
-    const useCase = new CreateCompanyOnboardingUseCase(prisma, configMock);
+    const useCase = new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock);
     await assert.rejects(
       () => useCase.execute(makeCmd()),
       (err: unknown) => { assert.ok(err instanceof ConflictException); return true; },
@@ -222,7 +239,7 @@ describe('CreateCompanyOnboardingUseCase', () => {
 
   it('throws NotFoundException when OWNER role is not seeded', async () => {
     const prisma = makePrisma({ ownerRoleFound: false });
-    const useCase = new CreateCompanyOnboardingUseCase(prisma, configMock);
+    const useCase = new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock);
     await assert.rejects(
       () => useCase.execute(makeCmd()),
       (err: unknown) => { assert.ok(err instanceof NotFoundException); return true; },
@@ -262,7 +279,7 @@ describe('CreateCompanyOnboardingUseCase', () => {
       return fn(tx);
     };
 
-    const useCase = new CreateCompanyOnboardingUseCase(prisma, configMock);
+    const useCase = new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock);
     const result = await useCase.execute(makeCmd({ lineOaAddUrl: 'https://line.me/R/oa' }));
 
     // temporaryPassword is present and non-empty
@@ -401,7 +418,7 @@ describe('CreateCompanyOnboardingUseCase', () => {
       };
 
       await assert.rejects(
-        () => new CreateCompanyOnboardingUseCase(prisma, configMock).execute(makeCmd()),
+        () => new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock).execute(makeCmd()),
         new RegExp(`${failing} failed`),
       );
       // The transaction aborts on the first failure: nothing downstream of the seed is written,
@@ -442,7 +459,7 @@ describe('CreateCompanyOnboardingUseCase', () => {
       return fn(tx);
     };
 
-    const useCase = new CreateCompanyOnboardingUseCase(prisma, configMock);
+    const useCase = new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock);
     await useCase.execute(makeCmd());
 
     const meta = auditArgs.data.metadataJson;
@@ -476,7 +493,7 @@ describe('CreateCompanyOnboardingUseCase', () => {
     });
 
     await assert.rejects(
-      () => new CreateCompanyOnboardingUseCase(prisma, configMock).execute(makeCmd()),
+      () => new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock).execute(makeCmd()),
       (error: any) => error.getResponse?.().code === 'coa_postcondition_failed',
     );
     assert.equal(runCreates, 0);
@@ -499,7 +516,7 @@ describe('CreateCompanyOnboardingUseCase', () => {
         return fn(tx);
       }, opts);
 
-    await new CreateCompanyOnboardingUseCase(prisma, configMock).execute(makeCmd());
+    await new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock).execute(makeCmd());
 
     assert.equal(branchData.taxBranchCode, '00000');
     assert.equal(branchData.isVatEstablishment, true);
@@ -521,7 +538,7 @@ describe('CreateCompanyOnboardingUseCase', () => {
         };
         return fn(tx);
       }, opts);
-    await new CreateCompanyOnboardingUseCase(prisma, configMock).execute({ ...makeCmd(), modulePackage: 'starter' } as any);
+    await new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock).execute({ ...makeCmd(), modulePackage: 'starter' } as any);
 
     assert.ok(entitlementRows, 'entitlement rows are still seeded');
     assert.equal(entitlementRows.length, ALL_FEATURE_ENTITLEMENT_KEYS.length, 'still one explicit row per canonical key');
@@ -550,7 +567,7 @@ describe('CreateCompanyOnboardingUseCase', () => {
           tx.company = { ...tx.company, update: async (args: any) => { companyUpdates.push(args.data); return companyUpdate ? companyUpdate(args) : {}; } };
           return fn(tx);
         }, opts);
-      await new CreateCompanyOnboardingUseCase(prisma, configMock).execute({ ...makeCmd(), ...cmdExtra } as any);
+      await new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock).execute({ ...makeCmd(), ...cmdExtra } as any);
       return { vatStateData, factData, companyUpdates };
     }
 
@@ -575,7 +592,7 @@ describe('CreateCompanyOnboardingUseCase', () => {
   it('refuses an effective date that is not a civil date', async () => {
     const prisma = makePrisma({});
     await assert.rejects(
-      () => new CreateCompanyOnboardingUseCase(prisma, configMock).execute({
+      () => new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock).execute({
         ...makeCmd(), vatRegistration: { status: 'REGISTERED', effectiveFrom: '01/07/2026' },
       } as any),
       /effectiveFrom must be YYYY-MM-DD/,
@@ -612,7 +629,7 @@ describe('CreateCompanyOnboardingUseCase', () => {
       });
     };
 
-    const result = await new CreateCompanyOnboardingUseCase(prisma, configMock).execute(makeCmd());
+    const result = await new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock).execute(makeCmd());
 
     const enabled = new Map((entitlement.entitlements.data as Array<{ featureKey: string; enabled: boolean }>)
       .map((row) => [row.featureKey, row.enabled]));
@@ -935,7 +952,7 @@ describe('CreateCompanyOnboardingUseCase attachExistingOwner', () => {
   it('rejects when the username does not exist', async () => {
     const { prisma } = makeAttachPrisma({ userStatus: null });
     await assert.rejects(
-      () => new CreateCompanyOnboardingUseCase(prisma, configMock).execute(makeCmd({ attachExistingOwner: true })),
+      () => new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock).execute(makeCmd({ attachExistingOwner: true })),
       /does not match an active user/,
     );
   });
@@ -943,14 +960,14 @@ describe('CreateCompanyOnboardingUseCase attachExistingOwner', () => {
   it('rejects when the existing user is not ACTIVE', async () => {
     const { prisma } = makeAttachPrisma({ userStatus: 'DISABLED' });
     await assert.rejects(
-      () => new CreateCompanyOnboardingUseCase(prisma, configMock).execute(makeCmd({ attachExistingOwner: true })),
+      () => new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock).execute(makeCmd({ attachExistingOwner: true })),
       /does not match an active user/,
     );
   });
 
   it('creates membership only — no new user, credential, or temporary password', async () => {
     const { prisma, calls } = makeAttachPrisma({});
-    const result = await new CreateCompanyOnboardingUseCase(prisma, configMock).execute(makeCmd({ attachExistingOwner: true }));
+    const result = await new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock).execute(makeCmd({ attachExistingOwner: true }));
     assert.equal(calls.userCreate, 0);
     assert.equal(calls.credentialCreate, 0);
     assert.equal(calls.membershipCreate, 1);
@@ -963,14 +980,14 @@ describe('CreateCompanyOnboardingUseCase attachExistingOwner', () => {
 
   it('skips the LINE link QR when the owner already has an ACTIVE LINE identity', async () => {
     const { prisma, calls } = makeAttachPrisma({ ownerHasLine: true });
-    const result = await new CreateCompanyOnboardingUseCase(prisma, configMock).execute(makeCmd({ attachExistingOwner: true }));
+    const result = await new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock).execute(makeCmd({ attachExistingOwner: true }));
     assert.equal(calls.lineTokenCreate, 0);
     assert.equal(result.ownerLineLink, undefined);
   });
 
   it('still issues the LINE link QR when the owner has no LINE identity yet', async () => {
     const { prisma, calls } = makeAttachPrisma({ ownerHasLine: false });
-    const result = await new CreateCompanyOnboardingUseCase(prisma, configMock).execute(makeCmd({ attachExistingOwner: true }));
+    const result = await new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock).execute(makeCmd({ attachExistingOwner: true }));
     assert.equal(calls.lineTokenCreate, 1);
     assert.ok(result.ownerLineLink);
   });
@@ -1030,7 +1047,7 @@ describe('CreateCompanyOnboardingUseCase tax identity capture', () => {
         },
       },
     } as any;
-    const run = () => new CreateCompanyOnboardingUseCase(prisma, configMock).execute(makeCmd(taxId ? { taxId } as any : {}));
+    const run = () => new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock).execute(makeCmd(taxId ? { taxId } as any : {}));
     return { run, captured };
   }
 
@@ -1131,7 +1148,7 @@ describe('CreateCompanyOnboardingUseCase PDPA tenant tripwire', () => {
       const { prisma } = tripwirePrisma();
       const { lines, restore } = captureWarnings();
       try {
-        await new CreateCompanyOnboardingUseCase(prisma, configMock).execute(makeCmd({ businessCategory: category }));
+        await new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock).execute(makeCmd({ businessCategory: category }));
       } finally {
         restore();
       }
@@ -1158,7 +1175,7 @@ describe('CreateCompanyOnboardingUseCase PDPA tenant tripwire', () => {
       const { prisma } = tripwirePrisma();
       const { lines, restore } = captureWarnings();
       try {
-        await new CreateCompanyOnboardingUseCase(prisma, configMock).execute(makeCmd({ businessCategory: category }));
+        await new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock).execute(makeCmd({ businessCategory: category }));
       } finally {
         restore();
       }
@@ -1174,7 +1191,7 @@ describe('CreateCompanyOnboardingUseCase PDPA tenant tripwire', () => {
     const { prisma, captured } = tripwirePrisma();
     const { restore } = captureWarnings();
     try {
-      await new CreateCompanyOnboardingUseCase(prisma, configMock).execute(makeCmd({ businessCategory: 'CLINIC' }));
+      await new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock).execute(makeCmd({ businessCategory: 'CLINIC' }));
     } finally {
       restore();
     }
@@ -1187,7 +1204,7 @@ describe('CreateCompanyOnboardingUseCase PDPA tenant tripwire', () => {
 describe('CreateCompanyOnboardingUseCase P29 default term', () => {
   it('gives every admin-created company STARTER for exactly 30 days', async () => {
     const prisma = makePrisma({});
-    await new CreateCompanyOnboardingUseCase(prisma, configMock).execute(makeCmd());
+    await new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock).execute(makeCmd());
 
     assert.equal(prisma.planTermUpserts().length, 1);
     const args = prisma.planTermUpserts()[0];
@@ -1205,11 +1222,69 @@ describe('CreateCompanyOnboardingUseCase P29 default term', () => {
     assert.deepEqual(args.update, {});
   });
 
+  // P10-L §6 / review B-04. The LINE-first owner is defined by what is NOT created for them.
+  it('creates a LINE-first owner with no username, no credential and no temporary password', async () => {
+    const prisma = makePrisma({});
+    legalRecords.length = 0;
+    const evidence = { documentVersion: 'v3', legalAcceptedAt: new Date('2026-09-04T03:21:00.000Z') } as any;
+    const result = await new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock).execute(makeCmd({
+      ownerUsername: undefined,
+      ownerAuth: { kind: 'line', providerUserId: 'Uline-1', channelId: 'channel-1', displayName: 'นิด' },
+      legalAcceptance: evidence,
+    }));
+
+    assert.equal(prisma.userCreates()[0].data.username, null);
+    assert.equal(prisma.userCreates()[0].data.email, undefined, 'this flow never asks for an address');
+    assert.deepEqual(prisma.credentialCreates(), [], 'LINE-ONBOARD-01: no credential, so no temp password');
+    assert.equal(result.temporaryPassword, undefined);
+    assert.equal(result.username, null);
+    // Already linked by this transaction, so a QR to link them would link what is linked.
+    assert.deepEqual(prisma.lineTokenCreates(), []);
+    assert.equal(result.ownerLineLink, undefined);
+    // The identity IS the credential, created in the same transaction as the company (spec §6).
+    assert.equal(prisma.identityCreates()[0].data.providerUserId, 'Uline-1');
+    assert.equal(prisma.identityCreates()[0].data.providerChannelId, 'channel-1');
+    assert.equal(prisma.identityCreates()[0].data.status, 'ACTIVE');
+    // And the clickwrap already given on LIFF is replayed against the new membership.
+    assert.equal(legalRecords[0].membershipId, 'mem-1');
+    assert.equal(legalRecords[0].evidence, evidence);
+    assert.equal(JSON.stringify(result).includes('Uline-1'), false, 'no LINE id in the handover payload');
+  });
+
+  it('leaves the password owner shape untouched in every byte', async () => {
+    const prisma = makePrisma({});
+    legalRecords.length = 0;
+    const result = await new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock).execute(makeCmd());
+
+    assert.equal(prisma.userCreates()[0].data.username, 'john.doe');
+    assert.equal(prisma.credentialCreates().length, 1);
+    assert.ok(result.temporaryPassword);
+    assert.deepEqual(prisma.identityCreates(), [], 'no identity is invented for an admin handover');
+    assert.deepEqual(legalRecords, [], 'and no acceptance is fabricated on their behalf');
+  });
+
+  // Review B-01: the tier is decided HERE or nowhere. `applyPlanTermPreset` leaves an existing row
+  // alone, so a provisioning caller that upserted its own preset afterwards was silently ignored.
+  it('writes the preset a provisioning caller named instead of the console default', async () => {
+    const prisma = makePrisma({});
+    await new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock)
+      .execute(makeCmd({ planTier: 'PRO_999', planDays: 30 }));
+
+    assert.equal(prisma.planTermUpserts().length, 1);
+    const args = prisma.planTermUpserts()[0];
+    assert.equal(args.create.tierKey, 'PRO_999');
+    assert.equal(args.create.monthlySlipLimit, 100);
+    assert.equal(
+      args.create.termEndsAt.getTime() - args.create.termStartAt.getTime(),
+      30 * 24 * 60 * 60 * 1000,
+    );
+  });
+
   it('a failed term write NEVER fails the onboarding', async () => {
     const prisma = makePrisma({});
     prisma.client.companyPlanTerm.upsert = async () => { throw new Error('db down'); };
 
-    const result = await new CreateCompanyOnboardingUseCase(prisma, configMock).execute(makeCmd());
+    const result = await new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock).execute(makeCmd());
     // The company exists and is usable — a company with no term row is unlimited, not broken.
     assert.equal(result.companyId, 'co-1');
     assert.equal(result.onboardingRunId, 'run-1');

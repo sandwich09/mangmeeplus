@@ -48,18 +48,22 @@ export class SignupClaimUseCase {
     const found = await this.tokens.peek(rawToken);
     if (!found) return { valid: false };
     const { token, request } = found;
+    // A claim link only ever exists for an address-bearing (Flow B) application; a `line-oa` row
+    // has no EMAIL_* edge and so no token. An addressless row here is unusable, not a page.
+    const contactEmail = request.contactEmail;
+    if (!contactEmail) return { valid: false };
     // Same lookup `setPassword` makes below. Answering it here is what lets the page lead with the
     // attach branch instead of offering a password form whose submit can only 409.
     const emailOwner = await this.prisma.client.user.findUnique({
-      where: { email: request.contactEmail },
+      where: { email: contactEmail },
       select: { id: true },
     });
     return {
       valid: true,
       companyName: request.companyName,
-      maskedEmail: maskEmail(request.contactEmail),
-      ...(suggestedUsernameFromEmail(request.contactEmail)
-        ? { suggestedUsername: suggestedUsernameFromEmail(request.contactEmail)! }
+      maskedEmail: maskEmail(contactEmail),
+      ...(suggestedUsernameFromEmail(contactEmail)
+        ? { suggestedUsername: suggestedUsernameFromEmail(contactEmail)! }
         : {}),
       expiresAt: token.expiresAt.toISOString(),
       emailMatchesExistingUser: !!emailOwner,
@@ -73,11 +77,14 @@ export class SignupClaimUseCase {
     const preview = await this.tokens.peek(cmd.token);
     if (!preview) throw new BadRequestException(INVALID_CLAIM);
 
+    const contactEmail = preview.request.contactEmail;
+    if (!contactEmail) throw new BadRequestException(INVALID_CLAIM);
+
     const username = cmd.username.trim();
     const [usernameTaken, emailOwner] = await Promise.all([
       this.prisma.client.user.findUnique({ where: { username }, select: { id: true } }),
       this.prisma.client.user.findUnique({
-        where: { email: preview.request.contactEmail },
+        where: { email: contactEmail },
         select: { id: true },
       }),
     ]);
