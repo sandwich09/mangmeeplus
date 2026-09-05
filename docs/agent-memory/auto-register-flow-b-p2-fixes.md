@@ -1,6 +1,6 @@
 # Agent Memory: auto-register-flow-b-p2-fixes
 
-Status: IMPLEMENTED and REBASED onto `codex/flow-b-p1-fixes` (3d5cd03f). Round-2 review items F2–F12 applied. Not merged, no PR. P2 must merge AFTER P1: its "15 ครั้ง" free-trial copy is only true with P1's `SIGNUP_TRIAL_TIER`.
+Status: IMPLEMENTED and REBASED onto `codex/flow-b-p1-fixes` FINAL tip (c9617c93). Round-2 review items F2–F12 applied. Not merged, no PR. P2 must merge AFTER P1: its "15 ครั้ง" free-trial copy is only true with P1's `SIGNUP_TRIAL_TIER`.
 
 Owner: thawatchai
 
@@ -72,6 +72,31 @@ One conflict, resolved as directed: the web-form approve takes P1's transactiona
 and the letter or not at all. Two follow-on fixups: the R10 tests now assert that transaction's
 `data` instead of a second update, and the F6 outcome logic sits inside R08's RECEIVED-only branch
 with the transient throw BEFORE the write, so a retry resumes from RECEIVED as R08 intends.
+
+## Rebase onto P1's final tip (c9617c93)
+
+Five conflicts, all content-preserving:
+
+1. `signup.logic.spec.ts` imports — union of P1's `PLAN_TIER_PRESETS`/`SIGNUP_TRIAL_TIER_KEY` and my
+   `PUBLIC_SIGNUP_STATUS_KEYS`.
+2. `signup-admin-queue.use-case.ts` approve branch — P1's `if (lineOa || retryingProvisioning)`
+   (their F2 retry) kept, my `chosenCategory`/`reviewedCategory` computed above it.
+3. Same file, the transaction — P1's F8 in-transaction audit kept, with `...reviewedCategory` in
+   its `data` and `businessCategory: chosenCategory` in the audit metadata. One transaction carries
+   state, approval facts, the letter AND the evidence.
+4. `signup.logic.ts` / `SignupPage.tsx` / `SignupWelcomePage.tsx` / its spec — my fuller free-trial
+   copy wins as directed (the four cards stay deleted), but keyed off P1's `SIGNUP_TRIAL_TIER_KEY`
+   rather than a hardcoded `FREE_TRIAL_15`, and `SELECTABLE_OFFER_KEY` takes P1's `'FREE_TRIAL'`.
+   The welcome line keeps my "what happens after" clause on P1's F1 sentence.
+5. Coordination, not a textual conflict: P1's F2 moved `PROVISIONING_FAILED` into the all-source
+   `QUEUE_STATES`, so my `PROBLEM_STATES`/`LINE_PROBLEM_STATES` split and the PROBLEM count moved
+   with it — otherwise a Flow B provisioning failure showed in ALL, was counted in PROBLEM, and was
+   missing from the PROBLEM list.
+
+Round-2 review blocker, fixed in the same pass: `SignupQueueQueryDto.cursor` still bounded the
+cursor at 64 characters while F10's `createdAt|id` cursor is 67, so every "โหลดเพิ่ม" was a 400
+from the global pipe. Bound raised to 128 and pinned by a test that round-trips a real
+`encodeQueueCursor` value through the real DTO under the real `GLOBAL_VALIDATION_PIPE_OPTIONS`.
 
 ## Next
 
