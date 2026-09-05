@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { MaterializeClaimExpensesService } from './materialize-claim-expenses.service';
+import { expenseTotalsIdentityError } from '../../../expenses/domain/logic/expense-totals.logic';
 
 function lineRecord(overrides: Partial<any> = {}): any {
   return {
@@ -132,6 +133,27 @@ describe('MaterializeClaimExpensesService', () => {
     assert.equal(satang.grandTotalAmount, '0.0100');
     assert.equal(maximum.line.unitPrice, '99999999999999.9900');
     assert.equal(maximum.grandTotalAmount, '99999999999999.9900');
+  });
+
+  /**
+   * Expense spec §5.1. This builder is one of the few writers that fills the expense HEADER totals
+   * from its own figure instead of deriving them from the line it also writes, and the file already
+   * depends on the two staying byte-equivalent through satang normalization. The guard inside the
+   * builder cannot be tripped from out here — both sides come from the same `amount` — so what this
+   * asserts is the invariant itself, across the amounts most likely to drift.
+   */
+  it('projects a header that adds up to its own line at every satang boundary', () => {
+    const svc = new MaterializeClaimExpensesService();
+    for (const amount of ['500.0000', '0.0100', '0.005', '1234.565', '99999999999999.9900']) {
+      const [item] = svc.buildItems(request({ lines: [lineRecord({ amount })] }));
+      assert.equal(
+        expenseTotalsIdentityError({ vatMode: 'NO_VAT', totals: item, lines: [{ ...item.line, chargeKind: null }] }),
+        null,
+        amount,
+      );
+      assert.equal(item.grandTotalAmount, item.line.lineTotalAmount);
+      assert.equal(item.subtotalAmount, item.line.lineSubtotalAmount);
+    }
   });
 
   it('is a pure mapping: a second run over the now-linked lines repeats the same items', async () => {
