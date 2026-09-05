@@ -837,6 +837,8 @@ slice D was wrong; the branch simply predated #437/#438. The guard then passed o
    a phone linkifies all of them. Eighteen added; a contracts test WALKS the list rather than
    sampling it, because the failure mode is one missing entry and a spot check is how a missing
    entry survives.
+   **Superseded in round 6:** three of the eighteen — `in`, `us`, `it` — came back out. See the
+   round-6 block at the end of this section; the list carries fifteen of them now.
    **`id` deliberately left out**, and pinned as a decision: `TAX.ID`, `REF.ID`, `DOC.ID` and
    `CUST.ID` are ordinary receipt and document-number tokens with exactly the shape this rule fires
    on. Losing a customer's tax id off the card is a certain bug; a bare `something.id` with no path
@@ -880,6 +882,41 @@ slice D was wrong; the branch simply predated #437/#438. The guard then passed o
   host left to anchor on. Cosmetic: no host, no tappable link, no figure. Not worth a rule that
   would have to understand paths.
 
+**Round-6 additions to the same list (2026-09-06)**
+
+Round 6 found the ccTLD entries added in round 4 eating ordinary receipt text, and one Thai residual.
+Two of the three were fixed; the two below are recorded and pinned by test, not fixed.
+
+Verification: contracts 245/245/0, ai-gateway 1082/1082/0 (slice C's `expense-explain-record.spec.ts`
+untouched and green), api 6760 tests / 6661 pass / 0 fail / 99 skipped, web 1587/1587/0, typecheck 0
+errors in all five packages, pins `--check` `status=current`. **Mutation table now 32 rows, every one
+verified RED**, 33 anchors present and unique. Two rows are new: `r1` drops `SCRUB_AMBIGUOUS_HOST`
+from the chain — the survivor round 5 missed — and `r3` puts `in`/`us`/`it` back into the list.
+
+- **Fixed, for context:** `in`, `us` and `it` left `SCRUB_TLDS`, exactly the way `id` was already
+  out of it. All four spell the tail of an uppercase receipt abbreviation with precisely the shape
+  this pass fires on — one dot, no path, nothing after the suffix: `DINE.IN`, `CHECK.IN`, `WALK.IN`,
+  `LOG.IN`, `CALL.US`, `CONTACT.US`, `ABOUT.US`, `DO.IT` alongside `TAX.ID`, `REF.ID`, `DOC.ID`,
+  `CUST.ID`. All twelve are now pinned as kept in one test; the two walked-TLD tests dropped the
+  three suffixes so the walk and the list cannot drift apart.
+- **ACCEPTED RESIDUAL — the older tiebreaker entries collide the same way.** `MAIN.ST`, `CALL.ME`,
+  `ABC.CO`, `GO.LIVE`, `THE.SHOP`, `MY.APP` are stripped whole by `st`, `me`, `co`, `live`, `shop`,
+  `app`. It is the identical false positive, but those entries predate this round and were not
+  touched: each removal trades a false positive on a card for a live link printed verbatim in a
+  bubble the user reads as the system's own answer, and that trade wants its own evidence — which
+  receipts actually print, and which of these suffixes actually linkify on a phone. Not a blocker:
+  the failure is a lost word, never a surviving host.
+- **ACCEPTED RESIDUAL — a mark-final Thai word glued to a host loses the whole field.**
+  `ร้านคาเฟ่abc.com` and `ร้านคาเฟ่café.com` both scrub to `''`, where `ร้านabc.com` correctly keeps
+  `ร้าน`. Cause: the script boundary refuses to open a Latin label directly after a combining mark
+  (`\p{M}`), so the ambiguous single-dot pass declines; the IDN pass, which may begin on a mark, then
+  matches from the head of the token and carries the word off with the host. A separator restores the
+  name (`ร้านคาเฟ่ café.com` → `ร้านคาเฟ่`), which is both what the residual costs and what bounds it.
+  Deliberately not fixed: it errs toward over-stripping and can never leave a live host standing, and
+  the obvious relaxation of the boundary is the B1 regression itself (D.16) — it hands back half a
+  host glued to the shop's name, which is strictly worse. Pinned by test so a future widening of the
+  label charset has to face the case rather than rediscover it.
+
 ### D.16 B1 — the host scrub is two passes, and the order is the fix (2026-09-06)
 
 **Path taken: the full two-pass design, not the ASCII fallback.** The corpus is green at both ends.
@@ -914,10 +951,12 @@ Two things the corpus caught that the design note did not:
    `abcwww.evil.com` whole.
 
 Neither shows up unless the BENIGN half of the corpus is asserted with exact equality. `!/evil/` was
-true of `ร้านabc`. The corpus now pins both ends in one test: ten hostile strings by exact expected
-output, every tiebreaker TLD walked (52 of them, plus the IDN pass over four), thirteen benign
-strings byte-identical, and three more whose digits the money rule masks by design asserted on the
-surviving name.
+true of `ร้านabc`. The corpus now pins both ends in one test: eleven hostile strings by exact
+expected output, every tiebreaker TLD walked (49 of them after round 6, plus the IDN pass over
+four), thirteen benign strings byte-identical, and three more whose digits the money rule masks by
+design asserted on the surviving name. Round 6 added the eleventh hostile row (`ร้านabc.com` →
+`ร้าน`) because it is the one case the single-dot pass is the ONLY pass for — with that pass
+removed every other row stayed green, so the pass was load-bearing and unpinned.
 
 `scrubRecordIdentifier` deliberately runs none of these passes: its shape test (one token, no dots)
 already refuses anything host-shaped, so a link rule there would be dead weight.

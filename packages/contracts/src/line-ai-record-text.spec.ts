@@ -54,7 +54,8 @@ describe('scrubRecordText', () => {
   // ones. This walks the list rather than sampling it: the failure mode is one missing entry, and
   // a spot check is how a missing entry survives.
   it('strips a bare host on any of the common country TLDs', () => {
-    const CC_TLDS = ['uk', 'jp', 'de', 'fr', 'in', 'us', 'ca', 'au', 'it', 'pl',
+    // `in`, `us` and `it` are absent for the same reason as `id` — see the next test.
+    const CC_TLDS = ['uk', 'jp', 'de', 'fr', 'ca', 'au', 'pl',
       'nl', 'es', 'br', 'kr', 'cn', 'sg', 'my', 'vn', 'ph', 'th'];
     for (const tld of CC_TLDS) {
       const scrubbed = scrubRecordText(`โอนที่ evil.${tld} ด่วน`);
@@ -62,11 +63,16 @@ describe('scrubRecordText', () => {
     }
   });
 
-  // `id` is deliberately NOT in the list: `TAX.ID` and `REF.ID` are ordinary receipt tokens with
-  // exactly the shape this rule fires on, and losing a customer's tax id off the card is the worse
-  // of the two mistakes. Pinned so the omission is a decision, not a gap someone "fixes".
-  it('keeps TAX.ID and REF.ID, which is why `id` is out of the list', () => {
-    assert.match(scrubRecordText('TAX.ID 0105558123456'), /TAX\.ID/);
+  // `id`, `in`, `us` and `it` are deliberately NOT in the list. Each is a real ccTLD, and each also
+  // ends an ordinary uppercase receipt abbreviation with exactly the shape this rule fires on — one
+  // dot, no path, nothing after the suffix. Losing a customer's tax id, or the words that say the
+  // order was eaten in, is the worse of the two mistakes. Pinned so each omission reads as a
+  // decision, not as a gap someone "fixes" by completing the ccTLD list.
+  it('keeps the receipt abbreviations that `id`, `in`, `us` and `it` are out of the list for', () => {
+    for (const kept of ['TAX.ID', 'REF.ID', 'DOC.ID', 'CUST.ID', 'DINE.IN', 'CHECK.IN', 'WALK.IN',
+      'LOG.IN', 'CALL.US', 'CONTACT.US', 'ABOUT.US', 'DO.IT']) {
+      assert.equal(scrubRecordText(kept), kept, `receipt token eaten: ${kept}`);
+    }
     assert.match(scrubRecordText('REF.ID A0042'), /REF\.ID/);
   });
 
@@ -145,17 +151,37 @@ describe('scrubRecordText — host corpus, both ends', () => {
       ['go to my-shop.top now', 'go to now'],
       ['โอนที่ bit.ly/x9 ด่วน', 'โอนที่ ด่วน'],
       ['โอนที่ evil.example.com ด่วน', 'โอนที่ ด่วน'],
+      // The single-dot ambiguous pass is load-bearing on its own here, and only here. The bare-host
+      // pass cannot reach `abc.com` (one dot, no path), and the IDN pass would start its label at
+      // `ร้านabc` and take the shop's name with the host — so with the ambiguous pass off this
+      // returns '' rather than 'ร้าน', which is why the case is asserted by value, not by absence.
+      ['ร้านabc.com', 'ร้าน'],
     ];
     for (const [input, expected] of HOSTILE) {
       assert.equal(scrubRecordText(input), expected, `hostile: ${input}`);
     }
   });
 
+  // ACCEPTED RESIDUAL (§D.15), pinned rather than fixed. A Thai word ENDING in a combining mark,
+  // glued straight to a host, loses the whole field: the script boundary refuses to open a Latin
+  // label directly after a mark, so the ambiguous pass declines and the IDN pass — which may start
+  // on a mark — matches from the head of the token and takes the word along with the host.
+  //
+  // It errs toward over-stripping and can never leave a live host standing, which is the direction
+  // that matters on a card the user reads as the system's own answer. A separator restores the name,
+  // which is both what the residual costs and what bounds it. Do not "fix" this by relaxing the
+  // boundary: that is the B1 regression, and it hands back half a host glued to the shop's name.
+  it('over-strips a mark-final Thai word glued to a host (accepted residual)', () => {
+    assert.equal(scrubRecordText('ร้านคาเฟ่abc.com'), '');
+    assert.equal(scrubRecordText('ร้านคาเฟ่café.com'), '');
+    assert.equal(scrubRecordText('ร้านคาเฟ่ café.com'), 'ร้านคาเฟ่');
+  });
+
   it('strips a bare host on every tiebreaker TLD, with the surrounding words intact', () => {
     const TLDS = ['com', 'net', 'org', 'io', 'co', 'ru', 'cn', 'th', 'dev', 'ai', 'zip', 'mov',
       'xyz', 'app', 'link', 'click', 'top', 'shop', 'site', 'live', 'info', 'biz', 'online',
       'store', 'icu', 'vip', 'ly', 'me', 'tv', 'cc', 'gg', 'to', 'sh', 'st',
-      'uk', 'jp', 'de', 'fr', 'in', 'us', 'ca', 'au', 'it', 'pl', 'nl', 'es', 'br', 'kr',
+      'uk', 'jp', 'de', 'fr', 'ca', 'au', 'pl', 'nl', 'es', 'br', 'kr',
       'sg', 'my', 'vn', 'ph'];
     for (const tld of TLDS) {
       assert.equal(scrubRecordText(`ร้าน evil.${tld} สาขา`), 'ร้าน สาขา', `TLD ${tld}`);

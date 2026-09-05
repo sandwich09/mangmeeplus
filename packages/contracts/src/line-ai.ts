@@ -904,14 +904,22 @@ const scrubSchemeLink = (): RegExp => new RegExp(`https?:\\/\\/\\S+|${SCRUB_ASCI
  * Ordered generic-then-country and kept flat on purpose: it is read as a set, and a missing entry
  * is a live link printed verbatim on a card.
  *
- * `id` is DELIBERATELY ABSENT. It is a real ccTLD, but `TAX.ID`, `REF.ID`, `DOC.ID` and `CUST.ID`
- * are ordinary tokens on a receipt and in a document number, and these rules fire on exactly that
- * shape. Stripping a customer's tax id off the card is a certain bug; `something.id` as a bare host
- * with no other signal is a word. Revisit only with a path or second-dot signal in front of it.
+ * `id`, `in`, `us` and `it` are DELIBERATELY ABSENT. All four are real ccTLDs, and all four also
+ * spell the tail of an ordinary uppercase receipt abbreviation: `TAX.ID`, `REF.ID`, `DOC.ID`,
+ * `CUST.ID`, `DINE.IN`, `CHECK.IN`, `WALK.IN`, `LOG.IN`, `CALL.US`, `CONTACT.US`, `ABOUT.US`,
+ * `DO.IT`. This rule fires on exactly that shape — one dot, no path, nothing after the suffix — so
+ * carrying them eats a real line off the card, and stripping a customer's tax id is a certain bug.
+ * A bare `something.in` with no path and no second dot is a word; anything with either signal is
+ * already stripped by the passes above, whatever its suffix. Revisit only with such a signal.
+ *
+ * ACCEPTED RESIDUAL (§D.15), recorded rather than fixed: the same collision exists for entries that
+ * predate this round — `MAIN.ST`, `CALL.ME`, `ABC.CO`, `GO.LIVE`, `THE.SHOP`, `MY.APP` are stripped
+ * by `st`, `me`, `co`, `live`, `shop`, `app`. Those are left alone here: each removal trades a false
+ * positive on the card for a live link printed verbatim, and that trade needs its own evidence.
  */
 const SCRUB_TLDS = 'com|net|org|io|co|ru|cn|th|dev|ai|zip|mov|xyz|app|link|click|top|shop|site|live'
   + '|info|biz|online|store|icu|vip|ly|me|tv|cc|gg|to|sh|st'
-  + '|uk|jp|de|fr|in|us|ca|au|it|pl|nl|es|br|kr|sg|my|vn|ph';
+  + '|uk|jp|de|fr|ca|au|pl|nl|es|br|kr|sg|my|vn|ph';
 
 /**
  * PASS (a), ASCII labels. The label may only START at a script boundary: the character before it
