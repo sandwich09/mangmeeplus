@@ -14,6 +14,7 @@ import { Logger } from '@nestjs/common';
 import { PrismaPg } from '@prisma/adapter-pg';
 import type { AiUsageEntry } from '@watchdog-bms/contracts';
 import { PrismaClient } from '../../../generated/prisma/client';
+import { pgSpecUnreachableReason } from '../../../common/database/pg-spec-guard';
 import { RedisRateLimitService } from '../../../common/security/redis-rate-limit.service';
 import { __resetFxCache } from './ai-fx-rate';
 import {
@@ -252,7 +253,9 @@ describe('company OCR admission', () => {
     let companyId = '';
     const monthKey = '2099-08';
     try {
-      await Promise.all(clients.map((client) => client.$queryRaw`SELECT 1`));
+      const unreachable = await pgSpecUnreachableReason(
+        () => Promise.all(clients.map((client) => client.$queryRaw`SELECT 1`)), 'OCR_REQUIRE_POSTGRES');
+      if (unreachable) return t.skip(unreachable);
       companyId = (await clients[0]!.company.create({
         data: { name: `ocr-admission-race-${process.pid}-${randomUUID()}`, status: 'ACTIVE' },
         select: { id: true },
@@ -413,7 +416,9 @@ describe('company OCR admission — commercial plan ceiling', () => {
     let companyId = '';
     const monthKey = '2099-09';
     try {
-      await Promise.all(clients.map((client) => client.$queryRaw`SELECT 1`));
+      const unreachable = await pgSpecUnreachableReason(
+        () => Promise.all(clients.map((client) => client.$queryRaw`SELECT 1`)), 'OCR_REQUIRE_POSTGRES');
+      if (unreachable) return t.skip(unreachable);
       companyId = (await clients[0]!.company.create({
         data: { name: `plan-quota-race-${process.pid}-${randomUUID()}`, status: 'ACTIVE' },
         select: { id: true },

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../../../../generated/prisma/client';
+import { pgSpecUnreachableReason } from '../../../../common/database/pg-spec-guard';
 import { GetPartnerAiUsageUseCase } from './get-partner-ai-usage.use-case';
 import {
   __resetCompanyAiBudgetCache,
@@ -205,7 +206,9 @@ describe('GetPartnerAiUsageUseCase', () => {
     const writer = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl }) });
     let companyId = '';
     try {
-      await Promise.all([reader.$queryRaw`SELECT 1`, writer.$queryRaw`SELECT 1`]);
+      const unreachable = await pgSpecUnreachableReason(
+        () => Promise.all([reader.$queryRaw`SELECT 1`, writer.$queryRaw`SELECT 1`]), 'OCR_REQUIRE_POSTGRES');
+      if (unreachable) return t.skip(unreachable);
       companyId = (await reader.company.create({
         data: { name: `ocr-usage-snapshot-${process.pid}-${randomUUID()}`, status: 'ACTIVE' },
         select: { id: true },

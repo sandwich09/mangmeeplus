@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { ConflictException, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../../../../generated/prisma/client';
+import { pgSpecUnreachableReason } from '../../../../common/database/pg-spec-guard';
 import { SetPartnerAiModelUseCase } from './set-partner-ai-model.use-case';
 import { SetPartnerOcrConfigUseCase } from './set-partner-ocr-config.use-case';
 import { __resetCompanyAiBudgetCache, assertCompanyAiBudget } from '../../../line-ai/application/company-ai-usage-meter';
@@ -383,7 +384,9 @@ describe('SetPartnerOcrConfigUseCase', () => {
     const adminIds: string[] = [];
     const runId = randomUUID();
     try {
-      await Promise.all(clients.map((client) => client.$queryRaw`SELECT 1`));
+      const unreachable = await pgSpecUnreachableReason(
+        () => Promise.all(clients.map((client) => client.$queryRaw`SELECT 1`)), 'OCR_REQUIRE_POSTGRES');
+      if (unreachable) return t.skip(unreachable);
       companyId = (await clients[0]!.company.create({
         data: { name: `ocr-cas-${process.pid}-${runId}`, status: 'ACTIVE' },
         select: { id: true },
