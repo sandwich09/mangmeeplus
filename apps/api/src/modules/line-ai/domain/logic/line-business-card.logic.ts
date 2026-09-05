@@ -413,9 +413,11 @@ export const LIFF_ID_PATTERN = /^[0-9]{4,20}-[A-Za-z0-9]{1,32}$/;
  */
 export function buildSignupStatusCard(companyName: string, businessHours: boolean): LineReplyMessage {
   const shop = companyName.trim() ? `ร้าน ${bounded(companyName, 60)} ` : '';
+  // The bubble's own title already says "ได้รับคำขอแล้ว", so the body says what happens next and
+  // does not repeat it — the same edit the LIFF waiting card took (Owner 2026-09-05).
   const text = businessHours
-    ? `ได้รับคำขอเปิด${shop}แล้วค่ะ ทีมงานกำลังตรวจสอบ ปกติดำเนินการให้ภายในวันทำการ (จันทร์–เสาร์ 9:00–18:00) พร้อมเมื่อไหร่จะแจ้งในแชทนี้นะคะ`
-    : `ได้รับคำขอเปิด${shop}แล้วค่ะ ตอนนี้อยู่นอกเวลาทำการ ทีมงานจะดูให้ในวันทำการถัดไป (จันทร์–เสาร์ 9:00–18:00) นะคะ`;
+    ? `คำขอเปิด${shop}เข้าระบบแล้วค่ะ ทีมงานกำลังตรวจสอบ ปกติดำเนินการให้ภายในวันทำการ (จันทร์–เสาร์ 9:00–18:00) พร้อมเมื่อไหร่จะแจ้งในแชทนี้นะคะ`
+    : `คำขอเปิด${shop}เข้าระบบแล้วค่ะ ตอนนี้อยู่นอกเวลาทำการ ทีมงานจะดูให้ในวันทำการถัดไป (จันทร์–เสาร์ 9:00–18:00) นะคะ`;
   return {
     type: 'flex',
     altText: preview(text, 400),

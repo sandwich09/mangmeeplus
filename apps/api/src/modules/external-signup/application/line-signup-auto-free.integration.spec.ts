@@ -264,6 +264,7 @@ const CONFIG = {
 const CMD = {
   idToken: 'aaaa.bbbb.cccc',
   companyName: 'ร้านมั่งมี',
+  phoneNumber: '0812345678',
   legal: { ...currentLegalRelease('th'), locale: 'th' },
   correlationRequestId: 'req-1',
   webBaseUrl: 'https://app.example.com',

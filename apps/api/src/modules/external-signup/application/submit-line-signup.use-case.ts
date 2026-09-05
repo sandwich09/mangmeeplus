@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, UnprocessableEntityException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, UnprocessableEntityException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { LineSignupSubmitAcceptedDto } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
@@ -16,7 +16,7 @@ import {
   lineExternalSignupId,
   normalizeLineCompanyName,
   normalizeReferralCode,
-  normalizeThaiMobile,
+  requireThaiMobile,
 } from '../domain/line-signup.logic';
 import { CompanySignupCoreService } from './company-signup-core.service';
 import { ProvisionSignupUseCase } from './provision-signup.use-case';
@@ -27,7 +27,8 @@ export type SubmitLineSignupCommand = {
   /** LIFF ID token — the only identity input. */
   idToken: string;
   companyName: string;
-  phoneNumber?: string;
+  /** Required since Owner 2026-09-05; still checked here, because a type is not a trust boundary. */
+  phoneNumber: string;
   referralCode?: string;
   legal: {
     documentVersion: string;
@@ -77,14 +78,18 @@ export class SubmitLineSignupUseCase {
     }
 
     let companyName: string;
-    let phoneNumber: string | null;
+    let phoneNumber: string;
     let referralCode: string | null;
     try {
       companyName = normalizeLineCompanyName(cmd.companyName);
-      phoneNumber = normalizeThaiMobile(cmd.phoneNumber);
+      phoneNumber = requireThaiMobile(cmd.phoneNumber);
       referralCode = normalizeReferralCode(cmd.referralCode);
     } catch (error) {
-      throw new UnprocessableEntityException((error as Error).message);
+      const code = (error as Error).message;
+      // The phone is the one field the customer can see and correct, so it answers 400 with a code
+      // the LIFF page turns back into a sentence beside the field (Owner 2026-09-05).
+      if (code.startsWith('line_signup_phone_')) throw new BadRequestException(code);
+      throw new UnprocessableEntityException(code);
     }
 
     // Spec §5: a LINE account that already belongs to an active user opens a SECOND shop for that
@@ -114,7 +119,7 @@ export class SubmitLineSignupUseCase {
     await this.audit(request.id, 'signup.line.submitted', cmd.correlationRequestId, {
       source: SIGNUP_SOURCE_LINE_OA,
       existingAccount: attachUserId !== null,
-      hasPhoneNumber: phoneNumber !== null,
+      // No `hasPhoneNumber`: the field is required now, so the flag could only ever be true.
       hasReferralCode: referralCode !== null,
       repeatTrial,
     });

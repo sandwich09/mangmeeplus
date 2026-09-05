@@ -114,6 +114,8 @@ function wire(client: PrismaClient, options: { adminUserId: string; approvalMode
 const submitCmd = (correlationRequestId: string) => ({
   idToken: 'aaaa.bbbb.cccc',
   companyName: `ร้านใหม่ ${randomUUID().slice(0, 8)}`,
+  // Required since Owner 2026-09-05 (spec §3.2); every real submit carries one.
+  phoneNumber: '0812345678',
   legal: { ...currentLegalRelease('th'), locale: 'th' },
   correlationRequestId,
   ...URLS,

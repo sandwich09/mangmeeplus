@@ -29,8 +29,9 @@ export class LineSignupLegalDto {
 export class LineSignupSubmitBodyDto {
   @IsString() @MaxLength(LINE_ID_TOKEN_MAX_LENGTH) @Matches(LINE_ID_TOKEN_PATTERN) idToken!: string;
   @IsString() @IsNotEmpty() @MaxLength(LINE_SIGNUP_COMPANY_NAME_MAX) companyName!: string;
-  // Optional by design (spec §3.2). Digits, spaces and dashes only; the use-case decides validity.
-  @IsString() @IsOptional() @MaxLength(20) @Matches(/^[0-9 -]*$/) phoneNumber?: string;
+  // Required since Owner 2026-09-05 (spec §3.2). Digits, spaces and dashes only; the use-case
+  // decides whether they add up to a Thai mobile, and answers `line_signup_phone_*` when they do not.
+  @IsString() @IsNotEmpty() @MaxLength(20) @Matches(/^[0-9 -]*$/) phoneNumber!: string;
   @IsString() @IsOptional() @MaxLength(LINE_SIGNUP_REFERRAL_CODE_MAX) @Matches(/^[A-Za-z0-9_-]*$/) referralCode?: string;
   @IsObject() @ValidateNested() @Type(() => LineSignupLegalDto) legal!: LineSignupLegalDto;
 }
@@ -69,7 +70,7 @@ export class PublicLineSignupController {
     return this.submit.execute({
       idToken: dto.idToken,
       companyName: dto.companyName,
-      ...(dto.phoneNumber ? { phoneNumber: dto.phoneNumber } : {}),
+      phoneNumber: dto.phoneNumber,
       ...(dto.referralCode ? { referralCode: dto.referralCode } : {}),
       legal: dto.legal,
       ...(req.headers['user-agent'] ? { userAgent: String(req.headers['user-agent']) } : {}),

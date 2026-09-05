@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ConflictException, UnauthorizedException, UnprocessableEntityException } from '@nestjs/common';
+import { BadRequestException, ConflictException, UnauthorizedException, UnprocessableEntityException } from '@nestjs/common';
 import { currentLegalRelease } from '../../auth/application/legal-acceptance.service';
 import { SubmitLineSignupUseCase } from './submit-line-signup.use-case';
 
@@ -10,6 +10,7 @@ const LEGAL = { ...RELEASE, locale: 'th' };
 const CMD = {
   idToken: 'aaaa.bbbb.cccc',
   companyName: 'ร้านมั่งมี',
+  phoneNumber: '0812345678',
   legal: LEGAL,
   userAgent: 'LINE/14 iOS',
   correlationRequestId: 'req-1',
@@ -226,16 +227,39 @@ describe('SubmitLineSignupUseCase — identity and clickwrap', () => {
     await assert.rejects(() => h.useCase.execute(CMD, NOW), /line_signup_already_pending/);
   });
 
-  it('rejects a phone number that is not a Thai mobile, and accepts a blank one', async () => {
+  /**
+   * Owner 2026-09-05: the phone became required. Two codes, both 400, because the LIFF page turns
+   * them into the one sentence beside the field — and 400 rather than 422 so the page can tell a
+   * fixable field apart from a shape it did not send.
+   */
+  it('refuses a missing or non-Thai-mobile phone with a coded 400', async () => {
     const h = harness();
-    await assert.rejects(
-      () => h.useCase.execute({ ...CMD, phoneNumber: '12345' }, NOW),
-      UnprocessableEntityException,
-    );
+    for (const [phoneNumber, code] of [
+      [undefined, 'line_signup_phone_required'],
+      ['', 'line_signup_phone_required'],
+      ['  -  ', 'line_signup_phone_required'],
+      ['12345', 'line_signup_phone_invalid'],
+      ['08123456789', 'line_signup_phone_invalid'],
+    ] as const) {
+      await assert.rejects(
+        () => h.useCase.execute({ ...CMD, phoneNumber: phoneNumber as string }, NOW),
+        (error: unknown) => {
+          assert.ok(error instanceof BadRequestException, `${phoneNumber} → 400`);
+          assert.match(JSON.stringify(error.getResponse()), new RegExp(code));
+          return true;
+        },
+      );
+    }
+    assert.deepEqual(h.created, [], 'nothing is created without a reachable number');
+
+    // A bad company name still answers 422: it is not the field the page can point at.
+    await assert.rejects(() => h.useCase.execute({ ...CMD, companyName: '   ' }, NOW), UnprocessableEntityException);
+  });
+
+  it('stores the phone as digits, however the shop owner spaced it', async () => {
+    const h = harness();
     await h.useCase.execute({ ...CMD, phoneNumber: '081-234-5678' }, NOW);
     assert.equal(h.created[0].phoneNumber, '0812345678');
-    await h.useCase.execute(CMD, NOW);
-    assert.equal(h.created[1].phoneNumber, undefined, 'the field is optional by design');
   });
 });
 

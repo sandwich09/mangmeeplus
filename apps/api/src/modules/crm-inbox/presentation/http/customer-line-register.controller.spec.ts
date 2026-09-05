@@ -63,6 +63,12 @@ describe('CustomerLineRegisterController LIFF page security (H-08)', () => {
     assert.equal(html.includes('__h08_customer_xss__'), false);
     assert.match(html, /data-client-compatibility-notice="generic"/);
     assert.match(html, /id="liff-content"/);
+    // Built by the shared liffPageHtml since the round-3 review, so it carries the มั่งมี theme and
+    // the message tones. dvh, not vh: a phone browser's collapsing address bar makes vh lie.
+    assert.match(html, /<header class="brand">/);
+    assert.match(html, /\.notice-warning\{background:/);
+    assert.match(html, /max-height:40dvh/);
+    assert.equal(html.includes('max-height:40vh'), false, 'vh is banned on mobile surfaces');
     const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)];
     assert.equal(scripts.length, 2);
     assert.ok(scripts.every(([, attributes, body]) => /\bsrc="[^"]+"/.test(attributes!) && body!.trim() === ''));
