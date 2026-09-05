@@ -22,6 +22,9 @@ export type ErpToolContext = {
   branchIds?: string[];
   locationIds?: string[];
   locale: string;
+  /** Chat provenance forwarded verbatim from the API's own turn request (spec §5.5). It carries no
+   *  authority — the ERP boundary re-resolves company, permissions and branch scope. */
+  chatKeyHash?: string;
   actorDelegations?: Record<string, string[]>;
 };
 

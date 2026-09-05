@@ -82,6 +82,7 @@ import {
   AccountingGetDocumentDetailTool,
   AccountingGetReceivableSummaryTool,
   ExpenseGetDetailTool,
+  ExpenseExplainRecordTool,
   ReimbursementGetSummaryTool,
   ReimbursementGetDetailTool,
 } from './application/use-cases/erp-core-detail-tools.use-case';
@@ -142,6 +143,7 @@ const erpTools = [
   LedgerFinancialSummaryTool,
   ExpenseListRecentTool,
   ExpenseGetDetailTool,
+  ExpenseExplainRecordTool,
   SalesGetSalesSummaryTool,
   TaxGetUpcomingObligationsTool,
   TaxGetVatSummaryTool,

@@ -211,6 +211,13 @@ describe('IntentRouterAgent – model routing', () => {
     assert.ok(systemPrompt.includes('Intent Router Agent'));
     assert.ok(systemPrompt.includes('capability_help'));
     assert.ok(systemPrompt.includes('business intent wins'));
+    // S-3 (spec §5.5): the prompt must name the explain tool for a "why does MY record look like
+    // this" question AND must forbid answering it with the period total. Without the second half
+    // the router kept choosing expense.list_recent for the Owner's E4 sentence.
+    assert.ok(systemPrompt.includes('use expense.explain_record with subject expense and agent accounting'),
+      'router prompt must route the own-record explanation question to expense.explain_record');
+    assert.ok(systemPrompt.includes('Never answer that question with expense.list_recent'),
+      'router prompt must forbid answering it with a period total');
     assert.ok(catalog.enabledFeatures.some((feature: any) => feature.toolName === 'ledger.get_financial_summary'));
     assert.ok(catalog.enabledFeatures.some((feature: any) => feature.toolName === 'sales.get_sales_summary'));
 	    assert.ok(catalog.enabledFeatures.some((feature: any) => feature.toolName === 'crm.get_pipeline_summary'));

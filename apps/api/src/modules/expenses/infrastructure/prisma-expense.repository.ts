@@ -2595,7 +2595,7 @@ export class PrismaExpenseRepository {
     since: Date;
     scopes: { branchIds?: string[] };
     take: number;
-  }): Promise<Array<{ id: string; expenseDate: Date | null; grandTotalAmount: string | null; sourceDocumentType: string | null; createdAt: Date }>> {
+  }): Promise<Array<{ id: string; expenseDate: Date | null; grandTotalAmount: string | null; vendorDocumentNumber: string | null; sourceDocumentType: string | null; createdAt: Date }>> {
     const rows = await this.prisma.client.expenseRecord.findMany({
       where: {
         companyId: input.companyId,
@@ -2612,12 +2612,15 @@ export class PrismaExpenseRepository {
       // ponytail: served by the existing (companyId, captureSource) index plus a filter+sort;
       // fine at SME LINE-capture volumes. Add (companyId, captureSource, createdAt) if a company's
       // LINE upload history ever makes this scan show up.
-      select: { id: true, expenseDate: true, grandTotalAmount: true, sourceDocumentType: true, createdAt: true },
+      // `vendorDocumentNumber` rides along so `expense.explain_record` can resolve a
+      // documentNumber reference inside the SAME provenance-bounded set, with no second query.
+      select: { id: true, expenseDate: true, grandTotalAmount: true, vendorDocumentNumber: true, sourceDocumentType: true, createdAt: true },
     });
     return rows.map((row: any) => ({
       id: row.id,
       expenseDate: row.expenseDate ?? null,
       grandTotalAmount: row.grandTotalAmount?.toString() ?? null,
+      vendorDocumentNumber: row.vendorDocumentNumber ?? null,
       sourceDocumentType: row.sourceDocumentType ?? null,
       createdAt: row.createdAt,
     }));

@@ -15,6 +15,9 @@ function emptyData(name: string): unknown {
     case 'inventory.get_product_detail':
     case 'accounting.get_document_detail':
     case 'expense.get_detail':
+    // Explain is a detail read: "empty" is the same honest `found: false` get_detail returns,
+    // never a zero-valued explanation of a record that is not there.
+    case 'expense.explain_record':
     case 'reimbursement.get_detail':
     case 'crm.get_customer_360':
     case 'crm.get_conversation_summary':
