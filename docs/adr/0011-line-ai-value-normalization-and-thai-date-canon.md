@@ -18,7 +18,12 @@ The repo already solves the mirror problem on the output side: `response-compose
 4. Discovery policy (money and dates alike): unambiguous → auto with recorded assumptions; materially ambiguous (2-digit years, multiple surviving readings, implausible-for-context dates) → ONE bounded clarify naming the concrete choices; unmappable → value dropped to `missingFields` + NEEDS_REVIEW. Never guess.
 5. Wire and storage formats do not change: tools and Prisma keep ISO-8601 CE (`YYYY-MM-DD`); exactly one tested BE↔CE/ISO conversion helper crosses the boundary.
 6. **Document context (amendment 2026-09-05, `line-ai-draft-control-spec-th.md` §5.2).** `extractValueCandidates` takes `documentContext: 'receipt' | 'chat'`, defaulting to `'chat'`. In `'receipt'` mode a `D/M/YY` whose two leading parts are both ≤ 12 is read as day/month (with `orderAssumedDayMonth`, exactly as decision 3 already says) AND its two-digit era is resolved through the existing plausibility window — nearest today when the window leaves both readings, flagged `twoDigitYearResolvedPlausibleEra`. `'chat'` is byte-for-byte unchanged.
-7. **A placeholder date is never silent (amendment 2026-09-05, §5.2).** `ExpenseRecord.expenseDate` is NOT NULL, so a receipt whose date could not be read still stores the upload day. That is allowed; presenting it as a reading is not. The apply service drops the draft to `aiVerificationStatus: NEEDS_REVIEW`, adds `expenseDate` to `missingFields` and returns a readable reason; the LINE card says "ยังไม่ระบุ — ใช้วันที่ส่งไว้ก่อน" with the words to correct it. A date that IS read but sits more than one day ahead of today or more than two years behind is reviewed as `วันที่ผิดปกติ`.
+7. **A stored date always says which of four things it is (amendment 2026-09-05, §5.2).** `ExpenseRecord.expenseDate` is NOT NULL, so "there is a value" carries no information. `ExpenseDocumentDateStatus` carries it instead, and the reading's assumptions travel with the date on `ReceiptOcrFieldResult.expenseDateAssumptions` so this can be decided at all:
+   - `verified` — the page stated it plainly. Nothing shown.
+   - `assumed` — read off the page, but the reader applied the DD/MM convention or chose an era. **The date is kept and the record is NOT sent to review**; every surface labels it (card "อ่านจากบิล แบบ วัน/เดือน", web "อ่านจากบิล", export `document_date_status`). Forcing review here would make receipt mode pointless — every Thai `DD/MM/YY` bill would land in review exactly as if its date were unread.
+   - `unverified` — never read; the value is the upload-day placeholder. `aiVerificationStatus: NEEDS_REVIEW`, `expenseDate` in `missingFields`, a readable reason, and the card says "ยังไม่ระบุ — ใช้วันที่ส่งไว้ก่อน" with the words to correct it.
+   - `implausible` — read, but more than one day ahead of today or more than two years behind. Review, reason `วันที่ผิดปกติ`.
+   Only the last two are review. The flag is always present.
 
 ## Consequences
 
@@ -35,7 +40,7 @@ The 2026-08-28 owner decision ("7-6-69 could be 7 June or 6 July — leave it bl
 ### Trade-offs
 
 - D/M + พ.ศ. defaults can mis-read genuinely MM/DD or CE foreign documents — accepted by owner; assumptions are recorded and the NEEDS_REVIEW/human-review path catches them.
-- Receipt mode reads a date a person could not have been asked about. Its answer is always assumption-flagged and NEEDS_REVIEW, and the sanity window above catches a reading that lands in the wrong decade.
+- Receipt mode reads a date a person could not have been asked about. Its answer is always assumption-flagged — on the record, the card, the review page, the list and the export — and the sanity window above catches a reading that lands in the wrong decade. It is deliberately NOT sent to review on that basis alone: a flag a reviewer can see beats a queue nobody works through.
 - The normalizer grammar (Thai number words, currency tokens) needs maintenance as new wordings appear — bounded by golden tests; unknown tokens degrade safely to review, never to guesses.
 - Image-sourced values cannot be verified against pixels — mitigated by cross-checking capture hints against normalizer output over the OCR text.
 

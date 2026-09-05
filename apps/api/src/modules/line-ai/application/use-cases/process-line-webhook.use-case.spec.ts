@@ -3401,6 +3401,38 @@ describe('receipt capture card: an unread date says so', () => {
     assert.match(reply, /• วันที่เอกสาร – 3 ก\.ย\. 2569/);
     assert.equal(reply.includes('ใช้วันที่ส่งไว้ก่อน'), false);
   });
+
+  // Keying the copy on whether a date STRING exists gets three of the four states wrong: the
+  // upload-day placeholder, a misread 2019 date and an assumed DD/MM reading are all present
+  // strings, and all three printed as plain fact.
+  it('says which of the four things the stored date actually is', () => {
+    const withStatus = (status: 'verified' | 'assumed' | 'unverified' | 'implausible', expenseDate?: string) =>
+      formatPaypersReply('https://app.test', 'company-1', 'expense-1', { fields: { grandTotalAmount: '1789.04', ...(expenseDate ? { expenseDate } : {}) } as never, dateStatus: status });
+
+    assert.match(withStatus('assumed', '2026-09-03'), /• วันที่เอกสาร – 3 ก\.ย\. 2569 \(อ่านจากบิล แบบ วัน\/เดือน\)/);
+    assert.match(withStatus('implausible', '2019-01-05'), /• วันที่เอกสาร – 5 ม\.ค\. 2562 \(ผิดปกติ ตรวจในเว็บ\)/);
+    assert.match(withStatus('unverified', '2026-09-05'), /• วันที่เอกสาร – ยังไม่ระบุ — ใช้วันที่ส่งไว้ก่อน/);
+    assert.match(withStatus('verified', '2026-09-03'), /• วันที่เอกสาร – 3 ก\.ย\. 2569$/m);
+  });
+
+  // Journey J1 step 1: a service charge is money the shop added and the row a reviewer questions
+  // first. It was only ever shown when the sender happened to ask what was on the bill.
+  it('lists the additional charges on the default card, with a count and a total', () => {
+    const reply = formatPaypersReply('https://app.test', 'company-1', 'expense-1', {
+      fields: {
+        grandTotalAmount: '1789.04',
+        additionalCharges: [
+          { kind: 'SERVICE_CHARGE', description: 'ค่าบริการ 10%', amount: '152.00', evidenceSignal: 'Service charge 10%' },
+        ],
+      } as never,
+    });
+    assert.match(reply, /➕ ค่าใช้จ่ายเพิ่ม \(1 รายการ รวม 152\.00\):/);
+    assert.match(reply, /• ค่าบริการ 10% – 152\.00/);
+  });
+
+  it('adds no charges block to a bill that printed none', () => {
+    assert.equal(card({ grandTotalAmount: '580.00' }).includes('ค่าใช้จ่ายเพิ่ม'), false);
+  });
 });
 
 /**
