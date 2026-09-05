@@ -6,8 +6,15 @@ import { hashToken } from '../../domain/logic/secure-token.logic';
 
 const RAW_TICKET = 'raw-merge-ticket-value';
 
-type MembershipRow = { id: string; companyId: string; userId: string; status: string };
-type UserRow = { id: string; email: string | null; emailVerifiedAt: Date | null; status: string };
+type MembershipRow = {
+  id: string; companyId: string; userId: string; status: string;
+  /** Review R05: the merge's verdict now depends on these, so the fixtures have to carry them. */
+  roleKeys?: string[]; companyName?: string;
+};
+type UserRow = {
+  id: string; email: string | null; emailVerifiedAt: Date | null; status: string;
+  displayName?: string; username?: string | null;
+};
 
 type HarnessOptions = {
   ticket?: Record<string, unknown>;
@@ -17,6 +24,10 @@ type HarnessOptions = {
   profiles?: Array<{ membershipId: string; userId: string }>;
   /** Simulates the CAS losing to a concurrent confirm. */
   ticketAlreadyClaimed?: boolean;
+  /** Which accounts have a username/password credential; default: the one being merged away. */
+  credentials?: string[];
+  /** Which accounts have a LINE identity; default: the one that survives. */
+  lineIdentities?: string[];
 };
 
 /**
@@ -26,10 +37,10 @@ type HarnessOptions = {
  */
 function makeHarness(opts: HarnessOptions = {}) {
   const users: Record<string, UserRow> = {
-    'new-1': { id: 'new-1', email: 'new@example.com', emailVerifiedAt: new Date('2026-08-30T00:00:00Z'), status: 'ACTIVE', ...opts.newUser },
+    'new-1': { id: 'new-1', email: 'new@example.com', emailVerifiedAt: new Date('2026-08-30T00:00:00Z'), status: 'ACTIVE', displayName: 'บัญชีใหม่', username: 'somchai', ...opts.newUser },
     ...(opts.existingUser === null
       ? {}
-      : { 'existing-1': { id: 'existing-1', email: null, emailVerifiedAt: null, status: 'ACTIVE', ...opts.existingUser } as UserRow }),
+      : { 'existing-1': { id: 'existing-1', email: null, emailVerifiedAt: null, status: 'ACTIVE', displayName: 'บัญชีเดิม', username: null, ...opts.existingUser } as UserRow }),
   };
   const memberships: MembershipRow[] = opts.memberships ?? [
     { id: 'm-new-a', companyId: 'co-a', userId: 'new-1', status: 'ACTIVE' },
@@ -66,11 +77,28 @@ function makeHarness(opts: HarnessOptions = {}) {
       update: async ({ where, data }: any) => Object.assign(users[where.id]!, data),
     },
     companyMembership: {
-      findMany: async ({ where }: any) => memberships.filter((m) =>
-        m.userId === where.userId
-        && (where.status ? m.status === where.status : true)
-        && (where.companyId?.in ? where.companyId.in.includes(m.companyId) : true)),
+      // Prisma returns exactly what is selected, so the relations the merge now reads (the role
+      // keys and the shop name) are shaped here rather than handed back as raw fixture fields.
+      findMany: async ({ where }: any) => memberships
+        .filter((m) => m.userId === where.userId
+          && (where.status ? m.status === where.status : true)
+          && (where.companyId?.in ? where.companyId.in.includes(m.companyId) : true))
+        .map((m) => ({
+          ...m,
+          roles: (m.roleKeys ?? []).map((key) => ({ role: { key } })),
+          company: { name: m.companyName ?? m.companyId },
+        })),
       update: async ({ where, data }: any) => Object.assign(memberships.find((m) => m.id === where.id)!, data),
+    },
+    userCredential: {
+      findUnique: async ({ where }: any) => (opts.credentials ?? ['new-1']).includes(where.userId)
+        ? { userId: where.userId, status: 'ACTIVE' }
+        : null,
+    },
+    externalIdentity: {
+      findFirst: async ({ where }: any) => ((opts.lineIdentities ?? ['existing-1']).includes(where.userId)
+        ? { userId: where.userId }
+        : null),
     },
     employeeAccessProfile: {
       updateMany: async ({ where, data }: any) => {
@@ -95,8 +123,9 @@ function makeHarness(opts: HarnessOptions = {}) {
 
   const useCase = new AccountMergeUseCase({ client } as any, issueToken, audit);
   const run = (ticket = RAW_TICKET, userId = 'new-1') => useCase.execute({ userId, ticket, requestId: 'req-1' });
+  const preview = (ticket = RAW_TICKET, userId = 'new-1') => useCase.preview({ userId, ticket });
   const mergeAudit = () => audits.find((entry) => entry.action === 'auth.account.merge');
-  return { run, users, memberships, profiles, tickets, sessionRevocations, issued, audits, mergeAudit };
+  return { run, preview, users, memberships, profiles, tickets, sessionRevocations, issued, audits, mergeAudit };
 }
 
 describe('AccountMergeUseCase', () => {
@@ -192,6 +221,107 @@ describe('AccountMergeUseCase', () => {
     assert.equal(h.memberships.find((m) => m.id === 'm-old-shared')!.status, 'ACTIVE');
     assert.deepEqual(h.mergeAudit().metadataJson.movedCompanyIds, ['co-a']);
     assert.deepEqual(h.mergeAudit().metadataJson.skippedCompanyIds, ['co-shared']);
+  });
+
+  /**
+   * Review R05. Both fixtures come from the report: the account being merged away is the SOLE
+   * ACTIVE OWNER of a shop, and the account it would merge into already holds an employee
+   * membership there. Disabling the owner row leaves the shop with no owner — in the second
+   * fixture, with no active access at all.
+   */
+  describe('overlapping memberships fail closed', () => {
+    const owningTheSameShop = (targetStatus: string) => ({
+      memberships: [
+        {
+          id: 'm-new-shared', companyId: 'co-shared', userId: 'new-1', status: 'ACTIVE',
+          roleKeys: ['OWNER'], companyName: 'ร้านมั่งมี',
+        },
+        {
+          id: 'm-old-shared', companyId: 'co-shared', userId: 'existing-1', status: targetStatus,
+          roleKeys: ['STAFF'], companyName: 'ร้านมั่งมี',
+        },
+      ],
+    });
+
+    for (const targetStatus of ['ACTIVE', 'DISABLED']) {
+      it(`refuses rather than close the sole owner out of a shop (target membership ${targetStatus})`, async () => {
+        const h = makeHarness(owningTheSameShop(targetStatus));
+
+        await assert.rejects(() => h.run(), (error: unknown) => {
+          assert.ok(error instanceof ConflictException);
+          assert.equal((error.getResponse() as { code?: string }).code, 'account_merge_role_conflict');
+          return true;
+        });
+
+        // Nothing may have moved: this is a refusal, not a partial merge.
+        const owner = h.memberships.find((m) => m.id === 'm-new-shared')!;
+        assert.equal(owner.status, 'ACTIVE', 'the only active owner must survive the refusal');
+        assert.equal(owner.userId, 'new-1');
+        assert.equal(h.users['new-1']!.status, 'ACTIVE', 'a refused merge closes no account');
+        assert.equal(h.tickets[0]!.consumedAt, null, 'a refused merge leaves the offer usable');
+        assert.deepEqual(h.issued, [], 'and issues no session');
+      });
+    }
+
+    it('still allows the overlap when the two memberships are the same thing', async () => {
+      const h = makeHarness({
+        memberships: [
+          { id: 'm-new-shared', companyId: 'co-shared', userId: 'new-1', status: 'ACTIVE', roleKeys: ['OWNER'] },
+          { id: 'm-old-shared', companyId: 'co-shared', userId: 'existing-1', status: 'ACTIVE', roleKeys: ['OWNER'] },
+        ],
+      });
+
+      await h.run();
+
+      assert.equal(h.memberships.find((m) => m.id === 'm-new-shared')!.status, 'DISABLED');
+      assert.equal(h.memberships.find((m) => m.id === 'm-old-shared')!.status, 'ACTIVE');
+    });
+  });
+
+  describe('preview', () => {
+    it('says per shop what will happen, and which way of signing in survives', async () => {
+      const h = makeHarness({
+        memberships: [
+          { id: 'm-new-a', companyId: 'co-a', userId: 'new-1', status: 'ACTIVE', roleKeys: ['OWNER'], companyName: 'ร้านหนึ่ง' },
+          { id: 'm-new-shared', companyId: 'co-shared', userId: 'new-1', status: 'ACTIVE', roleKeys: ['OWNER'], companyName: 'ร้านสอง' },
+          { id: 'm-old-shared', companyId: 'co-shared', userId: 'existing-1', status: 'ACTIVE', roleKeys: ['OWNER'], companyName: 'ร้านสอง' },
+        ],
+      });
+
+      const plan = await h.preview();
+
+      assert.equal(plan.canMerge, true);
+      assert.deepEqual(plan.companies, [
+        { companyName: 'ร้านหนึ่ง', outcome: 'move' },
+        { companyName: 'ร้านสอง', outcome: 'close_duplicate' },
+      ]);
+      // The surviving account signs in with LINE; the username and password being merged away stop
+      // working, and the dialog has to be able to say so before the button is pressed.
+      assert.deepEqual(plan.keeps, { displayName: 'บัญชีเดิม', signInWith: ['line'] });
+      assert.deepEqual(plan.closes, { displayName: 'บัญชีใหม่', username: 'somchai', signInWith: ['password'] });
+    });
+
+    it('names the shop that blocks the merge', async () => {
+      const h = makeHarness({
+        memberships: [
+          { id: 'm-new-shared', companyId: 'co-shared', userId: 'new-1', status: 'ACTIVE', roleKeys: ['OWNER'], companyName: 'ร้านมั่งมี' },
+          { id: 'm-old-shared', companyId: 'co-shared', userId: 'existing-1', status: 'ACTIVE', roleKeys: ['STAFF'], companyName: 'ร้านมั่งมี' },
+        ],
+      });
+
+      const plan = await h.preview();
+
+      assert.equal(plan.canMerge, false);
+      assert.deepEqual(plan.companies, [
+        { companyName: 'ร้านมั่งมี', outcome: 'blocked', reason: 'role_conflict' },
+      ]);
+    });
+
+    it('reads nothing and changes nothing for a ticket that is not the caller\'s', async () => {
+      const h = makeHarness();
+      await assert.rejects(() => h.preview(RAW_TICKET, 'someone-else'), ForbiddenException);
+      assert.equal(h.tickets[0]!.consumedAt, null);
+    });
   });
 
   it('rejects an unknown ticket', async () => {
