@@ -306,13 +306,14 @@ unchanged. The flag decides, never the copy. See D.1.
 
 ## Slice D — `codex/line-ai-draft-edit` (S-4, แก้ draft ผ่าน LINE)
 
-Status: implemented on top of C (`ca37d6a1`), gates green, pushed at `579f16b5`; not reviewed, no PR.
+Status: implemented on top of C (`ca37d6a1`), gates green, pushed; not reviewed, no PR.
 
-Gates (2026-09-06): api fixed list 6508 tests / 0 fail / 99 skipped · ai-gateway 1048 / 0 fail ·
-contracts 217 / 0 fail · config 141 / 0 fail · api+gateway+contracts typecheck clean ·
-prisma validate ok · maintenance pins `--check` **status=current** (after the deploy.sh edit) ·
-`production-serving-mode.spec.sh` PASS · pg spec 1/1 on an isolated `watchdog_bms_sliced` database ·
-no TODO / `@ts-ignore` in the slice.
+Gates (2026-09-06, re-run after the F11/F12/F13 scrubber change): api fixed list 6508 tests /
+0 fail / 99 skipped · ai-gateway 1048 / 0 fail · contracts 224 / 0 fail · config 141 / 0 fail ·
+api+gateway+contracts typecheck clean · prisma validate ok · maintenance pins `--check`
+**status=current** (after the deploy.sh edit) · `production-serving-mode.spec.sh` PASS · pg spec
+1/1 on an isolated `watchdog_bms_sliced` database · no TODO / `@ts-ignore` in the slice ·
+11 mutations, all verified red.
 
 ### D.1 What it does
 
