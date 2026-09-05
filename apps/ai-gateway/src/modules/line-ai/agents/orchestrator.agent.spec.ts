@@ -596,12 +596,26 @@ describe('OrchestratorAgent', () => {
   // asked why the service charge on HIS OWN bill was a separate line. Intake routed it
   // BUSINESS_READ_QUESTION (0.55); no LINE tool could answer, and he was told the question was
   // outside the system. It is not — his expense record is the system.
+  //
+  // Slice C (S-3) shipped the answer, and §5.3 is explicit that the test must not walk backwards:
+  // "กรณี E4 ต้องได้คำตอบจริงจาก S-3 และในระหว่างที่ S-3 ยังไม่ขึ้นต้องได้ unsupported_yet".
+  // So E4 itself is now the explain lane's, and `unsupported_yet` is what remains for a business
+  // turn the explain tool cannot take — which is J4's "ช่วยออกใบกำกับภาษีให้หน่อย".
   describe('E4: a business turn with no tool is "not yet", not "out of scope"', () => {
     const OWNER_QUESTION = 'ทำไม service charge คิดแยกเป็นอีกรายการ';
-    const run = (intakeIntent?: any) => new OrchestratorAgent(
+    /** In the system, about no particular record — nothing for `preferExplainRecordPlan` to take. */
+    const NOT_ON_LINE_YET = 'ช่วยออกใบกำกับภาษีให้หน่อย';
+    const runText = (text: string, intakeIntent?: any) => new OrchestratorAgent(
       { invoke: async () => ({ toolName: 'x', status: 'ok', sourceRefs: [], asOf: '' }) } as any,
       makeConfig(),
-    ).run({ ...makeReq(OWNER_QUESTION), ...(intakeIntent ? { intakeIntent } : {}) });
+    ).run({ ...makeReq(text), ...(intakeIntent ? { intakeIntent } : {}) });
+    const run = (intakeIntent?: any) => runText(NOT_ON_LINE_YET, intakeIntent);
+
+    it('hands the owner question to the explain lane rather than refusing it at all', async () => {
+      const result = await runText(OWNER_QUESTION, 'BUSINESS_READ_QUESTION');
+      assert.deepEqual(result.plan.refusals, [], 'S-3 answers E4 now — a refusal here would be the regression');
+      assert.equal(result.plan.intents[0]?.requiredTools[0], 'expense.explain_record');
+    });
 
     it('answers "ยังทำผ่าน LINE ไม่ได้" with a web link, not "นอกขอบเขต"', async () => {
       const result = await run('BUSINESS_READ_QUESTION');
