@@ -26,6 +26,14 @@ export class UnlinkLineIdentityUseCase {
       data: { status: 'UNLINKED', updatedAt: new Date() },
     });
 
+    // line-support-request-spec-th §2.5. The selected-company row survived the unlink, so it went
+    // on naming a shop this LINE account is no longer in — which is what made "ติดต่อเจ้าหน้าที่"
+    // page an operator about the wrong shop (UAT E2), and what left a 24h assistant pause hanging
+    // on a severed account. Deleted rather than cleared: with no identity there is no context.
+    await this.prisma.client.lineCompanyContext.deleteMany({
+      where: { lineUserId: identity.providerUserId },
+    });
+
     void this.audit?.log({
       actorUserId: userId,
       action: AuditAction.AUTH_IDENTITY_UNLINK,

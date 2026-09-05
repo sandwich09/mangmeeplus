@@ -87,6 +87,7 @@ import { buildAiBudgetExceededMessage, buildExpenseDraftCardMessage, buildLegalA
 // request; both live in the signup module, which owns those rules and their audit.
 import { PackageChangeRequestUseCase } from '../../../external-signup/application/package-change-request.use-case';
 import { LineSignupNotifyService } from '../../../external-signup/application/line-signup-notify.service';
+import { AuthRateLimitService } from '../../../auth/application/auth-rate-limit.service';
 import { isBusinessHours } from '../../../external-signup/domain/business-hours.logic';
 import { SIGNUP_SOURCE_LINE_OA } from '../../../external-signup/domain/company-signup.logic';
 import { advisorDirectAnswerText } from '../../domain/logic/line-advisor-direct-answer.logic';
@@ -174,9 +175,24 @@ const EMPLOYEE_DOOR_REPLY = '👋 ยินดีต้อนรับค่ะ 
 /** L-17: the greeting for someone the system already knows. Short on purpose — they came back. */
 const WELCOME_BACK_REPLY = '👋 ยินดีต้อนรับกลับมานะคะ ส่งรูปใบเสร็จ หรือถามยอดขายในแชทนี้ได้เลยค่ะ '
   + 'ถ้าต้องการคุยกับทีมงาน พิมพ์ ติดต่อเจ้าหน้าที่ ได้เลยนะคะ';
-const STAFF_CONTACT_REPLY = '📮 รับเรื่องแล้วค่ะ ทีมงานจะตอบในแชทนี้ในเวลาทำการ (จันทร์–เสาร์ 9:00–18:00) นะคะ';
+/** line-support-request-spec-th §2.1.4. Carries the way out, because a 24h pause with no exit was
+ *  the other half of the complaint. No plus sign anywhere a customer reads. */
+const STAFF_CONTACT_REPLY = '📮 รับเรื่องแล้วค่ะ ทีมงานจะตอบในแชทนี้ในเวลาทำการ (จันทร์–เสาร์ 9:00–18:00) '
+  + 'หากรีบ โทร 098-256-5628 ได้เลยค่ะ · พิมพ์ "คุยกับ AI ต่อ" ถ้าต้องการให้น้องมั่งมีตอบต่อ';
+/** §2.2.4: a second tap while the first request is still OPEN. Honest, and pages nobody twice. */
+const SUPPORT_ALREADY_OPEN_REPLY = '📮 คำขอของคุณยังอยู่ในคิวค่ะ ทีมงานจะตอบในแชทนี้ในเวลาทำการ '
+  + '(จันทร์–เสาร์ 9:00–18:00) นะคะ · พิมพ์ "คุยกับ AI ต่อ" ถ้าต้องการให้น้องมั่งมีตอบต่อ';
+/** §2.4: the assistant is back, said in the assistant's own voice. */
+const ASSISTANT_RESUMED_REPLY = '💚 น้องมั่งมีกลับมาแล้วค่ะ ถามได้เลยนะคะ';
+/** The amplification floor's answer. Warm on purpose: whoever hits it may still genuinely need
+ *  help, and the requests they already opened are in the operator inbox either way. */
+const SUPPORT_DAILY_LIMIT_REPLY = '📮 รับเรื่องไว้แล้วค่ะ ทีมงานจะติดต่อกลับในเวลาทำการ '
+  + '(จันทร์–เสาร์ 9:00–18:00) หากรีบ โทร 098-256-5628 ได้เลยค่ะ';
 /** Sent while a support pause is running, in place of every assistant answer (§8). */
-const SUPPORT_PAUSED_REPLY = '📮 ทีมงานรับเรื่องแล้วค่ะ กำลังดูให้อยู่ เดี๋ยวตอบในแชทนี้นะคะ';
+const SUPPORT_PAUSED_REPLY = '📮 ทีมงานรับเรื่องแล้วค่ะ กำลังดูให้อยู่ เดี๋ยวตอบในแชทนี้นะคะ '
+  + '· พิมพ์ "คุยกับ AI ต่อ" ถ้าต้องการให้น้องมั่งมีตอบต่อ';
+/** §3 PDPA: one line of context for the operator, never a transcript. */
+const SUPPORT_LAST_MESSAGE_MAX_LENGTH = 200;
 const PACKAGE_CHANGE_ACCEPTED_REPLY = '📦 รับคำขอแล้วค่ะ ทีมงานจะติดต่อกลับในเวลาทำการ (จันทร์–เสาร์ 9:00–18:00) นะคะ';
 const PACKAGE_CHANGE_NOT_OWNER_REPLY = '📦 การเปลี่ยนแพ็กเกจต้องให้เจ้าของร้านเป็นคนขอนะคะ รบกวนแจ้งเจ้าของร้านให้พิมพ์ '
   + '"ขอเปลี่ยนแพ็กเกจ" ในแชทนี้ได้เลยค่ะ';
@@ -1188,6 +1204,10 @@ export class ProcessLineWebhookUseCase {
     // P10-L §7/§8. Absent, "ติดต่อเจ้าหน้าที่" still pauses the assistant and still answers the
     // customer; only the admin fan-out is lost, which is the part that already logs its failures.
     @Optional() private readonly signupNotify?: LineSignupNotifyService,
+    // The amplification floor on "ติดต่อเจ้าหน้าที่". `@Optional()` like its neighbours, and the
+    // absent case FAILS OPEN on purpose: this bounds cost, it does not protect anything, and a
+    // missing Redis must never be the reason a customer in trouble cannot reach a person.
+    @Optional() private readonly rateLimit?: AuthRateLimitService,
   ) {}
 
   /**
@@ -1570,60 +1590,199 @@ export class ProcessLineWebhookUseCase {
   }
 
   /**
-   * P10-L §7/§8. The OA has Chat switched off, so "a human will answer" has to mean something the
-   * system enforces: the assistant stops for 24 hours and the operators are told, with a link to the
-   * partner page they answer from.
+   * P10-L §7/§8, rewritten by line-support-request-spec-th §2.1.
    *
-   * Public by design — someone whose account is broken enough to need a person may well not resolve
-   * to one. The pause is only recorded when there IS a context row to hang it on, which is exactly
-   * the case where an assistant would otherwise keep answering over the top of support.
+   * The OA has Chat switched off, so "a human will answer" has to mean something the system
+   * enforces. What it used to enforce was almost nothing: the shop name came off the stale
+   * `LineCompanyContext` row (UAT E2 — a shop the asker had unlinked from three days earlier), the
+   * pause needed that same row to exist, and the notice was queued once per day whether or not
+   * anyone was ever told. Now the tap writes a `LineSupportRequest` — the fact of the ask — and
+   * everything else is re-derived from it.
+   *
+   * Public by design: someone whose account is broken enough to need a person may well not resolve
+   * to one, and that is exactly the person the old shape dropped.
    */
   private async handleStaffContact(event: LineTextEvent, requestId: string): Promise<void> {
-    const paused = await this.pauseAssistant(event.lineUserId);
-    await this.deliverReply(event, STAFF_CONTACT_REPLY);
-    // Told REGARDLESS of whether there was an assistant to pause. An unlinked prospect has no
-    // context row, and that is precisely the person most likely to need a human — answering them
-    // "รับเรื่องแล้ว" while telling nobody was the worst of both.
-    //
-    // Once per shop per day, and once per stranger per day, on the outbox key. A linked customer
-    // who asks again while the pause is still running is already in the queue, so only the
-    // not-paused → paused transition is worth an alert.
-    if (!paused || paused.transitioned) {
-      await this.signupNotify?.enqueueSupportRequest(event.lineUserId, paused?.companyId ?? null);
+    const asker = await this.resolveSupportAsker(event.lineUserId);
+    // Dedupe is per OPEN request, not per day (§2.2.4): while one is open the answer is "you are
+    // still in the queue" and nobody is paged twice; once it closes, a new tap is a new request.
+    const open = await this.prisma.client.lineSupportRequest.findFirst({
+      where: { lineUserId: event.lineUserId, status: 'OPEN' },
+      select: { id: true },
+    });
+    if (open) {
+      // Still waiting on us, so the assistant stays out of the thread: a repeat tap re-arms the
+      // pause even though it opens nothing.
+      if (asker?.companyId) await this.pauseAssistant(event.lineUserId, asker.companyId);
+      await this.deliverReply(event, SUPPORT_ALREADY_OPEN_REPLY);
+      await this.audit.log({
+        action: 'signup.line.support_requested',
+        ...(asker?.companyId ? { companyId: asker.companyId } : {}),
+        targetType: 'line_support_request',
+        targetId: open.id,
+        requestId,
+        result: 'SUCCESS',
+        riskLevel: 'LOW',
+        metadataJson: { alreadyOpen: true, paused: Boolean(asker?.companyId) },
+      });
+      await this.updateEventLog(event.webhookEventId, 'support_already_open');
+      return;
     }
+
+    // Amplification floor. Closing a request frees the dedupe above, so tap → "คุยกับ AI ต่อ" →
+    // tap, repeated, was an unbounded source of rows, letters and pushes from one unauthenticated
+    // LINE account. Three genuine asks a day is more than a real customer makes; the fourth is
+    // answered warmly and writes nothing. Checked HERE, not at dispatch: a repeat tap on an
+    // already-open request costs nothing and must never be refused.
+    if (this.rateLimit && !await this.rateLimit.consumeLineSupportRequestSlot(event.lineUserId)) {
+      await this.deliverReply(event, SUPPORT_DAILY_LIMIT_REPLY);
+      await this.audit.log({
+        action: 'signup.line.support_requested',
+        ...(asker?.companyId ? { companyId: asker.companyId } : {}),
+        targetType: 'line_user',
+        requestId,
+        result: 'DENIED',
+        riskLevel: 'LOW',
+        metadataJson: { reason: 'daily_limit', linked: Boolean(asker) },
+      });
+      await this.updateEventLog(event.webhookEventId, 'support_rate_limited');
+      // Deliberately NOT paused. Silencing the assistant for 24 hours on the strength of a tap
+      // that opened no request and paged nobody is the worst of both: the customer loses the bot
+      // AND has nothing in the operator inbox to be answered from.
+      return;
+    }
+
+    const created = await this.prisma.client.lineSupportRequest.create({
+      data: {
+        lineUserId: event.lineUserId,
+        lineUserIdHash: hashMessagePreview(event.lineUserId),
+        ...(asker?.companyId ? { companyId: asker.companyId } : {}),
+        ...(asker?.signupRequestId ? { signupRequestId: asker.signupRequestId } : {}),
+        ...(asker?.lastMessageText ? { lastMessageText: asker.lastMessageText } : {}),
+      },
+      select: { id: true },
+    });
+    // Only a linked asker has an assistant to stop, and only now that a request actually exists:
+    // someone who unlinked is talking to the door card, so there is nothing to pause — but they
+    // still reach a human (§2.1.2).
+    if (asker?.companyId) await this.pauseAssistant(event.lineUserId, asker.companyId);
+    await this.deliverReply(event, STAFF_CONTACT_REPLY);
+    await this.signupNotify?.enqueueSupportRequest(created.id);
     await this.audit.log({
       action: 'signup.line.support_requested',
-      ...(paused ? { companyId: paused.companyId } : {}),
-      targetType: 'line_user',
+      ...(asker?.companyId ? { companyId: asker.companyId } : {}),
+      targetType: 'line_support_request',
+      targetId: created.id,
       requestId,
       result: 'SUCCESS',
       riskLevel: 'LOW',
-      metadataJson: { paused: paused !== null, alreadyPaused: paused ? !paused.transitioned : false },
+      metadataJson: {
+        paused: Boolean(asker?.companyId),
+        linked: Boolean(asker),
+        hasPendingSignup: Boolean(asker?.signupRequestId),
+      },
     });
     await this.updateEventLog(event.webhookEventId, 'support_requested');
   }
 
   /**
-   * Stamps the pause on the existing per-LINE-user context row. No row means there is no assistant
-   * to stop — the alert still goes out, it just carries no company.
+   * §2.1.1. Who is this, RIGHT NOW — re-derived on every tap from the ACTIVE identity, never read
+   * off `LineCompanyContext`. That row survives an unlink (§2.5 fixes that going forward, but a
+   * stale one may still exist), so trusting it is what named the wrong shop in the UAT evidence.
    *
-   * `transitioned` is read before the write rather than derived from it, because the write is
-   * unconditional (a lapsed pause must be extended). Two messages racing can both read "not
-   * paused"; the outbox key is what makes that one alert rather than two.
+   * `resolveCompanyForLineUser` already encodes the tie-breaker the spec asks for — the selected
+   * company counts only while the caller is still a member of it. Its `needsSelection` answer is
+   * for a chat that can ask a question; a support ticket cannot, so it falls back to the oldest
+   * membership rather than filing the request against no shop at all.
    */
-  private async pauseAssistant(lineUserId: string): Promise<{ companyId: string; transitioned: boolean } | null> {
-    const before = await this.prisma.client.lineCompanyContext.findUnique({
-      where: { lineUserId },
-      select: { companyId: true, aiPausedUntil: true },
+  private async resolveSupportAsker(lineUserId: string): Promise<{
+    companyId: string | null;
+    signupRequestId?: string;
+    lastMessageText?: string;
+  } | null> {
+    const identity = await this.resolveLineIdentity({ lineUserId });
+    if (!identity || identity.user.status !== 'ACTIVE') {
+      const pending = await this.pendingSignupFor(lineUserId);
+      return pending ? { companyId: null, signupRequestId: pending } : null;
+    }
+    const resolved = await resolveCompanyForLineUser(this.prisma, identity.userId, lineUserId);
+    const companyId = resolved && 'companyId' in resolved
+      ? resolved.companyId
+      : (await this.prisma.client.companyMembership.findFirst({
+        where: { userId: identity.userId, status: 'ACTIVE', company: { status: 'ACTIVE' } },
+        orderBy: { createdAt: 'asc' },
+        select: { companyId: true },
+      }))?.companyId ?? null;
+    if (!companyId) {
+      const pending = await this.pendingSignupFor(lineUserId);
+      return { companyId: null, ...(pending ? { signupRequestId: pending } : {}) };
+    }
+    // §2.2.1: the one line of context an operator needs before opening the shop. `AiTurn` is the
+    // only durable record of what a customer typed (the buffer is in-process and the webhook log
+    // clears its payload at every terminal status), so an unlinked asker simply has none.
+    const lastTurn = await this.prisma.client.aiTurn.findFirst({
+      where: { companyId, userId: identity.userId, userMessagePreview: { not: null } },
+      orderBy: { createdAt: 'desc' },
+      select: { userMessagePreview: true },
     });
-    if (!before) return null;
-    const updated = await this.prisma.client.lineCompanyContext.updateMany({
-      where: { lineUserId },
-      data: { aiPausedUntil: new Date(Date.now() + SUPPORT_PAUSE_MS) },
+    const lastMessageText = lastTurn?.userMessagePreview?.trim().slice(0, SUPPORT_LAST_MESSAGE_MAX_LENGTH);
+    return { companyId, ...(lastMessageText ? { lastMessageText } : {}) };
+  }
+
+  /** The application this asker is still travelling on, if any — the queue link of §2.1.1. Same
+   *  non-terminal state set the door card reads, so the two entrances agree about "still open". */
+  private async pendingSignupFor(lineUserId: string): Promise<string | undefined> {
+    const pending = await this.prisma.client.companySignupRequest.findFirst({
+      where: { lineProviderUserId: lineUserId, state: { in: [...OPEN_LINE_SIGNUP_STATES] } },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
     });
-    if (updated.count !== 1) return null;
-    const wasPaused = !!before.aiPausedUntil && before.aiPausedUntil.getTime() > Date.now();
-    return { companyId: before.companyId, transitioned: !wasPaused };
+    return pending?.id;
+  }
+
+  /**
+   * Stamps the pause on the per-LINE-user context row, creating it when the caller has never used
+   * the company switcher. Upsert rather than update (§2.1.2): the old code could only pause a user
+   * who happened to already have a row, so a single-shop owner — the common case — kept getting
+   * assistant answers on top of a human.
+   *
+   * `companyId` is only used to CREATE the row. An existing row keeps whatever it points at, which
+   * for a multi-company user with a stale selection may NOT be the shop this request was filed
+   * against — and that is fine here: the pause is keyed on `lineUserId`, so it silences the right
+   * conversation either way, and the request row (not this one) is what names the shop.
+   */
+  private async pauseAssistant(lineUserId: string, companyId: string): Promise<void> {
+    const aiPausedUntil = new Date(Date.now() + SUPPORT_PAUSE_MS);
+    await this.prisma.client.lineCompanyContext.upsert({
+      where: { lineUserId },
+      create: { lineUserId, companyId, aiPausedUntil },
+      update: { aiPausedUntil },
+    });
+  }
+
+  /**
+   * §2.4. The customer's own way out. Works with no pause running and with no account at all — it
+   * is a promise ("the assistant is back") that must never depend on state the customer cannot see.
+   */
+  private async handleAssistantResume(event: LineTextEvent, requestId: string): Promise<void> {
+    await this.prisma.client.lineCompanyContext.updateMany({
+      where: { lineUserId: event.lineUserId },
+      data: { aiPausedUntil: null },
+    });
+    const closed = await this.prisma.client.lineSupportRequest.updateMany({
+      where: { lineUserId: event.lineUserId, status: 'OPEN' },
+      data: { status: 'CLOSED', closedAt: new Date(), closedReason: 'customer_resumed' },
+    });
+    await this.deliverReply(event, ASSISTANT_RESUMED_REPLY);
+    await this.audit.log({
+      action: 'signup.line.support_resumed',
+      targetType: 'line_user',
+      requestId,
+      result: 'SUCCESS',
+      riskLevel: 'LOW',
+      metadataJson: { closedRequests: closed.count },
+    });
+    await this.updateEventLog(event.webhookEventId, 'support_resumed');
   }
 
   /**
@@ -2035,6 +2194,13 @@ export class ProcessLineWebhookUseCase {
     }
     if (publicCommand === 'staff_contact') {
       await this.handleStaffContact(event, requestId);
+      return;
+    }
+    // §2.4. Public for the same reason its twin is: the pause is keyed on the LINE user, not on an
+    // account, so the words that lift it must reach as far as the words that set it. Handled ABOVE
+    // the pause gate below, or the reply that lifts the pause would be swallowed by the pause.
+    if (publicCommand === 'resume_ai') {
+      await this.handleAssistantResume(event, requestId);
       return;
     }
     if (publicCommand === 'contact') {

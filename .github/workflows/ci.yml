@@ -422,7 +422,7 @@ jobs:
           pnpm --filter @watchdog-bms/api test:tax-identity-pg
           SYSTEM_ADMIN_CUTOVER_TEST_DATABASE_URL="$DATABASE_URL" \
             pnpm --filter @watchdog-bms/api exec tsx --test prisma/system-admin-cutover.pg.spec.ts
-      # The three identity/username specs prove things only the real indexes can show — the
+      # The four identity/username/support specs prove things only real rows can show — the
       # `lower(username)` unique index, the `(provider, providerChannelId, providerUserId)` slot a
       # LINE signup re-points, and the driver's P2002 shape. Each guards itself on a database named
       # `watchdog_bms`, so they share one: `migrate deploy` for the schema, `sync-permissions` for
@@ -431,7 +431,7 @@ jobs:
       # ONE INVOCATION EACH, deliberately. The runner interleaves spec files, and two of these seed
       # usernames that collide under `lower(username)` — running them together fails on a duplicate
       # that has nothing to do with the code under test.
-      - name: Identity, username and LINE-signup specs against PostgreSQL
+      - name: Identity, username, LINE-signup and support-request specs against PostgreSQL
         if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
         env:
           PGPASSWORD: watchdog_ci
@@ -449,6 +449,9 @@ jobs:
           LINE_SIGNUP_TEST_DATABASE_URL="$DATABASE_URL" \
             pnpm --filter @watchdog-bms/api exec tsx --test \
             src/modules/external-signup/line-signup-stale-identity.pg.spec.ts
+          LINE_SUPPORT_TEST_DATABASE_URL="$DATABASE_URL" \
+            pnpm --filter @watchdog-bms/api exec tsx --test \
+            src/modules/external-signup/line-support-request.pg.spec.ts
       - run: pnpm test
         if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
       - name: P27, OCR, and expense payment integrity against PostgreSQL

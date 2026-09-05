@@ -284,13 +284,17 @@ describe('UnlinkLineIdentityUseCase', () => {
     );
   });
 
-  it('sets status UNLINKED and returns unlinked=true', async () => {
+  it('sets status UNLINKED, clears the selected-company row, and returns unlinked=true', async () => {
     const updated: unknown[] = [];
+    const contextDeletes: unknown[] = [];
     const prisma = {
       client: {
         externalIdentity: {
-          findFirst: async () => ({ id: 'ei-1', userId: 'user-1' }),
+          findFirst: async () => ({ id: 'ei-1', userId: 'user-1', providerUserId: 'Uline-1' }),
           update: async (args: unknown) => { updated.push(args); return {}; },
+        },
+        lineCompanyContext: {
+          deleteMany: async (args: unknown) => { contextDeletes.push(args); return { count: 1 }; },
         },
       },
     } as any;
@@ -300,6 +304,9 @@ describe('UnlinkLineIdentityUseCase', () => {
     assert.equal(result.unlinked, true);
     assert.equal(updated.length, 1);
     assert.equal((updated[0] as any).data.status, 'UNLINKED');
+    // line-support-request-spec-th §2.5: the row outlived the identity, so a support request
+    // named a shop this LINE account had left — and a 24h assistant pause hung on a severed one.
+    assert.deepEqual(contextDeletes, [{ where: { lineUserId: 'Uline-1' } }]);
   });
 });
 

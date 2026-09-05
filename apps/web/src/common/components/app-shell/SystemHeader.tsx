@@ -1,14 +1,49 @@
 'use client';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { logoutCurrentSession } from '@/common/auth/session';
 import { AlertModal } from '@/common/components/modal';
+import {
+  getSupportOpenCount, subscribeSupportOpenCount,
+} from '@/features/system-support-requests/support-requests.api';
+
+/** The one section that has to shout. See `useOpenSupportCount` below. */
+const SUPPORT_REQUESTS_HREF = '/system/support-requests';
+
+/**
+ * line-support-request-spec-th §2.2 delta (Owner 2026-09-05): operators are not LINE-linked, so
+ * this badge — not a push — is how anyone learns a customer is waiting.
+ *
+ * Two sources, deliberately, because navigation is not the only thing that changes the number:
+ *  - a fetch on mount and on every navigation, over the cheap `/count` endpoint (the header asks on
+ *    every page, and answering that with the 200-row queue read was a page nobody renders);
+ *  - a subscription to the inbox page, which publishes every count IT reads — including the one
+ *    after "ตอบแล้ว" or "ให้ AI ทำงานต่อ". Without it, answering a request left the badge in the
+ *    header directly above still claiming somebody was waiting, because the path had not changed.
+ *
+ * Quiet about its own failures throughout: a 403 (not every system admin holds
+ * `system.partner_company.update`) or an outage leaves `null`, which renders no badge at all
+ * rather than a confident zero.
+ */
+function useOpenSupportCount(pathname: string): number | null {
+  const [openCount, setOpenCount] = useState<number | null>(null);
+  useEffect(() => subscribeSupportOpenCount(setOpenCount), []);
+  useEffect(() => {
+    const controller = new AbortController();
+    getSupportOpenCount({ signal: controller.signal })
+      .then((result) => { if (!controller.signal.aborted) setOpenCount(result.open); })
+      .catch(() => { if (!controller.signal.aborted) setOpenCount(null); });
+    return () => controller.abort();
+  }, [pathname]);
+  return openCount;
+}
 
 const SECTIONS = [
   { href: '/system/platform-access', label: 'เปิด–ปิดระบบ' },
   { href: '/system/partners', label: 'พาร์ทเนอร์' },
   { href: '/system/signup-requests', label: 'คำขอสมัครใช้งาน' },
+  { href: SUPPORT_REQUESTS_HREF, label: 'คำขอคุยกับเจ้าหน้าที่' },
   // ค้นหาผู้ใช้ is a section on the partners page, not a tab — /system/users redirects there.
   { href: '/system/company-onboardings/new', label: 'เปิดบริษัทใหม่' },
   { href: '/system/data-rights', label: 'สิทธิข้อมูล' },
@@ -26,6 +61,7 @@ const SystemHeader: React.FC = () => {
   const [signingOut, setSigningOut] = useState(false);
   const [signOutFailed, setSignOutFailed] = useState(false);
   const pathname = usePathname();
+  const openSupportCount = useOpenSupportCount(pathname);
 
   const handleSignOut = async () => {
     if (signingOut) return;
@@ -56,6 +92,11 @@ const SystemHeader: React.FC = () => {
                 }`}
               >
                 {section.label}
+                {section.href === SUPPORT_REQUESTS_HREF && openSupportCount !== null && openSupportCount > 0 && (
+                  <span className="ml-1.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-red-100 px-1.5 py-0.5 text-xs font-semibold text-red-700">
+                    {openSupportCount > 99 ? '99+' : openSupportCount}
+                  </span>
+                )}
               </Link>
             );
           })}

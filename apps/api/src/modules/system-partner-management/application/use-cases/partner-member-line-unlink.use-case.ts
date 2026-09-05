@@ -21,7 +21,7 @@ export class PartnerMemberLineUnlinkUseCase {
 
     const identity = await this.prisma.client.externalIdentity.findFirst({
       where: { userId: cmd.memberUserId, provider: 'LINE', status: 'ACTIVE' },
-      select: { id: true },
+      select: { id: true, providerUserId: true },
     });
     if (!identity) throw new NotFoundException('No active LINE identity linked.');
 
@@ -29,6 +29,13 @@ export class PartnerMemberLineUnlinkUseCase {
       this.prisma.client.externalIdentity.update({
         where: { id: identity.id },
         data: { status: 'UNLINKED', updatedAt: new Date() },
+      }),
+      // line-support-request-spec-th §2.5, in the same transaction as the unlink: a context row
+      // that outlives its identity names a shop this LINE account has left, and is what sent the
+      // support notice to the wrong partner page in UAT. Nothing else keys on it — the intake
+      // state and pending media are keyed by (companyId, userId), which the unlink does not touch.
+      this.prisma.client.lineCompanyContext.deleteMany({
+        where: { lineUserId: identity.providerUserId },
       }),
       this.prisma.client.auditLog.create({
         data: {

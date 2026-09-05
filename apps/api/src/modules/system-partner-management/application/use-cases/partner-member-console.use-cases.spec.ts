@@ -22,6 +22,7 @@ function makePrisma(opts: {
   const credentialUpdates: any[] = [];
   const identityUpdates: any[] = [];
   const userUpdates: any[] = [];
+  const contextDeletes: any[] = [];
   const ops = {
     companyMembership: {
       findFirst: async () =>
@@ -29,8 +30,12 @@ function makePrisma(opts: {
       findMany: async () => [],
     },
     externalIdentity: {
-      findFirst: async () => (opts.identity === false ? null : { id: 'identity-1' }),
+      findFirst: async () => (opts.identity === false ? null : { id: 'identity-1', providerUserId: 'Uline-1' }),
       update: async (args: any) => { identityUpdates.push(args); return {}; },
+    },
+    // line-support-request-spec-th §2.5: the selected-company row goes with the identity.
+    lineCompanyContext: {
+      deleteMany: async (args: any) => { contextDeletes.push(args); return { count: 1 }; },
     },
     userCredential: {
       findUnique: async () =>
@@ -46,7 +51,7 @@ function makePrisma(opts: {
     },
   };
   const client = { ...ops, $transaction: async (arg: any) => (typeof arg === 'function' ? arg(ops) : Promise.all(arg)) };
-  return { prisma: { client } as any, audits, credentialUpdates, identityUpdates, userUpdates };
+  return { prisma: { client } as any, audits, credentialUpdates, identityUpdates, userUpdates, contextDeletes };
 }
 
 const cmd = { companyId: 'co-1', memberUserId: 'user-1', requestingAdminUserId: 'admin-1', requestId: 'req-1' };
@@ -97,13 +102,16 @@ describe('PartnerMemberPasswordRevealUseCase', () => {
 
 describe('PartnerMemberLineUnlinkUseCase', () => {
   it('unlinks the active LINE identity and audits with actor = admin', async () => {
-    const { prisma, audits, identityUpdates } = makePrisma();
+    const { prisma, audits, identityUpdates, contextDeletes } = makePrisma();
     const result = await new PartnerMemberLineUnlinkUseCase(prisma).execute(cmd);
 
     assert.deepEqual(result, { unlinked: true });
     assert.equal(identityUpdates[0].data.status, 'UNLINKED');
     assert.equal(audits[0].action, 'system.partner_member.line_unlink');
     assert.equal(audits[0].actorUserId, 'admin-1');
+    // §2.5, in the SAME transaction: a context row that outlives its identity names a shop this
+    // LINE account has left, which is what sent a support notice to the wrong partner page.
+    assert.deepEqual(contextDeletes, [{ where: { lineUserId: 'Uline-1' } }]);
   });
 
   it('404s when the member has no active LINE identity', async () => {

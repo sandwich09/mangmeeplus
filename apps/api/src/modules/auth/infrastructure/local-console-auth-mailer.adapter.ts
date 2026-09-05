@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import type {
   AccountClaimEmailInput, AuthEmailLinkInput, AuthMailerPort, LineSignupWelcomeEmailInput,
-  PackageChangeNoticeEmailInput, SignupRejectionEmailInput,
+  PackageChangeNoticeEmailInput, SignupRejectionEmailInput, SupportRequestNoticeEmailInput,
 } from '../domain/ports/auth-mailer.port';
 import { renderAccountClaimEmail } from './account-claim-email.template';
 import { renderSignupRejectionEmail } from './signup-rejection-email.template';
@@ -72,6 +72,16 @@ export class LocalConsoleAuthMailerAdapter implements AuthMailerPort {
     console.info('[auth-mailer] package_change_notice', {
       toEmail: input.toEmail, companyName: input.companyName, tierKey: input.tierKey,
     });
+  }
+
+  // A console IS the local mailbox: a developer reading this log has been told, so `true` is the
+  // honest answer here in a way it is not for the disabled adapter.
+  async sendSupportRequestNotice(input: SupportRequestNoticeEmailInput): Promise<boolean> {
+    console.info('[auth-mailer] support_request_notice', {
+      toEmail: input.toEmail, who: input.who, actionUrl: input.actionUrl,
+      ...(input.lastMessageText ? { lastMessageText: input.lastMessageText } : {}),
+    });
+    return true;
   }
 
   private buildUrl(pathname: string, token: string): string {

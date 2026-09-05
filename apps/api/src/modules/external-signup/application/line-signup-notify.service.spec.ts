@@ -20,6 +20,14 @@ function harness(options: {
   fetchImpl?: (url: string, init: any) => Promise<any>;
   markCount?: number;
   admins?: Array<{ companyId: string; userId: string }>;
+  /** LINE users whose assistant pause has not lapsed yet, for the expiry sweep. */
+  stillPaused?: Array<{ lineUserId: string }>;
+  /** The §2.2-delta row `deliverSupportNotice` reads. `null` = the request was deleted meanwhile. */
+  supportRequest?: Record<string, unknown> | null;
+  /** How many admin LINE pushes actually landed. Owner 2026-09-05: in production this is 0. */
+  lineDelivered?: number;
+  /** `false` = no mail provider, `throw` = SES refused. */
+  emailSent?: boolean | 'throw';
 } = {}) {
   const appended: any[] = [];
   const marks: any[] = [];
@@ -27,6 +35,10 @@ function harness(options: {
   const pushes: any[] = [];
   const adminPushes: Array<{ userIds: string[]; text: string; opts?: { skipProviderUserIdHash?: string } }> = [];
   const queries: any[] = [];
+  const letters: any[] = [];
+  const supportUpdates: any[] = [];
+  const supportQueries: any[] = [];
+  const supportDeletes: any[] = [];
 
   const prisma = {
     client: {
@@ -48,6 +60,16 @@ function harness(options: {
       companyMembership: { findFirst: async () => (options.owner ? { user: options.owner } : null), findMany: async () => [] },
       company: { findUnique: async () => ({ name: 'ร้านนิด' }) },
       externalIdentity: { findMany: async () => [] },
+      lineSupportRequest: {
+        findUnique: async () => (options.supportRequest === undefined
+          ? { companyId: 'co-1', lineUserIdHash: 'deadbeefdeadbeef', lastMessageText: null, signupRequestId: null }
+          : options.supportRequest),
+        update: async (args: any) => { supportUpdates.push(args); return args; },
+        findMany: async (args: any) => { supportQueries.push(args); return options.due ?? []; },
+        updateMany: async (args: any) => { supportUpdates.push(args); return { count: (options.due ?? []).length }; },
+        deleteMany: async (args: any) => { supportDeletes.push(args); return { count: (options.due ?? []).length }; },
+      },
+      lineCompanyContext: { findMany: async () => options.stillPaused ?? [] },
     },
   } as any;
 
@@ -68,13 +90,26 @@ function harness(options: {
       activeSystemAdmins: async () => options.admins ?? [{ companyId: 'sys', userId: 'admin-1' }],
       pushToLinkedAdmins: async (userIds: string[], text: string, opts?: any) => {
         adminPushes.push({ userIds, text, ...(opts ? { opts } : {}) });
+        return options.lineDelivered ?? userIds.length;
       },
     } as any,
     { raise: async (kind: string) => { alerts.push(kind); } } as any,
-    { warn: (fields: any) => logs.push(fields), error: (fields: any) => logs.push(fields) } as any,
+    {
+      sendSupportRequestNotice: async (input: any) => {
+        letters.push(input);
+        if (options.emailSent === 'throw') throw new Error('ses_refused');
+        return options.emailSent ?? true;
+      },
+    } as any,
+    {
+      info: (fields: any) => logs.push(fields),
+      warn: (fields: any) => logs.push(fields),
+      error: (fields: any) => logs.push(fields),
+    } as any,
   );
   return {
-    service, appended, marks, logs, pushes, adminPushes, queries, alerts,
+    service, appended, marks, logs, pushes, adminPushes, queries, alerts, letters,
+    supportUpdates, supportQueries, supportDeletes,
     restore: () => { globalThis.fetch = original; },
   };
 }
@@ -185,29 +220,19 @@ describe('P10-L push delivery', () => {
 // L-B follow-up (b). The old exclusion was lost when the fan-out moved to the shared helper, so an
 // operator who is also the person asking got "a customer wants to talk to us" in their OWN chat.
 describe('support notice never lands in the asker own chat', () => {
-  it('carries the asker fingerprint, not their LINE id, and skips that admin', async () => {
-    const asker = harness({ request: completed() });
-    await asker.service.enqueueSupportRequest(LINE_USER, 'co-1');
-    asker.restore();
-    const askerHash = asker.appended[0].payloadJson.data.askerHash;
-
-    assert.ok(askerHash, 'the delivery step needs something to compare against');
-    assert.equal(JSON.stringify(asker.appended[0].payloadJson).includes(LINE_USER), false,
-      'and a raw LINE id must not enter the outbox');
-
-    // …and the delivery step hands that fingerprint to the fan-out as the chat to skip. The filter
-    // itself is exercised against the real service in signup-admin-notify.service.spec.ts.
-    const h = harness({ request: completed() });
-    await h.service.deliverSupportNotice('co-1', askerHash);
+  it('reads the exclusion off the request row, so no LINE id ever enters the outbox', async () => {
+    const h = harness({
+      supportRequest: {
+        companyId: 'co-1', lineUserIdHash: 'feedfacefeedface', lastMessageText: null, signupRequestId: null,
+      },
+    });
+    await h.service.enqueueSupportRequest('req-1');
+    await h.service.deliverSupportNotice('req-1');
     h.restore();
-    assert.equal(h.adminPushes[0]!.opts!.skipProviderUserIdHash, askerHash);
-  });
 
-  it('asks for no exclusion when the payload predates the fingerprint', async () => {
-    const h = harness({ request: completed() });
-    await h.service.deliverSupportNotice('co-1', undefined);
-    h.restore();
-    assert.equal(h.adminPushes[0]!.opts, undefined, 'an old row still reaches every operator');
+    assert.equal(JSON.stringify(h.appended[0].payloadJson).includes(LINE_USER), false,
+      'the payload is an id and nothing else');
+    assert.equal(h.adminPushes[0]!.opts!.skipProviderUserIdHash, 'feedfacefeedface');
   });
 });
 
@@ -375,56 +400,131 @@ describe('P10-L push budget (§7)', () => {
   });
 });
 
-describe('P10-L support alerts (§7/§8)', () => {
-  it('keys the alert per shop per Bangkok day, and carries no LINE id into the outbox', async () => {
+describe('support notices (line-support-request-spec-th §2.2)', () => {
+  it('keys the notice per REQUEST, not per shop per day', async () => {
     const h = harness();
-    const day1 = new Date('2026-09-03T02:00:00.000Z');   // 09:00 Bangkok
-    const sameDay = new Date('2026-09-03T16:00:00.000Z'); // 23:00 Bangkok
-    const nextDay = new Date('2026-09-03T17:30:00.000Z'); // 00:30 Bangkok, the 4th
+    const day1 = new Date('2026-09-03T02:00:00.000Z');
+    const sameDay = new Date('2026-09-03T16:00:00.000Z');
 
-    await h.service.enqueueSupportRequest('Uline-1', 'co-1', day1);
-    await h.service.enqueueSupportRequest('Uline-1', 'co-1', sameDay);
-    await h.service.enqueueSupportRequest('Uline-1', 'co-1', nextDay);
+    await h.service.enqueueSupportRequest('req-1', day1);
+    await h.service.enqueueSupportRequest('req-1', sameDay);
+    await h.service.enqueueSupportRequest('req-2', sameDay);
     h.restore();
 
     const keys = h.appended.map((row: any) => row.eventKey);
-    assert.equal(new Set(keys.slice(0, 2)).size, 1, 'two asks on one Bangkok day are one alert');
-    assert.notEqual(keys[2], keys[0], 'a new Bangkok day is a new alert');
-    // A LINE user id is a durable identifier for a person; the outbox is readable platform-wide.
-    assert.equal(JSON.stringify(h.appended).includes('Uline-1'), false);
+    assert.equal(new Set(keys.slice(0, 2)).size, 1, 'one request is one notice, however often it is queued');
+    assert.notEqual(keys[2], keys[0], 'a second request is a second notice, even the same day');
+    assert.match(keys[0], /^notify:line_support:req:req-1$/);
+    // The whole payload is an id: no LINE id, no name, no message text (P11 F-EM-3).
+    assert.deepEqual(h.appended[0].payloadJson.data, { supportRequestId: 'req-1' });
   });
 
-  it('keys an unlinked stranger by a digest, not by their LINE id', async () => {
+  it('points every channel at the support inbox, and names the shop from the request row', async () => {
     const h = harness();
-    await h.service.enqueueSupportRequest('Uline-1', null);
-    await h.service.enqueueSupportRequest('Uline-2', null);
+    await h.service.deliverSupportNotice('req-1');
     h.restore();
-
-    const [first, second] = h.appended.map((row: any) => row.eventKey);
-    assert.notEqual(first, second, 'two strangers are two alerts');
-    assert.match(first, /^notify:line_support:anon:[0-9a-f]{16}:\d{4}-\d{2}-\d{2}$/);
-    assert.equal(JSON.stringify(h.appended).includes('Uline-1'), false);
+    assert.match(h.adminPushes[0]!.text, /\/system\/support-requests/);
+    assert.match(h.adminPushes[0]!.text, /ร้านนิด/);
+    assert.equal(h.letters[0].actionUrl, 'https://app.example.test/system/support-requests');
+    assert.equal(h.letters[0].toEmail, 'contact@mangmeeplus.com');
+    assert.equal(h.letters[0].who, 'ร้านนิด');
   });
 
-  it('points an operator at the partner page, or the queue when there is no shop yet', async () => {
-    const withShop = harness();
-    await withShop.service.deliverSupportNotice('co-1');
-    withShop.restore();
-    assert.match(withShop.adminPushes[0]!.text, /\/system\/partners\/co-1/);
-    assert.match(withShop.adminPushes[0]!.text, /ร้านนิด/);
-    assert.deepEqual(withShop.adminPushes[0]!.userIds, ['admin-1']);
-
-    const noShop = harness();
-    await noShop.service.deliverSupportNotice(null);
-    noShop.restore();
-    assert.match(noShop.adminPushes[0]!.text, /\/system\/signup-requests/);
+  it('names an applicant by the shop they applied for, never by a LINE id', async () => {
+    const h = harness({
+      supportRequest: {
+        companyId: null, lineUserIdHash: 'aaaabbbbccccdddd',
+        lastMessageText: 'สมัครแล้วยังไม่ได้เรื่องเลยค่ะ', signupRequestId: 'sr-1',
+      },
+      request: { companyName: 'The sun coffee' },
+    });
+    await h.service.deliverSupportNotice('req-1');
+    h.restore();
+    assert.equal(h.letters[0].who, 'ผู้ที่ยังไม่ได้เปิดร้าน (มีคำขอสมัคร: The sun coffee)');
+    assert.equal(h.letters[0].lastMessageText, 'สมัครแล้วยังไม่ได้เรื่องเลยค่ะ');
+    assert.match(h.adminPushes[0]!.text, /สมัครแล้วยังไม่ได้เรื่องเลยค่ะ/);
   });
 
-  it('says nothing when there is no operator to say it to', async () => {
-    const h = harness({ admins: [] });
-    await h.service.deliverSupportNotice('co-1');
+  // The UAT evidence: zero LINE-linked admins, notice PUBLISHED, nobody told, nothing said so.
+  it('records what actually landed on each channel', async () => {
+    const h = harness({ lineDelivered: 0 });
+    await h.service.deliverSupportNotice('req-1');
     h.restore();
+    assert.deepEqual(Object.keys(h.supportUpdates[0].data).sort(),
+      ['emailSent', 'lineNotifiedCount', 'notifiedAt']);
+    assert.equal(h.supportUpdates[0].data.lineNotifiedCount, 0);
+    assert.equal(h.supportUpdates[0].data.emailSent, true);
+    // `notifiedAt` is what separates this from "the drain has not run yet" in the inbox.
+    assert.ok(h.supportUpdates[0].data.notifiedAt instanceof Date);
+    assert.equal(h.logs.at(-1).event, 'signup.support.notified');
+    assert.deepEqual(h.alerts, [], 'the letter went out, so somebody was told');
+  });
+
+  it('raises support_unreachable only when NO channel delivered anything', async () => {
+    const h = harness({ admins: [], lineDelivered: 0, emailSent: false });
+    await h.service.deliverSupportNotice('req-1');
+    h.restore();
+    assert.equal(h.supportUpdates[0].data.lineNotifiedCount, 0);
+    assert.equal(h.supportUpdates[0].data.emailSent, false);
+    assert.ok(h.supportUpdates[0].data.notifiedAt instanceof Date, 'we DID try; nobody heard');
+    assert.equal(h.logs.at(-1).event, 'signup.support.unreachable');
+    assert.equal(h.logs.at(-1).riskLevel, 'HIGH');
+    assert.deepEqual(h.alerts, ['support_unreachable']);
+  });
+
+  it('treats an SES refusal as "not sent" instead of letting it reach the drain', async () => {
+    const h = harness({ admins: [], emailSent: 'throw' });
+    await h.service.deliverSupportNotice('req-1');
+    h.restore();
+    assert.deepEqual(h.alerts, ['support_unreachable']);
+    assert.ok(h.logs.some((row: any) => row.event === 'signup.support.email_failed'));
+  });
+
+  it('does nothing at all for a request that no longer exists', async () => {
+    const h = harness({ supportRequest: null });
+    await h.service.deliverSupportNotice('gone');
+    h.restore();
+    assert.deepEqual(h.letters, []);
     assert.deepEqual(h.adminPushes, []);
+    assert.deepEqual(h.supportUpdates, []);
+  });
+
+  it('expires an OPEN request only once its assistant pause has lapsed (§2.4)', async () => {
+    const h = harness({ due: [{ id: 'req-1' }], stillPaused: [{ lineUserId: 'Uline-9' }] });
+    const result = await h.service.sweepExpiredSupportRequests(new Date('2026-09-05T00:00:00.000Z'));
+    h.restore();
+    assert.equal(result.expired, 1);
+    assert.deepEqual(h.supportQueries[0].where.lineUserId, { notIn: ['Uline-9'] },
+      'somebody still inside their 24h pause is still waiting');
+    assert.equal(h.supportQueries[0].where.status, 'OPEN');
+    assert.equal(h.supportUpdates[0].data.closedReason, 'expired');
+  });
+
+  // §3 PDPA. A settled request keeps a raw LINE id and up to 200 characters the customer typed;
+  // 90 days after the matter was settled neither has a purpose, so the whole row goes.
+  it('deletes settled requests 90 days after they settled, not after they were asked', async () => {
+    const h = harness({ due: [{ id: 'req-1' }, { id: 'req-2' }] });
+    const now = new Date('2026-12-05T00:00:00.000Z');
+    const result = await h.service.purgeSettledSupportRequests(now);
+    h.restore();
+
+    assert.equal(result.purged, 2);
+    const where = h.supportQueries[0].where;
+    // The clock runs from the SETTLED stamp, and an OPEN request is never touched however old:
+    // one of those is somebody still waiting.
+    assert.deepEqual(where.OR.map((clause: any) => clause.status), ['CLOSED', 'ANSWERED']);
+    const cutoff = where.OR[0].closedAt.lte as Date;
+    assert.equal(Math.round((now.getTime() - cutoff.getTime()) / 86_400_000), 90);
+    assert.equal(where.OR[1].answeredAt.lte instanceof Date, true);
+    assert.equal(JSON.stringify(where).includes('requestedAt'), false);
+    assert.deepEqual(h.supportDeletes[0].where, { id: { in: ['req-1', 'req-2'] } });
+  });
+
+  it('deletes nothing at all when nothing is due', async () => {
+    const h = harness({ due: [] });
+    assert.deepEqual(await h.service.purgeSettledSupportRequests(), { purged: 0 });
+    h.restore();
+    assert.deepEqual(h.supportDeletes, []);
   });
 });
 

@@ -14,6 +14,7 @@ import { ProvisionSignupUseCase } from './application/provision-signup.use-case'
 import { SignupAdminQueueUseCase } from './application/signup-admin-queue.use-case';
 import { SignupClaimEmailService } from './application/signup-claim-email.service';
 import { SignupClaimUseCase } from './application/signup-claim.use-case';
+import { SupportRequestAdminUseCase } from './application/support-request-admin.use-case';
 import { SubmitCompanySignupUseCase } from './application/submit-company-signup.use-case';
 import { SubmitLineSignupUseCase } from './application/submit-line-signup.use-case';
 import { GetLineSignupStatusUseCase } from './application/get-line-signup-status.use-case';
@@ -26,6 +27,7 @@ import { PublicLineSignupController } from './presentation/http/public-line-sign
 import { PublicSesEventsController } from './presentation/http/public-ses-events.controller';
 import { SignupClaimEmailInternalController } from './presentation/http/signup-claim-email-internal.controller';
 import { SystemSignupRequestController } from './presentation/http/system-signup-request.controller';
+import { SystemSupportRequestController } from './presentation/http/system-support-request.controller';
 
 @Module({
   // AuthModule: the rate limiter and the mailer port. DataModelCoreModule: the outbox repository.
@@ -38,6 +40,7 @@ import { SystemSignupRequestController } from './presentation/http/system-signup
     PublicLineSignupController,
     PublicSesEventsController,
     SystemSignupRequestController,
+    SystemSupportRequestController,
     CompanyPackageChangeController,
     SignupClaimEmailInternalController,
   ],
@@ -52,6 +55,7 @@ import { SystemSignupRequestController } from './presentation/http/system-signup
     SignupClaimUseCase,
     ProvisionSignupUseCase,
     SignupAdminQueueUseCase,
+    SupportRequestAdminUseCase,
     SignupAdminNotifyService,
     LineSignupNotifyService,
     SignupOpsAlertService,
