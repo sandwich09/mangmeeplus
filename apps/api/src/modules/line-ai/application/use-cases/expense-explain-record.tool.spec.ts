@@ -8,7 +8,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
-import { ExpenseExplainRecordTool, explainAssumptions, explainTotalsIdentity, readExplainRecordRef } from './erp-core-detail-tools.use-case';
+import { ExpenseExplainRecordTool, explainAssumptions, readExplainRecordRef } from './erp-core-detail-tools.use-case';
 import { LINE_RECENT_CAPTURE_WINDOW_MS } from '../../../expenses/application/services/line-recent-capture';
 
 const ctx = {
@@ -30,6 +30,8 @@ const BHC = {
     { description: 'ค่าบริการ 10%', chargeKind: 'SERVICE_CHARGE', quantity: '1', unitPrice: '152.00', lineSubtotalAmount: '152.00', vatAmount: '10.64' },
   ],
   charges: [{ kind: 'SERVICE_CHARGE', label: 'ค่าบริการ', amount: '152.00', vatAmount: '10.64' }],
+  // Slice B computes this for every record from the stored header against the stored lines.
+  totalsIdentity: { ok: true, gapAmount: '0.00' },
   attachments: [],
 };
 
@@ -121,17 +123,15 @@ describe('expense.explain_record', () => {
     assert.deepEqual(readExplainRecordRef({ recordRefKind: 'anything-else' }), { kind: 'recent' });
   });
 
-  it('passes slice B\'s totals-identity verdict through, and reports none when the detail has none', async () => {
+  it('carries slice B\'s totals-identity verdict through, both ways', async () => {
     const { repo } = makeRepo();
     const clean = await new ExpenseExplainRecordTool(getExpense(), repo).execute(ctx as any, {});
-    assert.equal((clean.data as any).totalsIdentity, undefined, 'no verdict is invented');
+    assert.deepEqual((clean.data as any).totalsIdentity, { ok: true, gapAmount: '0.00' });
     const broken = await new ExpenseExplainRecordTool(
       getExpense({ ...BHC, totalsIdentity: { ok: false, gapAmount: '12.00' } }), repo,
     ).execute(ctx as any, {});
-    assert.deepEqual((broken.data as any).totalsIdentity, { ok: false, gapAmount: '12.00' });
-    // Shape guard: only a real boolean verdict is forwarded.
-    assert.equal(explainTotalsIdentity({ totalsIdentity: { ok: 'no' } }), undefined);
-    assert.deepEqual(explainTotalsIdentity({ totalsIdentity: { ok: false } }), { ok: false, gapAmount: '0.00' });
+    assert.deepEqual((broken.data as any).totalsIdentity, { ok: false, gapAmount: '12.00' },
+      'a record that does not add up says so, verbatim from the detail mapper');
   });
 
   it('names the values the reader assumed, and stays silent for a hand-typed record', () => {

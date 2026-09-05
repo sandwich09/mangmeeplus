@@ -292,14 +292,21 @@ export class ExpenseExplainRecordTool implements ErpReadToolPort {
             grandTotalAmount: expense.grandTotalAmount,
           },
           assumptions: explainAssumptions(expense),
-          // Slice B's stored-header-vs-stored-lines check, passed straight through when the detail
-          // carries it. A record whose own totals do not reconcile must SAY SO before it explains
-          // an arithmetic the reader would otherwise take as verified.
-          ...(explainTotalsIdentity(expense) ? { totalsIdentity: explainTotalsIdentity(expense) } : {}),
+          // Slice B's stored-header-vs-stored-lines check, computed by the detail mapper for every
+          // record. A record whose own totals do not reconcile must SAY SO before it explains an
+          // arithmetic the reader would otherwise take as verified.
+          totalsIdentity: expense.totalsIdentity,
           // What the LINE lanes can actually change TODAY (spec §5.3): the correction lane's text
-          // fields. `amount` is deliberately excluded — `canCorrectAmount` refuses a multi-line
-          // record and (slice B) any record carrying a charge line, so promising an amount edit
-          // over LINE would be a lie on exactly the receipts this tool explains. S-4 replaces this.
+          // fields.
+          //
+          // `amount` is deliberately excluded and NOT computed from `canCorrectAmount`, even though
+          // that predicate is the authority. It reads `taxCodeDefinitionId` and
+          // `externalTaxCodeSnapshot`, which `ExpenseLineSummary` does not carry — so evaluating it
+          // here would come out MORE permissive than the lane really is and could tell a user to
+          // type a correction the lane then refuses. That is exactly the E3 dishonesty this slice
+          // exists to remove, so the conservative answer stands: amounts are edited in web.
+          // (`canCorrectAmount` also refuses every record with a charge line, which is every
+          // receipt this tool explains.) S-4 replaces this pair with the real draft-edit capability.
           editableOverLine: ['expenseDate', 'vendorName', 'documentNumber', 'note'],
           amountEditableOverLine: false,
         },
@@ -323,21 +330,6 @@ export class ExpenseExplainRecordTool implements ErpReadToolPort {
     // ambiguity refusal — this is a read, and the answer names the vendor/date/number it explains.
     return rows[0]?.id;
   }
-}
-
-/**
- * Slice B's `ExpenseDetail.totalsIdentity` — stored header totals vs the stored lines — read
- * defensively so this tool works both before and after that field lands. `undefined` means the
- * detail does not report the check at all, which the answer states nothing about; a reported
- * `ok: false` is surfaced with its gap so the reader is warned before believing the arithmetic.
- */
-export function explainTotalsIdentity(expense: Record<string, unknown>): { ok: boolean; gapAmount: string } | undefined {
-  const raw = expense['totalsIdentity'];
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
-  const identity = raw as Record<string, unknown>;
-  if (typeof identity['ok'] !== 'boolean') return undefined;
-  const gap = identity['gapAmount'];
-  return { ok: identity['ok'], gapAmount: typeof gap === 'string' || typeof gap === 'number' ? String(gap) : '0.00' };
 }
 
 /**
