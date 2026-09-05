@@ -1,6 +1,6 @@
 import { ConflictException, Injectable, Logger } from '@nestjs/common';
 import {
-  COMPANY_BUSINESS_CATEGORIES, PLAN_TIER_PRESETS, type CompanyBusinessCategory,
+  COMPANY_BUSINESS_CATEGORIES, PLAN_TIER_PRESETS, SIGNUP_TRIAL_TIER_KEY, type CompanyBusinessCategory,
 } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { AppConfigService } from '../../../common/config/app-config.service';
@@ -385,11 +385,11 @@ export class ProvisionSignupUseCase {
       warmupSlipLimit: this.config.lineSignupWarmupSlips,
     };
 
-    await this.bestEffort(companyId, requestId, 'plan_term_warmup', request.source, () =>
+    await this.bestEffort(companyId, requestId, 'plan_term_warmup', request.source, async () => {
       // Upsert, not update: the term row is written by onboarding after ITS transaction commits and
       // is explicitly allowed to be missing (a company with no term is unlimited, not broken), so
       // an update here would raise P2025 on a provisioning that has already created the shop.
-      this.prisma.client.companyPlanTerm.upsert({
+      await this.prisma.client.companyPlanTerm.upsert({
         where: { companyId },
         create: {
           companyId,
@@ -401,20 +401,34 @@ export class ProvisionSignupUseCase {
           termEndsAt: new Date(now.getTime() + TRIAL_DAYS * DAY_MS),
           ...warmup,
         },
-        // Dates and tier are left exactly as onboarding set them: this never shortens a term.
-        update: warmup,
-      }),
-    );
+        // Review F9: writes NOTHING to a row that exists. Dates, tier and warm-up are all left as
+        // whoever wrote them left them, so this can neither shorten a term nor re-cap a shop.
+        update: {},
+      });
+      // The warm-up is stamped exactly once, on a term that has never had one — normally the row
+      // onboarding created moments ago. An admin retry weeks later matches nothing here, so a shop
+      // whose first week is long past is not put back under the anti-abuse ceiling.
+      await this.prisma.client.companyPlanTerm.updateMany({
+        where: { companyId, warmupUntil: null },
+        data: warmup,
+      });
+    });
 
     // Review G-06: without this a free trial shop spends the PLATFORM default AI budget. Same
     // upsert shape `set-partner-ai-model` uses, so there is one way this row comes into being.
-    await this.bestEffort(companyId, requestId, 'ai_budget', request.source, () =>
-      this.prisma.client.companyAiConfiguration.upsert({
+    await this.bestEffort(companyId, requestId, 'ai_budget', request.source, async () => {
+      await this.prisma.client.companyAiConfiguration.upsert({
         where: { companyId },
         create: { companyId, monthlyBudgetSatang: this.config.lineFreeAiBudgetSatang },
-        update: { monthlyBudgetSatang: this.config.lineFreeAiBudgetSatang },
-      }),
-    );
+        update: {},
+      });
+      // `null` is the schema's "inherit the platform default", so this caps a shop that has never
+      // been given a budget and leaves an admin-set one — raised or lowered — exactly alone (F9).
+      await this.prisma.client.companyAiConfiguration.updateMany({
+        where: { companyId, monthlyBudgetSatang: null },
+        data: { monthlyBudgetSatang: this.config.lineFreeAiBudgetSatang },
+      });
+    });
 
     // Review B-06: an owner with a second shop otherwise meets a company picker instead of the shop
     // they just opened. Same upsert the LINE link use-case does when it resolves a company.
@@ -481,10 +495,10 @@ const WARMUP_DAYS = 7;
 const TRIAL_DAYS = 30;
 /**
  * Owner 2026-09-05 (review R02): ONE trial preset for every shop this flow opens, whichever form
- * it came in through. Named once so the create path, the recovery path and the LINE trial guards
- * can never drift apart again.
+ * it came in through. The definition lives in contracts (review F1) so the page that advertises
+ * the trial and the code that grants it read the same key.
  */
-const SIGNUP_TRIAL_TIER = 'FREE_TRIAL_15' as const;
+const SIGNUP_TRIAL_TIER = SIGNUP_TRIAL_TIER_KEY;
 
 /** The subset of `CompanySignupRequest` provisioning reads. */
 type SignupRow = {

@@ -59,6 +59,14 @@ export const PLAN_TIER_PRESETS: Record<PlanTierKey, { labelTh: string; branchLim
   ENTERPRISE_1999: { labelTh: 'ธุรกิจ (ENTERPRISE)', branchLimit: 10, employeeLimit: 30, monthlySlipLimit: 2000 },
 };
 
+/**
+ * Owner 2026-09-05 (review R02/F1): the one tier every self-service signup provisions, whichever
+ * form it came in through. Named here rather than in provisioning so the page that advertises the
+ * trial and the code that grants it cannot drift — the form used to promise PRO limits while
+ * provisioning wrote this.
+ */
+export const SIGNUP_TRIAL_TIER_KEY: PlanTierKey = 'FREE_TRIAL_15';
+
 /** Catalog order, cheapest first — the order a shop moves through, not an alphabetical accident. */
 const PLAN_TIER_LADDER: readonly PlanTierKey[] = [
   'FREE_TRIAL_15', 'STARTER_249', 'BASIC_499', 'PRO_999', 'ENTERPRISE_1999',

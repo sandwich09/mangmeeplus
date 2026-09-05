@@ -76,7 +76,8 @@ function OfferCards() {
         );
       })}
       <p className="pt-1 text-[13px] leading-6 text-gray-500">
-        ตอนนี้เปิดให้สมัครแพ็กเกจมืออาชีพ แบบทดลองใช้ฟรีก่อน แพ็กเกจอื่นจะเปิดเร็ว ๆ นี้
+        {/* F1: this named a paid package for a shop that opens on the free trial. */}
+        ตอนนี้เปิดให้ทดลองใช้ฟรีก่อน แพ็กเกจแบบเสียค่าบริการจะเปิดเร็ว ๆ นี้
       </p>
     </fieldset>
   );

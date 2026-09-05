@@ -283,7 +283,8 @@ function Welcome() {
             {/* Hidden entirely when the term is unknown: a made-up date is worse than no date. */}
             {trialEndsAt ? (
               <p className="mt-2 text-[15px] leading-7 text-gray-600">
-                ทดลองใช้แพ็กเกจ PRO ฟรี ถึง {formatThaiDate(trialEndsAt)}
+                {/* F1: named the PRO package while provisioning writes the free trial. */}
+                ทดลองใช้ฟรี ถึง {formatThaiDate(trialEndsAt)}
               </p>
             ) : null}
 

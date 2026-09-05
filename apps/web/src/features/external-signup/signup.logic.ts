@@ -1,6 +1,7 @@
 import {
   CURRENT_LEGAL_DOCUMENTS,
   PLAN_TIER_PRESETS,
+  SIGNUP_TRIAL_TIER_KEY,
   type PlanTierKey,
   type PublicSignupStatusKey,
   type SignupOfferKey,
@@ -42,7 +43,9 @@ function limitsLabel(tierKey: PlanTierKey): string {
 export const SIGNUP_OFFERS: readonly SignupOfferCard[] = [
   { tierKey: 'STARTER_249', offerKey: 'STARTER_249', nameTh: 'เริ่มต้น', priceLabel: '฿249 / เดือน', selectable: false, unavailableReason: UNAVAILABLE_REASON },
   { tierKey: 'BASIC_499', offerKey: 'BASIC_499', nameTh: 'เติบโต', priceLabel: '฿499 / เดือน', selectable: false, unavailableReason: UNAVAILABLE_REASON },
-  { tierKey: 'PRO_999', offerKey: 'FREE_TRIAL', nameTh: 'มืออาชีพ', priceLabel: '฿999 / เดือน', selectable: true, badge: 'ทดลองใช้ฟรี' },
+  // F1: the card names the tier provisioning actually writes. It used to advertise PRO — 5 branches,
+  // 10 staff, 100 receipts, ฿999 — for a shop that opens on 1/2/15 with a first-week ceiling.
+  { tierKey: SIGNUP_TRIAL_TIER_KEY, offerKey: 'FREE_TRIAL', nameTh: 'ทดลองใช้ฟรี', priceLabel: 'ฟรี 30 วัน', selectable: true },
   { tierKey: 'ENTERPRISE_1999', offerKey: 'ENTERPRISE_1999', nameTh: 'ธุรกิจ', priceLabel: '฿1,999 / เดือน', selectable: false, unavailableReason: UNAVAILABLE_REASON },
 ];
 

@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { PLAN_TIER_PRESETS, SIGNUP_TRIAL_TIER_KEY } from '@watchdog-bms/contracts';
 import {
   clampMobileInput,
   isThaiMobile,
@@ -93,7 +94,7 @@ describe('offer catalog', () => {
     const selectable = SIGNUP_OFFERS.filter((offer) => offer.selectable);
     assert.equal(selectable.length, 1);
     assert.equal(selectable[0]!.offerKey, SELECTABLE_OFFER_KEY);
-    assert.equal(selectable[0]!.tierKey, 'PRO_999');
+    assert.equal(selectable[0]!.tierKey, SIGNUP_TRIAL_TIER_KEY);
   });
 
   // Owner 2026-09-05: no package is chosen at signup any more, so what the form submits must name
@@ -101,6 +102,31 @@ describe('offer catalog', () => {
   // was never shown and is never provisioned.
   it('submits the free-trial offer key, not the retired PRO trial', () => {
     assert.equal(SELECTABLE_OFFER_KEY, 'FREE_TRIAL');
+  });
+
+  /**
+   * F1. The page promised PRO limits — 5 branches, 10 staff, 100 receipts, ฿999 — while
+   * provisioning writes FREE_TRIAL_15: 1 branch, 2 staff, 15 receipts, plus a first-week ceiling.
+   * The numbers on the card have to be the numbers the shop gets.
+   */
+  it('offers the tier that is actually provisioned, with its real limits', () => {
+    const selectable = SIGNUP_OFFERS.find((offer) => offer.selectable)!;
+
+    assert.equal(selectable.tierKey, SIGNUP_TRIAL_TIER_KEY);
+    const preset = PLAN_TIER_PRESETS[SIGNUP_TRIAL_TIER_KEY];
+    assert.match(offerLimitsLabel(selectable), new RegExp(`${preset.branchLimit} สาขา`));
+    assert.match(offerLimitsLabel(selectable), new RegExp(`${preset.employeeLimit} คน`));
+    assert.match(offerLimitsLabel(selectable), new RegExp(`${preset.monthlySlipLimit} ใบ/เดือน`));
+  });
+
+  it('names no PRO package and quotes no price on the offer the applicant takes', () => {
+    const selectable = SIGNUP_OFFERS.find((offer) => offer.selectable)!;
+    const shown = `${selectable.nameTh} ${selectable.priceLabel} ${selectable.badge ?? ''}`;
+
+    assert.equal(/PRO|มืออาชีพ/i.test(shown), false, `the trial card still sells PRO: ${shown}`);
+    assert.equal(/999/.test(shown), false, `the trial card still quotes a price: ${shown}`);
+    // And no card anywhere still carries the retired offer or the PRO tier.
+    assert.deepEqual(SIGNUP_OFFERS.filter((o) => o.tierKey === 'PRO_999' || o.offerKey === 'PRO_TRIAL'), []);
   });
 
   it('gives every unavailable card a reason assistive technology can read', () => {
@@ -111,8 +137,8 @@ describe('offer catalog', () => {
   });
 
   it('quotes the quota from the shared tier presets rather than restating numbers', () => {
-    const pro = SIGNUP_OFFERS.find((offer) => offer.tierKey === 'PRO_999')!;
-    assert.match(offerLimitsLabel(pro), /5 สาขา · 10 คน · อ่านสลิป 100 ใบ\/เดือน/);
+    const paid = SIGNUP_OFFERS.find((offer) => offer.tierKey === 'BASIC_499')!;
+    assert.match(offerLimitsLabel(paid), /2 สาขา · 5 คน · อ่านสลิป 50 ใบ\/เดือน/);
   });
 
   it('pins the consent version to the current legal artifacts', () => {

@@ -263,6 +263,31 @@ describe('AccountMergeUseCase', () => {
       });
     }
 
+    /**
+     * F5: the inactive-target rule on its own. No OWNER is involved and the roles match exactly,
+     * so neither the owner invariant nor the role rule can be what refuses this — only the fact
+     * that the membership being kept is not access the person actually has. Merging into it would
+     * close the working membership and leave them locked out of a shop they can use today.
+     */
+    it('refuses when the membership that would be kept is not active, roles notwithstanding', async () => {
+      const h = makeHarness({
+        memberships: [
+          { id: 'm-new-shared', companyId: 'co-shared', userId: 'new-1', status: 'ACTIVE', roleKeys: ['STAFF'], companyName: 'ร้านมั่งมี' },
+          { id: 'm-old-shared', companyId: 'co-shared', userId: 'existing-1', status: 'DISABLED', roleKeys: ['STAFF'], companyName: 'ร้านมั่งมี' },
+        ],
+      });
+
+      const plan = await h.preview();
+      assert.equal(plan.canMerge, false);
+      assert.deepEqual(plan.companies, [
+        { companyName: 'ร้านมั่งมี', outcome: 'blocked', reason: 'target_membership_inactive' },
+      ]);
+
+      await assert.rejects(() => h.run(), ConflictException);
+      assert.equal(h.memberships.find((m) => m.id === 'm-new-shared')!.status, 'ACTIVE');
+      assert.equal(h.users['new-1']!.status, 'ACTIVE');
+    });
+
     it('still allows the overlap when the two memberships are the same thing', async () => {
       const h = makeHarness({
         memberships: [
