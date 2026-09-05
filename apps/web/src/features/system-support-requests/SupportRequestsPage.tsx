@@ -109,6 +109,120 @@ export function SupportRowActions({ item, busy, onAnswered, onResume }: {
 }
 
 /**
+ * Everything below the tabs: the error banner OR the table, never both.
+ *
+ * Extracted from the page so that "an error replaces the table" is a RENDER assertion rather than
+ * a regex over the source. It used to be neither — the table rendered unconditionally under the
+ * banner, so a first-load 403 told an operator "ไม่มีคำขอในกลุ่มนี้", which is the one thing a
+ * permission error does not know. Having the decision in one function is what makes rendering with
+ * `error` set provably unable to produce a table.
+ */
+export function SupportInboxBody({ error, loading, items, busyId, onRetry, onAnswered, onResume }: {
+  error: string | null;
+  loading: boolean;
+  items: SupportRequestItemDto[];
+  busyId: string | null;
+  onRetry: () => void;
+  onAnswered: (item: SupportRequestItemDto) => void;
+  onResume: (item: SupportRequestItemDto) => void;
+}) {
+  if (error) {
+    return (
+      <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        {error}
+        <button type="button" className="ml-3 underline" onClick={onRetry}>
+          ลองใหม่
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
+      <div className="overflow-x-auto">
+        <table className="min-w-full divide-y divide-gray-200 text-left text-sm">
+          <thead className="bg-gray-50 text-xs font-medium uppercase text-gray-500">
+            <tr>
+              <th className="px-4 py-3">ผู้ขอ</th>
+              <th className="px-4 py-3">รอมานาน</th>
+              <th className="px-4 py-3">ข้อความล่าสุด</th>
+              <th className="px-4 py-3">แจ้งทีมงาน</th>
+              <th className="px-4 py-3">การทำงาน</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100 text-gray-700">
+            {loading ? (
+              [...Array(4)].map((_, i) => <SkeletonRow key={i} />)
+            ) : items.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="px-4 py-12 text-center text-sm text-gray-400">
+                  ไม่มีคำขอในกลุ่มนี้
+                </td>
+              </tr>
+            ) : items.map((item) => {
+              const closedReason = supportClosedReasonTh(item.closedReason);
+              return (
+                <tr key={item.id} className="align-top hover:bg-gray-50">
+                  {/* Bounded for the same reason the message cell is: the applicant label
+                      ("ผู้ที่ยังไม่ได้เปิดร้าน (มีคำขอสมัคร: …)") carries a shop name an operator
+                      did not choose the length of. */}
+                  <td className="max-w-[14rem] px-4 py-3">
+                    <p className="break-words font-medium text-gray-900">{item.askerLabel}</p>
+                    {/* §3 PDPA: a fragment of the hash, so two rows can be matched to one person
+                        without a LINE id ever reaching this page. */}
+                    <p className="mt-0.5 text-xs text-gray-400">รหัสผู้ขอ {item.askerRef}</p>
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      <ChipBadge chip={supportStatusChip(item.status)} />
+                      {closedReason && <span className="text-xs text-gray-400">{closedReason}</span>}
+                    </div>
+                    {item.answeredByDisplayName && (
+                      <p className="mt-0.5 text-xs text-gray-500">ตอบโดย {item.answeredByDisplayName}</p>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-xs text-gray-600">
+                    {/* The clock stops when somebody answered or the request closed: a settled
+                        row that keeps counting reads as a customer still waiting. */}
+                    <p className="text-gray-500">{waitedLabelTh(item)}</p>
+                    <p className="font-medium text-gray-900">{waitedForTh(item)}</p>
+                    <p className="mt-0.5 text-gray-500">{formatThaiDateTime(item.requestedAt)}</p>
+                  </td>
+                  {/* 200 characters of Thai in an unconstrained cell pushed the action column off
+                      a 390px screen. Bounded, clamped and breakable; the full text is on the title
+                      attribute for anyone who needs it.
+
+                      NO `block` here: Tailwind emits `.block{display:block}` after
+                      `.line-clamp-2`, so it overrides the `-webkit-box` the clamp needs and the
+                      cell renders all 200 characters (352px tall at 390px, measured). Every other
+                      `line-clamp-2` in this repo omits it for the same reason. */}
+                  <td className="max-w-[16rem] px-4 py-3 text-xs text-gray-600">
+                    {item.lastMessageText ? (
+                      <span className="line-clamp-2 break-words" title={item.lastMessageText}>
+                        “{item.lastMessageText}”
+                      </span>
+                    ) : '—'}
+                  </td>
+                  <td className="px-4 py-3">
+                    <ChipBadge chip={notifiedSummary(item)} />
+                  </td>
+                  <td className="px-4 py-3">
+                    <SupportRowActions
+                      item={item}
+                      busy={busyId === item.id}
+                      onAnswered={() => onAnswered(item)}
+                      onResume={() => onResume(item)}
+                    />
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/**
  * line-support-request-spec-th §2.3 — "คำขอคุยกับเจ้าหน้าที่".
  *
  * Owner 2026-09-05: no operator has LINE linked, so this page is the PRIMARY channel, not a
@@ -243,93 +357,15 @@ export default function SupportRequestsPage() {
           })}
         </div>
 
-        {error && (
-          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {error}
-            <button type="button" className="ml-3 underline" onClick={() => void load()}>
-              ลองใหม่
-            </button>
-          </div>
-        )}
-
-        {/* Gated on `!error` like the signup queue: an empty table under a permission banner says
-            "there is nothing waiting", which is the one thing a 403 does not tell us. */}
-        {!error && (
-        <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200 text-left text-sm">
-              <thead className="bg-gray-50 text-xs font-medium uppercase text-gray-500">
-                <tr>
-                  <th className="px-4 py-3">ผู้ขอ</th>
-                  <th className="px-4 py-3">รอมานาน</th>
-                  <th className="px-4 py-3">ข้อความล่าสุด</th>
-                  <th className="px-4 py-3">แจ้งทีมงาน</th>
-                  <th className="px-4 py-3">การทำงาน</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100 text-gray-700">
-                {loading ? (
-                  [...Array(4)].map((_, i) => <SkeletonRow key={i} />)
-                ) : items.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="px-4 py-12 text-center text-sm text-gray-400">
-                      ไม่มีคำขอในกลุ่มนี้
-                    </td>
-                  </tr>
-                ) : items.map((item) => {
-                  const busy = busyId === item.id;
-                  const closedReason = supportClosedReasonTh(item.closedReason);
-                  return (
-                    <tr key={item.id} className="align-top hover:bg-gray-50">
-                      <td className="px-4 py-3">
-                        <p className="font-medium text-gray-900">{item.askerLabel}</p>
-                        {/* §3 PDPA: a fragment of the hash, so two rows can be matched to one
-                            person without a LINE id ever reaching this page. */}
-                        <p className="mt-0.5 text-xs text-gray-400">รหัสผู้ขอ {item.askerRef}</p>
-                        <div className="mt-1.5 flex flex-wrap gap-1.5">
-                          <ChipBadge chip={supportStatusChip(item.status)} />
-                          {closedReason && <span className="text-xs text-gray-400">{closedReason}</span>}
-                        </div>
-                        {item.answeredByDisplayName && (
-                          <p className="mt-0.5 text-xs text-gray-500">ตอบโดย {item.answeredByDisplayName}</p>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-xs text-gray-600">
-                        {/* The clock stops when somebody answered or the request closed: a
-                            settled row that keeps counting reads as a customer still waiting. */}
-                        <p className="text-gray-500">{waitedLabelTh(item)}</p>
-                        <p className="font-medium text-gray-900">{waitedForTh(item)}</p>
-                        <p className="mt-0.5 text-gray-500">{formatThaiDateTime(item.requestedAt)}</p>
-                      </td>
-                      {/* 200 characters of Thai in an unconstrained cell pushed the action column
-                          off a 390px screen. Bounded, clamped and breakable; the full text is on
-                          the title attribute for anyone who needs it. */}
-                      <td className="max-w-[16rem] px-4 py-3 text-xs text-gray-600">
-                        {item.lastMessageText ? (
-                          <span className="line-clamp-2 block break-words" title={item.lastMessageText}>
-                            “{item.lastMessageText}”
-                          </span>
-                        ) : '—'}
-                      </td>
-                      <td className="px-4 py-3">
-                        <ChipBadge chip={notifiedSummary(item)} />
-                      </td>
-                      <td className="px-4 py-3">
-                        <SupportRowActions
-                          item={item}
-                          busy={busy}
-                          onAnswered={() => void handleAnswered(item)}
-                          onResume={() => void handleResume(item)}
-                        />
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-        )}
+        <SupportInboxBody
+          error={error}
+          loading={loading}
+          items={items}
+          busyId={busyId}
+          onRetry={() => void load()}
+          onAnswered={(item) => void handleAnswered(item)}
+          onResume={(item) => void handleResume(item)}
+        />
       </div>
     </div>
   );

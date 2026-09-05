@@ -246,6 +246,16 @@ export class AuthRateLimitService {
    * No `emitSecurityEvent` either: `SecurityEventRisk` is HIGH or CRITICAL, and the deployed metric
    * filter alarms on both. A customer asking for help a fourth time is neither — the webhook writes
    * a `DENIED` audit row for it, which is where this belongs.
+   *
+   * `degrade-to-local`, and this is the whole reason the method exists rather than a one-line
+   * `assertWithinLimit` call. The default `fail-closed` throws `ServiceUnavailableException` in
+   * production when Redis is unavailable — which here would propagate out of `handleStaffContact`
+   * and produce NO request row, NO notice and NO reply, on a webhook event already claimed and so
+   * never redelivered. That is precisely the silent "รับเรื่องแล้วค่ะ that reached nobody" this
+   * branch exists to remove, and no non-production environment can catch it because outside
+   * production every policy already degrades. This bucket guards no spend and no secret (the cost
+   * it bounds is rows and emails), so it takes the §4-rule-6 side: still bounded, at 3 per task
+   * instead of 3 per fleet, rather than trading a customer's route to a human for it.
    */
   async consumeLineSupportRequestSlot(lineProviderUserId: string): Promise<boolean> {
     const decision = await this.limits.consume(
@@ -253,6 +263,7 @@ export class AuthRateLimitService {
       lineProviderUserId,
       LINE_SUPPORT_MAX_PER_USER_PER_DAY,
       LINE_SIGNUP_DAY_SECONDS,
+      'degrade-to-local',
     );
     return decision.allowed;
   }

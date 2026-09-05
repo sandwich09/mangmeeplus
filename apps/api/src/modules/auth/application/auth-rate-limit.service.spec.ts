@@ -109,6 +109,49 @@ describe('AuthRateLimitService LINE-first signup buckets', () => {
   });
 });
 
+/**
+ * The support floor is the ONE bucket in this family that may not fail closed, and no non-production
+ * environment can show it: outside production every policy already degrades, so a `fail-closed`
+ * support bucket looks perfect in UAT and, the first time Redis blinks in production, throws
+ * `ServiceUnavailableException` out of `handleStaffContact` — no row, no notice, no reply, on a
+ * webhook event already claimed and therefore never redelivered. That is the E1 silence this whole
+ * branch exists to remove, reintroduced by its own abuse control.
+ *
+ * So the store here is real, configured with PRODUCTION semantics, and cannot answer.
+ */
+describe('AuthRateLimitService support-request floor under a production store failure', () => {
+  const brokenProductionStore = () => {
+    const store = new RedisRateLimitService({ redisUrl: 'redis://unused', isProduction: true } as never);
+    const down = async () => { throw new Error('redis down'); };
+    (store as unknown as { client: unknown }).client = { eval: down, get: down, ttl: down };
+    return store;
+  };
+
+  it('keeps answering, and still bounds the day to three, when Redis is down in production', async () => {
+    const service = new AuthRateLimitService(config, brokenProductionStore());
+
+    // The control: a cost-bearing bucket on the same broken store still refuses, which is what
+    // proves production semantics are genuinely in force here rather than quietly degraded.
+    await assert.rejects(service.assertLineSignupUserAllowed('Uline-1'), /unavailable/i);
+
+    for (let ask = 0; ask < 3; ask += 1) {
+      assert.equal(await service.consumeLineSupportRequestSlot('Uline-1'), true, `ask ${ask + 1} reaches a human`);
+    }
+    // Degraded is not unlimited: the limit still applies, per task instead of per fleet.
+    assert.equal(await service.consumeLineSupportRequestSlot('Uline-1'), false);
+    assert.equal(await service.consumeLineSupportRequestSlot('Uline-2'), true, 'and it is still per person');
+  });
+
+  it('bounds the day to three on a healthy store too', async () => {
+    const service = makeService();
+    for (let ask = 0; ask < 3; ask += 1) {
+      assert.equal(await service.consumeLineSupportRequestSlot('Uline-1'), true);
+    }
+    assert.equal(await service.consumeLineSupportRequestSlot('Uline-1'), false);
+    assert.equal(await service.consumeLineSupportRequestSlot('Uline-2'), true);
+  });
+});
+
 describe('AuthRateLimitService customer register', () => {
   it('blocks by IP plus LINE channel after the configured limit', async () => {
     const service = makeService();

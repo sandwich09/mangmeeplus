@@ -1610,11 +1610,10 @@ export class ProcessLineWebhookUseCase {
       where: { lineUserId: event.lineUserId, status: 'OPEN' },
       select: { id: true },
     });
-    // Only a linked asker has an assistant to stop. Someone who unlinked is talking to the door
-    // card, so there is nothing to pause — but they still reach a human (§2.1.2).
-    if (asker?.companyId) await this.pauseAssistant(event.lineUserId, asker.companyId);
-
     if (open) {
+      // Still waiting on us, so the assistant stays out of the thread: a repeat tap re-arms the
+      // pause even though it opens nothing.
+      if (asker?.companyId) await this.pauseAssistant(event.lineUserId, asker.companyId);
       await this.deliverReply(event, SUPPORT_ALREADY_OPEN_REPLY);
       await this.audit.log({
         action: 'signup.line.support_requested',
@@ -1647,6 +1646,9 @@ export class ProcessLineWebhookUseCase {
         metadataJson: { reason: 'daily_limit', linked: Boolean(asker) },
       });
       await this.updateEventLog(event.webhookEventId, 'support_rate_limited');
+      // Deliberately NOT paused. Silencing the assistant for 24 hours on the strength of a tap
+      // that opened no request and paged nobody is the worst of both: the customer loses the bot
+      // AND has nothing in the operator inbox to be answered from.
       return;
     }
 
@@ -1660,6 +1662,10 @@ export class ProcessLineWebhookUseCase {
       },
       select: { id: true },
     });
+    // Only a linked asker has an assistant to stop, and only now that a request actually exists:
+    // someone who unlinked is talking to the door card, so there is nothing to pause — but they
+    // still reach a human (§2.1.2).
+    if (asker?.companyId) await this.pauseAssistant(event.lineUserId, asker.companyId);
     await this.deliverReply(event, STAFF_CONTACT_REPLY);
     await this.signupNotify?.enqueueSupportRequest(created.id);
     await this.audit.log({

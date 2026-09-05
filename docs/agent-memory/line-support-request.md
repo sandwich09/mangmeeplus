@@ -69,6 +69,24 @@ One assertion was itself too weak and was tightened: the read-sequence QA check 
 `catch`, so a mutation that removed the guard from the SUCCESS path — the one that paints rows —
 still passed.
 
+## Review round 3 — findings addressed (2026-09-06, on e662e04f)
+
+HIGH: the amplification floor introduced a production-only version of the bug it guards.
+`consumeLineSupportRequestSlot` used the default `fail-closed` policy, so a Redis outage in
+production throws `ServiceUnavailableException` out of `handleStaffContact` — no row, no notice,
+no reply, on an event already claimed and therefore never redelivered. No non-production
+environment can see it: outside production every policy already degrades. Now `degrade-to-local`
+(bounded at 3 per task instead of 3 per fleet), proven with a real limiter over a throwing store
+under production semantics, with a cost-bearing bucket on the same store as the control.
+
+MED: `pauseAssistant` ran above the floor gate, so a refused fourth tap silenced the assistant for
+24h while opening no request and paging nobody. MED: `line-clamp-2 block break-words` did not
+clamp — Tailwind emits `.block{display:block}` after `.line-clamp-2` — so the cell rendered all
+200 characters and pushed the action column off a 390px screen; the asker column is now bounded
+too. LOW: the clamp and the error/empty decision became render assertions (`SupportInboxBody`
+extracted), since a source regex is exactly what let the broken clamp ship — the string was right
+and the CSS was not.
+
 ## Open questions
 
 - The signup queue has **no** OPEN-count badge, so there was no pattern to reuse; the badge built
@@ -123,7 +141,8 @@ still passed.
   request-keyed (1), remove the amplification floor (2), purge keyed on `requestedAt` so OPEN rows
   are deleted (2), `queued` collapsed into `unreachable` (2), remove the web error gate + item
   clearing + read sequencing (2 — after tightening the assertion; see below), badge without the
-  page subscription (2).
+  page subscription (2), drop `'degrade-to-local'` (2), re-add `block` to the clamp (1), move the
+  pause back above the floor gate (2).
 - Heavy jobs (typechecks, full suites, `next build`) were serialized behind a shared
   `/tmp/mangmee-heavy.lock` mutex: the machine could not hold two 8 GB `tsc` runs at once.
 
@@ -131,10 +150,13 @@ still passed.
 
 - Merge order matters only against `codex/line-support-request-docs`: the spec file is duplicated
   on this branch to carry the §2.2 deltas. Take either side, then re-apply the delta sections.
-- **`apps/api/package.json` will conflict with slice B**: both branches append a spec path to the
-  single-line `test` script, which git resolves as a whole-line conflict. Resolution is mechanical
-  — keep BOTH appended paths on one line — and it already happened once against #430
-  (`liff-page-contrast.spec.ts`) during the rebase onto 91704151.
+- **Two known merge conflicts with slice B, both mechanical:**
+  - `apps/api/package.json` — both branches append a spec path to the single-line `test` script, so
+    git reports a whole-line conflict. Keep BOTH appended paths on the one line. This already
+    happened once against #430 (`liff-page-contrast.spec.ts`) during the rebase onto 91704151.
+  - `.github/workflows/ci.yml` — both branches add an invocation to the same Postgres step. Keep
+    BOTH invocations in that one step (they share the `watchdog_bms` database and the step's
+    `migrate deploy` / `sync-permissions` preamble); do not split it into two steps.
 - Not done: no LIFF/status-card copy change (neither mentions contacting staff), no
   `line-ai-security-eval.ts` fixture (that corpus is the prepared-plan orchestrator lane; the
   exact-match/injection cases live in `line-staff-menu.logic.spec.ts`), no local LINE-fake drive.

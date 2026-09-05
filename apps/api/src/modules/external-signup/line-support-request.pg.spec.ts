@@ -385,18 +385,23 @@ describe('"ติดต่อเจ้าหน้าที่" on real PostgreS
     }
   });
 
-  it('opens no request at all once the daily floor is spent, and still answers', async () => {
+  it('opens no request at all once the daily floor is spent, and silences nothing', async () => {
     const client = connect();
     const tag = `linesupport-${randomUUID().slice(0, 8)}`;
     const lineUserId = `U${tag}`;
     try {
       await seed(client, tag, lineUserId);
+      await client.lineCompanyContext.deleteMany({ where: { lineUserId } });
       const h = wire(client, { supportSlot: false });
       await h.webhook.execute(event(lineUserId, STAFF_CONTACT_COMMAND));
 
       assert.equal(await client.lineSupportRequest.count({ where: { lineUserId } }), 0);
       assert.deepEqual(h.notices, []);
       assert.match(h.replies.at(-1)!, /รับเรื่องไว้แล้วค่ะ/);
+      // A refused tap opens nothing and pages nobody, so a 24h pause on the strength of it would
+      // cost the customer the assistant AND leave nothing in the inbox to be answered from.
+      assert.equal(await client.lineCompanyContext.count({ where: { lineUserId } }), 0,
+        'the assistant is not silenced by a tap that did nothing');
     } finally {
       await cleanup(client, tag, lineUserId);
       await client.$disconnect();

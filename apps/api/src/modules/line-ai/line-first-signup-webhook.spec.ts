@@ -10,6 +10,8 @@ import {
 import { buildSignupDoorCard, buildSignupStatusCard, buildAiBudgetExceededMessage } from './domain/logic/line-business-card.logic';
 import { classifyLineAiGatewayFailure } from './domain/logic/line-ai-terminal-outcome.logic';
 import { ProcessLineWebhookUseCase } from './application/use-cases/process-line-webhook.use-case';
+import { AuthRateLimitService } from '../auth/application/auth-rate-limit.service';
+import { RedisRateLimitService } from '../../common/security/redis-rate-limit.service';
 
 const WEB_BASE = 'https://app.example.test';
 
@@ -188,6 +190,8 @@ function harness(options: {
   lastTurn?: { userMessagePreview: string | null } | null;
   /** The amplification floor: `false` = this LINE account has spent its three asks for today. */
   supportSlot?: boolean;
+  /** A REAL `AuthRateLimitService`, for the store-failure case a fake boolean cannot show. */
+  rateLimit?: unknown;
   /** Absent means LINE_MESSAGING_CHANNEL_ID is unset (L-19). */
   channelId?: string;
   liffId?: string;
@@ -277,12 +281,12 @@ function harness(options: {
     ...Array.from({ length: 17 }, () => undefined),
     { create: async (cmd: any) => { packageChanges.push(cmd); return { id: 'pcr-1' }; } } as any,
     { enqueueSupportRequest: async (supportRequestId: string) => { supportNotices.push(supportRequestId); } } as any,
-    {
+    (options.rateLimit ?? {
       consumeLineSupportRequestSlot: async (lineUserId: string) => {
         supportSlots.push(lineUserId);
         return options.supportSlot ?? true;
       },
-    } as any,
+    }) as any,
   );
 
   // The use case builds its own Logger; capture what it writes at ERROR.
@@ -513,6 +517,40 @@ describe('P10-L contact-staff pause (§8), rewritten by line-support-request-spe
 
     assert.deepEqual(h.supportSlots, [], 'the floor was never consulted');
     assert.match(rendered(h), /ยังอยู่ในคิว/);
+  });
+
+  /**
+   * The floor's own failure mode, end to end with the REAL rate limiter over a store that cannot
+   * answer under production semantics. `fail-closed` here would throw out of `handleStaffContact`
+   * — no row, no notice, no reply, on an event already claimed and so never redelivered — which is
+   * exactly the E1 silence this branch exists to remove.
+   */
+  it('still opens the request when Redis is down in production, instead of going silent', async () => {
+    const store = new RedisRateLimitService({ redisUrl: 'redis://unused', isProduction: true } as never);
+    const down = async () => { throw new Error('redis down'); };
+    (store as unknown as { client: unknown }).client = { eval: down, get: down, ttl: down };
+    const h = harness({
+      identity: linked,
+      memberships: [{ companyId: 'co-now', roles: [] }],
+      rateLimit: new AuthRateLimitService({} as never, store),
+    });
+
+    await h.useCase.execute(event(STAFF_CONTACT_COMMAND));
+
+    assert.equal(h.supportRequests.length, 1, 'the row a human is answered from exists');
+    assert.deepEqual(h.supportNotices, ['sr-1'], 'and somebody is paged');
+    assert.match(rendered(h), /รับเรื่องแล้วค่ะ/, 'and the customer is answered');
+    assert.equal(outcome(h), 'support_requested');
+  });
+
+  // A refused fourth tap opens nothing and pages nobody, so silencing the assistant for 24 hours
+  // on the strength of it is the worst of both.
+  it('does not re-arm the 24h pause on a tap the floor refused', async () => {
+    const h = harness({ identity: linked, memberships: [{ companyId: 'co-now', roles: [] }], supportSlot: false });
+    await h.useCase.execute(event(STAFF_CONTACT_COMMAND));
+
+    assert.deepEqual(h.contextUpserts, [], 'no request to answer means no assistant to silence');
+    assert.equal(outcome(h), 'support_rate_limited');
   });
 
   // M7 (reviewer probe): a membership in a company the plan-term sweep DISABLED is not a shop this

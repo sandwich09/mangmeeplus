@@ -6,7 +6,8 @@ import type { SupportRequestItemDto } from '@watchdog-bms/contracts';
 
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
 
-const { SupportRowActions } = require('./SupportRequestsPage') as typeof import('./SupportRequestsPage');
+const { SupportRowActions, SupportInboxBody } =
+  require('./SupportRequestsPage') as typeof import('./SupportRequestsPage');
 
 function item(overrides: Partial<SupportRequestItemDto> = {}): SupportRequestItemDto {
   return {
@@ -74,5 +75,71 @@ describe('SupportRowActions — the inbox row, rendered', () => {
     const markup = render({ status: 'OPEN' }, true);
     assert.match(markup, /กำลังทำรายการ/);
     assert.equal((markup.match(/disabled=""/g) ?? []).length, 2);
+  });
+});
+
+/** The body decides between the error banner and the table, so both are rendered here. */
+function renderBody(props: Partial<Parameters<typeof SupportInboxBody>[0]> = {}): string {
+  return renderToStaticMarkup(
+    React.createElement(SupportInboxBody, {
+      error: null,
+      loading: false,
+      items: [],
+      busyId: null,
+      onRetry: () => {},
+      onAnswered: () => {},
+      onResume: () => {},
+      ...props,
+    }),
+  );
+}
+
+describe('SupportInboxBody — error, empty and the message cell, rendered', () => {
+  // The table used to render UNDER the banner, so a first-load 403 told an operator the queue was
+  // empty — the one thing a permission error does not know.
+  it('replaces the table with the error, rather than sitting above an empty one', () => {
+    const markup = renderBody({ error: 'คุณไม่มีสิทธิ์ดูคำขอคุยกับเจ้าหน้าที่' });
+    assert.match(markup, /คุณไม่มีสิทธิ์ดูคำขอคุยกับเจ้าหน้าที่/);
+    assert.match(markup, /ลองใหม่/);
+    assert.doesNotMatch(markup, /ไม่มีคำขอในกลุ่มนี้/, 'no "the queue is empty" under a 403');
+    assert.doesNotMatch(markup, /<table/);
+  });
+
+  it('says an empty queue is empty when that is actually known', () => {
+    const markup = renderBody({ items: [] });
+    assert.match(markup, /ไม่มีคำขอในกลุ่มนี้/);
+    assert.match(markup, /<table/);
+  });
+
+  it('shows skeletons rather than an empty verdict while loading', () => {
+    const markup = renderBody({ loading: true });
+    assert.doesNotMatch(markup, /ไม่มีคำขอในกลุ่มนี้/);
+    assert.match(markup, /animate-pulse/);
+  });
+
+  /**
+   * The clamp regression, rendered. `block` cancels `line-clamp-2` — Tailwind emits
+   * `.block{display:block}` after it, overriding the `-webkit-box` the clamp needs — and the cell
+   * grew to 352px at 390px wide, pushing the action column off the screen.
+   */
+  it('clamps a long message to two lines without a display that cancels the clamp', () => {
+    const long = 'ก'.repeat(200);
+    const markup = renderBody({ items: [item({ lastMessageText: long })] });
+    const cell = /<span class="([^"]*)" title="ก+">/.exec(markup);
+
+    assert.ok(cell, 'the message renders in a class-bearing span');
+    const classes = cell![1]!.split(' ');
+    assert.ok(classes.includes('line-clamp-2'));
+    assert.ok(classes.includes('break-words'));
+    assert.equal(classes.includes('block'), false, '`block` overrides the clamp and un-clamps it');
+    assert.equal(classes.some((name) => /^(flex|grid|inline-block|table)$/.test(name)), false,
+      'and so would any other display utility');
+    assert.match(markup, /max-w-\[16rem\]/, 'the cell is bounded, so the clamp has a width to work in');
+  });
+
+  it('bounds the asker column too, since an applicant label carries a shop name of any length', () => {
+    const markup = renderBody({ items: [item({ askerLabel: 'ผู้ที่ยังไม่ได้เปิดร้าน (มีคำขอสมัคร: ' + 'ร'.repeat(80) + ')' })] });
+    assert.match(markup, /max-w-\[14rem\]/);
+    assert.match(markup, /break-words font-medium/);
   });
 });

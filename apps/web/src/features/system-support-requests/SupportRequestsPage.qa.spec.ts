@@ -28,16 +28,19 @@ test('a 403 says so in Thai instead of leaking the API error', () => {
   assert.match(page, /e\.status === 403 \? 'คุณไม่มีสิทธิ์ดูคำขอคุยกับเจ้าหน้าที่' : apiErrorMessage\(err\)/);
 });
 
-test('loading and empty states exist, so an empty inbox never reads as a broken page', () => {
-  assert.match(page, /SkeletonRow/);
-  assert.match(page, /ไม่มีคำขอในกลุ่มนี้/);
+// The states themselves are rendered in SupportRowActions.spec.ts; what stays here is that the
+// page actually hands the body the flags it decides from.
+test('the page tells the body what it knows: loading, error, and the rows', () => {
+  assert.match(page, /loading=\{loading\}/);
+  assert.match(page, /items=\{items\}/);
 });
 
-// A 403 used to render "ไม่มีคำขอในกลุ่มนี้" UNDER the permission banner — telling an operator
-// the queue is empty is the one thing a permission error does not know.
-test('an error replaces the table rather than sitting above an empty one', () => {
-  assert.match(page, /\{!error && \(/);
-  assert.match(page, /setItems\(\[\]\);/, 'and the previous tab\'s rows do not survive a failure');
+// The error-vs-table decision itself is a RENDER assertion in SupportRowActions.spec.ts
+// (`SupportInboxBody`). What only the source can show is the other half of that bug: rows from a
+// previous successful read surviving the failure that followed them.
+test('a failed read clears the rows it could not replace', () => {
+  assert.match(page, /setItems\(\[\]\);/);
+  assert.match(page, /error=\{error\}/, 'and the body is the one thing that decides what to show');
 });
 
 // Two overlapping reads (a tab switch during a post-action reload) used to let the SLOWER one
@@ -62,14 +65,13 @@ test('every count the page reads is published to the nav badge', () => {
   assert.match(page, /publishSupportOpenCount\(result\.openCount\);/);
 });
 
-// 200 characters of Thai in an unconstrained <td> pushed the action column off a 390px screen.
-test('the last-message column is bounded, clamped and breakable at 390px', () => {
-  assert.match(page, /max-w-\[16rem\]/);
-  assert.match(page, /line-clamp-2 block break-words/);
-  assert.match(page, /title=\{item\.lastMessageText\}/, 'the full text stays reachable');
-  // The table is the only thing allowed to scroll sideways; the page body never does.
+// The clamp itself is a RENDER assertion in SupportRowActions.spec.ts — a source regex is what
+// let `line-clamp-2 block break-words` ship, since the string was right and the CSS was not.
+// What stays here is the page-level rule the render cannot see.
+test('only the table scrolls sideways; the page body never does', () => {
   assert.match(page, /overflow-x-auto/);
   assert.equal(/overflow-x-scroll/.test(page), false);
+  assert.match(page, /min-h-dvh/);
 });
 
 // A settled request that keeps counting reads as a customer still waiting.
