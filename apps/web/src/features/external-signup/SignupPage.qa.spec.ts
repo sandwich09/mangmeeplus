@@ -21,6 +21,27 @@ test('R07: the MX rejection lands under the email input, with focus', () => {
   assert.match(source, /focusField\(rejection\.field\)/);
 });
 
+test('R12: a successful submit puts the request id in the URL', () => {
+  // The id used to live only in React state while the URL still said `/signup`, so the page that
+  // told the applicant to "keep this link" was a form. A reload gave them a blank one.
+  assert.match(source, /router\.replace\(`\/signup\/status\/\$\{encodeURIComponent\(result\.requestId\)\}`\)/);
+});
+
+test('R12: the received view does not offer a resend that does not exist yet', () => {
+  // Nothing can be re-sent before an approval: `canResendClaim` is false in PENDING_REVIEW, so the
+  // "ask for a new email in 2 days" line pointed at a button that is not rendered.
+  assert.doesNotMatch(source, /2 วัน/);
+  assert.match(source, /เมื่ออนุมัติแล้วจึงขอส่งลิงก์ใหม่ได้/);
+});
+
+test('R11: an availability outage is not reported as "we closed signups"', () => {
+  // The availability call failing says nothing about whether the product is taking applications.
+  // Painting the closed notice over an outage turned a five-second blip into a lost customer.
+  assert.match(source, /'loading' \| 'open' \| 'closed' \| 'unavailable'/);
+  assert.match(source, /setAvailability\('unavailable'\)/);
+  assert.match(source, /SignupUnavailableNotice/);
+});
+
 test('a local validation failure focuses the first error rather than leaving the user at the button', () => {
   // The submit button sits at the bottom of a long mobile form: colouring a field the applicant
   // has already scrolled past is the same as saying nothing.

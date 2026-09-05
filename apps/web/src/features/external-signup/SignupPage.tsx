@@ -1,13 +1,14 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import type { PublicCompanySignupBody } from '@watchdog-bms/contracts';
 import { Button } from '@/common/components/button';
 import { SwitchField, TextField } from '@/common/components/field';
 import { trimmed } from '@/common/forms/trim';
 import { getSignupAvailability, submitCompanySignup } from './external-signup.api';
-import { SignupBrandHeader, SignupClosedNotice } from './SignupChrome';
+import { SignupBrandHeader, SignupClosedNotice, SignupUnavailableNotice } from './SignupChrome';
 import {
   clampMobileInput,
   firstSignupErrorField,
@@ -18,6 +19,7 @@ import {
   SELECTABLE_OFFER_KEY,
   SIGNUP_CONSENT_VERSION,
   SIGNUP_OFFERS,
+  SIGNUP_SUPPORT_PHONE,
   signupFieldRejection,
   signupSubmitErrorMessage,
   validateSignupForm,
@@ -112,20 +114,26 @@ function SubmittedView({ requestId }: { requestId: string }) {
       >
         ตรวจสอบสถานะคำขอ
       </Link>
+      {/* R12: resend does not exist before an approval — `canResendClaim` is false in
+          PENDING_REVIEW and the button is not rendered — so the old "ask for a new email in 2 days"
+          line sent the applicant looking for a control that is not there. No approval time is
+          promised either; the honest fallback is the phone number. */}
       <p className="text-[13px] leading-6 text-gray-500">
-        เก็บลิงก์หน้านี้ไว้ตรวจสถานะได้ตลอด หากอีเมลไม่มาภายใน 2 วัน กดขอส่งอีเมลใหม่ได้จากหน้าตรวจสอบสถานะ
+        เก็บลิงก์หน้าตรวจสอบสถานะไว้ กลับมาดูได้ตลอด เมื่ออนุมัติแล้วจึงขอส่งลิงก์ใหม่ได้ หากรอนาน โทร {SIGNUP_SUPPORT_PHONE}
       </p>
     </div>
   );
 }
 
 export default function SignupPage() {
+  const router = useRouter();
   // Reused verbatim on every retry — the server treats it as the idempotency key, so a second tap
   // after a timeout must not create a second request. It is REPLACED only after a definite
   // validation rejection (R07): that answer proves nothing was queued, and the row the rejection
   // left behind holds the old payload's hash, so a corrected form under the same key is a 409.
   const [externalSignupId, setExternalSignupId] = useState(() => crypto.randomUUID());
-  const [availability, setAvailability] = useState<'loading' | 'open' | 'closed'>('loading');
+  const [availability, setAvailability] = useState<'loading' | 'open' | 'closed' | 'unavailable'>('loading');
+  const [availabilityAttempt, setAvailabilityAttempt] = useState(0);
   const [values, setValues] = useState<SignupFormValues>(EMPTY_FORM);
   const [fieldErrors, setFieldErrors] = useState<SignupFieldErrors>({});
   const [error, setError] = useState<string | null>(null);
@@ -134,18 +142,21 @@ export default function SignupPage() {
 
   useEffect(() => {
     let active = true;
+    setAvailability('loading');
     void getSignupAvailability()
       .then((result) => {
         if (active) setAvailability(result.enabled ? 'open' : 'closed');
       })
-      // An availability call that cannot answer must not present a form whose submit will fail.
+      // An availability call that cannot answer must not present a form whose submit will fail —
+      // but it may not claim we stopped taking applications either (R11). Its own state, its own
+      // sentence, and a retry.
       .catch(() => {
-        if (active) setAvailability('closed');
+        if (active) setAvailability('unavailable');
       });
     return () => {
       active = false;
     };
-  }, []);
+  }, [availabilityAttempt]);
 
   const set = <K extends keyof SignupFormValues>(key: K, value: SignupFormValues[K]) => {
     setValues((previous) => ({ ...previous, [key]: value }));
@@ -192,6 +203,10 @@ export default function SignupPage() {
     try {
       const result = await submitCompanySignup(body);
       setRequestId(result.requestId);
+      // R12: the id must reach the URL, or the page telling the applicant to keep this link is a
+      // form — a reload, a share or a bookmark all came back to an empty one. `replace`, not
+      // `push`: the filled-in form is not somewhere Back should return to.
+      router.replace(`/signup/status/${encodeURIComponent(result.requestId)}`);
     } catch (cause) {
       // A rejection that names ONE field belongs under that field — the MX check names the mistyped
       // address, and a banner at the top of a long form does not point at what to correct.
@@ -225,6 +240,8 @@ export default function SignupPage() {
         <div className="rounded-2xl border border-gray-200 bg-white p-5 sm:p-8">
           {availability === 'closed' ? (
             <SignupClosedNotice />
+          ) : availability === 'unavailable' ? (
+            <SignupUnavailableNotice onRetry={() => setAvailabilityAttempt((count) => count + 1)} />
           ) : requestId ? (
             <SubmittedView requestId={requestId} />
           ) : (

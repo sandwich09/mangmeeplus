@@ -189,6 +189,18 @@ export function rotateSignupKeyAfter(error: unknown): boolean {
   return status === 400 || status === 422;
 }
 
+/**
+ * R11: a load that failed for a reason which says nothing about the thing being loaded. The status
+ * page called every failure a wrong link and the claim page called every failure a dead token — so
+ * an API restart, a rate limit or a lost connection retired a link that was perfectly good. No
+ * answer at all (a network error carries no status) is transient by definition.
+ */
+export function isTransientLoadFailure(error: unknown): boolean {
+  const status = (error as { status?: unknown } | null | undefined)?.status;
+  if (typeof status !== 'number') return true;
+  return status === 429 || status >= 500;
+}
+
 /** Submit order, so "focus the first error" means the first one the applicant would reach. */
 const SIGNUP_FIELD_ORDER: readonly (keyof SignupFormValues)[] = [
   'companyName', 'ownerFirstName', 'ownerLastName', 'contactEmail', 'phoneNumber', 'businessType',
@@ -218,6 +230,26 @@ const STATUS_COPY: Record<PublicSignupStatusKey, SignupStatusCopy> = {
     title: 'อนุมัติแล้ว รอตั้งรหัสผ่าน',
     body: 'เราส่งอีเมลพร้อมลิงก์ตั้งรหัสผ่านไปให้แล้ว กรุณาตรวจกล่องจดหมาย และเมลขยะ',
     tone: 'success',
+  },
+  // R11: the letter bounced, so the AWAITING_CLAIM sentence ("ไปให้แล้ว") was telling the applicant
+  // to keep checking a mailbox nothing reached. The resend button is rendered in this state.
+  EMAIL_FAILED: {
+    title: 'ส่งอีเมลไม่สำเร็จ',
+    body: `อีเมลส่งไปไม่ถึง กดขอส่งใหม่ได้เลย หากอีเมลพิมพ์ผิด โทร ${SIGNUP_SUPPORT_PHONE} ให้ทีมงานแก้ให้`,
+    tone: 'warning',
+  },
+  // R11: the mailbox is proved and the shop is being built. READY put a "log in" button in front
+  // of an account that had no company behind it yet.
+  PREPARING: {
+    title: 'กำลังเปิดร้านให้',
+    body: 'ยืนยันอีเมลเรียบร้อยแล้ว ระบบกำลังเปิดร้านให้ อีกสักครู่หน้านี้จะบอกว่าเข้าใช้งานได้',
+    tone: 'info',
+  },
+  // R11: nothing retries this by itself, so "ยังไม่ต้องทำอะไรเพิ่ม" pointed at a queue nobody works.
+  PREPARING_FAILED: {
+    title: 'เปิดร้านติดขัด',
+    body: `การเปิดร้านติดขัด ทีมงานกำลังดูให้ ต้องการให้เร่ง โทร ${SIGNUP_SUPPORT_PHONE}`,
+    tone: 'error',
   },
   READY: {
     title: 'เปิดใช้งานแล้ว',

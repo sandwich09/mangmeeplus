@@ -242,6 +242,9 @@ describe('SignupClaimEmailService.drain', () => {
     );
     assert.equal(h.sent[0].rawToken, 'raw-token-for-signup-1');
     assert.equal(h.sent[0].toEmail, 'somchai@example.com');
+    // R12: the id travels with the letter so a link that turns out to be spent can still hand its
+    // holder the status page instead of a login they have no password for.
+    assert.equal(h.sent[0].signupRequestId, 'signup-1');
     // The only writes back to the request are the send timestamp and the SES message id that a
     // later bounce/complaint event will arrive with — the raw token goes nowhere.
     assert.equal(h.updates.length, 1);

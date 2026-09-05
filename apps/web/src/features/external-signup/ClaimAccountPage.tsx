@@ -11,25 +11,61 @@ import { readTokenParam } from '@/features/auth/auth.logic';
 import { attachSignupClaimToExistingUser, getSignupClaimInfo, setSignupClaimPassword } from './external-signup.api';
 import { rememberClaimedCompany } from './welcome-handoff.logic';
 import { SignupBrandHeader } from './SignupChrome';
-import { signupSubmitErrorMessage, validateClaimPassword, type ClaimPasswordErrors } from './signup.logic';
+import {
+  isTransientLoadFailure,
+  signupSubmitErrorMessage,
+  validateClaimPassword,
+  type ClaimPasswordErrors,
+} from './signup.logic';
+
+const secondaryButtonClass =
+  'flex h-12 w-full items-center justify-center rounded-xl border-[1.5px] border-gray-200 bg-white text-[15.5px] font-semibold text-gray-900 hover:border-[#046B29]';
 
 /**
  * One view for every unusable token — invalid, expired, already spent. Telling them apart would
  * tell someone holding a guessed token which guess was closer (spec §4B: single-use, hash-only).
+ *
+ * R12: "ขอลิงก์ใหม่ได้จากหน้าตรวจสอบสถานะ" used to be advice with no way to follow it — the only
+ * button went to a login the applicant has no password for. The claim mail carries the request id
+ * beside the token, so when it is there this offers the page it is telling them to open.
  */
-function UnusableLinkView() {
+function UnusableLinkView({ statusRequestId }: { statusRequestId?: string }) {
   return (
     <div className="space-y-4" role="status">
       <h1 className="text-[22px] font-extrabold leading-9 text-gray-900">ลิงก์ไม่พร้อมใช้งาน</h1>
       <p className="text-[15px] leading-7 text-gray-600">
         ลิงก์นี้อาจหมดอายุ หรือถูกใช้ไปแล้ว ขอลิงก์ใหม่ได้จากหน้าตรวจสอบสถานะคำขอของคุณ
       </p>
-      <Link
-        href="/login"
-        className="flex h-12 w-full items-center justify-center rounded-xl border-[1.5px] border-gray-200 bg-white text-[15.5px] font-semibold text-gray-900 hover:border-[#046B29]"
-      >
+      {statusRequestId ? (
+        <Link
+          href={`/signup/status/${encodeURIComponent(statusRequestId)}`}
+          className="flex h-12 w-full items-center justify-center rounded-xl bg-[#046B29] text-[15.5px] font-semibold text-white"
+        >
+          ไปหน้าตรวจสอบสถานะคำขอ
+        </Link>
+      ) : null}
+      <Link href="/login" className={secondaryButtonClass}>
         ไปหน้าเข้าสู่ระบบ
       </Link>
+    </div>
+  );
+}
+
+/**
+ * R11: an API restart, a rate limit or a lost connection while the applicant opened their email
+ * used to retire a link that was perfectly good — every failure landed on the view above. This one
+ * says the truth (we could not check) and offers the only action that helps.
+ */
+function ClaimCheckFailedView({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="space-y-4" role="alert">
+      <h1 className="text-[22px] font-extrabold leading-9 text-gray-900">ตรวจสอบลิงก์ไม่ได้ตอนนี้</h1>
+      <p className="text-[15px] leading-7 text-gray-600">
+        ระบบขัดข้องชั่วคราว ยังไม่ทราบว่าลิงก์นี้ใช้ได้หรือไม่ กรุณาลองใหม่อีกครั้ง
+      </p>
+      <Button type="button" size="lg" className="w-full !rounded-xl" onClick={onRetry}>
+        ลองใหม่อีกครั้ง
+      </Button>
     </div>
   );
 }
@@ -238,25 +274,35 @@ function ClaimCard({ token, info }: { token: string; info: SignupClaimInfoDto })
 function ClaimAccount() {
   const searchParams = useSearchParams();
   const token = readTokenParam(searchParams.get('token'));
+  // R12: the claim mail carries the request id beside the token, so a link that turns out to be
+  // spent still knows which status page to send its holder to. Never PII, and the status endpoint
+  // answers with a coarse state only.
+  const statusRequestId = searchParams.get('r')?.trim() || undefined;
   const [info, setInfo] = useState<SignupClaimInfoDto | null>(null);
   const [unusable, setUnusable] = useState(!token);
+  const [checkFailed, setCheckFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     if (!token) return;
     let active = true;
+    setCheckFailed(false);
     void getSignupClaimInfo(token)
       .then((result) => {
         if (!active) return;
         if (result.valid) setInfo(result);
         else setUnusable(true);
       })
-      .catch(() => {
-        if (active) setUnusable(true);
+      .catch((cause) => {
+        if (!active) return;
+        // Only a definite answer from the server may retire the link. Everything else is an outage.
+        if (isTransientLoadFailure(cause)) setCheckFailed(true);
+        else setUnusable(true);
       });
     return () => {
       active = false;
     };
-  }, [token]);
+  }, [token, attempt]);
 
   return (
     <div className="min-h-dvh bg-gray-50">
@@ -264,7 +310,9 @@ function ClaimAccount() {
       <main className="mx-auto w-full max-w-md px-4 py-6 sm:py-12">
         <div className="rounded-2xl border border-gray-200 bg-white p-5 sm:p-8">
           {unusable ? (
-            <UnusableLinkView />
+            <UnusableLinkView {...(statusRequestId ? { statusRequestId } : {})} />
+          ) : checkFailed ? (
+            <ClaimCheckFailedView onRetry={() => setAttempt((count) => count + 1)} />
           ) : info && token ? (
             <ClaimCard token={token} info={info} />
           ) : (

@@ -317,6 +317,8 @@ export class SignupClaimEmailService {
       companyName: request.companyName,
       rawToken,
       expiresAt,
+      // R12: so a link that turns out to be spent can still offer the status page (spec §4D ②).
+      signupRequestId: request.id,
     });
     // Only after a successful send: this timestamp is what the reminder sweep counts from, and the
     // SES message id is the only handle a later bounce/complaint event has on this row (spec §4D).

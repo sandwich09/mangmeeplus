@@ -33,14 +33,25 @@ export type PublicCompanySignupBody = {
 
 export type PublicCompanySignupAcceptedDto = { requestId: string };
 
-/** Coarse public states — never expose internal review detail. */
-export type PublicSignupStatusKey =
-  | 'CHECKING'        // RECEIVED/VALIDATED
-  | 'PENDING_REVIEW'  // waiting for admin
-  | 'AWAITING_CLAIM'  // approved, claim email sent (EMAIL_PENDING)
-  | 'READY'           // provisioned (EMAIL_VERIFIED..COMPLETED)
-  | 'REJECTED'
-  | 'EXPIRED';
+/**
+ * Coarse public states — never expose internal review detail. Coarse is not the same as untrue:
+ * R11 added the three keys below because the page was telling applicants that a shop existed, that
+ * a rescue was under way, or that an email had been delivered, in states where none of that had
+ * happened. A key added here needs Thai copy behind it in `apps/web`'s signup logic.
+ */
+export const PUBLIC_SIGNUP_STATUS_KEYS = [
+  'CHECKING',         // RECEIVED/VALIDATED
+  'PENDING_REVIEW',   // waiting for admin
+  'AWAITING_CLAIM',   // approved, claim email sent (EMAIL_PENDING)
+  'EMAIL_FAILED',     // the claim email bounced — nothing is on its way
+  'PREPARING',        // mailbox proved, shop being built (EMAIL_VERIFIED/PROVISIONING)
+  'PREPARING_FAILED', // the build stopped and nothing retries by itself
+  'READY',            // provisioned (READY/LINE_LINK_PENDING/COMPLETED)
+  'REJECTED',
+  'EXPIRED',
+] as const;
+
+export type PublicSignupStatusKey = (typeof PUBLIC_SIGNUP_STATUS_KEYS)[number];
 
 export type PublicSignupStatusDto = {
   requestId: string;

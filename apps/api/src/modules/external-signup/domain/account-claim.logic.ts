@@ -39,10 +39,20 @@ export function publicSignupStatusKey(state: CompanySignupState): PublicSignupSt
     case 'PENDING_REVIEW':
       return 'PENDING_REVIEW';
     case 'EMAIL_PENDING':
-    case 'EMAIL_FAILED':
       return 'AWAITING_CLAIM';
+    // R11: the letter bounced. Reporting it as sent is how an applicant waits for a mail that is
+    // never coming — the honest answer is the one with a resend button behind it.
+    case 'EMAIL_FAILED':
+      return 'EMAIL_FAILED';
+    // R11: the mailbox is proved and the shop is being built. It does NOT exist yet, so this may
+    // not be READY: that state carries a "log in" call to action for a company that has no rows.
     case 'EMAIL_VERIFIED':
     case 'PROVISIONING':
+      return 'PREPARING';
+    // R11: the build stopped and nothing retries it. Collapsing this into CHECKING told the
+    // applicant there was nothing to do, next to a queue nobody was working.
+    case 'PROVISIONING_FAILED':
+      return 'PREPARING_FAILED';
     case 'READY':
     case 'LINE_LINK_PENDING':
     case 'COMPLETED':

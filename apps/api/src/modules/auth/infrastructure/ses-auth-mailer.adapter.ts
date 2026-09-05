@@ -27,9 +27,11 @@ function formatExpiry(value: Date): string {
   }).format(value);
 }
 
-function link(baseUrl: string, pathname: string, token: string): string {
+function link(baseUrl: string, pathname: string, token: string, signupRequestId?: string): string {
   const url = new URL(pathname, baseUrl);
   url.searchParams.set('token', token);
+  // R12: the claim page's recovery link. Set after the token so the existing URL shape is unchanged.
+  if (signupRequestId) url.searchParams.set('r', signupRequestId);
   return url.toString();
 }
 
@@ -105,7 +107,7 @@ function renderClaimEmail(input: AccountClaimEmailInput, baseUrl: string): Rende
     companyName: input.companyName,
     toEmail: input.toEmail,
     expiresAt: input.expiresAt,
-    claimUrl: link(baseUrl, '/claim-account', input.rawToken),
+    claimUrl: link(baseUrl, '/claim-account', input.rawToken, input.signupRequestId),
     ...(accountClaimLogoUrl() ? { logoUrl: accountClaimLogoUrl()! } : {}),
   });
 }

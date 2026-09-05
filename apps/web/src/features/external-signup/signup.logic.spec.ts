@@ -1,9 +1,12 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { PLAN_TIER_PRESETS, SIGNUP_TRIAL_TIER_KEY, SIGNUP_TRIAL_WARMUP_SLIPS } from '@watchdog-bms/contracts';
+import {
+  PLAN_TIER_PRESETS, PUBLIC_SIGNUP_STATUS_KEYS, SIGNUP_TRIAL_TIER_KEY, SIGNUP_TRIAL_WARMUP_SLIPS,
+} from '@watchdog-bms/contracts';
 import {
   clampMobileInput,
   firstSignupErrorField,
+  isTransientLoadFailure,
   isThaiMobile,
   MOBILE_DIGITS,
   offerLimitsLabel,
@@ -198,11 +201,42 @@ describe('public status copy', () => {
     assert.match(signupStatusCopy('EXPIRED', true).body, /ขอลิงก์ใหม่/);
   });
 
-  it('never renders a "+" in owner-facing copy', () => {
-    for (const status of ['CHECKING', 'PENDING_REVIEW', 'AWAITING_CLAIM', 'READY', 'REJECTED', 'EXPIRED'] as const) {
+  it('never renders a "+" in owner-facing copy, for every key the contract declares', () => {
+    for (const status of PUBLIC_SIGNUP_STATUS_KEYS) {
       const copy = signupStatusCopy(status);
+      assert.ok(copy.title && copy.body, status);
       assert.doesNotMatch(`${copy.title} ${copy.body}`, /\+/, status);
     }
+  });
+
+  // R11: three states answered with copy about something that had not happened — a shop that did
+  // not exist, a rescue nothing was running, and an email that had bounced.
+  it('separates being prepared, a stalled preparation and a bounced email from READY', () => {
+    const preparing = signupStatusCopy('PREPARING');
+    assert.doesNotMatch(preparing.body, /พร้อมใช้งาน|เข้าสู่ระบบ/);
+
+    // Nothing retries by itself, so "ยังไม่ต้องทำอะไรเพิ่ม" left the applicant waiting on nobody.
+    const failed = signupStatusCopy('PREPARING_FAILED');
+    assert.doesNotMatch(failed.body, /ยังไม่ต้องทำอะไร/);
+    assert.match(failed.body, /098-256-5628/);
+
+    const bounced = signupStatusCopy('EMAIL_FAILED');
+    assert.match(bounced.title, /ส่งอีเมลไม่สำเร็จ/);
+    assert.doesNotMatch(bounced.body, /ไปให้แล้ว/);
+    assert.match(bounced.body, /ขอส่งใหม่/);
+
+    // The one state that may promise a login is still the one where the shop exists.
+    assert.match(signupStatusCopy('READY').body, /เข้าสู่ระบบ/);
+  });
+
+  it('tells a transient load failure apart from a request that really is not there', () => {
+    // An outage on the way to the status/claim page must not be reported as a dead link.
+    assert.equal(isTransientLoadFailure(Object.assign(new Error('x'), { status: 503 })), true);
+    assert.equal(isTransientLoadFailure(Object.assign(new Error('x'), { status: 500 })), true);
+    assert.equal(isTransientLoadFailure(Object.assign(new Error('x'), { status: 429 })), true);
+    assert.equal(isTransientLoadFailure(new Error('Network request failed.')), true);
+    assert.equal(isTransientLoadFailure(Object.assign(new Error('x'), { status: 404 })), false);
+    assert.equal(isTransientLoadFailure(Object.assign(new Error('x'), { status: 400 })), false);
   });
 });
 
