@@ -585,13 +585,27 @@ and the API fails to boot. `injectable-di-token.spec.ts` exists for exactly this
 the api fixed list; the token is now stated explicitly with `@Inject(AppConfigService)`, the same
 way `RedisRateLimitService` and `LineDraftPreviewStore` state theirs.
 
-Worth noting alongside H1: this slice produced TWO distinct Nest-DI-at-boot bugs that no
-hand-constructed spec could see. The repo already has the right answer to both and I had missed it
-— `pnpm --filter @watchdog-bms/api test:boot` (`src/scripts/boot-di-smoke.ts`) resolves the REAL
-provider graph from the swc build, which is the only place the metadata Nest reads exists, and CI
-runs it. That is the authoritative gate for H1; `erp-draft-update-tools.di.spec.ts` and
-`injectable-di-token.spec.ts` are the cheap halves that fail in the normal suite in a second,
-without a build. Both were run for this slice.
+**MEASURED, and it changes the conclusion: `test:boot` does NOT catch H1.** The obvious remedy —
+"build the real Nest module" — was tried against the real swc build with the bug re-introduced, and
+it passed: `boot-di-smoke: Nest resolved every provider in 140ms`, exit 0.
+
+The reason is worth keeping. `boot-di-smoke` catches an UNRESOLVABLE token: a parameter whose type
+erased, so Nest has something to look up and cannot find it. That is the `Pick<>` bug (M9's
+follow-on), and it is caught loudly. H1 is the opposite failure — a subclass with NO constructor
+metadata declares NO dependencies, so Nest resolves it perfectly and hands back an object with
+`undefined` fields. A graph of zero dependencies is a VALID graph. Nothing that only asks "does the
+graph resolve?" can see it; the object is broken, not unwireable.
+
+So this slice hit two Nest-DI bugs that fail in two different ways, and they need two different
+guards, neither of which subsumes the other:
+
+| Failure | What it looks like | Caught by |
+|---|---|---|
+| Erased parameter type (`Pick<>`) | Nest cannot resolve a token | `injectable-di-token.spec.ts` (source scan) and `test:boot` |
+| Inherited constructor on an `@Injectable()` subclass | Nest resolves ZERO dependencies and succeeds | `erp-draft-update-tools.di.spec.ts` (arity) — and nothing else |
+
+All three were run for this slice: `test:boot` green against the swc build, both specs green, and
+the arity spec verified red with the bug re-introduced.
 
 Process note for whoever reuses `mutations.sh`: it restores with `git checkout --`, so it now
 REFUSES to run on a dirty tree. It silently ate an uncommitted scrubber change once.

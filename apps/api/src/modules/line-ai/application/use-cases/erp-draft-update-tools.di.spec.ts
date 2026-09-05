@@ -17,11 +17,13 @@
  * perfectly wired, so it can only produce a false alarm. Arity is compiler-independent and fails
  * for exactly the mistake this guards.
  *
- * This is the CHEAP half of a pair, exactly like `injectable-di-token.spec.ts` next door. The
- * authoritative check is `pnpm --filter @watchdog-bms/api test:boot` (`src/scripts/boot-di-smoke.ts`),
- * which resolves the real provider graph from the swc build — the only place the metadata Nest
- * actually reads exists — and which CI runs. This spec earns its place by failing in the normal
- * suite, in a second, without a build.
+ * This spec is the ONLY guard for this failure, which is not obvious and was measured rather than
+ * assumed. `pnpm test:boot` (`src/scripts/boot-di-smoke.ts`) resolves the real provider graph from
+ * the swc build and is authoritative for its own class of bug — an ERASED parameter type, where
+ * Nest has a token it cannot find. It does NOT catch this one: with the bug re-introduced it still
+ * reported "Nest resolved every provider" and exited 0, because a class declaring zero
+ * dependencies resolves perfectly. The object is broken, not unwireable, and nothing that only
+ * asks "does the graph resolve?" can tell the difference.
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
