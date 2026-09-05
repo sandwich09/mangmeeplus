@@ -2,13 +2,20 @@ import { BadRequestException, ConflictException, Injectable, UnauthorizedExcepti
 import type { SignupClaimInfoDto, SignupClaimResultDto } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { hashPassword, verifyPassword } from '../../auth/domain/logic/password-credential.logic';
-import { CompanySignupCoreService } from './company-signup-core.service';
+import { CompanySignupCoreService, signupStateGuard } from './company-signup-core.service';
 import { AccountClaimTokenService } from './account-claim-token.service';
 import { ProvisionSignupUseCase } from './provision-signup.use-case';
 import { maskEmail, suggestedUsernameFromEmail } from '../domain/account-claim.logic';
 
 /** One message for expired, used and unknown tokens (P11 F-EM-3) — the page is never an oracle. */
 const INVALID_CLAIM = 'claim_link_invalid_or_expired';
+
+/**
+ * Re-checked under the core's advisory lock, on the row as it is NOW. The peek that opened this
+ * claim happened before the applicant typed anything, and a sweep, a reissue or a second tab may
+ * have moved the row since.
+ */
+const STILL_AWAITING_CLAIM = signupStateGuard(INVALID_CLAIM, (current) => current.state === 'EMAIL_PENDING');
 
 /**
  * Constant-cost verify for an unknown identifier, mirroring `PasswordLoginUseCase`: an account that
@@ -93,18 +100,14 @@ export class SignupClaimUseCase {
     // it is the same person (spec §4C forbids guessing), send them to the attach branch.
     if (emailOwner) throw new ConflictException('email_already_registered_use_existing_account');
 
-    const request = await this.tokens.consume(cmd.token);
-    if (!request) throw new BadRequestException(INVALID_CLAIM);
-
-    await this.prisma.client.companySignupRequest.update({
-      where: { id: request.id },
+    await this.recordClaim(cmd.token, preview.request.id, cmd.correlationRequestId, {
       // Hash only — the plaintext never reaches the database (§4B).
-      data: { pendingPasswordHash: hashPassword(cmd.password), attachUserId: null },
+      pendingPasswordHash: hashPassword(cmd.password),
+      attachUserId: null,
     });
-    await this.core.advance(request.id, 'EMAIL_VERIFIED', cmd.correlationRequestId);
 
     const provisioned = await this.provision.execute({
-      requestId: request.id,
+      requestId: preview.request.id,
       username,
       correlationRequestId: cmd.correlationRequestId,
       webBaseUrl: cmd.webBaseUrl,
@@ -120,23 +123,50 @@ export class SignupClaimUseCase {
 
     const owner = await this.authenticate(cmd.identifier, cmd.password);
 
-    const request = await this.tokens.consume(cmd.token);
-    if (!request) throw new BadRequestException(INVALID_CLAIM);
-
-    await this.prisma.client.companySignupRequest.update({
-      where: { id: request.id },
+    await this.recordClaim(cmd.token, preview.request.id, cmd.correlationRequestId, {
       // Attach carries no password of its own; clear any hash a previous branch attempt left.
-      data: { attachUserId: owner.id, pendingPasswordHash: null },
+      attachUserId: owner.id,
+      pendingPasswordHash: null,
     });
-    await this.core.advance(request.id, 'EMAIL_VERIFIED', cmd.correlationRequestId);
 
     const provisioned = await this.provision.execute({
-      requestId: request.id,
+      requestId: preview.request.id,
       correlationRequestId: cmd.correlationRequestId,
       webBaseUrl: cmd.webBaseUrl,
       apiBaseUrl: cmd.apiBaseUrl,
     });
     return toResult(provisioned);
+  }
+
+  /**
+   * Review R04: spending the single-use link, writing the claim material and moving the state are
+   * ONE transaction. As three writes, a request that moved on between the page load and the submit
+   * — or a process that died in the window — left the applicant holding a burnt token and a request
+   * that had never claimed, with no way forward but an admin reissue.
+   *
+   * `expect` is what makes the link single-use here: the row is re-read under the core's advisory
+   * lock, and a second submission of the same link finds a state that is no longer EMAIL_PENDING
+   * and is refused with the one sentence this whole boundary answers with.
+   */
+  private async recordClaim(
+    rawToken: string,
+    requestId: string,
+    correlationRequestId: string,
+    data: { pendingPasswordHash: string | null; attachUserId: string | null },
+  ): Promise<void> {
+    try {
+      await this.core.advance(requestId, 'EMAIL_VERIFIED', correlationRequestId, undefined, STILL_AWAITING_CLAIM, {
+        data,
+        alsoInTransaction: async (tx) => {
+          if (!await this.tokens.consume(rawToken, new Date(), tx)) throw new BadRequestException(INVALID_CLAIM);
+        },
+      });
+    } catch (error) {
+      // Every refusal from this boundary reads the same, so a second submission of a spent link
+      // learns nothing a first one would not (P11 F-EM-3).
+      if (error instanceof ConflictException) throw new BadRequestException(INVALID_CLAIM);
+      throw error;
+    }
   }
 
   /**

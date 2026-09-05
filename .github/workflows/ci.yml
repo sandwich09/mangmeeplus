@@ -430,10 +430,13 @@ jobs:
       # `migrate deploy` for the schema, `sync-permissions` for the system roles the onboarding
       # path reads (a full seed is demo data this does not need).
       #
+      # Flow B recovery (review R04/F2/F10) rides the same database: its assertions are about a
+      # conditional in-transaction stamp, a rolled-back approve and an adopt-on-retry —
+      # none of which an in-memory fake can show, because the transaction IS the mechanism.
       # ONE INVOCATION EACH, deliberately. The runner interleaves spec files, and two of these seed
       # usernames that collide under `lower(username)` — running them together fails on a duplicate
       # that has nothing to do with the code under test.
-      - name: Identity, username, LINE-signup, support-request and charge-kind specs against PostgreSQL
+      - name: Identity, username, LINE-signup, support-request, charge-kind and signup-recovery specs against PostgreSQL
         if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
         env:
           PGPASSWORD: watchdog_ci
@@ -457,6 +460,9 @@ jobs:
           EXPENSE_CHARGE_KIND_TEST_DATABASE_URL="$DATABASE_URL" \
             pnpm --filter @watchdog-bms/api exec tsx --test \
             src/modules/expenses/expense-line-charge-kind.pg.spec.ts
+          SIGNUP_RECOVERY_TEST_DATABASE_URL="$DATABASE_URL" \
+            pnpm --filter @watchdog-bms/api exec tsx --test \
+            src/modules/external-signup/signup-provisioning-recovery.pg.spec.ts
       - run: pnpm test
         if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
       - name: P27, OCR, and expense payment integrity against PostgreSQL

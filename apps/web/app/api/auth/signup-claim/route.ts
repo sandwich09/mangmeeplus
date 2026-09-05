@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import { forwardedClientHeaders } from '@/common/api/forwarded-client-headers';
 import { internalApiV1Base } from '@/common/api/internal-api-base';
 import { generateCsrfToken, resolveHomePath, setAuthCookies } from '@/common/auth/auth-cookies.server';
 
@@ -44,12 +45,18 @@ export async function POST(request: NextRequest) {
 
   const claimPath = mode === 'attach' ? '/public/signup-claims/attach' : '/public/signup-claims/set-password';
   const claimBody = mode === 'attach' ? { token, identifier, password } : { token, username, password };
+  // Review R06: this BFF reaches the API over loopback, so without the visitor's chain every
+  // applicant shares ONE 20/hour claim bucket and ONE password-login failure bucket. The API trusts
+  // `x-forwarded-for` only from the private tier and walks it from the right past the hops our own
+  // gateway and Cloudflare appended, so forwarding it verbatim hands over the visitor and nothing
+  // a visitor could choose for themselves.
+  const clientHeaders = forwardedClientHeaders(request.headers);
 
   let claimRes: Response;
   try {
     claimRes = await fetch(`${internalApiV1Base()}${claimPath}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...clientHeaders },
       body: JSON.stringify(claimBody),
       cache: 'no-store',
     });
@@ -69,7 +76,7 @@ export async function POST(request: NextRequest) {
   try {
     const loginRes = await fetch(`${internalApiV1Base()}/auth/password/login`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...clientHeaders },
       body: JSON.stringify({ username: loginIdentifier, password }),
       cache: 'no-store',
     });

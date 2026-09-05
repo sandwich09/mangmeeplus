@@ -162,3 +162,51 @@ describe('AuthRateLimitService customer register', () => {
     await service.assertCustomerRegisterAllowed('2.2.2.2', 'line-ch-1');
   });
 });
+
+/**
+ * Review F14. The merge preview is a READ the dialog makes to describe a decision. It used to share
+ * the LINE-login callback's bucket, so opening the dialog a few times could 429 the visitor's own
+ * LINE login — the very thing the dialog exists to recover from. The two must not share a key.
+ */
+describe('AuthRateLimitService account-merge preview (F6)', () => {
+  /** Records the bucket each assertion draws from, which is the thing that must not be shared. */
+  /** The callback limits the shared fixture does not carry; 10 is the production shape. */
+  const withCallback = () => new AuthRateLimitService(
+    { ...(config as object), lineLoginCallbackMaxPerIp: 10, lineLoginCallbackWindowSeconds: 900 } as never,
+    new RedisRateLimitService({ redisUrl: '', isProduction: false } as never),
+  );
+
+  function spyingService() {
+    const buckets: string[] = [];
+    const service = withCallback();
+    const inner = (service as unknown as {
+      assertWithinLimit(bucket: string, key: string, max: number, windowSeconds: number): Promise<void>;
+    }).assertWithinLimit.bind(service);
+    (service as unknown as Record<string, unknown>)['assertWithinLimit'] = async (
+      bucket: string, key: string, max: number, windowSeconds: number,
+    ) => {
+      buckets.push(bucket);
+      return inner(bucket, key, max, windowSeconds);
+    };
+    return { service, buckets };
+  }
+
+  it('draws from its own bucket, never the LINE-login callback one', async () => {
+    const h = spyingService();
+
+    await h.service.assertAccountMergePreviewAllowed('1.1.1.1');
+    await h.service.assertLineLoginCallbackAllowed('1.1.1.1');
+
+    assert.deepEqual(h.buckets, ['account-merge-preview-ip', 'line-login-callback-ip']);
+  });
+
+  it('lets a person open the dialog far more often than the callback quota allows', async () => {
+    const service = withCallback();
+    // Ten is the whole LINE-login callback quota; the preview must not be spent by that point.
+    for (let open = 0; open < 30; open += 1) {
+      await service.assertAccountMergePreviewAllowed('3.3.3.3');
+    }
+    // ...and the visitor's LINE login is untouched by all of that.
+    await service.assertLineLoginCallbackAllowed('3.3.3.3');
+  });
+});

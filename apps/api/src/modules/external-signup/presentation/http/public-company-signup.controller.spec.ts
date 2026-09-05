@@ -1,6 +1,8 @@
+import 'reflect-metadata';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { ServiceUnavailableException } from '@nestjs/common';
+import { METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
 import { PublicCompanySignupController } from './public-company-signup.controller';
 
 /**
@@ -37,6 +39,49 @@ function harness(sesWebBaseUrl: string | null = 'https://app.mangmeeplus.com') {
 
 const SET_PASSWORD = { token: 't'.repeat(48), username: 'somchai', password: 'secret123' } as any;
 const ATTACH = { token: 't'.repeat(48), identifier: 'somchai', password: 'secret123' } as any;
+
+/**
+ * Review R01, root fix. The claim token is a bearer credential; a URL path carries it through every
+ * access log on the way in (ALB, the API's own request logger, any proxy in between). It belongs in
+ * a request BODY, which none of those log.
+ */
+describe('PublicCompanySignupController — the claim token never travels in a URL', () => {
+  const proto = PublicCompanySignupController.prototype as unknown as Record<string, () => unknown>;
+
+  it('exposes claim-info as POST signup-claims/info', () => {
+    const handler = proto['claimInfo'];
+    assert.ok(handler, 'claimInfo handler must exist');
+    assert.equal(Reflect.getMetadata(PATH_METADATA, handler), 'signup-claims/info');
+    // RequestMethod.POST === 1
+    assert.equal(Reflect.getMetadata(METHOD_METADATA, handler), 1);
+  });
+
+  it('leaves no route at all with a token in its path', () => {
+    const withToken = Object.getOwnPropertyNames(proto)
+      .filter((name) => name !== 'constructor' && typeof proto[name] === 'function')
+      .map((name) => [name, Reflect.getMetadata(PATH_METADATA, proto[name]!)] as const)
+      .filter(([, path]) => typeof path === 'string' && path.includes(':token'));
+    assert.deepEqual(withToken, []);
+  });
+
+  it('reads the token from the body and keeps the identical empty answer for a malformed one', async () => {
+    const seen: string[] = [];
+    const controller = new PublicCompanySignupController(
+      { externalSignupEnabled: true, sesWebBaseUrl: 'https://app.mangmeeplus.com' } as any,
+      { assertPublicSignupReadAllowed: async () => undefined } as any,
+      {} as any,
+      {} as any,
+      { info: async (token: string) => { seen.push(token); return { valid: true } as any; } } as any,
+    );
+
+    const good = 't'.repeat(48);
+    assert.deepEqual(await controller.claimInfo({ token: good } as any, REQ), { valid: true });
+    assert.deepEqual(seen, [good]);
+    // Malformed tokens are answered exactly like unknown ones — the endpoint is never a shape oracle.
+    assert.deepEqual(await controller.claimInfo({ token: 'short' } as any, REQ), { valid: false });
+    assert.deepEqual(seen, [good], 'a malformed token must not reach the use case');
+  });
+});
 
 describe('PublicCompanySignupController — the handoff base a claim persists', () => {
   it('ignores the applicant Origin on both claim branches', async () => {

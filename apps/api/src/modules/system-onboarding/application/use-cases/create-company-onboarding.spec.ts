@@ -822,9 +822,9 @@ const signupInput = {
   externalSignupId: 'official-001', companyName: 'บริษัท ตัวอย่าง จำกัด', taxId: '0105555000012',
   ownerFirstName: 'คุณสมชาย',
   ownerLastName: 'ทดสอบ', contactEmail: 'Owner@Example.com', consentVersion: 'terms-2026-08',
-  // Only PRO_TRIAL is sellable (spec §3A); the pre-catalog placeholder this used to carry is now
-  // rejected by the offer allowlist, which is the intended behaviour.
-  referralCode: 'creator-a', requestedOfferKey: 'PRO_TRIAL',
+  // Owner 2026-09-05: the form presents one offer, the free trial, and the key is attribution only
+  // — it chooses no package and refuses no application.
+  referralCode: 'creator-a', requestedOfferKey: 'FREE_TRIAL',
 };
 
 describe('P10-0 external signup core', () => {

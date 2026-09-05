@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
-import type { AccountClaimToken, CompanySignupRequest } from '../../../generated/prisma/client';
+import type { AccountClaimToken, CompanySignupRequest, Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../../common/database/prisma.service';
-import { CLAIM_TOKEN_TTL_HOURS, hashClaimToken } from '../domain/account-claim.logic';
+import { claimTokenExpiresAt, hashClaimToken } from '../domain/account-claim.logic';
 
 /** 32 bytes of randomness, URL-safe. Matches the entropy of the reset-token pattern (P11 §2). */
 const CLAIM_TOKEN_BYTES = 32;
@@ -18,9 +18,17 @@ export class AccountClaimTokenService {
    * put in one email. Only its hash is persisted, and any earlier unused token for the request is
    * revoked in the same transaction, so a resend always invalidates the link that came before.
    */
-  async mint(signupRequestId: string, now = new Date()): Promise<MintedClaimToken> {
+  async mint(
+    signupRequestId: string,
+    now = new Date(),
+    /**
+     * Review F7: when the request's activation window ends. The link is minted to die with it —
+     * a 72-hour token issued on day 28 of a 30-day window was killed mid-life by the sweep.
+     */
+    windowStartedAt: Date | null = null,
+  ): Promise<MintedClaimToken> {
     const rawToken = randomBytes(CLAIM_TOKEN_BYTES).toString('base64url');
-    const expiresAt = new Date(now.getTime() + CLAIM_TOKEN_TTL_HOURS * 3_600_000);
+    const expiresAt = claimTokenExpiresAt(now, windowStartedAt);
 
     await this.prisma.client.$transaction(async (tx) => {
       await tx.accountClaimToken.updateMany({
@@ -67,15 +75,25 @@ export class AccountClaimTokenService {
    * the same link produce exactly one winner, because only one `updateMany` can move `usedAt` off
    * null. The loser is told the link is spent rather than being allowed a second provisioning.
    */
-  async consume(rawToken: string, now = new Date()): Promise<CompanySignupRequest | null> {
+  async consume(
+    rawToken: string,
+    now = new Date(),
+    /**
+     * Review R04: the claim transaction. Spending the link and recording the claim used to be
+     * separate writes, so a request that moved on in between — or a process that died there — left
+     * the applicant with a burnt single-use token and nothing to show for it.
+     */
+    tx?: Prisma.TransactionClient,
+  ): Promise<CompanySignupRequest | null> {
+    const client = tx ?? this.prisma.client;
     const tokenHash = hashClaimToken(rawToken);
-    const claimed = await this.prisma.client.accountClaimToken.updateMany({
+    const claimed = await client.accountClaimToken.updateMany({
       where: { tokenHash, usedAt: null, revokedAt: null, expiresAt: { gt: now } },
       data: { usedAt: now },
     });
     if (claimed.count !== 1) return null;
 
-    const token = await this.prisma.client.accountClaimToken.findUnique({
+    const token = await client.accountClaimToken.findUnique({
       where: { tokenHash },
       include: { signupRequest: true },
     });

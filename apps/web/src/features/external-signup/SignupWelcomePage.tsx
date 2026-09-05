@@ -1,6 +1,7 @@
 'use client';
 
 import { Suspense, useEffect, useState } from 'react';
+import type { AccountMergeCompanyOutcomeDto, AccountMergePreviewDto } from '@watchdog-bms/contracts';
 import { withLineExternalBrowser } from '@/common/auth/line-in-app-browser.logic';
 import { useSearchParams } from 'next/navigation';
 import { Button } from '@/common/components/button';
@@ -8,7 +9,7 @@ import { Modal } from '@/common/components/modal';
 import { formatThaiDate } from '@/common/i18n/thai-date';
 import { fetchPlanTermNotice } from '@/features/plan-term/plan-term.api';
 import { SignupBrandHeader } from './SignupChrome';
-import { readClaimedCompany, type WelcomeHandoff } from './welcome-handoff.logic';
+import { readClaimedCompany, shouldFetchMergeOffer, type WelcomeHandoff } from './welcome-handoff.logic';
 
 const LINE_GREEN = '#06C755';
 
@@ -43,7 +44,30 @@ function LineLinkButton({ className = '' }: { className?: string }) {
   );
 }
 
-type MergeOffer = { ready: boolean; existingAccount?: { displayName: string; companyNames: string[] } };
+type MergeOffer = {
+  ready: boolean;
+  existingAccount?: { displayName: string; companyNames: string[] };
+  /** Review R05: what the merge would do, per shop, and which way of signing in survives. */
+  preview?: AccountMergePreviewDto;
+};
+
+/** Owner copy. No plus sign anywhere in user-facing text: write "และ". */
+const MERGE_OUTCOME_TH: Record<AccountMergeCompanyOutcomeDto['outcome'], string> = {
+  move: 'ย้ายไปอยู่กับบัญชีเดิม',
+  close_duplicate: 'บัญชีเดิมมีสิทธิ์ร้านนี้อยู่แล้ว',
+  blocked: 'รวมไม่ได้',
+};
+
+const MERGE_BLOCK_TH: Record<string, string> = {
+  last_active_owner: 'ร้านนี้จะไม่เหลือเจ้าของร้าน',
+  role_conflict: 'สองบัญชีมีสิทธิ์ในร้านนี้ไม่เหมือนกัน',
+  target_membership_inactive: 'สิทธิ์ของบัญชีเดิมในร้านนี้ถูกปิดอยู่',
+};
+
+const SIGN_IN_TH: Record<string, string> = { line: 'LINE', password: 'ชื่อผู้ใช้และรหัสผ่าน' };
+
+const signInLabel = (ways: string[]) =>
+  ways.map((way) => SIGN_IN_TH[way] ?? way).join(' หรือ ') || 'ยังไม่มีวิธีเข้าสู่ระบบ';
 
 const MERGE_ERROR_DEFAULT = 'รวมบัญชีไม่สำเร็จ ลองใหม่อีกครั้ง หรือติดต่อ 098-256-5628';
 const MERGE_EXPIRED = 'คำขอรวมบัญชีหมดอายุแล้ว กดปุ่ม เชื่อมกับ LINE อีกครั้ง แล้วเลือกรวมบัญชี';
@@ -56,6 +80,8 @@ const MERGE_ERROR_TH: Record<string, string> = {
   merge_in_progress: 'กำลังรวมบัญชีอยู่ กรุณารอสักครู่แล้วเปิดหน้านี้ใหม่',
   merge_target_unavailable: 'บัญชีเดิมใช้งานไม่ได้ในตอนนี้ ติดต่อ 098-256-5628',
   merge_not_needed: 'สองบัญชีนี้เป็นบัญชีเดียวกันอยู่แล้ว ไม่ต้องรวม',
+  // Review R05: the server refuses rather than decide on its own which role set should win.
+  account_merge_role_conflict: 'รวมบัญชีไม่ได้ เพราะสิทธิ์ในร้านที่ซ้ำกันไม่ตรงกัน ติดต่อ 098-256-5628',
 };
 
 /**
@@ -71,15 +97,18 @@ function MergeDialog({ open, onClose }: { open: boolean; onClose: () => void }) 
 
   // The ticket lives in an HttpOnly cookie, so only the server can say whether an offer is live.
   // A cookie that has expired is not an error — the user simply presses the LINE button again.
+  //
+  // Review F6: fetched ONCE per mount, not on every open. The dialog is re-offered on every failed
+  // link attempt, and each open used to cost a preview call — which the API rate-limits.
   useEffect(() => {
-    if (!open) return undefined;
+    if (!shouldFetchMergeOffer(open, offer)) return undefined;
     let active = true;
     void fetch('/api/auth/account-merge/ticket', { cache: 'no-store' })
       .then((res) => res.json())
       .then((data: MergeOffer) => { if (active) setOffer(data); })
       .catch(() => { if (active) setOffer({ ready: false }); });
     return () => { active = false; };
-  }, [open]);
+  }, [open, offer]);
 
   const confirmMerge = async () => {
     setPending(true);
@@ -100,6 +129,10 @@ function MergeDialog({ open, onClose }: { open: boolean; onClose: () => void }) 
   };
 
   const existing = offer?.ready ? offer.existingAccount : undefined;
+  const preview = offer?.ready ? offer.preview : undefined;
+  // Fail closed in the UI too: a plan that says no disables the button rather than letting the
+  // person press it and read a 409.
+  const blockedByPlan = preview ? !preview.canMerge : false;
 
   return (
     <Modal
@@ -118,16 +151,20 @@ function MergeDialog({ open, onClose }: { open: boolean; onClose: () => void }) 
               type="button"
               size="lg"
               className="w-full !rounded-xl"
-              disabled={!offer?.ready || pending}
+              disabled={!offer?.ready || pending || blockedByPlan}
               loading={pending}
               onClick={confirmMerge}
             >
               รวมเข้าบัญชีเดิม
             </Button>
             <p className="text-center text-[12.5px] leading-6 text-gray-500">
-              {offer?.ready
-                ? 'ร้านของบัญชีนี้จะย้ายไปอยู่กับบัญชีเดิม แล้วใช้ LINE เข้าใช้งานได้ทุกร้าน'
-                : MERGE_EXPIRED}
+              {!offer?.ready
+                ? MERGE_EXPIRED
+                : blockedByPlan
+                  ? 'มีร้านที่รวมไม่ได้ ดูรายละเอียดด้านบน แล้วติดต่อ 098-256-5628'
+                  : preview
+                    ? `หลังรวมแล้ว เข้าสู่ระบบด้วย ${signInLabel(preview.keeps.signInWith)}`
+                    : 'ร้านของบัญชีนี้จะย้ายไปอยู่กับบัญชีเดิม แล้วใช้ LINE เข้าใช้งานได้ทุกร้าน'}
             </p>
             <Button type="button" size="lg" variant="secondary" className="w-full !rounded-xl" disabled={pending} onClick={() => setDeclined(true)}>
               ไว้ก่อน
@@ -158,6 +195,33 @@ function MergeDialog({ open, onClose }: { open: boolean; onClose: () => void }) 
                   ))}
                 </ul>
               ) : null}
+            </div>
+          ) : null}
+          {/* Review R05: consent needs the consequences. One line per shop, then the credentials
+              that survive and the ones that stop working. */}
+          {preview ? (
+            <div className="mt-3.5 rounded-xl border border-gray-200 p-3.5">
+              <p className="text-[12.5px] font-semibold text-gray-500">สิ่งที่จะเกิดกับแต่ละร้าน</p>
+              <ul className="mt-1.5 space-y-1.5">
+                {preview.companies.map((company) => (
+                  <li key={company.companyName} className="text-[14px] leading-6 text-gray-700">
+                    <span className="font-semibold text-gray-900">{company.companyName}</span>
+                    {' — '}
+                    <span className={company.outcome === 'blocked' ? 'text-amber-800' : undefined}>
+                      {MERGE_OUTCOME_TH[company.outcome]}
+                      {company.outcome === 'blocked' && company.reason
+                        ? ` (${MERGE_BLOCK_TH[company.reason] ?? company.reason})`
+                        : ''}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-2.5 text-[13.5px] leading-6 text-gray-600">
+                เข้าสู่ระบบต่อด้วย {signInLabel(preview.keeps.signInWith)}
+                {preview.closes.signInWith.length > 0
+                  ? ` และจะใช้ ${signInLabel(preview.closes.signInWith)} ของบัญชีนี้ไม่ได้อีก`
+                  : ''}
+              </p>
             </div>
           ) : null}
           {error ? (
@@ -222,7 +286,8 @@ function Welcome() {
             {/* Hidden entirely when the term is unknown: a made-up date is worse than no date. */}
             {trialEndsAt ? (
               <p className="mt-2 text-[15px] leading-7 text-gray-600">
-                ทดลองใช้แพ็กเกจ PRO ฟรี ถึง {formatThaiDate(trialEndsAt)}
+                {/* F1: named the PRO package while provisioning writes the free trial. */}
+                ทดลองใช้ฟรี ถึง {formatThaiDate(trialEndsAt)}
               </p>
             ) : null}
 

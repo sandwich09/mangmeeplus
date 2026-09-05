@@ -44,6 +44,21 @@ describe('trustedClientIp', () => {
     assert.equal(trustedClientIp(request('172.71.14.9')), '10.0.0.5');
   });
 
+  // Review R06: the claim BFF is co-located with the API in the api-web container, so it reaches
+  // it over loopback and its forwarded chain IS trusted — that is the whole trust boundary. These
+  // already pass; they are here so the property is named and a change to the walk has to face it.
+  it('keys a BFF-forwarded chain on the visitor, one bucket per visitor', () => {
+    assert.equal(trustedClientIp(request('203.0.113.55, 172.71.14.9', '127.0.0.1')), '203.0.113.55');
+    assert.equal(trustedClientIp(request('198.51.100.7, 172.71.14.9', '127.0.0.1')), '198.51.100.7');
+  });
+
+  it('ignores the same chain when the caller is not the trusted tier', () => {
+    // A public client that forges the header reaches the API through the gateway, which appends the
+    // hop it actually observed — so the forged value is never the rightmost untrusted one.
+    assert.equal(trustedClientIp(request('203.0.113.55, 172.71.14.9', '198.51.100.99')), '198.51.100.99');
+    assert.equal(trustedClientIp(request('203.0.113.55', '198.51.100.99')), '198.51.100.99');
+  });
+
   it('treats addresses just outside the Cloudflare ranges as visitors', () => {
     assert.equal(trustedClientIp(request('2a06:98c8::1')), '2a06:98c8::1');
     assert.equal(trustedClientIp(request('104.28.0.1')), '104.28.0.1');

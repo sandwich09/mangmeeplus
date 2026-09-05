@@ -48,7 +48,10 @@ function harness(options: {
   const failures: any[] = [];
   const planTermUpserts: any[] = [];
   const planTermUpdates: any[] = [];
+  /** F9: the conditional "stamp only if never stamped" writes, which a retry must not repeat. */
+  const planTermStamps: any[] = [];
   const aiConfigUpserts: any[] = [];
+  const aiConfigStamps: any[] = [];
   const lineContexts: any[] = [];
 
   const request = { ...REQUEST, ...(options.request ?? {}) };
@@ -60,8 +63,12 @@ function harness(options: {
       companyPlanTerm: {
         upsert: async (args: any) => { planTermUpserts.push(args); return {}; },
         update: async (args: any) => { planTermUpdates.push(args); return {}; },
+        updateMany: async (args: any) => { planTermStamps.push(args); return { count: 1 }; },
       },
-      companyAiConfiguration: { upsert: async (args: any) => { aiConfigUpserts.push(args); return {}; } },
+      companyAiConfiguration: {
+        upsert: async (args: any) => { aiConfigUpserts.push(args); return {}; },
+        updateMany: async (args: any) => { aiConfigStamps.push(args); return { count: 1 }; },
+      },
       lineCompanyContext: { upsert: async (args: any) => { lineContexts.push(args); return {}; } },
       companySignupRequest: { update: (args: any) => { requestUpdates.push(args); return Promise.resolve({}); } },
       auditLog: { create: (args: any) => { audits.push(args); return Promise.resolve({}); } },
@@ -108,19 +115,100 @@ function harness(options: {
   return {
     useCase: new ProvisionSignupUseCase(prisma, core, onboarding, config, adminDirectory, lineNotify, opsAlerts),
     onboardingCalls, companyUpdates, requestUpdates, audits, advances, completed, failures, planTermUpserts,
-    planTermUpdates, aiConfigUpserts, lineContexts, linePushes, alerts,
+    planTermUpdates, planTermStamps, aiConfigUpserts, aiConfigStamps, lineContexts, linePushes, alerts,
   };
 }
 
-describe('provisioning applies the PRO trial term (P29 T3)', () => {
-  it('names the PRO_999 30-day term on the onboarding command, not by a second upsert', async () => {
+describe('provisioning applies the free-trial term (P29 T3; Owner 2026-09-05)', () => {
+  it('names the free-trial 30-day term on the onboarding command, not by a second upsert', async () => {
     const h = harness();
     await h.useCase.execute(CMD);
-    // Review B-01: onboarding writes the term row, so this use-case must NOT upsert its own —
-    // `applyPlanTermPreset` leaves an existing row alone and the intended tier would be lost.
-    assert.equal(h.planTermUpserts.length, 0);
-    assert.equal(h.onboardingCalls[0].planTier, 'PRO_999');
+    // Review B-01: onboarding is TOLD the tier rather than having one upserted over it afterwards,
+    // because an upsert against an existing row cannot change a tier that is already wrong.
+    // Review R02: one trial for both sources. The web form used to grant PRO_999 here.
+    assert.equal(h.onboardingCalls[0].planTier, 'FREE_TRIAL_15');
     assert.equal(h.onboardingCalls[0].planDays, 30);
+    // The single upsert that follows is the warm-up guard, and its `update` side touches nothing
+    // but the warm-up — no tier, no dates, so it can never contradict what onboarding wrote.
+    assert.equal(h.planTermUpserts.length, 1);
+    // F9: the upsert writes nothing to a row that exists, so it can never contradict what
+    // onboarding wrote; the warm-up arrives through its own conditional stamp.
+    assert.deepEqual(h.planTermUpserts[0].update, {});
+    assert.equal(h.planTermStamps[0].where.warmupUntil, null);
+  });
+});
+
+/**
+ * Owner 2026-09-05, second half: "the same free trial" means the same PRODUCT, not only the same
+ * tier row. The AI budget cap and the first-week receipt ceiling were `line-oa`-only, so a web-form
+ * shop on the identical trial tier still spent the PLATFORM default AI budget and read at its full
+ * tier ceiling from day one.
+ */
+describe('the trial guards are the same for both sources (Owner 2026-09-05)', () => {
+  it('caps a web-form trial shop the way a LINE trial shop is capped', async () => {
+    const h = harness();
+    await h.useCase.execute(CMD);
+
+    const term = h.planTermUpserts[0];
+    assert.ok(term, 'a web-form trial shop must get the warm-up guard too');
+    assert.equal(term.where.companyId, 'co-1');
+    assert.equal(h.planTermStamps[0].data.warmupSlipLimit, 10);
+    assert.ok(h.planTermStamps[0].data.warmupUntil.getTime() - Date.now() > 6.5 * 24 * 3600_000);
+    assert.equal(term.create.tierKey, 'FREE_TRIAL_15');
+    assert.equal(term.create.monthlySlipLimit, 15);
+    assert.equal(term.create.termEndsAt.getTime() - term.create.termStartAt.getTime(), 30 * 24 * 3600_000);
+    assert.equal(h.aiConfigUpserts[0]?.create.monthlyBudgetSatang, 8000);
+    assert.equal(h.aiConfigStamps[0]?.data.monthlyBudgetSatang, 8000);
+  });
+
+  it('writes identical guard rows whichever form the shop came in through', async () => {
+    const web = harness();
+    await web.useCase.execute(CMD);
+    const line = harness({ request: LINE_REQUEST });
+    await line.useCase.execute(CMD);
+
+    const shape = (upsert: any) => ({
+      ...upsert.create,
+      termStartAt: undefined, termEndsAt: undefined, warmupUntil: undefined,
+      update: upsert.update,
+    });
+    assert.deepEqual(shape(web.planTermUpserts[0]), shape(line.planTermUpserts[0]));
+    assert.deepEqual(web.aiConfigUpserts[0], line.aiConfigUpserts[0]);
+    assert.equal(web.planTermStamps[0].data.warmupSlipLimit, line.planTermStamps[0].data.warmupSlipLimit);
+    assert.deepEqual(web.aiConfigStamps[0], line.aiConfigStamps[0]);
+  });
+
+  /**
+   * F9. These guards run on EVERY provisioning, including an admin retry weeks later. Stamping the
+   * warm-up unconditionally would re-cap a shop whose first week is long past, and stamping the
+   * budget unconditionally would silently undo an admin who raised it. Both must be written once
+   * and only once: on the row that has never had one.
+   */
+  it('never re-stamps the warm-up or the budget over a shop that already has them', async () => {
+    const h = harness();
+    await h.useCase.execute(CMD);
+
+    // The upsert only fills a MISSING row — its update side writes nothing at all.
+    assert.deepEqual(h.planTermUpserts[0].update, {});
+    assert.deepEqual(h.aiConfigUpserts[0].update, {});
+    // The warm-up and the cap are then stamped conditionally, so a retry matches no row.
+    assert.equal(h.planTermStamps.length, 1);
+    assert.equal(h.planTermStamps[0].where.companyId, 'co-1');
+    assert.equal(h.planTermStamps[0].where.warmupUntil, null, 'only a term that never had a warm-up');
+    assert.equal(h.planTermStamps[0].data.warmupSlipLimit, 10);
+    assert.equal(h.aiConfigStamps.length, 1);
+    assert.equal(h.aiConfigStamps[0].where.monthlyBudgetSatang, null, 'only a budget nobody has set');
+    assert.equal(h.aiConfigStamps[0].data.monthlyBudgetSatang, 8000);
+  });
+
+  it('keeps the genuinely LINE-only guard off a web-form shop', async () => {
+    const h = harness();
+    await h.useCase.execute(CMD);
+
+    // LineCompanyContext points a LINE conversation at a shop. A web-form applicant has no LINE
+    // account yet — the welcome page's link step is where that arrives.
+    assert.deepEqual(h.lineContexts, []);
+    assert.deepEqual(h.linePushes, []);
   });
 });
 
@@ -286,15 +374,15 @@ describe('ProvisionSignupUseCase — LINE-first source', () => {
     // it may not be there, and a bare update would raise P2025 on a shop that already exists.
     const term = h.planTermUpserts[0];
     assert.equal(term.where.companyId, 'co-1');
-    assert.equal(term.update.warmupSlipLimit, 10);
-    assert.ok(term.update.warmupUntil.getTime() - Date.now() > 6.5 * 24 * 3600_000);
+    assert.equal(h.planTermStamps[0].data.warmupSlipLimit, 10);
+    assert.ok(h.planTermStamps[0].data.warmupUntil.getTime() - Date.now() > 6.5 * 24 * 3600_000);
     // The create side is the full free-trial term, so a missing row is repaired, not half-written.
     assert.equal(term.create.tierKey, 'FREE_TRIAL_15');
     assert.equal(term.create.monthlySlipLimit, 15);
     assert.equal(term.create.termEndsAt.getTime() - term.create.termStartAt.getTime(), 30 * 24 * 3600_000);
     // Review G-06: without this the trial shop would spend the platform default budget.
     assert.equal(h.aiConfigUpserts[0].create.monthlyBudgetSatang, 8000);
-    assert.equal(h.aiConfigUpserts[0].update.monthlyBudgetSatang, 8000);
+    assert.equal(h.aiConfigStamps[0].data.monthlyBudgetSatang, 8000);
     // Review B-06: the first receipt must land in the shop just opened, not in a company picker.
     assert.equal(h.lineContexts[0].where.lineUserId, 'Uline-1');
     assert.equal(h.lineContexts[0].create.companyId, 'co-1');
@@ -381,17 +469,22 @@ describe('ProvisionSignupUseCase — recovering an already-created company', () 
     await h.useCase.execute(CMD);
 
     assert.equal(h.onboardingCalls.length, 0, 'the company already exists');
+    // Owner 2026-09-05: one writer for the trial's shape, so the recovered shop is repaired by the
+    // same guard upsert both sources use rather than by a second web-only preset call.
     assert.equal(h.planTermUpserts.length, 1);
-    assert.equal(h.planTermUpserts[0].create.tierKey, 'PRO_999');
-    // Idempotent: a term the admin already set is never shortened by a retry.
+    assert.equal(h.planTermUpserts[0].create.tierKey, 'FREE_TRIAL_15');
+    assert.equal(h.planTermUpserts[0].create.monthlySlipLimit, 15);
+    // Idempotent: a term the admin already set keeps its tier and its dates through a retry.
     assert.deepEqual(h.planTermUpserts[0].update, {});
+    // And the recovered shop is capped like every other trial shop — once, if it has no cap yet.
+    assert.equal(h.aiConfigStamps[0]?.data.monthlyBudgetSatang, 8000);
   });
 
   it('leaves a recovered LINE shop to its own trial guards', async () => {
     const h = harness({ request: { ...LINE_REQUEST, companyId: 'co-1', ownerUserId: 'user-1' } });
     await h.useCase.execute(CMD);
 
-    // The trial guards upsert FREE_TRIAL_15 themselves; a PRO_999 preset here would race them.
+    // The trial guards upsert FREE_TRIAL_15 themselves; a second preset here would race them.
     assert.equal(h.planTermUpserts.length, 1);
     assert.equal(h.planTermUpserts[0].create.tierKey, 'FREE_TRIAL_15');
   });

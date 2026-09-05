@@ -26,19 +26,24 @@ export const OUTBOX_LEASE_EXPIRED_ERROR = 'outbox lease expired: claimer did not
 export class PrismaOutboxRepository implements OutboxRepositoryPort {
   constructor(private readonly prisma: PrismaService) {}
 
-  async append(input: AppendOutboxEventInput): Promise<OutboxEventRecord> {
+  /**
+   * `tx` joins an append to a caller's transaction, so an event that MUST accompany a state change
+   * commits with it or not at all (review R08). Omitted, this behaves exactly as before.
+   */
+  async append(input: AppendOutboxEventInput, tx?: Prisma.TransactionClient): Promise<OutboxEventRecord> {
     const validationError = validateOutboxPayload(input.payloadJson);
     if (validationError) throw new Error(validationError);
 
     const safePayload = redactOutboxPayload(input.payloadJson);
+    const client = tx ?? this.prisma.client;
 
     // Idempotent: skip if eventKey already exists
-    const existing = await this.prisma.client.outboxEvent.findUnique({
+    const existing = await client.outboxEvent.findUnique({
       where: { eventKey: input.eventKey },
     });
     if (existing) return this.toRecord(existing);
 
-    const row = await this.prisma.client.outboxEvent.create({
+    const row = await client.outboxEvent.create({
       data: {
         companyId: input.companyId,
         eventType: input.eventType,

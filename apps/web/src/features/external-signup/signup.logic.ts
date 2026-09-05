@@ -1,6 +1,8 @@
 import {
   CURRENT_LEGAL_DOCUMENTS,
   PLAN_TIER_PRESETS,
+  SIGNUP_TRIAL_TIER_KEY,
+  SIGNUP_TRIAL_WARMUP_SLIPS,
   type PlanTierKey,
   type PublicSignupStatusKey,
   type SignupOfferKey,
@@ -42,7 +44,9 @@ function limitsLabel(tierKey: PlanTierKey): string {
 export const SIGNUP_OFFERS: readonly SignupOfferCard[] = [
   { tierKey: 'STARTER_249', offerKey: 'STARTER_249', nameTh: 'เริ่มต้น', priceLabel: '฿249 / เดือน', selectable: false, unavailableReason: UNAVAILABLE_REASON },
   { tierKey: 'BASIC_499', offerKey: 'BASIC_499', nameTh: 'เติบโต', priceLabel: '฿499 / เดือน', selectable: false, unavailableReason: UNAVAILABLE_REASON },
-  { tierKey: 'PRO_999', offerKey: 'PRO_TRIAL', nameTh: 'มืออาชีพ', priceLabel: '฿999 / เดือน', selectable: true, badge: 'ทดลองใช้ฟรี' },
+  // F1: the card names the tier provisioning actually writes. It used to advertise PRO — 5 branches,
+  // 10 staff, 100 receipts, ฿999 — for a shop that opens on 1/2/15 with a first-week ceiling.
+  { tierKey: SIGNUP_TRIAL_TIER_KEY, offerKey: 'FREE_TRIAL', nameTh: 'ทดลองใช้ฟรี', priceLabel: 'ฟรี 30 วัน', selectable: true },
   { tierKey: 'ENTERPRISE_1999', offerKey: 'ENTERPRISE_1999', nameTh: 'ธุรกิจ', priceLabel: '฿1,999 / เดือน', selectable: false, unavailableReason: UNAVAILABLE_REASON },
 ];
 
@@ -50,8 +54,21 @@ export function offerLimitsLabel(card: SignupOfferCard): string {
   return limitsLabel(card.tierKey);
 }
 
-/** The one offer the server accepts today (spec §3A allowlist). */
-export const SELECTABLE_OFFER_KEY: SignupOfferKey = 'PRO_TRIAL';
+/**
+ * Review F17. P10-L §9 holds a brand-new trial shop to a tighter receipt ceiling for its first
+ * week. Telling people afterwards is how "the app is broken" support calls start, so the card says
+ * it up front. Owner copy rule: no plus sign in user-facing text.
+ */
+export function offerWarmupNote(card: SignupOfferCard): string | undefined {
+  if (card.tierKey !== SIGNUP_TRIAL_TIER_KEY) return undefined;
+  return `สัปดาห์แรกอ่านได้ ${SIGNUP_TRIAL_WARMUP_SLIPS} ใบ`;
+}
+
+/**
+ * The one offer the form submits. Owner 2026-09-05: no package is chosen at signup, so this names
+ * the free trial the applicant actually gets rather than the PRO package it used to be sold as.
+ */
+export const SELECTABLE_OFFER_KEY: SignupOfferKey = 'FREE_TRIAL';
 
 // ── Form validation ──
 

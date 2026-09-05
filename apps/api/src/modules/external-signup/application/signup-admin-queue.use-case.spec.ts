@@ -16,7 +16,7 @@ const REQUEST = {
   businessType: 'ร้านค้าปลีก',
   vatRegistered: false,
   taxId: '0105555000012',
-  requestedOfferKey: 'PRO_TRIAL',
+  requestedOfferKey: 'FREE_TRIAL',
   mxValid: true,
   createdAt: new Date('2026-08-25T00:00:00.000Z'),
   approvedAt: null as Date | null,
@@ -87,8 +87,20 @@ function harness(options: {
   } as any;
 
   const core = {
-    advance: async (id: string, state: string, _corr: string, failureCode?: string) => {
-      advances.push({ id, state, ...(failureCode ? { failureCode } : {}) });
+    // R08: `extras` is how a transition carries the facts that make it true — the approval stamp
+    // and the claim email now ride the same transaction, so the stub has to honour both.
+    advance: async (
+      id: string, state: string, _corr: string, failureCode?: string, _expect?: unknown,
+      extras?: { data?: Record<string, unknown>; alsoInTransaction?: (tx: unknown) => Promise<void> },
+    ) => {
+      advances.push({
+        id, state,
+        ...(failureCode ? { failureCode } : {}),
+        ...(extras?.data ? { data: extras.data } : {}),
+      });
+      // F8: the audit and the letter both write through the transaction client, so the stub hands
+      // over the same store — an `{}` here would hide a missing audit as a TypeError.
+      await extras?.alsoInTransaction?.(prisma.client);
       return {};
     },
   } as any;
@@ -357,7 +369,7 @@ describe('SignupAdminQueueUseCase.decide — LINE-first source', () => {
     const { items } = await h.useCase.list(NOW);
     assert.equal(items.length, 1);
     assert.deepEqual(h.requestQueries[0].where.OR[1], {
-      state: { in: ['PROVISIONING_FAILED', 'READY', 'PROVISIONING'] }, source: 'line-oa',
+      state: { in: ['READY', 'PROVISIONING'] }, source: 'line-oa',
     });
   });
 
@@ -447,13 +459,15 @@ describe('SignupAdminQueueUseCase.decide — LINE-first source', () => {
 
   // Review MEDIUM-D: only for THIS source. A web-form row in the same state has no retry an admin
   // could reach — approve, reject and reissue all 409 — so listing it offers three dead ends.
-  it('asks for that state only on the LINE source, leaving the web form byte-identical', async () => {
+  // Review F2: PROVISIONING_FAILED moved into the source-independent list. READY and PROVISIONING
+  // stay LINE-only — a web row in either has no action an admin can take on it.
+  it('asks for a failed provisioning on every source, and the other two on LINE alone', async () => {
     const h = harness({ requests: [] });
     await h.useCase.list(NOW);
 
     assert.deepEqual(h.requestQueries[0].where.OR, [
-      { state: { in: ['PENDING_REVIEW', 'EMAIL_PENDING', 'EMAIL_FAILED', 'EXPIRED'] } },
-      { state: { in: ['PROVISIONING_FAILED', 'READY', 'PROVISIONING'] }, source: 'line-oa' },
+      { state: { in: ['PENDING_REVIEW', 'EMAIL_PENDING', 'EMAIL_FAILED', 'EXPIRED', 'PROVISIONING_FAILED'] } },
+      { state: { in: ['READY', 'PROVISIONING'] }, source: 'line-oa' },
     ]);
   });
 
@@ -470,11 +484,13 @@ describe('SignupAdminQueueUseCase.decide — LINE-first source', () => {
     assert.equal(h.audits[0].data.metadataJson.retryOfFailedProvisioning, true);
   });
 
-  it('does not offer that retry to the web form, whose approval means something else', async () => {
-    const h = harness({ request: { ...REQUEST, state: 'PROVISIONING_FAILED' } });
+  // Review F2: the web form gets the same retry. What it does NOT get is the READY close-out —
+  // that row's last step belongs to the applicant's own welcome page.
+  it('still refuses the READY close-out to the web form, whose last step is the applicant\'s', async () => {
+    const h = harness({ request: { ...REQUEST, state: 'READY' } });
     await assert.rejects(
       () => h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1', URLS),
-      /invalid_signup_decision:PROVISIONING_FAILED/,
+      /invalid_signup_decision:READY/,
     );
   });
 
@@ -575,21 +591,74 @@ describe('SignupAdminQueueUseCase.decide — approve', () => {
     const result = await h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1');
 
     assert.deepEqual(result, { requestId: 'signup-1', state: 'EMAIL_PENDING' });
-    assert.deepEqual(h.advances, [{ id: 'signup-1', state: 'EMAIL_PENDING' }]);
-    assert.equal(h.updates[0].data.approvedByUserId, 'admin-1');
-    assert.ok(h.updates[0].data.approvedAt instanceof Date);
+    assert.equal(h.advances.length, 1);
+    assert.equal(h.advances[0].state, 'EMAIL_PENDING');
+    // R08: the approval facts ride the transition itself, never a second update that can be lost.
+    assert.equal(h.advances[0].data.approvedByUserId, 'admin-1');
+    assert.ok(h.advances[0].data.approvedAt instanceof Date);
+    // R09: the activation window the sweep reads starts here, beside the audit fact.
+    assert.ok(h.advances[0].data.claimWindowStartedAt instanceof Date);
+    assert.deepEqual(h.updates, [], 'nothing about the approval is written outside the transition');
     assert.deepEqual(h.enqueued, [{ id: 'signup-1', reason: 'approve' }]);
   });
 
-  it('is a no-op when the application is already approved', async () => {
+  it('repairs an already-approved application instead of reporting success over a missing email', async () => {
     const h = harness({ request: { ...REQUEST, state: 'EMAIL_PENDING' } });
     const result = await h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-2');
 
     assert.equal(result.state, 'EMAIL_PENDING');
-    // No second transition, no second approver stamp, and above all no second email.
+    // R08: no second transition and no second approver stamp — but the letter is re-enqueued,
+    // because the outbox key is the request id and the alternative is an applicant who waits
+    // forever for an email the first, half-failed approve never queued.
     assert.deepEqual(h.advances, []);
+    assert.deepEqual(h.updates, []);
+    assert.deepEqual(h.enqueued, [{ id: 'signup-1', reason: 'approve' }]);
+    // F8: a repair is an operator action and leaves its own record — the alternative is evidence
+    // that consists only of the absence of a second email.
+    assert.equal(h.audits.length, 1);
+    assert.equal(h.audits[0].data.action, 'signup.request.claim_email_repaired');
+    assert.equal(h.audits[0].data.metadataJson.fromState, 'EMAIL_PENDING');
+  });
+
+  /**
+   * Review F2. A Flow B applicant who claimed their link and then hit a failed provisioning was a
+   * dead end: the row was listed for LINE only, the token was spent, and resend and reissue both
+   * refuse from PROVISIONING_FAILED. The retry is the same action on both sources.
+   */
+  it('retries a failed provisioning on the web form, without asking for the mailbox again', async () => {
+    const h = harness({ request: { ...REQUEST, state: 'PROVISIONING_FAILED', approvedAt: NOW } });
+
+    const result = await h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1', URLS);
+
+    assert.equal(result.state, 'LINE_LINK_PENDING', 'a web shop parks at its own LINE step');
+    assert.equal(h.provisioned.length, 1);
+    assert.equal(h.provisioned[0].requestId, 'signup-1');
+    // The claim already happened: no new letter, and no trip back to EMAIL_PENDING.
     assert.deepEqual(h.enqueued, []);
-    assert.deepEqual(h.audits, []);
+    assert.deepEqual(h.advances, []);
+    // The original decision time is history and is not rewritten by the retry.
+    assert.deepEqual(h.updates, []);
+    // Review F16: a retry files under its own action. As a second `signup.request.approved` the
+    // trail read as two approvals of one application, when the approval happened days earlier.
+    assert.equal(h.audits[0].data.action, 'signup.request.provisioning_retried');
+    assert.equal(h.audits[0].data.metadataJson.retryOfFailedProvisioning, true);
+    assert.equal(h.audits[0].data.metadataJson.finishedStrandedRow, false);
+  });
+
+  it('lists a failed provisioning for every source, not just LINE', async () => {
+    const h = harness({
+      requests: [
+        { ...REQUEST, id: 'web-1', state: 'PROVISIONING_FAILED', source: 'official-site', failureCode: 'boom' },
+      ],
+    });
+
+    const queue = await h.useCase.list(NOW);
+
+    assert.equal(queue.items.length, 1, 'the row an operator most needs to find must be listed');
+    assert.equal(queue.items[0]!.state, 'PROVISIONING_FAILED');
+    assert.equal(queue.items[0]!.failureCode, 'boom');
+    // The states the list asks for include it unconditionally rather than only for `line-oa`.
+    assert.ok(h.requestQueries[0].where.OR[0].state.in.includes('PROVISIONING_FAILED'));
   });
 
   it('refuses to approve an application that is past review', async () => {

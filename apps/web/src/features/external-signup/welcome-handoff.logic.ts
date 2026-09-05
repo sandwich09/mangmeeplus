@@ -60,3 +60,18 @@ export function readClaimedCompany(storage?: Storage): WelcomeHandoff | null {
     return null;
   }
 }
+
+/**
+ * Review F6/F14: whether the merge dialog should ASK the server for its offer and plan.
+ *
+ * The dialog is re-offered on every failed link attempt (spec §4F: the offer repeats, it is not a
+ * one-shot), and each open used to cost a preview call the API rate-limits. Once an answer is in
+ * hand — including "no live offer" — reopening the same dialog must not ask again: the ticket in
+ * the cookie has not changed, so neither has the answer.
+ *
+ * Extracted from the component so the decision is testable without a DOM; the effect is a one-line
+ * caller of this.
+ */
+export function shouldFetchMergeOffer(open: boolean, offer: unknown | null): boolean {
+  return open && offer === null;
+}

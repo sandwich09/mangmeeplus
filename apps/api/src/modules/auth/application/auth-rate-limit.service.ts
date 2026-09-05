@@ -24,6 +24,15 @@ const PUBLIC_SIGNUP_CLAIM_MAX_PER_IP = 20;
 // it exists to bound an unsigned flood, not to shape legitimate AWS traffic.
 const SES_EVENTS_MAX_PER_IP = 600;
 
+/**
+ * Review F6: the merge PREVIEW is a read the dialog makes to describe a decision, not an attempt at
+ * the decision itself. It used to share the LINE-login callback bucket (10/window), so a person who
+ * opened the dialog a few times could 429 their own LINE login — the very thing the dialog exists
+ * to recover. Its own bucket, sized for a human opening a dialog, keeps the two apart.
+ */
+const ACCOUNT_MERGE_PREVIEW_WINDOW_SECONDS = 3600;
+const ACCOUNT_MERGE_PREVIEW_MAX_PER_IP = 120;
+
 // P10-L §9. Same fail-closed policy and the same "constants, not env knobs" reasoning as the web
 // signup buckets above: `LINE_SIGNUP_ENABLED` is the operational switch, not the limits.
 // Per-LINE-account is the tightest one because it is the only key tied to a verified human, and
@@ -116,6 +125,20 @@ export class AuthRateLimitService {
       ipAddress,
       this.config.lineLoginCallbackMaxPerIp,
       this.config.lineLoginCallbackWindowSeconds,
+    );
+  }
+
+  /**
+   * Review F6. Reading what a merge WOULD do must never cost the visitor their ability to log in
+   * with LINE: this is an authenticated read behind a ticket the caller already holds, so it is
+   * bounded generously and separately from the callback that mints the ticket.
+   */
+  async assertAccountMergePreviewAllowed(ipAddress: string): Promise<void> {
+    await this.assertWithinLimit(
+      'account-merge-preview-ip',
+      ipAddress,
+      ACCOUNT_MERGE_PREVIEW_MAX_PER_IP,
+      ACCOUNT_MERGE_PREVIEW_WINDOW_SECONDS,
     );
   }
 

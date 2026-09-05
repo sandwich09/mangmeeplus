@@ -80,7 +80,13 @@ export class SignupClaimEmailService {
    *  - `resend`/`reissue` add a minute bucket, so an impatient double-click collapses into one send
    *    while a genuine request a minute later still goes out.
    */
-  async enqueue(signupRequestId: string, reason: ClaimEmailReason, now = new Date()): Promise<void> {
+  async enqueue(
+    signupRequestId: string,
+    reason: ClaimEmailReason,
+    now = new Date(),
+    /** R08: pass the approve transaction so the letter cannot be lost while the state moves on. */
+    tx?: Parameters<PrismaOutboxRepository['append']>[1],
+  ): Promise<void> {
     await this.outbox.append({
       eventType: ACCOUNT_CLAIM_EMAIL_EVENT_TYPE,
       aggregateType: 'CompanySignupRequest',
@@ -92,7 +98,7 @@ export class SignupClaimEmailService {
         occurredAt: now.toISOString(),
         data: { signupRequestId, reminder: reason === 'reminder' },
       },
-    });
+    }, tx);
   }
 
   /**
@@ -239,7 +245,11 @@ export class SignupClaimEmailService {
     const due = await this.prisma.client.companySignupRequest.findMany({
       where: {
         state: { in: ['EMAIL_PENDING', 'EMAIL_FAILED'] },
-        approvedAt: { not: null, lt: cutoff },
+        // Review R09: the ACTIVATION window, not the approval date. An admin reissue restarts this
+        // column, so a fresh link sent against an old approval is no longer expired by the next
+        // sweep — which used to kill the link before the applicant could open it. Rows written
+        // before the column existed were backfilled from `approvedAt`, so nothing changed for them.
+        claimWindowStartedAt: { not: null, lt: cutoff },
       },
       select: { id: true },
       take,
@@ -291,7 +301,7 @@ export class SignupClaimEmailService {
   private async sendClaimEmail(signupRequestId: string): Promise<void> {
     const request = await this.prisma.client.companySignupRequest.findUnique({
       where: { id: signupRequestId },
-      select: { id: true, state: true, contactEmail: true, companyName: true },
+      select: { id: true, state: true, contactEmail: true, companyName: true, claimWindowStartedAt: true },
     });
     if (!request) throw new Error('signup_request_not_found');
     // A request that moved on (claimed, rejected, suspended) must not receive a stale link.
@@ -300,7 +310,8 @@ export class SignupClaimEmailService {
     // has no EMAIL_* edge), so an addressless row here would be a bug — mint no token for it.
     if (!request.contactEmail) return;
 
-    const { rawToken, expiresAt } = await this.tokens.mint(request.id);
+    // Review F7: the link dies with its activation window, never after it.
+    const { rawToken, expiresAt } = await this.tokens.mint(request.id, new Date(), request.claimWindowStartedAt);
     const messageId = await this.mailer.sendAccountClaim({
       toEmail: request.contactEmail,
       companyName: request.companyName,
