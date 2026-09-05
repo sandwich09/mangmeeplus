@@ -55,6 +55,19 @@ in the database, confirm which half committed, and finish it by hand. Frequency 
 near zero (Flow B provisioning runs from the claim page, inside one request), and P10-L's own rows
 are fully covered by the LINE-only recovery paths.
 
+## Residuals for the Owner to acknowledge (spec §15.5 note)
+
+1. **Bare internationalised hosts pass the SEC-05 link fence.** `มังมี.ไทย/pay` written WITHOUT a
+   scheme is not matched, because the only rule that would catch it (`\p{L}` labels) also matches
+   ordinary Thai prose around a full stop and would refuse honest operator sentences. Written the
+   way it would have to be to be tappable — `https://มังมี.ไทย/pay` — it IS refused, by punycode
+   hostname. Accepted tradeoff; revisit only if a real message is ever found using the bare form.
+2. **`sweepStuckPushes` re-alerts every Bangkok day while any single push row stays stuck.** That is
+   intended (the customer genuinely has not been told their shop is open), but it means the alert
+   does not clear itself: an operator has to answer the shop from the partner page and have the
+   stuck outbox row cleared. Written up in the playbook with the manual step. If it repeats past one
+   day the cause is the OA's monthly message quota, which is a plan decision, not a per-shop fix.
+
 ## Artifacts
 
 - api: `signup-ops-alert.service.ts`, `package-change-decision.use-case.ts`,

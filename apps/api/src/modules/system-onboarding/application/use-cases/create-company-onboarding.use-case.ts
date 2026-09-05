@@ -330,6 +330,14 @@ export class CreateCompanyOnboardingUseCase {
         });
       }
 
+      // Same rule for the phone, and for the same reason: a LINE account opening its SECOND shop
+      // reaches this branch, and the number typed on that application was landing nowhere at all —
+      // so the profile page and the day-7 nudge kept asking for a number the customer had given.
+      // Never an overwrite: a number already on the account is the one they can be reached on.
+      if (attach && claimed?.phoneNumber && !owner.phoneNumber) {
+        await tx.user.update({ where: { id: owner.id }, data: { phoneNumber: claimed.phoneNumber } });
+      }
+
       if (claimed?.passwordHash && !attach) {
         await tx.userCredential.create({
           data: {

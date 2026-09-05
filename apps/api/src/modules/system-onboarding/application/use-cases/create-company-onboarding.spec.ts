@@ -907,8 +907,13 @@ describe('P10-0 external signup core', () => {
 
 // 10D attach mode: new company onto an existing owner username — no new user/credential/password.
 describe('CreateCompanyOnboardingUseCase attachExistingOwner', () => {
-  function makeAttachPrisma(opts: { userStatus?: string | null; ownerHasLine?: boolean } = {}) {
-    const calls = { userCreate: 0, credentialCreate: 0, lineTokenCreate: 0, membershipCreate: 0, auditArgs: undefined as any };
+  function makeAttachPrisma(
+    opts: { userStatus?: string | null; ownerHasLine?: boolean; owner?: Record<string, unknown> } = {},
+  ) {
+    const calls = {
+      userCreate: 0, credentialCreate: 0, lineTokenCreate: 0, membershipCreate: 0,
+      auditArgs: undefined as any, userUpdates: [] as any[],
+    };
     const prisma = {
       client: {
         user: {
@@ -928,7 +933,11 @@ describe('CreateCompanyOnboardingUseCase attachExistingOwner', () => {
             chartOfAccount: chart.chartOfAccount,
             user: {
               create: async () => { calls.userCreate += 1; return { id: 'new-user' }; },
-              findUniqueOrThrow: async () => ({ id: 'owner-existing', displayName: 'Existing Owner' }),
+              findUniqueOrThrow: async () => ({
+                id: 'owner-existing', displayName: 'Existing Owner',
+                email: null, phoneNumber: null, ...opts.owner,
+              }),
+              update: async (args: any) => { calls.userUpdates.push(args); return {}; },
             },
             userCredential: { create: async () => { calls.credentialCreate += 1; return {}; } },
             companyMembership: { create: async () => { calls.membershipCreate += 1; return { id: 'mem-2' }; } },
@@ -976,6 +985,41 @@ describe('CreateCompanyOnboardingUseCase attachExistingOwner', () => {
     assert.equal(result.ownerId, 'owner-existing');
     assert.equal(result.chartOfAccounts.accountCount, 175);
     assert.equal(calls.auditArgs.data.metadataJson.attachExistingOwner, true);
+  });
+
+  /**
+   * B-3. A LINE account opening its SECOND shop reaches this branch, and the phone typed on that
+   * application was landing nowhere: `phoneNumber` was written only in the `user.create` arm, so
+   * the profile page and the day-7 nudge kept asking for a number the customer had already given.
+   */
+  it('adopts the phone from the application when the account has none', async () => {
+    const { prisma, calls } = makeAttachPrisma({});
+    await new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock).execute(makeCmd({
+      attachExistingOwner: true,
+      claimedOwner: { phoneNumber: '0812345678' },
+    }));
+
+    assert.deepEqual(calls.userUpdates, [
+      { where: { id: 'owner-existing' }, data: { phoneNumber: '0812345678' } },
+    ]);
+  });
+
+  it('never overwrites a phone the account already carries', async () => {
+    const { prisma, calls } = makeAttachPrisma({ owner: { phoneNumber: '0899999999' } });
+    await new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock).execute(makeCmd({
+      attachExistingOwner: true,
+      claimedOwner: { phoneNumber: '0812345678' },
+    }));
+
+    assert.deepEqual(calls.userUpdates, [], 'the number they can be reached on is the one on file');
+  });
+
+  it('writes nothing when the optional phone was left blank', async () => {
+    const { prisma, calls } = makeAttachPrisma({});
+    await new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock)
+      .execute(makeCmd({ attachExistingOwner: true }));
+
+    assert.deepEqual(calls.userUpdates, []);
   });
 
   it('skips the LINE link QR when the owner already has an ACTIVE LINE identity', async () => {
