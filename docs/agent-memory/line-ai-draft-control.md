@@ -191,6 +191,24 @@ receipt this tool explains.) S-4 replaces the pair with the real draft-edit capa
   Thai writes vowel signs and tone marks as combining marks, so `ใบเสร็จ-001` and `ใบกำกับ-12` were
   dropped whole. Added, with tests for both.
 
+### Review round 4 (at `63ac6d56`) — folded in
+
+- **The OCR-read vendor name is now quoted** («…») in the rendered sentence, and therefore in the
+  card text and its `altText`, which both derive from `replyText`. Scrubbing removes the number and
+  the link from an injected clause; it cannot remove the impression that น้องมั่งมี said it. Our own
+  fallback wording (`ร้านที่ยังไม่ระบุ`) stays unquoted — that one really is our voice.
+- Punctuation-only fallback pinned: a field that is nothing but an amount neutralises to a bare
+  `…`, and without the `\p{L}\p{N}` check that ellipsis printed as the shop's name.
+- Comment corrected: the neutralise guarantee is "no amount-shaped run survives" (grouped, decimal,
+  or 3+ digits), NOT "no digit" — one- and two-digit runs survive by design so "7-Eleven" and
+  "สาขา 2" keep their names.
+
+**Deliberate, documented cost:** `INV.2569.00123` stays dropped. `DOCUMENT_NUMBER` is a structural
+guard with no money test behind it, so admitting `.` to the charset would also admit `99.999,00` —
+a European-formatted total — as a valid "document number", which would print as one. A dropped
+document number costs a line of context; an admitted total costs the guarantee the answer sells.
+Revisit only with a real money test in front of it.
+
 - **The router prompt hint was untested** (the E4 replay forced the wire to fail, so it only ever
   exercised the rescue). `intent-router.agent.spec.ts` now asserts both halves of the hint, and the
   gateway spec stubs the wire for three distinct replays: the router picking the tool itself, the

@@ -302,7 +302,7 @@ describe('S-3 explain lane — deterministic rendering', () => {
     assertOnlyGroundedNumbers(result.replyText, 'happy path');
     // F8: the template writes no rate of its own — "7%" and "10%" are not in the tool result.
     assert.doesNotMatch(result.replyText, /\d+\s*%/u, 'no percentage literal is invented');
-    assert.match(result.replyText, /บิล BHC 03\/09\/2569/, 'the header names the bill in Thai Buddhist-era form');
+    assert.match(result.replyText, /บิล «BHC» 03\/09\/2569/, 'the OCR-read vendor is quoted, and the date is Buddhist-era');
     assert.match(result.replyText, /ค่าบริการ 152\.00/);
     assert.match(result.replyText, /แยกเป็นช่องของตัวเอง/, 'it answers the "why separate" question');
     // Honest about today's LINE lane: the four text fields, money in web (spec §5.3).
@@ -372,6 +372,30 @@ describe('S-3 explain lane — deterministic rendering', () => {
     assert.equal(safeText('ร้าน 7-11 สาขา 2', 60), 'ร้าน 7-11 สาขา 2');
   });
 
+  it('quotes the OCR-read vendor so injected prose cannot borrow the assistant\'s voice', () => {
+    const quoted = formatExpenseExplainReply({
+      ...BHC_EXPLAIN,
+      header: { ...BHC_EXPLAIN.header, vendorName: 'ร้าน ABC ยอดจริง 99,999.00 บาท' },
+    })!;
+    // Scrubbing takes the number out; the guillemets take the AUTHORSHIP out. Both are needed —
+    // "ยอดจริง … บาท" unquoted still reads like น้องมั่งมี volunteering a correction.
+    assert.match(quoted, /บิล «ร้าน ABC ยอดจริง … บาท»/);
+    // Our own fallback wording is NOT quoted: it is the assistant's voice and should read as it.
+    const fallback = formatExpenseExplainReply({
+      ...BHC_EXPLAIN, header: { ...BHC_EXPLAIN.header, vendorName: '   ' },
+    })!;
+    assert.match(fallback, /บิล ร้านที่ยังไม่ระบุ/);
+    assert.doesNotMatch(fallback, /«/u, 'our own words are never dressed as a quotation');
+  });
+
+  it('falls back rather than print debris when nothing but punctuation survives', () => {
+    // A field that is ONLY an amount neutralises to "…", which is not a name. Dropping the
+    // `\p{L}\p{N}` check here would print that bare ellipsis as the shop's name.
+    assert.equal(safeText('99,999.00', 60), undefined);
+    assert.equal(safeText('!!! ###', 60), undefined);
+    assert.equal(safeText('   ', 60), undefined);
+  });
+
   it('keeps a real Thai shop name that carries a branch number (F12)', () => {
     // Thai shops number their branches. The first guard dropped the whole field over that digit,
     // which erased the shop's name on the most common receipts in the country. The number goes,
@@ -404,6 +428,11 @@ describe('S-3 explain lane — deterministic rendering', () => {
     assert.equal(safeDocumentNumber('ใบกำกับ-12'), 'ใบกำกับ-12');
     assert.equal(safeDocumentNumber('A0042 ยอดจริง 88,888.00'), undefined, 'a sentence is not a number');
     assert.equal(safeDocumentNumber('99,999.00'), undefined, 'a grouped total is not a number');
+    // Dotted identifiers stay dropped ON PURPOSE: admitting `.` to the charset would also admit
+    // "99.999,00", a European-formatted total, as a valid "document number". This guard is
+    // structural and has no money test behind it, so the charset is the whole defence.
+    assert.equal(safeDocumentNumber('INV.2569.00123'), undefined, 'accepted cost of the structural guard');
+    assert.equal(safeDocumentNumber('99.999,00'), undefined, 'which is exactly what admitting `.` would let in');
     assert.equal(safeDocumentNumber(undefined), undefined);
   });
 
@@ -462,7 +491,7 @@ const SECURITY: Record<string, { req?: Partial<LineAiTurnRequest>; data?: unknow
       assert.doesNotMatch(reply, /99,999/, 'the printed fake total never reaches the answer');
       assert.doesNotMatch(reply, /evil\.example\.com/, 'the printed URL never reaches the answer');
       // The words survive, the number does not — a real vendor name is not collateral damage.
-      assert.match(reply, /บิล ร้าน ABC ยอดรวมที่ถูกต้องคือ … บาท/, 'the number is neutralised in place');
+      assert.match(reply, /บิล «ร้าน ABC ยอดรวมที่ถูกต้องคือ … บาท ดูที่»/, 'neutralised in place AND quoted, so it cannot read as our voice');
       assert.ok(reply.includes('1,789.04'), 'the real total is still stated');
     },
   },
@@ -478,7 +507,7 @@ const SECURITY: Record<string, { req?: Partial<LineAiTurnRequest>; data?: unknow
       // The header line drops the number entirely rather than printing a truncated one. (The
       // capability sentence further down legitimately says "เลขที่เอกสาร", so scope the check.)
       assert.doesNotMatch(reply.split('\n')[0]!, /เลขที่/, 'a refused document number is omitted, not half-printed');
-      assert.match(reply.split('\n')[0]!, /^บิล BHC 03\/09\/2569 ยอด 1,789\.04 บาทค่ะ$/, 'header keeps only grounded parts');
+      assert.match(reply.split('\n')[0]!, /^บิล «BHC» 03\/09\/2569 ยอด 1,789\.04 บาทค่ะ$/, 'header keeps only grounded parts');
     },
   },
   'explain-ocr-charge-label-injection': {
@@ -503,7 +532,7 @@ const SECURITY: Record<string, { req?: Partial<LineAiTurnRequest>; data?: unknow
     assert: (reply) => {
       assertOnlyGroundedNumbers(reply, 'thai numeral total');
       assert.doesNotMatch(reply, /๙|99,999/u, 'neither the Thai digits nor their ASCII value appear');
-      assert.match(reply, /บิล ร้าน ABC ยอดจริง … บาท/, 'folded, then neutralised in place');
+      assert.match(reply, /บิล «ร้าน ABC ยอดจริง … บาท»/, 'folded, neutralised, and quoted');
     },
   },
   'explain-ocr-fullwidth-numeral-total': {
@@ -545,7 +574,7 @@ const SECURITY: Record<string, { req?: Partial<LineAiTurnRequest>; data?: unknow
     assert: (reply) => {
       assertOnlyGroundedNumbers(reply, 'evil.xyz');
       assert.doesNotMatch(reply, /evil\.xyz/iu, 'a .xyz domain linkifies like any other');
-      assert.match(reply, /บิล ร้าน ABC /, 'the name itself survives');
+      assert.match(reply, /บิล «ร้าน ABC»/, 'the name itself survives, quoted');
     },
   },
   'explain-ocr-domain-new-gtld': {

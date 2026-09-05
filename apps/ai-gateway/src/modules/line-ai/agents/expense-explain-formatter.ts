@@ -103,8 +103,10 @@ const NUMBER_PLACEHOLDER = '…';
  *   - `neutralise` (default, for real OCR prose like the vendor name): replace the number with `…`
  *     and KEEP the words. Thai shops number their branches — "ร้าน 7-Eleven สาขา 123", "โลตัส สาขา
  *     456", "ปตท. สาขา 088" — so dropping the field over a digit erased the shop's name from the
- *     answer on the most common receipts there are. The guarantee is about NUMBERS, not words: no
- *     digit the record did not carry can survive this, which is all it ever promised.
+ *     answer on the most common receipts there are. The guarantee is about AMOUNTS, not words and
+ *     not every digit: no amount-shaped run survives — grouped, decimal, or three-or-more digits.
+ *     A one- or two-digit run DOES survive by design ("7-Eleven", "สาขา 2" are names), and nothing
+ *     that short reads as a total beside a grouped figure like 1,789.04.
  *   - `drop` (for enum-derived labels: charge kind, status, assumption keys): those are generated
  *     from a fixed Thai vocabulary and never legitimately contain a number, so anything that does
  *     is not a label — the neutral fallback reads better than a sentence with a hole in it, and a
@@ -136,6 +138,12 @@ export function safeText(value: unknown, maxChars: number, policy: 'neutralise' 
 // `\p{M}` is load-bearing, not decoration: Thai writes its vowel signs and tone marks as combining
 // marks, so "ใบเสร็จ-001" and "ใบกำกับ-12" are `\p{L}` + `\p{M}` sequences. Without it the charset
 // rejected the mark and every Thai-prefixed document number was dropped whole.
+//
+// `.` is deliberately NOT in the charset, so a dot-separated identifier like "INV.2569.00123" is
+// dropped. That is the price of this being a STRUCTURAL guard with no money test behind it: admit
+// `.` and "99.999,00" — a European-formatted total — becomes a valid "document number" and prints
+// as one. A dropped document number costs the reader a line of context; an admitted total costs
+// them the one guarantee this answer sells. Revisit only with a real money test in front of it.
 const DOCUMENT_NUMBER = /^[\p{L}\p{N}][\p{L}\p{N}\p{M}\-/_#]{0,31}$/u;
 export function safeDocumentNumber(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
@@ -200,7 +208,12 @@ export function formatExpenseExplainReply(data: unknown): string | undefined {
   if (!subtotal || !discount || !charges || !taxable || !vat || !grand) return undefined;
 
   // Every one of these is OCR text. `safeText` bounds and scrubs it, or refuses it entirely.
-  const vendor = safeText(header['vendorName'], MAX_VENDOR_CHARS) ?? 'ร้านที่ยังไม่ระบุ';
+  // The vendor name is the one span of this sentence COPIED off the customer's paper, so it is
+  // quoted. Without the guillemets an injected clause reads as น้องมั่งมี's own voice — the scrubber
+  // can take the number and the link out of "ยอดจริง … บาท" but not the impression that the
+  // assistant said it. Our own fallback wording is NOT quoted: that one really is our voice.
+  const vendorRead = safeText(header['vendorName'], MAX_VENDOR_CHARS);
+  const vendor = vendorRead ? `«${vendorRead}»` : 'ร้านที่ยังไม่ระบุ';
   const date = thaiBuddhistDate(header['expenseDate']);
   const docNumber = safeDocumentNumber(header['documentNumber']);
   // The status label is enum-derived on the API side, but it crosses the same untrusted boundary.
