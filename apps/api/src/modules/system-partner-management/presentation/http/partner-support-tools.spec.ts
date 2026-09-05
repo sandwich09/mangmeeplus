@@ -43,6 +43,7 @@ type Options = {
 function harness(options: Options = {}) {
   const audits: any[] = [];
   const planTermUpdates: any[] = [];
+  const supportAnswered: any[] = [];
   let planTerm = options.planTerm === undefined ? null : options.planTerm;
 
   const prisma = {
@@ -83,6 +84,11 @@ function harness(options: Options = {}) {
       companyAiMonthlyUsage: { findUnique: async () => options.aiUsage ?? null },
       companyAiConfiguration: { findUnique: async () => options.aiConfig ?? null },
       user: { findUnique: async () => ({ displayName: 'พี่แอดมิน' }) },
+      // line-support-request-spec-th §2.3: answering the shop closes its OPEN request, so the
+      // operator does not have to remember a second button.
+      lineSupportRequest: {
+        updateMany: async (args: any) => { supportAnswered.push(args); return { count: 1 }; },
+      },
       $transaction: async (fn: any) => fn(prisma.client),
     },
   } as any;
@@ -101,7 +107,10 @@ function harness(options: Options = {}) {
   controller.timeline = new GetPartnerTimelineUseCase(prisma, config);
   controller.lineMessage = new SendPartnerLineMessageUseCase(prisma, config);
 
-  return { controller: controller as PartnerController, audits, planTermUpdates, planTerm: () => planTerm };
+  return {
+    controller: controller as PartnerController, audits, planTermUpdates, supportAnswered,
+    planTerm: () => planTerm,
+  };
 }
 
 describe('GET /system/partners/:id/timeline — §8', () => {
@@ -225,6 +234,17 @@ describe('POST /system/partners/:id/line-message — SEC-05', () => {
     assert.equal(h.audits[0].action, 'system.partner.line_message_sent');
     assert.equal(h.audits[0].metadataJson.text, 'ได้รับเรื่องแล้วนะคะ');
     assert.equal(h.audits[0].result, 'SUCCESS');
+    // line-support-request-spec-th §2.3: the message IS the answer, so the request closes with it.
+    assert.deepEqual(h.supportAnswered[0].where, { companyId: 'co-1', status: 'OPEN' });
+    assert.equal(h.supportAnswered[0].data.answeredByUserId, 'admin-1');
+  });
+
+  it('leaves the request OPEN when the message reached nobody', async () => {
+    const h = harness({ ownerIdentities: [] });
+    const result = await h.controller.sendLineMessage('co-1', { text: 'ได้รับเรื่องแล้วนะคะ' }, REQ);
+
+    assert.deepEqual(result, { delivered: 0 });
+    assert.deepEqual(h.supportAnswered, [], 'a message nobody received has answered nobody');
   });
 
   it('refuses a message longer than the bound, before it reaches LINE', async () => {

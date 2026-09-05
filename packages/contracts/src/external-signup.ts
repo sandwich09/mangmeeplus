@@ -250,6 +250,59 @@ export type PartnerLineMessageResultDto = {
   delivered: number;
 };
 
+// ── Support requests: "ติดต่อเจ้าหน้าที่" (line-support-request-spec-th §2.3) ──
+
+export type SupportRequestStatus = 'OPEN' | 'ANSWERED' | 'CLOSED';
+
+/** Why a request closed. `expired` is the sweep; the other two are a person deciding. */
+export type SupportRequestClosedReason = 'admin' | 'customer_resumed' | 'expired';
+
+/**
+ * One person waiting for a human.
+ *
+ * §3 PDPA: NO raw LINE id crosses this contract. `askerLabel` is a shop name, or the name of the
+ * shop the person applied for, and `askerRef` is the last 6 characters of the same sha256 prefix
+ * the audit rail carries — enough for an operator to match two rows to one person, not enough to
+ * identify anyone outside our own database.
+ */
+export type SupportRequestItemDto = {
+  id: string;
+  status: SupportRequestStatus;
+  /** Shop name, or "ผู้ที่ยังไม่ได้เปิดร้าน (มีคำขอสมัคร: …)" — already display-ready Thai. */
+  askerLabel: string;
+  askerRef: string;
+  /** Present once the asker holds an ACTIVE membership: the partner page opens from here. */
+  companyId?: string;
+  /** Present while they are still in the signup funnel: the queue opens from here instead. */
+  signupRequestId?: string;
+  requestedAt: string;
+  /** ≤200 chars of what they last typed, when the assistant kept any. */
+  lastMessageText?: string;
+  /**
+   * Owner 2026-09-05: admins are not LINE-linked, so `0` is the expected reading and NOT an error.
+   * This page is the primary channel; these two only say which extras also went out.
+   */
+  lineNotifiedCount: number;
+  emailSent: boolean;
+  answeredAt?: string;
+  answeredByDisplayName?: string;
+  closedAt?: string;
+  closedReason?: SupportRequestClosedReason;
+};
+
+export type SupportRequestQueueDto = {
+  items: SupportRequestItemDto[];
+  /** Always the OPEN total, whatever `status` filtered the list — it feeds the system nav badge. */
+  openCount: number;
+};
+
+export type SupportRequestActionDto = {
+  id: string;
+  status: SupportRequestStatus;
+  /** `resume-ai` only: whether a running assistant pause was actually lifted. */
+  pauseCleared?: boolean;
+};
+
 /** One event on a shop's timeline (§8). Assembled from rows that already exist — no new log table. */
 export type PartnerTimelineEntryDto = {
   /** Stable key the page maps to an icon/label; unknown values still render by `label`. */

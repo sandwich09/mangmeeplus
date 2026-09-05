@@ -62,6 +62,17 @@ export class SendPartnerLineMessageUseCase {
       if (await pushSystemLineMessage(token, providerUserId, body)) delivered += 1;
     }
 
+    // line-support-request-spec-th §2.3: answering the shop IS answering its request, so the
+    // operator does not also have to remember to press a button. Only when something landed — a
+    // message that reached nobody has not answered anybody. Bulk update because a shop may have
+    // more than one person asking, and both are answered by the same message.
+    if (delivered > 0) {
+      await this.prisma.client.lineSupportRequest.updateMany({
+        where: { companyId: cmd.companyId, status: 'OPEN' },
+        data: { status: 'ANSWERED', answeredAt: new Date(), answeredByUserId: cmd.requestingAdminUserId },
+      });
+    }
+
     // The paragraph IS the evidence here (SEC-05): an operator speaking as the platform must leave
     // behind exactly what they said. Bounded above, and no recipient id is recorded with it.
     await this.prisma.client.auditLog.create({
