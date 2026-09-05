@@ -87,8 +87,18 @@ function harness(options: {
   } as any;
 
   const core = {
-    advance: async (id: string, state: string, _corr: string, failureCode?: string) => {
-      advances.push({ id, state, ...(failureCode ? { failureCode } : {}) });
+    // R08: `extras` is how a transition carries the facts that make it true — the approval stamp
+    // and the claim email now ride the same transaction, so the stub has to honour both.
+    advance: async (
+      id: string, state: string, _corr: string, failureCode?: string, _expect?: unknown,
+      extras?: { data?: Record<string, unknown>; alsoInTransaction?: (tx: unknown) => Promise<void> },
+    ) => {
+      advances.push({
+        id, state,
+        ...(failureCode ? { failureCode } : {}),
+        ...(extras?.data ? { data: extras.data } : {}),
+      });
+      await extras?.alsoInTransaction?.({});
       return {};
     },
   } as any;
@@ -575,21 +585,29 @@ describe('SignupAdminQueueUseCase.decide — approve', () => {
     const result = await h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1');
 
     assert.deepEqual(result, { requestId: 'signup-1', state: 'EMAIL_PENDING' });
-    assert.deepEqual(h.advances, [{ id: 'signup-1', state: 'EMAIL_PENDING' }]);
-    assert.equal(h.updates[0].data.approvedByUserId, 'admin-1');
-    assert.ok(h.updates[0].data.approvedAt instanceof Date);
+    assert.equal(h.advances.length, 1);
+    assert.equal(h.advances[0].state, 'EMAIL_PENDING');
+    // R08: the approval facts ride the transition itself, never a second update that can be lost.
+    assert.equal(h.advances[0].data.approvedByUserId, 'admin-1');
+    assert.ok(h.advances[0].data.approvedAt instanceof Date);
+    // R09: the activation window the sweep reads starts here, beside the audit fact.
+    assert.ok(h.advances[0].data.claimWindowStartedAt instanceof Date);
+    assert.deepEqual(h.updates, [], 'nothing about the approval is written outside the transition');
     assert.deepEqual(h.enqueued, [{ id: 'signup-1', reason: 'approve' }]);
   });
 
-  it('is a no-op when the application is already approved', async () => {
+  it('repairs an already-approved application instead of reporting success over a missing email', async () => {
     const h = harness({ request: { ...REQUEST, state: 'EMAIL_PENDING' } });
     const result = await h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-2');
 
     assert.equal(result.state, 'EMAIL_PENDING');
-    // No second transition, no second approver stamp, and above all no second email.
+    // R08: no second transition and no second approver stamp — but the letter is re-enqueued,
+    // because the outbox key is the request id and the alternative is an applicant who waits
+    // forever for an email the first, half-failed approve never queued.
     assert.deepEqual(h.advances, []);
-    assert.deepEqual(h.enqueued, []);
+    assert.deepEqual(h.updates, []);
     assert.deepEqual(h.audits, []);
+    assert.deepEqual(h.enqueued, [{ id: 'signup-1', reason: 'approve' }]);
   });
 
   it('refuses to approve an application that is past review', async () => {

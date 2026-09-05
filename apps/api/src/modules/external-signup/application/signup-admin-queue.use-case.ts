@@ -240,8 +240,15 @@ export class SignupAdminQueueUseCase {
           || isStaleProvisioning(request, now)
         : request.state === 'PENDING_REVIEW';
       if (!approvable) {
-        // Already approved is a no-op; anything else is a real conflict the admin should see.
-        if (request.state === 'EMAIL_PENDING') return { requestId, state: request.state };
+        if (request.state === 'EMAIL_PENDING') {
+          // Review R08: NOT a no-op. A retry lands here when the first approve moved the state and
+          // then failed — and returning success over a letter nobody queued is the whole defect.
+          // The append is keyed on the request id alone, so repairing costs nothing when the event
+          // is already there and is the only thing that helps when it is not.
+          await this.claimEmail.enqueue(requestId, 'approve', request.approvedAt ?? now);
+          return { requestId, state: request.state };
+        }
+        // Anything else is a real conflict the admin should see.
         if (lineOa && SETTLED_STATES.includes(request.state as CompanySignupState)) {
           return { requestId, state: request.state };
         }
@@ -277,12 +284,15 @@ export class SignupAdminQueueUseCase {
         });
         return { requestId, state: 'COMPLETED' };
       }
-      await this.core.advance(requestId, 'EMAIL_PENDING', correlationRequestId);
-      await this.prisma.client.companySignupRequest.update({
-        where: { id: requestId },
-        data: { approvedAt, approvedByUserId: adminUserId },
+      // Review R08: state, the approval facts and the letter commit together or not at all. As
+      // three separate writes, a failure between any two left the applicant in EMAIL_PENDING
+      // waiting on an email nobody would send — and the retry read the state and reported success.
+      // R09: `claimWindowStartedAt` is the clock the 30-day sweep and the self-serve resend read.
+      // It starts here and RESTARTS on a reissue; `approvedAt` stays the audit fact it always was.
+      await this.core.advance(requestId, 'EMAIL_PENDING', correlationRequestId, undefined, undefined, {
+        data: { approvedAt, approvedByUserId: adminUserId, claimWindowStartedAt: approvedAt },
+        alsoInTransaction: (tx) => this.claimEmail.enqueue(requestId, 'approve', approvedAt, tx),
       });
-      await this.claimEmail.enqueue(requestId, 'approve', approvedAt);
       await this.audit(requestId, adminUserId, correlationRequestId, 'signup.request.approved', {
         hadTaxId: request.taxId !== null,
         mxValid: request.mxValid ?? false,
@@ -325,6 +335,7 @@ export class SignupAdminQueueUseCase {
     requestId: string,
     adminUserId: string,
     correlationRequestId: string,
+    now = new Date(),
   ): Promise<AdminSignupReissueDto> {
     const request = await this.findOrThrow(requestId);
     if (!REISSUABLE_STATES.includes(request.state as CompanySignupState)) {
@@ -335,10 +346,14 @@ export class SignupAdminQueueUseCase {
     // From EMAIL_PENDING this is a no-op replay in the core; from EMAIL_FAILED/EXPIRED it is the
     // documented way back. Either way the state after this call is EMAIL_PENDING.
     await this.core.advance(requestId, 'EMAIL_PENDING', correlationRequestId);
-    // A reissue restarts the reminder clock: the applicant gets one reminder per live link.
+    // Review R09: a reissue restarts the reminder clock AND the activation window. Without the
+    // second one the 30-day sweep still measured from the original `approvedAt`, so an admin who
+    // reissued an old approval watched the next sweep expire the link they had just sent — and the
+    // token peek then refused it, because peek requires EMAIL_PENDING. `approvedAt` is untouched:
+    // it records when this application was decided, which no later action may rewrite.
     await this.prisma.client.companySignupRequest.update({
       where: { id: requestId },
-      data: { claimReminderSentAt: null },
+      data: { claimReminderSentAt: null, claimWindowStartedAt: now },
     });
     await this.claimEmail.enqueue(requestId, 'reissue');
     await this.audit(requestId, adminUserId, correlationRequestId, 'signup.request.claim_reissued', {

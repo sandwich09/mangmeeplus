@@ -500,8 +500,11 @@ describe('SignupClaimEmailService.sweepExpiredApprovals', () => {
     // A fresh approval, an unapproved application and an already-claimed one are all out of scope
     // by the predicate itself — the sweep never sees them.
     assert.deepEqual(where.state, { in: ['EMAIL_PENDING', 'EMAIL_FAILED'] });
-    assert.equal(where.approvedAt.not, null);
-    assert.equal(NOW.getTime() - (where.approvedAt.lt as Date).getTime(), 30 * 86_400_000);
+    // R09: the ACTIVATION window, which an admin reissue restarts — not the approval date, which
+    // would expire a freshly reissued link on the very next pass.
+    assert.equal(where.approvedAt, undefined, 'the sweep must not measure from the audit fact');
+    assert.equal(where.claimWindowStartedAt.not, null);
+    assert.equal(NOW.getTime() - (where.claimWindowStartedAt.lt as Date).getTime(), 30 * 86_400_000);
     assert.equal(h.queries[0].take, 100, 'one pass stays bounded');
     assert.deepEqual(h.advanced, [
       { id: 'signup-1', state: 'EXPIRED', actor: 'signup-expiry-sweep', failureCode: CLAIM_EXPIRY_FAILURE_CODE },

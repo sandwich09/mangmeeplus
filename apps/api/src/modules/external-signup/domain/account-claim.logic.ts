@@ -58,16 +58,22 @@ export function publicSignupStatusKey(state: CompanySignupState): PublicSignupSt
 
 /**
  * Spec §4D ②/④: an approved request never dead-ends. Self-serve resend covers the live
- * EMAIL_PENDING window plus expired links for 30 days after approval; after that it is admin-only.
+ * EMAIL_PENDING window plus expired links for 30 days after the activation window started; after
+ * that it is admin-only.
+ *
+ * Review R09: the window is `claimWindowStartedAt`, which an admin reissue restarts — measuring
+ * from `approvedAt` meant a reissued old approval was already outside its own window the moment it
+ * was sent. Callers pass `claimWindowStartedAt ?? approvedAt` so a row written before that column
+ * existed behaves exactly as it used to.
  */
 export function canResendClaim(
   state: CompanySignupState,
-  approvedAt: Date | null,
+  windowStartedAt: Date | null,
   now: Date,
 ): boolean {
   if (state === 'EMAIL_PENDING' || state === 'EMAIL_FAILED') return true;
-  if (state !== 'EXPIRED' || !approvedAt) return false;
-  const ageDays = (now.getTime() - approvedAt.getTime()) / 86_400_000;
+  if (state !== 'EXPIRED' || !windowStartedAt) return false;
+  const ageDays = (now.getTime() - windowStartedAt.getTime()) / 86_400_000;
   return ageDays <= SELF_SERVE_RESEND_WINDOW_DAYS;
 }
 

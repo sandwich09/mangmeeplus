@@ -3125,6 +3125,10 @@ model CompanySignupRequest {
   attachUserId           String?
   approvedAt             DateTime?
   approvedByUserId       String?
+  // Review R09: when the CURRENT claim link's 30-day activation window started. Set at approve and
+  // RESTARTED by an admin reissue; `approvedAt` stays the audit fact of when the decision was made,
+  // so a reissued old approval is no longer expired again by the next sweep.
+  claimWindowStartedAt   DateTime?
   claimEmailLastSentAt   DateTime?
   // SES MessageId of the last claim email. The only join key an SNS bounce/complaint event carries
   // back to this row (spec §4D); unique because SES never reuses a MessageId.

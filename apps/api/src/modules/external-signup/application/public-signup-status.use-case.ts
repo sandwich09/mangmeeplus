@@ -21,14 +21,15 @@ export class PublicSignupStatusUseCase {
   async status(requestId: string, now = new Date()): Promise<PublicSignupStatusDto> {
     const request = await this.prisma.client.companySignupRequest.findUnique({
       where: { id: requestId },
-      select: { id: true, state: true, approvedAt: true },
+      select: { id: true, state: true, approvedAt: true, claimWindowStartedAt: true },
     });
     if (!request) throw new NotFoundException('company_signup_request_not_found');
     const state = request.state as CompanySignupState;
     return {
       requestId: request.id,
       status: publicSignupStatusKey(state),
-      canResendClaim: canResendClaim(state, request.approvedAt, now),
+      // R09: the reissue-restarted window, falling back to the approval for rows written before it.
+      canResendClaim: canResendClaim(state, request.claimWindowStartedAt ?? request.approvedAt, now),
     };
   }
 
@@ -40,12 +41,12 @@ export class PublicSignupStatusUseCase {
   async resendClaim(requestId: string, correlationRequestId: string, now = new Date()): Promise<void> {
     const request = await this.prisma.client.companySignupRequest.findUnique({
       where: { id: requestId },
-      select: { id: true, state: true, approvedAt: true },
+      select: { id: true, state: true, approvedAt: true, claimWindowStartedAt: true },
     });
     if (!request) throw new NotFoundException('company_signup_request_not_found');
 
     const state = request.state as CompanySignupState;
-    if (!canResendClaim(state, request.approvedAt, now)) {
+    if (!canResendClaim(state, request.claimWindowStartedAt ?? request.approvedAt, now)) {
       throw new ConflictException('claim_resend_not_available');
     }
     // From EMAIL_FAILED or EXPIRED this is the documented way back to a live link; from
