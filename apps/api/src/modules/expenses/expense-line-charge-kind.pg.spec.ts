@@ -19,13 +19,14 @@ import { randomUUID } from 'node:crypto';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { EXPENSE_LINE_CHARGE_KINDS, expenseLineCharges } from '@watchdog-bms/contracts';
 import { PrismaClient } from '../../generated/prisma/client';
+import { pgSpecUnreachableReason } from '../../common/database/pg-spec-guard';
 import { calcDocumentTotals, calcLineTotals, expenseTotalsIdentityError } from './domain/logic/expense-totals.logic';
 import { PrismaExpenseRepository } from './infrastructure/prisma-expense.repository';
 
 const databaseUrl = process.env['EXPENSE_CHARGE_KIND_TEST_DATABASE_URL'];
 
 describe('expense line charge kind on real PostgreSQL', { skip: !databaseUrl }, () => {
-  it('applies the migration and round-trips a charge line whose totals satisfy the identity', async () => {
+  it('applies the migration and round-trips a charge line whose totals satisfy the identity', async (t) => {
     const url = new URL(databaseUrl!);
     assert.ok(['localhost', '127.0.0.1'].includes(url.hostname), 'only an explicit local test database is allowed');
     // Localhost alone is NOT proof of a local database: the production access recipe port-forwards
@@ -36,6 +37,14 @@ describe('expense line charge kind on real PostgreSQL', { skip: !databaseUrl }, 
     const tag = `chargekind-${randomUUID().slice(0, 8)}`;
 
     try {
+      // Shared with the other real-PostgreSQL suites: a URL that is set but whose server does not
+      // answer is the same "no database here" condition the unset case skips for, not a red test on
+      // a developer's stopped docker. Still a failure in CI, which started the database one step
+      // earlier, or under EXPENSE_CHARGE_KIND_REQUIRE_POSTGRES=true.
+      const unreachable = await pgSpecUnreachableReason(
+        () => client.$queryRaw`SELECT 1`, 'EXPENSE_CHARGE_KIND_REQUIRE_POSTGRES');
+      if (unreachable) return t.skip(unreachable);
+
       // The migration itself: without the enum type and column this read throws, and no amount of
       // application code can make the write below succeed.
       const [{ labels }] = await client.$queryRawUnsafe<{ labels: string[] }[]>(
