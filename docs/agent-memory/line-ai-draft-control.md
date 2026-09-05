@@ -655,6 +655,11 @@ is the mirror of every other row — not an unwanted write, but a wanted write s
 answered with somebody else's numbers. The blanket assertion now reads "nothing writes except the
 outcome that is defined as a write", which is a checkable claim rather than a slogan.
 
+The mutation for it is deliberately a COMBINED row (`rh_both`). Each half of the fix — reading the
+pending slot first, and forgetting the old confirmation on a new preview — closes the bug on its
+own, so each single-sided mutation survives, which is what defence in depth looks like from a
+mutation harness. Only removing both reproduces what shipped, and that row is red.
+
 Three reviewer mutations that were still green are now pinned: the TTL is asserted to be 600 s (not
 merely "tracks the constant", which let both move together), a discounted line moved to a charge
 keeps its discount, and the gateway's `groundingText` bound is asserted at 1000.
