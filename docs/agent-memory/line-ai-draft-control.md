@@ -673,6 +673,28 @@ Three reviewer mutations that were still green are now pinned: the TTL is assert
 merely "tracks the constant", which let both move together), a discounted line moved to a charge
 keeps its discount, and the gateway's `groundingText` bound is asserted at 1000.
 
+### D.12 Round-3 close-out (2026-09-06)
+
+Two reviewer mutations were still surviving, and both were the same shape of test bug — an
+assertion that looked like it covered a rule while standing next to it:
+
+- **R5** — the only `chargesAmount` assertion sat on an UNDISCOUNTED charge, so deleting the
+  `- discount` in `chargesTotal` changed nothing any test could see. A moved line carrying a
+  discount now pins it: 200 printed, 50 off, `chargesAmount` must read 150.00, because that is what
+  `taxable = subtotal - discount + charges` actually adds.
+- **R10** — the grounding-bound test re-derived `.slice(0, 1000)` inside itself and never called
+  `run()`, so it asserted its own arithmetic. It now drives the real orchestrator with a 3000-char
+  message, reads the `ErpToolContext` the tool client was handed, and checks BOTH positions of the
+  flag (bounded when on, field absent when off).
+
+Both verified RED with the fix reverted. Mutation table now **27 rows, every one red**.
+
+Also: `.zip` and `.mov` joined the link tiebreaker — a browser resolves them, so a bare
+"invoice.zip" in a bubble is a tappable link on a phone, which is a different risk from an
+unresolvable word. `evil.pro`, `evil.club`, `evil.fun`, `evil.buzz`, `evil.uk` and `evil.de` stay as
+documented residual (D.11 item 1). The vendor-name probe was re-run: `ABC Co.Ltd`, `S.Pak Food`,
+`St.Louis Hospital`, `บริษัท A.B.C.` and `S.P.C.` all survive intact.
+
 ### D.11 Accepted, recorded, no code
 
 1. **D-1 residual TLDs.** A bare single-label host on a TLD outside the tiebreaker list survives as
