@@ -10,12 +10,15 @@ import { getSignupAvailability, submitCompanySignup } from './external-signup.ap
 import { SignupBrandHeader, SignupClosedNotice } from './SignupChrome';
 import {
   clampMobileInput,
+  firstSignupErrorField,
   MOBILE_DIGITS,
   offerLimitsLabel,
   offerWarmupNote,
+  rotateSignupKeyAfter,
   SELECTABLE_OFFER_KEY,
   SIGNUP_CONSENT_VERSION,
   SIGNUP_OFFERS,
+  signupFieldRejection,
   signupSubmitErrorMessage,
   validateSignupForm,
   type SignupFieldErrors,
@@ -117,9 +120,11 @@ function SubmittedView({ requestId }: { requestId: string }) {
 }
 
 export default function SignupPage() {
-  // Minted once per form session and reused verbatim on every retry — the server treats it as the
-  // idempotency key, so a second tap after a timeout must not create a second request.
-  const [externalSignupId] = useState(() => crypto.randomUUID());
+  // Reused verbatim on every retry — the server treats it as the idempotency key, so a second tap
+  // after a timeout must not create a second request. It is REPLACED only after a definite
+  // validation rejection (R07): that answer proves nothing was queued, and the row the rejection
+  // left behind holds the old payload's hash, so a corrected form under the same key is a 409.
+  const [externalSignupId, setExternalSignupId] = useState(() => crypto.randomUUID());
   const [availability, setAvailability] = useState<'loading' | 'open' | 'closed'>('loading');
   const [values, setValues] = useState<SignupFormValues>(EMPTY_FORM);
   const [fieldErrors, setFieldErrors] = useState<SignupFieldErrors>({});
@@ -147,12 +152,23 @@ export default function SignupPage() {
     if (fieldErrors[key]) setFieldErrors((previous) => ({ ...previous, [key]: undefined }));
   };
 
+  // `Field` derives the input id from `name`, which is exactly the form key. The submit button sits
+  // below a long mobile form, so colouring a field the applicant has already scrolled past is the
+  // same as saying nothing.
+  const focusField = (field: keyof SignupFormValues) => {
+    const input = document.getElementById(field);
+    input?.scrollIntoView({ block: 'center' });
+    if (input instanceof HTMLElement) input.focus();
+  };
+
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     const errors = validateSignupForm(values);
     setFieldErrors(errors);
-    if (Object.keys(errors).length > 0) {
+    const firstLocalError = firstSignupErrorField(errors);
+    if (firstLocalError) {
       setError(null);
+      focusField(firstLocalError);
       return;
     }
 
@@ -177,9 +193,18 @@ export default function SignupPage() {
       const result = await submitCompanySignup(body);
       setRequestId(result.requestId);
     } catch (cause) {
-      // The MX rejection (422) arrives here as a server sentence about the address; showing it
-      // verbatim is the whole point — a generic line would hide the typo the user must fix.
-      setError(signupSubmitErrorMessage(cause));
+      // A rejection that names ONE field belongs under that field — the MX check names the mistyped
+      // address, and a banner at the top of a long form does not point at what to correct.
+      const rejection = signupFieldRejection(cause);
+      if (rejection) {
+        setFieldErrors({ [rejection.field]: rejection.message });
+        setError(null);
+        focusField(rejection.field);
+      } else {
+        setError(signupSubmitErrorMessage(cause));
+      }
+      // The correction is a NEW submission: the rejected payload already owns the old key.
+      if (rotateSignupKeyAfter(cause)) setExternalSignupId(crypto.randomUUID());
     } finally {
       setLoading(false);
     }

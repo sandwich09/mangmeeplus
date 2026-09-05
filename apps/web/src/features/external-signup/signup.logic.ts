@@ -150,6 +150,55 @@ export function signupSubmitErrorMessage(error: unknown): string {
   return serverThai || apiErrorMessage(error);
 }
 
+/**
+ * Server rejections that name ONE field the applicant can fix. The MX check is the whole reason
+ * this exists: the API answers `email_domain_has_no_mx` — an English code with no Thai sentence
+ * behind it — so the shared translator (rightly refusing unknown diagnostics) told the applicant to
+ * reload the page for a typo only they can correct.
+ */
+const FIELD_REJECTIONS: Record<string, { field: keyof SignupFormValues; message: string }> = {
+  email_domain_has_no_mx: { field: 'contactEmail', message: 'ไม่พบโดเมนอีเมลนี้ ตรวจตัวสะกดอีกครั้ง' },
+};
+
+export function signupFieldRejection(
+  error: unknown,
+): { field: keyof SignupFormValues; message: string } | null {
+  const raw = error as { code?: unknown; message?: unknown } | null | undefined;
+  // The API puts the code in `message`; anything routed through the BFF carries it in `code`.
+  for (const candidate of [raw?.code, raw?.message]) {
+    if (typeof candidate !== 'string') continue;
+    const rejection = FIELD_REJECTIONS[candidate.trim()];
+    if (rejection) return rejection;
+  }
+  return null;
+}
+
+/**
+ * R07: `submit-company-signup.use-case` receives the payload DURABLY before it checks MX, so a 422
+ * leaves a row keyed by the idempotency key holding the mistyped address's payload hash. Re-sending
+ * the corrected form under that same key is `external_signup_payload_conflict`, and the applicant
+ * is stuck on the form for good.
+ *
+ * 400/422 is the one class of answer that proves the server FINISHED with this payload, so the
+ * correction is a new submission and earns a new key. Everything else — a network error, a 5xx, a
+ * 429, a timeout — leaves the outcome unknown, and there the key must survive or a second tap
+ * opens a second application.
+ */
+export function rotateSignupKeyAfter(error: unknown): boolean {
+  const status = (error as { status?: unknown } | null | undefined)?.status;
+  return status === 400 || status === 422;
+}
+
+/** Submit order, so "focus the first error" means the first one the applicant would reach. */
+const SIGNUP_FIELD_ORDER: readonly (keyof SignupFormValues)[] = [
+  'companyName', 'ownerFirstName', 'ownerLastName', 'contactEmail', 'phoneNumber', 'businessType',
+  'vatRegistered', 'taxId',
+];
+
+export function firstSignupErrorField(errors: SignupFieldErrors): keyof SignupFormValues | null {
+  return SIGNUP_FIELD_ORDER.find((field) => errors[field]) ?? null;
+}
+
 // ── Status page copy (spec §3 allowlist — coarse states only, never internal review detail) ──
 
 export type SignupStatusCopy = { title: string; body: string; tone: 'info' | 'success' | 'warning' | 'error' };

@@ -3,13 +3,16 @@ import assert from 'node:assert/strict';
 import { PLAN_TIER_PRESETS, SIGNUP_TRIAL_TIER_KEY, SIGNUP_TRIAL_WARMUP_SLIPS } from '@watchdog-bms/contracts';
 import {
   clampMobileInput,
+  firstSignupErrorField,
   isThaiMobile,
   MOBILE_DIGITS,
   offerLimitsLabel,
   offerWarmupNote,
+  rotateSignupKeyAfter,
   SELECTABLE_OFFER_KEY,
   SIGNUP_CONSENT_VERSION,
   SIGNUP_OFFERS,
+  signupFieldRejection,
   signupStatusCopy,
   signupSubmitErrorMessage,
   validateClaimPassword,
@@ -241,6 +244,42 @@ describe('submit error copy', () => {
       signupSubmitErrorMessage(Object.assign(new Error('Conflict'), { status: 409 })),
       /ข้อมูลถูกเปลี่ยนแปลงระหว่างทำรายการ/,
     );
+  });
+});
+
+// R07. `submit-company-signup.use-case.ts` durably RECEIVES the payload before it looks up MX, so a
+// 422 leaves a row keyed by this idempotency key carrying the OLD address's payload hash. Sending
+// the corrected form under the same key answers `external_signup_payload_conflict` — the applicant
+// who mistyped their address cannot get past the form at all.
+describe('recovering from a rejected submit', () => {
+  it('rotates the idempotency key only after a definite validation rejection', () => {
+    assert.equal(rotateSignupKeyAfter(Object.assign(new Error('email_domain_has_no_mx'), { status: 422 })), true);
+    assert.equal(rotateSignupKeyAfter(Object.assign(new Error('Validation failed.'), { status: 400 })), true);
+    // Unknown outcomes keep the key: a retry after a timeout must not open a second application.
+    for (const status of [429, 500, 502, 503]) {
+      assert.equal(rotateSignupKeyAfter(Object.assign(new Error('x'), { status })), false, String(status));
+    }
+    assert.equal(rotateSignupKeyAfter(new Error('Network request failed.')), false);
+    assert.equal(rotateSignupKeyAfter(null), false);
+  });
+
+  it('puts the MX rejection under the email field in Thai instead of "reload the page"', () => {
+    const rejection = signupFieldRejection(Object.assign(new Error('email_domain_has_no_mx'), { status: 422 }));
+    assert.equal(rejection?.field, 'contactEmail');
+    assert.match(rejection!.message, /ไม่พบโดเมนอีเมลนี้/);
+    assert.doesNotMatch(rejection!.message, /โหลดหน้าใหม่/);
+    assert.doesNotMatch(rejection!.message, /\+/);
+    // The API answers with the code in `message`; the BFF shape carries it in `code`. Both count.
+    assert.equal(signupFieldRejection({ code: 'email_domain_has_no_mx', status: 422 })?.field, 'contactEmail');
+    // Anything that does not name a field stays a form-level message.
+    assert.equal(signupFieldRejection(Object.assign(new Error('Conflict'), { status: 409 })), null);
+    assert.equal(signupFieldRejection(null), null);
+  });
+
+  it('names the first error in submit order, so focus lands where the applicant reads', () => {
+    assert.equal(firstSignupErrorField({ phoneNumber: 'x', companyName: 'y' }), 'companyName');
+    assert.equal(firstSignupErrorField({ taxId: 'x', contactEmail: 'y' }), 'contactEmail');
+    assert.equal(firstSignupErrorField({}), null);
   });
 });
 
