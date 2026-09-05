@@ -127,10 +127,61 @@ Web — `apps/web/app/(workspace)/companies/[companyId]/settings/profile/page.ts
 re-run; outputs (`.github/workflows/deploy-production.yml`,
 `infra/security/validate-production-maintenance-release.sh`) committed with it.
 
+## Integration round (2026-09-05) — rebased onto L-C
+
+Integration review of 4ded0fa3 passed. What the integration work consisted of:
+
+- **`--onto` rebase, not a plain one.** `origin/codex/line-signup-c-admin` (5b811c28) is NOT a
+  descendant of `origin/develop`: it branched at 74303618 and develop has since moved 34 commits
+  ahead. `git rebase <L-C>` therefore replays 43 commits, dragging develop's L-A/L-A2/docs work
+  into L-E and making `L-C..HEAD` 35 files. L-C already carries the L-A2 *code* through its own
+  lineage; the develop-only content it lacks is docs (spec v4 +350, plan v2 +135, review round 1
+  +112). So the rebase used `git rebase --onto origin/codex/line-signup-c-admin 74ccbb07`, which
+  replays L-E's 11 commits alone. **L-C still needs its own rebase onto develop before merge.**
+- Conflicts and how they were settled: `auth.controller.ts` keep both constructor params
+  (`exchangeLiffSession` 28, `accountProfile` 29, `audit` 30); `apps/api/package.json` union of
+  appended spec paths, verified by parsing (455 specs, 0 duplicates); the two pin files take
+  either side then `node infra/security/sync-production-maintenance-release-pins.mjs`
+  (validatorSha256 452265ed) — never hand-edit the SHA. `audit-action.ts`, `auth.module.ts` and
+  `api-error-message.ts` auto-merged and were verified by parsing (L-C added 6 error keys, L-E 5,
+  overlap 0).
+- **`line-liff-signup.spec.ts` (L-C's) needed the same arity edit at two sites.** Both branches
+  had independently grown a positional stub row from five entries to six; merged needs seven.
+  Only `tsc` sees this — the suites run through tsx, which strips types without checking them, so
+  `pnpm test` was green at 28 arguments where 29 are required. Its inline comment also claimed the
+  LIFF fake was the last parameter before `audit`, true on L-C and wrong once `accountProfile`
+  follows it.
+- **Constructor-shape guard** added in `auth.controller.spec.ts`: it reads the parameter names out
+  of the controller source and asserts arity 30 plus the six positions the positional stubs depend
+  on (2 prisma, 11 changePassword, 13 notifyPasswordResetRequest, 15
+  setAiAssistantPreferenceUseCase, 19 authRateLimit, 20 legalAcceptance). Verified against both
+  failure modes: adding a parameter and swapping two.
+- **pg-spec hardenings**: the holder is seeded `SomChai` (with a lower-case holder, dropping
+  `lower()` still passed, because the desired name is lower-cased before the read), and the spec
+  refuses any database not named `watchdog_bms` — localhost alone is not proof of a local
+  database, because the production access recipe port-forwards prod to 127.0.0.1 over SSM.
+- **`packages/contracts` must be rebuilt after checking out this head.** `packages/contracts/dist`
+  is gitignored and untracked (`.gitignore:10`), so a fresh checkout has none and `tsc` reports
+  ~24 false "has no exported member" errors against a stale or absent dist. Run
+  `pnpm --filter @watchdog-bms/contracts build` first. This slice adds exports to
+  `packages/contracts/src/company-profile.ts`, so it is the likely trigger.
+
+**Counting note (my error, corrected here).** Earlier rounds of this doc claimed "api 8884 tests".
+That number was produced by counting `.` characters in the dot reporter's output, which also
+counts dots inside file paths, ellipses and decimals — it was never a test count. The measured
+figure via the fixed list and the TAP reporter is 6450/6351/0/99. **Report per-workspace counts
+only, from a reporter that prints its own totals — never an aggregate, never a character count.**
+
 ## Verification (after review round 2)
 
-- `apps/api` full fixed list: **8884 tests, 0 failures** with the DB present (8883 when the
-  `.pg.spec` skips). `apps/web`: **1434 tests, 0 failures, 0 skipped**.
+- Per workspace, never an aggregate (see the counting note below):
+  | workspace | tests | pass | fail | skipped |
+  |---|---|---|---|---|
+  | `apps/api` (fixed list, 455 specs, DB present) | 6450 | 6351 | 0 | 99 |
+  | `apps/api` (same list, `.pg.spec` skipping) | 6449 | 6350 | 0 | 99 |
+  | `apps/web` | 1434 | 1434 | 0 | 0 |
+  | `packages/contracts` | 206 | 206 | 0 | 0 |
+  | `packages/config` | 138 | 138 | 0 | 0 |
 - `pnpm -r typecheck` clean; `next build` clean, route still `ƒ`; pin sync `status=current`.
 - `account-profile-username.pg.spec.ts` verified to **fail on revert** to the ILIKE version
   (`\`_\` is a LIKE wildcard: nobody holds som_hai`).
@@ -140,7 +191,7 @@ re-run; outputs (`.github/workflows/deploy-production.yml`,
 
 ## Verification (after review round 1, superseded)
 
-- `apps/api` full fixed test list: green, 0 failures. New specs registered in
+- `apps/api` full fixed test list: 0 failures. New specs registered in
   `apps/api/package.json` (the only allowed edit there).
 - `apps/web` suite: 1426/1426.
 - `NODE_OPTIONS=--max-old-space-size=8192 pnpm -r typecheck`: clean.
