@@ -16,6 +16,12 @@
  * `emitDecoratorMetadata` at all — it reports ABSENT for every class here, including ones that are
  * perfectly wired, so it can only produce a false alarm. Arity is compiler-independent and fails
  * for exactly the mistake this guards.
+ *
+ * This is the CHEAP half of a pair, exactly like `injectable-di-token.spec.ts` next door. The
+ * authoritative check is `pnpm --filter @watchdog-bms/api test:boot` (`src/scripts/boot-di-smoke.ts`),
+ * which resolves the real provider graph from the swc build — the only place the metadata Nest
+ * actually reads exists — and which CI runs. This spec earns its place by failing in the normal
+ * suite, in a second, without a build.
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';

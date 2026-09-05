@@ -586,8 +586,12 @@ the api fixed list; the token is now stated explicitly with `@Inject(AppConfigSe
 way `RedisRateLimitService` and `LineDraftPreviewStore` state theirs.
 
 Worth noting alongside H1: this slice produced TWO distinct Nest-DI-at-boot bugs that no
-hand-constructed spec could see, and each was caught by a different structural guard. If a third
-appears, the answer is a spec that builds the real module rather than a third structural rule.
+hand-constructed spec could see. The repo already has the right answer to both and I had missed it
+— `pnpm --filter @watchdog-bms/api test:boot` (`src/scripts/boot-di-smoke.ts`) resolves the REAL
+provider graph from the swc build, which is the only place the metadata Nest reads exists, and CI
+runs it. That is the authoritative gate for H1; `erp-draft-update-tools.di.spec.ts` and
+`injectable-di-token.spec.ts` are the cheap halves that fail in the normal suite in a second,
+without a build. Both were run for this slice.
 
 Process note for whoever reuses `mutations.sh`: it restores with `git checkout --`, so it now
 REFUSES to run on a dirty tree. It silently ate an uncommitted scrubber change once.
