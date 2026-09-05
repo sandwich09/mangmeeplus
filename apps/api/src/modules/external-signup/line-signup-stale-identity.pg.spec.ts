@@ -64,6 +64,21 @@ function wire(client: PrismaClient, options: { adminUserId: string; approvalMode
   } as any;
   const core = new CompanySignupCoreService(prisma);
   const legal = new LegalAcceptanceService(prisma, { log: async () => undefined } as any);
+  /**
+   * Opens the moment onboarding has written the LINE identity row and is STILL inside its company
+   * transaction. `recordFromEvidence` is the very next statement after the identity block, so it is
+   * the one seam that names that window without reaching into the use case. A timer opens the gate
+   * anyway if provisioning never gets there, so a spec fails on its assertion, not on a hang.
+   */
+  let openGate!: () => void;
+  const gate = new Promise<void>((resolve) => { openGate = resolve; });
+  const backstop = setTimeout(() => openGate(), 5_000);
+  backstop.unref?.();
+  const recordFromEvidence = legal.recordFromEvidence.bind(legal);
+  (legal as any).recordFromEvidence = async (...args: Parameters<typeof recordFromEvidence>) => {
+    openGate();
+    return recordFromEvidence(...args);
+  };
   const onboarding = new CreateCompanyOnboardingUseCase(prisma, config, legal);
   const adminDirectory = { activeSystemAdmins: async () => [{ companyId: 'sys', userId: options.adminUserId }], enqueue: async () => undefined } as any;
   const linePushes: Array<{ id: string; kind: string }> = [];
@@ -91,6 +106,7 @@ function wire(client: PrismaClient, options: { adminUserId: string; approvalMode
       prisma,
       { lineMessagingChannelId: CHANNEL, lineLoginChannelId: CHANNEL, isProduction: false } as any,
     ),
+    gate,
     linePushes,
   };
 }
@@ -430,9 +446,15 @@ describe('a stale LINE identity on real PostgreSQL', { skip: !databaseUrl }, () 
       await client.companyMembership.create({ data: { companyId: rivalCompanyId, userId: rivalUserId, status: 'ACTIVE' } });
 
       const accepted = await h.submit.execute(submitCmd(`${tag}-race`), NOW);
+      // The window has to be the DANGEROUS one, not any two calls that happen to overlap.
+      // `h.gate` opens the instant provisioning has written the identity row and is still inside
+      // its transaction. An unlocked link starting there reads the row as it was BEFORE that write
+      // (uncommitted), queues its UPDATE on the row lock, and applies it the moment provisioning
+      // commits — overwriting a re-point it never saw. Starting the link any earlier or later
+      // cannot reproduce that, which is why an untimed race reported green with no lock at all.
       const [approve, link] = await Promise.allSettled([
         h.queue.decide(accepted.requestId, { action: 'APPROVE' }, seeded.adminUserId, `${tag}-approve`, URLS),
-        h.link.execute({ userId: rivalUserId, idToken: 'aaaa.bbbb.cccc', requestId: `${tag}-link` }),
+        h.gate.then(() => h.link.execute({ userId: rivalUserId, idToken: 'aaaa.bbbb.cccc', requestId: `${tag}-link` })),
       ]);
 
       const winners = [approve, link].filter((r) => r.status === 'fulfilled');
@@ -440,7 +462,10 @@ describe('a stale LINE identity on real PostgreSQL', { skip: !databaseUrl }, () 
       const loser = [approve, link].find((r) => r.status === 'rejected') as PromiseRejectedResult;
       // Whichever order the lock hands out, the loser is TOLD, by name. `line_identity_already_linked`
       // is provisioning refusing a slot that moved; `line_linked_elsewhere` is the link refusing one.
-      assert.match(String(loser.reason), /line_identity_already_linked|line_linked_elsewhere/);
+      // The two carry the name in different places — a bare `message` and a `{ code }` body — so a
+      // string match on the exception alone would pass on "something threw", which is not the point.
+      const refusal = (error: any) => error?.getResponse?.()?.code ?? error?.message ?? String(error);
+      assert.match(refusal(loser.reason), /^(line_identity_already_linked|line_linked_elsewhere)$/);
 
       const identities = await client.externalIdentity.findMany({
         where: { provider: 'LINE', providerChannelId: CHANNEL, providerUserId: lineUserId },
