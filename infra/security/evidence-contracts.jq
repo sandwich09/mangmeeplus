@@ -1280,36 +1280,79 @@ def e0_h3_validator_paths: [
   "infra/security/verify-production-security-baseline.sh"
 ];
 
-def e0_openssl_waiver_rows: [
+# Every ECR finding the Owner has waived, one row per finding, carrying the exact evidence the
+# signed artifact must reproduce. Mirrors infra/docker/ecr-scan-blocking-findings.jq: that policy
+# decides what a scan may waive, this table decides what the signed evidence may claim. Severity,
+# package and version live PER ROW so the 2026-09 CRITICAL openssl row cannot loosen the 2026-08
+# HIGH-only rows nor the zlib row, and each batch carries its own approval and expiry so they
+# lapse independently. Rows 1-4: 2026-08 batch, expires 2026-09-10. Rows 5-6: 2026-09 batch,
+# expires 2026-09-19.
+def e0_ecr_waiver_rows: [
   { id: "AWS-ECR-CVE-2026-14456-OPENSSL-PRE35-MAPPING", cve: "CVE-2026-14456",
+    severity: "HIGH", packageName: "openssl", packageVersion: "3.0.20-1~deb12u2",
     providerStatement: "The issue is present since OpenSSL 3.5 when the QUIC server implementation was added.",
-    reachabilityEvidence: "Provider states the issue begins in OpenSSL 3.5 QUIC server; the scanned package is 3.0.20." },
+    reachabilityEvidence: "Provider states the issue begins in OpenSSL 3.5 QUIC server; the scanned package is 3.0.20.",
+    approvedBy: "CHAT-OWNER-DIRECTIVE-2026-08-27-FIX-ALL-UNTIL-DEPLOY-SUCCEEDS",
+    expiresAtEpoch: 1788998400 },
   { id: "AWS-ECR-CVE-2026-54874-OPENSSL-DTLS-UNUSED", cve: "CVE-2026-54874",
+    severity: "HIGH", packageName: "openssl", packageVersion: "3.0.20-1~deb12u2",
     providerStatement: "Receiving a DTLS record for a future epoch while a handshake is in progress",
-    reachabilityEvidence: "No process in the image speaks DTLS; the runtime is Node 22 with bundled OpenSSL 3.5.7 and the Debian package enters only as a ca-certificates dependency." },
+    reachabilityEvidence: "No process in the image speaks DTLS; the runtime is Node 22 with bundled OpenSSL 3.5.7 and the Debian package enters only as a ca-certificates dependency.",
+    approvedBy: "CHAT-OWNER-DIRECTIVE-2026-08-27-FIX-ALL-UNTIL-DEPLOY-SUCCEEDS",
+    expiresAtEpoch: 1788998400 },
   { id: "AWS-ECR-CVE-2026-63072-OPENSSL-CMS-UNUSED", cve: "CVE-2026-63072",
+    severity: "HIGH", packageName: "openssl", packageVersion: "3.0.20-1~deb12u2",
     providerStatement: "reachable from the public CMS_decrypt() function",
-    reachabilityEvidence: "No process in the image calls CMS_decrypt and the openssl CLI is never executed (repo-verified 2026-08-27)." },
+    reachabilityEvidence: "No process in the image calls CMS_decrypt and the openssl CLI is never executed (repo-verified 2026-08-27).",
+    approvedBy: "CHAT-OWNER-DIRECTIVE-2026-08-27-FIX-ALL-UNTIL-DEPLOY-SUCCEEDS",
+    expiresAtEpoch: 1788998400 },
   { id: "AWS-ECR-CVE-2026-63076-OPENSSL-CMP-UNUSED", cve: "CVE-2026-63076",
+    severity: "HIGH", packageName: "openssl", packageVersion: "3.0.20-1~deb12u2",
     providerStatement: "CMP is a specialized feature that an application must explicitly enable.",
-    reachabilityEvidence: "No process in the image enables CMP and the openssl CLI is never executed (repo-verified 2026-08-27)." }
+    reachabilityEvidence: "No process in the image enables CMP and the openssl CLI is never executed (repo-verified 2026-08-27).",
+    approvedBy: "CHAT-OWNER-DIRECTIVE-2026-08-27-FIX-ALL-UNTIL-DEPLOY-SUCCEEDS",
+    expiresAtEpoch: 1788998400 },
+  { id: "AWS-ECR-CVE-2026-75803-OPENSSL-EVP-CIPHER-UNUSED", cve: "CVE-2026-75803",
+    severity: "CRITICAL", packageName: "openssl", packageVersion: "3.0.20-1~deb12u2",
+    providerStatement: "for AES-OCB and ChaCha20-Poly1305 ciphers it skipped the AEAD tag verification when an empty ciphertext was passed to the function",
+    reachabilityEvidence: "The runtime is Node 22 with its own bundled OpenSSL, not the Debian libssl; the Debian openssl package enters only as a hard dependency of ca-certificates and, in the api image, of the ClamAV 1.5.3 .deb. No process in any image calls EVP_Cipher() on an attacker-supplied AEAD ciphertext: ClamAV uses OpenSSL for hashing and database signature checks, and TLS records always carry content plus tag, never an empty ciphertext. FIPS is not in use.",
+    approvedBy: "CHAT-OWNER-DIRECTIVE-2026-09-05-UAT-DEPLOY-WAIVER",
+    expiresAtEpoch: 1789776000 },
+  { id: "AWS-ECR-CVE-2026-85091-ZLIB-PRE131-MAPPING", cve: "CVE-2026-85091",
+    severity: "HIGH", packageName: "zlib", packageVersion: "1.2.13.dfsg-1",
+    providerStatement: "when processing non-blocking gzwrite() operations with stale external buffer pointers",
+    reachabilityEvidence: "Provider states the affected range is zlib 1.3.1.2 through 1.3.2 while the scanned Debian package is 1.2.13. Node bundles its own zlib, and no process in any image writes gzip streams through the system zlib non-blocking gzwrite()/gzprintf() API (repo-verified 2026-09-05).",
+    approvedBy: "CHAT-OWNER-DIRECTIVE-2026-09-05-UAT-DEPLOY-WAIVER",
+    expiresAtEpoch: 1789776000 }
 ];
 
-def e0_ecr_openssl_unreachable_waiver($digest):
+# The record minus its two scan-derived fields must equal its allowlist row exactly, so id, cve,
+# severity, packageName, packageVersion, providerStatement, reachabilityEvidence, approvedBy and
+# expiresAtEpoch all have to match the waived row — drift in any one stays blocking. $issued_at is
+# the evidence issue time (bound to real time by signed-evidence.sh), never a wall clock, so the
+# contract stays deterministic for a given artifact.
+def e0_ecr_unreachable_waiver($digest; $issued_at):
   . as $w
-  | ([e0_openssl_waiver_rows[] | select(.id == $w.id)][0]) as $row
+  | ([e0_ecr_waiver_rows[] | select(.id == $w.id)][0]) as $row
   | ($row != null)
   and ($w | e0_exact_keys(["approvedBy","compensatingControl","cve","expiresAtEpoch","id","packageName",
     "packageVersion","providerStatement","reachabilityEvidence","scannedDigest","severity"]))
-  and $w.cve == $row.cve and $w.severity == "HIGH"
-  and $w.packageName == "openssl" and $w.packageVersion == "3.0.20-1~deb12u2"
+  and ($w | del(.compensatingControl, .scannedDigest)) == $row
   and $w.scannedDigest == $digest
-  and $w.reachabilityEvidence == $row.reachabilityEvidence
   and $w.compensatingControl
     == "Exact CVE, severity, package, version and provider statement match; all mismatches remain blocking."
-  and $w.approvedBy == "CHAT-OWNER-DIRECTIVE-2026-08-27-FIX-ALL-UNTIL-DEPLOY-SUCCEEDS"
-  and $w.expiresAtEpoch == 1788998400
-  and $w.providerStatement == $row.providerStatement;
+  and $row.expiresAtEpoch > $issued_at;
+
+# Waiver list plus the severity accounting it implies. The preflight workflow derives critical/high
+# from `.blocking` alone, so every waived finding is missing from those two counts and has to be
+# added back here — a waived CRITICAL must show up as scanSeverityCounts.CRITICAL, never be ignored.
+def e0_ecr_scan_waivers($digest; $issued_at; $counts; $critical; $high):
+  type == "array"
+  and length <= (e0_ecr_waiver_rows | length)
+  and (map(.id) | unique | length) == length
+  and all(.[]; e0_ecr_unreachable_waiver($digest; $issued_at))
+  and ($counts.CRITICAL // 0) == ($critical + (map(select(.severity == "CRITICAL")) | length))
+  and ($counts.HIGH // 0) == ($high + (map(select(.severity == "HIGH")) | length));
 
 def e0_h3_release_files: [
   "cosign-ai-gateway.json","cosign-api-web.json","cosign-workers.json",
@@ -1331,7 +1374,7 @@ def e0_h3_controller_evidence($evidence):
     and map(.path) == e0_h3_validator_paths
     and all(.[]; e0_exact_keys(["path","sha256"]) and (.sha256 | e0_hash)));
 
-def e0_h3_security_service_evidence($source; $repository):
+def e0_h3_security_service_evidence($source; $repository; $issued_at):
   . as $service
   | e0_exact_keys(["ciIssuer","ciSignatureFile","ciSignatureFileSha256","ciSignedDigest",
       "ciSignerIdentity","critical","digest","high","image","imagePushedAtEpoch",
@@ -1368,11 +1411,8 @@ def e0_h3_security_service_evidence($source; $repository):
       (.key == "INFORMATIONAL" or .key == "LOW" or .key == "MEDIUM" or .key == "HIGH"
         or .key == "CRITICAL" or .key == "UNDEFINED")
       and (.value | e0_integer)))
-  and (.scanSeverityCounts.CRITICAL // 0) == .critical
-  and (.scanWaivers | type == "array" and length <= 4
-    and (map(.id) | unique | length) == length
-    and all(.[]; e0_ecr_openssl_unreachable_waiver($service.scanResolvedDigest)))
-  and (.scanSeverityCounts.HIGH // 0) == (.high + (.scanWaivers | length))
+  and (.scanWaivers | e0_ecr_scan_waivers($service.scanResolvedDigest; $issued_at;
+    $service.scanSeverityCounts; $service.critical; $service.high))
   and (if .scanProviderStatus == "COMPLETE" then true
     elif .scanProviderStatus == "ACTIVE" then
       .scanProviderDescription == "Continuous scan is selected for image."
@@ -1396,7 +1436,8 @@ def e0_h3_artifact_evidence($evidence; $uat_ref; $manifest_hash):
     and all(.[]; e0_exact_keys(["name","sha256"]) and (.sha256 | e0_hash)))
   and (.services | type == "array" and length == 3 and . == sort_by(.service)
     and map(.service) == ["ai-gateway","api-web","workers"]
-    and all(.[]; e0_h3_security_service_evidence($evidence.sourceCommit; $evidence.repository)))
+    and all(.[]; e0_h3_security_service_evidence($evidence.sourceCommit; $evidence.repository;
+      $evidence.issuedAtEpoch)))
   and all(.services[]; . as $service
     | any($artifact.releaseFiles[]; .name == $service.sbomFile and .sha256 == $service.sbomSha256)
       and any($artifact.releaseFiles[];
@@ -1431,11 +1472,8 @@ def e0_h3_migration_tool_verification($evidence; $expected):
           (.key == "INFORMATIONAL" or .key == "LOW" or .key == "MEDIUM" or .key == "HIGH"
             or .key == "CRITICAL" or .key == "UNDEFINED")
           and (.value | e0_integer)))
-      and (.severityCounts.CRITICAL // 0) == .critical
-      and (.waivers | type == "array" and length <= 4
-        and (map(.id) | unique | length) == length
-        and all(.[]; e0_ecr_openssl_unreachable_waiver($live.scan.resolvedDigest)))
-      and (.severityCounts.HIGH // 0) == (.high + (.waivers | length))
+      and (.waivers | e0_ecr_scan_waivers($live.scan.resolvedDigest; $evidence.issuedAtEpoch;
+        $live.scan.severityCounts; $live.scan.critical; $live.scan.high))
       and (if .providerStatus == "COMPLETE" then true
         elif .providerStatus == "ACTIVE" then
           .providerDescription == "Continuous scan is selected for image."
