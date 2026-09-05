@@ -879,3 +879,45 @@ slice D was wrong; the branch simply predated #437/#438. The guard then passed o
   fragment survives because the money rule masks the dotted quad first and the link rule then has no
   host left to anchor on. Cosmetic: no host, no tappable link, no figure. Not worth a rule that
   would have to understand paths.
+
+### D.16 B1 — the host scrub is two passes, and the order is the fix (2026-09-06)
+
+**Path taken: the full two-pass design, not the ASCII fallback.** The corpus is green at both ends.
+
+Round 4 widened the host label to `\p{L}` so `café.com` and `ร้านค้า.com` would stop printing as
+live links. That fixed Latin and broke Thai, and the way it broke is worth keeping: `ร้าน` is
+ร + ้ + า + น, and the tone mark `้` is `\p{M}`, not `\p{L}`. So the `\p{L}` run that reaches the dot
+in `ร้านabcbit.ly` does not start at the word — it starts *after the mark*, at `านabcbit` — and the
+scrubber returned `ร้`, having eaten the tail of the shop's name. Adding `\p{M}` to the class makes
+it worse, not better: the run then swallows the whole word. Slice C's F10 test caught it.
+
+The shape that works:
+
+- **(a) ASCII labels, but only starting at a script boundary.** The character before the label must
+  not be Latin-script, a combining mark, a digit, or a dot. Thai→Latin IS a boundary, which is
+  precisely what lets `abcbit.ly/x9` go while `ร้าน` stays.
+- **(b) IDN labels, but only at a hard boundary** (start, whitespace, punctuation) — never mid-word.
+  This takes `ร้านค้า.com`, `café.com`, `münchen.de`, `東京.jp` whole. Inner labels and the suffix
+  stay ASCII, which is what keeps an all-Thai dotted phrase (`กก.ขข.คค`, `ลาดพร้าว.วังหิน.โชคชัย`)
+  out of the host branch entirely.
+
+**(a) before (b) is load-bearing.** Run (b) first on `ร้านabcbit.ly/x9` and its label matches
+`ร้านabcbit`, taking the name with it. By the time (b) runs, (a) has removed the link.
+
+Two things the corpus caught that the design note did not:
+
+1. **The boundary needs `\p{Script=Latin}`, not `[A-Za-z]`.** `ü` is a Latin letter the ASCII range
+   does not contain, so with the narrow test `münchen.de` was still clipped to `mü`.
+2. **The `www.` branch of the scheme rule needed the same guard.** A scheme is a hard signal
+   anywhere, but `www.` is not: in `ร้านabcwww.evil.com` it sits mid-token, matched there, and left
+   `ร้านabc` — half a host glued to the shop's name. Guarded, it declines and pass (a) takes
+   `abcwww.evil.com` whole.
+
+Neither shows up unless the BENIGN half of the corpus is asserted with exact equality. `!/evil/` was
+true of `ร้านabc`. The corpus now pins both ends in one test: ten hostile strings by exact expected
+output, every tiebreaker TLD walked (52 of them, plus the IDN pass over four), thirteen benign
+strings byte-identical, and three more whose digits the money rule masks by design asserted on the
+surviving name.
+
+`scrubRecordIdentifier` deliberately runs none of these passes: its shape test (one token, no dots)
+already refuses anything host-shaped, so a link rule there would be dead weight.
