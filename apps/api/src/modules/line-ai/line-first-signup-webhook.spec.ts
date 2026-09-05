@@ -174,7 +174,8 @@ describe('P10-L door and status cards (§3.1/§7)', () => {
 type Harness = ReturnType<typeof harness>;
 
 function harness(options: {
-  pendingSignup?: { id: string; companyName: string } | null;
+  // `id` only matters to the support path (§2.1.1 queue link); the status card reads the name.
+  pendingSignup?: { id?: string; companyName: string } | null;
   identity?: { userId: string; user: { status: string; aiAssistantOptOutAt: Date | null; displayName: string } } | null;
   ownerMembership?: any;
   /** ACTIVE memberships in ACTIVE companies — what `resolveCompanyForLineUser` reads (§2.1.1). */
