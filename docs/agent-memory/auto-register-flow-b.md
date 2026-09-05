@@ -76,3 +76,22 @@ Follow-ups ที่ยังไม่ทำ:
 - `apps/web/app/api/auth/login/route.ts` มีอาการ R06 เหมือนกัน แต่อยู่ใน maintenance pins จึงไม่แตะ
 - ~~free trial ทางเว็บยังไม่ได้ AI budget/warm-up ของ LINE~~ **ปิดแล้ว 2026-09-05 (Owner follow-up):** `applyLineTrialGuards` → `applyTrialGuards` รันทั้งสอง source โดยดูจาก `SIGNUP_TRIAL_TIER` ไม่ใช่ source — ร้านจากฟอร์มเว็บได้ AI budget cap, warm-up 7 วัน และ term 30 วันชุดเดียวกับ LINE; `LineCompanyContext` และ LINE push ยังเป็นของ LINE เท่านั้น (gate ด้วย `lineProviderUserId`); `adoptExistingCompany` ไม่เขียน plan term ของตัวเองอีกแล้ว — มี writer เดียว. env keys ยังชื่อ `lineSignupWarmupSlips` / `lineFreeAiBudgetSatang` (การเปลี่ยนชื่อต้องแก้ deploy.sh จึงไม่ทำในรอบนี้)
 - P2 ทั้งหมด (R07, R10–R13) และ integration matrix ท้ายรายงาน
+
+## Update 2026-09-06: reviewer round on `codex/flow-b-p1-fixes` (F1–F12)
+
+รีวิวรอบสองยืนยัน red/green ครบทั้ง 8 ข้อ P1 แต่ยกอีก 11 รายการ แก้บนสาขาเดิมทั้งหมด:
+
+- **F1 (HIGH)** หน้าเว็บโฆษณา PRO ฿999 5 สาขา/10 คน/100 ใบ ขณะที่ provisioning เขียน `FREE_TRIAL_15` (1/2/15 + warm-up) → การ์ดที่เลือกได้กลายเป็น tier ที่ได้จริง ตัวเลขมาจาก `PLAN_TIER_PRESETS` และย้าย `SIGNUP_TRIAL_TIER_KEY` ไป contracts ให้หน้าเว็บกับ provisioning อ่านคีย์เดียวกัน; ลบคำว่า PRO/มืออาชีพ/฿999 ออกจากทั้ง 4 หน้า (P2 จะเขียน copy เต็มทับตอน rebase)
+- **F2 (MED)** แถว Flow B ที่ provisioning ล้มหลัง claim มองไม่เห็นในคิวและกู้ไม่ได้ → `PROVISIONING_FAILED` เข้า queue states ของทุก source, approve = retry provisioning ทั้งสอง source (ไม่ย้อนกลับไป EMAIL_PENDING), ปุ่ม "ลองเปิดร้านอีกครั้ง" เปิดให้ web ด้วย; READY/PROVISIONING ยังเป็น LINE-only
+- **F3 (MED)** migration rename ทำ DB ที่ apply ชื่อเดิมพัง P3018 → บันทึกวิธี `prisma migrate resolve` ใน `docs/runbooks/production-migration-reconciliation.md` (UAT/prod ไม่เคย apply ทั้งสองชื่อ)
+- **F4 (MED)** spec §3A/§4F เขียนใหม่: free-trial rule, `FREE_TRIAL` + normalise `PRO_TRIAL`, ยกเลิก `offer_not_available`, `account_merge_role_conflict`, ACTIVE-OWNER invariant, `POST /v1/auth/account-merge/preview`
+- **F5** เพิ่มเทสต์เดี่ยวของกฎ `target_membership_inactive` (role ตรงกันและไม่มี OWNER ทั้งคู่ จึงมีแต่กฎนี้ที่ปฏิเสธได้)
+- **F6** merge preview มี bucket ของตัวเอง (`account-merge-preview-ip`, 120/ชม.) แทนการใช้ `line-login-callback-ip` (10) ร่วมกัน และ dialog fetch preview ครั้งเดียวต่อ mount
+- **F7** self-serve resend ไม่รีสตาร์ต window → token TTL ถูก clamp ให้ตายพร้อม window และ resend ที่เหลือ < 1 ชม. ถูกปฏิเสธด้วย `claim_window_almost_over`
+- **F8** audit ของการอนุมัติเข้าไปอยู่ใน transaction เดียวกับ state และจดหมาย และเส้นซ่อม EMAIL_PENDING เขียน audit ของตัวเอง (`signup.request.claim_email_repaired`)
+- **F9** `applyTrialGuards` เคย re-stamp warm-up และ AI budget ทุกครั้งที่ retry → upsert ทั้งสองไม่เขียนอะไรลง row ที่มีอยู่ และ stamp แบบมีเงื่อนไข (`warmupUntil: null` / `monthlyBudgetSatang: null`) จึงลงครั้งเดียว
+- **F10** pg spec ใหม่พิสูจน์ atomicity ของ approve บน Postgres จริง (enqueue ล้ม → ไม่มีอะไรถูกเขียน; สำเร็จ → state + approvedAt + claimWindowStartedAt + outbox พร้อมกัน และ retry ไม่ได้จดหมายใบที่สอง)
+- **F12** แก้บันทึกเดิม: admin queue **DTO** ส่ง `requestedOfferKey` ออกมาจริง (`signup-admin-queue.use-case.ts`) แม้หน้าเว็บจะยังไม่เรนเดอร์ — คำว่า "ไม่มี DTO ต้องแก้" ในบันทึกรอบก่อนหมายถึงการเรนเดอร์เท่านั้น
+- **offer key rename** `PRO_TRIAL` → `FREE_TRIAL` ฝั่ง server และฟอร์ม; `PRO_TRIAL` ยังรับได้และถูก normalise (ไม่ปฏิเสธคำขอ)
+
+สมมติฐานที่บันทึกไว้ตามที่ reviewer ขอ: R06 พึ่งพาการที่ ECS Express gateway append peer ที่มันเห็นจริง — เขียนไว้ใน `docs/runbooks/cloud-environment-operations.md` พร้อมอาการเวลาสมมติฐานพัง

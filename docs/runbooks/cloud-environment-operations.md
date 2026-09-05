@@ -534,3 +534,32 @@ Feature branch `codex/line-substitute-receipt-assisted-issuance` ส่งเอ
 6. **Log hygiene**: path ที่มี token ถูก mask เป็น `/v1/document-delivery/:token` ในทุกจุดที่ log
    path (request logger / exception filter / rate-limit security event) — ถ้าเพิ่มจุด log ใหม่
    ที่แตะ `req.path` ต้องผ่าน `maskLoggedPath()` เสมอ token เป็น bearer credential ของเอกสารกฎหมาย
+
+---
+
+## Visitor IP through the api-web container (review R06) — 2026-09-06
+
+Rate limits that are keyed on the visitor (the 20/hour signup-claim bucket, the password-login
+failure bucket) depend on one assumption about the ingress chain, recorded here because breaking it
+silently collapses every visitor into one key rather than failing loudly:
+
+- prod chain is browser → Cloudflare Worker → **ECS Express gateway** → `web-api-proxy.mjs` →
+  Nest (or Next), all inside one container over loopback.
+- `trustedClientIp()` honours `x-forwarded-for` only when the TCP peer is the private/loopback tier
+  and walks the chain **from the right**, skipping every hop our own tier or Cloudflare appended.
+  The first hop that is neither is the answer.
+- **The assumption:** the ECS Express gateway appends the peer it actually observed. That appended
+  hop is what makes a visitor-supplied `x-forwarded-for` unusable as a self-chosen key — a forged
+  value always sits to the LEFT of the observed one and is skipped.
+- The claim BFF (`apps/web/app/api/auth/signup-claim/route.ts`) calls the API server-to-server, so
+  it forwards the chain verbatim with `forwardedClientHeaders()`. Without it every applicant in the
+  country shares the container's loopback address as one bucket.
+
+**If the ingress is ever changed** — a different gateway, a direct-to-ALB path, Cloudflare removed —
+re-check that the rightmost hop is still infrastructure-appended before trusting these buckets. The
+symptom of a broken assumption is not an error: it is a shared key (everyone throttled together) or
+a spoofable one (nobody throttled). `apps/api/src/common/security/trusted-client-ip.spec.ts` holds
+the property tests for both directions.
+
+Known gap: `apps/web/app/api/auth/login/route.ts` has the same shape and does NOT forward the chain
+yet. It is in the production maintenance pins, so changing it needs a pin re-sync in the same PR.

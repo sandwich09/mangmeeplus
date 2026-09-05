@@ -116,3 +116,39 @@ repo 121 − prod 70 = **51 migration ใหม่** ที่ release task จ�
 กลาง ก.ค. ถึง ส.ค. (h-fixes, substitute receipt, wht, ฯลฯ) — **จับเวลาตอน apply** เพราะ 51 ตัวบน
 DB ที่มีข้อมูลจริงอาจนานกว่าที่คิด (บางตัวมี backfill) แต่ prod ตอนนี้ยังไม่มี user data มาก
 จึงน่าจะเร็ว — ตั้งเป็น baseline สำหรับครั้งต่อไป
+
+---
+
+## Dev note 2026-09-06 — a migration renamed on a branch (review F3)
+
+`codex/flow-b-p1-fixes` renamed its own migration after it had already been applied to local
+developer and agent databases:
+
+- old: `20260905170000_signup_claim_activation_window`
+- new: `20260905173000_signup_claim_activation_window`
+
+The rename avoids sharing a timestamp prefix with `20260905170000_line_support_request` on
+`codex/line-support-request`. Both are additive and touch different objects (a new enum plus the
+`LineSupportRequest` table there, one nullable column on `CompanySignupRequest` here), so the apply
+order between them does not matter; the resulting order is
+`170000_line_support_request` → `173000_signup_claim_activation_window` →
+`180000_line_support_request_notified_at`.
+
+**UAT and production never applied either name**, so nothing there needs doing.
+
+A LOCAL or AGENT database that ran the branch at `11fb16ae` or earlier has the OLD name in
+`_prisma_migrations` and already has the column. `prisma migrate deploy` will then try to add it
+again and fail with P3018 ("column already exists"). Reconcile without dropping anything:
+
+```sh
+cd apps/api
+export DATABASE_URL='postgresql://watchdog:watchdog_local_password@127.0.0.1:15432/watchdog_bms?schema=public'
+# tell Prisma the new name is already applied (the column is there)
+pnpm exec prisma migrate resolve --applied 20260905173000_signup_claim_activation_window
+# and retire the old row if it is still listed
+pnpm exec prisma migrate resolve --rolled-back 20260905170000_signup_claim_activation_window
+pnpm exec prisma migrate status   # expect "Database schema is up to date!"
+```
+
+A database that never ran the old name needs none of this — `migrate deploy` applies the new one
+normally. A throwaway database can simply be recreated instead.

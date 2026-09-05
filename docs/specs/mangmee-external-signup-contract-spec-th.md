@@ -64,10 +64,12 @@
 
 ### 3A. Offer preview สำหรับหน้า auto-register — **spec-only 2026-08-29**
 
-- Source of truth ของราคาและ enable state คือ [Billing §8](mangmee-billing-subscription-spec-th.md#billing-offer-catalog) ชุด 2026-08-30 (ตรงเว็บ official): `PRO_TRIAL` (ทดลองใช้ฟรีบน PRO), `STARTER_249`, `BASIC_499`, `PRO_999`, `ENTERPRISE_1999`.
-- หน้า auto-register แสดงครบ 4 tier (เริ่มต้น/เติบโต/มืออาชีพ/ธุรกิจ) ให้เห็น journey จริง แต่เลือกได้เฉพาะ `PRO_TRIAL` — trial ผูกกับแพ็กเกจ PRO ตามเว็บ ("สามารถเริ่มต้นด้วยแพ็กเกจ PRO ทดลองใช้ฟรี"); tier อื่น disabled พร้อมข้อความ “เร็ว ๆ นี้” และเหตุผลที่อ่านได้ด้วย assistive technology.
-- Allowlist ฝั่ง server สำหรับการสมัครปัจจุบันรับเฉพาะ `PRO_TRIAL`; ถ้าผู้เรียกส่ง key อื่นโดยตรงให้คืน `offer_not_available` และ **ห้าม fallback เป็น trial เงียบ ๆ**.
-- แม้รับ `PRO_TRIAL` แล้ว `requestedOfferKey` ยังคงเป็น attribution/audit เท่านั้นตาม §3; P10 ห้ามสร้าง `BillingPackage`, payment attempt, entitlement หรืออนุมาน quota enforcement (ตัวเลขประกาศต่อ tier อยู่ Billing §8; การบังคับเป็น P26).
+> **แก้ไข Owner 2026-09-05 (review R02/F1):** ไม่มีการเลือกแพ็กเกจตอนสมัครอีกต่อไป ทุก self-signup — ทั้งฟอร์มเว็บและ LINE — ได้ **free trial ชุดเดียวกัน** (`FREE_TRIAL_15`: 1 สาขา / 2 คน / 15 สลิปต่อเดือน, 30 วัน, พร้อม warm-up สัปดาห์แรกและ AI budget cap เท่ากับเส้น LINE) ย่อหน้าด้านล่างแทนที่ข้อความ 2026-08-29 ทั้งหมด
+
+- Source of truth ของราคาและ enable state ยังเป็น [Billing §8](mangmee-billing-subscription-spec-th.md#billing-offer-catalog) ชุด 2026-08-30 แต่ **ไม่มี tier ใดขายผ่านหน้า auto-register**; tier ที่เสียเงินแสดงเป็น preview ที่กดไม่ได้ พร้อมข้อความ “เร็ว ๆ นี้” และเหตุผลที่อ่านได้ด้วย assistive technology
+- การ์ดที่เลือกได้มีใบเดียวคือ free trial และ **ตัวเลขบนการ์ดต้องมาจาก `PLAN_TIER_PRESETS[SIGNUP_TRIAL_TIER_KEY]`** ไม่ใช่เขียนซ้ำด้วยมือ (F1: หน้าเว็บเคยโฆษณา PRO 5 สาขา / 10 คน / 100 ใบ ที่ ฿999 ขณะที่ provisioning เขียน 1/2/15) ห้ามมีคำว่า PRO/มืออาชีพ หรือราคาบนการ์ดนี้
+- Offer key ที่ฟอร์มส่งคือ `FREE_TRIAL`; ชื่อเดิม `PRO_TRIAL` ยังรับได้และถูก **normalise เป็น `FREE_TRIAL`** เพื่อ client ที่ค้างอยู่ — **ไม่ปฏิเสธคำขอเพราะ key อีกต่อไป** (`offer_not_available` ถูกยกเลิก) key นอก catalog ถูกทิ้งเป็น `null` แทนที่จะเก็บ เพราะคิว admin ต้องไม่แสดง free text ที่ผู้สมัครเลือกเอง
+- `requestedOfferKey` เป็น attribution/audit เท่านั้นตาม §3 และ **ไม่ตัดสินอะไรเลย** — tier ที่ได้กำหนดโดยนโยบาย ไม่ใช่โดยสิ่งที่ผู้สมัครขอ; P10 ยังห้ามสร้าง `BillingPackage`, payment attempt, entitlement หรืออนุมาน quota enforcement (การบังคับเป็น P26)
 
 <a id="external-signup-owner-amendment"></a>
 ## 4. Durable state — **target Flow B (amendment v2 2026-08-30); delta ยังไม่ implement**
@@ -129,6 +131,9 @@ Enum เดิมใช้ซ้ำได้ทั้งชุด (`EMAIL_PENDIN
 
 - หน้าสำเร็จหลัง provision: ปุ่ม "เชื่อมบัญชี LINE" (mobile = OAuth link P12-2; desktop = QR P12-3a) + ปุ่ม/QR "เพิ่มเพื่อน OA" (ลิงก์กลาง ไม่มี token ส่วนตัว); ข้ามได้ → state ค้าง `LINE_LINK_PENDING`, เชื่อมทีหลังจากหน้าตั้งค่า + แบนเนอร์เตือนในเว็บ; เมลอนุมัติแนบลิงก์เพิ่มเพื่อน OA กลางได้ตามกติกา P11.
 - **LINE ชนบัญชีอื่น** (เช่น เป็นพนักงานอยู่แล้วแต่เผลอสร้างบัญชีใหม่): เสนอ 2 ทางเท่านั้น — **"รวมเข้าบัญชีเดิม"** (ย้าย membership บริษัทใหม่ไป User เดิม + ย้าย email; บัญชีใหม่ที่ว่างถูกปิดไม่ลบ audit) หรือ **"ไว้ก่อน"** (สองบัญชีอยู่ต่อ พร้อมข้อความบอกผลชัด: บริษัทใหม่ใช้ผ่านเว็บ+รหัสผ่าน, LINE ยังใช้กับงานบริษัทเดิมเท่านั้น, เปลี่ยนใจมารวมทีหลังได้); **ห้ามมีตัวเลือก "ย้าย LINE ออกจากบัญชีเดิม" ในจอนี้** — การย้ายต้องไปทำใน flow ตั้งค่าเดิมแบบตั้งใจ.
+- **แก้ไข 2026-09-05 (review R05): การรวมไม่ใช่การย้ายแบบไม่มีเงื่อนไข** — ก่อนเขียนอะไรเลย ระบบวางแผนรายบริษัทและ **fail closed** ทั้งคำขอด้วย `account_merge_role_conflict` (ระบุชื่อร้านที่ติด) เมื่อเข้าเงื่อนไขข้อใดข้อหนึ่ง เรียงตามลำดับ: membership ฝั่งบัญชีเดิมไม่ ACTIVE (`target_membership_inactive`), ฝั่งที่จะถูกปิดเป็น OWNER แต่ฝั่งที่เก็บไว้ไม่ใช่ (`last_active_owner` — invariant "ต้องเหลือ ACTIVE OWNER อย่างน้อยหนึ่งคนต่อร้าน" ตรวจแยกต่างหากเสมอ), หรือสอง membership มี role ไม่ตรงกัน (`role_conflict`) เฉพาะกรณี role ตรงกันและ ACTIVE ทั้งคู่เท่านั้นที่ปิด membership ซ้ำได้ตามเดิม
+- แผนนี้คำนวณ **ก่อน** consume ticket ดังนั้นการถูกปฏิเสธไม่กิน ticket ผู้ใช้แก้สิทธิ์แล้วกดปุ่มเดิมซ้ำได้
+- **`POST /v1/auth/account-merge/preview`** (read-only, ticket อยู่ใน body ไม่ใช่ URL, bucket rate limit ของตัวเอง) คืนแผนเดียวกันให้ dialog แสดงก่อนยืนยัน: แต่ละร้านจะ `move` / `close_duplicate` / `blocked` (พร้อมเหตุผล) และ **บัญชีไหนอยู่ต่อ + เข้าสู่ระบบด้วยวิธีใดหลังรวม** (LINE / ชื่อผู้ใช้และรหัสผ่าน) เพื่อไม่ให้ใครยืนยันสิ่งที่มองไม่เห็นผล
 - ข้อเสนอ merge เด้งซ้ำทุกครั้งที่กดเชื่อมแล้วชน ไม่ใช่ครั้งเดียวทิ้ง.
 - Scope ร่วมรอบนี้: ตัวเลือกบริษัท (web + LINE picker) ต้องแสดง **label บทบาท** ("เจ้าของ"/"พนักงานบัญชี"/…) ปิด gap ความงงจาก P13.
 - Future (จดไว้ ไม่ทำรอบนี้): ฟอร์มเวอร์ชัน LIFF สำหรับคนสมัครจาก rich menu — รู้ตัวตน LINE ตั้งแต่กรอก เชื่อมอัตโนมัติไม่ต้องเห็นปุ่ม/QR; และ "ลิงก์เชิญพนักงาน" ให้พนักงานใหม่รับด้วยบัญชีเดิมได้ (ปิดเคสเจ้าของร้านไปเป็นพนักงานที่อื่น).
@@ -137,7 +142,7 @@ Enum เดิมใช้ซ้ำได้ทั้งชุด (`EMAIL_PENDIN
 
 ตาม §13.6A + checklist ของ §13.6D ปรับเข้า Flow B: หน้าหลังกด submit บอกว่า "ได้รับคำขอแล้ว กำลังตรวจสอบ — เราจะส่งอีเมลเมื่ออนุมัติ" **ห้ามอ้างว่าสร้างบริษัทสำเร็จและห้ามสัญญาเวลาอนุมัติ**; หน้าเช็คสถานะ mapping ตรง state จริง (§3 allowlist) + ปุ่มขอส่งเมลตั้งรหัสซ้ำเมื่ออยู่ EMAIL_PENDING; ฟอร์ม mobile-first 390px ตามผู้ใช้จริง (ผู้ใช้ 40+, ปุ่ม/ฟอนต์ใหญ่)
 
-ส่วนเลือก offer แสดงรายการตาม §3A (4 tier ชุด 2026-08-30): `PRO_TRIAL` เลือกได้; tier อื่นแสดงราคาแต่ control disabled + “เร็ว ๆ นี้”; ห้ามแสดง upload slip, payment pending หรือ payment success ใน flow ปัจจุบัน.
+ส่วนเลือก offer แสดงรายการตาม §3A: การ์ด free trial เลือกได้หนึ่งใบ (ตัวเลขมาจาก preset ไม่ใช่เขียนซ้ำ ห้ามมีคำว่า PRO หรือราคา); tier ที่เสียเงินแสดงราคาแต่ control disabled + “เร็ว ๆ นี้”; ห้ามแสดง upload slip, payment pending หรือ payment success ใน flow ปัจจุบัน.
 
 ## 6. Gates/tests (ยกจากแผนหลัก §15 แถว "Official signup API" คำต่อคำ)
 
