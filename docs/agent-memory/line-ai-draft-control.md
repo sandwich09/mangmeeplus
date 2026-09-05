@@ -95,8 +95,10 @@ separate "ค่าบริการ" account and no report by charge kind.
 
 ## Slice C — `codex/line-ai-explain-record` (S-3, อธิบายรายการของฉัน)
 
-Status: implemented on top of B (`5200ba5d`, B rebased onto develop `91704151`), review round 1
-fixed, gates green, pushed; no PR.
+Status: rebased onto develop `e37eb216` (which carries B via PR #434), review rounds 1–4 fixed,
+gates green, pushed; no PR. Slice A merges after this one — expect a small second rebase in
+`process-line-webhook.use-case.ts`, where A took the `intakeIntent` binding from here verbatim, so
+that hunk should collapse rather than conflict.
 
 What it does — evidence E4 ("ทำไม service charge คิดแยกเป็นอีกรายการนึง") now gets a real answer:
 
@@ -162,6 +164,9 @@ receipt this tool explains.) S-4 replaces the pair with the real draft-edit capa
   third-party possessor or a mutation verb vetoes outright. E4 has no document noun at all, so it is
   matched by its own shape (a named additional charge + a "how is it counted" verb). 6 positives and
   13 negatives are pinned.
+
+### Review round 2 (at `ca5dad1f`) — fixed
+
 - **The guard was written in ASCII, on a Thai receipt.** `\d` is `[0-9]` even under `/u`, and
   `\bwww\.` needs a word boundary Thai text does not give, so four shapes walked straight past the
   first fix: a Thai-numeral total (`๙๙,๙๙๙.๐๐`), a fullwidth one (`９９，９９９．００`), an integer-only
