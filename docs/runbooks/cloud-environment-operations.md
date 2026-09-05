@@ -138,7 +138,31 @@ capacity ไม่ใช่ deploy ใหม่
 
 ### UAT — เปิดกลับ
 
-รันคำสั่งเดิมโดยไม่ใส่ตัวแปร (ได้ 1/2) หรือใส่ค่าที่ต้องการ
+**ตั้งแต่ 2026-09-05 ห้ามใช้ `deploy.sh` จากเครื่องเพื่อเปิดกลับ:** `deploy.sh` รุ่นที่ deploy อยู่ (ตั้งแต่ `71263dd0`)
+ปฏิเสธ service rollout ทุกแบบถ้าไม่มี `RELEASE_PARENT_OPERATION_ID`, `RELEASE_TASK_IMAGE` และ
+`DEPLOYMENT_EVIDENCE_DIR` จาก release task (พิสูจน์แล้ว: `bash infra/uat/deploy-with-runtime-mutex.sh all`
+จาก checkout ที่ `71263dd0` จบด้วย rc=2 พร้อมข้อความนั้น) ให้ใช้ API round-trip ตามข้อ 2 แทน:
+
+```sh
+export AWS_PROFILE=watchdog-bedrock AWS_SDK_LOAD_CONFIG=1 AWS_REGION=ap-southeast-1
+for arn in $(aws ecs list-services --cluster watchdog-bms-uat --query 'serviceArns[]' --output text); do
+  aws ecs describe-express-gateway-service --service "$arn" --output json > before.json
+  jq '.service.activeConfigurations[0] as $c | {serviceArn: .service.serviceArn,
+        executionRoleArn: $c.executionRoleArn, healthCheckPath: $c.healthCheckPath,
+        primaryContainer: $c.primaryContainer, taskRoleArn: $c.taskRoleArn,
+        networkConfiguration: $c.networkConfiguration, cpu: $c.cpu, memory: $c.memory,
+        scalingTarget: ($c.scalingTarget | .minTaskCount = 1 | .maxTaskCount = 2)}' before.json > payload.json
+  aws ecs update-express-gateway-service --cli-input-json file://payload.json >/dev/null
+done
+```
+
+คัดลอก 9 key จาก describe ทั้งชุด เปลี่ยนเฉพาะ `scalingTarget` (image/env/secrets ต้องเหมือนเดิม byte-for-byte —
+ตรวจด้วย jq ก่อนยิง) หลัง update แต่ละ service จะมี **`activeConfigurations` สองตัว** (revision เก่า 0/0 กับใหม่ 1/2)
+ประมาณ 3 นาทีจน deployment ของ revision ใหม่จบ (`aws ecs list-service-deployments --service <arn>` เป็น
+`SUCCESSFUL`) ต้องรอจน `length(service.activeConfigurations) == 1` ทั้งสาม service **แล้วรัน
+`infra/uat/verify-deploy-readiness.sh` จากเครื่อง (read-only, env `DEPLOY_ENV=uat ECS_CLUSTER_NAME=watchdog-bms-uat`)
+ให้ผ่านก่อน** ค่อย dispatch `deploy-uat.yml` — สั่งเร็วไปจะล้มที่ preflight ด้วย
+`api-web is not a stable singleton UAT service` (run `33946705432`, 2026-09-05) และเสีย dispatch ไปหนึ่งครั้ง
 **`run-a5-capacity-mutating.sh` ต้องการ `minTaskCount >= 1`** ต้องเปิดก่อนรัน U5 capacity
 
 ### Production
