@@ -358,6 +358,9 @@ const CODE_LABELS: Record<string, string> = {
   merge_in_progress: 'กำลังรวมบัญชีอยู่ กรุณารอสักครู่แล้วเปิดหน้านี้ใหม่',
   merge_target_unavailable: 'บัญชีเดิมใช้งานไม่ได้ในตอนนี้ ติดต่อ 098-256-5628',
   merge_not_needed: 'สองบัญชีนี้เป็นบัญชีเดียวกันอยู่แล้ว ไม่ต้องรวม',
+  // Review R05: fail closed. Two accounts hold different access to the same shop, and merging would
+  // decide on its own which side wins — including closing a shop's only owner out of it.
+  account_merge_role_conflict: 'รวมบัญชีไม่ได้ เพราะสองบัญชีมีสิทธิ์ในร้านเดียวกันไม่ตรงกัน ติดต่อ 098-256-5628 เพื่อให้ทีมงานจัดสิทธิ์ให้ก่อน',
 
   // ---- ยอมรับข้อกำหนดการใช้งาน ----
   legal_acceptance_required: 'ต้องยอมรับข้อกำหนดการใช้งานและรับทราบประกาศความเป็นส่วนตัวก่อนใช้งาน',

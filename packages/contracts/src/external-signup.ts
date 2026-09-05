@@ -179,6 +179,38 @@ export type AdminSignupDecisionDto = { requestId: string; state: string };
 
 export type AdminSignupReissueDto = { requestId: string; state: string; claimEmailQueued: boolean };
 
+// ── Spec §4F account merge — what a merge would do, shown before it is confirmed ──
+
+/**
+ * Review R05. `move`: this shop follows you to the account you keep, with the same roles.
+ * `close_duplicate`: you already have identical access there through the other account, so the
+ * duplicate is closed and nothing about the shop changes. `blocked`: the two memberships disagree,
+ * and merging would decide a question only a person can — the whole merge is refused.
+ */
+export type AccountMergeCompanyOutcomeDto = {
+  companyName: string;
+  outcome: 'move' | 'close_duplicate' | 'blocked';
+  /** Only on `blocked`: which rule refused, so the dialog can say something true. */
+  reason?: 'role_conflict' | 'target_membership_inactive' | 'last_active_owner';
+};
+
+/** Names an account well enough to decide between two of them, and nothing more — never an email. */
+export type AccountMergeAccountSummaryDto = {
+  displayName: string;
+  username?: string;
+  /** The ways this account can sign in today. */
+  signInWith: Array<'line' | 'password'>;
+};
+
+export type AccountMergePreviewDto = {
+  canMerge: boolean;
+  /** The account that survives; its `signInWith` is what still works afterwards. */
+  keeps: AccountMergeAccountSummaryDto;
+  /** The account that is closed; signing in with these stops working. */
+  closes: AccountMergeAccountSummaryDto;
+  companies: AccountMergeCompanyOutcomeDto[];
+};
+
 // ── P10-L LINE-first signup (spec docs/specs/mangmee-line-first-signup-spec-th.md) ──
 
 /**

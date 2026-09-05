@@ -719,6 +719,23 @@ export class AuthController {
     });
   }
 
+  /**
+   * Review R05: what the merge would do, before it is confirmed — which shops move, which block,
+   * and which way of signing in survives. POST rather than GET because the ticket is a bearer
+   * credential and a URL segment is recorded by every access log on the way in (review R01).
+   */
+  @Post('account-merge/preview')
+  @HttpCode(200)
+  @RequirePermissions('account.identity.link')
+  @ApiOperation({ summary: 'What merging into the LINE-owning account would do (spec §4F)' })
+  @ApiBody({ type: AccountMergeDto })
+  @ApiResponse({ status: 200, description: 'Per-shop plan and the credentials that survive' })
+  @ApiResponse({ status: 403, description: 'Ticket belongs to another session' })
+  async accountMergePreview(@Body() dto: AccountMergeDto, @Req() req: Request & { context: RequestContext }) {
+    await this.authRateLimit.assertLineLoginCallbackAllowed(trustedClientIp(req));
+    return this.accountMergeUseCase.preview({ userId: req.context.userId, ticket: dto.ticket });
+  }
+
   @Public()
   // Path lives under line/link-page so liff.login redirectUri stays inside the registered LIFF endpoint URL scope; old path kept for already-issued QRs.
   @Get(['line/link-page/employee', 'line/employee-link-page'])

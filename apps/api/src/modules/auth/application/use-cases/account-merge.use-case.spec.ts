@@ -312,6 +312,24 @@ describe('AccountMergeUseCase', () => {
       const plan = await h.preview();
 
       assert.equal(plan.canMerge, false);
+      // The owner invariant is checked before the role rule, so the reason names the real problem:
+      // this shop would be left without an owner, not merely with two disagreeing role sets.
+      assert.deepEqual(plan.companies, [
+        { companyName: 'ร้านมั่งมี', outcome: 'blocked', reason: 'last_active_owner' },
+      ]);
+    });
+
+    it('reports a plain role disagreement as one, when no owner is at stake', async () => {
+      const h = makeHarness({
+        memberships: [
+          { id: 'm-new-shared', companyId: 'co-shared', userId: 'new-1', status: 'ACTIVE', roleKeys: ['STAFF'], companyName: 'ร้านมั่งมี' },
+          { id: 'm-old-shared', companyId: 'co-shared', userId: 'existing-1', status: 'ACTIVE', roleKeys: ['ACCOUNTANT'], companyName: 'ร้านมั่งมี' },
+        ],
+      });
+
+      const plan = await h.preview();
+
+      assert.equal(plan.canMerge, false);
       assert.deepEqual(plan.companies, [
         { companyName: 'ร้านมั่งมี', outcome: 'blocked', reason: 'role_conflict' },
       ]);

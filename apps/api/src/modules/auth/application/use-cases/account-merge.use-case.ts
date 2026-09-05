@@ -1,5 +1,7 @@
 import { ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
+import type { AccountMergeAccountSummaryDto, AccountMergePreviewDto } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
+import { planAccountMerge, type MergeCompanyPlan, type MergeMembershipView } from '../../domain/logic/account-merge.logic';
 import { AuditService } from '../../../audit/application/audit.service';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
 import { observeCustomerJourney } from '../../../../common/observability/customer-journey-audit';
@@ -11,6 +13,29 @@ import { IssueTokenUseCase, type AuthTokensResult } from './issue-token.use-case
 export const ACCOUNT_MERGE_TICKET_TTL_MS = 15 * 60_000;
 
 export type AccountMergeResult = { merged: true } & AuthTokensResult;
+
+/** Everything the R05 plan needs from a membership, and nothing that would put a role id in a DTO. */
+const MEMBERSHIP_SELECT = {
+  id: true,
+  companyId: true,
+  status: true,
+  company: { select: { name: true } },
+  roles: { select: { role: { select: { key: true } } } },
+} as const;
+
+type MembershipRow = {
+  companyId: string;
+  status: string;
+  company: { name: string } | null;
+  roles: Array<{ role: { key: string } }>;
+};
+
+const toView = (membership: MembershipRow): MergeMembershipView => ({
+  companyId: membership.companyId,
+  companyName: membership.company?.name ?? '',
+  status: membership.status,
+  roleKeys: membership.roles.map((entry) => entry.role.key),
+});
 
 /**
  * Spec §4F: "รวมเข้าบัญชีเดิม". The company memberships of the account the caller is signed in as
@@ -37,6 +62,65 @@ export class AccountMergeUseCase {
       () => this.merge(input),
       () => ({ outcome: 'merged' }),
     );
+  }
+
+  /**
+   * Review R05: what this merge would do, answered before anything is written. The dialog needs it
+   * to name the shops that move, the shops that block, and — because the merge closes an account —
+   * which way of signing in still works afterwards. Read-only: no ticket is spent, nothing changes,
+   * and a caller holding someone else's ticket learns exactly what `merge` would tell them.
+   */
+  async preview(input: { userId: string; ticket: string }): Promise<AccountMergePreviewDto> {
+    const row = await this.prisma.client.accountMergeTicket.findUnique({
+      where: { tokenHash: hashToken(input.ticket) },
+    });
+    if (!row) throw new NotFoundException({ code: 'merge_ticket_invalid', message: 'Merge ticket is unknown.' });
+    if (row.newUserId !== input.userId) {
+      throw new ForbiddenException({ code: 'merge_ticket_not_yours', message: 'Merge ticket belongs to another session.' });
+    }
+
+    const [memberships, keeps, closes] = await Promise.all([
+      this.prisma.client.companyMembership.findMany({
+        where: { userId: input.userId, status: 'ACTIVE' },
+        select: MEMBERSHIP_SELECT,
+      }),
+      this.accountSummary(row.existingUserId),
+      this.accountSummary(input.userId),
+    ]);
+    const counterparts = await this.prisma.client.companyMembership.findMany({
+      where: { userId: row.existingUserId, companyId: { in: memberships.map((m) => m.companyId) } },
+      select: MEMBERSHIP_SELECT,
+    });
+
+    const plan = planAccountMerge(memberships.map(toView), counterparts.map(toView));
+    return {
+      canMerge: plan.every((entry) => entry.outcome !== 'blocked'),
+      keeps,
+      closes,
+      companies: plan.map(({ companyName, outcome, reason }) => ({
+        companyName, outcome, ...(reason ? { reason } : {}),
+      })),
+    };
+  }
+
+  /** Display name, username and the ways in — never the address, on either side. */
+  private async accountSummary(userId: string): Promise<AccountMergeAccountSummaryDto> {
+    const [user, credential, line] = await Promise.all([
+      this.prisma.client.user.findUnique({ where: { id: userId }, select: { displayName: true, username: true } }),
+      this.prisma.client.userCredential.findUnique({ where: { userId }, select: { status: true } }),
+      this.prisma.client.externalIdentity.findFirst({
+        where: { userId, provider: 'LINE', status: 'ACTIVE' },
+        select: { userId: true },
+      }),
+    ]);
+    return {
+      displayName: user?.displayName ?? '',
+      ...(user?.username ? { username: user.username } : {}),
+      signInWith: [
+        ...(line ? ['line' as const] : []),
+        ...(credential && credential.status === 'ACTIVE' ? ['password' as const] : []),
+      ],
+    };
   }
 
   private async merge(input: { userId: string; ticket: string; requestId: string }): Promise<AccountMergeResult> {
@@ -73,8 +157,31 @@ export class AccountMergeUseCase {
 
     const now = new Date();
     const moved = await this.prisma.client.$transaction(async (tx) => {
-      // Claim first, move second. Two concurrent confirms match this one row between them, so the
-      // loser gets count 0 and answers "already merging" instead of running the move a second time.
+      const memberships = await tx.companyMembership.findMany({
+        where: { userId, status: 'ACTIVE' },
+        select: MEMBERSHIP_SELECT,
+      });
+      const counterparts = await tx.companyMembership.findMany({
+        where: { userId: row.existingUserId, companyId: { in: memberships.map((m) => m.companyId) } },
+        select: MEMBERSHIP_SELECT,
+      });
+      // Review R05: decided BEFORE the first write, and re-decided here inside the transaction
+      // rather than trusted from the preview — a role or a status may have changed while the
+      // person read the dialog.
+      const plan = planAccountMerge(memberships.map(toView), counterparts.map(toView));
+      const blocked = plan.filter((entry) => entry.outcome === 'blocked');
+      if (blocked.length > 0) {
+        throw new ConflictException({
+          code: 'account_merge_role_conflict',
+          message: 'These accounts hold different access to the same shop; a merge would decide that on its own.',
+          // Names the shops, so the dialog can say which one to sort out first. No ids, no roles.
+          companies: blocked.map(({ companyName, reason }) => ({ companyName, reason })),
+        });
+      }
+
+      // Decide, THEN claim, then move. The refusal above spends no ticket, so the person can sort
+      // the shop out and press the same button again; the CAS still picks the single winner between
+      // two concurrent confirms, and the loser answers "already merging" rather than moving twice.
       const claimed = await tx.accountMergeTicket.updateMany({
         where: { id: row.id, consumedAt: null },
         data: { consumedAt: now },
@@ -83,25 +190,16 @@ export class AccountMergeUseCase {
         throw new ConflictException({ code: 'merge_in_progress', message: 'This merge is already running.' });
       }
 
-      const memberships = await tx.companyMembership.findMany({
-        where: { userId, status: 'ACTIVE' },
-        select: { id: true, companyId: true },
-      });
-      const alreadyMember = new Set(
-        (await tx.companyMembership.findMany({
-          where: { userId: row.existingUserId, companyId: { in: memberships.map((m) => m.companyId) } },
-          select: { companyId: true },
-        })).map((m) => m.companyId),
-      );
-
       const movedCompanyIds: string[] = [];
       const skippedCompanyIds: string[] = [];
       const movedMembershipIds: string[] = [];
+      const byCompany = new Map(plan.map((entry) => [entry.companyId, entry]));
       for (const membership of memberships) {
-        if (alreadyMember.has(membership.companyId)) {
+        if (byCompany.get(membership.companyId)?.outcome === 'close_duplicate') {
           // @@unique([companyId, userId]) forbids a second row for the same pair, and the existing
           // account's own membership is the one that keeps its roles and history. The duplicate is
-          // deactivated rather than moved or deleted, so the audit still shows it existed.
+          // deactivated rather than moved or deleted, so the audit still shows it existed. Reached
+          // only when that row is ACTIVE and carries the SAME roles, so the shop loses nothing.
           skippedCompanyIds.push(membership.companyId);
           await tx.companyMembership.update({ where: { id: membership.id }, data: { status: 'DISABLED' } });
           continue;
