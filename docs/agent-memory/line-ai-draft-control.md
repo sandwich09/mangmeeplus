@@ -92,3 +92,44 @@ the fallback and the collision together.
 
 Known gap (§10, deliberate): additional charges still post to the record's expense category — no
 separate "ค่าบริการ" account and no report by charge kind.
+
+## Slice C — `codex/line-ai-explain-record` (S-3, อธิบายรายการของฉัน)
+
+Status: implemented on top of B (`99f99335`), gates green, pushed; not reviewed, no PR.
+
+What it does — evidence E4 ("ทำไม service charge คิดแยกเป็นอีกรายการนึง") now gets a real answer:
+
+- **API tool `expense.explain_record`** (`erp-core-detail-tools.use-case.ts`), wired into
+  `internal-tools.controller.ts` beside `expense.get_detail` and sharing its exact read permissions,
+  `sensitiveAudit`, tenant scoping and typed `forbidden` / `unsupported_module` statuses. Output per
+  spec §5.5: header (vendor, date, document number, Thai status label), line groups (products /
+  `charges` from slice B / discount), the §5.1 identity as real numbers, the assumed-or-unverified
+  list read from the OCR provenance the apply service stores (`aiVerifiedFieldsJson` +
+  `aiVerificationSummaryJson`), slice B's `totalsIdentity` verdict passed through when present, and
+  what LINE can change today.
+- **ONE shared provenance rule.** `apps/api/src/modules/expenses/application/services/line-recent-capture.ts`
+  now owns the 24 h window + chat/user/branch/status query that the correction lane's candidate
+  loader used to hold inline (`process-line-webhook.use-case.ts`, was `CORRECTION_CANDIDATE_WINDOW_MS`).
+  Both lanes call it; only the *ambiguity policy* differs (the write lane refuses, this read takes the
+  newest and names the bill). `listRecentLineCaptures` also returns `vendorDocumentNumber`, so a
+  `documentNumber` reference resolves inside the same bounded set with no second query.
+- **Chat provenance now reaches the tool**: `LineUserContext.chatKeyHash` → gateway `ErpToolContext`
+  → `InternalToolContextDto`. DATA only; company/permissions/branch are still re-resolved from the
+  verified actor delegation, so a wrong value can at most pick another of the SAME user's own chats.
+- **`intakeIntent` is bound on every turn** (it used to ride only when a prepared plan was
+  forwarded), which is what lets the orchestrator tell a business read from an out-of-scope question.
+  It activates no lane by itself — the prepared simple-read lane still requires `preparedPlan`.
+  *Overlaps slice A*, which also plans to consume `req.intakeIntent` for `unsupported_yet`; A should
+  keep this binding rather than re-add its own.
+- **Gateway**: registry entry (`read_detail`, `questionKinds: ['detail','explain']`, subjects
+  `['expense']`, agents `accounting`/`cfo`/`general`), `ROUTER_ENABLED_TOOLS`, accounting specialist
+  allowlist, feature-coverage claim, a router prompt hint, and a deterministic
+  `preferExplainRecordPlan` rescue keyed on trusted `BUSINESS_READ_QUESTION` + `asksAboutOwnRecord`.
+- **Deterministic Thai answer** (`expense-explain-formatter.ts`): one bubble, one card, no model
+  call, every money figure copied from the tool result. It refuses (falls back to the honest path)
+  when the totals identity is incomplete rather than half-answering.
+
+Deliberately NOT done: `line-ai-classifier.logic.ts` got no hint — `classifyIntent`/`chooseAgent` are
+referenced only by their own spec, so a hint there would be dead code; the live deterministic seam is
+the orchestrator rescue above. Amount edits over LINE stay `false` (S-4 owns them); the answer says
+so instead of promising them.
