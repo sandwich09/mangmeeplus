@@ -30,8 +30,11 @@ function harness(options: {
    * every pre-existing test describes the same account it always did.
    */
   identity?: { userId: string; status?: string; user?: { status: string } } | null;
-  /** Memberships the account behind that identity already has — a repeat trial when non-zero. */
-  priorCompanies?: number;
+  /**
+   * What the account behind that identity already belongs to. Only an OWNER membership makes this a
+   * repeat trial — an employee whose LINE was linked by the staff QR is opening their FIRST shop.
+   */
+  memberships?: Array<{ owner: boolean }>;
   verifyThrows?: Error;
   createThrows?: unknown;
   /** null = a verified token that carries no profile name, which LINE permits. */
@@ -59,7 +62,14 @@ function harness(options: {
           : null;
       },
     },
-    companyMembership: { count: async () => options.priorCompanies ?? 0 },
+    // The OWNER role filter is HONOURED: dropping it from the query has to turn an employee's
+    // first shop into a "repeat trial", which is exactly the regression this fake exists to catch.
+    companyMembership: {
+      count: async (args: any) => {
+        const ownerOnly = args?.where?.roles?.some?.role?.key === 'OWNER';
+        return (options.memberships ?? []).filter((m) => m.owner || !ownerOnly).length;
+      },
+    },
     companySignupRequest: {
       count: async (args: any) => { capCounts.push(args); return options.approvedToday ?? 0; },
       update: async (args: any) => { updates.push(args); return {}; },
@@ -301,7 +311,7 @@ describe('SubmitLineSignupUseCase — where the application goes', () => {
     const h = harness({
       approvalMode: 'AUTO_FREE',
       identity: { userId: 'user-old', status: 'UNLINKED' },
-      priorCompanies: 1,
+      memberships: [{ owner: true }],
     });
     const result = await h.useCase.execute(CMD, NOW);
 
@@ -314,6 +324,23 @@ describe('SubmitLineSignupUseCase — where the application goes', () => {
     assert.equal(h.audits[0].data.metadataJson.repeatTrial, true, 'the submit row says so too');
   });
 
+  /**
+   * Review B1. An employee's LINE is linked by the staff QR, so their identity points at an account
+   * that already holds a membership — in their EMPLOYER's shop. Counting any membership made their
+   * OWN first shop a "repeat trial" and sent it to manual review naming a company never theirs.
+   */
+  it('does not count an employee membership as a trial this person has had', async () => {
+    const h = harness({
+      approvalMode: 'AUTO_FREE',
+      identity: { userId: 'user-staff', status: 'UNLINKED' },
+      memberships: [{ owner: false }],
+    });
+    const result = await h.useCase.execute(CMD, NOW);
+
+    assert.equal(result.state, 'COMPLETED', 'their first shop is a first shop');
+    assert.equal(h.audits[0].data.metadataJson.repeatTrial, false);
+  });
+
   it('still auto-approves a LINE account that has never had a shop', async () => {
     const h = harness({ approvalMode: 'AUTO_FREE', identity: { userId: 'user-old', status: 'UNLINKED' } });
     const result = await h.useCase.execute(CMD, NOW);
@@ -323,7 +350,7 @@ describe('SubmitLineSignupUseCase — where the application goes', () => {
   });
 
   it('treats a second shop for an ACTIVE account as a repeat trial too', async () => {
-    const h = harness({ approvalMode: 'AUTO_FREE', identity: { userId: 'user-9' }, priorCompanies: 1 });
+    const h = harness({ approvalMode: 'AUTO_FREE', identity: { userId: 'user-9' }, memberships: [{ owner: true }] });
     const result = await h.useCase.execute(CMD, NOW);
 
     assert.equal(result.state, 'PENDING_REVIEW');
@@ -390,6 +417,21 @@ describe('SubmitLineSignupUseCase — where the application goes', () => {
   it('refuses a status it does not recognise rather than guessing', async () => {
     const h = harness({ identity: { userId: 'user-9', status: 'SOMETHING_NEW' } });
     await assert.rejects(() => h.useCase.execute(CMD, NOW), /line_signup_account_blocked/);
+  });
+
+  // Review B2. Unlinking must not be the way around a suspension: the user-status guard has to run
+  // for an UNLINKED identity too, or a suspended owner severs the link, applies again, and walks
+  // away with a brand-new ACTIVE account on the very same LINE.
+  it('refuses a suspended account that unlinked first', async () => {
+    const h = harness({ identity: { userId: 'user-old', status: 'UNLINKED', user: { status: 'SUSPENDED' } } });
+    await assert.rejects(() => h.useCase.execute(CMD, NOW), /line_signup_account_blocked/);
+    assert.deepEqual(h.created, [], 'and no application row is left behind for an admin to approve');
+  });
+
+  it('still lets an UNLINKED identity of an ACTIVE account open a new shop', async () => {
+    const h = harness({ identity: { userId: 'user-old', status: 'UNLINKED', user: { status: 'ACTIVE' } } });
+    const result = await h.useCase.execute(CMD, NOW);
+    assert.equal(result.state, 'PENDING_REVIEW', 'the ordinary "I closed my old shop" case is untouched');
   });
 
   it('tells the LIFF page which waiting message to show', async () => {

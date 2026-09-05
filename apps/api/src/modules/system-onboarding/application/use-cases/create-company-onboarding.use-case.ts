@@ -386,6 +386,14 @@ export class CreateCompanyOnboardingUseCase {
           providerUserId: lineOwner.providerUserId,
           providerChannelId: lineOwner.channelId,
         };
+        // Review B3, defence in depth. The open-application index and the provisioning claim lock
+        // already keep two runs for one LINE account apart, but nothing INSIDE this transaction
+        // did: two concurrent onboardings could both read the same UNLINKED row and both re-point
+        // it, and the loser's shop would be left standing with no way in. Same advisory-lock shape
+        // the signup core uses for its own fences, keyed on the identity slot, so the read below IS
+        // the decision — nobody else can move the row until this transaction commits.
+        const identityLockKey = `line-identity:${lineOwner.channelId}:${lineOwner.providerUserId}`;
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${identityLockKey}, 0))`;
         const existingIdentity = await tx.externalIdentity.findUnique({
           where: { provider_providerChannelId_providerUserId: identityKey },
           select: { id: true, userId: true, status: true },

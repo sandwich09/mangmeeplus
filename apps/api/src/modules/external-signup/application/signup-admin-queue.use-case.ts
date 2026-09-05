@@ -72,16 +72,18 @@ export class SignupAdminQueueUseCase {
     const emails = [...new Set(requests.map((r) => r.contactEmail).filter((email): email is string => !!email))];
     const taxIds = [...new Set(requests.map((r) => r.taxId).filter((id): id is string => !!id))];
     const phones = [...new Set(requests.map((r) => r.phoneNumber).filter((phone): phone is string => !!phone))];
-    const [users, companies, phoneMatches] = await Promise.all([
+    const [users, companies, phoneMatches, priorCompanies] = await Promise.all([
       this.prisma.client.user.findMany({ where: { email: { in: emails } }, select: { email: true } }),
       taxIds.length
         ? this.prisma.client.company.findMany({ where: { taxId: { in: taxIds } }, select: { taxId: true, name: true } })
         : Promise.resolve([]),
       this.companiesReachableByPhone(phones),
+      // Its own two reads are sequential (identity, then membership), but they run alongside the
+      // others rather than after them: an admin opening the queue pays one round trip, not two.
+      this.shopsTheseApplicantsAlreadyHad(requests),
     ]);
     const knownEmails = new Set(users.map((u) => u.email));
     const companyByTaxId = new Map(companies.map((c) => [c.taxId, c.name]));
-    const priorCompanies = await this.shopsTheseApplicantsAlreadyHad(requests);
 
     return {
       items: requests.map((request) =>
@@ -115,7 +117,10 @@ export class SignupAdminQueueUseCase {
     if (applicantUserIds.length === 0) return new Map();
 
     const memberships = await this.prisma.client.companyMembership.findMany({
-      where: { userId: { in: applicantUserIds } },
+      // OWNER only (review B1): an employee whose LINE was linked by the staff QR carries a
+      // membership in their EMPLOYER's shop, and naming that shop here would tell the operator
+      // this person is repeating a trial they never had.
+      where: { userId: { in: applicantUserIds }, roles: { some: { role: { key: 'OWNER' } } } },
       orderBy: { createdAt: 'asc' },
       select: {
         userId: true,

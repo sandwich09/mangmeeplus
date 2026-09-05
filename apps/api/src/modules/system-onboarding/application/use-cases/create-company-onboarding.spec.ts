@@ -176,6 +176,7 @@ function makePrisma(opts: {
   const credentialCreates: any[] = [];
   const identityCreates: any[] = [];
   const identityUpdates: any[] = [];
+  const identityLocks: unknown[][] = [];
   const txAudits: any[] = [];
   const lineTokenCreates: any[] = [];
   const txResult = {
@@ -190,6 +191,7 @@ function makePrisma(opts: {
     credentialCreates: () => credentialCreates,
     identityCreates: () => identityCreates,
     identityUpdates: () => identityUpdates,
+    identityLocks: () => identityLocks,
     txAudits: () => txAudits,
     lineTokenCreates: () => lineTokenCreates,
     client: {
@@ -215,6 +217,12 @@ function makePrisma(opts: {
           companyMembership: { create: async () => ({ id: 'mem-1' }) },
           membershipRole: { create: async () => ({}) },
           employeeLineLinkToken: { create: async (args: any) => { lineTokenCreates.push(args); return {}; } },
+          // Review B3: the identity slot is decided under an advisory lock. Recorded, so a test can
+          // prove the lock is taken rather than trusting the comment above it.
+          $executeRaw: async (_strings: TemplateStringsArray, ...values: unknown[]) => {
+            identityLocks.push(values);
+            return 0;
+          },
           externalIdentity: {
             findUnique: async () => opts.existingIdentity ?? null,
             create: async (args: any) => {
@@ -1333,6 +1341,9 @@ describe('CreateCompanyOnboardingUseCase P29 default term', () => {
     await new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock).execute(lineOwnerCmd());
 
     assert.deepEqual(prisma.identityCreates(), [], 'the unique slot is already taken by that row');
+    // Review B3: read and write are serialised on the slot itself, so two concurrent onboardings
+    // cannot both look at one UNLINKED row and both claim it.
+    assert.deepEqual(prisma.identityLocks(), [['line-identity:channel-1:Uline-1']]);
     const update = prisma.identityUpdates()[0];
     assert.deepEqual(update.where, { id: 'ext-old' });
     assert.equal(update.data.userId, 'owner-1', 'it now belongs to the owner of the new shop');

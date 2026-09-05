@@ -299,6 +299,10 @@ describe('ProvisionSignupUseCase — LINE-first source', () => {
     assert.equal(h.lineContexts[0].where.lineUserId, 'Uline-1');
     assert.equal(h.lineContexts[0].create.companyId, 'co-1');
     assert.equal(h.lineContexts[0].update.companyId, 'co-1');
+    // Review N4: the row survives a re-pointed LINE account, and `aiPausedUntil` on it is the §8
+    // "ติดต่อเจ้าหน้าที่" hold on the PREVIOUS owner's conversation. Inheriting it would open the
+    // new shop with the assistant silently switched off until a timestamp nobody can see expires.
+    assert.equal(h.lineContexts[0].update.aiPausedUntil, null);
   });
 
   it('finishes at COMPLETED instead of parking at the LINE link step', async () => {

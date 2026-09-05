@@ -93,7 +93,7 @@ export class SubmitLineSignupUseCase {
     const attachUserId = identity.attachUserId;
     // Owner 2026-09-05: this LINE account has held a shop before — a closed one counts. The free
     // trial it is asking for is therefore a REPEAT, which a person decides rather than the machine.
-    const repeatTrial = identity.userId !== null && await this.hasHadCompany(identity.userId);
+    const repeatTrial = identity.userId !== null && await this.hasOwnedCompany(identity.userId);
 
     const externalSignupId = lineExternalSignupId(verified.channelId, verified.providerUserId, randomUUID());
     const request = await this.create({
@@ -290,24 +290,34 @@ export class SubmitLineSignupUseCase {
       select: { status: true, userId: true, user: { select: { status: true } } },
     });
     if (!identity) return { attachUserId: null, userId: null };
+    // Admin kill-switch (the same rule `LinkLineIdentityUseCase` keeps). Opening a shop must not be
+    // the one route that silently resurrects a disabled identity.
+    if (identity.status === 'DISABLED') throw new ConflictException('line_signup_identity_disabled');
+    // Checked for EVERY identity status, ACTIVE or UNLINKED, and BEFORE the unlinked branch below.
+    // Otherwise unlinking is a way around a suspension: a SUSPENDED owner severs the link, applies
+    // again, and the flow hands them a brand-new ACTIVE account on the same LINE (review B2).
+    if (identity.user.status !== 'ACTIVE') throw new ConflictException('line_signup_account_blocked');
     // The owner unlinked deliberately, or their old shop was closed. A NEW account is what they
     // asked for; onboarding re-points this same row rather than creating a second one for the slot.
     // `userId` still travels: the account behind that stale row is what makes this a repeat trial.
     if (identity.status === 'UNLINKED') return { attachUserId: null, userId: identity.userId };
-    // Admin kill-switch (the same rule `LinkLineIdentityUseCase` keeps). Opening a shop must not be
-    // the one route that silently resurrects a disabled identity.
-    if (identity.status === 'DISABLED') throw new ConflictException('line_signup_identity_disabled');
-    // An identity whose account is SUSPENDED/DISABLED has nowhere to attach a shop to, and creating
-    // a second account for it would hand the same person a way around their own suspension.
-    if (identity.status !== 'ACTIVE' || identity.user.status !== 'ACTIVE') {
-      throw new ConflictException('line_signup_account_blocked');
-    }
+    // Fail closed on a status this build does not know: an unrecognised state is not an owner.
+    if (identity.status !== 'ACTIVE') throw new ConflictException('line_signup_account_blocked');
     return { attachUserId: identity.userId, userId: identity.userId };
   }
 
-  /** Any membership in any status: a shop that was closed is still a trial this person has had. */
-  private async hasHadCompany(userId: string): Promise<boolean> {
-    return (await this.prisma.client.companyMembership.count({ where: { userId } })) > 0;
+  /**
+   * An OWNER membership, in any status: a shop that was closed is still a trial this person had.
+   *
+   * OWNER and not "any membership" (review B1). An employee whose LINE was linked by the staff QR
+   * carries a membership in their EMPLOYER's shop — counting it flagged their own first shop as a
+   * repeat trial and sent it to manual review naming a company that was never theirs.
+   */
+  private async hasOwnedCompany(userId: string): Promise<boolean> {
+    const owned = await this.prisma.client.companyMembership.count({
+      where: { userId, roles: { some: { role: { key: 'OWNER' } } } },
+    });
+    return owned > 0;
   }
 
   /** Ids, booleans and counts only: no shop name, phone number or LINE user id in evidence. */

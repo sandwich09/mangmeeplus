@@ -79,6 +79,7 @@ function wire(client: PrismaClient, options: { adminUserId: string; approvalMode
   } as any;
   const claimEmail = { enqueue: async () => undefined, enqueueRejectionNotice: async () => undefined } as any;
   return {
+    onboarding,
     submit: new SubmitLineSignupUseCase(prisma, config, core, lineIdToken, rateLimit, adminDirectory, provision, opsAlerts),
     queue: new SignupAdminQueueUseCase(prisma, core, { revokeAll: async () => 0 } as any, claimEmail, provision, lineNotify),
     unlink: new UnlinkLineIdentityUseCase(prisma),
@@ -98,10 +99,18 @@ const submitCmd = (correlationRequestId: string) => ({
  * The world before the new application: an account with one shop, a plan term, and the LINE
  * identity that owns the unique slot. `shopStatus` decides whether that shop is still running.
  */
-async function seedOldShop(client: PrismaClient, tag: string, lineUserId: string) {
+async function seedOldShop(
+  client: PrismaClient,
+  tag: string,
+  lineUserId: string,
+  // 'OWNER' is the repeat-trial case. 'STAFF' is review B1: an employee whose LINE was linked by
+  // the staff QR holds a membership in their EMPLOYER's shop, which is not a trial they ever had.
+  roleKey: 'OWNER' | 'STAFF' = 'OWNER',
+) {
   const oldUserId = `${tag}-old-user`;
   const oldCompanyId = `${tag}-old-company`;
   const adminUserId = `${tag}-admin`;
+  const role = await client.role.findUniqueOrThrow({ where: { scopeKey_key: { scopeKey: 'system', key: roleKey } } });
   await client.user.create({ data: { id: adminUserId, displayName: `${tag} admin`, status: 'ACTIVE' } });
   await client.user.create({ data: { id: oldUserId, displayName: `${tag} owner`, status: 'ACTIVE' } });
   await client.company.create({
@@ -110,6 +119,7 @@ async function seedOldShop(client: PrismaClient, tag: string, lineUserId: string
   await client.companyMembership.create({
     data: { id: `${tag}-old-membership`, companyId: oldCompanyId, userId: oldUserId, status: 'ACTIVE' },
   });
+  await client.membershipRole.create({ data: { membershipId: `${tag}-old-membership`, roleId: role.id } });
   await client.companyPlanTerm.create({
     data: {
       companyId: oldCompanyId, tierKey: 'FREE_TRIAL_15', branchLimit: 1, employeeLimit: 3, monthlySlipLimit: 15,
@@ -126,17 +136,34 @@ async function seedOldShop(client: PrismaClient, tag: string, lineUserId: string
   });
   // The chat had already resolved to the old shop, which is exactly the stale pointer that must not
   // survive: after the new shop opens, this LINE user must never land back on the disabled one.
-  await client.lineCompanyContext.create({ data: { lineUserId, companyId: oldCompanyId } });
+  // `aiPausedUntil` is the §8 "ติดต่อเจ้าหน้าที่" hold on the PREVIOUS owner's conversation, live
+  // and days from expiring — the new shop must not inherit a silenced assistant (review N4).
+  await client.lineCompanyContext.create({
+    data: { lineUserId, companyId: oldCompanyId, aiPausedUntil: new Date('2099-01-01T00:00:00Z') },
+  });
   return { adminUserId, oldUserId, oldCompanyId };
 }
 
-async function cleanup(client: PrismaClient, tag: string, lineUserId: string) {
+async function cleanup(
+  client: PrismaClient,
+  tag: string,
+  lineUserId: string,
+  extra: { companyIds?: string[]; userIds?: string[] } = {},
+) {
   const requests = await client.companySignupRequest.findMany({
     where: { lineProviderUserId: lineUserId },
     select: { id: true, companyId: true, ownerUserId: true },
   });
-  const companyIds = [`${tag}-old-company`, ...requests.map((r) => r.companyId).filter((id): id is string => !!id)];
-  const userIds = [`${tag}-old-user`, `${tag}-admin`, ...requests.map((r) => r.ownerUserId).filter((id): id is string => !!id)];
+  const companyIds = [
+    `${tag}-old-company`,
+    ...requests.map((r) => r.companyId).filter((id): id is string => !!id),
+    ...(extra.companyIds ?? []),
+  ];
+  const userIds = [
+    `${tag}-old-user`, `${tag}-admin`,
+    ...requests.map((r) => r.ownerUserId).filter((id): id is string => !!id),
+    ...(extra.userIds ?? []),
+  ];
   await client.lineCompanyContext.deleteMany({ where: { lineUserId } });
   await client.companySignupRequest.deleteMany({ where: { id: { in: requests.map((r) => r.id) } } });
   await client.companyOnboardingRun.deleteMany({ where: { companyId: { in: companyIds } } });
@@ -230,6 +257,8 @@ describe('a stale LINE identity on real PostgreSQL', { skip: !databaseUrl }, () 
       // not a copy of it: the stale context still pointed at the disabled company until this ran.
       const context = await client.lineCompanyContext.findUniqueOrThrow({ where: { lineUserId } });
       assert.equal(context.companyId, newCompanyId, 'the stale pointer is overwritten, not left');
+      // Review N4: and the previous owner's "a human is handling this" hold does not come with it.
+      assert.equal(context.aiPausedUntil, null, 'the new shop starts with its assistant switched on');
       assert.deepEqual(
         await resolveCompanyForLineUser({ client } as any, identity.userId, lineUserId),
         { companyId: newCompanyId },
@@ -257,6 +286,13 @@ describe('a stale LINE identity on real PostgreSQL', { skip: !databaseUrl }, () 
       await client.user.update({ where: { id: seeded.oldUserId }, data: { status: 'ACTIVE' } });
       await client.externalIdentity.update({ where: { id: `${tag}-identity` }, data: { status: 'DISABLED' } });
       await assert.rejects(() => h.submit.execute(submitCmd(`${tag}-disabled`), NOW), /line_signup_identity_disabled/);
+
+      // Review B2, the reviewer's escape hatch: unlink FIRST, then apply. The user-status guard has
+      // to run for an UNLINKED identity too — otherwise a suspended owner severs the link and this
+      // flow hands them a brand-new ACTIVE account on the same LINE (it reached COMPLETED).
+      await client.externalIdentity.update({ where: { id: `${tag}-identity` }, data: { status: 'UNLINKED' } });
+      await client.user.update({ where: { id: seeded.oldUserId }, data: { status: 'SUSPENDED' } });
+      await assert.rejects(() => h.submit.execute(submitCmd(`${tag}-unlinked-suspended`), NOW), /line_signup_account_blocked/);
 
       assert.equal(
         await client.companySignupRequest.count({ where: { lineProviderUserId: lineUserId } }),
@@ -291,6 +327,97 @@ describe('a stale LINE identity on real PostgreSQL', { skip: !databaseUrl }, () 
       assert.equal((flagged.metadataJson as any).reason, 'repeat_trial_manual_review');
     } finally {
       await cleanup(client, tag, lineUserId);
+      await client.$disconnect();
+    }
+  });
+
+  /**
+   * Review B1. The staff QR links an employee's LINE to an account that already holds a membership
+   * — in their EMPLOYER's shop. Counting any membership made their OWN first shop a repeat trial:
+   * AUTO_FREE stopped opening it, and the queue chip named a company that was never theirs.
+   */
+  it('opens an employee their first shop without calling it a repeat trial', async () => {
+    const client = connect();
+    const tag = `linesignup-${randomUUID().slice(0, 8)}`;
+    const lineUserId = `U${tag}`;
+    try {
+      const seeded = await seedOldShop(client, tag, lineUserId, 'STAFF');
+      await client.company.update({ where: { id: seeded.oldCompanyId }, data: { status: 'ACTIVE' } });
+      const h = wire(client, { adminUserId: seeded.adminUserId, lineUserId, approvalMode: 'AUTO_FREE' });
+      // They leave that job, their LINE is unlinked, and they open a shop of their own.
+      await h.unlink.execute({ userId: seeded.oldUserId, requestId: `${tag}-unlink` });
+
+      const accepted = await h.submit.execute(submitCmd(`${tag}-employee`), NOW);
+
+      assert.equal(accepted.state, 'COMPLETED', 'a first shop is a first shop');
+      const submitted = await client.auditLog.findFirstOrThrow({
+        where: { action: 'signup.line.submitted', targetId: accepted.requestId },
+      });
+      assert.equal((submitted.metadataJson as any).repeatTrial, false);
+      assert.equal(
+        await client.auditLog.count({ where: { action: 'signup.line.auto_approve_repeat_trial', targetId: accepted.requestId } }),
+        0,
+      );
+      // And the queue never names the employer's shop as a trial this applicant already had.
+      const rows = (await h.queue.list()).items.filter((item) => item.requestId === accepted.requestId);
+      for (const row of rows) assert.equal(row.priorCompanyName, undefined);
+    } finally {
+      await cleanup(client, tag, lineUserId);
+      await client.$disconnect();
+    }
+  });
+
+  /**
+   * Review B3, defence in depth. Nothing reachable today puts two onboarding runs on one UNLINKED
+   * slot — the open-application index and the provisioning claim lock both stand in the way — but
+   * the re-point itself was an unguarded read-then-update, so if either of those ever moved, two
+   * runs would both claim the row and the loser's shop would stand with no way into it.
+   */
+  it('lets only ONE of two concurrent runs claim a stale identity', async () => {
+    const client = connect();
+    const tag = `linesignup-${randomUUID().slice(0, 8)}`;
+    const lineUserId = `U${tag}`;
+    const built: string[] = [];
+    const owners: string[] = [];
+    try {
+      const seeded = await seedOldShop(client, tag, lineUserId);
+      const h = wire(client, { adminUserId: seeded.adminUserId, lineUserId });
+      await h.unlink.execute({ userId: seeded.oldUserId, requestId: `${tag}-unlink` });
+
+      const race = (suffix: string) => h.onboarding.execute({
+        companyName: `ร้านแข่ง ${tag} ${suffix}`,
+        businessCategory: 'RETAIL',
+        ownerDisplayName: 'นิด',
+        ownerAuth: { kind: 'line', providerUserId: lineUserId, channelId: CHANNEL },
+        allowDuplicateCompanyName: true,
+        requestingAdminUserId: seeded.adminUserId,
+        requestId: `${tag}-race-${suffix}`,
+        ...URLS,
+      });
+      const results = await Promise.allSettled([race('a'), race('b')]);
+      for (const result of results) {
+        if (result.status !== 'fulfilled') continue;
+        built.push(result.value.companyId);
+        owners.push(result.value.ownerId);
+      }
+
+      assert.equal(results.filter((r) => r.status === 'fulfilled').length, 1, 'one run keeps the slot');
+      const loser = results.find((r) => r.status === 'rejected') as PromiseRejectedResult;
+      assert.match(String(loser.reason), /line_identity_already_linked/, 'and the other is told why, by name');
+
+      // The unique index says one row; the audit says it moved exactly once.
+      const identities = await client.externalIdentity.findMany({
+        where: { provider: 'LINE', providerChannelId: CHANNEL, providerUserId: lineUserId },
+      });
+      assert.equal(identities.length, 1);
+      assert.equal(identities[0]!.userId, owners[0]);
+      assert.equal(
+        await client.auditLog.count({ where: { action: 'auth.identity.repointed', targetId: `${tag}-identity` } }),
+        1,
+        'the loser rolled its re-point back with the rest of its transaction',
+      );
+    } finally {
+      await cleanup(client, tag, lineUserId, { companyIds: built, userIds: owners });
       await client.$disconnect();
     }
   });

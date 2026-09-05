@@ -33,9 +33,13 @@ function harness(options: {
   membershipsByPhone?: Array<{ user: { phoneNumber: string | null }; company: { name: string } }>;
   /** Rows in the unique LINE slot, in ANY status — that is what the repeat-trial hint reads. */
   identities?: Array<{ providerUserId: string; providerChannelId: string; userId: string }>;
-  /** What those accounts already belong to, oldest first. */
+  /**
+   * What those accounts already belong to, oldest first. `owner: false` is an employee membership —
+   * their EMPLOYER's shop, which must never be named as a trial this applicant already had.
+   */
   priorMemberships?: Array<{
     userId: string;
+    owner: boolean;
     company: { name: string; status: string; planTerm: { termDisabledAt: Date | null } | null };
   }>;
 } = {}) {
@@ -64,9 +68,12 @@ function harness(options: {
       // Review A-01: the second phone rail — a member of an existing shop carries the number.
       // Owner 2026-09-05 added a second reader keyed by user id: the repeat-trial hint.
       companyMembership: {
-        findMany: async (args: any) => (args?.where?.userId
-          ? options.priorMemberships ?? []
-          : options.membershipsByPhone ?? []),
+        findMany: async (args: any) => {
+          if (!args?.where?.userId) return options.membershipsByPhone ?? [];
+          // The OWNER filter is HONOURED: dropping it has to make the employee case red.
+          const ownerOnly = args?.where?.roles?.some?.role?.key === 'OWNER';
+          return (options.priorMemberships ?? []).filter((m) => m.owner || !ownerOnly);
+        },
       },
       externalIdentity: { findMany: async () => options.identities ?? [] },
       auditLog: { create: async (args: any) => { audits.push(args); return {}; } },
@@ -196,21 +203,21 @@ describe('SignupAdminQueueUseCase.list', () => {
    * Owner 2026-09-05. The applicant unlinked and is applying again, so the identity that names them
    * is UNLINKED — invisible to any ACTIVE-only read, and precisely the case this hint exists for.
    */
-  it('names the shop a repeat applicant already had, and how it stands today', async () => {
-    const lineRow = {
-      ...REQUEST, id: 'signup-line', source: 'line-oa', contactEmail: null, taxId: null,
-      lineProviderUserId: 'Uline-1', lineChannelId: 'channel-1',
-    };
-    const state = async (company: any) => {
-      const h = harness({
-        requests: [lineRow],
-        identities: [{ providerUserId: 'Uline-1', providerChannelId: 'channel-1', userId: 'user-old' }],
-        priorMemberships: [{ userId: 'user-old', company }],
-      });
-      const { items } = await h.useCase.list(NOW);
-      return items[0]!;
-    };
+  const lineRow = {
+    ...REQUEST, id: 'signup-line', source: 'line-oa', contactEmail: null, taxId: null,
+    lineProviderUserId: 'Uline-1', lineChannelId: 'channel-1',
+  };
+  const state = async (company: any, owner = true) => {
+    const h = harness({
+      requests: [lineRow],
+      identities: [{ providerUserId: 'Uline-1', providerChannelId: 'channel-1', userId: 'user-old' }],
+      priorMemberships: [{ userId: 'user-old', owner, company }],
+    });
+    const { items } = await h.useCase.list(NOW);
+    return items[0]!;
+  };
 
+  it('names the shop a repeat applicant already had, and how it stands today', async () => {
     const closed = await state({ name: 'ร้านเก่า', status: 'DISABLED', planTerm: null });
     assert.equal(closed.priorCompanyName, 'ร้านเก่า');
     assert.equal(closed.priorCompanyState, 'CLOSED');
@@ -221,6 +228,15 @@ describe('SignupAdminQueueUseCase.list', () => {
     assert.equal(expired.priorCompanyState, 'EXPIRED');
     const running = await state({ name: 'ร้านเก่า', status: 'ACTIVE', planTerm: null });
     assert.equal(running.priorCompanyState, 'ACTIVE');
+  });
+
+  // Review B1: the employee whose LINE was linked by the staff QR. Their identity points at an
+  // account holding a membership in their EMPLOYER's shop — naming it here would tell the operator
+  // this person is repeating a trial they have never had, on a company that was never theirs.
+  it('never names an employer shop the applicant only works at', async () => {
+    const employeeOnly = await state({ name: 'ร้านนายจ้าง', status: 'ACTIVE', planTerm: null }, false);
+    assert.equal(employeeOnly.priorCompanyName, undefined);
+    assert.equal(employeeOnly.priorCompanyState, undefined);
   });
 
   it('says nothing about a prior shop when there is none', async () => {
