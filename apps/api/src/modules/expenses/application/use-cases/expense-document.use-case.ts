@@ -264,7 +264,11 @@ export class CaptureLineExpenseNoteUseCase {
             vendorName: validated.vendorName ?? undefined,
           },
           warnings: validated.warnings,
-          missingFields: ['receipt_evidence', ...(amount ? [] : ['amount']), ...(validated.expenseCategoryId ? [] : ['category'])],
+          // Spec §5.2: `expenseDate` fell back to `provisionalDate` (today) a few lines above and
+          // nothing said so — the same silent placeholder the receipt path had. The collection
+          // branch above already asks for the date through `unresolvedQuestions`; this branch has
+          // no conversation to ask, so the flag is the only thing that tells the reviewer.
+          missingFields: ['receipt_evidence', ...(amount ? [] : ['amount']), ...(validated.expenseCategoryId ? [] : ['category']), ...(validated.expenseDate ? [] : ['expenseDate'])],
           nextAction: 'review_in_web',
         },
         sourceChannelMetadataJson: {

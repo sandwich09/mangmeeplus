@@ -79,7 +79,7 @@ import { ListApprovalQueueUseCase } from '../../../reimbursements/application/us
 import { ListPurchaseRequestsUseCase } from '../../../procurement/application/use-cases/purchase-request.use-case';
 import { ListPurchaseOrdersUseCase } from '../../../procurement/application/use-cases/purchase-order.use-case';
 import type { BusinessDocumentClassification, LineExpenseDraftRouteContext, LineUserContext, LineAiTurnRequest, LineAiTurnResponse, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeRoutePlan, LineIntakeSubstituteContext, ReceiptOcrFieldResult, RequestContext } from '@watchdog-bms/contracts';
-import { LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, nextPlanTierKey, asIntakeRouteIntent, extractValueCandidates, hasToolPermissions, todayCivilDate } from '@watchdog-bms/contracts';
+import { LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, nextPlanTierKey, asIntakeRouteIntent, civilDateToUtcDate, extractValueCandidates, hasToolPermissions, todayCivilDate } from '@watchdog-bms/contracts';
 import { LineAiLedgerService, ledgerKey, type LedgerEntry } from '../line-ai-ledger.service';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
 import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, isCapabilityQuestion, staffMenuCommand, PACKAGE_CHANGE_COMMAND, PENDING_APPROVAL_ITEM_LIMIT, type ApprovalSurfaceKey, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
@@ -5683,7 +5683,12 @@ export class ProcessLineWebhookUseCase {
   ): Promise<{ expenseId: string; hasDuplicate: boolean }> {
     const expense = await this.expenseRepo!.createExpense({
       companyId, branchId: await this.expenseRepo!.resolveCreateBranchId(companyId, scopes),
-      captureSource: 'LINE_UPLOAD', expenseDate: new Date(), currency: 'THB',
+      // Same placeholder rule as the direct-media path above: a CALENDAR day, not the instant the
+      // photo arrived. A full timestamp in a date column hides the row from the list's day filter,
+      // and the UTC day is yesterday for anyone sending a receipt before 07:00 Bangkok. This lane
+      // already marks the draft NEEDS_REVIEW with `expenseDate` in `missingFields`, so the value
+      // is honest about being a placeholder — it just was not the right placeholder.
+      captureSource: 'LINE_UPLOAD', expenseDate: civilDateToUtcDate(todayCivilDate()), currency: 'THB',
       vatMode: 'NO_VAT', inputVatClaimStatus: 'NEEDS_REVIEW', note: 'LINE receipt (clarified)',
       createdByUserId: userId, lineMessageId: pending.lineMessageId, lineEventId,
       subtotalAmount: '0', discountAmount: '0', taxableAmount: '0', vatAmount: '0',
