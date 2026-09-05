@@ -38,6 +38,13 @@ const SIGNUP_OUTBOX_EVENT_TYPES = [
   SIGNUP_OPS_ALERT_EVENT_TYPE,
 ] as const;
 
+/**
+ * F6 retention: how long an application that never got past `RECEIVED` is kept. Long enough that an
+ * applicant who walked away mid-correction can still come back the same week, short enough that a
+ * mistyped address does not leave its owner's name, address and phone in the table indefinitely.
+ */
+const INTAKE_RETENTION_DAYS = 7;
+
 /** Reason recorded on the state row when the 30-day sweep parks an unclaimed approval (§4D ④). */
 export const CLAIM_EXPIRY_FAILURE_CODE = 'claim_not_started';
 const EXPIRY_SWEEP_ACTOR = 'signup-expiry-sweep';
@@ -275,6 +282,39 @@ export class SignupClaimEmailService {
   }
 
   /**
+   * F6 retention. A submit whose MX check fails is left in `RECEIVED` on purpose (the applicant
+   * corrects the address and sends a NEW request under a new key), so the rejected row is an
+   * orphan: it reaches no queue, no admin sees it, and nothing else in the system ever removes it —
+   * while it holds the applicant's name, address and phone. After the retention window it is
+   * deleted outright rather than scrubbed: there is nothing here anyone needs, and a masked
+   * tombstone would be PII we chose to keep.
+   *
+   * `AccountClaimToken` cascades, and a RECEIVED row has none anyway — a token is only minted at
+   * `EMAIL_PENDING`, which is several states away.
+   *
+   * Source-blind by design: `RECEIVED` is one of `LINE_OPEN_APPLICATION_STATES`, so deleting a
+   * week-old row also releases a LINE account fenced out of applying again by an attempt that got
+   * nowhere. That is the outcome we want — the fence exists to stop two live applications, not to
+   * lock someone out over one that died at intake.
+   */
+  async sweepAbandonedIntake(now = new Date()): Promise<{ purgedIntake: number }> {
+    const cutoff = new Date(now.getTime() - INTAKE_RETENTION_DAYS * 86_400_000);
+    // One statement rather than the read-then-act loop the other sweeps use: there is no state
+    // machine to walk here and nothing to enqueue, so the predicate is the whole operation. The
+    // window and the state bound the set by construction.
+    const { count } = await this.prisma.client.companySignupRequest.deleteMany({
+      where: {
+        state: 'RECEIVED',
+        createdAt: { lt: cutoff },
+        // Belt and braces: a row that stamped a company id built something, whatever its state
+        // says, and this sweep must never be the thing that unlinks a real shop's application.
+        companyId: null,
+      },
+    });
+    return { purgedIntake: count };
+  }
+
+  /**
    * Spec §4D: the opt-in rejection notice. Deliberately does NOT touch state — the request is
    * already `REJECTED` and a bounced or refused notice must never undo that decision. A failure
    * here surfaces as the drain's log line and a FAILED outbox row, nothing else.
@@ -317,6 +357,8 @@ export class SignupClaimEmailService {
       companyName: request.companyName,
       rawToken,
       expiresAt,
+      // R12: so a link that turns out to be spent can still offer the status page (spec §4D ②).
+      signupRequestId: request.id,
     });
     // Only after a successful send: this timestamp is what the reminder sweep counts from, and the
     // SES message id is the only handle a later bounce/complaint event has on this row (spec §4D).

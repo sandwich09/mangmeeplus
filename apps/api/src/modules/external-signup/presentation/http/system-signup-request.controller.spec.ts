@@ -1,7 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ServiceUnavailableException } from '@nestjs/common';
-import { SystemSignupRequestController } from './system-signup-request.controller';
+import { ServiceUnavailableException, ValidationPipe } from '@nestjs/common';
+import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../../../../common/pipes/validation-pipe.options';
+import { encodeQueueCursor } from '../../application/signup-admin-queue.use-case';
+import { SignupQueueQueryDto, SystemSignupRequestController } from './system-signup-request.controller';
 
 // The Origin an admin's browser sends is client-suppliable, and approving a LINE application
 // PERSISTS this base as the shop owner's way back in (review L-1).
@@ -54,5 +56,30 @@ describe('SystemSignupRequestController — the handoff base an approval persist
       assert.equal(result.requestId, 'signup-1');
       assert.equal(h.decisions[0][4], undefined, 'no handoff base is needed or resolved');
     }
+  });
+});
+
+// F10 follow-up. The cursor stopped being a cuid and became base64url of `createdAt|id`, which is
+// 67 characters — three past the bound the DTO still carried. Every "โหลดเพิ่ม" was a 400 before
+// the query reached the use case, and nothing pinned the bound, so widening it silently was
+// possible. This validates through the REAL global pipe, which is what rejected it.
+describe('SignupQueueQueryDto — the cursor the queue actually mints', () => {
+  const pipe = new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS);
+  const metadata = { type: 'query' as const, metatype: SignupQueueQueryDto };
+
+  it('accepts a real cursor for a real row', async () => {
+    const cursor = encodeQueueCursor(new Date('2026-09-05T17:31:07.412Z'), 'cmtgzg42a000x4k5xje8ot9mg');
+    assert.ok(cursor.length > 64, `a cursor is ${cursor.length} chars; the old bound was 64`);
+
+    const parsed = await pipe.transform({ tab: 'PROBLEM', cursor }, metadata) as SignupQueueQueryDto;
+    assert.equal(parsed.cursor, cursor);
+    assert.equal(parsed.tab, 'PROBLEM');
+  });
+
+  it('still refuses a cursor that is not one', async () => {
+    // The bound is wider, not absent: this arrives on a query string from anyone with the page.
+    await assert.rejects(() => pipe.transform({ cursor: 'a'.repeat(200) }, metadata));
+    await assert.rejects(() => pipe.transform({ cursor: 'not a cursor' }, metadata));
+    await assert.rejects(() => pipe.transform({ tab: 'EVERYTHING' }, metadata));
   });
 });

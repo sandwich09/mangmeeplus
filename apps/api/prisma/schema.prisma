@@ -3118,6 +3118,11 @@ model CompanySignupRequest {
   version                Int                @default(0)
   failureCode            String?
   businessType           String?
+  // R10: what the applicant typed, free text, in their own language. The PDPA health tripwire
+  // needs the ENUM, and "คลินิก" is not machine-mappable — so an admin picks it at review and it is
+  // stored here. Nullable: rows decided before this existed, and every review that left it alone,
+  // fall back to the exact-match mapping of `businessType`.
+  businessCategory       String?
   phoneNumber            String?
   vatRegistered          Boolean?
   mxValid                Boolean?

@@ -138,12 +138,14 @@ at provision, not at approval (spec §4D ⑤).
    transitions through `core.advance(… 'EXPIRED', 'claim_not_started')` so the advisory lock, version
    CAS, audit row and outbox evidence all apply, and is bounded at 100 rows per pass. Admin reissue
    from `EXPIRED` already had no age limit and is unchanged.
-2. **`businessType` never becomes a real category.** Free Thai text is not machine-mappable, so
-   anything without an exact enum match provisions as `OTHER` — including a clinic. The frozen
-   `AdminSignupDecisionBody` has no field for an admin to choose the category, so this round has no
-   place to correct it before provisioning. **A health-adjacent tenant will be categorised `OTHER`
-   and the PDPA tripwire (`pdpaHealthAdjacentTenantOnboarded`) will not fire.** Correcting it in
-   company settings afterwards is the only route today. This is the highest-value follow-up.
+2. ~~**`businessType` never becomes a real category.**~~ **Closed** (review R10, 2026-09-05). Free
+   Thai text is still not machine-mappable and nothing guesses it — the decision moved to the human
+   who is already reading the word. `AdminSignupDecisionBody.businessCategory` carries the enum the
+   reviewer picks on the approve dialog, defaulted to the server's exact-match mapping and requiring
+   an explicit "ตรวจแล้ว เป็นอื่น ๆ" confirmation when the mapping could not read what was typed;
+   it is re-checked against the enum at the DTO and again in the use case, stored on
+   `CompanySignupRequest.businessCategory`, and preferred over the mapping at provisioning — so the
+   PDPA tripwire (`pdpaHealthAdjacentTenantOnboarded`) now fires for a clinic that said "คลินิก".
 3. **Provisioning retry loses the chosen username.** It is passed through the claim request rather
    than persisted (there is no column, and the schema is frozen). A retry after
    `PROVISIONING_FAILED` falls back to the email local part.

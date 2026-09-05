@@ -6,17 +6,19 @@ import type {
   AdminSignupQueueItemDto,
   AdminSignupReissueDto,
 } from '@watchdog-bms/contracts';
+import { COMPANY_BUSINESS_CATEGORIES } from '@watchdog-bms/contracts';
 import type { CompanySignupRequest } from '../../../generated/prisma/client';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { CompanySignupCoreService, signupStateGuard } from './company-signup-core.service';
 import { AccountClaimTokenService } from './account-claim-token.service';
 import { SignupClaimEmailService } from './signup-claim-email.service';
-import { ProvisionSignupUseCase } from './provision-signup.use-case';
+import { ProvisionSignupUseCase, mapBusinessCategory, reviewedBusinessCategory } from './provision-signup.use-case';
 import { LineSignupNotifyService } from './line-signup-notify.service';
 import { daysSinceApproval } from '../domain/account-claim.logic';
 import {
   OWNED_COMPANY_MEMBERSHIP,
   SIGNUP_SOURCE_LINE_OA,
+  STALE_PROVISIONING_MS,
   isStaleProvisioning,
   type CompanySignupState,
 } from '../domain/company-signup.logic';
@@ -55,6 +57,43 @@ const SETTLED_STATES: readonly CompanySignupState[] = ['PROVISIONING', 'COMPLETE
 /** States a LINE application can be approved out of: the first decision, and the two recoveries. */
 const LINE_APPROVABLE_STATES: readonly CompanySignupState[] = ['PENDING_REVIEW', 'PROVISIONING_FAILED', 'READY'];
 
+/**
+ * R13: an application that has been decided against. Nothing here is actionable from the queue, but
+ * "where did that application go" is a question an operator has every week and the answer used to
+ * be nowhere — REJECTED and SUSPENDED rows appeared in no list at all. EXPIRED is in BOTH this and
+ * the actionable queue on purpose: it is reissuable (spec §4D ④) and it is also what an operator
+ * looking for a dropped application is most often looking for.
+ */
+const ARCHIVED_STATES: readonly CompanySignupState[] = ['REJECTED', 'SUSPENDED', 'EXPIRED'];
+
+/**
+ * The bounced/expired/failed rows the "มีปัญหา" tab exists for, minus the time-based one.
+ *
+ * `PROBLEM_STATES` follows `QUEUE_STATES`: review F2 made `PROVISIONING_FAILED` an every-source
+ * row, so leaving it on the LINE-only list here would have listed a Flow B failure in the ALL tab
+ * and hidden it from the one tab an operator opens to find exactly that — while the tab's own
+ * count included it. `READY` stays LINE-only: a web row's close-out is the applicant's own
+ * welcome page, not an admin action.
+ */
+const PROBLEM_STATES: readonly CompanySignupState[] = ['EMAIL_FAILED', 'EXPIRED', 'PROVISIONING_FAILED'];
+const LINE_PROBLEM_STATES: readonly CompanySignupState[] = ['READY'];
+
+/**
+ * R13. One page of the queue. Defaults chosen for the operator, not the database: 50 rows is more
+ * than a phone screen and less than a scroll nobody finishes, and the ceiling exists because the
+ * limit arrives from a query string.
+ */
+const DEFAULT_PAGE_SIZE = 50;
+const MAX_PAGE_SIZE = 200;
+
+export type SignupQueueListOptions = {
+  /** A `SignupQueueTab` the server understands. Absent = the whole actionable queue. */
+  tab?: string;
+  /** Id of the last row of the previous page. */
+  cursor?: string;
+  limit?: number;
+};
+
 @Injectable()
 export class SignupAdminQueueUseCase {
   constructor(
@@ -66,18 +105,33 @@ export class SignupAdminQueueUseCase {
     private readonly lineNotify: LineSignupNotifyService,
   ) {}
 
-  async list(now = new Date()): Promise<AdminSignupQueueDto> {
-    const requests = await this.prisma.client.companySignupRequest.findMany({
-      where: {
-        OR: [
-          { state: { in: QUEUE_STATES as CompanySignupState[] } },
-          { state: { in: LINE_ONLY_QUEUE_STATES as CompanySignupState[] }, source: SIGNUP_SOURCE_LINE_OA },
-        ],
-      },
-      orderBy: [{ state: 'asc' }, { createdAt: 'asc' }],
-      take: 200,
+  /**
+   * R13: the tab is decided HERE, and the page is a page. The first version read 200 rows with no
+   * cursor and let the browser filter and count them, so a backlog past 200 was invisible, a tab
+   * could report "no applications in this group" over rows the database was holding, and every
+   * count was a count of the truncation rather than of the queue.
+   */
+  async list(now = new Date(), options: SignupQueueListOptions = {}): Promise<AdminSignupQueueDto> {
+    const pageSize = Math.min(Math.max(Math.trunc(options.limit ?? DEFAULT_PAGE_SIZE), 1), MAX_PAGE_SIZE);
+    const tabWhere = queueWhere(options.tab, now);
+    // F10: the cursor is the ordering VALUES of the last row, not that row's id. Prisma's `cursor`
+    // resolves an id against the same filtered query, so a row that left the tab between pages —
+    // an admin approved it, a sweep parked it — answered with an empty page and stranded the tab
+    // until someone reloaded. Values cannot go stale; the row they came from need not exist.
+    const after = decodeQueueCursor(options.cursor);
+    // One more than the page, purely as a probe: its presence is what says another page exists.
+    const rows = await this.prisma.client.companySignupRequest.findMany({
+      where: after ? { AND: [tabWhere, keysetAfter(after)] } : tabWhere,
+      // Oldest first — this is a work queue — with the id as tiebreaker, because a cursor over a
+      // non-deterministic order skips and repeats rows between pages.
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      take: pageSize + 1,
     });
-    if (requests.length === 0) return { items: [] };
+    const requests = rows.slice(0, pageSize);
+    const last = requests[requests.length - 1];
+    const nextCursor = rows.length > pageSize && last ? encodeQueueCursor(last.createdAt, last.id) : null;
+    const counts = await this.tabCounts(now);
+    if (requests.length === 0) return { items: [], nextCursor: null, counts };
 
     // Two batched lookups rather than per-row queries: the hints are the whole point of the queue,
     // and an admin opening it should not pay N round-trips for N applications.
@@ -101,6 +155,50 @@ export class SignupAdminQueueUseCase {
     return {
       items: requests.map((request) =>
         toQueueItem(request, knownEmails, companyByTaxId, phoneMatches, priorCompanies, now)),
+      nextCursor,
+      counts,
+    };
+  }
+
+  /**
+   * R13: what each tab holds IN THE DATABASE, so the page never reports a count of the page it
+   * happens to have. Two reads: one grouping by state and source, and one for abandoned
+   * provisioning runs — which no state count can see, because the clock decides that one.
+   */
+  private async tabCounts(now: Date): Promise<Record<string, number>> {
+    const [grouped, staleProvisioning] = await Promise.all([
+      this.prisma.client.companySignupRequest.groupBy({
+        by: ['state', 'source'],
+        where: {
+          state: {
+            in: [...new Set([...QUEUE_STATES, ...LINE_ONLY_QUEUE_STATES, ...ARCHIVED_STATES])] as CompanySignupState[],
+          },
+        },
+        _count: { _all: true },
+      }),
+      this.prisma.client.companySignupRequest.count({ where: staleProvisioningWhere(now) }),
+    ]);
+
+    const total = (state: CompanySignupState, lineOnly = false) => grouped
+      .filter((row) => row.state === state && (!lineOnly || row.source === SIGNUP_SOURCE_LINE_OA))
+      .reduce((sum, row) => sum + row._count._all, 0);
+
+    const pendingReview = total('PENDING_REVIEW');
+    // The web filter reads EMAIL_PENDING without a bounce flag; a bounce IS the EMAIL_FAILED state.
+    const awaitingClaim = total('EMAIL_PENDING');
+    // Counted exactly the way `queueWhere('PROBLEM')` asks for them, or the tab promises rows the
+    // list cannot show: F2 made PROVISIONING_FAILED every-source, READY is still LINE-only.
+    const problem = total('EMAIL_FAILED') + total('EXPIRED')
+      + total('PROVISIONING_FAILED') + total('READY', true)
+      + staleProvisioning;
+    return {
+      // Everything actionable: the same set `queueWhere(undefined)` returns, counted whole. A live
+      // PROVISIONING run is listed there but is not a problem, so it is added separately.
+      ALL: pendingReview + awaitingClaim + problem + (total('PROVISIONING', true) - staleProvisioning),
+      PENDING_REVIEW: pendingReview,
+      AWAITING_CLAIM: awaitingClaim,
+      PROBLEM: problem,
+      ARCHIVED: ARCHIVED_STATES.reduce((sum, state) => sum + total(state), 0),
     };
   }
 
@@ -272,6 +370,15 @@ export class SignupAdminQueueUseCase {
         throw new ConflictException(`invalid_signup_decision:${request.state}`);
       }
       const approvedAt = new Date();
+      // R10: the enum the reviewer picked, stored with the approval it belongs to. Re-checked here
+      // rather than trusted: the PDPA tripwire may only be armed by a value the enum knows.
+      const chosenCategory = (COMPANY_BUSINESS_CATEGORIES as readonly string[])
+        .includes(body.businessCategory ?? '')
+        ? (body.businessCategory as string)
+        : null;
+      // Absent means "review did not decide", which must leave the column alone rather than write
+      // a null over a choice an earlier decision made.
+      const reviewedCategory = chosenCategory ? { businessCategory: chosenCategory } : {};
       // A LINE approval IS provisioning; so is a retry from PROVISIONING_FAILED on either source.
       // A web retry must never take the branch below it: that row claimed its link long ago, and
       // sending it back to EMAIL_PENDING would ask for a mailbox proof it has already given.
@@ -284,7 +391,7 @@ export class SignupAdminQueueUseCase {
         if (firstDecision) {
           await this.prisma.client.companySignupRequest.update({
             where: { id: requestId },
-            data: { approvedAt, approvedByUserId: adminUserId },
+            data: { approvedAt, approvedByUserId: adminUserId, ...reviewedCategory },
           });
         }
         // Review F16: a retry is not a decision. Filing it as a second `signup.request.approved`
@@ -300,6 +407,9 @@ export class SignupAdminQueueUseCase {
             fromState: request.state,
             retryOfFailedProvisioning: retryingProvisioning,
             finishedStrandedRow: !firstDecision && !retryingProvisioning,
+            // R10: which category armed (or did not arm) the PDPA tripwire is part of what this
+            // operator decided, on a retry as much as on the first decision.
+            businessCategory: chosenCategory,
           },
         );
         if (!urls) throw new ConflictException('signup_provisioning_urls_required');
@@ -319,8 +429,13 @@ export class SignupAdminQueueUseCase {
       // waiting on an email nobody would send — and the retry read the state and reported success.
       // R09: `claimWindowStartedAt` is the clock the 30-day sweep and the self-serve resend read.
       // It starts here and RESTARTS on a reissue; `approvedAt` stays the audit fact it always was.
+      // R10: the reviewer's category is one of those approval facts, so it rides the SAME
+      // transaction rather than a second update that a failure could leave behind.
       await this.core.advance(requestId, 'EMAIL_PENDING', correlationRequestId, undefined, undefined, {
-        data: { approvedAt, approvedByUserId: adminUserId, claimWindowStartedAt: approvedAt },
+        data: {
+          approvedAt, approvedByUserId: adminUserId, claimWindowStartedAt: approvedAt,
+          ...reviewedCategory,
+        },
         // Review F8: the letter AND the record of the decision ride the transaction that makes it.
         // The audit goes FIRST so a failure in the letter proves the audit rolls back with it
         // (review F15) — an audit written outside the transaction would survive and claim a
@@ -329,6 +444,7 @@ export class SignupAdminQueueUseCase {
           await this.audit(requestId, adminUserId, correlationRequestId, 'signup.request.approved', {
             hadTaxId: request.taxId !== null,
             mxValid: request.mxValid ?? false,
+            businessCategory: chosenCategory,
           }, tx);
           await this.claimEmail.enqueue(requestId, 'approve', approvedAt, tx);
         },
@@ -491,6 +607,78 @@ export class SignupAdminQueueUseCase {
   }
 }
 
+/**
+ * F10: one page boundary, as the two values the ordering is made of. Base64url so it survives a
+ * query string, and opaque so nobody starts building one by hand.
+ */
+export function encodeQueueCursor(createdAt: Date, id: string): string {
+  return Buffer.from(`${createdAt.toISOString()}|${id}`, 'utf8').toString('base64url');
+}
+
+function decodeQueueCursor(cursor: string | undefined): { createdAt: Date; id: string } | null {
+  if (!cursor) return null;
+  // A cursor that cannot be read is the FIRST page, never an error and never an empty tab: it
+  // arrives from a query string, and the worst an operator should get from a mangled one is
+  // starting over.
+  const [at, ...rest] = Buffer.from(cursor, 'base64url').toString('utf8').split('|');
+  const id = rest.join('|');
+  const createdAt = at ? new Date(at) : new Date(NaN);
+  return id && !Number.isNaN(createdAt.getTime()) ? { createdAt, id } : null;
+}
+
+/** Everything strictly after that boundary, in the same order the page is read in. */
+function keysetAfter(after: { createdAt: Date; id: string }) {
+  return {
+    OR: [
+      { createdAt: { gt: after.createdAt } },
+      { createdAt: after.createdAt, id: { gt: after.id } },
+    ],
+  };
+}
+
+/**
+ * R13: an abandoned provisioning run, as a query. The fence decides this with `isStaleProvisioning`
+ * against the same clock; the two MUST agree, so the threshold comes from that module's constant
+ * and never from a number typed here.
+ */
+function staleProvisioningWhere(now: Date) {
+  return {
+    state: 'PROVISIONING' as CompanySignupState,
+    source: SIGNUP_SOURCE_LINE_OA,
+    provisioningStartedAt: { lt: new Date(now.getTime() - STALE_PROVISIONING_MS) },
+  };
+}
+
+/**
+ * R13: what one tab holds. The page used to decide this over whatever 200 rows it had been given,
+ * which is why a tab could show nothing while the database held a backlog. One definition, on the
+ * server, used for both the page and its count.
+ *
+ * No tab (the default) is the whole actionable queue, byte-identical to what this asked for before
+ * paging existed — a web-form row in a LINE-only state still has no retry an admin could reach.
+ */
+function queueWhere(tab: string | undefined, now: Date) {
+  if (tab === 'PENDING_REVIEW') return { state: 'PENDING_REVIEW' as CompanySignupState };
+  // A bounce IS the EMAIL_FAILED state, so "waiting to set a password" is EMAIL_PENDING exactly.
+  if (tab === 'AWAITING_CLAIM') return { state: 'EMAIL_PENDING' as CompanySignupState };
+  if (tab === 'ARCHIVED') return { state: { in: ARCHIVED_STATES as CompanySignupState[] } };
+  if (tab === 'PROBLEM') {
+    return {
+      OR: [
+        { state: { in: PROBLEM_STATES as CompanySignupState[] } },
+        { state: { in: LINE_PROBLEM_STATES as CompanySignupState[] }, source: SIGNUP_SOURCE_LINE_OA },
+        staleProvisioningWhere(now),
+      ],
+    };
+  }
+  return {
+    OR: [
+      { state: { in: QUEUE_STATES as CompanySignupState[] } },
+      { state: { in: LINE_ONLY_QUEUE_STATES as CompanySignupState[] }, source: SIGNUP_SOURCE_LINE_OA },
+    ],
+  };
+}
+
 /** The one shop a repeat applicant already had, and how it stands today. */
 type PriorCompany = { name: string; state: 'ACTIVE' | 'EXPIRED' | 'CLOSED' };
 
@@ -521,6 +709,10 @@ function toQueueItem(
     ...(request.vatRegistered !== null ? { vatRegistered: request.vatRegistered } : {}),
     ...(request.taxId ? { taxId: request.taxId } : {}),
     ...(request.requestedOfferKey ? { requestedOfferKey: request.requestedOfferKey } : {}),
+    // R10: the server owns the mapping, so the approve dialog can default to it — and can see that
+    // a row with free text answering OTHER is one where the reviewer has to make the call.
+    businessCategory: reviewedBusinessCategory(request.businessCategory)
+      ?? mapBusinessCategory(request.businessType),
     ...(request.mxValid !== null ? { mxValid: request.mxValid } : {}),
     // P10-L §8: the operator has to be able to tell the two sources apart at a glance, and a LINE
     // row shows a LINE name and an acceptance time where a web row shows an address and MX.

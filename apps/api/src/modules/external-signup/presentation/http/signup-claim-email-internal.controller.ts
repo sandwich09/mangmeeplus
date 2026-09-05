@@ -62,6 +62,9 @@ export class SignupClaimEmailInternalController {
     // settled. On this timer rather than a daily one for the same reason as everything above it —
     // a second schedule is a second thing to deploy and forget, and the query is cheap and bounded.
     const supportPurge = await this.lineNotify.purgeSettledSupportRequests();
+    // F6 retention rides here for the same reason: it is a question about rows on a clock. Last of
+    // all, so a failure in it cannot skip work that a customer is waiting on.
+    const intake = await this.claimEmail.sweepAbandonedIntake();
     return {
       ...reminders, ...expiry,
       profileGuardQueued: profileGuard.queued,
@@ -69,6 +72,7 @@ export class SignupClaimEmailInternalController {
       stuckPushes: stuckPushes.stuck,
       supportRequestsExpired: supportRequests.expired,
       supportRequestsPurged: supportPurge.purged,
+      purgedIntake: intake.purgedIntake,
     };
   }
 }

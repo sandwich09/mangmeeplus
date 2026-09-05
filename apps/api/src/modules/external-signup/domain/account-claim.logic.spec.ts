@@ -14,6 +14,7 @@ import {
   publicSignupStatusKey,
   suggestedUsernameFromEmail,
 } from './account-claim.logic';
+import { PUBLIC_SIGNUP_STATUS_KEYS } from '@watchdog-bms/contracts';
 import { COMPANY_SIGNUP_STATES, type CompanySignupState } from './company-signup.logic';
 
 const NOW = new Date('2026-09-01T00:00:00.000Z');
@@ -38,18 +39,31 @@ describe('account claim logic', () => {
     assert.equal(publicSignupStatusKey('VALIDATED'), 'CHECKING');
     assert.equal(publicSignupStatusKey('PENDING_REVIEW'), 'PENDING_REVIEW');
     assert.equal(publicSignupStatusKey('EMAIL_PENDING'), 'AWAITING_CLAIM');
-    assert.equal(publicSignupStatusKey('EMAIL_FAILED'), 'AWAITING_CLAIM');
     assert.equal(publicSignupStatusKey('READY'), 'READY');
     assert.equal(publicSignupStatusKey('COMPLETED'), 'READY');
+    assert.equal(publicSignupStatusKey('LINE_LINK_PENDING'), 'READY');
     assert.equal(publicSignupStatusKey('REJECTED'), 'REJECTED');
     assert.equal(publicSignupStatusKey('EXPIRED'), 'EXPIRED');
-    // The public surface must never leak an internal failure as its own status.
-    assert.equal(publicSignupStatusKey('PROVISIONING_FAILED'), 'CHECKING');
     assert.equal(publicSignupStatusKey('SUSPENDED'), 'CHECKING');
   });
 
+  // R11: three states used to answer with a status that claimed something which had not happened.
+  // The mapping is coarse by design (spec §3) but it may not be UNTRUE — an applicant who is told
+  // "your shop is ready, log in" before a company exists, or "nothing to do" while nothing is
+  // retrying, or "we sent the email" after it bounced, is being sent to the wrong place.
+  it('does not report a shop, a rescue, or a delivery that has not happened', () => {
+    // No company exists in either: the claim was proved and provisioning is still running.
+    assert.equal(publicSignupStatusKey('EMAIL_VERIFIED'), 'PREPARING');
+    assert.equal(publicSignupStatusKey('PROVISIONING'), 'PREPARING');
+    // Nothing retries by itself, so this needs a human — not "ยังไม่ต้องทำอะไรเพิ่ม".
+    assert.equal(publicSignupStatusKey('PROVISIONING_FAILED'), 'PREPARING_FAILED');
+    // The letter bounced. Saying it was sent is how an applicant waits for a mail that never comes.
+    assert.equal(publicSignupStatusKey('EMAIL_FAILED'), 'EMAIL_FAILED');
+  });
+
   it('collapses any unmapped state to CHECKING rather than leaking it', () => {
-    const allowed = new Set(['CHECKING', 'PENDING_REVIEW', 'AWAITING_CLAIM', 'READY', 'REJECTED', 'EXPIRED']);
+    // From the contract, so a key added there without copy behind it cannot slip through here.
+    const allowed = new Set<string>(PUBLIC_SIGNUP_STATUS_KEYS);
     for (const state of COMPANY_SIGNUP_STATES) {
       assert.ok(allowed.has(publicSignupStatusKey(state)), `${state} escaped the allowlist`);
     }

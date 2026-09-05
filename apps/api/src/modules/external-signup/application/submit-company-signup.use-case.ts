@@ -1,4 +1,6 @@
-import { Injectable, Optional, UnprocessableEntityException } from '@nestjs/common';
+import {
+  Injectable, Optional, ServiceUnavailableException, UnprocessableEntityException,
+} from '@nestjs/common';
 import { resolveMx } from 'node:dns/promises';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { CompanySignupCoreService } from './company-signup-core.service';
@@ -48,14 +50,23 @@ export class SubmitCompanySignupUseCase {
       // never here — so this check exists to catch typos at the form, not to authorise anything
       // (§3). The address is guaranteed by `normalizeCompanySignupInput`; this path is Flow B only,
       // and the LINE source has its own submit use-case that never enters here (spec §5).
-      const mxValid = await this.hasMailExchanger(request.contactEmail ?? '');
+      const outcome = await this.checkMailExchanger(request.contactEmail ?? '');
+      // F6: a resolver that could not answer says NOTHING about the address, so nothing is
+      // recorded and nothing is claimed. Answering 422 here accused a correct address of being a
+      // typo — and because the form rotates its idempotency key on a definite rejection, every DNS
+      // blip also left an orphan RECEIVED row holding the applicant's name, address and phone.
+      // Thrown before the write, so a retry resumes from RECEIVED exactly as R08 intends.
+      if (outcome === 'lookup-failed') {
+        throw new ServiceUnavailableException('email_domain_check_unavailable');
+      }
       await this.prisma.client.companySignupRequest.update({
         where: { id: request.id },
-        data: { mxValid },
+        data: { mxValid: outcome === 'has-mx' },
       });
-      if (!mxValid) {
+      if (outcome === 'no-mx') {
         // Left in RECEIVED deliberately: the applicant fixes the address and submits again with a
-        // new externalSignupId. Nothing reaches the admin queue, and no email was ever sent.
+        // new externalSignupId. Nothing reaches the admin queue, and no email was ever sent. The
+        // row this leaves behind is cleared by `sweepAbandonedIntake` after the retention window.
         throw new UnprocessableEntityException('email_domain_has_no_mx');
       }
       await this.core.advance(request.id, 'VALIDATED', correlationRequestId);
@@ -71,19 +82,30 @@ export class SubmitCompanySignupUseCase {
     return { requestId: request.id };
   }
 
-  private async hasMailExchanger(email: string): Promise<boolean> {
+  private async checkMailExchanger(email: string): Promise<MxOutcome> {
     const domain = email.slice(email.lastIndexOf('@') + 1);
-    if (!domain) return false;
+    if (!domain) return 'no-mx';
     try {
       const records = await withTimeout(this.mxResolver(domain), MX_LOOKUP_TIMEOUT_MS);
-      return Array.isArray(records) && records.length > 0;
-    } catch {
-      // NXDOMAIN, no records, and a timed-out resolver all land here. Treating them alike keeps the
-      // applicant's message honest ("we cannot reach this domain") without exposing DNS internals.
-      return false;
+      return Array.isArray(records) && records.length > 0 ? 'has-mx' : 'no-mx';
+    } catch (error) {
+      // F6: only a DNS answer that IS an answer may reject the address. `ENOTFOUND` is NXDOMAIN
+      // (the domain does not exist) and `ENODATA` is "it exists and publishes no MX" — both are
+      // facts about the domain. A timeout, a SERVFAIL or a refused resolver are facts about US.
+      const code = (error as { code?: unknown } | null)?.code;
+      return typeof code === 'string' && DEFINITE_DNS_CODES.has(code) ? 'no-mx' : 'lookup-failed';
     }
   }
 }
+
+/**
+ * F6: the three answers a mail-exchanger check can give. Collapsing the last two into `false` is
+ * what made a DNS blip look like a typo in the applicant's address.
+ */
+type MxOutcome = 'has-mx' | 'no-mx' | 'lookup-failed';
+
+/** DNS rejections that are a statement about the DOMAIN rather than about our own resolver. */
+const DEFINITE_DNS_CODES = new Set(['ENOTFOUND', 'ENODATA', 'NXDOMAIN']);
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout>;

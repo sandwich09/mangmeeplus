@@ -1,6 +1,6 @@
 # Agent Memory: auto-register-flow-b
 
-Status: IMPLEMENTED (Slices A-C + P29 T1-T3) on `codex/auto-register-round1`, 2026-08-30 — 4 Opus agents in parallel worktrees, Fable integrated (wiring, P29 hook, claim-session BFF chain, line_linked_elsewhere code, expired-company switcher+role labels, reject-notify checkbox disabled). Flag off everywhere; NO UAT deploy until SES ops (Owner). Follow-ups: businessCategory at approve (PDPA tripwire gap — top), rejection-notice consumer, LINE expired-reply seam, DRAFT-seat loophole, EMAIL_PENDING→EXPIRED sweep, merge-accounts backend (dialog primary = เร็ว ๆ นี้), SES bounce→EMAIL_FAILED (Slice D).
+Status: IMPLEMENTED (Slices A-C + P29 T1-T3) on `codex/auto-register-round1`, 2026-08-30 — 4 Opus agents in parallel worktrees, Fable integrated (wiring, P29 hook, claim-session BFF chain, line_linked_elsewhere code, expired-company switcher+role labels, reject-notify checkbox disabled). Flag off everywhere; NO UAT deploy until SES ops (Owner). Follow-ups: ~~businessCategory at approve (PDPA tripwire gap — top)~~ **Closed 2026-09-05** (review R10: the reviewer picks the enum on the approve dialog; stored on the request and preferred at provisioning), rejection-notice consumer, LINE expired-reply seam, DRAFT-seat loophole, EMAIL_PENDING→EXPIRED sweep, merge-accounts backend (dialog primary = เร็ว ๆ นี้), SES bounce→EMAIL_FAILED (Slice D).
 
 Owner: thawatchai
 
