@@ -675,7 +675,10 @@ export function toAiTurnIntent(rawIntent: string, refusalReason?: string): (type
   const up = (rawIntent ?? '').toUpperCase();
   if ((AI_TURN_INTENTS as readonly string[]).includes(up)) return up as (typeof AI_TURN_INTENTS)[number];
   if (refusalReason === 'mutation_blocked') return 'MUTATION_REQUEST';
-  if (refusalReason === 'feature_disabled' || refusalReason === 'unsupported_module') return 'UNSUPPORTED_MODULE';
+  // `unsupported_yet` maps here too: the Prisma `AiTurnIntent` enum has no member for it, and the
+  // split that matters — what the customer was told — lives on the refusal reason and the terminal
+  // status, not on this analytics-side intent.
+  if (refusalReason === 'feature_disabled' || refusalReason === 'unsupported_module' || refusalReason === 'unsupported_yet') return 'UNSUPPORTED_MODULE';
   if (refusalReason && /forbidden|permission/i.test(refusalReason)) return 'FORBIDDEN';
   return 'UNKNOWN';
 }

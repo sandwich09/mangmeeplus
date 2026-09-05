@@ -7,7 +7,7 @@
  */
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { LineAiTurnRequest, LineAiAgent, LineAiIntent, LineAiConversationContext, LineAiCoverageItem, LineAiValueCandidates, LineAiAnswerPresentation, LineAiWebLink, AgentIntentPlan, AgentFact, SourceRef, SpecialistOutput, ToolMeta } from '@watchdog-bms/contracts';
-import { LINE_TOOL_REGISTRY, hasToolPermissions, isAmbiguousDateCandidate, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
+import { LINE_TOOL_REGISTRY, hasToolPermissions, isAmbiguousDateCandidate, isBusinessIntakeIntent, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
 import { extractJson } from '../../../common/ai/extract-json';
 import type { AgentRunResult } from './agent-types';
 import { IntentRouterAgent, ROUTER_ENABLED_TOOLS, isSubjectCompatible, isZeroToolIntent } from './intent-router.agent';
@@ -474,6 +474,18 @@ export class OrchestratorAgent {
         refusals: [],
       };
     }
+    // Spec §5.3: "ยังไม่รองรับ" is not "นอกขอบเขต". The API's own intake routing already decided
+    // what this turn was about, and it hands that decision over on `intakeIntent` — a trusted field
+    // the API binds from its parsed route plan, never from the model's `preparedPlan`. When it says
+    // business and the router still found nothing to run, the subject IS in this system and LINE
+    // simply has no tool for it yet. UAT 2026-09-03: "ทำไม service charge คิดแยกเป็นอีกรายการ" — a
+    // question about the sender's own expense — was answered "อยู่นอกขอบเขตระบบ". Runs after the
+    // joke rescue so a joke ask is still rescued, and only over the out-of-scope code: a safety,
+    // privacy, permission or mutation refusal keeps its own meaning and its own copy.
+    if (isBusinessIntakeIntent(req.intakeIntent) && plan.refusals.length > 0
+      && plan.refusals.every((refusal) => refusal.reason === 'unsupported_module')) {
+      plan = { ...plan, refusals: plan.refusals.map((refusal) => ({ ...refusal, reason: 'unsupported_yet' as const })) };
+    }
     const zeroToolIntent = plan.intents.length === 1 && isZeroToolIntent(plan.intents[0]?.intent)
       ? plan.intents[0].intent
       : undefined;
@@ -530,6 +542,9 @@ export class OrchestratorAgent {
     const composer = new ResponseComposerAgent();
     const composed = composer.compose(plan, composableOutputs, req.messageText, req.userContext.locale, {
       featureDisabledTools,
+      // So the `unsupported_yet` copy can point at the workspace it says the answer lives in. The
+      // API turns a `/companies/…` path into a one-time auto-login handoff link on delivery.
+      companyId: req.userContext.companyId,
     });
     // Owner decision 2026-07-03: text business-read answers are model-composed from the raw tool
     // data (grounded by the number guard; deterministic compose is the fallback).

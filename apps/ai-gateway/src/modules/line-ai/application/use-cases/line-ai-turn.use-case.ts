@@ -5,7 +5,7 @@
  */
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { LineAiTurnRequest, LineAiTurnResponse, ToolResult, SourceRef } from '@watchdog-bms/contracts';
-import { asIntakeRouteIntent, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
+import { asIntakeRouteIntent, isBusinessIntakeIntent, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
 import { classifyIntent, chooseAgent, selectTools, getRefusalReason, validateTurnRequest } from '../../domain/logic/line-ai-turn.logic';
 import { ErpToolClient, type ErpToolContext } from '../../infrastructure/erp-tool.client';
 import { OrchestratorAgent } from '../../agents/orchestrator.agent';
@@ -17,6 +17,10 @@ import { featureDisabledReply } from '../../agents/response-composer.agent';
 // ---- Thai-first refusal messages ----
 const MUTATION_REPLY = '⚠️ ขออภัยค่ะ น้องมั่งมีไม่สามารถดำเนินการนี้ผ่าน LINE ได้\nกรุณาเปิดเว็บแอปเพื่อดำเนินการต่อนะคะ';
 const UNSUPPORTED_REPLY = '📋 ขออภัยค่ะ น้องมั่งมีตอบได้เฉพาะข้อมูลในระบบธุรกิจที่เชื่อมต่ออยู่เท่านั้น\nคำถามนี้อยู่นอกขอบเขตระบบ จึงไม่สามารถให้ข้อมูลที่น่าเชื่อถือได้ค่ะ';
+/** Spec §5.3: the sibling of `UNSUPPORTED_REPLY` for a turn the API's own intake already placed
+ *  inside the business. The web link rides on `webLinks`, which the API renders with its own base
+ *  URL and rewrites into a one-time auto-login handoff. */
+const UNSUPPORTED_YET_REPLY = '📋 เรื่องนี้อยู่ในระบบ แต่น้องมั่งมียังทำผ่าน LINE ไม่ได้ในตอนนี้ค่ะ\nทำได้ในเว็บนะคะ';
 const FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้ค่ะ';
 /** Matches the errorCode the ERP tool boundary returns when a company feature is off. */
 const FEATURE_NOT_ENABLED_CODE = 'FEATURE_NOT_ENABLED';
@@ -293,7 +297,18 @@ export class LineAiTurnUseCase {
     const refusalReason = getRefusalReason(intent);
 
     if (refusalReason) {
-      const replyText = intent === 'mutation_request' ? MUTATION_REPLY : (intent === 'unsupported_module' || intent === 'unknown') ? UNSUPPORTED_REPLY : FORBIDDEN_REPLY;
+      // Spec §5.3: this path classifies by keyword alone, and its Thai list is all in-system
+      // subjects (บัญชี, ภาษี, เงินเดือน, งบดุล). The trusted intake intent, not the keyword, decides
+      // whether the honest answer is "outside the system" or "not on LINE yet".
+      const businessIntake = isBusinessIntakeIntent(req.intakeIntent);
+      const outOfScope = intent === 'unsupported_module' || intent === 'unknown';
+      if (outOfScope && businessIntake) {
+        return {
+          ...this.buildRefusedResponse(req, 'unsupported_yet', UNSUPPORTED_YET_REPLY, startMs, intent, agent),
+          webLinks: [{ label: 'เปิดเว็บแอป', path: `/companies/${req.userContext.companyId}` }],
+        };
+      }
+      const replyText = intent === 'mutation_request' ? MUTATION_REPLY : outOfScope ? UNSUPPORTED_REPLY : FORBIDDEN_REPLY;
       return this.buildRefusedResponse(req, refusalReason, replyText, startMs, intent, agent);
     }
 

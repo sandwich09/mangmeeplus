@@ -24,6 +24,11 @@ export const REFUSAL_MESSAGES: Record<LineAiRefusalReason, string> = {
   unsupported_module:
     '📋 ขออภัยค่ะ ฟีเจอร์นี้ยังไม่พร้อมใช้งานผ่าน LINE ในขณะนี้\n' +
     'กรุณาเปิดเว็บแอปเพื่อดูข้อมูลเพิ่มเติมนะคะ',
+  // Spec §5.3: the subject IS in the system — telling the owner their own bill is "out of scope"
+  // is wrong twice. Pass a `webPath` to `formatRefusal` and the link is appended below.
+  unsupported_yet:
+    '📋 เรื่องนี้อยู่ในระบบ แต่น้องมั่งมียังทำผ่าน LINE ไม่ได้ในตอนนี้ค่ะ\n' +
+    'ทำได้ในเว็บนะคะ',
   forbidden:
     '🔒 คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้ค่ะ\n' +
     'หากต้องการสิทธิ์เพิ่มเติม กรุณาติดต่อผู้ดูแลระบบนะคะ',
