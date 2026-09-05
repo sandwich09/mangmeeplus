@@ -224,10 +224,19 @@ const RATE_LIMIT_REPLY = '⏳ ระบบกำลังประมวลผ�
 /** Post-OCR branch ambiguity (multi-branch company, no defaultable head office): the read
  *  succeeded, only the branch decision is missing — send the user to the web picker honestly.
  *  Says "เอกสาร", not "ใบเสร็จ": the same refusal now answers the check-bill lane, where calling
- *  the document a receipt is exactly the claim the whole question exists to avoid. */
+ *  the document a receipt is exactly the claim the whole question exists to avoid. Cause and fix
+ *  only — how to get back in differs by lane, so the caller appends one of the tails below. */
 const RECEIPT_BRANCH_REQUIRED_REPLY = '🧾 อ่านเอกสารได้แล้วค่ะ แต่บริษัทมีหลายสาขาและน้องเลือกให้เองไม่ได้ '
-  + 'จึงยังไม่ได้บันทึกรายการนะคะ\nรบกวนบันทึกผ่านเว็บแอปแล้วเลือกสาขา หรือให้ผู้ดูแลตั้งสาขาประจำตัวให้คุณ '
-  + 'แล้วส่งรูปเดิมเข้ามาใหม่ได้เลยค่ะ';
+  + 'จึงยังไม่ได้บันทึกรายการนะคะ\nรบกวนบันทึกผ่านเว็บแอปแล้วเลือกสาขา หรือให้ผู้ดูแลตั้งสาขาประจำตัวให้คุณ';
+/** DIRECT photo lane: the refusal happens before any byte is stored, so re-sending the picture is
+ *  genuinely the way back in. */
+const BRANCH_RETRY_RESEND = '\nแล้วส่งรูปเดิมเข้ามาใหม่ได้เลยค่ะ';
+/** PENDING-MEDIA lane: the bytes are still parked on a PENDING row, and `ensurePendingMedia` answers
+ *  ANY new image with `{ created: false }` while that row lives (`PENDING_MEDIA_TTL_MINUTES`) — a
+ *  re-send is silently swallowed and logged `duplicate_media_pending`. Telling this sender to send
+ *  the photo again would be the same kind of lie the transient copy was: answering the open question
+ *  a second time is what actually works. */
+const BRANCH_RETRY_ANSWER = '\nไฟล์เดิมยังเก็บไว้ให้อยู่ แล้วตอบข้อความเดิมอีกครั้งได้เลยค่ะ';
 /**
  * The deterministic half of a capture failure. These codes describe a DATA state — the company's
  * branches, or this member's assignment — so the next attempt reproduces them byte for byte, and
@@ -236,14 +245,23 @@ const RECEIPT_BRANCH_REQUIRED_REPLY = '🧾 อ่านเอกสารได
  * unknown, keeps the transient copy, and keeps its retry.
  *
  * One map for every LINE capture lane, so the pending-media answer and the direct photo cannot
- * disagree about what a branch refusal means or which terminal status it records.
+ * disagree about what a branch refusal means or which terminal status it records. `tail` is required
+ * rather than defaulted: the two lanes recover differently, and a forgotten tail would silently ship
+ * the wrong instruction — the exact defect this argument exists to prevent.
  */
-export function lineCaptureFailureReply(error: unknown): { reply: string; status: string; errorCode: string } | undefined {
+export function lineCaptureFailureReply(
+  error: unknown,
+  tail: string,
+): { reply: string; status: string; errorCode: string } | undefined {
   const code = error instanceof HttpException
     ? (error.getResponse() as { code?: string } | undefined)?.code
     : undefined;
   if (code === 'TRANSACTION_BRANCH_REQUIRED' || code === 'TRANSACTION_BRANCH_INVALID') {
-    return { reply: RECEIPT_BRANCH_REQUIRED_REPLY, status: 'clarification_required', errorCode: 'RECEIPT_BRANCH_SELECTION_REQUIRED' };
+    return {
+      reply: `${RECEIPT_BRANCH_REQUIRED_REPLY}${tail}`,
+      status: 'clarification_required',
+      errorCode: 'RECEIPT_BRANCH_SELECTION_REQUIRED',
+    };
   }
   return undefined;
 }
@@ -2649,7 +2667,7 @@ export class ProcessLineWebhookUseCase {
         } catch (error) {
           // Same rule as the answer above: a data state the sender can fix gets its own sentence and
           // leaves the row PENDING; anything else is still a real fault and belongs to the dispatcher.
-          if (!lineCaptureFailureReply(error)) throw error;
+          if (!lineCaptureFailureReply(error, BRANCH_RETRY_ANSWER)) throw error;
           await this.replyPendingMediaFailure(event, companyId, requestId, error);
           return;
         }
@@ -4189,7 +4207,7 @@ export class ProcessLineWebhookUseCase {
     } catch (err) {
       // Branch ambiguity is a data-setup state, not a transient fault: say what to do instead of
       // the "ชั่วคราว ลองใหม่" copy that retries into the identical failure (Owner 2026-08-27).
-      const deterministic = lineCaptureFailureReply(err);
+      const deterministic = lineCaptureFailureReply(err, BRANCH_RETRY_RESEND);
       if (deterministic) {
         this.logger.warn({ msg: 'LINE receipt upload needs branch selection', webhookEventId: event.webhookEventId });
         await this.deliverReply(event, deterministic.reply).catch(() => {});
@@ -5156,7 +5174,7 @@ export class ProcessLineWebhookUseCase {
   private async replyPendingMediaFailure(
     event: LineTextEvent, companyId: string, requestId: string, error: unknown,
   ): Promise<void> {
-    const deterministic = lineCaptureFailureReply(error);
+    const deterministic = lineCaptureFailureReply(error, BRANCH_RETRY_ANSWER);
     this.logger.warn({
       msg: deterministic ? 'line_pending_media_answer_needs_setup' : 'line_substitute_media_answer_failed',
       requestId, ...(deterministic && { errorCode: deterministic.errorCode }), error: (error as Error).message,

@@ -141,6 +141,8 @@ type Harness = {
   attachMediaCalls: any[];
   linkScanCalls: any[];
   receiptContinuationCalls: any[];
+  /** Everything the dispatcher logged at warn — level 40 is what an operator is paged on. */
+  warnings: any[];
   /** Inputs the REAL capture use case handed to CreateExpenseDraftUseCase (realCapture only). */
   draftsCreated: any[];
   /** Every LINE payload as sent (one entry per reply/push call), so Flex shape and uri actions can be asserted. */
@@ -342,8 +344,17 @@ function makeHarness(opts: {
     acceptedLegal,
     shadowProbe,
     openLaunchGate,
-    // initReceiptUpload / completeReceiptUpload
-    { execute: async (_ctx: any, cmd: any) => { initCalls.push(cmd); return { expenseId: 'expense-1', attachmentId: 'att-1', uploadUrl: '/u', uploadMethod: 'PUT', expiresAt: new Date() }; } } as any,
+    // initReceiptUpload / completeReceiptUpload. The init double resolves the branch exactly as the
+    // REAL `InitReceiptUploadUseCase` does (expense-upload.use-case.ts:59) — without that, the direct
+    // photo lane could never reach its own branch refusal and a mutant deleting its map lookup
+    // survived every spec in the repo.
+    {
+      execute: async (ctx: any, cmd: any) => {
+        await expenseRepo.resolveCreateBranchId(ctx.companyId, ctx.scopes ?? {}, cmd.branchId);
+        initCalls.push(cmd);
+        return { expenseId: 'expense-1', attachmentId: 'att-1', uploadUrl: '/u', uploadMethod: 'PUT', expiresAt: new Date() };
+      },
+    } as any,
     { execute: async (_ctx: any, cmd: any) => { completeCalls.push(cmd); return { id: 'expense-1' }; } } as any,
     // captureExpenseNote
     {
@@ -425,6 +436,9 @@ function makeHarness(opts: {
       : undefined) as any,
     opts.expenseDraftConversation,
   );
+  // The dispatcher's own logger, so a test can assert what an operator sees at level 40.
+  const warnings: any[] = [];
+  (useCase as any).logger = { warn: (payload: any) => warnings.push(payload), error: () => {}, log: () => {}, debug: () => {} };
   const jpegBytes = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
   (useCase as any).downloadLineMedia = async () => opts.mediaDownloadFails ? null : ({
     fileName: 'image.jpg', mimeType: 'image/jpeg', byteSize: jpegBytes.byteLength,
@@ -434,7 +448,7 @@ function makeHarness(opts: {
     uploads.push({ intent, media });
     if (opts.uploadThrows) throw new Error('storage PUT failed');
   };
-  return { useCase, replies, captured, signatureCreated, routeRequests, turnRequests, ocrRequests, uploads, initCalls, completeCalls, createUploadIntentCalls, completeAttachmentCalls, createExpenseCalls, linkAttachmentCalls, updateExpenseCalls, candidateQueries, correctionCalls, substituteCalls, checkBillStarts, mediaContextCalls, attachMediaCalls, linkScanCalls, receiptContinuationCalls, draftsCreated, sentMessages, ledgerAcks };
+  return { useCase, replies, captured, signatureCreated, routeRequests, turnRequests, ocrRequests, uploads, initCalls, completeCalls, createUploadIntentCalls, completeAttachmentCalls, createExpenseCalls, linkAttachmentCalls, updateExpenseCalls, candidateQueries, correctionCalls, substituteCalls, checkBillStarts, mediaContextCalls, attachMediaCalls, linkScanCalls, receiptContinuationCalls, draftsCreated, sentMessages, ledgerAcks, warnings };
 }
 
 const TEXT_EVENT = {
@@ -3788,6 +3802,10 @@ describe('LINE capture branch default – every LINE-originated draft (UAT 2026-
     assert.doesNotMatch(reply, /เกิดข้อผิดพลาดชั่วคราว/, 'a retry reproduces this exactly — never "temporary"');
     assert.match(reply, /หลายสาขา/, 'says WHY nothing was saved');
     assert.match(reply, /เว็บ/, 'points at the place with a branch picker');
+    // The tail is lane-specific and this is the PARKED lane: `ensurePendingMedia` swallows any new
+    // image while the row lives, so "send the photo again" would be a second false instruction.
+    assert.match(reply, /ไฟล์เดิมยังเก็บไว้ให้อยู่ แล้วตอบข้อความเดิมอีกครั้งได้เลยค่ะ$/);
+    assert.doesNotMatch(reply, /ส่งรูปเดิมเข้ามาใหม่/, 'a re-send here is silently dropped');
     // Same terminal state the DIRECT photo path records for the same refusal (2026-08-27).
     assert.equal(h.updates.at(-1)?.data.status, 'clarification_required');
     assert.equal(h.updates.at(-1)?.data.errorCode, 'RECEIPT_BRANCH_SELECTION_REQUIRED');
@@ -3822,6 +3840,60 @@ describe('LINE capture branch default – every LINE-originated draft (UAT 2026-
 
     assert.match(h.replies.join('\n'), /เกิดข้อผิดพลาดชั่วคราว/, 'an unknown fault really may pass on a retry');
     assert.equal(updates.at(-1)?.data.status, 'substitute_media_answer_failed');
+  });
+
+  // The tail the refusal above prints has to be the instruction that actually works. It says
+  // "answer the same message again", so answering it again — once an admin has set the member's
+  // default branch — must complete the capture off the SAME parked bytes.
+  it('(c4) and the instruction it gives works: the same answer succeeds once a default branch exists', async () => {
+    const { prisma, pendingMediaRows, updates } = makePrisma({ branches: AMBIGUOUS_BRANCHES });
+    seedPendingRow(pendingMediaRows, { askedQuestionJson: askedCheckBill() });
+    const refused = makeHarness({ permissions: CAPTURE_PERMISSIONS, prisma, substituteResult: blockedContinuation });
+
+    await refused.useCase.execute(CHECK_BILL_ANSWER);
+
+    assert.equal(refused.createExpenseCalls.length, 0);
+    assert.equal(pendingMediaRows[0].status, 'PENDING', 'the bytes survive the refusal');
+
+    // The admin sets สาขาประจำตัว, exactly what the reply asked for. Same chat, same parked row,
+    // the sender simply answers "1" again.
+    const fixed = makePrisma({ branches: AMBIGUOUS_BRANCHES, memberDefaultBranchId: 'silom' });
+    (fixed.prisma.client as any).lineIntakePendingMedia = (prisma.client as any).lineIntakePendingMedia;
+    const retry = makeHarness({ permissions: CAPTURE_PERMISSIONS, prisma: fixed.prisma, substituteResult: blockedContinuation });
+
+    await retry.useCase.execute({ ...CHECK_BILL_ANSWER, webhookEventId: 'evt-check-bill-answer-2' });
+
+    assert.equal(retry.createExpenseCalls.length, 1, 'the retyped answer completes the capture');
+    assert.equal(retry.createExpenseCalls[0].branchId, 'silom');
+    assert.equal(retry.createExpenseCalls[0].lineMessageId, 'msg-media-1', 'off the ORIGINAL parked bytes');
+    assert.equal(pendingMediaRows[0].status, 'RESOLVED_RECEIPT');
+    assert.equal(updates.at(-1)?.data.errorCode, 'RECEIPT_BRANCH_SELECTION_REQUIRED', 'the refusal turn kept its own status');
+  });
+
+  // The DIRECT lane's refusal had no test on this branch at all: a mutant that made
+  // `executeReceiptUpload` skip the shared map left the whole file green.
+  it('(c5) the DIRECT photo refusal uses the map, its own tail, and stores nothing', async () => {
+    const { prisma, pendingMediaRows, updates } = makePrisma({ branches: AMBIGUOUS_BRANCHES });
+    const h = makeHarness({
+      permissions: CAPTURE_PERMISSIONS, prisma, routePlan: CAPTURE_PLAN, receiptOcrResult: validReceiptOcr(),
+    });
+
+    const result = await h.useCase.executeReceiptUpload(MEDIA_EVENT);
+
+    assert.equal(result.outcome, 'done');
+    assert.equal(h.initCalls.length, 0, 'the branch refusal precedes every write');
+    assert.equal(pendingMediaRows.length, 0, 'an expense turn parks nothing');
+    const reply = h.replies.join('\n');
+    assert.doesNotMatch(reply, /เกิดข้อผิดพลาดชั่วคราว/);
+    assert.doesNotMatch(reply, /ประมวลผลรูปนี้ไม่สำเร็จ/, 'not the generic media-failure copy either');
+    assert.match(reply, /หลายสาขา/);
+    // Nothing was stored here, so re-sending the picture really is the way back in.
+    assert.match(reply, /แล้วส่งรูปเดิมเข้ามาใหม่ได้เลยค่ะ$/);
+    assert.doesNotMatch(reply, /ตอบข้อความเดิมอีกครั้ง/, 'there is no parked question to answer');
+    assert.equal(updates.at(-1)?.data.status, 'clarification_required');
+    assert.equal(updates.at(-1)?.data.errorCode, 'RECEIPT_BRANCH_SELECTION_REQUIRED');
+    assert.equal(h.warnings.length, 1, 'one operator-visible line, not a stack trace');
+    assert.equal(h.warnings[0].msg, 'LINE receipt upload needs branch selection');
   });
 
   it('(d) the RECEIPT-05 "confirmed receipt" answer takes the same default', async () => {
