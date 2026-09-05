@@ -131,13 +131,21 @@ re-run; outputs (`.github/workflows/deploy-production.yml`,
 
 Integration review of 4ded0fa3 passed. What the integration work consisted of:
 
-- **`--onto` rebase, not a plain one.** `origin/codex/line-signup-c-admin` (5b811c28) is NOT a
-  descendant of `origin/develop`: it branched at 74303618 and develop has since moved 34 commits
-  ahead. `git rebase <L-C>` therefore replays 43 commits, dragging develop's L-A/L-A2/docs work
-  into L-E and making `L-C..HEAD` 35 files. L-C already carries the L-A2 *code* through its own
-  lineage; the develop-only content it lacks is docs (spec v4 +350, plan v2 +135, review round 1
+- **`--onto` rebase, not a plain one.** At the time of the rebase, L-C (5b811c28) was not a
+  descendant of `origin/develop`: it branched at 74303618 and develop had moved 34 commits ahead.
+  A plain `git rebase <L-C>` therefore replayed 43 commits, dragging develop's L-A/L-A2/docs work
+  into L-E and making `L-C..HEAD` 35 files. L-C already carried the L-A2 *code* through its own
+  lineage; the develop-only content it lacked was docs (spec v4 +350, plan v2 +135, review round 1
   +112). So the rebase used `git rebase --onto origin/codex/line-signup-c-admin 74ccbb07`, which
-  replays L-E's 11 commits alone. **L-C still needs its own rebase onto develop before merge.**
+  replays L-E's 11 commits alone.
+- **That divergence is now closed (verified 2026-09-05).** `origin/develop` was merged INTO
+  `codex/line-signup-c-admin` (merge commit 5d26d125, a docs-only difference: spec v4, plan v2,
+  review round 1, task memory; pins current), so L-C is 0 behind develop and L-E's base 5b811c28
+  is an ancestor of it. Checked with `git merge-base --is-ancestor` both ways. **L-E needs no
+  further rebase**, and the earlier "L-C must rebase onto develop first" caveat no longer applies.
+
+  Integration order: **docs-2 PR → develop; L-C PR (contains L-B, already merged with develop) →
+  develop; L-E PR → develop; develop → main.** No UAT deploy until the Owner orders it.
 - Conflicts and how they were settled: `auth.controller.ts` keep both constructor params
   (`exchangeLiffSession` 28, `accountProfile` 29, `audit` 30); `apps/api/package.json` union of
   appended spec paths, verified by parsing (455 specs, 0 duplicates); the two pin files take
