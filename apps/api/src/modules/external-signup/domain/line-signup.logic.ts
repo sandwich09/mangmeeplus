@@ -17,13 +17,31 @@ export function normalizeLineCompanyName(value: string): string {
 /**
  * Thai mobile: exactly 10 digits starting 0, however the shop owner spaced or dashed it. Same rule
  * as the web signup form's `isThaiMobile`, restated here because it lives in the web bundle.
- * Blank is a legitimate answer — the field is labelled optional on purpose (spec §3.2).
+ * Blank returns null — `account-profile` uses that to clear a stored number. The LIFF signup form
+ * goes through `requireThaiMobile` instead, which refuses blank (spec §3.2).
  */
 export function normalizeThaiMobile(value: string | undefined | null): string | null {
   const digits = (value ?? '').replace(/[^0-9]/g, '');
   if (!digits) return null;
   if (!/^0\d{9}$/.test(digits)) throw new Error('invalid_phoneNumber');
   return digits;
+}
+
+/**
+ * The LIFF form's phone field, required since Owner 2026-09-05 (spec §3.2). Same digit rule as
+ * `normalizeThaiMobile` — which stays optional-tolerant because `account-profile` uses blank to
+ * CLEAR a stored number — but blank is an answer to refuse here, and the two outcomes carry their
+ * own codes so the page can name the field rather than print a generic failure.
+ */
+export function requireThaiMobile(value: string | undefined | null): string {
+  let phone: string | null;
+  try {
+    phone = normalizeThaiMobile(value);
+  } catch {
+    throw new Error('line_signup_phone_invalid');
+  }
+  if (!phone) throw new Error('line_signup_phone_required');
+  return phone;
 }
 
 export function normalizeReferralCode(value: string | undefined | null): string | null {
