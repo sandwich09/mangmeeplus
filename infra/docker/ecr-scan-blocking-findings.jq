@@ -1,43 +1,35 @@
 def finding_attribute($key):
   ([.attributes[]? | select(.key == $key) | .value][0] // "");
 
-# Waived: the four Debian openssl 3.0.20-1~deb12u2 HIGH findings. The package enters the image
-# only as a hard dependency of ca-certificates (removing it was probed and refused 2026-08-27);
-# the runtime is Node 22 with its own bundled OpenSSL 3.5.7, no code path executes the openssl
-# CLI (repo grep), and no process in the image terminates QUIC, DTLS, CMP or CMS. Each waiver
-# matches ONE CVE by name plus a provider-statement anchor from its advisory text — any drift in
-# package, version, severity or statement stays blocking. Debian has not shipped a fixed build
-# yet (base pulled fresh 2026-08-27 still carries 3.0.20-1~deb12u2); re-evaluate at expiry.
-def openssl_waiver_table: [
-  { id: "AWS-ECR-CVE-2026-14456-OPENSSL-PRE35-MAPPING",
-    cve: "CVE-2026-14456",
-    anchor: "The issue is present since OpenSSL 3.5 when the QUIC server implementation was added.",
-    reachabilityEvidence: "Provider states the issue begins in OpenSSL 3.5 QUIC server; the scanned package is 3.0.20." },
+# Every ECR HIGH/CRITICAL finding the Owner has waived, one row per finding. Each row matches ONE CVE
+# by name plus its severity, package, version and a provider-statement anchor copied verbatim from the
+# advisory description — any drift in any of those stays blocking, and severity/package/version are
+# per row so the CRITICAL openssl row can never loosen the HIGH-only ones. Reachability is the same
+# story for all five: the runtime is Node 22 with its own bundled OpenSSL and zlib, so the Debian
+# packages are not reached by the api, web, workers or gateway processes; openssl enters the image
+# only as a hard dependency of ca-certificates and, in the api image, of the ClamAV 1.5.3 .deb.
+def waiver_rows: [
   { id: "AWS-ECR-CVE-2026-54874-OPENSSL-DTLS-UNUSED",
     cve: "CVE-2026-54874",
+    severity: "HIGH",
+    package: "openssl",
+    version: "3.0.20-1~deb12u2",
     anchor: "Receiving a DTLS record for a future epoch while a handshake is in progress",
     reachabilityEvidence: "No process in the image speaks DTLS; the runtime is Node 22 with bundled OpenSSL 3.5.7 and the Debian package enters only as a ca-certificates dependency." },
   { id: "AWS-ECR-CVE-2026-63072-OPENSSL-CMS-UNUSED",
     cve: "CVE-2026-63072",
+    severity: "HIGH",
+    package: "openssl",
+    version: "3.0.20-1~deb12u2",
     anchor: "reachable from the public CMS_decrypt() function",
     reachabilityEvidence: "No process in the image calls CMS_decrypt and the openssl CLI is never executed (repo-verified 2026-08-27)." },
   { id: "AWS-ECR-CVE-2026-63076-OPENSSL-CMP-UNUSED",
     cve: "CVE-2026-63076",
+    severity: "HIGH",
+    package: "openssl",
+    version: "3.0.20-1~deb12u2",
     anchor: "CMP is a specialized feature that an application must explicitly enable.",
-    reachabilityEvidence: "No process in the image enables CMP and the openssl CLI is never executed (repo-verified 2026-08-27)." }
-];
-
-def openssl_waiver_expiry: 1788998400;
-def openssl_waiver_approval: "CHAT-OWNER-DIRECTIVE-2026-08-27-FIX-ALL-UNTIL-DEPLOY-SUCCEEDS";
-
-# Waived 2026-09-05: two NEW base-image findings Debian has not fixed either — security-tracker lists
-# bookworm openssl 3.0.20-1~deb12u2 and zlib 1:1.2.13.dfsg-1 as still vulnerable, and the newest
-# upstream node:22-bookworm-slim digest ships the same two packages, so bumping the pinned base does
-# not clear them. Same rules as the four above: exact CVE plus a provider-statement anchor, with the
-# severity, package and version carried per row so the CRITICAL row cannot loosen the HIGH-only ones.
-# Any drift in package, version, severity or statement stays blocking. Separate expiry def so these
-# two expire independently of the four above.
-def debian_2026_09_waiver_table: [
+    reachabilityEvidence: "No process in the image enables CMP and the openssl CLI is never executed (repo-verified 2026-08-27)." },
   { id: "AWS-ECR-CVE-2026-75803-OPENSSL-EVP-CIPHER-UNUSED",
     cve: "CVE-2026-75803",
     severity: "CRITICAL",
@@ -54,17 +46,26 @@ def debian_2026_09_waiver_table: [
     reachabilityEvidence: "Provider states the affected range is zlib 1.3.1.2 through 1.3.2 while the scanned Debian package is 1.2.13. Node bundles its own zlib, and no process in any image writes gzip streams through the system zlib non-blocking gzwrite()/gzprintf() API (repo-verified 2026-09-05)." }
 ];
 
-def debian_2026_09_waiver_expiry: 1789776000;
-def debian_2026_09_waiver_approval: "CHAT-OWNER-DIRECTIVE-2026-09-05-UAT-DEPLOY-WAIVER";
+# Renewed 2026-09-05 to 2026-10-05T00:00:00Z. The 2026-08 batch (expired 2026-09-10) and the 2026-09
+# batch (expired 2026-09-19) were renewed together under one Owner directive, so they now share one
+# expiry and one approval def. security-tracker.debian.org, read 2026-09-05: bookworm
+# `openssl 3.0.20-1~deb12u2` is still `vulnerable` for CVE-2026-54874, CVE-2026-63072, CVE-2026-63076
+# and CVE-2026-75803 with no bookworm fixed version (fixed only in trixie-security 3.5.7-1~deb13u2
+# and sid 3.6.4-1), and CVE-2026-85091 has no fixed zlib in ANY suite — bumping the pinned
+# node:22-bookworm-slim digest clears none of them. Re-evaluate at expiry: a further renewal needs
+# fresh evidence and a NEW Owner approval id, never a silently extended epoch.
+#
+# Retired 2026-09-05: `AWS-ECR-CVE-2026-14456-OPENSSL-PRE35-MAPPING`. ECR stopped reporting the
+# finding and the tracker now records bookworm openssl as `<not-affected> (Vulnerble code introduced
+# later)`, so the mapping exception is deleted rather than renewed — it would block again if it ever
+# returns.
+def waiver_expiry: 1791158400;
+def waiver_approval: "CHAT-OWNER-DIRECTIVE-2026-09-05-CVE-WAIVER-RENEWAL-2026-10-05";
 
-# One matchable table. The four 2026-08 rows are all HIGH openssl 3.0.20-1~deb12u2 under the shared
-# expiry and approval, so those constants are attached here rather than repeated on every row.
+# Expiry and approval are attached here rather than repeated on every row. A future batch that needs
+# to lapse on its own schedule gets its own rows/expiry/approval defs and is appended with `+`.
 def waiver_table:
-  [openssl_waiver_table[] | . + {
-      severity: "HIGH", package: "openssl", version: "3.0.20-1~deb12u2",
-      expiry: openssl_waiver_expiry, approval: openssl_waiver_approval }]
-  + [debian_2026_09_waiver_table[] | . + {
-      expiry: debian_2026_09_waiver_expiry, approval: debian_2026_09_waiver_approval }];
+  [waiver_rows[] | . + { expiry: waiver_expiry, approval: waiver_approval }];
 
 def matched_waiver_row:
   . as $finding
