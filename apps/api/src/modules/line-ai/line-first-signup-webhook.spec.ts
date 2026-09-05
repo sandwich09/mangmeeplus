@@ -4,7 +4,8 @@ import { createHmac } from 'node:crypto';
 import { LineWebhookController } from '../auth/presentation/line-webhook.controller';
 import {
   LINE_FOLLOW_EVENT_TEXT, PACKAGE_CHANGE_COMMAND, PROFILE_GUARD_COMMAND, PROFILE_GUARD_LATER_COMMAND,
-  STAFF_CONTACT_COMMAND, EMPLOYEE_DOOR_COMMAND, linePostbackCommandText, staffMenuCommand,
+  STAFF_CONTACT_COMMAND, EMPLOYEE_DOOR_COMMAND, RESUME_AI_COMMAND,
+  linePostbackCommandText, staffMenuCommand,
 } from './domain/logic/line-staff-menu.logic';
 import { buildSignupDoorCard, buildSignupStatusCard, buildAiBudgetExceededMessage } from './domain/logic/line-business-card.logic';
 import { classifyLineAiGatewayFailure } from './domain/logic/line-ai-terminal-outcome.logic';
@@ -173,11 +174,17 @@ describe('P10-L door and status cards (§3.1/§7)', () => {
 type Harness = ReturnType<typeof harness>;
 
 function harness(options: {
-  pendingSignup?: { companyName: string } | null;
+  pendingSignup?: { id: string; companyName: string } | null;
   identity?: { userId: string; user: { status: string; aiAssistantOptOutAt: Date | null; displayName: string } } | null;
   ownerMembership?: any;
+  /** ACTIVE memberships in ACTIVE companies — what `resolveCompanyForLineUser` reads (§2.1.1). */
+  memberships?: Array<{ companyId: string; roles: unknown[] }>;
   context?: { companyId: string; aiPausedUntil: Date | null } | null;
   contextUpdateCount?: number;
+  /** An OPEN `LineSupportRequest` for this LINE user, if one is already in the queue (§2.2.4). */
+  openSupportRequest?: { id: string } | null;
+  /** The last thing this customer typed, as `AiTurn` kept it. */
+  lastTurn?: { userMessagePreview: string | null } | null;
   /** Absent means LINE_MESSAGING_CHANNEL_ID is unset (L-19). */
   channelId?: string;
   liffId?: string;
@@ -188,6 +195,9 @@ function harness(options: {
   const packageChanges: any[] = [];
   const supportNotices: any[] = [];
   const contextUpdates: any[] = [];
+  const contextUpserts: any[] = [];
+  const supportRequests: any[] = [];
+  const supportClosures: any[] = [];
   const membershipQueries: any[] = [];
   const errors: any[] = [];
 
@@ -200,12 +210,27 @@ function harness(options: {
           contextUpdates.push(args);
           return { count: options.contextUpdateCount ?? (options.context ? 1 : 0) };
         },
+        upsert: async (args: any) => { contextUpserts.push(args); return {}; },
       },
+      // §2.1: the request row IS the fact of the ask, written before anyone is notified.
+      lineSupportRequest: {
+        findFirst: async () => options.openSupportRequest ?? null,
+        create: async (args: any) => { supportRequests.push(args); return { id: 'sr-1' }; },
+        updateMany: async (args: any) => { supportClosures.push(args); return { count: 1 }; },
+      },
+      aiTurn: { findFirst: async () => options.lastTurn ?? null },
       externalIdentity: { findFirst: async () => options.identity ?? null },
       companyMembership: {
         // The role and company-status filters ARE the guard here, so the query is recorded: a fake
         // that only returns a row cannot tell whether the guard was asked for.
-        findFirst: async (args: any) => { membershipQueries.push(args); return options.ownerMembership ?? null; },
+        findFirst: async (args: any) => {
+          membershipQueries.push(args);
+          // Two shapes, two questions: the package-change owner check asks for a ROLE; the
+          // profile-guard and support-asker lookups ask only "any shop this person is still in".
+          if (args?.where?.roles) return options.ownerMembership ?? null;
+          return options.memberships?.[0] ?? options.ownerMembership ?? null;
+        },
+        findMany: async (args: any) => { membershipQueries.push(args); return options.memberships ?? []; },
       },
       companyPlanTerm: { findUnique: async () => null },
       lineWebhookEventLog: {
@@ -247,12 +272,15 @@ function harness(options: {
     // before the two P10-L collaborators, which the constructor deliberately keeps last.
     ...Array.from({ length: 17 }, () => undefined),
     { create: async (cmd: any) => { packageChanges.push(cmd); return { id: 'pcr-1' }; } } as any,
-    { enqueueSupportRequest: async (lineUserId: string, companyId: string | null) => { supportNotices.push({ companyId, lineUserId }); } } as any,
+    { enqueueSupportRequest: async (supportRequestId: string) => { supportNotices.push(supportRequestId); } } as any,
   );
 
   // The use case builds its own Logger; capture what it writes at ERROR.
   (useCase as any).logger = { error: (entry: any) => errors.push(entry), warn: () => {}, log: () => {} };
-  return { useCase, replies, eventLog, audits, packageChanges, supportNotices, contextUpdates, membershipQueries, errors };
+  return {
+    useCase, replies, eventLog, audits, packageChanges, supportNotices, contextUpdates, contextUpserts,
+    supportRequests, supportClosures, membershipQueries, errors,
+  };
 }
 
 const event = (text: string) => ({
@@ -358,49 +386,103 @@ describe('P10-L webhook doors', () => {
   });
 });
 
-describe('P10-L contact-staff pause (§8)', () => {
-  it('answers, pauses the assistant for 24 hours and tells the operators', async () => {
-    const h = harness({ context: { companyId: 'co-1', aiPausedUntil: null } });
+describe('P10-L contact-staff pause (§8), rewritten by line-support-request-spec-th §2.1', () => {
+  const linked = { userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } };
+
+  it('opens a request against the shop the asker is in NOW, and pauses the assistant', async () => {
+    const h = harness({
+      identity: linked,
+      memberships: [{ companyId: 'co-now', roles: [] }],
+      // E2: the context row still points at a shop this person unlinked from on 2026-09-02.
+      context: { companyId: 'co-stale', aiPausedUntil: null },
+      lastTurn: { userMessagePreview: 'ส่งใบเสร็จแล้วไม่เห็นขึ้นเลยค่ะ' },
+    });
     await h.useCase.execute(event(STAFF_CONTACT_COMMAND));
 
     assert.match(rendered(h), /รับเรื่องแล้วค่ะ/);
-    const pausedUntil = h.contextUpdates[0].data.aiPausedUntil as Date;
+    assert.match(rendered(h), /098-256-5628/, 'and the number for someone in a hurry');
+    assert.match(rendered(h), /คุยกับ AI ต่อ/, 'and the way back out of the pause');
+    assert.equal(h.supportRequests[0].data.companyId, 'co-now', 'membership decides, not the stale row');
+    assert.equal(h.supportRequests[0].data.lastMessageText, 'ส่งใบเสร็จแล้วไม่เห็นขึ้นเลยค่ะ');
+    assert.match(h.supportRequests[0].data.lineUserIdHash, /^[0-9a-f]{16}$/);
+    assert.deepEqual(h.supportNotices, ['sr-1'], 'the notice names the request, not a shop and a day');
+
+    const pausedUntil = h.contextUpserts[0].update.aiPausedUntil as Date;
     const hours = (pausedUntil.getTime() - Date.now()) / 3_600_000;
     assert.ok(hours > 23.9 && hours <= 24, `pause is 24h, got ${hours}`);
-    assert.deepEqual(h.supportNotices, [{ companyId: 'co-1', lineUserId: 'Uline-1' }]);
   });
 
   // The worst outcome this flow can produce: telling a stranger "รับเรื่องแล้ว" and telling nobody.
-  // An unlinked prospect has no context row, and is exactly who most needs a person.
-  it('tells the operators even when there is no shop to pause', async () => {
-    const h = harness({ context: null });
+  it('files an unlinked asker against their pending application, and pauses nothing', async () => {
+    const h = harness({
+      identity: null,
+      context: { companyId: 'co-stale', aiPausedUntil: null },
+      pendingSignup: { id: 'sr-signup-1', companyName: 'The sun coffee' },
+    });
     await h.useCase.execute(event(STAFF_CONTACT_COMMAND));
 
     assert.match(rendered(h), /รับเรื่องแล้วค่ะ/);
-    assert.deepEqual(h.supportNotices, [{ companyId: null, lineUserId: 'Uline-1' }]);
+    assert.equal(h.supportRequests[0].data.companyId, undefined, 'no membership, no shop');
+    assert.equal(h.supportRequests[0].data.signupRequestId, 'sr-signup-1', 'the queue link instead');
+    assert.deepEqual(h.contextUpserts, [], 'nobody to pause: they are talking to the door card');
+    assert.deepEqual(h.supportNotices, ['sr-1']);
   });
 
-  // MEDIUM-6: a customer who asks twice inside the same pause is already in the queue. The alert
-  // fires on the not-paused → paused transition; the daily outbox key is the durable second guard.
-  it('does not re-alert while the pause it already opened is still running', async () => {
-    const h = harness({ context: { companyId: 'co-1', aiPausedUntil: new Date(Date.now() + 3_600_000) } });
+  it('files an unlinked asker with no application at all rather than dropping them', async () => {
+    const h = harness({ identity: null, context: null, pendingSignup: null });
     await h.useCase.execute(event(STAFF_CONTACT_COMMAND));
 
-    assert.match(rendered(h), /รับเรื่องแล้วค่ะ/, 'the customer is still answered');
+    assert.equal(h.supportRequests.length, 1);
+    assert.equal(h.supportRequests[0].data.signupRequestId, undefined);
+    assert.deepEqual(h.supportNotices, ['sr-1']);
+  });
+
+  // §2.2.4. Dedupe is per OPEN request, not per day: yesterday's answered request must never be
+  // the reason today's customer reaches nobody.
+  it('answers a repeat tap with "still in the queue" and pages nobody twice', async () => {
+    const h = harness({
+      identity: linked,
+      memberships: [{ companyId: 'co-now', roles: [] }],
+      context: { companyId: 'co-now', aiPausedUntil: new Date(Date.now() + 3_600_000) },
+      openSupportRequest: { id: 'sr-open' },
+    });
+    await h.useCase.execute(event(STAFF_CONTACT_COMMAND));
+
+    assert.match(rendered(h), /ยังอยู่ในคิว/, 'the customer is still answered');
+    assert.deepEqual(h.supportRequests, [], 'and no second request is opened');
     assert.deepEqual(h.supportNotices, []);
-    assert.ok(h.contextUpdates[0].data.aiPausedUntil, 'and the pause is extended, not left to lapse');
+    assert.ok(h.contextUpserts[0].update.aiPausedUntil, 'the pause is extended, not left to lapse');
+    assert.equal(outcome(h), 'support_already_open');
+  });
+
+  // §2.4. The other half of the complaint: a 24h pause with no way out.
+  it('lets the customer bring the assistant back, and closes their request with it', async () => {
+    const h = harness({ identity: linked, context: { companyId: 'co-now', aiPausedUntil: new Date(Date.now() + 3_600_000) } });
+    await h.useCase.execute(event(RESUME_AI_COMMAND));
+
+    assert.match(rendered(h), /น้องมั่งมีกลับมาแล้ว/);
+    assert.deepEqual(h.contextUpdates[0].data, { aiPausedUntil: null });
+    assert.equal(h.supportClosures[0].data.closedReason, 'customer_resumed');
+    assert.equal(h.supportClosures[0].where.status, 'OPEN');
+    assert.equal(outcome(h), 'support_resumed');
+  });
+
+  it('answers the resume command the same way with no pause and no account', async () => {
+    const h = harness({ identity: null, context: null });
+    await h.useCase.execute(event('ให้ AI ตอบ'));
+
+    assert.match(rendered(h), /น้องมั่งมีกลับมาแล้ว/, 'a promise must not depend on state nobody can see');
+    assert.equal(outcome(h), 'support_resumed');
   });
 
   it('holds the assistant back while the pause runs, and lets go once it expires', async () => {
-    const identity = { userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } };
-
-    const paused = harness({ identity, context: { companyId: 'co-1', aiPausedUntil: new Date(Date.now() + 3_600_000) } });
+    const paused = harness({ identity: linked, context: { companyId: 'co-1', aiPausedUntil: new Date(Date.now() + 3_600_000) } });
     await paused.useCase.execute(event('ยอดขายวันนี้'));
     assert.match(rendered(paused), /ทีมงานรับเรื่องแล้ว/);
     assert.equal(outcome(paused), 'support_paused');
 
     // Self-expiring: a stamp in the past is the same as no stamp, with nothing to clean up.
-    const expired = harness({ identity, context: { companyId: 'co-1', aiPausedUntil: new Date(Date.now() - 1) } });
+    const expired = harness({ identity: linked, context: { companyId: 'co-1', aiPausedUntil: new Date(Date.now() - 1) } });
     await expired.useCase.execute(event(STAFF_CONTACT_COMMAND));
     assert.equal(outcome(expired), 'support_requested', 'the turn ran normally again');
   });
