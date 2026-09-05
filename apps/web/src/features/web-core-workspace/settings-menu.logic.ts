@@ -1,3 +1,4 @@
+import { COMPANY_PROFILE_SETTINGS_PATH } from '@watchdog-bms/contracts';
 import type { MangmeeTone } from '@/common/components/mangmee';
 import { canSeeRoute } from './route-permissions';
 
@@ -18,7 +19,7 @@ export const SETTINGS_MENU_ITEMS: readonly SettingsMenuItem[] = [
   // never asked for. First on purpose — for those customers it is the only entry that applies.
   {
     key: 'company-profile',
-    href: '/settings/profile',
+    href: COMPANY_PROFILE_SETTINGS_PATH,
     title: 'ข้อมูลร้านและบัญชีของฉัน',
     desc: 'ชื่อจดทะเบียน เลขผู้เสียภาษี ที่อยู่ และอีเมล เบอร์ รหัสผ่านสำรองของคุณ',
     iconKey: 'LockIcon',

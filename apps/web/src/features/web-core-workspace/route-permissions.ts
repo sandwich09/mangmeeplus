@@ -1,3 +1,5 @@
+import { COMPANY_PROFILE_SETTINGS_PATH } from '@watchdog-bms/contracts';
+
 export type RoutePermissionRule = {
   path: string;
   anyOf: readonly string[];
@@ -13,7 +15,7 @@ export const ROUTE_PERMISSION_RULES: readonly RoutePermissionRule[] = [
   // manager can open the page and read the masked shop block plus their own account section; the
   // shop form itself un-masks and saves only for a holder of `company.legal_identity.manage`,
   // which the API enforces and the registry keeps OWNER-only pending QP2.
-  { path: '/settings/profile', anyOf: ['company.setup.read'] },
+  { path: COMPANY_PROFILE_SETTINGS_PATH, anyOf: ['company.setup.read'] },
   { path: '/settings/line-oa', anyOf: ['crm.channel.manage'] },
   { path: '/settings/notifications', anyOf: ['notification.preference.manage'] },
   { path: '/settings/notification-rules', anyOf: ['notification.rule.manage'] },

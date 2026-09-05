@@ -189,6 +189,25 @@ describe('the completeness card stays out of the way', () => {
     assert.match(card, /\.catch\(\(\) => \{ if \(!cancelled\) setItems\(null\); \}\)/);
   });
 
+  // L2: the dismissal must outlive the tab; the 10-minute answer cache need not.
+  it('keeps the dismissal in localStorage and the answer cache in sessionStorage', () => {
+    assert.match(card, /readChecklistDismissal\(typeof window === 'undefined' \? undefined : window\.localStorage, companyId\)/);
+    assert.match(card, /dismissChecklistFor\(typeof window === 'undefined' \? undefined : window\.localStorage, companyId\)/);
+    assert.match(card, /const storage = typeof window === 'undefined' \? undefined : window\.sessionStorage;/);
+  });
+
+  // L1: a save makes the cached answer wrong.
+  it('is invalidated by every save on the profile page', () => {
+    const page = readFileSync(new URL('./CompanyProfilePage.tsx', import.meta.url), 'utf8');
+    for (const handler of ['const saveShop', 'const saveVat', 'const saveEmail', 'const savePassword']) {
+      const start = page.indexOf(handler);
+      assert.notEqual(start, -1, handler);
+      const body = page.slice(start, page.indexOf('\n  };', start));
+      assert.match(body, /invalidateChecklist\(\)/, `${handler}: the dashboard would keep showing the completed item as missing`);
+    }
+    assert.match(page, /clearChecklistCache\(typeof window === 'undefined' \? undefined : window\.sessionStorage, companyId\)/);
+  });
+
   it('reads the cache before it reaches for the network', () => {
     const effect = card.slice(card.indexOf('useEffect(() => {'), card.indexOf('if (hidden ||'));
     const cacheAt = effect.indexOf('readChecklistCache(');
@@ -202,7 +221,7 @@ describe('the completeness card stays out of the way', () => {
   it('offers "ไว้ก่อน" and actually records it', () => {
     assert.match(card, /ไว้ก่อน/);
     const handler = card.slice(card.indexOf('const dismiss = () => {'), card.indexOf('return (', card.indexOf('const dismiss')));
-    assert.match(handler, /^\s*dismissChecklist\(/m, 'the button must record the dismissal, not merely mention it');
+    assert.match(handler, /^\s*dismissChecklistFor\(/m, 'the button must record the dismissal, not merely mention it');
     assert.match(handler, /setHidden\(true\)/);
   });
 });

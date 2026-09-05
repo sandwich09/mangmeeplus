@@ -6,9 +6,10 @@ import { getAccountProfile, getCompanyIdentity } from './company-profile.api';
 import {
   checklistIsComplete,
   companyProfileHref,
-  dismissChecklist,
+  dismissChecklistFor,
   profileChecklist,
   readChecklistCache,
+  readChecklistDismissal,
   writeChecklistCache,
   type ChecklistItem,
 } from './company-profile.logic';
@@ -19,8 +20,10 @@ import {
  * complete, nothing when either read fails — a dashboard is not the place to learn that a
  * settings API is down — and nothing for a week after "ไว้ก่อน".
  *
- * Cached per company in `sessionStorage`, because the email item cannot complete while SES is
- * sandboxed: without a cache this card would fire two GETs on every dashboard mount forever.
+ * The 10-minute answer cache lives in `sessionStorage` (a per-tab convenience — the email item
+ * cannot complete while SES is sandboxed, so without it the card fires two GETs on every dashboard
+ * mount forever). The 7-day "ไว้ก่อน" lives in `localStorage`, because an answer that dies with the
+ * tab is not an answer.
  */
 export function ProfileCompletenessCard({ companyId }: { companyId: string }) {
   const [items, setItems] = useState<ChecklistItem[] | null>(null);
@@ -29,6 +32,10 @@ export function ProfileCompletenessCard({ companyId }: { companyId: string }) {
   useEffect(() => {
     let cancelled = false;
     const storage = typeof window === 'undefined' ? undefined : window.sessionStorage;
+    if (readChecklistDismissal(typeof window === 'undefined' ? undefined : window.localStorage, companyId)) {
+      setHidden(true);
+      return;
+    }
 
     const cached = readChecklistCache(storage, companyId);
     if (cached === 'hidden') { setHidden(true); return; }
@@ -52,7 +59,7 @@ export function ProfileCompletenessCard({ companyId }: { companyId: string }) {
   if (hidden || !items || checklistIsComplete(items)) return null;
 
   const dismiss = () => {
-    dismissChecklist(typeof window === 'undefined' ? undefined : window.sessionStorage, companyId);
+    dismissChecklistFor(typeof window === 'undefined' ? undefined : window.localStorage, companyId);
     setHidden(true);
   };
 

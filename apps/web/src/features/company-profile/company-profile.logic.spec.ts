@@ -1,20 +1,25 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { todayCivilDate } from '@watchdog-bms/contracts';
 import {
   addressChanged,
   addressErrorMessages,
   buildIdentityPatch,
   checklistIsComplete,
   companyProfileHref,
-  dismissChecklist,
+  clearChecklistCache,
+  dismissChecklistFor,
   identityChangeKind,
   isThaiMobileInput,
   isThaiTaxIdInput,
   passwordFormError,
   profileChecklist,
   readChecklistCache,
+  readChecklistDismissal,
   usernameFieldRequired,
+  INVALID_USERNAME_MESSAGE,
+  USERNAME_PATTERN,
   writeChecklistCache,
   CHECKLIST_CACHE_TTL_MS,
 } from './company-profile.logic';
@@ -138,6 +143,17 @@ describe('addressErrorMessages', () => {
       ['กรุณากรอก จังหวัด', 'รหัสไปรษณีย์ ต้องเป็นตัวเลข 5 หลัก'],
     );
   });
+  // N2: only `is required` means "you left it blank" — telling an owner to fill in a box they
+  // already filled sends them to fix the wrong thing.
+  it('does not call a shape error an empty box', () => {
+    assert.deepEqual(
+      addressErrorMessages({ details: ['addressJson.province must be a string', 'addressJson.floor is not an allowed field'] }),
+      ['จังหวัด ค่าไม่ถูกต้อง'],
+      'an unknown key has no box to name, and a wrong-typed one is not a blank one',
+    );
+    assert.deepEqual(addressErrorMessages({ details: ['addressJson.district is required'] }), ['กรุณากรอก อำเภอ / เขต']);
+  });
+
   it('says nothing when the error is not about the address', () => {
     assert.deepEqual(addressErrorMessages({ message: 'stale' }), []);
     assert.deepEqual(addressErrorMessages(null), []);
@@ -240,11 +256,29 @@ describe('checklist cache', () => {
     assert.equal(readChecklistCache(storage, 'c-1', 1_000), 'hidden');
   });
 
-  it('honours "ไว้ก่อน" for a week, past the ordinary TTL', () => {
+  // L2: a 7-day answer stored in sessionStorage dies with the tab.
+  it('keeps "ไว้ก่อน" in a store that outlives the tab, for a week', () => {
+    const session = fakeStorage();
+    const local = fakeStorage();
+    dismissChecklistFor(local, 'c-1', 1_000);
+
+    assert.equal(session.store.size, 0, 'the dismissal must not be the tab-scoped store');
+    assert.equal(readChecklistDismissal(local, 'c-1', 1_000 + CHECKLIST_CACHE_TTL_MS * 2), true);
+    assert.equal(readChecklistDismissal(local, 'c-1', 1_000 + 6 * 24 * 60 * 60 * 1000), true);
+    assert.equal(readChecklistDismissal(local, 'c-1', 1_000 + 8 * 24 * 60 * 60 * 1000), false, 'a week later it may ask again');
+    assert.equal(readChecklistDismissal(local, 'c-2', 1_000), false, 'dismissing one shop is not dismissing them all');
+    assert.equal(readChecklistDismissal(undefined, 'c-1', 1_000), false);
+  });
+
+  // L1: after a save the cached answer still lists the item the owner just completed.
+  it('drops the cached answer so a save is visible on the next dashboard visit', () => {
     const storage = fakeStorage();
-    dismissChecklist(storage, 'c-1', 1_000);
-    assert.equal(readChecklistCache(storage, 'c-1', 1_000 + CHECKLIST_CACHE_TTL_MS * 2), 'hidden');
-    assert.equal(readChecklistCache(storage, 'c-1', 1_000 + 8 * 24 * 60 * 60 * 1000), null, 'a week later it may ask again');
+    writeChecklistCache(storage, 'c-1', incomplete, 1_000);
+    assert.deepEqual(readChecklistCache(storage, 'c-1', 1_000), incomplete);
+
+    clearChecklistCache(storage, 'c-1');
+    assert.equal(readChecklistCache(storage, 'c-1', 1_000), null, 'a stale answer must not survive a save');
+    assert.doesNotThrow(() => clearChecklistCache(undefined, 'c-1'));
   });
 
   it('is keyed per company, and survives junk or an unavailable store', () => {
@@ -253,11 +287,64 @@ describe('checklist cache', () => {
     assert.equal(readChecklistCache(storage, 'c-2', 1_000), null);
     assert.equal(readChecklistCache(fakeStorage({ 'watchdog.profileChecklist.c-1': 'not json' }), 'c-1', 1_000), null);
     assert.equal(readChecklistCache(undefined, 'c-1', 1_000), null);
-    // Private mode throws on write; the card must still render.
-    const throwing = { getItem: () => { throw new Error('denied'); }, setItem: () => { throw new Error('denied'); }, removeItem: () => {} };
+    // Private mode throws on every access; the card must still render.
+    const throwing = { getItem: () => { throw new Error('denied'); }, setItem: () => { throw new Error('denied'); }, removeItem: () => { throw new Error('denied'); } };
     assert.equal(readChecklistCache(throwing, 'c-1', 1_000), null);
+    assert.equal(readChecklistDismissal(throwing, 'c-1', 1_000), false);
     assert.doesNotThrow(() => writeChecklistCache(throwing, 'c-1', incomplete, 1_000));
-    assert.doesNotThrow(() => dismissChecklist(throwing, 'c-1', 1_000));
+    assert.doesNotThrow(() => dismissChecklistFor(throwing, 'c-1', 1_000));
+    assert.doesNotThrow(() => clearChecklistCache(throwing, 'c-1'));
+  });
+});
+
+// M2: the server validates effectiveFrom against the COMPANY's civil date, so a UTC date
+// back-dates a CRITICAL-audited legal record by a day for the first seven hours of every ICT day.
+describe('legal dates are Bangkok dates', () => {
+  it('does not back-date a legal change made just after midnight in Bangkok', () => {
+    const justAfterMidnightIct = new Date('2026-09-05T01:00:00+07:00');
+    assert.equal(justAfterMidnightIct.toISOString().slice(0, 10), '2026-09-04', 'precondition: UTC is still yesterday');
+
+    const closed = { ...CLOSED, legalIdentityVersion: 1 };
+    const current = { registeredName: 'เดิม', taxId: '0105558123456', addressJson: FULL_ADDRESS };
+    const result = buildIdentityPatch(
+      closed, current,
+      { registeredName: 'เดิม', taxId: '0105558999999', address: FULL_ADDRESS },
+      todayCivilDate('Asia/Bangkok', justAfterMidnightIct),
+    );
+    assert.ok('body' in result);
+    assert.equal(result.body['effectiveFrom'], '2026-09-05');
+  });
+
+  it('defaults to the Bangkok date, not the UTC one', () => {
+    const source = readFileSync(new URL('./company-profile.logic.ts', import.meta.url), 'utf8');
+    assert.match(source, /today: string = todayCivilDate\('Asia\/Bangkok'\)/);
+    const page = readFileSync(new URL('./CompanyProfilePage.tsx', import.meta.url), 'utf8');
+    assert.match(page, /effectiveFrom: todayCivilDate\('Asia\/Bangkok'\)/, 'the VAT fact carries a legal date too');
+    assert.doesNotMatch(page, /new Date\(\)\.toISOString\(\)\.slice\(0, 10\)/, 'no UTC date may reach a legal record');
+  });
+});
+
+// M1: a Thai owner typing สมชาย was getting a generic English sentence.
+describe('the username charset is explained before the server has to', () => {
+  it('names the rule in Thai, client-side, with the same regex the API uses', () => {
+    const account = { username: null, emailVerified: false };
+    for (const bad of ['สมชาย', 'ab', 'somchai@gmail.com', 'som chai']) {
+      assert.equal(
+        passwordFormError(account, { password: 'backup-password', confirmPassword: 'backup-password', username: bad }),
+        INVALID_USERNAME_MESSAGE,
+        bad,
+      );
+    }
+    assert.doesNotMatch(INVALID_USERNAME_MESSAGE, /[a-z]{3,}_[a-z]{3,}/, 'no snake_case code may leak into the copy');
+    for (const good of ['somchai', 'mangmee.shop', 'som_hai', 'som-chai']) {
+      assert.equal(passwordFormError(account, { password: 'backup-password', confirmPassword: 'backup-password', username: good }), null, good);
+    }
+  });
+
+  it('uses the same pattern the API enforces', () => {
+    assert.equal(USERNAME_PATTERN.source, /^[a-z0-9._-]{4,64}$/.source);
+    const api = readFileSync(new URL('../../../../api/src/modules/auth/application/use-cases/account-profile.use-case.ts', import.meta.url), 'utf8');
+    assert.ok(api.includes(`const USERNAME_PATTERN = ${USERNAME_PATTERN.toString()};`), 'the two copies must not drift');
   });
 });
 
@@ -291,7 +378,7 @@ describe('the profile route is reachable and dynamic', () => {
       'utf8',
     );
     assert.match(page, /export const dynamic = 'force-dynamic';/);
-    assert.match(page, /requireRoutePermission\(session, '\/settings\/profile'\)/);
+    assert.match(page, /requireRoutePermission\(session, COMPANY_PROFILE_SETTINGS_PATH\)/);
     assert.match(page, /permissions=\{session\?\.permissions \?\? \[\]\}/);
   });
 

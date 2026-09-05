@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
-import type { CompanyIdentityResponse, CompanyLegalAddress, VatFactStatus } from '@watchdog-bms/contracts';
+import { todayCivilDate, type CompanyIdentityResponse, type CompanyLegalAddress, type VatFactStatus } from '@watchdog-bms/contracts';
 import { apiErrorCode, apiErrorMessage } from '@/common/api/api-error-message';
 import { MangmeeCard, MangmeePage } from '@/common/components/mangmee';
 import { TextField } from '@/common/components/field';
@@ -22,6 +22,7 @@ import {
 import {
   addressErrorMessages,
   buildIdentityPatch,
+  clearChecklistCache,
   isThaiMobileInput,
   passwordFormError,
   usernameFieldRequired,
@@ -84,6 +85,12 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [passwordSaving, setPasswordSaving] = useState(false);
 
+  // L1: the dashboard card caches its answer for 10 minutes, so without this the item the owner
+  // just completed keeps reading as missing on the next dashboard visit.
+  const invalidateChecklist = useCallback(() => {
+    clearChecklistCache(typeof window === 'undefined' ? undefined : window.sessionStorage, companyId);
+  }, [companyId]);
+
   const load = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
@@ -134,6 +141,7 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
     setShopSaving(true);
     try {
       await patchCompanyIdentity(companyId, patch.body as never);
+      invalidateChecklist();
       toast.success('บันทึกข้อมูลร้านแล้วค่ะ');
       await load();
     } catch (error) {
@@ -154,8 +162,9 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
       await putVatRegistration(companyId, {
         commandId: `profile-vat-${companyId}-${status}-${identity.vatRegistration.version}`,
         expectedVersion: identity.vatRegistration.version,
-        command: { kind: 'UPSERT_FACT', status, effectiveFrom: new Date().toISOString().slice(0, 10) },
+        command: { kind: 'UPSERT_FACT', status, effectiveFrom: todayCivilDate('Asia/Bangkok') },
       });
+      invalidateChecklist();
       toast.success('บันทึกสถานะ VAT แล้วค่ะ');
       await load();
     } catch (error) {
@@ -176,6 +185,7 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
     setEmailSaving(true);
     try {
       await requestMyEmailVerification(email.trim(), account?.hasPassword ? emailPassword : undefined);
+      invalidateChecklist();
       setEmailSent(true);
       setEmailPassword('');
       await load();
@@ -217,6 +227,7 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
       setNewUsername('');
       // The stored form is lower-cased and the login box matches it case-sensitively, so telling
       // them what to type is the difference between a backup password and a locked door.
+      invalidateChecklist();
       toast.success(saved.username
         ? `ตั้งรหัสผ่านสำรองแล้วค่ะ ชื่อผู้ใช้ของคุณคือ ${saved.username}`
         : 'ตั้งรหัสผ่านสำรองแล้วค่ะ');

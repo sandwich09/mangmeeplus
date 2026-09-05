@@ -72,6 +72,42 @@ lists), `auth.module.ts`, `audit-action.ts`, `api-error-message.ts`, the `apps/a
 test list and both pin files. Do NOT rebase until the coordinator says so; on rebase, re-check
 the controller spec's constructor stubs BY NAME not position, re-run pin sync, re-run both suites.
 
+## Review round 2 (2026-09-05) — 11 findings, all addressed
+
+- **B1 (HIGH, introduced by my own F5 fix)** Prisma's `mode: 'insensitive'` compiles to
+  `"username" ILIKE $1` with the value bound raw, and `_` — which `USERNAME_PATTERN` allows — is a
+  LIKE wildcard. Proven on real Postgres before fixing: `som_hai` refused (nobody holds it),
+  `somchai_gmail.com` refused because it matched another user's EMAIL — an address-enumeration
+  oracle on the one self-service route. Now an exact `$queryRaw` `lower("username") = $2`, and the
+  email arm is **deleted** (L4: the charset forbids `@`, so it was dead and, under ILIKE, harmful).
+  Every in-memory fake in the repo modelled that operator as equality and reported green, which is
+  why this needed `account-profile-username.pg.spec.ts` — the repo's skip-without-DB idiom, gated
+  on `ACCOUNT_PROFILE_TEST_DATABASE_URL`, registered in the fixed test list. The shared fake now
+  **throws** on any `mode:` clause and answers the one raw query explicitly.
+- **M1** the charset rejection was an uncoded English sentence; a Thai owner typing `สมชาย` got the
+  generic fallback. Now `code: 'invalid_username'` with Thai copy, and the regex is mirrored
+  client-side in `passwordFormError` with the same sentence. Both sides tested; the spec asserts
+  the two regex copies are byte-identical.
+- **M2** `buildIdentityPatch`'s `today` default and the VAT `effectiveFrom` used the UTC date while
+  the server compares against `todayCivilDate(company.timezone)` — between 00:00 and 07:00 ICT that
+  back-dated a CRITICAL-audited legal record by a day, silently. Both now use
+  `todayCivilDate('Asia/Bangkok')` from contracts; tested with a fixed clock at 01:00 ICT.
+- **L1** nothing invalidated the completeness cache after a save, so the item the owner had just
+  completed kept reading as missing for up to 10 minutes. All four save handlers now clear it.
+- **L2** the 7-day "ไว้ก่อน" was in `sessionStorage` and died with the tab. The dismissal moved to
+  `localStorage` under its own key; the 10-minute answer cache stays per-tab.
+- **L3 / L5** pinned: a REVOKED LINE identity is never told a password was set; an **unverified**
+  email does not count as a login identifier.
+- **N1** `route-permissions.ts`, `settings-menu.logic.ts` and the route file all use
+  `COMPANY_PROFILE_SETTINGS_PATH` from contracts instead of three copies of the literal.
+- **N2** `addressErrorMessages` mapped shape errors (`must be a string`, `is not an allowed field`)
+  to "กรุณากรอก «label»", sending the owner to fix a box they had already filled. Only
+  `is required` gets that sentence now; the rest get a neutral "ค่าไม่ถูกต้อง".
+- **N3** the cross-module import of `normalizeThaiMobile` carries a one-line reason.
+
+Reviewer confirmed correct, no action: F1, F2 (both sides), F3, F4, F6, F7, F8, the `setup.read`
+widening, the relative-path contracts, and the force-dynamic route.
+
 ## Contract change to note at review
 
 `RequestEmailChangeUseCase` no longer 401s an account with no `UserCredential`. A DISABLED credential still 401s — access taken away is a different fact from access never issued. `forgot-password-reset.use-case.spec.ts` was updated to state the new rule.
@@ -91,7 +127,18 @@ Web — `apps/web/app/(workspace)/companies/[companyId]/settings/profile/page.ts
 re-run; outputs (`.github/workflows/deploy-production.yml`,
 `infra/security/validate-production-maintenance-release.sh`) committed with it.
 
-## Verification (after review round 1)
+## Verification (after review round 2)
+
+- `apps/api` full fixed list: **8884 tests, 0 failures** with the DB present (8883 when the
+  `.pg.spec` skips). `apps/web`: **1434 tests, 0 failures, 0 skipped**.
+- `pnpm -r typecheck` clean; `next build` clean, route still `ƒ`; pin sync `status=current`.
+- `account-profile-username.pg.spec.ts` verified to **fail on revert** to the ILIKE version
+  (`\`_\` is a LIKE wildcard: nobody holds som_hai`).
+- **47 mutations, 47 caught, 0 escaped** — the 11 round-2 findings, the three the reviewer
+  re-flagged (M6/M8/M12) and 30 round-1 regression guards. One escaped on the first sweep (N2's
+  shape-error copy) and was closed.
+
+## Verification (after review round 1, superseded)
 
 - `apps/api` full fixed test list: green, 0 failures. New specs registered in
   `apps/api/package.json` (the only allowed edit there).

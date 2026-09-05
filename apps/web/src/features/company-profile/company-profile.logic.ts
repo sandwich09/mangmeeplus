@@ -1,4 +1,5 @@
 import {
+  todayCivilDate,
   COMPANY_PROFILE_ACCOUNT_HASH,
   COMPANY_PROFILE_SHOP_HASH,
   type CompanyIdentityControl,
@@ -105,7 +106,12 @@ export function addressErrorMessages(error: unknown): string[] {
     if (typeof entry !== 'string') continue;
     const label = ADDRESS_LABELS[/^addressJson\.([A-Za-z0-9]+)/.exec(entry)?.[1] ?? ''];
     if (!label) continue;
-    const text = /\d+ digits/.test(entry) ? `${label} ต้องเป็นตัวเลข 5 หลัก` : `กรุณากรอก ${label}`;
+    // Only `is required` means "you left it blank". `must be a string` and
+    // `is not an allowed field` are shape errors — telling the owner to fill in a box they already
+    // filled in would send them to fix the wrong thing.
+    const text = /\d+ digits/.test(entry) ? `${label} ต้องเป็นตัวเลข 5 หลัก`
+      : /is required/.test(entry) ? `กรุณากรอก ${label}`
+        : `${label} ค่าไม่ถูกต้อง`;
     if (!messages.includes(text)) messages.push(text);
   }
   return messages;
@@ -144,10 +150,44 @@ export const CHECKLIST_CACHE_TTL_MS = 10 * 60 * 1000;
 export const CHECKLIST_DISMISS_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type StorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
-type CacheEntry = { at: number; items: readonly ChecklistItem[]; dismissedUntil?: number };
+type CacheEntry = { at: number; items: readonly ChecklistItem[] };
 
 export function checklistCacheKey(companyId: string): string {
   return `watchdog.profileChecklist.${companyId}`;
+}
+
+/**
+ * The 10-minute cache is a per-tab convenience and belongs in sessionStorage; a 7-day "ไว้ก่อน"
+ * stored there dies with the tab, so the card the owner just dismissed is back on the next visit.
+ * The dismissal is the answer to a question — it goes in localStorage.
+ */
+export function checklistDismissKey(companyId: string): string {
+  return `watchdog.profileChecklistDismissed.${companyId}`;
+}
+
+export function readChecklistDismissal(storage: StorageLike | undefined, companyId: string, now: number = Date.now()): boolean {
+  if (!storage) return false;
+  try {
+    const until = Number(storage.getItem(checklistDismissKey(companyId)));
+    return Number.isFinite(until) && until > now;
+  } catch {
+    return false;
+  }
+}
+
+export function dismissChecklistFor(storage: StorageLike | undefined, companyId: string, now: number = Date.now()): void {
+  if (!storage) return;
+  try {
+    storage.setItem(checklistDismissKey(companyId), String(now + CHECKLIST_DISMISS_MS));
+  } catch { /* nothing to do: the card reappears on the next mount */ }
+}
+
+/** After a save the cached answer is a lie — the item the owner just completed still reads missing. */
+export function clearChecklistCache(storage: StorageLike | undefined, companyId: string): void {
+  if (!storage) return;
+  try {
+    storage.removeItem(checklistCacheKey(companyId));
+  } catch { /* the entry expires on its own within CHECKLIST_CACHE_TTL_MS */ }
 }
 
 /**
@@ -167,7 +207,6 @@ export function readChecklistCache(
     const raw = storage.getItem(checklistCacheKey(companyId));
     if (!raw) return null;
     const entry = JSON.parse(raw) as CacheEntry;
-    if (typeof entry?.dismissedUntil === 'number' && entry.dismissedUntil > now) return 'hidden';
     if (typeof entry?.at !== 'number' || now - entry.at > CHECKLIST_CACHE_TTL_MS) return null;
     if (!Array.isArray(entry.items)) return null;
     return checklistIsComplete(entry.items) ? 'hidden' : [...entry.items];
@@ -188,20 +227,6 @@ export function writeChecklistCache(
   } catch { /* private mode: the card simply refetches next time */ }
 }
 
-export function dismissChecklist(
-  storage: StorageLike | undefined,
-  companyId: string,
-  now: number = Date.now(),
-): void {
-  if (!storage) return;
-  try {
-    storage.setItem(
-      checklistCacheKey(companyId),
-      JSON.stringify({ at: now, items: [], dismissedUntil: now + CHECKLIST_DISMISS_MS } satisfies CacheEntry),
-    );
-  } catch { /* nothing to do: the card reappears on the next mount */ }
-}
-
 export type ShopForm = { registeredName: string; taxId: string; address: Record<string, string | null | undefined> };
 export type CurrentIdentity = { registeredName: string | null; taxId: string | null; addressJson: Record<string, unknown> | null } | null;
 
@@ -216,7 +241,10 @@ export function buildIdentityPatch(
   control: Pick<CompanyIdentityControl, 'legalIdentityVersion' | 'captureWindowOpen' | 'authoritativeLatched' | 'fieldLatched'>,
   current: CurrentIdentity,
   form: ShopForm,
-  today: string = new Date().toISOString().slice(0, 10),
+  // NOT the UTC date: the server validates `effectiveFrom` against `todayCivilDate(company.timezone)`,
+  // so between 00:00 and 07:00 ICT a UTC date is yesterday — silently back-dating a CRITICAL-audited
+  // legal record by a day.
+  today: string = todayCivilDate('Asia/Bangkok'),
 ): { body: Record<string, unknown> } | { error: string } {
   const taxId = form.taxId.replace(/[^0-9]/g, '');
   const registeredName = form.registeredName.trim();
@@ -258,6 +286,10 @@ export function buildIdentityPatch(
   };
 }
 
+/** Mirrors `USERNAME_PATTERN` in `apps/api/.../account-profile.use-case.ts`; both reject `สมชาย`. */
+export const USERNAME_PATTERN = /^[a-z0-9._-]{4,64}$/;
+export const INVALID_USERNAME_MESSAGE = 'ชื่อผู้ใช้ใช้ได้เฉพาะ a-z 0-9 จุด ขีด และขีดล่าง ยาว 4 ถึง 64 ตัว (ภาษาไทยใช้ไม่ได้ค่ะ)';
+
 export type AccountLoginState = { username: string | null; emailVerified: boolean } | null;
 
 /**
@@ -281,6 +313,10 @@ export function passwordFormError(
   if (usernameFieldRequired(account) && !form.username.trim()) {
     return 'ตั้งชื่อผู้ใช้ด้วยนะคะ ไว้ใช้คู่กับรหัสผ่านตอนเข้าจากคอมพิวเตอร์';
   }
+  // Same rule as the server, so a Thai name is named as the problem here rather than coming back
+  // as a generic English sentence from the API.
+  const desired = form.username.trim().toLowerCase();
+  if (desired && !USERNAME_PATTERN.test(desired)) return INVALID_USERNAME_MESSAGE;
   return null;
 }
 
