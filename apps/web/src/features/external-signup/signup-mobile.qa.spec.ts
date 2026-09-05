@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 import * as React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { SIGNUP_TRIAL_WARMUP } from './signup.logic';
 
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
 
@@ -60,6 +61,9 @@ describe('the free-trial notice', () => {
     const { TrialNotice } = await import('./SignupPage');
     const html = renderToStaticMarkup(React.createElement(TrialNotice));
     assert.match(html, /ทดลองใช้ฟรี 30 วัน/);
+    // Review F17: the first-week ceiling has to REACH the screen, not merely exist as a constant.
+    // It used to be rendered from the offer card; the card is gone and the promise is not.
+    assert.match(html, new RegExp(SIGNUP_TRIAL_WARMUP));
     assert.match(html, /ไม่มีการตัดเงินอัตโนมัติ/);
     assert.doesNotMatch(html, /w-\[\d+px\]/);
     // Owner copy rule for this journey.
