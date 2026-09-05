@@ -53,6 +53,7 @@ import {
   AccountingGetDocumentDetailTool,
   AccountingGetReceivableSummaryTool,
   ExpenseGetDetailTool,
+  ExpenseExplainRecordTool,
   ReimbursementGetSummaryTool,
   ReimbursementGetDetailTool,
 } from '../../application/use-cases/erp-core-detail-tools.use-case';
@@ -94,6 +95,10 @@ class InternalToolContextDto {
   @IsString() @IsOptional() @MaxLength(128) requestId?: string;
   @IsString() @IsOptional() @MaxLength(64) membershipId?: string;
   @IsString() @IsOptional() @MaxLength(32) locale?: string;
+  /** Chat provenance (spec §5.5). Shape-checked only, exactly like `locale`: it selects which of
+   *  the CALLER'S OWN records a read tool may resolve as "the one from this chat" and grants
+   *  nothing — company, membership, permissions and branch scope are re-derived below. */
+  @IsString() @IsOptional() @MaxLength(128) chatKeyHash?: string;
   @IsArray() @IsString({ each: true }) @IsOptional() roles?: string[];
   @IsArray() @IsString({ each: true }) @IsOptional() permissions?: string[];
   @IsArray() @IsString({ each: true }) @IsOptional() branchIds?: string[];
@@ -181,6 +186,7 @@ export class InternalToolsController {
     private readonly crmConversationSummary: CrmGetConversationSummaryTool,
     private readonly invProductDetail: InventoryGetProductDetailTool,
     private readonly expenseDetail: ExpenseGetDetailTool,
+    private readonly expenseExplain: ExpenseExplainRecordTool,
     private readonly reimbursementSummary: ReimbursementGetSummaryTool,
     private readonly reimbursementDetail: ReimbursementGetDetailTool,
     private readonly accountingDocumentDetail: AccountingGetDocumentDetailTool,
@@ -204,6 +210,7 @@ export class InternalToolsController {
     this.toolMap.set('ledger.get_financial_summary', this.ledgerSummary);
     this.toolMap.set('expense.list_recent', this.expenseListRecent);
     this.toolMap.set('expense.get_detail', this.expenseDetail);
+    this.toolMap.set('expense.explain_record', this.expenseExplain);
     this.toolMap.set('sales.get_sales_summary', this.salesSummary);
     this.toolMap.set('tax.get_upcoming_tax_obligations', this.taxUpcomingObligations);
     this.toolMap.set('tax.get_vat_summary', this.taxVatSummary);
@@ -378,6 +385,7 @@ export class InternalToolsController {
       // `locale` is optional on the DTO so an existing caller that omits it is not turned into a
       // 400 by this change; ErpToolContext still wants a value, and Thai is what this channel is.
       locale: dto.context.locale ?? 'th',
+      ...(dto.context.chatKeyHash ? { chatKeyHash: dto.context.chatKeyHash } : {}),
     };
 
     // L-08 deny order — registry entry, then classification, then ERP permissions, then company

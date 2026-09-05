@@ -3664,7 +3664,10 @@ describe('LINE advisor – ADVISOR_CONVERSATION falls through to the existing tu
     assert.match(h.replies[0], /turn-answer/, 'the reply still comes from the existing reference path');
   });
 
-  it('an UNSUPPORTED route still binds no intakeIntent — the field marks the advisor lane only', async () => {
+  it('binds every route\'s own trusted intent, and still forwards no prepared plan (S-3)', async () => {
+    // The field used to mark the advisor lane only. S-3 binds the outer route on every turn — the
+    // orchestrator needs it to tell a business read from an out-of-scope question (evidence E4) —
+    // while the lanes that ACT on a plan still require `preparedPlan`, which stays absent here.
     const h = makeHarness({
       permissions: PERMISSIONS,
       routePlan: { status: 'ROUTED', intent: 'UNSUPPORTED', language: 'th', confidence: 0.4 },
@@ -3673,7 +3676,8 @@ describe('LINE advisor – ADVISOR_CONVERSATION falls through to the existing tu
     await h.useCase.execute({ ...TEXT_EVENT, messageText: 'กินข้าวยัง' });
 
     assert.equal(h.turnRequests.length, 1);
-    assert.equal(h.turnRequests[0].intakeIntent, undefined, 'legacy turn shape unchanged');
+    assert.equal(h.turnRequests[0].intakeIntent, 'UNSUPPORTED', 'the route\'s own intent, never another lane\'s');
+    assert.equal(h.turnRequests[0].preparedPlan, undefined);
     assert.match(h.replies[0], /turn-answer/);
   });
 });

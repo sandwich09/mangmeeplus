@@ -15,6 +15,10 @@ export type ErpToolContext = {
   branchIds?: string[];
   locationIds?: string[];
   locale: string;
+  /** Chat provenance for tools that resolve "the record this chat just captured" (spec §5.5).
+   *  DATA only — it can never widen company, permission or branch scope, all of which are
+   *  re-resolved from the verified actor delegation. Absent for a non-LINE caller. */
+  chatKeyHash?: string;
 };
 
 export interface ErpReadToolPort<TInput = Record<string, unknown>> {

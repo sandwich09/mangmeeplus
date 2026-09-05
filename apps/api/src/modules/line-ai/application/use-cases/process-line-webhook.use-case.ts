@@ -26,6 +26,7 @@ import {
   CompleteReceiptUploadUseCase,
 } from '../../../expenses/application/use-cases/expense-upload.use-case';
 import { reconcileExpenseDuplicateCandidates } from '../../../expenses/application/services/expense-duplicate-detection';
+import { listRecentLineCaptureCandidates } from '../../../expenses/application/services/line-recent-capture';
 import { pickLineDefaultBranchId } from '../../../expenses/domain/logic/line-receipt-branch.logic';
 import { CaptureLineExpenseNoteUseCase, LineTextExpenseCaptureIncompleteError } from '../../../expenses/application/use-cases/expense-document.use-case';
 import { CorrectLineCapturedExpenseUseCase } from '../../../expenses/application/use-cases/line-correction.use-case';
@@ -346,8 +347,6 @@ const COMPANY_SELECTION_PENDING_STATUSES = new Set([
   'company_context_listed',
   'company_context_selection_invalid',
 ]);
-/** How far back a correction may reach. Older records are corrected in web. */
-const CORRECTION_CANDIDATE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const LINE_MEDIA_DOWNLOAD_TIMEOUT_MS = 30_000;
 
 type ReceiptOcrPreflight = {
@@ -3489,6 +3488,10 @@ export class ProcessLineWebhookUseCase {
       roles: resolvedAccess.roles,
       branchIds: resolvedAccess.scopes.branchIds,
       locale: 'th-TH',
+      // Chat provenance for read tools that resolve "บิลเมื่อกี้" (spec §5.5). Same hash the intake
+      // lane stores on a LINE-captured record, so the tool sees the SAME chat the correction lane
+      // does. Never the raw LINE id — that stays redacted above.
+      chatKeyHash: chatKeyHashOf(event),
     };
 
     // 7. Build turn request
@@ -3504,6 +3507,14 @@ export class ProcessLineWebhookUseCase {
       ...(aiOpenClarifications?.length && { openClarifications: aiOpenClarifications }),
       messagePreviewHash: hashMessagePreview(event.messageText),
       ...(entitledFeatureKeys && { entitledFeatureKeys: [...entitledFeatureKeys] }),
+      // S-3: bind the TRUSTED outer intake route on EVERY turn, from the already-parsed
+      // `LineIntakeRoutePlan.intent` (membership-validated, never from the untrusted wrapper).
+      // It used to ride only when a prepared plan was forwarded, which meant a plain
+      // BUSINESS_READ_QUESTION reached the gateway with no provenance at all and the orchestrator
+      // could not tell an in-system business question from an out-of-scope one (evidence E4).
+      // Binding it alone activates NO lane: the prepared simple-read lane additionally requires
+      // `req.preparedPlan`, which is still forwarded only under its own flags below.
+      ...(asIntakeRouteIntent(routePlan.intent) ? { intakeIntent: asIntakeRouteIntent(routePlan.intent) } : {}),
       // Phase 3/4 (default OFF): forward ONLY the intake route's already-parsed prepared plan when a
       // downstream gateway lane wants it — shadow comparison (Phase 3) or one-call simple read
       // (Phase 4). OR-gated so the lanes stay independent. The wrapper carries no authority; the
@@ -5538,9 +5549,10 @@ export class ProcessLineWebhookUseCase {
     scopes: { branchIds?: string[] },
   ): Promise<LineIntakeCorrectionCandidate[]> {
     if (!this.expenseRepo) return [];
-    const since = new Date(Date.now() - CORRECTION_CANDIDATE_WINDOW_MS);
-    const rows = await this.expenseRepo.listRecentLineCaptures({
-      companyId, createdByUserId: userId, chatKeyHash, since, scopes, take: LINE_CORRECTION_CANDIDATE_LIMIT,
+    // Recency window + chat provenance come from the ONE shared rule (spec §5.5), so the correction
+    // lane and `expense.explain_record` can never disagree about what "this chat just captured" is.
+    const rows = await listRecentLineCaptureCandidates(this.expenseRepo, {
+      companyId, userId, chatKeyHash, scopes, take: LINE_CORRECTION_CANDIDATE_LIMIT,
     });
     return rows.map((row) => {
       const amount = row.grandTotalAmount && Number(row.grandTotalAmount) > 0
