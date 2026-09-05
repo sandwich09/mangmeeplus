@@ -137,10 +137,12 @@ export class SignupClaimEmailService {
         // all (an unlinked stranger asking for help), so it is dispatched before the id check.
         // §15.6's ops alert belongs to a DAY, for the same reason and with the same exemption.
         if (event.eventType === LINE_SUPPORT_NOTICE_EVENT_TYPE) {
-          await this.lineNotify.deliverSupportNotice(
-            readPayloadString(event.payloadJson, 'companyId'),
-            readPayloadString(event.payloadJson, 'askerHash') ?? undefined,
-          );
+          const supportRequestId = readPayloadString(event.payloadJson, 'supportRequestId');
+          // A schemaVersion 1 row queued before the deploy names a shop and a day, not a request,
+          // and there is no `LineSupportRequest` for it to describe. Settling it is the right
+          // handling: the notice it stood for is at most minutes old and the customer has already
+          // been answered, so failing the row would only retry a message with no subject.
+          if (supportRequestId) await this.lineNotify.deliverSupportNotice(supportRequestId);
         } else if (event.eventType === SIGNUP_OPS_ALERT_EVENT_TYPE) {
           const kind = readPayloadString(event.payloadJson, 'kind');
           const dayKey = readPayloadString(event.payloadJson, 'dayKey');

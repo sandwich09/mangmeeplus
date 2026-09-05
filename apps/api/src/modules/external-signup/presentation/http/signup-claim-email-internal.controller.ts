@@ -55,11 +55,15 @@ export class SignupClaimEmailInternalController {
     // L-B follow-up (a): a throttled push never terminalizes, so `countDead()` never sees it and
     // nothing else would ever notice a shop's "พร้อมใช้แล้ว" stuck behind the OA quota.
     const stuckPushes = await this.opsAlerts.sweepStuckPushes();
+    // line-support-request-spec-th §2.4: the 24h assistant pause expires by itself, so the request
+    // behind it must too — otherwise the operator inbox fills with rows nobody is waiting on.
+    const supportRequests = await this.lineNotify.sweepExpiredSupportRequests();
     return {
       ...reminders, ...expiry,
       profileGuardQueued: profileGuard.queued,
       trialBudgetsExhausted: trialBudgets.exhausted,
       stuckPushes: stuckPushes.stuck,
+      supportRequestsExpired: supportRequests.expired,
     };
   }
 }

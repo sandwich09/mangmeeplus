@@ -26,6 +26,22 @@ export type PackageChangeNoticeEmailInput = Readonly<{
   tierKey: string;
 }>;
 
+/**
+ * line-support-request-spec-th §2.2 delta (Owner 2026-09-05). The one letter in this port addressed
+ * to US rather than to a customer: operators are not LINE-linked, so the support mailbox is how a
+ * waiting customer reaches a person at all. No customer address, no token, no LINE id — a shop
+ * name, one line of what they said, and the /system link an operator opens.
+ */
+export type SupportRequestNoticeEmailInput = Readonly<{
+  toEmail: string;
+  /** Shop name, or the "ยังไม่ได้เปิดร้าน" label with the applied-for name. Already display-safe. */
+  who: string;
+  /** ≤200 chars of what the customer last typed, when the assistant kept any. */
+  lastMessageText?: string;
+  /** Absolute link to the page the operator answers from. */
+  actionUrl: string;
+}>;
+
 export interface AuthMailerPort {
   sendEmailVerification(input: AuthEmailLinkInput): Promise<void>;
   sendPasswordResetLink(input: AuthEmailLinkInput): Promise<void>;
@@ -38,4 +54,10 @@ export interface AuthMailerPort {
   sendSignupRejection(input: SignupRejectionEmailInput): Promise<void>;
   sendLineSignupWelcome(input: LineSignupWelcomeEmailInput): Promise<void>;
   sendPackageChangeNotice(input: PackageChangeNoticeEmailInput): Promise<void>;
+  /**
+   * `true` only when a provider actually accepted the letter. An adapter with no provider answers
+   * `false` rather than pretending — this boolean is half of the "nobody was told" alarm, so a
+   * polite no-op here would silence exactly the condition it exists to catch.
+   */
+  sendSupportRequestNotice(input: SupportRequestNoticeEmailInput): Promise<boolean>;
 }
