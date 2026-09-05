@@ -12,7 +12,7 @@ import { LineAiTurnUseCase } from '../../application/use-cases/line-ai-turn.use-
 import { createProvider } from '../../infrastructure/provider/provider.factory';
 import { IntentRouterAgent } from '../../agents/intent-router.agent';
 import { gateBusinessDocumentClassification, parseBusinessDocumentClassification } from '../../domain/logic/business-document-classification.logic';
-import { AI_DOCUMENT_OCR_TIMEOUT_MS, LINE_AI_AGENT_REGISTRY, LINE_TOOL_REGISTRY, RECEIPT_ADDITIONAL_CHARGE_KINDS, asIntakeRouterCapabilities, extractValueCandidates, isAmbiguousDateCandidate, mapThaiDigits, VALUE_ASSUMPTIONS, type AiModelLineage, type LineAiTurnRequest, type LineAiTurnResponse, type LineIntakeRoutePlan, type LineIntakeRouteRequest, type ReceiptOcrRequest, type ReceiptOcrResponse, type BankStatementAiExtractRequest, type BankStatementAiExtractResponse, type BankStatementAiExtractRow } from '@watchdog-bms/contracts';
+import { AI_DOCUMENT_OCR_TIMEOUT_MS, LINE_AI_AGENT_REGISTRY, LINE_TOOL_REGISTRY, RECEIPT_ADDITIONAL_CHARGE_KINDS, asIntakeRouterCapabilities, extractValueCandidates, isAmbiguousDateCandidate, mapThaiDigits, todayCivilDate, VALUE_ASSUMPTIONS, type AiModelLineage, type LineAiTurnRequest, type LineAiTurnResponse, type LineIntakeRoutePlan, type LineIntakeRouteRequest, type ReceiptOcrRequest, type ReceiptOcrResponse, type BankStatementAiExtractRequest, type BankStatementAiExtractResponse, type BankStatementAiExtractRow } from '@watchdog-bms/contracts';
 
 // JSON bodies on these routes carry base64 media and need main.ts's 16mb parser
 // (UPLOAD_MAX_BYTES 10MB inflates to ~13.7MB in base64); every other route stays at
@@ -642,8 +642,13 @@ function isFullSpanDate(value: string): boolean {
 export function applyOcrValueCrossCheck(
   fields: NonNullable<ReceiptOcrResponse['fields']>,
   documentText: string,
+  /** Injected in tests; the receipt-mode era rule needs a clock and this module owns no other one. */
+  todayIso: string = todayCivilDate(),
 ): NonNullable<ReceiptOcrResponse['fields']> {
-  const candidates = extractValueCandidates(documentText);
+  // `receipt`, not chat (spec §5.2): this text is PRINTED, so DD/MM is the Thai convention and the
+  // date is necessarily past. Chat's 2026-08-28 rule left 03/09/69 with no usable reading at all,
+  // and the date was then dropped here — the draft carried today's date with nobody told.
+  const candidates = extractValueCandidates(documentText, todayIso, { documentContext: 'receipt' });
   const mappedText = mapThaiDigits(documentText);
   // Receipts carry more bare numbers than the chat-payload candidate cap, so the allowed set
   // is the normalizer's (word-form-aware) amounts UNION an uncapped digit scan of the text.

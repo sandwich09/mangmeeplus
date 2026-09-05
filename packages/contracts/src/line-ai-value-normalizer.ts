@@ -266,13 +266,19 @@ function resolveYearReadings(rawYear: number, digits: number): YearReading[] {
  *  both survive and the date stays ambiguous, which is the answer for a date nobody can pin down. */
 const PLAUSIBLE_EXPENSE_YEARS_BACK = 15;
 
-function plausibleEraReadings(readings: YearReading[], todayIso: string): YearReading[] {
+/** `nearestWins` is the receipt rule (spec §5.2): a printed document always carries ONE date, so a
+ *  window that leaves two readings picks the one nearest today rather than giving up — the
+ *  `twoDigitYearResolvedPlausibleEra` flag still says the era was resolved, not read. Chat text
+ *  keeps the 2026-08-28 decision: two surviving readings stay ambiguous and the person is asked. */
+function plausibleEraReadings(readings: YearReading[], todayIso: string, nearestWins = false): YearReading[] {
   if (readings.length <= 1) return readings;
   const todayYear = Number(todayIso.slice(0, 4));
   if (!Number.isFinite(todayYear)) return readings;
   const plausible = readings.filter((r) => r.yearCe <= todayYear && r.yearCe >= todayYear - PLAUSIBLE_EXPENSE_YEARS_BACK);
-  if (plausible.length !== 1) return readings;
-  return [{ ...plausible[0]!, assumptions: [VALUE_ASSUMPTIONS.twoDigitYearResolvedPlausibleEra] }];
+  if (plausible.length === 1) return [{ ...plausible[0]!, assumptions: [VALUE_ASSUMPTIONS.twoDigitYearResolvedPlausibleEra] }];
+  if (!nearestWins) return readings;
+  const nearest = [...readings].sort((a, b) => Math.abs(a.yearCe - todayYear) - Math.abs(b.yearCe - todayYear))[0]!;
+  return [{ ...nearest, assumptions: [VALUE_ASSUMPTIONS.twoDigitYearResolvedPlausibleEra] }];
 }
 
 function resolveNamedMonthYearReadings(monthName: string, rawYear: number, digits: number): YearReading[] {
@@ -313,9 +319,20 @@ function overlaps(ranges: SpanRange[], start: number, end: number): boolean {
   return ranges.some((r) => start < r.end && end > r.start);
 }
 
+/** Which kind of text this is. `chat` (the default) is what a person typed: an order or era it
+ *  cannot tell apart stays ambiguous and the person is asked (owner decision 2026-08-28). `receipt`
+ *  is text printed on a document nobody can be asked about, where Thai practice is DD/MM and the
+ *  date is necessarily in the past — so those two readings resolve, flagged as assumed. */
+export type LineAiDocumentContext = 'receipt' | 'chat';
+
 /** Extracts amount and date candidates from one LINE turn text. `todayIso` (Asia/Bangkok)
  *  is injected so future dates can be flagged; extraction itself never reads the clock. */
-export function extractValueCandidates(text: string, todayIso?: string): LineAiValueCandidates {
+export function extractValueCandidates(
+  text: string,
+  todayIso?: string,
+  options: { documentContext?: LineAiDocumentContext } = {},
+): LineAiValueCandidates {
+  const receiptMode = options.documentContext === 'receipt';
   const mapped = mapThaiDigits(text);
   const dateRanges: SpanRange[] = [];
   const dates: LineAiDateCandidate[] = [];
@@ -452,8 +469,11 @@ export function extractValueCandidates(text: string, todayIso?: string): LineAiV
     // Only when the วัน/เดือน order is already certain. A date whose own order cannot be told apart
     // (7-6-69) stays out of reach on purpose — owner decision 2026-08-28: leave it blank and let the
     // person who was there type it, rather than pick one of two readings and look confident.
-    const eraResolved = todayIso && orderAssumptions.length === 0
-      ? plausibleEraReadings(yearReadings, todayIso)
+    // A RECEIPT has nobody to ask, and Thai receipts print DD/MM: the order above already applied
+    // that convention with `orderAssumedDayMonth`, so refusing the era on top of it only threw the
+    // whole printed date away (UAT 2026-09-03: a bill printing 03/09/69 recorded no date at all).
+    const eraResolved = todayIso && (receiptMode || orderAssumptions.length === 0)
+      ? plausibleEraReadings(yearReadings, todayIso, receiptMode)
       : yearReadings;
     for (const reading of eraResolved) {
       pushDate(start, end, day, month, reading, orderAssumptions);
