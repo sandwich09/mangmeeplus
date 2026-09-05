@@ -261,3 +261,9 @@ Gaps left for slice B or later (deliberate, see the final report):
 - `line-ai-classifier.logic.ts` (API) was left alone: `classifyIntent`/`chooseAgent` there have no production caller — the live twin is the gateway's `line-ai-turn.logic.ts`, whose deterministic path now splits on the intake intent.
 - `LineAiIntent` and the Prisma `AiTurnIntent` enum gained no member; `unsupported_yet` maps to `UNSUPPORTED_MODULE` for analytics. The customer-visible split lives on the refusal reason and the terminal status.
 - `chargeKind` deliberately NOT added (slice B owns it). The interim marker is the in-memory `PreparedOcrLine.isAdditionalCharge` flag plus the OCR `additionalCharges` block for the card — B can rebase over this and swap both for the column.
+- **`line-expense-draft-conversation.use-case.ts:360` still overwrites `note`** with `state.header.businessPurpose` on every persist, destroying `'LINE receipt upload'` on the first purpose answer. Left alone deliberately: that lane is COLLECTING a field (there is no purpose column, so the purpose lives in `note`) and re-stamps it as the user refines the answer — appending there would stack purposes, which is worse for that lane than the current state. Fixing it properly needs a purpose-vs-provenance split; spec §5.3 scopes the append rule to the correction lane.
+
+Impact sweep found and fixed on the way (both the same silent-placeholder class as item 1):
+
+- LINE text-note path (`expense-document.use-case.ts`) defaulted `expenseDate` to today with the conversation off and never flagged it → now adds `expenseDate` to `missingFields`.
+- Pending-media clarify path (`process-line-webhook.use-case.ts`) wrote `expenseDate: new Date()` — a full instant into a date column, the exact bug the direct-media path's comment says was fixed → now `civilDateToUtcDate(todayCivilDate())`.
