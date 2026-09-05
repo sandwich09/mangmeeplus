@@ -20,6 +20,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../../generated/prisma/client';
+import { pgSpecUnreachableReason } from '../../common/database/pg-spec-guard';
 import { AuditService } from '../audit/application/audit.service';
 import { PrismaAuditRepository } from '../audit/infrastructure/prisma-audit.repository';
 import { PrismaExpenseRepository } from './infrastructure/prisma-expense.repository';
@@ -58,15 +59,24 @@ describe('receipt truth on real PostgreSQL (spec §11)', { skip: !databaseUrl },
   const userId = `${tag}-user`;
   const branchId = `${tag}-branch`;
   let client!: PrismaClient;
+  let unreachable: string | null = null;
 
   before(async () => {
     client = connect();
+    // Shared with the other real-PostgreSQL suites: a URL that is set but whose server does not
+    // answer is the same "no database here" condition the unset case skips for, not a red test on
+    // a developer's stopped docker. Still a failure in CI, which started the database one step
+    // earlier, or under RECEIPT_TRUTH_REQUIRE_POSTGRES=true.
+    unreachable = await pgSpecUnreachableReason(
+      () => client.$queryRaw`SELECT 1`, 'RECEIPT_TRUTH_REQUIRE_POSTGRES');
+    if (unreachable) return;
     await client.user.create({ data: { id: userId, displayName: 'ผู้ทดสอบ', status: 'ACTIVE' } });
     await client.company.create({ data: { id: companyId, name: `ร้าน ${tag}`, businessCategory: 'SERVICE' } });
     await client.branch.create({ data: { id: branchId, companyId, code: 'HO', name: 'สำนักงานใหญ่', type: 'HEAD_OFFICE', createdByUserId: userId } });
   });
 
   after(async () => {
+    if (unreachable) { await client.$disconnect(); return; }
     try {
       await client.auditLog.deleteMany({ where: { companyId } });
       await client.outboxEvent.deleteMany({ where: { companyId } });
@@ -101,7 +111,8 @@ describe('receipt truth on real PostgreSQL (spec §11)', { skip: !databaseUrl },
     },
   })).id;
 
-  it('writes a charge row the printed VAT proves, with no withholding on it', async () => {
+  it('writes a charge row the printed VAT proves, with no withholding on it', async (t) => {
+    if (unreachable) return t.skip(unreachable);
     const expenseId = await draft();
 
     const outcome = await apply().apply(ctx(), expenseId, BHC as never, { todayIso: TODAY });
@@ -124,7 +135,8 @@ describe('receipt truth on real PostgreSQL (spec §11)', { skip: !databaseUrl },
     assert.ok(outcome.reviewReasons.includes(RECEIPT_REVIEW_REASONS.whtWithCharges));
   });
 
-  it('persists an assumed date as a real date, flagged and NOT forced into review', async () => {
+  it('persists an assumed date as a real date, flagged and NOT forced into review', async (t) => {
+    if (unreachable) return t.skip(unreachable);
     const expenseId = await draft();
 
     // No printed WHT here: the only thing that could send this record to review is the date, which
@@ -139,7 +151,8 @@ describe('receipt truth on real PostgreSQL (spec §11)', { skip: !databaseUrl },
     assert.deepEqual(outcome.dateAssumptions, BHC.expenseDateAssumptions);
   });
 
-  it('leaves the placeholder date alone and marks the record for review when nothing was read', async () => {
+  it('leaves the placeholder date alone and marks the record for review when nothing was read', async (t) => {
+    if (unreachable) return t.skip(unreachable);
     const expenseId = await draft();
 
     const outcome = await apply().apply(ctx(), expenseId, { grandTotalAmount: '580.00' } as never, { todayIso: TODAY });
@@ -151,7 +164,8 @@ describe('receipt truth on real PostgreSQL (spec §11)', { skip: !databaseUrl },
     assert.deepEqual(outcome.reviewReasons, [RECEIPT_REVIEW_REASONS.dateUnverified]);
   });
 
-  it('appends the user note through the real transaction without losing the provenance', async () => {
+  it('appends the user note through the real transaction without losing the provenance', async (t) => {
+    if (unreachable) return t.skip(unreachable);
     const expenseId = await draft();
     const record = await client.expenseRecord.findUniqueOrThrow({ where: { id: expenseId } });
     const useCase = new CorrectLineCapturedExpenseUseCase(
@@ -177,7 +191,8 @@ describe('receipt truth on real PostgreSQL (spec §11)', { skip: !databaseUrl },
     assert.equal(after.grandTotalAmount.toFixed(2), record.grandTotalAmount.toFixed(2), 'and no money moved');
   });
 
-  it('caps a full note in the column rather than dropping what the user said', async () => {
+  it('caps a full note in the column rather than dropping what the user said', async (t) => {
+    if (unreachable) return t.skip(unreachable);
     const expenseId = await draft(`LINE receipt upload${'!'.repeat(441)}`);
     const useCase = new CorrectLineCapturedExpenseUseCase(
       { client } as any,

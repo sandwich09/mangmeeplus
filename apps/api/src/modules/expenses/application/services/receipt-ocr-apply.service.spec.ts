@@ -1196,7 +1196,7 @@ describe('apply: additional-charge tax rules (spec §5.1)', () => {
   it('keeps the rate the document printed and asks for nothing', async () => {
     const { lines, result } = await applyFields(bhc, null, {}, TODAY);
     assert.equal(result.chargesApplied, 1);
-    const row = lines.find((l: any) => l.description === 'ค่าบริการ 10%');
+    const row = lines.find((l: any) => l.chargeKind != null);
     assert.equal(row.vatRate, '0.0700', 'the printed document rate is evidence, not a guess');
     assert.deepEqual(result.reviewReasons, []);
   });
@@ -1208,7 +1208,7 @@ describe('apply: additional-charge tax rules (spec §5.1)', () => {
       { vatMode: 'VAT_EXCLUDED', expenseDate: '2026-09-03', subtotalAmount: '100.00', vatAmount: '7.00', quantity: '1', unitPrice: '100.00', additionalCharges: [charge({ amount: '10.00' })] },
       null, {}, TODAY,
     );
-    const row = lines.find((l: any) => l.description === 'ค่าบริการ 10%');
+    const row = lines.find((l: any) => l.chargeKind != null);
     assert.equal(row?.vatRate ?? null, null);
     assert.equal(row?.vatTreatment ?? null, null, 'a treatment without a proven rate is a second guess');
     assert.equal(row?.reviewStatus, 'NEEDS_REVIEW');
@@ -1217,8 +1217,8 @@ describe('apply: additional-charge tax rules (spec §5.1)', () => {
 
   it('never spreads withholding onto a charge row, and says the base needs checking', async () => {
     const { lines, result } = await applyFields({ ...bhc, whtRate: '0.03' }, null, {}, TODAY);
-    const row = lines.find((l: any) => l.description === 'ค่าบริการ 10%');
-    const product = lines.find((l: any) => l.description !== 'ค่าบริการ 10%');
+    const row = lines.find((l: any) => l.chargeKind != null);
+    const product = lines.find((l: any) => l.chargeKind == null);
     assert.equal(row.whtRate, null);
     assert.equal(row.whtAmount, '0.0000');
     assert.equal(product.whtRate, '0.0300', 'the printed rate still applies to what it was withheld on');
@@ -1239,7 +1239,7 @@ describe('apply: additional-charge tax rules (spec §5.1)', () => {
     const { lines, record, result } = await applyFields(slip, null, {}, TODAY);
     assert.equal(result.chargesApplied, 1, 'the charge is a printed row and must survive');
     assert.equal(record.grandTotalAmount, '117.7000', 'and what was paid must not move');
-    const row = lines.find((l: any) => l.description === 'ค่าบริการ');
+    const row = lines.find((l: any) => l.chargeKind != null);
     assert.equal(row.vatRate, '0.0700', '7.70 over 110.00 IS the proof — no guess, nothing to review');
     assert.deepEqual(result.reviewReasons, []);
   });
@@ -1255,7 +1255,7 @@ describe('apply: additional-charge tax rules (spec §5.1)', () => {
     };
     const { lines, result } = await applyFields(slip, null, {}, TODAY);
     assert.equal(result.chargesApplied, 1);
-    const row = lines.find((l: any) => l.description === 'ค่าบริการ');
+    const row = lines.find((l: any) => l.chargeKind != null);
     assert.equal(row.vatRate ?? null, null);
     assert.equal(row.reviewStatus, 'NEEDS_REVIEW');
     assert.ok(result.reviewReasons.some((reason: string) => reason.startsWith(RECEIPT_REVIEW_REASONS.chargeVatUnknown)));
