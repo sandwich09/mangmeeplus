@@ -15,5 +15,7 @@ export default async function CompanyProfileSettingsPage({
   const session = await fetchServerSession(companyId);
   const forbidden = requireRoutePermission(session, '/settings/profile');
   if (forbidden) return forbidden;
-  return <CompanyProfilePage companyId={companyId} />;
+  // Permissions decide which controls are writable at all; the API enforces the same keys, so a
+  // caller who edits the markup gains a 403, not a saved change.
+  return <CompanyProfilePage companyId={companyId} permissions={session?.permissions ?? []} />;
 }

@@ -3,36 +3,58 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { getAccountProfile, getCompanyIdentity } from './company-profile.api';
-import { checklistIsComplete, companyProfileHref, profileChecklist, type ChecklistItem } from './company-profile.logic';
+import {
+  checklistIsComplete,
+  companyProfileHref,
+  dismissChecklist,
+  profileChecklist,
+  readChecklistCache,
+  writeChecklistCache,
+  type ChecklistItem,
+} from './company-profile.logic';
 
 /**
  * "What is still missing" for the owner of a shop opened from LINE (spec §15.4). Never blocks
- * anything and never nags: it renders nothing until both reads land, nothing when the list is
- * complete, and nothing when either read fails — a dashboard is not the place to learn that a
- * settings API is down.
+ * anything and never nags: it renders nothing until it has an answer, nothing when the list is
+ * complete, nothing when either read fails — a dashboard is not the place to learn that a
+ * settings API is down — and nothing for a week after "ไว้ก่อน".
  *
- * Derived from `GET …/identity` and `GET /auth/account/security`, which the profile page already
- * calls, so there is no third endpoint that could disagree with the page this links to.
+ * Cached per company in `sessionStorage`, because the email item cannot complete while SES is
+ * sandboxed: without a cache this card would fire two GETs on every dashboard mount forever.
  */
 export function ProfileCompletenessCard({ companyId }: { companyId: string }) {
   const [items, setItems] = useState<ChecklistItem[] | null>(null);
+  const [hidden, setHidden] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
+    const storage = typeof window === 'undefined' ? undefined : window.sessionStorage;
+
+    const cached = readChecklistCache(storage, companyId);
+    if (cached === 'hidden') { setHidden(true); return; }
+    if (cached) { setItems(cached); return; }
+
     void Promise.all([getCompanyIdentity(companyId), getAccountProfile()])
       .then(([identity, account]) => {
         if (cancelled) return;
-        setItems(profileChecklist({
+        const next = profileChecklist({
           readiness: identity.readiness,
           emailVerified: account.emailVerified,
           hasPassword: account.hasPassword,
-        }));
+        });
+        writeChecklistCache(storage, companyId, next);
+        setItems(next);
       })
       .catch(() => { if (!cancelled) setItems(null); });
     return () => { cancelled = true; };
   }, [companyId]);
 
-  if (!items || checklistIsComplete(items)) return null;
+  if (hidden || !items || checklistIsComplete(items)) return null;
+
+  const dismiss = () => {
+    dismissChecklist(typeof window === 'undefined' ? undefined : window.sessionStorage, companyId);
+    setHidden(true);
+  };
 
   return (
     <section className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-5 shadow-[var(--shadow-theme-sm)]">
@@ -53,6 +75,13 @@ export function ProfileCompletenessCard({ companyId }: { companyId: string }) {
           </li>
         ))}
       </ul>
+      <button
+        type="button"
+        onClick={dismiss}
+        className="mt-4 text-sm font-medium text-amber-800 underline underline-offset-4 hover:text-amber-900"
+      >
+        ไว้ก่อน
+      </button>
     </section>
   );
 }

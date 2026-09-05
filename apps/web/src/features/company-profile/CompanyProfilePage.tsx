@@ -19,7 +19,13 @@ import {
   setMyPhoneNumber,
   type AccountProfileState,
 } from './company-profile.api';
-import { identityChangeKind, isThaiMobileInput, isThaiTaxIdInput, type IdentityField } from './company-profile.logic';
+import {
+  addressErrorMessages,
+  buildIdentityPatch,
+  isThaiMobileInput,
+  passwordFormError,
+  usernameFieldRequired,
+} from './company-profile.logic';
 
 const EMPTY_ADDRESS: CompanyLegalAddress = {
   line1: '', line2: '', subdistrict: '', district: '', province: '', postalCode: '',
@@ -43,7 +49,11 @@ function SectionHeading({ id, title, hint }: { id: string; title: string; hint: 
   );
 }
 
-export function CompanyProfilePage({ companyId }: { companyId: string }) {
+export function CompanyProfilePage({ companyId, permissions }: { companyId: string; permissions: readonly string[] }) {
+  // The API gates on these same keys; disabling here is so a member is not invited to type into a
+  // box whose every save comes back 403 (FINANCE holds vat_registration.read but not .manage).
+  const canManageShop = permissions.includes('company.legal_identity.manage');
+  const canManageVat = permissions.includes('company.vat_registration.manage');
   const toast = useToast();
   const [identity, setIdentity] = useState<CompanyIdentityResponse | null>(null);
   const [account, setAccount] = useState<AccountProfileState | null>(null);
@@ -68,6 +78,7 @@ export function CompanyProfilePage({ companyId }: { companyId: string }) {
   const [phone, setPhone] = useState('');
   const [phoneError, setPhoneError] = useState<string | null>(null);
   const [phoneSaving, setPhoneSaving] = useState(false);
+  const [newUsername, setNewUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [passwordError, setPasswordError] = useState<string | null>(null);
@@ -98,54 +109,38 @@ export function CompanyProfilePage({ companyId }: { companyId: string }) {
 
   const control = identity?.control;
   const full = identity?.identity && !identity.identity.masked ? identity.identity : null;
-  // `company.legal_identity.read` is what un-masks the section; without it the owner would be
-  // typing over values they cannot see, so the form is read-only instead of silently destructive.
-  const canEditShop = full !== null;
+  // Two separate facts: `legal_identity.read` un-masks the values, `legal_identity.manage` allows
+  // the write. Editing needs both — typing over values you cannot see is destructive, and typing
+  // values you may not save is a 403 dressed up as a form.
+  const canEditShop = full !== null && canManageShop;
+  const masked = identity?.identity && identity.identity.masked ? identity.identity : null;
   const vatStatus = identity?.vatRegistration?.status ?? 'UNKNOWN';
-
-  const changedFields = (): IdentityField[] => {
-    const fields: IdentityField[] = [];
-    if (taxId.replace(/[^0-9]/g, '') !== (full?.taxId ?? '')) fields.push('taxId');
-    if (registeredName.trim() !== (full?.registeredName ?? '')) fields.push('registeredName');
-    const current = full?.addressJson ?? null;
-    const sameAddress = current !== null && (Object.keys(EMPTY_ADDRESS) as Array<keyof CompanyLegalAddress>)
-      .every((key) => (address[key] ?? '') === (current[key] ?? ''));
-    if (!sameAddress) fields.push('addressJson');
-    return fields;
-  };
+  // `PasswordLoginUseCase` looks accounts up by username OR verified email. With neither, a
+  // password would be unusable, so the username stops being optional.
+  const usernameRequired = usernameFieldRequired(account);
 
   const saveShop = async () => {
     if (!control || !canEditShop) return;
-    const fields = changedFields();
     setShopError(null);
-    if (fields.length === 0) {
-      setShopError('ยังไม่มีอะไรเปลี่ยนค่ะ');
+    const patch = buildIdentityPatch(
+      control,
+      full ? { registeredName: full.registeredName, taxId: full.taxId, addressJson: full.addressJson as Record<string, unknown> | null } : null,
+      { registeredName, taxId, address },
+    );
+    if ('error' in patch) {
+      setShopError(patch.error);
       return;
     }
-    if (taxId.trim() && !isThaiTaxIdInput(taxId)) {
-      setShopError('เลขผู้เสียภาษีต้องเป็นตัวเลข 13 หลักค่ะ');
-      return;
-    }
-    const changeKind = identityChangeKind(control, fields);
     setShopSaving(true);
     try {
-      await patchCompanyIdentity(companyId, {
-        expectedLegalIdentityVersion: control.legalIdentityVersion,
-        changeKind,
-        ...(fields.includes('taxId') ? { taxId: taxId.replace(/[^0-9]/g, '') } : {}),
-        ...(fields.includes('registeredName') ? { registeredName: registeredName.trim() } : {}),
-        ...(fields.includes('addressJson')
-          ? { addressJson: { ...address, line2: address.line2?.trim() ? address.line2.trim() : null } }
-          : {}),
-        // The server requires these two for the heavier kinds; a shop owner filling in a blank
-        // field should not have to learn the vocabulary, so the page answers for them.
-        ...(changeKind === 'CORRECTION' ? { correctionReason: 'TYPO' as const, note: 'แก้ไขจากหน้าข้อมูลร้าน' } : {}),
-        ...(changeKind === 'LEGAL_CHANGE' ? { effectiveFrom: new Date().toISOString().slice(0, 10) } : {}),
-      });
+      await patchCompanyIdentity(companyId, patch.body as never);
       toast.success('บันทึกข้อมูลร้านแล้วค่ะ');
       await load();
     } catch (error) {
-      setShopError(apiErrorMessage(error));
+      // `invalid addressJson` arrives with per-field details and no code, so the generic sentence
+      // would tell the owner to reload when the real answer is "จังหวัด is empty".
+      const fields = addressErrorMessages(error);
+      setShopError(fields.length > 0 ? fields.join(' · ') : apiErrorMessage(error));
     } finally {
       setShopSaving(false);
     }
@@ -211,21 +206,20 @@ export function CompanyProfilePage({ companyId }: { companyId: string }) {
   };
 
   const savePassword = async () => {
-    setPasswordError(null);
-    if (password.length < 8) {
-      setPasswordError('รหัสผ่านต้องยาวอย่างน้อย 8 ตัวค่ะ');
-      return;
-    }
-    if (password !== confirmPassword) {
-      setPasswordError('รหัสผ่านสองช่องยังไม่ตรงกันค่ะ');
-      return;
-    }
+    const invalid = passwordFormError(account, { password, confirmPassword, username: newUsername });
+    setPasswordError(invalid);
+    if (invalid) return;
     setPasswordSaving(true);
     try {
-      await setMyFirstPassword(password);
+      const saved = await setMyFirstPassword(password, newUsername.trim() || undefined);
       setPassword('');
       setConfirmPassword('');
-      toast.success('ตั้งรหัสผ่านสำรองแล้วค่ะ');
+      setNewUsername('');
+      // The stored form is lower-cased and the login box matches it case-sensitively, so telling
+      // them what to type is the difference between a backup password and a locked door.
+      toast.success(saved.username
+        ? `ตั้งรหัสผ่านสำรองแล้วค่ะ ชื่อผู้ใช้ของคุณคือ ${saved.username}`
+        : 'ตั้งรหัสผ่านสำรองแล้วค่ะ');
       await load();
     } catch (error) {
       setPasswordError(apiErrorMessage(error));
@@ -283,10 +277,26 @@ export function CompanyProfilePage({ companyId }: { companyId: string }) {
           {!canEditShop && (
             <div className="mb-4">
               <Banner tone="note">
-                บัญชีของคุณดูข้อมูลนี้ได้บางส่วน ถ้าต้องการแก้ไข ให้เจ้าของร้านเป็นคนแก้นะคะ
+                {full
+                  ? 'บัญชีของคุณดูข้อมูลนี้ได้อย่างเดียว ถ้าต้องการแก้ไข ให้เจ้าของร้านเป็นคนแก้นะคะ'
+                  : 'บัญชีของคุณเห็นข้อมูลนี้ได้บางส่วน ถ้าต้องการดูหรือแก้ไขทั้งหมด ให้เจ้าของร้านเป็นคนทำนะคะ'}
               </Banner>
             </div>
           )}
+          {/* A caller with only `company.setup.read` gets the masked block the API actually sent —
+              last four of the tax id and the province — instead of an editable form full of blanks
+              that would have overwritten real values with empty ones. */}
+          {masked ? (
+            <dl className="grid gap-3 text-sm" data-testid="masked-identity">
+              <div><dt className="text-gray-600">ชื่อร้าน</dt><dd className="font-medium text-gray-900">{masked.displayName}</dd></div>
+              <div><dt className="text-gray-600">ชื่อจดทะเบียน</dt><dd className="font-medium text-gray-900">{masked.registeredName ?? 'ยังไม่ได้กรอก'}</dd></div>
+              <div>
+                <dt className="text-gray-600">เลขผู้เสียภาษี</dt>
+                <dd className="font-medium text-gray-900">{masked.taxIdLast4 ? `ลงท้าย ${masked.taxIdLast4}` : 'ยังไม่ได้กรอก'}</dd>
+              </div>
+              <div><dt className="text-gray-600">จังหวัด</dt><dd className="font-medium text-gray-900">{masked.addressProvince ?? 'ยังไม่ได้กรอก'}</dd></div>
+            </dl>
+          ) : (
           <div className="grid gap-4">
             <TextField
               label="ชื่อจดทะเบียน"
@@ -323,16 +333,21 @@ export function CompanyProfilePage({ companyId }: { companyId: string }) {
               </button>
             )}
           </div>
+          )}
 
           {identity?.vatRegistration && (
             <div className="mt-6 border-t border-gray-200 pt-5">
               <label className="text-sm font-medium text-gray-900" htmlFor="vat-status">ร้านจดทะเบียน VAT หรือยัง</label>
-              <p className="mt-1 mb-3 text-sm text-gray-600">ตอบไว้เพื่อให้ระบบออกเอกสารภาษีได้ถูกต้องค่ะ</p>
+              <p className="mt-1 mb-3 text-sm text-gray-600">
+                {canManageVat
+                  ? 'ตอบไว้เพื่อให้ระบบออกเอกสารภาษีได้ถูกต้องค่ะ'
+                  : 'บัญชีของคุณดูได้อย่างเดียว ให้เจ้าของร้านหรือผู้ทำบัญชีเป็นคนตอบนะคะ'}
+              </p>
               <ThemedSelect
                 id="vat-status"
                 className="mangmee-input"
                 value={vatStatus}
-                disabled={vatSaving}
+                disabled={vatSaving || !canManageVat}
                 onChange={(event) => {
                   const next = event.target.value;
                   if (next === 'REGISTERED' || next === 'NOT_REGISTERED') void saveVat(next);
@@ -438,6 +453,21 @@ export function CompanyProfilePage({ companyId }: { companyId: string }) {
                 <p className="text-sm text-gray-600">
                   ตั้งไว้เพื่อเข้าใช้งานบนคอมพิวเตอร์โดยไม่ต้องใช้ LINE ไม่บังคับค่ะ
                 </p>
+                {(usernameRequired || !account?.emailVerified) && (
+                  <TextField
+                    label={usernameRequired ? 'ชื่อผู้ใช้' : 'ชื่อผู้ใช้ (ถ้าต้องการ)'}
+                    value={newUsername}
+                    autoComplete="username"
+                    disabled={passwordSaving}
+                    required={usernameRequired}
+                    hint={
+                      usernameRequired
+                        ? 'ใช้คู่กับรหัสผ่านตอนเข้าจากคอมพิวเตอร์ ตัวอักษร a-z ตัวเลข จุด ขีด อย่างน้อย 4 ตัว'
+                        : 'ถ้าไม่ตั้ง จะเข้าด้วยอีเมลที่ยืนยันแล้วก็ได้ค่ะ'
+                    }
+                    onChange={(event) => setNewUsername(event.target.value)}
+                  />
+                )}
                 <TextField
                   label="รหัสผ่านใหม่"
                   type="password"

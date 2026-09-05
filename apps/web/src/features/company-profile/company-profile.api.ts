@@ -10,6 +10,7 @@ import type {
 export type AccountProfileState = {
   email: string | null;
   emailVerified: boolean;
+  username: string | null;
   emailVerifiedAt: string | null;
   pendingEmail: string | null;
   pendingEmailExpiresAt: string | null;
@@ -42,7 +43,8 @@ export function setMyPhoneNumber(phoneNumber: string): Promise<{ phoneNumber: st
   return apiFetch('/v1/auth/me/contact', { method: 'PATCH', body: JSON.stringify({ phoneNumber }) });
 }
 
-export function setMyFirstPassword(password: string, username?: string): Promise<void> {
+/** Answers the STORED username — lower-cased — which is what the login box will accept. */
+export function setMyFirstPassword(password: string, username?: string): Promise<{ username: string | null }> {
   return apiFetch('/v1/auth/me/password/set', {
     method: 'POST',
     body: JSON.stringify(username ? { password, username } : { password }),
