@@ -35,8 +35,9 @@ export class PublicCompanySignupDto {
   @IsString() @IsOptional() @MaxLength(32) @Matches(/^[0-9 -]*$/) taxId?: string;
   @IsString() @IsNotEmpty() @MaxLength(64) consentVersion!: string;
   @IsString() @IsOptional() @MaxLength(128) @Matches(/^[A-Za-z0-9_-]*$/) referralCode?: string;
-  // Only PRO_TRIAL is sellable today; the domain re-checks and answers `offer_not_available`
-  // rather than falling back to the trial silently (spec §3A).
+  // Owner 2026-09-05 (review R02): attribution only. Every self-signed-up shop is provisioned on
+  // the free trial, so this key chooses nothing; the domain records a catalog value and drops
+  // anything else rather than refusing the application over a label the server ignores.
   @IsIn(['PRO_TRIAL', 'STARTER_249', 'BASIC_499', 'PRO_999', 'ENTERPRISE_1999']) @IsOptional() requestedOfferKey?: string;
 }
 
@@ -45,7 +46,7 @@ export class PublicCompanySignupDto {
  * token would be a shape oracle, and this endpoint answers `{ valid: false }` for malformed,
  * expired, used and unknown alike. The pattern is checked in the handler instead.
  */
-export class SignupClaimInfoDtoBody {
+export class SignupClaimTokenDto {
   @IsString() @MaxLength(200) token!: string;
 }
 
@@ -152,7 +153,7 @@ export class PublicCompanySignupController {
   @Post('signup-claims/info')
   @HttpCode(200)
   @ApiOperation({ summary: 'Claim link details; identical empty answer for expired/used/unknown' })
-  async claimInfo(@Body() dto: SignupClaimInfoDtoBody, @Req() req: Request): Promise<SignupClaimInfoDto> {
+  async claimInfo(@Body() dto: SignupClaimTokenDto, @Req() req: Request): Promise<SignupClaimInfoDto> {
     await this.rateLimit.assertPublicSignupReadAllowed(trustedClientIp(req));
     // A malformed token is answered exactly like an unknown one — no shape oracle either.
     if (!CLAIM_TOKEN_PATTERN.test(dto.token)) return { valid: false };

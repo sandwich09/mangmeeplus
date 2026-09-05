@@ -7,7 +7,7 @@ Decisions: งานนี้เป็น review; ใช้ application code จ
 Open questions: นโยบายรักษาบทบาทเมื่อ merge memberships ซ้ำ; trial หลังหมดอายุและเส้นต่ออายุที่ต้องการแสดงผู้สมัคร; UAT บน LINE iOS/Android จริงสำหรับการข้าม browser
 Artifacts: รายงานในไฟล์นี้; สคริปต์จำลองและภาพ local ชั่วคราวอยู่ `/tmp/mangmee-auto-register-review-20260905/`
 Verification: API 192/192 และ web 46/46 ผ่าน; targeted probes และ mobile browser checks ยืนยัน gaps ด้านล่าง
-Next: แก้ P1 ก่อนเพิ่มการเปิดใช้จริง แล้วเพิ่ม integration coverage ตาม matrix ท้ายรายงาน; ยังไม่มี production acceptance จากการรีวิวนี้
+Next: P1 ปิดแล้วบน `codex/flow-b-p1-fixes` (ดู "รอบแก้ P1 2026-09-05" ท้ายไฟล์); P2 และ integration matrix ยังค้าง; ยังไม่มี production acceptance จากการรีวิวนี้
 
 ## ข้อสรุป
 
@@ -225,3 +225,25 @@ node /tmp/mangmee-auto-register-review-20260905/browser-probe.cjs
 4. Status/wording/recovery, input validation, queue pagination แล้วทำ mobile LINE/SES UAT จริง
 
 ไม่จำเป็นต้องรื้อ flow หรือเพิ่ม framework ใหม่เพื่อแก้ข้อเหล่านี้ ส่วนใหญ่เป็นการแก้ transaction boundary, initial parameters, request context และ copy ให้ตรง state
+
+## รอบแก้ P1 2026-09-05 — branch `codex/flow-b-p1-fixes`
+
+รายงานข้างบนเขียนบน checkout `91957572`; รอบแก้นี้ทำบน `origin/develop` (`91704151`) ซึ่งใหม่กว่าและมี P10-L slices, stale-identity fixes และ CI pg step อยู่แล้ว จึงมีบางข้อที่ **ไม่ reproduce** — บันทึกไว้พร้อมเทสต์ที่พิสูจน์ ไม่ได้แก้ทับ
+
+| ข้อ | reproduce บน develop? | สถานะ |
+|---|---|---|
+| R01 token ใน log | ใช่ (ทั้งสองชั้น) | แก้แล้ว: `POST /public/signup-claims/info` (token อยู่ใน body) และ `RequestLoggerMiddleware` log route template / mask segment ที่ยาวพอจะเป็น credential |
+| R02 PRO trial ได้ STARTER | **ไม่** — onboarding รับ `planTier` มาแล้วเขียนครั้งเดียว | เปลี่ยนตาม Owner 2026-09-05 แทน: ทุก self-signup ได้ free trial (`FREE_TRIAL_15` 30 วัน) ทั้ง web และ LINE; `requestedOfferKey` เป็น attribution อย่างเดียว ไม่ปฏิเสธคำขออีกต่อไป |
+| R03 CSRF ตัดผู้ใช้ที่ล็อกอินอยู่ | ใช่ | แก้แล้ว: public `/api/v1/*` ส่ง `credentials: 'omit'`; `/api/auth/*` (BFF ที่ตั้ง cookie) ยังส่ง credentials เหมือนเดิม; CSRF ที่อื่นไม่ถูกลด |
+| R04 บริษัทซ้ำ / request ค้าง | **ไม่** — stamp อยู่ใน company transaction, ผู้แพ้ rollback ทั้ง transaction, retry adopt ได้ทั้ง new-user และ attach (pg spec ยืนยัน 3 เคส) | ส่วนที่ reproduce คือ claim: consume token แยกจากการบันทึก → แก้ให้เป็น transaction เดียว |
+| R05 merge ทำ OWNER หาย | ใช่ (ทั้งสอง fixture) | แก้แล้ว: fail closed `account_merge_role_conflict` + invariant "ต้องเหลือ ACTIVE OWNER" + preview รายร้านและวิธีเข้าสู่ระบบที่เหลือ |
+| R06 rate limit รวมเป็น IP เดียว | ใช่ (ฝั่ง BFF) | แก้แล้ว: claim BFF forward `x-forwarded-for` ทั้ง claim และ login lane ผ่าน `forwardedClientHeaders`; ฝั่ง API `trustedClientIp` ถูกต้องอยู่แล้ว (มี property guard เพิ่ม) |
+| R08 retry ตอบสำเร็จทั้งที่งานหาย | ใช่ (ทั้ง submit และ approve) | แก้แล้ว: submit resume จาก state ที่ค้าง; approve เขียน state + approvedAt + outbox ใน transaction เดียว; retry ซ่อม email ที่หาย |
+| R09 reissue แล้วโดน sweep ปิดซ้ำ | ใช่ | แก้แล้ว: คอลัมน์ใหม่ `claimWindowStartedAt` (additive + backfill); approve เริ่ม, reissue รีสตาร์ท, sweep และ self-serve resend อ่านคอลัมน์นี้; `approvedAt` ยังเป็น audit fact |
+
+ยังไม่ได้แก้ในรอบนี้ (ตั้งใจ):
+
+- **R01 ชั้น infra:** ALB / Cloudflare access log ก็บันทึก path เดิมด้วย ลิงก์ claim ที่ส่งไปแล้วก่อนรอบนี้จึงเคยผ่าน log ชั้นนั้น — เป็นงาน infra (log retention / redaction ที่ edge) ไม่ได้อยู่ในโค้ดนี้
+- **`apps/web/app/api/auth/login/route.ts`** มีอาการ R06 แบบเดียวกัน แต่ไฟล์นี้อยู่ใน maintenance pins ของ production deploy จึงไม่แตะในรอบนี้
+- **AI budget ของ free trial ทาง web:** `applyLineTrialGuards` (warm-up + `companyAiConfiguration`) ยังรันเฉพาะ source `line-oa` ตามเดิม การเปลี่ยน tier รอบนี้ไม่ได้ทำให้แย่ลง แต่ตอนนี้ร้านจากฟอร์มเว็บก็เป็น free trial แล้ว จึงควรมี Owner decision ว่าจะให้ AI budget เท่ากับ LINE หรือไม่
+- **P2 ทั้งหมด (R07, R10–R13)** และ integration matrix ท้ายรายงาน

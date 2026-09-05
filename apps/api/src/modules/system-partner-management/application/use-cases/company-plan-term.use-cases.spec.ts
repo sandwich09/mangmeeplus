@@ -9,7 +9,7 @@ import {
   applyPlanTermPreset,
 } from './company-plan-term.use-cases';
 import { DAY_MS, isPlanTierKey } from '../../domain/logic/plan-term.logic';
-import { SELECTABLE_SIGNUP_OFFER_KEYS } from '../../../external-signup/domain/company-signup.logic';
+import { RECORDED_SIGNUP_OFFER_KEYS } from '../../../external-signup/domain/company-signup.logic';
 
 const COMPANY = 'co-1';
 const NOW_ISH = () => new Date();
@@ -192,7 +192,9 @@ describe('applyPlanTermPreset', () => {
     assert.equal(args.create.employeeLimit, 2);
     assert.equal(args.create.monthlySlipLimit, 15);
     assert.ok(isPlanTierKey('FREE_TRIAL_15'));
-    assert.equal(SELECTABLE_SIGNUP_OFFER_KEYS.includes('FREE_TRIAL_15'), false);
+    // R02: the public form's own key list still does not contain it — every self-signup lands on
+    // this preset by policy, not by asking for it.
+    assert.equal(RECORDED_SIGNUP_OFFER_KEYS.includes('FREE_TRIAL_15'), false);
   });
 });
 

@@ -52,3 +52,25 @@ One integration branch `codex/round3-hardening` merged four reviewed workstreams
 - Post-deploy ops still owed: SNS HTTPS subscription per runbook ses-email-setup.md ขั้นที่ 6 (subscribe the ECS origin, NOT the custom domain), then simulator bounce proof.
 - Done outside the repo: Cloudflare DMARC Management enabled (p=none, dashboard reports); mangmee_web branch `signup-cta` ready (do NOT upload until production signup activates); SES production access still under AWS review.
 - Owner order 2026-08-31 (evening): claim email carries NO trial-benefits block and NO LINE-invitation block (both removed from the template with regression guards — package terms and the LINE step are in-app only). The LIFF/rich-menu signup flow (spec §4F future note) is **ON HOLD** by Owner order — do not build until they lift it.
+
+## Update 2026-09-05: external review P1 round — branch `codex/flow-b-p1-fixes`
+
+Status: **P1 ปิดครบ** (R01, R02, R03, R04, R05, R06, R08, R09) บน `codex/flow-b-p1-fixes` แตกจาก `origin/develop` `91704151`; ยังไม่ merge, ยังไม่ deploy. รายงานต้นทางและตารางว่าอะไร reproduce/ไม่ reproduce อยู่ใน `docs/agent-memory/auto-register-review-2026-09-05.md` (commit ไว้ทั้งฉบับเป็น baseline แล้วต่อท้ายด้วยหัวข้อ "รอบแก้ P1 2026-09-05")
+
+ทุกข้อทำแบบ red-first: เขียนเทสต์ที่ fail บน develop ก่อน commit แล้วจึงแก้ ทั้งสองส่วนเก็บไว้
+
+Owner decisions ที่บันทึกรอบนี้:
+
+- **แพ็กเกจตอนสมัคร (2026-09-05):** ไม่มีการเลือกแพ็กเกจที่หน้าสมัครอีกต่อไป ทุก self-signup — ทั้งฟอร์มเว็บและ LINE — ได้ **free trial เดียวกัน** (`FREE_TRIAL_15`, 30 วัน, 15 สลิป/เดือน) เดิมฟอร์มเว็บให้ `PRO_999` ทั้งที่หน้าเว็บโฆษณาว่าทดลองฟรี `requestedOfferKey` เหลือไว้เป็นหลักฐาน attribution เท่านั้น (รับค่าใน catalog, ค่าอื่นทิ้ง, ไม่ปฏิเสธคำขอ) — คิว admin ไม่ได้แสดงคีย์นี้ จึงไม่มี DTO ต้องแก้
+- **merge ที่สิทธิ์ทับกัน (R05):** fail closed ด้วย `account_merge_role_conflict` เมื่อสอง membership ของร้านเดียวกันมี role ไม่ตรงกัน หรือ membership ฝั่งปลายทางไม่ ACTIVE และบังคับ invariant "ต้องเหลือ ACTIVE OWNER อย่างน้อยหนึ่งคนต่อร้าน" ก่อนปิด membership ใด ๆ พร้อม preview รายร้าน (`POST /v1/auth/account-merge/preview`) ที่บอกว่าร้านไหนย้าย ร้านไหนติด และหลังรวมแล้วเข้าสู่ระบบด้วยอะไร
+
+Schema delta: `CompanySignupRequest.claimWindowStartedAt` (nullable, additive migration `20260905170000_signup_claim_activation_window` พร้อม backfill จาก `approvedAt`) — R09 ต้องการนาฬิกาที่ reissue รีสตาร์ทได้ โดยไม่แตะ `approvedAt` ซึ่งเป็น audit fact
+
+Verification: api 6539 tests / 1325 suites / 6440 pass / 0 fail / 99 skipped; web 1489 pass / 0 fail; `apps/web` build ผ่าน; `pnpm -r typecheck` ผ่าน; `prisma validate` ผ่าน; maintenance pins `--check` = current; pg spec ใหม่ `signup-provisioning-recovery.pg.spec.ts` (5 tests) รันบน docker postgres จริงและถูกเพิ่มใน ci.yml pg step แบบ invocation ของตัวเอง
+
+Follow-ups ที่ยังไม่ทำ:
+
+- ALB / Cloudflare access log ยังบันทึก path เดิม (R01 ชั้น infra) — งาน ops ไม่ใช่โค้ดนี้
+- `apps/web/app/api/auth/login/route.ts` มีอาการ R06 เหมือนกัน แต่อยู่ใน maintenance pins จึงไม่แตะ
+- free trial ทางเว็บยังไม่ได้ AI budget/warm-up ของ LINE (`applyLineTrialGuards` รันเฉพาะ `line-oa`) — ต้องมี Owner decision
+- P2 ทั้งหมด (R07, R10–R13) และ integration matrix ท้ายรายงาน
