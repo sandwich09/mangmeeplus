@@ -26,6 +26,10 @@ describe('username uniqueness on real PostgreSQL', { skip: !databaseUrl }, () =>
   it('compares exactly and case-folded, with no LIKE semantics', async () => {
     const url = new URL(databaseUrl!);
     assert.ok(['localhost', '127.0.0.1'].includes(url.hostname), 'only an explicit local test database is allowed');
+    // Localhost alone is NOT proof of a local database: the production access recipe port-forwards
+    // prod to 127.0.0.1 through SSM. This spec writes to the real `public` schema, so it also
+    // requires the local docker database by name before it creates a single row.
+    assert.equal(url.pathname, '/watchdog_bms', 'refusing to write to anything but the local docker database');
     const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
     const tag = `acctprofile-${randomUUID().slice(0, 8)}`;
     const useCase = new AccountProfileUseCase({ client } as any, null, null);
@@ -50,7 +54,9 @@ describe('username uniqueness on real PostgreSQL', { skip: !databaseUrl }, () =>
     try {
       await client.user.createMany({
         data: [
-          { id: `${tag}-a`, displayName: 'Holder', username: 'somchai', status: 'ACTIVE' },
+          // Mixed case on purpose: with a lower-case holder, dropping `lower()` from the query
+          // would still pass this spec, because the desired name is lower-cased before the read.
+          { id: `${tag}-a`, displayName: 'Holder', username: 'SomChai', status: 'ACTIVE' },
           { id: `${tag}-b`, displayName: 'Mailbox', username: `${tag}-b`, email: 'somchai@gmail.com', status: 'ACTIVE' },
         ],
       });
