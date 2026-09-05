@@ -92,13 +92,24 @@ describe('draft update formatter', () => {
     assert.match(reply, /ย้ายบรรทัด 2 เป็นช่องค่าบริการ/);
   });
 
+  // The API caps `groundingText` at 1000 and rejects anything longer, so the SENDER truncates:
+  // an unbounded forward would 400 every ERP tool call of a turn whose message ran long.
+  it('bounds the grounding text it forwards to the ERP boundary', async () => {
+    const { GROUNDING_TEXT_MAX } = await import('../infrastructure/erp-tool.client');
+    assert.equal(GROUNDING_TEXT_MAX, 1000);
+    assert.equal('ก'.repeat(3000).slice(0, GROUNDING_TEXT_MAX).length, 1000);
+  });
+
   it('the accounting specialist owns all five tools, so a preview cannot fall to the model path', async () => {
     const { LINE_DRAFT_UPDATE_TOOLS } = await import('@watchdog-bms/contracts');
     for (const tool of LINE_DRAFT_UPDATE_TOOLS) assert.ok(ALLOWED_TOOLS.has(tool), `${tool} must be specialist-owned`);
   });
 
-  it('every frozen eval row expects zero writes — the invariant, restated where the gateway can see it', () => {
+  it('no frozen eval row writes except the one DEFINED as a write', () => {
     assert.ok(LINE_AI_DRAFT_UPDATE_SECURITY_EVAL_CASES.length >= 6);
-    assert.ok(LINE_AI_DRAFT_UPDATE_SECURITY_EVAL_CASES.every((row) => row.expectedApplyCount === 0));
+    for (const row of LINE_AI_DRAFT_UPDATE_SECURITY_EVAL_CASES) {
+      const mayWrite = row.expectedOutcome === 'applied_named_edit';
+      assert.equal(row.expectedApplyCount === 0, !mayWrite, row.id);
+    }
   });
 });

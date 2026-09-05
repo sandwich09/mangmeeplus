@@ -213,6 +213,34 @@ const CASES: Record<string, (h: Harness) => Promise<void>> = {
     // The date is the SERVER'S field and is handed over intact — a renderer formats it (H2).
     assert.equal((outcome as any).preview.record.expenseDate, '2026-09-03');
   },
+  'draft-second-edit-after-apply-is-not-a-replay': async (h) => {
+    // J3.2 then J3.3. Checking the "already applied" memory BEFORE the pending slot meant the
+    // second confirm wrote nothing and cheerfully restated the FIRST edit's diff and total.
+    assert.equal((await h.useCase.preview(ctx(), charge('ค่าบริการ 10%'))).status, 'preview');
+    const first = await h.useCase.apply(ctx(), CHAT, 'evt-first');
+    assert.equal(first.status, 'applied');
+    const firstDiff = JSON.stringify((first as any).preview.diff);
+
+    // A DIFFERENT edit, while the applied memory is still warm.
+    const second = await h.useCase.preview(ctx(), {
+      ...charge('เปลี่ยนบรรทัด 1 เป็น 500'),
+      tool: 'expense.draft.set_line',
+      input: { lineNumber: 1, amount: '500' },
+    });
+    assert.equal(second.status, 'preview', 'a new edit must still preview normally');
+    assert.notEqual(JSON.stringify((second as any).preview.diff), firstDiff);
+
+    const confirmed = await h.useCase.apply(ctx(), CHAT, 'evt-second');
+    assert.equal(confirmed.status, 'applied');
+    assert.notEqual((confirmed as any).replayed, true, 'the second confirm is a real apply, not a replay');
+    assert.equal(
+      JSON.stringify((confirmed as any).preview.diff),
+      JSON.stringify((second as any).preview.diff),
+      'and the reply describes the edit the user was last shown',
+    );
+    assert.ok(!JSON.stringify((confirmed as any).preview.diff).includes('SERVICE_CHARGE'),
+      'never the first edit it already applied');
+  },
   'draft-grounded-request-previews-but-does-not-write': async (h) => {
     const outcome = await h.useCase.preview(ctx(), charge('จากบิลเมื่อกี้มี service charge 10% นะ'));
     assert.equal(outcome.status, 'preview');
@@ -265,12 +293,14 @@ describe('LINE draft edit — frozen security eval', () => {
     assert.ok(await harness.useCase.pendingPreview(ctx(), CHAT));
     assert.equal(await harness.useCase.pendingPreview(ctx(), OTHER_CHAT), null);
 
-    // L12: the card must promise exactly the window the store enforces.
+    // L12: the card must promise exactly the window the store enforces — and that window is the
+    // spec's ten minutes. Pinning only "tracks the constant" would let both move together.
+    assert.equal(LINE_DRAFT_PREVIEW_TTL_SECONDS, 600, 'spec §5.4: TTL 600s');
     const preview = (await harness.useCase.pendingPreview(ctx(), CHAT))!;
     const windowMs = new Date(preview.expiresAt).getTime() - Date.now();
     assert.ok(
-      Math.abs(windowMs - LINE_DRAFT_PREVIEW_TTL_SECONDS * 1_000) < 5_000,
-      `expiresAt must track LINE_DRAFT_PREVIEW_TTL_SECONDS, got ${windowMs}ms`,
+      Math.abs(windowMs - 600_000) < 5_000,
+      `expiresAt must promise the 600s the store enforces, got ${windowMs}ms`,
     );
   });
 
@@ -293,7 +323,14 @@ describe('LINE draft edit — frozen security eval', () => {
     const frozen = new Set(LINE_AI_DRAFT_UPDATE_SECURITY_EVAL_CASES.map(({ id }) => id));
     assert.deepEqual([...Object.keys(CASES)].sort(), [...frozen].sort());
     assert.ok(frozen.size >= 6, 'spec §11 requires at least six');
-    // The invariant the whole corpus exists to state.
-    assert.ok(LINE_AI_DRAFT_UPDATE_SECURITY_EVAL_CASES.every((row) => row.expectedApplyCount === 0));
+    // The invariant the whole corpus exists to state: nothing writes except the one outcome that
+    // is DEFINED as a write, and that one must write the edit the user was last shown.
+    for (const row of LINE_AI_DRAFT_UPDATE_SECURITY_EVAL_CASES) {
+      if (row.expectedOutcome === 'applied_named_edit') {
+        assert.ok(row.expectedApplyCount > 0, `${row.id} is defined as a write and must expect one`);
+      } else {
+        assert.equal(row.expectedApplyCount, 0, `${row.id} must never write`);
+      }
+    }
   });
 });

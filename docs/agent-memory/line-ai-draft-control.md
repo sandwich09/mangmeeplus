@@ -547,9 +547,34 @@ parsed it, so UAT J3.7 was an infinite loop), L10–L15 and R2.
 
 **H4** — no ci.yml step here at all: develop's "Identity, username and LINE-signup specs against
 PostgreSQL" step already runs `CREATE DATABASE watchdog_bms`, and a second one would fail the job at
-rebase. The one-line hunk to add this spec to that step is in
-`<scratchpad>/agent-a01dbfd25bc868c9b/ci-rebase-hunk.txt`; until then the pg spec runs on demand
-against an isolated `watchdog_bms_sliced`.
+rebase.
+
+**REBASE ACTION (do not skip): `line-draft-update.pg.spec.ts` runs NOWHERE in CI until this lands.**
+Its own guard refuses any database not named `watchdog_bms*`, which is exactly what develop's step
+creates and migrates. Append one invocation to the END of that step's `run:` block — no new step, no
+second `CREATE DATABASE`:
+
+```yaml
+           LINE_SIGNUP_TEST_DATABASE_URL="$DATABASE_URL" \
+             pnpm --filter @watchdog-bms/api exec tsx --test \
+             src/modules/external-signup/line-signup-stale-identity.pg.spec.ts
++          # S-4 draft edit: only a real database can show that the PREVIEW transaction is
++          # genuinely rolled back. Its own invocation, like the three above — the runner
++          # interleaves spec files, and this one seeds a company and user of its own.
++          LINE_DRAFT_EDIT_TEST_DATABASE_URL="$DATABASE_URL" \
++            pnpm --filter @watchdog-bms/api exec tsx --test \
++            src/modules/expenses/line-draft-update.pg.spec.ts
+```
+
+Until then it runs on demand against an isolated database:
+
+```bash
+docker exec docker-postgres-1 psql -U watchdog -d postgres -c 'CREATE DATABASE watchdog_bms_sliced'
+DATABASE_URL='postgresql://watchdog:watchdog_local_password@127.0.0.1:15432/watchdog_bms_sliced?schema=public' \
+  pnpm --filter @watchdog-bms/api exec prisma migrate deploy
+LINE_DRAFT_EDIT_TEST_DATABASE_URL='postgresql://watchdog:watchdog_local_password@127.0.0.1:15432/watchdog_bms_sliced?schema=public' \
+  pnpm --filter @watchdog-bms/api exec tsx --test src/modules/expenses/line-draft-update.pg.spec.ts
+```
 
 ### D.9 Mutation table after the review — 22 rows, every one verified red
 
@@ -609,3 +634,46 @@ the arity spec verified red with the bug re-introduced.
 
 Process note for whoever reuses `mutations.sh`: it restores with `git checkout --`, so it now
 REFUSES to run on a dirty tree. It silently ate an uncommitted scrubber change once.
+
+### D.10 Round-2 review (2026-09-06) — one HIGH, from the L10 fix itself
+
+Round 1 verified every earlier finding fixed. Round 2 found that **the L10 "already applied" memory
+had introduced a worse bug than the one it solved.**
+
+`apply()` consulted that memory BEFORE the pending slot, and `preview()` never cleared it. So for
+120 seconds after any successful confirm: a SECOND, different edit previewed normally, the user
+pressed ยืนยัน, **nothing was written**, and the reply cheerfully restated the FIRST edit's diff and
+total. That is J3.2 followed by J3.3 — the ordinary journey in the UAT script, not an edge case.
+
+Fixed on both sides of the door: the pending slot is read first and the applied memory is consulted
+only when nothing pends; and saving a new preview forgets the old confirmation. Either alone would
+close it; together the store cannot hold a live preview and a stale confirmation at once.
+
+The corpus grew an outcome for it, `applied_named_edit`, and with it the honest admission that
+`expectedApplyCount` was never really "always zero": one row is DEFINED as a write, and its danger
+is the mirror of every other row — not an unwanted write, but a wanted write silently swallowed and
+answered with somebody else's numbers. The blanket assertion now reads "nothing writes except the
+outcome that is defined as a write", which is a checkable claim rather than a slogan.
+
+Three reviewer mutations that were still green are now pinned: the TTL is asserted to be 600 s (not
+merely "tracks the constant", which let both move together), a discounted line moved to a charge
+keeps its discount, and the gateway's `groundingText` bound is asserted at 1000.
+
+### D.11 Accepted, recorded, no code
+
+1. **D-1 residual TLDs.** A bare single-label host on a TLD outside the tiebreaker list survives as
+   text. `th` has been ADDED — this is a Thai product and `shop.th` is a plausible thing for a
+   receipt to carry — along with `dev` and `ai`. `evil.frobnicate` and anything else novel still
+   survives. Accepted: the money guard blocks the fabricated-total harm independently, and a bare
+   unlinked host word in a bubble is ordinary text, while eating "ABC Co.Ltd" is a certain bug on
+   every bill a limited company prints.
+2. **Dotted or spaced document numbers render "—".** `scrubRecordIdentifier` is one token with no
+   dots by design (admitting `.` re-admits `1789.04` and `192.168.1.1/pay`). A vendor whose document
+   number really contains a dot or a space shows "—" on the card rather than a wrong value. Accepted
+   pending an Owner sanity check on real Thai document numbers.
+3. **Replay after permission revocation returns the read-only preview.** A user who confirmed and
+   then lost `expense.update` sees the applied summary again on a second tap. It is a restatement of
+   a write that already happened and already passed the permission check; no new read of the record
+   occurs. Accepted.
+4. **A no-op `อัตรา VAT: 7% → 7%` row can appear** when a `set_vat_mode` patch restates the rate the
+   record already holds. Cosmetic; the totals row beside it is still correct.

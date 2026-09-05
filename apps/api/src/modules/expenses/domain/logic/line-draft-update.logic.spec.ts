@@ -151,6 +151,21 @@ describe('projectLineDraftPatch', () => {
     assert.equal((projected as any).lines[0].unitPrice, '500');
   });
 
+  // L14: a charge row contributes its subtotal MINUS its own discount, because that is what
+  // `taxable = subtotal - discount + charges` adds. Multiplying quantity by unit price and
+  // stopping there disagrees with the total printed beside it on the same card.
+  it('carries a moved line\'s own discount into the charge it becomes', () => {
+    const discounted = line({ lineNumber: 2, id: 'l2', description: 'Service Charge', unitPrice: '200', discountAmount: '50', lineSubtotalAmount: '200' });
+    const projected = projectLineDraftPatch(record([line(), discounted]), {
+      tool: 'expense.draft.set_line', lineNumber: 2, chargeKind: 'SERVICE_CHARGE',
+    });
+    assert.ok(!('error' in projected));
+    const moved = (projected as any).lines.find((entry: any) => entry.chargeKind === 'SERVICE_CHARGE');
+    assert.equal(moved.discountAmount, '50', 'the discount rides along and must not be silently dropped');
+    assert.equal(moved.quantity, '1');
+    assert.equal(moved.unitPrice, '200.0000');
+  });
+
   it('refuses to delete the last line', () => {
     assert.deepEqual(projectLineDraftPatch(record([line()]), { tool: 'expense.draft.remove_line', lineNumber: 1 }), { error: 'last_line' });
   });

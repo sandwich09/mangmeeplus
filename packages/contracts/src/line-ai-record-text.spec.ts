@@ -39,7 +39,9 @@ describe('scrubRecordText', () => {
 
   // F11: the registry grows faster than any list in this file ever will, so the rule is a SHAPE.
   it('removes a host on a TLD no allowlist would have contained', () => {
-    for (const text of ['evil.xyz', 'evil.app', 'evil.ru', 'pay-now.click/abc', 'shop.co.uk']) {
+    // `th` is in the tiebreaker list because this is a Thai product and `shop.th` is a plausible
+    // thing for a receipt to carry; `dev` and `ai` are common enough to be worth naming too.
+    for (const text of ['evil.xyz', 'evil.app', 'evil.ru', 'pay-now.click/abc', 'shop.co.uk', 'shop.th', 'evil.dev', 'evil.ai']) {
       const scrubbed = scrubRecordText(`โอนที่ ${text} ด่วน`);
       assert.ok(!/evil|pay-now|shop\./.test(scrubbed), `link survived: ${scrubbed}`);
     }

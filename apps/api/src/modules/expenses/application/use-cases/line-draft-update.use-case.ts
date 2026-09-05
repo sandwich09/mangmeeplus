@@ -251,15 +251,18 @@ export class LineDraftUpdateUseCase {
   /** Beat two, confirm. Everything is re-derived from the chat; the postback proves only intent. */
   async apply(ctx: RequestContext, chatKeyHash: string, webhookEventId: string): Promise<LineDraftApplyOutcome> {
     if (!this.enabled) return { status: 'blocked', reason: 'feature_disabled' };
-    const applied = await this.previews.loadApplied(ctx.companyId, chatKeyHash);
-    if (applied && applied.userId === ctx.userId) {
-      // Already done on a previous tap of this same card.
-      return { status: 'applied', preview: applied.preview, expenseId: applied.expenseId, replayed: true };
-    }
     const stored = await this.previews.load(ctx.companyId, chatKeyHash);
     // Wrong user, wrong chat, wrong company, or simply gone: all one answer, because telling them
     // apart would confirm that some other chat holds a pending edit.
     if (!stored || stored.companyId !== ctx.companyId || stored.userId !== ctx.userId || stored.chatKeyHash !== chatKeyHash) {
+      // ONLY with nothing pending is this a second tap on a card already confirmed. Checking the
+      // applied memory first was a real bug: within its window, a SECOND edit would preview
+      // normally, the user would press ยืนยัน, nothing would be written, and the reply would
+      // restate the FIRST edit — J3.2 followed by J3.3, which is the ordinary journey.
+      const applied = await this.previews.loadApplied(ctx.companyId, chatKeyHash);
+      if (applied && applied.userId === ctx.userId) {
+        return { status: 'applied', preview: applied.preview, expenseId: applied.expenseId, replayed: true };
+      }
       return { status: 'expired' };
     }
     if (!ctx.permissions.includes('expense.update')) return { status: 'blocked', reason: 'forbidden' };

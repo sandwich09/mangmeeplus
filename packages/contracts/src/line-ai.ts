@@ -903,7 +903,7 @@ const SCRUB_BARE_HOST = /[a-z0-9-]{2,}(?:\.[a-z0-9-]{2,}){2,}(?![a-z0-9-])\S*|[a
  * about. A novel single-label TLD with no other signal survives as text — recorded as accepted,
  * because the alternative silently eats "Co.Ltd", "St.Louis" and "TAX.INV" off real receipts.
  */
-const SCRUB_AMBIGUOUS_HOST = /[a-z0-9-]+\.(?:com|net|org|io|co|ru|cn|xyz|app|link|click|top|shop|site|live|info|biz|online|store|icu|vip|ly|me|tv|cc|gg|to|sh|st)(?![a-z\p{L}])/giu;
+const SCRUB_AMBIGUOUS_HOST = /[a-z0-9-]+\.(?:com|net|org|io|co|ru|cn|th|dev|ai|xyz|app|link|click|top|shop|site|live|info|biz|online|store|icu|vip|ly|me|tv|cc|gg|to|sh|st)(?![a-z\p{L}])/giu;
 
 export type ScrubOptions = {
   /** `mask` (default) keeps the label and replaces the figure; `drop` empties the whole value. */

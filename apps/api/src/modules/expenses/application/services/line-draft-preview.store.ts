@@ -76,6 +76,10 @@ export class LineDraftPreviewStore {
   }
 
   async save(entry: StoredDraftPreview): Promise<boolean> {
+    // A NEW question retires the old answer. Belt to the apply path's braces: that path only
+    // consults the applied memory when nothing is pending, but leaving a stale confirmation
+    // sitting next to a live preview is a trap for the next reader of either.
+    await this.forget(entry.companyId, entry.chatKeyHash);
     const key = previewKey(entry.companyId, entry.chatKeyHash);
     const value = JSON.stringify(entry);
     const redis = this.redis();
@@ -145,6 +149,20 @@ export class LineDraftPreviewStore {
   /** The preview this chat applied a moment ago, if any. */
   async loadApplied(companyId: string, chatKeyHash: string): Promise<StoredDraftPreview | null> {
     return this.read(appliedKey(companyId, chatKeyHash));
+  }
+
+  /** Drop the "already applied" memory — a new proposal has superseded it. */
+  async forget(companyId: string, chatKeyHash: string): Promise<void> {
+    const key = appliedKey(companyId, chatKeyHash);
+    this.local.delete(key);
+    const redis = this.redis();
+    if (!redis) return;
+    try {
+      await redis.del(key);
+    } catch (err) {
+      // Its own short TTL is the backstop, and the apply path checks it only when nothing pends.
+      this.logger.warn({ msg: 'expense.line_ai.draft_preview.forget_failed', error: (err as Error).message });
+    }
   }
 
   async discard(companyId: string, chatKeyHash: string): Promise<void> {
