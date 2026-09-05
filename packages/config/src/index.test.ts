@@ -703,6 +703,24 @@ describe('aiGatewayConfigSchema – item 10B new keys', () => {
   });
 });
 
+describe('apiConfigSchema LINE draft edit rollout gate (S-4)', () => {
+  const base = { APP_ENV: 'local', SERVICE_NAME: 'api', DATABASE_URL: 'postgresql://local', S3_BUCKET: 'local' };
+  it('defaults the LINE draft edit lane off', () => {
+    assert.equal(apiConfigSchema.parse(base).LINE_AI_DRAFT_EDIT_ENABLED, false);
+    assert.equal(aiGatewayConfigSchema.parse({ ...base, SERVICE_NAME: 'ai-gateway' }).LINE_AI_DRAFT_EDIT_ENABLED, false);
+  });
+  it('accepts an explicit UAT enable on both services', () => {
+    assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_DRAFT_EDIT_ENABLED: 'true' }).LINE_AI_DRAFT_EDIT_ENABLED, true);
+    assert.equal(
+      aiGatewayConfigSchema.parse({ ...base, SERVICE_NAME: 'ai-gateway', LINE_AI_DRAFT_EDIT_ENABLED: 'true' }).LINE_AI_DRAFT_EDIT_ENABLED,
+      true,
+    );
+  });
+  it('refuses a non-boolean spelling rather than treating it as truthy', () => {
+    assert.equal(apiConfigSchema.safeParse({ ...base, LINE_AI_DRAFT_EDIT_ENABLED: 'yes' }).success, false);
+  });
+});
+
 describe('apiConfigSchema LINE expense draft rollout gate', () => {
   const base = { APP_ENV: 'local', SERVICE_NAME: 'api', DATABASE_URL: 'postgresql://local', S3_BUCKET: 'local' };
 
