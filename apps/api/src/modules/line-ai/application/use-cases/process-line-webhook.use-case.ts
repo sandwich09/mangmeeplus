@@ -1056,7 +1056,9 @@ export function buildCorrectionEvidence(
  *  being employee of one company and owner of another used to lock the assistant out entirely.
  *  The selection is still verified against this user's own ACTIVE memberships below, and
  *  per-company authorization stays with the permission resolver and branch ABAC downstream. */
-async function resolveCompanyForLineUser(
+// Exported so a signup spec can assert the chat lands on the NEW shop after a LINE identity is
+// re-pointed, against this resolver rather than a copy of it.
+export async function resolveCompanyForLineUser(
   prisma: PrismaService,
   userId: string,
   lineUserId: string,
@@ -3600,6 +3602,9 @@ export class ProcessLineWebhookUseCase {
     await this.prisma.client.lineCompanyContext.upsert({
       where: { lineUserId: event.lineUserId },
       create: { lineUserId: event.lineUserId, companyId: selected.companyId, selectedAt: new Date() },
+      // `aiPausedUntil` is KEPT here on purpose, unlike the signup and link paths that clear it.
+      // The same person is switching between their own shops mid-conversation; the §8 hold means a
+      // human is handling this thread, and typing a shop name is not a request to hand it back.
       update: { companyId: selected.companyId, selectedAt: new Date() },
     });
     await this.audit.log({

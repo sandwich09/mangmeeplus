@@ -99,6 +99,12 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
   const UNAVAILABLE_TH = 'ตอนนี้ระบบยังเปิดให้สมัครทางนี้ไม่ได้ค่ะ ลองใหม่อีกครั้งภายหลัง หรือทักหาทีมงานได้เลยนะคะ';
   /** Spec §7 writes the window exactly this way. One copy, so the page and the LINE cards agree. */
   const BUSINESS_HOURS_TH = '(จันทร์–เสาร์ 9:00–18:00)';
+  /**
+   * The two refusals a shop owner cannot fix from this page: their account is suspended, or their
+   * LINE identity was disabled by an admin. Retrying is not a way out of either, so the copy names
+   * the people who can help instead of inviting another tap.
+   */
+  const SIGNUP_BLOCKED_TH = 'บัญชี LINE นี้เปิดร้านใหม่ไม่ได้ค่ะ กรุณาติดต่อทีมงาน โทร 098-256-5628 หรืออีเมล contact@mangmeeplus.com นะคะ';
   /** States in which an application is still travelling — the page shows status, not the form. */
   const OPEN_SIGNUP_STATES = ['RECEIVED', 'VALIDATED', 'PENDING_REVIEW', 'PROVISIONING', 'READY', 'PROVISIONING_FAILED'];
   const START_REASON_TH = {
@@ -403,6 +409,11 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
       // The release moved under a page that was left open. Nothing to retry blind: reload and the
       // fresh page carries the text this customer will actually be agreeing to.
       if (code === 'legal_release_changed') throw new Error('ข้อกำหนดมีฉบับใหม่แล้วค่ะ กรุณาปิดหน้านี้แล้วเปิดใหม่อีกครั้งนะคะ');
+      // The account behind this LINE is suspended, or the identity itself was disabled. Nothing on
+      // this page can change either, so the one honest answer is who to call.
+      if (code === 'line_signup_account_blocked' || code === 'line_signup_identity_disabled') {
+        throw new Error(SIGNUP_BLOCKED_TH);
+      }
       if (code === 'line_signup_already_pending') {
         // A second tab, or a submit that raced the open read. One more read — not a poll — so the
         // waiting card names the shop and the real business-hours answer instead of guessing both.

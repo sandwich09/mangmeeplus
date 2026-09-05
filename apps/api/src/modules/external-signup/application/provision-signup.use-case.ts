@@ -424,7 +424,11 @@ export class ProvisionSignupUseCase {
         this.prisma.client.lineCompanyContext.upsert({
           where: { lineUserId },
           create: { lineUserId, companyId, selectedAt: now },
-          update: { companyId, selectedAt: now },
+          // `aiPausedUntil` is cleared, never carried (review N4). It is the §8 "ติดต่อเจ้าหน้าที่"
+          // hold on ONE conversation about ONE shop; a re-pointed LINE account opening a new shop
+          // would otherwise start it with the previous owner's assistant switched off, silently,
+          // until a timestamp nobody can see expires.
+          update: { companyId, selectedAt: now, aiPausedUntil: null },
         }),
       );
     }

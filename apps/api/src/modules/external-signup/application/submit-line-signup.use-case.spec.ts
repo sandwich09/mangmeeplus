@@ -24,7 +24,17 @@ function harness(options: {
   approvalMode?: 'MANUAL' | 'AUTO_FREE';
   autoDailyCap?: number;
   approvedToday?: number;
-  identity?: { userId: string } | null;
+  /**
+   * The row that owns the unique `(LINE, channel, providerUserId)` slot, in WHATEVER status — which
+   * is the whole point of this fix. Defaults keep it the ACTIVE identity of an ACTIVE user, so
+   * every pre-existing test describes the same account it always did.
+   */
+  identity?: { userId: string; status?: string; user?: { status: string } } | null;
+  /**
+   * What the account behind that identity already belongs to. Only an OWNER membership makes this a
+   * repeat trial — an employee whose LINE was linked by the staff QR is opening their FIRST shop.
+   */
+  memberships?: Array<{ owner: boolean; status?: string }>;
   verifyThrows?: Error;
   createThrows?: unknown;
   /** null = a verified token that carries no profile name, which LINE permits. */
@@ -42,8 +52,26 @@ function harness(options: {
 
   const capCounts: any[] = [];
   const locks: unknown[][] = [];
+  const identityReads: any[] = [];
   const client: any = {
-    externalIdentity: { findFirst: async () => options.identity ?? null },
+    externalIdentity: {
+      findFirst: async (args: any) => {
+        identityReads.push(args);
+        return options.identity
+          ? { status: 'ACTIVE', user: { status: 'ACTIVE' }, ...options.identity }
+          : null;
+      },
+    },
+    // Both filters are HONOURED. Dropping the OWNER role turns an employee's first shop into a
+    // "repeat trial"; dropping the DRAFT exclusion turns a half-filled employee draft into one.
+    // A fake that ignored the where-clause would report green for either regression.
+    companyMembership: {
+      count: async (args: any) => (options.memberships ?? []).filter((m) => {
+        if (args?.where?.roles?.some?.role?.key === 'OWNER' && !m.owner) return false;
+        if (args?.where?.status?.not && (m.status ?? 'ACTIVE') === args.where.status.not) return false;
+        return true;
+      }).length,
+    },
     companySignupRequest: {
       count: async (args: any) => { capCounts.push(args); return options.approvedToday ?? 0; },
       update: async (args: any) => { updates.push(args); return {}; },
@@ -103,6 +131,7 @@ function harness(options: {
   return {
     useCase: new SubmitLineSignupUseCase(prisma, config, core, lineIdToken, rateLimit, adminNotify, provision, opsAlerts),
     created, advances, audits, updates, notified, provisioned, userQuotas, capCounts, locks, alerts,
+    identityReads,
   };
 }
 
@@ -278,6 +307,87 @@ describe('SubmitLineSignupUseCase — where the application goes', () => {
     assert.deepEqual(h.alerts, ['auto_cap_reached']);
   });
 
+  // Owner 2026-09-05. A LINE account whose old shop was closed is asking for a SECOND free trial.
+  // AUTO_FREE opening that unseen is how one person collects trials; a person decides it instead.
+  it('sends a repeat trial to the queue instead of auto-approving it', async () => {
+    const h = harness({
+      approvalMode: 'AUTO_FREE',
+      identity: { userId: 'user-old', status: 'UNLINKED' },
+      memberships: [{ owner: true }],
+    });
+    const result = await h.useCase.execute(CMD, NOW);
+
+    assert.equal(result.state, 'PENDING_REVIEW');
+    assert.deepEqual(h.provisioned, [], 'no shop is opened by the machine for a repeat trial');
+    assert.deepEqual(h.updates, [], 'and no daily cap slot is burned on it either');
+    assert.deepEqual(h.notified, ['signup-1'], 'it lands in the admin queue like any manual row');
+    const flagged = h.audits.find((entry: any) => entry.data.action === 'signup.line.auto_approve_repeat_trial');
+    assert.equal(flagged.data.metadataJson.reason, 'repeat_trial_manual_review');
+    assert.equal(h.audits[0].data.metadataJson.repeatTrial, true, 'the submit row says so too');
+  });
+
+  /**
+   * Review B1. An employee's LINE is linked by the staff QR, so their identity points at an account
+   * that already holds a membership — in their EMPLOYER's shop. Counting any membership made their
+   * OWN first shop a "repeat trial" and sent it to manual review naming a company never theirs.
+   */
+  it('does not count an employee membership as a trial this person has had', async () => {
+    const h = harness({
+      approvalMode: 'AUTO_FREE',
+      identity: { userId: 'user-staff', status: 'UNLINKED' },
+      memberships: [{ owner: false }],
+    });
+    const result = await h.useCase.execute(CMD, NOW);
+
+    assert.equal(result.state, 'COMPLETED', 'their first shop is a first shop');
+    assert.equal(h.audits[0].data.metadataJson.repeatTrial, false);
+  });
+
+  /**
+   * An employee draft an admin started and abandoned is a half-filled form, not a shop. Onboarding
+   * writes the owner's membership ACTIVE inside the company transaction, so a shop that was really
+   * opened never sits in DRAFT — counting DRAFT could only ever produce a false repeat trial.
+   */
+  it('does not count an abandoned DRAFT membership as a shop this person had', async () => {
+    const h = harness({
+      approvalMode: 'AUTO_FREE',
+      identity: { userId: 'user-old', status: 'UNLINKED' },
+      memberships: [{ owner: true, status: 'DRAFT' }],
+    });
+    const result = await h.useCase.execute(CMD, NOW);
+
+    assert.equal(result.state, 'COMPLETED');
+    assert.equal(h.audits[0].data.metadataJson.repeatTrial, false);
+  });
+
+  it('still counts a shop that was closed, suspended or disabled', async () => {
+    for (const status of ['SUSPENDED', 'DISABLED', 'INVITED']) {
+      const h = harness({
+        approvalMode: 'AUTO_FREE',
+        identity: { userId: 'user-old', status: 'UNLINKED' },
+        memberships: [{ owner: true, status }],
+      });
+      const result = await h.useCase.execute(CMD, NOW);
+      assert.equal(result.state, 'PENDING_REVIEW', `${status} membership is still a shop they had`);
+    }
+  });
+
+  it('still auto-approves a LINE account that has never had a shop', async () => {
+    const h = harness({ approvalMode: 'AUTO_FREE', identity: { userId: 'user-old', status: 'UNLINKED' } });
+    const result = await h.useCase.execute(CMD, NOW);
+
+    assert.equal(result.state, 'COMPLETED', 'an unlinked identity alone is not a repeat trial');
+    assert.equal(h.audits[0].data.metadataJson.repeatTrial, false);
+  });
+
+  it('treats a second shop for an ACTIVE account as a repeat trial too', async () => {
+    const h = harness({ approvalMode: 'AUTO_FREE', identity: { userId: 'user-9' }, memberships: [{ owner: true }] });
+    const result = await h.useCase.execute(CMD, NOW);
+
+    assert.equal(result.state, 'PENDING_REVIEW');
+    assert.equal(h.created[0].attachUserId, 'user-9', 'still an attach — just not an automatic one');
+  });
+
   it('raises no cap alert on the ordinary path, or when no operator exists to name', async () => {
     const under = harness({ approvalMode: 'AUTO_FREE', autoDailyCap: 20, approvedToday: 0 });
     await under.useCase.execute(CMD, NOW);
@@ -296,6 +406,63 @@ describe('SubmitLineSignupUseCase — where the application goes', () => {
 
     assert.equal(result.existingAccount, true);
     assert.equal(h.created[0].attachUserId, 'user-9');
+  });
+
+  it('reads the identity slot without a status filter', async () => {
+    const h = harness();
+    await h.useCase.execute(CMD, NOW);
+    // UAT cmto4xtrx002r4o5tf7o38dls: with `status: 'ACTIVE'` in this where-clause an UNLINKED row
+    // was invisible here and fatal in onboarding, because the unique slot belongs to it regardless.
+    assert.deepEqual(h.identityReads[0].where, {
+      provider: 'LINE', providerUserId: 'Uline-1', providerChannelId: 'channel-1',
+    });
+  });
+
+  it('opens a NEW account when the LINE account was unlinked earlier', async () => {
+    // The UAT shape: linked once, unlinked, applying again. Before the fix this reached onboarding
+    // as "brand new", whose `externalIdentity.create` then died on the unique slot the stale row
+    // still owns — 409 twice, PROVISIONING_FAILED, and every admin retry the same.
+    const h = harness({ identity: { userId: 'user-old', status: 'UNLINKED' } });
+    const result = await h.useCase.execute(CMD, NOW);
+
+    assert.equal(result.existingAccount, false, 'the old account is not where this shop belongs');
+    assert.equal(h.created[0].attachUserId, undefined);
+    assert.equal(result.state, 'PENDING_REVIEW', 'and the application is a real one, not a refusal');
+  });
+
+  it('refuses at submit when the account behind the LINE identity is suspended', async () => {
+    const h = harness({ identity: { userId: 'user-9', user: { status: 'SUSPENDED' } } });
+    await assert.rejects(() => h.useCase.execute(CMD, NOW), /line_signup_account_blocked/);
+    assert.deepEqual(h.created, [], 'no application row exists for a refusal');
+    assert.deepEqual(h.userQuotas, ['attempt:Uline-1', 'inspect:Uline-1'], 'no creation quota spent');
+  });
+
+  it('refuses at submit when an admin disabled the LINE identity', async () => {
+    // Same rule LinkLineIdentityUseCase keeps: signing up must not be the one route that quietly
+    // resurrects a disabled identity.
+    const h = harness({ identity: { userId: 'user-9', status: 'DISABLED' } });
+    await assert.rejects(() => h.useCase.execute(CMD, NOW), /line_signup_identity_disabled/);
+    assert.deepEqual(h.created, []);
+  });
+
+  it('refuses a status it does not recognise rather than guessing', async () => {
+    const h = harness({ identity: { userId: 'user-9', status: 'SOMETHING_NEW' } });
+    await assert.rejects(() => h.useCase.execute(CMD, NOW), /line_signup_account_blocked/);
+  });
+
+  // Review B2. Unlinking must not be the way around a suspension: the user-status guard has to run
+  // for an UNLINKED identity too, or a suspended owner severs the link, applies again, and walks
+  // away with a brand-new ACTIVE account on the very same LINE.
+  it('refuses a suspended account that unlinked first', async () => {
+    const h = harness({ identity: { userId: 'user-old', status: 'UNLINKED', user: { status: 'SUSPENDED' } } });
+    await assert.rejects(() => h.useCase.execute(CMD, NOW), /line_signup_account_blocked/);
+    assert.deepEqual(h.created, [], 'and no application row is left behind for an admin to approve');
+  });
+
+  it('still lets an UNLINKED identity of an ACTIVE account open a new shop', async () => {
+    const h = harness({ identity: { userId: 'user-old', status: 'UNLINKED', user: { status: 'ACTIVE' } } });
+    const result = await h.useCase.execute(CMD, NOW);
+    assert.equal(result.state, 'PENDING_REVIEW', 'the ordinary "I closed my old shop" case is untouched');
   });
 
   it('tells the LIFF page which waiting message to show', async () => {

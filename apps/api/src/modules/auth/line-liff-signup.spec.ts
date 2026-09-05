@@ -274,6 +274,30 @@ describe('P10-L LIFF client script', () => {
     assert.match(h.elements['pending-text']!.textContent, /จันทร์–เสาร์ 9:00–18:00/, 'the §7 wording, once');
   });
 
+  /**
+   * The two refusals a shop owner cannot fix from this page. Before the code map they arrived as
+   * the bare string `line_signup_account_blocked` under "ส่งคำขอไม่สำเร็จ" — a machine word and no
+   * way forward for someone whose account is suspended.
+   */
+  for (const code of ['line_signup_account_blocked', 'line_signup_identity_disabled']) {
+    it(`answers ${code} with the support phone and email`, async () => {
+      const h = runSignupScript('null', [
+        { status: 200, body: 'null' },
+        { status: 409, body: JSON.stringify({ message: code }) },
+      ]);
+      await settle();
+      await settle();
+      await h.click('link');
+      await settle();
+
+      assert.equal(h.calls.length, 2, 'a refusal is final: no re-read, no retry loop');
+      assert.match(h.elements.detail!.textContent, /098-256-5628/);
+      assert.match(h.elements.detail!.textContent, /contact@mangmeeplus\.com/);
+      assert.doesNotMatch(h.elements.detail!.textContent, /line_signup_/, 'never the raw code');
+      assert.equal(h.views.find((view) => view.id === 'done-view')!.hidden, true);
+    });
+  }
+
   it('closes the LIFF window from the ปิด button (L-9)', async () => {
     const h = runSignupScript('null');
     await settle();

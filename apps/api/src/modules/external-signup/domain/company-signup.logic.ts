@@ -204,3 +204,21 @@ export function canTransitionCompanySignup(
 export function isCompanySignupFailureState(state: CompanySignupState): boolean {
   return state === 'EMAIL_FAILED' || state === 'PROVISIONING_FAILED' || state === 'SUSPENDED' || state === 'EXPIRED';
 }
+
+/**
+ * What "this applicant has already had a shop" means — the repeat-trial signal, read by BOTH the
+ * AUTO_FREE guard at submit and the admin queue's hint. One definition, because the two answering
+ * differently would be the queue naming a shop the machine did not act on, or the reverse.
+ *
+ * OWNER only (review B1): an employee whose LINE was linked by the staff QR holds a membership in
+ * their EMPLOYER's shop, which is not a trial they ever had.
+ *
+ * DRAFT excluded: that status belongs to an employee draft nobody finished — a half-filled form,
+ * not a shop. Every other status counts, because a closed, suspended or disabled shop still
+ * existed; onboarding creates the owner's membership ACTIVE inside the company transaction, so a
+ * shop that was really opened never sits in DRAFT.
+ */
+export const OWNED_COMPANY_MEMBERSHIP = {
+  status: { not: 'DRAFT' as const },
+  roles: { some: { role: { key: 'OWNER' } } },
+};

@@ -31,6 +31,19 @@ function harness(options: {
   companies?: any[];
   companiesByPhone?: Array<{ phone: string; name: string }>;
   membershipsByPhone?: Array<{ user: { phoneNumber: string | null }; company: { name: string } }>;
+  /** Rows in the unique LINE slot, in ANY status — that is what the repeat-trial hint reads. */
+  identities?: Array<{ providerUserId: string; providerChannelId: string; userId: string }>;
+  /**
+   * What those accounts already belong to, oldest first. `owner: false` is an employee membership —
+   * their EMPLOYER's shop, which must never be named as a trial this applicant already had.
+   */
+  priorMemberships?: Array<{
+    userId: string;
+    owner: boolean;
+    /** Defaults to ACTIVE. `DRAFT` is an employee draft nobody finished — never a shop. */
+    status?: string;
+    company: { name: string; status: string; planTerm: { termDisabledAt: Date | null } | null };
+  }>;
 } = {}) {
   const audits: any[] = [];
   const updates: any[] = [];
@@ -55,7 +68,20 @@ function harness(options: {
           : options.companies ?? []),
       },
       // Review A-01: the second phone rail — a member of an existing shop carries the number.
-      companyMembership: { findMany: async () => options.membershipsByPhone ?? [] },
+      // Owner 2026-09-05 added a second reader keyed by user id: the repeat-trial hint.
+      companyMembership: {
+        findMany: async (args: any) => {
+          if (!args?.where?.userId) return options.membershipsByPhone ?? [];
+          // Both filters are HONOURED: dropping the OWNER role makes the employee case red, and
+          // dropping the DRAFT exclusion makes the abandoned-draft case red.
+          return (options.priorMemberships ?? []).filter((m) => {
+            if (args?.where?.roles?.some?.role?.key === 'OWNER' && !m.owner) return false;
+            if (args?.where?.status?.not && (m.status ?? 'ACTIVE') === args.where.status.not) return false;
+            return true;
+          });
+        },
+      },
+      externalIdentity: { findMany: async () => options.identities ?? [] },
       auditLog: { create: async (args: any) => { audits.push(args); return {}; } },
     },
   } as any;
@@ -177,6 +203,89 @@ describe('SignupAdminQueueUseCase.list', () => {
     assert.equal(items[0]!.contactEmail, undefined);
     assert.equal(items[0]!.emailMatchesExistingUser, false);
     assert.deepEqual(h.userQueries[0].where.email.in, ['somchai@example.com']);
+  });
+
+  /**
+   * Owner 2026-09-05. The applicant unlinked and is applying again, so the identity that names them
+   * is UNLINKED — invisible to any ACTIVE-only read, and precisely the case this hint exists for.
+   */
+  const lineRow = {
+    ...REQUEST, id: 'signup-line', source: 'line-oa', contactEmail: null, taxId: null,
+    lineProviderUserId: 'Uline-1', lineChannelId: 'channel-1',
+  };
+  const state = async (company: any, owner = true, status?: string) => {
+    const h = harness({
+      requests: [lineRow],
+      identities: [{ providerUserId: 'Uline-1', providerChannelId: 'channel-1', userId: 'user-old' }],
+      priorMemberships: [{ userId: 'user-old', owner, ...(status ? { status } : {}), company }],
+    });
+    const { items } = await h.useCase.list(NOW);
+    return items[0]!;
+  };
+
+  it('names the shop a repeat applicant already had, and how it stands today', async () => {
+    const closed = await state({ name: 'ร้านเก่า', status: 'DISABLED', planTerm: null });
+    assert.equal(closed.priorCompanyName, 'ร้านเก่า');
+    assert.equal(closed.priorCompanyState, 'CLOSED');
+    // The same pair the LINE assistant uses to tell a term expiry from an admin-ordered close.
+    const expired = await state({
+      name: 'ร้านเก่า', status: 'DISABLED', planTerm: { termDisabledAt: new Date('2026-08-01') },
+    });
+    assert.equal(expired.priorCompanyState, 'EXPIRED');
+    const running = await state({ name: 'ร้านเก่า', status: 'ACTIVE', planTerm: null });
+    assert.equal(running.priorCompanyState, 'ACTIVE');
+  });
+
+  /**
+   * The chat's `ownsTermExpiredCompany` requires DISABLED *and* a `termDisabledAt` stamp. Reading
+   * the stamp alone called a SUSPENDED shop "หมดอายุ" while the assistant called the same shop
+   * something else — and an operator told a customer to renew a suspension only an admin can lift.
+   */
+  it('calls a shop expired on exactly the pair the LINE assistant uses', async () => {
+    const suspended = await state({
+      name: 'ร้านเก่า', status: 'SUSPENDED', planTerm: { termDisabledAt: new Date('2026-08-01') },
+    });
+    assert.equal(suspended.priorCompanyState, 'CLOSED', 'a suspension is not an expiry');
+    const disabledByHand = await state({ name: 'ร้านเก่า', status: 'DISABLED', planTerm: { termDisabledAt: null } });
+    assert.equal(disabledByHand.priorCompanyState, 'CLOSED');
+  });
+
+  // An employee draft an admin started and abandoned is a half-filled form, not a shop.
+  it('never names a shop from a membership that never got past DRAFT', async () => {
+    const draft = await state({ name: 'ร้านร่าง', status: 'ACTIVE', planTerm: null }, true, 'DRAFT');
+    assert.equal(draft.priorCompanyName, undefined);
+    assert.equal(draft.priorCompanyState, undefined);
+  });
+
+  // Review B1: the employee whose LINE was linked by the staff QR. Their identity points at an
+  // account holding a membership in their EMPLOYER's shop — naming it here would tell the operator
+  // this person is repeating a trial they have never had, on a company that was never theirs.
+  it('never names an employer shop the applicant only works at', async () => {
+    const employeeOnly = await state({ name: 'ร้านนายจ้าง', status: 'ACTIVE', planTerm: null }, false);
+    assert.equal(employeeOnly.priorCompanyName, undefined);
+    assert.equal(employeeOnly.priorCompanyState, undefined);
+  });
+
+  it('says nothing about a prior shop when there is none', async () => {
+    const h = harness({
+      requests: [{
+        ...REQUEST, source: 'line-oa', contactEmail: null, taxId: null,
+        lineProviderUserId: 'Uline-1', lineChannelId: 'channel-1',
+      }],
+    });
+    const { items } = await h.useCase.list(NOW);
+    assert.equal(items[0]!.priorCompanyName, undefined);
+    assert.equal(items[0]!.priorCompanyState, undefined);
+  });
+
+  // The "มีปัญหา" tab has to be able to say WHY. Without the code on the DTO the page could only
+  // show "เปิดร้านไม่สำเร็จ" for a stale LINE identity and for a database outage alike.
+  it('carries the provisioning failure code to the queue', async () => {
+    const h = harness({
+      requests: [{ ...REQUEST, state: 'PROVISIONING_FAILED', source: 'line-oa', failureCode: 'line_identity_already_linked' }],
+    });
+    const { items } = await h.useCase.list(NOW);
+    assert.equal(items[0]!.failureCode, 'line_identity_already_linked');
   });
 });
 

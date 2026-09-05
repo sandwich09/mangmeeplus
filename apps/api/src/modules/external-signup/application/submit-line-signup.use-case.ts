@@ -11,7 +11,7 @@ import {
   type LegalSignupEvidence,
 } from '../../auth/application/legal-acceptance.service';
 import { bangkokDayKey, bangkokDayStart, isBusinessHours } from '../domain/business-hours.logic';
-import { SIGNUP_SOURCE_LINE_OA } from '../domain/company-signup.logic';
+import { OWNED_COMPANY_MEMBERSHIP, SIGNUP_SOURCE_LINE_OA } from '../domain/company-signup.logic';
 import {
   lineExternalSignupId,
   normalizeLineCompanyName,
@@ -89,7 +89,11 @@ export class SubmitLineSignupUseCase {
 
     // Spec §5: a LINE account that already belongs to an active user opens a SECOND shop for that
     // account rather than a second account. Decided here, from proof, not by an admin from a hint.
-    const attachUserId = await this.existingOwnerUserId(verified.providerUserId, verified.channelId);
+    const identity = await this.resolveLineIdentity(verified.providerUserId, verified.channelId);
+    const attachUserId = identity.attachUserId;
+    // Owner 2026-09-05: this LINE account has held a shop before — a closed one counts. The free
+    // trial it is asking for is therefore a REPEAT, which a person decides rather than the machine.
+    const repeatTrial = identity.userId !== null && await this.hasOwnedCompany(identity.userId);
 
     const externalSignupId = lineExternalSignupId(verified.channelId, verified.providerUserId, randomUUID());
     const request = await this.create({
@@ -112,13 +116,14 @@ export class SubmitLineSignupUseCase {
       existingAccount: attachUserId !== null,
       hasPhoneNumber: phoneNumber !== null,
       hasReferralCode: referralCode !== null,
+      repeatTrial,
     });
 
     const businessHours = isBusinessHours(now, {
       days: this.config.lineSignupBusinessDays,
       hours: this.config.lineSignupBusinessHours,
     });
-    const state = await this.decideAndRun(request.id, cmd, now);
+    const state = await this.decideAndRun(request.id, cmd, now, repeatTrial);
     return { requestId: request.id, state, existingAccount: attachUserId !== null, businessHours };
   }
 
@@ -127,9 +132,23 @@ export class SubmitLineSignupUseCase {
    * the same shape the web claim page uses — but only when it can name a real operator AND only
    * under the daily cap: either way it falls back to MANUAL rather than opening the spend tap
    * wider (spec §9 item 3).
+   *
+   * Owner 2026-09-05 adds a third fallback with the same shape: a repeat trial. Nothing is blocked
+   * — the application still reaches the queue, where an operator can see the shop this LINE account
+   * had before and approve it anyway.
    */
-  private async decideAndRun(requestId: string, cmd: SubmitLineSignupCommand, now: Date): Promise<string> {
-    if (this.config.lineSignupApprovalMode === 'AUTO_FREE') {
+  private async decideAndRun(
+    requestId: string,
+    cmd: SubmitLineSignupCommand,
+    now: Date,
+    repeatTrial: boolean,
+  ): Promise<string> {
+    if (repeatTrial && this.config.lineSignupApprovalMode === 'AUTO_FREE') {
+      await this.audit(requestId, 'signup.line.auto_approve_repeat_trial', cmd.correlationRequestId, {
+        reason: 'repeat_trial_manual_review',
+      });
+    }
+    if (this.config.lineSignupApprovalMode === 'AUTO_FREE' && !repeatTrial) {
       // Resolved BEFORE a cap slot is taken: onboarding writes this id into two foreign keys, so
       // an installation with no SYSTEM_ADMIN cannot auto-provision at all and must not burn a slot
       // discovering that. `approvedByUserId` stays null on the row — the spec's record of "no admin
@@ -250,19 +269,58 @@ export class SubmitLineSignupUseCase {
     }
   }
 
-  /** ACTIVE identity on OUR channel belonging to an ACTIVE user — anything else is not an owner. */
-  private async existingOwnerUserId(providerUserId: string, channelId: string): Promise<string | null> {
+  /**
+   * The account this LINE identity opens a SECOND shop for, or null for a genuinely new one.
+   *
+   * Matched WITHOUT a status filter, because the unique `(provider, channel, providerUserId)` slot
+   * is owned by the row whatever its status. Filtering on ACTIVE here is what broke UAT request
+   * cmto4xtrx002r4o5tf7o38dls: the tester had unlinked earlier, submit therefore reported "new
+   * account", and onboarding's `externalIdentity.create` hit the constraint — a generic 409 and a
+   * PROVISIONING_FAILED row that failed identically on every admin retry.
+   *
+   * Four outcomes: attach, refuse (blocked account), refuse (disabled identity), or a new account
+   * whose provisioning re-points the stale row. The trailing non-ACTIVE branch is unreachable
+   * against today's three-value enum — it is the fail-closed default for a status added later,
+   * not a case anything can currently produce.
+   */
+  private async resolveLineIdentity(
+    providerUserId: string,
+    channelId: string,
+  ): Promise<{ attachUserId: string | null; userId: string | null }> {
     const identity = await this.prisma.client.externalIdentity.findFirst({
-      where: {
-        provider: 'LINE',
-        providerUserId,
-        providerChannelId: channelId,
-        status: 'ACTIVE',
-        user: { status: 'ACTIVE' },
-      },
-      select: { userId: true },
+      where: { provider: 'LINE', providerUserId, providerChannelId: channelId },
+      select: { status: true, userId: true, user: { select: { status: true } } },
     });
-    return identity?.userId ?? null;
+    if (!identity) return { attachUserId: null, userId: null };
+    // Admin kill-switch (the same rule `LinkLineIdentityUseCase` keeps). Opening a shop must not be
+    // the one route that silently resurrects a disabled identity.
+    if (identity.status === 'DISABLED') throw new ConflictException('line_signup_identity_disabled');
+    // Checked for EVERY identity status, ACTIVE or UNLINKED, and BEFORE the unlinked branch below.
+    // Otherwise unlinking is a way around a suspension: a SUSPENDED owner severs the link, applies
+    // again, and the flow hands them a brand-new ACTIVE account on the same LINE (review B2).
+    if (identity.user.status !== 'ACTIVE') throw new ConflictException('line_signup_account_blocked');
+    // The owner unlinked deliberately, or their old shop was closed. A NEW account is what they
+    // asked for; onboarding re-points this same row rather than creating a second one for the slot.
+    // `userId` still travels: the account behind that stale row is what makes this a repeat trial.
+    if (identity.status === 'UNLINKED') return { attachUserId: null, userId: identity.userId };
+    // Fail closed on a status this build does not know: an unrecognised state is not an owner.
+    if (identity.status !== 'ACTIVE') throw new ConflictException('line_signup_account_blocked');
+    return { attachUserId: identity.userId, userId: identity.userId };
+  }
+
+  /**
+   * An OWNER membership that actually came into being. A shop that was closed, suspended or
+   * disabled is still a trial this person had; one that never got past DRAFT is not.
+   *
+   * OWNER and not "any membership" (review B1). An employee whose LINE was linked by the staff QR
+   * carries a membership in their EMPLOYER's shop — counting it flagged their own first shop as a
+   * repeat trial and sent it to manual review naming a company that was never theirs.
+   */
+  private async hasOwnedCompany(userId: string): Promise<boolean> {
+    const owned = await this.prisma.client.companyMembership.count({
+      where: { userId, ...OWNED_COMPANY_MEMBERSHIP },
+    });
+    return owned > 0;
   }
 
   /** Ids, booleans and counts only: no shop name, phone number or LINE user id in evidence. */

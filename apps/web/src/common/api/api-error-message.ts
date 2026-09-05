@@ -346,6 +346,10 @@ const CODE_LABELS: Record<string, string> = {
   line_messaging_channel_not_configured: 'ยังไม่ได้ตั้งค่าช่องทาง LINE ของระบบ จึงส่งข้อความไม่ได้',
   package_change_request_not_found: 'ไม่พบคำขอเปลี่ยนแพ็กเกจนี้ อาจถูกดำเนินการไปแล้ว กรุณาโหลดหน้าใหม่',
   line_linked_elsewhere: 'LINE นี้เชื่อมกับบัญชีอื่นอยู่แล้ว เลือกได้ว่าจะรวมเป็นบัญชีเดียวหรือใช้แยกกันต่อ',
+  // Provisioning refused the LINE identity by name instead of letting a unique violation become
+  // "ข้อมูลซ้ำ" — an operator reading that had nothing to do next. Both say what to change.
+  line_identity_already_linked: 'LINE ของผู้สมัครผูกกับบัญชีอื่นอยู่ ต้องปลดการเชื่อมในหน้าพาร์ทเนอร์ก่อน แล้วกดอนุมัติอีกครั้ง',
+  line_identity_disabled: 'LINE ของผู้สมัครถูกปิดใช้งานอยู่ ต้องเปิดใช้งานก่อน แล้วกดอนุมัติอีกครั้ง',
   // Spec §4F account merge — same copy the welcome dialog's own map shows, so the message reads
   // identically wherever the code surfaces.
   merge_ticket_invalid: 'คำขอรวมบัญชีหมดอายุแล้ว กดปุ่มเชื่อมบัญชี LINE อีกครั้งเพื่อเริ่มใหม่',

@@ -28,6 +28,7 @@ import {
   rejectNotifyDefault,
   rejectNotifyLabel,
   signupBusinessSummary,
+  signupFailureChip,
   signupHintChips,
   isFinishingStrandedRow,
   isLineSignup,
@@ -580,6 +581,7 @@ export default function SignupQueuePage() {
                       const busy = busyId === item.requestId;
                       const idle = signupIdleChip(item);
                       const hints = signupHintChips(item);
+                      const failure = signupFailureChip(item);
                       return (
                         <tr key={item.requestId} className="align-top hover:bg-gray-50">
                           <td className="px-4 py-3">
@@ -621,6 +623,8 @@ export default function SignupQueuePage() {
                           <td className="px-4 py-3">
                             <div className="flex flex-wrap gap-1">
                               <ChipBadge chip={signupStateChip(item.state, item)} />
+                              {/* Why it failed, when the code names something an admin can fix. */}
+                              {failure && <ChipBadge chip={failure} />}
                               {idle && <ChipBadge chip={idle} />}
                               {hints.map((chip) => (
                                 <ChipBadge key={chip.label} chip={chip} />
