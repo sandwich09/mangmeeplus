@@ -729,6 +729,120 @@ export type LineIntakeCorrectionHints = {
 export const LINE_CORRECTION_FIELDS = ['expenseDate', 'amount', 'vendorName', 'documentNumber', 'note'] as const;
 export type LineCorrectionField = (typeof LINE_CORRECTION_FIELDS)[number];
 
+// ─── S-4 draft edit over LINE (draft-control spec §5.4/§6) ────────────────────────────────────
+// Two beats, always: a PREVIEW that writes nothing and an APPLY that only a confirm postback can
+// reach. Everything below describes the first beat; the second carries no payload of its own
+// because the postback is allowed to say nothing but "yes" (SEC-04).
+
+/** The record kinds a draft-edit tool may address. `expense` is the only one this release writes;
+ *  the field exists from day one so income/receipt drafts (spec §10) can join without a contract
+ *  break, and every tool input reserves it. */
+export const LINE_DRAFT_RECORD_TYPES = ['expense'] as const;
+export type LineDraftRecordType = (typeof LINE_DRAFT_RECORD_TYPES)[number];
+
+/** The five draft-edit tools, in the order the registry declares them. Exported so the API adapter,
+ *  the gateway router hints and the specs all name the same five strings. */
+export const LINE_DRAFT_UPDATE_TOOLS = [
+  'expense.draft.set_header',
+  'expense.draft.set_line',
+  'expense.draft.add_charge',
+  'expense.draft.remove_line',
+  'expense.draft.set_vat_mode',
+] as const;
+export type LineDraftUpdateTool = (typeof LINE_DRAFT_UPDATE_TOOLS)[number];
+
+/** One field the pending edit would change, as the confirm card states it. `before` is `null` when
+ *  the record holds nothing today ("ยังไม่ระบุ"); `after` is null only for a cleared field. */
+export type LineDraftUpdateDiffField = {
+  /** Stable machine name (`expenseDate`, `line.2.amount`, `charge.SERVICE_CHARGE`, …). */
+  field: string;
+  /** Thai label the card prints. Deterministic — never model text. */
+  label: string;
+  before: string | null;
+  after: string | null;
+};
+
+/** The document totals the edit would leave behind. Same five figures as the §5.1 identity, so a
+ *  card can restate the arithmetic instead of asserting a number. */
+export type LineDraftUpdateTotals = {
+  subtotalAmount: string;
+  discountAmount: string;
+  chargesAmount: string;
+  taxableAmount: string;
+  vatAmount: string;
+  grandTotalAmount: string;
+};
+
+/**
+ * The result of the PREVIEW beat: what WOULD change, what the totals WOULD become, and the handle
+ * the confirm beat re-derives. Nothing is written to produce it.
+ *
+ * `previewId` is an opaque server id used for audit correlation and for proving that a confirm
+ * matches the preview the chat was shown. It is deliberately NOT carried in the postback — the
+ * server looks the preview up by chat, so a forged or replayed id can reach nothing (§5.4, SEC-04).
+ */
+export type LineDraftUpdatePreview = {
+  previewId: string;
+  recordType: LineDraftRecordType;
+  expenseId: string;
+  /** Human summary of the record the edit targets, e.g. "BHC · 03/09/2569". Structured fields only. */
+  recordLabel: string;
+  /** The tool that proposed this edit; the card copy is chosen from it. */
+  tool: LineDraftUpdateTool;
+  diff: LineDraftUpdateDiffField[];
+  totalsBefore: LineDraftUpdateTotals;
+  totalsAfter: LineDraftUpdateTotals;
+  /** Deterministic Thai warnings (unverified VAT on a charge, NEEDS_REVIEW reasons, …). */
+  warnings: string[];
+  expiresAt: string;
+};
+
+/** The confirm/cancel beat. It carries an INTENT and nothing else — no preview id, no expense id,
+ *  no company id — because the server re-derives all of them from the chat that is answering. */
+export type LineDraftUpdatePostback = {
+  action: 'confirm' | 'cancel';
+};
+
+/**
+ * Every free-text field on a captured record — vendor name, document number, line description,
+ * a charge label the OCR wrote — is text an ATTACKER PUT ON A PIECE OF PAPER. It reaches a card,
+ * a reply and an audit payload, so it is scrubbed once, here, and both apps import this copy: the
+ * API renders the confirm card, the gateway renders the answer, and a second implementation is how
+ * one of them ends up printing "ยอดรวมใหม่ 9,999.00" that the server never computed.
+ *
+ * What it removes, in order: control characters and bidi overrides (a right-to-left mark can make
+ * a number read backwards), URLs and bare domains, money-shaped and percent-shaped runs (so only
+ * the server's own figures can look like figures), then whitespace runs; finally it is truncated.
+ *
+ * It is a DISPLAY guard, not an escape: it never makes untrusted text safe to obey, and no caller
+ * may treat scrubbed text as an instruction.
+ */
+export function scrubRecordText(value: string | null | undefined, maxLength = 60): string {
+  if (typeof value !== 'string') return '';
+  return value
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, ' ')
+    .replace(/\b(?:https?:\/\/|www\.)\S+/gi, '')
+    .replace(/\b[\w-]+\.(?:com|net|org|co|io|th|link|xyz)\b\S*/gi, '')
+    .replace(/\d[\d,]*\.\d{2}\b/g, '▪')
+    .replace(/\d+(?:\.\d+)?\s*%/g, '▪')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLength);
+}
+
+/** Why a draft edit could not even be previewed. Each maps to one deterministic Thai reply. */
+export type LineDraftUpdateBlockedReason =
+  | 'feature_disabled'
+  | 'no_recent_record'
+  | 'ambiguous_record'
+  | 'mutation_blocked'
+  | 'forbidden'
+  | 'ambiguous_line'
+  | 'ungrounded_value'
+  | 'invalid_patch'
+  | 'rate_limited';
+
 // ─── Prepared advisor contract (advisor spec §6/§9) ────────────────────────────────────────────
 // One brain, several rooms: the mode names which room a turn belongs to. Slice A ships SOCIAL_CHAT
 // only — the other members exist so the enum is the spec's, not a moving target, but nothing routes

@@ -12,7 +12,7 @@
  * apply leaves no trace claiming it happened.
  */
 import { ForbiddenException, Injectable } from '@nestjs/common';
-import type { ExpenseLineVatTreatment, LineCorrectionField, LineIntakeCorrectionCandidate, LineIntakeCorrectionHints, RequestContext } from '@watchdog-bms/contracts';
+import type { LineCorrectionField, LineIntakeCorrectionCandidate, LineIntakeCorrectionHints, RequestContext } from '@watchdog-bms/contracts';
 import { LINE_CORRECTION_FIELDS } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AuditService } from '../../../audit/application/audit.service';
@@ -23,7 +23,7 @@ import {
   type ClarificationConsumption,
 } from '../../../line-ai/application/line-ai-consumption-marker';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
-import { appendUserNote, canCorrectAmount, evaluateCorrectionHints, type CorrectionEvidence } from '../../domain/logic/line-correction.logic';
+import { appendUserNote, evaluateCorrectionHints, type CorrectionEvidence } from '../../domain/logic/line-correction.logic';
 import { reconcileExpenseDuplicateCandidates } from '../services/expense-duplicate-detection';
 import { UpdateExpenseDraftUseCase } from './expense-draft.use-case';
 
@@ -99,8 +99,11 @@ export class CorrectLineCapturedExpenseUseCase {
       if (!CORRECTABLE_STATUSES.has(record.status)) return { status: 'guidance', reason: `status_locked:${record.status}` };
       if (!isBranchInScope(ctx.scopes ?? {}, record.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
 
-      const allowedFields = LINE_CORRECTION_FIELDS.filter((field) =>
-        field !== 'amount' || canCorrectAmount({ sourceDocumentType: record.sourceDocumentType, lines: record.lines }));
+      // S-4 (draft-control spec §5.4): `amount` left this lane. Money now goes through the draft
+      // tools — preview the new totals, show them, and write only on [ยืนยัน] — because rewriting a
+      // line set blind is exactly what `canCorrectAmount` had to keep refusing. This lane keeps the
+      // four header fields it can change honestly, and `amountOnlyLine` is gone with it.
+      const allowedFields = LINE_CORRECTION_FIELDS.filter((field) => field !== 'amount');
       const evaluated = evaluateCorrectionHints(input.hints, {
         expenseDate: record.expenseDate?.toISOString() ?? null,
         grandTotalAmount: record.grandTotalAmount?.toString() ?? null,
@@ -123,10 +126,9 @@ export class CorrectLineCapturedExpenseUseCase {
         ...(fields.expenseDate ? { expenseDate: fields.expenseDate.to } : {}),
         ...(fields.vendorName ? { vendorNameSnapshot: fields.vendorName.to } : {}),
         ...(fields.documentNumber ? { vendorDocumentNumber: fields.documentNumber.to } : {}),
-        // Spec §5.3: append, never overwrite — the provenance note ("LINE receipt upload") is how
-        // anyone later knows this record came from a photo in a chat.
+        // Spec §5.3 (slice A): append, never overwrite — the provenance note ("LINE receipt
+        // upload") is how anyone later knows this record came from a photo in a chat.
         ...(noteAppend ? { note: noteAppend.note } : {}),
-        ...(fields.amount ? { lines: this.amountOnlyLine(record, fields.amount.to) } : {}),
       }, { db: tx, suppressGenericAudit: true });
 
       await this.appendProvenance(tx, ctx, record, input.lineMessageIdHash, fields);
@@ -172,19 +174,6 @@ export class CorrectLineCapturedExpenseUseCase {
     const named = input.hints?.targetExpenseId;
     if (named && input.candidates.some((candidate) => candidate.id === named)) return { status: 'resolved', expenseId: named };
     return { status: 'unresolved', outcome: { status: 'guidance', reason: 'ambiguous_target' } };
-  }
-
-  /** The trivial single line a text note carries — `canCorrectAmount` already refused anything
-   *  richer, so rewriting it cannot destroy itemisation or a tax selection. */
-  private amountOnlyLine(record: { lines: Array<{ description?: string | null; vatRate?: { toString(): string } | null; vatTreatment?: ExpenseLineVatTreatment | null }>; note?: string | null }, amount: string) {
-    return [{
-      lineNumber: 1,
-      description: record.lines[0]?.description ?? record.note ?? 'LINE correction',
-      quantity: '1',
-      unitPrice: amount,
-      vatRate: record.lines[0]?.vatRate?.toString(),
-      vatTreatment: record.lines[0]?.vatTreatment ?? null,
-    }];
   }
 
   /** Convenience mirror on the record; the audit row above is the durable history. */

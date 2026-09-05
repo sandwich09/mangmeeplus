@@ -1,4 +1,5 @@
 import type { LineQuickReplyItem, LineReplyMessage } from '../../infrastructure/line-reply.adapter';
+import { DRAFT_UPDATE_CANCEL_COMMAND, DRAFT_UPDATE_CONFIRM_COMMAND } from './line-draft-update-card.logic';
 import { FEATURE_CATALOG } from '@watchdog-bms/contracts';
 
 /**
@@ -480,6 +481,9 @@ export type StaffMenuCommand =
   | 'package_change' | 'employee' | 'staff_contact' | 'profile_guard' | 'profile_guard_later'
   // §2.4 delta: the customer's own way out of the support pause.
   | 'resume_ai'
+  // S-4 (draft-control spec §5.4): the two buttons on the draft-edit confirm card. Typed answers
+  // work too, which is the point of SEC-04 — a postback may do nothing a message could not.
+  | 'draft_update_confirm' | 'draft_update_cancel'
   | 'follow';
 
 export function staffMenuCommand(text: string): StaffMenuCommand | null {
@@ -497,6 +501,8 @@ export function staffMenuCommand(text: string): StaffMenuCommand | null {
   if (normalized === RESUME_AI_COMMAND || normalized === RESUME_AI_ALT_COMMAND) return 'resume_ai';
   if (normalized === PROFILE_GUARD_COMMAND) return 'profile_guard';
   if (normalized === PROFILE_GUARD_LATER_COMMAND) return 'profile_guard_later';
+  if (normalized === DRAFT_UPDATE_CONFIRM_COMMAND) return 'draft_update_confirm';
+  if (normalized === DRAFT_UPDATE_CANCEL_COMMAND) return 'draft_update_cancel';
   if (normalized === LINE_FOLLOW_EVENT_TEXT) return 'follow';
   if (normalized === 'โปรโมชั่น' || normalized === 'แพ็กเกจ') return 'promotion';
   return null;
@@ -513,6 +519,10 @@ const POSTBACK_ACTIONS: Readonly<Record<string, string>> = {
   'package-change': PACKAGE_CHANGE_COMMAND,
   'profile-guard': PROFILE_GUARD_COMMAND,
   'profile-guard-later': PROFILE_GUARD_LATER_COMMAND,
+  // S-4: the confirm/cancel buttons carry an intent and no ids. The server re-derives which
+  // preview they answer from the chat, so a forged or replayed `data` reaches nothing.
+  'draft-update-confirm': DRAFT_UPDATE_CONFIRM_COMMAND,
+  'draft-update-cancel': DRAFT_UPDATE_CANCEL_COMMAND,
 };
 
 /** `action=<name>&…`; unknown or absent actions answer null so the event is dropped, not guessed. */

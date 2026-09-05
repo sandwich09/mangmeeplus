@@ -1,9 +1,10 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import Decimal from 'decimal.js';
 import type { RequestContext, SourceRef, ToolResult } from '@watchdog-bms/contracts';
 import { EXPENSE_STATUS_LABELS } from '@watchdog-bms/contracts';
 import { listRecentLineCaptureCandidates } from '../../../expenses/application/services/line-recent-capture';
 import { PrismaExpenseRepository } from '../../../expenses/infrastructure/prisma-expense.repository';
+import { LineDraftUpdateUseCase } from '../../../expenses/application/use-cases/line-draft-update.use-case';
 import { GetProductUseCase } from '../../../inventory/application/use-cases/list-products.use-case';
 import { GetDocumentUseCase, ListDocumentsUseCase } from '../../../accounting-documents/application/use-cases/document.use-case';
 import { GetExpenseUseCase } from '../../../expenses/application/use-cases/expense-draft.use-case';
@@ -240,7 +241,15 @@ export class ExpenseExplainRecordTool implements ErpReadToolPort {
     private readonly getExpense: GetExpenseUseCase,
     // Typed as the repository (the DI token) but used only through the narrow reader surface.
     private readonly recentCaptures: PrismaExpenseRepository,
+    // S-4: the ONE fact this read tool needs from the draft lane — whether money can be edited over
+    // LINE at all in this deployment. `@Optional()` so an older wiring simply reports the pre-S-4
+    // answer rather than failing to boot.
+    @Optional() private readonly draftUpdate?: LineDraftUpdateUseCase,
   ) {}
+
+  private get draftEditEnabled(): boolean {
+    return this.draftUpdate?.enabled === true;
+  }
 
   async execute(ctx: ErpToolContext, input: Record<string, unknown> = {}): Promise<ToolResult> {
     const asOf = now();
@@ -296,19 +305,21 @@ export class ExpenseExplainRecordTool implements ErpReadToolPort {
           // record. A record whose own totals do not reconcile must SAY SO before it explains an
           // arithmetic the reader would otherwise take as verified.
           totalsIdentity: expense.totalsIdentity,
-          // What the LINE lanes can actually change TODAY (spec §5.3): the correction lane's text
-          // fields.
+          // What the LINE lanes can actually change TODAY (spec §5.3/§5.4).
           //
-          // `amount` is deliberately excluded and NOT computed from `canCorrectAmount`, even though
-          // that predicate is the authority. It reads `taxCodeDefinitionId` and
-          // `externalTaxCodeSnapshot`, which `ExpenseLineSummary` does not carry — so evaluating it
+          // With S-4 OFF this is the correction lane's four text fields and nothing else. `amount`
+          // is excluded and deliberately NOT computed from `canCorrectAmount`, even though that
+          // predicate is the authority: it reads `taxCodeDefinitionId` and
+          // `externalTaxCodeSnapshot`, which `ExpenseLineSummary` does not carry, so evaluating it
           // here would come out MORE permissive than the lane really is and could tell a user to
-          // type a correction the lane then refuses. That is exactly the E3 dishonesty this slice
-          // exists to remove, so the conservative answer stands: amounts are edited in web.
-          // (`canCorrectAmount` also refuses every record with a charge line, which is every
-          // receipt this tool explains.) S-4 replaces this pair with the real draft-edit capability.
-          editableOverLine: ['expenseDate', 'vendorName', 'documentNumber', 'note'],
-          amountEditableOverLine: false,
+          // type a correction the lane then refuses — exactly the E3 dishonesty this slice removes.
+          //
+          // With S-4 ON the draft tools really do change money, on exactly the receipts this tool
+          // explains, so the answer says so. The flag decides; the copy never guesses.
+          editableOverLine: this.draftEditEnabled
+            ? ['expenseDate', 'vendorName', 'documentNumber', 'note', 'amount', 'charges', 'vat']
+            : ['expenseDate', 'vendorName', 'documentNumber', 'note'],
+          amountEditableOverLine: this.draftEditEnabled,
         },
         sourceRefs: [source(ctx, asOf, expense.expenseNumber ?? 'ค่าใช้จ่าย', 'expenses', 'expense', expense.id, `/companies/${ctx.companyId}/expenses/${expense.id}`)],
       };
