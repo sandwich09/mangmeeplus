@@ -37,7 +37,10 @@ const LIFF_PAGE_STYLE = `:root{--brand:#22C55E;--brand-dark:#15803D;--ink:#10182
     [hidden]{display:none!important}
     button:disabled{opacity:.5}
     pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--ground);border:1px solid var(--line);border-radius:8px;padding:12px;font-size:13px;color:var(--muted)}
-    pre:empty{display:none}`;
+    /* A container with no message must not paint its own box: #detail is the last element on the
+       signup page, and empty it rendered as a grey rounded rectangle under the trial line
+       (Owner 2026-09-05). This covers the first paint; setStatus() then toggles [hidden]. */
+    #status:empty,#detail:empty{display:none}`;
 
 /** The coin-with-sprout mark from the มั่งมี Brand Kit — the same paths `MangmeeLogo.tsx` draws. */
 const MANGMEE_HEADER_HTML = `<header class="brand"><svg viewBox="0 0 48 48" fill="none" aria-hidden="true">
@@ -216,9 +219,22 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     return typeof value === 'string' && value.length <= 32768 && /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(value);
   }
 
+  /**
+   * The only writer of the two message containers, on every page — so hiding them when they carry
+   * nothing is one edit here rather than one per caller. The CSS :empty rule covers the first paint,
+   * before this script runs; this covers the case :empty cannot see, which is a message that is
+   * present but blank (an Error carrying only whitespace still painted an empty box).
+   * No backticks in here: this whole script is a template literal.
+   */
   function setStatus(text, detail) {
-    statusEl.textContent = text;
-    detailEl.textContent = detail || '';
+    setMessage(statusEl, text);
+    setMessage(detailEl, detail || '');
+  }
+
+  function setMessage(el, text) {
+    if (!el) return;
+    el.textContent = text;
+    el.hidden = !text.trim();
   }
 
   function removeQueryParam(name) {

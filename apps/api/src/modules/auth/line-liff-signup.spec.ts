@@ -92,6 +92,26 @@ describe('P10-L LIFF signup page', () => {
     assert.ok(challenge.length * 7.2 > 390, 'the string really is wider than the screen');
   });
 
+  /**
+   * `#detail` is the last element on the signup page, directly under the trial line, and it carries
+   * a background, a border and padding. Rendered empty it was a grey rounded box with nothing in it
+   * — which is what the Owner photographed on 2026-09-05. Both halves are asserted: the CSS rule
+   * covers the first paint, before the script has run at all.
+   */
+  it('never paints an empty message container on any page it serves', async () => {
+    const c = makeController();
+    const pages = [c.lineSignupPage(request()), c.lineStartPage(request()), await c.lineLinkPage(request()), await c.employeeLineLinkPage(request())];
+
+    for (const html of pages) {
+      // The containers really are served empty — otherwise the rule below would be guarding nothing.
+      assert.ok(html.includes('<pre id="detail"></pre>'), 'detail is rendered with no content');
+      assert.ok(html.includes('#status:empty,#detail:empty{display:none}'), 'and an empty one is not painted');
+    }
+    // The box only exists because `pre` is a painted surface; if that ever stops being true the rule
+    // above is dead weight rather than a fix, so the paint itself is pinned here.
+    assert.match(pages[0]!, /pre\{[^}]*background:var\(--ground\)[^}]*border:1px solid var\(--line\)/);
+  });
+
   it('wears the มั่งมี header and palette on every page it serves', () => {
     for (const html of [
       makeController().lineSignupPage(request()),
@@ -254,6 +274,43 @@ describe('P10-L LIFF client script', () => {
   }
 
   const settle = () => new Promise((resolve) => { setImmediate(resolve); });
+
+  /** The runtime half of the same rule: `:empty` cannot see a message that is present but blank. */
+  describe('an empty message container is hidden, a real message is not', () => {
+    it('hides both containers once the form is up and there is nothing to say', async () => {
+      const { elements } = runSignupScript('null');
+      await settle();
+      await settle();
+
+      assert.equal(elements['status']!.textContent, '');
+      assert.equal(elements['status']!.hidden, true, 'no status text, no status box');
+      assert.equal(elements['detail']!.hidden, true, 'this is the grey box the Owner photographed');
+    });
+
+    it('shows both again for a real failure, with no styling of its own', async () => {
+      const h = runSignupScript('null', [], { initFails: new Error('LIFF init failed') });
+      await settle();
+      await settle();
+
+      assert.equal(h.elements.status!.hidden, false);
+      assert.equal(h.elements.detail!.hidden, false, 'an error still has to be readable');
+      assert.match(h.elements.detail!.textContent, /LIFF init failed/);
+      // Hidden is the only thing that changed: nothing swaps a class, so the shown box keeps the
+      // one `pre` rule the page was served with.
+      assert.equal(h.elements.detail!.className, undefined);
+    });
+
+    // An `Error` carrying only whitespace is exactly the case the CSS rule cannot catch: the node
+    // is not `:empty`, so without the script half the box comes back with nothing readable in it.
+    it('hides a message that is present but blank', async () => {
+      const h = runSignupScript('null', [], { initFails: new Error('   ') });
+      await settle();
+      await settle();
+
+      assert.equal(h.elements.status!.hidden, false, 'the title still says what failed');
+      assert.equal(h.elements.detail!.hidden, true, 'but a blank reason paints no box');
+    });
+  });
 
   it('reads status exactly once on open and then shows the form', async () => {
     const { elements, views, calls } = runSignupScript('null');

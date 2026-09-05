@@ -18,6 +18,9 @@ infrastructure, no `package.json`, no pinned files.
 4. **Card heading and body must not repeat each other** — the heading is "ได้รับแล้ว", so the body
    starts with what happens next.
 5. **มั่งมี theme on every API-served LIFF page.**
+6. **No empty message container may paint its own box** (follow-up from a second phone screenshot):
+   `#detail` is the last element on the signup page, directly under the trial line, and carried a
+   background, border and padding while holding nothing — a grey rounded box with no text in it.
 
 ## What changed
 
@@ -31,6 +34,7 @@ infrastructure, no `package.json`, no pinned files.
 | 3 | `auth.controller.ts` — trial line |
 | 4 | `liff-page.security.ts` — `done-text` and `pending-text`; `line-business-card.logic.ts` `buildSignupStatusCard` took the same edit, because its own comment promises the chat card and the LIFF page say the same three sentences |
 | 5 | `liff-page.security.ts` — `LIFF_PAGE_STYLE` rewritten on the มั่งมี tokens, plus `MANGMEE_HEADER_HTML` (inline coin-with-sprout SVG + "มั่งมีพลัส"); `auth.controller.ts` signup styles moved onto the same tokens |
+| 6 | `liff-page.security.ts` — `#status:empty,#detail:empty{display:none}` for the first paint, and `setStatus` now routes both containers through `setMessage`, which toggles `hidden` on the trimmed text |
 
 `normalizeThaiMobile` was **not** changed: `account-profile.use-case.ts` uses its blank→null answer
 to CLEAR a stored number. `requireThaiMobile` wraps it instead.
@@ -38,6 +42,15 @@ to CLEAR a stored number. `requireThaiMobile` wraps it instead.
 `sweepProfileGuardNudges` was **not** changed: it already filters `phoneNumber: null`, so a flow
 that now always carries a phone simply stops matching. Spec §3.6 records that the day-7 card is
 about email/password only for this source.
+
+Decision 6 needs **both** halves. CSS `:empty` alone misses a message that is present but blank —
+an `Error` carrying only whitespace is not `:empty`, so the box came back with nothing readable in
+it. The `hidden` toggle alone misses the first paint, before the script has run. `setStatus` is the
+single writer of both containers on all four pages, so the runtime half is one edit.
+
+**Gotcha for the next editor:** `LIFF_PAGE_SCRIPT` is a `String.raw` template literal. A backtick in
+a comment inside it terminates the template and the file stops compiling — write those comments
+without backticks.
 
 `LIFF_PAGE_CSP` is byte-for-byte unchanged — the logo is inline SVG, the type is the system stack,
 so no new origin and no `img-src` edit were needed (`img-src 'self' data:` was already there).
