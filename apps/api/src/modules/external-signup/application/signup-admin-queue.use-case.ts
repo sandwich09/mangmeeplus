@@ -8,7 +8,7 @@ import type {
 } from '@watchdog-bms/contracts';
 import type { CompanySignupRequest } from '../../../generated/prisma/client';
 import { PrismaService } from '../../../common/database/prisma.service';
-import { CompanySignupCoreService } from './company-signup-core.service';
+import { CompanySignupCoreService, signupStateGuard } from './company-signup-core.service';
 import { AccountClaimTokenService } from './account-claim-token.service';
 import { SignupClaimEmailService } from './signup-claim-email.service';
 import { ProvisionSignupUseCase } from './provision-signup.use-case';
@@ -296,11 +296,25 @@ export class SignupAdminQueueUseCase {
     // stamped a `companyId`. The stamp happens inside the company transaction, so no company id
     // means no company — there is nothing to strand, and the row is otherwise a dead end an
     // operator can only clear by opening a shop they have already decided not to want.
-    if (request.state === 'PROVISIONING'
-      && !(isStaleProvisioning(request, now) && request.companyId === null)) {
-      throw new ConflictException('suspend_not_allowed_in_flight');
-    }
-    await this.core.advance(request.id, 'SUSPENDED', correlationRequestId, 'admin_suspended');
+    //
+    // The predicate goes to the CORE rather than being decided here, because `request` above was
+    // read outside the lock: a run that finished, or one that started, between that read and the
+    // write would otherwise be suspended anyway — the transition table permits the edge and cannot
+    // know that this particular row has since acquired a company. Re-checked under the lock, the
+    // race collapses into a 409 the operator can act on.
+    // READY is in the refused set for the same reason PROVISIONING is: the shop EXISTS and the
+    // application has not closed, so suspending strands an ACTIVE company whose trial guards may
+    // never have run — and frees the LINE account to apply again, because SUSPENDED leaves the
+    // open-application index. The action a READY row wants is the close-out, not the stop.
+    const inFlight = signupStateGuard(
+      'suspend_not_allowed_in_flight',
+      (current) => (current.state !== 'PROVISIONING' && current.state !== 'READY')
+        || (current.state === 'PROVISIONING'
+          && isStaleProvisioning(current, now)
+          && current.companyId === null),
+    );
+    if (!inFlight(request)) throw new ConflictException(inFlight.rejectionCode);
+    await this.core.advance(request.id, 'SUSPENDED', correlationRequestId, 'admin_suspended', inFlight);
     await this.tokens.revokeAll(request.id);
     await this.prisma.client.companySignupRequest.update({
       where: { id: request.id },

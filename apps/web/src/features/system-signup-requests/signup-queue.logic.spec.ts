@@ -122,16 +122,22 @@ describe('a failed provisioning is actionable, not just labelled', () => {
         `staleProvisioning=${staleProvisioning}`,
       );
     }
+    // HIGH-2: READY joins it. The shop EXISTS and the application has not closed, so suspending
+    // strands an ACTIVE company and frees the LINE account to apply again. The API refuses it under
+    // its own lock; the page must not offer a button that 409s.
+    assert.equal(canSuspendSignup(item({ state: 'READY', source: 'line-oa' })), false);
     // The settled rows still offer it.
     assert.equal(canSuspendSignup(failed()), true);
     assert.equal(canSuspendSignup(item({ state: 'COMPLETED', source: 'line-oa' })), true);
   });
 
   it('says the shop keeps running when suspending only settles the application', () => {
-    for (const state of ['PROVISIONING_FAILED', 'READY', 'COMPLETED']) {
+    for (const state of ['PROVISIONING_FAILED', 'COMPLETED']) {
       assert.equal(suspendLeavesShopRunning(state), true, state);
     }
     assert.equal(suspendLeavesShopRunning('PENDING_REVIEW'), false);
+    // READY is no longer suspendable at all, so it needs no copy about what suspending leaves.
+    assert.equal(canSuspendSignup(item({ state: 'READY', source: 'line-oa' })), false);
   });
 
   it('offers suspend on a LINE row and nowhere else', () => {

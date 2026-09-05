@@ -17,6 +17,20 @@ const SERVICE_ACTOR = 'official-signup-core';
 const SPECIAL_PROVISIONING_STATES = new Set<CompanySignupState>(['PROVISIONING', 'READY', 'PROVISIONING_FAILED']);
 
 type ReceiveResult = Readonly<{ request: CompanySignupRequest; replayed: boolean }>;
+/**
+ * A caller-supplied precondition, evaluated under the advisory lock. `rejectionCode` is what the
+ * caller wants the operator to see, so the guard and its message stay in one place.
+ */
+export type SignupStatePredicate = ((current: CompanySignupRequest) => boolean) & { rejectionCode: string };
+
+/** Attaches the refusal code to a predicate, so a guard cannot be written without one. */
+export function signupStateGuard(
+  rejectionCode: string,
+  predicate: (current: CompanySignupRequest) => boolean,
+): SignupStatePredicate {
+  return Object.assign(predicate, { rejectionCode });
+}
+
 type ProvisionClaim = Readonly<{
   request: CompanySignupRequest;
   claimed: boolean;
@@ -74,14 +88,21 @@ export class CompanySignupCoreService {
     });
   }
 
+  /**
+   * `expect` is re-evaluated on the row read UNDER the advisory lock, which is the only snapshot
+   * that can still be trusted. A caller that decided from its own earlier read is deciding from a
+   * row another transaction may have moved since — and the transition table alone cannot catch it,
+   * because it answers "is this edge legal", not "is this edge still the right thing to do".
+   */
   async advance(
     requestId: string,
     toState: Exclude<CompanySignupState, 'RECEIVED'>,
     correlationRequestId: string,
     failureCode?: string,
+    expect?: SignupStatePredicate,
   ): Promise<ReceiveResult> {
     if (SPECIAL_PROVISIONING_STATES.has(toState)) throw new ConflictException('use_provisioning_boundary');
-    return this.changeState(requestId, toState, correlationRequestId, failureCode);
+    return this.changeState(requestId, toState, correlationRequestId, failureCode, expect);
   }
 
   async claimProvisioning(requestId: string, correlationRequestId: string, now = new Date()): Promise<ProvisionClaim> {
@@ -163,10 +184,14 @@ export class CompanySignupCoreService {
     toState: CompanySignupState,
     correlationRequestId: string,
     failureCode?: string,
+    expect?: SignupStatePredicate,
   ): Promise<ReceiveResult> {
     return this.prisma.client.$transaction(async (tx) => {
       await this.lock(tx, requestId);
       const current = await this.findOrThrow(tx, requestId);
+      // Checked BEFORE the replay shortcut and before the table: the caller's precondition is about
+      // this row as it is now, under the lock, not as it looked when the caller read it.
+      if (expect && !expect(current)) throw new ConflictException(expect.rejectionCode);
       const normalizedFailure = failureCode?.trim().slice(0, 64) || null;
       if (current.state === toState && current.failureCode === normalizedFailure) {
         return { request: current, replayed: true };

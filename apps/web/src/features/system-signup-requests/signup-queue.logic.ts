@@ -118,17 +118,20 @@ export function isFinishingStrandedRow(state: string): boolean {
 /** Only a LINE application can be suspended: spec §3.7 is about stopping an auto-approved shop. */
 export function canSuspendSignup(item: AdminSignupQueueItemDto): boolean {
   if (!isLineSignup(item)) return false;
-  // Never mid-provisioning, at either freshness. SUSPENDED is terminal, so suspending here strands
-  // a shop that may already exist but whose trial guards never ran — an UNLIMITED shop, with the
-  // application closed behind it — and on a live run it races the attempt still in flight. The one
-  // action those rows offer is the close-out.
-  if (item.state === 'PROVISIONING') return false;
+  // Never while the shop exists but the application has not closed. SUSPENDED is terminal, so
+  // suspending here strands a shop whose trial guards may never have run — an UNLIMITED shop, with
+  // the application shut behind it — and frees the LINE account to apply again. On a live run it
+  // also races the attempt still in flight. The one action those rows offer is the close-out.
+  //
+  // The API refuses both states under its own lock (`suspend_not_allowed_in_flight`); this only
+  // keeps the page from offering a button that 409s.
+  if (item.state === 'PROVISIONING' || item.state === 'READY') return false;
   return item.state !== 'SUSPENDED' && item.state !== 'REJECTED';
 }
 
 /** True when suspending leaves a shop already standing, so the copy must not imply it stops it. */
 export function suspendLeavesShopRunning(state: string): boolean {
-  return state === 'PROVISIONING_FAILED' || state === 'READY' || state === 'COMPLETED';
+  return state === 'PROVISIONING_FAILED' || state === 'COMPLETED';
 }
 
 /** Approval survives an expired link (spec §4D ②) — reissue is the way back, never a re-application. */
