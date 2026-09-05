@@ -38,9 +38,10 @@ delete swcrc.$schema;
 const TRANSFORM = { ...swcrc, sourceMaps: false, swcrc: false, configFile: false };
 const PARSE = { ...swcrc.jsc.parser, target: swcrc.jsc.target };
 
-// `@Controller()` and `@Catch()` classes are built by the same container from the same metadata and
-// break the same way.
-const PROVIDER_DECORATORS = new Set(['Injectable', 'Controller', 'Catch']);
+// Everything the injector constructs from `design:paramtypes`, not just providers: `@Controller()`
+// and `@Catch()` classes take constructor dependencies, and so does a `@Module()` class that injects
+// something for `configure()` or `onModuleInit()`. All four break identically.
+const PROVIDER_DECORATORS = new Set(['Injectable', 'Controller', 'Catch', 'Module']);
 
 function walk(dir, out = []) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -164,7 +165,7 @@ for (const file of files) {
 
 if (targets.length === 0 && providerClasses < 100) {
   console.error(
-    `check-di-metadata: found only ${providerClasses} provider classes under ${DEFAULT_ROOT} —` +
+    `check-di-metadata: found only ${providerClasses} decorated classes under ${DEFAULT_ROOT} —` +
       ' the scan lost its subject, not the codebase its providers.',
   );
   process.exit(1);
@@ -182,6 +183,6 @@ if (offenders.length > 0) {
 }
 
 console.log(
-  `check-di-metadata: ${files.length} files, ${providerClasses} provider classes,` +
+  `check-di-metadata: ${files.length} files, ${providerClasses} decorated classes,` +
     ` ${checkedClasses} with constructor dependencies — all carry design:paramtypes.`,
 );
