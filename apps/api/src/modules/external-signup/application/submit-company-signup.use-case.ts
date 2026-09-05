@@ -71,7 +71,6 @@ export class SubmitCompanySignupUseCase {
       }
       await this.core.advance(request.id, 'VALIDATED', correlationRequestId);
     }
-    }
 
     // A replay already in PENDING_REVIEW takes the core's replay branch and writes nothing.
     await this.core.advance(request.id, 'PENDING_REVIEW', correlationRequestId);

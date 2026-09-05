@@ -331,17 +331,21 @@ describe('SignupAdminQueueUseCase.decide — business category at review', () =>
     await h.useCase.decide(
       'signup-1', { action: 'APPROVE', businessCategory: 'CLINIC' }, 'admin-1', 'req-1', URLS,
     );
-    assert.equal(h.updates[0].data.businessCategory, 'CLINIC');
-    assert.equal(h.updates[0].data.approvedByUserId, 'admin-1');
+    // R08: the approval facts ride the state transition's own transaction, so the category the
+    // reviewer picked commits with the state and the letter or not at all.
+    const approval = h.advances.find((a: any) => a.state === 'EMAIL_PENDING');
+    assert.equal(approval.data.businessCategory, 'CLINIC');
+    assert.equal(approval.data.approvedByUserId, 'admin-1');
     // And it is evidence: a health-category decision an operator made has to be auditable.
-    const approval = h.audits.find((a) => a.data.action === 'signup.request.approved');
-    assert.equal(approval.data.metadataJson.businessCategory, 'CLINIC');
+    const auditRow = h.audits.find((a) => a.data.action === 'signup.request.approved');
+    assert.equal(auditRow.data.metadataJson.businessCategory, 'CLINIC');
   });
 
   it('leaves the column alone when review did not pick one', async () => {
     const h = harness();
     await h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1', URLS);
-    assert.equal('businessCategory' in h.updates[0].data, false);
+    const approval = h.advances.find((a: any) => a.state === 'EMAIL_PENDING');
+    assert.equal('businessCategory' in approval.data, false);
   });
 
   // F3: the enum re-check is the line that decides whether a PDPA safeguard can be armed by a
@@ -351,16 +355,18 @@ describe('SignupAdminQueueUseCase.decide — business category at review', () =>
     await h.useCase.decide(
       'signup-1', { action: 'APPROVE', businessCategory: 'HOSPITAL' }, 'admin-1', 'req-1', URLS,
     );
-    assert.equal('businessCategory' in h.updates[0].data, false, 'nothing unvalidated is stored');
-    const approval = h.audits.find((a) => a.data.action === 'signup.request.approved');
-    assert.equal(approval.data.metadataJson.businessCategory, null);
+    const written = h.advances.find((a: any) => a.state === 'EMAIL_PENDING');
+    assert.equal('businessCategory' in written.data, false, 'nothing unvalidated is stored');
+    const auditRow = h.audits.find((a) => a.data.action === 'signup.request.approved');
+    assert.equal(auditRow.data.metadataJson.businessCategory, null);
     // Same for an empty string and for a case that only LOOKS like the enum.
     for (const bad of ['', 'clinic', ' CLINIC ']) {
       const other = harness();
       await other.useCase.decide(
         'signup-1', { action: 'APPROVE', businessCategory: bad }, 'admin-1', 'req-1', URLS,
       );
-      assert.equal('businessCategory' in other.updates[0].data, false, bad);
+      const badWrite = other.advances.find((a: any) => a.state === 'EMAIL_PENDING');
+      assert.equal('businessCategory' in badWrite.data, false, bad);
     }
   });
 
