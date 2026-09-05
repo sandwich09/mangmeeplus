@@ -121,7 +121,7 @@ export class CreateExpenseDraftUseCase {
         const t = reconciled.totals;
         return {
           expenseId: record.id, companyId: ctx.companyId, lineNumber: l.lineNumber,
-          description: l.description, quantity: l.quantity, unitPrice: l.unitPrice,
+          description: l.description, chargeKind: l.chargeKind ?? null, quantity: l.quantity, unitPrice: l.unitPrice,
           discountAmount: t.discountAmount, taxableAmount: t.taxableAmount,
           vatRate: reconciled.vatRate, vatTreatment: l.vatTreatment ?? null, vatAmount: t.vatAmount,
           whtRate: expenseWhtLineRate(input.whtInput, l.whtRate), whtAmount: t.whtAmount,
@@ -316,7 +316,7 @@ export class UpdateExpenseDraftUseCase {
         const t = reconciled.totals;
         return {
           expenseId, companyId: ctx.companyId, lineNumber: l.lineNumber, description: l.description,
-          quantity: l.quantity, unitPrice: l.unitPrice, discountAmount: t.discountAmount,
+          chargeKind: l.chargeKind ?? null, quantity: l.quantity, unitPrice: l.unitPrice, discountAmount: t.discountAmount,
           taxableAmount: t.taxableAmount, vatRate: reconciled.vatRate, vatTreatment: l.vatTreatment ?? null, vatAmount: t.vatAmount,
           whtRate: expenseWhtLineRate(whtInput, l.whtRate), whtAmount: t.whtAmount, lineSubtotalAmount: t.lineSubtotalAmount,
           lineTotalAmount: t.lineTotalAmount, expenseCategoryId: l.expenseCategoryId ?? null,

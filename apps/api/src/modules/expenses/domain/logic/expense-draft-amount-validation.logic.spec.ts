@@ -96,3 +96,61 @@ describe('create expense Decimal(18,4) boundary validation', () => {
     }) ?? '', /WHT rate/);
   });
 });
+
+/**
+ * Spec §5.1: an additional charge is one printed amount that sits after the goods, and only a
+ * ROUNDING row may be a deduction. These rules are the persistence boundary — the LINE lane, the
+ * OCR apply and the web review all reach the database through this function.
+ */
+describe('additional charge line rules', () => {
+  const charge = (overrides: Partial<ExpenseDraftAmountLine> = {}): ExpenseDraftAmountLine =>
+    line({ lineNumber: 2, chargeKind: 'SERVICE_CHARGE', quantity: '1', unitPrice: '152', ...overrides });
+
+  it('accepts the BHC bill: goods then a service charge, and the totals identity holds', () => {
+    assert.equal(validateExpenseDraftAmounts({
+      vatMode: 'VAT_EXCLUDED',
+      lines: [line({ lineNumber: 1, unitPrice: '1520', vatRate: '0.07' }), charge({ vatRate: '0.07' })],
+    }), null);
+  });
+
+  it('accepts a negative ROUNDING row and nothing else negative', () => {
+    assert.equal(validateExpenseDraftAmounts({
+      vatMode: 'NO_VAT',
+      lines: [line({ lineNumber: 1, unitPrice: '100.50' }), charge({ chargeKind: 'ROUNDING', unitPrice: '-0.50' })],
+    }), null);
+    for (const kind of ['SERVICE_CHARGE', 'DELIVERY', 'PACKAGING', 'PLATFORM_FEE', 'TIP', 'OTHER'] as const) {
+      assert.match(validateExpenseDraftAmounts({
+        vatMode: 'NO_VAT', lines: [line({ lineNumber: 1 }), charge({ chargeKind: kind, unitPrice: '-0.50' })],
+      }) ?? '', /only ROUNDING may be negative/, kind);
+    }
+    // Zero is not an amount a document printed as a charge either.
+    assert.match(validateExpenseDraftAmounts({
+      vatMode: 'NO_VAT', lines: [line({ lineNumber: 1 }), charge({ unitPrice: '0' })],
+    }) ?? '', /only ROUNDING may be negative/);
+  });
+
+  it('keeps a minus sign out of ordinary product lines', () => {
+    assert.match(validateExpenseDraftAmounts({
+      vatMode: 'NO_VAT', lines: [line({ unitPrice: '-0.50' })],
+    }) ?? '', /unit price must be non-negative/);
+  });
+
+  it('requires quantity 1 so the unit price is the printed amount', () => {
+    assert.match(validateExpenseDraftAmounts({
+      vatMode: 'NO_VAT', lines: [line({ lineNumber: 1 }), charge({ quantity: '2', unitPrice: '76' })],
+    }) ?? '', /must have quantity 1/);
+  });
+
+  it('requires every charge to sort after every product line', () => {
+    assert.match(validateExpenseDraftAmounts({
+      vatMode: 'NO_VAT',
+      lines: [charge({ lineNumber: 1 }), line({ lineNumber: 2, unitPrice: '1520' })],
+    }) ?? '', /must come after every product line/);
+  });
+
+  it('refuses a charge kind the schema does not have', () => {
+    assert.match(validateExpenseDraftAmounts({
+      vatMode: 'NO_VAT', lines: [charge({ lineNumber: 1, chargeKind: 'TRUCK_FEE' as never })],
+    }) ?? '', /charge kind must be one of/);
+  });
+});

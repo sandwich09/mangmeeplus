@@ -1,18 +1,19 @@
 import Decimal from 'decimal.js';
 import {
   EXPENSE_VAT_SOURCE_INPUT_TYPES,
+  type ExpenseLineChargeKind,
   type ExpenseVatCaptureSnapshotV1,
   type ExpenseVatMode,
   type ExpenseVatSourceInput,
   type ExpenseVatSourceOrigin,
   type ExpenseVatSourceOverrideInput,
 } from '@watchdog-bms/contracts';
-import { calcDocumentTotals, calcLineTotals, type LineTotalsResult } from './expense-totals.logic';
+import { EXPENSE_TOTALS_TOLERANCE, calcDocumentTotals, calcLineTotals, documentTotalsLines, type LineTotalsResult } from './expense-totals.logic';
 import type { ExpenseRecordWithRelations } from '../models/expense.model';
 import { EXPENSE_DECIMAL_18_4_PATTERN, validateExpenseDraftAmounts } from './expense-draft-amount-validation.logic';
 import { applyExpenseWhtInput } from './expense-wht-input.logic';
 
-const TOLERANCE = new Decimal('0.05');
+const TOLERANCE = EXPENSE_TOTALS_TOLERANCE;
 const MONEY = /^(?:0|[1-9]\d{0,15})(?:\.\d{1,2})?$/;
 const PERCENT = /^(?:0|[1-9]\d?)(?:\.\d{1,4})?$/;
 
@@ -23,12 +24,18 @@ export type ExpenseVatReconciliationLineInput = {
   discountAmount?: string;
   vatRate?: string | null;
   whtRate?: string | null;
+  /** §5.1: an additional-charge row. Reconciles like any other line; only the document subtotal
+   *  treats it differently. */
+  chargeKind?: ExpenseLineChargeKind | null;
 };
 
 export type ExpenseVatReconciliationResult = {
   lines: Array<{
     lineNumber: number;
     vatRate: string | null;
+    /** Kept beside `totals`, not inside it: the accepted-VAT confirm path writes `totals` straight
+     *  into Prisma and sweeps its values as amounts, and a charge kind is neither. */
+    chargeKind?: ExpenseLineChargeKind | null;
     totals: LineTotalsResult;
   }>;
   totals: ReturnType<typeof calcDocumentTotals>;
@@ -276,7 +283,7 @@ export function acceptExpenseVatSource(
     new Decimal(target.totals.vatAmount).plus(residual));
   if (!adjusted) return fail('Document VAT would make the selected line VAT or pre-VAT amount negative.');
   target.totals = adjusted;
-  result.totals = calcDocumentTotals({ lines: result.lines.map((line) => line.totals) });
+  result.totals = calcDocumentTotals({ lines: documentTotalsLines(result.lines) });
   const whtError = applyExpenseWhtInput(result, expense.whtInputJson);
   if (whtError) return fail(whtError);
   if ([...Object.values(result.totals), ...result.lines.flatMap((line) => Object.values(line.totals))]
@@ -355,9 +362,10 @@ export function reconcileExpenseVat(input: {
     lineNumber: line.lineNumber,
     vatRate: rates.get(line.lineNumber) ?? null,
     whtRate: line.whtRate,
+    chargeKind: line.chargeKind ?? null,
     totals: calcLineTotals({ ...line, vatRate: rates.get(line.lineNumber), vatMode: input.vatMode }),
   }));
-  const calculatedTotals = calcDocumentTotals({ lines: calculated.map((line) => line.totals) });
+  const calculatedTotals = calcDocumentTotals({ lines: documentTotalsLines(calculated) });
   const accepted = calculated.map((line) => ({ ...line, totals: { ...line.totals } }));
   const residuals = new Map(calculated.map((line) => [line.lineNumber, new Decimal(0)]));
   const knownLineNumbers = new Set(input.lines.map((line) => line.lineNumber));
@@ -466,7 +474,7 @@ export function reconcileExpenseVat(input: {
     status = 'MISMATCH';
   }
 
-  const totals = calcDocumentTotals({ lines: accepted.map((line) => line.totals) });
+  const totals = calcDocumentTotals({ lines: documentTotalsLines(accepted) });
   const attention = attentionLines(status, calculated, mismatchedSourceLines);
   const knownRates = new Set(accepted.map((line) => line.vatRate).filter((rate): rate is string => rate !== null));
   const allKnownRatesAreZero = knownRates.size > 0 && [...knownRates].every((rate) => decimal(rate).eq(0));

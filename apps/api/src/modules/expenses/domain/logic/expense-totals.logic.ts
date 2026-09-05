@@ -1,4 +1,4 @@
-import type { ExpenseVatMode } from '@watchdog-bms/contracts';
+import type { ExpenseLineChargeKind, ExpenseVatMode } from '@watchdog-bms/contracts';
 import Decimal from 'decimal.js';
 
 function d4(value: Decimal): string { return value.toFixed(4); }
@@ -52,7 +52,9 @@ export function calcLineTotals(input: LineTotalsInput): LineTotalsResult {
   const price = decimal(input.unitPrice);
   const discount = decimal(input.discountAmount);
   const lineSubtotal = round2(qty.mul(price));
-  const discountClamped = round2(Decimal.min(discount, lineSubtotal));
+  // Clamp against zero, not against the subtotal: a ROUNDING charge line is negative, and
+  // `min(0, -0.50)` would have turned its own amount into a discount and zeroed the row.
+  const discountClamped = round2(Decimal.min(discount, Decimal.max(lineSubtotal, 0)));
   const afterDiscount = round2(lineSubtotal.minus(discountClamped));
 
   let taxable: Decimal;
@@ -86,8 +88,15 @@ export function calcLineTotals(input: LineTotalsInput): LineTotalsResult {
   };
 }
 
+/** `LineTotalsResult` stays pure money — several call sites sweep every value in it as an amount and
+ *  write it straight to Prisma — so the charge flag arrives alongside it, not inside it. */
+export type DocumentTotalsLine = LineTotalsResult & {
+  /** Non-null keeps this row out of `subtotalAmount` — see `calcDocumentTotals`. */
+  chargeKind?: ExpenseLineChargeKind | null;
+};
+
 export type DocumentTotalsInput = {
-  lines: Array<{ taxableAmount: string; vatAmount: string; whtAmount: string; lineSubtotalAmount: string; discountAmount: string; lineTotalAmount: string }>;
+  lines: Array<DocumentTotalsLine>;
   extraDiscountAmount?: string;
 };
 
@@ -101,10 +110,13 @@ export type DocumentTotalsResult = {
   netPayableAmount: string;
 };
 
+/** Spec §5.1: `subtotalAmount` is the goods and services total, so an additional charge is counted
+ *  once — in the tax base — instead of appearing both as "รวมสินค้า" and again as a charge. Every
+ *  other aggregate keeps summing all rows, which is what makes the identity below hold. */
 export function calcDocumentTotals(input: DocumentTotalsInput): DocumentTotalsResult {
   let subtotal = new Decimal(0), discount = new Decimal(0), taxable = new Decimal(0), vat = new Decimal(0), wht = new Decimal(0);
   for (const line of input.lines) {
-    subtotal = subtotal.plus(decimal(line.lineSubtotalAmount));
+    if (line.chargeKind == null) subtotal = subtotal.plus(decimal(line.lineSubtotalAmount));
     discount = discount.plus(decimal(line.discountAmount));
     taxable = taxable.plus(decimal(line.taxableAmount));
     vat = vat.plus(decimal(line.vatAmount));
@@ -118,6 +130,67 @@ export function calcDocumentTotals(input: DocumentTotalsInput): DocumentTotalsRe
   const grandTotal = round2(taxable.plus(vat));
   const netPayable = round2(grandTotal.minus(wht));
   return { subtotalAmount: d4(round2(subtotal)), discountAmount: d4(discount), taxableAmount: d4(taxable), vatAmount: d4(vat), whtAmount: d4(wht), grandTotalAmount: d4(grandTotal), netPayableAmount: d4(netPayable) };
+}
+
+/** Flatten reconciled rows into what `calcDocumentTotals` reads, carrying the charge flag that lives
+ *  beside the money rather than in it. Every re-derivation of the document totals goes through this,
+ *  which is what keeps an additional charge out of `subtotalAmount` on all of them. */
+export function documentTotalsLines(
+  lines: readonly { chargeKind?: ExpenseLineChargeKind | null; totals: LineTotalsResult }[],
+): DocumentTotalsLine[] {
+  return lines.map((line) => ({ ...line.totals, chargeKind: line.chargeKind ?? null }));
+}
+
+/** The satang tolerance the VAT capture snapshot records as `toleranceAmount`. Lives here so the
+ *  reconciliation and the totals identity compare against the same number. */
+export const EXPENSE_TOTALS_TOLERANCE = new Decimal('0.05');
+
+/**
+ * Spec §5.1 totals identity, checked on the figures that are about to be stored:
+ *
+ *   subtotalAmount   = Σ product lineSubtotal
+ *   taxableAmount    = subtotalAmount − discountAmount + Σ charge lineSubtotal
+ *   vatAmount        = Σ line vat
+ *   grandTotalAmount = taxableAmount + vatAmount
+ *
+ * Returns the reason it does not hold, or null. A record that fails is refused rather than written:
+ * the whole point of giving charges their own field is that the tax base counts them exactly once,
+ * and a total that no longer adds up is an accounting record nobody can defend.
+ *
+ * The second equation is skipped under VAT_INCLUDED, where `subtotalAmount` is the VAT-inclusive
+ * figure the document printed and the base is derived by dividing it out — the other three still
+ * bind, and they are what pin the charge rows into the base.
+ */
+export function expenseTotalsIdentityError(input: {
+  vatMode: ExpenseVatMode;
+  lines: readonly DocumentTotalsLine[];
+  totals: Pick<DocumentTotalsResult, 'subtotalAmount' | 'discountAmount' | 'taxableAmount' | 'vatAmount' | 'grandTotalAmount'>;
+}): string | null {
+  const sum = (pick: (line: DocumentTotalsLine) => string, of: (line: DocumentTotalsLine) => boolean): Decimal =>
+    input.lines.reduce((total, line) => (of(line) ? total.plus(decimal(pick(line))) : total), new Decimal(0));
+  const isCharge = (line: DocumentTotalsLine): boolean => line.chargeKind != null;
+  const off = (actual: Decimal, expected: Decimal): boolean =>
+    actual.minus(expected).abs().gt(EXPENSE_TOTALS_TOLERANCE);
+
+  const productSubtotal = sum((line) => line.lineSubtotalAmount, (line) => !isCharge(line));
+  if (off(decimal(input.totals.subtotalAmount), productSubtotal)) {
+    return `Totals identity: subtotal ${input.totals.subtotalAmount} is not the ${productSubtotal.toFixed(2)} the product lines add up to.`;
+  }
+  if (off(decimal(input.totals.vatAmount), sum((line) => line.vatAmount, () => true))) {
+    return `Totals identity: VAT ${input.totals.vatAmount} is not the sum of the line VAT.`;
+  }
+  if (off(decimal(input.totals.grandTotalAmount), decimal(input.totals.taxableAmount).plus(decimal(input.totals.vatAmount)))) {
+    return `Totals identity: grand total ${input.totals.grandTotalAmount} is not taxable plus VAT.`;
+  }
+  if (input.vatMode !== 'VAT_INCLUDED') {
+    const expectedTaxable = productSubtotal
+      .minus(decimal(input.totals.discountAmount))
+      .plus(sum((line) => line.lineSubtotalAmount, isCharge));
+    if (off(decimal(input.totals.taxableAmount), expectedTaxable)) {
+      return `Totals identity: taxable ${input.totals.taxableAmount} is not subtotal minus discount plus the additional charges (${expectedTaxable.toFixed(2)}).`;
+    }
+  }
+  return null;
 }
 
 export function calcPaymentAmounts(netPayableAmount: string, paidAmount: string): { outstandingAmount: string } {

@@ -19,7 +19,7 @@ import type {
   SubstituteReceiptApprovalMode, SubstituteReceiptListFilter,
   ExpenseVatSourceOverrideInput,
 } from '@watchdog-bms/contracts';
-import { civilDate, civilDateToUtcDate, civilDayRangeToUtc, civilPeriodKey, coerceCivilDate, exclusiveEndOfDay, isCivilDate, EXPENSE_PAYMENT_METHODS } from '@watchdog-bms/contracts';
+import { civilDate, civilDateToUtcDate, civilDayRangeToUtc, civilPeriodKey, coerceCivilDate, exclusiveEndOfDay, expenseLineCharges, isCivilDate, EXPENSE_PAYMENT_METHODS } from '@watchdog-bms/contracts';
 import { expenseTaxSourceChecksum } from '../domain/logic/expense-status.logic';
 import { nextExpensePostingSource } from '../domain/logic/expense-auto-post.logic';
 import { calcPaymentAmounts, derivePaymentStatus, SETTLE_EPSILON } from '../domain/logic/expense-totals.logic';
@@ -167,6 +167,7 @@ function mapLine(l: any) {
     id: l.id,
     lineNumber: l.lineNumber,
     description: l.description,
+    chargeKind: l.chargeKind ?? null,
     quantity: l.quantity?.toString() ?? '0',
     unitPrice: l.unitPrice?.toString() ?? '0',
     discountAmount: l.discountAmount?.toString() ?? '0',
@@ -685,6 +686,7 @@ export class PrismaExpenseRepository {
       where: { companyId, expenseId: id, status: { not: 'SUPERSEDED' } },
       orderBy: { version: 'desc' },
     });
+    const mappedLines = (r as any).lines.map(mapLine);
     return {
       ...base,
       categoryDefaultInputTaxCode,
@@ -693,7 +695,8 @@ export class PrismaExpenseRepository {
       journalEntryNumber: journal?.entryNumber ?? null,
       pendingPostingSourceType: pendingSource?.sourceType ?? null,
       pendingPostingSourceId: pendingSource?.sourceId ?? null,
-      lines: (r as any).lines.map(mapLine),
+      lines: mappedLines,
+      charges: expenseLineCharges(mappedLines),
       attachments,
       duplicateCandidates,
       substituteReceiptEvidence: substituteRow ? toSubstituteEvidenceSummary(mapSubstituteEvidence(substituteRow)) : null,
@@ -2065,9 +2068,11 @@ export class PrismaExpenseRepository {
         where: { companyId: input.companyId, targetType: 'expense.record', targetId: input.id, attachment: { companyId: input.companyId } },
         include: { attachment: true },
       }) as any;
+      const currentLines = current.lines.map(mapLine);
       const currentRecord: ExpenseRecordWithRelations = {
         ...mapExpense(current),
-        lines: current.lines.map(mapLine),
+        lines: currentLines,
+        charges: expenseLineCharges(currentLines),
         attachments: attachmentLinks.map((l) => ({
           id: l.attachmentId,
           purpose: l.purpose as any,
@@ -2304,6 +2309,7 @@ export class PrismaExpenseRepository {
           const { taxSnapshot, taxComponents } = l;
           const data = {
           expenseId, companyId, lineNumber: l.lineNumber, description: l.description,
+          chargeKind: l.chargeKind ?? null,
           quantity: l.quantity, unitPrice: l.unitPrice, discountAmount: l.discountAmount,
           taxableAmount: l.taxableAmount, vatRate: l.vatRate, vatTreatment: l.vatTreatment ?? null, vatAmount: l.vatAmount,
           whtRate: l.whtRate, whtAmount: l.whtAmount, lineSubtotalAmount: l.lineSubtotalAmount,

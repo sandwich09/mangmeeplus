@@ -3,12 +3,15 @@ import { PrismaService } from '../../../../common/database/prisma.service';
 import { Prisma } from '../../../../generated/prisma/client';
 import Decimal from 'decimal.js';
 import {
+  EXPENSE_LINE_CHARGE_KIND_LABELS,
   RECEIPT_ADDITIONAL_CHARGE_KINDS,
   RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE,
+  type ExpenseLineChargeKind,
   type ExpenseVatMode,
   type ExpenseVatCaptureSnapshotV1,
   type ExpenseVatSourceInput,
   type ExpenseWhtCapture,
+  type ReceiptOcrAdditionalCharge,
   type ReceiptOcrFieldResult,
   validateExpenseWhtInput,
 } from '@watchdog-bms/contracts';
@@ -228,6 +231,8 @@ export type ReceiptChargeReconciliationStatus =
 
 type PreparedOcrLine = {
   description: string;
+  /** Set only on an additional-charge row (spec S-1); product rows leave it null. */
+  chargeKind?: ExpenseLineChargeKind | null;
   quantity: string;
   unitPrice: string;
   vatRate: string | null;
@@ -238,6 +243,18 @@ type PreparedOcrLine = {
   aiLineConfidence?: number;
   totals: ReturnType<typeof calcLineTotals>;
 };
+
+/**
+ * Spec §5.1: an additional-charge row is described in Thai by its kind, keeping the percent the
+ * document printed when the extractor read one ("ค่าบริการ 10%"). The extractor's own wording is
+ * usually English ("Service charge 10%") and stays verbatim in `sourceLineText` as the evidence
+ * span, so nothing about the document is lost by naming the row in the reviewer's language.
+ */
+function chargeDescription(charge: ReceiptOcrAdditionalCharge): string {
+  const label = EXPENSE_LINE_CHARGE_KIND_LABELS[charge.kind];
+  const percent = /(\d{1,2}(?:\.\d{1,2})?)\s*%/.exec(charge.description)?.[1];
+  return percent ? `${label} ${percent}%` : label;
+}
 
 function documentVatMode(fields: ReceiptOcrFieldResult): ExpenseVatMode {
   return validVatMode(fields.vatMode) ?? 'NO_VAT';
@@ -302,7 +319,7 @@ function reconciledTotals(
   candidate: PreparedOcrLine[],
   fields: ReceiptOcrFieldResult,
 ): ReturnType<typeof calcDocumentTotals> | null {
-  const totals = calcDocumentTotals({ lines: candidate.map((line) => line.totals) });
+  const totals = calcDocumentTotals({ lines: candidate.map((line) => ({ ...line.totals, chargeKind: line.chargeKind ?? null })) });
   // Mixed per-line VAT rates make the document's single printed taxable base incomparable.
   const taxableIsComparable = new Set(candidate.map((line) => line.vatRate ?? '')).size <= 1;
   const ok = closeEnough(totals.grandTotalAmount, fields.grandTotalAmount)
@@ -365,7 +382,8 @@ function prepareOcrLines(
     : [];
   const printedSubtotal = positiveMoney(fields.subtotalAmount);
   const chargeLines = () => charges.map((charge) => prepareLine({
-    description: charge.description,
+    description: chargeDescription(charge),
+    chargeKind: charge.kind,
     quantity: '1.0000',
     unitPrice: toMoney4(charge.amount),
     vatRate: charge.vatRate ?? defaultLineVatRate(fields),
@@ -568,6 +586,7 @@ export class ReceiptOcrApplyService {
           vatMode: vatMode ?? 'NO_VAT',
           lines: prepared.lines.map((line, index) => ({
             lineNumber: index + 1,
+            chargeKind: line.chargeKind ?? null,
             quantity: line.quantity,
             unitPrice: line.unitPrice,
             discountAmount: line.totals.discountAmount,
@@ -675,6 +694,7 @@ export class ReceiptOcrApplyService {
           expenseId,
           lineNumber: index + 1,
           description: line.description,
+          chargeKind: line.chargeKind ?? null,
           quantity: line.quantity,
           unitPrice: line.unitPrice,
           discountAmount: line.totals.discountAmount,

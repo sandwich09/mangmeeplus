@@ -469,6 +469,32 @@ describe('ReceiptOcrApplyService.apply', () => {
     assert.equal(applied.result.chargesApplied, 1);
     assert.deepEqual(applied.lines.map((line: any) => line.unitPrice), ['524.0000', '149.0000', '82.2000']);
     assert.equal(applied.record.grandTotalAmount, '904.2000');
+    // Spec S-1: the charge row is a charge, named in Thai with the percent the bill printed, and it
+    // stays out of the goods subtotal while remaining inside the tax base and the total.
+    assert.deepEqual(applied.lines.map((line: any) => line.chargeKind), [null, null, 'SERVICE_CHARGE']);
+    assert.equal(applied.lines[2].description, 'ค่าบริการ 10%');
+    assert.equal(applied.lines[2].sourceLineText, 'Service charge', 'the document\u2019s own wording stays as evidence');
+    assert.equal(applied.record.subtotalAmount, '822.0000');
+    assert.equal(applied.record.taxableAmount, '904.2000');
+  });
+
+  it('names every charge kind in Thai and keeps a ROUNDING deduction out of the goods subtotal', async () => {
+    const applied = await applyFields({
+      description: 'อาหาร',
+      subtotalAmount: '100.00',
+      grandTotalAmount: '135.00',
+      vatMode: 'NO_VAT',
+      additionalCharges: [
+        { kind: 'DELIVERY', description: 'Delivery fee', amount: '20.00', evidenceSignal: 'Delivery' },
+        { kind: 'PACKAGING', description: 'Packaging 15 %', amount: '15.00', evidenceSignal: 'Packaging' },
+      ],
+    });
+
+    assert.equal(applied.result.chargeReconciliationStatus, 'RECONCILED_CHARGE_LINES');
+    assert.deepEqual(applied.lines.map((line: any) => line.chargeKind), [null, 'DELIVERY', 'PACKAGING']);
+    assert.deepEqual(applied.lines.map((line: any) => line.description), ['อาหาร', 'ค่าส่ง', 'ค่าบรรจุ 15%']);
+    assert.equal(applied.record.subtotalAmount, '100.0000', 'the two charges are not goods');
+    assert.equal(applied.record.grandTotalAmount, '135.0000');
   });
 
   it('falls back to the summary line when the item rows contradict the printed total, and says so', async () => {
