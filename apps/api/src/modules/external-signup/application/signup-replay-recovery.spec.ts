@@ -156,7 +156,11 @@ describe('R08 (a): a submit replay resumes instead of reporting success over mis
 });
 
 describe('R08 (b): approve writes the state, its metadata and the email as one unit', () => {
-  const APPROVED = { id: 'signup-1', state: 'PENDING_REVIEW', source: 'official-site', contactEmail: 'a@b.co', taxId: null, mxValid: true, approvedAt: null };
+  const APPROVED = {
+    id: 'signup-1', state: 'PENDING_REVIEW', source: 'official-site', contactEmail: 'a@b.co',
+    taxId: null as string | null, mxValid: true,
+    approvedAt: null as Date | null, approvedByUserId: null as string | null,
+  };
 
   it('records the approval on the same write as the state, not as a second update', async () => {
     const outbox = fakeOutbox();
