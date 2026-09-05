@@ -17,6 +17,7 @@ import {
 import { encryptCredential } from '../../../system-partner-management/domain/logic/credential-cipher.logic';
 import { assertEmployeeLimit } from '../../../system-partner-management/application/plan-term-limit';
 import { lockEmployeeProfile } from '../lock-employee-profile';
+import { uniqueConstraintFields } from '../../../../common/database/prisma-error';
 
 export type CreateEmployeeCommand = {
   companyId: string;
@@ -240,9 +241,9 @@ export class CreateEmployeeUseCase {
           });
         });
       } catch (err) {
-        if (uniqueConstraintTarget(err)?.some((f) => f === 'phoneNumber')) throw new ConflictException(PHONE_CONFLICT);
-        if (uniqueConstraintTarget(err)?.some((f) => f === 'email')) throw new ConflictException(EMAIL_CONFLICT);
-        if (uniqueConstraintTarget(err)?.some((f) => f === 'username')) throw new ConflictException(USERNAME_CONFLICT);
+        if (uniqueConstraintFields(err)?.some((f) => f === 'phoneNumber')) throw new ConflictException(PHONE_CONFLICT);
+        if (uniqueConstraintFields(err)?.some((f) => f === 'email')) throw new ConflictException(EMAIL_CONFLICT);
+        if (uniqueConstraintFields(err)?.some((f) => f === 'username')) throw new ConflictException(USERNAME_CONFLICT);
         throw err;
       }
 
@@ -267,10 +268,17 @@ export class CreateEmployeeUseCase {
     // (e.g. the owner of another company), attach a new membership to THAT user instead of
     // creating a duplicate login. Gated behind linkExistingUser so the owner confirms the link
     // first — the existing credential, username, and email are never touched.
-    const existingUser = await this.prisma.client.user.findFirst({
-      where: { username: { equals: username, mode: 'insensitive' } },
-      select: { id: true, username: true, status: true, email: true },
-    });
+    //
+    // Deliberately NOT Prisma's `mode: 'insensitive'` (same fix as `AccountProfileUseCase`): that
+    // compiles to `"username" ILIKE $1` with the value bound raw, and `_` — which the username
+    // charset allows — is a single-character LIKE wildcard. On real Postgres `som_hai` matched a
+    // stored `somchai`, so this refused a free username with `employee_existing_user`, and with
+    // `linkExistingUser` it handed the WRONG account to `attachExistingUser` — a company membership
+    // on somebody the admin never chose, which `EMAIL_MUST_DIFFER` does not catch. An exact
+    // `lower()` comparison has no pattern semantics at all. `username` is already lower-cased above.
+    const [existingUser] = await this.prisma.client.$queryRaw<Array<{ id: string; username: string | null; status: string; email: string | null }>>`
+      SELECT "id", "username", "status", "email" FROM "User" WHERE lower("username") = ${username} LIMIT 1
+    `;
     if (existingUser && existingUser.status === 'ACTIVE') {
       if (!cmd.linkExistingUser) throw new ConflictException(EXISTING_USER_CONFLICT);
       // The employee must be addressable in this company by an email of its own, never the login
@@ -389,14 +397,14 @@ export class CreateEmployeeUseCase {
           lineLink: buildLineLinkPackage(cmd.apiBaseUrl, lineLinkToken.rawToken, lineLinkToken.expiresAt, this.config.lineLiffId),
         };
       } catch (err) {
-        if (uniqueConstraintTarget(err)?.includes('username')) throw new ConflictException(USERNAME_CONFLICT);
-        if (uniqueConstraintTarget(err)?.some((f) => f === 'identityHash')) {
+        if (uniqueConstraintFields(err)?.includes('username')) throw new ConflictException(USERNAME_CONFLICT);
+        if (uniqueConstraintFields(err)?.some((f) => f === 'identityHash')) {
           throw new ConflictException(IDENTITY_CONFLICT);
         }
-        if (uniqueConstraintTarget(err)?.some((f) => f === 'phoneNumber')) {
+        if (uniqueConstraintFields(err)?.some((f) => f === 'phoneNumber')) {
           throw new ConflictException(PHONE_CONFLICT);
         }
-        if (uniqueConstraintTarget(err)?.some((f) => f === 'email')) {
+        if (uniqueConstraintFields(err)?.some((f) => f === 'email')) {
           throw new ConflictException(EMAIL_CONFLICT);
         }
         throw err;
@@ -507,8 +515,8 @@ export class CreateEmployeeUseCase {
         lineLink: buildLineLinkPackage(cmd.apiBaseUrl, ctx.lineLinkToken.rawToken, ctx.lineLinkToken.expiresAt, this.config.lineLiffId),
       };
     } catch (err) {
-      if (uniqueConstraintTarget(err)?.some((f) => f === 'phoneNumber')) throw new ConflictException(PHONE_CONFLICT);
-      if (uniqueConstraintTarget(err)?.some((f) => f === 'identityHash')) throw new ConflictException(IDENTITY_CONFLICT);
+      if (uniqueConstraintFields(err)?.some((f) => f === 'phoneNumber')) throw new ConflictException(PHONE_CONFLICT);
+      if (uniqueConstraintFields(err)?.some((f) => f === 'identityHash')) throw new ConflictException(IDENTITY_CONFLICT);
       throw err;
     }
   }
@@ -579,8 +587,3 @@ export class CreateEmployeeUseCase {
   }
 }
 
-function uniqueConstraintTarget(err: unknown): string[] | undefined {
-  if (typeof err !== 'object' || err === null || (err as { code?: string }).code !== 'P2002') return undefined;
-  const target = (err as { meta?: { target?: unknown } }).meta?.target;
-  return Array.isArray(target) ? (target as string[]) : typeof target === 'string' ? [target] : undefined;
-}

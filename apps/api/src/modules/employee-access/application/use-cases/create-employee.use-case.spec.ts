@@ -147,11 +147,23 @@ function makeUseCase(opts: { roles?: Array<{ id: string; key: string; permission
       role: { findMany: async () => roles },
       membershipRole: { findMany: async ({ where }: any) => state.membershipRoles.filter((row) => row.membershipId === where.membershipId) },
       auditLog: { create: tx.auditLog.create },
+      // The cross-company username read is raw SQL on purpose (see the use-case): Prisma's
+      // `mode: 'insensitive'` compiles to ILIKE, whose wildcards this fake cannot model. Assert the
+      // shape so a silent slide back to a pattern match fails here, and prove the no-LIKE promise by
+      // answering `_`/`%` as the literal characters they are. `create-employee-username.pg.spec.ts`
+      // is what actually exercises the operator, against real Postgres.
+      $queryRaw: async (strings: TemplateStringsArray, ...values: string[]) => {
+        assert.match(strings.join('?'), /^\s*SELECT "id", "username", "status", "email" FROM "User" WHERE lower\("username"\) = \? LIMIT 1\s*$/);
+        const [wanted] = values;
+        return state.users.filter((u) => (u.username ?? '').toLowerCase() === wanted).slice(0, 1);
+      },
       user: {
         findFirst: async ({ where }: any) => {
+          // No caller may reintroduce the ILIKE read this fake used to answer as plain equality.
+          assert.equal(JSON.stringify(where ?? {}).includes('"mode"'), false, 'case-insensitive Prisma filters are not modelled here');
           const uname = where?.username?.equals ?? where?.username;
           if (!uname) return null;
-          return state.users.find((u) => (u.username ?? '').toLowerCase() === String(uname).toLowerCase()) ?? null;
+          return state.users.find((u) => u.username === uname) ?? null;
         },
       },
       companyPlanTerm: companyPlanTermFake,

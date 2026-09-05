@@ -579,6 +579,13 @@ model User {
   // Spec §4F account merge (both sides of one ticket).
   mergeTicketsAsNew       AccountMergeTicket[]     @relation("AccountMergeTicketNewUser")
   mergeTicketsAsExisting  AccountMergeTicket[]     @relation("AccountMergeTicketExistingUser")
+
+  // `username @unique` above is a plain B-tree and therefore case-sensitive. Both username
+  // uniqueness reads (AccountProfileUseCase, CreateEmployeeUseCase) compare
+  // `lower("username")`, which that index cannot serve, so an EXPRESSION index Prisma cannot
+  // express lives in the migration SQL as
+  // "User_username_lower_idx" ON "User" (lower("username")).
+  // It is deliberately NOT unique yet — see docs/runbooks/username-case-uniqueness-followup.md.
 }
 
 model UserCredential {

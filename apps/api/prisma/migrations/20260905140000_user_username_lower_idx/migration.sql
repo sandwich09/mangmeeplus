@@ -1,0 +1,11 @@
+-- Username uniqueness is decided by `lower("username") = $1` in two places — the self-service
+-- username set (`AccountProfileUseCase`) and the admin employee create (`CreateEmployeeUseCase`).
+-- The plain B-tree behind `User.username @unique` cannot serve that predicate, so both reads were
+-- sequential scans of every user in the system. Expression indexes have no Prisma syntax, so this
+-- lives here and the schema carries a pointer comment on the model.
+--
+-- NOT UNIQUE, deliberately. A unique functional index would fail this migration outright on any
+-- environment that already holds two case-variant usernames, and production data cannot be checked
+-- from a development checkout. Promoting it is the follow-up in
+-- `docs/runbooks/username-case-uniqueness-followup.md`, once production reports zero such rows.
+CREATE INDEX "User_username_lower_idx" ON "User" (lower("username"));
