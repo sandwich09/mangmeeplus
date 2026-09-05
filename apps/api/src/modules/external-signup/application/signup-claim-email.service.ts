@@ -137,7 +137,10 @@ export class SignupClaimEmailService {
         // all (an unlinked stranger asking for help), so it is dispatched before the id check.
         // §15.6's ops alert belongs to a DAY, for the same reason and with the same exemption.
         if (event.eventType === LINE_SUPPORT_NOTICE_EVENT_TYPE) {
-          await this.lineNotify.deliverSupportNotice(readPayloadString(event.payloadJson, 'companyId'));
+          await this.lineNotify.deliverSupportNotice(
+            readPayloadString(event.payloadJson, 'companyId'),
+            readPayloadString(event.payloadJson, 'askerHash') ?? undefined,
+          );
         } else if (event.eventType === SIGNUP_OPS_ALERT_EVENT_TYPE) {
           const kind = readPayloadString(event.payloadJson, 'kind');
           const dayKey = readPayloadString(event.payloadJson, 'dayKey');

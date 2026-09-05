@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { LOGGER_TOKEN, type AppLogger } from '../../../common/logger/logger.service';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { AppConfigService } from '../../../common/config/app-config.service';
@@ -134,7 +135,16 @@ export class SignupAdminNotifyService {
    * exact rail, with the same audience and the same "one message per admin, never two" rule (L-16)
    * — a second copy would be a second place to forget the de-duplication by identity row.
    */
-  async pushToLinkedAdmins(userIds: string[], text: string): Promise<void> {
+  async pushToLinkedAdmins(
+    userIds: string[],
+    text: string,
+    /**
+     * A LINE identity to leave out, given as the short hash the outbox carries rather than the raw
+     * id (the payload stays PII-free by design). An operator who is ALSO the person asking for help
+     * must not receive "a customer wants to talk to us" in the very chat they wrote it in.
+     */
+    options?: { skipProviderUserIdHash?: string },
+  ): Promise<void> {
     const token = this.config.lineMessagingChannelAccessToken;
     if (!token) return;
     const identities = await this.prisma.client.externalIdentity.findMany({
@@ -143,6 +153,8 @@ export class SignupAdminNotifyService {
     });
     // One admin may hold more than one identity row; the operator wants one message, not two.
     for (const providerUserId of new Set(identities.map((identity) => identity.providerUserId))) {
+      if (options?.skipProviderUserIdHash
+        && shortLineIdHash(providerUserId) === options.skipProviderUserIdHash) continue;
       const delivered = await pushSystemLineMessage(token, providerUserId, text);
       if (!delivered) {
         this.logger.warn(
@@ -152,6 +164,14 @@ export class SignupAdminNotifyService {
       }
     }
   }
+}
+
+/**
+ * The identity fingerprint the support-notice outbox row carries instead of a raw LINE id, so an
+ * exclusion can be honoured at delivery without the id ever entering a table the platform reads.
+ */
+export function shortLineIdHash(value: string): string {
+  return createHash('sha256').update(value, 'utf8').digest('hex').slice(0, 16);
 }
 
 function groupByCompany(rows: Array<{ companyId: string; userId: string }>): Map<string, string[]> {

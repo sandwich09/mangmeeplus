@@ -8,11 +8,19 @@ export type LinePushOutcome = { ok: true } | { ok: false; error: string; retryAf
 const LINE_PUSH_URL = 'https://api.line.me/v2/bot/message/push';
 const LINE_PUSH_TIMEOUT_MS = 5_000;
 
+/**
+ * The longest deferral we will honour. LINE's monthly-quota 429 can name a retry-after measured in
+ * weeks; obeying it literally parks "ร้านของคุณพร้อมใช้แล้ว" until the quota resets, which is not a
+ * schedule anyone chose. Six hours keeps the row alive and re-checking while an operator acts.
+ */
+export const LINE_RETRY_AFTER_MAX_SECONDS = 6 * 60 * 60;
+
 /** LINE sends whole seconds; anything else is a header we do not understand and must not act on. */
 export function parseLineRetryAfterSeconds(value: string | null): number | undefined {
   if (!value) return undefined;
   const seconds = Number(value);
-  return Number.isFinite(seconds) && seconds > 0 ? seconds : undefined;
+  if (!Number.isFinite(seconds) || seconds <= 0) return undefined;
+  return Math.min(seconds, LINE_RETRY_AFTER_MAX_SECONDS);
 }
 
 /**

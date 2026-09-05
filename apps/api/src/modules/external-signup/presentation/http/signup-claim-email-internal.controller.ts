@@ -52,10 +52,14 @@ export class SignupClaimEmailInternalController {
     // §15.6 (d) rides here too: "how many trial shops burned their AI budget today" is a question
     // about state, and this is the timer that already asks state questions on a 15-minute cadence.
     const trialBudgets = await this.opsAlerts.sweepTrialBudgets();
+    // L-B follow-up (a): a throttled push never terminalizes, so `countDead()` never sees it and
+    // nothing else would ever notice a shop's "พร้อมใช้แล้ว" stuck behind the OA quota.
+    const stuckPushes = await this.opsAlerts.sweepStuckPushes();
     return {
       ...reminders, ...expiry,
       profileGuardQueued: profileGuard.queued,
       trialBudgetsExhausted: trialBudgets.exhausted,
+      stuckPushes: stuckPushes.stuck,
     };
   }
 }

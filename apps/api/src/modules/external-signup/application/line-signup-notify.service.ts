@@ -8,7 +8,7 @@ import { pushLineMessages } from '../../auth/infrastructure/system-line-push';
 import { buildProfileGuardNudgeCard } from '../../line-ai/domain/logic/line-business-card.logic';
 import { bangkokDayKey } from '../domain/business-hours.logic';
 import { SIGNUP_SOURCE_LINE_OA } from '../domain/company-signup.logic';
-import { SIGNUP_QUEUE_PATH, SignupAdminNotifyService } from './signup-admin-notify.service';
+import { SIGNUP_QUEUE_PATH, SignupAdminNotifyService, shortLineIdHash } from './signup-admin-notify.service';
 import { SignupOpsAlertService } from './signup-ops-alert.service';
 
 /**
@@ -180,13 +180,15 @@ export class LineSignupNotifyService {
       payloadJson: {
         schemaVersion: 1,
         occurredAt: now.toISOString(),
-        data: { ...(companyId ? { companyId } : {}) },
+        // The asker's identity fingerprint, never the id itself: the delivery step needs to know
+ //        which admin chat to SKIP, and a hash answers that without putting a LINE id in the outbox.
+        data: { ...(companyId ? { companyId } : {}), askerHash: shortHash(lineUserId) },
       },
     });
   }
 
   /** Consumer for the above. Best-effort per admin; a dead OA is logged, never retried forever. */
-  async deliverSupportNotice(companyId: string | null): Promise<void> {
+  async deliverSupportNotice(companyId: string | null, askerHash?: string): Promise<void> {
     const admins = await this.adminNotify.activeSystemAdmins();
     if (admins.length === 0) return;
     const company = companyId
@@ -200,6 +202,9 @@ export class LineSignupNotifyService {
     await this.adminNotify.pushToLinkedAdmins(
       admins.map((admin) => admin.userId),
       `📮 ลูกค้าขอคุยกับเจ้าหน้าที่: ${who}\n${href}`,
+      // An operator who is also the person asking would otherwise be told, in their own chat, that
+      // somebody wants to talk to them.
+      ...(askerHash ? [{ skipProviderUserIdHash: askerHash }] : []),
     );
   }
 
@@ -318,9 +323,8 @@ export class LineSignupNotifyService {
  * once-per-day latch is keyed on a truncated digest instead — enough to be unique per person per
  * day, not enough to be an identifier anyone can join on.
  */
-function shortHash(value: string): string {
-  return createHash('sha256').update(value, 'utf8').digest('hex').slice(0, 16);
-}
+/** One definition, shared with the delivery-side exclusion (`shortLineIdHash`). */
+const shortHash = shortLineIdHash;
 
 export function lineSignupPushEventKey(signupRequestId: string, kind: LineSignupPushKind): string {
   // `approved` and `attached` share a slot: one provisioning, one "your shop is ready" message.

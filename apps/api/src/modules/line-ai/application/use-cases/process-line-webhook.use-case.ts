@@ -2069,8 +2069,22 @@ export class ProcessLineWebhookUseCase {
       // has no account to link. The same card the door sends, so both entrances agree — and a
       // `follow` from a stranger lands here too, which is what makes G-03 an answer.
       await this.deliverRequiredMessages(event, [await this.entryDoorMessage(event.lineUserId)]);
-      await this.audit.log({ action: 'ai.line.unlinked_access', targetType: 'line_user', requestId, result: 'DENIED', riskLevel: 'LOW', metadataJson: { lineUserId: '[REDACTED]' } });
-      await this.updateEventLog(event.webhookEventId, publicCommand === 'follow' ? 'line_follow' : 'unlinked', LINE_AI_ERROR_CODES.UNLINKED_USER);
+      // L-B follow-up (c): adding the OA as a friend is the INVITED first step of this flow, not an
+      // attempt to reach anything. Recording it DENIED puts every prospect into a security signal
+      // whose whole value is that it is rare — the door card is the correct, successful answer to
+      // them. A message or a postback from an unlinked stranger is still a real access attempt and
+      // keeps its DENIED row.
+      const invitedEntry = publicCommand === 'follow';
+      await this.audit.log({
+        action: 'ai.line.unlinked_access', targetType: 'line_user', requestId,
+        result: invitedEntry ? 'SUCCESS' : 'DENIED', riskLevel: 'LOW',
+        metadataJson: { lineUserId: '[REDACTED]', ...(invitedEntry ? { entry: 'follow' } : {}) },
+      });
+      await this.updateEventLog(
+        event.webhookEventId,
+        invitedEntry ? 'line_follow' : 'unlinked',
+        invitedEntry ? undefined : LINE_AI_ERROR_CODES.UNLINKED_USER,
+      );
       return;
     }
 
@@ -2083,22 +2097,30 @@ export class ProcessLineWebhookUseCase {
       return;
     }
 
-    // P10-L §8: while a human is handling this thread the assistant stays out of it. Checked right
-    // after identity, so every path below — commands, receipts, AI turns — is covered by one gate.
-    if (await this.assistantPaused(event.lineUserId)) {
-      await this.deliverReply(event, SUPPORT_PAUSED_REPLY);
-      await this.updateEventLog(event.webhookEventId, 'support_paused');
-      return;
-    }
-
     // P10-L §3.7. Needs an identity but NOT a resolvable active company: a shop whose trial expired
     // is DISABLED, and asking to change package is exactly what that shop is here to do.
+    //
+    // ABOVE the support pause on purpose. The pause exists to stop the ASSISTANT talking over a
+    // human, and these are not assistant turns — they are the customer pressing a button we put in
+    // front of them. Under the pause they were swallowed by the "we are looking into it" reply and
+    // no request was ever created, so the one action an expired shop is in the chat to take
+    // silently did nothing for 24 hours.
     if (publicCommand === 'package_change') {
       await this.handlePackageChangeRequest(event, identity.userId, requestId);
       return;
     }
     if (publicCommand === 'profile_guard' || publicCommand === 'profile_guard_later') {
       await this.handleProfileGuardAnswer(event, identity.userId, publicCommand === 'profile_guard');
+      return;
+    }
+
+    // P10-L §8: while a human is handling this thread the assistant stays out of it. Everything
+    // below is an assistant turn — free text, receipts, AI answers — which is exactly what the
+    // pause is for. (`ติดต่อเจ้าหน้าที่` is handled further up, before identity resolution, so it
+    // stays reachable too and simply re-arms the pause.)
+    if (await this.assistantPaused(event.lineUserId)) {
+      await this.deliverReply(event, SUPPORT_PAUSED_REPLY);
+      await this.updateEventLog(event.webhookEventId, 'support_paused');
       return;
     }
 

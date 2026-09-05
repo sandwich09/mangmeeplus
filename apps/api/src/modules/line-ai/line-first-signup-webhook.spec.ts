@@ -271,6 +271,24 @@ describe('P10-L webhook doors', () => {
 
     assert.match(rendered(h), /เปิดร้านใหม่ ทดลองฟรี/);
     assert.equal(outcome(h), 'line_follow');
+    // L-B follow-up (c): adding the OA is the INVITED first step of this flow. Recording it DENIED
+    // put every prospect into a security signal whose whole value is that it is rare.
+    const denied = h.audits.filter((entry: any) => entry.result === 'DENIED');
+    assert.deepEqual(denied, [], 'a friend-add is not a denied access attempt');
+    const entry = h.audits.find((row: any) => row.action === 'ai.line.unlinked_access');
+    assert.equal(entry.result, 'SUCCESS');
+    assert.equal(entry.metadataJson.entry, 'follow');
+    assert.equal(entry.metadataJson.lineUserId, '[REDACTED]');
+    assert.equal(h.eventLog.at(-1)!.data.errorCode, undefined, 'and it is not an error outcome');
+  });
+
+  it('still records a DENIED attempt when an unlinked stranger MESSAGES the OA', async () => {
+    const h = harness({ pendingSignup: null });
+    await h.useCase.execute(event('สวัสดีครับ'));
+
+    assert.equal(outcome(h), 'unlinked');
+    const entry = h.audits.find((row: any) => row.action === 'ai.line.unlinked_access');
+    assert.equal(entry.result, 'DENIED', 'reaching for the assistant without an account still is');
   });
 
   it('answers a follow with the status card while an application is travelling', async () => {
@@ -381,6 +399,39 @@ describe('P10-L contact-staff pause (§8)', () => {
     const expired = harness({ identity, context: { companyId: 'co-1', aiPausedUntil: new Date(Date.now() - 1) } });
     await expired.useCase.execute(event(STAFF_CONTACT_COMMAND));
     assert.equal(outcome(expired), 'support_requested', 'the turn ran normally again');
+  });
+
+  /**
+   * The pause is about the ASSISTANT, not about the buttons we put in front of the customer. It was
+   * swallowing the explicit commands too: a paused owner who asked to change package got only "we
+   * are looking into it" and NO request was created — for 24 hours, on the one action an expired
+   * shop is in the chat to take.
+   */
+  it('still opens a package-change request while a human is handling the thread', async () => {
+    const identity = { userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } };
+    const paused = harness({
+      identity,
+      ownerMembership: { companyId: 'co-1', company: { planTerm: { tierKey: 'FREE_TRIAL_15' } } },
+      context: { companyId: 'co-1', aiPausedUntil: new Date(Date.now() + 3_600_000) },
+    });
+    await paused.useCase.execute(event(PACKAGE_CHANGE_COMMAND));
+
+    assert.equal(paused.packageChanges.length, 1, 'the request an operator has to act on exists');
+    assert.match(rendered(paused), /รับคำขอแล้ว/);
+    assert.equal(rendered(paused).includes('ทีมงานรับเรื่องแล้ว'), false, 'not the paused reply');
+  });
+
+  it('still keeps free text paused, which is what the pause is for', async () => {
+    const identity = { userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } };
+    const paused = harness({
+      identity,
+      context: { companyId: 'co-1', aiPausedUntil: new Date(Date.now() + 3_600_000) },
+    });
+    await paused.useCase.execute(event('ยอดขายวันนี้เท่าไหร่'));
+
+    assert.match(rendered(paused), /ทีมงานรับเรื่องแล้ว/);
+    assert.equal(outcome(paused), 'support_paused');
+    assert.deepEqual(paused.packageChanges, []);
   });
 });
 
