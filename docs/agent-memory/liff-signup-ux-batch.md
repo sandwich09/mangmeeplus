@@ -1,6 +1,7 @@
 # Agent Memory: liff-signup-ux-batch
 
-Status: implemented on `codex/liff-signup-ux-batch`; API suite green; no PR opened (by instruction).
+Status: implemented on `codex/liff-signup-ux-batch`, rebased onto develop f44b0519 (PR #428);
+API suite and typecheck green; no PR opened (by instruction).
 
 Owner: Owner UAT feedback 2026-09-05, from the LIFF signup form opened in LINE on iPhone.
 
@@ -62,10 +63,11 @@ Owner: *"warning สีเหลือง / ส่งไม่สำเร็จ
    landed in the summary at the top (scrolled away) and `#detail` at the bottom (below the fold) —
    off-screen in both directions at the moment of the tap. A client-side failure now also stops
    claiming "ส่งคำขอไม่สำเร็จ", because nothing was submitted.
-9. **Guidance map** keyed on the codes the server *actually* answers with. `line_signup_identity_disabled`
-   and `line_signup_account_blocked` were named in the brief but **do not exist anywhere on this
-   path** — they were not added; unknown codes fall to the generic error copy and the raw code is
-   never shown to a customer.
+9. **Guidance map** keyed on the codes the server *actually* answers with; unknown codes fall to the
+   generic error copy and the raw code is never shown to a customer.
+   `line_signup_identity_disabled` and `line_signup_account_blocked` were named in the round-4 brief
+   but did not exist on this path **at that time**, so they were deliberately left out rather than
+   invented. They arrived for real with PR #428 and are mapped now — see round 6.
 10. **Contrast (review SHOULD-FIX 2).** White on `--brand` #22C55E is 2.28:1 and failed AA on the
     submit button, every `a.btn` and the header bar. All three now use `--brand-dark` #15803D
     (5.02:1); #22C55E survives only as the success notice's left rule, where no text sits on it.
@@ -122,7 +124,10 @@ so no new origin and no `img-src` edit were needed (`img-src 'self' data:` was a
   | list | tests | pass | fail | skipped |
   |---|---|---|---|---|
   | `pretest` | 30 | 16 | 0 | 14 |
-  | `test` | 6480 | 6381 | 0 | 99 |
+  | `test` | 6513 | 6414 | 0 | 99 |
+
+  (Pre-rebase this branch alone read 6480/6381; the rebase onto develop f44b0519 brought
+  PR #428's tests in, hence +33.)
 
   Earlier revisions of this file claimed 7810 and then 7829 "passing" from the dot-character
   method; both were wrong. The round-3 reviewer measured 6477/6378/0/99, and this run is +3 tests
