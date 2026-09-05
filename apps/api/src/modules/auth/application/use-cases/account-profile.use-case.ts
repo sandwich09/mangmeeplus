@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { PrismaService } from '../../../../common/database/prisma.service';
+import { uniqueConstraintFields } from '../../../../common/database/prisma-error';
 import { hashPassword } from '../../domain/logic/password-credential.logic';
 // Cross-module, deliberately: this is the same Thai-mobile rule the LINE signup form applies, and
 // a second copy of it here is how the two would drift apart. Pure function, no DI, no cycle.
@@ -136,11 +137,10 @@ export class AccountProfileUseCase {
     } catch (error) {
       // `UserCredential.userId` and `User.username` are both unique, so the database — not the
       // read above — is what actually decides a race between two taps.
-      const target = (error as { code?: string; meta?: { target?: unknown } })?.code === 'P2002'
-        ? (error as { meta?: { target?: unknown } }).meta?.target
-        : null;
-      if (target) {
-        const fields = Array.isArray(target) ? target.map(String) : [String(target)];
+      // `meta.target` alone was blind under `@prisma/adapter-pg`, which leaves it undefined and puts
+      // the columns on `meta.driverAdapterError` — see `uniqueConstraintFields`.
+      const fields = uniqueConstraintFields(error);
+      if (fields) {
         if (fields.some((field) => field.includes('username'))) {
           throw new ConflictException({ code: 'username_taken', message: 'This username is already taken.' });
         }

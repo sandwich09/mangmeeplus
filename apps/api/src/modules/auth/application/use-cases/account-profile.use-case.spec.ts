@@ -59,7 +59,21 @@ function makePrisma(seed: { users?: Row[]; credentials?: Row[]; tokens?: Row[]; 
       update: async ({ where, data }: any) => {
         const user = users.find((row) => match(row, where));
         if (data.username && users.some((row) => row['username'] === data.username && row['id'] !== user!['id'])) {
-          throw Object.assign(new Error('unique'), { code: 'P2002', meta: { target: ['username'] } });
+          // The shape `@prisma/adapter-pg` ACTUALLY raises (verified against local Postgres 7.8.0):
+          // `meta.target` is undefined and the columns live under `driverAdapterError`. The old fake
+          // fabricated `meta.target: ['username']`, so every unit test passed while production could
+          // not translate this at all. `lower(username` is what the pending UNIQUE functional index
+          // will report — truncated at the expression's first `(` — and must fold to `username` too.
+          throw Object.assign(new Error('unique'), {
+            code: 'P2002',
+            meta: {
+              modelName: 'User',
+              driverAdapterError: {
+                name: 'DriverAdapterError',
+                cause: { originalCode: '23505', kind: 'UniqueConstraintViolation', constraint: { fields: ['lower(username'] } },
+              },
+            },
+          });
         }
         return Object.assign(user!, data);
       },
@@ -72,6 +86,8 @@ function makePrisma(seed: { users?: Row[]; credentials?: Row[]; tokens?: Row[]; 
     userCredential: {
       create: async ({ data }: any) => {
         if (credentials.some((row) => row['userId'] === data.userId)) {
+          // Kept on the legacy `meta.target` shape on purpose: it is what Prisma raises WITHOUT a
+          // driver adapter, and `uniqueConstraintFields` must keep reading both.
           throw Object.assign(new Error('unique'), { code: 'P2002', meta: { target: ['userId'] } });
         }
         credentials.push({ ...data });
@@ -216,6 +232,26 @@ describe('AccountProfileUseCase — first password', () => {
     await assert.rejects(
       () => new AccountProfileUseCase(prisma, audit).setInitialPassword('user-line', 'backup-password', 'boss@example.com', 'req-1', 'session-current'),
       BadRequestException,
+    );
+  });
+
+  // The read above cannot be the last word: nothing holds a lock between it and the write, so the
+  // unique index is what actually decides a race. Until this test the P2002 branch had no coverage
+  // at all, and it had been dead in production since the driver adapter landed — `meta.target` is
+  // undefined there and the columns arrive under `meta.driverAdapterError` instead, so the raw
+  // error escaped and the caller lost the `username_taken` code entirely.
+  it('answers username_taken when the name is claimed between the uniqueness read and the write', async () => {
+    const { prisma, users } = makePrisma({ users: [{ ...LINE_ONLY_USER }] });
+    const read = prisma.client.$queryRaw;
+    prisma.client.$queryRaw = async (...args: unknown[]) => {
+      const rows = await read(...args);
+      users.push({ id: 'user-racer', status: 'ACTIVE', username: 'somchai' });
+      return rows;
+    };
+    await assert.rejects(
+      () => new AccountProfileUseCase(prisma, audit).setInitialPassword('user-line', 'backup-password', 'somchai', 'req-1', 'session-current'),
+      (error: unknown) => error instanceof ConflictException && (error.getResponse() as Row)['code'] === 'username_taken',
+      'the loser of the race must get username_taken, never a raw driver error',
     );
   });
 
