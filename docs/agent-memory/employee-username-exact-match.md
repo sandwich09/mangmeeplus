@@ -53,7 +53,9 @@ meta: { modelName: 'User', driverAdapterError: { cause: {
   constraint: { fields: ['username'] } } } }
 ```
 
-Both readers here knew only `meta.target`, so both were no-ops:
+Both readers in this change's scope knew only `meta.target`, so both were no-ops (two more readers
+elsewhere have the same blindness and are deliberately left for a separate decision — see Open
+questions):
 
 | Site | Dead codes |
 | --- | --- |
@@ -86,11 +88,13 @@ translation the day it lands.
   (still the non-adapter shape, and what the unit fakes model), falls back to the adapter shape, and
   normalises the functional-index form. The local `uniqueConstraintTarget` in `create-employee` was
   deleted rather than aliased.
-- **`AllExceptionsFilter` deliberately left alone**, though it has the same blindness. Its spec
-  (`all-exceptions.filter.spec.ts:96`) requires a string ARRAY specifically so a bare `target` — an
-  index *name*, not a column list — cannot enrich a client-facing body. That is a stricter,
-  security-boundary rule than these use cases need, and widening what may leave that filter is a
-  separate decision from restoring a conflict code. Recorded as an open question, not silently done.
+- **`AllExceptionsFilter` and `DataRightsService` deliberately left alone**, though both have the
+  same blindness. The filter's spec (`all-exceptions.filter.spec.ts:96`) requires a string ARRAY
+  specifically so a bare `target` — an index *name*, not a column list — cannot enrich a
+  client-facing body: a stricter, security-boundary rule than these use cases need, and widening
+  what may leave that filter is a decision rather than a patch. `data-rights` degrades to the wrong
+  code rather than to no code, which is milder than what was fixed here. Both are recorded as open
+  questions to settle in one change, not silently folded into this one.
 - **`update-employee.use-case.ts` needed no change**: it has no P2002 translation at all, only
   read-then-write pre-checks.
 - **`User.email` was reviewed, not changed.** The nearby email comparison
@@ -161,17 +165,20 @@ dot reporter's dot count (which adds one dot per suite — the 48-test spec prin
 | none (as shipped) | tests 3 · **pass 3 · fail 0** | tests 48 · **pass 48 · fail 0** | tests 23 · **pass 23 · fail 0** |
 | restore `{ equals: username, mode: 'insensitive' }` | tests 3 · **pass 2 · fail 1** — `` `_` is a LIKE wildcard: nobody holds som_hai``, actual `'employee_existing_user'`, expected `'created'` | tests 48 · **pass 11 · fail 37** — `case-insensitive Prisma filters are not modelled here` | unaffected |
 | drop `lower()` (`WHERE "username" = $1`) | tests 3 · **pass 2 · fail 1** — `case-folded equality still catches the real collision` (what the mixed-case `SomChai` seed is for) | tests 48 · **pass 11 · fail 37** — the fake's SQL-shape assertion no longer matches the query | unaffected |
-| remove the `driverAdapterError` branch from `uniqueConstraintFields` | tests 3 · **pass 2 · fail 1** — actual `` 'uncaught:PrismaClientKnownRequestError:P2002:… Unique constraint failed on the fields: (`username`)' ``, expected `'employee_username_conflict'` | unaffected — its fake never enforced uniqueness at all | tests 23 · **pass 22 · fail 1** — the read-vs-write race test |
+| remove the `driverAdapterError` branch from `uniqueConstraintFields` | tests 3 · **pass 1 · fail 2** — BOTH translation tests depend on it; the first reports actual `` 'uncaught:PrismaClientKnownRequestError:P2002:… Unique constraint failed on the fields: (`username`)' ``, expected `'employee_username_conflict'` | unaffected — its fake never enforced uniqueness at all | tests 23 · **pass 22 · fail 1** — the read-vs-write race test |
 | drop the `lower(` normalisation from `uniqueConstraintFields` | tests 3 · **pass 2 · fail 1** — actual `` '… Unique constraint failed on the fields: (`lower(username`)' ``, expected `'employee_username_conflict'` | unaffected | unaffected |
 
-An earlier revision of this file recorded the drop-`lower()` mutation as PASSING the unit spec. That
-was wrong: the SQL-shape assertion added to the fake catches it, 37 of 48.
+Two cells in an earlier revision of this file were wrong, both now re-measured rather than reasoned
+about: the drop-`lower()` mutation was recorded as PASSING the unit spec (it fails 37 of 48 — the
+fake's SQL-shape assertion catches it), and the remove-adapter-branch mutation as `pass 2 · fail 1`
+(that figure predated the third pg test, which depends on the same branch; it is `pass 1 · fail 2`).
 
 ## Artifacts
 
 - Bug 1 fix: `apps/api/src/modules/employee-access/application/use-cases/create-employee.use-case.ts:270`
-- Bug 2 fix: `apps/api/src/common/database/prisma-error.ts`, used at
-  `create-employee.use-case.ts:244-246,400-408,518-519` and `account-profile.use-case.ts:139`
+- Bug 2 fix: `apps/api/src/common/database/prisma-error.ts`, wired at **10 call sites** — 9 in
+  `create-employee.use-case.ts` (`:244-246`, `:400-408`, `:518-519`) and 1 in
+  `account-profile.use-case.ts:139`
 - Hostile fake: `apps/api/src/modules/employee-access/application/use-cases/create-employee.use-case.spec.ts:150`
 - Adapter-shaped fake + the read-vs-write race test that reaches the translation at all:
   `apps/api/src/modules/auth/application/use-cases/account-profile.use-case.spec.ts:62,238`
@@ -204,11 +211,19 @@ Run from `apps/api` unless noted. Local DB
 
 ## Open questions
 
-- **`AllExceptionsFilter` still reads only `meta.target`** (`all-exceptions.filter.ts:97`), so any
-  P2002 not translated by a use case still answers a field-less generic 409. Fixing it means
-  deciding whether adapter-reported constraint fields may enrich a client body — its spec currently
-  forbids even a bare `meta.target` string, on the grounds that an index name is not a column list.
-  Left as a deliberate, separate decision.
+- **Two `meta.target`-only readers remain, both out of scope here and best decided together:**
+  - `all-exceptions.filter.ts:97` — the global fallback, so any P2002 NOT translated by a use case
+    still answers a field-less generic 409. Fixing it means deciding whether adapter-reported
+    constraint fields may enrich a client body; its spec currently forbids even a bare `meta.target`
+    string, on the grounds that an index name is not a column list. A deliberate security-boundary
+    rule, not an oversight — so widening it is a decision, not a patch.
+  - `data-rights.service.ts:988-991` — `uniqueTargetColumns()` returns `[]` under the driver
+    adapter, so the `targetColumns.includes('requestKey')` branch at `:309-316` never fires and a
+    `requestKey` collision is misreported as `data_rights_active_target_conflict` instead of
+    `data_rights_request_key_conflict`. Milder than the two fixed here: both arms are coded 409s, so
+    the caller gets *a* code, just the wrong one. `isUniqueViolation` at `:972` still detects the
+    violation (it also accepts `23505`); only the column discrimination is blind. It should adopt
+    `uniqueConstraintFields()` in the same change that settles the filter question.
 - Does production hold any case-variant usernames today? Cannot be read from a development
   checkout. The detection query is step 1 of the follow-up runbook, and its answer is **not
   durable** — two of the four writers can create a new case-variant pair at any time.
