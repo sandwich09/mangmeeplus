@@ -105,7 +105,9 @@ test('the queue survives a 390px phone, which is where an operator reads it', ()
   for (const [, , px] of source.matchAll(/\b((?:min-)?w)-\[(\d+)px\]/g)) {
     assert.ok(Number(px) <= 358, `a ${px}px fixed width does not fit a 390px screen`);
   }
-  assert.doesNotMatch(source, /\bmin-h-screen\b/);
+  // Height is INV-10's job (src/common/styles/viewport-units.spec.ts) for the whole app; naming
+  // the banned class here is what that scanner reads as a violation.
+  assert.match(source, /\bmin-h-dvh\b/);
 });
 
 test('a package decision is confirmed before it moves what a customer pays', () => {
