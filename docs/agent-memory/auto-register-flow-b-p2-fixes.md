@@ -1,6 +1,6 @@
 # Agent Memory: auto-register-flow-b-p2-fixes
 
-Status: IMPLEMENTED and REBASED onto `codex/flow-b-p1-fixes` FINAL tip (c9617c93). Round-2 review items F2–F12 applied. Not merged, no PR. P2 must merge AFTER P1: its "15 ครั้ง" free-trial copy is only true with P1's `SIGNUP_TRIAL_TIER`.
+Status: IMPLEMENTED and REBASED onto `codex/flow-b-p1-fixes` FINAL tip (636acd22, which sits directly on develop e37eb216). Round-2 review items F2–F12 applied. Not merged, no PR. P2 must merge AFTER P1: its "15 ครั้ง" free-trial copy is only true with P1's `SIGNUP_TRIAL_TIER`.
 
 Owner: thawatchai
 
@@ -97,6 +97,32 @@ Round-2 review blocker, fixed in the same pass: `SignupQueueQueryDto.cursor` sti
 cursor at 64 characters while F10's `createdAt|id` cursor is 67, so every "โหลดเพิ่ม" was a 400
 from the global pipe. Bound raised to 128 and pinned by a test that round-trips a real
 `encodeQueueCursor` value through the real DTO under the real `GLOBAL_VALIDATION_PIPE_OPTIONS`.
+
+## Final rebase onto P1's closing tip (636acd22)
+
+P1 rebased itself onto a newer develop, so `c9617c93` stopped being an ancestor and a plain
+`git rebase` tried to replay P1's own commits. `git rebase --onto 636acd22 c9617c93` replays only
+this branch's 15. One dropped as already upstream (the comment reword P1 had taken).
+
+Conflicts, all content-preserving:
+
+1. Import lists in `SignupPage.tsx` and `signup.logic.spec.ts` — union with P1's `offerWarmupNote`
+   / `SIGNUP_TRIAL_WARMUP_SLIPS`.
+2. `local-console-auth-mailer.adapter.ts` (from develop) — keep develop's `sendSupportRequestNotice`
+   AND my widened `buildUrl(pathname, token, signupRequestId?)`.
+3. `signup-claim-email-internal.controller.ts` (from develop) — keep develop's
+   `sweepExpiredSupportRequests` + `purgeSettledSupportRequests` AND my `sweepAbandonedIntake`,
+   which stays last so a retention failure cannot skip work a customer waits on.
+4. The approve audit — P1's F16 split (`signup.request.provisioning_retried` for a retry) kept,
+   with my `businessCategory` in its metadata on both actions.
+5. The trial copy — my free-trial lines, then P1's F17 warm-up sentence. The offer cards it hung
+   off are gone, so `offerWarmupNote(card)` became the `SIGNUP_TRIAL_WARMUP` constant, rendered in
+   `TrialNotice` under the monthly number it qualifies. P1's F17 assertion moved with it, and a
+   second assertion was added because "the constant exists" and "the sentence reaches the screen"
+   are different claims — deleting the rendered line had stayed green.
+
+`signup-pages.qa.spec.ts` keeps P1's entries plus my `signup.logic.ts` / `SignupChrome.tsx` and the
+directory assertion. `package.json` and `ci.yml` are untouched by this branch — P1 owns both.
 
 ## Next
 
