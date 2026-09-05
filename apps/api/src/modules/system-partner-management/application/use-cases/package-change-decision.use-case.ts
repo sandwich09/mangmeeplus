@@ -12,19 +12,22 @@ import { PrismaService } from '../../../../common/database/prisma.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { LOGGER_TOKEN, type AppLogger } from '../../../../common/logger/logger.service';
 import { pushSystemLineMessage } from '../../../auth/infrastructure/system-line-push';
+import { checkShopMessage, shopMessageAllowedHosts } from '../../domain/logic/partner-line-message.logic';
 import { SetCompanyPlanTermUseCase } from './company-plan-term.use-cases';
 
 export const PACKAGE_CHANGE_DECIDED_ACTION = 'signup.line.package_change_decided';
 
 /** Owner copy (§7 register). No plus sign in customer text; write "และ". */
+/** The operator's note is a SEPARATE line: run together, an internal-sounding remark reads as
+ *  part of the platform's own sentence in the customer's chat. */
 export function packageChangeApprovedMessageTh(tierKey: string, note?: string): string {
   const label = PLAN_TIER_PRESETS[tierKey as PlanTierKey]?.labelTh ?? tierKey;
-  return `เปลี่ยนแพ็กเกจเป็น ${label} แล้วค่ะ${note ? ` ${note}` : ''}`;
+  return `เปลี่ยนแพ็กเกจเป็น ${label} แล้วค่ะ${note ? `\n${note}` : ''}`;
 }
 
 export function packageChangeRejectedMessageTh(note?: string): string {
   return 'ตอนนี้ยังเปลี่ยนแพ็กเกจให้ไม่ได้ ต้องขออภัยด้วยนะคะ '
-    + `ติดต่อทีมงานได้ที่ โทร 098-256-5628 (จันทร์–เสาร์ 9:00–18:00) ค่ะ${note ? ` ${note}` : ''}`;
+    + `ติดต่อทีมงานได้ที่ โทร 098-256-5628 (จันทร์–เสาร์ 9:00–18:00) ค่ะ${note ? `\n${note}` : ''}`;
 }
 
 /**
@@ -98,6 +101,10 @@ export class PackageChangeDecisionUseCase {
     if (body.action === 'APPROVE' && !Object.hasOwn(PLAN_TIER_PRESETS, row.requestedTierKey)) {
       throw new UnprocessableEntityException(`tierKey "${row.requestedTierKey}" is not a known plan tier.`);
     }
+    // MEDIUM-3: this note is PUSHED into the shop's LINE chat, so it is the same trust boundary the
+    // message box is — and it was crossing it unchecked. Same fence, same codes, and checked BEFORE
+    // the CAS claim so a refused note leaves the row exactly where the operator found it.
+    const note = this.checkedNote(body.note);
 
     // Claim first. The loser of a race sees a decided row above on its next read and changes nothing.
     const claimed = await this.prisma.client.packageChangeRequest.updateMany({
@@ -142,15 +149,30 @@ export class PackageChangeDecisionUseCase {
         result: 'SUCCESS',
         riskLevel: 'HIGH',
         metadataJson: {
+          // The paragraph IS the evidence, exactly as it is for the message box: an operator
+          // speaking to a customer as the platform leaves behind what they actually said.
           action: body.action,
           requestedTierKey: row.requestedTierKey,
-          hasNote: Boolean(body.note?.trim()),
+          ...(note ? { note } : {}),
         },
       },
     });
 
-    await this.notifyShop(row.companyId, body, row.requestedTierKey);
+    await this.notifyShop(row.companyId, body, row.requestedTierKey, note);
     return { id, status: target };
+  }
+
+  /**
+   * The operator's own paragraph, held to the SEC-05 rule the message box is held to: a link in a
+   * push our Verified OA sends inherits that account's trust, wherever in the product it was typed.
+   */
+  private checkedNote(raw: string | undefined): string | undefined {
+    if (!raw?.trim()) return undefined;
+    const check = checkShopMessage(raw, shopMessageAllowedHosts(this.config.sesWebBaseUrl));
+    if (check.ok) return check.text;
+    // Same literal codes the message box throws, so one Thai sentence covers both routes.
+    if (check.reason === 'too_long') throw new UnprocessableEntityException('partner_line_message_too_long');
+    throw new UnprocessableEntityException('partner_line_message_external_link');
   }
 
   /**
@@ -161,10 +183,10 @@ export class PackageChangeDecisionUseCase {
     companyId: string,
     body: AdminPackageChangeDecisionBody,
     requestedTierKey: string,
+    note: string | undefined,
   ): Promise<void> {
     const token = this.config.lineMessagingChannelAccessToken;
     if (!token) return;
-    const note = body.note?.trim() || undefined;
     const text = body.action === 'APPROVE'
       ? packageChangeApprovedMessageTh(requestedTierKey, note)
       : packageChangeRejectedMessageTh(note);

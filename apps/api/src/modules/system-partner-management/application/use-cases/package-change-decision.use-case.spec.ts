@@ -207,6 +207,40 @@ describe('POST /system/package-change-requests/:id/decision — REJECT', () => {
     assert.doesNotMatch(pushes[0]!.text, /\+/);
   });
 
+  // MEDIUM-3: the note is pushed into a customer's LINE chat, so it crosses the SAME boundary the
+  // message box does. It was going out unchecked, and the audit recorded only that one existed.
+  it('holds the note to the SEC-05 fence, before anything is claimed', async () => {
+    for (const note of [
+      'โอนที่ https://evil.example.com ค่ะ',
+      'app.mangmeeplus.com:443@evil.test/pay',
+      'ก'.repeat(501),
+    ]) {
+      const h = harness();
+      await assert.rejects(
+        () => h.controller.decide('pcr-1', { action: 'APPROVE', note }, REQ),
+        UnprocessableEntityException,
+      );
+      assert.deepEqual(h.updates, [], 'the row is not claimed for a decision that is refused');
+      assert.deepEqual(h.planTermCalls, [], 'and the tier does not move');
+      assert.deepEqual(pushes, []);
+    }
+  });
+
+  it('refuses the same paragraph the message box refuses, with the same code', async () => {
+    const paragraph = 'ดูที่ https://evil.example.com/pay ค่ะ';
+    const h = harness();
+    await assert.rejects(
+      () => h.controller.decide('pcr-1', { action: 'REJECT', note: paragraph }, REQ),
+      (error: Error) => /partner_line_message_external_link/.test(error.message),
+    );
+  });
+
+  it('records the note text in the audit, not merely that one existed', async () => {
+    const h = harness();
+    await h.controller.decide('pcr-1', { action: 'APPROVE', note: 'เริ่มรอบใหม่วันนี้นะคะ' }, REQ);
+    assert.equal(h.audits[0].metadataJson.note, 'เริ่มรอบใหม่วันนี้นะคะ');
+  });
+
   it('stays silent when the shop has no linked LINE owner', async () => {
     const h = harness({ ownerLineUserIds: [] });
     const result = await h.controller.decide('pcr-1', { action: 'REJECT' }, REQ);

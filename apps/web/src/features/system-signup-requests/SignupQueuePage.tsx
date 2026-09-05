@@ -90,7 +90,9 @@ export default function SignupQueuePage() {
   const [rejecting, setRejecting] = useState<AdminSignupQueueItemDto | null>(null);
   const [notifyApplicant, setNotifyApplicant] = useState(false);
   const [rejectionReason, setRejectionReason] = useState('');
-  const [packageNote, setPackageNote] = useState('');
+  // Keyed by request id: one shared box put the note an operator typed for one shop onto whichever
+  // shop they decided next.
+  const [packageNotes, setPackageNotes] = useState<Record<string, string>>({});
 
   const load = async () => {
     setLoading(true);
@@ -120,6 +122,9 @@ export default function SignupQueuePage() {
 
   const selectTab = (next: SignupQueueTab) => {
     setTab(next);
+    // A failure belongs to the tab that produced it: leaving it up over another tab reports a
+    // problem the operator is not looking at, on a list that loaded fine.
+    setTabError(null);
     if (tabLoadsOwnList(next)) void loadTab(next);
   };
 
@@ -227,10 +232,10 @@ export default function SignupQueuePage() {
     if (!accepted) return;
     setBusyId(item.id);
     try {
-      const note = packageNote.trim();
+      const note = (packageNotes[item.id] ?? '').trim();
       await decidePackageChangeRequest(item.id, { action, ...(note ? { note } : {}) });
       toast.success(action === 'APPROVE' ? 'เปลี่ยนแพ็กเกจและแจ้งลูกค้าแล้ว' : 'ปิดคำขอแล้ว');
-      setPackageNote('');
+      setPackageNotes((current) => ({ ...current, [item.id]: '' }));
       await loadTab('PACKAGE_CHANGE');
     } catch (err) {
       toast.error(apiErrorMessage(err));
@@ -391,21 +396,9 @@ export default function SignupQueuePage() {
         {/* §8 "คำขอเปลี่ยนแพ็กเกจ": its own shape — a shop, a move, and who asked. */}
         {tab === 'PACKAGE_CHANGE' && !tabError && (
           <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
-            <div className="space-y-1.5 border-b border-gray-100 px-4 py-3">
-              <label htmlFor="package-change-note" className="block text-sm font-medium text-gray-700">
-                ข้อความถึงร้าน (ไม่บังคับ)
-              </label>
-              <input
-                id="package-change-note"
-                maxLength={200}
-                value={packageNote}
-                onChange={(e) => setPackageNote(e.target.value)}
-                disabled={busyId !== null}
-                placeholder="เช่น เริ่มรอบใหม่วันนี้นะคะ"
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-brand-400 focus:outline-none disabled:bg-gray-50"
-              />
-              <p className="text-xs text-gray-500">ต่อท้ายข้อความที่ระบบส่งให้ร้านทางไลน์</p>
-            </div>
+            <p className="border-b border-gray-100 px-4 py-2 text-xs text-gray-500">
+              ข้อความถึงร้านจะถูกส่งเข้าไลน์ของลูกค้าต่อท้ายผลการตัดสิน ใส่ลิงก์ได้เฉพาะเว็บของเราและ LIFF
+            </p>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200 text-left text-sm">
                 <thead className="bg-gray-50 text-xs font-medium uppercase text-gray-500">
@@ -431,6 +424,17 @@ export default function SignupQueuePage() {
                         <td className="px-4 py-3">
                           <p className="font-medium text-gray-900">{item.companyName}</p>
                           {item.note && <p className="mt-0.5 text-xs text-gray-500">{item.note}</p>}
+                          {/* Per row: a note typed for one shop must not follow the operator to
+                              the next one. Bounded and link-fenced server-side (SEC-05). */}
+                          <input
+                            aria-label={`ข้อความถึงร้าน ${item.companyName}`}
+                            maxLength={200}
+                            value={packageNotes[item.id] ?? ''}
+                            onChange={(e) => setPackageNotes((current) => ({ ...current, [item.id]: e.target.value }))}
+                            disabled={busy}
+                            placeholder="ข้อความถึงร้าน — ลูกค้าจะเห็นใน LINE (ไม่บังคับ)"
+                            className="mt-1.5 w-full rounded border border-gray-300 px-2 py-1 text-xs text-gray-900 focus:border-brand-400 focus:outline-none disabled:bg-gray-50"
+                          />
                         </td>
                         <td className="px-4 py-3 text-xs text-gray-600">
                           {item.currentTierKey ? `${item.currentTierKey} → ` : ''}{item.requestedTierKey}

@@ -46,6 +46,17 @@ test('an unopened tab shows no count rather than a confident zero', () => {
   assert.match(source, /\{count !== null && <span/);
 });
 
+test('a tab failure does not stay up over another tab', () => {
+  assert.match(source, /const selectTab = \(next: SignupQueueTab\) => \{[\s\S]{0,400}setTabError\(null\)/);
+});
+
+test('the package-change note is per row, not one box shared by every shop', () => {
+  // A single box put the note typed for one shop onto whichever shop was decided next.
+  assert.match(source, /const \[packageNotes, setPackageNotes\] = useState<Record<string, string>>\(\{\}\)/);
+  assert.match(source, /value=\{packageNotes\[item\.id\] \?\? ''\}/);
+  assert.match(source, /const note = \(packageNotes\[item\.id\] \?\? ''\)\.trim\(\)/);
+});
+
 test('the package-change tab offers the decision AND the partner page', () => {
   // The tier move sometimes needs a conversation and a term date first, which lives on the partner
   // page — the same place the writer this button calls actually lives.
