@@ -66,7 +66,7 @@ Owner decisions ที่บันทึกรอบนี้:
 
 Schema delta: `CompanySignupRequest.claimWindowStartedAt` (nullable, additive migration `20260905170000_signup_claim_activation_window` พร้อม backfill จาก `approvedAt`) — R09 ต้องการนาฬิกาที่ reissue รีสตาร์ทได้ โดยไม่แตะ `approvedAt` ซึ่งเป็น audit fact
 
-Verification: api 6539 tests / 1325 suites / 6440 pass / 0 fail / 99 skipped; web 1489 pass / 0 fail; `apps/web` build ผ่าน; `pnpm -r typecheck` ผ่าน; `prisma validate` ผ่าน; maintenance pins `--check` = current; pg spec ใหม่ `signup-provisioning-recovery.pg.spec.ts` (5 tests) รันบน docker postgres จริงและถูกเพิ่มใน ci.yml pg step แบบ invocation ของตัวเอง
+Verification (รอบสุดท้ายบน `43fd6d05`): api 6537 tests / 1323 suites / 6438 pass / 0 fail / 99 skipped; web 1489 tests / 322 suites / 1489 pass / 0 fail; `apps/web` build ผ่าน; `pnpm -r typecheck` ผ่าน; `prisma validate` ผ่าน; maintenance pins `--check` = current; pg spec ใหม่ `signup-provisioning-recovery.pg.spec.ts` (5 tests) รันบน docker postgres จริงและถูกเพิ่มใน ci.yml pg step แบบ invocation ของตัวเอง
 
 Follow-ups ที่ยังไม่ทำ:
 
