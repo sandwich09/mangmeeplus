@@ -188,6 +188,30 @@ describe('detectLineDraftEditRequest', () => {
     assert.equal(detectLineDraftEditRequest('เพิ่มค่าบริการ 10% ให้บิลของคนอื่น'), null);
   });
 
+  // M8 / UAT J3.7: the `ambiguous_line` clarify tells the user to type exactly this. Without a
+  // parser for it the lane asks which line, the user answers, and the same question comes back.
+  it('reads the answer to the "which line?" clarify', () => {
+    for (const message of ['บรรทัด 2 เป็น 500', 'บรรทัดที่ 2 เป็น 500', 'รายการที่ 2 = 500', 'บรรทัด 2 คือ 1,500.50']) {
+      const detected = detectLineDraftEditRequest(message);
+      assert.equal(detected?.tool, 'expense.draft.set_line', message);
+      assert.equal((detected?.input as any).lineNumber, 2, message);
+    }
+    assert.equal((detectLineDraftEditRequest('บรรทัด 2 คือ 1,500.50')?.input as any).amount, '1500.50');
+  });
+
+  // L15a: a Thai keyboard produces ๑๕๒, and a parser written against \d alone ignores it.
+  it('folds Thai and fullwidth numerals before parsing', () => {
+    assert.deepEqual(detectLineDraftEditRequest('มีค่าบริการ ๑๕๒ บาท'), {
+      tool: 'expense.draft.add_charge', input: { kind: 'SERVICE_CHARGE', amount: '152' },
+    });
+    assert.deepEqual(detectLineDraftEditRequest('ค่าบริการ ๑๐%'), {
+      tool: 'expense.draft.add_charge', input: { kind: 'SERVICE_CHARGE', percentOfSubtotal: '10' },
+    });
+    assert.deepEqual(detectLineDraftEditRequest('ลบบรรทัด ２'), {
+      tool: 'expense.draft.remove_line', input: { lineNumber: 2 },
+    });
+  });
+
   it('is an allowlist: an ordinary sentence routes nowhere', () => {
     assert.equal(detectLineDraftEditRequest('ขอบคุณครับ'), null);
     assert.equal(detectLineDraftEditRequest('ยอดรวมเดือนนี้เท่าไหร่'), null);

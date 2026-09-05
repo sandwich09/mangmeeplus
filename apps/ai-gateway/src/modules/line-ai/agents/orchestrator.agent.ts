@@ -19,6 +19,7 @@ import { preparedSimpleReadEligibility, preparedFamilyKey, type PreparedSimpleRe
 import { activePreparedFamilies, formatPreparedSimpleRead, preparedTerminalReply } from './prepared-simple-read-formatter';
 import { formatExpenseExplainReply } from './expense-explain-formatter';
 import { formatDraftUpdateReply } from './draft-update-formatter';
+import { GROUNDING_TEXT_MAX } from '../infrastructure/erp-tool.client';
 import { CoverageCriticAgent } from './coverage-critic.agent';
 import { ErpToolClient, type ErpToolContext } from '../infrastructure/erp-tool.client';
 import { AiGatewayConfigService } from '../../../common/config/ai-gateway-config.service';
@@ -447,7 +448,10 @@ export class OrchestratorAgent {
       // write was actually SAID, and only the message can prove that. Forwarded verbatim, bounded
       // at the transport, used by nothing but that check — it grants no authority and is not
       // stored. Sent only while the draft lane exists, so an off deployment's wire is unchanged.
-      ...(this.config.lineAiDraftEditEnabled ? { groundingText: req.messageText } : {}),
+      // Bounded HERE, not just validated at the far end: the API DTO caps this at 1000 with
+      // `forbidNonWhitelisted`, so an unbounded forward would 400 EVERY tool call of a turn whose
+      // message happens to be longer — turning a long message into a total read outage.
+      ...(this.config.lineAiDraftEditEnabled ? { groundingText: req.messageText.slice(0, GROUNDING_TEXT_MAX) } : {}),
       actorDelegations: req.actorDelegations,
     };
 

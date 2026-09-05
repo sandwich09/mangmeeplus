@@ -1,10 +1,13 @@
 /**
- * Spec `line-ai-draft-control-spec-th.md` §5.3, replaying the owner's real UAT turn of 2026-09-03.
+ * Two rules on one class, kept in one file because they are one class:
  *
- * He sent a BHC bill and then typed "จากบิลเมื่อกี้มี service charge 10% นะ แก้ไขได้ใช่ไหม". The lane
- * wrote that sentence OVER the note — destroying "LINE receipt upload", the only record that the
- * draft came from a photo in a chat — changed no money at all, and answered "แก้ไขรายการเดิมให้แล้ว".
- * These tests pin the two halves of the fix: the note is appended, and the reply says what happened.
+ *  1. (slice A) the note is APPENDED, never overwritten, and the reply says what happened;
+ *  2. (slice D) `amount` belongs to this lane only while `LINE_AI_DRAFT_EDIT_ENABLED` is OFF.
+ *
+ * The second exists because S-4 first removed `amount` unconditionally, which would have made
+ * the flag a one-way door rather than a rollback: switching it off would have left a lane that
+ * silently stopped applying a correction it used to apply. Only a test that runs BOTH positions
+ * can say otherwise.
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -133,5 +136,105 @@ describe('LINE correction: the note is appended, never overwritten (spec §5.3)'
 
     assert.equal(outcome.status, 'guidance');
     assert.deepEqual(draftUpdates, [], 'nothing was written');
-  });
+
+const NOW = new Date('2026-09-05T10:00:00.000Z');
+
+function buildFlagLane(options: { draftEditEnabled?: boolean; lines?: unknown[]; sourceDocumentType?: string } = {}) {
+  const record = {
+    id: 'exp-1',
+    companyId: 'co-1',
+    branchId: null,
+    status: 'DRAFT',
+    createdByUserId: 'u-1',
+    updatedAt: NOW,
+    sourceDocumentType: options.sourceDocumentType ?? 'EXPENSE_NOTE_TEXT',
+    expenseDate: new Date('2026-09-03T00:00:00.000Z'),
+    grandTotalAmount: '59',
+    vendorNameSnapshot: 'ร้านกาแฟ',
+    vendorDocumentNumber: null,
+    note: 'LINE receipt upload',
+    aiVerificationSummaryJson: {},
+    lines: options.lines ?? [{ description: 'กาแฟ', vatRate: null, vatTreatment: null, vatAmount: '0', whtAmount: '0' }],
+  };
+  const updates: Array<Record<string, unknown>> = [];
+  const tx = {
+    $executeRaw: async () => 0,
+    outboxEvent: { findFirst: async () => null, create: async () => ({}) },
+    expenseRecord: { findFirst: async () => record },
+  };
+  const prisma = { client: { $transaction: async (run: (t: unknown) => Promise<unknown>) => run(tx) } };
+  const useCase = new CorrectLineCapturedExpenseUseCase(
+    prisma as never,
+    // Duplicate reconciliation runs inside the apply transaction for value-changing fields.
+    { updateExpense: async () => record, runDuplicateCheck: async () => [], listOpenDuplicateCandidates: async () => [] } as never,
+    { execute: async (_ctx: unknown, _id: string, input: Record<string, unknown>) => { updates.push(input); return record; } } as never,
+    { log: async () => {} } as never,
+    { lineAiDraftEditEnabled: options.draftEditEnabled ?? false } as never,
+  );
+  return { useCase, updates };
+}
+
+const flagCtx = {
+  requestId: 'r-1', authSubject: 'u-1', userId: 'u-1', companyId: 'co-1',
+  membershipId: 'm-1', roles: ['ACCOUNTANT'], permissions: ['expense.update'],
+  scopes: {}, authProvider: 'line' as const,
+};
+
+const input = (hints: Record<string, unknown>) => ({
+  lineMessageIdHash: 'hash-1',
+  candidates: [{ id: 'exp-1', label: 'บิลเงินสด · 59.00', createdAt: NOW.toISOString() }],
+  hints,
+  evidence: [{ text: 'ยอดจริง ๆ 590', todayIso: '2026-09-05' }],
 });
+
+describe('LINE correction lane — the amount field across the S-4 flag', () => {
+  it('with the draft lane OFF, still applies a single-line amount correction (pre-S-4 behaviour)', async () => {
+    const harness = buildFlagLane({ draftEditEnabled: false });
+    const outcome = await harness.useCase.execute(flagCtx as never, input({ amount: { to: '590' } }) as never);
+    assert.equal(outcome.status, 'applied');
+    assert.deepEqual((outcome as any).fields.amount, { from: '59', to: '590' });
+    // It writes through the whole-line-set replacement `canCorrectAmount` makes safe.
+    assert.equal((harness.updates[0]!['lines'] as any[])[0].unitPrice, '590');
+  });
+
+  it('with the draft lane OFF, still refuses an amount on a record canCorrectAmount rejects', async () => {
+    // An OCR receipt: a blind line-set replacement would erase itemisation and tax data.
+    const harness = buildFlagLane({ draftEditEnabled: false, sourceDocumentType: 'RECEIPT' });
+    const outcome = await harness.useCase.execute(flagCtx as never, input({ amount: { to: '590' } }) as never);
+    assert.equal(outcome.status, 'guidance');
+    assert.equal(harness.updates.length, 0);
+  });
+
+  it('with the draft lane ON, amount leaves this lane entirely — the draft tools own it', async () => {
+    const harness = buildFlagLane({ draftEditEnabled: true });
+    const outcome = await harness.useCase.execute(flagCtx as never, input({ amount: { to: '590' } }) as never);
+    assert.equal(outcome.status, 'guidance');
+    assert.equal((outcome as any).reason, 'no_correctable_field');
+    assert.equal(harness.updates.length, 0, 'and nothing is written on the way out');
+  });
+
+  it('applies a header field in either position — the flag only ever moves money', async () => {
+    for (const draftEditEnabled of [false, true]) {
+      const harness = buildFlagLane({ draftEditEnabled });
+      const outcome = await harness.useCase.execute(flagCtx as never, {
+        // A vendor unrelated to the stored one, so the direction guard has nothing to be unsure
+        // about — that guard has its own coverage in `line-correction.logic.spec.ts`.
+        ...input({ vendorName: { to: 'บริษัท เอบีซี' } }),
+        evidence: [{ text: 'ร้านชื่อ บริษัท เอบีซี นะ', todayIso: '2026-09-05' }],
+      } as never);
+      assert.equal(outcome.status, 'applied', `draftEditEnabled=${draftEditEnabled}`);
+      assert.equal(harness.updates[0]!['vendorNameSnapshot'], 'บริษัท เอบีซี');
+      assert.equal(harness.updates[0]!['lines'], undefined, 'a header correction never touches the lines');
+    }
+  });
+
+  it('refuses a caller with neither expense.update nor expense.review, in both positions', async () => {
+    for (const draftEditEnabled of [false, true]) {
+      const harness = buildFlagLane({ draftEditEnabled });
+      const outcome = await harness.useCase.execute(
+        { ...flagCtx, permissions: ['expense.receipt.line_upload'] } as never,
+        input({ vendorName: { to: 'บริษัท เอบีซี' } }) as never,
+      );
+      assert.equal(outcome.status, 'guidance');
+      assert.equal((outcome as any).reason, 'missing_update_permission');
+    }

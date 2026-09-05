@@ -26,6 +26,8 @@ import type { LineDraftPatch } from '../../domain/logic/line-draft-update.logic'
 /** Spec §5.4: ten minutes. Long enough to read the card on a phone, short enough that a stale
  *  proposal cannot be confirmed against a record someone has since reworked in web. */
 export const LINE_DRAFT_PREVIEW_TTL_SECONDS = 600;
+/** How long "you already confirmed this" stays sayable. A UI courtesy, not a correctness device. */
+export const LINE_DRAFT_APPLIED_TTL_SECONDS = 120;
 
 export type StoredDraftPreview = {
   previewId: string;
@@ -77,18 +79,26 @@ export class LineDraftPreviewStore {
     const key = previewKey(entry.companyId, entry.chatKeyHash);
     const value = JSON.stringify(entry);
     const redis = this.redis();
+    // No Redis CONFIGURED at all is the local-development shape, and the in-process map is what
+    // lets the LINE fake harness drive J3 end to end.
     if (!redis) return this.saveLocal(key, value);
     try {
       await redis.set(key, value, 'EX', LINE_DRAFT_PREVIEW_TTL_SECONDS);
       return true;
     } catch (err) {
+      // A CONFIGURED Redis that FAILED is a different thing, and falling back to the per-process
+      // map here would hide it: UAT would look healthy while confirms landed on whichever task
+      // happened to hold the preview. Refuse, loudly, in every environment.
       this.logger.warn({ msg: 'expense.line_ai.draft_preview.store_failed', error: (err as Error).message });
-      return this.saveLocal(key, value);
+      return false;
     }
   }
 
   async load(companyId: string, chatKeyHash: string): Promise<StoredDraftPreview | null> {
-    const key = previewKey(companyId, chatKeyHash);
+    return this.read(previewKey(companyId, chatKeyHash));
+  }
+
+  private async read(key: string): Promise<StoredDraftPreview | null> {
     const redis = this.redis();
     let raw: string | null = null;
     if (redis) {
@@ -105,9 +115,36 @@ export class LineDraftPreviewStore {
       return JSON.parse(raw) as StoredDraftPreview;
     } catch {
       // A payload this process cannot read is a payload it must not act on.
-      await this.discard(companyId, chatKeyHash);
+      this.local.delete(key);
       return null;
     }
+  }
+
+  /**
+   * Remember, briefly, that this chat's preview was APPLIED. A person whose confirm looks slow taps
+   * the button again; without this the second tap finds an empty slot and is told nothing was
+   * pending, which is a lie about an edit they just made. Short TTL — this is a UI courtesy, and
+   * the `updatedAt` guard is what actually prevents a second write.
+   */
+  async remember(companyId: string, chatKeyHash: string, entry: StoredDraftPreview): Promise<void> {
+    const key = appliedKey(companyId, chatKeyHash);
+    const value = JSON.stringify(entry);
+    const redis = this.redis();
+    if (!redis) {
+      this.saveLocal(key, value, LINE_DRAFT_APPLIED_TTL_SECONDS);
+      return;
+    }
+    try {
+      await redis.set(key, value, 'EX', LINE_DRAFT_APPLIED_TTL_SECONDS);
+    } catch (err) {
+      // Losing this only costs the second tap its nicer wording.
+      this.logger.warn({ msg: 'expense.line_ai.draft_preview.remember_failed', error: (err as Error).message });
+    }
+  }
+
+  /** The preview this chat applied a moment ago, if any. */
+  async loadApplied(companyId: string, chatKeyHash: string): Promise<StoredDraftPreview | null> {
+    return this.read(appliedKey(companyId, chatKeyHash));
   }
 
   async discard(companyId: string, chatKeyHash: string): Promise<void> {
@@ -124,13 +161,13 @@ export class LineDraftPreviewStore {
     }
   }
 
-  private saveLocal(key: string, value: string): boolean {
+  private saveLocal(key: string, value: string, ttlSeconds = LINE_DRAFT_PREVIEW_TTL_SECONDS): boolean {
     if (this.config?.isProduction) return false;
     if (this.local.size > 1_000) {
       const now = Date.now();
       for (const [candidate, entry] of this.local) if (entry.expiresAt <= now) this.local.delete(candidate);
     }
-    this.local.set(key, { value, expiresAt: Date.now() + LINE_DRAFT_PREVIEW_TTL_SECONDS * 1_000 });
+    this.local.set(key, { value, expiresAt: Date.now() + ttlSeconds * 1_000 });
     return true;
   }
 
@@ -168,4 +205,9 @@ export class LineDraftPreviewStore {
 
 export function previewKey(companyId: string, chatKeyHash: string): string {
   return `line-ai:draft-preview:${companyId}:${chatKeyHash}`;
+}
+
+/** Same company+CHAT scoping as the preview itself — a confirmation is as chat-bound as the card. */
+export function appliedKey(companyId: string, chatKeyHash: string): string {
+  return `line-ai:draft-applied:${companyId}:${chatKeyHash}`;
 }

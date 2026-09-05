@@ -17,7 +17,7 @@
  * Nothing a model says can reach APPLY. The tool surface is PREVIEW only.
  */
 import { randomUUID } from 'node:crypto';
-import { BadRequestException, ForbiddenException, Injectable, Optional } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Optional } from '@nestjs/common';
 import Decimal from 'decimal.js';
 import type {
   ExpenseLineChargeKind,
@@ -47,7 +47,7 @@ import {
 } from '../../domain/logic/line-draft-update.logic';
 import type { CorrectionEvidence } from '../../domain/logic/line-correction.logic';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
-import { LineDraftPreviewStore, type StoredDraftPreview } from '../services/line-draft-preview.store';
+import { LINE_DRAFT_PREVIEW_TTL_SECONDS, LineDraftPreviewStore, type StoredDraftPreview } from '../services/line-draft-preview.store';
 import { UpdateExpenseDraftUseCase } from './expense-draft.use-case';
 
 /** Spec §2: LINE may edit only these. CONFIRMED and VOIDED are the web's, and say so. */
@@ -83,7 +83,7 @@ export type LineDraftPreviewOutcome =
   | LineDraftUpdateBlocked;
 
 export type LineDraftApplyOutcome =
-  | { status: 'applied'; preview: LineDraftUpdatePreview; expenseId: string }
+  | { status: 'applied'; preview: LineDraftUpdatePreview; expenseId: string; replayed?: boolean }
   | { status: 'cancelled' }
   | { status: 'expired' }
   | { status: 'changed'; expenseId: string }
@@ -202,7 +202,8 @@ export class LineDraftUpdateUseCase {
       totalsBefore: totalsOf(target),
       totalsAfter,
       warnings: projected.warnings,
-      expiresAt: new Date(Date.now() + 600_000).toISOString(),
+      // One source of truth: the card must promise exactly the window the store enforces.
+      expiresAt: new Date(Date.now() + LINE_DRAFT_PREVIEW_TTL_SECONDS * 1_000).toISOString(),
     };
 
     const stored: StoredDraftPreview = {
@@ -250,6 +251,11 @@ export class LineDraftUpdateUseCase {
   /** Beat two, confirm. Everything is re-derived from the chat; the postback proves only intent. */
   async apply(ctx: RequestContext, chatKeyHash: string, webhookEventId: string): Promise<LineDraftApplyOutcome> {
     if (!this.enabled) return { status: 'blocked', reason: 'feature_disabled' };
+    const applied = await this.previews.loadApplied(ctx.companyId, chatKeyHash);
+    if (applied && applied.userId === ctx.userId) {
+      // Already done on a previous tap of this same card.
+      return { status: 'applied', preview: applied.preview, expenseId: applied.expenseId, replayed: true };
+    }
     const stored = await this.previews.load(ctx.companyId, chatKeyHash);
     // Wrong user, wrong chat, wrong company, or simply gone: all one answer, because telling them
     // apart would confirm that some other chat holds a pending edit.
@@ -280,7 +286,8 @@ export class LineDraftUpdateUseCase {
 
     const before = totalsOf(target);
     const client = this.prisma.client as any;
-    await client.$transaction(async (tx: any) => {
+    try {
+      await client.$transaction(async (tx: any) => {
       await this.updateDraft.execute(
         ctx,
         target.id,
@@ -307,9 +314,23 @@ export class LineDraftUpdateUseCase {
           diff: stored.preview.diff,
         },
       }, tx);
-    });
+      });
+    } catch (err) {
+      // The row moved between our own re-read and the write — the same race the `updatedAt` compare
+      // above catches, just lost by a smaller margin. Same answer either way: drop the proposal and
+      // ask the user to look again, never re-base it onto a record they have not seen.
+      if (err instanceof ConflictException) {
+        await this.previews.discard(ctx.companyId, chatKeyHash);
+        return { status: 'changed', expenseId: target.id };
+      }
+      throw err;
+    }
 
     await this.previews.discard(ctx.companyId, chatKeyHash);
+    // Remembered briefly so a SECOND tap on the same card answers "แก้ไปแล้วค่ะ" rather than
+    // "there is nothing pending" — a double tap is the commonest thing a person does to a button
+    // whose reply is slow, and telling them nothing happened would be a lie about their own edit.
+    await this.previews.remember(ctx.companyId, chatKeyHash, stored);
     return { status: 'applied', preview: stored.preview, expenseId: target.id };
   }
 
@@ -413,10 +434,22 @@ function totalsOf(record: ExpenseRecordWithRelations): LineDraftUpdateTotals {
   };
 }
 
+/**
+ * The charges figure the card prints, derived the SAME way the reconciliation derives the tax base:
+ * a charge row's contribution is its subtotal MINUS its own discount, because that is what
+ * `taxableAmount = subtotal - discount + charges` actually adds. Multiplying quantity by unit price
+ * and stopping there quietly disagrees with the total sitting next to it on the same card as soon
+ * as a discounted line becomes a charge.
+ */
 function chargesTotal(lines: readonly DraftLineInput[]): string {
   return lines
     .filter((line) => line.chargeKind != null)
-    .reduce((sum, line) => sum.plus(new Decimal(line.quantity).mul(line.unitPrice)), new Decimal(0))
+    .reduce(
+      (sum, line) => sum
+        .plus(new Decimal(line.quantity).mul(line.unitPrice))
+        .minus(new Decimal(line.discountAmount ?? '0')),
+      new Decimal(0),
+    )
     .toFixed(2);
 }
 

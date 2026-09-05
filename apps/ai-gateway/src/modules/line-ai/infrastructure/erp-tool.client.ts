@@ -13,6 +13,10 @@ import type { ToolPolicy } from '../../../common/ai/tool-policy.model';
 // Kept so a future not-yet-wired tool can short-circuit to unsupported_module instead of HTTP 404.
 const UNIMPLEMENTED_TOOLS = new Set<string>();
 
+/** The API's `InternalToolContextDto` caps `groundingText` at this length and rejects anything
+ *  longer, so the sender truncates rather than letting one long message 400 a whole turn. */
+export const GROUNDING_TEXT_MAX = 1000;
+
 export type ErpToolContext = {
   requestId?: string;
   companyId: string;
@@ -25,8 +29,9 @@ export type ErpToolContext = {
   /** Chat provenance forwarded verbatim from the API's own turn request (spec §5.5). It carries no
    *  authority — the ERP boundary re-resolves company, permissions and branch scope. */
   chatKeyHash?: string;
-  /** S-4 value grounding (spec §5.4): the message this turn is answering, forwarded verbatim so the
-   *  ERP boundary can refuse a draft edit whose number nobody said. Carries no authority. */
+  /** S-4 value grounding (spec §5.4): the message this turn is answering, forwarded so the ERP
+   *  boundary can refuse a draft edit whose number nobody said. Carries no authority, and is
+   *  bounded at {@link GROUNDING_TEXT_MAX} before it is sent. */
   groundingText?: string;
   actorDelegations?: Record<string, string[]>;
 };

@@ -111,7 +111,10 @@ class InternalToolContextDto {
   /** S-4 grounding evidence (spec §5.4): the message this turn is answering, echoed back by the
    *  gateway. Shape-checked and length-bounded only; it authorises nothing and is used solely to
    *  prove that a number a draft-edit preview would write was said by the user. */
-  @IsString() @IsOptional() @MaxLength(1000) groundingText?: string;
+  //  No @MaxLength: a caller that sends more must be TRUNCATED, not rejected. With
+  //  `forbidNonWhitelisted` a length violation 400s the whole request, which would take out every
+  //  ERP read of a turn whose LINE message happened to be long. The value is cut where it is read.
+  @IsString() @IsOptional() groundingText?: string;
   @IsArray() @IsString({ each: true }) @IsOptional() roles?: string[];
   @IsArray() @IsString({ each: true }) @IsOptional() permissions?: string[];
   @IsArray() @IsString({ each: true }) @IsOptional() branchIds?: string[];
@@ -132,6 +135,9 @@ export class InternalToolCallDto {
  * method directly, so the gateway's ToolPolicyEnforcerService cannot be the only gate.
  * Semantics mirror `toolMetaToPolicy` in the gateway: mutation == final_mutation | approval_request.
  */
+/** Grounding evidence is bounded here rather than rejected at validation (see the DTO note). */
+const GROUNDING_TEXT_MAX_CHARS = 1000;
+
 const MUTATION_TOOL_CATEGORIES: ReadonlySet<ToolCategory> = new Set<ToolCategory>(['final_mutation', 'approval_request']);
 const KNOWN_TOOL_CATEGORIES: ReadonlySet<string> = new Set<ToolCategory>([
   ...LINE_ALLOWED_TOOL_CATEGORIES,
@@ -413,7 +419,7 @@ export class InternalToolsController {
       // 400 by this change; ErpToolContext still wants a value, and Thai is what this channel is.
       locale: dto.context.locale ?? 'th',
       ...(dto.context.chatKeyHash ? { chatKeyHash: dto.context.chatKeyHash } : {}),
-      ...(dto.context.groundingText ? { groundingText: dto.context.groundingText } : {}),
+      ...(dto.context.groundingText ? { groundingText: dto.context.groundingText.slice(0, GROUNDING_TEXT_MAX_CHARS) } : {}),
     };
 
     // L-08 deny order — registry entry, then classification, then ERP permissions, then company

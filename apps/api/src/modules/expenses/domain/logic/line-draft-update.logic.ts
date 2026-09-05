@@ -23,6 +23,7 @@ import {
   EXPENSE_LINE_CHARGE_KINDS,
   EXPENSE_LINE_CHARGE_KIND_LABELS,
   expenseChargeKindAllowsNegative,
+  normalizeScrubDigits,
   scrubRecordIdentifier,
   scrubRecordText,
   type CreateExpenseDraftInput,
@@ -146,7 +147,11 @@ export function parseLineDraftPatch(tool: LineDraftUpdateTool, input: Record<str
       if (input['percentOfSubtotal'] !== undefined && !percent) return { ok: false, reason: 'invalid_percent' };
       // Exactly one basis. Both would let a mismatch decide itself; neither is not an instruction.
       if (Boolean(explicit) === Boolean(percent)) return { ok: false, reason: 'charge_needs_one_basis' };
-      if (percent && !new Decimal(percent).gt(0)) return { ok: false, reason: 'invalid_percent' };
+      // Bounded to (0, 100]: a "service charge" larger than the bill it is charged on is a misread
+      // percent sign or a hostile number, never an instruction worth previewing.
+      if (percent && !(new Decimal(percent).gt(0) && new Decimal(percent).lte(100))) {
+        return { ok: false, reason: 'invalid_percent' };
+      }
       return {
         ok: true,
         patch: {
@@ -366,9 +371,28 @@ export function projectLineDraftPatch(
       }
       if (patch.amount !== undefined) {
         diff.push({ field: `line.${patch.lineNumber}.amount`, label: `บรรทัด ${patch.lineNumber} จำนวนเงิน`, kind: 'money', before: money(target.lineSubtotalAmount), after: money(patch.amount) });
-        // The amount a person states is the row's printed total, so it lands on a quantity-1 row.
-        // A multi-unit product line keeps its unit price semantics only when it stays at qty 1;
-        // anything else would silently reinterpret "แก้ยอดเป็น 500" as a unit price.
+        // The amount a person states is the row's printed TOTAL, so it lands on a quantity-1 row.
+        // Collapsing a multi-unit line is a real change to what the document says, so it is stated
+        // rather than done quietly — same for a discount the row carried, which no longer has a
+        // subtotal to apply to.
+        if (!new Decimal(target.quantity).eq(1)) {
+          diff.push({
+            field: `line.${patch.lineNumber}.quantity`,
+            label: `บรรทัด ${patch.lineNumber} จำนวน`,
+            kind: 'plain',
+            before: target.quantity,
+            after: '1',
+          });
+        }
+        if (new Decimal(target.discountAmount).gt(0)) {
+          diff.push({
+            field: `line.${patch.lineNumber}.discountAmount`,
+            label: `บรรทัด ${patch.lineNumber} ส่วนลดที่จะถูกล้าง`,
+            kind: 'money',
+            before: money(target.discountAmount),
+            after: money('0'),
+          });
+        }
         updated.quantity = '1';
         updated.unitPrice = patch.amount;
         updated.discountAmount = '0';
@@ -528,17 +552,31 @@ export type DetectedDraftEdit = { tool: LineDraftUpdateTool; input: Record<strin
  * this function decides WHICH tool, never whether a value may be written.
  */
 export function detectLineDraftEditRequest(messageText: string): DetectedDraftEdit | null {
-  const text = messageText.toLowerCase();
+  // Thai and fullwidth numerals first: "ค่าบริการ ๑๕๒" and "ค่าบริการ 152" are the same request,
+  // and a parser written against `\d` alone silently ignores the one a Thai keyboard produces.
+  const digits = normalizeScrubDigits(messageText);
+  const text = digits.toLowerCase();
   if (THIRD_PARTY_MARKERS.some((marker) => text.includes(marker))) return null;
 
-  const move = /ย้าย\s*(?:บรรทัด|รายการ)?\s*(\d{1,3})\s*(?:เป็น|ไป)?\s*(?:ช่อง)?\s*(.{0,20})/u.exec(messageText);
+  const move = /ย้าย\s*(?:บรรทัด|รายการ)?\s*(\d{1,3})\s*(?:เป็น|ไป)?\s*(?:ช่อง)?\s*(.{0,20})/u.exec(digits);
   if (move) {
     const kind = chargeKindIn(move[2] ?? '');
     if (kind) return { tool: 'expense.draft.set_line', input: { lineNumber: Number(move[1]), chargeKind: kind } };
   }
 
-  const remove = /(?:ลบ|เอา)\s*(?:บรรทัด|รายการที่|รายการ)\s*(\d{1,3})/u.exec(messageText);
+  const remove = /(?:ลบ|เอา)\s*(?:บรรทัด|รายการที่|รายการ)\s*(\d{1,3})/u.exec(digits);
   if (remove) return { tool: 'expense.draft.remove_line', input: { lineNumber: Number(remove[1]) } };
+
+  // "บรรทัด 2 เป็น 500" — the answer to the `ambiguous_line` clarify, which tells the user to type
+  // exactly this. Without a parser for it the clarify is a loop: the lane asks which line, the user
+  // says, and the same question comes back (UAT row J3.7).
+  const lineAmount = /(?:บรรทัด(?:ที่)?|รายการที่)\s*(\d{1,3})\s*(?:เป็น|=|คือ|แก้เป็น)\s*([\d,]+(?:\.\d{1,2})?)/u.exec(digits);
+  if (lineAmount) {
+    return {
+      tool: 'expense.draft.set_line',
+      input: { lineNumber: Number(lineAmount[1]), amount: lineAmount[2]!.replace(/,/g, '') },
+    };
+  }
 
   const charge = CHARGE_PHRASES.flatMap((entry) => entry.patterns.map((pattern) => ({ kind: entry.kind, pattern })))
     .map((entry) => ({ ...entry, at: text.indexOf(entry.pattern) }))
@@ -547,7 +585,7 @@ export function detectLineDraftEditRequest(messageText: string): DetectedDraftEd
   if (!charge) return null;
   // Only the text AFTER the charge phrase can name its size, so "ยอด 1,520 มีค่าบริการ 10%" cannot
   // read the bill total as the charge.
-  const tail = messageText.slice(charge.at + charge.pattern.length, charge.at + charge.pattern.length + 40);
+  const tail = digits.slice(charge.at + charge.pattern.length, charge.at + charge.pattern.length + 40);
   const percent = /(\d{1,3}(?:\.\d+)?)\s*(?:%|เปอร์เซ็น|เปอร์เซ็นต์)/u.exec(tail);
   if (percent) return { tool: 'expense.draft.add_charge', input: { kind: charge.kind, percentOfSubtotal: percent[1] } };
   const flat = /(\d[\d,]*(?:\.\d{1,2})?)/u.exec(tail);

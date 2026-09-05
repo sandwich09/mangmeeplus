@@ -249,6 +249,46 @@ describe('LINE draft edit — frozen security eval', () => {
     }
   });
 
+  // R2: the reviewer's mutation of the store KEY was green — nothing pinned that the preview is
+  // scoped per company AND per chat, or that the card promises the window the store enforces.
+  it('keys the pending preview by company AND chat, and by nothing else', async () => {
+    const { previewKey, appliedKey, LINE_DRAFT_PREVIEW_TTL_SECONDS } = await import('../services/line-draft-preview.store');
+    assert.equal(previewKey('co-1', CHAT), `line-ai:draft-preview:co-1:${CHAT}`);
+    assert.notEqual(previewKey('co-1', CHAT), previewKey('co-1', OTHER_CHAT), 'two chats are two slots');
+    assert.notEqual(previewKey('co-1', CHAT), previewKey('co-2', CHAT), 'two companies are two slots');
+    assert.notEqual(previewKey('co-1', CHAT), appliedKey('co-1', CHAT), 'pending and applied never collide');
+
+    // And the store really is per chat, not merely keyed that way: a preview taken in chat A is
+    // invisible in chat B even to the same user in the same company.
+    const harness = build();
+    assert.equal((await harness.useCase.preview(ctx(), charge('ค่าบริการ 10%'))).status, 'preview');
+    assert.ok(await harness.useCase.pendingPreview(ctx(), CHAT));
+    assert.equal(await harness.useCase.pendingPreview(ctx(), OTHER_CHAT), null);
+
+    // L12: the card must promise exactly the window the store enforces.
+    const preview = (await harness.useCase.pendingPreview(ctx(), CHAT))!;
+    const windowMs = new Date(preview.expiresAt).getTime() - Date.now();
+    assert.ok(
+      Math.abs(windowMs - LINE_DRAFT_PREVIEW_TTL_SECONDS * 1_000) < 5_000,
+      `expiresAt must track LINE_DRAFT_PREVIEW_TTL_SECONDS, got ${windowMs}ms`,
+    );
+  });
+
+  // L10: a person whose confirm looks slow taps again. Telling them nothing was pending would deny
+  // an edit they really made.
+  it('answers a second tap as already applied, not as expired', async () => {
+    const harness = build();
+    assert.equal((await harness.useCase.preview(ctx(), charge('ค่าบริการ 10%'))).status, 'preview');
+    const first = await harness.useCase.apply(ctx(), CHAT, 'evt-1');
+    assert.equal(first.status, 'applied');
+    assert.notEqual((first as any).replayed, true);
+
+    const second = await harness.useCase.apply(ctx(), CHAT, 'evt-1-again');
+    assert.equal(second.status, 'applied');
+    assert.equal((second as any).replayed, true);
+    assert.equal(harness.applies(), 1, 'and the record is written exactly once');
+  });
+
   it('has a runner for every frozen case and no runner without one', () => {
     const frozen = new Set(LINE_AI_DRAFT_UPDATE_SECURITY_EVAL_CASES.map(({ id }) => id));
     assert.deepEqual([...Object.keys(CASES)].sort(), [...frozen].sort());

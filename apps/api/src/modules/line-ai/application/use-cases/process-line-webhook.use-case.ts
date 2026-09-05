@@ -34,6 +34,7 @@ import { LineDraftUpdateUseCase } from '../../../expenses/application/use-cases/
 import { detectLineDraftEditRequest } from '../../../expenses/domain/logic/line-draft-update.logic';
 import { LINE_DRAFT_UPDATE_TOOLS, type LineDraftUpdateTool, type LineIntakeCorrectionHints } from '@watchdog-bms/contracts';
 import {
+  DRAFT_UPDATE_ALREADY_APPLIED_PREFIX,
   DRAFT_UPDATE_CANCELLED_REPLY,
   DRAFT_UPDATE_EXPIRED_REPLY,
   buildDraftUpdatePreviewCard,
@@ -2016,7 +2017,10 @@ export class ProcessLineWebhookUseCase {
     let reply: string;
     let status = 'completed';
     if (outcome.status === 'applied') {
-      reply = draftUpdateAppliedReply(this.config.webBaseUrl, ctx.companyId, outcome.expenseId, outcome.preview);
+      const applied = draftUpdateAppliedReply(this.config.webBaseUrl, ctx.companyId, outcome.expenseId, outcome.preview);
+      // A double tap is the commonest thing a person does to a slow button; saying "nothing is
+      // pending" would deny an edit they really made.
+      reply = outcome.replayed ? `${DRAFT_UPDATE_ALREADY_APPLIED_PREFIX} ${applied}` : applied;
     } else if (outcome.status === 'changed') {
       reply = draftUpdateChangedReply(this.config.webBaseUrl, ctx.companyId, outcome.expenseId);
       status = 'draft_update_stale';
@@ -2657,7 +2661,10 @@ export class ProcessLineWebhookUseCase {
     // intent and nothing else: everything it acts on is re-derived from this chat (SEC-04). A
     // customer who types the same two phrases lands in exactly the same place, which is the
     // property that makes a forged `data` value harmless.
-    if (menuCommand === 'draft_update_confirm' || menuCommand === 'draft_update_cancel') {
+    // Gated on the flag, not just on the handler: with S-4 off these two phrases must behave the
+    // way any other text did before S-4 — they fall through to the ordinary AI turn. Recognising
+    // them as commands while the lane is dark would be a behaviour change a rollback cannot undo.
+    if (this.draftUpdate?.enabled && (menuCommand === 'draft_update_confirm' || menuCommand === 'draft_update_cancel')) {
       await this.handleDraftUpdatePostback(event, {
         requestId, authSubject: identity.userId, userId: identity.userId, companyId,
         membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles,
@@ -3665,9 +3672,11 @@ export class ProcessLineWebhookUseCase {
           recentCapturedExpenses.length === 1 ? recentCapturedExpenses[0]!.id : undefined)
         : 'not_handled';
       if (draftOutcome !== 'not_handled') {
-        // The ledger records what this turn actually DID: a proposal the user must answer is not
-        // an apply, and labelling it one would make the trail read as though money had moved.
-        await this.ackConsumed(correctionPlan, draftOutcome === 'proposed' ? 'correction_apply' : 'correction_guidance');
+        // The ledger records what this turn actually DID, and NEITHER outcome writes: a preview is a
+        // question the user has still to answer, and a refusal is a sentence. `correction_apply`
+        // would make the trail read as though money had moved on this turn, which is the one thing
+        // this lane is built never to do without a confirm postback.
+        await this.ackConsumed(correctionPlan, 'correction_guidance');
         return;
       }
       // Try to apply; every guard failure degrades to the guidance reply — never to a create.

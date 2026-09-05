@@ -191,6 +191,9 @@ export function draftUpdateAppliedReply(
 }
 
 export const DRAFT_UPDATE_CANCELLED_REPLY = 'ยกเลิกแล้วค่ะ ยังไม่ได้แก้อะไรในรายการนะคะ';
+/** A second tap on a card whose confirm already went through. Not "expired" — that would deny an
+ *  edit the user really did make. */
+export const DRAFT_UPDATE_ALREADY_APPLIED_PREFIX = 'แก้ไปแล้วค่ะ';
 export const DRAFT_UPDATE_EXPIRED_REPLY = 'ไม่พบรายการที่รอยืนยันในแชทนี้ค่ะ (อาจหมดเวลาไปแล้ว) พิมพ์สิ่งที่ต้องการแก้อีกครั้งได้เลยค่ะ';
 
 /** §5.4: the record moved between the card and the button, so the proposal described something
