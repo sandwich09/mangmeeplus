@@ -22,6 +22,33 @@ const STATE_CHIP: Record<string, Chip> = {
   COMPLETED: { label: 'เปิดใช้งานแล้ว', tone: 'success' },
 };
 
+/**
+ * Why the last provisioning stopped, for the rows on the "มีปัญหา" tab. Only codes an admin can act
+ * on are mapped — an unknown one stays silent rather than putting a machine string in front of an
+ * operator, and the state chip already says "เปิดร้านไม่สำเร็จ".
+ */
+const FAILURE_CHIP: Record<string, Chip> = {
+  line_identity_already_linked: {
+    label: 'LINE นี้ผูกกับบัญชีอื่นอยู่ ต้องปลดการเชื่อมก่อนจึงเปิดร้านได้',
+    tone: 'danger',
+  },
+  line_identity_disabled: {
+    label: 'LINE นี้ถูกปิดใช้งานอยู่ ต้องเปิดใช้งานก่อนจึงเปิดร้านได้',
+    tone: 'danger',
+  },
+};
+
+/** Owner 2026-09-05: how the shop this applicant already had stands today. */
+const PRIOR_COMPANY_STATE_TH: Record<string, string> = {
+  ACTIVE: 'ใช้งานอยู่',
+  EXPIRED: 'หมดอายุ',
+  CLOSED: 'ปิดอยู่',
+};
+
+export function signupFailureChip(item: AdminSignupQueueItemDto): Chip | null {
+  return (item.failureCode ? FAILURE_CHIP[item.failureCode] : undefined) ?? null;
+}
+
 /** P10-L: the source decides what approving DOES, so the page has to be able to ask. */
 export function isLineSignup(item: AdminSignupQueueItemDto): boolean {
   return item.source === 'line-oa';
@@ -64,6 +91,12 @@ export function signupHintChips(item: AdminSignupQueueItemDto): Chip[] {
   // account instead of creating a new one. The operator's next click depends on knowing which.
   if (item.attachesToExistingAccount) {
     chips.push({ label: 'LINE นี้มีบัญชีอยู่แล้ว จะเพิ่มเป็นร้านที่ 2', tone: 'info' });
+  }
+  // Owner 2026-09-05: a repeat free trial. Approving is still allowed — this only puts the shop
+  // this LINE account already had in front of the operator BEFORE the button, not after.
+  if (item.priorCompanyName) {
+    const state = PRIOR_COMPANY_STATE_TH[item.priorCompanyState ?? ''] ?? 'ไม่ทราบสถานะ';
+    chips.push({ label: `LINE นี้เคยมีร้าน: ${item.priorCompanyName} (${state})`, tone: 'warning' });
   }
   if (item.taxIdMatchesCompanyName) {
     chips.push({ label: `เลขภาษีตรงกับ ${item.taxIdMatchesCompanyName}`, tone: 'warning' });

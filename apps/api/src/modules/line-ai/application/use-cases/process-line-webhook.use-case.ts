@@ -1056,7 +1056,9 @@ export function buildCorrectionEvidence(
  *  being employee of one company and owner of another used to lock the assistant out entirely.
  *  The selection is still verified against this user's own ACTIVE memberships below, and
  *  per-company authorization stays with the permission resolver and branch ABAC downstream. */
-async function resolveCompanyForLineUser(
+// Exported so a signup spec can assert the chat lands on the NEW shop after a LINE identity is
+// re-pointed, against this resolver rather than a copy of it.
+export async function resolveCompanyForLineUser(
   prisma: PrismaService,
   userId: string,
   lineUserId: string,

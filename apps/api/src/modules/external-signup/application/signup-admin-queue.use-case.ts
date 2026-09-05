@@ -81,8 +81,72 @@ export class SignupAdminQueueUseCase {
     ]);
     const knownEmails = new Set(users.map((u) => u.email));
     const companyByTaxId = new Map(companies.map((c) => [c.taxId, c.name]));
+    const priorCompanies = await this.shopsTheseApplicantsAlreadyHad(requests);
 
-    return { items: requests.map((request) => toQueueItem(request, knownEmails, companyByTaxId, phoneMatches, now)) };
+    return {
+      items: requests.map((request) =>
+        toQueueItem(request, knownEmails, companyByTaxId, phoneMatches, priorCompanies, now)),
+    };
+  }
+
+  /**
+   * Owner 2026-09-05: a repeat trial has to be visible before the approve button is pressed. The
+   * applicant is found through the identity that owns their LINE slot IN ANY STATUS — an owner who
+   * unlinked, or whose shop was closed, is exactly the case this hint exists for and the one an
+   * ACTIVE-only read cannot see. Batched like the other hints: one identity read and one membership
+   * read for the whole page, never per row.
+   */
+  private async shopsTheseApplicantsAlreadyHad(
+    requests: CompanySignupRequest[],
+  ): Promise<Map<string, PriorCompany>> {
+    const lineRows = requests.filter((r) => r.lineProviderUserId && r.lineChannelId);
+    const providerUserIds = [...new Set(lineRows.map((r) => r.lineProviderUserId!))];
+    const identities = providerUserIds.length
+      ? await this.prisma.client.externalIdentity.findMany({
+          where: { provider: 'LINE', providerUserId: { in: providerUserIds } },
+          select: { providerUserId: true, providerChannelId: true, userId: true },
+        })
+      : [];
+    const userIdByIdentity = new Map(identities.map((i) => [identityKey(i.providerChannelId, i.providerUserId), i.userId]));
+    const applicantUserIds = [...new Set([
+      ...identities.map((i) => i.userId),
+      ...requests.map((r) => r.attachUserId).filter((id): id is string => !!id),
+    ])];
+    if (applicantUserIds.length === 0) return new Map();
+
+    const memberships = await this.prisma.client.companyMembership.findMany({
+      where: { userId: { in: applicantUserIds } },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        userId: true,
+        company: { select: { name: true, status: true, planTerm: { select: { termDisabledAt: true } } } },
+      },
+    });
+    // Oldest membership wins: it is the shop this person is coming back FROM.
+    const byUserId = new Map<string, PriorCompany>();
+    for (const row of memberships) {
+      if (byUserId.has(row.userId)) continue;
+      byUserId.set(row.userId, {
+        name: row.company.name,
+        // Same pair the LINE assistant uses to tell an expiry from an admin-ordered close, so the
+        // queue and the chat cannot describe one shop two different ways.
+        state: row.company.status === 'ACTIVE'
+          ? 'ACTIVE'
+          : row.company.planTerm?.termDisabledAt ? 'EXPIRED' : 'CLOSED',
+      });
+    }
+
+    // Keyed by REQUEST id, so `toQueueItem` stays a pure mapping with nothing left to look up.
+    const byRequest = new Map<string, PriorCompany>();
+    for (const request of requests) {
+      const userId = request.attachUserId
+        ?? (request.lineProviderUserId && request.lineChannelId
+          ? userIdByIdentity.get(identityKey(request.lineChannelId, request.lineProviderUserId))
+          : undefined);
+      const prior = userId ? byUserId.get(userId) : undefined;
+      if (prior) byRequest.set(request.id, prior);
+    }
+    return byRequest;
   }
 
   /**
@@ -129,7 +193,8 @@ export class SignupAdminQueueUseCase {
     });
     // These rows are all COMPLETED, so none of the queue's dedupe hints apply to them.
     return {
-      items: requests.map((request) => toQueueItem(request, new Set<string | null>(), new Map(), new Map(), now)),
+      items: requests.map((request) =>
+        toQueueItem(request, new Set<string | null>(), new Map(), new Map(), new Map(), now)),
     };
   }
 
@@ -358,13 +423,20 @@ export class SignupAdminQueueUseCase {
   }
 }
 
+/** The one shop a repeat applicant already had, and how it stands today. */
+type PriorCompany = { name: string; state: 'ACTIVE' | 'EXPIRED' | 'CLOSED' };
+
+const identityKey = (channelId: string, providerUserId: string) => `${channelId}:${providerUserId}`;
+
 function toQueueItem(
   request: CompanySignupRequest,
   knownEmails: Set<string | null>,
   companyByTaxId: Map<string | null, string>,
   companyByPhone: Map<string, string>,
+  priorCompanies: Map<string, PriorCompany>,
   now: Date,
 ): AdminSignupQueueItemDto {
+  const priorCompany = priorCompanies.get(request.id);
   const taxIdMatch = request.taxId ? companyByTaxId.get(request.taxId) : undefined;
   const phoneMatch = request.phoneNumber ? companyByPhone.get(request.phoneNumber) : undefined;
   const approvalAge = daysSinceApproval(request.approvedAt, now);
@@ -407,5 +479,10 @@ function toQueueItem(
     ...(phoneMatch ? { phoneMatchesCompanyName: phoneMatch } : {}),
     ...(approvalAge !== undefined ? { daysSinceApproval: approvalAge } : {}),
     emailDeliveryFailed: request.state === 'EMAIL_FAILED',
+    // Owner 2026-09-05: the repeat-trial hint. Nothing is blocked — the operator is simply told
+    // which shop this LINE account had before, and whether it is closed, expired or still running.
+    ...(priorCompany ? { priorCompanyName: priorCompany.name, priorCompanyState: priorCompany.state } : {}),
+    // Why the last provisioning stopped, so "เปิดร้านไม่สำเร็จ" can name a cause an admin can act on.
+    ...(request.failureCode ? { failureCode: request.failureCode } : {}),
   };
 }

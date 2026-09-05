@@ -127,6 +127,21 @@ export type AdminSignupQueueItemDto = {
   phoneMatchesCompanyName?: string;
   daysSinceApproval?: number;
   emailDeliveryFailed: boolean;
+  /**
+   * Owner 2026-09-05. This LINE account — or the account its identity belongs to, whatever status
+   * that identity is in — has held a shop before, so the free trial being asked for is a REPEAT.
+   * The shop's name, because the operator's question is "is this the same person coming back".
+   * A hint, never a block: the row is still approvable.
+   */
+  priorCompanyName?: string;
+  /** How that shop stands today: 'ACTIVE' | 'EXPIRED' (term ended) | 'CLOSED'. Web owns the Thai. */
+  priorCompanyState?: string;
+  /**
+   * Why provisioning stopped, for the rows on the "มีปัญหา" tab. A bounded code the API already
+   * stores on the request (`failureCode`), surfaced so the queue can say what an admin must fix
+   * instead of showing "เปิดร้านไม่สำเร็จ" for two very different causes.
+   */
+  failureCode?: string;
 };
 
 export type AdminSignupQueueDto = { items: AdminSignupQueueItemDto[] };
