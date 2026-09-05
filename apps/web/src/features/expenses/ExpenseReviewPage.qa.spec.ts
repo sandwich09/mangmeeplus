@@ -53,7 +53,10 @@ test('the money card shows the additional charges between the discount and the t
     'expenses.subtotal', 'expenses.discount', 'expenses.charges_total', 'expenses.taxable_base_ex_vat',
   ]);
   assert.match(source, /const chargesTotal = \(detail\.charges \?\? \[\]\)\.reduce/);
-  assert.match(source, /\{chargesTotal !== 0 && <MoneyRow/, 'a zero-charge bill keeps the card it had');
+  // Presence, not a non-zero sum: charges that cancel each other still explain why the goods
+  // subtotal and the tax base differ.
+  assert.match(source, /const hasCharges = \(detail\.charges \?\? \[\]\)\.length > 0;/);
+  assert.match(source, /\{hasCharges && <MoneyRow/, 'a bill with no charges keeps the card it had');
   for (const locale of ['th', 'en'] as const) {
     assert.ok(workspaceDictionary[locale]['expenses.charges_total'].trim().length > 0);
   }

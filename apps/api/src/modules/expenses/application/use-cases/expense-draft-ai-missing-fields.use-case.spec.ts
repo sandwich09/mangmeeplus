@@ -27,6 +27,9 @@ function makeUseCase(missingFields: string[]) {
     }),
     findByIdWithRelations: async () => ({ lines: [] }),
     updateExpense: async (input: any) => { updates.push(input); return input; },
+    // §5.1: an omitted chargeKind on a replacement PATCH keeps the stored one, so the
+    // update path reads them back before it validates.
+    listLineChargeKinds: async () => new Map<number, string | null>(),
     upsertLines: async () => undefined,
   } as any;
   return { useCase: new UpdateExpenseDraftUseCase(repo, audit, transactionTax), updates };

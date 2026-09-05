@@ -146,18 +146,32 @@ export function documentTotalsLines(
 export const EXPENSE_TOTALS_TOLERANCE = new Decimal('0.05');
 
 /**
- * Spec §5.1 totals identity, checked on the figures that are about to be stored:
+ * Spec §5.1 totals identity — the HEADER totals against the LINES:
  *
  *   subtotalAmount   = Σ product lineSubtotal
  *   taxableAmount    = subtotalAmount − discountAmount + Σ charge lineSubtotal
  *   vatAmount        = Σ line vat
  *   grandTotalAmount = taxableAmount + vatAmount
  *
- * Returns the reason it does not hold, or null. A record that fails is refused rather than written:
- * the whole point of giving charges their own field is that the tax base counts them exactly once,
- * and a total that no longer adds up is an accounting record nobody can defend.
+ * Returns the reason it does not hold, or null.
  *
- * The second equation is skipped under VAT_INCLUDED, where `subtotalAmount` is the VAT-inclusive
+ * WHERE THIS ACTUALLY BITES — it only means something where the two sides come from different
+ * places, so read this before adding another call site:
+ *
+ *  - `CreateExpenseDraftUseCase` / `UpdateExpenseDraftUseCase`: the header is `reconcileExpenseVat`'s
+ *    output and the lines are what `TransactionTaxService.resolveLines` handed back. Two sources,
+ *    one write — this is the enforcement that refuses the write (400).
+ *  - `materializeClaimExpenses`: the header amounts are written from the claim's own figure rather
+ *    than derived from the line, so the builder proves they agree before the projection is created.
+ *  - `findByIdWithRelations` (read side, `ExpenseDetail.totalsIdentity`): stored header vs stored
+ *    lines, so a record written before this rule existed — or by anything that bypasses the
+ *    use-cases — is visible instead of silently wrong.
+ *
+ *  - `validateExpenseDraftAmounts` also calls it, but there both sides are derived from the same
+ *    line array, so it can only fail if `calcDocumentTotals` itself stops honouring the charge
+ *    split. That call is a regression tripwire on this file, NOT a validation of caller input.
+ *
+ * The taxable equation is skipped under VAT_INCLUDED, where `subtotalAmount` is the VAT-inclusive
  * figure the document printed and the base is derived by dividing it out — the other three still
  * bind, and they are what pin the charge rows into the base.
  */
@@ -191,6 +205,24 @@ export function expenseTotalsIdentityError(input: {
     }
   }
   return null;
+}
+
+/**
+ * The read-side view of the same identity: does this stored record still add up, and by how much is
+ * it out? Legacy rows and anything written outside the draft use-cases can diverge, and a reader —
+ * the web money card, the LINE explain tool — has to be able to say so rather than print a total
+ * whose parts contradict it. `gapAmount` is signed: stored grand total minus what the lines make.
+ */
+export function expenseTotalsIdentity(input: {
+  vatMode: ExpenseVatMode;
+  lines: readonly DocumentTotalsLine[];
+  totals: Pick<DocumentTotalsResult, 'subtotalAmount' | 'discountAmount' | 'taxableAmount' | 'vatAmount' | 'grandTotalAmount'>;
+}): { ok: boolean; gapAmount: string } {
+  const derived = calcDocumentTotals({ lines: [...input.lines] });
+  return {
+    ok: expenseTotalsIdentityError(input) === null,
+    gapAmount: d4(round2(decimal(input.totals.grandTotalAmount).minus(decimal(derived.grandTotalAmount)))),
+  };
 }
 
 export function calcPaymentAmounts(netPayableAmount: string, paidAmount: string): { outstandingAmount: string } {

@@ -35,6 +35,9 @@ function makeUseCase(overrides: Record<string, unknown> = {}) {
       await withinTransaction?.({ transaction: 'expense-update' });
       return input;
     },
+    // §5.1: an omitted chargeKind on a replacement PATCH keeps the stored one, so the
+    // update path reads them back before it validates.
+    listLineChargeKinds: async () => new Map<number, string | null>(),
     upsertLines: async (_companyId: string, _expenseId: string, lines: any[]) => { upserted.push(...lines); },
   } as any;
   return { useCase: new UpdateExpenseDraftUseCase(repo, audit, transactionTax), updates, upserted };

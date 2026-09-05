@@ -491,6 +491,84 @@ export function reviewValues(detail: ExpenseDetail): ExpenseDraftReviewValues {
   };
 }
 
+/**
+ * Spec §5.1: an additional charge always sorts after every product, so adding a PRODUCT inserts it
+ * BEFORE the charges rather than at the end — appending would build the one payload shape the API
+ * refuses, and the reviewer would only meet the refusal on save. `vatSource.lines` is keyed by line
+ * number, so it shifts with the insert.
+ *
+ * Pure, and in the model rather than inline in the page, so the rule is tested by exercising it
+ * instead of by matching the component's source.
+ */
+export function insertExpenseReviewLine(
+  values: ExpenseDraftReviewValues,
+  chargeKind: ExpenseLineChargeKind | null,
+): ExpenseDraftReviewValues {
+  const firstCharge = values.lines.findIndex((line) => line.chargeKind != null);
+  const at = chargeKind !== null || firstCharge < 0 ? values.lines.length : firstCharge;
+  const fresh: ExpenseDraftReviewValues['lines'][number] = {
+    description: chargeKind === null ? '' : EXPENSE_LINE_CHARGE_KIND_LABELS[chargeKind],
+    chargeKind, quantity: '1', unitPrice: '0', discountAmount: '0', vatRate: '', vatTreatment: null,
+    whtRate: values.whtInput ? null : expenseDocumentWhtRate(values.lines) || null,
+    expenseCategoryId: null, accountHintKey: null, taxCategory: null,
+    taxCodeDefinitionId: null, externalTaxCode: null, transactionContext: 'DOMESTIC_PURCHASE',
+  };
+  return {
+    ...values,
+    lines: [...values.lines.slice(0, at), fresh, ...values.lines.slice(at)],
+    ...(values.vatSource?.lines?.length && {
+      vatSource: {
+        ...values.vatSource,
+        lines: [
+          ...values.vatSource.lines.map((sourceLine) => ({
+            ...sourceLine, lineNumber: sourceLine.lineNumber > at ? sourceLine.lineNumber + 1 : sourceLine.lineNumber,
+          })),
+          { lineNumber: at + 1, inputType: 'NONE' as const },
+        ].sort((left, right) => left.lineNumber - right.lineNumber),
+      },
+    }),
+  };
+}
+
+/** Removes one line and closes the gap `vatSource.lines` leaves behind. */
+export function removeExpenseReviewLine(
+  values: ExpenseDraftReviewValues,
+  index: number,
+): ExpenseDraftReviewValues {
+  return {
+    ...values,
+    lines: values.lines.filter((_, lineIndex) => lineIndex !== index),
+    ...(values.vatSource?.lines?.length && {
+      vatSource: {
+        ...values.vatSource,
+        lines: values.vatSource.lines
+          .filter((sourceLine) => sourceLine.lineNumber !== index + 1)
+          .map((sourceLine) => ({ ...sourceLine, lineNumber: sourceLine.lineNumber > index + 1 ? sourceLine.lineNumber - 1 : sourceLine.lineNumber })),
+      },
+    }),
+  };
+}
+
+/** A charge description the reviewer never customised — kept in step with the kind. "ค่าบริการ 10%"
+ *  read off a bill is not one of these and survives a kind change. */
+export function isPlainChargeLabel(description: string): boolean {
+  return description.trim() === ''
+    || (Object.values(EXPENSE_LINE_CHARGE_KIND_LABELS) as string[]).includes(description.trim());
+}
+
+/** The kind a charge row carries after the reviewer picks a new one, description following only
+ *  while it was still the untouched default. */
+export function applyChargeKindChange(
+  line: ExpenseDraftReviewValues['lines'][number],
+  chargeKind: ExpenseLineChargeKind,
+): ExpenseDraftReviewValues['lines'][number] {
+  return {
+    ...line,
+    chargeKind,
+    description: isPlainChargeLabel(line.description) ? EXPENSE_LINE_CHARGE_KIND_LABELS[chargeKind] : line.description,
+  };
+}
+
 export function allowsDomesticInputTaxCode(
   sourceDocumentType: SourceDocumentType,
   taxEvidenceStatus: TaxEvidenceStatus,

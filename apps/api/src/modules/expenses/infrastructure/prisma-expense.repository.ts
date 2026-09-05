@@ -8,6 +8,7 @@ import { POSITIVE_ACCOUNTING_MONEY_PATTERN } from '../../accounting-documents/do
 import { findAttachmentLinkConflict } from '../../data-model-core/domain/logic/attachment.logic';
 import { PrismaDocumentSequenceRepository } from '../../data-model-core/infrastructure/repositories/prisma-document-sequence.repository';
 import { buildReversalLines } from '../../ledger/domain/logic/journal-balance.logic';
+import { expenseTotalsIdentity } from '../domain/logic/expense-totals.logic';
 import type {
   ExpenseRecord, ExpenseRecordWithRelations, ExpensePaymentRecord, CreateExpenseRecordInput,
   UpdateExpenseRecordInput, ExpenseLineInput, PaginatedExpenses, SignatureAssetRecord, SubstituteReceiptEvidenceRecord,
@@ -18,6 +19,7 @@ import type {
   CreateExpenseCategoryInput, UpdateExpenseCategoryInput, SharedEvidenceFilter, SignatureSubmitChannel,
   SubstituteReceiptApprovalMode, SubstituteReceiptListFilter,
   ExpenseVatSourceOverrideInput,
+  ExpenseLineChargeKind,
 } from '@watchdog-bms/contracts';
 import { civilDate, civilDateToUtcDate, civilDayRangeToUtc, civilPeriodKey, coerceCivilDate, exclusiveEndOfDay, expenseLineCharges, isCivilDate, EXPENSE_PAYMENT_METHODS } from '@watchdog-bms/contracts';
 import { expenseTaxSourceChecksum } from '../domain/logic/expense-status.logic';
@@ -697,6 +699,7 @@ export class PrismaExpenseRepository {
       pendingPostingSourceId: pendingSource?.sourceId ?? null,
       lines: mappedLines,
       charges: expenseLineCharges(mappedLines),
+      totalsIdentity: expenseTotalsIdentity({ vatMode: base.vatMode, totals: base, lines: mappedLines }),
       attachments,
       duplicateCandidates,
       substituteReceiptEvidence: substituteRow ? toSubstituteEvidenceSummary(mapSubstituteEvidence(substituteRow)) : null,
@@ -2069,10 +2072,12 @@ export class PrismaExpenseRepository {
         include: { attachment: true },
       }) as any;
       const currentLines = current.lines.map(mapLine);
+      const mappedCurrent = mapExpense(current);
       const currentRecord: ExpenseRecordWithRelations = {
-        ...mapExpense(current),
+        ...mappedCurrent,
         lines: currentLines,
         charges: expenseLineCharges(currentLines),
+        totalsIdentity: expenseTotalsIdentity({ vatMode: mappedCurrent.vatMode, totals: mappedCurrent, lines: currentLines }),
         attachments: attachmentLinks.map((l) => ({
           id: l.attachmentId,
           purpose: l.purpose as any,
@@ -2294,6 +2299,16 @@ export class PrismaExpenseRepository {
       }),
     ]);
     return { pending: pending + pendingPayments, errors: errors + paymentErrors };
+  }
+
+  /** Spec §5.1: `updateExpenseDraft` replaces the whole line array, and a client that echoes a line
+   *  back without `chargeKind` means "leave it alone", not "clear it". Two columns, so the update
+   *  path can honour that without paying for the full relations read. */
+  async listLineChargeKinds(companyId: string, expenseId: string): Promise<Map<number, ExpenseLineChargeKind | null>> {
+    const rows = await this.prisma.client.expenseLine.findMany({
+      where: { companyId, expenseId }, select: { lineNumber: true, chargeKind: true },
+    });
+    return new Map(rows.map((row) => [row.lineNumber, row.chargeKind ?? null]));
   }
 
   async upsertLines(companyId: string, expenseId: string, lines: ExpenseLineInput[], db?: any): Promise<void> {
@@ -3122,7 +3137,7 @@ export class PrismaExpenseRepository {
   }
 
   async listSharedEvidence(companyId: string, filter: SharedEvidenceFilter, scopes?: { branchIds?: string[] }): Promise<{
-    rows: Array<ExpenseRecord & { categoryName: string | null; journalEntryNumber: string | null; attachments: Array<{ id: string; purpose: string; originalFileName: string; mimeType: string; byteSize: number; checksumSha256: string | null; status: string; createdAt: Date }> }>;
+    rows: Array<ExpenseRecord & { categoryName: string | null; journalEntryNumber: string | null; additionalChargesAmount: string; attachments: Array<{ id: string; purpose: string; originalFileName: string; mimeType: string; byteSize: number; checksumSha256: string | null; status: string; createdAt: Date }> }>;
     total: number;
     page: number;
     pageSize: number;
@@ -3154,6 +3169,15 @@ export class PrismaExpenseRepository {
       orderBy: [{ paidAt: 'asc' }, { createdAt: 'asc' }],
       select: { id: true, expenseId: true, postingStatus: true, postingError: true },
     }) : [];
+    // §5.1: `subtotalAmount` is goods only, so the accountant index needs the charge total to stay
+    // additive. One grouped aggregate rather than every line of every row — the export pages 50 to
+    // 500 records at a time and none of the other line fields are used here.
+    const chargeSums = ids.length > 0 ? await this.prisma.client.expenseLine.groupBy({
+      by: ['expenseId'],
+      where: { companyId, expenseId: { in: ids }, chargeKind: { not: null } },
+      _sum: { lineSubtotalAmount: true },
+    }) : [];
+    const chargeTotalByExpense = new Map(chargeSums.map((row) => [row.expenseId, row._sum.lineSubtotalAmount?.toString() ?? '0']));
     const paymentIds = payments.map((payment) => payment.id);
     const journals = ids.length > 0 ? await this.prisma.client.journalEntry.findMany({
       where: {
@@ -3231,6 +3255,7 @@ export class PrismaExpenseRepository {
           pendingPostingSourceId: pendingSource?.sourceId ?? null,
           postingStatus: effectivePostingStatus,
           postingError: effectivePostingError,
+          additionalChargesAmount: chargeTotalByExpense.get(r.id) ?? '0',
           attachments: byExpense.get(r.id) ?? [],
         };
       }),

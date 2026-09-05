@@ -135,4 +135,19 @@ describe('amount correctability', () => {
     assert.equal(canCorrectAmount({ sourceDocumentType: 'EXPENSE_NOTE_TEXT', lines: [{ vatAmount: '7.00' }] }), false);
     assert.equal(canCorrectAmount({ sourceDocumentType: 'EXPENSE_NOTE_TEXT', lines: [{ taxCodeDefinitionId: 'tax-i7' }] }), false);
   });
+
+  // Expense spec §5.1: the lane rewrites its single line as a PRODUCT row, so letting it run on a
+  // record whose one line is a charge would reclassify a service charge as goods and move it out
+  // of the charge total — off the back of a chat message that only mentioned the amount.
+  it('refuses a record whose single line is an additional charge', () => {
+    for (const chargeKind of ['SERVICE_CHARGE', 'DELIVERY', 'ROUNDING', 'OTHER']) {
+      assert.equal(canCorrectAmount({
+        sourceDocumentType: 'EXPENSE_NOTE_TEXT', lines: [{ chargeKind, vatAmount: '0', whtAmount: '0' }],
+      }), false, chargeKind);
+    }
+    // An explicit null is still an ordinary product line, exactly as before.
+    assert.equal(canCorrectAmount({
+      sourceDocumentType: 'EXPENSE_NOTE_TEXT', lines: [{ chargeKind: null, vatAmount: '0', whtAmount: '0' }],
+    }), true);
+  });
 });

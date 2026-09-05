@@ -50,6 +50,9 @@ describe('UpdateExpenseDraftUseCase optimistic concurrency', () => {
         await withinTx?.(TX);
         return { ...record, ...input };
       },
+      // §5.1: an omitted chargeKind on a replacement PATCH keeps the stored one, so the
+      // update path reads them back before it validates.
+      listLineChargeKinds: async () => new Map<number, string | null>(),
       upsertLines: async (_companyId: string, _expenseId: string, lines: any[], db: unknown) => {
         events.push('lines.upsert');
         assert.equal(db, TX);

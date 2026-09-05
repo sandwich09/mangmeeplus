@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { completeVatFields, isStaleOcrApply, ocrLineVatRateUnknown, ocrVatSource, ocrWhtInput, ReceiptOcrApplyService, usableItemLines, verifyDiscountAmount } from './receipt-ocr-apply.service';
+import { completeVatFields, isStaleOcrApply, ocrLineVatRateUnknown, ocrVatSource, ocrWhtInput, receiptFallbackLineTotal, ReceiptOcrApplyService, usableItemLines, verifyDiscountAmount } from './receipt-ocr-apply.service';
 import { calcLineTotals } from '../../domain/logic/expense-totals.logic';
 
 function makeDuplicateRepo(overrides: Record<string, unknown> = {}) {
@@ -473,9 +473,36 @@ describe('ReceiptOcrApplyService.apply', () => {
     // stays out of the goods subtotal while remaining inside the tax base and the total.
     assert.deepEqual(applied.lines.map((line: any) => line.chargeKind), [null, null, 'SERVICE_CHARGE']);
     assert.equal(applied.lines[2].description, 'ค่าบริการ 10%');
-    assert.equal(applied.lines[2].sourceLineText, 'Service charge', 'the document\u2019s own wording stays as evidence');
+    assert.equal(applied.lines[2].sourceLineText, 'Service charge 10%', 'the extractor\u2019s own wording is kept, not replaced by the Thai label');
     assert.equal(applied.record.subtotalAmount, '822.0000');
     assert.equal(applied.record.taxableAmount, '904.2000');
+  });
+
+  // A restaurant slip that prints its subtotal and its service charge but has no "TOTAL" box: the
+  // fallback used to be `subtotalAmount` alone, so the charge simply vanished from the record and
+  // the company under-recorded what it paid.
+  it('rebuilds the total from goods, discount and charges when the page printed no grand total', async () => {
+    const applied = await applyFields({
+      description: 'อาหาร',
+      subtotalAmount: '1520.00',
+      vatMode: 'NO_VAT',
+      additionalCharges: [{ kind: 'SERVICE_CHARGE', description: 'Service charge 10%', amount: '152.00', evidenceSignal: 'Service charge 10% 152.00' }],
+    });
+
+    assert.equal(applied.result.chargesApplied, 1);
+    assert.deepEqual(applied.lines.map((line: any) => line.chargeKind), [null, 'SERVICE_CHARGE']);
+    assert.equal(applied.record.subtotalAmount, '1520.0000');
+    assert.equal(applied.record.grandTotalAmount, '1672.0000', 'the service charge is part of what was paid');
+  });
+
+  it('adds the printed VAT to the rebuilt total, and never twice on a VAT-included page', () => {
+    assert.equal(receiptFallbackLineTotal({ subtotalAmount: '1000.00', vatAmount: '70.00', vatMode: 'VAT_EXCLUDED' } as any), '1070.0000');
+    // VAT_INCLUDED already has the tax inside the printed subtotal.
+    assert.equal(receiptFallbackLineTotal({ subtotalAmount: '1070.00', vatAmount: '70.00', vatMode: 'VAT_INCLUDED' } as any), '1070.0000');
+    assert.equal(receiptFallbackLineTotal({ subtotalAmount: '1000.00', discountAmount: '100.00', vatMode: 'NO_VAT' } as any), '900.0000');
+    // A printed grand total always wins, and a page with neither stays unusable.
+    assert.equal(receiptFallbackLineTotal({ grandTotalAmount: '1789.04', subtotalAmount: '1.00' } as any), '1789.04');
+    assert.equal(receiptFallbackLineTotal({ vatMode: 'NO_VAT' } as any), undefined);
   });
 
   it('names every charge kind in Thai and keeps a ROUNDING deduction out of the goods subtotal', async () => {

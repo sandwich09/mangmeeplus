@@ -151,12 +151,17 @@ export function evaluateCorrectionHints(
  *  On an OCR-parsed receipt the same write would erase itemisation and tax selections. */
 export function canCorrectAmount(target: {
   sourceDocumentType: string | null;
-  lines: Array<{ taxCodeDefinitionId?: string | null; externalTaxCodeSnapshot?: string | null; vatAmount?: string | null; whtAmount?: string | null }>;
+  lines: Array<{ chargeKind?: string | null; taxCodeDefinitionId?: string | null; externalTaxCodeSnapshot?: string | null; vatAmount?: string | null; whtAmount?: string | null }>;
 }): boolean {
   if (target.sourceDocumentType !== 'EXPENSE_NOTE_TEXT') return false;
   if (target.lines.length > 1) return false;
+  // Expense spec §5.1: the lane rewrites the single line as a product row with the corrected
+  // amount. On a record whose one line IS an additional charge that silently reclassifies a
+  // service charge as goods and moves it out of the charge total — a change nobody asked for, on
+  // the strength of a chat message about the amount. Refuse and let the web (or S-4) do it.
   return target.lines.every((line) =>
-    !line.taxCodeDefinitionId
+    line.chargeKind == null
+    && !line.taxCodeDefinitionId
     && !line.externalTaxCodeSnapshot
     && Number.parseFloat(line.vatAmount ?? '0') === 0
     && Number.parseFloat(line.whtAmount ?? '0') === 0);

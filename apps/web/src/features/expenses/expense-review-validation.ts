@@ -200,7 +200,9 @@ export function validateExpenseReview(
     const unitPrice = numberValue(line.unitPrice);
     if (unitPrice === null) addIssue(issues, `${prefix}.unitPrice`, 'error', 'expenses.v_number_invalid');
     else if (unitPrice < 0 && !signedCharge) addIssue(issues, `${prefix}.unitPrice`, 'error', chargeKind === null ? 'expenses.v_amount_negative' : 'expenses.v_charge_amount_positive');
-    else if (chargeKind !== null && !signedCharge && unitPrice <= 0) addIssue(issues, `${prefix}.unitPrice`, 'error', 'expenses.v_charge_amount_positive');
+    // Zero is not a charge in either direction — a 0.00 ปัดเศษ row explains nothing and would sit
+    // in the reviewer's charge group forever.
+    else if (chargeKind !== null && (unitPrice === 0 || (!signedCharge && unitPrice < 0))) addIssue(issues, `${prefix}.unitPrice`, 'error', 'expenses.v_charge_amount_positive');
     else if (malformedDecimal(signedCharge ? line.unitPrice.replace(/^-/, '') : line.unitPrice)) addIssue(issues, `${prefix}.unitPrice`, 'error', 'expenses.v_number_format');
 
     const discount = numberValue(line.discountAmount);

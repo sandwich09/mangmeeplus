@@ -32,6 +32,9 @@ function harness(launchGate: any) {
     {
       resolveCreateBranchId: async () => 'branch-1',
       createExpense: async (data: any) => { created.push(data); return { id: 'expense-1', ...data }; },
+      // §5.1: an omitted chargeKind on a replacement PATCH keeps the stored one, so the
+      // update path reads them back before it validates.
+      listLineChargeKinds: async () => new Map<number, string | null>(),
       upsertLines: async () => undefined,
     } as any,
     { log: async (entry: any) => { audits.push(entry); } } as any,

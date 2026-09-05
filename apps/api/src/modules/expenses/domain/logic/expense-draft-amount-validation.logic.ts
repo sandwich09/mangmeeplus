@@ -118,9 +118,11 @@ export function validateExpenseChargeLines(
     if (!parsedDecimal(line.quantity)?.eq(1)) {
       return `Line ${label} is an additional charge and must have quantity 1 with the amount in unit price.`;
     }
+    // Zero is not a charge in either direction: a 0.00 ROUNDING row is a line that says nothing,
+    // and it would sit in the reviewer's charge group forever explaining nothing.
     const amount = parsedDecimal(line.unitPrice, expenseChargeKindAllowsNegative(kind));
-    if (!amount || (!expenseChargeKindAllowsNegative(kind) && !amount.gt(0))) {
-      return `Line ${label} additional charge ${kind} must be a positive amount; only ROUNDING may be negative.`;
+    if (!amount || amount.isZero() || (!expenseChargeKindAllowsNegative(kind) && !amount.gt(0))) {
+      return `Line ${label} additional charge ${kind} must be a non-zero amount; only ROUNDING may be negative.`;
     }
   }
   return null;

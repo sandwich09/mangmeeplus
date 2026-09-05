@@ -11,6 +11,7 @@ import {
   vatSourceFromSnapshot,
 } from '../../domain/logic/expense-vat-reconciliation.logic';
 import { validateExpenseDraftAmounts, validateExpenseLineVatTreatments } from '../../domain/logic/expense-draft-amount-validation.logic';
+import { expenseTotalsIdentityError } from '../../domain/logic/expense-totals.logic';
 import { applyExpenseWhtInput, expenseWhtLineRate } from '../../domain/logic/expense-wht-input.logic';
 import { toSourceDocumentType } from '../../domain/logic/expense-document.logic';
 import {
@@ -31,7 +32,7 @@ import {
   readAiCategorySuggestion,
 } from '../../domain/logic/expense-status.logic';
 import type { ExpenseLineInput, ExpenseRecord, ExpenseRecordWithRelations, PaginatedExpenses } from '../../domain/models/expense.model';
-import type { RequestContext, CreateExpenseDraftInput, UpdateExpenseDraftInput, ListExpensesFilter, ExpenseStatus, ExpenseVatSourceOverrideInput, RecordExpensePaymentInput } from '@watchdog-bms/contracts';
+import type { RequestContext, CreateExpenseDraftInput, UpdateExpenseDraftInput, ListExpensesFilter, ExpenseStatus, ExpenseVatMode, ExpenseVatSourceOverrideInput, RecordExpensePaymentInput } from '@watchdog-bms/contracts';
 import { expenseVatReconciliationMessage, isBlockingExpenseVatReconciliation, validateExpenseWhtInput } from '@watchdog-bms/contracts';
 import { ExpenseTransactionTaxService, type ExpenseTaxLineSelection } from '../services/expense-transaction-tax.service';
 import { LaunchGateGuardService } from '../../../feature-launch/application/launch-gate.guard';
@@ -58,6 +59,26 @@ function assertBranchInScope(ctx: RequestContext, branchId: string | null | unde
   if (!isBranchInScope(ctx.scopes ?? {}, branchId)) {
     throw new ForbiddenException('Branch is outside your assigned branch scope.');
   }
+}
+
+/**
+ * Spec §5.1, at the one point where the header and the lines genuinely come from different places:
+ * the header totals are `reconcileExpenseVat`'s, and the lines are whatever
+ * `TransactionTaxService.resolveLines` handed back after resolving Tax Codes. Nothing downstream
+ * re-derives one from the other, so if the two ever disagree the record is written self-contradicting
+ * — a grand total whose own rows do not add up to it. Refuse instead.
+ */
+function assertExpenseTotalsIdentity(
+  vatMode: ExpenseVatMode,
+  lines: readonly ExpenseLineInput[],
+  totals: Parameters<typeof expenseTotalsIdentityError>[0]['totals'],
+): void {
+  const error = expenseTotalsIdentityError({ vatMode, totals, lines: lines.map((line) => ({
+    lineSubtotalAmount: line.lineSubtotalAmount, discountAmount: line.discountAmount,
+    taxableAmount: line.taxableAmount, vatAmount: line.vatAmount, whtAmount: line.whtAmount,
+    lineTotalAmount: line.lineTotalAmount, chargeKind: line.chargeKind ?? null,
+  })) });
+  if (error) throw new BadRequestException(error);
 }
 
 @Injectable()
@@ -134,6 +155,7 @@ export class CreateExpenseDraftUseCase {
         const resolved = await this.transactionTax.resolveLines(ctx, {
           expenseId: record.id, branchId: branchId ?? undefined, expenseDate: input.expenseDate, currency: input.currency ?? 'THB',
         }, prepared);
+        assertExpenseTotalsIdentity(input.vatMode, resolved, totals);
         await this.repo.upsertLines(ctx.companyId, record.id, resolved);
       } catch (error) {
         await this.repo.deleteDraftExpense(ctx.companyId, record.id);
@@ -288,16 +310,28 @@ export class UpdateExpenseDraftUseCase {
     let totals: ReturnType<typeof reconcileExpenseVat>['totals'] | undefined;
     let vatCaptureSnapshotJson: ReturnType<typeof reconcileExpenseVat>['snapshot'] | undefined;
     if (lines) {
+      // §5.1 PATCH semantics for `chargeKind`. `lines` is a full replacement, so a client that
+      // echoed a line back without this field used to CLEAR it — a service charge quietly became a
+      // product row, the goods subtotal grew by its amount, and the request still answered 200.
+      // Absent means "leave this line's kind alone" now; only an explicit null clears one. Resolved
+      // here, before validation, so the shape rules and the totals both see the kind the row will
+      // actually be stored with — and after the cheap guards above, so a request they reject never
+      // pays for the read.
+      const storedChargeKinds = await this.repo.listLineChargeKinds(ctx.companyId, expenseId);
+      const withChargeKinds = lines.map((line) => ({
+        ...line,
+        chargeKind: line.chargeKind === undefined ? storedChargeKinds.get(line.lineNumber) ?? null : line.chargeKind,
+      }));
       // Spec §19c: VAT mode describes the document arithmetic; claimability is the separate axis below.
       const vatMode = input.vatMode ?? r.vatMode;
-      const amountError = validateExpenseDraftAmounts({ vatMode, lines });
+      const amountError = validateExpenseDraftAmounts({ vatMode, lines: withChargeKinds });
       if (amountError) throw new BadRequestException(amountError);
       const source = input.vatSource ?? vatSourceFromSnapshot(r.vatCaptureSnapshotJson);
       const vatSourceError = validateExpenseVatSourceInput(source, vatMode, lines.map((line) => line.lineNumber));
       if (vatSourceError) throw new BadRequestException(vatSourceError);
       const vat = reconcileExpenseVat({
         vatMode,
-        lines,
+        lines: withChargeKinds,
         source,
         sourceOrigin: input.vatSource ? 'REVIEWER' : r.vatCaptureSnapshotJson?.source.origin ?? 'REVIEWER',
         sourceTaxableAmount: input.vatSource ? null : r.vatCaptureSnapshotJson?.source.taxableAmount,
@@ -307,11 +341,11 @@ export class UpdateExpenseDraftUseCase {
       });
       const whtAmountError = applyExpenseWhtInput(vat, whtInput);
       if (whtAmountError) throw new BadRequestException(whtAmountError);
-      const vatTreatmentError = validateExpenseLineVatTreatments(lines.map((line, index) => ({ ...line, vatRate: vat.lines[index]!.vatRate })));
+      const vatTreatmentError = validateExpenseLineVatTreatments(withChargeKinds.map((line, index) => ({ ...line, vatRate: vat.lines[index]!.vatRate })));
       if (vatTreatmentError) throw new BadRequestException(vatTreatmentError);
       totals = vat.totals;
       vatCaptureSnapshotJson = vat.snapshot;
-      const prepared = lines.map((l, i) => {
+      const prepared = withChargeKinds.map((l, i) => {
         const reconciled = vat.lines[i]!;
         const t = reconciled.totals;
         return {
@@ -328,6 +362,7 @@ export class UpdateExpenseDraftUseCase {
         expenseId, branchId: input.branchId ?? r.branchId ?? undefined,
         expenseDate: input.expenseDate ?? r.expenseDate.toISOString(), currency: r.currency,
       }, prepared, 'DRAFT', options.db);
+      assertExpenseTotalsIdentity(vatMode, resolvedLines, totals);
     } else if (input.vatSource !== undefined || input.whtInput !== undefined
       || (whtInput && input.vatMode !== undefined && input.vatMode !== r.vatMode)) {
       throw new BadRequestException('lines are required when updating vatSource or whtInput.');

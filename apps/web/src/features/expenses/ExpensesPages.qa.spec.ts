@@ -51,11 +51,13 @@ test('the quota banner offers the two things the shop can still do', () => {
  * build the one payload shape the API refuses, and the reviewer would meet the refusal only on
  * save. Second, the charge rows render as their own group, not as more goods lines.
  */
-test('adding a product inserts it before the charges, and adding a charge appends', () => {
-  assert.match(source, /const firstCharge = v\.lines\.findIndex\(\(line\) => line\.chargeKind != null\);/);
-  assert.match(source, /const at = chargeKind !== null \|\| firstCharge < 0 \? v\.lines\.length : firstCharge;/);
-  // The VAT source is keyed by line number, so an insert in the middle has to shift it.
-  assert.match(source, /lineNumber: sourceLine\.lineNumber > at \? sourceLine\.lineNumber \+ 1 : sourceLine\.lineNumber/);
+// The RULE is exercised in expense-review-validation.spec.ts against the real model
+// (`insertExpenseReviewLine`); this file only checks that the page still delegates to it, because
+// the rule silently moving back inline is the way a behavioural test stops covering the button.
+test('the add buttons delegate to the shared ordering rule', () => {
+  assert.match(source, /const insertLine = \(chargeKind: ExpenseLineChargeKind \| null\) => \{[\s\S]{0,120}insertExpenseReviewLine\(v, chargeKind\)/);
+  assert.match(source, /const removeLine = \(index: number\) => \{[\s\S]{0,140}removeExpenseReviewLine\(v, index\)/);
+  assert.doesNotMatch(source, /findIndex\(\(line\) => line\.chargeKind != null\)/, 'the ordering rule belongs in the model, where it is tested');
   assert.match(source, /onClick=\{\(\) => insertLine\(null\)\}/);
   assert.match(source, /onClick=\{\(\) => insertLine\('SERVICE_CHARGE'\)\}/);
 });

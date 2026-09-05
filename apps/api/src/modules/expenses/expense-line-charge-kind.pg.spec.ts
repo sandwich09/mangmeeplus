@@ -144,6 +144,37 @@ describe('expense line charge kind on real PostgreSQL', { skip: !databaseUrl }, 
       const updated = await kinds();
       assert.deepEqual(updated.lines.map((line) => line.chargeKind), [null, 'DELIVERY']);
       assert.deepEqual(updated.charges.map((charge) => charge.label), ['ค่าส่ง']);
+
+      // §5.1 identity, on what is actually in the database rather than on two values derived from
+      // one array in memory: the stored header against the stored lines.
+      assert.deepEqual(updated.totalsIdentity, { ok: true, gapAmount: '0.0000' });
+      assert.equal(updated.subtotalAmount, '1520', 'the charge is not goods');
+      assert.equal(updated.taxableAmount, '1672');
+      assert.equal(updated.grandTotalAmount, '1789.04');
+      assert.equal(
+        expenseTotalsIdentityError({
+          vatMode: 'VAT_EXCLUDED',
+          totals: updated,
+          lines: updated.lines.map((line) => ({
+            lineSubtotalAmount: line.lineSubtotalAmount, discountAmount: line.discountAmount,
+            taxableAmount: line.taxableAmount, vatAmount: line.vatAmount, whtAmount: line.whtAmount,
+            lineTotalAmount: line.lineTotalAmount, chargeKind: line.chargeKind ?? null,
+          })),
+        }),
+        null,
+      );
+
+      // A record whose header no longer matches its lines — what a row written before §5.1, or by
+      // anything that bypasses the draft use-cases, looks like. The read side must SAY so rather
+      // than print a total its own parts contradict.
+      await client.expenseRecord.update({ where: { id: expense.id }, data: { subtotalAmount: '1672' } });
+      const divergent = await kinds();
+      assert.equal(divergent.totalsIdentity.ok, false);
+      assert.equal(divergent.totalsIdentity.gapAmount, '0.0000', 'the grand total still matches; the subtotal is what drifted');
+      await client.expenseRecord.update({ where: { id: expense.id }, data: { subtotalAmount: '1520', grandTotalAmount: '1900' } });
+      const shortGrand = await kinds();
+      assert.equal(shortGrand.totalsIdentity.ok, false);
+      assert.equal(shortGrand.totalsIdentity.gapAmount, '110.9600', 'stored grand total minus what the lines make');
     } finally {
       await client.expenseLine.deleteMany({ where: { companyId: `${tag}-co` } });
       await client.expenseRecord.deleteMany({ where: { companyId: `${tag}-co` } });

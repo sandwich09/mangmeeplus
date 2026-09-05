@@ -35,6 +35,7 @@ import {
   effectiveVatRateLabel, vatModeRequiresRate,
   PAYEE_ENTITY_KIND_LABELS, AI_SUGGESTION_FIELD_LABELS, applyExpenseAiSuggestion, expenseAiSuggestion, expenseAiCategorySuggestion,
   EXPENSE_LINE_CHARGE_KINDS, EXPENSE_LINE_CHARGE_KIND_LABELS,
+  insertExpenseReviewLine, removeExpenseReviewLine, applyChargeKindChange,
   formatTaxId, taxIdDigits, reviewValues, expenseReviewWithholdsTax, expenseVatSourceValidationMessage, expenseVatBlockedWayOut } from './expenses.model';
 export { reviewValues } from './expenses.model';
 import type { AiReviewField, ExpenseAiSuggestion, ExpenseSummary, ExpenseDetail, ExpenseDraftReviewValues, ExpenseCategorySummary, ExpenseLineChargeKind, ExpenseReviewStepKey, ExpenseCapabilities, ExpensesTab, ManualExpenseItem } from './expenses.model';
@@ -1312,56 +1313,17 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
     }));
   };
 
-  /**
-   * Spec §5.1: an additional charge always sorts after every product, so a new product goes in
-   * BEFORE the charges rather than at the end — otherwise the payload the reviewer saves is the one
-   * shape the API refuses. `vatSource.lines` is keyed by line number and shifts with the insert.
-   */
+  // The line-array rules live in `expenses.model.ts` so they are tested by being run, not by
+  // matching this file's source.
   const insertLine = (chargeKind: ExpenseLineChargeKind | null) => {
     setVatSourceDirty(true);
-    setValues((v) => {
-      const firstCharge = v.lines.findIndex((line) => line.chargeKind != null);
-      const at = chargeKind !== null || firstCharge < 0 ? v.lines.length : firstCharge;
-      const fresh = {
-        description: chargeKind === null ? '' : EXPENSE_LINE_CHARGE_KIND_LABELS[chargeKind],
-        chargeKind, quantity: '1', unitPrice: '0', discountAmount: '0', vatRate: '', vatTreatment: null,
-        whtRate: v.whtInput ? null : expenseDocumentWhtRate(v.lines) || null,
-        expenseCategoryId: null, accountHintKey: null, taxCategory: null,
-        taxCodeDefinitionId: null, externalTaxCode: null, transactionContext: 'DOMESTIC_PURCHASE' as const,
-      };
-      return {
-        ...v,
-        lines: [...v.lines.slice(0, at), fresh, ...v.lines.slice(at)],
-        ...(v.vatSource?.lines?.length && {
-          vatSource: {
-            ...v.vatSource,
-            lines: [
-              ...v.vatSource.lines.map((sourceLine) => ({
-                ...sourceLine, lineNumber: sourceLine.lineNumber > at ? sourceLine.lineNumber + 1 : sourceLine.lineNumber,
-              })),
-              { lineNumber: at + 1, inputType: 'NONE' as const },
-            ].sort((left, right) => left.lineNumber - right.lineNumber),
-          },
-        }),
-      };
-    });
+    setValues((v) => insertExpenseReviewLine(v, chargeKind));
   };
 
   const removeLine = (index: number) => {
     setVatSourceDirty(true);
     setVatEditors({});
-    setValues((v) => ({
-      ...v,
-      lines: v.lines.filter((_, lineIndex) => lineIndex !== index),
-      ...(v.vatSource?.lines?.length && {
-        vatSource: {
-          ...v.vatSource,
-          lines: v.vatSource.lines
-            .filter((sourceLine) => sourceLine.lineNumber !== index + 1)
-            .map((sourceLine) => ({ ...sourceLine, lineNumber: sourceLine.lineNumber > index + 1 ? sourceLine.lineNumber - 1 : sourceLine.lineNumber })),
-        },
-      }),
-    }));
+    setValues((v) => removeExpenseReviewLine(v, index));
   };
 
   /** Rendered as two groups but stored as one array, so `index` stays the line number the issues,
@@ -1369,10 +1331,6 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   const entries = values.lines.map((line, index) => ({ line, index }));
   const productEntries = entries.filter((entry) => entry.line.chargeKind == null);
   const chargeEntries = entries.filter((entry) => entry.line.chargeKind != null);
-  /** A description the reviewer never customised — kept in step with the kind. "ค่าบริการ 10%" read
-   *  off a bill is not one of these and survives a kind change. */
-  const isPlainChargeLabel = (description: string): boolean =>
-    description.trim() === '' || (Object.values(EXPENSE_LINE_CHARGE_KIND_LABELS) as string[]).includes(description.trim());
 
   const setVatSourceType = (inputType: 'RATE' | 'AMOUNT' | 'BOTH' | 'NONE' | 'LINES') => {
     setVatSourceDirty(true);
@@ -1952,16 +1910,10 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
                 onChange={(e) => {
                   const next = e.target.value as ExpenseLineChargeKind;
                   setVatSourceDirty(true);
+                  // The reviewer's own wording wins; only the untouched default follows the kind.
                   setValues((current) => ({
                     ...current,
-                    lines: current.lines.map((item, lineIndex) => lineIndex === index
-                      ? {
-                        ...item,
-                        chargeKind: next,
-                        // The reviewer's own wording wins; only the untouched default follows the kind.
-                        description: isPlainChargeLabel(item.description) ? EXPENSE_LINE_CHARGE_KIND_LABELS[next] : item.description,
-                      }
-                      : item),
+                    lines: current.lines.map((item, lineIndex) => lineIndex === index ? applyChargeKindChange(item, next) : item),
                   }));
                 }}
                 disabled={!isMutable || busy}

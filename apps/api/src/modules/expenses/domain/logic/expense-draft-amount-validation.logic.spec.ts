@@ -123,10 +123,18 @@ describe('additional charge line rules', () => {
         vatMode: 'NO_VAT', lines: [line({ lineNumber: 1 }), charge({ chargeKind: kind, unitPrice: '-0.50' })],
       }) ?? '', /only ROUNDING may be negative/, kind);
     }
-    // Zero is not an amount a document printed as a charge either.
-    assert.match(validateExpenseDraftAmounts({
-      vatMode: 'NO_VAT', lines: [line({ lineNumber: 1 }), charge({ unitPrice: '0' })],
-    }) ?? '', /only ROUNDING may be negative/);
+  });
+
+  it('refuses a zero charge of any kind, ROUNDING included', () => {
+    // A 0.00 ปัดเศษ row is a line that says nothing and would sit in the charge group forever.
+    for (const [kind, unitPrice] of [
+      ['SERVICE_CHARGE', '0'], ['SERVICE_CHARGE', '0.0000'],
+      ['ROUNDING', '0'], ['ROUNDING', '-0'], ['ROUNDING', '0.0000'], ['ROUNDING', '-0.0000'],
+    ] as const) {
+      assert.match(validateExpenseDraftAmounts({
+        vatMode: 'NO_VAT', lines: [line({ lineNumber: 1 }), charge({ chargeKind: kind, unitPrice })],
+      }) ?? '', /must be a non-zero amount/, `${kind} ${unitPrice}`);
+    }
   });
 
   it('keeps a minus sign out of ordinary product lines', () => {

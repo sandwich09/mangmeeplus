@@ -3,7 +3,7 @@ import type {
   ExpensePaymentStatus, ExpensePostingStatus, ExpenseVatMode, InputVatClaimStatus,
   ExpensePaymentMethod, ExpenseCaptureSource, ExpenseCategoryStatus,
   CreateExpenseDraftInput, UpdateExpenseDraftInput, ListExpensesFilter,
-  ExpenseLineSummary, ExpenseChargeSummary, ExpenseAttachmentRef, DuplicateCandidateSummary, ExpenseCategorySummary,
+  ExpenseLineSummary, ExpenseChargeSummary, ExpenseTotalsIdentity, ExpenseAttachmentRef, DuplicateCandidateSummary, ExpenseCategorySummary,
   SourceDocumentType, TaxEvidenceStatus, TaxEvidenceReasonCode, ExpenseLineReviewStatus,
   SignatureAssetStatus, SignatureSubmitChannel,
   SubstituteReceiptEvidenceStatus, SubstituteReceiptEvidenceSummary, SubstituteReceiptReasonCode,
@@ -121,6 +121,8 @@ export type ExpenseRecordWithRelations = ExpenseRecord & {
   /** Spec §5.1: the `chargeKind != null` rows, derived by `expenseLineCharges` so the web, the LINE
    *  read tool and the API detail all describe an additional charge the same way. */
   charges: ExpenseChargeSummary[];
+  /** Stored header vs stored lines — see `expenseTotalsIdentity`. */
+  totalsIdentity: ExpenseTotalsIdentity;
   attachments: ExpenseAttachmentRef[];
   duplicateCandidates: DuplicateCandidateSummary[];
   substituteReceiptEvidence: SubstituteReceiptEvidenceSummary | null;

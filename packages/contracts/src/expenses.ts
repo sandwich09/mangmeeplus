@@ -601,6 +601,11 @@ export type ExpenseSummary = {
   updatedAt: string;
 };
 
+export type ExpenseTotalsIdentity = {
+  ok: boolean;
+  gapAmount: string;
+};
+
 /** One additional-charge row as a reader sees it: `amount` is what the document printed for the
  *  charge (its line subtotal), which is also the figure that enters the tax base. */
 export type ExpenseChargeSummary = {
@@ -670,6 +675,11 @@ export type ExpenseDetail = ExpenseSummary & {
   lines: ExpenseLineSummary[];
   /** §5.1 derived view of the `chargeKind != null` rows, so a reader never has to know the rule. */
   charges: ExpenseChargeSummary[];
+  /** Does this stored record still add up? Computed from the stored header against the stored
+   *  lines, so a row written before §5.1 existed — or by anything that bypasses the draft
+   *  use-cases — is visible instead of printing a total its own parts contradict. `gapAmount` is
+   *  signed: stored grand total minus what the lines make. */
+  totalsIdentity: ExpenseTotalsIdentity;
   attachments: ExpenseAttachmentRef[];
   duplicateStatus: DuplicateStatus;
   duplicateOfExpenseId: string | null;
@@ -701,8 +711,16 @@ export type CreateExpenseDraftInput = {
   lines: Array<{
     lineNumber: number;
     description: string;
-    /** §5.1: makes the row an additional charge — quantity 1, unit price = the printed amount,
-     *  and it must sort after every product row. */
+    /**
+     * §5.1: makes the row an additional charge — quantity 1, unit price = the printed amount, and
+     * it must sort after every product row.
+     *
+     * On `updateExpenseDraft` (where `lines` is a full replacement) this field is the one
+     * exception to that: ABSENT keeps whatever kind the line with this `lineNumber` already has,
+     * and only an explicit `null` clears one. A client that echoes a line back without the field
+     * would otherwise turn a service charge into a product and get a 200 for it. On create there
+     * is nothing to keep, so absent and null both mean "not a charge".
+     */
     chargeKind?: ExpenseLineChargeKind | null;
     quantity: string;
     unitPrice: string;
@@ -1197,6 +1215,10 @@ export const ACCOUNTANT_INDEX_COLUMNS = [
   'supporting_evidence_refs',
   'web_url',
   'notes',
+  // Trailing, so every existing consumer's column offsets are untouched. Spec §5.1 moved the
+  // additional charges out of `subtotal_amount`; without this column the row stopped adding up for
+  // an accountant reading it (`subtotal − discount + charges + vat = grand_total`).
+  'additional_charges_amount',
 ] as const;
 
 export type AccountantIndexColumn = (typeof ACCOUNTANT_INDEX_COLUMNS)[number];
@@ -1246,6 +1268,7 @@ export const ACCOUNTANT_INDEX_COLUMN_LABELS: Record<AccountantIndexColumn, strin
   supporting_evidence_refs: 'ไฟล์แนบเพิ่มเติม',
   web_url: 'ลิงก์เปิดในระบบ',
   notes: 'หมายเหตุ',
+  additional_charges_amount: 'ค่าใช้จ่ายเพิ่ม',
 };
 
 /** Everyday view: what a non-accountant needs to read the export at a glance. */
