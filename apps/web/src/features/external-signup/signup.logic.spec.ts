@@ -86,14 +86,21 @@ describe('signup form validation', () => {
 });
 
 describe('offer catalog', () => {
-  // Spec §3A: all four tiers are shown so the applicant sees the real journey, but the server
-  // allowlist accepts PRO_TRIAL only — a second selectable card would submit a rejected key.
-  it('shows four tiers with exactly one selectable, the PRO trial', () => {
+  // Spec §3A: all four tiers are shown so the applicant sees the real journey, but exactly one is
+  // selectable — a second selectable card would submit a key the server does not treat as an offer.
+  it('shows four tiers with exactly one selectable, the free trial', () => {
     assert.equal(SIGNUP_OFFERS.length, 4);
     const selectable = SIGNUP_OFFERS.filter((offer) => offer.selectable);
     assert.equal(selectable.length, 1);
     assert.equal(selectable[0]!.offerKey, SELECTABLE_OFFER_KEY);
     assert.equal(selectable[0]!.tierKey, 'PRO_999');
+  });
+
+  // Owner 2026-09-05: no package is chosen at signup any more, so what the form submits must name
+  // the offer the applicant actually gets. Sending PRO_TRIAL recorded a request for a package that
+  // was never shown and is never provisioned.
+  it('submits the free-trial offer key, not the retired PRO trial', () => {
+    assert.equal(SELECTABLE_OFFER_KEY, 'FREE_TRIAL');
   });
 
   it('gives every unavailable card a reason assistive technology can read', () => {

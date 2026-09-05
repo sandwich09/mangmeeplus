@@ -130,7 +130,12 @@ describe('normalizeCompanySignupInput — Flow B fields', () => {
   // in-flight client that still sends a catalog key must not have its application refused over a
   // label the server no longer reads.
   it('records the requested offer key as attribution and never refuses an application over it', () => {
-    assert.equal(normalizeCompanySignupInput({ ...VALID, requestedOfferKey: 'PRO_TRIAL' }).requestedOfferKey, 'PRO_TRIAL');
+    assert.equal(normalizeCompanySignupInput({ ...VALID, requestedOfferKey: 'FREE_TRIAL' }).requestedOfferKey, 'FREE_TRIAL');
+    // The form no longer offers PRO, so recording "the applicant asked for PRO_TRIAL" would be a
+    // false fact about a choice nobody was shown. In-flight and cached clients still send the old
+    // name for the same single offer, so it is normalised onto the free trial rather than refused.
+    assert.equal(normalizeCompanySignupInput({ ...VALID, requestedOfferKey: 'PRO_TRIAL' }).requestedOfferKey, 'FREE_TRIAL');
+    // A paid catalog key is still recorded verbatim — it is attribution, not a request we honour.
     assert.equal(normalizeCompanySignupInput({ ...VALID, requestedOfferKey: 'PRO_999' }).requestedOfferKey, 'PRO_999');
     // Anything outside the catalog is dropped rather than stored — the operator's queue must never
     // render free text an applicant chose for this field.
