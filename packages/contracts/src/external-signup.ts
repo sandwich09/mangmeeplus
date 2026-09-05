@@ -7,8 +7,12 @@
  * Owner 2026-09-05 (review R02): this key no longer chooses a package. Every self-signed-up shop —
  * web form and LINE alike — is provisioned on the free trial, so the key is recorded as attribution
  * only and an unrecognised value is dropped rather than refused.
+ *
+ * `FREE_TRIAL` is the only offer the form presents. `PRO_TRIAL` is its retired name, kept so an
+ * in-flight or cached client is normalised onto the free trial rather than refused; nothing new
+ * should send it. The paid keys are recorded as attribution only.
  */
-export type SignupOfferKey = 'PRO_TRIAL' | 'STARTER_249' | 'BASIC_499' | 'PRO_999' | 'ENTERPRISE_1999';
+export type SignupOfferKey = 'FREE_TRIAL' | 'PRO_TRIAL' | 'STARTER_249' | 'BASIC_499' | 'PRO_999' | 'ENTERPRISE_1999';
 
 export type PublicCompanySignupBody = {
   /** Client-minted UUID, reused verbatim on retry (idempotency key). */

@@ -16,7 +16,7 @@ const REQUEST = {
   businessType: 'ร้านค้าปลีก',
   vatRegistered: false,
   taxId: '0105555000012',
-  requestedOfferKey: 'PRO_TRIAL',
+  requestedOfferKey: 'FREE_TRIAL',
   mxValid: true,
   createdAt: new Date('2026-08-25T00:00:00.000Z'),
   approvedAt: null as Date | null,

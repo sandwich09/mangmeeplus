@@ -9,15 +9,29 @@ export const COMPANY_SIGNUP_STATES = [
 export type CompanySignupState = (typeof COMPANY_SIGNUP_STATES)[number];
 
 /**
- * Owner 2026-09-05 (review R02): there is no package choice at signup any anymore — every
+ * The one offer the form presents. Named for what the applicant actually gets — `SIGNUP_TRIAL_TIER`
+ * in provisioning — rather than for the package it used to be sold as.
+ */
+export const SIGNUP_FREE_TRIAL_OFFER_KEY = 'FREE_TRIAL';
+
+/**
+ * Owner 2026-09-05 (review R02): there is no package choice at signup any more — every
  * self-signed-up shop starts on the same free trial the LINE-first flow gives. What the applicant
  * asked for is kept as attribution evidence, so the catalog keys are what this flow will RECORD;
  * anything else is dropped rather than stored, because the operator's queue must never render free
  * text an applicant chose.
  */
 export const RECORDED_SIGNUP_OFFER_KEYS: readonly string[] = [
-  'PRO_TRIAL', 'STARTER_249', 'BASIC_499', 'PRO_999', 'ENTERPRISE_1999',
+  SIGNUP_FREE_TRIAL_OFFER_KEY, 'STARTER_249', 'BASIC_499', 'PRO_999', 'ENTERPRISE_1999',
 ];
+
+/**
+ * The retired name for the same single offer. The form used to call the free trial "the PRO trial"
+ * because it was sold as PRO limits; it is not, and no package is chosen at signup at all now. An
+ * in-flight or cached client still sending it is normalised, never refused — recording it verbatim
+ * would file a request for a package the applicant was never shown and will never be given.
+ */
+const LEGACY_FREE_TRIAL_OFFER_KEYS: readonly string[] = ['PRO_TRIAL'];
 
 export type CompanySignupInput = Readonly<{
   externalSignupId: string;
@@ -164,9 +178,11 @@ export function normalizeCompanySignupInput(input: CompanySignupInput): Normaliz
   // attribution and is never a reason to refuse an application. An in-flight client still sending
   // an older catalog key gets its shop, not a 422 about a label the server ignores.
   const requested = optional(input.requestedOfferKey, 'requestedOfferKey', 128);
-  const requestedOfferKey = requested !== null && RECORDED_SIGNUP_OFFER_KEYS.includes(requested)
-    ? requested
-    : null;
+  const requestedOfferKey = requested === null
+    ? null
+    : LEGACY_FREE_TRIAL_OFFER_KEYS.includes(requested)
+      ? SIGNUP_FREE_TRIAL_OFFER_KEY
+      : RECORDED_SIGNUP_OFFER_KEYS.includes(requested) ? requested : null;
 
   return {
     externalSignupId: bounded(input.externalSignupId, 'externalSignupId', 128),

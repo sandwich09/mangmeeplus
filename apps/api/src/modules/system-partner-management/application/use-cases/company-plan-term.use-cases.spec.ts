@@ -192,9 +192,10 @@ describe('applyPlanTermPreset', () => {
     assert.equal(args.create.employeeLimit, 2);
     assert.equal(args.create.monthlySlipLimit, 15);
     assert.ok(isPlanTierKey('FREE_TRIAL_15'));
-    // R02: the public form's own key list still does not contain it — every self-signup lands on
-    // this preset by policy, not by asking for it.
+    // R02: the offer key and the plan tier stay different vocabularies. The form's one offer is
+    // `FREE_TRIAL`; the tier it provisions is `FREE_TRIAL_15`, which no applicant can name.
     assert.equal(RECORDED_SIGNUP_OFFER_KEYS.includes('FREE_TRIAL_15'), false);
+    assert.equal(RECORDED_SIGNUP_OFFER_KEYS.includes('FREE_TRIAL'), true);
   });
 });
 

@@ -42,7 +42,7 @@ function limitsLabel(tierKey: PlanTierKey): string {
 export const SIGNUP_OFFERS: readonly SignupOfferCard[] = [
   { tierKey: 'STARTER_249', offerKey: 'STARTER_249', nameTh: 'เริ่มต้น', priceLabel: '฿249 / เดือน', selectable: false, unavailableReason: UNAVAILABLE_REASON },
   { tierKey: 'BASIC_499', offerKey: 'BASIC_499', nameTh: 'เติบโต', priceLabel: '฿499 / เดือน', selectable: false, unavailableReason: UNAVAILABLE_REASON },
-  { tierKey: 'PRO_999', offerKey: 'PRO_TRIAL', nameTh: 'มืออาชีพ', priceLabel: '฿999 / เดือน', selectable: true, badge: 'ทดลองใช้ฟรี' },
+  { tierKey: 'PRO_999', offerKey: 'FREE_TRIAL', nameTh: 'มืออาชีพ', priceLabel: '฿999 / เดือน', selectable: true, badge: 'ทดลองใช้ฟรี' },
   { tierKey: 'ENTERPRISE_1999', offerKey: 'ENTERPRISE_1999', nameTh: 'ธุรกิจ', priceLabel: '฿1,999 / เดือน', selectable: false, unavailableReason: UNAVAILABLE_REASON },
 ];
 
@@ -50,8 +50,11 @@ export function offerLimitsLabel(card: SignupOfferCard): string {
   return limitsLabel(card.tierKey);
 }
 
-/** The one offer the server accepts today (spec §3A allowlist). */
-export const SELECTABLE_OFFER_KEY: SignupOfferKey = 'PRO_TRIAL';
+/**
+ * The one offer the form submits. Owner 2026-09-05: no package is chosen at signup, so this names
+ * the free trial the applicant actually gets rather than the PRO package it used to be sold as.
+ */
+export const SELECTABLE_OFFER_KEY: SignupOfferKey = 'FREE_TRIAL';
 
 // ── Form validation ──
 

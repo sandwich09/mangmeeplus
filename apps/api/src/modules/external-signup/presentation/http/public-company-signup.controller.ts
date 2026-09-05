@@ -38,7 +38,9 @@ export class PublicCompanySignupDto {
   // Owner 2026-09-05 (review R02): attribution only. Every self-signed-up shop is provisioned on
   // the free trial, so this key chooses nothing; the domain records a catalog value and drops
   // anything else rather than refusing the application over a label the server ignores.
-  @IsIn(['PRO_TRIAL', 'STARTER_249', 'BASIC_499', 'PRO_999', 'ENTERPRISE_1999']) @IsOptional() requestedOfferKey?: string;
+  // PRO_TRIAL is the free trial's retired name, still accepted for in-flight clients and
+  // normalised onto FREE_TRIAL by the domain.
+  @IsIn(['FREE_TRIAL', 'PRO_TRIAL', 'STARTER_249', 'BASIC_499', 'PRO_999', 'ENTERPRISE_1999']) @IsOptional() requestedOfferKey?: string;
 }
 
 /**
