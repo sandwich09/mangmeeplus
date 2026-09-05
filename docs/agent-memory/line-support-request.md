@@ -1,7 +1,8 @@
 # Agent Memory: line-support-request
 
-Status: IMPLEMENTED on `codex/line-support-request` (branched from `origin/develop` f44b0519,
-which already contains `codex/line-signup-stale-identity`). Pushed, no PR. Not deployed.
+Status: IMPLEMENTED on `codex/line-support-request`, rebased onto `origin/develop` 91704151
+(contains `codex/line-signup-stale-identity` and the LIFF UX batch #430). Pushed, no PR.
+Not deployed.
 
 Owner: Owner · spec `docs/specs/line-support-request-spec-th.md` (APPROVED-FOR-BUILD 2026-09-05)
 
@@ -76,10 +77,16 @@ three adapters, both LINE unlink writers), `packages/contracts`, `apps/web`
 
 ## Verification
 
-- `pnpm --filter @watchdog-bms/api test` — see the branch's final report for exact counts.
-- `pnpm --filter @watchdog-bms/contracts test`, `apps/web` tests + `next build`, `pnpm -r typecheck`,
-  `prisma validate`, `node infra/security/sync-production-maintenance-release-pins.mjs --check`
-  (status=current; no pinned file touched).
+- `pnpm --filter @watchdog-bms/api test` — pretest 30 tests / 16 pass / 0 fail / 14 skipped;
+  main 6528 tests / 6429 pass / 0 fail / 99 skipped (the skips are the `.pg.spec.ts` files that
+  self-skip without their database env var).
+- `pnpm --filter @watchdog-bms/contracts test` — 206 / 206 / 0.
+- `apps/web` tests — 1494 / 1494 / 0; `next build --webpack` green,
+  `/system/support-requests` renders dynamic (ƒ).
+- `pnpm -r typecheck` clean; `prisma validate` valid;
+  `node infra/security/sync-production-maintenance-release-pins.mjs --check` → status=current,
+  and none of the 45 pinned files is in the diff (`apps/web/app/system/layout.tsx` is pinned —
+  the nav lives in `SystemHeader.tsx`, which is not).
 - Real Postgres: `src/modules/external-signup/line-support-request.pg.spec.ts`, 7/7 against a
   throwaway `postgres:16-alpine` on 127.0.0.1:15444 (`LINE_SUPPORT_TEST_DATABASE_URL`), dropped
   afterwards. Wired into the existing CI Postgres step, one invocation of its own.
