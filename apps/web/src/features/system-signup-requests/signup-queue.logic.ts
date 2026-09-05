@@ -120,11 +120,15 @@ export function signupBusinessSummary(item: AdminSignupQueueItemDto): string {
 
 export function canApproveSignup(state: string, item?: AdminSignupQueueItemDto): boolean {
   if (state === 'PENDING_REVIEW') return true;
-  // P10-L: for a LINE application, approving is also the RECOVERY. PROVISIONING_FAILED retries;
-  // READY means the shop was built and the last step did not land, so approving closes it. Both
-  // are idempotent behind the fence, and both leave the customer's LINE account locked until done.
+  // Review F2: retrying a failed provisioning is offered on BOTH sources. A Flow B applicant who
+  // claimed their link and then hit a failure has a spent token and no way back — resend and
+  // reissue both refuse from this state — so this button is the only thing that opens their shop.
+  if (state === 'PROVISIONING_FAILED') return true;
+  // P10-L: for a LINE application, approving is also the RECOVERY. READY means the shop was built
+  // and the last step did not land, so approving closes it. Idempotent behind the fence, and it
+  // leaves the customer's LINE account locked until done.
   if (item === undefined || !isLineSignup(item)) return false;
-  if (state === 'PROVISIONING_FAILED' || state === 'READY') return true;
+  if (state === 'READY') return true;
   // An abandoned run is the third recovery. A live one is not: the API answers 200 with the row
   // still PROVISIONING (its idempotency path), so a button here would promise a close-out that
   // did not happen — the same shape of lie the READY chip used to tell.

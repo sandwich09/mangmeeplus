@@ -97,15 +97,18 @@ function MergeDialog({ open, onClose }: { open: boolean; onClose: () => void }) 
 
   // The ticket lives in an HttpOnly cookie, so only the server can say whether an offer is live.
   // A cookie that has expired is not an error — the user simply presses the LINE button again.
+  //
+  // Review F6: fetched ONCE per mount, not on every open. The dialog is re-offered on every failed
+  // link attempt, and each open used to cost a preview call — which the API rate-limits.
   useEffect(() => {
-    if (!open) return undefined;
+    if (!open || offer !== null) return undefined;
     let active = true;
     void fetch('/api/auth/account-merge/ticket', { cache: 'no-store' })
       .then((res) => res.json())
       .then((data: MergeOffer) => { if (active) setOffer(data); })
       .catch(() => { if (active) setOffer({ ready: false }); });
     return () => { active = false; };
-  }, [open]);
+  }, [open, offer]);
 
   const confirmMerge = async () => {
     setPending(true);

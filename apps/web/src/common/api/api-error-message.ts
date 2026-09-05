@@ -361,6 +361,9 @@ const CODE_LABELS: Record<string, string> = {
   // Review R05: fail closed. Two accounts hold different access to the same shop, and merging would
   // decide on its own which side wins — including closing a shop's only owner out of it.
   account_merge_role_conflict: 'รวมบัญชีไม่ได้ เพราะสองบัญชีมีสิทธิ์ในร้านเดียวกันไม่ตรงกัน ติดต่อ 098-256-5628 เพื่อให้ทีมงานจัดสิทธิ์ให้ก่อน',
+  // Review F7: the self-serve window does not restart, so near its end a resent link would die
+  // between the inbox and the tap. An operator reissue has no age limit and does restart it.
+  claim_window_almost_over: 'ลิงก์หมดเขตแล้ว ขอลิงก์ใหม่จากทีมงานที่ 098-256-5628',
 
   // ---- ยอมรับข้อกำหนดการใช้งาน ----
   legal_acceptance_required: 'ต้องยอมรับข้อกำหนดการใช้งานและรับทราบประกาศความเป็นส่วนตัวก่อนใช้งาน',

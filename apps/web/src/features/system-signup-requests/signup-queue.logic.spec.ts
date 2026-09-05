@@ -53,14 +53,15 @@ describe('a failed provisioning is actionable, not just labelled', () => {
 
   const ready = (source = 'line-oa') => item({ state: 'READY', source });
 
-  it('offers approve as the retry, but only for the source whose API accepts it', () => {
+  it('offers approve as the retry for a failed provisioning, whatever the source', () => {
     assert.equal(canApproveSignup('PROVISIONING_FAILED', failed()), true);
     // Review HIGH-1: READY is the other recovery — the shop exists, the last step did not land.
     assert.equal(canApproveSignup('READY', ready()), true);
-    // Flow B has no retry an admin could reach — approve, reject and reissue all 409.
-    assert.equal(canApproveSignup('PROVISIONING_FAILED', failed('official-site')), false);
+    // Review F2: a Flow B row that failed provisioning has a spent token and no other way back,
+    // so the retry is offered here too. Its READY close-out is still the applicant's own page.
+    assert.equal(canApproveSignup('PROVISIONING_FAILED', failed('official-site')), true);
     assert.equal(canApproveSignup('READY', ready('official-site')), false);
-    assert.equal(canApproveSignup('PROVISIONING_FAILED'), false, 'no item, no claim');
+    assert.equal(canApproveSignup('PROVISIONING_FAILED'), true, 'the state alone is enough now');
     assert.equal(canApproveSignup('PENDING_REVIEW'), true, 'the ordinary case is unchanged');
   });
 

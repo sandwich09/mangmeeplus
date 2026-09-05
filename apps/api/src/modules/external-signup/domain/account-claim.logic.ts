@@ -77,6 +77,34 @@ export function canResendClaim(
   return ageDays <= SELF_SERVE_RESEND_WINDOW_DAYS;
 }
 
+/**
+ * Review F7: a claim link may not outlive the window it belongs to. The token TTL is 72 hours and
+ * the activation window is 30 days, so a link resent on day 28 used to be minted alive until day
+ * 31 — and the sweep parked the request at day 30, killing the link mid-life and telling the
+ * applicant nothing. The expiry is therefore the EARLIER of the two clocks.
+ *
+ * A row with no window (nothing has approved it yet) keeps the plain TTL: there is no window to
+ * clamp to, and minting is gated on EMAIL_PENDING elsewhere.
+ */
+export function claimTokenExpiresAt(now: Date, windowStartedAt: Date | null): Date {
+  const ttlEnd = new Date(now.getTime() + CLAIM_TOKEN_TTL_HOURS * 3_600_000);
+  if (!windowStartedAt) return ttlEnd;
+  const windowEnd = new Date(windowStartedAt.getTime() + CLAIM_EXPIRY_AFTER_APPROVAL_DAYS * 86_400_000);
+  return windowEnd < ttlEnd ? windowEnd : ttlEnd;
+}
+
+/**
+ * Below this, a fresh link is not worth sending: it would arrive, sit in an inbox, and be dead
+ * before most people open it. The applicant is told to ask an operator instead — reissue has no
+ * age limit at all (spec §4D ④).
+ */
+export const CLAIM_RESEND_MIN_WINDOW_MS = 3_600_000;
+
+export function claimWindowRemainingMs(now: Date, windowStartedAt: Date | null): number {
+  if (!windowStartedAt) return Number.POSITIVE_INFINITY;
+  return windowStartedAt.getTime() + CLAIM_EXPIRY_AFTER_APPROVAL_DAYS * 86_400_000 - now.getTime();
+}
+
 /** Whole days since approval, for the queue's "approved but never started" flag (spec §4D ③). */
 export function daysSinceApproval(approvedAt: Date | null, now: Date): number | undefined {
   if (!approvedAt) return undefined;

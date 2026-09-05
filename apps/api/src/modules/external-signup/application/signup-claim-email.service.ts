@@ -301,7 +301,7 @@ export class SignupClaimEmailService {
   private async sendClaimEmail(signupRequestId: string): Promise<void> {
     const request = await this.prisma.client.companySignupRequest.findUnique({
       where: { id: signupRequestId },
-      select: { id: true, state: true, contactEmail: true, companyName: true },
+      select: { id: true, state: true, contactEmail: true, companyName: true, claimWindowStartedAt: true },
     });
     if (!request) throw new Error('signup_request_not_found');
     // A request that moved on (claimed, rejected, suspended) must not receive a stale link.
@@ -310,7 +310,8 @@ export class SignupClaimEmailService {
     // has no EMAIL_* edge), so an addressless row here would be a bug — mint no token for it.
     if (!request.contactEmail) return;
 
-    const { rawToken, expiresAt } = await this.tokens.mint(request.id);
+    // Review F7: the link dies with its activation window, never after it.
+    const { rawToken, expiresAt } = await this.tokens.mint(request.id, new Date(), request.claimWindowStartedAt);
     const messageId = await this.mailer.sendAccountClaim({
       toEmail: request.contactEmail,
       companyName: request.companyName,

@@ -732,7 +732,9 @@ export class AuthController {
   @ApiResponse({ status: 200, description: 'Per-shop plan and the credentials that survive' })
   @ApiResponse({ status: 403, description: 'Ticket belongs to another session' })
   async accountMergePreview(@Body() dto: AccountMergeDto, @Req() req: Request & { context: RequestContext }) {
-    await this.authRateLimit.assertLineLoginCallbackAllowed(trustedClientIp(req));
+    // Review F6: its own bucket. Sharing the callback's 10-per-window meant opening this dialog a
+    // few times could 429 the visitor's own LINE login — the thing the dialog exists to recover.
+    await this.authRateLimit.assertAccountMergePreviewAllowed(trustedClientIp(req));
     return this.accountMergeUseCase.preview({ userId: req.context.userId, ticket: dto.ticket });
   }
 

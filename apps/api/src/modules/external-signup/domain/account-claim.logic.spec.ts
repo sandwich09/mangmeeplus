@@ -1,9 +1,13 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  CLAIM_EXPIRY_AFTER_APPROVAL_DAYS,
   CLAIM_REMINDER_AFTER_HOURS,
+  CLAIM_RESEND_MIN_WINDOW_MS,
   CLAIM_TOKEN_TTL_HOURS,
   canResendClaim,
+  claimTokenExpiresAt,
+  claimWindowRemainingMs,
   daysSinceApproval,
   hashClaimToken,
   maskEmail,
@@ -86,6 +90,36 @@ describe('account claim logic', () => {
     assert.equal(suggestedUsernameFromEmail('ab@x.co'), undefined);
     assert.equal(suggestedUsernameFromEmail('สมชาย@x.co'), undefined);
     assert.equal(suggestedUsernameFromEmail('...abc@x.co'), 'abc');
+  });
+});
+
+/**
+ * Review F7. The token TTL is 72 hours; the activation window is 30 days and a self-serve resend
+ * does not restart it. A link resent on day 28 was therefore minted alive until day 31, and the
+ * day-30 sweep killed it mid-life — the applicant tapped a link that had been valid when it was
+ * sent and got the same blank refusal an unknown token gets.
+ */
+describe('a claim link never outlives its own activation window (F7)', () => {
+  it('gives the full 72 hours while the window has room for it', () => {
+    const expiry = claimTokenExpiresAt(NOW, daysAgo(1));
+    assert.equal(expiry.getTime() - NOW.getTime(), CLAIM_TOKEN_TTL_HOURS * 3_600_000);
+  });
+
+  it('clamps the link to the end of its window, never past it', () => {
+    // Day 28 of 30: a full TTL would outlive the window by a day and be swept mid-life.
+    const expiry = claimTokenExpiresAt(NOW, daysAgo(28));
+    assert.equal(expiry.getTime(), daysAgo(28).getTime() + CLAIM_EXPIRY_AFTER_APPROVAL_DAYS * 86_400_000);
+    assert.ok(expiry.getTime() - NOW.getTime() < CLAIM_TOKEN_TTL_HOURS * 3_600_000);
+  });
+
+  it('keeps the plain TTL when there is no window to clamp to', () => {
+    assert.equal(claimTokenExpiresAt(NOW, null).getTime() - NOW.getTime(), CLAIM_TOKEN_TTL_HOURS * 3_600_000);
+  });
+
+  it('measures what is left of the window, so a nearly dead one can be refused', () => {
+    assert.equal(claimWindowRemainingMs(NOW, daysAgo(CLAIM_EXPIRY_AFTER_APPROVAL_DAYS)), 0);
+    assert.ok(claimWindowRemainingMs(NOW, daysAgo(1)) > CLAIM_RESEND_MIN_WINDOW_MS);
+    assert.equal(claimWindowRemainingMs(NOW, null), Number.POSITIVE_INFINITY);
   });
 });
 

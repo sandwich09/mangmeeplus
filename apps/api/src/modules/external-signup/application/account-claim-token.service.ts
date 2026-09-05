@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
 import type { AccountClaimToken, CompanySignupRequest, Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../../common/database/prisma.service';
-import { CLAIM_TOKEN_TTL_HOURS, hashClaimToken } from '../domain/account-claim.logic';
+import { claimTokenExpiresAt, hashClaimToken } from '../domain/account-claim.logic';
 
 /** 32 bytes of randomness, URL-safe. Matches the entropy of the reset-token pattern (P11 §2). */
 const CLAIM_TOKEN_BYTES = 32;
@@ -18,9 +18,17 @@ export class AccountClaimTokenService {
    * put in one email. Only its hash is persisted, and any earlier unused token for the request is
    * revoked in the same transaction, so a resend always invalidates the link that came before.
    */
-  async mint(signupRequestId: string, now = new Date()): Promise<MintedClaimToken> {
+  async mint(
+    signupRequestId: string,
+    now = new Date(),
+    /**
+     * Review F7: when the request's activation window ends. The link is minted to die with it —
+     * a 72-hour token issued on day 28 of a 30-day window was killed mid-life by the sweep.
+     */
+    windowStartedAt: Date | null = null,
+  ): Promise<MintedClaimToken> {
     const rawToken = randomBytes(CLAIM_TOKEN_BYTES).toString('base64url');
-    const expiresAt = new Date(now.getTime() + CLAIM_TOKEN_TTL_HOURS * 3_600_000);
+    const expiresAt = claimTokenExpiresAt(now, windowStartedAt);
 
     await this.prisma.client.$transaction(async (tx) => {
       await tx.accountClaimToken.updateMany({

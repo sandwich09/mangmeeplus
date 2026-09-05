@@ -21,17 +21,25 @@ import {
   type CompanySignupState,
 } from '../domain/company-signup.logic';
 
-/** Everything an admin still has a decision or an action to take on (spec §4C, §4D). */
-const QUEUE_STATES: readonly CompanySignupState[] = ['PENDING_REVIEW', 'EMAIL_PENDING', 'EMAIL_FAILED', 'EXPIRED'];
+/**
+ * Everything an admin still has a decision or an action to take on (spec §4C, §4D).
+ *
+ * Review F2: `PROVISIONING_FAILED` is here for EVERY source now. A Flow B applicant who claimed
+ * their link and then hit a failed provisioning was invisible — the row was listed for LINE only,
+ * the token was spent, and resend and reissue both refuse from that state. The shop was never
+ * built and nobody could see that it had not been.
+ */
+const QUEUE_STATES: readonly CompanySignupState[] = [
+  'PENDING_REVIEW', 'EMAIL_PENDING', 'EMAIL_FAILED', 'EXPIRED', 'PROVISIONING_FAILED',
+];
 
 /**
  * Review MEDIUM-D: shown for the LINE source ONLY. There the fence releases precisely so an admin
  * can retry, and an unseen row also leaves the customer's LINE account fenced by the
- * open-application index with no way out. A web-form row in either state has no retry an admin
- * could reach — approve, reject and reissue all 409 — so listing it would be an invitation to
- * three dead ends. Flow B retry semantics are L-C.
+ * open-application index with no way out. A web-form row in either state still has no action an
+ * admin could take — its close-out is the applicant's own welcome page.
  */
-const LINE_ONLY_QUEUE_STATES: readonly CompanySignupState[] = ['PROVISIONING_FAILED', 'READY', 'PROVISIONING'];
+const LINE_ONLY_QUEUE_STATES: readonly CompanySignupState[] = ['READY', 'PROVISIONING'];
 
 /** Spec §4D ④: an approved request never dead-ends, so reissue has no age limit. */
 const REISSUABLE_STATES: readonly CompanySignupState[] = ['EMAIL_PENDING', 'EMAIL_FAILED', 'EXPIRED'];
@@ -235,10 +243,13 @@ export class SignupAdminQueueUseCase {
       // An abandoned PROVISIONING row is approvable too: the fence will re-claim it, and the queue
       // has to agree with the fence about what abandoned means or it offers a recovery the fence
       // refuses (or, as first shipped, refuses one the fence would have allowed).
+      // Review F2: retrying a failed provisioning is the same action on both sources — the fence
+      // released precisely so somebody could try again, and adopt-on-retry makes it idempotent.
+      const retryingProvisioning = request.state === 'PROVISIONING_FAILED';
       const approvable = lineOa
         ? LINE_APPROVABLE_STATES.includes(request.state as CompanySignupState)
           || isStaleProvisioning(request, now)
-        : request.state === 'PENDING_REVIEW';
+        : request.state === 'PENDING_REVIEW' || retryingProvisioning;
       if (!approvable) {
         if (request.state === 'EMAIL_PENDING') {
           // Review R08: NOT a no-op. A retry lands here when the first approve moved the state and
@@ -246,6 +257,12 @@ export class SignupAdminQueueUseCase {
           // The append is keyed on the request id alone, so repairing costs nothing when the event
           // is already there and is the only thing that helps when it is not.
           await this.claimEmail.enqueue(requestId, 'approve', request.approvedAt ?? now);
+          // Review F8: a repair is an action an operator took, so it leaves a record of its own —
+          // otherwise the only evidence a second approve happened is the absence of a second email.
+          await this.audit(requestId, adminUserId, correlationRequestId, 'signup.request.claim_email_repaired', {
+            source: request.source,
+            fromState: request.state,
+          });
           return { requestId, state: request.state };
         }
         // Anything else is a real conflict the admin should see.
@@ -255,7 +272,10 @@ export class SignupAdminQueueUseCase {
         throw new ConflictException(`invalid_signup_decision:${request.state}`);
       }
       const approvedAt = new Date();
-      if (lineOa) {
+      // A LINE approval IS provisioning; so is a retry from PROVISIONING_FAILED on either source.
+      // A web retry must never take the branch below it: that row claimed its link long ago, and
+      // sending it back to EMAIL_PENDING would ask for a mailbox proof it has already given.
+      if (lineOa || retryingProvisioning) {
         // No claim email exists for this source, so approval IS provisioning.
         // Review LOW-3: the approval stamp records WHEN this application was decided, so only a
         // first decision writes it. Closing a row that is already past the decision — a retry or a
@@ -282,7 +302,9 @@ export class SignupAdminQueueUseCase {
           correlationRequestId,
           ...urls,
         });
-        return { requestId, state: 'COMPLETED' };
+        // A LINE application finishes; a web one parks at the LINE step on its own welcome page,
+        // so a retry must report where the row actually is rather than claiming it is done (F2).
+        return { requestId, state: lineOa ? 'COMPLETED' : 'LINE_LINK_PENDING' };
       }
       // Review R08: state, the approval facts and the letter commit together or not at all. As
       // three separate writes, a failure between any two left the applicant in EMAIL_PENDING
@@ -291,11 +313,14 @@ export class SignupAdminQueueUseCase {
       // It starts here and RESTARTS on a reissue; `approvedAt` stays the audit fact it always was.
       await this.core.advance(requestId, 'EMAIL_PENDING', correlationRequestId, undefined, undefined, {
         data: { approvedAt, approvedByUserId: adminUserId, claimWindowStartedAt: approvedAt },
-        alsoInTransaction: (tx) => this.claimEmail.enqueue(requestId, 'approve', approvedAt, tx),
-      });
-      await this.audit(requestId, adminUserId, correlationRequestId, 'signup.request.approved', {
-        hadTaxId: request.taxId !== null,
-        mxValid: request.mxValid ?? false,
+        // Review F8: the letter AND the record of the decision ride the transaction that makes it.
+        alsoInTransaction: async (tx) => {
+          await this.claimEmail.enqueue(requestId, 'approve', approvedAt, tx);
+          await this.audit(requestId, adminUserId, correlationRequestId, 'signup.request.approved', {
+            hadTaxId: request.taxId !== null,
+            mxValid: request.mxValid ?? false,
+          }, tx);
+        },
       });
       return { requestId, state: 'EMAIL_PENDING' };
     }
@@ -433,8 +458,14 @@ export class SignupAdminQueueUseCase {
     action: string,
     // Scalars only, by type: an object here would be a place for PII to hide.
     metadata: Record<string, string | number | boolean | null>,
+    /**
+     * Review F8: the approve transaction. An audit written afterwards can be lost on its own, which
+     * leaves a decision that happened with no record that it did — the one thing an audit trail
+     * exists to prevent.
+     */
+    tx?: { auditLog: { create(args: unknown): Promise<unknown> } },
   ): Promise<void> {
-    await this.prisma.client.auditLog.create({
+    await (tx ?? this.prisma.client).auditLog.create({
       data: {
         actorUserId: adminUserId,
         action,
