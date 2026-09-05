@@ -44,8 +44,16 @@ test('an error replaces the table rather than sitting above an empty one', () =>
 // win, painting the previous tab's rows under the new tab's heading.
 test('only the newest read may write state', () => {
   assert.match(page, /const seq = \+\+readSeq\.current;/);
-  assert.match(page, /if \(seq !== readSeq\.current\) return;/);
   assert.match(page, /inFlight\.current\?\.abort\(\);/);
+  // Both exit paths, asserted where they actually are: the success path is the one that paints
+  // rows, so a guard present only in `catch` would still let a stale response repaint the table.
+  assert.match(
+    page,
+    /await listSupportRequests\(next, \{ signal: controller\.signal \}\);\s*\n\s*if \(seq !== readSeq\.current\) return;/,
+    'the resolved read checks its own sequence before setting any state',
+  );
+  assert.match(page, /\} catch \(err\) \{\s*\n\s*if \(seq !== readSeq\.current\) return;/);
+  assert.equal((page.match(/if \(seq !== readSeq\.current\) return;/g) ?? []).length, 2);
 });
 
 // One number, one source: answering a request must not leave the header badge above this very
