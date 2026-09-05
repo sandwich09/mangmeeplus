@@ -491,7 +491,8 @@ the repo hand-constructs these classes and would have stayed green through it; t
 61 plain fakes never touch the real ones. Each concrete class now declares its own constructor, and
 `erp-draft-update-tools.di.spec.ts` fails if one stops.
 
-The runnable assertion is constructor ARITY, not `Reflect.getMetadata`. The repo's test runner is
+**DECISION D-2 (how to test DI), confirmed by the coordinator 2026-09-06.** The runnable assertion
+is constructor ARITY, not `Reflect.getMetadata`. The repo's test runner is
 tsx/esbuild, which does not implement `emitDecoratorMetadata` at all — it reports ABSENT for every
 class, including correctly wired ones, so a metadata assertion could only ever produce a false
 alarm. Arity is compiler-independent and fails for exactly this mistake.
@@ -512,13 +513,25 @@ through untouched. It is now defined by SHAPE — digits folded first, then ONE 
 characters matching `[\p{L}\p{M}0-9][\p{L}\p{M}0-9\-/_#]*`, `.` excluded on purpose — and anything
 else returns null so the card prints "ยังไม่ระบุ".
 
-**M5 vs F11 was a genuine conflict, resolved explicitly.** F11 asked for a shape-based link rule
-(no TLD allowlist); M5 asked that `ABC Co.Ltd`, `St.Louis Hospital` and `TAX.INV` survive. Those are
-the same shape as `evil.xyz` — one dot, no path — so shape alone cannot separate them. The rule now
-is: scheme/`www.`, a path, or two-plus dots with every label ≥ 2 characters removes a link with no
-list involved; the ambiguous one-dot case is decided by a compact TLD list used ONLY as a
-tiebreaker. Residual, accepted: a novel single-label TLD with no other signal survives as text.
-The alternative silently eats real vendor names off receipts.
+**DECISION D-1 (link detection), confirmed by the coordinator 2026-09-06.** F11 asked for a
+shape-based link rule with no TLD allowlist; M5 asked that `ABC Co.Ltd`, `St.Louis Hospital` and
+`TAX.INV` survive. Those are the SAME shape as `evil.xyz` — one dot, no path — so no shape rule can
+separate them, and the two findings could not both be implemented literally.
+
+The rule, settled: **shape is primary** — a scheme, `www.`, a path, or two-plus dots with every
+label ≥ 2 characters removes a link with no list involved, which is what F11 was really about (a
+novel TLD cannot walk past a rule that never looks at the TLD). A compact TLD list decides ONLY the
+genuinely ambiguous bare one-dot case, as a tiebreaker.
+
+Consequence, accepted as a decision and not a gap: a novel single-label TLD with no other signal
+(`evil.frobnicate`) survives as text. That is acceptable because the harm this guard exists to stop
+is a FABRICATED TOTAL, and the money guard already blocks that independently; a bare host word,
+quoted and unlinked in a bubble, is ordinary text. Eating a real vendor's name off a receipt, by
+contrast, is a certain product bug on every bill printed by a `Co.Ltd`.
+
+**Slice C's `safeText` must adopt this identical rule at rebase**, not a stricter local variant —
+the whole point of `scrubRecordText` living in `packages/contracts` is that the API card and the
+gateway answer cannot disagree about what a link is.
 
 **M9 — flag-off was not a rollback.** `amount` had been removed from the five-field correction lane
 unconditionally, so turning `LINE_AI_DRAFT_EDIT_ENABLED` off would have left a lane that silently
@@ -564,6 +577,17 @@ against an isolated `watchdog_bms_sliced`.
 | l12 | The card promises a window the store does not enforce | eval — the TTL assertion |
 | l13 | An unbounded charge percent | logic spec — "bounds a charge percent to (0, 100]" |
 | r2 | The preview key stops being per chat | eval — "keys the pending preview by company AND chat" |
+
+**A second boot bug, caught by the repo's own guard.** The M9 fix gave
+`CorrectLineCapturedExpenseUseCase` a `Pick<AppConfigService, 'lineAiDraftEditEnabled'>` parameter.
+A `Pick<>` annotation emits NO runtime type — it erases to `Object`, so Nest has nothing to resolve
+and the API fails to boot. `injectable-di-token.spec.ts` exists for exactly this and turned red in
+the api fixed list; the token is now stated explicitly with `@Inject(AppConfigService)`, the same
+way `RedisRateLimitService` and `LineDraftPreviewStore` state theirs.
+
+Worth noting alongside H1: this slice produced TWO distinct Nest-DI-at-boot bugs that no
+hand-constructed spec could see, and each was caught by a different structural guard. If a third
+appears, the answer is a spec that builds the real module rather than a third structural rule.
 
 Process note for whoever reuses `mutations.sh`: it restores with `git checkout --`, so it now
 REFUSES to run on a dirty tree. It silently ate an uncommitted scrubber change once.

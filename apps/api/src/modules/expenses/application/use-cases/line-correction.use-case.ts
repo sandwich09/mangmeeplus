@@ -11,7 +11,7 @@
  * record must still find the first apply. The marker rides the same transaction, so a rolled-back
  * apply leaves no trace claiming it happened.
  */
-import { ForbiddenException, Injectable, Optional } from '@nestjs/common';
+import { ForbiddenException, Inject, Injectable, Optional } from '@nestjs/common';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import type { ExpenseLineVatTreatment, LineCorrectionField, LineIntakeCorrectionCandidate, LineIntakeCorrectionHints, RequestContext } from '@watchdog-bms/contracts';
 import { LINE_CORRECTION_FIELDS } from '@watchdog-bms/contracts';
@@ -89,9 +89,17 @@ export class CorrectLineCapturedExpenseUseCase {
     private readonly repo: PrismaExpenseRepository,
     private readonly updateDraft: UpdateExpenseDraftUseCase,
     private readonly audit: AuditService,
-    /** Only to read `LINE_AI_DRAFT_EDIT_ENABLED`. `@Optional()` so an older wiring keeps the
-     *  pre-S-4 lane, which is also the correct answer when the flag is off. */
-    @Optional() private readonly config?: Pick<AppConfigService, 'lineAiDraftEditEnabled'>,
+    /**
+     * Only to read `LINE_AI_DRAFT_EDIT_ENABLED`. `@Optional()` so an older wiring keeps the pre-S-4
+     * lane, which is also the correct answer when the flag is off.
+     *
+     * The token is stated EXPLICITLY because a `Pick<>` annotation emits no runtime type — it
+     * erases to `Object`, Nest has nothing to resolve, and the whole API fails to boot. Same reason
+     * `RedisRateLimitService` states its own; `injectable-di-token.spec.ts` is the guard.
+     */
+    @Inject(AppConfigService)
+    @Optional()
+    private readonly config?: Pick<AppConfigService, 'lineAiDraftEditEnabled'>,
   ) {}
 
   async execute(ctx: RequestContext, input: LineCorrectionInput): Promise<LineCorrectionOutcome> {
