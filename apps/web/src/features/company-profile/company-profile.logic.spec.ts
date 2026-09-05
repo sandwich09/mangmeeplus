@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { todayCivilDate } from '@watchdog-bms/contracts';
+import { todayCivilDate, COMPANY_PROFILE_ACCOUNT_HASH, COMPANY_PROFILE_SHOP_HASH } from '@watchdog-bms/contracts';
 import {
   addressChanged,
   addressErrorMessages,
@@ -18,6 +18,8 @@ import {
   readChecklistCache,
   readChecklistDismissal,
   usernameFieldRequired,
+  sectionIdFromHash,
+  COMPANY_PROFILE_SECTION_IDS,
   INVALID_USERNAME_MESSAGE,
   USERNAME_PATTERN,
   writeChecklistCache,
@@ -358,6 +360,35 @@ describe('field validation matches the API', () => {
     assert.equal(isThaiTaxIdInput('0105558123456'), true);
     assert.equal(isThaiTaxIdInput('0-1055-58123-45-6'), true);
     for (const bad of ['12345', '01055581234567', '']) assert.equal(isThaiTaxIdInput(bad), false, bad);
+  });
+});
+
+// The sections mount after the reads land, so the browser's own fragment jump ran on an empty
+// page — `#account` from the day-7 nudge left the owner at the top (rehearsal 26).
+describe('sectionIdFromHash', () => {
+  it('resolves every id the page renders, with or without the leading #', () => {
+    for (const id of COMPANY_PROFILE_SECTION_IDS) {
+      assert.equal(sectionIdFromHash(`#${id}`), id, id);
+      assert.equal(sectionIdFromHash(id), id, id);
+    }
+    assert.equal(sectionIdFromHash(COMPANY_PROFILE_ACCOUNT_HASH), 'account', 'the nudge link must resolve');
+    assert.equal(sectionIdFromHash(COMPANY_PROFILE_SHOP_HASH), 'shop');
+  });
+
+  it('resolves nothing else, so only our own ids ever reach the DOM', () => {
+    for (const junk of [
+      '', '#', '#javascript:alert(1)', 'javascript:alert(1)', '#Account', '#account?x=1',
+      '#accounts', '#../shop', '#<script>', '# account', null, undefined,
+    ]) {
+      assert.equal(sectionIdFromHash(junk), null, JSON.stringify(junk));
+    }
+  });
+
+  it('names ids the page actually renders', () => {
+    const page = readFileSync(new URL('./CompanyProfilePage.tsx', import.meta.url), 'utf8');
+    for (const id of COMPANY_PROFILE_SECTION_IDS) {
+      assert.ok(page.includes(`id="${id}"`), `the page must carry an element with id="${id}"`);
+    }
   });
 });
 

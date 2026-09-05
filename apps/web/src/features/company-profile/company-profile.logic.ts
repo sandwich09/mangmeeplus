@@ -34,6 +34,22 @@ export function identityChangeKind(
   return touchesLatched ? 'LEGAL_CHANGE' : 'CORRECTION';
 }
 
+/**
+ * The ids the page actually renders, and the only values a fragment may resolve to.
+ *
+ * An allow-list rather than "strip the #": the hash is whatever the URL says, so anything that
+ * reaches `getElementById` should be one of ours. `#javascript:…` and friends resolve to null.
+ */
+export const COMPANY_PROFILE_SECTION_IDS = ['shop', 'vat-status', 'account'] as const;
+export type CompanyProfileSectionId = (typeof COMPANY_PROFILE_SECTION_IDS)[number];
+
+export function sectionIdFromHash(hash: string | null | undefined): CompanyProfileSectionId | null {
+  const id = (hash ?? '').replace(/^#/, '');
+  return (COMPANY_PROFILE_SECTION_IDS as readonly string[]).includes(id)
+    ? (id as CompanyProfileSectionId)
+    : null;
+}
+
 export type ChecklistItemKey = 'identity' | 'address' | 'email' | 'password';
 
 export type ChecklistItem = {

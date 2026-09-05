@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { todayCivilDate, type CompanyIdentityResponse, type CompanyLegalAddress, type VatFactStatus } from '@watchdog-bms/contracts';
 import { apiErrorCode, apiErrorMessage } from '@/common/api/api-error-message';
 import { MangmeeCard, MangmeePage } from '@/common/components/mangmee';
@@ -25,6 +25,7 @@ import {
   clearChecklistCache,
   isThaiMobileInput,
   passwordFormError,
+  sectionIdFromHash,
   usernameFieldRequired,
 } from './company-profile.logic';
 
@@ -113,6 +114,28 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
   }, [companyId]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Both sections mount only after the two reads land, so by the time they exist the browser has
+  // already performed its native fragment jump — against an empty page. `#account` from the day-7
+  // กันหลุด nudge therefore left the owner at the top of the page, looking at the shop form.
+  //
+  // No `behavior: 'smooth'`: an unrequested animation is exactly what `prefers-reduced-motion`
+  // asks us not to do, and the default instant jump is what a fragment would have done anyway.
+  const jumpedToHash = useRef(false);
+  useEffect(() => {
+    if (loading || loadError) return undefined;
+    const jump = () => {
+      const id = sectionIdFromHash(window.location.hash);
+      if (id) document.getElementById(id)?.scrollIntoView({ block: 'start' });
+    };
+    if (!jumpedToHash.current) {
+      jumpedToHash.current = true;
+      jump();
+    }
+    // A hash change while mounted is a same-page navigation React does not re-render for.
+    window.addEventListener('hashchange', jump);
+    return () => window.removeEventListener('hashchange', jump);
+  }, [loading, loadError]);
 
   const control = identity?.control;
   const full = identity?.identity && !identity.identity.masked ? identity.identity : null;

@@ -175,6 +175,19 @@ describe('handlers that no static render reaches', () => {
     assert.match(savePassword, /saved\.username/, 'the login name is lower-cased server-side; the user has to be told');
   });
 
+  // The native fragment jump already ran against an empty page, so the page has to redo it once
+  // the sections exist — otherwise "ใส่เลย" lands the owner at the top (rehearsal 26).
+  it('jumps to the hashed section once the sections are in the DOM', () => {
+    const effect = block('const jumpedToHash = useRef(false);', 'if (loading) {');
+    assert.match(effect, /if \(loading \|\| loadError\) return undefined;/, 'the sections do not exist yet while loading');
+    assert.match(effect, /sectionIdFromHash\(window\.location\.hash\)/, 'only the page\u2019s own ids may reach the DOM');
+    assert.match(effect, /document\.getElementById\(id\)\?\.scrollIntoView\(\{ block: 'start' \}\)/);
+    assert.doesNotMatch(effect, /smooth/, 'an unrequested animation is what prefers-reduced-motion asks us not to do');
+    assert.match(effect, /if \(!jumpedToHash\.current\) \{/, 'the first jump must not repeat on every re-render');
+    assert.match(effect, /addEventListener\('hashchange', jump\)/, 'a same-page hash change re-renders nothing');
+    assert.match(effect, /removeEventListener\('hashchange', jump\)/);
+  });
+
   it('omits the current password for an account that has none', () => {
     const saveEmail = block('const saveEmail = async () => {', 'const savePhone = async');
     assert.match(saveEmail, /account\?\.hasPassword \? emailPassword : undefined/);
