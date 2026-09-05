@@ -211,5 +211,7 @@ Expiry boundary, run directly on `e0_ecr_scan_waivers` because the h2 fixture pi
    production promotion is blocked until the contract change lands.
 3. Set up the nightly ECR re-scan alert described in the runbook so the next new CVE surfaces before
    deploy day.
-4. Re-evaluate both waivers on 2026-09-19 — and remember a renewal now needs the row edited in
+4. ~~Re-evaluate both waivers on 2026-09-19~~ — SUPERSEDED 2026-09-05: renewed to 2026-10-05
+   (epoch `1791158400`) together with the 2026-08 batch, and `CVE-2026-14456` retired. See
+   `docs/agent-memory/cve-waiver-renewal-2026-10-05.md`. A renewal still needs the row edited in
    **both** `infra/docker/ecr-scan-blocking-findings.jq` and `e0_ecr_waiver_rows`.
