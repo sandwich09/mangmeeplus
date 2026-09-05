@@ -105,17 +105,23 @@ export class SignupAdminQueueUseCase {
    */
   async list(now = new Date(), options: SignupQueueListOptions = {}): Promise<AdminSignupQueueDto> {
     const pageSize = Math.min(Math.max(Math.trunc(options.limit ?? DEFAULT_PAGE_SIZE), 1), MAX_PAGE_SIZE);
+    const tabWhere = queueWhere(options.tab, now);
+    // F10: the cursor is the ordering VALUES of the last row, not that row's id. Prisma's `cursor`
+    // resolves an id against the same filtered query, so a row that left the tab between pages —
+    // an admin approved it, a sweep parked it — answered with an empty page and stranded the tab
+    // until someone reloaded. Values cannot go stale; the row they came from need not exist.
+    const after = decodeQueueCursor(options.cursor);
     // One more than the page, purely as a probe: its presence is what says another page exists.
     const rows = await this.prisma.client.companySignupRequest.findMany({
-      where: queueWhere(options.tab, now),
+      where: after ? { AND: [tabWhere, keysetAfter(after)] } : tabWhere,
       // Oldest first — this is a work queue — with the id as tiebreaker, because a cursor over a
       // non-deterministic order skips and repeats rows between pages.
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       take: pageSize + 1,
-      ...(options.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
     });
     const requests = rows.slice(0, pageSize);
-    const nextCursor = rows.length > pageSize ? requests[requests.length - 1]?.id ?? null : null;
+    const last = requests[requests.length - 1];
+    const nextCursor = rows.length > pageSize && last ? encodeQueueCursor(last.createdAt, last.id) : null;
     const counts = await this.tabCounts(now);
     if (requests.length === 0) return { items: [], nextCursor: null, counts };
 
@@ -589,6 +595,35 @@ export class SignupAdminQueueUseCase {
       },
     });
   }
+}
+
+/**
+ * F10: one page boundary, as the two values the ordering is made of. Base64url so it survives a
+ * query string, and opaque so nobody starts building one by hand.
+ */
+export function encodeQueueCursor(createdAt: Date, id: string): string {
+  return Buffer.from(`${createdAt.toISOString()}|${id}`, 'utf8').toString('base64url');
+}
+
+function decodeQueueCursor(cursor: string | undefined): { createdAt: Date; id: string } | null {
+  if (!cursor) return null;
+  // A cursor that cannot be read is the FIRST page, never an error and never an empty tab: it
+  // arrives from a query string, and the worst an operator should get from a mangled one is
+  // starting over.
+  const [at, ...rest] = Buffer.from(cursor, 'base64url').toString('utf8').split('|');
+  const id = rest.join('|');
+  const createdAt = at ? new Date(at) : new Date(NaN);
+  return id && !Number.isNaN(createdAt.getTime()) ? { createdAt, id } : null;
+}
+
+/** Everything strictly after that boundary, in the same order the page is read in. */
+function keysetAfter(after: { createdAt: Date; id: string }) {
+  return {
+    OR: [
+      { createdAt: { gt: after.createdAt } },
+      { createdAt: after.createdAt, id: { gt: after.id } },
+    ],
+  };
 }
 
 /**

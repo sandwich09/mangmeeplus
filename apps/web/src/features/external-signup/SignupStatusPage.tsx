@@ -12,6 +12,7 @@ import {
   SIGNUP_SUPPORT_PHONE,
   SIGNUP_TRIAL_AFTER,
   SIGNUP_TRIAL_HEADLINE,
+  showsTrialNotice,
   signupStatusCopy,
   signupSubmitErrorMessage,
 } from './signup.logic';
@@ -124,11 +125,15 @@ export default function SignupStatusPage({ requestId }: { requestId: string }) {
               ) : null}
 
               {/* Owner 2026-09-05: the same free-trial line the form and the received page carry,
-                  so nobody arrives at their shop expecting the tier the old cards advertised. */}
-              <section className="rounded-xl border border-[#B6E0C4] bg-[#F2F9F4] p-3.5">
-                <p className="text-[14.5px] font-bold text-[#046B29]">{SIGNUP_TRIAL_HEADLINE}</p>
-                <p className="mt-1 text-[13.5px] leading-6 text-gray-600">{SIGNUP_TRIAL_AFTER}</p>
-              </section>
+                  so nobody arrives at their shop expecting the tier the old cards advertised.
+                  F8: hidden where no shop is coming — beside a rejection, a stalled build or an
+                  expired request it is an advert on a dead end. */}
+              {status && showsTrialNotice(status.status) ? (
+                <section className="rounded-xl border border-[#B6E0C4] bg-[#F2F9F4] p-3.5">
+                  <p className="text-[14.5px] font-bold text-[#046B29]">{SIGNUP_TRIAL_HEADLINE}</p>
+                  <p className="mt-1 text-[13.5px] leading-6 text-gray-600">{SIGNUP_TRIAL_AFTER}</p>
+                </section>
+              ) : null}
 
               {/* R12: this URL is the applicant's only way back. Copy, then paste it into their
                   own chat — a bookmark on a phone browser is the thing they lose first. */}

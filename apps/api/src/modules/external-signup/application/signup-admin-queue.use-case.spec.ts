@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { ConflictException, NotFoundException } from '@nestjs/common';
-import { SignupAdminQueueUseCase } from './signup-admin-queue.use-case';
+import { SignupAdminQueueUseCase, encodeQueueCursor } from './signup-admin-queue.use-case';
 import { STALE_PROVISIONING_MS } from '../domain/company-signup.logic';
 
 const NOW = new Date('2026-09-01T00:00:00.000Z');
@@ -344,6 +344,26 @@ describe('SignupAdminQueueUseCase.decide — business category at review', () =>
     assert.equal('businessCategory' in h.updates[0].data, false);
   });
 
+  // F3: the enum re-check is the line that decides whether a PDPA safeguard can be armed by a
+  // string nobody validated. Replacing it with `body.businessCategory ?? null` must not pass.
+  it('refuses a category the enum does not know, at the use case and not only at the DTO', async () => {
+    const h = harness();
+    await h.useCase.decide(
+      'signup-1', { action: 'APPROVE', businessCategory: 'HOSPITAL' }, 'admin-1', 'req-1', URLS,
+    );
+    assert.equal('businessCategory' in h.updates[0].data, false, 'nothing unvalidated is stored');
+    const approval = h.audits.find((a) => a.data.action === 'signup.request.approved');
+    assert.equal(approval.data.metadataJson.businessCategory, null);
+    // Same for an empty string and for a case that only LOOKS like the enum.
+    for (const bad of ['', 'clinic', ' CLINIC ']) {
+      const other = harness();
+      await other.useCase.decide(
+        'signup-1', { action: 'APPROVE', businessCategory: bad }, 'admin-1', 'req-1', URLS,
+      );
+      assert.equal('businessCategory' in other.updates[0].data, false, bad);
+    }
+  });
+
   it('carries the choice into a LINE approval, which provisions inline', async () => {
     const h = harness({ request: LINE_REQUEST });
     await h.useCase.decide(
@@ -613,6 +633,12 @@ describe('SignupAdminQueueUseCase.decide — suspend', () => {
 // past 200 was invisible, a tab could show "ไม่มีคำขอในกลุ่มนี้" over rows the database was holding,
 // and REJECTED/SUSPENDED applications could not be found at all.
 describe('SignupAdminQueueUseCase.list — filtering, paging and counts', () => {
+  const queueWhereForDefaultTab = () => ({
+    OR: [
+      { state: { in: ['PENDING_REVIEW', 'EMAIL_PENDING', 'EMAIL_FAILED', 'EXPIRED'] } },
+      { state: { in: ['PROVISIONING_FAILED', 'READY', 'PROVISIONING'] }, source: 'line-oa' },
+    ],
+  });
   const page = (n: number) => Array.from({ length: n }, (_, i) => ({
     ...REQUEST,
     id: `signup-${i + 1}`,
@@ -636,10 +662,11 @@ describe('SignupAdminQueueUseCase.list — filtering, paging and counts', () => 
   });
 
   it('hands back a cursor when more rows exist, and nothing when they do not', async () => {
-    const full = harness({ requests: page(6) });
+    const rows = page(6);
+    const full = harness({ requests: rows });
     const first = await full.useCase.list(NOW, { limit: 5 });
     assert.equal(first.items.length, 5, 'the extra row is a probe, never rendered');
-    assert.equal(first.nextCursor, 'signup-5');
+    assert.equal(first.nextCursor, encodeQueueCursor(rows[4]!.createdAt, rows[4]!.id));
     assert.equal(full.requestQueries[0].take, 6);
 
     const last = harness({ requests: page(3) });
@@ -648,19 +675,66 @@ describe('SignupAdminQueueUseCase.list — filtering, paging and counts', () => 
     assert.equal(rest.nextCursor, null);
   });
 
-  it('continues past the cursor instead of re-reading the same page', async () => {
+  // F10: the cursor carries the ORDERING VALUES, not a row to look up. A row-id cursor is resolved
+  // by Prisma against the same filtered query, so a row that left the tab between pages (an admin
+  // approved it, a sweep parked it) makes the next page come back empty — and the operator sees a
+  // tab that has silently stopped, with no way on but a reload.
+  it('continues from the ordering values, so a row leaving the tab cannot strand the page', async () => {
     const h = harness({ requests: page(2) });
-    await h.useCase.list(NOW, { cursor: 'signup-40', limit: 5 });
-    assert.deepEqual(h.requestQueries[0].cursor, { id: 'signup-40' });
-    assert.equal(h.requestQueries[0].skip, 1);
+    const at = new Date('2026-08-30T10:00:00.000Z');
+    const cursor = encodeQueueCursor(at, 'signup-40');
+    await h.useCase.list(NOW, { cursor, limit: 5 });
+
+    const where = h.requestQueries[0].where;
+    // Never a row lookup: nothing here has to still exist, or still match the tab.
+    assert.equal(h.requestQueries[0].cursor, undefined);
+    assert.equal(h.requestQueries[0].skip, undefined);
+    // The tab predicate first, the page boundary second — the default tab has an `OR` of its own,
+    // so the boundary is identified by position, not by "the clause with an OR in it".
+    assert.deepEqual(where.AND[0], queueWhereForDefaultTab());
+    assert.deepEqual(where.AND[1].OR, [
+      { createdAt: { gt: at } },
+      { createdAt: at, id: { gt: 'signup-40' } },
+    ]);
     // Deterministic ordering, or a cursor can skip or repeat rows between pages.
     assert.deepEqual(h.requestQueries[0].orderBy, [{ createdAt: 'asc' }, { id: 'asc' }]);
+  });
+
+  it('hands back a cursor made of the last row values, and ignores a corrupt one', async () => {
+    const rows = page(6);
+    const h = harness({ requests: rows });
+    const first = await h.useCase.list(NOW, { limit: 5 });
+    assert.equal(first.nextCursor, encodeQueueCursor(rows[4]!.createdAt, rows[4]!.id));
+
+    // A cursor that cannot be read is the first page, never a crash and never an empty tab.
+    const garbled = harness({ requests: page(2) });
+    await garbled.useCase.list(NOW, { cursor: 'not-a-cursor', limit: 5 });
+    assert.equal(garbled.requestQueries[0].where.AND, undefined);
   });
 
   it('caps what one page may ask for, whatever the caller sends', async () => {
     const h = harness({ requests: [] });
     await h.useCase.list(NOW, { limit: 100_000 });
     assert.ok(h.requestQueries[0].take <= 201, `asked for ${h.requestQueries[0].take}`);
+  });
+
+  // F5: the "มีปัญหา" tab exists to surface rows an operator must act on, and an ABANDONED
+  // provisioning run is the one they most need to find. It is decided by the clock, not by a
+  // state, so it has to be part of the tab's predicate — otherwise the tab's own count (which
+  // does include it) promises rows the list can never show.
+  it('puts abandoned provisioning runs on the problem tab, agreeing with its count', async () => {
+    const h = harness({ requests: [] });
+    await h.useCase.list(NOW, { tab: 'PROBLEM' });
+
+    const branches = h.requestQueries[0].where.OR;
+    const stale = branches.find((b: any) => b.provisioningStartedAt);
+    assert.ok(stale, 'the problem tab must ask for abandoned runs, not only for failed states');
+    assert.equal(stale.state, 'PROVISIONING');
+    assert.equal(stale.source, 'line-oa');
+    // The same clock the fence uses, or the queue and the fence disagree about what abandoned is.
+    assert.equal(NOW.getTime() - (stale.provisioningStartedAt.lt as Date).getTime(), STALE_PROVISIONING_MS);
+    // And the states that are problems by state alone are still there.
+    assert.deepEqual(branches[0], { state: { in: ['EMAIL_FAILED', 'EXPIRED'] } });
   });
 
   it('counts the WHOLE queue, not the page it just read', async () => {

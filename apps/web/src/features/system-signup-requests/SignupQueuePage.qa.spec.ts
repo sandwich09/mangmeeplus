@@ -94,6 +94,11 @@ test('R10: approving asks for the business category the mapping could not read',
   assert.match(source, /COMPANY_BUSINESS_CATEGORIES\.map/);
   assert.match(source, /setBusinessCategory\(item\.businessCategory/);
   assert.match(source, /businessCategory: businessCategory/);
+  // F2: "อื่น ๆ" is confirmed, never refused — every Thai answer maps to OTHER, so refusing it
+  // meant a genuinely-other shop could not be approved at all.
+  assert.match(source, /approveBlockedOnCategory\(approving, businessCategory, confirmedOther\)/);
+  assert.match(source, /ตรวจแล้ว เป็นอื่น ๆ/);
+  assert.match(source, /setConfirmedOther\(false\)/);
 });
 
 test('the queue survives a 390px phone, which is where an operator reads it', () => {

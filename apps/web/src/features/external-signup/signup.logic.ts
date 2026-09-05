@@ -224,9 +224,12 @@ const STATUS_COPY: Record<PublicSignupStatusKey, SignupStatusCopy> = {
   },
   // R11: the mailbox is proved and the shop is being built. READY put a "log in" button in front
   // of an account that had no company behind it yet.
+  //
+  // F9: nothing polls this page, so it may not say it will update on its own — that left the
+  // applicant watching a screen that would never change. The refresh is the honest instruction.
   PREPARING: {
     title: 'กำลังเปิดร้านให้',
-    body: 'ยืนยันอีเมลเรียบร้อยแล้ว ระบบกำลังเปิดร้านให้ อีกสักครู่หน้านี้จะบอกว่าเข้าใช้งานได้',
+    body: 'ยืนยันอีเมลเรียบร้อยแล้ว ระบบกำลังเปิดร้านให้ อีกสักครู่กดรีเฟรชหน้านี้เพื่อดูสถานะล่าสุด',
     tone: 'info',
   },
   // R11: nothing retries this by itself, so "ยังไม่ต้องทำอะไรเพิ่ม" pointed at a queue nobody works.
@@ -262,6 +265,15 @@ const EXPIRED_NEEDS_STAFF_COPY: SignupStatusCopy = {
   body: `คำขอหมดอายุ ติดต่อ ${SIGNUP_SUPPORT_PHONE} หรืออีเมล ${SIGNUP_SUPPORT_EMAIL} เพื่อเปิดใช้อีกครั้ง`,
   tone: 'warning',
 };
+
+/**
+ * F8: the free-trial line is a promise about a shop that is on its way. Beside "we did not approve
+ * this", "the build stopped" or "this expired" it is an advert on a dead end — and on the last two
+ * it reads as if the trial were already running.
+ */
+export function showsTrialNotice(status: PublicSignupStatusKey): boolean {
+  return status !== 'REJECTED' && status !== 'PREPARING_FAILED' && status !== 'EXPIRED';
+}
 
 export function signupStatusCopy(
   status: PublicSignupStatusKey,

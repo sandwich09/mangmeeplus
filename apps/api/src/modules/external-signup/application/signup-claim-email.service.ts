@@ -38,6 +38,13 @@ const SIGNUP_OUTBOX_EVENT_TYPES = [
   SIGNUP_OPS_ALERT_EVENT_TYPE,
 ] as const;
 
+/**
+ * F6 retention: how long an application that never got past `RECEIVED` is kept. Long enough that an
+ * applicant who walked away mid-correction can still come back the same week, short enough that a
+ * mistyped address does not leave its owner's name, address and phone in the table indefinitely.
+ */
+const INTAKE_RETENTION_DAYS = 7;
+
 /** Reason recorded on the state row when the 30-day sweep parks an unclaimed approval (§4D ④). */
 export const CLAIM_EXPIRY_FAILURE_CODE = 'claim_not_started';
 const EXPIRY_SWEEP_ACTOR = 'signup-expiry-sweep';
@@ -272,6 +279,34 @@ export class SignupClaimEmailService {
       }
     }
     return { expired };
+  }
+
+  /**
+   * F6 retention. A submit whose MX check fails is left in `RECEIVED` on purpose (the applicant
+   * corrects the address and sends a NEW request under a new key), so the rejected row is an
+   * orphan: it reaches no queue, no admin sees it, and nothing else in the system ever removes it —
+   * while it holds the applicant's name, address and phone. After the retention window it is
+   * deleted outright rather than scrubbed: there is nothing here anyone needs, and a masked
+   * tombstone would be PII we chose to keep.
+   *
+   * `AccountClaimToken` cascades, and a RECEIVED row has none anyway — a token is only minted at
+   * `EMAIL_PENDING`, which is several states away.
+   */
+  async sweepAbandonedIntake(now = new Date()): Promise<{ purgedIntake: number }> {
+    const cutoff = new Date(now.getTime() - INTAKE_RETENTION_DAYS * 86_400_000);
+    // One statement rather than the read-then-act loop the other sweeps use: there is no state
+    // machine to walk here and nothing to enqueue, so the predicate is the whole operation. The
+    // window and the state bound the set by construction.
+    const { count } = await this.prisma.client.companySignupRequest.deleteMany({
+      where: {
+        state: 'RECEIVED',
+        createdAt: { lt: cutoff },
+        // Belt and braces: a row that stamped a company id built something, whatever its state
+        // says, and this sweep must never be the thing that unlinks a real shop's application.
+        companyId: null,
+      },
+    });
+    return { purgedIntake: count };
   }
 
   /**

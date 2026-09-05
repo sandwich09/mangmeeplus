@@ -575,6 +575,45 @@ describe('SignupClaimEmailService.sweepExpiredApprovals', () => {
   });
 });
 
+// F6. A submit that fails its MX check leaves the row in RECEIVED by design, and the form then
+// mints a NEW idempotency key — so every mistyped address (and, before F6, every DNS blip) leaves
+// a row nobody will ever act on, holding the applicant's name, address and phone. It never reaches
+// an admin queue, so nothing else would ever remove it.
+describe('SignupClaimEmailService.sweepAbandonedIntake', () => {
+  function intakeHarness(deleted = 0) {
+    const queries: any[] = [];
+    const prisma = {
+      client: {
+        companySignupRequest: {
+          deleteMany: async (args: any) => { queries.push(args); return { count: deleted }; },
+        },
+      },
+    } as any;
+    const service = new SignupClaimEmailService(
+      prisma, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
+      { error: () => {}, warn: () => {} } as any,
+    );
+    return { service, queries };
+  }
+
+  it('deletes intake rows that never got past RECEIVED once the retention window passes', async () => {
+    const h = intakeHarness(3);
+    assert.deepEqual(await h.service.sweepAbandonedIntake(NOW), { purgedIntake: 3 });
+
+    const where = h.queries[0].where;
+    // RECEIVED only: a row that reached VALIDATED is an application someone may still act on.
+    assert.equal(where.state, 'RECEIVED');
+    assert.equal(NOW.getTime() - (where.createdAt.lt as Date).getTime(), 7 * 86_400_000);
+    // Never a row that built anything: a company id here would mean provisioning got somewhere.
+    assert.equal(where.companyId, null);
+  });
+
+  it('leaves a fresh intake row alone', async () => {
+    const h = intakeHarness(0);
+    assert.deepEqual(await h.service.sweepAbandonedIntake(NOW), { purgedIntake: 0 });
+  });
+});
+
 /**
  * `SignupAdminNotifyService` is the producer/consumer pair for the same drain, so it is covered
  * here: `apps/api/package.json`'s test list is explicit, and a spec file of its own would never be

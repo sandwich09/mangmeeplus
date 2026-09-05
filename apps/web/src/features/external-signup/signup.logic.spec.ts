@@ -15,6 +15,7 @@ import {
   SIGNUP_TRIAL_AFTER,
   SIGNUP_TRIAL_WARMUP,
   SIGNUP_TRIAL_HEADLINE,
+  showsTrialNotice,
   signupFieldRejection,
   signupStatusCopy,
   signupSubmitErrorMessage,
@@ -194,6 +195,25 @@ describe('public status copy', () => {
     assert.match(signupStatusCopy('READY').body, /เข้าสู่ระบบ/);
   });
 
+  // F8: the free-trial line is a promise about a shop that is coming. Next to "we rejected this",
+  // "it stalled" or "this expired" it is an advert on a dead end.
+  it('shows the free-trial promise only where a shop is still coming', () => {
+    for (const key of ['CHECKING', 'PENDING_REVIEW', 'AWAITING_CLAIM', 'EMAIL_FAILED', 'PREPARING'] as const) {
+      assert.equal(showsTrialNotice(key), true, key);
+    }
+    for (const key of ['REJECTED', 'PREPARING_FAILED', 'EXPIRED'] as const) {
+      assert.equal(showsTrialNotice(key), false, key);
+    }
+  });
+
+  // F9: nothing polls this page, so copy that says it will update on its own is a promise the
+  // page does not keep — the applicant sits watching a screen that will never change.
+  it('asks for a refresh rather than promising the page updates itself', () => {
+    const preparing = signupStatusCopy('PREPARING');
+    assert.match(preparing.body, /รีเฟรช/);
+    assert.doesNotMatch(preparing.body, /หน้านี้จะบอก/);
+  });
+
   it('tells a transient load failure apart from a request that really is not there', () => {
     // An outage on the way to the status/claim page must not be reported as a dead link.
     assert.equal(isTransientLoadFailure(Object.assign(new Error('x'), { status: 503 })), true);
@@ -260,6 +280,19 @@ describe('recovering from a rejected submit', () => {
     }
     assert.equal(rotateSignupKeyAfter(new Error('Network request failed.')), false);
     assert.equal(rotateSignupKeyAfter(null), false);
+  });
+
+  // F6: a resolver that could not answer says nothing about the address. It must not accuse the
+  // applicant of a typo, and it must not rotate the key — the submission has not been decided.
+  it('keeps the key and blames nobody when the domain check could not run', () => {
+    const outage = Object.assign(new Error('email_domain_check_unavailable'), { status: 503 });
+    assert.equal(rotateSignupKeyAfter(outage), false);
+    assert.equal(signupFieldRejection(outage), null);
+    const message = signupSubmitErrorMessage(outage);
+    assert.match(message, /ตรวจอีเมลไม่ได้ชั่วคราว/);
+    assert.match(message, /ลองใหม่/);
+    assert.doesNotMatch(message, /ตรวจตัวสะกด/);
+    assert.doesNotMatch(message, /\+/);
   });
 
   it('puts the MX rejection under the email field in Thai instead of "reload the page"', () => {

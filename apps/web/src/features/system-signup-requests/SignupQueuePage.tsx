@@ -18,6 +18,7 @@ import {
   type AdminSignupQueueItemDto,
 } from './signup-requests.api';
 import {
+  approveBlockedOnCategory,
   approveLabel,
   BUSINESS_CATEGORY_LABELS,
   canApproveSignup,
@@ -25,6 +26,7 @@ import {
   canReissueSignup,
   canSuspendSignup,
   isAbandonedEmptyAttempt,
+  queueEmptyForReal,
   rejectNotifyDefault,
   rejectNotifyLabel,
   requiresCategoryChoice,
@@ -171,6 +173,9 @@ export default function SignupQueuePage() {
   // health tripwire reads that enum and free Thai text can never map onto it.
   const [approving, setApproving] = useState<AdminSignupQueueItemDto | null>(null);
   const [businessCategory, setBusinessCategory] = useState<string>('OTHER');
+  // F2: "อื่น ๆ" is a legitimate answer — a barber shop really is one — so it is confirmed, not
+  // refused. Reset with every dialog so a confirmation never carries to the next shop.
+  const [confirmedOther, setConfirmedOther] = useState(false);
   // Keyed by request id: one shared box put the note an operator typed for one shop onto whichever
   // shop they decided next.
   const [packageNotes, setPackageNotes] = useState<Record<string, string>>({});
@@ -241,6 +246,7 @@ export default function SignupQueuePage() {
   const openApprove = (item: AdminSignupQueueItemDto) => {
     // Default to what the server mapped, so a row the mapping DID read is one click as before.
     setBusinessCategory(item.businessCategory ?? 'OTHER');
+    setConfirmedOther(false);
     setApproving(item);
   };
 
@@ -388,17 +394,20 @@ export default function SignupQueuePage() {
       : approveFromLine
         ? `อนุมัติและเปิดร้าน ${approving.companyName} ให้ทันที (ลูกค้าจะได้รับแจ้งทาง LINE) ใช่หรือไม่`
         : `อนุมัติและส่งอีเมลตั้งรหัสให้ ${approving.contactEmail ?? approving.ownerDisplayName} ใช่หรือไม่`;
-  // R10: a row whose free text the mapping could not read may not be approved on the default.
-  const approveBlocked = approving !== null
+  // R10/F2: a row whose free text the mapping could not read may not be approved on the DEFAULT —
+  // but "อื่น ๆ" chosen on purpose is a decision, and the checkbox is how it says so.
+  const approveNeedsOtherConfirmed = approving !== null
     && requiresCategoryChoice(approving)
     && businessCategory === 'OTHER';
+  const approveBlocked = approving !== null
+    && approveBlockedOnCategory(approving, businessCategory, confirmedOther);
 
   const visible = tab === 'AUTO_APPROVED' ? (autoItems ?? []) : items;
   // R13: "no applications in this group" is a claim about the DATABASE, so it may only be made
   // when the server counted zero. A page that simply has not loaded says nothing.
   const emptyForReal = tab === 'AUTO_APPROVED'
     ? autoItems !== null && autoItems.length === 0
-    : visible.length === 0 && (counts?.[tab] ?? 0) === 0;
+    : queueEmptyForReal(visible, counts, tab);
 
   /** Counted server-side over the whole queue; the two own-endpoint tabs still count their list. */
   const tabCount = (key: SignupQueueTab): number | null => {
@@ -460,10 +469,28 @@ export default function SignupQueuePage() {
               ))}
             </select>
             <p className="text-xs text-gray-500">
-              {approveBlocked
-                ? 'ระบบอ่านข้อความที่ผู้สมัครกรอกไม่ได้ กรุณาเลือกประเภทที่ตรงกับร้านนี้ก่อนอนุมัติ'
-                : 'เลือกให้ตรงกับสิ่งที่ร้านทำจริง คลินิก สปา หรือร้านขายยา จะเข้าสู่การตรวจ PDPA เพิ่ม'}
+              เลือกให้ตรงกับสิ่งที่ร้านทำจริง คลินิก สปา หรือร้านขายยา จะเข้าสู่การตรวจ PDPA เพิ่ม
             </p>
+            {/* F2: shown only where the mapping could not read the free text AND the reviewer is
+                staying on "อื่น ๆ". Ticking it is the record that a human looked and decided —
+                which is the whole point of moving this decision to review. */}
+            {approveNeedsOtherConfirmed && (
+              <label className="flex items-start gap-2 rounded-lg border border-yellow-200 bg-yellow-50 px-3 py-2">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4"
+                  checked={confirmedOther}
+                  onChange={(e) => setConfirmedOther(e.target.checked)}
+                  disabled={busyId !== null}
+                />
+                <span className="text-xs text-gray-700">
+                  ตรวจแล้ว เป็นอื่น ๆ
+                  <span className="mt-0.5 block text-gray-500">
+                    ระบบอ่าน “{approving?.businessType}” ไม่ได้ ยืนยันว่าร้านนี้ไม่ใช่คลินิก สปา หรือร้านขายยา
+                  </span>
+                </span>
+              </label>
+            )}
           </div>
         </div>
       </Modal>

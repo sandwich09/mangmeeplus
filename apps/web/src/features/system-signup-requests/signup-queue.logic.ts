@@ -124,6 +124,20 @@ export function requiresCategoryChoice(item: AdminSignupQueueItemDto): boolean {
   return (item.businessCategory ?? 'OTHER') === 'OTHER' && Boolean(item.businessType?.trim());
 }
 
+/**
+ * F2: what stops an approval, and what does not. The first cut refused OTHER outright whenever the
+ * mapping had failed — but EVERY Thai answer maps to OTHER, so a shop that genuinely is "other"
+ * ("ร้านตัดผม") could not be approved at all. The reviewer confirms that choice instead: the
+ * tripwire still gets a decision rather than a default, and the honest answer stays reachable.
+ */
+export function approveBlockedOnCategory(
+  item: AdminSignupQueueItemDto,
+  chosen: string,
+  confirmedOther: boolean,
+): boolean {
+  return requiresCategoryChoice(item) && chosen === 'OTHER' && !confirmedOther;
+}
+
 /** Same wording the manual onboarding form uses, so one category reads the same in both places. */
 export const BUSINESS_CATEGORY_LABELS: Record<CompanyBusinessCategory, string> = {
   RETAIL: 'ค้าปลีก (Retail)',
@@ -254,3 +268,17 @@ export function tabLoadsOwnList(tab: SignupQueueTab): boolean {
 // R13: what each tab holds is decided by the API now (`queueWhere` in signup-admin-queue.use-case),
 // because filtering here could only ever filter the page that happened to arrive — which is how a
 // tab came to report "no applications in this group" over a backlog the database was holding.
+
+/**
+ * F4: whether "ไม่มีคำขอในกลุ่มนี้" is TRUE. It is a claim about the database, so it may only be
+ * made when the server counted this tab and counted zero. An empty screen with no count behind it
+ * is a load that did not answer — the same sentence would then mean the opposite of what it says.
+ */
+export function queueEmptyForReal(
+  visible: readonly AdminSignupQueueItemDto[],
+  counts: Record<string, number> | null,
+  tab: SignupQueueTab,
+): boolean {
+  if (visible.length > 0) return false;
+  return counts?.[tab] === 0;
+}

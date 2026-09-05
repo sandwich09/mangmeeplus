@@ -18,6 +18,8 @@ import {
   signupStateChip,
   rejectNotifyDefault,
   rejectNotifyLabel,
+  approveBlockedOnCategory,
+  queueEmptyForReal,
   requiresCategoryChoice,
   tabLoadsOwnList,
   SIGNUP_QUEUE_TABS,
@@ -348,6 +350,38 @@ describe('queue tabs', () => {
     assert.equal(requiresCategoryChoice(item({ businessType: '   ', businessCategory: 'OTHER' })), false);
     // A row from before the column existed answers the same way as an unmapped one.
     assert.equal(requiresCategoryChoice(item({ businessType: 'คลินิก' })), true);
+  });
+
+  // F2: every Thai answer maps to OTHER, so refusing OTHER refused the only value the dialog
+  // offered — a barber shop ("ร้านตัดผม") genuinely IS "other" and could never be approved. The
+  // reviewer records that deliberately instead; the tripwire still gets a decision, not a default.
+  it('lets the reviewer record OTHER deliberately rather than blocking it', () => {
+    const row = item({ businessType: 'ร้านตัดผม', businessCategory: 'OTHER' });
+    assert.equal(approveBlockedOnCategory(row, 'OTHER', false), true, 'not yet confirmed');
+    assert.equal(approveBlockedOnCategory(row, 'OTHER', true), false, 'confirmed as genuinely other');
+    // Picking a real category needs no confirmation at all.
+    assert.equal(approveBlockedOnCategory(row, 'CLINIC', false), false);
+    // A row the mapping already read is never blocked, confirmed or not.
+    const mapped = item({ businessType: 'RETAIL', businessCategory: 'RETAIL' });
+    assert.equal(approveBlockedOnCategory(mapped, 'OTHER', false), false);
+    // Nothing typed: OTHER is the true answer and there is nothing to confirm.
+    assert.equal(approveBlockedOnCategory(item({ businessCategory: 'OTHER' }), 'OTHER', false), false);
+  });
+
+  // F4: "ไม่มีคำขอในกลุ่มนี้" is a claim about the DATABASE. Saying it because the page happens to
+  // hold nothing is exactly the lie R13 existed to remove — a failed load and a genuinely empty
+  // tab look identical on screen but mean opposite things.
+  it('only calls a tab empty when the server counted zero', () => {
+    const row = item();
+    assert.equal(queueEmptyForReal([], { PENDING_REVIEW: 0 }, 'PENDING_REVIEW'), true);
+    // Counted rows but none on screen: the load failed, or a page is still coming.
+    assert.equal(queueEmptyForReal([], { PENDING_REVIEW: 240 }, 'PENDING_REVIEW'), false);
+    // No counts at all (the request failed) is never proof of emptiness.
+    assert.equal(queueEmptyForReal([], null, 'PENDING_REVIEW'), false);
+    // A tab the server did not count is not proof either.
+    assert.equal(queueEmptyForReal([], { ALL: 0 }, 'PROBLEM'), false);
+    // Rows on screen are never "empty", whatever the count says.
+    assert.equal(queueEmptyForReal([row], { ALL: 0 }, 'ALL'), false);
   });
 
   it('has a Thai label for every category the reviewer can pick', () => {
