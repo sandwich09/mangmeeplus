@@ -94,10 +94,10 @@ const REQUEST = {
   companyId: null,
 };
 
-function harness() {
+function harness(overrides: Record<string, unknown> = {}) {
   const { prisma, planTerms } = fakePrisma();
   const core = {
-    claimProvisioning: async () => ({ request: { ...REQUEST }, claimed: true, attemptId: 'attempt-1' }),
+    claimProvisioning: async () => ({ request: { ...REQUEST, ...overrides }, claimed: true, attemptId: 'attempt-1' }),
     completeProvisioning: async () => ({}),
     failProvisioning: async () => ({}),
     advance: async () => ({}),
@@ -110,23 +110,52 @@ function harness() {
   return { useCase: new ProvisionSignupUseCase(prisma, core, onboarding, CONFIG, adminDirectory, lineNotify, opsAlerts), planTerms };
 }
 
+const PROVISION = {
+  requestId: 'signup-1',
+  username: 'somchai',
+  correlationRequestId: 'req-1',
+  webBaseUrl: 'https://app.example.com',
+  apiBaseUrl: 'https://api.example.com/v1',
+};
+
 describe('B-01 pre-flight: the tier a signup provisioning actually writes', () => {
   it('gives the Flow B applicant the tier provisioning asked for, not the onboarding default', async () => {
     const h = harness();
-    await h.useCase.execute({
-      requestId: 'signup-1',
-      username: 'somchai',
-      correlationRequestId: 'req-1',
-      webBaseUrl: 'https://app.example.com',
-      apiBaseUrl: 'https://api.example.com/v1',
-    });
+    await h.useCase.execute(PROVISION);
 
     const term = h.planTerms.get('co-1');
     assert.ok(term, 'provisioning must leave a plan term behind');
-    // Before the fix this read STARTER_249: onboarding created the row first and the second
-    // `applyPlanTermPreset('PRO_999')` was a no-op, so the trial silently sold 30 slips, not 100.
-    assert.equal(term.tierKey, 'PRO_999');
-    assert.equal(term.monthlySlipLimit, 100);
+    // R02 as first reported (STARTER retained because `applyPlanTermPreset` upserts with an empty
+    // `update`) does NOT reproduce here: onboarding is TOLD the tier, so it writes it once.
+    assert.notEqual(term.tierKey, 'STARTER_249');
+    // Owner 2026-09-05: a self-signed-up shop starts on the SAME free trial the LINE-first flow
+    // gives. There is no PRO grant at signup any more.
+    assert.equal(term.tierKey, 'FREE_TRIAL_15');
+    assert.equal(term.branchLimit, 1);
+    assert.equal(term.employeeLimit, 2);
+    assert.equal(term.monthlySlipLimit, 15);
     assert.equal(term.termEndsAt.getTime() - term.termStartAt.getTime(), 30 * 24 * 60 * 60 * 1000);
+  });
+
+  it('ignores what the applicant asked for — a PRO request still provisions the free trial', async () => {
+    const h = harness({ requestedOfferKey: 'PRO_999' });
+    await h.useCase.execute(PROVISION);
+
+    assert.equal(h.planTerms.get('co-1')?.tierKey, 'FREE_TRIAL_15');
+  });
+
+  it('never overwrites a term an admin already set, and a retry never shortens it', async () => {
+    const h = harness();
+    const paidUntil = new Date('2027-01-01T00:00:00.000Z');
+    h.planTerms.set('co-1', {
+      companyId: 'co-1', tierKey: 'ENTERPRISE_1999', branchLimit: 10, employeeLimit: 30,
+      monthlySlipLimit: 2000, termStartAt: new Date('2026-01-01T00:00:00.000Z'), termEndsAt: paidUntil,
+    });
+
+    await h.useCase.execute(PROVISION);
+
+    const term = h.planTerms.get('co-1');
+    assert.equal(term.tierKey, 'ENTERPRISE_1999', 'a paid term must survive a provisioning retry');
+    assert.equal(term.termEndsAt.getTime(), paidUntil.getTime());
   });
 });

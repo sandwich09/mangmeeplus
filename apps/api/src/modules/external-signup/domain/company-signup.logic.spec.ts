@@ -125,11 +125,16 @@ describe('normalizeCompanySignupInput — Flow B fields', () => {
     assert.throws(() => normalizeCompanySignupInput({ ...VALID, phoneNumber: '123' }), /invalid_phoneNumber/);
   });
 
-  it('accepts only the sellable offer key and never falls back silently', () => {
+  // Owner 2026-09-05 (R02): there is no package choice at signup any more — every self-signed-up
+  // shop starts on the same free trial. The key survives as attribution evidence only, so an
+  // in-flight client that still sends a catalog key must not have its application refused over a
+  // label the server no longer reads.
+  it('records the requested offer key as attribution and never refuses an application over it', () => {
     assert.equal(normalizeCompanySignupInput({ ...VALID, requestedOfferKey: 'PRO_TRIAL' }).requestedOfferKey, 'PRO_TRIAL');
-    // A tier that exists in the catalog but is not sellable yet is still refused (spec §3A).
-    assert.throws(() => normalizeCompanySignupInput({ ...VALID, requestedOfferKey: 'PRO_999' }), /offer_not_available/);
-    assert.throws(() => normalizeCompanySignupInput({ ...VALID, requestedOfferKey: 'FREE_FOREVER' }), /offer_not_available/);
+    assert.equal(normalizeCompanySignupInput({ ...VALID, requestedOfferKey: 'PRO_999' }).requestedOfferKey, 'PRO_999');
+    // Anything outside the catalog is dropped rather than stored — the operator's queue must never
+    // render free text an applicant chose for this field.
+    assert.equal(normalizeCompanySignupInput({ ...VALID, requestedOfferKey: 'FREE_FOREVER' }).requestedOfferKey, null);
     assert.equal(normalizeCompanySignupInput({ ...VALID, requestedOfferKey: '  ' }).requestedOfferKey, null);
   });
 
