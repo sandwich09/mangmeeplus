@@ -241,7 +241,9 @@ describe('POST /system/partners/:id/line-message — SEC-05', () => {
   // B-1: the operator writes the whitespace, so "one token to the next space" was a rule they
   // controlled. Every one of these renders the second URL live in the customer's chat.
   it('refuses a second URL glued onto one of ours', async () => {
-    for (const glue of ['"', '<', '`', '\u200b']) {
+    // A Thai letter and a closing bracket are ordinary text, and neither can ever be on a list of
+    // terminators — which is why the rule is that a token may not CONTAIN a second scheme.
+    for (const glue of ['"', '<', '`', '\u200b', '\u0e04', ')', '\u3002', '']) {
       const h = harness();
       await assert.rejects(
         () => h.controller.sendLineMessage(

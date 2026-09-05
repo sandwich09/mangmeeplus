@@ -108,7 +108,14 @@ describe('checkShopMessage — SEC-05', () => {
    * one token, judged once as our host — while every linkifier renders the second one live.
    */
   it('judges a second URL glued on with punctuation or an invisible character', () => {
-    const glue = ['"', '<', '`', '\u200b', '\u2060', '\ufeff', '\u202e'];
+    // Terminators, brackets, ordinary punctuation, an ideographic full stop, Thai letters — the
+    // point is that NONE of these can be enumerated. A token simply may not contain a second
+    // scheme, so any glue at all leaves two tokens.
+    const glue = [
+      '"', '<', '`', '\u200b', '\u2060', '\ufeff', '\u202e',
+      ')', ']', '}', ',', ';', '|', '\\', '^', '(', '!', '*', '~',
+      '\u3002', '\u0e46', '\u0e04', '\u4e2d', '\ud83d\ude00', '',
+    ];
     for (const character of glue) {
       const text = `ดูที่ https://app.mangmeeplus.com/x${character}https://evil.test/pay ค่ะ`;
       const result = checkShopMessage(text, ALLOWED);
@@ -126,6 +133,14 @@ describe('checkShopMessage — SEC-05', () => {
       'https://"https://evil.test/pay',
       'ไม่มีลิงก์เลยค่ะ',
       'https://app.mangmeeplus.com/x\u200bhttps://evil.test/y',
+      // The characters an allowlist of terminators can never finish enumerating.
+      'https://app.mangmeeplus.com/x)https://evil.test/y',
+      'https://app.mangmeeplus.com/x,https://evil.test/y',
+      'https://app.mangmeeplus.com/x\u3002https://evil.test/y',
+      'https://app.mangmeeplus.com/x\u0e04https://evil.test/y',
+      // No glue at all: two schemes run straight together.
+      'https://app.mangmeeplus.com/xhttps://evil.test/y',
+      'http://a.test/xhttps://b.test/y?q=https://c.test',
     ];
     for (const sample of samples) {
       const occurrences = sample.match(/https?:\/\//gi)?.length ?? 0;

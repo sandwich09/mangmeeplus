@@ -57,6 +57,12 @@ are fully covered by the LINE-only recovery paths.
 
 ## Residuals for the Owner to acknowledge (spec §15.5 note)
 
+0. **The link fence's rule is structural, and must stay that way.** A token may never CONTAIN a
+   second `https?://`. Two earlier versions tried to enumerate the characters that end a URL — first
+   whitespace, then a longer allowlist — and both leaked: a swept probe of 122 glue characters
+   leaked 102 against the allowlist version. Anything that adds a character to `TOKEN_END` instead
+   of preserving the lookahead is re-opening the same bypass. `TOKEN_END` still earns its place for
+   bare-host glue and invisible characters, but it is not what makes the fence sound.
 1. **Bare internationalised hosts pass the SEC-05 link fence.** `มังมี.ไทย/pay` written WITHOUT a
    scheme is not matched, because the only rule that would catch it (`\p{L}` labels) also matches
    ordinary Thai prose around a full stop and would refuse honest operator sentences. Written the

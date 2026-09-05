@@ -25,15 +25,20 @@ export const LIFF_HOST = 'liff.line.me';
 const TOKEN_END = '\\s"\'<>`\\u200b-\\u200f\\u2028\\u2029\\u202a-\\u202e\\u2060-\\u2064\\ufeff';
 
 /**
- * An explicit link, taken whole up to the next terminator and handed to the URL parser — never
- * pattern-matched for its host, because `https://app.mangmeeplus.com:443@evil.test/pay` only reads
- * correctly through the same parser the tapper's browser uses.
+ * An explicit link, taken up to the next terminator OR the next scheme, and handed to the URL
+ * parser — never pattern-matched for its host, because `app.mangmeeplus.com:443@evil.test/pay`
+ * only reads correctly through the same parser the tapper's browser uses.
  *
- * `*` rather than `+`: EVERY `https?://` in the text must produce a token, even a degenerate one
- * (a scheme glued straight onto a quote). A `+` here would silently skip it, which is the whole
- * class of bug this regex exists to close — a spec asserts the counts match.
+ * The lookahead is the load-bearing half. `TOKEN_END` is an ALLOWLIST of terminators, so every
+ * character NOT on it — `)` `,` `;` `|` `^`, a Thai letter, an ideographic full stop — glued a
+ * second live URL into the first token, which was then judged once as our host and sent. A swept
+ * probe leaked 96 of 106 such characters. Listing more of them is the same bug with a longer list:
+ * the invariant is structural, and it is that a token may never CONTAIN a second scheme.
+ *
+ * `*` rather than `+` so EVERY `https?://` still produces a token, even a degenerate one (a scheme
+ * glued straight onto a terminator). A spec asserts judged tokens == scheme occurrences.
  */
-const SCHEME_URL = new RegExp(`https?://[^${TOKEN_END}]*`, 'gi');
+const SCHEME_URL = new RegExp(`https?://(?:(?!https?://)[^${TOKEN_END}])*`, 'gi');
 
 /**
  * A bare host LINE auto-links for the reader (`a.b`, `www.a.b/c`), so it is a link whatever a
@@ -42,7 +47,10 @@ const SCHEME_URL = new RegExp(`https?://[^${TOKEN_END}]*`, 'gi');
  * matched — but with a scheme it is, via `SCHEME_URL` above, which is how one would have to be
  * written to be tappable anyway.
  */
-const BARE_HOST = new RegExp(`(?:[a-z0-9-]+\\.)+[a-z]{2,}(?:[:/?#][^${TOKEN_END}]*)?`, 'gi');
+const BARE_HOST = new RegExp(
+  `(?:[a-z0-9-]+\\.)+[a-z]{2,}(?:[:/?#](?:(?!https?://)[^${TOKEN_END}])*)?`,
+  'gi',
+);
 
 /** Dotted-quad; the bracketed IPv6 form is caught by the `[` prefix `new URL` leaves on it. */
 const IPV4 = /^\d{1,3}(?:\.\d{1,3}){3}$/;

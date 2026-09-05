@@ -231,7 +231,8 @@ describe('POST /system/package-change-requests/:id/decision — REJECT', () => {
 
   // B-1, on the second route that pushes an operator's paragraph into a customer's chat.
   it('refuses a second URL glued onto one of ours in the note', async () => {
-    for (const glue of ['"', '<', '`', '\u200b']) {
+    // Same set as the message box: the Thai letter is the one an allowlist can never catch.
+    for (const glue of ['"', '<', '`', '\u200b', '\u0e04', ')', '\u3002', '']) {
       const h = harness();
       await assert.rejects(
         () => h.controller.decide(
