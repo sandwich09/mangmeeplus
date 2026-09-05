@@ -385,7 +385,19 @@ category with `LINE_DRAFT_EDIT_DISABLED`, no preview card, and a stray confirm p
   charge-line refusal to it. Delete it after that lands if nothing else picks it up.
 - `scrubRecordText` lives in `packages/contracts` so BOTH apps share one copy. Slice C's review is
   widening a gateway-local `safeText` for the same reason; at rebase the two must collapse onto
-  this one rather than diverging.
+  this one rather than diverging. C's round-3 findings are already applied here:
+  - **F11** links are matched by SHAPE (`(?:\S*\.)?[a-z0-9-]+\.[a-z]{2,24}\b\S*`), never by a TLD
+    allowlist — `evil.xyz`, `evil.app` and `evil.ru` walked past C's list, and the registry grows
+    faster than any list in a source file ever will.
+  - **F12** a money-shaped run inside a LABEL is MASKED with `…`, not dropped, so
+    "ร้าน 7-Eleven สาขา 123" still says which shop it is. `scrubRecordText(…, { onMoney: 'drop' })`
+    is the opt-in for a free-text SENTENCE, where a hole would read as something the system said.
+  - **F13** a document number's digits ARE its value, so it has its own `scrubRecordIdentifier`
+    whose charset includes `\p{M}` — Thai tone marks and vowel signs are separate combining code
+    points, and a `\p{L}\p{N}` class alone hands back mangled Thai for "ใบกำกับ-12". It also drops
+    the thousands separator, so an identifier can never take a printed total's shape. Both
+    renderers (API card, gateway formatter) switch on the diff row's `field`, so neither re-masks
+    what the identifier scrub deliberately kept.
 
 ### D.4 Mutation table — every row RUN and verified red (`mutations.sh`, 2026-09-06)
 
