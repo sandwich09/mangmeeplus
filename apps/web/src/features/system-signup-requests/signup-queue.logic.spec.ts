@@ -115,13 +115,28 @@ describe('a failed provisioning is actionable, not just labelled', () => {
   // Review MEDIUM-2: SUSPENDED is terminal, so suspending mid-provisioning strands a shop that may
   // already exist but whose trial guards never ran — an unlimited shop with its application shut.
   it('never offers ระงับ while a provisioning run is in flight, at either freshness', () => {
-    for (const staleProvisioning of [true, false]) {
-      assert.equal(
-        canSuspendSignup(item({ state: 'PROVISIONING', source: 'line-oa', staleProvisioning })),
-        false,
-        `staleProvisioning=${staleProvisioning}`,
-      );
-    }
+    // A LIVE run, at either company state: work is still in flight.
+    assert.equal(canSuspendSignup(item({ state: 'PROVISIONING', source: 'line-oa' })), false, 'fresh');
+    assert.equal(
+      canSuspendSignup(item({ state: 'PROVISIONING', source: 'line-oa', companyId: 'co-1' })),
+      false,
+      'fresh, with a shop already stamped',
+    );
+    // B-2. An ABANDONED attempt that DID build a shop must not be stopped either — that would
+    // strand an ACTIVE company with its application shut behind it.
+    assert.equal(
+      canSuspendSignup(item({
+        state: 'PROVISIONING', source: 'line-oa', staleProvisioning: true, companyId: 'co-1',
+      })),
+      false,
+      'abandoned, but a shop exists',
+    );
+    // …and the one case the API allows under its lock: given up on, and nothing built.
+    assert.equal(
+      canSuspendSignup(item({ state: 'PROVISIONING', source: 'line-oa', staleProvisioning: true })),
+      true,
+      'abandoned with no shop is the one suspendable in-flight row',
+    );
     // HIGH-2: READY joins it. The shop EXISTS and the application has not closed, so suspending
     // strands an ACTIVE company and frees the LINE account to apply again. The API refuses it under
     // its own lock; the page must not offer a button that 409s.

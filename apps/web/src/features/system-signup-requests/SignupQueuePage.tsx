@@ -24,6 +24,7 @@ import {
   canReissueSignup,
   canSuspendSignup,
   filterSignupQueue,
+  isAbandonedEmptyAttempt,
   rejectNotifyDefault,
   rejectNotifyLabel,
   signupBusinessSummary,
@@ -70,6 +71,75 @@ function SkeletonRow() {
 
 const rowActionClass =
   'rounded border px-3 py-1 text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed';
+
+
+/**
+ * The buttons one queue row offers. Extracted from the table so the gating can be RENDERED in a
+ * spec: the page itself only reaches its rows behind `useEffect`, and the rule that matters here —
+ * which PROVISIONING rows may be suspended — is exactly the kind that a source assertion can agree
+ * with while the markup does something else.
+ */
+export function SignupRowActions({ item, busy, onApprove, onReject, onReissue, onSuspend }: {
+  item: AdminSignupQueueItemDto;
+  busy: boolean;
+  onApprove: () => void;
+  onReject: () => void;
+  onReissue: () => void;
+  onSuspend: () => void;
+}) {
+  const approve = canApproveSignup(item.state, item);
+  const reject = canRejectSignup(item.state);
+  const reissue = canReissueSignup(item.state);
+  const suspend = canSuspendSignup(item);
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      {approve && (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onApprove}
+          className={`${rowActionClass} border-green-300 bg-green-50 text-green-700 hover:bg-green-100`}
+        >
+          {busy ? 'กำลังทำรายการ...' : approveLabel(item.state)}
+        </button>
+      )}
+      {/* Rejecting is only a decision before one has been made; every other state answers 409, so
+          the button used to be a dead end. */}
+      {reject && (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onReject}
+          className={`${rowActionClass} border-red-200 bg-red-50 text-red-600 hover:bg-red-100`}
+        >
+          ปฏิเสธ
+        </button>
+      )}
+      {reissue && (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onReissue}
+          className={`${rowActionClass} border-gray-300 bg-white text-gray-700 hover:bg-gray-50`}
+        >
+          {busy ? 'กำลังทำรายการ...' : 'ส่งลิงก์ใหม่'}
+        </button>
+      )}
+      {suspend && (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onSuspend}
+          className={`${rowActionClass} border-orange-300 bg-orange-50 text-orange-700 hover:bg-orange-100`}
+        >
+          ระงับ
+        </button>
+      )}
+      {!approve && !reject && !reissue && !suspend && <span className="text-xs text-gray-400">—</span>}
+    </div>
+  );
+}
 
 export default function SignupQueuePage() {
   const toast = useToast();
@@ -198,9 +268,12 @@ export default function SignupQueuePage() {
     // stopped" would be false — closing it is a separate action on the partner page.
     const accepted = await confirm({
       title: 'ระงับคำขอ',
-      message: suspendLeavesShopRunning(item.state)
-        ? `หยุดคำขอของร้าน ${item.companyName} ใช่หรือไม่ (ร้านที่เปิดไปแล้วยังใช้ได้ ต้องไปปิดที่หน้าพาร์ทเนอร์)`
-        : `ระงับร้าน ${item.companyName} ใช่หรือไม่ ร้านจะถูกหยุดไว้จนกว่าทีมงานจะตรวจสอบ`,
+      message: isAbandonedEmptyAttempt(item)
+        // Nothing was built, so there is no shop to talk about — only a dead row to close.
+        ? `หยุดคำขอที่ค้างและยังไม่มีร้าน ของ ${item.companyName} ใช่หรือไม่`
+        : suspendLeavesShopRunning(item.state)
+          ? `หยุดคำขอของร้าน ${item.companyName} ใช่หรือไม่ (ร้านที่เปิดไปแล้วยังใช้ได้ ต้องไปปิดที่หน้าพาร์ทเนอร์)`
+          : `ระงับร้าน ${item.companyName} ใช่หรือไม่ ร้านจะถูกหยุดไว้จนกว่าทีมงานจะตรวจสอบ`,
       confirmLabel: 'ระงับ',
       variant: 'danger',
     });
@@ -556,60 +629,18 @@ export default function SignupQueuePage() {
                           </td>
                           <td className="px-4 py-3 text-xs text-gray-500">{formatThaiDateTime(item.createdAt)}</td>
                           <td className="px-4 py-3">
-                            <div className="flex flex-wrap gap-2">
-                              {canApproveSignup(item.state, item) && (
-                                <>
-                                  <button
-                                    type="button"
-                                    disabled={busy}
-                                    onClick={() => void handleApprove(item)}
-                                    className={`${rowActionClass} border-green-300 bg-green-50 text-green-700 hover:bg-green-100`}
-                                  >
-                                    {busy ? 'กำลังทำรายการ...' : approveLabel(item.state)}
-                                  </button>
-                                </>
-                              )}
-                              {/* Rejecting is only a decision before one has been made; every other
-                                  state answers 409, so the button used to be a dead end. */}
-                              {canRejectSignup(item.state) && (
-                                <button
-                                  type="button"
-                                  disabled={busy}
-                                  onClick={() => {
-                                    setNotifyApplicant(rejectNotifyDefault(item));
-                                    setRejectionReason('');
-                                    setRejecting(item);
-                                  }}
-                                  className={`${rowActionClass} border-red-200 bg-red-50 text-red-600 hover:bg-red-100`}
-                                >
-                                  ปฏิเสธ
-                                </button>
-                              )}
-                              {canReissueSignup(item.state) && (
-                                <button
-                                  type="button"
-                                  disabled={busy}
-                                  onClick={() => void handleReissue(item)}
-                                  className={`${rowActionClass} border-gray-300 bg-white text-gray-700 hover:bg-gray-50`}
-                                >
-                                  {busy ? 'กำลังทำรายการ...' : 'ส่งลิงก์ใหม่'}
-                                </button>
-                              )}
-                              {canSuspendSignup(item) && (
-                                <button
-                                  type="button"
-                                  disabled={busy}
-                                  onClick={() => void handleSuspend(item)}
-                                  className={`${rowActionClass} border-orange-300 bg-orange-50 text-orange-700 hover:bg-orange-100`}
-                                >
-                                  ระงับ
-                                </button>
-                              )}
-                              {!canApproveSignup(item.state, item) && !canRejectSignup(item.state)
-                                && !canReissueSignup(item.state) && !canSuspendSignup(item) && (
-                                <span className="text-xs text-gray-400">—</span>
-                              )}
-                            </div>
+                            <SignupRowActions
+                              item={item}
+                              busy={busy}
+                              onApprove={() => void handleApprove(item)}
+                              onReject={() => {
+                                setNotifyApplicant(rejectNotifyDefault(item));
+                                setRejectionReason('');
+                                setRejecting(item);
+                              }}
+                              onReissue={() => void handleReissue(item)}
+                              onSuspend={() => void handleSuspend(item)}
+                            />
                           </td>
                         </tr>
                       );

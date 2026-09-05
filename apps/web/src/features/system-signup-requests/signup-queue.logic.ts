@@ -115,18 +115,30 @@ export function isFinishingStrandedRow(state: string): boolean {
   return state === 'PROVISIONING_FAILED' || state === 'READY' || state === 'PROVISIONING';
 }
 
-/** Only a LINE application can be suspended: spec §3.7 is about stopping an auto-approved shop. */
+/**
+ * Only a LINE application can be suspended: spec §3.7 is about stopping an auto-approved shop.
+ *
+ * READY is never offered — the shop EXISTS and the application has not closed, so suspending
+ * strands an ACTIVE company whose trial guards may never have run and frees the LINE account to
+ * apply again. The action a READY row wants is the close-out.
+ *
+ * PROVISIONING is offered in exactly ONE case, the same one the API allows under its own lock
+ * (plan note, L-C): an ABANDONED attempt that never stamped a `companyId`. That stamp happens
+ * inside the company transaction, so no company id means nothing was built and nothing can be
+ * stranded — and without the button that row is a dead end whose only other exit is opening a shop
+ * the operator has already decided not to want. A live run, or an abandoned one that DID build a
+ * shop, still shows only the close-out.
+ */
 export function canSuspendSignup(item: AdminSignupQueueItemDto): boolean {
   if (!isLineSignup(item)) return false;
-  // Never while the shop exists but the application has not closed. SUSPENDED is terminal, so
-  // suspending here strands a shop whose trial guards may never have run — an UNLIMITED shop, with
-  // the application shut behind it — and frees the LINE account to apply again. On a live run it
-  // also races the attempt still in flight. The one action those rows offer is the close-out.
-  //
-  // The API refuses both states under its own lock (`suspend_not_allowed_in_flight`); this only
-  // keeps the page from offering a button that 409s.
-  if (item.state === 'PROVISIONING' || item.state === 'READY') return false;
+  if (item.state === 'READY') return false;
+  if (item.state === 'PROVISIONING') return isAbandonedEmptyAttempt(item);
   return item.state !== 'SUSPENDED' && item.state !== 'REJECTED';
+}
+
+/** The one suspendable PROVISIONING row: given up on by the clock, and with no shop behind it. */
+export function isAbandonedEmptyAttempt(item: AdminSignupQueueItemDto): boolean {
+  return item.state === 'PROVISIONING' && item.staleProvisioning === true && !item.companyId;
 }
 
 /** True when suspending leaves a shop already standing, so the copy must not imply it stops it. */
