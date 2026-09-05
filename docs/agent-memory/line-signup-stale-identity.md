@@ -79,6 +79,40 @@ the row whatever its status, so an owner who had unlinked was invisible to submi
   copy (support phone 098-256-5628, contact@mangmeeplus.com), NOT in web `CODE_LABELS`. The two
   PROVISIONING codes ARE in `CODE_LABELS`, because the admin toast reads them.
 
+### Review round 3 (2026-09-05) — sweep around the change
+
+- MED-1 (cross-flow race): `link-line-identity.use-case.ts` re-points the SAME UNLINKED row from a
+  flow an owner can trigger at will, and did it with an unlocked read-then-update. Its UPDATE
+  waited on the row lock and then overwrote a just-committed re-point from onboarding, taking the
+  LINE credential off the owner of the shop that had just been built. Both sites now decide inside
+  one transaction holding `pg_advisory_xact_lock(hashtextextended(<key>, 0))` and RE-READ inside
+  the lock. The key comes from ONE builder, `common/database/line-identity-lock.ts`
+  (`lineIdentityLockKey`) — a divergent literal is a lock that locks nothing, and nothing would
+  fail until the day it mattered. Keyed on the canonical channel: the only channel either writer
+  creates rows on, so the link's legacy-channel fallback cannot collide with provisioning.
+- MED-2: the link path clears `LineCompanyContext.aiPausedUntil`. It can move a severed LINE
+  account to a DIFFERENT user, so the previous owner's support hold would otherwise silence the
+  assistant in somebody else's shop. The third site — the chat's own company switcher at
+  `process-line-webhook.use-case.ts` — KEEPS the pause on purpose and now says why in one line:
+  the same person switching between their own shops mid-conversation is not asking for the thread
+  back.
+- LOW-1: reverted the `apps/api/package.json` `scripts.test` addition. `spec-suite-coverage.spec.ts`
+  exempts `*.pg.spec.ts` (`NEEDS_DATABASE`), so the wiring meta-test never wanted it, and AGENTS.md
+  forbids non-dependency `package.json` edits. `package.json` is now byte-identical to
+  origin/develop; the explicit CI step is the spec's only runner, and `pnpm test` no longer names it.
+- LOW-4 (repeat-trial intent): both readers now share ONE predicate,
+  `OWNED_COMPANY_MEMBERSHIP` in `domain/company-signup.logic.ts` — OWNER role, and NOT DRAFT.
+  **Onboarding creates the owner membership `status: 'ACTIVE'` inside the company transaction**, at
+  creation and not at completion, so a shop that really opened never sits in DRAFT; DRAFT only ever
+  means an employee draft (`create-employee.use-case.ts`) that nobody finished, and those carry
+  roles. INVITED/SUSPENDED/DISABLED still count — those shops existed.
+- Item 5 (queue vs chat "expired"): the queue now uses the assistant's exact pair — company
+  `DISABLED` **and** `planTerm.termDisabledAt` — instead of the stamp alone. A SUSPENDED shop read
+  as "หมดอายุ" before, so an operator would offer a renewal for a suspension only an admin can lift.
+  The unreachable "unknown identity status" branch stays as the fail-closed default; the comment no
+  longer claims it is a case anything can produce.
+- `liff-page.security.ts` deliberately untouched in this round — the LIFF UX branch is rewriting it.
+
 ## Artifacts
 
 - `apps/api/src/modules/external-signup/application/submit-line-signup.use-case.ts`
@@ -89,23 +123,23 @@ the row whatever its status, so an owner who had unlinked was invisible to submi
 - `packages/contracts/src/external-signup.ts`
 - `apps/web/src/features/system-signup-requests/signup-queue.logic.ts`, `SignupQueuePage.tsx`
 - `apps/web/src/common/api/api-error-message.ts`
-- `apps/api/src/modules/external-signup/line-signup-stale-identity.pg.spec.ts` (new; added to the
-  fixed api test list in `apps/api/package.json`)
+- `apps/api/src/common/database/line-identity-lock.ts` (new; the one lock-key builder)
+- `apps/api/src/modules/auth/application/use-cases/link-line-identity.use-case.ts`
+- `apps/api/src/modules/external-signup/line-signup-stale-identity.pg.spec.ts` (new; run ONLY by the
+  explicit CI step — `package.json` is untouched)
 - `docs/runbooks/line-first-signup-support-playbook.md` (support entry)
 - `.github/workflows/ci.yml` (the three pg specs now run in `typecheck-and-test`)
 
 ## Verification
 
-- api fixed list, with `LINE_SIGNUP_TEST_DATABASE_URL` set: pretest 30 tests / 16 pass / 0 fail /
-  14 skipped; test 6461 tests / 6362 pass / 0 fail / 99 skipped (stable across two runs; the
-  6475 figure recorded on 2026-09-03 came from date-sensitive specs, not from a lost file — the
-  "every spec file is wired into a package.json script" meta-test passes and `git diff` shows a
-  net +6 `it(` blocks). Without the variable the pg spec reports 0 tests / 0 fail: it skips.
-- pg spec against local docker (`postgresql://…@127.0.0.1:15432/watchdog_bms`): 5/5 pass; the
+- api fixed list: pretest 30 tests / 16 pass / 0 fail / 14 skipped; test 6477 tests / 6378 pass /
+  0 fail / 99 skipped. The new pg spec is NOT in that list any more (LOW-1) — it runs from the CI
+  step, and `pnpm test` no longer names it.
+- pg spec against local docker (`postgresql://…@127.0.0.1:15432/watchdog_bms`): 7/7 pass; the
   database row counts are identical before and after, so cleanup is complete.
-- pg spec on a CLEAN container (`migrate deploy` + `sync-permissions`, nothing else): 5/5, and the
-  other two `*_TEST_DATABASE_URL` specs pass beside it when each is its own invocation. Run
-  together they fail on `lower(username)` — which is why the CI step sequences them.
+- pg spec on a CLEAN container (`migrate deploy` + `sync-permissions`, nothing else) passed at the
+  round-2 head, and the other two `*_TEST_DATABASE_URL` specs pass beside it when each is its own
+  invocation. Run together they fail on `lower(username)` — which is why the CI step sequences them.
 - `pnpm --filter @watchdog-bms/web test` — 1478 tests, 1478 pass, 0 fail, 0 skipped.
 - `pnpm --filter @watchdog-bms/web build` — exit 0.
 - `pnpm -r typecheck` green (api `tsc --noEmit` needs `NODE_OPTIONS=--max-old-space-size=8192`
@@ -121,6 +155,15 @@ the row whatever its status, so an owner who had unlinked was invisible to submi
   | B2 — move the user-status guard back after the UNLINKED return | 2 failures: submit unit "refuses a suspended account that unlinked first", pg blocked-refusals case |
   | B3 — drop `pg_advisory_xact_lock` from the re-point | 2 failures: pg concurrency case (both runs claimed the row), onboarding unit lock assertion |
   | N4 — inherit `aiPausedUntil` again | 2 failures: provision unit trial-guards case, pg end-to-end case |
+  | MED-1 — drop the lock from the link use-case | 2 failures: link unit "decides the identity slot under the shared advisory key", pg "link and approve contend for one stale slot" |
+  | MED-2 — inherit `aiPausedUntil` on the link path | 1 failure: link unit "clears the support pause when the context moves" |
+  | LOW-4 — count DRAFT again (one shared predicate, so both readers at once) | 3 failures: submit unit, queue unit, pg DRAFT case |
+  | Item 5 — read the term stamp alone again | 1 failure: queue unit "calls a shop expired on exactly the pair the LINE assistant uses" |
+
+  Note on the MED-1 mutation: an UNTIMED race passed with no lock at all, because the link's short
+  transaction always commits before provisioning reaches the identity block. The pg test now starts
+  the link at the one window that matters — provisioning's identity row written, transaction still
+  open — via a gate on `recordFromEvidence`, the statement immediately after the identity block.
 
 ## Open questions
 
