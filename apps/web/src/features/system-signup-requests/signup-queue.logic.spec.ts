@@ -12,6 +12,7 @@ import {
   isFinishingStrandedRow,
   isLineSignup,
   signupBusinessSummary,
+  signupFailureChip,
   signupHintChips,
   signupIdleChip,
   signupStateChip,
@@ -286,6 +287,53 @@ describe('signupHintChips — the phone duplicate hint', () => {
     const chips = signupHintChips(item({ source: 'line-oa', attachesToExistingAccount: true }));
     assert.ok(chips.some((chip) => chip.label === 'LINE นี้มีบัญชีอยู่แล้ว จะเพิ่มเป็นร้านที่ 2'));
     assert.equal(signupHintChips(item({ source: 'line-oa' })).length, 0);
+  });
+});
+
+// Owner 2026-09-05. A closed shop plus a fresh signup is a REPEAT free trial, and the operator has
+// to see which shop before the approve button rather than after the second one exists.
+describe('signupHintChips — the repeat-trial hint', () => {
+  const repeat = (priorCompanyState?: string) =>
+    signupHintChips(item({ source: 'line-oa', priorCompanyName: 'ร้านเก่า', priorCompanyState }));
+
+  it('names the shop and how it stands today', () => {
+    assert.ok(repeat('CLOSED').some((c) => c.label === 'LINE นี้เคยมีร้าน: ร้านเก่า (ปิดอยู่)'));
+    assert.ok(repeat('EXPIRED').some((c) => c.label === 'LINE นี้เคยมีร้าน: ร้านเก่า (หมดอายุ)'));
+    assert.ok(repeat('ACTIVE').some((c) => c.label === 'LINE นี้เคยมีร้าน: ร้านเก่า (ใช้งานอยู่)'));
+    assert.equal(repeat('CLOSED').find((c) => c.label.startsWith('LINE นี้เคยมีร้าน'))!.tone, 'warning');
+  });
+
+  it('still names the shop when the API sends a state this build does not know', () => {
+    assert.ok(repeat('SOMETHING_NEW').some((c) => c.label === 'LINE นี้เคยมีร้าน: ร้านเก่า (ไม่ทราบสถานะ)'));
+  });
+
+  it('says nothing for a first-time applicant', () => {
+    assert.deepEqual(signupHintChips(item({ source: 'line-oa' })), []);
+  });
+});
+
+/**
+ * The failure code the queue now carries. PROVISIONING_FAILED reads the same for a database outage
+ * and for a LINE account that belongs to somebody else — only one of which an admin can fix.
+ */
+describe('signupFailureChip', () => {
+  it('says what to fix for the two LINE identity refusals', () => {
+    assert.equal(
+      signupFailureChip(item({ failureCode: 'line_identity_already_linked' }))!.label,
+      'LINE นี้ผูกกับบัญชีอื่นอยู่ ต้องปลดการเชื่อมก่อนจึงเปิดร้านได้',
+    );
+    assert.equal(signupFailureChip(item({ failureCode: 'line_identity_disabled' }))!.tone, 'danger');
+  });
+
+  it('stays silent rather than putting a machine string in front of an operator', () => {
+    assert.equal(signupFailureChip(item({ failureCode: 'connection_reset' })), null);
+    assert.equal(signupFailureChip(item()), null);
+  });
+
+  // The tab an operator finds these rows on.
+  it('keeps a failed LINE row on the problem tab', () => {
+    const failed = item({ state: 'PROVISIONING_FAILED', source: 'line-oa', failureCode: 'line_identity_already_linked' });
+    assert.deepEqual(filterSignupQueue([failed], 'PROBLEM'), [failed]);
   });
 });
 
