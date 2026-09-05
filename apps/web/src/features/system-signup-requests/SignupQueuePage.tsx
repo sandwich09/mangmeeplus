@@ -24,7 +24,6 @@ import {
   canRejectSignup,
   canReissueSignup,
   canSuspendSignup,
-  filterSignupQueue,
   isAbandonedEmptyAttempt,
   rejectNotifyDefault,
   rejectNotifyLabel,
@@ -154,6 +153,11 @@ export default function SignupQueuePage() {
   const [packageItems, setPackageItems] = useState<AdminPackageChangeItemDto[] | null>(null);
   const [tabError, setTabError] = useState<string | null>(null);
   const [tab, setTab] = useState<SignupQueueTab>('ALL');
+  // R13: how far this tab has been paged, and how many rows the DATABASE holds per tab — the page
+  // can only ever count what it was handed, which is how a tab came to claim it was empty.
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [counts, setCounts] = useState<Record<string, number> | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -171,16 +175,36 @@ export default function SignupQueuePage() {
   // shop they decided next.
   const [packageNotes, setPackageNotes] = useState<Record<string, string>>({});
 
-  const load = async () => {
+  // R13: one page of ONE tab, from the server. Reloading always restarts at the first page —
+  // an action that changed a row must not leave the operator looking at a stale later page.
+  const load = async (forTab: SignupQueueTab = tab) => {
     setLoading(true);
     setError(null);
     try {
-      setItems((await listSignupRequests()).items);
+      const page = await listSignupRequests({ tab: tabLoadsOwnList(forTab) ? 'ALL' : forTab });
+      setItems(page.items);
+      setNextCursor(page.nextCursor ?? null);
+      setCounts(page.counts ?? null);
     } catch (err) {
       const e = err as Error & { status?: number };
       setError(e.status === 403 ? 'คุณไม่มีสิทธิ์ดูคำขอสมัครใช้งาน' : apiErrorMessage(err));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadMore = async () => {
+    if (!nextCursor) return;
+    setLoadingMore(true);
+    try {
+      const page = await listSignupRequests({ tab, cursor: nextCursor });
+      // Appended: a "load more" that replaces the list is a pager that loses what you were reading.
+      setItems((current) => [...current, ...page.items]);
+      setNextCursor(page.nextCursor ?? null);
+    } catch (err) {
+      setError(apiErrorMessage(err));
+    } finally {
+      setLoadingMore(false);
     }
   };
 
@@ -202,7 +226,10 @@ export default function SignupQueuePage() {
     // A failure belongs to the tab that produced it: leaving it up over another tab reports a
     // problem the operator is not looking at, on a list that loaded fine.
     setTabError(null);
+    // R13: the tab is a server-side filter now, so switching one is a fetch, not a re-filter of
+    // whatever page happened to be in memory.
     if (tabLoadsOwnList(next)) void loadTab(next);
+    else void load(next);
   };
 
   useEffect(() => {
@@ -366,13 +393,18 @@ export default function SignupQueuePage() {
     && requiresCategoryChoice(approving)
     && businessCategory === 'OTHER';
 
-  const visible = tab === 'AUTO_APPROVED' ? (autoItems ?? []) : filterSignupQueue(items, tab);
+  const visible = tab === 'AUTO_APPROVED' ? (autoItems ?? []) : items;
+  // R13: "no applications in this group" is a claim about the DATABASE, so it may only be made
+  // when the server counted zero. A page that simply has not loaded says nothing.
+  const emptyForReal = tab === 'AUTO_APPROVED'
+    ? autoItems !== null && autoItems.length === 0
+    : visible.length === 0 && (counts?.[tab] ?? 0) === 0;
 
-  /** Only the tabs that filter the main queue can show a count before they are opened. */
+  /** Counted server-side over the whole queue; the two own-endpoint tabs still count their list. */
   const tabCount = (key: SignupQueueTab): number | null => {
     if (key === 'AUTO_APPROVED') return autoItems?.length ?? null;
     if (key === 'PACKAGE_CHANGE') return packageItems?.length ?? null;
-    return filterSignupQueue(items, key).length;
+    return counts?.[key] ?? null;
   };
 
   return (
@@ -658,7 +690,7 @@ export default function SignupQueuePage() {
                   ) : visible.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="px-4 py-12 text-center text-sm text-gray-400">
-                        ไม่มีคำขอในกลุ่มนี้
+                        {emptyForReal ? 'ไม่มีคำขอในกลุ่มนี้' : 'ยังโหลดรายการไม่ได้ กดลองใหม่อีกครั้ง'}
                       </td>
                     </tr>
                   ) : (
@@ -738,6 +770,23 @@ export default function SignupQueuePage() {
                 </tbody>
               </table>
             </div>
+            {/* R13: the way past the first page. Without it the queue simply stopped at whatever it
+                had read, and rows behind that were unreachable from the console at all. */}
+            {tab !== 'AUTO_APPROVED' && nextCursor && (
+              <div className="border-t border-gray-100 px-4 py-3 text-center">
+                <button
+                  type="button"
+                  disabled={loadingMore}
+                  onClick={() => void loadMore()}
+                  className="rounded-lg border border-gray-300 bg-white px-4 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40"
+                >
+                  {loadingMore ? 'กำลังโหลด...' : 'โหลดเพิ่ม'}
+                </button>
+                <p className="mt-1.5 text-xs text-gray-400">
+                  แสดง {visible.length} จาก {counts?.[tab] ?? visible.length} รายการ
+                </p>
+              </div>
+            )}
           </div>
         )}
       </div>

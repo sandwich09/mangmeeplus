@@ -227,7 +227,9 @@ export function rejectNotifyLabel(item: AdminSignupQueueItemDto): string {
   return isLineSignup(item) ? 'แจ้งทางไลน์' : 'ส่งอีเมลแจ้งผู้สมัคร';
 }
 
-export type SignupQueueTab = 'ALL' | 'PENDING_REVIEW' | 'AWAITING_CLAIM' | 'PROBLEM' | 'AUTO_APPROVED' | 'PACKAGE_CHANGE';
+export type SignupQueueTab =
+  | 'ALL' | 'PENDING_REVIEW' | 'AWAITING_CLAIM' | 'PROBLEM' | 'ARCHIVED'
+  | 'AUTO_APPROVED' | 'PACKAGE_CHANGE';
 
 /** Review B-09 / §8: 14 days of what AUTO_FREE let through, for after-the-fact review. */
 export const AUTO_APPROVED_REVIEW_DAYS = 14;
@@ -237,6 +239,9 @@ export const SIGNUP_QUEUE_TABS: { key: SignupQueueTab; label: string }[] = [
   { key: 'PENDING_REVIEW', label: 'รออนุมัติ' },
   { key: 'AWAITING_CLAIM', label: 'รอตั้งรหัส' },
   { key: 'PROBLEM', label: 'มีปัญหา' },
+  // R13: a rejected, suspended or expired application appeared on no list at all, so "where did
+  // that application go" had no answer anywhere in the console.
+  { key: 'ARCHIVED', label: 'ปิดไปแล้ว' },
   { key: 'AUTO_APPROVED', label: `อนุมัติอัตโนมัติ ${AUTO_APPROVED_REVIEW_DAYS} วัน` },
   { key: 'PACKAGE_CHANGE', label: 'คำขอเปลี่ยนแพ็กเกจ' },
 ];
@@ -246,18 +251,6 @@ export function tabLoadsOwnList(tab: SignupQueueTab): boolean {
   return tab === 'AUTO_APPROVED' || tab === 'PACKAGE_CHANGE';
 }
 
-export function filterSignupQueue(
-  items: AdminSignupQueueItemDto[],
-  tab: SignupQueueTab,
-): AdminSignupQueueItemDto[] {
-  if (tab === 'ALL') return items;
-  if (tab === 'PENDING_REVIEW') return items.filter((i) => i.state === 'PENDING_REVIEW');
-  if (tab === 'AWAITING_CLAIM') return items.filter((i) => i.state === 'EMAIL_PENDING' && !i.emailDeliveryFailed);
-  // A bounce flag counts as a problem even if the state has not flipped to EMAIL_FAILED yet, and a
-  // provisioning that failed is the most actionable problem of the lot. An ABANDONED run belongs
-  // here too — it is the one an operator most needs to find — while a live one is not a problem.
-  return items.filter((i) => i.state === 'EMAIL_FAILED' || i.state === 'EXPIRED'
-    || i.state === 'PROVISIONING_FAILED' || i.state === 'READY'
-    || (i.state === 'PROVISIONING' && i.staleProvisioning === true)
-    || i.emailDeliveryFailed);
-}
+// R13: what each tab holds is decided by the API now (`queueWhere` in signup-admin-queue.use-case),
+// because filtering here could only ever filter the page that happened to arrive — which is how a
+// tab came to report "no applications in this group" over a backlog the database was holding.

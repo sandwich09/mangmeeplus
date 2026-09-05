@@ -18,6 +18,7 @@ import { daysSinceApproval } from '../domain/account-claim.logic';
 import {
   OWNED_COMPANY_MEMBERSHIP,
   SIGNUP_SOURCE_LINE_OA,
+  STALE_PROVISIONING_MS,
   isStaleProvisioning,
   type CompanySignupState,
 } from '../domain/company-signup.logic';
@@ -56,6 +57,35 @@ const SETTLED_STATES: readonly CompanySignupState[] = ['PROVISIONING', 'COMPLETE
 /** States a LINE application can be approved out of: the first decision, and the two recoveries. */
 const LINE_APPROVABLE_STATES: readonly CompanySignupState[] = ['PENDING_REVIEW', 'PROVISIONING_FAILED', 'READY'];
 
+/**
+ * R13: an application that has been decided against. Nothing here is actionable from the queue, but
+ * "where did that application go" is a question an operator has every week and the answer used to
+ * be nowhere — REJECTED and SUSPENDED rows appeared in no list at all. EXPIRED is in BOTH this and
+ * the actionable queue on purpose: it is reissuable (spec §4D ④) and it is also what an operator
+ * looking for a dropped application is most often looking for.
+ */
+const ARCHIVED_STATES: readonly CompanySignupState[] = ['REJECTED', 'SUSPENDED', 'EXPIRED'];
+
+/** The bounced/expired/failed rows the "มีปัญหา" tab exists for, minus the time-based one. */
+const PROBLEM_STATES: readonly CompanySignupState[] = ['EMAIL_FAILED', 'EXPIRED'];
+const LINE_PROBLEM_STATES: readonly CompanySignupState[] = ['PROVISIONING_FAILED', 'READY'];
+
+/**
+ * R13. One page of the queue. Defaults chosen for the operator, not the database: 50 rows is more
+ * than a phone screen and less than a scroll nobody finishes, and the ceiling exists because the
+ * limit arrives from a query string.
+ */
+const DEFAULT_PAGE_SIZE = 50;
+const MAX_PAGE_SIZE = 200;
+
+export type SignupQueueListOptions = {
+  /** A `SignupQueueTab` the server understands. Absent = the whole actionable queue. */
+  tab?: string;
+  /** Id of the last row of the previous page. */
+  cursor?: string;
+  limit?: number;
+};
+
 @Injectable()
 export class SignupAdminQueueUseCase {
   constructor(
@@ -67,18 +97,27 @@ export class SignupAdminQueueUseCase {
     private readonly lineNotify: LineSignupNotifyService,
   ) {}
 
-  async list(now = new Date()): Promise<AdminSignupQueueDto> {
-    const requests = await this.prisma.client.companySignupRequest.findMany({
-      where: {
-        OR: [
-          { state: { in: QUEUE_STATES as CompanySignupState[] } },
-          { state: { in: LINE_ONLY_QUEUE_STATES as CompanySignupState[] }, source: SIGNUP_SOURCE_LINE_OA },
-        ],
-      },
-      orderBy: [{ state: 'asc' }, { createdAt: 'asc' }],
-      take: 200,
+  /**
+   * R13: the tab is decided HERE, and the page is a page. The first version read 200 rows with no
+   * cursor and let the browser filter and count them, so a backlog past 200 was invisible, a tab
+   * could report "no applications in this group" over rows the database was holding, and every
+   * count was a count of the truncation rather than of the queue.
+   */
+  async list(now = new Date(), options: SignupQueueListOptions = {}): Promise<AdminSignupQueueDto> {
+    const pageSize = Math.min(Math.max(Math.trunc(options.limit ?? DEFAULT_PAGE_SIZE), 1), MAX_PAGE_SIZE);
+    // One more than the page, purely as a probe: its presence is what says another page exists.
+    const rows = await this.prisma.client.companySignupRequest.findMany({
+      where: queueWhere(options.tab, now),
+      // Oldest first — this is a work queue — with the id as tiebreaker, because a cursor over a
+      // non-deterministic order skips and repeats rows between pages.
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      take: pageSize + 1,
+      ...(options.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
     });
-    if (requests.length === 0) return { items: [] };
+    const requests = rows.slice(0, pageSize);
+    const nextCursor = rows.length > pageSize ? requests[requests.length - 1]?.id ?? null : null;
+    const counts = await this.tabCounts(now);
+    if (requests.length === 0) return { items: [], nextCursor: null, counts };
 
     // Two batched lookups rather than per-row queries: the hints are the whole point of the queue,
     // and an admin opening it should not pay N round-trips for N applications.
@@ -102,6 +141,48 @@ export class SignupAdminQueueUseCase {
     return {
       items: requests.map((request) =>
         toQueueItem(request, knownEmails, companyByTaxId, phoneMatches, priorCompanies, now)),
+      nextCursor,
+      counts,
+    };
+  }
+
+  /**
+   * R13: what each tab holds IN THE DATABASE, so the page never reports a count of the page it
+   * happens to have. Two reads: one grouping by state and source, and one for abandoned
+   * provisioning runs — which no state count can see, because the clock decides that one.
+   */
+  private async tabCounts(now: Date): Promise<Record<string, number>> {
+    const [grouped, staleProvisioning] = await Promise.all([
+      this.prisma.client.companySignupRequest.groupBy({
+        by: ['state', 'source'],
+        where: {
+          state: {
+            in: [...new Set([...QUEUE_STATES, ...LINE_ONLY_QUEUE_STATES, ...ARCHIVED_STATES])] as CompanySignupState[],
+          },
+        },
+        _count: { _all: true },
+      }),
+      this.prisma.client.companySignupRequest.count({ where: staleProvisioningWhere(now) }),
+    ]);
+
+    const total = (state: CompanySignupState, lineOnly = false) => grouped
+      .filter((row) => row.state === state && (!lineOnly || row.source === SIGNUP_SOURCE_LINE_OA))
+      .reduce((sum, row) => sum + row._count._all, 0);
+
+    const pendingReview = total('PENDING_REVIEW');
+    // The web filter reads EMAIL_PENDING without a bounce flag; a bounce IS the EMAIL_FAILED state.
+    const awaitingClaim = total('EMAIL_PENDING');
+    const problem = total('EMAIL_FAILED') + total('EXPIRED')
+      + total('PROVISIONING_FAILED', true) + total('READY', true)
+      + staleProvisioning;
+    return {
+      // Everything actionable: the same set `queueWhere(undefined)` returns, counted whole. A live
+      // PROVISIONING run is listed there but is not a problem, so it is added separately.
+      ALL: pendingReview + awaitingClaim + problem + (total('PROVISIONING', true) - staleProvisioning),
+      PENDING_REVIEW: pendingReview,
+      AWAITING_CLAIM: awaitingClaim,
+      PROBLEM: problem,
+      ARCHIVED: ARCHIVED_STATES.reduce((sum, state) => sum + total(state), 0),
     };
   }
 
@@ -508,6 +589,49 @@ export class SignupAdminQueueUseCase {
       },
     });
   }
+}
+
+/**
+ * R13: an abandoned provisioning run, as a query. The fence decides this with `isStaleProvisioning`
+ * against the same clock; the two MUST agree, so the threshold comes from that module's constant
+ * and never from a number typed here.
+ */
+function staleProvisioningWhere(now: Date) {
+  return {
+    state: 'PROVISIONING' as CompanySignupState,
+    source: SIGNUP_SOURCE_LINE_OA,
+    provisioningStartedAt: { lt: new Date(now.getTime() - STALE_PROVISIONING_MS) },
+  };
+}
+
+/**
+ * R13: what one tab holds. The page used to decide this over whatever 200 rows it had been given,
+ * which is why a tab could show nothing while the database held a backlog. One definition, on the
+ * server, used for both the page and its count.
+ *
+ * No tab (the default) is the whole actionable queue, byte-identical to what this asked for before
+ * paging existed — a web-form row in a LINE-only state still has no retry an admin could reach.
+ */
+function queueWhere(tab: string | undefined, now: Date) {
+  if (tab === 'PENDING_REVIEW') return { state: 'PENDING_REVIEW' as CompanySignupState };
+  // A bounce IS the EMAIL_FAILED state, so "waiting to set a password" is EMAIL_PENDING exactly.
+  if (tab === 'AWAITING_CLAIM') return { state: 'EMAIL_PENDING' as CompanySignupState };
+  if (tab === 'ARCHIVED') return { state: { in: ARCHIVED_STATES as CompanySignupState[] } };
+  if (tab === 'PROBLEM') {
+    return {
+      OR: [
+        { state: { in: PROBLEM_STATES as CompanySignupState[] } },
+        { state: { in: LINE_PROBLEM_STATES as CompanySignupState[] }, source: SIGNUP_SOURCE_LINE_OA },
+        staleProvisioningWhere(now),
+      ],
+    };
+  }
+  return {
+    OR: [
+      { state: { in: QUEUE_STATES as CompanySignupState[] } },
+      { state: { in: LINE_ONLY_QUEUE_STATES as CompanySignupState[] }, source: SIGNUP_SOURCE_LINE_OA },
+    ],
+  };
 }
 
 /** The one shop a repeat applicant already had, and how it stands today. */

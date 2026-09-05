@@ -9,7 +9,6 @@ import {
   canReissueSignup,
   canSuspendSignup,
   suspendLeavesShopRunning,
-  filterSignupQueue,
   isFinishingStrandedRow,
   isLineSignup,
   signupBusinessSummary,
@@ -102,18 +101,6 @@ describe('a failed provisioning is actionable, not just labelled', () => {
       assert.equal(isFinishingStrandedRow(state), true, state);
     }
     assert.equal(isFinishingStrandedRow('PENDING_REVIEW'), false);
-  });
-
-  it('lists every recoverable row under the problem tab, where an operator would look', () => {
-    const stale = item({ state: 'PROVISIONING', source: 'line-oa', staleProvisioning: true });
-    const live = item({ state: 'PROVISIONING', source: 'line-oa' });
-    const items = [failed(), ready(), stale, live, item({ state: 'PENDING_REVIEW' })];
-    // An abandoned run is the one an operator most needs to find; a live one is not a problem yet.
-    assert.deepEqual(
-      filterSignupQueue(items, 'PROBLEM').map((i) => i.state),
-      ['PROVISIONING_FAILED', 'READY', 'PROVISIONING'],
-    );
-    assert.equal(filterSignupQueue(items, 'PROBLEM').includes(live), false);
   });
 
   // Review MEDIUM-2: SUSPENDED is terminal, so suspending mid-provisioning strands a shop that may
@@ -243,34 +230,6 @@ describe('queue actions', () => {
   });
 });
 
-describe('filterSignupQueue', () => {
-  const pending = item({ requestId: 'a', state: 'PENDING_REVIEW' });
-  const awaiting = item({ requestId: 'b', state: 'EMAIL_PENDING' });
-  const bounced = item({ requestId: 'c', state: 'EMAIL_FAILED', emailDeliveryFailed: true });
-  const expired = item({ requestId: 'd', state: 'EXPIRED' });
-  const all = [pending, awaiting, bounced, expired];
-
-  it('keeps every row on the ALL tab', () => {
-    assert.equal(filterSignupQueue(all, 'ALL').length, 4);
-  });
-
-  it('splits waiting-for-review from waiting-for-the-applicant', () => {
-    assert.deepEqual(filterSignupQueue(all, 'PENDING_REVIEW').map((i) => i.requestId), ['a']);
-    assert.deepEqual(filterSignupQueue(all, 'AWAITING_CLAIM').map((i) => i.requestId), ['b']);
-  });
-
-  it('groups bounced and expired requests as problems', () => {
-    assert.deepEqual(filterSignupQueue(all, 'PROBLEM').map((i) => i.requestId), ['c', 'd']);
-  });
-
-  it('treats a bounce flag as a problem even before the state flips', () => {
-    const flagged = item({ requestId: 'e', state: 'EMAIL_PENDING', emailDeliveryFailed: true });
-    assert.deepEqual(filterSignupQueue([flagged], 'PROBLEM').map((i) => i.requestId), ['e']);
-    assert.deepEqual(filterSignupQueue([flagged], 'AWAITING_CLAIM'), []);
-  });
-});
-
-
 // Review A-01. The commonest duplicate is a customer an admin opened a shop for by hand, who then
 // applies from LINE as if they were new — approving that gives one person two shops.
 describe('signupHintChips — the phone duplicate hint', () => {
@@ -333,11 +292,6 @@ describe('signupFailureChip', () => {
     assert.equal(signupFailureChip(item()), null);
   });
 
-  // The tab an operator finds these rows on.
-  it('keeps a failed LINE row on the problem tab', () => {
-    const failed = item({ state: 'PROVISIONING_FAILED', source: 'line-oa', failureCode: 'line_identity_already_linked' });
-    assert.deepEqual(filterSignupQueue([failed], 'PROBLEM'), [failed]);
-  });
 });
 
 // §8 vs §4D: the default follows the rail, because the two rails fail in opposite directions.
@@ -359,6 +313,9 @@ describe('queue tabs', () => {
     const keys = SIGNUP_QUEUE_TABS.map((tab) => tab.key);
     assert.ok(keys.includes('AUTO_APPROVED'));
     assert.ok(keys.includes('PACKAGE_CHANGE'));
+    // R13: a rejected or suspended application appeared on no list at all, so "where did that
+    // application go" had no answer anywhere in the console.
+    assert.ok(keys.includes('ARCHIVED'));
     assert.equal(SIGNUP_QUEUE_TABS.find((tab) => tab.key === 'AUTO_APPROVED')!.label, 'อนุมัติอัตโนมัติ 14 วัน');
 
     assert.equal(tabLoadsOwnList('AUTO_APPROVED'), true);

@@ -1,6 +1,8 @@
-import { Body, Controller, Get, HttpCode, Param, Post, Req } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, Post, Query, Req } from '@nestjs/common';
 import { ApiOperation, ApiResponse } from '@nestjs/swagger';
-import { IsBoolean, IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
+import {
+  IsBoolean, IsIn, IsNumberString, IsOptional, IsString, Matches, MaxLength,
+} from 'class-validator';
 import type { Request } from 'express';
 import {
   COMPANY_BUSINESS_CATEGORIES,
@@ -27,6 +29,16 @@ export class SignupDecisionRequestDto {
   @IsString() @MaxLength(SIGNUP_REJECTION_REASON_MAX_LENGTH) @IsOptional() rejectionReason?: string;
 }
 
+/** R13: the queue's page and tab, arriving as a query string, so each one is bounded here. */
+export class SignupQueueQueryDto {
+  // Unknown values are not an error — the use case falls through to the whole actionable queue —
+  // but the set is closed so a caller cannot invent a filter the counts do not know about.
+  @IsIn(['ALL', 'PENDING_REVIEW', 'AWAITING_CLAIM', 'PROBLEM', 'ARCHIVED']) @IsOptional() tab?: string;
+  // A cuid from a previous page, never something the operator types.
+  @IsString() @MaxLength(64) @Matches(/^[A-Za-z0-9_-]+$/) @IsOptional() cursor?: string;
+  @IsNumberString() @IsOptional() limit?: string;
+}
+
 /**
  * System Admin review queue (spec §4C). Gated by the onboarding permissions rather than a new key:
  * reading the queue is reading pending onboardings, and approving one is what causes a company to
@@ -44,9 +56,15 @@ export class SystemSignupRequestController {
 
   @Get()
   @RequirePermissions('system.company_onboarding.read')
-  @ApiOperation({ summary: 'List signup applications awaiting review or claim' })
-  list(): Promise<AdminSignupQueueDto> {
-    return this.queue.list();
+  @ApiOperation({ summary: 'List one page of one tab of the signup queue, with whole-queue counts' })
+  list(@Query() query: SignupQueueQueryDto): Promise<AdminSignupQueueDto> {
+    // R13: the tab and the page belong to the database, not to a browser filtering 200 rows. The
+    // DTO bounds all three; an unknown tab falls through to the whole actionable queue.
+    return this.queue.list(new Date(), {
+      ...(query.tab ? { tab: query.tab } : {}),
+      ...(query.cursor ? { cursor: query.cursor } : {}),
+      ...(query.limit ? { limit: Number(query.limit) } : {}),
+    });
   }
 
   @Get('auto-approved')

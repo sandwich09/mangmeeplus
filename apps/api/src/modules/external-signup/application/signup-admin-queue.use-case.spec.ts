@@ -37,6 +37,10 @@ function harness(options: {
    * What those accounts already belong to, oldest first. `owner: false` is an employee membership —
    * their EMPLOYER's shop, which must never be named as a trial this applicant already had.
    */
+  /** R13: `groupBy(['state','source'])` rows behind the tab counts. */
+  stateCounts?: Array<{ state: string; source: string; _count: { _all: number } }>;
+  /** R13: abandoned PROVISIONING runs, which no state count can see (the clock decides). */
+  staleProvisioningCount?: number;
   priorMemberships?: Array<{
     userId: string;
     owner: boolean;
@@ -60,6 +64,9 @@ function harness(options: {
         findUnique: async () => (options.request === undefined ? { ...REQUEST } : options.request),
         findMany: async (args: any) => { requestQueries.push(args); return options.requests ?? []; },
         update: async (args: any) => { updates.push(args); return {}; },
+        // R13: the tab counts are read from the whole table, never from the page just fetched.
+        groupBy: async () => options.stateCounts ?? [],
+        count: async () => options.staleProvisioningCount ?? 0,
       },
       user: { findMany: async (args: any) => { userQueries.push(args); return options.users ?? []; } },
       company: {
@@ -599,6 +606,92 @@ describe('SignupAdminQueueUseCase.decide — suspend', () => {
     assert.equal(result.state, 'SUSPENDED');
     assert.deepEqual(h.advances, []);
     assert.deepEqual(h.audits, []);
+  });
+});
+
+// R13: the queue read 200 rows and the page filtered and counted whatever came back — so a backlog
+// past 200 was invisible, a tab could show "ไม่มีคำขอในกลุ่มนี้" over rows the database was holding,
+// and REJECTED/SUSPENDED applications could not be found at all.
+describe('SignupAdminQueueUseCase.list — filtering, paging and counts', () => {
+  const page = (n: number) => Array.from({ length: n }, (_, i) => ({
+    ...REQUEST,
+    id: `signup-${i + 1}`,
+    createdAt: new Date(NOW.getTime() - (n - i) * 60_000),
+  }));
+
+  it('asks the database for one tab rather than filtering a truncated page in the browser', async () => {
+    const h = harness({ requests: [] });
+    await h.useCase.list(NOW, { tab: 'PENDING_REVIEW' });
+    assert.deepEqual(h.requestQueries[0].where, { state: 'PENDING_REVIEW' });
+
+    const claim = harness({ requests: [] });
+    await claim.useCase.list(NOW, { tab: 'AWAITING_CLAIM' });
+    assert.deepEqual(claim.requestQueries[0].where, { state: 'EMAIL_PENDING' });
+  });
+
+  it('offers an archive so a rejected or suspended application can still be found', async () => {
+    const h = harness({ requests: [] });
+    await h.useCase.list(NOW, { tab: 'ARCHIVED' });
+    assert.deepEqual(h.requestQueries[0].where, { state: { in: ['REJECTED', 'SUSPENDED', 'EXPIRED'] } });
+  });
+
+  it('hands back a cursor when more rows exist, and nothing when they do not', async () => {
+    const full = harness({ requests: page(6) });
+    const first = await full.useCase.list(NOW, { limit: 5 });
+    assert.equal(first.items.length, 5, 'the extra row is a probe, never rendered');
+    assert.equal(first.nextCursor, 'signup-5');
+    assert.equal(full.requestQueries[0].take, 6);
+
+    const last = harness({ requests: page(3) });
+    const rest = await last.useCase.list(NOW, { limit: 5 });
+    assert.equal(rest.items.length, 3);
+    assert.equal(rest.nextCursor, null);
+  });
+
+  it('continues past the cursor instead of re-reading the same page', async () => {
+    const h = harness({ requests: page(2) });
+    await h.useCase.list(NOW, { cursor: 'signup-40', limit: 5 });
+    assert.deepEqual(h.requestQueries[0].cursor, { id: 'signup-40' });
+    assert.equal(h.requestQueries[0].skip, 1);
+    // Deterministic ordering, or a cursor can skip or repeat rows between pages.
+    assert.deepEqual(h.requestQueries[0].orderBy, [{ createdAt: 'asc' }, { id: 'asc' }]);
+  });
+
+  it('caps what one page may ask for, whatever the caller sends', async () => {
+    const h = harness({ requests: [] });
+    await h.useCase.list(NOW, { limit: 100_000 });
+    assert.ok(h.requestQueries[0].take <= 201, `asked for ${h.requestQueries[0].take}`);
+  });
+
+  it('counts the WHOLE queue, not the page it just read', async () => {
+    const h = harness({
+      requests: page(2),
+      stateCounts: [
+        { state: 'PENDING_REVIEW', source: 'official-site', _count: { _all: 240 } },
+        { state: 'EMAIL_PENDING', source: 'official-site', _count: { _all: 31 } },
+        { state: 'EMAIL_FAILED', source: 'official-site', _count: { _all: 4 } },
+        { state: 'EXPIRED', source: 'official-site', _count: { _all: 7 } },
+        { state: 'PROVISIONING_FAILED', source: 'line-oa', _count: { _all: 2 } },
+        { state: 'READY', source: 'line-oa', _count: { _all: 1 } },
+        // 8 runs in flight, 5 of them abandoned by the clock: the 3 live ones are in the queue and
+        // are NOT a problem, which is the one distinction a state count cannot make on its own.
+        { state: 'PROVISIONING', source: 'line-oa', _count: { _all: 8 } },
+        // A web-form row in a LINE-only state is not in the queue, so it is in no count either.
+        { state: 'READY', source: 'official-site', _count: { _all: 99 } },
+        { state: 'REJECTED', source: 'official-site', _count: { _all: 12 } },
+        { state: 'SUSPENDED', source: 'line-oa', _count: { _all: 3 } },
+      ],
+      staleProvisioningCount: 5,
+    });
+    const { counts } = await h.useCase.list(NOW);
+
+    assert.equal(counts!.PENDING_REVIEW, 240);
+    assert.equal(counts!.AWAITING_CLAIM, 31);
+    // Bounced, expired, failed provisioning, stranded READY, and the abandoned runs.
+    assert.equal(counts!.PROBLEM, 4 + 7 + 2 + 1 + 5);
+    assert.equal(counts!.ARCHIVED, 12 + 3 + 7);
+    // Everything actionable, live provisioning runs included, and nothing that is not in the queue.
+    assert.equal(counts!.ALL, 240 + 31 + 4 + 7 + 2 + 1 + 8);
   });
 });
 

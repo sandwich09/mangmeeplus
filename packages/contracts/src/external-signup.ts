@@ -178,7 +178,20 @@ export type AdminSignupQueueItemDto = {
   failureCode?: string;
 };
 
-export type AdminSignupQueueDto = { items: AdminSignupQueueItemDto[] };
+export type AdminSignupQueueDto = {
+  items: AdminSignupQueueItemDto[];
+  /**
+   * R13: pass back as `?cursor=` for the next page. `null`/absent means this was the last page —
+   * the queue used to read 200 rows with no way past them, so a backlog simply disappeared.
+   */
+  nextCursor?: string | null;
+  /**
+   * R13: how many rows each tab holds IN THE DATABASE, keyed by tab. Counted server-side because
+   * the page can only ever count what it was given, which is how a tab came to say "no
+   * applications in this group" over rows that were there.
+   */
+  counts?: Record<string, number>;
+};
 
 /** Bounded because the admin's paragraph travels through the outbox and into an inbox. */
 export const SIGNUP_REJECTION_REASON_MAX_LENGTH = 500;

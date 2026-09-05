@@ -46,6 +46,25 @@ test('an unopened tab shows no count rather than a confident zero', () => {
   assert.match(source, /\{count !== null && <span/);
 });
 
+test('R13: the tab is asked of the server, not applied to whatever 200 rows arrived', () => {
+  // The queue read 200 rows and the browser filtered them, so a tab could show nothing while the
+  // database held a backlog, and every count was a count of the truncation.
+  assert.match(source, /listSignupRequests\(\{ tab/);
+  assert.doesNotMatch(source, /filterSignupQueue/);
+});
+
+test('R13: there is a way past the first page, and it continues rather than restarts', () => {
+  assert.match(source, /nextCursor/);
+  assert.match(source, /โหลดเพิ่ม/);
+  // Appends — a "load more" that replaces the list is a pager that loses what you were reading.
+  assert.match(source, /setItems\(\(current\) => \[\.\.\.current, \.\.\.page\.items\]\)/);
+});
+
+test('R13: "no applications here" is only said when the server counted zero', () => {
+  assert.match(source, /const emptyForReal =/);
+  assert.match(source, /ไม่มีคำขอในกลุ่มนี้/);
+});
+
 test('a tab failure does not stay up over another tab', () => {
   assert.match(source, /const selectTab = \(next: SignupQueueTab\) => \{[\s\S]{0,400}setTabError\(null\)/);
 });
