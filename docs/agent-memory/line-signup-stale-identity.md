@@ -113,6 +113,22 @@ the row whatever its status, so an owner who had unlinked was invisible to submi
   longer claims it is a case anything can produce.
 - `liff-page.security.ts` deliberately untouched in this round — the LIFF UX branch is rewriting it.
 
+### Review round 4 (2026-09-05)
+
+- MEDIUM: the link use-case's new `$transaction` took no options, so Prisma's default 5s `timeout`
+  applied while its FIRST statement waits on the identity key — a key onboarding may hold for up to
+  15s (`{ maxWait: 5_000, timeout: 15_000 }`). A holder keeping it 8s made the link fail with
+  P2028 after ~7.6s, and P2028 is not a code `all-exceptions.filter.ts` maps, so the customer got a
+  500 instead of the designed `line_linked_elsewhere` 409. Now `{ maxWait: 5_000, timeout: 20_000 }`
+  — deliberately above the onboarding cap, asserted in a unit test so the two budgets cannot drift
+  back together.
+- KNOWN FOLLOW-UP, not closed here: two writers still touch `ExternalIdentity.status` WITHOUT the
+  identity lock — `unlink-line-identity.use-case.ts:24` and
+  `partner-member-line-unlink.use-case.ts:29`. Both only move a row to UNLINKED, so neither can
+  steal a slot from the two re-pointers, but an unlink racing a re-point is still a read-then-write
+  nobody serialises. Left as-is on the reviewer's call; take the same key if either ever grows a
+  read-then-decide.
+
 ## Artifacts
 
 - `apps/api/src/modules/external-signup/application/submit-line-signup.use-case.ts`
@@ -159,6 +175,7 @@ the row whatever its status, so an owner who had unlinked was invisible to submi
   | MED-2 — inherit `aiPausedUntil` on the link path | 1 failure: link unit "clears the support pause when the context moves" |
   | LOW-4 — count DRAFT again (one shared predicate, so both readers at once) | 3 failures: submit unit, queue unit, pg DRAFT case |
   | Item 5 — read the term stamp alone again | 1 failure: queue unit "calls a shop expired on exactly the pair the LINE assistant uses" |
+  | Round 4 — drop the `$transaction` options from the link use case | 1 failure: link unit "waits longer than the onboarding transaction it queues behind" |
 
   Note on the MED-1 mutation: an UNTIMED race passed with no lock at all, because the link's short
   transaction always commits before provisioning reaches the identity block. The pg test now starts

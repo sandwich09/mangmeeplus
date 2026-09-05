@@ -120,7 +120,13 @@ export class LinkLineIdentityUseCase {
         }
       }
       return false;
-    });
+    // The FIRST statement in here waits on the identity key, and the holder is usually onboarding —
+    // which runs its whole company transaction under that key on a `{ maxWait: 5_000, timeout:
+    // 15_000 }` budget. Prisma's default 5s would expire while this call is doing exactly what it
+    // is supposed to do (waiting), and P2028 is not a code `all-exceptions.filter.ts` maps: the
+    // customer would get a 500 instead of the designed `line_linked_elsewhere` 409. 20s sits above
+    // the onboarding cap, so the wait can only end in a decision, never in a timeout.
+    }, { maxWait: 5_000, timeout: 20_000 });
 
     // Outside the lock on purpose: neither the company context nor the audit decides the slot, and
     // holding an advisory key across them would serialise unrelated work.

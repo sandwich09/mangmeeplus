@@ -9,8 +9,11 @@ import { LinkLineIdentityUseCase } from './link-line-identity.use-case';
  * `line-identity:<channel>:<providerUserId>` advisory key, which signup provisioning takes too.
  * The key is recorded rather than swallowed so a spec can assert the two sites cannot drift.
  */
-function withIdentityTx(prisma: any, locks: unknown[][]): any {
-  prisma.client.$transaction = async (fn: any) => fn(prisma.client);
+function withIdentityTx(prisma: any, locks: unknown[][], txOptions: any[]): any {
+  prisma.client.$transaction = async (fn: any, options: any) => {
+    txOptions.push(options);
+    return fn(prisma.client);
+  };
   prisma.client.$executeRaw = async (_strings: TemplateStringsArray, ...values: unknown[]) => {
     locks.push(values);
     return 0;
@@ -23,6 +26,7 @@ function makeUseCase(opts: { existing?: any; createThrowsP2002?: boolean; member
   const updates: any[] = [];
   const contextUpserts: any[] = [];
   const identityLocks: unknown[][] = [];
+  const txOptions: any[] = [];
 
   const prisma = {
     client: {
@@ -48,8 +52,10 @@ function makeUseCase(opts: { existing?: any; createThrowsP2002?: boolean; member
   const config = { lineMessagingChannelId: 'msg-chan-1', lineLoginChannelId: 'login-chan-1' } as any;
   const audit = { log: async () => {} } as any;
 
-  const useCase = new LinkLineIdentityUseCase(lineVerifier, withIdentityTx(prisma, identityLocks), config, audit);
-  return { useCase, creates, updates, contextUpserts, identityLocks };
+  const useCase = new LinkLineIdentityUseCase(
+    lineVerifier, withIdentityTx(prisma, identityLocks, txOptions), config, audit,
+  );
+  return { useCase, creates, updates, contextUpserts, identityLocks, txOptions };
 }
 
 const input = { userId: 'user-1', idToken: 'line-id-token', requestId: 'req-1' };
@@ -173,6 +179,21 @@ describe('LinkLineIdentityUseCase', () => {
 
     assert.deepEqual(identityLocks, [[lineIdentityLockKey('msg-chan-1', 'line-user-1')]]);
     assert.deepEqual(identityLocks[0], ['line-identity:msg-chan-1:line-user-1'], 'the literal both sites share');
+  });
+
+  /**
+   * The first statement inside that transaction WAITS on the key, and the usual holder is
+   * onboarding, whose own budget is `{ maxWait: 5_000, timeout: 15_000 }`. On Prisma's default 5s
+   * this call expires while doing exactly what it should — and P2028 is not a code
+   * `all-exceptions.filter.ts` maps, so the customer gets a 500 rather than the designed
+   * `line_linked_elsewhere` 409. The budget has to outlast the holder it queues behind.
+   */
+  it('waits longer than the onboarding transaction it queues behind', async () => {
+    const { useCase, txOptions } = makeUseCase();
+    await useCase.execute(input);
+
+    assert.deepEqual(txOptions, [{ maxWait: 5_000, timeout: 20_000 }]);
+    assert.ok(txOptions[0].timeout > 15_000, 'above the onboarding cap, or the wait ends in a 500');
   });
 
   // Review MED-2: this path can move a severed LINE account to a DIFFERENT user, so the previous
