@@ -170,6 +170,9 @@ function generateTempPassword(): string {
 
 const TEMP_PASSWORD_TTL_MS = 72 * 60 * 60 * 1000; // 72 hours
 
+/** Postgres unique violation — here, only the LINE identity slot. */
+const UNIQUE_VIOLATION = 'P2002';
+
 @Injectable()
 export class CreateCompanyOnboardingUseCase {
   constructor(
@@ -370,21 +373,64 @@ export class CreateCompanyOnboardingUseCase {
         data: { membershipId: membership.id, roleId: ownerRole.id },
       });
 
-      // Spec §6: the LINE identity is the credential, so it is created HERE — in the same
-      // transaction as the company and the membership. A unique violation means this LINE account
-      // already belongs to someone, which §5 should have caught and turned into an attach; letting
-      // it abort the transaction is correct, because half a shop is worse than none.
+      // Spec §6: the LINE identity is the credential, so it is bound HERE — in the same transaction
+      // as the company and the membership. The unique `(provider, channel, providerUserId)` slot is
+      // owned by whichever row exists, ACTIVE or not, so a bare `create` failed forever for an owner
+      // who had ever unlinked (UAT cmto4xtrx002r4o5tf7o38dls): P2002 escaped as a generic 409 and
+      // every admin retry repeated it. An UNLINKED row is re-pointed instead — the same
+      // reactivation `LinkLineIdentityUseCase` performs — and the two states that really do belong
+      // to somebody are refused BY NAME, so the queue chip and the toast can say which.
       if (lineOwner && !attach) {
-        await tx.externalIdentity.create({
-          data: {
-            userId: owner.id,
-            provider: 'LINE',
-            providerUserId: lineOwner.providerUserId,
-            providerChannelId: lineOwner.channelId,
-            status: 'ACTIVE',
-            linkedAt: new Date(),
-          },
+        const identityKey = {
+          provider: 'LINE' as const,
+          providerUserId: lineOwner.providerUserId,
+          providerChannelId: lineOwner.channelId,
+        };
+        const existingIdentity = await tx.externalIdentity.findUnique({
+          where: { provider_providerChannelId_providerUserId: identityKey },
+          select: { id: true, userId: true, status: true },
         });
+        if (!existingIdentity) {
+          try {
+            await tx.externalIdentity.create({
+              data: { userId: owner.id, ...identityKey, status: 'ACTIVE', linkedAt: new Date() },
+            });
+          } catch (error) {
+            // Two approvals for the same LINE account raced between the read above and this insert.
+            if ((error as { code?: string }).code !== UNIQUE_VIOLATION) throw error;
+            throw new ConflictException('line_identity_already_linked');
+          }
+        } else if (existingIdentity.status === 'UNLINKED') {
+          await tx.externalIdentity.update({
+            where: { id: existingIdentity.id },
+            data: { userId: owner.id, status: 'ACTIVE', linkedAt: new Date() },
+          });
+          // Support has to be able to see that this LINE account moved from one account to another;
+          // ids only, so no LINE user id or shop name enters the trail (DATA-MIN-01).
+          await tx.auditLog.create({
+            data: {
+              actorUserId: cmd.requestingAdminUserId,
+              companyId: company.id,
+              action: 'auth.identity.repointed',
+              targetType: 'external_identity',
+              targetId: existingIdentity.id,
+              requestId: cmd.requestId,
+              result: 'SUCCESS',
+              riskLevel: 'HIGH',
+              metadataJson: {
+                previousUserId: existingIdentity.userId,
+                previousStatus: existingIdentity.status,
+                ownerUserId: owner.id,
+              },
+            },
+          });
+        } else {
+          // ACTIVE or DISABLED: §5 refuses both at submit, so reaching here means the identity
+          // changed under an application that was already in the queue.
+          throw new ConflictException(
+            existingIdentity.status === 'DISABLED' ? 'line_identity_disabled' : 'line_identity_already_linked',
+          );
+        }
       }
 
       // LEGAL-LIFF-01: the acceptance the owner already gave on LIFF, written where the in-app gate

@@ -158,6 +158,14 @@ function makePrisma(opts: {
   existingUsername?: boolean;
   existingCompany?: boolean;
   ownerRoleFound?: boolean;
+  /**
+   * The row already sitting in the unique `(LINE, channel, providerUserId)` slot. Onboarding has to
+   * cope with three shapes of it, and a fake that only knew `create` is why the UNLINKED one
+   * (UAT cmto4xtrx002r4o5tf7o38dls) reached production as a P2002.
+   */
+  existingIdentity?: { id: string; userId: string; status: string } | null;
+  /** Simulates a concurrent insert landing between the read and the create. */
+  identityCreateConflict?: boolean;
 }) {
   const ownerRole = opts.ownerRoleFound ?? true ? { id: 'role-owner' } : null;
   // P29 §4A: the post-commit default-term write. Recorded, never asserted-on by the pre-existing
@@ -167,6 +175,8 @@ function makePrisma(opts: {
   const userCreates: any[] = [];
   const credentialCreates: any[] = [];
   const identityCreates: any[] = [];
+  const identityUpdates: any[] = [];
+  const txAudits: any[] = [];
   const lineTokenCreates: any[] = [];
   const txResult = {
     company: { id: 'co-1' },
@@ -179,6 +189,8 @@ function makePrisma(opts: {
     userCreates: () => userCreates,
     credentialCreates: () => credentialCreates,
     identityCreates: () => identityCreates,
+    identityUpdates: () => identityUpdates,
+    txAudits: () => txAudits,
     lineTokenCreates: () => lineTokenCreates,
     client: {
       user: {
@@ -203,13 +215,23 @@ function makePrisma(opts: {
           companyMembership: { create: async () => ({ id: 'mem-1' }) },
           membershipRole: { create: async () => ({}) },
           employeeLineLinkToken: { create: async (args: any) => { lineTokenCreates.push(args); return {}; } },
-          externalIdentity: { create: async (args: any) => { identityCreates.push(args); return { id: 'ext-1' }; } },
+          externalIdentity: {
+            findUnique: async () => opts.existingIdentity ?? null,
+            create: async (args: any) => {
+              if (opts.identityCreateConflict) {
+                throw Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
+              }
+              identityCreates.push(args);
+              return { id: 'ext-1' };
+            },
+            update: async (args: any) => { identityUpdates.push(args); return { id: 'ext-1' }; },
+          },
           branch: { create: async () => ({}) },
           companyVatRegistrationState: { create: async () => ({}) },
           ...entitlementTx(),
           ...taxConfigTx(),
           companyOnboardingRun: { create: async (args: any) => ({ id: 'run-1', ...args.data }) },
-          auditLog: { create: async () => ({}) },
+          auditLog: { create: async (args: any) => { txAudits.push(args); return {}; } },
           ...workflowTx(),
         };
         return fn(tx);
@@ -1293,6 +1315,61 @@ describe('CreateCompanyOnboardingUseCase P29 default term', () => {
     assert.equal(legalRecords[0].membershipId, 'mem-1');
     assert.equal(legalRecords[0].evidence, evidence);
     assert.equal(JSON.stringify(result).includes('Uline-1'), false, 'no LINE id in the handover payload');
+  });
+
+  /**
+   * UAT cmto4xtrx002r4o5tf7o38dls. The owner had linked this LINE once and unlinked it, so the row
+   * still owned the unique `(LINE, channel, providerUserId)` slot while looking like nobody's. The
+   * bare `create` here raised P2002, the global filter turned it into a generic "Duplicate value"
+   * 409 in about 40ms, the request parked at PROVISIONING_FAILED, and every admin retry repeated it.
+   */
+  const lineOwnerCmd = () => makeCmd({
+    ownerUsername: undefined,
+    ownerAuth: { kind: 'line', providerUserId: 'Uline-1', channelId: 'channel-1' },
+  });
+
+  it('re-points a stale UNLINKED identity instead of creating a second one', async () => {
+    const prisma = makePrisma({ existingIdentity: { id: 'ext-old', userId: 'user-old', status: 'UNLINKED' } });
+    await new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock).execute(lineOwnerCmd());
+
+    assert.deepEqual(prisma.identityCreates(), [], 'the unique slot is already taken by that row');
+    const update = prisma.identityUpdates()[0];
+    assert.deepEqual(update.where, { id: 'ext-old' });
+    assert.equal(update.data.userId, 'owner-1', 'it now belongs to the owner of the new shop');
+    assert.equal(update.data.status, 'ACTIVE');
+    assert.ok(update.data.linkedAt instanceof Date);
+
+    // Support has to be able to see that this LINE moved from one account to another.
+    const moved = prisma.txAudits().find((a: any) => a.data.action === 'auth.identity.repointed');
+    assert.equal(moved.data.targetId, 'ext-old');
+    assert.equal(moved.data.metadataJson.previousUserId, 'user-old');
+    assert.equal(moved.data.metadataJson.ownerUserId, 'owner-1');
+    assert.equal(JSON.stringify(moved).includes('Uline-1'), false, 'no LINE user id in evidence');
+  });
+
+  it('refuses BY NAME when the identity still belongs to somebody', async () => {
+    const active = makePrisma({ existingIdentity: { id: 'ext-1', userId: 'user-9', status: 'ACTIVE' } });
+    await assert.rejects(
+      () => new CreateCompanyOnboardingUseCase(active, configMock, legalMock).execute(lineOwnerCmd()),
+      /line_identity_already_linked/,
+    );
+    assert.deepEqual(active.identityUpdates(), [], 'a live link is never silently moved');
+
+    const disabled = makePrisma({ existingIdentity: { id: 'ext-1', userId: 'user-9', status: 'DISABLED' } });
+    await assert.rejects(
+      () => new CreateCompanyOnboardingUseCase(disabled, configMock, legalMock).execute(lineOwnerCmd()),
+      /line_identity_disabled/,
+    );
+  });
+
+  it('names the conflict when a concurrent approval takes the slot mid-transaction', async () => {
+    // The read said "free" and the insert said otherwise. Without this the raw P2002 escapes and
+    // the admin gets "Duplicate value" with nothing to act on.
+    const prisma = makePrisma({ identityCreateConflict: true });
+    await assert.rejects(
+      () => new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock).execute(lineOwnerCmd()),
+      /line_identity_already_linked/,
+    );
   });
 
   // Review A-04. Same "no username, no credential" shape as the LIFF owner above, but the identity
