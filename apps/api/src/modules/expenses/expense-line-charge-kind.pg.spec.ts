@@ -20,6 +20,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { EXPENSE_LINE_CHARGE_KINDS, expenseLineCharges } from '@watchdog-bms/contracts';
 import { PrismaClient } from '../../generated/prisma/client';
 import { calcDocumentTotals, calcLineTotals, expenseTotalsIdentityError } from './domain/logic/expense-totals.logic';
+import { PrismaExpenseRepository } from './infrastructure/prisma-expense.repository';
 
 const databaseUrl = process.env['EXPENSE_CHARGE_KIND_TEST_DATABASE_URL'];
 
@@ -110,6 +111,39 @@ describe('expense line charge kind on real PostgreSQL', { skip: !databaseUrl }, 
         (error: unknown) => error instanceof Error,
         'the database, not only the application, refuses a charge kind outside the enum',
       );
+
+      // The shared line copier: the web PATCH, the LINE lane and the substitute-receipt
+      // continuation all reach the database through `upsertLines`, so a kind dropped here is a
+      // service charge that silently becomes a product on the next save of any of them.
+      const repo = new PrismaExpenseRepository({ client } as never);
+      const upsert = (chargeKind: 'SERVICE_CHARGE' | 'DELIVERY') => repo.upsertLines(`${tag}-co`, expense.id,
+        lines.map((line) => ({
+          expenseId: expense.id, companyId: `${tag}-co`, lineNumber: line.lineNumber,
+          description: line.description, chargeKind: line.chargeKind === null ? null : chargeKind,
+          quantity: line.quantity, unitPrice: line.unitPrice, discountAmount: line.totals.discountAmount,
+          taxableAmount: line.totals.taxableAmount, vatRate: '0.0700', vatAmount: line.totals.vatAmount,
+          whtRate: null, whtAmount: line.totals.whtAmount,
+          lineSubtotalAmount: line.totals.lineSubtotalAmount, lineTotalAmount: line.totals.lineTotalAmount,
+          expenseCategoryId: null, accountHintKey: null, taxCategory: null,
+        })));
+      const kinds = async () => (await repo.findByIdWithRelations(`${tag}-co`, expense.id))!;
+
+      // Both branches of the upsert. On CREATE a missing kind writes null; on UPDATE it writes
+      // nothing at all and the row silently keeps a kind the caller no longer means — the quieter
+      // of the two bugs, and the one a create-only test would never see.
+      await client.expenseLine.deleteMany({ where: { expenseId: expense.id } });
+      await upsert('SERVICE_CHARGE');
+      const created = await kinds();
+      assert.deepEqual(created.lines.map((line) => line.chargeKind), [null, 'SERVICE_CHARGE'],
+        'upsertLines must carry the charge kind into a new row, and mapLine must read it back');
+      assert.deepEqual(created.charges, [
+        { kind: 'SERVICE_CHARGE', label: 'ค่าบริการ', amount: '152', vatAmount: '10.64' },
+      ]);
+
+      await upsert('DELIVERY');
+      const updated = await kinds();
+      assert.deepEqual(updated.lines.map((line) => line.chargeKind), [null, 'DELIVERY']);
+      assert.deepEqual(updated.charges.map((charge) => charge.label), ['ค่าส่ง']);
     } finally {
       await client.expenseLine.deleteMany({ where: { companyId: `${tag}-co` } });
       await client.expenseRecord.deleteMany({ where: { companyId: `${tag}-co` } });
