@@ -138,7 +138,31 @@ capacity ไม่ใช่ deploy ใหม่
 
 ### UAT — เปิดกลับ
 
-รันคำสั่งเดิมโดยไม่ใส่ตัวแปร (ได้ 1/2) หรือใส่ค่าที่ต้องการ
+**ตั้งแต่ 2026-09-05 ห้ามใช้ `deploy.sh` จากเครื่องเพื่อเปิดกลับ:** `deploy.sh` รุ่นที่ deploy อยู่ (ตั้งแต่ `71263dd0`)
+ปฏิเสธ service rollout ทุกแบบถ้าไม่มี `RELEASE_PARENT_OPERATION_ID`, `RELEASE_TASK_IMAGE` และ
+`DEPLOYMENT_EVIDENCE_DIR` จาก release task (พิสูจน์แล้ว: `bash infra/uat/deploy-with-runtime-mutex.sh all`
+จาก checkout ที่ `71263dd0` จบด้วย rc=2 พร้อมข้อความนั้น) ให้ใช้ API round-trip ตามข้อ 2 แทน:
+
+```sh
+export AWS_PROFILE=watchdog-bedrock AWS_SDK_LOAD_CONFIG=1 AWS_REGION=ap-southeast-1
+for arn in $(aws ecs list-services --cluster watchdog-bms-uat --query 'serviceArns[]' --output text); do
+  aws ecs describe-express-gateway-service --service "$arn" --output json > before.json
+  jq '.service.activeConfigurations[0] as $c | {serviceArn: .service.serviceArn,
+        executionRoleArn: $c.executionRoleArn, healthCheckPath: $c.healthCheckPath,
+        primaryContainer: $c.primaryContainer, taskRoleArn: $c.taskRoleArn,
+        networkConfiguration: $c.networkConfiguration, cpu: $c.cpu, memory: $c.memory,
+        scalingTarget: ($c.scalingTarget | .minTaskCount = 1 | .maxTaskCount = 2)}' before.json > payload.json
+  aws ecs update-express-gateway-service --cli-input-json file://payload.json >/dev/null
+done
+```
+
+คัดลอก 9 key จาก describe ทั้งชุด เปลี่ยนเฉพาะ `scalingTarget` (image/env/secrets ต้องเหมือนเดิม byte-for-byte —
+ตรวจด้วย jq ก่อนยิง) หลัง update แต่ละ service จะมี **`activeConfigurations` สองตัว** (revision เก่า 0/0 กับใหม่ 1/2)
+ประมาณ 3 นาทีจน deployment ของ revision ใหม่จบ (`aws ecs list-service-deployments --service <arn>` เป็น
+`SUCCESSFUL`) ต้องรอจน `length(service.activeConfigurations) == 1` ทั้งสาม service **แล้วรัน
+`infra/uat/verify-deploy-readiness.sh` จากเครื่อง (read-only, env `DEPLOY_ENV=uat ECS_CLUSTER_NAME=watchdog-bms-uat`)
+ให้ผ่านก่อน** ค่อย dispatch `deploy-uat.yml` — สั่งเร็วไปจะล้มที่ preflight ด้วย
+`api-web is not a stable singleton UAT service` (run `33946705432`, 2026-09-05) และเสีย dispatch ไปหนึ่งครั้ง
 **`run-a5-capacity-mutating.sh` ต้องการ `minTaskCount >= 1`** ต้องเปิดก่อนรัน U5 capacity
 
 ### Production
@@ -415,6 +439,38 @@ Bedrock **ไม่เคยเป็นต้นเหตุ** — $3.20 ทั
    mutex ร่วมกับ deploy แล้ว แต่ยังไม่ได้ run กับ AWS; ลบ node เก่าหลัง soak เท่านั้น
 8. **Production มี `IncomingBytes` alarm แล้ว แต่ UAT ยังไม่มี**. เพิ่ม UAT per-log-group alarm ก่อน
    acceptance รอบยาว; อย่าใช้ข้อความเก่าว่าไม่มี alarm ทั้ง account
+
+### ECR scan gate — CVE ใหม่ใน base image
+
+`infra/docker/verify-ecr-scan.sh` รันใน CI ทุก build แล้วส่ง finding จาก ECR เข้า
+`infra/docker/ecr-scan-blocking-findings.jq` เกตนี้ **fail-closed**: HIGH/CRITICAL ทุกตัวที่ไม่มี waiver
+ตรงเป๊ะจะบล็อก deploy และ `coverageComplete` ยังบังคับให้จำนวน finding ที่อ่านได้ตรงกับ severity count
+ของ ECR ด้วย (กันกรณี ECR รายงานตัวเลขแต่ไม่ส่งรายละเอียด)
+
+**bump base image ไม่ช่วย เมื่อ Debian ยังไม่มี fix** ฐานคือ `node:22-bookworm-slim` pin ด้วย digest
+CVE ที่เจอส่วนใหญ่เป็นแพ็กเกจ Debian (openssl, zlib) ไม่ใช่โค้ดเรา ถ้า security-tracker บอกว่า bookworm
+ยังไม่มี fixed version การดึง digest ใหม่ก็ได้แพ็กเกจเวอร์ชันเดิมกลับมา — เสียเวลา build ฟรี
+เช็คก่อนเสมอที่ `https://security-tracker.debian.org/tracker/<CVE>` ดูช่อง bookworm ว่าเป็น
+`vulnerable` หรือมีเลขเวอร์ชันที่ fix แล้ว
+
+**กติกา waiver** (ดูตัวอย่างจริงในไฟล์ `.jq`): ทุกแถวต้องมี CVE ตรงตัว + `severity` + `package_name` +
+`package_version` + anchor ที่คัดลอกจาก description ของ provider แบบคำต่อคำ + epoch หมดอายุ +
+approval id ของ Owner ทั้งหมดต้องแมตช์พร้อมกัน — drift ตัวใดตัวหนึ่ง (เวอร์ชันขยับ, severity เปลี่ยน,
+provider แก้ข้อความ) กลับไปบล็อกทันที `severity`/`package`/`version` เก็บระดับแถว จึงเพิ่มแถว CRITICAL
+ได้โดยไม่ทำให้แถว HIGH เดิมหลวม และแต่ละชุดมี `def` หมดอายุของตัวเอง หมดอายุแยกกันได้
+แก้ไฟล์แล้วต้องรัน `bash infra/docker/ecr-scan-blocking-findings.spec.sh` เสมอ
+
+**กระบวนการที่ต้องมี ไม่ใช่ waive ไปเรื่อย ๆ**
+
+1. re-scan ทุกคืนแล้วแจ้งเตือน — ให้รู้ CVE ใหม่ก่อนถึงวัน deploy ไม่ใช่ตอน pipeline แดง
+2. คง base pin ไว้ แต่ bump digest เป็นรอบ ๆ เพื่อรับ fix ที่ Debian ปล่อยจริง
+3. ใส่ `apt-get upgrade` ตอน build **เฉพาะเมื่อ** Debian มี fixed version แล้วเท่านั้น
+4. ถึงวันหมดอายุให้ประเมินใหม่ — ถ้ายังไม่มี fix ต้องขออนุมัติต่ออายุใหม่ ไม่ใช่ยืด epoch เงียบ ๆ
+
+> ⚠️ `infra/security/evidence-contracts.jq` (`e0_ecr_openssl_unreachable_waiver`) ยังล็อก waiver ไว้ที่
+> ชุด 2026-08 เท่านั้น: `severity == "HIGH"`, `packageName == "openssl"`, approval/expiry ค่าเดิม,
+> `waivers | length <= 4` และ `severityCounts.CRITICAL == critical` — เกต UAT ผ่าน แต่ production
+> security preflight จะปฏิเสธ waiver ชุดใหม่ ต้องแก้ contract นั้นแยกก่อนโปรโมต production
 
 ### โค้ดกับ AWS sync กันแล้ว (2026-08-09)
 
