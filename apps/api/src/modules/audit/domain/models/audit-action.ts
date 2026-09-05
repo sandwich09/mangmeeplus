@@ -20,8 +20,14 @@ export const AuditAction = {
   /** P12-3b LINE → web deep-link handoff: a link was minted for a recipient, and a tap spent it. */
   AUTH_LINE_HANDOFF_ISSUE: 'auth.line_handoff.issue',
   AUTH_LINE_HANDOFF_EXCHANGE: 'auth.line_handoff.exchange',
+  /** P10-L §3.5: a LIFF "start" tap exchanged an ID token for a handoff into one company. */
+  AUTH_LINE_LIFF_SESSION: 'auth.line.liff_session',
   /** PDPA objection route (M-05 register §3.1): user toggled the LINE AI assistant. */
   AUTH_AI_ASSISTANT_PREFERENCE_UPDATE: 'auth.ai_assistant.preference_update',
+  /** P10-L §3.6 progressive profiling: the user set their own recovery phone number. */
+  AUTH_ACCOUNT_CONTACT_UPDATE: 'auth.account.contact_update',
+  /** P10-L §15.4: a LINE-first account gained its first password. Not a reset — there was none. */
+  AUTH_PASSWORD_SET: 'auth.password.set',
   AUTH_COMPANY_SWITCH: 'auth.company.switch',
   PLATFORM_ACCESS_STATE_UPDATE: 'platform.access.state_update',
   ADMIN_USER_INVITE: 'admin.user.invite',

@@ -91,12 +91,18 @@ function packageHarness(options: {
 } = {}) {
   const audits: any[] = [];
   const rows: any[] = [];
+  const membershipQueries: any[] = [];
   const prisma = {
     client: {
       companyMembership: {
-        findFirst: async () => (options.roles === null
-          ? null
-          : { roles: (options.roles ?? ['OWNER']).map((key) => ({ role: { key } })) }),
+        // The company-status filter IS half the guard here, so the query is recorded: a fake that
+        // only answers with a row cannot tell whether the right question was asked.
+        findFirst: async (args: any) => {
+          membershipQueries.push(args);
+          return options.roles === null
+            ? null
+            : { roles: (options.roles ?? ['OWNER']).map((key) => ({ role: { key } })) };
+        },
       },
       packageChangeRequest: {
         findFirst: async () => options.openRow ?? null,
@@ -118,7 +124,7 @@ function packageHarness(options: {
       }),
     },
   } as any;
-  return { useCase: new PackageChangeRequestUseCase(prisma), audits, rows };
+  return { useCase: new PackageChangeRequestUseCase(prisma), audits, rows, membershipQueries };
 }
 
 describe('PackageChangeRequestUseCase', () => {
@@ -149,6 +155,19 @@ describe('PackageChangeRequestUseCase', () => {
       });
       assert.deepEqual(h.audits, [], String(roles));
     }
+  });
+
+  // P10-L §3.7. The expiry message carries this button, and an expired trial leaves the company
+  // DISABLED — so a guard that demanded ACTIVE would 403 exactly the shop the button is printed
+  // for, and the LINE flow would offer a way out that leads nowhere.
+  it('lets a shop whose trial expired ask, which is the whole point of the button', async () => {
+    const h = packageHarness();
+    await h.useCase.create(cmd);
+
+    assert.deepEqual(h.membershipQueries[0].where.company, { status: { in: ['ACTIVE', 'DISABLED'] } });
+    // An operator's suspension is not a package problem, so it stays out of the accepted set.
+    assert.equal(JSON.stringify(h.membershipQueries[0].where.company).includes('SUSPENDED'), false);
+    assert.equal(JSON.stringify(h.membershipQueries[0].where.company).includes('ARCHIVED'), false);
   });
 
   it('refuses a caller with no active membership in the company at all', async () => {

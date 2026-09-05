@@ -4,6 +4,7 @@ import {
   FEATURE_CATALOG,
   FEATURE_PACKAGE_PRESETS,
   MENU_ENTITLEMENT_BINDINGS,
+  PARTNER_LINE_MESSAGE_MAX_LENGTH,
   PLAN_TIER_PRESETS,
   type CompanyPlanTermDto,
   type FeaturePackagePresetKey,
@@ -41,6 +42,9 @@ import {
   resetPartnerMemberPassword,
   setPartnerMemberContact,
   revealPartnerMemberTempPassword,
+  endPartnerPlanTermWarmup,
+  getPartnerTimeline,
+  sendPartnerLineMessage,
 } from './system-partners.api';
 import type {
   PartnerCompanyDetailDto,
@@ -48,6 +52,7 @@ import type {
   PartnerAiUsageDto,
   PartnerMemberDto,
   EmployeeLineLinkPackage,
+  PartnerTimelineEntryDto,
 } from './system-partners.api';
 import {
   budgetBarClass,
@@ -1643,6 +1648,7 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
   const [renewOpen, setRenewOpen] = useState(false);
   const [renewDays, setRenewDays] = useState('30');
   const [renewing, setRenewing] = useState(false);
+  const [endingWarmup, setEndingWarmup] = useState(false);
 
   const [tierKey, setTierKey] = useState<PlanTierKey>('STARTER_249');
   const [branchLimit, setBranchLimit] = useState('');
@@ -1743,9 +1749,24 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
     }
   };
 
+  // P10-L §9 "ตรวจแล้ว". The warm-up bounds the damage of a shop nobody has looked at; once an
+  // operator HAS looked, keeping it on is only friction. Shown only while there is one to lift.
+  const handleEndWarmup = async () => {
+    setEndingWarmup(true);
+    try {
+      setTerm((await endPartnerPlanTermWarmup(companyId)).term);
+      showToast('ปลดโควตาอุ่นเครื่องแล้ว ร้านใช้เพดานของแพ็กเกจได้เต็มจำนวน', 'success');
+    } catch (err) {
+      showToast(apiErrorMessage(err), 'error');
+    } finally {
+      setEndingWarmup(false);
+    }
+  };
+
   // Renew restores a company the sweep disabled, but never one an admin disabled by hand (§4C).
   const adminDisabled = companyStatus === 'DISABLED' && !term?.termDisabledAt;
   const previewDays = parseDaysInput(renewDays);
+  const warmupActive = Boolean(term?.warmupUntil && new Date(term.warmupUntil).getTime() > Date.now());
 
   return (
     <SectionCard title="แพ็กเกจและอายุการใช้งาน">
@@ -1778,6 +1799,17 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
               <p className="text-xs text-gray-500">
                 จำนวนสลิปเป็นค่าประกาศของแพ็กเกจ ยังไม่ตัดจริง
               </p>
+
+              {warmupActive && (
+                <div className="flex flex-wrap items-center gap-2 rounded border border-amber-200 bg-amber-50 px-3 py-2">
+                  <p className="flex-1 text-sm text-amber-900">
+                    ช่วงอุ่นเครื่อง อ่านรูปได้ {term.warmupSlipLimit ?? '—'} ครั้ง จนถึง {formatThaiDateTime(term.warmupUntil!)}
+                  </p>
+                  <button type="button" className={btnSecondary} onClick={handleEndWarmup} disabled={endingWarmup}>
+                    {endingWarmup ? 'กำลังปลด...' : 'ตรวจแล้ว'}
+                  </button>
+                </div>
+              )}
 
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <ReadOnlyField label="เริ่มใช้งาน" value={formatDate(term.termStartAt)} />
@@ -1908,6 +1940,122 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
           </div>
         </Modal>
       )}
+    </SectionCard>
+  );
+}
+
+/**
+ * P10-L §8. One shop's story, read straight from the server's assembly of rows that already exist.
+ * Rendered as a plain list on purpose: this is answered while somebody is on the phone.
+ */
+function ShopTimelineSection({ companyId }: { companyId: string }) {
+  const [entries, setEntries] = useState<PartnerTimelineEntryDto[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const result = await getPartnerTimeline(companyId);
+        if (!cancelled) setEntries(result.entries);
+      } catch (err) {
+        const e = err as Error & { status?: number };
+        if (!cancelled) setError(e.status === 403 ? 'คุณไม่มีสิทธิ์ดูประวัติร้านนี้' : apiErrorMessage(err));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [companyId]);
+
+  return (
+    <SectionCard title="ประวัติร้าน">
+      {error ? (
+        <p className="text-sm text-red-600">{error}</p>
+      ) : entries === null ? (
+        <div className="h-16 animate-pulse rounded border border-gray-100" />
+      ) : entries.length === 0 ? (
+        <p className="text-sm text-gray-500">ยังไม่มีเหตุการณ์ที่บันทึกไว้</p>
+      ) : (
+        <ol className="space-y-2">
+          {entries.map((entry, index) => (
+            <li key={`${entry.kind}-${entry.at ?? index}`} className="flex flex-wrap items-baseline gap-x-2">
+              <span className="w-40 shrink-0 text-xs text-gray-500">
+                {entry.at ? formatThaiDateTime(entry.at) : 'ตอนนี้'}
+              </span>
+              <span className={`text-sm ${entry.kind === 'ai_refusal' ? 'font-medium text-amber-700' : 'text-gray-900'}`}>
+                {entry.label}
+              </span>
+              {entry.detail && <span className="text-xs text-gray-500">{entry.detail}</span>}
+            </li>
+          ))}
+        </ol>
+      )}
+    </SectionCard>
+  );
+}
+
+/**
+ * P10-L §8 / SEC-05. The OA runs webhook-only, so an operator cannot type a reply from the LINE OA
+ * app at all — this box is the whole answer path for "ติดต่อเจ้าหน้าที่". The server bounds it,
+ * fences its links to our own domains, signs it with the operator's name and audits its text; the
+ * confirm step here exists because a push cannot be unsent.
+ */
+function ShopMessageSection({ companyId, showToast }: {
+  companyId: string;
+  showToast: (message: string, variant: 'success' | 'error') => void;
+}) {
+  const { confirm, confirmDialog } = useConfirm();
+  const [text, setText] = useState('');
+  const [sending, setSending] = useState(false);
+
+  const handleSend = async () => {
+    const message = text.trim();
+    if (!message) return;
+    const accepted = await confirm({
+      title: 'ส่งข้อความถึงร้าน',
+      message: `ส่งข้อความนี้เข้าไลน์ของเจ้าของร้าน ใช่หรือไม่\n\n${message}`,
+      confirmLabel: 'ส่งข้อความ',
+      variant: 'primary',
+    });
+    if (!accepted) return;
+    setSending(true);
+    try {
+      const result = await sendPartnerLineMessage(companyId, { text: message });
+      if (result.delivered === 0) {
+        // Not an error the operator caused, but they must not walk away thinking they answered.
+        showToast('ยังไม่ได้ส่ง เพราะเจ้าของร้านยังไม่ได้ผูก LINE', 'error');
+      } else {
+        showToast('ส่งข้อความให้ร้านแล้ว', 'success');
+        setText('');
+      }
+    } catch (err) {
+      showToast(apiErrorMessage(err), 'error');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <SectionCard title="ส่งข้อความถึงร้าน">
+      {confirmDialog}
+      <div className="space-y-2">
+        <textarea
+          aria-label="ข้อความถึงร้าน"
+          rows={3}
+          maxLength={PARTNER_LINE_MESSAGE_MAX_LENGTH}
+          value={text}
+          disabled={sending}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="เช่น ได้รับเรื่องแล้วนะคะ ทีมงานกำลังตรวจสอบให้ค่ะ"
+          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-brand-400 focus:outline-none disabled:bg-gray-50"
+        />
+        <p className="text-xs text-gray-500">
+          ส่งถึงเจ้าของร้านที่ผูก LINE ไว้ ระบบจะแนบชื่อผู้ส่งให้อัตโนมัติ ใส่ลิงก์ได้เฉพาะเว็บของเราและ LIFF
+          ({text.trim().length}/{PARTNER_LINE_MESSAGE_MAX_LENGTH})
+        </p>
+        <button type="button" className={btnPrimary} onClick={handleSend} disabled={sending || !text.trim()}>
+          {sending ? 'กำลังส่ง...' : 'ส่งข้อความ'}
+        </button>
+      </div>
     </SectionCard>
   );
 }
@@ -2248,6 +2396,10 @@ export default function PartnerDetailPage({ companyId }: { companyId: string }) 
             onSaved={load}
           />
         </SectionCard>
+
+        {/* P10-L §8: what happened to this shop, and the one way to answer its owner. */}
+        <ShopTimelineSection key={`timeline-${companyId}`} companyId={companyId} />
+        <ShopMessageSection key={`message-${companyId}`} companyId={companyId} showToast={showToast} />
 
         {/* Plan limits & usage term (P29) */}
         <PlanTermSection

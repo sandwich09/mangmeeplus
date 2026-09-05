@@ -49,6 +49,15 @@ function membershipStatusLabel(
   }
 }
 
+/**
+ * Review A-05. A LINE-first account is defined by what it does NOT have: no username, no address,
+ * only a linked LINE identity. Anything else — including an account that simply has not linked yet
+ * — is an ordinary account and keeps the two columns it is used to.
+ */
+export function lineOnlyUser(user: Pick<SystemUserLookupItemDto, 'username' | 'email' | 'lineLinked'>): boolean {
+  return !user.username && !user.email && user.lineLinked;
+}
+
 function mergeTrailLine(entry: SystemUserMergeTrailDto): string {
   const when = formatThaiDate(entry.at);
   return entry.direction === 'merged_into'
@@ -64,14 +73,23 @@ function UserCard({ user }: { user: SystemUserLookupItemDto }) {
       <header className="space-y-1.5 border-b border-gray-100 px-4 py-3">
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="text-base font-semibold text-gray-900">{user.displayName}</h2>
+          {/* P10-L §8 / review A-05: a LINE-first owner has no username and no address by design,
+              so two "—" placeholders read as a broken account. The badge says what they DO have. */}
+          {lineOnlyUser(user) && <span className={greenBadge}>LINE</span>}
           <span className={user.status === 'ACTIVE' ? greenBadge : neutralBadge}>
             {USER_STATUS_LABEL[user.status]}
           </span>
         </div>
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-500">
-          <span>{user.username ?? '—'}</span>
-          <span aria-hidden>·</span>
-          <span className="break-all">{user.email ?? '—'}</span>
+          {lineOnlyUser(user) ? (
+            <span>เข้าใช้งานด้วย LINE เท่านั้น ไม่มีชื่อผู้ใช้และอีเมล</span>
+          ) : (
+            <>
+              <span>{user.username ?? '—'}</span>
+              <span aria-hidden>·</span>
+              <span className="break-all">{user.email ?? '—'}</span>
+            </>
+          )}
           <span aria-hidden>·</span>
           <span className={user.lineLinked ? greenBadge : neutralBadge}>
             {user.lineLinked ? 'เชื่อม LINE แล้ว' : 'ยังไม่เชื่อม LINE'}

@@ -12,6 +12,8 @@ import {
   SignupAdminNotifyService,
   signupPendingReviewMessage,
 } from './signup-admin-notify.service';
+import { LINE_SIGNUP_PUSH_EVENT_TYPE, LINE_SUPPORT_NOTICE_EVENT_TYPE, LinePushThrottledError } from './line-signup-notify.service';
+import { SIGNUP_OPS_ALERT_EVENT_TYPE } from './signup-ops-alert.service';
 
 const NOW = new Date('2026-09-01T12:00:00.000Z');
 
@@ -84,9 +86,27 @@ function harness(options: { request?: any; sendFails?: boolean } = {}) {
   const core = { advance: async () => ({ replayed: false }) } as any;
   const adminNotify = { notify: async (id: string) => { notified.push(id); } } as any;
 
-  const service = new SignupClaimEmailService(prisma, outbox, tokens, core, adminNotify, mailer, logger);
+  const lineDelivered: Array<{ id: string; kind: string }> = [];
+  let lineFailure: unknown = null;
+  const lineNotify = {
+    deliver: async (id: string, kind: string) => {
+      if (lineFailure) throw lineFailure;
+      lineDelivered.push({ id, kind });
+    },
+    deliverSupportNotice: async () => undefined,
+  } as any;
+
+  // §15.6: the ops alert is the one drained event with no application behind it.
+  const opsDelivered: Array<{ kind: string; dayKey: string }> = [];
+  const opsAlerts = {
+    deliver: async (kind: string, dayKey: string) => { opsDelivered.push({ kind, dayKey }); },
+  } as any;
+
+  const service = new SignupClaimEmailService(prisma, outbox, tokens, core, adminNotify, lineNotify, opsAlerts, mailer, logger);
   return {
     service, appended, sent, rejections, notified, claims, published, failed, updates, minted, logs,
+    lineDelivered, opsDelivered,
+    lineFails: (error: unknown) => { lineFailure = error; },
     queue: (events: any[]) => { claimable = events; },
   };
 }
@@ -199,6 +219,89 @@ describe('SignupClaimEmailService.drain', () => {
     });
   });
 
+  it('routes a LINE push row to the push sender, carrying the kind the row names', async () => {
+    const h = harness();
+    h.queue([event({
+      id: 'evt-push', eventType: LINE_SIGNUP_PUSH_EVENT_TYPE,
+      payloadJson: { schemaVersion: 1, data: { signupRequestId: 'signup-1', kind: 'approved' } },
+    })]);
+
+    const result = await h.service.drain();
+
+    assert.equal(result.sent, 1);
+    assert.deepEqual(h.lineDelivered, [{ id: 'signup-1', kind: 'approved' }]);
+    // Settled against its OWN type, so a mis-typed CAS cannot publish someone else's work.
+    assert.deepEqual(h.published[0], {
+      id: 'evt-push', claimToken: 'lease-1', expectedEventType: LINE_SIGNUP_PUSH_EVENT_TYPE,
+    });
+  });
+
+  // G-07 / MEDIUM-5. LINE answers a monthly-quota 429 with a retry-after measured in hours. The
+  // default ladder is 2^n seconds and DEADs at five attempts — about two minutes — which would
+  // throw away "ร้านของคุณพร้อมใช้แล้ว" for a condition that fixes itself.
+  it('reschedules a throttled push at LINE\'s own time and spends none of its attempts', async () => {
+    const h = harness();
+    h.lineFails(new LinePushThrottledError('line_api_429', 3600));
+    h.queue([event({
+      id: 'evt-push', eventType: LINE_SIGNUP_PUSH_EVENT_TYPE,
+      payloadJson: { schemaVersion: 1, data: { signupRequestId: 'signup-1', kind: 'approved' } },
+    })]);
+
+    const before = Date.now();
+    await h.service.drain();
+
+    assert.equal(h.failed.length, 1);
+    assert.equal(h.failed[0].countsTowardMax, false, 'a throttle is not one of the five attempts');
+    const scheduled = (h.failed[0].nextAvailableAt as Date).getTime();
+    assert.ok(scheduled >= before + 3_600_000, 'and it waits exactly as long as LINE asked');
+    assert.ok(scheduled <= Date.now() + 3_600_000);
+  });
+
+  it('survives a sustained quota outage without ever going DEAD', async () => {
+    // Five drains — one more than the ladder needs to terminalize an ordinary failure.
+    const h = harness();
+    h.lineFails(new LinePushThrottledError('line_api_429', 60));
+    for (let pass = 0; pass < 5; pass += 1) {
+      h.queue([event({
+        id: 'evt-push', eventType: LINE_SIGNUP_PUSH_EVENT_TYPE,
+        payloadJson: { schemaVersion: 1, data: { signupRequestId: 'signup-1', kind: 'approved' } },
+      })]);
+      await h.service.drain();
+    }
+
+    assert.equal(h.failed.length, 5);
+    assert.ok(h.failed.every((row: any) => row.countsTowardMax === false), 'none of them spend an attempt');
+    // The repository is what turns that into "never DEAD"; asserted directly on the ladder below.
+  });
+
+  it('still spends an attempt on a failure that is NOT a throttle', async () => {
+    const h = harness();
+    h.lineFails(new Error('line_api_500'));
+    h.queue([event({
+      id: 'evt-push', eventType: LINE_SIGNUP_PUSH_EVENT_TYPE,
+      payloadJson: { schemaVersion: 1, data: { signupRequestId: 'signup-1', kind: 'approved' } },
+    })]);
+
+    await h.service.drain();
+
+    assert.equal(h.failed[0].countsTowardMax, undefined, 'the default ladder still owns real failures');
+    assert.equal(h.failed[0].nextAvailableAt, undefined);
+  });
+
+  it('fails a LINE push row that names no kind instead of guessing one', async () => {
+    const h = harness();
+    h.queue([event({
+      id: 'evt-push', eventType: LINE_SIGNUP_PUSH_EVENT_TYPE,
+      payloadJson: { schemaVersion: 1, data: { signupRequestId: 'signup-1' } },
+    })]);
+
+    const result = await h.service.drain();
+
+    assert.equal(result.failed, 1);
+    assert.deepEqual(h.lineDelivered, []);
+    assert.equal(h.failed[0].error, 'missing_line_push_kind');
+  });
+
   it('claims exactly the signup event types the workflow drain excludes', async () => {
     const h = harness();
     h.queue([event()]);
@@ -210,7 +313,25 @@ describe('SignupClaimEmailService.drain', () => {
       ACCOUNT_CLAIM_EMAIL_EVENT_TYPE,
       SIGNUP_REJECTION_NOTICE_EVENT_TYPE,
       SIGNUP_PENDING_REVIEW_EVENT_TYPE,
+      LINE_SIGNUP_PUSH_EVENT_TYPE,
+      LINE_SUPPORT_NOTICE_EVENT_TYPE,
+      SIGNUP_OPS_ALERT_EVENT_TYPE,
     ]);
+  });
+
+  // §15.6: the only event on this drain with no application behind it, so the "every row carries a
+  // signupRequestId" rule cannot apply to it — and that rule used to run before dispatch.
+  it('delivers an ops alert that carries a day instead of an application', async () => {
+    const h = harness();
+    h.queue([{
+      id: 'evt-ops', eventType: SIGNUP_OPS_ALERT_EVENT_TYPE, claimToken: 'tok',
+      payloadJson: { data: { kind: 'auto_cap_reached', dayKey: '2026-09-05' } },
+    }]);
+    await h.service.drain();
+
+    assert.deepEqual(h.opsDelivered, [{ kind: 'auto_cap_reached', dayKey: '2026-09-05' }]);
+    assert.equal(h.published[0].id, 'evt-ops', 'and it settles like every other row');
+    assert.deepEqual(h.failed, []);
   });
 
   it('routes each signup event type to its own handler', async () => {
@@ -315,7 +436,7 @@ describe('SignupClaimEmailService.sweepReminders', () => {
     } as any;
     const outbox = { append: async (input: any) => { enqueued.push(input.eventKey); return input; } } as any;
     const service = new SignupClaimEmailService(
-      prisma, outbox, {} as any, {} as any, {} as any, {} as any, { error: () => {}, warn: () => {} } as any,
+      prisma, outbox, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, { error: () => {}, warn: () => {} } as any,
     );
     return { service, enqueued, marks };
   }
@@ -364,7 +485,7 @@ describe('SignupClaimEmailService.sweepExpiredApprovals', () => {
       },
     } as any;
     const service = new SignupClaimEmailService(
-      prisma, {} as any, {} as any, core, {} as any, {} as any,
+      prisma, {} as any, {} as any, core, {} as any, {} as any, {} as any, {} as any,
       { error: (f: any) => logs.push(f), warn: (f: any) => logs.push(f) } as any,
     );
     return { service, queries, advanced, logs };

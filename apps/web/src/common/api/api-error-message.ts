@@ -19,6 +19,8 @@ const CODE_LABELS: Record<string, string> = {
   platform_access_open_unavailable: 'ยังเปิดระบบไม่ได้จนกว่า production release จะผ่านการตรวจสอบครบถ้วน',
   // P12-3b: a spent/expired LINE deep-link handoff — same line the /login notice shows.
   line_handoff_unavailable: 'ลิงก์นี้หมดอายุหรือถูกใช้ไปแล้ว กรุณาเข้าสู่ระบบเพื่อเปิดรายการนี้',
+  // P10-L §3.5: the LIFF start page asks for a session and the handoff route is switched off.
+  line_web_handoff_disabled: 'ตอนนี้เปิดหน้าเว็บจาก LINE ไม่ได้ กรุณาเข้าสู่ระบบที่เว็บแอปโดยตรง',
   // P10 claim page. Both are 409s the applicant can act on, and both used to collapse into the
   // generic "ข้อมูลถูกเปลี่ยนแปลงระหว่างทำรายการ" — which named neither the cause nor a way out
   // (Owner UAT 2026-08-31: an applicant with an existing account hit a dead end here).
@@ -335,6 +337,14 @@ const CODE_LABELS: Record<string, string> = {
   // P29: the term ended, so business routes are refused on access. Data is intact — the copy must
   // not read as data loss, and the only move that helps is renewing, not retrying.
   company_term_expired: 'ร้านนี้ครบกำหนดใช้งานแล้ว ข้อมูลทั้งหมดยังอยู่ครบ ติดต่อ 098-256-5628 เพื่อใช้งานต่อ',
+
+  // ---- P10-L §8 admin support tools (system console; the reader is an operator, not a shop) ----
+  // SEC-05: each says what to change, because the operator has the message in front of them.
+  partner_line_message_empty: 'ยังไม่ได้พิมพ์ข้อความ',
+  partner_line_message_too_long: 'ข้อความยาวเกิน 500 ตัวอักษร กรุณาย่อให้สั้นลง',
+  partner_line_message_external_link: 'ใส่ลิงก์ได้เฉพาะเว็บของเราและ LIFF เท่านั้น กรุณาลบลิงก์ภายนอกออก',
+  line_messaging_channel_not_configured: 'ยังไม่ได้ตั้งค่าช่องทาง LINE ของระบบ จึงส่งข้อความไม่ได้',
+  package_change_request_not_found: 'ไม่พบคำขอเปลี่ยนแพ็กเกจนี้ อาจถูกดำเนินการไปแล้ว กรุณาโหลดหน้าใหม่',
   line_linked_elsewhere: 'LINE นี้เชื่อมกับบัญชีอื่นอยู่แล้ว เลือกได้ว่าจะรวมเป็นบัญชีเดียวหรือใช้แยกกันต่อ',
   // Spec §4F account merge — same copy the welcome dialog's own map shows, so the message reads
   // identically wherever the code surfaces.
@@ -355,8 +365,21 @@ const CODE_LABELS: Record<string, string> = {
   // ทางเดียวที่ผู้ใช้ทำได้จริงคือติดต่อฝ่ายสนับสนุน — กดซ้ำไม่ช่วย จึงต้องไม่เขียนว่า "ลองใหม่"
   legal_acceptance_incomplete: 'หลักฐานการยอมรับไม่สมบูรณ์ กรุณาติดต่อฝ่ายสนับสนุนก่อนดำเนินการต่อ',
 
+  // ---- ข้อมูลร้านและบัญชีของฉัน (P10-L §15.4) ----
+  // ลูกค้าที่เปิดร้านจาก LINE ไม่เคยมีรหัสผ่านมาก่อน ข้อความจึงต้องบอกทางไปต่อ ไม่ใช่แค่บอกว่าผิด
+  email_belongs_to_other_account:
+    'อีเมลนี้มีบัญชีอื่นใช้อยู่แล้ว ถ้าเป็นบัญชีของคุณเอง กรุณาเข้าสู่ระบบด้วยบัญชีเดิมแล้วผูก LINE เข้ากับบัญชีนั้น',
+  password_already_set: 'บัญชีนี้มีรหัสผ่านอยู่แล้ว กรุณาใช้เมนูเปลี่ยนรหัสผ่านแทน',
+  // บัญชีที่เปิดจาก LINE ไม่มีอีเมล ถ้าไม่ตั้งชื่อผู้ใช้ รหัสผ่านที่ตั้งไว้จะใช้เข้าระบบไม่ได้เลย
+  username_required: 'บัญชีนี้ยังไม่มีอีเมลที่ยืนยันแล้ว กรุณาตั้งชื่อผู้ใช้ไว้ใช้คู่กับรหัสผ่าน',
+  // ต้องบอกกติกาให้ครบ เพราะคนไทยจะพิมพ์ชื่อไทยเป็นอย่างแรก
+  invalid_username: 'ชื่อผู้ใช้ใช้ได้เฉพาะ a-z 0-9 จุด ขีด และขีดล่าง ยาว 4 ถึง 64 ตัว (ภาษาไทยใช้ไม่ได้ค่ะ)',
+  // `username_taken` already has copy above, shared with the Flow B claim screen.
+  invalid_phone_number: 'เบอร์มือถือต้องเป็นตัวเลข 10 หลัก ขึ้นต้นด้วย 0',
+
   // ---- ตั้งค่าบริษัทและ VAT ----
-  company_tax_identity_incomplete: 'ข้อมูลผู้เสียภาษีของบริษัทยังไม่ครบ กรุณากรอกให้ครบในหน้าตั้งค่าบริษัทก่อน',
+  // จนถึง L-E ข้อความนี้ชี้ไปหน้าที่ยังไม่มีอยู่จริง ตอนนี้มีแล้วจึงเรียกชื่อเมนูตรง ๆ
+  company_tax_identity_incomplete: 'ข้อมูลผู้เสียภาษีของบริษัทยังไม่ครบ กรุณากรอกให้ครบที่ ตั้งค่า › ข้อมูลร้านและบัญชีของฉัน ก่อน',
   identity_change_kind_not_allowed: 'ข้อมูลชนิดนี้แก้เองไม่ได้ กรุณาติดต่อฝ่ายสนับสนุน',
   vat_registration_future_fact_conflict:
     'มีการบันทึกสถานะจดทะเบียน VAT ล่วงหน้าไว้แล้ว กรุณาเลือกว่าจะแทนที่รายการเดิมหรือไม่',

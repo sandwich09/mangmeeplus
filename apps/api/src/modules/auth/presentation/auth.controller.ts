@@ -11,6 +11,7 @@ import {
   Logger,
   NotFoundException,
   Optional,
+  Patch,
   Post,
   Req,
   UnauthorizedException,
@@ -25,15 +26,23 @@ import {
   COMPANY_ID_PATTERN,
   EMPLOYEE_LINE_LINK_TOKEN_PATTERN,
   escapeHtml,
-  LIFF_CLIENT_NOTICE_HTML,
   LIFF_PAGE_CSP,
   LIFF_PAGE_SCRIPT,
+  liffPageHtml,
   LINE_CHANNEL_ID_PATTERN,
   LINE_ID_TOKEN_MAX_LENGTH,
   LINE_ID_TOKEN_PATTERN,
 } from '../../../common/security/liff-page.security';
+import { CURRENT_LEGAL_DOCUMENTS, legalAcceptanceStatements } from '@watchdog-bms/contracts';
+import { currentLegalRelease } from '../application/legal-acceptance.service';
+// The one place the signup form's length limit is decided; the input must not drift from it.
+import { LINE_SIGNUP_COMPANY_NAME_MAX } from '../../external-signup/domain/line-signup.logic';
+import {
+  ExchangeLiffSessionUseCase,
+  type ExchangeLiffSessionResult,
+} from '../application/use-cases/exchange-liff-session.use-case';
 import { accessTokenFromCookies } from './auth-cookie.constants';
-import { publicApiBase } from '../../../common/http/public-api-base';
+import { publicApiBase, requiredWebAppBase } from '../../../common/http/public-api-base';
 import { RequirePermissions } from '../../../common/security/permissions.decorator';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import { emitSecurityEvent, SECURITY_EVENT } from '../../../common/logger/security-event';
@@ -59,6 +68,7 @@ import { NotifyPasswordResetRequestUseCase } from '../application/use-cases/noti
 import { GetAccountSecurityStateUseCase } from '../application/use-cases/get-account-security-state.use-case';
 import { SetAiAssistantPreferenceUseCase } from '../application/use-cases/set-ai-assistant-preference.use-case';
 import { RequestEmailChangeUseCase } from '../application/use-cases/request-email-change.use-case';
+import { AccountProfileUseCase } from '../application/use-cases/account-profile.use-case';
 import { ResendEmailVerificationUseCase } from '../application/use-cases/resend-email-verification.use-case';
 import { ConfirmEmailVerificationUseCase } from '../application/use-cases/confirm-email-verification.use-case';
 import { AuthRateLimitService } from '../application/auth-rate-limit.service';
@@ -118,6 +128,12 @@ export class LineLinkDto {
   @IsString() @IsOptional() @MaxLength(128) @Matches(COMPANY_ID_PATTERN) companyId?: string;
 }
 
+/** P10-L §4: the token is the credential; `companyId` is only ever an echo of a picker choice. */
+class LiffSessionDto {
+  @IsString() @IsNotEmpty() @MaxLength(LINE_ID_TOKEN_MAX_LENGTH) @Matches(LINE_ID_TOKEN_PATTERN) idToken!: string;
+  @IsString() @IsOptional() @MaxLength(128) @Matches(COMPANY_ID_PATTERN) companyId?: string;
+}
+
 class RefreshDto {
   @IsString() @IsNotEmpty() refreshToken!: string;
 }
@@ -158,8 +174,20 @@ export class PasswordResetRequestDto {
 }
 
 class RequestEmailChangeDto {
-  @IsString() @IsNotEmpty() currentPassword!: string;
+  // Optional only for an account that has no credential at all (P10-L §15.4). The use case, not
+  // the pipe, decides that: it demands the password whenever one exists.
+  @IsString() @IsNotEmpty() @IsOptional() currentPassword?: string;
   @IsEmail() @MaxLength(320) newEmail!: string;
+}
+
+class SetMyContactDto {
+  /** Blank clears the stored number. Shape is enforced by `normalizeThaiMobile` in the use case. */
+  @IsString() @IsOptional() @MaxLength(20) phoneNumber?: string;
+}
+
+class SetFirstPasswordDto {
+  @IsString() @MinLength(8) password!: string;
+  @IsString() @IsOptional() @MaxLength(64) username?: string;
 }
 
 class VerifyEmailDto {
@@ -215,6 +243,8 @@ export class AuthController {
     private readonly approveLineWebLoginTransaction: ApproveLineWebLoginTransactionUseCase,
     private readonly redeemLineWebLoginTransaction: RedeemLineWebLoginTransactionUseCase,
     private readonly exchangeLineHandoffToken: ExchangeLineHandoffTokenUseCase,
+    private readonly exchangeLiffSession: ExchangeLiffSessionUseCase,
+    private readonly accountProfile: AccountProfileUseCase,
     @Optional() @Inject(AuditService) private readonly audit: AuditService | null = null,
   ) {}
 
@@ -440,35 +470,20 @@ export class AuthController {
     const devMode = this.config.isLocal;
     const apiBase = publicApiBase(req);
     const oaAddUrl = await this.getOaAddFriendUrl();
-    return `<!doctype html>
-<html lang="th">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>มั่งมี Plus LINE Link</title>
-  <style>
-    body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;padding:24px;line-height:1.5;color:#111827;background:#f9fafb}
-    main{max-width:520px;margin:auto;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:20px}
-    button,a.btn{border:0;border-radius:6px;background:#16a34a;color:white;padding:10px 14px;font-weight:600;display:inline-block;text-decoration:none}
-    [hidden]{display:none!important}
-    button:disabled{opacity:.5}
-    pre{white-space:pre-wrap;background:#f3f4f6;border-radius:6px;padding:12px}
-  </style>
-</head>
-<body data-liff-mode="account" data-liff-id="${escapeHtml(liffId)}" data-api-base="${escapeHtml(apiBase)}" data-dev-mode="${String(devMode)}" data-oa-add-url="${escapeHtml(oaAddUrl)}">
-  <main>
-    ${LIFF_CLIENT_NOTICE_HTML}
-    <div id="liff-content">
-      <h1>มั่งมี Plus LINE Link</h1>
+    return liffPageHtml({
+      title: 'มั่งมี Plus LINE Link',
+      data: {
+        'liff-mode': 'account',
+        'liff-id': liffId,
+        'api-base': apiBase,
+        'dev-mode': String(devMode),
+        'oa-add-url': oaAddUrl,
+      },
+      content: `      <h1>มั่งมี Plus LINE Link</h1>
       <p id="status">Ready</p>
       <button id="link">Link LINE account</button>
-      <pre id="detail"></pre>
-    </div>
-  </main>
-  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-  <script src="/v1/auth/line/link-page.js"></script>
-</body>
-</html>`;
+      <pre id="detail"></pre>`,
+    });
   }
 
   @Public()
@@ -479,6 +494,136 @@ export class AuthController {
   @ApiOperation({ summary: 'Static same-origin LIFF account-link client' })
   lineLinkPageScript(): string {
     return LIFF_PAGE_SCRIPT;
+  }
+
+  /**
+   * P10-L §3.2. The signup form, rendered by the API so the binding acceptance block is the release
+   * the SERVER is serving right now — statement text, version and challenge all come off
+   * `currentLegalRelease()` at render time, and the submit is refused unless the page echoes them
+   * back unchanged (LEGAL-LIFF-01).
+   */
+  @Public()
+  // Both paths, for the same reason the employee page has two: `https://liff.line.me/<id>/signup`
+  // resolves against the REGISTERED LIFF endpoint URL (`.../line/link-page`), so the sub-path is
+  // what a real tap hits, while `line/signup-page` is the name spec §4 gives the contract.
+  @Get(['line/link-page/signup', 'line/signup-page'])
+  @Header('Content-Type', 'text/html; charset=utf-8')
+  @Header('Cache-Control', 'no-store, max-age=0')
+  @Header('Referrer-Policy', 'no-referrer')
+  @Header('Content-Security-Policy', LIFF_PAGE_CSP)
+  @ApiOperation({ summary: 'LIFF signup page for a LINE-first company application (P10-L §3.2)' })
+  lineSignupPage(@Req() req: Request): string {
+    const release = currentLegalRelease('th');
+    const statements = legalAcceptanceStatements('th');
+    // Not the API origin, and not a silent empty string: these two links are what makes the
+    // acceptance binding, so an environment that cannot serve them refuses the page (503) the same
+    // way the session exchange refuses to build a handoff URL it cannot point anywhere.
+    const webBase = requiredWebAppBase(this.config.sesWebBaseUrl).replace(/\/+$/, '');
+    return liffPageHtml({
+      title: 'เปิดร้านใหม่ ทดลองใช้ฟรี',
+      data: {
+        'liff-mode': 'signup',
+        'liff-id': this.config.lineLiffId ?? '',
+        'api-base': publicApiBase(req),
+        'legal-version': release.documentVersion,
+        'legal-statement': release.statementSha256,
+        'legal-release': release.releaseFingerprintSha256,
+        'legal-challenge': release.displayChallenge,
+        'legal-locale': 'th',
+      },
+      style: 'label{display:block;margin-top:12px;font-weight:600}'
+        + '\n    input{width:100%;box-sizing:border-box;padding:10px;border:1px solid #d1d5db;border-radius:6px;font-size:16px}'
+        + '\n    .legal{margin-top:16px;padding:12px;background:#f3f4f6;border-radius:6px;font-size:14px}'
+        + '\n    .legal li{margin-bottom:6px}'
+        + '\n    .fine{color:#4b5563;font-size:14px}',
+      content: `      <h1>เปิดร้านใหม่ ทดลองใช้ฟรี</h1>
+      <p id="greeting"></p>
+      <p id="status">กำลังเตรียมหน้าให้ค่ะ</p>
+      <section id="retry-view" data-view hidden>
+        <p>กรุณาเปิดลิงก์นี้จากแอป LINE นะคะ ถ้าเปิดจากเบราว์เซอร์ปกติจะยังสมัครไม่ได้ค่ะ</p>
+        <p><button id="retry">ลองอีกครั้ง</button></p>
+      </section>
+      <section id="form-view" data-view hidden>
+        <label for="company-name">ชื่อร้าน</label>
+        <input id="company-name" type="text" maxlength="${LINE_SIGNUP_COMPANY_NAME_MAX}" autocomplete="organization" />
+        <label for="phone-number">เบอร์มือถือ (ไม่บังคับ)</label>
+        <input id="phone-number" type="tel" inputmode="numeric" maxlength="10" autocomplete="tel-national" />
+        <section class="legal">
+          <p>${escapeHtml(CURRENT_LEGAL_DOCUMENTS.terms.titleTh)} และ${escapeHtml(CURRENT_LEGAL_DOCUMENTS.privacy.titleTh)} ${escapeHtml(CURRENT_LEGAL_DOCUMENTS.terms.displayVersionTh)}</p>
+          <ul>
+            <li>${escapeHtml(statements.terms)}</li>
+            <li>${escapeHtml(statements.privacy)}</li>
+            <li>${escapeHtml(statements.deletion)}</li>
+          </ul>
+          <p><a href="${escapeHtml(`${webBase}${CURRENT_LEGAL_DOCUMENTS.terms.latestHref}`)}" target="_blank" rel="noopener">อ่านข้อกำหนดการใช้งาน</a></p>
+          <p><a href="${escapeHtml(`${webBase}${CURRENT_LEGAL_DOCUMENTS.privacy.latestHref}`)}" target="_blank" rel="noopener">อ่านประกาศความเป็นส่วนตัว</a></p>
+          <p class="fine">รหัสอ้างอิงฉบับที่แสดง: ${escapeHtml(release.displayChallenge)}</p>
+        </section>
+        <p><button id="link" disabled>ยอมรับและเริ่มทดลองใช้ฟรี</button></p>
+        <p class="fine">ทดลองฟรี 30 วัน ให้ AI อ่านรูปได้ 15 ครั้ง ไม่ต้องใส่บัตร</p>
+      </section>
+      <section id="done-view" data-view hidden>
+        <h2>ได้รับแล้ว</h2>
+        <p id="done-text"></p>
+        <p><button data-close>ปิด</button></p>
+      </section>
+      <section id="pending-view" data-view hidden>
+        <h2>ได้รับแล้ว</h2>
+        <p id="pending-text"></p>
+        <p><button data-close>ปิด</button></p>
+      </section>
+      <pre id="detail"></pre>`,
+    });
+  }
+
+  /**
+   * P10-L §3.5. "เริ่มใช้งาน": no form, no login screen — the page proves who tapped and opens the
+   * minted destination in the EXTERNAL browser, because the cookie must land in Safari/Chrome and
+   * not in the LINE in-app browser (QR fix 2026-09-01).
+   */
+  @Public()
+  /** Sub-path first, for `https://liff.line.me/<id>/start`; the spec §4 name is the alias. */
+  @Get(['line/link-page/start', 'line/start-page'])
+  @Header('Content-Type', 'text/html; charset=utf-8')
+  @Header('Cache-Control', 'no-store, max-age=0')
+  @Header('Referrer-Policy', 'no-referrer')
+  @Header('Content-Security-Policy', LIFF_PAGE_CSP)
+  @ApiOperation({ summary: 'LIFF start page: exchange a LINE identity for a web session (P10-L §3.5)' })
+  lineStartPage(@Req() req: Request): string {
+    return liffPageHtml({
+      title: 'เริ่มใช้งานมั่งมีพลัส',
+      data: {
+        'liff-mode': 'start',
+        'liff-id': this.config.lineLiffId ?? '',
+        'api-base': publicApiBase(req),
+      },
+      style: '#companies button{display:block;width:100%;margin-top:8px}',
+      content: `      <h1>เริ่มใช้งาน</h1>
+      <p id="status">กำลังเปิดหน้าเว็บให้ค่ะ</p>
+      <div id="companies" hidden></div>
+      <p><a id="open-web" class="btn" hidden>เปิดหน้าเว็บ</a></p>
+      <p><a id="go-signup" class="btn" href="/v1/auth/line/link-page/signup" hidden>เปิดร้านใหม่ ทดลองฟรี</a></p>
+      <p><button id="link">ลองอีกครั้ง</button></p>
+      <pre id="detail"></pre>`,
+    });
+  }
+
+  /**
+   * P10-L §4. The exchange behind the start page. `@Public()` because the ID token IS the
+   * credential; the per-account bucket is spent inside, after the token proves whose it is.
+   */
+  @Public()
+  @Post('line/liff/session')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Exchange a LIFF ID token for a one-time web handoff URL (P10-L §3.5)' })
+  @ApiResponse({ status: 200, description: 'A handoff URL, or why one could not be minted' })
+  @ApiResponse({ status: 401, description: 'LINE ID token invalid, expired or for another channel' })
+  @ApiResponse({ status: 403, description: 'LINE web handoff is disabled' })
+  async lineLiffSession(@Body() dto: LiffSessionDto): Promise<ExchangeLiffSessionResult> {
+    return this.exchangeLiffSession.execute({
+      idToken: dto.idToken,
+      ...(dto.companyId ? { companyId: dto.companyId } : {}),
+    });
   }
 
   // Deep link into the system LINE OA chat (LINE shows the add-friend prompt when
@@ -576,36 +721,20 @@ export class AuthController {
     const liffId = this.config.lineLiffId ?? '';
     const apiBase = publicApiBase(req);
     const oaAddUrl = await this.getOaAddFriendUrl();
-    return `<!doctype html>
-<html lang="th">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>มั่งมี Plus LINE Link</title>
-  <style>
-    body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;padding:24px;line-height:1.5;color:#111827;background:#f9fafb}
-    main{max-width:520px;margin:auto;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:20px}
-    button,a.btn{border:0;border-radius:6px;background:#16a34a;color:white;padding:10px 14px;font-weight:600;display:inline-block;text-decoration:none}
-    [hidden]{display:none!important}
-    button:disabled{opacity:.5}
-    pre{white-space:pre-wrap;background:#f3f4f6;border-radius:6px;padding:12px}
-  </style>
-</head>
-<body data-liff-mode="employee" data-liff-id="${escapeHtml(liffId)}" data-api-base="${escapeHtml(apiBase)}" data-oa-add-url="${escapeHtml(oaAddUrl)}">
-  <main>
-    ${LIFF_CLIENT_NOTICE_HTML}
-    <div id="liff-content">
-      <h1>Link your LINE account</h1>
+    return liffPageHtml({
+      title: 'มั่งมี Plus LINE Link',
+      data: {
+        'liff-mode': 'employee',
+        'liff-id': liffId,
+        'api-base': apiBase,
+        'oa-add-url': oaAddUrl,
+      },
+      content: `      <h1>Link your LINE account</h1>
       <p id="status">Ready</p>
       <button id="link">Link LINE account</button>
       <a id="open-line" class="btn" hidden>Open LINE</a>
-      <pre id="detail"></pre>
-    </div>
-  </main>
-  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-  <script src="/v1/auth/line/link-page.js"></script>
-</body>
-</html>`;
+      <pre id="detail"></pre>`,
+    });
   }
 
   @Public()
@@ -818,6 +947,39 @@ export class AuthController {
       mustChangePassword: credential?.mustChangePassword ?? false,
       legalAcceptanceRequired: legalAcceptance.required,
     };
+  }
+
+  // P10-L §15.4 "บัญชีของฉัน". Both act on the caller's own row only — the userId comes from the
+  // verified session — so `account.password.change`, the key the sibling self-service writes
+  // already use, is the whole gate.
+  @Patch('me/contact')
+  @HttpCode(200)
+  @RequirePermissions('account.password.change')
+  @ApiOperation({ summary: 'Set or clear the current user recovery phone number' })
+  @ApiBody({ type: SetMyContactDto })
+  @ApiResponse({ status: 200, description: 'Contact number updated' })
+  async setMyContact(@Body() dto: SetMyContactDto, @Req() req: Request & { context: RequestContext }) {
+    await this.authRateLimit.assertAccountProfileWriteAllowed(req.context.userId);
+    return this.accountProfile.setPhoneNumber(req.context.userId, dto.phoneNumber, req.context.requestId);
+  }
+
+  @Post('me/password/set')
+  @HttpCode(200)
+  @RequirePermissions('account.password.change')
+  @ApiOperation({ summary: 'Set the first password for an account that has none' })
+  @ApiBody({ type: SetFirstPasswordDto })
+  @ApiResponse({ status: 200, description: 'Password set; answers the stored username' })
+  @ApiResponse({ status: 400, description: 'This account has no verified email, so a username is required' })
+  @ApiResponse({ status: 409, description: 'This account already has a password' })
+  async setMyFirstPassword(@Body() dto: SetFirstPasswordDto, @Req() req: Request & { context: RequestContext }) {
+    // `username_taken` makes this an enumeration oracle for anyone holding one valid session.
+    await this.authRateLimit.assertAccountProfileWriteAllowed(req.context.userId);
+    // Same session identity ChangePassword uses, so the caller's own tab survives the revocation.
+    const tokenId = extractSid(req);
+    if (!tokenId) throw new UnauthorizedException('Cannot identify session.');
+    return this.accountProfile.setInitialPassword(
+      req.context.userId, dto.password, dto.username, req.context.requestId, tokenId,
+    );
   }
 
   @Get('me/companies')

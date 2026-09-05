@@ -3125,6 +3125,8 @@ model CompanySignupRequest {
   // AUTO_FREE approved this with no admin in the loop; approvedByUserId stays null.
   autoApproved           Boolean            @default(false)
   adminReminderSentAt    DateTime?
+  // P10-L §3.6: the one "กันหลุด" card is claimed by stamping this, so two sweeps queue one push.
+  profileGuardNudgedAt   DateTime?
   createdAt              DateTime           @default(now())
   updatedAt              DateTime           @updatedAt
   company                Company?           @relation(fields: [companyId], references: [id], onDelete: SetNull)
@@ -3412,6 +3414,9 @@ model LineCompanyContext {
   lineUserId String
   companyId  String
   selectedAt DateTime @default(now())
+  // P10-L §8: set by "ติดต่อเจ้าหน้าที่" so the assistant stays out of a thread a human is handling.
+  // A timestamp rather than a flag, so it expires by itself and nobody has to remember to clear it.
+  aiPausedUntil DateTime?
   updatedAt  DateTime @updatedAt
 
   @@unique([lineUserId])

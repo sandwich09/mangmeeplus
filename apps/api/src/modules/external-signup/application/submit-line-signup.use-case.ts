@@ -21,6 +21,7 @@ import {
 import { CompanySignupCoreService } from './company-signup-core.service';
 import { ProvisionSignupUseCase } from './provision-signup.use-case';
 import { SignupAdminNotifyService } from './signup-admin-notify.service';
+import { SignupOpsAlertService } from './signup-ops-alert.service';
 
 export type SubmitLineSignupCommand = {
   /** LIFF ID token — the only identity input. */
@@ -54,6 +55,7 @@ export class SubmitLineSignupUseCase {
     private readonly rateLimit: AuthRateLimitService,
     private readonly adminNotify: SignupAdminNotifyService,
     private readonly provision: ProvisionSignupUseCase,
+    private readonly opsAlerts: SignupOpsAlertService,
   ) {}
 
   async execute(cmd: SubmitLineSignupCommand, now = new Date()): Promise<LineSignupSubmitAcceptedDto> {
@@ -159,6 +161,9 @@ export class SubmitLineSignupUseCase {
         cmd.correlationRequestId,
         { approvedToday: slot.approvedToday, dailyCap: this.config.lineSignupAutoDailyCap },
       );
+      // §15.6 (a): the machine stopped approving for today, so the rest of the day is manual work
+      // somebody has to know is coming. Once per Bangkok day, whatever the queue length.
+      if (actorUserId !== null) await this.opsAlerts.raise('auto_cap_reached', now);
     }
 
     await this.core.advance(requestId, 'PENDING_REVIEW', cmd.correlationRequestId);

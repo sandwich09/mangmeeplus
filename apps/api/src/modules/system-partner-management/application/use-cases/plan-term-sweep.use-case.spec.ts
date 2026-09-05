@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { PlanTermSweepUseCase } from './plan-term-sweep.use-case';
 import { DAY_MS } from '../../domain/logic/plan-term.logic';
+import { PACKAGE_CHANGE_HINT_TH } from '../../domain/logic/plan-term.logic';
 
 type Row = {
   companyId: string;
@@ -21,7 +22,7 @@ type Row = {
  * filter (so "skips non-ACTIVE" is a real result, not a stub), and `updateMany` behaves as a
  * compare-and-set (so exactly-once is a real result too).
  */
-function makeWorld(rows: Row[], opts: { owners?: string[]; admins?: Array<{ companyId: string; userId: string }> } = {}) {
+function makeWorld(rows: Row[], opts: { owners?: string[]; admins?: Array<{ companyId: string; userId: string }>; lineLinked?: boolean } = {}) {
   const state = rows.map((row) => ({
     warningDays: 7, warn7SentAt: null, warn3SentAt: null, warn1SentAt: null,
     expiredNotifiedAt: null, termDisabledAt: null, ...row,
@@ -63,6 +64,10 @@ function makeWorld(rows: Row[], opts: { owners?: string[]; admins?: Array<{ comp
           if (wantsOwner) return owners.map((userId) => ({ userId }));
           return admins.map((admin) => ({ companyId: admin.companyId, userId: admin.userId }));
         },
+      },
+      // P10-L §3.7: whether the copy may name a LINE command depends on this row existing.
+      externalIdentity: {
+        findFirst: async () => (opts.lineLinked === false ? null : { id: 'ext-1' }),
       },
     },
   } as any;
@@ -167,6 +172,35 @@ describe('PlanTermSweepUseCase — expiry', () => {
     assert.equal(adminEvent.companyId, 'sys-co');
     assert.equal(adminEvent.sourceId, 'co-1');
     assert.equal(adminEvent.deepLinkHref, '/system/partners/co-1');
+  });
+});
+
+// P10-L §3.7. The body the rail persists is what the WEB dashboard renders, and this sweep runs for
+// every company on the platform — Flow B customers and admin-created shops included. Telling one of
+// those owners to type "ขอเปลี่ยนแพ็กเกจ" into a LINE chat is an instruction they cannot follow.
+describe('PlanTermSweepUseCase — the LINE hint follows the customer, not the sweep', () => {
+  it('omits it for a web-only company and includes it for a LINE-linked one', async () => {
+    const webOnly = makeWorld([{ companyId: 'co-web', companyName: 'ร้านเว็บ', companyStatus: 'ACTIVE', termEndsAt: past(1) }], { lineLinked: false });
+    await webOnly.sweep.execute();
+    const webBody = webOnly.notifications.calls[0]!.body as string;
+    assert.equal(webBody.includes(PACKAGE_CHANGE_HINT_TH), false);
+    assert.match(webBody, /ข้อมูลทั้งหมดยังอยู่ครบ/, 'the rest of the message is unchanged');
+    // The System Admin copy is the same body, so it must not carry it either.
+    assert.equal((webOnly.notifications.calls[1]!.body as string).includes(PACKAGE_CHANGE_HINT_TH), false);
+
+    const lineShop = makeWorld([{ companyId: 'co-line', companyName: 'ร้านไลน์', companyStatus: 'ACTIVE', termEndsAt: past(1) }], { lineLinked: true });
+    await lineShop.sweep.execute();
+    assert.ok((lineShop.notifications.calls[0]!.body as string).endsWith(PACKAGE_CHANGE_HINT_TH));
+  });
+
+  it('applies the same rule to the 7/3/1 warnings', async () => {
+    const webOnly = makeWorld([{ companyId: 'co-web', companyName: 'ร้านเว็บ', companyStatus: 'ACTIVE', termEndsAt: future(3) }], { lineLinked: false });
+    await webOnly.sweep.execute();
+    assert.equal((webOnly.notifications.calls[0]!.body as string).includes(PACKAGE_CHANGE_HINT_TH), false);
+
+    const lineShop = makeWorld([{ companyId: 'co-line', companyName: 'ร้านไลน์', companyStatus: 'ACTIVE', termEndsAt: future(3) }], { lineLinked: true });
+    await lineShop.sweep.execute();
+    assert.ok((lineShop.notifications.calls[0]!.body as string).endsWith(PACKAGE_CHANGE_HINT_TH));
   });
 });
 

@@ -33,6 +33,9 @@ function makeUCs() {
     getPlanTerm: { execute: async () => ({ term: null }) } as any,
     setPlanTerm: { execute: async () => ({ term: { companyId: 'co-1', tierKey: 'STARTER_249' } }) } as any,
     renewPlanTerm: { execute: async () => ({ term: { companyId: 'co-1', renewCount: 1 } }) } as any,
+    endWarmup: { execute: async () => ({ term: { companyId: 'co-1', warmupUntil: undefined } }) } as any,
+    timeline: { execute: async () => ({ entries: [] }) } as any,
+    lineMessage: { execute: async () => ({ delivered: 1 }) } as any,
   };
 }
 
@@ -45,7 +48,8 @@ function makeCtrl(overrides: Partial<ReturnType<typeof makeUCs>> = {}) {
     uc.setMemberContact,
     // VAT registration: delegated to the company's own service, not re-implemented here.
     { put: async () => ({ version: 1, resultKind: 'APPLIED', replayed: false }) } as any,
-    uc.getPlanTerm, uc.setPlanTerm, uc.renewPlanTerm,
+    uc.getPlanTerm, uc.setPlanTerm, uc.renewPlanTerm, uc.endWarmup,
+    uc.timeline, uc.lineMessage,
   );
 }
 

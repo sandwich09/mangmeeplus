@@ -14,6 +14,7 @@ import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import { stripThaiTitlePrefix } from '@/common/components/mangmee';
 import { useBranchFilter, useBranchScopeLabel } from '@/features/web-core-workspace/WorkspaceScope';
 import { isBranchScope403 } from '@/features/web-core-workspace/branch-scope-label.logic';
+import { ProfileCompletenessCard } from '@/features/company-profile/ProfileCompletenessCard';
 
 type DashboardTabPeriodKind = Exclude<DashboardPeriodKind, 'last_month' | 'custom'>;
 
@@ -320,6 +321,11 @@ export function CompanyDashboardPage({
       </div>
 
       {permissions.includes('crm.inbox.read') && <CrmDailyBriefCard companyId={companyId} periodKind={periodKind} refreshToken={refreshToken} />}
+
+      {/* P10-L §15.4: OWNER-only, and `company.legal_identity.manage` is exactly that today
+          (permission-registry.spec.ts keeps it owner-only pending QP2) — so it gates on the
+          authority to fix what the card asks for, not on a role name the dashboard never receives. */}
+      {permissions.includes('company.legal_identity.manage') && <ProfileCompletenessCard companyId={companyId} />}
 
       {error && (
         <div role="alert" className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[15px] font-medium text-red-700">{error}</div>

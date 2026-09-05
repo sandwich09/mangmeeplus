@@ -10,6 +10,8 @@ import {
   SIGNUP_REJECTION_NOTICE_EVENT_TYPE,
 } from '../../../external-signup/application/signup-claim-email.service';
 import { SIGNUP_PENDING_REVIEW_EVENT_TYPE } from '../../../external-signup/application/signup-admin-notify.service';
+import { LINE_SIGNUP_PUSH_EVENT_TYPE, LINE_SUPPORT_NOTICE_EVENT_TYPE } from '../../../external-signup/application/line-signup-notify.service';
+import { SIGNUP_OPS_ALERT_EVENT_TYPE } from '../../../external-signup/application/signup-ops-alert.service';
 
 const WORKER_ID = 'workflow-outbox-drain';
 const OUTBOX_DEAD_EVENT = 'outbox.dead_rows';
@@ -88,6 +90,9 @@ export class DrainWorkflowOutboxUseCase {
         ACCOUNT_CLAIM_EMAIL_EVENT_TYPE,
         SIGNUP_REJECTION_NOTICE_EVENT_TYPE,
         SIGNUP_PENDING_REVIEW_EVENT_TYPE,
+        LINE_SIGNUP_PUSH_EVENT_TYPE,
+        LINE_SUPPORT_NOTICE_EVENT_TYPE,
+        SIGNUP_OPS_ALERT_EVENT_TYPE,
       ],
     });
     const sweep = this.shadow.startSweep('outbox.drain');

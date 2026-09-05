@@ -35,6 +35,8 @@ function harness(options: {
   onboardingFails?: Error;
   /** Empty = an installation with no platform operator at all. */
   systemAdmins?: Array<{ companyId: string; userId: string }>;
+  /** §15.6 (c): the core reports a fence taken from an abandoned attempt. */
+  reclaimedStale?: boolean;
 } = {}) {
   const onboardingCalls: any[] = [];
   const companyUpdates: any[] = [];
@@ -69,6 +71,8 @@ function harness(options: {
   const core = {
     claimProvisioning: async () => ({
       request, claimed: options.claimed ?? true, attemptId: options.claimed === false ? null : 'attempt-1',
+      // §15.6 (c): the core reports when the claim took the fence from an abandoned attempt.
+      ...(options.reclaimedStale ? { reclaimedStale: true } : {}),
     }),
     completeProvisioning: async (input: any) => { completed.push(input); return {}; },
     failProvisioning: async (input: any) => { failures.push(input); return {}; },
@@ -92,10 +96,18 @@ function harness(options: {
     activeSystemAdmins: async () => (options.systemAdmins ?? [{ companyId: 'sys', userId: 'sysadmin-1' }]),
   } as any;
 
+  // P10-L: the "your shop is ready" push is QUEUED here, so the spec records keys rather than sends.
+  const linePushes: Array<{ id: string; kind: string }> = [];
+  const lineNotify = { enqueue: async (id: string, kind: string) => { linePushes.push({ id, kind }); } } as any;
+
+  // §15.6: an ops alert is raised on a failed or re-claimed provisioning; recorded, never sent.
+  const alerts: string[] = [];
+  const opsAlerts = { raise: async (kind: string) => { alerts.push(kind); } } as any;
+
   return {
-    useCase: new ProvisionSignupUseCase(prisma, core, onboarding, config, adminDirectory),
+    useCase: new ProvisionSignupUseCase(prisma, core, onboarding, config, adminDirectory, lineNotify, opsAlerts),
     onboardingCalls, companyUpdates, requestUpdates, audits, advances, completed, failures, planTermUpserts,
-    planTermUpdates, aiConfigUpserts, lineContexts,
+    planTermUpdates, aiConfigUpserts, lineContexts, linePushes, alerts,
   };
 }
 
@@ -254,7 +266,9 @@ describe('ProvisionSignupUseCase — LINE-first source', () => {
       kind: 'line', providerUserId: 'Uline-1', channelId: 'channel-1', displayName: 'นิด',
     });
     assert.equal(cmd.ownerUsername, undefined, 'no username exists for a LINE-first owner');
-    assert.equal(cmd.claimedOwner, undefined, 'and therefore no email-owner shape');
+    // The owner payload carries the phone and NOTHING else: no address, no password, no attach —
+    // those are the email-owner shape, and this owner has none of them.
+    assert.deepEqual(cmd.claimedOwner, { phoneNumber: '0982565628' });
     assert.equal(cmd.planTier, 'FREE_TRIAL_15');
     assert.equal(cmd.planDays, 30);
     // Spec §6: the acceptance time is the one from the application, not the provisioning clock.
@@ -378,6 +392,36 @@ describe('ProvisionSignupUseCase — recovering an already-created company', () 
   });
 });
 
+describe('P10-L: the one push a new shop is owed (§3.4/§7)', () => {
+  it('queues it on the normal finish, and names the attach case correctly', async () => {
+    const fresh = harness({ request: LINE_REQUEST });
+    await fresh.useCase.execute(CMD);
+    assert.deepEqual(fresh.linePushes, [{ id: 'signup-1', kind: 'approved' }]);
+
+    const second = harness({ request: { ...LINE_REQUEST, attachUserId: 'user-9' } });
+    await second.useCase.execute(CMD);
+    assert.deepEqual(second.linePushes, [{ id: 'signup-1', kind: 'attached' }]);
+  });
+
+  it('queues it from the stranded-row close-out too, so a dead process costs nobody their message', async () => {
+    // The fence lost its holder between completeProvisioning and the final advance. Closing the row
+    // finishes the hop AND owes the same message — under the same outbox key, so the two paths
+    // together still deliver exactly one.
+    const h = harness({ claimed: false, request: { ...LINE_REQUEST, companyId: 'co-1', state: 'READY' } });
+    await h.useCase.execute(CMD);
+
+    assert.equal(h.onboardingCalls.length, 0, 'no second company');
+    assert.deepEqual(h.advances.at(-1), { id: 'signup-1', state: 'COMPLETED' });
+    assert.deepEqual(h.linePushes, [{ id: 'signup-1', kind: 'approved' }]);
+  });
+
+  it('stays silent for a web application, which has an email rail of its own', async () => {
+    const h = harness();
+    await h.useCase.execute(CMD);
+    assert.deepEqual(h.linePushes, []);
+  });
+});
+
 describe('ProvisionSignupUseCase — fencing', () => {
   it('reads back the winner instead of provisioning twice', async () => {
     const h = harness({ claimed: false, request: { companyId: 'co-1', state: 'READY' } });
@@ -397,5 +441,44 @@ describe('ProvisionSignupUseCase — fencing', () => {
     assert.equal(h.completed.length, 0);
     // The hash stays put so an admin retry still has something to provision with.
     assert.equal(h.requestUpdates.length, 0);
+    // §15.6 (c): a shop was told "we will open it" and was not. Nothing else says so out loud.
+    assert.deepEqual(h.alerts, ['provisioning_failed']);
+  });
+
+  it('raises the ops alert when the fence is taken from an abandoned attempt', async () => {
+    // The claim itself recovers, so nothing here fails — but a run that sat half-open long enough
+    // for the clock to give up on it is exactly what an operator needs to hear about.
+    const h = harness({ reclaimedStale: true });
+    await h.useCase.execute({ ...CMD, username: 'somchai' });
+
+    assert.deepEqual(h.alerts, ['provisioning_failed']);
+  });
+
+  /**
+   * Confirmed on a real stack: after a LINE-first signup carrying 0812345678, the owner's
+   * `User.phoneNumber` was null and the number existed only on the application row — so the profile
+   * page asked for it again, the day-7 nudge fired at somebody who had already given it, and the
+   * queue's duplicate hint could never match a shop this flow opened.
+   */
+  it('gives the new LINE owner the phone number they typed at signup', async () => {
+    const h = harness({ request: { ...LINE_REQUEST, phoneNumber: '0812345678' } });
+    await h.useCase.execute(CMD);
+
+    assert.equal(h.onboardingCalls[0].claimedOwner?.phoneNumber, '0812345678');
+    // Still a brand-new owner: a phone must not be mistaken for "attach to this account".
+    assert.equal(h.onboardingCalls[0].claimedOwner?.attachUserId, undefined);
+    assert.equal(h.onboardingCalls[0].ownerAuth.kind, 'line');
+  });
+
+  it('sends no owner payload at all when the optional phone was left blank', async () => {
+    const h = harness({ request: { ...LINE_REQUEST, phoneNumber: null } });
+    await h.useCase.execute(CMD);
+    assert.equal(h.onboardingCalls[0].claimedOwner, undefined, 'byte-identical to before');
+  });
+
+  it('raises nothing on a provisioning that simply works', async () => {
+    const h = harness();
+    await h.useCase.execute({ ...CMD, username: 'somchai' });
+    assert.deepEqual(h.alerts, []);
   });
 });

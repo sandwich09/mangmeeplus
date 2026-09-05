@@ -16,6 +16,7 @@ import { ApproveLineWebLoginTransactionUseCase } from './application/use-cases/a
 import { RedeemLineWebLoginTransactionUseCase } from './application/use-cases/redeem-line-web-login-transaction.use-case';
 import { MintLineHandoffTokenUseCase } from './application/use-cases/mint-line-handoff-token.use-case';
 import { ExchangeLineHandoffTokenUseCase } from './application/use-cases/exchange-line-handoff-token.use-case';
+import { ExchangeLiffSessionUseCase } from './application/use-cases/exchange-liff-session.use-case';
 import { RefreshSessionUseCase } from './application/use-cases/refresh-session.use-case';
 import { LogoutUseCase } from './application/use-cases/logout.use-case';
 import { RevokeOtherSessionsUseCase } from './application/use-cases/revoke-other-sessions.use-case';
@@ -30,6 +31,7 @@ import { NotifyPasswordResetRequestUseCase } from './application/use-cases/notif
 import { GetAccountSecurityStateUseCase } from './application/use-cases/get-account-security-state.use-case';
 import { SetAiAssistantPreferenceUseCase } from './application/use-cases/set-ai-assistant-preference.use-case';
 import { RequestEmailChangeUseCase } from './application/use-cases/request-email-change.use-case';
+import { AccountProfileUseCase } from './application/use-cases/account-profile.use-case';
 import { ResendEmailVerificationUseCase } from './application/use-cases/resend-email-verification.use-case';
 import { ConfirmEmailVerificationUseCase } from './application/use-cases/confirm-email-verification.use-case';
 import { AuthRateLimitService } from './application/auth-rate-limit.service';
@@ -88,6 +90,7 @@ export function selectAuthMailer(
     RedeemLineWebLoginTransactionUseCase,
     MintLineHandoffTokenUseCase,
     ExchangeLineHandoffTokenUseCase,
+    ExchangeLiffSessionUseCase,
     RefreshSessionUseCase,
     LogoutUseCase,
     RevokeOtherSessionsUseCase,
@@ -102,6 +105,7 @@ export function selectAuthMailer(
     GetAccountSecurityStateUseCase,
     SetAiAssistantPreferenceUseCase,
     RequestEmailChangeUseCase,
+    AccountProfileUseCase,
     ResendEmailVerificationUseCase,
     ConfirmEmailVerificationUseCase,
     AuthRateLimitService,
