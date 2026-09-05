@@ -1,11 +1,12 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { PLAN_TIER_PRESETS, SIGNUP_TRIAL_TIER_KEY } from '@watchdog-bms/contracts';
+import { PLAN_TIER_PRESETS, SIGNUP_TRIAL_TIER_KEY, SIGNUP_TRIAL_WARMUP_SLIPS } from '@watchdog-bms/contracts';
 import {
   clampMobileInput,
   isThaiMobile,
   MOBILE_DIGITS,
   offerLimitsLabel,
+  offerWarmupNote,
   SELECTABLE_OFFER_KEY,
   SIGNUP_CONSENT_VERSION,
   SIGNUP_OFFERS,
@@ -117,6 +118,29 @@ describe('offer catalog', () => {
     assert.match(offerLimitsLabel(selectable), new RegExp(`${preset.branchLimit} สาขา`));
     assert.match(offerLimitsLabel(selectable), new RegExp(`${preset.employeeLimit} คน`));
     assert.match(offerLimitsLabel(selectable), new RegExp(`${preset.monthlySlipLimit} ใบ/เดือน`));
+  });
+
+  /**
+   * Review F17. P10-L §9 caps a brand-new trial shop harder for its first week than its tier
+   * allows. Discovering that on day one reads as a broken app, so the card says it in advance.
+   */
+  it('says what the first week actually allows, from the shared constant', () => {
+    const selectable = SIGNUP_OFFERS.find((offer) => offer.selectable)!;
+    const note = offerWarmupNote(selectable);
+
+    assert.ok(note, 'the trial card must state its first-week ceiling');
+    assert.match(note!, new RegExp(`สัปดาห์แรกอ่านได้ ${SIGNUP_TRIAL_WARMUP_SLIPS} ใบ`));
+    // Owner copy rule: no plus sign anywhere in user-facing text.
+    assert.equal(note!.includes('+'), false);
+    // The number is the warm-up ceiling, not the monthly quota — they differ, and saying the
+    // monthly one here would promise 15 receipts in a week that allows 10.
+    assert.notEqual(SIGNUP_TRIAL_WARMUP_SLIPS, PLAN_TIER_PRESETS[SIGNUP_TRIAL_TIER_KEY].monthlySlipLimit);
+  });
+
+  it('puts the warm-up note on the trial card only', () => {
+    for (const paid of SIGNUP_OFFERS.filter((offer) => !offer.selectable)) {
+      assert.equal(offerWarmupNote(paid), undefined, `${paid.tierKey} has no warm-up`);
+    }
   });
 
   it('names no PRO package and quotes no price on the offer the applicant takes', () => {

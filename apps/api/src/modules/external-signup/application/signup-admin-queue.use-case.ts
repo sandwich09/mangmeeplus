@@ -287,13 +287,21 @@ export class SignupAdminQueueUseCase {
             data: { approvedAt, approvedByUserId: adminUserId },
           });
         }
-        await this.audit(requestId, adminUserId, correlationRequestId, 'signup.request.approved', {
-          source: request.source,
-          hadPhoneNumber: request.phoneNumber !== null,
-          fromState: request.state,
-          retryOfFailedProvisioning: request.state === 'PROVISIONING_FAILED',
-          finishedStrandedRow: !firstDecision && request.state !== 'PROVISIONING_FAILED',
-        });
+        // Review F16: a retry is not a decision. Filing it as a second `signup.request.approved`
+        // made the trail read as two approvals of one application — and on the web form, where the
+        // real approval happened days earlier, that is simply untrue. Its own action keeps
+        // "how many applications were approved" answerable by counting.
+        await this.audit(
+          requestId, adminUserId, correlationRequestId,
+          retryingProvisioning ? 'signup.request.provisioning_retried' : 'signup.request.approved',
+          {
+            source: request.source,
+            hadPhoneNumber: request.phoneNumber !== null,
+            fromState: request.state,
+            retryOfFailedProvisioning: retryingProvisioning,
+            finishedStrandedRow: !firstDecision && !retryingProvisioning,
+          },
+        );
         if (!urls) throw new ConflictException('signup_provisioning_urls_required');
         await this.provision.execute({
           requestId,
@@ -314,12 +322,15 @@ export class SignupAdminQueueUseCase {
       await this.core.advance(requestId, 'EMAIL_PENDING', correlationRequestId, undefined, undefined, {
         data: { approvedAt, approvedByUserId: adminUserId, claimWindowStartedAt: approvedAt },
         // Review F8: the letter AND the record of the decision ride the transaction that makes it.
+        // The audit goes FIRST so a failure in the letter proves the audit rolls back with it
+        // (review F15) — an audit written outside the transaction would survive and claim a
+        // decision that never committed.
         alsoInTransaction: async (tx) => {
-          await this.claimEmail.enqueue(requestId, 'approve', approvedAt, tx);
           await this.audit(requestId, adminUserId, correlationRequestId, 'signup.request.approved', {
             hadTaxId: request.taxId !== null,
             mxValid: request.mxValid ?? false,
           }, tx);
+          await this.claimEmail.enqueue(requestId, 'approve', approvedAt, tx);
         },
       });
       return { requestId, state: 'EMAIL_PENDING' };

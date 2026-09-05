@@ -638,7 +638,11 @@ describe('SignupAdminQueueUseCase.decide — approve', () => {
     assert.deepEqual(h.advances, []);
     // The original decision time is history and is not rewritten by the retry.
     assert.deepEqual(h.updates, []);
+    // Review F16: a retry files under its own action. As a second `signup.request.approved` the
+    // trail read as two approvals of one application, when the approval happened days earlier.
+    assert.equal(h.audits[0].data.action, 'signup.request.provisioning_retried');
     assert.equal(h.audits[0].data.metadataJson.retryOfFailedProvisioning, true);
+    assert.equal(h.audits[0].data.metadataJson.finishedStrandedRow, false);
   });
 
   it('lists a failed provisioning for every source, not just LINE', async () => {

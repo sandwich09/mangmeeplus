@@ -12,6 +12,7 @@ import {
   clampMobileInput,
   MOBILE_DIGITS,
   offerLimitsLabel,
+  offerWarmupNote,
   SELECTABLE_OFFER_KEY,
   SIGNUP_CONSENT_VERSION,
   SIGNUP_OFFERS,
@@ -65,11 +66,18 @@ function OfferCards() {
                 <span className="text-[15px] font-semibold text-gray-700">{offer.priceLabel}</span>
                 {offer.badge ? (
                   <span className="rounded-md bg-[#046B29] px-2 py-0.5 text-[12px] font-bold text-white">{offer.badge}</span>
-                ) : (
+                ) : null}
+                {/* The "coming soon" chip belongs to the cards you cannot pick. Keyed on
+                    `selectable`, not on the absence of a badge: the trial card carries neither. */}
+                {offer.selectable ? null : (
                   <span className="rounded-md bg-gray-200 px-2 py-0.5 text-[12px] font-semibold text-gray-600">เร็ว ๆ นี้</span>
                 )}
               </span>
               <span className="mt-1 block text-[13px] leading-6 text-gray-500">{offerLimitsLabel(offer)}</span>
+              {/* F17: the first-week ceiling, said before signing up rather than discovered on day one. */}
+              {offerWarmupNote(offer) ? (
+                <span className="mt-0.5 block text-[13px] leading-6 text-gray-500">{offerWarmupNote(offer)}</span>
+              ) : null}
               {offer.unavailableReason ? <span id={reasonId} className="sr-only">{offer.unavailableReason}</span> : null}
             </span>
           </label>

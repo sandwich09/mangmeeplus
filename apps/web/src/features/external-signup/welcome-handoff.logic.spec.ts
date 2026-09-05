@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readClaimedCompany, rememberClaimedCompany } from './welcome-handoff.logic';
+import { readClaimedCompany, rememberClaimedCompany, shouldFetchMergeOffer } from './welcome-handoff.logic';
 
 function fakeStorage(seed: Record<string, string> = {}): Storage {
   const map = new Map(Object.entries(seed));
@@ -57,5 +57,27 @@ describe('welcome handoff', () => {
       homePath: '/',
       attachedToExistingUser: false,
     });
+  });
+});
+
+/**
+ * Review F14. The merge dialog is re-offered on every failed link attempt, and each open used to
+ * cost a preview call the API rate-limits. One answer per mount is enough: the ticket in the cookie
+ * has not changed between opens, so neither has the plan it describes.
+ */
+describe('shouldFetchMergeOffer', () => {
+  it('asks once when the dialog opens with nothing in hand', () => {
+    assert.equal(shouldFetchMergeOffer(true, null), true);
+  });
+
+  it('never asks again once an answer is held, however often the dialog reopens', () => {
+    const answered = { ready: true, existingAccount: { displayName: 'บัญชีเดิม', companyNames: [] } };
+    assert.equal(shouldFetchMergeOffer(true, answered), false);
+    // "No live offer" is an answer too — re-asking would spend quota to learn the same thing.
+    assert.equal(shouldFetchMergeOffer(true, { ready: false }), false);
+  });
+
+  it('asks nothing while the dialog is closed', () => {
+    assert.equal(shouldFetchMergeOffer(false, null), false);
   });
 });

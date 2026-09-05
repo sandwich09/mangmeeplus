@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { claimTokenExpiresAt, CLAIM_EXPIRY_AFTER_APPROVAL_DAYS } from '../domain/account-claim.logic';
 import {
   ACCOUNT_CLAIM_EMAIL_EVENT_TYPE,
   CLAIM_EXPIRY_FAILURE_CODE,
@@ -29,6 +30,7 @@ function harness(options: { request?: any; sendFails?: boolean } = {}) {
   const failed: any[] = [];
   const updates: any[] = [];
   const minted: string[] = [];
+  const mintCalls: Array<{ id: string; now: Date; windowStartedAt: Date | null }> = [];
   const logs: any[] = [];
   let claimable: any[] = [];
 
@@ -59,10 +61,13 @@ function harness(options: { request?: any; sendFails?: boolean } = {}) {
   } as any;
 
   const tokens = {
-    mint: async (id: string) => {
+    // F13: records what the service asks for, and answers with the REAL clamp — so a service that
+    // stopped passing the window would hand the mailer a link outliving its own sweep.
+    mint: async (id: string, now: Date = NOW, windowStartedAt: Date | null = null) => {
       const rawToken = `raw-token-for-${id}`;
       minted.push(rawToken);
-      return { rawToken, expiresAt: new Date(NOW.getTime() + 72 * 3_600_000) };
+      mintCalls.push({ id, now, windowStartedAt });
+      return { rawToken, expiresAt: claimTokenExpiresAt(now, windowStartedAt) };
     },
   } as any;
 
@@ -104,7 +109,7 @@ function harness(options: { request?: any; sendFails?: boolean } = {}) {
 
   const service = new SignupClaimEmailService(prisma, outbox, tokens, core, adminNotify, lineNotify, opsAlerts, mailer, logger);
   return {
-    service, appended, sent, rejections, notified, claims, published, failed, updates, minted, logs,
+    service, appended, sent, rejections, notified, claims, published, failed, updates, minted, mintCalls, logs,
     lineDelivered, opsDelivered,
     lineFails: (error: unknown) => { lineFailure = error; },
     queue: (events: any[]) => { claimable = events; },
@@ -195,6 +200,35 @@ describe('SignupClaimEmailService.drain', () => {
     id: 'evt-1', claimToken: 'lease-1', attempts: 0, eventType: ACCOUNT_CLAIM_EMAIL_EVENT_TYPE,
     payloadJson: { schemaVersion: 1, data: { signupRequestId: 'signup-1', reminder: false } },
     ...overrides,
+  });
+
+  /**
+   * Review F13: the wiring half of F7. The clamp is in the domain and the mint honours it, but
+   * `sendClaimEmail` has to hand the request's window over — otherwise every link is minted for a
+   * full 72 hours again and the day-30 sweep kills the late ones mid-life.
+   */
+  it('mints against the request\'s activation window, and mails the clamped expiry', async () => {
+    const windowStartedAt = new Date(NOW.getTime() - 28 * 86_400_000);
+    const h = harness({
+      request: {
+        id: 'signup-1', state: 'EMAIL_PENDING', contactEmail: 'somchai@example.com',
+        companyName: 'ร้านมั่งมี', claimWindowStartedAt: windowStartedAt,
+      },
+    });
+    h.queue([event()]);
+
+    await h.service.drain();
+
+    assert.equal(h.mintCalls.length, 1);
+    assert.equal(
+      h.mintCalls[0]!.windowStartedAt?.getTime(),
+      windowStartedAt.getTime(),
+      'the window has to reach the mint, or the clamp never applies',
+    );
+    // What the applicant receives dies with the window, not 72 hours after the send.
+    const windowEnd = windowStartedAt.getTime() + CLAIM_EXPIRY_AFTER_APPROVAL_DAYS * 86_400_000;
+    assert.equal(h.sent[0].expiresAt.getTime(), windowEnd);
+    assert.equal(h.sent[0].expiresAt.getTime(), claimTokenExpiresAt(NOW, windowStartedAt).getTime());
   });
 
   it('mints at send, mails the raw token once, and never persists it', async () => {

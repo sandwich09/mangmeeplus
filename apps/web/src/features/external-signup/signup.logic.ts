@@ -2,6 +2,7 @@ import {
   CURRENT_LEGAL_DOCUMENTS,
   PLAN_TIER_PRESETS,
   SIGNUP_TRIAL_TIER_KEY,
+  SIGNUP_TRIAL_WARMUP_SLIPS,
   type PlanTierKey,
   type PublicSignupStatusKey,
   type SignupOfferKey,
@@ -51,6 +52,16 @@ export const SIGNUP_OFFERS: readonly SignupOfferCard[] = [
 
 export function offerLimitsLabel(card: SignupOfferCard): string {
   return limitsLabel(card.tierKey);
+}
+
+/**
+ * Review F17. P10-L §9 holds a brand-new trial shop to a tighter receipt ceiling for its first
+ * week. Telling people afterwards is how "the app is broken" support calls start, so the card says
+ * it up front. Owner copy rule: no plus sign in user-facing text.
+ */
+export function offerWarmupNote(card: SignupOfferCard): string | undefined {
+  if (card.tierKey !== SIGNUP_TRIAL_TIER_KEY) return undefined;
+  return `สัปดาห์แรกอ่านได้ ${SIGNUP_TRIAL_WARMUP_SLIPS} ใบ`;
 }
 
 /**

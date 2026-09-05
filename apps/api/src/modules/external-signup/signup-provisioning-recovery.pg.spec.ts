@@ -263,6 +263,17 @@ describe('F2: a failed web provisioning is visible in the queue and retryable th
       assert.equal(after.state, 'LINE_LINK_PENDING');
       assert.equal((await companiesFor(client, request.companyName)).length, 1, 'exactly one shop');
       assert.equal(await client.companyMembership.count({ where: { companyId: after.companyId! } }), 1);
+      // Review F16: a retry is not a decision. Filed as `signup.request.approved` the trail read as
+      // two approvals of one application, when the real approval happened days earlier.
+      assert.equal(
+        await client.auditLog.count({ where: { targetId: request.id, action: 'signup.request.provisioning_retried' } }),
+        1,
+      );
+      assert.equal(
+        await client.auditLog.count({ where: { targetId: request.id, action: 'signup.request.approved' } }),
+        0,
+        'the retry must not add a second approval to the trail',
+      );
     } finally {
       await client.$disconnect();
     }
@@ -297,6 +308,14 @@ describe('F10/R08: approve writes its state, its stamp and its letter in one tra
       assert.equal(after.approvedAt, null, 'and no approval may be recorded for a decision that failed');
       assert.equal(after.claimWindowStartedAt, null);
       assert.deepEqual(await claimEmailRows(client, request.id), []);
+      // Review F15: the audit is written on the TRANSACTION client, so it rolls back with the
+      // decision. Written on `prisma.client` it would survive and assert an approval that never
+      // committed — an audit trail that lies is worse than one with a gap.
+      assert.equal(
+        await client.auditLog.count({ where: { targetId: request.id, action: 'signup.request.approved' } }),
+        0,
+        'no audit row may outlive the transaction it belongs to',
+      );
     } finally {
       await client.$disconnect();
     }
@@ -326,6 +345,15 @@ describe('F10/R08: approve writes its state, its stamp and its letter in one tra
       assert.deepEqual(
         await claimEmailRows(client, request.id),
         [{ eventKey: `email:claim:${request.id}` }],
+      );
+      // One decision, one approval row — the retry files as a repair, not a second approval (F8).
+      assert.equal(
+        await client.auditLog.count({ where: { targetId: request.id, action: 'signup.request.approved' } }),
+        1,
+      );
+      assert.equal(
+        await client.auditLog.count({ where: { targetId: request.id, action: 'signup.request.claim_email_repaired' } }),
+        1,
       );
     } finally {
       await client.$disconnect();

@@ -9,7 +9,7 @@ import { Modal } from '@/common/components/modal';
 import { formatThaiDate } from '@/common/i18n/thai-date';
 import { fetchPlanTermNotice } from '@/features/plan-term/plan-term.api';
 import { SignupBrandHeader } from './SignupChrome';
-import { readClaimedCompany, type WelcomeHandoff } from './welcome-handoff.logic';
+import { readClaimedCompany, shouldFetchMergeOffer, type WelcomeHandoff } from './welcome-handoff.logic';
 
 const LINE_GREEN = '#06C755';
 
@@ -101,7 +101,7 @@ function MergeDialog({ open, onClose }: { open: boolean; onClose: () => void }) 
   // Review F6: fetched ONCE per mount, not on every open. The dialog is re-offered on every failed
   // link attempt, and each open used to cost a preview call — which the API rate-limits.
   useEffect(() => {
-    if (!open || offer !== null) return undefined;
+    if (!shouldFetchMergeOffer(open, offer)) return undefined;
     let active = true;
     void fetch('/api/auth/account-merge/ticket', { cache: 'no-store' })
       .then((res) => res.json())
