@@ -376,7 +376,9 @@ describe('expenses.model', () => {
       expenseDate: '2026-07-10',
       vatMode: 'VAT_EXCLUDED',
       lines: [{
-        lineNumber: 1, description: 'สินค้า', quantity: '2', unitPrice: '150', discountAmount: '10', vatRate: '0.07',
+        // §5.1: stated on EVERY row, product rows included. An absent kind tells the server to keep
+        // whatever that row already had, which is not what this form means on a goods line.
+        lineNumber: 1, description: 'สินค้า', chargeKind: null, quantity: '2', unitPrice: '150', discountAmount: '10', vatRate: '0.07',
         whtRate: '0.03', expenseCategoryId: 'category-1', accountHintKey: 'expense.office', taxCategory: 'INPUT_VAT',
       }],
     });

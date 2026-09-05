@@ -15,6 +15,7 @@ import type {
   ExpenseLineVatTreatment,
   ExpenseLineChargeKind,
   ExpenseChargeSummary,
+  ExpenseTotalsIdentity,
   RecordExpensePaymentInput,
 } from '@watchdog-bms/contracts';
 import {
@@ -71,6 +72,7 @@ export type {
   ExpensePaymentSummary,
   ExpenseLineChargeKind,
   ExpenseChargeSummary,
+  ExpenseTotalsIdentity,
 };
 
 export {
@@ -407,6 +409,10 @@ export type ExpenseDetail = ExpenseSummary & {
   /** The charge rows, already grouped and labelled by the API — the money card reads this rather
    *  than re-deriving the rule on the client. */
   charges: ExpenseChargeSummary[];
+  /** Stored header vs stored lines. False on a record written before §5.1, or by anything that
+   *  bypasses the draft use-cases — the money card says so rather than printing a total whose own
+   *  parts contradict it. Branch on `ok`; see `ExpenseTotalsIdentity.gapAmount`. */
+  totalsIdentity: ExpenseTotalsIdentity;
   attachments: Array<{
     id: string;
     purpose: string;
@@ -616,9 +622,12 @@ export function buildExpenseDraftReviewPayload(values: ExpenseDraftReviewValues)
     lines: values.lines.map((line, index) => ({
       lineNumber: index + 1,
       description: line.description.trim(),
-      // Present only on a charge row, like every other optional line field here: an absent value and
-      // an explicit null both store null, so a product line's payload is byte-identical to before.
-      ...(line.chargeKind && { chargeKind: line.chargeKind }),
+      // ALWAYS sent, unlike the other optional line fields here. `lines` is a replacement and the
+      // server reads an ABSENT kind as "keep what this row already had", matching the row by its
+      // description. Omitting it on product rows let a newly typed ของหวาน pick up a kind it never
+      // had — and the server cannot tell that apart from a caller that genuinely means "keep".
+      // Stating it on every row makes this form's intent explicit and the server's guess unnecessary.
+      chargeKind: line.chargeKind ?? null,
       quantity: line.quantity,
       unitPrice: line.unitPrice,
       discountAmount: line.discountAmount,

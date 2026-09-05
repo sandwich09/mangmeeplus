@@ -603,6 +603,8 @@ export type ExpenseSummary = {
 
 export type ExpenseTotalsIdentity = {
   ok: boolean;
+  /** Signed: stored grand total minus what the lines make. Describes THAT equation only — a record
+   *  whose subtotal drifted reports `ok: false` with a zero gap, so branch on `ok`. */
   gapAmount: string;
 };
 
@@ -677,8 +679,8 @@ export type ExpenseDetail = ExpenseSummary & {
   charges: ExpenseChargeSummary[];
   /** Does this stored record still add up? Computed from the stored header against the stored
    *  lines, so a row written before §5.1 existed — or by anything that bypasses the draft
-   *  use-cases — is visible instead of printing a total its own parts contradict. `gapAmount` is
-   *  signed: stored grand total minus what the lines make. */
+   *  use-cases — is visible instead of printing a total its own parts contradict. Available for the
+   *  S-3 explain tool and read by the web review page, which warns when `ok` is false. */
   totalsIdentity: ExpenseTotalsIdentity;
   attachments: ExpenseAttachmentRef[];
   duplicateStatus: DuplicateStatus;

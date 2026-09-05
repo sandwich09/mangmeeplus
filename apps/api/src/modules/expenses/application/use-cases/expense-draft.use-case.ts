@@ -32,7 +32,7 @@ import {
   readAiCategorySuggestion,
 } from '../../domain/logic/expense-status.logic';
 import type { ExpenseLineInput, ExpenseRecord, ExpenseRecordWithRelations, PaginatedExpenses } from '../../domain/models/expense.model';
-import type { RequestContext, CreateExpenseDraftInput, UpdateExpenseDraftInput, ListExpensesFilter, ExpenseStatus, ExpenseVatMode, ExpenseVatSourceOverrideInput, RecordExpensePaymentInput } from '@watchdog-bms/contracts';
+import type { RequestContext, CreateExpenseDraftInput, UpdateExpenseDraftInput, ListExpensesFilter, ExpenseStatus, ExpenseLineChargeKind, ExpenseVatMode, ExpenseVatSourceOverrideInput, RecordExpensePaymentInput } from '@watchdog-bms/contracts';
 import { expenseVatReconciliationMessage, isBlockingExpenseVatReconciliation, validateExpenseWhtInput } from '@watchdog-bms/contracts';
 import { ExpenseTransactionTaxService, type ExpenseTaxLineSelection } from '../services/expense-transaction-tax.service';
 import { LaunchGateGuardService } from '../../../feature-launch/application/launch-gate.guard';
@@ -313,15 +313,33 @@ export class UpdateExpenseDraftUseCase {
       // §5.1 PATCH semantics for `chargeKind`. `lines` is a full replacement, so a client that
       // echoed a line back without this field used to CLEAR it — a service charge quietly became a
       // product row, the goods subtotal grew by its amount, and the request still answered 200.
-      // Absent means "leave this line's kind alone" now; only an explicit null clears one. Resolved
-      // here, before validation, so the shape rules and the totals both see the kind the row will
-      // actually be stored with — and after the cheap guards above, so a request they reject never
-      // pays for the read.
-      const storedChargeKinds = await this.repo.listLineChargeKinds(ctx.companyId, expenseId);
-      const withChargeKinds = lines.map((line) => ({
-        ...line,
-        chargeKind: line.chargeKind === undefined ? storedChargeKinds.get(line.lineNumber) ?? null : line.chargeKind,
-      }));
+      // Absent means "leave this row's kind alone"; only an explicit null clears one.
+      //
+      // Matched by DESCRIPTION, not by `lineNumber`. A line number is a position: inserting a goods
+      // row renumbers everything under it, so the row arriving as line 2 is usually not the row that
+      // was line 2. Resolving by number handed a newly typed ของหวาน the service charge's kind and
+      // answered 200 — and the totals identity agreed, because it is derived from those same wrong
+      // kinds. A description that matches exactly one stored row is the row; anything else (a new
+      // row, a renamed one, or a duplicate description) resolves to null rather than a guess.
+      // Callers that mean to keep a kind through a rename send it, and every first-party caller now
+      // sends the field on every row.
+      //
+      // Read here, before validation so the shape rules and the totals see what will be stored,
+      // after the cheap guards above so a rejected request never pays for it, and on the caller's
+      // transaction so a concurrent edit cannot slip between this read and the write.
+      const storedLines = await this.repo.listLineChargeKinds(ctx.companyId, expenseId, options.db);
+      const storedKindsByDescription = new Map<string, ExpenseLineChargeKind | null | 'ambiguous'>();
+      for (const stored of storedLines.values()) {
+        storedKindsByDescription.set(
+          stored.description,
+          storedKindsByDescription.has(stored.description) ? 'ambiguous' : stored.chargeKind,
+        );
+      }
+      const withChargeKinds = lines.map((line) => {
+        if (line.chargeKind !== undefined) return { ...line, chargeKind: line.chargeKind };
+        const stored = storedKindsByDescription.get(line.description);
+        return { ...line, chargeKind: stored === undefined || stored === 'ambiguous' ? null : stored };
+      });
       // Spec §19c: VAT mode describes the document arithmetic; claimability is the separate axis below.
       const vatMode = input.vatMode ?? r.vatMode;
       const amountError = validateExpenseDraftAmounts({ vatMode, lines: withChargeKinds });

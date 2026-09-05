@@ -773,6 +773,15 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
     <div ref={moneyRef} className="scroll-mt-24">
       <MangmeeCard className="p-4">
         <h3 className="text-sm font-semibold text-gray-800">{t('expenses.money_section_title', locale)}</h3>
+        {/* §5.1: the rows below are the stored header, and the lines are stored separately. A record
+            written before that rule — or by anything bypassing the draft use-cases — can have the
+            two disagree, and printing the header alone would state a total its own lines contradict.
+            Branch on `ok`: a subtotal-only drift has a correct grand total and so a zero gap. */}
+        {detail.totalsIdentity?.ok === false && (
+          <p className="mt-2 rounded-lg bg-warning-50 px-3 py-2 text-xs leading-relaxed text-warning-700">
+            {t('expenses.totals_identity_warning', locale)}
+          </p>
+        )}
         <div className="mt-2">
           <MoneyRow label={t('expenses.subtotal', locale)} value={detail.subtotalAmount} />
           {Number(detail.discountAmount) > 0 && <MoneyRow label={t('expenses.discount', locale)} value={detail.discountAmount} negative />}

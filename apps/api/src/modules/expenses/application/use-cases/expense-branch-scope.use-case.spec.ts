@@ -85,7 +85,7 @@ describe('CreateExpenseDraftUseCase branch tagging', () => {
         createExpense: async (input: any) => { created.push(input); return { id: 'exp-1', ...input }; },
         // §5.1: an omitted chargeKind on a replacement PATCH keeps the stored one, so the
         // update path reads them back before it validates.
-        listLineChargeKinds: async () => new Map<number, string | null>(),
+        listLineChargeKinds: async () => new Map<number, { chargeKind: string | null; description: string }>(),
         upsertLines: async () => undefined,
       } as any,
     };

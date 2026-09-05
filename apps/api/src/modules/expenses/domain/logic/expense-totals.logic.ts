@@ -210,8 +210,14 @@ export function expenseTotalsIdentityError(input: {
 /**
  * The read-side view of the same identity: does this stored record still add up, and by how much is
  * it out? Legacy rows and anything written outside the draft use-cases can diverge, and a reader —
- * the web money card, the LINE explain tool — has to be able to say so rather than print a total
- * whose parts contradict it. `gapAmount` is signed: stored grand total minus what the lines make.
+ * the web money card, the S-3 explain tool — has to be able to say so rather than print a total
+ * whose parts contradict it.
+ *
+ * KEY OFF `ok`, NOT `gapAmount`. The gap is one number and can only describe one equation: the
+ * signed difference between the stored grand total and what the lines make. A record whose SUBTOTAL
+ * drifted — charges counted as goods, say — has a perfectly correct grand total, so it reports
+ * `{ ok: false, gapAmount: '0.0000' }`. The gap is there to tell a person how far out the money is
+ * once `ok` has already told them something is.
  */
 export function expenseTotalsIdentity(input: {
   vatMode: ExpenseVatMode;

@@ -37,9 +37,25 @@ write boundary" while only calling it somewhere it could not fail):
   alone passes every suite; the mutation that proves the rule is making `calcDocumentTotals` count
   charge rows in `subtotalAmount` again.
 
-PATCH semantics: `lines` is a full replacement, so an ABSENT `chargeKind` keeps the stored kind for
-that `lineNumber` and only an explicit `null` clears it. Without that, a client echoing a line back
-turned a service charge into a product and got a 200.
+PATCH semantics: `lines` is a full replacement, so an ABSENT `chargeKind` keeps the stored kind and
+only an explicit `null` clears it. Without that, a client echoing a line back turned a service charge
+into a product and got a 200.
+
+The first version of that keep resolved by `lineNumber` and was itself a blocker: a line number is a
+POSITION, and adding a goods row renumbers everything under it, so the row arriving as line 2 is not
+the row that was line 2. A reviewer typing "ของหวาน" got it stored as SERVICE_CHARGE, with a 200 and
+`totalsIdentity.ok = true` — the identity is derived from the same wrong kinds, so it cannot catch
+this class of bug. Fixed on three layers, because any one of them alone still leaves a hole:
+
+- the web payload emits `chargeKind` on EVERY row (`null` for products), not only on charge rows;
+- the LINE draft-collection lane states `chargeKind: null` on the items it materializes;
+- the server resolves an absent kind by DESCRIPTION, not line number: a description matching exactly
+  one stored row is that row, and a new row, a renamed row or a duplicate description resolves to
+  null rather than a guess.
+
+Read side: `ExpenseDetail.totalsIdentity { ok, gapAmount }` is declared in the web model and the
+review page warns when `ok` is false. Consumers must branch on `ok` — `gapAmount` describes the
+grand-total equation only, so a subtotal-only drift reports `ok: false` with a zero gap.
 
 Owner-visible export change: the accountant index gained a trailing column
 `additional_charges_amount` ("ค่าใช้จ่ายเพิ่ม") so the row is additive again now that
@@ -49,9 +65,10 @@ position-based consumers keep their offsets. The golden CSV sha256 in
 quarantined in `spec-suite-coverage.spec.ts` before this change, and un-quarantining it needs a
 `package.json` script edit plus an Owner call on the format, so it was left alone.
 
-Merge with slice A (`codex/line-ai-truth-and-dates`): NOT conflict-free. Both branches edit
-`receipt-ocr-apply.service.ts` and this memory file. B rebases onto A before PR; the conflict hunks
-are recorded in the slice-B handoff.
+Merge order (agreed with the coordinator): **B merges into develop FIRST.** Slice A then rebases onto
+develop-with-B and collapses its `isAdditionalCharge` into `chargeKind != null`; slice C rebases onto
+B rather than merging C's older copy of B's history. The B/A conflicts are one import line each in
+`receipt-ocr-apply.service.ts` and its spec, plus this memory file — the service bodies auto-merge.
 
 Known gap (§10, deliberate): additional charges still post to the record's expense category — no
 separate "ค่าบริการ" account and no report by charge kind.

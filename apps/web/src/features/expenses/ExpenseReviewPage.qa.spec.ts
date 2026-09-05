@@ -65,3 +65,19 @@ test('the money card shows the additional charges between the discount and the t
     assert.doesNotMatch(workspaceDictionary.th[key], /\+/, key);
   }
 });
+
+/**
+ * §5.1 read side. The money rows are the stored header while the lines are stored separately, so a
+ * record written before that rule — or by anything bypassing the draft use-cases — can have the two
+ * disagree. Printing the header alone would state a total its own lines contradict.
+ */
+test('the money card warns when the stored record does not add up', () => {
+  assert.match(source, /detail\.totalsIdentity\?\.ok === false && \(/);
+  assert.match(source, /t\('expenses\.totals_identity_warning', locale\)/);
+  // Branch on `ok`: a subtotal-only drift has a correct grand total and therefore a zero gap.
+  assert.doesNotMatch(source, /totalsIdentity\.gapAmount\s*(!==|===|>|<)/);
+  for (const locale of ['th', 'en'] as const) {
+    assert.ok(workspaceDictionary[locale]['expenses.totals_identity_warning'].trim().length > 0);
+  }
+  assert.doesNotMatch(workspaceDictionary.th['expenses.totals_identity_warning'], /\+/);
+});

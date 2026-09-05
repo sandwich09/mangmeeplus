@@ -470,6 +470,20 @@ describe('review line ordering', () => {
     assert.deepEqual(payload.lines!.map((line) => line.lineNumber), [1, 2, 3, 4, 5, 6]);
   });
 
+  /**
+   * The payload states `chargeKind` on EVERY row, product rows included. The server reads an absent
+   * kind as "keep what this row had", and adding a goods line renumbers everything under it — so a
+   * payload that omits the field on products let a newly typed ของหวาน inherit the service charge it
+   * displaced, and the save answered 200.
+   */
+  it('states the charge kind on every line, not only on the charges', () => {
+    const payload = buildExpenseDraftReviewPayload(insertExpenseReviewLine(base(), null));
+    assert.deepEqual(payload.lines!.map((line) => line.chargeKind), [null, null, 'SERVICE_CHARGE']);
+    for (const line of payload.lines!) {
+      assert.ok('chargeKind' in line, `line ${line.lineNumber} must carry the field even when null`);
+    }
+  });
+
   it('keeps vatSource line numbers pointing at the same rows across an insert and a remove', () => {
     const withSource: ExpenseDraftReviewValues = {
       ...base(),

@@ -2301,14 +2301,24 @@ export class PrismaExpenseRepository {
     return { pending: pending + pendingPayments, errors: errors + paymentErrors };
   }
 
-  /** Spec §5.1: `updateExpenseDraft` replaces the whole line array, and a client that echoes a line
-   *  back without `chargeKind` means "leave it alone", not "clear it". Two columns, so the update
-   *  path can honour that without paying for the full relations read. */
-  async listLineChargeKinds(companyId: string, expenseId: string): Promise<Map<number, ExpenseLineChargeKind | null>> {
-    const rows = await this.prisma.client.expenseLine.findMany({
-      where: { companyId, expenseId }, select: { lineNumber: true, chargeKind: true },
+  /**
+   * Spec §5.1: `updateExpenseDraft` replaces the whole line array, and a client that echoes a line
+   * back without `chargeKind` means "leave it alone", not "clear it". The description rides along
+   * because `lineNumber` alone is NOT a stable identity — inserting a goods row renumbers everything
+   * below it — so the caller can check it is looking at the same row before keeping a kind.
+   *
+   * Runs on the caller's transaction when there is one: the update path reads this before writing in
+   * the same transaction, and a read outside it would see a stale row under concurrent edits.
+   */
+  async listLineChargeKinds(
+    companyId: string,
+    expenseId: string,
+    db: ExpenseDb = this.prisma.client,
+  ): Promise<Map<number, { chargeKind: ExpenseLineChargeKind | null; description: string }>> {
+    const rows = await db.expenseLine.findMany({
+      where: { companyId, expenseId }, select: { lineNumber: true, chargeKind: true, description: true },
     });
-    return new Map(rows.map((row) => [row.lineNumber, row.chargeKind ?? null]));
+    return new Map(rows.map((row) => [row.lineNumber, { chargeKind: row.chargeKind ?? null, description: row.description }]));
   }
 
   async upsertLines(companyId: string, expenseId: string, lines: ExpenseLineInput[], db?: any): Promise<void> {
