@@ -41,6 +41,33 @@ three adapters, both LINE unlink writers), `packages/contracts`, `apps/web`
 8. **Migration renamed** `20260905160000` → `20260905170000`: the local dev database already had a
    sibling branch's `20260905160000_expense_line_charge_kind`, and two migrations sharing a
    timestamp make apply order ambiguous.
+9. **Review round 2 (29da5003) — `notifiedAt` is its OWN migration** (`20260905180000`), not an edit
+   to `…170000`: reviewers had already applied that file, and changing an applied migration's bytes
+   fails the checksum check on their next `migrate deploy`.
+10. **The amplification floor answers, it does not throw.** Every other bucket in
+    `AuthRateLimitService` guards an HTTP endpoint where a 429 is right; this one guards a chat
+    message from somebody asking for help. Fails OPEN when Redis is absent — it bounds cost, it
+    does not protect anything. Charged where a row is CREATED, so a repeat tap on an open request
+    (which costs nothing) can never spend the last slot.
+11. **`notifyState` is derived, not stored.** A stored third state could disagree with the counters
+    it summarises; `notifiedAt IS NULL` is the whole distinction.
+12. **The badge has two sources**: the cheap `/count` endpoint on navigation, plus a module-level
+    subscription the inbox page publishes into after every read. `[pathname]` alone never fires
+    when a request is answered from that very page.
+
+## Review round 2 — findings addressed (2026-09-05, on 29da5003)
+
+HIGH: table rendered under the error banner and `items` survived a failure (403 read as "empty
+queue"); overlapping reads let the slower one paint; nav badge went stale after an action.
+MED: no 90-day PDPA deletion; unbounded tap → resume → tap amplification; red "แจ้งไม่สำเร็จ" on a
+row whose notice had not drained; 200 Thai chars pushing the action column off 390px; "รอมานาน"
+counting on settled rows; `SupportRowActions` exported for a spec that did not exist.
+LOW: `take: 1000` with no `orderBy`; an untrue `pauseAssistant` comment; no log for a dropped
+schemaVersion-1 notice; no M7 DISABLED-company probe.
+
+One assertion was itself too weak and was tightened: the read-sequence QA check matched the copy in
+`catch`, so a mutation that removed the guard from the SUCCESS path — the one that paints rows —
+still passed.
 
 ## Open questions
 
@@ -97,7 +124,11 @@ three adapters, both LINE unlink writers), `packages/contracts`, `apps/web`
 ## Next
 
 - Merge order matters only against `codex/line-support-request-docs`: the spec file is duplicated
-  on this branch to carry the §2.2 delta. Take either side, then re-apply the delta section.
+  on this branch to carry the §2.2 deltas. Take either side, then re-apply the delta sections.
+- **`apps/api/package.json` will conflict with slice B**: both branches append a spec path to the
+  single-line `test` script, which git resolves as a whole-line conflict. Resolution is mechanical
+  — keep BOTH appended paths on one line — and it already happened once against #430
+  (`liff-page-contrast.spec.ts`) during the rebase onto 91704151.
 - Not done: no LIFF/status-card copy change (neither mentions contacting staff), no
   `line-ai-security-eval.ts` fixture (that corpus is the prepared-plan orchestrator lane; the
   exact-match/injection cases live in `line-staff-menu.logic.spec.ts`), no local LINE-fake drive.
