@@ -147,8 +147,14 @@ function fakePrisma(options: { systemAdmins?: string[] } = {}) {
       findFirst: async ({ where }: any) => {
         const row = identities.find((r: any) => r.providerUserId === where.providerUserId
           && (where.providerChannelId === undefined || r.providerChannelId === where.providerChannelId));
+        if (!row) return null;
         // Users this flow creates are ACTIVE; the seed can override by setting `user` on the row.
-        return row ? { user: { status: 'ACTIVE' }, ...row } : null;
+        const full = { user: { status: 'ACTIVE' }, ...row };
+        // Status filters are HONOURED, unlike in the unit fakes — restoring the `status: 'ACTIVE'`
+        // where-clause this bug was made of has to make these tests red, not green.
+        if (where.status !== undefined && full.status !== where.status) return null;
+        if (where.user?.status !== undefined && full.user.status !== where.user.status) return null;
+        return full;
       },
       findUnique: async ({ where }: any) => {
         const key = where.provider_providerChannelId_providerUserId;
