@@ -69,10 +69,40 @@ media and travel lanes #1/#2. LINE reimbursement is handoff-only and creates not
   `LedgerEntryHeldError` → `debug` `ai.line.ledger.entry_held`. Behaviour is byte-identical (still
   unacked, still no outcome counter); only the level and the message change.
 
+- The refusal's TAIL is lane-specific, and that is load-bearing (adversarial review F1). The shared
+  sentence carries cause and fix; the caller appends how to get back in:
+  - `BRANCH_RETRY_RESEND` — direct photo. The refusal precedes every write, so re-sending works.
+  - `BRANCH_RETRY_ANSWER` — pending media. The bytes are still parked, and `ensurePendingMedia`
+    (~`:4920`) answers ANY new image with `{ created: false }` while that row lives
+    (`PENDING_MEDIA_TTL_MINUTES = 30`), logging `duplicate_media_pending` and storing nothing. A
+    re-send here is silently swallowed; answering the same question again is what works. Telling
+    this sender to resend would have been the same class of lie as the transient copy.
+  `tail` is a REQUIRED argument, not a defaulted one — a forgotten tail is exactly the defect it
+  exists to prevent, so the type system asks every call site.
+
 ## Open questions
 
 - None blocking. Longer term the honest ambiguous answer would be better as a branch quick-reply in
   LINE rather than a web hand-off; out of scope for a live-bug fix.
+
+## Accepted, not fixed here (adversarial review of e1fea654)
+
+- **F5 — the `resolveSubstituteMediaAnswer` catch is wider than the create.** `updateExpense` and the
+  continuation finalize can in principle also raise `TRANSACTION_BRANCH_INVALID` for an ALREADY
+  existing record; the branch copy ("จึงยังไม่ได้บันทึกรายการ") would then be slightly off, since a
+  draft does exist by that point. Low probability — those paths address a record whose branch was
+  already validated — and the alternative (narrowing the catch to the create call) would let a real
+  fault escape to the generic dispatcher reply. Left as is; revisit if it is ever observed.
+- **F6 — a branch refusal writes no audit row.** Pre-existing on the direct path since 2026-08-27 and
+  unchanged here: `audit.log` runs only after a successful create. A refused capture is visible in
+  `lineWebhookEventLog` (`clarification_required` / `RECEIPT_BRANCH_SELECTION_REQUIRED`) and at warn,
+  but not in the audit trail. Worth fixing with the other "refusals are not audited" cases rather
+  than one lane at a time.
+- **F7 — two racing "1" answers.** The loser hits `@@unique(companyId, lineMessageId)` on
+  `createExpense`, surfaces as a raw P2002, and gets `ERROR_REPLY` — while the winner already
+  resolved the row and recorded the draft. The honest answer is "this is already recorded", and a
+  `P2002 → already-recorded` entry is the natural next member of `lineCaptureFailureReply`'s map now
+  that the map exists. Pre-existing; needs its own copy decision, so not smuggled into this fix.
 
 ## Artifacts
 
@@ -80,6 +110,8 @@ media and travel lanes #1/#2. LINE reimbursement is handoff-only and creates not
 - `apps/api/src/modules/expenses/application/use-cases/expense-document.use-case.ts`
 - `apps/api/src/modules/line-ai/application/use-cases/drain-line-ledger.use-case.ts`
 - `apps/api/src/modules/line-ai/application/use-cases/line-intake-dispatch.use-case.spec.ts`
+- `apps/api/src/modules/line-ai/application/use-cases/line-capture-branch-default.spec.ts` (new; the
+  only `apps/api/package.json` edit is its one-line registration in the `test` list)
 - `apps/api/src/modules/line-ai/application/use-cases/drain-line-ledger.use-case.spec.ts`
 
 ## Verification
@@ -104,8 +136,23 @@ Red-first, production files stashed vs. applied, same spec:
 - Full fixed api list (464 spec files) — 6712 tests, 1355 suites, **6613 pass / 0 fail**, 99 skipped,
   43.6s.
 
-`flock(1)` does not exist on macOS; the mutex was held with an equivalent `fcntl.flock` wrapper on
-`/tmp/mangmee-heavy.lock` for the full-suite run.
+Mutation checks (each mutant applied alone, spec run, then reverted):
+
+| Mutant | Killed by |
+|---|---|
+| direct lane skips the shared map | `(c5)` |
+| direct lane prints the parked tail | `(c5)` |
+| parked lane prints the direct tail | `(c)` |
+| drop `status: 'ACTIVE'` from the branch query | 7 of 10 in the focused spec |
+| drop `companyId` from the branch query | 7 of 10 |
+| drop the `id.in` scope filter | 3 of 10 |
+| `branchIds: []` treated as "all branches" (`?.length`) | the empty-scope case |
+
+**Mutex:** `/tmp/mangmee-heavy.lock` is a **mkdir** lock shared with the other sessions —
+`mkdir` to acquire, `rmdir` to release. `flock(1)` does not exist on macOS, and an earlier
+`fcntl.flock` wrapper here created the path as a REGULAR FILE, which makes every other session's
+`mkdir` fail permanently. That file was removed and the wrapper replaced with mkdir/rmdir
+(`cb-heavy-lock.sh`); never open this path as a file.
 
 ## Next
 
