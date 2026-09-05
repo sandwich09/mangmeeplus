@@ -384,6 +384,90 @@ mutate_facts forged-scan-waiver '.artifactIntegrity.services[0].scanSeverityCoun
     compensatingControl:"Exact CVE, severity, package, version and provider statement match; all mismatches remain blocking.",
     approvedBy:"CHAT-OWNER-DIRECTIVE-2026-08-27-FIX-ALL-UNTIL-DEPLOY-SUCCEEDS",expiresAtEpoch:1788998400,
     providerStatement:"The issue is present since OpenSSL 3.5 when the QUIC server implementation was added."}]'
+
+# 2026-09 waiver batch. Services sort to [ai-gateway,api-web,workers], so index 1 mirrors the real
+# api scan (5 waivers: 3 of the 4 openssl HIGH rows plus the CRITICAL openssl and HIGH zlib rows,
+# rawSeverityCounts {CRITICAL:1,HIGH:4}, nothing blocking) and index 2 the workers scan (zlib only).
+# Every field is spelled out here rather than read from the contract table, so drift in either the
+# table or the policy jq fails this spec.
+control='Exact CVE, severity, package, version and provider statement match; all mismatches remain blocking.'
+approval_08='CHAT-OWNER-DIRECTIVE-2026-08-27-FIX-ALL-UNTIL-DEPLOY-SUCCEEDS'
+approval_09='CHAT-OWNER-DIRECTIVE-2026-09-05-UAT-DEPLOY-WAIVER'
+openssl_high='[
+  {id:"AWS-ECR-CVE-2026-54874-OPENSSL-DTLS-UNUSED",cve:"CVE-2026-54874",
+   providerStatement:"Receiving a DTLS record for a future epoch while a handshake is in progress",
+   reachabilityEvidence:"No process in the image speaks DTLS; the runtime is Node 22 with bundled OpenSSL 3.5.7 and the Debian package enters only as a ca-certificates dependency."},
+  {id:"AWS-ECR-CVE-2026-63072-OPENSSL-CMS-UNUSED",cve:"CVE-2026-63072",
+   providerStatement:"reachable from the public CMS_decrypt() function",
+   reachabilityEvidence:"No process in the image calls CMS_decrypt and the openssl CLI is never executed (repo-verified 2026-08-27)."},
+  {id:"AWS-ECR-CVE-2026-63076-OPENSSL-CMP-UNUSED",cve:"CVE-2026-63076",
+   providerStatement:"CMP is a specialized feature that an application must explicitly enable.",
+   reachabilityEvidence:"No process in the image enables CMP and the openssl CLI is never executed (repo-verified 2026-08-27)."}
+] | map(. + {severity:"HIGH",packageName:"openssl",packageVersion:"3.0.20-1~deb12u2",
+  scannedDigest:$d,compensatingControl:$c,approvedBy:$a8,expiresAtEpoch:1788998400})'
+evp_critical='{id:"AWS-ECR-CVE-2026-75803-OPENSSL-EVP-CIPHER-UNUSED",cve:"CVE-2026-75803",
+  severity:"CRITICAL",packageName:"openssl",packageVersion:"3.0.20-1~deb12u2",scannedDigest:$d,
+  providerStatement:"for AES-OCB and ChaCha20-Poly1305 ciphers it skipped the AEAD tag verification when an empty ciphertext was passed to the function",
+  reachabilityEvidence:"The runtime is Node 22 with its own bundled OpenSSL, not the Debian libssl; the Debian openssl package enters only as a hard dependency of ca-certificates and, in the api image, of the ClamAV 1.5.3 .deb. No process in any image calls EVP_Cipher() on an attacker-supplied AEAD ciphertext: ClamAV uses OpenSSL for hashing and database signature checks, and TLS records always carry content plus tag, never an empty ciphertext. FIPS is not in use.",
+  compensatingControl:$c,approvedBy:$a9,expiresAtEpoch:1789776000}'
+zlib_high='{id:"AWS-ECR-CVE-2026-85091-ZLIB-PRE131-MAPPING",cve:"CVE-2026-85091",
+  severity:"HIGH",packageName:"zlib",packageVersion:"1.2.13.dfsg-1",scannedDigest:$d,
+  providerStatement:"when processing non-blocking gzwrite() operations with stale external buffer pointers",
+  reachabilityEvidence:"Provider states the affected range is zlib 1.3.1.2 through 1.3.2 while the scanned Debian package is 1.2.13. Node bundles its own zlib, and no process in any image writes gzip streams through the system zlib non-blocking gzwrite()/gzprintf() API (repo-verified 2026-09-05).",
+  compensatingControl:$c,approvedBy:$a9,expiresAtEpoch:1789776000}'
+waive_service() {
+  local out="$1" index="$2" waivers="$3" counts="$4"
+  jq -cS --arg c "$control" --arg a8 "$approval_08" --arg a9 "$approval_09" --argjson i "$index" '
+    .artifactIntegrity.services[$i].scanResolvedDigest as $d
+    | .artifactIntegrity.services[$i].scanSeverityCounts='"$counts"'
+    | .artifactIntegrity.services[$i].scanWaivers='"$waivers" "$facts" > "$out"
+  test -s "$out"
+}
+api_waived="$fixture/waived-scan-2026-09.json"
+waive_service "$api_waived" 1 "($openssl_high) + [$evp_critical, $zlib_high]" '{CRITICAL:1,HIGH:4}'
+security_preflight_build_payload "$api_waived" "$h2" "$clone" "$clone_ref" \
+  "$fixture/waived-2026-09-payload.json"
+workers_waived="$fixture/waived-scan-workers.json"
+waive_service "$workers_waived" 2 "[$zlib_high]" '{HIGH:1}'
+security_preflight_build_payload "$workers_waived" "$h2" "$clone" "$clone_ref" \
+  "$fixture/waived-workers-payload.json"
+
+mutate_waived() {
+  local label="$1" filter="$2" mutated="$fixture/waived-${1}.json"
+  jq -cS "$filter" "$api_waived" > "$mutated"
+  test -s "$mutated"
+  expect_reject "$label" security_preflight_build_payload "$mutated" "$h2" "$clone" "$clone_ref" \
+    "$fixture/rejected.json"
+}
+w='.artifactIntegrity.services[1].scanWaivers'
+mutate_waived unknown-waiver-row "${w}[3].id=\"AWS-ECR-CVE-2099-0001-NOT-APPROVED\""
+mutate_waived drifted-provider-statement "${w}[3].providerStatement=\"it skipped the AEAD tag verification\""
+mutate_waived drifted-package-version "${w}[3].packageVersion=\"3.0.20-1~deb12u3\""
+mutate_waived swapped-waiver-severity "${w}[3].severity=\"HIGH\" | ${w}[4].severity=\"CRITICAL\""
+mutate_waived wrong-waiver-approval "${w}[3].approvedBy=\"$approval_08\""
+mutate_waived duplicate-waiver-id "${w}[1]=${w}[0]"
+mutate_waived seven-waivers "${w} += [${w}[0], ${w}[1]]
+  | .artifactIntegrity.services[1].scanSeverityCounts={CRITICAL:1,HIGH:6}"
+mutate_waived blocking-beside-waiver '.artifactIntegrity.services[1].critical=1'
+mutate_facts waived-critical-uncounted '.artifactIntegrity.services[1].scanSeverityCounts.CRITICAL=1'
+
+# Expiry is compared against the evidence issue time, which the h2 fixture pins to 1700000000, so
+# exercise the boundary directly on the contract rule instead of forging a whole future-dated chain.
+# The two batches lapse independently: the api mix dies with the 2026-08 rows on 2026-09-10, the
+# workers zlib waiver survives until 2026-09-19.
+waiver_rule_at() {
+  local waived="$1" index="$2"
+  jq -er -L "$repo_root/infra/security" --argjson at "$3" --argjson i "$index" '
+    include "evidence-contracts";
+    .artifactIntegrity.services[$i] as $s
+    | ($s.scanWaivers | e0_ecr_scan_waivers($s.scanResolvedDigest; $at;
+        $s.scanSeverityCounts; $s.critical; $s.high)) | tostring' "$waived"
+}
+test "$(waiver_rule_at "$api_waived" 1 1788998399)" = true
+test "$(waiver_rule_at "$api_waived" 1 1788998400)" = false
+test "$(waiver_rule_at "$workers_waived" 2 1789775999)" = true
+test "$(waiver_rule_at "$workers_waived" 2 1789776000)" = false
+
 mutate_facts runtime-rds-single-az '.runtimeSecurityBaseline.rds.multiAZ=false'
 mutate_facts runtime-redis-single-node '.runtimeSecurityBaseline.redis.nodeCount=1'
 mutate_facts runtime-no-human-delivery '.runtimeSecurityBaseline.alerting.deliveredNotificationCount=0'
