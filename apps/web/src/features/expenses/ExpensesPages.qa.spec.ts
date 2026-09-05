@@ -75,3 +75,16 @@ test('charge rows render in their own group, keyed by the shared array index', (
   // browser, is what refuses a minus sign on every other kind.
   assert.match(source, /<input type="number" step="0\.0001" className=\{validationInputClass\(amountIssue \?\? quantityIssue\)\}/);
 });
+
+/**
+ * Spec `line-ai-draft-control-spec-th.md` §5.2. Both list layouts (the mobile card and the desktop
+ * row) render the two date badges as a pair. A mis-indented duplicate slipped in and painted
+ * "อ่านจากบิล" twice on the same row — invisible to the type system and to every logic test.
+ */
+test('the document-date badge is rendered once per list layout, beside the late badge', () => {
+  const dateBadges = source.match(/<DocumentDateBadge\b/g) ?? [];
+  const lateBadges = source.match(/<LateDocumentBadge\b/g) ?? [];
+  assert.ok(dateBadges.length > 0, 'the badge is rendered at all');
+  assert.equal(dateBadges.length, lateBadges.length, 'exactly one date badge per layout that shows the late badge');
+  assert.doesNotMatch(source, /<DocumentDateBadge[^>]*\/>\s*<DocumentDateBadge/, 'no row paints the same badge twice');
+});

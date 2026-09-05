@@ -325,4 +325,33 @@ describe('LineAiLedgerService (item 10F, fake Redis)', () => {
     assert.equal(entry?.createdAt, NOW.toISOString());
     assert.equal(fieldsToEntry(key, '1-0', ['kind', 'nonsense']), null);
   });
+
+  /**
+   * Spec `line-ai-draft-control-spec-th.md` §5.3. A turn the reclaim worker re-runs must reach the
+   * gateway with the same trusted provenance the live turn had — without it a drained business
+   * question is told it is out of scope. The value is re-validated on the way out by membership,
+   * exactly like `clarifyForIntent`, because a stream field is untrusted storage.
+   */
+  it('round-trips the trusted intake intent, and refuses one that is not a known route', async () => {
+    const { service, redis } = makeService();
+    const key = ledgerKey('c1', 'chat1');
+    await service.appendTurn({
+      companyId: 'c1', chatKey: 'chat1', turnId: 't1', webhookEventId: 'e1', userId: 'u1',
+      text: 'ทำไม service charge คิดแยกเป็นอีกรายการ', intakeIntent: 'BUSINESS_READ_QUESTION', now: NOW,
+    });
+
+    const [row] = redis.streams.get(key)!;
+    assert.equal(fieldsToEntry(key, row.id, row.fields)?.intakeIntent, 'BUSINESS_READ_QUESTION');
+
+    const forged = fieldsToEntry(key, row.id, [...row.fields.slice(0, -2), 'intakeIntent', 'NOT_A_ROUTE']);
+    assert.equal(forged?.intakeIntent, undefined, 'membership validation, never a cast');
+  });
+
+  it('carries no intake intent for a turn that had none', async () => {
+    const { service, redis } = makeService();
+    const key = ledgerKey('c1', 'chat1');
+    await service.appendTurn({ companyId: 'c1', chatKey: 'chat1', turnId: 't1', webhookEventId: 'e1', userId: 'u1', text: 'x', now: NOW });
+    const [row] = redis.streams.get(key)!;
+    assert.equal(fieldsToEntry(key, row.id, row.fields)?.intakeIntent, undefined);
+  });
 });

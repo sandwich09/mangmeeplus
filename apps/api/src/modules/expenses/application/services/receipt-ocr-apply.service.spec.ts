@@ -683,6 +683,22 @@ describe('ReceiptOcrApplyService.apply', () => {
     assert.equal(applied.lines.length, 1);
     assert.equal(applied.record.grandTotalAmount, '1200.0000');
     assert.equal(applied.record.aiVerifiedFieldsJson.grandTotalAmount, '1200.00');
+    // Spec §5.1: 1,100 + 77 is 1,177, and the page says 1,200 — its own figures contradict each
+    // other by more than the charge's VAT, so folding IS right: the printed total is what was
+    // paid. What must never happen is folding a printed service charge away in SILENCE. Returning
+    // `[]` here left `aiVerificationStatus` at PARTIAL on a draft that had just swallowed one.
+    assert.ok(applied.result.reviewReasons.includes(RECEIPT_REVIEW_REASONS.chargesFolded),
+      `the fold has to be said out loud, got: ${JSON.stringify(applied.result.reviewReasons)}`);
+    assert.equal(applied.record.aiVerificationStatus, 'NEEDS_REVIEW');
+  });
+
+  it('says nothing about charges on a bill that printed none', async () => {
+    const applied = await applyFields({
+      expenseDate: '2026-09-03', grandTotalAmount: '1200.00', vatMode: 'NO_VAT',
+    }, null, {}, '2026-09-05');
+    assert.equal(applied.result.chargeReconciliationStatus, 'SUMMARY_LINE');
+    assert.deepEqual(applied.result.reviewReasons, [], 'no charge, no charge reason');
+    assert.equal(applied.record.aiVerificationStatus, 'PARTIAL');
   });
 
   it('never asserts a 7% line rate for a document that printed no VAT', async () => {

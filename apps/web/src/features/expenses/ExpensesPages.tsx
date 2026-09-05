@@ -2376,7 +2376,6 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
                           <div className="mt-0.5 text-xs text-gray-500"><span className="font-semibold">{t('expenses.intake_date', locale)}:</span> {dateShort(e.uploadedAt)}</div>
                           <div className="mt-1 flex flex-wrap gap-1">
                             <LateDocumentBadge expense={e} locale={locale} />
-                    <DocumentDateBadge expense={e} />
                             <DocumentDateBadge expense={e} />
                             <MangmeeBadge tone="slate">{expenseValueLabel(CAPTURE_SOURCE_LABELS, e.captureSource, 'ช่องทางอื่น')}</MangmeeBadge>
                           </div>
