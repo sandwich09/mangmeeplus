@@ -290,6 +290,21 @@ describe('claim password rules', () => {
     assert.equal(validateClaimPassword('somchai', 'abcd1234', 'abcd1234').password, undefined);
   });
 
+  // The field used to accept anything non-empty, so a Thai or spaced username reached the claim
+  // endpoint and came back as a 400 nobody could read — after a password had been typed twice.
+  it('applies the same username rule the claim endpoint enforces', () => {
+    const bad = (username: string) => validateClaimPassword(username, 'abcd1234', 'abcd1234').username;
+    assert.ok(bad('ab'), 'shorter than 3');
+    assert.ok(bad('a'.repeat(41)), 'longer than 40');
+    assert.ok(bad('สมชาย'), 'Thai characters');
+    assert.ok(bad('som chai'), 'a space');
+    assert.ok(bad('som@chai'), 'a character outside [A-Za-z0-9._-]');
+    assert.match(bad('ab')!, /3–40/);
+    for (const ok of ['som', 'som.chai', 'som_chai-01', 'A'.repeat(40)]) {
+      assert.equal(validateClaimPassword(ok, 'abcd1234', 'abcd1234').username, undefined, ok);
+    }
+  });
+
   it('catches a mismatched or missing confirmation, and a blank username', () => {
     assert.ok(validateClaimPassword('somchai', 'abcd1234', '').confirmPassword);
     assert.ok(validateClaimPassword('somchai', 'abcd1234', 'abcd12345').confirmPassword);

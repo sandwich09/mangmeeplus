@@ -49,7 +49,8 @@ test('an unopened tab shows no count rather than a confident zero', () => {
 test('R13: the tab is asked of the server, not applied to whatever 200 rows arrived', () => {
   // The queue read 200 rows and the browser filtered them, so a tab could show nothing while the
   // database held a backlog, and every count was a count of the truncation.
-  assert.match(source, /listSignupRequests\(\{ tab/);
+  assert.match(source, /const page = await listSignupRequests\(\{ tab: tabLoadsOwnList\(forTab\) \? 'ALL' : forTab \}\)/);
+  assert.doesNotMatch(source, /listSignupRequests\(\)/);
   assert.doesNotMatch(source, /filterSignupQueue/);
 });
 

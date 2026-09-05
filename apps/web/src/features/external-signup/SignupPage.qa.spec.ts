@@ -27,6 +27,13 @@ test('R12: a successful submit puts the request id in the URL', () => {
   assert.match(source, /router\.replace\(`\/signup\/status\/\$\{encodeURIComponent\(result\.requestId\)\}`\)/);
 });
 
+test('the received page does not promise a password to someone who already has an account', () => {
+  // The claim page offers both lanes — set a password, or sign in with an existing account — so
+  // "the email will have a link to set a password" told half the applicants the wrong story.
+  assert.match(source, /เมื่ออนุมัติ เราจะส่งลิงก์เปิดใช้งานทางอีเมล ตั้งรหัสใหม่หรือใช้บัญชีเดิมได้/);
+  assert.doesNotMatch(source, /ในอีเมลจะมีลิงก์สำหรับตั้งรหัสผ่าน/);
+});
+
 test('R12: the received view does not offer a resend that does not exist yet', () => {
   // Nothing can be re-sent before an approval: `canResendClaim` is false in PENDING_REVIEW, so the
   // "ask for a new email in 2 days" line pointed at a button that is not rendered.
