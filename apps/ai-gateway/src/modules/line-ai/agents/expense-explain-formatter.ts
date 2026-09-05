@@ -65,16 +65,25 @@ export function foldDigits(value: string): string {
  * dangerous half is a BARE domain (`evil.example.com`, `bit.ly/x9`), which LINE links just the same.
  * No `\b` before `www` on purpose: after a Thai letter there is no word boundary, so `ร้านabcwww.…`
  * defeated it.
+ *
+ * The TLD is a SHAPE, never a list. A list is a permanent race against the registry — `.xyz`,
+ * `.app` and `.ru` all linkify exactly like `.com`, and every one of them was live while an
+ * allowlist of ten spelled safety. The cost of the shape is that `Co.Ltd` scrubs too; a company
+ * suffix is worth less than a live link in an answer the reader trusts.
  */
-const AUTO_LINKABLE = /(?:https?:\/\/\S+|(?:\S*\.)?[a-z0-9-]+\.(?:com|net|org|co|io|ly|me|info|biz|th)\b\S*)/giu;
+const AUTO_LINKABLE = /(?:https?:\/\/\S+|(?:\S*\.)?[a-z0-9-]+\.[a-z]{2,24}\b\S*)/giu;
 
 /**
  * Money-shaped, once folded: a grouped run (`99,999`), a decimal amount (`99999.00`), or any run of
  * three or more digits. Three digits is the deliberate floor — `99999` with no separator still reads
- * as an amount next to a real total, and no legitimate vendor name or charge label needs one.
+ * as an amount next to a real total.
  */
 const MONEY_SHAPED = /\d[\d,]*\.\d+|\d{1,3}(?:,\d{3})+|\d{3,}/u;
 const PERCENT_SHAPED = /\d+\s*%/u;
+const MONEY_SHAPED_G = new RegExp(MONEY_SHAPED.source, 'gu');
+const PERCENT_SHAPED_G = new RegExp(PERCENT_SHAPED.source, 'gu');
+/** What a refused number leaves behind, so the surrounding words still read as a sentence. */
+const NUMBER_PLACEHOLDER = '…';
 
 /**
  * Free text that reaches this template is OCR output — whatever was printed on the paper the
@@ -86,20 +95,35 @@ const PERCENT_SHAPED = /\d+\s*%/u;
  * Four rules, in order:
  *   1. fold every digit alphabet to ASCII, so the patterns below cannot be stepped around;
  *   2. strip anything a LINE client would auto-link, bare domains included;
- *   3. bound the length (an OCR line is a name, not a paragraph);
- *   4. DROP the whole field when a money- or percent-shaped token survives. Scrubbing the number in
- *      place would leave a sentence built around a hole; dropping the field falls back to a neutral
- *      label and keeps the guarantee absolute — every digit in the reply came from the record.
+ *   3. deal with any money- or percent-shaped token (see `policy` below);
+ *   4. bound the length (an OCR line is a name, not a paragraph).
+ *
+ * `policy` is where the two kinds of field part company:
+ *
+ *   - `neutralise` (default, for real OCR prose like the vendor name): replace the number with `…`
+ *     and KEEP the words. Thai shops number their branches — "ร้าน 7-Eleven สาขา 123", "โลตัส สาขา
+ *     456", "ปตท. สาขา 088" — so dropping the field over a digit erased the shop's name from the
+ *     answer on the most common receipts there are. The guarantee is about NUMBERS, not words: no
+ *     digit the record did not carry can survive this, which is all it ever promised.
+ *   - `drop` (for enum-derived labels: charge kind, status, assumption keys): those are generated
+ *     from a fixed Thai vocabulary and never legitimately contain a number, so anything that does
+ *     is not a label — the neutral fallback reads better than a sentence with a hole in it, and a
+ *     charge label lands inside the arithmetic line where prose does not belong.
  *
  * `undefined` means "use the neutral fallback", never "print it anyway".
  */
-export function safeText(value: unknown, maxChars: number): string | undefined {
+export function safeText(value: unknown, maxChars: number, policy: 'neutralise' | 'drop' = 'neutralise'): string | undefined {
   if (typeof value !== 'string') return undefined;
-  const folded = foldDigits(value.normalize('NFC'));
-  const stripped = folded.replace(AUTO_LINKABLE, ' ').replace(/\s+/gu, ' ').trim();
-  if (!stripped) return undefined;
-  const bounded = stripped.slice(0, maxChars);
-  return MONEY_SHAPED.test(bounded) || PERCENT_SHAPED.test(bounded) ? undefined : bounded;
+  const delinked = foldDigits(value.normalize('NFC')).replace(AUTO_LINKABLE, ' ');
+  if (policy === 'drop' && (MONEY_SHAPED.test(delinked) || PERCENT_SHAPED.test(delinked))) return undefined;
+  // Percent first: `999%` would otherwise lose its digits to the money rule and leave a bare `%`.
+  const neutralised = delinked
+    .replace(PERCENT_SHAPED_G, NUMBER_PLACEHOLDER)
+    .replace(MONEY_SHAPED_G, NUMBER_PLACEHOLDER);
+  const stripped = neutralised.replace(/\s+/gu, ' ').trim();
+  // Nothing but punctuation left is not a name — fall back rather than print debris.
+  if (!/[\p{L}\p{N}]/u.test(stripped)) return undefined;
+  return stripped.slice(0, maxChars);
 }
 
 /**
@@ -109,7 +133,10 @@ export function safeText(value: unknown, maxChars: number): string | undefined {
  * injected sentence cannot satisfy, since a sentence needs spaces and a fake total needs a
  * separator or a decimal.
  */
-const DOCUMENT_NUMBER = /^[\p{L}\p{N}][\p{L}\p{N}\-/_#]{0,31}$/u;
+// `\p{M}` is load-bearing, not decoration: Thai writes its vowel signs and tone marks as combining
+// marks, so "ใบเสร็จ-001" and "ใบกำกับ-12" are `\p{L}` + `\p{M}` sequences. Without it the charset
+// rejected the mark and every Thai-prefixed document number was dropped whole.
+const DOCUMENT_NUMBER = /^[\p{L}\p{N}][\p{L}\p{N}\p{M}\-/_#]{0,31}$/u;
 export function safeDocumentNumber(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   const folded = foldDigits(value.normalize('NFC')).trim();
@@ -145,7 +172,7 @@ function assumptionLine(assumptions: unknown): string | undefined {
     if (typeof field !== 'string') continue;
     // `missingFields` is copied out of the OCR output, so an unmapped key is attacker text too:
     // take the known Thai label, else the scrubbed key, else skip the entry entirely.
-    const label = ASSUMPTION_FIELD_LABELS[field] ?? safeText(field, MAX_CHARGE_LABEL_CHARS);
+    const label = ASSUMPTION_FIELD_LABELS[field] ?? safeText(field, MAX_CHARGE_LABEL_CHARS, 'drop');
     if (label) labels.push(label);
   }
   return labels.length > 0 ? `ยังไม่ยืนยัน: ${labels.slice(0, 4).join(' · ')} — ตรวจอีกครั้งได้ในเว็บนะคะ` : undefined;
@@ -177,7 +204,7 @@ export function formatExpenseExplainReply(data: unknown): string | undefined {
   const date = thaiBuddhistDate(header['expenseDate']);
   const docNumber = safeDocumentNumber(header['documentNumber']);
   // The status label is enum-derived on the API side, but it crosses the same untrusted boundary.
-  const statusLabel = safeText(header['statusLabel'], MAX_CHARGE_LABEL_CHARS);
+  const statusLabel = safeText(header['statusLabel'], MAX_CHARGE_LABEL_CHARS, 'drop');
 
   // Headline: the total, then the arithmetic that produces it, term by term, in document order.
   const chargeRows = Array.isArray(groups['charges']) ? groups['charges'] as Array<Record<string, unknown>> : [];
@@ -187,7 +214,7 @@ export function formatExpenseExplainReply(data: unknown): string | undefined {
     const amount = money(row['amount']);
     // A charge label lands INSIDE the arithmetic line, so an unscrubbed one would read as part of
     // the sum. A refused label still gets its term — the amount is the load-bearing half.
-    const label = safeText(row['label'], MAX_CHARGE_LABEL_CHARS) ?? 'ค่าใช้จ่ายเพิ่ม';
+    const label = safeText(row['label'], MAX_CHARGE_LABEL_CHARS, 'drop') ?? 'ค่าใช้จ่ายเพิ่ม';
     if (amount) terms.push(`${label} ${amount}`);
   }
 

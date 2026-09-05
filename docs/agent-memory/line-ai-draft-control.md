@@ -171,7 +171,25 @@ receipt this tool explains.) S-4 replaces the pair with the real draft-edit capa
   `documentNumber` gets its own structural guard instead of the prose one — it is the one field
   whose job is digits, so `INV-2569-00123` must survive while a sentence must not: a single token
   of document-number characters, which an injected sentence (needing spaces) cannot satisfy. Four
-  more corpus rows (**10** now) and three more mutations cover this.
+  more corpus rows and three more mutations cover this.
+
+### Review round 3 (at `0455f0d3`) — fixed
+
+- **The link control was a TLD allowlist**, so `evil.xyz`, `evil.app` and `evil.ru` rendered and
+  LINE auto-linked them — and the spec's guard shared the same list, so no test could see it. Both
+  sides now use a TLD *shape* (`[a-z]{2,24}`), which needs no upkeep as the registry grows. The
+  accepted cost is that `Co.Ltd` scrubs too. Two corpus rows added (**12** now).
+- **The `\d{3,}` floor was eating real shop names.** Thai shops number their branches, so
+  "ร้าน 7-Eleven สาขา 123", "โลตัส สาขา 456" and "ปตท. สาขา 088" all collapsed to
+  "ร้านที่ยังไม่ระบุ" — the guard was erasing the vendor on the most common receipts in the
+  country. `safeText` now takes a policy: **neutralise** (default) replaces the number with `…` and
+  keeps the words, for real OCR prose like the vendor name; **drop** stays for the enum-derived
+  labels (charge kind, status, assumption keys), which never legitimately contain a number and land
+  inside the arithmetic line where prose does not belong. The guarantee is unchanged — it was
+  always about numbers, never about words.
+- **`DOCUMENT_NUMBER` lacked `\p{M}`** (a regression introduced by round 2's structural guard):
+  Thai writes vowel signs and tone marks as combining marks, so `ใบเสร็จ-001` and `ใบกำกับ-12` were
+  dropped whole. Added, with tests for both.
 
 - **The router prompt hint was untested** (the E4 replay forced the wire to fail, so it only ever
   exercised the rescue). `intent-router.agent.spec.ts` now asserts both halves of the hint, and the
