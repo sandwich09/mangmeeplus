@@ -41,7 +41,15 @@ function toRequestContext(ctx: ErpToolContext): RequestContext {
 
 /**
  * One base class for the five tools: they differ only in their name and in the argument shape the
- * pure parser already owns, so five copies of this method would be five places to forget a guard.
+ * pure parser already owns, so five copies of `execute` would be five places to forget a guard.
+ *
+ * The CONSTRUCTORS are not shared, and must not be. `emitDecoratorMetadata` — swc's and TypeScript's
+ * alike — writes `design:paramtypes` only for the class that DECLARES a constructor. An `@Injectable()`
+ * subclass that inherits one emits no metadata, so Nest resolves zero dependencies, constructs it with
+ * no arguments, and the first `expense.draft.*` call dies on an undefined `draftUpdate` — in the built
+ * image only, where no spec that hand-constructs the class would ever see it. Every concrete class
+ * below therefore declares its own constructor, and `erp-draft-update-tools.di.spec.ts` fails if one
+ * stops doing so.
  */
 abstract class ExpenseDraftUpdateTool implements ErpReadToolPort {
   abstract toolName: LineDraftUpdateTool;
@@ -152,24 +160,34 @@ abstract class ExpenseDraftUpdateTool implements ErpReadToolPort {
 @Injectable()
 export class ExpenseDraftSetHeaderTool extends ExpenseDraftUpdateTool {
   toolName = 'expense.draft.set_header' as const;
+  // Declared, not inherited — see the note on the base class. Nest needs the metadata here.
+  constructor(draftUpdate: LineDraftUpdateUseCase, repo: PrismaExpenseRepository) { super(draftUpdate, repo); }
 }
 
 @Injectable()
 export class ExpenseDraftSetLineTool extends ExpenseDraftUpdateTool {
   toolName = 'expense.draft.set_line' as const;
+  // Declared, not inherited — see the note on the base class. Nest needs the metadata here.
+  constructor(draftUpdate: LineDraftUpdateUseCase, repo: PrismaExpenseRepository) { super(draftUpdate, repo); }
 }
 
 @Injectable()
 export class ExpenseDraftAddChargeTool extends ExpenseDraftUpdateTool {
   toolName = 'expense.draft.add_charge' as const;
+  // Declared, not inherited — see the note on the base class. Nest needs the metadata here.
+  constructor(draftUpdate: LineDraftUpdateUseCase, repo: PrismaExpenseRepository) { super(draftUpdate, repo); }
 }
 
 @Injectable()
 export class ExpenseDraftRemoveLineTool extends ExpenseDraftUpdateTool {
   toolName = 'expense.draft.remove_line' as const;
+  // Declared, not inherited — see the note on the base class. Nest needs the metadata here.
+  constructor(draftUpdate: LineDraftUpdateUseCase, repo: PrismaExpenseRepository) { super(draftUpdate, repo); }
 }
 
 @Injectable()
 export class ExpenseDraftSetVatModeTool extends ExpenseDraftUpdateTool {
   toolName = 'expense.draft.set_vat_mode' as const;
+  // Declared, not inherited — see the note on the base class. Nest needs the metadata here.
+  constructor(draftUpdate: LineDraftUpdateUseCase, repo: PrismaExpenseRepository) { super(draftUpdate, repo); }
 }
