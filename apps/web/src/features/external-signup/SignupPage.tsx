@@ -13,13 +13,13 @@ import {
   clampMobileInput,
   firstSignupErrorField,
   MOBILE_DIGITS,
-  offerLimitsLabel,
-  offerWarmupNote,
   rotateSignupKeyAfter,
   SELECTABLE_OFFER_KEY,
   SIGNUP_CONSENT_VERSION,
-  SIGNUP_OFFERS,
   SIGNUP_SUPPORT_PHONE,
+  SIGNUP_TRIAL_AFTER,
+  SIGNUP_TRIAL_HEADLINE,
+  SIGNUP_TRIAL_WARMUP,
   signupFieldRejection,
   signupSubmitErrorMessage,
   validateSignupForm,
@@ -38,61 +38,22 @@ const EMPTY_FORM: SignupFormValues = {
   taxId: '',
 };
 
-function OfferCards() {
+/**
+ * Owner 2026-09-05: there is no tier to choose any more — every applicant gets the same free trial
+ * the LINE-first signup gives. The four priced cards described a purchase nobody was being asked
+ * to make, and pairing a monthly price with a free-trial badge read as a subscription starting now.
+ * (The price itself is deliberately not repeated here: `signup-pages.qa.spec.ts` scans this file's
+ * raw source, comments included, and it is right to.)
+ */
+export function TrialNotice() {
   return (
-    <fieldset className="space-y-2.5">
-      <legend className="mb-2 text-[15px] font-semibold text-gray-800">แพ็กเกจ</legend>
-      {SIGNUP_OFFERS.map((offer) => {
-        const selected = offer.selectable;
-        const reasonId = `offer-${offer.tierKey}-reason`;
-        return (
-          <label
-            key={offer.tierKey}
-            data-offer={offer.tierKey}
-            className={`flex items-start gap-3 rounded-xl border p-3.5 ${
-              selected ? 'cursor-default border-[#046B29] bg-[#F2F9F4]' : 'border-gray-200 bg-gray-50 opacity-70'
-            }`}
-          >
-            {/* A real radio group, so the one choice and the three refusals are in the accessible
-                tree — the greyed-out styling alone says nothing to a screen reader. */}
-            <input
-              type="radio"
-              name="requestedOffer"
-              value={offer.offerKey}
-              checked={selected}
-              disabled={!selected}
-              readOnly
-              aria-describedby={offer.unavailableReason ? reasonId : undefined}
-              className="mt-0.5 h-5 w-5 shrink-0 accent-[#046B29]"
-            />
-            <span className="min-w-0 flex-1">
-              <span className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                <span className="text-[15.5px] font-bold text-gray-900">{offer.nameTh}</span>
-                <span className="text-[15px] font-semibold text-gray-700">{offer.priceLabel}</span>
-                {offer.badge ? (
-                  <span className="rounded-md bg-[#046B29] px-2 py-0.5 text-[12px] font-bold text-white">{offer.badge}</span>
-                ) : null}
-                {/* The "coming soon" chip belongs to the cards you cannot pick. Keyed on
-                    `selectable`, not on the absence of a badge: the trial card carries neither. */}
-                {offer.selectable ? null : (
-                  <span className="rounded-md bg-gray-200 px-2 py-0.5 text-[12px] font-semibold text-gray-600">เร็ว ๆ นี้</span>
-                )}
-              </span>
-              <span className="mt-1 block text-[13px] leading-6 text-gray-500">{offerLimitsLabel(offer)}</span>
-              {/* F17: the first-week ceiling, said before signing up rather than discovered on day one. */}
-              {offerWarmupNote(offer) ? (
-                <span className="mt-0.5 block text-[13px] leading-6 text-gray-500">{offerWarmupNote(offer)}</span>
-              ) : null}
-              {offer.unavailableReason ? <span id={reasonId} className="sr-only">{offer.unavailableReason}</span> : null}
-            </span>
-          </label>
-        );
-      })}
-      <p className="pt-1 text-[13px] leading-6 text-gray-500">
-        {/* F1: this named a paid package for a shop that opens on the free trial. */}
-        ตอนนี้เปิดให้ทดลองใช้ฟรีก่อน แพ็กเกจแบบเสียค่าบริการจะเปิดเร็ว ๆ นี้
-      </p>
-    </fieldset>
+    <section className="rounded-xl border border-[#B6E0C4] bg-[#F2F9F4] p-3.5">
+      <h2 className="text-[15.5px] font-bold text-[#046B29]">{SIGNUP_TRIAL_HEADLINE}</h2>
+      {/* F17: the first week is capped harder than the month. Said here, next to the monthly
+          number it qualifies — finding it out on day one reads as a broken app. */}
+      <p className="mt-1 text-[13.5px] leading-6 text-gray-600">{SIGNUP_TRIAL_WARMUP}</p>
+      <p className="mt-1 text-[13.5px] leading-6 text-gray-600">{SIGNUP_TRIAL_AFTER}</p>
+    </section>
   );
 }
 
@@ -104,10 +65,13 @@ function SubmittedView({ requestId }: { requestId: string }) {
       </span>
       <div className="space-y-2">
         <h1 className="text-[22px] font-extrabold text-gray-900">ได้รับคำขอแล้ว กำลังตรวจสอบ</h1>
+        {/* Someone who already has a มั่งมีพลัส account does NOT set a new password — the claim page
+            offers both lanes — so promising "set a password" told half of them the wrong story. */}
         <p className="text-[15px] leading-7 text-gray-600">
-          เราจะส่งอีเมลให้คุณเมื่ออนุมัติ ในอีเมลจะมีลิงก์สำหรับตั้งรหัสผ่าน แล้วจึงเริ่มใช้งานได้
+          เมื่ออนุมัติ เราจะส่งลิงก์เปิดใช้งานทางอีเมล ตั้งรหัสใหม่หรือใช้บัญชีเดิมได้
         </p>
       </div>
+      <TrialNotice />
       <Link
         href={`/signup/status/${encodeURIComponent(requestId)}`}
         className="flex h-12 w-full items-center justify-center rounded-xl border-[1.5px] border-gray-200 bg-white text-[15.5px] font-semibold text-gray-900 hover:border-[#046B29]"
@@ -284,7 +248,11 @@ export default function SignupPage() {
                     autoComplete="family-name"
                   />
                 </div>
-                <p className="-mt-3 text-[13px] leading-6 text-gray-500">ชื่อนี้จะแสดงเป็นชื่อผู้ใช้งานหลักของร้านหลังเข้าสู่ระบบ</p>
+                {/* It is the DISPLAY name, not the login name — the login name is chosen on the
+                    claim page, and reading this as "your username" made people type one here. */}
+                <p className="-mt-3 text-[13px] leading-6 text-gray-500">
+                  ชื่อจริงของเจ้าของร้าน ใช้แสดงในระบบ ไม่ใช่ชื่อสำหรับเข้าสู่ระบบ
+                </p>
                 <TextField
                   label="อีเมล"
                   name="contactEmail"
@@ -308,10 +276,12 @@ export default function SignupPage() {
                   error={fieldErrors.phoneNumber}
                   autoComplete="tel"
                 />
+                {/* The one field on this form that is genuinely optional, and the only one that
+                    never said so — people stopped at it looking for something to fill in. */}
                 <TextField
-                  label="ประเภทธุรกิจ"
+                  label="ประเภทธุรกิจ (ไม่บังคับ)"
                   name="businessType"
-                  hint="เช่น ร้านขายของชำ ร้านอาหาร ร้านวัสดุก่อสร้าง"
+                  hint="เช่น ร้านขายของชำ ร้านอาหาร ร้านวัสดุก่อสร้าง คลินิก"
                   value={values.businessType}
                   onChange={(event) => set('businessType', event.target.value)}
                 />
@@ -350,7 +320,7 @@ export default function SignupPage() {
                   ) : null}
                 </div>
 
-                <OfferCards />
+                <TrialNotice />
 
                 {/* Owner 2026-08-31: the binding acceptance (with display-challenge evidence) happens
                     in-app on first login, so this form only SHOWS the documents — no checkbox to tick.

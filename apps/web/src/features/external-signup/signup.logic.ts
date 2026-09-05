@@ -3,7 +3,6 @@ import {
   PLAN_TIER_PRESETS,
   SIGNUP_TRIAL_TIER_KEY,
   SIGNUP_TRIAL_WARMUP_SLIPS,
-  type PlanTierKey,
   type PublicSignupStatusKey,
   type SignupOfferKey,
 } from '@watchdog-bms/contracts';
@@ -19,54 +18,39 @@ export const SIGNUP_CONSENT_VERSION =
 export const SIGNUP_SUPPORT_PHONE = '098-256-5628';
 export const SIGNUP_SUPPORT_EMAIL = 'contact@mangmeeplus.com';
 
-// ── Offer cards (spec §3A, Billing §8 catalog 2026-08-30) ──
+// ── What signing up gets you ──
 
-export type SignupOfferCard = {
-  tierKey: PlanTierKey;
-  /** What submit sends. Only the PRO trial is accepted by the server this round. */
-  offerKey: SignupOfferKey;
-  nameTh: string;
-  priceLabel: string;
-  /** Selectable cards carry the trial badge; the rest are priced previews of the real journey. */
-  selectable: boolean;
-  badge?: string;
-  /** Read by assistive technology as the reason the control is unavailable. */
-  unavailableReason?: string;
-};
+/**
+/**
+ * Owner 2026-09-05: self-signup stopped selling a tier. Every applicant gets the same free trial
+ * the LINE-first signup gives, so the four priced cards — and the monthly price sitting next to a
+ * free-trial badge — are gone. They described a purchase nobody was being asked to make.
+ *
+ * The numbers are quoted from the shared preset rather than restated, so a change to the trial
+ * cannot leave this page promising the old one.
+ */
+const TRIAL_PRESET = PLAN_TIER_PRESETS[SIGNUP_TRIAL_TIER_KEY];
 
-const UNAVAILABLE_REASON = 'ยังไม่เปิดให้สมัครแพ็กเกจนี้ทางออนไลน์ เร็ว ๆ นี้';
+export const SIGNUP_TRIAL_DAYS = 30;
 
-function limitsLabel(tierKey: PlanTierKey): string {
-  const preset = PLAN_TIER_PRESETS[tierKey];
-  return `${preset.branchLimit} สาขา · ${preset.employeeLimit} คน · อ่านสลิป ${preset.monthlySlipLimit} ใบ/เดือน`;
-}
-
-export const SIGNUP_OFFERS: readonly SignupOfferCard[] = [
-  { tierKey: 'STARTER_249', offerKey: 'STARTER_249', nameTh: 'เริ่มต้น', priceLabel: '฿249 / เดือน', selectable: false, unavailableReason: UNAVAILABLE_REASON },
-  { tierKey: 'BASIC_499', offerKey: 'BASIC_499', nameTh: 'เติบโต', priceLabel: '฿499 / เดือน', selectable: false, unavailableReason: UNAVAILABLE_REASON },
-  // F1: the card names the tier provisioning actually writes. It used to advertise PRO — 5 branches,
-  // 10 staff, 100 receipts, ฿999 — for a shop that opens on 1/2/15 with a first-week ceiling.
-  { tierKey: SIGNUP_TRIAL_TIER_KEY, offerKey: 'FREE_TRIAL', nameTh: 'ทดลองใช้ฟรี', priceLabel: 'ฟรี 30 วัน', selectable: true },
-  { tierKey: 'ENTERPRISE_1999', offerKey: 'ENTERPRISE_1999', nameTh: 'ธุรกิจ', priceLabel: '฿1,999 / เดือน', selectable: false, unavailableReason: UNAVAILABLE_REASON },
-];
-
-export function offerLimitsLabel(card: SignupOfferCard): string {
-  return limitsLabel(card.tierKey);
-}
+export const SIGNUP_TRIAL_HEADLINE =
+  `ทดลองใช้ฟรี ${SIGNUP_TRIAL_DAYS} วัน ให้ AI อ่านรูปใบเสร็จได้ ${TRIAL_PRESET.monthlySlipLimit} ครั้ง`;
 
 /**
  * Review F17. P10-L §9 holds a brand-new trial shop to a tighter receipt ceiling for its first
- * week. Telling people afterwards is how "the app is broken" support calls start, so the card says
- * it up front. Owner copy rule: no plus sign in user-facing text.
+ * week. Telling people afterwards is how "the app is broken" support calls start, so the copy says
+ * it up front — next to the monthly number it qualifies, not on a card that no longer exists.
  */
-export function offerWarmupNote(card: SignupOfferCard): string | undefined {
-  if (card.tierKey !== SIGNUP_TRIAL_TIER_KEY) return undefined;
-  return `สัปดาห์แรกอ่านได้ ${SIGNUP_TRIAL_WARMUP_SLIPS} ใบ`;
-}
+export const SIGNUP_TRIAL_WARMUP = `สัปดาห์แรกอ่านได้ ${SIGNUP_TRIAL_WARMUP_SLIPS} ใบ`;
+
+/** What happens at the end of it. Never implies a card, a renewal, or a charge. */
+export const SIGNUP_TRIAL_AFTER =
+  'เมื่อครบกำหนด ติดต่อทีมงานเพื่อเลือกแพ็กเกจ ไม่มีการตัดเงินอัตโนมัติ';
 
 /**
- * The one offer the form submits. Owner 2026-09-05: no package is chosen at signup, so this names
- * the free trial the applicant actually gets rather than the PRO package it used to be sold as.
+ * Still sent with the form: it is the key the server's allowlist accepts and what the admin queue
+ * shows. The applicant is no longer shown a choice, because there is not one — and R02 made this
+ * name the free trial that is actually provisioned rather than the paid tier it used to name.
  */
 export const SELECTABLE_OFFER_KEY: SignupOfferKey = 'FREE_TRIAL';
 
@@ -294,10 +278,26 @@ export function signupStatusCopy(
 
 export type ClaimPasswordErrors = { username?: string; password?: string; confirmPassword?: string };
 
-/** Mirrors the hint under the field: at least 8 characters, with letters and digits. */
+/**
+ * Exactly the rule the claim endpoint enforces
+ * (`SignupClaimSetPasswordDto`: 3–40, `[A-Za-z0-9._-]`). The page used to check only that the box
+ * was non-empty, so a Thai or spaced username reached the server and came back as a 400 the
+ * applicant could not read — after they had typed a password twice.
+ */
+export const CLAIM_USERNAME_MIN = 3;
+export const CLAIM_USERNAME_MAX = 40;
+const CLAIM_USERNAME_PATTERN = /^[A-Za-z0-9._-]+$/;
+export const CLAIM_USERNAME_HINT =
+  `${CLAIM_USERNAME_MIN}–${CLAIM_USERNAME_MAX} ตัว ใช้ภาษาอังกฤษ ตัวเลข จุด ขีดกลาง หรือขีดล่าง`;
+
 export function validateClaimPassword(username: string, password: string, confirmPassword: string): ClaimPasswordErrors {
   const errors: ClaimPasswordErrors = {};
-  if (!username.trim()) errors.username = 'กรุณากรอกชื่อผู้ใช้';
+  const trimmedUsername = username.trim();
+  if (!trimmedUsername) errors.username = 'กรุณากรอกชื่อผู้ใช้';
+  else if (trimmedUsername.length < CLAIM_USERNAME_MIN || trimmedUsername.length > CLAIM_USERNAME_MAX
+    || !CLAIM_USERNAME_PATTERN.test(trimmedUsername)) {
+    errors.username = `ชื่อผู้ใช้ต้องมี ${CLAIM_USERNAME_HINT}`;
+  }
   if (password.length < 8 || !/[A-Za-z]/.test(password) || !/[0-9]/.test(password)) {
     errors.password = 'รหัสผ่านต้องยาวอย่างน้อย 8 ตัว และมีทั้งตัวอักษร และตัวเลข';
   }

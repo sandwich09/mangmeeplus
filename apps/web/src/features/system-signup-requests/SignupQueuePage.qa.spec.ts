@@ -95,6 +95,19 @@ test('R10: approving asks for the business category the mapping could not read',
   assert.match(source, /businessCategory: businessCategory/);
 });
 
+test('the queue survives a 390px phone, which is where an operator reads it', () => {
+  // §8: this queue is worked from a phone. Every table is the thing that overflows, so each one
+  // scrolls inside its own box rather than pushing the page sideways.
+  const tables = [...source.matchAll(/<table\b/g)].length;
+  const scrollers = [...source.matchAll(/overflow-x-auto/g)].length;
+  assert.ok(tables > 0 && scrollers >= tables, `${tables} tables, ${scrollers} scroll containers`);
+  // The new controls are full-width-safe: no fixed pixel widths anywhere on the page.
+  for (const [, , px] of source.matchAll(/\b((?:min-)?w)-\[(\d+)px\]/g)) {
+    assert.ok(Number(px) <= 358, `a ${px}px fixed width does not fit a 390px screen`);
+  }
+  assert.doesNotMatch(source, /\bmin-h-screen\b/);
+});
+
 test('a package decision is confirmed before it moves what a customer pays', () => {
   assert.match(source, /const accepted = await confirm\(\{[\s\S]{0,400}อนุมัติเปลี่ยนแพ็กเกจ/);
   assert.match(source, /if \(!accepted\) return;[\s\S]{0,200}decidePackageChangeRequest/);

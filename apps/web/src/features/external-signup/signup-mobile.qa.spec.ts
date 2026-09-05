@@ -1,0 +1,84 @@
+import assert from 'node:assert/strict';
+import { readdirSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { describe, it } from 'node:test';
+import * as React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+
+(globalThis as typeof globalThis & { React: typeof React }).React = React;
+
+// The phone is the primary surface: 390px wide, with the browser chrome eating the bottom. These
+// are the two ways this journey has broken there before — a `vh` height that the address bar cuts
+// off, and a width that puts the submit button off-screen sideways.
+const VIEWPORT = 390;
+/** 390 minus the page's own `px-4` gutters on both sides. */
+const CONTENT_WIDTH = VIEWPORT - 16 * 2;
+
+const dir = fileURLToPath(new URL('.', import.meta.url));
+const pages = readdirSync(dir)
+  .filter((name) => name.endsWith('.tsx'))
+  .map((name) => ({ name, source: readFileSync(new URL(`./${name}`, import.meta.url), 'utf8') }));
+
+describe('the public signup journey at 390px', () => {
+  it('measures the pages it claims to cover', () => {
+    assert.ok(pages.length >= 4, `only found ${pages.map((p) => p.name).join(', ')}`);
+  });
+
+  it('sizes full-height screens in dvh, never vh', () => {
+    for (const { name, source } of pages) {
+      assert.doesNotMatch(source, /\bmin-h-screen\b/, `${name} uses vh; the URL bar cuts it off`);
+      assert.doesNotMatch(source, /\bh-screen\b/, `${name} uses vh; the URL bar cuts it off`);
+    }
+  });
+
+  it('declares no fixed width wider than the 390px content column', () => {
+    for (const { name, source } of pages) {
+      for (const [, prop, px] of source.matchAll(/\b((?:min-)?w)-\[(\d+)px\]/g)) {
+        assert.ok(
+          Number(px) <= CONTENT_WIDTH,
+          `${name}: ${prop}-[${px}px] is wider than the ${CONTENT_WIDTH}px column`,
+        );
+      }
+    }
+  });
+
+  it('keeps the content column inside the viewport', () => {
+    // `max-w-md` is 448px, which is wider than 390 — it only works because the column also carries
+    // horizontal padding and `w-full`, so it shrinks. A column without that would overflow.
+    for (const { name, source } of pages) {
+      for (const [line] of source.matchAll(/.*\bmax-w-(?:md|lg|4xl)\b.*/g)) {
+        assert.match(line, /\bw-full\b|\bmx-auto\b/, `${name}: ${line.trim()}`);
+      }
+    }
+  });
+});
+
+describe('the free-trial notice', () => {
+  it('renders as flowing text with no fixed width', async () => {
+    const { TrialNotice } = await import('./SignupPage');
+    const html = renderToStaticMarkup(React.createElement(TrialNotice));
+    assert.match(html, /ทดลองใช้ฟรี 30 วัน/);
+    assert.match(html, /ไม่มีการตัดเงินอัตโนมัติ/);
+    assert.doesNotMatch(html, /w-\[\d+px\]/);
+    // Owner copy rule for this journey.
+    assert.doesNotMatch(html, /\+/);
+  });
+});
+
+describe('the closed and outage notices', () => {
+  it('gives each a full-width tap target rather than a link in a paragraph', async () => {
+    const { SignupClosedNotice, SignupUnavailableNotice } = await import('./SignupChrome');
+    const closed = renderToStaticMarkup(React.createElement(SignupClosedNotice));
+    const outage = renderToStaticMarkup(
+      React.createElement(SignupUnavailableNotice, { onRetry: () => {} }),
+    );
+    for (const html of [closed, outage]) {
+      // h-12 is the 48px minimum tap target, and w-full keeps it inside the 390px column.
+      assert.match(html, /h-12 w-full/);
+      assert.doesNotMatch(html, /\+/);
+    }
+    // R11: two different situations, so they may not read as the same sentence.
+    assert.match(closed, /ยังไม่เปิดรับสมัคร/);
+    assert.match(outage, /ยังเปิดรับสมัครอยู่/);
+  });
+});

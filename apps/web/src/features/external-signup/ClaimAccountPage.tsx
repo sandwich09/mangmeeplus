@@ -12,7 +12,10 @@ import { attachSignupClaimToExistingUser, getSignupClaimInfo, setSignupClaimPass
 import { rememberClaimedCompany } from './welcome-handoff.logic';
 import { SignupBrandHeader } from './SignupChrome';
 import {
+  CLAIM_USERNAME_HINT,
+  CLAIM_USERNAME_MAX,
   isTransientLoadFailure,
+  SIGNUP_SUPPORT_PHONE,
   signupSubmitErrorMessage,
   validateClaimPassword,
   type ClaimPasswordErrors,
@@ -148,11 +151,15 @@ function ClaimCard({ token, info }: { token: string; info: SignupClaimInfoDto })
           <p className="mt-1.5 text-[15px] leading-7 text-gray-600">สำหรับเข้าใช้งาน {companyName}</p>
 
           <form onSubmit={handleSetPassword} className="mt-6 space-y-4" noValidate>
+            {/* The hint, the cap and the check now all say the same thing the API enforces. The
+                field used to accept anything non-empty, so a Thai username came back as a 400 the
+                applicant could not read — after they had typed a password twice. */}
             <TextField
               label="ชื่อผู้ใช้"
               name="username"
               autoComplete="username"
-              hint={`ใช้เข้าสู่ระบบได้ทั้งชื่อผู้ใช้ และอีเมล${info.maskedEmail ? ` ${info.maskedEmail}` : ''}`}
+              maxLength={CLAIM_USERNAME_MAX}
+              hint={`${CLAIM_USERNAME_HINT} ใช้เข้าสู่ระบบได้ทั้งชื่อผู้ใช้ และอีเมล${info.maskedEmail ? ` ${info.maskedEmail}` : ''}`}
               value={username}
               onChange={(event) => setUsername(event.target.value)}
               onBlur={(event) => setUsername(trimmed(event.target.value))}
@@ -243,17 +250,23 @@ function ClaimCard({ token, info }: { token: string; info: SignupClaimInfoDto })
             </Button>
           </form>
 
-          {/* Offered only when a new account is actually reachable. For a duplicate email the
-              server refuses that branch, so a link back to it would be a link to a dead end. */}
-          {emailHasAccount ? (
-            <p className="mt-4 text-[13px] leading-6 text-gray-500">
-              จำรหัสผ่านบัญชีเดิมไม่ได้?{' '}
-              <Link href="/forgot-password" target="_blank" className="font-semibold text-[#046B29] underline">
-                ตั้งรหัสผ่านใหม่
-              </Link>
-              {' '}แล้วกลับมาที่หน้านี้อีกครั้ง
-            </p>
-          ) : (
+          {/* Anyone on this lane can be locked out of the account they are trying to attach to, so
+              the recovery is offered to both — it used to appear only for a duplicate email, which
+              stranded exactly the people who came here BECAUSE they have an old account. An
+              account that only ever signed in with LINE has no password to reset, so that case is
+              named rather than left to a reset mail that never arrives. */}
+          <p className="mt-4 text-[13px] leading-6 text-gray-500">
+            จำรหัสผ่านบัญชีเดิมไม่ได้?{' '}
+            <Link href="/forgot-password" target="_blank" className="font-semibold text-[#046B29] underline">
+              ตั้งรหัสผ่านใหม่
+            </Link>
+            {' '}แล้วกลับมาที่หน้านี้อีกครั้ง เคยเข้าด้วย LINE อย่างเดียว ยังไม่เคยตั้งรหัสผ่าน โทร {SIGNUP_SUPPORT_PHONE}
+          </p>
+
+          {/* Going back is only offered when a new account is actually reachable: for a duplicate
+              email the server refuses that branch, so the link would lead to a form that can only
+              fail — and the line above says what choosing it would mean. */}
+          {emailHasAccount ? null : (
             <button
               type="button"
               onClick={() => {
@@ -262,7 +275,7 @@ function ClaimCard({ token, info }: { token: string; info: SignupClaimInfoDto })
               }}
               className="mt-4 w-full text-[14.5px] font-semibold text-gray-600 underline hover:text-gray-900"
             >
-              ย้อนกลับไปตั้งรหัสผ่านใหม่
+              ย้อนกลับไปสร้างบัญชีใหม่สำหรับร้านนี้ (ร้านจะไม่รวมกับบัญชีเดิม)
             </button>
           )}
         </>

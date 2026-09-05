@@ -10,6 +10,8 @@ import {
   isTransientLoadFailure,
   SIGNUP_SUPPORT_EMAIL,
   SIGNUP_SUPPORT_PHONE,
+  SIGNUP_TRIAL_AFTER,
+  SIGNUP_TRIAL_HEADLINE,
   signupStatusCopy,
   signupSubmitErrorMessage,
 } from './signup.logic';
@@ -120,6 +122,13 @@ export default function SignupStatusPage({ requestId }: { requestId: string }) {
                   เข้าสู่ระบบ
                 </Link>
               ) : null}
+
+              {/* Owner 2026-09-05: the same free-trial line the form and the received page carry,
+                  so nobody arrives at their shop expecting the tier the old cards advertised. */}
+              <section className="rounded-xl border border-[#B6E0C4] bg-[#F2F9F4] p-3.5">
+                <p className="text-[14.5px] font-bold text-[#046B29]">{SIGNUP_TRIAL_HEADLINE}</p>
+                <p className="mt-1 text-[13.5px] leading-6 text-gray-600">{SIGNUP_TRIAL_AFTER}</p>
+              </section>
 
               {/* R12: this URL is the applicant's only way back. Copy, then paste it into their
                   own chat — a bookmark on a phone browser is the thing they lose first. */}

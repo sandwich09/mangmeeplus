@@ -9,12 +9,12 @@ import {
   isTransientLoadFailure,
   isThaiMobile,
   MOBILE_DIGITS,
-  offerLimitsLabel,
-  offerWarmupNote,
   rotateSignupKeyAfter,
   SELECTABLE_OFFER_KEY,
   SIGNUP_CONSENT_VERSION,
-  SIGNUP_OFFERS,
+  SIGNUP_TRIAL_AFTER,
+  SIGNUP_TRIAL_WARMUP,
+  SIGNUP_TRIAL_HEADLINE,
   signupFieldRejection,
   signupStatusCopy,
   signupSubmitErrorMessage,
@@ -93,82 +93,47 @@ describe('signup form validation', () => {
   });
 });
 
-describe('offer catalog', () => {
-  // Spec §3A: all four tiers are shown so the applicant sees the real journey, but exactly one is
-  // selectable — a second selectable card would submit a key the server does not treat as an offer.
-  it('shows four tiers with exactly one selectable, the free trial', () => {
-    assert.equal(SIGNUP_OFFERS.length, 4);
-    const selectable = SIGNUP_OFFERS.filter((offer) => offer.selectable);
-    assert.equal(selectable.length, 1);
-    assert.equal(selectable[0]!.offerKey, SELECTABLE_OFFER_KEY);
-    assert.equal(selectable[0]!.tierKey, SIGNUP_TRIAL_TIER_KEY);
+// Owner 2026-09-05: self-signup stopped selling a tier. Every applicant gets the same free trial
+// the LINE-first signup gives, so the four priced cards and the "PRO ฿999 with a free-trial badge"
+// pairing are gone — they described a purchase nobody was being asked to make.
+describe('what signing up gets you', () => {
+  it('quotes the free trial from the shared preset rather than restating numbers', () => {
+    assert.match(SIGNUP_TRIAL_HEADLINE, /ทดลองใช้ฟรี 30 วัน/);
+    assert.match(SIGNUP_TRIAL_HEADLINE, new RegExp(`${PLAN_TIER_PRESETS[SIGNUP_TRIAL_TIER_KEY].monthlySlipLimit} ครั้ง`));
   });
 
-  // Owner 2026-09-05: no package is chosen at signup any more, so what the form submits must name
-  // the offer the applicant actually gets. Sending PRO_TRIAL recorded a request for a package that
-  // was never shown and is never provisioned.
-  it('submits the free-trial offer key, not the retired PRO trial', () => {
+  it('says what happens at the end without implying a charge', () => {
+    assert.match(SIGNUP_TRIAL_AFTER, /ติดต่อทีมงาน/);
+    assert.match(SIGNUP_TRIAL_AFTER, /ไม่มีการตัดเงินอัตโนมัติ/);
+  });
+
+  it('names no price and no tier in either line', () => {
+    const copy = `${SIGNUP_TRIAL_HEADLINE} ${SIGNUP_TRIAL_AFTER}`;
+    assert.doesNotMatch(copy, /999|฿/);
+    assert.doesNotMatch(copy, /\bPRO\b/);
+    assert.doesNotMatch(copy, /\+/);
+  });
+
+  it('still sends the offer key the server allowlist accepts', () => {
+    // The applicant is shown no choice, but the request still carries what the API expects and the
+    // admin queue displays. R02 made that key name the trial that is actually provisioned.
     assert.equal(SELECTABLE_OFFER_KEY, 'FREE_TRIAL');
   });
 
   /**
-   * F1. The page promised PRO limits — 5 branches, 10 staff, 100 receipts, ฿999 — while
-   * provisioning writes FREE_TRIAL_15: 1 branch, 2 staff, 15 receipts, plus a first-week ceiling.
-   * The numbers on the card have to be the numbers the shop gets.
-   */
-  it('offers the tier that is actually provisioned, with its real limits', () => {
-    const selectable = SIGNUP_OFFERS.find((offer) => offer.selectable)!;
-
-    assert.equal(selectable.tierKey, SIGNUP_TRIAL_TIER_KEY);
-    const preset = PLAN_TIER_PRESETS[SIGNUP_TRIAL_TIER_KEY];
-    assert.match(offerLimitsLabel(selectable), new RegExp(`${preset.branchLimit} สาขา`));
-    assert.match(offerLimitsLabel(selectable), new RegExp(`${preset.employeeLimit} คน`));
-    assert.match(offerLimitsLabel(selectable), new RegExp(`${preset.monthlySlipLimit} ใบ/เดือน`));
-  });
-
-  /**
    * Review F17. P10-L §9 caps a brand-new trial shop harder for its first week than its tier
-   * allows. Discovering that on day one reads as a broken app, so the card says it in advance.
+   * allows. Discovering that on day one reads as a broken app, so the copy says it in advance —
+   * the card it used to sit on is gone, the promise it corrects is not.
    */
   it('says what the first week actually allows, from the shared constant', () => {
-    const selectable = SIGNUP_OFFERS.find((offer) => offer.selectable)!;
-    const note = offerWarmupNote(selectable);
-
-    assert.ok(note, 'the trial card must state its first-week ceiling');
-    assert.match(note!, new RegExp(`สัปดาห์แรกอ่านได้ ${SIGNUP_TRIAL_WARMUP_SLIPS} ใบ`));
+    assert.match(SIGNUP_TRIAL_WARMUP, new RegExp(`สัปดาห์แรกอ่านได้ ${SIGNUP_TRIAL_WARMUP_SLIPS} ใบ`));
     // Owner copy rule: no plus sign anywhere in user-facing text.
-    assert.equal(note!.includes('+'), false);
+    assert.equal(SIGNUP_TRIAL_WARMUP.includes('+'), false);
     // The number is the warm-up ceiling, not the monthly quota — they differ, and saying the
-    // monthly one here would promise 15 receipts in a week that allows 10.
+    // monthly one here would promise a month's receipts in a week that allows fewer.
     assert.notEqual(SIGNUP_TRIAL_WARMUP_SLIPS, PLAN_TIER_PRESETS[SIGNUP_TRIAL_TIER_KEY].monthlySlipLimit);
-  });
-
-  it('puts the warm-up note on the trial card only', () => {
-    for (const paid of SIGNUP_OFFERS.filter((offer) => !offer.selectable)) {
-      assert.equal(offerWarmupNote(paid), undefined, `${paid.tierKey} has no warm-up`);
-    }
-  });
-
-  it('names no PRO package and quotes no price on the offer the applicant takes', () => {
-    const selectable = SIGNUP_OFFERS.find((offer) => offer.selectable)!;
-    const shown = `${selectable.nameTh} ${selectable.priceLabel} ${selectable.badge ?? ''}`;
-
-    assert.equal(/PRO|มืออาชีพ/i.test(shown), false, `the trial card still sells PRO: ${shown}`);
-    assert.equal(/999/.test(shown), false, `the trial card still quotes a price: ${shown}`);
-    // And no card anywhere still carries the retired offer or the PRO tier.
-    assert.deepEqual(SIGNUP_OFFERS.filter((o) => o.tierKey === 'PRO_999' || o.offerKey === 'PRO_TRIAL'), []);
-  });
-
-  it('gives every unavailable card a reason assistive technology can read', () => {
-    for (const offer of SIGNUP_OFFERS.filter((card) => !card.selectable)) {
-      assert.ok(offer.unavailableReason, `${offer.tierKey} has no reason`);
-      assert.match(offer.unavailableReason!, /เร็ว ๆ นี้/);
-    }
-  });
-
-  it('quotes the quota from the shared tier presets rather than restating numbers', () => {
-    const paid = SIGNUP_OFFERS.find((offer) => offer.tierKey === 'BASIC_499')!;
-    assert.match(offerLimitsLabel(paid), /2 สาขา · 5 คน · อ่านสลิป 50 ใบ\/เดือน/);
+    // And the headline it qualifies still quotes the MONTHLY number, so the two do not blur.
+    assert.match(SIGNUP_TRIAL_HEADLINE, new RegExp(`${PLAN_TIER_PRESETS[SIGNUP_TRIAL_TIER_KEY].monthlySlipLimit} ครั้ง`));
   });
 
   it('pins the consent version to the current legal artifacts', () => {
