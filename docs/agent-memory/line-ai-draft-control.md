@@ -713,3 +713,38 @@ documented residual (D.11 item 1). The vendor-name probe was re-run: `ABC Co.Ltd
    occurs. Accepted.
 4. **A no-op `อัตรา VAT: 7% → 7%` row can appear** when a `set_vat_mode` patch restates the rate the
    record already holds. Cosmetic; the totals row beside it is still correct.
+
+### D.13 Rebase checklist (prepared 2026-09-06, NOT yet executed)
+
+D is held unrebased on `ca37d6a1` (slice C). C is PR #436 (head `4393df95`) and is not on develop
+yet, and D imports three things from it — `listRecentLineCaptureCandidates`,
+`ExpenseExplainRecordTool` and `formatExpenseExplainReply` — so rebasing before C lands would
+delete D's own dependencies. Wait for the develop tip.
+
+When the tip arrives, in this order:
+
+1. **`process-line-webhook.use-case.ts` is the big one.** It moved +269 lines on develop and D edits
+   FIVE separate regions of it: the postback dispatch (gated on `draftUpdate?.enabled`), the
+   correction-lane hook, `handleDraftUpdatePostback`, `proposeDraftUpdate` +
+   `amountCorrectionAsDraftEdit`, and the post-turn card attachment. Take them one region at a time
+   and re-read each in its new surroundings rather than accepting a three-way merge — two of these
+   sit inside conditionals whose neighbours moved.
+2. **Counts.** `WIRED_TOOL_COUNT` stays 61 and `LINE_TOOL_REGISTRY` should read 66 once C is in. If
+   either differs, a tool was added on develop and BOTH the constant and the registry walk in
+   `internal-tools.controller.spec.ts` need looking at, not just the number.
+3. **Three `package.json` test scripts** (api, ai-gateway, contracts) conflict on their single-line
+   spec lists. Keep BOTH sides' paths — the conflict is textual, never a choice.
+4. **ci.yml** — apply the hunk in §D.8. Match develop's step BY CONTENT, not by name (the step name
+   is longer now), keep every existing invocation, and append D's. This is the only gate
+   `line-draft-update.pg.spec.ts` will ever have; skipping it leaves the spec running nowhere.
+5. **Collapse `safeText` onto `scrubRecordText`.** C lands the shared copy in `packages/contracts`.
+   The gateway must import it rather than keep a local variant — the whole point of the shared
+   helper is that the API card and the gateway answer cannot disagree about what a link is. Carry
+   D's F11/F12/F13 + `.zip`/`.mov` rules across; they are the newer ones.
+6. **Re-verify the pins.** `deploy.sh` is pinned: after any rebase that touches it, run
+   `node infra/security/sync-production-maintenance-release-pins.mjs`, commit the pin update, and
+   confirm `--check` reports `status=current`. Check `expected_deploy` and the workflow's
+   `EXPECTED_MAINTENANCE_RELEASE_VALIDATOR_SHA256` moved together.
+7. **Re-run everything**: the 27-row mutation table, the api fixed list, the gateway suite,
+   contracts, config, `test:boot`, and the pg spec on an isolated database. The mutation harness
+   refuses a dirty tree, so commit the rebase first.
