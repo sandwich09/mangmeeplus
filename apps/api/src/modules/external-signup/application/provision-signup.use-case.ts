@@ -233,12 +233,14 @@ export class ProvisionSignupUseCase {
       // Owner decision (UAT round 1): a self-signed-up trial shop starts on the "เริ่มต้น" menu
       // preset; the admin can widen it later from the partner console.
       modulePackage: 'starter',
-      // Trial clock starts at provision, not approval (spec §4D ⑤): 30 days either way. The LINE
-      // shop gets the 15-slip free trial (Owner 2026-09-04), the web form its PRO trial.
+      // Trial clock starts at provision, not approval (spec §4D ⑤): 30 days.
       // Review B-01: named HERE rather than upserted afterwards — onboarding creates the term
       // row, and a second `applyPlanTermPreset` against an existing row is a no-op.
-      planTier: lineOa ? 'FREE_TRIAL_15' : 'PRO_999',
-      planDays: 30,
+      // Owner 2026-09-05 (review R02): ONE trial for both sources. The web form used to grant
+      // PRO_999 while its own page advertised a free trial, so a self-signed-up shop opened with
+      // 5 branches and 100 slips nobody had decided to give away.
+      planTier: SIGNUP_TRIAL_TIER,
+      planDays: TRIAL_DAYS,
       requestingAdminUserId: operator.userId,
       // Closes the "company exists, nothing records which" window (review HIGH-A).
       linkSignupRequestId: request.id,
@@ -279,7 +281,7 @@ export class ProvisionSignupUseCase {
     // A LINE shop needs nothing here: its trial guards already upsert the term.
     if (!lineOa) {
       await this.bestEffort(companyId, request.id, 'plan_term_adopted', () =>
-        applyPlanTermPreset(this.prisma, companyId, 'PRO_999', 30, operator.userId));
+        applyPlanTermPreset(this.prisma, companyId, SIGNUP_TRIAL_TIER, TRIAL_DAYS, operator.userId));
     }
     return {
       companyId,
@@ -377,7 +379,7 @@ export class ProvisionSignupUseCase {
    */
   private async applyLineTrialGuards(companyId: string, request: SignupRow, requestId: string): Promise<void> {
     const now = new Date();
-    const preset = PLAN_TIER_PRESETS.FREE_TRIAL_15;
+    const preset = PLAN_TIER_PRESETS[SIGNUP_TRIAL_TIER];
     const warmup = {
       // Anti-abuse: a brand-new free shop may read fewer slips in its first week than its tier
       // allows, until the window passes or an admin marks it checked.
@@ -393,7 +395,7 @@ export class ProvisionSignupUseCase {
         where: { companyId },
         create: {
           companyId,
-          tierKey: 'FREE_TRIAL_15',
+          tierKey: SIGNUP_TRIAL_TIER,
           branchLimit: preset.branchLimit,
           employeeLimit: preset.employeeLimit,
           monthlySlipLimit: preset.monthlySlipLimit,
@@ -475,6 +477,12 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const WARMUP_DAYS = 7;
 /** Owner 2026-09-04: the LINE trial runs 30 days, the same length onboarding was told to write. */
 const TRIAL_DAYS = 30;
+/**
+ * Owner 2026-09-05 (review R02): ONE trial preset for every shop this flow opens, whichever form
+ * it came in through. Named once so the create path, the recovery path and the LINE trial guards
+ * can never drift apart again.
+ */
+const SIGNUP_TRIAL_TIER = 'FREE_TRIAL_15' as const;
 
 /** The subset of `CompanySignupRequest` provisioning reads. */
 type SignupRow = {

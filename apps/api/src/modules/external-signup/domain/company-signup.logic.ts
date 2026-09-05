@@ -8,8 +8,16 @@ export const COMPANY_SIGNUP_STATES = [
 
 export type CompanySignupState = (typeof COMPANY_SIGNUP_STATES)[number];
 
-/** Spec §3A: the form shows four tiers but only the PRO trial is selectable server-side. */
-export const SELECTABLE_SIGNUP_OFFER_KEYS: readonly string[] = ['PRO_TRIAL'];
+/**
+ * Owner 2026-09-05 (review R02): there is no package choice at signup any anymore — every
+ * self-signed-up shop starts on the same free trial the LINE-first flow gives. What the applicant
+ * asked for is kept as attribution evidence, so the catalog keys are what this flow will RECORD;
+ * anything else is dropped rather than stored, because the operator's queue must never render free
+ * text an applicant chose.
+ */
+export const RECORDED_SIGNUP_OFFER_KEYS: readonly string[] = [
+  'PRO_TRIAL', 'STARTER_249', 'BASIC_499', 'PRO_999', 'ENTERPRISE_1999',
+];
 
 export type CompanySignupInput = Readonly<{
   externalSignupId: string;
@@ -152,12 +160,13 @@ export function normalizeCompanySignupInput(input: CompanySignupInput): Normaliz
   const phoneNumber = optional(input.phoneNumber, 'phoneNumber', 20);
   if (phoneNumber !== null && !PHONE_PATTERN.test(phoneNumber)) throw new Error('invalid_phoneNumber');
 
-  // Spec §3A: an unknown or not-yet-sellable offer key is rejected outright — never a silent
-  // fallback to the trial, because the key is attribution evidence the Owner reads later.
-  const requestedOfferKey = optional(input.requestedOfferKey, 'requestedOfferKey', 128);
-  if (requestedOfferKey !== null && !SELECTABLE_SIGNUP_OFFER_KEYS.includes(requestedOfferKey)) {
-    throw new Error('offer_not_available');
-  }
+  // R02: the key no longer decides anything — the tier is fixed by policy — so it is recorded as
+  // attribution and is never a reason to refuse an application. An in-flight client still sending
+  // an older catalog key gets its shop, not a 422 about a label the server ignores.
+  const requested = optional(input.requestedOfferKey, 'requestedOfferKey', 128);
+  const requestedOfferKey = requested !== null && RECORDED_SIGNUP_OFFER_KEYS.includes(requested)
+    ? requested
+    : null;
 
   return {
     externalSignupId: bounded(input.externalSignupId, 'externalSignupId', 128),

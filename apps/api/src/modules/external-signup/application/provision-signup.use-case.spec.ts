@@ -112,14 +112,15 @@ function harness(options: {
   };
 }
 
-describe('provisioning applies the PRO trial term (P29 T3)', () => {
-  it('names the PRO_999 30-day term on the onboarding command, not by a second upsert', async () => {
+describe('provisioning applies the free-trial term (P29 T3; Owner 2026-09-05)', () => {
+  it('names the free-trial 30-day term on the onboarding command, not by a second upsert', async () => {
     const h = harness();
     await h.useCase.execute(CMD);
     // Review B-01: onboarding writes the term row, so this use-case must NOT upsert its own —
     // `applyPlanTermPreset` leaves an existing row alone and the intended tier would be lost.
     assert.equal(h.planTermUpserts.length, 0);
-    assert.equal(h.onboardingCalls[0].planTier, 'PRO_999');
+    // Review R02: one trial for both sources. The web form used to grant PRO_999 here.
+    assert.equal(h.onboardingCalls[0].planTier, 'FREE_TRIAL_15');
     assert.equal(h.onboardingCalls[0].planDays, 30);
   });
 });
@@ -382,7 +383,7 @@ describe('ProvisionSignupUseCase — recovering an already-created company', () 
 
     assert.equal(h.onboardingCalls.length, 0, 'the company already exists');
     assert.equal(h.planTermUpserts.length, 1);
-    assert.equal(h.planTermUpserts[0].create.tierKey, 'PRO_999');
+    assert.equal(h.planTermUpserts[0].create.tierKey, 'FREE_TRIAL_15');
     // Idempotent: a term the admin already set is never shortened by a retry.
     assert.deepEqual(h.planTermUpserts[0].update, {});
   });
@@ -391,7 +392,7 @@ describe('ProvisionSignupUseCase — recovering an already-created company', () 
     const h = harness({ request: { ...LINE_REQUEST, companyId: 'co-1', ownerUserId: 'user-1' } });
     await h.useCase.execute(CMD);
 
-    // The trial guards upsert FREE_TRIAL_15 themselves; a PRO_999 preset here would race them.
+    // The trial guards upsert FREE_TRIAL_15 themselves; a second preset here would race them.
     assert.equal(h.planTermUpserts.length, 1);
     assert.equal(h.planTermUpserts[0].create.tierKey, 'FREE_TRIAL_15');
   });

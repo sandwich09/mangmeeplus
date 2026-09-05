@@ -1,7 +1,13 @@
 // P10 Flow B — public auto-register + admin review queue contracts.
 // Spec: docs/specs/mangmee-external-signup-contract-spec-th.md (amendment v2 2026-08-30).
 
-/** Offer catalog 2026-08-30 (Billing §8). Only PRO_TRIAL is selectable at signup. */
+/**
+ * Offer catalog 2026-08-30 (Billing §8).
+ *
+ * Owner 2026-09-05 (review R02): this key no longer chooses a package. Every self-signed-up shop —
+ * web form and LINE alike — is provisioned on the free trial, so the key is recorded as attribution
+ * only and an unrecognised value is dropped rather than refused.
+ */
 export type SignupOfferKey = 'PRO_TRIAL' | 'STARTER_249' | 'BASIC_499' | 'PRO_999' | 'ENTERPRISE_1999';
 
 export type PublicCompanySignupBody = {
@@ -17,6 +23,7 @@ export type PublicCompanySignupBody = {
   taxId?: string;
   consentVersion: string;
   referralCode?: string;
+  /** Attribution only — the provisioned package is the free trial regardless of this value. */
   requestedOfferKey?: SignupOfferKey;
 };
 
