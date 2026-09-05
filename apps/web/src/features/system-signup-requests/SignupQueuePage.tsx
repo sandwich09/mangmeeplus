@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { SIGNUP_REJECTION_REASON_MAX_LENGTH } from '@watchdog-bms/contracts';
+import { COMPANY_BUSINESS_CATEGORIES, SIGNUP_REJECTION_REASON_MAX_LENGTH } from '@watchdog-bms/contracts';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import { Modal, useConfirm } from '@/common/components/modal';
 import { Button } from '@/common/components/button';
@@ -19,6 +19,7 @@ import {
 } from './signup-requests.api';
 import {
   approveLabel,
+  BUSINESS_CATEGORY_LABELS,
   canApproveSignup,
   canRejectSignup,
   canReissueSignup,
@@ -27,6 +28,7 @@ import {
   isAbandonedEmptyAttempt,
   rejectNotifyDefault,
   rejectNotifyLabel,
+  requiresCategoryChoice,
   signupBusinessSummary,
   signupFailureChip,
   signupHintChips,
@@ -161,6 +163,10 @@ export default function SignupQueuePage() {
   const [rejecting, setRejecting] = useState<AdminSignupQueueItemDto | null>(null);
   const [notifyApplicant, setNotifyApplicant] = useState(false);
   const [rejectionReason, setRejectionReason] = useState('');
+  // R10: approving now carries the business category, so it gets a dialog of its own — the PDPA
+  // health tripwire reads that enum and free Thai text can never map onto it.
+  const [approving, setApproving] = useState<AdminSignupQueueItemDto | null>(null);
+  const [businessCategory, setBusinessCategory] = useState<string>('OTHER');
   // Keyed by request id: one shared box put the note an operator typed for one shop onto whichever
   // shop they decided next.
   const [packageNotes, setPackageNotes] = useState<Record<string, string>>({});
@@ -203,28 +209,27 @@ export default function SignupQueuePage() {
     void load();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleApprove = async (item: AdminSignupQueueItemDto) => {
-    // P10-L: a LINE application has no address, so approving it opens the shop immediately and the
-    // customer hears about it in LINE. Promising an email here would be a promise nothing keeps —
-    // and for a row whose shop already exists, so would promising to open one (review LOW-2).
-    const fromLine = isLineSignup(item);
-    const finishing = fromLine && isFinishingStrandedRow(item.state);
-    const accepted = await confirm({
-      title: finishing ? 'ปิดงานคำขอ' : 'อนุมัติคำขอ',
-      message: finishing
-        ? `ปิดงานให้ร้าน ${item.companyName} ที่เปิดค้างอยู่ ใช่หรือไม่`
-        : fromLine
-          ? `อนุมัติและเปิดร้าน ${item.companyName} ให้ทันที (ลูกค้าจะได้รับแจ้งทาง LINE) ใช่หรือไม่`
-          : `อนุมัติและส่งอีเมลตั้งรหัสให้ ${item.contactEmail ?? item.ownerDisplayName} ใช่หรือไม่`,
-      confirmLabel: finishing ? 'ปิดงาน' : fromLine ? 'อนุมัติและเปิดร้าน' : 'อนุมัติและส่งอีเมล',
-      variant: 'primary',
-    });
-    if (!accepted) return;
+  // R10: approving is where the business category is decided, so it needs a form rather than a
+  // yes/no. `useConfirm` renders one sentence and nothing else.
+  const openApprove = (item: AdminSignupQueueItemDto) => {
+    // Default to what the server mapped, so a row the mapping DID read is one click as before.
+    setBusinessCategory(item.businessCategory ?? 'OTHER');
+    setApproving(item);
+  };
+
+  const handleApprove = async () => {
+    if (!approving) return;
+    const item = approving;
     setBusyId(item.requestId);
     try {
       // The API answers 200 with the CURRENT state, so a close-out that found the run still going
       // comes back as PROVISIONING. Reporting that as done would be the same lie the chip told.
-      const decided = await decideSignupRequest(item.requestId, { action: 'APPROVE' });
+      const fromLine = isLineSignup(item);
+      const finishing = fromLine && isFinishingStrandedRow(item.state);
+      const decided = await decideSignupRequest(item.requestId, {
+        action: 'APPROVE',
+        businessCategory: businessCategory,
+      });
       if (decided.state === 'PROVISIONING') {
         toast.warning('ยังเปิดร้านอยู่ รอสักครู่แล้วลองใหม่');
       } else {
@@ -232,7 +237,9 @@ export default function SignupQueuePage() {
           ? 'ปิดงานเรียบร้อย'
           : fromLine ? 'อนุมัติแล้ว เปิดร้านให้เรียบร้อย' : 'อนุมัติแล้ว ระบบกำลังส่งอีเมลตั้งรหัส');
       }
+      setApproving(null);
       await load();
+      if (tabLoadsOwnList(tab)) await loadTab(tab);
     } catch (err) {
       toast.error(apiErrorMessage(err));
     } finally {
@@ -338,6 +345,27 @@ export default function SignupQueuePage() {
     }
   };
 
+  // P10-L: a LINE application has no address, so approving it opens the shop immediately and the
+  // customer hears about it in LINE. Promising an email here would be a promise nothing keeps —
+  // and for a row whose shop already exists, so would promising to open one (review LOW-2).
+  const approveFromLine = approving ? isLineSignup(approving) : false;
+  const approveFinishing = approveFromLine && isFinishingStrandedRow(approving!.state);
+  const approveDialogTitle = approveFinishing ? 'ปิดงานคำขอ' : 'อนุมัติคำขอ';
+  const approveDialogConfirmLabel = approveFinishing
+    ? 'ปิดงาน'
+    : approveFromLine ? 'อนุมัติและเปิดร้าน' : 'อนุมัติและส่งอีเมล';
+  const approveDialogMessage = !approving
+    ? ''
+    : approveFinishing
+      ? `ปิดงานให้ร้าน ${approving.companyName} ที่เปิดค้างอยู่ ใช่หรือไม่`
+      : approveFromLine
+        ? `อนุมัติและเปิดร้าน ${approving.companyName} ให้ทันที (ลูกค้าจะได้รับแจ้งทาง LINE) ใช่หรือไม่`
+        : `อนุมัติและส่งอีเมลตั้งรหัสให้ ${approving.contactEmail ?? approving.ownerDisplayName} ใช่หรือไม่`;
+  // R10: a row whose free text the mapping could not read may not be approved on the default.
+  const approveBlocked = approving !== null
+    && requiresCategoryChoice(approving)
+    && businessCategory === 'OTHER';
+
   const visible = tab === 'AUTO_APPROVED' ? (autoItems ?? []) : filterSignupQueue(items, tab);
 
   /** Only the tabs that filter the main queue can show a count before they are opened. */
@@ -350,6 +378,63 @@ export default function SignupQueuePage() {
   return (
     <div className="min-h-dvh bg-gray-50 p-6">
       {confirmDialog}
+
+      {/* R10. Approving is the last moment anyone looks at this application before a company
+          exists, and the PDPA health tripwire reads an enum the public form cannot produce: it asks
+          for free text, and "คลินิก" maps to OTHER. So the reviewer picks — defaulted to whatever
+          the server mapped, and REQUIRED when the mapping could not read what was typed. */}
+      <Modal
+        open={approving !== null}
+        title={approveDialogTitle}
+        size="sm"
+        onClose={() => setApproving(null)}
+        footer={(
+          <>
+            <Button type="button" variant="secondary" onClick={() => setApproving(null)} disabled={busyId !== null}>
+              ยกเลิก
+            </Button>
+            <Button
+              type="button"
+              variant="primary"
+              onClick={() => void handleApprove()}
+              disabled={busyId !== null || approveBlocked}
+            >
+              {busyId !== null ? 'กำลังบันทึก...' : approveDialogConfirmLabel}
+            </Button>
+          </>
+        )}
+      >
+        <div className="space-y-3 text-sm text-gray-600">
+          <p>{approveDialogMessage}</p>
+          <div className="space-y-1.5">
+            <label htmlFor="signup-business-category" className="block text-sm font-medium text-gray-700">
+              ประเภทธุรกิจของร้านนี้
+            </label>
+            {/* What the applicant actually typed, next to the choice it is being turned into. */}
+            {approving?.businessType && (
+              <p className="text-xs text-gray-500">
+                ผู้สมัครกรอกว่า “{approving.businessType}”
+              </p>
+            )}
+            <select
+              id="signup-business-category"
+              value={businessCategory}
+              onChange={(e) => setBusinessCategory(e.target.value)}
+              disabled={busyId !== null}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-brand-400 focus:outline-none disabled:bg-gray-50"
+            >
+              {COMPANY_BUSINESS_CATEGORIES.map((category) => (
+                <option key={category} value={category}>{BUSINESS_CATEGORY_LABELS[category]}</option>
+              ))}
+            </select>
+            <p className="text-xs text-gray-500">
+              {approveBlocked
+                ? 'ระบบอ่านข้อความที่ผู้สมัครกรอกไม่ได้ กรุณาเลือกประเภทที่ตรงกับร้านนี้ก่อนอนุมัติ'
+                : 'เลือกให้ตรงกับสิ่งที่ร้านทำจริง คลินิก สปา หรือร้านขายยา จะเข้าสู่การตรวจ PDPA เพิ่ม'}
+            </p>
+          </div>
+        </div>
+      </Modal>
 
       <Modal
         open={rejecting !== null}
@@ -636,7 +721,7 @@ export default function SignupQueuePage() {
                             <SignupRowActions
                               item={item}
                               busy={busy}
-                              onApprove={() => void handleApprove(item)}
+                              onApprove={() => openApprove(item)}
                               onReject={() => {
                                 setNotifyApplicant(rejectNotifyDefault(item));
                                 setRejectionReason('');

@@ -65,6 +65,17 @@ test('the package-change tab offers the decision AND the partner page', () => {
   assert.match(source, /href=\{`\/system\/partners\/\$\{item\.companyId\}`\}/);
 });
 
+test('R10: approving asks for the business category the mapping could not read', () => {
+  // "คลินิก" maps to OTHER, so the PDPA health tripwire never fired for a Thai applicant even
+  // though the operator was reading the word. The dialog defaults to the server's mapping and
+  // refuses to approve while a row the mapping could not read has no choice on it.
+  assert.match(source, /const \[approving, setApproving\] = useState<AdminSignupQueueItemDto \| null>\(null\)/);
+  assert.match(source, /requiresCategoryChoice\(approving\)/);
+  assert.match(source, /COMPANY_BUSINESS_CATEGORIES\.map/);
+  assert.match(source, /setBusinessCategory\(item\.businessCategory/);
+  assert.match(source, /businessCategory: businessCategory/);
+});
+
 test('a package decision is confirmed before it moves what a customer pays', () => {
   assert.match(source, /const accepted = await confirm\(\{[\s\S]{0,400}อนุมัติเปลี่ยนแพ็กเกจ/);
   assert.match(source, /if \(!accepted\) return;[\s\S]{0,200}decidePackageChangeRequest/);

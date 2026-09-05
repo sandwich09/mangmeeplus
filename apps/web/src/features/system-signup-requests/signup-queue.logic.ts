@@ -1,7 +1,7 @@
 // Pure presentation rules for the auto-register review queue (P10 Flow B, spec §4C/§4D).
 // Kept out of the page so the state/hint/filter decisions stay testable under `pnpm test`.
 
-import type { AdminSignupQueueItemDto } from '@watchdog-bms/contracts';
+import type { AdminSignupQueueItemDto, CompanyBusinessCategory } from '@watchdog-bms/contracts';
 
 /** Chip tone; the page owns the Tailwind classes for each. */
 export type ChipTone = 'neutral' | 'info' | 'warning' | 'danger' | 'success';
@@ -110,6 +110,30 @@ export function signupHintChips(item: AdminSignupQueueItemDto): Chip[] {
   if (item.mxValid === false) chips.push({ label: 'โดเมนอีเมลมีปัญหา', tone: 'danger' });
   return chips;
 }
+
+/**
+ * R10. `businessType` is free text in the applicant's own language and the PDPA health tripwire
+ * reads the closed enum, so "คลินิก" mapped to OTHER and the safeguard never fired for the people
+ * it exists for. When the mapping could not read what the applicant wrote, the reviewer — who is
+ * looking straight at that word — has to say which category it is. Nothing guesses from the text.
+ *
+ * An empty `businessType` is not a failed mapping: OTHER is then the true answer, and asking would
+ * be asking the operator to invent one.
+ */
+export function requiresCategoryChoice(item: AdminSignupQueueItemDto): boolean {
+  return (item.businessCategory ?? 'OTHER') === 'OTHER' && Boolean(item.businessType?.trim());
+}
+
+/** Same wording the manual onboarding form uses, so one category reads the same in both places. */
+export const BUSINESS_CATEGORY_LABELS: Record<CompanyBusinessCategory, string> = {
+  RETAIL: 'ค้าปลีก (Retail)',
+  TRADING: 'ค้าส่ง / เทรดดิ้ง (Trading / wholesale)',
+  SERVICE: 'บริการทั่วไป (General service)',
+  CLINIC: 'คลินิก / สถานพยาบาล (Clinic)',
+  WELLNESS_SPA: 'สปา / เวลเนส (Spa / wellness)',
+  MEDICAL_RETAIL: 'ร้านขายยา / เวชภัณฑ์ (Pharmacy / medical retail)',
+  OTHER: 'อื่น ๆ (Other)',
+};
 
 /** Business-type / VAT / tax id, joined only for the parts the applicant actually filled in. */
 export function signupBusinessSummary(item: AdminSignupQueueItemDto): string {

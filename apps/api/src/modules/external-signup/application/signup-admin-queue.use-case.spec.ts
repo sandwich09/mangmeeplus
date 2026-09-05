@@ -316,6 +316,36 @@ const LINE_REQUEST = {
 };
 const URLS = { webBaseUrl: 'https://app.example.com', apiBaseUrl: 'https://api.example.com/v1' };
 
+// R10: the PDPA health tripwire is dead for Thai free text ("คลินิก" maps to OTHER), so the enum is
+// chosen by the human who is already reading that word — at review, never by a heuristic.
+describe('SignupAdminQueueUseCase.decide — business category at review', () => {
+  it('stores the category the admin picked alongside the approval', async () => {
+    const h = harness();
+    await h.useCase.decide(
+      'signup-1', { action: 'APPROVE', businessCategory: 'CLINIC' }, 'admin-1', 'req-1', URLS,
+    );
+    assert.equal(h.updates[0].data.businessCategory, 'CLINIC');
+    assert.equal(h.updates[0].data.approvedByUserId, 'admin-1');
+    // And it is evidence: a health-category decision an operator made has to be auditable.
+    const approval = h.audits.find((a) => a.data.action === 'signup.request.approved');
+    assert.equal(approval.data.metadataJson.businessCategory, 'CLINIC');
+  });
+
+  it('leaves the column alone when review did not pick one', async () => {
+    const h = harness();
+    await h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1', URLS);
+    assert.equal('businessCategory' in h.updates[0].data, false);
+  });
+
+  it('carries the choice into a LINE approval, which provisions inline', async () => {
+    const h = harness({ request: LINE_REQUEST });
+    await h.useCase.decide(
+      'signup-1', { action: 'APPROVE', businessCategory: 'WELLNESS_SPA' }, 'admin-1', 'req-1', URLS,
+    );
+    assert.equal(h.updates[0].data.businessCategory, 'WELLNESS_SPA');
+  });
+});
+
 describe('SignupAdminQueueUseCase.decide — LINE-first source', () => {
   it('provisions on approval instead of queueing a claim email nobody can receive', async () => {
     const h = harness({ request: LINE_REQUEST });
@@ -681,7 +711,9 @@ describe('SignupAdminQueueUseCase.decide — approve', () => {
     assert.equal(audit.riskLevel, 'HIGH');
     assert.equal(audit.actorUserId, 'admin-1');
     assert.equal(audit.targetId, 'signup-1');
-    assert.deepEqual(audit.metadataJson, { hadTaxId: true, mxValid: true });
+    // R10: null records that this reviewer did not pick a category — an enum key or nothing, and
+    // never the applicant's own words, which are the PII this row must not carry.
+    assert.deepEqual(audit.metadataJson, { hadTaxId: true, mxValid: true, businessCategory: null });
     // Applicant PII must never reach evidence.
     const evidence = JSON.stringify(h.audits);
     for (const pii of ['somchai@example.com', 'ร้านมั่งมี', '0105555000012', '0982565628']) {

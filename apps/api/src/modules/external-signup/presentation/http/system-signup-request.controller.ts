@@ -3,6 +3,7 @@ import { ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { IsBoolean, IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
 import type { Request } from 'express';
 import {
+  COMPANY_BUSINESS_CATEGORIES,
   SIGNUP_REJECTION_REASON_MAX_LENGTH,
   type AdminSignupDecisionDto, type AdminSignupQueueDto, type AdminSignupReissueDto,
 } from '@watchdog-bms/contracts';
@@ -16,6 +17,10 @@ export class SignupDecisionRequestDto {
   // SUSPEND (P10-L §3.7) stops an application an admin does not want to keep, most often one
   // AUTO_FREE let through.
   @IsIn(['APPROVE', 'REJECT', 'SUSPEND']) action!: 'APPROVE' | 'REJECT' | 'SUSPEND';
+  // R10, APPROVE only: the enum the reviewer picked, because the form's free text ("คลินิก") maps
+  // to OTHER and left the PDPA health tripwire dead. Bounded to the closed enum here, and checked
+  // again in the use case — the value decides whether a safeguard fires.
+  @IsIn(COMPANY_BUSINESS_CATEGORIES as unknown as string[]) @IsOptional() businessCategory?: string;
   @IsBoolean() @IsOptional() notifyApplicant?: boolean;
   // Plain text, bounded: it is copied verbatim into an email body, so it gets the same treatment as
   // any other free-text field crossing a trust boundary. The template escapes it on render.

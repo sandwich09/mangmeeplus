@@ -1,8 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import type { AdminSignupQueueItemDto } from '@watchdog-bms/contracts';
+import { COMPANY_BUSINESS_CATEGORIES, type AdminSignupQueueItemDto } from '@watchdog-bms/contracts';
 import {
   approveLabel,
+  BUSINESS_CATEGORY_LABELS,
   canApproveSignup,
   canRejectSignup,
   canReissueSignup,
@@ -18,6 +19,7 @@ import {
   signupStateChip,
   rejectNotifyDefault,
   rejectNotifyLabel,
+  requiresCategoryChoice,
   tabLoadsOwnList,
   SIGNUP_QUEUE_TABS,
 } from './signup-queue.logic';
@@ -374,5 +376,26 @@ describe('queue tabs', () => {
     assert.equal(canApproveSignup(row.state, row), false);
     assert.equal(canRejectSignup(row.state), false);
     assert.equal(canReissueSignup(row.state), false);
+  });
+
+  // R10: the PDPA health tripwire reads the closed enum, and the form asks for free text — an
+  // applicant who typed "คลินิก" mapped to OTHER and the safeguard never fired. The reviewer, who
+  // is looking straight at that word, decides; nothing here guesses from the text.
+  it('makes the reviewer choose a category when the mapping could not', () => {
+    assert.equal(requiresCategoryChoice(item({ businessType: 'คลินิก', businessCategory: 'OTHER' })), true);
+    // Already decided, at review or by an exact match: nothing left to ask.
+    assert.equal(requiresCategoryChoice(item({ businessType: 'คลินิก', businessCategory: 'CLINIC' })), false);
+    assert.equal(requiresCategoryChoice(item({ businessType: 'RETAIL', businessCategory: 'RETAIL' })), false);
+    // Nothing was typed, so there is nothing the mapping failed to read — OTHER is the true answer.
+    assert.equal(requiresCategoryChoice(item({ businessCategory: 'OTHER' })), false);
+    assert.equal(requiresCategoryChoice(item({ businessType: '   ', businessCategory: 'OTHER' })), false);
+    // A row from before the column existed answers the same way as an unmapped one.
+    assert.equal(requiresCategoryChoice(item({ businessType: 'คลินิก' })), true);
+  });
+
+  it('has a Thai label for every category the reviewer can pick', () => {
+    for (const key of COMPANY_BUSINESS_CATEGORIES) {
+      assert.ok(BUSINESS_CATEGORY_LABELS[key], key);
+    }
   });
 });

@@ -140,6 +140,12 @@ export type AdminSignupQueueItemDto = {
   vatRegistered?: boolean;
   taxId?: string;
   requestedOfferKey?: string;
+  /**
+   * R10: what `businessType` maps to today — the stored review choice when one was made, otherwise
+   * the exact-match mapping. The server owns the mapping, so the approve dialog can DEFAULT to it
+   * and can tell that a row with free text answering OTHER is one the reviewer has to decide.
+   */
+  businessCategory?: string;
   mxValid?: boolean;
   createdAt: string;
   approvedAt?: string;
@@ -181,6 +187,14 @@ export type AdminSignupDecisionBody = {
   /** Idempotency: repeat with same requestId is a no-op returning current state.
    *  SUSPEND (P10-L §8) stops an auto-approved application an admin does not want to keep. */
   action: 'APPROVE' | 'REJECT' | 'SUSPEND';
+  /**
+   * R10, APPROVE only. `businessType` on the form is free text in the applicant's own language and
+   * the PDPA health tripwire reads the CLOSED enum — "คลินิก" maps to OTHER, so the safeguard never
+   * fired for the people it exists for. The reviewer who is already reading that word picks the
+   * enum here; nothing guesses it, and omitting it keeps the exact-match mapping.
+   * A `CompanyBusinessCategory` (company-profile.ts); the server re-checks membership.
+   */
+  businessCategory?: string;
   /** REJECT only: send a notice email (default silent). */
   notifyApplicant?: boolean;
   /**
