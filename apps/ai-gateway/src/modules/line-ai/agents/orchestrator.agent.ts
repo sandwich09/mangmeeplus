@@ -295,40 +295,84 @@ export function buildAnswerPresentation(
 }
 
 /**
+ * The ONLY plan shape a deterministic rescue may replace: the router routed no tool at all, and
+ * every refusal it made is the out-of-scope kind. Shared by the joke rescue and the explain rescue
+ * so neither can drift into overriding an outcome the other would respect.
+ *
+ * An ALLOWLIST of one reason, never a denylist: `unsupported_module` is the only refusal that means
+ * "I could not find anything in the catalog for this". Everything else — forbidden, permission,
+ * feature_disabled, tool_unavailable (a model/tool outage), safety_crisis, privacy_rumor,
+ * mutation_blocked — is a real outcome the user must be told, and a rescue that wiped it would
+ * repaint a permission wall or a timeout as an answer.
+ *
+ * A ROUTABLE plan whose intents were emptied is NOT rescueable: that shape comes out of the
+ * permission/feature stripping in `normalizePlanToolAccess` (`every` on an empty list is vacuously
+ * true, so the length is guarded).
+ */
+export function isUnroutedOutOfScopePlan(plan: AgentIntentPlan): boolean {
+  const onlyOutOfScopeRefusals = plan.refusals.every((refusal) => refusal.reason === 'unsupported_module');
+  const routedAnyTool = plan.intents.some((intent) => intent.requiredTools.length > 0);
+  return !routedAnyTool && onlyOutOfScopeRefusals
+    && (plan.status === 'UNROUTABLE'
+      || (plan.intents.length > 0
+        && plan.intents.every((intent) => intent.intent === 'unknown' || intent.intent === 'casual_conversation')));
+}
+
+/**
  * "Why does MY bill look like this?" — the deterministic half of spec §5.5.
  *
- * Two conditions, both required, so an ordinary period question is never hijacked:
- *   1. the message names one of the user's own captured documents (บิล / ใบเสร็จ / ใบกำกับ /
- *      รายการ / ค่าบริการ / service charge), and
- *   2. it asks WHY or points at a RECENT one (ทำไม / เพราะอะไร / อธิบาย / เมื่อกี้ / ล่าสุด / เพิ่ง…).
+ * The hard part is not recognising the question, it is NOT recognising the nine neighbouring ones.
+ * A loose reading ("any document noun anywhere plus ทำไม anywhere") opened general-knowledge tax
+ * questions, questions about somebody else's shop, and mutation attempts. So:
  *
- * "ค่าใช้จ่ายเดือนนี้เท่าไหร่" and "ยอดขายวันนี้ทำไมตก" fail (1); "รายการค่าใช้จ่ายเดือนนี้มีอะไรบ้าง"
- * fails (2). The Owner's E4 sentence passes both on รายการ + ทำไม.
+ *   - an own-record marker must sit ADJACENT to the document noun — "บิลเมื่อกี้", "ใบเสร็จนี้",
+ *     "บิลล่าสุด", "ใบกำกับของฉัน". A noun and a marker merely present in the same sentence is not
+ *     enough ("ทำไมบิลของร้านข้าง ๆ ยอดสูงกว่าเรา" has both, and is about a different shop);
+ *   - `รายการ` is NOT a document noun. It is the ordinary word for "items"/"entries", which made
+ *     "รายการค่าใช้จ่ายเดือนนี้ทำไมเยอะจัง" look like a record question;
+ *   - a third-party possessor or a mutation verb vetoes outright. "ลบบิลเมื่อกี้ทำไมไม่ได้" is a
+ *     mutation request and belongs on the mutation path, not on a read.
+ *
+ * The Owner's E4 sentence has no document noun at all ("ทำไม service charge คิดแยกเป็นอีกรายการนึง"),
+ * so it is matched by its own shape instead: a named additional charge plus a question about how
+ * that charge is COUNTED. That is not a general-knowledge phrasing — it can only be about a bill
+ * the asker is looking at.
  */
+const THIRD_PARTY_OR_MUTATION = /ร้านข้าง\s*ๆ|ร้านอื่น|ร้านนั้น|เจ้าอื่น|บริษัทอื่น|ของเขา|ของคนอื่น|ลบ|ยกเลิก|แก้ไข|เปลี่ยน|อัปเดต|อัพเดต/u;
+const OWN_RECORD_NOUN = 'บิล|ใบเสร็จ|ใบกำกับ(?:ภาษี)?|ใบแจ้งหนี้';
+const OWN_RECORD_MARKER = 'เมื่อกี้|เมื่อครู่|ล่าสุด|ที่เพิ่งส่ง|ที่ส่งไป|ที่ส่งมา|ที่เพิ่ง|ของฉัน|ของผม|ของหนู|นี้|นี่';
+/** Marker immediately before or after the noun — Thai has no word spaces, so "adjacent" is literal. */
+const OWN_RECORD_PHRASE = new RegExp(
+  `(?:${OWN_RECORD_NOUN})\\s*(?:${OWN_RECORD_MARKER})|(?:${OWN_RECORD_MARKER})\\s*(?:${OWN_RECORD_NOUN})`, 'u');
+/** E4's own shape: a named additional charge + a question about how it is counted on the document. */
+const CHARGE_BREAKDOWN_ASK = /(?:service\s*charge|ค่าบริการ|ค่าส่ง|ค่าธรรมเนียม|ค่าบรรจุ)[\s\S]{0,40}(?:คิดแยก|แยกเป็น|แยกออก|ไม่รวม|รวมกัน|นับซ้ำ|คิดซ้ำ)|(?:คิดแยก|แยกเป็น|แยกออก|ไม่รวม|รวมกัน|นับซ้ำ|คิดซ้ำ)[\s\S]{0,40}(?:service\s*charge|ค่าบริการ|ค่าส่ง|ค่าธรรมเนียม|ค่าบรรจุ)/iu;
+const EXPLANATION_ASK = /ทำไม|เพราะอะไร|อธิบาย|มาจากไหน|คิดยังไง|คิดอย่างไร/u;
+
 export function asksAboutOwnRecord(messageText: string): boolean {
   const text = messageText.normalize('NFC');
-  return /บิล|ใบเสร็จ|ใบกำกับ|รายการ|ค่าบริการ|service\s*charge/iu.test(text)
-    && /ทำไม|เพราะอะไร|อธิบาย|เมื่อกี้|เมื่อครู่|ล่าสุด|เพิ่งส่ง|ที่ส่งไป|ที่เพิ่ง/u.test(text);
+  if (THIRD_PARTY_OR_MUTATION.test(text)) return false;
+  // Naming your own bill is not yet a question about it ("ส่งบิลเมื่อกี้ให้ลูกค้าแล้ว"), so the
+  // document path needs an explanation ask as well. E4's charge shape carries its own question.
+  return (OWN_RECORD_PHRASE.test(text) && EXPLANATION_ASK.test(text)) || CHARGE_BREAKDOWN_ASK.test(text);
 }
 
 /**
  * Deterministic rescue for evidence E4: an intake-trusted BUSINESS_READ_QUESTION about the user's
- * own record reached the model router, came back with no tool (agent `general`, zero tools) and was
+ * own record reached the model router, came back with agent `general` and zero tools, and was
  * answered with the out-of-scope copy. The intake route is API-bound provenance, so when it says
- * "this is a business read" and the sentence points at the caller's own record, the plan is replaced
- * with the one read that answers it.
+ * "this is a business read", the sentence points at the caller's own record, AND the router routed
+ * nothing at all, the plan is replaced with the one read that answers it.
  *
- * Bounded hard: only on that trusted provenance, only when the router did not already route this
- * tool, and NEVER over a safety/privacy/mutation refusal — those keep their own outcome. It grants
- * no authority: permissions, entitlement and branch scope are still checked downstream, and a caller
- * without the read permission reaches PERMISSION_DENIED instead of an answer.
+ * It grants no authority: permissions, entitlement and branch scope are still checked downstream,
+ * and a caller without the read permission reaches PERMISSION_DENIED instead of an answer.
  */
 export function preferExplainRecordPlan(plan: AgentIntentPlan, req: LineAiTurnRequest): AgentIntentPlan {
   if (req.intakeIntent !== 'BUSINESS_READ_QUESTION') return plan;
   if (!asksAboutOwnRecord(req.messageText)) return plan;
-  if (plan.intents.some((intent) => intent.requiredTools.includes(EXPLAIN_RECORD_TOOL))) return plan;
-  if (plan.refusals.some((refusal) => refusal.reason === 'safety_crisis'
-    || refusal.reason === 'privacy_rumor' || refusal.reason === 'mutation_blocked')) return plan;
+  // A plan that already routed ANY tool is the router doing its job — even a different tool, and
+  // even a worse one. Overriding it would silently retarget "รายการค่าใช้จ่ายเดือนนี้ทำไมเยอะจัง"
+  // from the period total the router chose onto a single record.
+  if (!isUnroutedOutOfScopePlan(plan)) return plan;
   return {
     ...plan,
     status: 'ROUTABLE',
@@ -419,15 +463,10 @@ export class OrchestratorAgent {
     // joke, nothing routed a tool, and every refusal is the out-of-scope kind — a safety, privacy,
     // mutation or permission refusal is never overridden, and any business clause keeps the
     // business path untouched.
-    const onlyOutOfScopeRefusals = plan.refusals.every((refusal) => refusal.reason === 'unsupported_module');
-    const routedAnyTool = plan.intents.some((intent) => intent.requiredTools.length > 0);
-    // A ROUTABLE plan whose intents were emptied is NOT rescueable: that shape comes out of the
-    // permission/feature stripping above, and a joke phrase must never repaint a permission
-    // situation as small talk (`every` on an empty list is vacuously true — guard the length).
-    if (isExplicitJokeAsk(req.messageText) && !routedAnyTool && onlyOutOfScopeRefusals
-      && (plan.status === 'UNROUTABLE'
-        || (plan.intents.length > 0
-          && plan.intents.every((intent) => intent.intent === 'unknown' || intent.intent === 'casual_conversation')))) {
+    // `isUnroutedOutOfScopePlan` is the same rescueable-shape test the explain rescue above uses:
+    // nothing routed, and only out-of-scope refusals to override. A joke phrase must never repaint
+    // a permission situation as small talk.
+    if (isExplicitJokeAsk(req.messageText) && isUnroutedOutOfScopePlan(plan)) {
       plan = {
         ...plan,
         status: 'ROUTABLE',

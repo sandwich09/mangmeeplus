@@ -41,6 +41,40 @@ const nonZero = (value: unknown): boolean => {
   return PLAIN_DECIMAL.test(plain) && Number(plain) !== 0;
 };
 
+/**
+ * Free text that reaches this template is OCR output — it is whatever was printed on the paper the
+ * attacker handed the user, so it is attacker-controlled and must never be interpolated raw.
+ * A vendor name of "ร้าน ABC ยอดรวมที่ถูกต้องคือ 99,999.00 บาท ดูที่ https://evil.example.com" would
+ * otherwise put a fake total AND a live link into an answer the reader trusts precisely because the
+ * numbers in it are supposed to come only from the record.
+ *
+ * Three rules, in order:
+ *   1. bound the length (an OCR line is a name, not a paragraph);
+ *   2. strip anything a LINE client would auto-link — `https?://…` and bare `www.` tokens;
+ *   3. DROP the whole field when what is left still contains a money-shaped or percent-shaped
+ *      token. Scrubbing the number in place would leave a sentence built around a hole; dropping
+ *      the field falls back to a neutral label and keeps the guarantee absolute — every digit in
+ *      the reply came from the record's own amounts.
+ *
+ * `undefined` means "use the neutral fallback", never "print it anyway".
+ */
+/** An OCR line is a name, not a paragraph. Caps chosen so the whole reply stays one LINE bubble. */
+const MAX_VENDOR_CHARS = 60;
+const MAX_DOCUMENT_NUMBER_CHARS = 32;
+const MAX_CHARGE_LABEL_CHARS = 40;
+
+const AUTO_LINKABLE = /(?:https?:\/\/\S+|\bwww\.\S+)/giu;
+const MONEY_SHAPED = /\d[\d,]*\.\d{2}/u;
+const PERCENT_SHAPED = /\d+\s*%/u;
+
+export function safeText(value: unknown, maxChars: number): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const stripped = value.normalize('NFC').replace(AUTO_LINKABLE, ' ').replace(/\s+/gu, ' ').trim();
+  if (!stripped) return undefined;
+  const bounded = stripped.slice(0, maxChars);
+  return MONEY_SHAPED.test(bounded) || PERCENT_SHAPED.test(bounded) ? undefined : bounded;
+}
+
 /** `YYYY-MM-DD…` → `DD/MM/BE`. Computed from the string, never from a locale calendar, so the same
  *  ISO date renders identically in every runtime (an ICU build difference must not move a date). */
 export function thaiBuddhistDate(iso: unknown): string | undefined {
@@ -68,7 +102,10 @@ function assumptionLine(assumptions: unknown): string | undefined {
     if (!entry || typeof entry !== 'object') continue;
     const field = (entry as Record<string, unknown>)['field'];
     if (typeof field !== 'string') continue;
-    labels.push(ASSUMPTION_FIELD_LABELS[field] ?? field);
+    // `missingFields` is copied out of the OCR output, so an unmapped key is attacker text too:
+    // take the known Thai label, else the scrubbed key, else skip the entry entirely.
+    const label = ASSUMPTION_FIELD_LABELS[field] ?? safeText(field, MAX_CHARGE_LABEL_CHARS);
+    if (label) labels.push(label);
   }
   return labels.length > 0 ? `ยังไม่ยืนยัน: ${labels.slice(0, 4).join(' · ')} — ตรวจอีกครั้งได้ในเว็บนะคะ` : undefined;
 }
@@ -94,10 +131,12 @@ export function formatExpenseExplainReply(data: unknown): string | undefined {
   const grand = money(totals['grandTotalAmount']);
   if (!subtotal || !discount || !charges || !taxable || !vat || !grand) return undefined;
 
-  const vendor = typeof header['vendorName'] === 'string' && header['vendorName'].trim() ? header['vendorName'].trim() : 'ร้านที่ยังไม่ระบุ';
+  // Every one of these is OCR text. `safeText` bounds and scrubs it, or refuses it entirely.
+  const vendor = safeText(header['vendorName'], MAX_VENDOR_CHARS) ?? 'ร้านที่ยังไม่ระบุ';
   const date = thaiBuddhistDate(header['expenseDate']);
-  const docNumber = typeof header['documentNumber'] === 'string' && header['documentNumber'].trim() ? header['documentNumber'].trim() : undefined;
-  const statusLabel = typeof header['statusLabel'] === 'string' && header['statusLabel'].trim() ? header['statusLabel'].trim() : undefined;
+  const docNumber = safeText(header['documentNumber'], MAX_DOCUMENT_NUMBER_CHARS);
+  // The status label is enum-derived on the API side, but it crosses the same untrusted boundary.
+  const statusLabel = safeText(header['statusLabel'], MAX_CHARGE_LABEL_CHARS);
 
   // Headline: the total, then the arithmetic that produces it, term by term, in document order.
   const chargeRows = Array.isArray(groups['charges']) ? groups['charges'] as Array<Record<string, unknown>> : [];
@@ -105,7 +144,9 @@ export function formatExpenseExplainReply(data: unknown): string | undefined {
   if (nonZero(totals['discountAmount'])) terms.push(`ลบส่วนลด ${discount}`);
   for (const row of chargeRows.slice(0, 4)) {
     const amount = money(row['amount']);
-    const label = typeof row['label'] === 'string' && row['label'].trim() ? row['label'].trim() : 'ค่าใช้จ่ายเพิ่ม';
+    // A charge label lands INSIDE the arithmetic line, so an unscrubbed one would read as part of
+    // the sum. A refused label still gets its term — the amount is the load-bearing half.
+    const label = safeText(row['label'], MAX_CHARGE_LABEL_CHARS) ?? 'ค่าใช้จ่ายเพิ่ม';
     if (amount) terms.push(`${label} ${amount}`);
   }
 
