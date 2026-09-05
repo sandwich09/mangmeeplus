@@ -2229,6 +2229,21 @@ enum ExpenseLineReviewStatus {
   NEEDS_REVIEW
 }
 
+// What an expense line IS, when it is not a product/service row: the additional charges a Thai
+// receipt prints under its item block. Mirrored by RECEIPT_ADDITIONAL_CHARGE_KINDS /
+// EXPENSE_LINE_CHARGE_KINDS in packages/contracts (one array, asserted set-equal to this enum by
+// prisma-enum-parity.spec.ts). Null on every product line and on every row written before this
+// column existed — there is no backfill, so an old OCR "service charge" row stays a product line.
+enum ExpenseLineChargeKind {
+  SERVICE_CHARGE
+  DELIVERY
+  PACKAGING
+  PLATFORM_FEE
+  TIP
+  ROUNDING
+  OTHER
+}
+
 enum SignatureAssetStatus {
   PENDING_OWNER_APPROVAL
   ACTIVE
@@ -2508,6 +2523,11 @@ model ExpenseLine {
   expenseId                  String
   lineNumber                 Int
   description                String
+  // Non-null makes this an additional-charge row (service charge, delivery, …) rather than a
+  // product row: quantity 1, unitPrice = amount, lineNumber after every product line. It changes
+  // what the totals identity counts the row toward, never which account it posts to — a charge
+  // line still inherits the record's expense category.
+  chargeKind                 ExpenseLineChargeKind?
   quantity                   Decimal                  @db.Decimal(18, 4)
   unitPrice                  Decimal                  @db.Decimal(18, 4)
   discountAmount             Decimal                  @default(0) @db.Decimal(18, 4)

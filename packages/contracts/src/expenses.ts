@@ -2,6 +2,7 @@
 
 import {
   BUSINESS_DOCUMENT_KINDS,
+  RECEIPT_ADDITIONAL_CHARGE_KINDS,
   type BusinessDocumentClassification,
   type BusinessDocumentKind,
   type ReceiptOcrFieldResult,
@@ -479,10 +480,37 @@ export function validateExpenseWhtInput(input: unknown): string | null {
 /** An explicit zero treatment, independent of claimability and a selected Tax Code. */
 export type ExpenseLineVatTreatment = 'ZERO_RATED' | 'EXEMPT' | 'NON_VAT';
 
+/**
+ * Spec `line-ai-draft-control-spec-th.md` §5.1: the additional charges a receipt prints under its
+ * item block. ONE array, deliberately: the receipt OCR extractor already reported exactly these
+ * seven kinds, and Prisma's `ExpenseLineChargeKind` mirrors it (asserted set-equal by
+ * `prisma-enum-parity.spec.ts`), so a kind can never mean one thing on the way in and another in
+ * the database.
+ */
+export const EXPENSE_LINE_CHARGE_KINDS = RECEIPT_ADDITIONAL_CHARGE_KINDS;
+export type ExpenseLineChargeKind = (typeof EXPENSE_LINE_CHARGE_KINDS)[number];
+
+export const EXPENSE_LINE_CHARGE_KIND_LABELS: Record<ExpenseLineChargeKind, string> = {
+  SERVICE_CHARGE: 'ค่าบริการ',
+  DELIVERY: 'ค่าส่ง',
+  PACKAGING: 'ค่าบรรจุ',
+  PLATFORM_FEE: 'ค่าธรรมเนียมแพลตฟอร์ม',
+  TIP: 'ทิป',
+  ROUNDING: 'ปัดเศษ',
+  OTHER: 'อื่น ๆ',
+};
+
+/** ROUNDING is the one kind a document may print as a deduction ("ปัดเศษ -0.50"). */
+export function expenseChargeKindAllowsNegative(kind: ExpenseLineChargeKind): boolean {
+  return kind === 'ROUNDING';
+}
+
 export type ExpenseLineSummary = {
   id: string;
   lineNumber: number;
   description: string;
+  /** Non-null makes this an additional-charge row rather than a product row (§5.1). */
+  chargeKind?: ExpenseLineChargeKind | null;
   quantity: string;
   unitPrice: string;
   discountAmount: string;
@@ -573,6 +601,30 @@ export type ExpenseSummary = {
   updatedAt: string;
 };
 
+/** One additional-charge row as a reader sees it: `amount` is what the document printed for the
+ *  charge (its line subtotal), which is also the figure that enters the tax base. */
+export type ExpenseChargeSummary = {
+  kind: ExpenseLineChargeKind;
+  label: string;
+  amount: string;
+  vatAmount: string;
+};
+
+/** The single derivation of `ExpenseDetail.charges`, shared by the API mapper, the LINE read tool
+ *  and the web summary so the three can never disagree about what a charge row is worth. */
+export function expenseLineCharges(
+  lines: readonly { chargeKind?: ExpenseLineChargeKind | null; lineSubtotalAmount: string; vatAmount: string }[],
+): ExpenseChargeSummary[] {
+  return lines
+    .filter((line): line is typeof line & { chargeKind: ExpenseLineChargeKind } => line.chargeKind != null)
+    .map((line) => ({
+      kind: line.chargeKind,
+      label: EXPENSE_LINE_CHARGE_KIND_LABELS[line.chargeKind],
+      amount: line.lineSubtotalAmount,
+      vatAmount: line.vatAmount,
+    }));
+}
+
 export type ExpenseDetail = ExpenseSummary & {
   /** Set when this expense is a reimbursement-claim projection — it is settled by the
    *  claim payout (RBPAY), never by a manual expense payment. */
@@ -616,6 +668,8 @@ export type ExpenseDetail = ExpenseSummary & {
   voidedAt: string | null;
   voidReason: string | null;
   lines: ExpenseLineSummary[];
+  /** §5.1 derived view of the `chargeKind != null` rows, so a reader never has to know the rule. */
+  charges: ExpenseChargeSummary[];
   attachments: ExpenseAttachmentRef[];
   duplicateStatus: DuplicateStatus;
   duplicateOfExpenseId: string | null;
@@ -647,6 +701,9 @@ export type CreateExpenseDraftInput = {
   lines: Array<{
     lineNumber: number;
     description: string;
+    /** §5.1: makes the row an additional charge — quantity 1, unit price = the printed amount,
+     *  and it must sort after every product row. */
+    chargeKind?: ExpenseLineChargeKind | null;
     quantity: string;
     unitPrice: string;
     discountAmount?: string;
