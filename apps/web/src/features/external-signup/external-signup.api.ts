@@ -5,6 +5,7 @@ import type {
   PublicCompanySignupBody,
   PublicSignupStatusDto,
   SignupClaimAttachBody,
+  SignupClaimInfoBody,
   SignupClaimInfoDto,
   SignupClaimResultDto,
   SignupClaimSetPasswordBody,
@@ -72,8 +73,13 @@ export function resendSignupClaimEmail(requestId: string): Promise<void> {
   });
 }
 
+// Review R01: POST with the token in the body. It used to be `GET signup-claims/<token>`, which put
+// a live bearer credential into every access log between the browser and the API.
 export function getSignupClaimInfo(token: string): Promise<SignupClaimInfoDto> {
-  return publicJson<SignupClaimInfoDto>(`/api/v1/public/signup-claims/${encodeURIComponent(token)}`);
+  return publicJson<SignupClaimInfoDto>('/api/v1/public/signup-claims/info', {
+    method: 'POST',
+    body: { token } satisfies SignupClaimInfoBody,
+  });
 }
 
 export type SignupClaimSessionResult = SignupClaimResultDto & { sessionEstablished: boolean };

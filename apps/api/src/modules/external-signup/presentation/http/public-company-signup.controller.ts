@@ -40,6 +40,15 @@ export class PublicCompanySignupDto {
   @IsIn(['PRO_TRIAL', 'STARTER_249', 'BASIC_499', 'PRO_999', 'ENTERPRISE_1999']) @IsOptional() requestedOfferKey?: string;
 }
 
+/**
+ * Review R01. Deliberately NOT `@Matches(CLAIM_TOKEN_PATTERN)`: a validation 400 for a malformed
+ * token would be a shape oracle, and this endpoint answers `{ valid: false }` for malformed,
+ * expired, used and unknown alike. The pattern is checked in the handler instead.
+ */
+export class SignupClaimInfoDtoBody {
+  @IsString() @MaxLength(200) token!: string;
+}
+
 export class SignupClaimSetPasswordDto {
   @IsString() @Matches(CLAIM_TOKEN_PATTERN) token!: string;
   @IsString() @IsNotEmpty() @MinLength(3) @MaxLength(40) @Matches(USERNAME_PATTERN) username!: string;
@@ -134,13 +143,20 @@ export class PublicCompanySignupController {
     return { queued: true };
   }
 
-  @Get('signup-claims/:token')
+  /**
+   * Review R01: POST with the token in the BODY, not `GET signup-claims/:token`. Reading a claim
+   * page is not a mutation, but a URL segment is recorded by every access log between the browser
+   * and this handler (ALB, the API's own request logger, any proxy in between) — and this token is
+   * a bearer credential for an approved shop. A body is logged by none of them.
+   */
+  @Post('signup-claims/info')
+  @HttpCode(200)
   @ApiOperation({ summary: 'Claim link details; identical empty answer for expired/used/unknown' })
-  async claimInfo(@Param('token') token: string, @Req() req: Request): Promise<SignupClaimInfoDto> {
+  async claimInfo(@Body() dto: SignupClaimInfoDtoBody, @Req() req: Request): Promise<SignupClaimInfoDto> {
     await this.rateLimit.assertPublicSignupReadAllowed(trustedClientIp(req));
     // A malformed token is answered exactly like an unknown one — no shape oracle either.
-    if (!CLAIM_TOKEN_PATTERN.test(token)) return { valid: false };
-    return this.claim.info(token);
+    if (!CLAIM_TOKEN_PATTERN.test(dto.token)) return { valid: false };
+    return this.claim.info(dto.token);
   }
 
   @Post('signup-claims/set-password')

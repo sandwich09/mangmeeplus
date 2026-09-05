@@ -54,6 +54,12 @@ export type SignupClaimInfoDto = {
   emailMatchesExistingUser?: boolean;
 };
 
+/**
+ * Review R01: the claim token is a bearer credential, so it travels in a POST body — never in a URL
+ * segment, which every access log on the way in records verbatim.
+ */
+export type SignupClaimInfoBody = { token: string };
+
 export type SignupClaimSetPasswordBody = {
   token: string;
   username: string;
