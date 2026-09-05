@@ -308,13 +308,15 @@ unchanged. The flag decides, never the copy. See D.1.
 
 Status: implemented on top of C (`ca37d6a1`), gates green, pushed; not reviewed, no PR.
 
-Gates (2026-09-06, final, after round-2 review): api fixed list **6527 tests / 0 fail / 99 skipped**
-· ai-gateway **1050 / 0 fail** · contracts **225 / 0 fail** · config **141 / 0 fail** ·
-api+gateway+contracts typecheck clean · `pnpm --filter @watchdog-bms/api test:boot` (real Nest graph
-from the swc build) **exit 0** · prisma validate ok · maintenance pins `--check` **status=current**
-· `production-serving-mode.spec.sh` PASS · pg spec **1/1** on an isolated `watchdog_bms_sliced`
+Gates (2026-09-06, POST-REBASE onto slice A `00c0e182`): api fixed list **6736 tests / 0 fail /
+99 skipped** · ai-gateway **1081 / 0 fail** · web **1554 / 0 fail** · contracts **237 / 0 fail** ·
+config **141 / 0 fail** · api+gateway+contracts typecheck clean ·
+`pnpm --filter @watchdog-bms/api test:boot` (real Nest graph from the swc build) **exit 0** ·
+prisma validate ok · maintenance pins `--check` **status=current** ·
+`production-serving-mode.spec.sh` PASS · pg spec **1/1** on an isolated `watchdog_bms_sliced`
 database (created, migrated, used, dropped) · no TODO / `@ts-ignore` in the slice ·
-**25 mutations, every one verified red**.
+**27 mutations, every one verified red**, with anchor uniqueness asserted before any of them runs.
+`production-image-security.spec.sh` is deliberately NOT run locally — it makes live AWS calls.
 
 ### D.1 What it does
 
@@ -748,3 +750,73 @@ When the tip arrives, in this order:
 7. **Re-run everything**: the 27-row mutation table, the api fixed list, the gateway suite,
    contracts, config, `test:boot`, and the pg spec on an isolated database. The mutation harness
    refuses a dirty tree, so commit the rebase first.
+
+### D.14 Rebase onto slice A (2026-09-06) — done
+
+`c5653bbb` (on C's pre-merge head `ca37d6a1`) → rebased onto A's verified head `00c0e182`, which
+sits on develop `2793a58e` and already contains C #436 and P1 #435.
+
+**The `--onto` upstream was NOT the merge-base.** `git merge-base HEAD 00c0e182` answers `c7b1d138`,
+an old develop merge (#427), because C rebased before merging — so `ca37d6a1` is no longer an
+ancestor of anything on develop. Rebasing from the merge-base would have replayed B's five and C's
+four commits on top of A, duplicating work already in develop under different SHAs. The correct
+upstream is the last commit that is not mine, confirmed by enumeration: `ca37d6a1..HEAD` is exactly
+24 slice-D commits, `c7b1d138..ca37d6a1` is exactly B's and C's nine. Command:
+`git rebase --onto 00c0e182 ca37d6a1 codex/line-ai-draft-edit`.
+
+**Conflicts, and how each was resolved**
+
+| File | Resolution |
+|---|---|
+| `line-staff-menu.logic.ts` | Union of the command enum — A's `resume_ai` and D's two draft-confirm commands. |
+| `erp-core-detail-tools.use-case.ts` | Took C's `totalsIdentity: expense.totalsIdentity` (B landed the field, so D's defensive `explainTotalsIdentity` helper is gone), kept D's flag-driven `editableOverLine`, and kept C's reasoning about why `canCorrectAmount` is not evaluated from the detail. |
+| `process-line-webhook.use-case.ts` | Both new optional constructor params kept, A's first, D's LAST — the specs wire this constructor positionally, so a new dependency must not shift anyone else's argument. |
+| `line-correction.use-case.ts` | A's `appendUserNote` (better than D's overwrite) plus D's flag-gated `amountOnlyLine` path. |
+| `line-correction.use-case.spec.ts` | add/add: **both files' tests**, D's helpers renamed (`ctx`→`flagCtx`, `build`→`buildFlagLane`). |
+| `apps/api/package.json` | Union of the spec list, by script: 467 + 464 → 471 tokens, then 471 + 466 → 472. |
+| `docs/…-capture-correction-spec.md` | A's note-append amendment plus D's amount amendment, rewritten so the amount bullet describes BOTH flag positions. |
+| `docs/agent-memory/line-ai-draft-control.md` | All of A's and C's sections kept, D's appended, with a bridge noting that `amountEditableOverLine` is now flag-driven. |
+
+**Two mistakes I made and had to redo, worth knowing:**
+
+1. The first union of `line-correction.use-case.spec.ts` was assembled from the two CONFLICT HALVES
+   and written as the whole file. Git hoists a common suffix out of an add/add region, so the
+   closing `});\n});` sat after the `>>>>>>>` marker and was discarded — the file would not parse.
+   Rebuilt from the two real files (`git show 00c0e182:…` and `git show c5653bbb:…`) instead.
+2. The rename was partial: D's `ctx` is a plain object while A's is a factory function, so D's
+   surviving `ctx` references silently bound to A's and passed a function where a context belonged.
+   The rebuild renames every bare `ctx` and asserts none survives.
+
+**Post-rebase checklist (§D.13) results**
+
+- Counts re-derived from the tree, not assumed: `WIRED_TOOL_COUNT = 61` and `toolMap.set` = 61
+  agree; `LINE_TOOL_REGISTRY` = 66 entries. Both as expected.
+- ci.yml: `line-draft-update.pg.spec.ts` joins develop's single Postgres step, matched by CONTENT
+  (its name has grown to "Identity, username, LINE-signup, support-request, charge-kind,
+  signup-recovery and receipt-truth specs against PostgreSQL"). One `CREATE DATABASE watchdog_bms`,
+  now **eight** invocations. The spec finally has a CI home.
+- `safeText` collapsed onto `scrubRecordText`, as a UNION rather than a replacement — each side had
+  learned something the other had not. From C: NFC normalisation (Thai combining marks), the
+  fullwidth percent and ideographic space, a THREE-digit floor so "ร้าน 7-Eleven สาขา 12" keeps its
+  name, and refusing a field left with nothing but punctuation. From D: the shape-first link rule
+  with corroboration, so `ABC Co.Ltd`, `St.Louis Hospital` and `TAX.INV` survive where C's rule
+  deleted them. `safeDocumentNumber` delegates to `scrubRecordIdentifier`; both names stay so C's
+  call sites are untouched.
+- Pins: `--check` reports `status=current`; `expected_deploy` and the workflow validator SHA are
+  unchanged because `deploy.sh` did not conflict.
+- E4 and J4 are NOT re-routed by the draft lane, and this is now pinned in
+  `line-draft-update.logic.spec.ts` rather than argued: E4 ("ทำไม service charge คิดแยกเป็นอีกรายการ")
+  contains the words the detector cares about but names no amount, so it stays A's
+  `expense.explain_record` turn; J4 stays `unsupported_yet`. The owner's real UAT turn, which DOES
+  name a percent, is still a draft edit.
+
+**A trap for the next rebase:** the generated Prisma client is not rebased. Straight after the
+rebase the api typecheck showed 21 errors and the web suite 33 failures, all of them in A's and
+develop's new schema fields (`lineSupportRequest`, `claimWindowStartedAt`) and none in slice D.
+`pnpm --filter @watchdog-bms/api exec prisma generate` cleared every one. Run it before believing a
+single post-rebase gate.
+
+The mutation runner now refuses to start unless every anchor is present AND unique
+(`mut.py --check-anchors`). It caught one stale anchor immediately: the scrubber collapse had moved
+the line `m10` targets. `replace(..., 1)` takes the first match, so a duplicated fragment would
+mutate a line the row was never about and the "RED" it produced would prove nothing.
