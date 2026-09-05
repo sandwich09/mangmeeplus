@@ -34,7 +34,7 @@ function line(description = 'อาหาร') {
     discountAmount: '0', taxableAmount: '1520', vatRate: '0.07', vatAmount: '106.4',
     whtRate: null, whtAmount: '0', lineSubtotalAmount: '1520', lineTotalAmount: '1626.4',
     expenseCategoryId: null, accountHintKey: null, taxCategory: null, sourceLineText: null,
-    aiLineConfidence: null, reviewStatus: 'AI_SUGGESTED' as const,
+    aiLineConfidence: null, reviewStatus: 'SUGGESTED' as const,
   };
 }
 

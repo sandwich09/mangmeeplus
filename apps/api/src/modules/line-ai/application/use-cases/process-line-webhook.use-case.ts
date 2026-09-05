@@ -2052,8 +2052,8 @@ export class ProcessLineWebhookUseCase {
     request: { tool: LineDraftUpdateTool; input: Record<string, unknown> },
     evidence: Array<{ text: string; todayIso: string }>,
     expenseId: string | undefined,
-  ): Promise<boolean> {
-    if (!this.draftUpdate?.enabled) return false;
+  ): Promise<'proposed' | 'answered' | 'not_handled'> {
+    if (!this.draftUpdate?.enabled) return 'not_handled';
     const outcome = await this.draftUpdate.preview(ctx, {
       tool: request.tool,
       input: request.input,
@@ -2070,7 +2070,7 @@ export class ProcessLineWebhookUseCase {
         replyText: outcome.preview.previewId, intent: 'CORRECTION',
       });
       await this.updateEventLog(event.webhookEventId, 'draft_update_preview', undefined, ctx.companyId);
-      return true;
+      return 'proposed';
     }
     if (outcome.status === 'move_suggestion') {
       const reply = draftUpdateMoveSuggestionReply(outcome.lineNumber, outcome.chargeLabel);
@@ -2080,12 +2080,12 @@ export class ProcessLineWebhookUseCase {
         userMessagePreview: normalizeLineText(event.messageText), replyText: reply, intent: 'CORRECTION',
       });
       await this.updateEventLog(event.webhookEventId, 'draft_update_move_suggested', undefined, ctx.companyId);
-      return true;
+      return 'answered';
     }
     // `feature_disabled` means the flag flipped mid-turn or the shared preview store is gone; the
     // existing lane is the correct, unchanged answer. Everything else is a real fact about THIS
     // record and must be said rather than swallowed.
-    if (outcome.reason === 'feature_disabled') return false;
+    if (outcome.reason === 'feature_disabled') return 'not_handled';
     const reply = draftUpdateBlockedReply(outcome.reason, this.config.webBaseUrl, ctx.companyId, outcome.expenseId);
     await this.deliverCompletedReply(event, reply, ctx.companyId, access);
     await this.persistIntakeTurn({
@@ -2098,7 +2098,7 @@ export class ProcessLineWebhookUseCase {
       outcome.reason === 'forbidden' ? LINE_AI_ERROR_CODES.FORBIDDEN : undefined,
       ctx.companyId,
     );
-    return true;
+    return 'answered';
   }
 
   /**
@@ -3660,10 +3660,14 @@ export class ProcessLineWebhookUseCase {
       // rather than as words this function can read.
       const draftRequest = detectLineDraftEditRequest(normalizedText)
         ?? this.amountCorrectionAsDraftEdit(routePlan.correctionHints, recentCapturedExpenses);
-      if (draftRequest && this.draftUpdate?.enabled
-        && await this.proposeDraftUpdate(event, correctionCtx, resolvedAccess, draftRequest, correctionEvidence,
-          recentCapturedExpenses.length === 1 ? recentCapturedExpenses[0]!.id : undefined)) {
-        await this.ackConsumed(correctionPlan, 'correction_apply');
+      const draftOutcome = draftRequest && this.draftUpdate?.enabled
+        ? await this.proposeDraftUpdate(event, correctionCtx, resolvedAccess, draftRequest, correctionEvidence,
+          recentCapturedExpenses.length === 1 ? recentCapturedExpenses[0]!.id : undefined)
+        : 'not_handled';
+      if (draftOutcome !== 'not_handled') {
+        // The ledger records what this turn actually DID: a proposal the user must answer is not
+        // an apply, and labelling it one would make the trail read as though money had moved.
+        await this.ackConsumed(correctionPlan, draftOutcome === 'proposed' ? 'correction_apply' : 'correction_guidance');
         return;
       }
       // Try to apply; every guard failure degrades to the guidance reply — never to a create.
