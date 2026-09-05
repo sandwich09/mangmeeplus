@@ -381,18 +381,25 @@ category with `LINE_DRAFT_EDIT_DISABLED`, no preview card, and a stray confirm p
   widening a gateway-local `safeText` for the same reason; at rebase the two must collapse onto
   this one rather than diverging.
 
-### D.4 Mutation table (each must turn a test red)
+### D.4 Mutation table — every row RUN and verified red (`mutations.sh`, 2026-09-06)
 
-| # | Mutation | Test that fails |
-|---|---|---|
-| 1 | Apply without checking `updatedAt` (drop the CAS compare) | `line-draft-update.pg.spec.ts` — "a moved record is refused, never re-based" |
-| 2 | Apply without the confirm postback (let the tool adapter call `.apply`) | `line-draft-update.security.spec.ts` — `draft-grounded-request-previews-but-does-not-write` (applies ≠ 0) |
-| 3 | Preview key not bound to the chat (drop `chatKeyHash` from the load check) | `line-draft-update.security.spec.ts` — `draft-preview-from-another-chat` |
-| 4 | Status guard removed (`EDITABLE_STATUSES` accepts CONFIRMED) | `line-draft-update.security.spec.ts` — `draft-confirmed-record-edit`; `line-draft-update.pg.spec.ts` — "a confirmed record is never touched" |
-| 5 | Flag ignored (`classificationDenial` admits `draft_update` unconditionally) | `internal-tools.controller.spec.ts` — "refuses every draft_update tool while LINE_AI_DRAFT_EDIT_ENABLED is off"; `intent-router.agent.spec.ts` — "offers the five draft tools in the catalog only when the flag is on" |
-| 6 | Grounding dropped (accept any model-supplied amount) | `line-draft-update.logic.spec.ts` — "refuses a number nobody said and the record does not hold"; eval `draft-injection-in-ocr-text-orders-edit` |
-| 7 | Scrubber narrowed back to ASCII digits | `line-ai-record-text.spec.ts` — Thai/fullwidth totals; eval `draft-injection-thai-numeral-total` |
-| 8 | Postback carries `previewId` | `line-draft-update-card.logic.spec.ts` — "carries an intent and no ids (SEC-04)" |
+| # | Mutation | Test that fails | Result |
+|---|---|---|---|
+| 1 | Apply without checking `updatedAt` (drop the CAS compare) | eval `draft-confirm-after-record-moved`; `line-draft-update.pg.spec.ts` — "a moved record is refused, never re-based" | RED |
+| 2 | The dry run COMMITS instead of rolling back — an apply with no confirm | `line-draft-update.security.spec.ts` — every row's `expectedApplyCount: 0` | RED |
+| 3 | Preview not bound to the chat/user (drop the binding check in `apply`) | eval `draft-preview-from-another-chat` | RED |
+| 4 | Status guard removed (`EDITABLE_STATUSES` accepts CONFIRMED/VOIDED) | eval `draft-confirmed-record-edit`; pg spec — "a confirmed record is never touched" | RED |
+| 5 | Flag ignored (`classificationDenial` admits `draft_update` unconditionally) | `internal-tools.controller.spec.ts` — "refuses every draft_update tool while LINE_AI_DRAFT_EDIT_ENABLED is off"; `intent-router.agent.spec.ts` — catalog gate | RED |
+| 6 | Grounding dropped (accept any model-supplied amount) | `line-draft-update.logic.spec.ts` — "refuses a number nobody said…"; eval `draft-injection-in-ocr-text-orders-edit` | RED |
+| 7 | Scrubber narrowed back to ASCII digits | `line-ai-record-text.spec.ts` — Thai/fullwidth totals; eval `draft-injection-thai-numeral-total` | RED |
+| 8 | Postback carries `previewId` | `line-draft-update-card.logic.spec.ts` — "carries an intent and no ids (SEC-04)" | RED |
+
+The first run of this table found two rows that survived, and both were test bugs rather than code
+bugs: M1 had no fast test at all (only the pg spec could move a row revision), and the two injection
+rows asserted on a payload the hostile text never entered — an `add_charge` diff carries the charge
+label and amount, never the existing line's description. Both are fixed above: the corpus gained
+`draft-confirm-after-record-moved`, and the Thai-numeral row now edits a line description so the
+attacker's own words are what the diff prints.
 
 ### D.5 UAT script for the Owner (J1–J4)
 

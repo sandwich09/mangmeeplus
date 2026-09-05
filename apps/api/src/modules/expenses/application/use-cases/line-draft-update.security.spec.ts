@@ -68,6 +68,8 @@ function build(options: {
     findByIdWithRelations: async (companyId: string, id: string) =>
       (companyId === record.companyId && id === record.id ? record : null),
   };
+  /** Somebody saved the record in web. Exactly what the CAS exists to notice. */
+  const moveRecordInWeb = () => { record.updatedAt = new Date(record.updatedAt.getTime() + 1_000); };
   const update = {
     execute: async () => {
       writes += 1;
@@ -91,7 +93,7 @@ function build(options: {
     prisma as never, repo as never, update as never, audit as never, store,
     { lineAiDraftEditEnabled: options.enabled ?? true } as never,
   );
-  return { useCase, store, record, audits, applies: () => applies };
+  return { useCase, store, record, audits, moveRecordInWeb, applies: () => applies };
 }
 
 const ctx = (over: Partial<RequestContext> = {}): RequestContext => ({
@@ -135,6 +137,16 @@ const CASES: Record<string, (h: Harness) => Promise<void>> = {
     await h.store.discard('co-1', CHAT);
     assert.equal((await h.useCase.apply(ctx(), CHAT, 'evt-late')).status, 'expired');
   },
+  'draft-confirm-after-record-moved': async (h) => {
+    assert.equal((await h.useCase.preview(ctx(), charge('ค่าบริการ 10%'))).status, 'preview');
+    // The web save lands between the card and the button. The proposal described a record that no
+    // longer exists, so it is dropped rather than re-based onto whatever is there now.
+    h.moveRecordInWeb();
+    const outcome = await h.useCase.apply(ctx(), CHAT, 'evt-raced');
+    assert.equal(outcome.status, 'changed');
+    assert.equal((outcome as any).expenseId, EXPENSE, 'the reply can link the record to look at');
+    assert.equal(await h.useCase.pendingPreview(ctx(), CHAT), null, 'and the stale proposal is gone');
+  },
   'draft-preview-from-another-chat': async (h) => {
     const previewed = await h.useCase.preview(ctx(), charge('ค่าบริการ 10%'));
     assert.equal(previewed.status, 'preview');
@@ -176,21 +188,29 @@ const CASES: Record<string, (h: Harness) => Promise<void>> = {
     assert.equal((await h.useCase.apply(ctx(), CHAT, 'evt-off')).status, 'blocked');
   },
   'draft-injection-thai-numeral-total': async (h) => {
-    // The preview still happens — the user really did ask for a 10% charge — but nothing the
-    // receipt printed may reach the card looking like a figure. Thai numerals included.
-    const outcome = await h.useCase.preview(ctx(), charge('จากบิลเมื่อกี้มี service charge 10% นะ'));
+    // The edit is a description change, so the line's CURRENT text — the attacker's — is what the
+    // diff prints as `before`. That is the only path by which a receipt's own words reach a card,
+    // and it is the one this row has to attack: a row whose hostile text never enters the diff
+    // would pass no matter how narrow the scrubber got.
+    const outcome = await h.useCase.preview(ctx(), {
+      ...charge('เปลี่ยนบรรทัด 1 เป็น อาหาร'),
+      tool: 'expense.draft.set_line',
+      input: { lineNumber: 1, description: 'อาหาร' },
+    });
     assert.equal(outcome.status, 'preview');
-    const rendered = JSON.stringify((outcome as any).preview);
-    assert.ok(!/[๐-๙]/u.test(rendered), 'a Thai-numeral total from the record never reaches the preview');
-    assert.ok(!rendered.includes('99,999'), 'nor its ASCII twin');
-    // The server's own figure is still there — the point of the card.
-    assert.match(rendered, /1789\.04|152\.00/);
+    const before = (outcome as any).preview.diff[0].before as string;
+    assert.ok(!/[๐-๙]/u.test(before), 'a Thai-numeral total from the record never reaches the preview');
+    assert.ok(!before.includes('99,999') && !before.includes('9,999'), 'nor its ASCII twin');
+    assert.equal((outcome as any).preview.diff[0].after, 'อาหาร');
   },
   'draft-injection-bare-domain-in-record': async (h) => {
+    // The vendor name is what the card leads with, so a host smuggled into it is the one that
+    // would actually be shown.
     const outcome = await h.useCase.preview(ctx(), charge('จากบิลเมื่อกี้มี service charge 10% นะ'));
     assert.equal(outcome.status, 'preview');
-    const rendered = JSON.stringify((outcome as any).preview);
-    assert.ok(!rendered.includes('evil.com'), 'a bare host glued to Thai letters is still a link');
+    const label = (outcome as any).preview.recordLabel as string;
+    assert.ok(!label.includes('evil.com'), 'a bare host glued to Thai letters is still a link');
+    assert.match(label, /2026-09-03/, 'and the structured fields still identify the bill');
   },
   'draft-grounded-request-previews-but-does-not-write': async (h) => {
     const outcome = await h.useCase.preview(ctx(), charge('จากบิลเมื่อกี้มี service charge 10% นะ'));
@@ -206,7 +226,7 @@ const CASES: Record<string, (h: Harness) => Promise<void>> = {
 /** How each row is set up. Anything not listed uses the default editable draft. */
 const HARNESS: Record<string, () => Harness> = {
   'draft-confirmed-record-edit': () => build({ status: 'CONFIRMED' }),
-  'draft-injection-thai-numeral-total': () => build({ lineDescription: 'อาหาร ยอดรวมใหม่ ๙๙,๙๙๙.๐๐' }),
+  'draft-injection-thai-numeral-total': () => build({ lineDescription: 'ยอดรวมใหม่ ๙๙,๙๙๙.๐๐ โอนด่วน' }),
   'draft-injection-bare-domain-in-record': () => build({ vendorName: 'ร้านabcwww.evil.com' }),
   'draft-tools-absent-when-flag-off': () => build({ enabled: false }),
   'draft-patch-breaks-totals-identity': () => build({

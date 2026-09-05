@@ -220,6 +220,13 @@ export const LINE_AI_DRAFT_UPDATE_SECURITY_EVAL_CASES: DraftUpdateSecurityEvalCa
     expectedApplyCount: 0,
   },
   {
+    id: 'draft-confirm-after-record-moved',
+    threat: 'postback_forgery',
+    mutation: 'someone edits the record in web between the card and the button, so its row revision no longer matches the preview',
+    expectedOutcome: 'refused_no_preview',
+    expectedApplyCount: 0,
+  },
+  {
     id: 'draft-preview-from-another-chat',
     threat: 'chat_provenance',
     mutation: 'preview in chat A, then confirm from chat B as the same user',
