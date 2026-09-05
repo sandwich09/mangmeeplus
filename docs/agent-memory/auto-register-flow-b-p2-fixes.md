@@ -1,6 +1,6 @@
 # Agent Memory: auto-register-flow-b-p2-fixes
 
-Status: IMPLEMENTED on `codex/flow-b-p2-fixes` (from `origin/develop` 9170415114d9974ccbf8e71df2208275bfc49105). Not merged, no PR. Needs a rebase onto the sibling `codex/flow-b-p1-fixes` head before it goes anywhere.
+Status: IMPLEMENTED and REBASED onto `codex/flow-b-p1-fixes` (3d5cd03f). Round-2 review items F2–F12 applied. Not merged, no PR. P2 must merge AFTER P1: its "15 ครั้ง" free-trial copy is only true with P1's `SIGNUP_TRIAL_TIER`.
 
 Owner: thawatchai
 
@@ -34,10 +34,46 @@ Scope: the P2 findings and the whole "UX และ wording" table of `docs/agent
 - Web: 1507 tests / 322 suites / 1507 pass / 0 fail
 - `pnpm -r typecheck` exit 0; `apps/web` `next build` exit 0 (contracts built first); `prisma validate` OK
 - `node infra/security/sync-production-maintenance-release-pins.mjs --check` → `status=current` (no touched file is pinned)
-- Mutation pass: 22 reverts, every one re-reddened its test. Three gaps it found were closed first (username rule untested, received-page copy unasserted, and a queue guard that matched the load-more call as well as the first page).
+- Mutation pass: 32 reverts across both rounds (22 + F2/F3/F4/F5/F6a/F6b/F6c/F8/F9/F10), every one
+  re-reddened its test on the rebased head. Three gaps it found were closed first (username rule untested, received-page copy unasserted, and a queue guard that matched the load-more call as well as the first page).
 - Not run: any real database, SES send, or browser session. The 390px checks are source/render assertions, not screenshots.
+
+## Round 2 (review of 0c69c791)
+
+- **F2** — the approve dialog refused OTHER whenever free text existed, but every Thai answer maps
+  to OTHER, so a genuinely-other shop ("ร้านตัดผม") could never be approved. `approveBlockedOnCategory`
+  now blocks only until the reviewer ticks "ตรวจแล้ว เป็นอื่น ๆ": the tripwire still gets a decision
+  rather than a default, and the honest answer stays reachable.
+- **F3/F4/F5** — three untested branches got their tests: the use-case enum re-check (an unvalidated
+  category must reach neither the column nor the audit row), `queueEmptyForReal` as a pure function
+  (an empty screen with no count behind it is a failed load, not an empty tab), and the PROBLEM
+  tab's predicate including abandoned provisioning runs so the tab and its count agree.
+- **F6** — `hasMailExchanger` collapsed NXDOMAIN and a timed-out resolver into "no MX", so a DNS
+  blip accused a correct address of a typo AND (because the form rotates its key on a definite
+  rejection) left an orphan RECEIVED row holding name, address and phone. Only
+  `ENOTFOUND`/`ENODATA`/`NXDOMAIN` reject now (422, key rotates); everything else is
+  `ServiceUnavailableException('email_domain_check_unavailable')` — 503, key kept, nobody blamed.
+  Retention: `sweepAbandonedIntake` deletes RECEIVED rows older than 7 days (`companyId: null`
+  guard) on the existing 15-minute timer, last so it cannot skip work a customer waits on.
+- **F7** — `WIRING.md` §8 item 2 and the `auto-register-flow-b.md` follow-up struck as Closed.
+- **F8/F9** — the free-trial line is hidden on REJECTED / PREPARING_FAILED / EXPIRED, and PREPARING
+  asks for a refresh rather than promising a page that nothing polls will update itself.
+- **F10** — the queue cursor carries the ordering VALUES (base64url `createdAt|id`), not a row id:
+  Prisma's row cursor is resolved against the same filtered query, so a row that left the tab
+  between pages answered with an empty page and stranded the tab until reload. A corrupt cursor is
+  the first page.
+- **F12** — `force-dynamic` on `/signup/status/[requestId]`, like its siblings.
+
+## Rebase onto P1
+
+One conflict, resolved as directed: the web-form approve takes P1's transactional
+`core.advance(…, { data, alsoInTransaction })` form with `...reviewedCategory` folded into its
+`data` — the separate `prisma.update` is gone, so the reviewer's category commits with the state
+and the letter or not at all. Two follow-on fixups: the R10 tests now assert that transaction's
+`data` instead of a second update, and the F6 outcome logic sits inside R08's RECEIVED-only branch
+with the transient throw BEFORE the write, so a retry resumes from RECEIVED as R08 intends.
 
 ## Next
 
-- Rebase onto the sibling `codex/flow-b-p1-fixes` head. Expected overlaps: `provision-signup.use-case.ts` (their `planTier`, my `businessCategory`, adjacent lines in the same `createCompany` call), `signup-admin-queue.use-case.ts` (their approve/reissue transactions, my `list` and the approve-time category write), and the `external-signup` web pages (their public-fetch credentials/CSRF and the claim route's POST, my copy and state changes).
+- ~~Rebase onto the sibling `codex/flow-b-p1-fixes` head.~~ **Done** (3d5cd03f). The overlaps it touched: `provision-signup.use-case.ts` (their `planTier`, my `businessCategory`, adjacent lines in the same `createCompany` call), `signup-admin-queue.use-case.ts` (their approve/reissue transactions, my `list` and the approve-time category write), and the `external-signup` web pages (their public-fetch credentials/CSRF and the claim route's POST, my copy and state changes).
 - Left out on purpose: spec/docs reconciliation for P10 (the review's "Docs drift" item), and any change to what the server provisions — both belong elsewhere.
