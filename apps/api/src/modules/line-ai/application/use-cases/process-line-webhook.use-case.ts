@@ -797,15 +797,30 @@ function isReceiptItemQuestion(text: string): boolean {
   return /(?:ซื้อ|จ่าย|ค่า|มี|รายการ).{0,12}(?:สินค้า|อะไร|รายการ)|(?:สินค้า|ของ|รายการ).{0,12}(?:อะไร|บ้าง|ไหน)|what\s+(?:items?|products?).*(?:bill|receipt)|what.*(?:bill|receipt).*(?:for|contain)/iu.test(text);
 }
 
-function receiptItemLines(fields: ReceiptOcrFieldResult | null | undefined): string[] {
-  return (fields?.lines ?? []).slice(0, 10).map((line) => {
-    const amount = Number(toMoney4(line.amount));
-    const amountLabel = Number.isFinite(amount)
-      ? amount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-      : line.amount;
-    return `• ${line.description} × ${line.quantity} – ${amountLabel}`;
-  });
+function moneyLabel(value: string): string {
+  const amount = Number(toMoney4(value));
+  return Number.isFinite(amount)
+    ? amount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : value;
 }
+
+/** Spec §5.1: products and additional charges are two different things on a bill, and a card that
+ *  prints "service charge 10%" among the food reads as if the shop sold a dish by that name (UAT
+ *  2026-09-03). Charges come from the OCR `additionalCharges` block, which is where they were
+ *  identified — slice B moves the marker onto the persisted `chargeKind` column. */
+function receiptItemLines(fields: ReceiptOcrFieldResult | null | undefined): string[] {
+  const items = (fields?.lines ?? []).slice(0, 10)
+    .map((line) => `• ${line.description} × ${line.quantity} – ${moneyLabel(line.amount)}`);
+  const charges = (fields?.additionalCharges ?? []).slice(0, 10)
+    .map((charge) => `• ${charge.description} – ${moneyLabel(charge.amount)}`);
+  return charges.length > 0 ? [...items, 'ค่าใช้จ่ายเพิ่ม:', ...charges] : items;
+}
+
+/** Spec §5.2. The record keeps the upload day as a placeholder because `expenseDate` is NOT NULL —
+ *  so the card has to say both halves. "ยังไม่ระบุ" alone was true about the reading and silent
+ *  about the record: UAT 2026-09-03 stored today's date on a bill printing 03/09/69 and the sender
+ *  had no way to know, nor any way to fix it from the chat he was already in. */
+const UNVERIFIED_DATE_CARD_LINE = 'ยังไม่ระบุ — ใช้วันที่ส่งไว้ก่อน พิมพ์ "วันที่ 3/9/69" เพื่อแก้';
 
 /** Same user-facing date shape as the web app, e.g. 25 ก.ค. 2569. */
 const THAI_DATE_REPLY_FORMATTER = new Intl.DateTimeFormat('th-TH', {
@@ -834,7 +849,7 @@ function formatPaypersReply(
     `• ประเภทเอกสาร – ${docType ?? 'รอตรวจสอบ'}`,
     `• ยอดรวม – ${amount}`,
     `• ผู้ขาย/ผู้รับเงิน – ${options.fields?.vendorName ?? 'ยังไม่ระบุ'}`,
-    `• วันที่เอกสาร – ${formatReplyDate(options.fields?.expenseDate) ?? 'ยังไม่ระบุ'}`,
+    `• วันที่เอกสาร – ${formatReplyDate(options.fields?.expenseDate) ?? UNVERIFIED_DATE_CARD_LINE}`,
     `• เลขที่เอกสาร – ${options.fields?.documentNumber ?? 'ยังไม่ระบุ'}`,
     `• VAT / WHT / ภาษีซื้อ – ${options.fields?.vatAmount ? `VAT ${Number(toMoney4(options.fields.vatAmount)).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : 'รอตรวจสอบ'}`,
     `• หมวดหมู่ค่าใช้จ่าย – ${options.categoryName ?? 'ยังไม่ระบุ'}`,
@@ -4610,6 +4625,11 @@ export class ProcessLineWebhookUseCase {
     }
     let effectiveCategory = hintedCategory;
     let categorySuggestion: ReceiptCategorySuggestion | undefined;
+    // Spec §5.2: `expenseDate` was seeded with the upload day above because the column is NOT NULL.
+    // Until the apply below says the document's own date was read and is plausible, that value is a
+    // placeholder — and the card, the summary JSON and the review form all have to say so.
+    let dateVerified = false;
+    let reviewReasons: string[] = [];
     if (ocrFields) {
       const applyOutcome = await this.receiptOcrApply.apply(ctx, intent.expenseId, ocrFields, {
         ...(hintedCategory
@@ -4624,6 +4644,8 @@ export class ProcessLineWebhookUseCase {
       // Stale means a correction landed during the OCR round trip; keep the draft as captured.
       const duplicateResult = isStaleOcrApply(applyOutcome) ? null : applyOutcome;
       hasDuplicate ||= (duplicateResult?.candidatesCreated ?? 0) > 0;
+      reviewReasons = duplicateResult?.reviewReasons ?? [];
+      dateVerified = duplicateResult?.dateVerified ?? false;
       categorySuggestion = duplicateResult?.categorySuggestion;
       effectiveCategory = duplicateResult?.categoryId
         ? {
@@ -4637,6 +4659,9 @@ export class ProcessLineWebhookUseCase {
       ?? ['vendor', 'expenseDate', 'documentNumber', 'grandTotalAmount', 'vatAmount', 'category']);
     if (effectiveCategory?.id) missingFields.delete('category');
     else missingFields.add('category');
+    // Spec §5.2: an unverified date is a missing one, whatever the column holds. This is the flag the
+    // web review form already reads (`expenseAiMissingFields`), so no second mechanism is invented.
+    if (!dateVerified) missingFields.add('expenseDate');
 
     await this.prisma.client.expenseRecord.update({
       where: { id: intent.expenseId },
@@ -4676,6 +4701,9 @@ export class ProcessLineWebhookUseCase {
           // category survives the LINE intake instead of being dropped after apply.
           ...(categorySuggestion ? { categorySuggestion } : {}),
           missingFields: [...missingFields].slice(0, 20),
+          // Spec §5.1/§5.2: the same readable reasons the web upload path stores, so a draft captured
+          // over LINE and one uploaded in the browser explain themselves the same way.
+          ...(reviewReasons.length > 0 ? { reviewReasons } : {}),
           duplicateWarning: hasDuplicate,
           nextAction: 'review_in_web',
         },

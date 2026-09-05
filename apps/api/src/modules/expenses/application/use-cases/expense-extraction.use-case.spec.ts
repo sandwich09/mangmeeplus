@@ -91,6 +91,10 @@ function makeUseCase(options: {
         categoryAutoFilled: false,
         chargeReconciliationStatus: 'SUMMARY_LINE',
         chargesApplied: 0,
+        // Spec §5.1/§5.2: the real service always answers both, so the fake must too — a fake that
+        // omits them lets the caller read `undefined` where production reads a decision.
+        reviewReasons: [],
+        dateVerified: true,
         ...options.applyResult,
       };
     }),
