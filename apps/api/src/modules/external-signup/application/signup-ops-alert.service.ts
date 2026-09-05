@@ -8,6 +8,7 @@ import { CreateOrUpdateNotificationEventUseCase } from '../../dashboard-notifica
 import { bangkokMonthKey } from '../../line-ai/application/company-ai-usage-meter';
 import { TRIAL_COUNTER_TIER_KEY } from '../../system-partner-management/domain/logic/receipt-quota.logic';
 import { bangkokDayKey } from '../domain/business-hours.logic';
+import { LINE_SIGNUP_PUSH_EVENT_TYPE } from './line-signup-notify.service';
 import { SIGNUP_QUEUE_PATH, SignupAdminNotifyService } from './signup-admin-notify.service';
 
 /** Reserved for the signup drain, like its three siblings — the generic drain must exclude it. */
@@ -18,7 +19,13 @@ export type SignupOpsAlertKind =
   | 'auto_cap_reached'
   | 'line_push_failed'
   | 'provisioning_failed'
-  | 'trial_budget_exhausted';
+  | 'trial_budget_exhausted'
+  | 'line_push_stuck';
+
+/** A customer's one owed message has been unsent for this long — long past "the OA blinked". */
+export const STUCK_PUSH_AFTER_MS = 60 * 60_000;
+/** Or it has been deferred this many times, which no transient failure does. */
+export const STUCK_PUSH_ATTEMPTS = 3;
 
 const ALERT_TRIGGER = 'signup_ops_alert';
 
@@ -33,6 +40,8 @@ export function signupOpsAlertTitleTh(kind: SignupOpsAlertKind): string {
       return 'เปิดร้านให้ลูกค้าไม่สำเร็จ';
     case 'trial_budget_exhausted':
       return 'ร้านทดลองใช้งบ AI หมดหลายร้านวันนี้';
+    case 'line_push_stuck':
+      return 'ข้อความ พร้อมใช้แล้ว ค้างส่งไม่ออก';
   }
 }
 
@@ -46,6 +55,8 @@ export function signupOpsAlertBodyTh(kind: SignupOpsAlertKind): string {
       return 'มีคำขอที่เปิดร้านไม่สำเร็จ เปิดแท็บ มีปัญหา ในคิวเพื่อกดลองใหม่ค่ะ';
     case 'trial_budget_exhausted':
       return 'ร้านทดลองที่ใช้งบ AI ครบแล้วเกินเกณฑ์ที่ตั้งไว้ เปิดคิวเพื่อตรวจสอบค่ะ';
+    case 'line_push_stuck':
+      return 'มีร้านที่ยังไม่ได้รับข้อความว่าเปิดร้านให้แล้ว อาจถึงโควตาข้อความของ OA เปิดคิวเพื่อตรวจสอบค่ะ';
   }
 }
 
@@ -153,7 +164,8 @@ export class SignupOpsAlertService {
     if (trials.length === 0) return { exhausted: 0, raised: false };
 
     const companyIds = trials.map((trial) => trial.companyId);
-    const monthKey = bangkokMonthKey();
+    // From the caller's clock, not a second one: a sweep given `now` must count that month.
+    const monthKey = bangkokMonthKey(now);
     const [usage, overrides] = await Promise.all([
       this.prisma.client.companyAiMonthlyUsage.findMany({
         where: { companyId: { in: companyIds }, monthKey },
@@ -177,6 +189,31 @@ export class SignupOpsAlertService {
     if (exhausted < threshold) return { exhausted, raised: false };
     await this.raise('trial_budget_exhausted', now);
     return { exhausted, raised: true };
+  }
+
+  /**
+   * L-B follow-up (a). A throttled push is DEFERRED, never terminalized — which is right, because
+   * it is the one message this flow owes a customer. The cost is that it also never becomes DEAD,
+   * and `countDead()` is the only outbox alarm there is: a shop's "พร้อมใช้แล้ว" stuck behind the
+   * OA's monthly quota is, today, completely silent.
+   *
+   * So the rows themselves are the signal: a signup push still unsent an hour later, or deferred
+   * three times, is not a blip. Counted on the same 15-minute sweep, announced once a day.
+   */
+  async sweepStuckPushes(now = new Date()): Promise<{ stuck: number; raised: boolean }> {
+    const stuck = await this.prisma.client.outboxEvent.count({
+      where: {
+        eventType: LINE_SIGNUP_PUSH_EVENT_TYPE,
+        status: { in: ['PENDING', 'FAILED'] },
+        OR: [
+          { createdAt: { lt: new Date(now.getTime() - STUCK_PUSH_AFTER_MS) } },
+          { attempts: { gte: STUCK_PUSH_ATTEMPTS } },
+        ],
+      },
+    });
+    if (stuck === 0) return { stuck, raised: false };
+    await this.raise('line_push_stuck', now);
+    return { stuck, raised: true };
   }
 }
 

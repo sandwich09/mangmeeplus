@@ -105,7 +105,11 @@ export function toPlanTermDto(row: PlanTermRow, now: Date): CompanyPlanTermDto {
     ...(row.lastRenewedAt ? { lastRenewedAt: row.lastRenewedAt.toISOString() } : {}),
     ...(row.termDisabledAt ? { termDisabledAt: row.termDisabledAt.toISOString() } : {}),
     ...(row.warmupUntil ? { warmupUntil: row.warmupUntil.toISOString() } : {}),
-    ...(row.warmupSlipLimit ? { warmupSlipLimit: row.warmupSlipLimit } : {}),
+    // Nullish, not truthy: a warm-up ceiling of 0 is a real (if brutal) setting, and dropping it
+    // would show the operator a warm-up with no number rather than the number that is refusing.
+    ...(row.warmupSlipLimit === null || row.warmupSlipLimit === undefined
+      ? {}
+      : { warmupSlipLimit: row.warmupSlipLimit }),
     derivedState,
     daysLeft,
   };

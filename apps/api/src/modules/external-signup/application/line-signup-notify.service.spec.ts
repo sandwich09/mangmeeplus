@@ -4,6 +4,7 @@ import {
   LINE_SIGNUP_PUSH_EVENT_TYPE, LineSignupNotifyService, lineSignupPushEventKey, lineSignupPushRetryKey,
 } from './line-signup-notify.service';
 import { pushLineMessages } from '../../auth/infrastructure/system-line-push';
+import { WARNING_LADDER_DAYS } from '../../system-partner-management/domain/logic/plan-term.logic';
 
 const LINE_USER = 'Uline-1';
 const TOKEN = 'channel-token';
@@ -24,7 +25,7 @@ function harness(options: {
   const marks: any[] = [];
   const logs: any[] = [];
   const pushes: any[] = [];
-  const adminPushes: Array<{ userIds: string[]; text: string }> = [];
+  const adminPushes: Array<{ userIds: string[]; text: string; opts?: { skipProviderUserIdHash?: string } }> = [];
   const queries: any[] = [];
 
   const prisma = {
@@ -65,7 +66,9 @@ function harness(options: {
     { lineMessagingChannelAccessToken: TOKEN, lineLiffId: '1234567890-abcdef', sesWebBaseUrl: 'https://app.example.test' } as any,
     {
       activeSystemAdmins: async () => options.admins ?? [{ companyId: 'sys', userId: 'admin-1' }],
-      pushToLinkedAdmins: async (userIds: string[], text: string) => { adminPushes.push({ userIds, text }); },
+      pushToLinkedAdmins: async (userIds: string[], text: string, opts?: any) => {
+        adminPushes.push({ userIds, text, ...(opts ? { opts } : {}) });
+      },
     } as any,
     { raise: async (kind: string) => { alerts.push(kind); } } as any,
     { warn: (fields: any) => logs.push(fields), error: (fields: any) => logs.push(fields) } as any,
@@ -158,6 +161,53 @@ describe('P10-L push delivery', () => {
     await assert.rejects(() => h.service.deliver('r1', 'approved'), /line_api_429/);
     h.restore();
     assert.equal(h.logs.at(-1).retryAfterSeconds, 17, 'LINE\'s own schedule is what gets recorded');
+    // §15.6 (b): a 429 means customers are not hearing that their shop is open, and the log line
+    // above is not something anyone reads. Raised BEFORE the throttle throw, which returns early.
+    assert.deepEqual(h.alerts, ['line_push_failed']);
+  });
+
+  it('raises the same alert for a dead OA, and none for a delivery that lands', async () => {
+    const dead = harness({
+      request: completed(),
+      fetchImpl: async () => ({ ok: false, status: 401, headers: { get: () => null } }),
+    });
+    await assert.rejects(() => dead.service.deliver('r1', 'approved'), /invalid_access_token/);
+    dead.restore();
+    assert.deepEqual(dead.alerts, ['line_push_failed']);
+
+    const ok = harness({ request: completed() });
+    await ok.service.deliver('r1', 'approved');
+    ok.restore();
+    assert.deepEqual(ok.alerts, [], 'a push that landed is not an ops event');
+  });
+});
+
+// L-B follow-up (b). The old exclusion was lost when the fan-out moved to the shared helper, so an
+// operator who is also the person asking got "a customer wants to talk to us" in their OWN chat.
+describe('support notice never lands in the asker own chat', () => {
+  it('carries the asker fingerprint, not their LINE id, and skips that admin', async () => {
+    const asker = harness({ request: completed() });
+    await asker.service.enqueueSupportRequest(LINE_USER, 'co-1');
+    asker.restore();
+    const askerHash = asker.appended[0].payloadJson.data.askerHash;
+
+    assert.ok(askerHash, 'the delivery step needs something to compare against');
+    assert.equal(JSON.stringify(asker.appended[0].payloadJson).includes(LINE_USER), false,
+      'and a raw LINE id must not enter the outbox');
+
+    // …and the delivery step hands that fingerprint to the fan-out as the chat to skip. The filter
+    // itself is exercised against the real service in signup-admin-notify.service.spec.ts.
+    const h = harness({ request: completed() });
+    await h.service.deliverSupportNotice('co-1', askerHash);
+    h.restore();
+    assert.equal(h.adminPushes[0]!.opts!.skipProviderUserIdHash, askerHash);
+  });
+
+  it('asks for no exclusion when the payload predates the fingerprint', async () => {
+    const h = harness({ request: completed() });
+    await h.service.deliverSupportNotice('co-1', undefined);
+    h.restore();
+    assert.equal(h.adminPushes[0]!.opts, undefined, 'an old row still reaches every operator');
   });
 });
 
@@ -304,7 +354,10 @@ describe('P10-L push budget (§7)', () => {
     const distinct = new Set(await lifecycleKeys());
     // P29 owns the 7/3/1 warnings and the expiry notice and sends them on its own rail — this slice
     // must not add a fifth and sixth of its own, or the table in §7 stops being true.
-    const P29_PUSHES_OVER_THIRTY_DAYS = 4;
+    //
+    // Derived from P29's own ladder rather than typed: adding a fourth warning day there would make
+    // the §7 budget false, and a hardcoded 4 here would have gone on agreeing with itself.
+    const P29_PUSHES_OVER_THIRTY_DAYS = WARNING_LADDER_DAYS.length + 1; // + the expiry notice
     assert.ok(
       distinct.size + P29_PUSHES_OVER_THIRTY_DAYS <= 6,
       `thirty-day budget is 6; this slice contributes ${distinct.size}`,

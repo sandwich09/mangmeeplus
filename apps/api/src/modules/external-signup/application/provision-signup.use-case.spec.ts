@@ -35,6 +35,8 @@ function harness(options: {
   onboardingFails?: Error;
   /** Empty = an installation with no platform operator at all. */
   systemAdmins?: Array<{ companyId: string; userId: string }>;
+  /** §15.6 (c): the core reports a fence taken from an abandoned attempt. */
+  reclaimedStale?: boolean;
 } = {}) {
   const onboardingCalls: any[] = [];
   const companyUpdates: any[] = [];
@@ -69,6 +71,8 @@ function harness(options: {
   const core = {
     claimProvisioning: async () => ({
       request, claimed: options.claimed ?? true, attemptId: options.claimed === false ? null : 'attempt-1',
+      // §15.6 (c): the core reports when the claim took the fence from an abandoned attempt.
+      ...(options.reclaimedStale ? { reclaimedStale: true } : {}),
     }),
     completeProvisioning: async (input: any) => { completed.push(input); return {}; },
     failProvisioning: async (input: any) => { failures.push(input); return {}; },
@@ -262,7 +266,9 @@ describe('ProvisionSignupUseCase — LINE-first source', () => {
       kind: 'line', providerUserId: 'Uline-1', channelId: 'channel-1', displayName: 'นิด',
     });
     assert.equal(cmd.ownerUsername, undefined, 'no username exists for a LINE-first owner');
-    assert.equal(cmd.claimedOwner, undefined, 'and therefore no email-owner shape');
+    // The owner payload carries the phone and NOTHING else: no address, no password, no attach —
+    // those are the email-owner shape, and this owner has none of them.
+    assert.deepEqual(cmd.claimedOwner, { phoneNumber: '0982565628' });
     assert.equal(cmd.planTier, 'FREE_TRIAL_15');
     assert.equal(cmd.planDays, 30);
     // Spec §6: the acceptance time is the one from the application, not the provisioning clock.
@@ -435,5 +441,44 @@ describe('ProvisionSignupUseCase — fencing', () => {
     assert.equal(h.completed.length, 0);
     // The hash stays put so an admin retry still has something to provision with.
     assert.equal(h.requestUpdates.length, 0);
+    // §15.6 (c): a shop was told "we will open it" and was not. Nothing else says so out loud.
+    assert.deepEqual(h.alerts, ['provisioning_failed']);
+  });
+
+  it('raises the ops alert when the fence is taken from an abandoned attempt', async () => {
+    // The claim itself recovers, so nothing here fails — but a run that sat half-open long enough
+    // for the clock to give up on it is exactly what an operator needs to hear about.
+    const h = harness({ reclaimedStale: true });
+    await h.useCase.execute({ ...CMD, username: 'somchai' });
+
+    assert.deepEqual(h.alerts, ['provisioning_failed']);
+  });
+
+  /**
+   * Confirmed on a real stack: after a LINE-first signup carrying 0812345678, the owner's
+   * `User.phoneNumber` was null and the number existed only on the application row — so the profile
+   * page asked for it again, the day-7 nudge fired at somebody who had already given it, and the
+   * queue's duplicate hint could never match a shop this flow opened.
+   */
+  it('gives the new LINE owner the phone number they typed at signup', async () => {
+    const h = harness({ request: { ...LINE_REQUEST, phoneNumber: '0812345678' } });
+    await h.useCase.execute(CMD);
+
+    assert.equal(h.onboardingCalls[0].claimedOwner?.phoneNumber, '0812345678');
+    // Still a brand-new owner: a phone must not be mistaken for "attach to this account".
+    assert.equal(h.onboardingCalls[0].claimedOwner?.attachUserId, undefined);
+    assert.equal(h.onboardingCalls[0].ownerAuth.kind, 'line');
+  });
+
+  it('sends no owner payload at all when the optional phone was left blank', async () => {
+    const h = harness({ request: { ...LINE_REQUEST, phoneNumber: null } });
+    await h.useCase.execute(CMD);
+    assert.equal(h.onboardingCalls[0].claimedOwner, undefined, 'byte-identical to before');
+  });
+
+  it('raises nothing on a provisioning that simply works', async () => {
+    const h = harness();
+    await h.useCase.execute({ ...CMD, username: 'somchai' });
+    assert.deepEqual(h.alerts, []);
   });
 });

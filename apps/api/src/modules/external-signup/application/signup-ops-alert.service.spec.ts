@@ -14,6 +14,7 @@ const AFTER_MIDNIGHT = new Date('2026-09-05T17:30:00.000Z');
 
 function harness(options: {
   trials?: Array<{ companyId: string }>;
+  stuckPushes?: number;
   usage?: Array<{ companyId: string; costSatang: number }>;
   overrides?: Array<{ companyId: string; monthlyBudgetSatang: number | null }>;
   threshold?: number;
@@ -27,6 +28,7 @@ function harness(options: {
   const notifications: any[] = [];
   const pushes: Array<{ userIds: string[]; text: string }> = [];
   const planTermQueries: any[] = [];
+  const outboxCounts: any[] = [];
 
   const prisma = {
     client: {
@@ -34,6 +36,9 @@ function harness(options: {
         findMany: async (args: any) => { planTermQueries.push(args); return options.trials ?? []; },
       },
       companyAiMonthlyUsage: { findMany: async () => options.usage ?? [] },
+      outboxEvent: {
+        count: async (args: any) => { outboxCounts.push(args); return options.stuckPushes ?? 0; },
+      },
       companyAiConfiguration: { findMany: async () => options.overrides ?? [] },
     },
   } as any;
@@ -69,7 +74,7 @@ function harness(options: {
 
   return {
     service: new SignupOpsAlertService(prisma, outbox, notificationUseCase, adminNotify, config, logger),
-    outboxRows, appended, notifications, pushes, planTermQueries, logs,
+    outboxRows, appended, notifications, pushes, planTermQueries, outboxCounts, logs,
   };
 }
 
@@ -194,5 +199,34 @@ describe('SignupOpsAlertService.sweepTrialBudgets — §15.6 (d)', () => {
     await h.service.sweepTrialBudgets(EVENING);
     assert.equal(h.planTermQueries[0].where.tierKey, 'FREE_TRIAL_15');
     assert.deepEqual(h.planTermQueries[0].where.termEndsAt, { gt: EVENING });
+  });
+});
+
+
+describe('SignupOpsAlertService.sweepStuckPushes — L-B follow-up (a)', () => {
+  it('stays quiet when every owed message went out', async () => {
+    const h = harness({ stuckPushes: 0 });
+    assert.deepEqual(await h.service.sweepStuckPushes(EVENING), { stuck: 0, raised: false });
+    assert.equal(h.outboxRows.size, 0);
+  });
+
+  // A throttled push is DEFERRED, never terminalized, so it never becomes DEAD — and `countDead()`
+  // is the only outbox alarm there is. Without this the shop simply never hears it is open.
+  it('announces pushes that are still unsent, once for the day', async () => {
+    const h = harness({ stuckPushes: 3 });
+    assert.deepEqual(await h.service.sweepStuckPushes(EVENING), { stuck: 3, raised: true });
+    await h.service.sweepStuckPushes(EVENING);
+    assert.deepEqual([...h.outboxRows.keys()], [signupOpsAlertEventKey('line_push_stuck', '2026-09-05')]);
+  });
+
+  it('counts only signup pushes, and only ones that are old or repeatedly deferred', async () => {
+    const h = harness({ stuckPushes: 1 });
+    await h.service.sweepStuckPushes(EVENING);
+
+    const where = h.outboxCounts[0].where;
+    assert.equal(where.eventType, 'push.line_signup.requested');
+    assert.deepEqual(where.status, { in: ['PENDING', 'FAILED'] });
+    assert.deepEqual(where.OR[0].createdAt, { lt: new Date(EVENING.getTime() - 60 * 60_000) });
+    assert.deepEqual(where.OR[1].attempts, { gte: 3 });
   });
 });

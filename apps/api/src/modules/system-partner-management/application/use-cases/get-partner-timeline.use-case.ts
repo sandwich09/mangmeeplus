@@ -166,7 +166,8 @@ export class GetPartnerTimelineUseCase {
     });
     if (!linked) return 'ยังไม่มีสมาชิกคนไหนผูก LINE';
 
-    const monthKey = bangkokMonthKey();
+    // The timeline's own clock, so a caller that passes `now` gets a coherent answer.
+    const monthKey = bangkokMonthKey(now);
     const [ocrUsage, aiUsage, aiConfig] = await Promise.all([
       this.prisma.client.companyOcrMonthlyUsage.findUnique({
         where: { companyId_monthKey: { companyId, monthKey } },

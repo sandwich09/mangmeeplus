@@ -340,6 +340,14 @@ describe('AUTO_FREE end to end (review HIGH-1)', () => {
     assert.equal(result.state, 'PENDING_REVIEW');
     assert.deepEqual(h.store.onboardingRuns, []);
     assert.ok(h.store.audits.some((a) => a.action === 'signup.line.auto_approve_capped'));
+    // §15.6 (a), driven end to end through submit rather than from a stubbed decision.
+    assert.deepEqual(h.alerts, ['auto_cap_reached']);
+  });
+
+  it('tells nobody about a cap that was never reached', async () => {
+    const h = harness({ config: { lineSignupAutoDailyCap: 20 } });
+    await h.submit.execute(CMD, NOW);
+    assert.deepEqual(h.alerts, []);
   });
 });
 

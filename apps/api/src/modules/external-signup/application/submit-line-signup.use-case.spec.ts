@@ -273,6 +273,21 @@ describe('SubmitLineSignupUseCase — where the application goes', () => {
     assert.deepEqual(h.notified, ['signup-1']);
     const capped = h.audits.find((entry: any) => entry.data.action === 'signup.line.auto_approve_capped');
     assert.equal(capped.data.metadataJson.dailyCap, 20);
+    // §15.6 (a): the rest of the day is manual work somebody has to know is coming. The audit row
+    // above is evidence; this is the only thing that TELLS anyone.
+    assert.deepEqual(h.alerts, ['auto_cap_reached']);
+  });
+
+  it('raises no cap alert on the ordinary path, or when no operator exists to name', async () => {
+    const under = harness({ approvalMode: 'AUTO_FREE', autoDailyCap: 20, approvedToday: 0 });
+    await under.useCase.execute(CMD, NOW);
+    assert.deepEqual(under.alerts, [], 'a shop approved inside the cap is not an ops event');
+
+    // No SYSTEM_ADMIN at all: the application falls back to MANUAL for a different reason, and
+    // "the cap is full" would be a false statement about why.
+    const noActor = harness({ approvalMode: 'AUTO_FREE', autoDailyCap: 20, systemAdmins: [] });
+    await noActor.useCase.execute(CMD, NOW);
+    assert.deepEqual(noActor.alerts, []);
   });
 
   it('opens a second shop on the account this LINE user already owns', async () => {
