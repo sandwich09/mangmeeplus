@@ -24,6 +24,10 @@ export const AuditAction = {
   AUTH_LINE_LIFF_SESSION: 'auth.line.liff_session',
   /** PDPA objection route (M-05 register §3.1): user toggled the LINE AI assistant. */
   AUTH_AI_ASSISTANT_PREFERENCE_UPDATE: 'auth.ai_assistant.preference_update',
+  /** P10-L §3.6 progressive profiling: the user set their own recovery phone number. */
+  AUTH_ACCOUNT_CONTACT_UPDATE: 'auth.account.contact_update',
+  /** P10-L §15.4: a LINE-first account gained its first password. Not a reset — there was none. */
+  AUTH_PASSWORD_SET: 'auth.password.set',
   AUTH_COMPANY_SWITCH: 'auth.company.switch',
   PLATFORM_ACCESS_STATE_UPDATE: 'platform.access.state_update',
   ADMIN_USER_INVITE: 'admin.user.invite',

@@ -5,6 +5,13 @@ import { emitSecurityEvent, SECURITY_EVENT } from '../../../common/logger/securi
 
 // P10 public signup buckets. One hour of window for all of them; the counts differ by how
 // expensive the action is downstream (an email send costs SES reputation, a status read costs a row).
+// P10-L §15.4. `POST me/password/set` answers `username_taken`, which makes it a username oracle
+// for anyone holding one valid session; `me/contact` is a cheap write on the same account. One
+// per-user budget covers both. Module constants rather than config keys because nothing
+// operational wants this tuned per environment — the same call the LINE_SIGNUP_* buckets make.
+const ACCOUNT_PROFILE_WRITE_WINDOW_SECONDS = 900;
+const ACCOUNT_PROFILE_WRITE_MAX_PER_USER = 10;
+
 const PUBLIC_SIGNUP_WINDOW_SECONDS = 3600;
 const PUBLIC_SIGNUP_MAX_PER_IP = 10;
 const PUBLIC_SIGNUP_MAX_PER_EMAIL = 5;
@@ -265,6 +272,16 @@ export class AuthRateLimitService {
       userId,
       this.config.emailVerificationRequestMaxPerUser,
       this.config.emailVerificationRequestWindowSeconds,
+    );
+  }
+
+  /** Self-service writes on the caller's own account: phone number and first password. */
+  async assertAccountProfileWriteAllowed(userId: string): Promise<void> {
+    await this.assertWithinLimit(
+      'account-profile-write-user',
+      userId,
+      ACCOUNT_PROFILE_WRITE_MAX_PER_USER,
+      ACCOUNT_PROFILE_WRITE_WINDOW_SECONDS,
     );
   }
 

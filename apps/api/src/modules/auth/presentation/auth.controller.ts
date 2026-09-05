@@ -11,6 +11,7 @@ import {
   Logger,
   NotFoundException,
   Optional,
+  Patch,
   Post,
   Req,
   UnauthorizedException,
@@ -67,6 +68,7 @@ import { NotifyPasswordResetRequestUseCase } from '../application/use-cases/noti
 import { GetAccountSecurityStateUseCase } from '../application/use-cases/get-account-security-state.use-case';
 import { SetAiAssistantPreferenceUseCase } from '../application/use-cases/set-ai-assistant-preference.use-case';
 import { RequestEmailChangeUseCase } from '../application/use-cases/request-email-change.use-case';
+import { AccountProfileUseCase } from '../application/use-cases/account-profile.use-case';
 import { ResendEmailVerificationUseCase } from '../application/use-cases/resend-email-verification.use-case';
 import { ConfirmEmailVerificationUseCase } from '../application/use-cases/confirm-email-verification.use-case';
 import { AuthRateLimitService } from '../application/auth-rate-limit.service';
@@ -172,8 +174,20 @@ export class PasswordResetRequestDto {
 }
 
 class RequestEmailChangeDto {
-  @IsString() @IsNotEmpty() currentPassword!: string;
+  // Optional only for an account that has no credential at all (P10-L §15.4). The use case, not
+  // the pipe, decides that: it demands the password whenever one exists.
+  @IsString() @IsNotEmpty() @IsOptional() currentPassword?: string;
   @IsEmail() @MaxLength(320) newEmail!: string;
+}
+
+class SetMyContactDto {
+  /** Blank clears the stored number. Shape is enforced by `normalizeThaiMobile` in the use case. */
+  @IsString() @IsOptional() @MaxLength(20) phoneNumber?: string;
+}
+
+class SetFirstPasswordDto {
+  @IsString() @MinLength(8) password!: string;
+  @IsString() @IsOptional() @MaxLength(64) username?: string;
 }
 
 class VerifyEmailDto {
@@ -230,6 +244,7 @@ export class AuthController {
     private readonly redeemLineWebLoginTransaction: RedeemLineWebLoginTransactionUseCase,
     private readonly exchangeLineHandoffToken: ExchangeLineHandoffTokenUseCase,
     private readonly exchangeLiffSession: ExchangeLiffSessionUseCase,
+    private readonly accountProfile: AccountProfileUseCase,
     @Optional() @Inject(AuditService) private readonly audit: AuditService | null = null,
   ) {}
 
@@ -932,6 +947,39 @@ export class AuthController {
       mustChangePassword: credential?.mustChangePassword ?? false,
       legalAcceptanceRequired: legalAcceptance.required,
     };
+  }
+
+  // P10-L §15.4 "บัญชีของฉัน". Both act on the caller's own row only — the userId comes from the
+  // verified session — so `account.password.change`, the key the sibling self-service writes
+  // already use, is the whole gate.
+  @Patch('me/contact')
+  @HttpCode(200)
+  @RequirePermissions('account.password.change')
+  @ApiOperation({ summary: 'Set or clear the current user recovery phone number' })
+  @ApiBody({ type: SetMyContactDto })
+  @ApiResponse({ status: 200, description: 'Contact number updated' })
+  async setMyContact(@Body() dto: SetMyContactDto, @Req() req: Request & { context: RequestContext }) {
+    await this.authRateLimit.assertAccountProfileWriteAllowed(req.context.userId);
+    return this.accountProfile.setPhoneNumber(req.context.userId, dto.phoneNumber, req.context.requestId);
+  }
+
+  @Post('me/password/set')
+  @HttpCode(200)
+  @RequirePermissions('account.password.change')
+  @ApiOperation({ summary: 'Set the first password for an account that has none' })
+  @ApiBody({ type: SetFirstPasswordDto })
+  @ApiResponse({ status: 200, description: 'Password set; answers the stored username' })
+  @ApiResponse({ status: 400, description: 'This account has no verified email, so a username is required' })
+  @ApiResponse({ status: 409, description: 'This account already has a password' })
+  async setMyFirstPassword(@Body() dto: SetFirstPasswordDto, @Req() req: Request & { context: RequestContext }) {
+    // `username_taken` makes this an enumeration oracle for anyone holding one valid session.
+    await this.authRateLimit.assertAccountProfileWriteAllowed(req.context.userId);
+    // Same session identity ChangePassword uses, so the caller's own tab survives the revocation.
+    const tokenId = extractSid(req);
+    if (!tokenId) throw new UnauthorizedException('Cannot identify session.');
+    return this.accountProfile.setInitialPassword(
+      req.context.userId, dto.password, dto.username, req.context.requestId, tokenId,
+    );
   }
 
   @Get('me/companies')

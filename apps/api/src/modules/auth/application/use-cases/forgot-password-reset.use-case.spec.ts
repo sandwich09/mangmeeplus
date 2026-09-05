@@ -297,8 +297,12 @@ describe('RequestEmailChangeUseCase', () => {
     assert.equal(sideEffects, 0);
   });
 
-  it('keeps missing users, missing credentials and disabled credentials unauthorized', async () => {
-    for (const user of [null, { credential: null }, {
+  // A *missing* credential is no longer in this list (P10-L §15.4): a LINE-first account was never
+  // issued a password, so demanding one locked it out of ever setting a recovery email. That path
+  // is covered in `account-profile.use-case.spec.ts`. A DISABLED credential is a different fact —
+  // access was taken away — and stays 401.
+  it('keeps missing users and disabled credentials unauthorized', async () => {
+    for (const user of [null, {
       credential: { status: 'DISABLED', passwordHash: hashPassword('synthetic-current-password') },
     }]) {
       let transactions = 0;

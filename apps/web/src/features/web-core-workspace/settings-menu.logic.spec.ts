@@ -10,6 +10,7 @@ describe('settings menu', () => {
     assert.deepEqual(
       SETTINGS_MENU_ITEMS.map(({ title, href }) => [title, href]),
       [
+        ['ข้อมูลร้านและบัญชีของฉัน', '/settings/profile'],
         ['เชื่อมต่อ LINE OA', '/settings/line-oa'],
         ['สินค้าและบริการสำหรับ CRM', '/settings/crm-catalog'],
         ['สาขา', '/settings/branches'],
@@ -23,9 +24,10 @@ describe('settings menu', () => {
     for (const item of SETTINGS_MENU_ITEMS) assert.ok(findRoutePermissionRule(item.href), item.key);
   });
 
-  it('shows all seven cards to a fully permitted user', () => {
+  it('shows all eight cards to a fully permitted user', () => {
     // account-security is parked (owner decision 2026-08-05), so its card no longer counts.
     assert.equal(filterSettingsMenuItems([
+      'company.setup.read',
       'crm.channel.manage',
       'inventory.product.read',
       'account.password.change',
@@ -33,7 +35,7 @@ describe('settings menu', () => {
       'tax.profile.read',
       'ledger.posting-rule.read',
       'ledger.account.read',
-    ]).length, 7);
+    ]).length, 8);
   });
 
   it('filters every card by any listed permission', () => {
