@@ -40,6 +40,8 @@ function harness(options: {
   priorMemberships?: Array<{
     userId: string;
     owner: boolean;
+    /** Defaults to ACTIVE. `DRAFT` is an employee draft nobody finished — never a shop. */
+    status?: string;
     company: { name: string; status: string; planTerm: { termDisabledAt: Date | null } | null };
   }>;
 } = {}) {
@@ -70,9 +72,13 @@ function harness(options: {
       companyMembership: {
         findMany: async (args: any) => {
           if (!args?.where?.userId) return options.membershipsByPhone ?? [];
-          // The OWNER filter is HONOURED: dropping it has to make the employee case red.
-          const ownerOnly = args?.where?.roles?.some?.role?.key === 'OWNER';
-          return (options.priorMemberships ?? []).filter((m) => m.owner || !ownerOnly);
+          // Both filters are HONOURED: dropping the OWNER role makes the employee case red, and
+          // dropping the DRAFT exclusion makes the abandoned-draft case red.
+          return (options.priorMemberships ?? []).filter((m) => {
+            if (args?.where?.roles?.some?.role?.key === 'OWNER' && !m.owner) return false;
+            if (args?.where?.status?.not && (m.status ?? 'ACTIVE') === args.where.status.not) return false;
+            return true;
+          });
         },
       },
       externalIdentity: { findMany: async () => options.identities ?? [] },
@@ -207,11 +213,11 @@ describe('SignupAdminQueueUseCase.list', () => {
     ...REQUEST, id: 'signup-line', source: 'line-oa', contactEmail: null, taxId: null,
     lineProviderUserId: 'Uline-1', lineChannelId: 'channel-1',
   };
-  const state = async (company: any, owner = true) => {
+  const state = async (company: any, owner = true, status?: string) => {
     const h = harness({
       requests: [lineRow],
       identities: [{ providerUserId: 'Uline-1', providerChannelId: 'channel-1', userId: 'user-old' }],
-      priorMemberships: [{ userId: 'user-old', owner, company }],
+      priorMemberships: [{ userId: 'user-old', owner, ...(status ? { status } : {}), company }],
     });
     const { items } = await h.useCase.list(NOW);
     return items[0]!;
@@ -228,6 +234,27 @@ describe('SignupAdminQueueUseCase.list', () => {
     assert.equal(expired.priorCompanyState, 'EXPIRED');
     const running = await state({ name: 'ร้านเก่า', status: 'ACTIVE', planTerm: null });
     assert.equal(running.priorCompanyState, 'ACTIVE');
+  });
+
+  /**
+   * The chat's `ownsTermExpiredCompany` requires DISABLED *and* a `termDisabledAt` stamp. Reading
+   * the stamp alone called a SUSPENDED shop "หมดอายุ" while the assistant called the same shop
+   * something else — and an operator told a customer to renew a suspension only an admin can lift.
+   */
+  it('calls a shop expired on exactly the pair the LINE assistant uses', async () => {
+    const suspended = await state({
+      name: 'ร้านเก่า', status: 'SUSPENDED', planTerm: { termDisabledAt: new Date('2026-08-01') },
+    });
+    assert.equal(suspended.priorCompanyState, 'CLOSED', 'a suspension is not an expiry');
+    const disabledByHand = await state({ name: 'ร้านเก่า', status: 'DISABLED', planTerm: { termDisabledAt: null } });
+    assert.equal(disabledByHand.priorCompanyState, 'CLOSED');
+  });
+
+  // An employee draft an admin started and abandoned is a half-filled form, not a shop.
+  it('never names a shop from a membership that never got past DRAFT', async () => {
+    const draft = await state({ name: 'ร้านร่าง', status: 'ACTIVE', planTerm: null }, true, 'DRAFT');
+    assert.equal(draft.priorCompanyName, undefined);
+    assert.equal(draft.priorCompanyState, undefined);
   });
 
   // Review B1: the employee whose LINE was linked by the staff QR. Their identity points at an

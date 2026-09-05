@@ -23,6 +23,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../../generated/prisma/client';
 import { currentLegalRelease } from '../auth/application/legal-acceptance.service';
 import { LegalAcceptanceService } from '../auth/application/legal-acceptance.service';
+import { LinkLineIdentityUseCase } from '../auth/application/use-cases/link-line-identity.use-case';
 import { UnlinkLineIdentityUseCase } from '../auth/application/use-cases/unlink-line-identity.use-case';
 import { resolveCompanyForLineUser } from '../line-ai/application/use-cases/process-line-webhook.use-case';
 import { CreateCompanyOnboardingUseCase } from '../system-onboarding/application/use-cases/create-company-onboarding.use-case';
@@ -83,6 +84,13 @@ function wire(client: PrismaClient, options: { adminUserId: string; approvalMode
     submit: new SubmitLineSignupUseCase(prisma, config, core, lineIdToken, rateLimit, adminDirectory, provision, opsAlerts),
     queue: new SignupAdminQueueUseCase(prisma, core, { revokeAll: async () => 0 } as any, claimEmail, provision, lineNotify),
     unlink: new UnlinkLineIdentityUseCase(prisma),
+    // The OTHER writer of this identity slot (review MED-1). Real, over the same client, so the two
+    // flows contend for the same advisory key exactly as they do in production.
+    link: new LinkLineIdentityUseCase(
+      { verify: async () => ({ subject: options.lineUserId }) } as any,
+      prisma,
+      { lineMessagingChannelId: CHANNEL, lineLoginChannelId: CHANNEL, isProduction: false } as any,
+    ),
     linePushes,
   };
 }
@@ -106,6 +114,9 @@ async function seedOldShop(
   // 'OWNER' is the repeat-trial case. 'STAFF' is review B1: an employee whose LINE was linked by
   // the staff QR holds a membership in their EMPLOYER's shop, which is not a trial they ever had.
   roleKey: 'OWNER' | 'STAFF' = 'OWNER',
+  // DRAFT is an employee draft nobody finished. Onboarding writes the owner's membership ACTIVE
+  // inside the company transaction, so a shop that really opened never sits in DRAFT.
+  membershipStatus: 'ACTIVE' | 'DRAFT' = 'ACTIVE',
 ) {
   const oldUserId = `${tag}-old-user`;
   const oldCompanyId = `${tag}-old-company`;
@@ -117,7 +128,7 @@ async function seedOldShop(
     data: { id: oldCompanyId, name: `ร้านเก่า ${tag}`, businessCategory: 'RETAIL', status: 'DISABLED' },
   });
   await client.companyMembership.create({
-    data: { id: `${tag}-old-membership`, companyId: oldCompanyId, userId: oldUserId, status: 'ACTIVE' },
+    data: { id: `${tag}-old-membership`, companyId: oldCompanyId, userId: oldUserId, status: membershipStatus },
   });
   await client.membershipRole.create({ data: { membershipId: `${tag}-old-membership`, roleId: role.id } });
   await client.companyPlanTerm.create({
@@ -363,6 +374,95 @@ describe('a stale LINE identity on real PostgreSQL', { skip: !databaseUrl }, () 
       for (const row of rows) assert.equal(row.priorCompanyName, undefined);
     } finally {
       await cleanup(client, tag, lineUserId);
+      await client.$disconnect();
+    }
+  });
+
+  /**
+   * Review LOW-4. An admin starts an employee draft, gives it the OWNER role and never finishes it.
+   * That is a half-filled form, not a shop — counting it would send a genuine first-time applicant
+   * to manual review and name a company nobody ever opened.
+   */
+  it('does not treat an abandoned DRAFT membership as a shop this person had', async () => {
+    const client = connect();
+    const tag = `linesignup-${randomUUID().slice(0, 8)}`;
+    const lineUserId = `U${tag}`;
+    try {
+      const seeded = await seedOldShop(client, tag, lineUserId, 'OWNER', 'DRAFT');
+      const h = wire(client, { adminUserId: seeded.adminUserId, lineUserId, approvalMode: 'AUTO_FREE' });
+      await h.unlink.execute({ userId: seeded.oldUserId, requestId: `${tag}-unlink` });
+
+      const accepted = await h.submit.execute(submitCmd(`${tag}-draft`), NOW);
+
+      assert.equal(accepted.state, 'COMPLETED', 'a draft nobody finished is not a previous trial');
+      const submitted = await client.auditLog.findFirstOrThrow({
+        where: { action: 'signup.line.submitted', targetId: accepted.requestId },
+      });
+      assert.equal((submitted.metadataJson as any).repeatTrial, false);
+      const rows = (await h.queue.list()).items.filter((item) => item.requestId === accepted.requestId);
+      for (const row of rows) assert.equal(row.priorCompanyName, undefined);
+    } finally {
+      await cleanup(client, tag, lineUserId);
+      await client.$disconnect();
+    }
+  });
+
+  /**
+   * Review MED-1, the cross-flow race. `link-line-identity` re-points the SAME row from a flow an
+   * owner can trigger at any moment. Both sides read then update, so before the shared advisory key
+   * the second UPDATE simply waited on the row lock and overwrote the first — a link landing beside
+   * a fresh provisioning took the LINE credential off the owner of the shop just built, silently.
+   */
+  it('lets link and approve contend for one stale slot without either overwriting the other', async () => {
+    const client = connect();
+    const tag = `linesignup-${randomUUID().slice(0, 8)}`;
+    const lineUserId = `U${tag}`;
+    try {
+      const seeded = await seedOldShop(client, tag, lineUserId);
+      const h = wire(client, { adminUserId: seeded.adminUserId, lineUserId });
+      await h.unlink.execute({ userId: seeded.oldUserId, requestId: `${tag}-unlink` });
+
+      // The other claimant: a real account with a live shop, linking this same LINE to itself.
+      const rivalUserId = `${tag}-rival-user`;
+      const rivalCompanyId = `${tag}-rival-company`;
+      await client.user.create({ data: { id: rivalUserId, displayName: `${tag} rival`, status: 'ACTIVE' } });
+      await client.company.create({ data: { id: rivalCompanyId, name: `ร้านคู่แข่ง ${tag}`, businessCategory: 'RETAIL' } });
+      await client.companyMembership.create({ data: { companyId: rivalCompanyId, userId: rivalUserId, status: 'ACTIVE' } });
+
+      const accepted = await h.submit.execute(submitCmd(`${tag}-race`), NOW);
+      const [approve, link] = await Promise.allSettled([
+        h.queue.decide(accepted.requestId, { action: 'APPROVE' }, seeded.adminUserId, `${tag}-approve`, URLS),
+        h.link.execute({ userId: rivalUserId, idToken: 'aaaa.bbbb.cccc', requestId: `${tag}-link` }),
+      ]);
+
+      const winners = [approve, link].filter((r) => r.status === 'fulfilled');
+      assert.equal(winners.length, 1, 'exactly one claims the slot — never both');
+      const loser = [approve, link].find((r) => r.status === 'rejected') as PromiseRejectedResult;
+      // Whichever order the lock hands out, the loser is TOLD, by name. `line_identity_already_linked`
+      // is provisioning refusing a slot that moved; `line_linked_elsewhere` is the link refusing one.
+      assert.match(String(loser.reason), /line_identity_already_linked|line_linked_elsewhere/);
+
+      const identities = await client.externalIdentity.findMany({
+        where: { provider: 'LINE', providerChannelId: CHANNEL, providerUserId: lineUserId },
+      });
+      assert.equal(identities.length, 1, 'the unique slot still holds exactly one row');
+      const request = await client.companySignupRequest.findUniqueOrThrow({ where: { id: accepted.requestId } });
+      const expectedOwner = approve.status === 'fulfilled' ? request.ownerUserId : rivalUserId;
+      assert.equal(identities[0]!.userId, expectedOwner, 'and it belongs to the winner, not the last writer');
+      assert.equal(identities[0]!.status, 'ACTIVE');
+      if (approve.status === 'rejected') {
+        // The shop is not lost: the application parks with a code an admin can act on and retry.
+        assert.equal(request.state, 'PROVISIONING_FAILED');
+        assert.equal(request.failureCode, 'line_identity_already_linked');
+      }
+      await client.lineCompanyContext.deleteMany({ where: { lineUserId } });
+      await client.companyMembership.deleteMany({ where: { userId: rivalUserId } });
+      await client.company.deleteMany({ where: { id: rivalCompanyId } });
+      await client.user.deleteMany({ where: { id: rivalUserId } });
+    } finally {
+      await cleanup(client, tag, lineUserId, {
+        companyIds: [`${tag}-rival-company`], userIds: [`${tag}-rival-user`],
+      });
       await client.$disconnect();
     }
   });

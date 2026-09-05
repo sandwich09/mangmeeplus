@@ -14,7 +14,12 @@ import { SignupClaimEmailService } from './signup-claim-email.service';
 import { ProvisionSignupUseCase } from './provision-signup.use-case';
 import { LineSignupNotifyService } from './line-signup-notify.service';
 import { daysSinceApproval } from '../domain/account-claim.logic';
-import { SIGNUP_SOURCE_LINE_OA, isStaleProvisioning, type CompanySignupState } from '../domain/company-signup.logic';
+import {
+  OWNED_COMPANY_MEMBERSHIP,
+  SIGNUP_SOURCE_LINE_OA,
+  isStaleProvisioning,
+  type CompanySignupState,
+} from '../domain/company-signup.logic';
 
 /** Everything an admin still has a decision or an action to take on (spec §4C, §4D). */
 const QUEUE_STATES: readonly CompanySignupState[] = ['PENDING_REVIEW', 'EMAIL_PENDING', 'EMAIL_FAILED', 'EXPIRED'];
@@ -117,10 +122,9 @@ export class SignupAdminQueueUseCase {
     if (applicantUserIds.length === 0) return new Map();
 
     const memberships = await this.prisma.client.companyMembership.findMany({
-      // OWNER only (review B1): an employee whose LINE was linked by the staff QR carries a
-      // membership in their EMPLOYER's shop, and naming that shop here would tell the operator
-      // this person is repeating a trial they never had.
-      where: { userId: { in: applicantUserIds }, roles: { some: { role: { key: 'OWNER' } } } },
+      // The same predicate submit's AUTO_FREE guard uses, from one definition: the chip must name
+      // exactly the shops that made the machine step aside, never a different set.
+      where: { userId: { in: applicantUserIds }, ...OWNED_COMPANY_MEMBERSHIP },
       orderBy: { createdAt: 'asc' },
       select: {
         userId: true,
@@ -133,11 +137,13 @@ export class SignupAdminQueueUseCase {
       if (byUserId.has(row.userId)) continue;
       byUserId.set(row.userId, {
         name: row.company.name,
-        // Same pair the LINE assistant uses to tell an expiry from an admin-ordered close, so the
-        // queue and the chat cannot describe one shop two different ways.
-        state: row.company.status === 'ACTIVE'
-          ? 'ACTIVE'
-          : row.company.planTerm?.termDisabledAt ? 'EXPIRED' : 'CLOSED',
+        // EXACTLY the pair `ownsTermExpiredCompany` uses in the LINE assistant: DISABLED *and* a
+        // `termDisabledAt` stamp. Testing the stamp alone read a SUSPENDED shop as "หมดอายุ" while
+        // the chat called the same shop something else — one shop, two stories, and the operator
+        // would offer a renewal for a suspension only an admin can lift.
+        state: row.company.status === 'DISABLED' && row.company.planTerm?.termDisabledAt
+          ? 'EXPIRED'
+          : row.company.status === 'ACTIVE' ? 'ACTIVE' : 'CLOSED',
       });
     }
 

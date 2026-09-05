@@ -14,6 +14,7 @@ import {
   type VatFactStatus,
 } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
+import { lineIdentityLockKey } from '../../../../common/database/line-identity-lock';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { emitSecurityEvent, SECURITY_EVENT } from '../../../../common/logger/security-event';
 import { normalizeTaxId } from '../../../data-model-core/domain/logic/company-legal-identity.logic';
@@ -386,14 +387,16 @@ export class CreateCompanyOnboardingUseCase {
           providerUserId: lineOwner.providerUserId,
           providerChannelId: lineOwner.channelId,
         };
-        // Review B3, defence in depth. The open-application index and the provisioning claim lock
-        // already keep two runs for one LINE account apart, but nothing INSIDE this transaction
-        // did: two concurrent onboardings could both read the same UNLINKED row and both re-point
-        // it, and the loser's shop would be left standing with no way in. Same advisory-lock shape
-        // the signup core uses for its own fences, keyed on the identity slot, so the read below IS
-        // the decision — nobody else can move the row until this transaction commits.
-        const identityLockKey = `line-identity:${lineOwner.channelId}:${lineOwner.providerUserId}`;
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${identityLockKey}, 0))`;
+        // The lock covers exactly one thing: deciding and writing THIS identity slot. Everything
+        // else in this transaction is protected by its own fences (the open-application index, the
+        // provisioning claim, the `companyId` stamp), and none of them reach across modules.
+        //
+        // `link-line-identity.use-case.ts` re-points the very same row, from a different flow that
+        // an owner can trigger at any moment. Both sides read then update, so row locks alone would
+        // let the second UPDATE queue behind the first and overwrite it — taking the LINE
+        // credential off the owner of the shop this transaction is building. Both take THIS key,
+        // and both re-read inside it, which is what makes the read below the decision.
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lineIdentityLockKey(lineOwner.channelId, lineOwner.providerUserId)}, 0))`;
         const existingIdentity = await tx.externalIdentity.findUnique({
           where: { provider_providerChannelId_providerUserId: identityKey },
           select: { id: true, userId: true, status: true },

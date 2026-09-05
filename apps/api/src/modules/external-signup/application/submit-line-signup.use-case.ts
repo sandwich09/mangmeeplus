@@ -11,7 +11,7 @@ import {
   type LegalSignupEvidence,
 } from '../../auth/application/legal-acceptance.service';
 import { bangkokDayKey, bangkokDayStart, isBusinessHours } from '../domain/business-hours.logic';
-import { SIGNUP_SOURCE_LINE_OA } from '../domain/company-signup.logic';
+import { OWNED_COMPANY_MEMBERSHIP, SIGNUP_SOURCE_LINE_OA } from '../domain/company-signup.logic';
 import {
   lineExternalSignupId,
   normalizeLineCompanyName,
@@ -278,8 +278,10 @@ export class SubmitLineSignupUseCase {
    * account", and onboarding's `externalIdentity.create` hit the constraint — a generic 409 and a
    * PROVISIONING_FAILED row that failed identically on every admin retry.
    *
-   * Four outcomes and no fifth: attach, refuse, refuse, or a new account whose provisioning
-   * re-points the stale row. Anything this does not recognise refuses rather than guesses.
+   * Four outcomes: attach, refuse (blocked account), refuse (disabled identity), or a new account
+   * whose provisioning re-points the stale row. The trailing non-ACTIVE branch is unreachable
+   * against today's three-value enum — it is the fail-closed default for a status added later,
+   * not a case anything can currently produce.
    */
   private async resolveLineIdentity(
     providerUserId: string,
@@ -307,7 +309,8 @@ export class SubmitLineSignupUseCase {
   }
 
   /**
-   * An OWNER membership, in any status: a shop that was closed is still a trial this person had.
+   * An OWNER membership that actually came into being. A shop that was closed, suspended or
+   * disabled is still a trial this person had; one that never got past DRAFT is not.
    *
    * OWNER and not "any membership" (review B1). An employee whose LINE was linked by the staff QR
    * carries a membership in their EMPLOYER's shop — counting it flagged their own first shop as a
@@ -315,7 +318,7 @@ export class SubmitLineSignupUseCase {
    */
   private async hasOwnedCompany(userId: string): Promise<boolean> {
     const owned = await this.prisma.client.companyMembership.count({
-      where: { userId, roles: { some: { role: { key: 'OWNER' } } } },
+      where: { userId, ...OWNED_COMPANY_MEMBERSHIP },
     });
     return owned > 0;
   }

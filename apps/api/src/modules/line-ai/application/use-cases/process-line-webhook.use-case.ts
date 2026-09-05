@@ -3602,6 +3602,9 @@ export class ProcessLineWebhookUseCase {
     await this.prisma.client.lineCompanyContext.upsert({
       where: { lineUserId: event.lineUserId },
       create: { lineUserId: event.lineUserId, companyId: selected.companyId, selectedAt: new Date() },
+      // `aiPausedUntil` is KEPT here on purpose, unlike the signup and link paths that clear it.
+      // The same person is switching between their own shops mid-conversation; the §8 hold means a
+      // human is handling this thread, and typing a shop name is not a request to hand it back.
       update: { companyId: selected.companyId, selectedAt: new Date() },
     });
     await this.audit.log({

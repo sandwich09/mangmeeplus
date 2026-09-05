@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { ConflictException, Logger, NotFoundException } from '@nestjs/common';
+import { lineIdentityLockKey } from '../../../../common/database/line-identity-lock';
 import { CreateCompanyOnboardingUseCase } from './create-company-onboarding.use-case';
 import { verifyPassword } from '../../../auth/domain/logic/password-credential.logic';
 import { ALL_FEATURE_ENTITLEMENT_KEYS, FEATURE_PACKAGE_PRESETS } from '@watchdog-bms/contracts';
@@ -1341,9 +1342,12 @@ describe('CreateCompanyOnboardingUseCase P29 default term', () => {
     await new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock).execute(lineOwnerCmd());
 
     assert.deepEqual(prisma.identityCreates(), [], 'the unique slot is already taken by that row');
-    // Review B3: read and write are serialised on the slot itself, so two concurrent onboardings
-    // cannot both look at one UNLINKED row and both claim it.
-    assert.deepEqual(prisma.identityLocks(), [['line-identity:channel-1:Uline-1']]);
+    // Review B3/MED-1: read and write are serialised on the slot itself, so neither a second
+    // onboarding nor a concurrent LINE link can claim the row between the read and the update.
+    // Asserted against the SHARED key builder AND against its literal — the link use-case takes the
+    // same one, and a silent divergence there would be a lock that locks nothing.
+    assert.deepEqual(prisma.identityLocks(), [[lineIdentityLockKey('channel-1', 'Uline-1')]]);
+    assert.deepEqual(prisma.identityLocks()[0], ['line-identity:channel-1:Uline-1']);
     const update = prisma.identityUpdates()[0];
     assert.deepEqual(update.where, { id: 'ext-old' });
     assert.equal(update.data.userId, 'owner-1', 'it now belongs to the owner of the new shop');

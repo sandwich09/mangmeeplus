@@ -34,7 +34,7 @@ function harness(options: {
    * What the account behind that identity already belongs to. Only an OWNER membership makes this a
    * repeat trial — an employee whose LINE was linked by the staff QR is opening their FIRST shop.
    */
-  memberships?: Array<{ owner: boolean }>;
+  memberships?: Array<{ owner: boolean; status?: string }>;
   verifyThrows?: Error;
   createThrows?: unknown;
   /** null = a verified token that carries no profile name, which LINE permits. */
@@ -62,13 +62,15 @@ function harness(options: {
           : null;
       },
     },
-    // The OWNER role filter is HONOURED: dropping it from the query has to turn an employee's
-    // first shop into a "repeat trial", which is exactly the regression this fake exists to catch.
+    // Both filters are HONOURED. Dropping the OWNER role turns an employee's first shop into a
+    // "repeat trial"; dropping the DRAFT exclusion turns a half-filled employee draft into one.
+    // A fake that ignored the where-clause would report green for either regression.
     companyMembership: {
-      count: async (args: any) => {
-        const ownerOnly = args?.where?.roles?.some?.role?.key === 'OWNER';
-        return (options.memberships ?? []).filter((m) => m.owner || !ownerOnly).length;
-      },
+      count: async (args: any) => (options.memberships ?? []).filter((m) => {
+        if (args?.where?.roles?.some?.role?.key === 'OWNER' && !m.owner) return false;
+        if (args?.where?.status?.not && (m.status ?? 'ACTIVE') === args.where.status.not) return false;
+        return true;
+      }).length,
     },
     companySignupRequest: {
       count: async (args: any) => { capCounts.push(args); return options.approvedToday ?? 0; },
@@ -339,6 +341,35 @@ describe('SubmitLineSignupUseCase — where the application goes', () => {
 
     assert.equal(result.state, 'COMPLETED', 'their first shop is a first shop');
     assert.equal(h.audits[0].data.metadataJson.repeatTrial, false);
+  });
+
+  /**
+   * An employee draft an admin started and abandoned is a half-filled form, not a shop. Onboarding
+   * writes the owner's membership ACTIVE inside the company transaction, so a shop that was really
+   * opened never sits in DRAFT — counting DRAFT could only ever produce a false repeat trial.
+   */
+  it('does not count an abandoned DRAFT membership as a shop this person had', async () => {
+    const h = harness({
+      approvalMode: 'AUTO_FREE',
+      identity: { userId: 'user-old', status: 'UNLINKED' },
+      memberships: [{ owner: true, status: 'DRAFT' }],
+    });
+    const result = await h.useCase.execute(CMD, NOW);
+
+    assert.equal(result.state, 'COMPLETED');
+    assert.equal(h.audits[0].data.metadataJson.repeatTrial, false);
+  });
+
+  it('still counts a shop that was closed, suspended or disabled', async () => {
+    for (const status of ['SUSPENDED', 'DISABLED', 'INVITED']) {
+      const h = harness({
+        approvalMode: 'AUTO_FREE',
+        identity: { userId: 'user-old', status: 'UNLINKED' },
+        memberships: [{ owner: true, status }],
+      });
+      const result = await h.useCase.execute(CMD, NOW);
+      assert.equal(result.state, 'PENDING_REVIEW', `${status} membership is still a shop they had`);
+    }
   });
 
   it('still auto-approves a LINE account that has never had a shop', async () => {
