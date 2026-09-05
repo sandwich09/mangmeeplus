@@ -133,7 +133,10 @@ describe('P10-L LIFF signup page', () => {
     const signup = c.lineSignupPage(request());
     assert.ok(signup.includes('<p id="phone-number-error" class="field-error" hidden></p>'));
     assert.ok(signup.includes('<p id="company-name-error" class="field-error" hidden></p>'));
+    // LOW-5: no <p> around it — a hidden button in a visible paragraph still left that paragraph's
+    // margins as a gap under the notice on first paint.
     assert.ok(signup.includes('<button id="notice-action" hidden></button>'), 'the reload affordance');
+    assert.equal(signup.includes('<p><button id="notice-action"'), false, 'no wrapper to collapse');
     assert.ok(signup.includes('<p id="status" class="notice notice-info">'), 'the first paint is already a notice');
   });
 
@@ -511,6 +514,32 @@ describe('P10-L LIFF client script', () => {
       assert.equal(h.elements['notice-action']!.textContent, 'โหลดหน้าใหม่');
     });
 
+    // AUTO_FREE provisions inside the submit, so provision-signup's 409 reaches this page (LOW-2).
+    it('tells the customer not to re-send when the application row is corrupt', async () => {
+      const h = await submitWith(409, JSON.stringify({ message: 'line_signup_evidence_missing' }));
+
+      assert.equal(h.tone(), 'error');
+      assert.match(h.elements.status!.textContent, /ระบบเปิดร้านให้ไม่สำเร็จ/);
+      assert.match(h.elements.status!.textContent, /ไม่ต้องส่งใหม่/, 'nothing on this page can fix it');
+      assert.match(h.elements.status!.textContent, /098-256-5628/);
+    });
+
+    // Nest's ValidationPipe answers `message` as an ARRAY of English constraint strings (LOW-3).
+    it('reads a ValidationPipe 400 as a stale page, not a system fault', async () => {
+      const h = await submitWith(400, JSON.stringify({
+        message: ['phoneNumber should not be empty', 'phoneNumber must match /^[0-9 -]*$/ regular expression'],
+        error: 'Bad Request',
+        statusCode: 400,
+      }));
+
+      assert.equal(h.tone(), 'warning', 'a reloadable page, not a red failure');
+      assert.match(h.elements.status!.textContent, /ข้อมูลในหน้านี้ไม่ครบ/);
+      assert.equal(h.elements['notice-action']!.hidden, false, 'and a way to reload it');
+      // The English constraint strings must never reach a shop owner.
+      assert.equal(h.elements.status!.textContent.includes('should not be empty'), false);
+      assert.equal(h.elements.status!.textContent.includes('regular expression'), false);
+    });
+
     it('falls back to the generic error for a code it has never heard of', async () => {
       const h = await submitWith(500, JSON.stringify({ message: 'line_signup_something_new' }));
 
@@ -534,6 +563,18 @@ describe('P10-L LIFF client script', () => {
       assert.match(h.elements.status!.textContent, /เชื่อมต่อไม่สำเร็จ/);
       assert.match(h.elements.status!.textContent, /ลองใหม่/);
       assert.equal(h.elements.link!.disabled, false);
+      // LOW-4: this branch also catches a 202 that will not parse and a failed status re-read, and
+      // the raw message is then the only diagnostic there is — support must still be able to see it.
+      assert.match(h.elements.detail!.textContent, /Failed to fetch/, 'the technical reason survives');
+      assert.equal(h.elements.detail!.hidden, false);
+    });
+
+    it('keeps the reason when a 202 body will not parse', async () => {
+      const h = await submitWith(202, 'not json at all');
+
+      assert.equal(h.tone(), 'warning');
+      assert.match(h.elements.status!.textContent, /เชื่อมต่อไม่สำเร็จ/, 'the customer gets a sentence');
+      assert.notEqual(h.elements.detail!.textContent, '', 'and support gets the parse error');
     });
 
     it('shows success in the success tone', async () => {

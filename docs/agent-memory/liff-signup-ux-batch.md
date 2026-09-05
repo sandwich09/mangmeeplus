@@ -4,8 +4,9 @@ Status: implemented on `codex/liff-signup-ux-batch`; API suite green; no PR open
 
 Owner: Owner UAT feedback 2026-09-05, from the LIFF signup form opened in LINE on iPhone.
 
-Scope: the eleven UX decisions below, across the five API-served LIFF pages only. No web app, no
-infrastructure, no `package.json`, no pinned files.
+Scope: the fifteen UX decisions below, across the five API-served LIFF pages only. No web app, no
+infrastructure, no pinned files. The only `package.json` edit is appending one spec path (see the
+meta-test note under Verification).
 
 ## Decisions (Owner 2026-09-05)
 
@@ -75,9 +76,31 @@ Owner: *"warning สีเหลือง / ส่งไม่สำเร็จ
     and every id and every string of customer-facing copy is identical. Its PDPA notice opts out of
     the shared `pre` rule via `.consent-notice` so long-form legal text stays at reading size.
 
+## Round 5 — review LOW items (2026-09-05)
+
+12. **LOW-2** `line_signup_evidence_missing` (409 from `provision-signup.use-case.ts:332`) reaches
+    this page because AUTO_FREE provisions inline inside the submit. Error tone; the advice says
+    *not* to re-send, because the row is corrupt rather than incomplete — only support can fix it.
+13. **LOW-3** A 400 carrying no code we know is the global ValidationPipe, whose `message` is an
+    array of English constraint strings. It now maps to a warning with a reload action instead of
+    GENERIC_ERROR: an out-of-step page is reloadable, not a system fault.
+14. **LOW-4** The network branch in `runWith` now passes `errorDetail(error)` through to `#detail`.
+    That branch also catches a 202 whose JSON will not parse, `currentIdToken()` throwing, and a
+    failed status re-read inside the 409 branch — cases where the raw message is the only
+    diagnostic support will ever get.
+15. **LOW-5** Dropped the `<p>` around `#notice-action` (a hidden button inside a visible paragraph
+    still left that paragraph's 16px margins as a gap under the notice) and moved
+    `.consent-notice` from `40vh` to `40dvh` per the project's mobile rule.
+
+**LOW-6 is deliberately NOT done.** The CRM customer-register page is the one LIFF page whose
+audience is the *shop's* customers, not ours, and it now shows a "มั่งมีพลัส" bar above the shop's
+own name. Whether that co-branding is wanted is the Owner's call, not a reviewer's or mine — left
+as-is pending that decision.
+
 **Gotcha for the next editor:** `LIFF_PAGE_SCRIPT` and `LIFF_PAGE_STYLE` are both template
 literals. A backtick in a comment inside either one terminates the template and the file stops
-compiling — write those comments without backticks. This cost two build failures in this batch.
+compiling — write those comments without backticks. This cost three build failures across this
+batch; the compiler catches it immediately, so no test guards it.
 
 Every LIFF page is now built by `liffPageHtml`, so the theme, the tones and the empty-container
 rule reach all five of them from one place.
@@ -87,11 +110,25 @@ so no new origin and no `img-src` edit were needed (`img-src 'self' data:` was a
 
 ## Verification
 
-- `pnpm --filter @watchdog-bms/api test` — the fixed list, exit 0, **0 failing**. Counted from the
-  dot reporter's own output: `pretest` 35 passing, `test` 7794 passing, **7829 total**. (An earlier
-  revision of this file said 7810 before the tone work landed; an independent reviewer measured
-  6465/6366 by a different method — if the two ever need reconciling, count with
-  `scratchpad/count.py`, which splits the log at the pnpm script banners.)
+- `pnpm --filter @watchdog-bms/api test` — the packaged script, **exit 0**.
+
+  Counts come from the **spec reporter's own summary**, not from counting dot-reporter characters:
+  the packaged scripts use `--test-reporter=dot`, which prints one character per test, emits no
+  summary, and — the reason the earlier numbers in this file were wrong — prints nothing at all for
+  a *skipped* test, so a character count silently overstates "passing" and hides the skips.
+  Re-run the same two file lists with `--test-reporter=spec` (see
+  `scratchpad/run-suite-spec.sh`) and quote these lines:
+
+  | list | tests | pass | fail | skipped |
+  |---|---|---|---|---|
+  | `pretest` | 30 | 16 | 0 | 14 |
+  | `test` | 6480 | 6381 | 0 | 99 |
+
+  Earlier revisions of this file claimed 7810 and then 7829 "passing" from the dot-character
+  method; both were wrong. The round-3 reviewer measured 6477/6378/0/99, and this run is +3 tests
+  on the `test` list — exactly the three added for LOW-2, LOW-3 and LOW-4.
+- The repo has a meta-test, `every spec file is wired into a package.json script`, which is why
+  `liff-page-contrast.spec.ts` had to be appended to `apps/api` `scripts.test`. It passes.
 - `pnpm typecheck` — all **seven** workspaces (design-tokens, config, contracts, workers, web,
   ai-gateway, api), exit 0.
 - `node infra/security/sync-production-maintenance-release-pins.mjs --check` — `exactFiles=45 status=current`.
@@ -102,6 +139,15 @@ so no new origin and no `img-src` edit were needed (`img-src 'self' data:` was a
   3. delete `el.hidden = !text.trim()` → all 3 empty-container tests fail.
   4. pin the tone class to `notice-info` → **12** tests fail across the phone, tone and
      init-failure suites.
+
+## Next
+
+STEP 2, on the coordinator's go, once `codex/line-signup-stale-identity` is in develop: rebase onto
+origin/develop. Two conflicts are expected — `apps/api/package.json` `scripts.test` (keep BOTH
+appended spec paths) and `submitSignup`'s refusal block (keep `signupGuidance()`, and add the
+sibling's 409 codes `line_signup_identity_disabled` and `line_signup_account_blocked` as error-tone
+guidance entries carrying its `SIGNUP_BLOCKED_TH` sentence, so that copy stops being a bare `Error`
+landing in the technical box). Re-run the full gates after.
 - **Screenshots at 390×664 and 375×667** (the reviewer is right that this IS achievable): render the
   HTML to a file, serve the directory with `python3 -m http.server` on 127.0.0.1, and drive
   `http://127.0.0.1:<port>/…`. Confirmed there: the warning notice is yellow with the rule under the

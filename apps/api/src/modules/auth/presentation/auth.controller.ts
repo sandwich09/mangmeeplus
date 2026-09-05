@@ -536,13 +536,16 @@ export class AuthController {
         + '\n    .legal{margin-top:20px;padding:12px;background:var(--ground);border:1px solid var(--line);border-radius:10px;font-size:14px}'
         + '\n    .legal li{margin-bottom:6px}'
         + '\n    .fine{color:var(--muted);font-size:14px}'
+        // No <p> wrapper around the button: a hidden button inside a visible paragraph still left
+        // that paragraph's margins on the page, as a 16px gap under the notice (review LOW-5).
+        + '\n    #notice-action{margin-bottom:12px}'
         // The challenge is 64 hex characters of legal evidence, so it may not be cut off — it wraps
         // mid-string instead, at its own size, in its own block (Owner 2026-09-05, 390px phone).
         + '\n    .challenge{margin:4px 0 0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--muted);overflow-wrap:anywhere;word-break:break-all}',
       content: `      <h1>เปิดร้านใหม่ ทดลองใช้ฟรี</h1>
       <p id="greeting"></p>
       <p id="status" class="notice notice-info">กำลังเตรียมหน้าให้ค่ะ</p>
-      <p><button id="notice-action" hidden></button></p>
+      <button id="notice-action" hidden></button>
       <section id="retry-view" data-view hidden>
         <p>กรุณาเปิดลิงก์นี้จากแอป LINE นะคะ ถ้าเปิดจากเบราว์เซอร์ปกติจะยังสมัครไม่ได้ค่ะ</p>
         <p><button id="retry">ลองอีกครั้ง</button></p>

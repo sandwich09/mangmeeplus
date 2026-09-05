@@ -203,6 +203,9 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     line_signup_already_pending: { tone: 'info', text: 'มีคำขอเดิมรออนุมัติอยู่แล้ว', advice: 'ทีมงานกำลังตรวจสอบให้อยู่ค่ะ พร้อมใช้เมื่อไหร่จะแจ้งในแชทนี้นะคะ' },
     line_signup_disabled: { tone: 'error', text: 'ตอนนี้ยังเปิดให้สมัครทางนี้ไม่ได้', advice: 'ลองใหม่อีกครั้งภายหลัง หรือ' + SUPPORT_TH },
     web_base_url_not_configured: { tone: 'error', text: 'ระบบขัดข้อง ส่งคำขอไม่สำเร็จ', advice: 'ลองใหม่อีกครั้ง หากยังไม่ได้ ' + SUPPORT_TH },
+    // AUTO_FREE provisions inside the submit, so this 409 from provision-signup reaches this page.
+    // The row is corrupt, not incomplete: re-sending cannot fix it, so the advice does not suggest it.
+    line_signup_evidence_missing: { tone: 'error', text: 'ระบบเปิดร้านให้ไม่สำเร็จ', advice: 'ไม่ต้องส่งใหม่นะคะ ' + SUPPORT_TH },
     // From codex/line-signup-stale-identity: the account behind this LINE is suspended, or the
     // identity itself was disabled. Nothing on this page can change either, so the one honest
     // answer is who to call. SIGNUP_BLOCKED_TH is already "what went wrong AND who to call" in a
@@ -212,6 +215,10 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
   };
   /** Used only when the body carried no code we know — the status is then all we have to go on. */
   const SIGNUP_STATUS_GUIDANCE = {
+    // A 400 with no code we know is the global ValidationPipe, whose message is an ARRAY of English
+    // constraint strings. Never readable to a shop owner, and always a page that is out of step
+    // with the DTO — so the answer is a reload, not the generic "system fault".
+    400: { tone: 'warning', text: 'ข้อมูลในหน้านี้ไม่ครบ', advice: 'แตะปุ่มเพื่อโหลดใหม่ แล้วกรอกอีกครั้งนะคะ', action: 'reload' },
     401: { tone: 'error', text: 'เปิดจาก LINE ไม่สำเร็จ', advice: 'ปิดหน้านี้แล้วแตะเมนูใน LINE อีกครั้งนะคะ' },
     403: { tone: 'error', text: 'ตอนนี้ยังเปิดให้สมัครทางนี้ไม่ได้', advice: 'ลองใหม่อีกครั้งภายหลัง หรือ' + SUPPORT_TH },
     503: { tone: 'error', text: 'ระบบขัดข้องชั่วคราว', advice: 'ลองใหม่อีกครั้ง หากยังไม่ได้ ' + SUPPORT_TH }
@@ -297,9 +304,13 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     setMessage(detailEl, detail || '');
   }
 
-  /** The notice plus its advice line, from one guidance entry. */
-  function setGuidance(entry) {
-    setStatus(entry.advice ? entry.text + '\n' + entry.advice : entry.text, '', entry.tone);
+  /**
+   * The notice plus its advice line, from one guidance entry. detail is for the cases where a
+   * technical string is all anyone has to go on — a dropped connection, a body that would not
+   * parse — so support still gets it in #detail while the customer reads the sentence above.
+   */
+  function setGuidance(entry, detail) {
+    setStatus(entry.advice ? entry.text + '\n' + entry.advice : entry.text, detail || '', entry.tone);
     setFieldError(entry.field || '', entry.field ? entry.advice : '');
     if (actionEl) {
       actionEl.hidden = entry.action !== 'reload';
@@ -685,7 +696,9 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
       if (error && error.guidance) {
         setGuidance(error.guidance);
       } else if (mode === 'signup' && signupReady) {
-        setGuidance(NETWORK_GUIDANCE);
+        // Not only the network: a 202 whose JSON will not parse, or a status re-read that fails
+        // inside the 409 branch, land here too — and those leave nothing but the raw message.
+        setGuidance(NETWORK_GUIDANCE, errorDetail(error));
       } else if (mode === 'signup') {
         // signupReady is false until the form is on screen, so this is precisely the init phase.
         setStatus(SIGNUP_INIT_FAIL_TH + '\n' + 'ปิดหน้านี้แล้วแตะเมนูใน LINE อีกครั้งนะคะ', errorDetail(error), 'error');

@@ -85,7 +85,8 @@ export class CustomerLineRegisterController {
       // size and reading colour, in the page's own face rather than monospace.
       style: 'label{display:flex;gap:8px;align-items:flex-start;margin:12px 0}'
         + '\n    #consent{width:22px;height:22px;min-height:0;flex:none}'
-        + '\n    .consent-notice{font-family:inherit;font-size:14px;color:var(--ink);max-height:40vh;overflow-y:auto}',
+        // dvh, not vh: on a phone browser vh ignores the collapsing address bar (project rule).
+        + '\n    .consent-notice{font-family:inherit;font-size:14px;color:var(--ink);max-height:40dvh;overflow-y:auto}',
       content: `      <h1>ลงทะเบียนลูกค้า LINE — ${escapeHtml(companyName)}</h1>
       <pre class="consent-notice">${escapeHtml(PDPA_CONSENT_NOTICE_TEXT)}</pre>
       <label><input id="consent" type="checkbox" required /> <span>ยินยอมตามประกาศความเป็นส่วนตัวนี้</span></label>
