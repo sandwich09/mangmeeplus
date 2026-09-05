@@ -125,6 +125,55 @@ describe('provisioning applies the free-trial term (P29 T3; Owner 2026-09-05)', 
   });
 });
 
+/**
+ * Owner 2026-09-05, second half: "the same free trial" means the same PRODUCT, not only the same
+ * tier row. The AI budget cap and the first-week receipt ceiling were `line-oa`-only, so a web-form
+ * shop on the identical trial tier still spent the PLATFORM default AI budget and read at its full
+ * tier ceiling from day one.
+ */
+describe('the trial guards are the same for both sources (Owner 2026-09-05)', () => {
+  it('caps a web-form trial shop the way a LINE trial shop is capped', async () => {
+    const h = harness();
+    await h.useCase.execute(CMD);
+
+    const term = h.planTermUpserts[0];
+    assert.ok(term, 'a web-form trial shop must get the warm-up guard too');
+    assert.equal(term.where.companyId, 'co-1');
+    assert.equal(term.update.warmupSlipLimit, 10);
+    assert.ok(term.update.warmupUntil.getTime() - Date.now() > 6.5 * 24 * 3600_000);
+    assert.equal(term.create.tierKey, 'FREE_TRIAL_15');
+    assert.equal(term.create.monthlySlipLimit, 15);
+    assert.equal(term.create.termEndsAt.getTime() - term.create.termStartAt.getTime(), 30 * 24 * 3600_000);
+    assert.equal(h.aiConfigUpserts[0]?.create.monthlyBudgetSatang, 8000);
+    assert.equal(h.aiConfigUpserts[0]?.update.monthlyBudgetSatang, 8000);
+  });
+
+  it('writes identical guard rows whichever form the shop came in through', async () => {
+    const web = harness();
+    await web.useCase.execute(CMD);
+    const line = harness({ request: LINE_REQUEST });
+    await line.useCase.execute(CMD);
+
+    const shape = (upsert: any) => ({
+      ...upsert.create,
+      termStartAt: undefined, termEndsAt: undefined, warmupUntil: undefined,
+      update: { ...upsert.update, warmupUntil: undefined },
+    });
+    assert.deepEqual(shape(web.planTermUpserts[0]), shape(line.planTermUpserts[0]));
+    assert.deepEqual(web.aiConfigUpserts[0], line.aiConfigUpserts[0]);
+  });
+
+  it('keeps the genuinely LINE-only guard off a web-form shop', async () => {
+    const h = harness();
+    await h.useCase.execute(CMD);
+
+    // LineCompanyContext points a LINE conversation at a shop. A web-form applicant has no LINE
+    // account yet — the welcome page's link step is where that arrives.
+    assert.deepEqual(h.lineContexts, []);
+    assert.deepEqual(h.linePushes, []);
+  });
+});
+
 describe('mapBusinessCategory', () => {
   it('honours an exact enum match and never guesses free text', () => {
     assert.equal(mapBusinessCategory('RETAIL'), 'RETAIL');
