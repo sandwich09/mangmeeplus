@@ -105,21 +105,27 @@ still passed.
 ## Verification
 
 - `pnpm --filter @watchdog-bms/api test` — pretest 30 tests / 16 pass / 0 fail / 14 skipped;
-  main 6528 tests / 6429 pass / 0 fail / 99 skipped (the skips are the `.pg.spec.ts` files that
+  main 6535 tests / 6436 pass / 0 fail / 99 skipped (the skips are the `.pg.spec.ts` files that
   self-skip without their database env var).
 - `pnpm --filter @watchdog-bms/contracts test` — 206 / 206 / 0.
-- `apps/web` tests — 1494 / 1494 / 0; `next build --webpack` green,
+- `apps/web` tests — 1508 / 1508 / 0; `next build --webpack` green,
   `/system/support-requests` renders dynamic (ƒ).
 - `pnpm -r typecheck` clean; `prisma validate` valid;
   `node infra/security/sync-production-maintenance-release-pins.mjs --check` → status=current,
   and none of the 45 pinned files is in the diff (`apps/web/app/system/layout.tsx` is pinned —
   the nav lives in `SystemHeader.tsx`, which is not).
-- Real Postgres: `src/modules/external-signup/line-support-request.pg.spec.ts`, 7/7 against a
+- Real Postgres: `src/modules/external-signup/line-support-request.pg.spec.ts`, 10/10 against a
   throwaway `postgres:16-alpine` on 127.0.0.1:15444 (`LINE_SUPPORT_TEST_DATABASE_URL`), dropped
   afterwards. Wired into the existing CI Postgres step, one invocation of its own.
-- Mutations, all reverted: stale context instead of membership (5 failures), drop the unreachable
-  alert (3), resume not clearing the pause (5), unlink not clearing the context (3), day-keyed
-  notice instead of request-keyed (1).
+- Mutations, all applied, run and reverted — each killed by at least one test:
+  stale context instead of membership (4 failures), drop the unreachable alert (3), resume not
+  clearing the pause (5), unlink not clearing the context (3), day-keyed notice instead of
+  request-keyed (1), remove the amplification floor (2), purge keyed on `requestedAt` so OPEN rows
+  are deleted (2), `queued` collapsed into `unreachable` (2), remove the web error gate + item
+  clearing + read sequencing (2 — after tightening the assertion; see below), badge without the
+  page subscription (2).
+- Heavy jobs (typechecks, full suites, `next build`) were serialized behind a shared
+  `/tmp/mangmee-heavy.lock` mutex: the machine could not hold two 8 GB `tsc` runs at once.
 
 ## Next
 
