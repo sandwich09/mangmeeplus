@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { IntentRouterAgent, intakeRouterSystemPrompt, isCrisisMessage, isSubjectCompatible, LINE_INTAKE_ROUTER_SYSTEM_PROMPT, ROUTER_ENABLED_TOOLS } from './intent-router.agent';
+import { INTENT_ROUTER_SYSTEM_PROMPT, IntentRouterAgent, intakeRouterSystemPrompt, isCrisisMessage, isSubjectCompatible, LINE_INTAKE_ROUTER_SYSTEM_PROMPT, ROUTER_ENABLED_TOOLS } from './intent-router.agent';
 import { DisabledProvider } from '../infrastructure/provider/disabled.provider';
 import type { ProviderInput } from '../infrastructure/provider/provider.port';
 import { CACHE_MIN_CHARS } from '../infrastructure/provider/bedrock.provider';
@@ -440,18 +440,35 @@ describe('IntentRouterAgent – model routing', () => {
   });
 });
 
-// Owner boundary (2026-07-05): LINE AI is read-first. Router-enabled tools must be read/report
-// only; drafts and evidence stay in the intake flow, and approval/final mutation categories are
-// never model-reachable.
+// Owner boundary (2026-07-05, amended by the draft-control spec 2026-09-05 §5.4): LINE AI is
+// read-first, with ONE exception — the five `draft_update` tools, which only PREVIEW a change to
+// the caller's own recent draft and write nothing. Drafts, evidence, approval and final mutation
+// stay unreachable to the model.
 describe('IntentRouterAgent – read-only tool boundary', () => {
-  it('every router-enabled tool is a read/report/suggestion category tool', async () => {
+  it('every router-enabled tool is read-only, or a draft_update preview tool', async () => {
     const { ROUTER_ENABLED_TOOLS } = await import('./intent-router.agent');
-    const { LINE_TOOL_REGISTRY } = await import('@watchdog-bms/contracts');
+    const { LINE_TOOL_REGISTRY, LINE_DRAFT_UPDATE_TOOLS } = await import('@watchdog-bms/contracts');
     const readOnly = new Set(['read_summary', 'read_detail', 'report', 'suggestion']);
     for (const name of ROUTER_ENABLED_TOOLS) {
       const meta = LINE_TOOL_REGISTRY.find((t) => t.name === name);
       assert.ok(meta, `enabled tool ${name} must exist in registry`);
-      assert.ok(readOnly.has(meta!.category), `enabled tool ${name} must be read-only, got ${meta!.category}`);
+      const previewTool = meta!.category === 'draft_update'
+        && (LINE_DRAFT_UPDATE_TOOLS as readonly string[]).includes(name);
+      assert.ok(readOnly.has(meta!.category) || previewTool,
+        `enabled tool ${name} must be read-only or a draft_update preview, got ${meta!.category}`);
+    }
+  });
+
+  it('the five draft_update tools require the SAME permission as the web draft PATCH', async () => {
+    const { LINE_TOOL_REGISTRY, LINE_DRAFT_UPDATE_TOOLS } = await import('@watchdog-bms/contracts');
+    for (const name of LINE_DRAFT_UPDATE_TOOLS) {
+      const meta = LINE_TOOL_REGISTRY.find((t) => t.name === name)!;
+      // `expense.controller.ts` `updateDraft` → `@RequirePermissions('expense.update')`. LINE must
+      // never be a cheaper way to edit than the web form.
+      assert.deepEqual(meta.requiredPermissions, ['expense.update']);
+      assert.equal(meta.requiresErpPermissionCheck, true);
+      assert.equal(meta.sensitiveAudit, true);
+      assert.equal(meta.category, 'draft_update');
     }
   });
 
@@ -463,6 +480,42 @@ describe('IntentRouterAgent – read-only tool boundary', () => {
     for (const tool of writeLike) {
       assert.ok(!ROUTER_ENABLED_TOOLS.has(tool.name), `${tool.name} (${tool.category}) must not be model-callable`);
     }
+  });
+});
+
+// S-4 (draft-control spec §5.4/§8). Two things are asserted here that nothing else can prove:
+// the prompt actually TELLS the model to use these tools, and the catalog it is given contains
+// them only when this deployment has switched the lane on.
+describe('IntentRouterAgent – draft edit routing (S-4)', () => {
+  it('the system prompt steers an own-record edit to the expense.draft.* tools', () => {
+    const prompt = INTENT_ROUTER_SYSTEM_PROMPT;
+    assert.match(prompt, /expense\.draft\.\* tool with subject expense and agent accounting/);
+    assert.match(prompt, /only PREVIEW the change/);
+    // The refusal half of the same sentence: another shop's document is not routable here.
+    assert.match(prompt, /another shop's, another person's, or another company's document is not routable here/);
+  });
+
+  it('offers the five draft tools in the catalog only when the flag is on', async () => {
+    const catalogFor = async (draftEditEnabled: boolean): Promise<string> => {
+      let catalog = '';
+      const router = new IntentRouterAgent({
+        generateText: async (input: ProviderInput) => {
+          catalog = `${input.cacheableContext ?? ''}${input.userPrompt ?? ''}${input.systemPrompt ?? ''}`;
+          return { ok: true as const, text: JSON.stringify({
+            status: 'ROUTABLE', language: 'th',
+            intents: [{ intent: 'read_detail', subject: 'expense', agent: 'accounting', priority: 1, requiredTools: ['expense.draft.add_charge'], missingContext: [] }],
+            refusals: [], requiresHumanReview: false,
+          }) };
+        },
+      }, draftEditEnabled);
+      const plan = await router.route('บิลเมื่อกี้มีค่าบริการ 10% นะ');
+      // The plan itself is accepted either way — the API executor is the authoritative gate — but
+      // the model may only be OFFERED the tool when the lane exists.
+      assert.equal(plan.status, 'ROUTABLE');
+      return catalog;
+    };
+    assert.ok((await catalogFor(true)).includes('expense.draft.add_charge'), 'flag on: the tool is in the catalog');
+    assert.ok(!(await catalogFor(false)).includes('expense.draft.add_charge'), 'flag off: the tool is absent, not merely refused');
   });
 });
 

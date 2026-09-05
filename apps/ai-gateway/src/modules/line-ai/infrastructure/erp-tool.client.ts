@@ -25,11 +25,19 @@ export type ErpToolContext = {
   /** Chat provenance forwarded verbatim from the API's own turn request (spec §5.5). It carries no
    *  authority — the ERP boundary re-resolves company, permissions and branch scope. */
   chatKeyHash?: string;
+  /** S-4 value grounding (spec §5.4): the message this turn is answering, forwarded verbatim so the
+   *  ERP boundary can refuse a draft edit whose number nobody said. Carries no authority. */
+  groundingText?: string;
   actorDelegations?: Record<string, string[]>;
 };
 
 /** Derive ToolPolicy from ToolMeta for enforcer assertion. */
 export function toolMetaToPolicy(tool: ToolMeta): ToolPolicy {
+  // `draft_update` is deliberately NOT a mutation here (spec §5.4): those five tools only PREVIEW,
+  // and the write they lead to happens on a LINE confirm postback that never passes through this
+  // client. Gating them on AI_FINAL_MUTATION_ENABLED would claim this path can mutate — it cannot.
+  // Their own switch is LINE_AI_DRAFT_EDIT_ENABLED, enforced by the router catalog, the tool loop
+  // and (authoritatively) the API executor.
   const isMutation = tool.category === 'final_mutation' || tool.category === 'approval_request';
   return {
     toolName: tool.name,

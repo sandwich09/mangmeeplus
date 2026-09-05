@@ -5,7 +5,7 @@
  * route BEFORE any source-module use case runs. It emits a route plan only.
  * Uses model prompt when a provider is configured; fails closed when model routing is unavailable.
  */
-import { BUSINESS_DOCUMENT_REASON_CODES, LINE_CORRECTION_FIELDS, LINE_TOOL_REGISTRY, LINE_AI_BUSINESS_SUBJECTS, LINE_AI_CONTEXT_WINDOW_MINUTES, VALUE_ASSUMPTIONS, asIntakeClarificationFields, asIntakeFundingSource, asIntakeRouteIntent, asIntakeRouterCapabilities, asIntakeSemanticOutcome, isAmbiguousDateCandidate, formatDateClarifyQuestion, parseLineAiPreparedAdvisorAnswer, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
+import { BUSINESS_DOCUMENT_REASON_CODES, LINE_CORRECTION_FIELDS, LINE_DRAFT_UPDATE_TOOLS, LINE_TOOL_REGISTRY, LINE_AI_BUSINESS_SUBJECTS, LINE_AI_CONTEXT_WINDOW_MINUTES, VALUE_ASSUMPTIONS, asIntakeClarificationFields, asIntakeFundingSource, asIntakeRouteIntent, asIntakeRouterCapabilities, asIntakeSemanticOutcome, isAmbiguousDateCandidate, formatDateClarifyQuestion, parseLineAiPreparedAdvisorAnswer, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
 import type { AgentIntentPlan, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeCorrectionHints, LineIntakeExpenseItemHint, LineIntakeReimbursementHints, LineIntakeRouteIntent, LineIntakeRoutePlan, LineIntakeRouteRequest } from '@watchdog-bms/contracts';
 import type { IModelProvider } from '../infrastructure/provider/provider.port';
 import { extractJson } from '../../../common/ai/extract-json';
@@ -75,6 +75,7 @@ For an expense total or bounded list over a month, week, or explicit date range,
 Use expense.get_daily_closing only for an explicit one-day operational close: what occurred that day, what remains payable/due/overdue, or what must be reviewed before closing the shop. Never substitute it for a period total.
 Do not use inventory search, stock, or aggregate sales tools to answer product-decision advice such as "ช่วงนี้ควรขายอะไรดี". The current catalog has no grounded product-level demand/margin recommendation; return unsupported_module.
 When the user asks WHY or HOW one of their OWN recent records adds up the way it does — ทำไม, เพราะอะไร, อธิบาย, or a question about บิล/ใบเสร็จ/รายการ/ยอด they just sent or captured in this chat (for example "ทำไม service charge คิดแยกเป็นอีกรายการ", "บิลเมื่อกี้ยอดมาจากไหน", "ใบเสร็จนี้ VAT คิดยังไง") — use expense.explain_record with subject expense and agent accounting. It explains ONE record the user captured through LINE. Never answer that question with expense.list_recent (a period total) or refuse it as out of scope. Use expense.get_detail instead only when the user names a specific record id to look up rather than asking why their recent one looks like that.
+When the user asks to CHANGE their OWN recent record that this chat captured — add or set a service charge/ค่าบริการ/ค่าส่ง/ค่าธรรมเนียม/ทิป, change one line's amount ("แก้ยอดเป็น 500"), remove a line ("ลบบรรทัด 2"), or set the VAT mode/rate ("VAT 7%", "ไม่มี VAT") — use the matching expense.draft.* tool with subject expense and agent accounting. These tools only PREVIEW the change and return the resulting totals; the user still has to press ยืนยัน, so nothing is written by choosing one. Use them only for the user's own recent record in this chat: a request about another shop's, another person's, or another company's document is not routable here. Never invent an amount or a percent that the message does not contain.
 For a bill's purchased/paid items, route by the document's business direction: a supplier/outgoing expense bill uses expense.get_detail; a customer invoice or sales document uses accounting.get_document_detail. The word "สินค้า" alone never makes this an inventory question. Put the canonical record id in missingContext when it is absent so the tool loop asks one clarification instead of guessing.
 Treat domestic sale/purchase, import goods, imported services/PP36, export, zero-rated, exempt, and non-taxable questions as tax read requests. Tax configuration changes, recompute, filing, payment, and issue resolution are mutations and stay blocked.
 Do not use accounting/ledger tools to answer sales, CRM, tax, payroll, bank, or weather questions unless the enabled catalog explicitly says they match.
@@ -146,7 +147,15 @@ export const ROUTER_ENABLED_TOOLS = new Set([
   'reimbursement.get_summary',
   'reimbursement.get_detail',
   'reports.get_monthly_report_summary',
+  // S-4 draft edit (draft-control spec §5.4). Wired in the API executor like every other name in
+  // this list, but shown to the model ONLY while `LINE_AI_DRAFT_EDIT_ENABLED` is on — see
+  // `buildFeatureCatalog`. They are here rather than in ROUTER_DISABLED_TOOLS because "not wired"
+  // and "not switched on for this deployment" are different facts and get different replies.
+  ...LINE_DRAFT_UPDATE_TOOLS,
 ]);
+
+/** The subset of the list above that disappears when the draft-edit flag is off. */
+const ROUTER_DRAFT_UPDATE_TOOLS: ReadonlySet<string> = new Set<string>(LINE_DRAFT_UPDATE_TOOLS);
 
 // Registered-but-waiting tools for modules/read adapters not yet implemented (items 13/14/15/18): the model
 // can see they exist (disabled catalog) and users get a safe channel-unavailable reply; flip
@@ -343,7 +352,10 @@ const SUBSTITUTE_CLARIFY_FALLBACK = 'ต้องการทำใบรับ�
 const REIMBURSEMENT_CLARIFY_FALLBACK = 'รายการนี้คุณสำรองจ่ายเองเพื่อขอเบิกคืน หรือเป็นค่าใช้จ่ายที่บริษัทจ่ายคะ';
 
 export class IntentRouterAgent {
-  constructor(private readonly provider: IModelProvider) {}
+  /** `draftEditEnabled` decides whether the five S-4 draft tools appear in the catalog this router
+   *  hands the model (spec §8). Defaulted false so every existing construction — and every spec —
+   *  keeps the exact pre-S-4 catalog byte-for-byte. */
+  constructor(private readonly provider: IModelProvider, private readonly draftEditEnabled = false) {}
 
   async route(messageText: string, hasAttachment = false, conversationContext?: LineAiConversationContext, openClarifications?: LineAiOpenClarification[]): Promise<AgentIntentPlan> {
     if (isCrisisMessage(messageText)) return crisisPlan(messageText);
@@ -394,7 +406,7 @@ export class IntentRouterAgent {
     const result = await this.provider.generateText({
       systemPrompt: intakeRouterSystemPrompt(caps),
       // The ~21KB glossary + tool catalog is a cost/latency price paid ONLY when fused planning needs it.
-      ...(caps.fusedPlan ? { cacheableContext: JSON.stringify({ businessGlossary: LINE_AI_THAI_BUSINESS_GLOSSARY, ...buildFeatureCatalog() }) } : {}),
+      ...(caps.fusedPlan ? { cacheableContext: JSON.stringify({ businessGlossary: LINE_AI_THAI_BUSINESS_GLOSSARY, ...buildFeatureCatalog(this.draftEditEnabled) }) } : {}),
       messages: [{ role: 'user', text: JSON.stringify(payload) }],
       ...(images.length > 0 ? { images } : {}),
       // Legacy keeps 1000; only the (larger) fused output needs the bigger bound. An image asks for
@@ -519,7 +531,7 @@ export class IntentRouterAgent {
     // prefix can form. Same user turn, same model-visible content.
     // INTENT_ROUTER_SYSTEM_PROMPT is itself under the provider's checkpoint threshold, but this
     // checkpoint sits after it in the prefix and so caches system + catalog together.
-    const catalog = JSON.stringify({ businessGlossary: LINE_AI_THAI_BUSINESS_GLOSSARY, ...buildFeatureCatalog() });
+    const catalog = JSON.stringify({ businessGlossary: LINE_AI_THAI_BUSINESS_GLOSSARY, ...buildFeatureCatalog(this.draftEditEnabled) });
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const result = await this.provider.generateText({
         systemPrompt: INTENT_ROUTER_SYSTEM_PROMPT,
@@ -618,7 +630,7 @@ function isValidZeroToolIntent(intent: AgentIntentPlan['intents'][number] | unde
     && intent.requiredTools.length === 0;
 }
 
-function buildFeatureCatalog(): {
+function buildFeatureCatalog(draftEditEnabled = false): {
   enabledFeatures: Array<{ toolName: string; sourceModule: string; category: string; agentHints: readonly string[]; description: string; businessSubjects: readonly string[]; questionKinds: readonly string[]; requiredInputFields: readonly string[]; optionalInputFields: readonly string[] }>;
   disabledFeatures: Array<{ toolName: string; sourceModule: string; category: string; agentHints: readonly string[]; description: string; businessSubjects: readonly string[]; questionKinds: readonly string[]; requiredInputFields: readonly string[]; optionalInputFields: readonly string[]; reason: string }>;
 } {
@@ -632,7 +644,12 @@ function buildFeatureCatalog(): {
       : { toolName, sourceModule: 'unknown', category: 'unknown', agentHints: [], description: '', businessSubjects: [], questionKinds: [], requiredInputFields: [], optionalInputFields: [] };
   };
   return {
-    enabledFeatures: [...ROUTER_ENABLED_TOOLS].map(toFeature),
+    // Flag off ⇒ the five draft tools are not in the catalog at all. "Offered then refused" would
+    // have advertised an ability this deployment does not have, which is the exact failure the
+    // capability card was built to stop.
+    enabledFeatures: [...ROUTER_ENABLED_TOOLS]
+      .filter((toolName) => draftEditEnabled || !ROUTER_DRAFT_UPDATE_TOOLS.has(toolName))
+      .map(toFeature),
     disabledFeatures: [...ROUTER_DISABLED_TOOLS].map((toolName) => ({ ...toFeature(toolName), reason: 'backend_tool_not_wired' })),
   };
 }

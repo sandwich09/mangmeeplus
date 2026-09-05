@@ -7,7 +7,7 @@
  */
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { LineAiTurnRequest, LineAiAgent, LineAiIntent, LineAiConversationContext, LineAiCoverageItem, LineAiValueCandidates, LineAiAnswerPresentation, LineAiWebLink, AgentIntentPlan, AgentFact, SourceRef, SpecialistOutput, ToolMeta } from '@watchdog-bms/contracts';
-import { LINE_TOOL_REGISTRY, hasToolPermissions, isAmbiguousDateCandidate, isBusinessIntakeIntent, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
+import { LINE_DRAFT_UPDATE_TOOLS, LINE_TOOL_REGISTRY, hasToolPermissions, isAmbiguousDateCandidate, isBusinessIntakeIntent, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
 import { extractJson } from '../../../common/ai/extract-json';
 import type { AgentRunResult } from './agent-types';
 import { IntentRouterAgent, ROUTER_ENABLED_TOOLS, isSubjectCompatible, isZeroToolIntent } from './intent-router.agent';
@@ -18,6 +18,7 @@ import { normalizePlanToolAccess, removeRuntimeBlockedTools } from './tool-avail
 import { preparedSimpleReadEligibility, preparedFamilyKey, type PreparedSimpleReadContext } from '../domain/logic/prepared-simple-read.logic';
 import { activePreparedFamilies, formatPreparedSimpleRead, preparedTerminalReply } from './prepared-simple-read-formatter';
 import { formatExpenseExplainReply } from './expense-explain-formatter';
+import { formatDraftUpdateReply } from './draft-update-formatter';
 import { CoverageCriticAgent } from './coverage-critic.agent';
 import { ErpToolClient, type ErpToolContext } from '../infrastructure/erp-tool.client';
 import { AiGatewayConfigService } from '../../../common/config/ai-gateway-config.service';
@@ -390,6 +391,14 @@ function explainedRecordReply(toolData: Array<{ tool: string; data: unknown }>):
   return entry ? formatExpenseExplainReply(entry.data) : undefined;
 }
 
+/** The deterministic draft-edit answer for this turn, when one of the gathered calls was a
+ *  `draft_update` PREVIEW the formatter could fully verify. Same rule as the explain lane: the
+ *  model never phrases a turn that states somebody's money. */
+function draftUpdateReply(toolData: Array<{ tool: string; data: unknown }>): string | undefined {
+  const entry = toolData.find((item) => (LINE_DRAFT_UPDATE_TOOLS as readonly string[]).includes(item.tool));
+  return entry ? formatDraftUpdateReply(entry.data) : undefined;
+}
+
 /** The tool must be in the OWNING specialist's allowlist (domain isolation) — mirrors createSpecialist:
  *  inventory → InventoryAgent, every other agent → AccountingSummaryAgent. */
 function specialistAllowsTool(agent: LineAiAgent, toolName: string): boolean {
@@ -434,6 +443,11 @@ export class OrchestratorAgent {
       // Spec §5.5: "the record this chat captured" is resolved by the ERP tool, so the chat has to
       // reach it. Opaque hash, never the raw LINE id, and never an authorization input.
       chatKeyHash: req.userContext.chatKeyHash,
+      // S-4 grounding (spec §5.4): the ERP side must be able to prove a number a draft edit would
+      // write was actually SAID, and only the message can prove that. Forwarded verbatim, bounded
+      // at the transport, used by nothing but that check — it grants no authority and is not
+      // stored. Sent only while the draft lane exists, so an off deployment's wire is unchanged.
+      ...(this.config.lineAiDraftEditEnabled ? { groundingText: req.messageText } : {}),
       actorDelegations: req.actorDelegations,
     };
 
@@ -448,7 +462,7 @@ export class OrchestratorAgent {
     }
 
     // Route intents. Fresh, non-narrowed delegation preserved (Phase 3 shadow may then compare).
-    const router = new IntentRouterAgent(provider);
+    const router = new IntentRouterAgent(provider, this.config.lineAiDraftEditEnabled);
     const routedPlan = await router.route(req.messageText, false, req.conversationContext, req.openClarifications);
     this.maybeShadowComparePreparedPlan(req, routedPlan);
     const access = normalizePlanToolAccess(routedPlan, req.messageText, req.userContext);
@@ -570,6 +584,11 @@ export class OrchestratorAgent {
       // asks ONE clarifying question instead of guessing; the follow-up turn resolves it via
       // conversationContext.
       replyText = askUserQuestion;
+    } else if (draftUpdateReply(toolData)) {
+      // Spec §5.4: a preview is rendered by the deterministic Thai template only, so no sentence
+      // can promise a total the server did not compute — and no model text can imply the change
+      // was saved. The API attaches the [ยืนยัน]/[ยกเลิก] buttons to this same turn.
+      replyText = draftUpdateReply(toolData)!;
     } else if (explainedRecordReply(toolData)) {
       // Spec §5.5: an explain answer is rendered by the deterministic Thai template only. No model
       // call, so no sentence can restate someone's money in a number the tool did not return.
@@ -843,7 +862,7 @@ export class OrchestratorAgent {
     provider: IModelProvider,
     budget: number,
   ): Promise<{ outputs: SpecialistOutput[]; askUser?: string }> {
-    const available = availableToolsForPlan(plan, ctx.permissions);
+    const available = availableToolsForPlan(plan, ctx.permissions, this.config.lineAiDraftEditEnabled);
     if (available.size === 0 || budget <= 0) return { outputs: [] };
 
     const outputs: SpecialistOutput[] = [];
@@ -891,7 +910,7 @@ export class OrchestratorAgent {
     budget: number,
   ): Promise<{ unavailable: boolean; outputs: SpecialistOutput[]; askUser?: string; coverage?: LineAiCoverageItem[] }> {
     const generateWithTools = provider.generateWithTools?.bind(provider);
-    const available = availableToolsForPlan(plan, ctx.permissions);
+    const available = availableToolsForPlan(plan, ctx.permissions, this.config.lineAiDraftEditEnabled);
     if (!generateWithTools || available.size === 0 || budget <= 0) return { unavailable: true, outputs: [] };
 
     const todayIso = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
@@ -1099,11 +1118,19 @@ type LoopTool = { agent: LineAiAgent; intent: LineAiIntent; subject: AgentIntent
 
 // The router plans; the loop only executes. Exposed tools are requiredTools intersected with the
 // specialist allowlist, enabled catalog, subject compatibility, and effective permissions.
-function availableToolsForPlan(plan: AgentIntentPlan, permissions: readonly string[]): Map<string, LoopTool> {
+function availableToolsForPlan(
+  plan: AgentIntentPlan,
+  permissions: readonly string[],
+  draftEditEnabled = false,
+): Map<string, LoopTool> {
   const map = new Map<string, LoopTool>();
   for (const intentItem of plan.intents) {
     const specialistTools = allowedToolsForAgent(intentItem.agent);
     for (const name of intentItem.requiredTools) {
+      // S-4: with the flag off the five draft tools are not in the catalog the router saw, so a
+      // plan naming one came from somewhere else. It is dropped here as well as refused by the API
+      // executor — the loop must not even offer the model a tool this deployment will not run.
+      if (!draftEditEnabled && (LINE_DRAFT_UPDATE_TOOLS as readonly string[]).includes(name)) continue;
       if (!specialistTools.has(name) || !ROUTER_ENABLED_TOOLS.has(name) || map.has(name) || !isSubjectCompatible(intentItem.subject, name)) continue;
       const meta = LINE_TOOL_REGISTRY.find((t) => t.name === name);
       if (meta && hasToolPermissions(meta, permissions)) {
