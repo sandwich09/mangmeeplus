@@ -467,10 +467,10 @@ provider แก้ข้อความ) กลับไปบล็อกทั
 3. ใส่ `apt-get upgrade` ตอน build **เฉพาะเมื่อ** Debian มี fixed version แล้วเท่านั้น
 4. ถึงวันหมดอายุให้ประเมินใหม่ — ถ้ายังไม่มี fix ต้องขออนุมัติต่ออายุใหม่ ไม่ใช่ยืด epoch เงียบ ๆ
 
-> ⚠️ `infra/security/evidence-contracts.jq` (`e0_ecr_openssl_unreachable_waiver`) ยังล็อก waiver ไว้ที่
-> ชุด 2026-08 เท่านั้น: `severity == "HIGH"`, `packageName == "openssl"`, approval/expiry ค่าเดิม,
-> `waivers | length <= 4` และ `severityCounts.CRITICAL == critical` — เกต UAT ผ่าน แต่ production
-> security preflight จะปฏิเสธ waiver ชุดใหม่ ต้องแก้ contract นั้นแยกก่อนโปรโมต production
+> ⚠️ waiver หนึ่งแถวต้องเพิ่ม **สองไฟล์**: `infra/docker/ecr-scan-blocking-findings.jq` (เกต UAT/CI) และ
+> `e0_ecr_waiver_rows` ใน `infra/security/evidence-contracts.jq` (production security preflight) —
+> ใส่แค่ไฟล์แรก UAT ผ่านแต่โปรโมต production ถูกปฏิเสธ แก้แล้วรัน
+> `bash infra/security/production-security-preflight.spec.sh` ด้วย
 
 ### โค้ดกับ AWS sync กันแล้ว (2026-08-09)
 
