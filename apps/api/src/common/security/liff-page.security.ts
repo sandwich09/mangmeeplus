@@ -111,6 +111,13 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     signup: 'ส่งคำขอไม่สำเร็จ',
     start: 'เปิดหน้าเว็บไม่สำเร็จ'
   };
+  /**
+   * A signup page that never got past liff.init has no form, so "ส่งคำขอไม่สำเร็จ" describes a
+   * submit that never happened and leaves the reader with nothing to do. The commonest cause is the
+   * page being opened OUTSIDE the LINE app — which is exactly what a rich-menu link does when it is
+   * tapped from a browser — so the hint names that first.
+   */
+  const SIGNUP_INIT_FAIL_TH = 'เปิดหน้าสมัครไม่สำเร็จ';
 
   function compareVersion(actual, minimum) {
     const length = Math.max(actual.length, minimum.length);
@@ -486,7 +493,14 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     try {
       await action();
     } catch (error) {
-      setStatus(FAIL_TITLE_TH[mode] || 'Link failed', error && error.message ? error.message : String(error));
+      const detail = error && error.message ? error.message : String(error);
+      // signupReady is false until the form is on screen, so this is precisely the init phase.
+      if (mode === 'signup' && !signupReady) {
+        setStatus(SIGNUP_INIT_FAIL_TH, detail);
+        showOnly('retry-view');
+      } else {
+        setStatus(FAIL_TITLE_TH[mode] || 'Link failed', detail);
+      }
       if (actionBtn) actionBtn.disabled = false;
     }
   }
@@ -503,6 +517,15 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
   }
 
   if (actionBtn) actionBtn.addEventListener('click', run);
+  // The signup page's own button lives inside the form, which an init failure never renders — so
+  // the retry that recovers from it needs a control of its own.
+  const retryBtn = document.getElementById('retry');
+  if (retryBtn) {
+    retryBtn.addEventListener('click', function () {
+      showOnly('');
+      void run();
+    });
+  }
   // The "ปิด" buttons on the done and waiting cards. Without this they were decoration: a LIFF page
   // has no browser chrome to close it with, so the customer was left staring at a finished screen.
   const closeButtons = document.querySelectorAll('[data-close]');

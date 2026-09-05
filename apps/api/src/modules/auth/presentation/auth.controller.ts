@@ -524,6 +524,10 @@ export class AuthController {
       content: `      <h1>เปิดร้านใหม่ ทดลองใช้ฟรี</h1>
       <p id="greeting"></p>
       <p id="status">กำลังเตรียมหน้าให้ค่ะ</p>
+      <section id="retry-view" data-view hidden>
+        <p>กรุณาเปิดลิงก์นี้จากแอป LINE นะคะ ถ้าเปิดจากเบราว์เซอร์ปกติจะยังสมัครไม่ได้ค่ะ</p>
+        <p><button id="retry">ลองอีกครั้ง</button></p>
+      </section>
       <section id="form-view" data-view hidden>
         <label for="company-name">ชื่อร้าน</label>
         <input id="company-name" type="text" maxlength="${LINE_SIGNUP_COMPANY_NAME_MAX}" autocomplete="organization" />

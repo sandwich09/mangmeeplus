@@ -139,7 +139,11 @@ describe('P10-L LIFF client script', () => {
   /** Runs the shared script in a sandbox with the DOM the signup page provides. */
   const CHALLENGE = 'c'.repeat(64);
 
-  function runSignupScript(statusBody: string, responses: Array<{ status: number; body: string }> = []) {
+  function runSignupScript(
+    statusBody: string,
+    responses: Array<{ status: number; body: string }> = [],
+    options: { initFails?: Error } = {},
+  ) {
     const handlers: Record<string, Array<() => unknown>> = {};
     const listen = (key: string) => (_event: string, handler: () => unknown) => {
       (handlers[key] ??= []).push(handler);
@@ -149,6 +153,7 @@ describe('P10-L LIFF client script', () => {
       detail: { textContent: '' },
       greeting: { textContent: '' },
       link: { disabled: true, addEventListener: listen('link') },
+      retry: { addEventListener: listen('retry') },
       'client-notice': { hidden: true },
       'liff-content': { hidden: false },
       'pending-text': { textContent: '' },
@@ -158,6 +163,7 @@ describe('P10-L LIFF client script', () => {
     };
     const closeButtons = [{ addEventListener: listen('close') }];
     const views = [
+      { id: 'retry-view', hidden: true },
       { id: 'form-view', hidden: true },
       { id: 'done-view', hidden: true },
       { id: 'pending-view', hidden: true },
@@ -176,7 +182,7 @@ describe('P10-L LIFF client script', () => {
         querySelectorAll: (selector: string) => (selector === '[data-close]' ? closeButtons : views),
       },
       liff: {
-        init: async () => {},
+        init: async () => { if (options.initFails) throw options.initFails; },
         isLoggedIn: () => true,
         getDecodedIDToken: () => ({ exp: Math.floor(Date.now() / 1000) + 3600, name: 'นิด' }),
         getIDToken: () => 'aaa.bbb.ccc',
@@ -286,6 +292,42 @@ describe('P10-L LIFF client script', () => {
     assert.equal(views.find((view) => view.id === 'pending-view')!.hidden, false);
     assert.equal(views.find((view) => view.id === 'form-view')!.hidden, true);
     assert.match(elements['pending-text']!.textContent, /นอกเวลาทำการ/);
+  });
+
+  /**
+   * The rich-menu link opened in a plain browser is exactly `liff.init` failing, and the page used to
+   * answer it with the title and "ส่งคำขอไม่สำเร็จ" — a submit that never happened, no form, no retry
+   * and no reason. The start page has always shown a retry; this is the same pattern.
+   */
+  describe('the page never opened at all', () => {
+    const settleTwice = async () => {
+      await new Promise((resolve) => { setImmediate(resolve); });
+      await new Promise((resolve) => { setImmediate(resolve); });
+    };
+
+    it('offers a retry and names the likely cause instead of reporting a failed submit', async () => {
+      const h = runSignupScript('null', [], { initFails: new Error('LIFF init failed') });
+      await settleTwice();
+
+      assert.equal(h.elements.status!.textContent, 'เปิดหน้าสมัครไม่สำเร็จ');
+      assert.notEqual(h.elements.status!.textContent, 'ส่งคำขอไม่สำเร็จ', 'nothing was submitted');
+      assert.equal(h.views.find((view) => view.id === 'retry-view')!.hidden, false);
+      assert.equal(h.views.find((view) => view.id === 'form-view')!.hidden, true);
+      assert.match(h.elements.detail!.textContent, /LIFF init failed/, 'the reason stays readable');
+    });
+
+    it('keeps the submit-failure wording for a submit that really did fail', async () => {
+      const h = runSignupScript('null', [
+        { status: 200, body: 'null' },
+        { status: 500, body: '{"message":"boom"}' },
+      ]);
+      await settleTwice();
+      await h.click('link');
+      await settleTwice();
+
+      assert.equal(h.elements.status!.textContent, 'ส่งคำขอไม่สำเร็จ');
+      assert.equal(h.views.find((view) => view.id === 'retry-view')!.hidden, true);
+    });
   });
 });
 
@@ -449,4 +491,6 @@ describe('ExchangeLiffSessionUseCase', () => {
 
     await assert.rejects(() => useCase.execute({ idToken: 'a.b.c' }), ServiceUnavailableException);
   });
+
+
 });

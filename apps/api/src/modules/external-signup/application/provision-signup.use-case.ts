@@ -340,8 +340,19 @@ export class ProvisionSignupUseCase {
         ...(request.lineDisplayName ? { displayName: request.lineDisplayName } : {}),
       },
       // Spec §5: this LINE account already owns a shop, so the new one joins that account.
-      ...(attachUserId
-        ? { claimedOwner: { ...(request.phoneNumber ? { phoneNumber: request.phoneNumber } : {}), attachUserId } }
+      //
+      // The phone travels on BOTH branches. It used to travel only on the attach one, so a
+      // LINE-first owner's number lived on the application row and nowhere else: the profile page
+      // and `GET /auth/account/security` read `User.phoneNumber` and saw nothing, the day-7 nudge
+      // asked for a number the customer had already given, and the queue's duplicate hint (which
+      // reads the same column) could never fire for a shop this flow opened.
+      ...(attachUserId || request.phoneNumber
+        ? {
+            claimedOwner: {
+              ...(request.phoneNumber ? { phoneNumber: request.phoneNumber } : {}),
+              ...(attachUserId ? { attachUserId } : {}),
+            },
+          }
         : {}),
       legalAcceptance: {
         documentVersion: request.legalDocumentVersion ?? '',
