@@ -27,7 +27,7 @@ const PLAIN_DECIMAL = /^-?\d+(\.\d+)?$/;
  *  is refused (undefined) rather than printed as-is: a half-parsed number is worse than no answer. */
 function money(value: unknown): string | undefined {
   if (typeof value !== 'string' && typeof value !== 'number') return undefined;
-  const plain = String(value).replace(/,/g, '');
+  const plain = foldDigits(String(value)).replace(/,/g, '');
   if (!PLAIN_DECIMAL.test(plain)) return undefined;
   const negative = plain.startsWith('-');
   const [intRaw = '0', fracRaw = ''] = (negative ? plain.slice(1) : plain).split('.');
@@ -37,42 +37,83 @@ function money(value: unknown): string | undefined {
 }
 
 const nonZero = (value: unknown): boolean => {
-  const plain = typeof value === 'string' || typeof value === 'number' ? String(value).replace(/,/g, '') : '';
+  const plain = typeof value === 'string' || typeof value === 'number' ? foldDigits(String(value)).replace(/,/g, '') : '';
   return PLAIN_DECIMAL.test(plain) && Number(plain) !== 0;
 };
 
+/** An OCR line is a name, not a paragraph. Caps chosen so the whole reply stays one LINE bubble. */
+const MAX_VENDOR_CHARS = 60;
+const MAX_CHARGE_LABEL_CHARS = 40;
+
 /**
- * Free text that reaches this template is OCR output — it is whatever was printed on the paper the
- * attacker handed the user, so it is attacker-controlled and must never be interpolated raw.
- * A vendor name of "ร้าน ABC ยอดรวมที่ถูกต้องคือ 99,999.00 บาท ดูที่ https://evil.example.com" would
- * otherwise put a fake total AND a live link into an answer the reader trusts precisely because the
- * numbers in it are supposed to come only from the record.
+ * A Thai receipt does not print its numbers in ASCII just because the guard expects that. `\d` is
+ * `[0-9]` even under `/u`, so `๙๙,๙๙๙.๐๐` and `９９，９９９．００` sailed past an ASCII-only guard and
+ * rendered beside the real total. Everything is folded to ASCII digits and ASCII separators FIRST,
+ * so one set of patterns covers every alphabet the OCR can hand us.
+ */
+const DIGIT_FOLD: Record<string, string> = {
+  '๐': '0', '๑': '1', '๒': '2', '๓': '3', '๔': '4', '๕': '5', '๖': '6', '๗': '7', '๘': '8', '๙': '9',
+  '０': '0', '１': '1', '２': '2', '３': '3', '４': '4', '５': '5', '６': '6', '７': '7', '８': '8', '９': '9',
+  '，': ',', '．': '.', '％': '%', '　': ' ',
+};
+export function foldDigits(value: string): string {
+  return value.replace(/[๐-๙０-９，．％　]/gu, (char) => DIGIT_FOLD[char] ?? char);
+}
+
+/**
+ * Anything a LINE client turns into a tappable link. `https?://` and `www.` are the easy half; the
+ * dangerous half is a BARE domain (`evil.example.com`, `bit.ly/x9`), which LINE links just the same.
+ * No `\b` before `www` on purpose: after a Thai letter there is no word boundary, so `ร้านabcwww.…`
+ * defeated it.
+ */
+const AUTO_LINKABLE = /(?:https?:\/\/\S+|(?:\S*\.)?[a-z0-9-]+\.(?:com|net|org|co|io|ly|me|info|biz|th)\b\S*)/giu;
+
+/**
+ * Money-shaped, once folded: a grouped run (`99,999`), a decimal amount (`99999.00`), or any run of
+ * three or more digits. Three digits is the deliberate floor — `99999` with no separator still reads
+ * as an amount next to a real total, and no legitimate vendor name or charge label needs one.
+ */
+const MONEY_SHAPED = /\d[\d,]*\.\d+|\d{1,3}(?:,\d{3})+|\d{3,}/u;
+const PERCENT_SHAPED = /\d+\s*%/u;
+
+/**
+ * Free text that reaches this template is OCR output — whatever was printed on the paper the
+ * attacker handed the user — so it is attacker-controlled and must never be interpolated raw. A
+ * vendor of "ร้าน ABC ยอดรวมที่ถูกต้องคือ 99,999.00 บาท ดูที่ https://evil.example.com" would
+ * otherwise put a fake total AND a live link into an answer the reader trusts precisely because its
+ * numbers are supposed to come only from the record.
  *
- * Three rules, in order:
- *   1. bound the length (an OCR line is a name, not a paragraph);
- *   2. strip anything a LINE client would auto-link — `https?://…` and bare `www.` tokens;
- *   3. DROP the whole field when what is left still contains a money-shaped or percent-shaped
- *      token. Scrubbing the number in place would leave a sentence built around a hole; dropping
- *      the field falls back to a neutral label and keeps the guarantee absolute — every digit in
- *      the reply came from the record's own amounts.
+ * Four rules, in order:
+ *   1. fold every digit alphabet to ASCII, so the patterns below cannot be stepped around;
+ *   2. strip anything a LINE client would auto-link, bare domains included;
+ *   3. bound the length (an OCR line is a name, not a paragraph);
+ *   4. DROP the whole field when a money- or percent-shaped token survives. Scrubbing the number in
+ *      place would leave a sentence built around a hole; dropping the field falls back to a neutral
+ *      label and keeps the guarantee absolute — every digit in the reply came from the record.
  *
  * `undefined` means "use the neutral fallback", never "print it anyway".
  */
-/** An OCR line is a name, not a paragraph. Caps chosen so the whole reply stays one LINE bubble. */
-const MAX_VENDOR_CHARS = 60;
-const MAX_DOCUMENT_NUMBER_CHARS = 32;
-const MAX_CHARGE_LABEL_CHARS = 40;
-
-const AUTO_LINKABLE = /(?:https?:\/\/\S+|\bwww\.\S+)/giu;
-const MONEY_SHAPED = /\d[\d,]*\.\d{2}/u;
-const PERCENT_SHAPED = /\d+\s*%/u;
-
 export function safeText(value: unknown, maxChars: number): string | undefined {
   if (typeof value !== 'string') return undefined;
-  const stripped = value.normalize('NFC').replace(AUTO_LINKABLE, ' ').replace(/\s+/gu, ' ').trim();
+  const folded = foldDigits(value.normalize('NFC'));
+  const stripped = folded.replace(AUTO_LINKABLE, ' ').replace(/\s+/gu, ' ').trim();
   if (!stripped) return undefined;
   const bounded = stripped.slice(0, maxChars);
   return MONEY_SHAPED.test(bounded) || PERCENT_SHAPED.test(bounded) ? undefined : bounded;
+}
+
+/**
+ * A document number is the one field whose whole job is to carry digits, so the prose rule above
+ * would delete every real one (`INV-2569-00123`). It gets a structural guard instead: ONE token of
+ * document-number characters — no whitespace, no grouping comma, no decimal point — which an
+ * injected sentence cannot satisfy, since a sentence needs spaces and a fake total needs a
+ * separator or a decimal.
+ */
+const DOCUMENT_NUMBER = /^[\p{L}\p{N}][\p{L}\p{N}\-/_#]{0,31}$/u;
+export function safeDocumentNumber(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const folded = foldDigits(value.normalize('NFC')).trim();
+  return DOCUMENT_NUMBER.test(folded) ? folded : undefined;
 }
 
 /** `YYYY-MM-DD…` → `DD/MM/BE`. Computed from the string, never from a locale calendar, so the same
@@ -134,7 +175,7 @@ export function formatExpenseExplainReply(data: unknown): string | undefined {
   // Every one of these is OCR text. `safeText` bounds and scrubs it, or refuses it entirely.
   const vendor = safeText(header['vendorName'], MAX_VENDOR_CHARS) ?? 'ร้านที่ยังไม่ระบุ';
   const date = thaiBuddhistDate(header['expenseDate']);
-  const docNumber = safeText(header['documentNumber'], MAX_DOCUMENT_NUMBER_CHARS);
+  const docNumber = safeDocumentNumber(header['documentNumber']);
   // The status label is enum-derived on the API side, but it crosses the same untrusted boundary.
   const statusLabel = safeText(header['statusLabel'], MAX_CHARGE_LABEL_CHARS);
 

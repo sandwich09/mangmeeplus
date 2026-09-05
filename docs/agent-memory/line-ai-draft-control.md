@@ -95,7 +95,8 @@ separate "ค่าบริการ" account and no report by charge kind.
 
 ## Slice C — `codex/line-ai-explain-record` (S-3, อธิบายรายการของฉัน)
 
-Status: implemented on top of B (`99f99335`), gates green, pushed; not reviewed, no PR.
+Status: implemented on top of B (`5200ba5d`, B rebased onto develop `91704151`), review round 1
+fixed, gates green, pushed; no PR.
 
 What it does — evidence E4 ("ทำไม service charge คิดแยกเป็นอีกรายการนึง") now gets a real answer:
 
@@ -105,8 +106,9 @@ What it does — evidence E4 ("ทำไม service charge คิดแยกเ
   spec §5.5: header (vendor, date, document number, Thai status label), line groups (products /
   `charges` from slice B / discount), the §5.1 identity as real numbers, the assumed-or-unverified
   list read from the OCR provenance the apply service stores (`aiVerifiedFieldsJson` +
-  `aiVerificationSummaryJson`), slice B's `totalsIdentity` verdict passed through when present, and
-  what LINE can change today.
+  `aiVerificationSummaryJson`), slice B's `totalsIdentity` verdict (a required field on
+  `ExpenseDetail` since B's fix-up, so it is read directly rather than defensively), and what LINE
+  can change today.
 - **ONE shared provenance rule.** `apps/api/src/modules/expenses/application/services/line-recent-capture.ts`
   now owns the 24 h window + chat/user/branch/status query that the correction lane's candidate
   loader used to hold inline (`process-line-webhook.use-case.ts`, was `CORRECTION_CANDIDATE_WINDOW_MS`).
@@ -131,8 +133,14 @@ What it does — evidence E4 ("ทำไม service charge คิดแยกเ
 
 Deliberately NOT done: `line-ai-classifier.logic.ts` got no hint — `classifyIntent`/`chooseAgent` are
 referenced only by their own spec, so a hint there would be dead code; the live deterministic seam is
-the orchestrator rescue above. Amount edits over LINE stay `false` (S-4 owns them); the answer says
-so instead of promising them.
+the orchestrator rescue above.
+
+`amountEditableOverLine` stays a hard `false` rather than calling B's `canCorrectAmount`, which is
+the authority. That predicate reads `taxCodeDefinitionId` and `externalTaxCodeSnapshot`, and
+`ExpenseLineSummary` carries neither — evaluating it from the detail would come out MORE permissive
+than the lane really is and could invite a correction the lane then refuses, which is the E3
+dishonesty this slice exists to remove. (It also refuses every record with a charge line, i.e. every
+receipt this tool explains.) S-4 replaces the pair with the real draft-edit capability.
 
 ### Review round 1 (adversarial, at `ca37d6a1`) — fixed
 
@@ -153,7 +161,18 @@ so instead of promising them.
   document noun (`บิลเมื่อกี้`, `ใบเสร็จนี้`), `รายการ` is no longer a document noun, and a
   third-party possessor or a mutation verb vetoes outright. E4 has no document noun at all, so it is
   matched by its own shape (a named additional charge + a "how is it counted" verb). 6 positives and
-  10 negatives are pinned.
+  13 negatives are pinned.
+- **The guard was written in ASCII, on a Thai receipt.** `\d` is `[0-9]` even under `/u`, and
+  `\bwww\.` needs a word boundary Thai text does not give, so four shapes walked straight past the
+  first fix: a Thai-numeral total (`๙๙,๙๙๙.๐๐`), a fullwidth one (`９９，９９９．００`), an integer-only
+  fake total with no decimal part (`99999`), and a bare domain with no scheme (`ร้านabcbit.ly/x9`).
+  Every field is now folded to ASCII digits and separators FIRST (`foldDigits`), the money shape
+  covers grouped, decimal and any run of 3+ digits, and the link pattern includes bare domains.
+  `documentNumber` gets its own structural guard instead of the prose one — it is the one field
+  whose job is digits, so `INV-2569-00123` must survive while a sentence must not: a single token
+  of document-number characters, which an injected sentence (needing spaces) cannot satisfy. Four
+  more corpus rows (**10** now) and three more mutations cover this.
+
 - **The router prompt hint was untested** (the E4 replay forced the wire to fail, so it only ever
   exercised the rescue). `intent-router.agent.spec.ts` now asserts both halves of the hint, and the
   gateway spec stubs the wire for three distinct replays: the router picking the tool itself, the
