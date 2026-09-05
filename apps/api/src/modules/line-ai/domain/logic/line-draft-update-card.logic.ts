@@ -190,6 +190,22 @@ export function draftUpdateAppliedReply(
   ].join('\n');
 }
 
+/** What the correction lane's `proposeDraftUpdate` did with a turn. */
+export type DraftProposalOutcome = 'proposed' | 'answered' | 'not_handled';
+
+/**
+ * Which clarification-ack reason a draft-lane turn records (spec §8 ledger hygiene).
+ *
+ * NEITHER handled outcome writes: a preview is a question the user has still to answer, and a
+ * refusal is a sentence. `correction_apply` would make the ledger read as though money moved on
+ * this turn — the one thing this lane exists never to do without a confirm postback. It is a
+ * function so that claim is testable; inline, it was a ternary whose comment said the opposite of
+ * what it did.
+ */
+export function draftProposalAckReason(outcome: DraftProposalOutcome): 'correction_guidance' {
+  return 'correction_guidance';
+}
+
 export const DRAFT_UPDATE_CANCELLED_REPLY = 'ยกเลิกแล้วค่ะ ยังไม่ได้แก้อะไรในรายการนะคะ';
 /** A second tap on a card whose confirm already went through. Not "expired" — that would deny an
  *  edit the user really did make. */

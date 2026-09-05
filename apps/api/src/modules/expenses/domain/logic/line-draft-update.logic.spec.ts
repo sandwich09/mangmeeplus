@@ -58,6 +58,20 @@ describe('parseLineDraftPatch', () => {
     );
   });
 
+  // L13: a "service charge" larger than the bill it is charged on is a misread percent sign or a
+  // hostile number, never an instruction worth previewing.
+  it('bounds a charge percent to (0, 100]', () => {
+    for (const percentOfSubtotal of ['0', '-5', '101', '9999']) {
+      assert.deepEqual(
+        parseLineDraftPatch('expense.draft.add_charge', { kind: 'SERVICE_CHARGE', percentOfSubtotal }),
+        { ok: false, reason: 'invalid_percent' },
+        percentOfSubtotal,
+      );
+    }
+    assert.equal(parseLineDraftPatch('expense.draft.add_charge', { kind: 'SERVICE_CHARGE', percentOfSubtotal: '100' }).ok, true);
+    assert.equal(parseLineDraftPatch('expense.draft.add_charge', { kind: 'SERVICE_CHARGE', percentOfSubtotal: '10' }).ok, true);
+  });
+
   it('bounds every value the model wire can carry', () => {
     assert.deepEqual(parseLineDraftPatch('expense.draft.remove_line', { lineNumber: 900 }), { ok: false, reason: 'invalid_line_number' });
     assert.deepEqual(parseLineDraftPatch('expense.draft.set_line', { lineNumber: 1, amount: '1e9' }), { ok: false, reason: 'invalid_amount' });

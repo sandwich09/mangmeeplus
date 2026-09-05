@@ -15,6 +15,7 @@ import {
   buildDraftUpdatePreviewCard,
   draftUpdateAppliedReply,
   draftUpdateBlockedReply,
+  draftProposalAckReason,
   draftUpdateMutationBlockedReply,
 } from './line-draft-update-card.logic';
 
@@ -142,6 +143,14 @@ describe('draft update confirm card', () => {
     assert.equal(draftUpdateBlockedReply('mutation_blocked', 'https://app.example', 'co-1', 'exp-1'), reply);
     assert.match(draftUpdateBlockedReply('ambiguous_line', 'https://app.example', 'co-1'), /บรรทัดไหน/);
     assert.match(draftUpdateBlockedReply('forbidden', 'https://app.example', 'co-1'), /ยังไม่มีสิทธิ์/);
+  });
+
+  // M7: the inline ternary labelled an unanswered proposal `correction_apply`, which is exactly
+  // what its own comment said it must not do.
+  it('never records a draft-lane turn as an applied correction — neither outcome writes', () => {
+    assert.equal(draftProposalAckReason('proposed'), 'correction_guidance');
+    assert.equal(draftProposalAckReason('answered'), 'correction_guidance');
+    assert.equal(draftProposalAckReason('not_handled'), 'correction_guidance');
   });
 
   it("never puts a '+' in customer copy (spec §3)", () => {

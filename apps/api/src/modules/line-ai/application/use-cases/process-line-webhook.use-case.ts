@@ -35,6 +35,7 @@ import { detectLineDraftEditRequest } from '../../../expenses/domain/logic/line-
 import { LINE_DRAFT_UPDATE_TOOLS, type LineDraftUpdateTool, type LineIntakeCorrectionHints } from '@watchdog-bms/contracts';
 import {
   DRAFT_UPDATE_ALREADY_APPLIED_PREFIX,
+  draftProposalAckReason,
   DRAFT_UPDATE_CANCELLED_REPLY,
   DRAFT_UPDATE_EXPIRED_REPLY,
   buildDraftUpdatePreviewCard,
@@ -3672,11 +3673,7 @@ export class ProcessLineWebhookUseCase {
           recentCapturedExpenses.length === 1 ? recentCapturedExpenses[0]!.id : undefined)
         : 'not_handled';
       if (draftOutcome !== 'not_handled') {
-        // The ledger records what this turn actually DID, and NEITHER outcome writes: a preview is a
-        // question the user has still to answer, and a refusal is a sentence. `correction_apply`
-        // would make the trail read as though money had moved on this turn, which is the one thing
-        // this lane is built never to do without a confirm postback.
-        await this.ackConsumed(correctionPlan, 'correction_guidance');
+        await this.ackConsumed(correctionPlan, draftProposalAckReason(draftOutcome));
         return;
       }
       // Try to apply; every guard failure degrades to the guidance reply — never to a create.
