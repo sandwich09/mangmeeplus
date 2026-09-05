@@ -284,6 +284,12 @@ export type SupportRequestItemDto = {
    */
   lineNotifiedCount: number;
   emailSent: boolean;
+  /**
+   * Read this BEFORE the two counts above. `queued` means the outbox drain has not run yet, so
+   * `0`/`false` are defaults rather than outcomes — without this a request rendered "nobody was
+   * told" for the seconds between the tap and the drain. Only `unreachable` is a fault.
+   */
+  notifyState: 'queued' | 'notified' | 'unreachable';
   answeredAt?: string;
   answeredByDisplayName?: string;
   closedAt?: string;
@@ -295,6 +301,12 @@ export type SupportRequestQueueDto = {
   /** Always the OPEN total, whatever `status` filtered the list — it feeds the system nav badge. */
   openCount: number;
 };
+
+/**
+ * Just the badge number. Its own endpoint because the system header asks for it on every
+ * navigation, and answering that with a 200-row queue read is a page of rows nobody renders.
+ */
+export type SupportRequestCountDto = { open: number };
 
 export type SupportRequestActionDto = {
   id: string;

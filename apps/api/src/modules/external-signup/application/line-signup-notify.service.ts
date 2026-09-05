@@ -41,6 +41,8 @@ export const PROFILE_GUARD_AFTER_READS = 5;
 
 /** line-support-request-spec-th §2.4: the same 24 hours the assistant pause runs for. */
 export const SUPPORT_REQUEST_EXPIRY_MS = 24 * 60 * 60 * 1000;
+/** §3 PDPA: a settled request is deleted 90 days after it settled, message text and all. */
+export const SUPPORT_REQUEST_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 
 /** Owner copy (§7). No plus sign in customer text; write "และ". */
 export function approvedMessageTh(companyName: string): string {
@@ -252,9 +254,11 @@ export class LineSignupNotifyService {
       { skipProviderUserIdHash: request.lineUserIdHash },
     );
 
+    // `notifiedAt` is what separates "nobody could be told" from "the drain has not run yet" — the
+    // inbox renders a red chip on the first and a quiet "กำลังแจ้ง…" on the second.
     await this.prisma.client.lineSupportRequest.update({
       where: { id: supportRequestId },
-      data: { lineNotifiedCount, emailSent },
+      data: { lineNotifiedCount, emailSent, notifiedAt: new Date() },
     });
 
     if (lineNotifiedCount > 0 || emailSent) {
@@ -302,8 +306,14 @@ export class LineSignupNotifyService {
    * instead, or it would sit OPEN for ever.
    */
   async sweepExpiredSupportRequests(now = new Date(), take = 200): Promise<{ expired: number }> {
+    // ponytail: one page of live pauses, oldest first, as an exclusion list. Ceiling = 1000 people
+    // inside a 24h pause at the same moment; beyond that the 1001st would have its request expired
+    // an hour early, which is a wrong label on a row nobody is reading rather than a lost request.
+    // Upgrade path if the platform ever gets there: drop the list and join in SQL with a raw query,
+    // or add `pausedUntil` to `LineSupportRequest` and make this a pure `where` clause.
     const paused = await this.prisma.client.lineCompanyContext.findMany({
       where: { aiPausedUntil: { gt: now } },
+      orderBy: { aiPausedUntil: 'asc' },
       select: { lineUserId: true },
       take: 1000,
     });
@@ -323,6 +333,36 @@ export class LineSignupNotifyService {
       data: { status: 'CLOSED', closedAt: now, closedReason: 'expired' },
     });
     return { expired: closed.count };
+  }
+
+  /**
+   * §3 PDPA. A settled request keeps two pieces of personal data — the raw `lineUserId` and up to
+   * 200 characters the customer typed — and neither has a purpose 90 days after the conversation
+   * ended. The whole row goes: there is nothing left in it worth keeping without them, and a
+   * scrubbed shell would only be a slower way to reach the same state.
+   *
+   * Counts from `closedAt`/`answeredAt`, not `requestedAt`: the retention clock the notice promises
+   * runs from when the matter was settled. OPEN rows are never touched, however old — one of those
+   * is somebody still waiting.
+   */
+  async purgeSettledSupportRequests(now = new Date(), take = 500): Promise<{ purged: number }> {
+    const cutoff = new Date(now.getTime() - SUPPORT_REQUEST_RETENTION_MS);
+    const due = await this.prisma.client.lineSupportRequest.findMany({
+      where: {
+        OR: [
+          { status: 'CLOSED', closedAt: { lte: cutoff } },
+          { status: 'ANSWERED', answeredAt: { lte: cutoff } },
+        ],
+      },
+      orderBy: { requestedAt: 'asc' },
+      select: { id: true },
+      take,
+    });
+    if (due.length === 0) return { purged: 0 };
+    const deleted = await this.prisma.client.lineSupportRequest.deleteMany({
+      where: { id: { in: due.map((row) => row.id) } },
+    });
+    return { purged: deleted.count };
   }
 
   /**

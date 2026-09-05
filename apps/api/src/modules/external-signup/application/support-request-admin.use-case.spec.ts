@@ -19,6 +19,7 @@ const row = (over: Record<string, unknown> = {}) => ({
   lastMessageText: null,
   lineNotifiedCount: 0,
   emailSent: true,
+  notifiedAt: new Date('2026-09-05T02:00:05.000Z'),
   answeredAt: null,
   answeredByUserId: null,
   closedAt: null,
@@ -79,6 +80,28 @@ describe('the support inbox read (line-support-request-spec-th §2.3)', () => {
     assert.equal(JSON.stringify(result).includes('Uline-1'), false, '§3: no raw LINE id crosses the API');
     assert.equal(item!.lineNotifiedCount, 0);
     assert.equal(item!.emailSent, true);
+    assert.equal(item!.notifyState, 'notified');
+  });
+
+  // The counters hold their DEFAULTS until the outbox drain runs, which is indistinguishable from
+  // "every channel failed" — the inbox rendered a red chip for the seconds in between.
+  it('calls a request queued until the drain has actually tried', () => {
+    const queued = harness({ rows: [row({ notifiedAt: null, lineNotifiedCount: 0, emailSent: false })] });
+    const unreachable = harness({ rows: [row({ notifiedAt: new Date(), lineNotifiedCount: 0, emailSent: false })] });
+    const byLine = harness({ rows: [row({ notifiedAt: new Date(), lineNotifiedCount: 2, emailSent: false })] });
+
+    return Promise.all([queued.useCase.list(), unreachable.useCase.list(), byLine.useCase.list()])
+      .then(([q, u, l]) => {
+        assert.equal(q.items[0]!.notifyState, 'queued');
+        assert.equal(u.items[0]!.notifyState, 'unreachable');
+        assert.equal(l.items[0]!.notifyState, 'notified', 'one rail is enough');
+      });
+  });
+
+  it('answers the badge without reading a page of rows', async () => {
+    const h = harness({ openCount: 7 });
+    assert.deepEqual(await h.useCase.openCount(), { open: 7 });
+    assert.deepEqual(h.queries, [], 'no findMany at all');
   });
 
   it('names someone still in the funnel by the shop they applied for', async () => {

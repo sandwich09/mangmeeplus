@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type {
-  SupportRequestActionDto, SupportRequestClosedReason, SupportRequestItemDto,
-  SupportRequestQueueDto, SupportRequestStatus,
+  SupportRequestActionDto, SupportRequestClosedReason, SupportRequestCountDto,
+  SupportRequestItemDto, SupportRequestQueueDto, SupportRequestStatus,
 } from '@watchdog-bms/contracts';
 import { Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../../common/database/prisma.service';
@@ -12,6 +12,18 @@ export const SUPPORT_REQUEST_RESUME_ACTION = 'system.support_request.resume_ai';
 
 /** Bounded like the signup queue (`take: 200`): an operator scrolls, a page never streams a table. */
 const QUEUE_LIMIT = 200;
+
+/**
+ * `notifiedAt` is the whole point of the distinction: before the drain runs, the two counters hold
+ * their DEFAULTS, which look exactly like "every channel failed". Derived rather than stored,
+ * because a stored third state could disagree with the counters it summarises.
+ */
+export function supportNotifyState(
+  row: { notifiedAt: Date | null; lineNotifiedCount: number; emailSent: boolean },
+): SupportRequestItemDto['notifyState'] {
+  if (!row.notifiedAt) return 'queued';
+  return row.lineNotifiedCount > 0 || row.emailSent ? 'notified' : 'unreachable';
+}
 
 /**
  * line-support-request-spec-th §2.3 — the operator's inbox for "ติดต่อเจ้าหน้าที่".
@@ -27,6 +39,14 @@ const QUEUE_LIMIT = 200;
 @Injectable()
 export class SupportRequestAdminUseCase {
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * The badge number on its own. The system header asks on every navigation, and answering that
+   * with the 200-row queue read was a page of rows nobody renders.
+   */
+  async openCount(): Promise<SupportRequestCountDto> {
+    return { open: await this.prisma.client.lineSupportRequest.count({ where: { status: 'OPEN' } }) };
+  }
 
   async list(status?: SupportRequestStatus): Promise<SupportRequestQueueDto> {
     const [rows, openCount] = await Promise.all([
@@ -79,6 +99,7 @@ export class SupportRequestAdminUseCase {
         ...(row.lastMessageText ? { lastMessageText: row.lastMessageText } : {}),
         lineNotifiedCount: row.lineNotifiedCount,
         emailSent: row.emailSent,
+        notifyState: supportNotifyState(row),
         ...(row.answeredAt ? { answeredAt: row.answeredAt.toISOString() } : {}),
         ...(row.answeredByUserId && answererName.get(row.answeredByUserId)
           ? { answeredByDisplayName: answererName.get(row.answeredByUserId)! }

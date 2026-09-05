@@ -3,7 +3,7 @@ import { ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { IsIn, IsOptional } from 'class-validator';
 import type { Request } from 'express';
 import type {
-  SupportRequestActionDto, SupportRequestQueueDto, SupportRequestStatus,
+  SupportRequestActionDto, SupportRequestCountDto, SupportRequestQueueDto, SupportRequestStatus,
 } from '@watchdog-bms/contracts';
 import { RequirePermissions } from '../../../../common/security/permissions.decorator';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
@@ -35,6 +35,15 @@ export class SystemSupportRequestController {
   @ApiResponse({ status: 200 })
   list(@Query() query: SupportRequestQueryDto): Promise<SupportRequestQueueDto> {
     return this.requests.list(query?.status);
+  }
+
+  // Declared before the `:supportRequestId` routes below so `count` can never be read as an id.
+  @Get('count')
+  @RequirePermissions('system.partner_company.update')
+  @ApiOperation({ summary: 'How many customers are still waiting — the system nav badge' })
+  @ApiResponse({ status: 200 })
+  count(): Promise<SupportRequestCountDto> {
+    return this.requests.openCount();
   }
 
   @Post(':supportRequestId/answered')

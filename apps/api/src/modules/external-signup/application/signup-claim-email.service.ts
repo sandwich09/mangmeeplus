@@ -143,6 +143,12 @@ export class SignupClaimEmailService {
           // handling: the notice it stood for is at most minutes old and the customer has already
           // been answered, so failing the row would only retry a message with no subject.
           if (supportRequestId) await this.lineNotify.deliverSupportNotice(supportRequestId);
+          else {
+            this.logger.info({
+              event: 'signup.support.legacy_notice_dropped',
+              outboxEventId: event.id,
+            }, 'signup.support.legacy_notice_dropped');
+          }
         } else if (event.eventType === SIGNUP_OPS_ALERT_EVENT_TYPE) {
           const kind = readPayloadString(event.payloadJson, 'kind');
           const dayKey = readPayloadString(event.payloadJson, 'dayKey');

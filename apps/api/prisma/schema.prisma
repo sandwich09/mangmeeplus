@@ -3466,6 +3466,10 @@ model LineSupportRequest {
   /// The support-mailbox letter went out. Best effort: an unconfigured mailer leaves this false
   /// and blocks nothing.
   emailSent          Boolean                  @default(false)
+  /// When the outbox drain finished trying every channel. NULL means it has not run yet, which is
+  /// the difference between "nobody could be told" and "we have not tried yet" — without it the
+  /// inbox showed a red "แจ้งไม่สำเร็จ" for the seconds between the tap and the drain.
+  notifiedAt         DateTime?
   status             LineSupportRequestStatus @default(OPEN)
   answeredAt         DateTime?
   answeredByUserId   String?

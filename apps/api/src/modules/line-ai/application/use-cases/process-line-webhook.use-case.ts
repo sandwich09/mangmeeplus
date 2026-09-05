@@ -87,6 +87,7 @@ import { buildAiBudgetExceededMessage, buildExpenseDraftCardMessage, buildLegalA
 // request; both live in the signup module, which owns those rules and their audit.
 import { PackageChangeRequestUseCase } from '../../../external-signup/application/package-change-request.use-case';
 import { LineSignupNotifyService } from '../../../external-signup/application/line-signup-notify.service';
+import { AuthRateLimitService } from '../../../auth/application/auth-rate-limit.service';
 import { isBusinessHours } from '../../../external-signup/domain/business-hours.logic';
 import { SIGNUP_SOURCE_LINE_OA } from '../../../external-signup/domain/company-signup.logic';
 import { advisorDirectAnswerText } from '../../domain/logic/line-advisor-direct-answer.logic';
@@ -183,6 +184,10 @@ const SUPPORT_ALREADY_OPEN_REPLY = '📮 คำขอของคุณยัง
   + '(จันทร์–เสาร์ 9:00–18:00) นะคะ · พิมพ์ "คุยกับ AI ต่อ" ถ้าต้องการให้น้องมั่งมีตอบต่อ';
 /** §2.4: the assistant is back, said in the assistant's own voice. */
 const ASSISTANT_RESUMED_REPLY = '💚 น้องมั่งมีกลับมาแล้วค่ะ ถามได้เลยนะคะ';
+/** The amplification floor's answer. Warm on purpose: whoever hits it may still genuinely need
+ *  help, and the requests they already opened are in the operator inbox either way. */
+const SUPPORT_DAILY_LIMIT_REPLY = '📮 รับเรื่องไว้แล้วค่ะ ทีมงานจะติดต่อกลับในเวลาทำการ '
+  + '(จันทร์–เสาร์ 9:00–18:00) หากรีบ โทร 098-256-5628 ได้เลยค่ะ';
 /** Sent while a support pause is running, in place of every assistant answer (§8). */
 const SUPPORT_PAUSED_REPLY = '📮 ทีมงานรับเรื่องแล้วค่ะ กำลังดูให้อยู่ เดี๋ยวตอบในแชทนี้นะคะ '
   + '· พิมพ์ "คุยกับ AI ต่อ" ถ้าต้องการให้น้องมั่งมีตอบต่อ';
@@ -1199,6 +1204,10 @@ export class ProcessLineWebhookUseCase {
     // P10-L §7/§8. Absent, "ติดต่อเจ้าหน้าที่" still pauses the assistant and still answers the
     // customer; only the admin fan-out is lost, which is the part that already logs its failures.
     @Optional() private readonly signupNotify?: LineSignupNotifyService,
+    // The amplification floor on "ติดต่อเจ้าหน้าที่". `@Optional()` like its neighbours, and the
+    // absent case FAILS OPEN on purpose: this bounds cost, it does not protect anything, and a
+    // missing Redis must never be the reason a customer in trouble cannot reach a person.
+    @Optional() private readonly rateLimit?: AuthRateLimitService,
   ) {}
 
   /**
@@ -1621,6 +1630,26 @@ export class ProcessLineWebhookUseCase {
       return;
     }
 
+    // Amplification floor. Closing a request frees the dedupe above, so tap → "คุยกับ AI ต่อ" →
+    // tap, repeated, was an unbounded source of rows, letters and pushes from one unauthenticated
+    // LINE account. Three genuine asks a day is more than a real customer makes; the fourth is
+    // answered warmly and writes nothing. Checked HERE, not at dispatch: a repeat tap on an
+    // already-open request costs nothing and must never be refused.
+    if (this.rateLimit && !await this.rateLimit.consumeLineSupportRequestSlot(event.lineUserId)) {
+      await this.deliverReply(event, SUPPORT_DAILY_LIMIT_REPLY);
+      await this.audit.log({
+        action: 'signup.line.support_requested',
+        ...(asker?.companyId ? { companyId: asker.companyId } : {}),
+        targetType: 'line_user',
+        requestId,
+        result: 'DENIED',
+        riskLevel: 'LOW',
+        metadataJson: { reason: 'daily_limit', linked: Boolean(asker) },
+      });
+      await this.updateEventLog(event.webhookEventId, 'support_rate_limited');
+      return;
+    }
+
     const created = await this.prisma.client.lineSupportRequest.create({
       data: {
         lineUserId: event.lineUserId,
@@ -1711,8 +1740,10 @@ export class ProcessLineWebhookUseCase {
    * who happened to already have a row, so a single-shop owner — the common case — kept getting
    * assistant answers on top of a human.
    *
-   * `companyId` is only used to CREATE the row; an existing selection is left alone, because the
-   * caller is by construction still a member of whatever it points at.
+   * `companyId` is only used to CREATE the row. An existing row keeps whatever it points at, which
+   * for a multi-company user with a stale selection may NOT be the shop this request was filed
+   * against — and that is fine here: the pause is keyed on `lineUserId`, so it silences the right
+   * conversation either way, and the request row (not this one) is what names the shop.
    */
   private async pauseAssistant(lineUserId: string, companyId: string): Promise<void> {
     const aiPausedUntil = new Date(Date.now() + SUPPORT_PAUSE_MS);

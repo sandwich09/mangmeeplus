@@ -59,6 +59,8 @@ function wire(client: PrismaClient, options: {
   linkedAdminPushes?: number;
   adminUserIds?: string[];
   mailerSends?: boolean;
+  /** The amplification floor: `false` = this LINE account has spent its three asks for today. */
+  supportSlot?: boolean;
 } = {}): Wiring {
   const prisma = { client } as any;
   const replies: string[] = [];
@@ -114,6 +116,7 @@ function wire(client: PrismaClient, options: {
     ...Array.from({ length: 17 }, () => undefined) as [],
     undefined as any,
     { enqueueSupportRequest: async (id: string) => { notices.push(id); } } as any,
+    { consumeLineSupportRequestSlot: async () => options.supportSlot ?? true } as any,
   );
   (webhook as any).logger = { error: () => {}, warn: () => {}, log: () => {} };
 
@@ -348,6 +351,84 @@ describe('"ติดต่อเจ้าหน้าที่" on real PostgreS
         'system.support_request.answered', 'system.support_request.resume_ai',
       ]);
       assert.ok(audits.every((a) => a.riskLevel === 'HIGH'));
+    } finally {
+      await cleanup(client, tag, lineUserId);
+      await client.$disconnect();
+    }
+  });
+
+  /**
+   * M7 (reviewer probe). A membership in a company the plan-term sweep DISABLED is not a shop this
+   * person can be helped in — and only real rows can show it, because the filter lives in the
+   * `company: { status: 'ACTIVE' }` join a fake would have to reimplement to disagree with.
+   */
+  it('treats a DISABLED-company member as having no shop, and creates no context row', async () => {
+    const client = connect();
+    const tag = `linesupport-${randomUUID().slice(0, 8)}`;
+    const lineUserId = `U${tag}`;
+    try {
+      const { companyId } = await seed(client, tag, lineUserId);
+      await client.lineCompanyContext.deleteMany({ where: { lineUserId } });
+      await client.company.update({ where: { id: companyId }, data: { status: 'DISABLED' } });
+
+      const h = wire(client);
+      await h.webhook.execute(event(lineUserId, STAFF_CONTACT_COMMAND));
+
+      const row = await client.lineSupportRequest.findFirstOrThrow({ where: { lineUserId } });
+      assert.equal(row.companyId, null, 'a shop that is switched off is not a shop to file against');
+      assert.equal(await client.lineCompanyContext.count({ where: { lineUserId } }), 0,
+        'and nothing pauses an assistant that has no company to run for');
+      assert.deepEqual(h.notices, [row.id], 'they still reach a human');
+    } finally {
+      await cleanup(client, tag, lineUserId);
+      await client.$disconnect();
+    }
+  });
+
+  it('opens no request at all once the daily floor is spent, and still answers', async () => {
+    const client = connect();
+    const tag = `linesupport-${randomUUID().slice(0, 8)}`;
+    const lineUserId = `U${tag}`;
+    try {
+      await seed(client, tag, lineUserId);
+      const h = wire(client, { supportSlot: false });
+      await h.webhook.execute(event(lineUserId, STAFF_CONTACT_COMMAND));
+
+      assert.equal(await client.lineSupportRequest.count({ where: { lineUserId } }), 0);
+      assert.deepEqual(h.notices, []);
+      assert.match(h.replies.at(-1)!, /รับเรื่องไว้แล้วค่ะ/);
+    } finally {
+      await cleanup(client, tag, lineUserId);
+      await client.$disconnect();
+    }
+  });
+
+  // §3 PDPA: the raw LINE id and the customer's own words leave the database 90 days after the
+  // matter settled. Proven against real rows because "the row is gone" is the whole assertion.
+  it('deletes a settled request 90 days on, and never an OPEN one', async () => {
+    const client = connect();
+    const tag = `linesupport-${randomUUID().slice(0, 8)}`;
+    const lineUserId = `U${tag}`;
+    try {
+      await seed(client, tag, lineUserId);
+      const h = wire(client);
+      await h.webhook.execute(event(lineUserId, STAFF_CONTACT_COMMAND));
+      const id = h.notices[0]!;
+      const long = new Date(Date.now() - 100 * 86_400_000);
+
+      // Old, but still OPEN: somebody is waiting, however long it has been.
+      await client.lineSupportRequest.update({ where: { id }, data: { requestedAt: long } });
+      assert.deepEqual(await h.notify.purgeSettledSupportRequests(), { purged: 0 });
+      assert.equal(await client.lineSupportRequest.count({ where: { id } }), 1);
+
+      // Settled 100 days ago: the message text and the LINE id go with the row.
+      await client.lineSupportRequest.update({
+        where: { id },
+        data: { status: 'CLOSED', closedAt: long, closedReason: 'expired', lastMessageText: 'ช่วยด้วยค่ะ' },
+      });
+      assert.equal((await h.notify.purgeSettledSupportRequests()).purged >= 1, true);
+      assert.equal(await client.lineSupportRequest.count({ where: { id } }), 0);
+      assert.equal(await client.lineSupportRequest.count({ where: { lineUserId } }), 0);
     } finally {
       await cleanup(client, tag, lineUserId);
       await client.$disconnect();

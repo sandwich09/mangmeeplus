@@ -186,6 +186,8 @@ function harness(options: {
   openSupportRequest?: { id: string } | null;
   /** The last thing this customer typed, as `AiTurn` kept it. */
   lastTurn?: { userMessagePreview: string | null } | null;
+  /** The amplification floor: `false` = this LINE account has spent its three asks for today. */
+  supportSlot?: boolean;
   /** Absent means LINE_MESSAGING_CHANNEL_ID is unset (L-19). */
   channelId?: string;
   liffId?: string;
@@ -199,6 +201,7 @@ function harness(options: {
   const contextUpserts: any[] = [];
   const supportRequests: any[] = [];
   const supportClosures: any[] = [];
+  const supportSlots: string[] = [];
   const membershipQueries: any[] = [];
   const errors: any[] = [];
 
@@ -274,13 +277,19 @@ function harness(options: {
     ...Array.from({ length: 17 }, () => undefined),
     { create: async (cmd: any) => { packageChanges.push(cmd); return { id: 'pcr-1' }; } } as any,
     { enqueueSupportRequest: async (supportRequestId: string) => { supportNotices.push(supportRequestId); } } as any,
+    {
+      consumeLineSupportRequestSlot: async (lineUserId: string) => {
+        supportSlots.push(lineUserId);
+        return options.supportSlot ?? true;
+      },
+    } as any,
   );
 
   // The use case builds its own Logger; capture what it writes at ERROR.
   (useCase as any).logger = { error: (entry: any) => errors.push(entry), warn: () => {}, log: () => {} };
   return {
     useCase, replies, eventLog, audits, packageChanges, supportNotices, contextUpdates, contextUpserts,
-    supportRequests, supportClosures, membershipQueries, errors,
+    supportRequests, supportClosures, supportSlots, membershipQueries, errors,
   };
 }
 
@@ -474,6 +483,48 @@ describe('P10-L contact-staff pause (§8), rewritten by line-support-request-spe
 
     assert.match(rendered(h), /น้องมั่งมีกลับมาแล้ว/, 'a promise must not depend on state nobody can see');
     assert.equal(outcome(h), 'support_resumed');
+  });
+
+  // Closing a request frees the dedupe above, so tap → "คุยกับ AI ต่อ" → tap, repeated, was an
+  // unbounded source of rows, letters and pushes from one unauthenticated LINE account.
+  it('stops opening new requests after three in a day, warmly and without writing anything', async () => {
+    const h = harness({ identity: linked, memberships: [{ companyId: 'co-now', roles: [] }], supportSlot: false });
+    await h.useCase.execute(event(STAFF_CONTACT_COMMAND));
+
+    assert.deepEqual(h.supportSlots, ['Uline-1'], 'the floor is keyed on the LINE account');
+    assert.deepEqual(h.supportRequests, [], 'no fourth row');
+    assert.deepEqual(h.supportNotices, [], 'and nobody is paged for it');
+    assert.match(rendered(h), /รับเรื่องไว้แล้วค่ะ/, 'and the customer is answered warmly, not refused');
+    assert.equal(rendered(h).includes('Too many'), false);
+    assert.equal(outcome(h), 'support_rate_limited');
+    assert.equal(h.audits.at(-1).result, 'DENIED');
+  });
+
+  // The floor is charged where a row is CREATED, so a repeat tap on an open request — which costs
+  // nothing — must never be the thing that spends the last slot.
+  it('never spends a slot on a repeat tap of an already-open request', async () => {
+    const h = harness({
+      identity: linked,
+      memberships: [{ companyId: 'co-now', roles: [] }],
+      openSupportRequest: { id: 'sr-open' },
+      supportSlot: false,
+    });
+    await h.useCase.execute(event(STAFF_CONTACT_COMMAND));
+
+    assert.deepEqual(h.supportSlots, [], 'the floor was never consulted');
+    assert.match(rendered(h), /ยังอยู่ในคิว/);
+  });
+
+  // M7 (reviewer probe): a membership in a company the plan-term sweep DISABLED is not a shop this
+  // person can be helped in, so the request carries no company — and nothing may pause an
+  // assistant that has no company to run for.
+  it('files a DISABLED-company member as having no shop, and creates no context row', async () => {
+    const h = harness({ identity: linked, memberships: [], context: null, pendingSignup: null });
+    await h.useCase.execute(event(STAFF_CONTACT_COMMAND));
+
+    assert.equal(h.supportRequests[0].data.companyId, undefined);
+    assert.deepEqual(h.contextUpserts, [], 'no company, no pause, no row invented for one');
+    assert.deepEqual(h.supportNotices, ['sr-1'], 'they still reach a human');
   });
 
   it('holds the assistant back while the pause runs, and lets go once it expires', async () => {

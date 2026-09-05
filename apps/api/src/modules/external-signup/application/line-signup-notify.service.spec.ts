@@ -38,6 +38,7 @@ function harness(options: {
   const letters: any[] = [];
   const supportUpdates: any[] = [];
   const supportQueries: any[] = [];
+  const supportDeletes: any[] = [];
 
   const prisma = {
     client: {
@@ -66,6 +67,7 @@ function harness(options: {
         update: async (args: any) => { supportUpdates.push(args); return args; },
         findMany: async (args: any) => { supportQueries.push(args); return options.due ?? []; },
         updateMany: async (args: any) => { supportUpdates.push(args); return { count: (options.due ?? []).length }; },
+        deleteMany: async (args: any) => { supportDeletes.push(args); return { count: (options.due ?? []).length }; },
       },
       lineCompanyContext: { findMany: async () => options.stillPaused ?? [] },
     },
@@ -107,7 +109,7 @@ function harness(options: {
   );
   return {
     service, appended, marks, logs, pushes, adminPushes, queries, alerts, letters,
-    supportUpdates, supportQueries,
+    supportUpdates, supportQueries, supportDeletes,
     restore: () => { globalThis.fetch = original; },
   };
 }
@@ -448,7 +450,12 @@ describe('support notices (line-support-request-spec-th §2.2)', () => {
     const h = harness({ lineDelivered: 0 });
     await h.service.deliverSupportNotice('req-1');
     h.restore();
-    assert.deepEqual(h.supportUpdates[0].data, { lineNotifiedCount: 0, emailSent: true });
+    assert.deepEqual(Object.keys(h.supportUpdates[0].data).sort(),
+      ['emailSent', 'lineNotifiedCount', 'notifiedAt']);
+    assert.equal(h.supportUpdates[0].data.lineNotifiedCount, 0);
+    assert.equal(h.supportUpdates[0].data.emailSent, true);
+    // `notifiedAt` is what separates this from "the drain has not run yet" in the inbox.
+    assert.ok(h.supportUpdates[0].data.notifiedAt instanceof Date);
     assert.equal(h.logs.at(-1).event, 'signup.support.notified');
     assert.deepEqual(h.alerts, [], 'the letter went out, so somebody was told');
   });
@@ -457,7 +464,9 @@ describe('support notices (line-support-request-spec-th §2.2)', () => {
     const h = harness({ admins: [], lineDelivered: 0, emailSent: false });
     await h.service.deliverSupportNotice('req-1');
     h.restore();
-    assert.deepEqual(h.supportUpdates[0].data, { lineNotifiedCount: 0, emailSent: false });
+    assert.equal(h.supportUpdates[0].data.lineNotifiedCount, 0);
+    assert.equal(h.supportUpdates[0].data.emailSent, false);
+    assert.ok(h.supportUpdates[0].data.notifiedAt instanceof Date, 'we DID try; nobody heard');
     assert.equal(h.logs.at(-1).event, 'signup.support.unreachable');
     assert.equal(h.logs.at(-1).riskLevel, 'HIGH');
     assert.deepEqual(h.alerts, ['support_unreachable']);
@@ -489,6 +498,33 @@ describe('support notices (line-support-request-spec-th §2.2)', () => {
       'somebody still inside their 24h pause is still waiting');
     assert.equal(h.supportQueries[0].where.status, 'OPEN');
     assert.equal(h.supportUpdates[0].data.closedReason, 'expired');
+  });
+
+  // §3 PDPA. A settled request keeps a raw LINE id and up to 200 characters the customer typed;
+  // 90 days after the matter was settled neither has a purpose, so the whole row goes.
+  it('deletes settled requests 90 days after they settled, not after they were asked', async () => {
+    const h = harness({ due: [{ id: 'req-1' }, { id: 'req-2' }] });
+    const now = new Date('2026-12-05T00:00:00.000Z');
+    const result = await h.service.purgeSettledSupportRequests(now);
+    h.restore();
+
+    assert.equal(result.purged, 2);
+    const where = h.supportQueries[0].where;
+    // The clock runs from the SETTLED stamp, and an OPEN request is never touched however old:
+    // one of those is somebody still waiting.
+    assert.deepEqual(where.OR.map((clause: any) => clause.status), ['CLOSED', 'ANSWERED']);
+    const cutoff = where.OR[0].closedAt.lte as Date;
+    assert.equal(Math.round((now.getTime() - cutoff.getTime()) / 86_400_000), 90);
+    assert.equal(where.OR[1].answeredAt.lte instanceof Date, true);
+    assert.equal(JSON.stringify(where).includes('requestedAt'), false);
+    assert.deepEqual(h.supportDeletes[0].where, { id: { in: ['req-1', 'req-2'] } });
+  });
+
+  it('deletes nothing at all when nothing is due', async () => {
+    const h = harness({ due: [] });
+    assert.deepEqual(await h.service.purgeSettledSupportRequests(), { purged: 0 });
+    h.restore();
+    assert.deepEqual(h.supportDeletes, []);
   });
 });
 
