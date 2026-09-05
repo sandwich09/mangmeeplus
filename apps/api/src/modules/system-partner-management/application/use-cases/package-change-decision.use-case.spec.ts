@@ -226,6 +226,23 @@ describe('POST /system/package-change-requests/:id/decision — REJECT', () => {
     }
   });
 
+  // B-1, on the second route that pushes an operator's paragraph into a customer's chat.
+  it('refuses a second URL glued onto one of ours in the note', async () => {
+    for (const glue of ['"', '<', '`', '\u200b']) {
+      const h = harness();
+      await assert.rejects(
+        () => h.controller.decide(
+          'pcr-1',
+          { action: 'APPROVE', note: `\u0e14\u0e39\u0e17\u0e35\u0e48 https://app.mangmeeplus.com/x${glue}https://evil.test/pay` },
+          REQ,
+        ),
+        (error: Error) => /partner_line_message_external_link/.test(error.message),
+      );
+      assert.deepEqual(h.planTermCalls, [], 'and the tier does not move on a refused note');
+      assert.deepEqual(pushes, []);
+    }
+  });
+
   it('refuses the same paragraph the message box refuses, with the same code', async () => {
     const paragraph = 'ดูที่ https://evil.example.com/pay ค่ะ';
     const h = harness();

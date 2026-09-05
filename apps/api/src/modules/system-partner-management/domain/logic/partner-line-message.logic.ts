@@ -13,11 +13,27 @@ export type ShopMessageCheck =
 export const LIFF_HOST = 'liff.line.me';
 
 /**
- * An explicit link, taken WHOLE and handed to the URL parser — never pattern-matched for its host.
- * `\S+` on purpose: `https://app.mangmeeplus.com:443@evil.test/pay` must arrive here in one piece,
- * because the only thing that reads it correctly is the same parser the tapper's browser uses.
+ * Where a URL token ENDS. Whitespace is not enough, because the operator writes the whitespace:
+ * `https://ours/x"https://evil.test/pay` is one `\S+` run, so it was judged once as our host and
+ * sent — while every linkifier, LINE's included, renders the second URL live and tappable.
+ *
+ * So a token also ends at the characters that separate URLs in practice — quotes, angle brackets,
+ * a backtick — and at the invisible ones an attacker would reach for next: the zero-width and
+ * bidi-control class (U+200B–U+200F, U+2028/29, U+202A–U+202E, U+2060–U+2064, U+FEFF), which a
+ * reader cannot see but a parser stops at.
  */
-const SCHEME_URL = /https?:\/\/\S+/gi;
+const TOKEN_END = '\\s"\'<>`\\u200b-\\u200f\\u2028\\u2029\\u202a-\\u202e\\u2060-\\u2064\\ufeff';
+
+/**
+ * An explicit link, taken whole up to the next terminator and handed to the URL parser — never
+ * pattern-matched for its host, because `https://app.mangmeeplus.com:443@evil.test/pay` only reads
+ * correctly through the same parser the tapper's browser uses.
+ *
+ * `*` rather than `+`: EVERY `https?://` in the text must produce a token, even a degenerate one
+ * (a scheme glued straight onto a quote). A `+` here would silently skip it, which is the whole
+ * class of bug this regex exists to close — a spec asserts the counts match.
+ */
+const SCHEME_URL = new RegExp(`https?://[^${TOKEN_END}]*`, 'gi');
 
 /**
  * A bare host LINE auto-links for the reader (`a.b`, `www.a.b/c`), so it is a link whatever a
@@ -26,7 +42,7 @@ const SCHEME_URL = /https?:\/\/\S+/gi;
  * matched — but with a scheme it is, via `SCHEME_URL` above, which is how one would have to be
  * written to be tappable anyway.
  */
-const BARE_HOST = /(?:[a-z0-9-]+\.)+[a-z]{2,}(?:[:/?#]\S*)?/gi;
+const BARE_HOST = new RegExp(`(?:[a-z0-9-]+\\.)+[a-z]{2,}(?:[:/?#][^${TOKEN_END}]*)?`, 'gi');
 
 /** Dotted-quad; the bracketed IPv6 form is caught by the `[` prefix `new URL` leaves on it. */
 const IPV4 = /^\d{1,3}(?:\.\d{1,3}){3}$/;
@@ -82,6 +98,15 @@ function hostOf(token: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * How many `https?://` tokens the fence actually judges in a string. Exported for the spec that
+ * pins the invariant: this must equal the number of `https?://` occurrences, or some link in the
+ * text was never looked at.
+ */
+export function countJudgedSchemeTokens(text: string): number {
+  return [...text.matchAll(SCHEME_URL)].length;
 }
 
 function isIpLiteral(hostname: string): boolean {

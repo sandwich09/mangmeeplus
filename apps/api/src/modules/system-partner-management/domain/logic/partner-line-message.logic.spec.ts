@@ -5,6 +5,7 @@ import {
   LIFF_HOST,
   baseUrlHost,
   checkShopMessage,
+  countJudgedSchemeTokens,
   shopMessageAllowedHosts,
 } from './partner-line-message.logic';
 
@@ -99,6 +100,40 @@ describe('checkShopMessage — SEC-05', () => {
     // Even when someone configures WEB_BASE_URL as an address, a bare IP stays refused: "our host"
     // is a name, and an address in a customer message is never one.
     assert.equal(checkShopMessage('http://203.0.113.9/pay', ['203.0.113.9', LIFF_HOST]).ok, false);
+  });
+
+  /**
+   * B-1. "Whole token to the next whitespace" is a rule the OPERATOR controls: gluing a second URL
+   * on with a quote, an angle bracket, a backtick or an invisible zero-width space made the pair
+   * one token, judged once as our host — while every linkifier renders the second one live.
+   */
+  it('judges a second URL glued on with punctuation or an invisible character', () => {
+    const glue = ['"', '<', '`', '\u200b', '\u2060', '\ufeff', '\u202e'];
+    for (const character of glue) {
+      const text = `ดูที่ https://app.mangmeeplus.com/x${character}https://evil.test/pay ค่ะ`;
+      const result = checkShopMessage(text, ALLOWED);
+      assert.equal(result.ok, false, `glue ${JSON.stringify(character)} must not hide the second URL`);
+      assert.equal((result as any).host, 'evil.test');
+    }
+  });
+
+  // The invariant that keeps the rule from being re-broken by a future tweak: a token regex that
+  // skips even one `https://` occurrence is a fence with a hole, whatever else it gets right.
+  it('produces exactly one judged token per https:// occurrence in the text', () => {
+    const samples = [
+      'https://app.mangmeeplus.com/a"https://evil.test/b',
+      'a https://one.test b https://two.test c',
+      'https://"https://evil.test/pay',
+      'ไม่มีลิงก์เลยค่ะ',
+      'https://app.mangmeeplus.com/x\u200bhttps://evil.test/y',
+    ];
+    for (const sample of samples) {
+      const occurrences = sample.match(/https?:\/\//gi)?.length ?? 0;
+      assert.equal(
+        countJudgedSchemeTokens(sample), occurrences,
+        `every scheme occurrence must be judged in ${JSON.stringify(sample)}`,
+      );
+    }
   });
 
   it('refuses an internationalised domain by its punycode host', () => {
