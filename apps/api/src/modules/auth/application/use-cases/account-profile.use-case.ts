@@ -1,6 +1,8 @@
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { hashPassword } from '../../domain/logic/password-credential.logic';
+// Cross-module, deliberately: this is the same Thai-mobile rule the LINE signup form applies, and
+// a second copy of it here is how the two would drift apart. Pure function, no DI, no cycle.
 import { normalizeThaiMobile } from '../../../external-signup/domain/line-signup.logic';
 import { AuditService } from '../../../audit/application/audit.service';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
@@ -11,6 +13,7 @@ import { notifyAccountSecurityChange, PASSWORD_SET_NOTICE } from '../account-sec
 // Codes are written as literals, not constants, because `api-error-coverage.spec.ts` scans this
 // source for `code: '…'` to prove every one of them has Thai copy. A constant hides them from it.
 
+/** Mirrored client-side by `USERNAME_PATTERN` in `apps/web/src/features/company-profile/company-profile.logic.ts`. */
 const USERNAME_PATTERN = /^[a-z0-9._-]{4,64}$/;
 
 /**
@@ -72,7 +75,12 @@ export class AccountProfileUseCase {
   ): Promise<{ username: string | null }> {
     const desiredUsername = username?.trim().toLowerCase() || null;
     if (desiredUsername !== null && !USERNAME_PATTERN.test(desiredUsername)) {
-      throw new BadRequestException('username must be 4-64 characters of a-z, 0-9, dot, dash or underscore.');
+      // Coded: a Thai owner typing สมชาย was getting an English sentence through the generic
+      // fallback, which named neither the rule nor the fix.
+      throw new BadRequestException({
+        code: 'invalid_username',
+        message: 'username must be 4-64 characters of a-z, 0-9, dot, dash or underscore.',
+      });
     }
 
     const user = await this.prisma.client.user.findUnique({
@@ -97,21 +105,18 @@ export class AccountProfileUseCase {
     }
 
     if (desiredUsername !== null && desiredUsername !== user.username) {
-      // Case-insensitively, and against email too: the login lookup accepts either, so a username
-      // equal to somebody's address would make one login name resolve to two accounts. The DB
-      // unique index is case-SENSITIVE, so this check is the only thing standing between
-      // "somchai" and "Somchai" becoming two login names for two different people.
-      const taken = await this.prisma.client.user.findFirst({
-        where: {
-          id: { not: userId },
-          OR: [
-            { username: { equals: desiredUsername, mode: 'insensitive' } },
-            { email: { equals: desiredUsername, mode: 'insensitive' } },
-          ],
-        },
-        select: { id: true },
-      });
-      if (taken) throw new ConflictException({ code: 'username_taken', message: 'This username is already taken.' });
+      // The unique index is a plain B-tree and therefore case-sensitive, so this read is the only
+      // thing stopping "somchai" and "SomChai" becoming two login names for two different people.
+      //
+      // It is deliberately NOT Prisma's `mode: 'insensitive'`: that compiles to `ILIKE` with the
+      // value bound raw, and `_` — which the username charset allows — is a LIKE wildcard. On real
+      // Postgres that refused `som_hai` because `somchai` exists, and refused `somchai_gmail.com`
+      // because it matched somebody's EMAIL, which made this an address-enumeration oracle. An
+      // exact `lower()` comparison has no pattern semantics at all.
+      const taken = await this.prisma.client.$queryRaw<Array<{ id: string }>>`
+        SELECT "id" FROM "User" WHERE "id" <> ${userId} AND lower("username") = ${desiredUsername} LIMIT 1
+      `;
+      if (taken.length > 0) throw new ConflictException({ code: 'username_taken', message: 'This username is already taken.' });
     }
 
     const passwordHash = hashPassword(password);

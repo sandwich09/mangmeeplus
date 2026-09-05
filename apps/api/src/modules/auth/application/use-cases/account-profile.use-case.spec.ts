@@ -33,16 +33,16 @@ function makePrisma(seed: { users?: Row[]; credentials?: Row[]; tokens?: Row[]; 
 
   const match = (row: Row, where: Row): boolean =>
     Object.entries(where).every(([key, value]) => {
+      // `PasswordLoginUseCase` genuinely sends an OR of plain equalities.
       if (key === 'OR') return (value as Row[]).some((clause) => match(row, clause));
+      // Never modelled: `mode: 'insensitive'` is ILIKE, and a fake that treats it as equality is
+      // precisely what reported green while real Postgres refused `som_hai`
+      // (`account-profile-username.pg.spec.ts`). Anything needing it must be raw SQL.
+      if (value !== null && typeof value === 'object' && 'mode' in value) {
+        throw new Error(`case-insensitive matching cannot be faked; use $queryRaw (field: ${key})`);
+      }
       if (value !== null && typeof value === 'object' && 'not' in value) return row[key] !== (value as Row)['not'];
       if (value !== null && typeof value === 'object' && 'gt' in value) return row[key] > (value as Row)['gt'];
-      // `mode: 'insensitive'` is how Prisma spells a case-folded comparison.
-      if (value !== null && typeof value === 'object' && 'equals' in value) {
-        const expected = (value as Row)['equals'];
-        return (value as Row)['mode'] === 'insensitive'
-          ? String(row[key] ?? '').toLowerCase() === String(expected ?? '').toLowerCase()
-          : row[key] === expected;
-      }
       return row[key] === value;
     });
 
@@ -100,6 +100,21 @@ function makePrisma(seed: { users?: Row[]; credentials?: Row[]; tokens?: Row[]; 
         return { count: matching.length };
       },
     },
+  };
+  /**
+   * The username uniqueness read is raw SQL, deliberately: Prisma's `mode: 'insensitive'` compiles
+   * to ILIKE and `_` is a wildcard (see `account-profile-username.pg.spec.ts`). This fake answers
+   * the ONE query the use case sends and refuses to guess at any other — a fake that modelled SQL
+   * is exactly what reported green while real Postgres was refusing `som_hai`.
+   */
+  client.$queryRaw = async (strings: TemplateStringsArray, ...values: unknown[]) => {
+    const sql = strings.join('?');
+    assert.match(sql, /lower\("username"\) = /, `unmodelled raw query: ${sql}`);
+    const [callerId, desired] = values as [string, string];
+    return users
+      .filter((row) => row['id'] !== callerId && String(row['username'] ?? '').toLowerCase() === desired)
+      .slice(0, 1)
+      .map((row) => ({ id: row['id'] }));
   };
   client.$transaction = async (fn: any) => fn(client);
   return { prisma: { client } as any, users, credentials, tokens, sessions, lineIdentities };
@@ -232,6 +247,23 @@ describe('AccountProfileUseCase — first password', () => {
     assert.match(line.pushes[0]!.text, /098-256-5628/, 'the notice must say what to do if it was not them');
   });
 
+  // L3: an unlinked identity belongs to a LINE account that no longer speaks for this user.
+  it('does not announce the password to a revoked LINE identity', async () => {
+    const { prisma, credentials } = makePrisma({
+      users: [{ ...LINE_ONLY_USER }],
+      lineIdentities: [{ userId: 'user-line', provider: 'LINE', status: 'REVOKED', providerUserId: 'line-old-phone' }],
+    });
+    const line = captureLinePush();
+    try {
+      await new AccountProfileUseCase(prisma, audit, lineConfig)
+        .setInitialPassword('user-line', 'backup-password', 'mangmee.shop', 'req-1', 'session-current');
+    } finally {
+      line.restore();
+    }
+    assert.equal(credentials.length, 1, 'the password is still set');
+    assert.deepEqual(line.pushes, [], 'a revoked identity must not be told a password was set');
+  });
+
   it('still sets the password when there is no LINE identity to notify', async () => {
     const { prisma, credentials } = makePrisma({ users: [{ ...LINE_ONLY_USER }] });
     const line = captureLinePush();
@@ -245,12 +277,30 @@ describe('AccountProfileUseCase — first password', () => {
     assert.equal(line.pushes.length, 0);
   });
 
-  it('rejects a username that is not a usable login name', async () => {
-    const { prisma } = makePrisma({ users: [{ ...LINE_ONLY_USER }] });
+  // M1: a Thai owner typing สมชาย was getting an uncoded English sentence.
+  it('rejects a username that is not a usable login name, with a code the web can translate', async () => {
+    const { prisma, credentials } = makePrisma({ users: [{ ...LINE_ONLY_USER }] });
+    for (const bad of ['สมชาย', 'ก ข', 'ab', 'som chai', 'somchai@gmail.com']) {
+      await assert.rejects(
+        () => new AccountProfileUseCase(prisma, audit).setInitialPassword('user-line', 'backup-password', bad, 'req-1', 'session-current'),
+        (error: unknown) => error instanceof BadRequestException
+          && (error.getResponse() as Row)['code'] === 'invalid_username',
+        bad,
+      );
+    }
+    assert.equal(credentials.length, 0);
+  });
+
+  // L5: an unverified address cannot receive a reset, so it is not a login identifier.
+  it('does not let an unverified email stand in for a username', async () => {
+    const { prisma, credentials } = makePrisma({
+      users: [{ ...LINE_ONLY_USER, email: 'owner@example.com', emailVerifiedAt: null }],
+    });
     await assert.rejects(
-      () => new AccountProfileUseCase(prisma, audit).setInitialPassword('user-line', 'backup-password', 'ก ข', 'req-1'),
-      BadRequestException,
+      () => new AccountProfileUseCase(prisma, audit).setInitialPassword('user-line', 'backup-password', undefined, 'req-1', 'session-current'),
+      (error: unknown) => error instanceof BadRequestException && (error.getResponse() as Row)['code'] === 'username_required',
     );
+    assert.equal(credentials.length, 0);
   });
 });
 

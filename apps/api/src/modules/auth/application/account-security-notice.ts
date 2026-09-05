@@ -28,6 +28,8 @@ export async function notifyAccountSecurityChange(
   text: string,
 ): Promise<boolean> {
   if (!channelAccessToken) return false;
+  // ACTIVE only: an unlinked or revoked identity belongs to a LINE account that no longer speaks
+  // for this user, and "a password was set on your account" is the last message to send there.
   const identity = await prisma.client.externalIdentity.findFirst({
     where: { userId, provider: 'LINE', status: 'ACTIVE' },
     select: { providerUserId: true },
