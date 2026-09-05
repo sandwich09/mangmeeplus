@@ -17,6 +17,7 @@ import {
 import { encryptCredential } from '../../../system-partner-management/domain/logic/credential-cipher.logic';
 import { assertEmployeeLimit } from '../../../system-partner-management/application/plan-term-limit';
 import { lockEmployeeProfile } from '../lock-employee-profile';
+import { uniqueConstraintFields } from '../../../../common/database/prisma-error';
 
 export type CreateEmployeeCommand = {
   companyId: string;
@@ -240,9 +241,9 @@ export class CreateEmployeeUseCase {
           });
         });
       } catch (err) {
-        if (uniqueConstraintTarget(err)?.some((f) => f === 'phoneNumber')) throw new ConflictException(PHONE_CONFLICT);
-        if (uniqueConstraintTarget(err)?.some((f) => f === 'email')) throw new ConflictException(EMAIL_CONFLICT);
-        if (uniqueConstraintTarget(err)?.some((f) => f === 'username')) throw new ConflictException(USERNAME_CONFLICT);
+        if (uniqueConstraintFields(err)?.some((f) => f === 'phoneNumber')) throw new ConflictException(PHONE_CONFLICT);
+        if (uniqueConstraintFields(err)?.some((f) => f === 'email')) throw new ConflictException(EMAIL_CONFLICT);
+        if (uniqueConstraintFields(err)?.some((f) => f === 'username')) throw new ConflictException(USERNAME_CONFLICT);
         throw err;
       }
 
@@ -396,14 +397,14 @@ export class CreateEmployeeUseCase {
           lineLink: buildLineLinkPackage(cmd.apiBaseUrl, lineLinkToken.rawToken, lineLinkToken.expiresAt, this.config.lineLiffId),
         };
       } catch (err) {
-        if (uniqueConstraintTarget(err)?.includes('username')) throw new ConflictException(USERNAME_CONFLICT);
-        if (uniqueConstraintTarget(err)?.some((f) => f === 'identityHash')) {
+        if (uniqueConstraintFields(err)?.includes('username')) throw new ConflictException(USERNAME_CONFLICT);
+        if (uniqueConstraintFields(err)?.some((f) => f === 'identityHash')) {
           throw new ConflictException(IDENTITY_CONFLICT);
         }
-        if (uniqueConstraintTarget(err)?.some((f) => f === 'phoneNumber')) {
+        if (uniqueConstraintFields(err)?.some((f) => f === 'phoneNumber')) {
           throw new ConflictException(PHONE_CONFLICT);
         }
-        if (uniqueConstraintTarget(err)?.some((f) => f === 'email')) {
+        if (uniqueConstraintFields(err)?.some((f) => f === 'email')) {
           throw new ConflictException(EMAIL_CONFLICT);
         }
         throw err;
@@ -514,8 +515,8 @@ export class CreateEmployeeUseCase {
         lineLink: buildLineLinkPackage(cmd.apiBaseUrl, ctx.lineLinkToken.rawToken, ctx.lineLinkToken.expiresAt, this.config.lineLiffId),
       };
     } catch (err) {
-      if (uniqueConstraintTarget(err)?.some((f) => f === 'phoneNumber')) throw new ConflictException(PHONE_CONFLICT);
-      if (uniqueConstraintTarget(err)?.some((f) => f === 'identityHash')) throw new ConflictException(IDENTITY_CONFLICT);
+      if (uniqueConstraintFields(err)?.some((f) => f === 'phoneNumber')) throw new ConflictException(PHONE_CONFLICT);
+      if (uniqueConstraintFields(err)?.some((f) => f === 'identityHash')) throw new ConflictException(IDENTITY_CONFLICT);
       throw err;
     }
   }
@@ -586,8 +587,3 @@ export class CreateEmployeeUseCase {
   }
 }
 
-function uniqueConstraintTarget(err: unknown): string[] | undefined {
-  if (typeof err !== 'object' || err === null || (err as { code?: string }).code !== 'P2002') return undefined;
-  const target = (err as { meta?: { target?: unknown } }).meta?.target;
-  return Array.isArray(target) ? (target as string[]) : typeof target === 'string' ? [target] : undefined;
-}
