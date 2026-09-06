@@ -5,6 +5,7 @@ import { LinkLineIdentityUseCase } from './link-line-identity.use-case';
 import { LineLoginVerifierAdapter } from '../../infrastructure/line-login-verifier.adapter';
 import { AuditService } from '../../../audit/application/audit.service';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
+import { revokePendingLineHandoffTokens } from '../../domain/logic/line-handoff.logic';
 
 function hashLineLinkToken(rawToken: string): string {
   return createHash('sha256').update(rawToken).digest('hex');
@@ -175,6 +176,14 @@ export class CompleteEmployeeLineLinkUseCase {
       data: { status: 'UNLINKED' },
     });
     for (const identity of others) {
+      // Owner decision 2026-09-06: the old phone keeps whatever handoff deep links were sent to it,
+      // and each is a bearer session for this employee until its TTL runs out. Awaited, not fired
+      // and forgotten, so the count below is real; a failure here surfaces to the caller's
+      // best-effort catch exactly as a failed sever already does.
+      const handoffTokensRevoked = await revokePendingLineHandoffTokens(this.prisma.client.lineWebHandoffToken, {
+        lineUserId: identity.providerUserId,
+        userId: token.userId,
+      });
       void this.audit?.log({
         actorUserId: token.userId,
         action: AuditAction.AUTH_IDENTITY_UNLINK,
@@ -188,6 +197,7 @@ export class CompleteEmployeeLineLinkUseCase {
           reason: 'employee_line_relink',
           keptProviderUserId: keepProviderUserId,
           severedProviderUserId: identity.providerUserId,
+          handoffTokensRevoked,
         },
       });
     }

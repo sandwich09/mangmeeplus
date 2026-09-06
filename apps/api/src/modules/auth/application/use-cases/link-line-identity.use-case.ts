@@ -6,6 +6,7 @@ import { LineLoginVerifierAdapter } from '../../infrastructure/line-login-verifi
 import { AuditService } from '../../../audit/application/audit.service';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
 import { observeCustomerJourney } from '../../../../common/observability/customer-journey-audit';
+import { revokePendingLineHandoffTokens } from '../../domain/logic/line-handoff.logic';
 
 @Injectable()
 export class LinkLineIdentityUseCase {
@@ -72,6 +73,16 @@ export class LinkLineIdentityUseCase {
         (await tx.externalIdentity.findFirst({ where: matchAnyStatus }));
       if (existing && existing.providerChannelId !== providerChannelId) {
         console.warn(`[line-link] line_identity_legacy_channel_row identityId=${existing.id}`);
+      }
+
+      // Owner decision 2026-09-06. Both re-point branches below move this LINE account to a
+      // DIFFERENT person, and the unspent handoff links already sitting in that chat still name the
+      // previous holder — a tap after the move would mint the old owner's session for whoever holds
+      // the account now. Placed once, before the branch, so neither can forget it; run inside the
+      // transaction, so the refusals below (`line_linked_elsewhere`, disabled) roll it back with
+      // everything else and a link that never happened revokes nothing.
+      if (existing && existing.userId !== userId) {
+        await revokePendingLineHandoffTokens(tx.lineWebHandoffToken, { lineUserId, userId: existing.userId });
       }
 
       if (existing?.status === 'ACTIVE') {

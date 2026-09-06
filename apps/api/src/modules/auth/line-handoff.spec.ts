@@ -311,6 +311,20 @@ describe('ExchangeLineHandoffTokenUseCase refusals', () => {
     assert.equal(new Set(bodies).size, 1, 'refusals must be indistinguishable to the caller');
   });
 
+  it('refuses a token an unlink revoked without writing anything or issuing a session', async () => {
+    // The other half of the 2026-09-06 unlink fix: severing a LINE link flips its unspent rows to
+    // REVOKED, and the exchange must treat one exactly as it treats a spent one — same 403, same
+    // body, refused at step 2 so the row is never claimed and no surface side effect runs.
+    const calls: unknown[][] = [];
+    const { prisma, updates } = makeExchangePrisma({ row: row({ status: 'REVOKED' }), userStatus: 'ACTIVE' });
+    const uc = new ExchangeLineHandoffTokenUseCase(prisma, issueToken(calls), legalAcceptance(false));
+
+    const body = (await refusal(uc)).getResponse() as Record<string, unknown>;
+    assert.equal(body['code'], 'line_handoff_unavailable');
+    assert.equal(updates.length, 0, 'a revoked row must not be claimed');
+    assert.equal(calls.length, 0, 'a revoked row must not mint a session');
+  });
+
   it('checks the token before the account, so a lookup miss cannot probe user state', async () => {
     let userReads = 0;
     const { prisma } = makeExchangePrisma({ row: null });

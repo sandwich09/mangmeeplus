@@ -1,4 +1,5 @@
-// P12-3b LINE → web deep-link session handoff: pure token and path rules.
+// P12-3b LINE → web deep-link session handoff: token and path rules, plus the revoke a severed
+// LINE link owes the tokens already sent to it.
 // Spec: docs/specs/line-web-deeplink-handoff-spec.md §9, §11.
 import { generateLineLinkToken, hashLineLinkToken } from '../../../employee-access/domain/logic/employee-access.logic';
 
@@ -61,4 +62,44 @@ export function isSafeHandoffPath(targetPath: string, companyId: string): boolea
 /** `<web>/l/<token>` — the URL that replaces a plain deep link in an outgoing LINE message. */
 export function lineHandoffUrl(webBaseUrl: string, rawToken: string): string {
   return `${webBaseUrl.replace(/\/+$/, '')}${HANDOFF_PATH_PREFIX}${rawToken}`;
+}
+
+/** Narrow delegate so this runs on `prisma.client` or a transaction client, and a spec can fake two
+ *  lines of it — the shape `session-revocation.logic.ts` uses for the same reason. */
+type LineHandoffTokenRevokeDelegate = {
+  updateMany(args: {
+    where: { lineUserId: string; userId: string; status: 'PENDING' };
+    data: { status: 'REVOKED' };
+  }): Promise<{ count: number }>;
+};
+
+/**
+ * Severing a LINE link must also kill the links already sitting in that chat.
+ *
+ * A PENDING row is a bearer credential with up to `LINE_HANDOFF_TOKEN_TTL_MS` left on it. Unlinking
+ * used to drop the identity and the selected-company row and leave every unspent handoff token
+ * exchangeable, so a tap inside that window still minted a first-party web session for the account
+ * that had just been severed — and a picker-surface token re-created the company context row under
+ * a `lineUserId` that may by then belong to somebody else.
+ *
+ * Matched on `lineUserId` AND `userId` because the row carries both: it kills exactly the links sent
+ * to THIS pairing, so re-pointing the same LINE account at another person can neither resurrect the
+ * previous holder's tokens nor reach into the new holder's.
+ *
+ * `REVOKED` is already a value of `LineWebHandoffTokenStatus`, so this needs no migration and no
+ * expiry fudge: the exchange's existing `status !== 'PENDING'` check refuses the row as
+ * `token_not_pending`, the same generic 403 a used token gets (spec §12), and refuses it at step 2 —
+ * before the claim, before any session, and before any surface side effect.
+ *
+ * Returns the number of links killed, for the severing path's audit row.
+ */
+export async function revokePendingLineHandoffTokens(
+  lineWebHandoffToken: LineHandoffTokenRevokeDelegate,
+  identity: { lineUserId: string; userId: string },
+): Promise<number> {
+  const { count } = await lineWebHandoffToken.updateMany({
+    where: { lineUserId: identity.lineUserId, userId: identity.userId, status: 'PENDING' },
+    data: { status: 'REVOKED' },
+  });
+  return count;
 }
