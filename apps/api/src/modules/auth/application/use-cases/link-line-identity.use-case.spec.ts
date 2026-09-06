@@ -9,7 +9,7 @@ import { LinkLineIdentityUseCase } from './link-line-identity.use-case';
  * `line-identity:<channel>:<providerUserId>` advisory key, which signup provisioning takes too.
  * The key is recorded rather than swallowed so a spec can assert the two sites cannot drift.
  */
-function withIdentityTx(prisma: any, locks: unknown[][], txOptions: any[]): any {
+function withIdentityTx(prisma: any, locks: unknown[][], txOptions: any[], revokes: any[]): any {
   prisma.client.$transaction = async (fn: any, options: any) => {
     txOptions.push(options);
     return fn(prisma.client);
@@ -17,6 +17,11 @@ function withIdentityTx(prisma: any, locks: unknown[][], txOptions: any[]): any 
   prisma.client.$executeRaw = async (_strings: TemplateStringsArray, ...values: unknown[]) => {
     locks.push(values);
     return 0;
+  };
+  // A re-point to a different user revokes the previous holder's PENDING handoff links in this
+  // same transaction (Owner decision 2026-09-06), so the delegate belongs to the tx harness.
+  prisma.client.lineWebHandoffToken = {
+    updateMany: async (args: unknown) => { revokes.push(args); return { count: 0 }; },
   };
   return prisma;
 }
@@ -27,6 +32,7 @@ function makeUseCase(opts: { existing?: any; createThrowsP2002?: boolean; member
   const contextUpserts: any[] = [];
   const identityLocks: unknown[][] = [];
   const txOptions: any[] = [];
+  const handoffRevokes: any[] = [];
 
   const prisma = {
     client: {
@@ -53,9 +59,9 @@ function makeUseCase(opts: { existing?: any; createThrowsP2002?: boolean; member
   const audit = { log: async () => {} } as any;
 
   const useCase = new LinkLineIdentityUseCase(
-    lineVerifier, withIdentityTx(prisma, identityLocks, txOptions), config, audit,
+    lineVerifier, withIdentityTx(prisma, identityLocks, txOptions, handoffRevokes), config, audit,
   );
-  return { useCase, creates, updates, contextUpserts, identityLocks, txOptions };
+  return { useCase, creates, updates, contextUpserts, identityLocks, txOptions, handoffRevokes };
 }
 
 const input = { userId: 'user-1', idToken: 'line-id-token', requestId: 'req-1' };
@@ -103,7 +109,7 @@ describe('LinkLineIdentityUseCase', () => {
   });
 
   it('moves a severed LINE account to a different user via reactivation', async () => {
-    const { useCase, updates } = makeUseCase({
+    const { useCase, updates, handoffRevokes } = makeUseCase({
       existing: { id: 'identity-1', userId: 'user-other', status: 'UNLINKED' },
     });
     const result = await useCase.execute(input);
@@ -111,6 +117,20 @@ describe('LinkLineIdentityUseCase', () => {
     assert.deepEqual(result, { linked: true, providerUserId: 'line-user-1' });
     assert.equal(updates.length, 1);
     assert.equal(updates[0].data.userId, 'user-1');
+    // Owner decision 2026-09-06: any unspent handoff link left in that chat still names
+    // `user-other`, so the new holder of the LINE account could tap into the old owner's session.
+    assert.deepEqual(handoffRevokes, [{
+      where: { lineUserId: 'line-user-1', userId: 'user-other', status: 'PENDING' },
+      data: { status: 'REVOKED' },
+    }]);
+  });
+
+  it('revokes nothing when the row already belongs to this user', async () => {
+    const { useCase, handoffRevokes } = makeUseCase({
+      existing: { id: 'identity-1', userId: 'user-1', status: 'UNLINKED' },
+    });
+    await useCase.execute(input);
+    assert.deepEqual(handoffRevokes, [], 'a relink by the same person must not burn their own links');
   });
 
   it('rejects when the LINE account is actively linked to another user', async () => {

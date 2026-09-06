@@ -402,6 +402,27 @@ describe('ExchangeLineHandoffTokenUseCase refusals', () => {
     assert.equal(new Set(bodies).size, 1, 'refusals must be indistinguishable to the caller');
   });
 
+  it('refuses a token an unlink revoked without writing anything or issuing a session', async () => {
+    // The other half of the 2026-09-06 unlink fix: severing a LINE link flips its unspent rows to
+    // REVOKED, and the exchange must treat one exactly as it treats a spent one — same 403, same
+    // body, refused at step 2. Deliberately a PICKER-surface row, the one surface that would move
+    // the chat's selected company at step 4b: the refusal has to land before the claim, so a link
+    // sent to a since-severed LINE account cannot re-create `LineCompanyContext` under a
+    // `lineUserId` that may by now belong to somebody else.
+    const calls: unknown[][] = [];
+    const { prisma, updates, contextUpserts } = makeExchangePrisma({
+      row: row({ status: 'REVOKED', surface: LINE_HANDOFF_SURFACE_COMPANY_PICKER_OPEN }),
+      userStatus: 'ACTIVE',
+    });
+    const uc = new ExchangeLineHandoffTokenUseCase(prisma, issueToken(calls), legalAcceptance(false));
+
+    const body = (await refusal(uc)).getResponse() as Record<string, unknown>;
+    assert.equal(body['code'], 'line_handoff_unavailable');
+    assert.equal(updates.length, 0, 'a revoked row must not be claimed');
+    assert.equal(calls.length, 0, 'a revoked row must not mint a session');
+    assert.deepEqual(contextUpserts, [], 'a revoked row must not move the chat to a company');
+  });
+
   it('checks the token before the account, so a lookup miss cannot probe user state', async () => {
     let userReads = 0;
     const { prisma } = makeExchangePrisma({ row: null });

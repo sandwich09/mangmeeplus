@@ -25,6 +25,7 @@ function makeUseCase(opts: {
   const auditEvents: any[] = [];
   const tokenUpdates: any[] = [];
   const identityUpdates: any[] = [];
+  const handoffRevokes: any[] = [];
   // Interleaved operation log: proves the claim happens BEFORE the identity link (H-09).
   const ops: string[] = [];
 
@@ -76,6 +77,11 @@ function makeUseCase(opts: {
           return { count: (opts.otherActiveIdentities ?? []).length };
         },
       },
+      // The severed phone keeps whatever handoff deep links were sent to it; each is a bearer
+      // session for this employee until its TTL expires, so the sever kills them too.
+      lineWebHandoffToken: {
+        updateMany: async (args: any) => { handoffRevokes.push(args); return { count: 2 }; },
+      },
     },
   } as any;
 
@@ -101,7 +107,7 @@ function makeUseCase(opts: {
   const audit = { log: async (entry: any) => { auditEvents.push(entry); } } as any;
 
   const useCase = new CompleteEmployeeLineLinkUseCase(prisma, linkLineIdentity, lineVerifier, audit);
-  return { useCase, auditEvents, tokenUpdates, identityUpdates, linkCalls, ops, token };
+  return { useCase, auditEvents, tokenUpdates, identityUpdates, handoffRevokes, linkCalls, ops, token };
 }
 
 const input = { linkToken: 'raw-token', idToken: 'line-id-token', requestId: 'req-1' };
@@ -185,7 +191,7 @@ describe('CompleteEmployeeLineLinkUseCase', () => {
   });
 
   it('severs other ACTIVE LINE identities of the user after a successful relink (identity cardinality)', async () => {
-    const { useCase, identityUpdates, auditEvents } = makeUseCase({
+    const { useCase, identityUpdates, auditEvents, handoffRevokes } = makeUseCase({
       otherActiveIdentities: [{ id: 'identity-old', providerUserId: 'line-user-old' }],
     });
     await useCase.execute(input);
@@ -194,11 +200,19 @@ describe('CompleteEmployeeLineLinkUseCase', () => {
     assert.deepEqual(identityUpdates[0].where, { id: { in: ['identity-old'] }, status: 'ACTIVE' });
     assert.deepEqual(identityUpdates[0].data, { status: 'UNLINKED' });
 
+    // Owner decision 2026-09-06: severing the old phone's identity is not enough while the deep
+    // links already delivered to it still exchange into this employee's session.
+    assert.deepEqual(handoffRevokes, [{
+      where: { lineUserId: 'line-user-old', userId: 'user-1', status: 'PENDING' },
+      data: { status: 'REVOKED' },
+    }]);
+
     const unlinkAudit = auditEvents.find((event) => event.action === 'auth.identity.unlink');
     assert.ok(unlinkAudit, 'per-identity AUTH_IDENTITY_UNLINK audit must be emitted');
     assert.equal(unlinkAudit.targetId, 'identity-old');
     assert.equal(unlinkAudit.metadataJson.severedProviderUserId, 'line-user-old');
     assert.equal(unlinkAudit.metadataJson.keptProviderUserId, 'line-user-1');
+    assert.equal(unlinkAudit.metadataJson.handoffLinksRevoked, 2);
 
     const successAudit = auditEvents.find((event) => event.action === 'access.employee.line_link.success');
     assert.equal(successAudit.metadataJson.unlinkedPreviousLineIdentities, 1);
