@@ -12,6 +12,25 @@ trap 'rm -rf "$tmp_dir"' EXIT
 bash -n "$agentcore"
 bash -n "$ecs"
 
+# Turns execute in AgentCore: exercise its actual environment renderer for both deployments,
+# including draft-tool visibility, rather than accepting ECS-only activation as parity evidence.
+awk '/^AGENTCORE_LINE_AI_FUSED_PLAN_SHADOW_ENABLED=/{on=1} /^ENV_SHA=/{exit} on{print}' \
+  "$agentcore" > "$tmp_dir/runtime-env.sh"
+printf '\nprintf "%%s" "$ENV_VARS"\n' >> "$tmp_dir/runtime-env.sh"
+for stage in uat production; do
+  env -i PATH="$PATH" DEPLOY_ENVIRONMENT="$stage" bash "$tmp_dir/runtime-env.sh" \
+    | jq -e '.LINE_AI_FUSED_PLAN_SHADOW_ENABLED=="true"
+      and .LINE_AI_PREPARED_SIMPLE_READ_ENABLED=="true" and .LINE_AI_DRAFT_EDIT_ENABLED=="true"
+      and .LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES=="sales.get_sales_summary::single_metric,expense.list_recent::single_metric,accounting.get_summary::list,expense.get_daily_closing::single_metric"
+      and .AI_FINAL_MUTATION_ENABLED=="false" and .AI_PROMPT_LOGGING_ENABLED=="false"' >/dev/null
+  env -i PATH="$PATH" DEPLOY_ENVIRONMENT="$stage" LINE_AI_FUSED_PLAN_SHADOW_ENABLED=false \
+    LINE_AI_PREPARED_SIMPLE_READ_ENABLED=false LINE_AI_DRAFT_EDIT_ENABLED=false \
+    LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES=sales.get_sales_summary::single_metric \
+    bash "$tmp_dir/runtime-env.sh" | jq -e '.LINE_AI_FUSED_PLAN_SHADOW_ENABLED=="false"
+      and .LINE_AI_PREPARED_SIMPLE_READ_ENABLED=="false" and .LINE_AI_DRAFT_EDIT_ENABLED=="false"
+      and .LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES=="sales.get_sales_summary::single_metric"' >/dev/null
+done
+
 grep -Fq '"AI_GATEWAY_INTERNAL_SECRET_ARN": "${AI_GATEWAY_SECRET_ARN}"' "$agentcore"
 if grep -Fq '"AI_GATEWAY_INTERNAL_SECRET": "${AI_GATEWAY_INTERNAL_SECRET}"' "$agentcore"; then
   echo 'AgentCore must not publish the raw internal secret in runtime metadata' >&2

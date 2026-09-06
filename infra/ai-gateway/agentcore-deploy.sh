@@ -173,19 +173,12 @@ EOF
 # DEPLOY_ENVIRONMENT is a literal; GIT_SHA is the exact 40-hex SOURCE_COMMIT verified above, never
 # a short tag. Keep both siblings of APP_ENV — packages/config/src/deployment-identity-manifest.test.ts
 # fails CI if any runtime definition in this repo sets APP_ENV without them.
-# Speed-lane flags for the runtime artifact (Owner activation ladder 2026-08-27): the ECS task
-# flags alone are not enough — turns execute inside this AgentCore artifact, so the lane must be
-# enabled HERE. UAT defaults ON with the four compiled families; production is forced off
-# unconditionally until the lane passes its activation gates (same fail-closed stance as deploy.sh).
-if [ "${DEPLOY_ENVIRONMENT}" = "uat" ]; then
-  AGENTCORE_LINE_AI_FUSED_PLAN_SHADOW_ENABLED="${LINE_AI_FUSED_PLAN_SHADOW_ENABLED:-true}"
-  AGENTCORE_LINE_AI_PREPARED_SIMPLE_READ_ENABLED="${LINE_AI_PREPARED_SIMPLE_READ_ENABLED:-true}"
-  AGENTCORE_LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES="${LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES:-sales.get_sales_summary::single_metric,expense.list_recent::single_metric,accounting.get_summary::list,expense.get_daily_closing::single_metric}"
-else
-  AGENTCORE_LINE_AI_FUSED_PLAN_SHADOW_ENABLED="false"
-  AGENTCORE_LINE_AI_PREPARED_SIMPLE_READ_ENABLED="false"
-  AGENTCORE_LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES=""
-fi
+# Owner parity decision 2026-09-06 includes the runtime that executes the turns, not only ECS.
+# Keep the same defaults and explicit overrides as infra/prod-ecs-express/deploy.sh.
+AGENTCORE_LINE_AI_FUSED_PLAN_SHADOW_ENABLED="${LINE_AI_FUSED_PLAN_SHADOW_ENABLED:-true}"
+AGENTCORE_LINE_AI_PREPARED_SIMPLE_READ_ENABLED="${LINE_AI_PREPARED_SIMPLE_READ_ENABLED:-true}"
+AGENTCORE_LINE_AI_DRAFT_EDIT_ENABLED="${LINE_AI_DRAFT_EDIT_ENABLED:-true}"
+AGENTCORE_LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES="${LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES:-sales.get_sales_summary::single_metric,expense.list_recent::single_metric,accounting.get_summary::list,expense.get_daily_closing::single_metric}"
 
 ENV_VARS=$(cat <<EOF
 {
@@ -216,6 +209,7 @@ ENV_VARS=$(cat <<EOF
   "AI_FINAL_MUTATION_ENABLED": "false",
   "LINE_AI_FUSED_PLAN_SHADOW_ENABLED": "${AGENTCORE_LINE_AI_FUSED_PLAN_SHADOW_ENABLED}",
   "LINE_AI_PREPARED_SIMPLE_READ_ENABLED": "${AGENTCORE_LINE_AI_PREPARED_SIMPLE_READ_ENABLED}",
+  "LINE_AI_DRAFT_EDIT_ENABLED": "${AGENTCORE_LINE_AI_DRAFT_EDIT_ENABLED}",
   "LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES": "${AGENTCORE_LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES}",
   "AI_PROMPT_LOGGING_ENABLED": "false",
   "AI_TOOL_TIMEOUT_MS": "15000",
