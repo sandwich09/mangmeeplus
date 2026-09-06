@@ -10,6 +10,7 @@ const clearCtx: AdvisorDirectAnswerContext = {
   hasActiveExpenseDrafts: false,
   hasPendingMediaCapsule: false,
   hasSubstituteState: false,
+  capabilityQuestion: false,
 };
 
 const socialAnswer = {
@@ -31,7 +32,7 @@ describe('advisorDirectAnswerText (Slice A)', () => {
   });
 
   it('declines whenever ANY open turn state exists (§9.1 rows 1–6)', () => {
-    for (const flag of ['hasAttachment', 'hasOpenClarifications', 'hasActiveExpenseDrafts', 'hasPendingMediaCapsule', 'hasSubstituteState'] as const) {
+    for (const flag of ['hasAttachment', 'hasOpenClarifications', 'hasActiveExpenseDrafts', 'hasPendingMediaCapsule', 'hasSubstituteState', 'capabilityQuestion'] as const) {
       assert.equal(advisorDirectAnswerText(socialAnswer, { ...clearCtx, [flag]: true }), null, flag);
     }
   });

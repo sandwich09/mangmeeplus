@@ -3518,6 +3518,9 @@ export class ProcessLineWebhookUseCase {
       hasActiveExpenseDrafts: activeExpenseDrafts.length > 0,
       hasPendingMediaCapsule: !!mediaResumeCapsule,
       hasSubstituteState: substituteContext.workflowState !== 'none' || substituteContext.hasPendingQuestion,
+      // §8.2: the same matcher that keeps the fixed card for strangers keeps the shortcut off a
+      // linked caller's capability question — the scoped composer owns that answer.
+      capabilityQuestion: isCapabilityQuestion(normalizedText),
     });
     if (advisorDirectText) {
       this.logger.log({ msg: 'line.ai.advisor_direct_served', requestId, companyId, context: 'ProcessLineWebhookUseCase' });

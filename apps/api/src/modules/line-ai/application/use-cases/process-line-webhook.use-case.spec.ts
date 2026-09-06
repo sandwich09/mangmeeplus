@@ -685,6 +685,38 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal((updates.at(-1) as any).data.status, 'support_paused');
   });
 
+  // §8.2 again, from the other side. Forwarding the question opened a lane it could not reach
+  // before: a router that answers ADVISOR_CONVERSATION hands back a social draft the API delivers
+  // ITSELF, without the gateway and therefore without `composeCapabilityHelp`. That draft is model
+  // prose about what น้องมั่งมี can do, so it can name exactly the features the scoping exists to
+  // hide — the prompt says it never routes this way, and prompt wording is not a trust boundary.
+  it('never lets an ADVISOR_CONVERSATION draft answer a capability question with an unscoped list', async () => {
+    const { prisma } = makePrisma({ entitlements: EXPENSES_ONLY_ENTITLEMENTS });
+    const { useCase, replies, getAiGatewayCalled } = makeUseCase(prisma, {
+      permissions: ['line.ai.query', 'expense.read'],
+      config: { lineAiAdvisorMode: 'social' },
+      intakeRouteFn: () => ({
+        status: 'ROUTED', intent: 'ADVISOR_CONVERSATION', language: 'th', confidence: 0.95,
+        advisorAnswer: {
+          version: 1, mode: 'SOCIAL_CHAT', needsTools: false, confidence: 0.95,
+          knowledgeCardIds: [], companyProfileFieldsUsed: [],
+          answerText: 'น้องมั่งมีดูยอดขายวันนี้ สรุปบัญชี และภาษีให้ได้ค่ะ ถามมาได้เลยนะคะ 💚',
+        },
+      }),
+      aiGatewayFn: () => ({
+        requestId: 'req-ai', replyText: 'น้องมั่งมีช่วยเรื่องค่าใช้จ่ายได้ค่ะ',
+        sourceRefs: [], sourceLabels: [], webLinks: [],
+        intent: 'capability_help', agent: 'general', refused: false, toolsInvoked: [], toolCalls: [],
+        modelCallCount: 1, modelLineage: [], usage: [], durationMs: 8,
+      }),
+    });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-capability-advisor', messageText: 'มั่งมีทำอะไรได้บ้าง' });
+
+    assert.equal(replies.some((reply) => reply.includes('ยอดขายวันนี้')), false, 'the shortcut must not advertise ยอดขาย');
+    assert.equal(getAiGatewayCalled(), true, 'the turn falls through to the scoped composer instead');
+  });
+
   // Identities linked before providerChannelId was recorded must keep working without relinking.
   it('falls back to a channel-agnostic identity for legacy links', async () => {
     const { prisma, updates, identityQueries } = makePrisma({ identityChannelId: 'legacy-channel' });

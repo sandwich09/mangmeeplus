@@ -18,6 +18,11 @@ export type AdvisorDirectAnswerContext = {
   hasActiveExpenseDrafts: boolean;
   hasPendingMediaCapsule: boolean;
   hasSubstituteState: boolean;
+  /** Capability-help spec §8.2: a linked caller's "ทำอะไรได้บ้าง" now reaches the router, and a
+   *  social draft describing the assistant is a feature LIST — the one answer that must be scoped
+   *  to this caller's permissions and this shop's entitlements, which only `composeCapabilityHelp`
+   *  does. The router prompt says it never routes these here; prompt wording is not a trust boundary. */
+  capabilityQuestion: boolean;
 };
 
 /** A money figure needs grounding and social chat has no grounding source, so any baht amount
@@ -57,7 +62,7 @@ export function advisorDirectAnswerText(rawAdvisorAnswer: unknown, ctx: AdvisorD
   // §9.1 rows 1–6: any open state or attachment means an existing route owns the turn.
   if (
     ctx.hasAttachment || ctx.hasOpenClarifications || ctx.hasActiveExpenseDrafts
-    || ctx.hasPendingMediaCapsule || ctx.hasSubstituteState
+    || ctx.hasPendingMediaCapsule || ctx.hasSubstituteState || ctx.capabilityQuestion
   ) return null;
 
   const answer = parseLineAiPreparedAdvisorAnswer(rawAdvisorAnswer);
