@@ -1359,6 +1359,8 @@ describe('LINE intake router – advisor route under the trusted capability', ()
     assert.match(P, /An identity question \("คุณเป็นใคร"/);
     assert.match(P, /is NEVER ADVISOR_CONVERSATION: return "intent": "UNSUPPORTED" with NO advisorAnswer/);
     assert.match(P, /never a list, numbered steps, or a tutorial/);
+    // Owner 2026-09-06: no robot icon, ever; a smile or a laugh only when it fits.
+    assert.match(P, /Never use the robot emoji 🤖/);
   });
 
   it('parses the route plus its bounded advisor draft from ONE model response', async () => {

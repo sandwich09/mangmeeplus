@@ -34,6 +34,8 @@ const MALE_PARTICLE = /ครับ/u;
  *  «ผม…» follows « and matches neither, and hair (ตัดผม) has no whitespace before it. */
 const OWN_PRONOUN_PHOM = /^ผม|\sผม(?:ชื่อ|คือ|เป็น|ยินดี|พร้อม|เอง|ขอ|จะ|ช่วย)/mu;
 const WRONG_SELF_NAME = /AI Assistant|WatchDog|Mangmee ?Plus AI|ผู้ช่วย AI ของ Mangmee ?Plus/iu;
+/** Owner 2026-09-06: a robot icon is never her (the UAT draft signed off with one). */
+const ROBOT_ICON = /🤖/u;
 /** A social answer is 1–3 sentences (spec §12). A list or numbered steps is a tutorial, which the
  *  permission-scoped walkthrough lane owns — never a model-written one from here. */
 const LIST_SHAPE = /(?:^|\s)(?:[•▪‣]|\d{1,2}[.)])\s+\S/u;
@@ -69,7 +71,7 @@ export function advisorDirectAnswerText(rawAdvisorAnswer: unknown, ctx: AdvisorD
   const text = answer.answerText?.trim();
   if (!text) return null;
   if (BAHT_AMOUNT.test(text)) return null;
-  if (MALE_PARTICLE.test(text) || OWN_PRONOUN_PHOM.test(text) || WRONG_SELF_NAME.test(text)) return null;
+  if (MALE_PARTICLE.test(text) || OWN_PRONOUN_PHOM.test(text) || WRONG_SELF_NAME.test(text) || ROBOT_ICON.test(text)) return null;
   if (looksLikeTutorial(text)) return null;
   return text;
 }

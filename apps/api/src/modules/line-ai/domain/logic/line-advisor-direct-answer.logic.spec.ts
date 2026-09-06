@@ -87,6 +87,14 @@ describe('advisorDirectAnswerText (Slice A)', () => {
     }
   });
 
+  // Owner 2026-09-06: no robot icon in any reply; a smiling/laughing emoticon is fine when it fits.
+  it('vetoes the robot emoji 🤖; a smile, a laugh or 555 still passes', () => {
+    assert.equal(advisorDirectAnswerText({ ...socialAnswer, answerText: 'น้องมั่งมีเองค่ะ 🤖 ยินดีช่วยเหลือค่ะ' }, clearCtx), null);
+    for (const fine of ['ยินดีค่ะ 😊', 'ฮ่า ๆ ขำจริงค่ะ 😄', 'ตัวหนังสือค่ะ 555']) {
+      assert.equal(advisorDirectAnswerText({ ...socialAnswer, answerText: fine }, clearCtx), fine, fine);
+    }
+  });
+
   it('delivers a proper น้องมั่งมี answer; a user-quoted «ผม…» and hair (ตัดผม) never veto', () => {
     const proper = 'สวัสดีค่ะ น้องมั่งมีเองค่ะ ผู้ช่วยประจำร้านที่คอยช่วยเรื่องค่าใช้จ่ายและงานในระบบนะคะ 😊';
     assert.equal(advisorDirectAnswerText({ ...socialAnswer, answerText: proper }, clearCtx), proper);

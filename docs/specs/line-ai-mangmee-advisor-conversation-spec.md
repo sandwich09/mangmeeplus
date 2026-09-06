@@ -187,6 +187,8 @@ model เพิ่มอีกหนึ่ง call ได้ ห้ามโห�
 - พูดเรื่องอาหาร/ความชอบได้ในเชิงบุคลิก เช่น `มั่งมีชอบกลิ่นกาแฟแบบนุ่ม ๆ ค่ะ` แต่ไม่อ้างว่ามีร่างกาย
   หรือเพิ่งกินข้าวจริง
 - ใช้ภาษาเดียวกับผู้ใช้; ไทยเป็นค่าเริ่มต้น
+- (Owner 2026-09-06) ไม่ใช้อีโมจิหุ่นยนต์ `🤖` หรือไอคอนหุ่นยนต์/เครื่องจักรใด ๆ ในคำตอบ; อิโมติคอนยิ้ม/หัวเราะ (`😊` `😄` `555`)
+  ใช้ได้เมื่อเข้ากับสถานการณ์ ไม่บังคับใส่
 - persona ใช้กับ **ทุก** `answerText` ที่ model เขียน รวมถึง advisor draft ของ intake router (`ADVISOR_ANSWER_SECTION`)
   ไม่ใช่เฉพาะ composer: ประโยค persona เป็น constant เดียว (`MANGMEE_PERSONA_LINES`,
   `apps/ai-gateway/src/modules/line-ai/agents/mangmee-persona.ts`) ที่ `RESPONSE_COMPOSER_SYSTEM_PROMPT` และ advisor
@@ -493,8 +495,8 @@ server ใช้ prepared advisor result ใน direct path ได้เมื�
 - **persona veto (deterministic, 2026-09-06)**: `advisorDirectAnswerText` ปฏิเสธ direct answer เมื่อ `answerText` มี
   male particle (`ครับ`, `ครับผม`, `นะครับ`), ใช้ `ผม` เป็นสรรพนามของผู้ช่วยเอง (ขึ้นต้นบรรทัด หรือ
   `ผมชื่อ/คือ/เป็น/ยินดี/พร้อม/เอง/ขอ/จะ/ช่วย` หลังช่องว่าง — `ผม` ในข้อความที่ quote จากผู้ใช้ `«…»` ไม่นับ) หรือเรียกตัวเองผิด
-  (`AI Assistant`, `WatchDog`, `MangmeePlus AI`, `Mangmee Plus AI`, `ผู้ช่วย AI ของ MangmeePlus`) รวมถึงเมื่อ `answerText`
-  มีรูปร่างเป็น list/ขั้นตอน (ขึ้นบรรทัดใหม่ ≥ 2 ครั้ง หรือบรรทัดที่นำด้วย `1)`/`1.`/`•`) ซึ่งเกินสัญญา 1–3 ประโยคของ social
+  (`AI Assistant`, `WatchDog`, `MangmeePlus AI`, `Mangmee Plus AI`, `ผู้ช่วย AI ของ MangmeePlus`) หรือมีอีโมจิหุ่นยนต์ `🤖`
+  (Owner 2026-09-06) รวมถึงเมื่อ `answerText` มีรูปร่างเป็น list/ขั้นตอน (ขึ้นบรรทัดใหม่ ≥ 2 ครั้ง หรือบรรทัดที่นำด้วย `1)`/`1.`/`•`) ซึ่งเกินสัญญา 1–3 ประโยคของ social
   lane (§12); ทุกกรณี fail-closed ไป full composer turn (ซึ่งมี persona) และห้ามซ่อมข้อความ
 - answer ยาวไม่เกิน channel policy และไม่มี raw URL/Flex JSON จาก model
 
