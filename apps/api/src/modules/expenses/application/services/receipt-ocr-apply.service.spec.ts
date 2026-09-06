@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { completeVatFields, isStaleOcrApply, ocrLineVatRateUnknown, ocrVatSource, ocrWhtInput, RECEIPT_REVIEW_REASONS, receiptFallbackLineTotal, ReceiptOcrApplyService, reviewReceiptDate, usableItemLines, verifyDiscountAmount } from './receipt-ocr-apply.service';
 import { calcLineTotals, expenseTotalsIdentityError } from '../../domain/logic/expense-totals.logic';
+import { acceptExpenseVatSource } from '../../domain/logic/expense-vat-reconciliation.logic';
 
 function makeDuplicateRepo(overrides: Record<string, unknown> = {}) {
   return {
@@ -1362,9 +1363,12 @@ describe('apply: the printed arithmetic decides the VAT mode, not the extractor 
   /**
    * The Owner's earlier check bill: 270+160+190+30+50+25 = 725 goods, Gratuity 72, and a VAT box
    * printed as a whole 56 baht where 7% of 797 is 55.79. Both readings miss the printed total by
-   * that 0.21, so the whole bill used to fold and the gratuity disappeared with it. `ปัดเศษ` is a
-   * charge kind the schema, the draft validator, the web charge group and the accountant export all
-   * already accept, so the remainder becomes a row instead of deleting the one beside it.
+   * that 0.21, so the whole bill used to fold and the gratuity disappeared with it.
+   *
+   * A whole-baht VAT box is a merchant rounding its own VAT, and a rounded VAT is a fact about the
+   * TAX, not about the base: the 0.21 belongs in the VAT, never in a line the document never
+   * printed. So the rows stand exactly as printed, the record keeps the computed VAT, and the
+   * MISMATCH the reviewer already knows how to answer — "ใช้ยอดตามเอกสาร" — lands it on the invoice.
    */
   const checkBill = {
     vatMode: 'VAT_EXCLUDED' as const, vatRate: '0.07',
@@ -1383,31 +1387,33 @@ describe('apply: the printed arithmetic decides the VAT mode, not the extractor 
     ],
   };
 
-  it('keeps the gratuity and the printed total when the bill rounded its VAT to a whole baht', async () => {
+  it('keeps the gratuity and the printed rows when the bill made its VAT a whole baht', async () => {
     const { lines, record, result } = await applyFields(checkBill, null, {}, TODAY);
 
     assert.equal(result.chargeReconciliationStatus, 'RECONCILED_ITEM_LINES');
     assert.equal(result.chargesApplied, 1);
     assert.equal(result.reviewReasons.includes(RECEIPT_REVIEW_REASONS.chargesFolded), false);
-    assert.ok(result.reviewReasons.some((reason: string) => reason.startsWith(RECEIPT_REVIEW_REASONS.chargeRounding)),
-      'the 0.21 the bill rounded is named, not hidden');
+    assert.ok(result.reviewReasons.some((reason: string) => reason.startsWith(RECEIPT_REVIEW_REASONS.vatRounding)),
+      `the 0.21 the bill rounded is named, not hidden: ${JSON.stringify(result.reviewReasons)}`);
+    assert.ok(result.reviewReasons.some((reason: string) => reason.includes('0.21') && reason.includes('ใช้ยอดตามเอกสาร')),
+      'and the reviewer is told the one button that records the printed figure');
 
+    assert.equal(lines.length, 7, 'six goods rows and the gratuity — nothing else');
+    assert.equal(lines.some((line: any) => line.chargeKind === 'ROUNDING'), false,
+      'a whole-baht VAT remainder belongs in the VAT, never in a line the document never printed');
     const serviceCharge = lines.find((line: any) => line.chargeKind === 'SERVICE_CHARGE');
-    const rounding = lines.find((line: any) => line.chargeKind === 'ROUNDING');
     assert.equal(serviceCharge.unitPrice, '72.0000');
-    assert.equal(rounding.description, 'ปัดเศษ');
-    assert.equal(rounding.unitPrice, '0.2100');
-    assert.equal(rounding.vatRate, '0');
-    assert.equal(lines.length, 8, 'six goods rows, the gratuity and the rounding row');
-    assert.equal(lines.at(-1).chargeKind, 'ROUNDING', 'every charge sorts after every product row');
+    assert.equal(lines.at(-1).chargeKind, 'SERVICE_CHARGE', 'every charge sorts after every product row');
 
     assert.equal(record.subtotalAmount, '725.0000', 'the goods are the goods');
-    assert.equal(record.taxableAmount, '797.2100');
-    assert.equal(record.vatAmount, '55.7900');
-    assert.equal(record.grandTotalAmount, '853.0000', 'and the stored total is the printed one');
+    assert.equal(record.taxableAmount, '797.0000', 'the tax base is what the document printed');
+    assert.equal(record.vatAmount, '55.7900', 'per-line VAT is rate × taxable, so the record keeps the computed figure');
+    assert.equal(record.grandTotalAmount, '852.7900');
+    assert.equal(record.vatCaptureSnapshotJson.reconciliation.status, 'MISMATCH',
+      'and the existing block still stands between this draft and a confirmation');
   });
 
-  it('holds the §5.1 totals identity on the rounded record', async () => {
+  it('holds the §5.1 totals identity on the reconciled record', async () => {
     const { lines, record } = await applyFields(checkBill, null, {}, TODAY);
     assert.equal(expenseTotalsIdentityError({
       vatMode: record.vatMode,
@@ -1420,11 +1426,194 @@ describe('apply: the printed arithmetic decides the VAT mode, not the extractor 
     }), null);
   });
 
-  it('adds no rounding row when the gap is bigger than a rounding, or the VAT is not whole baht', async () => {
-    const tooBig = await applyFields({ ...checkBill, vatAmount: '58.00', grandTotalAmount: '855.00' }, null, {}, TODAY);
-    assert.equal(tooBig.lines.some((line: any) => line.chargeKind === 'ROUNDING'), false);
+  /**
+   * The point of keeping the rows: the record reaches the reviewer as a MISMATCH with every printed
+   * row intact, and the button that already exists — "ใช้ยอดตามเอกสาร" — lands it exactly on the tax
+   * invoice. The 0.21 goes into the VAT, where the merchant put it, and the tax base never moves.
+   */
+  it('lands on the printed 797 / 56 / 853 once the reviewer accepts the document amounts', async () => {
+    const { lines, record } = await applyFields(checkBill, null, {}, TODAY);
+    const expense = {
+      ...record,
+      whtInputJson: null,
+      lines: lines.map((line: any) => ({ ...line })),
+    } as any;
 
+    const accepted = acceptExpenseVatSource(expense, { reason: 'ตรวจกับใบเสร็จแล้ว', vatLineNumber: 1 });
+
+    assert.equal(accepted.totals.taxableAmount, '797.0000', 'the tax base is the printed one, untouched');
+    assert.equal(accepted.totals.vatAmount, '56.0000', 'and the 0.21 lands in the VAT, where the merchant put it');
+    assert.equal(accepted.totals.grandTotalAmount, '853.0000');
+    assert.equal(accepted.lines.length, 7, 'accepting the printed VAT invents no line either');
+    assert.equal(accepted.snapshot.reconciliation.status, 'REVIEWER_ACCEPTED');
+
+    // Finding F8, PRE-EXISTING and deliberately not fixed here (see the task memory doc):
+    // `reconcileExpenseVat` drops `chargeKind` from the rows it returns
+    // (`expense-vat-reconciliation.logic.ts:492`), so both this acceptance and `applyExpenseWhtInput`
+    // recompute the header from rows that all look like goods — the gratuity is counted into
+    // `subtotalAmount` and the §5.1 identity fails. Pinned here so the day it IS fixed, this line
+    // fails and points at the record instead of letting the fix pass unnoticed.
+    assert.equal(accepted.totals.subtotalAmount, '797.0000', 'F8: the gratuity is wrongly counted as goods');
+  });
+
+  /**
+   * The other direction: a POS that truncates its VAT box to 55 prints a total 0.79 BELOW the
+   * computed one. The old ROUNDING synthesis answered that with a NEGATIVE line the bill never
+   * printed. Nothing is invented in either direction now — the rows stand and the remainder is named.
+   */
+  it('keeps the rows and invents no negative line when the bill truncated its VAT down', async () => {
+    const { lines, record, result } = await applyFields(
+      { ...checkBill, vatAmount: '55.00', grandTotalAmount: '852.00' }, null, {}, TODAY);
+
+    assert.equal(result.chargeReconciliationStatus, 'RECONCILED_ITEM_LINES');
+    assert.equal(result.chargesApplied, 1);
+    assert.equal(lines.length, 7);
+    assert.equal(lines.some((line: any) => line.chargeKind === 'ROUNDING'), false);
+    assert.ok(result.reviewReasons.some((reason: string) => reason.includes('-0.79')),
+      `the remainder is named with its sign: ${JSON.stringify(result.reviewReasons)}`);
+    assert.equal(record.vatAmount, '55.7900');
+    assert.equal(record.grandTotalAmount, '852.7900');
+  });
+
+  it('widens nothing for a satang-precise VAT box: that is a misread, not a rounding', async () => {
     const satangVat = await applyFields({ ...checkBill, vatAmount: '55.50', grandTotalAmount: '852.50' }, null, {}, TODAY);
-    assert.equal(satangVat.lines.some((line: any) => line.chargeKind === 'ROUNDING'), false);
+    assert.equal(satangVat.result.chargeReconciliationStatus, 'ITEMS_DID_NOT_RECONCILE');
+    assert.equal(satangVat.lines.length, 1);
+  });
+
+  // A whole baht is the whole licence: a gap this size is the page disagreeing with itself, and the
+  // fold — with both numbers — is what the reviewer has to be given.
+  it('stops at one baht: a zero-rated tip leaves 5.25 of the printed VAT unexplained', async () => {
+    const { lines, result } = await applyFields({
+      ...checkBill,
+      additionalCharges: [{ ...checkBill.additionalCharges[0], vatRate: '0' }],
+    }, null, {}, TODAY);
+
+    assert.equal(result.chargeReconciliationStatus, 'ITEMS_DID_NOT_RECONCILE');
+    assert.equal(result.chargesApplied, 0);
+    assert.equal(lines.length, 1);
+  });
+
+  // The rounding is in the VAT box, so the licence covers the VAT and the total it moved — never the
+  // tax BASE. A printed `taxableAmount` that misses the rows by more than a satang is the page
+  // disagreeing with itself about what was supplied, and no VAT box can excuse it.
+  it('never widens the taxable comparison, even with a whole-baht VAT box', async () => {
+    const { lines, result } = await applyFields(
+      { ...checkBill, taxableAmount: '797.60' }, null, {}, TODAY);
+
+    assert.equal(result.chargeReconciliationStatus, 'ITEMS_DID_NOT_RECONCILE');
+    assert.equal(lines.length, 1);
+  });
+
+  // Rows that do not add up to the printed subtotal are a different disagreement and must keep
+  // reaching the reviewer as one.
+  it('never widens the subtotal comparison: item rows that miss the printed subtotal still fail', async () => {
+    const { lines, result } = await applyFields({
+      ...checkBill,
+      lines: [...checkBill.lines.slice(0, 5), { description: 'อาหาร 6', amount: '35.00', quantity: '1', evidenceSignal: '35.00' }],
+    }, null, {}, TODAY);
+
+    assert.equal(result.chargeReconciliationStatus, 'ITEMS_DID_NOT_RECONCILE');
+    assert.equal(result.itemsSumAmount, '735.00');
+    assert.equal(lines.length, 1);
+    assert.equal(lines.some((line: any) => line.chargeKind != null), false);
+  });
+});
+
+/** Review findings on the first cut of the VAT-mode fix, each with the case that exposed it. */
+describe('apply: what the printed-arithmetic mode may and may not overwrite', () => {
+  // P15/P16: EXEMPT and NEEDS_REVIEW are answers about the document's tax POSITION, not readings of
+  // its totals. `provenVat` above already refuses to overwrite them; the printed-mode proof must
+  // refuse for the same reason, or an exempt supply with a printed VAT box silently becomes taxable.
+  it('leaves a deliberate EXEMPT mode alone even when the arithmetic proves VAT was added', () => {
+    assert.equal(completeVatFields({
+      vatMode: 'EXEMPT', subtotalAmount: '130.00', vatAmount: '10.01', grandTotalAmount: '140.01',
+    } as never).vatMode, 'EXEMPT');
+  });
+
+  it('leaves NEEDS_REVIEW alone', () => {
+    assert.equal(completeVatFields({
+      vatMode: 'NEEDS_REVIEW', subtotalAmount: '130.00', vatAmount: '10.01', grandTotalAmount: '140.01',
+    } as never).vatMode, 'NEEDS_REVIEW');
+  });
+
+  it('still corrects the modes the extractor only guessed', () => {
+    for (const guessed of ['VAT_INCLUDED', 'NO_VAT', 'ห้ามเดา']) {
+      assert.equal(completeVatFields({
+        vatMode: guessed, subtotalAmount: '130.00', vatAmount: '10.01', grandTotalAmount: '140.01',
+      } as never).vatMode, 'VAT_EXCLUDED', `${guessed} is a guess the printed arithmetic outranks`);
+    }
+  });
+
+  // The extractor is a separate service and its output is JSON: `additionalCharges` can be anything.
+  // `fields.additionalCharges?.some(...)` threw a TypeError on a string, taking the whole apply with it.
+  it('treats a non-array additionalCharges as no charges instead of throwing', () => {
+    const out = completeVatFields({
+      vatMode: 'VAT_INCLUDED', vatRate: '0.07', subtotalAmount: '130.00', vatAmount: '9.10',
+      grandTotalAmount: '139.10', additionalCharges: 'not-an-array',
+    } as never);
+    // 130.00 + 9.10 = 139.10 is only the printed total once the charge block counts as nothing.
+    assert.equal(out.vatMode, 'VAT_EXCLUDED');
+    assert.equal(out.vatRate, '0.0700');
+  });
+
+  it('survives a non-array additionalCharges through the whole apply', async () => {
+    const { lines, result } = await applyFields({
+      vatMode: 'VAT_EXCLUDED', vatRate: '0.07', subtotalAmount: '130.00', vatAmount: '9.10',
+      grandTotalAmount: '139.10', additionalCharges: 'not-an-array', expenseDate: '2026-09-05',
+    }, null, {}, '2026-09-06');
+    assert.equal(result.chargesApplied, 0);
+    assert.equal(lines.length, 1);
+  });
+});
+
+/**
+ * F5/F12. Two apply outcomes write no lines at all: a rerun that must PRESERVE reviewed lines, and
+ * one skipped because the record moved under the OCR round trip. Both returned `charges: []`, which
+ * the LINE card reads as "the charges were folded into one total" — and printed that sentence over a
+ * record that carries a real SERVICE_CHARGE row. An outcome says what the record HAS.
+ */
+describe('apply: outcomes that write no lines still report the charges the record carries', () => {
+  const persisted = [
+    { whtRate: null, vatTreatment: 'ZERO_RATED', chargeKind: null, lineSubtotalAmount: '130.0000', vatAmount: '0.0000' },
+    { whtRate: null, vatTreatment: null, chargeKind: 'SERVICE_CHARGE', lineSubtotalAmount: '13.0000', vatAmount: '0.9100' },
+  ];
+
+  it('returns the persisted charge rows when a reviewed line layout is preserved', async () => {
+    const { lines, result } = await applyFields(
+      { vatMode: 'VAT_EXCLUDED', vatRate: '0.07', subtotalAmount: '130.00', vatAmount: '10.01', grandTotalAmount: '153.01' },
+      null,
+      { lines: persisted },
+    );
+
+    assert.deepEqual(lines, [], 'a reviewed layout is never rewritten');
+    assert.deepEqual(result.charges, [{ kind: 'SERVICE_CHARGE', label: 'ค่าบริการ', amount: '13.0000', vatAmount: '0.9100' }]);
+  });
+
+  it('returns the persisted charge rows when the apply is skipped as stale', async () => {
+    const tx = {
+      expenseRecord: {
+        findFirst: async () => ({
+          expenseCategoryId: null, expenseCategory: null, vatCaptureSnapshotJson: null,
+          updatedAt: new Date('2026-08-03T13:05:00.000Z'), lines: persisted,
+        }),
+        update: async () => { throw new Error('a stale apply must write nothing'); },
+      },
+      expenseCategory: { findFirst: async () => null },
+      expenseLine: { deleteMany: async () => undefined, create: async () => undefined },
+    };
+    const prisma = { client: { $transaction: async (fn: any) => fn(tx) } };
+
+    const outcome = await new ReceiptOcrApplyService(prisma as any, makeDuplicateRepo() as any)
+      .apply({ companyId: 'company-1', userId: 'user-1' }, 'expense-1', { grandTotalAmount: '153.01' }, {
+        expectedUpdatedAt: new Date('2026-08-03T13:00:00.000Z'),
+      });
+
+    assert.equal(isStaleOcrApply(outcome), true);
+    assert.deepEqual(outcome.charges, [{ kind: 'SERVICE_CHARGE', label: 'ค่าบริการ', amount: '13.0000', vatAmount: '0.9100' }]);
+    // F12: the shape is one type, so no caller may read a field this outcome never filled in.
+    assert.deepEqual(outcome.reviewReasons, []);
+    assert.equal(outcome.chargesApplied, 0);
+    assert.equal(outcome.chargeReconciliationStatus, 'SUMMARY_LINE');
   });
 });

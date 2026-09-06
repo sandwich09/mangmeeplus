@@ -178,6 +178,49 @@ describe('receipt truth on real PostgreSQL (spec §11)', { skip: !databaseUrl },
     assert.equal(record.grandTotalAmount.toFixed(2), '153.01', 'and what the shop paid never moved');
   });
 
+  /**
+   * The Owner's check bill: 725.00 of food, Gratuity 72.00, and a VAT box printed as a whole 56 baht
+   * where 7% of 797.00 is 55.79. The first cut of this fix answered the 0.21 with a synthesized
+   * `ปัดเศษ` row; that row is withdrawn — a whole-baht VAT remainder belongs in the VAT, not in the
+   * tax base. Only a real database proves the negative: seven rows, `chargeKind` on exactly one of
+   * them, and no eighth row that the document never printed.
+   */
+  it('records the check bill exactly as printed and invents no rounding row', async (t) => {
+    if (unreachable) return t.skip(unreachable);
+    const expenseId = await draft();
+
+    const outcome = await apply().apply(ctx(), expenseId, {
+      vatMode: 'VAT_EXCLUDED', vatRate: '0.07', expenseDate: '2026-09-04',
+      subtotalAmount: '725.00', vatAmount: '56.00', grandTotalAmount: '853.00',
+      additionalCharges: [{
+        kind: 'SERVICE_CHARGE', amount: '72.00', confidence: 0.9,
+        description: 'Gratuity', evidenceSignal: 'Gratuity 72.00',
+      }],
+      lines: [270, 160, 190, 30, 50, 25].map((amount, index) => ({
+        description: `อาหาร ${index + 1}`, amount: `${amount}.00`, quantity: '1', evidenceSignal: `${amount}.00`,
+      })),
+    } as never, { todayIso: TODAY });
+
+    assert.equal(outcome.chargeReconciliationStatus, 'RECONCILED_ITEM_LINES');
+    assert.equal(outcome.chargesApplied, 1);
+    assert.ok(outcome.reviewReasons.some((reason) => reason.startsWith(RECEIPT_REVIEW_REASONS.vatRounding)),
+      `the 0.21 is named for the reviewer: ${JSON.stringify(outcome.reviewReasons)}`);
+    assert.deepEqual(outcome.charges, [{ kind: 'SERVICE_CHARGE', label: 'ค่าบริการ', amount: '72.0000', vatAmount: '5.0400' }]);
+
+    const lines = await client.expenseLine.findMany({ where: { expenseId }, orderBy: { lineNumber: 'asc' } });
+    assert.equal(lines.length, 7, 'six goods rows and the gratuity');
+    assert.deepEqual(lines.map((line) => line.chargeKind), [null, null, null, null, null, null, 'SERVICE_CHARGE']);
+    assert.equal(lines[6]!.unitPrice.toFixed(2), '72.00');
+
+    const record = await client.expenseRecord.findUniqueOrThrow({ where: { id: expenseId } });
+    assert.equal(record.subtotalAmount.toFixed(2), '725.00', 'the gratuity is not goods');
+    assert.equal(record.taxableAmount.toFixed(2), '797.00');
+    assert.equal(record.vatAmount.toFixed(2), '55.79', 'per-line VAT is rate × taxable, and stays so');
+    assert.equal(record.grandTotalAmount.toFixed(2), '852.79');
+    assert.equal((record.vatCaptureSnapshotJson as any).reconciliation.status, 'MISMATCH',
+      'the printed 56.00 is still the reviewer‘s call, and confirmation is still blocked until it is made');
+  });
+
   it('persists an assumed date as a real date, flagged and NOT forced into review', async (t) => {
     if (unreachable) return t.skip(unreachable);
     const expenseId = await draft();
