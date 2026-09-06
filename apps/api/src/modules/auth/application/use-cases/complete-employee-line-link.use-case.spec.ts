@@ -21,11 +21,15 @@ function makeUseCase(opts: {
   newerTokenExists?: boolean;
   restoreThrows?: boolean;
   severThrows?: boolean;
+  revokeThrows?: boolean;
 } = {}) {
   const auditEvents: any[] = [];
   const tokenUpdates: any[] = [];
   const identityUpdates: any[] = [];
   const handoffRevokes: any[] = [];
+  const contextDeletes: any[] = [];
+  /** Real rows with a real status, so a rolled-back sever can be observed as still ACTIVE. */
+  const identityRows = (opts.otherActiveIdentities ?? []).map((identity) => ({ ...identity, status: 'ACTIVE' }));
   // Interleaved operation log: proves the claim happens BEFORE the identity link (H-09).
   const ops: string[] = [];
 
@@ -42,8 +46,7 @@ function makeUseCase(opts: {
   };
   const token = opts.token === undefined ? defaultToken : opts.token;
 
-  const prisma = {
-    client: {
+  const ops_ = {
       employeeLineLinkToken: {
         findUnique: async () => token,
         findFirst: async () => (opts.newerTokenExists ? { id: 'token-newer' } : null),
@@ -69,18 +72,45 @@ function makeUseCase(opts: {
           opts.linkedLineUserId && where.providerUserId === opts.linkedLineUserId && where.userId === 'user-1'
             ? { id: 'identity-1', linkedAt: opts.linkedIdentityLinkedAt ?? new Date() }
             : null,
-        findMany: async () => opts.otherActiveIdentities ?? [],
+        findMany: async () => identityRows
+          .filter((identity) => identity.status === 'ACTIVE')
+          .map(({ id, providerUserId }) => ({ id, providerUserId })),
         updateMany: async ({ where, data }: any) => {
           if (opts.severThrows) throw new Error('db down');
           identityUpdates.push({ where, data });
           ops.push('identity:sever-others');
-          return { count: (opts.otherActiveIdentities ?? []).length };
+          const hit = identityRows.filter((identity) => identity.id === where.id && identity.status === where.status);
+          for (const identity of hit) identity.status = data.status;
+          return { count: hit.length };
         },
+      },
+      lineCompanyContext: {
+        deleteMany: async (args: any) => { contextDeletes.push(args); return { count: 1 }; },
       },
       // The severed phone keeps whatever handoff deep links were sent to it; each is a bearer
       // session for this employee until its TTL expires, so the sever kills them too.
       lineWebHandoffToken: {
-        updateMany: async (args: any) => { handoffRevokes.push(args); return { count: 2 }; },
+        updateMany: async (args: any) => {
+          if (opts.revokeThrows) throw new Error('db down');
+          handoffRevokes.push(args);
+          return { count: 2 };
+        },
+      },
+  };
+  // Interactive transaction with rollback semantics: the callback gets the same delegates, and a
+  // throw restores the identity rows. Without it a spec cannot tell "severed then failed to revoke"
+  // (the defect) from "neither happened" (the fix).
+  const prisma = {
+    client: {
+      ...ops_,
+      $transaction: async (fn: any) => {
+        const snapshot = identityRows.map((identity) => ({ ...identity }));
+        try {
+          return await fn(ops_);
+        } catch (error) {
+          identityRows.forEach((identity, index) => Object.assign(identity, snapshot[index]));
+          throw error;
+        }
       },
     },
   } as any;
@@ -107,7 +137,10 @@ function makeUseCase(opts: {
   const audit = { log: async (entry: any) => { auditEvents.push(entry); } } as any;
 
   const useCase = new CompleteEmployeeLineLinkUseCase(prisma, linkLineIdentity, lineVerifier, audit);
-  return { useCase, auditEvents, tokenUpdates, identityUpdates, handoffRevokes, linkCalls, ops, token };
+  return {
+    useCase, auditEvents, tokenUpdates, identityUpdates, handoffRevokes, contextDeletes,
+    identityRows, linkCalls, ops, token,
+  };
 }
 
 const input = { linkToken: 'raw-token', idToken: 'line-id-token', requestId: 'req-1' };
@@ -191,14 +224,17 @@ describe('CompleteEmployeeLineLinkUseCase', () => {
   });
 
   it('severs other ACTIVE LINE identities of the user after a successful relink (identity cardinality)', async () => {
-    const { useCase, identityUpdates, auditEvents, handoffRevokes } = makeUseCase({
+    const { useCase, identityUpdates, auditEvents, handoffRevokes, contextDeletes, identityRows } = makeUseCase({
       otherActiveIdentities: [{ id: 'identity-old', providerUserId: 'line-user-old' }],
     });
     await useCase.execute(input);
 
     assert.equal(identityUpdates.length, 1);
-    assert.deepEqual(identityUpdates[0].where, { id: { in: ['identity-old'] }, status: 'ACTIVE' });
+    assert.deepEqual(identityUpdates[0].where, { id: 'identity-old', status: 'ACTIVE' });
     assert.deepEqual(identityUpdates[0].data, { status: 'UNLINKED' });
+    assert.equal(identityRows[0].status, 'UNLINKED');
+    // Same one-liner the other two sever paths run: with no identity there is no selected company.
+    assert.deepEqual(contextDeletes, [{ where: { lineUserId: 'line-user-old' } }]);
 
     // Owner decision 2026-09-06: severing the old phone's identity is not enough while the deep
     // links already delivered to it still exchange into this employee's session.
@@ -269,7 +305,31 @@ describe('CompleteEmployeeLineLinkUseCase', () => {
 
     assert.deepEqual(result, { linked: true });
     assert.equal(identityUpdates.length, 1);
-    assert.deepEqual(identityUpdates[0].where.id, { in: ['identity-old'] });
+    assert.equal(identityUpdates[0].where.id, 'identity-old');
+  });
+
+  it('leaves the identity ACTIVE when the handoff revoke fails, so the re-scan can retry the sever', async () => {
+    // Owner decision 2026-09-06. Before this, the UNLINKED write landed and the revoke did not, and
+    // nothing could ever retry: the self-heal re-scan only looks for ACTIVE identities, so the row
+    // it needed to fix was already invisible to it — leaving a bearer deep link alive for its whole
+    // remaining TTL. One transaction means the sever either finishes or is still there to redo.
+    const { useCase, auditEvents, identityRows, handoffRevokes } = makeUseCase({
+      otherActiveIdentities: [{ id: 'identity-old', providerUserId: 'line-user-old' }],
+      revokeThrows: true,
+    });
+
+    const result = await useCase.execute(input);
+
+    assert.deepEqual(result, { linked: true }, 'a failed sever must not undo a committed link');
+    assert.equal(identityRows[0].status, 'ACTIVE', 'the UNLINKED write must roll back with the revoke');
+    assert.deepEqual(handoffRevokes, []);
+    const successAudit = auditEvents.find((event) => event.action === 'access.employee.line_link.success');
+    assert.equal(successAudit.metadataJson.lineIdentitySeverFailed, true);
+    assert.equal(
+      auditEvents.some((event) => event.action === 'auth.identity.unlink'),
+      false,
+      'no unlink audit for a sever that did not happen',
+    );
   });
 
   it('denies the grace path to an identity linked BEFORE the claim — the old phone cannot ride a used QR to sever the new account', async () => {

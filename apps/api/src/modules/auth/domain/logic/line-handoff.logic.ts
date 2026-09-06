@@ -78,6 +78,20 @@ export function lineHandoffUrl(webBaseUrl: string, rawToken: string): string {
   return `${webBaseUrl.replace(/\/+$/, '')}${HANDOFF_PATH_PREFIX}${rawToken}`;
 }
 
+/**
+ * `LineWebHandoffToken.lineUserId` is the CHAT a message was sent to, not always a person: the
+ * webhook sets `chatId = groupId ?? roomId ?? userId` (`line-webhook.controller.ts:75`) and the send
+ * seams mint with that same chat key. LINE encodes the kind in the first character — `U` + 32 hex
+ * is a user, `C` + 32 hex a group, `R` + 32 hex a room — so the prefix is what separates "sent to a
+ * person" from "sent to a room full of them".
+ *
+ * Anything else, including a shape LINE has never issued, answers `false` and so keeps the stricter
+ * per-person check: unrecognised means fail closed, never fall open.
+ */
+export function isLineGroupChatKey(chatKey: string): boolean {
+  return /^[CR][0-9a-fA-F]{32}$/.test(chatKey);
+}
+
 /** Narrow delegate so this runs on `prisma.client` or a transaction client, and a spec can fake two
  *  lines of it — the shape `session-revocation.logic.ts` uses for the same reason. */
 type LineHandoffTokenRevokeDelegate = {

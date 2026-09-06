@@ -1,7 +1,8 @@
 # Agent Memory: line-unlink-revokes-handoff-tokens
 
-Status: Implemented on `codex/line-unlink-revokes-handoff-tokens`; typecheck + touched specs green;
-pushed, no PR opened, not deployed.
+Status: Implemented on `codex/line-unlink-revokes-handoff-tokens` (PR #464); typecheck + touched specs
+green; pushed, not deployed. Follow-up `codex/line-handoff-exchange-identity-guard` (Owner "ทำ",
+2026-09-06) closes both residuals and adds the exchange-side identity guard — see below.
 Owner: Owner (decision 2026-09-06), delivered by agent session 2026-09-06.
 Scope: P12-3b LINE → web deep-link handoff. `apps/api` auth + system-partner-management only. No
 schema/migration, no `package.json`, no env, no deploy change.
@@ -122,23 +123,128 @@ Verified clean, no change needed:
 - No pinned file touched: `sync-production-maintenance-release-pins.mjs` → `status=current`, tree
   clean.
 
-## Residuals (not this change)
+## Residuals
 
-- `severOtherLineIdentities` sets `UNLINKED` but does **not** delete `LineCompanyContext` for the
-  severed `providerUserId`, unlike the other two unlink paths. **Classified LOW this pass:**
-  `process-line-webhook.use-case.ts` `resolveLineIdentity` (:2666-2679) matches on
-  `status: 'ACTIVE'`, so a severed account resolves to no identity and the leftover row is dead
-  weight until a relink overwrites it. Tidiness, not a live hole.
-- The employee sever revokes **after** `externalIdentity.updateMany`, and the caller swallows
-  failures (`.catch(() => undefined)`). If the revoke throws, the self-heal re-scan cannot retry it:
-  `others` filters `status: 'ACTIVE'` and the identities are already `UNLINKED`, so it returns 0
-  before reaching the loop. Exposure is a DB error in that gap leaving a bearer link alive for the
-  rest of its ≤15 min TTL — and the exchange has **no** identity re-check to fall back on (it
-  re-resolves user/membership/company only). Still strictly better than before, when 100 % of
-  tokens survived. Fixing it means reordering sever-after-revoke, which costs audit honesty on the
-  other failure branch; left for the Owner to call.
+- ~~`severOtherLineIdentities` sets `UNLINKED` but does not delete `LineCompanyContext`.~~ **CLOSED
+  2026-09-06** (Owner: "ทำ") on `codex/line-handoff-exchange-identity-guard`: the delete now runs
+  inside the sever's transaction, the same one-liner the other two paths use, so all three sever
+  paths leave identical state.
+- ~~The employee sever revokes AFTER `externalIdentity.updateMany` and a failed revoke can never be
+  retried (the self-heal re-scan filters `status: ACTIVE`).~~ **CLOSED 2026-09-06** (Owner: "ทำ") on
+  the same branch: the `UNLINKED` write, the context delete and the revoke run in ONE interactive
+  `$transaction` per severed identity. `severOtherLineIdentities` has **no outer transaction** — it
+  is called twice from `execute` on `prisma.client`, never inside one — so it opens its own; Prisma
+  cannot nest interactive transactions, so this was checked before writing it. The audit stays
+  outside the transaction, exactly as `unlink-line-identity.use-case.ts` does (it goes through
+  `AuditService`, not `tx.auditLog.create`). Reordering sever-after-revoke was **not** needed: the
+  transaction removes the failure gap without costing audit honesty on either branch.
 - No sweep exists to write `EXPIRED`; it is still lazy-at-read-time, as the spec says.
+
+## Follow-up branch: `codex/line-handoff-exchange-identity-guard` (2026-09-06)
+
+Owner decision "ทำ", two items on one branch, cut from `origin/develop` `0e205867` and fast-forward
+merged with this branch at `173ffcdc` (plain merge, never rebased).
+
+1. **Exchange identity guard (defence in depth).** The revoke above is the primary control, but it
+   is one `UPDATE` that can fail, and it cannot see a re-point. `exchange-line-handoff-token.use-case.ts`
+   step 3 now takes a fourth parallel read: `externalIdentity.findFirst({ userId: record.userId,
+   provider: 'LINE', providerUserId: record.lineUserId, status: 'ACTIVE' })`, refusing
+   `line_identity_severed` when it misses. Folding `userId` into the WHERE answers both conditions
+   ("an ACTIVE identity exists" AND "it is still this user's") in one indexed lookup
+   (`@@index([userId, provider, status])`) and gives both failure modes one reason. Channel-agnostic:
+   the token row has no channel column, so this is `resolveLineIdentity`'s fallback branch. Placed
+   in the existing `Promise.all`, so no extra round trip and no state write before the claim —
+   before the `USED` flip, before the #460 `LineCompanyContext` upsert, before `issueToken`. Outward
+   result is byte-identical to a used token (`line_handoff_unavailable`, same message, same
+   `targetPath` echo), so `/l/[token]/route.ts` — which branches on `!apiRes.ok`, never on a reason —
+   still lands on `/login?line=handoff-expired&next=<target>`. No controller mapping exists to
+   extend; the route needed no change.
+2. **Atomic employee sever**, as recorded under Residuals.
+
+### Verification (this branch)
+
+- Red first: 7 leaf subtests (5 in `line-handoff.spec.ts`, 2 in
+  `complete-employee-line-link.use-case.spec.ts`); green after: **105/105** across
+  `line-handoff.spec.ts`, `complete-employee-line-link.use-case.spec.ts`, `line-linking.spec.ts`,
+  `link-line-identity.use-case.spec.ts`, `partner-member-console.use-cases.spec.ts`,
+  `spec-suite-coverage.spec.ts`.
+- Mutations, all restored: remove the identity guard → **4** exchange subtests red; move the guard
+  to after the claim → **1** red (the "writes nothing" test, which is the whole point of the
+  placement); drop the `$transaction` around the sever → **4** employee subtests red, including
+  "leaves the identity ACTIVE when the handoff revoke fails".
+- The exchange fake applies its `WHERE` for real, so dropping `status`, `providerUserId` or `userId`
+  from the guard's query fails rather than passing on an unread call. The employee fake's
+  `$transaction` restores an identity-row snapshot on throw, which is what makes "severed but not
+  revoked" distinguishable from "neither".
+- `pnpm --filter @watchdog-bms/api typecheck` clean; `check-di-metadata.mjs` pass (no DI change, so
+  `auth.module.ts` — a pinned file — was not touched); `sync-production-maintenance-release-pins.mjs`
+  → `status=current`, `git status --porcelain` shows only the four intended files plus these docs.
+- Group/room fix (third session): red first — the pre-fix WHERE reds **2** leaf subtests (group and
+  room happy paths); green after: **122/122** across `line-handoff.spec.ts`,
+  `line-handoff.logic.spec.ts`, `complete-employee-line-link.use-case.spec.ts`,
+  `line-linking.spec.ts`, `link-line-identity.use-case.spec.ts`,
+  `partner-member-console.use-cases.spec.ts`, `spec-suite-coverage.spec.ts`. Mutation "drop `ACTIVE`
+  from the group branch" reds **3**, including "refuses a group-minted link once the user has no
+  ACTIVE LINE identity" — the one that matters. That mutation is only catchable because the spec
+  fake now models a **surviving `UNLINKED` row** rather than a missing one, and filters by the WHERE
+  the way Postgres would (an absent key filters nothing) instead of asserting literal keys.
+- **Independent re-verification of `e2117e4b` (fourth session, adversarial re-review).** Both counts
+  above reproduced from a clean worktree: **122/122** green over the seven specs, mutation "always
+  require `providerUserId`" reds **2** (the group and room happy paths), mutation "drop `ACTIVE` from
+  the group branch" reds **3** (those two plus the severed-user refusal). Typecheck clean;
+  `check-di-metadata.mjs` 796 files / 870 decorated classes pass; pins
+  `status=current` with `git status --porcelain` empty. Confirmed by reading the call sites, not just
+  the claim: the picker (`process-line-webhook.use-case.ts:4404`) and LIFF
+  (`exchange-liff-session.use-case.ts:86`) mint with the **person's** id, so a group-minted
+  picker-surface row is impossible by construction and step 4b can never key `LineCompanyContext` by
+  a group id — and the in-LINE switch (`:4473`) keys that same row by `event.lineUserId`, so the two
+  entrances really do write one row. `grep` found **no** other LINE-id classifier in the repo, so
+  `isLineGroupChatKey` duplicates nothing. The group WHERE is an exact prefix of
+  `@@index([userId, provider, status])`.
+  One gap found and closed here: the classifier had **no direct unit test**, so its fail-closed
+  property was asserted nowhere — `isLineGroupChatKey` describe block added to
+  `line-handoff.logic.spec.ts` (**124/124** after), pinning that `''`, `'C'`, a `U…` key, wrong
+  length, lowercase `c` and a non-hex character all take the **strict** per-person mode.
+
+### Adversarial review of the guard, 2026-09-06 (third session) — one HIGH defect, fixed
+
+The guard's WHERE assumed `LineWebHandoffToken.lineUserId` names a **person**. It does not: it is
+the **chat key**. `line-webhook.controller.ts:75` sets `chatId = groupId ?? roomId ?? userId`, the
+assistant reply seam mints with `event.pushTargetId ?? event.lineUserId`
+(`process-line-webhook.use-case.ts:2606`) and the ledger drain with `entry.chatKey`
+(`drain-line-ledger.use-case.ts:208`) — in a group or room all three are the group/room id. No
+`ExternalIdentity` ever carries a group id as `providerUserId`, so `providerUserId = record.lineUserId`
+missed for **every** deep link sent into a group chat and the exchange refused it
+`line_identity_severed`; the customer bounced to `/login?line=handoff-expired`. The picker
+(`:4403`) and `exchange-liff-session.use-case.ts:83` mint with the person's id and were never
+affected.
+
+Fixed by branching the WHERE on the id's prefix — `isLineGroupChatKey` in `line-handoff.logic.ts`,
+`/^[CR][0-9a-fA-F]{32}$/`, unrecognised shapes falling to the stricter 1:1 mode. 1:1 keeps
+`providerUserId` + `userId` + ACTIVE; group/room requires any ACTIVE `LINE` identity for the token's
+`userId`. Same single `[userId, provider, status]` read, same refusal reason, same outward 403. Mint
+sites untouched.
+
+## Follow-ups (recorded here, deliberately NOT fixed on this branch)
+
+1. **#464's revoke is keyed `(lineUserId, userId)`, so it never matches a group/room-minted row.**
+   Severing a link revokes only the links sent to that 1:1 chat; links sent into a group survive the
+   sever as `PENDING`. The new guard covers the common case — once the user has no ACTIVE LINE
+   identity left, a group-minted link is refused — but **not** a re-pointed user who still holds an
+   ACTIVE `LINE` identity on a second channel: for the rest of the 15-minute TTL that user can still
+   exchange a group-minted link. Closing it properly means revoking on `userId` alone, or storing
+   the person's own LINE id on the row alongside the chat key.
+2. **The ledger drain mints with `entry.chatKey`** (`drain-line-ledger.use-case.ts:208`) — the same
+   root cause as (1)/the guard defect, listed separately because it is a second write path that
+   would need the same treatment if the row ever grows a person column.
+3. **Per-identity sever transactions are bounded only by ACTIVE identities per user.**
+   `severOtherLineIdentities` opens one interactive `$transaction` per severed identity; practically
+   ≤ the number of LINE channels, but nothing enforces that bound.
+4. **The identity match is channel-agnostic**, in both modes, because the token row has no channel
+   column. That is a residual of the data model, not a decision: a user linked on channel A can
+   satisfy the guard for a token minted from channel B.
 
 ## Next
 
-Owner review, then PR to `develop`. Nothing to un-park; no UAT/prod action.
+Owner review of both branches, then PRs to `develop` (#464 first, the follow-up merges it).
+Nothing to un-park; no UAT/prod action.
