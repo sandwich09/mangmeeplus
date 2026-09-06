@@ -92,8 +92,8 @@ import { FEATURE_TEMPORARILY_UNAVAILABLE, loadEntitledFeatureKeys } from '../../
 import { ListApprovalQueueUseCase } from '../../../reimbursements/application/use-cases/reimbursement-approval.use-case';
 import { ListPurchaseRequestsUseCase } from '../../../procurement/application/use-cases/purchase-request.use-case';
 import { ListPurchaseOrdersUseCase } from '../../../procurement/application/use-cases/purchase-order.use-case';
-import type { BusinessDocumentClassification, LineExpenseDraftRouteContext, LineUserContext, LineAiTurnRequest, LineAiTurnResponse, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeRoutePlan, LineIntakeSubstituteContext, ReceiptOcrFieldResult, RequestContext } from '@watchdog-bms/contracts';
-import { LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, nextPlanTierKey, asIntakeRouteIntent, civilDateToUtcDate, extractValueCandidates, hasToolPermissions, todayCivilDate, type ExpenseDocumentDateStatus } from '@watchdog-bms/contracts';
+import type { BusinessDocumentClassification, ExpenseChargeSummary, LineExpenseDraftRouteContext, LineUserContext, LineAiTurnRequest, LineAiTurnResponse, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeRoutePlan, LineIntakeSubstituteContext, ReceiptOcrAdditionalCharge, ReceiptOcrFieldResult, RequestContext } from '@watchdog-bms/contracts';
+import { EXPENSE_LINE_CHARGE_KIND_LABELS, LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, nextPlanTierKey, asIntakeRouteIntent, civilDateToUtcDate, extractValueCandidates, hasToolPermissions, todayCivilDate, type ExpenseDocumentDateStatus } from '@watchdog-bms/contracts';
 import { LineAiLedgerService, ledgerKey, type LedgerEntry } from '../line-ai-ledger.service';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
 import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, isCapabilityQuestion, staffMenuCommand, PACKAGE_CHANGE_COMMAND, PENDING_APPROVAL_ITEM_LIMIT, type ApprovalSurfaceKey, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
@@ -868,14 +868,26 @@ function moneyLabel(value: string): string {
 
 /** Spec §5.1: products and additional charges are two different things on a bill, and a card that
  *  prints "service charge 10%" among the food reads as if the shop sold a dish by that name (UAT
- *  2026-09-03). Charges come from the OCR `additionalCharges` block, which is where they were
- *  identified — slice B moves the marker onto the persisted `chargeKind` column. */
-function receiptItemLines(fields: ReceiptOcrFieldResult | null | undefined): string[] {
+ *  2026-09-03). The charges are the rows the record actually CARRIES — `expenseLineCharges` over the
+ *  persisted `chargeKind` column, the same derivation the web summary and the S-3 read tool use. */
+function receiptItemLines(
+  fields: ReceiptOcrFieldResult | null | undefined,
+  charges: readonly ExpenseChargeSummary[] = [],
+): string[] {
   const items = (fields?.lines ?? []).slice(0, 10)
     .map((line) => `• ${line.description} × ${line.quantity} – ${moneyLabel(line.amount)}`);
-  const charges = (fields?.additionalCharges ?? []).slice(0, 10)
-    .map((charge) => `• ${charge.description} – ${moneyLabel(charge.amount)}`);
-  return charges.length > 0 ? [...items, 'ค่าใช้จ่ายเพิ่ม:', ...charges] : items;
+  const chargeRows = charges.slice(0, 10).map((charge) => `• ${charge.label} – ${moneyLabel(charge.amount)}`);
+  return chargeRows.length > 0 ? [...items, 'ค่าใช้จ่ายเพิ่ม:', ...chargeRows] : items;
+}
+
+/** The one line a card may say about a charge the apply could NOT put on the record. It is money the
+ *  document printed, so staying silent hides it; listing it under "ค่าใช้จ่ายเพิ่ม" the way a
+ *  persisted row is listed claims a row that does not exist (UAT 2026-09-06). */
+function foldedChargeLine(charges: readonly ReceiptOcrAdditionalCharge[]): string {
+  const named = charges.slice(0, 3)
+    .map((charge) => `${EXPENSE_LINE_CHARGE_KIND_LABELS[charge.kind] ?? 'ค่าใช้จ่ายเพิ่ม'} ${moneyLabel(charge.amount)}`)
+    .join(', ');
+  return `➕ ${named} ยังรวมอยู่ในยอดเดียว – ตรวจแยกบนเว็บ`;
 }
 
 /**
@@ -914,7 +926,7 @@ export function formatPaypersReply(
   webBaseUrl: string | undefined,
   companyId: string,
   expenseId: string,
-  options: { hasDuplicate?: boolean; textOnly?: boolean; amount?: string | null; fields?: ReceiptOcrFieldResult | null; categoryName?: string | null; sourceDocumentType?: string | null; questionText?: string; dateStatus?: ExpenseDocumentDateStatus } = {},
+  options: { hasDuplicate?: boolean; textOnly?: boolean; amount?: string | null; fields?: ReceiptOcrFieldResult | null; charges?: readonly ExpenseChargeSummary[]; categoryName?: string | null; sourceDocumentType?: string | null; questionText?: string; dateStatus?: ExpenseDocumentDateStatus } = {},
 ): string {
   const link = absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses/${expenseId}`);
   const amountValue = options.fields?.grandTotalAmount ?? options.amount;
@@ -935,19 +947,24 @@ export function formatPaypersReply(
   // Journey J1 step 1: additional charges belong on the DEFAULT card, not only when the sender
   // happens to ask what was on the bill. A service charge is money the shop added — the row a
   // reviewer questions first — and folding it into "ยอดรวม" is how the BHC 152.00 went unseen.
-  // ponytail: read from the OCR `additionalCharges` block; slice B swaps this for the persisted
-  // `chargeKind` column, one call site.
-  const charges = options.fields?.additionalCharges ?? [];
+  //
+  // UAT 2026-09-06: this read the OCR `additionalCharges` SUGGESTION, so three cards listed a
+  // ค่าบริการ that the apply had folded away and the record never carried. One source of truth: the
+  // rows the apply persisted. When it folded them, the card says exactly that instead.
+  const charges = options.charges ?? [];
+  const suggested = options.fields?.additionalCharges ?? [];
   if (charges.length > 0) {
     const total = charges.reduce((sum, charge) => sum + Number(toMoney4(charge.amount)), 0);
     parts.push(
       '',
       `➕ ค่าใช้จ่ายเพิ่ม (${charges.length} รายการ รวม ${total.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}):`,
-      ...charges.slice(0, 10).map((charge) => `• ${charge.description} – ${moneyLabel(charge.amount)}`),
+      ...charges.slice(0, 10).map((charge) => `• ${charge.label} – ${moneyLabel(charge.amount)}`),
     );
+  } else if (suggested.length > 0) {
+    parts.push('', foldedChargeLine(suggested));
   }
   if (options.questionText && isReceiptItemQuestion(options.questionText)) {
-    const itemLines = receiptItemLines(options.fields);
+    const itemLines = receiptItemLines(options.fields, charges);
     parts.push('', '🛒 รายการที่อ่านได้จากบิล:', ...(itemLines.length > 0
       ? itemLines
       : ['• ยังอ่านรายการสินค้าจากหลักฐานนี้ไม่ได้ชัดเจนค่ะ']));
@@ -1025,7 +1042,8 @@ export function formatGroundedReceiptFollowUp(
     ? Number(expense.grandTotalAmount).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     : 'ยังไม่ระบุ';
   if (isReceiptItemQuestion(questionText)) {
-    const items = receiptItemLines(fields);
+    // The stored record already carries its charge rows, derived once by `expenseLineCharges`.
+    const items = receiptItemLines(fields, expense.charges);
     return [
       '🧾 ตอบจากบิลล่าสุดที่บันทึกไว้ในแชทนี้ (ยังรอตรวจสอบ)',
       '',
@@ -4969,6 +4987,9 @@ export class ProcessLineWebhookUseCase {
     let dateAssumptions: string[] | undefined;
     let reviewReasons: string[] = [];
     let chargeReconciliation: { status: string; chargesApplied: number; itemsSumAmount?: string } | undefined;
+    /** Spec §5.1: the charge rows the apply WROTE, for the card to print. Stays `[]` when the apply
+     *  folded them (or was skipped as stale) — the card then says so rather than listing them. */
+    let appliedCharges: ExpenseChargeSummary[] = [];
     if (ocrFields) {
       const applyOutcome = await this.receiptOcrApply.apply(ctx, intent.expenseId, ocrFields, {
         ...(hintedCategory
@@ -4996,6 +5017,7 @@ export class ProcessLineWebhookUseCase {
             ...(duplicateResult.itemsSumAmount ? { itemsSumAmount: duplicateResult.itemsSumAmount } : {}),
           }
         : undefined;
+      appliedCharges = duplicateResult?.charges ?? [];
       categorySuggestion = duplicateResult?.categorySuggestion;
       effectiveCategory = duplicateResult?.categoryId
         ? {
@@ -5086,6 +5108,8 @@ export class ProcessLineWebhookUseCase {
     const replyTexts = receiptDraft?.replyTexts.length ? [...receiptDraft.replyTexts] : [formatPaypersReply(this.config.webBaseUrl, companyId, intent.expenseId, {
       hasDuplicate,
       fields: ocrFields,
+      // Spec §5.1: what the record CARRIES, not what the extractor suggested (UAT 2026-09-06).
+      charges: appliedCharges,
       sourceDocumentType: hintedDocType !== 'NEEDS_REVIEW' ? hintedDocType : undefined,
       categoryName: effectiveCategory?.name || null,
       questionText: caption,

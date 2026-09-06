@@ -3304,6 +3304,9 @@ function expenseWithLines(lines: unknown[]) {
   return {
     id: 'expense-1', sourceDocumentType: 'RECEIPT', grandTotalAmount: '125.00', currency: 'THB',
     expenseCategoryId: null, accountHintKey: null, taxEvidenceStatus: 'NEEDS_REVIEW',
+    // `ExpenseRecordWithRelations.charges` — the `expenseLineCharges` derivation over the persisted
+    // `chargeKind` rows, which is what the follow-up answers from.
+    charges: [],
     aiVerificationSummaryJson: { recognizedFields: { lines }, missingFields: [] },
   } as any;
 }
@@ -3335,12 +3338,22 @@ describe('LINE grounded receipt item follow-up', () => {
   // among the food, so the card read as if the shop sold a dish by that name (UAT 2026-09-03).
   it('lists additional charges under their own heading, not among the products', () => {
     const expense = expenseWithLines([{ description: 'ข้าวผัด', quantity: '2', amount: '300.00', evidenceSignal: 'ข้าวผัด 2 300' }]);
+    expense.charges = [{ kind: 'SERVICE_CHARGE', label: 'ค่าบริการ', amount: '152.0000', vatAmount: '10.6400' }];
+    const reply = formatGroundedReceiptFollowUp('https://app.test', 'company-1', expense, undefined, 'บิลนี้ซื้ออะไรบ้าง');
+    assert.match(reply, /ข้าวผัด × 2 – 300\.00/);
+    assert.match(reply, /ค่าใช้จ่ายเพิ่ม:\n• ค่าบริการ – 152\.00/, 'the charge sits under its own heading, below the products');
+  });
+
+  // UAT 2026-09-06: the follow-up read the OCR suggestion, so it answered "ค่าบริการ 13.00" about a
+  // record that carried no charge row at all.
+  it('names no charge the record does not carry, whatever the extractor suggested', () => {
+    const expense = expenseWithLines([{ description: 'ข้าวผัด', quantity: '2', amount: '300.00', evidenceSignal: 'ข้าวผัด 2 300' }]);
     expense.aiVerificationSummaryJson.recognizedFields.additionalCharges = [
       { kind: 'SERVICE_CHARGE', description: 'ค่าบริการ 10%', amount: '152.00', evidenceSignal: 'Service charge 10%' },
     ];
     const reply = formatGroundedReceiptFollowUp('https://app.test', 'company-1', expense, undefined, 'บิลนี้ซื้ออะไรบ้าง');
-    assert.match(reply, /ข้าวผัด × 2 – 300\.00/);
-    assert.match(reply, /ค่าใช้จ่ายเพิ่ม:\n• ค่าบริการ 10% – 152\.00/, 'the charge sits under its own heading, below the products');
+    assert.equal(reply.includes('ค่าใช้จ่ายเพิ่ม:'), false);
+    assert.equal(reply.includes('152.00'), false);
   });
 });
 
@@ -3417,7 +3430,12 @@ describe('receipt capture card: an unread date says so', () => {
 
   // Journey J1 step 1: a service charge is money the shop added and the row a reviewer questions
   // first. It was only ever shown when the sender happened to ask what was on the bill.
-  it('lists the additional charges on the default card, with a count and a total', () => {
+  //
+  // UAT 2026-09-06: the card listed the OCR's `additionalCharges` block, which is a SUGGESTION —
+  // three records showed "ค่าบริการ 13.00" in the chat and carried no charge row at all. The card
+  // now prints the rows the apply actually persisted, which is the same `expenseLineCharges`
+  // derivation the web summary and the S-3 read tool answer from.
+  it('lists the charges that were persisted, with a count and a total', () => {
     const reply = formatPaypersReply('https://app.test', 'company-1', 'expense-1', {
       fields: {
         grandTotalAmount: '1789.04',
@@ -3425,9 +3443,24 @@ describe('receipt capture card: an unread date says so', () => {
           { kind: 'SERVICE_CHARGE', description: 'ค่าบริการ 10%', amount: '152.00', evidenceSignal: 'Service charge 10%' },
         ],
       } as never,
+      charges: [{ kind: 'SERVICE_CHARGE', label: 'ค่าบริการ', amount: '152.0000', vatAmount: '10.6400' }],
     });
     assert.match(reply, /➕ ค่าใช้จ่ายเพิ่ม \(1 รายการ รวม 152\.00\):/);
-    assert.match(reply, /• ค่าบริการ 10% – 152\.00/);
+    assert.match(reply, /• ค่าบริการ – 152\.00/);
+  });
+
+  it('says the charge is still inside the total rather than listing it as recorded', () => {
+    const reply = formatPaypersReply('https://app.test', 'company-1', 'expense-1', {
+      fields: {
+        grandTotalAmount: '153.01',
+        additionalCharges: [
+          { kind: 'SERVICE_CHARGE', description: 'ค่าบริการ (10%)', amount: '13.00', evidenceSignal: 'ค่าบริการ (10%) 13.00' },
+        ],
+      } as never,
+      charges: [],
+    });
+    assert.match(reply, /➕ ค่าบริการ 13\.00 ยังรวมอยู่ในยอดเดียว – ตรวจแยกบนเว็บ/);
+    assert.equal(reply.includes('รายการ รวม'), false, 'a folded charge was never recorded as a row');
   });
 
   it('adds no charges block to a bill that printed none', () => {
