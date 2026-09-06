@@ -1,6 +1,7 @@
 # Agent Memory: company-profile setup UX wave (2026-09-06)
 
-Status: in progress on `codex/company-profile-setup-ux` (branched from `origin/develop` 740fa36d). Not merged, no PR, not deployed.
+Status: implemented and verified on `codex/company-profile-setup-ux` (branched from `origin/develop`
+740fa36d). Pushed. Not merged, no PR, not deployed.
 
 Owner: Owner UAT report 2026-09-06 on a freshly auto-approved LINE-first shop. Spec
 `docs/specs/mangmee-line-first-signup-spec-th.md` §15.4 + the new §15.4.1 delta (authoritative).
@@ -17,9 +18,10 @@ It is local state (`vatChoice`); "บันทึกข้อมูลร้า�
 `buildIdentityPatch` reports a change) and then the VAT PUT (when the choice differs from the
 server), in that order, with separate error banners. `load()` seeds the form **once** (a
 `seededRef`), so the post-save re-read refreshes `legalIdentityVersion` / `vatRegistration.version`
-/ `readiness` without wiping anything the owner is still typing. `shopFormChange()` is a pure
-function that answers "identity? vat? neither?" and owns the "ยังไม่มีอะไรเปลี่ยนค่ะ" sentence, so
-the guard counts the VAT change too. `UNKNOWN` stays a disabled option.
+/ `readiness` without wiping anything the owner is still typing. `buildShopSave()` is a pure
+function that answers "identity patch? vat status? neither?" and owns the "ยังไม่มีอะไรเปลี่ยนค่ะ"
+sentence, so the guard counts the VAT change too. A client-side validation problem (a half-typed
+tax id) stops the whole press rather than quietly saving the other half. `UNKNOWN` stays a disabled option.
 
 **B. A verified email is read-only until asked otherwise.** `emailSectionMode(account, editing)` is
 a pure function returning `unavailable | edit | pending | verified | none`; the page renders one
@@ -41,7 +43,7 @@ Production keeps `EMAIL_PROVIDER=disabled`; this makes that visible, it does not
 
 **D. Plain phone copy.** Hint `ใส่เบอร์มือถือ 10 หลัก เช่น 0812345678`, error
 `เบอร์มือถือต้องมี 10 หลัก เช่น 0812345678`, exported from `company-profile.logic.ts` as
-`PHONE_HINT` / `PHONE_ERROR` so the page and the spec cannot drift. Blank-to-clear survives as a
+`PHONE_HINT` / `PHONE_ERROR_MESSAGE` so the page and the spec cannot drift. Blank-to-clear survives as a
 "ลบเบอร์ออก" text button rendered only when `account.phoneNumber` is set. The public signup form
 error and the `invalid_phone_number` API copy were aligned to the same sentence — three different
 sentences for one rule is the confusion the Owner reported.
@@ -59,24 +61,100 @@ without the permission fires a request, and the dismissal deliberately does **no
 sentinel was a second way of saying the same thing and it made the hook's return type awkward. It
 now answers `ChecklistItem[] | null` and the completeness question is asked once, by the caller.
 
-## Evidence table — real API calls on the local stack
+## Evidence table — real API calls on the local stack (2026-09-06)
 
-API on 127.0.0.1:3011 (`APP_ENV=local`, dev auth, `WEB_BASE_URL=http://127.0.0.1:3010`), web dev
-server on 127.0.0.1:3010, docker postgres 127.0.0.1:15432 `watchdog_bms`, seeded company
-`seed-local-company`. Recorded run: see the report; the table below is filled from that run.
+API on 127.0.0.1:3011 (`APP_ENV=local`, `AUTH_PROVIDER=dev`, `WEB_BASE_URL=http://127.0.0.1:3010`),
+web dev server on 127.0.0.1:3010, docker postgres 127.0.0.1:15432 `watchdog_bms`, company
+`seed-local-company`, caller `seed-local-owner` (OWNER, dev bearer). Every row is a real request
+against a real database, no mocks. The identity PATCH body was produced by running the shipped
+`buildShopSave` against the real `GET identity` response, not hand-written.
 
 | # | method + path | EMAIL_PROVIDER | status | key response / resulting state |
 |---|---|---|---|---|
-| | (filled in during verification) | | | |
+| 1 | GET `/v1/companies/seed-local-company/identity` | local-console | 200 | `legalIdentityVersion 0`, `captureWindowOpen true`, identity all null, VAT `REGISTERED` v3, reasons `tax_id_missing, registered_name_missing, company_address_incomplete, vat_status_unanswered` |
+| 2 | GET `/v1/auth/account/security` | local-console | 200 | **`emailDeliveryEnabled: true`**, `emailVerified false`, `hasPassword true`, `username "Owner"` |
+| 3 | PATCH `/v1/companies/seed-local-company/identity` | local-console | 200 | `{legalIdentityVersion: 1, revisionId: cmtpoxpk1…}`; body = `buildShopSave().identityPatch` (`INITIAL_CAPTURE`, taxId + registeredName + addressJson, `expectedLegalIdentityVersion 0`) |
+| 4 | PUT `/v1/companies/seed-local-company/vat-registration` | local-console | 200 | `{version: 4, resultKind: UPSERT_FACT, replayed: false}` |
+| 5 | GET `…/identity` (re-read) | local-console | 200 | both halves persisted: registeredName, taxId `0105561000001`, full address, VAT `NOT_REGISTERED` v4 |
+| 6 | POST `/v1/auth/account/email` | local-console | 202 | `{email: owner.recovery@mangmeeplus.test, expiresAt …}`; API console printed a real `verificationUrl` |
+| 7 | GET `/v1/auth/account/security` | local-console | 200 | `pendingEmail` set, `pendingEmailExpiresAt` set |
+| 8 | POST `/v1/auth/account/email/resend` | local-console | 202 | new expiry, new `verificationUrl`; old token → REVOKED |
+| 9 | POST `/v1/auth/account/email/verify` (token from row 8) | local-console | 200 | `{email: owner.recovery@…, verifiedAt: 2026-09-06T10:51:29.833Z}` |
+| 10 | GET `/v1/auth/account/security` | local-console | 200 | `emailVerified true`, `pendingEmail null` |
+| 11 | POST `/v1/auth/account/email` with the SAME verified address | local-console | 409 | "This email is already verified for your account." — the dead end §15.4.1 B removes from the UI |
+| 12 | PATCH `/v1/auth/me/contact` `0812345678` | local-console | 200 | `{phoneNumber: "0812345678"}` |
+| 13 | PATCH `/v1/auth/me/contact` `812345678` | local-console | 400 | `{code: invalid_phone_number}` → the Thai copy the form mirrors |
+| 14 | PATCH `/v1/auth/me/contact` `""` | local-console | 200 | `{phoneNumber: null}` — blank still clears; the button now says so |
+| 15 | POST `/v1/auth/me/password/set` | local-console | 409 | `{code: password_already_set}`. **The happy path could not be exercised**: every ACTIVE member of `seed-local-company` has a `UserCredential` (verified by query — `credentialLess: []`), so the 409 branch is what the seed can prove without inventing a user |
+| 16 | GET `/v1/auth/account/security` | **disabled** | 200 | **`emailDeliveryEnabled: false`** |
+| 17 | POST `/v1/auth/account/email` | **disabled** | **422** | `{code: email_delivery_unavailable}` |
+| 18 | POST `/v1/auth/account/email/resend` | **disabled** | **422** | same code — and there was NO pending token, so the 404 "no pending request" never ran: the gate is genuinely first |
+| — | `EmailVerificationToken` count after rows 17–18 | disabled | — | **2 (1 REVOKED, 1 USED) — unchanged.** No token was written for a letter nobody could receive |
+
+## Browser pass (Playwright, chromium, against the same stack)
+
+Four checks, all passing; screenshots under the worktree's `output/company-profile-ux/` (not committed).
+
+1. **Desktop 1440×900, unfinished shop** — the amber dot renders on ตั้งค่าบริษัท with
+   `aria-label="ตั้งค่ายังไม่ครบ"`, and the ข้อมูลร้านและบัญชีของฉัน card carries "ยังกรอกไม่ครบ".
+   Switching to the finished company in the same session: neither appears.
+2. **Mobile 390×844, the Owner's exact sequence** — type ชื่อจดทะเบียน / เลขภาษี / ที่อยู่, then change
+   the VAT select: **every typed value is still on screen**. One press of บันทึกข้อมูลร้าน issues
+   `PATCH …/identity` 200 **and** `PUT …/vat-registration` 200. After a hard reload both persisted.
+3. **Desktop, same company once finished** — dot and badge gone.
+4. **Desktop, account section** — a verified address renders as text + "ยืนยันแล้ว" with no input and
+   no send button; "เปลี่ยนอีเมล" reveals the box **and focuses it**; "ยกเลิก" returns to read-only.
+   The phone hint reads the plain sentence; "ลบเบอร์ออก" appears only once a number is stored, and
+   clearing it through that button answers 200.
+
+Local seed data touched by this run: `seed-local-company` legal identity + VAT + owner email/phone,
+and `seed-local-company-2` legal identity (reset between browser runs so the indicator could be
+proven to APPEAR, not only to disappear). Nothing outside the local docker database.
 
 ## Open questions / deliberately not done
 
-(filled in at the end)
+- **`password/set` happy path unproven against a live database** — no credential-less ACTIVE member
+  exists in the local seed, and inventing one is a data change this task did not call for.
+- **`readiness.identity.reasons` still lists `vat_status_unanswered` after a VAT answer is stored**
+  (row 5 above: VAT is `NOT_REGISTERED` v4 and the reason remains). It does not affect this page —
+  `profileChecklist` deliberately ignores that reason — but it is wrong somewhere in the readiness
+  computation. **Out of scope, not fixed.**
+- The spec's §15.4 contextual tax-id modal is still not built (unchanged from the previous round).
+- No E2E spec was added to `e2e/`; the browser pass was a throwaway file, deleted.
+
+## Artifacts
+
+API — `apps/api/src/modules/auth/application/email-delivery.policy.ts` (new),
+`use-cases/get-account-security-state.use-case.ts` (+ spec),
+`use-cases/request-email-change.use-case.ts`, `use-cases/resend-email-verification.use-case.ts`,
+`use-cases/account-profile.use-case.spec.ts` (the existing home for both email use cases — no new
+spec file, so `apps/api/package.json` is untouched).
+
+Web — `features/company-profile/{CompanyProfilePage.tsx, company-profile.logic.ts,
+company-profile.api.ts, ProfileCompletenessCard.tsx, use-profile-checklist.ts (new),
+ProfileAttentionBadge.tsx (new)}` + `company-profile.logic.spec.ts` and
+`CompanyProfilePage.qa.spec.ts`; `common/api/api-error-message.ts`;
+`common/components/app-shell/AppSidebar.tsx`;
+`features/web-core-workspace/{WorkspaceLayout.tsx, web-core-workspace.model.ts}`;
+`app/(workspace)/companies/[companyId]/settings/page.tsx`;
+`features/external-signup/signup.logic.ts` (+ spec).
+
+Docs — `docs/specs/mangmee-line-first-signup-spec-th.md` §15.4.1, this file.
+
+No pinned file was touched: `auth.module.ts` and `auth.guard` are unchanged, so no pin re-sync.
 
 ## Verification
 
-(filled in at the end)
+- Red-then-green per decision, on the specs listed above.
+- `apps/web` full suite 1634/1634, `apps/api` full fixed list 6881 tests / 6782 pass / 0 fail /
+  99 skipped, `pnpm -r typecheck` clean, `check-di-metadata` clean (870 decorated classes).
+- **14 mutations, 14 caught, 0 escaped** — one per decision plus the guards most likely to rot
+  (VAT auto-save, the seed-once ref, the VAT half of the change guard, the verified-email mode, both
+  API delivery gates, the state flag, the checklist omission, both phone copies, the layout flag,
+  the sidebar dot, the hub permission gate, and the hook honouring the card's snooze).
 
 ## Next
 
-Push the branch. No PR, no merge, no deploy until the Owner asks.
+No PR, no merge, no deploy until the Owner asks. When this does go to UAT, the thing to watch is
+that UAT runs `EMAIL_PROVIDER=ses` (sandboxed) while production runs `disabled` — so the page will
+look different in the two, on purpose, and that difference is now visible rather than hidden.
