@@ -19,6 +19,11 @@ export type ErpToolContext = {
    *  DATA only — it can never widen company, permission or branch scope, all of which are
    *  re-resolved from the verified actor delegation. Absent for a non-LINE caller. */
   chatKeyHash?: string;
+  /** The message this turn is answering, forwarded verbatim by the API that received it, bounded
+   *  at the transport. Used by exactly one thing: the S-4 value-grounding guard (spec §5.4), which
+   *  needs to prove that a number a draft edit would write was actually said. It is never stored,
+   *  never logged, and grants nothing — with it absent, only numbers already on the record ground. */
+  groundingText?: string;
 };
 
 export interface ErpReadToolPort<TInput = Record<string, unknown>> {

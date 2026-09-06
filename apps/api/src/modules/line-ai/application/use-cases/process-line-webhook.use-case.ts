@@ -30,6 +30,20 @@ import { listRecentLineCaptureCandidates } from '../../../expenses/application/s
 import { pickLineDefaultBranchId } from '../../../expenses/domain/logic/line-receipt-branch.logic';
 import { CaptureLineExpenseNoteUseCase, LineTextExpenseCaptureIncompleteError } from '../../../expenses/application/use-cases/expense-document.use-case';
 import { CorrectLineCapturedExpenseUseCase } from '../../../expenses/application/use-cases/line-correction.use-case';
+import { LineDraftUpdateUseCase } from '../../../expenses/application/use-cases/line-draft-update.use-case';
+import { detectLineDraftEditRequest } from '../../../expenses/domain/logic/line-draft-update.logic';
+import { LINE_DRAFT_UPDATE_TOOLS, type LineDraftUpdateTool, type LineIntakeCorrectionHints } from '@watchdog-bms/contracts';
+import {
+  DRAFT_UPDATE_ALREADY_APPLIED_PREFIX,
+  draftProposalAckReason,
+  DRAFT_UPDATE_CANCELLED_REPLY,
+  DRAFT_UPDATE_EXPIRED_REPLY,
+  buildDraftUpdatePreviewCard,
+  draftUpdateAppliedReply,
+  draftUpdateBlockedReply,
+  draftUpdateChangedReply,
+  draftUpdateMoveSuggestionReply,
+} from '../../domain/logic/line-draft-update-card.logic';
 import {
   CHECK_BILL_PAYMENT_CHOICES,
   CHECK_BILL_PAYMENT_QUESTION,
@@ -1305,6 +1319,12 @@ export class ProcessLineWebhookUseCase {
     // absent case FAILS OPEN on purpose: this bounds cost, it does not protect anything, and a
     // missing Redis must never be the reason a customer in trouble cannot reach a person.
     @Optional() private readonly rateLimit?: AuthRateLimitService,
+    // S-4 draft edit (draft-control spec §5.4). LAST on purpose, like the params above it: the
+    // specs wire this constructor positionally, so a new dependency goes on the end where it
+    // cannot shift anyone else's argument. `@Optional()` like every other expense lane here —
+    // absent, `LINE_AI_DRAFT_EDIT_ENABLED` is effectively off: no preview card, no confirm
+    // handling, and the correction lane keeps exactly today's honest behaviour.
+    @Optional() private readonly draftUpdate?: LineDraftUpdateUseCase,
   ) {}
 
   /**
@@ -1961,6 +1981,149 @@ export class ProcessLineWebhookUseCase {
     await this.updateEventLog(event.webhookEventId, 'profile_guard_accepted', undefined, membership.companyId);
   }
 
+  /**
+   * S-4 beat two (spec §5.4, J3.2/J3.4). The button said "yes" or "no" and nothing else; which
+   * record, which change and whether it is still applicable are all re-derived server-side from
+   * the pending preview this chat holds.
+   *
+   * Every outcome is an honest sentence: applied names what changed and links the record, a moved
+   * record says so and drops the proposal, a confirmed record gets the `mutation_blocked` copy
+   * rather than "out of scope", and an expired or foreign preview is simply "not found".
+   */
+  private async handleDraftUpdatePostback(
+    event: LineTextEvent,
+    ctx: RequestContext,
+    access: { permissions: string[]; roles: string[] },
+    confirm: boolean,
+  ): Promise<void> {
+    const chatKeyHash = chatKeyHashOf(event);
+    if (!this.draftUpdate?.enabled) {
+      await this.deliverReply(event, DRAFT_UPDATE_EXPIRED_REPLY);
+      await this.updateEventLog(event.webhookEventId, 'draft_update_disabled', undefined, ctx.companyId);
+      return;
+    }
+    if (!confirm) {
+      const cancelled = await this.draftUpdate.cancel(ctx, chatKeyHash);
+      await this.deliverCompletedReply(
+        event,
+        cancelled === 'cancelled' ? DRAFT_UPDATE_CANCELLED_REPLY : DRAFT_UPDATE_EXPIRED_REPLY,
+        ctx.companyId,
+        access,
+      );
+      await this.updateEventLog(event.webhookEventId, 'draft_update_cancelled', undefined, ctx.companyId);
+      return;
+    }
+
+    const outcome = await this.draftUpdate.apply(ctx, chatKeyHash, event.webhookEventId);
+    let reply: string;
+    let status = 'completed';
+    if (outcome.status === 'applied') {
+      const applied = draftUpdateAppliedReply(this.config.webBaseUrl, ctx.companyId, outcome.expenseId, outcome.preview);
+      // A double tap is the commonest thing a person does to a slow button; saying "nothing is
+      // pending" would deny an edit they really made.
+      reply = outcome.replayed ? `${DRAFT_UPDATE_ALREADY_APPLIED_PREFIX} ${applied}` : applied;
+    } else if (outcome.status === 'changed') {
+      reply = draftUpdateChangedReply(this.config.webBaseUrl, ctx.companyId, outcome.expenseId);
+      status = 'draft_update_stale';
+    } else if (outcome.status === 'expired' || outcome.status === 'cancelled') {
+      reply = DRAFT_UPDATE_EXPIRED_REPLY;
+      status = 'draft_update_expired';
+    } else {
+      reply = draftUpdateBlockedReply(outcome.reason, this.config.webBaseUrl, ctx.companyId, outcome.expenseId);
+      status = outcome.reason === 'forbidden' ? 'forbidden' : 'draft_update_blocked';
+    }
+    await this.deliverCompletedReply(event, reply, ctx.companyId, access);
+    await this.persistIntakeTurn({
+      userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
+      userMessagePreview: normalizeLineText(event.messageText), replyText: reply, intent: 'CORRECTION',
+    });
+    await this.updateEventLog(
+      event.webhookEventId,
+      status,
+      outcome.status === 'blocked' && outcome.reason === 'forbidden' ? LINE_AI_ERROR_CODES.FORBIDDEN : undefined,
+      ctx.companyId,
+    );
+  }
+
+  /**
+   * S-4 beat one. Turns one detected edit request into the confirm card, or into the honest line
+   * that says why it could not. Returns false when the caller should fall through to its existing
+   * lane — which is what keeps the flag-off and no-match paths byte-identical to today.
+   */
+  private async proposeDraftUpdate(
+    event: LineTextEvent,
+    ctx: RequestContext,
+    access: { permissions: string[]; roles: string[] },
+    request: { tool: LineDraftUpdateTool; input: Record<string, unknown> },
+    evidence: Array<{ text: string; todayIso: string }>,
+    expenseId: string | undefined,
+  ): Promise<'proposed' | 'answered' | 'not_handled'> {
+    if (!this.draftUpdate?.enabled) return 'not_handled';
+    const outcome = await this.draftUpdate.preview(ctx, {
+      tool: request.tool,
+      input: request.input,
+      chatKeyHash: chatKeyHashOf(event),
+      requestId: ctx.requestId,
+      evidence,
+      ...(expenseId ? { expenseId } : {}),
+    });
+    if (outcome.status === 'preview') {
+      await this.deliverRequiredMessages(event, [buildDraftUpdatePreviewCard(outcome.preview)]);
+      await this.persistIntakeTurn({
+        userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
+        userMessagePreview: normalizeLineText(event.messageText),
+        replyText: outcome.preview.previewId, intent: 'CORRECTION',
+      });
+      await this.updateEventLog(event.webhookEventId, 'draft_update_preview', undefined, ctx.companyId);
+      return 'proposed';
+    }
+    if (outcome.status === 'move_suggestion') {
+      const reply = draftUpdateMoveSuggestionReply(outcome.lineNumber, outcome.chargeLabel);
+      await this.deliverCompletedReply(event, reply, ctx.companyId, access);
+      await this.persistIntakeTurn({
+        userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
+        userMessagePreview: normalizeLineText(event.messageText), replyText: reply, intent: 'CORRECTION',
+      });
+      await this.updateEventLog(event.webhookEventId, 'draft_update_move_suggested', undefined, ctx.companyId);
+      return 'answered';
+    }
+    // `feature_disabled` means the flag flipped mid-turn or the shared preview store is gone; the
+    // existing lane is the correct, unchanged answer. Everything else is a real fact about THIS
+    // record and must be said rather than swallowed.
+    if (outcome.reason === 'feature_disabled') return 'not_handled';
+    const reply = draftUpdateBlockedReply(outcome.reason, this.config.webBaseUrl, ctx.companyId, outcome.expenseId);
+    await this.deliverCompletedReply(event, reply, ctx.companyId, access);
+    await this.persistIntakeTurn({
+      userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
+      userMessagePreview: normalizeLineText(event.messageText), replyText: reply, intent: 'CORRECTION',
+    });
+    await this.updateEventLog(
+      event.webhookEventId,
+      outcome.reason === 'forbidden' ? 'forbidden' : 'draft_update_blocked',
+      outcome.reason === 'forbidden' ? LINE_AI_ERROR_CODES.FORBIDDEN : undefined,
+      ctx.companyId,
+    );
+    return 'answered';
+  }
+
+  /**
+   * The router's `amount` correction hint, read as a draft edit (spec §5.4).
+   *
+   * `amount` never arrives as words this turn can parse — it is a bounded hint the model SELECTED
+   * from grounded value candidates — so it needs its own translation. The line it lands on is
+   * deliberately left unset: the use case fills it with the record's only line, or refuses with
+   * `ambiguous_line`, which is the "บรรทัดไหน" clarify this lane already sends. `from` is not
+   * carried: the direction guard belongs to the five-field lane, and a draft edit asks for
+   * confirmation anyway.
+   */
+  private amountCorrectionAsDraftEdit(
+    hints: LineIntakeCorrectionHints | undefined,
+    candidates: LineIntakeCorrectionCandidate[],
+  ): { tool: LineDraftUpdateTool; input: Record<string, unknown> } | null {
+    if (!hints?.amount?.to || candidates.length !== 1) return null;
+    return { tool: 'expense.draft.set_line', input: { amount: hints.amount.to } };
+  }
+
   private async deliverRequiredMessages(
     event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; handoff?: LineHandoffRecipient },
     messages: LineReplyMessage[],
@@ -2491,6 +2654,23 @@ export class ProcessLineWebhookUseCase {
         isOwner: resolvedAccess.roles.includes('OWNER'),
       })]);
       await this.updateEventLog(event.webhookEventId, 'staff_menu_receipt', undefined, companyId);
+      return;
+    }
+
+    // S-4 (spec §5.4): the two buttons on a draft-edit confirm card. Handled HERE — after company,
+    // membership and permissions are resolved, before any AI turn — because the postback carries an
+    // intent and nothing else: everything it acts on is re-derived from this chat (SEC-04). A
+    // customer who types the same two phrases lands in exactly the same place, which is the
+    // property that makes a forged `data` value harmless.
+    // Gated on the flag, not just on the handler: with S-4 off these two phrases must behave the
+    // way any other text did before S-4 — they fall through to the ordinary AI turn. Recognising
+    // them as commands while the lane is dark would be a behaviour change a rollback cannot undo.
+    if (this.draftUpdate?.enabled && (menuCommand === 'draft_update_confirm' || menuCommand === 'draft_update_cancel')) {
+      await this.handleDraftUpdatePostback(event, {
+        requestId, authSubject: identity.userId, userId: identity.userId, companyId,
+        membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles,
+        permissions: resolvedAccess.permissions, scopes: resolvedAccess.scopes, authProvider: 'line',
+      }, resolvedAccess, menuCommand === 'draft_update_confirm');
       return;
     }
 
@@ -3476,13 +3656,33 @@ export class ProcessLineWebhookUseCase {
         membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles,
         permissions: resolvedAccess.permissions, scopes: resolvedAccess.scopes, authProvider: 'line',
       };
+      const correctionEvidence = buildCorrectionEvidence(normalizedText, openWaiting, routePlan.resolvedClarificationIds);
+      // S-4 (spec §5.4/§5.5): money, charges, VAT and whole lines are NOT the five-field correction
+      // lane's to write — it would have answered "ยังไม่ได้แก้ยอด" and pointed at the web. They now
+      // route to the draft tools, which PREVIEW the change and wait for [ยืนยัน].
+      //
+      // The detector is an allowlist and runs only here, where the intake router has already
+      // classified this turn as a correction of a record THIS user captured in THIS chat — the route
+      // is the own-record marker, and the detector additionally refuses a message that names
+      // somebody else's document. `amount` is handled below because it arrives as a router HINT
+      // rather than as words this function can read.
+      const draftRequest = detectLineDraftEditRequest(normalizedText)
+        ?? this.amountCorrectionAsDraftEdit(routePlan.correctionHints, recentCapturedExpenses);
+      const draftOutcome = draftRequest && this.draftUpdate?.enabled
+        ? await this.proposeDraftUpdate(event, correctionCtx, resolvedAccess, draftRequest, correctionEvidence,
+          recentCapturedExpenses.length === 1 ? recentCapturedExpenses[0]!.id : undefined)
+        : 'not_handled';
+      if (draftOutcome !== 'not_handled') {
+        await this.ackConsumed(correctionPlan, draftProposalAckReason(draftOutcome));
+        return;
+      }
       // Try to apply; every guard failure degrades to the guidance reply — never to a create.
       const applied = this.correctExpense
         ? await this.correctExpense.execute(correctionCtx, {
           lineMessageIdHash: hashMessagePreview(event.lineMessageId ?? event.webhookEventId),
           candidates: recentCapturedExpenses,
           ...(routePlan.correctionHints ? { hints: routePlan.correctionHints } : {}),
-          evidence: buildCorrectionEvidence(normalizedText, openWaiting, routePlan.resolvedClarificationIds),
+          evidence: correctionEvidence,
           ...(correctionPlan ? { consumption: correctionPlan.consumption } : {}),
         })
         : { status: 'guidance' as const, reason: 'correction_module_unavailable' };
@@ -3730,7 +3930,19 @@ export class ProcessLineWebhookUseCase {
       companyId,
       resolvedAccess,
     ));
-    const delivery = await this.deliverMessages(event, [completionMessage]);
+    // S-4 (spec §5.4): when the gateway's plan reached one of the five `draft_update` tools, the
+    // API has already computed and stored a preview for THIS turn — the tool call is the proposal,
+    // the card is the question, and the write is still the confirm postback. The card is built
+    // here rather than by the gateway because only the API may print the buttons whose postbacks
+    // it will have to re-derive (SEC-04), and because every figure on it comes from the server's
+    // own rolled-back run, never from model text.
+    const draftPreview = turnResponse.toolsInvoked.some((tool) => (LINE_DRAFT_UPDATE_TOOLS as readonly string[]).includes(tool))
+      ? await this.draftUpdate?.pendingPreview({ companyId, userId: identity.userId }, chatKeyHashOf(event), requestId)
+      : null;
+    const delivery = await this.deliverMessages(
+      event,
+      draftPreview ? [completionMessage, buildDraftUpdatePreviewCard(draftPreview)] : [completionMessage],
+    );
     this.emitTurnSummary({ webhookEventId: event.webhookEventId, requestId, request: turnRequest, response: turnResponse, delivery });
     if (delivery !== 'ok') {
       await this.prisma.client.aiTurn.update({

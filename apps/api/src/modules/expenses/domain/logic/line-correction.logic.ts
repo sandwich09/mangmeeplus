@@ -64,6 +64,23 @@ function dateCandidates(evidence: CorrectionEvidence[]): Set<string> {
   return values;
 }
 
+/**
+ * The same three grounding checks, exposed for the S-4 draft lane (spec §5.4: "ตัวเลขต้องมาจาก
+ * ข้อความผู้ใช้หรือจาก record"). Exported rather than re-implemented there: a second copy of this
+ * rule is exactly how one of them ends up looser than the other.
+ */
+export function amountAppearsInEvidence(evidence: CorrectionEvidence[], value: string): boolean {
+  return amountCandidates(evidence).has(String(Number.parseFloat(value)));
+}
+
+export function dateAppearsInEvidence(evidence: CorrectionEvidence[], isoDate: string): boolean {
+  return dateCandidates(evidence).has(isoDate.slice(0, 10));
+}
+
+export function textAppearsInEvidence(evidence: CorrectionEvidence[], value: string): boolean {
+  return appearsIn(evidence, value);
+}
+
 function currentValue(target: CorrectionTargetSnapshot, field: LineCorrectionField): string | null {
   switch (field) {
     case 'expenseDate': return target.expenseDate;

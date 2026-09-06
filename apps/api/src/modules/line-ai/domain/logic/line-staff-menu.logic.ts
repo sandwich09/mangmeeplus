@@ -1,4 +1,5 @@
 import type { LineQuickReplyItem, LineReplyMessage } from '../../infrastructure/line-reply.adapter';
+import { DRAFT_UPDATE_CANCEL_COMMAND, DRAFT_UPDATE_CONFIRM_COMMAND } from './line-draft-update-card.logic';
 import { FEATURE_CATALOG } from '@watchdog-bms/contracts';
 
 /**
@@ -480,6 +481,9 @@ export type StaffMenuCommand =
   | 'package_change' | 'employee' | 'staff_contact' | 'profile_guard' | 'profile_guard_later'
   // §2.4 delta: the customer's own way out of the support pause.
   | 'resume_ai'
+  // S-4 (draft-control spec §5.4): the two buttons on the draft-edit confirm card. Typed answers
+  // work too, which is the point of SEC-04 — a postback may do nothing a message could not.
+  | 'draft_update_confirm' | 'draft_update_cancel'
   | 'follow';
 
 export function staffMenuCommand(text: string): StaffMenuCommand | null {
@@ -497,6 +501,8 @@ export function staffMenuCommand(text: string): StaffMenuCommand | null {
   if (normalized === RESUME_AI_COMMAND || normalized === RESUME_AI_ALT_COMMAND) return 'resume_ai';
   if (normalized === PROFILE_GUARD_COMMAND) return 'profile_guard';
   if (normalized === PROFILE_GUARD_LATER_COMMAND) return 'profile_guard_later';
+  if (normalized === DRAFT_UPDATE_CONFIRM_COMMAND) return 'draft_update_confirm';
+  if (normalized === DRAFT_UPDATE_CANCEL_COMMAND) return 'draft_update_cancel';
   if (normalized === LINE_FOLLOW_EVENT_TEXT) return 'follow';
   if (normalized === 'โปรโมชั่น' || normalized === 'แพ็กเกจ') return 'promotion';
   return null;
@@ -515,8 +521,28 @@ const POSTBACK_ACTIONS: Readonly<Record<string, string>> = {
   'profile-guard-later': PROFILE_GUARD_LATER_COMMAND,
 };
 
-/** `action=<name>&…`; unknown or absent actions answer null so the event is dropped, not guessed. */
-export function linePostbackCommandText(data: string | undefined): string | null {
+/**
+ * S-4: the confirm/cancel buttons carry an intent and no ids. The server re-derives which preview
+ * they answer from the chat, so a forged or replayed `data` reaches nothing.
+ *
+ * Gated on the flag, and this is the point: with S-4 off no card carries these buttons, so the only
+ * thing that can send one is a forgery. Resolving it to a command anyway sent the event down the
+ * text lane and into a PAID AI turn — before S-4 it resolved to null and was dropped. Flag off must
+ * mean dropped again.
+ */
+const DRAFT_POSTBACK_ACTIONS: Readonly<Record<string, string>> = {
+  'draft-update-confirm': DRAFT_UPDATE_CONFIRM_COMMAND,
+  'draft-update-cancel': DRAFT_UPDATE_CANCEL_COMMAND,
+};
+
+/**
+ * `action=<name>&…`; unknown or absent actions answer null so the event is dropped, not guessed.
+ *
+ * `draftEditEnabled` decides whether the two S-4 actions resolve at all. It defaults to false so a
+ * caller that has not been taught about the flag keeps the pre-S-4 behaviour — dropped — rather
+ * than the more permissive one.
+ */
+export function linePostbackCommandText(data: string | undefined, draftEditEnabled = false): string | null {
   if (!data) return null;
   let action: string | null;
   try {
@@ -524,5 +550,7 @@ export function linePostbackCommandText(data: string | undefined): string | null
   } catch {
     return null;
   }
-  return (action && POSTBACK_ACTIONS[action]) ?? null;
+  if (!action) return null;
+  if (draftEditEnabled && DRAFT_POSTBACK_ACTIONS[action]) return DRAFT_POSTBACK_ACTIONS[action]!;
+  return POSTBACK_ACTIONS[action] ?? null;
 }
