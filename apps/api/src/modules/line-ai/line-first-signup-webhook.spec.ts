@@ -10,6 +10,7 @@ import {
 import { buildSignupDoorCard, buildSignupStatusCard, buildAiBudgetExceededMessage } from './domain/logic/line-business-card.logic';
 import { classifyLineAiGatewayFailure } from './domain/logic/line-ai-terminal-outcome.logic';
 import { ProcessLineWebhookUseCase } from './application/use-cases/process-line-webhook.use-case';
+import { DRAFT_UPDATE_CONFIRM_COMMAND } from './domain/logic/line-draft-update-card.logic';
 import { AuthRateLimitService } from '../auth/application/auth-rate-limit.service';
 import { RedisRateLimitService } from '../../common/security/redis-rate-limit.service';
 
@@ -989,6 +990,18 @@ describe('the pause silences the assistant, not the app (UAT 2026-09-06 รอ�
 
     assert.match(rendered(later), /ส่งข้อความถึงทีมงานแล้ว/, 'a fresh message gets the full answer');
     assert.equal(later.supportUpdates.length, 1);
+  });
+
+  // Review 2026-09-06 (mutation survived: `deterministicCommand = publicCommand !== null`). S-4's
+  // two phrases are a command only while its lane is lit; with the flag off they are ordinary text,
+  // and letting them past the gate would fall through the handler's own flag check into a PAID AI
+  // turn on a paused chat. The harness wires no `draftUpdate`, which is exactly the dark lane.
+  it('keeps the draft-edit phrases under the pause while the S-4 lane is dark', async () => {
+    const h = harness({ identity: linked, context: pausedContext, openSupportRequest: waiting });
+    await h.useCase.execute(event(DRAFT_UPDATE_CONFIRM_COMMAND));
+
+    assert.equal(h.supportUpdates.length, 1, 'ordinary text, filed for the operator like any other');
+    assert.equal(outcome(h), 'support_paused');
   });
 });
 

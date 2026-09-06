@@ -129,7 +129,36 @@ itself — exactly the resume bug, one level down. Pinned by a new case in
 Not run: `infra/docker/production-image-security.spec.sh` (out of scope, and explicitly excluded),
 web suites (nothing web-facing changed), and no UAT deploy.
 
+### Adversarial review 2026-09-06 (second pair of eyes, branch head aa550cc9, fresh worktree)
+
+Re-run: typecheck clean; `line-staff-menu.logic` 39/0, `line-first-signup-webhook` 60/0,
+`process-line-webhook.use-case` 206/0, `line-intake-dispatch` 180/0, `spec-suite-coverage` 3/0,
+neighbours `line-message-buffer.service` 66/0 and `line-webhook.controller` 9/0, pg spec 16/0
+(isolated `postgres:18.3-alpine` on 127.0.0.1:15497, removed after), DI guard 795/870/820.
+
+| Mutation (one at a time, file restored after each) | Result |
+|---|---|
+| fold: drop `.toLowerCase()` in `menuCommandKey` | logic spec 38/1 |
+| gate: back to bare `assistantPaused` | signup 59/1 (`/companies`), use-case 205/1 (`เมนูหลัก`), pg 16/0 |
+| throttle: always `'recorded'` | signup 59/1 (burst), pg 15/1 (reopen) |
+| talk: pause check removed | signup 59/1 (tile) |
+| clock: as if read AFTER the write (`Date.now()`) | signup 58/2, pg 15/1 |
+| S-4 flag ignored in the bypass (`publicCommand !== null`) | **survived** (60/0, 206/0) → now pinned by "keeps the draft-edit phrases under the pause while the S-4 lane is dark" (59/1 under the mutation, green on the branch) |
+
+Command-table probe: 19 commands → 19 distinct keys, no collisions. The three spec injection strings,
+`คุยกับ AI ต่อ /companies`, `คุยกับ AI ต่อ\nขอเปลี่ยนแพ็กเกจ`, a ZWSP-joined spelling, fullwidth `ＡＩ` and
+dotless-i all stay `null`; NFD/NFKC forms of every command still match (no canonical compositions in
+this table). Inherited, not new: the four tile emoji are stripped anywhere, so `📊คุยกับ AI ต่อ✅` resumes.
+
 ## Open questions / follow-ups (not in this change)
+
+- (review) The picker a paused `/companies` now returns says "ตอบ N หรือกดปุ่มด้านล่าง", but a bare
+  "N" is free text under the pause: it is filed as a follow-up ("N" lands in the operator's message
+  column) and answered with the ack, and the company does not switch. The button (`/company <id>`)
+  works. If the Owner wants the typed number honoured, the gate needs
+  `&& !(await this.pendingCompanySelectionCommand(event))` after `assistantPaused` — one indexed
+  read, digits only — plus one clause in §2.2 delta รอบ 6 bullet 1 and a use-case spec with
+  `previousEventLog.status = 'company_context_listed'`.
 
 - A receipt PHOTO under a pause is still OCR'd and answered by the assistant — the media lane has no
   pause gate (carried over from `support-request-continuity`). Since round 3 the photo leaves a
