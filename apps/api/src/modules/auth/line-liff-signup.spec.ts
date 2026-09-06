@@ -48,10 +48,9 @@ describe('P10-L LIFF signup page', () => {
     const release = currentLegalRelease('th');
 
     assertOnlyExternalScripts(html);
-    // The four values the submit is checked against. Asserted as the ATTRIBUTES the script reads,
-    // not merely as text present somewhere on the page: the challenge is also printed in the legal
-    // block, so a plain `includes` would still pass while the attribute the form posts was stale —
-    // and a stale challenge is evidence of an agreement to text nobody was shown.
+    // The four values the submit is checked against, asserted as the ATTRIBUTES the script reads
+    // rather than as text present somewhere on the page — a stale attribute would be evidence of
+    // an agreement to text nobody was shown.
     assert.ok(html.includes(`data-legal-challenge="${release.displayChallenge}"`), 'challenge attribute');
     assert.ok(html.includes(`data-legal-version="${release.documentVersion}"`));
     assert.ok(html.includes(`data-legal-statement="${release.statementSha256}"`));
@@ -74,22 +73,21 @@ describe('P10-L LIFF signup page', () => {
   });
 
   /**
-   * The challenge is 64 hex characters and the Owner's phone rendered it off the right edge. It is
-   * legal evidence, so it may not be shortened — it wraps instead, in a block of its own.
+   * Owner 2026-09-06: the 64-hex reference is evidence, not reading matter — under the privacy
+   * links it was a wall of hex on the shop owner's phone. It stays in the attribute the script
+   * posts back (LEGAL-LIFF-01) and is no longer rendered at all; this supersedes the 2026-09-05
+   * decision to wrap it rather than truncate it.
    */
-  it('lets the 64-hex reference wrap instead of running off a 390px screen', () => {
+  it('carries the 64-hex challenge only in the data attribute, never on screen', () => {
     const html = makeController().lineSignupPage(request());
     const challenge = currentLegalRelease('th').displayChallenge;
 
-    assert.ok(html.includes(`<p class="challenge">${challenge}</p>`), 'its own block, whole');
-    const rule = /\.challenge\{([^}]*)\}/.exec(html);
-    assert.ok(rule, 'the .challenge rule must be served with the page');
-    for (const declaration of ['overflow-wrap:anywhere', 'word-break:break-all', 'font-size:12px', 'monospace']) {
-      assert.ok(rule![1]!.includes(declaration), declaration);
-    }
-    // 64 hex at 12px monospace is ~7.2px/char ≈ 461px — wider than a 390px phone minus padding, so
-    // the wrap is what keeps it on screen rather than a lucky font size.
-    assert.ok(challenge.length * 7.2 > 390, 'the string really is wider than the screen');
+    assert.ok(html.includes(`data-legal-challenge="${challenge}"`), 'the submit keeps its evidence');
+    assert.equal(html.includes('รหัสอ้างอิงฉบับที่แสดง'), false, 'and the label goes with it');
+    assert.equal(/\.challenge\{/.test(html), false, 'the rule that styled the block it no longer has');
+    // Stronger than "no <p class=challenge>": strike the attribute and the hex must be gone from
+    // the whole page, so there is nothing left anywhere for a phone to paint.
+    assert.equal(html.replace(`data-legal-challenge="${challenge}"`, '').includes(challenge), false);
   });
 
   /**
