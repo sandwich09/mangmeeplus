@@ -206,6 +206,66 @@ describe('LineHandoffLinkService flex rewriting', () => {
   });
 });
 
+describe('LineHandoffLinkService.linkFor (explicit, one company per link)', () => {
+  const PICKER: LineHandoffContext = { ...CTX, companyId: 'co-2', surface: 'company_picker_open_web' };
+
+  it('mints a link for a company the message is NOT bound to, which the walk cannot do', async () => {
+    const { service, calls } = makeService();
+    assert.equal(await service.linkFor(PICKER, '/companies/co-2/dashboard'), `${WEB}/l/tok1`);
+    assert.deepEqual(calls, [{
+      userId: 'user-1', companyId: 'co-2', lineUserId: 'Uabc',
+      surface: 'company_picker_open_web', targetPath: '/companies/co-2/dashboard',
+    }]);
+  });
+
+  it('mints nothing at all while the handoff feature is off', async () => {
+    for (const options of [{ enabled: false }, { webBaseUrl: undefined }]) {
+      const { service, calls } = makeService(options);
+      assert.equal(await service.linkFor(PICKER, '/companies/co-2/dashboard'), null);
+      assert.equal(calls.length, 0, 'the caller must render exactly what it rendered before');
+    }
+  });
+
+  it('returns null and warns without the token when minting throws', async () => {
+    const { service, warnings } = makeService({ behaviour: 'throw' });
+    assert.equal(await service.linkFor(PICKER, '/companies/co-2/dashboard'), null);
+    assert.equal((warnings[0] as any).msg, 'line_handoff_mint_failed');
+    assert.equal((warnings[0] as any).surface, 'company_picker_open_web');
+    assert.ok(!JSON.stringify(warnings).includes('tok'));
+  });
+});
+
+describe('LineHandoffLinkService never double-wraps a handoff link', () => {
+  /** `/l/<token>` sits OUTSIDE `/companies/`, which is exactly why the entry route was put there
+   *  (line-handoff.logic.ts HANDOFF_PATH_PREFIX). The picker mints its own links before delivery,
+   *  so the seam must walk straight past them: re-wrapping would burn a second token and point it
+   *  at a path no mint would accept. */
+  it('leaves an already-minted /l/<token> URL untouched in text and in flex', async () => {
+    const { service, calls } = makeService();
+    const link = `${WEB}/l/already-minted-token`;
+    const [message] = await service.wrapOutgoingLineContent(CTX, [text(`เปิดเว็บที่ ${link}`)]);
+    assert.equal((message as { text: string }).text, `เปิดเว็บที่ ${link}`);
+
+    const picker: LineReplyMessage = {
+      type: 'flex',
+      altText: 'เลือกบริษัทที่ต้องการใช้งาน',
+      contents: {
+        type: 'carousel',
+        contents: [{
+          type: 'bubble',
+          footer: { type: 'box', layout: 'vertical', contents: [
+            { type: 'button', action: { type: 'message', label: 'เลือกบริษัทนี้', text: '/company co-2' } },
+            { type: 'button', action: { type: 'uri', label: 'เปิดเว็บบริษัทนี้', uri: link } },
+          ] },
+        }],
+      },
+    };
+    const [wrapped] = await service.wrapOutgoingLineContent(CTX, [picker]);
+    assert.equal(wrapped, picker, 'nothing to rewrite means the same message object');
+    assert.equal(calls.length, 0, 'not one extra token for a message that already carries its own');
+  });
+});
+
 describe('LineHandoffLinkService never leaks a token', () => {
   it('logs nothing containing the minted token, on success or on failure', async () => {
     const { service, warnings } = makeService();
