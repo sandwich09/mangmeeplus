@@ -4445,6 +4445,15 @@ export class ProcessLineWebhookUseCase {
         isOwner: isCompanyOwner(currentMembership),
         newShopSignupUrl: this.newShopSignupUrl(),
         pendingSignupName: pendingSignup?.companyName,
+        // Owner 2026-09-06: the picker below is only pushed to a multi-company member, so its
+        // เปิดเว็บบริษัทนี้ button never reached the single-shop owner. Same mint, same surface — the
+        // exchange-time switch simply re-selects the company the chat is already on. A multi-company
+        // member gets a second token on the current company's bubble too; tokens are single-use, so
+        // sharing one between the two cards would break whichever the reader tapped second.
+        openWebUrl: await this.handoffLinks?.linkFor(
+          { userId, companyId: currentMembership.companyId, lineUserId: event.lineUserId, surface: LINE_HANDOFF_SURFACE_COMPANY_PICKER_OPEN },
+          `/companies/${currentMembership.companyId}/dashboard`,
+        ) ?? undefined,
       })];
       if (memberships.length > 1) {
         messages.push(buildCompanyPickerMessage(

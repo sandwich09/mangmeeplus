@@ -154,8 +154,11 @@ app signed in on it.
   correctly, because that check is what stops a token for company A being re-pointed at company B. A picker of
   N companies therefore mints N tokens **explicitly**, through `LineHandoffLinkService.linkFor(ctx, targetPath)`,
   which keeps the seam's enabled rule, its degrade-to-plain failure and its never-log-the-token guarantee.
-  Only the bubbles on the visible page are minted. `/l/<token>` sits outside `/companies/`, so the seam walks
-  straight past these links and never double-wraps them.
+  Only the bubbles on the visible page are minted, plus one for the context card above them (2026-09-06: the
+  same button on บริษัทของฉัน itself, so the single-company member who is never sent a picker still has one).
+  Tokens are single-use, so a multi-company member's current company is minted twice per view rather than
+  sharing one link between the two cards — whichever they tapped second would otherwise be refused.
+  `/l/<token>` sits outside `/companies/`, so the seam walks straight past these links and never double-wraps them.
 - **Where the switch happens.** LINE sends the server nothing when a `uri` button is tapped, so the LINE half of
   the tap can only run at exchange time. `ExchangeLineHandoffTokenUseCase` upserts `LineCompanyContext` for
   `record.lineUserId` → `record.companyId` **after** the PENDING→USED claim (step 4) and **before** issuing the

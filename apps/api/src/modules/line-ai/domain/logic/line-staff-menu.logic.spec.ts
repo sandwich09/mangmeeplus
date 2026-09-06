@@ -105,6 +105,46 @@ describe('LINE staff menu', () => {
   });
 
   /**
+   * Owner 2026-09-06: *"เจ้าของที่มีบริษัทเดียวจะไม่เห็นการ์ดเลือกบริษัท อยากให้การ์ดบริษัทเดียวมีปุ่มเปิดเว็บด้วย"*.
+   * The picker only ships when the member has more than one company, so its เปิดเว็บบริษัทนี้ button
+   * never reached a single-shop owner at all. Same action, same label, on the card everyone gets.
+   */
+  it('opens the web on the current company, above เปิดร้านใหม่ when the card carries both', () => {
+    const message = buildCompanyContextMessage({
+      companyName: 'บริษัทมั่งมี จำกัด', displayName: 'พิมพ์ชนก', roleLabels: ['เจ้าของกิจการ'], isOwner: true,
+      newShopSignupUrl: 'https://liff.line.me/2007891234-AbCdEf01/signup',
+      openWebUrl: 'https://app.example.com/l/tok-1',
+    });
+    assert.deepEqual((message as any).contents.footer.contents.map((button: any) => button.action), [
+      { type: 'uri', label: COMPANY_PICKER_OPEN_WEB_LABEL, uri: 'https://app.example.com/l/tok-1' },
+      { type: 'uri', label: 'เปิดร้านใหม่', uri: 'https://liff.line.me/2007891234-AbCdEf01/signup' },
+    ]);
+    assert.equal((message as any).contents.footer.contents[0].style, 'secondary', 'opening a shop stays the primary call');
+    assert.equal((message as any).contents.footer.spacing, 'sm', 'two buttons, so there is a gap to space');
+    // No switch is promised: this card is already about this company, so the picker's hint has no
+    // meaning here. The chat-list preview is unchanged too — a button is not news.
+    assert.equal(JSON.stringify(message).includes(COMPANY_PICKER_OPEN_WEB_HINT), false);
+    assert.equal((message as any).altText, 'บริษัทของฉัน: บริษัทมั่งมี จำกัด · คุณพิมพ์ชนก · เจ้าของกิจการ');
+  });
+
+  it('gives an employee the web button, and only that one', () => {
+    // Opening the web on the company they already work in is not a shop-owner action — the web
+    // enforces its own permissions. เปิดร้านใหม่ keeps its owner gate untouched.
+    const message = buildCompanyContextMessage({
+      companyName: 'บริษัทมั่งมี จำกัด', displayName: 'สมชาย', roleLabels: ['พนักงาน'],
+      newShopSignupUrl: 'https://liff.line.me/2007891234-AbCdEf01/signup',
+      openWebUrl: 'https://app.example.com/l/tok-1',
+    });
+    assert.deepEqual((message as any).contents.footer.contents.map((button: any) => button.action), [
+      { type: 'uri', label: COMPANY_PICKER_OPEN_WEB_LABEL, uri: 'https://app.example.com/l/tok-1' },
+    ]);
+    assert.equal(JSON.stringify(message).includes('เปิดร้านใหม่'), false);
+    // The other half of the rule above, and the one that guards production: a footer holding ONE
+    // button takes no `spacing`, so the owner-only เปิดร้านใหม่ card shipped today is byte-identical.
+    assert.equal((message as any).contents.footer.spacing, undefined, 'one button, no gap to space');
+  });
+
+  /**
    * Owner 2026-09-06: "ปุ่มเปิดร้านใหม่โผล่ให้ STAFF ผ่าน /companies => staff ไม่ควรเห็น ถ้าเขาจะเปิดร้านเอง
    * ต้องผ่าน promotion หากอยู่ในมุมมองพนักงาน". The door is a shop-owner action, so it is gated on the
    * viewer's role in THIS company; the employee view keeps one plain sentence naming the route instead.
@@ -157,6 +197,10 @@ describe('LINE staff menu', () => {
     // undefined either way and the card must be exactly the one shipped today.
     const today = JSON.stringify(buildCompanyContextMessage(context));
     assert.equal(JSON.stringify(buildCompanyContextMessage({ ...context, newShopSignupUrl: undefined })), today);
+    // Same rule for the web button: the handoff feature off, or a mint that failed, hands the card
+    // `undefined` and the card must be the one shipped today rather than half of a new one.
+    assert.equal(JSON.stringify(buildCompanyContextMessage({ ...context, openWebUrl: undefined })), today);
+    assert.equal(today.includes(COMPANY_PICKER_OPEN_WEB_LABEL), false);
     assert.equal(today.includes('เปิดร้านใหม่'), false);
     assert.equal(today.includes('footer'), false);
     // An owner with NO application travelling is the overwhelming majority of `/companies`, and

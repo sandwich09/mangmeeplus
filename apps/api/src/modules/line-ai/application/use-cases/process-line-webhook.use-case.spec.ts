@@ -1764,6 +1764,10 @@ describe('ProcessLineWebhookUseCase', () => {
       assert.deepEqual(calls, [
         // The LINE identity is the CHAT's own user id — the same key `LineCompanyContext` is
         // upserted under — so the exchange switches the row this conversation reads.
+        // The context card mints first, for the company the chat is already on. Tokens are
+        // single-use, so its button cannot share the one on that company's picker bubble below —
+        // whichever the reader tapped second would land on `handoff-expired`.
+        { userId: 'user-1', companyId: 'co-2', lineUserId: 'line-user-secret', surface: 'company_picker_open_web', targetPath: '/companies/co-2/dashboard' },
         { userId: 'user-1', companyId: 'co-1', lineUserId: 'line-user-secret', surface: 'company_picker_open_web', targetPath: '/companies/co-1/dashboard' },
         { userId: 'user-1', companyId: 'co-2', lineUserId: 'line-user-secret', surface: 'company_picker_open_web', targetPath: '/companies/co-2/dashboard' },
       ]);
@@ -1780,7 +1784,7 @@ describe('ProcessLineWebhookUseCase', () => {
       // The send-boundary seam still runs and adds nothing: `/l/<token>` sits outside `/companies/`,
       // so there is nothing for it to rewrite (proved in line-handoff-link.service.spec.ts).
       assert.equal(wraps.length, 1);
-      assert.equal(calls.length, 2, 'two bubbles, two tokens, and not one more');
+      assert.equal(calls.length, 3, 'two bubbles plus the context card, and not one more');
     });
 
     it('renders the picker exactly as before when the handoff feature is off', async () => {
@@ -1819,12 +1823,64 @@ describe('ProcessLineWebhookUseCase', () => {
 
       await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-picker-page2', messageText: '/companies page 2' });
 
-      // Page 2 shows three companies plus the navigation bubble; only the three get a token.
-      assert.equal(calls.length, 3);
-      assert.deepEqual(calls.map((call) => call.companyId), ['co-12', 'co-13', 'co-14']);
+      // Page 2 shows three companies plus the navigation bubble; only the three get a token —
+      // after the context card's own, which is always for the current company whatever page is up.
+      assert.equal(calls.length, 4);
+      assert.deepEqual(calls.map((call) => call.companyId), ['co-1', 'co-12', 'co-13', 'co-14']);
       const page = bubbles(pickerOf(sentMessageBatches));
       assert.equal(page.length, 4);
       assert.equal(JSON.stringify(page[3]).includes('/l/'), false, 'the pager bubble is navigation, not a company');
+    });
+
+    /**
+     * Owner 2026-09-06: *"เจ้าของที่มีบริษัทเดียวจะไม่เห็นการ์ดเลือกบริษัท อยากให้การ์ดบริษัทเดียวมีปุ่มเปิดเว็บด้วย"*.
+     * The picker is only pushed when `memberships.length > 1`, so the single-shop owner — the
+     * majority of บริษัทของฉัน — could not reach the web from this screen at all. The context card
+     * mints for the CURRENT company; the exchange-time switch is a no-op that re-selects it.
+     */
+    const oneShop = () => makePrisma({
+      displayName: 'พิมพ์ชนก',
+      memberships: [{ companyId: 'co-1', company: { name: 'บริษัทหนึ่ง' }, roles: [{ role: { key: 'OWNER', name: 'เจ้าของกิจการ' } }] }],
+    }).prisma;
+
+    it('puts the web button on the context card of a member with a single company', async () => {
+      const { calls, handoffLinks } = fakeLinks();
+      const { useCase, sentMessageBatches } = makeUseCase(oneShop(), { permissions: ['line.ai.query'], handoffLinks });
+
+      await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-context-web', messageText: '/companies' });
+
+      assert.equal(sentMessageBatches[0]?.length, 1, 'one company still sends no picker');
+      assert.deepEqual(calls, [
+        { userId: 'user-1', companyId: 'co-1', lineUserId: 'line-user-secret', surface: 'company_picker_open_web', targetPath: '/companies/co-1/dashboard' },
+      ]);
+      const card = sentMessageBatches[0]![0] as any;
+      assert.deepEqual(card.contents.footer.contents.map((b: any) => b.action), [
+        { type: 'uri', label: 'เปิดเว็บบริษัทนี้', uri: 'https://app.example.com/l/tok-co-1' },
+      ]);
+    });
+
+    it('leaves the context card exactly as before when the handoff feature is off', async () => {
+      const { useCase, sentMessageBatches } = makeUseCase(oneShop(), { permissions: ['line.ai.query'] });
+
+      await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-context-web-off', messageText: '/companies' });
+
+      const card = JSON.stringify(sentMessageBatches[0]![0]);
+      assert.match(card, /บริษัทหนึ่ง/);
+      assert.equal(card.includes('เปิดเว็บบริษัทนี้'), false);
+      assert.equal(card.includes('/l/'), false);
+      assert.equal(card.includes('footer'), false, 'no seam, no mint, and not one byte added');
+    });
+
+    it('still delivers the context card when its own mint fails', async () => {
+      const { calls, handoffLinks } = fakeLinks(['co-1']);
+      const { useCase, sentMessageBatches } = makeUseCase(oneShop(), { permissions: ['line.ai.query'], handoffLinks });
+
+      await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-context-web-fail', messageText: '/companies' });
+
+      assert.deepEqual(calls.map((call) => call.companyId), ['co-1'], 'the mint was attempted and returned nothing');
+      const card = sentMessageBatches[0]![0] as any;
+      assert.match(JSON.stringify(card), /บริษัทหนึ่ง/, 'the answer the owner asked for still arrives');
+      assert.equal(card.contents.footer, undefined, 'and never a button with nowhere to go');
     });
   });
 
