@@ -30,12 +30,14 @@ const BAHT_AMOUNT = /[0-9๐-๙][0-9๐-๙,]*(?:\.[0-9๐-๙]+)?\s*(?:บา�
  *  trust boundary: a male particle, the assistant's own ผม, or a wrong self-name declines the shortcut
  *  and the composer turn (which owns the persona) answers instead. Never repaired. */
 const MALE_PARTICLE = /ครับ/u;
-/** ผม as HER pronoun only: line-initial, or after whitespace with a self-predicate. A user's quoted
- *  «ผม…» follows « and matches neither, and hair (ตัดผม) has no whitespace before it. */
-const OWN_PRONOUN_PHOM = /^ผม|\sผม(?:ชื่อ|คือ|เป็น|ยินดี|พร้อม|เอง|ขอ|จะ|ช่วย)/mu;
-/** Owner 2026-09-06: she is น้องมั่งมี, never หนู — same shape as ผม, so a quoted «หนู…» stays deliverable. */
+/** ผม/ดิฉัน as HER pronoun. Thai writes no word spaces ("วันนี้ผม…", "แต่ผม…"), so ผม is caught anywhere
+ *  EXCEPT a user's quoted «ผม…» and hair, where the neighbouring word settles it (ตัดผม, ทรงผม, ผมสั้น, ผมร่วง). */
+const OWN_PRONOUN_PHOM = /(?<!«|ตัด|ทรง|เส้น|สระ|ย้อม|ดัด|ยืด|หวี|เซ็ต|ทำ|มัด|ถัก|รวบ|เกล้า|ไว้|ปลูก|ปลาย|โคน|ราก|สี|แต่ง|ขน)ผม(?!สั้น|ยาว|ร่วง|หงอก|เผ้า|บาง|ดก|สวย|เสีย|แห้ง|มัน|หยิก|ตรง|ดำ|ขาว|ทอง|สี|ทรง)|(?<!«)ดิฉัน/u;
+/** Owner 2026-09-06: she is น้องมั่งมี, never หนู — line-initial or after whitespace with a self-predicate
+ *  (หนู is also "you" to a junior and a mouse), so a quoted «หนู…» stays deliverable. */
 const OWN_PRONOUN_NU = /^หนู|\sหนู(?:คือ|ชื่อ|เป็น|ยินดี|พร้อม|เอง|ขอ|จะ|ช่วย)/mu;
-const WRONG_SELF_NAME = /AI Assistant|WatchDog|Mangmee ?Plus AI|ผู้ช่วย AI ของ Mangmee ?Plus/iu;
+/** A product-bot label, a vendor, or "language model" is a wrong self-name whatever the particle. */
+const WRONG_SELF_NAME = /AI Assistant|WatchDog|Mangmee ?Plus AI|AI ของ Mangmee ?Plus|Claude|Anthropic|OpenAI|ChatGPT|Bedrock|language model|โมเดลภาษา/iu;
 /** Owner 2026-09-06: a robot icon is never her (the UAT draft signed off with one). */
 const ROBOT_ICON = /🤖/u;
 /** A social answer is 1–3 sentences (spec §12). A list or numbered steps is a tutorial, which the

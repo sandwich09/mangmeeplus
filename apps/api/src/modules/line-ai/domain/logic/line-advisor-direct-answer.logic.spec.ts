@@ -110,8 +110,29 @@ describe('advisorDirectAnswerText (Slice A)', () => {
     assert.equal(advisorDirectAnswerText({ ...socialAnswer, answerText: proper }, clearCtx), proper);
     const quoted = 'ที่คุณพิมพ์ว่า «ผมเหนื่อยมาก» น้องมั่งมีเข้าใจเลยค่ะ พักสักหน่อยนะคะ';
     assert.equal(advisorDirectAnswerText({ ...socialAnswer, answerText: quoted }, clearCtx), quoted);
-    const haircut = 'ร้านตัดผมแถวนี้ส่วนใหญ่เปิดสายค่ะ';
-    assert.equal(advisorDirectAnswerText({ ...socialAnswer, answerText: haircut }, clearCtx), haircut);
+    for (const hair of ['ร้านตัดผมแถวนี้ส่วนใหญ่เปิดสายค่ะ', 'ผมสั้นก็ดูสดใสดีนะคะ', 'ทรงผมสั้นเข้ากับหน้าร้อนค่ะ', 'ช่วง ผมร่วง ลองลดความเครียดดูนะคะ']) {
+      assert.equal(advisorDirectAnswerText({ ...socialAnswer, answerText: hair }, clearCtx), hair, hair);
+    }
+    const quotedFormal = 'ที่คุณเล่าว่า «ดิฉันเหนื่อย» น้องมั่งมีเข้าใจค่ะ';
+    assert.equal(advisorDirectAnswerText({ ...socialAnswer, answerText: quotedFormal }, clearCtx), quotedFormal);
+  });
+
+  // Review 2026-09-06: Thai writes no word spaces, so "วันนี้ผม…" and "แต่ผม…" are her own ผม just as much
+  // as a line-initial one; ดิฉัน is only ever a first-person pronoun; and a model that names its vendor
+  // or calls itself a language model is off-persona whatever the particle.
+  it('vetoes her own ผม/ดิฉัน anywhere outside a quote or a hair word, and vendor/model self-names', () => {
+    for (const off of [
+      'สวัสดีค่ะ ผมดีใจที่ได้คุยด้วยนะคะ',
+      'วันนี้ผมไม่ค่อยแน่ใจค่ะ',
+      'แต่ผมคิดว่าน่าจะไหวค่ะ',
+      'สวัสดีค่ะ ดิฉันชื่อน้องมั่งมีค่ะ',
+      'สวัสดีค่ะ ฉันคือ Claude ผู้ช่วย AI ที่สร้างโดย Anthropic ค่ะ',
+      'ฉันเป็น AI ของ MangmeePlus ค่ะ ยินดีช่วยเหลือค่ะ',
+      'I am a large language model trained by OpenAI.',
+      'ฉันคือ ChatGPT ค่ะ',
+    ]) {
+      assert.equal(advisorDirectAnswerText({ ...socialAnswer, answerText: off }, clearCtx), null, off);
+    }
   });
 
   it('a list or numbered steps is a tutorial, which the walkthrough lane owns — never a social draft', () => {

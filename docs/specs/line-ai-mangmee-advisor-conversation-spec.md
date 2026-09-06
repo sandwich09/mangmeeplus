@@ -495,10 +495,12 @@ server ใช้ prepared advisor result ใน direct path ได้เมื�
   runtime LLM judge/critic เป็น authority
 - safety/privacy/mutation detector ไม่ veto
 - **persona veto (deterministic, 2026-09-06)**: `advisorDirectAnswerText` ปฏิเสธ direct answer เมื่อ `answerText` มี
-  male particle (`ครับ`, `ครับผม`, `นะครับ`), ใช้ `ผม` เป็นสรรพนามของผู้ช่วยเอง (ขึ้นต้นบรรทัด หรือ
-  `ผมชื่อ/คือ/เป็น/ยินดี/พร้อม/เอง/ขอ/จะ/ช่วย` หลังช่องว่าง — `ผม` ในข้อความที่ quote จากผู้ใช้ `«…»` ไม่นับ), ใช้ `หนู` เป็นสรรพนาม
-  ของตัวเองในรูปเดียวกัน (`^หนู` หรือ `หนูคือ/ชื่อ/เป็น/ยินดี/พร้อม/เอง/ขอ/จะ/ช่วย` หลังช่องว่าง — Owner 2026-09-06) หรือเรียกตัวเองผิด
-  (`AI Assistant`, `WatchDog`, `MangmeePlus AI`, `Mangmee Plus AI`, `ผู้ช่วย AI ของ MangmeePlus`) หรือมีอีโมจิหุ่นยนต์ `🤖`
+  male particle (`ครับ`, `ครับผม`, `นะครับ`), ใช้ `ผม` หรือ `ดิฉัน` เป็นสรรพนามของผู้ช่วยเอง (ทุกตำแหน่ง เพราะไทยไม่เว้นวรรคระหว่างคำ
+  — `วันนี้ผม…`, `แต่ผม…` — ยกเว้น `ผม` ในข้อความที่ quote จากผู้ใช้ `«…»` และคำเกี่ยวกับเส้นผมที่คำข้างเคียงบอกได้ เช่น ตัดผม/ทรงผม/
+  ผมสั้น/ผมร่วง; review 2026-09-06), ใช้ `หนู` เป็นสรรพนามของตัวเอง (`^หนู` หรือ `หนูคือ/ชื่อ/เป็น/ยินดี/พร้อม/เอง/ขอ/จะ/ช่วย`
+  หลังช่องว่าง — Owner 2026-09-06) หรือเรียกตัวเองผิด (`AI Assistant`, `WatchDog`, `MangmeePlus AI`, `Mangmee Plus AI`,
+  `AI ของ MangmeePlus`, ชื่อ vendor/model — `Claude`, `Anthropic`, `OpenAI`, `ChatGPT`, `Bedrock` — หรือ `language model`/`โมเดลภาษา`)
+  หรือมีอีโมจิหุ่นยนต์ `🤖`
   (Owner 2026-09-06) รวมถึงเมื่อ `answerText` มีรูปร่างเป็น list/ขั้นตอน (ขึ้นบรรทัดใหม่ ≥ 2 ครั้ง หรือบรรทัดที่นำด้วย `1)`/`1.`/`•`) ซึ่งเกินสัญญา 1–3 ประโยคของ social
   lane (§12); ทุกกรณี fail-closed ไป full composer turn (ซึ่งมี persona) และห้ามซ่อมข้อความ
 - answer ยาวไม่เกิน channel policy และไม่มี raw URL/Flex JSON จาก model
