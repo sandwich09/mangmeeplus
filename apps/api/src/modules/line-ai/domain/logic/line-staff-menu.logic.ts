@@ -1,6 +1,6 @@
 import type { LineQuickReplyItem, LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import { DRAFT_UPDATE_CANCEL_COMMAND, DRAFT_UPDATE_CONFIRM_COMMAND } from './line-draft-update-card.logic';
-import { FEATURE_CATALOG } from '@watchdog-bms/contracts';
+import { FEATURE_CATALOG, scrubRecordText } from '@watchdog-bms/contracts';
 
 /**
  * P10-L. The exact words on a button ARE the command, so the label and the matcher can never drift:
@@ -61,6 +61,16 @@ export type CompanyContextCard = {
    * no id, company or token ever travels in the URL (LINE-ONBOARD-01).
    */
   newShopSignupUrl?: string;
+  /**
+   * The shop named on the application this LINE account still has travelling, or `undefined` when
+   * it has none. UAT 2026-09-06 "สมัครแล้วแต่บริษัทหาย": a repeat trial always queues for review
+   * (§3.3), so the owner who had just used the button above came back to this card and found no
+   * trace of the shop they applied for. The card says where the request is, and the door above is
+   * withheld while it is open — the LIFF form could only answer `line_signup_already_pending`.
+   *
+   * Free text an applicant typed, so the card scrubs it like every other customer-supplied value.
+   */
+  pendingSignupName?: string;
 };
 
 /**
@@ -155,9 +165,15 @@ export function buildCompanyContextMessage(context: CompanyContextCard): LineRep
   const companyName = boundedLabel(context.companyName, 'ไม่ระบุบริษัท');
   const displayName = boundedLabel(context.displayName, 'ผู้ใช้งาน');
   const roleLabel = boundedLabel(context.roleLabels.filter(Boolean).join(' · '), 'พนักงาน');
+  // Every state that keeps an application open also fences the applicant out of filing another one,
+  // `PROVISIONING_FAILED` included, so all of them get the one answer `buildSignupStatusCard` gives
+  // — "รอทีมงานตรวจสอบ". Two surfaces saying different things about one request is the bug this fixes.
+  const shop = scrubRecordText(context.pendingSignupName, 60);
+  const pendingLine = context.pendingSignupName === undefined ? undefined
+    : `🕒 คำขอเปิดร้าน${shop ? ` «${shop}»` : 'ใหม่'} รอทีมงานตรวจสอบ ปกติภายในวันทำการ`;
   return {
     type: 'flex',
-    altText: `บริษัทของฉัน: ${companyName} · คุณ${displayName} · ${roleLabel}`,
+    altText: `บริษัทของฉัน: ${companyName} · คุณ${displayName} · ${roleLabel}${pendingLine ? `\n${pendingLine}` : ''}`,
     contents: {
       type: 'bubble', size: 'kilo',
       body: { type: 'box', layout: 'vertical', spacing: 'md', paddingAll: '16px', contents: [
@@ -165,8 +181,9 @@ export function buildCompanyContextMessage(context: CompanyContextCard): LineRep
         { type: 'text', text: `🏢 ${companyName}`, weight: 'bold', size: 'md', color: '#101828', wrap: true },
         { type: 'text', text: `👤 คุณ${displayName}`, size: 'sm', color: '#475467', wrap: true },
         { type: 'text', text: `💼 ${roleLabel}`, size: 'sm', color: '#475467', wrap: true },
+        ...(pendingLine ? [{ type: 'text', text: pendingLine, size: 'sm', color: '#475467', wrap: true }] : []),
       ] },
-      ...(context.newShopSignupUrl ? {
+      ...(context.newShopSignupUrl && !pendingLine ? {
         footer: { type: 'box', layout: 'vertical', contents: [
           { type: 'button', style: 'primary', color: '#22C55E', action: { type: 'uri', label: 'เปิดร้านใหม่', uri: context.newShopSignupUrl } },
         ] },

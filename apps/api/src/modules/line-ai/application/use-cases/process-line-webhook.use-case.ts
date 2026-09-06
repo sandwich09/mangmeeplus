@@ -4319,11 +4319,17 @@ export class ProcessLineWebhookUseCase {
         await this.updateEventLog(event.webhookEventId, 'needs_company_selection', LINE_AI_ERROR_CODES.AMBIGUOUS_COMPANY);
         return;
       }
+      // UAT 2026-09-06 "สมัครแล้วแต่บริษัทหาย": the shop this owner applied for is not a membership
+      // yet, so nothing on this screen mentioned it. Same read the door card does, so the two
+      // entrances keep agreeing about "still open" — and while one IS open the card withholds the
+      // button, because the LIFF form behind it can only answer `line_signup_already_pending`.
+      const pendingSignup = await this.findOpenLineSignup(event.lineUserId);
       const messages: LineReplyMessage[] = [buildCompanyContextMessage({
         companyName: companyLabel(currentMembership),
         displayName,
         roleLabels: companyRoleLabels(currentMembership),
         newShopSignupUrl: this.newShopSignupUrl(),
+        pendingSignupName: pendingSignup?.companyName,
       })];
       if (memberships.length > 1) {
         messages.push(buildCompanyPickerMessage(

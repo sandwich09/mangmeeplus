@@ -402,6 +402,29 @@ describe('P10-L LIFF client script', () => {
   });
 
   /**
+   * UAT 2026-09-06 "สมัครแล้วแต่บริษัทหาย". A second shop for an existing owner always queues for
+   * review (§3.3), and the done card said only that it had been added — so the owner went to
+   * บริษัทของฉัน, did not find it, and concluded it was gone. The card names where it will appear.
+   */
+  it('tells a second-shop applicant where the new shop will show up once it is approved', async () => {
+    const h = runSignupScript('null', [
+      { status: 200, body: 'null' },
+      { status: 202, body: JSON.stringify({ requestId: 'r1', state: 'PENDING_REVIEW', existingAccount: true, businessHours: true }) },
+    ]);
+    await settle();
+    await settle();
+    await h.click('link');
+    await settle();
+
+    const done = h.elements['done-text']!.textContent;
+    assert.equal(h.views.find((view) => view.id === 'done-view')!.hidden, false);
+    assert.match(done, /บริษัทของฉัน/);
+    assert.match(done, /อนุมัติ/);
+    // Still one card, still no "+" anywhere in customer-facing copy (spec §3).
+    assert.equal(done.includes('+'), false);
+  });
+
+  /**
    * Review BLOCKER 1. The phone error used to be thrown as a bare Error, so it landed in the summary
    * ("ส่งคำขอไม่สำเร็จ", scrolled off the top at tap time) and in #detail (below the fold) — the one
    * moment the customer needed it, it was off-screen in both directions. These assertions are all

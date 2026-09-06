@@ -1024,7 +1024,9 @@ export function scrubRecordText(
     .trim();
   // Nothing but punctuation left is not a name — the caller's neutral fallback reads better than
   // printed debris.
-  return /[\p{L}\p{N}]/u.test(scrubbed) ? scrubbed.slice(0, maxLength) : '';
+  // `slice` counts UTF-16 units, so the bound can land between the halves of an emoji and leave a
+  // lone high surrogate at the end — not a character any channel can send. Drop the half-glyph.
+  return /[\p{L}\p{N}]/u.test(scrubbed) ? scrubbed.slice(0, maxLength).replace(/[\ud800-\udbff]$/u, '') : '';
 }
 
 /**

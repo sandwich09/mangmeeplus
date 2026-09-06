@@ -110,6 +110,60 @@ describe('LINE staff menu', () => {
     assert.equal(JSON.stringify(buildCompanyContextMessage({ ...context, newShopSignupUrl: undefined })), today);
     assert.equal(today.includes('เปิดร้านใหม่'), false);
     assert.equal(today.includes('footer'), false);
+    // An owner with NO application travelling is the overwhelming majority of `/companies`, and
+    // their card must not gain a byte from this feature — with or without the signup door.
+    assert.equal(JSON.stringify(buildCompanyContextMessage({ ...context, pendingSignupName: undefined })), today);
+    const withDoor = { ...context, newShopSignupUrl: 'https://liff.line.me/2007891234-AbCdEf01/signup' };
+    assert.equal(
+      JSON.stringify(buildCompanyContextMessage({ ...withDoor, pendingSignupName: undefined })),
+      JSON.stringify(buildCompanyContextMessage(withDoor)),
+    );
+    assert.equal(today.includes('🕒'), false);
+  });
+
+  /**
+   * UAT 2026-09-06 "สมัครแล้วแต่บริษัทหาย": an owner tapped "เปิดร้านใหม่", the LIFF form filed the
+   * application, and `/companies` then showed the picker with no trace of it — so the shop had, as
+   * far as the owner could tell, vanished. The card is the only surface that owner looks at, so it
+   * is the surface that has to say where the request is.
+   */
+  it('answers the pending shop request on the context card instead of offering the door again', () => {
+    const message = buildCompanyContextMessage({
+      companyName: 'บริษัทมั่งมี จำกัด', displayName: 'พิมพ์ชนก', roleLabels: ['เจ้าของกิจการ'],
+      newShopSignupUrl: 'https://liff.line.me/2007891234-AbCdEf01/signup',
+      pendingSignupName: 'ร้านใหม่',
+    });
+    const rendered = JSON.stringify(message);
+    assert.match(rendered, /🕒 คำขอเปิดร้าน «ร้านใหม่» รอทีมงานตรวจสอบ ปกติภายในวันทำการ/);
+    // The alt text is what the owner sees in the chat list, which is where "it vanished" was decided.
+    assert.match((message as any).altText, /🕒 คำขอเปิดร้าน «ร้านใหม่»/);
+    // The LIFF form can only answer `line_signup_already_pending` while one is open (the partial
+    // unique index `CompanySignupRequest_line_open_key`), so the door must not be offered at all.
+    assert.equal((message as any).contents?.footer, undefined);
+    assert.equal(rendered.includes('"uri"'), false);
+  });
+
+  it('scrubs the pending shop name the same way every other card scrubs record text', () => {
+    const message = buildCompanyContextMessage({
+      companyName: 'บริษัทมั่งมี จำกัด', displayName: 'พิมพ์ชนก', roleLabels: ['เจ้าของกิจการ'],
+      newShopSignupUrl: 'https://liff.line.me/2007891234-AbCdEf01/signup',
+      pendingSignupName: 'ร้านใหม่ bit.ly/x9',
+    });
+    const rendered = JSON.stringify(message);
+    // A shop name is customer-supplied free text that reaches this card unreviewed; the link an
+    // applicant typed into it must not become something the owner is invited to tap.
+    assert.equal(rendered.includes('bit.ly'), false);
+    assert.match(rendered, /🕒 คำขอเปิดร้าน «ร้านใหม่» รอทีมงานตรวจสอบ/);
+  });
+
+  it('still names the request when the shop name scrubs away to nothing', () => {
+    const message = buildCompanyContextMessage({
+      companyName: 'บริษัทมั่งมี จำกัด', displayName: 'พิมพ์ชนก', roleLabels: ['เจ้าของกิจการ'],
+      pendingSignupName: 'bit.ly/x9',
+    });
+    // Empty quotation marks would read as a bug; the line still has to answer "where is my request".
+    assert.match(JSON.stringify(message), /🕒 คำขอเปิดร้านใหม่ รอทีมงานตรวจสอบ ปกติภายในวันทำการ/);
+    assert.equal(JSON.stringify(message).includes('«»'), false);
   });
 
   it('builds tappable company cards using immutable company ids', () => {
