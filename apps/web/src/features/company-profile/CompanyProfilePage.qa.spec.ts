@@ -251,10 +251,13 @@ describe('the email block matches the state the account is actually in', () => {
     assert.doesNotMatch(html, /id="account-email"/);
   });
 
-  it('gives an account with no email the plain form', () => {
+  it('gives an account with no email the plain form, labelled once', () => {
     const html = renderLoaded({ permissions: OWNER });
     assert.match(html, /id="account-email"/);
     assert.match(html, /ส่งลิงก์ยืนยันอีเมล/);
+    // The read-only blocks carry their own caption; with the box on screen that caption is the
+    // box's own label, and rendering both put "อีเมล" on two consecutive lines.
+    assert.equal(html.match(/>อีเมล</g)?.length, 1, 'one label for one field');
   });
 
   // §15.4.1 C: production runs EMAIL_PROVIDER=disabled, where the mailer is a silent no-op.

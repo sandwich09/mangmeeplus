@@ -481,7 +481,10 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
           />
 
           <div className="grid gap-4">
-            <div className="text-sm font-medium text-gray-700">อีเมล</div>
+            {/* The read-only blocks need a caption; the two form modes get theirs from the box. */}
+            {emailMode !== 'edit' && emailMode !== 'none' && (
+              <div className="text-sm font-medium text-gray-700">อีเมล</div>
+            )}
 
             {/* §15.4.1 C: with no mailer there is nothing to offer, so nothing is offered. */}
             {emailMode === 'unavailable' && (
