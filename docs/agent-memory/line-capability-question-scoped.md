@@ -1,9 +1,10 @@
 # Agent Memory: line-capability-question-scoped
 
 Status: Implemented and verified locally 2026-09-06 on branch `codex/line-capability-question-scoped`
-(cut from `origin/develop` 740fa36d, with `origin/codex/line-ai-persona-teaching` 52325370 — PR #453,
-not yet merged — merged in as 53c9ab15 so the fix sits on the code it depends on). Code + tests
-`bfce270b`. No PR, not merged, not deployed; no live UAT turn re-run yet.
+(cut from `origin/develop` 740fa36d with `origin/codex/line-ai-persona-teaching` 52325370 merged in,
+because PR #453 was still open; #453 landed as `a4ef867b` mid-task and that develop is merged in too,
+so the branch diff is now exactly this change). Code + tests `bfce270b`, docs `7404c528`. No PR, not
+merged, not deployed; no live UAT turn re-run yet.
 Owner: thawatchai
 Scope: Review finding F1 of `line-ai-persona-teaching.md` (adversarial review 2026-09-06), Owner
 decision "เห็นด้วย" the same day. ONE defect: the API's deterministic capability lane
@@ -108,13 +109,16 @@ Verification (2026-09-06, worktree `scratchpad/wt-cap`, after `pnpm install --fr
 - `pnpm --filter @watchdog-bms/api typecheck` — pass. `pnpm --filter @watchdog-bms/ai-gateway
   typecheck` — pass. `node apps/api/scripts/check-di-metadata.mjs` — 795 files, 870 decorated
   classes, 820 with constructor dependencies, all carry `design:paramtypes`.
-- Full `pnpm --filter @watchdog-bms/api test` and `pnpm --filter @watchdog-bms/ai-gateway test`
-  under the heavy-job mutex `/tmp/mangmee-heavy.lock`: see the run recorded below.
+- Full suites, heavy-job mutex `/tmp/mangmee-heavy.lock` held for both (mkdir acquired, rmdir
+  released): `pnpm --filter @watchdog-bms/ai-gateway test` — **1097 tests / 121 suites, 1097 pass,
+  0 fail**; the api `test` file list — **6888 tests / 1373 suites, 6789 pass, 0 fail, 99 skipped,
+  exit 0** (the api script pins `--test-reporter=dot`, so it was re-run through `tsx --test
+  --test-reporter=tap` over the same file list to get countable numbers).
 - Mutation: intercept put back above `resolveLineIdentity` → the three linked-caller specs go red
   (212 pass → 209 / 3 fail), restored → 212 / 212.
 - Not run: any live LINE/UAT turn; web typecheck (no web change).
 Next:
-- Owner review → PR (stacked on #453; the diff collapses to this change once #453 lands) → UAT
+- Owner review → PR (#453 has landed, so the diff is already just this change) → UAT
   deploy with the same candidate → run `ทำอะไรได้บ้าง` and `มั่งมีใช้ยังไง` as (1) an unlinked LINE
   account — expect the six-function card — and (2) a linked expenses-only employee — expect the
   scoped card / walkthrough with no ยอดขาย and no สรุปบัญชี → production promotion.
