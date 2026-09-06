@@ -143,8 +143,10 @@ the LINE camera client-side).
    `https://official.mangmeeplus.com/`; คุยกับทีมงาน returns the contact card.
 2. ถ่ายใบเสร็จ tile: LINE camera opens IMMEDIATELY (no attach/camera prompt); a captured photo sends into
    the chat and the receipt pipeline picks it up as before. Typed `ถ่ายใบเสร็จ` still shows the helper card.
-3. "ทำอะไรได้บ้าง" returns the curated six-function card, not a model answer; "ใบกำกับภาษีใช้ยังไง" still
-   reaches the AI route.
+3. "ทำอะไรได้บ้าง" from an UNLINKED account returns the curated six-function card, not a model answer;
+   "ใบกำกับภาษีใช้ยังไง" still reaches the AI route. From a LINKED account the same question takes the AI
+   route too and comes back scoped to that employee's permissions and the shop's enabled features — a card
+   naming ยอดขาย to an expenses-only employee is the bug (Owner 2026-09-06, capability-help spec §8.2).
 4. Poster image loads inside LINE (public HTTPS web asset) on both iOS and Android.
 
 ---
