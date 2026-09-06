@@ -92,8 +92,8 @@ import { FEATURE_TEMPORARILY_UNAVAILABLE, loadEntitledFeatureKeys } from '../../
 import { ListApprovalQueueUseCase } from '../../../reimbursements/application/use-cases/reimbursement-approval.use-case';
 import { ListPurchaseRequestsUseCase } from '../../../procurement/application/use-cases/purchase-request.use-case';
 import { ListPurchaseOrdersUseCase } from '../../../procurement/application/use-cases/purchase-order.use-case';
-import type { BusinessDocumentClassification, ExpenseChargeSummary, LineExpenseDraftRouteContext, LineUserContext, LineAiTurnRequest, LineAiTurnResponse, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeRoutePlan, LineIntakeSubstituteContext, ReceiptOcrAdditionalCharge, ReceiptOcrFieldResult, RequestContext } from '@watchdog-bms/contracts';
-import { EXPENSE_LINE_CHARGE_KIND_LABELS, LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, nextPlanTierKey, asIntakeRouteIntent, civilDateToUtcDate, extractValueCandidates, hasToolPermissions, todayCivilDate, type ExpenseDocumentDateStatus } from '@watchdog-bms/contracts';
+import type { BusinessDocumentClassification, ExpenseChargeSummary, ExpenseLineChargeKind, LineExpenseDraftRouteContext, LineUserContext, LineAiTurnRequest, LineAiTurnResponse, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeRoutePlan, LineIntakeSubstituteContext, ReceiptOcrAdditionalCharge, ReceiptOcrFieldResult, RequestContext } from '@watchdog-bms/contracts';
+import { EXPENSE_LINE_CHARGE_KIND_LABELS, RECEIPT_ADDITIONAL_CHARGE_KINDS, LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, nextPlanTierKey, asIntakeRouteIntent, civilDateToUtcDate, extractValueCandidates, hasToolPermissions, todayCivilDate, type ExpenseDocumentDateStatus } from '@watchdog-bms/contracts';
 import { LineAiLedgerService, ledgerKey, type LedgerEntry } from '../line-ai-ledger.service';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
 import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, isCapabilityQuestion, staffMenuCommand, PACKAGE_CHANGE_COMMAND, PENDING_APPROVAL_ITEM_LIMIT, type ApprovalSurfaceKey, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
@@ -552,9 +552,14 @@ function buildCheckBillReceiptUploadQuickReply(): NonNullable<LineReplyMessage['
   };
 }
 
+/** Spec §5.1: `charges` are the rows the apply WROTE on this draft, listed by the same helper and the
+ *  same label constant as the receipt capture card — a gratuity the check-bill lane recorded used to
+ *  go unmentioned here because this reply never saw the apply outcome at all (F6). */
 export function formatCheckBillDraftCreatedReply(
   continuation: Pick<LineSubstituteReceiptContinuationResult, 'status' | 'replyText' | 'pendingQuestion'>,
+  charges: readonly ExpenseChargeSummary[] = [],
 ): string {
+  const chargeBlock = chargeSummaryLines(charges);
   const hardFailure = ['FORBIDDEN', 'INELIGIBLE', 'STALE'].includes(continuation.status);
   if (hardFailure || !continuation.pendingQuestion) {
     return `✅ สร้างร่างค่าใช้จ่าย 1 รายการแล้วค่ะ\n\n${continuation.replyText}`;
@@ -562,6 +567,7 @@ export function formatCheckBillDraftCreatedReply(
   return [
     '✅ สร้างร่างค่าใช้จ่าย 1 รายการแล้วค่ะ',
     'เก็บเช็กบิลใบเดิมเป็นหลักฐานประกอบ และไม่สร้างรายการซ้ำ',
+    ...(chargeBlock.length > 0 ? ['', ...chargeBlock] : []),
     '',
     'ต่อไปถามทีละข้อนะคะ',
     continuation.pendingQuestion,
@@ -880,15 +886,43 @@ function receiptItemLines(
   return chargeRows.length > 0 ? [...items, 'ค่าใช้จ่ายเพิ่ม:', ...chargeRows] : items;
 }
 
+/** The Thai label for a charge kind the EXTRACTOR proposed. `EXPENSE_LINE_CHARGE_KIND_LABELS` is a
+ *  plain object, so `[kind]` on model output resolves `constructor`/`__proto__` to an
+ *  Object.prototype member — a truthy value `??` never replaces, which printed
+ *  "function Object() { [native code] }" at the customer. A kind is a label only if it is a kind. */
+function chargeKindLabel(kind: string): string {
+  return (RECEIPT_ADDITIONAL_CHARGE_KINDS as readonly string[]).includes(kind)
+    ? EXPENSE_LINE_CHARGE_KIND_LABELS[kind as ExpenseLineChargeKind]
+    : 'ค่าใช้จ่ายเพิ่ม';
+}
+
 /** The one line a card may say about a charge the apply could NOT put on the record. It is money the
  *  document printed, so staying silent hides it; listing it under "ค่าใช้จ่ายเพิ่ม" the way a
  *  persisted row is listed claims a row that does not exist (UAT 2026-09-06). */
 function foldedChargeLine(charges: readonly ReceiptOcrAdditionalCharge[]): string {
   const named = charges.slice(0, 3)
-    .map((charge) => `${EXPENSE_LINE_CHARGE_KIND_LABELS[charge.kind] ?? 'ค่าใช้จ่ายเพิ่ม'} ${moneyLabel(charge.amount)}`)
+    .map((charge) => `${chargeKindLabel(charge.kind)} ${moneyLabel(charge.amount)}`)
     .join(', ');
   return `➕ ${named} ยังรวมอยู่ในยอดเดียว – ตรวจแยกบนเว็บ`;
 }
+
+/** Spec §5.1: the charge block, in one place, so the receipt card and the check-bill reply cannot
+ *  drift apart. `label` already comes from `EXPENSE_LINE_CHARGE_KIND_LABELS` via `expenseLineCharges`
+ *  — never from model prose. Empty for a record with no charge rows: no heading, no block. */
+function chargeSummaryLines(charges: readonly ExpenseChargeSummary[]): string[] {
+  if (charges.length === 0) return [];
+  const total = charges.reduce((sum, charge) => sum + Number(toMoney4(charge.amount)), 0);
+  return [
+    `➕ ค่าใช้จ่ายเพิ่ม (${charges.length} รายการ รวม ${total.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}):`,
+    ...charges.slice(0, 10).map((charge) => `• ${charge.label} – ${moneyLabel(charge.amount)}`),
+  ];
+}
+
+/** The apply outcomes that really did fold the document's charges into one summary line. A rerun
+ *  that PRESERVED reviewed lines, and one skipped as stale, wrote no lines at all — they report
+ *  `SUMMARY_LINE`, and saying "ยังรวมอยู่ในยอดเดียว" for them describes an apply that never ran over
+ *  a record that may well carry a real charge row (F5). */
+const FOLDED_CHARGE_STATUSES = ['FOLDED_INTO_SUMMARY_NEEDS_REVIEW', 'ITEMS_DID_NOT_RECONCILE'];
 
 /**
  * Spec §5.2. Four states, not two — and keying the copy on whether a date STRING is present (which
@@ -926,7 +960,7 @@ export function formatPaypersReply(
   webBaseUrl: string | undefined,
   companyId: string,
   expenseId: string,
-  options: { hasDuplicate?: boolean; textOnly?: boolean; amount?: string | null; fields?: ReceiptOcrFieldResult | null; charges?: readonly ExpenseChargeSummary[]; categoryName?: string | null; sourceDocumentType?: string | null; questionText?: string; dateStatus?: ExpenseDocumentDateStatus } = {},
+  options: { hasDuplicate?: boolean; textOnly?: boolean; amount?: string | null; fields?: ReceiptOcrFieldResult | null; charges?: readonly ExpenseChargeSummary[]; chargeReconciliation?: { status: string; chargesApplied: number }; categoryName?: string | null; sourceDocumentType?: string | null; questionText?: string; dateStatus?: ExpenseDocumentDateStatus } = {},
 ): string {
   const link = absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses/${expenseId}`);
   const amountValue = options.fields?.grandTotalAmount ?? options.amount;
@@ -952,17 +986,14 @@ export function formatPaypersReply(
   // ค่าบริการ that the apply had folded away and the record never carried. One source of truth: the
   // rows the apply persisted. When it folded them, the card says exactly that instead.
   const charges = options.charges ?? [];
-  const suggested = options.fields?.additionalCharges ?? [];
-  if (charges.length > 0) {
-    const total = charges.reduce((sum, charge) => sum + Number(toMoney4(charge.amount)), 0);
-    parts.push(
-      '',
-      `➕ ค่าใช้จ่ายเพิ่ม (${charges.length} รายการ รวม ${total.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}):`,
-      ...charges.slice(0, 10).map((charge) => `• ${charge.label} – ${moneyLabel(charge.amount)}`),
-    );
-  } else if (suggested.length > 0) {
-    parts.push('', foldedChargeLine(suggested));
-  }
+  // …and the fold is a claim about what THIS apply did with the lines it wrote, so it needs the
+  // outcome that says so. Without one — a follow-up card, a redelivery — nothing is claimed (F5).
+  const folded = options.chargeReconciliation?.chargesApplied === 0
+    && FOLDED_CHARGE_STATUSES.includes(options.chargeReconciliation.status)
+    ? options.fields?.additionalCharges ?? []
+    : [];
+  if (charges.length > 0) parts.push('', ...chargeSummaryLines(charges));
+  else if (folded.length > 0) parts.push('', foldedChargeLine(folded));
   if (options.questionText && isReceiptItemQuestion(options.questionText)) {
     const itemLines = receiptItemLines(options.fields, charges);
     parts.push('', '🛒 รายการที่อ่านได้จากบิล:', ...(itemLines.length > 0
@@ -5110,6 +5141,9 @@ export class ProcessLineWebhookUseCase {
       fields: ocrFields,
       // Spec §5.1: what the record CARRIES, not what the extractor suggested (UAT 2026-09-06).
       charges: appliedCharges,
+      // …and the outcome that says whether THIS apply folded them, so the card only claims a fold
+      // that actually happened (F5).
+      ...(chargeReconciliation ? { chargeReconciliation } : {}),
       sourceDocumentType: hintedDocType !== 'NEEDS_REVIEW' ? hintedDocType : undefined,
       categoryName: effectiveCategory?.name || null,
       questionText: caption,
@@ -5622,7 +5656,11 @@ export class ProcessLineWebhookUseCase {
         access.membershipId,
       ));
     }
-    if (asked.ocrFields) await this.receiptOcrApply.apply(ctx, expenseId, asked.ocrFields);
+    // Spec §5.1/§5.2: the SAME apply as the photo lane runs here, so it raises the same review
+    // reasons and writes the same charge rows. Both used to be thrown away with the outcome — the
+    // summary JSON below was composed from scratch and the reply never named the charge.
+    const applied = asked.ocrFields ? await this.receiptOcrApply.apply(ctx, expenseId, asked.ocrFields) : undefined;
+    const appliedOutcome = applied && !isStaleOcrApply(applied) ? applied : undefined;
     const classification = asked.classification ?? { documentKind: 'ORDER_OR_CHECK_BILL' };
     await this.expenseRepo.updateExpense({
       id: expenseId,
@@ -5637,6 +5675,11 @@ export class ProcessLineWebhookUseCase {
         recognizedFields: asked.ocrFields,
         classification,
         missingFields: asked.ocrFields?.missingFields ?? [],
+        // Merged, never dropped: this write replaces the whole JSON, so a reason the apply raised
+        // is gone from the record — and from the web review banners — unless it is carried here.
+        // Read totally: a summary field can never be the thing that throws a user's turn away and
+        // strands the pending row it was about.
+        ...(appliedOutcome?.reviewReasons?.length ? { reviewReasons: appliedOutcome.reviewReasons } : {}),
         duplicateWarning: false,
         nextAction: 'check_bill_payment_decision_confirmed',
       },
@@ -5655,7 +5698,7 @@ export class ProcessLineWebhookUseCase {
           webBaseUrl: this.config.webBaseUrl,
           confirmedStart: true,
         });
-    const reply = formatCheckBillDraftCreatedReply(continuation);
+    const reply = formatCheckBillDraftCreatedReply(continuation, appliedOutcome?.charges ?? []);
     if (continuation.pendingQuestion && !['FORBIDDEN', 'INELIGIBLE', 'STALE'].includes(continuation.status)) {
       await this.deliverReply(event, reply);
     } else {

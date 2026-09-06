@@ -114,6 +114,84 @@ describe('check-bill LINE reply UX', () => {
     });
     assert.match(reply, /รายการนี้ไม่เข้าเงื่อนไขที่ระบบรองรับ/);
   });
+
+  // Spec §5.1. The check-bill lane runs the SAME apply as the photo lane and then throws its result
+  // away, so a gratuity the apply had just written as a row was never mentioned: the sender was told
+  // "สร้างร่างค่าใช้จ่าย 1 รายการแล้ว" and nothing else. One helper, one label constant, both cards.
+  it('lists the persisted charges the way the capture card does', () => {
+    const reply = formatCheckBillDraftCreatedReply(
+      { status: 'BLOCKED', replyText: 'blocker dump', pendingQuestion: 'ค่าใช้จ่ายนี้ใช้ทำอะไรคะ?' },
+      [{ kind: 'SERVICE_CHARGE', label: 'ค่าบริการ', amount: '72.0000', vatAmount: '5.0400' }],
+    );
+    assert.match(reply, /➕ ค่าใช้จ่ายเพิ่ม \(1 รายการ รวม 72\.00\):/);
+    assert.match(reply, /• ค่าบริการ – 72\.00/);
+    assert.match(reply, /ค่าใช้จ่ายนี้ใช้ทำอะไรคะ/, 'and the next question is still the last thing said');
+  });
+
+  it('adds no charge block to a check bill that carried none', () => {
+    const reply = formatCheckBillDraftCreatedReply(
+      { status: 'BLOCKED', replyText: 'x', pendingQuestion: 'ค่าใช้จ่ายนี้ใช้ทำอะไรคะ?' }, []);
+    assert.equal(reply.includes('ค่าใช้จ่ายเพิ่ม'), false);
+  });
+
+  /**
+   * F6, through the real `resolvePendingCheckBillAction`. Answering "1" on a check bill runs the
+   * same apply as the photo lane, and then overwrote `aiVerificationSummaryJson` from scratch — so
+   * every review reason the apply had just raised (here: the whole-baht VAT remainder the reviewer
+   * has to answer with "ใช้ยอดตามเอกสาร") was dropped on the floor, and the reply never named the
+   * gratuity the apply had written as a row.
+   */
+  it('keeps the apply outcome when the check bill is confirmed as paid', async () => {
+    const { prisma } = makePrisma();
+    const updates: any[] = [];
+    const charges = [{ kind: 'SERVICE_CHARGE', label: 'ค่าบริการ', amount: '72.0000', vatAmount: '5.0400' }];
+    const reviewReason = 'บิลปัดเศษ VAT เป็นบาทเต็ม ต่างจากที่คำนวณ 0.21 บาท – กด ใช้ยอดตามเอกสาร เพื่อบันทึกตามใบเสร็จ';
+    const { useCase, replies } = makeUseCase(prisma, {
+      permissions: ['expense.receipt.line_upload', 'expense.receipt.upload', 'expense.create'],
+      receiptOcrApply: {
+        apply: async () => ({
+          candidatesCreated: 0, categoryId: null, categoryName: null, categoryAutoFilled: false,
+          chargeReconciliationStatus: 'RECONCILED_ITEM_LINES', chargesApplied: 1, charges,
+          reviewReasons: [reviewReason],
+          dateVerified: true, dateAssumed: false, dateStatus: 'verified',
+        }),
+      },
+      expenseRepo: {
+        findByLineMessageId: async () => null,
+        updateExpense: async (input: any) => { updates.push(input); return input; },
+      },
+      substituteReceiptContinuation: {
+        startFromCheckBill: async () => ({ status: 'BLOCKED' }),
+        execute: async () => ({ status: 'BLOCKED', replyText: 'blocker dump', pendingQuestion: 'ค่าใช้จ่ายนี้ใช้ทำอะไรคะ?' }),
+      },
+    });
+    (useCase as any).createReceiptDraftFromPendingMedia = async () => ({ expenseId: 'expense-check-bill' });
+    (useCase as any).resolvePendingRow = async () => undefined;
+    (useCase as any).recordDeliveredReceiptContinuation = async () => undefined;
+    (useCase as any).persistIntakeTurn = async () => undefined;
+    (useCase as any).updateEventLog = async () => undefined;
+    (useCase as any).deliverReply = async (_event: any, reply: string) => { replies.push(reply); };
+    (useCase as any).deliverCompletedReply = async (_event: any, reply: string) => { replies.push(reply); };
+
+    const event = { ...BASE_EVENT, webhookEventId: 'evt-check-bill-1', messageText: '1' } as any;
+    const ctx = {
+      requestId: 'req-1', authSubject: 'u1', userId: 'u1', companyId: 'company-1', membershipId: 'mem-1',
+      roles: ['STAFF'], permissions: ['expense.receipt.line_upload'], scopes: {}, authProvider: 'line',
+    } as any;
+    const outcome = await (useCase as any).resolvePendingCheckBillAction(
+      event, ctx,
+      { membershipId: 'mem-1', roles: ['STAFF'], permissions: ['expense.receipt.line_upload'], scopes: {} },
+      { id: 'pending-1', attachmentId: 'att-1', lineMessageId: 'line-msg-check', mimeType: 'image/jpeg' },
+      '1',
+      { kind: 'CHECK_BILL_ACTION', ocrFields: { grandTotalAmount: '853.00', vatAmount: '56.00' } },
+    );
+
+    assert.equal(outcome.outcome, 'handled');
+    assert.deepEqual(updates[0].aiVerificationSummaryJson.reviewReasons, [reviewReason],
+      'the reasons the apply raised must survive the summary write');
+    assert.match(replies.join('\n'), /➕ ค่าใช้จ่ายเพิ่ม \(1 รายการ รวม 72\.00\):/);
+    assert.match(replies.join('\n'), /• ค่าบริการ – 72\.00/);
+  });
 });
 
 const ROUTED_EXPENSE_DOCUMENT = {
@@ -313,6 +391,8 @@ function makeUseCase(
       initSignatureUpload?: any;
       createSignatureAsset?: any;
       receiptOcrFn?: (req?: any) => any;
+      receiptOcrApply?: any;
+      expenseRepo?: any;
       substituteReceiptContinuation?: any;
       createUploadIntent?: any;
       completeAttachmentUpload?: any;
@@ -381,7 +461,7 @@ function makeUseCase(
         return 'ok';
       },
     } as any,
-    { apply: async () => ({ candidatesCreated: 0 }) } as any,
+    (opts.receiptOcrApply ?? { apply: async () => ({ candidatesCreated: 0 }) }) as any,
     { assertClean: opts.malwareScanFn ?? CLEAN_SCANNER.assertClean } as any,
     { isRequired: async (input: { userId: string; companyId: string; membershipId: string }) => {
       legalChecks.push(input);
@@ -399,7 +479,7 @@ function makeUseCase(
     undefined,
     opts.initSignatureUpload,
     opts.createSignatureAsset,
-    undefined,
+    opts.expenseRepo,
     opts.substituteLedger,
     opts.createUploadIntent,
     opts.completeAttachmentUpload,
@@ -3449,18 +3529,61 @@ describe('receipt capture card: an unread date says so', () => {
     assert.match(reply, /• ค่าบริการ – 152\.00/);
   });
 
+  const foldedFields = {
+    grandTotalAmount: '153.01',
+    additionalCharges: [
+      { kind: 'SERVICE_CHARGE', description: 'ค่าบริการ (10%)', amount: '13.00', evidenceSignal: 'ค่าบริการ (10%) 13.00' },
+    ],
+  } as never;
+
   it('says the charge is still inside the total rather than listing it as recorded', () => {
+    const reply = formatPaypersReply('https://app.test', 'company-1', 'expense-1', {
+      fields: foldedFields,
+      charges: [],
+      chargeReconciliation: { status: 'FOLDED_INTO_SUMMARY_NEEDS_REVIEW', chargesApplied: 0 },
+    });
+    assert.match(reply, /➕ ค่าบริการ 13\.00 ยังรวมอยู่ในยอดเดียว – ตรวจแยกบนเว็บ/);
+    assert.equal(reply.includes('รายการ รวม'), false, 'a folded charge was never recorded as a row');
+  });
+
+  /**
+   * F5. "ยังรวมอยู่ในยอดเดียว" is a claim about what THIS apply did with the lines it wrote. Two
+   * outcomes write no lines at all — a rerun over reviewed lines, and one skipped because the record
+   * moved — and both used to arrive here as "no charges", so the card announced a fold that never
+   * happened, over records that carry a real SERVICE_CHARGE row.
+   */
+  it('claims no fold when this apply wrote no lines at all', () => {
+    const reply = formatPaypersReply('https://app.test', 'company-1', 'expense-1', {
+      fields: foldedFields,
+      charges: [{ kind: 'SERVICE_CHARGE', label: 'ค่าบริการ', amount: '13.0000', vatAmount: '0.9100' }],
+      chargeReconciliation: { status: 'SUMMARY_LINE', chargesApplied: 0 },
+    });
+    assert.equal(reply.includes('ยังรวมอยู่ในยอดเดียว'), false);
+    assert.match(reply, /➕ ค่าใช้จ่ายเพิ่ม \(1 รายการ รวม 13\.00\):/, 'it lists what the record has');
+  });
+
+  it('claims no fold when no apply outcome is known at all', () => {
+    const reply = formatPaypersReply('https://app.test', 'company-1', 'expense-1', { fields: foldedFields, charges: [] });
+    assert.equal(reply.includes('ยังรวมอยู่ในยอดเดียว'), false);
+  });
+
+  // F9. `EXPENSE_LINE_CHARGE_KIND_LABELS[kind]` is a plain object, so a kind the extractor invented
+  // as `constructor` or `__proto__` resolves to an Object.prototype member and `??` never fires —
+  // the card printed "function Object() { [native code] } 13.00" at the customer.
+  it('falls back to a plain label for a charge kind that is not one', () => {
     const reply = formatPaypersReply('https://app.test', 'company-1', 'expense-1', {
       fields: {
         grandTotalAmount: '153.01',
         additionalCharges: [
-          { kind: 'SERVICE_CHARGE', description: 'ค่าบริการ (10%)', amount: '13.00', evidenceSignal: 'ค่าบริการ (10%) 13.00' },
+          { kind: 'constructor', description: 'x', amount: '13.00', evidenceSignal: 'x 13.00' },
+          { kind: '__proto__', description: 'y', amount: '1.00', evidenceSignal: 'y 1.00' },
         ],
       } as never,
       charges: [],
+      chargeReconciliation: { status: 'FOLDED_INTO_SUMMARY_NEEDS_REVIEW', chargesApplied: 0 },
     });
-    assert.match(reply, /➕ ค่าบริการ 13\.00 ยังรวมอยู่ในยอดเดียว – ตรวจแยกบนเว็บ/);
-    assert.equal(reply.includes('รายการ รวม'), false, 'a folded charge was never recorded as a row');
+    assert.match(reply, /➕ ค่าใช้จ่ายเพิ่ม 13\.00, ค่าใช้จ่ายเพิ่ม 1\.00 ยังรวมอยู่ในยอดเดียว/);
+    assert.equal(/native code|\[object Object\]|undefined/.test(reply), false, `no prototype member reached the card: ${reply}`);
   });
 
   it('adds no charges block to a bill that printed none', () => {
