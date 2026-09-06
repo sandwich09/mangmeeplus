@@ -171,18 +171,27 @@ export class CompleteEmployeeLineLinkUseCase {
       select: { id: true, providerUserId: true },
     });
     if (others.length === 0) return 0;
-    await this.prisma.client.externalIdentity.updateMany({
-      where: { id: { in: others.map((identity) => identity.id) }, status: 'ACTIVE' },
-      data: { status: 'UNLINKED' },
-    });
     for (const identity of others) {
-      // Owner decision 2026-09-06: the old phone keeps whatever handoff deep links were sent to it,
-      // and each is a bearer session for this employee until its TTL runs out. Awaited, not fired
-      // and forgotten, so the count below is real; a failure here surfaces to the caller's
-      // best-effort catch exactly as a failed sever already does.
-      const handoffLinksRevoked = await revokePendingLineHandoffTokens(this.prisma.client.lineWebHandoffToken, {
-        lineUserId: identity.providerUserId,
-        userId: token.userId,
+      // One transaction per severed account, the same rule the two unlink use cases follow: an
+      // identity flipped to UNLINKED whose deep links were NOT revoked is the worst of the three
+      // outcomes, and it used to be unrecoverable — the self-heal re-scan above looks for ACTIVE
+      // rows only, so the half-severed identity was already invisible to the retry and the bearer
+      // link stayed alive for the rest of its TTL. Either all three writes land or the identity
+      // stays ACTIVE and the next scan redoes it. Owner decision 2026-09-06.
+      const handoffLinksRevoked = await this.prisma.client.$transaction(async (tx) => {
+        await tx.externalIdentity.updateMany({
+          where: { id: identity.id, status: 'ACTIVE' },
+          data: { status: 'UNLINKED' },
+        });
+        // With no identity there is no selected company — the same one-liner the self-serve and
+        // admin unlinks run, so all three sever paths now leave identical state.
+        await tx.lineCompanyContext.deleteMany({ where: { lineUserId: identity.providerUserId } });
+        // The old phone keeps whatever handoff deep links were sent to it, and each is a bearer
+        // session for this employee until its TTL runs out.
+        return revokePendingLineHandoffTokens(tx.lineWebHandoffToken, {
+          lineUserId: identity.providerUserId,
+          userId: token.userId,
+        });
       });
       void this.audit?.log({
         actorUserId: token.userId,

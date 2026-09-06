@@ -4,7 +4,7 @@ import { PrismaService } from '../../../../common/database/prisma.service';
 import { emitSecurityEvent, SECURITY_EVENT } from '../../../../common/logger/security-event';
 import { AuditService } from '../../../audit/application/audit.service';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
-import { hashLineHandoffToken, LINE_HANDOFF_SURFACE_COMPANY_PICKER_OPEN } from '../../domain/logic/line-handoff.logic';
+import { hashLineHandoffToken, isLineGroupChatKey, LINE_HANDOFF_SURFACE_COMPANY_PICKER_OPEN } from '../../domain/logic/line-handoff.logic';
 import { LegalAcceptanceService } from '../legal-acceptance.service';
 import { IssueTokenUseCase, type AuthTokensResult } from './issue-token.use-case';
 
@@ -15,7 +15,8 @@ export type LineHandoffRefusalReason =
   | 'token_not_pending'
   | 'user_inactive'
   | 'membership_inactive'
-  | 'company_inactive';
+  | 'company_inactive'
+  | 'line_identity_severed';
 
 export type ExchangeLineHandoffTokenResult = AuthTokensResult & {
   companyId: string;
@@ -33,7 +34,8 @@ const GENERIC_REFUSAL = 'This link is expired or has already been used.';
  * The ORDER of the checks below is the security property, not a style choice:
  *   1. look up by hash — an unknown token is indistinguishable from an expired one to the caller;
  *   2. status and TTL;
- *   3. re-resolve user / membership / company, so access revoked between send and tap is refused;
+ *   3. re-resolve LINE identity / user / membership / company, so access revoked between send and
+ *      tap — including the LINE link itself being severed — is refused;
  *   4. claim PENDING → USED atomically, BEFORE any session exists, so two taps mint one session;
  *   5. only then issue.
  *
@@ -67,7 +69,30 @@ export class ExchangeLineHandoffTokenUseCase {
 
     // 3. Re-resolve identity at exchange time. "Removing or inactivating a user from a company
     //    immediately blocks LINE AI, alerts, deep links" — line-ai-channel-auth-spec.md §4.
-    const [user, membership, company] = await Promise.all([
+    const [lineIdentity, user, membership, company] = await Promise.all([
+      // The LINE link itself. Severing a link revokes the tokens already sent to that chat, but
+      // that revoke is one UPDATE that can fail — the employee relink sever proved it — so this is
+      // the second wall. Channel-agnostic because the token row carries no channel, matching the
+      // fallback branch `resolveLineIdentity` already uses; served by `[userId, provider, status]`,
+      // one indexed read in either mode.
+      //
+      // Two modes, because `record.lineUserId` is the CHAT the message went to, not always a
+      // person (`isLineGroupChatKey`):
+      //  - 1:1 — matched exactly as `resolveLineIdentity` does (provider + providerUserId + ACTIVE)
+      //    plus the token's own `userId`, which is what covers the re-point case where the identity
+      //    is ACTIVE but now somebody else's;
+      //  - group/room — the chat key is a group id, and no identity can hold one as
+      //    `providerUserId`, so requiring it would refuse EVERY link sent into a group. There the
+      //    wall is the part that still means something: this user has a live LINE link at all.
+      this.prisma.client.externalIdentity.findFirst({
+        where: {
+          userId: record.userId,
+          provider: 'LINE',
+          ...(isLineGroupChatKey(record.lineUserId) ? {} : { providerUserId: record.lineUserId }),
+          status: 'ACTIVE',
+        },
+        select: { id: true },
+      }),
       this.prisma.client.user.findUnique({
         where: { id: record.userId },
         select: { status: true, credential: { select: { mustChangePassword: true } } },
@@ -78,6 +103,7 @@ export class ExchangeLineHandoffTokenUseCase {
       }),
       this.prisma.client.company.findUnique({ where: { id: record.companyId }, select: { status: true } }),
     ]);
+    if (!lineIdentity) throw this.refuse('line_identity_severed', record);
     if (!user || user.status !== 'ACTIVE') throw this.refuse('user_inactive', record);
     if (!membership) throw this.refuse('membership_inactive', record);
     if (!company || company.status !== 'ACTIVE') throw this.refuse('company_inactive', record);

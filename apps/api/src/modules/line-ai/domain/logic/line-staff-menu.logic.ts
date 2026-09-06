@@ -334,9 +334,23 @@ export function isCapabilityQuestion(text: string): boolean {
   const normalized = text.trim();
   if (normalized.length === 0 || normalized.length > 40) return false;
   if (['ทำอะไรได้', 'ทำไรได้', 'ช่วยอะไรได้', 'ช่วยไรได้', 'มีฟีเจอร์อะไร'].some((stem) => normalized.includes(stem))) return true;
+  if (TEACH_REQUEST.test(normalized) && !TUTORING_EXPENSE.test(normalized)) return true;
   return ['ใช้ยังไง', 'ใช้งานยังไง'].some((stem) => normalized.includes(stem))
     && ['มั่งมี', 'ระบบ', 'แอป', 'แอพ', 'ที่นี่', 'เมนู'].some((subject) => normalized.includes(subject));
 }
+
+/** Owner 2026-09-06 ("ตกลง"): "สอนวิธีใช้หน่อย" is the same capability question asked as a request,
+ *  so it joins the lane above. Bare "สอน" is an everyday tutoring EXPENSE noun (ค่าสอนพิเศษ,
+ *  โรงเรียนสอนขับรถ, สอนงานพนักงานใหม่), so a match needs the REQUEST form: สอน glued to a usage
+ *  object (สอน[การ|วิธี|วิธีการ]ใช้) or, across a short subject/filler run, to a polite imperative
+ *  particle (สอน…หน่อย, สอน…ที + ครับ/ค่ะ/นะ or end of message). "ที" must be followed by ค/น or the
+ *  end so "สอนที่บ้าน" and "สอนทีเดียว" stay out. */
+const TEACH_REQUEST = /สอน(?:(?:การ|วิธี|วิธีการ)?ใช้|[ก-๙\s]{0,8}(?:หน่อย|ที(?:$|[คน])))/;
+/** …and the expense noun keeps its own veto, because a bill CAN carry a request particle
+ *  ("ขอบิลค่าสอนหน่อย"). A DIGIT anywhere disqualifies too: a tutoring expense always names an
+ *  amount ("ค่าสอนพิเศษ 500"), a teach request never does. Scoped to this branch only — the
+ *  "ทำอะไรได้บ้าง" and "ใช้ยังไง" lanes above keep their existing behaviour. */
+const TUTORING_EXPENSE = /\d|ค่าเรียน|(?:ค่า|บิล|ใบเสร็จ|จ้าง)สอน/;
 
 /** The six REAL functions, matching rich menu v2 ver2 — nothing aspirational belongs here. */
 export function buildCapabilityCard(): LineReplyMessage {
