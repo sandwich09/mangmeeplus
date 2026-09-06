@@ -204,6 +204,22 @@ Expiry boundary, run directly on `e0_ecr_scan_waivers` because the h2 fixture pi
   (`e0_h3_validator_paths`, `production-security-preflight.yml:645`), which reads them from the
   source commit — no stored hash to update.
 
+## 2026-09-06 — images now take Debian security updates at build time
+
+UAT deploy run `34002392225` (candidate `475a414e`) failed the ECR gate on `CVE-2026-86145` (HIGH,
+CVSS3 8.2, `pcre2` `10.42-1`, `pcre2_dfa_match` out-of-bounds write) in both
+`watchdog-bms-workers` and `watchdog-bms-api`. Unlike the openssl/zlib rows above, Debian **has**
+shipped the fix — `pcre2 10.42-1+deb12u1` via DLA-4772-1 on bookworm-security, which the pinned base
+already lists as a source. The root cause was ours: no Dockerfile ever ran an apt upgrade, so no
+Debian security build ever reached an image. Fixed on `codex/pcre2-security-upgrade` by adding
+`apt-get update -y && apt-get upgrade -y --no-install-recommends` to the shared `system` stage of all
+six Dockerfiles (`apps/api`, `apps/workers`, `apps/ai-gateway`, `apps/web`, `apps/web/…lambda`,
+`infra/api-web`); base digest, install lines and every purge line/order unchanged. No waiver row was
+added or touched — a CVE with a Debian fix must be fixed, not waived. **From now on the gate should
+only trip for CVEs with no Debian fix**, which is exactly the case the waiver table above exists for;
+a new blocking finding that *does* have a fixed Debian version now means the build is stale (rebuild
+without cache), not that a waiver is needed.
+
 ## Next
 
 1. Open the PR for `codex/ecr-scan-waivers-2026-09-05` and re-run the UAT deploy.
