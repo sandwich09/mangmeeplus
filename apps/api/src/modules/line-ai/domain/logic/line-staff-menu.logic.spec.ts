@@ -120,6 +120,7 @@ describe('LINE staff menu', () => {
       { type: 'uri', label: 'เปิดร้านใหม่', uri: 'https://liff.line.me/2007891234-AbCdEf01/signup' },
     ]);
     assert.equal((message as any).contents.footer.contents[0].style, 'secondary', 'opening a shop stays the primary call');
+    assert.equal((message as any).contents.footer.spacing, 'sm', 'two buttons, so there is a gap to space');
     // No switch is promised: this card is already about this company, so the picker's hint has no
     // meaning here. The chat-list preview is unchanged too — a button is not news.
     assert.equal(JSON.stringify(message).includes(COMPANY_PICKER_OPEN_WEB_HINT), false);
@@ -138,6 +139,9 @@ describe('LINE staff menu', () => {
       { type: 'uri', label: COMPANY_PICKER_OPEN_WEB_LABEL, uri: 'https://app.example.com/l/tok-1' },
     ]);
     assert.equal(JSON.stringify(message).includes('เปิดร้านใหม่'), false);
+    // The other half of the rule above, and the one that guards production: a footer holding ONE
+    // button takes no `spacing`, so the owner-only เปิดร้านใหม่ card shipped today is byte-identical.
+    assert.equal((message as any).contents.footer.spacing, undefined, 'one button, no gap to space');
   });
 
   /**

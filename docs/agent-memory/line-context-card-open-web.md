@@ -83,6 +83,49 @@ company_picker_open_web }` pair this card now mints, exchanged and switched end 
 call site and Flex rendering, both covered by the specs above against the real `buildCompanyContextMessage` and
 the real `handleCompanyCommand`.
 
+## Adversarial review 2026-09-06
+
+Reviewed at `2e745efe` (the branch after its plain merge of `origin/develop`). Gates re-run there:
+`line-staff-menu.logic.spec.ts` 52/52, `process-line-webhook.use-case.spec.ts` **223**/223 (222 above was
+honest at `7a6a1765`; develop's `bb951457` added one), `typecheck` clean, `check-di-metadata.mjs` 796 files /
+870 decorated classes. `sync-production-maintenance-release-pins.mjs` reports `status=current` and the commit
+touches no pinned file.
+
+Traced clean:
+
+- **Link unavailable ⇒ no button.** `linkFor` returns `null` on both the `enabled` gate and any mint throw
+  (`line-handoff-link.service.ts`), `?? undefined` carries that to `openWebUrl`, and the card then renders
+  without a `footer`. Both spec'd, and the raw `/companies/…` URL is never rendered as a fallback.
+- **Membership parity with the picker.** `currentMembership` is looked up inside `listLineCompanies`'s own
+  `status: 'ACTIVE'` + `company.status: 'ACTIVE'` result, and a `currentCompanyId` absent from it returns the
+  picker before the card is built — so the card cannot mint for a suspended, pending or removed membership.
+- **Stale-card switch.** A context card left in the chat keeps a live token for 15 minutes, so a member who
+  switches to company B and then taps the old A card's button is switched back to A. Same property the
+  picker's `✓ ใช้งานอยู่` bubble already has, and the card the button sits on says 🏢 A — accepted, not a new
+  invariant break (spec §6.2 "การ์ดเก่าในแชท" already covers the expired case).
+
+Mutations (each restored): context-card mint bound to `memberships[0]` instead of `currentMembership` →
+webhook spec **red** on `deepEqual(calls, …)`; web button rendered unconditionally → menu spec **red**,
+5 subtests.
+
+One fix applied: the footer's *"`spacing` only when more than one button"* rule — the whole basis of the
+byte-identical claim — had no test, and making `spacing: 'sm'` unconditional left **both** spec files green.
+Now pinned in `line-staff-menu.logic.spec.ts` from both sides (`'sm'` on the two-button card, `undefined` on
+the one-button card). The claim itself is true: rendering the four ≤1-button shapes through this branch's
+`buildCompanyContextMessage` and through `4c10f938`'s side by side gives identical `JSON.stringify` output.
+
+**Mint accounting per บริษัทของฉัน tap** (one `LineWebHandoffToken` row + one `AUTH_LINE_HANDOFF_ISSUE`
+MEDIUM audit row each). Supersedes the "up to 11" figure in [[line-company-picker-open-web]]:
+
+| member | before this branch | after |
+|---|---|---|
+| 1 company (no picker sent) | 0 | **1** |
+| 2–12 companies | N | **N + 1** (max 13) |
+| >12 companies, page 1 or 2 | 11 | **12** |
+
+Nothing deletes spent or expired handoff tokens — a pre-existing P12-3b gap this branch adds one row per tap
+to. Not a blocker; the cleanup job is the Owner's call.
+
 ## Open questions
 
 - None blocking.
