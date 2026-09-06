@@ -1,6 +1,6 @@
 # Agent Memory: line-ai-persona-teaching
 
-Status: In progress 2026-09-06 — docs updated, code + specs on branch `codex/line-ai-persona-teaching` (cut from `origin/develop` f2bd38ed). Not merged, not deployed.
+Status: Implemented and verified locally 2026-09-06 on branch `codex/line-ai-persona-teaching` (cut from `origin/develop` f2bd38ed; commits 263b8f89 docs → eb82f049 gateway+contracts → 27309491 api). No PR, not merged, not deployed; live UAT re-check of the two turns still open.
 Owner: thawatchai
 Scope: Wave-3 fix from UAT 2026-09-06 (build f2bd38ed, brand-new auto-approved company, OWNER, Thai). Two turns:
   (1) `คุณเป็นใคร` → the intake router's advisor draft was delivered verbatim: `สวัสดีครับ! หนูคือ AI Assistant ของ MangmeePlus 🤖 … มีอะไรให้ช่วยไหมครับ?` (male ครับ, wrong self-name, หนู/ครับ mix). Owner: "จริงต้องเป็น persona ผู้หญิงนะ".
@@ -22,7 +22,12 @@ Artifacts:
 - Gateway: `agents/mangmee-persona.ts` (new), `agents/intent-router.agent.ts`, `agents/response-composer.agent.ts`, `common/ai/extract-json.ts` + specs.
 - Contracts: `packages/contracts/src/ai-tools.ts` (`LINE_CAPABILITY_REPLY_PREFIXES`).
 - API: `domain/logic/line-advisor-direct-answer.logic.ts` (+spec), `domain/logic/line-ai-capability-follow-up.logic.ts`, `application/use-cases/process-line-webhook.use-case.ts` (intake AiTurn row records modelId/durationMs from the route's `usage`), `line-intake-dispatch.use-case.spec.ts`.
-Verification:
-- Recorded in the final handoff (typecheck ×2, gateway test suite, touched api specs, DI guard, spec-suite coverage) — see the branch report.
+Verification (2026-09-06, this worktree, `pnpm install --frozen-lockfile` + `prisma generate` first):
+- `pnpm --filter @watchdog-bms/ai-gateway typecheck` — pass. `pnpm --filter @watchdog-bms/api typecheck` — pass (after fixing my own spec fixture: `PreparedAdvisorAnswer` requires `knowledgeCardIds`/`companyProfileFieldsUsed`). `pnpm --filter @watchdog-bms/contracts typecheck` — pass.
+- `pnpm --filter @watchdog-bms/ai-gateway test` (heavy-job mutex held via `mkdir /tmp/mangmee-heavy.lock`) — 1096 tests / 121 suites, 1096 pass, 0 fail (first run 1095/1 — my AC-15 fixture used "how do I start", which the trigger list lacked; added `how do i start` to the list + spec doc).
+- `pnpm --filter @watchdog-bms/api exec tsx --test src/modules/line-ai/domain/logic/line-advisor-direct-answer.logic.spec.ts src/modules/line-ai/application/use-cases/line-intake-dispatch.use-case.spec.ts src/spec-suite-coverage.spec.ts` — 197 tests / 21 suites, 197 pass, 0 fail (first run 196/1 — my lineage test compared the Flex-rendered reply to plain text; assertion changed to a match).
+- `node apps/api/scripts/check-di-metadata.mjs` — 795 files, 870 decorated classes, 820 with constructor dependencies, all carry design:paramtypes.
+- Mutation checks: persona veto removed → direct-answer spec 9 pass / 2 fail (UAT draft + tutorial shape) — restored → 11/11. Trigger wiring removed (`composeCapabilityHelp` always the card) → composer + orchestrator specs 137 pass / 4 fail (AC-13/14/15 + orchestrator teaching) — restored → 141/141.
+- Not run: the full api `test` script (only touched specs + the coverage guard), web typecheck (no web change), any live LINE/UAT turn.
 Next:
 - Owner review → PR → UAT deploy with the same candidate → re-run the two UAT turns (`คุณเป็นใคร`, `สอนฉันใช้งานเบื้องต้น…`) and confirm persona + walkthrough → production promotion.
