@@ -133,8 +133,20 @@ Red-first, production files stashed vs. applied, same spec:
 - `node apps/api/scripts/check-di-metadata.mjs` — 789 files, 863 decorated classes, 813 with
   constructor dependencies, all carry `design:paramtypes`.
 - `pnpm --filter @watchdog-bms/api test:boot` — Nest resolved every provider in 145ms.
-- Full fixed api list (464 spec files) — 6712 tests, 1355 suites, **6613 pass / 0 fail**, 99 skipped,
-  43.6s.
+- Full fixed api list, first pass (464 spec files) — 6712 tests, 1355 suites, **6613 pass / 0 fail**,
+  99 skipped, 43.6s. After the review fixes (465 files) — 6724 tests, 1357 suites, **6625 pass /
+  0 fail**, 99 skipped, 54.2s.
+
+After merging develop @ `f86fe9d4` (Slice D; 469 spec files in the list):
+
+- both slices' specs together (this branch's three + D's `line-draft-update.logic`,
+  `line-draft-update.security`, `line-draft-update-card.logic`, `erp-draft-update-tools.di`,
+  `internal-tools.controller`, plus the drain) — 495 tests, 64 suites, **495 pass / 0 fail**.
+- `spec-suite-coverage.spec.ts` — 3 pass (after the prefix fix recorded below).
+- `typecheck` clean; `check-di-metadata.mjs` — 794 files, **870 decorated classes, 820 with
+  constructor dependencies**, 0 offenders; `test:boot` — every provider resolved in 142ms, exit 0.
+- full fixed api list (469 spec files) — 6781 tests, 1366 suites, **6682 pass / 0 fail**, 99 skipped,
+  43.8s.
 
 Mutation checks (each mutant applied alone, spec run, then reverted):
 
@@ -147,6 +159,31 @@ Mutation checks (each mutant applied alone, spec run, then reverted):
 | drop `companyId` from the branch query | 7 of 10 |
 | drop the `id.in` scope filter | 3 of 10 |
 | `branchIds: []` treated as "all branches" (`?.length`) | the empty-scope case |
+
+## Merge with develop (PR #440, Slice D)
+
+Merged `origin/develop` @ `f86fe9d4` as a plain merge commit (no rebase, no force). Exactly one
+conflict — `apps/api/package.json`, where D appended four spec tokens to the single-line
+`scripts.test` and this branch appended one. `process-line-webhook.use-case.ts` auto-merged: D's
+constructor params, flag-gated draft tools and menu commands sit alongside `resolveLineCaptureBranchId`,
+`lineCaptureFailureReply` and `replyPendingMediaFailure` with no textual overlap.
+
+Resolved by script, never by hand: take develop's token list verbatim, append our one token, then
+assert the result is develop's tokens in develop's order + that token, no duplicates, and that no
+key other than `scripts.test` differs from develop.
+
+**The near-miss worth remembering:** the first resolver wrote the token list back WITHOUT the
+`tsx --test --test-reporter=dot ` runner prefix. The file stayed valid JSON, the "only `.scripts.test`
+differs" assertion still passed, and `git diff` still showed a single changed line — but the script
+would have run nothing. `spec-suite-coverage.spec.ts` caught it by reporting EVERY spec as
+unreferenced (not one — all of them, which is the signature of a script the guard cannot parse). Two
+lessons: assert the VALUE's shape, not just which key changed; and a coverage guard failing wholesale
+means the runner string is broken, not that a spec is missing. A second bug in the same fix — the
+resolver re-read `HEAD`, which after the merge commit is the bad resolution itself — is why it now
+reads our side from the merge's FIRST PARENT.
+
+Proof the slices coexist: `git diff origin/develop...HEAD` restricted to added/removed lines hashes
+identical before and after the merge (`e12a0c91`), so the merge changed none of this branch's lines.
 
 **Mutex:** `/tmp/mangmee-heavy.lock` is a **mkdir** lock shared with the other sessions —
 `mkdir` to acquire, `rmdir` to release. `flock(1)` does not exist on macOS, and an earlier
