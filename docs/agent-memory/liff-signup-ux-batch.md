@@ -14,8 +14,14 @@ meta-test note under Verification).
 1. **Phone is required** — supersedes the 2026-09-04 "ไม่บังคับ" decision and the Baymard evidence
    behind it (§14, now annotated as overridden). Label is bare "เบอร์มือถือ"; input carries
    `required` and `inputmode="tel"`.
-2. **The 64-hex `displayChallenge` may not overflow** — it is legal evidence, so it wraps rather
-   than truncating: its own block, monospace 12px, `overflow-wrap:anywhere; word-break:break-all`.
+2. ~~**The 64-hex `displayChallenge` may not overflow** — it is legal evidence, so it wraps rather
+   than truncating: its own block, monospace 12px, `overflow-wrap:anywhere; word-break:break-all`.~~
+   **SUPERSEDED 2026-09-06** (`codex/liff-signup-hide-legal-challenge`): the Owner asked for the
+   hash to go away entirely — *"เอา hash ที่แสดงบน line lif ออกหน่อย ... ที่อยู่ข้างล่าง privacy"*. The
+   label and the `<p class="challenge">` block and the `.challenge` rule are removed; the value
+   stays in `data-legal-challenge`, the script still posts it and the server still validates and
+   stores it, so the LEGAL-LIFF-01 evidence contract is unchanged. Nothing wraps because nothing
+   is rendered.
 3. **Trial line drops "ไม่ต้องใส่บัตร"** → "ทดลองฟรี 30 วัน ให้ AI อ่านรูปได้ 15 ครั้ง".
 4. **Card heading and body must not repeat each other** — the heading is "ได้รับแล้ว", so the body
    starts with what happens next.
@@ -32,7 +38,7 @@ meta-test note under Verification).
 | 1 page | `auth.controller.ts` `lineSignupPage` — label, `required`, `inputmode="tel"` |
 | 1 DTO | `public-line-signup.controller.ts` — `@IsNotEmpty()`, `@IsOptional()` dropped, pattern kept as `*` so `@IsNotEmpty` is the rule that rejects `""` (and a mutation of it is detectable) |
 | 1 server | new `requireThaiMobile` in `line-signup.logic.ts` → `submit-line-signup.use-case.ts` answers **400** `line_signup_phone_required` / `line_signup_phone_invalid`; everything else still 422 |
-| 2 | `auth.controller.ts` — `.challenge` rule + its own `<p class="challenge">` block |
+| 2 | `auth.controller.ts` — `.challenge` rule + its own `<p class="challenge">` block (**both deleted again 2026-09-06**, see the superseding note above) |
 | 3 | `auth.controller.ts` — trial line |
 | 4 | `liff-page.security.ts` — `done-text` and `pending-text`; `line-business-card.logic.ts` `buildSignupStatusCard` took the same edit, because its own comment promises the chat card and the LIFF page say the same three sentences |
 | 5 | `liff-page.security.ts` — `LIFF_PAGE_STYLE` rewritten on the มั่งมี tokens, plus `MANGMEE_HEADER_HTML` (inline coin-with-sprout SVG + "มั่งมีพลัส"); `auth.controller.ts` signup styles moved onto the same tokens |
