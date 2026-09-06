@@ -134,12 +134,31 @@ function makeExchangePrisma(options: {
   updatedCount?: number;
   /** The LINE context write is best-effort: the web half must survive the LINE half failing. */
   contextUpsertThrows?: boolean;
+  /** The ACTIVE LINE identity behind this chat. Omitted = still this user's; `null` = severed
+   *  (UNLINKED or deleted); a different `userId` = the LINE account was re-pointed at somebody else. */
+  identity?: { userId: string; providerUserId: string } | null;
 }) {
   const finds: any[] = [];
   const updates: any[] = [];
   const contextUpserts: any[] = [];
+  const identityFinds: any[] = [];
+  // Applies the WHERE for real rather than recording the call: a guard that forgets `status`,
+  // `providerUserId` or `userId` must fail, not pass on a query nobody inspected.
+  const identityRow = options.identity === undefined ? { userId: USER, providerUserId: LINE_USER } : options.identity;
   const prisma = {
     client: {
+      externalIdentity: {
+        findFirst: async (args: any) => {
+          identityFinds.push(args);
+          const { where } = args;
+          if (!identityRow) return null;
+          const matches = where.provider === 'LINE'
+            && where.status === 'ACTIVE'
+            && where.providerUserId === identityRow.providerUserId
+            && where.userId === identityRow.userId;
+          return matches ? { id: 'ei-1' } : null;
+        },
+      },
       lineCompanyContext: {
         upsert: async (args: any) => {
           if (options.contextUpsertThrows) throw new Error('context write exploded');
@@ -169,7 +188,7 @@ function makeExchangePrisma(options: {
       },
     },
   } as any;
-  return { prisma, finds, updates, contextUpserts };
+  return { prisma, finds, updates, contextUpserts, identityFinds };
 }
 
 const issueToken = (calls: unknown[][]) => ({
@@ -368,6 +387,15 @@ describe('ExchangeLineHandoffTokenUseCase refusals', () => {
     ['a revoked membership', { row: row(), userStatus: 'ACTIVE', membership: null }, 'membership_inactive'],
     ['a suspended company', { row: row(), userStatus: 'ACTIVE', companyStatus: 'SUSPENDED' }, 'company_inactive'],
     ['a missing company', { row: row(), userStatus: 'ACTIVE', companyStatus: null }, 'company_inactive'],
+    // Owner decision 2026-09-06, defence in depth: the revoke a sever performs is the primary
+    // control, but it is one UPDATE that can fail. The exchange must not be the only thing standing
+    // between a severed chat and a session, so it re-checks the identity itself.
+    ['a severed LINE identity', { row: row(), userStatus: 'ACTIVE', identity: null }, 'line_identity_severed'],
+    [
+      'a LINE account re-pointed at another user',
+      { row: row(), userStatus: 'ACTIVE', identity: { userId: 'user-2', providerUserId: LINE_USER } },
+      'line_identity_severed',
+    ],
   ];
 
   for (const [label, options, reason] of foundRefusals) {
@@ -423,6 +451,43 @@ describe('ExchangeLineHandoffTokenUseCase refusals', () => {
     assert.deepEqual(contextUpserts, [], 'a revoked row must not move the chat to a company');
   });
 
+  it('refuses a severed or re-pointed LINE identity BEFORE the claim, writing nothing', async () => {
+    // The token row's own status is the primary control (an unlink flips it to REVOKED), but that
+    // revoke is a single UPDATE that can fail — see the employee sever. So the exchange re-checks
+    // the identity too, and the check has to land where the REVOKED one does: before the claim, and
+    // therefore before the picker surface's `LineCompanyContext` upsert and before any session.
+    for (const identity of [null, { userId: 'user-2', providerUserId: LINE_USER }] as const) {
+      const calls: unknown[][] = [];
+      const { prisma, updates, contextUpserts } = makeExchangePrisma({
+        row: row({ surface: LINE_HANDOFF_SURFACE_COMPANY_PICKER_OPEN }),
+        userStatus: 'ACTIVE',
+        identity,
+      });
+      const uc = new ExchangeLineHandoffTokenUseCase(prisma, issueToken(calls), legalAcceptance(false));
+
+      const body = (await refusal(uc)).getResponse() as Record<string, unknown>;
+      assert.equal(body['code'], 'line_handoff_unavailable');
+      assert.equal(body['message'], 'This link is expired or has already been used.');
+      assert.equal(updates.length, 0, 'a severed identity must not claim the row');
+      assert.equal(calls.length, 0, 'a severed identity must not mint a session');
+      assert.deepEqual(contextUpserts, [], 'a severed identity must not move the chat to a company');
+    }
+  });
+
+  it('matches the identity on provider + LINE userId + ACTIVE + the token’s own user', async () => {
+    // Same keys `resolveLineIdentity` uses (channel-agnostic: the token row carries no channel),
+    // plus the token's `userId` — without it a LINE account re-pointed at somebody else still opens
+    // the previous holder's session.
+    const { prisma, identityFinds } = makeExchangePrisma({ row: row(), userStatus: 'ACTIVE' });
+    const uc = new ExchangeLineHandoffTokenUseCase(prisma, issueToken([]), legalAcceptance(false));
+    await uc.execute({ token: RAW_TOKEN });
+
+    assert.equal(identityFinds.length, 1, 'exactly one identity lookup per exchange');
+    assert.deepEqual(identityFinds[0].where, {
+      userId: USER, provider: 'LINE', providerUserId: LINE_USER, status: 'ACTIVE',
+    });
+  });
+
   it('checks the token before the account, so a lookup miss cannot probe user state', async () => {
     let userReads = 0;
     const { prisma } = makeExchangePrisma({ row: null });
@@ -465,6 +530,7 @@ describe('ExchangeLineHandoffTokenUseCase refusals', () => {
             return { count: claims === 1 ? 1 : 0 };
           },
         },
+        externalIdentity: { findFirst: async () => ({ id: 'ei-1' }) },
         user: { findUnique: async () => ({ status: 'ACTIVE', credential: { mustChangePassword: false } }) },
         companyMembership: { findFirst: async () => ({ id: 'mem-1' }) },
         company: { findUnique: async () => ({ status: 'ACTIVE' }) },
