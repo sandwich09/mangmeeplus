@@ -669,6 +669,40 @@ describe('capability question (Owner 2026-08-27: only real features)', () => {
     assert.equal(isCapabilityQuestion('มีฟีเจอร์อะไรบ้าง'), true);
   });
 
+  // Owner 2026-09-06 ("ตกลง"): "สอนวิธีใช้หน่อย" is the same question in request form, so it takes
+  // the same lane — accepting that a stranger gets the public card and a linked AI-on caller is
+  // routed into the gateway's `capability_help` teaching mode instead of an advisor direct answer.
+  it('catches the "teach me" request forms, with particles and with or without the subject', () => {
+    for (const text of [
+      'สอนหน่อย', 'สอนวิธีใช้', 'สอนวิธีใช้หน่อย', 'สอนวิธีใช้มั่งมีหน่อย', 'สอนใช้หน่อย',
+      'ช่วยสอนหน่อย', 'สอนที',
+      'สอนหน่อยครับ', 'สอนวิธีใช้หน่อยค่ะ', 'สอนหน่อยนะคะ', 'สอนทีครับ', 'สอนทีค่ะ',
+      'น้องมั่งมีสอนวิธีใช้หน่อยครับ', 'มั่งมีสอนหน่อยค่ะ', 'สอนวิธีใช้ระบบหน่อย', 'สอนใช้แอปหน่อย',
+      'สอนการใช้งานหน่อยครับ', 'สอนให้หน่อย',
+    ]) assert.equal(isCapabilityQuestion(text), true, text);
+  });
+
+  // The same word is an everyday tutoring EXPENSE noun. A match needs the request form, and an
+  // amount anywhere disqualifies — these are the shapes an expenses shop actually sends.
+  it('leaves tutoring-expense text alone', () => {
+    for (const text of [
+      'ค่าสอนพิเศษ 500',
+      'จ่ายค่าสอนลูก 1,500 บาท',
+      'โรงเรียนสอนขับรถ 2,000',
+      'จ้างครูมาสอน',
+      'อาจารย์สอนเสร็จแล้ว',
+      'ค่าเรียนสอนภาษา',
+      'สอนงานพนักงานใหม่วันนี้',
+      // The DIGIT half of the veto, alone: the ค่า/บิล/ใบเสร็จ/จ้าง prefixes must sit next to สอน,
+      // so this line clears every one of them and only the amount disqualifies it. Without this
+      // case, dropping `\d` from TUTORING_EXPENSE keeps the whole suite green (review 2026-09-06).
+      'จ้างครูสอนหน่อย 800',
+      'บิลค่าสอน',
+      'ขอบิลค่าสอนหน่อย',
+      '1',
+    ]) assert.equal(isCapabilityQuestion(text), false, text);
+  });
+
   it('never swallows a real business question that contains a stem', () => {
     assert.equal(isCapabilityQuestion('ใบกำกับภาษีใช้ยังไง'), false);
     assert.equal(isCapabilityQuestion('ยอดขายวันนี้เท่าไหร่'), false);

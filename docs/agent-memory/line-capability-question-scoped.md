@@ -88,8 +88,10 @@ Open questions:
   `staff_menu_capability_entitlements` (delivered, via the existing `staff_menu_` prefix rule). Spec
   §8.2 + AC-17. STILL OPEN and untouched: the permission floor (`FORBIDDEN_REPLY` after one paid
   router call) and the legal / pause / opt-out gates.
-- **OWNER DECISION NEEDED (review 2026-09-06, adversarial, head ebb7460f): the Owner's own words do
-  not match the matcher.** `isCapabilityQuestion` fires on the `ทำอะไรได้`/`ช่วยอะไรได้`/`มีฟีเจอร์อะไร`
+- ~~**OWNER DECISION NEEDED … the Owner's own words do not match the matcher.**~~ **DECIDED and
+  CLOSED 2026-09-06 ("ตกลง"), on branch `codex/line-capability-question-teach-phrasing`** — see the
+  third follow-up branch section at the end. The original finding, kept for the reasoning:
+  `isCapabilityQuestion` fires on the `ทำอะไรได้`/`ช่วยอะไรได้`/`มีฟีเจอร์อะไร`
   family and on `ใช้ยังไง`/`ใช้งานยังไง` **only with** a `มั่งมี`/`ระบบ`/`แอป`/`แอพ`/`ที่นี่`/`เมนู`
   subject. Verified against the matcher: `สอนหน่อย`, `สอนวิธีใช้หน่อย` and `สอนวิธีใช้มั่งมีหน่อย`
   all return **false** — so the literal phrasing in the Owner's rule ("ถ้าบอกให้**สอนวิธีใช้**") gets
@@ -190,7 +192,81 @@ intake-dispatch + staff-menu + terminal-outcome + spec-suite-coverage + first-si
 `false` → 215 / 3 fail; forced to `true` (every message gets the card) → 214 / 4 fail; restored →
 218 / 218. Not run: any live LINE/UAT turn; ai-gateway suites (no gateway change).
 
+Teach-phrasing branch (2026-09-06, `codex/line-capability-question-teach-phrasing`, cut from
+`origin/develop` 0e205867 with `origin/codex/line-capability-question-ai-off` merged in — that PR
+was still open, so the merge was NOT a no-op — worktree `scratchpad/wt-teach-matcher`): closes the
+matcher residual above. Owner decision "ตกลง": the "teach me" request forms join the capability
+lane, accepting both consequences of the SHARED matcher (a stranger gets the public card; a linked
+AI-on caller loses the advisor direct answer and takes the gateway's `capability_help` teaching
+mode). Diff is three files — `line-staff-menu.logic.ts` (+14: one branch line in
+`isCapabilityQuestion` plus two commented module regexes), and the two specs. The rule: a match
+needs the REQUEST form — `สอน` glued to a usage object (`สอน[การ|วิธี|วิธีการ]ใช้`) or, across ≤ 8
+Thai chars of subject/filler, to a polite imperative particle (`หน่อย`, or `ที` followed by ค/น or
+end of message, so `สอนที่บ้าน`/`สอนทีเดียว` stay out) — and is vetoed by `TUTORING_EXPENSE` =
+`/\d|ค่าเรียน|(?:ค่า|บิล|ใบเสร็จ|จ้าง)สอน/`. The **digit** veto is the load-bearing half: a tutoring
+expense always names an amount, a teach request never does. Both regexes are scoped to this branch
+only, so `ทำอะไรได้บ้าง` and `ใช้ยังไง` keep their existing behaviour (e.g. "ระบบ 2 ใช้ยังไง" is
+unaffected). **Gateway untouched, deliberately:** `INTENT_ROUTER_SYSTEM_PROMPT`
+(`intent-router.agent.ts:59`) already lists `สอนใช้งานหน่อย` and `วิธีใช้` among its
+`capability_help` examples, and `:234` already names `สอน` in the never-ADVISOR rule, so a linked
+AI-on user's `สอนวิธีใช้หน่อย` already reaches teaching mode — no example line was added, and no
+gateway spec was run. Docs: spec §8.2 gains the full phrasing list + the veto rule + the accepted
+consequences, and AC-18. Verification (mutex held for every run, `pnpm install --frozen-lockfile`
++ `prisma generate` first): RED `line-staff-menu.logic.spec.ts` + `process-line-webhook.use-case.spec.ts`
+**280 tests, 276 pass / 4 fail** (the teach-forms positives; and the unlinked, AI-off and
+advisor-veto cases for `สอนวิธีใช้หน่อย`) → GREEN **280 / 280**. With `spec-suite-coverage.spec.ts`
++ `line-intake-dispatch.use-case.spec.ts`: **466 / 466, 0 fail**. `pnpm --filter @watchdog-bms/api
+typecheck` pass (note: bare `tsc --noEmit` OOMs on this app — the package script's
+`--max-old-space-size=8192` is required). `check-di-metadata.mjs` 796 files / 870 decorated classes
+/ 820 with constructor deps, clean. Mutation: branch replaced by `normalized.includes('สอน')` so
+`ค่าสอนพิเศษ 500` is accepted → `leaves tutoring-expense text alone` goes red (53 tests, 52 pass /
+1 fail, assertion names `ค่าสอนพิเศษ 500`); restored → 53 / 53. Sync-pins script run, no drift.
+Not run: any live LINE/UAT turn; ai-gateway suites (no gateway change); web (no web change).
+Residual: the `ใช้` branch allows `สอนการใช้`/`สอนวิธีใช้` but nothing between `สอน` and `ใช้`
+beyond `การ|วิธี|วิธีการ`, so `สอนผมใช้หน่อย` matches only via the `หน่อย` branch and
+`สอนผมใช้` (no particle) does not match at all — judged acceptable, add an alternative if UAT shows
+the phrasing.
+
+Adversarial review 2026-09-06 (head ef561bdd, worktree `scratchpad/wt-review-teach`). Verdict READY;
+one fix pushed, the rest recorded as accepted residuals.
+- **Fixed.** The digit veto was UNVERIFIED: dropping only `\d` from `TUTORING_EXPENSE` kept the two
+  spec files at 280/280, because every negative in the list is already killed by the keyword veto or
+  never matches `TEACH_REQUEST` at all — while the spec and the paragraph above call the digit half
+  "load-bearing". `จ้างครูสอนหน่อย 800` added to `leaves tutoring-expense text alone`: the
+  `ค่า|บิล|ใบเสร็จ|จ้าง` prefixes must sit ADJACENT to `สอน`, so that line clears all four and only
+  the amount disqualifies it. That mutation now reds (280 → 279/1).
+- **Residual, accepted — human-object teach requests inside the ≤ 8-char window match.**
+  `สอนงานหน่อย`, `สอนเด็กหน่อย`, `ช่วยสอนลูกค้าหน่อย`, `สอนน้องใหม่หน่อย`, `ฝากสอนน้องที`,
+  `วันนี้สอนหน่อยไหม` and `จ้างครูสอนหน่อย` (no amount) all match. Costed at every call site and
+  none loses a business turn: `process-line-webhook.use-case.ts:2811` is UNLINKED-only (the public
+  card instead of the entry-door card), `:3018` fires only inside the two AI-lane REFUSALS (the
+  entitlement card instead of the bare line, and `staff_menu_capability_entitlements` instead of
+  `feature_disabled` in the outcome counts), and `:3565` only vetoes `advisorDirectAnswerText`,
+  which is already `undefined` unless the router chose `ADVISOR_CONVERSATION` — an expense or a
+  business read is never intercepted, and the matcher runs nowhere ABOVE the router. Widening the
+  veto would therefore buy nothing but risk. Note the door-card swap at `:2811`: a stranger typing
+  these words is shown features and NOT the signup door.
+- **Residual, accepted — the digit veto also kills teach requests that name a number**, e.g.
+  `สอนวิธีใช้ 2 อย่างหน่อย`, `สอนหน่อย 1 เรื่อง`. Narrowing it to a baht/amount context was
+  considered and rejected: the false-positive direction is free (above) while a mis-read tutoring
+  expense is not, so the veto keeps the bias toward the business record.
+- **Residual, accepted — `ที` misses common casual endings.** `สอนทีเถอะ`, `สอนทีสิ`,
+  `สอนทีได้ไหม` do not match (`ที` is only accepted before ค/น or end of message). `สอนทีมหน่อย`
+  and `สอนทีละขั้นตอนหน่อย` behave correctly via the `หน่อย` branch. Add alternations only if UAT
+  shows the phrasing.
+- Checked and clean: `\s` in the window covers `สอน  หน่อย`; trailing `!!`, an emoji and a newline
+  still match (only `\d` vetoes); Thai combining/tone marks count as window chars, so
+  `สอนพนักงานใหม่หน่อย` (11) and `สอนน้องมั่งมีหน่อย` (10) fall outside it while `สอนน้องใหม่หน่อย`
+  (8) does not; NFC/NFD/NFKC/NFKD all match identically (Thai marks do not decompose), so the repo's
+  NFC-not-NFKC gotcha does not bite here. Ordering verified: `staffMenuCommand` runs at `:2751`, so
+  `ติดต่อเจ้าหน้าที่` / `คุยกับน้องมั่งมี` / RESUME_AI / the menu tiles are all matched BEFORE the
+  capability check at `:2811`, and a bare numeric reply is vetoed by `\d` anyway.
+
 Next:
+- Teach-phrasing branch: Owner review → PR → UAT → send `สอนวิธีใช้หน่อย` as (1) an unlinked LINE
+  account (expect the six-function card), (2) a linked employee of an AI-off company (expect the
+  gate line + entitlement card), (3) a linked employee of an AI-on company (expect the scoped
+  walkthrough, not an advisor one-liner) — the router-output risk in Open questions applies to (3).
 - Follow-up branch: Owner review → PR → UAT → on an AI-off UAT company, send `ทำอะไรได้บ้าง` as a
   linked ACTIVE employee and expect the refusal line + buttons note + the entitlement card, and an
   ordinary question on the same company to still get the bare line.

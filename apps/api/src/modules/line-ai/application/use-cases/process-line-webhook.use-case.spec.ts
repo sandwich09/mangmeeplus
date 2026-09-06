@@ -627,21 +627,25 @@ describe('ProcessLineWebhookUseCase', () => {
     { featureKey: 'dashboard_notifications', enabled: true },
   ];
 
-  it('answers an unlinked capability question with the curated card, before any model read', async () => {
-    const { prisma, updates } = makePrisma({ identityUserId: null });
-    const { useCase, sentMessages, legalChecks, getAiGatewayCalled, intakeRequests } =
-      makeUseCase(prisma, { legalAcceptanceRequired: true });
+  // Owner 2026-09-06 ("ตกลง"): the "teach me" request forms share this matcher, and the accepted
+  // consequence is that a stranger asking "สอนวิธีใช้หน่อย" gets the same public six-function card.
+  for (const messageText of ['ทำอะไรได้บ้าง', 'สอนวิธีใช้หน่อย']) {
+    it(`answers an unlinked "${messageText}" with the curated card, before any model read`, async () => {
+      const { prisma, updates } = makePrisma({ identityUserId: null });
+      const { useCase, sentMessages, legalChecks, getAiGatewayCalled, intakeRequests } =
+        makeUseCase(prisma, { legalAcceptanceRequired: true });
 
-    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-capability-unlinked', messageText: 'ทำอะไรได้บ้าง' });
+      await useCase.execute({ ...BASE_EVENT, webhookEventId: `evt-capability-unlinked-${messageText}`, messageText });
 
-    assert.equal(sentMessages[0]?.type, 'flex');
-    assert.equal(sentMessages[0]?.altText, CAPABILITY_CARD_ALT);
-    assert.match(JSON.stringify(sentMessages[0]), /ยอดขายวันนี้/, 'the public card is unchanged');
-    assert.equal(legalChecks.length, 0);
-    assert.equal(intakeRequests.length, 0);
-    assert.equal(getAiGatewayCalled(), false);
-    assert.equal((updates.at(-1) as any).data.status, 'staff_menu_capability');
-  });
+      assert.equal(sentMessages[0]?.type, 'flex');
+      assert.equal(sentMessages[0]?.altText, CAPABILITY_CARD_ALT);
+      assert.match(JSON.stringify(sentMessages[0]), /ยอดขายวันนี้/, 'the public card is unchanged');
+      assert.equal(legalChecks.length, 0);
+      assert.equal(intakeRequests.length, 0);
+      assert.equal(getAiGatewayCalled(), false);
+      assert.equal((updates.at(-1) as any).data.status, 'staff_menu_capability');
+    });
+  }
 
   // The guard is `!identity || status !== 'ACTIVE'`, and both halves carry the card: a suspended
   // account has nothing to scope an answer to, so it gets the same public copy a stranger does —
@@ -658,7 +662,7 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal((updates.at(-1) as any).data.status, 'staff_menu_capability');
   });
 
-  for (const messageText of ['มั่งมีใช้ยังไง', 'ทำอะไรได้บ้าง']) {
+  for (const messageText of ['มั่งมีใช้ยังไง', 'ทำอะไรได้บ้าง', 'สอนวิธีใช้หน่อย']) {
     it(`sends a linked caller's "${messageText}" to the scoped turn instead of the fixed card`, async () => {
       const { prisma, updates } = makePrisma({ entitlements: EXPENSES_ONLY_ENTITLEMENTS });
       const { useCase, sentMessages, intakeRequests, aiGatewayRequests } = makeUseCase(prisma, {
@@ -714,7 +718,10 @@ describe('ProcessLineWebhookUseCase', () => {
   // ITSELF, without the gateway and therefore without `composeCapabilityHelp`. That draft is model
   // prose about what น้องมั่งมี can do, so it can name exactly the features the scoping exists to
   // hide — the prompt says it never routes this way, and prompt wording is not a trust boundary.
-  it('never lets an ADVISOR_CONVERSATION draft answer a capability question with an unscoped list', async () => {
+  // The "teach me" forms ride the same veto: Owner 2026-09-06 accepts that a linked AI-on caller's
+  // "สอนวิธีใช้หน่อย" loses the advisor's direct answer and takes the gateway's teaching mode.
+  for (const messageText of ['มั่งมีทำอะไรได้บ้าง', 'สอนวิธีใช้หน่อย']) {
+  it(`never lets an ADVISOR_CONVERSATION draft answer "${messageText}" with an unscoped list`, async () => {
     const { prisma } = makePrisma({ entitlements: EXPENSES_ONLY_ENTITLEMENTS });
     const { useCase, replies, getAiGatewayCalled } = makeUseCase(prisma, {
       permissions: ['line.ai.query', 'expense.read'],
@@ -735,11 +742,12 @@ describe('ProcessLineWebhookUseCase', () => {
       }),
     });
 
-    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-capability-advisor', messageText: 'มั่งมีทำอะไรได้บ้าง' });
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: `evt-capability-advisor-${messageText}`, messageText });
 
     assert.equal(replies.some((reply) => reply.includes('ยอดขายวันนี้')), false, 'the shortcut must not advertise ยอดขาย');
     assert.equal(getAiGatewayCalled(), true, 'the turn falls through to the scoped composer instead');
   });
+  }
 
   // ── A shut AI lane still owes the shop its own scope (Owner 2026-09-06) ──────────────────────
   // "ร้านที่ปิดฟีเจอร์ แล้วเอไอตอบ ฟีเจอร์ยังไม่เปิดใช้งาน โอเค อันนี้ได้ แต่ถ้าบอกให้สอนวิธีใช้ ใน
@@ -755,7 +763,7 @@ describe('ProcessLineWebhookUseCase', () => {
     { featureKey: 'sales_documents', enabled: false },
   ];
 
-  for (const messageText of ['มั่งมีใช้ยังไง', 'ทำอะไรได้บ้าง']) {
+  for (const messageText of ['มั่งมีใช้ยังไง', 'ทำอะไรได้บ้าง', 'สอนวิธีใช้หน่อย']) {
     it(`answers "${messageText}" from an AI-off shop with the entitlement card, not the bare refusal`, async () => {
       const { prisma, updates } = makePrisma({ entitlements: AI_OFF_ENTITLEMENTS });
       const { useCase, replies, sentMessageBatches, intakeRequests, getAiGatewayCalled } =
