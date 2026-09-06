@@ -10,8 +10,11 @@ import { LineIdTokenService } from '../line-id-token.service';
 import { lineHandoffUrl } from '../../domain/logic/line-handoff.logic';
 import { MintLineHandoffTokenUseCase } from './mint-line-handoff-token.use-case';
 
-/** Spec §15.2 B-07: an existing route, and the one thing a new shop is here to do. */
-export const LIFF_START_TARGET_PATH = 'expenses/upload';
+/**
+ * Spec §15.2 B-07. Owner decision 2026-09-06: the shop's own overview, not the upload form —
+ * the same landing `/l/<token>` already falls back to when a row carries no target path.
+ */
+export const LIFF_START_TARGET_PATH = 'dashboard';
 
 /** Why the tap cannot open the app. Each maps to one plain-Thai sentence on the LIFF page. */
 export type LiffSessionBlockedReason = 'suspended' | 'expired' | 'no_membership';
