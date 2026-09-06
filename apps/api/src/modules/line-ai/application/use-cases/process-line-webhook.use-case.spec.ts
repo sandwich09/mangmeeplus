@@ -234,8 +234,12 @@ function makePrisma(opts: {
 	  planTerm?: { tierKey: string; monthlySlipLimit: number; warmupUntil?: Date | null; warmupSlipLimit?: number | null; quotaNoticeSentMonthKey?: string | null } | null;
 	  /** Document reads already admitted this Bangkok month (`CompanyOcrMonthlyUsage.usedCount`). */
 	  receiptsUsed?: number;
+	  /** A shop application this LINE account still has travelling (P10-L §5). The fake honours the
+	   *  caller's own state filter, so a fixture only surfaces where `OPEN_LINE_SIGNUP_STATES` says
+	   *  the request is still open — which is the thing under test, not a constant re-typed here. */
+	  openLineSignup?: { companyName: string; state: string } | null;
 	} = {}) {
-	  const { identityUserId = 'user-1', displayName = 'พิม', identityChannelId = 'msg-channel-1', aiAssistantOptOutAt = null, memberships = [{ companyId: 'company-1' }], lineCompanyContext = null, previousEventLog = null, recentTurns = [], entitlements = [], branches = [], branchFindManyFn, turnOutcomeUnavailable = false, turnOutcomeFailAfter, termExpiredMemberships = [], planTerm = null, receiptsUsed = 0 } = opts;
+	  const { identityUserId = 'user-1', displayName = 'พิม', identityChannelId = 'msg-channel-1', aiAssistantOptOutAt = null, memberships = [{ companyId: 'company-1' }], lineCompanyContext = null, previousEventLog = null, recentTurns = [], entitlements = [], branches = [], branchFindManyFn, turnOutcomeUnavailable = false, turnOutcomeFailAfter, termExpiredMemberships = [], planTerm = null, receiptsUsed = 0, openLineSignup = null } = opts;
   let quotaNoticeSentMonthKey = planTerm?.quotaNoticeSentMonthKey ?? null;
   const termExpiredRows = termExpiredMemberships.map((row) => ({ roles: [{ role: { key: 'OWNER' } }], ...row }));
   const turnOutcomeWrites: any[] = [];
@@ -263,9 +267,16 @@ function makePrisma(opts: {
           findMany: async () => [],
         },
       }),
-      // P10-L: the unlinked path now answers with the door card, which first asks whether this
-      // LINE account already has an application travelling. These fixtures have none.
-      companySignupRequest: { findFirst: async () => null },
+      // P10-L: the unlinked path now answers with the door card, and the บริษัทของฉัน card asks the
+      // same question, so both first ask whether this LINE account has an application travelling.
+      // These fixtures have none unless `openLineSignup` supplies one.
+      companySignupRequest: {
+        findFirst: async (args: any) => {
+          if (!openLineSignup) return null;
+          const open = args?.where?.state?.in;
+          return Array.isArray(open) && !open.includes(openLineSignup.state) ? null : openLineSignup;
+        },
+      },
       // Every media turn asks whether a human is waiting on this LINE user (UAT 2026-09-06); these
       // fixtures have no support thread, so the answer is "nobody" and nothing is written.
       lineSupportRequest: { findFirst: async () => null },
@@ -1593,6 +1604,55 @@ describe('ProcessLineWebhookUseCase', () => {
     ]) {
       assert.equal(JSON.stringify(await card(closed)).includes('เปิดร้านใหม่'), false);
     }
+  });
+
+  /**
+   * UAT 2026-09-06, build f2bd38ed, "สมัครแล้วแต่บริษัทหาย". The owner filed a second shop from the
+   * card's own button; a repeat trial always queues for review (§3.3), so `/companies` afterwards
+   * showed the picker and nothing else — the request existed, but no surface the owner used said so.
+   *
+   * Every state in `OPEN_LINE_SIGNUP_STATES` is fenced out of applying again, `PROVISIONING_FAILED`
+   * included, so all of them owe the same answer and none of them may re-offer the door.
+   */
+  it('replaces the เปิดร้านใหม่ door with the pending request while an application is travelling', async () => {
+    for (const state of ['PENDING_REVIEW', 'PROVISIONING_FAILED']) {
+      const { prisma } = makePrisma({
+        displayName: 'พิมพ์ชนก',
+        memberships: [{ companyId: 'co-1', company: { name: 'test sand' }, roles: [{ role: { key: 'OWNER', name: 'เจ้าของกิจการ' } }] }],
+        openLineSignup: { companyName: 'ร้านใหม่', state },
+      });
+      const { useCase, sentMessageBatches } = makeUseCase(prisma, {
+        permissions: ['line.ai.query'],
+        config: { lineLiffId: '2007891234-AbCdEf01', externalSignupEnabled: true, lineMessagingChannelId: 'msg-channel-1' },
+      });
+
+      await useCase.execute({ ...BASE_EVENT, webhookEventId: `evt-pending-${state}`, messageText: '/companies' });
+
+      const card = JSON.stringify(sentMessageBatches[0]?.[0]);
+      assert.match(card, /🕒 คำขอเปิดร้าน «ร้านใหม่» รอทีมงานตรวจสอบ ปกติภายในวันทำการ/, state);
+      assert.equal((sentMessageBatches[0]?.[0] as any)?.contents?.footer, undefined, state);
+      assert.equal(card.includes('liff.line.me'), false, state);
+    }
+  });
+
+  it('keeps the เปิดร้านใหม่ door for an owner whose only application already settled', async () => {
+    const { prisma } = makePrisma({
+      displayName: 'พิมพ์ชนก',
+      memberships: [{ companyId: 'co-1', company: { name: 'test sand' }, roles: [{ role: { key: 'OWNER', name: 'เจ้าของกิจการ' } }] }],
+      // COMPLETED is not in OPEN_LINE_SIGNUP_STATES: the shop exists, so nothing is waiting and the
+      // owner is free to open another one.
+      openLineSignup: { companyName: 'ร้านเก่า', state: 'COMPLETED' },
+    });
+    const { useCase, sentMessageBatches } = makeUseCase(prisma, {
+      permissions: ['line.ai.query'],
+      config: { lineLiffId: '2007891234-AbCdEf01', externalSignupEnabled: true, lineMessagingChannelId: 'msg-channel-1' },
+    });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-settled-signup', messageText: '/companies' });
+
+    const card = sentMessageBatches[0]?.[0] as any;
+    assert.equal(card?.contents?.footer?.contents?.[0]?.action?.label, 'เปิดร้านใหม่');
+    assert.equal(JSON.stringify(card).includes('🕒'), false);
   });
 
   it('returns only the current-company card to a non-owner', async () => {

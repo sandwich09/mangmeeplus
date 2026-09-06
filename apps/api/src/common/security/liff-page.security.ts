@@ -605,7 +605,10 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     // The card's own heading already says "ได้รับแล้ว", so the body says what happens next and
     // nothing else — repeating the heading was the first thing the Owner read twice (2026-09-05).
     document.getElementById('done-text').textContent = accepted.existingAccount
-      ? 'เพิ่มร้านที่ 2 ให้บัญชีของคุณแล้วค่ะ พร้อมเมื่อไหร่เราจะส่งข้อความในแชทนี้นะคะ'
+      // A second shop for an existing owner always goes to the review queue (§3.3), so it does NOT
+      // appear in บริษัทของฉัน yet. Saying where it will show up is what stops the owner reading the
+      // unchanged picker as "my shop vanished" (UAT 2026-09-06).
+      ? 'เพิ่มร้านที่ 2 ให้บัญชีของคุณแล้วค่ะ ร้านใหม่จะขึ้นในเมนู บริษัทของฉัน หลังทีมงานอนุมัตินะคะ พร้อมเมื่อไหร่เราจะส่งข้อความในแชทนี้นะคะ'
       : (accepted.businessHours
         ? 'ทีมงานกำลังตรวจสอบ ปกติดำเนินการให้ภายในวันทำการ ' + BUSINESS_HOURS_TH + ' พร้อมใช้เมื่อไหร่เราจะส่งข้อความในแชทนี้นะคะ'
         : 'ตอนนี้อยู่นอกเวลาทำการ ทีมงานจะดูให้ในวันทำการถัดไป ' + BUSINESS_HOURS_TH + ' พร้อมใช้เมื่อไหร่เราจะส่งข้อความในแชทนี้นะคะ');
