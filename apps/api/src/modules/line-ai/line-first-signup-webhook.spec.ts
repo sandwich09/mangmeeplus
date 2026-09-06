@@ -270,6 +270,12 @@ function harness(options: {
         // greeting or a button the buffer forwarded straight through.
         findUnique: async () => null,
         create: async () => ({}),
+        // A bare number asks what the PREVIOUS turn settled on (`pendingCompanySelectionCommand`),
+        // excluding the turn in hand: the writes recorded below are that history.
+        findFirst: async (args: any) => {
+          const previous = eventLog.filter((entry) => entry.where?.webhookEventId !== args?.where?.webhookEventId?.not).at(-1);
+          return previous ? { status: previous.data.status } : null;
+        },
         // `updateEventLog` writes through updateMany; the claim's CAS uses it too, so the recorded
         // list starts at the claim and the OUTCOME is the last entry.
         updateMany: async (args: any) => { eventLog.push(args); return { count: 1 }; },
@@ -938,6 +944,55 @@ describe('the pause silences the assistant, not the app (UAT 2026-09-06 รอ�
     assert.equal(rendered(h).includes('ส่งข้อความถึงทีมงานแล้ว'), false, 'and no confirmation on top of it');
     assert.deepEqual(h.supportUpdates, [], 'pressing a button is not the customer asking again');
     assert.equal(outcome(h), 'company_context_listed');
+  });
+
+  // Review 2026-09-06 (M1). The picker `/companies` now returns says "ตอบ N หรือกดปุ่มด้านล่าง", and
+  // the Owner has more than one shop. A bare "2" is neither a menu command nor a `/company` one, so
+  // the gate filed it for the operator and the shop never changed — the button worked, the words
+  // beside it did not. A number is an answer only while the previous turn actually asked.
+  const shops = [
+    { companyId: 'co-1', roles: [], company: { name: 'ร้านนิด' } },
+    { companyId: 'co-2', roles: [], company: { name: 'ร้านสอง' } },
+  ];
+
+  it('honours the number the picker asked for, under the pause', async () => {
+    const h = harness({ identity: linked, context: pausedContext, openSupportRequest: waiting, memberships: shops });
+    await h.useCase.execute(event('/companies'));
+    await h.useCase.execute(event('2'));
+
+    assert.equal(h.contextUpserts[0]?.update.companyId, 'co-2', 'the shop switches');
+    assert.match(rendered(h), /เปลี่ยนบริษัทเป็น ร้านสอง/);
+    assert.equal(rendered(h).includes('📮'), false, 'and nothing is acknowledged on top of it');
+    assert.deepEqual(h.supportUpdates, [], 'answering the picker is not a message to the team');
+    assert.equal(outcome(h), 'company_context_switched');
+
+    const thai = harness({ identity: linked, context: pausedContext, openSupportRequest: waiting, memberships: shops });
+    await thai.useCase.execute(event('/companies'));
+    await thai.useCase.execute(event('๒'));
+    assert.equal(thai.contextUpserts[0]?.update.companyId, 'co-2', 'Thai digits, as the picker already accepts them');
+  });
+
+  it('keeps a bare number as a follow-up when nothing asked for one', async () => {
+    const h = harness({ identity: linked, context: pausedContext, openSupportRequest: waiting, memberships: shops });
+    await h.useCase.execute(event('ยังไม่ได้เลยค่ะ'));
+    await h.useCase.execute(event('2'));
+
+    assert.equal(h.supportUpdates.length, 2, 'both lines reach the operator');
+    assert.equal(h.supportUpdates[1].data.lastMessageText, '2');
+    assert.deepEqual(h.contextUpserts, [], 'and no shop changes under them');
+    assert.equal(outcome(h), 'support_paused');
+  });
+
+  it('reads "2 คน" as a sentence for the operator even with a picker pending', async () => {
+    const h = harness({ identity: linked, context: pausedContext, openSupportRequest: waiting, memberships: shops });
+    await h.useCase.execute(event('/companies'));
+    await h.useCase.execute(event('2 คน'));
+
+    assert.equal(h.supportUpdates.length, 1);
+    assert.equal(h.supportUpdates[0].data.lastMessageText, '2 คน');
+    assert.deepEqual(h.contextUpserts, []);
+    assert.match(rendered(h), /ส่งข้อความถึงทีมงานแล้ว/);
+    assert.equal(outcome(h), 'support_paused');
   });
 
   // The rich-menu tile literally says "คุยกับน้องมั่งมี", so the greeting was the honest reply to

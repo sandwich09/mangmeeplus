@@ -2833,7 +2833,11 @@ export class ProcessLineWebhookUseCase {
         || (publicCommand !== 'draft_update_confirm' && publicCommand !== 'draft_update_cancel'));
     if (!deterministicCommand
       && !parseLineCompanyCommand(event.messageText)
-      && await this.assistantPaused(event.lineUserId)) {
+      && await this.assistantPaused(event.lineUserId)
+      // A bare number is an answer only while the previous turn asked for one (review 2026-09-06
+      // M1): the picker `/companies` returns says "ตอบ N". Digits-only text is the precondition of
+      // that one read, so a sentence never pays it; the same helper resolves the selection below.
+      && !(await this.pendingCompanySelectionCommand(event))) {
       // Staying out of the thread is not the same as swallowing it (UAT 2026-09-06): what they just
       // wrote goes onto the request the operator answers from, and only then may the reply say so.
       const recorded = await this.recordSupportFollowUp(event.lineUserId, requestId, { text: event.messageText });

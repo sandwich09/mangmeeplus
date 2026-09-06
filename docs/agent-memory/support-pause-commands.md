@@ -79,9 +79,11 @@ itself — exactly the resume bug, one level down. Pinned by a new case in
   `refusePendingLegalAcceptance` in front of every paused free-text message — a paused customer with
   no membership would hear "link your account" instead of "we are looking into it". A two-line
   predicate at the existing site is both smaller and narrower.
-- **A bare digit is NOT a bypass.** `pendingCompanySelectionCommand` resolves "1" to a company
-  choice only when the previous turn asked; under a pause a bare number is far more likely a
-  sentence for the operator, so only the explicit `/companies`-family commands bypass.
+- **A bare digit bypasses the pause ONLY while a picker is pending** (review 2026-09-06 M1, reversing
+  the first cut's "never"): the picker `/companies` returns under the pause says "ตอบ N หรือกดปุ่ม
+  ด้านล่าง", and the Owner is a multi-company account. The gate reuses `pendingCompanySelectionCommand`
+  as-is — digits-only (Thai digits included, via `parseBareCompanySelection`) is the precondition of
+  its one indexed read, so free text never pays it; with no picker pending, "2" stays a follow-up.
 - **`recordSupportFollowUp` returns `'none' | 'recorded' | 'repeat'`** instead of a boolean. The
   throttle is the caller's decision (which words to say), and the reply map keeps the call site one
   line. `handleStaffContact` ignores the value, as it did the boolean — a tap answers
@@ -145,20 +147,23 @@ neighbours `line-message-buffer.service` 66/0 and `line-webhook.controller` 9/0,
 | clock: as if read AFTER the write (`Date.now()`) | signup 58/2, pg 15/1 |
 | S-4 flag ignored in the bypass (`publicCommand !== null`) | **survived** (60/0, 206/0) → now pinned by "keeps the draft-edit phrases under the pause while the S-4 lane is dark" (59/1 under the mutation, green on the branch) |
 
+### M1 follow-up 2026-09-06 (the typed picker number under the pause)
+
+`line-first-signup-webhook.spec.ts` 64 pass / 0 fail — **1 red first** (63/1: "honours the number the
+picker asked for, under the pause", `contextUpserts[0]` undefined); the two guards ("keeps a bare
+number as a follow-up when nothing asked for one", `"2 คน"` with a picker pending) were green before
+and after. Mutation — clause removed, gate back to bare `assistantPaused` — 63/1 on the same case,
+64/0 restored. `process-line-webhook.use-case` 206/0, `line-staff-menu.logic` 39/0,
+`spec-suite-coverage` 3/0, typecheck clean, DI guard 795/870/820. Harness gained a
+`lineWebhookEventLog.findFirst` fake that reads the previous turn's recorded outcome back, so the
+`/companies` → `2` sequence is real, not a preset status.
+
 Command-table probe: 19 commands → 19 distinct keys, no collisions. The three spec injection strings,
 `คุยกับ AI ต่อ /companies`, `คุยกับ AI ต่อ\nขอเปลี่ยนแพ็กเกจ`, a ZWSP-joined spelling, fullwidth `ＡＩ` and
 dotless-i all stay `null`; NFD/NFKC forms of every command still match (no canonical compositions in
 this table). Inherited, not new: the four tile emoji are stripped anywhere, so `📊คุยกับ AI ต่อ✅` resumes.
 
 ## Open questions / follow-ups (not in this change)
-
-- (review) The picker a paused `/companies` now returns says "ตอบ N หรือกดปุ่มด้านล่าง", but a bare
-  "N" is free text under the pause: it is filed as a follow-up ("N" lands in the operator's message
-  column) and answered with the ack, and the company does not switch. The button (`/company <id>`)
-  works. If the Owner wants the typed number honoured, the gate needs
-  `&& !(await this.pendingCompanySelectionCommand(event))` after `assistantPaused` — one indexed
-  read, digits only — plus one clause in §2.2 delta รอบ 6 bullet 1 and a use-case spec with
-  `previousEventLog.status = 'company_context_listed'`.
 
 - A receipt PHOTO under a pause is still OCR'd and answered by the assistant — the media lane has no
   pause gate (carried over from `support-request-continuity`). Since round 3 the photo leaves a
@@ -179,4 +184,5 @@ this table). Inherited, not new: the four tile emoji are stripped anywhere, so `
   "ทีมงานรับเรื่องแล้วค่ะ กำลังดูให้อยู่ …" and not the welcome, (c) two messages a minute apart must
   give the full card once then "📮 รับข้อความแล้วค่ะ" — with BOTH lines visible in
   `/system/support-requests`, (d) `คุยกับ ai ต่อ` in lowercase must answer "น้องมั่งมีกลับมาแล้วค่ะ"
-  and drop the row off the รอตอบ tab.
+  and drop the row off the รอตอบ tab, (e) `/companies` then a typed `2` must switch the shop with no
+  📮 line and nothing new in `/system/support-requests`.
