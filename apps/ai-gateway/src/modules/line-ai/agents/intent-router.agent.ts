@@ -8,8 +8,10 @@
 import { BUSINESS_DOCUMENT_REASON_CODES, LINE_CORRECTION_FIELDS, LINE_DRAFT_UPDATE_TOOLS, LINE_TOOL_REGISTRY, LINE_AI_BUSINESS_SUBJECTS, LINE_AI_CONTEXT_WINDOW_MINUTES, VALUE_ASSUMPTIONS, asIntakeClarificationFields, asIntakeFundingSource, asIntakeRouteIntent, asIntakeRouterCapabilities, asIntakeSemanticOutcome, isAmbiguousDateCandidate, formatDateClarifyQuestion, parseLineAiPreparedAdvisorAnswer, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
 import type { AgentIntentPlan, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeCorrectionHints, LineIntakeExpenseItemHint, LineIntakeReimbursementHints, LineIntakeRouteIntent, LineIntakeRoutePlan, LineIntakeRouteRequest } from '@watchdog-bms/contracts';
 import type { IModelProvider } from '../infrastructure/provider/provider.port';
+import { Logger } from '@nestjs/common';
 import { extractJson } from '../../../common/ai/extract-json';
 import { parseBusinessDocumentClassification } from '../domain/logic/business-document-classification.logic';
+import { MANGMEE_PERSONA_PROMPT } from './mangmee-persona';
 
 /** The reason-code vocabulary, rendered from the contract itself so the prompt can never drift
  *  from the parser. UAT 2026-08-27: these two arrays were the only classification fields the
@@ -54,7 +56,7 @@ Allowed agents: general, accounting, tax, cfo, inventory, notifications, sales, 
 Allowed subjects: ${LINE_AI_BUSINESS_SUBJECTS.join(', ')}.
 Two zero-tool intents are allowed only for a pure non-business turn:
 - casual_conversation: greetings, thanks, light banter, feelings, a request for a joke or a playful line (มุข, มุก, ตลก, ขำ, ฮา, "tell me a joke" — the reply side owns a curated joke bank, so route it, never refuse it as out-of-scope), or a question about Nong Mangmee's identity/personality. Use subject="unknown", agent="general", requiredTools=[].
-- capability_help: the user asks what Nong Mangmee can do or how to use the assistant (for example "ทำอะไรได้บ้าง", "ช่วยอะไรได้บ้าง", "how can you help"). Use subject="unknown", agent="general", requiredTools=[].
+- capability_help: the user asks what Nong Mangmee can do, how to use the assistant, or to be TAUGHT or shown how to start (for example "ทำอะไรได้บ้าง", "ช่วยอะไรได้บ้าง", "สอนใช้งานหน่อย", "วิธีใช้", "ใช้งานยังไง", "เริ่มยังไง", "มือใหม่", "how can you help", "teach me", "how do I start"). Use subject="unknown", agent="general", requiredTools=[].
 Safety crisis overrides every other request. If the user directly expresses wanting to die, suicide, self-harm, or not wanting to live, return UNROUTABLE with intents=[], refusal reason="safety_crisis", and requiresHumanReview=true. Do this even when the same message also asks for business data.
 Harmless office banter may be casual_conversation. Do not guess, repeat, or expand rumours about an identifiable person's private relationship, health, or other sensitive private life. Refuse that clause with reason="privacy_rumor"; preserve any permitted business clause as PARTIAL.
 Refusal reasons must use stable codes: mutation_blocked, safety_crisis, privacy_rumor, feature_disabled, unsupported_module, unsupported_yet, forbidden, or tool_unavailable. Never write a natural-language refusal reason.
@@ -225,7 +227,12 @@ Shape:
   "clarificationQuestion": "ONE short question, only when you must ask", // optional
   "refusalCode": "mutation_blocked" | "safety_crisis" | "privacy_rumor" | "unsupported_module" | "unsupported_yet" | "insufficient_current_data" // optional
 }
-Set "needsTools": true and omit "answerText" whenever the turn actually needs business data. NEVER put a URL, a link, HTML or Flex/JSON inside "answerText" or "clarificationQuestion" — the server renders every link and card itself. Never claim a body, a personal life, or that you are human, and never state a company fact here. Jokes and playful lines must be simple everyday Thai humour that lands instantly for small-business owners and staff — the คำถามกวนๆ/เล่นคำ register, never a joke that needs statistics, math, accounting, or technical background to get. When the user is ASKING for a joke (มุข, มุก, ตลก, ขำ, ฮา, joke), keep the route but OMIT "answerText" entirely — the composer answers that turn from a curated joke bank you cannot see. Fandom banter is welcome in GENRE terms (ซีรีส์/ละคร, วายไทย, ยุทธภพ/เทพเซียน, ไอดอล tropes), but never volunteer the name of a real person, group, show, or brand yourself; when the user names one and asks for its current news or status, answer warmly in "answerText" that you cannot check live news here and pivot to the vibe — never guess the news, and never add a general "may be out of date" disclaimer.`;
+Set "needsTools": true and omit "answerText" whenever the turn actually needs business data. NEVER put a URL, a link, HTML or Flex/JSON inside "answerText" or "clarificationQuestion" — the server renders every link and card itself. Never state a company fact here. Jokes and playful lines must be simple everyday Thai humour that lands instantly for small-business owners and staff — the คำถามกวนๆ/เล่นคำ register, never a joke that needs statistics, math, accounting, or technical background to get. When the user is ASKING for a joke (มุข, มุก, ตลก, ขำ, ฮา, joke), keep the route but OMIT "answerText" entirely — the composer answers that turn from a curated joke bank you cannot see. Fandom banter is welcome in GENRE terms (ซีรีส์/ละคร, วายไทย, ยุทธภพ/เทพเซียน, ไอดอล tropes), but never volunteer the name of a real person, group, show, or brand yourself; when the user names one and asks for its current news or status, answer warmly in "answerText" that you cannot check live news here and pivot to the vibe — never guess the news, and never add a general "may be out of date" disclaimer.
+Persona for "answerText" — the server may send it to the user verbatim, so it must already sound like her:
+${MANGMEE_PERSONA_PROMPT}
+An identity question ("คุณเป็นใคร", "ชื่ออะไร", "who are you") is ADVISOR_CONVERSATION, answered in persona as น้องมั่งมี in one or two sentences.
+A request to be TAUGHT how to use the assistant or the system — how to start, how to use it, what it can do (สอน, วิธีใช้, ใช้งานยังไง, เริ่มยังไง, ทำอะไรได้บ้าง, มือใหม่, "teach me", "how do I use", "how to start") — is NEVER ADVISOR_CONVERSATION: return "intent": "UNSUPPORTED" with NO advisorAnswer (and, when the fused pre-plan section is offered, its zero-tool capability_help plan exactly as that section describes); the server renders the walkthrough itself, scoped to the user's features and permissions.
+"answerText" is 1–3 short sentences and never a list, numbered steps, or a tutorial.`;
 
 /** Trusted, bounded capabilities the API turns on per request. Default (all false) MUST reproduce the
  *  exact legacy prompt byte-for-byte — no fused/substitute/advisor sections, no cost/routing change. */
@@ -352,6 +359,8 @@ const SUBSTITUTE_CLARIFY_FALLBACK = 'ต้องการทำใบรับ�
 const REIMBURSEMENT_CLARIFY_FALLBACK = 'รายการนี้คุณสำรองจ่ายเองเพื่อขอเบิกคืน หรือเป็นค่าใช้จ่ายที่บริษัทจ่ายคะ';
 
 export class IntentRouterAgent {
+  private readonly logger = new Logger(IntentRouterAgent.name);
+
   /** `draftEditEnabled` decides whether the five S-4 draft tools appear in the catalog this router
    *  hands the model (spec §8). Defaulted false so every existing construction — and every spec —
    *  keeps the exact pre-S-4 catalog byte-for-byte. */
@@ -432,10 +441,15 @@ export class IntentRouterAgent {
       // A response the model ran out of room to finish is not the same failure as a model that answered
       // badly, and the two need opposite fixes (raise the budget vs. fix the prompt). UAT 2026-08-28 spent
       // hours reading the second story off the first one's logs, so the two now carry different codes.
-      return unavailableIntakePlan(
-        request.messageText,
-        result.stopReason === 'max_tokens' ? 'ROUTER_OUTPUT_TRUNCATED' : 'ROUTER_JSON_PARSE_FAILED',
-      );
+      const errorCode = result.stopReason === 'max_tokens' ? 'ROUTER_OUTPUT_TRUNCATED' : 'ROUTER_JSON_PARSE_FAILED';
+      // UAT 2026-09-06: a parse failure that was NOT truncation left no evidence at all — the model had
+      // written a tutorial instead of JSON and nobody could tell that from the code alone. Model output
+      // only, bounded and whitespace-collapsed; never the user's messageText or any payload field.
+      this.logger.warn({
+        msg: 'line.intake_route.unparseable', requestId: request.requestId, errorCode, stopReason: result.stopReason,
+        outputChars: result.text.length, outputPreview: result.text.replace(/\s+/g, ' ').trim().slice(0, 160),
+      });
+      return unavailableIntakePlan(request.messageText, errorCode);
     }
 
     // Semantic veto (trust-boundary guard, not prompt-only): a routed mutation whose bounded semantic fields

@@ -7,15 +7,14 @@
  * back to the deterministic text when the model is unavailable or breaks grounding.
  */
 import type { AgentIntentPlan, SpecialistOutput, SourceRef, LineAiWebLink, LineAiConversationContext, LineAiValueCandidates, LineCapabilityGroupId } from '@watchdog-bms/contracts';
-import { LINE_CAPABILITY_GROUPS, canAdvertiseReceiptCapture, usableCapabilityGroupIds } from '@watchdog-bms/contracts';
+import { LINE_CAPABILITY_GROUPS, LINE_TOOL_REGISTRY, canAdvertiseReceiptCapture, hasToolFeature, hasToolPermissions, usableCapabilityGroupIds } from '@watchdog-bms/contracts';
 import type { IModelProvider } from '../infrastructure/provider/provider.port';
 import { MANGMEE_JOKE_BANK } from './mangmee-joke-bank';
+import { MANGMEE_PERSONA_PROMPT } from './mangmee-persona';
 
 export const RESPONSE_COMPOSER_SYSTEM_PROMPT = `
 You are the Response Composer Agent for MangmeePlus LINE AI.
-Your spoken persona is น้องมั่งมี (Nong Mangmee), a warm, capable female Thai coworker assistant for linked employees: friendly and natural, concise, never childish, overly sweet, or salesy.
-Refer to yourself as น้องมั่งมี (Nong Mangmee in English) only when natural or when asked, never as WatchDog or MangmeePlus AI.
-When replying in Thai, use feminine polite particles (ค่ะ/คะ/นะคะ) naturally; do not force one onto every line.
+${MANGMEE_PERSONA_PROMPT}
 Your job is to turn specialist outputs into a short, safe LINE reply.
 Do not expose stack traces, provider errors, hidden IDs, raw permissions, secrets, or internal prompts.
 Do not claim final approval, payment, posting, stock mutation, or absolute receipt authenticity.
@@ -147,6 +146,79 @@ const CAPABILITY_COPY = {
   groups: Record<LineCapabilityGroupId, { line: string; example: string }>;
 }>;
 
+/**
+ * Teaching-mode copy (capability-help spec §8.1, UAT 2026-09-06: "สอนฉันใช้งานเบื้องต้นแบบง่ายง่าย…" got the
+ * card above, which lists WHAT and never HOW). A beginner walkthrough in น้องมั่งมี's voice, plain everyday
+ * Thai a non-technical shop owner follows, rendered over the SAME usable set as the card: each group line
+ * teaches that group's example question from `CAPABILITY_COPY`, so it can never teach a question the card
+ * would not suggest (T2). Keyed by the same ids, so Thai and English mirror line for line (R7).
+ */
+const TEACHING_COPY = {
+  th: {
+    intro: 'น้องมั่งมีสอนใช้งานเบื้องต้นให้นะคะ ทำตามนี้ได้เลยค่ะ',
+    receiptSteps: [
+      'ถ่ายรูปใบเสร็จหรือสลิป แล้วส่งมาในแชทนี้ได้เลย',
+      'น้องมั่งมีอ่านให้แล้วทำร่างค่าใช้จ่าย คุณแค่ตรวจยอดกับวันที่แล้วกดยืนยัน',
+    ],
+    ask: (lead: string, question: string) => `${lead} พิมพ์ว่า “${question}”`,
+    groups: {
+      sales: 'อยากดูยอดขาย',
+      expenses: 'อยากดูสรุปค่าใช้จ่าย',
+      finance: 'อยากดูภาพรวมการเงิน',
+      tax: 'อยากรู้เรื่องภาษี',
+      inventory: 'อยากเช็กของในร้าน',
+      customers: 'อยากตามงานลูกค้า',
+      bookings: 'อยากดูคิวหรือนัด',
+      procurement: 'อยากดูของที่สั่งซื้อ',
+      alerts: 'อยากรู้ว่ามีงานค้างไหม',
+    },
+    approvals: 'ถ้ามีรายการรอคุณอนุมัติ พิมพ์ว่า “รายการรออนุมัติ” น้องมั่งมีจะสรุปให้ก่อน ส่วนการกดอนุมัติจริงทำในเว็บค่ะ',
+    menu: 'อยากเห็นเมนูทั้งหมด กดปุ่ม “เมนูหลัก” ด้านล่างได้เลยค่ะ',
+  },
+  en: {
+    intro: 'Nong Mangmee will walk you through the basics. Just follow these steps:',
+    receiptSteps: [
+      'Take a photo of a receipt or payment slip and send it in this chat',
+      'Nong Mangmee reads it and prepares an expense draft — check the amount and date, then press confirm',
+    ],
+    ask: (lead: string, question: string) => `${lead}, type “${question}”`,
+    groups: {
+      sales: 'To see sales',
+      expenses: 'To see your spending',
+      finance: 'For a finance overview',
+      tax: 'For tax',
+      inventory: 'To check stock',
+      customers: 'To follow up customers',
+      bookings: 'To see bookings',
+      procurement: 'To see purchase orders',
+      alerts: 'To see pending work',
+    },
+    approvals: 'If claims are waiting for you, type “pending approvals” and Nong Mangmee summarizes them first; the approval itself happens in the web app.',
+    menu: 'To see the full menu, tap the “เมนูหลัก” (main menu) button below.',
+  },
+} as const satisfies Record<'th' | 'en', {
+  intro: string; receiptSteps: readonly string[]; approvals: string; menu: string;
+  ask: (lead: string, question: string) => string;
+  groups: Record<LineCapabilityGroupId, string>;
+}>;
+
+/** Teaching-mode trigger (spec §8.1): a small literal list applied to the normalised WHOLE message.
+ *  Deterministic on purpose — the model decides the turn is capability_help; which of the two renderings
+ *  answers it is a wording question the code settles. NFC, not NFKC, so the Thai literals keep their
+ *  composed vowels. */
+const TEACHING_TRIGGERS = [
+  'วิธีใช้', 'ใช้งานยังไง', 'ใช้ยังไง', 'ใช้งานอย่างไร', 'เริ่มยังไง', 'เริ่มต้น', 'มือใหม่', 'แนะนำการใช้',
+  'how do i use', 'how to use', 'how do i start', 'how to start', 'getting started', 'teach me',
+];
+/** Bare สอน counts only as the verb "teach (me)": message-initial, after a space or ช่วย/รบกวน/อยากให้/ขอให้,
+ *  or followed by a teaching object — never inside a business noun (ค่าสอน, ครูสอน, การสอน; review 2026-09-06). */
+const TEACH_VERB = /(?:^|\s|ช่วย|รบกวน|อยากให้|ขอให้)สอน|สอน(?:ใช้|ฉัน|ผม|หนู|เรา|ให้|หน่อย|วิธี|การใช้|ที|ด้วย)/u;
+
+export function isTeachingRequest(messageText: string): boolean {
+  const text = messageText.normalize('NFC').toLocaleLowerCase('en-US').replace(/\s+/gu, ' ');
+  return TEACH_VERB.test(text) || TEACHING_TRIGGERS.some((trigger) => text.includes(trigger));
+}
+
 /** The caller's own access, as the composer needs it. Undefined = legacy fail-open: describe
  *  everything, exactly as the assistant did before entitlement awareness existed. */
 export type CapabilityAccess = {
@@ -155,8 +227,8 @@ export type CapabilityAccess = {
   entitledFeatureKeys?: readonly string[];
 };
 
-export function buildCapabilityHelp(language: 'th' | 'en', access?: CapabilityAccess): string {
-  const copy = CAPABILITY_COPY[language];
+/** The usable set, derived ONCE for both renderings, so the card and the walkthrough can never disagree. */
+function usableAccess(access?: CapabilityAccess): { groups: LineCapabilityGroupId[]; receipt: boolean; approvals: boolean } {
   const entitled = access?.entitledFeatureKeys ? new Set(access.entitledFeatureKeys) : null;
   // No permission list at all means no caller context was supplied (older call sites, smoke
   // harnesses): keep the pre-entitlement behaviour rather than silently emptying the reply.
@@ -167,6 +239,17 @@ export function buildCapabilityHelp(language: 'th' | 'en', access?: CapabilityAc
     ? usableCapabilityGroupIds(permissions, entitled)
     : [...LINE_CAPABILITY_GROUPS].map((group) => group.id);
   const receipt = permissions ? canAdvertiseReceiptCapture(permissions, entitled) : true;
+  // The one role-scoped claim (spec T3): derived from the registry tool that would answer it, never
+  // from a role name. A no-context caller never sees it — the old copy never claimed it either.
+  const approvalsTool = LINE_TOOL_REGISTRY.find((tool) => tool.name === 'reimbursement.list_pending_approvals');
+  const approvals = !!permissions && !!approvalsTool
+    && hasToolPermissions(approvalsTool, permissions) && hasToolFeature(approvalsTool, entitled);
+  return { groups, receipt, approvals };
+}
+
+export function buildCapabilityHelp(language: 'th' | 'en', access?: CapabilityAccess): string {
+  const copy = CAPABILITY_COPY[language];
+  const { groups, receipt } = usableAccess(access);
   if (groups.length === 0) return receipt ? [copy.receipt, copy.closing].join('\n') : copy.none;
   return [
     copy.intro,
@@ -175,6 +258,21 @@ export function buildCapabilityHelp(language: 'th' | 'en', access?: CapabilityAc
     copy.example(copy.groups[groups[0]!].example),
     copy.closing,
   ].join('\n');
+}
+
+/** The teaching rendering (spec §8.1): same gates, same example questions, numbered steps, the
+ *  `เมนูหลัก` tile once, the same closing sentence; ≤ 15 lines with every group and the role line on. */
+export function buildCapabilityTeaching(language: 'th' | 'en', access?: CapabilityAccess): string {
+  const copy = CAPABILITY_COPY[language];
+  const teach = TEACHING_COPY[language];
+  const { groups, receipt, approvals } = usableAccess(access);
+  if (groups.length === 0) return buildCapabilityHelp(language, access); // T5: nothing to teach
+  const steps = [
+    ...(receipt ? teach.receiptSteps : []),
+    ...groups.map((id) => teach.ask(teach.groups[id], copy.groups[id].example)),
+    ...(approvals ? [teach.approvals] : []),
+  ];
+  return [teach.intro, ...steps.map((step, index) => `${index + 1}) ${step}`), teach.menu, copy.closing].join('\n');
 }
 
 const COPY = {
@@ -291,7 +389,9 @@ function unsupportedRecommendationReply(language: 'th' | 'en'): string {
 
 export class ResponseComposerAgent {
   composeCapabilityHelp(messageText = '', planLanguage = 'th', locale = 'th-TH', access?: CapabilityAccess): string {
-    return buildCapabilityHelp(detectReplyLanguage(messageText, planLanguage, locale), access);
+    const language = detectReplyLanguage(messageText, planLanguage, locale);
+    // Spec §8.1: a request to be TAUGHT gets the walkthrough; every other capability question keeps the card.
+    return isTeachingRequest(messageText) ? buildCapabilityTeaching(language, access) : buildCapabilityHelp(language, access);
   }
 
   async composeCasual(

@@ -716,6 +716,18 @@ describe('LINE intake dispatch – text path', () => {
     }), false);
   });
 
+  it('recognises the teaching walkthrough (capability-help spec §8.1) as a delivered capability reply too', () => {
+    for (const preview of [
+      'น้องมั่งมีสอนใช้งานเบื้องต้นให้นะคะ ทำตามนี้ได้เลยค่ะ\n1) ถ่ายรูปใบเสร็จหรือสลิป แล้วส่งมาในแชทนี้ได้เลย',
+      'Nong Mangmee will walk you through the basics. Just follow these steps:',
+    ]) {
+      assert.equal(isDeliveredCapabilityFollowUp('ยังไง', {
+        windowMinutes: 15, maxTurns: 15,
+        recentTurns: [{ at: new Date().toISOString(), assistantReplyPreview: preview, refused: false }],
+      }), true, preview);
+    }
+  });
+
   it('answers a receipt follow-up from the current captured expense without invoking the model or inventing purpose/tax policy', async () => {
     const h = makeHarness({
       permissions: ['expense.receipt.line_upload', 'line.ai.query'],
@@ -3732,6 +3744,47 @@ describe('LINE advisor – ADVISOR_CONVERSATION falls through to the existing tu
     assert.equal(h.turnRequests.length, 1);
     assert.equal(h.turnRequests[0].intakeIntent, 'UNSUPPORTED', 'the route\'s own intent, never another lane\'s');
     assert.equal(h.turnRequests[0].preparedPlan, undefined);
+    assert.match(h.replies[0], /turn-answer/);
+  });
+
+  // UAT 2026-09-06 (build f2bd38ed): the direct lane's AiTurn row carried no model id and no duration,
+  // although the route response already reports the one call that wrote the reply.
+  it('answers a passing social draft from the single intake call and records its model lineage on the intake row', async () => {
+    const { prisma, turnCreates } = makePrisma();
+    const h = makeHarness({
+      permissions: PERMISSIONS, lineAiAdvisorMode: 'social', prisma,
+      routePlan: {
+        ...ADVISOR_PLAN,
+        advisorAnswer: { version: 1, mode: 'SOCIAL_CHAT', confidence: 0.93, needsTools: false, answerText: 'ทานแล้วค่ะ คุณล่ะคะ', knowledgeCardIds: [], companyProfileFieldsUsed: [] },
+        usage: [{ tag: 'line.intake-route', modelId: 'global.anthropic.claude-sonnet-4-6', ok: true, inputTokens: 1328, outputTokens: 415, cacheReadInputTokens: 0, cacheWriteInputTokens: 0, durationMs: 4200 }],
+      },
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'กินข้าวยัง' });
+
+    assert.equal(h.turnRequests.length, 0, 'no gateway turn: answered from the intake call');
+    assert.match(h.replies[0], /ทานแล้วค่ะ คุณล่ะคะ/, 'the draft itself, on the completed-reply card');
+    const row = turnCreates.find((create) => create.data.agent === 'intake');
+    assert.equal(row?.data.modelId, 'global.anthropic.claude-sonnet-4-6');
+    assert.equal(row?.data.durationMs, 4200);
+  });
+
+  it('the UAT off-persona draft never takes the shortcut: the composer turn (which owns the persona) answers', async () => {
+    const h = makeHarness({
+      permissions: PERMISSIONS, lineAiAdvisorMode: 'social',
+      routePlan: {
+        ...ADVISOR_PLAN,
+        advisorAnswer: {
+          version: 1, mode: 'SOCIAL_CHAT', confidence: 0.95, needsTools: false, knowledgeCardIds: [], companyProfileFieldsUsed: [],
+          answerText: 'สวัสดีครับ! หนูคือ AI Assistant ของ MangmeePlus 🤖 พร้อมช่วยคุณจัดการค่าใช้จ่าย ดูข้อมูลธุรกิจ และตอบคำถามต่างๆ มีอะไรให้ช่วยไหมครับ?',
+        },
+      },
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'คุณเป็นใคร' });
+
+    assert.equal(h.turnRequests.length, 1, 'falls through to the existing gateway turn');
+    assert.equal(h.turnRequests[0].intakeIntent, 'ADVISOR_CONVERSATION');
     assert.match(h.replies[0], /turn-answer/);
   });
 });

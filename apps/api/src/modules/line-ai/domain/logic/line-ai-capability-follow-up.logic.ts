@@ -1,5 +1,5 @@
 import type { LineAiConversationContext, LineCapabilityGroupId } from '@watchdog-bms/contracts';
-import { canAdvertiseReceiptCapture, LINE_CAPABILITY_GROUPS, usableCapabilityGroupIds } from '@watchdog-bms/contracts';
+import { canAdvertiseReceiptCapture, LINE_CAPABILITY_GROUPS, LINE_CAPABILITY_REPLY_PREFIXES, usableCapabilityGroupIds } from '@watchdog-bms/contracts';
 import { normalizeLineText } from './line-ai-classifier.logic';
 
 export function isDeliveredCapabilityFollowUp(
@@ -9,8 +9,8 @@ export function isDeliveredCapabilityFollowUp(
   const normalized = normalizeLineText(text).toLocaleLowerCase('th-TH');
   if (!/^(อย่างไร|อย่างไหร่|ยังไง|แบบไหน|เช่นอะไร|how|how so|such as what)[?？]?$/iu.test(normalized)) return false;
   const lastReply = context?.recentTurns.at(-1)?.assistantReplyPreview ?? '';
-  return lastReply.startsWith('น้องมั่งมีช่วยค้นและสรุปข้อมูลงานตามสิทธิ์')
-    || lastReply.startsWith('Nong Mangmee can find and summarize work data');
+  // The card and the teaching walkthrough (spec §8.1) both count: the openings are a shared contract.
+  return LINE_CAPABILITY_REPLY_PREFIXES.some((prefix) => lastReply.startsWith(prefix));
 }
 
 /** “What do I do next?”, in the phrasings people actually send.
