@@ -318,7 +318,7 @@ describe('queue tabs', () => {
     // R13: a rejected or suspended application appeared on no list at all, so "where did that
     // application go" had no answer anywhere in the console.
     assert.ok(keys.includes('ARCHIVED'));
-    assert.equal(SIGNUP_QUEUE_TABS.find((tab) => tab.key === 'AUTO_APPROVED')!.label, 'อนุมัติอัตโนมัติ 14 วัน');
+    assert.equal(SIGNUP_QUEUE_TABS.find((tab) => tab.key === 'AUTO_APPROVED')!.label, 'เปิดให้อัตโนมัติ (ย้อนหลัง 14 วัน)');
 
     assert.equal(tabLoadsOwnList('AUTO_APPROVED'), true);
     assert.equal(tabLoadsOwnList('PACKAGE_CHANGE'), true);
