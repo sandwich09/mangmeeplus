@@ -308,6 +308,15 @@ baht, so the computed side has to carry the fraction:
 - `process-line-webhook.use-case.spec.ts` **204/204**; `spec-suite-coverage.spec.ts` **3/3** (no new
   spec file, so no `package.json` edit); `check-di-metadata.mjs` 794 files / 870 decorated classes /
   820 with constructor dependencies, clean.
+- `receipt-truth.pg.spec.ts` **7/7, 0 skipped** against a throwaway `postgres:18.3-alpine` on port
+  15917 (`migrate deploy` + `prisma/sync-permissions.ts` first, container `docker rm -f` afterwards).
+- `tsc --noEmit` on `apps/api` exit 0 (`NODE_OPTIONS=--max-old-space-size=8192`); `test:boot` —
+  "boot-di-smoke: Nest resolved every provider in 143ms".
+- `pnpm --filter @watchdog-bms/api test` (full fixed list) **exit 0**, 8,227 reporter dot passes,
+  0 skipped, no `✖`.
+- Heavy suites ran under the `mkdir /tmp/mangmee-heavy.lock` mutex, released with `rmdir` afterwards.
+- `git merge --no-commit --no-ff origin/develop` (2065ca29) on top of this work: "Automatic merge
+  went well", aborted.
 
 ## Review findings recorded, NOT fixed (controller decision, 2026-09-06)
 
