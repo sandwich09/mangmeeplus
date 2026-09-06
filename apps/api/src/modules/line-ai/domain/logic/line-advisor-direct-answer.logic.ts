@@ -33,6 +33,8 @@ const MALE_PARTICLE = /ครับ/u;
 /** ผม as HER pronoun only: line-initial, or after whitespace with a self-predicate. A user's quoted
  *  «ผม…» follows « and matches neither, and hair (ตัดผม) has no whitespace before it. */
 const OWN_PRONOUN_PHOM = /^ผม|\sผม(?:ชื่อ|คือ|เป็น|ยินดี|พร้อม|เอง|ขอ|จะ|ช่วย)/mu;
+/** Owner 2026-09-06: she is น้องมั่งมี, never หนู — same shape as ผม, so a quoted «หนู…» stays deliverable. */
+const OWN_PRONOUN_NU = /^หนู|\sหนู(?:คือ|ชื่อ|เป็น|ยินดี|พร้อม|เอง|ขอ|จะ|ช่วย)/mu;
 const WRONG_SELF_NAME = /AI Assistant|WatchDog|Mangmee ?Plus AI|ผู้ช่วย AI ของ Mangmee ?Plus/iu;
 /** Owner 2026-09-06: a robot icon is never her (the UAT draft signed off with one). */
 const ROBOT_ICON = /🤖/u;
@@ -71,7 +73,7 @@ export function advisorDirectAnswerText(rawAdvisorAnswer: unknown, ctx: AdvisorD
   const text = answer.answerText?.trim();
   if (!text) return null;
   if (BAHT_AMOUNT.test(text)) return null;
-  if (MALE_PARTICLE.test(text) || OWN_PRONOUN_PHOM.test(text) || WRONG_SELF_NAME.test(text) || ROBOT_ICON.test(text)) return null;
+  if (MALE_PARTICLE.test(text) || OWN_PRONOUN_PHOM.test(text) || OWN_PRONOUN_NU.test(text) || WRONG_SELF_NAME.test(text) || ROBOT_ICON.test(text)) return null;
   if (looksLikeTutorial(text)) return null;
   return text;
 }

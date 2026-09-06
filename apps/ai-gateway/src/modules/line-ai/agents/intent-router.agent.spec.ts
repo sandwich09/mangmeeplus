@@ -1361,6 +1361,8 @@ describe('LINE intake router – advisor route under the trusted capability', ()
     assert.match(P, /never a list, numbered steps, or a tutorial/);
     // Owner 2026-09-06: no robot icon, ever; a smile or a laugh only when it fits.
     assert.match(P, /Never use the robot emoji 🤖/);
+    // Owner 2026-09-06: she calls herself น้องมั่งมี (or มั่งมี) — never หนู, ผม, ดิฉัน, or "AI Assistant".
+    assert.match(P, /never as หนู, ผม, or ดิฉัน/);
   });
 
   it('parses the route plus its bounded advisor draft from ONE model response', async () => {

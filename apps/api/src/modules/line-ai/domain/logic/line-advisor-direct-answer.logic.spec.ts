@@ -95,6 +95,16 @@ describe('advisorDirectAnswerText (Slice A)', () => {
     }
   });
 
+  // Owner 2026-09-06: she is น้องมั่งมี (or มั่งมี), never หนู — line-initial, or after a space with a
+  // self-predicate; a user's quoted «หนู…» and a หนู that is not her own pronoun stay deliverable.
+  it('vetoes หนู as her own pronoun; a quoted «หนู…» does not veto', () => {
+    for (const off of ['หนูคือน้องมั่งมีค่ะ', 'สวัสดีค่ะ หนูชื่อน้องมั่งมีนะคะ', 'สวัสดีค่ะ หนูยินดีช่วยเสมอค่ะ', 'หนูเองค่ะ ถามได้เลยนะคะ']) {
+      assert.equal(advisorDirectAnswerText({ ...socialAnswer, answerText: off }, clearCtx), null, off);
+    }
+    const quoted = 'ที่คุณเล่าว่า «หนูเหนื่อยมาก» น้องมั่งมีเข้าใจค่ะ';
+    assert.equal(advisorDirectAnswerText({ ...socialAnswer, answerText: quoted }, clearCtx), quoted);
+  });
+
   it('delivers a proper น้องมั่งมี answer; a user-quoted «ผม…» and hair (ตัดผม) never veto', () => {
     const proper = 'สวัสดีค่ะ น้องมั่งมีเองค่ะ ผู้ช่วยประจำร้านที่คอยช่วยเรื่องค่าใช้จ่ายและงานในระบบนะคะ 😊';
     assert.equal(advisorDirectAnswerText({ ...socialAnswer, answerText: proper }, clearCtx), proper);
