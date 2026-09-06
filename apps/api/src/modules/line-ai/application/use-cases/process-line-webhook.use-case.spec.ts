@@ -734,6 +734,63 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(getAiGatewayCalled(), true, 'the turn falls through to the scoped composer instead');
   });
 
+  // ── A shut AI lane still owes the shop its own scope (Owner 2026-09-06) ──────────────────────
+  // "ร้านที่ปิดฟีเจอร์ แล้วเอไอตอบ ฟีเจอร์ยังไม่เปิดใช้งาน โอเค อันนี้ได้ แต่ถ้าบอกให้สอนวิธีใช้ ใน
+  // ขอบเขตที่เปิดใช้งานควรบอกได้." Closes the §8.2 residual: after PR #454 a linked caller of an
+  // AI-off shop fell through to the AI gate and read one bare line. The gate's own copy is kept
+  // (spec CC1 — a planned CLOSE must never read as "not enabled"), and a capability question also
+  // gets the deterministic entitlement card, built from the same `entitledFeatureKeys` the
+  // "บริการของเรา" tile uses, so it can name nothing the company has not switched on.
+  const AI_OFF_ENTITLEMENTS = [
+    { featureKey: 'ai_line_assistant', enabled: false },
+    { featureKey: 'expenses', enabled: true },
+    { featureKey: 'expenses.upload', enabled: true },
+    { featureKey: 'sales_documents', enabled: false },
+  ];
+
+  for (const messageText of ['มั่งมีใช้ยังไง', 'ทำอะไรได้บ้าง']) {
+    it(`answers "${messageText}" from an AI-off shop with the entitlement card, not the bare refusal`, async () => {
+      const { prisma, updates } = makePrisma({ entitlements: AI_OFF_ENTITLEMENTS });
+      const { useCase, replies, sentMessageBatches, intakeRequests, getAiGatewayCalled } =
+        makeUseCase(prisma, { permissions: ['line.ai.query', 'expense.read'] });
+
+      await useCase.execute({ ...BASE_EVENT, webhookEventId: `evt-capability-off-${messageText}`, messageText });
+
+      // Zero model calls on this lane — the card is deterministic, exactly like the tile's.
+      assert.equal(intakeRequests.length, 0);
+      assert.equal(getAiGatewayCalled(), false);
+      const batch = sentMessageBatches.at(-1) ?? [];
+      assert.equal(batch.length, 2, 'the honest line, then the scoped card');
+      assert.match(replies.at(-1) ?? '', /ยังไม่ได้เปิดใช้งาน/, 'the shop is still told the AI is off');
+      assert.match(replies.at(-1) ?? '', /บริการของเรา/, 'and which buttons still work');
+      assert.equal(batch[1]?.type, 'flex');
+      const rendered = JSON.stringify(batch[1]);
+      assert.match(rendered, /ค่าใช้จ่าย\+ใบเสร็จ/, 'names what this shop DID enable');
+      for (const hidden of ['ผู้ช่วย AI ทาง LINE', 'เอกสารขาย']) {
+        assert.equal(rendered.includes(hidden), false, `must not advertise ${hidden}`);
+      }
+      assert.equal(rendered.includes(CAPABILITY_CARD_ALT), false, 'never the unscoped six-function card');
+      assert.equal((updates.at(-1) as any).data.status, 'staff_menu_capability_entitlements');
+    });
+  }
+
+  it('gives an AI-off shop the entitlement card when the launch route is closed too', async () => {
+    const { prisma, updates } = makePrisma({ entitlements: AI_OFF_ENTITLEMENTS });
+    const { useCase, replies, sentMessageBatches, getAiGatewayCalled } = makeUseCase(prisma, {
+      permissions: ['line.ai.query'],
+      launchGate: closedLaunchGate,
+    });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-capability-closed', messageText: 'ทำอะไรได้บ้าง' });
+
+    assert.equal(getAiGatewayCalled(), false);
+    // CC1 holds: a planned CLOSE keeps its own words and never borrows the "not enabled" line.
+    assert.match(replies.at(-1) ?? '', /พักให้บริการชั่วคราว/);
+    assert.doesNotMatch(replies.at(-1) ?? '', /ยังไม่ได้เปิดใช้งาน/);
+    assert.match(JSON.stringify(sentMessageBatches.at(-1)?.[1]), /ค่าใช้จ่าย\+ใบเสร็จ/);
+    assert.equal((updates.at(-1) as any).data.status, 'staff_menu_capability_entitlements');
+  });
+
   // Identities linked before providerChannelId was recorded must keep working without relinking.
   it('falls back to a channel-agnostic identity for legacy links', async () => {
     const { prisma, updates, identityQueries } = makePrisma({ identityChannelId: 'legacy-channel' });
@@ -922,12 +979,15 @@ describe('ProcessLineWebhookUseCase', () => {
 
   it('denies the whole turn when ai_line_assistant entitlement is toggled off', async () => {
     const { prisma, updates } = makePrisma({ entitlements: [{ featureKey: 'ai_line_assistant', enabled: false }] });
-    const { useCase, replies, getAiGatewayCalled } = makeUseCase(prisma, { permissions: ['line.ai.query'] });
+    const { useCase, replies, sentMessageBatches, getAiGatewayCalled } = makeUseCase(prisma, { permissions: ['line.ai.query'] });
 
     await useCase.execute(BASE_EVENT);
 
     assert.equal(getAiGatewayCalled(), false);
     assert.match(replies[0] ?? '', /ยังไม่ได้เปิดใช้งาน/);
+    // An ORDINARY question keeps the bare line: only a capability question earns the entitlement
+    // card below it (Owner 2026-09-06, §8.2).
+    assert.equal(sentMessageBatches[0]?.length, 1);
     assert.equal((updates[0] as any).data.status, 'feature_disabled');
   });
 
