@@ -4,10 +4,15 @@ Status: Implemented and pushed on `codex/line-second-shop-button-auto-free-uat`;
 Owner: MangmeeDev
 Scope: Two Owner-ordered changes, both under "every environment value comes from that environment's config, and nothing UAT-only may reach production".
 
+Superseded in part: the button described below reached **every** linked member of the current
+company, STAFF included. Owner 2026-09-06 made it owner-only —
+`docs/agent-memory/line-second-shop-owner-only.md` and spec §3.1.1 carry the current rule; read that
+first, then this for the URL, config and AUTO_FREE background, which are unchanged.
+
 Decisions:
 - **Part 1 — "เปิดร้านใหม่" on the บริษัทของฉัน card.** `CompanyContextCard` gains one optional
   `newShopSignupUrl`; `buildCompanyContextMessage` renders a single footer button only when it is
-  set. The URL is built in `ProcessLineWebhookUseCase.newShopSignupUrl()` from
+  set (**and, since 2026-09-06, only for an `OWNER` of the company the card is about**). The URL is built in `ProcessLineWebhookUseCase.newShopSignupUrl()` from
   `config.lineLiffId` (validated with the door card's `LIFF_ID_PATTERN`) and
   `config.externalSignupEnabled` — the same switch `POST /v1/public/company-signups` answers with
   `external_signup_disabled`. Gating in the use case, not the domain logic, keeps
