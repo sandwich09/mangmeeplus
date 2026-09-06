@@ -59,6 +59,11 @@ OPEN/ANSWERED ──(customer resume | admin resume | 24h sweep)──▶ CLOSED
 - A receipt photo sent during a live support thread is still OCR'd and answered by the assistant —
   the media lane has no pause gate. Out of scope here; it also means a plain receipt can reopen a
   request ("ลูกค้าส่งรูปภาพมา" in the cell tells the operator what it was).
+- A follow-up does NOT re-arm the 24 h pause, which is still measured from the original tap. So a
+  request reopened at hour 23 is swept `expired` an hour later even though nobody answered it. That
+  is the pre-existing lifecycle of any OPEN request (`sweepExpiredSupportRequests` closes on the
+  lapsed pause, not on the answer), so it is not a regression — but it is the next thing to fix if
+  the Owner sees reopened rows disappearing.
 
 ## Artifacts
 
@@ -84,7 +89,7 @@ OPEN/ANSWERED ──(customer resume | admin resume | 24h sweep)──▶ CLOSED
   stamps the row with `lastMessageAt` (the value the duration above it is measured from).
 - Spec: `docs/specs/line-support-request-spec-th.md` §2.2 delta รอบ 3.
 
-## Verification (2026-09-06, branch head)
+## Verification (2026-09-06, all re-run on the committed tree)
 
 | Gate | Result |
 |---|---|
@@ -97,7 +102,7 @@ OPEN/ANSWERED ──(customer resume | admin resume | 24h sweep)──▶ CLOSED
 | `pnpm --filter @watchdog-bms/api typecheck` | clean |
 | `node apps/api/scripts/check-di-metadata.mjs` | 794 files, 870 decorated classes — all carry `design:paramtypes` |
 | `pnpm --filter @watchdog-bms/api test:boot` | Nest resolved every provider in 138 ms |
-| `pnpm --filter @watchdog-bms/api test` (full fixed list, under the heavy mutex) | exit 0, no failure markers |
+| `pnpm --filter @watchdog-bms/api test` (full fixed list, under the heavy mutex) | exit 0, 9587 dot-reporter tests, zero `✖` |
 | `pnpm --filter @watchdog-bms/web typecheck` | clean |
 | `pnpm --filter @watchdog-bms/web test` | 1594 pass / 0 fail |
 | `prisma validate` | valid |
