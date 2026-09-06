@@ -649,6 +649,10 @@ describe('capability question (Owner 2026-08-27: only real features)', () => {
       'อาจารย์สอนเสร็จแล้ว',
       'ค่าเรียนสอนภาษา',
       'สอนงานพนักงานใหม่วันนี้',
+      // The DIGIT half of the veto, alone: the ค่า/บิล/ใบเสร็จ/จ้าง prefixes must sit next to สอน,
+      // so this line clears every one of them and only the amount disqualifies it. Without this
+      // case, dropping `\d` from TUTORING_EXPENSE keeps the whole suite green (review 2026-09-06).
+      'จ้างครูสอนหน่อย 800',
       'บิลค่าสอน',
       'ขอบิลค่าสอนหน่อย',
       '1',

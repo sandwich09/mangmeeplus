@@ -227,6 +227,41 @@ beyond `การ|วิธี|วิธีการ`, so `สอนผมใช
 `สอนผมใช้` (no particle) does not match at all — judged acceptable, add an alternative if UAT shows
 the phrasing.
 
+Adversarial review 2026-09-06 (head ef561bdd, worktree `scratchpad/wt-review-teach`). Verdict READY;
+one fix pushed, the rest recorded as accepted residuals.
+- **Fixed.** The digit veto was UNVERIFIED: dropping only `\d` from `TUTORING_EXPENSE` kept the two
+  spec files at 280/280, because every negative in the list is already killed by the keyword veto or
+  never matches `TEACH_REQUEST` at all — while the spec and the paragraph above call the digit half
+  "load-bearing". `จ้างครูสอนหน่อย 800` added to `leaves tutoring-expense text alone`: the
+  `ค่า|บิล|ใบเสร็จ|จ้าง` prefixes must sit ADJACENT to `สอน`, so that line clears all four and only
+  the amount disqualifies it. That mutation now reds (280 → 279/1).
+- **Residual, accepted — human-object teach requests inside the ≤ 8-char window match.**
+  `สอนงานหน่อย`, `สอนเด็กหน่อย`, `ช่วยสอนลูกค้าหน่อย`, `สอนน้องใหม่หน่อย`, `ฝากสอนน้องที`,
+  `วันนี้สอนหน่อยไหม` and `จ้างครูสอนหน่อย` (no amount) all match. Costed at every call site and
+  none loses a business turn: `process-line-webhook.use-case.ts:2811` is UNLINKED-only (the public
+  card instead of the entry-door card), `:3018` fires only inside the two AI-lane REFUSALS (the
+  entitlement card instead of the bare line, and `staff_menu_capability_entitlements` instead of
+  `feature_disabled` in the outcome counts), and `:3565` only vetoes `advisorDirectAnswerText`,
+  which is already `undefined` unless the router chose `ADVISOR_CONVERSATION` — an expense or a
+  business read is never intercepted, and the matcher runs nowhere ABOVE the router. Widening the
+  veto would therefore buy nothing but risk. Note the door-card swap at `:2811`: a stranger typing
+  these words is shown features and NOT the signup door.
+- **Residual, accepted — the digit veto also kills teach requests that name a number**, e.g.
+  `สอนวิธีใช้ 2 อย่างหน่อย`, `สอนหน่อย 1 เรื่อง`. Narrowing it to a baht/amount context was
+  considered and rejected: the false-positive direction is free (above) while a mis-read tutoring
+  expense is not, so the veto keeps the bias toward the business record.
+- **Residual, accepted — `ที` misses common casual endings.** `สอนทีเถอะ`, `สอนทีสิ`,
+  `สอนทีได้ไหม` do not match (`ที` is only accepted before ค/น or end of message). `สอนทีมหน่อย`
+  and `สอนทีละขั้นตอนหน่อย` behave correctly via the `หน่อย` branch. Add alternations only if UAT
+  shows the phrasing.
+- Checked and clean: `\s` in the window covers `สอน  หน่อย`; trailing `!!`, an emoji and a newline
+  still match (only `\d` vetoes); Thai combining/tone marks count as window chars, so
+  `สอนพนักงานใหม่หน่อย` (11) and `สอนน้องมั่งมีหน่อย` (10) fall outside it while `สอนน้องใหม่หน่อย`
+  (8) does not; NFC/NFD/NFKC/NFKD all match identically (Thai marks do not decompose), so the repo's
+  NFC-not-NFKC gotcha does not bite here. Ordering verified: `staffMenuCommand` runs at `:2751`, so
+  `ติดต่อเจ้าหน้าที่` / `คุยกับน้องมั่งมี` / RESUME_AI / the menu tiles are all matched BEFORE the
+  capability check at `:2811`, and a bare numeric reply is vetoed by `\d` anyway.
+
 Next:
 - Teach-phrasing branch: Owner review → PR → UAT → send `สอนวิธีใช้หน่อย` as (1) an unlinked LINE
   account (expect the six-function card), (2) a linked employee of an AI-off company (expect the
