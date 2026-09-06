@@ -25,6 +25,23 @@ export type AdvisorDirectAnswerContext = {
  *  stay conversational and are allowed. Thai digits included; the parser never maps them. */
 const BAHT_AMOUNT = /[0-9๐-๙][0-9๐-๙,]*(?:\.[0-9๐-๙]+)?\s*(?:บาท|บ\.)|฿\s*[0-9๐-๙]/;
 
+/** Persona veto (spec §9.2; UAT 2026-09-06 delivered "สวัสดีครับ! หนูคือ AI Assistant ของ MangmeePlus …"
+ *  straight to the customer). The router prompt now carries the persona, but prompt wording is not a
+ *  trust boundary: a male particle, the assistant's own ผม, or a wrong self-name declines the shortcut
+ *  and the composer turn (which owns the persona) answers instead. Never repaired. */
+const MALE_PARTICLE = /ครับ/u;
+/** ผม as HER pronoun only: line-initial, or after whitespace with a self-predicate. A user's quoted
+ *  «ผม…» follows « and matches neither, and hair (ตัดผม) has no whitespace before it. */
+const OWN_PRONOUN_PHOM = /^ผม|\sผม(?:ชื่อ|คือ|เป็น|ยินดี|พร้อม|เอง|ขอ|จะ|ช่วย)/mu;
+const WRONG_SELF_NAME = /AI Assistant|WatchDog|Mangmee ?Plus AI|ผู้ช่วย AI ของ Mangmee ?Plus/iu;
+/** A social answer is 1–3 sentences (spec §12). A list or numbered steps is a tutorial, which the
+ *  permission-scoped walkthrough lane owns — never a model-written one from here. */
+const LIST_SHAPE = /(?:^|\s)(?:[•▪‣]|\d{1,2}[.)])\s+\S/u;
+
+function looksLikeTutorial(text: string): boolean {
+  return (text.match(/\n/g)?.length ?? 0) >= 2 || LIST_SHAPE.test(text);
+}
+
 /**
  * Returns the reply text to deliver directly from the single intake call, or null to fall back to
  * the existing full path. Fail-closed on every gate; never repairs model output.
@@ -52,5 +69,7 @@ export function advisorDirectAnswerText(rawAdvisorAnswer: unknown, ctx: AdvisorD
   const text = answer.answerText?.trim();
   if (!text) return null;
   if (BAHT_AMOUNT.test(text)) return null;
+  if (MALE_PARTICLE.test(text) || OWN_PRONOUN_PHOM.test(text) || WRONG_SELF_NAME.test(text)) return null;
+  if (looksLikeTutorial(text)) return null;
   return text;
 }

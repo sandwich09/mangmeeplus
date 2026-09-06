@@ -3468,6 +3468,10 @@ export class ProcessLineWebhookUseCase {
       await this.persistIntakeTurn({
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: normalizedText, replyText: advisorDirectText, intent: 'UNKNOWN',
+        // The one model call that wrote this reply, as the route response already reports it — before
+        // this the direct lane's AiTurn row carried no model id and no duration at all (UAT 2026-09-06).
+        modelId: routePlan.usage?.[0]?.modelId,
+        durationMs: routePlan.usage?.reduce((total, entry) => total + entry.durationMs, 0),
       });
       await this.deliverCompletedReply(event, advisorDirectText, companyId, resolvedAccess);
       await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
@@ -4387,6 +4391,9 @@ export class ProcessLineWebhookUseCase {
     replyText: string;
     intent: 'READ_SUMMARY' | 'EVIDENCE_CAPTURE' | 'SIGNATURE_REQUEST' | 'CLARIFY' | 'MUTATION_REQUEST' | 'CORRECTION' | 'UNKNOWN';
     refused?: boolean;
+    /** Lineage of an intake lane that answered from its own model call (advisor direct answer). */
+    modelId?: string;
+    durationMs?: number;
   }): Promise<void> {
     try {
       await this.timeStage(input.webhookEventId, 'persistence', async () => {
@@ -4409,6 +4416,8 @@ export class ProcessLineWebhookUseCase {
             agent: 'intake',
             refused: input.refused ?? false,
             replyPreview: input.replyText.slice(0, PREVIEW_MAX_CHARS),
+            ...(input.modelId !== undefined && { modelId: input.modelId }),
+            ...(input.durationMs !== undefined && { durationMs: input.durationMs }),
           },
         });
       });

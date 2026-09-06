@@ -67,4 +67,45 @@ describe('advisorDirectAnswerText (Slice A)', () => {
     assert.equal(advisorDirectAnswerText({ ...socialAnswer, offeredCards: [] }, clearCtx), null);
     assert.equal(advisorDirectAnswerText(undefined, clearCtx), null);
   });
+
+  // UAT 2026-09-06 (build f2bd38ed): this exact draft reached the customer. The persona is enforced
+  // here deterministically, not only in the prompt — fail-closed to the composer turn, never repaired.
+  it('vetoes the UAT off-persona draft and every male particle / own ผม / wrong self-name (spec §9.2)', () => {
+    const uat = 'สวัสดีครับ! หนูคือ AI Assistant ของ MangmeePlus 🤖 พร้อมช่วยคุณจัดการค่าใช้จ่าย ดูข้อมูลธุรกิจ และตอบคำถามต่างๆ มีอะไรให้ช่วยไหมครับ?';
+    assert.equal(advisorDirectAnswerText({ ...socialAnswer, answerText: uat }, clearCtx), null);
+    for (const off of [
+      'สวัสดีครับ น้องมั่งมีเองค่ะ', // one stray ครับ is enough
+      'ยินดีครับผม',
+      'ได้เลยนะครับ',
+      'ผมชื่อน้องมั่งมีค่ะ',
+      'สวัสดีค่ะ ผมพร้อมช่วยเสมอค่ะ',
+      'น้องมั่งมีคือผู้ช่วย AI ของ MangmeePlus ค่ะ',
+      'I am the WatchDog assistant, nice to meet you.',
+      'I am Mangmee Plus AI, happy to help!',
+    ]) {
+      assert.equal(advisorDirectAnswerText({ ...socialAnswer, answerText: off }, clearCtx), null, off);
+    }
+  });
+
+  it('delivers a proper น้องมั่งมี answer; a user-quoted «ผม…» and hair (ตัดผม) never veto', () => {
+    const proper = 'สวัสดีค่ะ น้องมั่งมีเองค่ะ ผู้ช่วยประจำร้านที่คอยช่วยเรื่องค่าใช้จ่ายและงานในระบบนะคะ 😊';
+    assert.equal(advisorDirectAnswerText({ ...socialAnswer, answerText: proper }, clearCtx), proper);
+    const quoted = 'ที่คุณพิมพ์ว่า «ผมเหนื่อยมาก» น้องมั่งมีเข้าใจเลยค่ะ พักสักหน่อยนะคะ';
+    assert.equal(advisorDirectAnswerText({ ...socialAnswer, answerText: quoted }, clearCtx), quoted);
+    const haircut = 'ร้านตัดผมแถวนี้ส่วนใหญ่เปิดสายค่ะ';
+    assert.equal(advisorDirectAnswerText({ ...socialAnswer, answerText: haircut }, clearCtx), haircut);
+  });
+
+  it('a list or numbered steps is a tutorial, which the walkthrough lane owns — never a social draft', () => {
+    for (const tutorial of [
+      'ง่ายมากค่ะ\n1) ถ่ายรูปใบเสร็จส่งมา\n2) ตรวจยอดแล้วกดยืนยัน\n3) พิมพ์ถามสรุปได้เลย',
+      'ทำได้ 2 อย่างค่ะ • ดูค่าใช้จ่าย • ดูงานค้าง',
+      'Step 1. send a receipt. Step 2. confirm the draft.',
+    ]) {
+      assert.equal(advisorDirectAnswerText({ ...socialAnswer, answerText: tutorial }, clearCtx), null, tutorial);
+    }
+    // One line break for breathing room is still a chat-sized answer.
+    const twoLines = 'เข้าใจเลยค่ะ\nพักสักหน่อยแล้วค่อยลุยต่อนะคะ';
+    assert.equal(advisorDirectAnswerText({ ...socialAnswer, answerText: twoLines }, clearCtx), twoLines);
+  });
 });
