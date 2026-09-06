@@ -4,7 +4,10 @@ Status: PR #447 (`codex/receipt-charge-vat-mode`). First cut `d300b144` was revi
 round 2 applied the controller's decisions — R1 (the ROUNDING row withdrawn), F5, F6, F9, F11, F14 —
 and recorded F7, F8, F10, F13 as findings. **Round 3 fixes F8** (`reconcileExpenseVat` now carries
 `chargeKind`), which is what makes R1's story true: the reviewer can now land a charge-bearing bill
-on the tax invoice. F7, F10 and F13 stay recorded, not fixed. Not merged.
+on the tax invoice. **Round 4 closes the window question** (M1/M2/M3/M4 of the delta review on
+`e9496d59`): the whole-baht comparison is strictly under one baht in both directions, six boundary
+fixtures pin the constant, spec §7.4 carries the rule, and the `rowsSubtotal` gate comment says
+which half of it is real. F7, F10 and F13 stay recorded, not fixed. Not merged.
 Owner: Owner (UAT report 2026-09-06, build 178d3fb6)
 Scope: `apps/api` receipt OCR apply service + the LINE capture/check-bill replies, plus (round 3) one
 line of `expense-vat-reconciliation.logic.ts`. No contracts, web, gateway, schema or migration
@@ -97,16 +100,22 @@ CHECK_BILL   status ITEMS_DID_NOT_RECONCILE          chargesApplied 0
    ใช้ยอดตามเอกสาร เพื่อบันทึกตามใบเสร็จ" — which names the amount, the sign and the one control that
    records the printed figure.
 
-   **Deviation from the brief, flagged for the controller.** The brief said `≤ 0.50` in either
-   direction AND required the fixture "printed VAT 55 / total 852" to keep its rows with a −0.79
-   remainder reason. Those two cannot both hold: 55.79 − 55 = 0.79. The implemented window is
-   `MAX_WHOLE_BAHT_VAT_ROUNDING = 1` (strictly under one baht), because
+   **The window, decided (round 4). `MAX_WHOLE_BAHT_VAT_ROUNDING = 1`, compared STRICTLY: a gap of
+   exactly ฿1.00 folds, in both directions.** The brief had said `≤ 0.50` in either direction AND
+   required the fixture "printed VAT 55 / total 852" to keep its rows with a −0.79 remainder reason;
+   those two cannot both hold (55.79 − 55 = 0.79), so the window went to one baht, because
    (a) the named fixture is the concrete acceptance criterion and a POS that TRUNCATES its VAT box
    (Thai ปัดเศษทิ้ง, 55.79 → 55) is as real as one that rounds (→ 56), and a 0.50 window would fold
    exactly those bills and delete their charge rows — the bug under repair; and
    (b) the window is safe at 1.00 because it accepts no amount: the record still carries the computed
-   VAT, still reads `MISMATCH`, and still blocks confirmation until a reviewer answers. One line to
-   revert if the Owner wants 0.50: the constant, and the truncation fixture's expectation.
+   VAT, still reads `MISMATCH`, and still blocks confirmation until a reviewer answers.
+
+   Round 4 made the comparison exclusive. `closeEnough` compared `<= 1`, so a gap of exactly ฿1.00
+   was accepted and labelled "บิลปัดเศษ VAT เป็นบาทเต็ม ต่างจากที่คำนวณ 1.00 บาท" — but a gap of
+   exactly one baht against a whole-baht printed box means the COMPUTED VAT is a whole baht too, and
+   a whole baht is not the rounding of another: that page disagrees with itself and has to fold with
+   both numbers. `closeEnough` took a fourth argument, `exclusive`, set only on the two whole-baht
+   comparisons; the ฿0.05 satang tolerance beside it still compares inclusively (F13 untouched).
 
 3. **One source of truth for the LINE card.** `apply()` now returns `charges: ExpenseChargeSummary[]`
    built by the shared `expenseLineCharges` over the rows it actually wrote. `formatPaypersReply`
@@ -263,6 +272,43 @@ Same bill, VAT box 55  RECONCILED_ITEM_LINES   chargesApplied 1  same 7 rows, no
   `test:boot` — "boot-di-smoke: Nest resolved every provider in 133ms".
 - Heavy suites ran under the `mkdir /tmp/mangmee-heavy.lock` mutex, released with `rmdir` afterwards.
 
+### Round 4 verification (the strict window, its fixtures, and the spec)
+
+The constant was unpinned: raising it to 2 left the whole spec green. Six boundary fixtures on the
+Owner's check-bill SHAPE now hold both edges in both directions. Only the gratuity moves between
+them, and only to put the COMPUTED VAT where the gap has to land — the printed box is always a whole
+baht, so the computed side has to carry the fraction:
+
+| gratuity | taxable | computed VAT | printed VAT / total | gap | expected |
+|---|---|---|---|---|---|
+| 75.00 | 800.00 | 56.00 | 57 / 857.00 | **+1.00** | folds — `ITEMS_DID_NOT_RECONCILE`, no charge row |
+| 75.00 | 800.00 | 56.00 | 55 / 855.00 | **−1.00** | folds |
+| 32.00 | 757.00 | 52.99 | 54 / 811.00 | **+1.01** | folds |
+| 18.00 | 743.00 | 52.01 | 51 / 794.00 | **−1.01** | folds |
+| 18.00 | 743.00 | 52.01 | 53 / 796.00 | **+0.99** | 7 rows kept, `vatRounding` names `0.99` |
+| 32.00 | 757.00 | 52.99 | 52 / 809.00 | **−0.99** | 7 rows kept, `vatRounding` names `-0.99` |
+
+- **RED first**, fixtures added before the production line moved:
+  `receipt-ocr-apply.service.spec.ts` **105 tests, 103 pass, 2 fail** — exactly the ±1.00 pair,
+  `actual 'RECONCILED_ITEM_LINES' / expected 'ITEMS_DID_NOT_RECONCILE'`. The ±1.01 and ±0.99 four
+  were green on the old code too: they pin the edges the change must NOT move.
+- After the strict comparison: **105/105**.
+- **Mutation M1**, `MAX_WHOLE_BAHT_VAT_ROUNDING = 2` (anchor `grep -cF` = 1) → **4 failures**, the
+  four "folds" fixtures, and only those. Restored, 105/105 again. The constant is now pinned: the
+  ±1.01 pair is what dies when the window widens, the ±1.00 pair when it stops being strict.
+- Spec §7.4 amended in the same PR (docs-first item M3): the ฿0.05 rule keeps its "or" branch, the
+  whole-baht allowance is written out with its guard, its strictness and its `MISMATCH` consequence,
+  `vatRounding` joins the outcome list beside `RECONCILED_ITEM_LINES` / `ITEMS_DID_NOT_RECONCILE`,
+  the printed-arithmetic VAT mode is stated as deciding BEFORE the extractor's word (cross-referenced
+  to this file), and it now says in as many words that no `ROUNDING` and no negative line is ever
+  synthesized. §7.3 and §14 unchanged.
+- M4, comment only: the `rowsSubtotal` gate now says the comparison is real ONLY on the item branch.
+  The fallback half (`totals.subtotalAmount`) is reached only where the single base line was built
+  FROM `fields.subtotalAmount`, so it agrees by construction and cannot fail.
+- `process-line-webhook.use-case.spec.ts` **204/204**; `spec-suite-coverage.spec.ts` **3/3** (no new
+  spec file, so no `package.json` edit); `check-di-metadata.mjs` 794 files / 870 decorated classes /
+  820 with constructor dependencies, clean.
+
 ## Review findings recorded, NOT fixed (controller decision, 2026-09-06)
 
 Each was reproduced through the real functions before it was written down; the outputs below are
@@ -371,9 +417,9 @@ worse: `MAX_WHOLE_BAHT_VAT_ROUNDING` compares at 1.00, far from any satang bound
 
 ## Next
 
-- **Controller decision needed on the window**: `MAX_WHOLE_BAHT_VAT_ROUNDING = 1` (under one baht,
-  either direction) versus the brief's `≤ 0.50`. See the deviation note in decision 2 — 0.50 folds
-  the truncating-POS bill the brief itself named as a required fixture.
+- ~~**Controller decision needed on the window.**~~ **Closed in round 4**: `MAX_WHOLE_BAHT_VAT_ROUNDING
+  = 1`, compared strictly, both signs; six boundary fixtures pin it and spec §7.4 states it. The
+  brief's `≤ 0.50` folds the truncating-POS bill the brief itself named as a required fixture.
 - ~~**F8 blocks the story R1 tells.**~~ **Fixed in round 3** — see the F8 section above. `ใช้ยอด
   ตามเอกสาร` on the Owner's check bill now lands 725.00 / 797.00 / 56.00 / 853.00 with the §5.1
   identity holding, and a printed WHT beside a service charge no longer 400s the reviewer's save.

@@ -1486,6 +1486,59 @@ describe('apply: the printed arithmetic decides the VAT mode, not the extractor 
     assert.equal(satangVat.lines.length, 1);
   });
 
+  /**
+   * The window itself, pinned at both edges and in both directions, because the constant is the
+   * whole licence: at exactly ฿1.00 the computed VAT is a whole baht too, and one whole baht is not
+   * a ROUNDING of another — it is the page disagreeing with itself, so the comparison is strict.
+   *
+   * The gratuity is the only figure that moves, and it moves only to put the computed VAT where the
+   * gap has to land — the printed box is always a whole baht, so the computed side has to carry the
+   * fraction:
+   *   Gratuity 75.00 → taxable 800.00, computed VAT 56.00  → printed 57 / 55 miss by ±1.00
+   *   Gratuity 32.00 → taxable 757.00, computed VAT 52.99  → printed 54 / 52 miss by +1.01 / −0.99
+   *   Gratuity 18.00 → taxable 743.00, computed VAT 52.01  → printed 51 / 53 miss by −1.01 / +0.99
+   */
+  const wholeBahtWindow = (gratuity: string, printedVat: number, taxable: number) => ({
+    ...checkBill,
+    additionalCharges: [{ ...checkBill.additionalCharges[0], amount: gratuity }],
+    vatAmount: printedVat.toFixed(2),
+    grandTotalAmount: (taxable + printedVat).toFixed(2),
+  });
+
+  for (const [gap, gratuity, printedVat, taxable] of [
+    ['+1.00', '75.00', 57, 800],
+    ['-1.00', '75.00', 55, 800],
+    ['+1.01', '32.00', 54, 757],
+    ['-1.01', '18.00', 51, 743],
+  ] as const) {
+    it(`folds when a whole-baht VAT box misses the computed VAT by ${gap}`, async () => {
+      const { lines, result } = await applyFields(wholeBahtWindow(gratuity, printedVat, taxable), null, {}, TODAY);
+
+      assert.equal(result.chargeReconciliationStatus, 'ITEMS_DID_NOT_RECONCILE');
+      assert.equal(result.chargesApplied, 0);
+      assert.equal(lines.length, 1);
+      assert.equal(lines.some((line: any) => line.chargeKind != null), false,
+        'a gap this wide is not a rounding, so no charge row is kept on its account');
+    });
+  }
+
+  for (const [gap, gratuity, printedVat, taxable] of [
+    ['+0.99', '18.00', 53, 743],
+    ['-0.99', '32.00', 52, 757],
+  ] as const) {
+    it(`keeps the rows when a whole-baht VAT box misses the computed VAT by ${gap}`, async () => {
+      const { lines, record, result } = await applyFields(wholeBahtWindow(gratuity, printedVat, taxable), null, {}, TODAY);
+
+      assert.equal(result.chargeReconciliationStatus, 'RECONCILED_ITEM_LINES');
+      assert.equal(result.chargesApplied, 1);
+      assert.equal(lines.length, 7, 'six goods rows and the gratuity, exactly as printed');
+      assert.ok(result.reviewReasons.some((reason: string) =>
+        reason.startsWith(RECEIPT_REVIEW_REASONS.vatRounding) && reason.includes(`${gap.replace('+', '')} บาท`)),
+        `the remainder is named with its sign: ${JSON.stringify(result.reviewReasons)}`);
+      assert.equal(record.vatAmount, (taxable * 0.07).toFixed(4), 'and the record still keeps the computed VAT');
+    });
+  }
+
   // A whole baht is the whole licence: a gap this size is the page disagreeing with itself, and the
   // fold — with both numbers — is what the reviewer has to be given.
   it('stops at one baht: a zero-rated tip leaves 5.25 of the printed VAT unexplained', async () => {

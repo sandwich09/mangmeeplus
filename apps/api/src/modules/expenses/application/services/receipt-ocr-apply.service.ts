@@ -117,8 +117,11 @@ const VAT_TOLERANCE = 0.05;
 const MAX_IMPLIED_VAT_RATE = 0.2;
 const MAX_OCR_ADDITIONAL_CHARGES = 10;
 /** How far a WHOLE-BAHT printed VAT box (and the total that carries it) may sit from the computed
- *  figures and still be that merchant rounding its own VAT rather than a misread number. Under one
- *  baht, either way: a POS that rounds prints 56 where 55.79 was due, one that truncates prints 55.
+ *  figures and still be that merchant rounding its own VAT rather than a misread number. STRICTLY
+ *  under one baht, either way: a POS that rounds prints 56 where 55.79 was due, one that truncates
+ *  prints 55. The comparison is exclusive because a gap of exactly ฿1.00 means the computed VAT is
+ *  itself a whole baht, and a whole baht is not the rounding of another — that page disagrees with
+ *  itself and has to reach the reviewer as a fold with both numbers.
  *  Nothing is accepted by this — the record keeps the computed VAT and stays a MISMATCH — it only
  *  decides whether the reviewer sees the document's real rows or a single folded summary line. */
 const MAX_WHOLE_BAHT_VAT_ROUNDING = 1;
@@ -469,9 +472,18 @@ function prepareLine(
   };
 }
 
-function closeEnough(actual: string, expected: string | undefined, tolerance = VAT_TOLERANCE): boolean {
+/** `exclusive` is the whole-baht window only (see `MAX_WHOLE_BAHT_VAT_ROUNDING`): a gap of exactly
+ *  ฿1.00 means the computed VAT is a whole baht too, and one whole baht is not a rounding of
+ *  another. The ฿0.05 satang tolerance keeps its inclusive comparison, unchanged. */
+function closeEnough(
+  actual: string,
+  expected: string | undefined,
+  tolerance = VAT_TOLERANCE,
+  exclusive = false,
+): boolean {
   if (!expected) return true;
-  return Math.abs(Number(actual) - Number(toMoney4(expected))) <= tolerance;
+  const gap = Math.abs(Number(actual) - Number(toMoney4(expected)));
+  return exclusive ? gap < tolerance : gap <= tolerance;
 }
 
 /**
@@ -493,11 +505,12 @@ function printedVatIsWholeBaht(fields: ReceiptOcrFieldResult, totals: ReturnType
   // same remainder is a coincidence, not evidence — and widening on it would let a charge inherit
   // the document rate that §5.1 says nothing proved (a slip reading 100.00 + 10.00, VAT 7.00).
   if (positiveMoney(fields.grandTotalAmount) === undefined || fields.subtotalAmount === undefined) return false;
-  // And the rows must already reach the printed subtotal: the document's own item block when it
-  // printed one, otherwise this candidate's own goods total (the charge branch builds its base line
-  // FROM that subtotal, so it agrees by construction). A bill whose printed rows disagree with its
-  // printed subtotal is a different disagreement, and the summary fold — ITEMS_DID_NOT_RECONCILE,
-  // with both numbers — is what has to carry that one to the reviewer.
+  // And the printed item rows must already reach the printed subtotal. This gate is REAL only on
+  // the item branch: a bill whose own rows disagree with its own subtotal is a different
+  // disagreement, and the summary fold — ITEMS_DID_NOT_RECONCILE, with both numbers — is what has
+  // to carry that one to the reviewer. The fallback half is not a gate: with no usable item block
+  // the only branch left is the charge branch, which builds its single base line FROM
+  // `fields.subtotalAmount`, so this candidate's goods total agrees by construction.
   const items = usableItemLines(fields);
   const rowsSubtotal = items.length >= 2
     ? items.reduce((sum, item) => sum + (positiveMoney(item.amount) ?? 0), 0).toFixed(4)
@@ -513,13 +526,16 @@ function reconciledTotals(
   fields: ReceiptOcrFieldResult,
 ): ReturnType<typeof calcDocumentTotals> | null {
   const totals = calcDocumentTotals({ lines: candidate.map((line) => ({ ...line.totals, chargeKind: line.chargeKind ?? null })) });
-  const taxTolerance = printedVatIsWholeBaht(fields, totals) ? MAX_WHOLE_BAHT_VAT_ROUNDING : VAT_TOLERANCE;
+  const wholeBaht = printedVatIsWholeBaht(fields, totals);
+  const taxTolerance = wholeBaht ? MAX_WHOLE_BAHT_VAT_ROUNDING : VAT_TOLERANCE;
   // Mixed per-line VAT rates make the document's single printed taxable base incomparable.
   const taxableIsComparable = new Set(candidate.map((line) => line.vatRate ?? '')).size <= 1;
-  const ok = closeEnough(totals.grandTotalAmount, fields.grandTotalAmount, taxTolerance)
+  // The whole-baht window is STRICTLY under one baht in either direction; the satang tolerance
+  // beside it keeps comparing inclusively, exactly as it did before this widening existed.
+  const ok = closeEnough(totals.grandTotalAmount, fields.grandTotalAmount, taxTolerance, wholeBaht)
     // Never widened: the tax BASE is the document's own arithmetic, not its rounding.
     && (!taxableIsComparable || closeEnough(totals.taxableAmount, fields.taxableAmount))
-    && closeEnough(totals.vatAmount, fields.vatAmount, taxTolerance);
+    && closeEnough(totals.vatAmount, fields.vatAmount, taxTolerance, wholeBaht);
   return ok ? totals : null;
 }
 
