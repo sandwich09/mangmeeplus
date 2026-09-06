@@ -489,7 +489,12 @@ export function reconcileExpenseVat(input: {
   const sourceOrigin = input.sourceOrigin ?? 'REVIEWER';
 
   return {
-    lines: accepted.map(({ lineNumber, vatRate, totals: lineTotals }) => ({ lineNumber, vatRate, totals: lineTotals })),
+    // `chargeKind` travels with the row, not just into `totals` above: `acceptExpenseVatSource` and
+    // `applyExpenseWhtInput` both re-derive the header from these rows, and without the flag every
+    // charge would be counted into `subtotalAmount` as goods (spec §5.1). `whtRate` stays behind —
+    // it is an input, and the accepted-VAT confirm path writes what it finds here into Prisma.
+    lines: accepted.map(({ lineNumber, vatRate, chargeKind, totals: lineTotals }) =>
+      ({ lineNumber, vatRate, chargeKind, totals: lineTotals })),
     totals,
     snapshot: {
       version: 1,

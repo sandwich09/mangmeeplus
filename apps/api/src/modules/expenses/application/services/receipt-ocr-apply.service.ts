@@ -4,10 +4,12 @@ import { Prisma } from '../../../../generated/prisma/client';
 import Decimal from 'decimal.js';
 import {
   EXPENSE_LINE_CHARGE_KIND_LABELS,
+  expenseLineCharges,
   isAssumedDateReading,
   RECEIPT_ADDITIONAL_CHARGE_KINDS,
   RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE,
   todayCivilDate,
+  type ExpenseChargeSummary,
   type ExpenseDocumentDateStatus,
   type ExpenseLineChargeKind,
   type ExpenseVatMode,
@@ -47,8 +49,19 @@ export const RECEIPT_REVIEW_REASONS = {
   dateImplausible: 'วันที่ผิดปกติ',
   chargeVatUnknown: 'ค่าใช้จ่ายเพิ่มยังไม่รู้ VAT – ตรวจก่อนยืนยัน',
   chargesFolded: 'ค่าใช้จ่ายเพิ่มถูกรวมในยอดเดียว – ตรวจก่อนยืนยัน',
+  vatRounding: 'บิลปัดเศษ VAT เป็นบาทเต็ม',
   whtWithCharges: 'ตรวจฐานหัก ณ ที่จ่ายกับค่าบริการ',
 } as const;
+
+/** The rows are the document's rows and the record's VAT is `rate × taxable`, so the baht the
+ *  merchant rounded its VAT box to cannot be reproduced without inventing a line. It is named
+ *  instead, together with the one control that records the printed figure: the reviewer's existing
+ *  "ใช้ยอดตามเอกสาร" puts the remainder in the VAT — where the merchant put it — and leaves the tax
+ *  base alone. */
+function vatRoundingReason(remainder: number): string {
+  return `${RECEIPT_REVIEW_REASONS.vatRounding} ต่างจากที่คำนวณ ${remainder.toFixed(2)} บาท`
+    + ' – กด ใช้ยอดตามเอกสาร เพื่อบันทึกตามใบเสร็จ';
+}
 
 /** How far a printed date may sit from today before it is evidence of a misread rather than a date.
  *  A receipt can be issued a day ahead across a timezone, never a year ahead; and a bill older than
@@ -103,6 +116,15 @@ export function reviewReceiptDate(
 const VAT_TOLERANCE = 0.05;
 const MAX_IMPLIED_VAT_RATE = 0.2;
 const MAX_OCR_ADDITIONAL_CHARGES = 10;
+/** How far a WHOLE-BAHT printed VAT box (and the total that carries it) may sit from the computed
+ *  figures and still be that merchant rounding its own VAT rather than a misread number. STRICTLY
+ *  under one baht, either way: a POS that rounds prints 56 where 55.79 was due, one that truncates
+ *  prints 55. The comparison is exclusive because a gap of exactly ฿1.00 means the computed VAT is
+ *  itself a whole baht, and a whole baht is not the rounding of another — that page disagrees with
+ *  itself and has to reach the reviewer as a fold with both numbers.
+ *  Nothing is accepted by this — the record keeps the computed VAT and stays a MISMATCH — it only
+ *  decides whether the reviewer sees the document's real rows or a single folded summary line. */
+const MAX_WHOLE_BAHT_VAT_ROUNDING = 1;
 // Mirrors the gateway prompt bound; past this the item block is a catalogue, not an expense.
 const MAX_OCR_ITEM_LINES = 40;
 
@@ -117,6 +139,14 @@ function nonNegativeMoney(value: string | undefined): number | undefined {
 function positiveMoney(value: string | undefined): number | undefined {
   const n = Number(String(value ?? '').replace(/,/g, ''));
   return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+/** Every reader of the extractor's charge block goes through this. `additionalCharges` is JSON from
+ *  a separate service, so a non-array there is a value to ignore, not a crash: the guard used to sit
+ *  in one reader while `completeVatFields` reached `.some()` on the raw field first and threw a
+ *  TypeError that took the whole apply — and the draft — with it. */
+function ocrCharges(fields: ReceiptOcrFieldResult): readonly ReceiptOcrAdditionalCharge[] {
+  return Array.isArray(fields.additionalCharges) ? fields.additionalCharges : [];
 }
 
 /** A VAT rate as the contracts express it: a decimal fraction in [0,1), e.g. "0.07" or "0". */
@@ -165,7 +195,7 @@ export function verifyDiscountAmount(fields: ReceiptOcrFieldResult): ReceiptOcrF
   const base = fields.vatMode === 'VAT_EXCLUDED'
     ? positiveMoney(fields.taxableAmount) ?? (grand !== undefined && vat !== undefined ? grand - vat : undefined)
     : grand;
-  const charges = (fields.additionalCharges ?? []).reduce((sum, charge) => sum + (positiveMoney(charge.amount) ?? 0), 0);
+  const charges = ocrCharges(fields).reduce((sum, charge) => sum + (positiveMoney(charge.amount) ?? 0), 0);
   const implied = subtotal !== undefined && base !== undefined ? subtotal + charges - base : undefined;
   if (implied !== undefined && Math.abs(implied - discount) <= VAT_TOLERANCE) {
     return printed > 0 ? fields : { ...fields, discountAmount: discount.toFixed(2) };
@@ -174,6 +204,36 @@ export function verifyDiscountAmount(fields: ReceiptOcrFieldResult): ReceiptOcrF
   if (implied !== undefined && implied > VAT_TOLERANCE && implied <= subtotal!) out.discountAmount = implied.toFixed(2);
   else delete out.discountAmount;
   return out;
+}
+
+/**
+ * Which side of the printed total the VAT sits on, decided by the document's own arithmetic rather
+ * than by the word the extractor put in `vatMode`.
+ *
+ * UAT 2026-09-06 (records cmtp9v5bc…, cmtp9ul5d…, cmtp9tw7q…): three bills printing
+ * `130.00 + ค่าบริการ 13.00 + VAT 10.01 = 153.01` — VAT plainly ADDED ON TOP, exact to the satang —
+ * arrived labelled `VAT_INCLUDED`. Read as inclusive, the base and the charge come to 143.00, no
+ * reading reconciles against the printed 153.01, and `prepareOcrLines` folded the printed service
+ * charge into a single summary line: the chat card promised a charge row the record did not have.
+ *
+ * `subtotalAmount` is the goods total BEFORE the additional charges (the extractor prompt says so),
+ * so the charged base is `subtotal − discount + Σ charges`. Adding the printed VAT to that and
+ * hitting the printed total proves the VAT was added; reaching the total WITHOUT it proves the VAT
+ * was already inside. Returns null when neither reading explains the total — the extractor's word is
+ * still the answer there, exactly as before.
+ */
+function printedVatMode(
+  fields: ReceiptOcrFieldResult,
+  vat: number | undefined,
+  grand: number | undefined,
+): 'VAT_INCLUDED' | 'VAT_EXCLUDED' | null {
+  const subtotal = positiveMoney(fields.subtotalAmount);
+  if (subtotal === undefined || vat === undefined || grand === undefined) return null;
+  const charges = ocrCharges(fields).reduce((sum, charge) => sum + (positiveMoney(charge.amount) ?? 0), 0);
+  const base = subtotal - (nonNegativeMoney(fields.discountAmount) ?? 0) + charges;
+  if (Math.abs(base + vat - grand) <= VAT_TOLERANCE) return 'VAT_EXCLUDED';
+  if (Math.abs(base - grand) <= VAT_TOLERANCE) return 'VAT_INCLUDED';
+  return null;
 }
 
 /** Spec §19c decision 4: deterministic completion, not AI invention. When exactly one of
@@ -199,7 +259,7 @@ export function completeVatFields(fields: ReceiptOcrFieldResult): ReceiptOcrFiel
   }
 
   const printed = Number.parseFloat(String(fields.vatRate ?? ''));
-  const hasPerChargeVatTreatment = fields.additionalCharges?.some((charge) => charge.vatRate !== undefined) ?? false;
+  const hasPerChargeVatTreatment = ocrCharges(fields).some((charge) => charge.vatRate !== undefined);
   // Spec §19g decision 2: `printed >= 0` — a printed zero rate is a zero-rated supply and must
   // survive here, or §19f decision 3 only held because the old `defaultLineVatRate` fallback
   // happened to re-add a '0'. A printed 0 contradicted by a non-zero VAT amount still falls through
@@ -215,6 +275,14 @@ export function completeVatFields(fields: ReceiptOcrFieldResult): ReceiptOcrFiel
 
   const provenVat = Boolean(taxable && vat && grand && Math.abs(taxable + vat - grand) <= VAT_TOLERANCE);
   if (provenVat && (!validVatMode(out.vatMode) || out.vatMode === 'NO_VAT')) out.vatMode = 'VAT_EXCLUDED';
+  // The printed arithmetic outranks a mode the extractor GUESSED — VAT_INCLUDED, VAT_EXCLUDED,
+  // NO_VAT, or a word that is not a mode at all. It does not outrank EXEMPT or NEEDS_REVIEW: those
+  // are answers about the document's tax POSITION, not readings of its totals, and a supply exempted
+  // by law does not become taxable because a box on the slip adds up (the same line `provenVat`
+  // above already refuses to cross).
+  const deliberateMode = out.vatMode === 'EXEMPT' || out.vatMode === 'NEEDS_REVIEW';
+  const printedMode = deliberateMode ? null : printedVatMode(fields, vat, grand);
+  if (printedMode) out.vatMode = printedMode;
   // Only a proven base+VAT=total triple makes taxableAmount the subtotal: without it the line
   // unit price would be derived from a base that does not explain the total (deriveUnitPrice),
   // and the next review save would recompute the document DOWN to that base.
@@ -291,8 +359,7 @@ export function receiptFallbackLineTotal(fields: ReceiptOcrFieldResult): string 
   if (fields.grandTotalAmount) return fields.grandTotalAmount;
   const subtotal = positiveMoney(fields.subtotalAmount);
   if (subtotal === undefined) return undefined;
-  const charges = (Array.isArray(fields.additionalCharges) ? fields.additionalCharges : [])
-    .reduce((sum, charge) => sum + (Number(toMoney4(charge.amount)) || 0), 0);
+  const charges = ocrCharges(fields).reduce((sum, charge) => sum + (Number(toMoney4(charge.amount)) || 0), 0);
   // VAT_INCLUDED already has the tax inside the printed figures; adding it again double-counts.
   const vat = validVatMode(fields.vatMode) === 'VAT_INCLUDED' ? 0 : nonNegativeMoney(fields.vatAmount) ?? 0;
   const total = subtotal - (nonNegativeMoney(fields.discountAmount) ?? 0) + charges + vat;
@@ -405,9 +472,50 @@ function prepareLine(
   };
 }
 
-function closeEnough(actual: string, expected: string | undefined): boolean {
+/** `exclusive` is the whole-baht window only (see `MAX_WHOLE_BAHT_VAT_ROUNDING`): a gap of exactly
+ *  ฿1.00 means the computed VAT is a whole baht too, and one whole baht is not a rounding of
+ *  another. The ฿0.05 satang tolerance keeps its inclusive comparison, unchanged. */
+function closeEnough(
+  actual: string,
+  expected: string | undefined,
+  tolerance = VAT_TOLERANCE,
+  exclusive = false,
+): boolean {
   if (!expected) return true;
-  return Math.abs(Number(actual) - Number(toMoney4(expected))) <= VAT_TOLERANCE;
+  const gap = Math.abs(Number(actual) - Number(toMoney4(expected)));
+  return exclusive ? gap < tolerance : gap <= tolerance;
+}
+
+/**
+ * A merchant that prints its VAT as a whole baht has rounded (or truncated) its own VAT box, and the
+ * printed total carries the same remainder. The Owner's check bill: goods 725.00, Gratuity 72.00,
+ * VAT box "56" where 7% of 797.00 is 55.79, total 853.00 — both figures 0.21 out, `closeEnough`
+ * rejected each of them, and the whole bill folded, deleting the gratuity to hide the remainder.
+ *
+ * True widens ONLY the VAT and grand-total comparisons below, and only while the printed rows still
+ * add up to the printed subtotal: the rounding lives in the TAX, so a base that disagrees is a
+ * different problem and must keep failing (it becomes ITEMS_DID_NOT_RECONCILE). Nothing here is
+ * accepted as the record's VAT — the record keeps the computed figure and the printed one stays a
+ * MISMATCH the reviewer has to answer.
+ */
+function printedVatIsWholeBaht(fields: ReceiptOcrFieldResult, totals: ReturnType<typeof calcDocumentTotals>): boolean {
+  const printedVat = positiveMoney(fields.vatAmount);
+  if (printedVat === undefined || !Number.isInteger(printedVat)) return false;
+  // Both figures have to be on the page: a whole-baht VAT box with no printed total to carry the
+  // same remainder is a coincidence, not evidence — and widening on it would let a charge inherit
+  // the document rate that §5.1 says nothing proved (a slip reading 100.00 + 10.00, VAT 7.00).
+  if (positiveMoney(fields.grandTotalAmount) === undefined || fields.subtotalAmount === undefined) return false;
+  // And the printed item rows must already reach the printed subtotal. This gate is REAL only on
+  // the item branch: a bill whose own rows disagree with its own subtotal is a different
+  // disagreement, and the summary fold — ITEMS_DID_NOT_RECONCILE, with both numbers — is what has
+  // to carry that one to the reviewer. The fallback half is not a gate: with no usable item block
+  // the only branch left is the charge branch, which builds its single base line FROM
+  // `fields.subtotalAmount`, so this candidate's goods total agrees by construction.
+  const items = usableItemLines(fields);
+  const rowsSubtotal = items.length >= 2
+    ? items.reduce((sum, item) => sum + (positiveMoney(item.amount) ?? 0), 0).toFixed(4)
+    : totals.subtotalAmount;
+  return closeEnough(rowsSubtotal, fields.subtotalAmount);
 }
 
 /** A breakdown may replace the summary line only when it reproduces the document's own printed
@@ -418,12 +526,29 @@ function reconciledTotals(
   fields: ReceiptOcrFieldResult,
 ): ReturnType<typeof calcDocumentTotals> | null {
   const totals = calcDocumentTotals({ lines: candidate.map((line) => ({ ...line.totals, chargeKind: line.chargeKind ?? null })) });
+  const wholeBaht = printedVatIsWholeBaht(fields, totals);
+  const taxTolerance = wholeBaht ? MAX_WHOLE_BAHT_VAT_ROUNDING : VAT_TOLERANCE;
   // Mixed per-line VAT rates make the document's single printed taxable base incomparable.
   const taxableIsComparable = new Set(candidate.map((line) => line.vatRate ?? '')).size <= 1;
-  const ok = closeEnough(totals.grandTotalAmount, fields.grandTotalAmount)
+  // The whole-baht window is STRICTLY under one baht in either direction; the satang tolerance
+  // beside it keeps comparing inclusively, exactly as it did before this widening existed.
+  const ok = closeEnough(totals.grandTotalAmount, fields.grandTotalAmount, taxTolerance, wholeBaht)
+    // Never widened: the tax BASE is the document's own arithmetic, not its rounding.
     && (!taxableIsComparable || closeEnough(totals.taxableAmount, fields.taxableAmount))
-    && closeEnough(totals.vatAmount, fields.vatAmount);
+    && closeEnough(totals.vatAmount, fields.vatAmount, taxTolerance, wholeBaht);
   return ok ? totals : null;
+}
+
+/** Spec §5.1: a remainder the reconciled record could not reproduce is named, never hidden — and
+ *  never paid for with a line the document did not print. Empty while the two agree to the satang. */
+function vatRoundingReasons(
+  fields: ReceiptOcrFieldResult,
+  totals: ReturnType<typeof calcDocumentTotals>,
+): string[] {
+  const printedVat = positiveMoney(fields.vatAmount);
+  if (printedVat === undefined) return [];
+  const remainder = Number((printedVat - Number(totals.vatAmount)).toFixed(2));
+  return Math.abs(remainder) > VAT_TOLERANCE ? [vatRoundingReason(remainder)] : [];
 }
 
 /** Spec §5: the extracted item block, re-validated here because the gateway is a separate service
@@ -465,9 +590,9 @@ function prepareOcrLines(
 } {
   const vatMode = documentVatMode(fields);
   const whtRate = expenseWhtLineRate(ocrWhtInput(fields));
-  const hadChargeSuggestions = Array.isArray(fields.additionalCharges) && fields.additionalCharges.length > 0;
-  const charges = Array.isArray(fields.additionalCharges) && fields.additionalCharges.length <= MAX_OCR_ADDITIONAL_CHARGES
-    ? fields.additionalCharges.filter((charge) => {
+  const hadChargeSuggestions = ocrCharges(fields).length > 0;
+  const charges = ocrCharges(fields).length <= MAX_OCR_ADDITIONAL_CHARGES
+    ? ocrCharges(fields).filter((charge) => {
         // Spec §5.1 says `ROUNDING` is the one kind a document may print negative and every other
         // kind must be positive. Only the second half is enforced: `calcLineTotals` clamps a
         // document discount with `min(discount, lineSubtotal)`, which on a negative subtotal
@@ -580,7 +705,14 @@ function prepareOcrLines(
     const totals = reconciledTotals(proven, fields);
     // The printed totals adding up WITH the charges taxed is the proof §5.1 asks for — no guess and
     // nothing to review. Only when they do not does the charge rate become an open question.
-    if (totals) return { status: 'RECONCILED_ITEM_LINES', lines: proven, totals, chargesApplied: charges.length, chargeReviewReasons: whtReason };
+    if (totals) {
+      return {
+        status: 'RECONCILED_ITEM_LINES', lines: proven, totals, chargesApplied: charges.length,
+        // A whole-baht VAT box may have widened the acceptance above; whatever it did, a remainder
+        // the record could not reproduce is named here rather than papered over with a line.
+        chargeReviewReasons: [...vatRoundingReasons(fields, totals), ...whtReason],
+      };
+    }
     if (charges.length > 0) {
       const unproven = unprovenCharges(candidate);
       if (unproven) return { ...unproven, status: 'RECONCILED_ITEM_LINES' as const };
@@ -604,7 +736,12 @@ function prepareOcrLines(
     ];
     const proven = [...base, ...chargeLines('document')];
     const totals = reconciledTotals(proven, fields);
-    if (totals) return { status: 'RECONCILED_CHARGE_LINES', lines: proven, totals, chargesApplied: charges.length, chargeReviewReasons: whtReason };
+    if (totals) {
+      return {
+        status: 'RECONCILED_CHARGE_LINES', lines: proven, totals, chargesApplied: charges.length,
+        chargeReviewReasons: [...vatRoundingReasons(fields, totals), ...whtReason],
+      };
+    }
     const unproven = unprovenCharges(base);
     if (unproven) return unproven;
   }
@@ -666,6 +803,11 @@ type AppliedReceiptResult = AppliedReceiptCategory & {
   /** Only with ITEMS_DID_NOT_RECONCILE: what the printed rows add up to, for the reviewer to compare. */
   itemsSumAmount?: string;
   chargesApplied: number;
+  /** Spec §5.1: the charge rows this apply actually WROTE, derived by `expenseLineCharges` — the
+   *  same one the web summary and the S-3 read tool answer from. The LINE capture card printed the
+   *  OCR's `additionalCharges` suggestion instead and promised rows the record did not have
+   *  (UAT 2026-09-06); a caller that wants to name a charge reads this and nothing else. */
+  charges: ExpenseChargeSummary[];
   /** Spec §5.1/§5.2: readable reasons this draft must be reviewed, for the caller to put in
    *  `aiVerificationSummaryJson` and in its own reply. Returned rather than written here because
    *  both capture paths compose that JSON themselves after this service returns. */
@@ -742,7 +884,7 @@ export class ReceiptOcrApplyService {
     if (date) data['expenseDate'] = date;
     const vatMode = validVatMode(completed.vatMode);
     if (vatMode) data['vatMode'] = vatMode;
-    const appliedCategory = await this.prisma.client.$transaction(async (tx): Promise<AppliedReceiptResult | 'stale'> => {
+    const appliedCategory = await this.prisma.client.$transaction(async (tx): Promise<AppliedReceiptResult | { stale: ExpenseChargeSummary[] }> => {
       const currentExpense = await tx.expenseRecord.findFirst({
         where: { id: expenseId, companyId: ctx.companyId },
         select: {
@@ -750,13 +892,23 @@ export class ReceiptOcrApplyService {
           updatedAt: true,
           vatCaptureSnapshotJson: true,
           whtInputJson: true,
-          lines: { select: { whtRate: true, vatTreatment: true } },
+          // The charge columns come along because an outcome that writes NO lines still has to say
+          // what the record carries: `expenseLineCharges` over exactly these rows (F5).
+          lines: { select: { whtRate: true, vatTreatment: true, chargeKind: true, lineSubtotalAmount: true, vatAmount: true } },
           expenseCategory: { select: { id: true, name: true, companyId: true } },
         },
       });
+      /** Spec §5.1: what the record CARRIES right now, for every outcome that writes no lines of its
+       *  own. Returning `[]` there told the LINE card the charges had been folded into one total,
+       *  and it printed that sentence over records holding a real SERVICE_CHARGE row. */
+      const persistedCharges = expenseLineCharges((currentExpense?.lines ?? []).map((line) => ({
+        chargeKind: line.chargeKind,
+        lineSubtotalAmount: toMoney4(String(line.lineSubtotalAmount)),
+        vatAmount: toMoney4(String(line.vatAmount)),
+      })));
       if (options.expectedUpdatedAt && currentExpense?.updatedAt
         && currentExpense.updatedAt.getTime() !== options.expectedUpdatedAt.getTime()) {
-        return 'stale';
+        return { stale: persistedCharges };
       }
       if (!currentExpense) throw new NotFoundException(`Expense ${expenseId} not found`);
       const priorWht = currentExpense.whtInputJson as ExpenseWhtCapture | null;
@@ -881,6 +1033,8 @@ export class ReceiptOcrApplyService {
           ...(categorySuggestion ? { categorySuggestion } : {}),
           chargeReconciliationStatus: 'SUMMARY_LINE',
           chargesApplied: 0,
+          // This apply wrote no lines, so the charges are the ones already on the record — not none.
+          charges: persistedCharges,
           reviewReasons,
           dateVerified: dateReview.verified,
           dateAssumed: dateReview.assumed,
@@ -925,6 +1079,7 @@ export class ReceiptOcrApplyService {
         chargeReconciliationStatus: prepared!.status,
         ...(prepared!.itemsSumAmount ? { itemsSumAmount: prepared!.itemsSumAmount } : {}),
         chargesApplied: prepared!.chargesApplied,
+        charges: expenseLineCharges(prepared!.lines.map((line) => ({ chargeKind: line.chargeKind ?? null, ...line.totals }))),
         reviewReasons,
         dateVerified: dateReview.verified,
         dateAssumed: dateReview.assumed,
@@ -932,8 +1087,16 @@ export class ReceiptOcrApplyService {
         ...(dateReview.assumptions ? { dateAssumptions: dateReview.assumptions } : {}),
       };
     });
-    if (appliedCategory === 'stale') {
-      return { staleSkipped: true, candidatesCreated: 0, categoryId: null, categoryName: null, categoryAutoFilled: false } as unknown as ReceiptOcrApplyOutcome;
+    if ('stale' in appliedCategory) {
+      // F12: one honest shape, no cast that omits half the fields. Nothing was applied, so this
+      // outcome verified no date and raised no reason — but the record's own charge rows are real
+      // and the caller's card must be able to print them.
+      return {
+        staleSkipped: true, candidatesCreated: 0,
+        categoryId: null, categoryName: null, categoryAutoFilled: false,
+        chargeReconciliationStatus: 'SUMMARY_LINE', chargesApplied: 0, charges: appliedCategory.stale,
+        reviewReasons: [], dateVerified: false, dateAssumed: false, dateStatus: 'unverified',
+      };
     }
     // Spec S1-R5: ids, a boolean and a confidence band only — never the category name, the OCR text
     // or any document content. `autoFilled` splits "the server wrote it" from "the reviewer is only

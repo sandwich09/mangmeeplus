@@ -370,6 +370,106 @@ describe('additional charge lines in the document totals', () => {
   });
 });
 
+/**
+ * Finding F8. `reconcileExpenseVat` is where every header re-derivation starts, so the charge flag
+ * has to survive the rows it hands back. Two call sites rebuild the totals from exactly those rows —
+ * `acceptExpenseVatSource` (the reviewer's "ใช้ยอดตามเอกสาร") and `applyExpenseWhtInput` (every
+ * printed WHT: the OCR apply and both draft use-case paths) — and while `chargeKind` was dropped
+ * they counted a service charge into `subtotalAmount` and failed the §5.1 identity.
+ */
+describe('reconciled rows carry the charge flag into every header re-derivation', () => {
+  // The Owner's UAT check bill: 270+160+190+30+50+25 = 725 of goods, a 72.00 gratuity, a printed
+  // VAT box of 56 against a computed 55.79, printed total 853.
+  const checkBill = () => [
+    ...['270', '160', '190', '30', '50', '25'].map((unitPrice, index) => ({
+      lineNumber: index + 1, quantity: '1', unitPrice, vatRate: '0.07', chargeKind: null,
+    })),
+    { lineNumber: 7, quantity: '1', unitPrice: '72', vatRate: '0.07', chargeKind: 'SERVICE_CHARGE' as const },
+  ];
+  // 1000 of goods + a 100 service charge, VAT 77 printed on top, WHT withheld at 3%.
+  const whtBill = () => [
+    { lineNumber: 1, quantity: '1', unitPrice: '1000', vatRate: '0.07', chargeKind: null },
+    { lineNumber: 2, quantity: '1', unitPrice: '100', vatRate: '0.07', chargeKind: 'SERVICE_CHARGE' as const },
+  ];
+  // The identity is checked against the PERSISTED rows, which keep their own `chargeKind` — the
+  // shape `assertExpenseTotalsIdentity` and `ExpenseDetail.totalsIdentity` both compare against.
+  const identityError = (
+    vatMode: 'VAT_EXCLUDED',
+    result: { lines: Array<{ totals: any }>; totals: any },
+    inputs: ReadonlyArray<{ chargeKind: string | null }>,
+  ) => expenseTotalsIdentityError({
+    vatMode,
+    totals: result.totals,
+    lines: result.lines.map((line, index) => ({ ...line.totals, chargeKind: inputs[index]!.chargeKind as any })),
+  });
+
+  it('returns the charge kind on the rows it reconciled', () => {
+    const lines = checkBill();
+    const vat = reconcileExpenseVat({ vatMode: 'VAT_EXCLUDED', lines });
+    assert.deepEqual(vat.lines.map((line) => line.chargeKind ?? null),
+      [null, null, null, null, null, null, 'SERVICE_CHARGE']);
+    // …which is what keeps a re-derivation from those rows alone honest.
+    assert.equal(calcDocumentTotals({ lines: vat.lines.map((line) => ({ ...line.totals, chargeKind: line.chargeKind })) })
+      .subtotalAmount, '725.0000');
+  });
+
+  it('lands the accepted document VAT on the printed 725 / 797 / 56 / 853', () => {
+    const lines = checkBill();
+    const vat = reconcileExpenseVat({ vatMode: 'VAT_EXCLUDED', lines, source: { inputType: 'AMOUNT', vatAmount: '56' } });
+    assert.equal(vat.snapshot.reconciliation.status, 'MISMATCH', 'the whole-baht VAT box is 0.21 off the computed 55.79');
+    const expense = {
+      vatMode: 'VAT_EXCLUDED', whtInputJson: null, ...vat.totals, vatCaptureSnapshotJson: vat.snapshot,
+      lines: lines.map((line, index) => ({ ...line, ...vat.lines[index]!.totals })),
+    } as any;
+
+    const accepted = acceptExpenseVatSource(expense, { reason: 'ตรวจกับใบเสร็จแล้ว', vatLineNumber: 1 });
+
+    assert.equal(accepted.totals.subtotalAmount, '725.0000', 'the gratuity is a charge, not goods');
+    assert.equal(accepted.totals.taxableAmount, '797.0000');
+    assert.equal(accepted.totals.vatAmount, '56.0000');
+    assert.equal(accepted.totals.grandTotalAmount, '853.0000');
+    assert.equal(identityError('VAT_EXCLUDED', accepted, lines), null);
+  });
+
+  // The WHT rule itself is untouched here. `applyExpenseWhtInput` applies a RATE to each WITHHELD
+  // row's own `taxableAmount`, and uses the base — `totals.taxableAmount` when nothing is excluded,
+  // otherwise the withheld rows' taxable sum — to cap and allocate an AMOUNT. Both call shapes in
+  // the codebase are pinned: the OCR apply excludes the charge rows (§5.1), the draft use-cases
+  // withhold against the whole document.
+  it('keeps the goods subtotal when a printed WHT recomputes the header', () => {
+    for (const [label, excluded, expectedWht, expectedLineWht] of [
+      ['charges excluded (receipt-ocr-apply)', new Set([2]), '30.0000', ['30.0000', '0.0000']],
+      ['whole document (expense-draft use-cases)', new Set<number>(), '33.0000', ['30.0000', '3.0000']],
+    ] as const) {
+      const lines = whtBill();
+      const vat = reconcileExpenseVat({ vatMode: 'VAT_EXCLUDED', lines, source: { inputType: 'AMOUNT', vatAmount: '77' } });
+      assert.equal(applyExpenseWhtInput(vat, { inputType: 'RATE', value: '3' }, excluded), null, label);
+
+      assert.equal(vat.totals.subtotalAmount, '1000.0000', `${label}: the goods are the goods`);
+      assert.equal(vat.totals.taxableAmount, '1100.0000', `${label}: the charge is in the tax base`);
+      assert.equal(vat.totals.vatAmount, '77.0000', label);
+      assert.equal(vat.totals.grandTotalAmount, '1177.0000', label);
+      assert.equal(vat.totals.whtAmount, expectedWht, `${label}: the WHT base is unchanged by the subtotal`);
+      assert.deepEqual(vat.lines.map((line) => line.totals.whtAmount), [...expectedLineWht], label);
+      assert.equal(vat.totals.netPayableAmount,
+        new Decimal('1177').minus(expectedWht).toFixed(4), label);
+      assert.equal(identityError('VAT_EXCLUDED', vat, lines), null, label);
+    }
+  });
+
+  // A baht WHT is the one input the base actually divides, so it is what pins "the base is the
+  // withheld rows' taxable, charges included unless the caller excluded them".
+  it('allocates a baht WHT over the withheld rows, charge row included', () => {
+    const lines = whtBill();
+    const vat = reconcileExpenseVat({ vatMode: 'VAT_EXCLUDED', lines, source: { inputType: 'AMOUNT', vatAmount: '77' } });
+    assert.equal(applyExpenseWhtInput(vat, { inputType: 'AMOUNT', value: '33' }), null);
+    assert.deepEqual(vat.lines.map((line) => line.totals.whtAmount), ['30.0000', '3.0000']);
+    assert.equal(vat.totals.whtAmount, '33.0000');
+    assert.equal(vat.totals.subtotalAmount, '1000.0000');
+    assert.equal(identityError('VAT_EXCLUDED', vat, lines), null);
+  });
+});
+
 describe('expenseTotalsIdentityError', () => {
   const food = { ...calcLineTotals({ quantity: '1', unitPrice: '1520', vatRate: '0.07', vatMode: 'VAT_EXCLUDED' }), chargeKind: null };
   const charge = { ...calcLineTotals({ quantity: '1', unitPrice: '152', vatRate: '0.07', vatMode: 'VAT_EXCLUDED' }), chargeKind: 'SERVICE_CHARGE' as const };
