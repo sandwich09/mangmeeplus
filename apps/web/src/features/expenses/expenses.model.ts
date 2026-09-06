@@ -826,7 +826,7 @@ export function expenseAiFieldProvenance(
   if (!summary) return null;
   const aliases: readonly string[] = AI_REVIEW_FIELD_KEYS[field];
   // Every producer writes `recognizedFields` as the `ReceiptOcrFieldResult` OBJECT — the field
-  // names are its KEYS. Reading it as a `string[]` made `recognized` permanently false, so the 🤖
+  // names are its KEYS. Reading it as a `string[]` made `recognized` permanently false, so the AI
   // badge this function exists to drive has never rendered. A key present but empty is not a
   // reading, so the value has to be there too.
   const raw = summary['recognizedFields'];

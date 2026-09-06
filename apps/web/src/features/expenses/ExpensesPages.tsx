@@ -147,7 +147,7 @@ export function AiFieldLabel({ label, field, summary }: { label: ReactNode; fiel
   return (
     <>
       {label}
-      {provenance?.recognized && <span className="ml-1 inline-flex rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-semibold text-brand-700" title={t('expenses.ai_field_source', locale)}>🤖</span>}
+      {provenance?.recognized && <span className="ml-1 inline-flex rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-semibold text-brand-700" title={t('expenses.ai_field_source', locale)}>AI</span>}
     </>
   );
 }
@@ -1018,7 +1018,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
               disabled={busy}
               onClick={() => setCategoryId(aiCategorySuggestion.expenseCategoryId)}
             >
-              🤖 {t('expenses.category_ai_suggested', locale)}: {aiCategorySuggestion.categoryName} · {t('expenses.category_ai_suggested_apply', locale)}
+              {t('expenses.category_ai_suggested', locale)}: {aiCategorySuggestion.categoryName} · {t('expenses.category_ai_suggested_apply', locale)}
             </button>
           )}
           <AiFieldMissingHint field="category" summary={detail.aiVerificationSummaryJson} />
