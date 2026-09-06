@@ -1,11 +1,14 @@
 # Agent Memory: receipt-charge-vat-mode
 
-Status: PR #447 (`codex/receipt-charge-vat-mode`). First cut `d300b144` was reviewed NOT READY; this
-round applies the controller's decisions — R1 (the ROUNDING row withdrawn), F5, F6, F9, F11, F14 —
-and records F7, F8, F10, F13 as findings. Not merged.
+Status: PR #447 (`codex/receipt-charge-vat-mode`). First cut `d300b144` was reviewed NOT READY;
+round 2 applied the controller's decisions — R1 (the ROUNDING row withdrawn), F5, F6, F9, F11, F14 —
+and recorded F7, F8, F10, F13 as findings. **Round 3 fixes F8** (`reconcileExpenseVat` now carries
+`chargeKind`), which is what makes R1's story true: the reviewer can now land a charge-bearing bill
+on the tax invoice. F7, F10 and F13 stay recorded, not fixed. Not merged.
 Owner: Owner (UAT report 2026-09-06, build 178d3fb6)
-Scope: `apps/api` receipt OCR apply service + the LINE capture/check-bill replies. No contracts, web,
-gateway, schema or migration change — `expenseLineCharges` already exists.
+Scope: `apps/api` receipt OCR apply service + the LINE capture/check-bill replies, plus (round 3) one
+line of `expense-vat-reconciliation.logic.ts`. No contracts, web, gateway, schema or migration
+change — `expenseLineCharges` already exists.
 
 ## Symptom
 
@@ -232,6 +235,34 @@ Same bill, VAT box 55  RECONCILED_ITEM_LINES   chargesApplied 1  same 7 rows, no
                        reason "… ต่างจากที่คำนวณ -0.79 บาท – …"
 ```
 
+### Round 3 verification (the F8 fix)
+
+- RED first, from this worktree, before the production line changed: `expense-totals.logic.spec.ts`
+  **4 failing**, `receipt-ocr-apply.service.spec.ts` **1 failing** (`797.0000` vs `725.0000`),
+  `expense-draft-vat-decouple.use-case.spec.ts` **1 failing** with the real 400
+  (`Totals identity: subtotal 1100.0000 is not the 1000.00 the product lines add up to.`).
+  After the carry: **83/83**, **99/99**, **24/24**, and
+  `expense-draft-amount-validation.use-case.spec.ts` **21/21** — 227/227 across the four.
+- Mutation gate, 2 mutations, both anchors `grep -cF == 1`, run against the four specs together:
+  **2 killed, 0 survived.**
+  - M1, `chargeKind` dropped from the returned rows again (the fix reverted) → **7 failures**, one
+    in every consumer spec.
+  - M2, the WHT base recomputed ignoring charge rows
+    (`withheld.filter((line) => line.chargeKind == null)`) → **1 failure**,
+    `allocates a baht WHT over the withheld rows, charge row included`. Only the AMOUNT branch
+    reads `base`, so the RATE fixtures cannot kill it — that baht test is the one that does, and
+    nothing else in the suite covered the WHT base against a charge row before it.
+- `receipt-truth.pg.spec.ts` **7/7** and `expense-line-charge-kind.pg.spec.ts` **1/1** against a
+  throwaway `postgres:18.3-alpine` on port 15893 (`migrate deploy` + `prisma/sync-permissions.ts`
+  first, container `docker rm -f` afterwards).
+- `spec-suite-coverage.spec.ts` 3/3 (no new spec file, so no `package.json` edit).
+- `tsc --noEmit` on `apps/api` clean (`NODE_OPTIONS=--max-old-space-size=8192`).
+- `node apps/api/scripts/check-di-metadata.mjs` — 794 files, 870 decorated classes, 820 with
+  constructor dependencies, all clean.
+- `pnpm --filter @watchdog-bms/api test` (full fixed list) **exit 0**, 9,612 dot passes, no `✖`;
+  `test:boot` — "boot-di-smoke: Nest resolved every provider in 133ms".
+- Heavy suites ran under the `mkdir /tmp/mangmee-heavy.lock` mutex, released with `rmdir` afterwards.
+
 ## Review findings recorded, NOT fixed (controller decision, 2026-09-06)
 
 Each was reproduced through the real functions before it was written down; the outputs below are
@@ -255,29 +286,56 @@ scope here. The fix is an ordering question — the mode proof would have to run
 flow shares, so it needs its own slice. No live example yet: no UAT bill so far prints a discount AND
 a charge AND a mislabelled mode together.
 
-### F8 — `reconcileExpenseVat` drops `chargeKind`, so a recomputed header counts charges as goods
+### F8 — FIXED on this branch (round 3): `reconcileExpenseVat` now carries `chargeKind`
 
-`expense-vat-reconciliation.logic.ts:492` returns
+`expense-vat-reconciliation.logic.ts:492` returned
 `accepted.map(({ lineNumber, vatRate, totals }) => ({ lineNumber, vatRate, totals }))` — the
-`chargeKind` flag that keeps a charge row out of `subtotalAmount` is not carried. Every later
-`calcDocumentTotals({ lines: documentTotalsLines(result.lines) })` therefore treats every row as
-goods. TWO call sites do exactly that:
+`chargeKind` flag that keeps a charge row out of `subtotalAmount` was not carried, even though the
+declared result type already had the field. Every later
+`calcDocumentTotals({ lines: documentTotalsLines(result.lines) })` therefore treated every row as
+goods.
 
-- `expense-wht-input.logic.ts:51`, whenever a printed WHT is applied. The check bill with `whtRate
-  0.03` writes `subtotalAmount 797.0000` for 725.00 of goods, and
-  `expenseTotalsIdentityError` → `"Totals identity: subtotal 797.0000 is not the 725.00 the product
-  lines add up to."` — persisted, because the apply's `expenseRecord.update` does not re-check it.
-- `acceptExpenseVatSource:286`, the reviewer's "ใช้ยอดตามเอกสาร". Variant B above lands
-  `taxable 797.0000 / vat 56.0000 / grand 853.0000` — correct — but `subtotal 797.0000`, and the same
-  identity error. **This is the one that matters most**: it is the control R1 hands the reviewer, so
-  a charge-bearing bill accepted at the printed VAT produces a header that fails the §5.1 identity.
+**The fix** is that map, carrying `chargeKind` (six added lines, five of them the comment saying why
+`whtRate` stays behind). `documentTotalsLines` already existed and already read the flag — the rows
+simply arrived without it. Nothing else changed: no contract, no schema, no WHT rule, no tolerance.
 
-Pre-existing (it predates this branch — nothing here touches either file) but plainly MORE reachable
-now that charge rows are actually written. The fix looks like one line at `:492` (carry `chargeKind`
-through the returned rows) plus its type; it is shared money logic used by the web review save, so it
-belongs in its own change with its own gates, not in a card/VAT-mode fix. Pinned by an assertion in
-`receipt-ocr-apply.service.spec.ts` ("F8: the gratuity is wrongly counted as goods") so the day it is
-fixed, that test fails and points here.
+**Reproduced RED first, through the real functions** (`scratchpad/charge-f8/repro.ts`), then GREEN
+after the one-line carry:
+
+| | before | after |
+|---|---|---|
+| rows returned by `reconcileExpenseVat` | `chargeKind` `undefined` on every row | `[null ×6, SERVICE_CHARGE]` |
+| check bill after `acceptExpenseVatSource` | subtotal **797.0000** / taxable 797.00 / VAT 56.00 / grand 853.00 | subtotal **725.0000**, rest unchanged |
+| its `expenseTotalsIdentityError` | `"Totals identity: subtotal 797.0000 is not the 725.00 the product lines add up to."` | `null`, `totalsIdentity.ok === true` |
+| WHT fixture (1000 goods + 100 SC, VAT 77, WHT 3%) | subtotal **1100.0000** | subtotal **1000.0000**, taxable 1100.00, VAT 77.00, grand 1177.00 |
+| its WHT, charges excluded (OCR apply) | 30.00 (rows 30.00 / 0.00) | **unchanged** 30.00, netPayable 1147.00 |
+| its WHT, whole document (draft use-cases) | 33.00 (rows 30.00 / 3.00) | **unchanged** 33.00, netPayable 1144.00 |
+| `UpdateExpenseDraftUseCase` on that bill | `BadRequestException: Totals identity: subtotal 1100.0000 is not the 1000.00 the product lines add up to.` | writes 1000.00 / 1100.00 / 77.00 / 1177.00 |
+
+**The WHT base is untouched, and that is the point.** `applyExpenseWhtInput` applies a RATE to each
+WITHHELD row's own `taxableAmount`; the `base` — `totals.taxableAmount` when nothing is excluded,
+otherwise the withheld rows' taxable sum — only caps and allocates an AMOUNT. Neither reads
+`subtotalAmount`, so the amounts above are identical before and after. Both call shapes in the
+codebase are now pinned: `receipt-ocr-apply.service.ts:934` passes `chargeLineNumbers` (§5.1: a
+charge row takes no share of a printed WHT), and both `expense-draft.use-case.ts` paths withhold
+against the whole document.
+
+**Every consumer of the accepted rows was checked** (`grep reconcileExpenseVat(`, `vat.lines`,
+`.lines.map(`, `result.lines`, `documentTotalsLines`, `calcDocumentTotals` across
+`apps/api/src/modules/expenses`), and each is either fixed by the carry or never depended on it:
+
+| consumer | how it reads the rows | covered by |
+|---|---|---|
+| `acceptExpenseVatSource:286` | `calcDocumentTotals({ lines: documentTotalsLines(result.lines) })` | `expense-totals.logic.spec.ts`, `receipt-ocr-apply.service.spec.ts` |
+| `expense-wht-input.logic.ts:51` | same, on every printed WHT | `expense-totals.logic.spec.ts` (both call shapes + a baht WHT) |
+| `expense-draft.use-case.ts:111` (create) | `applyExpenseWhtInput` → `assertExpenseTotalsIdentity:158` | `expense-draft-amount-validation.use-case.spec.ts` |
+| `expense-draft.use-case.ts:369` (update) | `applyExpenseWhtInput` → `assertExpenseTotalsIdentity:392` | `expense-draft-vat-decouple.use-case.spec.ts` |
+| `receipt-ocr-apply.service.ts:940-949` | `vat.lines[i].vatRate` / `.totals` only; `charges` and the persisted `chargeKind` come from `prepared.lines` | `receipt-ocr-apply.service.spec.ts`, `receipt-truth.pg.spec.ts` |
+| `prisma-expense.repository.ts:2127` | merges `acceptedVat.lines[…].totals` onto rows that keep their own `chargeKind` | fixed via `acceptExpenseVatSource` |
+
+The stale F8 pin in `receipt-ocr-apply.service.spec.ts` ("F8: the gratuity is wrongly counted as
+goods", `797.0000`) now asserts `725.0000` plus `expenseTotalsIdentityError === null` and
+`expenseTotalsIdentity(...).ok`.
 
 ### F10 — a charge's own rate string makes a single-rate bill read as MIXED (provenance only)
 
@@ -316,12 +374,13 @@ worse: `MAX_WHOLE_BAHT_VAT_ROUNDING` compares at 1.00, far from any satang bound
 - **Controller decision needed on the window**: `MAX_WHOLE_BAHT_VAT_ROUNDING = 1` (under one baht,
   either direction) versus the brief's `≤ 0.50`. See the deviation note in decision 2 — 0.50 folds
   the truncating-POS bill the brief itself named as a required fixture.
-- **F8 blocks the story R1 tells.** `ใช้ยอดตามเอกสาร` on a charge-bearing record lands the right
-  taxable/VAT/grand but writes `subtotalAmount 797.00` for 725.00 of goods and fails the §5.1
-  identity. R1 is still an improvement without it (the rows survive, the reviewer sees the real bill
-  and the remainder is named) but "the reviewer can land the record on the tax invoice" is not true
-  until F8 is fixed. Smallest known fix: carry `chargeKind` through
-  `expense-vat-reconciliation.logic.ts:492`, with its own gates.
+- ~~**F8 blocks the story R1 tells.**~~ **Fixed in round 3** — see the F8 section above. `ใช้ยอด
+  ตามเอกสาร` on the Owner's check bill now lands 725.00 / 797.00 / 56.00 / 853.00 with the §5.1
+  identity holding, and a printed WHT beside a service charge no longer 400s the reviewer's save.
+- **Worth re-testing on UAT because F8 widened what works**, not only what was already reported: a
+  charge-bearing record with a printed WHT could not be SAVED from the web review page at all
+  (`CreateExpenseDraftUseCase` and `UpdateExpenseDraftUseCase` both rejected it with the §5.1
+  identity 400). Any bill with a service charge and a หัก ณ ที่จ่าย line is worth one pass.
 - Owner acceptance on UAT: re-send the HOUSE TANGO and 4,331.36 bills and confirm the card's
   `➕ ค่าใช้จ่ายเพิ่ม` block matches the web record's charge rows; and send the check bill, answer
   "1", and confirm the reply names ค่าบริการ 72.00 and the review page shows the ปัดเศษ VAT reason.

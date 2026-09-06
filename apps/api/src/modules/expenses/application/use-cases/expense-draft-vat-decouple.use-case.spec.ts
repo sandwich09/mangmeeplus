@@ -104,6 +104,31 @@ describe('UpdateExpenseDraftUseCase VAT decoupling (spec §19c)', () => {
     assert.equal(upserted.length, 0);
   });
 
+  // Finding F8. `applyExpenseWhtInput` recomputes the header from the rows `reconcileExpenseVat`
+  // returned, so while those rows dropped `chargeKind` a printed WHT on a charge-bearing bill made
+  // `subtotalAmount` swallow the service charge — and `assertExpenseTotalsIdentity` rejected the
+  // reviewer's own save with "subtotal 1100.0000 is not the 1000.00 the product lines add up to."
+  it('saves a service charge with a printed WHT without counting it into the goods subtotal', async () => {
+    const { useCase, updates, upserted } = makeUseCase();
+
+    await useCase.execute(ctx, 'exp-1', {
+      vatMode: 'VAT_EXCLUDED', whtInput: { inputType: 'RATE', value: '3' },
+      lines: [
+        { ...receiptLine, unitPrice: '1000', chargeKind: null },
+        { ...receiptLine, lineNumber: 2, description: 'ค่าบริการ', unitPrice: '100', chargeKind: 'SERVICE_CHARGE' },
+      ],
+    } as any);
+
+    assert.equal(updates[0].subtotalAmount, '1000.0000', 'the charge belongs in the tax base, not the goods');
+    assert.equal(updates[0].taxableAmount, '1100.0000');
+    assert.equal(updates[0].vatAmount, '77.0000');
+    assert.equal(updates[0].grandTotalAmount, '1177.0000');
+    // The WHT rule is unchanged: this path withholds against the whole document, so both rows carry it.
+    assert.equal(updates[0].whtAmount, '33.0000');
+    assert.deepEqual(upserted.map((line) => line.whtAmount), ['30.0000', '3.0000']);
+    assert.deepEqual(upserted.map((line) => line.chargeKind), [null, 'SERVICE_CHARGE']);
+  });
+
   it('persists source, accepted line VAT, and the calculation snapshot in one review update', async () => {
     const { useCase, updates, upserted } = makeUseCase();
 

@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { completeVatFields, isStaleOcrApply, ocrLineVatRateUnknown, ocrVatSource, ocrWhtInput, RECEIPT_REVIEW_REASONS, receiptFallbackLineTotal, ReceiptOcrApplyService, reviewReceiptDate, usableItemLines, verifyDiscountAmount } from './receipt-ocr-apply.service';
-import { calcLineTotals, expenseTotalsIdentityError } from '../../domain/logic/expense-totals.logic';
+import { calcLineTotals, expenseTotalsIdentity, expenseTotalsIdentityError } from '../../domain/logic/expense-totals.logic';
 import { acceptExpenseVatSource } from '../../domain/logic/expense-vat-reconciliation.logic';
 
 function makeDuplicateRepo(overrides: Record<string, unknown> = {}) {
@@ -1447,13 +1447,18 @@ describe('apply: the printed arithmetic decides the VAT mode, not the extractor 
     assert.equal(accepted.lines.length, 7, 'accepting the printed VAT invents no line either');
     assert.equal(accepted.snapshot.reconciliation.status, 'REVIEWER_ACCEPTED');
 
-    // Finding F8, PRE-EXISTING and deliberately not fixed here (see the task memory doc):
-    // `reconcileExpenseVat` drops `chargeKind` from the rows it returns
-    // (`expense-vat-reconciliation.logic.ts:492`), so both this acceptance and `applyExpenseWhtInput`
-    // recompute the header from rows that all look like goods — the gratuity is counted into
-    // `subtotalAmount` and the §5.1 identity fails. Pinned here so the day it IS fixed, this line
-    // fails and points at the record instead of letting the fix pass unnoticed.
-    assert.equal(accepted.totals.subtotalAmount, '797.0000', 'F8: the gratuity is wrongly counted as goods');
+    // Finding F8, FIXED: `reconcileExpenseVat` carries `chargeKind` on the rows it returns, so this
+    // acceptance — and `applyExpenseWhtInput` beside it — recompute the header from rows that still
+    // know which one is the gratuity. The tax base moved to the printed 797; the goods did not.
+    assert.equal(accepted.totals.subtotalAmount, '725.0000', 'the gratuity is a charge, not goods');
+    const identityInput = {
+      vatMode: record.vatMode,
+      totals: accepted.totals,
+      // The persisted rows are what a reader compares the header against, and they keep their kind.
+      lines: accepted.lines.map((line, index) => ({ ...line.totals, chargeKind: lines[index].chargeKind })),
+    };
+    assert.equal(expenseTotalsIdentityError(identityInput), null, 'the §5.1 identity holds on the accepted record');
+    assert.equal(expenseTotalsIdentity(identityInput).ok, true);
   });
 
   /**
