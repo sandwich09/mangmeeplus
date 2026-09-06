@@ -76,13 +76,18 @@ Open questions:
   needs a provider. A misroute now answers something ELSE (small talk, or "ยังไม่รองรับ") rather
   than something wrongly scoped; the previous lane could not misroute but could not be right either.
   Worth one live UAT turn per phrasing before production promotion.
-- Linked callers whom a gate refuses now get that gate's reply instead of the card: AI feature off
-  (`lineAssistantDisabledFor`) → `feature_disabled`; none of `line.ai.query` / receipt-capture /
-  signature → `FORBIDDEN_REPLY`; launch route closed → its refusal. Each is the same answer every
-  other message from that caller already gets, so this is consistency rather than a regression — but
-  it is a visible change for an AI-off shop that used to see a card listing ถ่ายใบเสร็จ /
-  บริษัทของฉัน / โปรโมชั่น / ติดต่อเรา, all of which still work. Owner call if that shop should keep
-  a card; not implemented, and it would need its own lane rather than this one.
+- ~~Linked callers whom a gate refuses now get that gate's reply instead of the card~~ — **CLOSED
+  2026-09-06 for the two AI-lane gates**, on branch `codex/line-capability-question-ai-off`. Owner
+  rule: "ร้านที่ปิดฟีเจอร์ แล้วเอไอตอบ ฟีเจอร์ยังไม่เปิดใช้งาน โอเค อันนี้ได้ แต่ถ้าบอกให้สอนวิธีใช้
+  ใน ขอบเขตที่เปิดใช้งานควรบอกได้." An `isCapabilityQuestion` refused by `lineAssistantDisabledFor`
+  or by `refuseWhenLaunchRouteClosed` now keeps that gate's own line (CC1 intact) and gains
+  `buildServiceEntitlementMessage(entitledFeatureKeys)` — the `บริการของเรา` tile's card, same
+  entitlement read, so it can name nothing the shop has not switched on — plus one note naming only
+  the two tiles above the AI gate (`เมนูหลัก` is BELOW it and would answer `feature_disabled`, so it
+  is not named). Zero model calls, DENIED audit rows unchanged, ordinary questions unchanged, outcome
+  `staff_menu_capability_entitlements` (delivered, via the existing `staff_menu_` prefix rule). Spec
+  §8.2 + AC-17. STILL OPEN and untouched: the permission floor (`FORBIDDEN_REPLY` after one paid
+  router call) and the legal / pause / opt-out gates.
 - F2 of the persona review (an approvals-only caller taught `ค่าใช้จ่ายเดือนนี้เท่าไหร่`) is
   untouched and still open; it is a property of the group derivation, not of this lane.
 Artifacts:
@@ -144,6 +149,11 @@ Review (2026-09-06, adversarial, branch head de1ad5d6 → two fixes on top):
   card was the dishonest one — it advertised ยอดขายวันนี้, สรุปบัญชี, คุยกับน้องมั่งมี AND
   `พิมพ์ "เมนูหลัก"`, and `เมนูหลัก` itself returns `feature_disabled` for that shop (the menu lane
   sits below the AI gate). No fix recommended; the change is strictly more honest here.
+  **SUPERSEDED 2026-09-06 by the Owner's own call** (Open questions, first bullet): honest is not
+  enough — the AI-off shop must also be TOLD its enabled scope. The gate-by-gate rows "AI feature
+  off → `📋 ฟีเจอร์นี้ยังไม่ได้เปิดใช้งาน…`" and "Launch route closed → its refusal" now read: that
+  same line, plus the buttons note, plus the entitlement card, on a capability question only, with
+  the router call count still zero.
 - Not fixed, INFO: the gateway pin's phrasing list is hand-copied (the gateway cannot import the
   API's matcher), so it misses `ทำไรได้`/`ช่วยไรได้`, the `ใช้งานยังไง` variant and the
   `แอป`/`แอพ`/`ที่นี่`/`เมนู` subjects — harmless, because `composeCapabilityHelp` branches only on
@@ -156,7 +166,23 @@ Review (2026-09-06, adversarial, branch head de1ad5d6 → two fixes on top):
   213 / 1; delete the card delivery → 212 / 2; change the unlinked event-log status → 212 / 2.
   Before the fixes the second of those survived at 212/212.
 
+Follow-up branch (2026-09-06, `codex/line-capability-question-ai-off`, cut from `origin/develop`
+5dabcf16, worktree `scratchpad/wt-capoff`): the AI-off residual above, closed. Two files —
+`process-line-webhook.use-case.ts` (~18 production lines: one module const pair + a 2-line reply
+builder, an optional `capabilityHelp` thunk on `refuseWhenLaunchRouteClosed`, one `const` at the
+gate seam, and two if/else + two status ternaries) and its spec. Verification: use-case spec RED
+**218 tests, 215 pass / 3 fail** (the two AI-off phrasings and the launch-route case; the
+`feature_disabled` regression guard passed from the start) → GREEN **218 / 218**;
+intake-dispatch + staff-menu + terminal-outcome + spec-suite-coverage + first-signup **303 / 303,
+35 suites**; `pnpm --filter @watchdog-bms/api typecheck` pass; `check-di-metadata.mjs` 796 files /
+870 decorated classes / 820 with constructor deps, all clean. Mutations: gate check forced to
+`false` → 215 / 3 fail; forced to `true` (every message gets the card) → 214 / 4 fail; restored →
+218 / 218. Not run: any live LINE/UAT turn; ai-gateway suites (no gateway change).
+
 Next:
+- Follow-up branch: Owner review → PR → UAT → on an AI-off UAT company, send `ทำอะไรได้บ้าง` as a
+  linked ACTIVE employee and expect the refusal line + buttons note + the entitlement card, and an
+  ordinary question on the same company to still get the bare line.
 - Owner review → PR (#453 has landed, so the diff is already just this change) → UAT
   deploy with the same candidate → run `ทำอะไรได้บ้าง` and `มั่งมีใช้ยังไง` as (1) an unlinked LINE
   account — expect the six-function card — and (2) a linked expenses-only employee — expect the
