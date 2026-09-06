@@ -52,38 +52,19 @@ assert_rejected deploy-production-debounce-experiment-not-activated \
 assert_rejected deploy-invalid-external-signup-boolean \
   'EXTERNAL_SIGNUP_ENABLED must be exactly true or false' \
   env -i PATH="$PATH" DEPLOY_ENV=uat EXTERNAL_SIGNUP_ENABLED=yes bash "$deploy" all
-assert_rejected deploy-production-external-signup-not-activated \
-  'EXTERNAL_SIGNUP_ENABLED=true is not activated for production yet' \
-  env -i PATH="$PATH" DEPLOY_ENV=production PRODUCTION_SERVING_MODE=live \
-    EXTERNAL_SIGNUP_ENABLED=true bash "$deploy" all
-# P10-L (spec §10/§15.7). Two independent production gates: the signup flow, and the receipt
-# ceiling — the latter separately because switching it on is the first limit EVERY existing shop
-# would ever meet and it needs its own announcement (review G-01).
+# Owner 2026-09-06 activates signup and quota together; malformed values must still fail.
 assert_rejected deploy-invalid-line-signup-boolean \
   'LINE_SIGNUP_ENABLED must be exactly true or false' \
   env -i PATH="$PATH" DEPLOY_ENV=uat LINE_SIGNUP_ENABLED=yes bash "$deploy" all
-assert_rejected deploy-production-line-signup-not-activated \
-  'LINE_SIGNUP_ENABLED=true is not activated for production yet' \
-  env -i PATH="$PATH" DEPLOY_ENV=production PRODUCTION_SERVING_MODE=live \
-    LINE_SIGNUP_ENABLED=true bash "$deploy" all
 assert_rejected deploy-invalid-receipt-quota-boolean \
   'RECEIPT_QUOTA_ENFORCED must be exactly true or false' \
   env -i PATH="$PATH" DEPLOY_ENV=uat RECEIPT_QUOTA_ENFORCED=yes bash "$deploy" all
-assert_rejected deploy-production-receipt-quota-not-activated \
-  'RECEIPT_QUOTA_ENFORCED=true is not activated for production yet' \
-  env -i PATH="$PATH" DEPLOY_ENV=production PRODUCTION_SERVING_MODE=live \
-    RECEIPT_QUOTA_ENFORCED=true bash "$deploy" all
 assert_rejected deploy-invalid-line-signup-approval-mode \
   'LINE_SIGNUP_APPROVAL_MODE must be exactly MANUAL or AUTO_FREE' \
   env -i PATH="$PATH" DEPLOY_ENV=uat LINE_SIGNUP_APPROVAL_MODE=auto bash "$deploy" all
-# Auto-approval: UAT defaults to AUTO_FREE so the signup journey can be walked without an operator,
-# every other environment defaults to MANUAL, and production refuses AUTO_FREE even when exported.
-assert_rejected deploy-production-line-signup-auto-free-not-activated \
-  'LINE_SIGNUP_APPROVAL_MODE=AUTO_FREE is not activated for production yet' \
-  env -i PATH="$PATH" DEPLOY_ENV=production PRODUCTION_SERVING_MODE=live \
-    LINE_SIGNUP_APPROVAL_MODE=AUTO_FREE bash "$deploy" all
+# Owner 2026-09-06 selected AUTO_FREE in both environments; MANUAL remains an override.
 grep -Fq 'LINE_SIGNUP_APPROVAL_MODE_INPUT="${LINE_SIGNUP_APPROVAL_MODE:-}"' "$deploy"
-grep -Fq 'if [ "$DEPLOY_ENV" = uat ]; then LINE_SIGNUP_APPROVAL_MODE_INPUT=AUTO_FREE; else LINE_SIGNUP_APPROVAL_MODE_INPUT=MANUAL; fi' "$deploy"
+grep -Fq 'LINE_SIGNUP_APPROVAL_MODE_INPUT=AUTO_FREE' "$deploy"
 assert_rejected deploy-invalid-line-signup-daily-cap \
   'LINE_SIGNUP_AUTO_DAILY_CAP must be a non-negative integer' \
   env -i PATH="$PATH" DEPLOY_ENV=uat LINE_SIGNUP_AUTO_DAILY_CAP=twenty bash "$deploy" all
@@ -147,6 +128,30 @@ assert_rejected deploy-production-ses-not-activated \
   'EMAIL_PROVIDER=ses is not activated for production yet' \
   env -i PATH="$PATH" DEPLOY_ENV=production PRODUCTION_SERVING_MODE=live \
     EMAIL_PROVIDER=ses bash "$deploy" all
+# Execute the real config/validation prefix without ever reaching AWS. This proves the release
+# defaults and explicit rollback values, including the deliberately deferred Production email lane.
+awk '/^RESOURCE_PREFIX=/{exit} {print}' "$deploy" > "$tmp_dir/config.sh"
+cat >> "$tmp_dir/config.sh" <<'EOF'
+printf '%s\n' "$LINE_SIGNUP_ENABLED_INPUT|$EXTERNAL_SIGNUP_ENABLED_INPUT|$LINE_SIGNUP_APPROVAL_MODE_INPUT|$RECEIPT_QUOTA_ENFORCED_INPUT|$LINE_AI_DRAFT_EDIT_ENABLED_INPUT|$EMAIL_PROVIDER_INPUT"
+EOF
+for stage in uat production; do
+  expected_email=disabled
+  [ "$stage" != uat ] || expected_email=ses
+  actual="$(env -i PATH="$PATH" DEPLOY_ENV="$stage" PRODUCTION_SERVING_MODE=live bash "$tmp_dir/config.sh")"
+  test "$actual" = "true|true|AUTO_FREE|true|true|$expected_email"
+  actual="$(env -i PATH="$PATH" DEPLOY_ENV="$stage" PRODUCTION_SERVING_MODE=live \
+    LINE_SIGNUP_ENABLED=true EXTERNAL_SIGNUP_ENABLED=true LINE_SIGNUP_APPROVAL_MODE=AUTO_FREE \
+    RECEIPT_QUOTA_ENFORCED=true LINE_AI_DRAFT_EDIT_ENABLED=true bash "$tmp_dir/config.sh")"
+  test "$actual" = "true|true|AUTO_FREE|true|true|$expected_email"
+  actual="$(env -i PATH="$PATH" DEPLOY_ENV="$stage" PRODUCTION_SERVING_MODE=live \
+    LINE_SIGNUP_ENABLED=false EXTERNAL_SIGNUP_ENABLED=false LINE_SIGNUP_APPROVAL_MODE=MANUAL \
+    RECEIPT_QUOTA_ENFORCED=false LINE_AI_DRAFT_EDIT_ENABLED=false EMAIL_PROVIDER=disabled bash "$tmp_dir/config.sh")"
+  test "$actual" = 'false|false|MANUAL|false|false|disabled'
+done
+assert_rejected deploy-invalid-draft-edit-boolean \
+  'LINE_AI_DRAFT_EDIT_ENABLED must be exactly true or false' \
+  env -i PATH="$PATH" DEPLOY_ENV=production PRODUCTION_SERVING_MODE=live \
+    LINE_AI_DRAFT_EDIT_ENABLED=yes bash "$deploy" all
 assert_rejected deploy-invalid-line-web-login-boolean \
   'LINE_WEB_LOGIN_ENABLED must be exactly true or false' \
   env -i PATH="$PATH" DEPLOY_ENV=uat LINE_WEB_LOGIN_ENABLED=yes bash "$deploy" all
@@ -291,11 +296,11 @@ test "$(grep -Fc '{name:"LINE_WEB_HANDOFF_ENABLED", value:$lineWebHandoffEnabled
 grep -Fq 'LINE_AI_EXACT_GREETING_ENABLED_INPUT="${LINE_AI_EXACT_GREETING_ENABLED:-}"' "$deploy"
 grep -Fq -- '--arg lineAiExactGreetingEnabled "$SERVING_LINE_AI_EXACT_GREETING_ENABLED"' "$deploy"
 test "$(grep -Fc '{name:"LINE_AI_EXACT_GREETING_ENABLED", value:$lineAiExactGreetingEnabled}' "$deploy")" -eq 1
-# S-4 draft edit (draft-control spec §8): UAT defaults on, production defaults off, the value is
+# S-4 draft edit (draft-control spec §8): both environments default on, the value is
 # validated as an exact boolean, maintenance quiesces it, and BOTH containers carry it — the API is
 # the authoritative executor and the gateway decides whether the tools are offered at all.
 grep -Fq 'LINE_AI_DRAFT_EDIT_ENABLED_INPUT="${LINE_AI_DRAFT_EDIT_ENABLED:-}"' "$deploy"
-grep -Fq 'if [ "$DEPLOY_ENV" = uat ]; then LINE_AI_DRAFT_EDIT_ENABLED_INPUT=true; else LINE_AI_DRAFT_EDIT_ENABLED_INPUT=false; fi' "$deploy"
+grep -Fq 'LINE_AI_DRAFT_EDIT_ENABLED_INPUT=true' "$deploy"
 grep -Fq 'ERROR: LINE_AI_DRAFT_EDIT_ENABLED must be exactly true or false' "$deploy"
 grep -Fq 'SERVING_LINE_AI_DRAFT_EDIT_ENABLED=false' "$deploy"
 test "$(grep -Fc -- '--arg lineAiDraftEditEnabled "$SERVING_LINE_AI_DRAFT_EDIT_ENABLED"' "$deploy")" -eq 2
