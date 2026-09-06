@@ -37,8 +37,7 @@ LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES_INPUT="${LINE_AI_DETERMINISTIC_RESPONSE_
 LINE_AI_DRAFT_EDIT_ENABLED_INPUT="${LINE_AI_DRAFT_EDIT_ENABLED:-}"
 LINE_AI_BUFFER_DEBOUNCE_MS_INPUT="${LINE_AI_BUFFER_DEBOUNCE_MS:-}"
 EXTERNAL_SIGNUP_ENABLED_INPUT="${EXTERNAL_SIGNUP_ENABLED:-}"
-# P10-L LINE-first signup (spec §10/§15.7). Empty = "decide from DEPLOY_ENV below", the same shape
-# EXTERNAL_SIGNUP_ENABLED uses, so a UAT deploy needs no flag and production cannot drift open.
+# Owner 2026-09-06: signup, auto approval and quota default to the UAT values in both environments.
 LINE_SIGNUP_ENABLED_INPUT="${LINE_SIGNUP_ENABLED:-}"
 LINE_SIGNUP_APPROVAL_MODE_INPUT="${LINE_SIGNUP_APPROVAL_MODE:-}"
 LINE_SIGNUP_AUTO_DAILY_CAP_INPUT="${LINE_SIGNUP_AUTO_DAILY_CAP:-20}"
@@ -171,11 +170,9 @@ fi
 if [ -z "$LINE_AI_PREPARED_SIMPLE_READ_ENABLED_INPUT" ]; then
   LINE_AI_PREPARED_SIMPLE_READ_ENABLED_INPUT=true
 fi
-# S-4 draft edit over LINE (draft-control spec §8): UAT exercises it, production stays off until the
-# Owner signs off J1-J4 on the recorded UAT run. Same shape as EXTERNAL_SIGNUP_ENABLED — an
-# environment default, not an env branch inside the container definition.
+# Owner 2026-09-06 enabled draft edit in both environments; UAT J1-J4 still supplies acceptance.
 if [ -z "$LINE_AI_DRAFT_EDIT_ENABLED_INPUT" ]; then
-  if [ "$DEPLOY_ENV" = uat ]; then LINE_AI_DRAFT_EDIT_ENABLED_INPUT=true; else LINE_AI_DRAFT_EDIT_ENABLED_INPUT=false; fi
+  LINE_AI_DRAFT_EDIT_ENABLED_INPUT=true
 fi
 # Debounce: Owner selected 1,000 ms as the primary candidate (spec decision 2026-08-22);
 # UAT runs it as the canary default, production keeps the shipped 2,000 ms until the
@@ -201,57 +198,33 @@ if [ "$DEPLOY_ENV" = production ] && [ "$LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED_INP
   echo "ERROR: LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED=true is not activated for production yet" >&2
   exit 2
 fi
-# Auto-register + real claim email (P10/P11) — UAT-first rollout 2026-08-31: UAT defaults ON with
-# SES, production stays fail-closed on both until the Owner orders the production email round.
+# Owner 2026-09-06: align signup/draft switches with UAT; email delivery remains deferred.
 if [ -z "$EXTERNAL_SIGNUP_ENABLED_INPUT" ]; then
-  if [ "$DEPLOY_ENV" = uat ]; then EXTERNAL_SIGNUP_ENABLED_INPUT=true; else EXTERNAL_SIGNUP_ENABLED_INPUT=false; fi
+  EXTERNAL_SIGNUP_ENABLED_INPUT=true
 fi
 case "$EXTERNAL_SIGNUP_ENABLED_INPUT" in true|false) ;; *)
   echo "ERROR: EXTERNAL_SIGNUP_ENABLED must be exactly true or false" >&2; exit 2 ;;
 esac
-if [ "$DEPLOY_ENV" = production ] && [ "$EXTERNAL_SIGNUP_ENABLED_INPUT" = true ]; then
-  echo "ERROR: EXTERNAL_SIGNUP_ENABLED=true is not activated for production yet" >&2
-  exit 2
-fi
-# P10-L LINE-first signup (spec §10) and the receipt ceiling (§15.7). Both default ON for UAT and
-# fail-closed for production, and both are hard-stopped on production until the Owner orders it —
-# RECEIPT_QUOTA_ENFORCED separately from the signup flag, because it is the first limit EVERY
-# existing shop would ever meet and it needs its own seven-day announcement (review G-01).
+# Signup and receipt quota are enabled together by the same recorded Owner decision.
 if [ -z "$LINE_SIGNUP_ENABLED_INPUT" ]; then
-  if [ "$DEPLOY_ENV" = uat ]; then LINE_SIGNUP_ENABLED_INPUT=true; else LINE_SIGNUP_ENABLED_INPUT=false; fi
+  LINE_SIGNUP_ENABLED_INPUT=true
 fi
 case "$LINE_SIGNUP_ENABLED_INPUT" in true|false) ;; *)
   echo "ERROR: LINE_SIGNUP_ENABLED must be exactly true or false" >&2; exit 2 ;;
 esac
-if [ "$DEPLOY_ENV" = production ] && [ "$LINE_SIGNUP_ENABLED_INPUT" = true ]; then
-  echo "ERROR: LINE_SIGNUP_ENABLED=true is not activated for production yet" >&2
-  exit 2
-fi
 if [ -z "$RECEIPT_QUOTA_ENFORCED_INPUT" ]; then
-  if [ "$DEPLOY_ENV" = uat ]; then RECEIPT_QUOTA_ENFORCED_INPUT=true; else RECEIPT_QUOTA_ENFORCED_INPUT=false; fi
+  RECEIPT_QUOTA_ENFORCED_INPUT=true
 fi
 case "$RECEIPT_QUOTA_ENFORCED_INPUT" in true|false) ;; *)
   echo "ERROR: RECEIPT_QUOTA_ENFORCED must be exactly true or false" >&2; exit 2 ;;
 esac
-if [ "$DEPLOY_ENV" = production ] && [ "$RECEIPT_QUOTA_ENFORCED_INPUT" = true ]; then
-  echo "ERROR: RECEIPT_QUOTA_ENFORCED=true is not activated for production yet" >&2
-  exit 2
-fi
-# Auto-approval is a UAT rehearsal switch: UAT provisions a trial shop straight from the LIFF form
-# so the whole journey can be walked without an operator, while production keeps every application
-# in the manual queue until the Owner orders otherwise. Same shape as EXTERNAL_SIGNUP_ENABLED —
-# empty means "decide from DEPLOY_ENV", an explicit value is still validated, and production refuses
-# AUTO_FREE outright so a stray export cannot approve real shops.
+# AUTO_FREE is the approved default; operators can still explicitly select MANUAL.
 if [ -z "$LINE_SIGNUP_APPROVAL_MODE_INPUT" ]; then
-  if [ "$DEPLOY_ENV" = uat ]; then LINE_SIGNUP_APPROVAL_MODE_INPUT=AUTO_FREE; else LINE_SIGNUP_APPROVAL_MODE_INPUT=MANUAL; fi
+  LINE_SIGNUP_APPROVAL_MODE_INPUT=AUTO_FREE
 fi
 case "$LINE_SIGNUP_APPROVAL_MODE_INPUT" in MANUAL|AUTO_FREE) ;; *)
   echo "ERROR: LINE_SIGNUP_APPROVAL_MODE must be exactly MANUAL or AUTO_FREE" >&2; exit 2 ;;
 esac
-if [ "$DEPLOY_ENV" = production ] && [ "$LINE_SIGNUP_APPROVAL_MODE_INPUT" = AUTO_FREE ]; then
-  echo "ERROR: LINE_SIGNUP_APPROVAL_MODE=AUTO_FREE is not activated for production yet" >&2
-  exit 2
-fi
 # The remaining P10-L knobs are shaped, not gated. Each pattern is the EXACT counterpart of its
 # `apiConfigSchema` rule (packages/config/src/index.ts): anything this lets through and zod does not
 # is a task revision that crash-loops on boot instead of a deploy that stops here.
@@ -965,8 +938,7 @@ EOF
     --policy-arn arn:aws:iam::aws:policy/service-role/AmazonECSInfrastructureRoleforExpressGatewayServices >/dev/null 2>&1 || true
 
   ensure_role "$API_TASK_ROLE" '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ecs-tasks.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
-  # SES send rights ride the same provider gate as the runtime env: no ses provider, no policy
-  # statement — production gains nothing until its email round is activated above.
+  # SES send rights follow the provider gate; Production email remains deferred.
   SES_POLICY_STATEMENT=""
   if [ "$SERVING_EMAIL_PROVIDER" = ses ]; then
     SES_POLICY_STATEMENT=",
