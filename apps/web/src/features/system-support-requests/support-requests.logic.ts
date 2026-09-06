@@ -18,6 +18,21 @@ export function supportStatusChip(status: SupportRequestStatus): Chip {
   return { label: 'ปิดแล้ว', tone: 'neutral' };
 }
 
+/**
+ * UAT 2026-09-06. A request that was answered and then written to again is OPEN like any other, and
+ * looked like a brand new one — so an operator could not tell they were rejoining a conversation
+ * already in progress. `answeredAt` survives the reopen precisely so this chip can say so.
+ */
+export function supportReopenedChip(
+  item: Pick<SupportRequestItemDto, 'status' | 'reopenedCount'>,
+): Chip | null {
+  // The count is the whole claim — no floor. Flooring it at 1 made a row with an answer and no
+  // reopen say "ลูกค้าตอบกลับ" about a customer who had not written back.
+  if (item.status !== 'OPEN' || item.reopenedCount < 1) return null;
+  // One reopen follows exactly one answer, so the count IS how many times we have replied.
+  return { label: `ตอบแล้ว ${item.reopenedCount} ครั้ง · ลูกค้าตอบกลับ`, tone: 'info' };
+}
+
 export function supportClosedReasonTh(reason: string | undefined): string | null {
   if (reason === 'admin') return 'ทีมงานให้ AI ทำงานต่อ';
   if (reason === 'customer_resumed') return 'ลูกค้าเรียก AI กลับเอง';
@@ -25,14 +40,34 @@ export function supportClosedReasonTh(reason: string | undefined): string | null
   return null;
 }
 
-type WaitWindow = Pick<SupportRequestItemDto, 'requestedAt' | 'answeredAt' | 'closedAt'>;
+type WaitWindow = Pick<
+  SupportRequestItemDto, 'status' | 'requestedAt' | 'lastMessageAt' | 'answeredAt' | 'closedAt'
+>;
+
+/** Equal to `requestedAt` until the customer writes again — see `lastMessageAt` in the contract. */
+const waitStartedAt = (item: WaitWindow): string => item.lastMessageAt ?? item.requestedAt;
 
 /**
  * The clock STOPS when somebody answered, or when the request closed. A settled row that keeps
  * counting reads as a customer still waiting, which is the one thing this column exists to say.
  * `answeredAt` wins over `closedAt`: being answered is when the waiting actually ended.
+ *
+ * An OPEN row is never settled, whatever `answeredAt` says: after a reopen it carries the previous
+ * answer as history, and stopping there would have read "ใช้เวลา 30 นาที" over a customer who has
+ * been waiting since (UAT 2026-09-06).
+ *
+ * And a settling stamp OLDER than the start is not this wait's end at all — it belongs to the
+ * round trip before it. A reopened-then-closed row ended at its `closedAt`; taking the earlier
+ * `answeredAt` made the duration negative, which printed as "ใช้เวลา —" over a real wait.
  */
-const waitEndedAt = (item: WaitWindow): string | undefined => item.answeredAt ?? item.closedAt;
+const waitEndedAt = (item: WaitWindow): string | undefined => {
+  if (item.status === 'OPEN') return undefined;
+  const started = new Date(waitStartedAt(item)).getTime();
+  const settled = (at: string | undefined) => (at && new Date(at).getTime() >= started ? at : undefined);
+  // `answeredAt` still wins over `closedAt` when both are this wait's: being answered is when the
+  // waiting actually ended, and the close that follows it is bookkeeping.
+  return settled(item.answeredAt) ?? settled(item.closedAt);
+};
 
 export function waitedLabelTh(item: WaitWindow): string {
   return waitEndedAt(item) ? 'ใช้เวลา' : 'รอมานาน';
@@ -45,7 +80,7 @@ export function waitedLabelTh(item: WaitWindow): string {
 export function waitedForTh(item: WaitWindow, now: Date = new Date()): string {
   const until = waitEndedAt(item);
   const end = until ? new Date(until).getTime() : now.getTime();
-  const ms = end - new Date(item.requestedAt).getTime();
+  const ms = end - new Date(waitStartedAt(item)).getTime();
   if (!Number.isFinite(ms) || ms < 0) return '—';
   const minutes = Math.floor(ms / 60_000);
   if (minutes < 1) return 'เมื่อสักครู่';
@@ -76,9 +111,19 @@ export function notifiedSummary(
   return { label: parts.join(' · ') || 'แจ้งแล้ว', tone: 'neutral' };
 }
 
-/** Where an operator goes to answer. A shop has a message box; an applicant has the queue. */
+/**
+ * Where an operator goes to answer. A shop has a message box; an applicant has the queue.
+ *
+ * The shop link names the REQUEST, because the message box addresses the shop's OWNERs and the
+ * person waiting is often an employee whose chat they cannot see. `asker` is the same hash fragment
+ * this page prints (§3: never a LINE id, never a LINE display name), so the box can say who it is
+ * answering in the words the operator just read.
+ */
 export function supportAnswerHref(item: SupportRequestItemDto): string | null {
-  if (item.companyId) return `/system/partners/${item.companyId}`;
+  if (item.companyId) {
+    return `/system/partners/${item.companyId}?support=${encodeURIComponent(item.id)}`
+      + `&asker=${encodeURIComponent(item.askerRef)}`;
+  }
   if (item.signupRequestId) return '/system/signup-requests';
   return null;
 }

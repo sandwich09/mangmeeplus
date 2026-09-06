@@ -92,8 +92,8 @@ import { FEATURE_TEMPORARILY_UNAVAILABLE, loadEntitledFeatureKeys } from '../../
 import { ListApprovalQueueUseCase } from '../../../reimbursements/application/use-cases/reimbursement-approval.use-case';
 import { ListPurchaseRequestsUseCase } from '../../../procurement/application/use-cases/purchase-request.use-case';
 import { ListPurchaseOrdersUseCase } from '../../../procurement/application/use-cases/purchase-order.use-case';
-import type { BusinessDocumentClassification, LineExpenseDraftRouteContext, LineUserContext, LineAiTurnRequest, LineAiTurnResponse, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeRoutePlan, LineIntakeSubstituteContext, ReceiptOcrFieldResult, RequestContext } from '@watchdog-bms/contracts';
-import { LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, nextPlanTierKey, asIntakeRouteIntent, civilDateToUtcDate, extractValueCandidates, hasToolPermissions, todayCivilDate, type ExpenseDocumentDateStatus } from '@watchdog-bms/contracts';
+import type { BusinessDocumentClassification, ExpenseChargeSummary, ExpenseLineChargeKind, LineExpenseDraftRouteContext, LineUserContext, LineAiTurnRequest, LineAiTurnResponse, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeRoutePlan, LineIntakeSubstituteContext, ReceiptOcrAdditionalCharge, ReceiptOcrFieldResult, RequestContext } from '@watchdog-bms/contracts';
+import { EXPENSE_LINE_CHARGE_KIND_LABELS, RECEIPT_ADDITIONAL_CHARGE_KINDS, LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, nextPlanTierKey, asIntakeRouteIntent, civilDateToUtcDate, extractValueCandidates, hasToolPermissions, todayCivilDate, type ExpenseDocumentDateStatus } from '@watchdog-bms/contracts';
 import { LineAiLedgerService, ledgerKey, type LedgerEntry } from '../line-ai-ledger.service';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
 import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, isCapabilityQuestion, staffMenuCommand, PACKAGE_CHANGE_COMMAND, PENDING_APPROVAL_ITEM_LIMIT, type ApprovalSurfaceKey, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
@@ -203,8 +203,15 @@ const ASSISTANT_RESUMED_REPLY = '💚 น้องมั่งมีกลับ
  *  help, and the requests they already opened are in the operator inbox either way. */
 const SUPPORT_DAILY_LIMIT_REPLY = '📮 รับเรื่องไว้แล้วค่ะ ทีมงานจะติดต่อกลับในเวลาทำการ '
   + '(จันทร์–เสาร์ 9:00–18:00) หากรีบ โทร 098-256-5628 ได้เลยค่ะ';
-/** Sent while a support pause is running, in place of every assistant answer (§8). */
+/** Sent while a support pause is running and there is no live request to write to (§8). */
 const SUPPORT_PAUSED_REPLY = '📮 ทีมงานรับเรื่องแล้วค่ะ กำลังดูให้อยู่ เดี๋ยวตอบในแชทนี้นะคะ '
+  + '· พิมพ์ "คุยกับ AI ต่อ" ถ้าต้องการให้น้องมั่งมีตอบต่อ';
+/**
+ * UAT 2026-09-06. The reply above was told to a customer whose message had just been dropped on the
+ * floor, which is the one thing it must never mean. This one is only ever sent once the message is
+ * ON the request an operator reads, so "ส่งถึงทีมงานแล้ว" is a fact rather than a comfort.
+ */
+const SUPPORT_FOLLOW_UP_REPLY = '📮 ส่งข้อความถึงทีมงานแล้วค่ะ ทีมงานจะตอบกลับในแชทนี้นะคะ '
   + '· พิมพ์ "คุยกับ AI ต่อ" ถ้าต้องการให้น้องมั่งมีตอบต่อ';
 /** §3 PDPA: one line of context for the operator, never a transcript. */
 const SUPPORT_LAST_MESSAGE_MAX_LENGTH = 200;
@@ -552,9 +559,14 @@ function buildCheckBillReceiptUploadQuickReply(): NonNullable<LineReplyMessage['
   };
 }
 
+/** Spec §5.1: `charges` are the rows the apply WROTE on this draft, listed by the same helper and the
+ *  same label constant as the receipt capture card — a gratuity the check-bill lane recorded used to
+ *  go unmentioned here because this reply never saw the apply outcome at all (F6). */
 export function formatCheckBillDraftCreatedReply(
   continuation: Pick<LineSubstituteReceiptContinuationResult, 'status' | 'replyText' | 'pendingQuestion'>,
+  charges: readonly ExpenseChargeSummary[] = [],
 ): string {
+  const chargeBlock = chargeSummaryLines(charges);
   const hardFailure = ['FORBIDDEN', 'INELIGIBLE', 'STALE'].includes(continuation.status);
   if (hardFailure || !continuation.pendingQuestion) {
     return `✅ สร้างร่างค่าใช้จ่าย 1 รายการแล้วค่ะ\n\n${continuation.replyText}`;
@@ -562,6 +574,7 @@ export function formatCheckBillDraftCreatedReply(
   return [
     '✅ สร้างร่างค่าใช้จ่าย 1 รายการแล้วค่ะ',
     'เก็บเช็กบิลใบเดิมเป็นหลักฐานประกอบ และไม่สร้างรายการซ้ำ',
+    ...(chargeBlock.length > 0 ? ['', ...chargeBlock] : []),
     '',
     'ต่อไปถามทีละข้อนะคะ',
     continuation.pendingQuestion,
@@ -868,15 +881,55 @@ function moneyLabel(value: string): string {
 
 /** Spec §5.1: products and additional charges are two different things on a bill, and a card that
  *  prints "service charge 10%" among the food reads as if the shop sold a dish by that name (UAT
- *  2026-09-03). Charges come from the OCR `additionalCharges` block, which is where they were
- *  identified — slice B moves the marker onto the persisted `chargeKind` column. */
-function receiptItemLines(fields: ReceiptOcrFieldResult | null | undefined): string[] {
+ *  2026-09-03). The charges are the rows the record actually CARRIES — `expenseLineCharges` over the
+ *  persisted `chargeKind` column, the same derivation the web summary and the S-3 read tool use. */
+function receiptItemLines(
+  fields: ReceiptOcrFieldResult | null | undefined,
+  charges: readonly ExpenseChargeSummary[] = [],
+): string[] {
   const items = (fields?.lines ?? []).slice(0, 10)
     .map((line) => `• ${line.description} × ${line.quantity} – ${moneyLabel(line.amount)}`);
-  const charges = (fields?.additionalCharges ?? []).slice(0, 10)
-    .map((charge) => `• ${charge.description} – ${moneyLabel(charge.amount)}`);
-  return charges.length > 0 ? [...items, 'ค่าใช้จ่ายเพิ่ม:', ...charges] : items;
+  const chargeRows = charges.slice(0, 10).map((charge) => `• ${charge.label} – ${moneyLabel(charge.amount)}`);
+  return chargeRows.length > 0 ? [...items, 'ค่าใช้จ่ายเพิ่ม:', ...chargeRows] : items;
 }
+
+/** The Thai label for a charge kind the EXTRACTOR proposed. `EXPENSE_LINE_CHARGE_KIND_LABELS` is a
+ *  plain object, so `[kind]` on model output resolves `constructor`/`__proto__` to an
+ *  Object.prototype member — a truthy value `??` never replaces, which printed
+ *  "function Object() { [native code] }" at the customer. A kind is a label only if it is a kind. */
+function chargeKindLabel(kind: string): string {
+  return (RECEIPT_ADDITIONAL_CHARGE_KINDS as readonly string[]).includes(kind)
+    ? EXPENSE_LINE_CHARGE_KIND_LABELS[kind as ExpenseLineChargeKind]
+    : 'ค่าใช้จ่ายเพิ่ม';
+}
+
+/** The one line a card may say about a charge the apply could NOT put on the record. It is money the
+ *  document printed, so staying silent hides it; listing it under "ค่าใช้จ่ายเพิ่ม" the way a
+ *  persisted row is listed claims a row that does not exist (UAT 2026-09-06). */
+function foldedChargeLine(charges: readonly ReceiptOcrAdditionalCharge[]): string {
+  const named = charges.slice(0, 3)
+    .map((charge) => `${chargeKindLabel(charge.kind)} ${moneyLabel(charge.amount)}`)
+    .join(', ');
+  return `➕ ${named} ยังรวมอยู่ในยอดเดียว – ตรวจแยกบนเว็บ`;
+}
+
+/** Spec §5.1: the charge block, in one place, so the receipt card and the check-bill reply cannot
+ *  drift apart. `label` already comes from `EXPENSE_LINE_CHARGE_KIND_LABELS` via `expenseLineCharges`
+ *  — never from model prose. Empty for a record with no charge rows: no heading, no block. */
+function chargeSummaryLines(charges: readonly ExpenseChargeSummary[]): string[] {
+  if (charges.length === 0) return [];
+  const total = charges.reduce((sum, charge) => sum + Number(toMoney4(charge.amount)), 0);
+  return [
+    `➕ ค่าใช้จ่ายเพิ่ม (${charges.length} รายการ รวม ${total.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}):`,
+    ...charges.slice(0, 10).map((charge) => `• ${charge.label} – ${moneyLabel(charge.amount)}`),
+  ];
+}
+
+/** The apply outcomes that really did fold the document's charges into one summary line. A rerun
+ *  that PRESERVED reviewed lines, and one skipped as stale, wrote no lines at all — they report
+ *  `SUMMARY_LINE`, and saying "ยังรวมอยู่ในยอดเดียว" for them describes an apply that never ran over
+ *  a record that may well carry a real charge row (F5). */
+const FOLDED_CHARGE_STATUSES = ['FOLDED_INTO_SUMMARY_NEEDS_REVIEW', 'ITEMS_DID_NOT_RECONCILE'];
 
 /**
  * Spec §5.2. Four states, not two — and keying the copy on whether a date STRING is present (which
@@ -914,7 +967,7 @@ export function formatPaypersReply(
   webBaseUrl: string | undefined,
   companyId: string,
   expenseId: string,
-  options: { hasDuplicate?: boolean; textOnly?: boolean; amount?: string | null; fields?: ReceiptOcrFieldResult | null; categoryName?: string | null; sourceDocumentType?: string | null; questionText?: string; dateStatus?: ExpenseDocumentDateStatus } = {},
+  options: { hasDuplicate?: boolean; textOnly?: boolean; amount?: string | null; fields?: ReceiptOcrFieldResult | null; charges?: readonly ExpenseChargeSummary[]; chargeReconciliation?: { status: string; chargesApplied: number }; categoryName?: string | null; sourceDocumentType?: string | null; questionText?: string; dateStatus?: ExpenseDocumentDateStatus } = {},
 ): string {
   const link = absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses/${expenseId}`);
   const amountValue = options.fields?.grandTotalAmount ?? options.amount;
@@ -935,19 +988,21 @@ export function formatPaypersReply(
   // Journey J1 step 1: additional charges belong on the DEFAULT card, not only when the sender
   // happens to ask what was on the bill. A service charge is money the shop added — the row a
   // reviewer questions first — and folding it into "ยอดรวม" is how the BHC 152.00 went unseen.
-  // ponytail: read from the OCR `additionalCharges` block; slice B swaps this for the persisted
-  // `chargeKind` column, one call site.
-  const charges = options.fields?.additionalCharges ?? [];
-  if (charges.length > 0) {
-    const total = charges.reduce((sum, charge) => sum + Number(toMoney4(charge.amount)), 0);
-    parts.push(
-      '',
-      `➕ ค่าใช้จ่ายเพิ่ม (${charges.length} รายการ รวม ${total.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}):`,
-      ...charges.slice(0, 10).map((charge) => `• ${charge.description} – ${moneyLabel(charge.amount)}`),
-    );
-  }
+  //
+  // UAT 2026-09-06: this read the OCR `additionalCharges` SUGGESTION, so three cards listed a
+  // ค่าบริการ that the apply had folded away and the record never carried. One source of truth: the
+  // rows the apply persisted. When it folded them, the card says exactly that instead.
+  const charges = options.charges ?? [];
+  // …and the fold is a claim about what THIS apply did with the lines it wrote, so it needs the
+  // outcome that says so. Without one — a follow-up card, a redelivery — nothing is claimed (F5).
+  const folded = options.chargeReconciliation?.chargesApplied === 0
+    && FOLDED_CHARGE_STATUSES.includes(options.chargeReconciliation.status)
+    ? options.fields?.additionalCharges ?? []
+    : [];
+  if (charges.length > 0) parts.push('', ...chargeSummaryLines(charges));
+  else if (folded.length > 0) parts.push('', foldedChargeLine(folded));
   if (options.questionText && isReceiptItemQuestion(options.questionText)) {
-    const itemLines = receiptItemLines(options.fields);
+    const itemLines = receiptItemLines(options.fields, charges);
     parts.push('', '🛒 รายการที่อ่านได้จากบิล:', ...(itemLines.length > 0
       ? itemLines
       : ['• ยังอ่านรายการสินค้าจากหลักฐานนี้ไม่ได้ชัดเจนค่ะ']));
@@ -1025,7 +1080,8 @@ export function formatGroundedReceiptFollowUp(
     ? Number(expense.grandTotalAmount).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     : 'ยังไม่ระบุ';
   if (isReceiptItemQuestion(questionText)) {
-    const items = receiptItemLines(fields);
+    // The stored record already carries its charge rows, derived once by `expenseLineCharges`.
+    const items = receiptItemLines(fields, expense.charges);
     return [
       '🧾 ตอบจากบิลล่าสุดที่บันทึกไว้ในแชทนี้ (ยังรอตรวจสอบ)',
       '',
@@ -1729,6 +1785,23 @@ export class ProcessLineWebhookUseCase {
     return buildSignupDoorCard(liffId, this.config.sesWebBaseUrl);
   }
 
+  /**
+   * The door card's "เปิดร้านใหม่ ทดลองฟรี" only ever reaches a stranger; a linked owner gets
+   * WELCOME_BACK and had no way to open a second shop. The บริษัทของฉัน card carries the same
+   * central LIFF page for them — same URL, built from this environment's config, with nothing about
+   * the user or the company in it (LINE-ONBOARD-01).
+   *
+   * Both halves are required: an unusable LIFF id would send the owner to a broken page, and where
+   * self-service signup is closed for the environment the LIFF form itself refuses, so the button
+   * must not exist there either. `externalSignupEnabled` is the same switch the public signup route
+   * answers with `external_signup_disabled`.
+   */
+  private newShopSignupUrl(): string | undefined {
+    const liffId = this.config.lineLiffId;
+    if (!this.config.externalSignupEnabled || !liffId || !LIFF_ID_PATTERN.test(liffId)) return undefined;
+    return `https://liff.line.me/${liffId}/signup`;
+  }
+
   /** §15.1: "ช่วงทดลอง" is only true of the trial tier; every other shop hears about its package. */
   private async isTrialTier(companyId: string): Promise<boolean> {
     const term = await this.prisma.client.companyPlanTerm.findUnique({
@@ -1762,26 +1835,30 @@ export class ProcessLineWebhookUseCase {
    */
   private async handleStaffContact(event: LineTextEvent, requestId: string): Promise<void> {
     const asker = await this.resolveSupportAsker(event.lineUserId);
-    // Dedupe is per OPEN request, not per day (§2.2.4): while one is open the answer is "you are
+    // Dedupe is per LIVE request, not per day (§2.2.4): while one is live the answer is "you are
     // still in the queue" and nobody is paged twice; once it closes, a new tap is a new request.
-    const open = await this.prisma.client.lineSupportRequest.findFirst({
-      where: { lineUserId: event.lineUserId, status: 'OPEN' },
-      select: { id: true },
-    });
-    if (open) {
+    // ANSWERED counts as live (review 2026-09-06): deduping on OPEN alone meant TAPPING the button
+    // after an answer opened a second row, while TYPING the same thing reopened the first.
+    const live = await this.findLiveSupportRequest(event.lineUserId);
+    if (live) {
+      // The tap is a message like any other, so it travels the one path that reopens an ANSWERED
+      // request and re-arms the pause. It carries no text: "ติดต่อเจ้าหน้าที่" in the operator's
+      // message column would replace whatever the customer actually last said.
+      await this.recordSupportFollowUp(event.lineUserId, requestId, {});
       // Still waiting on us, so the assistant stays out of the thread: a repeat tap re-arms the
-      // pause even though it opens nothing.
+      // pause even though it opens nothing — including for someone whose request names no shop.
       if (asker?.companyId) await this.pauseAssistant(event.lineUserId, asker.companyId);
       await this.deliverReply(event, SUPPORT_ALREADY_OPEN_REPLY);
       await this.audit.log({
         action: 'signup.line.support_requested',
         ...(asker?.companyId ? { companyId: asker.companyId } : {}),
         targetType: 'line_support_request',
-        targetId: open.id,
+        targetId: live.id,
         requestId,
         result: 'SUCCESS',
         riskLevel: 'LOW',
-        metadataJson: { alreadyOpen: true, paused: Boolean(asker?.companyId) },
+        // A reopen is not a new request: it spends no daily slot and pages nobody a second time.
+        metadataJson: { alreadyOpen: true, reopened: live.status === 'ANSWERED', paused: Boolean(asker?.companyId) },
       });
       await this.updateEventLog(event.webhookEventId, 'support_already_open');
       return;
@@ -1816,7 +1893,11 @@ export class ProcessLineWebhookUseCase {
         lineUserIdHash: hashMessagePreview(event.lineUserId),
         ...(asker?.companyId ? { companyId: asker.companyId } : {}),
         ...(asker?.signupRequestId ? { signupRequestId: asker.signupRequestId } : {}),
-        ...(asker?.lastMessageText ? { lastMessageText: asker.lastMessageText } : {}),
+        // Both, from the same sentence: `requestText` is the question and never changes again,
+        // `lastMessageText` is where the thread has got to and is rewritten by every follow-up.
+        ...(asker?.lastMessageText
+          ? { requestText: asker.lastMessageText, lastMessageText: asker.lastMessageText }
+          : {}),
       },
       select: { id: true },
     });
@@ -1908,6 +1989,11 @@ export class ProcessLineWebhookUseCase {
    * for a multi-company user with a stale selection may NOT be the shop this request was filed
    * against — and that is fine here: the pause is keyed on `lineUserId`, so it silences the right
    * conversation either way, and the request row (not this one) is what names the shop.
+   *
+   * The ONLY creator of that row (review 2026-09-06 N2), which is why both call sites reach it
+   * through `resolveSupportAsker`: the `companyId` it writes has just been re-derived from a live
+   * ACTIVE membership. `recordSupportFollowUp` extends a running pause instead, because the id IT
+   * holds is whatever the request remembered and may name a shop the person has since left.
    */
   private async pauseAssistant(lineUserId: string, companyId: string): Promise<void> {
     const aiPausedUntil = new Date(Date.now() + SUPPORT_PAUSE_MS);
@@ -1916,6 +2002,124 @@ export class ProcessLineWebhookUseCase {
       create: { lineUserId, companyId, aiPausedUntil },
       update: { aiPausedUntil },
     });
+  }
+
+  /**
+   * The request this person is still waiting on, whichever shop it names — a customer is one
+   * person. CLOSED is excluded on purpose: that matter was settled by somebody deciding, and a
+   * fresh "ติดต่อเจ้าหน้าที่" opens a new request (§2.2.4).
+   */
+  private async findLiveSupportRequest(lineUserId: string) {
+    return this.prisma.client.lineSupportRequest.findFirst({
+      where: { lineUserId, status: { in: ['OPEN', 'ANSWERED'] } },
+      orderBy: { requestedAt: 'desc' },
+      select: { id: true, status: true, companyId: true },
+    });
+  }
+
+  /**
+   * The customer wrote again while a human was supposed to be handling the thread (UAT 2026-09-06).
+   *
+   * Until this existed, `lastMessageText` was written exactly once — at the tap — and "ตอบแล้ว" put
+   * the row on a tab nothing could bring it back from. So the conversation died silently: the
+   * customer kept typing, the pause kept answering "we are looking into it", and no operator
+   * surface changed. Their message now lands on the request itself, and an ANSWERED one returns to
+   * รอตอบ (and to the header badge, which counts OPEN).
+   *
+   * CLOSED is deliberately excluded: that matter is settled by somebody deciding, and a fresh
+   * "ติดต่อเจ้าหน้าที่" opens a new request — the behaviour §2.2.4 already describes. The lookup is
+   * per LINE user and NOT per company: a customer is one person whatever shop the row names.
+   *
+   * `message` says what arrived, and the two shapes are deliberately different: text is the newest
+   * thing worth showing an operator; an empty object is a tap on the button, which moves the clock
+   * and says nothing. A PHOTO is neither — it goes through `stampSupportMedia`, because it is not
+   * the customer asking again (review 2026-09-06 N1).
+   *
+   * Returns false when there was nothing to append to, when somebody else moved the row first, or
+   * when the append itself failed — and the caller then keeps the reply it had. Best effort on
+   * purpose: this is bookkeeping beside the turn, and a receipt must not be lost, nor a customer
+   * left with no answer at all, because the support table could not be written.
+   */
+  private async recordSupportFollowUp(
+    lineUserId: string,
+    requestId: string,
+    message: { text?: string },
+  ): Promise<boolean> {
+    try {
+      const live = await this.findLiveSupportRequest(lineUserId);
+      if (!live) return false;
+      const reopened = live.status === 'ANSWERED';
+      const text = message.text?.trim().slice(0, SUPPORT_LAST_MESSAGE_MAX_LENGTH);
+      // Conditional on the status it just read, because reading and then writing is a race an
+      // operator loses in public: "ตอบแล้ว" pressed in the gap left the row ANSWERED while the
+      // customer was told their message had been delivered to a queue it was no longer in.
+      const moved = await this.prisma.client.lineSupportRequest.updateMany({
+        where: { id: live.id, status: live.status },
+        data: {
+          lastMessageAt: new Date(),
+          ...(text ? { lastMessageText: text } : {}),
+          // `answeredAt`/`answeredByUserId` are KEPT: they are the history of the last answer, and
+          // the count is what lets the inbox say "ตอบแล้ว N ครั้ง · ลูกค้าตอบกลับ" rather than
+          // pretending nobody ever replied.
+          ...(reopened ? { status: 'OPEN' as const, reopenedCount: { increment: 1 } } : {}),
+        },
+      });
+      if (moved.count === 0) return false;
+      // The expiry sweep closes a request 24h after the customer last wrote, and the assistant must
+      // stay out for exactly as long. Both clocks now run from the same message; before this, a
+      // request reopened at hour 23 was swept an hour later with a fresh question on it.
+      //
+      // EXTEND ONLY, never create (review 2026-09-06 N2). `live.companyId` is whatever the row
+      // recorded when it was filed, checked against nobody since — and §2.5 DELETES this row on
+      // unlink, so an upsert here rebuilt an ex-member's context pointing at the shop they left.
+      // The tap's own `pauseAssistant`, which asks `resolveSupportAsker` for a live membership
+      // first, stays the only thing allowed to open a pause.
+      await this.prisma.client.lineCompanyContext.updateMany({
+        where: { lineUserId, aiPausedUntil: { not: null } },
+        data: { aiPausedUntil: new Date(Date.now() + SUPPORT_PAUSE_MS) },
+      });
+      await this.audit.log({
+        action: 'signup.line.support_follow_up',
+        ...(live.companyId ? { companyId: live.companyId } : {}),
+        targetType: 'line_support_request',
+        targetId: live.id,
+        requestId,
+        result: 'SUCCESS',
+        riskLevel: 'LOW',
+        // §3: whether they wrote something, never what — and never the LINE id.
+        metadataJson: { reopened, hasText: Boolean(text) },
+      });
+      return true;
+    } catch (error) {
+      this.logger.warn({ msg: 'line_support_follow_up_not_recorded', error: (error as Error).message });
+      return false;
+    }
+  }
+
+  /**
+   * A photo or a file on a live thread is a MARKER, and nothing else (review 2026-09-06, N1).
+   *
+   * It used to travel the full follow-up path, which reopened an ANSWERED request, moved
+   * `lastMessageAt` and re-armed the 24 h mute. But the commonest photo on a live thread is an
+   * ordinary receipt with nothing to do with the request — so a shop that uploads one a day kept
+   * its own assistant switched off and its inbox row alive for ever, on nothing but its bookkeeping.
+   *
+   * Only a TEXT follow-up under the pause, or a tap on "ติดต่อเจ้าหน้าที่", is the customer asking
+   * again. `lastMediaAt` alone: the inbox still says "📷 ส่งรูปมา" beside whatever tab the row is in,
+   * and §3 keeps the bytes out. Best effort, like the follow-up beside it — a receipt must never be
+   * lost because the support table could not be written.
+   */
+  private async stampSupportMedia(lineUserId: string): Promise<void> {
+    try {
+      const live = await this.findLiveSupportRequest(lineUserId);
+      if (!live) return;
+      await this.prisma.client.lineSupportRequest.updateMany({
+        where: { id: live.id, status: live.status },
+        data: { lastMediaAt: new Date() },
+      });
+    } catch (error) {
+      this.logger.warn({ msg: 'line_support_media_not_recorded', error: (error as Error).message });
+    }
   }
 
   /**
@@ -2588,7 +2792,10 @@ export class ProcessLineWebhookUseCase {
     // pause is for. (`ติดต่อเจ้าหน้าที่` is handled further up, before identity resolution, so it
     // stays reachable too and simply re-arms the pause.)
     if (await this.assistantPaused(event.lineUserId)) {
-      await this.deliverReply(event, SUPPORT_PAUSED_REPLY);
+      // Staying out of the thread is not the same as swallowing it (UAT 2026-09-06): what they just
+      // wrote goes onto the request the operator answers from, and only then may the reply say so.
+      const recorded = await this.recordSupportFollowUp(event.lineUserId, requestId, { text: event.messageText });
+      await this.deliverReply(event, recorded ? SUPPORT_FOLLOW_UP_REPLY : SUPPORT_PAUSED_REPLY);
       await this.updateEventLog(event.webhookEventId, 'support_paused');
       return;
     }
@@ -4116,6 +4323,7 @@ export class ProcessLineWebhookUseCase {
         companyName: companyLabel(currentMembership),
         displayName,
         roleLabels: companyRoleLabels(currentMembership),
+        newShopSignupUrl: this.newShopSignupUrl(),
       })];
       if (memberships.length > 1) {
         messages.push(buildCompanyPickerMessage(
@@ -4436,6 +4644,16 @@ export class ProcessLineWebhookUseCase {
   private async executeReceiptUploadInner(event: LineReceiptUploadEvent, captionText?: string): Promise<LineMediaTurnOutcome | undefined> {
     const requestId = randomUUID();
     if (!await this.claimWebhookEvent(event.webhookEventId, event.lineUserId)) return { outcome: 'done' };
+
+    // This lane has no pause gate of its own, so a customer answering a human WITH A PICTURE was
+    // the one message that reached nobody at all. Stamped before anything else can refuse the
+    // photo as a receipt: whether it is a valid receipt and whether a person is waiting for it are
+    // different questions. ponytail: one indexed lookup per media event — cheap enough not to gate
+    // it on the pause, which would miss an unlinked asker (who has no assistant to pause).
+    //
+    // A MARKER only, and a marker is not a follow-up: it moves no clock, reopens nothing and
+    // re-arms no mute (N1). See `stampSupportMedia`.
+    await this.stampSupportMedia(event.lineUserId);
 
     const identity = await this.resolveLineIdentity(event);
     if (!identity || identity.user.status !== 'ACTIVE') {
@@ -4969,6 +5187,9 @@ export class ProcessLineWebhookUseCase {
     let dateAssumptions: string[] | undefined;
     let reviewReasons: string[] = [];
     let chargeReconciliation: { status: string; chargesApplied: number; itemsSumAmount?: string } | undefined;
+    /** Spec §5.1: the charge rows the apply WROTE, for the card to print. Stays `[]` when the apply
+     *  folded them (or was skipped as stale) — the card then says so rather than listing them. */
+    let appliedCharges: ExpenseChargeSummary[] = [];
     if (ocrFields) {
       const applyOutcome = await this.receiptOcrApply.apply(ctx, intent.expenseId, ocrFields, {
         ...(hintedCategory
@@ -4996,6 +5217,7 @@ export class ProcessLineWebhookUseCase {
             ...(duplicateResult.itemsSumAmount ? { itemsSumAmount: duplicateResult.itemsSumAmount } : {}),
           }
         : undefined;
+      appliedCharges = duplicateResult?.charges ?? [];
       categorySuggestion = duplicateResult?.categorySuggestion;
       effectiveCategory = duplicateResult?.categoryId
         ? {
@@ -5086,6 +5308,11 @@ export class ProcessLineWebhookUseCase {
     const replyTexts = receiptDraft?.replyTexts.length ? [...receiptDraft.replyTexts] : [formatPaypersReply(this.config.webBaseUrl, companyId, intent.expenseId, {
       hasDuplicate,
       fields: ocrFields,
+      // Spec §5.1: what the record CARRIES, not what the extractor suggested (UAT 2026-09-06).
+      charges: appliedCharges,
+      // …and the outcome that says whether THIS apply folded them, so the card only claims a fold
+      // that actually happened (F5).
+      ...(chargeReconciliation ? { chargeReconciliation } : {}),
       sourceDocumentType: hintedDocType !== 'NEEDS_REVIEW' ? hintedDocType : undefined,
       categoryName: effectiveCategory?.name || null,
       questionText: caption,
@@ -5598,7 +5825,11 @@ export class ProcessLineWebhookUseCase {
         access.membershipId,
       ));
     }
-    if (asked.ocrFields) await this.receiptOcrApply.apply(ctx, expenseId, asked.ocrFields);
+    // Spec §5.1/§5.2: the SAME apply as the photo lane runs here, so it raises the same review
+    // reasons and writes the same charge rows. Both used to be thrown away with the outcome — the
+    // summary JSON below was composed from scratch and the reply never named the charge.
+    const applied = asked.ocrFields ? await this.receiptOcrApply.apply(ctx, expenseId, asked.ocrFields) : undefined;
+    const appliedOutcome = applied && !isStaleOcrApply(applied) ? applied : undefined;
     const classification = asked.classification ?? { documentKind: 'ORDER_OR_CHECK_BILL' };
     await this.expenseRepo.updateExpense({
       id: expenseId,
@@ -5613,6 +5844,11 @@ export class ProcessLineWebhookUseCase {
         recognizedFields: asked.ocrFields,
         classification,
         missingFields: asked.ocrFields?.missingFields ?? [],
+        // Merged, never dropped: this write replaces the whole JSON, so a reason the apply raised
+        // is gone from the record — and from the web review banners — unless it is carried here.
+        // Read totally: a summary field can never be the thing that throws a user's turn away and
+        // strands the pending row it was about.
+        ...(appliedOutcome?.reviewReasons?.length ? { reviewReasons: appliedOutcome.reviewReasons } : {}),
         duplicateWarning: false,
         nextAction: 'check_bill_payment_decision_confirmed',
       },
@@ -5631,7 +5867,7 @@ export class ProcessLineWebhookUseCase {
           webBaseUrl: this.config.webBaseUrl,
           confirmedStart: true,
         });
-    const reply = formatCheckBillDraftCreatedReply(continuation);
+    const reply = formatCheckBillDraftCreatedReply(continuation, appliedOutcome?.charges ?? []);
     if (continuation.pendingQuestion && !['FORBIDDEN', 'INELIGIBLE', 'STALE'].includes(continuation.status)) {
       await this.deliverReply(event, reply);
     } else {

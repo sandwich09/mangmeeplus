@@ -120,10 +120,17 @@ document net payable = document grand total - document WHT
 
 ### 7.4 OCR reconciliation
 
-- Candidate charge lines are accepted only when recomputed grand total, VAT, and WHT each differ from printed values by no more than ฿0.05.
+- Candidate charge lines are accepted when recomputed grand total, VAT, and WHT each differ from printed values by no more than ฿0.05 — **or** under the whole-baht VAT rounding allowance below.
 - Recomputed taxable amount must also match when all lines share one VAT rate. With explicit mixed VAT/zero-rate lines, printed `taxableAmount` may be only the positive-rate VAT base while the existing expense header stores the sum of all pre-VAT lines; in that case gross plus VAT are the acceptance proof.
-- Accepted outcome: `RECONCILED_CHARGE_LINES`.
-- Fallback outcome: `FOLDED_INTO_SUMMARY_NEEDS_REVIEW`.
+- **Whole-baht VAT rounding allowance.** Only when the printed VAT is a whole-baht figure AND the printed item rows — or, where the page printed no usable item block, the subtotal base line, which is built from the printed subtotal and therefore agrees by construction — already reconcile with the printed subtotal, the grand total and VAT comparisons widen: a gap of STRICTLY LESS than ฿1.00 in either direction is accepted (a POS that rounds prints 56 where 55.79 was due; one that truncates prints 55). Exactly ฿1.00 is not a rounding — the computed VAT would then be a whole baht itself — and the bill folds.
+  - The taxable comparison never widens, and the WHT tolerance never widens: the rounding is a fact about the TAX, not about the base or the withholding.
+  - The rows stay exactly as printed, and the record keeps the COMPUTED VAT and grand total — nothing on the document is accepted as an amount by this allowance. All it decides is whether the reviewer sees the document's real rows or a single folded summary line with the charge deleted.
+  - Review reason `vatRounding` names the remainder with its sign and the one control that records the printed figure ("ใช้ยอดตามเอกสาร").
+  - The VAT capture snapshot stays `MISMATCH`, so the §7.5 confirmation guard still stands between this draft and a confirmation. "ใช้ยอดตามเอกสาร" is what answers it: the remainder moves into the VAT, where the merchant put it, and the tax base does not move.
+- No `ROUNDING` line and no negative line is ever synthesized to close a remainder. A `ROUNDING` charge line exists only because the document printed one (§7.3 and §14 unchanged: negative lines are not created, and negative rounding still belongs in the discount).
+- The document's VAT mode is decided from the printed arithmetic BEFORE the extractor's `vatMode` word: `subtotal − discount + Σ charges` plus the printed VAT reaching the printed total proves `VAT_EXCLUDED`, reaching it without the VAT proves `VAT_INCLUDED`, and the extractor's word stands only when neither reading explains the total. It never overrides a deliberate `EXEMPT` or `NEEDS_REVIEW`, which are tax positions rather than readings of the totals. Background and the UAT bills that forced this: `docs/agent-memory/receipt-charge-vat-mode.md`.
+- Accepted outcomes: `RECONCILED_CHARGE_LINES`, or `RECONCILED_ITEM_LINES` when the printed item block itself reconciles. Either may carry the `vatRounding` review reason; the charge branch may instead carry `chargeVatUnknown` when the printed totals reconcile only with the charge left un-rated.
+- Fallback outcomes: `FOLDED_INTO_SUMMARY_NEEDS_REVIEW`, or `ITEMS_DID_NOT_RECONCILE` when the page printed item rows that would not reconcile — the reviewer is shown both numbers, not merely told they disagree.
 - No-charge outcome: `SUMMARY_LINE`.
 - Fallback must preserve the printed grand total through a later review save.
 - Raw OCR fields, including rejected/folded charge suggestions, remain in `aiVerifiedFieldsJson`.

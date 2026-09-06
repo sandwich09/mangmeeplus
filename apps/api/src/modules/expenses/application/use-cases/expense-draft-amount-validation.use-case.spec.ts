@@ -191,6 +191,20 @@ describe('expense totals identity at the write boundary', () => {
     assert.equal(upserted.length, 0, 'nothing is persisted when the two sides disagree');
   });
 
+  // Finding F8. A printed WHT sends the header back through `applyExpenseWhtInput`, which rebuilds
+  // it from the rows `reconcileExpenseVat` returned — so this is the create-side twin of the update
+  // path, and while those rows dropped `chargeKind` it rejected the reviewer's own write.
+  it('writes the bill when a printed WHT recomputes the header', async () => {
+    const { useCase, created, upserted } = setup();
+    await useCase.execute(ctx, { ...bhc(), whtInput: { inputType: 'RATE', value: '3' } });
+    assert.equal(created[0].subtotalAmount, '1520.0000', 'the service charge is not goods');
+    assert.equal(created[0].taxableAmount, '1672.0000');
+    assert.equal(created[0].grandTotalAmount, '1789.0400');
+    // The WHT rule is unchanged: this path withholds against the whole document.
+    assert.equal(created[0].whtAmount, '50.1600');
+    assert.deepEqual(upserted.map((line) => line.whtAmount), ['45.6000', '4.5600']);
+  });
+
   it('refuses the write when tax resolution moves a line amount', async () => {
     const { useCase, upserted } = setup((lines) => lines.map((line, index) => (index === 0
       ? { ...line, taxableAmount: '999.0000', lineSubtotalAmount: '999.0000' } : line)));

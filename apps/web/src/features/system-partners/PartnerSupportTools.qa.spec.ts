@@ -10,7 +10,7 @@ test('the shop timeline and the message box are actually mounted on the partner 
   // A section that exists as a component and is never rendered is the shape of gap this slice was
   // written to close (§8: support has one page to work from).
   assert.match(partnerPage, /<ShopTimelineSection key=\{`timeline-\$\{companyId\}`\} companyId=\{companyId\} \/>/);
-  assert.match(partnerPage, /<ShopMessageSection key=\{`message-\$\{companyId\}`\}/);
+  assert.match(partnerPage, /<ShopMessageSection\s+key=\{`message-\$\{companyId\}`\}/);
 });
 
 test('the timeline reads the server assembly rather than re-deriving it in the browser', () => {
@@ -23,6 +23,29 @@ test('the timeline reads the server assembly rather than re-deriving it in the b
 test('the message box confirms before sending, because a push cannot be unsent', () => {
   assert.match(partnerPage, /title: 'ส่งข้อความถึงร้าน'/);
   assert.match(partnerPage, /if \(!accepted\) return;[\s\S]{0,200}sendPartnerLineMessage/);
+});
+
+/**
+ * Review 2026-09-06 (F4). This box addresses the shop's OWNERs, so a request an EMPLOYEE raised was
+ * answered into a chat they cannot see. The inbox link now names the request; the box passes it on,
+ * which is what adds that ONE person to the recipients — and marks their request answered, so the
+ * operator does not have to go back and press a second button.
+ */
+test('the message box answers the request the inbox link named', () => {
+  assert.match(partnerPage, /supportRequestId/);
+  assert.match(partnerPage, /sendPartnerLineMessage\(companyId, \{ text: message, \.\.\.\(supportRequestId \? \{ supportRequestId \} : \{\}\) \}\)/);
+  // §3: the requester is named by the same hash fragment the inbox prints, never a LINE identifier.
+  assert.match(partnerPage, /ตอบถึง: ผู้ขอ \{supportAskerRef/);
+  assert.equal(/lineUserId/.test(partnerPage), false);
+});
+
+test('the partner route hands the page what the link is carrying', () => {
+  const route = readFileSync(
+    new URL('../../../app/system/partners/[companyId]/page.tsx', import.meta.url), 'utf8',
+  );
+  assert.match(route, /searchParams/);
+  assert.match(route, /support/);
+  assert.match(route, /asker/);
 });
 
 test('a message that reached nobody is reported as not sent', () => {

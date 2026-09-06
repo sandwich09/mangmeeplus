@@ -90,6 +90,28 @@ describe('LINE staff menu', () => {
     assert.equal(/companyId|membership|permission|branch/u.test(rendered), false);
   });
 
+  it('offers เปิดร้านใหม่ on the context card using the signup URL the environment supplied', () => {
+    const message = buildCompanyContextMessage({
+      companyName: 'บริษัทมั่งมี จำกัด', displayName: 'พิมพ์ชนก', roleLabels: ['เจ้าของกิจการ'],
+      newShopSignupUrl: 'https://liff.line.me/2007891234-AbCdEf01/signup',
+    });
+    const button = (message as any).contents?.footer?.contents?.[0];
+    assert.equal(button?.action?.label, 'เปิดร้านใหม่');
+    // The env URL verbatim: no query string, no company, no display name, no token (LINE-ONBOARD-01).
+    assert.equal(button?.action?.uri, 'https://liff.line.me/2007891234-AbCdEf01/signup');
+    assert.equal(/[?#]|บริษัทมั่งมี|พิมพ์ชนก|token/u.test(button?.action?.uri), false);
+  });
+
+  it('keeps the context card byte-identical when this environment has no signup URL', () => {
+    const context = { companyName: 'บริษัทมั่งมี จำกัด', displayName: 'พิมพ์ชนก', roleLabels: ['เจ้าของกิจการ'] };
+    // No LIFF id configured, or self-service signup closed for the environment: the caller passes
+    // undefined either way and the card must be exactly the one shipped today.
+    const today = JSON.stringify(buildCompanyContextMessage(context));
+    assert.equal(JSON.stringify(buildCompanyContextMessage({ ...context, newShopSignupUrl: undefined })), today);
+    assert.equal(today.includes('เปิดร้านใหม่'), false);
+    assert.equal(today.includes('footer'), false);
+  });
+
   it('builds tappable company cards using immutable company ids', () => {
     const message = buildCompanyPickerMessage([
       { companyId: 'co-1', companyName: 'บริษัทหนึ่ง' },
