@@ -324,6 +324,22 @@ const EXPENSE_FEATURE_DISABLED_REPLY = '📋 บริษัทนี้ยั�
  * points at the channel that still works so a closed AI lane does not read as a dead product.
  */
 const LAUNCH_ROUTE_CLOSED_REPLY = '🔧 ตอนนี้ผู้ช่วยพักให้บริการชั่วคราวค่ะ\nระหว่างนี้ยังใช้งานผ่านเว็บแอปได้ตามปกติ และเราจะกลับมาให้บริการเร็ว ๆ นี้นะคะ';
+/**
+ * Owner 2026-09-06: "ร้านที่ปิดฟีเจอร์ แล้วเอไอตอบ ฟีเจอร์ยังไม่เปิดใช้งาน โอเค อันนี้ได้ แต่ถ้าบอกให้
+ * สอนวิธีใช้ ในขอบเขตที่เปิดใช้งานควรบอกได้" — closes the §8.2 residual PR #454 left open. When the AI
+ * lane refuses (never bought, or the kill switch is pulled) a capability question is still owed the
+ * scope the shop DOES have, so each gate KEEPS its own refusal line (spec CC1: a planned CLOSE must
+ * never read as "not enabled") and appends the same deterministic card the "บริการของเรา" tile
+ * renders from the same `entitledFeatureKeys`. Zero model calls, and it can name nothing this company
+ * has not switched on. The note names only the two tiles that sit ABOVE the AI gate — `เมนูหลัก`
+ * itself is below it and would answer `feature_disabled`.
+ */
+const CAPABILITY_ENTITLEMENT_NOTE = '💡 ปุ่ม “บริการของเรา” และ “ติดต่อเรา” ในแชทนี้ยังกดได้ตามปกตินะคะ';
+/** `staff_menu_` prefix on purpose: `classifyLineAiTerminalOutcome` reads it as `delivered`, which
+ *  this turn is — a distinct status so it can still be counted apart from a bare refusal. */
+const CAPABILITY_ENTITLEMENT_STATUS = 'staff_menu_capability_entitlements';
+const capabilityEntitlementReply = (lead: string, entitled: ReadonlySet<string> | null): LineReplyMessage[] =>
+  [{ type: 'text', text: `${lead}\n${CAPABILITY_ENTITLEMENT_NOTE}` }, buildServiceEntitlementMessage(entitled)];
 const ASSISTANT_TALK_GREETING = 'สวัสดีค่ะ 😊 น้องมั่งมีมาแล้วนะคะ\nวันนี้มีอะไรให้น้องช่วยแบ่งเบาบ้าง บอกได้เลยค่ะ 💚';
 const SIGNATURE_FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์เก็บลายเซ็นประจำตัวผ่าน LINE ค่ะ';
 const SIGNATURE_NEED_IMAGE_REPLY = '✍️ ต้องการอัปโหลดลายเซ็นใช่ไหมคะ กรุณาส่ง "รูปลายเซ็น" เข้ามาในแชทนี้ได้เลยนะคะ\nระบบจะเก็บเป็นลายเซ็นประจำตัวของคุณ ใช้ลงนามได้ทันทีค่ะ';
@@ -1502,6 +1518,9 @@ export class ProcessLineWebhookUseCase {
     actorUserId: string,
     companyId: string,
     requestId: string,
+    /** Owner 2026-09-06: a capability question keeps this gate's CLOSED-route copy and gains the
+     *  entitlement card under it. Absent on the receipt-upload path, which carries no question. */
+    capabilityHelp?: (lead: string) => LineReplyMessage[],
   ): Promise<boolean> {
     try {
       await this.launchGate.assertLaunchRouteOpen('ai_line_assistant');
@@ -1510,7 +1529,8 @@ export class ProcessLineWebhookUseCase {
       const body = (error as { getResponse?: () => unknown })?.getResponse?.() as { code?: string } | undefined;
       if (body?.code !== FEATURE_TEMPORARILY_UNAVAILABLE) throw error;
     }
-    await this.deliverReply(event, LAUNCH_ROUTE_CLOSED_REPLY);
+    if (capabilityHelp) await this.deliverRequiredMessages(event, capabilityHelp(LAUNCH_ROUTE_CLOSED_REPLY));
+    else await this.deliverReply(event, LAUNCH_ROUTE_CLOSED_REPLY);
     await this.audit.log({
       companyId,
       actorUserId,
@@ -1527,7 +1547,9 @@ export class ProcessLineWebhookUseCase {
     // Its own status, not `feature_disabled`: a planned CLOSE and a company that never bought the
     // feature are different incidents, and R3 verification counts the fallback served under the
     // first. It classifies as `feature_disabled` so the AI-failure alarm stays quiet during a drill.
-    await this.updateEventLog(event.webhookEventId, 'launch_route_closed', LINE_AI_ERROR_CODES.UNSUPPORTED_MODULE, companyId);
+    await this.updateEventLog(event.webhookEventId,
+      capabilityHelp ? CAPABILITY_ENTITLEMENT_STATUS : 'launch_route_closed',
+      LINE_AI_ERROR_CODES.UNSUPPORTED_MODULE, companyId);
     return true;
   }
 
@@ -2991,10 +3013,16 @@ export class ProcessLineWebhookUseCase {
       return;
     }
 
+    // Owner 2026-09-06 (§8.2 residual): a capability question survives a shut AI lane — both gates
+    // below keep their own words and their DENIED audit row, and add the scoped entitlement card.
+    const capabilityHelp = isCapabilityQuestion(event.messageText)
+      ? (lead: string) => capabilityEntitlementReply(lead, entitledFeatureKeys)
+      : undefined;
     await this.recordShadowTurn(companyId);
-    if (await this.refuseWhenLaunchRouteClosed(event, identity.userId, companyId, requestId)) return;
+    if (await this.refuseWhenLaunchRouteClosed(event, identity.userId, companyId, requestId, capabilityHelp)) return;
     if (lineAssistantDisabledFor(entitledFeatureKeys)) {
-      await this.deliverReply(event, formatRefusal('feature_disabled'));
+      if (capabilityHelp) await this.deliverRequiredMessages(event, capabilityHelp(formatRefusal('feature_disabled')));
+      else await this.deliverReply(event, formatRefusal('feature_disabled'));
       await this.audit.log({
         companyId,
         actorUserId: identity.userId,
@@ -3006,7 +3034,9 @@ export class ProcessLineWebhookUseCase {
         riskLevel: 'LOW',
         metadataJson: { reason: 'feature_disabled' },
       });
-      await this.updateEventLog(event.webhookEventId, 'feature_disabled', LINE_AI_ERROR_CODES.UNSUPPORTED_MODULE, companyId);
+      await this.updateEventLog(event.webhookEventId,
+        capabilityHelp ? CAPABILITY_ENTITLEMENT_STATUS : 'feature_disabled',
+        LINE_AI_ERROR_CODES.UNSUPPORTED_MODULE, companyId);
       return;
     }
 
