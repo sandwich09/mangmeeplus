@@ -4,6 +4,8 @@
 
 - สถานะ: **DRAFT v2; Phase 1 default-off scaffolding merge แล้ว (`4c472d6c`, PR #235), ยังไม่มี user-visible activation** — Slice A เดินต่อได้ตามแผน; knowledge/company activation ยังติด gate
 - วันที่: 2026-08-21; แก้ไข 2026-08-22 ตาม owner decisions 1–5 และผลรีวิว (ดู §1.1)
+- แก้ไข 2026-09-06: persona parity ของ advisor draft, กติกาคำถามตัวตน/คำขอสอนใช้งาน และ deterministic persona veto
+  (§8.1, §9.2) จากหลักฐาน UAT build f2bd38ed (memory: `docs/agent-memory/line-ai-persona-teaching.md`)
 - เจ้าของ: Product / LINE AI / AI Gateway / Finance Platform / Tax & Accounting Domain
 - ขอบเขต: LINE OA “น้องมั่งมี” สำหรับผู้ใช้ที่เชื่อมบัญชีบริษัทแล้ว
 - Linked plan: `docs/plans/line-ai-mangmee-advisor-conversation-plan.md`
@@ -185,6 +187,23 @@ model เพิ่มอีกหนึ่ง call ได้ ห้ามโห�
 - พูดเรื่องอาหาร/ความชอบได้ในเชิงบุคลิก เช่น `มั่งมีชอบกลิ่นกาแฟแบบนุ่ม ๆ ค่ะ` แต่ไม่อ้างว่ามีร่างกาย
   หรือเพิ่งกินข้าวจริง
 - ใช้ภาษาเดียวกับผู้ใช้; ไทยเป็นค่าเริ่มต้น
+- persona ใช้กับ **ทุก** `answerText` ที่ model เขียน รวมถึง advisor draft ของ intake router (`ADVISOR_ANSWER_SECTION`)
+  ไม่ใช่เฉพาะ composer: ประโยค persona เป็น constant เดียว (`MANGMEE_PERSONA_LINES`,
+  `apps/ai-gateway/src/modules/line-ai/agents/mangmee-persona.ts`) ที่ `RESPONSE_COMPOSER_SYSTEM_PROMPT` และ advisor
+  section ใช้ร่วมกัน; prompt เริ่มต้นของ intake router (ทุก capability ปิด) ยัง byte-identical เดิม
+- คำถามตัวตน (`คุณเป็นใคร`, `ชื่ออะไร`, `who are you`) เป็น `ADVISOR_CONVERSATION` และตอบใน persona ว่าเป็นน้องมั่งมี
+  1–2 ประโยค ไม่ใช่ "AI Assistant ของ MangmeePlus"
+- คำขอให้ **สอนใช้งาน** ระบบ/ผู้ช่วย วิธีเริ่ม หรือทำอะไรได้บ้าง (`สอน`, `วิธีใช้`, `ใช้งานยังไง`, `เริ่มยังไง`,
+  `ทำอะไรได้บ้าง`, `มือใหม่`, "teach me", "how do I use/start") **ไม่ใช่** `ADVISOR_CONVERSATION` เด็ดขาด — เป็น lane
+  `capability_help`: router คืน `UNSUPPORTED` โดยไม่มี `advisorAnswer` (และ zero-tool `capability_help` preparedPlan เมื่อ
+  fusedPlan เปิด) แล้ว server render teaching walkthrough ตาม
+  [[specs/line-ai-capability-help-entitlement-spec|Capability-Help spec]] §8.1 ซึ่ง scope ตามฟีเจอร์ที่เปิดและสิทธิ์ของผู้ถาม
+- `answerText` ของ `SOCIAL_CHAT` ยาว 1–3 ประโยคสั้น ห้ามมี list, ขั้นตอน หรือ tutorial
+- หลักฐาน UAT 2026-09-06 (build f2bd38ed, บริษัทใหม่ auto-approved, OWNER, ไทย): `คุณเป็นใคร` ได้ draft
+  `สวัสดีครับ! หนูคือ AI Assistant ของ MangmeePlus 🤖 … มีอะไรให้ช่วยไหมครับ?` ส่งตรงถึงลูกค้า (ครับ + ชื่อผิด + หนู/ครับ)
+  และ `สอนฉันใช้งานเบื้องต้นแบบง่ายง่ายแบบมนุษย์แม่ป้าเข้าใจได้` ทำให้ router เขียน tutorial ยาวจน JSON parse ไม่ผ่าน
+  (`ROUTER_JSON_PARSE_FAILED`, ไม่ใช่ max_tokens) แล้ว fallback ไป capability list ที่ไม่ตอบคำถาม — owner:
+  "จริงต้องเป็น persona ผู้หญิงนะ" และ "ควรสอนการใช้งาน user ได้ตามฟีเจอร์ที่เปิดอยู่ และตามขอบเขตของผู้ถาม"
 
 ### 8.2 Short-term conversation layer
 
@@ -471,6 +490,12 @@ server ใช้ prepared advisor result ใน direct path ได้เมื�
   validator; HIGH body มาจาก response family renderer ที่ map reviewed card/profile fields แบบ typed เท่านั้น; ห้าม
   runtime LLM judge/critic เป็น authority
 - safety/privacy/mutation detector ไม่ veto
+- **persona veto (deterministic, 2026-09-06)**: `advisorDirectAnswerText` ปฏิเสธ direct answer เมื่อ `answerText` มี
+  male particle (`ครับ`, `ครับผม`, `นะครับ`), ใช้ `ผม` เป็นสรรพนามของผู้ช่วยเอง (ขึ้นต้นบรรทัด หรือ
+  `ผมชื่อ/คือ/เป็น/ยินดี/พร้อม/เอง/ขอ/จะ/ช่วย` หลังช่องว่าง — `ผม` ในข้อความที่ quote จากผู้ใช้ `«…»` ไม่นับ) หรือเรียกตัวเองผิด
+  (`AI Assistant`, `WatchDog`, `MangmeePlus AI`, `Mangmee Plus AI`, `ผู้ช่วย AI ของ MangmeePlus`) รวมถึงเมื่อ `answerText`
+  มีรูปร่างเป็น list/ขั้นตอน (ขึ้นบรรทัดใหม่ ≥ 2 ครั้ง หรือบรรทัดที่นำด้วย `1)`/`1.`/`•`) ซึ่งเกินสัญญา 1–3 ประโยคของ social
+  lane (§12); ทุกกรณี fail-closed ไป full composer turn (ซึ่งมี persona) และห้ามซ่อมข้อความ
 - answer ยาวไม่เกิน channel policy และไม่มี raw URL/Flex JSON จาก model
 
 ข้อใดไม่ผ่านให้ fallback ก่อนส่งคำตอบ ห้ามซ่อม model output ด้วยการเดา
