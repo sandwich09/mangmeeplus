@@ -212,7 +212,7 @@ describe('CompleteEmployeeLineLinkUseCase', () => {
     assert.equal(unlinkAudit.targetId, 'identity-old');
     assert.equal(unlinkAudit.metadataJson.severedProviderUserId, 'line-user-old');
     assert.equal(unlinkAudit.metadataJson.keptProviderUserId, 'line-user-1');
-    assert.equal(unlinkAudit.metadataJson.handoffTokensRevoked, 2);
+    assert.equal(unlinkAudit.metadataJson.handoffLinksRevoked, 2);
 
     const successAudit = auditEvents.find((event) => event.action === 'access.employee.line_link.success');
     assert.equal(successAudit.metadataJson.unlinkedPreviousLineIdentities, 1);

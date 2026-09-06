@@ -124,7 +124,7 @@ describe('PartnerMemberLineUnlinkUseCase', () => {
       where: { lineUserId: 'Uline-1', userId: 'user-1', status: 'PENDING' },
       data: { status: 'REVOKED' },
     }]);
-    assert.equal(audits[0].metadataJson.handoffTokensRevoked, 3);
+    assert.equal(audits[0].metadataJson.handoffLinksRevoked, 3);
   });
 
   it('404s when the member has no active LINE identity', async () => {

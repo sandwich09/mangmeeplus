@@ -406,7 +406,7 @@ describe('UnlinkLineIdentityUseCase', () => {
     // One row per unlink, naming how many links it killed.
     assert.equal(audits.length, 1);
     assert.equal(audits[0].action, 'auth.identity.unlink');
-    assert.deepEqual(audits[0].metadataJson, { handoffTokensRevoked: 1 });
+    assert.deepEqual(audits[0].metadataJson, { handoffLinksRevoked: 1 });
   });
 
   it('reports zero revoked when the chat held no unspent links', async () => {
@@ -414,7 +414,7 @@ describe('UnlinkLineIdentityUseCase', () => {
     const audits: any[] = [];
     const uc = new UnlinkLineIdentityUseCase(prisma, { log: async (e: unknown) => { audits.push(e); } } as any);
     await uc.execute({ userId: 'user-1', requestId: 'req-1' });
-    assert.deepEqual(audits[0].metadataJson, { handoffTokensRevoked: 0 });
+    assert.deepEqual(audits[0].metadataJson, { handoffLinksRevoked: 0 });
   });
 });
 

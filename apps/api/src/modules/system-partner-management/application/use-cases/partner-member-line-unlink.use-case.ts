@@ -43,7 +43,7 @@ export class PartnerMemberLineUnlinkUseCase {
       // Owner decision 2026-09-06: an admin severing a member's LINE account has to sever the
       // unspent deep links already in that chat too, or the member keeps a way in for 15 minutes
       // after support believes the account is cut off.
-      const handoffTokensRevoked = await revokePendingLineHandoffTokens(tx.lineWebHandoffToken, {
+      const handoffLinksRevoked = await revokePendingLineHandoffTokens(tx.lineWebHandoffToken, {
         lineUserId: identity.providerUserId,
         userId: cmd.memberUserId,
       });
@@ -56,7 +56,7 @@ export class PartnerMemberLineUnlinkUseCase {
           requestId: cmd.requestId,
           result: 'SUCCESS',
           riskLevel: 'HIGH',
-          metadataJson: { companyId: cmd.companyId, memberUserId: cmd.memberUserId, handoffTokensRevoked },
+          metadataJson: { companyId: cmd.companyId, memberUserId: cmd.memberUserId, handoffLinksRevoked },
         },
       });
     });

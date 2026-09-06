@@ -180,7 +180,7 @@ export class CompleteEmployeeLineLinkUseCase {
       // and each is a bearer session for this employee until its TTL runs out. Awaited, not fired
       // and forgotten, so the count below is real; a failure here surfaces to the caller's
       // best-effort catch exactly as a failed sever already does.
-      const handoffTokensRevoked = await revokePendingLineHandoffTokens(this.prisma.client.lineWebHandoffToken, {
+      const handoffLinksRevoked = await revokePendingLineHandoffTokens(this.prisma.client.lineWebHandoffToken, {
         lineUserId: identity.providerUserId,
         userId: token.userId,
       });
@@ -197,7 +197,7 @@ export class CompleteEmployeeLineLinkUseCase {
           reason: 'employee_line_relink',
           keptProviderUserId: keepProviderUserId,
           severedProviderUserId: identity.providerUserId,
-          handoffTokensRevoked,
+          handoffLinksRevoked,
         },
       });
     }

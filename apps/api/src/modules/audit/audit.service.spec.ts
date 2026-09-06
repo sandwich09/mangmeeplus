@@ -73,6 +73,10 @@ describe('AuditService', () => {
         documentBody: 'full document',
         nested: { refreshToken: 'secret-refresh' },
         note: 'safe note',
+        // The key regex is a SUBSTRING match, so any count named `...token...` is redacted into
+        // uselessness. The LINE-unlink revoke count learned this the hard way and is spelled
+        // `handoffLinksRevoked`; this asserts the name it has to keep.
+        handoffLinksRevoked: 3,
       },
     });
 
@@ -83,6 +87,7 @@ describe('AuditService', () => {
       documentBody: '[REDACTED]',
       nested: { refreshToken: '[REDACTED]' },
       note: 'safe note',
+      handoffLinksRevoked: 3,
     });
   });
 

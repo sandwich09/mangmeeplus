@@ -25,7 +25,7 @@ export class UnlinkLineIdentityUseCase {
     // One transaction, because a severed link that still opens a session is worse than a link that
     // failed to sever: if any of the three writes cannot land, none of them do and the caller
     // retries. Owner decision 2026-09-06.
-    const handoffTokensRevoked = await this.prisma.client.$transaction(async (tx) => {
+    const handoffLinksRevoked = await this.prisma.client.$transaction(async (tx) => {
       await tx.externalIdentity.update({
         where: { id: identity.id },
         data: { status: 'UNLINKED', updatedAt: new Date() },
@@ -55,7 +55,7 @@ export class UnlinkLineIdentityUseCase {
       requestId,
       result: 'SUCCESS',
       riskLevel: 'MEDIUM',
-      metadataJson: { handoffTokensRevoked },
+      metadataJson: { handoffLinksRevoked },
     });
 
     return { unlinked: true };

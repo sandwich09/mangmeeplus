@@ -37,7 +37,7 @@ exchangeable for the rest of its ≤ 15-minute TTL (`LINE_HANDOFF_TOKEN_TTL_MS`)
   `company_picker_open_web` context switch that PR #460 added. Verified against the merged code,
   not assumed; the spec asserts it with a picker-surface row.
 - Audit reuses each path's existing row rather than adding an action: metadata gains
-  `handoffTokensRevoked: <n>`.
+  `handoffLinksRevoked: <n>`.
 
 ## Severing paths covered (all four)
 
@@ -81,18 +81,62 @@ None. No owner input pending.
 - `pnpm exec tsx --test` over the five touched specs + `line-handoff.logic.spec.ts` — all pass.
 - `node apps/api/scripts/check-di-metadata.mjs` — pass.
 - `spec-suite-coverage.spec.ts` — pass.
-- Mutation: helper body replaced with `return 0` → 4 specs red, one per severing path
-  (unlink, partner unlink, employee sever, admin re-point); restored → green.
+- Mutation: helper body `return count` → `return 0` reds **3** leaf subtests (employee sever,
+  self-serve unlink, partner unlink); restored → green. It cannot red the re-point specs or
+  `reports zero revoked`, which assert the `WHERE` or a zero — the count is all it perturbs.
+- Mutation: re-point `userId: existing.userId` → `userId` (the new caller) reds 2 subtests. This is
+  the one that matters — with the caller's id the revoke matches nothing and the hazard survives.
 - The unlink spec's `lineWebHandoffToken.updateMany` fake really applies its `WHERE` to an
   in-memory row set, so a wrong filter fails rather than passing on a recorded call. It asserts
   `USED`/`EXPIRED` rows, another user's row on the same `lineUserId`, and the same user's row on a
   different `lineUserId` all stay `PENDING`.
 
+## Adversarial review 2026-09-06 (second session)
+
+One real defect found and fixed on the branch:
+
+- **The audit key was being redacted.** `audit.service.ts` `SENSITIVE_METADATA_KEY` is a
+  **substring** match that includes `token`, so `handoffTokensRevoked` reached every row as
+  `"[REDACTED]"` — the count the whole audit claim rests on. It hit the two paths that go through
+  `AuditService.log` (self-serve unlink, employee sever) but **not** the partner unlink, which
+  writes `tx.auditLog.create` directly: the three paths disagreed with each other in production.
+  Every spec asserting the key used a fake audit that captures the entry *before* `prepare()`
+  sanitizes, so nothing could catch it. Fixed by renaming the key to `handoffLinksRevoked`
+  (9 sites + both docs); the shared regex is deliberately broad and was left alone. Regression
+  guard added to `audit/audit.service.spec.ts`, which exercises the real sanitizer — renaming the
+  key back to anything containing `token` reds it.
+
+Verified clean, no change needed:
+
+- Re-point uses the **old** owner's `existing.userId` (`link-line-identity.use-case.ts:84-85`),
+  inside the pre-existing advisory-lock transaction (`{maxWait: 5_000, timeout: 20_000}`).
+- Both `userId` and `lineUserId` are non-nullable on `LineWebHandoffToken`, and the single minter
+  (`mint-line-handoff-token.use-case.ts:42-53`) always writes both — no surface escapes the match.
+- All three interactive `$transaction` callbacks use `tx` for every write and keep non-DB I/O out;
+  the partner path's `auditLog.create` was already inside the array form, so the 5 s default budget
+  is unchanged. Employee sever correctly uses `prisma.client` — it has no transaction.
+- Exchange refuses `REVOKED` at step 2 (`exchange-line-handoff-token.use-case.ts:65`), before the
+  claim (:87), the picker context upsert (:98) and `issueToken` (:106); same generic 403 body as
+  expired/used, no oracle. The claim is a conditional `updateMany({status:'PENDING'}) + count===0`
+  (:87-91), so the unlink/exchange race is safe either way it lands.
+- No pinned file touched: `sync-production-maintenance-release-pins.mjs` → `status=current`, tree
+  clean.
+
 ## Residuals (not this change)
 
 - `severOtherLineIdentities` sets `UNLINKED` but does **not** delete `LineCompanyContext` for the
-  severed `providerUserId`, unlike the other two unlink paths. Same class of bug as the
-  line-support-request-spec-th §2.5 fix, out of scope here.
+  severed `providerUserId`, unlike the other two unlink paths. **Classified LOW this pass:**
+  `process-line-webhook.use-case.ts` `resolveLineIdentity` (:2666-2679) matches on
+  `status: 'ACTIVE'`, so a severed account resolves to no identity and the leftover row is dead
+  weight until a relink overwrites it. Tidiness, not a live hole.
+- The employee sever revokes **after** `externalIdentity.updateMany`, and the caller swallows
+  failures (`.catch(() => undefined)`). If the revoke throws, the self-heal re-scan cannot retry it:
+  `others` filters `status: 'ACTIVE'` and the identities are already `UNLINKED`, so it returns 0
+  before reaching the loop. Exposure is a DB error in that gap leaving a bearer link alive for the
+  rest of its ≤15 min TTL — and the exchange has **no** identity re-check to fall back on (it
+  re-resolves user/membership/company only). Still strictly better than before, when 100 % of
+  tokens survived. Fixing it means reordering sever-after-revoke, which costs audit honesty on the
+  other failure branch; left for the Owner to call.
 - No sweep exists to write `EXPIRED`; it is still lazy-at-read-time, as the spec says.
 
 ## Next

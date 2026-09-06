@@ -105,7 +105,9 @@ type LineHandoffTokenRevokeDelegate = {
  * `token_not_pending`, the same generic 403 a used token gets (spec §12), and refuses it at step 2 —
  * before the claim, before any session, and before any surface side effect.
  *
- * Returns the number of links killed, for the severing path's audit row.
+ * Returns the number of links killed, for the severing path's audit row — which spells it
+ * `handoffLinksRevoked`, never `...token...`: `audit.service.ts` redacts any metadata key matching
+ * that substring, so a count named after tokens reaches the row as `[REDACTED]`.
  */
 export async function revokePendingLineHandoffTokens(
   lineWebHandoffToken: LineHandoffTokenRevokeDelegate,
