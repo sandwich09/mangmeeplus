@@ -842,6 +842,17 @@ function companyRoleLabels(membership: LineCompanyMembership): string[] {
     .filter((name): name is string => !!name))];
 }
 
+/**
+ * The role KEY, never the label: `companyRoleLabels` above renders `role.name`, which a company can
+ * rename to anything. `'OWNER'` is the same key the owner-only reads in this file already use
+ * (`access.roles.includes('OWNER')`, and the `roles: { some: { role: { key: 'OWNER' } } }` filters),
+ * and it is scoped to the ONE membership the card is about — being an owner elsewhere does not make
+ * this an owner's view of this company.
+ */
+function isCompanyOwner(membership: LineCompanyMembership): boolean {
+  return (membership.roles ?? []).some((item) => item.role?.key === 'OWNER');
+}
+
 function findCompanySelection(memberships: LineCompanyMembership[], value: string): LineCompanyMembership | undefined {
   const index = Number(value);
   if (Number.isInteger(index) && index >= 1 && index <= memberships.length) return memberships[index - 1];
@@ -4392,6 +4403,7 @@ export class ProcessLineWebhookUseCase {
         companyName: companyLabel(currentMembership),
         displayName,
         roleLabels: companyRoleLabels(currentMembership),
+        isOwner: isCompanyOwner(currentMembership),
         newShopSignupUrl: this.newShopSignupUrl(),
         pendingSignupName: pendingSignup?.companyName,
       })];

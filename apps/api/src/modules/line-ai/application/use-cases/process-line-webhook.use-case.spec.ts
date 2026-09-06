@@ -1788,6 +1788,43 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(JSON.stringify(card).includes('🕒'), false);
   });
 
+  /**
+   * Owner 2026-09-06: "ปุ่มเปิดร้านใหม่โผล่ให้ STAFF ผ่าน /companies => staff ไม่ควรเห็น ถ้าเขาจะเปิดร้านเอง
+   * ต้องผ่าน promotion หากอยู่ในมุมมองพนักงาน". The gate reads the roles of the membership this card is
+   * ABOUT, so the same person is an owner on their own shop's card and an employee on their employer's
+   * — spec §3.1 built the "ฉันเป็นพนักงาน" door for exactly this trap ("พนักงานเผลอสมัครร้านซ้ำ").
+   */
+  it('hides เปิดร้านใหม่ from an employee of the current company and points at โปรโมชั่น instead', async () => {
+    const employeeOf = async (roles: Array<{ role: { key: string; name?: string } }>) => {
+      const { prisma } = makePrisma({
+        displayName: 'สมชาย',
+        memberships: [{ companyId: 'co-1', company: { name: 'บริษัทพนักงาน' }, roles }],
+      });
+      const { useCase, sentMessageBatches } = makeUseCase(prisma, {
+        permissions: ['line.ai.query'],
+        config: { lineLiffId: '2007891234-AbCdEf01', externalSignupEnabled: true, lineMessagingChannelId: 'msg-channel-1' },
+      });
+      await useCase.execute({ ...BASE_EVENT, webhookEventId: `evt-staff-door-${roles.map(({ role }) => role.key).join('-')}`, messageText: '/companies' });
+      return sentMessageBatches[0]?.[0] as any;
+    };
+
+    for (const roles of [
+      [{ role: { key: 'STAFF', name: 'พนักงาน' } }],
+      [{ role: { key: 'ACCOUNTANT', name: 'ฝ่ายบัญชี' } }, { role: { key: 'BRANCH_MANAGER', name: 'ผู้จัดการสาขา' } }],
+    ]) {
+      const card = await employeeOf(roles);
+      const rendered = JSON.stringify(card);
+      assert.equal(card?.contents?.footer, undefined, roles[0]!.role.key);
+      assert.equal(rendered.includes('เปิดร้านใหม่'), false, roles[0]!.role.key);
+      assert.equal(rendered.includes('liff.line.me'), false, roles[0]!.role.key);
+      assert.match(rendered, /อยากเปิดร้านของตัวเอง กดปุ่ม โปรโมชั่น ในเมนูได้เลยค่ะ/);
+    }
+
+    // An OWNER role alongside employee roles in the SAME company is still an owner of it.
+    const alsoOwner = await employeeOf([{ role: { key: 'ACCOUNTANT', name: 'ฝ่ายบัญชี' } }, { role: { key: 'OWNER', name: 'เจ้าของกิจการ' } }]);
+    assert.equal(alsoOwner?.contents?.footer?.contents?.[0]?.action?.label, 'เปิดร้านใหม่');
+  });
+
   it('returns only the current-company card to a non-owner', async () => {
     const { prisma } = makePrisma({
       displayName: 'สมชาย',

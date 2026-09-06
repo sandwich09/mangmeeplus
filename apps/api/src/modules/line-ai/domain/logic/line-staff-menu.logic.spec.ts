@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { FEATURE_CATALOG } from '@watchdog-bms/contracts';
-import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, isCapabilityQuestion, staffMenuCommand, EMPLOYEE_DOOR_COMMAND, LINE_FOLLOW_EVENT_TEXT, PACKAGE_CHANGE_COMMAND, PROFILE_GUARD_COMMAND, PROFILE_GUARD_LATER_COMMAND, RESUME_AI_ALIASES, RESUME_AI_COMMAND, STAFF_CONTACT_COMMAND } from './line-staff-menu.logic';
+import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, isCapabilityQuestion, staffMenuCommand, EMPLOYEE_DOOR_COMMAND, LINE_FOLLOW_EVENT_TEXT, PACKAGE_CHANGE_COMMAND, PROFILE_GUARD_COMMAND, PROFILE_GUARD_LATER_COMMAND, RESUME_AI_ALIASES, RESUME_AI_COMMAND, STAFF_CONTACT_COMMAND, VIEW_PACKAGES_COMMAND } from './line-staff-menu.logic';
 import { DRAFT_UPDATE_CANCEL_COMMAND, DRAFT_UPDATE_CONFIRM_COMMAND } from './line-draft-update-card.logic';
 
 // entitledFeatureKeys null is the legacy fail-open company, so these cases keep asserting the
@@ -93,7 +93,7 @@ describe('LINE staff menu', () => {
 
   it('offers เปิดร้านใหม่ on the context card using the signup URL the environment supplied', () => {
     const message = buildCompanyContextMessage({
-      companyName: 'บริษัทมั่งมี จำกัด', displayName: 'พิมพ์ชนก', roleLabels: ['เจ้าของกิจการ'],
+      companyName: 'บริษัทมั่งมี จำกัด', displayName: 'พิมพ์ชนก', roleLabels: ['เจ้าของกิจการ'], isOwner: true,
       newShopSignupUrl: 'https://liff.line.me/2007891234-AbCdEf01/signup',
     });
     const button = (message as any).contents?.footer?.contents?.[0];
@@ -101,10 +101,58 @@ describe('LINE staff menu', () => {
     // The env URL verbatim: no query string, no company, no display name, no token (LINE-ONBOARD-01).
     assert.equal(button?.action?.uri, 'https://liff.line.me/2007891234-AbCdEf01/signup');
     assert.equal(/[?#]|บริษัทมั่งมี|พิมพ์ชนก|token/u.test(button?.action?.uri), false);
+    assert.equal(JSON.stringify(message).includes(VIEW_PACKAGES_COMMAND), false);
+  });
+
+  /**
+   * Owner 2026-09-06: "ปุ่มเปิดร้านใหม่โผล่ให้ STAFF ผ่าน /companies => staff ไม่ควรเห็น ถ้าเขาจะเปิดร้านเอง
+   * ต้องผ่าน promotion หากอยู่ในมุมมองพนักงาน". The door is a shop-owner action, so it is gated on the
+   * viewer's role in THIS company; the employee view keeps one plain sentence naming the route instead.
+   */
+  it('withholds เปิดร้านใหม่ from the employee view and names the โปรโมชั่น route instead', () => {
+    const message = buildCompanyContextMessage({
+      companyName: 'บริษัทมั่งมี จำกัด', displayName: 'สมชาย', roleLabels: ['พนักงาน'],
+      newShopSignupUrl: 'https://liff.line.me/2007891234-AbCdEf01/signup',
+    });
+    const rendered = JSON.stringify(message);
+    assert.equal(rendered.includes('เปิดร้านใหม่'), false);
+    assert.equal((message as any).contents?.footer, undefined);
+    // No URL and no LIFF id reach an employee — the route is a menu button they already have.
+    assert.equal(rendered.includes('"uri"'), false);
+    assert.equal(rendered.includes('liff.line.me'), false);
+    assert.match(rendered, /อยากเปิดร้านของตัวเอง กดปุ่ม โปรโมชั่น ในเมนูได้เลยค่ะ/);
+    // The chat-list preview is unchanged: this is a pointer the reader sees when they open the card,
+    // not news about their own request the way the 🕒 line is.
+    assert.equal((message as any).altText.includes(VIEW_PACKAGES_COMMAND), false);
+  });
+
+  it('says nothing about opening a shop to an employee whose environment has no signup door', () => {
+    const employee = { companyName: 'บริษัทมั่งมี จำกัด', displayName: 'สมชาย', roleLabels: ['พนักงาน'] };
+    // Production keeps `EXTERNAL_SIGNUP_ENABLED` off, so there is no door to replace and nothing to
+    // point at — the card an employee gets there is exactly the one shipped today.
+    const rendered = JSON.stringify(buildCompanyContextMessage(employee));
+    assert.equal(rendered.includes(VIEW_PACKAGES_COMMAND), false);
+    assert.equal(rendered.includes('เปิดร้านใหม่'), false);
+    assert.equal(rendered.includes('footer'), false);
+  });
+
+  it('leaves the pending request as the only answer, employee or owner', () => {
+    // An open application already fences its applicant out of filing another one, so neither the
+    // door (owner) nor the โปรโมชั่น pointer (employee) may invite a second one on top of it.
+    for (const isOwner of [true, false]) {
+      const rendered = JSON.stringify(buildCompanyContextMessage({
+        companyName: 'บริษัทมั่งมี จำกัด', displayName: 'สมชาย', roleLabels: ['พนักงาน'], isOwner,
+        newShopSignupUrl: 'https://liff.line.me/2007891234-AbCdEf01/signup',
+        pendingSignupName: 'ร้านใหม่',
+      }));
+      assert.match(rendered, /🕒 คำขอเปิดร้าน «ร้านใหม่» รอทีมงานตรวจสอบ/, String(isOwner));
+      assert.equal(rendered.includes('เปิดร้านใหม่'), false, String(isOwner));
+      assert.equal(rendered.includes(VIEW_PACKAGES_COMMAND), false, String(isOwner));
+    }
   });
 
   it('keeps the context card byte-identical when this environment has no signup URL', () => {
-    const context = { companyName: 'บริษัทมั่งมี จำกัด', displayName: 'พิมพ์ชนก', roleLabels: ['เจ้าของกิจการ'] };
+    const context = { companyName: 'บริษัทมั่งมี จำกัด', displayName: 'พิมพ์ชนก', roleLabels: ['เจ้าของกิจการ'], isOwner: true };
     // No LIFF id configured, or self-service signup closed for the environment: the caller passes
     // undefined either way and the card must be exactly the one shipped today.
     const today = JSON.stringify(buildCompanyContextMessage(context));
@@ -399,7 +447,7 @@ describe('LINE staff menu', () => {
   it('matches every command it publishes, exactly as written', () => {
     const commands = [
       'เมนูหลัก', 'ถามข้อมูล', 'รายการรออนุมัติ', 'ถ่ายใบเสร็จ', 'บริการของเรา', 'ติดต่อเรา',
-      RESUME_AI_COMMAND, 'โปรโมชั่น', 'แพ็กเกจ', PACKAGE_CHANGE_COMMAND, EMPLOYEE_DOOR_COMMAND,
+      RESUME_AI_COMMAND, VIEW_PACKAGES_COMMAND, 'แพ็กเกจ', PACKAGE_CHANGE_COMMAND, EMPLOYEE_DOOR_COMMAND,
       STAFF_CONTACT_COMMAND, ...RESUME_AI_ALIASES, PROFILE_GUARD_COMMAND,
       PROFILE_GUARD_LATER_COMMAND, DRAFT_UPDATE_CONFIRM_COMMAND, DRAFT_UPDATE_CANCEL_COMMAND,
       LINE_FOLLOW_EVENT_TEXT,
