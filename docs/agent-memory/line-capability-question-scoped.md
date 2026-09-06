@@ -117,6 +117,45 @@ Verification (2026-09-06, worktree `scratchpad/wt-cap`, after `pnpm install --fr
 - Mutation: intercept put back above `resolveLineIdentity` → the three linked-caller specs go red
   (212 pass → 209 / 3 fail), restored → 212 / 212.
 - Not run: any live LINE/UAT turn; web typecheck (no web change).
+Review (2026-09-06, adversarial, branch head de1ad5d6 → two fixes on top):
+- Verdict READY after the fixes. The move itself is exactly what it claims: `git diff` on the use
+  case is ONE hunk, the check order is byte-identical to develop apart from the intercept crossing
+  `resolveLineIdentity`, `resolveLineIdentity` is read-only (two `findFirst`s + a warn log), and no
+  `staffMenuCommand` string is also an `isCapabilityQuestion` (whole-string match vs substring
+  stems — probed all 23 commands incl. the emoji-prefixed tiles: zero overlap), so no command lane
+  changed hands.
+- **R1 (MEDIUM, FIXED `b7057009`).** Forwarding the question opened the ADVISOR shortcut. Proven:
+  a linked expenses-only caller asking `มั่งมีทำอะไรได้บ้าง`, router returns ADVISOR_CONVERSATION +
+  a valid SOCIAL_CHAT draft, and the API delivered `น้องมั่งมีดูยอดขายวันนี้ สรุปบัญชี และภาษีให้ได้ค่ะ`
+  itself — `status = completed`, gateway never called, `composeCapabilityHelp` never reached. The
+  only guard was `looksLikeTutorial` (≥ 2 newlines or a list marker), which a one-line answer walks
+  past. `advisorDirectAnswerText` now declines on `capabilityQuestion`.
+- **R2 (LOW, FIXED `c3242d84`).** The `status !== 'ACTIVE'` half of the guard was unpinned:
+  relaxing it to `!identity` left the suite at 212/212 (a suspended account would fall through to a
+  full AI turn). `makePrisma` hard-coded ACTIVE; one option + one case, and the mutation now fails.
+- Gate-by-gate for a linked expenses-only caller, all probed live: support pause → pause/follow-up
+  reply, `support_paused`, no router call. AI feature off → `📋 ฟีเจอร์นี้ยังไม่ได้เปิดใช้งาน…`,
+  `feature_disabled`, no router call. Launch route closed → its refusal. Legal pending → the legal
+  card (and the BUFFER's preflight already answered these before `execute` on develop too, so
+  nothing moved). Opt-out → the PDPA line. No membership → `UNLINKED_REPLY`. Holds
+  receipt-capture but not `line.ai.query` → `FORBIDDEN_REPLY` **after one paid router call** (the
+  floor at §3007 passes, the refusal is at §4091); on develop that message was a free card.
+- Residual risk #3 re-read: the AI-off shop's new answer names nothing it cannot use, and the OLD
+  card was the dishonest one — it advertised ยอดขายวันนี้, สรุปบัญชี, คุยกับน้องมั่งมี AND
+  `พิมพ์ "เมนูหลัก"`, and `เมนูหลัก` itself returns `feature_disabled` for that shop (the menu lane
+  sits below the AI gate). No fix recommended; the change is strictly more honest here.
+- Not fixed, INFO: the gateway pin's phrasing list is hand-copied (the gateway cannot import the
+  API's matcher), so it misses `ทำไรได้`/`ช่วยไรได้`, the `ใช้งานยังไง` variant and the
+  `แอป`/`แอพ`/`ที่นี่`/`เมนู` subjects — harmless, because `composeCapabilityHelp` branches only on
+  `isTeachingRequest` and both renderings are scoped by the same `usableAccess`.
+- Verification: use-case spec 212 → **214 / 214**; `line-advisor-direct-answer.logic.spec.ts`
+  **14 / 14**; intake-dispatch + staff-menu + first-signup + spec-suite-coverage **295 / 295, 34
+  suites**; `response-composer.agent.spec.ts` **102 / 102**; api + ai-gateway typecheck pass;
+  `check-di-metadata.mjs` clean. Mutations, all four red after the fixes (baseline 214/214):
+  intercept back above `resolveLineIdentity` → 210 pass / 4 fail; drop `!== 'ACTIVE'` →
+  213 / 1; delete the card delivery → 212 / 2; change the unlinked event-log status → 212 / 2.
+  Before the fixes the second of those survived at 212/212.
+
 Next:
 - Owner review → PR (#453 has landed, so the diff is already just this change) → UAT
   deploy with the same candidate → run `ทำอะไรได้บ้าง` and `มั่งมีใช้ยังไง` as (1) an unlinked LINE
