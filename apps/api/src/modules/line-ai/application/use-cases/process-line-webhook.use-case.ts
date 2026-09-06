@@ -96,7 +96,7 @@ import type { BusinessDocumentClassification, ExpenseChargeSummary, ExpenseLineC
 import { EXPENSE_LINE_CHARGE_KIND_LABELS, RECEIPT_ADDITIONAL_CHARGE_KINDS, LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, nextPlanTierKey, asIntakeRouteIntent, civilDateToUtcDate, extractValueCandidates, hasToolPermissions, todayCivilDate, type ExpenseDocumentDateStatus } from '@watchdog-bms/contracts';
 import { LineAiLedgerService, ledgerKey, type LedgerEntry } from '../line-ai-ledger.service';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
-import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, isCapabilityQuestion, staffMenuCommand, PACKAGE_CHANGE_COMMAND, PENDING_APPROVAL_ITEM_LIMIT, type ApprovalSurfaceKey, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
+import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, isCapabilityQuestion, staffMenuCommand, PACKAGE_CHANGE_COMMAND, PENDING_APPROVAL_ITEM_LIMIT, RESUME_AI_COMMAND, type ApprovalSurfaceKey, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
 import { buildAiBudgetExceededMessage, buildExpenseDraftCardMessage, buildLegalAcceptanceRequiredMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildReceiptQuotaExceededMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, buildSignupDoorCard, buildSignupStatusCard, LIFF_ID_PATTERN, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
 // P10-L: the LINE surface opens a package-change request and tells the operators about a support
 // request; both live in the signup module, which owns those rules and their audit.
@@ -190,13 +190,17 @@ const EMPLOYEE_DOOR_REPLY = '👋 ยินดีต้อนรับค่ะ 
 /** L-17: the greeting for someone the system already knows. Short on purpose — they came back. */
 const WELCOME_BACK_REPLY = '👋 ยินดีต้อนรับกลับมานะคะ ส่งรูปใบเสร็จ หรือถามยอดขายในแชทนี้ได้เลยค่ะ '
   + 'ถ้าต้องการคุยกับทีมงาน พิมพ์ ติดต่อเจ้าหน้าที่ ได้เลยนะคะ';
+/** The way out of a support pause, as every reply that offers one prints it: the tile's own words,
+ *  tapped or typed (Owner 2026-09-06). Built from the command so the hint and the matcher cannot
+ *  drift — and never "AI": the customer knows her as น้องมั่งมี. */
+const RESUME_HINT = `· กดปุ่ม "${RESUME_AI_COMMAND}" หรือพิมพ์ "${RESUME_AI_COMMAND}" เมื่ออยากให้น้องมั่งมีตอบต่อ`;
 /** line-support-request-spec-th §2.1.4. Carries the way out, because a 24h pause with no exit was
  *  the other half of the complaint. No plus sign anywhere a customer reads. */
 const STAFF_CONTACT_REPLY = '📮 รับเรื่องแล้วค่ะ ทีมงานจะตอบในแชทนี้ในเวลาทำการ (จันทร์–เสาร์ 9:00–18:00) '
-  + 'หากรีบ โทร 098-256-5628 ได้เลยค่ะ · พิมพ์ "คุยกับ AI ต่อ" ถ้าต้องการให้น้องมั่งมีตอบต่อ';
+  + `หากรีบ โทร 098-256-5628 ได้เลยค่ะ ${RESUME_HINT}`;
 /** §2.2.4: a second tap while the first request is still OPEN. Honest, and pages nobody twice. */
 const SUPPORT_ALREADY_OPEN_REPLY = '📮 คำขอของคุณยังอยู่ในคิวค่ะ ทีมงานจะตอบในแชทนี้ในเวลาทำการ '
-  + '(จันทร์–เสาร์ 9:00–18:00) นะคะ · พิมพ์ "คุยกับ AI ต่อ" ถ้าต้องการให้น้องมั่งมีตอบต่อ';
+  + `(จันทร์–เสาร์ 9:00–18:00) นะคะ ${RESUME_HINT}`;
 /** §2.4: the assistant is back, said in the assistant's own voice. */
 const ASSISTANT_RESUMED_REPLY = '💚 น้องมั่งมีกลับมาแล้วค่ะ ถามได้เลยนะคะ';
 /** The amplification floor's answer. Warm on purpose: whoever hits it may still genuinely need
@@ -205,14 +209,28 @@ const SUPPORT_DAILY_LIMIT_REPLY = '📮 รับเรื่องไว้แ�
   + '(จันทร์–เสาร์ 9:00–18:00) หากรีบ โทร 098-256-5628 ได้เลยค่ะ';
 /** Sent while a support pause is running and there is no live request to write to (§8). */
 const SUPPORT_PAUSED_REPLY = '📮 ทีมงานรับเรื่องแล้วค่ะ กำลังดูให้อยู่ เดี๋ยวตอบในแชทนี้นะคะ '
-  + '· พิมพ์ "คุยกับ AI ต่อ" ถ้าต้องการให้น้องมั่งมีตอบต่อ';
+  + RESUME_HINT;
 /**
  * UAT 2026-09-06. The reply above was told to a customer whose message had just been dropped on the
  * floor, which is the one thing it must never mean. This one is only ever sent once the message is
  * ON the request an operator reads, so "ส่งถึงทีมงานแล้ว" is a fact rather than a comfort.
  */
 const SUPPORT_FOLLOW_UP_REPLY = '📮 ส่งข้อความถึงทีมงานแล้วค่ะ ทีมงานจะตอบกลับในแชทนี้นะคะ '
-  + '· พิมพ์ "คุยกับ AI ต่อ" ถ้าต้องการให้น้องมั่งมีตอบต่อ';
+  + RESUME_HINT;
+/**
+ * UAT 2026-09-06 (§2.2 delta รอบ 6). The full confirmation is worth saying once; said to every line
+ * of a burst it is the noise the Owner saw three times in one screen — and the menu hint least of
+ * all, since the customer has just read it. The MESSAGE is still recorded every time; only the
+ * speech is rationed, off the `lastMessageAt` the row already carries.
+ */
+const SUPPORT_FOLLOW_UP_REPEAT_REPLY = '📮 รับข้อความแล้วค่ะ';
+const SUPPORT_FOLLOW_UP_REPLY_INTERVAL_MS = 10 * 60 * 1000;
+const SUPPORT_FOLLOW_UP_REPLIES = {
+  none: SUPPORT_PAUSED_REPLY,
+  recorded: SUPPORT_FOLLOW_UP_REPLY,
+  repeat: SUPPORT_FOLLOW_UP_REPEAT_REPLY,
+} as const;
+type SupportFollowUpOutcome = keyof typeof SUPPORT_FOLLOW_UP_REPLIES;
 /** §3 PDPA: one line of context for the operator, never a transcript. */
 const SUPPORT_LAST_MESSAGE_MAX_LENGTH = 200;
 const PACKAGE_CHANGE_ACCEPTED_REPLY = '📦 รับคำขอแล้วค่ะ ทีมงานจะติดต่อกลับในเวลาทำการ (จันทร์–เสาร์ 9:00–18:00) นะคะ';
@@ -231,7 +249,7 @@ const OPEN_LINE_SIGNUP_STATES = [
 ] as const;
 // PDPA objection route (M-05 register §3.1): the user opted out of AI processing, so the
 // turn stops here — before any model, tool, or gateway involvement. Deterministic text.
-const AI_OPT_OUT_REPLY = '🤖 คุณปิดการใช้งานผู้ช่วย AI ไว้ ข้อความนี้จึงไม่ถูกประมวลผลด้วย AI ค่ะ\nเปิดใช้งานอีกครั้งได้ที่ เว็บแอป → ตั้งค่า → ความปลอดภัย นะคะ';
+const AI_OPT_OUT_REPLY = 'คุณปิดการใช้งานผู้ช่วย AI ไว้ ข้อความนี้จึงไม่ถูกประมวลผลด้วย AI ค่ะ\nเปิดใช้งานอีกครั้งได้ที่ เว็บแอป → ตั้งค่า → ความปลอดภัย นะคะ';
 export { LEGAL_ACCEPTANCE_REQUIRED_REPLY } from '../../domain/logic/line-business-card.logic';
 const FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์ใช้งาน LINE AI สำหรับบริษัทนี้ค่ะ';
 const ERROR_REPLY = '⏳ ขออภัยค่ะ เกิดข้อผิดพลาดชั่วคราว กรุณาลองใหม่อีกครั้งนะคะ';
@@ -328,7 +346,7 @@ const MEDIA_CLARIFY_REPLY = [
  * problem (owner UX review 2026-08-29). */
 export function formatOcrGovernanceClarifyReply(errorCode?: string, readFailed = false): string {
   const notice = errorCode === 'OCR_FEATURE_DISABLED'
-    ? '🤖 บริษัทปิดการอ่านเอกสารด้วย AI ไว้ค่ะ ระบบยังเก็บไฟล์นี้ไว้ได้ แต่จะไม่อ่านข้อมูลให้อัตโนมัติ'
+    ? 'บริษัทปิดการอ่านเอกสารด้วย AI ไว้ค่ะ ระบบยังเก็บไฟล์นี้ไว้ได้ แต่จะไม่อ่านข้อมูลให้อัตโนมัติ'
     : errorCode === 'OCR_MONTHLY_LIMIT_EXCEEDED'
       ? '📊 บริษัทใช้สิทธิ์อ่านเอกสารด้วย AI ครบเดือนนี้แล้วค่ะ ระบบยังเก็บไฟล์นี้ไว้ได้ แต่จะไม่อ่านข้อมูลให้อัตโนมัติ'
       : errorCode === 'OCR_QUOTA_UNAVAILABLE'
@@ -1864,8 +1882,8 @@ export class ProcessLineWebhookUseCase {
       return;
     }
 
-    // Amplification floor. Closing a request frees the dedupe above, so tap → "คุยกับ AI ต่อ" →
-    // tap, repeated, was an unbounded source of rows, letters and pushes from one unauthenticated
+    // Amplification floor. Closing a request frees the dedupe above, so tap → resume → tap,
+    // repeated, was an unbounded source of rows, letters and pushes from one unauthenticated
     // LINE account. Three genuine asks a day is more than a real customer makes; the fourth is
     // answered warmly and writes nothing. Checked HERE, not at dispatch: a repeat tap on an
     // already-open request costs nothing and must never be refused.
@@ -2013,7 +2031,9 @@ export class ProcessLineWebhookUseCase {
     return this.prisma.client.lineSupportRequest.findFirst({
       where: { lineUserId, status: { in: ['OPEN', 'ANSWERED'] } },
       orderBy: { requestedAt: 'desc' },
-      select: { id: true, status: true, companyId: true },
+      // `lastMessageAt` (NOT NULL, defaulted at creation) is the confirmation throttle's clock —
+      // read here, before the follow-up write moves it.
+      select: { id: true, status: true, companyId: true, lastMessageAt: true },
     });
   }
 
@@ -2035,19 +2055,21 @@ export class ProcessLineWebhookUseCase {
    * and says nothing. A PHOTO is neither — it goes through `stampSupportMedia`, because it is not
    * the customer asking again (review 2026-09-06 N1).
    *
-   * Returns false when there was nothing to append to, when somebody else moved the row first, or
+   * Returns `none` when there was nothing to append to, when somebody else moved the row first, or
    * when the append itself failed — and the caller then keeps the reply it had. Best effort on
    * purpose: this is bookkeeping beside the turn, and a receipt must not be lost, nor a customer
-   * left with no answer at all, because the support table could not be written.
+   * left with no answer at all, because the support table could not be written. `repeat` means the
+   * message WAS recorded and the customer has already been told so within the last ten minutes
+   * (§2.2 delta รอบ 6), so the caller acknowledges in one line instead of repeating the card.
    */
   private async recordSupportFollowUp(
     lineUserId: string,
     requestId: string,
     message: { text?: string },
-  ): Promise<boolean> {
+  ): Promise<SupportFollowUpOutcome> {
     try {
       const live = await this.findLiveSupportRequest(lineUserId);
-      if (!live) return false;
+      if (!live) return 'none';
       const reopened = live.status === 'ANSWERED';
       const text = message.text?.trim().slice(0, SUPPORT_LAST_MESSAGE_MAX_LENGTH);
       // Conditional on the status it just read, because reading and then writing is a race an
@@ -2064,7 +2086,7 @@ export class ProcessLineWebhookUseCase {
           ...(reopened ? { status: 'OPEN' as const, reopenedCount: { increment: 1 } } : {}),
         },
       });
-      if (moved.count === 0) return false;
+      if (moved.count === 0) return 'none';
       // The expiry sweep closes a request 24h after the customer last wrote, and the assistant must
       // stay out for exactly as long. Both clocks now run from the same message; before this, a
       // request reopened at hour 23 was swept an hour later with a fresh question on it.
@@ -2089,10 +2111,13 @@ export class ProcessLineWebhookUseCase {
         // §3: whether they wrote something, never what — and never the LINE id.
         metadataJson: { reopened, hasText: Boolean(text) },
       });
-      return true;
+      // The stamp read BEFORE the write above: how long since this customer last wrote. No new
+      // column, and it is the same "when did they last write" the inbox clock and the sweep use.
+      return Date.now() - live.lastMessageAt.getTime() < SUPPORT_FOLLOW_UP_REPLY_INTERVAL_MS
+        ? 'repeat' : 'recorded';
     } catch (error) {
       this.logger.warn({ msg: 'line_support_follow_up_not_recorded', error: (error as Error).message });
-      return false;
+      return 'none';
     }
   }
 
@@ -2714,6 +2739,14 @@ export class ProcessLineWebhookUseCase {
       return;
     }
     if (publicCommand === 'talk') {
+      // Owner 2026-09-06 (§2.2 delta รอบ 6 ข้อ 6): the tile's words ARE the way back from a support
+      // pause, tapped or typed — under a pause they lift it exactly as the typed aliases do, and
+      // nothing is filed for the operator. Otherwise the tile greets as it always has. One string,
+      // one command, routed here by pause state, so the tile and the resume text never race.
+      if (await this.assistantPaused(event.lineUserId)) {
+        await this.handleAssistantResume(event, requestId);
+        return;
+      }
       await this.deliverReply(event, ASSISTANT_TALK_GREETING);
       await this.updateEventLog(event.webhookEventId, 'staff_menu_talk');
       return;
@@ -2791,11 +2824,27 @@ export class ProcessLineWebhookUseCase {
     // below is an assistant turn — free text, receipts, AI answers — which is exactly what the
     // pause is for. (`ติดต่อเจ้าหน้าที่` is handled further up, before identity resolution, so it
     // stays reachable too and simply re-arms the pause.)
-    if (await this.assistantPaused(event.lineUserId)) {
+    //
+    // FREE TEXT only (UAT 2026-09-06, §2.2 delta รอบ 6). The pause silences the ASSISTANT, not the
+    // product: `/companies`, `เมนูหลัก`, `ถ่ายใบเสร็จ`, `บริการของเรา` and the draft-edit answers
+    // are cards this code builds itself — no model, no cost, and each one a button the customer was
+    // shown. Swallowing them filed a button press as a sentence for an operator to read and gave
+    // back a confirmation nobody asked for. S-4's two phrases only count while its lane is lit; with
+    // the flag off they are ordinary text and stay under the pause like any other sentence.
+    const deterministicCommand = publicCommand !== null
+      && (this.draftUpdate?.enabled === true
+        || (publicCommand !== 'draft_update_confirm' && publicCommand !== 'draft_update_cancel'));
+    if (!deterministicCommand
+      && !parseLineCompanyCommand(event.messageText)
+      && await this.assistantPaused(event.lineUserId)
+      // A bare number is an answer only while the previous turn asked for one (review 2026-09-06
+      // M1): the picker `/companies` returns says "ตอบ N". Digits-only text is the precondition of
+      // that one read, so a sentence never pays it; the same helper resolves the selection below.
+      && !(await this.pendingCompanySelectionCommand(event))) {
       // Staying out of the thread is not the same as swallowing it (UAT 2026-09-06): what they just
       // wrote goes onto the request the operator answers from, and only then may the reply say so.
       const recorded = await this.recordSupportFollowUp(event.lineUserId, requestId, { text: event.messageText });
-      await this.deliverReply(event, recorded ? SUPPORT_FOLLOW_UP_REPLY : SUPPORT_PAUSED_REPLY);
+      await this.deliverReply(event, SUPPORT_FOLLOW_UP_REPLIES[recorded]);
       await this.updateEventLog(event.webhookEventId, 'support_paused');
       return;
     }

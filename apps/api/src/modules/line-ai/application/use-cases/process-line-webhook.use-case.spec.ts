@@ -64,6 +64,7 @@ describe('OCR governance LINE reply UX', () => {
     }
     // Governance refusals keep their own lead-in even though their status is also OCR_FAILED.
     assert.match(formatOcrGovernanceClarifyReply('OCR_FEATURE_DISABLED', true), /ปิดการอ่านเอกสารด้วย AI/);
+    assert.equal(formatOcrGovernanceClarifyReply('OCR_FEATURE_DISABLED').includes('🤖'), false, 'no robot icon (Owner 2026-09-06)');
   });
 });
 
@@ -215,7 +216,8 @@ function makePrisma(opts: {
 	  identityChannelId?: string;
 	  aiAssistantOptOutAt?: Date | null;
 	  memberships?: Array<{ companyId: string; company?: { name: string; brandName?: string | null }; roles?: Array<{ role: { key: string; name?: string } }> }>;
-	  lineCompanyContext?: { companyId: string } | null;
+	  /** `aiPausedUntil` in the future is a support hold (§8): the assistant stays out, the app does not. */
+	  lineCompanyContext?: { companyId: string; aiPausedUntil?: Date | null } | null;
 	  previousEventLog?: { webhookEventId: string; status: string; createdAt: Date } | null;
 	  recentTurns?: any[];
 	  entitlements?: Array<{ featureKey: string; enabled: boolean }>;
@@ -695,6 +697,7 @@ describe('ProcessLineWebhookUseCase', () => {
 
     assert.equal(getAiGatewayCalled(), false);
     assert.match(replies[0] ?? '', /ปิดการใช้งานผู้ช่วย AI/);
+    assert.equal((replies[0] ?? '').includes('🤖'), false, 'no robot icon (Owner 2026-09-06)');
     assert.equal((updates.at(-1) as any).data.status, 'ai_opt_out');
   });
 
@@ -1692,6 +1695,25 @@ describe('ProcessLineWebhookUseCase', () => {
 
     assert.equal(sentMessages[0]?.type, 'flex');
     assert.match(sentMessages[0]?.altText ?? '', /พิมพ์ชนก/);
+  });
+
+  // UAT 2026-09-06 (spec §2.2 delta รอบ 6). The support pause sits above every menu handler, so a
+  // customer waiting on a human got "ส่งข้อความถึงทีมงานแล้ว" for the menu button — the assistant
+  // was not the thing being silenced, the product was. A menu card costs no model call.
+  it('still opens the main menu while a support pause is running', async () => {
+    const { prisma } = makePrisma({
+      displayName: 'พิมพ์ชนก',
+      lineCompanyContext: { companyId: 'company-1', aiPausedUntil: new Date(Date.now() + 3_600_000) },
+    });
+    const { useCase, sentMessages, getAiGatewayCalled } = makeUseCase(prisma, { permissions: ['line.ai.query'] });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-main-menu-paused', messageText: 'เมนูหลัก' });
+
+    assert.equal(sentMessages[0]?.type, 'flex');
+    assert.match(sentMessages[0]?.altText ?? '', /พิมพ์ชนก/);
+    assert.equal(JSON.stringify(sentMessages).includes('ส่งข้อความถึงทีมงานแล้ว'), false);
+    assert.equal(JSON.stringify(sentMessages).includes('กำลังดูให้อยู่'), false);
+    assert.equal(getAiGatewayCalled(), false, 'and it is still a card, not a paid turn');
   });
 
   // UAT 2026-08-18: รายการรออนุมัติ only linked out, so an approver could not tell from LINE
