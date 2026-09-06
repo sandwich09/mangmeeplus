@@ -6,6 +6,8 @@ import { AUTH_MAILER_TOKEN, type AuthMailerPort } from '../../domain/ports/auth-
 import { AuditService } from '../../../audit/application/audit.service';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
 import { CURRENT_PASSWORD_INCORRECT } from './change-password.use-case';
+import { AppConfigService } from '../../../../common/config/app-config.service';
+import { assertEmailDeliveryEnabled } from '../email-delivery.policy';
 
 const EMAIL_VERIFICATION_TTL_MS = 15 * 60 * 1000;
 
@@ -15,6 +17,7 @@ export class RequestEmailChangeUseCase {
     private readonly prisma: PrismaService,
     @Inject(AUTH_MAILER_TOKEN) private readonly mailer: AuthMailerPort,
     @Optional() @Inject(AuditService) private readonly audit: AuditService | null = null,
+    @Optional() @Inject(AppConfigService) private readonly config: AppConfigService | null = null,
   ) {}
 
   async execute(input: {
@@ -23,6 +26,8 @@ export class RequestEmailChangeUseCase {
     newEmail: string;
     requestId?: string;
   }): Promise<{ email: string; expiresAt: string }> {
+    // Before anything else: with no mailer there is no outcome worth writing a token for.
+    assertEmailDeliveryEnabled(this.config);
     const newEmail = input.newEmail.trim().toLowerCase();
     const user = await this.prisma.client.user.findUnique({
       where: { id: input.userId },

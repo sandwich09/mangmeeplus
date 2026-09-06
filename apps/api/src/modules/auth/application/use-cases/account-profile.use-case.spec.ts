@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { BadRequestException, ConflictException, ForbiddenException, HttpException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, HttpException, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
 import { RequestMethod } from '@nestjs/common';
 import { DenyByDefaultGuard } from '../../../../common/security/deny-by-default.guard';
@@ -13,6 +13,7 @@ import { AccountProfileUseCase } from './account-profile.use-case';
 import { PasswordLoginUseCase } from './password-login.use-case';
 import { AuthRateLimitService } from '../auth-rate-limit.service';
 import { RequestEmailChangeUseCase } from './request-email-change.use-case';
+import { ResendEmailVerificationUseCase } from './resend-email-verification.use-case';
 import { ConfirmEmailVerificationUseCase } from './confirm-email-verification.use-case';
 import { GetAccountSecurityStateUseCase } from './get-account-security-state.use-case';
 import { hashToken } from '../../domain/logic/secure-token.logic';
@@ -399,6 +400,60 @@ describe('recovery email for an account with no password', () => {
       BadRequestException,
     );
     assert.equal(tokens.length, 0);
+  });
+
+  /**
+   * UAT 2026-09-06 §15.4.1 C. On `EMAIL_PROVIDER=disabled` — which is what production runs —
+   * `DisabledAuthMailerAdapter.sendEmailVerification` is a silent no-op, so both routes answered
+   * 202 with an expiry, wrote a PENDING token nobody could ever spend, and the page told the owner
+   * a letter was on its way. The refusal has to land BEFORE the token row exists, or the account
+   * sits in "รอการยืนยัน" forever.
+   */
+  it('refuses to promise a verification mail the environment cannot send', async () => {
+    const { prisma, tokens } = makePrisma({ users: [{ ...LINE_ONLY_USER }] });
+    const disabled = { emailProvider: 'disabled' } as any;
+    const unsent = { sendEmailVerification: async () => { throw new Error('must not send'); } } as any;
+
+    await assert.rejects(
+      () => new RequestEmailChangeUseCase(prisma, unsent, audit, disabled)
+        .execute({ userId: 'user-line', newEmail: 'owner@example.com', requestId: 'req-1' }),
+      (error: unknown) => error instanceof UnprocessableEntityException
+        && (error.getResponse() as Row)['code'] === 'email_delivery_unavailable',
+    );
+    assert.equal(tokens.length, 0, 'a token nobody can receive must never be written');
+  });
+
+  it('refuses a resend on the same environment, without revoking the pending token', async () => {
+    const { prisma, tokens } = makePrisma({
+      users: [{ ...LINE_ONLY_USER }],
+      tokens: [{
+        id: 'tok-1', userId: 'user-line', newEmail: 'owner@example.com', status: 'PENDING',
+        tokenHash: hashToken('raw'), expiresAt: new Date(Date.now() + 60_000), createdAt: new Date(),
+      }],
+    });
+    const disabled = { emailProvider: 'disabled' } as any;
+    const unsent = { sendEmailVerification: async () => { throw new Error('must not send'); } } as any;
+
+    await assert.rejects(
+      () => new ResendEmailVerificationUseCase(prisma, unsent, audit, disabled)
+        .execute({ userId: 'user-line', requestId: 'req-1' }),
+      (error: unknown) => error instanceof UnprocessableEntityException
+        && (error.getResponse() as Row)['code'] === 'email_delivery_unavailable',
+    );
+    assert.equal(tokens.length, 1);
+    assert.equal(tokens[0]!['status'], 'PENDING', 'a refused resend must not burn the link already sent');
+  });
+
+  it('still sends on an environment that has a mailer', async () => {
+    const { prisma, tokens } = makePrisma({ users: [{ ...LINE_ONLY_USER }] });
+    const sent: string[] = [];
+    const recording = { sendEmailVerification: async (input: Row) => { sent.push(input['toEmail']); } } as any;
+
+    await new RequestEmailChangeUseCase(prisma, recording, audit, { emailProvider: 'ses' } as any)
+      .execute({ userId: 'user-line', newEmail: 'owner@example.com', requestId: 'req-1' });
+
+    assert.deepEqual(sent, ['owner@example.com']);
+    assert.equal(tokens.length, 1);
   });
 
   it('answers a mailbox held by another account with the merge code, not a dead end', async () => {
