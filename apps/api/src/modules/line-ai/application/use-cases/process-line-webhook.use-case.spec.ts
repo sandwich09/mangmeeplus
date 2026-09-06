@@ -604,6 +604,87 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal((updates.at(-1) as any).data.status, 'staff_menu_talk');
   });
 
+  // ── Capability question, scoped to the asker (Owner 2026-09-06, review finding F1) ──
+  // The curated six-function card is PUBLIC marketing copy and stays the answer for a stranger. A
+  // LINKED caller must never see it: it names ยอดขาย and สรุปบัญชี to an expenses-only employee who
+  // can use neither, so their question continues into the ordinary turn and is answered by the
+  // permission/entitlement-scoped capability help (capability-help spec §8/§8.1).
+  const CAPABILITY_CARD_ALT = 'น้องมั่งมีช่วยอะไรได้บ้าง';
+  const EXPENSES_ONLY_ENTITLEMENTS = [
+    { featureKey: 'ai_line_assistant', enabled: true },
+    { featureKey: 'expenses', enabled: true },
+    { featureKey: 'expenses.list', enabled: true },
+    { featureKey: 'expenses.upload', enabled: true },
+    { featureKey: 'dashboard_notifications', enabled: true },
+  ];
+
+  it('answers an unlinked capability question with the curated card, before any model read', async () => {
+    const { prisma, updates } = makePrisma({ identityUserId: null });
+    const { useCase, sentMessages, legalChecks, getAiGatewayCalled, intakeRequests } =
+      makeUseCase(prisma, { legalAcceptanceRequired: true });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-capability-unlinked', messageText: 'ทำอะไรได้บ้าง' });
+
+    assert.equal(sentMessages[0]?.type, 'flex');
+    assert.equal(sentMessages[0]?.altText, CAPABILITY_CARD_ALT);
+    assert.match(JSON.stringify(sentMessages[0]), /ยอดขายวันนี้/, 'the public card is unchanged');
+    assert.equal(legalChecks.length, 0);
+    assert.equal(intakeRequests.length, 0);
+    assert.equal(getAiGatewayCalled(), false);
+    assert.equal((updates.at(-1) as any).data.status, 'staff_menu_capability');
+  });
+
+  for (const messageText of ['มั่งมีใช้ยังไง', 'ทำอะไรได้บ้าง']) {
+    it(`sends a linked caller's "${messageText}" to the scoped turn instead of the fixed card`, async () => {
+      const { prisma, updates } = makePrisma({ entitlements: EXPENSES_ONLY_ENTITLEMENTS });
+      const { useCase, sentMessages, intakeRequests, aiGatewayRequests } = makeUseCase(prisma, {
+        permissions: ['line.ai.query', 'expense.read'],
+        entitledFeatureKeys: ['ai_line_assistant', 'expenses', 'expenses.list', 'expenses.upload', 'dashboard_notifications'],
+        intakeRouteFn: () => ({ status: 'ROUTED', intent: 'UNSUPPORTED', language: 'th', confidence: 0.9 }),
+        aiGatewayFn: () => ({
+          requestId: 'req-ai', replyText: 'น้องมั่งมีสอนใช้งานเบื้องต้นให้นะคะ',
+          sourceRefs: [], sourceLabels: [], webLinks: [],
+          intent: 'capability_help', agent: 'general', refused: false, toolsInvoked: [], toolCalls: [],
+          modelCallCount: 1, modelLineage: [], usage: [], durationMs: 8,
+        }),
+      });
+
+      await useCase.execute({ ...BASE_EVENT, webhookEventId: `evt-capability-${messageText}`, messageText });
+
+      const rendered = JSON.stringify(sentMessages);
+      assert.equal(rendered.includes(CAPABILITY_CARD_ALT), false, 'the unscoped card must not reach a linked caller');
+      for (const hidden of ['ยอดขายวันนี้', 'สรุปบัญชี']) {
+        assert.equal(rendered.includes(hidden), false, `must not advertise ${hidden}`);
+      }
+      assert.notEqual((updates.at(-1) as any).data.status, 'staff_menu_capability');
+      // The scoped path IS the ordinary turn: the intake router sees the question, and the gateway
+      // turn carries the caller's own permissions and this company's feature set, which is what
+      // `composeCapabilityHelp` derives the reply from.
+      assert.equal(intakeRequests.length, 1);
+      assert.equal(intakeRequests[0].messageText, messageText);
+      assert.deepEqual(aiGatewayRequests[0].userContext.permissions, ['line.ai.query', 'expense.read']);
+      assert.ok(aiGatewayRequests[0].entitledFeatureKeys.includes('expenses'));
+      assert.equal(aiGatewayRequests[0].entitledFeatureKeys.includes('sales_documents'), false);
+    });
+  }
+
+  it('lets the support pause swallow a linked caller\'s capability question like any other free text', async () => {
+    const { prisma, updates } = makePrisma({
+      entitlements: EXPENSES_ONLY_ENTITLEMENTS,
+      lineCompanyContext: { companyId: 'company-1', aiPausedUntil: new Date(Date.now() + 3_600_000) },
+    });
+    const { useCase, replies, sentMessages, intakeRequests, getAiGatewayCalled } =
+      makeUseCase(prisma, { permissions: ['line.ai.query', 'expense.read'] });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-capability-paused', messageText: 'มั่งมีใช้ยังไง' });
+
+    assert.match(replies[0] ?? '', /ทีมงานรับเรื่องแล้วค่ะ กำลังดูให้อยู่/);
+    assert.equal(JSON.stringify(sentMessages).includes(CAPABILITY_CARD_ALT), false);
+    assert.equal(intakeRequests.length, 0);
+    assert.equal(getAiGatewayCalled(), false);
+    assert.equal((updates.at(-1) as any).data.status, 'support_paused');
+  });
+
   // Identities linked before providerChannelId was recorded must keep working without relinking.
   it('falls back to a channel-agnostic identity for legacy links', async () => {
     const { prisma, updates, identityQueries } = makePrisma({ identityChannelId: 'legacy-channel' });
