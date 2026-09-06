@@ -40,7 +40,7 @@ EXTERNAL_SIGNUP_ENABLED_INPUT="${EXTERNAL_SIGNUP_ENABLED:-}"
 # P10-L LINE-first signup (spec §10/§15.7). Empty = "decide from DEPLOY_ENV below", the same shape
 # EXTERNAL_SIGNUP_ENABLED uses, so a UAT deploy needs no flag and production cannot drift open.
 LINE_SIGNUP_ENABLED_INPUT="${LINE_SIGNUP_ENABLED:-}"
-LINE_SIGNUP_APPROVAL_MODE_INPUT="${LINE_SIGNUP_APPROVAL_MODE:-MANUAL}"
+LINE_SIGNUP_APPROVAL_MODE_INPUT="${LINE_SIGNUP_APPROVAL_MODE:-}"
 LINE_SIGNUP_AUTO_DAILY_CAP_INPUT="${LINE_SIGNUP_AUTO_DAILY_CAP:-20}"
 LINE_SIGNUP_WARMUP_SLIPS_INPUT="${LINE_SIGNUP_WARMUP_SLIPS:-10}"
 LINE_FREE_AI_BUDGET_SATANG_INPUT="${LINE_FREE_AI_BUDGET_SATANG:-8000}"
@@ -236,12 +236,24 @@ if [ "$DEPLOY_ENV" = production ] && [ "$RECEIPT_QUOTA_ENFORCED_INPUT" = true ];
   echo "ERROR: RECEIPT_QUOTA_ENFORCED=true is not activated for production yet" >&2
   exit 2
 fi
-# The remaining P10-L knobs are shaped, not gated. Each pattern is the EXACT counterpart of its
-# `apiConfigSchema` rule (packages/config/src/index.ts): anything this lets through and zod does not
-# is a task revision that crash-loops on boot instead of a deploy that stops here.
+# Auto-approval is a UAT rehearsal switch: UAT provisions a trial shop straight from the LIFF form
+# so the whole journey can be walked without an operator, while production keeps every application
+# in the manual queue until the Owner orders otherwise. Same shape as EXTERNAL_SIGNUP_ENABLED —
+# empty means "decide from DEPLOY_ENV", an explicit value is still validated, and production refuses
+# AUTO_FREE outright so a stray export cannot approve real shops.
+if [ -z "$LINE_SIGNUP_APPROVAL_MODE_INPUT" ]; then
+  if [ "$DEPLOY_ENV" = uat ]; then LINE_SIGNUP_APPROVAL_MODE_INPUT=AUTO_FREE; else LINE_SIGNUP_APPROVAL_MODE_INPUT=MANUAL; fi
+fi
 case "$LINE_SIGNUP_APPROVAL_MODE_INPUT" in MANUAL|AUTO_FREE) ;; *)
   echo "ERROR: LINE_SIGNUP_APPROVAL_MODE must be exactly MANUAL or AUTO_FREE" >&2; exit 2 ;;
 esac
+if [ "$DEPLOY_ENV" = production ] && [ "$LINE_SIGNUP_APPROVAL_MODE_INPUT" = AUTO_FREE ]; then
+  echo "ERROR: LINE_SIGNUP_APPROVAL_MODE=AUTO_FREE is not activated for production yet" >&2
+  exit 2
+fi
+# The remaining P10-L knobs are shaped, not gated. Each pattern is the EXACT counterpart of its
+# `apiConfigSchema` rule (packages/config/src/index.ts): anything this lets through and zod does not
+# is a task revision that crash-loops on boot instead of a deploy that stops here.
 # `nonnegative()` — 0 is a legal daily cap (it means "queue everything").
 case "$LINE_SIGNUP_AUTO_DAILY_CAP_INPUT" in ''|*[!0-9]*)
   echo "ERROR: LINE_SIGNUP_AUTO_DAILY_CAP must be a non-negative integer" >&2; exit 2 ;;

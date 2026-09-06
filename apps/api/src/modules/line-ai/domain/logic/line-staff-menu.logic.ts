@@ -53,6 +53,14 @@ export type CompanyContextCard = {
   companyName: string;
   displayName: string;
   roleLabels: string[];
+  /**
+   * "เปิดร้านใหม่": the SAME central LIFF signup page the door card opens, so an owner who is already
+   * linked can start a second shop — `submit-line-signup.use-case.ts` attaches it to the account the
+   * LINE identity already proves. The caller builds it from this environment's own config and passes
+   * `undefined` wherever self-service signup is closed, so nothing here is environment-specific and
+   * no id, company or token ever travels in the URL (LINE-ONBOARD-01).
+   */
+  newShopSignupUrl?: string;
 };
 
 /**
@@ -158,6 +166,11 @@ export function buildCompanyContextMessage(context: CompanyContextCard): LineRep
         { type: 'text', text: `👤 คุณ${displayName}`, size: 'sm', color: '#475467', wrap: true },
         { type: 'text', text: `💼 ${roleLabel}`, size: 'sm', color: '#475467', wrap: true },
       ] },
+      ...(context.newShopSignupUrl ? {
+        footer: { type: 'box', layout: 'vertical', contents: [
+          { type: 'button', style: 'primary', color: '#22C55E', action: { type: 'uri', label: 'เปิดร้านใหม่', uri: context.newShopSignupUrl } },
+        ] },
+      } : {}),
     },
   };
 }

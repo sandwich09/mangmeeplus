@@ -1483,6 +1483,35 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.match(JSON.stringify((ownerPicker as any).contents.contents[0]), /ใช้งานอยู่/);
   });
 
+  it('puts เปิดร้านใหม่ on the company card only where this environment opens self-service signup', async () => {
+    const card = async (config: Record<string, unknown>) => {
+      const { prisma } = makePrisma({
+        displayName: 'พิมพ์ชนก',
+        memberships: [{ companyId: 'co-1', company: { name: 'บริษัทหนึ่ง' }, roles: [{ role: { key: 'OWNER', name: 'เจ้าของกิจการ' } }] }],
+      });
+      const { useCase, sentMessageBatches } = makeUseCase(prisma, { permissions: ['line.ai.query'], config });
+      await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-new-shop', messageText: '/companies' });
+      return sentMessageBatches[0]?.[0] as any;
+    };
+
+    const open = await card({ lineLiffId: '2007891234-AbCdEf01', externalSignupEnabled: true });
+    const button = open?.contents?.footer?.contents?.[0];
+    assert.equal(button?.action?.label, 'เปิดร้านใหม่');
+    // Built from LINE_LIFF_ID, never a literal id, and carrying nothing about this owner or shop.
+    assert.equal(button?.action?.uri, 'https://liff.line.me/2007891234-AbCdEf01/signup');
+    assert.equal(/co-1|พิมพ์ชนก|บริษัทหนึ่ง|token/u.test(button?.action?.uri), false);
+
+    // Flag off, and an unusable LIFF id: no button either way, so production cannot show a door
+    // its own signup route would refuse.
+    for (const closed of [
+      { lineLiffId: '2007891234-AbCdEf01', externalSignupEnabled: false },
+      { lineLiffId: 'not a liff id', externalSignupEnabled: true },
+      { externalSignupEnabled: true },
+    ]) {
+      assert.equal(JSON.stringify(await card(closed)).includes('เปิดร้านใหม่'), false);
+    }
+  });
+
   it('returns only the current-company card to a non-owner', async () => {
     const { prisma } = makePrisma({
       displayName: 'สมชาย',

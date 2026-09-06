@@ -76,6 +76,14 @@ assert_rejected deploy-production-receipt-quota-not-activated \
 assert_rejected deploy-invalid-line-signup-approval-mode \
   'LINE_SIGNUP_APPROVAL_MODE must be exactly MANUAL or AUTO_FREE' \
   env -i PATH="$PATH" DEPLOY_ENV=uat LINE_SIGNUP_APPROVAL_MODE=auto bash "$deploy" all
+# Auto-approval: UAT defaults to AUTO_FREE so the signup journey can be walked without an operator,
+# every other environment defaults to MANUAL, and production refuses AUTO_FREE even when exported.
+assert_rejected deploy-production-line-signup-auto-free-not-activated \
+  'LINE_SIGNUP_APPROVAL_MODE=AUTO_FREE is not activated for production yet' \
+  env -i PATH="$PATH" DEPLOY_ENV=production PRODUCTION_SERVING_MODE=live \
+    LINE_SIGNUP_APPROVAL_MODE=AUTO_FREE bash "$deploy" all
+grep -Fq 'LINE_SIGNUP_APPROVAL_MODE_INPUT="${LINE_SIGNUP_APPROVAL_MODE:-}"' "$deploy"
+grep -Fq 'if [ "$DEPLOY_ENV" = uat ]; then LINE_SIGNUP_APPROVAL_MODE_INPUT=AUTO_FREE; else LINE_SIGNUP_APPROVAL_MODE_INPUT=MANUAL; fi' "$deploy"
 assert_rejected deploy-invalid-line-signup-daily-cap \
   'LINE_SIGNUP_AUTO_DAILY_CAP must be a non-negative integer' \
   env -i PATH="$PATH" DEPLOY_ENV=uat LINE_SIGNUP_AUTO_DAILY_CAP=twenty bash "$deploy" all
