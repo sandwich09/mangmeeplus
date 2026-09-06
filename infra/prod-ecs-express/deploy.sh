@@ -34,6 +34,7 @@ LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED_INPUT="${LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED
 LINE_AI_FUSED_PLAN_SHADOW_ENABLED_INPUT="${LINE_AI_FUSED_PLAN_SHADOW_ENABLED:-}"
 LINE_AI_PREPARED_SIMPLE_READ_ENABLED_INPUT="${LINE_AI_PREPARED_SIMPLE_READ_ENABLED:-}"
 LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES_INPUT="${LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES:-}"
+LINE_AI_DRAFT_EDIT_ENABLED_INPUT="${LINE_AI_DRAFT_EDIT_ENABLED:-}"
 LINE_AI_BUFFER_DEBOUNCE_MS_INPUT="${LINE_AI_BUFFER_DEBOUNCE_MS:-}"
 EXTERNAL_SIGNUP_ENABLED_INPUT="${EXTERNAL_SIGNUP_ENABLED:-}"
 # P10-L LINE-first signup (spec §10/§15.7). Empty = "decide from DEPLOY_ENV below", the same shape
@@ -169,6 +170,12 @@ fi
 if [ -z "$LINE_AI_PREPARED_SIMPLE_READ_ENABLED_INPUT" ]; then
   LINE_AI_PREPARED_SIMPLE_READ_ENABLED_INPUT=true
 fi
+# S-4 draft edit over LINE (draft-control spec §8): UAT exercises it, production stays off until the
+# Owner signs off J1-J4 on the recorded UAT run. Same shape as EXTERNAL_SIGNUP_ENABLED — an
+# environment default, not an env branch inside the container definition.
+if [ -z "$LINE_AI_DRAFT_EDIT_ENABLED_INPUT" ]; then
+  if [ "$DEPLOY_ENV" = uat ]; then LINE_AI_DRAFT_EDIT_ENABLED_INPUT=true; else LINE_AI_DRAFT_EDIT_ENABLED_INPUT=false; fi
+fi
 # Debounce: Owner selected 1,000 ms as the primary candidate (spec decision 2026-08-22);
 # UAT runs it as the canary default, production keeps the shipped 2,000 ms until the
 # cohort gates pass. Numeric-only; the app clamps its own bounds.
@@ -285,6 +292,9 @@ case "$LINE_AI_FUSED_PLAN_SHADOW_ENABLED_INPUT" in true|false) ;; *)
 esac
 case "$LINE_AI_PREPARED_SIMPLE_READ_ENABLED_INPUT" in true|false) ;; *)
   echo "ERROR: LINE_AI_PREPARED_SIMPLE_READ_ENABLED must be exactly true or false" >&2; exit 2 ;;
+esac
+case "$LINE_AI_DRAFT_EDIT_ENABLED_INPUT" in true|false) ;; *)
+  echo "ERROR: LINE_AI_DRAFT_EDIT_ENABLED must be exactly true or false" >&2; exit 2 ;;
 esac
 # Family keys are `${tool}::${answerShape}` (apps/ai-gateway/.../prepared-simple-read-formatter.ts),
 # comma-separated. Reject anything outside that charset here: the value is interpolated into a task
@@ -554,6 +564,7 @@ SERVING_LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED="$LINE_AI_DEBOUNCE_EXPERIMENT_ENABLE
 SERVING_LINE_AI_FUSED_PLAN_SHADOW_ENABLED="$LINE_AI_FUSED_PLAN_SHADOW_ENABLED_INPUT"
 SERVING_LINE_AI_PREPARED_SIMPLE_READ_ENABLED="$LINE_AI_PREPARED_SIMPLE_READ_ENABLED_INPUT"
 SERVING_LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES="$LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES_INPUT"
+SERVING_LINE_AI_DRAFT_EDIT_ENABLED="$LINE_AI_DRAFT_EDIT_ENABLED_INPUT"
 SERVING_EXTERNAL_SIGNUP_ENABLED="$EXTERNAL_SIGNUP_ENABLED_INPUT"
 SERVING_LINE_SIGNUP_ENABLED="$LINE_SIGNUP_ENABLED_INPUT"
 SERVING_RECEIPT_QUOTA_ENFORCED="$RECEIPT_QUOTA_ENFORCED_INPUT"
@@ -573,6 +584,7 @@ if [ "$PRODUCTION_SERVING_MODE_INPUT" = maintenance_only ]; then
   SERVING_LINE_AI_FUSED_PLAN_SHADOW_ENABLED=false
   SERVING_LINE_AI_PREPARED_SIMPLE_READ_ENABLED=false
   SERVING_LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES=""
+  SERVING_LINE_AI_DRAFT_EDIT_ENABLED=false
   SERVING_EXTERNAL_SIGNUP_ENABLED=false
   # A quiesced runtime takes no new shops and refuses no receipts: both P10-L switches go dark with
   # every other customer-facing one.
@@ -1633,6 +1645,7 @@ api_container_json() {
     --arg sesEventsTopicArn "$SES_EVENTS_TOPIC_ARN_VALUE" \
     --arg lineAiFusedPlanShadowEnabled "$SERVING_LINE_AI_FUSED_PLAN_SHADOW_ENABLED" \
     --arg lineAiPreparedSimpleReadEnabled "$SERVING_LINE_AI_PREPARED_SIMPLE_READ_ENABLED" \
+    --arg lineAiDraftEditEnabled "$SERVING_LINE_AI_DRAFT_EDIT_ENABLED" \
     --arg crmAiMinConfidence "${CRM_AI_MIN_CONFIDENCE:-0.7}" \
     --arg crmAiOutboundAllowedDomains "${CRM_AI_OUTBOUND_ALLOWED_DOMAINS:-}" \
     --arg workflowWebhookAllowedHosts "$WORKFLOW_WEBHOOK_ALLOWED_HOSTS" \
@@ -1734,6 +1747,7 @@ api_container_json() {
         {name:"SES_EVENTS_TOPIC_ARN", value:$sesEventsTopicArn},
         {name:"LINE_AI_FUSED_PLAN_SHADOW_ENABLED", value:$lineAiFusedPlanShadowEnabled},
         {name:"LINE_AI_PREPARED_SIMPLE_READ_ENABLED", value:$lineAiPreparedSimpleReadEnabled},
+        {name:"LINE_AI_DRAFT_EDIT_ENABLED", value:$lineAiDraftEditEnabled},
         {name:"WATCHDOG_JWT_ISSUER", value:$publicWebUrl},
         {name:"WATCHDOG_JWT_AUDIENCE", value:$jwtAudience},
         {name:"S3_BUCKET", value:$s3Bucket},
@@ -1865,6 +1879,7 @@ ai_container_json() {
     --arg lineAiFusedPlanShadowEnabled "$SERVING_LINE_AI_FUSED_PLAN_SHADOW_ENABLED" \
     --arg lineAiPreparedSimpleReadEnabled "$SERVING_LINE_AI_PREPARED_SIMPLE_READ_ENABLED" \
     --arg lineAiDeterministicResponseFamilies "$SERVING_LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES" \
+    --arg lineAiDraftEditEnabled "$SERVING_LINE_AI_DRAFT_EDIT_ENABLED" \
     --arg aiSecret "$(secret_arn "${SECRET_PREFIX}/ai-gateway-internal-secret")" \
     --arg jwtSecret "$(secret_arn "${SECRET_PREFIX}/watchdog-jwt-secret")" \
     --arg publicWebUrl "$public_web_url" \
@@ -1904,6 +1919,7 @@ ai_container_json() {
         {name:"LINE_AI_FUSED_PLAN_SHADOW_ENABLED", value:$lineAiFusedPlanShadowEnabled},
         {name:"LINE_AI_PREPARED_SIMPLE_READ_ENABLED", value:$lineAiPreparedSimpleReadEnabled},
         {name:"LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES", value:$lineAiDeterministicResponseFamilies},
+        {name:"LINE_AI_DRAFT_EDIT_ENABLED", value:$lineAiDraftEditEnabled},
         {name:"AGENTCORE_REGION", value:$agentcoreRegion},
         {name:"AGENTCORE_RUNTIME_ARN", value:$agentcoreArn},
         {name:"AGENTCORE_RUNTIME_QUALIFIER", value:$agentcoreQualifier},

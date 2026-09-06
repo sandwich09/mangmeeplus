@@ -65,6 +65,8 @@ export class AiGatewayConfigService {
   // Latency/autonomy Phases 3–6 (all default off / empty).
   get lineAiFusedPlanShadowEnabled(): boolean { return this.config.LINE_AI_FUSED_PLAN_SHADOW_ENABLED; }
   get lineAiPreparedSimpleReadEnabled(): boolean { return this.config.LINE_AI_PREPARED_SIMPLE_READ_ENABLED; }
+  /** S-4: whether the five `draft_update` preview tools exist in the catalog this turn (spec §8). */
+  get lineAiDraftEditEnabled(): boolean { return this.config.LINE_AI_DRAFT_EDIT_ENABLED; }
   /** Exact allow-listed deterministic response families (Phase 5). Empty = none enabled. */
   get lineAiDeterministicResponseFamilies(): string[] {
     return this.config.LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES.split(',').map((entry) => entry.trim()).filter(Boolean);

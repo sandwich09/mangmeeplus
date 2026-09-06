@@ -9,6 +9,7 @@
  * Shape budget: one bubble. The card the orchestrator builds from this text carries the web link as
  * its button, so no URL is written here (the API renders every link itself).
  */
+import { normalizeScrubDigits, scrubRecordIdentifier, scrubRecordText } from '@watchdog-bms/contracts';
 
 type Explain = {
   found?: unknown;
@@ -51,39 +52,17 @@ const MAX_CHARGE_LABEL_CHARS = 40;
  * rendered beside the real total. Everything is folded to ASCII digits and ASCII separators FIRST,
  * so one set of patterns covers every alphabet the OCR can hand us.
  */
-const DIGIT_FOLD: Record<string, string> = {
-  '๐': '0', '๑': '1', '๒': '2', '๓': '3', '๔': '4', '๕': '5', '๖': '6', '๗': '7', '๘': '8', '๙': '9',
-  '０': '0', '１': '1', '２': '2', '３': '3', '４': '4', '５': '5', '６': '6', '７': '7', '８': '8', '９': '9',
-  '，': ',', '．': '.', '％': '%', '　': ' ',
-};
 export function foldDigits(value: string): string {
-  return value.replace(/[๐-๙０-９，．％　]/gu, (char) => DIGIT_FOLD[char] ?? char);
+  return normalizeScrubDigits(value);
 }
 
 /**
- * Anything a LINE client turns into a tappable link. `https?://` and `www.` are the easy half; the
- * dangerous half is a BARE domain (`evil.example.com`, `bit.ly/x9`), which LINE links just the same.
- * No `\b` before `www` on purpose: after a Thai letter there is no word boundary, so `ร้านabcwww.…`
- * defeated it.
- *
- * The TLD is a SHAPE, never a list. A list is a permanent race against the registry — `.xyz`,
- * `.app` and `.ru` all linkify exactly like `.com`, and every one of them was live while an
- * allowlist of ten spelled safety. The cost of the shape is that `Co.Ltd` scrubs too; a company
- * suffix is worth less than a live link in an answer the reader trusts.
- */
-const AUTO_LINKABLE = /(?:https?:\/\/\S+|(?:\S*\.)?[a-z0-9-]+\.[a-z]{2,24}\b\S*)/giu;
-
-/**
  * Money-shaped, once folded: a grouped run (`99,999`), a decimal amount (`99999.00`), or any run of
- * three or more digits. Three digits is the deliberate floor — `99999` with no separator still reads
- * as an amount next to a real total.
+ * three or more digits. Retained here because two local money PREDICATES still use it; the text
+ * scrubbing itself is `scrubRecordText`'s, in contracts, shared with the API.
  */
 const MONEY_SHAPED = /\d[\d,]*\.\d+|\d{1,3}(?:,\d{3})+|\d{3,}/u;
 const PERCENT_SHAPED = /\d+\s*%/u;
-const MONEY_SHAPED_G = new RegExp(MONEY_SHAPED.source, 'gu');
-const PERCENT_SHAPED_G = new RegExp(PERCENT_SHAPED.source, 'gu');
-/** What a refused number leaves behind, so the surrounding words still read as a sentence. */
-const NUMBER_PLACEHOLDER = '…';
 
 /**
  * Free text that reaches this template is OCR output — whatever was printed on the paper the
@@ -116,16 +95,10 @@ const NUMBER_PLACEHOLDER = '…';
  */
 export function safeText(value: unknown, maxChars: number, policy: 'neutralise' | 'drop' = 'neutralise'): string | undefined {
   if (typeof value !== 'string') return undefined;
-  const delinked = foldDigits(value.normalize('NFC')).replace(AUTO_LINKABLE, ' ');
-  if (policy === 'drop' && (MONEY_SHAPED.test(delinked) || PERCENT_SHAPED.test(delinked))) return undefined;
-  // Percent first: `999%` would otherwise lose its digits to the money rule and leave a bare `%`.
-  const neutralised = delinked
-    .replace(PERCENT_SHAPED_G, NUMBER_PLACEHOLDER)
-    .replace(MONEY_SHAPED_G, NUMBER_PLACEHOLDER);
-  const stripped = neutralised.replace(/\s+/gu, ' ').trim();
-  // Nothing but punctuation left is not a name — fall back rather than print debris.
-  if (!/[\p{L}\p{N}]/u.test(stripped)) return undefined;
-  return stripped.slice(0, maxChars);
+  const scrubbed = scrubRecordText(value, maxChars, policy === 'drop' ? { onMoney: 'drop' } : {});
+  // `''` is the shared helper's "nothing usable left"; this channel's callers want `undefined` so
+  // they fall back to a neutral label rather than printing a hole.
+  return scrubbed === '' ? undefined : scrubbed;
 }
 
 /**
@@ -135,20 +108,8 @@ export function safeText(value: unknown, maxChars: number, policy: 'neutralise' 
  * injected sentence cannot satisfy, since a sentence needs spaces and a fake total needs a
  * separator or a decimal.
  */
-// `\p{M}` is load-bearing, not decoration: Thai writes its vowel signs and tone marks as combining
-// marks, so "ใบเสร็จ-001" and "ใบกำกับ-12" are `\p{L}` + `\p{M}` sequences. Without it the charset
-// rejected the mark and every Thai-prefixed document number was dropped whole.
-//
-// `.` is deliberately NOT in the charset, so a dot-separated identifier like "INV.2569.00123" is
-// dropped. That is the price of this being a STRUCTURAL guard with no money test behind it: admit
-// `.` and "99.999,00" — a European-formatted total — becomes a valid "document number" and prints
-// as one. A dropped document number costs the reader a line of context; an admitted total costs
-// them the one guarantee this answer sells. Revisit only with a real money test in front of it.
-const DOCUMENT_NUMBER = /^[\p{L}\p{N}][\p{L}\p{N}\p{M}\-/_#]{0,31}$/u;
 export function safeDocumentNumber(value: unknown): string | undefined {
-  if (typeof value !== 'string') return undefined;
-  const folded = foldDigits(value.normalize('NFC')).trim();
-  return DOCUMENT_NUMBER.test(folded) ? folded : undefined;
+  return scrubRecordIdentifier(typeof value === 'string' ? value : null, 32) ?? undefined;
 }
 
 /** `YYYY-MM-DD…` → `DD/MM/BE`. Computed from the string, never from a locale calendar, so the same

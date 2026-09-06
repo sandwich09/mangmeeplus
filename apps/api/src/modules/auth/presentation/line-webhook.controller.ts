@@ -80,7 +80,9 @@ export class LineWebhookController {
         // it into the same lane a typed message uses, where §3.1 decides door card or status card.
         const synthetic = event.type === 'follow'
           ? LINE_FOLLOW_EVENT_TEXT
-          : event.type === 'postback' ? linePostbackCommandText(event.postback?.data) : null;
+          : event.type === 'postback'
+            ? linePostbackCommandText(event.postback?.data, this.config.lineAiDraftEditEnabled)
+            : null;
         if (synthetic) {
           await this.messageBuffer.enqueue({
             chatId,

@@ -321,6 +321,11 @@ export const apiConfigSchema = baseConfigSchema.extend({
   LINE_AI_FLEX_TEXT_FALLBACK_ENABLED: envBoolean.default(false),
   // Durable multi-turn expense draft collection. Default off until recorded LINE OA UAT passes.
   LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED: envBoolean.default(false),
+  // S-4 (draft-control spec §8): editing a captured draft over LINE — preview card, confirm
+  // postback, apply. OFF is byte-for-byte today's behaviour: the five `draft_update` tools are
+  // absent from the catalog the model is offered, the executor refuses the category, and the
+  // webhook renders no preview card. Default off until the recorded UAT J1–J4 pass.
+  LINE_AI_DRAFT_EDIT_ENABLED: envBoolean.default(false),
   // Item 10F: LINE AI turn ledger on Redis Streams (ADR 0010; fail-open, default off)
   LINE_AI_LEDGER_ENABLED: envBoolean.default(false),
   LINE_AI_LEDGER_MAXLEN: z.coerce.number().int().positive().default(200),
@@ -470,6 +475,10 @@ export const aiGatewayConfigSchema = baseConfigSchema.extend({
   // be allow-listed by Phase 5 (empty default → no simple read is deterministic-eligible).
   LINE_AI_FUSED_PLAN_SHADOW_ENABLED: envBoolean.default(false),
   LINE_AI_PREPARED_SIMPLE_READ_ENABLED: envBoolean.default(false),
+  // Same switch as the API's, read here so the five `draft_update` tools are absent from the
+  // catalog the model is offered when it is off — "refused later" would still have advertised an
+  // ability this deployment does not have. Both containers carry it (deploy.sh).
+  LINE_AI_DRAFT_EDIT_ENABLED: envBoolean.default(false),
   // Exact family allowlist (comma-separated; empty = none enabled). Only families with a verified
   // deterministic formatter + fixed fixture and passed blind pairwise eval belong here.
   LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES: z.string().default(''),
