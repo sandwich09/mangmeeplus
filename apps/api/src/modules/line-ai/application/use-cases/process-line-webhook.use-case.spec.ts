@@ -512,13 +512,16 @@ function makeUseCase(
 	  return { useCase, replies, sentMessages, sentMessageBatches, pushes, aiGatewayRequests, intakeRequests, auditEvents, legalChecks, getAiGatewayCalled: () => aiGatewayCalled };
 	}
 
-const BASE_EVENT = {
+// The use case assigns onto its event argument (event.handoff = ...), so a shared literal passed
+// straight to execute() used to leak a stale handoff into every later test that spread it. Frozen:
+// pass a fresh copy ({ ...BASE_EVENT }) and any such write throws instead of corrupting the literal.
+const BASE_EVENT = Object.freeze({
   webhookEventId: 'evt-1',
   lineUserId: 'line-user-secret',
   replyToken: 'reply-1',
   messageText: 'ดู dashboard',
   messagingChannelId: 'msg-channel-1',
-};
+});
 
 describe('toAiTurnIntent (free-form model intent → AiTurn enum)', () => {
   it('passes through valid enum values (case-insensitive)', () => {
@@ -560,7 +563,7 @@ describe('ProcessLineWebhookUseCase', () => {
     const { prisma, identityQueries } = makePrisma();
     const { useCase } = makeUseCase(prisma, { permissions: ['dashboard.read'] });
 
-    await useCase.execute(BASE_EVENT);
+    await useCase.execute({ ...BASE_EVENT });
 
     assert.equal(identityQueries.length, 1);
     assert.equal(identityQueries[0].providerChannelId, 'msg-channel-1');
@@ -739,7 +742,7 @@ describe('ProcessLineWebhookUseCase', () => {
     const { prisma, updates, identityQueries } = makePrisma({ identityChannelId: 'legacy-channel' });
     const { useCase, replies } = makeUseCase(prisma, { permissions: ['dashboard.read'] });
 
-    await useCase.execute(BASE_EVENT);
+    await useCase.execute({ ...BASE_EVENT });
 
     assert.equal(identityQueries.length, 2);
     assert.equal(identityQueries[1].providerChannelId, undefined);
@@ -823,7 +826,7 @@ describe('ProcessLineWebhookUseCase', () => {
     const { prisma, updates } = makePrisma({ aiAssistantOptOutAt: new Date('2026-07-28T00:00:00Z') });
     const { useCase, replies, getAiGatewayCalled } = makeUseCase(prisma, { permissions: ['line.ai.query'] });
 
-    await useCase.execute(BASE_EVENT);
+    await useCase.execute({ ...BASE_EVENT });
 
     assert.equal(getAiGatewayCalled(), false);
     assert.match(replies[0] ?? '', /ปิดการใช้งานผู้ช่วย AI/);
@@ -913,7 +916,7 @@ describe('ProcessLineWebhookUseCase', () => {
     const { prisma, updates } = makePrisma();
     const { useCase, replies, getAiGatewayCalled } = makeUseCase(prisma, { permissions: ['dashboard.read'] });
 
-    await useCase.execute(BASE_EVENT);
+    await useCase.execute({ ...BASE_EVENT });
 
     assert.equal(getAiGatewayCalled(), false);
     assert.match(replies[0] ?? '', /ไม่มีสิทธิ์/);
@@ -924,7 +927,7 @@ describe('ProcessLineWebhookUseCase', () => {
     const { prisma, updates } = makePrisma({ entitlements: [{ featureKey: 'ai_line_assistant', enabled: false }] });
     const { useCase, replies, getAiGatewayCalled } = makeUseCase(prisma, { permissions: ['line.ai.query'] });
 
-    await useCase.execute(BASE_EVENT);
+    await useCase.execute({ ...BASE_EVENT });
 
     assert.equal(getAiGatewayCalled(), false);
     assert.match(replies[0] ?? '', /ยังไม่ได้เปิดใช้งาน/);
@@ -935,7 +938,7 @@ describe('ProcessLineWebhookUseCase', () => {
     const { prisma, updates } = makePrisma({ entitlements: [{ featureKey: 'expenses', enabled: true }] });
     const { useCase, getAiGatewayCalled } = makeUseCase(prisma, { permissions: ['line.ai.query'] });
 
-    await useCase.execute(BASE_EVENT);
+    await useCase.execute({ ...BASE_EVENT });
 
     assert.equal(getAiGatewayCalled(), false);
     assert.equal((updates[0] as any).data.status, 'feature_disabled');
@@ -1046,7 +1049,7 @@ describe('ProcessLineWebhookUseCase', () => {
       }),
     });
 
-    await useCase.execute(BASE_EVENT);
+    await useCase.execute({ ...BASE_EVENT });
 
     assert.equal(getAiGatewayCalled(), true);
     assert.deepEqual(aiGatewayRequests[0]?.userContext.entitlementDeniedPermissions, { 'inventory.report.read': 'inventory' });
@@ -1070,7 +1073,7 @@ describe('ProcessLineWebhookUseCase', () => {
       }),
     });
 
-    await useCase.execute(BASE_EVENT);
+    await useCase.execute({ ...BASE_EVENT });
 
     const sent: string[] = aiGatewayRequests[0]?.entitledFeatureKeys ?? [];
     assert.ok(sent.includes('expenses'));
@@ -1087,7 +1090,7 @@ describe('ProcessLineWebhookUseCase', () => {
       }),
     });
 
-    await useCase.execute(BASE_EVENT);
+    await useCase.execute({ ...BASE_EVENT });
 
     assert.equal(aiGatewayRequests[0]?.entitledFeatureKeys, undefined);
   });
@@ -1596,7 +1599,7 @@ describe('ProcessLineWebhookUseCase', () => {
     const { prisma } = makePrisma({ identityUserId: null });
     const { useCase, replies } = makeUseCase(prisma);
 
-    await useCase.execute(BASE_EVENT);
+    await useCase.execute({ ...BASE_EVENT });
 
     assert.match(replies[0] ?? '', /ยินดีต้อนรับสู่มั่งมีพลัส/);
     assert.equal(/เชื่อมต่อบัญชี/.test(replies[0] ?? ''), false);
@@ -1606,7 +1609,7 @@ describe('ProcessLineWebhookUseCase', () => {
     const { prisma } = makePrisma({ memberships: [] });
     const { useCase, replies } = makeUseCase(prisma);
 
-    await useCase.execute(BASE_EVENT);
+    await useCase.execute({ ...BASE_EVENT });
 
     assert.match(replies[0] ?? '', /เชื่อมต่อ/);
   });
@@ -1622,7 +1625,7 @@ describe('ProcessLineWebhookUseCase', () => {
       });
       const { useCase, replies, getAiGatewayCalled } = makeUseCase(prisma);
 
-      await useCase.execute(BASE_EVENT);
+      await useCase.execute({ ...BASE_EVENT });
 
       assert.match(replies[0] ?? '', /ครบกำหนดใช้งานแล้ว/);
       assert.match(replies[0] ?? '', /ข้อมูลทั้งหมดยังอยู่ครบ/);
@@ -1640,7 +1643,7 @@ describe('ProcessLineWebhookUseCase', () => {
       });
       const { useCase, replies } = makeUseCase(prisma);
 
-      await useCase.execute(BASE_EVENT);
+      await useCase.execute({ ...BASE_EVENT });
 
       assert.match(replies[0] ?? '', /เชื่อมต่อ/, 'staff keep the generic reply');
       assert.doesNotMatch(replies[0] ?? '', /098-256-5628/, 'and are shown no package or contact detail');
@@ -1653,7 +1656,7 @@ describe('ProcessLineWebhookUseCase', () => {
       const { prisma } = makePrisma({ memberships: [], termExpiredMemberships: [] });
       const { useCase, replies } = makeUseCase(prisma);
 
-      await useCase.execute(BASE_EVENT);
+      await useCase.execute({ ...BASE_EVENT });
 
       assert.match(replies[0] ?? '', /เชื่อมต่อ/);
     });
@@ -1667,7 +1670,7 @@ describe('ProcessLineWebhookUseCase', () => {
       prisma.client.companyMembership.findFirst = async (args: any) => { probes.push(args); return findFirst(args); };
       const { useCase, replies } = makeUseCase(prisma);
 
-      await useCase.execute(BASE_EVENT);
+      await useCase.execute({ ...BASE_EVENT });
 
       assert.deepEqual(probes, [], 'an active company never reaches the term-expired branch');
       assert.doesNotMatch(replies.join('\n'), /ครบกำหนดใช้งานแล้ว/);
@@ -1678,7 +1681,7 @@ describe('ProcessLineWebhookUseCase', () => {
     const { prisma } = makePrisma({ memberships: [{ companyId: 'co-1', company: { name: 'บริษัทหนึ่ง' } }, { companyId: 'co-2', company: { name: 'บริษัทสอง' } }], lineCompanyContext: null });
     const { useCase, sentMessages } = makeUseCase(prisma);
 
-    await useCase.execute(BASE_EVENT);
+    await useCase.execute({ ...BASE_EVENT });
 
     assert.equal(sentMessages[0]?.type, 'flex');
     assert.match(JSON.stringify(sentMessages[0]), /บริษัทหนึ่ง/);
@@ -2195,7 +2198,7 @@ describe('ProcessLineWebhookUseCase', () => {
       };
     (prisma.client as any).aiToolInvocation = { createMany: async () => ({ count: 0 }) };
 
-    await useCase.execute(BASE_EVENT);
+    await useCase.execute({ ...BASE_EVENT });
 
     assert.match(replies[0] ?? '', /ตอบแล้ว/);
   });
@@ -2232,7 +2235,7 @@ describe('ProcessLineWebhookUseCase', () => {
       };
     (prisma.client as any).aiToolInvocation = { createMany: async () => ({ count: 0 }) };
 
-    await useCase.execute(BASE_EVENT);
+    await useCase.execute({ ...BASE_EVENT });
 
     assert.match(replies[0] ?? '', /company-2 data/);
   });
@@ -3602,7 +3605,7 @@ describe('LINE webhook shadow coverage (piece 5)', () => {
     });
     const since = takeNewRecords();
 
-    await useCase.execute(BASE_EVENT);
+    await useCase.execute({ ...BASE_EVENT });
 
     assert.deepEqual(since(), [
       { surface: 'line.webhook.employee', companyId: 'company-1', featureKey: 'ai_line_assistant' },
@@ -3615,7 +3618,7 @@ describe('LINE webhook shadow coverage (piece 5)', () => {
     const { useCase } = makeUseCase(prisma, { permissions: ['line.ai.query'] });
     const since = takeNewRecords();
 
-    await useCase.execute(BASE_EVENT);
+    await useCase.execute({ ...BASE_EVENT });
 
     // Mutation guard for the Group-E trap: move `recordShadowTurn` below the
     // `lineAssistantDisabled` branch and this is [] — the family's would_block counter would then
@@ -3653,7 +3656,7 @@ describe('LINE webhook shadow coverage (piece 5)', () => {
     const { useCase } = makeUseCase(prisma, { permissions: ['line.ai.query'] });
     const since = takeNewRecords();
 
-    await useCase.execute(BASE_EVENT);
+    await useCase.execute({ ...BASE_EVENT });
 
     // No company means no entitlement question to ask; a fabricated observation would be worse
     // than none.
@@ -4714,7 +4717,7 @@ function makeIntakeStateUseCase(prisma: any, opts: {
   return { useCase, replies, logs, ledgerSubs, sent };
 }
 
-const STATE_EVENT = { ...BASE_EVENT, webhookEventId: 'evt-state-1', messageText: '200 บาท' };
+const STATE_EVENT = Object.freeze({ ...BASE_EVENT, webhookEventId: 'evt-state-1', messageText: '200 บาท' });
 
 describe('ProcessLineWebhookUseCase – neutral intake state mode: off (§8.3, default)', () => {
   it('never touches the repository and captures exactly as today', async () => {
@@ -4725,7 +4728,7 @@ describe('ProcessLineWebhookUseCase – neutral intake state mode: off (§8.3, d
       mode: 'off', capture: capture.capture, stateRepo: state.repo,
     });
 
-    await useCase.execute(STATE_EVENT);
+    await useCase.execute({ ...STATE_EVENT });
 
     assert.deepEqual(state.calls, [], 'default-off is byte-identical: the durable state is not read or written');
     assert.equal(capture.calls.length, 1, 'the legacy capture still runs');
@@ -4742,7 +4745,7 @@ describe('ProcessLineWebhookUseCase – neutral intake state mode: off (§8.3, d
       mode: 'off', capture: capture.capture, stateRepo: state.repo,
     });
 
-    await useCase.execute(STATE_EVENT);
+    await useCase.execute({ ...STATE_EVENT });
 
     assert.deepEqual(state.calls, []);
     assert.equal(capture.calls.length, 1, 'an outage the flag never consulted cannot block a turn');
@@ -4759,7 +4762,7 @@ describe('ProcessLineWebhookUseCase – neutral intake state mode: shadow (§8.3
       mode: 'shadow', capture: capture.capture, stateRepo: state.repo,
     });
 
-    await useCase.execute(STATE_EVENT);
+    await useCase.execute({ ...STATE_EVENT });
 
     assert.deepEqual(state.calls, ['read', 'resolve'], 'shadow exercises the real path so the measurement is real');
     assert.equal(capture.calls.length, 1, 'same capture as off');
@@ -4774,7 +4777,7 @@ describe('ProcessLineWebhookUseCase – neutral intake state mode: shadow (§8.3
       mode: 'shadow', capture: capture.capture, stateRepo: state.repo,
     });
 
-    await useCase.execute(STATE_EVENT);
+    await useCase.execute({ ...STATE_EVENT });
 
     const divergence = logs.map((line) => { try { return JSON.parse(line); } catch { return {}; } })
       .find((entry) => entry.event === 'line_ai_intake_state_shadow_divergence');
@@ -4796,7 +4799,7 @@ describe('ProcessLineWebhookUseCase – neutral intake state mode: on, four zero
       mode: 'on', capture: capture.capture, stateRepo: state.repo,
     });
 
-    await useCase.execute(STATE_EVENT);
+    await useCase.execute({ ...STATE_EVENT });
 
     assert.deepEqual(state.calls, ['read', 'resolve']);
     assert.equal(capture.calls.length, 1, 'a healthy, owned, fresh state is exactly what lets a write happen');
@@ -4821,7 +4824,7 @@ describe('ProcessLineWebhookUseCase – neutral intake state mode: on, four zero
         mode: 'on', capture: capture.capture, stateRepo: state.repo,
       });
 
-      await useCase.execute(STATE_EVENT);
+      await useCase.execute({ ...STATE_EVENT });
 
       assert.equal(capture.calls.length, 0, `${gap}: the capture use case is never reached, so nothing can be written`);
       // Matched on the canonical "not created yet" clause rather than the whole string, so a copy
@@ -4845,7 +4848,7 @@ describe('ProcessLineWebhookUseCase – neutral intake state mode: on, four zero
       }],
     });
 
-    await useCase.execute(STATE_EVENT);
+    await useCase.execute({ ...STATE_EVENT });
 
     assert.equal(capture.calls.length, 0);
     assert.deepEqual(ledgerSubs, [], 'no new question and no consumption marker on a refused turn');
@@ -4883,12 +4886,12 @@ describe('ProcessLineWebhookUseCase – neutral intake state mode: on, four zero
 //    wrapping the canonical reply. Same gate as the rest of terminal Flex
 //    (`LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED`), so default-off is still the legacy all-text shape. ──
 describe('ProcessLineWebhookUseCase – expense draft card on the capture terminal (§10.1, default off)', () => {
-  const CAPTURE_EVENT = { ...STATE_EVENT, webhookEventId: 'evt-draft-card', messageText: '200 บาท' };
+  const CAPTURE_EVENT = Object.freeze({ ...STATE_EVENT, webhookEventId: 'evt-draft-card', messageText: '200 บาท' });
   const run = async (config?: Record<string, unknown>) => {
     const { prisma } = makePrisma();
     const capture = makeCapture({ vendorNameSnapshot: 'ร้านกาแฟบ้านไร่' });
     const harness = makeIntakeStateUseCase(prisma, { capture: capture.capture, ...(config ? { config } : {}) });
-    await harness.useCase.execute(CAPTURE_EVENT);
+    await harness.useCase.execute({ ...CAPTURE_EVENT });
     return { ...harness, captureCalls: capture.calls };
   };
   const bodyOf = (message: any) => message.contents.body.contents;
@@ -4939,7 +4942,12 @@ describe('ProcessLineWebhookUseCase – expense draft card on the capture termin
     const on = makeIntakeStateUseCase(prisma, {
       capture: capture.capture, config: { lineAiMultipartTerminalFlexEnabled: true },
     });
-    await on.useCase.execute(CAPTURE_EVENT);
+    await on.useCase.execute({ ...CAPTURE_EVENT });
     assert.deepEqual(rowsOf(on.sent[0]![0]).map(([label]: string[]) => label), ['ยอดรวม', 'หมวดหมู่', 'สถานะ']);
   });
+});
+
+// Regression guard: passing a bare BASE_EVENT to execute() silently poisoned every later spread.
+it('keeps the shared event literals frozen so execute() cannot mutate them', () => {
+  assert.ok(Object.isFrozen(BASE_EVENT) && Object.isFrozen(STATE_EVENT));
 });
