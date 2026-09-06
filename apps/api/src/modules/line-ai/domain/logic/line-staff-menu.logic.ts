@@ -55,7 +55,25 @@ export type StaffMenuContext = {
 export type CompanyPickerItem = {
   companyId: string;
   companyName: string;
+  /**
+   * The already-minted one-tap link that opens the web app on THIS company (P12-3b `/l/<token>`).
+   * Absent — which is every caller while `LINE_WEB_HANDOFF_ENABLED` is off, and every company whose
+   * mint failed — renders the bubble exactly as it rendered before this feature: half a picker is
+   * worse than the one that always worked.
+   */
+  webUrl?: string;
 };
+
+/**
+ * Owner 2026-09-06: "มี 2 ปุ่ม ปุ่มเลือก อันนี้ทำงานเหมือนเดิม … อีกปุ่มคือสลับบริษัทและพาไปเว็บไซต์
+ * ตามบริษัทนั้น". Constants so the wording is one line to change, and so the label matcher and the
+ * button can never drift apart. Every label stays inside 12 Thai grapheme clusters, which is what
+ * LINE's `sm` button renders without an ellipsis.
+ */
+export const COMPANY_PICKER_SELECT_LABEL = 'เลือกบริษัทนี้';
+export const COMPANY_PICKER_OPEN_WEB_LABEL = 'เปิดเว็บบริษัทนี้';
+/** Says what the second button does that the first does not — the switch comes free with it. */
+export const COMPANY_PICKER_OPEN_WEB_HINT = 'กดเปิดเว็บ ระบบจะสลับบริษัทในไลน์ให้ด้วยค่ะ';
 
 export type CompanyContextCard = {
   companyName: string;
@@ -89,6 +107,14 @@ export type CompanyContextCard = {
    * Free text an applicant typed, so the card scrubs it like every other customer-supplied value.
    */
   pendingSignupName?: string;
+  /**
+   * Owner 2026-09-06: *"เจ้าของที่มีบริษัทเดียวจะไม่เห็นการ์ดเลือกบริษัท อยากให้การ์ดบริษัทเดียวมีปุ่มเปิดเว็บด้วย"*.
+   * The picker carrying `เปิดเว็บบริษัทนี้` is only sent to a member of more than one company, so a
+   * single-shop owner never saw that button at all. Same already-minted `/l/<token>` link, for the
+   * company THIS card is about. Absent — the handoff feature off, or a mint that failed — renders
+   * the card exactly as it rendered before, the same rule `CompanyPickerItem.webUrl` follows.
+   */
+  openWebUrl?: string;
 };
 
 /**
@@ -198,6 +224,14 @@ export function buildCompanyContextMessage(context: CompanyContextCard): LineRep
   const promotionLine = door && !context.isOwner
     ? `💡 อยากเปิดร้านของตัวเอง กดปุ่ม ${VIEW_PACKAGES_COMMAND} ในเมนูได้เลยค่ะ`
     : undefined;
+  // Opening the web on the company you are already in is not a shop-owner action — the web enforces
+  // its own permissions — so this one is for every member, and the door above keeps its own gate.
+  // No `COMPANY_PICKER_OPEN_WEB_HINT` here: the picker's hint explains a SWITCH, and this card is
+  // already about this company.
+  const buttons = [
+    ...(context.openWebUrl ? [{ type: 'button', style: 'secondary', action: { type: 'uri', label: COMPANY_PICKER_OPEN_WEB_LABEL, uri: context.openWebUrl } }] : []),
+    ...(door && context.isOwner ? [{ type: 'button', style: 'primary', color: '#22C55E', action: { type: 'uri', label: 'เปิดร้านใหม่', uri: context.newShopSignupUrl } }] : []),
+  ];
   return {
     type: 'flex',
     altText: `บริษัทของฉัน: ${companyName} · คุณ${displayName} · ${roleLabel}${pendingLine ? `\n${pendingLine}` : ''}`,
@@ -211,11 +245,11 @@ export function buildCompanyContextMessage(context: CompanyContextCard): LineRep
         ...(pendingLine ? [{ type: 'text', text: pendingLine, size: 'sm', color: '#475467', wrap: true }] : []),
         ...(promotionLine ? [{ type: 'text', text: promotionLine, size: 'sm', color: '#475467', wrap: true }] : []),
       ] },
-      ...(door && context.isOwner ? {
-        footer: { type: 'box', layout: 'vertical', contents: [
-          { type: 'button', style: 'primary', color: '#22C55E', action: { type: 'uri', label: 'เปิดร้านใหม่', uri: context.newShopSignupUrl } },
-        ] },
-      } : {}),
+      // `spacing` only where there is a gap to space, so the one-button card stays byte-identical
+      // to the one shipped today — the same rule the picker's footer follows.
+      ...(buttons.length > 0
+        ? { footer: { type: 'box', layout: 'vertical', ...(buttons.length > 1 ? { spacing: 'sm' } : {}), contents: buttons } }
+        : {}),
     },
   };
 }
@@ -351,6 +385,13 @@ export function buildContactCard(): LineReplyMessage {
 
 function companyBubble(company: CompanyPickerItem, selectionNumber: number, currentCompanyId?: string): Record<string, unknown> {
   const current = company.companyId === currentCompanyId;
+  // Two ways in, in the order they were asked for: switch the chat only (unchanged, and still
+  // typeable as a number), or switch AND open the web on that company in one tap. The current
+  // company keeps having nothing to select, so it gets the web button alone.
+  const buttons = [
+    ...(!current ? [{ type: 'button', style: 'primary', color: '#22C55E', action: { type: 'message', label: COMPANY_PICKER_SELECT_LABEL, text: `/company ${company.companyId}` } }] : []),
+    ...(company.webUrl ? [{ type: 'button', style: 'secondary', action: { type: 'uri', label: COMPANY_PICKER_OPEN_WEB_LABEL, uri: company.webUrl } }] : []),
+  ];
   return {
     type: 'bubble',
     body: {
@@ -359,29 +400,45 @@ function companyBubble(company: CompanyPickerItem, selectionNumber: number, curr
         { type: 'text', text: boundedLabel(company.companyName, 'ไม่ระบุบริษัท'), weight: 'bold', size: 'lg', color: '#101828', wrap: true },
         ...(current ? [{ type: 'text', text: '✓ ใช้งานอยู่', size: 'sm', color: '#16A34A', weight: 'bold' }] : []),
         ...(!current ? [{ type: 'text', text: `ตอบ ${selectionNumber} หรือกดปุ่มด้านล่าง`, size: 'sm', color: '#667085', wrap: true }] : []),
+        // Only where a switch actually happens. On the ✓ ใช้งานอยู่ bubble the chat is already on
+        // this company, so promising "ระบบจะสลับบริษัทในไลน์ให้ด้วย" describes a change that will
+        // not occur — the button there just opens the web.
+        ...(company.webUrl && !current ? [{ type: 'text', text: COMPANY_PICKER_OPEN_WEB_HINT, size: 'xs', color: '#667085', wrap: true }] : []),
       ],
     },
-    ...(!current ? {
-      footer: {
-        type: 'box', layout: 'vertical', contents: [
-          { type: 'button', style: 'primary', color: '#22C55E', action: { type: 'message', label: 'เลือกบริษัทนี้', text: `/company ${company.companyId}` } },
-        ],
-      },
-    } : {}),
+    // `spacing` only where there is a gap to space, so a one-button footer stays byte-identical to
+    // the one this picker has always sent.
+    ...(buttons.length > 0
+      ? { footer: { type: 'box', layout: 'vertical', ...(buttons.length > 1 ? { spacing: 'sm' } : {}), contents: buttons } }
+      : {}),
   };
 }
 
-/** LINE Flex carousels allow at most 12 bubbles. Eleven company bubbles plus one navigation
- * bubble keep every company reachable without silently dropping a name. */
-export function buildCompanyPickerMessage(companies: CompanyPickerItem[], currentCompanyId?: string, requestedPage = 1): LineReplyMessage {
-  if (companies.length === 0) return { type: 'text', text: 'ไม่พบบริษัทที่ใช้งานได้ในขณะนี้' };
-
+/**
+ * LINE Flex carousels allow at most 12 bubbles. Eleven company bubbles plus one navigation
+ * bubble keep every company reachable without silently dropping a name.
+ *
+ * Exported because a caller that mints one handoff token per VISIBLE bubble has to read the same
+ * page rule the renderer applies; re-deriving it there would mint for companies this carousel
+ * never shows, and drift the moment either copy changes.
+ */
+export function companyPickerPage<T extends CompanyPickerItem>(
+  companies: T[],
+  currentCompanyId?: string,
+  requestedPage = 1,
+): { visible: T[]; page: number; pageCount: number } {
   const current = companies.find((company) => company.companyId === currentCompanyId);
   const ordered = current ? [current, ...companies.filter((company) => company.companyId !== current.companyId)] : companies;
   const pageSize = companies.length > 12 ? 11 : 12;
-  const pageCount = Math.ceil(ordered.length / pageSize);
+  const pageCount = Math.max(1, Math.ceil(ordered.length / pageSize));
   const page = Math.max(1, Math.min(requestedPage, pageCount));
-  const visible = ordered.slice((page - 1) * pageSize, page * pageSize);
+  return { visible: ordered.slice((page - 1) * pageSize, page * pageSize), page, pageCount };
+}
+
+export function buildCompanyPickerMessage(companies: CompanyPickerItem[], currentCompanyId?: string, requestedPage = 1): LineReplyMessage {
+  if (companies.length === 0) return { type: 'text', text: 'ไม่พบบริษัทที่ใช้งานได้ในขณะนี้' };
+
+  const { visible, page, pageCount } = companyPickerPage(companies, currentCompanyId, requestedPage);
   const bubbles = visible.map((company) => companyBubble(company, companies.findIndex((item) => item.companyId === company.companyId) + 1, currentCompanyId));
   if (pageCount > 1) bubbles.push({
     type: 'bubble',

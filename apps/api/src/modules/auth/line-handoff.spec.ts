@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { MintLineHandoffTokenUseCase } from './application/use-cases/mint-line-handoff-token.use-case';
 import { ExchangeLineHandoffTokenUseCase } from './application/use-cases/exchange-line-handoff-token.use-case';
-import { hashLineHandoffToken } from './domain/logic/line-handoff.logic';
+import { hashLineHandoffToken, LINE_HANDOFF_SURFACE_COMPANY_PICKER_OPEN } from './domain/logic/line-handoff.logic';
 
 const COMPANY = 'co-1';
 const USER = 'user-1';
@@ -132,11 +132,21 @@ function makeExchangePrisma(options: {
   membership?: { id: string } | null;
   companyStatus?: 'ACTIVE' | 'SUSPENDED' | null;
   updatedCount?: number;
+  /** The LINE context write is best-effort: the web half must survive the LINE half failing. */
+  contextUpsertThrows?: boolean;
 }) {
   const finds: any[] = [];
   const updates: any[] = [];
+  const contextUpserts: any[] = [];
   const prisma = {
     client: {
+      lineCompanyContext: {
+        upsert: async (args: any) => {
+          if (options.contextUpsertThrows) throw new Error('context write exploded');
+          contextUpserts.push(args);
+          return { id: 'ctx-1' };
+        },
+      },
       lineWebHandoffToken: {
         findUnique: async (args: unknown) => { finds.push(args); return options.row; },
         updateMany: async (args: unknown) => { updates.push(args); return { count: options.updatedCount ?? 1 }; },
@@ -159,7 +169,7 @@ function makeExchangePrisma(options: {
       },
     },
   } as any;
-  return { prisma, finds, updates };
+  return { prisma, finds, updates, contextUpserts };
 }
 
 const issueToken = (calls: unknown[][]) => ({
@@ -248,6 +258,87 @@ describe('ExchangeLineHandoffTokenUseCase success', () => {
   });
 });
 
+/**
+ * Owner 2026-09-06: the บริษัทของฉัน picker's second button must "สลับบริษัทและพาไปเว็บไซต์ตามบริษัทนั้น"
+ * in ONE tap. LINE cannot tell the server a `uri` button was pressed, so the LINE-side switch has
+ * to happen here — and ONLY for that surface, because every other handoff link (an alert, an
+ * assistant reply) must never silently move the chat the customer is holding.
+ */
+describe('ExchangeLineHandoffTokenUseCase company-picker surface', () => {
+  const pickerRow = () => row({ surface: LINE_HANDOFF_SURFACE_COMPANY_PICKER_OPEN, targetPath: `/companies/${COMPANY}/dashboard` });
+
+  it('switches the LINE chat to the token’s company and audits it', async () => {
+    const { prisma, contextUpserts } = makeExchangePrisma({ row: pickerRow(), userStatus: 'ACTIVE' });
+    const { audit, logged } = makeAudit();
+    const uc = new ExchangeLineHandoffTokenUseCase(prisma, issueToken([]), legalAcceptance(false), audit);
+
+    const result = await uc.execute({ token: RAW_TOKEN });
+
+    assert.equal(result.targetPath, `/companies/${COMPANY}/dashboard`);
+    assert.equal(contextUpserts.length, 1);
+    assert.deepEqual(contextUpserts[0].where, { lineUserId: LINE_USER });
+    assert.equal(contextUpserts[0].create.companyId, COMPANY);
+    assert.equal(contextUpserts[0].update.companyId, COMPANY);
+    // Same rule as the in-LINE switch: a support hold means a human has this thread, and opening
+    // the web is not a request to hand it back.
+    assert.equal('aiPausedUntil' in contextUpserts[0].update, false, 'the §8 hold is kept');
+
+    const switchAudit = logged.find((entry) => entry.action === 'ai.line.company_context.switch');
+    assert.ok(switchAudit, 'the context change is audited exactly as the in-LINE switch is');
+    assert.equal(switchAudit.result, 'SUCCESS');
+    assert.equal(switchAudit.actorUserId, USER);
+    assert.equal(switchAudit.companyId, COMPANY);
+    assert.equal(switchAudit.metadataJson.surface, LINE_HANDOFF_SURFACE_COMPANY_PICKER_OPEN);
+    assert.equal(switchAudit.metadataJson.lineUserId, '[REDACTED]');
+    assertNoRawTokenAnywhere(logged);
+  });
+
+  it('switches only AFTER the single-use claim, so a spent link cannot move the chat', async () => {
+    const order: string[] = [];
+    const { prisma, contextUpserts } = makeExchangePrisma({ row: pickerRow(), userStatus: 'ACTIVE' });
+    const claim = prisma.client.lineWebHandoffToken.updateMany;
+    prisma.client.lineWebHandoffToken.updateMany = async (args: any) => { order.push('claim'); return claim(args); };
+    const upsert = prisma.client.lineCompanyContext.upsert;
+    prisma.client.lineCompanyContext.upsert = async (args: any) => { order.push('switch'); return upsert(args); };
+    const uc = new ExchangeLineHandoffTokenUseCase(prisma, issueToken([]), legalAcceptance(false));
+    await uc.execute({ token: RAW_TOKEN });
+    assert.deepEqual(order, ['claim', 'switch']);
+    assert.equal(contextUpserts.length, 1);
+
+    // A second tap loses the claim and must change nothing at all.
+    const spent = makeExchangePrisma({ row: pickerRow(), userStatus: 'ACTIVE', updatedCount: 0 });
+    const spentUc = new ExchangeLineHandoffTokenUseCase(spent.prisma, issueToken([]), legalAcceptance(false));
+    await refusal(spentUc);
+    assert.deepEqual(spent.contextUpserts, []);
+  });
+
+  it('leaves every other surface’s chat exactly where it was', async () => {
+    for (const surface of ['line_ai_reply', 'notification_push', 'company_picker_open', '']) {
+      const { prisma, contextUpserts } = makeExchangePrisma({ row: row({ surface }), userStatus: 'ACTIVE' });
+      const { audit, logged } = makeAudit();
+      const uc = new ExchangeLineHandoffTokenUseCase(prisma, issueToken([]), legalAcceptance(false), audit);
+      await uc.execute({ token: RAW_TOKEN });
+      assert.deepEqual(contextUpserts, [], `${surface || '(empty)'} must never move the chat`);
+      assert.equal(logged.some((entry) => entry.action === 'ai.line.company_context.switch'), false);
+    }
+  });
+
+  it('still issues the session when the context write fails — the web half must not die with it', async () => {
+    const calls: unknown[][] = [];
+    const warnings: unknown[] = [];
+    const { prisma } = makeExchangePrisma({ row: pickerRow(), userStatus: 'ACTIVE', contextUpsertThrows: true });
+    const uc = new ExchangeLineHandoffTokenUseCase(prisma, issueToken(calls), legalAcceptance(false));
+    (uc as any).logger = { warn: (entry: unknown) => warnings.push(entry) };
+
+    const result = await uc.execute({ token: RAW_TOKEN });
+
+    assert.equal(result.accessToken, 'access');
+    assert.equal(calls.length, 1, 'the session is issued regardless');
+    assert.equal((warnings[0] as any).msg, 'line_handoff_company_switch_failed');
+    assertNoRawTokenAnywhere(warnings);
+  });
+});
+
 describe('ExchangeLineHandoffTokenUseCase refusals', () => {
   it('refuses an unknown token with no destination to leak', async () => {
     const calls: unknown[][] = [];
@@ -309,6 +400,27 @@ describe('ExchangeLineHandoffTokenUseCase refusals', () => {
       bodies.push(JSON.stringify({ code: body['code'], message: body['message'] }));
     }
     assert.equal(new Set(bodies).size, 1, 'refusals must be indistinguishable to the caller');
+  });
+
+  it('refuses a token an unlink revoked without writing anything or issuing a session', async () => {
+    // The other half of the 2026-09-06 unlink fix: severing a LINE link flips its unspent rows to
+    // REVOKED, and the exchange must treat one exactly as it treats a spent one — same 403, same
+    // body, refused at step 2. Deliberately a PICKER-surface row, the one surface that would move
+    // the chat's selected company at step 4b: the refusal has to land before the claim, so a link
+    // sent to a since-severed LINE account cannot re-create `LineCompanyContext` under a
+    // `lineUserId` that may by now belong to somebody else.
+    const calls: unknown[][] = [];
+    const { prisma, updates, contextUpserts } = makeExchangePrisma({
+      row: row({ status: 'REVOKED', surface: LINE_HANDOFF_SURFACE_COMPANY_PICKER_OPEN }),
+      userStatus: 'ACTIVE',
+    });
+    const uc = new ExchangeLineHandoffTokenUseCase(prisma, issueToken(calls), legalAcceptance(false));
+
+    const body = (await refusal(uc)).getResponse() as Record<string, unknown>;
+    assert.equal(body['code'], 'line_handoff_unavailable');
+    assert.equal(updates.length, 0, 'a revoked row must not be claimed');
+    assert.equal(calls.length, 0, 'a revoked row must not mint a session');
+    assert.deepEqual(contextUpserts, [], 'a revoked row must not move the chat to a company');
   });
 
   it('checks the token before the account, so a lookup miss cannot probe user state', async () => {

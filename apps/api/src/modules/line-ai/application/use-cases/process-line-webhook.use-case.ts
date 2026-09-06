@@ -96,7 +96,7 @@ import type { BusinessDocumentClassification, ExpenseChargeSummary, ExpenseLineC
 import { EXPENSE_LINE_CHARGE_KIND_LABELS, RECEIPT_ADDITIONAL_CHARGE_KINDS, LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, nextPlanTierKey, asIntakeRouteIntent, civilDateToUtcDate, extractValueCandidates, hasToolPermissions, todayCivilDate, type ExpenseDocumentDateStatus } from '@watchdog-bms/contracts';
 import { LineAiLedgerService, ledgerKey, type LedgerEntry } from '../line-ai-ledger.service';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
-import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, isCapabilityQuestion, staffMenuCommand, PACKAGE_CHANGE_COMMAND, PENDING_APPROVAL_ITEM_LIMIT, RESUME_AI_COMMAND, type ApprovalSurfaceKey, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
+import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, companyPickerPage, isCapabilityQuestion, staffMenuCommand, PACKAGE_CHANGE_COMMAND, PENDING_APPROVAL_ITEM_LIMIT, RESUME_AI_COMMAND, type ApprovalSurfaceKey, type CompanyPickerItem, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
 import { buildAiBudgetExceededMessage, buildExpenseDraftCardMessage, buildLegalAcceptanceRequiredMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildReceiptQuotaExceededMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, buildSignupDoorCard, buildSignupStatusCard, LIFF_ID_PATTERN, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
 // P10-L: the LINE surface opens a package-change request and tells the operators about a support
 // request; both live in the signup module, which owns those rules and their audit.
@@ -123,6 +123,7 @@ import {
 import { claimReceiptQuotaNotice, receiptQuotaSnapshot, releaseReceiptQuotaNotice, RECEIPT_QUOTA_ERROR_CODE } from '../company-ocr-governance';
 import { bangkokMonthKey } from '../company-ai-usage-meter';
 import { LineHandoffLinkService } from '../line-handoff-link.service';
+import { LINE_HANDOFF_SURFACE_COMPANY_PICKER_OPEN } from '../../../auth/domain/logic/line-handoff.logic';
 import {
   classifyLineAiGatewayFailure,
   classifyLineAiTerminalOutcome,
@@ -323,6 +324,22 @@ const EXPENSE_FEATURE_DISABLED_REPLY = '📋 บริษัทนี้ยั�
  * points at the channel that still works so a closed AI lane does not read as a dead product.
  */
 const LAUNCH_ROUTE_CLOSED_REPLY = '🔧 ตอนนี้ผู้ช่วยพักให้บริการชั่วคราวค่ะ\nระหว่างนี้ยังใช้งานผ่านเว็บแอปได้ตามปกติ และเราจะกลับมาให้บริการเร็ว ๆ นี้นะคะ';
+/**
+ * Owner 2026-09-06: "ร้านที่ปิดฟีเจอร์ แล้วเอไอตอบ ฟีเจอร์ยังไม่เปิดใช้งาน โอเค อันนี้ได้ แต่ถ้าบอกให้
+ * สอนวิธีใช้ ในขอบเขตที่เปิดใช้งานควรบอกได้" — closes the §8.2 residual PR #454 left open. When the AI
+ * lane refuses (never bought, or the kill switch is pulled) a capability question is still owed the
+ * scope the shop DOES have, so each gate KEEPS its own refusal line (spec CC1: a planned CLOSE must
+ * never read as "not enabled") and appends the same deterministic card the "บริการของเรา" tile
+ * renders from the same `entitledFeatureKeys`. Zero model calls, and it can name nothing this company
+ * has not switched on. The note names only the two tiles that sit ABOVE the AI gate — `เมนูหลัก`
+ * itself is below it and would answer `feature_disabled`.
+ */
+const CAPABILITY_ENTITLEMENT_NOTE = '💡 ปุ่ม “บริการของเรา” และ “ติดต่อเรา” ในแชทนี้ยังกดได้ตามปกตินะคะ';
+/** `staff_menu_` prefix on purpose: `classifyLineAiTerminalOutcome` reads it as `delivered`, which
+ *  this turn is — a distinct status so it can still be counted apart from a bare refusal. */
+const CAPABILITY_ENTITLEMENT_STATUS = 'staff_menu_capability_entitlements';
+const capabilityEntitlementReply = (lead: string, entitled: ReadonlySet<string> | null): LineReplyMessage[] =>
+  [{ type: 'text', text: `${lead}\n${CAPABILITY_ENTITLEMENT_NOTE}` }, buildServiceEntitlementMessage(entitled)];
 const ASSISTANT_TALK_GREETING = 'สวัสดีค่ะ 😊 น้องมั่งมีมาแล้วนะคะ\nวันนี้มีอะไรให้น้องช่วยแบ่งเบาบ้าง บอกได้เลยค่ะ 💚';
 const SIGNATURE_FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์เก็บลายเซ็นประจำตัวผ่าน LINE ค่ะ';
 const SIGNATURE_NEED_IMAGE_REPLY = '✍️ ต้องการอัปโหลดลายเซ็นใช่ไหมคะ กรุณาส่ง "รูปลายเซ็น" เข้ามาในแชทนี้ได้เลยนะคะ\nระบบจะเก็บเป็นลายเซ็นประจำตัวของคุณ ใช้ลงนามได้ทันทีค่ะ';
@@ -1501,6 +1518,9 @@ export class ProcessLineWebhookUseCase {
     actorUserId: string,
     companyId: string,
     requestId: string,
+    /** Owner 2026-09-06: a capability question keeps this gate's CLOSED-route copy and gains the
+     *  entitlement card under it. Absent on the receipt-upload path, which carries no question. */
+    capabilityHelp?: (lead: string) => LineReplyMessage[],
   ): Promise<boolean> {
     try {
       await this.launchGate.assertLaunchRouteOpen('ai_line_assistant');
@@ -1509,7 +1529,8 @@ export class ProcessLineWebhookUseCase {
       const body = (error as { getResponse?: () => unknown })?.getResponse?.() as { code?: string } | undefined;
       if (body?.code !== FEATURE_TEMPORARILY_UNAVAILABLE) throw error;
     }
-    await this.deliverReply(event, LAUNCH_ROUTE_CLOSED_REPLY);
+    if (capabilityHelp) await this.deliverRequiredMessages(event, capabilityHelp(LAUNCH_ROUTE_CLOSED_REPLY));
+    else await this.deliverReply(event, LAUNCH_ROUTE_CLOSED_REPLY);
     await this.audit.log({
       companyId,
       actorUserId,
@@ -1526,7 +1547,9 @@ export class ProcessLineWebhookUseCase {
     // Its own status, not `feature_disabled`: a planned CLOSE and a company that never bought the
     // feature are different incidents, and R3 verification counts the fallback served under the
     // first. It classifies as `feature_disabled` so the AI-failure alarm stays quiet during a drill.
-    await this.updateEventLog(event.webhookEventId, 'launch_route_closed', LINE_AI_ERROR_CODES.UNSUPPORTED_MODULE, companyId);
+    await this.updateEventLog(event.webhookEventId,
+      capabilityHelp ? CAPABILITY_ENTITLEMENT_STATUS : 'launch_route_closed',
+      LINE_AI_ERROR_CODES.UNSUPPORTED_MODULE, companyId);
     return true;
   }
 
@@ -2990,10 +3013,16 @@ export class ProcessLineWebhookUseCase {
       return;
     }
 
+    // Owner 2026-09-06 (§8.2 residual): a capability question survives a shut AI lane — both gates
+    // below keep their own words and their DENIED audit row, and add the scoped entitlement card.
+    const capabilityHelp = isCapabilityQuestion(event.messageText)
+      ? (lead: string) => capabilityEntitlementReply(lead, entitledFeatureKeys)
+      : undefined;
     await this.recordShadowTurn(companyId);
-    if (await this.refuseWhenLaunchRouteClosed(event, identity.userId, companyId, requestId)) return;
+    if (await this.refuseWhenLaunchRouteClosed(event, identity.userId, companyId, requestId, capabilityHelp)) return;
     if (lineAssistantDisabledFor(entitledFeatureKeys)) {
-      await this.deliverReply(event, formatRefusal('feature_disabled'));
+      if (capabilityHelp) await this.deliverRequiredMessages(event, capabilityHelp(formatRefusal('feature_disabled')));
+      else await this.deliverReply(event, formatRefusal('feature_disabled'));
       await this.audit.log({
         companyId,
         actorUserId: identity.userId,
@@ -3005,7 +3034,9 @@ export class ProcessLineWebhookUseCase {
         riskLevel: 'LOW',
         metadataJson: { reason: 'feature_disabled' },
       });
-      await this.updateEventLog(event.webhookEventId, 'feature_disabled', LINE_AI_ERROR_CODES.UNSUPPORTED_MODULE, companyId);
+      await this.updateEventLog(event.webhookEventId,
+        capabilityHelp ? CAPABILITY_ENTITLEMENT_STATUS : 'feature_disabled',
+        LINE_AI_ERROR_CODES.UNSUPPORTED_MODULE, companyId);
       return;
     }
 
@@ -4369,6 +4400,44 @@ export class ProcessLineWebhookUseCase {
     return previous && COMPANY_SELECTION_PENDING_STATUSES.has(previous.status) ? candidate : null;
   }
 
+  /**
+   * บริษัทของฉัน bubbles, each carrying its OWN one-tap web link where one could be minted.
+   *
+   * Owner 2026-09-06: "มี 2 ปุ่ม … อีกปุ่มคือสลับบริษัทและพาไปเว็บไซต์ตามบริษัทนั้น". The delivery
+   * seam cannot do this: it binds ONE recipient company to a whole message, and `isSafeHandoffPath`
+   * refuses a path under any other company — which is exactly right, and exactly why a picker of N
+   * companies mints N tokens here instead. Only the bubbles this page actually shows get one.
+   *
+   * `lineUserId` is the chat's own id — the same key `LineCompanyContext` is upserted under below —
+   * so the exchange-time switch lands on the row this conversation reads.
+   *
+   * Absent seam (LINE_WEB_HANDOFF_ENABLED off) or a failed mint returns items with no `webUrl`, and
+   * the picker then renders exactly what it rendered before this feature existed.
+   */
+  private async companyPickerItems(
+    event: LineTextEvent,
+    userId: string,
+    memberships: LineCompanyMembership[],
+    currentCompanyId: string | undefined,
+    page: number | undefined,
+  ): Promise<CompanyPickerItem[]> {
+    const items: CompanyPickerItem[] = memberships.map((membership) => ({
+      companyId: membership.companyId,
+      companyName: companyLabel(membership),
+    }));
+    if (!this.handoffLinks) return items;
+    const visible = new Set(companyPickerPage(items, currentCompanyId, page).visible.map((item) => item.companyId));
+    return Promise.all(items.map(async (item) => (visible.has(item.companyId)
+      ? {
+        ...item,
+        webUrl: await this.handoffLinks!.linkFor(
+          { userId, companyId: item.companyId, lineUserId: event.lineUserId, surface: LINE_HANDOFF_SURFACE_COMPANY_PICKER_OPEN },
+          `/companies/${item.companyId}/dashboard`,
+        ) ?? undefined,
+      }
+      : item)));
+  }
+
   private async handleCompanyCommand(event: LineTextEvent, requestId: string, userId: string, displayName: string, command: LineCompanyCommand): Promise<void> {
     const memberships = await this.listLineCompanies(userId);
     if (memberships.length === 0) {
@@ -4387,7 +4456,7 @@ export class ProcessLineWebhookUseCase {
       const currentMembership = memberships.find((membership) => membership.companyId === currentCompanyId);
       if (!currentMembership) {
         await this.deliverRequiredMessages(event, [buildCompanyPickerMessage(
-          memberships.map((membership) => ({ companyId: membership.companyId, companyName: companyLabel(membership) })),
+          await this.companyPickerItems(event, userId, memberships, undefined, command.page),
           undefined,
           command.page,
         )]);
@@ -4406,10 +4475,19 @@ export class ProcessLineWebhookUseCase {
         isOwner: isCompanyOwner(currentMembership),
         newShopSignupUrl: this.newShopSignupUrl(),
         pendingSignupName: pendingSignup?.companyName,
+        // Owner 2026-09-06: the picker below is only pushed to a multi-company member, so its
+        // เปิดเว็บบริษัทนี้ button never reached the single-shop owner. Same mint, same surface — the
+        // exchange-time switch simply re-selects the company the chat is already on. A multi-company
+        // member gets a second token on the current company's bubble too; tokens are single-use, so
+        // sharing one between the two cards would break whichever the reader tapped second.
+        openWebUrl: await this.handoffLinks?.linkFor(
+          { userId, companyId: currentMembership.companyId, lineUserId: event.lineUserId, surface: LINE_HANDOFF_SURFACE_COMPANY_PICKER_OPEN },
+          `/companies/${currentMembership.companyId}/dashboard`,
+        ) ?? undefined,
       })];
       if (memberships.length > 1) {
         messages.push(buildCompanyPickerMessage(
-          memberships.map((membership) => ({ companyId: membership.companyId, companyName: companyLabel(membership) })),
+          await this.companyPickerItems(event, userId, memberships, currentMembership.companyId, command.page),
           currentMembership.companyId,
           command.page,
         ));

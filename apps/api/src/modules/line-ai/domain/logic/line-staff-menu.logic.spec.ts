@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { FEATURE_CATALOG } from '@watchdog-bms/contracts';
-import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, isCapabilityQuestion, staffMenuCommand, EMPLOYEE_DOOR_COMMAND, LINE_FOLLOW_EVENT_TEXT, PACKAGE_CHANGE_COMMAND, PROFILE_GUARD_COMMAND, PROFILE_GUARD_LATER_COMMAND, RESUME_AI_ALIASES, RESUME_AI_COMMAND, STAFF_CONTACT_COMMAND, VIEW_PACKAGES_COMMAND } from './line-staff-menu.logic';
+import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, companyPickerPage, isCapabilityQuestion, staffMenuCommand, COMPANY_PICKER_OPEN_WEB_HINT, COMPANY_PICKER_OPEN_WEB_LABEL, COMPANY_PICKER_SELECT_LABEL, EMPLOYEE_DOOR_COMMAND, LINE_FOLLOW_EVENT_TEXT, PACKAGE_CHANGE_COMMAND, PROFILE_GUARD_COMMAND, PROFILE_GUARD_LATER_COMMAND, RESUME_AI_ALIASES, RESUME_AI_COMMAND, STAFF_CONTACT_COMMAND, VIEW_PACKAGES_COMMAND } from './line-staff-menu.logic';
 import { DRAFT_UPDATE_CANCEL_COMMAND, DRAFT_UPDATE_CONFIRM_COMMAND } from './line-draft-update-card.logic';
 
 // entitledFeatureKeys null is the legacy fail-open company, so these cases keep asserting the
@@ -105,6 +105,46 @@ describe('LINE staff menu', () => {
   });
 
   /**
+   * Owner 2026-09-06: *"เจ้าของที่มีบริษัทเดียวจะไม่เห็นการ์ดเลือกบริษัท อยากให้การ์ดบริษัทเดียวมีปุ่มเปิดเว็บด้วย"*.
+   * The picker only ships when the member has more than one company, so its เปิดเว็บบริษัทนี้ button
+   * never reached a single-shop owner at all. Same action, same label, on the card everyone gets.
+   */
+  it('opens the web on the current company, above เปิดร้านใหม่ when the card carries both', () => {
+    const message = buildCompanyContextMessage({
+      companyName: 'บริษัทมั่งมี จำกัด', displayName: 'พิมพ์ชนก', roleLabels: ['เจ้าของกิจการ'], isOwner: true,
+      newShopSignupUrl: 'https://liff.line.me/2007891234-AbCdEf01/signup',
+      openWebUrl: 'https://app.example.com/l/tok-1',
+    });
+    assert.deepEqual((message as any).contents.footer.contents.map((button: any) => button.action), [
+      { type: 'uri', label: COMPANY_PICKER_OPEN_WEB_LABEL, uri: 'https://app.example.com/l/tok-1' },
+      { type: 'uri', label: 'เปิดร้านใหม่', uri: 'https://liff.line.me/2007891234-AbCdEf01/signup' },
+    ]);
+    assert.equal((message as any).contents.footer.contents[0].style, 'secondary', 'opening a shop stays the primary call');
+    assert.equal((message as any).contents.footer.spacing, 'sm', 'two buttons, so there is a gap to space');
+    // No switch is promised: this card is already about this company, so the picker's hint has no
+    // meaning here. The chat-list preview is unchanged too — a button is not news.
+    assert.equal(JSON.stringify(message).includes(COMPANY_PICKER_OPEN_WEB_HINT), false);
+    assert.equal((message as any).altText, 'บริษัทของฉัน: บริษัทมั่งมี จำกัด · คุณพิมพ์ชนก · เจ้าของกิจการ');
+  });
+
+  it('gives an employee the web button, and only that one', () => {
+    // Opening the web on the company they already work in is not a shop-owner action — the web
+    // enforces its own permissions. เปิดร้านใหม่ keeps its owner gate untouched.
+    const message = buildCompanyContextMessage({
+      companyName: 'บริษัทมั่งมี จำกัด', displayName: 'สมชาย', roleLabels: ['พนักงาน'],
+      newShopSignupUrl: 'https://liff.line.me/2007891234-AbCdEf01/signup',
+      openWebUrl: 'https://app.example.com/l/tok-1',
+    });
+    assert.deepEqual((message as any).contents.footer.contents.map((button: any) => button.action), [
+      { type: 'uri', label: COMPANY_PICKER_OPEN_WEB_LABEL, uri: 'https://app.example.com/l/tok-1' },
+    ]);
+    assert.equal(JSON.stringify(message).includes('เปิดร้านใหม่'), false);
+    // The other half of the rule above, and the one that guards production: a footer holding ONE
+    // button takes no `spacing`, so the owner-only เปิดร้านใหม่ card shipped today is byte-identical.
+    assert.equal((message as any).contents.footer.spacing, undefined, 'one button, no gap to space');
+  });
+
+  /**
    * Owner 2026-09-06: "ปุ่มเปิดร้านใหม่โผล่ให้ STAFF ผ่าน /companies => staff ไม่ควรเห็น ถ้าเขาจะเปิดร้านเอง
    * ต้องผ่าน promotion หากอยู่ในมุมมองพนักงาน". The door is a shop-owner action, so it is gated on the
    * viewer's role in THIS company; the employee view keeps one plain sentence naming the route instead.
@@ -157,6 +197,10 @@ describe('LINE staff menu', () => {
     // undefined either way and the card must be exactly the one shipped today.
     const today = JSON.stringify(buildCompanyContextMessage(context));
     assert.equal(JSON.stringify(buildCompanyContextMessage({ ...context, newShopSignupUrl: undefined })), today);
+    // Same rule for the web button: the handoff feature off, or a mint that failed, hands the card
+    // `undefined` and the card must be the one shipped today rather than half of a new one.
+    assert.equal(JSON.stringify(buildCompanyContextMessage({ ...context, openWebUrl: undefined })), today);
+    assert.equal(today.includes(COMPANY_PICKER_OPEN_WEB_LABEL), false);
     assert.equal(today.includes('เปิดร้านใหม่'), false);
     assert.equal(today.includes('footer'), false);
     // An owner with NO application travelling is the overwhelming majority of `/companies`, and
@@ -227,6 +271,95 @@ describe('LINE staff menu', () => {
     assert.match(JSON.stringify(message), /ตอบ 2 หรือกดปุ่มด้านล่าง/);
     assert.match(JSON.stringify(message), /\/company co-2/);
     assert.equal(JSON.stringify(message).includes('/company co-1'), false);
+  });
+
+  /**
+   * Owner 2026-09-06: "อยากให้มี ปุ่ม กดไปเข้าเว็บด้วยบริษัทนั้นๆด้วย … ก็คือมี 2 ปุ่ม".
+   * `webUrl` is the already-minted one-tap link; without it the bubble must be exactly what it
+   * was before this feature, because a picker with half a feature is worse than the old one.
+   */
+  it('gives a company with a web link both buttons, select first and open-web below it', () => {
+    const message = buildCompanyPickerMessage([
+      { companyId: 'co-1', companyName: 'บริษัทหนึ่ง' },
+      { companyId: 'co-2', companyName: 'บริษัทสอง', webUrl: 'https://app.example.com/l/tok2' },
+    ], 'co-1');
+    const [, second] = (message as any).contents.contents;
+    assert.deepEqual(second.footer.contents.map((button: any) => button.action), [
+      { type: 'message', label: COMPANY_PICKER_SELECT_LABEL, text: '/company co-2' },
+      { type: 'uri', label: COMPANY_PICKER_OPEN_WEB_LABEL, uri: 'https://app.example.com/l/tok2' },
+    ]);
+    assert.equal(second.footer.contents[0].style, 'primary');
+    assert.equal(second.footer.contents[1].style, 'secondary', 'the switch-only button stays the primary one');
+    // The number still works: typing "2" must keep switching, so its hint keeps its place.
+    const lines = second.body.contents.map((line: any) => line.text);
+    assert.ok(lines.includes('ตอบ 2 หรือกดปุ่มด้านล่าง'));
+    assert.ok(lines.includes(COMPANY_PICKER_OPEN_WEB_HINT));
+    assert.equal((message as any).altText, 'เลือกบริษัทที่ต้องการใช้งาน', 'the notification line is unchanged');
+  });
+
+  it('gives the current company only the web button — there is nothing to select', () => {
+    const message = buildCompanyPickerMessage([
+      { companyId: 'co-1', companyName: 'บริษัทหนึ่ง', webUrl: 'https://app.example.com/l/tok1' },
+      { companyId: 'co-2', companyName: 'บริษัทสอง', webUrl: 'https://app.example.com/l/tok2' },
+    ], 'co-1');
+    const [first] = (message as any).contents.contents;
+    assert.deepEqual(first.footer.contents.map((button: any) => button.action), [
+      { type: 'uri', label: COMPANY_PICKER_OPEN_WEB_LABEL, uri: 'https://app.example.com/l/tok1' },
+    ]);
+    assert.match(JSON.stringify(first), /ใช้งานอยู่/);
+    assert.equal(JSON.stringify(message).includes('/company co-1'), false, 'no redundant switch action');
+    // …and nothing to switch either: "ระบบจะสลับบริษัทในไลน์ให้ด้วย" on the bubble the chat is
+    // ALREADY on promises a change that will not happen. The line belongs to the bubbles it is
+    // true of; the second one still carries it.
+    const currentLines = first.body.contents.map((line: any) => line.text);
+    assert.equal(currentLines.includes(COMPANY_PICKER_OPEN_WEB_HINT), false, 'no switch is promised where none happens');
+    const [, second] = (message as any).contents.contents;
+    assert.ok(second.body.contents.map((line: any) => line.text).includes(COMPANY_PICKER_OPEN_WEB_HINT));
+  });
+
+  it('is byte-identical to the old picker when no company carries a web link', () => {
+    const plain = buildCompanyPickerMessage([
+      { companyId: 'co-1', companyName: 'บริษัทหนึ่ง' },
+      { companyId: 'co-2', companyName: 'บริษัทสอง' },
+    ], 'co-1');
+    const rendered = JSON.stringify(plain);
+    assert.equal(rendered.includes(COMPANY_PICKER_OPEN_WEB_LABEL), false);
+    assert.equal(rendered.includes(COMPANY_PICKER_OPEN_WEB_HINT), false);
+    assert.equal(rendered.includes('"uri"'), false, 'no uri action may appear without a minted link');
+    // The current company keeps having no footer at all, exactly as before.
+    assert.equal((plain as any).contents.contents[0].footer, undefined);
+  });
+
+  it('keeps every picker button short enough not to truncate at LINE sm size', () => {
+    const labels = [COMPANY_PICKER_SELECT_LABEL, COMPANY_PICKER_OPEN_WEB_LABEL];
+    for (const label of labels) {
+      const clusters = [...new Intl.Segmenter('th', { granularity: 'grapheme' }).segment(label)].length;
+      assert.ok(clusters <= 12, `${label} renders as ${clusters} clusters`);
+    }
+  });
+
+  /** The caller mints one token per VISIBLE bubble, so it must read the same page rule the
+   *  renderer uses rather than re-deriving it and drifting. */
+  it('exposes the visible page so a caller can mint exactly one link per bubble', () => {
+    const companies = Array.from({ length: 14 }, (_, index) => ({ companyId: `co-${index + 1}`, companyName: `บริษัท ${index + 1}` }));
+    const first = companyPickerPage(companies, 'co-14');
+    assert.equal(first.pageCount, 2);
+    assert.equal(first.page, 1);
+    assert.equal(first.visible.length, 11);
+    assert.equal(first.visible[0]?.companyId, 'co-14', 'the current company leads, as the carousel shows it');
+
+    const second = companyPickerPage(companies, 'co-14', 2);
+    assert.equal(second.page, 2);
+    assert.equal(second.visible.length, 3);
+    // Every company is reachable across the pages, and none is minted twice.
+    const seen = [...first.visible, ...second.visible].map((item) => item.companyId);
+    assert.equal(new Set(seen).size, 14);
+
+    // A page beyond the end clamps, exactly as the renderer clamps it.
+    assert.equal(companyPickerPage(companies, 'co-14', 99).page, 2);
+    assert.deepEqual(companyPickerPage([{ companyId: 'co-1', companyName: 'ก' }]), {
+      visible: [{ companyId: 'co-1', companyName: 'ก' }], page: 1, pageCount: 1,
+    });
   });
 
   it('puts the current company first and paginates every owner company without dropping names', () => {
@@ -541,6 +674,22 @@ describe('capability question (Owner 2026-08-27: only real features)', () => {
     assert.equal(isCapabilityQuestion('ยอดขายวันนี้เท่าไหร่'), false);
     assert.equal(isCapabilityQuestion('อยากรู้ว่าภ.ง.ด.53 ต้องยื่นยังไงและระบบภาษีทำอะไรได้บ้างช่วยอธิบายละเอียดหน่อย'), false);
     assert.equal(isCapabilityQuestion(''), false);
+  });
+
+  // Review 2026-09-06: since the AI-off gate now ATTACHES the entitlement card on a match
+  // (spec §8.2 / AC-17), a false positive costs an unasked-for card on an ordinary turn. These are
+  // the everyday shapes an AI-off shop actually sends — receipts, money, and the bare digit the
+  // company picker asks for. None may reach the card lane.
+  it('leaves ordinary business text, captions and number replies alone', () => {
+    for (const text of [
+      'ค่าอาหาร 250 บาท',
+      '1',
+      'ใบเสร็จค่าไฟฟ้าเดือนนี้',
+      'แก้ยอดเป็น 500 บาท',
+      'ระบบล่มหรือเปล่าครับ',
+      'ขอสรุปค่าใช้จ่ายเดือนนี้',
+      'เบิกค่าน้ำมันได้ไหม',
+    ]) assert.equal(isCapabilityQuestion(text), false, text);
   });
 
   it('the curated card lists only the six real functions', () => {

@@ -4,7 +4,7 @@ import { PrismaService } from '../../../../common/database/prisma.service';
 import { emitSecurityEvent, SECURITY_EVENT } from '../../../../common/logger/security-event';
 import { AuditService } from '../../../audit/application/audit.service';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
-import { hashLineHandoffToken } from '../../domain/logic/line-handoff.logic';
+import { hashLineHandoffToken, LINE_HANDOFF_SURFACE_COMPANY_PICKER_OPEN } from '../../domain/logic/line-handoff.logic';
 import { LegalAcceptanceService } from '../legal-acceptance.service';
 import { IssueTokenUseCase, type AuthTokensResult } from './issue-token.use-case';
 
@@ -90,6 +90,15 @@ export class ExchangeLineHandoffTokenUseCase {
     });
     if (claimed.count === 0) throw this.refuse('token_not_pending', record);
 
+    // 4b. The บริษัทของฉัน picker's "เปิดเว็บบริษัทนี้" button is ONE tap that has to do two things
+    //     (Owner 2026-09-06). LINE cannot call back on a `uri` tap, so the LINE half happens here,
+    //     after the single-use claim — a link that lost the race, expired, or was refused above
+    //     must not be able to move the chat. Surface-scoped: every other handoff link opens the web
+    //     without touching which shop the conversation is about.
+    if (record.surface === LINE_HANDOFF_SURFACE_COMPANY_PICKER_OPEN) {
+      await this.switchLineCompanyContext(record);
+    }
+
     // 5. `'line'` is the true origin of this session and the owner-locked rule in
     //    password-reset-line-flow-spec.md; owner decision 2026-08-29 (spec §17 Q1) keeps it. The
     //    web layout still gates the temporary password because /auth/me reports the credential
@@ -123,6 +132,39 @@ export class ExchangeLineHandoffTokenUseCase {
       mustChangePassword: user.credential?.mustChangePassword ?? false,
       legalAcceptanceRequired: legal.required,
     };
+  }
+
+  /**
+   * The same write the in-LINE switch makes (`process-line-webhook.use-case.ts` handleCompanyCommand),
+   * so the two entrances leave identical state: same row key, same kept `aiPausedUntil` — a support
+   * hold means a human has this thread, and opening the web is not a request to hand it back — and
+   * the same `ai.line.company_context.switch` audit action, distinguished only by its surface.
+   *
+   * Best-effort on purpose. The web half of this tap is already paid for by the time we get here
+   * (the token is spent); failing the whole exchange because the LINE side could not be written
+   * would cost the customer the page they asked for and leave them nothing.
+   */
+  private async switchLineCompanyContext(record: { userId: string; companyId: string; lineUserId: string; surface: string }): Promise<void> {
+    try {
+      const selectedAt = new Date();
+      await this.prisma.client.lineCompanyContext.upsert({
+        where: { lineUserId: record.lineUserId },
+        create: { lineUserId: record.lineUserId, companyId: record.companyId, selectedAt },
+        update: { companyId: record.companyId, selectedAt },
+      });
+      void this.audit?.log({
+        companyId: record.companyId,
+        actorUserId: record.userId,
+        action: 'ai.line.company_context.switch',
+        targetType: 'LineCompanyContext',
+        requestId: randomUUID(),
+        result: 'SUCCESS',
+        riskLevel: 'LOW',
+        metadataJson: { lineUserId: '[REDACTED]', surface: record.surface },
+      });
+    } catch (error) {
+      this.logger.warn({ msg: 'line_handoff_company_switch_failed', surface: record.surface, error: (error as Error).message });
+    }
   }
 
   /**

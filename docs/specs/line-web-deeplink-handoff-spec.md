@@ -109,7 +109,8 @@ Every claim in this spec traces to one of these. Nothing here is inferred from e
   - `status` — `PENDING | USED | REVOKED | EXPIRED`
   - `expiresAt`, `usedAt`, `createdAt`
   - Indexes: `@@unique([tokenHash])`, `@@index([userId, status])`, `@@index([companyId, status])`, `@@index([expiresAt])` for the sweep.
-  - Lifecycle: `PENDING` at mint → `USED` on the winning exchange → `EXPIRED` by TTL (lazily, at read time; a sweep may hard-delete rows past TTL + retention).
+  - Lifecycle: `PENDING` at mint → `USED` on the winning exchange → `EXPIRED` by TTL (lazily, at read time; a sweep may hard-delete rows past TTL + retention) → `REVOKED` when the LINE link it was sent to is severed.
+  - **2026-09-06 (Owner decision, "ยกเลิกผูก LINE ไม่ได้เพิกถอน token handoff ที่ค้าง แก้ได้เลย"):** severing a LINE identity revokes every `PENDING` row for that `(lineUserId, userId)` pair, in the same transaction as the sever. Before this, unlinking dropped the identity and the selected-company row but left unspent tokens exchangeable, so a tap within the 15-minute TTL still minted a web session for the account just severed — and a picker-surface token re-created `LineCompanyContext` under a `lineUserId` that may since have been relinked to somebody else. Matching on **both** columns is the point: it cannot resurrect a previous holder's links after a relink, nor reach into the new holder's. Applied by `revokePendingLineHandoffTokens` (`line-handoff.logic.ts`) from all four severing paths — self-serve unlink, admin partner unlink, employee-relink identity sever, and the `link-line-identity` re-point that moves a LINE account to a different user. Each path's existing audit row carries `handoffLinksRevoked: <n>`. `REVOKED` was already in the enum, so no migration; the exchange needed no change — its step-2 `status !== 'PENDING'` check already refuses the row as `token_not_pending`, the same generic 403 a used token gets, and refuses it before the claim, therefore before the session AND before the step-4b `company_picker_open_web` context switch.
   - Source of truth: ERP Core database. Nothing about the token lives in LINE state.
 
 ## 10. Permission and Audit
@@ -142,6 +143,48 @@ Every claim in this spec traces to one of these. Nothing here is inferred from e
 ### Minting seam (internal, no HTTP surface)
 
 `LineHandoffLinkService.wrap(userId, companyId, lineUserId, surface, path) → absolute URL`. Callers pass a path they have already decided to send; the service mints and returns `<webBaseUrl>/l/<token>`. When `webBaseUrl` is unset, or minting fails, it returns the plain absolute URL it would have produced today — a broken handoff must never cost the user their link.
+
+#### Delta 2026-09-06 — `company_picker_open_web`: the one surface that also switches the LINE chat
+
+Owner request (`line-rich-menu-v2-spec.md` §6.2 delta 2026-09-06): the บริษัทของฉัน picker gets a second
+button per bubble that in ONE tap both switches the LINE company context to that company and opens the web
+app signed in on it.
+
+- **Why the seam cannot do it.** The send-boundary walk binds ONE recipient `{userId, companyId, lineUserId, surface}`
+  to a whole message, and `isSafeHandoffPath(targetPath, companyId)` refuses a path under any other company —
+  correctly, because that check is what stops a token for company A being re-pointed at company B. A picker of
+  N companies therefore mints N tokens **explicitly**, through `LineHandoffLinkService.linkFor(ctx, targetPath)`,
+  which keeps the seam's enabled rule, its degrade-to-plain failure and its never-log-the-token guarantee.
+  Only the bubbles on the visible page are minted, plus one for the context card above them (2026-09-06: the
+  same button on บริษัทของฉัน itself, so the single-company member who is never sent a picker still has one).
+  Tokens are single-use, so a multi-company member's current company is minted twice per view rather than
+  sharing one link between the two cards — whichever they tapped second would otherwise be refused.
+  `/l/<token>` sits outside `/companies/`, so the seam walks straight past these links and never double-wraps them.
+- **Where the switch happens.** LINE sends the server nothing when a `uri` button is tapped, so the LINE half of
+  the tap can only run at exchange time. `ExchangeLineHandoffTokenUseCase` upserts `LineCompanyContext` for
+  `record.lineUserId` → `record.companyId` **after** the PENDING→USED claim (step 4) and **before** issuing the
+  session — after the claim, so an expired, refused, or already-spent link cannot move the chat.
+- **Why it is surface-scoped.** The write runs only when `record.surface === LINE_HANDOFF_SURFACE_COMPANY_PICKER_OPEN`
+  (`'company_picker_open_web'`, defined once in `auth/domain/logic/line-handoff.logic.ts`). Every other handoff
+  link — an assistant reply, an alert — is opened on the customer's own schedule, and silently changing which
+  shop their next LINE message is about would be a side effect nobody asked for. Only the button that says
+  "เปิดเว็บบริษัทนี้" earns it.
+- **State written** is identical to the in-LINE switch (`process-line-webhook.use-case.ts` `handleCompanyCommand`):
+  same row key, `aiPausedUntil` KEPT (a support hold means a human has the thread), and the same audit action
+  `ai.line.company_context.switch` with `metadataJson { lineUserId: '[REDACTED]', surface }`.
+- **Best-effort.** A failed context write logs `line_handoff_company_switch_failed` and the session still issues.
+  The token is already spent by then; failing the exchange would cost the customer the page they asked for and
+  give them nothing in return.
+- **The card outlives its buttons, and that is visible.** A picker carousel stays in the chat log for
+  ever, but each `เปิดเว็บบริษัทนี้` link is single-use with the §9 15-minute TTL. A tap on a stale card
+  is refused before the claim, so it changes nothing at all: no session, and — the point — **no switch**.
+  The web route sends it to `/login?line=handoff-expired&next=/companies/<id>/dashboard`, so signing in
+  still finishes the WEB half on the right company while the LINE chat stays where it was. The
+  `เลือกบริษัทนี้` button and the `ตอบ N` number beside it never expire, so the two halves of an old card
+  behave differently and nothing on screen says so. Accepted for now: บริษัทของฉัน re-sends fresh cards on
+  every tap. Revisit if customers report "กดแล้วไลน์ไม่เปลี่ยน" — the fix is a notice on the login bounce,
+  not a longer TTL, which would only widen the blast radius of a bearer token sitting in a chat log.
+- No schema change: `surface` is the column the row already carries.
 
 ## 12. UI Behavior
 

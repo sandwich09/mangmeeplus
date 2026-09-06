@@ -23,6 +23,7 @@ function makePrisma(opts: {
   const identityUpdates: any[] = [];
   const userUpdates: any[] = [];
   const contextDeletes: any[] = [];
+  const handoffRevokes: any[] = [];
   const ops = {
     companyMembership: {
       findFirst: async () =>
@@ -36,6 +37,10 @@ function makePrisma(opts: {
     // line-support-request-spec-th §2.5: the selected-company row goes with the identity.
     lineCompanyContext: {
       deleteMany: async (args: any) => { contextDeletes.push(args); return { count: 1 }; },
+    },
+    // Owner decision 2026-09-06: so does every unspent web deep link already sent to that chat.
+    lineWebHandoffToken: {
+      updateMany: async (args: any) => { handoffRevokes.push(args); return { count: 3 }; },
     },
     userCredential: {
       findUnique: async () =>
@@ -51,7 +56,7 @@ function makePrisma(opts: {
     },
   };
   const client = { ...ops, $transaction: async (arg: any) => (typeof arg === 'function' ? arg(ops) : Promise.all(arg)) };
-  return { prisma: { client } as any, audits, credentialUpdates, identityUpdates, userUpdates, contextDeletes };
+  return { prisma: { client } as any, audits, credentialUpdates, identityUpdates, userUpdates, contextDeletes, handoffRevokes };
 }
 
 const cmd = { companyId: 'co-1', memberUserId: 'user-1', requestingAdminUserId: 'admin-1', requestId: 'req-1' };
@@ -102,7 +107,7 @@ describe('PartnerMemberPasswordRevealUseCase', () => {
 
 describe('PartnerMemberLineUnlinkUseCase', () => {
   it('unlinks the active LINE identity and audits with actor = admin', async () => {
-    const { prisma, audits, identityUpdates, contextDeletes } = makePrisma();
+    const { prisma, audits, identityUpdates, contextDeletes, handoffRevokes } = makePrisma();
     const result = await new PartnerMemberLineUnlinkUseCase(prisma).execute(cmd);
 
     assert.deepEqual(result, { unlinked: true });
@@ -112,6 +117,14 @@ describe('PartnerMemberLineUnlinkUseCase', () => {
     // §2.5, in the SAME transaction: a context row that outlives its identity names a shop this
     // LINE account has left, which is what sent a support notice to the wrong partner page.
     assert.deepEqual(contextDeletes, [{ where: { lineUserId: 'Uline-1' } }]);
+    // Owner decision 2026-09-06, same transaction again: an admin-side unlink that left the chat's
+    // unspent deep links alive gave the member a way back in for 15 more minutes. Keyed on BOTH
+    // columns so a relink of this LINE account to another person cannot resurrect these.
+    assert.deepEqual(handoffRevokes, [{
+      where: { lineUserId: 'Uline-1', userId: 'user-1', status: 'PENDING' },
+      data: { status: 'REVOKED' },
+    }]);
+    assert.equal(audits[0].metadataJson.handoffLinksRevoked, 3);
   });
 
   it('404s when the member has no active LINE identity', async () => {

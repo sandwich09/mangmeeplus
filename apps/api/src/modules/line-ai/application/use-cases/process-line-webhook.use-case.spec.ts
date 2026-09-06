@@ -424,6 +424,8 @@ function makeUseCase(
       /** Defaults to the seeded OPEN route; pass `closedLaunchGate`/`brokenLaunchGate` to drive the
        *  AI-lane kill switch. */
       launchGate?: any;
+      /** P12-3b seam. Absent (the default) is the handoff feature switched off. */
+      handoffLinks?: any;
 	  } = {},
 	) {
   const replies: string[] = [];
@@ -507,18 +509,23 @@ function makeUseCase(
     opts.approvalQueues?.reimbursement,
     opts.approvalQueues?.purchaseRequests,
     opts.approvalQueues?.purchaseOrders,
+    undefined, // intakeState
+    opts.handoffLinks, // P12-3b handoff seam; absent = LINE_WEB_HANDOFF_ENABLED off
   );
 
 	  return { useCase, replies, sentMessages, sentMessageBatches, pushes, aiGatewayRequests, intakeRequests, auditEvents, legalChecks, getAiGatewayCalled: () => aiGatewayCalled };
 	}
 
-const BASE_EVENT = {
+// The use case assigns onto its event argument (event.handoff = ...), so a shared literal passed
+// straight to execute() used to leak a stale handoff into every later test that spread it. Frozen:
+// pass a fresh copy ({ ...BASE_EVENT }) and any such write throws instead of corrupting the literal.
+const BASE_EVENT = Object.freeze({
   webhookEventId: 'evt-1',
   lineUserId: 'line-user-secret',
   replyToken: 'reply-1',
   messageText: 'ดู dashboard',
   messagingChannelId: 'msg-channel-1',
-};
+});
 
 describe('toAiTurnIntent (free-form model intent → AiTurn enum)', () => {
   it('passes through valid enum values (case-insensitive)', () => {
@@ -560,7 +567,7 @@ describe('ProcessLineWebhookUseCase', () => {
     const { prisma, identityQueries } = makePrisma();
     const { useCase } = makeUseCase(prisma, { permissions: ['dashboard.read'] });
 
-    await useCase.execute(BASE_EVENT);
+    await useCase.execute({ ...BASE_EVENT });
 
     assert.equal(identityQueries.length, 1);
     assert.equal(identityQueries[0].providerChannelId, 'msg-channel-1');
@@ -734,12 +741,69 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(getAiGatewayCalled(), true, 'the turn falls through to the scoped composer instead');
   });
 
+  // ── A shut AI lane still owes the shop its own scope (Owner 2026-09-06) ──────────────────────
+  // "ร้านที่ปิดฟีเจอร์ แล้วเอไอตอบ ฟีเจอร์ยังไม่เปิดใช้งาน โอเค อันนี้ได้ แต่ถ้าบอกให้สอนวิธีใช้ ใน
+  // ขอบเขตที่เปิดใช้งานควรบอกได้." Closes the §8.2 residual: after PR #454 a linked caller of an
+  // AI-off shop fell through to the AI gate and read one bare line. The gate's own copy is kept
+  // (spec CC1 — a planned CLOSE must never read as "not enabled"), and a capability question also
+  // gets the deterministic entitlement card, built from the same `entitledFeatureKeys` the
+  // "บริการของเรา" tile uses, so it can name nothing the company has not switched on.
+  const AI_OFF_ENTITLEMENTS = [
+    { featureKey: 'ai_line_assistant', enabled: false },
+    { featureKey: 'expenses', enabled: true },
+    { featureKey: 'expenses.upload', enabled: true },
+    { featureKey: 'sales_documents', enabled: false },
+  ];
+
+  for (const messageText of ['มั่งมีใช้ยังไง', 'ทำอะไรได้บ้าง']) {
+    it(`answers "${messageText}" from an AI-off shop with the entitlement card, not the bare refusal`, async () => {
+      const { prisma, updates } = makePrisma({ entitlements: AI_OFF_ENTITLEMENTS });
+      const { useCase, replies, sentMessageBatches, intakeRequests, getAiGatewayCalled } =
+        makeUseCase(prisma, { permissions: ['line.ai.query', 'expense.read'] });
+
+      await useCase.execute({ ...BASE_EVENT, webhookEventId: `evt-capability-off-${messageText}`, messageText });
+
+      // Zero model calls on this lane — the card is deterministic, exactly like the tile's.
+      assert.equal(intakeRequests.length, 0);
+      assert.equal(getAiGatewayCalled(), false);
+      const batch = sentMessageBatches.at(-1) ?? [];
+      assert.equal(batch.length, 2, 'the honest line, then the scoped card');
+      assert.match(replies.at(-1) ?? '', /ยังไม่ได้เปิดใช้งาน/, 'the shop is still told the AI is off');
+      assert.match(replies.at(-1) ?? '', /บริการของเรา/, 'and which buttons still work');
+      assert.equal(batch[1]?.type, 'flex');
+      const rendered = JSON.stringify(batch[1]);
+      assert.match(rendered, /ค่าใช้จ่าย\+ใบเสร็จ/, 'names what this shop DID enable');
+      for (const hidden of ['ผู้ช่วย AI ทาง LINE', 'เอกสารขาย']) {
+        assert.equal(rendered.includes(hidden), false, `must not advertise ${hidden}`);
+      }
+      assert.equal(rendered.includes(CAPABILITY_CARD_ALT), false, 'never the unscoped six-function card');
+      assert.equal((updates.at(-1) as any).data.status, 'staff_menu_capability_entitlements');
+    });
+  }
+
+  it('gives an AI-off shop the entitlement card when the launch route is closed too', async () => {
+    const { prisma, updates } = makePrisma({ entitlements: AI_OFF_ENTITLEMENTS });
+    const { useCase, replies, sentMessageBatches, getAiGatewayCalled } = makeUseCase(prisma, {
+      permissions: ['line.ai.query'],
+      launchGate: closedLaunchGate,
+    });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-capability-closed', messageText: 'ทำอะไรได้บ้าง' });
+
+    assert.equal(getAiGatewayCalled(), false);
+    // CC1 holds: a planned CLOSE keeps its own words and never borrows the "not enabled" line.
+    assert.match(replies.at(-1) ?? '', /พักให้บริการชั่วคราว/);
+    assert.doesNotMatch(replies.at(-1) ?? '', /ยังไม่ได้เปิดใช้งาน/);
+    assert.match(JSON.stringify(sentMessageBatches.at(-1)?.[1]), /ค่าใช้จ่าย\+ใบเสร็จ/);
+    assert.equal((updates.at(-1) as any).data.status, 'staff_menu_capability_entitlements');
+  });
+
   // Identities linked before providerChannelId was recorded must keep working without relinking.
   it('falls back to a channel-agnostic identity for legacy links', async () => {
     const { prisma, updates, identityQueries } = makePrisma({ identityChannelId: 'legacy-channel' });
     const { useCase, replies } = makeUseCase(prisma, { permissions: ['dashboard.read'] });
 
-    await useCase.execute(BASE_EVENT);
+    await useCase.execute({ ...BASE_EVENT });
 
     assert.equal(identityQueries.length, 2);
     assert.equal(identityQueries[1].providerChannelId, undefined);
@@ -823,7 +887,7 @@ describe('ProcessLineWebhookUseCase', () => {
     const { prisma, updates } = makePrisma({ aiAssistantOptOutAt: new Date('2026-07-28T00:00:00Z') });
     const { useCase, replies, getAiGatewayCalled } = makeUseCase(prisma, { permissions: ['line.ai.query'] });
 
-    await useCase.execute(BASE_EVENT);
+    await useCase.execute({ ...BASE_EVENT });
 
     assert.equal(getAiGatewayCalled(), false);
     assert.match(replies[0] ?? '', /ปิดการใช้งานผู้ช่วย AI/);
@@ -913,7 +977,7 @@ describe('ProcessLineWebhookUseCase', () => {
     const { prisma, updates } = makePrisma();
     const { useCase, replies, getAiGatewayCalled } = makeUseCase(prisma, { permissions: ['dashboard.read'] });
 
-    await useCase.execute(BASE_EVENT);
+    await useCase.execute({ ...BASE_EVENT });
 
     assert.equal(getAiGatewayCalled(), false);
     assert.match(replies[0] ?? '', /ไม่มีสิทธิ์/);
@@ -922,12 +986,15 @@ describe('ProcessLineWebhookUseCase', () => {
 
   it('denies the whole turn when ai_line_assistant entitlement is toggled off', async () => {
     const { prisma, updates } = makePrisma({ entitlements: [{ featureKey: 'ai_line_assistant', enabled: false }] });
-    const { useCase, replies, getAiGatewayCalled } = makeUseCase(prisma, { permissions: ['line.ai.query'] });
+    const { useCase, replies, sentMessageBatches, getAiGatewayCalled } = makeUseCase(prisma, { permissions: ['line.ai.query'] });
 
-    await useCase.execute(BASE_EVENT);
+    await useCase.execute({ ...BASE_EVENT });
 
     assert.equal(getAiGatewayCalled(), false);
     assert.match(replies[0] ?? '', /ยังไม่ได้เปิดใช้งาน/);
+    // An ORDINARY question keeps the bare line: only a capability question earns the entitlement
+    // card below it (Owner 2026-09-06, §8.2).
+    assert.equal(sentMessageBatches[0]?.length, 1);
     assert.equal((updates[0] as any).data.status, 'feature_disabled');
   });
 
@@ -935,7 +1002,7 @@ describe('ProcessLineWebhookUseCase', () => {
     const { prisma, updates } = makePrisma({ entitlements: [{ featureKey: 'expenses', enabled: true }] });
     const { useCase, getAiGatewayCalled } = makeUseCase(prisma, { permissions: ['line.ai.query'] });
 
-    await useCase.execute(BASE_EVENT);
+    await useCase.execute({ ...BASE_EVENT });
 
     assert.equal(getAiGatewayCalled(), false);
     assert.equal((updates[0] as any).data.status, 'feature_disabled');
@@ -1046,7 +1113,7 @@ describe('ProcessLineWebhookUseCase', () => {
       }),
     });
 
-    await useCase.execute(BASE_EVENT);
+    await useCase.execute({ ...BASE_EVENT });
 
     assert.equal(getAiGatewayCalled(), true);
     assert.deepEqual(aiGatewayRequests[0]?.userContext.entitlementDeniedPermissions, { 'inventory.report.read': 'inventory' });
@@ -1070,7 +1137,7 @@ describe('ProcessLineWebhookUseCase', () => {
       }),
     });
 
-    await useCase.execute(BASE_EVENT);
+    await useCase.execute({ ...BASE_EVENT });
 
     const sent: string[] = aiGatewayRequests[0]?.entitledFeatureKeys ?? [];
     assert.ok(sent.includes('expenses'));
@@ -1087,7 +1154,7 @@ describe('ProcessLineWebhookUseCase', () => {
       }),
     });
 
-    await useCase.execute(BASE_EVENT);
+    await useCase.execute({ ...BASE_EVENT });
 
     assert.equal(aiGatewayRequests[0]?.entitledFeatureKeys, undefined);
   });
@@ -1596,7 +1663,7 @@ describe('ProcessLineWebhookUseCase', () => {
     const { prisma } = makePrisma({ identityUserId: null });
     const { useCase, replies } = makeUseCase(prisma);
 
-    await useCase.execute(BASE_EVENT);
+    await useCase.execute({ ...BASE_EVENT });
 
     assert.match(replies[0] ?? '', /ยินดีต้อนรับสู่มั่งมีพลัส/);
     assert.equal(/เชื่อมต่อบัญชี/.test(replies[0] ?? ''), false);
@@ -1606,7 +1673,7 @@ describe('ProcessLineWebhookUseCase', () => {
     const { prisma } = makePrisma({ memberships: [] });
     const { useCase, replies } = makeUseCase(prisma);
 
-    await useCase.execute(BASE_EVENT);
+    await useCase.execute({ ...BASE_EVENT });
 
     assert.match(replies[0] ?? '', /เชื่อมต่อ/);
   });
@@ -1622,7 +1689,7 @@ describe('ProcessLineWebhookUseCase', () => {
       });
       const { useCase, replies, getAiGatewayCalled } = makeUseCase(prisma);
 
-      await useCase.execute(BASE_EVENT);
+      await useCase.execute({ ...BASE_EVENT });
 
       assert.match(replies[0] ?? '', /ครบกำหนดใช้งานแล้ว/);
       assert.match(replies[0] ?? '', /ข้อมูลทั้งหมดยังอยู่ครบ/);
@@ -1640,7 +1707,7 @@ describe('ProcessLineWebhookUseCase', () => {
       });
       const { useCase, replies } = makeUseCase(prisma);
 
-      await useCase.execute(BASE_EVENT);
+      await useCase.execute({ ...BASE_EVENT });
 
       assert.match(replies[0] ?? '', /เชื่อมต่อ/, 'staff keep the generic reply');
       assert.doesNotMatch(replies[0] ?? '', /098-256-5628/, 'and are shown no package or contact detail');
@@ -1653,7 +1720,7 @@ describe('ProcessLineWebhookUseCase', () => {
       const { prisma } = makePrisma({ memberships: [], termExpiredMemberships: [] });
       const { useCase, replies } = makeUseCase(prisma);
 
-      await useCase.execute(BASE_EVENT);
+      await useCase.execute({ ...BASE_EVENT });
 
       assert.match(replies[0] ?? '', /เชื่อมต่อ/);
     });
@@ -1667,7 +1734,7 @@ describe('ProcessLineWebhookUseCase', () => {
       prisma.client.companyMembership.findFirst = async (args: any) => { probes.push(args); return findFirst(args); };
       const { useCase, replies } = makeUseCase(prisma);
 
-      await useCase.execute(BASE_EVENT);
+      await useCase.execute({ ...BASE_EVENT });
 
       assert.deepEqual(probes, [], 'an active company never reaches the term-expired branch');
       assert.doesNotMatch(replies.join('\n'), /ครบกำหนดใช้งานแล้ว/);
@@ -1678,7 +1745,7 @@ describe('ProcessLineWebhookUseCase', () => {
     const { prisma } = makePrisma({ memberships: [{ companyId: 'co-1', company: { name: 'บริษัทหนึ่ง' } }, { companyId: 'co-2', company: { name: 'บริษัทสอง' } }], lineCompanyContext: null });
     const { useCase, sentMessages } = makeUseCase(prisma);
 
-    await useCase.execute(BASE_EVENT);
+    await useCase.execute({ ...BASE_EVENT });
 
     assert.equal(sentMessages[0]?.type, 'flex');
     assert.match(JSON.stringify(sentMessages[0]), /บริษัทหนึ่ง/);
@@ -1708,6 +1775,173 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.match(JSON.stringify(ownerPicker), /บริษัทหนึ่ง/);
     assert.match(JSON.stringify(ownerPicker), /บริษัทสอง/);
     assert.match(JSON.stringify((ownerPicker as any).contents.contents[0]), /ใช้งานอยู่/);
+  });
+
+  /**
+   * Owner 2026-09-06: บริษัทของฉัน gets a second button per bubble that both switches the LINE
+   * company AND opens the web on it. LINE cannot notify the server about a `uri` tap, so each
+   * bubble carries its OWN handoff token; the switch happens at exchange time, keyed on the
+   * `company_picker_open_web` surface.
+   */
+  describe('บริษัทของฉัน one-tap web button', () => {
+    const twoShops = () => makePrisma({
+      displayName: 'พิมพ์ชนก',
+      memberships: [
+        { companyId: 'co-1', company: { name: 'บริษัทหนึ่ง' }, roles: [{ role: { key: 'OWNER', name: 'เจ้าของกิจการ' } }] },
+        { companyId: 'co-2', company: { name: 'บริษัทสอง' }, roles: [{ role: { key: 'OWNER', name: 'เจ้าของกิจการ' } }] },
+      ],
+      lineCompanyContext: { companyId: 'co-2' },
+    }).prisma;
+
+    /** Stands in for `LineHandoffLinkService`: one URL per company, or `null` where minting failed.
+     *  `wrapOutgoingLineContent` is the real seam's send-boundary walk — recorded here so a test can
+     *  see that it neither re-wraps the picker's own `/l/` links nor is handed a recipient. */
+    const fakeLinks = (fails: string[] = []) => {
+      const calls: any[] = [];
+      const wraps: any[] = [];
+      return {
+        calls,
+        wraps,
+        handoffLinks: {
+          linkFor: async (ctx: any, targetPath: string) => {
+            calls.push({ ...ctx, targetPath });
+            return fails.includes(ctx.companyId) ? null : `https://app.example.com/l/tok-${ctx.companyId}`;
+          },
+          wrapOutgoingLineContent: async (ctx: any, messages: any[]) => { wraps.push(ctx); return messages; },
+        },
+      };
+    };
+
+    const pickerOf = (batches: any[][]) => batches[0]![batches[0]!.length - 1];
+    const bubbles = (picker: any) => picker.contents.contents as any[];
+
+    it('mints one token per visible bubble, bound to that bubble’s own company', async () => {
+      const { calls, wraps, handoffLinks } = fakeLinks();
+      const { useCase, sentMessageBatches } = makeUseCase(twoShops(), { permissions: ['line.ai.query'], handoffLinks });
+
+      await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-picker-web', messageText: '/companies' });
+
+      assert.deepEqual(calls, [
+        // The LINE identity is the CHAT's own user id — the same key `LineCompanyContext` is
+        // upserted under — so the exchange switches the row this conversation reads.
+        // The context card mints first, for the company the chat is already on. Tokens are
+        // single-use, so its button cannot share the one on that company's picker bubble below —
+        // whichever the reader tapped second would land on `handoff-expired`.
+        { userId: 'user-1', companyId: 'co-2', lineUserId: 'line-user-secret', surface: 'company_picker_open_web', targetPath: '/companies/co-2/dashboard' },
+        { userId: 'user-1', companyId: 'co-1', lineUserId: 'line-user-secret', surface: 'company_picker_open_web', targetPath: '/companies/co-1/dashboard' },
+        { userId: 'user-1', companyId: 'co-2', lineUserId: 'line-user-secret', surface: 'company_picker_open_web', targetPath: '/companies/co-2/dashboard' },
+      ]);
+
+      const [current, other] = bubbles(pickerOf(sentMessageBatches));
+      // The current company has nothing to select, so the web button is its only one.
+      assert.deepEqual(current.footer.contents.map((b: any) => b.action), [
+        { type: 'uri', label: 'เปิดเว็บบริษัทนี้', uri: 'https://app.example.com/l/tok-co-2' },
+      ]);
+      assert.deepEqual(other.footer.contents.map((b: any) => b.action), [
+        { type: 'message', label: 'เลือกบริษัทนี้', text: '/company co-1' },
+        { type: 'uri', label: 'เปิดเว็บบริษัทนี้', uri: 'https://app.example.com/l/tok-co-1' },
+      ]);
+      // The send-boundary seam still runs and adds nothing: `/l/<token>` sits outside `/companies/`,
+      // so there is nothing for it to rewrite (proved in line-handoff-link.service.spec.ts).
+      assert.equal(wraps.length, 1);
+      assert.equal(calls.length, 3, 'two bubbles plus the context card, and not one more');
+    });
+
+    it('renders the picker exactly as before when the handoff feature is off', async () => {
+      const { useCase, sentMessageBatches } = makeUseCase(twoShops(), { permissions: ['line.ai.query'] });
+      await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-picker-off', messageText: '/companies' });
+
+      const rendered = JSON.stringify(pickerOf(sentMessageBatches));
+      assert.equal(rendered.includes('เปิดเว็บบริษัทนี้'), false);
+      assert.equal(rendered.includes('"uri"'), false);
+      assert.equal(rendered.includes('/l/'), false);
+      assert.match(rendered, /\/company co-1/, 'and the switch button it always had still works');
+    });
+
+    it('drops only the failing bubble’s web button when one mint fails', async () => {
+      const { handoffLinks } = fakeLinks(['co-1']);
+      const { useCase, sentMessageBatches } = makeUseCase(twoShops(), { permissions: ['line.ai.query'], handoffLinks });
+
+      await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-picker-partial', messageText: '/companies' });
+
+      const [current, other] = bubbles(pickerOf(sentMessageBatches));
+      assert.equal(current.footer.contents.length, 1, 'the company that minted keeps its web button');
+      assert.deepEqual(other.footer.contents.map((b: any) => b.action), [
+        { type: 'message', label: 'เลือกบริษัทนี้', text: '/company co-1' },
+      ], 'the one that failed keeps the picker it always had, and nothing else is lost');
+    });
+
+    it('mints for the visible page only, never for companies this carousel cannot show', async () => {
+      const memberships = Array.from({ length: 14 }, (_, index) => ({
+        companyId: `co-${index + 1}`,
+        company: { name: `บริษัท ${index + 1}` },
+        roles: [{ role: { key: 'OWNER', name: 'เจ้าของกิจการ' } }],
+      }));
+      const { prisma } = makePrisma({ displayName: 'พิมพ์ชนก', memberships, lineCompanyContext: { companyId: 'co-1' } });
+      const { calls, handoffLinks } = fakeLinks();
+      const { useCase, sentMessageBatches } = makeUseCase(prisma, { permissions: ['line.ai.query'], handoffLinks });
+
+      await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-picker-page2', messageText: '/companies page 2' });
+
+      // Page 2 shows three companies plus the navigation bubble; only the three get a token —
+      // after the context card's own, which is always for the current company whatever page is up.
+      assert.equal(calls.length, 4);
+      assert.deepEqual(calls.map((call) => call.companyId), ['co-1', 'co-12', 'co-13', 'co-14']);
+      const page = bubbles(pickerOf(sentMessageBatches));
+      assert.equal(page.length, 4);
+      assert.equal(JSON.stringify(page[3]).includes('/l/'), false, 'the pager bubble is navigation, not a company');
+    });
+
+    /**
+     * Owner 2026-09-06: *"เจ้าของที่มีบริษัทเดียวจะไม่เห็นการ์ดเลือกบริษัท อยากให้การ์ดบริษัทเดียวมีปุ่มเปิดเว็บด้วย"*.
+     * The picker is only pushed when `memberships.length > 1`, so the single-shop owner — the
+     * majority of บริษัทของฉัน — could not reach the web from this screen at all. The context card
+     * mints for the CURRENT company; the exchange-time switch is a no-op that re-selects it.
+     */
+    const oneShop = () => makePrisma({
+      displayName: 'พิมพ์ชนก',
+      memberships: [{ companyId: 'co-1', company: { name: 'บริษัทหนึ่ง' }, roles: [{ role: { key: 'OWNER', name: 'เจ้าของกิจการ' } }] }],
+    }).prisma;
+
+    it('puts the web button on the context card of a member with a single company', async () => {
+      const { calls, handoffLinks } = fakeLinks();
+      const { useCase, sentMessageBatches } = makeUseCase(oneShop(), { permissions: ['line.ai.query'], handoffLinks });
+
+      await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-context-web', messageText: '/companies' });
+
+      assert.equal(sentMessageBatches[0]?.length, 1, 'one company still sends no picker');
+      assert.deepEqual(calls, [
+        { userId: 'user-1', companyId: 'co-1', lineUserId: 'line-user-secret', surface: 'company_picker_open_web', targetPath: '/companies/co-1/dashboard' },
+      ]);
+      const card = sentMessageBatches[0]![0] as any;
+      assert.deepEqual(card.contents.footer.contents.map((b: any) => b.action), [
+        { type: 'uri', label: 'เปิดเว็บบริษัทนี้', uri: 'https://app.example.com/l/tok-co-1' },
+      ]);
+    });
+
+    it('leaves the context card exactly as before when the handoff feature is off', async () => {
+      const { useCase, sentMessageBatches } = makeUseCase(oneShop(), { permissions: ['line.ai.query'] });
+
+      await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-context-web-off', messageText: '/companies' });
+
+      const card = JSON.stringify(sentMessageBatches[0]![0]);
+      assert.match(card, /บริษัทหนึ่ง/);
+      assert.equal(card.includes('เปิดเว็บบริษัทนี้'), false);
+      assert.equal(card.includes('/l/'), false);
+      assert.equal(card.includes('footer'), false, 'no seam, no mint, and not one byte added');
+    });
+
+    it('still delivers the context card when its own mint fails', async () => {
+      const { calls, handoffLinks } = fakeLinks(['co-1']);
+      const { useCase, sentMessageBatches } = makeUseCase(oneShop(), { permissions: ['line.ai.query'], handoffLinks });
+
+      await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-context-web-fail', messageText: '/companies' });
+
+      assert.deepEqual(calls.map((call) => call.companyId), ['co-1'], 'the mint was attempted and returned nothing');
+      const card = sentMessageBatches[0]![0] as any;
+      assert.match(JSON.stringify(card), /บริษัทหนึ่ง/, 'the answer the owner asked for still arrives');
+      assert.equal(card.contents.footer, undefined, 'and never a button with nowhere to go');
+    });
   });
 
   it('puts เปิดร้านใหม่ on the company card only where this environment opens self-service signup', async () => {
@@ -2195,7 +2429,7 @@ describe('ProcessLineWebhookUseCase', () => {
       };
     (prisma.client as any).aiToolInvocation = { createMany: async () => ({ count: 0 }) };
 
-    await useCase.execute(BASE_EVENT);
+    await useCase.execute({ ...BASE_EVENT });
 
     assert.match(replies[0] ?? '', /ตอบแล้ว/);
   });
@@ -2232,7 +2466,7 @@ describe('ProcessLineWebhookUseCase', () => {
       };
     (prisma.client as any).aiToolInvocation = { createMany: async () => ({ count: 0 }) };
 
-    await useCase.execute(BASE_EVENT);
+    await useCase.execute({ ...BASE_EVENT });
 
     assert.match(replies[0] ?? '', /company-2 data/);
   });
@@ -3602,7 +3836,7 @@ describe('LINE webhook shadow coverage (piece 5)', () => {
     });
     const since = takeNewRecords();
 
-    await useCase.execute(BASE_EVENT);
+    await useCase.execute({ ...BASE_EVENT });
 
     assert.deepEqual(since(), [
       { surface: 'line.webhook.employee', companyId: 'company-1', featureKey: 'ai_line_assistant' },
@@ -3615,7 +3849,7 @@ describe('LINE webhook shadow coverage (piece 5)', () => {
     const { useCase } = makeUseCase(prisma, { permissions: ['line.ai.query'] });
     const since = takeNewRecords();
 
-    await useCase.execute(BASE_EVENT);
+    await useCase.execute({ ...BASE_EVENT });
 
     // Mutation guard for the Group-E trap: move `recordShadowTurn` below the
     // `lineAssistantDisabled` branch and this is [] — the family's would_block counter would then
@@ -3653,7 +3887,7 @@ describe('LINE webhook shadow coverage (piece 5)', () => {
     const { useCase } = makeUseCase(prisma, { permissions: ['line.ai.query'] });
     const since = takeNewRecords();
 
-    await useCase.execute(BASE_EVENT);
+    await useCase.execute({ ...BASE_EVENT });
 
     // No company means no entitlement question to ask; a fabricated observation would be worse
     // than none.
@@ -4714,7 +4948,7 @@ function makeIntakeStateUseCase(prisma: any, opts: {
   return { useCase, replies, logs, ledgerSubs, sent };
 }
 
-const STATE_EVENT = { ...BASE_EVENT, webhookEventId: 'evt-state-1', messageText: '200 บาท' };
+const STATE_EVENT = Object.freeze({ ...BASE_EVENT, webhookEventId: 'evt-state-1', messageText: '200 บาท' });
 
 describe('ProcessLineWebhookUseCase – neutral intake state mode: off (§8.3, default)', () => {
   it('never touches the repository and captures exactly as today', async () => {
@@ -4725,7 +4959,7 @@ describe('ProcessLineWebhookUseCase – neutral intake state mode: off (§8.3, d
       mode: 'off', capture: capture.capture, stateRepo: state.repo,
     });
 
-    await useCase.execute(STATE_EVENT);
+    await useCase.execute({ ...STATE_EVENT });
 
     assert.deepEqual(state.calls, [], 'default-off is byte-identical: the durable state is not read or written');
     assert.equal(capture.calls.length, 1, 'the legacy capture still runs');
@@ -4742,7 +4976,7 @@ describe('ProcessLineWebhookUseCase – neutral intake state mode: off (§8.3, d
       mode: 'off', capture: capture.capture, stateRepo: state.repo,
     });
 
-    await useCase.execute(STATE_EVENT);
+    await useCase.execute({ ...STATE_EVENT });
 
     assert.deepEqual(state.calls, []);
     assert.equal(capture.calls.length, 1, 'an outage the flag never consulted cannot block a turn');
@@ -4759,7 +4993,7 @@ describe('ProcessLineWebhookUseCase – neutral intake state mode: shadow (§8.3
       mode: 'shadow', capture: capture.capture, stateRepo: state.repo,
     });
 
-    await useCase.execute(STATE_EVENT);
+    await useCase.execute({ ...STATE_EVENT });
 
     assert.deepEqual(state.calls, ['read', 'resolve'], 'shadow exercises the real path so the measurement is real');
     assert.equal(capture.calls.length, 1, 'same capture as off');
@@ -4774,7 +5008,7 @@ describe('ProcessLineWebhookUseCase – neutral intake state mode: shadow (§8.3
       mode: 'shadow', capture: capture.capture, stateRepo: state.repo,
     });
 
-    await useCase.execute(STATE_EVENT);
+    await useCase.execute({ ...STATE_EVENT });
 
     const divergence = logs.map((line) => { try { return JSON.parse(line); } catch { return {}; } })
       .find((entry) => entry.event === 'line_ai_intake_state_shadow_divergence');
@@ -4796,7 +5030,7 @@ describe('ProcessLineWebhookUseCase – neutral intake state mode: on, four zero
       mode: 'on', capture: capture.capture, stateRepo: state.repo,
     });
 
-    await useCase.execute(STATE_EVENT);
+    await useCase.execute({ ...STATE_EVENT });
 
     assert.deepEqual(state.calls, ['read', 'resolve']);
     assert.equal(capture.calls.length, 1, 'a healthy, owned, fresh state is exactly what lets a write happen');
@@ -4821,7 +5055,7 @@ describe('ProcessLineWebhookUseCase – neutral intake state mode: on, four zero
         mode: 'on', capture: capture.capture, stateRepo: state.repo,
       });
 
-      await useCase.execute(STATE_EVENT);
+      await useCase.execute({ ...STATE_EVENT });
 
       assert.equal(capture.calls.length, 0, `${gap}: the capture use case is never reached, so nothing can be written`);
       // Matched on the canonical "not created yet" clause rather than the whole string, so a copy
@@ -4845,7 +5079,7 @@ describe('ProcessLineWebhookUseCase – neutral intake state mode: on, four zero
       }],
     });
 
-    await useCase.execute(STATE_EVENT);
+    await useCase.execute({ ...STATE_EVENT });
 
     assert.equal(capture.calls.length, 0);
     assert.deepEqual(ledgerSubs, [], 'no new question and no consumption marker on a refused turn');
@@ -4883,12 +5117,12 @@ describe('ProcessLineWebhookUseCase – neutral intake state mode: on, four zero
 //    wrapping the canonical reply. Same gate as the rest of terminal Flex
 //    (`LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED`), so default-off is still the legacy all-text shape. ──
 describe('ProcessLineWebhookUseCase – expense draft card on the capture terminal (§10.1, default off)', () => {
-  const CAPTURE_EVENT = { ...STATE_EVENT, webhookEventId: 'evt-draft-card', messageText: '200 บาท' };
+  const CAPTURE_EVENT = Object.freeze({ ...STATE_EVENT, webhookEventId: 'evt-draft-card', messageText: '200 บาท' });
   const run = async (config?: Record<string, unknown>) => {
     const { prisma } = makePrisma();
     const capture = makeCapture({ vendorNameSnapshot: 'ร้านกาแฟบ้านไร่' });
     const harness = makeIntakeStateUseCase(prisma, { capture: capture.capture, ...(config ? { config } : {}) });
-    await harness.useCase.execute(CAPTURE_EVENT);
+    await harness.useCase.execute({ ...CAPTURE_EVENT });
     return { ...harness, captureCalls: capture.calls };
   };
   const bodyOf = (message: any) => message.contents.body.contents;
@@ -4939,7 +5173,12 @@ describe('ProcessLineWebhookUseCase – expense draft card on the capture termin
     const on = makeIntakeStateUseCase(prisma, {
       capture: capture.capture, config: { lineAiMultipartTerminalFlexEnabled: true },
     });
-    await on.useCase.execute(CAPTURE_EVENT);
+    await on.useCase.execute({ ...CAPTURE_EVENT });
     assert.deepEqual(rowsOf(on.sent[0]![0]).map(([label]: string[]) => label), ['ยอดรวม', 'หมวดหมู่', 'สถานะ']);
   });
+});
+
+// Regression guard: passing a bare BASE_EVENT to execute() silently poisoned every later spread.
+it('keeps the shared event literals frozen so execute() cannot mutate them', () => {
+  assert.ok(Object.isFrozen(BASE_EVENT) && Object.isFrozen(STATE_EVENT));
 });

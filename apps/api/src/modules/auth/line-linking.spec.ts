@@ -14,11 +14,17 @@ const config = { lineLoginChannelId: 'login-ch-1', lineMessagingChannelId: 'msg-
  * key is taken and that it matches the one signup provisioning takes.
  */
 const identityLocks: unknown[][] = [];
+/** Every re-point revokes the previous holder's PENDING handoff links inside the same transaction,
+ *  so the delegate belongs to the tx harness; a spec that cares passes its own recorder instead. */
+const handoffRevokes: any[] = [];
 function withIdentityTx(prisma: any): any {
   prisma.client.$transaction = async (fn: any) => fn(prisma.client);
   prisma.client.$executeRaw = async (_strings: TemplateStringsArray, ...values: unknown[]) => {
     identityLocks.push(values);
     return 0;
+  };
+  prisma.client.lineWebHandoffToken ??= {
+    updateMany: async (args: unknown) => { handoffRevokes.push(args); return { count: 0 }; },
   };
   return prisma;
 }
@@ -63,6 +69,53 @@ describe('LinkLineIdentityUseCase', () => {
         return true;
       },
     );
+  });
+
+  it('revokes the previous holder PENDING handoff links when an admin QR re-points the identity', async () => {
+    const revokes: any[] = [];
+    const updates: any[] = [];
+    const prisma = {
+      client: {
+        externalIdentity: {
+          findFirst: async () => ({ id: 'ei-1', userId: 'other-user', status: 'ACTIVE', providerChannelId: 'msg-ch-1' }),
+          update: async (args: any) => { updates.push(args); return {}; },
+        },
+        companyMembership: { findMany: async () => [ownerMembership()] },
+        lineCompanyContext: { upsert: async () => {} },
+        lineWebHandoffToken: {
+          updateMany: async (args: any) => { revokes.push(args); return { count: 2 }; },
+        },
+      },
+    } as any;
+    const uc = new LinkLineIdentityUseCase(lineVerifier, withIdentityTx(prisma), config);
+    await uc.execute({ userId: 'user-1', idToken: 'tok', requestId: 'req-1', allowReassign: true });
+
+    assert.equal(updates[0].data.userId, 'user-1');
+    // Owner decision 2026-09-06: the links already in that chat name `other-user`, so a tap after
+    // the move would hand the NEW holder of the LINE account the OLD owner's web session.
+    assert.deepEqual(revokes, [{
+      where: { lineUserId: 'line-user-1', userId: 'other-user', status: 'PENDING' },
+      data: { status: 'REVOKED' },
+    }]);
+  });
+
+  it('revokes nothing when the same user re-links — their own links stay tappable', async () => {
+    const revokes: any[] = [];
+    const prisma = {
+      client: {
+        externalIdentity: {
+          findFirst: async () => ({ id: 'ei-1', userId: 'user-1', status: 'ACTIVE', providerChannelId: 'msg-ch-1' }),
+        },
+        companyMembership: { findMany: async () => [ownerMembership()] },
+        lineCompanyContext: { upsert: async () => {} },
+        lineWebHandoffToken: {
+          updateMany: async (args: any) => { revokes.push(args); return { count: 0 }; },
+        },
+      },
+    } as any;
+    const uc = new LinkLineIdentityUseCase(lineVerifier, withIdentityTx(prisma), config);
+    await uc.execute({ userId: 'user-1', idToken: 'tok', requestId: 'req-1' });
+    assert.deepEqual(revokes, []);
   });
 
   it('creates identity and returns linked=true when not found', async () => {
@@ -270,6 +323,36 @@ describe('LinkLineIdentityUseCase', () => {
 
 // ---- UnlinkLineIdentityUseCase ----
 
+type HandoffRow = { id: string; lineUserId: string; userId: string; status: string };
+
+/** The unlink's three writes share one transaction, so the fake hands the same delegates to the
+ *  callback. `lineWebHandoffToken.updateMany` really applies its WHERE to `handoffRows` — a spec
+ *  that only recorded the call could not tell a correct filter from one that revokes the wrong
+ *  rows, which is the whole risk in a query keyed on two columns and a status. */
+function makeUnlinkPrisma(handoffRows: HandoffRow[] = []) {
+  const updated: unknown[] = [];
+  const contextDeletes: unknown[] = [];
+  const ops = {
+    externalIdentity: {
+      findFirst: async () => ({ id: 'ei-1', userId: 'user-1', providerUserId: 'Uline-1' }),
+      update: async (args: unknown) => { updated.push(args); return {}; },
+    },
+    lineCompanyContext: {
+      deleteMany: async (args: unknown) => { contextDeletes.push(args); return { count: 1 }; },
+    },
+    lineWebHandoffToken: {
+      updateMany: async ({ where, data }: any) => {
+        const hit = handoffRows.filter((r) =>
+          r.lineUserId === where.lineUserId && r.userId === where.userId && r.status === where.status);
+        for (const r of hit) r.status = data.status;
+        return { count: hit.length };
+      },
+    },
+  };
+  const prisma = { client: { ...ops, $transaction: async (fn: any) => fn(ops) } } as any;
+  return { prisma, updated, contextDeletes, handoffRows };
+}
+
 describe('UnlinkLineIdentityUseCase', () => {
   it('throws NotFoundException when no linked identity', async () => {
     const prisma = {
@@ -285,19 +368,7 @@ describe('UnlinkLineIdentityUseCase', () => {
   });
 
   it('sets status UNLINKED, clears the selected-company row, and returns unlinked=true', async () => {
-    const updated: unknown[] = [];
-    const contextDeletes: unknown[] = [];
-    const prisma = {
-      client: {
-        externalIdentity: {
-          findFirst: async () => ({ id: 'ei-1', userId: 'user-1', providerUserId: 'Uline-1' }),
-          update: async (args: unknown) => { updated.push(args); return {}; },
-        },
-        lineCompanyContext: {
-          deleteMany: async (args: unknown) => { contextDeletes.push(args); return { count: 1 }; },
-        },
-      },
-    } as any;
+    const { prisma, updated, contextDeletes } = makeUnlinkPrisma();
     const uc = new UnlinkLineIdentityUseCase(prisma);
     const result = await uc.execute({ userId: 'user-1', requestId: 'req-1' });
 
@@ -307,6 +378,43 @@ describe('UnlinkLineIdentityUseCase', () => {
     // line-support-request-spec-th §2.5: the row outlived the identity, so a support request
     // named a shop this LINE account had left — and a 24h assistant pause hung on a severed one.
     assert.deepEqual(contextDeletes, [{ where: { lineUserId: 'Uline-1' } }]);
+  });
+
+  it('revokes this identity PENDING handoff links and leaves every other row alone', async () => {
+    // Owner decision 2026-09-06: an unspent handoff link is a ≤15-minute bearer session sitting in
+    // the chat being severed. Only the first row may change.
+    const rows: HandoffRow[] = [
+      { id: 'mine-pending', lineUserId: 'Uline-1', userId: 'user-1', status: 'PENDING' },
+      { id: 'mine-used', lineUserId: 'Uline-1', userId: 'user-1', status: 'USED' },
+      { id: 'mine-expired', lineUserId: 'Uline-1', userId: 'user-1', status: 'EXPIRED' },
+      // The same LINE account after a relink to somebody else, and the same person on another
+      // LINE account: matching on ONE of the two columns would wrongly burn one of these.
+      { id: 'other-user-same-line', lineUserId: 'Uline-1', userId: 'user-2', status: 'PENDING' },
+      { id: 'same-user-other-line', lineUserId: 'Uline-9', userId: 'user-1', status: 'PENDING' },
+    ];
+    const { prisma } = makeUnlinkPrisma(rows);
+    const audits: any[] = [];
+    const uc = new UnlinkLineIdentityUseCase(prisma, { log: async (e: unknown) => { audits.push(e); } } as any);
+
+    await uc.execute({ userId: 'user-1', requestId: 'req-1' });
+
+    assert.deepEqual(
+      rows.map((r) => `${r.id}:${r.status}`),
+      ['mine-pending:REVOKED', 'mine-used:USED', 'mine-expired:EXPIRED',
+        'other-user-same-line:PENDING', 'same-user-other-line:PENDING'],
+    );
+    // One row per unlink, naming how many links it killed.
+    assert.equal(audits.length, 1);
+    assert.equal(audits[0].action, 'auth.identity.unlink');
+    assert.deepEqual(audits[0].metadataJson, { handoffLinksRevoked: 1 });
+  });
+
+  it('reports zero revoked when the chat held no unspent links', async () => {
+    const { prisma } = makeUnlinkPrisma();
+    const audits: any[] = [];
+    const uc = new UnlinkLineIdentityUseCase(prisma, { log: async (e: unknown) => { audits.push(e); } } as any);
+    await uc.execute({ userId: 'user-1', requestId: 'req-1' });
+    assert.deepEqual(audits[0].metadataJson, { handoffLinksRevoked: 0 });
   });
 });
 
