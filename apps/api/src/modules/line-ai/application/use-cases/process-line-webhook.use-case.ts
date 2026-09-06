@@ -1729,6 +1729,23 @@ export class ProcessLineWebhookUseCase {
     return buildSignupDoorCard(liffId, this.config.sesWebBaseUrl);
   }
 
+  /**
+   * The door card's "เปิดร้านใหม่ ทดลองฟรี" only ever reaches a stranger; a linked owner gets
+   * WELCOME_BACK and had no way to open a second shop. The บริษัทของฉัน card carries the same
+   * central LIFF page for them — same URL, built from this environment's config, with nothing about
+   * the user or the company in it (LINE-ONBOARD-01).
+   *
+   * Both halves are required: an unusable LIFF id would send the owner to a broken page, and where
+   * self-service signup is closed for the environment the LIFF form itself refuses, so the button
+   * must not exist there either. `externalSignupEnabled` is the same switch the public signup route
+   * answers with `external_signup_disabled`.
+   */
+  private newShopSignupUrl(): string | undefined {
+    const liffId = this.config.lineLiffId;
+    if (!this.config.externalSignupEnabled || !liffId || !LIFF_ID_PATTERN.test(liffId)) return undefined;
+    return `https://liff.line.me/${liffId}/signup`;
+  }
+
   /** §15.1: "ช่วงทดลอง" is only true of the trial tier; every other shop hears about its package. */
   private async isTrialTier(companyId: string): Promise<boolean> {
     const term = await this.prisma.client.companyPlanTerm.findUnique({
@@ -4116,6 +4133,7 @@ export class ProcessLineWebhookUseCase {
         companyName: companyLabel(currentMembership),
         displayName,
         roleLabels: companyRoleLabels(currentMembership),
+        newShopSignupUrl: this.newShopSignupUrl(),
       })];
       if (memberships.length > 1) {
         messages.push(buildCompanyPickerMessage(
