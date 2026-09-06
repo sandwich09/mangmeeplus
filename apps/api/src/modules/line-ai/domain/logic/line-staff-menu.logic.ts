@@ -107,6 +107,14 @@ export type CompanyContextCard = {
    * Free text an applicant typed, so the card scrubs it like every other customer-supplied value.
    */
   pendingSignupName?: string;
+  /**
+   * Owner 2026-09-06: *"เจ้าของที่มีบริษัทเดียวจะไม่เห็นการ์ดเลือกบริษัท อยากให้การ์ดบริษัทเดียวมีปุ่มเปิดเว็บด้วย"*.
+   * The picker carrying `เปิดเว็บบริษัทนี้` is only sent to a member of more than one company, so a
+   * single-shop owner never saw that button at all. Same already-minted `/l/<token>` link, for the
+   * company THIS card is about. Absent — the handoff feature off, or a mint that failed — renders
+   * the card exactly as it rendered before, the same rule `CompanyPickerItem.webUrl` follows.
+   */
+  openWebUrl?: string;
 };
 
 /**
@@ -216,6 +224,14 @@ export function buildCompanyContextMessage(context: CompanyContextCard): LineRep
   const promotionLine = door && !context.isOwner
     ? `💡 อยากเปิดร้านของตัวเอง กดปุ่ม ${VIEW_PACKAGES_COMMAND} ในเมนูได้เลยค่ะ`
     : undefined;
+  // Opening the web on the company you are already in is not a shop-owner action — the web enforces
+  // its own permissions — so this one is for every member, and the door above keeps its own gate.
+  // No `COMPANY_PICKER_OPEN_WEB_HINT` here: the picker's hint explains a SWITCH, and this card is
+  // already about this company.
+  const buttons = [
+    ...(context.openWebUrl ? [{ type: 'button', style: 'secondary', action: { type: 'uri', label: COMPANY_PICKER_OPEN_WEB_LABEL, uri: context.openWebUrl } }] : []),
+    ...(door && context.isOwner ? [{ type: 'button', style: 'primary', color: '#22C55E', action: { type: 'uri', label: 'เปิดร้านใหม่', uri: context.newShopSignupUrl } }] : []),
+  ];
   return {
     type: 'flex',
     altText: `บริษัทของฉัน: ${companyName} · คุณ${displayName} · ${roleLabel}${pendingLine ? `\n${pendingLine}` : ''}`,
@@ -229,11 +245,11 @@ export function buildCompanyContextMessage(context: CompanyContextCard): LineRep
         ...(pendingLine ? [{ type: 'text', text: pendingLine, size: 'sm', color: '#475467', wrap: true }] : []),
         ...(promotionLine ? [{ type: 'text', text: promotionLine, size: 'sm', color: '#475467', wrap: true }] : []),
       ] },
-      ...(door && context.isOwner ? {
-        footer: { type: 'box', layout: 'vertical', contents: [
-          { type: 'button', style: 'primary', color: '#22C55E', action: { type: 'uri', label: 'เปิดร้านใหม่', uri: context.newShopSignupUrl } },
-        ] },
-      } : {}),
+      // `spacing` only where there is a gap to space, so the one-button card stays byte-identical
+      // to the one shipped today — the same rule the picker's footer follows.
+      ...(buttons.length > 0
+        ? { footer: { type: 'box', layout: 'vertical', ...(buttons.length > 1 ? { spacing: 'sm' } : {}), contents: buttons } }
+        : {}),
     },
   };
 }
