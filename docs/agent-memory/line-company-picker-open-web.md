@@ -115,10 +115,39 @@ LINE transport faked in-process (`--require` preload, see [[local-line-fake-harn
 
 Servers stopped, scratch scripts removed, heavy lock released.
 
+## Adversarial review 2026-09-06
+
+Reviewed at `50acb25f`; 5 requested mutations all went red on the intended subtest (surface check 23/2,
+switch-before-claim 24/1, `enabled` gate 19/1, plain-URL fallback 218/1, mint-every-membership 218/1).
+Exchange-time switch traced clean: the row's `lineUserId`/`userId`/`companyId` are all server-written at
+mint from the resolved LINE identity's own ACTIVE memberships, step 3 refuses a revoked membership BEFORE
+the claim and the switch, and both `LineCompanyContext` readers (`resolveCompanyForLineUser`,
+`exchange-liff-session`) re-verify the row against the CURRENT user's memberships — so a context written
+for a LINE id that was relinked in the meantime degrades to `needsSelection`, never to another tenant's data.
+
+Two fixes applied on top:
+
+- The hint no longer renders on the `✓ ใช้งานอยู่` bubble — there it promised a switch that cannot happen.
+- Both spec deltas now state the **stale-card outcome** (single-use + 15 min ⇒ an old card's web button
+  opens `/login?line=handoff-expired&next=…` and does NOT move the chat, while `เลือกบริษัทนี้`/`ตอบ N`
+  beside it never expire).
+
+Reported, not fixed:
+
+- The same carousel still renders WITHOUT web buttons at the three non-`list` sites
+  (`process-line-webhook.use-case.ts:2897` text-lane needs-selection, `:4465` invalid selection,
+  `:4810` media-lane needs-selection). Most visible at `:4465`: a mistyped number right after บริษัทของฉัน
+  answers with the one-button card. Left alone on purpose — 2897/4810 would mint up to 12 tokens for every
+  message from a multi-company user with no context, which is a cost the Owner request does not ask for.
+- Write amplification: one บริษัทของฉัน tap now mints up to 11 `LineWebHandoffToken` rows and 11
+  `AUTH_LINE_HANDOFF_ISSUE` (MEDIUM) audit rows, up from 0. Nothing anywhere deletes spent or expired
+  handoff tokens — a pre-existing P12-3b gap this feature multiplies. Fine at current scale.
+- `infra/prod-ecs-express/deploy.sh` comments claiming the handoff "stays production-off" / "fails closed"
+  were stale since the 2026-08-30 parity decision; corrected (comment-only).
+
 ## Open questions
 
-- None blocking. The hint line also renders on the current company's bubble ("ระบบจะสลับบริษัทในไลน์ให้ด้วย"),
-  which is true but redundant there; left as specified because the rule "web button ⇒ hint" is one rule.
+- None blocking.
 
 ## Next
 

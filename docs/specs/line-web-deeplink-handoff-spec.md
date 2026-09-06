@@ -171,6 +171,15 @@ app signed in on it.
 - **Best-effort.** A failed context write logs `line_handoff_company_switch_failed` and the session still issues.
   The token is already spent by then; failing the exchange would cost the customer the page they asked for and
   give them nothing in return.
+- **The card outlives its buttons, and that is visible.** A picker carousel stays in the chat log for
+  ever, but each `เปิดเว็บบริษัทนี้` link is single-use with the §9 15-minute TTL. A tap on a stale card
+  is refused before the claim, so it changes nothing at all: no session, and — the point — **no switch**.
+  The web route sends it to `/login?line=handoff-expired&next=/companies/<id>/dashboard`, so signing in
+  still finishes the WEB half on the right company while the LINE chat stays where it was. The
+  `เลือกบริษัทนี้` button and the `ตอบ N` number beside it never expire, so the two halves of an old card
+  behave differently and nothing on screen says so. Accepted for now: บริษัทของฉัน re-sends fresh cards on
+  every tap. Revisit if customers report "กดแล้วไลน์ไม่เปลี่ยน" — the fix is a notice on the login bounce,
+  not a longer TTL, which would only widen the blast radius of a bearer token sitting in a chat log.
 - No schema change: `surface` is the column the row already carries.
 
 ## 12. UI Behavior
