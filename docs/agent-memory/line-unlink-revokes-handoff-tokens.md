@@ -188,6 +188,23 @@ merged with this branch at `173ffcdc` (plain merge, never rebased).
   ACTIVE LINE identity" — the one that matters. That mutation is only catchable because the spec
   fake now models a **surviving `UNLINKED` row** rather than a missing one, and filters by the WHERE
   the way Postgres would (an absent key filters nothing) instead of asserting literal keys.
+- **Independent re-verification of `e2117e4b` (fourth session, adversarial re-review).** Both counts
+  above reproduced from a clean worktree: **122/122** green over the seven specs, mutation "always
+  require `providerUserId`" reds **2** (the group and room happy paths), mutation "drop `ACTIVE` from
+  the group branch" reds **3** (those two plus the severed-user refusal). Typecheck clean;
+  `check-di-metadata.mjs` 796 files / 870 decorated classes pass; pins
+  `status=current` with `git status --porcelain` empty. Confirmed by reading the call sites, not just
+  the claim: the picker (`process-line-webhook.use-case.ts:4404`) and LIFF
+  (`exchange-liff-session.use-case.ts:86`) mint with the **person's** id, so a group-minted
+  picker-surface row is impossible by construction and step 4b can never key `LineCompanyContext` by
+  a group id — and the in-LINE switch (`:4473`) keys that same row by `event.lineUserId`, so the two
+  entrances really do write one row. `grep` found **no** other LINE-id classifier in the repo, so
+  `isLineGroupChatKey` duplicates nothing. The group WHERE is an exact prefix of
+  `@@index([userId, provider, status])`.
+  One gap found and closed here: the classifier had **no direct unit test**, so its fail-closed
+  property was asserted nowhere — `isLineGroupChatKey` describe block added to
+  `line-handoff.logic.spec.ts` (**124/124** after), pinning that `''`, `'C'`, a `U…` key, wrong
+  length, lowercase `c` and a non-hex character all take the **strict** per-person mode.
 
 ### Adversarial review of the guard, 2026-09-06 (third session) — one HIGH defect, fixed
 

@@ -6,6 +6,7 @@ import {
   LINE_HANDOFF_TOKEN_TTL_MS,
   generateLineHandoffToken,
   hashLineHandoffToken,
+  isLineGroupChatKey,
   isSafeHandoffPath,
   lineHandoffUrl,
 } from './line-handoff.logic';
@@ -129,5 +130,25 @@ describe('lineHandoffUrl', () => {
   it('sits outside /companies/, so the cookie-less page bounce cannot intercept it', () => {
     const url = new URL(lineHandoffUrl('https://uat.mangmeeplus.com', 'tok-1'));
     assert.ok(!url.pathname.startsWith('/companies/'));
+  });
+});
+
+describe('isLineGroupChatKey', () => {
+  const HEX32 = '0123456789abcdef0123456789abcdef';
+
+  it('recognises the group and room keys that name nobody', () => {
+    assert.equal(isLineGroupChatKey(`C${HEX32}`), true);
+    assert.equal(isLineGroupChatKey(`R${HEX32}`), true);
+    // LINE spells its ids lowercase; tolerating uppercase costs nothing, since the only writer of
+    // this column is the webhook echoing back an id LINE itself issued.
+    assert.equal(isLineGroupChatKey(`C${HEX32.toUpperCase()}`), true);
+  });
+
+  it('sends a 1:1 key, and anything malformed, to the stricter per-person mode', () => {
+    // The security property: `false` selects the WHERE that pins `providerUserId` to the token's
+    // own chat key, so an id LINE has never issued can only ever refuse — never fall open.
+    for (const key of ['', 'C', `U${HEX32}`, `C${HEX32.slice(0, 31)}`, `C${HEX32}0`, `c${HEX32}`, `C${HEX32.slice(0, 31)}g`]) {
+      assert.equal(isLineGroupChatKey(key), false, `${JSON.stringify(key)} must take the strict mode`);
+    }
   });
 });
