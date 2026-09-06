@@ -537,9 +537,15 @@ describe('"ติดต่อเจ้าหน้าที่" on real PostgreS
       await h.webhook.execute(event(lineUserId, STAFF_CONTACT_COMMAND));
       const id = h.notices[0]!;
 
-      // Still inside the pause: nothing to expire, even though the row is a day old.
+      // Still inside the pause: nothing to expire, even though the row is a day old. Both stamps
+      // move: the window is measured from the newest customer message (review 2026-09-06), and
+      // `requestedAt` alone must no longer be able to expire anything.
       await client.lineSupportRequest.update({
-        where: { id }, data: { requestedAt: new Date(Date.now() - 48 * 3_600_000) },
+        where: { id },
+        data: {
+          requestedAt: new Date(Date.now() - 48 * 3_600_000),
+          lastMessageAt: new Date(Date.now() - 48 * 3_600_000),
+        },
       });
       assert.deepEqual(await h.notify.sweepExpiredSupportRequests(), { expired: 0 });
       assert.equal((await client.lineSupportRequest.findUniqueOrThrow({ where: { id } })).status, 'OPEN');
@@ -552,6 +558,105 @@ describe('"ติดต่อเจ้าหน้าที่" on real PostgreS
       const row = await client.lineSupportRequest.findUniqueOrThrow({ where: { id } });
       assert.equal(row.status, 'CLOSED');
       assert.equal(row.closedReason, 'expired');
+    } finally {
+      await cleanup(client, tag, lineUserId);
+      await client.$disconnect();
+    }
+  });
+
+  /**
+   * Review 2026-09-06 (F1). The sweep used to time from `requestedAt`, so a request reopened at
+   * hour 23 was closed at hour 24 with an unanswered question on it — moments after the customer
+   * was told "ทีมงานจะตอบกลับในแชทนี้นะคะ". Only real rows show it: the follow-up has to move BOTH
+   * the request's clock and the pause the sweep excludes on, and they are two tables.
+   */
+  it('does not expire a request the customer wrote to an hour ago', async () => {
+    const client = connect();
+    const tag = `linesupport-${randomUUID().slice(0, 8)}`;
+    const lineUserId = `U${tag}`;
+    try {
+      await seed(client, tag, lineUserId);
+      const h = wire(client);
+      await h.webhook.execute(event(lineUserId, STAFF_CONTACT_COMMAND));
+      const id = h.notices[0]!;
+
+      // Hour 23 of the original ask, and the pause with it: the state the old sweep closed.
+      const old = new Date(Date.now() - 23 * 3_600_000);
+      await client.lineSupportRequest.update({
+        where: { id }, data: { requestedAt: old, lastMessageAt: old },
+      });
+      await client.lineCompanyContext.update({
+        where: { lineUserId }, data: { aiPausedUntil: new Date(Date.now() + 3_600_000) },
+      });
+
+      await h.webhook.execute(event(lineUserId, 'ยังไม่ได้เลยค่ะ'));
+
+      const written = await client.lineSupportRequest.findUniqueOrThrow({ where: { id } });
+      assert.ok(written.lastMessageAt.getTime() > old.getTime(), 'their message moved the clock');
+      const context = await client.lineCompanyContext.findUniqueOrThrow({ where: { lineUserId } });
+      const pausedHours = (context.aiPausedUntil!.getTime() - Date.now()) / 3_600_000;
+      assert.ok(pausedHours > 23.9, `the pause was re-armed with it, got ${pausedHours}`);
+
+      // An hour later the ORIGINAL 24h would have lapsed. Nothing is due: they wrote a moment ago.
+      assert.deepEqual(await h.notify.sweepExpiredSupportRequests(new Date(Date.now() + 3_600_000)), { expired: 0 });
+      assert.equal((await client.lineSupportRequest.findUniqueOrThrow({ where: { id } })).status, 'OPEN');
+    } finally {
+      await cleanup(client, tag, lineUserId);
+      await client.$disconnect();
+    }
+  });
+
+  /**
+   * Review 2026-09-06 (F3/F7). Three things only real rows can show together: the question survives
+   * every later message, a photo leaves a marker and not a sentence, and TAPPING the button on an
+   * ANSWERED request reopens that request instead of opening a second one beside it.
+   */
+  it('keeps the question, marks a photo, and reopens on a tap rather than opening a second row', async () => {
+    const client = connect();
+    const tag = `linesupport-${randomUUID().slice(0, 8)}`;
+    const lineUserId = `U${tag}`;
+    try {
+      const { userId } = await seed(client, tag, lineUserId);
+      const h = wire(client);
+      await h.webhook.execute(event(lineUserId, STAFF_CONTACT_COMMAND));
+      const id = h.notices[0]!;
+      // What the tap files as the question comes from the assistant's own `AiTurn` memory, which
+      // this harness does not wire (it fakes the AI lane). Written directly, because what is under
+      // test here is that NOTHING AFTERWARDS may move it.
+      await client.lineSupportRequest.update({
+        where: { id },
+        data: { requestText: 'ส่งใบเสร็จแล้วไม่เห็นขึ้นเลยค่ะ', lastMessageText: 'ส่งใบเสร็จแล้วไม่เห็นขึ้นเลยค่ะ' },
+      });
+
+      // A nudge moves the newest message and leaves the question alone.
+      await h.webhook.execute(event(lineUserId, 'มีอัปเดตไหมคะ'));
+      const nudged = await client.lineSupportRequest.findUniqueOrThrow({ where: { id } });
+      assert.equal(nudged.requestText, 'ส่งใบเสร็จแล้วไม่เห็นขึ้นเลยค่ะ', 'still the question');
+      assert.equal(nudged.lastMessageText, 'มีอัปเดตไหมคะ');
+      assert.equal(nudged.lastMediaAt, null);
+
+      // A photo is a marker: §3 keeps the bytes out, and the words stay exactly as they were.
+      await h.webhook.executeReceiptUpload({
+        webhookEventId: `evt-${randomUUID()}`, replyToken: 'reply-1', lineUserId,
+        lineMessageId: `msg-${randomUUID()}`, messageType: 'image', messagingChannelId: CHANNEL,
+      } as any);
+      const withPhoto = await client.lineSupportRequest.findUniqueOrThrow({ where: { id } });
+      assert.ok(withPhoto.lastMediaAt, 'the operator learns a photo arrived');
+      assert.equal(withPhoto.lastMessageText, 'มีอัปเดตไหมคะ', 'and it costs the thread no words');
+      assert.equal(withPhoto.requestText, 'ส่งใบเสร็จแล้วไม่เห็นขึ้นเลยค่ะ');
+
+      // F7: answered, then TAPPED again. One request, reopened — not two rows for one conversation.
+      await h.admin.markAnswered(id, userId, `${tag}-answered`);
+      await h.webhook.execute(event(lineUserId, STAFF_CONTACT_COMMAND));
+
+      assert.equal(await client.lineSupportRequest.count({ where: { lineUserId } }), 1,
+        'a tap after an answer is the same conversation');
+      const reopened = await client.lineSupportRequest.findUniqueOrThrow({ where: { id } });
+      assert.equal(reopened.status, 'OPEN');
+      assert.equal(reopened.reopenedCount, 1);
+      assert.equal(reopened.lastMessageText, 'มีอัปเดตไหมคะ', 'the tap itself is not a message to show');
+      assert.equal(h.notices.length, 1, 'and nobody is paged twice for one conversation');
+      assert.match(h.replies.at(-1)!, /ยังอยู่ในคิว/);
     } finally {
       await cleanup(client, tag, lineUserId);
       await client.$disconnect();

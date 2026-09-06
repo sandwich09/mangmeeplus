@@ -3485,15 +3485,23 @@ model LineSupportRequest {
   /// page an operator can actually act on.
   signupRequestId    String?
   requestedAt        DateTime                 @default(now())
-  /// ≤200 chars of what they last typed, when the assistant kept it (§3). Rewritten every time the
-  /// customer writes again while the request is live. Never a photo — a photo leaves a marker —
-  /// and dropped with the row.
+  /// ≤200 chars of the question that was on the screen when they tapped (§3). IMMUTABLE: it is the
+  /// thing an operator is answering, and a nudge ("มีอัปเดตไหมคะ") or an unrelated receipt photo
+  /// used to overwrite it. Dropped with the row.
+  requestText        String?
+  /// ≤200 chars of the newest customer TEXT, when the assistant kept it (§3). Rewritten every time
+  /// they write again while the request is live. A photo never lands here — it stamps
+  /// `lastMediaAt` instead — and this is dropped with the row.
   lastMessageText    String?
   /// When that newest customer message arrived. Named as on `CrmConversation`, and NOT nullable
   /// here: the tap itself is a message, so every row has one and the inbox can order by it without
   /// a nulls-first surprise. `requestedAt` still says when they FIRST asked; `updatedAt` cannot
   /// serve, because the notify drain and both admin buttons move it too.
   lastMessageAt      DateTime                 @default(now())
+  /// When a photo or a document last arrived on this thread. §3 keeps the bytes out of the table
+  /// entirely, so the operator gets the FACT ("📷 ส่งรูปมา") and nothing else — and the words the
+  /// customer typed are not destroyed by a picture that may just be an ordinary receipt.
+  lastMediaAt        DateTime?
   /// How many times an ANSWERED request came back because the customer wrote again (UAT
   /// 2026-09-06). `answeredAt`/`answeredByUserId` stay as the history of the last answer; this is
   /// what lets the inbox say "ตอบแล้ว N ครั้ง · ลูกค้าตอบกลับ".
@@ -3519,6 +3527,9 @@ model LineSupportRequest {
   updatedAt          DateTime                 @updatedAt
 
   @@index([status, requestedAt])
+  /// The inbox reads and the expiry sweep both moved to `lastMessageAt` (UAT 2026-09-06), so the
+  /// index on `requestedAt` no longer serves either — it stays for the 90-day purge's ordering.
+  @@index([status, lastMessageAt])
   @@index([lineUserId, status])
 }
 

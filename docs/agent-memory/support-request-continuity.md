@@ -1,7 +1,7 @@
 # Agent Memory: support-request-continuity
 
-Status: DONE (gates green, not deployed) — branch `codex/support-request-continuity` from
-`origin/develop` (178d3fb6); no PR opened
+Status: DONE (round-2 review fixes applied, gates green, not deployed) — branch
+`codex/support-request-continuity` from `origin/develop` (178d3fb6); PR #446
 Owner: Owner (UAT report 2026-09-06)
 Scope: `LineSupportRequest` continuity — a customer who writes back after "ตอบแล้ว" must reach the inbox again.
 
@@ -30,83 +30,132 @@ the canned reply says "กำลังดูให้อยู่", and no opera
 ```
 OPEN ──(admin "ตอบแล้ว" | partner message delivered)──▶ ANSWERED
   ▲                                                        │
-  └──(customer text or photo, reopenedCount += 1)──────────┘
-OPEN/ANSWERED ──(customer resume | admin resume | 24h sweep)──▶ CLOSED   (never reopened)
+  └──(customer text, photo OR a second tap, reopenedCount += 1)──┘
+OPEN/ANSWERED ──(customer resume | admin resume | sweep 24h after lastMessageAt)──▶ CLOSED
 ```
 
 - `answeredAt` / `answeredByUserId` are kept as the history of the last answer.
-- `reopenedCount` counts answer→customer-reply round trips; the inbox chip reads it.
-- `lastMessageAt` is the newest customer message, and the waiting clock counts from it.
+- `reopenedCount` counts answer→customer-reply round trips; the inbox chip reads it (≥ 1 only).
+- `lastMessageAt` is the newest customer message. The waiting clock counts from it, the expiry
+  sweep counts from it, and the assistant's pause is re-armed to it + 24 h — one stamp, three uses.
+- `requestText` is the question and never moves; `lastMessageText` is the newest TEXT; a photo
+  stamps `lastMediaAt` and touches neither.
 - CLOSED is terminal: a fresh "ติดต่อเจ้าหน้าที่" opens a new row (existing §2.2.4 behaviour).
 
 ## Decisions
 
-- Two call sites only, not a global choke point: the pause gate (text) and the top of the media
-  lane. A lookup on every text event would put an extra query on the hot path for a case that
-  cannot happen (no request → nothing to append).
-- Schema delta is two additive columns on `LineSupportRequest`; no new table, no new index —
-  `@@index([lineUserId, status])` already serves the follow-up lookup.
+- Three call sites, not a global choke point: the pause gate (text), the top of the media lane, and
+  the tap's already-live branch. A lookup on every text event would put an extra query on the hot
+  path for a case that cannot happen (no request → nothing to append).
+- Schema delta is four additive columns and one index on `LineSupportRequest`; no new table.
+  `@@index([lineUserId, status])` already serves the follow-up lookup; `[status, lastMessageAt]`
+  was added in round 2 for the inbox read and the sweep, which both moved off `requestedAt`.
+- The follow-up write is `updateMany` with the read status as its `where`, not `update`: the
+  conditional IS the concurrency control, and no transaction is needed for a single row.
 - `updatedAt` was rejected as the "latest customer message" stamp: the drain (`notifiedAt`) and the
   admin buttons write it too, so it cannot say a customer wrote.
+
+## Adversarial review of 9281957f → NOT READY → fixed (2026-09-06, round 2)
+
+Nine findings. All fixed red-first; the decisions are now spec §2.2 delta รอบ 4.
+
+| # | Defect | Rule now |
+|---|---|---|
+| F1 (HIGH) | the sweep expired a request 24 h after `requestedAt`, so a thread reopened at hour 23 was closed at hour 24 — right after "ทีมงานจะตอบกลับในแชทนี้นะคะ" | **The thread's life is measured from the LAST customer message.** `sweepExpiredSupportRequests` filters on `lastMessageAt`, and EVERY recorded follow-up re-arms `LineCompanyContext.aiPausedUntil` to that message + 24 h (`pauseAssistant`, the same upsert the tap uses). Two clocks, one stamp. No shop on the request = no pause row created: an unlinked asker has no assistant to silence (§2.1.2), and their sweep window is `lastMessageAt` alone. |
+| F2 (MED) | `findFirst` → `update` is read-then-write: "ตอบแล้ว" landing in the gap left the row ANSWERED while the customer was told the message was delivered | conditional `updateMany({ where: { id, status: <the status just read> } })`; `count === 0` means NOT recorded, and the caller sends the old, promise-free reply |
+| F3 (MED) | `lastMessageText` was replaced, so a nudge or an unrelated receipt photo destroyed the question | new immutable `requestText` (backfilled from `lastMessageText`); `lastMessageText` = newest customer TEXT only; media stamps the new `lastMediaAt` and touches no words; the inbox shows the question, "ล่าสุด: …" when it has moved on, and "📷 ส่งรูปมา" beside them |
+| F4 (MED) | the partner box pushed to owner ∪ EVERY open requester — two strangers read each other's answer | union reverted. Recipients = OWNER LINE ids **+ the one requester named by an optional `supportRequestId`** on `POST /system/partners/:companyId/line-message` (must be this shop's, not CLOSED, else 404). The inbox link carries `?support=<id>&asker=<askerRef>`; the box shows "ตอบถึง: ผู้ขอ <askerRef>" and marks that request ANSWERED with the button's own audit (`system.support_request.answered`, `via: partner_line_message`) |
+| F5 (MED) | a reopened-then-closed row rendered "ใช้เวลา —" (end older than start) | the wait ends at the settling stamp that is **not older than the start**, `answeredAt` still winning over `closedAt` within one round trip; nothing older than the start ends anything, so the row falls back to "รอมานาน" instead of a negative duration |
+| F6 (LOW) | the 200-char cap was unpinned | a 400-char follow-up stores exactly 200; removing the `.slice` turns that test red (shown) |
+| F7 (LOW) | tapping "ติดต่อเจ้าหน้าที่" on an ANSWERED request opened a SECOND row, while typing reopened the first | one path: the dedupe reads `OPEN`/`ANSWERED` and the tap records a follow-up like any other message — with no text, because "ติดต่อเจ้าหน้าที่" is not a sentence an operator needs. A reopen is not a new request: no daily slot, no second page-out |
+| F8 (LOW) | asymmetry, recorded not changed — see below | — |
+| F9 (LOW) | the inbox read and the sweep both moved to `lastMessageAt` with no index behind them | `@@index([status, lastMessageAt])`, in the same unreleased migration |
+| chip | floored at 1, so "ตอบแล้ว 1 ครั้ง" appeared on rows nobody had written back to | shown only when `reopenedCount >= 1`, and it prints the real count |
+
+### F8 — the unlinked-asker asymmetry (recorded, deliberately unchanged)
+
+A **photo** is recorded at the very top of `executeReceiptUploadInner`, before identity resolution,
+so it lands on the request of an asker with no ACTIVE LINE identity as well. **Text** is recorded
+only inside the pause gate, which sits *after* identity resolution — an unlinked prospect's follow-up
+text hits the entry-door card above it and is never appended.
+
+Not a regression and not the reported defect: an unlinked asker has no assistant to pause, so the
+pause gate they would need is exactly the thing they do not have. Changing it means either a lookup
+on every unlinked text event (a query on the hot path for the rarest case) or moving the door card,
+which is a different feature. Left as is, written down so the next reader is not surprised that a
+picture from a stranger reaches the inbox and their sentence does not.
 
 ## Open questions / follow-ups (not in this change)
 
 - An UNLINKED prospect's follow-up text still hits the entry-door card, above the pause gate, so it
-  is not appended. They have no pause (nothing to silence), so the reported defect does not apply,
-  but the same silence exists for them.
-- A tap on "ติดต่อเจ้าหน้าที่" while a request is ANSWERED still creates a SECOND row
-  (`handleStaffContact` dedupes on OPEN only). Consistent with §2.2.4 as written; worth revisiting.
+  is not appended (F8 above — recorded, unchanged, and asymmetric with the photo lane).
 - A receipt photo sent during a live support thread is still OCR'd and answered by the assistant —
-  the media lane has no pause gate. Out of scope here; it also means a plain receipt can reopen a
-  request ("ลูกค้าส่งรูปภาพมา" in the cell tells the operator what it was).
-- A follow-up does NOT re-arm the 24 h pause, which is still measured from the original tap. So a
-  request reopened at hour 23 is swept `expired` an hour later even though nobody answered it. That
-  is the pre-existing lifecycle of any OPEN request (`sweepExpiredSupportRequests` closes on the
-  lapsed pause, not on the answer), so it is not a regression — but it is the next thing to fix if
-  the Owner sees reopened rows disappearing.
+  the media lane has no pause gate. Out of scope here; since round 2 the photo can still reopen a
+  request, but it now leaves a `lastMediaAt` marker rather than overwriting what was typed.
+- The partner box WITHOUT a `supportRequestId` still marks every OPEN request of the shop ANSWERED
+  (§2.3 as written since 2026-09-05). Answering the owner about billing therefore still clears an
+  employee's unrelated request off the tab. Named sends no longer do this — they move only the
+  request they name — so the fix, if the Owner wants one, is to make the inbox link the only route.
+- `LineSupportRequest` now carries two bounded strings (`requestText`, `lastMessageText`) and two
+  stamps; all of them die with the row at 90 days, and the purge was not touched.
 
 ## Artifacts
 
 - Schema: `apps/api/prisma/schema.prisma` — `LineSupportRequest.lastMessageAt DateTime @default(now())`,
-  `reopenedCount Int @default(0)`. Names taken from `CrmConversation`, which already models the same
-  idea; NOT nullable here because the tap itself is a message, which keeps `ORDER BY` simple.
+  `reopenedCount Int @default(0)`, plus (round 2) `requestText String?`, `lastMediaAt DateTime?` and
+  `@@index([status, lastMessageAt])`. Names taken from `CrmConversation`, which already models the
+  same idea; `lastMessageAt` NOT nullable because the tap itself is a message, which keeps
+  `ORDER BY` simple.
 - Migration: `apps/api/prisma/migrations/20260906120000_line_support_request_continuity/migration.sql`
-  — two `ADD COLUMN`s plus `UPDATE … SET "lastMessageAt" = "requestedAt"` so existing rows do not
-  claim they were written to at deploy time.
-- API: `process-line-webhook.use-case.ts` — `SUPPORT_FOLLOW_UP_REPLY`, `SUPPORT_PHOTO_PREVIEW`,
-  `recordSupportFollowUp()`, called from the pause gate (text) and the top of
-  `executeReceiptUploadInner` (photo). Best-effort: it catches, warns
-  `line_support_follow_up_not_recorded`, and returns false, so a receipt is never lost and the
-  customer never gets silence — the caller then sends the old, non-promising reply.
+  — four `ADD COLUMN`s, the index, and two backfills (`lastMessageAt` = `requestedAt`, `requestText`
+  = `lastMessageText`) so existing rows neither claim they were written to at deploy time nor lose
+  the only question they ever recorded. UNRELEASED, which is why round 2 extended this file rather
+  than adding a second one.
+- API: `process-line-webhook.use-case.ts` — `SUPPORT_FOLLOW_UP_REPLY`, `findLiveSupportRequest()`,
+  `recordSupportFollowUp(lineUserId, requestId, { text? | media? })`, called from the pause gate
+  (text), the top of `executeReceiptUploadInner` (media marker) and `handleStaffContact` (the tap,
+  no text). Best-effort: it catches, warns `line_support_follow_up_not_recorded`, and returns false
+  — so does a `count` of 0 — so a receipt is never lost and the customer never gets silence; the
+  caller then sends the old, non-promising reply.
+- API: `line-signup-notify.service.ts` — the expiry sweep filters on `lastMessageAt`.
 - API: `support-request-admin.use-case.ts` — `orderBy` now `[status asc, lastMessageAt desc]`; the
-  DTO carries `lastMessageAt` and `reopenedCount`.
-- API: `send-partner-line-message.use-case.ts` — recipients are OWNERs ∪ the LINE ids on this shop's
-  OPEN requests (item 4 below), deduped; the audit still records only a count.
-- Contracts: `packages/contracts/src/external-signup.ts` — `lastMessageAt`, `reopenedCount`, and the
-  corrected `delivered` doc.
-- Web: `support-requests.logic.ts` — the wait window starts at `lastMessageAt` and never ends while
-  `status === 'OPEN'`; new `supportReopenedChip()`. `SupportRequestsPage.tsx` renders the chip and
-  stamps the row with `lastMessageAt` (the value the duration above it is measured from).
-- Spec: `docs/specs/line-support-request-spec-th.md` §2.2 delta รอบ 3.
+  DTO carries `requestText`, `lastMessageAt`, `lastMediaAt` and `reopenedCount`.
+- API: `send-partner-line-message.use-case.ts` + `partner.controller.ts` — optional
+  `supportRequestId`: loaded, fenced to this shop and to a non-CLOSED status (404 otherwise), added
+  to the recipients, and marked ANSWERED with the inbox's own audit action. The audit still records
+  only a count of recipients.
+- Contracts: `packages/contracts/src/external-signup.ts` — `requestText`, `lastMessageAt`,
+  `lastMediaAt`, `reopenedCount`, `PartnerLineMessageBody.supportRequestId`, and the corrected
+  `delivered` doc.
+- Web: `support-requests.logic.ts` — the wait window starts at `lastMessageAt` and ends only at a
+  settling stamp that is not older than it; `supportReopenedChip()` prints the real count;
+  `supportAnswerHref()` carries `?support=&asker=`. `SupportRequestsPage.tsx` shows the question,
+  the newest message and the media marker. `app/system/partners/[companyId]/page.tsx` reads the two
+  params; `PartnerDetailPage.tsx` shows "ตอบถึง: ผู้ขอ …" and sends `supportRequestId`.
+- Spec: `docs/specs/line-support-request-spec-th.md` §2.2 delta รอบ 3 and รอบ 4.
 
-## Verification (2026-09-06, all re-run on the committed tree)
+## Verification (round 2, 2026-09-06, all re-run on the committed tree)
 
 | Gate | Result |
 |---|---|
-| `line-first-signup-webhook.spec.ts` | 47 pass / 0 fail (9 new, red first) |
-| `support-request-admin.use-case.spec.ts` | 10 pass / 0 fail |
-| `partner-support-tools.spec.ts` | 23 pass / 0 fail (3 new) |
+| `line-first-signup-webhook.spec.ts` | 55 pass / 0 fail (13 red first: 42/13 before the fixes) |
+| `line-signup-notify.service.spec.ts` (F1 sweep) | 33 pass / 0 fail (1 red first) |
+| `support-request-admin.use-case.spec.ts` | 12 pass / 0 fail (2 new, red first) |
+| `partner-support-tools.spec.ts` | 29 pass / 0 fail (12 red first) |
 | `line-intake-dispatch` + `process-line-webhook` use-case specs | 376 pass / 0 fail |
-| `line-support-request.pg.spec.ts` (real Postgres, isolated container :15437, `migrate deploy` first) | 12 pass / 0 fail (2 new) |
+| `line-support-request.pg.spec.ts` (real Postgres, throwaway `postgres:18.3-alpine` on 127.0.0.1:15473, `migrate deploy` + `sync-permissions` first, container removed) | 14 pass / 0 fail (2 new; the F3 case was red on the un-regenerated client) |
+| F6 mutation: `.slice(0, SUPPORT_LAST_MESSAGE_MAX_LENGTH)` removed | "stores at most 200 characters" goes RED (400 stored), green again on restore |
 | `spec-suite-coverage.spec.ts` | 3 pass / 0 fail (no package.json change needed) |
 | `pnpm --filter @watchdog-bms/api typecheck` | clean |
-| `node apps/api/scripts/check-di-metadata.mjs` | 794 files, 870 decorated classes — all carry `design:paramtypes` |
-| `pnpm --filter @watchdog-bms/api test:boot` | Nest resolved every provider in 138 ms |
-| `pnpm --filter @watchdog-bms/api test` (full fixed list, under the heavy mutex) | exit 0, 9587 dot-reporter tests, zero `✖` |
+| `node apps/api/scripts/check-di-metadata.mjs` | 794 files, 870 decorated classes, 820 with deps — all carry `design:paramtypes` |
+| `pnpm --filter @watchdog-bms/api test:boot` | Nest resolved every provider in 142 ms |
+| `pnpm --filter @watchdog-bms/api test` (full fixed list, under the heavy mutex) | exit 0, zero `✖`, 9605 dot-reporter marks |
 | `pnpm --filter @watchdog-bms/web typecheck` | clean |
-| `pnpm --filter @watchdog-bms/web test` | 1594 pass / 0 fail |
+| `pnpm --filter @watchdog-bms/web test` | 1604 pass / 0 fail |
+| web `system-support-requests` / `system-partners` feature specs | 50 / 77 pass, 0 fail |
 | `prisma validate` | valid |
-| `prisma migrate diff --from-schema <HEAD> --to-schema <branch> --script` | emits exactly the two `ADD COLUMN`s in the migration — no drift |
+| `prisma migrate diff --from-schema <develop 178d3fb6> --to-schema <branch> --script` | exactly four `ADD COLUMN`s (`lastMediaAt`, `lastMessageAt`, `reopenedCount`, `requestText`) + `CREATE INDEX LineSupportRequest_status_lastMessageAt_idx` |
+| `prisma migrate diff --from-config-datasource` against the migrated test DB | no `LineSupportRequest` drift (only the repo-wide pre-existing truncated-index renames) |
 
 Two pre-existing spec fakes (`line-intake-dispatch.use-case.spec.ts`,
 `process-line-webhook.use-case.spec.ts`) had no `lineSupportRequest` model at all, so the new media
@@ -118,7 +167,9 @@ Not run: `infra/docker/production-image-security.spec.sh` (out of scope), and no
 
 ## Next
 
-- Owner acceptance on UAT: answer a request from the partner box, press "ตอบแล้ว", then reply from
-  the customer's LINE — the row must return to รอตอบ with "ตอบแล้ว 1 ครั้ง · ลูกค้าตอบกลับ" and the
-  header badge must count it again.
-- The three follow-ups above are unfixed by design; none of them is the reported defect.
+- Owner acceptance on UAT: open the request from `/system/support-requests` with "เปิดหน้าร้าน" (the
+  box must say "ตอบถึง: ผู้ขอ …"), answer from it, then reply from the customer's LINE — the row must
+  return to รอตอบ with "ตอบแล้ว 1 ครั้ง · ลูกค้าตอบกลับ", the question must still be the first line of
+  the message cell, and the header badge must count it again. Send a photo too: "📷 ส่งรูปมา" beside
+  the words, never instead of them.
+- The follow-ups above are unfixed by design; none of them is the reported defect.

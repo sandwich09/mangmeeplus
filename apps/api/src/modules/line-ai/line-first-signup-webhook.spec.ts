@@ -186,6 +186,8 @@ function harness(options: {
   contextUpdateCount?: number;
   /** A live `LineSupportRequest` for this LINE user, if one is already in the queue (§2.2.4). */
   openSupportRequest?: { id: string; status?: string; companyId?: string | null } | null;
+  /** Rows the conditional follow-up write actually moved. `0` = somebody else got there first. */
+  followUpUpdateCount?: number;
   /** The last thing this customer typed, as `AiTurn` kept it. */
   lastTurn?: { userMessagePreview: string | null } | null;
   /** The amplification floor: `false` = this LINE account has spent its three asks for today. */
@@ -228,8 +230,17 @@ function harness(options: {
         // the query is recorded: a fake that only returns a row cannot show what was asked for.
         findFirst: async (args: any) => { supportLookups.push(args); return options.openSupportRequest ?? null; },
         create: async (args: any) => { supportRequests.push(args); return { id: 'sr-1' }; },
-        update: async (args: any) => { supportUpdates.push(args); return { id: args.where.id }; },
-        updateMany: async (args: any) => { supportClosures.push(args); return { count: 1 }; },
+        // Two callers share this model. The resume/close path writes a terminal status; the
+        // follow-up path writes the newest customer message, and its `count` is load-bearing —
+        // 0 means "ตอบแล้ว" won the race and nothing was recorded.
+        updateMany: async (args: any) => {
+          if (args.data?.lastMessageAt !== undefined) {
+            supportUpdates.push(args);
+            return { count: options.followUpUpdateCount ?? 1 };
+          }
+          supportClosures.push(args);
+          return { count: 1 };
+        },
       },
       aiTurn: { findFirst: async () => options.lastTurn ?? null },
       externalIdentity: { findFirst: async () => options.identity ?? null },
@@ -722,7 +733,7 @@ describe('a customer who writes back is still in the queue (UAT 2026-09-06)', ()
       identity: linked, context: pausedContext,
       openSupportRequest: { id: 'sr-9', status: 'OPEN', companyId: 'co-1' },
     });
-    (h.useCase as any).prisma.client.lineSupportRequest.update = async () => { throw new Error('deadlock'); };
+    (h.useCase as any).prisma.client.lineSupportRequest.updateMany = async () => { throw new Error('deadlock'); };
 
     await h.useCase.execute(event('มีอัปเดตไหมคะ'));
 
@@ -750,8 +761,12 @@ describe('a customer who writes back is still in the queue (UAT 2026-09-06)', ()
    * The photo lane has no pause gate of its own, so a customer answering a human WITH A PICTURE was
    * the one message that reached nobody at all — here it is refused as a receipt (no company
    * resolves) and still lands on the request, because those are two different questions.
+   *
+   * Review 2026-09-06 (F3): it must land as a MARKER, not as text. A photo that overwrote
+   * `lastMessageText` destroyed the sentence an operator was about to answer — and the commonest
+   * photo of all is an ordinary receipt that has nothing to do with the request.
    */
-  it('lands a photo on the waiting request without storing the photo', async () => {
+  it('marks a photo on the waiting request without touching the words it carries', async () => {
     const h = harness({
       identity: linked, memberships: [],
       openSupportRequest: { id: 'sr-9', status: 'ANSWERED', companyId: 'co-1' },
@@ -761,21 +776,159 @@ describe('a customer who writes back is still in the queue (UAT 2026-09-06)', ()
     const [update] = h.supportUpdates;
     assert.ok(update, 'a photo is a message from a customer who is waiting');
     assert.equal(update.data.status, 'OPEN');
-    assert.equal(update.data.lastMessageText, 'ลูกค้าส่งรูปภาพมา', 'the operator learns a photo arrived');
-    assert.equal(update.data.lastMessageText.includes('msg-1'), false, 'and nothing about the bytes');
+    assert.ok(update.data.lastMediaAt instanceof Date, 'the operator learns a photo arrived');
+    assert.equal(update.data.lastMessageText, undefined, 'and the question they typed survives it');
+    assert.equal(JSON.stringify(update.data).includes('msg-1'), false, 'nothing about the bytes');
   });
 
-  // The same lane carries PDFs, and an operator deciding how to help somebody should not be told
-  // "photo" about a document.
-  it('names a document a document', async () => {
+  // The same lane carries PDFs. One marker covers both: the inbox says a picture arrived, and an
+  // operator opening the chat sees which — spending a column on the distinction buys nothing.
+  it('marks a document the same way, and still never as text', async () => {
     const h = harness({
       identity: linked, memberships: [],
       openSupportRequest: { id: 'sr-9', status: 'OPEN', companyId: 'co-1' },
     });
     await h.useCase.executeReceiptUpload({ ...mediaEvent(), messageType: 'file', fileName: 'bill.pdf' });
 
-    assert.equal(h.supportUpdates[0].data.lastMessageText, 'ลูกค้าส่งไฟล์มา');
-    assert.equal(h.supportUpdates[0].data.lastMessageText.includes('bill.pdf'), false, 'never the file name');
+    assert.ok(h.supportUpdates[0].data.lastMediaAt instanceof Date);
+    assert.equal(h.supportUpdates[0].data.lastMessageText, undefined);
+    assert.equal(JSON.stringify(h.supportUpdates[0].data).includes('bill.pdf'), false, 'never the file name');
+  });
+
+  /**
+   * Review 2026-09-06 (F2). `findFirst` then `update` is read-then-write: an operator pressing
+   * "ตอบแล้ว" in the gap left the row ANSWERED while the customer was told their message had been
+   * delivered to a queue it was no longer in. The write now carries the status it read as its own
+   * precondition, and a `count` of 0 means nothing was recorded.
+   */
+  it('does not promise delivery when "ตอบแล้ว" won the race', async () => {
+    const h = harness({
+      identity: linked, context: pausedContext,
+      openSupportRequest: { id: 'sr-9', status: 'ANSWERED', companyId: 'co-1' },
+      followUpUpdateCount: 0,
+    });
+    await h.useCase.execute(event('ยังไม่ได้เลยค่ะ'));
+
+    assert.deepEqual(h.supportUpdates[0].where, { id: 'sr-9', status: 'ANSWERED' },
+      'the status it read is the precondition it writes under');
+    assert.match(rendered(h), /กำลังดูให้อยู่/, 'the old reply, which promises nothing we did not do');
+    assert.equal(rendered(h).includes('ส่งข้อความถึงทีมงานแล้ว'), false);
+    assert.equal(h.audits.some((row: any) => row.action === 'signup.line.support_follow_up'), false,
+      'and nothing was recorded, so nothing is audited as recorded');
+  });
+
+  it('guards the plain append with OPEN, so a close in the gap cannot be written over', async () => {
+    const h = harness({
+      identity: linked, context: pausedContext,
+      openSupportRequest: { id: 'sr-9', status: 'OPEN', companyId: 'co-1' },
+    });
+    await h.useCase.execute(event('มีอัปเดตไหมคะ'));
+
+    assert.deepEqual(h.supportUpdates[0].where, { id: 'sr-9', status: 'OPEN' });
+  });
+
+  /**
+   * Review 2026-09-06 (F1). The sweep closes a request 24 h after its last customer message, so a
+   * follow-up that did not move the pause left the assistant free to talk over a human — and the
+   * row expired on a clock the customer had already reset. One rule, both places.
+   */
+  it('re-arms the 24h pause from the message it just recorded', async () => {
+    const h = harness({
+      identity: linked, context: pausedContext,
+      openSupportRequest: { id: 'sr-9', status: 'ANSWERED', companyId: 'co-1' },
+    });
+    await h.useCase.execute(event('ยังไม่ได้เลยค่ะ'));
+
+    const upsert = h.contextUpserts[0];
+    assert.ok(upsert, 'a customer who just wrote is not somebody the assistant may interrupt');
+    assert.equal(upsert.where.lineUserId, 'Uline-1');
+    const hours = (upsert.update.aiPausedUntil.getTime() - Date.now()) / 3_600_000;
+    assert.ok(hours > 23.9 && hours <= 24, `24h from the follow-up, got ${hours}`);
+  });
+
+  it('leaves an unlinked asker unpaused, because there is no assistant to silence (§2.1.2)', async () => {
+    const h = harness({
+      identity: linked, context: pausedContext,
+      openSupportRequest: { id: 'sr-9', status: 'OPEN', companyId: null },
+    });
+    await h.useCase.execute(event('มีอัปเดตไหมคะ'));
+
+    assert.deepEqual(h.contextUpserts, [], 'no shop, no context row to create out of nothing');
+    assert.equal(h.supportUpdates.length, 1, 'their message is still recorded');
+  });
+
+  /**
+   * §3 PDPA bounds the operator's line of context at 200 characters. Pinned as its own case
+   * because the bound is one `.slice` — removing it stores whatever LINE accepted (up to 5000)
+   * and quietly widens what a settled row keeps about a customer.
+   */
+  it('stores at most 200 characters of a long follow-up', async () => {
+    const h = harness({
+      identity: linked, context: pausedContext,
+      openSupportRequest: { id: 'sr-9', status: 'OPEN', companyId: 'co-1' },
+    });
+    await h.useCase.execute(event('ก'.repeat(400)));
+
+    assert.equal(h.supportUpdates[0].data.lastMessageText.length, 200);
+  });
+});
+
+/**
+ * Review 2026-09-06 (F3/F7). Two questions the row now answers separately: what they ASKED, which
+ * is the sentence an operator is answering, and what they last WROTE, which is where the thread
+ * has got to. Before this, one column held both and the newest message ate the question.
+ */
+describe('the original question outlives every follow-up (UAT 2026-09-06)', () => {
+  const linked = { userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } };
+
+  it('keeps the tap-time question in its own column', async () => {
+    const h = harness({
+      identity: linked,
+      memberships: [{ companyId: 'co-now', roles: [] }],
+      lastTurn: { userMessagePreview: 'ส่งใบเสร็จแล้วไม่เห็นขึ้นเลยค่ะ' },
+    });
+    await h.useCase.execute(event(STAFF_CONTACT_COMMAND));
+
+    const { data } = h.supportRequests[0];
+    assert.equal(data.requestText, 'ส่งใบเสร็จแล้วไม่เห็นขึ้นเลยค่ะ', 'the question, never rewritten');
+    assert.equal(data.lastMessageText, 'ส่งใบเสร็จแล้วไม่เห็นขึ้นเลยค่ะ', 'and also the newest message, so far');
+  });
+
+  /**
+   * F7. `handleStaffContact` deduped on OPEN only, so tapping the button while a request was
+   * ANSWERED opened a SECOND row — while typing the same thing reopened the first. One path: the
+   * tap is a message like any other, and a reopen is not a new request, so it spends no daily slot.
+   */
+  it('reopens an ANSWERED request on a tap instead of opening a second one', async () => {
+    const h = harness({
+      identity: linked,
+      memberships: [{ companyId: 'co-now', roles: [] }],
+      context: { companyId: 'co-now', aiPausedUntil: new Date(Date.now() + 3_600_000) },
+      openSupportRequest: { id: 'sr-answered', status: 'ANSWERED', companyId: 'co-now' },
+    });
+    await h.useCase.execute(event(STAFF_CONTACT_COMMAND));
+
+    assert.deepEqual(h.supportRequests, [], 'no second row for the same conversation');
+    assert.deepEqual(h.supportSlots, [], 'and a reopen never spends one of the three daily asks');
+    const [update] = h.supportUpdates;
+    assert.ok(update, 'the tap is what brings it back');
+    assert.equal(update.data.status, 'OPEN');
+    assert.deepEqual(update.data.reopenedCount, { increment: 1 });
+    assert.match(rendered(h), /ยังอยู่ในคิว/);
+    assert.equal(outcome(h), 'support_already_open');
+    assert.deepEqual(h.supportNotices, [], 'nobody is paged twice for one conversation');
+  });
+
+  it('asks for a live request of either status before opening a new one', async () => {
+    const h = harness({
+      identity: linked,
+      memberships: [{ companyId: 'co-now', roles: [] }],
+      openSupportRequest: null,
+    });
+    await h.useCase.execute(event(STAFF_CONTACT_COMMAND));
+
+    assert.deepEqual(h.supportLookups[0].where.status, { in: ['OPEN', 'ANSWERED'] });
+    assert.equal(h.supportRequests.length, 1, 'nothing live, so this really is a new request');
   });
 });
 

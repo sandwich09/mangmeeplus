@@ -500,6 +500,25 @@ describe('support notices (line-support-request-spec-th §2.2)', () => {
     assert.equal(h.supportUpdates[0].data.closedReason, 'expired');
   });
 
+  /**
+   * Review 2026-09-06 (F1). Timing the window from `requestedAt` closed a request 24 h after it was
+   * FIRST raised, however recently the customer had written — so a thread reopened at hour 23 was
+   * swept at hour 24 with an unanswered question on it, straight after being told "ทีมงานจะตอบกลับ
+   * ในแชทนี้นะคะ". The thread's life is measured from the last thing the customer said.
+   */
+  it('measures the 24 hours from the customer\'s newest message, not from the tap', async () => {
+    const h = harness({ due: [{ id: 'req-1' }] });
+    const now = new Date('2026-09-05T00:00:00.000Z');
+    await h.service.sweepExpiredSupportRequests(now);
+    h.restore();
+
+    const where = h.supportQueries[0].where;
+    assert.ok(where.lastMessageAt?.lte instanceof Date, 'the window is keyed on the newest message');
+    assert.equal((now.getTime() - where.lastMessageAt.lte.getTime()) / 3_600_000, 24);
+    assert.equal(JSON.stringify(where).includes('requestedAt'), false,
+      'a request the customer wrote to an hour ago is not 24 hours old');
+  });
+
   // §3 PDPA. A settled request keeps a raw LINE id and up to 200 characters the customer typed;
   // 90 days after the matter was settled neither has a purpose, so the whole row goes.
   it('deletes settled requests 90 days after they settled, not after they were asked', async () => {

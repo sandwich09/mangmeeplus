@@ -146,7 +146,9 @@ export function SupportInboxBody({ error, loading, items, busyId, onRetry, onAns
             <tr>
               <th className="px-4 py-3">ผู้ขอ</th>
               <th className="px-4 py-3">รอมานาน</th>
-              <th className="px-4 py-3">ข้อความล่าสุด</th>
+              {/* Not "ข้อความล่าสุด" any more: the cell carries the QUESTION as well as the newest
+                  message, which is the point of splitting them. */}
+              <th className="px-4 py-3">ข้อความ</th>
               <th className="px-4 py-3">แจ้งทีมงาน</th>
               <th className="px-4 py-3">การทำงาน</th>
             </tr>
@@ -165,6 +167,13 @@ export function SupportInboxBody({ error, loading, items, busyId, onRetry, onAns
               // A request the customer wrote back to is OPEN like any other; without this it reads
               // as a first ask, and the operator answers a conversation already in progress blind.
               const reopened = supportReopenedChip(item);
+              // What they ASKED, and where the thread has got to. One column used to hold both, so
+              // a nudge ("มีอัปเดตไหมคะ") left the operator with no idea what was being asked. Rows
+              // raised before the split have only the newest message, which is then the question.
+              const question = item.requestText ?? item.lastMessageText;
+              const latest = item.lastMessageText && item.lastMessageText !== question
+                ? item.lastMessageText
+                : null;
               return (
                 <tr key={item.id} className="align-top hover:bg-gray-50">
                   {/* Bounded for the same reason the message cell is: the applicant label
@@ -203,11 +212,22 @@ export function SupportInboxBody({ error, loading, items, busyId, onRetry, onAns
                       cell renders all 200 characters (352px tall at 390px, measured). Every other
                       `line-clamp-2` in this repo omits it for the same reason. */}
                   <td className="max-w-[16rem] px-4 py-3 text-xs text-gray-600">
-                    {item.lastMessageText ? (
-                      <span className="line-clamp-2 break-words" title={item.lastMessageText}>
-                        “{item.lastMessageText}”
+                    {question ? (
+                      <span className="line-clamp-2 break-words" title={question}>
+                        “{question}”
                       </span>
-                    ) : '—'}
+                    ) : null}
+                    {/* Only when it has moved on: on a request nobody has followed up the two are
+                        the same sentence, and printing it twice reads as two messages. */}
+                    {latest && (
+                      <span className="mt-1 line-clamp-2 break-words text-gray-500" title={latest}>
+                        ล่าสุด: “{latest}”
+                      </span>
+                    )}
+                    {/* §3 keeps the bytes out of the record, so this is the whole of what a photo
+                        leaves behind — beside the words, never in place of them. */}
+                    {item.lastMediaAt && <span className="mt-1 text-gray-500">📷 ส่งรูปมา</span>}
+                    {!question && !item.lastMediaAt && '—'}
                   </td>
                   <td className="px-4 py-3">
                     <ChipBadge chip={notifiedSummary(item)} />

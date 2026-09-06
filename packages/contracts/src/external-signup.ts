@@ -330,13 +330,20 @@ export type AdminPackageChangeDecisionDto = { id: string; status: PackageChangeR
 /** Bounded because the admin's paragraph is pushed verbatim into a customer's LINE chat (SEC-05). */
 export const PARTNER_LINE_MESSAGE_MAX_LENGTH = 500;
 
-export type PartnerLineMessageBody = { text: string };
+export type PartnerLineMessageBody = {
+  text: string;
+  /**
+   * The support request this reply answers — carried by the inbox's "เปิดหน้าร้าน" link. It adds
+   * that ONE requester to the recipients (an employee's reply would otherwise go only to their
+   * owner) and marks the request answered. Must be this shop's, and not CLOSED.
+   */
+  supportRequestId?: string;
+};
 
 export type PartnerLineMessageResultDto = {
   /**
-   * How many LINE chats the message reached: the shop's linked OWNERs, plus whoever raised an OPEN
-   * support request against it (an employee's reply would otherwise go only to their owner).
-   * 0 means nobody in that set has LINE linked.
+   * How many LINE chats the message reached: the shop's linked OWNERs, plus the one requester named
+   * by `supportRequestId`. 0 means nobody in that set has LINE linked.
    */
   delivered: number;
 };
@@ -367,7 +374,12 @@ export type SupportRequestItemDto = {
   /** Present while they are still in the signup funnel: the queue opens from here instead. */
   signupRequestId?: string;
   requestedAt: string;
-  /** ≤200 chars of what they last typed, when the assistant kept any. */
+  /**
+   * ≤200 chars of the question that was on the screen when they tapped. Never rewritten — a nudge
+   * or an unrelated receipt photo used to overwrite the sentence an operator was answering.
+   */
+  requestText?: string;
+  /** ≤200 chars of the newest customer TEXT, when the assistant kept any. */
   lastMessageText?: string;
   /**
    * When that message arrived. The waiting clock counts from HERE, not from `requestedAt`: once a
@@ -375,6 +387,12 @@ export type SupportRequestItemDto = {
    * long they have been ignored. Equal to `requestedAt` until they do.
    */
   lastMessageAt: string;
+  /**
+   * When a photo or document last arrived on this thread. §3 keeps the bytes out of the record
+   * entirely, so this is all the inbox has to show ("📷 ส่งรูปมา") — and the words the customer
+   * typed survive a picture that may just be an ordinary receipt.
+   */
+  lastMediaAt?: string;
   /**
    * How many times this request was answered and then reopened by the customer writing back. `> 0`
    * on an OPEN row is the "ตอบแล้ว N ครั้ง · ลูกค้าตอบกลับ" case — the conversation is still running.

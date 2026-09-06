@@ -302,8 +302,11 @@ export class LineSignupNotifyService {
    * inbox slowly filling with rows nobody is waiting on any more. Closed on the sweep that already
    * runs, never before the pause has actually lapsed.
    *
-   * A request with no pause at all (an unlinked asker: nothing to stop) is timed from `requestedAt`
-   * instead, or it would sit OPEN for ever.
+   * A request with no pause at all (an unlinked asker: nothing to stop) is timed from its newest
+   * customer message alone, or it would sit OPEN for ever.
+   *
+   * That stamp — not `requestedAt` — is the whole window (review 2026-09-06): every follow-up moves
+   * it, and every follow-up re-arms the matching 24 h pause, so the two clocks cannot disagree.
    */
   async sweepExpiredSupportRequests(now = new Date(), take = 200): Promise<{ expired: number }> {
     // ponytail: one page of live pauses, oldest first, as an exclusion list. Ceiling = 1000 people
@@ -321,7 +324,10 @@ export class LineSignupNotifyService {
     const due = await this.prisma.client.lineSupportRequest.findMany({
       where: {
         status: 'OPEN',
-        requestedAt: { lte: new Date(now.getTime() - SUPPORT_REQUEST_EXPIRY_MS) },
+        // From the customer's LAST message, not from the tap (review 2026-09-06). Timed from
+        // `requestedAt`, a thread reopened at hour 23 was swept at hour 24 with an unanswered
+        // question on it — moments after being told "ทีมงานจะตอบกลับในแชทนี้นะคะ".
+        lastMessageAt: { lte: new Date(now.getTime() - SUPPORT_REQUEST_EXPIRY_MS) },
         ...(stillPaused.length > 0 ? { lineUserId: { notIn: stillPaused } } : {}),
       },
       select: { id: true },

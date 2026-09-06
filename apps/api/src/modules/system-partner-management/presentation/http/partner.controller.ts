@@ -148,6 +148,9 @@ export class RenewPlanTermBodyDto {
 // (trimmed length, our-domains-only links) so the HTTP boundary and the audit cannot disagree.
 export class PartnerLineMessageBodyDto {
   @IsString() @IsNotEmpty() @MaxLength(PARTNER_LINE_MESSAGE_MAX_LENGTH) text!: string;
+  /** Which support request this reply answers, when the operator came from the inbox link. The
+   *  use-case owns the rule (this shop, still live); this only fences the shape. */
+  @IsString() @IsOptional() @IsNotEmpty() supportRequestId?: string;
 }
 
 type AuthedRequest = Request & { context: RequestContext };
@@ -534,8 +537,12 @@ export class PartnerController {
   @Post(':partnerCompanyId/line-message')
   @HttpCode(200)
   @RequirePermissions('system.partner_company.update')
-  @ApiOperation({ summary: 'Push one operator-written LINE message to this shop OWNERs (SEC-05)' })
-  @ApiResponse({ status: 200, description: 'How many linked owner identities it reached' })
+  @ApiOperation({
+    summary: 'Push one operator-written LINE message to this shop OWNERs, plus the requester named '
+      + 'by an optional supportRequestId — which is marked answered with it (SEC-05)',
+  })
+  @ApiResponse({ status: 200, description: 'How many LINE chats it reached' })
+  @ApiResponse({ status: 404, description: 'No such shop, or a support request that is not this shop\'s and still live' })
   @ApiResponse({ status: 422, description: 'Empty, too long, links outside our own domains, or no LINE channel' })
   sendLineMessage(
     @Param('partnerCompanyId') companyId: string,
@@ -545,6 +552,7 @@ export class PartnerController {
     return this.lineMessage.execute({
       companyId,
       text: dto.text,
+      ...(dto.supportRequestId ? { supportRequestId: dto.supportRequestId } : {}),
       requestingAdminUserId: req.context.userId,
       requestId: req.context.requestId,
     });

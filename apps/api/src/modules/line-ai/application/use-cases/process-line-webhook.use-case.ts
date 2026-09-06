@@ -215,11 +215,6 @@ const SUPPORT_FOLLOW_UP_REPLY = '📮 ส่งข้อความถึงท
   + '· พิมพ์ "คุยกับ AI ต่อ" ถ้าต้องการให้น้องมั่งมีตอบต่อ';
 /** §3 PDPA: one line of context for the operator, never a transcript. */
 const SUPPORT_LAST_MESSAGE_MAX_LENGTH = 200;
-/** §3 keeps the media out of the request row entirely, so the operator gets the fact and no bytes.
- *  Two words rather than one: this lane carries PDFs as well, and an operator deciding how to help
- *  somebody should not be told "photo" about a document. */
-const SUPPORT_PHOTO_PREVIEW = 'ลูกค้าส่งรูปภาพมา';
-const SUPPORT_FILE_PREVIEW = 'ลูกค้าส่งไฟล์มา';
 const PACKAGE_CHANGE_ACCEPTED_REPLY = '📦 รับคำขอแล้วค่ะ ทีมงานจะติดต่อกลับในเวลาทำการ (จันทร์–เสาร์ 9:00–18:00) นะคะ';
 const PACKAGE_CHANGE_NOT_OWNER_REPLY = '📦 การเปลี่ยนแพ็กเกจต้องให้เจ้าของร้านเป็นคนขอนะคะ รบกวนแจ้งเจ้าของร้านให้พิมพ์ '
   + '"ขอเปลี่ยนแพ็กเกจ" ในแชทนี้ได้เลยค่ะ';
@@ -1774,26 +1769,30 @@ export class ProcessLineWebhookUseCase {
    */
   private async handleStaffContact(event: LineTextEvent, requestId: string): Promise<void> {
     const asker = await this.resolveSupportAsker(event.lineUserId);
-    // Dedupe is per OPEN request, not per day (§2.2.4): while one is open the answer is "you are
+    // Dedupe is per LIVE request, not per day (§2.2.4): while one is live the answer is "you are
     // still in the queue" and nobody is paged twice; once it closes, a new tap is a new request.
-    const open = await this.prisma.client.lineSupportRequest.findFirst({
-      where: { lineUserId: event.lineUserId, status: 'OPEN' },
-      select: { id: true },
-    });
-    if (open) {
+    // ANSWERED counts as live (review 2026-09-06): deduping on OPEN alone meant TAPPING the button
+    // after an answer opened a second row, while TYPING the same thing reopened the first.
+    const live = await this.findLiveSupportRequest(event.lineUserId);
+    if (live) {
+      // The tap is a message like any other, so it travels the one path that reopens an ANSWERED
+      // request and re-arms the pause. It carries no text: "ติดต่อเจ้าหน้าที่" in the operator's
+      // message column would replace whatever the customer actually last said.
+      await this.recordSupportFollowUp(event.lineUserId, requestId, {});
       // Still waiting on us, so the assistant stays out of the thread: a repeat tap re-arms the
-      // pause even though it opens nothing.
+      // pause even though it opens nothing — including for someone whose request names no shop.
       if (asker?.companyId) await this.pauseAssistant(event.lineUserId, asker.companyId);
       await this.deliverReply(event, SUPPORT_ALREADY_OPEN_REPLY);
       await this.audit.log({
         action: 'signup.line.support_requested',
         ...(asker?.companyId ? { companyId: asker.companyId } : {}),
         targetType: 'line_support_request',
-        targetId: open.id,
+        targetId: live.id,
         requestId,
         result: 'SUCCESS',
         riskLevel: 'LOW',
-        metadataJson: { alreadyOpen: true, paused: Boolean(asker?.companyId) },
+        // A reopen is not a new request: it spends no daily slot and pages nobody a second time.
+        metadataJson: { alreadyOpen: true, reopened: live.status === 'ANSWERED', paused: Boolean(asker?.companyId) },
       });
       await this.updateEventLog(event.webhookEventId, 'support_already_open');
       return;
@@ -1828,7 +1827,11 @@ export class ProcessLineWebhookUseCase {
         lineUserIdHash: hashMessagePreview(event.lineUserId),
         ...(asker?.companyId ? { companyId: asker.companyId } : {}),
         ...(asker?.signupRequestId ? { signupRequestId: asker.signupRequestId } : {}),
-        ...(asker?.lastMessageText ? { lastMessageText: asker.lastMessageText } : {}),
+        // Both, from the same sentence: `requestText` is the question and never changes again,
+        // `lastMessageText` is where the thread has got to and is rewritten by every follow-up.
+        ...(asker?.lastMessageText
+          ? { requestText: asker.lastMessageText, lastMessageText: asker.lastMessageText }
+          : {}),
       },
       select: { id: true },
     });
@@ -1931,6 +1934,19 @@ export class ProcessLineWebhookUseCase {
   }
 
   /**
+   * The request this person is still waiting on, whichever shop it names — a customer is one
+   * person. CLOSED is excluded on purpose: that matter was settled by somebody deciding, and a
+   * fresh "ติดต่อเจ้าหน้าที่" opens a new request (§2.2.4).
+   */
+  private async findLiveSupportRequest(lineUserId: string) {
+    return this.prisma.client.lineSupportRequest.findFirst({
+      where: { lineUserId, status: { in: ['OPEN', 'ANSWERED'] } },
+      orderBy: { requestedAt: 'desc' },
+      select: { id: true, status: true, companyId: true },
+    });
+  }
+
+  /**
    * The customer wrote again while a human was supposed to be handling the thread (UAT 2026-09-06).
    *
    * Until this existed, `lastMessageText` was written exactly once — at the tap — and "ตอบแล้ว" put
@@ -1943,29 +1959,36 @@ export class ProcessLineWebhookUseCase {
    * "ติดต่อเจ้าหน้าที่" opens a new request — the behaviour §2.2.4 already describes. The lookup is
    * per LINE user and NOT per company: a customer is one person whatever shop the row names.
    *
-   * Returns false when there was nothing to append to — or when the append itself failed, and the
-   * caller then keeps the reply it had. Best effort on purpose: this is bookkeeping beside the
-   * turn, and a receipt must not be lost, nor a customer left with no answer at all, because the
-   * support table could not be written.
+   * `message` says what arrived, and the three shapes are deliberately different: text is the
+   * newest thing worth showing an operator; `media` is a marker only (§3 — a picture must not cost
+   * the thread the sentence it was answering); and an empty object is a tap on the button, which
+   * moves the clock and says nothing.
+   *
+   * Returns false when there was nothing to append to, when somebody else moved the row first, or
+   * when the append itself failed — and the caller then keeps the reply it had. Best effort on
+   * purpose: this is bookkeeping beside the turn, and a receipt must not be lost, nor a customer
+   * left with no answer at all, because the support table could not be written.
    */
   private async recordSupportFollowUp(
     lineUserId: string,
-    preview: string,
     requestId: string,
+    message: { text?: string; media?: true },
   ): Promise<boolean> {
     try {
-      const live = await this.prisma.client.lineSupportRequest.findFirst({
-        where: { lineUserId, status: { in: ['OPEN', 'ANSWERED'] } },
-        orderBy: { requestedAt: 'desc' },
-        select: { id: true, status: true, companyId: true },
-      });
+      const live = await this.findLiveSupportRequest(lineUserId);
       if (!live) return false;
       const reopened = live.status === 'ANSWERED';
-      const text = preview.trim().slice(0, SUPPORT_LAST_MESSAGE_MAX_LENGTH);
-      await this.prisma.client.lineSupportRequest.update({
-        where: { id: live.id },
+      const text = message.text?.trim().slice(0, SUPPORT_LAST_MESSAGE_MAX_LENGTH);
+      const now = new Date();
+      // Conditional on the status it just read, because reading and then writing is a race an
+      // operator loses in public: "ตอบแล้ว" pressed in the gap left the row ANSWERED while the
+      // customer was told their message had been delivered to a queue it was no longer in.
+      const moved = await this.prisma.client.lineSupportRequest.updateMany({
+        where: { id: live.id, status: live.status },
         data: {
-          lastMessageAt: new Date(),
+          lastMessageAt: now,
+          // §3: the fact a picture arrived, never the picture — and never in place of the words.
+          ...(message.media ? { lastMediaAt: now } : {}),
           ...(text ? { lastMessageText: text } : {}),
           // `answeredAt`/`answeredByUserId` are KEPT: they are the history of the last answer, and
           // the count is what lets the inbox say "ตอบแล้ว N ครั้ง · ลูกค้าตอบกลับ" rather than
@@ -1973,6 +1996,11 @@ export class ProcessLineWebhookUseCase {
           ...(reopened ? { status: 'OPEN' as const, reopenedCount: { increment: 1 } } : {}),
         },
       });
+      if (moved.count === 0) return false;
+      // The expiry sweep closes a request 24h after the customer last wrote, and the assistant must
+      // stay out for exactly as long. Both clocks now run from the same message; before this, a
+      // request reopened at hour 23 was swept an hour later with a fresh question on it.
+      if (live.companyId) await this.pauseAssistant(lineUserId, live.companyId);
       await this.audit.log({
         action: 'signup.line.support_follow_up',
         ...(live.companyId ? { companyId: live.companyId } : {}),
@@ -2663,7 +2691,7 @@ export class ProcessLineWebhookUseCase {
     if (await this.assistantPaused(event.lineUserId)) {
       // Staying out of the thread is not the same as swallowing it (UAT 2026-09-06): what they just
       // wrote goes onto the request the operator answers from, and only then may the reply say so.
-      const recorded = await this.recordSupportFollowUp(event.lineUserId, event.messageText, requestId);
+      const recorded = await this.recordSupportFollowUp(event.lineUserId, requestId, { text: event.messageText });
       await this.deliverReply(event, recorded ? SUPPORT_FOLLOW_UP_REPLY : SUPPORT_PAUSED_REPLY);
       await this.updateEventLog(event.webhookEventId, 'support_paused');
       return;
@@ -4518,11 +4546,11 @@ export class ProcessLineWebhookUseCase {
     // photo as a receipt: whether it is a valid receipt and whether a person is waiting for it are
     // different questions. ponytail: one indexed lookup per media event — cheap enough not to gate
     // it on the pause, which would miss an unlinked asker (who has no assistant to pause).
-    await this.recordSupportFollowUp(
-      event.lineUserId,
-      event.messageType === 'file' ? SUPPORT_FILE_PREVIEW : SUPPORT_PHOTO_PREVIEW,
-      requestId,
-    );
+    //
+    // A MARKER only. The commonest photo on a live thread is an ordinary receipt with nothing to do
+    // with the request, and writing "ลูกค้าส่งรูปภาพมา" over `lastMessageText` destroyed the
+    // sentence the operator was answering.
+    await this.recordSupportFollowUp(event.lineUserId, requestId, { media: true });
 
     const identity = await this.resolveLineIdentity(event);
     if (!identity || identity.user.status !== 'ACTIVE') {

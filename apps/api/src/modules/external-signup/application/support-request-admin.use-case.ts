@@ -97,8 +97,12 @@ export class SupportRequestAdminUseCase {
         ...(row.companyId ? { companyId: row.companyId } : {}),
         ...(row.signupRequestId ? { signupRequestId: row.signupRequestId } : {}),
         requestedAt: row.requestedAt.toISOString(),
+        // Two different questions, and the inbox shows both: what they ASKED (immutable) and where
+        // the thread has got to. A photo is a marker beside them, never a replacement (§3).
+        ...(row.requestText ? { requestText: row.requestText } : {}),
         ...(row.lastMessageText ? { lastMessageText: row.lastMessageText } : {}),
         lastMessageAt: row.lastMessageAt.toISOString(),
+        ...(row.lastMediaAt ? { lastMediaAt: row.lastMediaAt.toISOString() } : {}),
         reopenedCount: row.reopenedCount,
         lineNotifiedCount: row.lineNotifiedCount,
         emailSent: row.emailSent,

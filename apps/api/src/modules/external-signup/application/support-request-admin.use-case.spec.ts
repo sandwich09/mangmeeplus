@@ -16,8 +16,10 @@ const row = (over: Record<string, unknown> = {}) => ({
   lineUserIdHash: 'feedfacefeedface',
   signupRequestId: null,
   requestedAt: new Date('2026-09-05T02:00:00.000Z'),
+  requestText: null,
   lastMessageText: null,
   lastMessageAt: new Date('2026-09-05T02:00:00.000Z'),
+  lastMediaAt: null,
   reopenedCount: 0,
   lineNotifiedCount: 0,
   emailSent: true,
@@ -145,6 +147,32 @@ describe('the support inbox read (line-support-request-spec-th §2.3)', () => {
     assert.equal(item!.answeredAt, '2026-09-05T03:00:00.000Z');
     assert.equal(item!.answeredByDisplayName, 'พี่แอดมิน');
     assert.equal(item!.status, 'OPEN');
+  });
+
+  /**
+   * Review 2026-09-06 (F3). One column held both "what they asked" and "what they last said", so a
+   * nudge or an unrelated receipt photo destroyed the question the operator was answering. Two
+   * columns, and a picture is a marker beside the words rather than a replacement for them.
+   */
+  it('carries the original question and the newest message as two separate things', async () => {
+    const h = harness({
+      rows: [row({
+        requestText: 'ส่งใบเสร็จแล้วไม่เห็นขึ้นเลยค่ะ',
+        lastMessageText: 'มีอัปเดตไหมคะ',
+        lastMediaAt: new Date('2026-09-06T05:00:00.000Z'),
+      })],
+    });
+    const [item] = (await h.useCase.list()).items;
+
+    assert.equal(item!.requestText, 'ส่งใบเสร็จแล้วไม่เห็นขึ้นเลยค่ะ', 'still the question, three messages later');
+    assert.equal(item!.lastMessageText, 'มีอัปเดตไหมคะ');
+    assert.equal(item!.lastMediaAt, '2026-09-06T05:00:00.000Z', 'and a photo arrived, which is all we keep of it');
+  });
+
+  it('says nothing about media on a thread that has none', async () => {
+    const [item] = (await harness({ rows: [row()] }).useCase.list()).items;
+    assert.equal(item!.lastMediaAt, undefined);
+    assert.equal(item!.requestText, undefined);
   });
 
   it('answers an empty inbox with the count rather than nothing', async () => {
