@@ -223,6 +223,10 @@ describe('handlers that no static render reaches', () => {
     assert.match(saveShop, /putVatRegistration\(/);
     assert.match(saveShop, /setVatError\(/, 'the VAT failure must not be reported in the identity banner');
     assert.ok(saveShop.indexOf('patchCompanyIdentity(') < saveShop.indexOf('putVatRegistration('), 'sequential, identity first');
+    // §15.4.1 A: two independent writes behind one press. An identity 409 must not also swallow
+    // the VAT answer the owner just gave, and a half-failed press must not answer "บันทึกแล้ว".
+    assert.match(saveShop, /\n {6}if \(plan\.vatStatus && identity\?\.vatRegistration\) \{/, 'the VAT write must not be gated on the identity result');
+    assert.match(saveShop, /if \(!failed\) toast\.success\(/, 'a half-failed save must not report success');
   });
 });
 
