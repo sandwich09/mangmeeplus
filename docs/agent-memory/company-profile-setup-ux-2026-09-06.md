@@ -164,3 +164,83 @@ No pinned file was touched: `auth.module.ts` and `auth.guard` are unchanged, so 
 No PR, no merge, no deploy until the Owner asks. When this does go to UAT, the thing to watch is
 that UAT runs `EMAIL_PROVIDER=ses` (sandboxed) while production runs `disabled` — so the page will
 look different in the two, on purpose, and that difference is now visible rather than hidden.
+
+## Adversarial review round 2 (2026-09-06) — READY
+
+Reviewed on `review2/company-profile-setup-ux` cut from `origin/codex/company-profile-setup-ux`
+4df6dfa7, with `origin/develop` cb7c31ee (#452–#455) merged in. **The merge was clean** — the only
+overlapping file was `docs/specs/mangmee-line-first-signup-spec-th.md`, different sections. The
+merge commit and one test fix were pushed fast-forward onto the branch.
+
+### Verified, not taken on trust
+
+- **The delivery refusal really is first.** `assertEmailDeliveryEnabled(this.config)` is the opening
+  statement of both `RequestEmailChangeUseCase.execute` and `ResendEmailVerificationUseCase.execute`
+  — before any Prisma call, before the revoke, before the mailer. Proven live: on
+  `EMAIL_PROVIDER=disabled` both routes answered 422 `email_delivery_unavailable` and the
+  `EmailVerificationToken` count went **6 → 6**.
+- **No hole around the gate.** Those two use-cases are the only writers of `EmailVerificationToken`
+  and the only callers of `sendEmailVerification` in the whole API.
+- **The `@Optional()` fallback can never fire in production.** `ConfigModule` is `@Global()` and
+  `auth.module.ts` already injects `AppConfigService` in two factories, so "absent config ⇒ enabled"
+  serves the hand-built specs only.
+- **`local-console` cannot report "enabled" off a laptop:** `selectAuthMailer` throws at boot unless
+  `APP_ENV=local` (`auth.module.ts:63`).
+- **All three indicator call sites gate on `company.legal_identity.manage`** —
+  `WorkspaceLayout.tsx`, `settings/page.tsx`, `DashboardPages.tsx:328`. The settings hub page stays
+  a server component; the badge is the only client island and renders `null` while unknown.
+- **The seed-once ref cannot leak one company's form into another's PATCH:** `CompanySwitcher` uses
+  `window.location.assign`, a full page load, so the ref is re-created.
+- **The VAT answer cannot be silently dropped:** the whole VAT block is behind
+  `{identity?.vatRegistration && …}`, which is present exactly when the reader holds
+  `company.vat_registration.read`.
+
+### Browser pass (chromium, local stack, both `EMAIL_PROVIDER` values) — 5/5
+
+Owner's exact mobile sequence (390×844): changing the VAT select fired **zero** requests and left
+all seven typed values byte-identical; one press produced exactly `PATCH identity 200` +
+`PUT vat-registration 200`; a hard reload showed both halves persisted. Verified email is text +
+"ยืนยันแล้ว" with no box and no send button, "เปลี่ยนอีเมล" reveals **and focuses** it, "ยกเลิก"
+restores. Pending state after a real 202 shows the pending address with a working resend (202).
+Disabled provider hides the send path, shows the note, and drops อีเมลกันหลุด from the checklist.
+**"ไว้ก่อน" hid the dashboard card while the sidebar dot and the hub badge both stayed** — the
+Owner's "จนกว่าจะตั้งครบ" holds. The collapsed-sidebar dot was confirmed from source rather than
+live (`AppSidebar.tsx:388`/`:417` render it outside the `sidebarVisible` guard).
+
+### Two escaping mutations, closed
+
+13 mutations run, 11 caught by the shipped specs, **2 escaped** — both in the partial-failure half
+of `saveShop`, which §15.4.1 A pins: gating the VAT PUT on the identity result, and firing
+"บันทึกข้อมูลร้านแล้วค่ะ" after a half-failed press. Two assertions added to
+`CompanyProfilePage.qa.spec.ts` (red under each mutation, green on HEAD).
+
+### Left open
+
+- **The sidebar dot goes stale-ON in-session.** `useProfileChecklist` re-reads only on
+  `[companyId, enabled]` and `invalidateChecklist()` only clears `sessionStorage`, but
+  `WorkspaceLayout` is an App-Router client layout that survives client navigation. Finish the
+  checklist on the profile page and the card and hub badge clear on their next mount while the dot
+  stays until a full page load — the three *can* disagree, transiently, despite the hook's
+  docstring. Never wrongly silent, self-heals on reload, so it was left alone. Cheapest fix if the
+  Owner asks: a window `CustomEvent` from `invalidateChecklist`, the pattern
+  `ACCESS_CONTEXT_STALE_EVENT` already uses.
+- **The claim-email path is the remaining live "silent send".**
+  `SignupClaimEmailService.sendClaimEmail` stamps `claimEmailLastSentAt` and marks the outbox event
+  published even though `DisabledAuthMailerAdapter.sendAccountClaim` returns `null` — on production
+  the row records a letter nobody received. `assertEmailDeliveryEnabled` is reusable there, but the
+  shape has to differ (a Flow B approval must not 422; it needs an ops alert or another channel).
+  Its sibling `RequestPasswordResetUseCase` is **not** a lie today: it is dead code with no route —
+  `POST /v1/auth/password/reset-request` goes to `NotifyPasswordResetRequestUseCase`, a LINE push,
+  and that is what `/forgot-password` promises ("ส่งรหัสผ่านชั่วคราวไปยัง LINE ที่ผูกไว้").
+- **AWS rejected the SES production-access request on 2026-09-06.** `EMAIL_PROVIDER=disabled` is
+  therefore the settled production state, not a waiting room, and `deploy.sh` refuses `ses` on
+  production regardless. UAT keeps `ses`; the two environments differ on purpose.
+- `password/set` happy path still unproven against a live database (unchanged).
+
+### Review verification
+
+`pnpm --filter @watchdog-bms/web exec tsc --noEmit` clean · `pnpm --filter @watchdog-bms/api
+typecheck` clean (after `prisma generate`) · `apps/web` full suite **1634/1634** · `apps/api` fixed
+list exit 0 · `check-di-metadata` clean (870 decorated classes) · `apps/web` `next build` clean,
+every settings route still `ƒ` · no `package.json`, schema, migration, `deploy.sh`, env or flag
+change.
