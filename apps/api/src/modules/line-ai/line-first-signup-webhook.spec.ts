@@ -181,11 +181,13 @@ function harness(options: {
   identity?: { userId: string; user: { status: string; aiAssistantOptOutAt: Date | null; displayName: string } } | null;
   ownerMembership?: any;
   /** ACTIVE memberships in ACTIVE companies — what `resolveCompanyForLineUser` reads (§2.1.1). */
-  memberships?: Array<{ companyId: string; roles: unknown[] }>;
+  memberships?: Array<{ companyId: string; roles: unknown[]; company?: { name: string } }>;
   context?: { companyId: string; aiPausedUntil: Date | null } | null;
   contextUpdateCount?: number;
-  /** A live `LineSupportRequest` for this LINE user, if one is already in the queue (§2.2.4). */
-  openSupportRequest?: { id: string; status?: string; companyId?: string | null } | null;
+  /** A live `LineSupportRequest` for this LINE user, if one is already in the queue (§2.2.4).
+   *  `lastMessageAt` is NOT NULL in the schema, so the fake supplies one; it is the clock the
+   *  confirmation throttle reads (§2.2 delta รอบ 6) and defaults to "long enough ago to speak". */
+  openSupportRequest?: { id: string; status?: string; companyId?: string | null; lastMessageAt?: Date } | null;
   /** Rows the conditional follow-up write actually moved. `0` = somebody else got there first. */
   followUpUpdateCount?: number;
   /** The last thing this customer typed, as `AiTurn` kept it. */
@@ -228,7 +230,12 @@ function harness(options: {
       lineSupportRequest: {
         // The `where` IS the guard for the follow-up lookup (which statuses may be reopened), so
         // the query is recorded: a fake that only returns a row cannot show what was asked for.
-        findFirst: async (args: any) => { supportLookups.push(args); return options.openSupportRequest ?? null; },
+        findFirst: async (args: any) => {
+          supportLookups.push(args);
+          return options.openSupportRequest
+            ? { lastMessageAt: new Date(Date.now() - 86_400_000), ...options.openSupportRequest }
+            : null;
+        },
         create: async (args: any) => { supportRequests.push(args); return { id: 'sr-1' }; },
         // Two callers share this model. The resume/close path writes a terminal status; the
         // follow-up path writes the newest customer message (or, for a photo, the marker alone),
@@ -902,6 +909,86 @@ describe('a customer who writes back is still in the queue (UAT 2026-09-06)', ()
     await h.useCase.execute(event('ก'.repeat(400)));
 
     assert.equal(h.supportUpdates[0].data.lastMessageText.length, 200);
+  });
+});
+
+/**
+ * UAT 2026-09-06, 15:42 ICT (build f2bd38ed). Four screenshots of one chat under a pause set at
+ * 10:58: `/companies` answered "ส่งข้อความถึงทีมงานแล้ว", the rich-menu tile answered the ordinary
+ * welcome — contradicting the hold it was sitting under — and the resume command the reply itself
+ * advertises did nothing because the phone keyboard wrote "ai". Spec §2.2 delta รอบ 6.
+ */
+describe('the pause silences the assistant, not the app (UAT 2026-09-06 รอบ 6)', () => {
+  const linked = { userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } };
+  const pausedContext = { companyId: 'co-1', aiPausedUntil: new Date(Date.now() + 3_600_000) };
+  const waiting = { id: 'sr-9', status: 'OPEN', companyId: 'co-1' };
+
+  // A deterministic command costs no model call and answers a button we put in front of the
+  // customer. Swallowing it filed a button press as a sentence for an operator to read, and gave
+  // back a confirmation nobody asked for instead of the card.
+  it('answers /companies under the pause instead of filing it as a follow-up', async () => {
+    const h = harness({
+      identity: linked, context: pausedContext, openSupportRequest: waiting,
+      memberships: [{ companyId: 'co-1', roles: [], company: { name: 'ร้านนิด' } }],
+    });
+    await h.useCase.execute(event('/companies'));
+
+    assert.match(rendered(h), /ร้านนิด/, 'the company card, which needs neither a model nor an operator');
+    assert.equal(rendered(h).includes('ส่งข้อความถึงทีมงานแล้ว'), false, 'and no confirmation on top of it');
+    assert.deepEqual(h.supportUpdates, [], 'pressing a button is not the customer asking again');
+    assert.equal(outcome(h), 'company_context_listed');
+  });
+
+  // The rich-menu tile literally says "คุยกับน้องมั่งมี", so the greeting was the honest reply to
+  // it — and a flat contradiction of the line the same chat had just been sent.
+  it('keeps the rich-menu greeting out of a thread a human is holding', async () => {
+    const h = harness({ identity: linked, context: pausedContext, openSupportRequest: waiting });
+    await h.useCase.execute(event('คุยกับน้องมั่งมี'));
+
+    assert.equal(rendered(h).includes('น้องมั่งมีมาแล้ว'), false, 'the welcome contradicted the pause');
+    assert.match(rendered(h), /กำลังดูให้อยู่/);
+    assert.match(rendered(h), /คุยกับ AI ต่อ/, 'and it still says the way out');
+    assert.deepEqual(h.supportUpdates, [], 'a tile tap is not a message to the team');
+    assert.equal(outcome(h), 'support_paused');
+  });
+
+  it('brings the assistant back on the lowercase spelling its own reply advertises', async () => {
+    const h = harness({ identity: linked, context: pausedContext, openSupportRequest: waiting });
+    await h.useCase.execute(event('คุยกับ ai ต่อ'));
+
+    assert.match(rendered(h), /น้องมั่งมีกลับมาแล้ว/);
+    assert.deepEqual(h.contextUpdates[0].data, { aiPausedUntil: null }, 'the hold is lifted');
+    assert.equal(h.supportClosures[0].data.closedReason, 'customer_resumed');
+    assert.equal(h.supportClosures[0].where.status, 'OPEN', 'and the inbox stops showing รอตอบ');
+    assert.deepEqual(h.supportUpdates, [], 'never filed as one more message to the team');
+    assert.equal(outcome(h), 'support_resumed');
+  });
+
+  /**
+   * The Owner got the same seven-line confirmation, menu hint and all, three times in one screen.
+   * The message still goes onto the request every time (that is the fix this rides on); only the
+   * SPEECH is rationed, off the stamp the row already carries.
+   */
+  it('confirms in full once, then acknowledges briefly for ten minutes', async () => {
+    const burst = harness({
+      identity: linked, context: pausedContext,
+      openSupportRequest: { ...waiting, lastMessageAt: new Date(Date.now() - 60_000) },
+    });
+    await burst.useCase.execute(event('ยังไม่ได้เลยค่ะ'));
+
+    assert.equal(burst.supportUpdates.length, 1, 'still recorded — the operator reads every line');
+    assert.match(rendered(burst), /รับข้อความแล้วค่ะ/);
+    assert.equal(rendered(burst).includes('ทีมงานจะตอบกลับในแชทนี้'), false, 'said once, not to every line');
+    assert.equal(rendered(burst).includes('คุยกับ AI ต่อ'), false, 'and the menu hint least of all');
+
+    const later = harness({
+      identity: linked, context: pausedContext,
+      openSupportRequest: { ...waiting, lastMessageAt: new Date(Date.now() - 11 * 60_000) },
+    });
+    await later.useCase.execute(event('ยังไม่ได้เลยค่ะ'));
+
+    assert.match(rendered(later), /ส่งข้อความถึงทีมงานแล้ว/, 'a fresh message gets the full answer');
+    assert.equal(later.supportUpdates.length, 1);
   });
 });
 

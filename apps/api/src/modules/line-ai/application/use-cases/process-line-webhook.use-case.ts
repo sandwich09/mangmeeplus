@@ -213,6 +213,20 @@ const SUPPORT_PAUSED_REPLY = '📮 ทีมงานรับเรื่อง
  */
 const SUPPORT_FOLLOW_UP_REPLY = '📮 ส่งข้อความถึงทีมงานแล้วค่ะ ทีมงานจะตอบกลับในแชทนี้นะคะ '
   + '· พิมพ์ "คุยกับ AI ต่อ" ถ้าต้องการให้น้องมั่งมีตอบต่อ';
+/**
+ * UAT 2026-09-06 (§2.2 delta รอบ 6). The full confirmation is worth saying once; said to every line
+ * of a burst it is the noise the Owner saw three times in one screen — and the menu hint least of
+ * all, since the customer has just read it. The MESSAGE is still recorded every time; only the
+ * speech is rationed, off the `lastMessageAt` the row already carries.
+ */
+const SUPPORT_FOLLOW_UP_REPEAT_REPLY = '📮 รับข้อความแล้วค่ะ';
+const SUPPORT_FOLLOW_UP_REPLY_INTERVAL_MS = 10 * 60 * 1000;
+const SUPPORT_FOLLOW_UP_REPLIES = {
+  none: SUPPORT_PAUSED_REPLY,
+  recorded: SUPPORT_FOLLOW_UP_REPLY,
+  repeat: SUPPORT_FOLLOW_UP_REPEAT_REPLY,
+} as const;
+type SupportFollowUpOutcome = keyof typeof SUPPORT_FOLLOW_UP_REPLIES;
 /** §3 PDPA: one line of context for the operator, never a transcript. */
 const SUPPORT_LAST_MESSAGE_MAX_LENGTH = 200;
 const PACKAGE_CHANGE_ACCEPTED_REPLY = '📦 รับคำขอแล้วค่ะ ทีมงานจะติดต่อกลับในเวลาทำการ (จันทร์–เสาร์ 9:00–18:00) นะคะ';
@@ -2013,7 +2027,9 @@ export class ProcessLineWebhookUseCase {
     return this.prisma.client.lineSupportRequest.findFirst({
       where: { lineUserId, status: { in: ['OPEN', 'ANSWERED'] } },
       orderBy: { requestedAt: 'desc' },
-      select: { id: true, status: true, companyId: true },
+      // `lastMessageAt` (NOT NULL, defaulted at creation) is the confirmation throttle's clock —
+      // read here, before the follow-up write moves it.
+      select: { id: true, status: true, companyId: true, lastMessageAt: true },
     });
   }
 
@@ -2035,19 +2051,21 @@ export class ProcessLineWebhookUseCase {
    * and says nothing. A PHOTO is neither — it goes through `stampSupportMedia`, because it is not
    * the customer asking again (review 2026-09-06 N1).
    *
-   * Returns false when there was nothing to append to, when somebody else moved the row first, or
+   * Returns `none` when there was nothing to append to, when somebody else moved the row first, or
    * when the append itself failed — and the caller then keeps the reply it had. Best effort on
    * purpose: this is bookkeeping beside the turn, and a receipt must not be lost, nor a customer
-   * left with no answer at all, because the support table could not be written.
+   * left with no answer at all, because the support table could not be written. `repeat` means the
+   * message WAS recorded and the customer has already been told so within the last ten minutes
+   * (§2.2 delta รอบ 6), so the caller acknowledges in one line instead of repeating the card.
    */
   private async recordSupportFollowUp(
     lineUserId: string,
     requestId: string,
     message: { text?: string },
-  ): Promise<boolean> {
+  ): Promise<SupportFollowUpOutcome> {
     try {
       const live = await this.findLiveSupportRequest(lineUserId);
-      if (!live) return false;
+      if (!live) return 'none';
       const reopened = live.status === 'ANSWERED';
       const text = message.text?.trim().slice(0, SUPPORT_LAST_MESSAGE_MAX_LENGTH);
       // Conditional on the status it just read, because reading and then writing is a race an
@@ -2064,7 +2082,7 @@ export class ProcessLineWebhookUseCase {
           ...(reopened ? { status: 'OPEN' as const, reopenedCount: { increment: 1 } } : {}),
         },
       });
-      if (moved.count === 0) return false;
+      if (moved.count === 0) return 'none';
       // The expiry sweep closes a request 24h after the customer last wrote, and the assistant must
       // stay out for exactly as long. Both clocks now run from the same message; before this, a
       // request reopened at hour 23 was swept an hour later with a fresh question on it.
@@ -2089,10 +2107,13 @@ export class ProcessLineWebhookUseCase {
         // §3: whether they wrote something, never what — and never the LINE id.
         metadataJson: { reopened, hasText: Boolean(text) },
       });
-      return true;
+      // The stamp read BEFORE the write above: how long since this customer last wrote. No new
+      // column, and it is the same "when did they last write" the inbox clock and the sweep use.
+      return Date.now() - live.lastMessageAt.getTime() < SUPPORT_FOLLOW_UP_REPLY_INTERVAL_MS
+        ? 'repeat' : 'recorded';
     } catch (error) {
       this.logger.warn({ msg: 'line_support_follow_up_not_recorded', error: (error as Error).message });
-      return false;
+      return 'none';
     }
   }
 
@@ -2714,6 +2735,15 @@ export class ProcessLineWebhookUseCase {
       return;
     }
     if (publicCommand === 'talk') {
+      // UAT 2026-09-06. The tile says "คุยกับน้องมั่งมี", so the greeting was the honest answer to
+      // it — and a flat contradiction of the hold the same chat had just been put under. Under a
+      // pause the tile says what the pause says, and offers the words that lift it. Not a
+      // follow-up: tapping a rich-menu button is not a sentence an operator has to read.
+      if (await this.assistantPaused(event.lineUserId)) {
+        await this.deliverReply(event, SUPPORT_PAUSED_REPLY);
+        await this.updateEventLog(event.webhookEventId, 'support_paused');
+        return;
+      }
       await this.deliverReply(event, ASSISTANT_TALK_GREETING);
       await this.updateEventLog(event.webhookEventId, 'staff_menu_talk');
       return;
@@ -2791,11 +2821,23 @@ export class ProcessLineWebhookUseCase {
     // below is an assistant turn — free text, receipts, AI answers — which is exactly what the
     // pause is for. (`ติดต่อเจ้าหน้าที่` is handled further up, before identity resolution, so it
     // stays reachable too and simply re-arms the pause.)
-    if (await this.assistantPaused(event.lineUserId)) {
+    //
+    // FREE TEXT only (UAT 2026-09-06, §2.2 delta รอบ 6). The pause silences the ASSISTANT, not the
+    // product: `/companies`, `เมนูหลัก`, `ถ่ายใบเสร็จ`, `บริการของเรา` and the draft-edit answers
+    // are cards this code builds itself — no model, no cost, and each one a button the customer was
+    // shown. Swallowing them filed a button press as a sentence for an operator to read and gave
+    // back a confirmation nobody asked for. S-4's two phrases only count while its lane is lit; with
+    // the flag off they are ordinary text and stay under the pause like any other sentence.
+    const deterministicCommand = publicCommand !== null
+      && (this.draftUpdate?.enabled === true
+        || (publicCommand !== 'draft_update_confirm' && publicCommand !== 'draft_update_cancel'));
+    if (!deterministicCommand
+      && !parseLineCompanyCommand(event.messageText)
+      && await this.assistantPaused(event.lineUserId)) {
       // Staying out of the thread is not the same as swallowing it (UAT 2026-09-06): what they just
       // wrote goes onto the request the operator answers from, and only then may the reply say so.
       const recorded = await this.recordSupportFollowUp(event.lineUserId, requestId, { text: event.messageText });
-      await this.deliverReply(event, recorded ? SUPPORT_FOLLOW_UP_REPLY : SUPPORT_PAUSED_REPLY);
+      await this.deliverReply(event, SUPPORT_FOLLOW_UP_REPLIES[recorded]);
       await this.updateEventLog(event.webhookEventId, 'support_paused');
       return;
     }

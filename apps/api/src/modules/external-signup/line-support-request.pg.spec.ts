@@ -311,7 +311,10 @@ describe('"ติดต่อเจ้าหน้าที่" on real PostgreS
       await seed(client, tag, lineUserId);
       const h = wire(client);
       await h.webhook.execute(event(lineUserId, STAFF_CONTACT_COMMAND));
-      await h.webhook.execute(event(lineUserId, RESUME_AI_COMMAND));
+      // UAT 2026-09-06: the customer typed the words the reply prints, with the "ai" their phone
+      // keyboard produced, and stayed muted for four more messages. Driven in the lowercase
+      // spelling here so the whole chain — command, pause, row — is pinned on real rows.
+      await h.webhook.execute(event(lineUserId, RESUME_AI_COMMAND.toLowerCase()));
 
       const context = await client.lineCompanyContext.findUniqueOrThrow({ where: { lineUserId } });
       assert.equal(context.aiPausedUntil, null, 'the pause is what the customer is living with');
@@ -404,8 +407,22 @@ describe('"ติดต่อเจ้าหน้าที่" on real PostgreS
       // (The follow-up audit row is asserted in line-first-signup-webhook.spec.ts: the audit
       // service is a no-op fake in this harness, which only wires LINE, SES and the outbox.)
 
-      // A pause is still running, so the customer was answered by the honest line, not the assistant.
+      // A pause is still running, so the customer was answered by the honest line, not the
+      // assistant — and briefly, because the tap that opened this thread spoke moments ago
+      // (§2.2 delta รอบ 6). The record is what matters and it is above; the card is not repeated.
+      assert.match(h.replies.at(-1)!, /รับข้อความแล้วค่ะ/);
+      assert.equal(h.replies.at(-1)!.includes('ทีมงานจะตอบกลับในแชทนี้'), false);
+
+      // Ten minutes later the same customer is not repeating themselves, and hears the whole
+      // thing again. Backdated rather than waited for: the clock is a column, not a timer.
+      await client.lineSupportRequest.update({
+        where: { id }, data: { lastMessageAt: new Date(Date.now() - 11 * 60_000) },
+      });
+      await h.webhook.execute(event(lineUserId, 'ยังอยู่ไหมคะ'));
+
       assert.match(h.replies.at(-1)!, /ส่งข้อความถึงทีมงานแล้ว/);
+      assert.equal((await client.lineSupportRequest.findUniqueOrThrow({ where: { id } })).lastMessageText,
+        'ยังอยู่ไหมคะ', 'and every line is still recorded, throttled reply or not');
     } finally {
       await cleanup(client, tag, lineUserId);
       await client.$disconnect();

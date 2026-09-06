@@ -15,9 +15,10 @@ export const STAFF_CONTACT_COMMAND = 'ติดต่อเจ้าหน้า
  * The way BACK from a support pause (line-support-request-spec-th §2.4). Without it the only exit
  * from "a human is handling this" was waiting 24 hours — the customer had no button and no words.
  *
- * Two spellings because both are natural and both are printed in the reply the pause sends; exact
- * whole-string matches like every other command here, so a sentence that merely quotes one (a
- * pasted instruction, an OCR'd photo caption) cannot resume the assistant on the customer's behalf.
+ * Two spellings because both are natural and both are printed in the reply the pause sends; whole
+ * -string matches like every other command here, so a sentence that merely quotes one (a pasted
+ * instruction, an OCR'd photo caption) cannot resume the assistant on the customer's behalf.
+ * The Latin "AI" is matched case-insensitively — see `menuCommandKey`, and UAT 2026-09-06.
  */
 export const RESUME_AI_COMMAND = 'คุยกับ AI ต่อ';
 export const RESUME_AI_ALT_COMMAND = 'ให้ AI ตอบ';
@@ -499,8 +500,25 @@ export type StaffMenuCommand =
   | 'draft_update_confirm' | 'draft_update_cancel'
   | 'follow';
 
+/**
+ * The whole-string key a command is matched on: tile emoji stripped, inner whitespace collapsed,
+ * Latin case folded.
+ *
+ * UAT 2026-09-06. The pause reply prints พิมพ์ "คุยกับ AI ต่อ"; the customer typed exactly that and
+ * the phone keyboard wrote "ai", so the one way out of a 24-hour hold fell through to the hold and
+ * was filed as another message for the operator. "AI" is the only Latin word this table contains
+ * (audited: every other command is pure Thai), and Thai has no case, so the fold changes nothing
+ * else — and collapsing runs of spaces only touches the two commands that have a space at all.
+ *
+ * Still a WHOLE-string match, which is the §3 property: a sentence that merely quotes a command —
+ * a pasted instruction, an OCR'd caption — resumes nothing.
+ */
+function menuCommandKey(text: string): string {
+  return text.trim().replace(/[📊✅📷🎁]/gu, '').replace(/\s+/gu, ' ').trim().toLowerCase();
+}
+
 export function staffMenuCommand(text: string): StaffMenuCommand | null {
-  const normalized = text.trim().replace(/[📊✅📷🎁]/gu, '').trim();
+  const normalized = menuCommandKey(text);
   if (normalized === 'เมนูหลัก') return 'main';
   if (normalized === 'ถามข้อมูล') return 'query';
   if (normalized === 'รายการรออนุมัติ') return 'approval';
@@ -511,7 +529,7 @@ export function staffMenuCommand(text: string): StaffMenuCommand | null {
   if (normalized === PACKAGE_CHANGE_COMMAND) return 'package_change';
   if (normalized === EMPLOYEE_DOOR_COMMAND) return 'employee';
   if (normalized === STAFF_CONTACT_COMMAND) return 'staff_contact';
-  if (normalized === RESUME_AI_COMMAND || normalized === RESUME_AI_ALT_COMMAND) return 'resume_ai';
+  if (normalized === menuCommandKey(RESUME_AI_COMMAND) || normalized === menuCommandKey(RESUME_AI_ALT_COMMAND)) return 'resume_ai';
   if (normalized === PROFILE_GUARD_COMMAND) return 'profile_guard';
   if (normalized === PROFILE_GUARD_LATER_COMMAND) return 'profile_guard_later';
   if (normalized === DRAFT_UPDATE_CONFIRM_COMMAND) return 'draft_update_confirm';
