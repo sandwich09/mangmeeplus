@@ -14,6 +14,20 @@ export const LINE_HANDOFF_TOKEN_TTL_MS = 15 * 60_000;
  *  does not intercept a request whose whole point is that it carries no session yet. */
 export const HANDOFF_PATH_PREFIX = '/l/';
 
+/**
+ * The ONE `surface` whose exchange also switches the LINE chat's company context.
+ *
+ * Owner 2026-09-06: บริษัทของฉัน gained a second button per company — "สลับบริษัทและพาไปเว็บไซต์ตาม
+ * บริษัทนั้น" in one tap. LINE never tells the server that a `uri` button was pressed, so the
+ * LINE-side half of that tap can only happen when the link is opened, i.e. at exchange time.
+ *
+ * It is scoped to this surface rather than applied to every handoff because the rest of them are
+ * links the customer opens on their own schedule — an assistant reply, an alert. Moving the chat
+ * they are holding because they read a notification would be a silent, unasked-for change of which
+ * shop the next message is about. Only the button that literally says "เปิดเว็บบริษัทนี้" earns it.
+ */
+export const LINE_HANDOFF_SURFACE_COMPANY_PICKER_OPEN = 'company_picker_open_web';
+
 /** Longest destination we will store or accept, matching `sanitizeReturnTo` in the web BFF. */
 const MAX_TARGET_PATH_LENGTH = 512;
 

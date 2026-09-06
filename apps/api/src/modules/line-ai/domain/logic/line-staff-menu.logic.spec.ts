@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { FEATURE_CATALOG } from '@watchdog-bms/contracts';
-import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, isCapabilityQuestion, staffMenuCommand, EMPLOYEE_DOOR_COMMAND, LINE_FOLLOW_EVENT_TEXT, PACKAGE_CHANGE_COMMAND, PROFILE_GUARD_COMMAND, PROFILE_GUARD_LATER_COMMAND, RESUME_AI_ALIASES, RESUME_AI_COMMAND, STAFF_CONTACT_COMMAND, VIEW_PACKAGES_COMMAND } from './line-staff-menu.logic';
+import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, companyPickerPage, isCapabilityQuestion, staffMenuCommand, COMPANY_PICKER_OPEN_WEB_HINT, COMPANY_PICKER_OPEN_WEB_LABEL, COMPANY_PICKER_SELECT_LABEL, EMPLOYEE_DOOR_COMMAND, LINE_FOLLOW_EVENT_TEXT, PACKAGE_CHANGE_COMMAND, PROFILE_GUARD_COMMAND, PROFILE_GUARD_LATER_COMMAND, RESUME_AI_ALIASES, RESUME_AI_COMMAND, STAFF_CONTACT_COMMAND, VIEW_PACKAGES_COMMAND } from './line-staff-menu.logic';
 import { DRAFT_UPDATE_CANCEL_COMMAND, DRAFT_UPDATE_CONFIRM_COMMAND } from './line-draft-update-card.logic';
 
 // entitledFeatureKeys null is the legacy fail-open company, so these cases keep asserting the
@@ -227,6 +227,95 @@ describe('LINE staff menu', () => {
     assert.match(JSON.stringify(message), /ตอบ 2 หรือกดปุ่มด้านล่าง/);
     assert.match(JSON.stringify(message), /\/company co-2/);
     assert.equal(JSON.stringify(message).includes('/company co-1'), false);
+  });
+
+  /**
+   * Owner 2026-09-06: "อยากให้มี ปุ่ม กดไปเข้าเว็บด้วยบริษัทนั้นๆด้วย … ก็คือมี 2 ปุ่ม".
+   * `webUrl` is the already-minted one-tap link; without it the bubble must be exactly what it
+   * was before this feature, because a picker with half a feature is worse than the old one.
+   */
+  it('gives a company with a web link both buttons, select first and open-web below it', () => {
+    const message = buildCompanyPickerMessage([
+      { companyId: 'co-1', companyName: 'บริษัทหนึ่ง' },
+      { companyId: 'co-2', companyName: 'บริษัทสอง', webUrl: 'https://app.example.com/l/tok2' },
+    ], 'co-1');
+    const [, second] = (message as any).contents.contents;
+    assert.deepEqual(second.footer.contents.map((button: any) => button.action), [
+      { type: 'message', label: COMPANY_PICKER_SELECT_LABEL, text: '/company co-2' },
+      { type: 'uri', label: COMPANY_PICKER_OPEN_WEB_LABEL, uri: 'https://app.example.com/l/tok2' },
+    ]);
+    assert.equal(second.footer.contents[0].style, 'primary');
+    assert.equal(second.footer.contents[1].style, 'secondary', 'the switch-only button stays the primary one');
+    // The number still works: typing "2" must keep switching, so its hint keeps its place.
+    const lines = second.body.contents.map((line: any) => line.text);
+    assert.ok(lines.includes('ตอบ 2 หรือกดปุ่มด้านล่าง'));
+    assert.ok(lines.includes(COMPANY_PICKER_OPEN_WEB_HINT));
+    assert.equal((message as any).altText, 'เลือกบริษัทที่ต้องการใช้งาน', 'the notification line is unchanged');
+  });
+
+  it('gives the current company only the web button — there is nothing to select', () => {
+    const message = buildCompanyPickerMessage([
+      { companyId: 'co-1', companyName: 'บริษัทหนึ่ง', webUrl: 'https://app.example.com/l/tok1' },
+      { companyId: 'co-2', companyName: 'บริษัทสอง', webUrl: 'https://app.example.com/l/tok2' },
+    ], 'co-1');
+    const [first] = (message as any).contents.contents;
+    assert.deepEqual(first.footer.contents.map((button: any) => button.action), [
+      { type: 'uri', label: COMPANY_PICKER_OPEN_WEB_LABEL, uri: 'https://app.example.com/l/tok1' },
+    ]);
+    assert.match(JSON.stringify(first), /ใช้งานอยู่/);
+    assert.equal(JSON.stringify(message).includes('/company co-1'), false, 'no redundant switch action');
+    // …and nothing to switch either: "ระบบจะสลับบริษัทในไลน์ให้ด้วย" on the bubble the chat is
+    // ALREADY on promises a change that will not happen. The line belongs to the bubbles it is
+    // true of; the second one still carries it.
+    const currentLines = first.body.contents.map((line: any) => line.text);
+    assert.equal(currentLines.includes(COMPANY_PICKER_OPEN_WEB_HINT), false, 'no switch is promised where none happens');
+    const [, second] = (message as any).contents.contents;
+    assert.ok(second.body.contents.map((line: any) => line.text).includes(COMPANY_PICKER_OPEN_WEB_HINT));
+  });
+
+  it('is byte-identical to the old picker when no company carries a web link', () => {
+    const plain = buildCompanyPickerMessage([
+      { companyId: 'co-1', companyName: 'บริษัทหนึ่ง' },
+      { companyId: 'co-2', companyName: 'บริษัทสอง' },
+    ], 'co-1');
+    const rendered = JSON.stringify(plain);
+    assert.equal(rendered.includes(COMPANY_PICKER_OPEN_WEB_LABEL), false);
+    assert.equal(rendered.includes(COMPANY_PICKER_OPEN_WEB_HINT), false);
+    assert.equal(rendered.includes('"uri"'), false, 'no uri action may appear without a minted link');
+    // The current company keeps having no footer at all, exactly as before.
+    assert.equal((plain as any).contents.contents[0].footer, undefined);
+  });
+
+  it('keeps every picker button short enough not to truncate at LINE sm size', () => {
+    const labels = [COMPANY_PICKER_SELECT_LABEL, COMPANY_PICKER_OPEN_WEB_LABEL];
+    for (const label of labels) {
+      const clusters = [...new Intl.Segmenter('th', { granularity: 'grapheme' }).segment(label)].length;
+      assert.ok(clusters <= 12, `${label} renders as ${clusters} clusters`);
+    }
+  });
+
+  /** The caller mints one token per VISIBLE bubble, so it must read the same page rule the
+   *  renderer uses rather than re-deriving it and drifting. */
+  it('exposes the visible page so a caller can mint exactly one link per bubble', () => {
+    const companies = Array.from({ length: 14 }, (_, index) => ({ companyId: `co-${index + 1}`, companyName: `บริษัท ${index + 1}` }));
+    const first = companyPickerPage(companies, 'co-14');
+    assert.equal(first.pageCount, 2);
+    assert.equal(first.page, 1);
+    assert.equal(first.visible.length, 11);
+    assert.equal(first.visible[0]?.companyId, 'co-14', 'the current company leads, as the carousel shows it');
+
+    const second = companyPickerPage(companies, 'co-14', 2);
+    assert.equal(second.page, 2);
+    assert.equal(second.visible.length, 3);
+    // Every company is reachable across the pages, and none is minted twice.
+    const seen = [...first.visible, ...second.visible].map((item) => item.companyId);
+    assert.equal(new Set(seen).size, 14);
+
+    // A page beyond the end clamps, exactly as the renderer clamps it.
+    assert.equal(companyPickerPage(companies, 'co-14', 99).page, 2);
+    assert.deepEqual(companyPickerPage([{ companyId: 'co-1', companyName: 'ก' }]), {
+      visible: [{ companyId: 'co-1', companyName: 'ก' }], page: 1, pageCount: 1,
+    });
   });
 
   it('puts the current company first and paginates every owner company without dropping names', () => {

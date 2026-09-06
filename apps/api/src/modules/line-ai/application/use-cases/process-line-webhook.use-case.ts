@@ -96,7 +96,7 @@ import type { BusinessDocumentClassification, ExpenseChargeSummary, ExpenseLineC
 import { EXPENSE_LINE_CHARGE_KIND_LABELS, RECEIPT_ADDITIONAL_CHARGE_KINDS, LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, nextPlanTierKey, asIntakeRouteIntent, civilDateToUtcDate, extractValueCandidates, hasToolPermissions, todayCivilDate, type ExpenseDocumentDateStatus } from '@watchdog-bms/contracts';
 import { LineAiLedgerService, ledgerKey, type LedgerEntry } from '../line-ai-ledger.service';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
-import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, isCapabilityQuestion, staffMenuCommand, PACKAGE_CHANGE_COMMAND, PENDING_APPROVAL_ITEM_LIMIT, RESUME_AI_COMMAND, type ApprovalSurfaceKey, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
+import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, companyPickerPage, isCapabilityQuestion, staffMenuCommand, PACKAGE_CHANGE_COMMAND, PENDING_APPROVAL_ITEM_LIMIT, RESUME_AI_COMMAND, type ApprovalSurfaceKey, type CompanyPickerItem, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
 import { buildAiBudgetExceededMessage, buildExpenseDraftCardMessage, buildLegalAcceptanceRequiredMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildReceiptQuotaExceededMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, buildSignupDoorCard, buildSignupStatusCard, LIFF_ID_PATTERN, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
 // P10-L: the LINE surface opens a package-change request and tells the operators about a support
 // request; both live in the signup module, which owns those rules and their audit.
@@ -123,6 +123,7 @@ import {
 import { claimReceiptQuotaNotice, receiptQuotaSnapshot, releaseReceiptQuotaNotice, RECEIPT_QUOTA_ERROR_CODE } from '../company-ocr-governance';
 import { bangkokMonthKey } from '../company-ai-usage-meter';
 import { LineHandoffLinkService } from '../line-handoff-link.service';
+import { LINE_HANDOFF_SURFACE_COMPANY_PICKER_OPEN } from '../../../auth/domain/logic/line-handoff.logic';
 import {
   classifyLineAiGatewayFailure,
   classifyLineAiTerminalOutcome,
@@ -4399,6 +4400,44 @@ export class ProcessLineWebhookUseCase {
     return previous && COMPANY_SELECTION_PENDING_STATUSES.has(previous.status) ? candidate : null;
   }
 
+  /**
+   * บริษัทของฉัน bubbles, each carrying its OWN one-tap web link where one could be minted.
+   *
+   * Owner 2026-09-06: "มี 2 ปุ่ม … อีกปุ่มคือสลับบริษัทและพาไปเว็บไซต์ตามบริษัทนั้น". The delivery
+   * seam cannot do this: it binds ONE recipient company to a whole message, and `isSafeHandoffPath`
+   * refuses a path under any other company — which is exactly right, and exactly why a picker of N
+   * companies mints N tokens here instead. Only the bubbles this page actually shows get one.
+   *
+   * `lineUserId` is the chat's own id — the same key `LineCompanyContext` is upserted under below —
+   * so the exchange-time switch lands on the row this conversation reads.
+   *
+   * Absent seam (LINE_WEB_HANDOFF_ENABLED off) or a failed mint returns items with no `webUrl`, and
+   * the picker then renders exactly what it rendered before this feature existed.
+   */
+  private async companyPickerItems(
+    event: LineTextEvent,
+    userId: string,
+    memberships: LineCompanyMembership[],
+    currentCompanyId: string | undefined,
+    page: number | undefined,
+  ): Promise<CompanyPickerItem[]> {
+    const items: CompanyPickerItem[] = memberships.map((membership) => ({
+      companyId: membership.companyId,
+      companyName: companyLabel(membership),
+    }));
+    if (!this.handoffLinks) return items;
+    const visible = new Set(companyPickerPage(items, currentCompanyId, page).visible.map((item) => item.companyId));
+    return Promise.all(items.map(async (item) => (visible.has(item.companyId)
+      ? {
+        ...item,
+        webUrl: await this.handoffLinks!.linkFor(
+          { userId, companyId: item.companyId, lineUserId: event.lineUserId, surface: LINE_HANDOFF_SURFACE_COMPANY_PICKER_OPEN },
+          `/companies/${item.companyId}/dashboard`,
+        ) ?? undefined,
+      }
+      : item)));
+  }
+
   private async handleCompanyCommand(event: LineTextEvent, requestId: string, userId: string, displayName: string, command: LineCompanyCommand): Promise<void> {
     const memberships = await this.listLineCompanies(userId);
     if (memberships.length === 0) {
@@ -4417,7 +4456,7 @@ export class ProcessLineWebhookUseCase {
       const currentMembership = memberships.find((membership) => membership.companyId === currentCompanyId);
       if (!currentMembership) {
         await this.deliverRequiredMessages(event, [buildCompanyPickerMessage(
-          memberships.map((membership) => ({ companyId: membership.companyId, companyName: companyLabel(membership) })),
+          await this.companyPickerItems(event, userId, memberships, undefined, command.page),
           undefined,
           command.page,
         )]);
@@ -4439,7 +4478,7 @@ export class ProcessLineWebhookUseCase {
       })];
       if (memberships.length > 1) {
         messages.push(buildCompanyPickerMessage(
-          memberships.map((membership) => ({ companyId: membership.companyId, companyName: companyLabel(membership) })),
+          await this.companyPickerItems(event, userId, memberships, currentMembership.companyId, command.page),
           currentMembership.companyId,
           command.page,
         ));
