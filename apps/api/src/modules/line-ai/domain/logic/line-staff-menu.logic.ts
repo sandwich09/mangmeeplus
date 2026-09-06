@@ -70,6 +70,16 @@ export type CompanyContextCard = {
    */
   newShopSignupUrl?: string;
   /**
+   * Owner 2026-09-06: "ปุ่มเปิดร้านใหม่โผล่ให้ STAFF ผ่าน /companies => staff ไม่ควรเห็น ถ้าเขาจะเปิดร้านเอง
+   * ต้องผ่าน promotion หากอยู่ในมุมมองพนักงาน". Opening a shop is a shop-owner action, so the door above
+   * is gated on the viewer's role in the company THIS card is about — someone who owns their own shop
+   * and works at another sees the door on one card and the โปรโมชั่น pointer on the other. Spec §3.1
+   * built the "ฉันเป็นพนักงาน" door for the same trap ("พนักงานเผลอสมัครร้านซ้ำ") at the stranger end.
+   *
+   * Absent means employee: a caller that forgets the flag withholds the door rather than opening it.
+   */
+  isOwner?: boolean;
+  /**
    * The shop named on the application this LINE account still has travelling, or `undefined` when
    * it has none. UAT 2026-09-06 "สมัครแล้วแต่บริษัทหาย": a repeat trial always queues for review
    * (§3.3), so the owner who had just used the button above came back to this card and found no
@@ -179,6 +189,15 @@ export function buildCompanyContextMessage(context: CompanyContextCard): LineRep
   const shop = scrubRecordText(context.pendingSignupName, 60);
   const pendingLine = context.pendingSignupName === undefined ? undefined
     : `🕒 คำขอเปิดร้าน${shop ? ` «${shop}»` : 'ใหม่'} รอทีมงานตรวจสอบ ปกติภายในวันทำการ`;
+  // Exactly one of these two, and only where the environment actually opens a door: the owner gets
+  // it, the employee gets the words for the route they already have in the menu. An open request
+  // silences both — the LIFF form behind either one could only answer `line_signup_already_pending`.
+  // The command name comes from the constant the tile and the matcher read, so the sentence cannot
+  // send an employee to words that stopped working.
+  const door = Boolean(context.newShopSignupUrl) && !pendingLine;
+  const promotionLine = door && !context.isOwner
+    ? `💡 อยากเปิดร้านของตัวเอง กดปุ่ม ${VIEW_PACKAGES_COMMAND} ในเมนูได้เลยค่ะ`
+    : undefined;
   return {
     type: 'flex',
     altText: `บริษัทของฉัน: ${companyName} · คุณ${displayName} · ${roleLabel}${pendingLine ? `\n${pendingLine}` : ''}`,
@@ -190,8 +209,9 @@ export function buildCompanyContextMessage(context: CompanyContextCard): LineRep
         { type: 'text', text: `👤 คุณ${displayName}`, size: 'sm', color: '#475467', wrap: true },
         { type: 'text', text: `💼 ${roleLabel}`, size: 'sm', color: '#475467', wrap: true },
         ...(pendingLine ? [{ type: 'text', text: pendingLine, size: 'sm', color: '#475467', wrap: true }] : []),
+        ...(promotionLine ? [{ type: 'text', text: promotionLine, size: 'sm', color: '#475467', wrap: true }] : []),
       ] },
-      ...(context.newShopSignupUrl && !pendingLine ? {
+      ...(door && context.isOwner ? {
         footer: { type: 'box', layout: 'vertical', contents: [
           { type: 'button', style: 'primary', color: '#22C55E', action: { type: 'uri', label: 'เปิดร้านใหม่', uri: context.newShopSignupUrl } },
         ] },
