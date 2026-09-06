@@ -135,6 +135,49 @@ describe('receipt truth on real PostgreSQL (spec §11)', { skip: !databaseUrl },
     assert.ok(outcome.reviewReasons.includes(RECEIPT_REVIEW_REASONS.whtWithCharges));
   });
 
+  /**
+   * UAT 2026-09-06 (cmtp9v5bc…): a bill printing `130.00 + ค่าบริการ 13.00 + VAT 10.01 = 153.01` was
+   * labelled `VAT_INCLUDED` by the extractor and stored as ONE 153.01 line with `chargeKind` NULL,
+   * while the chat card listed the service charge. The mode comes off the printed arithmetic now,
+   * and only a real database can show the enum, the `Decimal(18,4)` rates and the header/line split
+   * that the object fake settles by echoing whatever the service handed it.
+   */
+  it('splits a mislabelled VAT_INCLUDED bill into a base and a service-charge row', async (t) => {
+    if (unreachable) return t.skip(unreachable);
+    const expenseId = await draft();
+
+    const outcome = await apply().apply(ctx(), expenseId, {
+      vatMode: 'VAT_INCLUDED', vatRate: '0.07', quantity: '1', unitPrice: '130.00',
+      subtotalAmount: '130.00', vatAmount: '10.01', grandTotalAmount: '153.01',
+      expenseDate: '2026-09-05',
+      additionalCharges: [{
+        kind: 'SERVICE_CHARGE', amount: '13.00', vatRate: '0.07', confidence: 0.93,
+        description: 'ค่าบริการ (10%)', evidenceSignal: 'ค่าบริการ (10%) 13.00',
+      }],
+      description: 'Heineken bottle x1 with service charge',
+    } as never, { todayIso: TODAY });
+
+    assert.equal(outcome.chargeReconciliationStatus, 'RECONCILED_CHARGE_LINES');
+    assert.equal(outcome.chargesApplied, 1);
+    assert.equal(outcome.reviewReasons.includes(RECEIPT_REVIEW_REASONS.chargesFolded), false);
+    assert.deepEqual(outcome.charges, [{ kind: 'SERVICE_CHARGE', label: 'ค่าบริการ', amount: '13.0000', vatAmount: '0.9100' }]);
+
+    const lines = await client.expenseLine.findMany({ where: { expenseId }, orderBy: { lineNumber: 'asc' } });
+    assert.equal(lines.length, 2);
+    assert.equal(lines[0]!.chargeKind, null);
+    assert.equal(lines[0]!.unitPrice.toFixed(2), '130.00');
+    assert.equal(lines[1]!.chargeKind, 'SERVICE_CHARGE');
+    assert.equal(lines[1]!.unitPrice.toFixed(2), '13.00');
+    assert.equal(lines[1]!.vatRate?.toFixed(4), '0.0700');
+
+    const record = await client.expenseRecord.findUniqueOrThrow({ where: { id: expenseId } });
+    assert.equal(record.vatMode, 'VAT_EXCLUDED', 'the printed 130 + 13 + 10.01 = 153.01 is VAT added on top');
+    assert.equal(record.subtotalAmount.toFixed(2), '130.00', 'a service charge is not goods');
+    assert.equal(record.taxableAmount.toFixed(2), '143.00');
+    assert.equal(record.vatAmount.toFixed(2), '10.01');
+    assert.equal(record.grandTotalAmount.toFixed(2), '153.01', 'and what the shop paid never moved');
+  });
+
   it('persists an assumed date as a real date, flagged and NOT forced into review', async (t) => {
     if (unreachable) return t.skip(unreachable);
     const expenseId = await draft();
