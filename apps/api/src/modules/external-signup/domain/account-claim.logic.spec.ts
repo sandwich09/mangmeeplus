@@ -1,15 +1,20 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  CLAIM_EXPIRY_AFTER_APPROVAL_DAYS,
   CLAIM_REMINDER_AFTER_HOURS,
+  CLAIM_RESEND_MIN_WINDOW_MS,
   CLAIM_TOKEN_TTL_HOURS,
   canResendClaim,
+  claimTokenExpiresAt,
+  claimWindowRemainingMs,
   daysSinceApproval,
   hashClaimToken,
   maskEmail,
   publicSignupStatusKey,
   suggestedUsernameFromEmail,
 } from './account-claim.logic';
+import { PUBLIC_SIGNUP_STATUS_KEYS } from '@watchdog-bms/contracts';
 import { COMPANY_SIGNUP_STATES, type CompanySignupState } from './company-signup.logic';
 
 const NOW = new Date('2026-09-01T00:00:00.000Z');
@@ -34,18 +39,31 @@ describe('account claim logic', () => {
     assert.equal(publicSignupStatusKey('VALIDATED'), 'CHECKING');
     assert.equal(publicSignupStatusKey('PENDING_REVIEW'), 'PENDING_REVIEW');
     assert.equal(publicSignupStatusKey('EMAIL_PENDING'), 'AWAITING_CLAIM');
-    assert.equal(publicSignupStatusKey('EMAIL_FAILED'), 'AWAITING_CLAIM');
     assert.equal(publicSignupStatusKey('READY'), 'READY');
     assert.equal(publicSignupStatusKey('COMPLETED'), 'READY');
+    assert.equal(publicSignupStatusKey('LINE_LINK_PENDING'), 'READY');
     assert.equal(publicSignupStatusKey('REJECTED'), 'REJECTED');
     assert.equal(publicSignupStatusKey('EXPIRED'), 'EXPIRED');
-    // The public surface must never leak an internal failure as its own status.
-    assert.equal(publicSignupStatusKey('PROVISIONING_FAILED'), 'CHECKING');
     assert.equal(publicSignupStatusKey('SUSPENDED'), 'CHECKING');
   });
 
+  // R11: three states used to answer with a status that claimed something which had not happened.
+  // The mapping is coarse by design (spec §3) but it may not be UNTRUE — an applicant who is told
+  // "your shop is ready, log in" before a company exists, or "nothing to do" while nothing is
+  // retrying, or "we sent the email" after it bounced, is being sent to the wrong place.
+  it('does not report a shop, a rescue, or a delivery that has not happened', () => {
+    // No company exists in either: the claim was proved and provisioning is still running.
+    assert.equal(publicSignupStatusKey('EMAIL_VERIFIED'), 'PREPARING');
+    assert.equal(publicSignupStatusKey('PROVISIONING'), 'PREPARING');
+    // Nothing retries by itself, so this needs a human — not "ยังไม่ต้องทำอะไรเพิ่ม".
+    assert.equal(publicSignupStatusKey('PROVISIONING_FAILED'), 'PREPARING_FAILED');
+    // The letter bounced. Saying it was sent is how an applicant waits for a mail that never comes.
+    assert.equal(publicSignupStatusKey('EMAIL_FAILED'), 'EMAIL_FAILED');
+  });
+
   it('collapses any unmapped state to CHECKING rather than leaking it', () => {
-    const allowed = new Set(['CHECKING', 'PENDING_REVIEW', 'AWAITING_CLAIM', 'READY', 'REJECTED', 'EXPIRED']);
+    // From the contract, so a key added there without copy behind it cannot slip through here.
+    const allowed = new Set<string>(PUBLIC_SIGNUP_STATUS_KEYS);
     for (const state of COMPANY_SIGNUP_STATES) {
       assert.ok(allowed.has(publicSignupStatusKey(state)), `${state} escaped the allowlist`);
     }
@@ -86,6 +104,36 @@ describe('account claim logic', () => {
     assert.equal(suggestedUsernameFromEmail('ab@x.co'), undefined);
     assert.equal(suggestedUsernameFromEmail('สมชาย@x.co'), undefined);
     assert.equal(suggestedUsernameFromEmail('...abc@x.co'), 'abc');
+  });
+});
+
+/**
+ * Review F7. The token TTL is 72 hours; the activation window is 30 days and a self-serve resend
+ * does not restart it. A link resent on day 28 was therefore minted alive until day 31, and the
+ * day-30 sweep killed it mid-life — the applicant tapped a link that had been valid when it was
+ * sent and got the same blank refusal an unknown token gets.
+ */
+describe('a claim link never outlives its own activation window (F7)', () => {
+  it('gives the full 72 hours while the window has room for it', () => {
+    const expiry = claimTokenExpiresAt(NOW, daysAgo(1));
+    assert.equal(expiry.getTime() - NOW.getTime(), CLAIM_TOKEN_TTL_HOURS * 3_600_000);
+  });
+
+  it('clamps the link to the end of its window, never past it', () => {
+    // Day 28 of 30: a full TTL would outlive the window by a day and be swept mid-life.
+    const expiry = claimTokenExpiresAt(NOW, daysAgo(28));
+    assert.equal(expiry.getTime(), daysAgo(28).getTime() + CLAIM_EXPIRY_AFTER_APPROVAL_DAYS * 86_400_000);
+    assert.ok(expiry.getTime() - NOW.getTime() < CLAIM_TOKEN_TTL_HOURS * 3_600_000);
+  });
+
+  it('keeps the plain TTL when there is no window to clamp to', () => {
+    assert.equal(claimTokenExpiresAt(NOW, null).getTime() - NOW.getTime(), CLAIM_TOKEN_TTL_HOURS * 3_600_000);
+  });
+
+  it('measures what is left of the window, so a nearly dead one can be refused', () => {
+    assert.equal(claimWindowRemainingMs(NOW, daysAgo(CLAIM_EXPIRY_AFTER_APPROVAL_DAYS)), 0);
+    assert.ok(claimWindowRemainingMs(NOW, daysAgo(1)) > CLAIM_RESEND_MIN_WINDOW_MS);
+    assert.equal(claimWindowRemainingMs(NOW, null), Number.POSITIVE_INFINITY);
   });
 });
 

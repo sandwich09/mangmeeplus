@@ -5,6 +5,7 @@ import type {
   PublicCompanySignupBody,
   PublicSignupStatusDto,
   SignupClaimAttachBody,
+  SignupClaimInfoBody,
   SignupClaimInfoDto,
   SignupClaimResultDto,
   SignupClaimSetPasswordBody,
@@ -26,7 +27,13 @@ async function publicJson<T>(path: string, init?: { method: 'POST'; body: unknow
       method: init?.method ?? 'GET',
       headers: { 'Content-Type': 'application/json' },
       body: init ? JSON.stringify(init.body) : undefined,
-      credentials: 'include',
+      // Review R03: the `/api/v1/public/*` endpoints are session-less by design — the claim token
+      // or the request id is the whole proof — so they carry no ambient credential. Sending one
+      // put a signed-in applicant (an employee opening their own shop, an owner adding a second,
+      // anyone with a stale cookie) into the proxy's double-submit CSRF gate, which rejected the
+      // call with 403 before the API ever saw it. The `/api/auth/*` BFF keeps its credentials: it
+      // RETURNS Set-Cookie, and a browser drops those on a credentials-omitted fetch.
+      credentials: path.startsWith('/api/v1/') ? 'omit' : 'include',
       cache: 'no-store',
     });
   } catch (cause) {
@@ -72,8 +79,13 @@ export function resendSignupClaimEmail(requestId: string): Promise<void> {
   });
 }
 
+// Review R01: POST with the token in the body. It used to be `GET signup-claims/<token>`, which put
+// a live bearer credential into every access log between the browser and the API.
 export function getSignupClaimInfo(token: string): Promise<SignupClaimInfoDto> {
-  return publicJson<SignupClaimInfoDto>(`/api/v1/public/signup-claims/${encodeURIComponent(token)}`);
+  return publicJson<SignupClaimInfoDto>('/api/v1/public/signup-claims/info', {
+    method: 'POST',
+    body: { token } satisfies SignupClaimInfoBody,
+  });
 }
 
 export type SignupClaimSessionResult = SignupClaimResultDto & { sessionEstablished: boolean };

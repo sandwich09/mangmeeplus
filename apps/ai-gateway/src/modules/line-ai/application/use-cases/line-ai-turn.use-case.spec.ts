@@ -84,6 +84,30 @@ describe('LineAiTurnUseCase – feature flag routing', () => {
     assert.ok((resp.presentation?.cards.length ?? 0) > 0);
   });
 
+  // Spec `line-ai-draft-control-spec-th.md` §5.3. The deterministic path classifies by keyword, and
+  // its Thai list (บัญชี, ภาษี, เงินเดือน, งบดุล) is all in-system subjects — so "out of scope" was
+  // the wrong sentence there before any router was involved.
+  describe('deterministic path splits "not on LINE yet" from "out of scope"', () => {
+    const config = { lineAiAgentOrchestrationEnabled: false, lineAiAgentRuntime: 'disabled' } as any;
+    const ask = (intakeIntent?: any) => new LineAiTurnUseCase(makeErpTools(), makeOrchestrator(), config, makeAgentcoreRuntime())
+      .execute({ ...validReq, messageText: 'ขอดูงบดุลหน่อย', ...(intakeIntent ? { intakeIntent } : {}) });
+
+    it('says it is in the system and links to the web app when intake called it business', async () => {
+      const resp = await ask('BUSINESS_READ_QUESTION');
+      assert.equal(resp.refusalReason, 'unsupported_yet');
+      assert.match(resp.replyText, /เรื่องนี้อยู่ในระบบ แต่น้องมั่งมียังทำผ่าน LINE ไม่ได้/);
+      assert.deepEqual(resp.webLinks, [{ label: 'เปิดรายการในเว็บ', path: '/companies/company-1/expenses' }]);
+    });
+
+    it('keeps the out-of-scope copy when no trusted intake provenance says business', async () => {
+      for (const intake of [undefined, 'UNSUPPORTED']) {
+        const resp = await ask(intake);
+        assert.equal(resp.refusalReason, 'unsupported_module', String(intake));
+        assert.match(resp.replyText, /นอกขอบเขตระบบ/, String(intake));
+      }
+    });
+  });
+
   it('deterministic fallback preserves scalar zero as a successful answer card', async () => {
     const config = { lineAiAgentOrchestrationEnabled: false, lineAiAgentRuntime: 'disabled' } as any;
     const useCase = new LineAiTurnUseCase(makeErpTools('ok', 0), makeOrchestrator(), config, makeAgentcoreRuntime());

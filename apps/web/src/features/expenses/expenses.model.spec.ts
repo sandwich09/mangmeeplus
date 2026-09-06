@@ -14,6 +14,9 @@ import {
   substituteReceiptPreparationHref,
   deriveExpenseClassificationReviewState,
   expenseAiFieldProvenance,
+  expenseAiMissingFields,
+  expenseDocumentDateStatus,
+  expenseDateIsReadable,
   expenseAiSuggestion,
   expenseAiCategorySuggestion,
   applyExpenseAiSuggestion,
@@ -275,15 +278,51 @@ describe('expenses.model', () => {
   });
 
   it('maps AI summary aliases to review fields and keeps manual expenses unmarked', () => {
+    // Every producer writes `recognizedFields` as the ReceiptOcrFieldResult OBJECT; the legacy
+    // string[] shape is still read so nothing stored before this fix goes dark.
     const summary = {
-      recognizedFields: ['vendorName', 'amount', 'vatAmount'],
+      recognizedFields: { vendorName: 'ร้านกาแฟ', amount: '65.00', vatAmount: '4.20', documentNumber: '' },
       missingFields: ['vendorTaxId', 'category'],
     };
+    assert.deepEqual(expenseAiFieldProvenance(
+      { recognizedFields: ['vendorName', 'amount', 'vatAmount'], missingFields: [] },
+      'vendorNameSnapshot',
+    ), { recognized: true, missing: false }, 'the legacy array shape still reads');
+    assert.deepEqual(expenseAiFieldProvenance(summary, 'vendorDocumentNumber'), { recognized: false, missing: false },
+      'a key the OCR left empty was not a reading');
     assert.deepEqual(expenseAiFieldProvenance(summary, 'vendorNameSnapshot'), { recognized: true, missing: false });
     assert.deepEqual(expenseAiFieldProvenance(summary, 'total'), { recognized: true, missing: false });
     assert.deepEqual(expenseAiFieldProvenance(summary, 'vendorTaxIdSnapshot'), { recognized: false, missing: true });
     assert.deepEqual(expenseAiFieldProvenance(summary, 'category'), { recognized: false, missing: true });
     assert.equal(expenseAiFieldProvenance(null, 'vendorNameSnapshot'), null);
+  });
+
+  // Spec `line-ai-draft-control-spec-th.md` §5.2(ง). The date column is NOT NULL, so an unread date
+  // still stores the upload day — a value every non-empty check passes. The server now flags it in
+  // `missingFields`, and this is the chain that turns that flag into "ต้องกรอกเอง: วันที่รายจ่าย" on
+  // the review page. No new web mechanism: the flag reuses the one the page already reads.
+  it('shows an unverified expense date as a field the reviewer must confirm', () => {
+    const summary = { recognizedFields: {}, missingFields: ['expenseDate', 'category'], dateStatus: 'unverified' };
+    assert.deepEqual(expenseAiFieldProvenance(summary, 'expenseDate'), { recognized: false, missing: true });
+    assert.ok(expenseAiMissingFields(summary, 'data').includes('expenseDate'), 'and it belongs to the data step, not evidence');
+    assert.equal(AI_MISSING_FIELD_LABELS['expenseDate'], 'วันที่รายจ่าย');
+
+    const verified = { recognizedFields: {}, missingFields: ['category'] };
+    assert.deepEqual(expenseAiMissingFields(verified, 'data'), [], 'a date read off the document raises nothing');
+  });
+
+  // Spec §5.2: four states, and every surface reads them from here.
+  it('reports what the stored document date actually is', () => {
+    assert.equal(expenseDocumentDateStatus({ dateStatus: 'assumed' }), 'assumed');
+    assert.equal(expenseDocumentDateStatus({ dateStatus: 'implausible' }), 'implausible');
+    assert.equal(expenseDocumentDateStatus({ missingFields: ['expenseDate'] }), 'unverified', 'pre-§5.2 rows fall back to the flag');
+    assert.equal(expenseDocumentDateStatus({ missingFields: ['category'] }), 'verified');
+    assert.equal(expenseDocumentDateStatus(null), 'verified', 'a manual entry is a date a person typed');
+    assert.equal(expenseDocumentDateStatus({ dateStatus: 'nonsense' }), 'verified', 'an unknown value is not a warning');
+
+    assert.equal(expenseDateIsReadable({ dateStatus: 'assumed' }), true, 'read off the bill IS read');
+    assert.equal(expenseDateIsReadable({ dateStatus: 'unverified' }), false);
+    assert.equal(expenseDateIsReadable({ dateStatus: 'implausible' }), false);
   });
 
   it('formats fraction rates as a display-only percentage with at most two decimals', () => {
@@ -376,7 +415,9 @@ describe('expenses.model', () => {
       expenseDate: '2026-07-10',
       vatMode: 'VAT_EXCLUDED',
       lines: [{
-        lineNumber: 1, description: 'สินค้า', quantity: '2', unitPrice: '150', discountAmount: '10', vatRate: '0.07',
+        // §5.1: stated on EVERY row, product rows included. An absent kind tells the server to keep
+        // whatever that row already had, which is not what this form means on a goods line.
+        lineNumber: 1, description: 'สินค้า', chargeKind: null, quantity: '2', unitPrice: '150', discountAmount: '10', vatRate: '0.07',
         whtRate: '0.03', expenseCategoryId: 'category-1', accountHintKey: 'expense.office', taxCategory: 'INPUT_VAT',
       }],
     });

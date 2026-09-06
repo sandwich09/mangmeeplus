@@ -3,7 +3,9 @@ import type { PublicSignupStatusDto } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { CompanySignupCoreService } from './company-signup-core.service';
 import { SignupClaimEmailService } from './signup-claim-email.service';
-import { canResendClaim, publicSignupStatusKey } from '../domain/account-claim.logic';
+import {
+  CLAIM_RESEND_MIN_WINDOW_MS, canResendClaim, claimWindowRemainingMs, publicSignupStatusKey,
+} from '../domain/account-claim.logic';
 import type { CompanySignupState } from '../domain/company-signup.logic';
 
 @Injectable()
@@ -21,14 +23,15 @@ export class PublicSignupStatusUseCase {
   async status(requestId: string, now = new Date()): Promise<PublicSignupStatusDto> {
     const request = await this.prisma.client.companySignupRequest.findUnique({
       where: { id: requestId },
-      select: { id: true, state: true, approvedAt: true },
+      select: { id: true, state: true, approvedAt: true, claimWindowStartedAt: true },
     });
     if (!request) throw new NotFoundException('company_signup_request_not_found');
     const state = request.state as CompanySignupState;
     return {
       requestId: request.id,
       status: publicSignupStatusKey(state),
-      canResendClaim: canResendClaim(state, request.approvedAt, now),
+      // R09: the reissue-restarted window, falling back to the approval for rows written before it.
+      canResendClaim: canResendClaim(state, request.claimWindowStartedAt ?? request.approvedAt, now),
     };
   }
 
@@ -40,13 +43,21 @@ export class PublicSignupStatusUseCase {
   async resendClaim(requestId: string, correlationRequestId: string, now = new Date()): Promise<void> {
     const request = await this.prisma.client.companySignupRequest.findUnique({
       where: { id: requestId },
-      select: { id: true, state: true, approvedAt: true },
+      select: { id: true, state: true, approvedAt: true, claimWindowStartedAt: true },
     });
     if (!request) throw new NotFoundException('company_signup_request_not_found');
 
     const state = request.state as CompanySignupState;
-    if (!canResendClaim(state, request.approvedAt, now)) {
+    const windowStartedAt = request.claimWindowStartedAt ?? request.approvedAt;
+    if (!canResendClaim(state, windowStartedAt, now)) {
       throw new ConflictException('claim_resend_not_available');
+    }
+    // Review F7: a self-serve resend does NOT restart the window — that is the whole point of the
+    // 30-day self-serve limit — so near its end the link this would send is already almost dead.
+    // Saying so is better than sending one that expires between the inbox and the tap; an operator
+    // reissue has no age limit and does restart the clock.
+    if (claimWindowRemainingMs(now, windowStartedAt) < CLAIM_RESEND_MIN_WINDOW_MS) {
+      throw new ConflictException('claim_window_almost_over');
     }
     // From EMAIL_FAILED or EXPIRED this is the documented way back to a live link; from
     // EMAIL_PENDING the core treats it as a replay and changes nothing.

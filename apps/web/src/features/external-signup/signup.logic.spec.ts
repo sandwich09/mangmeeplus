@@ -1,13 +1,22 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  PLAN_TIER_PRESETS, PUBLIC_SIGNUP_STATUS_KEYS, SIGNUP_TRIAL_TIER_KEY, SIGNUP_TRIAL_WARMUP_SLIPS,
+} from '@watchdog-bms/contracts';
+import {
   clampMobileInput,
+  firstSignupErrorField,
+  isTransientLoadFailure,
   isThaiMobile,
   MOBILE_DIGITS,
-  offerLimitsLabel,
+  rotateSignupKeyAfter,
   SELECTABLE_OFFER_KEY,
   SIGNUP_CONSENT_VERSION,
-  SIGNUP_OFFERS,
+  SIGNUP_TRIAL_AFTER,
+  SIGNUP_TRIAL_WARMUP,
+  SIGNUP_TRIAL_HEADLINE,
+  showsTrialNotice,
+  signupFieldRejection,
   signupStatusCopy,
   signupSubmitErrorMessage,
   validateClaimPassword,
@@ -85,27 +94,47 @@ describe('signup form validation', () => {
   });
 });
 
-describe('offer catalog', () => {
-  // Spec §3A: all four tiers are shown so the applicant sees the real journey, but the server
-  // allowlist accepts PRO_TRIAL only — a second selectable card would submit a rejected key.
-  it('shows four tiers with exactly one selectable, the PRO trial', () => {
-    assert.equal(SIGNUP_OFFERS.length, 4);
-    const selectable = SIGNUP_OFFERS.filter((offer) => offer.selectable);
-    assert.equal(selectable.length, 1);
-    assert.equal(selectable[0]!.offerKey, SELECTABLE_OFFER_KEY);
-    assert.equal(selectable[0]!.tierKey, 'PRO_999');
+// Owner 2026-09-05: self-signup stopped selling a tier. Every applicant gets the same free trial
+// the LINE-first signup gives, so the four priced cards and the "PRO ฿999 with a free-trial badge"
+// pairing are gone — they described a purchase nobody was being asked to make.
+describe('what signing up gets you', () => {
+  it('quotes the free trial from the shared preset rather than restating numbers', () => {
+    assert.match(SIGNUP_TRIAL_HEADLINE, /ทดลองใช้ฟรี 30 วัน/);
+    assert.match(SIGNUP_TRIAL_HEADLINE, new RegExp(`${PLAN_TIER_PRESETS[SIGNUP_TRIAL_TIER_KEY].monthlySlipLimit} ครั้ง`));
   });
 
-  it('gives every unavailable card a reason assistive technology can read', () => {
-    for (const offer of SIGNUP_OFFERS.filter((card) => !card.selectable)) {
-      assert.ok(offer.unavailableReason, `${offer.tierKey} has no reason`);
-      assert.match(offer.unavailableReason!, /เร็ว ๆ นี้/);
-    }
+  it('says what happens at the end without implying a charge', () => {
+    assert.match(SIGNUP_TRIAL_AFTER, /ติดต่อทีมงาน/);
+    assert.match(SIGNUP_TRIAL_AFTER, /ไม่มีการตัดเงินอัตโนมัติ/);
   });
 
-  it('quotes the quota from the shared tier presets rather than restating numbers', () => {
-    const pro = SIGNUP_OFFERS.find((offer) => offer.tierKey === 'PRO_999')!;
-    assert.match(offerLimitsLabel(pro), /5 สาขา · 10 คน · อ่านสลิป 100 ใบ\/เดือน/);
+  it('names no price and no tier in either line', () => {
+    const copy = `${SIGNUP_TRIAL_HEADLINE} ${SIGNUP_TRIAL_AFTER}`;
+    assert.doesNotMatch(copy, /999|฿/);
+    assert.doesNotMatch(copy, /\bPRO\b/);
+    assert.doesNotMatch(copy, /\+/);
+  });
+
+  it('still sends the offer key the server allowlist accepts', () => {
+    // The applicant is shown no choice, but the request still carries what the API expects and the
+    // admin queue displays. R02 made that key name the trial that is actually provisioned.
+    assert.equal(SELECTABLE_OFFER_KEY, 'FREE_TRIAL');
+  });
+
+  /**
+   * Review F17. P10-L §9 caps a brand-new trial shop harder for its first week than its tier
+   * allows. Discovering that on day one reads as a broken app, so the copy says it in advance —
+   * the card it used to sit on is gone, the promise it corrects is not.
+   */
+  it('says what the first week actually allows, from the shared constant', () => {
+    assert.match(SIGNUP_TRIAL_WARMUP, new RegExp(`สัปดาห์แรกอ่านได้ ${SIGNUP_TRIAL_WARMUP_SLIPS} ใบ`));
+    // Owner copy rule: no plus sign anywhere in user-facing text.
+    assert.equal(SIGNUP_TRIAL_WARMUP.includes('+'), false);
+    // The number is the warm-up ceiling, not the monthly quota — they differ, and saying the
+    // monthly one here would promise a month's receipts in a week that allows fewer.
+    assert.notEqual(SIGNUP_TRIAL_WARMUP_SLIPS, PLAN_TIER_PRESETS[SIGNUP_TRIAL_TIER_KEY].monthlySlipLimit);
+    // And the headline it qualifies still quotes the MONTHLY number, so the two do not blur.
+    assert.match(SIGNUP_TRIAL_HEADLINE, new RegExp(`${PLAN_TIER_PRESETS[SIGNUP_TRIAL_TIER_KEY].monthlySlipLimit} ครั้ง`));
   });
 
   it('pins the consent version to the current legal artifacts', () => {
@@ -138,11 +167,61 @@ describe('public status copy', () => {
     assert.match(signupStatusCopy('EXPIRED', true).body, /ขอลิงก์ใหม่/);
   });
 
-  it('never renders a "+" in owner-facing copy', () => {
-    for (const status of ['CHECKING', 'PENDING_REVIEW', 'AWAITING_CLAIM', 'READY', 'REJECTED', 'EXPIRED'] as const) {
+  it('never renders a "+" in owner-facing copy, for every key the contract declares', () => {
+    for (const status of PUBLIC_SIGNUP_STATUS_KEYS) {
       const copy = signupStatusCopy(status);
+      assert.ok(copy.title && copy.body, status);
       assert.doesNotMatch(`${copy.title} ${copy.body}`, /\+/, status);
     }
+  });
+
+  // R11: three states answered with copy about something that had not happened — a shop that did
+  // not exist, a rescue nothing was running, and an email that had bounced.
+  it('separates being prepared, a stalled preparation and a bounced email from READY', () => {
+    const preparing = signupStatusCopy('PREPARING');
+    assert.doesNotMatch(preparing.body, /พร้อมใช้งาน|เข้าสู่ระบบ/);
+
+    // Nothing retries by itself, so "ยังไม่ต้องทำอะไรเพิ่ม" left the applicant waiting on nobody.
+    const failed = signupStatusCopy('PREPARING_FAILED');
+    assert.doesNotMatch(failed.body, /ยังไม่ต้องทำอะไร/);
+    assert.match(failed.body, /098-256-5628/);
+
+    const bounced = signupStatusCopy('EMAIL_FAILED');
+    assert.match(bounced.title, /ส่งอีเมลไม่สำเร็จ/);
+    assert.doesNotMatch(bounced.body, /ไปให้แล้ว/);
+    assert.match(bounced.body, /ขอส่งใหม่/);
+
+    // The one state that may promise a login is still the one where the shop exists.
+    assert.match(signupStatusCopy('READY').body, /เข้าสู่ระบบ/);
+  });
+
+  // F8: the free-trial line is a promise about a shop that is coming. Next to "we rejected this",
+  // "it stalled" or "this expired" it is an advert on a dead end.
+  it('shows the free-trial promise only where a shop is still coming', () => {
+    for (const key of ['CHECKING', 'PENDING_REVIEW', 'AWAITING_CLAIM', 'EMAIL_FAILED', 'PREPARING'] as const) {
+      assert.equal(showsTrialNotice(key), true, key);
+    }
+    for (const key of ['REJECTED', 'PREPARING_FAILED', 'EXPIRED'] as const) {
+      assert.equal(showsTrialNotice(key), false, key);
+    }
+  });
+
+  // F9: nothing polls this page, so copy that says it will update on its own is a promise the
+  // page does not keep — the applicant sits watching a screen that will never change.
+  it('asks for a refresh rather than promising the page updates itself', () => {
+    const preparing = signupStatusCopy('PREPARING');
+    assert.match(preparing.body, /รีเฟรช/);
+    assert.doesNotMatch(preparing.body, /หน้านี้จะบอก/);
+  });
+
+  it('tells a transient load failure apart from a request that really is not there', () => {
+    // An outage on the way to the status/claim page must not be reported as a dead link.
+    assert.equal(isTransientLoadFailure(Object.assign(new Error('x'), { status: 503 })), true);
+    assert.equal(isTransientLoadFailure(Object.assign(new Error('x'), { status: 500 })), true);
+    assert.equal(isTransientLoadFailure(Object.assign(new Error('x'), { status: 429 })), true);
+    assert.equal(isTransientLoadFailure(new Error('Network request failed.')), true);
+    assert.equal(isTransientLoadFailure(Object.assign(new Error('x'), { status: 404 })), false);
+    assert.equal(isTransientLoadFailure(Object.assign(new Error('x'), { status: 400 })), false);
   });
 });
 
@@ -187,12 +266,76 @@ describe('submit error copy', () => {
   });
 });
 
+// R07. `submit-company-signup.use-case.ts` durably RECEIVES the payload before it looks up MX, so a
+// 422 leaves a row keyed by this idempotency key carrying the OLD address's payload hash. Sending
+// the corrected form under the same key answers `external_signup_payload_conflict` — the applicant
+// who mistyped their address cannot get past the form at all.
+describe('recovering from a rejected submit', () => {
+  it('rotates the idempotency key only after a definite validation rejection', () => {
+    assert.equal(rotateSignupKeyAfter(Object.assign(new Error('email_domain_has_no_mx'), { status: 422 })), true);
+    assert.equal(rotateSignupKeyAfter(Object.assign(new Error('Validation failed.'), { status: 400 })), true);
+    // Unknown outcomes keep the key: a retry after a timeout must not open a second application.
+    for (const status of [429, 500, 502, 503]) {
+      assert.equal(rotateSignupKeyAfter(Object.assign(new Error('x'), { status })), false, String(status));
+    }
+    assert.equal(rotateSignupKeyAfter(new Error('Network request failed.')), false);
+    assert.equal(rotateSignupKeyAfter(null), false);
+  });
+
+  // F6: a resolver that could not answer says nothing about the address. It must not accuse the
+  // applicant of a typo, and it must not rotate the key — the submission has not been decided.
+  it('keeps the key and blames nobody when the domain check could not run', () => {
+    const outage = Object.assign(new Error('email_domain_check_unavailable'), { status: 503 });
+    assert.equal(rotateSignupKeyAfter(outage), false);
+    assert.equal(signupFieldRejection(outage), null);
+    const message = signupSubmitErrorMessage(outage);
+    assert.match(message, /ตรวจอีเมลไม่ได้ชั่วคราว/);
+    assert.match(message, /ลองใหม่/);
+    assert.doesNotMatch(message, /ตรวจตัวสะกด/);
+    assert.doesNotMatch(message, /\+/);
+  });
+
+  it('puts the MX rejection under the email field in Thai instead of "reload the page"', () => {
+    const rejection = signupFieldRejection(Object.assign(new Error('email_domain_has_no_mx'), { status: 422 }));
+    assert.equal(rejection?.field, 'contactEmail');
+    assert.match(rejection!.message, /ไม่พบโดเมนอีเมลนี้/);
+    assert.doesNotMatch(rejection!.message, /โหลดหน้าใหม่/);
+    assert.doesNotMatch(rejection!.message, /\+/);
+    // The API answers with the code in `message`; the BFF shape carries it in `code`. Both count.
+    assert.equal(signupFieldRejection({ code: 'email_domain_has_no_mx', status: 422 })?.field, 'contactEmail');
+    // Anything that does not name a field stays a form-level message.
+    assert.equal(signupFieldRejection(Object.assign(new Error('Conflict'), { status: 409 })), null);
+    assert.equal(signupFieldRejection(null), null);
+  });
+
+  it('names the first error in submit order, so focus lands where the applicant reads', () => {
+    assert.equal(firstSignupErrorField({ phoneNumber: 'x', companyName: 'y' }), 'companyName');
+    assert.equal(firstSignupErrorField({ taxId: 'x', contactEmail: 'y' }), 'contactEmail');
+    assert.equal(firstSignupErrorField({}), null);
+  });
+});
+
 describe('claim password rules', () => {
   it('requires 8 characters with both letters and digits', () => {
     assert.ok(validateClaimPassword('somchai', 'abc12', 'abc12').password);
     assert.ok(validateClaimPassword('somchai', 'abcdefgh', 'abcdefgh').password);
     assert.ok(validateClaimPassword('somchai', '12345678', '12345678').password);
     assert.equal(validateClaimPassword('somchai', 'abcd1234', 'abcd1234').password, undefined);
+  });
+
+  // The field used to accept anything non-empty, so a Thai or spaced username reached the claim
+  // endpoint and came back as a 400 nobody could read — after a password had been typed twice.
+  it('applies the same username rule the claim endpoint enforces', () => {
+    const bad = (username: string) => validateClaimPassword(username, 'abcd1234', 'abcd1234').username;
+    assert.ok(bad('ab'), 'shorter than 3');
+    assert.ok(bad('a'.repeat(41)), 'longer than 40');
+    assert.ok(bad('สมชาย'), 'Thai characters');
+    assert.ok(bad('som chai'), 'a space');
+    assert.ok(bad('som@chai'), 'a character outside [A-Za-z0-9._-]');
+    assert.match(bad('ab')!, /3–40/);
+    for (const ok of ['som', 'som.chai', 'som_chai-01', 'A'.repeat(40)]) {
+      assert.equal(validateClaimPassword(ok, 'abcd1234', 'abcd1234').username, undefined, ok);
+    }
   });
 
   it('catches a mismatched or missing confirmation, and a blank username', () => {

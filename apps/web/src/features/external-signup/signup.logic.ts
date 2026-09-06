@@ -1,7 +1,8 @@
 import {
   CURRENT_LEGAL_DOCUMENTS,
   PLAN_TIER_PRESETS,
-  type PlanTierKey,
+  SIGNUP_TRIAL_TIER_KEY,
+  SIGNUP_TRIAL_WARMUP_SLIPS,
   type PublicSignupStatusKey,
   type SignupOfferKey,
 } from '@watchdog-bms/contracts';
@@ -17,41 +18,41 @@ export const SIGNUP_CONSENT_VERSION =
 export const SIGNUP_SUPPORT_PHONE = '098-256-5628';
 export const SIGNUP_SUPPORT_EMAIL = 'contact@mangmeeplus.com';
 
-// ── Offer cards (spec §3A, Billing §8 catalog 2026-08-30) ──
+// ── What signing up gets you ──
 
-export type SignupOfferCard = {
-  tierKey: PlanTierKey;
-  /** What submit sends. Only the PRO trial is accepted by the server this round. */
-  offerKey: SignupOfferKey;
-  nameTh: string;
-  priceLabel: string;
-  /** Selectable cards carry the trial badge; the rest are priced previews of the real journey. */
-  selectable: boolean;
-  badge?: string;
-  /** Read by assistive technology as the reason the control is unavailable. */
-  unavailableReason?: string;
-};
+/**
+/**
+ * Owner 2026-09-05: self-signup stopped selling a tier. Every applicant gets the same free trial
+ * the LINE-first signup gives, so the four priced cards — and the monthly price sitting next to a
+ * free-trial badge — are gone. They described a purchase nobody was being asked to make.
+ *
+ * The numbers are quoted from the shared preset rather than restated, so a change to the trial
+ * cannot leave this page promising the old one.
+ */
+const TRIAL_PRESET = PLAN_TIER_PRESETS[SIGNUP_TRIAL_TIER_KEY];
 
-const UNAVAILABLE_REASON = 'ยังไม่เปิดให้สมัครแพ็กเกจนี้ทางออนไลน์ เร็ว ๆ นี้';
+export const SIGNUP_TRIAL_DAYS = 30;
 
-function limitsLabel(tierKey: PlanTierKey): string {
-  const preset = PLAN_TIER_PRESETS[tierKey];
-  return `${preset.branchLimit} สาขา · ${preset.employeeLimit} คน · อ่านสลิป ${preset.monthlySlipLimit} ใบ/เดือน`;
-}
+export const SIGNUP_TRIAL_HEADLINE =
+  `ทดลองใช้ฟรี ${SIGNUP_TRIAL_DAYS} วัน ให้ AI อ่านรูปใบเสร็จได้ ${TRIAL_PRESET.monthlySlipLimit} ครั้ง`;
 
-export const SIGNUP_OFFERS: readonly SignupOfferCard[] = [
-  { tierKey: 'STARTER_249', offerKey: 'STARTER_249', nameTh: 'เริ่มต้น', priceLabel: '฿249 / เดือน', selectable: false, unavailableReason: UNAVAILABLE_REASON },
-  { tierKey: 'BASIC_499', offerKey: 'BASIC_499', nameTh: 'เติบโต', priceLabel: '฿499 / เดือน', selectable: false, unavailableReason: UNAVAILABLE_REASON },
-  { tierKey: 'PRO_999', offerKey: 'PRO_TRIAL', nameTh: 'มืออาชีพ', priceLabel: '฿999 / เดือน', selectable: true, badge: 'ทดลองใช้ฟรี' },
-  { tierKey: 'ENTERPRISE_1999', offerKey: 'ENTERPRISE_1999', nameTh: 'ธุรกิจ', priceLabel: '฿1,999 / เดือน', selectable: false, unavailableReason: UNAVAILABLE_REASON },
-];
+/**
+ * Review F17. P10-L §9 holds a brand-new trial shop to a tighter receipt ceiling for its first
+ * week. Telling people afterwards is how "the app is broken" support calls start, so the copy says
+ * it up front — next to the monthly number it qualifies, not on a card that no longer exists.
+ */
+export const SIGNUP_TRIAL_WARMUP = `สัปดาห์แรกอ่านได้ ${SIGNUP_TRIAL_WARMUP_SLIPS} ใบ`;
 
-export function offerLimitsLabel(card: SignupOfferCard): string {
-  return limitsLabel(card.tierKey);
-}
+/** What happens at the end of it. Never implies a card, a renewal, or a charge. */
+export const SIGNUP_TRIAL_AFTER =
+  'เมื่อครบกำหนด ติดต่อทีมงานเพื่อเลือกแพ็กเกจ ไม่มีการตัดเงินอัตโนมัติ';
 
-/** The one offer the server accepts today (spec §3A allowlist). */
-export const SELECTABLE_OFFER_KEY: SignupOfferKey = 'PRO_TRIAL';
+/**
+ * Still sent with the form: it is the key the server's allowlist accepts and what the admin queue
+ * shows. The applicant is no longer shown a choice, because there is not one — and R02 made this
+ * name the free trial that is actually provisioned rather than the paid tier it used to name.
+ */
+export const SELECTABLE_OFFER_KEY: SignupOfferKey = 'FREE_TRIAL';
 
 // ── Form validation ──
 
@@ -133,6 +134,67 @@ export function signupSubmitErrorMessage(error: unknown): string {
   return serverThai || apiErrorMessage(error);
 }
 
+/**
+ * Server rejections that name ONE field the applicant can fix. The MX check is the whole reason
+ * this exists: the API answers `email_domain_has_no_mx` — an English code with no Thai sentence
+ * behind it — so the shared translator (rightly refusing unknown diagnostics) told the applicant to
+ * reload the page for a typo only they can correct.
+ */
+const FIELD_REJECTIONS: Record<string, { field: keyof SignupFormValues; message: string }> = {
+  email_domain_has_no_mx: { field: 'contactEmail', message: 'ไม่พบโดเมนอีเมลนี้ ตรวจตัวสะกดอีกครั้ง' },
+};
+
+export function signupFieldRejection(
+  error: unknown,
+): { field: keyof SignupFormValues; message: string } | null {
+  const raw = error as { code?: unknown; message?: unknown } | null | undefined;
+  // The API puts the code in `message`; anything routed through the BFF carries it in `code`.
+  for (const candidate of [raw?.code, raw?.message]) {
+    if (typeof candidate !== 'string') continue;
+    const rejection = FIELD_REJECTIONS[candidate.trim()];
+    if (rejection) return rejection;
+  }
+  return null;
+}
+
+/**
+ * R07: `submit-company-signup.use-case` receives the payload DURABLY before it checks MX, so a 422
+ * leaves a row keyed by the idempotency key holding the mistyped address's payload hash. Re-sending
+ * the corrected form under that same key is `external_signup_payload_conflict`, and the applicant
+ * is stuck on the form for good.
+ *
+ * 400/422 is the one class of answer that proves the server FINISHED with this payload, so the
+ * correction is a new submission and earns a new key. Everything else — a network error, a 5xx, a
+ * 429, a timeout — leaves the outcome unknown, and there the key must survive or a second tap
+ * opens a second application.
+ */
+export function rotateSignupKeyAfter(error: unknown): boolean {
+  const status = (error as { status?: unknown } | null | undefined)?.status;
+  return status === 400 || status === 422;
+}
+
+/**
+ * R11: a load that failed for a reason which says nothing about the thing being loaded. The status
+ * page called every failure a wrong link and the claim page called every failure a dead token — so
+ * an API restart, a rate limit or a lost connection retired a link that was perfectly good. No
+ * answer at all (a network error carries no status) is transient by definition.
+ */
+export function isTransientLoadFailure(error: unknown): boolean {
+  const status = (error as { status?: unknown } | null | undefined)?.status;
+  if (typeof status !== 'number') return true;
+  return status === 429 || status >= 500;
+}
+
+/** Submit order, so "focus the first error" means the first one the applicant would reach. */
+const SIGNUP_FIELD_ORDER: readonly (keyof SignupFormValues)[] = [
+  'companyName', 'ownerFirstName', 'ownerLastName', 'contactEmail', 'phoneNumber', 'businessType',
+  'vatRegistered', 'taxId',
+];
+
+export function firstSignupErrorField(errors: SignupFieldErrors): keyof SignupFormValues | null {
+  return SIGNUP_FIELD_ORDER.find((field) => errors[field]) ?? null;
+}
+
 // ── Status page copy (spec §3 allowlist — coarse states only, never internal review detail) ──
 
 export type SignupStatusCopy = { title: string; body: string; tone: 'info' | 'success' | 'warning' | 'error' };
@@ -152,6 +214,29 @@ const STATUS_COPY: Record<PublicSignupStatusKey, SignupStatusCopy> = {
     title: 'อนุมัติแล้ว รอตั้งรหัสผ่าน',
     body: 'เราส่งอีเมลพร้อมลิงก์ตั้งรหัสผ่านไปให้แล้ว กรุณาตรวจกล่องจดหมาย และเมลขยะ',
     tone: 'success',
+  },
+  // R11: the letter bounced, so the AWAITING_CLAIM sentence ("ไปให้แล้ว") was telling the applicant
+  // to keep checking a mailbox nothing reached. The resend button is rendered in this state.
+  EMAIL_FAILED: {
+    title: 'ส่งอีเมลไม่สำเร็จ',
+    body: `อีเมลส่งไปไม่ถึง กดขอส่งใหม่ได้เลย หากอีเมลพิมพ์ผิด โทร ${SIGNUP_SUPPORT_PHONE} ให้ทีมงานแก้ให้`,
+    tone: 'warning',
+  },
+  // R11: the mailbox is proved and the shop is being built. READY put a "log in" button in front
+  // of an account that had no company behind it yet.
+  //
+  // F9: nothing polls this page, so it may not say it will update on its own — that left the
+  // applicant watching a screen that would never change. The refresh is the honest instruction.
+  PREPARING: {
+    title: 'กำลังเปิดร้านให้',
+    body: 'ยืนยันอีเมลเรียบร้อยแล้ว ระบบกำลังเปิดร้านให้ อีกสักครู่กดรีเฟรชหน้านี้เพื่อดูสถานะล่าสุด',
+    tone: 'info',
+  },
+  // R11: nothing retries this by itself, so "ยังไม่ต้องทำอะไรเพิ่ม" pointed at a queue nobody works.
+  PREPARING_FAILED: {
+    title: 'เปิดร้านติดขัด',
+    body: `การเปิดร้านติดขัด ทีมงานกำลังดูให้ ต้องการให้เร่ง โทร ${SIGNUP_SUPPORT_PHONE}`,
+    tone: 'error',
   },
   READY: {
     title: 'เปิดใช้งานแล้ว',
@@ -181,6 +266,15 @@ const EXPIRED_NEEDS_STAFF_COPY: SignupStatusCopy = {
   tone: 'warning',
 };
 
+/**
+ * F8: the free-trial line is a promise about a shop that is on its way. Beside "we did not approve
+ * this", "the build stopped" or "this expired" it is an advert on a dead end — and on the last two
+ * it reads as if the trial were already running.
+ */
+export function showsTrialNotice(status: PublicSignupStatusKey): boolean {
+  return status !== 'REJECTED' && status !== 'PREPARING_FAILED' && status !== 'EXPIRED';
+}
+
 export function signupStatusCopy(
   status: PublicSignupStatusKey,
   /** From `PublicSignupStatusDto.canResendClaim`. Default keeps the self-serve wording. */
@@ -196,10 +290,26 @@ export function signupStatusCopy(
 
 export type ClaimPasswordErrors = { username?: string; password?: string; confirmPassword?: string };
 
-/** Mirrors the hint under the field: at least 8 characters, with letters and digits. */
+/**
+ * Exactly the rule the claim endpoint enforces
+ * (`SignupClaimSetPasswordDto`: 3–40, `[A-Za-z0-9._-]`). The page used to check only that the box
+ * was non-empty, so a Thai or spaced username reached the server and came back as a 400 the
+ * applicant could not read — after they had typed a password twice.
+ */
+export const CLAIM_USERNAME_MIN = 3;
+export const CLAIM_USERNAME_MAX = 40;
+const CLAIM_USERNAME_PATTERN = /^[A-Za-z0-9._-]+$/;
+export const CLAIM_USERNAME_HINT =
+  `${CLAIM_USERNAME_MIN}–${CLAIM_USERNAME_MAX} ตัว ใช้ภาษาอังกฤษ ตัวเลข จุด ขีดกลาง หรือขีดล่าง`;
+
 export function validateClaimPassword(username: string, password: string, confirmPassword: string): ClaimPasswordErrors {
   const errors: ClaimPasswordErrors = {};
-  if (!username.trim()) errors.username = 'กรุณากรอกชื่อผู้ใช้';
+  const trimmedUsername = username.trim();
+  if (!trimmedUsername) errors.username = 'กรุณากรอกชื่อผู้ใช้';
+  else if (trimmedUsername.length < CLAIM_USERNAME_MIN || trimmedUsername.length > CLAIM_USERNAME_MAX
+    || !CLAIM_USERNAME_PATTERN.test(trimmedUsername)) {
+    errors.username = `ชื่อผู้ใช้ต้องมี ${CLAIM_USERNAME_HINT}`;
+  }
   if (password.length < 8 || !/[A-Za-z]/.test(password) || !/[0-9]/.test(password)) {
     errors.password = 'รหัสผ่านต้องยาวอย่างน้อย 8 ตัว และมีทั้งตัวอักษร และตัวเลข';
   }

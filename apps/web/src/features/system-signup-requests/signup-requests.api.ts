@@ -23,8 +23,19 @@ export type {
   AdminSignupReissueDto,
 };
 
-export function listSignupRequests(): Promise<AdminSignupQueueDto> {
-  return apiFetch<AdminSignupQueueDto>('/v1/system/signup-requests');
+/**
+ * R13: one page of one tab. The server owns both — it used to answer with 200 unfiltered rows the
+ * browser then filtered and counted, so a backlog past 200 was invisible and every count was a
+ * count of the truncation.
+ */
+export function listSignupRequests(
+  options: { tab?: string; cursor?: string } = {},
+): Promise<AdminSignupQueueDto> {
+  const query = new URLSearchParams();
+  if (options.tab) query.set('tab', options.tab);
+  if (options.cursor) query.set('cursor', options.cursor);
+  const suffix = query.toString();
+  return apiFetch<AdminSignupQueueDto>(`/v1/system/signup-requests${suffix ? `?${suffix}` : ''}`);
 }
 
 /** Review B-09 / §8: what AUTO_FREE let through, for after-the-fact review. Its own route. */

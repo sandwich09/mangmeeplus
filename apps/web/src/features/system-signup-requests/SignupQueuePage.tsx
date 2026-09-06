@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { SIGNUP_REJECTION_REASON_MAX_LENGTH } from '@watchdog-bms/contracts';
+import { COMPANY_BUSINESS_CATEGORIES, SIGNUP_REJECTION_REASON_MAX_LENGTH } from '@watchdog-bms/contracts';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import { Modal, useConfirm } from '@/common/components/modal';
 import { Button } from '@/common/components/button';
@@ -18,16 +18,20 @@ import {
   type AdminSignupQueueItemDto,
 } from './signup-requests.api';
 import {
+  approveBlockedOnCategory,
   approveLabel,
+  BUSINESS_CATEGORY_LABELS,
   canApproveSignup,
   canRejectSignup,
   canReissueSignup,
   canSuspendSignup,
-  filterSignupQueue,
   isAbandonedEmptyAttempt,
+  queueEmptyForReal,
   rejectNotifyDefault,
   rejectNotifyLabel,
+  requiresCategoryChoice,
   signupBusinessSummary,
+  signupFailureChip,
   signupHintChips,
   isFinishingStrandedRow,
   isLineSignup,
@@ -151,6 +155,11 @@ export default function SignupQueuePage() {
   const [packageItems, setPackageItems] = useState<AdminPackageChangeItemDto[] | null>(null);
   const [tabError, setTabError] = useState<string | null>(null);
   const [tab, setTab] = useState<SignupQueueTab>('ALL');
+  // R13: how far this tab has been paged, and how many rows the DATABASE holds per tab — the page
+  // can only ever count what it was handed, which is how a tab came to claim it was empty.
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [counts, setCounts] = useState<Record<string, number> | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -160,20 +169,47 @@ export default function SignupQueuePage() {
   const [rejecting, setRejecting] = useState<AdminSignupQueueItemDto | null>(null);
   const [notifyApplicant, setNotifyApplicant] = useState(false);
   const [rejectionReason, setRejectionReason] = useState('');
+  // R10: approving now carries the business category, so it gets a dialog of its own — the PDPA
+  // health tripwire reads that enum and free Thai text can never map onto it.
+  const [approving, setApproving] = useState<AdminSignupQueueItemDto | null>(null);
+  const [businessCategory, setBusinessCategory] = useState<string>('OTHER');
+  // F2: "อื่น ๆ" is a legitimate answer — a barber shop really is one — so it is confirmed, not
+  // refused. Reset with every dialog so a confirmation never carries to the next shop.
+  const [confirmedOther, setConfirmedOther] = useState(false);
   // Keyed by request id: one shared box put the note an operator typed for one shop onto whichever
   // shop they decided next.
   const [packageNotes, setPackageNotes] = useState<Record<string, string>>({});
 
-  const load = async () => {
+  // R13: one page of ONE tab, from the server. Reloading always restarts at the first page —
+  // an action that changed a row must not leave the operator looking at a stale later page.
+  const load = async (forTab: SignupQueueTab = tab) => {
     setLoading(true);
     setError(null);
     try {
-      setItems((await listSignupRequests()).items);
+      const page = await listSignupRequests({ tab: tabLoadsOwnList(forTab) ? 'ALL' : forTab });
+      setItems(page.items);
+      setNextCursor(page.nextCursor ?? null);
+      setCounts(page.counts ?? null);
     } catch (err) {
       const e = err as Error & { status?: number };
       setError(e.status === 403 ? 'คุณไม่มีสิทธิ์ดูคำขอสมัครใช้งาน' : apiErrorMessage(err));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadMore = async () => {
+    if (!nextCursor) return;
+    setLoadingMore(true);
+    try {
+      const page = await listSignupRequests({ tab, cursor: nextCursor });
+      // Appended: a "load more" that replaces the list is a pager that loses what you were reading.
+      setItems((current) => [...current, ...page.items]);
+      setNextCursor(page.nextCursor ?? null);
+    } catch (err) {
+      setError(apiErrorMessage(err));
+    } finally {
+      setLoadingMore(false);
     }
   };
 
@@ -195,35 +231,38 @@ export default function SignupQueuePage() {
     // A failure belongs to the tab that produced it: leaving it up over another tab reports a
     // problem the operator is not looking at, on a list that loaded fine.
     setTabError(null);
+    // R13: the tab is a server-side filter now, so switching one is a fetch, not a re-filter of
+    // whatever page happened to be in memory.
     if (tabLoadsOwnList(next)) void loadTab(next);
+    else void load(next);
   };
 
   useEffect(() => {
     void load();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleApprove = async (item: AdminSignupQueueItemDto) => {
-    // P10-L: a LINE application has no address, so approving it opens the shop immediately and the
-    // customer hears about it in LINE. Promising an email here would be a promise nothing keeps —
-    // and for a row whose shop already exists, so would promising to open one (review LOW-2).
-    const fromLine = isLineSignup(item);
-    const finishing = fromLine && isFinishingStrandedRow(item.state);
-    const accepted = await confirm({
-      title: finishing ? 'ปิดงานคำขอ' : 'อนุมัติคำขอ',
-      message: finishing
-        ? `ปิดงานให้ร้าน ${item.companyName} ที่เปิดค้างอยู่ ใช่หรือไม่`
-        : fromLine
-          ? `อนุมัติและเปิดร้าน ${item.companyName} ให้ทันที (ลูกค้าจะได้รับแจ้งทาง LINE) ใช่หรือไม่`
-          : `อนุมัติและส่งอีเมลตั้งรหัสให้ ${item.contactEmail ?? item.ownerDisplayName} ใช่หรือไม่`,
-      confirmLabel: finishing ? 'ปิดงาน' : fromLine ? 'อนุมัติและเปิดร้าน' : 'อนุมัติและส่งอีเมล',
-      variant: 'primary',
-    });
-    if (!accepted) return;
+  // R10: approving is where the business category is decided, so it needs a form rather than a
+  // yes/no. `useConfirm` renders one sentence and nothing else.
+  const openApprove = (item: AdminSignupQueueItemDto) => {
+    // Default to what the server mapped, so a row the mapping DID read is one click as before.
+    setBusinessCategory(item.businessCategory ?? 'OTHER');
+    setConfirmedOther(false);
+    setApproving(item);
+  };
+
+  const handleApprove = async () => {
+    if (!approving) return;
+    const item = approving;
     setBusyId(item.requestId);
     try {
       // The API answers 200 with the CURRENT state, so a close-out that found the run still going
       // comes back as PROVISIONING. Reporting that as done would be the same lie the chip told.
-      const decided = await decideSignupRequest(item.requestId, { action: 'APPROVE' });
+      const fromLine = isLineSignup(item);
+      const finishing = fromLine && isFinishingStrandedRow(item.state);
+      const decided = await decideSignupRequest(item.requestId, {
+        action: 'APPROVE',
+        businessCategory: businessCategory,
+      });
       if (decided.state === 'PROVISIONING') {
         toast.warning('ยังเปิดร้านอยู่ รอสักครู่แล้วลองใหม่');
       } else {
@@ -231,7 +270,9 @@ export default function SignupQueuePage() {
           ? 'ปิดงานเรียบร้อย'
           : fromLine ? 'อนุมัติแล้ว เปิดร้านให้เรียบร้อย' : 'อนุมัติแล้ว ระบบกำลังส่งอีเมลตั้งรหัส');
       }
+      setApproving(null);
       await load();
+      if (tabLoadsOwnList(tab)) await loadTab(tab);
     } catch (err) {
       toast.error(apiErrorMessage(err));
     } finally {
@@ -337,18 +378,122 @@ export default function SignupQueuePage() {
     }
   };
 
-  const visible = tab === 'AUTO_APPROVED' ? (autoItems ?? []) : filterSignupQueue(items, tab);
+  // P10-L: a LINE application has no address, so approving it opens the shop immediately and the
+  // customer hears about it in LINE. Promising an email here would be a promise nothing keeps —
+  // and for a row whose shop already exists, so would promising to open one (review LOW-2).
+  const approveFromLine = approving ? isLineSignup(approving) : false;
+  const approveFinishing = approveFromLine && isFinishingStrandedRow(approving!.state);
+  const approveDialogTitle = approveFinishing ? 'ปิดงานคำขอ' : 'อนุมัติคำขอ';
+  const approveDialogConfirmLabel = approveFinishing
+    ? 'ปิดงาน'
+    : approveFromLine ? 'อนุมัติและเปิดร้าน' : 'อนุมัติและส่งอีเมล';
+  const approveDialogMessage = !approving
+    ? ''
+    : approveFinishing
+      ? `ปิดงานให้ร้าน ${approving.companyName} ที่เปิดค้างอยู่ ใช่หรือไม่`
+      : approveFromLine
+        ? `อนุมัติและเปิดร้าน ${approving.companyName} ให้ทันที (ลูกค้าจะได้รับแจ้งทาง LINE) ใช่หรือไม่`
+        : `อนุมัติและส่งอีเมลตั้งรหัสให้ ${approving.contactEmail ?? approving.ownerDisplayName} ใช่หรือไม่`;
+  // R10/F2: a row whose free text the mapping could not read may not be approved on the DEFAULT —
+  // but "อื่น ๆ" chosen on purpose is a decision, and the checkbox is how it says so.
+  const approveNeedsOtherConfirmed = approving !== null
+    && requiresCategoryChoice(approving)
+    && businessCategory === 'OTHER';
+  const approveBlocked = approving !== null
+    && approveBlockedOnCategory(approving, businessCategory, confirmedOther);
 
-  /** Only the tabs that filter the main queue can show a count before they are opened. */
+  const visible = tab === 'AUTO_APPROVED' ? (autoItems ?? []) : items;
+  // R13: "no applications in this group" is a claim about the DATABASE, so it may only be made
+  // when the server counted zero. A page that simply has not loaded says nothing.
+  const emptyForReal = tab === 'AUTO_APPROVED'
+    ? autoItems !== null && autoItems.length === 0
+    : queueEmptyForReal(visible, counts, tab);
+
+  /** Counted server-side over the whole queue; the two own-endpoint tabs still count their list. */
   const tabCount = (key: SignupQueueTab): number | null => {
     if (key === 'AUTO_APPROVED') return autoItems?.length ?? null;
     if (key === 'PACKAGE_CHANGE') return packageItems?.length ?? null;
-    return filterSignupQueue(items, key).length;
+    return counts?.[key] ?? null;
   };
 
   return (
     <div className="min-h-dvh bg-gray-50 p-6">
       {confirmDialog}
+
+      {/* R10. Approving is the last moment anyone looks at this application before a company
+          exists, and the PDPA health tripwire reads an enum the public form cannot produce: it asks
+          for free text, and "คลินิก" maps to OTHER. So the reviewer picks — defaulted to whatever
+          the server mapped, and REQUIRED when the mapping could not read what was typed. */}
+      <Modal
+        open={approving !== null}
+        title={approveDialogTitle}
+        size="sm"
+        onClose={() => setApproving(null)}
+        footer={(
+          <>
+            <Button type="button" variant="secondary" onClick={() => setApproving(null)} disabled={busyId !== null}>
+              ยกเลิก
+            </Button>
+            <Button
+              type="button"
+              variant="primary"
+              onClick={() => void handleApprove()}
+              disabled={busyId !== null || approveBlocked}
+            >
+              {busyId !== null ? 'กำลังบันทึก...' : approveDialogConfirmLabel}
+            </Button>
+          </>
+        )}
+      >
+        <div className="space-y-3 text-sm text-gray-600">
+          <p>{approveDialogMessage}</p>
+          <div className="space-y-1.5">
+            <label htmlFor="signup-business-category" className="block text-sm font-medium text-gray-700">
+              ประเภทธุรกิจของร้านนี้
+            </label>
+            {/* What the applicant actually typed, next to the choice it is being turned into. */}
+            {approving?.businessType && (
+              <p className="text-xs text-gray-500">
+                ผู้สมัครกรอกว่า “{approving.businessType}”
+              </p>
+            )}
+            <select
+              id="signup-business-category"
+              value={businessCategory}
+              onChange={(e) => setBusinessCategory(e.target.value)}
+              disabled={busyId !== null}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-brand-400 focus:outline-none disabled:bg-gray-50"
+            >
+              {COMPANY_BUSINESS_CATEGORIES.map((category) => (
+                <option key={category} value={category}>{BUSINESS_CATEGORY_LABELS[category]}</option>
+              ))}
+            </select>
+            <p className="text-xs text-gray-500">
+              เลือกให้ตรงกับสิ่งที่ร้านทำจริง คลินิก สปา หรือร้านขายยา จะเข้าสู่การตรวจ PDPA เพิ่ม
+            </p>
+            {/* F2: shown only where the mapping could not read the free text AND the reviewer is
+                staying on "อื่น ๆ". Ticking it is the record that a human looked and decided —
+                which is the whole point of moving this decision to review. */}
+            {approveNeedsOtherConfirmed && (
+              <label className="flex items-start gap-2 rounded-lg border border-yellow-200 bg-yellow-50 px-3 py-2">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4"
+                  checked={confirmedOther}
+                  onChange={(e) => setConfirmedOther(e.target.checked)}
+                  disabled={busyId !== null}
+                />
+                <span className="text-xs text-gray-700">
+                  ตรวจแล้ว เป็นอื่น ๆ
+                  <span className="mt-0.5 block text-gray-500">
+                    ระบบอ่าน “{approving?.businessType}” ไม่ได้ ยืนยันว่าร้านนี้ไม่ใช่คลินิก สปา หรือร้านขายยา
+                  </span>
+                </span>
+              </label>
+            )}
+          </div>
+        </div>
+      </Modal>
 
       <Modal
         open={rejecting !== null}
@@ -572,7 +717,7 @@ export default function SignupQueuePage() {
                   ) : visible.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="px-4 py-12 text-center text-sm text-gray-400">
-                        ไม่มีคำขอในกลุ่มนี้
+                        {emptyForReal ? 'ไม่มีคำขอในกลุ่มนี้' : 'ยังโหลดรายการไม่ได้ กดลองใหม่อีกครั้ง'}
                       </td>
                     </tr>
                   ) : (
@@ -580,6 +725,7 @@ export default function SignupQueuePage() {
                       const busy = busyId === item.requestId;
                       const idle = signupIdleChip(item);
                       const hints = signupHintChips(item);
+                      const failure = signupFailureChip(item);
                       return (
                         <tr key={item.requestId} className="align-top hover:bg-gray-50">
                           <td className="px-4 py-3">
@@ -621,6 +767,8 @@ export default function SignupQueuePage() {
                           <td className="px-4 py-3">
                             <div className="flex flex-wrap gap-1">
                               <ChipBadge chip={signupStateChip(item.state, item)} />
+                              {/* Why it failed, when the code names something an admin can fix. */}
+                              {failure && <ChipBadge chip={failure} />}
                               {idle && <ChipBadge chip={idle} />}
                               {hints.map((chip) => (
                                 <ChipBadge key={chip.label} chip={chip} />
@@ -632,7 +780,7 @@ export default function SignupQueuePage() {
                             <SignupRowActions
                               item={item}
                               busy={busy}
-                              onApprove={() => void handleApprove(item)}
+                              onApprove={() => openApprove(item)}
                               onReject={() => {
                                 setNotifyApplicant(rejectNotifyDefault(item));
                                 setRejectionReason('');
@@ -649,6 +797,23 @@ export default function SignupQueuePage() {
                 </tbody>
               </table>
             </div>
+            {/* R13: the way past the first page. Without it the queue simply stopped at whatever it
+                had read, and rows behind that were unreachable from the console at all. */}
+            {tab !== 'AUTO_APPROVED' && nextCursor && (
+              <div className="border-t border-gray-100 px-4 py-3 text-center">
+                <button
+                  type="button"
+                  disabled={loadingMore}
+                  onClick={() => void loadMore()}
+                  className="rounded-lg border border-gray-300 bg-white px-4 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40"
+                >
+                  {loadingMore ? 'กำลังโหลด...' : 'โหลดเพิ่ม'}
+                </button>
+                <p className="mt-1.5 text-xs text-gray-400">
+                  แสดง {visible.length} จาก {counts?.[tab] ?? visible.length} รายการ
+                </p>
+              </div>
+            )}
           </div>
         )}
       </div>

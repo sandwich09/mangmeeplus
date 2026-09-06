@@ -8,8 +8,30 @@ export const COMPANY_SIGNUP_STATES = [
 
 export type CompanySignupState = (typeof COMPANY_SIGNUP_STATES)[number];
 
-/** Spec §3A: the form shows four tiers but only the PRO trial is selectable server-side. */
-export const SELECTABLE_SIGNUP_OFFER_KEYS: readonly string[] = ['PRO_TRIAL'];
+/**
+ * The one offer the form presents. Named for what the applicant actually gets — `SIGNUP_TRIAL_TIER`
+ * in provisioning — rather than for the package it used to be sold as.
+ */
+export const SIGNUP_FREE_TRIAL_OFFER_KEY = 'FREE_TRIAL';
+
+/**
+ * Owner 2026-09-05 (review R02): there is no package choice at signup any more — every
+ * self-signed-up shop starts on the same free trial the LINE-first flow gives. What the applicant
+ * asked for is kept as attribution evidence, so the catalog keys are what this flow will RECORD;
+ * anything else is dropped rather than stored, because the operator's queue must never render free
+ * text an applicant chose.
+ */
+export const RECORDED_SIGNUP_OFFER_KEYS: readonly string[] = [
+  SIGNUP_FREE_TRIAL_OFFER_KEY, 'STARTER_249', 'BASIC_499', 'PRO_999', 'ENTERPRISE_1999',
+];
+
+/**
+ * The retired name for the same single offer. The form used to call the free trial "the PRO trial"
+ * because it was sold as PRO limits; it is not, and no package is chosen at signup at all now. An
+ * in-flight or cached client still sending it is normalised, never refused — recording it verbatim
+ * would file a request for a package the applicant was never shown and will never be given.
+ */
+const LEGACY_FREE_TRIAL_OFFER_KEYS: readonly string[] = ['PRO_TRIAL'];
 
 export type CompanySignupInput = Readonly<{
   externalSignupId: string;
@@ -104,6 +126,15 @@ export function isStaleProvisioning(
     && now.getTime() - request.provisioningStartedAt.getTime() > STALE_PROVISIONING_MS;
 }
 
+/**
+ * The states in which a LINE account is FENCED out of applying again (the partial unique index
+ * `CompanySignupRequest_line_open_key` mirrors this list, and a spec asserts they agree).
+ *
+ * `RECEIVED` is in this set, and `SignupClaimEmailService.sweepAbandonedIntake` is source-blind, so
+ * that sweep also releases a LINE fence left stuck at `RECEIVED` by an attempt that never got any
+ * further. That is the correct outcome and worth saying out loud: an application that got nowhere
+ * for a week is not a reason to keep its owner locked out of applying again.
+ */
 export const LINE_OPEN_APPLICATION_STATES: readonly CompanySignupState[] = [
   'RECEIVED', 'VALIDATED', 'PENDING_REVIEW', 'PROVISIONING', 'PROVISIONING_FAILED', 'READY',
 ];
@@ -152,12 +183,15 @@ export function normalizeCompanySignupInput(input: CompanySignupInput): Normaliz
   const phoneNumber = optional(input.phoneNumber, 'phoneNumber', 20);
   if (phoneNumber !== null && !PHONE_PATTERN.test(phoneNumber)) throw new Error('invalid_phoneNumber');
 
-  // Spec §3A: an unknown or not-yet-sellable offer key is rejected outright — never a silent
-  // fallback to the trial, because the key is attribution evidence the Owner reads later.
-  const requestedOfferKey = optional(input.requestedOfferKey, 'requestedOfferKey', 128);
-  if (requestedOfferKey !== null && !SELECTABLE_SIGNUP_OFFER_KEYS.includes(requestedOfferKey)) {
-    throw new Error('offer_not_available');
-  }
+  // R02: the key no longer decides anything — the tier is fixed by policy — so it is recorded as
+  // attribution and is never a reason to refuse an application. An in-flight client still sending
+  // an older catalog key gets its shop, not a 422 about a label the server ignores.
+  const requested = optional(input.requestedOfferKey, 'requestedOfferKey', 128);
+  const requestedOfferKey = requested === null
+    ? null
+    : LEGACY_FREE_TRIAL_OFFER_KEYS.includes(requested)
+      ? SIGNUP_FREE_TRIAL_OFFER_KEY
+      : RECORDED_SIGNUP_OFFER_KEYS.includes(requested) ? requested : null;
 
   return {
     externalSignupId: bounded(input.externalSignupId, 'externalSignupId', 128),
@@ -204,3 +238,21 @@ export function canTransitionCompanySignup(
 export function isCompanySignupFailureState(state: CompanySignupState): boolean {
   return state === 'EMAIL_FAILED' || state === 'PROVISIONING_FAILED' || state === 'SUSPENDED' || state === 'EXPIRED';
 }
+
+/**
+ * What "this applicant has already had a shop" means — the repeat-trial signal, read by BOTH the
+ * AUTO_FREE guard at submit and the admin queue's hint. One definition, because the two answering
+ * differently would be the queue naming a shop the machine did not act on, or the reverse.
+ *
+ * OWNER only (review B1): an employee whose LINE was linked by the staff QR holds a membership in
+ * their EMPLOYER's shop, which is not a trial they ever had.
+ *
+ * DRAFT excluded: that status belongs to an employee draft nobody finished — a half-filled form,
+ * not a shop. Every other status counts, because a closed, suspended or disabled shop still
+ * existed; onboarding creates the owner's membership ACTIVE inside the company transaction, so a
+ * shop that was really opened never sits in DRAFT.
+ */
+export const OWNED_COMPANY_MEMBERSHIP = {
+  status: { not: 'DRAFT' as const },
+  roles: { some: { role: { key: 'OWNER' } } },
+};

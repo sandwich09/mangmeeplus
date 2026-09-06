@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { completeVatFields, isStaleOcrApply, ocrLineVatRateUnknown, ocrVatSource, ocrWhtInput, ReceiptOcrApplyService, usableItemLines, verifyDiscountAmount } from './receipt-ocr-apply.service';
+import { completeVatFields, isStaleOcrApply, ocrLineVatRateUnknown, ocrVatSource, ocrWhtInput, RECEIPT_REVIEW_REASONS, receiptFallbackLineTotal, ReceiptOcrApplyService, reviewReceiptDate, usableItemLines, verifyDiscountAmount } from './receipt-ocr-apply.service';
 import { calcLineTotals } from '../../domain/logic/expense-totals.logic';
 
 function makeDuplicateRepo(overrides: Record<string, unknown> = {}) {
@@ -203,7 +203,7 @@ describe('ocrVatSource', () => {
   });
 });
 
-async function applyFields(fields: any, vatCaptureSnapshotJson: any = null, existing: Record<string, unknown> = {}) {
+async function applyFields(fields: any, vatCaptureSnapshotJson: any = null, existing: Record<string, unknown> = {}, todayIso?: string) {
   const updates: any[] = [];
   const lines: any[] = [];
   const tx = {
@@ -215,7 +215,8 @@ async function applyFields(fields: any, vatCaptureSnapshotJson: any = null, exis
     expenseLine: { deleteMany: async () => undefined, create: async (args: any) => { lines.push(args.data); } },
   };
   const prisma = { client: { $transaction: async (fn: any) => fn(tx) } };
-  const result = await new ReceiptOcrApplyService(prisma as any, makeDuplicateRepo() as any).apply({ companyId: 'company-1', userId: 'user-1' }, 'expense-1', fields);
+  const result = await new ReceiptOcrApplyService(prisma as any, makeDuplicateRepo() as any)
+    .apply({ companyId: 'company-1', userId: 'user-1' }, 'expense-1', fields, todayIso ? { todayIso } : {});
   return { record: updates[0]?.data, line: lines[0], lines, result };
 }
 
@@ -469,6 +470,59 @@ describe('ReceiptOcrApplyService.apply', () => {
     assert.equal(applied.result.chargesApplied, 1);
     assert.deepEqual(applied.lines.map((line: any) => line.unitPrice), ['524.0000', '149.0000', '82.2000']);
     assert.equal(applied.record.grandTotalAmount, '904.2000');
+    // Spec S-1: the charge row is a charge, named in Thai with the percent the bill printed, and it
+    // stays out of the goods subtotal while remaining inside the tax base and the total.
+    assert.deepEqual(applied.lines.map((line: any) => line.chargeKind), [null, null, 'SERVICE_CHARGE']);
+    assert.equal(applied.lines[2].description, 'ค่าบริการ 10%');
+    assert.equal(applied.lines[2].sourceLineText, 'Service charge 10%', 'the extractor\u2019s own wording is kept, not replaced by the Thai label');
+    assert.equal(applied.record.subtotalAmount, '822.0000');
+    assert.equal(applied.record.taxableAmount, '904.2000');
+  });
+
+  // A restaurant slip that prints its subtotal and its service charge but has no "TOTAL" box: the
+  // fallback used to be `subtotalAmount` alone, so the charge simply vanished from the record and
+  // the company under-recorded what it paid.
+  it('rebuilds the total from goods, discount and charges when the page printed no grand total', async () => {
+    const applied = await applyFields({
+      description: 'อาหาร',
+      subtotalAmount: '1520.00',
+      vatMode: 'NO_VAT',
+      additionalCharges: [{ kind: 'SERVICE_CHARGE', description: 'Service charge 10%', amount: '152.00', evidenceSignal: 'Service charge 10% 152.00' }],
+    });
+
+    assert.equal(applied.result.chargesApplied, 1);
+    assert.deepEqual(applied.lines.map((line: any) => line.chargeKind), [null, 'SERVICE_CHARGE']);
+    assert.equal(applied.record.subtotalAmount, '1520.0000');
+    assert.equal(applied.record.grandTotalAmount, '1672.0000', 'the service charge is part of what was paid');
+  });
+
+  it('adds the printed VAT to the rebuilt total, and never twice on a VAT-included page', () => {
+    assert.equal(receiptFallbackLineTotal({ subtotalAmount: '1000.00', vatAmount: '70.00', vatMode: 'VAT_EXCLUDED' } as any), '1070.0000');
+    // VAT_INCLUDED already has the tax inside the printed subtotal.
+    assert.equal(receiptFallbackLineTotal({ subtotalAmount: '1070.00', vatAmount: '70.00', vatMode: 'VAT_INCLUDED' } as any), '1070.0000');
+    assert.equal(receiptFallbackLineTotal({ subtotalAmount: '1000.00', discountAmount: '100.00', vatMode: 'NO_VAT' } as any), '900.0000');
+    // A printed grand total always wins, and a page with neither stays unusable.
+    assert.equal(receiptFallbackLineTotal({ grandTotalAmount: '1789.04', subtotalAmount: '1.00' } as any), '1789.04');
+    assert.equal(receiptFallbackLineTotal({ vatMode: 'NO_VAT' } as any), undefined);
+  });
+
+  it('names every charge kind in Thai and keeps a ROUNDING deduction out of the goods subtotal', async () => {
+    const applied = await applyFields({
+      description: 'อาหาร',
+      subtotalAmount: '100.00',
+      grandTotalAmount: '135.00',
+      vatMode: 'NO_VAT',
+      additionalCharges: [
+        { kind: 'DELIVERY', description: 'Delivery fee', amount: '20.00', evidenceSignal: 'Delivery' },
+        { kind: 'PACKAGING', description: 'Packaging 15 %', amount: '15.00', evidenceSignal: 'Packaging' },
+      ],
+    });
+
+    assert.equal(applied.result.chargeReconciliationStatus, 'RECONCILED_CHARGE_LINES');
+    assert.deepEqual(applied.lines.map((line: any) => line.chargeKind), [null, 'DELIVERY', 'PACKAGING']);
+    assert.deepEqual(applied.lines.map((line: any) => line.description), ['อาหาร', 'ค่าส่ง', 'ค่าบรรจุ 15%']);
+    assert.equal(applied.record.subtotalAmount, '100.0000', 'the two charges are not goods');
+    assert.equal(applied.record.grandTotalAmount, '135.0000');
   });
 
   it('falls back to the summary line when the item rows contradict the printed total, and says so', async () => {
@@ -629,6 +683,22 @@ describe('ReceiptOcrApplyService.apply', () => {
     assert.equal(applied.lines.length, 1);
     assert.equal(applied.record.grandTotalAmount, '1200.0000');
     assert.equal(applied.record.aiVerifiedFieldsJson.grandTotalAmount, '1200.00');
+    // Spec §5.1: 1,100 + 77 is 1,177, and the page says 1,200 — its own figures contradict each
+    // other by more than the charge's VAT, so folding IS right: the printed total is what was
+    // paid. What must never happen is folding a printed service charge away in SILENCE. Returning
+    // `[]` here left `aiVerificationStatus` at PARTIAL on a draft that had just swallowed one.
+    assert.ok(applied.result.reviewReasons.includes(RECEIPT_REVIEW_REASONS.chargesFolded),
+      `the fold has to be said out loud, got: ${JSON.stringify(applied.result.reviewReasons)}`);
+    assert.equal(applied.record.aiVerificationStatus, 'NEEDS_REVIEW');
+  });
+
+  it('says nothing about charges on a bill that printed none', async () => {
+    const applied = await applyFields({
+      expenseDate: '2026-09-03', grandTotalAmount: '1200.00', vatMode: 'NO_VAT',
+    }, null, {}, '2026-09-05');
+    assert.equal(applied.result.chargeReconciliationStatus, 'SUMMARY_LINE');
+    assert.deepEqual(applied.result.reviewReasons, [], 'no charge, no charge reason');
+    assert.equal(applied.record.aiVerificationStatus, 'PARTIAL');
   });
 
   it('never asserts a 7% line rate for a document that printed no VAT', async () => {
@@ -712,6 +782,12 @@ describe('ReceiptOcrApplyService.apply', () => {
       categorySuggestion: { expenseCategoryId: 'cat-meals', confidence: 0.92, categoryName: 'ค่าอาหาร' },
       chargeReconciliationStatus: 'SUMMARY_LINE',
       chargesApplied: 0,
+      // Spec §5.2: these fields read no date, so this outcome says so — the draft carries the
+      // upload day and the caller has to tell the reviewer that is what it is.
+      dateVerified: false,
+      dateAssumed: false,
+      dateStatus: 'unverified',
+      reviewReasons: ['วันที่บนเอกสารยังอ่านไม่ได้ – ใช้วันที่ส่งไว้ก่อน'],
     });
   });
 
@@ -1025,5 +1101,171 @@ describe('usableItemLines keeps a bill whose till prints free rows at 0.00', () 
 
   it('still refuses a negative amount, which no till prints as an item row', () => {
     assert.equal(usableItemLines({ lines: [paid('Pizza', '-499.00'), paid('Wings', '894.00')] } as any).length, 0);
+  });
+});
+
+// Spec `line-ai-draft-control-spec-th.md` §5.2. UAT 2026-09-03: a bill printing 03/09/69 was stored
+// with the upload day, the LINE card said "วันที่: ยังไม่ระบุ", and nothing anywhere held both facts.
+describe('reviewReceiptDate (spec §5.2)', () => {
+  const TODAY = '2026-09-05';
+
+  it('calls an unread date what it is, so the placeholder cannot pass as a reading', () => {
+    assert.deepEqual(reviewReceiptDate(undefined, TODAY), { status: 'unverified', verified: false, assumed: false, reason: RECEIPT_REVIEW_REASONS.dateUnverified });
+    assert.deepEqual(reviewReceiptDate('03/09/69', TODAY), { status: 'unverified', verified: false, assumed: false, reason: RECEIPT_REVIEW_REASONS.dateUnverified });
+  });
+
+  it('accepts a date the document proved', () => {
+    assert.deepEqual(reviewReceiptDate('2026-09-03', TODAY), { status: 'verified', verified: true, assumed: false });
+    assert.deepEqual(reviewReceiptDate('2026-09-06', TODAY), { status: 'verified', verified: true, assumed: false }, 'one day ahead crosses a timezone, it is not a misread');
+  });
+
+  it('flags a date too far from today to be this receipt', () => {
+    assert.equal(reviewReceiptDate('2026-09-07', TODAY).reason, RECEIPT_REVIEW_REASONS.dateImplausible);
+    assert.equal(reviewReceiptDate('2024-09-04', TODAY).reason, RECEIPT_REVIEW_REASONS.dateImplausible);
+    assert.equal(reviewReceiptDate('2024-09-05', TODAY).verified, true, 'exactly two years back is still in range');
+  });
+});
+
+describe('apply: an unverified date forces review instead of passing silently (spec §5.2)', () => {
+  const TODAY = '2026-09-05';
+
+  it('leaves expenseDate unwritten and marks the draft NEEDS_REVIEW when no date was read', async () => {
+    const { record, result } = await applyFields({ grandTotalAmount: '580.00' }, null, {}, TODAY);
+    assert.equal(record.expenseDate, undefined, 'the placeholder the upload seeded stays; nothing overwrites it');
+    assert.equal(record.aiVerificationStatus, 'NEEDS_REVIEW');
+    assert.equal(result.dateVerified, false);
+    assert.deepEqual(result.reviewReasons, [RECEIPT_REVIEW_REASONS.dateUnverified]);
+  });
+
+  it('writes a read date and stays PARTIAL', async () => {
+    const { record, result } = await applyFields({ grandTotalAmount: '580.00', expenseDate: '2026-09-03' }, null, {}, TODAY);
+    assert.equal(record.expenseDate.toISOString().slice(0, 10), '2026-09-03');
+    assert.equal(record.aiVerificationStatus, 'PARTIAL');
+    assert.equal(result.dateVerified, true);
+    assert.deepEqual(result.reviewReasons, []);
+  });
+
+  // Spec §5.2 (H2). Receipt mode makes `03/09/69` usable — but only by choosing the วัน/เดือน order
+  // and an era. The date stays on the record and does NOT force review; what it must never do is
+  // pass as something the page stated outright.
+  it('keeps an assumed reading, flags it, and does not force review', async () => {
+    const { record, result } = await applyFields({
+      grandTotalAmount: '580.00',
+      expenseDate: '2026-09-03',
+      expenseDateAssumptions: ['order_assumed_day_month', 'two_digit_year_resolved_plausible_era'],
+    }, null, {}, TODAY);
+    assert.equal(record.expenseDate.toISOString().slice(0, 10), '2026-09-03');
+    assert.equal(record.aiVerificationStatus, 'PARTIAL', 'an assumed date is a label, not a defect');
+    assert.equal(result.dateVerified, true);
+    assert.equal(result.dateAssumed, true);
+    assert.equal(result.dateStatus, 'assumed');
+    assert.deepEqual(result.dateAssumptions, ['order_assumed_day_month', 'two_digit_year_resolved_plausible_era']);
+    assert.deepEqual(result.reviewReasons, []);
+  });
+
+  it('does not call a plainly printed date assumed', async () => {
+    const { result } = await applyFields({
+      grandTotalAmount: '580.00', expenseDate: '2026-09-03', expenseDateAssumptions: ['era_read_be'],
+    }, null, {}, TODAY);
+    assert.equal(result.dateStatus, 'verified', 'พ.ศ. 2569 IS what the page printed — nothing was inferred');
+    assert.equal(result.dateAssumed, false);
+  });
+
+  it('still stores an out-of-range date, but never as a fact', async () => {
+    const { record, result } = await applyFields({ grandTotalAmount: '580.00', expenseDate: '2027-01-01' }, null, {}, TODAY);
+    assert.equal(record.expenseDate.toISOString().slice(0, 10), '2027-01-01');
+    assert.equal(record.aiVerificationStatus, 'NEEDS_REVIEW');
+    assert.deepEqual(result.reviewReasons, [RECEIPT_REVIEW_REASONS.dateImplausible]);
+  });
+});
+
+// Spec §5.1. The BHC bill: ค่าบริการ 10% became a product line taxed at a rate nobody printed, and
+// the document's WHT rate was spread onto it — a withholding base no one computed.
+describe('apply: additional-charge tax rules (spec §5.1)', () => {
+  const TODAY = '2026-09-05';
+  const charge = (over: Record<string, unknown> = {}) => ({
+    kind: 'SERVICE_CHARGE', description: 'ค่าบริการ 10%', amount: '152.00', evidenceSignal: 'Service charge 10%', ...over,
+  });
+  // สินค้า 1,520.00 + ค่าบริการ 152.00 = 1,672.00 ฐานภาษี, VAT 7% 117.04, รวม 1,789.04.
+  const bhc = {
+    vatMode: 'VAT_EXCLUDED' as const, expenseDate: '2026-09-03', subtotalAmount: '1520.00', taxableAmount: '1672.00',
+    vatAmount: '117.04', vatRate: '0.07', grandTotalAmount: '1789.04', quantity: '1', unitPrice: '1520.00',
+    additionalCharges: [charge()],
+  };
+
+  it('keeps the rate the document printed and asks for nothing', async () => {
+    const { lines, result } = await applyFields(bhc, null, {}, TODAY);
+    assert.equal(result.chargesApplied, 1);
+    const row = lines.find((l: any) => l.chargeKind != null);
+    assert.equal(row.vatRate, '0.0700', 'the printed document rate is evidence, not a guess');
+    assert.deepEqual(result.reviewReasons, []);
+  });
+
+  it('never invents 7% for a charge the page priced but never rated', async () => {
+    // A printed VAT amount with no rate and no base to derive one from: `defaultLineVatRate`
+    // answers 0.0700 here, which is the guess §5.1 forbids on a charge row.
+    const { lines, result } = await applyFields(
+      { vatMode: 'VAT_EXCLUDED', expenseDate: '2026-09-03', subtotalAmount: '100.00', vatAmount: '7.00', quantity: '1', unitPrice: '100.00', additionalCharges: [charge({ amount: '10.00' })] },
+      null, {}, TODAY,
+    );
+    const row = lines.find((l: any) => l.chargeKind != null);
+    assert.equal(row?.vatRate ?? null, null);
+    assert.equal(row?.vatTreatment ?? null, null, 'a treatment without a proven rate is a second guess');
+    assert.equal(row?.reviewStatus, 'NEEDS_REVIEW');
+    assert.deepEqual(result.reviewReasons, [RECEIPT_REVIEW_REASONS.chargeVatUnknown]);
+  });
+
+  it('never spreads withholding onto a charge row, and says the base needs checking', async () => {
+    const { lines, result } = await applyFields({ ...bhc, whtRate: '0.03' }, null, {}, TODAY);
+    const row = lines.find((l: any) => l.chargeKind != null);
+    const product = lines.find((l: any) => l.chargeKind == null);
+    assert.equal(row.whtRate, null);
+    assert.equal(row.whtAmount, '0.0000');
+    assert.equal(product.whtRate, '0.0300', 'the printed rate still applies to what it was withheld on');
+    assert.equal(product.whtAmount, '45.6000', 'and the whole printed withholding lands on that base');
+    assert.deepEqual(result.reviewReasons, [RECEIPT_REVIEW_REASONS.whtWithCharges]);
+  });
+
+  // The regression the first cut of §5.1 introduced. Nulling a charge's rate up-front broke
+  // reconciliation, the whole split folded, and the charge — with its money — disappeared: a slip
+  // printing 100.00 + 10.00 with VAT 7.70 recorded a 100.00 total instead of 117.70.
+  it('keeps the charge and the total when the printed VAT proves base + charges', async () => {
+    const slip = {
+      vatMode: 'VAT_EXCLUDED' as const, expenseDate: '2026-09-03',
+      subtotalAmount: '100.00', vatAmount: '7.70', grandTotalAmount: '117.70',
+      quantity: '1', unitPrice: '100.00',
+      additionalCharges: [charge({ description: 'ค่าบริการ', amount: '10.00' })],
+    };
+    const { lines, record, result } = await applyFields(slip, null, {}, TODAY);
+    assert.equal(result.chargesApplied, 1, 'the charge is a printed row and must survive');
+    assert.equal(record.grandTotalAmount, '117.7000', 'and what was paid must not move');
+    const row = lines.find((l: any) => l.chargeKind != null);
+    assert.equal(row.vatRate, '0.0700', '7.70 over 110.00 IS the proof — no guess, nothing to review');
+    assert.deepEqual(result.reviewReasons, []);
+  });
+
+  it('keeps an unexplained charge as a reviewable line rather than deleting it', async () => {
+    // The page prints a VAT its own base + charge cannot produce at any single rate (7.00 explains
+    // the goods alone). Keep both rows, un-rate the charge, and name the gap.
+    const slip = {
+      vatMode: 'VAT_EXCLUDED' as const, expenseDate: '2026-09-03',
+      subtotalAmount: '100.00', vatAmount: '7.00',
+      quantity: '1', unitPrice: '100.00',
+      additionalCharges: [charge({ description: 'ค่าบริการ', amount: '10.00' })],
+    };
+    const { lines, result } = await applyFields(slip, null, {}, TODAY);
+    assert.equal(result.chargesApplied, 1);
+    const row = lines.find((l: any) => l.chargeKind != null);
+    assert.equal(row.vatRate ?? null, null);
+    assert.equal(row.reviewStatus, 'NEEDS_REVIEW');
+    assert.ok(result.reviewReasons.some((reason: string) => reason.startsWith(RECEIPT_REVIEW_REASONS.chargeVatUnknown)));
+  });
+
+  it('keeps every kind other than ROUNDING positive', async () => {
+    const negative = await applyFields(
+      { ...bhc, additionalCharges: [charge({ amount: '-152.00' })] },
+      null, {}, TODAY,
+    );
+    assert.equal(negative.result.chargesApplied, 0, 'money added to a bill is never negative');
   });
 });

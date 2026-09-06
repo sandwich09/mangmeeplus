@@ -146,6 +146,7 @@ export class CreateAccountantPackageUseCase {
     }
 
     const indexRows = page.rows.map((r) => buildAccountantIndexRow({
+      aiVerificationSummaryJson: r.aiVerificationSummaryJson as Record<string, unknown> | null,
       companyName: company?.name ?? ctx.companyId,
       companyTaxId: company?.taxId ?? null,
       branchCode: r.branchId ? branchCodes.get(r.branchId) ?? null : null,
@@ -173,6 +174,7 @@ export class CreateAccountantPackageUseCase {
       description: r.note,
       quantity: null,
       subtotalAmount: r.subtotalAmount,
+      additionalChargesAmount: r.additionalChargesAmount,
       discountAmount: r.discountAmount,
       taxableAmount: r.taxableAmount,
       vatAmount: r.vatAmount,

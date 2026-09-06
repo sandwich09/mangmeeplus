@@ -1,20 +1,26 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import type { PublicCompanySignupBody } from '@watchdog-bms/contracts';
 import { Button } from '@/common/components/button';
 import { SwitchField, TextField } from '@/common/components/field';
 import { trimmed } from '@/common/forms/trim';
 import { getSignupAvailability, submitCompanySignup } from './external-signup.api';
-import { SignupBrandHeader, SignupClosedNotice } from './SignupChrome';
+import { SignupBrandHeader, SignupClosedNotice, SignupUnavailableNotice } from './SignupChrome';
 import {
   clampMobileInput,
+  firstSignupErrorField,
   MOBILE_DIGITS,
-  offerLimitsLabel,
+  rotateSignupKeyAfter,
   SELECTABLE_OFFER_KEY,
   SIGNUP_CONSENT_VERSION,
-  SIGNUP_OFFERS,
+  SIGNUP_SUPPORT_PHONE,
+  SIGNUP_TRIAL_AFTER,
+  SIGNUP_TRIAL_HEADLINE,
+  SIGNUP_TRIAL_WARMUP,
+  signupFieldRejection,
   signupSubmitErrorMessage,
   validateSignupForm,
   type SignupFieldErrors,
@@ -32,53 +38,22 @@ const EMPTY_FORM: SignupFormValues = {
   taxId: '',
 };
 
-function OfferCards() {
+/**
+ * Owner 2026-09-05: there is no tier to choose any more — every applicant gets the same free trial
+ * the LINE-first signup gives. The four priced cards described a purchase nobody was being asked
+ * to make, and pairing a monthly price with a free-trial badge read as a subscription starting now.
+ * (The price itself is deliberately not repeated here: `signup-pages.qa.spec.ts` scans this file's
+ * raw source, comments included, and it is right to.)
+ */
+export function TrialNotice() {
   return (
-    <fieldset className="space-y-2.5">
-      <legend className="mb-2 text-[15px] font-semibold text-gray-800">แพ็กเกจ</legend>
-      {SIGNUP_OFFERS.map((offer) => {
-        const selected = offer.selectable;
-        const reasonId = `offer-${offer.tierKey}-reason`;
-        return (
-          <label
-            key={offer.tierKey}
-            data-offer={offer.tierKey}
-            className={`flex items-start gap-3 rounded-xl border p-3.5 ${
-              selected ? 'cursor-default border-[#046B29] bg-[#F2F9F4]' : 'border-gray-200 bg-gray-50 opacity-70'
-            }`}
-          >
-            {/* A real radio group, so the one choice and the three refusals are in the accessible
-                tree — the greyed-out styling alone says nothing to a screen reader. */}
-            <input
-              type="radio"
-              name="requestedOffer"
-              value={offer.offerKey}
-              checked={selected}
-              disabled={!selected}
-              readOnly
-              aria-describedby={offer.unavailableReason ? reasonId : undefined}
-              className="mt-0.5 h-5 w-5 shrink-0 accent-[#046B29]"
-            />
-            <span className="min-w-0 flex-1">
-              <span className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                <span className="text-[15.5px] font-bold text-gray-900">{offer.nameTh}</span>
-                <span className="text-[15px] font-semibold text-gray-700">{offer.priceLabel}</span>
-                {offer.badge ? (
-                  <span className="rounded-md bg-[#046B29] px-2 py-0.5 text-[12px] font-bold text-white">{offer.badge}</span>
-                ) : (
-                  <span className="rounded-md bg-gray-200 px-2 py-0.5 text-[12px] font-semibold text-gray-600">เร็ว ๆ นี้</span>
-                )}
-              </span>
-              <span className="mt-1 block text-[13px] leading-6 text-gray-500">{offerLimitsLabel(offer)}</span>
-              {offer.unavailableReason ? <span id={reasonId} className="sr-only">{offer.unavailableReason}</span> : null}
-            </span>
-          </label>
-        );
-      })}
-      <p className="pt-1 text-[13px] leading-6 text-gray-500">
-        ตอนนี้เปิดให้สมัครแพ็กเกจมืออาชีพ แบบทดลองใช้ฟรีก่อน แพ็กเกจอื่นจะเปิดเร็ว ๆ นี้
-      </p>
-    </fieldset>
+    <section className="rounded-xl border border-[#B6E0C4] bg-[#F2F9F4] p-3.5">
+      <h2 className="text-[15.5px] font-bold text-[#046B29]">{SIGNUP_TRIAL_HEADLINE}</h2>
+      {/* F17: the first week is capped harder than the month. Said here, next to the monthly
+          number it qualifies — finding it out on day one reads as a broken app. */}
+      <p className="mt-1 text-[13.5px] leading-6 text-gray-600">{SIGNUP_TRIAL_WARMUP}</p>
+      <p className="mt-1 text-[13.5px] leading-6 text-gray-600">{SIGNUP_TRIAL_AFTER}</p>
+    </section>
   );
 }
 
@@ -90,28 +65,39 @@ function SubmittedView({ requestId }: { requestId: string }) {
       </span>
       <div className="space-y-2">
         <h1 className="text-[22px] font-extrabold text-gray-900">ได้รับคำขอแล้ว กำลังตรวจสอบ</h1>
+        {/* Someone who already has a มั่งมีพลัส account does NOT set a new password — the claim page
+            offers both lanes — so promising "set a password" told half of them the wrong story. */}
         <p className="text-[15px] leading-7 text-gray-600">
-          เราจะส่งอีเมลให้คุณเมื่ออนุมัติ ในอีเมลจะมีลิงก์สำหรับตั้งรหัสผ่าน แล้วจึงเริ่มใช้งานได้
+          เมื่ออนุมัติ เราจะส่งลิงก์เปิดใช้งานทางอีเมล ตั้งรหัสใหม่หรือใช้บัญชีเดิมได้
         </p>
       </div>
+      <TrialNotice />
       <Link
         href={`/signup/status/${encodeURIComponent(requestId)}`}
         className="flex h-12 w-full items-center justify-center rounded-xl border-[1.5px] border-gray-200 bg-white text-[15.5px] font-semibold text-gray-900 hover:border-[#046B29]"
       >
         ตรวจสอบสถานะคำขอ
       </Link>
+      {/* R12: resend does not exist before an approval — `canResendClaim` is false in
+          PENDING_REVIEW and the button is not rendered — so the old "ask for a new email in 2 days"
+          line sent the applicant looking for a control that is not there. No approval time is
+          promised either; the honest fallback is the phone number. */}
       <p className="text-[13px] leading-6 text-gray-500">
-        เก็บลิงก์หน้านี้ไว้ตรวจสถานะได้ตลอด หากอีเมลไม่มาภายใน 2 วัน กดขอส่งอีเมลใหม่ได้จากหน้าตรวจสอบสถานะ
+        เก็บลิงก์หน้าตรวจสอบสถานะไว้ กลับมาดูได้ตลอด เมื่ออนุมัติแล้วจึงขอส่งลิงก์ใหม่ได้ หากรอนาน โทร {SIGNUP_SUPPORT_PHONE}
       </p>
     </div>
   );
 }
 
 export default function SignupPage() {
-  // Minted once per form session and reused verbatim on every retry — the server treats it as the
-  // idempotency key, so a second tap after a timeout must not create a second request.
-  const [externalSignupId] = useState(() => crypto.randomUUID());
-  const [availability, setAvailability] = useState<'loading' | 'open' | 'closed'>('loading');
+  const router = useRouter();
+  // Reused verbatim on every retry — the server treats it as the idempotency key, so a second tap
+  // after a timeout must not create a second request. It is REPLACED only after a definite
+  // validation rejection (R07): that answer proves nothing was queued, and the row the rejection
+  // left behind holds the old payload's hash, so a corrected form under the same key is a 409.
+  const [externalSignupId, setExternalSignupId] = useState(() => crypto.randomUUID());
+  const [availability, setAvailability] = useState<'loading' | 'open' | 'closed' | 'unavailable'>('loading');
+  const [availabilityAttempt, setAvailabilityAttempt] = useState(0);
   const [values, setValues] = useState<SignupFormValues>(EMPTY_FORM);
   const [fieldErrors, setFieldErrors] = useState<SignupFieldErrors>({});
   const [error, setError] = useState<string | null>(null);
@@ -120,30 +106,44 @@ export default function SignupPage() {
 
   useEffect(() => {
     let active = true;
+    setAvailability('loading');
     void getSignupAvailability()
       .then((result) => {
         if (active) setAvailability(result.enabled ? 'open' : 'closed');
       })
-      // An availability call that cannot answer must not present a form whose submit will fail.
+      // An availability call that cannot answer must not present a form whose submit will fail —
+      // but it may not claim we stopped taking applications either (R11). Its own state, its own
+      // sentence, and a retry.
       .catch(() => {
-        if (active) setAvailability('closed');
+        if (active) setAvailability('unavailable');
       });
     return () => {
       active = false;
     };
-  }, []);
+  }, [availabilityAttempt]);
 
   const set = <K extends keyof SignupFormValues>(key: K, value: SignupFormValues[K]) => {
     setValues((previous) => ({ ...previous, [key]: value }));
     if (fieldErrors[key]) setFieldErrors((previous) => ({ ...previous, [key]: undefined }));
   };
 
+  // `Field` derives the input id from `name`, which is exactly the form key. The submit button sits
+  // below a long mobile form, so colouring a field the applicant has already scrolled past is the
+  // same as saying nothing.
+  const focusField = (field: keyof SignupFormValues) => {
+    const input = document.getElementById(field);
+    input?.scrollIntoView({ block: 'center' });
+    if (input instanceof HTMLElement) input.focus();
+  };
+
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     const errors = validateSignupForm(values);
     setFieldErrors(errors);
-    if (Object.keys(errors).length > 0) {
+    const firstLocalError = firstSignupErrorField(errors);
+    if (firstLocalError) {
       setError(null);
+      focusField(firstLocalError);
       return;
     }
 
@@ -167,10 +167,23 @@ export default function SignupPage() {
     try {
       const result = await submitCompanySignup(body);
       setRequestId(result.requestId);
+      // R12: the id must reach the URL, or the page telling the applicant to keep this link is a
+      // form — a reload, a share or a bookmark all came back to an empty one. `replace`, not
+      // `push`: the filled-in form is not somewhere Back should return to.
+      router.replace(`/signup/status/${encodeURIComponent(result.requestId)}`);
     } catch (cause) {
-      // The MX rejection (422) arrives here as a server sentence about the address; showing it
-      // verbatim is the whole point — a generic line would hide the typo the user must fix.
-      setError(signupSubmitErrorMessage(cause));
+      // A rejection that names ONE field belongs under that field — the MX check names the mistyped
+      // address, and a banner at the top of a long form does not point at what to correct.
+      const rejection = signupFieldRejection(cause);
+      if (rejection) {
+        setFieldErrors({ [rejection.field]: rejection.message });
+        setError(null);
+        focusField(rejection.field);
+      } else {
+        setError(signupSubmitErrorMessage(cause));
+      }
+      // The correction is a NEW submission: the rejected payload already owns the old key.
+      if (rotateSignupKeyAfter(cause)) setExternalSignupId(crypto.randomUUID());
     } finally {
       setLoading(false);
     }
@@ -191,6 +204,8 @@ export default function SignupPage() {
         <div className="rounded-2xl border border-gray-200 bg-white p-5 sm:p-8">
           {availability === 'closed' ? (
             <SignupClosedNotice />
+          ) : availability === 'unavailable' ? (
+            <SignupUnavailableNotice onRetry={() => setAvailabilityAttempt((count) => count + 1)} />
           ) : requestId ? (
             <SubmittedView requestId={requestId} />
           ) : (
@@ -233,7 +248,11 @@ export default function SignupPage() {
                     autoComplete="family-name"
                   />
                 </div>
-                <p className="-mt-3 text-[13px] leading-6 text-gray-500">ชื่อนี้จะแสดงเป็นชื่อผู้ใช้งานหลักของร้านหลังเข้าสู่ระบบ</p>
+                {/* It is the DISPLAY name, not the login name — the login name is chosen on the
+                    claim page, and reading this as "your username" made people type one here. */}
+                <p className="-mt-3 text-[13px] leading-6 text-gray-500">
+                  ชื่อจริงของเจ้าของร้าน ใช้แสดงในระบบ ไม่ใช่ชื่อสำหรับเข้าสู่ระบบ
+                </p>
                 <TextField
                   label="อีเมล"
                   name="contactEmail"
@@ -257,10 +276,12 @@ export default function SignupPage() {
                   error={fieldErrors.phoneNumber}
                   autoComplete="tel"
                 />
+                {/* The one field on this form that is genuinely optional, and the only one that
+                    never said so — people stopped at it looking for something to fill in. */}
                 <TextField
-                  label="ประเภทธุรกิจ"
+                  label="ประเภทธุรกิจ (ไม่บังคับ)"
                   name="businessType"
-                  hint="เช่น ร้านขายของชำ ร้านอาหาร ร้านวัสดุก่อสร้าง"
+                  hint="เช่น ร้านขายของชำ ร้านอาหาร ร้านวัสดุก่อสร้าง คลินิก"
                   value={values.businessType}
                   onChange={(event) => set('businessType', event.target.value)}
                 />
@@ -299,7 +320,7 @@ export default function SignupPage() {
                   ) : null}
                 </div>
 
-                <OfferCards />
+                <TrialNotice />
 
                 {/* Owner 2026-08-31: the binding acceptance (with display-challenge evidence) happens
                     in-app on first login, so this form only SHOWS the documents — no checkbox to tick.

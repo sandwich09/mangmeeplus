@@ -1,3 +1,4 @@
+import { expenseDocumentDateStatus } from '@watchdog-bms/contracts';
 import {
   ACCOUNTANT_INDEX_COLUMNS,
   ACCOUNTANT_INDEX_COLUMN_LABELS,
@@ -18,6 +19,9 @@ import { buildXlsx, type XlsxCell } from '../../../../common/export/xlsx.logic';
 import { safeCsvCell } from '../../../../common/export/csv.logic';
 
 export type AccountantIndexSource = {
+  /** Spec §5.2: the source of `document_date_status`. Optional — a caller that has no AI summary
+   *  (a manual entry) yields `verified`, which is what a hand-typed date is. */
+  aiVerificationSummaryJson?: Record<string, unknown> | null;
   companyName: string;
   companyTaxId: string | null;
   branchCode: string | null;
@@ -45,6 +49,9 @@ export type AccountantIndexSource = {
   description: string | null;
   quantity: string | null;
   subtotalAmount: string;
+  /** §5.1: the charge rows' printed amounts. `subtotal_amount` is goods only, so without this the
+   *  exported row does not add up to its own grand total. */
+  additionalChargesAmount: string;
   discountAmount: string;
   taxableAmount: string;
   vatAmount: string;
@@ -136,6 +143,10 @@ export function buildAccountantIndexRow(source: AccountantIndexSource): Accounta
     supporting_evidence_refs: supporting.map((a) => evidenceRef(source.expenseNumber, source.expenseId, a.id)).join(','),
     web_url: source.webUrl,
     notes: source.notes ?? '',
+    additional_charges_amount: source.additionalChargesAmount,
+    // Spec §5.2: the accountant reads `document_date` beside this, so a placeholder can never pass
+    // for a printed date in the one artefact that leaves the system.
+    document_date_status: expenseDocumentDateStatus(source.aiVerificationSummaryJson),
   };
 }
 
@@ -148,7 +159,8 @@ export function buildAccountantIndexCsv(rows: AccountantPackageIndexRow[]): stri
 
 /** Amount/quantity columns are written as real numbers so Excel can sum them. */
 const NUMERIC_COLUMNS = new Set<AccountantIndexColumn>([
-  'quantity', 'subtotal_amount', 'discount_amount', 'taxable_amount', 'vat_amount', 'wht_amount',
+  'quantity', 'subtotal_amount', 'additional_charges_amount', 'discount_amount', 'taxable_amount',
+  'vat_amount', 'wht_amount',
   'grand_total_amount', 'net_payable_amount', 'paid_amount', 'outstanding_amount',
 ]);
 

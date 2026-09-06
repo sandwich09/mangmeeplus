@@ -31,6 +31,22 @@ export function signupStateGuard(
   return Object.assign(predicate, { rejectionCode });
 }
 
+/**
+ * Review R08: a transition and the facts that make it true have to commit together. Before this,
+ * approve moved the state, then stamped `approvedAt`, then queued the claim email as three separate
+ * writes — so a failure between any two of them left an applicant in EMAIL_PENDING waiting on an
+ * email nobody would ever send, and the retry saw the state and returned success.
+ */
+export type SignupAdvanceExtras = Readonly<{
+  /** Columns written by the SAME CAS as the state, so metadata cannot part company with it. */
+  data?: Prisma.CompanySignupRequestUncheckedUpdateManyInput;
+  /**
+   * Required side effects — an outbox append, nothing that can block — run inside this
+   * transaction. A throw here rolls the transition back with them.
+   */
+  alsoInTransaction?: (tx: Prisma.TransactionClient) => Promise<void>;
+}>;
+
 type ProvisionClaim = Readonly<{
   request: CompanySignupRequest;
   claimed: boolean;
@@ -100,9 +116,10 @@ export class CompanySignupCoreService {
     correlationRequestId: string,
     failureCode?: string,
     expect?: SignupStatePredicate,
+    extras?: SignupAdvanceExtras,
   ): Promise<ReceiveResult> {
     if (SPECIAL_PROVISIONING_STATES.has(toState)) throw new ConflictException('use_provisioning_boundary');
-    return this.changeState(requestId, toState, correlationRequestId, failureCode, expect);
+    return this.changeState(requestId, toState, correlationRequestId, failureCode, expect, extras);
   }
 
   async claimProvisioning(requestId: string, correlationRequestId: string, now = new Date()): Promise<ProvisionClaim> {
@@ -185,6 +202,7 @@ export class CompanySignupCoreService {
     correlationRequestId: string,
     failureCode?: string,
     expect?: SignupStatePredicate,
+    extras?: SignupAdvanceExtras,
   ): Promise<ReceiveResult> {
     return this.prisma.client.$transaction(async (tx) => {
       await this.lock(tx, requestId);
@@ -205,10 +223,15 @@ export class CompanySignupCoreService {
         throw new UnprocessableEntityException('failure_code_required');
       }
       const request = await this.casUpdate(tx, current, {
+        ...(extras?.data ?? {}),
         state: toState,
         failureCode: isCompanySignupFailureState(toState) ? normalizedFailure : null,
       });
       await this.appendEvidence(tx, request, current.state as CompanySignupState, toState, correlationRequestId);
+      // R08: the required side effect commits with the transition or neither happens. Deliberately
+      // NOT re-run on the replay branch above — the caller owns repairing a side effect that was
+      // lost after an earlier transition committed, and it knows whether the repair is idempotent.
+      await extras?.alsoInTransaction?.(tx);
       return { request, replayed: false };
     });
   }

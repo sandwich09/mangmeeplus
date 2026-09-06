@@ -82,9 +82,17 @@ import {
   AccountingGetDocumentDetailTool,
   AccountingGetReceivableSummaryTool,
   ExpenseGetDetailTool,
+  ExpenseExplainRecordTool,
   ReimbursementGetSummaryTool,
   ReimbursementGetDetailTool,
 } from './application/use-cases/erp-core-detail-tools.use-case';
+import {
+  ExpenseDraftSetHeaderTool,
+  ExpenseDraftSetLineTool,
+  ExpenseDraftAddChargeTool,
+  ExpenseDraftRemoveLineTool,
+  ExpenseDraftSetVatModeTool,
+} from './application/use-cases/erp-draft-update-tools.use-case';
 import {
   CrmGetReportSummaryTool,
   CrmGetPipelineSummaryTool,
@@ -142,6 +150,12 @@ const erpTools = [
   LedgerFinancialSummaryTool,
   ExpenseListRecentTool,
   ExpenseGetDetailTool,
+  ExpenseExplainRecordTool,
+  ExpenseDraftSetHeaderTool,
+  ExpenseDraftSetLineTool,
+  ExpenseDraftAddChargeTool,
+  ExpenseDraftRemoveLineTool,
+  ExpenseDraftSetVatModeTool,
   SalesGetSalesSummaryTool,
   TaxGetUpcomingObligationsTool,
   TaxGetVatSummaryTool,

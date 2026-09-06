@@ -6,7 +6,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { NextFunction, Request, Response } from 'express';
 import type { AppConfigService } from '../config/app-config.service';
-import type { AppLogger } from '../logger/logger.service';
+import { createLogger, type AppLogger } from '../logger/logger.service';
 import { apiCacheControl, PRIVATE_NO_STORE } from './api-cache-control.middleware';
 import {
   MAX_INBOUND_REQUEST_ID_BYTES,
@@ -78,6 +78,52 @@ describe('RequestLoggerMiddleware', () => {
       (() => {}) as NextFunction,
     );
     assert.deepEqual(listeners, []);
+  });
+});
+
+/**
+ * Review R01. `createLogger`'s redaction is key-name based, and `path` is not a sensitive key — so
+ * a credential that travels as a URL SEGMENT rides straight out to CloudWatch. This runs the REAL
+ * logger (redaction on) so the assertion is about what actually reaches the destination stream,
+ * not about a stub.
+ */
+describe('RequestLoggerMiddleware — a secret in the URL never reaches a log line', () => {
+  // Same shape AccountClaimTokenService mints: 32 random bytes, base64url.
+  const CLAIM_TOKEN = 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0U1v';
+
+  function emit(path: string): string {
+    const written: string[] = [];
+    const logger = createLogger(
+      { level: 'info', redactionEnabled: true, serviceName: 'api' },
+      { write: (chunk: string) => void written.push(chunk) } as never,
+    );
+    const middleware = new RequestLoggerMiddleware(logger, { requestLogEnabled: true } as AppConfigService);
+    let finish: (() => void) | undefined;
+    middleware.use(
+      { method: 'GET', path, headers: {} } as unknown as Request,
+      { statusCode: 200, on: (event: string, cb: () => void) => { if (event === 'finish') finish = cb; } } as unknown as Response,
+      (() => {}) as NextFunction,
+    );
+    finish?.();
+    return written.join('');
+  }
+
+  it('drops a claim token that arrived as a path segment', () => {
+    const line = emit(`/v1/public/signup-claims/${CLAIM_TOKEN}`);
+    assert.equal(line.includes(CLAIM_TOKEN), false, `claim token leaked into the request log: ${line}`);
+    // The route still has to be identifiable — this is a redaction, not a blackout.
+    assert.ok(line.includes('/v1/public/signup-claims/'), line);
+  });
+
+  it('drops the local-storage upload/download tokens too', () => {
+    const objectToken = 'f'.repeat(32);
+    assert.equal(emit(`/v1/local-storage/download/${objectToken}`).includes(objectToken), false);
+  });
+
+  it('leaves ordinary ids alone, so a log line still names the company and the document', () => {
+    const line = emit('/v1/companies/cmtgzg42a000x4k5xje8ot9mg/expenses/e1');
+    assert.ok(line.includes('cmtgzg42a000x4k5xje8ot9mg'), line);
+    assert.ok(line.includes('/expenses/e1'), line);
   });
 });
 

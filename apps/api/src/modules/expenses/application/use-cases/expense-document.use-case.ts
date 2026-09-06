@@ -66,6 +66,10 @@ export class CaptureLineExpenseNoteUseCase {
       groundingTexts?: string[];
       lineMessageId: string;
       lineEventId: string;
+      /** LINE has no branch picker: the dispatcher resolves the same default the photo lane uses
+       *  (`pickLineDefaultBranchId`) and hands it in. Scope and ACTIVE status are still re-validated
+       *  by `CreateExpenseDraftUseCase`; absent means "the rule found nothing" — unchanged behaviour. */
+      branchId?: string;
       /** Default-off rollout gate. False preserves the proven single-turn capture behavior. */
       draftConversationEnabled?: boolean;
       /** Phase 1B (spec §8.1): true ONLY when the route the server verified said
@@ -180,6 +184,10 @@ export class CaptureLineExpenseNoteUseCase {
 
     const expense = await this.createDraft.execute(ctx, {
       captureSource: 'LINE_UPLOAD',
+      // The LINE branch default the dispatcher resolved (Owner 2026-08-27). Absent — no caller, or
+      // a company where the rule found nothing to pick — leaves the create resolver's own rule in
+      // charge exactly as before.
+      ...(cmd.branchId ? { branchId: cmd.branchId } : {}),
       expenseDate: initialState?.header.expenseDate ?? validated.expenseDate ?? provisionalDate,
       vatMode: validated.vatMode,
       inputVatClaimStatus: 'NEEDS_REVIEW',
@@ -264,7 +272,11 @@ export class CaptureLineExpenseNoteUseCase {
             vendorName: validated.vendorName ?? undefined,
           },
           warnings: validated.warnings,
-          missingFields: ['receipt_evidence', ...(amount ? [] : ['amount']), ...(validated.expenseCategoryId ? [] : ['category'])],
+          // Spec §5.2: `expenseDate` fell back to `provisionalDate` (today) a few lines above and
+          // nothing said so — the same silent placeholder the receipt path had. The collection
+          // branch above already asks for the date through `unresolvedQuestions`; this branch has
+          // no conversation to ask, so the flag is the only thing that tells the reviewer.
+          missingFields: ['receipt_evidence', ...(amount ? [] : ['amount']), ...(validated.expenseCategoryId ? [] : ['category']), ...(validated.expenseDate ? [] : ['expenseDate'])],
           nextAction: 'review_in_web',
         },
         sourceChannelMetadataJson: {

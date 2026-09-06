@@ -72,6 +72,8 @@ import { DeleteExpenseUseCase } from './application/use-cases/delete-expense.use
 import { CorrectLineCapturedExpenseUseCase } from './application/use-cases/line-correction.use-case';
 import { LineSubstituteReceiptContinuationUseCase } from './application/use-cases/line-substitute-receipt-continuation.use-case';
 import { LineExpenseDraftConversationUseCase } from './application/use-cases/line-expense-draft-conversation.use-case';
+import { LineDraftUpdateUseCase } from './application/use-cases/line-draft-update.use-case';
+import { LineDraftPreviewStore } from './application/services/line-draft-preview.store';
 
 @Module({
   // FeatureLaunchModule supplies the guard that fences the two roots of the expenses journey
@@ -103,6 +105,8 @@ import { LineExpenseDraftConversationUseCase } from './application/use-cases/lin
     ListExpenseCategoriesUseCase,
     CaptureLineExpenseNoteUseCase,
     CorrectLineCapturedExpenseUseCase,
+    LineDraftPreviewStore,
+    LineDraftUpdateUseCase,
     LineSubstituteReceiptContinuationUseCase,
     LineExpenseDraftConversationUseCase,
     ListCompanySubstituteReceiptsUseCase,
@@ -144,6 +148,8 @@ import { LineExpenseDraftConversationUseCase } from './application/use-cases/lin
     CompleteReceiptUploadUseCase,
     CaptureLineExpenseNoteUseCase,
     CorrectLineCapturedExpenseUseCase,
+    LineDraftPreviewStore,
+    LineDraftUpdateUseCase,
     LineSubstituteReceiptContinuationUseCase,
     LineExpenseDraftConversationUseCase,
     ConfirmExpenseUseCase,

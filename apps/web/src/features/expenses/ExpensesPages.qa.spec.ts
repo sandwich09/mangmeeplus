@@ -44,3 +44,47 @@ test('the quota banner offers the two things the shop can still do', () => {
   assert.match(source, /href=\{`\/companies\/\$\{companyId\}\/expenses\/\$\{blockedExpenseId\}`\}/);
   assert.doesNotMatch(source, /\/companies\/\$\{companyId\}\/renew/);
 });
+
+/**
+ * Spec §5.1. Two rules the type system cannot hold. First, an additional charge must sort after
+ * every product line, so adding a PRODUCT has to insert before the charges — appending it would
+ * build the one payload shape the API refuses, and the reviewer would meet the refusal only on
+ * save. Second, the charge rows render as their own group, not as more goods lines.
+ */
+// The RULE is exercised in expense-review-validation.spec.ts against the real model
+// (`insertExpenseReviewLine`); this file only checks that the page still delegates to it, because
+// the rule silently moving back inline is the way a behavioural test stops covering the button.
+test('the add buttons delegate to the shared ordering rule', () => {
+  assert.match(source, /const insertLine = \(chargeKind: ExpenseLineChargeKind \| null\) => \{[\s\S]{0,120}insertExpenseReviewLine\(v, chargeKind\)/);
+  assert.match(source, /const removeLine = \(index: number\) => \{[\s\S]{0,140}removeExpenseReviewLine\(v, index\)/);
+  assert.doesNotMatch(source, /findIndex\(\(line\) => line\.chargeKind != null\)/, 'the ordering rule belongs in the model, where it is tested');
+  assert.match(source, /onClick=\{\(\) => insertLine\(null\)\}/);
+  assert.match(source, /onClick=\{\(\) => insertLine\('SERVICE_CHARGE'\)\}/);
+});
+
+test('charge rows render in their own group, keyed by the shared array index', () => {
+  assert.match(source, /const productEntries = entries\.filter\(\(entry\) => entry\.line\.chargeKind == null\);/);
+  assert.match(source, /const chargeEntries = entries\.filter\(\(entry\) => entry\.line\.chargeKind != null\);/);
+  assert.match(source, /\{productEntries\.map\(\(\{ line, index \}\) => \{/);
+  assert.match(source, /\{chargeEntries\.map\(\(\{ line, index \}\) => \{/);
+  assert.match(source, /t\('expenses\.charges_section', locale\)/);
+  assert.match(source, /t\('expenses\.add_charge', locale\)/);
+  // One column: at 390px a select beside a money field left neither readable.
+  assert.match(source, /<div className="grid grid-cols-1 gap-3">/);
+  // No `min="0"` on the charge amount — ปัดเศษ is printed as a deduction and the validator, not the
+  // browser, is what refuses a minus sign on every other kind.
+  assert.match(source, /<input type="number" step="0\.0001" className=\{validationInputClass\(amountIssue \?\? quantityIssue\)\}/);
+});
+
+/**
+ * Spec `line-ai-draft-control-spec-th.md` §5.2. Both list layouts (the mobile card and the desktop
+ * row) render the two date badges as a pair. A mis-indented duplicate slipped in and painted
+ * "อ่านจากบิล" twice on the same row — invisible to the type system and to every logic test.
+ */
+test('the document-date badge is rendered once per list layout, beside the late badge', () => {
+  const dateBadges = source.match(/<DocumentDateBadge\b/g) ?? [];
+  const lateBadges = source.match(/<LateDocumentBadge\b/g) ?? [];
+  assert.ok(dateBadges.length > 0, 'the badge is rendered at all');
+  assert.equal(dateBadges.length, lateBadges.length, 'exactly one date badge per layout that shows the late badge');
+  assert.doesNotMatch(source, /<DocumentDateBadge[^>]*\/>\s*<DocumentDateBadge/, 'no row paints the same badge twice');
+});

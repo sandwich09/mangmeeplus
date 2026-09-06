@@ -347,6 +347,7 @@ describe('accountant export logic', () => {
     description: 'ค่ากาแฟ "พิเศษ"',
     quantity: '1',
     subtotalAmount: '100.0000',
+    additionalChargesAmount: '0',
     discountAmount: '0.0000',
     taxableAmount: '93.4579',
     vatAmount: '6.5421',

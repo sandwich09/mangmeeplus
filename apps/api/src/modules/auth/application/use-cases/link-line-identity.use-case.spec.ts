@@ -1,12 +1,32 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { ConflictException, ForbiddenException } from '@nestjs/common';
+import { lineIdentityLockKey } from '../../../../common/database/line-identity-lock';
 import { LinkLineIdentityUseCase } from './link-line-identity.use-case';
+
+/**
+ * Review MED-1: the slot decision runs inside one transaction under the shared
+ * `line-identity:<channel>:<providerUserId>` advisory key, which signup provisioning takes too.
+ * The key is recorded rather than swallowed so a spec can assert the two sites cannot drift.
+ */
+function withIdentityTx(prisma: any, locks: unknown[][], txOptions: any[]): any {
+  prisma.client.$transaction = async (fn: any, options: any) => {
+    txOptions.push(options);
+    return fn(prisma.client);
+  };
+  prisma.client.$executeRaw = async (_strings: TemplateStringsArray, ...values: unknown[]) => {
+    locks.push(values);
+    return 0;
+  };
+  return prisma;
+}
 
 function makeUseCase(opts: { existing?: any; createThrowsP2002?: boolean; memberships?: any[] } = {}) {
   const creates: any[] = [];
   const updates: any[] = [];
   const contextUpserts: any[] = [];
+  const identityLocks: unknown[][] = [];
+  const txOptions: any[] = [];
 
   const prisma = {
     client: {
@@ -32,8 +52,10 @@ function makeUseCase(opts: { existing?: any; createThrowsP2002?: boolean; member
   const config = { lineMessagingChannelId: 'msg-chan-1', lineLoginChannelId: 'login-chan-1' } as any;
   const audit = { log: async () => {} } as any;
 
-  const useCase = new LinkLineIdentityUseCase(lineVerifier, prisma, config, audit);
-  return { useCase, creates, updates, contextUpserts };
+  const useCase = new LinkLineIdentityUseCase(
+    lineVerifier, withIdentityTx(prisma, identityLocks, txOptions), config, audit,
+  );
+  return { useCase, creates, updates, contextUpserts, identityLocks, txOptions };
 }
 
 const input = { userId: 'user-1', idToken: 'line-id-token', requestId: 'req-1' };
@@ -141,5 +163,48 @@ describe('LinkLineIdentityUseCase', () => {
     await assert.rejects(() => useCase.execute(input), ForbiddenException);
     assert.equal(creates.length, 0);
     assert.equal(updates.length, 0);
+  });
+
+  /**
+   * Review MED-1. Signup provisioning re-points the SAME row inside its own transaction. Without a
+   * shared key both sides read, then queue their UPDATEs on the row lock, and the second overwrites
+   * the first — a link landing beside a fresh provisioning takes the LINE credential off the owner
+   * of the shop just built. The literal must equal the one `create-company-onboarding` takes.
+   */
+  it('decides the identity slot under the shared advisory key', async () => {
+    const { useCase, identityLocks } = makeUseCase({
+      existing: { id: 'identity-1', userId: 'other-user', status: 'UNLINKED' },
+    });
+    await useCase.execute(input);
+
+    assert.deepEqual(identityLocks, [[lineIdentityLockKey('msg-chan-1', 'line-user-1')]]);
+    assert.deepEqual(identityLocks[0], ['line-identity:msg-chan-1:line-user-1'], 'the literal both sites share');
+  });
+
+  /**
+   * The first statement inside that transaction WAITS on the key, and the usual holder is
+   * onboarding, whose own budget is `{ maxWait: 5_000, timeout: 15_000 }`. On Prisma's default 5s
+   * this call expires while doing exactly what it should — and P2028 is not a code
+   * `all-exceptions.filter.ts` maps, so the customer gets a 500 rather than the designed
+   * `line_linked_elsewhere` 409. The budget has to outlast the holder it queues behind.
+   */
+  it('waits longer than the onboarding transaction it queues behind', async () => {
+    const { useCase, txOptions } = makeUseCase();
+    await useCase.execute(input);
+
+    assert.deepEqual(txOptions, [{ maxWait: 5_000, timeout: 20_000 }]);
+    assert.ok(txOptions[0].timeout > 15_000, 'above the onboarding cap, or the wait ends in a 500');
+  });
+
+  // Review MED-2: this path can move a severed LINE account to a DIFFERENT user, so the previous
+  // owner's "a human is handling this" hold must not follow it into somebody else's shop.
+  it('clears the support pause when the context moves', async () => {
+    const { useCase, contextUpserts } = makeUseCase({
+      existing: { id: 'identity-1', userId: 'other-user', status: 'UNLINKED' },
+    });
+    await useCase.execute(input);
+
+    assert.equal(contextUpserts[0].update.aiPausedUntil, null);
+    assert.equal(contextUpserts[0].create.aiPausedUntil, undefined, 'a fresh row has no pause to clear');
   });
 });

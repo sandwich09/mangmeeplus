@@ -7,7 +7,7 @@
  */
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { LineAiTurnRequest, LineAiAgent, LineAiIntent, LineAiConversationContext, LineAiCoverageItem, LineAiValueCandidates, LineAiAnswerPresentation, LineAiWebLink, AgentIntentPlan, AgentFact, SourceRef, SpecialistOutput, ToolMeta } from '@watchdog-bms/contracts';
-import { LINE_TOOL_REGISTRY, hasToolPermissions, isAmbiguousDateCandidate, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
+import { LINE_DRAFT_UPDATE_TOOLS, LINE_TOOL_REGISTRY, hasToolPermissions, isAmbiguousDateCandidate, isBusinessIntakeIntent, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
 import { extractJson } from '../../../common/ai/extract-json';
 import type { AgentRunResult } from './agent-types';
 import { IntentRouterAgent, ROUTER_ENABLED_TOOLS, isSubjectCompatible, isZeroToolIntent } from './intent-router.agent';
@@ -17,6 +17,9 @@ import { isExplicitJokeAsk, ResponseComposerAgent, featureDisabledReply } from '
 import { normalizePlanToolAccess, removeRuntimeBlockedTools } from './tool-availability';
 import { preparedSimpleReadEligibility, preparedFamilyKey, type PreparedSimpleReadContext } from '../domain/logic/prepared-simple-read.logic';
 import { activePreparedFamilies, formatPreparedSimpleRead, preparedTerminalReply } from './prepared-simple-read-formatter';
+import { formatExpenseExplainReply } from './expense-explain-formatter';
+import { formatDraftUpdateReply } from './draft-update-formatter';
+import { GROUNDING_TEXT_MAX } from '../infrastructure/erp-tool.client';
 import { CoverageCriticAgent } from './coverage-critic.agent';
 import { ErpToolClient, type ErpToolContext } from '../infrastructure/erp-tool.client';
 import { AiGatewayConfigService } from '../../../common/config/ai-gateway-config.service';
@@ -293,6 +296,110 @@ export function buildAnswerPresentation(
   };
 }
 
+/**
+ * The ONLY plan shape a deterministic rescue may replace: the router routed no tool at all, and
+ * every refusal it made is the out-of-scope kind. Shared by the joke rescue and the explain rescue
+ * so neither can drift into overriding an outcome the other would respect.
+ *
+ * An ALLOWLIST of one reason, never a denylist: `unsupported_module` is the only refusal that means
+ * "I could not find anything in the catalog for this". Everything else — forbidden, permission,
+ * feature_disabled, tool_unavailable (a model/tool outage), safety_crisis, privacy_rumor,
+ * mutation_blocked — is a real outcome the user must be told, and a rescue that wiped it would
+ * repaint a permission wall or a timeout as an answer.
+ *
+ * A ROUTABLE plan whose intents were emptied is NOT rescueable: that shape comes out of the
+ * permission/feature stripping in `normalizePlanToolAccess` (`every` on an empty list is vacuously
+ * true, so the length is guarded).
+ */
+export function isUnroutedOutOfScopePlan(plan: AgentIntentPlan): boolean {
+  const onlyOutOfScopeRefusals = plan.refusals.every((refusal) => refusal.reason === 'unsupported_module');
+  const routedAnyTool = plan.intents.some((intent) => intent.requiredTools.length > 0);
+  return !routedAnyTool && onlyOutOfScopeRefusals
+    && (plan.status === 'UNROUTABLE'
+      || (plan.intents.length > 0
+        && plan.intents.every((intent) => intent.intent === 'unknown' || intent.intent === 'casual_conversation')));
+}
+
+/**
+ * "Why does MY bill look like this?" — the deterministic half of spec §5.5.
+ *
+ * The hard part is not recognising the question, it is NOT recognising the nine neighbouring ones.
+ * A loose reading ("any document noun anywhere plus ทำไม anywhere") opened general-knowledge tax
+ * questions, questions about somebody else's shop, and mutation attempts. So:
+ *
+ *   - an own-record marker must sit ADJACENT to the document noun — "บิลเมื่อกี้", "ใบเสร็จนี้",
+ *     "บิลล่าสุด", "ใบกำกับของฉัน". A noun and a marker merely present in the same sentence is not
+ *     enough ("ทำไมบิลของร้านข้าง ๆ ยอดสูงกว่าเรา" has both, and is about a different shop);
+ *   - `รายการ` is NOT a document noun. It is the ordinary word for "items"/"entries", which made
+ *     "รายการค่าใช้จ่ายเดือนนี้ทำไมเยอะจัง" look like a record question;
+ *   - a third-party possessor or a mutation verb vetoes outright. "ลบบิลเมื่อกี้ทำไมไม่ได้" is a
+ *     mutation request and belongs on the mutation path, not on a read.
+ *
+ * The Owner's E4 sentence has no document noun at all ("ทำไม service charge คิดแยกเป็นอีกรายการนึง"),
+ * so it is matched by its own shape instead: a named additional charge plus a question about how
+ * that charge is COUNTED. That is not a general-knowledge phrasing — it can only be about a bill
+ * the asker is looking at.
+ */
+const THIRD_PARTY_OR_MUTATION = /ร้านข้าง\s*ๆ|ร้านอื่น|ร้านนั้น|เจ้าอื่น|บริษัทอื่น|ของเขา|ของคนอื่น|ลบ|ยกเลิก|แก้ไข|เปลี่ยน|อัปเดต|อัพเดต/u;
+const OWN_RECORD_NOUN = 'บิล|ใบเสร็จ|ใบกำกับ(?:ภาษี)?|ใบแจ้งหนี้';
+const OWN_RECORD_MARKER = 'เมื่อกี้|เมื่อครู่|ล่าสุด|ที่เพิ่งส่ง|ที่ส่งไป|ที่ส่งมา|ที่เพิ่ง|ของฉัน|ของผม|ของหนู|นี้|นี่';
+/** Marker immediately before or after the noun — Thai has no word spaces, so "adjacent" is literal. */
+const OWN_RECORD_PHRASE = new RegExp(
+  `(?:${OWN_RECORD_NOUN})\\s*(?:${OWN_RECORD_MARKER})|(?:${OWN_RECORD_MARKER})\\s*(?:${OWN_RECORD_NOUN})`, 'u');
+/** E4's own shape: a named additional charge + a question about how it is counted on the document. */
+const CHARGE_BREAKDOWN_ASK = /(?:service\s*charge|ค่าบริการ|ค่าส่ง|ค่าธรรมเนียม|ค่าบรรจุ)[\s\S]{0,40}(?:คิดแยก|แยกเป็น|แยกออก|ไม่รวม|รวมกัน|นับซ้ำ|คิดซ้ำ)|(?:คิดแยก|แยกเป็น|แยกออก|ไม่รวม|รวมกัน|นับซ้ำ|คิดซ้ำ)[\s\S]{0,40}(?:service\s*charge|ค่าบริการ|ค่าส่ง|ค่าธรรมเนียม|ค่าบรรจุ)/iu;
+const EXPLANATION_ASK = /ทำไม|เพราะอะไร|อธิบาย|มาจากไหน|คิดยังไง|คิดอย่างไร/u;
+
+export function asksAboutOwnRecord(messageText: string): boolean {
+  const text = messageText.normalize('NFC');
+  if (THIRD_PARTY_OR_MUTATION.test(text)) return false;
+  // Naming your own bill is not yet a question about it ("ส่งบิลเมื่อกี้ให้ลูกค้าแล้ว"), so the
+  // document path needs an explanation ask as well. E4's charge shape carries its own question.
+  return (OWN_RECORD_PHRASE.test(text) && EXPLANATION_ASK.test(text)) || CHARGE_BREAKDOWN_ASK.test(text);
+}
+
+/**
+ * Deterministic rescue for evidence E4: an intake-trusted BUSINESS_READ_QUESTION about the user's
+ * own record reached the model router, came back with agent `general` and zero tools, and was
+ * answered with the out-of-scope copy. The intake route is API-bound provenance, so when it says
+ * "this is a business read", the sentence points at the caller's own record, AND the router routed
+ * nothing at all, the plan is replaced with the one read that answers it.
+ *
+ * It grants no authority: permissions, entitlement and branch scope are still checked downstream,
+ * and a caller without the read permission reaches PERMISSION_DENIED instead of an answer.
+ */
+export function preferExplainRecordPlan(plan: AgentIntentPlan, req: LineAiTurnRequest): AgentIntentPlan {
+  if (req.intakeIntent !== 'BUSINESS_READ_QUESTION') return plan;
+  if (!asksAboutOwnRecord(req.messageText)) return plan;
+  // A plan that already routed ANY tool is the router doing its job — even a different tool, and
+  // even a worse one. Overriding it would silently retarget "รายการค่าใช้จ่ายเดือนนี้ทำไมเยอะจัง"
+  // from the period total the router chose onto a single record.
+  if (!isUnroutedOutOfScopePlan(plan)) return plan;
+  return {
+    ...plan,
+    status: 'ROUTABLE',
+    intents: [{ intent: 'read_detail', subject: 'expense', agent: 'accounting', priority: 1, requiredTools: [EXPLAIN_RECORD_TOOL], missingContext: [] }],
+    refusals: [],
+  };
+}
+
+export const EXPLAIN_RECORD_TOOL = 'expense.explain_record';
+
+/** The deterministic explain answer for this turn, when one of the gathered reads was an explain
+ *  whose result the formatter could fully verify. `undefined` keeps the ordinary composed path. */
+function explainedRecordReply(toolData: Array<{ tool: string; data: unknown }>): string | undefined {
+  const entry = toolData.find((item) => item.tool === EXPLAIN_RECORD_TOOL);
+  return entry ? formatExpenseExplainReply(entry.data) : undefined;
+}
+
+/** The deterministic draft-edit answer for this turn, when one of the gathered calls was a
+ *  `draft_update` PREVIEW the formatter could fully verify. Same rule as the explain lane: the
+ *  model never phrases a turn that states somebody's money. */
+function draftUpdateReply(toolData: Array<{ tool: string; data: unknown }>): string | undefined {
+  const entry = toolData.find((item) => (LINE_DRAFT_UPDATE_TOOLS as readonly string[]).includes(item.tool));
+  return entry ? formatDraftUpdateReply(entry.data) : undefined;
+}
+
 /** The tool must be in the OWNING specialist's allowlist (domain isolation) — mirrors createSpecialist:
  *  inventory → InventoryAgent, every other agent → AccountingSummaryAgent. */
 function specialistAllowsTool(agent: LineAiAgent, toolName: string): boolean {
@@ -334,6 +441,17 @@ export class OrchestratorAgent {
       branchIds: req.userContext.branchIds,
       locationIds: req.userContext.locationIds,
       locale: req.userContext.locale,
+      // Spec §5.5: "the record this chat captured" is resolved by the ERP tool, so the chat has to
+      // reach it. Opaque hash, never the raw LINE id, and never an authorization input.
+      chatKeyHash: req.userContext.chatKeyHash,
+      // S-4 grounding (spec §5.4): the ERP side must be able to prove a number a draft edit would
+      // write was actually SAID, and only the message can prove that. Forwarded verbatim, bounded
+      // at the transport, used by nothing but that check — it grants no authority and is not
+      // stored. Sent only while the draft lane exists, so an off deployment's wire is unchanged.
+      // Bounded HERE, not just validated at the far end: the API DTO caps this at 1000 with
+      // `forbidNonWhitelisted`, so an unbounded forward would 400 EVERY tool call of a turn whose
+      // message happens to be longer — turning a long message into a total read outage.
+      ...(this.config.lineAiDraftEditEnabled ? { groundingText: req.messageText.slice(0, GROUNDING_TEXT_MAX) } : {}),
       actorDelegations: req.actorDelegations,
     };
 
@@ -348,11 +466,13 @@ export class OrchestratorAgent {
     }
 
     // Route intents. Fresh, non-narrowed delegation preserved (Phase 3 shadow may then compare).
-    const router = new IntentRouterAgent(provider);
+    const router = new IntentRouterAgent(provider, this.config.lineAiDraftEditEnabled);
     const routedPlan = await router.route(req.messageText, false, req.conversationContext, req.openClarifications);
     this.maybeShadowComparePreparedPlan(req, routedPlan);
     const access = normalizePlanToolAccess(routedPlan, req.messageText, req.userContext);
-    let plan = access.plan;
+    // Spec §5.5 / evidence E4: a trusted business-read intake about the caller's own record must
+    // reach the explain tool even when the model router returned no tool at all.
+    let plan = preferExplainRecordPlan(access.plan, req);
     const featureDisabledTools = [...access.featureDisabledTools];
     // A joke request the router refused as out-of-scope is a misroute, not a refusal to honour: the
     // composer owns a curated bank for exactly this turn (Owner decision 2026-08-29/30), and prompt
@@ -361,21 +481,28 @@ export class OrchestratorAgent {
     // joke, nothing routed a tool, and every refusal is the out-of-scope kind — a safety, privacy,
     // mutation or permission refusal is never overridden, and any business clause keeps the
     // business path untouched.
-    const onlyOutOfScopeRefusals = plan.refusals.every((refusal) => refusal.reason === 'unsupported_module');
-    const routedAnyTool = plan.intents.some((intent) => intent.requiredTools.length > 0);
-    // A ROUTABLE plan whose intents were emptied is NOT rescueable: that shape comes out of the
-    // permission/feature stripping above, and a joke phrase must never repaint a permission
-    // situation as small talk (`every` on an empty list is vacuously true — guard the length).
-    if (isExplicitJokeAsk(req.messageText) && !routedAnyTool && onlyOutOfScopeRefusals
-      && (plan.status === 'UNROUTABLE'
-        || (plan.intents.length > 0
-          && plan.intents.every((intent) => intent.intent === 'unknown' || intent.intent === 'casual_conversation')))) {
+    // `isUnroutedOutOfScopePlan` is the same rescueable-shape test the explain rescue above uses:
+    // nothing routed, and only out-of-scope refusals to override. A joke phrase must never repaint
+    // a permission situation as small talk.
+    if (isExplicitJokeAsk(req.messageText) && isUnroutedOutOfScopePlan(plan)) {
       plan = {
         ...plan,
         status: 'ROUTABLE',
         intents: [{ intent: 'casual_conversation', subject: 'unknown', agent: 'general', priority: 1, requiredTools: [], missingContext: [] }],
         refusals: [],
       };
+    }
+    // Spec §5.3: "ยังไม่รองรับ" is not "นอกขอบเขต". The API's own intake routing already decided
+    // what this turn was about, and it hands that decision over on `intakeIntent` — a trusted field
+    // the API binds from its parsed route plan, never from the model's `preparedPlan`. When it says
+    // business and the router still found nothing to run, the subject IS in this system and LINE
+    // simply has no tool for it yet. UAT 2026-09-03: "ทำไม service charge คิดแยกเป็นอีกรายการ" — a
+    // question about the sender's own expense — was answered "อยู่นอกขอบเขตระบบ". Runs after the
+    // joke rescue so a joke ask is still rescued, and only over the out-of-scope code: a safety,
+    // privacy, permission or mutation refusal keeps its own meaning and its own copy.
+    if (isBusinessIntakeIntent(req.intakeIntent) && plan.refusals.length > 0
+      && plan.refusals.every((refusal) => refusal.reason === 'unsupported_module')) {
+      plan = { ...plan, refusals: plan.refusals.map((refusal) => ({ ...refusal, reason: 'unsupported_yet' as const })) };
     }
     const zeroToolIntent = plan.intents.length === 1 && isZeroToolIntent(plan.intents[0]?.intent)
       ? plan.intents[0].intent
@@ -433,6 +560,9 @@ export class OrchestratorAgent {
     const composer = new ResponseComposerAgent();
     const composed = composer.compose(plan, composableOutputs, req.messageText, req.userContext.locale, {
       featureDisabledTools,
+      // So the `unsupported_yet` copy can point at the workspace it says the answer lives in. The
+      // API turns a `/companies/…` path into a one-time auto-login handoff link on delivery.
+      companyId: req.userContext.companyId,
     });
     // Owner decision 2026-07-03: text business-read answers are model-composed from the raw tool
     // data (grounded by the number guard; deterministic compose is the fallback).
@@ -458,6 +588,15 @@ export class OrchestratorAgent {
       // asks ONE clarifying question instead of guessing; the follow-up turn resolves it via
       // conversationContext.
       replyText = askUserQuestion;
+    } else if (draftUpdateReply(toolData)) {
+      // Spec §5.4: a preview is rendered by the deterministic Thai template only, so no sentence
+      // can promise a total the server did not compute — and no model text can imply the change
+      // was saved. The API attaches the [ยืนยัน]/[ยกเลิก] buttons to this same turn.
+      replyText = draftUpdateReply(toolData)!;
+    } else if (explainedRecordReply(toolData)) {
+      // Spec §5.5: an explain answer is rendered by the deterministic Thai template only. No model
+      // call, so no sentence can restate someone's money in a number the tool did not return.
+      replyText = explainedRecordReply(toolData)!;
     } else if (plan.status !== 'UNROUTABLE' && toolData.length > 0) {
       replyText = await composer.composeAnswer(req.messageText, toolData, composed.replyText, provider, {
         planLanguage: plan.language,
@@ -727,7 +866,7 @@ export class OrchestratorAgent {
     provider: IModelProvider,
     budget: number,
   ): Promise<{ outputs: SpecialistOutput[]; askUser?: string }> {
-    const available = availableToolsForPlan(plan, ctx.permissions);
+    const available = availableToolsForPlan(plan, ctx.permissions, this.config.lineAiDraftEditEnabled);
     if (available.size === 0 || budget <= 0) return { outputs: [] };
 
     const outputs: SpecialistOutput[] = [];
@@ -775,7 +914,7 @@ export class OrchestratorAgent {
     budget: number,
   ): Promise<{ unavailable: boolean; outputs: SpecialistOutput[]; askUser?: string; coverage?: LineAiCoverageItem[] }> {
     const generateWithTools = provider.generateWithTools?.bind(provider);
-    const available = availableToolsForPlan(plan, ctx.permissions);
+    const available = availableToolsForPlan(plan, ctx.permissions, this.config.lineAiDraftEditEnabled);
     if (!generateWithTools || available.size === 0 || budget <= 0) return { unavailable: true, outputs: [] };
 
     const todayIso = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
@@ -983,11 +1122,19 @@ type LoopTool = { agent: LineAiAgent; intent: LineAiIntent; subject: AgentIntent
 
 // The router plans; the loop only executes. Exposed tools are requiredTools intersected with the
 // specialist allowlist, enabled catalog, subject compatibility, and effective permissions.
-function availableToolsForPlan(plan: AgentIntentPlan, permissions: readonly string[]): Map<string, LoopTool> {
+function availableToolsForPlan(
+  plan: AgentIntentPlan,
+  permissions: readonly string[],
+  draftEditEnabled = false,
+): Map<string, LoopTool> {
   const map = new Map<string, LoopTool>();
   for (const intentItem of plan.intents) {
     const specialistTools = allowedToolsForAgent(intentItem.agent);
     for (const name of intentItem.requiredTools) {
+      // S-4: with the flag off the five draft tools are not in the catalog the router saw, so a
+      // plan naming one came from somewhere else. It is dropped here as well as refused by the API
+      // executor — the loop must not even offer the model a tool this deployment will not run.
+      if (!draftEditEnabled && (LINE_DRAFT_UPDATE_TOOLS as readonly string[]).includes(name)) continue;
       if (!specialistTools.has(name) || !ROUTER_ENABLED_TOOLS.has(name) || map.has(name) || !isSubjectCompatible(intentItem.subject, name)) continue;
       const meta = LINE_TOOL_REGISTRY.find((t) => t.name === name);
       if (meta && hasToolPermissions(meta, permissions)) {

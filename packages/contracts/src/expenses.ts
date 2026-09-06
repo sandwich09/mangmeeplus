@@ -2,11 +2,13 @@
 
 import {
   BUSINESS_DOCUMENT_KINDS,
+  RECEIPT_ADDITIONAL_CHARGE_KINDS,
   type BusinessDocumentClassification,
   type BusinessDocumentKind,
   type ReceiptOcrFieldResult,
 } from './line-ai.js';
 import type { BuyerEntityKind } from './company-tax-identity.js';
+import type { ExpenseDocumentDateStatus } from './line-ai-value-normalizer.js';
 
 export type ExpenseStatus = 'DRAFT' | 'EXTRACTING' | 'NEEDS_REVIEW' | 'READY_FOR_CONFIRMATION' | 'CONFIRMED' | 'REJECTED' | 'VOIDED';
 export type ExtractionStatus = 'NOT_REQUESTED' | 'NOT_CONFIGURED' | 'QUEUED' | 'PROCESSING' | 'SUCCEEDED' | 'PARTIAL' | 'FAILED';
@@ -479,10 +481,37 @@ export function validateExpenseWhtInput(input: unknown): string | null {
 /** An explicit zero treatment, independent of claimability and a selected Tax Code. */
 export type ExpenseLineVatTreatment = 'ZERO_RATED' | 'EXEMPT' | 'NON_VAT';
 
+/**
+ * Spec `line-ai-draft-control-spec-th.md` §5.1: the additional charges a receipt prints under its
+ * item block. ONE array, deliberately: the receipt OCR extractor already reported exactly these
+ * seven kinds, and Prisma's `ExpenseLineChargeKind` mirrors it (asserted set-equal by
+ * `prisma-enum-parity.spec.ts`), so a kind can never mean one thing on the way in and another in
+ * the database.
+ */
+export const EXPENSE_LINE_CHARGE_KINDS = RECEIPT_ADDITIONAL_CHARGE_KINDS;
+export type ExpenseLineChargeKind = (typeof EXPENSE_LINE_CHARGE_KINDS)[number];
+
+export const EXPENSE_LINE_CHARGE_KIND_LABELS: Record<ExpenseLineChargeKind, string> = {
+  SERVICE_CHARGE: 'ค่าบริการ',
+  DELIVERY: 'ค่าส่ง',
+  PACKAGING: 'ค่าบรรจุ',
+  PLATFORM_FEE: 'ค่าธรรมเนียมแพลตฟอร์ม',
+  TIP: 'ทิป',
+  ROUNDING: 'ปัดเศษ',
+  OTHER: 'อื่น ๆ',
+};
+
+/** ROUNDING is the one kind a document may print as a deduction ("ปัดเศษ -0.50"). */
+export function expenseChargeKindAllowsNegative(kind: ExpenseLineChargeKind): boolean {
+  return kind === 'ROUNDING';
+}
+
 export type ExpenseLineSummary = {
   id: string;
   lineNumber: number;
   description: string;
+  /** Non-null makes this an additional-charge row rather than a product row (§5.1). */
+  chargeKind?: ExpenseLineChargeKind | null;
   quantity: string;
   unitPrice: string;
   discountAmount: string;
@@ -567,11 +596,49 @@ export type ExpenseSummary = {
   sourceDocumentType: SourceDocumentType;
   taxEvidenceStatus: TaxEvidenceStatus;
   expenseCategoryId: string | null;
+  /**
+   * Spec §5.2: what `expenseDate` actually IS. The column is NOT NULL, so a list row showing a date
+   * says nothing about whether anyone read it off the document — a receipt whose date failed to
+   * parse shows the upload day, indistinguishable from a date the page printed. Derived from
+   * `aiVerificationSummaryJson`; absent on rows captured before §5.2, which read as `verified`.
+   */
+  dateStatus?: ExpenseDocumentDateStatus;
   uploadedAt: string;
   createdByUserId: string;
   createdAt: string;
   updatedAt: string;
 };
+
+export type ExpenseTotalsIdentity = {
+  ok: boolean;
+  /** Signed: stored grand total minus what the lines make. Describes THAT equation only — a record
+   *  whose subtotal drifted reports `ok: false` with a zero gap, so branch on `ok`. */
+  gapAmount: string;
+};
+
+/** One additional-charge row as a reader sees it: `amount` is what the document printed for the
+ *  charge (its line subtotal), which is also the figure that enters the tax base. */
+export type ExpenseChargeSummary = {
+  kind: ExpenseLineChargeKind;
+  label: string;
+  amount: string;
+  vatAmount: string;
+};
+
+/** The single derivation of `ExpenseDetail.charges`, shared by the API mapper, the LINE read tool
+ *  and the web summary so the three can never disagree about what a charge row is worth. */
+export function expenseLineCharges(
+  lines: readonly { chargeKind?: ExpenseLineChargeKind | null; lineSubtotalAmount: string; vatAmount: string }[],
+): ExpenseChargeSummary[] {
+  return lines
+    .filter((line): line is typeof line & { chargeKind: ExpenseLineChargeKind } => line.chargeKind != null)
+    .map((line) => ({
+      kind: line.chargeKind,
+      label: EXPENSE_LINE_CHARGE_KIND_LABELS[line.chargeKind],
+      amount: line.lineSubtotalAmount,
+      vatAmount: line.vatAmount,
+    }));
+}
 
 export type ExpenseDetail = ExpenseSummary & {
   /** Set when this expense is a reimbursement-claim projection — it is settled by the
@@ -616,6 +683,13 @@ export type ExpenseDetail = ExpenseSummary & {
   voidedAt: string | null;
   voidReason: string | null;
   lines: ExpenseLineSummary[];
+  /** §5.1 derived view of the `chargeKind != null` rows, so a reader never has to know the rule. */
+  charges: ExpenseChargeSummary[];
+  /** Does this stored record still add up? Computed from the stored header against the stored
+   *  lines, so a row written before §5.1 existed — or by anything that bypasses the draft
+   *  use-cases — is visible instead of printing a total its own parts contradict. Available for the
+   *  S-3 explain tool and read by the web review page, which warns when `ok` is false. */
+  totalsIdentity: ExpenseTotalsIdentity;
   attachments: ExpenseAttachmentRef[];
   duplicateStatus: DuplicateStatus;
   duplicateOfExpenseId: string | null;
@@ -647,6 +721,17 @@ export type CreateExpenseDraftInput = {
   lines: Array<{
     lineNumber: number;
     description: string;
+    /**
+     * §5.1: makes the row an additional charge — quantity 1, unit price = the printed amount, and
+     * it must sort after every product row.
+     *
+     * On `updateExpenseDraft` (where `lines` is a full replacement) this field is the one
+     * exception to that: ABSENT keeps whatever kind the line with this `lineNumber` already has,
+     * and only an explicit `null` clears one. A client that echoes a line back without the field
+     * would otherwise turn a service charge into a product and get a 200 for it. On create there
+     * is nothing to keep, so absent and null both mean "not a charge".
+     */
+    chargeKind?: ExpenseLineChargeKind | null;
     quantity: string;
     unitPrice: string;
     discountAmount?: string;
@@ -1140,6 +1225,14 @@ export const ACCOUNTANT_INDEX_COLUMNS = [
   'supporting_evidence_refs',
   'web_url',
   'notes',
+  // Trailing, so every existing consumer's column offsets are untouched. Spec §5.1 moved the
+  // additional charges out of `subtotal_amount`; without this column the row stopped adding up for
+  // an accountant reading it (`subtotal − discount + charges + vat = grand_total`).
+  'additional_charges_amount',
+  // Spec §5.2, after the one above by name. An accountant reading this file cannot otherwise tell
+  // a document date the receipt printed from the upload day a failed read left behind — both are
+  // just a date in `document_date`.
+  'document_date_status',
 ] as const;
 
 export type AccountantIndexColumn = (typeof ACCOUNTANT_INDEX_COLUMNS)[number];
@@ -1189,6 +1282,8 @@ export const ACCOUNTANT_INDEX_COLUMN_LABELS: Record<AccountantIndexColumn, strin
   supporting_evidence_refs: 'ไฟล์แนบเพิ่มเติม',
   web_url: 'ลิงก์เปิดในระบบ',
   notes: 'หมายเหตุ',
+  additional_charges_amount: 'ค่าใช้จ่ายเพิ่ม',
+  document_date_status: 'สถานะวันที่เอกสาร',
 };
 
 /** Everyday view: what a non-accountant needs to read the export at a glance. */

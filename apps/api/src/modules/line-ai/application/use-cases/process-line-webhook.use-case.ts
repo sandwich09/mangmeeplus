@@ -26,9 +26,24 @@ import {
   CompleteReceiptUploadUseCase,
 } from '../../../expenses/application/use-cases/expense-upload.use-case';
 import { reconcileExpenseDuplicateCandidates } from '../../../expenses/application/services/expense-duplicate-detection';
+import { listRecentLineCaptureCandidates } from '../../../expenses/application/services/line-recent-capture';
 import { pickLineDefaultBranchId } from '../../../expenses/domain/logic/line-receipt-branch.logic';
 import { CaptureLineExpenseNoteUseCase, LineTextExpenseCaptureIncompleteError } from '../../../expenses/application/use-cases/expense-document.use-case';
 import { CorrectLineCapturedExpenseUseCase } from '../../../expenses/application/use-cases/line-correction.use-case';
+import { LineDraftUpdateUseCase } from '../../../expenses/application/use-cases/line-draft-update.use-case';
+import { detectLineDraftEditRequest } from '../../../expenses/domain/logic/line-draft-update.logic';
+import { LINE_DRAFT_UPDATE_TOOLS, type LineDraftUpdateTool, type LineIntakeCorrectionHints } from '@watchdog-bms/contracts';
+import {
+  DRAFT_UPDATE_ALREADY_APPLIED_PREFIX,
+  draftProposalAckReason,
+  DRAFT_UPDATE_CANCELLED_REPLY,
+  DRAFT_UPDATE_EXPIRED_REPLY,
+  buildDraftUpdatePreviewCard,
+  draftUpdateAppliedReply,
+  draftUpdateBlockedReply,
+  draftUpdateChangedReply,
+  draftUpdateMoveSuggestionReply,
+} from '../../domain/logic/line-draft-update-card.logic';
 import {
   CHECK_BILL_PAYMENT_CHOICES,
   CHECK_BILL_PAYMENT_QUESTION,
@@ -78,7 +93,7 @@ import { ListApprovalQueueUseCase } from '../../../reimbursements/application/us
 import { ListPurchaseRequestsUseCase } from '../../../procurement/application/use-cases/purchase-request.use-case';
 import { ListPurchaseOrdersUseCase } from '../../../procurement/application/use-cases/purchase-order.use-case';
 import type { BusinessDocumentClassification, LineExpenseDraftRouteContext, LineUserContext, LineAiTurnRequest, LineAiTurnResponse, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeRoutePlan, LineIntakeSubstituteContext, ReceiptOcrFieldResult, RequestContext } from '@watchdog-bms/contracts';
-import { LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, nextPlanTierKey, asIntakeRouteIntent, extractValueCandidates, hasToolPermissions, todayCivilDate } from '@watchdog-bms/contracts';
+import { LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, nextPlanTierKey, asIntakeRouteIntent, civilDateToUtcDate, extractValueCandidates, hasToolPermissions, todayCivilDate, type ExpenseDocumentDateStatus } from '@watchdog-bms/contracts';
 import { LineAiLedgerService, ledgerKey, type LedgerEntry } from '../line-ai-ledger.service';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
 import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, isCapabilityQuestion, staffMenuCommand, PACKAGE_CHANGE_COMMAND, PENDING_APPROVAL_ITEM_LIMIT, type ApprovalSurfaceKey, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
@@ -87,6 +102,7 @@ import { buildAiBudgetExceededMessage, buildExpenseDraftCardMessage, buildLegalA
 // request; both live in the signup module, which owns those rules and their audit.
 import { PackageChangeRequestUseCase } from '../../../external-signup/application/package-change-request.use-case';
 import { LineSignupNotifyService } from '../../../external-signup/application/line-signup-notify.service';
+import { AuthRateLimitService } from '../../../auth/application/auth-rate-limit.service';
 import { isBusinessHours } from '../../../external-signup/domain/business-hours.logic';
 import { SIGNUP_SOURCE_LINE_OA } from '../../../external-signup/domain/company-signup.logic';
 import { advisorDirectAnswerText } from '../../domain/logic/line-advisor-direct-answer.logic';
@@ -174,9 +190,24 @@ const EMPLOYEE_DOOR_REPLY = '👋 ยินดีต้อนรับค่ะ 
 /** L-17: the greeting for someone the system already knows. Short on purpose — they came back. */
 const WELCOME_BACK_REPLY = '👋 ยินดีต้อนรับกลับมานะคะ ส่งรูปใบเสร็จ หรือถามยอดขายในแชทนี้ได้เลยค่ะ '
   + 'ถ้าต้องการคุยกับทีมงาน พิมพ์ ติดต่อเจ้าหน้าที่ ได้เลยนะคะ';
-const STAFF_CONTACT_REPLY = '📮 รับเรื่องแล้วค่ะ ทีมงานจะตอบในแชทนี้ในเวลาทำการ (จันทร์–เสาร์ 9:00–18:00) นะคะ';
+/** line-support-request-spec-th §2.1.4. Carries the way out, because a 24h pause with no exit was
+ *  the other half of the complaint. No plus sign anywhere a customer reads. */
+const STAFF_CONTACT_REPLY = '📮 รับเรื่องแล้วค่ะ ทีมงานจะตอบในแชทนี้ในเวลาทำการ (จันทร์–เสาร์ 9:00–18:00) '
+  + 'หากรีบ โทร 098-256-5628 ได้เลยค่ะ · พิมพ์ "คุยกับ AI ต่อ" ถ้าต้องการให้น้องมั่งมีตอบต่อ';
+/** §2.2.4: a second tap while the first request is still OPEN. Honest, and pages nobody twice. */
+const SUPPORT_ALREADY_OPEN_REPLY = '📮 คำขอของคุณยังอยู่ในคิวค่ะ ทีมงานจะตอบในแชทนี้ในเวลาทำการ '
+  + '(จันทร์–เสาร์ 9:00–18:00) นะคะ · พิมพ์ "คุยกับ AI ต่อ" ถ้าต้องการให้น้องมั่งมีตอบต่อ';
+/** §2.4: the assistant is back, said in the assistant's own voice. */
+const ASSISTANT_RESUMED_REPLY = '💚 น้องมั่งมีกลับมาแล้วค่ะ ถามได้เลยนะคะ';
+/** The amplification floor's answer. Warm on purpose: whoever hits it may still genuinely need
+ *  help, and the requests they already opened are in the operator inbox either way. */
+const SUPPORT_DAILY_LIMIT_REPLY = '📮 รับเรื่องไว้แล้วค่ะ ทีมงานจะติดต่อกลับในเวลาทำการ '
+  + '(จันทร์–เสาร์ 9:00–18:00) หากรีบ โทร 098-256-5628 ได้เลยค่ะ';
 /** Sent while a support pause is running, in place of every assistant answer (§8). */
-const SUPPORT_PAUSED_REPLY = '📮 ทีมงานรับเรื่องแล้วค่ะ กำลังดูให้อยู่ เดี๋ยวตอบในแชทนี้นะคะ';
+const SUPPORT_PAUSED_REPLY = '📮 ทีมงานรับเรื่องแล้วค่ะ กำลังดูให้อยู่ เดี๋ยวตอบในแชทนี้นะคะ '
+  + '· พิมพ์ "คุยกับ AI ต่อ" ถ้าต้องการให้น้องมั่งมีตอบต่อ';
+/** §3 PDPA: one line of context for the operator, never a transcript. */
+const SUPPORT_LAST_MESSAGE_MAX_LENGTH = 200;
 const PACKAGE_CHANGE_ACCEPTED_REPLY = '📦 รับคำขอแล้วค่ะ ทีมงานจะติดต่อกลับในเวลาทำการ (จันทร์–เสาร์ 9:00–18:00) นะคะ';
 const PACKAGE_CHANGE_NOT_OWNER_REPLY = '📦 การเปลี่ยนแพ็กเกจต้องให้เจ้าของร้านเป็นคนขอนะคะ รบกวนแจ้งเจ้าของร้านให้พิมพ์ '
   + '"ขอเปลี่ยนแพ็กเกจ" ในแชทนี้ได้เลยค่ะ';
@@ -205,8 +236,49 @@ const MEDIA_DOWNLOAD_FAILED_REPLY = '📷 น้องยังรับรู�
 const MEDIA_PROCESSING_FAILED_REPLY = '📷 ขออภัยค่ะ ระบบประมวลผลรูปนี้ไม่สำเร็จ รบกวนส่งรูปเดิมอีกครั้งนะคะ ถ้ารูปนี้เคยบันทึกไว้แล้ว ระบบจะแจ้งเตือนรายการซ้ำให้ค่ะ';
 const RATE_LIMIT_REPLY = '⏳ ระบบกำลังประมวลผลข้อความก่อนหน้า กรุณารอสักครู่แล้วลองใหม่อีกครั้งนะคะ';
 /** Post-OCR branch ambiguity (multi-branch company, no defaultable head office): the read
- *  succeeded, only the branch decision is missing — send the user to the web picker honestly. */
-const RECEIPT_BRANCH_REQUIRED_REPLY = '🧾 อ่านใบเสร็จได้แล้วค่ะ แต่บริษัทมีหลายสาขาและน้องเลือกให้เองไม่ได้ รบกวนบันทึกผ่านเว็บแล้วเลือกสาขานะคะ';
+ *  succeeded, only the branch decision is missing — send the user to the web picker honestly.
+ *  Says "เอกสาร", not "ใบเสร็จ": the same refusal now answers the check-bill lane, where calling
+ *  the document a receipt is exactly the claim the whole question exists to avoid. Cause and fix
+ *  only — how to get back in differs by lane, so the caller appends one of the tails below. */
+const RECEIPT_BRANCH_REQUIRED_REPLY = '🧾 อ่านเอกสารได้แล้วค่ะ แต่บริษัทมีหลายสาขาและน้องเลือกให้เองไม่ได้ '
+  + 'จึงยังไม่ได้บันทึกรายการนะคะ\nรบกวนบันทึกผ่านเว็บแอปแล้วเลือกสาขา หรือให้ผู้ดูแลตั้งสาขาประจำตัวให้คุณ';
+/** DIRECT photo lane: the refusal happens before any byte is stored, so re-sending the picture is
+ *  genuinely the way back in. */
+const BRANCH_RETRY_RESEND = '\nแล้วส่งรูปเดิมเข้ามาใหม่ได้เลยค่ะ';
+/** PENDING-MEDIA lane: the bytes are still parked on a PENDING row, and `ensurePendingMedia` answers
+ *  ANY new image with `{ created: false }` while that row lives (`PENDING_MEDIA_TTL_MINUTES`) — a
+ *  re-send is silently swallowed and logged `duplicate_media_pending`. Telling this sender to send
+ *  the photo again would be the same kind of lie the transient copy was: answering the open question
+ *  a second time is what actually works. */
+const BRANCH_RETRY_ANSWER = '\nไฟล์เดิมยังเก็บไว้ให้อยู่ แล้วตอบข้อความเดิมอีกครั้งได้เลยค่ะ';
+/**
+ * The deterministic half of a capture failure. These codes describe a DATA state — the company's
+ * branches, or this member's assignment — so the next attempt reproduces them byte for byte, and
+ * `ERROR_REPLY`'s "ชั่วคราว … ลองใหม่" is simply false (UAT 2026-09-05: the same check bill answered
+ * "1" twice, the same refusal twice, both dressed as temporary). Anything not listed here stays
+ * unknown, keeps the transient copy, and keeps its retry.
+ *
+ * One map for every LINE capture lane, so the pending-media answer and the direct photo cannot
+ * disagree about what a branch refusal means or which terminal status it records. `tail` is required
+ * rather than defaulted: the two lanes recover differently, and a forgotten tail would silently ship
+ * the wrong instruction — the exact defect this argument exists to prevent.
+ */
+export function lineCaptureFailureReply(
+  error: unknown,
+  tail: string,
+): { reply: string; status: string; errorCode: string } | undefined {
+  const code = error instanceof HttpException
+    ? (error.getResponse() as { code?: string } | undefined)?.code
+    : undefined;
+  if (code === 'TRANSACTION_BRANCH_REQUIRED' || code === 'TRANSACTION_BRANCH_INVALID') {
+    return {
+      reply: `${RECEIPT_BRANCH_REQUIRED_REPLY}${tail}`,
+      status: 'clarification_required',
+      errorCode: 'RECEIPT_BRANCH_SELECTION_REQUIRED',
+    };
+  }
+  return undefined;
+}
 /** Sent INSTEAD of RATE_LIMIT_REPLY when the turn's ledger entry exists: the reclaim drain WILL
  *  answer it, so telling the user to resend would produce a double answer (UAT 2026-08-27). */
 const BUSY_FOLLOW_UP_REPLY = '⏳ น้องมั่งมีกำลังตอบข้อความก่อนหน้าอยู่ค่ะ ข้อความนี้รับไว้แล้ว เดี๋ยวตามมาตอบให้เองนะคะ ไม่ต้องส่งซ้ำค่ะ';
@@ -330,8 +402,6 @@ const COMPANY_SELECTION_PENDING_STATUSES = new Set([
   'company_context_listed',
   'company_context_selection_invalid',
 ]);
-/** How far back a correction may reach. Older records are corrected in web. */
-const CORRECTION_CANDIDATE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const LINE_MEDIA_DOWNLOAD_TIMEOUT_MS = 30_000;
 
 type ReceiptOcrPreflight = {
@@ -646,7 +716,11 @@ export function formatLineReply(response: LineAiTurnResponse, webBaseUrl: string
   }
   const firstLink = response.webLinks[0];
   if (firstLink) {
-    lines.push(`เปิดดู: ${firstLink.label} ${absoluteWebLink(webBaseUrl, firstLink.path)}`);
+    const url = absoluteWebLink(webBaseUrl, firstLink.path);
+    // `absoluteWebLink` returns the path unchanged when no base URL is configured, and a bare
+    // "/companies/…" in a LINE message is not a link — it is a string nobody can open. Say the
+    // words instead; the reply is still true, it just stops pretending to be actionable.
+    lines.push(/^https?:\/\//i.test(url) ? `เปิดดู: ${firstLink.label} ${url}` : `เปิดเว็บมั่งมีพลัส: ${firstLink.label}`);
   }
   return lines.join('\n');
 }
@@ -660,7 +734,10 @@ export function toAiTurnIntent(rawIntent: string, refusalReason?: string): (type
   const up = (rawIntent ?? '').toUpperCase();
   if ((AI_TURN_INTENTS as readonly string[]).includes(up)) return up as (typeof AI_TURN_INTENTS)[number];
   if (refusalReason === 'mutation_blocked') return 'MUTATION_REQUEST';
-  if (refusalReason === 'feature_disabled' || refusalReason === 'unsupported_module') return 'UNSUPPORTED_MODULE';
+  // `unsupported_yet` maps here too: the Prisma `AiTurnIntent` enum has no member for it, and the
+  // split that matters — what the customer was told — lives on the refusal reason and the terminal
+  // status, not on this analytics-side intent.
+  if (refusalReason === 'feature_disabled' || refusalReason === 'unsupported_module' || refusalReason === 'unsupported_yet') return 'UNSUPPORTED_MODULE';
   if (refusalReason && /forbidden|permission/i.test(refusalReason)) return 'FORBIDDEN';
   return 'UNKNOWN';
 }
@@ -782,14 +859,45 @@ function isReceiptItemQuestion(text: string): boolean {
   return /(?:ซื้อ|จ่าย|ค่า|มี|รายการ).{0,12}(?:สินค้า|อะไร|รายการ)|(?:สินค้า|ของ|รายการ).{0,12}(?:อะไร|บ้าง|ไหน)|what\s+(?:items?|products?).*(?:bill|receipt)|what.*(?:bill|receipt).*(?:for|contain)/iu.test(text);
 }
 
+function moneyLabel(value: string): string {
+  const amount = Number(toMoney4(value));
+  return Number.isFinite(amount)
+    ? amount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : value;
+}
+
+/** Spec §5.1: products and additional charges are two different things on a bill, and a card that
+ *  prints "service charge 10%" among the food reads as if the shop sold a dish by that name (UAT
+ *  2026-09-03). Charges come from the OCR `additionalCharges` block, which is where they were
+ *  identified — slice B moves the marker onto the persisted `chargeKind` column. */
 function receiptItemLines(fields: ReceiptOcrFieldResult | null | undefined): string[] {
-  return (fields?.lines ?? []).slice(0, 10).map((line) => {
-    const amount = Number(toMoney4(line.amount));
-    const amountLabel = Number.isFinite(amount)
-      ? amount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-      : line.amount;
-    return `• ${line.description} × ${line.quantity} – ${amountLabel}`;
-  });
+  const items = (fields?.lines ?? []).slice(0, 10)
+    .map((line) => `• ${line.description} × ${line.quantity} – ${moneyLabel(line.amount)}`);
+  const charges = (fields?.additionalCharges ?? []).slice(0, 10)
+    .map((charge) => `• ${charge.description} – ${moneyLabel(charge.amount)}`);
+  return charges.length > 0 ? [...items, 'ค่าใช้จ่ายเพิ่ม:', ...charges] : items;
+}
+
+/**
+ * Spec §5.2. Four states, not two — and keying the copy on whether a date STRING is present (which
+ * is what "ยังไม่ระบุ or the date" did) gets three of them wrong: the upload-day placeholder is a
+ * present string, so is a misread 2019 date, and so is a reading that only works because the reader
+ * chose the วัน/เดือน order. All three printed as plain fact. The status comes from the apply
+ * service's own review, never from the presence of a value.
+ */
+export function receiptCardDateLine(
+  expenseDate: string | undefined,
+  status: ExpenseDocumentDateStatus,
+): string {
+  const printed = formatReplyDate(expenseDate);
+  if (status === 'unverified' || !printed) {
+    // Both halves: true about the reading AND about the record. UAT 2026-09-03 stored today's date
+    // on a bill printing 03/09/69 and the sender had no way to know, nor to fix it from the chat.
+    return 'ยังไม่ระบุ — ใช้วันที่ส่งไว้ก่อน พิมพ์ "วันที่ 3/9/69" เพื่อแก้';
+  }
+  if (status === 'implausible') return `${printed} (ผิดปกติ ตรวจในเว็บ)`;
+  if (status === 'assumed') return `${printed} (อ่านจากบิล แบบ วัน/เดือน)`;
+  return printed;
 }
 
 /** Same user-facing date shape as the web app, e.g. 25 ก.ค. 2569. */
@@ -802,11 +910,11 @@ function formatReplyDate(value: string | undefined): string | undefined {
   return Number.isNaN(date.getTime()) ? value : THAI_DATE_REPLY_FORMATTER.format(date);
 }
 
-function formatPaypersReply(
+export function formatPaypersReply(
   webBaseUrl: string | undefined,
   companyId: string,
   expenseId: string,
-  options: { hasDuplicate?: boolean; textOnly?: boolean; amount?: string | null; fields?: ReceiptOcrFieldResult | null; categoryName?: string | null; sourceDocumentType?: string | null; questionText?: string } = {},
+  options: { hasDuplicate?: boolean; textOnly?: boolean; amount?: string | null; fields?: ReceiptOcrFieldResult | null; categoryName?: string | null; sourceDocumentType?: string | null; questionText?: string; dateStatus?: ExpenseDocumentDateStatus } = {},
 ): string {
   const link = absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses/${expenseId}`);
   const amountValue = options.fields?.grandTotalAmount ?? options.amount;
@@ -819,11 +927,25 @@ function formatPaypersReply(
     `• ประเภทเอกสาร – ${docType ?? 'รอตรวจสอบ'}`,
     `• ยอดรวม – ${amount}`,
     `• ผู้ขาย/ผู้รับเงิน – ${options.fields?.vendorName ?? 'ยังไม่ระบุ'}`,
-    `• วันที่เอกสาร – ${formatReplyDate(options.fields?.expenseDate) ?? 'ยังไม่ระบุ'}`,
+    `• วันที่เอกสาร – ${receiptCardDateLine(options.fields?.expenseDate, options.dateStatus ?? (options.fields?.expenseDate ? 'verified' : 'unverified'))}`,
     `• เลขที่เอกสาร – ${options.fields?.documentNumber ?? 'ยังไม่ระบุ'}`,
     `• VAT / WHT / ภาษีซื้อ – ${options.fields?.vatAmount ? `VAT ${Number(toMoney4(options.fields.vatAmount)).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : 'รอตรวจสอบ'}`,
     `• หมวดหมู่ค่าใช้จ่าย – ${options.categoryName ?? 'ยังไม่ระบุ'}`,
   ];
+  // Journey J1 step 1: additional charges belong on the DEFAULT card, not only when the sender
+  // happens to ask what was on the bill. A service charge is money the shop added — the row a
+  // reviewer questions first — and folding it into "ยอดรวม" is how the BHC 152.00 went unseen.
+  // ponytail: read from the OCR `additionalCharges` block; slice B swaps this for the persisted
+  // `chargeKind` column, one call site.
+  const charges = options.fields?.additionalCharges ?? [];
+  if (charges.length > 0) {
+    const total = charges.reduce((sum, charge) => sum + Number(toMoney4(charge.amount)), 0);
+    parts.push(
+      '',
+      `➕ ค่าใช้จ่ายเพิ่ม (${charges.length} รายการ รวม ${total.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}):`,
+      ...charges.slice(0, 10).map((charge) => `• ${charge.description} – ${moneyLabel(charge.amount)}`),
+    );
+  }
   if (options.questionText && isReceiptItemQuestion(options.questionText)) {
     const itemLines = receiptItemLines(options.fields);
     parts.push('', '🛒 รายการที่อ่านได้จากบิล:', ...(itemLines.length > 0
@@ -966,14 +1088,27 @@ export function formatNextStepGuidanceReply(
 /** Phase 1 correction outcome: point at the right record, create nothing. Copy depends on what
  *  the caller may actually do in web — ACCOUNTANT/MARKETING can capture via LINE but hold no
  *  `expense.update`, so promising them an edit would be a lie. */
+/** Guidance reasons whose cause the customer can act on. Anything else keeps the generic copy —
+ *  an internal reason string must never leak into a reply. */
+const CORRECTION_GUIDANCE_REASON_LINES: Record<string, string> = {
+  empty_note: '📝 ไม่พบข้อความหมายเหตุในข้อความนี้ค่ะ จึงยังไม่ได้บันทึกอะไรไว้',
+};
+
 export function formatCorrectionGuidanceReply(
   webBaseUrl: string | undefined,
   companyId: string,
   candidates: LineIntakeCorrectionCandidate[],
   canEdit: boolean,
+  reason?: string,
 ): string {
   const listLink = absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses`);
   const action = canEdit ? 'เปิดแก้ไขในเว็บแอป' : 'เปิดตรวจสอบ และส่งต่อผู้มีสิทธิ์แก้ไข';
+  const named = reason ? CORRECTION_GUIDANCE_REASON_LINES[reason] : undefined;
+  if (named && candidates.length === 1) {
+    return [named, '', `รายการล่าสุด: ${candidates[0].label}`, `${action}:`,
+      absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses/${candidates[0].id}`)].join('\n');
+  }
+  if (named) return [named, `${action}: ${listLink}`].join('\n');
   if (candidates.length === 0) {
     return [
       '📝 ยังไม่พบรายการที่บันทึกไว้ล่าสุดในแชทนี้ที่แก้ไขได้',
@@ -1009,25 +1144,58 @@ const CORRECTION_FIELD_LABELS: Record<string, string> = {
   documentNumber: 'เลขที่เอกสาร', note: 'รายละเอียด',
 };
 
-/** Confirmation names old → new per field, so the user can see exactly what changed. */
+/**
+ * Spec §5.3: money this lane cannot touch. A service charge, a VAT figure or the total of an
+ * itemised bill needs the draft-edit tools (slice S-4). Until those exist the honest answer is that
+ * the amounts were NOT changed, and where they can be — UAT 2026-09-03: "จากบิลเมื่อกี้มี service
+ * charge 10% นะ แก้ไขได้ใช่ไหม" was answered "แก้ไขรายการเดิมให้แล้ว" after writing one sentence
+ * into `note`, and the owner had every reason to believe the bill now carried the 152.00.
+ */
+export function mentionsUnchangeableMoney(text: string): boolean {
+  return /ค่าบริการ|เซอร์วิส|service\s*charge|vat|ภาษี|ค่าส่ง|ค่าจัดส่ง|ค่าธรรมเนียม|ทิป|ส่วนลด|ยอด|ราคา|บาท/iu
+    .test(normalizeLineText(text));
+}
+
+/** Confirmation names exactly what changed per field — and, for the note, that a note is all that
+ *  changed. Nothing here may describe a write the lane did not make. */
 export function formatCorrectionAppliedReply(
   webBaseUrl: string | undefined,
   companyId: string,
   expenseId: string,
   fields: Record<string, { from: string | null; to: string }>,
+  messageText = '',
+  noteOutcome?: 'truncated' | 'duplicate',
 ): string {
+  const link = absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses/${expenseId}`);
+  const changed = Object.keys(fields);
+  const noteOnly = changed.length > 0 && changed.every((field) => field === 'note');
   const changes = Object.entries(fields).map(([field, change]) => {
     const label = CORRECTION_FIELD_LABELS[field] ?? field;
+    if (field === 'note') {
+      // Spec §5.3: say what the write DID. "บันทึกหมายเหตุไว้" over a note that filled up, or over
+      // a sentence already sitting at the end of it, is the same class of lie the header was.
+      if (noteOutcome === 'duplicate') return `• หมายเหตุนี้บันทึกไว้อยู่แล้ว: ${change.to}`;
+      if (noteOutcome === 'truncated') return `• บันทึกหมายเหตุไว้ (ตัดบางส่วน): ${change.to}`;
+      return `• บันทึกหมายเหตุไว้: ${change.to}`;
+    }
     const from = field === 'expenseDate' ? formatReplyDate(change.from ?? undefined) : change.from;
     const to = field === 'expenseDate' ? formatReplyDate(change.to) : change.to;
-    return `• ${label}: ${from ?? 'ยังไม่ระบุ'} → ${to}`;
+    return `• เปลี่ยน${label} จาก ${from ?? 'ยังไม่ระบุ'} เป็น ${to}`;
   });
   return [
-    '✅ แก้ไขรายการเดิมให้แล้ว (ไม่ได้สร้างรายการใหม่)',
+    noteOnly
+      ? '📝 บันทึกหมายเหตุไว้ให้แล้วค่ะ (ยังไม่ได้แก้ตัวเลขในรายการ)'
+      : '✅ แก้ไขรายการเดิมให้แล้ว (ไม่ได้สร้างรายการใหม่)',
     '',
     ...changes,
+    // Only when the lane did not in fact change an amount — a message that asked for a total and got
+    // one needs no caveat.
+    ...(noteOutcome === 'truncated' ? ['', 'หมายเหตุใกล้เต็ม แก้เพิ่มในเว็บได้เลยค่ะ'] : []),
+    ...(!fields['amount'] && mentionsUnchangeableMoney(messageText)
+      ? ['', 'ยังไม่ได้แก้ยอด ค่าบริการ หรือ VAT ให้นะคะ — แก้ตัวเลขเหล่านี้ได้ในเว็บค่ะ']
+      : []),
     '',
-    `ตรวจสอบในเว็บแอป:\n${absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses/${expenseId}`)}`,
+    `ตรวจสอบในเว็บแอป:\n${link}`,
   ].join('\n');
 }
 
@@ -1056,7 +1224,9 @@ export function buildCorrectionEvidence(
  *  being employee of one company and owner of another used to lock the assistant out entirely.
  *  The selection is still verified against this user's own ACTIVE memberships below, and
  *  per-company authorization stays with the permission resolver and branch ABAC downstream. */
-async function resolveCompanyForLineUser(
+// Exported so a signup spec can assert the chat lands on the NEW shop after a LINE identity is
+// re-pointed, against this resolver rather than a copy of it.
+export async function resolveCompanyForLineUser(
   prisma: PrismaService,
   userId: string,
   lineUserId: string,
@@ -1186,6 +1356,16 @@ export class ProcessLineWebhookUseCase {
     // P10-L §7/§8. Absent, "ติดต่อเจ้าหน้าที่" still pauses the assistant and still answers the
     // customer; only the admin fan-out is lost, which is the part that already logs its failures.
     @Optional() private readonly signupNotify?: LineSignupNotifyService,
+    // The amplification floor on "ติดต่อเจ้าหน้าที่". `@Optional()` like its neighbours, and the
+    // absent case FAILS OPEN on purpose: this bounds cost, it does not protect anything, and a
+    // missing Redis must never be the reason a customer in trouble cannot reach a person.
+    @Optional() private readonly rateLimit?: AuthRateLimitService,
+    // S-4 draft edit (draft-control spec §5.4). LAST on purpose, like the params above it: the
+    // specs wire this constructor positionally, so a new dependency goes on the end where it
+    // cannot shift anyone else's argument. `@Optional()` like every other expense lane here —
+    // absent, `LINE_AI_DRAFT_EDIT_ENABLED` is effectively off: no preview card, no confirm
+    // handling, and the correction lane keeps exactly today's honest behaviour.
+    @Optional() private readonly draftUpdate?: LineDraftUpdateUseCase,
   ) {}
 
   /**
@@ -1568,60 +1748,199 @@ export class ProcessLineWebhookUseCase {
   }
 
   /**
-   * P10-L §7/§8. The OA has Chat switched off, so "a human will answer" has to mean something the
-   * system enforces: the assistant stops for 24 hours and the operators are told, with a link to the
-   * partner page they answer from.
+   * P10-L §7/§8, rewritten by line-support-request-spec-th §2.1.
    *
-   * Public by design — someone whose account is broken enough to need a person may well not resolve
-   * to one. The pause is only recorded when there IS a context row to hang it on, which is exactly
-   * the case where an assistant would otherwise keep answering over the top of support.
+   * The OA has Chat switched off, so "a human will answer" has to mean something the system
+   * enforces. What it used to enforce was almost nothing: the shop name came off the stale
+   * `LineCompanyContext` row (UAT E2 — a shop the asker had unlinked from three days earlier), the
+   * pause needed that same row to exist, and the notice was queued once per day whether or not
+   * anyone was ever told. Now the tap writes a `LineSupportRequest` — the fact of the ask — and
+   * everything else is re-derived from it.
+   *
+   * Public by design: someone whose account is broken enough to need a person may well not resolve
+   * to one, and that is exactly the person the old shape dropped.
    */
   private async handleStaffContact(event: LineTextEvent, requestId: string): Promise<void> {
-    const paused = await this.pauseAssistant(event.lineUserId);
-    await this.deliverReply(event, STAFF_CONTACT_REPLY);
-    // Told REGARDLESS of whether there was an assistant to pause. An unlinked prospect has no
-    // context row, and that is precisely the person most likely to need a human — answering them
-    // "รับเรื่องแล้ว" while telling nobody was the worst of both.
-    //
-    // Once per shop per day, and once per stranger per day, on the outbox key. A linked customer
-    // who asks again while the pause is still running is already in the queue, so only the
-    // not-paused → paused transition is worth an alert.
-    if (!paused || paused.transitioned) {
-      await this.signupNotify?.enqueueSupportRequest(event.lineUserId, paused?.companyId ?? null);
+    const asker = await this.resolveSupportAsker(event.lineUserId);
+    // Dedupe is per OPEN request, not per day (§2.2.4): while one is open the answer is "you are
+    // still in the queue" and nobody is paged twice; once it closes, a new tap is a new request.
+    const open = await this.prisma.client.lineSupportRequest.findFirst({
+      where: { lineUserId: event.lineUserId, status: 'OPEN' },
+      select: { id: true },
+    });
+    if (open) {
+      // Still waiting on us, so the assistant stays out of the thread: a repeat tap re-arms the
+      // pause even though it opens nothing.
+      if (asker?.companyId) await this.pauseAssistant(event.lineUserId, asker.companyId);
+      await this.deliverReply(event, SUPPORT_ALREADY_OPEN_REPLY);
+      await this.audit.log({
+        action: 'signup.line.support_requested',
+        ...(asker?.companyId ? { companyId: asker.companyId } : {}),
+        targetType: 'line_support_request',
+        targetId: open.id,
+        requestId,
+        result: 'SUCCESS',
+        riskLevel: 'LOW',
+        metadataJson: { alreadyOpen: true, paused: Boolean(asker?.companyId) },
+      });
+      await this.updateEventLog(event.webhookEventId, 'support_already_open');
+      return;
     }
+
+    // Amplification floor. Closing a request frees the dedupe above, so tap → "คุยกับ AI ต่อ" →
+    // tap, repeated, was an unbounded source of rows, letters and pushes from one unauthenticated
+    // LINE account. Three genuine asks a day is more than a real customer makes; the fourth is
+    // answered warmly and writes nothing. Checked HERE, not at dispatch: a repeat tap on an
+    // already-open request costs nothing and must never be refused.
+    if (this.rateLimit && !await this.rateLimit.consumeLineSupportRequestSlot(event.lineUserId)) {
+      await this.deliverReply(event, SUPPORT_DAILY_LIMIT_REPLY);
+      await this.audit.log({
+        action: 'signup.line.support_requested',
+        ...(asker?.companyId ? { companyId: asker.companyId } : {}),
+        targetType: 'line_user',
+        requestId,
+        result: 'DENIED',
+        riskLevel: 'LOW',
+        metadataJson: { reason: 'daily_limit', linked: Boolean(asker) },
+      });
+      await this.updateEventLog(event.webhookEventId, 'support_rate_limited');
+      // Deliberately NOT paused. Silencing the assistant for 24 hours on the strength of a tap
+      // that opened no request and paged nobody is the worst of both: the customer loses the bot
+      // AND has nothing in the operator inbox to be answered from.
+      return;
+    }
+
+    const created = await this.prisma.client.lineSupportRequest.create({
+      data: {
+        lineUserId: event.lineUserId,
+        lineUserIdHash: hashMessagePreview(event.lineUserId),
+        ...(asker?.companyId ? { companyId: asker.companyId } : {}),
+        ...(asker?.signupRequestId ? { signupRequestId: asker.signupRequestId } : {}),
+        ...(asker?.lastMessageText ? { lastMessageText: asker.lastMessageText } : {}),
+      },
+      select: { id: true },
+    });
+    // Only a linked asker has an assistant to stop, and only now that a request actually exists:
+    // someone who unlinked is talking to the door card, so there is nothing to pause — but they
+    // still reach a human (§2.1.2).
+    if (asker?.companyId) await this.pauseAssistant(event.lineUserId, asker.companyId);
+    await this.deliverReply(event, STAFF_CONTACT_REPLY);
+    await this.signupNotify?.enqueueSupportRequest(created.id);
     await this.audit.log({
       action: 'signup.line.support_requested',
-      ...(paused ? { companyId: paused.companyId } : {}),
-      targetType: 'line_user',
+      ...(asker?.companyId ? { companyId: asker.companyId } : {}),
+      targetType: 'line_support_request',
+      targetId: created.id,
       requestId,
       result: 'SUCCESS',
       riskLevel: 'LOW',
-      metadataJson: { paused: paused !== null, alreadyPaused: paused ? !paused.transitioned : false },
+      metadataJson: {
+        paused: Boolean(asker?.companyId),
+        linked: Boolean(asker),
+        hasPendingSignup: Boolean(asker?.signupRequestId),
+      },
     });
     await this.updateEventLog(event.webhookEventId, 'support_requested');
   }
 
   /**
-   * Stamps the pause on the existing per-LINE-user context row. No row means there is no assistant
-   * to stop — the alert still goes out, it just carries no company.
+   * §2.1.1. Who is this, RIGHT NOW — re-derived on every tap from the ACTIVE identity, never read
+   * off `LineCompanyContext`. That row survives an unlink (§2.5 fixes that going forward, but a
+   * stale one may still exist), so trusting it is what named the wrong shop in the UAT evidence.
    *
-   * `transitioned` is read before the write rather than derived from it, because the write is
-   * unconditional (a lapsed pause must be extended). Two messages racing can both read "not
-   * paused"; the outbox key is what makes that one alert rather than two.
+   * `resolveCompanyForLineUser` already encodes the tie-breaker the spec asks for — the selected
+   * company counts only while the caller is still a member of it. Its `needsSelection` answer is
+   * for a chat that can ask a question; a support ticket cannot, so it falls back to the oldest
+   * membership rather than filing the request against no shop at all.
    */
-  private async pauseAssistant(lineUserId: string): Promise<{ companyId: string; transitioned: boolean } | null> {
-    const before = await this.prisma.client.lineCompanyContext.findUnique({
-      where: { lineUserId },
-      select: { companyId: true, aiPausedUntil: true },
+  private async resolveSupportAsker(lineUserId: string): Promise<{
+    companyId: string | null;
+    signupRequestId?: string;
+    lastMessageText?: string;
+  } | null> {
+    const identity = await this.resolveLineIdentity({ lineUserId });
+    if (!identity || identity.user.status !== 'ACTIVE') {
+      const pending = await this.pendingSignupFor(lineUserId);
+      return pending ? { companyId: null, signupRequestId: pending } : null;
+    }
+    const resolved = await resolveCompanyForLineUser(this.prisma, identity.userId, lineUserId);
+    const companyId = resolved && 'companyId' in resolved
+      ? resolved.companyId
+      : (await this.prisma.client.companyMembership.findFirst({
+        where: { userId: identity.userId, status: 'ACTIVE', company: { status: 'ACTIVE' } },
+        orderBy: { createdAt: 'asc' },
+        select: { companyId: true },
+      }))?.companyId ?? null;
+    if (!companyId) {
+      const pending = await this.pendingSignupFor(lineUserId);
+      return { companyId: null, ...(pending ? { signupRequestId: pending } : {}) };
+    }
+    // §2.2.1: the one line of context an operator needs before opening the shop. `AiTurn` is the
+    // only durable record of what a customer typed (the buffer is in-process and the webhook log
+    // clears its payload at every terminal status), so an unlinked asker simply has none.
+    const lastTurn = await this.prisma.client.aiTurn.findFirst({
+      where: { companyId, userId: identity.userId, userMessagePreview: { not: null } },
+      orderBy: { createdAt: 'desc' },
+      select: { userMessagePreview: true },
     });
-    if (!before) return null;
-    const updated = await this.prisma.client.lineCompanyContext.updateMany({
-      where: { lineUserId },
-      data: { aiPausedUntil: new Date(Date.now() + SUPPORT_PAUSE_MS) },
+    const lastMessageText = lastTurn?.userMessagePreview?.trim().slice(0, SUPPORT_LAST_MESSAGE_MAX_LENGTH);
+    return { companyId, ...(lastMessageText ? { lastMessageText } : {}) };
+  }
+
+  /** The application this asker is still travelling on, if any — the queue link of §2.1.1. Same
+   *  non-terminal state set the door card reads, so the two entrances agree about "still open". */
+  private async pendingSignupFor(lineUserId: string): Promise<string | undefined> {
+    const pending = await this.prisma.client.companySignupRequest.findFirst({
+      where: { lineProviderUserId: lineUserId, state: { in: [...OPEN_LINE_SIGNUP_STATES] } },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
     });
-    if (updated.count !== 1) return null;
-    const wasPaused = !!before.aiPausedUntil && before.aiPausedUntil.getTime() > Date.now();
-    return { companyId: before.companyId, transitioned: !wasPaused };
+    return pending?.id;
+  }
+
+  /**
+   * Stamps the pause on the per-LINE-user context row, creating it when the caller has never used
+   * the company switcher. Upsert rather than update (§2.1.2): the old code could only pause a user
+   * who happened to already have a row, so a single-shop owner — the common case — kept getting
+   * assistant answers on top of a human.
+   *
+   * `companyId` is only used to CREATE the row. An existing row keeps whatever it points at, which
+   * for a multi-company user with a stale selection may NOT be the shop this request was filed
+   * against — and that is fine here: the pause is keyed on `lineUserId`, so it silences the right
+   * conversation either way, and the request row (not this one) is what names the shop.
+   */
+  private async pauseAssistant(lineUserId: string, companyId: string): Promise<void> {
+    const aiPausedUntil = new Date(Date.now() + SUPPORT_PAUSE_MS);
+    await this.prisma.client.lineCompanyContext.upsert({
+      where: { lineUserId },
+      create: { lineUserId, companyId, aiPausedUntil },
+      update: { aiPausedUntil },
+    });
+  }
+
+  /**
+   * §2.4. The customer's own way out. Works with no pause running and with no account at all — it
+   * is a promise ("the assistant is back") that must never depend on state the customer cannot see.
+   */
+  private async handleAssistantResume(event: LineTextEvent, requestId: string): Promise<void> {
+    await this.prisma.client.lineCompanyContext.updateMany({
+      where: { lineUserId: event.lineUserId },
+      data: { aiPausedUntil: null },
+    });
+    const closed = await this.prisma.client.lineSupportRequest.updateMany({
+      where: { lineUserId: event.lineUserId, status: 'OPEN' },
+      data: { status: 'CLOSED', closedAt: new Date(), closedReason: 'customer_resumed' },
+    });
+    await this.deliverReply(event, ASSISTANT_RESUMED_REPLY);
+    await this.audit.log({
+      action: 'signup.line.support_resumed',
+      targetType: 'line_user',
+      requestId,
+      result: 'SUCCESS',
+      riskLevel: 'LOW',
+      metadataJson: { closedRequests: closed.count },
+    });
+    await this.updateEventLog(event.webhookEventId, 'support_resumed');
   }
 
   /**
@@ -1701,6 +2020,149 @@ export class ProcessLineWebhookUseCase {
       + `/companies/${membership.companyId}/settings/profile#account`;
     await this.deliverReply(event, `${PROFILE_GUARD_ACCEPTED_REPLY}\n${link}`);
     await this.updateEventLog(event.webhookEventId, 'profile_guard_accepted', undefined, membership.companyId);
+  }
+
+  /**
+   * S-4 beat two (spec §5.4, J3.2/J3.4). The button said "yes" or "no" and nothing else; which
+   * record, which change and whether it is still applicable are all re-derived server-side from
+   * the pending preview this chat holds.
+   *
+   * Every outcome is an honest sentence: applied names what changed and links the record, a moved
+   * record says so and drops the proposal, a confirmed record gets the `mutation_blocked` copy
+   * rather than "out of scope", and an expired or foreign preview is simply "not found".
+   */
+  private async handleDraftUpdatePostback(
+    event: LineTextEvent,
+    ctx: RequestContext,
+    access: { permissions: string[]; roles: string[] },
+    confirm: boolean,
+  ): Promise<void> {
+    const chatKeyHash = chatKeyHashOf(event);
+    if (!this.draftUpdate?.enabled) {
+      await this.deliverReply(event, DRAFT_UPDATE_EXPIRED_REPLY);
+      await this.updateEventLog(event.webhookEventId, 'draft_update_disabled', undefined, ctx.companyId);
+      return;
+    }
+    if (!confirm) {
+      const cancelled = await this.draftUpdate.cancel(ctx, chatKeyHash);
+      await this.deliverCompletedReply(
+        event,
+        cancelled === 'cancelled' ? DRAFT_UPDATE_CANCELLED_REPLY : DRAFT_UPDATE_EXPIRED_REPLY,
+        ctx.companyId,
+        access,
+      );
+      await this.updateEventLog(event.webhookEventId, 'draft_update_cancelled', undefined, ctx.companyId);
+      return;
+    }
+
+    const outcome = await this.draftUpdate.apply(ctx, chatKeyHash, event.webhookEventId);
+    let reply: string;
+    let status = 'completed';
+    if (outcome.status === 'applied') {
+      const applied = draftUpdateAppliedReply(this.config.webBaseUrl, ctx.companyId, outcome.expenseId, outcome.preview);
+      // A double tap is the commonest thing a person does to a slow button; saying "nothing is
+      // pending" would deny an edit they really made.
+      reply = outcome.replayed ? `${DRAFT_UPDATE_ALREADY_APPLIED_PREFIX} ${applied}` : applied;
+    } else if (outcome.status === 'changed') {
+      reply = draftUpdateChangedReply(this.config.webBaseUrl, ctx.companyId, outcome.expenseId);
+      status = 'draft_update_stale';
+    } else if (outcome.status === 'expired' || outcome.status === 'cancelled') {
+      reply = DRAFT_UPDATE_EXPIRED_REPLY;
+      status = 'draft_update_expired';
+    } else {
+      reply = draftUpdateBlockedReply(outcome.reason, this.config.webBaseUrl, ctx.companyId, outcome.expenseId);
+      status = outcome.reason === 'forbidden' ? 'forbidden' : 'draft_update_blocked';
+    }
+    await this.deliverCompletedReply(event, reply, ctx.companyId, access);
+    await this.persistIntakeTurn({
+      userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
+      userMessagePreview: normalizeLineText(event.messageText), replyText: reply, intent: 'CORRECTION',
+    });
+    await this.updateEventLog(
+      event.webhookEventId,
+      status,
+      outcome.status === 'blocked' && outcome.reason === 'forbidden' ? LINE_AI_ERROR_CODES.FORBIDDEN : undefined,
+      ctx.companyId,
+    );
+  }
+
+  /**
+   * S-4 beat one. Turns one detected edit request into the confirm card, or into the honest line
+   * that says why it could not. Returns false when the caller should fall through to its existing
+   * lane — which is what keeps the flag-off and no-match paths byte-identical to today.
+   */
+  private async proposeDraftUpdate(
+    event: LineTextEvent,
+    ctx: RequestContext,
+    access: { permissions: string[]; roles: string[] },
+    request: { tool: LineDraftUpdateTool; input: Record<string, unknown> },
+    evidence: Array<{ text: string; todayIso: string }>,
+    expenseId: string | undefined,
+  ): Promise<'proposed' | 'answered' | 'not_handled'> {
+    if (!this.draftUpdate?.enabled) return 'not_handled';
+    const outcome = await this.draftUpdate.preview(ctx, {
+      tool: request.tool,
+      input: request.input,
+      chatKeyHash: chatKeyHashOf(event),
+      requestId: ctx.requestId,
+      evidence,
+      ...(expenseId ? { expenseId } : {}),
+    });
+    if (outcome.status === 'preview') {
+      await this.deliverRequiredMessages(event, [buildDraftUpdatePreviewCard(outcome.preview)]);
+      await this.persistIntakeTurn({
+        userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
+        userMessagePreview: normalizeLineText(event.messageText),
+        replyText: outcome.preview.previewId, intent: 'CORRECTION',
+      });
+      await this.updateEventLog(event.webhookEventId, 'draft_update_preview', undefined, ctx.companyId);
+      return 'proposed';
+    }
+    if (outcome.status === 'move_suggestion') {
+      const reply = draftUpdateMoveSuggestionReply(outcome.lineNumber, outcome.chargeLabel);
+      await this.deliverCompletedReply(event, reply, ctx.companyId, access);
+      await this.persistIntakeTurn({
+        userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
+        userMessagePreview: normalizeLineText(event.messageText), replyText: reply, intent: 'CORRECTION',
+      });
+      await this.updateEventLog(event.webhookEventId, 'draft_update_move_suggested', undefined, ctx.companyId);
+      return 'answered';
+    }
+    // `feature_disabled` means the flag flipped mid-turn or the shared preview store is gone; the
+    // existing lane is the correct, unchanged answer. Everything else is a real fact about THIS
+    // record and must be said rather than swallowed.
+    if (outcome.reason === 'feature_disabled') return 'not_handled';
+    const reply = draftUpdateBlockedReply(outcome.reason, this.config.webBaseUrl, ctx.companyId, outcome.expenseId);
+    await this.deliverCompletedReply(event, reply, ctx.companyId, access);
+    await this.persistIntakeTurn({
+      userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
+      userMessagePreview: normalizeLineText(event.messageText), replyText: reply, intent: 'CORRECTION',
+    });
+    await this.updateEventLog(
+      event.webhookEventId,
+      outcome.reason === 'forbidden' ? 'forbidden' : 'draft_update_blocked',
+      outcome.reason === 'forbidden' ? LINE_AI_ERROR_CODES.FORBIDDEN : undefined,
+      ctx.companyId,
+    );
+    return 'answered';
+  }
+
+  /**
+   * The router's `amount` correction hint, read as a draft edit (spec §5.4).
+   *
+   * `amount` never arrives as words this turn can parse — it is a bounded hint the model SELECTED
+   * from grounded value candidates — so it needs its own translation. The line it lands on is
+   * deliberately left unset: the use case fills it with the record's only line, or refuses with
+   * `ambiguous_line`, which is the "บรรทัดไหน" clarify this lane already sends. `from` is not
+   * carried: the direction guard belongs to the five-field lane, and a draft edit asks for
+   * confirmation anyway.
+   */
+  private amountCorrectionAsDraftEdit(
+    hints: LineIntakeCorrectionHints | undefined,
+    candidates: LineIntakeCorrectionCandidate[],
+  ): { tool: LineDraftUpdateTool; input: Record<string, unknown> } | null {
+    if (!hints?.amount?.to || candidates.length !== 1) return null;
+    return { tool: 'expense.draft.set_line', input: { amount: hints.amount.to } };
   }
 
   private async deliverRequiredMessages(
@@ -2035,6 +2497,13 @@ export class ProcessLineWebhookUseCase {
       await this.handleStaffContact(event, requestId);
       return;
     }
+    // §2.4. Public for the same reason its twin is: the pause is keyed on the LINE user, not on an
+    // account, so the words that lift it must reach as far as the words that set it. Handled ABOVE
+    // the pause gate below, or the reply that lifts the pause would be swallowed by the pause.
+    if (publicCommand === 'resume_ai') {
+      await this.handleAssistantResume(event, requestId);
+      return;
+    }
     if (publicCommand === 'contact') {
       await this.deliverRequiredMessages(event, [buildContactCard()]);
       await this.updateEventLog(event.webhookEventId, 'staff_menu_contact');
@@ -2229,6 +2698,23 @@ export class ProcessLineWebhookUseCase {
       return;
     }
 
+    // S-4 (spec §5.4): the two buttons on a draft-edit confirm card. Handled HERE — after company,
+    // membership and permissions are resolved, before any AI turn — because the postback carries an
+    // intent and nothing else: everything it acts on is re-derived from this chat (SEC-04). A
+    // customer who types the same two phrases lands in exactly the same place, which is the
+    // property that makes a forged `data` value harmless.
+    // Gated on the flag, not just on the handler: with S-4 off these two phrases must behave the
+    // way any other text did before S-4 — they fall through to the ordinary AI turn. Recognising
+    // them as commands while the lane is dark would be a behaviour change a rollback cannot undo.
+    if (this.draftUpdate?.enabled && (menuCommand === 'draft_update_confirm' || menuCommand === 'draft_update_cancel')) {
+      await this.handleDraftUpdatePostback(event, {
+        requestId, authSubject: identity.userId, userId: identity.userId, companyId,
+        membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles,
+        permissions: resolvedAccess.permissions, scopes: resolvedAccess.scopes, authProvider: 'line',
+      }, resolvedAccess, menuCommand === 'draft_update_confirm');
+      return;
+    }
+
     await this.recordShadowTurn(companyId);
     if (await this.refuseWhenLaunchRouteClosed(event, identity.userId, companyId, requestId)) return;
     if (lineAssistantDisabledFor(entitledFeatureKeys)) {
@@ -2334,9 +2820,7 @@ export class ProcessLineWebhookUseCase {
       } catch (error) {
         // Nothing here may reach the dispatcher's generic failure reply: the sender would lose both
         // their answer and the explanation. Keep the bytes, say it plainly, end the turn.
-        this.logger.warn({ msg: 'line_substitute_media_answer_failed', requestId, error: (error as Error).message });
-        await this.deliverReply(event, ERROR_REPLY);
-        await this.updateEventLog(event.webhookEventId, 'substitute_media_answer_failed', undefined, companyId);
+        await this.replyPendingMediaFailure(event, companyId, requestId, error);
         return;
       }
       if (substituteAnswer?.outcome === 'handled') {
@@ -2355,10 +2839,18 @@ export class ProcessLineWebhookUseCase {
           ? 'ambiguous' as const
           : splitReply?.decision ?? classifyPendingMediaReply(normalizedText);
       if (decision === 'receipt') {
-        await this.resolvePendingMediaAsReceipt(
-          event, requestId, identity.userId, companyId, resolvedAccess, pendingMedia, normalizedText,
-          splitReply?.remainder,
-        );
+        try {
+          await this.resolvePendingMediaAsReceipt(
+            event, requestId, identity.userId, companyId, resolvedAccess, pendingMedia, normalizedText,
+            splitReply?.remainder,
+          );
+        } catch (error) {
+          // Same rule as the answer above: a data state the sender can fix gets its own sentence and
+          // leaves the row PENDING; anything else is still a real fault and belongs to the dispatcher.
+          if (!lineCaptureFailureReply(error, BRANCH_RETRY_ANSWER)) throw error;
+          await this.replyPendingMediaFailure(event, companyId, requestId, error);
+          return;
+        }
         await this.ackMediaClarification(companyId, event, identity.userId, pendingMedia.id, 'acked');
         return;
       }
@@ -3095,6 +3587,8 @@ export class ProcessLineWebhookUseCase {
       }
 
       let captured: Awaited<ReturnType<CaptureLineExpenseNoteUseCase['execute']>>;
+      // Resolved OUTSIDE `timeStage`: the stage measures the capture, not this lookup.
+      const captureBranchId = await this.resolveLineCaptureBranchId(companyId, ctx.membershipId, ctx.scopes ?? {});
       try {
         captured = await this.timeStage(event.webhookEventId, 'capture_execute', () => this.captureExpenseNote!.execute(ctx, {
           messageText: normalizedText,
@@ -3108,6 +3602,9 @@ export class ProcessLineWebhookUseCase {
             .map((item) => item.text),
           lineMessageId: event.lineMessageId ?? event.webhookEventId,
           lineEventId: event.webhookEventId,
+          // Same LINE branch rule the photo lanes use — a text note in a multi-branch company hit
+          // the identical TRANSACTION_BRANCH_REQUIRED dead end.
+          branchId: captureBranchId,
           draftConversationEnabled: expenseDraftConversationEnabled,
           // Phase 1B (§8.1): grounded `businessPurpose` may satisfy completeness ONLY behind the semantic
           // primary guard. 'off'/'shadow' never sets it, so the completeness expansion cannot ship alone —
@@ -3211,13 +3708,33 @@ export class ProcessLineWebhookUseCase {
         membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles,
         permissions: resolvedAccess.permissions, scopes: resolvedAccess.scopes, authProvider: 'line',
       };
+      const correctionEvidence = buildCorrectionEvidence(normalizedText, openWaiting, routePlan.resolvedClarificationIds);
+      // S-4 (spec §5.4/§5.5): money, charges, VAT and whole lines are NOT the five-field correction
+      // lane's to write — it would have answered "ยังไม่ได้แก้ยอด" and pointed at the web. They now
+      // route to the draft tools, which PREVIEW the change and wait for [ยืนยัน].
+      //
+      // The detector is an allowlist and runs only here, where the intake router has already
+      // classified this turn as a correction of a record THIS user captured in THIS chat — the route
+      // is the own-record marker, and the detector additionally refuses a message that names
+      // somebody else's document. `amount` is handled below because it arrives as a router HINT
+      // rather than as words this function can read.
+      const draftRequest = detectLineDraftEditRequest(normalizedText)
+        ?? this.amountCorrectionAsDraftEdit(routePlan.correctionHints, recentCapturedExpenses);
+      const draftOutcome = draftRequest && this.draftUpdate?.enabled
+        ? await this.proposeDraftUpdate(event, correctionCtx, resolvedAccess, draftRequest, correctionEvidence,
+          recentCapturedExpenses.length === 1 ? recentCapturedExpenses[0]!.id : undefined)
+        : 'not_handled';
+      if (draftOutcome !== 'not_handled') {
+        await this.ackConsumed(correctionPlan, draftProposalAckReason(draftOutcome));
+        return;
+      }
       // Try to apply; every guard failure degrades to the guidance reply — never to a create.
       const applied = this.correctExpense
         ? await this.correctExpense.execute(correctionCtx, {
           lineMessageIdHash: hashMessagePreview(event.lineMessageId ?? event.webhookEventId),
           candidates: recentCapturedExpenses,
           ...(routePlan.correctionHints ? { hints: routePlan.correctionHints } : {}),
-          evidence: buildCorrectionEvidence(normalizedText, openWaiting, routePlan.resolvedClarificationIds),
+          evidence: correctionEvidence,
           ...(correctionPlan ? { consumption: correctionPlan.consumption } : {}),
         })
         : { status: 'guidance' as const, reason: 'correction_module_unavailable' };
@@ -3225,11 +3742,11 @@ export class ProcessLineWebhookUseCase {
       let reply: string;
       if (applied.status === 'applied') {
         await this.ackConsumed(correctionPlan, 'correction_apply');
-        reply = formatCorrectionAppliedReply(this.config.webBaseUrl, companyId, applied.expenseId, applied.fields);
+        reply = formatCorrectionAppliedReply(this.config.webBaseUrl, companyId, applied.expenseId, applied.fields, normalizedText, applied.noteOutcome);
       } else if (applied.status === 'clarify') {
         reply = CORRECTION_DIRECTION_CLARIFY_REPLY;
       } else {
-        reply = formatCorrectionGuidanceReply(this.config.webBaseUrl, companyId, recentCapturedExpenses, canEdit);
+        reply = formatCorrectionGuidanceReply(this.config.webBaseUrl, companyId, recentCapturedExpenses, canEdit, applied.reason);
         await this.consumeClarifications(companyId, chatKey, identity.userId, openWaiting, routePlan.resolvedClarificationIds, 'correction_guidance');
       }
       const expenseDraftInterruption = applied.status === 'clarify' ? undefined : await interruptExpenseDraft();
@@ -3321,6 +3838,10 @@ export class ProcessLineWebhookUseCase {
       roles: resolvedAccess.roles,
       branchIds: resolvedAccess.scopes.branchIds,
       locale: 'th-TH',
+      // Chat provenance for read tools that resolve "บิลเมื่อกี้" (spec §5.5). Same hash the intake
+      // lane stores on a LINE-captured record, so the tool sees the SAME chat the correction lane
+      // does. Never the raw LINE id — that stays redacted above.
+      chatKeyHash: chatKeyHashOf(event),
     };
 
     // 7. Build turn request
@@ -3336,6 +3857,14 @@ export class ProcessLineWebhookUseCase {
       ...(aiOpenClarifications?.length && { openClarifications: aiOpenClarifications }),
       messagePreviewHash: hashMessagePreview(event.messageText),
       ...(entitledFeatureKeys && { entitledFeatureKeys: [...entitledFeatureKeys] }),
+      // S-3: bind the TRUSTED outer intake route on EVERY turn, from the already-parsed
+      // `LineIntakeRoutePlan.intent` (membership-validated, never from the untrusted wrapper).
+      // It used to ride only when a prepared plan was forwarded, which meant a plain
+      // BUSINESS_READ_QUESTION reached the gateway with no provenance at all and the orchestrator
+      // could not tell an in-system business question from an out-of-scope one (evidence E4).
+      // Binding it alone activates NO lane: the prepared simple-read lane additionally requires
+      // `req.preparedPlan`, which is still forwarded only under its own flags below.
+      ...(asIntakeRouteIntent(routePlan.intent) ? { intakeIntent: asIntakeRouteIntent(routePlan.intent) } : {}),
       // Phase 3/4 (default OFF): forward ONLY the intake route's already-parsed prepared plan when a
       // downstream gateway lane wants it — shadow comparison (Phase 3) or one-call simple read
       // (Phase 4). OR-gated so the lanes stay independent. The wrapper carries no authority; the
@@ -3367,6 +3896,9 @@ export class ProcessLineWebhookUseCase {
           companyId, chatKey, turnId: requestId, webhookEventId: event.webhookEventId,
           userId: identity.userId, text: normalizedText,
           ...(valueCandidates && { valueCandidates }),
+          // Carried so a reclaimed turn reaches the gateway with the SAME trusted provenance the
+          // live turn had — otherwise a drained E4 turn is told it is out of scope (spec §5.3).
+          ...(turnRequest.intakeIntent ? { intakeIntent: turnRequest.intakeIntent } : {}),
         })
       : null;
 
@@ -3450,7 +3982,19 @@ export class ProcessLineWebhookUseCase {
       companyId,
       resolvedAccess,
     ));
-    const delivery = await this.deliverMessages(event, [completionMessage]);
+    // S-4 (spec §5.4): when the gateway's plan reached one of the five `draft_update` tools, the
+    // API has already computed and stored a preview for THIS turn — the tool call is the proposal,
+    // the card is the question, and the write is still the confirm postback. The card is built
+    // here rather than by the gateway because only the API may print the buttons whose postbacks
+    // it will have to re-derive (SEC-04), and because every figure on it comes from the server's
+    // own rolled-back run, never from model text.
+    const draftPreview = turnResponse.toolsInvoked.some((tool) => (LINE_DRAFT_UPDATE_TOOLS as readonly string[]).includes(tool))
+      ? await this.draftUpdate?.pendingPreview({ companyId, userId: identity.userId }, chatKeyHashOf(event), requestId)
+      : null;
+    const delivery = await this.deliverMessages(
+      event,
+      draftPreview ? [completionMessage, buildDraftUpdatePreviewCard(draftPreview)] : [completionMessage],
+    );
     this.emitTurnSummary({ webhookEventId: event.webhookEventId, requestId, request: turnRequest, response: turnResponse, delivery });
     if (delivery !== 'ok') {
       await this.prisma.client.aiTurn.update({
@@ -3600,6 +4144,9 @@ export class ProcessLineWebhookUseCase {
     await this.prisma.client.lineCompanyContext.upsert({
       where: { lineUserId: event.lineUserId },
       create: { lineUserId: event.lineUserId, companyId: selected.companyId, selectedAt: new Date() },
+      // `aiPausedUntil` is KEPT here on purpose, unlike the signup and link paths that clear it.
+      // The same person is switching between their own shops mid-conversation; the §8 hold means a
+      // human is handling this thread, and typing a shop name is not a request to hand it back.
       update: { companyId: selected.companyId, selectedAt: new Date() },
     });
     await this.audit.log({
@@ -3872,11 +4419,11 @@ export class ProcessLineWebhookUseCase {
     } catch (err) {
       // Branch ambiguity is a data-setup state, not a transient fault: say what to do instead of
       // the "ชั่วคราว ลองใหม่" copy that retries into the identical failure (Owner 2026-08-27).
-      const response = (err as { getResponse?: () => unknown }).getResponse?.() as { code?: string } | undefined;
-      if (response?.code === 'TRANSACTION_BRANCH_REQUIRED' || response?.code === 'TRANSACTION_BRANCH_INVALID') {
+      const deterministic = lineCaptureFailureReply(err, BRANCH_RETRY_RESEND);
+      if (deterministic) {
         this.logger.warn({ msg: 'LINE receipt upload needs branch selection', webhookEventId: event.webhookEventId });
-        await this.deliverReply(event, RECEIPT_BRANCH_REQUIRED_REPLY).catch(() => {});
-        await this.updateEventLog(event.webhookEventId, 'clarification_required', 'RECEIPT_BRANCH_SELECTION_REQUIRED');
+        await this.deliverReply(event, deterministic.reply).catch(() => {});
+        await this.updateEventLog(event.webhookEventId, deterministic.status, deterministic.errorCode);
         return { outcome: 'done' };
       }
       this.logger.error({ msg: 'LINE receipt upload error', webhookEventId: event.webhookEventId, error: (err as Error).message });
@@ -4364,21 +4911,7 @@ export class ProcessLineWebhookUseCase {
     }
     if (decision.outcome !== 'expense') return;
 
-    // Owner 2026-08-27: never lose a successfully-read receipt to branch ambiguity. LINE has no
-    // branch picker, so default the USER'S OWN branch (membership defaultBranchId — "สาขาที่ user
-    // นั้นอยู่"), else the single in-scope branch, else the sole head office; the init use case
-    // re-validates scope and ACTIVE status, and the review lane keeps the branch editable.
-    const [branchCandidates, membership] = await Promise.all([
-      this.prisma.client.branch.findMany({
-        where: { companyId: ctx.companyId, status: 'ACTIVE', ...(ctx.scopes?.branchIds ? { id: { in: ctx.scopes.branchIds } } : {}) },
-        select: { id: true, type: true },
-        take: 20,
-      }),
-      ctx.membershipId
-        ? this.prisma.client.companyMembership.findUnique({ where: { id: ctx.membershipId }, select: { defaultBranchId: true } })
-        : Promise.resolve(null),
-    ]);
-    const defaultBranchId = pickLineDefaultBranchId(branchCandidates, membership?.defaultBranchId);
+    const defaultBranchId = await this.resolveLineCaptureBranchId(ctx.companyId, ctx.membershipId, ctx.scopes ?? {});
     const intent = await this.initReceiptUpload.execute(ctx, {
       ...(defaultBranchId ? { branchId: defaultBranchId } : {}),
       originalFileName: media.fileName,
@@ -4428,6 +4961,14 @@ export class ProcessLineWebhookUseCase {
     }
     let effectiveCategory = hintedCategory;
     let categorySuggestion: ReceiptCategorySuggestion | undefined;
+    // Spec §5.2: `expenseDate` was seeded with the upload day above because the column is NOT NULL.
+    // Until the apply below says the document's own date was read and is plausible, that value is a
+    // placeholder — and the card, the summary JSON and the review form all have to say so.
+    let dateVerified = false;
+    let dateStatus: ExpenseDocumentDateStatus = 'unverified';
+    let dateAssumptions: string[] | undefined;
+    let reviewReasons: string[] = [];
+    let chargeReconciliation: { status: string; chargesApplied: number; itemsSumAmount?: string } | undefined;
     if (ocrFields) {
       const applyOutcome = await this.receiptOcrApply.apply(ctx, intent.expenseId, ocrFields, {
         ...(hintedCategory
@@ -4442,6 +4983,19 @@ export class ProcessLineWebhookUseCase {
       // Stale means a correction landed during the OCR round trip; keep the draft as captured.
       const duplicateResult = isStaleOcrApply(applyOutcome) ? null : applyOutcome;
       hasDuplicate ||= (duplicateResult?.candidatesCreated ?? 0) > 0;
+      reviewReasons = duplicateResult?.reviewReasons ?? [];
+      dateVerified = duplicateResult?.dateVerified ?? false;
+      dateStatus = duplicateResult?.dateStatus ?? 'unverified';
+      dateAssumptions = duplicateResult?.dateAssumptions;
+      // Same shape the web upload path stores, so `ExpenseReviewPage`'s charge banners fire for a
+      // LINE draft too — they were written for the web lane and a LINE draft never carried the key.
+      chargeReconciliation = duplicateResult
+        ? {
+            status: duplicateResult.chargeReconciliationStatus,
+            chargesApplied: duplicateResult.chargesApplied,
+            ...(duplicateResult.itemsSumAmount ? { itemsSumAmount: duplicateResult.itemsSumAmount } : {}),
+          }
+        : undefined;
       categorySuggestion = duplicateResult?.categorySuggestion;
       effectiveCategory = duplicateResult?.categoryId
         ? {
@@ -4455,6 +5009,9 @@ export class ProcessLineWebhookUseCase {
       ?? ['vendor', 'expenseDate', 'documentNumber', 'grandTotalAmount', 'vatAmount', 'category']);
     if (effectiveCategory?.id) missingFields.delete('category');
     else missingFields.add('category');
+    // Spec §5.2: an unverified date is a missing one, whatever the column holds. This is the flag the
+    // web review form already reads (`expenseAiMissingFields`), so no second mechanism is invented.
+    if (!dateVerified) missingFields.add('expenseDate');
 
     await this.prisma.client.expenseRecord.update({
       where: { id: intent.expenseId },
@@ -4494,6 +5051,15 @@ export class ProcessLineWebhookUseCase {
           // category survives the LINE intake instead of being dropped after apply.
           ...(categorySuggestion ? { categorySuggestion } : {}),
           missingFields: [...missingFields].slice(0, 20),
+          // Spec §5.1/§5.2: the same readable reasons the web upload path stores, so a draft captured
+          // over LINE and one uploaded in the browser explain themselves the same way.
+          ...(reviewReasons.length > 0 ? { reviewReasons } : {}),
+          ...(chargeReconciliation ? { chargeReconciliation } : {}),
+          // Field-level evidence for the date: the four-state answer plus what the reader had to
+          // infer to produce it (§5.2). `assumed` is NOT a review trigger — it is the label the
+          // card, the review page, the list and the export all render.
+          dateStatus,
+          ...(dateAssumptions ? { expenseDateAssumptions: dateAssumptions } : {}),
           duplicateWarning: hasDuplicate,
           nextAction: 'review_in_web',
         },
@@ -4523,6 +5089,9 @@ export class ProcessLineWebhookUseCase {
       sourceDocumentType: hintedDocType !== 'NEEDS_REVIEW' ? hintedDocType : undefined,
       categoryName: effectiveCategory?.name || null,
       questionText: caption,
+      // Spec §5.2: the card says what the stored date IS — read, assumed, placeholder or absurd —
+      // instead of printing whatever string happens to be there as though the page stated it.
+      dateStatus,
     })];
     // §15.1: the free trial — and only that tier — sees how much of its 15 is left. Both numbers come
     // from the admission's own aggregate, read for the month the ADMISSION was counted in rather
@@ -4810,6 +5379,27 @@ export class ProcessLineWebhookUseCase {
     return { outcome: 'done' };
   }
 
+  /** A pending-media answer that could not be honoured. The row is left PENDING either way — the
+   *  sender still owns those bytes — but a KNOWN data state gets copy it can act on and the same
+   *  terminal status the direct photo path records, instead of a "temporary" claim that the very
+   *  next identical attempt disproves (UAT 2026-09-05). */
+  private async replyPendingMediaFailure(
+    event: LineTextEvent, companyId: string, requestId: string, error: unknown,
+  ): Promise<void> {
+    const deterministic = lineCaptureFailureReply(error, BRANCH_RETRY_ANSWER);
+    this.logger.warn({
+      msg: deterministic ? 'line_pending_media_answer_needs_setup' : 'line_substitute_media_answer_failed',
+      requestId, ...(deterministic && { errorCode: deterministic.errorCode }), error: (error as Error).message,
+    });
+    await this.deliverReply(event, deterministic?.reply ?? ERROR_REPLY);
+    await this.updateEventLog(
+      event.webhookEventId,
+      deterministic?.status ?? 'substitute_media_answer_failed',
+      deterministic?.errorCode,
+      companyId,
+    );
+  }
+
   private async resolvePendingRow(id: string, status: 'RESOLVED_RECEIPT' | 'RESOLVED_ILLUSTRATION' | 'RESOLVED_SIGNATURE'): Promise<void> {
     await this.prisma.client.lineIntakePendingMedia.updateMany({ where: { id, status: 'PENDING' }, data: { status } });
   }
@@ -5005,6 +5595,7 @@ export class ProcessLineWebhookUseCase {
         pending,
         access.scopes,
         chatKeyHashOf(event),
+        access.membershipId,
       ));
     }
     if (asked.ocrFields) await this.receiptOcrApply.apply(ctx, expenseId, asked.ocrFields);
@@ -5230,12 +5821,15 @@ export class ProcessLineWebhookUseCase {
       companyId: ctx.companyId, userId: ctx.userId, chatKeyHash: chatKeyHashOf(event), scopes: ctx.scopes ?? {},
     });
     if (hasActiveSubstituteContinuation(openRows)) return undefined;
+    // Resolved OUTSIDE `timeStage`: the stage measures the capture, not this lookup.
+    const branchId = await this.resolveLineCaptureBranchId(ctx.companyId, ctx.membershipId, ctx.scopes ?? {});
     try {
       return await this.timeStage(event.webhookEventId, 'capture_execute', () => this.captureExpenseNote!.execute(ctx, {
         messageText: normalizedText,
         captureHints: { amount, description },
         lineMessageId: event.lineMessageId ?? event.webhookEventId,
         lineEventId: event.webhookEventId,
+        branchId,
         // The substitute continuation owns this conversation's next question; a second draft-
         // conversation thread would ask the same user two different ones in the same reply.
         draftConversationEnabled: false,
@@ -5289,6 +5883,7 @@ export class ProcessLineWebhookUseCase {
         pending,
         access.scopes,
         chatKeyHashOf(event),
+        access.membershipId,
       ));
     }
     let reply = formatPaypersReply(this.config.webBaseUrl, companyId, expenseId, { hasDuplicate });
@@ -5367,9 +5962,10 @@ export class ProcessLineWebhookUseCase {
     scopes: { branchIds?: string[] },
   ): Promise<LineIntakeCorrectionCandidate[]> {
     if (!this.expenseRepo) return [];
-    const since = new Date(Date.now() - CORRECTION_CANDIDATE_WINDOW_MS);
-    const rows = await this.expenseRepo.listRecentLineCaptures({
-      companyId, createdByUserId: userId, chatKeyHash, since, scopes, take: LINE_CORRECTION_CANDIDATE_LIMIT,
+    // Recency window + chat provenance come from the ONE shared rule (spec §5.5), so the correction
+    // lane and `expense.explain_record` can never disagree about what "this chat just captured" is.
+    const rows = await listRecentLineCaptureCandidates(this.expenseRepo, {
+      companyId, userId, chatKeyHash, scopes, take: LINE_CORRECTION_CANDIDATE_LIMIT,
     });
     return rows.map((row) => {
       const amount = row.grandTotalAmount && Number(row.grandTotalAmount) > 0
@@ -5431,6 +6027,35 @@ export class ProcessLineWebhookUseCase {
     for (const entry of plan?.entries ?? []) await this.ledger?.ack(entry, 'acked', { outcome });
   }
 
+  /**
+   * Owner 2026-08-27: never lose a successfully-read document to branch ambiguity. LINE has no
+   * branch picker, so default the USER'S OWN branch (membership defaultBranchId — "สาขาที่ user
+   * นั้นอยู่"), else the single in-scope branch, else the sole head office; the create path
+   * re-validates scope and ACTIVE status, and the review lane keeps the branch editable.
+   *
+   * ONE rule for every LINE-originated record — the direct photo, the clarified pending media (the
+   * check bill answered "จ่ายแล้ว ไม่ได้ใบเสร็จ") and the text note. The pending-media lane never
+   * had it, which is exactly what killed the UAT check bill on 2026-09-05. `undefined` means still
+   * ambiguous: the caller answers honestly instead of guessing a branch into an accounting record.
+   */
+  private async resolveLineCaptureBranchId(
+    companyId: string,
+    membershipId: string | undefined,
+    scopes: { branchIds?: string[] },
+  ): Promise<string | undefined> {
+    const [branchCandidates, membership] = await Promise.all([
+      this.prisma.client.branch.findMany({
+        where: { companyId, status: 'ACTIVE', ...(scopes.branchIds ? { id: { in: scopes.branchIds } } : {}) },
+        select: { id: true, type: true },
+        take: 20,
+      }),
+      membershipId
+        ? this.prisma.client.companyMembership.findUnique({ where: { id: membershipId }, select: { defaultBranchId: true } })
+        : Promise.resolve(null),
+    ]);
+    return pickLineDefaultBranchId(branchCandidates, membership?.defaultBranchId);
+  }
+
   /** RECEIPT-05: build the reviewable expense draft from the attachment persisted at clarify
    *  time. OCR still waits for web review; byte and visual dedupe use attachment metadata. */
   private async createReceiptDraftFromPendingMedia(
@@ -5441,10 +6066,21 @@ export class ProcessLineWebhookUseCase {
     pending: { attachmentId: string; lineMessageId: string; mimeType: string },
     scopes: { branchIds?: string[] },
     chatKeyHash?: string,
+    membershipId?: string,
   ): Promise<{ expenseId: string; hasDuplicate: boolean }> {
     const expense = await this.expenseRepo!.createExpense({
-      companyId, branchId: await this.expenseRepo!.resolveCreateBranchId(companyId, scopes),
-      captureSource: 'LINE_UPLOAD', expenseDate: new Date(), currency: 'THB',
+      companyId,
+      // Same LINE branch rule the direct photo path uses; `resolveCreateBranchId` still re-validates
+      // scope and ACTIVE status, and still refuses when the rule found nothing to pick.
+      branchId: await this.expenseRepo!.resolveCreateBranchId(
+        companyId, scopes, await this.resolveLineCaptureBranchId(companyId, membershipId, scopes),
+      ),
+      // Same placeholder rule as the direct-media path above: a CALENDAR day, not the instant the
+      // photo arrived. A full timestamp in a date column hides the row from the list's day filter,
+      // and the UTC day is yesterday for anyone sending a receipt before 07:00 Bangkok. This lane
+      // already marks the draft NEEDS_REVIEW with `expenseDate` in `missingFields`, so the value
+      // is honest about being a placeholder — it just was not the right placeholder.
+      captureSource: 'LINE_UPLOAD', expenseDate: civilDateToUtcDate(todayCivilDate()), currency: 'THB',
       vatMode: 'NO_VAT', inputVatClaimStatus: 'NEEDS_REVIEW', note: 'LINE receipt (clarified)',
       createdByUserId: userId, lineMessageId: pending.lineMessageId, lineEventId,
       subtotalAmount: '0', discountAmount: '0', taxableAmount: '0', vatAmount: '0',

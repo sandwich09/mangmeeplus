@@ -60,8 +60,30 @@ function harness(options: {
     },
   } as any;
 
+  // R04: the claim now records itself through ONE transition — the state, the claim material and
+  // the single-use token CAS together — so the stub has to honour the guard, the extra columns and
+  // the in-transaction work, and roll the state back when that work throws.
+  const row = { ...REQUEST };
   const core = {
-    advance: async (id: string, state: string) => { advances.push({ id, state }); return {}; },
+    advance: async (
+      id: string, state: string, _corr: string, _failureCode?: string,
+      expect?: ((current: any) => boolean) & { rejectionCode: string },
+      extras?: { data?: Record<string, unknown>; alsoInTransaction?: (tx: unknown) => Promise<void> },
+    ) => {
+      if (expect && !expect(row)) throw new ConflictException(expect.rejectionCode);
+      const from = row.state;
+      advances.push({ id, state, ...(extras?.data ? { data: extras.data } : {}) });
+      row.state = state;
+      Object.assign(row, extras?.data ?? {});
+      try {
+        await extras?.alsoInTransaction?.(prisma.client);
+      } catch (error) {
+        row.state = from;
+        advances.pop();
+        throw error;
+      }
+      return {};
+    },
   } as any;
   const provision = {
     execute: async (cmd: any) => {
@@ -129,10 +151,13 @@ describe('SignupClaimUseCase.setPassword', () => {
 
     assert.equal(result.companyId, 'co-1');
     assert.equal(result.homePath, '/companies/co-1/dashboard');
-    const stored = h.updates[0].data.pendingPasswordHash as string;
+    // R04: the hash rides the transition, so it cannot be written for a claim that never happened.
+    assert.deepEqual(h.updates, [], 'nothing about the claim is written outside the transition');
+    assert.equal(h.advances.length, 1);
+    assert.equal(h.advances[0].state, 'EMAIL_VERIFIED');
+    const stored = h.advances[0].data.pendingPasswordHash as string;
     assert.match(stored, /^scrypt\$/);
     assert.equal(stored.includes('correct-horse'), false);
-    assert.deepEqual(h.advances, [{ id: 'signup-1', state: 'EMAIL_VERIFIED' }]);
     assert.equal(h.provisions[0].username, 'somchai');
   });
 
@@ -189,10 +214,12 @@ describe('SignupClaimUseCase.attach', () => {
     const result = await h.useCase.attach({ ...cmd, token: RAW_TOKEN, identifier: 'somchai', password: 'right-password' });
 
     assert.equal(result.companyId, 'co-1');
-    assert.equal(h.updates[0].data.attachUserId, 'user-9');
+    assert.deepEqual(h.updates, [], 'nothing about the claim is written outside the transition');
+    assert.equal(h.advances.length, 1);
+    assert.equal(h.advances[0].state, 'EMAIL_VERIFIED');
+    assert.equal(h.advances[0].data.attachUserId, 'user-9');
     // Attach carries no password of its own.
-    assert.equal(h.updates[0].data.pendingPasswordHash, null);
-    assert.deepEqual(h.advances, [{ id: 'signup-1', state: 'EMAIL_VERIFIED' }]);
+    assert.equal(h.advances[0].data.pendingPasswordHash, null);
     assert.equal(h.provisions[0].username, undefined);
     // No token/session field may appear in the claim result.
     assert.equal(/token|session/i.test(JSON.stringify(result)), false);

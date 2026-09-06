@@ -18,6 +18,17 @@ export const SIGNUP_PENDING_REVIEW_EVENT_TYPE = 'notify.signup_pending_review.re
 /** The admin queue route (`apps/web/app/system/signup-requests/page.tsx`). */
 export const SIGNUP_QUEUE_PATH = '/system/signup-requests';
 
+/**
+ * The support inbox route (`apps/web/app/system/support-requests/page.tsx`).
+ *
+ * Owner 2026-09-05: this page — not a LINE push — is the primary way an operator learns somebody is
+ * waiting, because no operator has LINE linked. Every notification this flow sends points here.
+ */
+export const SUPPORT_QUEUE_PATH = '/system/support-requests';
+
+/** Where the "nobody could be told" letter goes. Same mailbox the contact card already prints. */
+export const SUPPORT_MAILBOX_EMAIL = 'contact@mangmeeplus.com';
+
 /** Not in `IMPLEMENTED_TRIGGER_KEYS` on purpose — see `notify()`. */
 const SIGNUP_PENDING_REVIEW_TRIGGER = 'signup_pending_review';
 
@@ -134,6 +145,10 @@ export class SignupAdminNotifyService {
    * Public because the LINE-first flow's support alert and the §15.6 ops alerts both send on this
    * exact rail, with the same audience and the same "one message per admin, never two" rule (L-16)
    * — a second copy would be a second place to forget the de-duplication by identity row.
+   *
+   * Returns how many pushes LINE actually accepted. Callers that only fire and forget ignore it;
+   * the support notice records it, because "we told somebody" had been an assumption rather than
+   * a measurement, and in UAT the true answer was zero.
    */
   async pushToLinkedAdmins(
     userIds: string[],
@@ -144,25 +159,28 @@ export class SignupAdminNotifyService {
      * must not receive "a customer wants to talk to us" in the very chat they wrote it in.
      */
     options?: { skipProviderUserIdHash?: string },
-  ): Promise<void> {
+  ): Promise<number> {
     const token = this.config.lineMessagingChannelAccessToken;
-    if (!token) return;
+    if (!token) return 0;
     const identities = await this.prisma.client.externalIdentity.findMany({
       where: { userId: { in: userIds }, provider: 'LINE', status: 'ACTIVE' },
       select: { providerUserId: true },
     });
+    let sent = 0;
     // One admin may hold more than one identity row; the operator wants one message, not two.
     for (const providerUserId of new Set(identities.map((identity) => identity.providerUserId))) {
       if (options?.skipProviderUserIdHash
         && shortLineIdHash(providerUserId) === options.skipProviderUserIdHash) continue;
       const delivered = await pushSystemLineMessage(token, providerUserId, text);
-      if (!delivered) {
+      if (delivered) sent += 1;
+      else {
         this.logger.warn(
           { event: 'signup.pending_review.line_push_failed', riskLevel: 'LOW' },
           'signup.pending_review.line_push_failed',
         );
       }
     }
+    return sent;
   }
 }
 

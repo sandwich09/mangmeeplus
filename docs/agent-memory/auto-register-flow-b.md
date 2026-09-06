@@ -1,6 +1,6 @@
 # Agent Memory: auto-register-flow-b
 
-Status: IMPLEMENTED (Slices A-C + P29 T1-T3) on `codex/auto-register-round1`, 2026-08-30 — 4 Opus agents in parallel worktrees, Fable integrated (wiring, P29 hook, claim-session BFF chain, line_linked_elsewhere code, expired-company switcher+role labels, reject-notify checkbox disabled). Flag off everywhere; NO UAT deploy until SES ops (Owner). Follow-ups: businessCategory at approve (PDPA tripwire gap — top), rejection-notice consumer, LINE expired-reply seam, DRAFT-seat loophole, EMAIL_PENDING→EXPIRED sweep, merge-accounts backend (dialog primary = เร็ว ๆ นี้), SES bounce→EMAIL_FAILED (Slice D).
+Status: IMPLEMENTED (Slices A-C + P29 T1-T3) on `codex/auto-register-round1`, 2026-08-30 — 4 Opus agents in parallel worktrees, Fable integrated (wiring, P29 hook, claim-session BFF chain, line_linked_elsewhere code, expired-company switcher+role labels, reject-notify checkbox disabled). Flag off everywhere; NO UAT deploy until SES ops (Owner). Follow-ups: ~~businessCategory at approve (PDPA tripwire gap — top)~~ **Closed 2026-09-05** (review R10: the reviewer picks the enum on the approve dialog; stored on the request and preferred at provisioning), rejection-notice consumer, LINE expired-reply seam, DRAFT-seat loophole, EMAIL_PENDING→EXPIRED sweep, merge-accounts backend (dialog primary = เร็ว ๆ นี้), SES bounce→EMAIL_FAILED (Slice D).
 
 Owner: thawatchai
 
@@ -52,3 +52,46 @@ One integration branch `codex/round3-hardening` merged four reviewed workstreams
 - Post-deploy ops still owed: SNS HTTPS subscription per runbook ses-email-setup.md ขั้นที่ 6 (subscribe the ECS origin, NOT the custom domain), then simulator bounce proof.
 - Done outside the repo: Cloudflare DMARC Management enabled (p=none, dashboard reports); mangmee_web branch `signup-cta` ready (do NOT upload until production signup activates); SES production access still under AWS review.
 - Owner order 2026-08-31 (evening): claim email carries NO trial-benefits block and NO LINE-invitation block (both removed from the template with regression guards — package terms and the LINE step are in-app only). The LIFF/rich-menu signup flow (spec §4F future note) is **ON HOLD** by Owner order — do not build until they lift it.
+
+## Update 2026-09-05: external review P1 round — branch `codex/flow-b-p1-fixes`
+
+Status: **P1 ปิดครบ** (R01, R02, R03, R04, R05, R06, R08, R09) บน `codex/flow-b-p1-fixes` แตกจาก `origin/develop` `91704151`; ยังไม่ merge, ยังไม่ deploy. รายงานต้นทางและตารางว่าอะไร reproduce/ไม่ reproduce อยู่ใน `docs/agent-memory/auto-register-review-2026-09-05.md` (commit ไว้ทั้งฉบับเป็น baseline แล้วต่อท้ายด้วยหัวข้อ "รอบแก้ P1 2026-09-05")
+
+ทุกข้อทำแบบ red-first: เขียนเทสต์ที่ fail บน develop ก่อน commit แล้วจึงแก้ ทั้งสองส่วนเก็บไว้
+
+Owner decisions ที่บันทึกรอบนี้:
+
+- **แพ็กเกจตอนสมัคร (2026-09-05):** ไม่มีการเลือกแพ็กเกจที่หน้าสมัครอีกต่อไป ทุก self-signup — ทั้งฟอร์มเว็บและ LINE — ได้ **free trial เดียวกัน** (`FREE_TRIAL_15`, 30 วัน, 15 สลิป/เดือน) เดิมฟอร์มเว็บให้ `PRO_999` ทั้งที่หน้าเว็บโฆษณาว่าทดลองฟรี `requestedOfferKey` เหลือไว้เป็นหลักฐาน attribution เท่านั้น (รับค่าใน catalog, ค่าอื่นทิ้ง, ไม่ปฏิเสธคำขอ) — คิว admin ไม่ได้แสดงคีย์นี้ จึงไม่มี DTO ต้องแก้
+- **merge ที่สิทธิ์ทับกัน (R05):** fail closed ด้วย `account_merge_role_conflict` เมื่อสอง membership ของร้านเดียวกันมี role ไม่ตรงกัน หรือ membership ฝั่งปลายทางไม่ ACTIVE และบังคับ invariant "ต้องเหลือ ACTIVE OWNER อย่างน้อยหนึ่งคนต่อร้าน" ก่อนปิด membership ใด ๆ พร้อม preview รายร้าน (`POST /v1/auth/account-merge/preview`) ที่บอกว่าร้านไหนย้าย ร้านไหนติด และหลังรวมแล้วเข้าสู่ระบบด้วยอะไร
+
+Schema delta: `CompanySignupRequest.claimWindowStartedAt` (nullable, additive migration `20260905173000_signup_claim_activation_window` พร้อม backfill จาก `approvedAt`) — R09 ต้องการนาฬิกาที่ reissue รีสตาร์ทได้ โดยไม่แตะ `approvedAt` ซึ่งเป็น audit fact
+
+ชื่อ migration ตั้งเป็น `173000` เพื่อไม่ให้ prefix ชนกับ `20260905170000_line_support_request` บน `codex/line-support-request` (คนละตาราง: อันนั้นสร้าง enum และตาราง `LineSupportRequest` ใหม่, อันนี้เพิ่มคอลัมน์บน `CompanySignupRequest` — additive ทั้งคู่ ลำดับไหนก่อนก็ได้) ลำดับที่จะ apply จริงคือ `170000_line_support_request` → `173000_signup_claim_activation_window` → `180000_line_support_request_notified_at`
+
+Verification (รอบสุดท้ายบน `43fd6d05`): api 6537 tests / 1323 suites / 6438 pass / 0 fail / 99 skipped; web 1489 tests / 322 suites / 1489 pass / 0 fail; `apps/web` build ผ่าน; `pnpm -r typecheck` ผ่าน; `prisma validate` ผ่าน; maintenance pins `--check` = current; pg spec ใหม่ `signup-provisioning-recovery.pg.spec.ts` (5 tests) รันบน docker postgres จริงและถูกเพิ่มใน ci.yml pg step แบบ invocation ของตัวเอง
+
+Follow-ups ที่ยังไม่ทำ:
+
+- ALB / Cloudflare access log ยังบันทึก path เดิม (R01 ชั้น infra) — งาน ops ไม่ใช่โค้ดนี้
+- `apps/web/app/api/auth/login/route.ts` มีอาการ R06 เหมือนกัน แต่อยู่ใน maintenance pins จึงไม่แตะ
+- ~~free trial ทางเว็บยังไม่ได้ AI budget/warm-up ของ LINE~~ **ปิดแล้ว 2026-09-05 (Owner follow-up):** `applyLineTrialGuards` → `applyTrialGuards` รันทั้งสอง source โดยดูจาก `SIGNUP_TRIAL_TIER` ไม่ใช่ source — ร้านจากฟอร์มเว็บได้ AI budget cap, warm-up 7 วัน และ term 30 วันชุดเดียวกับ LINE; `LineCompanyContext` และ LINE push ยังเป็นของ LINE เท่านั้น (gate ด้วย `lineProviderUserId`); `adoptExistingCompany` ไม่เขียน plan term ของตัวเองอีกแล้ว — มี writer เดียว. env keys ยังชื่อ `lineSignupWarmupSlips` / `lineFreeAiBudgetSatang` (การเปลี่ยนชื่อต้องแก้ deploy.sh จึงไม่ทำในรอบนี้)
+- P2 ทั้งหมด (R07, R10–R13) และ integration matrix ท้ายรายงาน
+
+## Update 2026-09-06: reviewer round on `codex/flow-b-p1-fixes` (F1–F12)
+
+รีวิวรอบสองยืนยัน red/green ครบทั้ง 8 ข้อ P1 แต่ยกอีก 11 รายการ แก้บนสาขาเดิมทั้งหมด:
+
+- **F1 (HIGH)** หน้าเว็บโฆษณา PRO ฿999 5 สาขา/10 คน/100 ใบ ขณะที่ provisioning เขียน `FREE_TRIAL_15` (1/2/15 + warm-up) → การ์ดที่เลือกได้กลายเป็น tier ที่ได้จริง ตัวเลขมาจาก `PLAN_TIER_PRESETS` และย้าย `SIGNUP_TRIAL_TIER_KEY` ไป contracts ให้หน้าเว็บกับ provisioning อ่านคีย์เดียวกัน; ลบคำว่า PRO/มืออาชีพ/฿999 ออกจากทั้ง 4 หน้า (P2 จะเขียน copy เต็มทับตอน rebase)
+- **F2 (MED)** แถว Flow B ที่ provisioning ล้มหลัง claim มองไม่เห็นในคิวและกู้ไม่ได้ → `PROVISIONING_FAILED` เข้า queue states ของทุก source, approve = retry provisioning ทั้งสอง source (ไม่ย้อนกลับไป EMAIL_PENDING), ปุ่ม "ลองเปิดร้านอีกครั้ง" เปิดให้ web ด้วย; READY/PROVISIONING ยังเป็น LINE-only
+- **F3 (MED)** migration rename ทำ DB ที่ apply ชื่อเดิมพัง P3018 → บันทึกวิธี `prisma migrate resolve` ใน `docs/runbooks/production-migration-reconciliation.md` (UAT/prod ไม่เคย apply ทั้งสองชื่อ)
+- **F4 (MED)** spec §3A/§4F เขียนใหม่: free-trial rule, `FREE_TRIAL` + normalise `PRO_TRIAL`, ยกเลิก `offer_not_available`, `account_merge_role_conflict`, ACTIVE-OWNER invariant, `POST /v1/auth/account-merge/preview`
+- **F5** เพิ่มเทสต์เดี่ยวของกฎ `target_membership_inactive` (role ตรงกันและไม่มี OWNER ทั้งคู่ จึงมีแต่กฎนี้ที่ปฏิเสธได้)
+- **F6** merge preview มี bucket ของตัวเอง (`account-merge-preview-ip`, 120/ชม.) แทนการใช้ `line-login-callback-ip` (10) ร่วมกัน และ dialog fetch preview ครั้งเดียวต่อ mount
+- **F7** self-serve resend ไม่รีสตาร์ต window → token TTL ถูก clamp ให้ตายพร้อม window และ resend ที่เหลือ < 1 ชม. ถูกปฏิเสธด้วย `claim_window_almost_over`
+- **F8** audit ของการอนุมัติเข้าไปอยู่ใน transaction เดียวกับ state และจดหมาย และเส้นซ่อม EMAIL_PENDING เขียน audit ของตัวเอง (`signup.request.claim_email_repaired`)
+- **F9** `applyTrialGuards` เคย re-stamp warm-up และ AI budget ทุกครั้งที่ retry → upsert ทั้งสองไม่เขียนอะไรลง row ที่มีอยู่ และ stamp แบบมีเงื่อนไข (`warmupUntil: null` / `monthlyBudgetSatang: null`) จึงลงครั้งเดียว
+- **F10** pg spec ใหม่พิสูจน์ atomicity ของ approve บน Postgres จริง (enqueue ล้ม → ไม่มีอะไรถูกเขียน; สำเร็จ → state + approvedAt + claimWindowStartedAt + outbox พร้อมกัน และ retry ไม่ได้จดหมายใบที่สอง)
+- **F12** แก้บันทึกเดิม: admin queue **DTO** ส่ง `requestedOfferKey` ออกมาจริง (`signup-admin-queue.use-case.ts`) แม้หน้าเว็บจะยังไม่เรนเดอร์ — คำว่า "ไม่มี DTO ต้องแก้" ในบันทึกรอบก่อนหมายถึงการเรนเดอร์เท่านั้น
+- **offer key rename** `PRO_TRIAL` → `FREE_TRIAL` ฝั่ง server และฟอร์ม; `PRO_TRIAL` ยังรับได้และถูก normalise (ไม่ปฏิเสธคำขอ)
+
+สมมติฐานที่บันทึกไว้ตามที่ reviewer ขอ: R06 พึ่งพาการที่ ECS Express gateway append peer ที่มันเห็นจริง — เขียนไว้ใน `docs/runbooks/cloud-environment-operations.md` พร้อมอาการเวลาสมมติฐานพัง

@@ -5,7 +5,7 @@
  * route BEFORE any source-module use case runs. It emits a route plan only.
  * Uses model prompt when a provider is configured; fails closed when model routing is unavailable.
  */
-import { BUSINESS_DOCUMENT_REASON_CODES, LINE_CORRECTION_FIELDS, LINE_TOOL_REGISTRY, LINE_AI_BUSINESS_SUBJECTS, LINE_AI_CONTEXT_WINDOW_MINUTES, VALUE_ASSUMPTIONS, asIntakeClarificationFields, asIntakeFundingSource, asIntakeRouteIntent, asIntakeRouterCapabilities, asIntakeSemanticOutcome, isAmbiguousDateCandidate, formatDateClarifyQuestion, parseLineAiPreparedAdvisorAnswer, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
+import { BUSINESS_DOCUMENT_REASON_CODES, LINE_CORRECTION_FIELDS, LINE_DRAFT_UPDATE_TOOLS, LINE_TOOL_REGISTRY, LINE_AI_BUSINESS_SUBJECTS, LINE_AI_CONTEXT_WINDOW_MINUTES, VALUE_ASSUMPTIONS, asIntakeClarificationFields, asIntakeFundingSource, asIntakeRouteIntent, asIntakeRouterCapabilities, asIntakeSemanticOutcome, isAmbiguousDateCandidate, formatDateClarifyQuestion, parseLineAiPreparedAdvisorAnswer, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
 import type { AgentIntentPlan, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeCorrectionHints, LineIntakeExpenseItemHint, LineIntakeReimbursementHints, LineIntakeRouteIntent, LineIntakeRoutePlan, LineIntakeRouteRequest } from '@watchdog-bms/contracts';
 import type { IModelProvider } from '../infrastructure/provider/provider.port';
 import { extractJson } from '../../../common/ai/extract-json';
@@ -57,7 +57,8 @@ Two zero-tool intents are allowed only for a pure non-business turn:
 - capability_help: the user asks what Nong Mangmee can do or how to use the assistant (for example "ทำอะไรได้บ้าง", "ช่วยอะไรได้บ้าง", "how can you help"). Use subject="unknown", agent="general", requiredTools=[].
 Safety crisis overrides every other request. If the user directly expresses wanting to die, suicide, self-harm, or not wanting to live, return UNROUTABLE with intents=[], refusal reason="safety_crisis", and requiresHumanReview=true. Do this even when the same message also asks for business data.
 Harmless office banter may be casual_conversation. Do not guess, repeat, or expand rumours about an identifiable person's private relationship, health, or other sensitive private life. Refuse that clause with reason="privacy_rumor"; preserve any permitted business clause as PARTIAL.
-Refusal reasons must use stable codes: mutation_blocked, safety_crisis, privacy_rumor, feature_disabled, unsupported_module, forbidden, or tool_unavailable. Never write a natural-language refusal reason.
+Refusal reasons must use stable codes: mutation_blocked, safety_crisis, privacy_rumor, feature_disabled, unsupported_module, unsupported_yet, forbidden, or tool_unavailable. Never write a natural-language refusal reason.
+Use unsupported_yet, NOT unsupported_module, when the subject IS this ERP's own business data — an expense, a bill, a document, a customer, a report — but no tool here can do what was asked. unsupported_module is only for subjects the product does not cover at all (gold prices, the weather, someone else's company).
 If any clause asks to read, search, summarize, compare, explain, suggest, capture, or change business data, business intent wins: route every business request with tools and do not add a zero-tool intent. A social phrase around a business request does not make the turn casual.
 Do not use casual_conversation for current facts, news, weather, professional advice, or general knowledge questions; those remain unsupported unless an enabled business feature matches.
 Use the feature/tool catalog from the user payload as the source of truth. Read each feature description before choosing.
@@ -73,6 +74,8 @@ For SAP Tax Code questions, use tax.get_tax_code_profile. Never infer an externa
 For an expense total or bounded list over a month, week, or explicit date range, use expense.list_recent. This includes short owner wording such as how much was spent this month. Use expense.get_breakdown only when the user asks to group the period by category or branch.
 Use expense.get_daily_closing only for an explicit one-day operational close: what occurred that day, what remains payable/due/overdue, or what must be reviewed before closing the shop. Never substitute it for a period total.
 Do not use inventory search, stock, or aggregate sales tools to answer product-decision advice such as "ช่วงนี้ควรขายอะไรดี". The current catalog has no grounded product-level demand/margin recommendation; return unsupported_module.
+When the user asks WHY or HOW one of their OWN recent records adds up the way it does — ทำไม, เพราะอะไร, อธิบาย, or a question about บิล/ใบเสร็จ/รายการ/ยอด they just sent or captured in this chat (for example "ทำไม service charge คิดแยกเป็นอีกรายการ", "บิลเมื่อกี้ยอดมาจากไหน", "ใบเสร็จนี้ VAT คิดยังไง") — use expense.explain_record with subject expense and agent accounting. It explains ONE record the user captured through LINE. Never answer that question with expense.list_recent (a period total) or refuse it as out of scope. Use expense.get_detail instead only when the user names a specific record id to look up rather than asking why their recent one looks like that.
+When the user asks to CHANGE their OWN recent record that this chat captured — add or set a service charge/ค่าบริการ/ค่าส่ง/ค่าธรรมเนียม/ทิป, change one line's amount ("แก้ยอดเป็น 500"), remove a line ("ลบบรรทัด 2"), or set the VAT mode/rate ("VAT 7%", "ไม่มี VAT") — use the matching expense.draft.* tool with subject expense and agent accounting. These tools only PREVIEW the change and return the resulting totals; the user still has to press ยืนยัน, so nothing is written by choosing one. Use them only for the user's own recent record in this chat: a request about another shop's, another person's, or another company's document is not routable here. Never invent an amount or a percent that the message does not contain.
 For a bill's purchased/paid items, route by the document's business direction: a supplier/outgoing expense bill uses expense.get_detail; a customer invoice or sales document uses accounting.get_document_detail. The word "สินค้า" alone never makes this an inventory question. Put the canonical record id in missingContext when it is absent so the tool loop asks one clarification instead of guessing.
 Treat domestic sale/purchase, import goods, imported services/PP36, export, zero-rated, exempt, and non-taxable questions as tax read requests. Tax configuration changes, recompute, filing, payment, and issue resolution are mutations and stay blocked.
 Do not use accounting/ledger tools to answer sales, CRM, tax, payroll, bank, or weather questions unless the enabled catalog explicitly says they match.
@@ -105,6 +108,7 @@ export const ROUTER_ENABLED_TOOLS = new Set([
   'ledger.get_report_summary',
   'expense.list_recent',
   'expense.get_detail',
+  'expense.explain_record',
   'expense.get_breakdown',
   'expense.get_daily_closing',
   'sales.get_sales_summary',
@@ -143,7 +147,15 @@ export const ROUTER_ENABLED_TOOLS = new Set([
   'reimbursement.get_summary',
   'reimbursement.get_detail',
   'reports.get_monthly_report_summary',
+  // S-4 draft edit (draft-control spec §5.4). Wired in the API executor like every other name in
+  // this list, but shown to the model ONLY while `LINE_AI_DRAFT_EDIT_ENABLED` is on — see
+  // `buildFeatureCatalog`. They are here rather than in ROUTER_DISABLED_TOOLS because "not wired"
+  // and "not switched on for this deployment" are different facts and get different replies.
+  ...LINE_DRAFT_UPDATE_TOOLS,
 ]);
+
+/** The subset of the list above that disappears when the draft-edit flag is off. */
+const ROUTER_DRAFT_UPDATE_TOOLS: ReadonlySet<string> = new Set<string>(LINE_DRAFT_UPDATE_TOOLS);
 
 // Registered-but-waiting tools for modules/read adapters not yet implemented (items 13/14/15/18): the model
 // can see they exist (disabled catalog) and users get a safe channel-unavailable reply; flip
@@ -211,7 +223,7 @@ Shape:
   "answerText": "your reply in the user's language, 1–3 short sentences",
   "tonePreface": "none" | "acknowledge_stress" | "acknowledge_good_news", // optional
   "clarificationQuestion": "ONE short question, only when you must ask", // optional
-  "refusalCode": "mutation_blocked" | "safety_crisis" | "privacy_rumor" | "unsupported_module" | "insufficient_current_data" // optional
+  "refusalCode": "mutation_blocked" | "safety_crisis" | "privacy_rumor" | "unsupported_module" | "unsupported_yet" | "insufficient_current_data" // optional
 }
 Set "needsTools": true and omit "answerText" whenever the turn actually needs business data. NEVER put a URL, a link, HTML or Flex/JSON inside "answerText" or "clarificationQuestion" — the server renders every link and card itself. Never claim a body, a personal life, or that you are human, and never state a company fact here. Jokes and playful lines must be simple everyday Thai humour that lands instantly for small-business owners and staff — the คำถามกวนๆ/เล่นคำ register, never a joke that needs statistics, math, accounting, or technical background to get. When the user is ASKING for a joke (มุข, มุก, ตลก, ขำ, ฮา, joke), keep the route but OMIT "answerText" entirely — the composer answers that turn from a curated joke bank you cannot see. Fandom banter is welcome in GENRE terms (ซีรีส์/ละคร, วายไทย, ยุทธภพ/เทพเซียน, ไอดอล tropes), but never volunteer the name of a real person, group, show, or brand yourself; when the user names one and asks for its current news or status, answer warmly in "answerText" that you cannot check live news here and pivot to the vibe — never guess the news, and never add a general "may be out of date" disclaimer.`;
 
@@ -340,7 +352,10 @@ const SUBSTITUTE_CLARIFY_FALLBACK = 'ต้องการทำใบรับ�
 const REIMBURSEMENT_CLARIFY_FALLBACK = 'รายการนี้คุณสำรองจ่ายเองเพื่อขอเบิกคืน หรือเป็นค่าใช้จ่ายที่บริษัทจ่ายคะ';
 
 export class IntentRouterAgent {
-  constructor(private readonly provider: IModelProvider) {}
+  /** `draftEditEnabled` decides whether the five S-4 draft tools appear in the catalog this router
+   *  hands the model (spec §8). Defaulted false so every existing construction — and every spec —
+   *  keeps the exact pre-S-4 catalog byte-for-byte. */
+  constructor(private readonly provider: IModelProvider, private readonly draftEditEnabled = false) {}
 
   async route(messageText: string, hasAttachment = false, conversationContext?: LineAiConversationContext, openClarifications?: LineAiOpenClarification[]): Promise<AgentIntentPlan> {
     if (isCrisisMessage(messageText)) return crisisPlan(messageText);
@@ -391,7 +406,7 @@ export class IntentRouterAgent {
     const result = await this.provider.generateText({
       systemPrompt: intakeRouterSystemPrompt(caps),
       // The ~21KB glossary + tool catalog is a cost/latency price paid ONLY when fused planning needs it.
-      ...(caps.fusedPlan ? { cacheableContext: JSON.stringify({ businessGlossary: LINE_AI_THAI_BUSINESS_GLOSSARY, ...buildFeatureCatalog() }) } : {}),
+      ...(caps.fusedPlan ? { cacheableContext: JSON.stringify({ businessGlossary: LINE_AI_THAI_BUSINESS_GLOSSARY, ...buildFeatureCatalog(this.draftEditEnabled) }) } : {}),
       messages: [{ role: 'user', text: JSON.stringify(payload) }],
       ...(images.length > 0 ? { images } : {}),
       // Legacy keeps 1000; only the (larger) fused output needs the bigger bound. An image asks for
@@ -516,7 +531,7 @@ export class IntentRouterAgent {
     // prefix can form. Same user turn, same model-visible content.
     // INTENT_ROUTER_SYSTEM_PROMPT is itself under the provider's checkpoint threshold, but this
     // checkpoint sits after it in the prefix and so caches system + catalog together.
-    const catalog = JSON.stringify({ businessGlossary: LINE_AI_THAI_BUSINESS_GLOSSARY, ...buildFeatureCatalog() });
+    const catalog = JSON.stringify({ businessGlossary: LINE_AI_THAI_BUSINESS_GLOSSARY, ...buildFeatureCatalog(this.draftEditEnabled) });
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const result = await this.provider.generateText({
         systemPrompt: INTENT_ROUTER_SYSTEM_PROMPT,
@@ -615,7 +630,7 @@ function isValidZeroToolIntent(intent: AgentIntentPlan['intents'][number] | unde
     && intent.requiredTools.length === 0;
 }
 
-function buildFeatureCatalog(): {
+function buildFeatureCatalog(draftEditEnabled = false): {
   enabledFeatures: Array<{ toolName: string; sourceModule: string; category: string; agentHints: readonly string[]; description: string; businessSubjects: readonly string[]; questionKinds: readonly string[]; requiredInputFields: readonly string[]; optionalInputFields: readonly string[] }>;
   disabledFeatures: Array<{ toolName: string; sourceModule: string; category: string; agentHints: readonly string[]; description: string; businessSubjects: readonly string[]; questionKinds: readonly string[]; requiredInputFields: readonly string[]; optionalInputFields: readonly string[]; reason: string }>;
 } {
@@ -629,7 +644,12 @@ function buildFeatureCatalog(): {
       : { toolName, sourceModule: 'unknown', category: 'unknown', agentHints: [], description: '', businessSubjects: [], questionKinds: [], requiredInputFields: [], optionalInputFields: [] };
   };
   return {
-    enabledFeatures: [...ROUTER_ENABLED_TOOLS].map(toFeature),
+    // Flag off ⇒ the five draft tools are not in the catalog at all. "Offered then refused" would
+    // have advertised an ability this deployment does not have, which is the exact failure the
+    // capability card was built to stop.
+    enabledFeatures: [...ROUTER_ENABLED_TOOLS]
+      .filter((toolName) => draftEditEnabled || !ROUTER_DRAFT_UPDATE_TOOLS.has(toolName))
+      .map(toFeature),
     disabledFeatures: [...ROUTER_DISABLED_TOOLS].map((toolName) => ({ ...toFeature(toolName), reason: 'backend_tool_not_wired' })),
   };
 }

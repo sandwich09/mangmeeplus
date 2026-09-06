@@ -1,6 +1,6 @@
 import Decimal from 'decimal.js';
-import type { ExpenseWhtInput } from '@watchdog-bms/contracts';
-import { calcDocumentTotals, type DocumentTotalsResult, type LineTotalsResult } from './expense-totals.logic';
+import type { ExpenseLineChargeKind, ExpenseWhtInput } from '@watchdog-bms/contracts';
+import { calcDocumentTotals, documentTotalsLines, type DocumentTotalsResult, type LineTotalsResult } from './expense-totals.logic';
 
 /** Convert explicit percent once; amount-only source has no asserted tax rate. */
 export function expenseWhtLineRate(input: ExpenseWhtInput | null | undefined, legacyRate?: string | null): string | null {
@@ -11,21 +11,33 @@ export function expenseWhtLineRate(input: ExpenseWhtInput | null | undefined, le
 /** Apply WHT only after VAT reconciliation has fixed the accepted pre-VAT bases.
  * Mutates the prepared accounting result, keeping one accepted set of money fields. */
 export function applyExpenseWhtInput(
-  result: { lines: Array<{ lineNumber: number; totals: LineTotalsResult }>; totals: DocumentTotalsResult },
+  result: { lines: Array<{ lineNumber: number; chargeKind?: ExpenseLineChargeKind | null; totals: LineTotalsResult }>; totals: DocumentTotalsResult },
   input: ExpenseWhtInput | null | undefined,
+  /** Spec §5.1 (`line-ai-draft-control-spec-th.md`): rows the document did not withhold against —
+   *  additional charges such as a service charge or a rounding row. They take no share of the
+   *  printed WHT, and they do not dilute the allocation of it across the rows that did. Empty by
+   *  default, which is the whole-document behaviour every existing caller relies on. */
+  excludedLineNumbers: ReadonlySet<number> = new Set(),
 ): string | null {
   if (!input) return null;
   const value = new Decimal(input.value);
-  const base = new Decimal(result.totals.taxableAmount);
+  const withheld = result.lines.filter((line) => !excludedLineNumbers.has(line.lineNumber));
+  for (const line of result.lines) {
+    if (excludedLineNumbers.has(line.lineNumber)) line.totals.whtAmount = '0.0000';
+  }
+  const base = withheld.length === result.lines.length
+    ? new Decimal(result.totals.taxableAmount)
+    : withheld.reduce((sum, line) => sum.plus(line.totals.taxableAmount), new Decimal(0))
+      .toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
   if (input.inputType === 'AMOUNT' && value.gt(base)) return 'WHT amount cannot exceed the accepted pre-VAT amount.';
   if (input.inputType === 'RATE') {
-    for (const line of result.lines) {
+    for (const line of withheld) {
       line.totals.whtAmount = new Decimal(line.totals.taxableAmount).mul(value).div(100)
         .toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(4);
     }
   } else {
     // Largest remainder allocates exact satang without inventing a four-decimal rate.
-    const shares = result.lines.map((line) => {
+    const shares = withheld.map((line) => {
       const raw = base.gt(0) ? value.mul(100).mul(line.totals.taxableAmount).div(base) : new Decimal(0);
       return { line, cents: raw.floor(), remainder: raw.minus(raw.floor()) };
     });
@@ -36,6 +48,6 @@ export function applyExpenseWhtInput(
       share.line.totals.whtAmount = share.cents.div(100).toFixed(4);
     }
   }
-  result.totals = calcDocumentTotals({ lines: result.lines.map((line) => line.totals) });
+  result.totals = calcDocumentTotals({ lines: documentTotalsLines(result.lines) });
   return null;
 }

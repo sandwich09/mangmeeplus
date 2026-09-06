@@ -480,7 +480,7 @@ export class AuthController {
         'oa-add-url': oaAddUrl,
       },
       content: `      <h1>มั่งมี Plus LINE Link</h1>
-      <p id="status">Ready</p>
+      <p id="status" class="notice notice-info">Ready</p>
       <button id="link">Link LINE account</button>
       <pre id="detail"></pre>`,
     });
@@ -531,14 +531,21 @@ export class AuthController {
         'legal-challenge': release.displayChallenge,
         'legal-locale': 'th',
       },
-      style: 'label{display:block;margin-top:12px;font-weight:600}'
-        + '\n    input{width:100%;box-sizing:border-box;padding:10px;border:1px solid #d1d5db;border-radius:6px;font-size:16px}'
-        + '\n    .legal{margin-top:16px;padding:12px;background:#f3f4f6;border-radius:6px;font-size:14px}'
+      style: 'label{display:block;margin-top:16px;margin-bottom:6px;font-weight:600}'
+        + '\n    input{width:100%;min-height:48px;padding:12px;border:1px solid var(--line);border-radius:10px;font-size:16px;font-family:inherit;color:var(--ink)}'
+        + '\n    .legal{margin-top:20px;padding:12px;background:var(--ground);border:1px solid var(--line);border-radius:10px;font-size:14px}'
         + '\n    .legal li{margin-bottom:6px}'
-        + '\n    .fine{color:#4b5563;font-size:14px}',
+        + '\n    .fine{color:var(--muted);font-size:14px}'
+        // No <p> wrapper around the button: a hidden button inside a visible paragraph still left
+        // that paragraph's margins on the page, as a 16px gap under the notice (review LOW-5).
+        + '\n    #notice-action{margin-bottom:12px}'
+        // The challenge is 64 hex characters of legal evidence, so it may not be cut off — it wraps
+        // mid-string instead, at its own size, in its own block (Owner 2026-09-05, 390px phone).
+        + '\n    .challenge{margin:4px 0 0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--muted);overflow-wrap:anywhere;word-break:break-all}',
       content: `      <h1>เปิดร้านใหม่ ทดลองใช้ฟรี</h1>
       <p id="greeting"></p>
-      <p id="status">กำลังเตรียมหน้าให้ค่ะ</p>
+      <p id="status" class="notice notice-info">กำลังเตรียมหน้าให้ค่ะ</p>
+      <button id="notice-action" hidden></button>
       <section id="retry-view" data-view hidden>
         <p>กรุณาเปิดลิงก์นี้จากแอป LINE นะคะ ถ้าเปิดจากเบราว์เซอร์ปกติจะยังสมัครไม่ได้ค่ะ</p>
         <p><button id="retry">ลองอีกครั้ง</button></p>
@@ -546,8 +553,10 @@ export class AuthController {
       <section id="form-view" data-view hidden>
         <label for="company-name">ชื่อร้าน</label>
         <input id="company-name" type="text" maxlength="${LINE_SIGNUP_COMPANY_NAME_MAX}" autocomplete="organization" />
-        <label for="phone-number">เบอร์มือถือ (ไม่บังคับ)</label>
-        <input id="phone-number" type="tel" inputmode="numeric" maxlength="10" autocomplete="tel-national" />
+        <p id="company-name-error" class="field-error" hidden></p>
+        <label for="phone-number">เบอร์มือถือ</label>
+        <input id="phone-number" type="tel" inputmode="tel" maxlength="10" autocomplete="tel-national" required />
+        <p id="phone-number-error" class="field-error" hidden></p>
         <section class="legal">
           <p>${escapeHtml(CURRENT_LEGAL_DOCUMENTS.terms.titleTh)} และ${escapeHtml(CURRENT_LEGAL_DOCUMENTS.privacy.titleTh)} ${escapeHtml(CURRENT_LEGAL_DOCUMENTS.terms.displayVersionTh)}</p>
           <ul>
@@ -557,10 +566,11 @@ export class AuthController {
           </ul>
           <p><a href="${escapeHtml(`${webBase}${CURRENT_LEGAL_DOCUMENTS.terms.latestHref}`)}" target="_blank" rel="noopener">อ่านข้อกำหนดการใช้งาน</a></p>
           <p><a href="${escapeHtml(`${webBase}${CURRENT_LEGAL_DOCUMENTS.privacy.latestHref}`)}" target="_blank" rel="noopener">อ่านประกาศความเป็นส่วนตัว</a></p>
-          <p class="fine">รหัสอ้างอิงฉบับที่แสดง: ${escapeHtml(release.displayChallenge)}</p>
+          <p class="fine">รหัสอ้างอิงฉบับที่แสดง:</p>
+          <p class="challenge">${escapeHtml(release.displayChallenge)}</p>
         </section>
         <p><button id="link" disabled>ยอมรับและเริ่มทดลองใช้ฟรี</button></p>
-        <p class="fine">ทดลองฟรี 30 วัน ให้ AI อ่านรูปได้ 15 ครั้ง ไม่ต้องใส่บัตร</p>
+        <p class="fine">ทดลองฟรี 30 วัน ให้ AI อ่านรูปได้ 15 ครั้ง</p>
       </section>
       <section id="done-view" data-view hidden>
         <h2>ได้รับแล้ว</h2>
@@ -599,7 +609,7 @@ export class AuthController {
       },
       style: '#companies button{display:block;width:100%;margin-top:8px}',
       content: `      <h1>เริ่มใช้งาน</h1>
-      <p id="status">กำลังเปิดหน้าเว็บให้ค่ะ</p>
+      <p id="status" class="notice notice-info">กำลังเปิดหน้าเว็บให้ค่ะ</p>
       <div id="companies" hidden></div>
       <p><a id="open-web" class="btn" hidden>เปิดหน้าเว็บ</a></p>
       <p><a id="go-signup" class="btn" href="/v1/auth/line/link-page/signup" hidden>เปิดร้านใหม่ ทดลองฟรี</a></p>
@@ -709,6 +719,25 @@ export class AuthController {
     });
   }
 
+  /**
+   * Review R05: what the merge would do, before it is confirmed — which shops move, which block,
+   * and which way of signing in survives. POST rather than GET because the ticket is a bearer
+   * credential and a URL segment is recorded by every access log on the way in (review R01).
+   */
+  @Post('account-merge/preview')
+  @HttpCode(200)
+  @RequirePermissions('account.identity.link')
+  @ApiOperation({ summary: 'What merging into the LINE-owning account would do (spec §4F)' })
+  @ApiBody({ type: AccountMergeDto })
+  @ApiResponse({ status: 200, description: 'Per-shop plan and the credentials that survive' })
+  @ApiResponse({ status: 403, description: 'Ticket belongs to another session' })
+  async accountMergePreview(@Body() dto: AccountMergeDto, @Req() req: Request & { context: RequestContext }) {
+    // Review F6: its own bucket. Sharing the callback's 10-per-window meant opening this dialog a
+    // few times could 429 the visitor's own LINE login — the thing the dialog exists to recover.
+    await this.authRateLimit.assertAccountMergePreviewAllowed(trustedClientIp(req));
+    return this.accountMergeUseCase.preview({ userId: req.context.userId, ticket: dto.ticket });
+  }
+
   @Public()
   // Path lives under line/link-page so liff.login redirectUri stays inside the registered LIFF endpoint URL scope; old path kept for already-issued QRs.
   @Get(['line/link-page/employee', 'line/employee-link-page'])
@@ -730,7 +759,7 @@ export class AuthController {
         'oa-add-url': oaAddUrl,
       },
       content: `      <h1>Link your LINE account</h1>
-      <p id="status">Ready</p>
+      <p id="status" class="notice notice-info">Ready</p>
       <button id="link">Link LINE account</button>
       <a id="open-line" class="btn" hidden>Open LINE</a>
       <pre id="detail"></pre>`,

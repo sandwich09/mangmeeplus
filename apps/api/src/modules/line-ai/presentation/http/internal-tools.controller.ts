@@ -11,7 +11,9 @@ import { assertInternalSecret } from '../../../../common/security/secret-compare
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import {
   LINE_ALLOWED_TOOL_CATEGORIES,
+  LINE_DRAFT_UPDATE_TOOL_CATEGORY,
   LINE_TOOL_REGISTRY,
+  allowedToolCategories,
   hasToolFeature,
   hasToolPermissions,
   type ToolCategory,
@@ -53,9 +55,17 @@ import {
   AccountingGetDocumentDetailTool,
   AccountingGetReceivableSummaryTool,
   ExpenseGetDetailTool,
+  ExpenseExplainRecordTool,
   ReimbursementGetSummaryTool,
   ReimbursementGetDetailTool,
 } from '../../application/use-cases/erp-core-detail-tools.use-case';
+import {
+  ExpenseDraftSetHeaderTool,
+  ExpenseDraftSetLineTool,
+  ExpenseDraftAddChargeTool,
+  ExpenseDraftRemoveLineTool,
+  ExpenseDraftSetVatModeTool,
+} from '../../application/use-cases/erp-draft-update-tools.use-case';
 import {
   CrmGetReportSummaryTool,
   CrmGetPipelineSummaryTool,
@@ -94,6 +104,17 @@ class InternalToolContextDto {
   @IsString() @IsOptional() @MaxLength(128) requestId?: string;
   @IsString() @IsOptional() @MaxLength(64) membershipId?: string;
   @IsString() @IsOptional() @MaxLength(32) locale?: string;
+  /** Chat provenance (spec §5.5). Shape-checked only, exactly like `locale`: it selects which of
+   *  the CALLER'S OWN records a read tool may resolve as "the one from this chat" and grants
+   *  nothing — company, membership, permissions and branch scope are re-derived below. */
+  @IsString() @IsOptional() @MaxLength(128) chatKeyHash?: string;
+  /** S-4 grounding evidence (spec §5.4): the message this turn is answering, echoed back by the
+   *  gateway. Shape-checked and length-bounded only; it authorises nothing and is used solely to
+   *  prove that a number a draft-edit preview would write was said by the user. */
+  //  No @MaxLength: a caller that sends more must be TRUNCATED, not rejected. With
+  //  `forbidNonWhitelisted` a length violation 400s the whole request, which would take out every
+  //  ERP read of a turn whose LINE message happened to be long. The value is cut where it is read.
+  @IsString() @IsOptional() groundingText?: string;
   @IsArray() @IsString({ each: true }) @IsOptional() roles?: string[];
   @IsArray() @IsString({ each: true }) @IsOptional() permissions?: string[];
   @IsArray() @IsString({ each: true }) @IsOptional() branchIds?: string[];
@@ -114,10 +135,14 @@ export class InternalToolCallDto {
  * method directly, so the gateway's ToolPolicyEnforcerService cannot be the only gate.
  * Semantics mirror `toolMetaToPolicy` in the gateway: mutation == final_mutation | approval_request.
  */
+/** Grounding evidence is bounded here rather than rejected at validation (see the DTO note). */
+const GROUNDING_TEXT_MAX_CHARS = 1000;
+
 const MUTATION_TOOL_CATEGORIES: ReadonlySet<ToolCategory> = new Set<ToolCategory>(['final_mutation', 'approval_request']);
 const KNOWN_TOOL_CATEGORIES: ReadonlySet<string> = new Set<ToolCategory>([
   ...LINE_ALLOWED_TOOL_CATEGORIES,
   'draft_create',
+  LINE_DRAFT_UPDATE_TOOL_CATEGORY,
   'approval_request',
   'final_mutation',
 ]);
@@ -181,6 +206,7 @@ export class InternalToolsController {
     private readonly crmConversationSummary: CrmGetConversationSummaryTool,
     private readonly invProductDetail: InventoryGetProductDetailTool,
     private readonly expenseDetail: ExpenseGetDetailTool,
+    private readonly expenseExplain: ExpenseExplainRecordTool,
     private readonly reimbursementSummary: ReimbursementGetSummaryTool,
     private readonly reimbursementDetail: ReimbursementGetDetailTool,
     private readonly accountingDocumentDetail: AccountingGetDocumentDetailTool,
@@ -190,6 +216,11 @@ export class InternalToolsController {
     private readonly purchaseOrderDetail: ProcurementGetPurchaseOrderDetailTool,
     private readonly ledgerPeriodStatus: LedgerGetPeriodStatusTool,
     private readonly ledgerReportSummary: LedgerGetReportSummaryTool,
+    private readonly draftSetHeader: ExpenseDraftSetHeaderTool,
+    private readonly draftSetLine: ExpenseDraftSetLineTool,
+    private readonly draftAddCharge: ExpenseDraftAddChargeTool,
+    private readonly draftRemoveLine: ExpenseDraftRemoveLineTool,
+    private readonly draftSetVatMode: ExpenseDraftSetVatModeTool,
   ) {
     this.toolMap.set('company.get_current_context', this.companyCtx);
     this.toolMap.set('company.list_branches', this.companyBranches);
@@ -204,6 +235,7 @@ export class InternalToolsController {
     this.toolMap.set('ledger.get_financial_summary', this.ledgerSummary);
     this.toolMap.set('expense.list_recent', this.expenseListRecent);
     this.toolMap.set('expense.get_detail', this.expenseDetail);
+    this.toolMap.set('expense.explain_record', this.expenseExplain);
     this.toolMap.set('sales.get_sales_summary', this.salesSummary);
     this.toolMap.set('tax.get_upcoming_tax_obligations', this.taxUpcomingObligations);
     this.toolMap.set('tax.get_vat_summary', this.taxVatSummary);
@@ -246,6 +278,14 @@ export class InternalToolsController {
     this.toolMap.set('procurement.get_purchase_order_detail', this.purchaseOrderDetail);
     this.toolMap.set('ledger.get_period_status', this.ledgerPeriodStatus);
     this.toolMap.set('ledger.get_report_summary', this.ledgerReportSummary);
+    // S-4 preview tools. Wired unconditionally; `classificationDenial` is the flag gate, so a call
+    // with the flag off is refused by the SAME deny ladder every other classification uses rather
+    // than by an absent map entry (which would report "module not ready" and be a lie).
+    this.toolMap.set('expense.draft.set_header', this.draftSetHeader);
+    this.toolMap.set('expense.draft.set_line', this.draftSetLine);
+    this.toolMap.set('expense.draft.add_charge', this.draftAddCharge);
+    this.toolMap.set('expense.draft.remove_line', this.draftRemoveLine);
+    this.toolMap.set('expense.draft.set_vat_mode', this.draftSetVatMode);
   }
 
   @Public()
@@ -378,6 +418,8 @@ export class InternalToolsController {
       // `locale` is optional on the DTO so an existing caller that omits it is not turned into a
       // 400 by this change; ErpToolContext still wants a value, and Thai is what this channel is.
       locale: dto.context.locale ?? 'th',
+      ...(dto.context.chatKeyHash ? { chatKeyHash: dto.context.chatKeyHash } : {}),
+      ...(dto.context.groundingText ? { groundingText: dto.context.groundingText.slice(0, GROUNDING_TEXT_MAX_CHARS) } : {}),
     };
 
     // L-08 deny order — registry entry, then classification, then ERP permissions, then company
@@ -493,8 +535,13 @@ export class InternalToolsController {
     if (MUTATION_TOOL_CATEGORIES.has(meta.category) && !this.config.aiFinalMutationEnabled) {
       return 'AI_FINAL_MUTATION_DISABLED';
     }
-    if (!LINE_ALLOWED_TOOL_CATEGORIES.includes(meta.category)) return 'TOOL_CATEGORY_NOT_ALLOWED';
-    return undefined;
+    // S-4 (draft-control spec §5.4/§8): `draft_update` is admitted only while its own flag is on,
+    // and even then a tool call can do no more than PREVIEW — the write is the confirm postback,
+    // which arrives on the LINE webhook and never through this executor. It is deliberately NOT in
+    // `MUTATION_TOOL_CATEGORIES`: gating a read-only preview on the final-mutation kill switch
+    // would say this endpoint can mutate, which it cannot.
+    if (allowedToolCategories({ draftEditEnabled: this.config.lineAiDraftEditEnabled }).includes(meta.category)) return undefined;
+    return meta.category === LINE_DRAFT_UPDATE_TOOL_CATEGORY ? 'LINE_DRAFT_EDIT_DISABLED' : 'TOOL_CATEGORY_NOT_ALLOWED';
   }
 
   /**

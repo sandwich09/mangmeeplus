@@ -64,30 +64,32 @@ Critical or High findings. Any exception must name the exact digest/CVE,
 reachability evidence, compensating control, approver, and expiry; it must not
 silently lower the gate.
 
-### Temporary ECR mapping exception: CVE-2026-14456
+### Temporary ECR base-image exceptions
 
-Until `2026-08-27T00:00:00Z`, release scanning may waive only the exact AWS ECR
-finding `CVE-2026-14456`, severity `HIGH`, source package `openssl`, version
-`3.0.20-1~deb12u2`, when the provider description contains its own statement that
-the issue is present since OpenSSL 3.5 when QUIC server support was added. The
-scanned 3.0.20 package predates that implementation; this is provider reachability
-evidence, not a general CVE bypass. Initial observations were runnable digests
-`sha256:f9b5cf18a53487487e823a7e1e443359e0a7eaef4c953e26f1f2bdc970ecfc63`
-and `sha256:b89651b3b19cbc00a3bd9bf1ddfb545bf04a1db198f6d9d29f0f6d3b8fb56dc7`.
+`infra/docker/ecr-scan-blocking-findings.jq` is the compensating control and the
+only place a HIGH/CRITICAL finding may be waived. Each row requires the exact CVE,
+severity, source package, version and a provider statement copied verbatim from the
+advisory; it binds every emitted waiver to the exact scanned digest, carries an
+owner approval id and an expiry epoch, and fails closed when detailed findings do
+not cover the provider's aggregate HIGH/CRITICAL count. Every other HIGH/CRITICAL
+finding remains blocking. `e0_ecr_waiver_rows` in
+`infra/security/evidence-contracts.jq` holds the identical rows for production
+promotion — the two must match field for field, or UAT passes and promotion is
+refused. The Production Security Preflight retains the raw provider counts and
+embeds the digest-bound waiver in signed evidence.
 
-`infra/docker/ecr-scan-blocking-findings.jq` is the compensating control. It
-requires the exact CVE, severity, package, version and provider statement, binds
-each emitted waiver to the exact scanned digest, records owner approval
-`CHAT-OWNER-DIRECTIVE-2026-08-25-EXTEND-TO-2026-08-27` and expiry `1787788800`, and
-fails closed when detailed findings do not cover the provider's aggregate
-HIGH/CRITICAL count. Every other HIGH/CRITICAL finding remains blocking. The
-Production Security Preflight retains the raw provider counts and embeds the
-digest-bound waiver in signed evidence. Delete the exception when AWS corrects
-the mapping or before extending the expiry; an extension requires new evidence
-and explicit approval.
+Delete an exception when the provider corrects the mapping or stops reporting the
+finding; extending an expiry requires new evidence and a NEW explicit approval id,
+never a reused one. Every issue, renewal and retirement gets a row in the waiver
+ledger in `docs/runbooks/cloud-environment-operations.md` §7 ("ECR scan gate — CVE
+ใหม่ใน base image"), which is the authoritative list of what is waived, until when,
+and on whose approval.
 
-Owner renewed this exact exception on 2026-08-25 after UAT run `32829457833`
-attempt 2 reproduced the same provider mapping on fresh image digests. OpenSSL's
-vendor advisory still lists affected versions as 3.5.0+, while the scanned
-Debian source package remains 3.0.20; the renewal does not match any other CVE,
-severity, package, version or provider statement.
+Current state (2026-09-05): five rows — CVE-2026-54874, CVE-2026-63072 and
+CVE-2026-63076 (HIGH, `openssl 3.0.20-1~deb12u2`), CVE-2026-75803 (CRITICAL, same
+package) and CVE-2026-85091 (HIGH, `zlib 1.2.13.dfsg-1`) — all expiring
+`1791158400` (2026-10-05T00:00:00Z) under
+`CHAT-OWNER-DIRECTIVE-2026-09-05-CVE-WAIVER-RENEWAL-2026-10-05`. The earlier
+CVE-2026-14456 OpenSSL-3.5-QUIC mapping exception was retired the same day: ECR no
+longer reports it and Debian records bookworm openssl as not-affected, so the row
+was deleted rather than renewed and the finding blocks again if it returns.

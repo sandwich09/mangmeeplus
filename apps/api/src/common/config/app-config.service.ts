@@ -128,6 +128,9 @@ export class AppConfigService {
   // legacy push path; true = one retry with each Flex message's own altText.
   get lineAiFlexTextFallbackEnabled(): boolean { return this.config.LINE_AI_FLEX_TEXT_FALLBACK_ENABLED; }
   get lineExpenseDraftConversationEnabled(): boolean { return this.config.LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED; }
+  // S-4 draft edit over LINE (preview card → confirm postback → apply). OFF = the five
+  // `draft_update` tools are refused by the executor and the webhook renders no preview card.
+  get lineAiDraftEditEnabled(): boolean { return this.config.LINE_AI_DRAFT_EDIT_ENABLED; }
   // Item 10F: LINE AI turn ledger (Redis Streams; ADR 0010)
   get redisUrl(): string { return this.config.REDIS_URL; }
   get s3Bucket(): string { return this.config.S3_BUCKET; }

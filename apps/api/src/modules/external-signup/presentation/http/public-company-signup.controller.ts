@@ -35,9 +35,21 @@ export class PublicCompanySignupDto {
   @IsString() @IsOptional() @MaxLength(32) @Matches(/^[0-9 -]*$/) taxId?: string;
   @IsString() @IsNotEmpty() @MaxLength(64) consentVersion!: string;
   @IsString() @IsOptional() @MaxLength(128) @Matches(/^[A-Za-z0-9_-]*$/) referralCode?: string;
-  // Only PRO_TRIAL is sellable today; the domain re-checks and answers `offer_not_available`
-  // rather than falling back to the trial silently (spec §3A).
-  @IsIn(['PRO_TRIAL', 'STARTER_249', 'BASIC_499', 'PRO_999', 'ENTERPRISE_1999']) @IsOptional() requestedOfferKey?: string;
+  // Owner 2026-09-05 (review R02): attribution only. Every self-signed-up shop is provisioned on
+  // the free trial, so this key chooses nothing; the domain records a catalog value and drops
+  // anything else rather than refusing the application over a label the server ignores.
+  // PRO_TRIAL is the free trial's retired name, still accepted for in-flight clients and
+  // normalised onto FREE_TRIAL by the domain.
+  @IsIn(['FREE_TRIAL', 'PRO_TRIAL', 'STARTER_249', 'BASIC_499', 'PRO_999', 'ENTERPRISE_1999']) @IsOptional() requestedOfferKey?: string;
+}
+
+/**
+ * Review R01. Deliberately NOT `@Matches(CLAIM_TOKEN_PATTERN)`: a validation 400 for a malformed
+ * token would be a shape oracle, and this endpoint answers `{ valid: false }` for malformed,
+ * expired, used and unknown alike. The pattern is checked in the handler instead.
+ */
+export class SignupClaimTokenDto {
+  @IsString() @MaxLength(200) token!: string;
 }
 
 export class SignupClaimSetPasswordDto {
@@ -134,13 +146,20 @@ export class PublicCompanySignupController {
     return { queued: true };
   }
 
-  @Get('signup-claims/:token')
+  /**
+   * Review R01: POST with the token in the BODY, not `GET signup-claims/:token`. Reading a claim
+   * page is not a mutation, but a URL segment is recorded by every access log between the browser
+   * and this handler (ALB, the API's own request logger, any proxy in between) — and this token is
+   * a bearer credential for an approved shop. A body is logged by none of them.
+   */
+  @Post('signup-claims/info')
+  @HttpCode(200)
   @ApiOperation({ summary: 'Claim link details; identical empty answer for expired/used/unknown' })
-  async claimInfo(@Param('token') token: string, @Req() req: Request): Promise<SignupClaimInfoDto> {
+  async claimInfo(@Body() dto: SignupClaimTokenDto, @Req() req: Request): Promise<SignupClaimInfoDto> {
     await this.rateLimit.assertPublicSignupReadAllowed(trustedClientIp(req));
     // A malformed token is answered exactly like an unknown one — no shape oracle either.
-    if (!CLAIM_TOKEN_PATTERN.test(token)) return { valid: false };
-    return this.claim.info(token);
+    if (!CLAIM_TOKEN_PATTERN.test(dto.token)) return { valid: false };
+    return this.claim.info(dto.token);
   }
 
   @Post('signup-claims/set-password')

@@ -346,6 +346,10 @@ const CODE_LABELS: Record<string, string> = {
   line_messaging_channel_not_configured: 'ยังไม่ได้ตั้งค่าช่องทาง LINE ของระบบ จึงส่งข้อความไม่ได้',
   package_change_request_not_found: 'ไม่พบคำขอเปลี่ยนแพ็กเกจนี้ อาจถูกดำเนินการไปแล้ว กรุณาโหลดหน้าใหม่',
   line_linked_elsewhere: 'LINE นี้เชื่อมกับบัญชีอื่นอยู่แล้ว เลือกได้ว่าจะรวมเป็นบัญชีเดียวหรือใช้แยกกันต่อ',
+  // Provisioning refused the LINE identity by name instead of letting a unique violation become
+  // "ข้อมูลซ้ำ" — an operator reading that had nothing to do next. Both say what to change.
+  line_identity_already_linked: 'LINE ของผู้สมัครผูกกับบัญชีอื่นอยู่ ต้องปลดการเชื่อมในหน้าพาร์ทเนอร์ก่อน แล้วกดอนุมัติอีกครั้ง',
+  line_identity_disabled: 'LINE ของผู้สมัครถูกปิดใช้งานอยู่ ต้องเปิดใช้งานก่อน แล้วกดอนุมัติอีกครั้ง',
   // Spec §4F account merge — same copy the welcome dialog's own map shows, so the message reads
   // identically wherever the code surfaces.
   merge_ticket_invalid: 'คำขอรวมบัญชีหมดอายุแล้ว กดปุ่มเชื่อมบัญชี LINE อีกครั้งเพื่อเริ่มใหม่',
@@ -354,6 +358,12 @@ const CODE_LABELS: Record<string, string> = {
   merge_in_progress: 'กำลังรวมบัญชีอยู่ กรุณารอสักครู่แล้วเปิดหน้านี้ใหม่',
   merge_target_unavailable: 'บัญชีเดิมใช้งานไม่ได้ในตอนนี้ ติดต่อ 098-256-5628',
   merge_not_needed: 'สองบัญชีนี้เป็นบัญชีเดียวกันอยู่แล้ว ไม่ต้องรวม',
+  // Review R05: fail closed. Two accounts hold different access to the same shop, and merging would
+  // decide on its own which side wins — including closing a shop's only owner out of it.
+  account_merge_role_conflict: 'รวมบัญชีไม่ได้ เพราะสองบัญชีมีสิทธิ์ในร้านเดียวกันไม่ตรงกัน ติดต่อ 098-256-5628 เพื่อให้ทีมงานจัดสิทธิ์ให้ก่อน',
+  // Review F7: the self-serve window does not restart, so near its end a resent link would die
+  // between the inbox and the tap. An operator reissue has no age limit and does restart it.
+  claim_window_almost_over: 'ลิงก์หมดเขตแล้ว ขอลิงก์ใหม่จากทีมงานที่ 098-256-5628',
 
   // ---- ยอมรับข้อกำหนดการใช้งาน ----
   legal_acceptance_required: 'ต้องยอมรับข้อกำหนดการใช้งานและรับทราบประกาศความเป็นส่วนตัวก่อนใช้งาน',
@@ -390,6 +400,9 @@ const CODE_LABELS: Record<string, string> = {
   // ทั้งสองโค้ดมาจาก company-signup-core.service และโผล่ที่ปุ่มอนุมัติ/ปฏิเสธ/ส่งลิงก์ใหม่ในคิว
   // ทางแก้เดียวกันคือโหลดคิวใหม่ ข้อความจึงชี้ไปที่คิว ไม่ใช่ให้กดซ้ำ
   company_signup_request_not_found: 'ไม่พบคำขอสมัครนี้แล้ว กรุณาโหลดคิวคำขอใหม่',
+  // R07/F6: the MX lookup could not answer, which says nothing about the address the applicant
+  // typed. It may not read as a typo — the only correct instruction is to send the same form again.
+  email_domain_check_unavailable: 'ตรวจอีเมลไม่ได้ชั่วคราว กรุณากดส่งคำขออีกครั้ง ลองใหม่ในอีกสักครู่',
   company_signup_concurrent_transition:
     'คำขอนี้ถูกดำเนินการโดยผู้ดูแลคนอื่นระหว่างทำรายการ กรุณาโหลดคิวคำขอใหม่แล้วตรวจสถานะล่าสุด',
 };

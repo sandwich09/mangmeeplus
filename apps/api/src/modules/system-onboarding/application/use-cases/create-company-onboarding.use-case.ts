@@ -14,6 +14,7 @@ import {
   type VatFactStatus,
 } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
+import { lineIdentityLockKey } from '../../../../common/database/line-identity-lock';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { emitSecurityEvent, SECURITY_EVENT } from '../../../../common/logger/security-event';
 import { normalizeTaxId } from '../../../data-model-core/domain/logic/company-legal-identity.logic';
@@ -169,6 +170,9 @@ function generateTempPassword(): string {
 }
 
 const TEMP_PASSWORD_TTL_MS = 72 * 60 * 60 * 1000; // 72 hours
+
+/** Postgres unique violation — here, only the LINE identity slot. */
+const UNIQUE_VIOLATION = 'P2002';
 
 @Injectable()
 export class CreateCompanyOnboardingUseCase {
@@ -370,21 +374,74 @@ export class CreateCompanyOnboardingUseCase {
         data: { membershipId: membership.id, roleId: ownerRole.id },
       });
 
-      // Spec §6: the LINE identity is the credential, so it is created HERE — in the same
-      // transaction as the company and the membership. A unique violation means this LINE account
-      // already belongs to someone, which §5 should have caught and turned into an attach; letting
-      // it abort the transaction is correct, because half a shop is worse than none.
+      // Spec §6: the LINE identity is the credential, so it is bound HERE — in the same transaction
+      // as the company and the membership. The unique `(provider, channel, providerUserId)` slot is
+      // owned by whichever row exists, ACTIVE or not, so a bare `create` failed forever for an owner
+      // who had ever unlinked (UAT cmto4xtrx002r4o5tf7o38dls): P2002 escaped as a generic 409 and
+      // every admin retry repeated it. An UNLINKED row is re-pointed instead — the same
+      // reactivation `LinkLineIdentityUseCase` performs — and the two states that really do belong
+      // to somebody are refused BY NAME, so the queue chip and the toast can say which.
       if (lineOwner && !attach) {
-        await tx.externalIdentity.create({
-          data: {
-            userId: owner.id,
-            provider: 'LINE',
-            providerUserId: lineOwner.providerUserId,
-            providerChannelId: lineOwner.channelId,
-            status: 'ACTIVE',
-            linkedAt: new Date(),
-          },
+        const identityKey = {
+          provider: 'LINE' as const,
+          providerUserId: lineOwner.providerUserId,
+          providerChannelId: lineOwner.channelId,
+        };
+        // The lock covers exactly one thing: deciding and writing THIS identity slot. Everything
+        // else in this transaction is protected by its own fences (the open-application index, the
+        // provisioning claim, the `companyId` stamp), and none of them reach across modules.
+        //
+        // `link-line-identity.use-case.ts` re-points the very same row, from a different flow that
+        // an owner can trigger at any moment. Both sides read then update, so row locks alone would
+        // let the second UPDATE queue behind the first and overwrite it — taking the LINE
+        // credential off the owner of the shop this transaction is building. Both take THIS key,
+        // and both re-read inside it, which is what makes the read below the decision.
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lineIdentityLockKey(lineOwner.channelId, lineOwner.providerUserId)}, 0))`;
+        const existingIdentity = await tx.externalIdentity.findUnique({
+          where: { provider_providerChannelId_providerUserId: identityKey },
+          select: { id: true, userId: true, status: true },
         });
+        if (!existingIdentity) {
+          try {
+            await tx.externalIdentity.create({
+              data: { userId: owner.id, ...identityKey, status: 'ACTIVE', linkedAt: new Date() },
+            });
+          } catch (error) {
+            // Two approvals for the same LINE account raced between the read above and this insert.
+            if ((error as { code?: string }).code !== UNIQUE_VIOLATION) throw error;
+            throw new ConflictException('line_identity_already_linked');
+          }
+        } else if (existingIdentity.status === 'UNLINKED') {
+          await tx.externalIdentity.update({
+            where: { id: existingIdentity.id },
+            data: { userId: owner.id, status: 'ACTIVE', linkedAt: new Date() },
+          });
+          // Support has to be able to see that this LINE account moved from one account to another;
+          // ids only, so no LINE user id or shop name enters the trail (DATA-MIN-01).
+          await tx.auditLog.create({
+            data: {
+              actorUserId: cmd.requestingAdminUserId,
+              companyId: company.id,
+              action: 'auth.identity.repointed',
+              targetType: 'external_identity',
+              targetId: existingIdentity.id,
+              requestId: cmd.requestId,
+              result: 'SUCCESS',
+              riskLevel: 'HIGH',
+              metadataJson: {
+                previousUserId: existingIdentity.userId,
+                previousStatus: existingIdentity.status,
+                ownerUserId: owner.id,
+              },
+            },
+          });
+        } else {
+          // ACTIVE or DISABLED: §5 refuses both at submit, so reaching here means the identity
+          // changed under an application that was already in the queue.
+          throw new ConflictException(
+            existingIdentity.status === 'DISABLED' ? 'line_identity_disabled' : 'line_identity_already_linked',
+          );
+        }
       }
 
       // LEGAL-LIFF-01: the acceptance the owner already gave on LIFF, written where the in-app gate

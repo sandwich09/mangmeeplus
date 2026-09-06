@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { ConflictException, NotFoundException } from '@nestjs/common';
-import { SignupAdminQueueUseCase } from './signup-admin-queue.use-case';
+import { SignupAdminQueueUseCase, encodeQueueCursor } from './signup-admin-queue.use-case';
 import { STALE_PROVISIONING_MS } from '../domain/company-signup.logic';
 
 const NOW = new Date('2026-09-01T00:00:00.000Z');
@@ -16,7 +16,7 @@ const REQUEST = {
   businessType: 'ร้านค้าปลีก',
   vatRegistered: false,
   taxId: '0105555000012',
-  requestedOfferKey: 'PRO_TRIAL',
+  requestedOfferKey: 'FREE_TRIAL',
   mxValid: true,
   createdAt: new Date('2026-08-25T00:00:00.000Z'),
   approvedAt: null as Date | null,
@@ -31,6 +31,23 @@ function harness(options: {
   companies?: any[];
   companiesByPhone?: Array<{ phone: string; name: string }>;
   membershipsByPhone?: Array<{ user: { phoneNumber: string | null }; company: { name: string } }>;
+  /** Rows in the unique LINE slot, in ANY status — that is what the repeat-trial hint reads. */
+  identities?: Array<{ providerUserId: string; providerChannelId: string; userId: string }>;
+  /**
+   * What those accounts already belong to, oldest first. `owner: false` is an employee membership —
+   * their EMPLOYER's shop, which must never be named as a trial this applicant already had.
+   */
+  /** R13: `groupBy(['state','source'])` rows behind the tab counts. */
+  stateCounts?: Array<{ state: string; source: string; _count: { _all: number } }>;
+  /** R13: abandoned PROVISIONING runs, which no state count can see (the clock decides). */
+  staleProvisioningCount?: number;
+  priorMemberships?: Array<{
+    userId: string;
+    owner: boolean;
+    /** Defaults to ACTIVE. `DRAFT` is an employee draft nobody finished — never a shop. */
+    status?: string;
+    company: { name: string; status: string; planTerm: { termDisabledAt: Date | null } | null };
+  }>;
 } = {}) {
   const audits: any[] = [];
   const updates: any[] = [];
@@ -47,6 +64,9 @@ function harness(options: {
         findUnique: async () => (options.request === undefined ? { ...REQUEST } : options.request),
         findMany: async (args: any) => { requestQueries.push(args); return options.requests ?? []; },
         update: async (args: any) => { updates.push(args); return {}; },
+        // R13: the tab counts are read from the whole table, never from the page just fetched.
+        groupBy: async () => options.stateCounts ?? [],
+        count: async () => options.staleProvisioningCount ?? 0,
       },
       user: { findMany: async (args: any) => { userQueries.push(args); return options.users ?? []; } },
       company: {
@@ -55,14 +75,39 @@ function harness(options: {
           : options.companies ?? []),
       },
       // Review A-01: the second phone rail — a member of an existing shop carries the number.
-      companyMembership: { findMany: async () => options.membershipsByPhone ?? [] },
+      // Owner 2026-09-05 added a second reader keyed by user id: the repeat-trial hint.
+      companyMembership: {
+        findMany: async (args: any) => {
+          if (!args?.where?.userId) return options.membershipsByPhone ?? [];
+          // Both filters are HONOURED: dropping the OWNER role makes the employee case red, and
+          // dropping the DRAFT exclusion makes the abandoned-draft case red.
+          return (options.priorMemberships ?? []).filter((m) => {
+            if (args?.where?.roles?.some?.role?.key === 'OWNER' && !m.owner) return false;
+            if (args?.where?.status?.not && (m.status ?? 'ACTIVE') === args.where.status.not) return false;
+            return true;
+          });
+        },
+      },
+      externalIdentity: { findMany: async () => options.identities ?? [] },
       auditLog: { create: async (args: any) => { audits.push(args); return {}; } },
     },
   } as any;
 
   const core = {
-    advance: async (id: string, state: string, _corr: string, failureCode?: string) => {
-      advances.push({ id, state, ...(failureCode ? { failureCode } : {}) });
+    // R08: `extras` is how a transition carries the facts that make it true — the approval stamp
+    // and the claim email now ride the same transaction, so the stub has to honour both.
+    advance: async (
+      id: string, state: string, _corr: string, failureCode?: string, _expect?: unknown,
+      extras?: { data?: Record<string, unknown>; alsoInTransaction?: (tx: unknown) => Promise<void> },
+    ) => {
+      advances.push({
+        id, state,
+        ...(failureCode ? { failureCode } : {}),
+        ...(extras?.data ? { data: extras.data } : {}),
+      });
+      // F8: the audit and the letter both write through the transaction client, so the stub hands
+      // over the same store — an `{}` here would hide a missing audit as a TypeError.
+      await extras?.alsoInTransaction?.(prisma.client);
       return {};
     },
   } as any;
@@ -178,6 +223,89 @@ describe('SignupAdminQueueUseCase.list', () => {
     assert.equal(items[0]!.emailMatchesExistingUser, false);
     assert.deepEqual(h.userQueries[0].where.email.in, ['somchai@example.com']);
   });
+
+  /**
+   * Owner 2026-09-05. The applicant unlinked and is applying again, so the identity that names them
+   * is UNLINKED — invisible to any ACTIVE-only read, and precisely the case this hint exists for.
+   */
+  const lineRow = {
+    ...REQUEST, id: 'signup-line', source: 'line-oa', contactEmail: null, taxId: null,
+    lineProviderUserId: 'Uline-1', lineChannelId: 'channel-1',
+  };
+  const state = async (company: any, owner = true, status?: string) => {
+    const h = harness({
+      requests: [lineRow],
+      identities: [{ providerUserId: 'Uline-1', providerChannelId: 'channel-1', userId: 'user-old' }],
+      priorMemberships: [{ userId: 'user-old', owner, ...(status ? { status } : {}), company }],
+    });
+    const { items } = await h.useCase.list(NOW);
+    return items[0]!;
+  };
+
+  it('names the shop a repeat applicant already had, and how it stands today', async () => {
+    const closed = await state({ name: 'ร้านเก่า', status: 'DISABLED', planTerm: null });
+    assert.equal(closed.priorCompanyName, 'ร้านเก่า');
+    assert.equal(closed.priorCompanyState, 'CLOSED');
+    // The same pair the LINE assistant uses to tell a term expiry from an admin-ordered close.
+    const expired = await state({
+      name: 'ร้านเก่า', status: 'DISABLED', planTerm: { termDisabledAt: new Date('2026-08-01') },
+    });
+    assert.equal(expired.priorCompanyState, 'EXPIRED');
+    const running = await state({ name: 'ร้านเก่า', status: 'ACTIVE', planTerm: null });
+    assert.equal(running.priorCompanyState, 'ACTIVE');
+  });
+
+  /**
+   * The chat's `ownsTermExpiredCompany` requires DISABLED *and* a `termDisabledAt` stamp. Reading
+   * the stamp alone called a SUSPENDED shop "หมดอายุ" while the assistant called the same shop
+   * something else — and an operator told a customer to renew a suspension only an admin can lift.
+   */
+  it('calls a shop expired on exactly the pair the LINE assistant uses', async () => {
+    const suspended = await state({
+      name: 'ร้านเก่า', status: 'SUSPENDED', planTerm: { termDisabledAt: new Date('2026-08-01') },
+    });
+    assert.equal(suspended.priorCompanyState, 'CLOSED', 'a suspension is not an expiry');
+    const disabledByHand = await state({ name: 'ร้านเก่า', status: 'DISABLED', planTerm: { termDisabledAt: null } });
+    assert.equal(disabledByHand.priorCompanyState, 'CLOSED');
+  });
+
+  // An employee draft an admin started and abandoned is a half-filled form, not a shop.
+  it('never names a shop from a membership that never got past DRAFT', async () => {
+    const draft = await state({ name: 'ร้านร่าง', status: 'ACTIVE', planTerm: null }, true, 'DRAFT');
+    assert.equal(draft.priorCompanyName, undefined);
+    assert.equal(draft.priorCompanyState, undefined);
+  });
+
+  // Review B1: the employee whose LINE was linked by the staff QR. Their identity points at an
+  // account holding a membership in their EMPLOYER's shop — naming it here would tell the operator
+  // this person is repeating a trial they have never had, on a company that was never theirs.
+  it('never names an employer shop the applicant only works at', async () => {
+    const employeeOnly = await state({ name: 'ร้านนายจ้าง', status: 'ACTIVE', planTerm: null }, false);
+    assert.equal(employeeOnly.priorCompanyName, undefined);
+    assert.equal(employeeOnly.priorCompanyState, undefined);
+  });
+
+  it('says nothing about a prior shop when there is none', async () => {
+    const h = harness({
+      requests: [{
+        ...REQUEST, source: 'line-oa', contactEmail: null, taxId: null,
+        lineProviderUserId: 'Uline-1', lineChannelId: 'channel-1',
+      }],
+    });
+    const { items } = await h.useCase.list(NOW);
+    assert.equal(items[0]!.priorCompanyName, undefined);
+    assert.equal(items[0]!.priorCompanyState, undefined);
+  });
+
+  // The "มีปัญหา" tab has to be able to say WHY. Without the code on the DTO the page could only
+  // show "เปิดร้านไม่สำเร็จ" for a stale LINE identity and for a database outage alike.
+  it('carries the provisioning failure code to the queue', async () => {
+    const h = harness({
+      requests: [{ ...REQUEST, state: 'PROVISIONING_FAILED', source: 'line-oa', failureCode: 'line_identity_already_linked' }],
+    });
+    const { items } = await h.useCase.list(NOW);
+    assert.equal(items[0]!.failureCode, 'line_identity_already_linked');
+  });
 });
 
 // P10-L §5/§8. What "approve" MEANS depends on the source: the web form still has a mailbox to
@@ -194,6 +322,62 @@ const LINE_REQUEST = {
   legalAcceptedAt: new Date('2026-08-31T04:00:00.000Z'),
 };
 const URLS = { webBaseUrl: 'https://app.example.com', apiBaseUrl: 'https://api.example.com/v1' };
+
+// R10: the PDPA health tripwire is dead for Thai free text ("คลินิก" maps to OTHER), so the enum is
+// chosen by the human who is already reading that word — at review, never by a heuristic.
+describe('SignupAdminQueueUseCase.decide — business category at review', () => {
+  it('stores the category the admin picked alongside the approval', async () => {
+    const h = harness();
+    await h.useCase.decide(
+      'signup-1', { action: 'APPROVE', businessCategory: 'CLINIC' }, 'admin-1', 'req-1', URLS,
+    );
+    // R08: the approval facts ride the state transition's own transaction, so the category the
+    // reviewer picked commits with the state and the letter or not at all.
+    const approval = h.advances.find((a: any) => a.state === 'EMAIL_PENDING');
+    assert.equal(approval.data.businessCategory, 'CLINIC');
+    assert.equal(approval.data.approvedByUserId, 'admin-1');
+    // And it is evidence: a health-category decision an operator made has to be auditable.
+    const auditRow = h.audits.find((a) => a.data.action === 'signup.request.approved');
+    assert.equal(auditRow.data.metadataJson.businessCategory, 'CLINIC');
+  });
+
+  it('leaves the column alone when review did not pick one', async () => {
+    const h = harness();
+    await h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1', URLS);
+    const approval = h.advances.find((a: any) => a.state === 'EMAIL_PENDING');
+    assert.equal('businessCategory' in approval.data, false);
+  });
+
+  // F3: the enum re-check is the line that decides whether a PDPA safeguard can be armed by a
+  // string nobody validated. Replacing it with `body.businessCategory ?? null` must not pass.
+  it('refuses a category the enum does not know, at the use case and not only at the DTO', async () => {
+    const h = harness();
+    await h.useCase.decide(
+      'signup-1', { action: 'APPROVE', businessCategory: 'HOSPITAL' }, 'admin-1', 'req-1', URLS,
+    );
+    const written = h.advances.find((a: any) => a.state === 'EMAIL_PENDING');
+    assert.equal('businessCategory' in written.data, false, 'nothing unvalidated is stored');
+    const auditRow = h.audits.find((a) => a.data.action === 'signup.request.approved');
+    assert.equal(auditRow.data.metadataJson.businessCategory, null);
+    // Same for an empty string and for a case that only LOOKS like the enum.
+    for (const bad of ['', 'clinic', ' CLINIC ']) {
+      const other = harness();
+      await other.useCase.decide(
+        'signup-1', { action: 'APPROVE', businessCategory: bad }, 'admin-1', 'req-1', URLS,
+      );
+      const badWrite = other.advances.find((a: any) => a.state === 'EMAIL_PENDING');
+      assert.equal('businessCategory' in badWrite.data, false, bad);
+    }
+  });
+
+  it('carries the choice into a LINE approval, which provisions inline', async () => {
+    const h = harness({ request: LINE_REQUEST });
+    await h.useCase.decide(
+      'signup-1', { action: 'APPROVE', businessCategory: 'WELLNESS_SPA' }, 'admin-1', 'req-1', URLS,
+    );
+    assert.equal(h.updates[0].data.businessCategory, 'WELLNESS_SPA');
+  });
+});
 
 describe('SignupAdminQueueUseCase.decide — LINE-first source', () => {
   it('provisions on approval instead of queueing a claim email nobody can receive', async () => {
@@ -248,7 +432,7 @@ describe('SignupAdminQueueUseCase.decide — LINE-first source', () => {
     const { items } = await h.useCase.list(NOW);
     assert.equal(items.length, 1);
     assert.deepEqual(h.requestQueries[0].where.OR[1], {
-      state: { in: ['PROVISIONING_FAILED', 'READY', 'PROVISIONING'] }, source: 'line-oa',
+      state: { in: ['READY', 'PROVISIONING'] }, source: 'line-oa',
     });
   });
 
@@ -338,13 +522,15 @@ describe('SignupAdminQueueUseCase.decide — LINE-first source', () => {
 
   // Review MEDIUM-D: only for THIS source. A web-form row in the same state has no retry an admin
   // could reach — approve, reject and reissue all 409 — so listing it offers three dead ends.
-  it('asks for that state only on the LINE source, leaving the web form byte-identical', async () => {
+  // Review F2: PROVISIONING_FAILED moved into the source-independent list. READY and PROVISIONING
+  // stay LINE-only — a web row in either has no action an admin can take on it.
+  it('asks for a failed provisioning on every source, and the other two on LINE alone', async () => {
     const h = harness({ requests: [] });
     await h.useCase.list(NOW);
 
     assert.deepEqual(h.requestQueries[0].where.OR, [
-      { state: { in: ['PENDING_REVIEW', 'EMAIL_PENDING', 'EMAIL_FAILED', 'EXPIRED'] } },
-      { state: { in: ['PROVISIONING_FAILED', 'READY', 'PROVISIONING'] }, source: 'line-oa' },
+      { state: { in: ['PENDING_REVIEW', 'EMAIL_PENDING', 'EMAIL_FAILED', 'EXPIRED', 'PROVISIONING_FAILED'] } },
+      { state: { in: ['READY', 'PROVISIONING'] }, source: 'line-oa' },
     ]);
   });
 
@@ -361,11 +547,13 @@ describe('SignupAdminQueueUseCase.decide — LINE-first source', () => {
     assert.equal(h.audits[0].data.metadataJson.retryOfFailedProvisioning, true);
   });
 
-  it('does not offer that retry to the web form, whose approval means something else', async () => {
-    const h = harness({ request: { ...REQUEST, state: 'PROVISIONING_FAILED' } });
+  // Review F2: the web form gets the same retry. What it does NOT get is the READY close-out —
+  // that row's last step belongs to the applicant's own welcome page.
+  it('still refuses the READY close-out to the web form, whose last step is the applicant\'s', async () => {
+    const h = harness({ request: { ...REQUEST, state: 'READY' } });
     await assert.rejects(
       () => h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1', URLS),
-      /invalid_signup_decision:PROVISIONING_FAILED/,
+      /invalid_signup_decision:READY/,
     );
   });
 
@@ -447,6 +635,153 @@ describe('SignupAdminQueueUseCase.decide — suspend', () => {
   });
 });
 
+// R13: the queue read 200 rows and the page filtered and counted whatever came back — so a backlog
+// past 200 was invisible, a tab could show "ไม่มีคำขอในกลุ่มนี้" over rows the database was holding,
+// and REJECTED/SUSPENDED applications could not be found at all.
+describe('SignupAdminQueueUseCase.list — filtering, paging and counts', () => {
+  // Review F2 moved PROVISIONING_FAILED to every source; READY and a live PROVISIONING stay
+  // LINE-only, because a web row in either has no action an admin could take.
+  const queueWhereForDefaultTab = () => ({
+    OR: [
+      { state: { in: ['PENDING_REVIEW', 'EMAIL_PENDING', 'EMAIL_FAILED', 'EXPIRED', 'PROVISIONING_FAILED'] } },
+      { state: { in: ['READY', 'PROVISIONING'] }, source: 'line-oa' },
+    ],
+  });
+  const page = (n: number) => Array.from({ length: n }, (_, i) => ({
+    ...REQUEST,
+    id: `signup-${i + 1}`,
+    createdAt: new Date(NOW.getTime() - (n - i) * 60_000),
+  }));
+
+  it('asks the database for one tab rather than filtering a truncated page in the browser', async () => {
+    const h = harness({ requests: [] });
+    await h.useCase.list(NOW, { tab: 'PENDING_REVIEW' });
+    assert.deepEqual(h.requestQueries[0].where, { state: 'PENDING_REVIEW' });
+
+    const claim = harness({ requests: [] });
+    await claim.useCase.list(NOW, { tab: 'AWAITING_CLAIM' });
+    assert.deepEqual(claim.requestQueries[0].where, { state: 'EMAIL_PENDING' });
+  });
+
+  it('offers an archive so a rejected or suspended application can still be found', async () => {
+    const h = harness({ requests: [] });
+    await h.useCase.list(NOW, { tab: 'ARCHIVED' });
+    assert.deepEqual(h.requestQueries[0].where, { state: { in: ['REJECTED', 'SUSPENDED', 'EXPIRED'] } });
+  });
+
+  it('hands back a cursor when more rows exist, and nothing when they do not', async () => {
+    const rows = page(6);
+    const full = harness({ requests: rows });
+    const first = await full.useCase.list(NOW, { limit: 5 });
+    assert.equal(first.items.length, 5, 'the extra row is a probe, never rendered');
+    assert.equal(first.nextCursor, encodeQueueCursor(rows[4]!.createdAt, rows[4]!.id));
+    assert.equal(full.requestQueries[0].take, 6);
+
+    const last = harness({ requests: page(3) });
+    const rest = await last.useCase.list(NOW, { limit: 5 });
+    assert.equal(rest.items.length, 3);
+    assert.equal(rest.nextCursor, null);
+  });
+
+  // F10: the cursor carries the ORDERING VALUES, not a row to look up. A row-id cursor is resolved
+  // by Prisma against the same filtered query, so a row that left the tab between pages (an admin
+  // approved it, a sweep parked it) makes the next page come back empty — and the operator sees a
+  // tab that has silently stopped, with no way on but a reload.
+  it('continues from the ordering values, so a row leaving the tab cannot strand the page', async () => {
+    const h = harness({ requests: page(2) });
+    const at = new Date('2026-08-30T10:00:00.000Z');
+    const cursor = encodeQueueCursor(at, 'signup-40');
+    await h.useCase.list(NOW, { cursor, limit: 5 });
+
+    const where = h.requestQueries[0].where;
+    // Never a row lookup: nothing here has to still exist, or still match the tab.
+    assert.equal(h.requestQueries[0].cursor, undefined);
+    assert.equal(h.requestQueries[0].skip, undefined);
+    // The tab predicate first, the page boundary second — the default tab has an `OR` of its own,
+    // so the boundary is identified by position, not by "the clause with an OR in it".
+    assert.deepEqual(where.AND[0], queueWhereForDefaultTab());
+    assert.deepEqual(where.AND[1].OR, [
+      { createdAt: { gt: at } },
+      { createdAt: at, id: { gt: 'signup-40' } },
+    ]);
+    // Deterministic ordering, or a cursor can skip or repeat rows between pages.
+    assert.deepEqual(h.requestQueries[0].orderBy, [{ createdAt: 'asc' }, { id: 'asc' }]);
+  });
+
+  it('hands back a cursor made of the last row values, and ignores a corrupt one', async () => {
+    const rows = page(6);
+    const h = harness({ requests: rows });
+    const first = await h.useCase.list(NOW, { limit: 5 });
+    assert.equal(first.nextCursor, encodeQueueCursor(rows[4]!.createdAt, rows[4]!.id));
+
+    // A cursor that cannot be read is the first page, never a crash and never an empty tab.
+    const garbled = harness({ requests: page(2) });
+    await garbled.useCase.list(NOW, { cursor: 'not-a-cursor', limit: 5 });
+    assert.equal(garbled.requestQueries[0].where.AND, undefined);
+  });
+
+  it('caps what one page may ask for, whatever the caller sends', async () => {
+    const h = harness({ requests: [] });
+    await h.useCase.list(NOW, { limit: 100_000 });
+    assert.ok(h.requestQueries[0].take <= 201, `asked for ${h.requestQueries[0].take}`);
+  });
+
+  // F5: the "มีปัญหา" tab exists to surface rows an operator must act on, and an ABANDONED
+  // provisioning run is the one they most need to find. It is decided by the clock, not by a
+  // state, so it has to be part of the tab's predicate — otherwise the tab's own count (which
+  // does include it) promises rows the list can never show.
+  it('puts abandoned provisioning runs on the problem tab, agreeing with its count', async () => {
+    const h = harness({ requests: [] });
+    await h.useCase.list(NOW, { tab: 'PROBLEM' });
+
+    const branches = h.requestQueries[0].where.OR;
+    const stale = branches.find((b: any) => b.provisioningStartedAt);
+    assert.ok(stale, 'the problem tab must ask for abandoned runs, not only for failed states');
+    assert.equal(stale.state, 'PROVISIONING');
+    assert.equal(stale.source, 'line-oa');
+    // The same clock the fence uses, or the queue and the fence disagree about what abandoned is.
+    assert.equal(NOW.getTime() - (stale.provisioningStartedAt.lt as Date).getTime(), STALE_PROVISIONING_MS);
+    // And the states that are problems by state alone are still there. Review F2 made a failed
+    // provisioning an EVERY-source row, so it is asked for by state — not behind the LINE filter,
+    // which would have hidden a Flow B failure from the one tab that exists to surface it.
+    assert.deepEqual(branches[0], { state: { in: ['EMAIL_FAILED', 'EXPIRED', 'PROVISIONING_FAILED'] } });
+    assert.deepEqual(branches[1], { state: { in: ['READY'] }, source: 'line-oa' });
+  });
+
+  it('counts the WHOLE queue, not the page it just read', async () => {
+    const h = harness({
+      requests: page(2),
+      stateCounts: [
+        { state: 'PENDING_REVIEW', source: 'official-site', _count: { _all: 240 } },
+        { state: 'EMAIL_PENDING', source: 'official-site', _count: { _all: 31 } },
+        { state: 'EMAIL_FAILED', source: 'official-site', _count: { _all: 4 } },
+        { state: 'EXPIRED', source: 'official-site', _count: { _all: 7 } },
+        { state: 'PROVISIONING_FAILED', source: 'line-oa', _count: { _all: 2 } },
+        // F2: a Flow B provisioning failure is a queue row too, so it is counted like one.
+        { state: 'PROVISIONING_FAILED', source: 'official-site', _count: { _all: 6 } },
+        { state: 'READY', source: 'line-oa', _count: { _all: 1 } },
+        // 8 runs in flight, 5 of them abandoned by the clock: the 3 live ones are in the queue and
+        // are NOT a problem, which is the one distinction a state count cannot make on its own.
+        { state: 'PROVISIONING', source: 'line-oa', _count: { _all: 8 } },
+        // A web-form row in a LINE-only state is not in the queue, so it is in no count either.
+        { state: 'READY', source: 'official-site', _count: { _all: 99 } },
+        { state: 'REJECTED', source: 'official-site', _count: { _all: 12 } },
+        { state: 'SUSPENDED', source: 'line-oa', _count: { _all: 3 } },
+      ],
+      staleProvisioningCount: 5,
+    });
+    const { counts } = await h.useCase.list(NOW);
+
+    assert.equal(counts!.PENDING_REVIEW, 240);
+    assert.equal(counts!.AWAITING_CLAIM, 31);
+    // Bounced, expired, failed provisioning, stranded READY, and the abandoned runs.
+    assert.equal(counts!.PROBLEM, 4 + 7 + 2 + 6 + 1 + 5);
+    assert.equal(counts!.ARCHIVED, 12 + 3 + 7);
+    // Everything actionable, live provisioning runs included, and nothing that is not in the queue.
+    assert.equal(counts!.ALL, 240 + 31 + 4 + 7 + 2 + 6 + 1 + 8);
+  });
+});
+
 describe('SignupAdminQueueUseCase.listAutoApproved', () => {
   it('shows what the machine let through, without inventing dedupe hints for it', async () => {
     const h = harness({ requests: [{ ...LINE_REQUEST, state: 'COMPLETED', autoApproved: true }] });
@@ -466,21 +801,74 @@ describe('SignupAdminQueueUseCase.decide — approve', () => {
     const result = await h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1');
 
     assert.deepEqual(result, { requestId: 'signup-1', state: 'EMAIL_PENDING' });
-    assert.deepEqual(h.advances, [{ id: 'signup-1', state: 'EMAIL_PENDING' }]);
-    assert.equal(h.updates[0].data.approvedByUserId, 'admin-1');
-    assert.ok(h.updates[0].data.approvedAt instanceof Date);
+    assert.equal(h.advances.length, 1);
+    assert.equal(h.advances[0].state, 'EMAIL_PENDING');
+    // R08: the approval facts ride the transition itself, never a second update that can be lost.
+    assert.equal(h.advances[0].data.approvedByUserId, 'admin-1');
+    assert.ok(h.advances[0].data.approvedAt instanceof Date);
+    // R09: the activation window the sweep reads starts here, beside the audit fact.
+    assert.ok(h.advances[0].data.claimWindowStartedAt instanceof Date);
+    assert.deepEqual(h.updates, [], 'nothing about the approval is written outside the transition');
     assert.deepEqual(h.enqueued, [{ id: 'signup-1', reason: 'approve' }]);
   });
 
-  it('is a no-op when the application is already approved', async () => {
+  it('repairs an already-approved application instead of reporting success over a missing email', async () => {
     const h = harness({ request: { ...REQUEST, state: 'EMAIL_PENDING' } });
     const result = await h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-2');
 
     assert.equal(result.state, 'EMAIL_PENDING');
-    // No second transition, no second approver stamp, and above all no second email.
+    // R08: no second transition and no second approver stamp — but the letter is re-enqueued,
+    // because the outbox key is the request id and the alternative is an applicant who waits
+    // forever for an email the first, half-failed approve never queued.
     assert.deepEqual(h.advances, []);
+    assert.deepEqual(h.updates, []);
+    assert.deepEqual(h.enqueued, [{ id: 'signup-1', reason: 'approve' }]);
+    // F8: a repair is an operator action and leaves its own record — the alternative is evidence
+    // that consists only of the absence of a second email.
+    assert.equal(h.audits.length, 1);
+    assert.equal(h.audits[0].data.action, 'signup.request.claim_email_repaired');
+    assert.equal(h.audits[0].data.metadataJson.fromState, 'EMAIL_PENDING');
+  });
+
+  /**
+   * Review F2. A Flow B applicant who claimed their link and then hit a failed provisioning was a
+   * dead end: the row was listed for LINE only, the token was spent, and resend and reissue both
+   * refuse from PROVISIONING_FAILED. The retry is the same action on both sources.
+   */
+  it('retries a failed provisioning on the web form, without asking for the mailbox again', async () => {
+    const h = harness({ request: { ...REQUEST, state: 'PROVISIONING_FAILED', approvedAt: NOW } });
+
+    const result = await h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1', URLS);
+
+    assert.equal(result.state, 'LINE_LINK_PENDING', 'a web shop parks at its own LINE step');
+    assert.equal(h.provisioned.length, 1);
+    assert.equal(h.provisioned[0].requestId, 'signup-1');
+    // The claim already happened: no new letter, and no trip back to EMAIL_PENDING.
     assert.deepEqual(h.enqueued, []);
-    assert.deepEqual(h.audits, []);
+    assert.deepEqual(h.advances, []);
+    // The original decision time is history and is not rewritten by the retry.
+    assert.deepEqual(h.updates, []);
+    // Review F16: a retry files under its own action. As a second `signup.request.approved` the
+    // trail read as two approvals of one application, when the approval happened days earlier.
+    assert.equal(h.audits[0].data.action, 'signup.request.provisioning_retried');
+    assert.equal(h.audits[0].data.metadataJson.retryOfFailedProvisioning, true);
+    assert.equal(h.audits[0].data.metadataJson.finishedStrandedRow, false);
+  });
+
+  it('lists a failed provisioning for every source, not just LINE', async () => {
+    const h = harness({
+      requests: [
+        { ...REQUEST, id: 'web-1', state: 'PROVISIONING_FAILED', source: 'official-site', failureCode: 'boom' },
+      ],
+    });
+
+    const queue = await h.useCase.list(NOW);
+
+    assert.equal(queue.items.length, 1, 'the row an operator most needs to find must be listed');
+    assert.equal(queue.items[0]!.state, 'PROVISIONING_FAILED');
+    assert.equal(queue.items[0]!.failureCode, 'boom');
+    // The states the list asks for include it unconditionally rather than only for `line-oa`.
+    assert.ok(h.requestQueries[0].where.OR[0].state.in.includes('PROVISIONING_FAILED'));
   });
 
   it('refuses to approve an application that is past review', async () => {
@@ -503,7 +891,9 @@ describe('SignupAdminQueueUseCase.decide — approve', () => {
     assert.equal(audit.riskLevel, 'HIGH');
     assert.equal(audit.actorUserId, 'admin-1');
     assert.equal(audit.targetId, 'signup-1');
-    assert.deepEqual(audit.metadataJson, { hadTaxId: true, mxValid: true });
+    // R10: null records that this reviewer did not pick a category — an enum key or nothing, and
+    // never the applicant's own words, which are the PII this row must not carry.
+    assert.deepEqual(audit.metadataJson, { hadTaxId: true, mxValid: true, businessCategory: null });
     // Applicant PII must never reach evidence.
     const evidence = JSON.stringify(h.audits);
     for (const pii of ['somchai@example.com', 'ร้านมั่งมี', '0105555000012', '0982565628']) {

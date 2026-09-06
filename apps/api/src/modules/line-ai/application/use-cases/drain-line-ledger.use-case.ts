@@ -51,6 +51,17 @@ const MAX_BATCH_SIZE = 50;
  */
 const LEDGER_FEATURE_KEY = 'ai_line_assistant';
 
+/**
+ * Not a failure: a `waiting_user` entry inside the clarify window is the DESIGNED hold — the live
+ * turn path owns that answer, so the entry is deliberately left unacked in the PEL until it either
+ * gets answered or ages out. It unwinds `processEntry` as a throw only because "leave it alone" has
+ * no ack and no outcome counter; the drain loop below recognises it and stays quiet.
+ *
+ * Before this type it was reported as `ai.line.ledger.follow_up_failed` at level 40, so every drain
+ * of a chat with one open question looked like a delivery incident (UAT 2026-09-05, 11:47:00Z).
+ */
+class LedgerEntryHeldError extends Error {}
+
 @Injectable()
 export class DrainLineLedgerUseCase {
   private readonly logger = new Logger(DrainLineLedgerUseCase.name);
@@ -96,6 +107,11 @@ export class DrainLineLedgerUseCase {
             const outcome = await this.processEntry(entry, deliveryCount, now);
             result[outcome] += 1;
           } catch (err) {
+            // Expected hold, not an incident: stays in the PEL, says so at debug, counts nothing.
+            if (err instanceof LedgerEntryHeldError) {
+              this.logger.debug({ msg: 'ai.line.ledger.entry_held', entryId: entry.id, reason: err.message });
+              continue;
+            }
             // Leave unacked — the next reclaim retries; the delivery cap parks poison entries.
             this.logger.warn({ msg: 'ai.line.ledger.follow_up_failed', entryId: entry.id, error: (err as Error).message });
           }
@@ -114,7 +130,7 @@ export class DrainLineLedgerUseCase {
     if (entry.kind === 'sub_request' && entry.state === 'waiting_user') {
       if (this.inContextWindow(entry, now)) {
         // Still within the clarify window — leave it in the PEL untouched (not a delivery).
-        throw new Error('waiting_user entry still inside the clarify window');
+        throw new LedgerEntryHeldError('waiting_user entry still inside the clarify window');
       }
       await this.ledger.ack(entry, 'clarify_expired');
       return 'expired';
@@ -177,6 +193,9 @@ export class DrainLineLedgerUseCase {
       // Same entitlement set the live webhook sends, so a drained turn cannot describe the
       // assistant's capabilities differently from a turn answered in the moment.
       ...(entitledFeatureKeys && { entitledFeatureKeys: [...entitledFeatureKeys] }),
+      // ...and the same trusted intake provenance, for the same reason (spec §5.3): a reclaimed
+      // business turn that lost it gets the "out of scope" answer the live turn would not have given.
+      ...(entry.intakeIntent ? { intakeIntent: entry.intakeIntent } : {}),
     };
     const response = await this.aiGateway.requestLineTurn(turnRequest);
 

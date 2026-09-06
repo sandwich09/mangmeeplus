@@ -6,9 +6,11 @@ import { AppConfigService } from '../../../common/config/app-config.service';
 import { PrismaOutboxRepository } from '../../data-model-core/infrastructure/repositories/prisma-outbox.repository';
 import { pushLineMessages } from '../../auth/infrastructure/system-line-push';
 import { buildProfileGuardNudgeCard } from '../../line-ai/domain/logic/line-business-card.logic';
-import { bangkokDayKey } from '../domain/business-hours.logic';
+import { AUTH_MAILER_TOKEN, type AuthMailerPort } from '../../auth/domain/ports/auth-mailer.port';
 import { SIGNUP_SOURCE_LINE_OA } from '../domain/company-signup.logic';
-import { SIGNUP_QUEUE_PATH, SignupAdminNotifyService, shortLineIdHash } from './signup-admin-notify.service';
+import {
+  SUPPORT_MAILBOX_EMAIL, SUPPORT_QUEUE_PATH, SignupAdminNotifyService,
+} from './signup-admin-notify.service';
 import { SignupOpsAlertService } from './signup-ops-alert.service';
 
 /**
@@ -36,6 +38,11 @@ export type LineSignupPushKind = 'approved' | 'attached' | 'rejected' | 'profile
 /** §3.6: seven days of real use, or five successful reads — whichever comes first. */
 export const PROFILE_GUARD_AFTER_DAYS = 7;
 export const PROFILE_GUARD_AFTER_READS = 5;
+
+/** line-support-request-spec-th §2.4: the same 24 hours the assistant pause runs for. */
+export const SUPPORT_REQUEST_EXPIRY_MS = 24 * 60 * 60 * 1000;
+/** §3 PDPA: a settled request is deleted 90 days after it settled, message text and all. */
+export const SUPPORT_REQUEST_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 
 /** Owner copy (§7). No plus sign in customer text; write "และ". */
 export function approvedMessageTh(companyName: string): string {
@@ -74,6 +81,8 @@ export class LineSignupNotifyService {
     /** The operator directory and the admin LINE fan-out already live here; L-16: one copy. */
     private readonly adminNotify: SignupAdminNotifyService,
     private readonly opsAlerts: SignupOpsAlertService,
+    /** §2.2 delta: the support mailbox is the rail that actually reaches an operator today. */
+    @Inject(AUTH_MAILER_TOKEN) private readonly mailer: AuthMailerPort,
     @Inject(LOGGER_TOKEN) private readonly logger: AppLogger,
   ) {}
 
@@ -164,48 +173,196 @@ export class LineSignupNotifyService {
   }
 
   /**
-   * §7/§8. Queued rather than pushed inline, for two reasons: the customer has already been
-   * answered and must not wait on the operator rail, and the outbox key is what makes "at most one
-   * alert per shop per day" — and per unlinked stranger per day — a database fact.
+   * §7/§8, re-keyed by line-support-request-spec-th §2.2.4. Queued rather than pushed inline
+   * because the customer has already been answered and must not wait on the operator rail.
+   *
+   * The key is the REQUEST, not the day. The old `…:<companyId|anon>:<day>` key meant a customer
+   * whose morning request had been answered and closed could not reach anyone again until tomorrow;
+   * "one request, one notice" is both stricter where it matters (a repeat tap while OPEN is
+   * answered "ยังอยู่ในคิวค่ะ" and enqueues nothing) and correct where the old key was not.
    */
-  async enqueueSupportRequest(lineUserId: string, companyId: string | null, now = new Date()): Promise<void> {
+  async enqueueSupportRequest(supportRequestId: string, now = new Date()): Promise<void> {
     await this.outbox.append({
       eventType: LINE_SUPPORT_NOTICE_EVENT_TYPE,
       aggregateType: 'LineSupportRequest',
-      aggregateId: companyId ?? 'unlinked',
-      // A shop is named by its id; a stranger by a short hash of their LINE id, which keeps the raw
-      // id out of a table the whole platform can read (the audit rail redacts it for the same reason).
-      eventKey: `notify:line_support:${companyId ?? `anon:${shortHash(lineUserId)}`}:${bangkokDayKey(now)}`,
+      aggregateId: supportRequestId,
+      eventKey: lineSupportNoticeEventKey(supportRequestId),
       priority: 'HIGH',
       payloadJson: {
-        schemaVersion: 1,
+        schemaVersion: 2,
         occurredAt: now.toISOString(),
-        // The asker's identity fingerprint, never the id itself: the delivery step needs to know
- //        which admin chat to SKIP, and a hash answers that without putting a LINE id in the outbox.
-        data: { ...(companyId ? { companyId } : {}), askerHash: shortHash(lineUserId) },
+        // An id and nothing else: the consumer reads the row, so no LINE id, name or message text
+        // ever enters the outbox (P11 F-EM-3, evidence PII-free).
+        data: { supportRequestId },
       },
     });
   }
 
-  /** Consumer for the above. Best-effort per admin; a dead OA is logged, never retried forever. */
-  async deliverSupportNotice(companyId: string | null, askerHash?: string): Promise<void> {
-    const admins = await this.adminNotify.activeSystemAdmins();
-    if (admins.length === 0) return;
-    const company = companyId
-      ? await this.prisma.client.company.findUnique({ where: { id: companyId }, select: { name: true } })
-      : null;
+  /**
+   * Consumer for the above.
+   *
+   * Owner 2026-09-05: the /system inbox is the PRIMARY channel and the row is already in it before
+   * this runs — so this method's job is the optional extras and, above all, an honest count. It
+   * fans out to two rails: the support mailbox (operators are not LINE-linked, so this is the one
+   * that usually matters) and a LINE push to any admin who did link. Neither may throw: the
+   * request is safe in the database either way.
+   *
+   * "Unreachable" means BOTH rails delivered nothing. Then, and only then, a warn plus a
+   * once-a-day ops alert — the inbox row itself does not count as having told anybody.
+   */
+  async deliverSupportNotice(supportRequestId: string): Promise<void> {
+    const request = await this.prisma.client.lineSupportRequest.findUnique({
+      where: { id: supportRequestId },
+      select: {
+        companyId: true, lineUserIdHash: true, lastMessageText: true, signupRequestId: true,
+      },
+    });
+    if (!request) return;
+
+    const [company, signup] = await Promise.all([
+      request.companyId
+        ? this.prisma.client.company.findUnique({ where: { id: request.companyId }, select: { name: true } })
+        : Promise.resolve(null),
+      request.signupRequestId
+        ? this.prisma.client.companySignupRequest.findUnique({
+          where: { id: request.signupRequestId }, select: { companyName: true },
+        })
+        : Promise.resolve(null),
+    ]);
+    const who = supportAskerLabelTh(company?.name ?? null, signup?.companyName ?? null);
     const base = (this.config.sesWebBaseUrl ?? '').replace(/\/+$/, '');
-    // No company yet means the person is somewhere in the signup funnel, so the queue is the page
-    // an operator can actually act on.
-    const href = companyId ? `${base}/system/partners/${companyId}` : `${base}${SIGNUP_QUEUE_PATH}`;
-    const who = company?.name ?? (companyId ?? 'ผู้ที่ยังไม่ได้เปิดร้าน');
-    await this.adminNotify.pushToLinkedAdmins(
+    // The inbox is where an operator acts, so every channel points at it — not at the partner page
+    // and not at the signup queue, both of which lose the request's own state.
+    const href = `${base}${SUPPORT_QUEUE_PATH}`;
+
+    const emailSent = await this.sendSupportMailbox(supportRequestId, {
+      who,
+      actionUrl: href,
+      ...(request.lastMessageText ? { lastMessageText: request.lastMessageText } : {}),
+    });
+
+    const admins = await this.adminNotify.activeSystemAdmins();
+    const lineNotifiedCount = admins.length === 0 ? 0 : await this.adminNotify.pushToLinkedAdmins(
       admins.map((admin) => admin.userId),
-      `📮 ลูกค้าขอคุยกับเจ้าหน้าที่: ${who}\n${href}`,
+      [
+        `📮 ลูกค้าขอคุยกับเจ้าหน้าที่: ${who}`,
+        ...(request.lastMessageText ? [`“${request.lastMessageText}”`] : []),
+        href,
+      ].join('\n'),
       // An operator who is also the person asking would otherwise be told, in their own chat, that
       // somebody wants to talk to them.
-      ...(askerHash ? [{ skipProviderUserIdHash: askerHash }] : []),
+      { skipProviderUserIdHash: request.lineUserIdHash },
     );
+
+    // `notifiedAt` is what separates "nobody could be told" from "the drain has not run yet" — the
+    // inbox renders a red chip on the first and a quiet "กำลังแจ้ง…" on the second.
+    await this.prisma.client.lineSupportRequest.update({
+      where: { id: supportRequestId },
+      data: { lineNotifiedCount, emailSent, notifiedAt: new Date() },
+    });
+
+    if (lineNotifiedCount > 0 || emailSent) {
+      this.logger.info({
+        event: 'signup.support.notified',
+        supportRequestId,
+        lineNotifiedCount,
+        emailSent,
+      }, 'signup.support.notified');
+      return;
+    }
+    this.logger.warn({
+      event: 'signup.support.unreachable',
+      riskLevel: 'HIGH',
+      supportRequestId,
+      adminCount: admins.length,
+    }, 'signup.support.unreachable');
+    await this.opsAlerts.raise('support_unreachable');
+  }
+
+  /** Best effort by contract: a missing provider, a bad address or an SES outage is a `false`. */
+  private async sendSupportMailbox(
+    supportRequestId: string,
+    input: { who: string; actionUrl: string; lastMessageText?: string },
+  ): Promise<boolean> {
+    try {
+      return await this.mailer.sendSupportRequestNotice({ toEmail: SUPPORT_MAILBOX_EMAIL, ...input });
+    } catch (error) {
+      this.logger.warn({
+        event: 'signup.support.email_failed',
+        riskLevel: 'LOW',
+        supportRequestId,
+        errorCode: (error as Error).message,
+      }, 'signup.support.email_failed');
+      return false;
+    }
+  }
+
+  /**
+   * §2.4. The 24-hour pause expires by itself, but the REQUEST used to outlive it — an operator's
+   * inbox slowly filling with rows nobody is waiting on any more. Closed on the sweep that already
+   * runs, never before the pause has actually lapsed.
+   *
+   * A request with no pause at all (an unlinked asker: nothing to stop) is timed from `requestedAt`
+   * instead, or it would sit OPEN for ever.
+   */
+  async sweepExpiredSupportRequests(now = new Date(), take = 200): Promise<{ expired: number }> {
+    // ponytail: one page of live pauses, oldest first, as an exclusion list. Ceiling = 1000 people
+    // inside a 24h pause at the same moment; beyond that the 1001st would have its request expired
+    // an hour early, which is a wrong label on a row nobody is reading rather than a lost request.
+    // Upgrade path if the platform ever gets there: drop the list and join in SQL with a raw query,
+    // or add `pausedUntil` to `LineSupportRequest` and make this a pure `where` clause.
+    const paused = await this.prisma.client.lineCompanyContext.findMany({
+      where: { aiPausedUntil: { gt: now } },
+      orderBy: { aiPausedUntil: 'asc' },
+      select: { lineUserId: true },
+      take: 1000,
+    });
+    const stillPaused = paused.map((row) => row.lineUserId);
+    const due = await this.prisma.client.lineSupportRequest.findMany({
+      where: {
+        status: 'OPEN',
+        requestedAt: { lte: new Date(now.getTime() - SUPPORT_REQUEST_EXPIRY_MS) },
+        ...(stillPaused.length > 0 ? { lineUserId: { notIn: stillPaused } } : {}),
+      },
+      select: { id: true },
+      take,
+    });
+    if (due.length === 0) return { expired: 0 };
+    const closed = await this.prisma.client.lineSupportRequest.updateMany({
+      where: { id: { in: due.map((row) => row.id) }, status: 'OPEN' },
+      data: { status: 'CLOSED', closedAt: now, closedReason: 'expired' },
+    });
+    return { expired: closed.count };
+  }
+
+  /**
+   * §3 PDPA. A settled request keeps two pieces of personal data — the raw `lineUserId` and up to
+   * 200 characters the customer typed — and neither has a purpose 90 days after the conversation
+   * ended. The whole row goes: there is nothing left in it worth keeping without them, and a
+   * scrubbed shell would only be a slower way to reach the same state.
+   *
+   * Counts from `closedAt`/`answeredAt`, not `requestedAt`: the retention clock the notice promises
+   * runs from when the matter was settled. OPEN rows are never touched, however old — one of those
+   * is somebody still waiting.
+   */
+  async purgeSettledSupportRequests(now = new Date(), take = 500): Promise<{ purged: number }> {
+    const cutoff = new Date(now.getTime() - SUPPORT_REQUEST_RETENTION_MS);
+    const due = await this.prisma.client.lineSupportRequest.findMany({
+      where: {
+        OR: [
+          { status: 'CLOSED', closedAt: { lte: cutoff } },
+          { status: 'ANSWERED', answeredAt: { lte: cutoff } },
+        ],
+      },
+      orderBy: { requestedAt: 'asc' },
+      select: { id: true },
+      take,
+    });
+    if (due.length === 0) return { purged: 0 };
+    const deleted = await this.prisma.client.lineSupportRequest.deleteMany({
+      where: { id: { in: due.map((row) => row.id) } },
+    });
+    return { purged: deleted.count };
   }
 
   /**
@@ -318,13 +475,22 @@ export class LineSignupNotifyService {
 
 }
 
+export function lineSupportNoticeEventKey(supportRequestId: string): string {
+  return `notify:line_support:req:${supportRequestId}`;
+}
+
 /**
- * A LINE user id is a durable identifier for a person. The outbox is readable platform-wide, so the
- * once-per-day latch is keyed on a truncated digest instead — enough to be unique per person per
- * day, not enough to be an identifier anyone can join on.
+ * §2.2.1. What the operator is told they are looking at. A shop has a name; someone still in the
+ * funnel is named by the shop they APPLIED for, which is the only name that exists for them — and
+ * is what the UAT evidence needed, where the notice confidently named a shop the asker had left.
+ *
+ * Never a LINE id or a LINE display name: §3 keeps raw identifiers out of operator surfaces.
  */
-/** One definition, shared with the delivery-side exclusion (`shortLineIdHash`). */
-const shortHash = shortLineIdHash;
+export function supportAskerLabelTh(companyName: string | null, appliedCompanyName: string | null): string {
+  if (companyName) return companyName;
+  if (appliedCompanyName) return `ผู้ที่ยังไม่ได้เปิดร้าน (มีคำขอสมัคร: ${appliedCompanyName})`;
+  return 'ผู้ที่ยังไม่ได้เปิดร้าน';
+}
 
 export function lineSignupPushEventKey(signupRequestId: string, kind: LineSignupPushKind): string {
   // `approved` and `attached` share a slot: one provisioning, one "your shop is ready" message.

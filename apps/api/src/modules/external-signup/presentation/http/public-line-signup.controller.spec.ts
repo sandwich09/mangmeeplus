@@ -1,7 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { ForbiddenException, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
-import { PublicLineSignupController } from './public-line-signup.controller';
+import { plainToInstance } from 'class-transformer';
+import { validateSync } from 'class-validator';
+import { LineSignupSubmitBodyDto, PublicLineSignupController } from './public-line-signup.controller';
 
 // The LIFF page is served BY the API, so this request's Origin is the API host — never the web app.
 const REQ = {
@@ -10,7 +12,7 @@ const REQ = {
   get: () => 'api.example.com',
   socket: { remoteAddress: '203.0.113.10' },
 } as any;
-const BODY = { idToken: 'aaaa.bbbb.cccc', companyName: 'ร้านมั่งมี', legal: {} } as any;
+const BODY = { idToken: 'aaaa.bbbb.cccc', companyName: 'ร้านมั่งมี', phoneNumber: '0812345678', legal: {} } as any;
 
 /**
  * `sesWebBaseUrl: null` stands for WEB_BASE_URL being unset. `webBaseUrl` is set to the API origin
@@ -84,11 +86,56 @@ describe('PublicLineSignupController — the flag is the rollback', () => {
     assert.deepEqual(h.submits, [], 'nothing is created with a link that cannot work');
   });
 
+  it('passes the phone straight through, because the field is required now', async () => {
+    const h = harness(true);
+    await h.controller.create({ ...BODY, phoneNumber: '081-234-5678' }, REQ);
+    assert.equal(h.submits[0].phoneNumber, '081-234-5678', 'raw as typed; the use-case normalises it');
+  });
+
   it('refuses a status read whose header is not even token-shaped', async () => {
     const h = harness(true);
     await assert.rejects(() => h.controller.readStatus(undefined, REQ), UnauthorizedException);
     await assert.rejects(() => h.controller.readStatus('not a jwt', REQ), UnauthorizedException);
     // The bucket is still charged: a malformed probe is exactly what it is there to bound.
     assert.deepEqual(h.calls, ['read', 'read']);
+  });
+});
+
+/**
+ * Owner 2026-09-05 made the phone required. The DTO is the outer half of that rule — it stops a
+ * body with no phone at all before a single LINE verification round trip is spent — and the
+ * use-case is the inner half. Both are asserted, because either one alone lets a blank through.
+ */
+describe('LineSignupSubmitBodyDto — the phone is required', () => {
+  const validate = (phoneNumber: unknown) => validateSync(
+    plainToInstance(LineSignupSubmitBodyDto, {
+      idToken: 'aaaa.bbbb.cccc',
+      companyName: 'ร้านมั่งมี',
+      ...(phoneNumber === undefined ? {} : { phoneNumber }),
+      legal: {
+        documentVersion: 'v3',
+        statementSha256: 'a'.repeat(64),
+        releaseFingerprintSha256: 'b'.repeat(64),
+        displayChallenge: 'c'.repeat(64),
+        locale: 'th',
+      },
+    }),
+  ).filter((error) => error.property === 'phoneNumber');
+
+  it('rejects a body that omits the phone, and one that sends it empty', () => {
+    // `@IsNotEmpty` is what rejects the empty string — the pattern itself still admits it, so
+    // dropping the decorator makes this assertion fail rather than passing on someone else's rule.
+    for (const value of [undefined, '']) {
+      assert.notEqual(validate(value).length, 0, `phoneNumber=${JSON.stringify(value)} must not validate`);
+    }
+  });
+
+  it('accepts the digits, spaces and dashes a shop owner actually types', () => {
+    for (const value of ['0812345678', '081-234-5678', '081 234 5678']) {
+      assert.deepEqual(validate(value), [], value);
+    }
+    // Separator-only strings get past the shape rule by design; `requireThaiMobile` is what refuses
+    // them, with the code the LIFF page turns into a sentence (see submit-line-signup.use-case.spec).
+    assert.deepEqual(validate('- -'), []);
   });
 });

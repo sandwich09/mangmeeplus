@@ -5,6 +5,7 @@ import Decimal from 'decimal.js';
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../../../generated/prisma/client';
+import { pgSpecUnreachableReason } from '../../../common/database/pg-spec-guard';
 import { RecordExpensePaymentUseCase } from '../application/use-cases/expense-draft.use-case';
 import { AuditService } from '../../audit/application/audit.service';
 import { PrismaAuditRepository } from '../../audit/infrastructure/prisma-audit.repository';
@@ -301,6 +302,7 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
   let clients: PrismaClient[] = [];
   let ready = false;
   let fixtureCreated = false;
+  let unreachable: string | null = null;
 
   before(async () => {
     const url = process.env.DATABASE_URL;
@@ -308,9 +310,13 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
       assert.equal(required, false, 'Expense payment PostgreSQL is required but DATABASE_URL is unavailable');
       return;
     }
-    // A supplied but unavailable/unmigrated database is an error, never a silent skip.
     clients = [0, 1].map(() => new PrismaClient({ adapter: new PrismaPg({ connectionString: url }) }));
-    await clients[0]!.$queryRaw`SELECT "idempotencyKey", "payloadFingerprint" FROM "ExpensePayment" LIMIT 0`;
+    // A supplied but unavailable/unmigrated database skips on a developer machine and fails in CI.
+    unreachable = await pgSpecUnreachableReason(
+      () => clients[0]!.$queryRaw`SELECT "idempotencyKey", "payloadFingerprint" FROM "ExpensePayment" LIMIT 0`,
+      'EXPENSE_PAYMENT_REQUIRE_POSTGRES',
+    );
+    if (unreachable) return;
     await clients[0]!.company.create({ data: { id: companyId, name: 'Synthetic expense intent tests' } });
     fixtureCreated = true;
     await clients[0]!.user.create({ data: { id: userId, displayName: 'Synthetic payment tester' } });
@@ -357,7 +363,7 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
   }
 
   it('concurrent same-key calls from separate clients create exactly one payment, audit, event and totals increment', async (t) => {
-    if (!ready) return t.skip('DATABASE_URL is not set');
+    if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');
     const expense = await createExpense();
     const input = { paidAmount: '40.00', paymentMethod: 'BANK_TRANSFER' as const, paidAt: '2026-07-31', idempotencyKey: randomUUID() };
     const [first, second] = await Promise.all(clients.map((client) => useCase(client).execute(context(), expense.id, input)));
@@ -376,7 +382,7 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
   });
 
   it('concurrent same-key different-expense calls return one success and a business 409, never a unique-constraint 500', async (t) => {
-    if (!ready) return t.skip('DATABASE_URL is not set');
+    if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');
     const expenses = await Promise.all([createExpense(), createExpense()]);
     const input = { paidAmount: '40', idempotencyKey: randomUUID() };
     const results = await Promise.allSettled(clients.map((client, index) => useCase(client).execute(context(), expenses[index]!.id, input)));
@@ -392,7 +398,7 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
   });
 
   it('concurrent distinct intents retain both genuine payments and legacy unkeyed history', async (t) => {
-    if (!ready) return t.skip('DATABASE_URL is not set');
+    if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');
     const expense = await createExpense();
     await clients[0]!.expensePayment.createMany({ data: [0, 1].map(() => ({
       companyId, expenseId: expense.id, createdByUserId: userId, amount: '10', paidAt: new Date('2026-07-01T00:00:00Z'),
@@ -410,7 +416,7 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
 
   for (const failedWrite of ['audit', 'outbox'] as const) {
     it(`a real PostgreSQL ${failedWrite} constraint failure rolls back payment/totals/audit/event, and retry succeeds`, async (t) => {
-      if (!ready) return t.skip('DATABASE_URL is not set');
+      if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');
       const expense = await createExpense();
       const input = { paidAmount: '40', idempotencyKey: randomUUID() };
       const audit = new AuditService({ log: async (entry: any, tx: any) => {
@@ -436,7 +442,7 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
   }
 
   it('rechecks current scope on replay and returns voided state without restoring payment', async (t) => {
-    if (!ready) return t.skip('DATABASE_URL is not set');
+    if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');
     const expense = await createExpense();
     const input = { paidAmount: '40', idempotencyKey: randomUUID() };
     await useCase(clients[0]!).execute(context(), expense.id, input);

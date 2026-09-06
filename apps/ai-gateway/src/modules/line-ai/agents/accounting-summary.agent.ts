@@ -4,8 +4,10 @@
  */
 import type { AgentContext } from './agent-types';
 import type { AgentIntentItem, SpecialistOutput, AgentFact, AgentToolCall } from '@watchdog-bms/contracts';
-import { LINE_TOOL_REGISTRY } from '@watchdog-bms/contracts';
+import { LINE_DRAFT_UPDATE_TOOLS, LINE_TOOL_REGISTRY } from '@watchdog-bms/contracts';
 import type { ErpToolClient } from '../infrastructure/erp-tool.client';
+import { formatExpenseExplainReply } from './expense-explain-formatter';
+import { formatDraftUpdateReply } from './draft-update-formatter';
 
 export const ALLOWED_TOOLS = new Set([
   'accounting.get_summary',
@@ -17,6 +19,7 @@ export const ALLOWED_TOOLS = new Set([
   'ledger.get_report_summary',
   'expense.list_recent',
   'expense.get_detail',
+  'expense.explain_record',
   'expense.get_breakdown',
   'expense.get_daily_closing',
   'procurement.get_ap_outstanding',
@@ -59,12 +62,21 @@ export const ALLOWED_TOOLS = new Set([
   'reimbursement.get_summary',
   'reimbursement.get_detail',
   'reports.get_monthly_report_summary',
+  // S-4 draft edit (spec §5.4). They belong to the accounting specialist because they act on the
+  // expense record it already reads; the router catalog is what decides whether they are offered.
+  ...LINE_DRAFT_UPDATE_TOOLS,
 ]);
 
 const TOOL_FACT_LABELS: Record<string, string> = {
   'accounting.get_document_detail': 'ข้อมูลเอกสารบัญชี',
   'accounting.get_receivable_summary': 'สรุปลูกหนี้คงค้าง',
   'expense.get_detail': 'ข้อมูลค่าใช้จ่าย',
+  'expense.explain_record': 'ที่มาของยอดในบิล',
+  'expense.draft.set_header': 'ตัวอย่างการแก้รายการ',
+  'expense.draft.set_line': 'ตัวอย่างการแก้รายการ',
+  'expense.draft.add_charge': 'ตัวอย่างการแก้รายการ',
+  'expense.draft.remove_line': 'ตัวอย่างการแก้รายการ',
+  'expense.draft.set_vat_mode': 'ตัวอย่างการแก้รายการ',
   'reimbursement.get_summary': 'สรุปเบิกจ่าย',
   'reimbursement.get_detail': 'ข้อมูลเบิกจ่าย',
   'reports.get_monthly_report_summary': 'สรุปรายงานรายเดือน',
@@ -362,6 +374,20 @@ export class AccountingSummaryAgent {
           const totalAmount = items.reduce((sum, item) => sum + Number(String(item['grandTotalAmount'] ?? '0').replace(/,/g, '')), 0);
           pushFacts({ label: 'ยอดทั้งหมด', value: `${formatMoney(totalAmount)} บาท` });
         }
+      } else if (tool.name === 'expense.explain_record') {
+        // Spec §5.5: the whole answer is the deterministic Thai template, so the grounded fact IS
+        // that text. The orchestrator uses the same renderer for replyText and never lets the model
+        // rewrite it; this fact exists so the output is SUCCEEDED and carries the record's link.
+        const explained = formatExpenseExplainReply(data);
+        if (!explained) { readFailed = true; toolData.pop(); continue; }
+        pushFacts({ label: TOOL_FACT_LABELS[tool.name]!, value: explained });
+      } else if ((LINE_DRAFT_UPDATE_TOOLS as readonly string[]).includes(tool.name)) {
+        // Spec §5.4: a preview is stated by the deterministic template, never phrased by the model —
+        // the whole point is that no sentence about this money exists that the server did not
+        // compute. A payload the formatter cannot fully verify is treated as a failed read.
+        const rendered = formatDraftUpdateReply(data);
+        if (!rendered) { readFailed = true; toolData.pop(); continue; }
+        pushFacts({ label: TOOL_FACT_LABELS[tool.name]!, value: rendered });
       } else if (tool.name === 'expense.get_breakdown') {
         if (data['totalCount'] === undefined || data['totalAmount'] === undefined) { readFailed = true; toolData.pop(); continue; }
         pushFacts({

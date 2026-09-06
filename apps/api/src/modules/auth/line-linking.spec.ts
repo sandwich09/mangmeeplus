@@ -7,6 +7,22 @@ import { LineChannelBindingService } from './application/line-channel-binding.se
 
 const lineVerifier = { verify: async () => ({ subject: 'line-user-1' }) } as any;
 const config = { lineLoginChannelId: 'login-ch-1', lineMessagingChannelId: 'msg-ch-1' } as any;
+/**
+ * Review MED-1: the identity slot is now decided inside ONE transaction holding the shared
+ * `line-identity:<channel>:<providerUserId>` advisory key, so every fake needs the two members the
+ * use case reaches for. The lock keys are recorded, not merely swallowed, so a spec can prove the
+ * key is taken and that it matches the one signup provisioning takes.
+ */
+const identityLocks: unknown[][] = [];
+function withIdentityTx(prisma: any): any {
+  prisma.client.$transaction = async (fn: any) => fn(prisma.client);
+  prisma.client.$executeRaw = async (_strings: TemplateStringsArray, ...values: unknown[]) => {
+    identityLocks.push(values);
+    return 0;
+  };
+  return prisma;
+}
+
 const ownerMembership = (companyId = 'co-1') => ({ companyId, roles: [{ role: { key: 'OWNER' } }] });
 const staffMembership = (companyId = 'co-1') => ({ companyId, roles: [{ role: { key: 'STAFF' } }] });
 
@@ -23,7 +39,7 @@ describe('LinkLineIdentityUseCase', () => {
         lineCompanyContext: { upsert: async () => {} },
       },
     } as any;
-    const uc = new LinkLineIdentityUseCase(lineVerifier, prisma, config);
+    const uc = new LinkLineIdentityUseCase(lineVerifier, withIdentityTx(prisma), config);
     const result = await uc.execute({ userId: 'user-1', idToken: 'tok', requestId: 'req-1' });
     assert.equal(result.linked, true);
     assert.equal(result.providerUserId, 'line-user-1');
@@ -38,7 +54,7 @@ describe('LinkLineIdentityUseCase', () => {
         companyMembership: { findMany: async () => [ownerMembership()] },
       },
     } as any;
-    const uc = new LinkLineIdentityUseCase(lineVerifier, prisma, config);
+    const uc = new LinkLineIdentityUseCase(lineVerifier, withIdentityTx(prisma), config);
     await assert.rejects(
       () => uc.execute({ userId: 'user-1', idToken: 'tok', requestId: 'req-1' }),
       (err: unknown) => {
@@ -61,7 +77,7 @@ describe('LinkLineIdentityUseCase', () => {
         lineCompanyContext: { upsert: async () => {} },
       },
     } as any;
-    const uc = new LinkLineIdentityUseCase(lineVerifier, prisma, config);
+    const uc = new LinkLineIdentityUseCase(lineVerifier, withIdentityTx(prisma), config);
     const result = await uc.execute({ userId: 'user-1', idToken: 'tok', requestId: 'req-1' });
 
     assert.equal(result.linked, true);
@@ -84,7 +100,7 @@ describe('LinkLineIdentityUseCase', () => {
         lineCompanyContext: { upsert: async (args: unknown) => { upserted.push(args); return {}; } },
       },
     } as any;
-    const uc = new LinkLineIdentityUseCase(lineVerifier, prisma, config);
+    const uc = new LinkLineIdentityUseCase(lineVerifier, withIdentityTx(prisma), config);
     const result = await uc.execute({ userId: 'user-1', idToken: 'tok', requestId: 'req-1' });
 
     assert.equal(result.linked, true);
@@ -101,7 +117,7 @@ describe('LinkLineIdentityUseCase', () => {
         lineCompanyContext: { upsert: async (args: unknown) => { upserted.push(args); return {}; } },
       },
     } as any;
-    const uc = new LinkLineIdentityUseCase(lineVerifier, prisma, config);
+    const uc = new LinkLineIdentityUseCase(lineVerifier, withIdentityTx(prisma), config);
     await uc.execute({ userId: 'user-1', idToken: 'tok', requestId: 'req-1' });
 
     assert.equal(upserted.length, 1);
@@ -117,7 +133,7 @@ describe('LinkLineIdentityUseCase', () => {
         lineCompanyContext: { upsert: async (args: unknown) => { upserted.push(args); return {}; } },
       },
     } as any;
-    const uc = new LinkLineIdentityUseCase(lineVerifier, prisma, config);
+    const uc = new LinkLineIdentityUseCase(lineVerifier, withIdentityTx(prisma), config);
     await uc.execute({ userId: 'user-1', idToken: 'tok', requestId: 'req-1', companyId: 'co-2' });
 
     assert.equal(upserted.length, 1);
@@ -133,7 +149,7 @@ describe('LinkLineIdentityUseCase', () => {
         lineCompanyContext: { upsert: async () => {} },
       },
     } as any;
-    const uc = new LinkLineIdentityUseCase(lineVerifier, prisma, config);
+    const uc = new LinkLineIdentityUseCase(lineVerifier, withIdentityTx(prisma), config);
     await assert.rejects(
       () => uc.execute({ userId: 'user-1', idToken: 'tok', requestId: 'req-1', companyId: 'co-bad' }),
       (err: unknown) => { assert.ok(err instanceof ForbiddenException); return true; },
@@ -150,7 +166,7 @@ describe('LinkLineIdentityUseCase', () => {
         lineCompanyContext: { upsert: async (args: unknown) => { upserted.push(args); return {}; } },
       },
     } as any;
-    const uc = new LinkLineIdentityUseCase(lineVerifier, prisma, config);
+    const uc = new LinkLineIdentityUseCase(lineVerifier, withIdentityTx(prisma), config);
     const result = await uc.execute({ userId: 'user-1', idToken: 'tok', requestId: 'req-1' });
 
     assert.equal(result.linked, true);
@@ -168,7 +184,7 @@ describe('LinkLineIdentityUseCase', () => {
         lineCompanyContext: { upsert: async (args: any) => { upserted.push(args); } },
       },
     } as any;
-    const uc = new LinkLineIdentityUseCase(lineVerifier, prisma, config);
+    const uc = new LinkLineIdentityUseCase(lineVerifier, withIdentityTx(prisma), config);
     const result = await uc.execute({ userId: 'user-1', idToken: 'tok', requestId: 'req-1', companyId: 'co-2' });
 
     assert.equal(result.linked, true);
@@ -189,7 +205,7 @@ describe('LinkLineIdentityUseCase', () => {
         lineCompanyContext: { upsert: async () => {} },
       },
     } as any;
-    const uc = new LinkLineIdentityUseCase(lineVerifier, prisma, config);
+    const uc = new LinkLineIdentityUseCase(lineVerifier, withIdentityTx(prisma), config);
     const result = await uc.execute({ userId: 'user-1', idToken: 'tok', requestId: 'req-1' });
     assert.equal(result.linked, true);
     assert.equal(wheres.length, 1);
@@ -211,7 +227,7 @@ describe('LinkLineIdentityUseCase', () => {
         lineCompanyContext: { upsert: async () => {} },
       },
     } as any;
-    const uc = new LinkLineIdentityUseCase(lineVerifier, prisma, config);
+    const uc = new LinkLineIdentityUseCase(lineVerifier, withIdentityTx(prisma), config);
     const result = await uc.execute({ userId: 'user-1', idToken: 'tok', requestId: 'req-1' });
     assert.equal(result.linked, true);
     assert.equal(updates.length, 1);
@@ -231,7 +247,7 @@ describe('LinkLineIdentityUseCase', () => {
         lineCompanyContext: { upsert: async () => {} },
       },
     } as any;
-    const uc = new LinkLineIdentityUseCase(recordingVerifier, prisma, config);
+    const uc = new LinkLineIdentityUseCase(recordingVerifier, withIdentityTx(prisma), config);
 
     await uc.execute({ userId: 'user-1', idToken: 'tok', requestId: 'req-1', expectedNonce: 'n7' });
     assert.deepEqual(verifyCalls[0], ['tok', { nonce: 'n7' }]);
@@ -244,7 +260,7 @@ describe('LinkLineIdentityUseCase', () => {
   it('fails closed in production when no LINE channel is configured', async () => {
     const prisma = { client: { externalIdentity: { findFirst: async () => null } } } as any;
     const prodConfig = { lineMessagingChannelId: undefined, lineLoginChannelId: undefined, isProduction: true } as any;
-    const uc = new LinkLineIdentityUseCase(lineVerifier, prisma, prodConfig);
+    const uc = new LinkLineIdentityUseCase(lineVerifier, withIdentityTx(prisma), prodConfig);
     await assert.rejects(
       () => uc.execute({ userId: 'user-1', idToken: 'tok', requestId: 'req-1' }),
       (err: unknown) => { assert.ok(err instanceof ServiceUnavailableException); return true; },
@@ -268,13 +284,17 @@ describe('UnlinkLineIdentityUseCase', () => {
     );
   });
 
-  it('sets status UNLINKED and returns unlinked=true', async () => {
+  it('sets status UNLINKED, clears the selected-company row, and returns unlinked=true', async () => {
     const updated: unknown[] = [];
+    const contextDeletes: unknown[] = [];
     const prisma = {
       client: {
         externalIdentity: {
-          findFirst: async () => ({ id: 'ei-1', userId: 'user-1' }),
+          findFirst: async () => ({ id: 'ei-1', userId: 'user-1', providerUserId: 'Uline-1' }),
           update: async (args: unknown) => { updated.push(args); return {}; },
+        },
+        lineCompanyContext: {
+          deleteMany: async (args: unknown) => { contextDeletes.push(args); return { count: 1 }; },
         },
       },
     } as any;
@@ -284,6 +304,9 @@ describe('UnlinkLineIdentityUseCase', () => {
     assert.equal(result.unlinked, true);
     assert.equal(updated.length, 1);
     assert.equal((updated[0] as any).data.status, 'UNLINKED');
+    // line-support-request-spec-th §2.5: the row outlived the identity, so a support request
+    // named a shop this LINE account had left — and a 24h assistant pause hung on a severed one.
+    assert.deepEqual(contextDeletes, [{ where: { lineUserId: 'Uline-1' } }]);
   });
 });
 

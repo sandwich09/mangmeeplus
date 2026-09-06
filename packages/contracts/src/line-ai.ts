@@ -69,6 +69,14 @@ export type LineAiRefusalReason =
   | 'safety_crisis'
   | 'privacy_rumor'
   | 'unsupported_module'
+  /**
+   * In the system, not on LINE yet — a different sentence from `unsupported_module`, which means
+   * the subject is outside the product altogether. UAT 2026-09-03: "ทำไม service charge คิดแยกเป็น
+   * อีกรายการ" was a question about the sender's own expense record and was answered "อยู่นอกขอบเขต
+   * ระบบ", because no LINE tool could answer it yet. Chosen from the TRUSTED intake provenance
+   * (`LineAiTurnRequest.intakeIntent`), never from the model's own reading of the message.
+   */
+  | 'unsupported_yet'
   | 'forbidden'
   | 'unlinked_user'
   | 'ambiguous_company'
@@ -126,6 +134,17 @@ export type LineUserContext = {
   locationIds?: string[];
   locale: string;
   conversationId?: string;
+  /**
+   * Spec §5.5: the chat this turn belongs to, as the SAME salted hash the intake lane stores on a
+   * LINE-captured record (`chatKeyHashOf`). It is what lets a read tool resolve "บิลเมื่อกี้" to the
+   * record captured in THIS chat instead of any record the user owns, so the explain tool and the
+   * correction lane share one provenance rule.
+   *
+   * DATA, never authorization: company, membership, permissions and branch scope are re-resolved
+   * server-side from the actor delegation, so the worst a wrong value can do is narrow (or, at
+   * most, widen to another of the SAME user's own chats) which of their own records is explained.
+   */
+  chatKeyHash?: string;
 };
 
 /** Single source of truth for the short-term LINE memory window (api loader, gateway prompts,
@@ -254,6 +273,14 @@ export type ReceiptOcrFieldResult = {
   vendorBranchCode?: string;
   documentNumber?: string;
   expenseDate?: string;
+  /**
+   * `VALUE_ASSUMPTIONS` markers the deterministic reading of `expenseDate` carried (spec §5.2).
+   * A receipt printing `03/09/69` yields a perfectly usable `2026-09-03` — but only because the
+   * reader applied the Thai DD/MM convention and picked one of two eras. Without this field the
+   * ISO date arrives looking like something the page stated outright, and the draft, the card and
+   * the review form all present a reading as a fact. Absent means the page said it plainly.
+   */
+  expenseDateAssumptions?: string[];
   description?: string;
   quantity?: string;
   unitPrice?: string;
@@ -446,6 +473,20 @@ export function asIntakeRouteIntent(value: unknown): LineIntakeRouteIntent | und
   return typeof value === 'string' && LINE_INTAKE_ROUTE_INTENT_SET.has(value)
     ? (value as LineIntakeRouteIntent)
     : undefined;
+}
+
+/** The two intake outcomes that are NOT about the company's own records: one the router could not
+ *  place, and one it placed outside the product. Listed as the exception so a new member of
+ *  {@link LINE_INTAKE_ROUTE_INTENTS} — every one of which so far is an expense, a document, a
+ *  reading or an advisory turn — is business without a second edit here. */
+const NON_BUSINESS_INTAKE_INTENTS: readonly LineIntakeRouteIntent[] = ['CLARIFY', 'UNSUPPORTED'];
+
+/** True when the API's own intake routing already placed this turn inside the business (spec
+ *  §5.3). A refusal on such a turn means "LINE cannot do this yet" (`unsupported_yet`), never
+ *  "that subject is outside the system" (`unsupported_module`). */
+export function isBusinessIntakeIntent(value: unknown): boolean {
+  const intent = asIntakeRouteIntent(value);
+  return intent !== undefined && !NON_BUSINESS_INTAKE_INTENTS.includes(intent);
 }
 
 // ─── Semantic expense-vs-reimbursement contract (uat-correctness-latency spec §7) ─────────────
@@ -688,6 +729,359 @@ export type LineIntakeCorrectionHints = {
 export const LINE_CORRECTION_FIELDS = ['expenseDate', 'amount', 'vendorName', 'documentNumber', 'note'] as const;
 export type LineCorrectionField = (typeof LINE_CORRECTION_FIELDS)[number];
 
+// ─── S-4 draft edit over LINE (draft-control spec §5.4/§6) ────────────────────────────────────
+// Two beats, always: a PREVIEW that writes nothing and an APPLY that only a confirm postback can
+// reach. Everything below describes the first beat; the second carries no payload of its own
+// because the postback is allowed to say nothing but "yes" (SEC-04).
+
+/** The record kinds a draft-edit tool may address. `expense` is the only one this release writes;
+ *  the field exists from day one so income/receipt drafts (spec §10) can join without a contract
+ *  break, and every tool input reserves it. */
+export const LINE_DRAFT_RECORD_TYPES = ['expense'] as const;
+export type LineDraftRecordType = (typeof LINE_DRAFT_RECORD_TYPES)[number];
+
+/** The five draft-edit tools, in the order the registry declares them. Exported so the API adapter,
+ *  the gateway router hints and the specs all name the same five strings. */
+export const LINE_DRAFT_UPDATE_TOOLS = [
+  'expense.draft.set_header',
+  'expense.draft.set_line',
+  'expense.draft.add_charge',
+  'expense.draft.remove_line',
+  'expense.draft.set_vat_mode',
+] as const;
+export type LineDraftUpdateTool = (typeof LINE_DRAFT_UPDATE_TOOLS)[number];
+
+/**
+ * Where a diff value CAME FROM, which is the only thing that decides whether a renderer may scrub
+ * it. Getting this wrong in either direction is a bug with teeth:
+ *
+ * - `text` is OCR/user free text — a vendor name, a line description. An attacker wrote it, so it
+ *   is scrubbed, and a money-shaped run inside it is masked.
+ * - `identifier` is a document number, whose DIGITS are its value; it gets the identifier scrub
+ *   instead, which keeps them.
+ * - `money`, `date`, `plain` are SERVER-GENERATED — amounts this server computed, an ISO date it
+ *   read off the record, an enum label from a constant. Scrubbing them is how a confirm card ends
+ *   up saying "วันที่เอกสาร: …-…-…" and "อัตรา VAT: …", which is worse than useless: the whole
+ *   point of the card is to state what will change.
+ */
+export type LineDraftValueKind = 'text' | 'identifier' | 'money' | 'date' | 'plain';
+
+/** One field the pending edit would change, as the confirm card states it. `before` is `null` when
+ *  the record holds nothing today ("ยังไม่ระบุ"); `after` is null only for a cleared field. */
+export type LineDraftUpdateDiffField = {
+  /** Stable machine name (`expenseDate`, `line.2.amount`, `charge.SERVICE_CHARGE`, …). */
+  field: string;
+  /** Thai label the card prints. Server-generated from a constant — never model text, never scrubbed. */
+  label: string;
+  /** Decides how a renderer may treat `before`/`after`. See {@link LineDraftValueKind}. */
+  kind: LineDraftValueKind;
+  before: string | null;
+  after: string | null;
+};
+
+/** The document totals the edit would leave behind. Same five figures as the §5.1 identity, so a
+ *  card can restate the arithmetic instead of asserting a number. */
+export type LineDraftUpdateTotals = {
+  subtotalAmount: string;
+  discountAmount: string;
+  chargesAmount: string;
+  taxableAmount: string;
+  vatAmount: string;
+  grandTotalAmount: string;
+};
+
+/**
+ * The result of the PREVIEW beat: what WOULD change, what the totals WOULD become, and the handle
+ * the confirm beat re-derives. Nothing is written to produce it.
+ *
+ * `previewId` is an opaque server id used for audit correlation and for proving that a confirm
+ * matches the preview the chat was shown. It is deliberately NOT carried in the postback — the
+ * server looks the preview up by chat, so a forged or replayed id can reach nothing (§5.4, SEC-04).
+ */
+export type LineDraftUpdatePreview = {
+  previewId: string;
+  recordType: LineDraftRecordType;
+  expenseId: string;
+  /**
+   * The record the edit targets, as TYPED fields rather than one pre-joined sentence. A renderer
+   * needs to format the date for its own audience (the LINE channel prints Buddhist-era Thai), and
+   * it must not have to guess which half of a joined string was untrusted: `vendorName` is the one
+   * attacker-controlled part and arrives already scrubbed, the rest is the server's own.
+   */
+  record: {
+    vendorName: string | null;
+    /** ISO `YYYY-MM-DD`, read off the record. */
+    expenseDate: string;
+    /** Thai status label from `EXPENSE_STATUS_LABELS`. */
+    statusLabel: string;
+  };
+  /** The tool that proposed this edit; the card copy is chosen from it. */
+  tool: LineDraftUpdateTool;
+  diff: LineDraftUpdateDiffField[];
+  totalsBefore: LineDraftUpdateTotals;
+  totalsAfter: LineDraftUpdateTotals;
+  /** Deterministic Thai warnings (unverified VAT on a charge, NEEDS_REVIEW reasons, …). */
+  warnings: string[];
+  expiresAt: string;
+};
+
+/** The confirm/cancel beat. It carries an INTENT and nothing else — no preview id, no expense id,
+ *  no company id — because the server re-derives all of them from the chat that is answering. */
+export type LineDraftUpdatePostback = {
+  action: 'confirm' | 'cancel';
+};
+
+/**
+ * Every free-text field on a captured record - vendor name, document number, line description,
+ * a charge label the OCR wrote - is text an ATTACKER PUT ON A PIECE OF PAPER. It reaches a card,
+ * a reply and an audit payload, so it is scrubbed once, here, and both apps import this copy: the
+ * API renders the confirm card, the gateway renders the answer, and a second implementation is how
+ * one of them ends up printing a total the server never computed.
+ *
+ * The alphabet is deliberately wider than ASCII. A guard written against `\\d` and `\\b` passes every
+ * one of these, all of which render as a convincing total on a Thai phone:
+ *
+ *   ๙๙,๙๙๙.๐๐        Thai numerals
+ *   ９９，９９９．００   fullwidth digits with fullwidth comma and period
+ *   99,999            integer-only, no decimal point
+ *   ร้านabcwww.evil.com   `\\b` does not fire between a Thai letter and a Latin one
+ *
+ * Links are matched by SHAPE, never by a list of known TLDs (slice C review F11): `evil.xyz`,
+ * `evil.app` and `evil.ru` all walked past an allowlist, and the registry grows faster than any
+ * list in this file ever will. "Something dot two-or-more letters" is the rule.
+ *
+ * Money-shaped runs are MASKED, not dropped (F12). A label is mostly a name, and deleting the
+ * whole field to remove a number takes the name with it - "ร้าน 7-Eleven สาขา 123" has to keep
+ * saying which shop it is. Callers rendering a free-text SENTENCE, where a hole reads as though
+ * the system said something it did not, pass `onMoney: 'drop'` and get an empty string instead.
+ *
+ * It is a DISPLAY guard, not an escape: it never makes untrusted text safe to obey, and no caller
+ * may treat scrubbed text as an instruction.
+ */
+/** Latin, Thai and fullwidth digits - the three alphabets a Thai receipt can print a total in. */
+const SCRUB_DIGIT = '0-9\u0e50-\u0e59\uff10-\uff19';
+/** Grouping and decimal marks, including their fullwidth and Arabic twins. */
+const SCRUB_SEPARATOR = ',.\uff0c\uff0e\u066b\u066c';
+/** Fullwidth punctuation folded to ASCII, so one set of patterns covers every alphabet the OCR
+ *  can hand us. `\uff05` (fullwidth %) and `\u3000` (ideographic space) are here because a
+ *  pattern written in ASCII does not see them. */
+const SCRUB_FOLD: Readonly<Record<string, string>> = { '\uff0c': ',', '\uff0e': '.', '\uff05': '%', '\u3000': ' ', '\u066b': '.', '\u066c': ',' };
+/** What a masked figure looks like. An ellipsis reads as "something was here", which is the
+ *  honest thing for a reader to conclude. */
+export const SCRUB_MASK = '…';
+
+/** Control characters and the bidi overrides that can make a number read backwards. */
+// eslint-disable-next-line no-control-regex
+const SCRUB_INVISIBLE = /[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g;
+/**
+ * Links, in two passes.
+ *
+ * The first is unambiguous: anything with a scheme or a `www.` is a link, whole token.
+ *
+ * The second finds a BARE host, and it has to thread a needle. Matching "something dot letters"
+ * alone deletes ordinary text a Thai receipt really prints - `ABC Co.Ltd` became `ABC`,
+ * `St.Louis Hospital` became `Hospital`, `TAX.INV` vanished entirely. So a bare host must ALSO
+ * carry a corroborating signal: a path (`bit.ly/x9`), or a second dot (`evil.example.com`), or a
+ * TLD that is NOT immediately followed by another letter - which is what separates `evil.xyz` from
+ * `Co.Ltd`, where the "TLD" runs straight into more word.
+ *
+ * No allowlist of TLDs, and no leading `\b`: the registry grows faster than any list in this file,
+ * and `\b` does not fire between a Thai letter and a Latin one, which is exactly where a smuggled
+ * host hides (`ร้านabcwww.evil.com`).
+ */
+/**
+ * A scheme is a hard signal wherever it appears, so `https?://` needs no boundary. `www.` does: in
+ * `ร้านabcwww.evil.com` it sits mid-token, and matching there strips `www.evil.com` and hands back
+ * `ร้านabc` — half a host glued to the shop's name. Guarded, it declines, and the corroborated
+ * pass below takes `abcwww.evil.com` whole from the Thai→Latin boundary.
+ *
+ * Declared as a getter rather than a literal because it shares the boundary with the passes below,
+ * which is defined after it.
+ */
+const scrubSchemeLink = (): RegExp => new RegExp(`https?:\\/\\/\\S+|${SCRUB_ASCII_BOUNDARY}www\\.\\S+`, 'giu');
+/** The tiebreaker suffixes, shared by the ASCII and the IDN pass so the two can never disagree.
+ *
+ * Ordered generic-then-country and kept flat on purpose: it is read as a set, and a missing entry
+ * is a live link printed verbatim on a card.
+ *
+ * `id`, `in`, `us` and `it` are DELIBERATELY ABSENT. All four are real ccTLDs, and all four also
+ * spell the tail of an ordinary uppercase receipt abbreviation: `TAX.ID`, `REF.ID`, `DOC.ID`,
+ * `CUST.ID`, `DINE.IN`, `CHECK.IN`, `WALK.IN`, `LOG.IN`, `CALL.US`, `CONTACT.US`, `ABOUT.US`,
+ * `DO.IT`. This rule fires on exactly that shape — one dot, no path, nothing after the suffix — so
+ * carrying them eats a real line off the card, and stripping a customer's tax id is a certain bug.
+ * A bare `something.in` with no path and no second dot is a word; anything with either signal is
+ * already stripped by the passes above, whatever its suffix. Revisit only with such a signal.
+ *
+ * ACCEPTED RESIDUAL (§D.15), recorded rather than fixed: the same collision exists for entries that
+ * predate this round — `MAIN.ST`, `CALL.ME`, `ABC.CO`, `GO.LIVE`, `THE.SHOP`, `MY.APP` are stripped
+ * by `st`, `me`, `co`, `live`, `shop`, `app`. Those are left alone here: each removal trades a false
+ * positive on the card for a live link printed verbatim, and that trade needs its own evidence.
+ */
+const SCRUB_TLDS = 'com|net|org|io|co|ru|cn|th|dev|ai|zip|mov|xyz|app|link|click|top|shop|site|live'
+  + '|info|biz|online|store|icu|vip|ly|me|tv|cc|gg|to|sh|st'
+  + '|uk|jp|de|fr|ca|au|pl|nl|es|br|kr|sg|my|vn|ph';
+
+/**
+ * PASS (a), ASCII labels. The label may only START at a script boundary: the character before it
+ * must not be a Latin letter, a combining mark, or a digit.
+ *
+ * That lookbehind is the whole lesson of B1. Thai writes its tone marks and vowel signs as separate
+ * combining code points, so in `ร้านabcbit.ly` the Latin run that reaches the dot begins inside the
+ * Thai word; without the boundary this pass strips `านabcbit.ly` and hands back `ร้`. The class is
+ * `\\p{Script=Latin}`, not `[A-Za-z]`: `ü` is a Latin letter that the ASCII range does not contain,
+ * and with the narrower test `münchen.de` was clipped to `mü`. Thai→Latin
+ * counts AS a boundary (Thai letters are not Latin), which is exactly what lets `abcbit.ly/x9` go
+ * while `ร้าน` stays. In Latin the same rule stops `münchen.de` being clipped to `mü`.
+ *
+ * A label may also not start immediately after a DOT. Without that, `ร้านค้า.example.com` lost only
+ * its `example.com` tail to this pass and left `ร้านค้า.` behind as residue — an ASCII label sitting
+ * in the middle of an IDN host is not a host of its own, and leaving pass (b) the whole token is
+ * the only way it can take the whole token.
+ */
+const SCRUB_ASCII_BOUNDARY = '(?<![\\p{Script=Latin}\\p{M}0-9])(?<!\\.)';
+/** Corroborated by shape: a path, or two-plus dots where EVERY label is at least two characters.
+ *  Both labels stay ASCII, which is what keeps `กก.ขข.คค` and `เอ.บี.ซี.` out of the host branch —
+ *  no registrable host is a run of Thai initials. */
+const SCRUB_BARE_HOST = new RegExp(
+  `${SCRUB_ASCII_BOUNDARY}[a-z0-9-]{2,}(?:\\.[a-z0-9-]{2,}){2,}(?![a-z0-9-])\\S*`
+  + `|${SCRUB_ASCII_BOUNDARY}[a-z0-9-]+\\.[a-z]{2,24}\\/\\S*`,
+  'giu',
+);
+/**
+ * The genuinely ambiguous case, and the only place a TLD list earns its keep: ONE dot, no path.
+ * `evil.xyz` and `Co.Ltd` are the same shape, so shape cannot separate them — and both mistakes are
+ * real. Deleting `ABC Co.Ltd` down to `ABC` loses the vendor's name; leaving `evil.xyz` prints a
+ * host a reader might tap. Anything with a scheme, a path or a second dot is already gone above,
+ * whatever its TLD, so the list only ever decides this one shape.
+ */
+const SCRUB_AMBIGUOUS_HOST = new RegExp(
+  `${SCRUB_ASCII_BOUNDARY}[a-z0-9-]+\\.(?:${SCRUB_TLDS})(?![a-z\\p{L}])`,
+  'giu',
+);
+
+/**
+ * PASS (b), IDN labels — `ร้านค้า.com`, `café.com`, `münchen.de`, `東京.jp`. A phone linkifies every
+ * one of them, and pass (a) cannot see them: there is no ASCII character immediately before the dot
+ * for it to bite on.
+ *
+ * Anchored at a HARD boundary (start of string, whitespace, or punctuation) and never mid-word,
+ * because a mid-word match is precisely the bug this replaces. The inner labels and the suffix stay
+ * ASCII: that is what stops an all-Thai dotted phrase — `กก.ขข.คค`, `ลาดพร้าว.วังหิน.โชคชัย` — from
+ * reading as a host.
+ *
+ * Runs AFTER pass (a). On `ร้านabcbit.ly/x9` this pattern would otherwise match `ร้านabcbit.ly/x9`
+ * whole and take the shop's name with it; by the time it runs, pass (a) has already removed the
+ * link and left the name alone.
+ */
+const SCRUB_IDN_HOST = new RegExp(
+  `(?<=^|[\\s\\p{P}])[\\p{L}\\p{M}0-9-]+(?:\\.[a-z0-9-]+)*\\.(?:${SCRUB_TLDS})(?![a-z\\p{L}])\\S*`,
+  'giu',
+);
+
+export type ScrubOptions = {
+  /** `mask` (default) keeps the label and replaces the figure; `drop` empties the whole value. */
+  onMoney?: 'mask' | 'drop';
+};
+
+export function scrubRecordText(
+  value: string | null | undefined,
+  maxLength = 60,
+  options: ScrubOptions = {},
+): string {
+  if (typeof value !== 'string') return '';
+  const digit = `[${SCRUB_DIGIT}]`;
+  const digitOrSep = `[${SCRUB_DIGIT}${SCRUB_SEPARATOR}]`;
+  const percentSource = `${digit}${digitOrSep}*\\s*(?:%|เปอร์เซ็น(?:ต์)?)`;
+  // Grouped (`99,999`), decimal (`99999.00`), or any bare run of THREE or more. Three is the
+  // deliberate floor: Thai shops number their branches, so "ร้าน 7-Eleven สาขา 12" has to keep its
+  // name, and nothing that short reads as a total beside a grouped figure like 1,789.04.
+  const groupedSource = `${digit}${digitOrSep}+${digit}|${digit}{3,}`;
+  // NFC first, so one spelling of a character cannot dodge a pattern written against another.
+  // It does NOT do much for Thai — Thai vowel signs and tone marks have no canonical composition,
+  // so NFC leaves them exactly as they are, and the `\p{M}` in the identifier charset is what
+  // actually carries them. What NFC does buy is Latin: a decomposed `e` + U+0301 becomes `é`, so
+  // `caf\u00e9.com` and `cafe\u0301.com` are the same string by the time the link rule sees them.
+  // NFC, never NFKC — NFKC rewrites Thai in ways this channel has been bitten by before. Digits
+  // fold in the same pass, so every pattern below is written once, in ASCII.
+  const linkless = normalizeScrubDigits(value.normalize('NFC'))
+    .replace(SCRUB_INVISIBLE, ' ')
+    .replace(scrubSchemeLink(), ' ')
+    // (a) then (b): see SCRUB_IDN_HOST. Reversing these two eats the Thai word before the link.
+    .replace(SCRUB_BARE_HOST, ' ')
+    .replace(SCRUB_AMBIGUOUS_HOST, ' ')
+    .replace(SCRUB_IDN_HOST, ' ');
+  // Fresh non-global regexes for the test: a `g` regex carries `lastIndex` between calls, so
+  // reusing the replace ones here would make the answer depend on what was tested before it.
+  if (options.onMoney === 'drop'
+    && (new RegExp(percentSource, 'u').test(linkless) || new RegExp(groupedSource, 'u').test(linkless))) {
+    return '';
+  }
+  const scrubbed = linkless
+    // Percent first: `999%` would otherwise lose its digits to the money rule and leave a bare `%`.
+    .replace(new RegExp(percentSource, 'gu'), SCRUB_MASK)
+    .replace(new RegExp(groupedSource, 'gu'), SCRUB_MASK)
+    .replace(/\s+/g, ' ')
+    .trim();
+  // Nothing but punctuation left is not a name — the caller's neutral fallback reads better than
+  // printed debris.
+  return /[\p{L}\p{N}]/u.test(scrubbed) ? scrubbed.slice(0, maxLength) : '';
+}
+
+/**
+ * A document number is not prose: its DIGITS are the value. Masking them the way a label is
+ * masked leaves "ใบเสร็จ-…", which tells the reader nothing.
+ *
+ * So an identifier is defined by SHAPE, not by subtraction: ONE token, no spaces, at most
+ * `maxLength` characters, starting with a letter or digit and continuing with letters, digits,
+ * `-`, `/`, `_` or `#`. Anything else answers null and the caller prints "ยังไม่ระบุ".
+ *
+ * `.` is deliberately NOT in the charset. Admitting it admits `99.999,00`, `1789.04` and
+ * `192.168.1.1/pay` - the exact money and host shapes the label scrubber exists to remove, walked
+ * straight through the field that is allowed to keep its digits. No real document number needs a
+ * dot badly enough to reopen that hole.
+ *
+ * `\\p{M}` is in the class on purpose: Thai tone marks and vowel signs are separate combining code
+ * points, so `\\p{L}\\p{N}` alone deletes the marks out of "ใบกำกับ-12" and hands back mangled Thai.
+ * Digits are folded to ASCII first, so a Thai- or fullwidth-numeral identifier cannot smuggle a
+ * different alphabet past a later comparison.
+ */
+const IDENTIFIER_SHAPE = /^[\p{L}\p{M}0-9][\p{L}\p{M}0-9\-/_#]*$/u;
+
+export function scrubRecordIdentifier(value: string | null | undefined, maxLength = 32): string | null {
+  if (typeof value !== 'string') return null;
+  const token = normalizeScrubDigits(value)
+    .replace(SCRUB_INVISIBLE, ' ')
+    .trim();
+  if (token.length === 0 || token.length > maxLength) return null;
+  return IDENTIFIER_SHAPE.test(token) ? token : null;
+}
+
+/**
+ * Digits normalised to ASCII, so a comparison against a server figure cannot be fooled by the
+ * alphabet it was written in. Callers that must compare untrusted text with a computed number
+ * normalise BOTH sides through this.
+ */
+export function normalizeScrubDigits(value: string): string {
+  return value.replace(new RegExp(`[${SCRUB_DIGIT}]`, 'gu'), (character) => {
+    const code = character.codePointAt(0)!;
+    if (code >= 0x0e50 && code <= 0x0e59) return String(code - 0x0e50);
+    if (code >= 0xff10 && code <= 0xff19) return String(code - 0xff10);
+    return character;
+  }).replace(/[\uff0c\uff0e\uff05\u3000\u066b\u066c]/gu, (character) => SCRUB_FOLD[character] ?? character);
+}
+
+/** Why a draft edit could not even be previewed. Each maps to one deterministic Thai reply. */
+export type LineDraftUpdateBlockedReason =
+  | 'feature_disabled'
+  | 'no_recent_record'
+  | 'ambiguous_record'
+  | 'mutation_blocked'
+  | 'forbidden'
+  | 'ambiguous_line'
+  | 'ungrounded_value'
+  | 'invalid_patch'
+  | 'rate_limited';
+
 // ─── Prepared advisor contract (advisor spec §6/§9) ────────────────────────────────────────────
 // One brain, several rooms: the mode names which room a turn belongs to. Slice A ships SOCIAL_CHAT
 // only — the other members exist so the enum is the spec's, not a moving target, but nothing routes
@@ -714,6 +1108,8 @@ export const ADVISOR_REFUSAL_CODES = [
   'safety_crisis',
   'privacy_rumor',
   'unsupported_module',
+  /** Same split as {@link LineAiRefusalReason}: in the system, not on LINE yet. */
+  'unsupported_yet',
   'insufficient_current_data',
 ] as const;
 export type AdvisorRefusalCode = (typeof ADVISOR_REFUSAL_CODES)[number];

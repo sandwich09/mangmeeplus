@@ -393,6 +393,14 @@ jobs:
         if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
         env:
           NODE_OPTIONS: --max-old-space-size=4096
+      # The type system cannot see this one: an `@Injectable()` class inheriting its constructor
+      # from an undecorated base typechecks perfectly, passes every spec (tsx emits no decorator
+      # metadata, so a spec cannot even ask), and boots (a zero-dependency class resolves fine) —
+      # then every injected field is undefined at the first call. Only the swc emit shows it, so
+      # this reads the swc emit. ~1s, no build artifacts.
+      - name: Check Nest providers carry constructor metadata in the swc build
+        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
+        run: node apps/api/scripts/check-di-metadata.mjs
       - name: Typecheck and test durable release recovery against PostgreSQL
         if: needs.resolve-source.outputs.release_controller_only != 'true'
         env:
@@ -422,6 +430,63 @@ jobs:
           pnpm --filter @watchdog-bms/api test:tax-identity-pg
           SYSTEM_ADMIN_CUTOVER_TEST_DATABASE_URL="$DATABASE_URL" \
             pnpm --filter @watchdog-bms/api exec tsx --test prisma/system-admin-cutover.pg.spec.ts
+      # These six specs prove things only real rows, indexes and column types can show — the
+      # `lower(username)` unique index, the `(provider, providerChannelId, providerUserId)` slot a
+      # LINE signup re-points, the driver's P2002 shape, and the `ExpenseLineChargeKind` enum column
+      # (an in-memory fake storing a plain string is green against a database that rejects the
+      # write). Each guards itself on a database named `watchdog_bms`, so they share one:
+      # `migrate deploy` for the schema, `sync-permissions` for the system roles the onboarding
+      # path reads (a full seed is demo data this does not need).
+      #
+      # Flow B recovery (review R04/F2/F10) rides the same database: its assertions are about a
+      # conditional in-transaction stamp, a rolled-back approve and an adopt-on-retry —
+      # none of which an in-memory fake can show, because the transaction IS the mechanism.
+      #
+      # `receipt-truth` rides along for the same reason at a different layer: a charge row's null
+      # VAT rate, a null withholding rate beside a non-null one, and an `ExpenseLine.reviewStatus`
+      # of NEEDS_REVIEW are all decided by the column, and an in-memory fake echoes whatever it was
+      # handed (spec `line-ai-draft-control-spec-th.md` §11).
+      #
+      # ONE INVOCATION EACH, deliberately. The runner interleaves spec files, and two of these seed
+      # usernames that collide under `lower(username)` — running them together fails on a duplicate
+      # that has nothing to do with the code under test.
+      - name: Identity, username, LINE-signup, support-request, charge-kind, signup-recovery and receipt-truth specs against PostgreSQL
+        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
+        env:
+          PGPASSWORD: watchdog_ci
+          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_bms?schema=public
+        run: |
+          psql -h 127.0.0.1 -U watchdog -d watchdog_recovery_ci -c 'CREATE DATABASE watchdog_bms'
+          pnpm --filter @watchdog-bms/api exec prisma migrate deploy
+          pnpm --filter @watchdog-bms/api exec tsx prisma/sync-permissions.ts
+          ACCOUNT_PROFILE_TEST_DATABASE_URL="$DATABASE_URL" \
+            pnpm --filter @watchdog-bms/api exec tsx --test \
+            src/modules/auth/account-profile-username.pg.spec.ts
+          EMPLOYEE_ACCESS_TEST_DATABASE_URL="$DATABASE_URL" \
+            pnpm --filter @watchdog-bms/api exec tsx --test \
+            src/modules/employee-access/create-employee-username.pg.spec.ts
+          LINE_SIGNUP_TEST_DATABASE_URL="$DATABASE_URL" \
+            pnpm --filter @watchdog-bms/api exec tsx --test \
+            src/modules/external-signup/line-signup-stale-identity.pg.spec.ts
+          LINE_SUPPORT_TEST_DATABASE_URL="$DATABASE_URL" \
+            pnpm --filter @watchdog-bms/api exec tsx --test \
+            src/modules/external-signup/line-support-request.pg.spec.ts
+          EXPENSE_CHARGE_KIND_TEST_DATABASE_URL="$DATABASE_URL" \
+            pnpm --filter @watchdog-bms/api exec tsx --test \
+            src/modules/expenses/expense-line-charge-kind.pg.spec.ts
+          SIGNUP_RECOVERY_TEST_DATABASE_URL="$DATABASE_URL" \
+            pnpm --filter @watchdog-bms/api exec tsx --test \
+            src/modules/external-signup/signup-provisioning-recovery.pg.spec.ts
+          RECEIPT_TRUTH_TEST_DATABASE_URL="$DATABASE_URL" \
+            pnpm --filter @watchdog-bms/api exec tsx --test \
+            src/modules/expenses/receipt-truth.pg.spec.ts
+          # S-4 draft edit: only a real database can show that the PREVIEW transaction is genuinely
+          # rolled back — a fake would "roll back" a write it never performed. Its own invocation,
+          # like every spec above: the runner interleaves files, and this one seeds a company and a
+          # user of its own.
+          LINE_DRAFT_EDIT_TEST_DATABASE_URL="$DATABASE_URL" \
+            pnpm --filter @watchdog-bms/api exec tsx --test \
+            src/modules/expenses/line-draft-update.pg.spec.ts
       - run: pnpm test
         if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
       - name: P27, OCR, and expense payment integrity against PostgreSQL

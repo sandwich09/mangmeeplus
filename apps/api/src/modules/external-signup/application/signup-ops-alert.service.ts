@@ -9,7 +9,7 @@ import { bangkokMonthKey } from '../../line-ai/application/company-ai-usage-mete
 import { TRIAL_COUNTER_TIER_KEY } from '../../system-partner-management/domain/logic/receipt-quota.logic';
 import { bangkokDayKey } from '../domain/business-hours.logic';
 import { LINE_SIGNUP_PUSH_EVENT_TYPE } from './line-signup-notify.service';
-import { SIGNUP_QUEUE_PATH, SignupAdminNotifyService } from './signup-admin-notify.service';
+import { SIGNUP_QUEUE_PATH, SUPPORT_QUEUE_PATH, SignupAdminNotifyService } from './signup-admin-notify.service';
 
 /** Reserved for the signup drain, like its three siblings — the generic drain must exclude it. */
 export const SIGNUP_OPS_ALERT_EVENT_TYPE = 'notify.signup_ops_alert.requested';
@@ -20,7 +20,10 @@ export type SignupOpsAlertKind =
   | 'line_push_failed'
   | 'provisioning_failed'
   | 'trial_budget_exhausted'
-  | 'line_push_stuck';
+  | 'line_push_stuck'
+  // line-support-request-spec-th §2.2.3: a customer was told "รับเรื่องแล้ว" and NO channel
+  // delivered anything — no admin LINE push landed and the support letter did not go out.
+  | 'support_unreachable';
 
 /** A customer's one owed message has been unsent for this long — long past "the OA blinked". */
 export const STUCK_PUSH_AFTER_MS = 60 * 60_000;
@@ -42,6 +45,8 @@ export function signupOpsAlertTitleTh(kind: SignupOpsAlertKind): string {
       return 'ร้านทดลองใช้งบ AI หมดหลายร้านวันนี้';
     case 'line_push_stuck':
       return 'ข้อความ พร้อมใช้แล้ว ค้างส่งไม่ออก';
+    case 'support_unreachable':
+      return 'มีลูกค้ารอคุยกับเจ้าหน้าที่ แต่แจ้งทีมงานไม่ได้';
   }
 }
 
@@ -57,6 +62,8 @@ export function signupOpsAlertBodyTh(kind: SignupOpsAlertKind): string {
       return 'ร้านทดลองที่ใช้งบ AI ครบแล้วเกินเกณฑ์ที่ตั้งไว้ เปิดคิวเพื่อตรวจสอบค่ะ';
     case 'line_push_stuck':
       return 'มีร้านที่ยังไม่ได้รับข้อความว่าเปิดร้านให้แล้ว อาจถึงโควตาข้อความของ OA เปิดคิวเพื่อตรวจสอบค่ะ';
+    case 'support_unreachable':
+      return 'คำขออยู่ในหน้า คำขอคุยกับเจ้าหน้าที่ แล้ว แต่ไม่มีช่องทางไหนแจ้งสำเร็จ เปิดหน้าคำขอเพื่อตอบลูกค้าค่ะ';
   }
 }
 
@@ -119,6 +126,10 @@ export class SignupOpsAlertService {
 
     const title = signupOpsAlertTitleTh(kind);
     const body = signupOpsAlertBodyTh(kind);
+    // The one alert whose action is not in the signup queue: an unreachable support request is
+    // answered from the support inbox, and pointing an operator at the wrong page is the same
+    // failure as not telling them.
+    const href = kind === 'support_unreachable' ? SUPPORT_QUEUE_PATH : SIGNUP_QUEUE_PATH;
     let opened = false;
     for (const [companyId, userIds] of groupByCompany(admins)) {
       const result = await this.notifications.execute({
@@ -132,7 +143,7 @@ export class SignupOpsAlertService {
         severity: 'action',
         title,
         body,
-        deepLinkHref: SIGNUP_QUEUE_PATH,
+        deepLinkHref: href,
         recipientUserIds: userIds,
       });
       if (!result.skipped) opened = true;
@@ -141,7 +152,7 @@ export class SignupOpsAlertService {
 
     await this.adminNotify.pushToLinkedAdmins(
       admins.map((admin) => admin.userId),
-      `⚠️ ${title}\n${body}\n${webLink(SIGNUP_QUEUE_PATH)}`,
+      `⚠️ ${title}\n${body}\n${webLink(href)}`,
     );
   }
 

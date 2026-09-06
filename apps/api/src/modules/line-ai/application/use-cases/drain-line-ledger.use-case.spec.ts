@@ -101,7 +101,10 @@ function makeUseCase(opts: {
     }),
   } as any;
   const useCase = new DrainLineLedgerUseCase(prisma, config, permissionResolver, ledger, aiGateway, lineReply, shadow);
-  return { useCase, acks, ackReasons, pushes, turnRequests, aiTurnUpdates, eventUpdates, shadowRecords, shadowFlushes };
+  // The drain's own logger, so a test can assert what an operator actually sees at level 40.
+  const warnings: any[] = [];
+  (useCase as any).logger = { warn: (payload: any) => warnings.push(payload), debug: () => {}, log: () => {}, error: () => {} };
+  return { useCase, acks, ackReasons, pushes, turnRequests, aiTurnUpdates, eventUpdates, shadowRecords, shadowFlushes, warnings };
 }
 
 describe('DrainLineLedgerUseCase (item 10F)', () => {
@@ -115,12 +118,15 @@ describe('DrainLineLedgerUseCase (item 10F)', () => {
   it('follows up a pending sub_request: re-resolves permissions, runs the turn, pushes, acks', async () => {
     const candidates = { amounts: [{ span: 'หกสิบ', value: '60' }], dates: [] };
     const { useCase, acks, pushes, turnRequests } = makeUseCase({
-      claims: [{ entry: entry({ valueCandidates: candidates as never }), deliveryCount: 2, idleMs: 5000 }],
+      claims: [{ entry: entry({ valueCandidates: candidates as never, intakeIntent: 'BUSINESS_READ_QUESTION' as never }), deliveryCount: 2, idleMs: 5000 }],
     });
     const result = await useCase.execute(20, NOW);
     assert.equal(result.followedUp, 1);
     assert.equal(turnRequests[0].messageText, 'ยอดค้างซัพพลายเออร์');
     assert.deepEqual(turnRequests[0].valueCandidates, candidates);
+    // Spec §5.3: the other half of the ledger round-trip. A reclaimed business turn that lost its
+    // trusted provenance gets the "out of scope" answer the live turn would never have given.
+    assert.equal(turnRequests[0].intakeIntent, 'BUSINESS_READ_QUESTION');
     assert.equal(turnRequests[0].userContext.lineUserId, '[REDACTED]');
     assert.deepEqual(turnRequests[0].userContext.entitlementDeniedPermissions, { 'inventory.report.read': 'inventory' });
     assert.deepEqual(turnRequests[0].userContext.entitledFeatureKeys, ['ai_line_assistant']);
@@ -158,6 +164,22 @@ describe('DrainLineLedgerUseCase (item 10F)', () => {
     assert.equal(result.expired, 1);
     assert.deepEqual(acks, [{ id: '2-0', outcome: 'clarify_expired' }], 'in-window entry stays open');
     assert.equal(pushes.length, 0, 'expiry is silent — no nagging push');
+  });
+
+  // UAT 2026-09-05: `ai.line.ledger.follow_up_failed` … "waiting_user entry still inside the clarify
+  // window" rode every drain of a chat with an open question. It is the DESIGNED hold — the live turn
+  // path owns that answer — so it may not be reported at level 40 next to real delivery failures.
+  it('holds a fresh waiting_user entry without reporting it as a failure', async () => {
+    const { useCase, acks, warnings } = makeUseCase({
+      claims: [{ entry: entry({ id: '3-0', state: 'waiting_user', clarifyQuestion: 'ปีไหน?' }), deliveryCount: 1, idleMs: 5000 }],
+    });
+
+    const result = await useCase.execute(20, NOW);
+
+    assert.equal(result.claimed, 1);
+    assert.equal(result.expired, 0, 'still inside the window — nothing expires');
+    assert.deepEqual(acks, [], 'the entry stays in the PEL for the live path to answer');
+    assert.deepEqual(warnings, [], 'an expected hold is not an operator-visible failure');
   });
 
   it('parks an entry past the delivery cap instead of looping (poison protection)', async () => {

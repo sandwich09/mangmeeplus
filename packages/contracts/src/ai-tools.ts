@@ -2,10 +2,38 @@
 
 import type { LineAiBusinessSubject } from './line-ai.js';
 
-export type ToolCategory = 'read_summary' | 'read_detail' | 'report' | 'suggestion' | 'evidence_capture' | 'draft_create' | 'approval_request' | 'final_mutation';
+export type ToolCategory = 'read_summary' | 'read_detail' | 'report' | 'suggestion' | 'evidence_capture' | 'draft_create' | 'draft_update' | 'approval_request' | 'final_mutation';
 
 /** Current AI assistant phase: read/report/suggest plus accounting evidence capture; no approval/final mutation. */
 export const LINE_ALLOWED_TOOL_CATEGORIES: ToolCategory[] = ['read_summary', 'read_detail', 'report', 'suggestion', 'evidence_capture'];
+
+/**
+ * S-4 (draft-control spec §5.4/§8): editing a draft over LINE is its own category, kept OUT of
+ * `LINE_ALLOWED_TOOL_CATEGORIES` on purpose — it is admitted only while `LINE_AI_DRAFT_EDIT_ENABLED`
+ * is on, and even then a tool call can do no more than PREVIEW. The write happens on a confirm
+ * postback, through a path no model can reach, so a `draft_update` tool is never a mutation the way
+ * `final_mutation` is.
+ */
+export const LINE_DRAFT_UPDATE_TOOL_CATEGORY: ToolCategory = 'draft_update';
+
+/** The categories this phase may execute, given the runtime flags. Draft-edit tools disappear
+ *  entirely when the flag is off — not "refused later", absent, so the model is never offered one. */
+export function allowedToolCategories(flags: { draftEditEnabled?: boolean } = {}): ToolCategory[] {
+  return flags.draftEditEnabled
+    ? [...LINE_ALLOWED_TOOL_CATEGORIES, LINE_DRAFT_UPDATE_TOOL_CATEGORY]
+    : [...LINE_ALLOWED_TOOL_CATEGORIES];
+}
+
+/** The registry as this runtime should see it. One place decides tool visibility so the gateway's
+ *  catalog and the API's executor cannot disagree about which tools exist. */
+export function lineToolRegistryFor(flags: { draftEditEnabled?: boolean } = {}): ToolMeta[] {
+  const allowed = new Set(allowedToolCategories(flags));
+  return LINE_TOOL_REGISTRY.filter((tool) => allowed.has(tool.category) || !DYNAMIC_TOOL_CATEGORIES.has(tool.category));
+}
+
+/** Categories whose presence depends on a runtime flag. Everything else keeps its existing
+ *  visibility (registered-but-unwired tools still appear and answer `unsupported_module`). */
+const DYNAMIC_TOOL_CATEGORIES: ReadonlySet<ToolCategory> = new Set<ToolCategory>([LINE_DRAFT_UPDATE_TOOL_CATEGORY]);
 
 export type ToolResultStatus = 'ok' | 'forbidden' | 'unsupported_module' | 'unavailable' | 'error';
 
@@ -372,6 +400,107 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     sensitiveAudit: true,
     requiresErpPermissionCheck: true,
     requiredInputFields: ['expenseId'],
+  },
+  {
+    // Spec §5.5 (S-3): the answer to "ทำไมยอดนี้ถึงเป็นแบบนี้" about a record THIS chat captured.
+    // It reads one record and returns the header, the line groups, the totals identity as real
+    // numbers, what the AI assumed or could not verify, and what may still be changed over LINE —
+    // never a period total and never a list, which stay with expense.list_recent.
+    name: 'expense.explain_record',
+    description: 'Explain ONE expense record this user captured through LINE: vendor, date, document number, status, product lines, additional charges such as service charge, discount, the totals identity as real numbers, the values the reader assumed, and how to change it. Use for a "why/how is this bill made up" question about the user\'s own recent record (ทำไม, บิลเมื่อกี้, ใบเสร็จนี้). Never use it for a period total or a list.',
+    businessSubjects: ['expense'],
+    questionKinds: ['detail', 'explain'],
+    category: 'read_detail',
+    requiredPermissions: [],
+    anyOfPermissions: ['expense.read', 'expense.review', 'expense.read_related', 'expense.read_own'],
+    sourceModule: 'expenses',
+    supportedAgents: ['accounting', 'cfo', 'general'],
+    sensitiveAudit: true,
+    requiresErpPermissionCheck: true,
+    // FLAT primitives on purpose: the orchestrator's tool-input sanitizer keeps only whitelisted
+    // primitive values, so a nested `recordRef` object from the model wire would be dropped. The
+    // API adapter accepts BOTH this pair and the spec's nested `{ recordRef: { kind, value } }`.
+    // Every field is optional: with none, the tool explains the newest record of THIS chat.
+    optionalInputFields: ['recordType', 'recordRefKind', 'recordRefValue'],
+  },
+  // ── S-4 draft edit over LINE (spec §5.4) ────────────────────────────────────
+  // Five tools, one shape. Each one PREVIEWS a change to the record THIS chat captured and returns
+  // a `LineDraftUpdatePreview`; none of them writes. The write is the confirm postback, which no
+  // model can send. `requiredPermissions` is exactly what the web PATCH takes
+  // (`expense.controller.ts` `updateDraft` → `@RequirePermissions('expense.update')`) — LINE never
+  // gets a cheaper way to edit than the web form. Inputs are FLAT primitives because the
+  // orchestrator's tool-input sanitizer drops anything else, and every one reserves `recordType`
+  // (spec §4: income/receipt drafts join later without a contract break).
+  {
+    name: 'expense.draft.set_header',
+    description: 'Preview a header change on the expense draft this chat just captured: document date, vendor name, document number, or a note to append. Returns what would change and the resulting totals; the user must press ยืนยัน before anything is saved. Never use it on a confirmed record.',
+    businessSubjects: ['expense'],
+    questionKinds: ['detail'],
+    category: LINE_DRAFT_UPDATE_TOOL_CATEGORY,
+    requiredPermissions: ['expense.update'],
+    sourceModule: 'expenses',
+    supportedAgents: ['accounting', 'cfo', 'general'],
+    sensitiveAudit: true,
+    requiresErpPermissionCheck: true,
+    optionalInputFields: ['recordType', 'expenseDate', 'vendorName', 'documentNumber', 'noteAppend'],
+  },
+  {
+    name: 'expense.draft.set_line',
+    description: 'Preview a change to ONE existing line of the expense draft this chat captured: its description, its amount, its VAT treatment, or moving it into an additional-charge field such as ค่าบริการ (chargeKind). Returns what would change and the resulting totals; the user must press ยืนยัน before anything is saved.',
+    businessSubjects: ['expense'],
+    questionKinds: ['detail'],
+    category: LINE_DRAFT_UPDATE_TOOL_CATEGORY,
+    requiredPermissions: ['expense.update'],
+    sourceModule: 'expenses',
+    supportedAgents: ['accounting', 'cfo', 'general'],
+    sensitiveAudit: true,
+    requiresErpPermissionCheck: true,
+    requiredInputFields: ['lineNumber'],
+    // `chargeKind` is what turns "the OCR wrote service charge as a product line" into a move
+    // rather than a duplicate charge (spec §5.4 / J3.3).
+    optionalInputFields: ['recordType', 'description', 'amount', 'vatTreatment', 'chargeKind'],
+  },
+  {
+    name: 'expense.draft.add_charge',
+    description: 'Preview adding an additional charge (ค่าบริการ, ค่าส่ง, ค่าบรรจุ, ค่าธรรมเนียม, ทิป, ปัดเศษ, อื่น ๆ) to the expense draft this chat captured, given either an exact amount or a percent of the goods subtotal. Returns the computed amount and the resulting totals; the user must press ยืนยัน before anything is saved.',
+    businessSubjects: ['expense'],
+    questionKinds: ['detail'],
+    category: LINE_DRAFT_UPDATE_TOOL_CATEGORY,
+    requiredPermissions: ['expense.update'],
+    sourceModule: 'expenses',
+    supportedAgents: ['accounting', 'cfo', 'general'],
+    sensitiveAudit: true,
+    requiresErpPermissionCheck: true,
+    requiredInputFields: ['kind'],
+    optionalInputFields: ['recordType', 'amount', 'percentOfSubtotal', 'vatTreatment'],
+  },
+  {
+    name: 'expense.draft.remove_line',
+    description: 'Preview removing ONE line — a product line or an additional charge — from the expense draft this chat captured. Returns the resulting totals; the user must press ยืนยัน before anything is saved.',
+    businessSubjects: ['expense'],
+    questionKinds: ['detail'],
+    category: LINE_DRAFT_UPDATE_TOOL_CATEGORY,
+    requiredPermissions: ['expense.update'],
+    sourceModule: 'expenses',
+    supportedAgents: ['accounting', 'cfo', 'general'],
+    sensitiveAudit: true,
+    requiresErpPermissionCheck: true,
+    requiredInputFields: ['lineNumber'],
+    optionalInputFields: ['recordType'],
+  },
+  {
+    name: 'expense.draft.set_vat_mode',
+    description: 'Preview switching how VAT is read on the expense draft this chat captured (VAT excluded, VAT included, or no VAT) and at which rate. Returns the recomputed VAT and totals; the user must press ยืนยัน before anything is saved.',
+    businessSubjects: ['expense', 'tax'],
+    questionKinds: ['detail'],
+    category: LINE_DRAFT_UPDATE_TOOL_CATEGORY,
+    requiredPermissions: ['expense.update'],
+    sourceModule: 'expenses',
+    supportedAgents: ['accounting', 'cfo', 'general'],
+    sensitiveAudit: true,
+    requiresErpPermissionCheck: true,
+    requiredInputFields: ['vatMode'],
+    optionalInputFields: ['recordType', 'rate'],
   },
   {
     name: 'expense.get_daily_closing',

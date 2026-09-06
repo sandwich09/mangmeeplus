@@ -283,6 +283,15 @@ test "$(grep -Fc '{name:"LINE_WEB_HANDOFF_ENABLED", value:$lineWebHandoffEnabled
 grep -Fq 'LINE_AI_EXACT_GREETING_ENABLED_INPUT="${LINE_AI_EXACT_GREETING_ENABLED:-}"' "$deploy"
 grep -Fq -- '--arg lineAiExactGreetingEnabled "$SERVING_LINE_AI_EXACT_GREETING_ENABLED"' "$deploy"
 test "$(grep -Fc '{name:"LINE_AI_EXACT_GREETING_ENABLED", value:$lineAiExactGreetingEnabled}' "$deploy")" -eq 1
+# S-4 draft edit (draft-control spec §8): UAT defaults on, production defaults off, the value is
+# validated as an exact boolean, maintenance quiesces it, and BOTH containers carry it — the API is
+# the authoritative executor and the gateway decides whether the tools are offered at all.
+grep -Fq 'LINE_AI_DRAFT_EDIT_ENABLED_INPUT="${LINE_AI_DRAFT_EDIT_ENABLED:-}"' "$deploy"
+grep -Fq 'if [ "$DEPLOY_ENV" = uat ]; then LINE_AI_DRAFT_EDIT_ENABLED_INPUT=true; else LINE_AI_DRAFT_EDIT_ENABLED_INPUT=false; fi' "$deploy"
+grep -Fq 'ERROR: LINE_AI_DRAFT_EDIT_ENABLED must be exactly true or false' "$deploy"
+grep -Fq 'SERVING_LINE_AI_DRAFT_EDIT_ENABLED=false' "$deploy"
+test "$(grep -Fc -- '--arg lineAiDraftEditEnabled "$SERVING_LINE_AI_DRAFT_EDIT_ENABLED"' "$deploy")" -eq 2
+test "$(grep -Fc '{name:"LINE_AI_DRAFT_EDIT_ENABLED", value:$lineAiDraftEditEnabled}' "$deploy")" -eq 2
 grep -Fq -- '--arg modelProvider "$SERVING_MODEL_PROVIDER"' "$deploy"
 for flag in \
   LINE_AI_AGENT_ORCHESTRATION_ENABLED \

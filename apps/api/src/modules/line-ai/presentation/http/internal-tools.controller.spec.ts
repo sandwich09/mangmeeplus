@@ -1,7 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { UnauthorizedException } from '@nestjs/common';
-import { LINE_ALLOWED_TOOL_CATEGORIES, LINE_TOOL_REGISTRY, hasToolFeature, toolFeatureKeys, type ToolMeta, type ToolResult } from '@watchdog-bms/contracts';
+import { LINE_ALLOWED_TOOL_CATEGORIES, LINE_DRAFT_UPDATE_TOOLS, LINE_DRAFT_UPDATE_TOOL_CATEGORY, LINE_TOOL_REGISTRY, hasToolFeature, toolFeatureKeys, type ToolMeta, type ToolResult } from '@watchdog-bms/contracts';
+
+/** Constructor arity of the controller's tool list. Bumped whenever a tool is wired. */
+const WIRED_TOOL_COUNT = 61;
 import { SECURITY_EVENT } from '../../../../common/logger/security-event';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
 import { InternalToolsController } from './internal-tools.controller';
@@ -507,15 +510,20 @@ describe('InternalToolsController', () => {
 describe('InternalToolsController — L-08 mutation classification at the ERP executor', () => {
   const OK_TOOL = { execute: async () => ({ status: 'ok', sourceRefs: [], asOf: new Date().toISOString() }) };
 
-  function build(options: { permissions: string[]; finalMutationEnabled?: boolean; tools?: unknown[] }) {
+  function build(options: { permissions: string[]; finalMutationEnabled?: boolean; draftEditEnabled?: boolean; tools?: unknown[] }) {
     const { events, audit } = recordingAudit();
     const controller = new (InternalToolsController as any)(
-      { aiGatewayInternalSecret: 'secret', aiFinalMutationEnabled: options.finalMutationEnabled ?? false } as any,
+      {
+        aiGatewayInternalSecret: 'secret',
+        aiFinalMutationEnabled: options.finalMutationEnabled ?? false,
+        // S-4: default OFF, so every existing assertion in this file describes the pre-S-4 executor.
+        lineAiDraftEditEnabled: options.draftEditEnabled ?? false,
+      } as any,
       fakePrisma(),
       audit,
       fakeResolver({ permissions: options.permissions }),
       fakeDelegation(),
-      ...(options.tools ?? Array.from({ length: 55 }, () => OK_TOOL)),
+      ...(options.tools ?? Array.from({ length: WIRED_TOOL_COUNT }, () => OK_TOOL)),
     );
     return { controller, events };
   }
@@ -645,10 +653,13 @@ describe('InternalToolsController — L-08 mutation classification at the ERP ex
   it('every wired read tool keeps working — walked from the registry, not a hardcoded list', async () => {
     const { controller } = build({ permissions: [AI] });
     const wired = [...((controller as any).toolMap as Map<string, unknown>).keys()];
-    assert.equal(wired.length, 55, 'the wired read-tool surface must not shrink');
+    assert.equal(wired.length, WIRED_TOOL_COUNT, 'the wired tool surface must not shrink');
 
     for (const toolName of wired) {
       const meta = LINE_TOOL_REGISTRY.find((entry) => entry.name === toolName)!;
+      // S-4: the five `draft_update` tools are wired but gated on their own flag, which the walk
+      // below leaves off. They get their own pair of tests instead of being smuggled in here.
+      if (meta.category === LINE_DRAFT_UPDATE_TOOL_CATEGORY) continue;
       assert.ok(
         LINE_ALLOWED_TOOL_CATEGORIES.includes(meta.category),
         `${toolName} is categorised "${meta.category}", which the executor now denies`,
@@ -662,6 +673,50 @@ describe('InternalToolsController — L-08 mutation classification at the ERP ex
       });
       assert.equal(result.status, 'ok', `${toolName} must still execute (got ${result.errorCode ?? result.status})`);
     }
+  });
+
+  // S-4 (draft-control spec §5.4/§8). The executor is the authoritative gate: whatever the gateway
+  // catalog did or did not offer, a draft_update call is refused here unless this deployment
+  // switched the lane on — and it is refused as ITSELF, not as a final mutation.
+  it('refuses every draft_update tool while LINE_AI_DRAFT_EDIT_ENABLED is off', async () => {
+    for (const toolName of LINE_DRAFT_UPDATE_TOOLS) {
+      const { controller, events } = build({ permissions: [AI, 'expense.update'] });
+      const result = await controller.invoke('secret', DELEGATION, {
+        toolName,
+        context: { requestId: 'r-off', companyId: 'c1', userId: 'u1', permissions: [], locale: 'th-TH' },
+      });
+      assert.equal(result.status, 'forbidden', `${toolName} must not execute with the flag off`);
+      assert.equal(result.errorCode, 'AI_TOOL_CATEGORY_DENIED');
+      const deny = events.find((entry: any) => entry.action === 'ai.tool.invoke.denied');
+      assert.equal(deny.metadataJson.reasonCode, 'LINE_DRAFT_EDIT_DISABLED');
+    }
+  });
+
+  it('admits a draft_update tool with the flag on, and NOT via the final-mutation switch', async () => {
+    const withFlag = build({ permissions: [AI, 'expense.update'], draftEditEnabled: true });
+    const allowed = await withFlag.controller.invoke('secret', DELEGATION, {
+      toolName: 'expense.draft.add_charge',
+      context: { requestId: 'r-on', companyId: 'c1', userId: 'u1', permissions: [], locale: 'th-TH' },
+    });
+    assert.equal(allowed.status, 'ok');
+
+    // The final-mutation kill switch is a DIFFERENT switch: turning it on must not open this lane.
+    const viaMutationSwitch = build({ permissions: [AI, 'expense.update'], finalMutationEnabled: true });
+    const refused = await viaMutationSwitch.controller.invoke('secret', DELEGATION, {
+      toolName: 'expense.draft.add_charge',
+      context: { requestId: 'r-mut', companyId: 'c1', userId: 'u1', permissions: [], locale: 'th-TH' },
+    });
+    assert.equal(refused.status, 'forbidden');
+  });
+
+  it('still requires expense.update — the same permission the web draft PATCH takes', async () => {
+    const { controller } = build({ permissions: [AI], draftEditEnabled: true });
+    const result = await controller.invoke('secret', DELEGATION, {
+      toolName: 'expense.draft.add_charge',
+      context: { requestId: 'r-perm', companyId: 'c1', userId: 'u1', permissions: [], locale: 'th-TH' },
+    });
+    assert.equal(result.status, 'forbidden');
+    assert.equal(result.errorCode, 'ERP_PERMISSION_DENIED');
   });
 });
 

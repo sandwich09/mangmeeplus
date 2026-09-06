@@ -6,7 +6,16 @@ import type { PublicSignupStatusDto } from '@watchdog-bms/contracts';
 import { Button } from '@/common/components/button';
 import { getSignupStatus, resendSignupClaimEmail } from './external-signup.api';
 import { SignupBrandHeader } from './SignupChrome';
-import { SIGNUP_SUPPORT_EMAIL, SIGNUP_SUPPORT_PHONE, signupStatusCopy, signupSubmitErrorMessage } from './signup.logic';
+import {
+  isTransientLoadFailure,
+  SIGNUP_SUPPORT_EMAIL,
+  SIGNUP_SUPPORT_PHONE,
+  SIGNUP_TRIAL_AFTER,
+  SIGNUP_TRIAL_HEADLINE,
+  showsTrialNotice,
+  signupStatusCopy,
+  signupSubmitErrorMessage,
+} from './signup.logic';
 
 const TONE_CLASS = {
   info: 'border-gray-200 bg-gray-50 text-gray-700',
@@ -17,23 +26,42 @@ const TONE_CLASS = {
 
 export default function SignupStatusPage({ requestId }: { requestId: string }) {
   const [status, setStatus] = useState<PublicSignupStatusDto | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  // R11: an outage is not a verdict on the link. `transient` decides which of the two very
+  // different sentences the page is allowed to say, and whether a retry is offered at all.
+  const [loadError, setLoadError] = useState<{ message: string; transient: boolean } | null>(null);
+  const [attempt, setAttempt] = useState(0);
   const [resendState, setResendState] = useState<'idle' | 'sending' | 'sent'>('idle');
   const [resendError, setResendError] = useState<string | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
 
   useEffect(() => {
     let active = true;
+    setLoadError(null);
     void getSignupStatus(requestId)
       .then((result) => {
         if (active) setStatus(result);
       })
       .catch((cause) => {
-        if (active) setLoadError(signupSubmitErrorMessage(cause));
+        if (active) {
+          setLoadError({ message: signupSubmitErrorMessage(cause), transient: isTransientLoadFailure(cause) });
+        }
       });
     return () => {
       active = false;
     };
-  }, [requestId]);
+  }, [requestId, attempt]);
+
+  // R12: the id lives in the URL and nowhere else. Handing that URL over is the whole recovery,
+  // so the page has to be able to do it without asking anyone to read a cuid out loud.
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      setLinkCopied(true);
+    } catch {
+      // A browser that refuses clipboard access still shows the URL in its own address bar.
+      setLinkCopied(false);
+    }
+  };
 
   const handleResend = async () => {
     setResendState('sending');
@@ -61,9 +89,22 @@ export default function SignupStatusPage({ requestId }: { requestId: string }) {
           {loadError ? (
             <div role="alert" className="space-y-3">
               <p className="text-[15px] leading-7 text-gray-600">
-                ไม่พบคำขอนี้ หรือลิงก์ไม่ถูกต้อง กรุณาตรวจลิงก์ที่บันทึกไว้อีกครั้ง
+                {loadError.transient
+                  ? 'ตอนนี้ตรวจสถานะไม่ได้ชั่วคราว คำขอของคุณยังอยู่ กดลองใหม่อีกครั้งได้เลย'
+                  : 'ไม่พบคำขอนี้ หรือลิงก์ไม่ถูกต้อง กรุณาตรวจลิงก์ที่บันทึกไว้อีกครั้ง'}
               </p>
-              <p className="text-[13.5px] text-gray-500">{loadError}</p>
+              <p className="text-[13.5px] text-gray-500">{loadError.message}</p>
+              {loadError.transient ? (
+                <Button
+                  type="button"
+                  size="lg"
+                  variant="secondary"
+                  className="w-full !rounded-xl"
+                  onClick={() => setAttempt((count) => count + 1)}
+                >
+                  ลองใหม่อีกครั้ง
+                </Button>
+              ) : null}
             </div>
           ) : !copy ? (
             <p className="text-[15px] text-gray-500">กำลังโหลด…</p>
@@ -83,14 +124,45 @@ export default function SignupStatusPage({ requestId }: { requestId: string }) {
                 </Link>
               ) : null}
 
+              {/* Owner 2026-09-05: the same free-trial line the form and the received page carry,
+                  so nobody arrives at their shop expecting the tier the old cards advertised.
+                  F8: hidden where no shop is coming — beside a rejection, a stalled build or an
+                  expired request it is an advert on a dead end. */}
+              {status && showsTrialNotice(status.status) ? (
+                <section className="rounded-xl border border-[#B6E0C4] bg-[#F2F9F4] p-3.5">
+                  <p className="text-[14.5px] font-bold text-[#046B29]">{SIGNUP_TRIAL_HEADLINE}</p>
+                  <p className="mt-1 text-[13.5px] leading-6 text-gray-600">{SIGNUP_TRIAL_AFTER}</p>
+                </section>
+              ) : null}
+
+              {/* R12: this URL is the applicant's only way back. Copy, then paste it into their
+                  own chat — a bookmark on a phone browser is the thing they lose first. */}
+              <div className="space-y-1.5">
+                <Button
+                  type="button"
+                  size="lg"
+                  variant="secondary"
+                  className="w-full !rounded-xl"
+                  onClick={() => void copyLink()}
+                >
+                  {linkCopied ? 'คัดลอกลิงก์แล้ว' : 'คัดลอกลิงก์หน้านี้'}
+                </Button>
+                <p className="text-[13px] leading-6 text-gray-500">
+                  เก็บลิงก์นี้ไว้ กลับมาดูสถานะได้ตลอด แนะนำให้ส่งเข้าแชตของตัวเอง
+                </p>
+              </div>
+
               {status?.canResendClaim ? (
                 <div className="space-y-2.5 border-t border-gray-100 pt-5">
                   <p className="text-[14.5px] leading-7 text-gray-600">
                     ไม่ได้รับอีเมล หรือลิงก์หมดอายุ? กดขอลิงก์ใหม่ได้ ระบบจะส่งอีเมลฉบับใหม่ให้
                   </p>
                   {resendState === 'sent' ? (
+                    // R11: the API answers once the outbox row exists. A worker, SES and the
+                    // applicant's own provider all stand between that and a mailbox, so this says
+                    // what actually happened — the delivered claim belongs to whoever can see it.
                     <p role="status" className="rounded-xl border border-[#B6E0C4] bg-[#F2F9F4] px-4 py-3 text-[14.5px] leading-7 text-[#046B29]">
-                      ส่งอีเมลใหม่ให้แล้ว กรุณาตรวจกล่องจดหมาย และเมลขยะ
+                      รับคำขอส่งอีเมลใหม่แล้ว อีเมลจะถึงภายในไม่กี่นาที กรุณาตรวจกล่องจดหมาย และเมลขยะ
                     </p>
                   ) : (
                     <Button

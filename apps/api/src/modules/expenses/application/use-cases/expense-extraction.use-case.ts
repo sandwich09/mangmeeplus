@@ -23,6 +23,7 @@ function withEffectiveMissingFields(
   reported: string[] | undefined,
   categoryId: string | null | undefined,
   vatRateUnknown: boolean,
+  dateVerified = true,
 ): string[] {
   const missing = new Set(reported ?? DEFAULT_MISSING_FIELDS);
   if (categoryId) missing.delete('category');
@@ -31,6 +32,9 @@ function withEffectiveMissingFields(
   // reviewer is asked for it rather than a rate being assumed on their behalf.
   if (vatRateUnknown) missing.add('vatRate');
   else missing.delete('vatRate');
+  // Spec §5.2: the date column is NOT NULL, so an unread date still stores the upload day. Flagging
+  // it here is what makes the review form say so — a stored placeholder passes every non-empty check.
+  if (!dateVerified) missing.add('expenseDate');
   return [...missing].slice(0, 20);
 }
 
@@ -190,6 +194,7 @@ export class RequestReceiptExtractionUseCase {
         response.fields.missingFields,
         duplicateResult.categoryId ?? expense.expenseCategoryId,
         ocrLineVatRateUnknown(response.fields),
+        duplicateResult.dateVerified,
       );
       // AI classification defaults the review document type only while it is still
       // unclassified — a reviewer's explicit choice survives re-extraction.
@@ -229,6 +234,11 @@ export class RequestReceiptExtractionUseCase {
             // Shown to the reviewer beside the printed total when the two disagree.
             ...(duplicateResult.itemsSumAmount ? { itemsSumAmount: duplicateResult.itemsSumAmount } : {}),
           },
+          // Spec §5.1/§5.2: the reasons in the reviewer's own words, beside the field flags above,
+          // and the four-state answer for the document date the whole UI renders from.
+          ...(duplicateResult.reviewReasons.length > 0 ? { reviewReasons: duplicateResult.reviewReasons } : {}),
+          ...(duplicateResult.dateStatus ? { dateStatus: duplicateResult.dateStatus } : {}),
+          ...(duplicateResult.dateAssumptions ? { expenseDateAssumptions: duplicateResult.dateAssumptions } : {}),
           nextAction: 'review_in_web',
         },
       });

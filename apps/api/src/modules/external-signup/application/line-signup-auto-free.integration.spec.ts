@@ -135,10 +135,43 @@ function fakePrisma(options: { systemAdmins?: string[] } = {}) {
       // The recovery path reads the owner back from the membership onboarding created, so the
       // fake has to remember it — otherwise a passing retry test would prove nothing.
       findFirst: async ({ where }: any) => memberships.find((m) => m.companyId === where.companyId) ?? null,
+      // The repeat-trial read: any membership in any status, because a closed shop still counts.
+      count: async ({ where }: any) => memberships.filter((m) => m.userId === where.userId).length,
     }),
+    /**
+     * Modelled as the unique `(provider, channel, providerUserId)` slot it really is. A fake that
+     * always answered null could not tell "free" from "stale", which is exactly the difference
+     * UAT cmto4xtrx002r4o5tf7o38dls turned into a P2002 nobody could retry past.
+     */
     externalIdentity: auto('externalIdentity', {
-      findFirst: async () => null,
-      create: async ({ data }: any) => { trackedPush(identities, data); return { id: 'ext-1' }; },
+      findFirst: async ({ where }: any) => {
+        const row = identities.find((r: any) => r.providerUserId === where.providerUserId
+          && (where.providerChannelId === undefined || r.providerChannelId === where.providerChannelId));
+        if (!row) return null;
+        // Users this flow creates are ACTIVE; the seed can override by setting `user` on the row.
+        const full = { user: { status: 'ACTIVE' }, ...row };
+        // Status filters are HONOURED, unlike in the unit fakes — restoring the `status: 'ACTIVE'`
+        // where-clause this bug was made of has to make these tests red, not green.
+        if (where.status !== undefined && full.status !== where.status) return null;
+        if (where.user?.status !== undefined && full.user.status !== where.user.status) return null;
+        return full;
+      },
+      findUnique: async ({ where }: any) => {
+        const key = where.provider_providerChannelId_providerUserId;
+        const row = identities.find((r: any) => r.providerUserId === key.providerUserId
+          && r.providerChannelId === key.providerChannelId);
+        // A COPY, like Prisma: a caller holding the pre-update row must keep reading the old values
+        // after the update — that is how the re-point audit knows which account it moved off.
+        return row ? { ...row } : null;
+      },
+      create: async ({ data }: any) => trackedPush(identities, { id: `ext-${(seq += 1)}`, status: 'ACTIVE', ...data }),
+      update: async ({ where, data }: any) => {
+        const row = identities.find((r: any) => r.id === where.id);
+        const prior = { ...row };
+        txUndo.getStore()?.push(() => Object.assign(row, prior));
+        Object.assign(row, data);
+        return row;
+      },
     }),
     legalDocumentActionRecord: auto('legalDocumentActionRecord', {
       count: async () => legalRows.length,
@@ -231,6 +264,7 @@ const CONFIG = {
 const CMD = {
   idToken: 'aaaa.bbbb.cccc',
   companyName: 'ร้านมั่งมี',
+  phoneNumber: '0812345678',
   legal: { ...currentLegalRelease('th'), locale: 'th' },
   correlationRequestId: 'req-1',
   webBaseUrl: 'https://app.example.com',
@@ -581,6 +615,89 @@ describe('a fence nobody is holding can be taken (review MEDIUM-3)', () => {
     assert.equal(request.state, 'COMPLETED');
     assert.equal(h.store.onboardingRuns.length, 1, 'no second company was built');
     assert.equal(h.store.identities.length, 1);
+  });
+});
+
+/**
+ * UAT cmto4xtrx002r4o5tf7o38dls, end to end over the real submit → core → provisioning → onboarding
+ * chain. The tester had linked this LINE account and unlinked it, so the row sat UNLINKED while
+ * still owning the unique slot: submit reported `existingAccount: false`, onboarding's `create`
+ * raised P2002, the request parked at PROVISIONING_FAILED and every retry repeated it.
+ */
+describe('a LINE account that was unlinked can open a new shop', () => {
+  /** The stale row the old shop left behind, pointing at the account that has moved on. */
+  const seedUnlinked = (h: ReturnType<typeof harness>, overrides: Record<string, unknown> = {}) => {
+    h.store.identities.push({
+      id: 'ext-old', userId: 'user-old', provider: 'LINE',
+      providerUserId: 'Uline-1', providerChannelId: 'channel-1', status: 'UNLINKED', ...overrides,
+    });
+  };
+
+  it('re-points the stale identity instead of dying on the unique slot', async () => {
+    const h = harness();
+    seedUnlinked(h);
+
+    const result = await h.submit.execute(CMD, NOW);
+
+    assert.equal(result.state, 'COMPLETED', 'this used to be PROVISIONING_FAILED, forever');
+    assert.equal(result.existingAccount, false, 'a new account, not the one that walked away');
+    assert.equal(h.store.identities.length, 1, 'the slot holds ONE row, as its unique index says');
+    const identity = h.store.identities[0];
+    assert.equal(identity.id, 'ext-old', 'the same row, re-pointed');
+    assert.equal(identity.status, 'ACTIVE');
+    assert.notEqual(identity.userId, 'user-old', 'and it belongs to the new shop owner now');
+
+    // Support has to be able to see the account this LINE moved off.
+    const moved = h.store.audits.find((a) => a.action === 'auth.identity.repointed');
+    assert.equal(moved.metadataJson.previousUserId, 'user-old');
+    assert.equal(moved.metadataJson.ownerUserId, identity.userId);
+
+    // Owner 2026-09-05: the chat has to land on the NEW shop, never on the one left behind.
+    assert.equal(h.store.lineContexts.get('Uline-1').companyId, 'co-1');
+  });
+
+  it('touches nothing but the identity row on the way past', async () => {
+    const h = harness();
+    seedUnlinked(h);
+    const writes: Array<{ model: string; where: any }> = [];
+    for (const model of ['company', 'companyMembership', 'user'] as const) {
+      const real = h.store.prisma.client[model].update;
+      h.store.prisma.client[model].update = async (args: any) => {
+        writes.push({ model, where: args?.where });
+        return real(args);
+      };
+    }
+
+    await h.submit.execute(CMD, NOW);
+
+    // Owner 2026-09-05: re-pointing a LINE account must not reactivate the old shop, its
+    // memberships, its plan term or the account that owned it. Every write this flow makes is
+    // against the company it just created; the account that walked away is never touched.
+    assert.deepEqual(
+      [...new Set(writes.map((w) => `${w.model}:${w.where?.id}`))],
+      ['company:co-1'],
+      'only the new shop is written to',
+    );
+    assert.equal(h.store.memberships.length, 1, 'one membership, for the new shop');
+    assert.equal(h.store.memberships[0].userId, h.store.identities[0].userId);
+    assert.deepEqual([...h.store.planTerms.keys()], ['co-1'], 'and one plan term, for the new shop');
+  });
+
+  it('refuses at submit, before any row exists, when the identity is disabled', async () => {
+    const h = harness();
+    seedUnlinked(h, { status: 'DISABLED' });
+
+    await assert.rejects(() => h.submit.execute(CMD, NOW), /line_signup_identity_disabled/);
+    assert.equal(h.store.requests.size, 0, 'no application, so nothing for an admin to find');
+    assert.deepEqual(h.store.onboardingRuns, []);
+  });
+
+  it('refuses at submit when the account behind an ACTIVE identity is suspended', async () => {
+    const h = harness();
+    seedUnlinked(h, { status: 'ACTIVE', user: { status: 'SUSPENDED' } });
+
+    await assert.rejects(() => h.submit.execute(CMD, NOW), /line_signup_account_blocked/);
+    assert.equal(h.store.requests.size, 0);
   });
 });
 

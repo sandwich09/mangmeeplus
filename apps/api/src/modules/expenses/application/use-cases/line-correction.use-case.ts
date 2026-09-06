@@ -11,7 +11,8 @@
  * record must still find the first apply. The marker rides the same transaction, so a rolled-back
  * apply leaves no trace claiming it happened.
  */
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import { ForbiddenException, Inject, Injectable, Optional } from '@nestjs/common';
+import { AppConfigService } from '../../../../common/config/app-config.service';
 import type { ExpenseLineVatTreatment, LineCorrectionField, LineIntakeCorrectionCandidate, LineIntakeCorrectionHints, RequestContext } from '@watchdog-bms/contracts';
 import { LINE_CORRECTION_FIELDS } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
@@ -23,7 +24,7 @@ import {
   type ClarificationConsumption,
 } from '../../../line-ai/application/line-ai-consumption-marker';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
-import { canCorrectAmount, evaluateCorrectionHints, type CorrectionEvidence } from '../../domain/logic/line-correction.logic';
+import { appendUserNote, canCorrectAmount, evaluateCorrectionHints, type CorrectionEvidence } from '../../domain/logic/line-correction.logic';
 import { reconcileExpenseDuplicateCandidates } from '../services/expense-duplicate-detection';
 import { UpdateExpenseDraftUseCase } from './expense-draft.use-case';
 
@@ -37,7 +38,15 @@ const CORRECTIONS_MIRROR_CAP = 20;
 export type AppliedCorrectionField = { from: string | null; to: string };
 
 export type LineCorrectionOutcome =
-  | { status: 'applied'; expenseId: string; fields: Partial<Record<LineCorrectionField, AppliedCorrectionField>>; replayed?: boolean }
+  | {
+      status: 'applied';
+      expenseId: string;
+      fields: Partial<Record<LineCorrectionField, AppliedCorrectionField>>;
+      replayed?: boolean;
+      /** Set when the note write did not do the plain thing the reply would otherwise claim
+       *  (spec §5.3): the note filled up, or this sentence was already its newest segment. */
+      noteOutcome?: 'truncated' | 'duplicate';
+    }
   | { status: 'clarify'; field: LineCorrectionField }
   | { status: 'guidance'; reason: string };
 
@@ -51,6 +60,28 @@ export type LineCorrectionInput = {
   consumption?: ClarificationConsumption;
 };
 
+/**
+ * The trivial single line a text note carries. `canCorrectAmount` has already refused anything
+ * richer, so rewriting it cannot destroy itemisation or a tax selection.
+ *
+ * Reachable ONLY while the S-4 draft lane is off. With it on, an amount correction goes to
+ * `expense.draft.set_line`, which previews the resulting totals and waits for [ยืนยัน] — this
+ * blind whole-line-set replacement is exactly what that replaced.
+ */
+function amountOnlyLine(
+  record: { lines: Array<{ description?: string | null; vatRate?: { toString(): string } | null; vatTreatment?: ExpenseLineVatTreatment | null }>; note?: string | null },
+  amount: string,
+) {
+  return [{
+    lineNumber: 1,
+    description: record.lines[0]?.description ?? record.note ?? 'LINE correction',
+    quantity: '1',
+    unitPrice: amount,
+    vatRate: record.lines[0]?.vatRate?.toString(),
+    vatTreatment: record.lines[0]?.vatTreatment ?? null,
+  }];
+}
+
 @Injectable()
 export class CorrectLineCapturedExpenseUseCase {
   constructor(
@@ -58,6 +89,17 @@ export class CorrectLineCapturedExpenseUseCase {
     private readonly repo: PrismaExpenseRepository,
     private readonly updateDraft: UpdateExpenseDraftUseCase,
     private readonly audit: AuditService,
+    /**
+     * Only to read `LINE_AI_DRAFT_EDIT_ENABLED`. `@Optional()` so an older wiring keeps the pre-S-4
+     * lane, which is also the correct answer when the flag is off.
+     *
+     * The token is stated EXPLICITLY because a `Pick<>` annotation emits no runtime type — it
+     * erases to `Object`, Nest has nothing to resolve, and the whole API fails to boot. Same reason
+     * `RedisRateLimitService` states its own; `injectable-di-token.spec.ts` is the guard.
+     */
+    @Inject(AppConfigService)
+    @Optional()
+    private readonly config?: Pick<AppConfigService, 'lineAiDraftEditEnabled'>,
   ) {}
 
   async execute(ctx: RequestContext, input: LineCorrectionInput): Promise<LineCorrectionOutcome> {
@@ -91,8 +133,16 @@ export class CorrectLineCapturedExpenseUseCase {
       if (!CORRECTABLE_STATUSES.has(record.status)) return { status: 'guidance', reason: `status_locked:${record.status}` };
       if (!isBranchInScope(ctx.scopes ?? {}, record.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
 
-      const allowedFields = LINE_CORRECTION_FIELDS.filter((field) =>
-        field !== 'amount' || canCorrectAmount({ sourceDocumentType: record.sourceDocumentType, lines: record.lines }));
+      // S-4 (draft-control spec §5.4): with the draft lane ON, money leaves this lane entirely —
+      // it goes to the draft tools, which preview the new totals and write only on [ยืนยัน].
+      //
+      // With the flag OFF this lane must behave exactly as it did before S-4, or turning the flag
+      // off would be a REGRESSION rather than a rollback: the single-line text-note amount
+      // correction that used to apply would silently degrade to a guidance reply. So the old
+      // `canCorrectAmount` gate is restored on that path, unchanged.
+      const draftLaneOwnsAmount = this.config?.lineAiDraftEditEnabled === true;
+      const allowedFields = LINE_CORRECTION_FIELDS.filter((field) => field !== 'amount'
+        || (!draftLaneOwnsAmount && canCorrectAmount({ sourceDocumentType: record.sourceDocumentType, lines: record.lines })));
       const evaluated = evaluateCorrectionHints(input.hints, {
         expenseDate: record.expenseDate?.toISOString() ?? null,
         grandTotalAmount: record.grandTotalAmount?.toString() ?? null,
@@ -107,13 +157,20 @@ export class CorrectLineCapturedExpenseUseCase {
       }
 
       const { fields } = evaluated;
+      // Spec §5.3: work out what the note append actually achieves BEFORE promising it in a reply.
+      const noteAppend = fields.note ? appendUserNote(record.note, fields.note.to) : undefined;
+      if (noteAppend?.outcome === 'empty') return { status: 'guidance', reason: 'empty_note' };
       await this.updateDraft.execute(ctx, target.expenseId, {
         expectedUpdatedAt: record.updatedAt.toISOString(),
         ...(fields.expenseDate ? { expenseDate: fields.expenseDate.to } : {}),
         ...(fields.vendorName ? { vendorNameSnapshot: fields.vendorName.to } : {}),
         ...(fields.documentNumber ? { vendorDocumentNumber: fields.documentNumber.to } : {}),
-        ...(fields.note ? { note: fields.note.to } : {}),
-        ...(fields.amount ? { lines: this.amountOnlyLine(record, fields.amount.to) } : {}),
+        // Spec §5.3 (slice A): append, never overwrite — the provenance note ("LINE receipt
+        // upload") is how anyone later knows this record came from a photo in a chat.
+        ...(noteAppend ? { note: noteAppend.note } : {}),
+        // Reachable only while the S-4 draft lane is OFF; `allowedFields` drops `amount` entirely
+        // when it is on, and money goes to the previewed, confirmed draft tools instead.
+        ...(fields.amount ? { lines: amountOnlyLine(record, fields.amount.to) } : {}),
       }, { db: tx, suppressGenericAudit: true });
 
       await this.appendProvenance(tx, ctx, record, input.lineMessageIdHash, fields);
@@ -127,7 +184,9 @@ export class CorrectLineCapturedExpenseUseCase {
         companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.line_correction.apply',
         targetType: 'expense_record', targetId: target.expenseId, requestId: ctx.requestId,
         result: 'SUCCESS', riskLevel: 'MEDIUM',
-        metadataJson: { lineMessageIdHash: input.lineMessageIdHash, fields },
+        // Spec §7: `fields.note.to` is what the user typed, not what the column now holds — the
+        // audit has to say the write was an append or a reader would take it for a replacement.
+        metadataJson: { lineMessageIdHash: input.lineMessageIdHash, fields, ...(noteAppend ? { noteAppend: noteAppend.outcome } : {}) },
       }, tx);
 
       await tx.outboxEvent.create({
@@ -142,7 +201,10 @@ export class CorrectLineCapturedExpenseUseCase {
       });
       if (input.consumption) await markClarificationsConsumed(tx, input.consumption);
 
-      return { status: 'applied', expenseId: target.expenseId, fields };
+      return {
+        status: 'applied', expenseId: target.expenseId, fields,
+        ...(noteAppend && noteAppend.outcome !== 'appended' ? { noteOutcome: noteAppend.outcome } : {}),
+      };
     });
   }
 
@@ -154,19 +216,6 @@ export class CorrectLineCapturedExpenseUseCase {
     const named = input.hints?.targetExpenseId;
     if (named && input.candidates.some((candidate) => candidate.id === named)) return { status: 'resolved', expenseId: named };
     return { status: 'unresolved', outcome: { status: 'guidance', reason: 'ambiguous_target' } };
-  }
-
-  /** The trivial single line a text note carries — `canCorrectAmount` already refused anything
-   *  richer, so rewriting it cannot destroy itemisation or a tax selection. */
-  private amountOnlyLine(record: { lines: Array<{ description?: string | null; vatRate?: { toString(): string } | null; vatTreatment?: ExpenseLineVatTreatment | null }>; note?: string | null }, amount: string) {
-    return [{
-      lineNumber: 1,
-      description: record.lines[0]?.description ?? record.note ?? 'LINE correction',
-      quantity: '1',
-      unitPrice: amount,
-      vatRate: record.lines[0]?.vatRate?.toString(),
-      vatTreatment: record.lines[0]?.vatTreatment ?? null,
-    }];
   }
 
   /** Convenience mirror on the record; the audit row above is the durable history. */

@@ -1,14 +1,17 @@
 'use client';
 
 import { Suspense, useEffect, useState } from 'react';
+import type { AccountMergeCompanyOutcomeDto, AccountMergePreviewDto } from '@watchdog-bms/contracts';
 import { withLineExternalBrowser } from '@/common/auth/line-in-app-browser.logic';
 import { useSearchParams } from 'next/navigation';
 import { Button } from '@/common/components/button';
 import { Modal } from '@/common/components/modal';
 import { formatThaiDate } from '@/common/i18n/thai-date';
 import { fetchPlanTermNotice } from '@/features/plan-term/plan-term.api';
+import { getAccountSecurityState } from '@/features/auth/auth.api';
 import { SignupBrandHeader } from './SignupChrome';
-import { readClaimedCompany, type WelcomeHandoff } from './welcome-handoff.logic';
+import { SIGNUP_TRIAL_AFTER } from './signup.logic';
+import { readClaimedCompany, shouldFetchMergeOffer, type WelcomeHandoff } from './welcome-handoff.logic';
 
 const LINE_GREEN = '#06C755';
 
@@ -43,7 +46,30 @@ function LineLinkButton({ className = '' }: { className?: string }) {
   );
 }
 
-type MergeOffer = { ready: boolean; existingAccount?: { displayName: string; companyNames: string[] } };
+type MergeOffer = {
+  ready: boolean;
+  existingAccount?: { displayName: string; companyNames: string[] };
+  /** Review R05: what the merge would do, per shop, and which way of signing in survives. */
+  preview?: AccountMergePreviewDto;
+};
+
+/** Owner copy. No plus sign anywhere in user-facing text: write "และ". */
+const MERGE_OUTCOME_TH: Record<AccountMergeCompanyOutcomeDto['outcome'], string> = {
+  move: 'ย้ายไปอยู่กับบัญชีเดิม',
+  close_duplicate: 'บัญชีเดิมมีสิทธิ์ร้านนี้อยู่แล้ว',
+  blocked: 'รวมไม่ได้',
+};
+
+const MERGE_BLOCK_TH: Record<string, string> = {
+  last_active_owner: 'ร้านนี้จะไม่เหลือเจ้าของร้าน',
+  role_conflict: 'สองบัญชีมีสิทธิ์ในร้านนี้ไม่เหมือนกัน',
+  target_membership_inactive: 'สิทธิ์ของบัญชีเดิมในร้านนี้ถูกปิดอยู่',
+};
+
+const SIGN_IN_TH: Record<string, string> = { line: 'LINE', password: 'ชื่อผู้ใช้และรหัสผ่าน' };
+
+const signInLabel = (ways: string[]) =>
+  ways.map((way) => SIGN_IN_TH[way] ?? way).join(' หรือ ') || 'ยังไม่มีวิธีเข้าสู่ระบบ';
 
 const MERGE_ERROR_DEFAULT = 'รวมบัญชีไม่สำเร็จ ลองใหม่อีกครั้ง หรือติดต่อ 098-256-5628';
 const MERGE_EXPIRED = 'คำขอรวมบัญชีหมดอายุแล้ว กดปุ่ม เชื่อมกับ LINE อีกครั้ง แล้วเลือกรวมบัญชี';
@@ -56,6 +82,8 @@ const MERGE_ERROR_TH: Record<string, string> = {
   merge_in_progress: 'กำลังรวมบัญชีอยู่ กรุณารอสักครู่แล้วเปิดหน้านี้ใหม่',
   merge_target_unavailable: 'บัญชีเดิมใช้งานไม่ได้ในตอนนี้ ติดต่อ 098-256-5628',
   merge_not_needed: 'สองบัญชีนี้เป็นบัญชีเดียวกันอยู่แล้ว ไม่ต้องรวม',
+  // Review R05: the server refuses rather than decide on its own which role set should win.
+  account_merge_role_conflict: 'รวมบัญชีไม่ได้ เพราะสิทธิ์ในร้านที่ซ้ำกันไม่ตรงกัน ติดต่อ 098-256-5628',
 };
 
 /**
@@ -71,15 +99,18 @@ function MergeDialog({ open, onClose }: { open: boolean; onClose: () => void }) 
 
   // The ticket lives in an HttpOnly cookie, so only the server can say whether an offer is live.
   // A cookie that has expired is not an error — the user simply presses the LINE button again.
+  //
+  // Review F6: fetched ONCE per mount, not on every open. The dialog is re-offered on every failed
+  // link attempt, and each open used to cost a preview call — which the API rate-limits.
   useEffect(() => {
-    if (!open) return undefined;
+    if (!shouldFetchMergeOffer(open, offer)) return undefined;
     let active = true;
     void fetch('/api/auth/account-merge/ticket', { cache: 'no-store' })
       .then((res) => res.json())
       .then((data: MergeOffer) => { if (active) setOffer(data); })
       .catch(() => { if (active) setOffer({ ready: false }); });
     return () => { active = false; };
-  }, [open]);
+  }, [open, offer]);
 
   const confirmMerge = async () => {
     setPending(true);
@@ -100,6 +131,10 @@ function MergeDialog({ open, onClose }: { open: boolean; onClose: () => void }) 
   };
 
   const existing = offer?.ready ? offer.existingAccount : undefined;
+  const preview = offer?.ready ? offer.preview : undefined;
+  // Fail closed in the UI too: a plan that says no disables the button rather than letting the
+  // person press it and read a 409.
+  const blockedByPlan = preview ? !preview.canMerge : false;
 
   return (
     <Modal
@@ -118,16 +153,20 @@ function MergeDialog({ open, onClose }: { open: boolean; onClose: () => void }) 
               type="button"
               size="lg"
               className="w-full !rounded-xl"
-              disabled={!offer?.ready || pending}
+              disabled={!offer?.ready || pending || blockedByPlan}
               loading={pending}
               onClick={confirmMerge}
             >
               รวมเข้าบัญชีเดิม
             </Button>
             <p className="text-center text-[12.5px] leading-6 text-gray-500">
-              {offer?.ready
-                ? 'ร้านของบัญชีนี้จะย้ายไปอยู่กับบัญชีเดิม แล้วใช้ LINE เข้าใช้งานได้ทุกร้าน'
-                : MERGE_EXPIRED}
+              {!offer?.ready
+                ? MERGE_EXPIRED
+                : blockedByPlan
+                  ? 'มีร้านที่รวมไม่ได้ ดูรายละเอียดด้านบน แล้วติดต่อ 098-256-5628'
+                  : preview
+                    ? `หลังรวมแล้ว เข้าสู่ระบบด้วย ${signInLabel(preview.keeps.signInWith)}`
+                    : 'ร้านของบัญชีนี้จะย้ายไปอยู่กับบัญชีเดิม แล้วใช้ LINE เข้าใช้งานได้ทุกร้าน'}
             </p>
             <Button type="button" size="lg" variant="secondary" className="w-full !rounded-xl" disabled={pending} onClick={() => setDeclined(true)}>
               ไว้ก่อน
@@ -152,12 +191,48 @@ function MergeDialog({ open, onClose }: { open: boolean; onClose: () => void }) 
               <p className="text-[12.5px] font-semibold text-gray-500">บัญชีเดิมที่จะรวมเข้าไป</p>
               <p className="mt-1 text-[15px] font-extrabold text-gray-900">{existing.displayName || 'บัญชีผู้ใช้เดิม'}</p>
               {existing.companyNames.length > 0 ? (
-                <ul className="mt-1.5 space-y-1">
-                  {existing.companyNames.map((name) => (
-                    <li key={name} className="text-[14px] leading-6 text-gray-700">{name}</li>
-                  ))}
-                </ul>
+                <>
+                  <p className="mt-2 text-[12.5px] font-semibold text-gray-500">ร้านที่บัญชีเดิมมีอยู่</p>
+                  <ul className="mt-1 space-y-1">
+                    {existing.companyNames.map((name) => (
+                      <li key={name} className="text-[14px] leading-6 text-gray-700">{name}</li>
+                    ))}
+                  </ul>
+                </>
               ) : null}
+              {/* The screen explained the shops moving and said nothing about the credentials.
+                  Merging DISABLES this new account, so the username and password just chosen stop
+                  working — which is the part someone needs to know before they press it. */}
+              <p className="mt-2.5 border-t border-gray-200 pt-2.5 text-[13px] leading-6 text-gray-600">
+                หลังรวม เข้าสู่ระบบด้วยบัญชีเดิม หรือด้วย LINE นี้ ส่วนชื่อผู้ใช้และรหัสผ่านที่เพิ่งตั้งไว้จะใช้ไม่ได้อีก
+              </p>
+            </div>
+          ) : null}
+          {/* Review R05: consent needs the consequences. One line per shop, then the credentials
+              that survive and the ones that stop working. */}
+          {preview ? (
+            <div className="mt-3.5 rounded-xl border border-gray-200 p-3.5">
+              <p className="text-[12.5px] font-semibold text-gray-500">สิ่งที่จะเกิดกับแต่ละร้าน</p>
+              <ul className="mt-1.5 space-y-1.5">
+                {preview.companies.map((company) => (
+                  <li key={company.companyName} className="text-[14px] leading-6 text-gray-700">
+                    <span className="font-semibold text-gray-900">{company.companyName}</span>
+                    {' — '}
+                    <span className={company.outcome === 'blocked' ? 'text-amber-800' : undefined}>
+                      {MERGE_OUTCOME_TH[company.outcome]}
+                      {company.outcome === 'blocked' && company.reason
+                        ? ` (${MERGE_BLOCK_TH[company.reason] ?? company.reason})`
+                        : ''}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-2.5 text-[13.5px] leading-6 text-gray-600">
+                เข้าสู่ระบบต่อด้วย {signInLabel(preview.keeps.signInWith)}
+                {preview.closes.signInWith.length > 0
+                  ? ` และจะใช้ ${signInLabel(preview.closes.signInWith)} ของบัญชีนี้ไม่ได้อีก`
+                  : ''}
+              </p>
             </div>
           ) : null}
           {error ? (
@@ -179,6 +254,9 @@ function Welcome() {
   // mount, not during render: the prerendered HTML has no query string, so branching on it while
   // rendering makes the server and client trees disagree.
   const [lineOutcome, setLineOutcome] = useState<string | null>(null);
+  // What the BACKEND says about this account's LINE identity. `null` = not answered yet (or the
+  // read failed), which is the only case where the query string is allowed to decide.
+  const [linkedOnServer, setLinkedOnServer] = useState<boolean | null>(null);
   const [mergeOpen, setMergeOpen] = useState(false);
 
   useEffect(() => {
@@ -193,6 +271,13 @@ function Welcome() {
     void fetchPlanTermNotice().then((notice) => {
       if (active && notice) setTrialEndsAt(notice.termEndsAt);
     });
+    // The `line=linked` query is only ever present on the ONE navigation the callback makes. Coming
+    // back from the sidebar, or reloading, the page could not tell a fresh visit from a finished
+    // link and re-offered the connect panel to someone already linked. The backend knows.
+    void getAccountSecurityState()
+      .then((state) => { if (active) setLinkedOnServer(state.lineLinked); })
+      // A read that cannot answer must not claim the link is missing: leave the query to decide.
+      .catch(() => { if (active) setLinkedOnServer(null); });
     return () => {
       active = false;
     };
@@ -200,7 +285,8 @@ function Welcome() {
 
   const companyName = handoff?.companyName ?? 'ร้านของคุณ';
   const homePath = handoff?.homePath ?? '/';
-  const lineLinked = lineOutcome === 'linked';
+  // Server first, the callback's query only as the answer while that read is in flight.
+  const lineLinked = linkedOnServer ?? lineOutcome === 'linked';
 
   return (
     <div className="min-h-dvh bg-gray-50">
@@ -219,10 +305,15 @@ function Welcome() {
             <h1 className="mt-4 text-[24px] font-extrabold leading-9 text-gray-900">
               {handoff ? `${companyName} พร้อมใช้งานแล้ว` : 'เชื่อมบัญชี LINE'}
             </h1>
-            {/* Hidden entirely when the term is unknown: a made-up date is worse than no date. */}
+            {/* Owner 2026-09-05: one free trial for everyone, so this no longer names a tier the
+                shop was never put on. Hidden entirely when the term is unknown: a made-up date is
+                worse than no date. */}
             {trialEndsAt ? (
               <p className="mt-2 text-[15px] leading-7 text-gray-600">
-                ทดลองใช้แพ็กเกจ PRO ฟรี ถึง {formatThaiDate(trialEndsAt)}
+                {/* F1: named a paid tier while provisioning writes the free trial. The
+                    wording table's "what happens after" rides the same line, so the date never
+                    stands alone implying a renewal. */}
+                ทดลองใช้ฟรี ถึง {formatThaiDate(trialEndsAt)} — {SIGNUP_TRIAL_AFTER}
               </p>
             ) : null}
 
@@ -255,8 +346,11 @@ function Welcome() {
               <>
                 <section className="mt-6 rounded-xl border border-gray-200 bg-gray-50 p-4 sm:p-5">
                   <h2 className="text-[17px] font-extrabold text-gray-900">ขั้นตอนสุดท้าย — เชื่อมกับ LINE</h2>
+                  {/* This flow links an identity; it does not add a friend for anyone, and it has
+                      no friend-state check to know whether one was added. Saying it did left the
+                      owner expecting to send a receipt into a chat that was never opened. */}
                   <p className="mt-1.5 text-[14.5px] leading-7 text-gray-600">
-                    กดปุ่มเดียว ระบบพาไปยืนยันในแอป LINE และเพิ่มเพื่อน “น้องมั่งมี” ให้ในคราวเดียว
+                    กดปุ่มนี้ ระบบจะเปิดแอป LINE ให้ยืนยันตัวตน จากนั้นทำตามหน้าจอเพื่อเพิ่มเพื่อน “น้องมั่งมี” แล้วจึงส่งรูปใบเสร็จเข้าแชตได้
                   </p>
                   <ul className="mt-3.5 space-y-2">
                     {BULLETS.map((bullet) => (

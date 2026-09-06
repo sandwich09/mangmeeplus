@@ -38,6 +38,13 @@ const SIGNUP_OUTBOX_EVENT_TYPES = [
   SIGNUP_OPS_ALERT_EVENT_TYPE,
 ] as const;
 
+/**
+ * F6 retention: how long an application that never got past `RECEIVED` is kept. Long enough that an
+ * applicant who walked away mid-correction can still come back the same week, short enough that a
+ * mistyped address does not leave its owner's name, address and phone in the table indefinitely.
+ */
+const INTAKE_RETENTION_DAYS = 7;
+
 /** Reason recorded on the state row when the 30-day sweep parks an unclaimed approval (§4D ④). */
 export const CLAIM_EXPIRY_FAILURE_CODE = 'claim_not_started';
 const EXPIRY_SWEEP_ACTOR = 'signup-expiry-sweep';
@@ -80,7 +87,13 @@ export class SignupClaimEmailService {
    *  - `resend`/`reissue` add a minute bucket, so an impatient double-click collapses into one send
    *    while a genuine request a minute later still goes out.
    */
-  async enqueue(signupRequestId: string, reason: ClaimEmailReason, now = new Date()): Promise<void> {
+  async enqueue(
+    signupRequestId: string,
+    reason: ClaimEmailReason,
+    now = new Date(),
+    /** R08: pass the approve transaction so the letter cannot be lost while the state moves on. */
+    tx?: Parameters<PrismaOutboxRepository['append']>[1],
+  ): Promise<void> {
     await this.outbox.append({
       eventType: ACCOUNT_CLAIM_EMAIL_EVENT_TYPE,
       aggregateType: 'CompanySignupRequest',
@@ -92,7 +105,7 @@ export class SignupClaimEmailService {
         occurredAt: now.toISOString(),
         data: { signupRequestId, reminder: reason === 'reminder' },
       },
-    });
+    }, tx);
   }
 
   /**
@@ -137,10 +150,18 @@ export class SignupClaimEmailService {
         // all (an unlinked stranger asking for help), so it is dispatched before the id check.
         // §15.6's ops alert belongs to a DAY, for the same reason and with the same exemption.
         if (event.eventType === LINE_SUPPORT_NOTICE_EVENT_TYPE) {
-          await this.lineNotify.deliverSupportNotice(
-            readPayloadString(event.payloadJson, 'companyId'),
-            readPayloadString(event.payloadJson, 'askerHash') ?? undefined,
-          );
+          const supportRequestId = readPayloadString(event.payloadJson, 'supportRequestId');
+          // A schemaVersion 1 row queued before the deploy names a shop and a day, not a request,
+          // and there is no `LineSupportRequest` for it to describe. Settling it is the right
+          // handling: the notice it stood for is at most minutes old and the customer has already
+          // been answered, so failing the row would only retry a message with no subject.
+          if (supportRequestId) await this.lineNotify.deliverSupportNotice(supportRequestId);
+          else {
+            this.logger.info({
+              event: 'signup.support.legacy_notice_dropped',
+              outboxEventId: event.id,
+            }, 'signup.support.legacy_notice_dropped');
+          }
         } else if (event.eventType === SIGNUP_OPS_ALERT_EVENT_TYPE) {
           const kind = readPayloadString(event.payloadJson, 'kind');
           const dayKey = readPayloadString(event.payloadJson, 'dayKey');
@@ -231,7 +252,11 @@ export class SignupClaimEmailService {
     const due = await this.prisma.client.companySignupRequest.findMany({
       where: {
         state: { in: ['EMAIL_PENDING', 'EMAIL_FAILED'] },
-        approvedAt: { not: null, lt: cutoff },
+        // Review R09: the ACTIVATION window, not the approval date. An admin reissue restarts this
+        // column, so a fresh link sent against an old approval is no longer expired by the next
+        // sweep — which used to kill the link before the applicant could open it. Rows written
+        // before the column existed were backfilled from `approvedAt`, so nothing changed for them.
+        claimWindowStartedAt: { not: null, lt: cutoff },
       },
       select: { id: true },
       take,
@@ -254,6 +279,39 @@ export class SignupClaimEmailService {
       }
     }
     return { expired };
+  }
+
+  /**
+   * F6 retention. A submit whose MX check fails is left in `RECEIVED` on purpose (the applicant
+   * corrects the address and sends a NEW request under a new key), so the rejected row is an
+   * orphan: it reaches no queue, no admin sees it, and nothing else in the system ever removes it —
+   * while it holds the applicant's name, address and phone. After the retention window it is
+   * deleted outright rather than scrubbed: there is nothing here anyone needs, and a masked
+   * tombstone would be PII we chose to keep.
+   *
+   * `AccountClaimToken` cascades, and a RECEIVED row has none anyway — a token is only minted at
+   * `EMAIL_PENDING`, which is several states away.
+   *
+   * Source-blind by design: `RECEIVED` is one of `LINE_OPEN_APPLICATION_STATES`, so deleting a
+   * week-old row also releases a LINE account fenced out of applying again by an attempt that got
+   * nowhere. That is the outcome we want — the fence exists to stop two live applications, not to
+   * lock someone out over one that died at intake.
+   */
+  async sweepAbandonedIntake(now = new Date()): Promise<{ purgedIntake: number }> {
+    const cutoff = new Date(now.getTime() - INTAKE_RETENTION_DAYS * 86_400_000);
+    // One statement rather than the read-then-act loop the other sweeps use: there is no state
+    // machine to walk here and nothing to enqueue, so the predicate is the whole operation. The
+    // window and the state bound the set by construction.
+    const { count } = await this.prisma.client.companySignupRequest.deleteMany({
+      where: {
+        state: 'RECEIVED',
+        createdAt: { lt: cutoff },
+        // Belt and braces: a row that stamped a company id built something, whatever its state
+        // says, and this sweep must never be the thing that unlinks a real shop's application.
+        companyId: null,
+      },
+    });
+    return { purgedIntake: count };
   }
 
   /**
@@ -283,7 +341,7 @@ export class SignupClaimEmailService {
   private async sendClaimEmail(signupRequestId: string): Promise<void> {
     const request = await this.prisma.client.companySignupRequest.findUnique({
       where: { id: signupRequestId },
-      select: { id: true, state: true, contactEmail: true, companyName: true },
+      select: { id: true, state: true, contactEmail: true, companyName: true, claimWindowStartedAt: true },
     });
     if (!request) throw new Error('signup_request_not_found');
     // A request that moved on (claimed, rejected, suspended) must not receive a stale link.
@@ -292,12 +350,15 @@ export class SignupClaimEmailService {
     // has no EMAIL_* edge), so an addressless row here would be a bug — mint no token for it.
     if (!request.contactEmail) return;
 
-    const { rawToken, expiresAt } = await this.tokens.mint(request.id);
+    // Review F7: the link dies with its activation window, never after it.
+    const { rawToken, expiresAt } = await this.tokens.mint(request.id, new Date(), request.claimWindowStartedAt);
     const messageId = await this.mailer.sendAccountClaim({
       toEmail: request.contactEmail,
       companyName: request.companyName,
       rawToken,
       expiresAt,
+      // R12: so a link that turns out to be spent can still offer the status page (spec §4D ②).
+      signupRequestId: request.id,
     });
     // Only after a successful send: this timestamp is what the reminder sweep counts from, and the
     // SES message id is the only handle a later bounce/complaint event has on this row (spec §4D).

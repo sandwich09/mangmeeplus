@@ -577,11 +577,15 @@ export function transitionLineExpenseDraft(
   return next;
 }
 
+/** Every item this lane collects is something the user said they bought, never an additional charge
+ *  (expense spec §5.1) — and `chargeKind` is stated rather than omitted, because an absent kind means
+ *  "keep what line N had" and these line numbers are positional. */
 export function materializedLineExpenseDraftItems(state: LineExpenseDraftContinuation): Array<{
   lineNumber: number;
   description: string;
   quantity: string;
   unitPrice: string;
+  chargeKind: null;
   expenseCategoryId?: string;
   accountHintKey?: string;
 }> {
@@ -593,6 +597,7 @@ export function materializedLineExpenseDraftItems(state: LineExpenseDraftContinu
     }
     if (!price) return [];
     return [{ lineNumber: index + 1, description: item.description, quantity: item.quantity, unitPrice: price,
+      chargeKind: null,
       ...(item.expenseCategoryId ? { expenseCategoryId: item.expenseCategoryId } : {}) }];
   });
 }

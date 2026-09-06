@@ -472,6 +472,20 @@ provider แก้ข้อความ) กลับไปบล็อกทั
 > ใส่แค่ไฟล์แรก UAT ผ่านแต่โปรโมต production ถูกปฏิเสธ แก้แล้วรัน
 > `bash infra/security/production-security-preflight.spec.sh` ด้วย
 
+#### Waiver ledger
+
+ทุกครั้งที่ออก ต่ออายุ หรือปลด waiver ให้เพิ่มแถวที่นี่ ห้ามแก้ epoch เงียบ ๆ โดยไม่มีแถว
+
+| วันที่ | CVE | expiry เดิม → ใหม่ | approval id | หลักฐาน tracker (อ่านวันนั้น) |
+| --- | --- | --- | --- | --- |
+| 2026-08-27 | CVE-2026-14456, CVE-2026-54874, CVE-2026-63072, CVE-2026-63076 (HIGH, `openssl 3.0.20-1~deb12u2`) | — → `1788998400` (2026-09-10) | `CHAT-OWNER-DIRECTIVE-2026-08-27-FIX-ALL-UNTIL-DEPLOY-SUCCEEDS` | bookworm ยัง `vulnerable`, base ที่ pull ใหม่ 2026-08-27 ยังเป็น 3.0.20-1~deb12u2 |
+| 2026-09-05 | CVE-2026-75803 (CRITICAL, `openssl 3.0.20-1~deb12u2`), CVE-2026-85091 (HIGH, `zlib 1.2.13.dfsg-1`) | — → `1789776000` (2026-09-19) | `CHAT-OWNER-DIRECTIVE-2026-09-05-UAT-DEPLOY-WAIVER` | bookworm openssl + zlib `vulnerable`, digest `node:22-bookworm-slim` ใหม่สุดก็ยังได้แพ็กเกจเดิม |
+| 2026-09-05 | CVE-2026-54874, CVE-2026-63072, CVE-2026-63076, CVE-2026-75803, CVE-2026-85091 (ต่ออายุครบทั้ง 5 แถว) | `1788998400` / `1789776000` → `1791158400` (2026-10-05T00:00:00Z) | `CHAT-OWNER-DIRECTIVE-2026-09-05-CVE-WAIVER-RENEWAL-2026-10-05` | security-tracker อ่าน 2026-09-05: bookworm `openssl 3.0.20-1~deb12u2` ยัง `vulnerable` ทั้ง 4 CVE ไม่มี fixed version ของ bookworm (fix เฉพาะ trixie-security `3.5.7-1~deb13u2` และ sid `3.6.4-1`); CVE-2026-85091 **ไม่มี fixed zlib ใน suite ไหนเลย** — bump digest ไม่ช่วย |
+| 2026-09-05 | CVE-2026-14456 — **ปลดแถวทิ้ง (retired)** ไม่ต่ออายุ | `1788998400` → ไม่มีแถวแล้ว | (ปลดตามกติกา M-18 ใน `p1-production-security-operations.md`) | ECR ไม่รายงาน finding นี้อีก และ tracker ขึ้น bookworm openssl เป็น `<not-affected> (Vulnerble code introduced later)` |
+
+ครั้งหน้าหมดอายุ **2026-10-05T00:00:00Z** ถ้าถึงวันนั้นแล้ว Debian ยังไม่มี fix ต้องขอ approval id ใหม่
+อีกรอบ (ไม่ใช้ id เดิมซ้ำ) — เกตจะบล็อกทั้ง 5 แถวทันทีที่ `now >= 1791158400`
+
 ### โค้ดกับ AWS sync กันแล้ว (2026-08-09)
 
 ก่อนหน้านี้ AWS กับเอกสารตรงกัน (UAT 3 / production 14) แต่ **โค้ดยังเป็น 90/30** และแย่กว่านั้นคือ
@@ -520,3 +534,32 @@ Feature branch `codex/line-substitute-receipt-assisted-issuance` ส่งเอ
 6. **Log hygiene**: path ที่มี token ถูก mask เป็น `/v1/document-delivery/:token` ในทุกจุดที่ log
    path (request logger / exception filter / rate-limit security event) — ถ้าเพิ่มจุด log ใหม่
    ที่แตะ `req.path` ต้องผ่าน `maskLoggedPath()` เสมอ token เป็น bearer credential ของเอกสารกฎหมาย
+
+---
+
+## Visitor IP through the api-web container (review R06) — 2026-09-06
+
+Rate limits that are keyed on the visitor (the 20/hour signup-claim bucket, the password-login
+failure bucket) depend on one assumption about the ingress chain, recorded here because breaking it
+silently collapses every visitor into one key rather than failing loudly:
+
+- prod chain is browser → Cloudflare Worker → **ECS Express gateway** → `web-api-proxy.mjs` →
+  Nest (or Next), all inside one container over loopback.
+- `trustedClientIp()` honours `x-forwarded-for` only when the TCP peer is the private/loopback tier
+  and walks the chain **from the right**, skipping every hop our own tier or Cloudflare appended.
+  The first hop that is neither is the answer.
+- **The assumption:** the ECS Express gateway appends the peer it actually observed. That appended
+  hop is what makes a visitor-supplied `x-forwarded-for` unusable as a self-chosen key — a forged
+  value always sits to the LEFT of the observed one and is skipped.
+- The claim BFF (`apps/web/app/api/auth/signup-claim/route.ts`) calls the API server-to-server, so
+  it forwards the chain verbatim with `forwardedClientHeaders()`. Without it every applicant in the
+  country shares the container's loopback address as one bucket.
+
+**If the ingress is ever changed** — a different gateway, a direct-to-ALB path, Cloudflare removed —
+re-check that the rightmost hop is still infrastructure-appended before trusting these buckets. The
+symptom of a broken assumption is not an error: it is a shared key (everyone throttled together) or
+a spoofable one (nobody throttled). `apps/api/src/common/security/trusted-client-ip.spec.ts` holds
+the property tests for both directions.
+
+Known gap: `apps/web/app/api/auth/login/route.ts` has the same shape and does NOT forward the chain
+yet. It is in the production maintenance pins, so changing it needs a pin re-sync in the same PR.

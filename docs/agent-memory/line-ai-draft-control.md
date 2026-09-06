@@ -1,0 +1,962 @@
+# Agent Memory: line-ai-draft-control
+
+Status: docs approved (Owner 2026-09-05, 5 decisions) → A/B/C built, D built on C; single UAT deploy pending
+Owner: Owner (product) · Fable (control) · Opus (implementation)
+Scope: spec `docs/specs/line-ai-draft-control-spec-th.md`, plan `docs/plans/line-ai-draft-control-plan-th.md`
+Decisions: service charge first-class (chargeKind), no silent today-date, receipt-mode BE dates with recorded assumptions, `unsupported_yet` refusal split from `unsupported_module`, LINE draft edits behind preview+confirm postback and `LINE_AI_DRAFT_EDIT_ENABLED` (default off), one UAT deploy after everything.
+Open questions: Q1 (no-VAT-evidence charge → NEEDS_REVIEW), Q2 (edit allowed up to READY_FOR_CONFIRMATION) — spec defaults stand unless the Owner objects.
+Artifacts: branches `codex/line-ai-truth-and-dates` (A), `codex/expense-charge-kind` (B), `codex/line-ai-explain-record` (C), `codex/line-ai-draft-edit` (D)
+Verification: per slice — api fixed-list, typecheck, prisma validate, pins --check, web test/build when web touched, mutation table, security eval (D), local LINE-fake drive (J2–J4)
+Next: A + B implementation → review → PR develop; C after B; D after C; single develop→main PR; UAT deploy on Owner order.
+Next (D): rebase onto the final A/B/C heads, then reviewer pass; the Owner's UAT script is section D.5.
+
+## Slice B — `codex/expense-charge-kind` (S-1, service charge first-class)
+
+Status: implemented, gates green, pushed. Reviewed once adversarially (2026-09-05) and reworked;
+no PR yet.
+
+What it does: `ExpenseLineChargeKind` enum + nullable `ExpenseLine.chargeKind`, additive migration
+`20260905160000_expense_line_charge_kind` (no backfill). `subtotalAmount` becomes goods-only, so
+`taxable = subtotal - discount + charges` and `total = taxable + vat` hold. Charge rows must be
+quantity 1, non-zero, positive unless ROUNDING, and sorted after every product row. OCR apply names
+a charge in Thai with the printed percent and keeps the extractor's own wording in `sourceLineText`;
+`ExpenseDetail` gains a derived `charges` group and a `totalsIdentity` flag; the web review page
+renders "ค่าใช้จ่ายเพิ่ม" and a "ค่าบริการ/ค่าใช้จ่ายเพิ่ม" money row.
+
+Where the §5.1 identity is actually enforced (the first cut got this wrong and said "enforced at the
+write boundary" while only calling it somewhere it could not fail):
+
+- `CreateExpenseDraftUseCase` / `UpdateExpenseDraftUseCase` — header totals from
+  `reconcileExpenseVat` against the lines `TransactionTaxService.resolveLines` returned. Two
+  sources, one write; a mismatch is a 400 and nothing is persisted. This is the enforcement.
+- `materializeClaimExpenses` — the reimbursement projection writes header totals from the claim's
+  own figure, so the builder proves they agree before the projection exists.
+- `findByIdWithRelations` — read side, `ExpenseDetail.totalsIdentity { ok, gapAmount }`, so a record
+  written before this rule existed is visible rather than silently wrong.
+- `validateExpenseDraftAmounts` also calls it, but both sides there derive from the same line array:
+  that call is a regression tripwire on `calcDocumentTotals`, NOT input validation. Deleting it
+  alone passes every suite; the mutation that proves the rule is making `calcDocumentTotals` count
+  charge rows in `subtotalAmount` again.
+
+PATCH semantics: `lines` is a full replacement, so an ABSENT `chargeKind` keeps the stored kind and
+only an explicit `null` clears it. Without that, a client echoing a line back turned a service charge
+into a product and got a 200.
+
+The first version of that keep resolved by `lineNumber` and was itself a blocker: a line number is a
+POSITION, and adding a goods row renumbers everything under it, so the row arriving as line 2 is not
+the row that was line 2. A reviewer typing "ของหวาน" got it stored as SERVICE_CHARGE, with a 200 and
+`totalsIdentity.ok = true` — the identity is derived from the same wrong kinds, so it cannot catch
+this class of bug. Fixed on three layers, because any one of them alone still leaves a hole:
+
+- the web payload emits `chargeKind` on EVERY row (`null` for products), not only on charge rows;
+- the LINE draft-collection lane states `chargeKind: null` on the items it materializes;
+- the server resolves an absent kind by DESCRIPTION, not line number: a description matching exactly
+  one stored row is that row, and a new row, a renamed row or a duplicate description resolves to
+  null rather than a guess.
+
+Read side: `ExpenseDetail.totalsIdentity { ok, gapAmount }` is declared in the web model and the
+review page warns when `ok` is false. Consumers must branch on `ok` — `gapAmount` describes the
+grand-total equation only, so a subtotal-only drift reports `ok: false` with a zero gap.
+
+Owner-visible export change: the accountant index gained a trailing column
+`additional_charges_amount` ("ค่าใช้จ่ายเพิ่ม") so the row is additive again now that
+`subtotal_amount` is goods-only (`subtotal - discount + charges + vat = grand_total`). Trailing, so
+position-based consumers keep their offsets. The golden CSV sha256 in
+`common/export/thai-date.logic.spec.ts` is now stale for a second reason — it was ALREADY stale and
+quarantined in `spec-suite-coverage.spec.ts` before this change, and un-quarantining it needs a
+`package.json` script edit plus an Owner call on the format, so it was left alone.
+
+Merge order (agreed with the coordinator): **B merges into develop FIRST.** Slice A then rebases onto
+develop-with-B; slice C rebases onto B rather than merging C's older copy of B's history.
+
+B vs A (`8bef1a4c`) is **12 conflict hunks across 9 files**, and it is NOT all mechanical:
+
+- `receipt-ocr-apply.service.ts` (2 hunks) — the import list is trivial, but the `chargeLines()`
+  body needs a real resolution. A rewrote it around a `reading: 'document' | 'unproven'` parameter
+  with `needsReview`, `whtRate: null` and `isAdditionalCharge: true`; B changed the same rows to
+  carry `chargeKind`, a Thai description, and the richer `sourceLineText`. Keep A's signature and
+  tax rules, keep B's three field changes, and collapse `isAdditionalCharge` into
+  `chargeKind != null` at both read sites (the WHT allocation set and the per-line `whtRate`).
+- `packages/contracts/src/expenses.ts` (2) and `.github/workflows/ci.yml` (2) — both branches append
+  (an accountant-index column plus label; a pg-spec invocation). Keep both; A's own comment already
+  says to order `document_date_status` after B's `additional_charges_amount`.
+- `expense-export.logic.ts`, `prisma-expense.repository.ts`, `expenses.model.ts`,
+  `receipt-ocr-apply.service.spec.ts`, `ExpensesPages.qa.spec.ts`, this file (1 each) — import lists
+  and both-appended blocks. Keep both.
+
+Follow-up (not this slice): make `chargeKind` REQUIRED on `updateExpenseDraft` lines once no caller
+omits it. Every first-party caller already states it on every row, so the only thing the optional
+field still buys is the legacy/third-party fallback — and that fallback carries one documented
+collision: omitting the field while renaming a product to a stored charge row's exact description
+inherits that kind, because the wire format has no row identity. Making the field required deletes
+the fallback and the collision together.
+
+Known gap (§10, deliberate): additional charges still post to the record's expense category — no
+separate "ค่าบริการ" account and no report by charge kind.
+
+## Slice C — `codex/line-ai-explain-record` (S-3, อธิบายรายการของฉัน)
+
+Status: rebased onto develop `e37eb216` (which carries B via PR #434), review rounds 1–4 fixed,
+gates green, pushed; no PR. Slice A merges after this one — expect a small second rebase in
+`process-line-webhook.use-case.ts`, where A took the `intakeIntent` binding from here verbatim, so
+that hunk should collapse rather than conflict.
+
+What it does — evidence E4 ("ทำไม service charge คิดแยกเป็นอีกรายการนึง") now gets a real answer:
+
+- **API tool `expense.explain_record`** (`erp-core-detail-tools.use-case.ts`), wired into
+  `internal-tools.controller.ts` beside `expense.get_detail` and sharing its exact read permissions,
+  `sensitiveAudit`, tenant scoping and typed `forbidden` / `unsupported_module` statuses. Output per
+  spec §5.5: header (vendor, date, document number, Thai status label), line groups (products /
+  `charges` from slice B / discount), the §5.1 identity as real numbers, the assumed-or-unverified
+  list read from the OCR provenance the apply service stores (`aiVerifiedFieldsJson` +
+  `aiVerificationSummaryJson`), slice B's `totalsIdentity` verdict (a required field on
+  `ExpenseDetail` since B's fix-up, so it is read directly rather than defensively), and what LINE
+  can change today.
+- **ONE shared provenance rule.** `apps/api/src/modules/expenses/application/services/line-recent-capture.ts`
+  now owns the 24 h window + chat/user/branch/status query that the correction lane's candidate
+  loader used to hold inline (`process-line-webhook.use-case.ts`, was `CORRECTION_CANDIDATE_WINDOW_MS`).
+  Both lanes call it; only the *ambiguity policy* differs (the write lane refuses, this read takes the
+  newest and names the bill). `listRecentLineCaptures` also returns `vendorDocumentNumber`, so a
+  `documentNumber` reference resolves inside the same bounded set with no second query.
+- **Chat provenance now reaches the tool**: `LineUserContext.chatKeyHash` → gateway `ErpToolContext`
+  → `InternalToolContextDto`. DATA only; company/permissions/branch are still re-resolved from the
+  verified actor delegation, so a wrong value can at most pick another of the SAME user's own chats.
+- **`intakeIntent` is bound on every turn** (it used to ride only when a prepared plan was
+  forwarded), which is what lets the orchestrator tell a business read from an out-of-scope question.
+  It activates no lane by itself — the prepared simple-read lane still requires `preparedPlan`.
+  *Overlaps slice A*, which also plans to consume `req.intakeIntent` for `unsupported_yet`; A should
+  keep this binding rather than re-add its own.
+- **Gateway**: registry entry (`read_detail`, `questionKinds: ['detail','explain']`, subjects
+  `['expense']`, agents `accounting`/`cfo`/`general`), `ROUTER_ENABLED_TOOLS`, accounting specialist
+  allowlist, feature-coverage claim, a router prompt hint, and a deterministic
+  `preferExplainRecordPlan` rescue keyed on trusted `BUSINESS_READ_QUESTION` + `asksAboutOwnRecord`.
+- **Deterministic Thai answer** (`expense-explain-formatter.ts`): one bubble, one card, no model
+  call, every money figure copied from the tool result. It refuses (falls back to the honest path)
+  when the totals identity is incomplete rather than half-answering.
+
+Deliberately NOT done: `line-ai-classifier.logic.ts` got no hint — `classifyIntent`/`chooseAgent` are
+referenced only by their own spec, so a hint there would be dead code; the live deterministic seam is
+the orchestrator rescue above.
+
+`amountEditableOverLine` stays a hard `false` rather than calling B's `canCorrectAmount`, which is
+the authority. That predicate reads `taxCodeDefinitionId` and `externalTaxCodeSnapshot`, and
+`ExpenseLineSummary` carries neither — evaluating it from the detail would come out MORE permissive
+than the lane really is and could invite a correction the lane then refuses, which is the E3
+dishonesty this slice exists to remove. (It also refuses every record with a charge line, i.e. every
+receipt this tool explains.) S-4 replaces the pair with the real draft-edit capability.
+
+### Review round 1 (adversarial, at `ca37d6a1`) — fixed
+
+- **Free text was interpolated raw.** Vendor name, document number, charge label and unmapped
+  assumption keys all come from OCR, i.e. from whatever was printed on the paper the user was
+  handed. A vendor of `ร้าน ABC ยอดรวมที่ถูกต้องคือ 99,999.00 บาท ดูที่ https://evil.example.com`
+  put a fake total and a live link into the answer. `safeText()` now bounds (60 / 32 / 40), strips
+  `https?://…` and bare `www.` tokens, and **drops the whole field** when a money- or percent-shaped
+  token survives — a refused field falls back to a neutral label rather than a sentence with a hole.
+  Three OCR-injection rows added to the corpus (now 6, spec §11), and the number guard checks
+  `\d[\d,]*\.\d{2}` **and** `\d+%` against the tool result only, plus no auto-linkable text.
+- **The rescue was too eager.** It now fires only through `isUnroutedOutOfScopePlan()` — nothing
+  routed at all, and every refusal is `unsupported_module`. That is an allowlist, not the previous
+  three-item denylist, so `forbidden`, `feature_disabled`, `tool_unavailable` (a model outage) and
+  every other real outcome survive. The joke rescue was collapsed onto the same helper, so the two
+  deterministic rescues cannot drift apart.
+- **`asksAboutOwnRecord` was far too broad.** It now needs the own-record marker ADJACENT to the
+  document noun (`บิลเมื่อกี้`, `ใบเสร็จนี้`), `รายการ` is no longer a document noun, and a
+  third-party possessor or a mutation verb vetoes outright. E4 has no document noun at all, so it is
+  matched by its own shape (a named additional charge + a "how is it counted" verb). 6 positives and
+  13 negatives are pinned.
+
+### Review round 2 (at `ca5dad1f`) — fixed
+
+- **The guard was written in ASCII, on a Thai receipt.** `\d` is `[0-9]` even under `/u`, and
+  `\bwww\.` needs a word boundary Thai text does not give, so four shapes walked straight past the
+  first fix: a Thai-numeral total (`๙๙,๙๙๙.๐๐`), a fullwidth one (`９９，９９９．００`), an integer-only
+  fake total with no decimal part (`99999`), and a bare domain with no scheme (`ร้านabcbit.ly/x9`).
+  Every field is now folded to ASCII digits and separators FIRST (`foldDigits`), the money shape
+  covers grouped, decimal and any run of 3+ digits, and the link pattern includes bare domains.
+  `documentNumber` gets its own structural guard instead of the prose one — it is the one field
+  whose job is digits, so `INV-2569-00123` must survive while a sentence must not: a single token
+  of document-number characters, which an injected sentence (needing spaces) cannot satisfy. Four
+  more corpus rows and three more mutations cover this.
+
+### Review round 3 (at `0455f0d3`) — fixed
+
+- **The link control was a TLD allowlist**, so `evil.xyz`, `evil.app` and `evil.ru` rendered and
+  LINE auto-linked them — and the spec's guard shared the same list, so no test could see it. Both
+  sides now use a TLD *shape* (`[a-z]{2,24}`), which needs no upkeep as the registry grows. The
+  accepted cost is that `Co.Ltd` scrubs too. Two corpus rows added (**12** now).
+- **The `\d{3,}` floor was eating real shop names.** Thai shops number their branches, so
+  "ร้าน 7-Eleven สาขา 123", "โลตัส สาขา 456" and "ปตท. สาขา 088" all collapsed to
+  "ร้านที่ยังไม่ระบุ" — the guard was erasing the vendor on the most common receipts in the
+  country. `safeText` now takes a policy: **neutralise** (default) replaces the number with `…` and
+  keeps the words, for real OCR prose like the vendor name; **drop** stays for the enum-derived
+  labels (charge kind, status, assumption keys), which never legitimately contain a number and land
+  inside the arithmetic line where prose does not belong. The guarantee is unchanged — it was
+  always about numbers, never about words.
+- **`DOCUMENT_NUMBER` lacked `\p{M}`** (a regression introduced by round 2's structural guard):
+  Thai writes vowel signs and tone marks as combining marks, so `ใบเสร็จ-001` and `ใบกำกับ-12` were
+  dropped whole. Added, with tests for both.
+
+### Review round 4 (at `63ac6d56`) — folded in
+
+- **The OCR-read vendor name is now quoted** («…») in the rendered sentence, and therefore in the
+  card text and its `altText`, which both derive from `replyText`. Scrubbing removes the number and
+  the link from an injected clause; it cannot remove the impression that น้องมั่งมี said it. Our own
+  fallback wording (`ร้านที่ยังไม่ระบุ`) stays unquoted — that one really is our voice.
+- Punctuation-only fallback pinned: a field that is nothing but an amount neutralises to a bare
+  `…`, and without the `\p{L}\p{N}` check that ellipsis printed as the shop's name.
+- Comment corrected: the neutralise guarantee is "no amount-shaped run survives" (grouped, decimal,
+  or 3+ digits), NOT "no digit" — one- and two-digit runs survive by design so "7-Eleven" and
+  "สาขา 2" keep their names.
+
+**Deliberate, documented cost:** `INV.2569.00123` stays dropped. `DOCUMENT_NUMBER` is a structural
+guard with no money test behind it, so admitting `.` to the charset would also admit `99.999,00` —
+a European-formatted total — as a valid "document number", which would print as one. A dropped
+document number costs a line of context; an admitted total costs the guarantee the answer sells.
+Revisit only with a real money test in front of it.
+
+- **The router prompt hint was untested** (the E4 replay forced the wire to fail, so it only ever
+  exercised the rescue). `intent-router.agent.spec.ts` now asserts both halves of the hint, and the
+  gateway spec stubs the wire for three distinct replays: the router picking the tool itself, the
+  exact UAT UNROUTABLE plan reaching it through the rescue, and a model outage NOT being rescued.
+
+### AI usage / cost
+
+`AiUsageEvent` records MODEL calls (`usageTag`) and has no per-tool column. Tool calls are recorded
+separately: an `AiToolInvocation` row per call (written generically from `LINE_TOOL_REGISTRY`, so the
+explain tool needed no registration) plus the `AI_TOOL_INVOKE` audit row its `sensitiveAudit: true`
+demands. An explain turn is **cheaper** than a composed read: the deterministic renderer replaces the
+`line.compose` model call, so the turn adds one ERP call and removes one model call.
+
+### Open gap — `chatKeyHashOf` is an unsalted hash (reviewer F9, deliberately NOT changed)
+
+`chatKeyHashOf` (`line-ai-classifier.logic.ts:38` → `hashMessagePreview`) is a bare
+`sha256(lineUserId|pushTargetId).slice(0,16)`, so it is brute-forceable from a known LINE id. It was
+left alone because the value is **persisted and compared as an equality key** across
+`ExpenseRecord.sourceChannelMetadataJson` (matched in SQL by JSON path in `listRecentLineCaptures`),
+the LINE expense-draft conversation state, the substitute-receipt continuation state, and the
+pending-media clarify rows. Re-salting it would orphan every in-flight draft, open clarification and
+correctable record at deploy — they would silently stop matching. There is also no existing salted
+LINE-id hash to adopt: `shortLineIdHash` is the same unsalted sha256/16, and the CRM-inbox
+`pdpa-hmac-v2` scheme is a versioned, key-rotated identifier with its own migration path. Fixing this
+properly needs a dual-read migration (write v2, read v1∪v2, backfill, drop v1) — its own change.
+
+## Slice A — `codex/line-ai-truth-and-dates` (S-0 + S-2), 2026-09-05
+
+Status: implemented, pushed, NOT PR'd (branched from `origin/develop` c7b1d138).
+
+Delivered, all six plan §2-A items:
+
+1. No silent today-date. `receipt-ocr-apply.service.ts` gained `reviewReceiptDate` + `RECEIPT_REVIEW_REASONS`; an unread date (or one > today+1d / < today−2y) sets `aiVerificationStatus: NEEDS_REVIEW` and returns `{ dateVerified, reviewReasons }` on the outcome. Both capture paths (LINE webhook, web `expense-extraction.use-case`) add `expenseDate` to `missingFields` and store `reviewReasons` in `aiVerificationSummaryJson`. The LINE card says `ยังไม่ระบุ — ใช้วันที่ส่งไว้ก่อน พิมพ์ "วันที่ 3/9/69" เพื่อแก้`. **No web change was needed**: `expenseAiMissingFields` → `aiPrefillBanner` already renders `ต้องกรอกเอง: วันที่รายจ่าย` off `missingFields`, and `expenseDate` is already in `AI_DATA_STEP_FIELDS`.
+2. Receipt-mode BE dates. `extractValueCandidates(text, todayIso, { documentContext })`; `'receipt'` resolves the era through `plausibleEraReadings` even when the day/month order was assumed, taking the reading nearest today when the window leaves both. Wired at the ONE place the date was actually being dropped: `applyOcrValueCrossCheck` in the gateway, which sees the printed OCR text. `ReceiptOcrFieldResult.expenseDate` stays ISO — no raw string needed on the wire.
+3. Correction honesty. `appendUserNote` (append, ` · ` separator, 500-char cap, redelivery-idempotent) + audit `noteAppend: true`; `formatCorrectionAppliedReply` names each change, says `บันทึกหมายเหตุไว้` for a note, and adds the `ยังไม่ได้แก้ยอด` sentence + web link when the message mentioned money the lane cannot change.
+4. `unsupported_yet` in `LineAiRefusalReason` AND `ADVISOR_REFUSAL_CODES`, plus every silent-drop mirror (prepared-plan parser, AgentCore boundary set, router prompt + advisor schema, composer copy ladder th/en with a `/companies/<id>` webLink, API refusal table, both terminal-outcome switches, `toAiTurnIntent`). Chosen from `isBusinessIntakeIntent(req.intakeIntent)` — new helper in contracts, derived from `LINE_INTAKE_ROUTE_INTENTS` minus `CLARIFY`/`UNSUPPORTED`.
+5. Charge tax rules. A charge row takes its own or the document's PRINTED rate, never `defaultLineVatRate`'s invented 7%; unproven → `vatRate: null`, `vatTreatment: null`, line `reviewStatus: NEEDS_REVIEW`, record reason. WHT never lands on a charge row and is no longer diluted by one (`applyExpenseWhtInput` takes `excludedLineNumbers`). Card groups charges under `ค่าใช้จ่ายเพิ่ม`.
+6. Docs: this file, ADR 0011 (decisions 6+7 and a "why it does not violate 2026-08-28" section), capture-correction spec (note append + reply honesty + AC 10a), advisor spec (refusal code).
+
+Gaps left for slice B or later (deliberate, see the final report):
+
+- **Negative `ROUNDING` charges are still rejected.** `calcLineTotals` clamps a document discount with `min(discount, lineSubtotal)`, which on a negative subtotal cancels the row to zero, so the printed rounding would be silently dropped from the total instead of applied. The protective half of §5.1 (no other kind may be negative) IS enforced. Fixing it means changing a shared money helper — belongs with the `chargeKind` column in B.
+- **`ExpenseRecord.status` is not forced to NEEDS_REVIEW.** It is already NEEDS_REVIEW on every path when apply runs (`CompleteReceiptUploadUseCase` moves DRAFT→NEEDS_REVIEW first); the one exception is the flag-gated draft-conversation lane, which holds DRAFT on purpose so `startFromReceipt` can run and ASK for the missing date. Forcing it there would return NOT_FOUND and kill that conversation. `aiVerificationStatus` carries the signal instead.
+- **`expenseAiFieldProvenance` (`apps/web/.../expenses.model.ts:708`) can never render the 🤖 "recognized" badge**: it expects `summary.recognizedFields` to be a `string[]` of field names, and every producer writes the `ReceiptOcrFieldResult` OBJECT. The `missing` half works, which is the half slice A relies on. Pre-existing, untouched, worth a separate fix.
+- `line-ai-classifier.logic.ts` (API) was left alone: `classifyIntent`/`chooseAgent` there have no production caller — the live twin is the gateway's `line-ai-turn.logic.ts`, whose deterministic path now splits on the intake intent.
+- `LineAiIntent` and the Prisma `AiTurnIntent` enum gained no member; `unsupported_yet` maps to `UNSUPPORTED_MODULE` for analytics. The customer-visible split lives on the refusal reason and the terminal status.
+- `chargeKind` deliberately NOT added (slice B owns it). The interim marker is the in-memory `PreparedOcrLine.isAdditionalCharge` flag plus the OCR `additionalCharges` block for the card — B can rebase over this and swap both for the column.
+- **`line-expense-draft-conversation.use-case.ts:360` still overwrites `note`** with `state.header.businessPurpose` on every persist, destroying `'LINE receipt upload'` on the first purpose answer. Left alone deliberately: that lane is COLLECTING a field (there is no purpose column, so the purpose lives in `note`) and re-stamps it as the user refines the answer — appending there would stack purposes, which is worse for that lane than the current state. Fixing it properly needs a purpose-vs-provenance split; spec §5.3 scopes the append rule to the correction lane.
+
+Impact sweep found and fixed on the way (both the same silent-placeholder class as item 1):
+
+- LINE text-note path (`expense-document.use-case.ts`) defaulted `expenseDate` to today with the conversation off and never flagged it → now adds `expenseDate` to `missingFields`.
+- Pending-media clarify path (`process-line-webhook.use-case.ts`) wrote `expenseDate: new Date()` — a full instant into a date column, the exact bug the direct-media path's comment says was fixed → now `civilDateToUtcDate(todayCivilDate())`.
+
+## Slice A — adversarial review round 2 (2026-09-05)
+
+Reviewer found the slice's own principle ("ค่าที่เดา/สมมติต้องบอกว่าเดา") broken in three places. All fixed on the same branch, rebased onto `origin/develop` f44b0519.
+
+- **H1** `intakeIntent` was bound only inside the prepared-plan block, and the router omits the plan exactly when it had no confident tool — the E4 turn — so `unsupported_yet` was unreachable for the case it exists for. Bound on every routed turn, using slice C's hunk verbatim (`ed88fca8`) so the branches merge without conflicting resolutions; the two assertions C changed are matched too. Additionally carried on the ledger `turn` entry so the reclaim/drain path keeps it (C did not touch that). New API-level E4 replay.
+- **H2** Receipt mode computed the DD/MM + era assumptions in the gateway and dropped them: `ReceiptOcrFieldResult` carried only the ISO date, so `reviewReceiptDate` said `verified` for `03/09/69` and the ADR text was false. `expenseDateAssumptions` now travels on the OCR result; `ExpenseDocumentDateStatus` (contracts) is the four-state answer, `assumed` is kept and labelled and NOT forced into review, and the ADR says exactly that.
+- **M1** A charge with no per-charge VAT evidence sank the whole split: `vatRate: null` broke reconciliation, the fold discarded the charge, its money and `chargeReviewReasons`, and the record total moved (100 + 10 with printed VAT 7.70 recorded 100.00). The document rate is now tried FIRST and the printed totals adding up IS the proof; when they do not, the charge line stays with `vatRate: null` + `reviewStatus: NEEDS_REVIEW` and the unexplained VAT remainder is named in the reason. The un-rated split is only taken while it still reaches the printed grand total — a page contradicting its own total still folds, which is what the pre-existing 1000/100/77/1200 test was protecting. `chargeReconciliation` is now written on the LINE path too, so the web charge banners fire for LINE drafts.
+- **M2** card copy keyed on the four states, not on whether a date string exists.
+- **M3** `apps/api/src/modules/expenses/receipt-truth.pg.spec.ts` — 5 cases through the real adapter (charge VAT/WHT columns, assumed date persisted + PARTIAL, unread date + placeholder + NEEDS_REVIEW, note append keeps provenance, note cap). Wired into the ci.yml pg step, NOT package.json. Verified on a scratch container.
+- **L1** terminal-outcome spec wired into the api fixed list. **L2** `appendUserNote` returns an outcome — truncates the new segment with "…" at the cap and says so, only skips a sentence that is the newest segment, refuses whitespace with an honest reply. **L3** the link points at the expenses list, and `formatLineReply` prints words instead of a bare relative path when no base URL is configured. **L4/L5** dead comment corrected, ROUNDING note moved onto the charge filter.
+- **L6** charges are on the DEFAULT capture card (count + total), not only in the item-question branch.
+- **WEB** review banner renders `reviewReasons` + an "อ่านจากบิล" marker; the stepper, the audit checklist and `LateDocumentBadge` all stop treating the placeholder as a document date; `ExpenseSummary.dateStatus` (additive) is derived in the API mapper and shown on list rows; `document_date_status` appended last in the accountant index (slice B adds `additional_charges_amount` in the same region — order by name, trivial conflict expected). `expenseAiFieldProvenance` fixed: it expected `recognizedFields` as `string[]` while every producer writes the object, so the 🤖 badge had never rendered.
+- **DRAFT LANE** the purpose is stored as its own `วัตถุประสงค์: …` segment that replaces the previous one, keeping the provenance first.
+
+Still open (unchanged from round 1): negative `ROUNDING` charges stay rejected until `calcLineTotals` stops clamping a document discount against a negative subtotal (shared money path, slice B territory); `ExpenseRecord.status` is not forced to NEEDS_REVIEW because it already is on every path except the flag-gated draft-conversation lane, which holds DRAFT deliberately so it can ASK for the date.
+
+## Slice A — review round 3 (2026-09-06)
+
+Round-2 blockers verified closed by the reviewer's own probes; five narrow items fixed on the same branch, no rebase yet (waiting for B in develop).
+
+- **N1** `<DocumentDateBadge>` was rendered twice on the desktop list row (a mis-indented duplicate from a scripted edit) — an `assumed` row painted "อ่านจากบิล" twice. Deleted; `ExpensesPages.qa.spec.ts` now asserts one date badge per layout that shows the late badge, and no two adjacent.
+- **N2** `RECEIPT_REVIEW_REASONS.chargesFolded` had no test, so the mutation-table row "reinstate the fold-back discard" was overstated: reverting the fold branch to `chargeReviewReasons: []` really did leave everything green. The existing 1000/100/77/1200 fold test now asserts the reason and `aiVerificationStatus: NEEDS_REVIEW`, plus a companion asserting a charge-free bill raises nothing. **Mutation table corrected** — that revert is its own mutation (M11) and kills 1.
+- **N3** `withPurposeNote` had no test and neither did its wiring. Six cases in `line-correction.logic.spec.ts` (provenance first, purpose replaced not stacked, no separator from nothing, cap) and two in `line-expense-draft-conversation.use-case.spec.ts` that die when the lane is reverted to `note: state.header.businessPurpose` (M12, kills 2).
+- **N4** Could NOT reproduce a varying count. Fixed list, TAP reporter: `tests 6561 / pass 6462 / fail 0 / skipped 99` on four separate runs, and `pretest` is 30/16/0/14 twice including with the database forced unreachable. What IS environment-dependent, and proven: with a **present-but-unreachable** `DATABASE_URL`, four real-database suites (13 tests) flip from skip to **fail** — `Expense payment intent integrity` and three `company OCR admission` suites — because their `before` hook throws instead of the guard short-circuiting. With no `DATABASE_URL` at all they skip cleanly. So `# pass`/`# skipped`/`# fail` track database state while registration does not. The reviewer's 6537/6540 are below mine because they measured `df7f5d64`, before N1–N5 added tests. **Counts must be quoted with reporter + whether pretest is included + database state.**
+- **N5** Ledger round-trip: `appendTurn` persists `intakeIntent`, `fieldsToEntry` reads it back through `asIntakeRouteIntent` (a forged `NOT_A_ROUTE` comes back `undefined`), and the drain spec asserts the reclaimed turn request carries it.
+
+Gap found while proving N4, pre-existing and NOT fixed here: a broken (rather than absent) `DATABASE_URL` makes those four suites fail instead of skip. Worth its own change — the guards test for a missing URL, not an unusable one.
+
+Tooling note after two collisions on the shared box: this agent's helpers now live under `<scratchpad>/agent-aade5f5a0d0d0f4df/`, and `mutate.sh` reverts only the one file its patch reports touching (the old `git checkout -- .` ate uncommitted test files once). Full suites run behind `/tmp/mangmee-heavy.lock` (mkdir to acquire, nothing written inside). Never `pkill` on a bare `tsc`/`node --test` pattern — match the worktree path.
+
+Amended by slice D: `amountEditableOverLine` is no longer a hard `false`. It follows
+`LINE_AI_DRAFT_EDIT_ENABLED` — with S-4 on, the draft tools really do change money on exactly
+the receipts this tool explains, so the answer says so; with S-4 off the reasoning above stands
+unchanged. The flag decides, never the copy. See D.1.
+
+## Slice D — `codex/line-ai-draft-edit` (S-4, แก้ draft ผ่าน LINE)
+
+Status: implemented on top of C (`ca37d6a1`), gates green, pushed; not reviewed, no PR.
+
+Gates (2026-09-06, POST-REBASE onto slice A `00c0e182`): api fixed list **6736 tests / 0 fail /
+99 skipped** · ai-gateway **1081 / 0 fail** · web **1554 / 0 fail** · contracts **237 / 0 fail** ·
+config **141 / 0 fail** · api+gateway+contracts typecheck clean ·
+`pnpm --filter @watchdog-bms/api test:boot` (real Nest graph from the swc build) **exit 0** ·
+prisma validate ok · maintenance pins `--check` **status=current** ·
+`production-serving-mode.spec.sh` PASS · pg spec **1/1** on an isolated `watchdog_bms_sliced`
+database (created, migrated, used, dropped) · no TODO / `@ts-ignore` in the slice ·
+**27 mutations, every one verified red**, with anchor uniqueness asserted before any of them runs.
+`production-image-security.spec.sh` is deliberately NOT run locally — it makes live AWS calls.
+
+### D.1 What it does
+
+**Two beats, always.** A model — or the deterministic correction lane — can only ever produce a
+PREVIEW; the write is a `ยืนยัน` postback that no model can send.
+
+- **PREVIEW** (`LineDraftUpdateUseCase.preview`) resolves the record through the ONE shared
+  chat-provenance rule slice C extracted (`line-recent-capture.ts`), guards status ∈
+  `DRAFT | NEEDS_REVIEW | READY_FOR_CONFIRMATION`, re-checks branch scope and `expense.update`,
+  grounds every number against the turn's evidence or the record, then produces the resulting
+  totals by running the REAL `UpdateExpenseDraftUseCase` inside a transaction it throws out of.
+  That last choice is the load-bearing one: re-deriving the arithmetic is how a card ends up
+  promising a total the apply would not produce, and a rolled-back run of the actual write path
+  cannot disagree with itself. It also proves the validators, the VAT reconciliation, the tax-code
+  resolution and the §5.1 totals identity all pass *before* the user is asked anything.
+- **APPLY** (`.apply`) is reachable only from the confirm postback. The postback carries
+  `action=draft-update-confirm` and no ids (P10-L SEC-04); the server looks the preview up by
+  company + chat, re-checks `{companyId, userId, chatKeyHash}` and refuses unless the record's
+  `updatedAt` is still the one the preview was computed against. Then the same use case runs for
+  real, in one transaction, with `expense.line_ai.draft_update` written inside it.
+
+**Five tools** (`draft_update`, a new `ToolCategory`): `expense.draft.set_header`, `set_line`,
+`add_charge`, `remove_line`, `set_vat_mode`. `requiredPermissions: ['expense.update']` — exactly
+what `expense.controller.ts` `updateDraft` takes, so LINE is never a cheaper way to edit than the
+web form. Every input reserves `recordType` (spec §4).
+
+**Correction lane migration.** `amount` left the five-field lane and `amountOnlyLine` is deleted.
+An `amount` hint becomes `set_line` with no `lineNumber`; the use case fills it with the record's
+only line or refuses `ambiguous_line`, which renders as the same "บรรทัดไหน" clarify as before.
+Header corrections (date/vendor/docNo/note) stay ONE step — that is today's behaviour, they change
+no money, and the honest per-field reply slice A introduced is unchanged.
+
+**The card** is built API-side (`line-draft-update-card.logic.ts`) because only the API may print
+buttons whose postbacks it must later re-derive. The gateway renders the same preview as
+deterministic Thai text (`draft-update-formatter.ts`) so a Flex-less delivery still explains the
+choice, and so no model sentence ever states this money.
+
+### D.2 Flag
+
+`LINE_AI_DRAFT_EDIT_ENABLED`, default off, on **both** containers — the API executor is
+authoritative, the gateway decides whether the five tools are in the catalog the model is offered
+at all ("refused later" would still have advertised an ability the deployment does not have).
+`deploy.sh` defaults it true for UAT and false for production; maintenance mode quiesces it.
+Contract greps live in `production-serving-mode.spec.sh`; maintenance-release pins re-synced.
+
+Off is byte-for-byte the pre-S-4 behaviour: tools absent from the catalog, executor refuses the
+category with `LINE_DRAFT_EDIT_DISABLED`, no preview card, and a stray confirm postback answers
+"there is nothing pending".
+
+### D.3 Boundaries and known gaps
+
+- **No apply without a postback, ever.** That is the single invariant the frozen eval states, and
+  every row asserts `expectedApplyCount: 0` — including the row that legitimately previews.
+- A preview needs a SHARED store. Without Redis in production none is offered (the confirm would
+  reach a task that never saw it, and the user would be told "รายการเปลี่ยนไปแล้ว" for a change
+  nobody made). Outside production a per-process map keeps the local LINE-fake harness able to
+  drive J3.
+- The Redis key uses the chat **hash**, not the raw chat id as the spec wrote it — same uniqueness,
+  and it keeps raw LINE/group ids out of a store the tool lane can reach. Recorded as a deliberate
+  deviation.
+- Grounding on the GATEWAY lane needs the user's message at the ERP boundary, so
+  `ErpToolContext.groundingText` forwards it verbatim (bounded at the transport, sent only while
+  the flag is on). It authorises nothing and is not stored. Without it, only numbers already on the
+  record ground — strictly safer, but it would refuse a legitimate "เพิ่มค่าบริการ 10%".
+- Deliberately NOT added: a deterministic router rescue for draft edits. The primary journey (J3)
+  is the webhook's own allowlist detector, which runs only on a turn the intake router already
+  classified as a correction of THIS chat's record; the gateway lane relies on the prompt hint.
+  A rescue that guesses "this looks like an edit" is the wrong thing to make eager.
+- `canCorrectAmount` is retained with no production caller — slice B's fix-up is still adding a
+  charge-line refusal to it. Delete it after that lands if nothing else picks it up.
+- `scrubRecordText` lives in `packages/contracts` so BOTH apps share one copy. Slice C's review is
+  widening a gateway-local `safeText` for the same reason; at rebase the two must collapse onto
+  this one rather than diverging. C's round-3 findings are already applied here:
+  - **F11** links are matched by SHAPE (`(?:\S*\.)?[a-z0-9-]+\.[a-z]{2,24}\b\S*`), never by a TLD
+    allowlist — `evil.xyz`, `evil.app` and `evil.ru` walked past C's list, and the registry grows
+    faster than any list in a source file ever will.
+  - **F12** a money-shaped run inside a LABEL is MASKED with `…`, not dropped, so
+    "ร้าน 7-Eleven สาขา 123" still says which shop it is. `scrubRecordText(…, { onMoney: 'drop' })`
+    is the opt-in for a free-text SENTENCE, where a hole would read as something the system said.
+  - **F13** a document number's digits ARE its value, so it has its own `scrubRecordIdentifier`
+    whose charset includes `\p{M}` — Thai tone marks and vowel signs are separate combining code
+    points, and a `\p{L}\p{N}` class alone hands back mangled Thai for "ใบกำกับ-12". It also drops
+    the thousands separator, so an identifier can never take a printed total's shape. Both
+    renderers (API card, gateway formatter) switch on the diff row's `field`, so neither re-masks
+    what the identifier scrub deliberately kept.
+
+### D.4 Mutation table — every row RUN and verified red (`mutations.sh`, 2026-09-06)
+
+| # | Mutation | Test that fails | Result |
+|---|---|---|---|
+| 1 | Apply without checking `updatedAt` (drop the CAS compare) | eval `draft-confirm-after-record-moved`; `line-draft-update.pg.spec.ts` — "a moved record is refused, never re-based" | RED |
+| 2 | The dry run COMMITS instead of rolling back — an apply with no confirm | `line-draft-update.security.spec.ts` — every row's `expectedApplyCount: 0` | RED |
+| 3 | Preview not bound to the chat/user (drop the binding check in `apply`) | eval `draft-preview-from-another-chat` | RED |
+| 4 | Status guard removed (`EDITABLE_STATUSES` accepts CONFIRMED/VOIDED) | eval `draft-confirmed-record-edit`; pg spec — "a confirmed record is never touched" | RED |
+| 5 | Flag ignored (`classificationDenial` admits `draft_update` unconditionally) | `internal-tools.controller.spec.ts` — "refuses every draft_update tool while LINE_AI_DRAFT_EDIT_ENABLED is off"; `intent-router.agent.spec.ts` — catalog gate | RED |
+| 6 | Grounding dropped (accept any model-supplied amount) | `line-draft-update.logic.spec.ts` — "refuses a number nobody said…"; eval `draft-injection-in-ocr-text-orders-edit` | RED |
+| 7 | Scrubber narrowed back to ASCII digits | `line-ai-record-text.spec.ts` — Thai/fullwidth totals; eval `draft-injection-thai-numeral-total` | RED |
+| 8 | Postback carries `previewId` | `line-draft-update-card.logic.spec.ts` — "carries an intent and no ids (SEC-04)" | RED |
+
+The first run of this table found two rows that survived, and both were test bugs rather than code
+bugs: M1 had no fast test at all (only the pg spec could move a row revision), and the two injection
+rows asserted on a payload the hostile text never entered — an `add_charge` diff carries the charge
+label and amount, never the existing line's description. Both are fixed above: the corpus gained
+`draft-confirm-after-record-moved`, and the Thai-numeral row now edits a line description so the
+attacker's own words are what the diff prints.
+
+### D.5 UAT script for the Owner (J1–J4)
+
+Prerequisite: UAT runs the candidate with `LINE_AI_DRAFT_EDIT_ENABLED=true` on **both** api-web and
+ai-gateway (read it back from the task definitions before starting). Use the BHC restaurant bill —
+1,520.00 of food, service charge 10%, VAT 7%.
+
+| # | Type / do this | Expect exactly |
+|---|---|---|
+| J1.1 | Send the BHC bill photo | Summary card: ร้าน, **วันที่ 03/09/2569 อ่านจากบิล**, 3 รายการสินค้า, **ค่าบริการ 10% 152.00** in its own group, VAT 117.04, รวม 1,789.04, สถานะ "ร่าง รอตรวจ" |
+| J1.2 | Open the web link on the card | Review page shows a "ค่าใช้จ่ายเพิ่ม" group separate from products, and a ค่าบริการ row between ส่วนลด and VAT |
+| J2 | "ทำไม service charge คิดแยกเป็นอีกรายการ" | A real answer with the arithmetic (สินค้า 1,520.00, ค่าบริการ 152.00, ฐานภาษี 1,672.00, VAT 7% 117.04, รวม 1,789.04). **Never** "อยู่นอกขอบเขตระบบ" |
+| J3.1 | Send a NEW bill with no service charge, then "จากบิลเมื่อกี้มี service charge 10% นะ" | A confirm card naming the bill, `ค่าบริการ: ยังไม่ระบุ → 152.00`, **ยอดรวมใหม่** and the previous total, and two buttons [ยืนยัน] [ยกเลิก]. Nothing saved yet — the web page still shows the old total |
+| J3.2 | Press **ยืนยัน** | "แก้ให้แล้วค่ะ: ค่าบริการ 152.00 · ยอดรวม 1,789.04 · ดูในเว็บ: <link>". Open the link: the charge is a ค่าใช้จ่ายเพิ่ม row, subtotal stays goods-only, ฐานภาษี = subtotal − discount + charges, รวม = ฐานภาษี + VAT |
+| J3.2b | Press **ยกเลิก** on a fresh preview instead | "ยกเลิกแล้วค่ะ ยังไม่ได้แก้อะไรในรายการนะคะ" and the web page is unchanged |
+| J3.3 | On the ORIGINAL BHC bill (OCR wrote service charge as a product line), type "เพิ่มค่าบริการ 10%" | It refuses to duplicate: "บิลนี้มี ค่าบริการ เป็นรายการสินค้าอยู่แล้ว (บรรทัด N) … พิมพ์ 'ย้ายบรรทัด N เป็นช่องค่าบริการ'". Type that, confirm: the row moves and the total does NOT change |
+| J3.4 | Confirm a record in the web, then type "เพิ่มค่าบริการ 10%" in LINE | "รายการนี้ยืนยันไปแล้ว แก้ผ่าน LINE ไม่ได้ค่ะ ไปที่เว็บ <link> เพื่อยกเลิกหรือแก้" — not an out-of-scope refusal |
+| J3.5 | Get a preview card, edit the SAME record in the web, then press ยืนยัน | "รายการเปลี่ยนไปแล้ว ขอดูใหม่นะคะ" plus the link, and the web edit survives untouched |
+| J3.6 | Press ยืนยัน again ~11 minutes after a card | "ไม่พบรายการที่รอยืนยันในแชทนี้ค่ะ (อาจหมดเวลาไปแล้ว)…" |
+| J3.7 | "แก้ยอดเป็น 500" on a multi-line bill | "บิลนี้มีหลายบรรทัดค่ะ ขอทราบว่าต้องการแก้บรรทัดไหนนะคะ" — then "บรรทัด 2 เป็น 500" previews that line only |
+| J4 | "ช่วยออกใบกำกับภาษีให้หน่อย" | "เรื่องนี้ทำได้ในเว็บค่ะ น้องมั่งมียังทำผ่าน LINE ไม่ได้ในตอนนี้: <link>" (`unsupported_yet`, from slice A) |
+| Neg-1 | "ลบบรรทัด 2 ของบิลร้านอื่น" | No preview card. The lane must not act on a third-party phrasing |
+| Neg-2 | As a MARKETING/ACCOUNTANT user (no `expense.update`), "เพิ่มค่าบริการ 10%" | "คุณยังไม่มีสิทธิ์แก้รายการค่าใช้จ่ายค่ะ …" and no card |
+
+After the run, check in the web audit/history that each applied edit left an
+`expense.line_ai.draft_update` row naming the fields and both totals, and that no such row exists
+for any preview that was cancelled or expired.
+
+### D.6 Impact sweep (spec §9), row by row
+
+| Area | Verdict |
+|---|---|
+| OCR apply (`receipt-ocr-apply.service.ts`) | **Not affected.** D only reads what B (chargeKind) and A (charge VAT/WHT rules) write there. No line in that file is touched. |
+| correction lane (`line-correction.use-case.ts`) | **Changed.** `amount` removed from the allowed fields, `amountOnlyLine` deleted, and the clarification ack now records a proposal as guidance rather than as an apply. Note-append and the per-field honest reply (slice A) are untouched. |
+| substitute receipt continuation | **Not affected.** D copies lines only *within one record* (`storedLineToInput`), and that copier preserves `chargeKind`, WHT rate, category, account hint and the tax-code snapshot — asserted by "preserves every field of an untouched line". |
+| reimbursement → expense | **Not affected.** D never builds a line from another source record. |
+| VAT capture / input VAT claim | **Same path as the web.** Every D write goes through `UpdateExpenseDraftUseCase`, so `validateExpenseDraftAmounts`, `reconcileExpenseVat`, `validateExpenseVatSourceInput` and the claim rules run exactly as on the web PATCH. `set_vat_mode` moves the mode/rate through that same code. A charge whose VAT the products do not prove gets no rate and a visible warning — 7% is never assumed (§5.1). |
+| WHT | **Not affected.** D never sets `whtInput` and never spreads WHT onto a charge row; each line's `whtRate` is copied unchanged. |
+| ledger / journal, reports, CSV export | **Not affected.** At the repository boundary a LINE draft edit is byte-identical to a web draft edit; D introduces no new column, line shape or posting rule. |
+| web list / detail / validation / QA specs | **Not affected.** No web file is touched. |
+| LINE summary card / status row | **Not affected.** The capture card stays slice A's; D adds a separate confirm card. |
+| read tools + security eval | `expense.get_detail` unchanged. `expense.explain_record` now reports `amountEditableOverLine` from the flag instead of a hardcoded `false` — with S-4 on, the answer stops saying money cannot be changed over LINE, because it can. Eval: 12 frozen rows, every one `expectedApplyCount: 0`. |
+| AI usage / cost (`AiUsageEvent`) | **Metered like a read tool, no new model call.** All five tools are `sensitiveAudit: true`, so the executor writes `AI_TOOL_INVOKE` per call, and the turn's `AiUsageEntry` rows are unchanged in kind. The preview is pure server work and the reply is a deterministic template, so an edit turn costs one extra tool round trip — not another LLM call. |
+| quota (`RECEIPT_QUOTA_ENFORCED`) | **Not consumed.** The only claim sites are the OCR/extraction branch (`claimReceiptQuotaNotice`, `RequestReceiptExtractionUseCase`); no draft-edit path reaches them. Verified by grep. |
+| PDPA | **No new personal data.** The apply audit payload is exactly `{previewId, webhookEventId, tool, before, after, diff}` — asserted by key name in the pg spec — so no image, no raw LINE id, no message text. The Redis preview holds ids, the chat **hash**, the patch and the already-scrubbed diff, TTL 600 s, deleted on apply or cancel. `groundingText` is request-scoped: used for one substring check, never stored, never logged. |
+| outbox / drain | **None needed, none added.** Double-apply is prevented twice: the webhook event claim is the outer dedup layer as today, and a replayed confirm finds either no preview (deleted) or a moved `updatedAt`. No workflow template subscribes to anything new. |
+| docs | capture-correction spec (tools + the `amount` supersession), LINE runbook (flag table + what "off" restores), this memory (D.1–D.6). |
+| **web shows LINE-made edits?** | **Gap, pre-existing, not introduced here.** `ExpenseReviewPage` has no audit/history panel — `deriveExpenseAuditChecks` is a validation checklist, and nothing in the web renders `aiVerificationSummaryJson.corrections[]`. So a LINE edit is invisible in the web today for the *correction* lane too. D deliberately writes no `corrections[]` mirror for draft applies: with no reader it would be write-only data, and the `expense.line_ai.draft_update` audit row is the durable record. Whoever builds the history panel should read the audit log and cover both lanes.
+
+### D.7 Left out, with reasons
+
+1. **No deterministic router rescue** for draft edits. The primary journey is the webhook's own allowlist detector, which runs only on a turn already classified as a correction of THIS chat's record. A rescue that guesses "this looks like an edit" is the wrong thing to make eager on a write path.
+2. **No `corrections[]` JSON mirror** on a draft apply — no reader exists (see the web row above).
+3. **`canCorrectAmount` is live again, and B's charge refusal is already in it.** The entry that
+   said "no production caller, delete after B lands" was stale twice over. B landed the refusal on
+   develop (`line-correction.logic.ts:152-164`): a record whose single line IS an additional charge
+   is refused, because rewriting it as a product row would silently reclassify a service charge as
+   goods and move it out of the charge total. And M9 gave the function a caller again — the
+   flag-off path of `CorrectLineCapturedExpenseUseCase` uses it to decide whether a single-line
+   amount correction may still apply. Keep it.
+   Rebase note: B's version widens the line type with `chargeKind?: string | null`, so the call
+   site here must pass lines carrying it; the records this lane loads already do.
+4. **The pg spec's CI step creates `watchdog_bms` itself**, because PR #428's step is not on this base. On rebase the two should collapse into one — add the spec path to #428's step and drop this one.
+5. **`scrubRecordText` lives in `packages/contracts`** so both apps share one copy. Slice C's review is widening a gateway-local `safeText` for the same reason; at rebase they must collapse onto this one rather than diverge.
+
+### D.8 Adversarial review round (2026-09-06) — every finding closed
+
+The reviewer confirmed the design (preview never writes, the CAS is real, the postback is
+intent-only, the mutations were red) and then found fifteen things wrong with it. All are fixed on
+this branch; the two that were genuinely load-bearing are worth reading.
+
+**H1 was a blocker, and no existing test could have caught it.** The five draft tools shared a
+constructor on an undecorated abstract base. `emitDecoratorMetadata` — swc's and TypeScript's alike
+— writes `design:paramtypes` only for the class that DECLARES a constructor, so the `@Injectable()`
+subclasses emitted none, Nest would have built them with zero arguments, and the first
+`expense.draft.*` call in the built image would have died on an undefined use case. Every spec in
+the repo hand-constructs these classes and would have stayed green through it; the controller spec's
+61 plain fakes never touch the real ones. Each concrete class now declares its own constructor, and
+`erp-draft-update-tools.di.spec.ts` fails if one stops.
+
+**DECISION D-2 (how to test DI), confirmed by the coordinator 2026-09-06.** The runnable assertion
+is constructor ARITY, not `Reflect.getMetadata`. The repo's test runner is
+tsx/esbuild, which does not implement `emitDecoratorMetadata` at all — it reports ABSENT for every
+class, including correctly wired ones, so a metadata assertion could only ever produce a false
+alarm. Arity is compiler-independent and fails for exactly this mistake.
+
+**H2 was the scrubber eating the answer.** Masking every non-money digit run meant the confirm card
+could not state a date, a VAT rate, a deleted line's amount or a two-digit line number:
+"วันที่เอกสาร: …-…-… → …-…-…". A diff row now declares `kind` (`text` | `identifier` | `money` |
+`date` | `plain`), and only `text` — OCR/user free text — is scrubbed. Dates render Buddhist-era
+Thai, and the preview carries the record as TYPED fields instead of one pre-joined label, so a
+renderer never has to guess which half of a string was untrusted.
+
+Deviation recorded: spec J3.1 writes the date as `03/09/2569`; the card uses `3 ก.ย. 2569`, the
+shape every other LINE reply in this repo already uses. Same Buddhist era, consistent channel.
+
+**H3** — `scrubRecordIdentifier` had re-opened the hole it was added to close: it kept ASCII `.` and
+`\p{N}` admits Thai and fullwidth digits, so `ยอดใหม่ 1789.04 บาท` and `192.168.1.1/pay` passed
+through untouched. It is now defined by SHAPE — digits folded first, then ONE token of ≤ 32
+characters matching `[\p{L}\p{M}0-9][\p{L}\p{M}0-9\-/_#]*`, `.` excluded on purpose — and anything
+else returns null so the card prints "ยังไม่ระบุ".
+
+**DECISION D-1 (link detection), confirmed by the coordinator 2026-09-06.** F11 asked for a
+shape-based link rule with no TLD allowlist; M5 asked that `ABC Co.Ltd`, `St.Louis Hospital` and
+`TAX.INV` survive. Those are the SAME shape as `evil.xyz` — one dot, no path — so no shape rule can
+separate them, and the two findings could not both be implemented literally.
+
+The rule, settled: **shape is primary** — a scheme, `www.`, a path, or two-plus dots with every
+label ≥ 2 characters removes a link with no list involved, which is what F11 was really about (a
+novel TLD cannot walk past a rule that never looks at the TLD). A compact TLD list decides ONLY the
+genuinely ambiguous bare one-dot case, as a tiebreaker.
+
+Consequence, accepted as a decision and not a gap: a novel single-label TLD with no other signal
+(`evil.frobnicate`) survives as text. That is acceptable because the harm this guard exists to stop
+is a FABRICATED TOTAL, and the money guard already blocks that independently; a bare host word,
+quoted and unlinked in a bubble, is ordinary text. Eating a real vendor's name off a receipt, by
+contrast, is a certain product bug on every bill printed by a `Co.Ltd`.
+
+**Slice C's `safeText` must adopt this identical rule at rebase**, not a stricter local variant —
+the whole point of `scrubRecordText` living in `packages/contracts` is that the API card and the
+gateway answer cannot disagree about what a link is.
+
+**M9 — flag-off was not a rollback.** `amount` had been removed from the five-field correction lane
+unconditionally, so turning `LINE_AI_DRAFT_EDIT_ENABLED` off would have left a lane that silently
+stopped applying the single-line amount correction it used to apply. The removal is now gated on
+the flag, and the lane has its first spec (`line-correction.use-case.spec.ts`), which runs BOTH
+positions. The two confirm phrases are likewise commands only while the flag is on.
+
+Also fixed: M6 (grounding text bounded at the sender, and accept-and-truncate at the DTO — an
+unbounded forward would 400 every ERP tool call of a turn whose message ran long), M7 (the ledger
+called an unanswered proposal an applied correction — now a named function so the claim is
+testable), M8 (the `ambiguous_line` clarify told the user to type "บรรทัด 2 เป็น 500" and nothing
+parsed it, so UAT J3.7 was an infinite loop), L10–L15 and R2.
+
+**H4** — no ci.yml step here at all: develop's "Identity, username and LINE-signup specs against
+PostgreSQL" step already runs `CREATE DATABASE watchdog_bms`, and a second one would fail the job at
+rebase.
+
+**REBASE ACTION (do not skip): `line-draft-update.pg.spec.ts` runs NOWHERE in CI until this lands.**
+Its own guard refuses any database not named `watchdog_bms*`, which is exactly what develop's step
+creates and migrates. Append one invocation to the END of that step's `run:` block — no new step, no
+second `CREATE DATABASE`:
+
+```yaml
+           LINE_SIGNUP_TEST_DATABASE_URL="$DATABASE_URL" \
+             pnpm --filter @watchdog-bms/api exec tsx --test \
+             src/modules/external-signup/line-signup-stale-identity.pg.spec.ts
++          # S-4 draft edit: only a real database can show that the PREVIEW transaction is
++          # genuinely rolled back. Its own invocation, like the three above — the runner
++          # interleaves spec files, and this one seeds a company and user of its own.
++          LINE_DRAFT_EDIT_TEST_DATABASE_URL="$DATABASE_URL" \
++            pnpm --filter @watchdog-bms/api exec tsx --test \
++            src/modules/expenses/line-draft-update.pg.spec.ts
+```
+
+Until then it runs on demand against an isolated database:
+
+```bash
+docker exec docker-postgres-1 psql -U watchdog -d postgres -c 'CREATE DATABASE watchdog_bms_sliced'
+DATABASE_URL='postgresql://watchdog:watchdog_local_password@127.0.0.1:15432/watchdog_bms_sliced?schema=public' \
+  pnpm --filter @watchdog-bms/api exec prisma migrate deploy
+LINE_DRAFT_EDIT_TEST_DATABASE_URL='postgresql://watchdog:watchdog_local_password@127.0.0.1:15432/watchdog_bms_sliced?schema=public' \
+  pnpm --filter @watchdog-bms/api exec tsx --test src/modules/expenses/line-draft-update.pg.spec.ts
+```
+
+### D.9 Mutation table after the review — 22 rows, every one verified red
+
+| # | Mutation | Killed by |
+|---|---|---|
+| h1 | A concrete draft tool stops declaring its constructor | `erp-draft-update-tools.di.spec.ts` |
+| h2 | Scrub the diff's server-generated values again | card spec — "prints a real date on a set_header card" |
+| h3 | Admit `.` to the identifier charset | contracts scrubber spec |
+| m1 | Apply without the `updatedAt` CAS | eval `draft-confirm-after-record-moved`; pg spec |
+| m2 | The dry run commits instead of rolling back | every eval row's `expectedApplyCount: 0` |
+| m3 | Preview not bound to chat/user | eval `draft-preview-from-another-chat` |
+| m4 | Status guard accepts CONFIRMED/VOIDED | eval `draft-confirmed-record-edit`; pg spec |
+| m5 | Executor ignores the flag | controller spec |
+| m5b | A bare host needs no corroboration | contracts spec — "keeps real text that merely contains a dot" |
+| m6 | Grounding dropped | logic spec; eval injection row |
+| m7 | Scrubber narrowed to ASCII digits | contracts spec; api eval |
+| m7b | The ledger calls a proposal an applied correction | card spec — "never records a draft-lane turn as an applied correction" |
+| m8 | Postback carries `previewId` | card spec (SEC-04) |
+| m8b | Forget the "บรรทัด N เป็น X" parser | logic spec — the J3.7 clarify answer |
+| m9 | Link detection back to a TLD allowlist | contracts spec |
+| m9b | Remove `amount` from the correction lane whatever the flag says | `line-correction.use-case.spec.ts` |
+| m10 | A money run drops the whole label instead of masking | contracts spec — the 7-Eleven vendor |
+| m11 | `\p{M}` removed from the identifier charset | contracts spec — "ใบกำกับ-12" |
+| l10 | A second tap forgets the apply and denies the edit | eval — "answers a second tap as already applied" |
+| l12 | The card promises a window the store does not enforce | eval — the TTL assertion |
+| l13 | An unbounded charge percent | logic spec — "bounds a charge percent to (0, 100]" |
+| r2 | The preview key stops being per chat | eval — "keys the pending preview by company AND chat" |
+
+**A second boot bug, caught by the repo's own guard.** The M9 fix gave
+`CorrectLineCapturedExpenseUseCase` a `Pick<AppConfigService, 'lineAiDraftEditEnabled'>` parameter.
+A `Pick<>` annotation emits NO runtime type — it erases to `Object`, so Nest has nothing to resolve
+and the API fails to boot. `injectable-di-token.spec.ts` exists for exactly this and turned red in
+the api fixed list; the token is now stated explicitly with `@Inject(AppConfigService)`, the same
+way `RedisRateLimitService` and `LineDraftPreviewStore` state theirs.
+
+**MEASURED, and it changes the conclusion: `test:boot` does NOT catch H1.** The obvious remedy —
+"build the real Nest module" — was tried against the real swc build with the bug re-introduced, and
+it passed: `boot-di-smoke: Nest resolved every provider in 140ms`, exit 0.
+
+The reason is worth keeping. `boot-di-smoke` catches an UNRESOLVABLE token: a parameter whose type
+erased, so Nest has something to look up and cannot find it. That is the `Pick<>` bug (M9's
+follow-on), and it is caught loudly. H1 is the opposite failure — a subclass with NO constructor
+metadata declares NO dependencies, so Nest resolves it perfectly and hands back an object with
+`undefined` fields. A graph of zero dependencies is a VALID graph. Nothing that only asks "does the
+graph resolve?" can see it; the object is broken, not unwireable.
+
+So this slice hit two Nest-DI bugs that fail in two different ways, and they need two different
+guards, neither of which subsumes the other:
+
+| Failure | What it looks like | Caught by |
+|---|---|---|
+| Erased parameter type (`Pick<>`) | Nest cannot resolve a token | `injectable-di-token.spec.ts` (source scan) and `test:boot` |
+| Inherited constructor on an `@Injectable()` subclass | Nest resolves ZERO dependencies and succeeds | `erp-draft-update-tools.di.spec.ts` (arity) — and nothing else |
+
+All three were run for this slice: `test:boot` green against the swc build, both specs green, and
+the arity spec verified red with the bug re-introduced.
+
+Process note for whoever reuses `mutations.sh`: it restores with `git checkout --`, so it now
+REFUSES to run on a dirty tree. It silently ate an uncommitted scrubber change once.
+
+### D.10 Round-2 review (2026-09-06) — one HIGH, from the L10 fix itself
+
+Round 1 verified every earlier finding fixed. Round 2 found that **the L10 "already applied" memory
+had introduced a worse bug than the one it solved.**
+
+`apply()` consulted that memory BEFORE the pending slot, and `preview()` never cleared it. So for
+120 seconds after any successful confirm: a SECOND, different edit previewed normally, the user
+pressed ยืนยัน, **nothing was written**, and the reply cheerfully restated the FIRST edit's diff and
+total. That is J3.2 followed by J3.3 — the ordinary journey in the UAT script, not an edge case.
+
+Fixed on both sides of the door: the pending slot is read first and the applied memory is consulted
+only when nothing pends; and saving a new preview forgets the old confirmation. Either alone would
+close it; together the store cannot hold a live preview and a stale confirmation at once.
+
+The corpus grew an outcome for it, `applied_named_edit`, and with it the honest admission that
+`expectedApplyCount` was never really "always zero": one row is DEFINED as a write, and its danger
+is the mirror of every other row — not an unwanted write, but a wanted write silently swallowed and
+answered with somebody else's numbers. The blanket assertion now reads "nothing writes except the
+outcome that is defined as a write", which is a checkable claim rather than a slogan.
+
+The mutation for it is deliberately a COMBINED row (`rh_both`). Each half of the fix — reading the
+pending slot first, and forgetting the old confirmation on a new preview — closes the bug on its
+own, so each single-sided mutation survives, which is what defence in depth looks like from a
+mutation harness. Only removing both reproduces what shipped, and that row is red.
+
+Three reviewer mutations that were still green are now pinned: the TTL is asserted to be 600 s (not
+merely "tracks the constant", which let both move together), a discounted line moved to a charge
+keeps its discount, and the gateway's `groundingText` bound is asserted at 1000.
+
+### D.12 Round-3 close-out (2026-09-06)
+
+Two reviewer mutations were still surviving, and both were the same shape of test bug — an
+assertion that looked like it covered a rule while standing next to it:
+
+- **R5** — the only `chargesAmount` assertion sat on an UNDISCOUNTED charge, so deleting the
+  `- discount` in `chargesTotal` changed nothing any test could see. A moved line carrying a
+  discount now pins it: 200 printed, 50 off, `chargesAmount` must read 150.00, because that is what
+  `taxable = subtotal - discount + charges` actually adds.
+- **R10** — the grounding-bound test re-derived `.slice(0, 1000)` inside itself and never called
+  `run()`, so it asserted its own arithmetic. It now drives the real orchestrator with a 3000-char
+  message, reads the `ErpToolContext` the tool client was handed, and checks BOTH positions of the
+  flag (bounded when on, field absent when off).
+
+Both verified RED with the fix reverted. Mutation table now **27 rows, every one red**.
+
+Also: `.zip` and `.mov` joined the link tiebreaker — a browser resolves them, so a bare
+"invoice.zip" in a bubble is a tappable link on a phone, which is a different risk from an
+unresolvable word. `evil.pro`, `evil.club`, `evil.fun`, `evil.buzz`, `evil.uk` and `evil.de` stay as
+documented residual (D.11 item 1). The vendor-name probe was re-run: `ABC Co.Ltd`, `S.Pak Food`,
+`St.Louis Hospital`, `บริษัท A.B.C.` and `S.P.C.` all survive intact.
+
+### D.11 Accepted, recorded, no code
+
+1. **D-1 residual TLDs.** A bare single-label host on a TLD outside the tiebreaker list survives as
+   text. `th` has been ADDED — this is a Thai product and `shop.th` is a plausible thing for a
+   receipt to carry — along with `dev` and `ai`. `evil.frobnicate` and anything else novel still
+   survives. Accepted: the money guard blocks the fabricated-total harm independently, and a bare
+   unlinked host word in a bubble is ordinary text, while eating "ABC Co.Ltd" is a certain bug on
+   every bill a limited company prints.
+2. **Dotted or spaced document numbers render "—".** `scrubRecordIdentifier` is one token with no
+   dots by design (admitting `.` re-admits `1789.04` and `192.168.1.1/pay`). A vendor whose document
+   number really contains a dot or a space shows "—" on the card rather than a wrong value. Accepted
+   pending an Owner sanity check on real Thai document numbers.
+3. **Replay after permission revocation returns the read-only preview.** A user who confirmed and
+   then lost `expense.update` sees the applied summary again on a second tap. It is a restatement of
+   a write that already happened and already passed the permission check; no new read of the record
+   occurs. Accepted.
+4. **A no-op `อัตรา VAT: 7% → 7%` row can appear** when a `set_vat_mode` patch restates the rate the
+   record already holds. Cosmetic; the totals row beside it is still correct.
+
+### D.13 Rebase checklist (prepared 2026-09-06, NOT yet executed)
+
+D is held unrebased on `ca37d6a1` (slice C). C is PR #436 (head `4393df95`) and is not on develop
+yet, and D imports three things from it — `listRecentLineCaptureCandidates`,
+`ExpenseExplainRecordTool` and `formatExpenseExplainReply` — so rebasing before C lands would
+delete D's own dependencies. Wait for the develop tip.
+
+When the tip arrives, in this order:
+
+1. **`process-line-webhook.use-case.ts` is the big one.** It moved +269 lines on develop and D edits
+   FIVE separate regions of it: the postback dispatch (gated on `draftUpdate?.enabled`), the
+   correction-lane hook, `handleDraftUpdatePostback`, `proposeDraftUpdate` +
+   `amountCorrectionAsDraftEdit`, and the post-turn card attachment. Take them one region at a time
+   and re-read each in its new surroundings rather than accepting a three-way merge — two of these
+   sit inside conditionals whose neighbours moved.
+2. **Counts.** `WIRED_TOOL_COUNT` stays 61 and `LINE_TOOL_REGISTRY` should read 66 once C is in. If
+   either differs, a tool was added on develop and BOTH the constant and the registry walk in
+   `internal-tools.controller.spec.ts` need looking at, not just the number.
+3. **Three `package.json` test scripts** (api, ai-gateway, contracts) conflict on their single-line
+   spec lists. Keep BOTH sides' paths — the conflict is textual, never a choice.
+4. **ci.yml** — apply the hunk in §D.8. Match develop's step BY CONTENT, not by name (the step name
+   is longer now), keep every existing invocation, and append D's. This is the only gate
+   `line-draft-update.pg.spec.ts` will ever have; skipping it leaves the spec running nowhere.
+5. **Collapse `safeText` onto `scrubRecordText`.** C lands the shared copy in `packages/contracts`.
+   The gateway must import it rather than keep a local variant — the whole point of the shared
+   helper is that the API card and the gateway answer cannot disagree about what a link is. Carry
+   D's F11/F12/F13 + `.zip`/`.mov` rules across; they are the newer ones.
+6. **Re-verify the pins.** `deploy.sh` is pinned: after any rebase that touches it, run
+   `node infra/security/sync-production-maintenance-release-pins.mjs`, commit the pin update, and
+   confirm `--check` reports `status=current`. Check `expected_deploy` and the workflow's
+   `EXPECTED_MAINTENANCE_RELEASE_VALIDATOR_SHA256` moved together.
+7. **Re-run everything**: the 27-row mutation table, the api fixed list, the gateway suite,
+   contracts, config, `test:boot`, and the pg spec on an isolated database. The mutation harness
+   refuses a dirty tree, so commit the rebase first.
+
+### D.14 Rebase onto slice A (2026-09-06) — done
+
+`c5653bbb` (on C's pre-merge head `ca37d6a1`) → rebased onto A's verified head `00c0e182`, which
+sits on develop `2793a58e` and already contains C #436 and P1 #435.
+
+**The `--onto` upstream was NOT the merge-base.** `git merge-base HEAD 00c0e182` answers `c7b1d138`,
+an old develop merge (#427), because C rebased before merging — so `ca37d6a1` is no longer an
+ancestor of anything on develop. Rebasing from the merge-base would have replayed B's five and C's
+four commits on top of A, duplicating work already in develop under different SHAs. The correct
+upstream is the last commit that is not mine, confirmed by enumeration: `ca37d6a1..HEAD` is exactly
+24 slice-D commits, `c7b1d138..ca37d6a1` is exactly B's and C's nine. Command:
+`git rebase --onto 00c0e182 ca37d6a1 codex/line-ai-draft-edit`.
+
+**Conflicts, and how each was resolved**
+
+| File | Resolution |
+|---|---|
+| `line-staff-menu.logic.ts` | Union of the command enum — A's `resume_ai` and D's two draft-confirm commands. |
+| `erp-core-detail-tools.use-case.ts` | Took C's `totalsIdentity: expense.totalsIdentity` (B landed the field, so D's defensive `explainTotalsIdentity` helper is gone), kept D's flag-driven `editableOverLine`, and kept C's reasoning about why `canCorrectAmount` is not evaluated from the detail. |
+| `process-line-webhook.use-case.ts` | Both new optional constructor params kept, A's first, D's LAST — the specs wire this constructor positionally, so a new dependency must not shift anyone else's argument. |
+| `line-correction.use-case.ts` | A's `appendUserNote` (better than D's overwrite) plus D's flag-gated `amountOnlyLine` path. |
+| `line-correction.use-case.spec.ts` | add/add: **both files' tests**, D's helpers renamed (`ctx`→`flagCtx`, `build`→`buildFlagLane`). |
+| `apps/api/package.json` | Union of the spec list, by script: 467 + 464 → 471 tokens, then 471 + 466 → 472. |
+| `docs/…-capture-correction-spec.md` | A's note-append amendment plus D's amount amendment, rewritten so the amount bullet describes BOTH flag positions. |
+| `docs/agent-memory/line-ai-draft-control.md` | All of A's and C's sections kept, D's appended, with a bridge noting that `amountEditableOverLine` is now flag-driven. |
+
+**Two mistakes I made and had to redo, worth knowing:**
+
+1. The first union of `line-correction.use-case.spec.ts` was assembled from the two CONFLICT HALVES
+   and written as the whole file. Git hoists a common suffix out of an add/add region, so the
+   closing `});\n});` sat after the `>>>>>>>` marker and was discarded — the file would not parse.
+   Rebuilt from the two real files (`git show 00c0e182:…` and `git show c5653bbb:…`) instead.
+2. The rename was partial: D's `ctx` is a plain object while A's is a factory function, so D's
+   surviving `ctx` references silently bound to A's and passed a function where a context belonged.
+   The rebuild renames every bare `ctx` and asserts none survives.
+
+**Post-rebase checklist (§D.13) results**
+
+- Counts re-derived from the tree, not assumed: `WIRED_TOOL_COUNT = 61` and `toolMap.set` = 61
+  agree; `LINE_TOOL_REGISTRY` = 66 entries. Both as expected.
+- ci.yml: `line-draft-update.pg.spec.ts` joins develop's single Postgres step, matched by CONTENT
+  (its name has grown to "Identity, username, LINE-signup, support-request, charge-kind,
+  signup-recovery and receipt-truth specs against PostgreSQL"). One `CREATE DATABASE watchdog_bms`,
+  now **eight** invocations. The spec finally has a CI home.
+- `safeText` collapsed onto `scrubRecordText`, as a UNION rather than a replacement — each side had
+  learned something the other had not. From C: NFC normalisation (Thai combining marks), the
+  fullwidth percent and ideographic space, a THREE-digit floor so "ร้าน 7-Eleven สาขา 12" keeps its
+  name, and refusing a field left with nothing but punctuation. From D: the shape-first link rule
+  with corroboration, so `ABC Co.Ltd`, `St.Louis Hospital` and `TAX.INV` survive where C's rule
+  deleted them. `safeDocumentNumber` delegates to `scrubRecordIdentifier`; both names stay so C's
+  call sites are untouched.
+- Pins: `--check` reports `status=current`; `expected_deploy` and the workflow validator SHA are
+  unchanged because `deploy.sh` did not conflict.
+- E4 and J4 are NOT re-routed by the draft lane, and this is now pinned in
+  `line-draft-update.logic.spec.ts` rather than argued: E4 ("ทำไม service charge คิดแยกเป็นอีกรายการ")
+  contains the words the detector cares about but names no amount, so it stays A's
+  `expense.explain_record` turn; J4 stays `unsupported_yet`. The owner's real UAT turn, which DOES
+  name a percent, is still a draft edit.
+
+**A trap for the next rebase:** the generated Prisma client is not rebased. Straight after the
+rebase the api typecheck showed 21 errors and the web suite 33 failures, all of them in A's and
+develop's new schema fields (`lineSupportRequest`, `claimWindowStartedAt`) and none in slice D.
+`pnpm --filter @watchdog-bms/api exec prisma generate` cleared every one. Run it before believing a
+single post-rebase gate.
+
+The mutation runner now refuses to start unless every anchor is present AND unique
+(`mut.py --check-anchors`). It caught one stale anchor immediately: the scrubber collapse had moved
+the line `m10` targets. `replace(..., 1)` takes the first match, so a duplicated fragment would
+mutate a line the row was never about and the "RED" it produced would prove nothing.
+
+### D.15 Round-4 review fix-ups (2026-09-06)
+
+Merged `origin/develop` `1102944a` into the branch first (plain merge, conflict-free) because
+pull-request CI takes `ci.yml` from the merge ref: develop's #438 added a DI-guard step calling
+`apps/api/scripts/check-di-metadata.mjs`, which did not exist on a branch based on A. Nothing in
+slice D was wrong; the branch simply predated #437/#438. The guard then passed on the merged tree —
+`794 files, 870 decorated classes, 820 with constructor dependencies, all carry design:paramtypes`
+— which is an independent confirmation of the H1 fix from round 1.
+
+**Fixed**
+
+1. **ccTLDs in the link tiebreaker (MEDIUM).** `evil.uk/.jp/.de/.fr/.in/.us/.ca/.au/.it/.pl/.nl/
+   .es/.br/.kr/.sg/.my/.vn/.ph` printed verbatim on a card while `.io/.th/.ru/.zip` were stripped —
+   a phone linkifies all of them. Eighteen added; a contracts test WALKS the list rather than
+   sampling it, because the failure mode is one missing entry and a spot check is how a missing
+   entry survives.
+   **Superseded in round 6:** three of the eighteen — `in`, `us`, `it` — came back out. See the
+   round-6 block at the end of this section; the list carries fifteen of them now.
+   **`id` deliberately left out**, and pinned as a decision: `TAX.ID`, `REF.ID`, `DOC.ID` and
+   `CUST.ID` are ordinary receipt and document-number tokens with exactly the shape this rule fires
+   on. Losing a customer's tax id off the card is a certain bug; a bare `something.id` with no path
+   or second dot is a word.
+2. **The document-number scrub was unpinned at both call sites** — swapping `identifier()` (diff
+   builder) or `scrubRecordIdentifier` (gateway renderer) for the raw value left every suite green.
+   A negative assertion at each: `A0042 ยอดจริง 88,888.00 โอนที่ evil.example.com` must render as
+   `ยังไม่ระบุ`/`—`, never verbatim. A third assertion was added at the API card renderer, which the
+   review did not name but has the identical branch.
+3. **`.normalize('NFC')` pinned, and its comment corrected.** The old comment claimed NFC mattered
+   for Thai; it does not — Thai vowel signs and tone marks have no canonical composition, and the
+   `\p{M}` in the identifier charset is what actually carries them. NFC earns its place on Latin,
+   which the new test pins: `cafe` + U+0301 must scrub identically to `café`.
+   **That test found a separate real hole**: the host label charset was ASCII, so `café.com` and
+   `ร้านค้า.com` were never stripped — there was no `[a-z0-9-]` character immediately before the dot
+   for the pattern to bite on. The label side now accepts any Unicode letter; the SUFFIX stays ASCII,
+   which is what still stops a Thai phrase containing a full stop from reading as a host.
+5. Gateway comment on `groundingText` said the API rejects an over-long value. It truncates, on
+   purpose — a length rejection under `forbidNonWhitelisted` would 400 every ERP tool call of a turn
+   whose message ran long. Both ends truncate at the same bound.
+6. `line-ai-capture-correction-spec.md` claimed every frozen row is `expectedApplyCount: 0`. One is
+   not, by design: `applied_named_edit` expects 2.
+7. **`POSTBACK_ACTIONS` was not flag-gated (LOW, but the sharpest of these).** With
+   `LINE_AI_DRAFT_EDIT_ENABLED` off, no card carries those buttons, so the only thing that can send
+   one is a forgery — and it resolved to a command, went down the text lane, and reached a PAID AI
+   turn. Before S-4 it resolved to null and was dropped. The two draft actions now sit in their own
+   map behind the flag, which the webhook controller passes; the parameter defaults to `false` so a
+   caller not yet taught about the flag keeps the safer behaviour. Tested in both positions, with
+   the non-draft actions and the typed-text lane asserted unchanged.
+8. Two imports from `@watchdog-bms/contracts` in `accounting-summary.agent.ts` merged into one.
+
+**Recorded, deliberately NOT changed**
+
+- **Finding 4 — the `|${digit}{3,}` alternative in `groupedSource` is dead.** `${digit}${digitOrSep}+${digit}`
+  already matches any run of three or more digits (the middle class includes digits), so the second
+  alternative can never be the one that fires. It is a no-op, not a bug: removing it changes no
+  behaviour and would only make the intent — "grouped, decimal, or a bare run of three" — harder to
+  read at the point of use. Left as documentation.
+- **Finding 9 — `192.168.1.1/pay` scrubs to `…/pay`.** The host is removed (the point); the path
+  fragment survives because the money rule masks the dotted quad first and the link rule then has no
+  host left to anchor on. Cosmetic: no host, no tappable link, no figure. Not worth a rule that
+  would have to understand paths.
+
+**Round-6 additions to the same list (2026-09-06)**
+
+Round 6 found the ccTLD entries added in round 4 eating ordinary receipt text, and one Thai residual.
+Two of the three were fixed; the two below are recorded and pinned by test, not fixed.
+
+Verification: contracts 245/245/0, ai-gateway 1082/1082/0 (slice C's `expense-explain-record.spec.ts`
+untouched and green), api 6760 tests / 6661 pass / 0 fail / 99 skipped, web 1587/1587/0, typecheck 0
+errors in all five packages, pins `--check` `status=current`. **Mutation table now 32 rows, every one
+verified RED**, 33 anchors present and unique. Two rows are new: `r1` drops `SCRUB_AMBIGUOUS_HOST`
+from the chain — the survivor round 5 missed — and `r3` puts `in`/`us`/`it` back into the list.
+
+- **Fixed, for context:** `in`, `us` and `it` left `SCRUB_TLDS`, exactly the way `id` was already
+  out of it. All four spell the tail of an uppercase receipt abbreviation with precisely the shape
+  this pass fires on — one dot, no path, nothing after the suffix: `DINE.IN`, `CHECK.IN`, `WALK.IN`,
+  `LOG.IN`, `CALL.US`, `CONTACT.US`, `ABOUT.US`, `DO.IT` alongside `TAX.ID`, `REF.ID`, `DOC.ID`,
+  `CUST.ID`. All twelve are now pinned as kept in one test; the two walked-TLD tests dropped the
+  three suffixes so the walk and the list cannot drift apart.
+- **ACCEPTED RESIDUAL — the older tiebreaker entries collide the same way.** `MAIN.ST`, `CALL.ME`,
+  `ABC.CO`, `GO.LIVE`, `THE.SHOP`, `MY.APP` are stripped whole by `st`, `me`, `co`, `live`, `shop`,
+  `app`. It is the identical false positive, but those entries predate this round and were not
+  touched: each removal trades a false positive on a card for a live link printed verbatim in a
+  bubble the user reads as the system's own answer, and that trade wants its own evidence — which
+  receipts actually print, and which of these suffixes actually linkify on a phone. Not a blocker:
+  the failure is a lost word, never a surviving host.
+- **ACCEPTED RESIDUAL — a mark-final Thai word glued to a host loses the whole field.**
+  `ร้านคาเฟ่abc.com` and `ร้านคาเฟ่café.com` both scrub to `''`, where `ร้านabc.com` correctly keeps
+  `ร้าน`. Cause: the script boundary refuses to open a Latin label directly after a combining mark
+  (`\p{M}`), so the ambiguous single-dot pass declines; the IDN pass, which may begin on a mark, then
+  matches from the head of the token and carries the word off with the host. A separator restores the
+  name (`ร้านคาเฟ่ café.com` → `ร้านคาเฟ่`), which is both what the residual costs and what bounds it.
+  Deliberately not fixed: it errs toward over-stripping and can never leave a live host standing, and
+  the obvious relaxation of the boundary is the B1 regression itself (D.16) — it hands back half a
+  host glued to the shop's name, which is strictly worse. Pinned by test so a future widening of the
+  label charset has to face the case rather than rediscover it.
+
+### D.16 B1 — the host scrub is two passes, and the order is the fix (2026-09-06)
+
+**Path taken: the full two-pass design, not the ASCII fallback.** The corpus is green at both ends.
+
+Round 4 widened the host label to `\p{L}` so `café.com` and `ร้านค้า.com` would stop printing as
+live links. That fixed Latin and broke Thai, and the way it broke is worth keeping: `ร้าน` is
+ร + ้ + า + น, and the tone mark `้` is `\p{M}`, not `\p{L}`. So the `\p{L}` run that reaches the dot
+in `ร้านabcbit.ly` does not start at the word — it starts *after the mark*, at `านabcbit` — and the
+scrubber returned `ร้`, having eaten the tail of the shop's name. Adding `\p{M}` to the class makes
+it worse, not better: the run then swallows the whole word. Slice C's F10 test caught it.
+
+The shape that works:
+
+- **(a) ASCII labels, but only starting at a script boundary.** The character before the label must
+  not be Latin-script, a combining mark, a digit, or a dot. Thai→Latin IS a boundary, which is
+  precisely what lets `abcbit.ly/x9` go while `ร้าน` stays.
+- **(b) IDN labels, but only at a hard boundary** (start, whitespace, punctuation) — never mid-word.
+  This takes `ร้านค้า.com`, `café.com`, `münchen.de`, `東京.jp` whole. Inner labels and the suffix
+  stay ASCII, which is what keeps an all-Thai dotted phrase (`กก.ขข.คค`, `ลาดพร้าว.วังหิน.โชคชัย`)
+  out of the host branch entirely.
+
+**(a) before (b) is load-bearing.** Run (b) first on `ร้านabcbit.ly/x9` and its label matches
+`ร้านabcbit`, taking the name with it. By the time (b) runs, (a) has removed the link.
+
+Two things the corpus caught that the design note did not:
+
+1. **The boundary needs `\p{Script=Latin}`, not `[A-Za-z]`.** `ü` is a Latin letter the ASCII range
+   does not contain, so with the narrow test `münchen.de` was still clipped to `mü`.
+2. **The `www.` branch of the scheme rule needed the same guard.** A scheme is a hard signal
+   anywhere, but `www.` is not: in `ร้านabcwww.evil.com` it sits mid-token, matched there, and left
+   `ร้านabc` — half a host glued to the shop's name. Guarded, it declines and pass (a) takes
+   `abcwww.evil.com` whole.
+
+Neither shows up unless the BENIGN half of the corpus is asserted with exact equality. `!/evil/` was
+true of `ร้านabc`. The corpus now pins both ends in one test: eleven hostile strings by exact
+expected output, every tiebreaker TLD walked (49 of them after round 6, plus the IDN pass over
+four), thirteen benign strings byte-identical, and three more whose digits the money rule masks by
+design asserted on the surviving name. Round 6 added the eleventh hostile row (`ร้านabc.com` →
+`ร้าน`) because it is the one case the single-dot pass is the ONLY pass for — with that pass
+removed every other row stayed green, so the pass was load-bearing and unpinned.
+
+`scrubRecordIdentifier` deliberately runs none of these passes: its shape test (one token, no dots)
+already refuses anything host-shaped, so a link rule there would be dead weight.

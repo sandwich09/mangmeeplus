@@ -1,8 +1,18 @@
 // P10 Flow B — public auto-register + admin review queue contracts.
 // Spec: docs/specs/mangmee-external-signup-contract-spec-th.md (amendment v2 2026-08-30).
 
-/** Offer catalog 2026-08-30 (Billing §8). Only PRO_TRIAL is selectable at signup. */
-export type SignupOfferKey = 'PRO_TRIAL' | 'STARTER_249' | 'BASIC_499' | 'PRO_999' | 'ENTERPRISE_1999';
+/**
+ * Offer catalog 2026-08-30 (Billing §8).
+ *
+ * Owner 2026-09-05 (review R02): this key no longer chooses a package. Every self-signed-up shop —
+ * web form and LINE alike — is provisioned on the free trial, so the key is recorded as attribution
+ * only and an unrecognised value is dropped rather than refused.
+ *
+ * `FREE_TRIAL` is the only offer the form presents. `PRO_TRIAL` is its retired name, kept so an
+ * in-flight or cached client is normalised onto the free trial rather than refused; nothing new
+ * should send it. The paid keys are recorded as attribution only.
+ */
+export type SignupOfferKey = 'FREE_TRIAL' | 'PRO_TRIAL' | 'STARTER_249' | 'BASIC_499' | 'PRO_999' | 'ENTERPRISE_1999';
 
 export type PublicCompanySignupBody = {
   /** Client-minted UUID, reused verbatim on retry (idempotency key). */
@@ -17,19 +27,31 @@ export type PublicCompanySignupBody = {
   taxId?: string;
   consentVersion: string;
   referralCode?: string;
+  /** Attribution only — the provisioned package is the free trial regardless of this value. */
   requestedOfferKey?: SignupOfferKey;
 };
 
 export type PublicCompanySignupAcceptedDto = { requestId: string };
 
-/** Coarse public states — never expose internal review detail. */
-export type PublicSignupStatusKey =
-  | 'CHECKING'        // RECEIVED/VALIDATED
-  | 'PENDING_REVIEW'  // waiting for admin
-  | 'AWAITING_CLAIM'  // approved, claim email sent (EMAIL_PENDING)
-  | 'READY'           // provisioned (EMAIL_VERIFIED..COMPLETED)
-  | 'REJECTED'
-  | 'EXPIRED';
+/**
+ * Coarse public states — never expose internal review detail. Coarse is not the same as untrue:
+ * R11 added the three keys below because the page was telling applicants that a shop existed, that
+ * a rescue was under way, or that an email had been delivered, in states where none of that had
+ * happened. A key added here needs Thai copy behind it in `apps/web`'s signup logic.
+ */
+export const PUBLIC_SIGNUP_STATUS_KEYS = [
+  'CHECKING',         // RECEIVED/VALIDATED
+  'PENDING_REVIEW',   // waiting for admin
+  'AWAITING_CLAIM',   // approved, claim email sent (EMAIL_PENDING)
+  'EMAIL_FAILED',     // the claim email bounced — nothing is on its way
+  'PREPARING',        // mailbox proved, shop being built (EMAIL_VERIFIED/PROVISIONING)
+  'PREPARING_FAILED', // the build stopped and nothing retries by itself
+  'READY',            // provisioned (READY/LINE_LINK_PENDING/COMPLETED)
+  'REJECTED',
+  'EXPIRED',
+] as const;
+
+export type PublicSignupStatusKey = (typeof PUBLIC_SIGNUP_STATUS_KEYS)[number];
 
 export type PublicSignupStatusDto = {
   requestId: string;
@@ -53,6 +75,12 @@ export type SignupClaimInfoDto = {
    */
   emailMatchesExistingUser?: boolean;
 };
+
+/**
+ * Review R01: the claim token is a bearer credential, so it travels in a POST body — never in a URL
+ * segment, which every access log on the way in records verbatim.
+ */
+export type SignupClaimInfoBody = { token: string };
 
 export type SignupClaimSetPasswordBody = {
   token: string;
@@ -112,6 +140,12 @@ export type AdminSignupQueueItemDto = {
   vatRegistered?: boolean;
   taxId?: string;
   requestedOfferKey?: string;
+  /**
+   * R10: what `businessType` maps to today — the stored review choice when one was made, otherwise
+   * the exact-match mapping. The server owns the mapping, so the approve dialog can DEFAULT to it
+   * and can tell that a row with free text answering OTHER is one the reviewer has to decide.
+   */
+  businessCategory?: string;
   mxValid?: boolean;
   createdAt: string;
   approvedAt?: string;
@@ -127,9 +161,37 @@ export type AdminSignupQueueItemDto = {
   phoneMatchesCompanyName?: string;
   daysSinceApproval?: number;
   emailDeliveryFailed: boolean;
+  /**
+   * Owner 2026-09-05. This LINE account — or the account its identity belongs to, whatever status
+   * that identity is in — has held a shop before, so the free trial being asked for is a REPEAT.
+   * The shop's name, because the operator's question is "is this the same person coming back".
+   * A hint, never a block: the row is still approvable.
+   */
+  priorCompanyName?: string;
+  /** How that shop stands today: 'ACTIVE' | 'EXPIRED' (term ended) | 'CLOSED'. Web owns the Thai. */
+  priorCompanyState?: string;
+  /**
+   * Why provisioning stopped, for the rows on the "มีปัญหา" tab. A bounded code the API already
+   * stores on the request (`failureCode`), surfaced so the queue can say what an admin must fix
+   * instead of showing "เปิดร้านไม่สำเร็จ" for two very different causes.
+   */
+  failureCode?: string;
 };
 
-export type AdminSignupQueueDto = { items: AdminSignupQueueItemDto[] };
+export type AdminSignupQueueDto = {
+  items: AdminSignupQueueItemDto[];
+  /**
+   * R13: pass back as `?cursor=` for the next page. `null`/absent means this was the last page —
+   * the queue used to read 200 rows with no way past them, so a backlog simply disappeared.
+   */
+  nextCursor?: string | null;
+  /**
+   * R13: how many rows each tab holds IN THE DATABASE, keyed by tab. Counted server-side because
+   * the page can only ever count what it was given, which is how a tab came to say "no
+   * applications in this group" over rows that were there.
+   */
+  counts?: Record<string, number>;
+};
 
 /** Bounded because the admin's paragraph travels through the outbox and into an inbox. */
 export const SIGNUP_REJECTION_REASON_MAX_LENGTH = 500;
@@ -138,6 +200,14 @@ export type AdminSignupDecisionBody = {
   /** Idempotency: repeat with same requestId is a no-op returning current state.
    *  SUSPEND (P10-L §8) stops an auto-approved application an admin does not want to keep. */
   action: 'APPROVE' | 'REJECT' | 'SUSPEND';
+  /**
+   * R10, APPROVE only. `businessType` on the form is free text in the applicant's own language and
+   * the PDPA health tripwire reads the CLOSED enum — "คลินิก" maps to OTHER, so the safeguard never
+   * fired for the people it exists for. The reviewer who is already reading that word picks the
+   * enum here; nothing guesses it, and omitting it keeps the exact-match mapping.
+   * A `CompanyBusinessCategory` (company-profile.ts); the server re-checks membership.
+   */
+  businessCategory?: string;
   /** REJECT only: send a notice email (default silent). */
   notifyApplicant?: boolean;
   /**
@@ -150,6 +220,38 @@ export type AdminSignupDecisionBody = {
 export type AdminSignupDecisionDto = { requestId: string; state: string };
 
 export type AdminSignupReissueDto = { requestId: string; state: string; claimEmailQueued: boolean };
+
+// ── Spec §4F account merge — what a merge would do, shown before it is confirmed ──
+
+/**
+ * Review R05. `move`: this shop follows you to the account you keep, with the same roles.
+ * `close_duplicate`: you already have identical access there through the other account, so the
+ * duplicate is closed and nothing about the shop changes. `blocked`: the two memberships disagree,
+ * and merging would decide a question only a person can — the whole merge is refused.
+ */
+export type AccountMergeCompanyOutcomeDto = {
+  companyName: string;
+  outcome: 'move' | 'close_duplicate' | 'blocked';
+  /** Only on `blocked`: which rule refused, so the dialog can say something true. */
+  reason?: 'role_conflict' | 'target_membership_inactive' | 'last_active_owner';
+};
+
+/** Names an account well enough to decide between two of them, and nothing more — never an email. */
+export type AccountMergeAccountSummaryDto = {
+  displayName: string;
+  username?: string;
+  /** The ways this account can sign in today. */
+  signInWith: Array<'line' | 'password'>;
+};
+
+export type AccountMergePreviewDto = {
+  canMerge: boolean;
+  /** The account that survives; its `signInWith` is what still works afterwards. */
+  keeps: AccountMergeAccountSummaryDto;
+  /** The account that is closed; signing in with these stops working. */
+  closes: AccountMergeAccountSummaryDto;
+  companies: AccountMergeCompanyOutcomeDto[];
+};
 
 // ── P10-L LINE-first signup (spec docs/specs/mangmee-line-first-signup-spec-th.md) ──
 
@@ -233,6 +335,71 @@ export type PartnerLineMessageBody = { text: string };
 export type PartnerLineMessageResultDto = {
   /** How many linked OWNER identities the message reached. 0 means nobody has LINE linked. */
   delivered: number;
+};
+
+// ── Support requests: "ติดต่อเจ้าหน้าที่" (line-support-request-spec-th §2.3) ──
+
+export type SupportRequestStatus = 'OPEN' | 'ANSWERED' | 'CLOSED';
+
+/** Why a request closed. `expired` is the sweep; the other two are a person deciding. */
+export type SupportRequestClosedReason = 'admin' | 'customer_resumed' | 'expired';
+
+/**
+ * One person waiting for a human.
+ *
+ * §3 PDPA: NO raw LINE id crosses this contract. `askerLabel` is a shop name, or the name of the
+ * shop the person applied for, and `askerRef` is the last 6 characters of the same sha256 prefix
+ * the audit rail carries — enough for an operator to match two rows to one person, not enough to
+ * identify anyone outside our own database.
+ */
+export type SupportRequestItemDto = {
+  id: string;
+  status: SupportRequestStatus;
+  /** Shop name, or "ผู้ที่ยังไม่ได้เปิดร้าน (มีคำขอสมัคร: …)" — already display-ready Thai. */
+  askerLabel: string;
+  askerRef: string;
+  /** Present once the asker holds an ACTIVE membership: the partner page opens from here. */
+  companyId?: string;
+  /** Present while they are still in the signup funnel: the queue opens from here instead. */
+  signupRequestId?: string;
+  requestedAt: string;
+  /** ≤200 chars of what they last typed, when the assistant kept any. */
+  lastMessageText?: string;
+  /**
+   * Owner 2026-09-05: admins are not LINE-linked, so `0` is the expected reading and NOT an error.
+   * This page is the primary channel; these two only say which extras also went out.
+   */
+  lineNotifiedCount: number;
+  emailSent: boolean;
+  /**
+   * Read this BEFORE the two counts above. `queued` means the outbox drain has not run yet, so
+   * `0`/`false` are defaults rather than outcomes — without this a request rendered "nobody was
+   * told" for the seconds between the tap and the drain. Only `unreachable` is a fault.
+   */
+  notifyState: 'queued' | 'notified' | 'unreachable';
+  answeredAt?: string;
+  answeredByDisplayName?: string;
+  closedAt?: string;
+  closedReason?: SupportRequestClosedReason;
+};
+
+export type SupportRequestQueueDto = {
+  items: SupportRequestItemDto[];
+  /** Always the OPEN total, whatever `status` filtered the list — it feeds the system nav badge. */
+  openCount: number;
+};
+
+/**
+ * Just the badge number. Its own endpoint because the system header asks for it on every
+ * navigation, and answering that with a 200-row queue read is a page of rows nobody renders.
+ */
+export type SupportRequestCountDto = { open: number };
+
+export type SupportRequestActionDto = {
+  id: string;
+  status: SupportRequestStatus;
+  /** `resume-ai` only: whether a running assistant pause was actually lifted. */
+  pauseCleared?: boolean;
 };
 
 /** One event on a shop's timeline (§8). Assembled from rows that already exist — no new log table. */

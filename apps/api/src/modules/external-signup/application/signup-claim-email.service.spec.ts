@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { claimTokenExpiresAt, CLAIM_EXPIRY_AFTER_APPROVAL_DAYS } from '../domain/account-claim.logic';
 import {
   ACCOUNT_CLAIM_EMAIL_EVENT_TYPE,
   CLAIM_EXPIRY_FAILURE_CODE,
@@ -29,6 +30,7 @@ function harness(options: { request?: any; sendFails?: boolean } = {}) {
   const failed: any[] = [];
   const updates: any[] = [];
   const minted: string[] = [];
+  const mintCalls: Array<{ id: string; now: Date; windowStartedAt: Date | null }> = [];
   const logs: any[] = [];
   let claimable: any[] = [];
 
@@ -59,10 +61,13 @@ function harness(options: { request?: any; sendFails?: boolean } = {}) {
   } as any;
 
   const tokens = {
-    mint: async (id: string) => {
+    // F13: records what the service asks for, and answers with the REAL clamp — so a service that
+    // stopped passing the window would hand the mailer a link outliving its own sweep.
+    mint: async (id: string, now: Date = NOW, windowStartedAt: Date | null = null) => {
       const rawToken = `raw-token-for-${id}`;
       minted.push(rawToken);
-      return { rawToken, expiresAt: new Date(NOW.getTime() + 72 * 3_600_000) };
+      mintCalls.push({ id, now, windowStartedAt });
+      return { rawToken, expiresAt: claimTokenExpiresAt(now, windowStartedAt) };
     },
   } as any;
 
@@ -104,7 +109,7 @@ function harness(options: { request?: any; sendFails?: boolean } = {}) {
 
   const service = new SignupClaimEmailService(prisma, outbox, tokens, core, adminNotify, lineNotify, opsAlerts, mailer, logger);
   return {
-    service, appended, sent, rejections, notified, claims, published, failed, updates, minted, logs,
+    service, appended, sent, rejections, notified, claims, published, failed, updates, minted, mintCalls, logs,
     lineDelivered, opsDelivered,
     lineFails: (error: unknown) => { lineFailure = error; },
     queue: (events: any[]) => { claimable = events; },
@@ -197,6 +202,35 @@ describe('SignupClaimEmailService.drain', () => {
     ...overrides,
   });
 
+  /**
+   * Review F13: the wiring half of F7. The clamp is in the domain and the mint honours it, but
+   * `sendClaimEmail` has to hand the request's window over — otherwise every link is minted for a
+   * full 72 hours again and the day-30 sweep kills the late ones mid-life.
+   */
+  it('mints against the request\'s activation window, and mails the clamped expiry', async () => {
+    const windowStartedAt = new Date(NOW.getTime() - 28 * 86_400_000);
+    const h = harness({
+      request: {
+        id: 'signup-1', state: 'EMAIL_PENDING', contactEmail: 'somchai@example.com',
+        companyName: 'ร้านมั่งมี', claimWindowStartedAt: windowStartedAt,
+      },
+    });
+    h.queue([event()]);
+
+    await h.service.drain();
+
+    assert.equal(h.mintCalls.length, 1);
+    assert.equal(
+      h.mintCalls[0]!.windowStartedAt?.getTime(),
+      windowStartedAt.getTime(),
+      'the window has to reach the mint, or the clamp never applies',
+    );
+    // What the applicant receives dies with the window, not 72 hours after the send.
+    const windowEnd = windowStartedAt.getTime() + CLAIM_EXPIRY_AFTER_APPROVAL_DAYS * 86_400_000;
+    assert.equal(h.sent[0].expiresAt.getTime(), windowEnd);
+    assert.equal(h.sent[0].expiresAt.getTime(), claimTokenExpiresAt(NOW, windowStartedAt).getTime());
+  });
+
   it('mints at send, mails the raw token once, and never persists it', async () => {
     const h = harness();
     h.queue([event()]);
@@ -208,6 +242,9 @@ describe('SignupClaimEmailService.drain', () => {
     );
     assert.equal(h.sent[0].rawToken, 'raw-token-for-signup-1');
     assert.equal(h.sent[0].toEmail, 'somchai@example.com');
+    // R12: the id travels with the letter so a link that turns out to be spent can still hand its
+    // holder the status page instead of a login they have no password for.
+    assert.equal(h.sent[0].signupRequestId, 'signup-1');
     // The only writes back to the request are the send timestamp and the SES message id that a
     // later bounce/complaint event will arrive with — the raw token goes nowhere.
     assert.equal(h.updates.length, 1);
@@ -500,8 +537,11 @@ describe('SignupClaimEmailService.sweepExpiredApprovals', () => {
     // A fresh approval, an unapproved application and an already-claimed one are all out of scope
     // by the predicate itself — the sweep never sees them.
     assert.deepEqual(where.state, { in: ['EMAIL_PENDING', 'EMAIL_FAILED'] });
-    assert.equal(where.approvedAt.not, null);
-    assert.equal(NOW.getTime() - (where.approvedAt.lt as Date).getTime(), 30 * 86_400_000);
+    // R09: the ACTIVATION window, which an admin reissue restarts — not the approval date, which
+    // would expire a freshly reissued link on the very next pass.
+    assert.equal(where.approvedAt, undefined, 'the sweep must not measure from the audit fact');
+    assert.equal(where.claimWindowStartedAt.not, null);
+    assert.equal(NOW.getTime() - (where.claimWindowStartedAt.lt as Date).getTime(), 30 * 86_400_000);
     assert.equal(h.queries[0].take, 100, 'one pass stays bounded');
     assert.deepEqual(h.advanced, [
       { id: 'signup-1', state: 'EXPIRED', actor: 'signup-expiry-sweep', failureCode: CLAIM_EXPIRY_FAILURE_CODE },
@@ -532,6 +572,45 @@ describe('SignupClaimEmailService.sweepExpiredApprovals', () => {
     const h = expiryHarness([]);
     assert.deepEqual(await h.service.sweepExpiredApprovals(NOW), { expired: 0 });
     assert.deepEqual(h.advanced, []);
+  });
+});
+
+// F6. A submit that fails its MX check leaves the row in RECEIVED by design, and the form then
+// mints a NEW idempotency key — so every mistyped address (and, before F6, every DNS blip) leaves
+// a row nobody will ever act on, holding the applicant's name, address and phone. It never reaches
+// an admin queue, so nothing else would ever remove it.
+describe('SignupClaimEmailService.sweepAbandonedIntake', () => {
+  function intakeHarness(deleted = 0) {
+    const queries: any[] = [];
+    const prisma = {
+      client: {
+        companySignupRequest: {
+          deleteMany: async (args: any) => { queries.push(args); return { count: deleted }; },
+        },
+      },
+    } as any;
+    const service = new SignupClaimEmailService(
+      prisma, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
+      { error: () => {}, warn: () => {} } as any,
+    );
+    return { service, queries };
+  }
+
+  it('deletes intake rows that never got past RECEIVED once the retention window passes', async () => {
+    const h = intakeHarness(3);
+    assert.deepEqual(await h.service.sweepAbandonedIntake(NOW), { purgedIntake: 3 });
+
+    const where = h.queries[0].where;
+    // RECEIVED only: a row that reached VALIDATED is an application someone may still act on.
+    assert.equal(where.state, 'RECEIVED');
+    assert.equal(NOW.getTime() - (where.createdAt.lt as Date).getTime(), 7 * 86_400_000);
+    // Never a row that built anything: a company id here would mean provisioning got somewhere.
+    assert.equal(where.companyId, null);
+  });
+
+  it('leaves a fresh intake row alone', async () => {
+    const h = intakeHarness(0);
+    assert.deepEqual(await h.service.sweepAbandonedIntake(NOW), { purgedIntake: 0 });
   });
 });
 

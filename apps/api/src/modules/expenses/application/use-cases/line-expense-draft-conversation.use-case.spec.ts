@@ -14,7 +14,7 @@ const ctx: RequestContext = {
   roles: [], permissions: ['expense.receipt.line_upload'], scopes: {}, authProvider: 'line',
 };
 
-function harness(count = 1) {
+function harness(count = 1, expenseNote?: string) {
   const state = buildInitialLineExpenseDraftContinuation({
     workflowId: 'wf-1', companyId: 'c1', userId: 'u1', expenseId: 'e1', chatKeyHash: 'chat',
     targetRevision: '2026-08-18T00:00:00.000Z', provisionalExpenseDate: '2026-08-18',
@@ -28,6 +28,7 @@ function harness(count = 1) {
   }));
   const expense = {
     id: 'e1', companyId: 'c1', createdByUserId: 'u1', captureSource: 'LINE_UPLOAD', status: 'DRAFT',
+    ...(expenseNote !== undefined ? { note: expenseNote } : {}),
     updatedAt: new Date('2026-08-18T00:00:00.000Z'), sourceChannelMetadataJson: rows[0]!.sourceChannelMetadataJson,
     aiVerificationSummaryJson: {}, lines: [], attachments: [], duplicateCandidates: [], substituteReceiptEvidence: null, payments: [],
   } as any;
@@ -228,5 +229,45 @@ describe('LineExpenseDraftConversationUseCase', () => {
     assert.equal(updates.length, 2);
     assert.ok(updates.every((update) =>
       update.options.lineDraftCollection.sourceChannelMetadataJson.lineExpenseDraftContinuation.status === 'PAUSED_INTERRUPTED'));
+  });
+});
+
+/**
+ * Spec `line-ai-draft-control-spec-th.md` §5.3. This lane collects a business purpose over several
+ * turns and, with no purpose column to put it in, stores it in the header note — by overwriting the
+ * whole column, which took `'LINE receipt upload'` with it the moment the user answered.
+ */
+describe('the collected purpose does not evict the capture provenance', () => {
+  const PROVENANCE = 'LINE receipt upload';
+
+  async function collectPurpose(existingNote: string) {
+    const h = harness(1, existingNote);
+    const find = (h.useCase as any).repo.findByIdWithRelations;
+    (h.useCase as any).repo.findByIdWithRelations = async (...args: any[]) => ({
+      ...(await find(...args)),
+      note: existingNote,
+      expenseDate: new Date('2026-08-18T00:00:00.000Z'),
+      sourceChannelMetadataJson: { channel: 'LINE', kind: 'media' },
+      aiVerificationSummaryJson: {},
+      lines: [],
+    });
+    await h.useCase.startFromReceipt(ctx, {
+      expenseId: 'e1', chatKeyHash: 'chat', webhookEventId: 'receipt-evt',
+      businessPurpose: 'เลี้ยงลูกค้า',
+      ocrFields: { expenseDate: '2026-08-18', vendorName: 'ร้าน ABC', confidence: 0.97 },
+    });
+    return h.updates.at(-1)!.input.note as string;
+  }
+
+  it('writes the purpose behind the provenance, never over it', async () => {
+    const note = await collectPurpose(PROVENANCE);
+    assert.ok(note.startsWith(PROVENANCE), `provenance must survive the first answer, got: ${note}`);
+    assert.ok(note.includes('วัตถุประสงค์: เลี้ยงลูกค้า'));
+  });
+
+  it('replaces its own earlier answer instead of stacking a second purpose', async () => {
+    const note = await collectPurpose(`${PROVENANCE} · วัตถุประสงค์: ยังไม่แน่ใจ`);
+    assert.equal(note, `${PROVENANCE} · วัตถุประสงค์: เลี้ยงลูกค้า`);
+    assert.equal(note.split('วัตถุประสงค์:').length - 1, 1);
   });
 });

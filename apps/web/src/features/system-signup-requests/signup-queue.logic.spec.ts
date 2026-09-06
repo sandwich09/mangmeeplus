@@ -1,22 +1,26 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import type { AdminSignupQueueItemDto } from '@watchdog-bms/contracts';
+import { COMPANY_BUSINESS_CATEGORIES, type AdminSignupQueueItemDto } from '@watchdog-bms/contracts';
 import {
   approveLabel,
+  BUSINESS_CATEGORY_LABELS,
   canApproveSignup,
   canRejectSignup,
   canReissueSignup,
   canSuspendSignup,
   suspendLeavesShopRunning,
-  filterSignupQueue,
   isFinishingStrandedRow,
   isLineSignup,
   signupBusinessSummary,
+  signupFailureChip,
   signupHintChips,
   signupIdleChip,
   signupStateChip,
   rejectNotifyDefault,
   rejectNotifyLabel,
+  approveBlockedOnCategory,
+  queueEmptyForReal,
+  requiresCategoryChoice,
   tabLoadsOwnList,
   SIGNUP_QUEUE_TABS,
 } from './signup-queue.logic';
@@ -52,14 +56,15 @@ describe('a failed provisioning is actionable, not just labelled', () => {
 
   const ready = (source = 'line-oa') => item({ state: 'READY', source });
 
-  it('offers approve as the retry, but only for the source whose API accepts it', () => {
+  it('offers approve as the retry for a failed provisioning, whatever the source', () => {
     assert.equal(canApproveSignup('PROVISIONING_FAILED', failed()), true);
     // Review HIGH-1: READY is the other recovery — the shop exists, the last step did not land.
     assert.equal(canApproveSignup('READY', ready()), true);
-    // Flow B has no retry an admin could reach — approve, reject and reissue all 409.
-    assert.equal(canApproveSignup('PROVISIONING_FAILED', failed('official-site')), false);
+    // Review F2: a Flow B row that failed provisioning has a spent token and no other way back,
+    // so the retry is offered here too. Its READY close-out is still the applicant's own page.
+    assert.equal(canApproveSignup('PROVISIONING_FAILED', failed('official-site')), true);
     assert.equal(canApproveSignup('READY', ready('official-site')), false);
-    assert.equal(canApproveSignup('PROVISIONING_FAILED'), false, 'no item, no claim');
+    assert.equal(canApproveSignup('PROVISIONING_FAILED'), true, 'the state alone is enough now');
     assert.equal(canApproveSignup('PENDING_REVIEW'), true, 'the ordinary case is unchanged');
   });
 
@@ -98,18 +103,6 @@ describe('a failed provisioning is actionable, not just labelled', () => {
       assert.equal(isFinishingStrandedRow(state), true, state);
     }
     assert.equal(isFinishingStrandedRow('PENDING_REVIEW'), false);
-  });
-
-  it('lists every recoverable row under the problem tab, where an operator would look', () => {
-    const stale = item({ state: 'PROVISIONING', source: 'line-oa', staleProvisioning: true });
-    const live = item({ state: 'PROVISIONING', source: 'line-oa' });
-    const items = [failed(), ready(), stale, live, item({ state: 'PENDING_REVIEW' })];
-    // An abandoned run is the one an operator most needs to find; a live one is not a problem yet.
-    assert.deepEqual(
-      filterSignupQueue(items, 'PROBLEM').map((i) => i.state),
-      ['PROVISIONING_FAILED', 'READY', 'PROVISIONING'],
-    );
-    assert.equal(filterSignupQueue(items, 'PROBLEM').includes(live), false);
   });
 
   // Review MEDIUM-2: SUSPENDED is terminal, so suspending mid-provisioning strands a shop that may
@@ -239,34 +232,6 @@ describe('queue actions', () => {
   });
 });
 
-describe('filterSignupQueue', () => {
-  const pending = item({ requestId: 'a', state: 'PENDING_REVIEW' });
-  const awaiting = item({ requestId: 'b', state: 'EMAIL_PENDING' });
-  const bounced = item({ requestId: 'c', state: 'EMAIL_FAILED', emailDeliveryFailed: true });
-  const expired = item({ requestId: 'd', state: 'EXPIRED' });
-  const all = [pending, awaiting, bounced, expired];
-
-  it('keeps every row on the ALL tab', () => {
-    assert.equal(filterSignupQueue(all, 'ALL').length, 4);
-  });
-
-  it('splits waiting-for-review from waiting-for-the-applicant', () => {
-    assert.deepEqual(filterSignupQueue(all, 'PENDING_REVIEW').map((i) => i.requestId), ['a']);
-    assert.deepEqual(filterSignupQueue(all, 'AWAITING_CLAIM').map((i) => i.requestId), ['b']);
-  });
-
-  it('groups bounced and expired requests as problems', () => {
-    assert.deepEqual(filterSignupQueue(all, 'PROBLEM').map((i) => i.requestId), ['c', 'd']);
-  });
-
-  it('treats a bounce flag as a problem even before the state flips', () => {
-    const flagged = item({ requestId: 'e', state: 'EMAIL_PENDING', emailDeliveryFailed: true });
-    assert.deepEqual(filterSignupQueue([flagged], 'PROBLEM').map((i) => i.requestId), ['e']);
-    assert.deepEqual(filterSignupQueue([flagged], 'AWAITING_CLAIM'), []);
-  });
-});
-
-
 // Review A-01. The commonest duplicate is a customer an admin opened a shop for by hand, who then
 // applies from LINE as if they were new — approving that gives one person two shops.
 describe('signupHintChips — the phone duplicate hint', () => {
@@ -289,6 +254,48 @@ describe('signupHintChips — the phone duplicate hint', () => {
   });
 });
 
+// Owner 2026-09-05. A closed shop plus a fresh signup is a REPEAT free trial, and the operator has
+// to see which shop before the approve button rather than after the second one exists.
+describe('signupHintChips — the repeat-trial hint', () => {
+  const repeat = (priorCompanyState?: string) =>
+    signupHintChips(item({ source: 'line-oa', priorCompanyName: 'ร้านเก่า', priorCompanyState }));
+
+  it('names the shop and how it stands today', () => {
+    assert.ok(repeat('CLOSED').some((c) => c.label === 'LINE นี้เคยมีร้าน: ร้านเก่า (ปิดอยู่)'));
+    assert.ok(repeat('EXPIRED').some((c) => c.label === 'LINE นี้เคยมีร้าน: ร้านเก่า (หมดอายุ)'));
+    assert.ok(repeat('ACTIVE').some((c) => c.label === 'LINE นี้เคยมีร้าน: ร้านเก่า (ใช้งานอยู่)'));
+    assert.equal(repeat('CLOSED').find((c) => c.label.startsWith('LINE นี้เคยมีร้าน'))!.tone, 'warning');
+  });
+
+  it('still names the shop when the API sends a state this build does not know', () => {
+    assert.ok(repeat('SOMETHING_NEW').some((c) => c.label === 'LINE นี้เคยมีร้าน: ร้านเก่า (ไม่ทราบสถานะ)'));
+  });
+
+  it('says nothing for a first-time applicant', () => {
+    assert.deepEqual(signupHintChips(item({ source: 'line-oa' })), []);
+  });
+});
+
+/**
+ * The failure code the queue now carries. PROVISIONING_FAILED reads the same for a database outage
+ * and for a LINE account that belongs to somebody else — only one of which an admin can fix.
+ */
+describe('signupFailureChip', () => {
+  it('says what to fix for the two LINE identity refusals', () => {
+    assert.equal(
+      signupFailureChip(item({ failureCode: 'line_identity_already_linked' }))!.label,
+      'LINE นี้ผูกกับบัญชีอื่นอยู่ ต้องปลดการเชื่อมก่อนจึงเปิดร้านได้',
+    );
+    assert.equal(signupFailureChip(item({ failureCode: 'line_identity_disabled' }))!.tone, 'danger');
+  });
+
+  it('stays silent rather than putting a machine string in front of an operator', () => {
+    assert.equal(signupFailureChip(item({ failureCode: 'connection_reset' })), null);
+    assert.equal(signupFailureChip(item()), null);
+  });
+
+});
+
 // §8 vs §4D: the default follows the rail, because the two rails fail in opposite directions.
 describe('rejectNotifyDefault', () => {
   it('is ON for a LINE application: the chat is the applicant own, and silence is a shop wondering', () => {
@@ -308,6 +315,9 @@ describe('queue tabs', () => {
     const keys = SIGNUP_QUEUE_TABS.map((tab) => tab.key);
     assert.ok(keys.includes('AUTO_APPROVED'));
     assert.ok(keys.includes('PACKAGE_CHANGE'));
+    // R13: a rejected or suspended application appeared on no list at all, so "where did that
+    // application go" had no answer anywhere in the console.
+    assert.ok(keys.includes('ARCHIVED'));
     assert.equal(SIGNUP_QUEUE_TABS.find((tab) => tab.key === 'AUTO_APPROVED')!.label, 'อนุมัติอัตโนมัติ 14 วัน');
 
     assert.equal(tabLoadsOwnList('AUTO_APPROVED'), true);
@@ -325,5 +335,58 @@ describe('queue tabs', () => {
     assert.equal(canApproveSignup(row.state, row), false);
     assert.equal(canRejectSignup(row.state), false);
     assert.equal(canReissueSignup(row.state), false);
+  });
+
+  // R10: the PDPA health tripwire reads the closed enum, and the form asks for free text — an
+  // applicant who typed "คลินิก" mapped to OTHER and the safeguard never fired. The reviewer, who
+  // is looking straight at that word, decides; nothing here guesses from the text.
+  it('makes the reviewer choose a category when the mapping could not', () => {
+    assert.equal(requiresCategoryChoice(item({ businessType: 'คลินิก', businessCategory: 'OTHER' })), true);
+    // Already decided, at review or by an exact match: nothing left to ask.
+    assert.equal(requiresCategoryChoice(item({ businessType: 'คลินิก', businessCategory: 'CLINIC' })), false);
+    assert.equal(requiresCategoryChoice(item({ businessType: 'RETAIL', businessCategory: 'RETAIL' })), false);
+    // Nothing was typed, so there is nothing the mapping failed to read — OTHER is the true answer.
+    assert.equal(requiresCategoryChoice(item({ businessCategory: 'OTHER' })), false);
+    assert.equal(requiresCategoryChoice(item({ businessType: '   ', businessCategory: 'OTHER' })), false);
+    // A row from before the column existed answers the same way as an unmapped one.
+    assert.equal(requiresCategoryChoice(item({ businessType: 'คลินิก' })), true);
+  });
+
+  // F2: every Thai answer maps to OTHER, so refusing OTHER refused the only value the dialog
+  // offered — a barber shop ("ร้านตัดผม") genuinely IS "other" and could never be approved. The
+  // reviewer records that deliberately instead; the tripwire still gets a decision, not a default.
+  it('lets the reviewer record OTHER deliberately rather than blocking it', () => {
+    const row = item({ businessType: 'ร้านตัดผม', businessCategory: 'OTHER' });
+    assert.equal(approveBlockedOnCategory(row, 'OTHER', false), true, 'not yet confirmed');
+    assert.equal(approveBlockedOnCategory(row, 'OTHER', true), false, 'confirmed as genuinely other');
+    // Picking a real category needs no confirmation at all.
+    assert.equal(approveBlockedOnCategory(row, 'CLINIC', false), false);
+    // A row the mapping already read is never blocked, confirmed or not.
+    const mapped = item({ businessType: 'RETAIL', businessCategory: 'RETAIL' });
+    assert.equal(approveBlockedOnCategory(mapped, 'OTHER', false), false);
+    // Nothing typed: OTHER is the true answer and there is nothing to confirm.
+    assert.equal(approveBlockedOnCategory(item({ businessCategory: 'OTHER' }), 'OTHER', false), false);
+  });
+
+  // F4: "ไม่มีคำขอในกลุ่มนี้" is a claim about the DATABASE. Saying it because the page happens to
+  // hold nothing is exactly the lie R13 existed to remove — a failed load and a genuinely empty
+  // tab look identical on screen but mean opposite things.
+  it('only calls a tab empty when the server counted zero', () => {
+    const row = item();
+    assert.equal(queueEmptyForReal([], { PENDING_REVIEW: 0 }, 'PENDING_REVIEW'), true);
+    // Counted rows but none on screen: the load failed, or a page is still coming.
+    assert.equal(queueEmptyForReal([], { PENDING_REVIEW: 240 }, 'PENDING_REVIEW'), false);
+    // No counts at all (the request failed) is never proof of emptiness.
+    assert.equal(queueEmptyForReal([], null, 'PENDING_REVIEW'), false);
+    // A tab the server did not count is not proof either.
+    assert.equal(queueEmptyForReal([], { ALL: 0 }, 'PROBLEM'), false);
+    // Rows on screen are never "empty", whatever the count says.
+    assert.equal(queueEmptyForReal([row], { ALL: 0 }, 'ALL'), false);
+  });
+
+  it('has a Thai label for every category the reviewer can pick', () => {
+    for (const key of COMPANY_BUSINESS_CATEGORIES) {
+      assert.ok(BUSINESS_CATEGORY_LABELS[key], key);
+    }
   });
 });

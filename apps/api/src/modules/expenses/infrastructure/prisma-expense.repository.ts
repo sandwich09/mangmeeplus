@@ -8,6 +8,7 @@ import { POSITIVE_ACCOUNTING_MONEY_PATTERN } from '../../accounting-documents/do
 import { findAttachmentLinkConflict } from '../../data-model-core/domain/logic/attachment.logic';
 import { PrismaDocumentSequenceRepository } from '../../data-model-core/infrastructure/repositories/prisma-document-sequence.repository';
 import { buildReversalLines } from '../../ledger/domain/logic/journal-balance.logic';
+import { expenseTotalsIdentity } from '../domain/logic/expense-totals.logic';
 import type {
   ExpenseRecord, ExpenseRecordWithRelations, ExpensePaymentRecord, CreateExpenseRecordInput,
   UpdateExpenseRecordInput, ExpenseLineInput, PaginatedExpenses, SignatureAssetRecord, SubstituteReceiptEvidenceRecord,
@@ -18,8 +19,9 @@ import type {
   CreateExpenseCategoryInput, UpdateExpenseCategoryInput, SharedEvidenceFilter, SignatureSubmitChannel,
   SubstituteReceiptApprovalMode, SubstituteReceiptListFilter,
   ExpenseVatSourceOverrideInput,
+  ExpenseLineChargeKind,
 } from '@watchdog-bms/contracts';
-import { civilDate, civilDateToUtcDate, civilDayRangeToUtc, civilPeriodKey, coerceCivilDate, exclusiveEndOfDay, isCivilDate, EXPENSE_PAYMENT_METHODS } from '@watchdog-bms/contracts';
+import { civilDate, civilDateToUtcDate, civilDayRangeToUtc, civilPeriodKey, coerceCivilDate, exclusiveEndOfDay, expenseDocumentDateStatus, expenseLineCharges, isCivilDate, EXPENSE_PAYMENT_METHODS } from '@watchdog-bms/contracts';
 import { expenseTaxSourceChecksum } from '../domain/logic/expense-status.logic';
 import { nextExpensePostingSource } from '../domain/logic/expense-auto-post.logic';
 import { calcPaymentAmounts, derivePaymentStatus, SETTLE_EPSILON } from '../domain/logic/expense-totals.logic';
@@ -128,6 +130,10 @@ function mapExpense(r: any): ExpenseRecord {
     vendorSnapshotJson: r.vendorSnapshotJson ?? null,
     aiVerifiedFieldsJson: r.aiVerifiedFieldsJson ?? null,
     aiVerificationSummaryJson: r.aiVerificationSummaryJson ?? null,
+    // Spec §5.2: derived here, once, so a list row can say whether its date was read off the
+    // document or is the upload-day placeholder. Every consumer would otherwise have to re-derive
+    // it from the summary JSON, and the list does not even load that.
+    dateStatus: expenseDocumentDateStatus(r.aiVerificationSummaryJson),
     vatCaptureSnapshotJson: r.vatCaptureSnapshotJson ?? null,
     whtInputJson: r.whtInputJson ?? null,
   };
@@ -167,6 +173,7 @@ function mapLine(l: any) {
     id: l.id,
     lineNumber: l.lineNumber,
     description: l.description,
+    chargeKind: l.chargeKind ?? null,
     quantity: l.quantity?.toString() ?? '0',
     unitPrice: l.unitPrice?.toString() ?? '0',
     discountAmount: l.discountAmount?.toString() ?? '0',
@@ -685,6 +692,7 @@ export class PrismaExpenseRepository {
       where: { companyId, expenseId: id, status: { not: 'SUPERSEDED' } },
       orderBy: { version: 'desc' },
     });
+    const mappedLines = (r as any).lines.map(mapLine);
     return {
       ...base,
       categoryDefaultInputTaxCode,
@@ -693,7 +701,9 @@ export class PrismaExpenseRepository {
       journalEntryNumber: journal?.entryNumber ?? null,
       pendingPostingSourceType: pendingSource?.sourceType ?? null,
       pendingPostingSourceId: pendingSource?.sourceId ?? null,
-      lines: (r as any).lines.map(mapLine),
+      lines: mappedLines,
+      charges: expenseLineCharges(mappedLines),
+      totalsIdentity: expenseTotalsIdentity({ vatMode: base.vatMode, totals: base, lines: mappedLines }),
       attachments,
       duplicateCandidates,
       substituteReceiptEvidence: substituteRow ? toSubstituteEvidenceSummary(mapSubstituteEvidence(substituteRow)) : null,
@@ -2065,9 +2075,13 @@ export class PrismaExpenseRepository {
         where: { companyId: input.companyId, targetType: 'expense.record', targetId: input.id, attachment: { companyId: input.companyId } },
         include: { attachment: true },
       }) as any;
+      const currentLines = current.lines.map(mapLine);
+      const mappedCurrent = mapExpense(current);
       const currentRecord: ExpenseRecordWithRelations = {
-        ...mapExpense(current),
-        lines: current.lines.map(mapLine),
+        ...mappedCurrent,
+        lines: currentLines,
+        charges: expenseLineCharges(currentLines),
+        totalsIdentity: expenseTotalsIdentity({ vatMode: mappedCurrent.vatMode, totals: mappedCurrent, lines: currentLines }),
         attachments: attachmentLinks.map((l) => ({
           id: l.attachmentId,
           purpose: l.purpose as any,
@@ -2291,6 +2305,26 @@ export class PrismaExpenseRepository {
     return { pending: pending + pendingPayments, errors: errors + paymentErrors };
   }
 
+  /**
+   * Spec §5.1: `updateExpenseDraft` replaces the whole line array, and a client that echoes a line
+   * back without `chargeKind` means "leave it alone", not "clear it". The description rides along
+   * because `lineNumber` alone is NOT a stable identity — inserting a goods row renumbers everything
+   * below it — so the caller can check it is looking at the same row before keeping a kind.
+   *
+   * Runs on the caller's transaction when there is one: the update path reads this before writing in
+   * the same transaction, and a read outside it would see a stale row under concurrent edits.
+   */
+  async listLineChargeKinds(
+    companyId: string,
+    expenseId: string,
+    db: ExpenseDb = this.prisma.client,
+  ): Promise<Map<number, { chargeKind: ExpenseLineChargeKind | null; description: string }>> {
+    const rows = await db.expenseLine.findMany({
+      where: { companyId, expenseId }, select: { lineNumber: true, chargeKind: true, description: true },
+    });
+    return new Map(rows.map((row) => [row.lineNumber, { chargeKind: row.chargeKind ?? null, description: row.description }]));
+  }
+
   async upsertLines(companyId: string, expenseId: string, lines: ExpenseLineInput[], db?: any): Promise<void> {
     await this.runInTx(db, async (tx: any) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${expenseId}:substitute-receipt`}))`;
@@ -2304,6 +2338,7 @@ export class PrismaExpenseRepository {
           const { taxSnapshot, taxComponents } = l;
           const data = {
           expenseId, companyId, lineNumber: l.lineNumber, description: l.description,
+          chargeKind: l.chargeKind ?? null,
           quantity: l.quantity, unitPrice: l.unitPrice, discountAmount: l.discountAmount,
           taxableAmount: l.taxableAmount, vatRate: l.vatRate, vatTreatment: l.vatTreatment ?? null, vatAmount: l.vatAmount,
           whtRate: l.whtRate, whtAmount: l.whtAmount, lineSubtotalAmount: l.lineSubtotalAmount,
@@ -2564,7 +2599,7 @@ export class PrismaExpenseRepository {
     since: Date;
     scopes: { branchIds?: string[] };
     take: number;
-  }): Promise<Array<{ id: string; expenseDate: Date | null; grandTotalAmount: string | null; sourceDocumentType: string | null; createdAt: Date }>> {
+  }): Promise<Array<{ id: string; expenseDate: Date | null; grandTotalAmount: string | null; vendorDocumentNumber: string | null; sourceDocumentType: string | null; createdAt: Date }>> {
     const rows = await this.prisma.client.expenseRecord.findMany({
       where: {
         companyId: input.companyId,
@@ -2581,12 +2616,15 @@ export class PrismaExpenseRepository {
       // ponytail: served by the existing (companyId, captureSource) index plus a filter+sort;
       // fine at SME LINE-capture volumes. Add (companyId, captureSource, createdAt) if a company's
       // LINE upload history ever makes this scan show up.
-      select: { id: true, expenseDate: true, grandTotalAmount: true, sourceDocumentType: true, createdAt: true },
+      // `vendorDocumentNumber` rides along so `expense.explain_record` can resolve a
+      // documentNumber reference inside the SAME provenance-bounded set, with no second query.
+      select: { id: true, expenseDate: true, grandTotalAmount: true, vendorDocumentNumber: true, sourceDocumentType: true, createdAt: true },
     });
     return rows.map((row: any) => ({
       id: row.id,
       expenseDate: row.expenseDate ?? null,
       grandTotalAmount: row.grandTotalAmount?.toString() ?? null,
+      vendorDocumentNumber: row.vendorDocumentNumber ?? null,
       sourceDocumentType: row.sourceDocumentType ?? null,
       createdAt: row.createdAt,
     }));
@@ -3116,7 +3154,7 @@ export class PrismaExpenseRepository {
   }
 
   async listSharedEvidence(companyId: string, filter: SharedEvidenceFilter, scopes?: { branchIds?: string[] }): Promise<{
-    rows: Array<ExpenseRecord & { categoryName: string | null; journalEntryNumber: string | null; attachments: Array<{ id: string; purpose: string; originalFileName: string; mimeType: string; byteSize: number; checksumSha256: string | null; status: string; createdAt: Date }> }>;
+    rows: Array<ExpenseRecord & { categoryName: string | null; journalEntryNumber: string | null; additionalChargesAmount: string; attachments: Array<{ id: string; purpose: string; originalFileName: string; mimeType: string; byteSize: number; checksumSha256: string | null; status: string; createdAt: Date }> }>;
     total: number;
     page: number;
     pageSize: number;
@@ -3148,6 +3186,15 @@ export class PrismaExpenseRepository {
       orderBy: [{ paidAt: 'asc' }, { createdAt: 'asc' }],
       select: { id: true, expenseId: true, postingStatus: true, postingError: true },
     }) : [];
+    // §5.1: `subtotalAmount` is goods only, so the accountant index needs the charge total to stay
+    // additive. One grouped aggregate rather than every line of every row — the export pages 50 to
+    // 500 records at a time and none of the other line fields are used here.
+    const chargeSums = ids.length > 0 ? await this.prisma.client.expenseLine.groupBy({
+      by: ['expenseId'],
+      where: { companyId, expenseId: { in: ids }, chargeKind: { not: null } },
+      _sum: { lineSubtotalAmount: true },
+    }) : [];
+    const chargeTotalByExpense = new Map(chargeSums.map((row) => [row.expenseId, row._sum.lineSubtotalAmount?.toString() ?? '0']));
     const paymentIds = payments.map((payment) => payment.id);
     const journals = ids.length > 0 ? await this.prisma.client.journalEntry.findMany({
       where: {
@@ -3225,6 +3272,7 @@ export class PrismaExpenseRepository {
           pendingPostingSourceId: pendingSource?.sourceId ?? null,
           postingStatus: effectivePostingStatus,
           postingError: effectivePostingError,
+          additionalChargesAmount: chargeTotalByExpense.get(r.id) ?? '0',
           attachments: byExpense.get(r.id) ?? [],
         };
       }),

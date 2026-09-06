@@ -1,0 +1,195 @@
+/**
+ * `ExpenseLine.chargeKind` against real PostgreSQL.
+ *
+ * Two things no in-memory fake can answer. First, whether migration
+ * `20260905160000_expense_line_charge_kind` actually applies — the enum type has to exist before
+ * the column can reference it, and a fake that stores a plain string would report green against a
+ * database that rejects every write. Second, whether a charge row survives the round trip with its
+ * kind intact, which is what `subtotalAmount` now depends on: the whole point of the column is that
+ * the tax base counts an additional charge exactly once, and a kind that comes back null silently
+ * turns a service charge back into a product line.
+ *
+ * Run with (the scratch database this was proved on, or the local docker one):
+ *   EXPENSE_CHARGE_KIND_TEST_DATABASE_URL='postgresql://watchdog:watchdog_local_password@127.0.0.1:15432/watchdog_bms_chargekind_scratch?schema=public' \
+ *     npx tsx --test src/modules/expenses/expense-line-charge-kind.pg.spec.ts
+ */
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { EXPENSE_LINE_CHARGE_KINDS, expenseLineCharges } from '@watchdog-bms/contracts';
+import { PrismaClient } from '../../generated/prisma/client';
+import { pgSpecUnreachableReason } from '../../common/database/pg-spec-guard';
+import { calcDocumentTotals, calcLineTotals, expenseTotalsIdentityError } from './domain/logic/expense-totals.logic';
+import { PrismaExpenseRepository } from './infrastructure/prisma-expense.repository';
+
+const databaseUrl = process.env['EXPENSE_CHARGE_KIND_TEST_DATABASE_URL'];
+
+describe('expense line charge kind on real PostgreSQL', { skip: !databaseUrl }, () => {
+  it('applies the migration and round-trips a charge line whose totals satisfy the identity', async (t) => {
+    const url = new URL(databaseUrl!);
+    assert.ok(['localhost', '127.0.0.1'].includes(url.hostname), 'only an explicit local test database is allowed');
+    // Localhost alone is NOT proof of a local database: the production access recipe port-forwards
+    // prod to 127.0.0.1 through SSM. This spec writes rows, so it also requires a database whose
+    // name says it is the local docker one (or a scratch copy of it) before it creates anything.
+    assert.match(url.pathname, /^\/watchdog_bms(_[a-z0-9_]+)?$/, 'refusing to write to anything but the local docker database');
+    const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
+    const tag = `chargekind-${randomUUID().slice(0, 8)}`;
+
+    try {
+      // Shared with the other real-PostgreSQL suites: a URL that is set but whose server does not
+      // answer is the same "no database here" condition the unset case skips for, not a red test on
+      // a developer's stopped docker. Still a failure in CI, which started the database one step
+      // earlier, or under EXPENSE_CHARGE_KIND_REQUIRE_POSTGRES=true.
+      const unreachable = await pgSpecUnreachableReason(
+        () => client.$queryRaw`SELECT 1`, 'EXPENSE_CHARGE_KIND_REQUIRE_POSTGRES');
+      if (unreachable) return t.skip(unreachable);
+
+      // The migration itself: without the enum type and column this read throws, and no amount of
+      // application code can make the write below succeed.
+      const [{ labels }] = await client.$queryRawUnsafe<{ labels: string[] }[]>(
+        `SELECT array_agg(e.enumlabel::text ORDER BY e.enumsortorder) AS labels
+           FROM pg_type t JOIN pg_enum e ON e.enumtypid = t.oid
+          WHERE t.typname = 'ExpenseLineChargeKind'`,
+      );
+      assert.deepEqual(labels, [...EXPENSE_LINE_CHARGE_KINDS]);
+
+      // A restaurant bill exactly like the UAT 2026-09-03 one: 1,520.00 of food, a 10% service
+      // charge, 7% VAT on both.
+      const vatMode = 'VAT_EXCLUDED' as const;
+      const rows = [
+        { lineNumber: 1, chargeKind: null, description: 'อาหาร', quantity: '1', unitPrice: '1520' },
+        { lineNumber: 2, chargeKind: 'SERVICE_CHARGE' as const, description: 'ค่าบริการ 10%', quantity: '1', unitPrice: '152' },
+      ];
+      const lines = rows.map((row) => ({
+        ...row,
+        totals: calcLineTotals({ quantity: row.quantity, unitPrice: row.unitPrice, vatRate: '0.07', vatMode }),
+      }));
+      const totals = calcDocumentTotals({ lines: lines.map((line) => ({ ...line.totals, chargeKind: line.chargeKind })) });
+      assert.equal(expenseTotalsIdentityError({ vatMode, lines: lines.map((line) => ({ ...line.totals, chargeKind: line.chargeKind })), totals }), null);
+      // The charge is in the base and out of the goods subtotal — the reason the column exists.
+      assert.equal(totals.subtotalAmount, '1520.0000');
+      assert.equal(totals.taxableAmount, '1672.0000');
+      assert.equal(totals.vatAmount, '117.0400');
+      assert.equal(totals.grandTotalAmount, '1789.0400');
+
+      await client.company.create({ data: { id: `${tag}-co`, name: 'Charge Kind Test' } });
+      await client.user.create({ data: { id: `${tag}-user`, displayName: 'Charge Kind Test' } });
+      const expense = await client.expenseRecord.create({
+        data: {
+          id: `${tag}-exp`, companyId: `${tag}-co`, createdByUserId: `${tag}-user`,
+          expenseDate: new Date('2026-09-03T00:00:00.000Z'), vatMode, ...totals,
+          lines: {
+            create: lines.map((line) => ({
+              companyId: `${tag}-co`, lineNumber: line.lineNumber, description: line.description,
+              chargeKind: line.chargeKind, quantity: line.quantity, unitPrice: line.unitPrice,
+              taxableAmount: line.totals.taxableAmount, vatRate: '0.07', vatAmount: line.totals.vatAmount,
+              lineSubtotalAmount: line.totals.lineSubtotalAmount, lineTotalAmount: line.totals.lineTotalAmount,
+            })),
+          },
+        },
+        include: { lines: { orderBy: { lineNumber: 'asc' } } },
+      });
+
+      assert.deepEqual(expense.lines.map((line) => line.chargeKind), [null, 'SERVICE_CHARGE']);
+      assert.deepEqual(
+        expenseLineCharges(expense.lines.map((line) => ({
+          chargeKind: line.chargeKind, lineSubtotalAmount: line.lineSubtotalAmount.toString(), vatAmount: line.vatAmount.toString(),
+        }))),
+        // Prisma Decimal stringifies without trailing zeros, exactly as the repository's `mapLine` does.
+        [{ kind: 'SERVICE_CHARGE', label: 'ค่าบริการ', amount: '152', vatAmount: '10.64' }],
+      );
+
+      // ROUNDING is the one kind the column may carry below zero, and Decimal(18,4) is signed.
+      const rounding = await client.expenseLine.create({
+        data: {
+          companyId: `${tag}-co`, expenseId: expense.id, lineNumber: 3, description: 'ปัดเศษ',
+          chargeKind: 'ROUNDING', quantity: '1', unitPrice: '-0.5',
+          taxableAmount: '-0.5', vatAmount: '0', lineSubtotalAmount: '-0.5', lineTotalAmount: '-0.5',
+        },
+      });
+      assert.equal(rounding.lineSubtotalAmount.toString(), '-0.5');
+
+      await assert.rejects(
+        client.expenseLine.create({
+          data: {
+            companyId: `${tag}-co`, expenseId: expense.id, lineNumber: 4, description: 'ไม่มีชนิดนี้',
+            chargeKind: 'TRUCK_FEE' as never, quantity: '1', unitPrice: '1',
+          },
+        }),
+        (error: unknown) => error instanceof Error,
+        'the database, not only the application, refuses a charge kind outside the enum',
+      );
+
+      // The shared line copier: the web PATCH, the LINE lane and the substitute-receipt
+      // continuation all reach the database through `upsertLines`, so a kind dropped here is a
+      // service charge that silently becomes a product on the next save of any of them.
+      const repo = new PrismaExpenseRepository({ client } as never);
+      const upsert = (chargeKind: 'SERVICE_CHARGE' | 'DELIVERY') => repo.upsertLines(`${tag}-co`, expense.id,
+        lines.map((line) => ({
+          expenseId: expense.id, companyId: `${tag}-co`, lineNumber: line.lineNumber,
+          description: line.description, chargeKind: line.chargeKind === null ? null : chargeKind,
+          quantity: line.quantity, unitPrice: line.unitPrice, discountAmount: line.totals.discountAmount,
+          taxableAmount: line.totals.taxableAmount, vatRate: '0.0700', vatAmount: line.totals.vatAmount,
+          whtRate: null, whtAmount: line.totals.whtAmount,
+          lineSubtotalAmount: line.totals.lineSubtotalAmount, lineTotalAmount: line.totals.lineTotalAmount,
+          expenseCategoryId: null, accountHintKey: null, taxCategory: null,
+        })));
+      const kinds = async () => (await repo.findByIdWithRelations(`${tag}-co`, expense.id))!;
+
+      // Both branches of the upsert. On CREATE a missing kind writes null; on UPDATE it writes
+      // nothing at all and the row silently keeps a kind the caller no longer means — the quieter
+      // of the two bugs, and the one a create-only test would never see.
+      await client.expenseLine.deleteMany({ where: { expenseId: expense.id } });
+      await upsert('SERVICE_CHARGE');
+      const created = await kinds();
+      assert.deepEqual(created.lines.map((line) => line.chargeKind), [null, 'SERVICE_CHARGE'],
+        'upsertLines must carry the charge kind into a new row, and mapLine must read it back');
+      assert.deepEqual(created.charges, [
+        { kind: 'SERVICE_CHARGE', label: 'ค่าบริการ', amount: '152', vatAmount: '10.64' },
+      ]);
+
+      await upsert('DELIVERY');
+      const updated = await kinds();
+      assert.deepEqual(updated.lines.map((line) => line.chargeKind), [null, 'DELIVERY']);
+      assert.deepEqual(updated.charges.map((charge) => charge.label), ['ค่าส่ง']);
+
+      // §5.1 identity, on what is actually in the database rather than on two values derived from
+      // one array in memory: the stored header against the stored lines.
+      assert.deepEqual(updated.totalsIdentity, { ok: true, gapAmount: '0.0000' });
+      assert.equal(updated.subtotalAmount, '1520', 'the charge is not goods');
+      assert.equal(updated.taxableAmount, '1672');
+      assert.equal(updated.grandTotalAmount, '1789.04');
+      assert.equal(
+        expenseTotalsIdentityError({
+          vatMode: 'VAT_EXCLUDED',
+          totals: updated,
+          lines: updated.lines.map((line) => ({
+            lineSubtotalAmount: line.lineSubtotalAmount, discountAmount: line.discountAmount,
+            taxableAmount: line.taxableAmount, vatAmount: line.vatAmount, whtAmount: line.whtAmount,
+            lineTotalAmount: line.lineTotalAmount, chargeKind: line.chargeKind ?? null,
+          })),
+        }),
+        null,
+      );
+
+      // A record whose header no longer matches its lines — what a row written before §5.1, or by
+      // anything that bypasses the draft use-cases, looks like. The read side must SAY so rather
+      // than print a total its own parts contradict.
+      await client.expenseRecord.update({ where: { id: expense.id }, data: { subtotalAmount: '1672' } });
+      const divergent = await kinds();
+      assert.equal(divergent.totalsIdentity.ok, false);
+      assert.equal(divergent.totalsIdentity.gapAmount, '0.0000', 'the grand total still matches; the subtotal is what drifted');
+      await client.expenseRecord.update({ where: { id: expense.id }, data: { subtotalAmount: '1520', grandTotalAmount: '1900' } });
+      const shortGrand = await kinds();
+      assert.equal(shortGrand.totalsIdentity.ok, false);
+      assert.equal(shortGrand.totalsIdentity.gapAmount, '110.9600', 'stored grand total minus what the lines make');
+    } finally {
+      await client.expenseLine.deleteMany({ where: { companyId: `${tag}-co` } });
+      await client.expenseRecord.deleteMany({ where: { companyId: `${tag}-co` } });
+      await client.company.deleteMany({ where: { id: `${tag}-co` } });
+      await client.user.deleteMany({ where: { id: `${tag}-user` } });
+      await client.$disconnect();
+    }
+  });
+});

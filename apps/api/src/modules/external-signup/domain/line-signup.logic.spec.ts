@@ -8,6 +8,7 @@ import {
   normalizeLineCompanyName,
   normalizeReferralCode,
   normalizeThaiMobile,
+  requireThaiMobile,
 } from './line-signup.logic';
 
 describe('normalizeThaiMobile', () => {
@@ -17,7 +18,9 @@ describe('normalizeThaiMobile', () => {
     }
   });
 
-  it('treats blank as the legitimate answer it is — the field is optional', () => {
+  // Still optional-tolerant: `account-profile` uses a blank value to CLEAR a stored number, so this
+  // one must keep answering null rather than throwing. The LIFF form goes through requireThaiMobile.
+  it('treats blank as the legitimate answer it is for the profile screen', () => {
     for (const input of [undefined, null, '', '   ', '--']) {
       assert.equal(normalizeThaiMobile(input), null, String(input));
     }
@@ -29,6 +32,28 @@ describe('normalizeThaiMobile', () => {
     }
     // A landline-shaped number starting 0 with 9 digits is still not 10 digits.
     assert.throws(() => normalizeThaiMobile('021234567'), /invalid_phoneNumber/);
+  });
+});
+
+// Owner 2026-09-05: the LIFF form's phone field became required, and the page needs to tell the two
+// outcomes apart only far enough to print one sentence — so blank and wrong carry separate codes.
+describe('requireThaiMobile', () => {
+  it('accepts the same numbers, normalised the same way', () => {
+    for (const input of ['0812345678', '081-234-5678', '081 234 5678', ' 0812345678 ']) {
+      assert.equal(requireThaiMobile(input), '0812345678', input);
+    }
+  });
+
+  it('refuses blank with line_signup_phone_required', () => {
+    for (const input of [undefined, null, '', '   ', '--']) {
+      assert.throws(() => requireThaiMobile(input), /^Error: line_signup_phone_required$/, String(input));
+    }
+  });
+
+  it('refuses a number that is not a Thai mobile with line_signup_phone_invalid', () => {
+    for (const input of ['12345', '812345678', '08123456789', '021234567']) {
+      assert.throws(() => requireThaiMobile(input), /^Error: line_signup_phone_invalid$/, input);
+    }
   });
 });
 

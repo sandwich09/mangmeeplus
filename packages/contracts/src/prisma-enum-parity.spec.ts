@@ -67,6 +67,46 @@ describe('expense WHT input contract', () => {
   });
 });
 
+describe('expense line charge kind contract', () => {
+  it('is the same array the receipt OCR extractor reports, with a Thai label for every kind', () => {
+    // Identity, not deep-equality: two arrays that merely happen to agree today would drift the
+    // moment one side gained a kind, and a charge the OCR reports would stop being storable.
+    assert.equal(expenses.EXPENSE_LINE_CHARGE_KINDS, lineAi.RECEIPT_ADDITIONAL_CHARGE_KINDS);
+    assert.deepEqual(
+      Object.keys(expenses.EXPENSE_LINE_CHARGE_KIND_LABELS).sort(),
+      [...expenses.EXPENSE_LINE_CHARGE_KINDS].sort(),
+    );
+    assert.equal(expenses.EXPENSE_LINE_CHARGE_KIND_LABELS.SERVICE_CHARGE, 'ค่าบริการ');
+    for (const label of Object.values(expenses.EXPENSE_LINE_CHARGE_KIND_LABELS)) {
+      // Customer-facing Thai copy carries no "+" (spec §3).
+      assert.ok(label.trim().length > 0 && !label.includes('+'), label);
+    }
+  });
+
+  it('allows a negative amount for ROUNDING alone', () => {
+    for (const kind of expenses.EXPENSE_LINE_CHARGE_KINDS) {
+      assert.equal(expenses.expenseChargeKindAllowsNegative(kind), kind === 'ROUNDING', kind);
+    }
+  });
+
+  it('derives charges from the charge rows only, keeping document order', () => {
+    const line = (chargeKind: string | null, lineSubtotalAmount: string, vatAmount: string) =>
+      ({ chargeKind, lineSubtotalAmount, vatAmount }) as never;
+    assert.deepEqual(
+      expenses.expenseLineCharges([
+        line(null, '1520.0000', '106.4000'),
+        line('SERVICE_CHARGE', '152.0000', '10.6400'),
+        line('ROUNDING', '-0.5000', '0.0000'),
+      ]),
+      [
+        { kind: 'SERVICE_CHARGE', label: 'ค่าบริการ', amount: '152.0000', vatAmount: '10.6400' },
+        { kind: 'ROUNDING', label: 'ปัดเศษ', amount: '-0.5000', vatAmount: '0.0000' },
+      ],
+    );
+    assert.deepEqual(expenses.expenseLineCharges([line(null, '10.0000', '0.0000')]), []);
+  });
+});
+
 const SRC_DIR = path.dirname(fileURLToPath(import.meta.url));
 // packages/contracts/src -> three hops up is the repo root.
 const SCHEMA_PATH = path.resolve(SRC_DIR, '../../../apps/api/prisma/schema.prisma');
@@ -130,6 +170,9 @@ const REGISTRY: Registration[] = [
   { source: 'procurement.ts', arrayName: 'PAYMENT_METHODS', prismaEnum: 'AccountingPaymentMethod' },
   { source: 'expenses.ts', arrayName: 'INPUT_VAT_CLAIM_STATUSES', prismaEnum: 'InputVatClaimStatus' },
   { source: 'expenses.ts', arrayName: 'EXPENSE_PAYMENT_METHODS', prismaEnum: 'ExpensePaymentMethod' },
+  // Re-exported alias of line-ai.ts RECEIPT_ADDITIONAL_CHARGE_KINDS, so the discovery sweep below
+  // cannot see it (it is not an `as const` literal) and this row is the only thing covering it.
+  { source: 'expenses.ts', arrayName: 'EXPENSE_LINE_CHARGE_KINDS', prismaEnum: 'ExpenseLineChargeKind' },
   // Cross-named: the LINE turn intent list mirrors the Prisma AiTurnIntent enum.
   { source: 'line-ai.ts', arrayName: 'AI_TURN_INTENT_VALUES', prismaEnum: 'AiTurnIntent' },
   { source: 'transaction-tax.ts', arrayName: 'TAX_SOURCE_SYSTEMS', prismaEnum: 'TaxSourceSystem' },

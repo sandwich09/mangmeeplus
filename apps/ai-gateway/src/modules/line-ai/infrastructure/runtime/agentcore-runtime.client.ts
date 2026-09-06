@@ -81,9 +81,9 @@ function coerceUsage(value: unknown): AiUsageEntry[] | undefined {
 }
 
 const REFUSAL_REASONS = new Set<LineAiRefusalReason>([
-  'mutation_blocked', 'safety_crisis', 'privacy_rumor', 'unsupported_module', 'forbidden',
-  'unlinked_user', 'ambiguous_company', 'tool_unavailable', 'feature_disabled', 'ai_timeout',
-  'line_delivery_failure',
+  'mutation_blocked', 'safety_crisis', 'privacy_rumor', 'unsupported_module', 'unsupported_yet',
+  'forbidden', 'unlinked_user', 'ambiguous_company', 'tool_unavailable', 'feature_disabled',
+  'ai_timeout', 'line_delivery_failure',
 ]);
 
 function coerceRuntimeIdentity(value: unknown): LineAiRuntimeIdentity | undefined {

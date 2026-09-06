@@ -3,14 +3,15 @@ import { SendEmailCommand, type SESClient } from '@aws-sdk/client-ses';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import type {
   AccountClaimEmailInput, AuthEmailLinkInput, AuthMailerPort, LineSignupWelcomeEmailInput,
-  PackageChangeNoticeEmailInput, SignupRejectionEmailInput,
+  PackageChangeNoticeEmailInput, SignupRejectionEmailInput, SupportRequestNoticeEmailInput,
 } from '../domain/ports/auth-mailer.port';
 import { accountClaimLogoUrl, renderAccountClaimEmail } from './account-claim-email.template';
 import { renderSignupRejectionEmail } from './signup-rejection-email.template';
 
 export const SES_EMAIL_CLIENT_TOKEN = 'SES_EMAIL_CLIENT_TOKEN';
 type SesEmailClient = Pick<SESClient, 'send'>;
-type EmailKind = 'email_verification' | 'password_reset' | 'account_claim' | 'signup_rejection';
+type EmailKind = 'email_verification' | 'password_reset' | 'account_claim' | 'signup_rejection'
+  | 'support_request_notice';
 type RenderedEmail = Readonly<{ subject: string; text: string; html: string }>;
 type SecondaryAction = Readonly<{ label: string; url: string }>;
 
@@ -26,9 +27,11 @@ function formatExpiry(value: Date): string {
   }).format(value);
 }
 
-function link(baseUrl: string, pathname: string, token: string): string {
+function link(baseUrl: string, pathname: string, token: string, signupRequestId?: string): string {
   const url = new URL(pathname, baseUrl);
   url.searchParams.set('token', token);
+  // R12: the claim page's recovery link. Set after the token so the existing URL shape is unchanged.
+  if (signupRequestId) url.searchParams.set('r', signupRequestId);
   return url.toString();
 }
 
@@ -84,12 +87,27 @@ export function sesConfigurationSet(env: NodeJS.ProcessEnv = process.env): strin
   return env.SES_CONFIGURATION_SET?.trim() || undefined;
 }
 
+/** Internal letter, so Thai plain copy and the existing `layout` — no new template module. */
+function renderSupportRequestNoticeEmail(input: SupportRequestNoticeEmailInput): RenderedEmail {
+  const title = 'ลูกค้าขอคุยกับเจ้าหน้าที่';
+  const paragraphs = [
+    `ผู้ขอ: ${input.who}`,
+    ...(input.lastMessageText ? [`ข้อความล่าสุด: ${input.lastMessageText}`] : []),
+    'เปิดหน้าคำขอในระบบเพื่อดูรายละเอียดและตอบกลับได้เลยค่ะ',
+  ];
+  return {
+    subject: `[มั่งมี Plus] ${title}: ${input.who}`,
+    text: `${title}\n\n${paragraphs.join('\n')}\n\nเปิดลิงก์: ${input.actionUrl}`,
+    html: layout(title, paragraphs, 'เปิดคำขอ', input.actionUrl),
+  };
+}
+
 function renderClaimEmail(input: AccountClaimEmailInput, baseUrl: string): RenderedEmail {
   return renderAccountClaimEmail({
     companyName: input.companyName,
     toEmail: input.toEmail,
     expiresAt: input.expiresAt,
-    claimUrl: link(baseUrl, '/claim-account', input.rawToken),
+    claimUrl: link(baseUrl, '/claim-account', input.rawToken, input.signupRequestId),
     ...(accountClaimLogoUrl() ? { logoUrl: accountClaimLogoUrl()! } : {}),
   });
 }
@@ -133,6 +151,17 @@ export class SesAuthMailerAdapter implements AuthMailerPort {
   async sendLineSignupWelcome(_input: LineSignupWelcomeEmailInput): Promise<void> {}
 
   async sendPackageChangeNotice(_input: PackageChangeNoticeEmailInput): Promise<void> {}
+
+  /**
+   * §2.2 delta (Owner 2026-09-05). Unlike the two hooks above, this letter HAS truthful copy and a
+   * real address — it goes to our own support mailbox, so no customer consent, verified address or
+   * Owner-signed template is in the way. `baseUrl()` is deliberately not called: the action link is
+   * built by the caller, which already knows whether it has one.
+   */
+  async sendSupportRequestNotice(input: SupportRequestNoticeEmailInput): Promise<boolean> {
+    await this.send(input.toEmail, 'support_request_notice', renderSupportRequestNoticeEmail(input));
+    return true;
+  }
 
   private async send(toEmail: string, kind: EmailKind, rendered: RenderedEmail): Promise<string | null> {
     const fromAddress = this.config.sesFromAddress;

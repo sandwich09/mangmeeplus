@@ -369,7 +369,7 @@ mutate_facts active-without-enhanced-findings '.artifactIntegrity.services[0].sc
 mutate_facts nonterminal-scan-provider '.artifactIntegrity.services[0].scanProviderStatus="PENDING"'
 mutate_facts mismatched-scan-counts '.artifactIntegrity.services[0].scanSeverityCounts.HIGH=1'
 mutate_facts unknown-scan-severity '.artifactIntegrity.services[0].scanSeverityCounts.UNKNOWN=1'
-waiver='{"id":"AWS-ECR-CVE-2026-14456-OPENSSL-PRE35-MAPPING","cve":"CVE-2026-14456","severity":"HIGH","packageName":"openssl","packageVersion":"3.0.20-1~deb12u2","scannedDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","reachabilityEvidence":"Provider states the issue begins in OpenSSL 3.5 QUIC server; the scanned package is 3.0.20.","compensatingControl":"Exact CVE, severity, package, version and provider statement match; all mismatches remain blocking.","approvedBy":"CHAT-OWNER-DIRECTIVE-2026-08-27-FIX-ALL-UNTIL-DEPLOY-SUCCEEDS","expiresAtEpoch":1788998400,"providerStatement":"The issue is present since OpenSSL 3.5 when the QUIC server implementation was added."}'
+waiver='{"id":"AWS-ECR-CVE-2026-54874-OPENSSL-DTLS-UNUSED","cve":"CVE-2026-54874","severity":"HIGH","packageName":"openssl","packageVersion":"3.0.20-1~deb12u2","scannedDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","reachabilityEvidence":"No process in the image speaks DTLS; the runtime is Node 22 with bundled OpenSSL 3.5.7 and the Debian package enters only as a ca-certificates dependency.","compensatingControl":"Exact CVE, severity, package, version and provider statement match; all mismatches remain blocking.","approvedBy":"CHAT-OWNER-DIRECTIVE-2026-09-05-CVE-WAIVER-RENEWAL-2026-10-05","expiresAtEpoch":1791158400,"providerStatement":"Receiving a DTLS record for a future epoch while a handshake is in progress"}'
 waived_facts="$fixture/waived-scan.json"
 jq -cS --argjson waiver "$waiver" \
   '.artifactIntegrity.services[0].scanSeverityCounts.HIGH=1
@@ -378,21 +378,21 @@ security_preflight_build_payload "$waived_facts" "$h2" "$clone" "$clone_ref" \
   "$fixture/waived-payload.json"
 mutate_facts forged-scan-waiver '.artifactIntegrity.services[0].scanSeverityCounts.HIGH=1
   | .artifactIntegrity.services[0].scanWaivers=[{
-    id:"AWS-ECR-CVE-2026-14456-OPENSSL-PRE35-MAPPING",cve:"CVE-2026-14456",severity:"HIGH",
+    id:"AWS-ECR-CVE-2026-54874-OPENSSL-DTLS-UNUSED",cve:"CVE-2026-54874",severity:"HIGH",
     packageName:"openssl",packageVersion:"3.5.0",scannedDigest:.artifactIntegrity.services[0].scanResolvedDigest,
-    reachabilityEvidence:"Provider states the issue begins in OpenSSL 3.5 QUIC server; the scanned package is 3.0.20.",
+    reachabilityEvidence:"No process in the image speaks DTLS; the runtime is Node 22 with bundled OpenSSL 3.5.7 and the Debian package enters only as a ca-certificates dependency.",
     compensatingControl:"Exact CVE, severity, package, version and provider statement match; all mismatches remain blocking.",
-    approvedBy:"CHAT-OWNER-DIRECTIVE-2026-08-27-FIX-ALL-UNTIL-DEPLOY-SUCCEEDS",expiresAtEpoch:1788998400,
-    providerStatement:"The issue is present since OpenSSL 3.5 when the QUIC server implementation was added."}]'
+    approvedBy:"CHAT-OWNER-DIRECTIVE-2026-09-05-CVE-WAIVER-RENEWAL-2026-10-05",expiresAtEpoch:1791158400,
+    providerStatement:"Receiving a DTLS record for a future epoch while a handshake is in progress"}]'
 
-# 2026-09 waiver batch. Services sort to [ai-gateway,api-web,workers], so index 1 mirrors the real
-# api scan (5 waivers: 3 of the 4 openssl HIGH rows plus the CRITICAL openssl and HIGH zlib rows,
-# rawSeverityCounts {CRITICAL:1,HIGH:4}, nothing blocking) and index 2 the workers scan (zlib only).
-# Every field is spelled out here rather than read from the contract table, so drift in either the
-# table or the policy jq fails this spec.
+# Renewed waiver batch, expiry 2026-10-05 (1791158400). Services sort to
+# [ai-gateway,api-web,workers], so index 1 mirrors the real api scan (all 5 rows: 3 openssl HIGH plus
+# the CRITICAL openssl and HIGH zlib rows, rawSeverityCounts {CRITICAL:1,HIGH:4}, nothing blocking)
+# and index 2 the workers scan (zlib only). Every field is spelled out here rather than read from the
+# contract table, so drift in either the table or the policy jq fails this spec.
 control='Exact CVE, severity, package, version and provider statement match; all mismatches remain blocking.'
-approval_08='CHAT-OWNER-DIRECTIVE-2026-08-27-FIX-ALL-UNTIL-DEPLOY-SUCCEEDS'
-approval_09='CHAT-OWNER-DIRECTIVE-2026-09-05-UAT-DEPLOY-WAIVER'
+approval='CHAT-OWNER-DIRECTIVE-2026-09-05-CVE-WAIVER-RENEWAL-2026-10-05'
+superseded_approval='CHAT-OWNER-DIRECTIVE-2026-09-05-UAT-DEPLOY-WAIVER'
 openssl_high='[
   {id:"AWS-ECR-CVE-2026-54874-OPENSSL-DTLS-UNUSED",cve:"CVE-2026-54874",
    providerStatement:"Receiving a DTLS record for a future epoch while a handshake is in progress",
@@ -404,20 +404,20 @@ openssl_high='[
    providerStatement:"CMP is a specialized feature that an application must explicitly enable.",
    reachabilityEvidence:"No process in the image enables CMP and the openssl CLI is never executed (repo-verified 2026-08-27)."}
 ] | map(. + {severity:"HIGH",packageName:"openssl",packageVersion:"3.0.20-1~deb12u2",
-  scannedDigest:$d,compensatingControl:$c,approvedBy:$a8,expiresAtEpoch:1788998400})'
+  scannedDigest:$d,compensatingControl:$c,approvedBy:$a,expiresAtEpoch:1791158400})'
 evp_critical='{id:"AWS-ECR-CVE-2026-75803-OPENSSL-EVP-CIPHER-UNUSED",cve:"CVE-2026-75803",
   severity:"CRITICAL",packageName:"openssl",packageVersion:"3.0.20-1~deb12u2",scannedDigest:$d,
   providerStatement:"for AES-OCB and ChaCha20-Poly1305 ciphers it skipped the AEAD tag verification when an empty ciphertext was passed to the function",
   reachabilityEvidence:"The runtime is Node 22 with its own bundled OpenSSL, not the Debian libssl; the Debian openssl package enters only as a hard dependency of ca-certificates and, in the api image, of the ClamAV 1.5.3 .deb. No process in any image calls EVP_Cipher() on an attacker-supplied AEAD ciphertext: ClamAV uses OpenSSL for hashing and database signature checks, and TLS records always carry content plus tag, never an empty ciphertext. FIPS is not in use.",
-  compensatingControl:$c,approvedBy:$a9,expiresAtEpoch:1789776000}'
+  compensatingControl:$c,approvedBy:$a,expiresAtEpoch:1791158400}'
 zlib_high='{id:"AWS-ECR-CVE-2026-85091-ZLIB-PRE131-MAPPING",cve:"CVE-2026-85091",
   severity:"HIGH",packageName:"zlib",packageVersion:"1.2.13.dfsg-1",scannedDigest:$d,
   providerStatement:"when processing non-blocking gzwrite() operations with stale external buffer pointers",
   reachabilityEvidence:"Provider states the affected range is zlib 1.3.1.2 through 1.3.2 while the scanned Debian package is 1.2.13. Node bundles its own zlib, and no process in any image writes gzip streams through the system zlib non-blocking gzwrite()/gzprintf() API (repo-verified 2026-09-05).",
-  compensatingControl:$c,approvedBy:$a9,expiresAtEpoch:1789776000}'
+  compensatingControl:$c,approvedBy:$a,expiresAtEpoch:1791158400}'
 waive_service() {
   local out="$1" index="$2" waivers="$3" counts="$4"
-  jq -cS --arg c "$control" --arg a8 "$approval_08" --arg a9 "$approval_09" --argjson i "$index" '
+  jq -cS --arg c "$control" --arg a "$approval" --argjson i "$index" '
     .artifactIntegrity.services[$i].scanResolvedDigest as $d
     | .artifactIntegrity.services[$i].scanSeverityCounts='"$counts"'
     | .artifactIntegrity.services[$i].scanWaivers='"$waivers" "$facts" > "$out"
@@ -444,17 +444,25 @@ mutate_waived unknown-waiver-row "${w}[3].id=\"AWS-ECR-CVE-2099-0001-NOT-APPROVE
 mutate_waived drifted-provider-statement "${w}[3].providerStatement=\"it skipped the AEAD tag verification\""
 mutate_waived drifted-package-version "${w}[3].packageVersion=\"3.0.20-1~deb12u3\""
 mutate_waived swapped-waiver-severity "${w}[3].severity=\"HIGH\" | ${w}[4].severity=\"CRITICAL\""
-mutate_waived wrong-waiver-approval "${w}[3].approvedBy=\"$approval_08\""
+mutate_waived wrong-waiver-approval "${w}[3].approvedBy=\"$superseded_approval\""
+mutate_waived stale-waiver-expiry "${w}[3].expiresAtEpoch=1789776000"
 mutate_waived duplicate-waiver-id "${w}[1]=${w}[0]"
 mutate_waived seven-waivers "${w} += [${w}[0], ${w}[1]]
   | .artifactIntegrity.services[1].scanSeverityCounts={CRITICAL:1,HIGH:6}"
 mutate_waived blocking-beside-waiver '.artifactIntegrity.services[1].critical=1'
 mutate_facts waived-critical-uncounted '.artifactIntegrity.services[1].scanSeverityCounts.CRITICAL=1'
+# The 2026-09-05 retirement is load-bearing too: the deleted CVE-2026-14456 row, reproduced exactly
+# as it used to read, no longer has an allowlist entry. List length and counts stay legal, so only
+# the missing row can reject it.
+mutate_waived retired-waiver-row "${w}[0] += {
+    id:\"AWS-ECR-CVE-2026-14456-OPENSSL-PRE35-MAPPING\",cve:\"CVE-2026-14456\",
+    providerStatement:\"The issue is present since OpenSSL 3.5 when the QUIC server implementation was added.\",
+    reachabilityEvidence:\"Provider states the issue begins in OpenSSL 3.5 QUIC server; the scanned package is 3.0.20.\"}"
 
 # Expiry is compared against the evidence issue time, which the h2 fixture pins to 1700000000, so
 # exercise the boundary directly on the contract rule instead of forging a whole future-dated chain.
-# The two batches lapse independently: the api mix dies with the 2026-08 rows on 2026-09-10, the
-# workers zlib waiver survives until 2026-09-19.
+# The 2026-09-05 renewal put every row on 2026-10-05, so both scans still hold one second past the
+# superseded 2026-09-10 and 2026-09-19 epochs and both lapse together at 1791158400.
 waiver_rule_at() {
   local waived="$1" index="$2"
   jq -er -L "$repo_root/infra/security" --argjson at "$3" --argjson i "$index" '
@@ -463,10 +471,13 @@ waiver_rule_at() {
     | ($s.scanWaivers | e0_ecr_scan_waivers($s.scanResolvedDigest; $at;
         $s.scanSeverityCounts; $s.critical; $s.high)) | tostring' "$waived"
 }
-test "$(waiver_rule_at "$api_waived" 1 1788998399)" = true
-test "$(waiver_rule_at "$api_waived" 1 1788998400)" = false
-test "$(waiver_rule_at "$workers_waived" 2 1789775999)" = true
-test "$(waiver_rule_at "$workers_waived" 2 1789776000)" = false
+test "$(waiver_rule_at "$api_waived" 1 1788998400)" = true
+test "$(waiver_rule_at "$api_waived" 1 1789776000)" = true
+test "$(waiver_rule_at "$api_waived" 1 1791158399)" = true
+test "$(waiver_rule_at "$api_waived" 1 1791158400)" = false
+test "$(waiver_rule_at "$workers_waived" 2 1789776000)" = true
+test "$(waiver_rule_at "$workers_waived" 2 1791158399)" = true
+test "$(waiver_rule_at "$workers_waived" 2 1791158400)" = false
 
 mutate_facts runtime-rds-single-az '.runtimeSecurityBaseline.rds.multiAZ=false'
 mutate_facts runtime-redis-single-node '.runtimeSecurityBaseline.redis.nodeCount=1'

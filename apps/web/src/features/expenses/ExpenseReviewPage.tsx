@@ -31,7 +31,7 @@ import {
   canRunExpenseDuplicateCheck, hasAiGrandTotalMismatch, hasUnresolvedDuplicateWarning, initialExpenseReviewStep, needsAiTotalAcknowledgement,
   MIME_TYPE_LABELS, canDeleteExpense, effectiveVatRateLabel, expenseDeleteErrorMessage, firstFilled, shouldRereadReplacedReceipt, isBlockedCheckBillClassification,
   postingErrorText, vatModeRequiresRate, expensePaymentAttempt, classifyExpensePaymentFailure,
-  expenseConfirmBlocker,
+  expenseConfirmBlocker, expenseDocumentDateStatus, EXPENSE_DATE_STATUS_LABELS,
 } from './expenses.model';
 import type { ExpenseDetail, ExpenseReviewStepKey, ExpensePaymentAttempt, ExpensePaymentFailure } from './expenses.model';
 import { todayCivilDate, isCivilDate, type BusinessDocumentClassification, type ExpenseVatSourceOverrideInput, type ExpensePaymentMethod } from '@watchdog-bms/contracts';
@@ -763,13 +763,32 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
       </MangmeeCard>
     </div>
   );
+  // One number for the whole group: the charge rows the API already grouped and labelled. The row
+  // is shown whenever a charge EXISTS, not when the sum is non-zero — a bill whose charges happen
+  // to cancel (a service charge against a rounding deduction) still has to explain why the goods
+  // subtotal and the tax base differ, and a 0.00 that is really there is information.
+  const chargesTotal = (detail.charges ?? []).reduce((sum, charge) => sum + Number(charge.amount), 0);
+  const hasCharges = (detail.charges ?? []).length > 0;
   const moneyCard = (
     <div ref={moneyRef} className="scroll-mt-24">
       <MangmeeCard className="p-4">
         <h3 className="text-sm font-semibold text-gray-800">{t('expenses.money_section_title', locale)}</h3>
+        {/* §5.1: the rows below are the stored header, and the lines are stored separately. A record
+            written before that rule — or by anything bypassing the draft use-cases — can have the
+            two disagree, and printing the header alone would state a total its own lines contradict.
+            Branch on `ok`: a subtotal-only drift has a correct grand total and so a zero gap. */}
+        {detail.totalsIdentity?.ok === false && (
+          <p className="mt-2 rounded-lg bg-warning-50 px-3 py-2 text-xs leading-relaxed text-warning-700">
+            {t('expenses.totals_identity_warning', locale)}
+          </p>
+        )}
         <div className="mt-2">
           <MoneyRow label={t('expenses.subtotal', locale)} value={detail.subtotalAmount} />
           {Number(detail.discountAmount) > 0 && <MoneyRow label={t('expenses.discount', locale)} value={detail.discountAmount} negative />}
+          {/* Spec §5.1: the goods subtotal no longer includes the additional charges, so the column
+              only adds up if they are shown — between the discount and the tax base, which is the
+              order the arithmetic runs in (subtotal − discount + charges = base). */}
+          {hasCharges && <MoneyRow label={t('expenses.charges_total', locale)} value={chargesTotal.toFixed(4)} />}
           {showsVat && <MoneyRow label={t('expenses.taxable_base_ex_vat', locale)} value={detail.taxableAmount} muted />}
           {/* Spec §19g decision 3: mode + the rate the lines actually carry, so "VAT ฿0.00" can no
               longer sit under a label that claims 7%. */}
@@ -902,6 +921,22 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
       {(aiMap?.['chargeReconciliation'] as { status?: string } | undefined)?.status === 'FOLDED_INTO_SUMMARY_NEEDS_REVIEW' && (
         <span className="rounded-full border border-warning-100 bg-warning-50 px-2 py-0.5 font-medium text-warning-700">
           {t('expenses.ai_charges_folded', locale)}
+        </span>
+      )}
+      {/* Spec §5.1/§5.2: the server's own words for what it could not decide — an unread date, a
+          charge whose VAT nothing proved, a withholding base worth checking. These are the reasons
+          behind the flags above, and without them the reviewer sees a warning with no cause. */}
+      {(Array.isArray(aiMap?.['reviewReasons']) ? aiMap['reviewReasons'] : [])
+        .filter((reason): reason is string => typeof reason === 'string')
+        .slice(0, 4)
+        .map((reason, index) => (
+          <span key={`reason-${index}`} className="rounded-full border border-warning-100 bg-warning-50 px-2 py-0.5 font-medium text-warning-700">
+            {reason}
+          </span>
+        ))}
+      {expenseDocumentDateStatus(aiMap) === 'assumed' && (
+        <span className="rounded-full border border-[#A4BCFD] bg-white px-2 py-0.5 font-medium text-[#3538CD]">
+          {EXPENSE_DATE_STATUS_LABELS.assumed}
         </span>
       )}
       {canExtract && (

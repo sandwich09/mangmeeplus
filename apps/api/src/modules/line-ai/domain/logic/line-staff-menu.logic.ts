@@ -1,4 +1,5 @@
 import type { LineQuickReplyItem, LineReplyMessage } from '../../infrastructure/line-reply.adapter';
+import { DRAFT_UPDATE_CANCEL_COMMAND, DRAFT_UPDATE_CONFIRM_COMMAND } from './line-draft-update-card.logic';
 import { FEATURE_CATALOG } from '@watchdog-bms/contracts';
 
 /**
@@ -10,6 +11,16 @@ export const PACKAGE_CHANGE_COMMAND = 'ขอเปลี่ยนแพ็ก�
 export const VIEW_PACKAGES_COMMAND = 'โปรโมชั่น';
 export const EMPLOYEE_DOOR_COMMAND = 'ฉันเป็นพนักงาน';
 export const STAFF_CONTACT_COMMAND = 'ติดต่อเจ้าหน้าที่';
+/**
+ * The way BACK from a support pause (line-support-request-spec-th §2.4). Without it the only exit
+ * from "a human is handling this" was waiting 24 hours — the customer had no button and no words.
+ *
+ * Two spellings because both are natural and both are printed in the reply the pause sends; exact
+ * whole-string matches like every other command here, so a sentence that merely quotes one (a
+ * pasted instruction, an OCR'd photo caption) cannot resume the assistant on the customer's behalf.
+ */
+export const RESUME_AI_COMMAND = 'คุยกับ AI ต่อ';
+export const RESUME_AI_ALT_COMMAND = 'ให้ AI ตอบ';
 export const PROFILE_GUARD_COMMAND = 'ใส่เลย';
 export const PROFILE_GUARD_LATER_COMMAND = 'ไว้ก่อน';
 /**
@@ -468,6 +479,11 @@ export type StaffMenuCommand =
   // P10-L §3.7/§7. The four commands the LINE-first flow answers. All exact whole-string matches,
   // because every one of them is printed on a button — a customer never has to spell them.
   | 'package_change' | 'employee' | 'staff_contact' | 'profile_guard' | 'profile_guard_later'
+  // §2.4 delta: the customer's own way out of the support pause.
+  | 'resume_ai'
+  // S-4 (draft-control spec §5.4): the two buttons on the draft-edit confirm card. Typed answers
+  // work too, which is the point of SEC-04 — a postback may do nothing a message could not.
+  | 'draft_update_confirm' | 'draft_update_cancel'
   | 'follow';
 
 export function staffMenuCommand(text: string): StaffMenuCommand | null {
@@ -482,8 +498,11 @@ export function staffMenuCommand(text: string): StaffMenuCommand | null {
   if (normalized === PACKAGE_CHANGE_COMMAND) return 'package_change';
   if (normalized === EMPLOYEE_DOOR_COMMAND) return 'employee';
   if (normalized === STAFF_CONTACT_COMMAND) return 'staff_contact';
+  if (normalized === RESUME_AI_COMMAND || normalized === RESUME_AI_ALT_COMMAND) return 'resume_ai';
   if (normalized === PROFILE_GUARD_COMMAND) return 'profile_guard';
   if (normalized === PROFILE_GUARD_LATER_COMMAND) return 'profile_guard_later';
+  if (normalized === DRAFT_UPDATE_CONFIRM_COMMAND) return 'draft_update_confirm';
+  if (normalized === DRAFT_UPDATE_CANCEL_COMMAND) return 'draft_update_cancel';
   if (normalized === LINE_FOLLOW_EVENT_TEXT) return 'follow';
   if (normalized === 'โปรโมชั่น' || normalized === 'แพ็กเกจ') return 'promotion';
   return null;
@@ -502,8 +521,28 @@ const POSTBACK_ACTIONS: Readonly<Record<string, string>> = {
   'profile-guard-later': PROFILE_GUARD_LATER_COMMAND,
 };
 
-/** `action=<name>&…`; unknown or absent actions answer null so the event is dropped, not guessed. */
-export function linePostbackCommandText(data: string | undefined): string | null {
+/**
+ * S-4: the confirm/cancel buttons carry an intent and no ids. The server re-derives which preview
+ * they answer from the chat, so a forged or replayed `data` reaches nothing.
+ *
+ * Gated on the flag, and this is the point: with S-4 off no card carries these buttons, so the only
+ * thing that can send one is a forgery. Resolving it to a command anyway sent the event down the
+ * text lane and into a PAID AI turn — before S-4 it resolved to null and was dropped. Flag off must
+ * mean dropped again.
+ */
+const DRAFT_POSTBACK_ACTIONS: Readonly<Record<string, string>> = {
+  'draft-update-confirm': DRAFT_UPDATE_CONFIRM_COMMAND,
+  'draft-update-cancel': DRAFT_UPDATE_CANCEL_COMMAND,
+};
+
+/**
+ * `action=<name>&…`; unknown or absent actions answer null so the event is dropped, not guessed.
+ *
+ * `draftEditEnabled` decides whether the two S-4 actions resolve at all. It defaults to false so a
+ * caller that has not been taught about the flag keeps the pre-S-4 behaviour — dropped — rather
+ * than the more permissive one.
+ */
+export function linePostbackCommandText(data: string | undefined, draftEditEnabled = false): string | null {
   if (!data) return null;
   let action: string | null;
   try {
@@ -511,5 +550,7 @@ export function linePostbackCommandText(data: string | undefined): string | null
   } catch {
     return null;
   }
-  return (action && POSTBACK_ACTIONS[action]) ?? null;
+  if (!action) return null;
+  if (draftEditEnabled && DRAFT_POSTBACK_ACTIONS[action]) return DRAFT_POSTBACK_ACTIONS[action]!;
+  return POSTBACK_ACTIONS[action] ?? null;
 }

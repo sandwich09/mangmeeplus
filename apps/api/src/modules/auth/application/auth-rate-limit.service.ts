@@ -24,6 +24,15 @@ const PUBLIC_SIGNUP_CLAIM_MAX_PER_IP = 20;
 // it exists to bound an unsigned flood, not to shape legitimate AWS traffic.
 const SES_EVENTS_MAX_PER_IP = 600;
 
+/**
+ * Review F6: the merge PREVIEW is a read the dialog makes to describe a decision, not an attempt at
+ * the decision itself. It used to share the LINE-login callback bucket (10/window), so a person who
+ * opened the dialog a few times could 429 their own LINE login — the very thing the dialog exists
+ * to recover. Its own bucket, sized for a human opening a dialog, keeps the two apart.
+ */
+const ACCOUNT_MERGE_PREVIEW_WINDOW_SECONDS = 3600;
+const ACCOUNT_MERGE_PREVIEW_MAX_PER_IP = 120;
+
 // P10-L §9. Same fail-closed policy and the same "constants, not env knobs" reasoning as the web
 // signup buckets above: `LINE_SIGNUP_ENABLED` is the operational switch, not the limits.
 // Per-LINE-account is the tightest one because it is the only key tied to a verified human, and
@@ -38,6 +47,11 @@ const LINE_SIGNUP_ATTEMPT_MAX_PER_USER = 20;
 // Reading a status is not attempting a signup, so it gets its own, roomier quota: spending the
 // submit bucket on reads would let a status screen lock a customer out of applying (review LOW-4).
 const LINE_SIGNUP_READ_MAX_PER_USER = 60;
+// line-support-request-spec-th review: "ติดต่อเจ้าหน้าที่" is reachable by an unauthenticated LINE
+// account, and every OPEN request that closes frees the dedupe — so tap → resume → tap, repeated,
+// was an unbounded source of rows, letters and pushes from one person. Three genuine asks in a day
+// is already more than a real customer makes; the fourth is answered warmly and writes nothing.
+const LINE_SUPPORT_MAX_PER_USER_PER_DAY = 3;
 const LINE_SIGNUP_MAX_PER_IP = 20;
 const LINE_SIGNUP_READ_MAX_PER_IP = 60;
 const LINE_LIFF_SESSION_MAX_PER_USER = 30;
@@ -111,6 +125,20 @@ export class AuthRateLimitService {
       ipAddress,
       this.config.lineLoginCallbackMaxPerIp,
       this.config.lineLoginCallbackWindowSeconds,
+    );
+  }
+
+  /**
+   * Review F6. Reading what a merge WOULD do must never cost the visitor their ability to log in
+   * with LINE: this is an authenticated read behind a ticket the caller already holds, so it is
+   * bounded generously and separately from the callback that mints the ticket.
+   */
+  async assertAccountMergePreviewAllowed(ipAddress: string): Promise<void> {
+    await this.assertWithinLimit(
+      'account-merge-preview-ip',
+      ipAddress,
+      ACCOUNT_MERGE_PREVIEW_MAX_PER_IP,
+      ACCOUNT_MERGE_PREVIEW_WINDOW_SECONDS,
     );
   }
 
@@ -225,6 +253,42 @@ export class AuthRateLimitService {
       LINE_SIGNUP_READ_MAX_PER_USER,
       LINE_SIGNUP_WINDOW_SECONDS,
     );
+  }
+
+  /**
+   * The one bucket in this family that ANSWERS instead of throwing.
+   *
+   * Everything else here guards an HTTP endpoint, where a 429 is the right reply. This guards a
+   * chat message from somebody asking for help: a 429 would surface as the generic error reply, and
+   * telling a customer in trouble "too many requests" is the opposite of what this flow is for. So
+   * the caller gets a boolean and answers "we already have your request" in Thai.
+   *
+   * Spends the slot on the way in, like `assertWithinLimit` — a request that WAS opened is the cost
+   * being bounded, and the caller only asks when it is about to open one.
+   *
+   * No `emitSecurityEvent` either: `SecurityEventRisk` is HIGH or CRITICAL, and the deployed metric
+   * filter alarms on both. A customer asking for help a fourth time is neither — the webhook writes
+   * a `DENIED` audit row for it, which is where this belongs.
+   *
+   * `degrade-to-local`, and this is the whole reason the method exists rather than a one-line
+   * `assertWithinLimit` call. The default `fail-closed` throws `ServiceUnavailableException` in
+   * production when Redis is unavailable — which here would propagate out of `handleStaffContact`
+   * and produce NO request row, NO notice and NO reply, on a webhook event already claimed and so
+   * never redelivered. That is precisely the silent "รับเรื่องแล้วค่ะ that reached nobody" this
+   * branch exists to remove, and no non-production environment can catch it because outside
+   * production every policy already degrades. This bucket guards no spend and no secret (the cost
+   * it bounds is rows and emails), so it takes the §4-rule-6 side: still bounded, at 3 per task
+   * instead of 3 per fleet, rather than trading a customer's route to a human for it.
+   */
+  async consumeLineSupportRequestSlot(lineProviderUserId: string): Promise<boolean> {
+    const decision = await this.limits.consume(
+      'line-support-request-user',
+      lineProviderUserId,
+      LINE_SUPPORT_MAX_PER_USER_PER_DAY,
+      LINE_SIGNUP_DAY_SECONDS,
+      'degrade-to-local',
+    );
+    return decision.allowed;
   }
 
   /** Spent once an application actually exists. */
