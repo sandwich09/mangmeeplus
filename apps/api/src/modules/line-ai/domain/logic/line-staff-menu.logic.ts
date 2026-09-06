@@ -384,7 +384,10 @@ function companyBubble(company: CompanyPickerItem, selectionNumber: number, curr
         { type: 'text', text: boundedLabel(company.companyName, 'ไม่ระบุบริษัท'), weight: 'bold', size: 'lg', color: '#101828', wrap: true },
         ...(current ? [{ type: 'text', text: '✓ ใช้งานอยู่', size: 'sm', color: '#16A34A', weight: 'bold' }] : []),
         ...(!current ? [{ type: 'text', text: `ตอบ ${selectionNumber} หรือกดปุ่มด้านล่าง`, size: 'sm', color: '#667085', wrap: true }] : []),
-        ...(company.webUrl ? [{ type: 'text', text: COMPANY_PICKER_OPEN_WEB_HINT, size: 'xs', color: '#667085', wrap: true }] : []),
+        // Only where a switch actually happens. On the ✓ ใช้งานอยู่ bubble the chat is already on
+        // this company, so promising "ระบบจะสลับบริษัทในไลน์ให้ด้วย" describes a change that will
+        // not occur — the button there just opens the web.
+        ...(company.webUrl && !current ? [{ type: 'text', text: COMPANY_PICKER_OPEN_WEB_HINT, size: 'xs', color: '#667085', wrap: true }] : []),
       ],
     },
     // `spacing` only where there is a gap to space, so a one-button footer stays byte-identical to

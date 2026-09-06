@@ -264,6 +264,13 @@ describe('LINE staff menu', () => {
     ]);
     assert.match(JSON.stringify(first), /ใช้งานอยู่/);
     assert.equal(JSON.stringify(message).includes('/company co-1'), false, 'no redundant switch action');
+    // …and nothing to switch either: "ระบบจะสลับบริษัทในไลน์ให้ด้วย" on the bubble the chat is
+    // ALREADY on promises a change that will not happen. The line belongs to the bubbles it is
+    // true of; the second one still carries it.
+    const currentLines = first.body.contents.map((line: any) => line.text);
+    assert.equal(currentLines.includes(COMPANY_PICKER_OPEN_WEB_HINT), false, 'no switch is promised where none happens');
+    const [, second] = (message as any).contents.contents;
+    assert.ok(second.body.contents.map((line: any) => line.text).includes(COMPANY_PICKER_OPEN_WEB_HINT));
   });
 
   it('is byte-identical to the old picker when no company carries a web link', () => {
