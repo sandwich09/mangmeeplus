@@ -424,6 +424,8 @@ function makeUseCase(
       /** Defaults to the seeded OPEN route; pass `closedLaunchGate`/`brokenLaunchGate` to drive the
        *  AI-lane kill switch. */
       launchGate?: any;
+      /** P12-3b seam. Absent (the default) is the handoff feature switched off. */
+      handoffLinks?: any;
 	  } = {},
 	) {
   const replies: string[] = [];
@@ -507,6 +509,8 @@ function makeUseCase(
     opts.approvalQueues?.reimbursement,
     opts.approvalQueues?.purchaseRequests,
     opts.approvalQueues?.purchaseOrders,
+    undefined, // intakeState
+    opts.handoffLinks, // P12-3b handoff seam; absent = LINE_WEB_HANDOFF_ENABLED off
   );
 
 	  return { useCase, replies, sentMessages, sentMessageBatches, pushes, aiGatewayRequests, intakeRequests, auditEvents, legalChecks, getAiGatewayCalled: () => aiGatewayCalled };
@@ -1708,6 +1712,117 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.match(JSON.stringify(ownerPicker), /บริษัทหนึ่ง/);
     assert.match(JSON.stringify(ownerPicker), /บริษัทสอง/);
     assert.match(JSON.stringify((ownerPicker as any).contents.contents[0]), /ใช้งานอยู่/);
+  });
+
+  /**
+   * Owner 2026-09-06: บริษัทของฉัน gets a second button per bubble that both switches the LINE
+   * company AND opens the web on it. LINE cannot notify the server about a `uri` tap, so each
+   * bubble carries its OWN handoff token; the switch happens at exchange time, keyed on the
+   * `company_picker_open_web` surface.
+   */
+  describe('บริษัทของฉัน one-tap web button', () => {
+    const twoShops = () => makePrisma({
+      displayName: 'พิมพ์ชนก',
+      memberships: [
+        { companyId: 'co-1', company: { name: 'บริษัทหนึ่ง' }, roles: [{ role: { key: 'OWNER', name: 'เจ้าของกิจการ' } }] },
+        { companyId: 'co-2', company: { name: 'บริษัทสอง' }, roles: [{ role: { key: 'OWNER', name: 'เจ้าของกิจการ' } }] },
+      ],
+      lineCompanyContext: { companyId: 'co-2' },
+    }).prisma;
+
+    /** Stands in for `LineHandoffLinkService`: one URL per company, or `null` where minting failed.
+     *  `wrapOutgoingLineContent` is the real seam's send-boundary walk — recorded here so a test can
+     *  see that it neither re-wraps the picker's own `/l/` links nor is handed a recipient. */
+    const fakeLinks = (fails: string[] = []) => {
+      const calls: any[] = [];
+      const wraps: any[] = [];
+      return {
+        calls,
+        wraps,
+        handoffLinks: {
+          linkFor: async (ctx: any, targetPath: string) => {
+            calls.push({ ...ctx, targetPath });
+            return fails.includes(ctx.companyId) ? null : `https://app.example.com/l/tok-${ctx.companyId}`;
+          },
+          wrapOutgoingLineContent: async (ctx: any, messages: any[]) => { wraps.push(ctx); return messages; },
+        },
+      };
+    };
+
+    const pickerOf = (batches: any[][]) => batches[0]![batches[0]!.length - 1];
+    const bubbles = (picker: any) => picker.contents.contents as any[];
+
+    it('mints one token per visible bubble, bound to that bubble’s own company', async () => {
+      const { calls, wraps, handoffLinks } = fakeLinks();
+      const { useCase, sentMessageBatches } = makeUseCase(twoShops(), { permissions: ['line.ai.query'], handoffLinks });
+
+      await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-picker-web', messageText: '/companies' });
+
+      assert.deepEqual(calls, [
+        // The LINE identity is the CHAT's own user id — the same key `LineCompanyContext` is
+        // upserted under — so the exchange switches the row this conversation reads.
+        { userId: 'user-1', companyId: 'co-1', lineUserId: 'line-user-secret', surface: 'company_picker_open_web', targetPath: '/companies/co-1/dashboard' },
+        { userId: 'user-1', companyId: 'co-2', lineUserId: 'line-user-secret', surface: 'company_picker_open_web', targetPath: '/companies/co-2/dashboard' },
+      ]);
+
+      const [current, other] = bubbles(pickerOf(sentMessageBatches));
+      // The current company has nothing to select, so the web button is its only one.
+      assert.deepEqual(current.footer.contents.map((b: any) => b.action), [
+        { type: 'uri', label: 'เปิดเว็บบริษัทนี้', uri: 'https://app.example.com/l/tok-co-2' },
+      ]);
+      assert.deepEqual(other.footer.contents.map((b: any) => b.action), [
+        { type: 'message', label: 'เลือกบริษัทนี้', text: '/company co-1' },
+        { type: 'uri', label: 'เปิดเว็บบริษัทนี้', uri: 'https://app.example.com/l/tok-co-1' },
+      ]);
+      // The send-boundary seam still runs and adds nothing: `/l/<token>` sits outside `/companies/`,
+      // so there is nothing for it to rewrite (proved in line-handoff-link.service.spec.ts).
+      assert.equal(wraps.length, 1);
+      assert.equal(calls.length, 2, 'two bubbles, two tokens, and not one more');
+    });
+
+    it('renders the picker exactly as before when the handoff feature is off', async () => {
+      const { useCase, sentMessageBatches } = makeUseCase(twoShops(), { permissions: ['line.ai.query'] });
+      await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-picker-off', messageText: '/companies' });
+
+      const rendered = JSON.stringify(pickerOf(sentMessageBatches));
+      assert.equal(rendered.includes('เปิดเว็บบริษัทนี้'), false);
+      assert.equal(rendered.includes('"uri"'), false);
+      assert.equal(rendered.includes('/l/'), false);
+      assert.match(rendered, /\/company co-1/, 'and the switch button it always had still works');
+    });
+
+    it('drops only the failing bubble’s web button when one mint fails', async () => {
+      const { handoffLinks } = fakeLinks(['co-1']);
+      const { useCase, sentMessageBatches } = makeUseCase(twoShops(), { permissions: ['line.ai.query'], handoffLinks });
+
+      await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-picker-partial', messageText: '/companies' });
+
+      const [current, other] = bubbles(pickerOf(sentMessageBatches));
+      assert.equal(current.footer.contents.length, 1, 'the company that minted keeps its web button');
+      assert.deepEqual(other.footer.contents.map((b: any) => b.action), [
+        { type: 'message', label: 'เลือกบริษัทนี้', text: '/company co-1' },
+      ], 'the one that failed keeps the picker it always had, and nothing else is lost');
+    });
+
+    it('mints for the visible page only, never for companies this carousel cannot show', async () => {
+      const memberships = Array.from({ length: 14 }, (_, index) => ({
+        companyId: `co-${index + 1}`,
+        company: { name: `บริษัท ${index + 1}` },
+        roles: [{ role: { key: 'OWNER', name: 'เจ้าของกิจการ' } }],
+      }));
+      const { prisma } = makePrisma({ displayName: 'พิมพ์ชนก', memberships, lineCompanyContext: { companyId: 'co-1' } });
+      const { calls, handoffLinks } = fakeLinks();
+      const { useCase, sentMessageBatches } = makeUseCase(prisma, { permissions: ['line.ai.query'], handoffLinks });
+
+      await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-picker-page2', messageText: '/companies page 2' });
+
+      // Page 2 shows three companies plus the navigation bubble; only the three get a token.
+      assert.equal(calls.length, 3);
+      assert.deepEqual(calls.map((call) => call.companyId), ['co-12', 'co-13', 'co-14']);
+      const page = bubbles(pickerOf(sentMessageBatches));
+      assert.equal(page.length, 4);
+      assert.equal(JSON.stringify(page[3]).includes('/l/'), false, 'the pager bubble is navigation, not a company');
+    });
   });
 
   it('puts เปิดร้านใหม่ on the company card only where this environment opens self-service signup', async () => {

@@ -55,7 +55,25 @@ export type StaffMenuContext = {
 export type CompanyPickerItem = {
   companyId: string;
   companyName: string;
+  /**
+   * The already-minted one-tap link that opens the web app on THIS company (P12-3b `/l/<token>`).
+   * Absent — which is every caller while `LINE_WEB_HANDOFF_ENABLED` is off, and every company whose
+   * mint failed — renders the bubble exactly as it rendered before this feature: half a picker is
+   * worse than the one that always worked.
+   */
+  webUrl?: string;
 };
+
+/**
+ * Owner 2026-09-06: "มี 2 ปุ่ม ปุ่มเลือก อันนี้ทำงานเหมือนเดิม … อีกปุ่มคือสลับบริษัทและพาไปเว็บไซต์
+ * ตามบริษัทนั้น". Constants so the wording is one line to change, and so the label matcher and the
+ * button can never drift apart. Every label stays inside 12 Thai grapheme clusters, which is what
+ * LINE's `sm` button renders without an ellipsis.
+ */
+export const COMPANY_PICKER_SELECT_LABEL = 'เลือกบริษัทนี้';
+export const COMPANY_PICKER_OPEN_WEB_LABEL = 'เปิดเว็บบริษัทนี้';
+/** Says what the second button does that the first does not — the switch comes free with it. */
+export const COMPANY_PICKER_OPEN_WEB_HINT = 'กดเปิดเว็บ ระบบจะสลับบริษัทในไลน์ให้ด้วยค่ะ';
 
 export type CompanyContextCard = {
   companyName: string;
@@ -351,6 +369,13 @@ export function buildContactCard(): LineReplyMessage {
 
 function companyBubble(company: CompanyPickerItem, selectionNumber: number, currentCompanyId?: string): Record<string, unknown> {
   const current = company.companyId === currentCompanyId;
+  // Two ways in, in the order they were asked for: switch the chat only (unchanged, and still
+  // typeable as a number), or switch AND open the web on that company in one tap. The current
+  // company keeps having nothing to select, so it gets the web button alone.
+  const buttons = [
+    ...(!current ? [{ type: 'button', style: 'primary', color: '#22C55E', action: { type: 'message', label: COMPANY_PICKER_SELECT_LABEL, text: `/company ${company.companyId}` } }] : []),
+    ...(company.webUrl ? [{ type: 'button', style: 'secondary', action: { type: 'uri', label: COMPANY_PICKER_OPEN_WEB_LABEL, uri: company.webUrl } }] : []),
+  ];
   return {
     type: 'bubble',
     body: {
@@ -359,29 +384,42 @@ function companyBubble(company: CompanyPickerItem, selectionNumber: number, curr
         { type: 'text', text: boundedLabel(company.companyName, 'ไม่ระบุบริษัท'), weight: 'bold', size: 'lg', color: '#101828', wrap: true },
         ...(current ? [{ type: 'text', text: '✓ ใช้งานอยู่', size: 'sm', color: '#16A34A', weight: 'bold' }] : []),
         ...(!current ? [{ type: 'text', text: `ตอบ ${selectionNumber} หรือกดปุ่มด้านล่าง`, size: 'sm', color: '#667085', wrap: true }] : []),
+        ...(company.webUrl ? [{ type: 'text', text: COMPANY_PICKER_OPEN_WEB_HINT, size: 'xs', color: '#667085', wrap: true }] : []),
       ],
     },
-    ...(!current ? {
-      footer: {
-        type: 'box', layout: 'vertical', contents: [
-          { type: 'button', style: 'primary', color: '#22C55E', action: { type: 'message', label: 'เลือกบริษัทนี้', text: `/company ${company.companyId}` } },
-        ],
-      },
-    } : {}),
+    // `spacing` only where there is a gap to space, so a one-button footer stays byte-identical to
+    // the one this picker has always sent.
+    ...(buttons.length > 0
+      ? { footer: { type: 'box', layout: 'vertical', ...(buttons.length > 1 ? { spacing: 'sm' } : {}), contents: buttons } }
+      : {}),
   };
 }
 
-/** LINE Flex carousels allow at most 12 bubbles. Eleven company bubbles plus one navigation
- * bubble keep every company reachable without silently dropping a name. */
-export function buildCompanyPickerMessage(companies: CompanyPickerItem[], currentCompanyId?: string, requestedPage = 1): LineReplyMessage {
-  if (companies.length === 0) return { type: 'text', text: 'ไม่พบบริษัทที่ใช้งานได้ในขณะนี้' };
-
+/**
+ * LINE Flex carousels allow at most 12 bubbles. Eleven company bubbles plus one navigation
+ * bubble keep every company reachable without silently dropping a name.
+ *
+ * Exported because a caller that mints one handoff token per VISIBLE bubble has to read the same
+ * page rule the renderer applies; re-deriving it there would mint for companies this carousel
+ * never shows, and drift the moment either copy changes.
+ */
+export function companyPickerPage<T extends CompanyPickerItem>(
+  companies: T[],
+  currentCompanyId?: string,
+  requestedPage = 1,
+): { visible: T[]; page: number; pageCount: number } {
   const current = companies.find((company) => company.companyId === currentCompanyId);
   const ordered = current ? [current, ...companies.filter((company) => company.companyId !== current.companyId)] : companies;
   const pageSize = companies.length > 12 ? 11 : 12;
-  const pageCount = Math.ceil(ordered.length / pageSize);
+  const pageCount = Math.max(1, Math.ceil(ordered.length / pageSize));
   const page = Math.max(1, Math.min(requestedPage, pageCount));
-  const visible = ordered.slice((page - 1) * pageSize, page * pageSize);
+  return { visible: ordered.slice((page - 1) * pageSize, page * pageSize), page, pageCount };
+}
+
+export function buildCompanyPickerMessage(companies: CompanyPickerItem[], currentCompanyId?: string, requestedPage = 1): LineReplyMessage {
+  if (companies.length === 0) return { type: 'text', text: 'ไม่พบบริษัทที่ใช้งานได้ในขณะนี้' };
+
+  const { visible, page, pageCount } = companyPickerPage(companies, currentCompanyId, requestedPage);
   const bubbles = visible.map((company) => companyBubble(company, companies.findIndex((item) => item.companyId === company.companyId) + 1, currentCompanyId));
   if (pageCount > 1) bubbles.push({
     type: 'bubble',

@@ -112,13 +112,32 @@ export class LineHandoffLinkService {
   private async handoffFor(url: string, ctx: LineHandoffContext): Promise<string | null> {
     try {
       const parsed = new URL(url);
+      // The destination is the path the message already decided to send, never the whole URL.
+      return await this.linkFor(ctx, `${parsed.pathname}${parsed.search}`);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * `<web>/l/<token>` for one destination PATH, or `null` when the caller must render exactly what
+   * it renders without the handoff feature.
+   *
+   * Public because the walk above binds ONE recipient company to a whole message, and the
+   * บริษัทของฉัน picker needs a DIFFERENT company per bubble — `isSafeHandoffPath` rejects bubble
+   * B's path against bubble A's company, by design. Callers in that shape mint here instead, and
+   * so keep the seam's enabled rule, its degrade-to-plain failure, and its never-log-the-token
+   * guarantee rather than re-deriving three rules that must not drift.
+   */
+  async linkFor(ctx: LineHandoffContext, targetPath: string): Promise<string | null> {
+    if (!this.enabled) return null;
+    try {
       const { rawToken } = await this.mint.execute({
         userId: ctx.userId,
         companyId: ctx.companyId,
         lineUserId: ctx.lineUserId,
         surface: ctx.surface,
-        // The destination is the path the message already decided to send, never the whole URL.
-        targetPath: `${parsed.pathname}${parsed.search}`,
+        targetPath,
       });
       return lineHandoffUrl(this.config.webBaseUrl!, rawToken);
     } catch (error) {
