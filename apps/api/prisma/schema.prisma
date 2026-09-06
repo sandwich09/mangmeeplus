@@ -3485,9 +3485,19 @@ model LineSupportRequest {
   /// page an operator can actually act on.
   signupRequestId    String?
   requestedAt        DateTime                 @default(now())
-  /// ≤200 chars of what they last typed before tapping, when the assistant kept it (§3). Never a
-  /// photo, and dropped with the row.
+  /// ≤200 chars of what they last typed, when the assistant kept it (§3). Rewritten every time the
+  /// customer writes again while the request is live. Never a photo — a photo leaves a marker —
+  /// and dropped with the row.
   lastMessageText    String?
+  /// When that newest customer message arrived. Named as on `CrmConversation`, and NOT nullable
+  /// here: the tap itself is a message, so every row has one and the inbox can order by it without
+  /// a nulls-first surprise. `requestedAt` still says when they FIRST asked; `updatedAt` cannot
+  /// serve, because the notify drain and both admin buttons move it too.
+  lastMessageAt      DateTime                 @default(now())
+  /// How many times an ANSWERED request came back because the customer wrote again (UAT
+  /// 2026-09-06). `answeredAt`/`answeredByUserId` stay as the history of the last answer; this is
+  /// what lets the inbox say "ตอบแล้ว N ครั้ง · ลูกค้าตอบกลับ".
+  reopenedCount      Int                      @default(0)
   /// Successful LINE pushes to admins, counted at delivery. Owner 2026-09-05: admins are NOT
   /// LINE-linked, so `0` is the expected reading — the /system inbox is the primary channel and
   /// this row exists whether or not any push landed.

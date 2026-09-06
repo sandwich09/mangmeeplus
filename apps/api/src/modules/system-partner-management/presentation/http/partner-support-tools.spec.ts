@@ -32,6 +32,8 @@ type Options = {
   planTerm?: any | null;
   ownerIdentities?: Array<{ providerUserId: string }>;
   ownerMemberships?: Array<{ userId: string }>;
+  /** OPEN `LineSupportRequest` rows against this shop — the people actually waiting for a reply. */
+  supportRequesters?: Array<{ lineUserId: string }>;
   memberIdentity?: any | null;
   ocrUsage?: { usedCount: number } | null;
   aiUsage?: { costSatang: number } | null;
@@ -44,6 +46,7 @@ function harness(options: Options = {}) {
   const audits: any[] = [];
   const planTermUpdates: any[] = [];
   const supportAnswered: any[] = [];
+  const supportLookups: any[] = [];
   let planTerm = options.planTerm === undefined ? null : options.planTerm;
 
   const prisma = {
@@ -87,6 +90,7 @@ function harness(options: Options = {}) {
       // line-support-request-spec-th §2.3: answering the shop closes its OPEN request, so the
       // operator does not have to remember a second button.
       lineSupportRequest: {
+        findMany: async (args: any) => { supportLookups.push(args); return options.supportRequesters ?? []; },
         updateMany: async (args: any) => { supportAnswered.push(args); return { count: 1 }; },
       },
       $transaction: async (fn: any) => fn(prisma.client),
@@ -108,7 +112,7 @@ function harness(options: Options = {}) {
   controller.lineMessage = new SendPartnerLineMessageUseCase(prisma, config);
 
   return {
-    controller: controller as PartnerController, audits, planTermUpdates, supportAnswered,
+    controller: controller as PartnerController, audits, planTermUpdates, supportAnswered, supportLookups,
     planTerm: () => planTerm,
   };
 }
@@ -245,6 +249,44 @@ describe('POST /system/partners/:id/line-message — SEC-05', () => {
 
     assert.deepEqual(result, { delivered: 0 });
     assert.deepEqual(h.supportAnswered, [], 'a message nobody received has answered nobody');
+  });
+
+  /**
+   * The recipient set was the shop's OWNERs, full stop — so a request raised from an EMPLOYEE's
+   * LINE was answered into a chat that employee cannot see, and in a shop whose owner has no LINE
+   * linked it was answered into nothing at all. The person waiting is named on the request itself.
+   */
+  it('also reaches the employee who actually asked, not only the shop OWNERs', async () => {
+    const h = harness({ supportRequesters: [{ lineUserId: 'Uemployee-1' }] });
+    const result = await h.controller.sendLineMessage('co-1', { text: 'ได้รับเรื่องแล้วนะคะ' }, REQ);
+
+    assert.deepEqual(result, { delivered: 2 });
+    assert.deepEqual(pushes.map((push) => push.to), ['Uowner-1', 'Uemployee-1']);
+    // Only the people this very reply is answering: a settled request is not a mailing list.
+    assert.deepEqual(h.supportLookups[0].where, { companyId: 'co-1', status: 'OPEN' });
+    // §3: the audit counts recipients, it does not name them.
+    assert.equal(h.audits[0].metadataJson.recipients, 2);
+    assert.equal(JSON.stringify(h.audits[0]).includes('Uemployee-1'), false);
+  });
+
+  it('sends one message, not two, when the OWNER is the person who asked', async () => {
+    const h = harness({ supportRequesters: [{ lineUserId: 'Uowner-1' }] });
+    const result = await h.controller.sendLineMessage('co-1', { text: 'ได้รับเรื่องแล้วนะคะ' }, REQ);
+
+    assert.deepEqual(result, { delivered: 1 });
+    assert.deepEqual(pushes.map((push) => push.to), ['Uowner-1']);
+  });
+
+  it('answers an employee-raised request even when no OWNER has LINE linked', async () => {
+    const h = harness({
+      ownerMemberships: [], ownerIdentities: [],
+      supportRequesters: [{ lineUserId: 'Uemployee-1' }],
+    });
+    const result = await h.controller.sendLineMessage('co-1', { text: 'ได้รับเรื่องแล้วนะคะ' }, REQ);
+
+    assert.deepEqual(result, { delivered: 1 }, 'the request would otherwise wait for ever');
+    assert.equal(h.audits[0].result, 'SUCCESS');
+    assert.equal(h.supportAnswered.length, 1, 'and answering the asker IS answering the request');
   });
 
   it('refuses a message longer than the bound, before it reaches LINE', async () => {

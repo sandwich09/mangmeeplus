@@ -18,6 +18,19 @@ export function supportStatusChip(status: SupportRequestStatus): Chip {
   return { label: 'ปิดแล้ว', tone: 'neutral' };
 }
 
+/**
+ * UAT 2026-09-06. A request that was answered and then written to again is OPEN like any other, and
+ * looked like a brand new one — so an operator could not tell they were rejoining a conversation
+ * already in progress. `answeredAt` survives the reopen precisely so this chip can say so.
+ */
+export function supportReopenedChip(
+  item: Pick<SupportRequestItemDto, 'status' | 'answeredAt' | 'reopenedCount'>,
+): Chip | null {
+  if (item.status !== 'OPEN' || !item.answeredAt) return null;
+  // One reopen follows exactly one answer, so the count IS how many times we have replied.
+  return { label: `ตอบแล้ว ${Math.max(item.reopenedCount, 1)} ครั้ง · ลูกค้าตอบกลับ`, tone: 'info' };
+}
+
 export function supportClosedReasonTh(reason: string | undefined): string | null {
   if (reason === 'admin') return 'ทีมงานให้ AI ทำงานต่อ';
   if (reason === 'customer_resumed') return 'ลูกค้าเรียก AI กลับเอง';
@@ -25,14 +38,24 @@ export function supportClosedReasonTh(reason: string | undefined): string | null
   return null;
 }
 
-type WaitWindow = Pick<SupportRequestItemDto, 'requestedAt' | 'answeredAt' | 'closedAt'>;
+type WaitWindow = Pick<
+  SupportRequestItemDto, 'status' | 'requestedAt' | 'lastMessageAt' | 'answeredAt' | 'closedAt'
+>;
 
 /**
  * The clock STOPS when somebody answered, or when the request closed. A settled row that keeps
  * counting reads as a customer still waiting, which is the one thing this column exists to say.
  * `answeredAt` wins over `closedAt`: being answered is when the waiting actually ended.
+ *
+ * An OPEN row is never settled, whatever `answeredAt` says: after a reopen it carries the previous
+ * answer as history, and stopping there would have read "ใช้เวลา 30 นาที" over a customer who has
+ * been waiting since (UAT 2026-09-06).
  */
-const waitEndedAt = (item: WaitWindow): string | undefined => item.answeredAt ?? item.closedAt;
+const waitEndedAt = (item: WaitWindow): string | undefined =>
+  (item.status === 'OPEN' ? undefined : item.answeredAt) ?? item.closedAt;
+
+/** Equal to `requestedAt` until the customer writes again — see `lastMessageAt` in the contract. */
+const waitStartedAt = (item: WaitWindow): string => item.lastMessageAt ?? item.requestedAt;
 
 export function waitedLabelTh(item: WaitWindow): string {
   return waitEndedAt(item) ? 'ใช้เวลา' : 'รอมานาน';
@@ -45,7 +68,7 @@ export function waitedLabelTh(item: WaitWindow): string {
 export function waitedForTh(item: WaitWindow, now: Date = new Date()): string {
   const until = waitEndedAt(item);
   const end = until ? new Date(until).getTime() : now.getTime();
-  const ms = end - new Date(item.requestedAt).getTime();
+  const ms = end - new Date(waitStartedAt(item)).getTime();
   if (!Number.isFinite(ms) || ms < 0) return '—';
   const minutes = Math.floor(ms / 60_000);
   if (minutes < 1) return 'เมื่อสักครู่';

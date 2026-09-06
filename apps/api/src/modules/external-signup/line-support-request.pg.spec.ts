@@ -358,6 +358,93 @@ describe('"ติดต่อเจ้าหน้าที่" on real PostgreS
   });
 
   /**
+   * UAT 2026-09-06: "เจ้าหน้าที่ตอบกลับแล้วคำขอหายไปเลย ทั้งที่ยังไม่จบ".
+   *
+   * Only real rows can show this one: the reopen is a status transition PLUS a counter increment
+   * PLUS an answer that must survive both, and a fake that models the request as an object accepts
+   * whichever shape the code happens to write. `openCount` is the load-bearing part — it is the
+   * header badge, and an ANSWERED row is not in it.
+   */
+  it('brings an ANSWERED request back into รอตอบ when the customer writes again', async () => {
+    const client = connect();
+    const tag = `linesupport-${randomUUID().slice(0, 8)}`;
+    const lineUserId = `U${tag}`;
+    try {
+      const { userId } = await seed(client, tag, lineUserId);
+      const h = wire(client);
+      await h.webhook.execute(event(lineUserId, STAFF_CONTACT_COMMAND));
+      const id = h.notices[0]!;
+
+      await h.admin.markAnswered(id, userId, `${tag}-answered`);
+      const answered = await client.lineSupportRequest.findUniqueOrThrow({ where: { id } });
+      assert.equal(answered.status, 'ANSWERED');
+      assert.equal((await h.admin.list('OPEN')).items.some((row) => row.id === id), false,
+        'off the tab, which is the state the customer then wrote into');
+
+      await h.webhook.execute(event(lineUserId, 'ยังไม่ได้เลยค่ะ ลองแล้วไม่ขึ้น'));
+
+      const row = await client.lineSupportRequest.findUniqueOrThrow({ where: { id } });
+      assert.equal(row.status, 'OPEN', 'the same request, waiting again');
+      assert.equal(row.reopenedCount, 1);
+      assert.equal(row.lastMessageText, 'ยังไม่ได้เลยค่ะ ลองแล้วไม่ขึ้น');
+      assert.ok(row.lastMessageAt.getTime() >= answered.answeredAt!.getTime(),
+        'the waiting clock counts from the message, not from the answer');
+      // History, not a lie to erase: the inbox says "ตอบแล้ว 1 ครั้ง · ลูกค้าตอบกลับ" from these.
+      assert.equal(row.answeredByUserId, userId);
+      assert.deepEqual(row.answeredAt, answered.answeredAt);
+
+      const queue = await h.admin.list('OPEN');
+      const item = queue.items.find((entry) => entry.id === id);
+      assert.ok(item, 'and an operator can see it again');
+      assert.equal(item!.reopenedCount, 1);
+      assert.equal(item!.lastMessageText, 'ยังไม่ได้เลยค่ะ ลองแล้วไม่ขึ้น');
+      assert.equal(JSON.stringify(queue).includes(lineUserId), false, '§3: still no raw LINE id');
+      assert.equal((await h.admin.openCount()).open >= 1, true, 'the header badge counts it again');
+
+      // (The follow-up audit row is asserted in line-first-signup-webhook.spec.ts: the audit
+      // service is a no-op fake in this harness, which only wires LINE, SES and the outbox.)
+
+      // A pause is still running, so the customer was answered by the honest line, not the assistant.
+      assert.match(h.replies.at(-1)!, /ส่งข้อความถึงทีมงานแล้ว/);
+    } finally {
+      await cleanup(client, tag, lineUserId);
+      await client.$disconnect();
+    }
+  });
+
+  // CLOSED is settled by somebody deciding. A later message must not resurrect it — a fresh
+  // "ติดต่อเจ้าหน้าที่" is how a new matter opens (§2.2.4).
+  it('never reopens a request the customer or an operator already closed', async () => {
+    const client = connect();
+    const tag = `linesupport-${randomUUID().slice(0, 8)}`;
+    const lineUserId = `U${tag}`;
+    try {
+      await seed(client, tag, lineUserId);
+      const h = wire(client);
+      await h.webhook.execute(event(lineUserId, STAFF_CONTACT_COMMAND));
+      const id = h.notices[0]!;
+      await h.webhook.execute(event(lineUserId, RESUME_AI_COMMAND));
+      assert.equal((await client.lineSupportRequest.findUniqueOrThrow({ where: { id } })).status, 'CLOSED');
+
+      // The pause is gone with it, so this is an ordinary assistant turn again — but re-arm it to
+      // prove the follow-up path itself refuses a CLOSED row rather than merely never running.
+      await client.lineCompanyContext.update({
+        where: { lineUserId }, data: { aiPausedUntil: new Date(Date.now() + 3_600_000) },
+      });
+      await h.webhook.execute(event(lineUserId, 'ขอบคุณค่ะ'));
+
+      const row = await client.lineSupportRequest.findUniqueOrThrow({ where: { id } });
+      assert.equal(row.status, 'CLOSED');
+      assert.equal(row.reopenedCount, 0);
+      assert.notEqual(row.lastMessageText, 'ขอบคุณค่ะ');
+      assert.match(h.replies.at(-1)!, /กำลังดูให้อยู่/, 'and the customer keeps the old reply');
+    } finally {
+      await cleanup(client, tag, lineUserId);
+      await client.$disconnect();
+    }
+  });
+
+  /**
    * M7 (reviewer probe). A membership in a company the plan-term sweep DISABLED is not a shop this
    * person can be helped in — and only real rows can show it, because the filter lives in the
    * `company: { status: 'ACTIVE' }` join a fake would have to reimplement to disagree with.

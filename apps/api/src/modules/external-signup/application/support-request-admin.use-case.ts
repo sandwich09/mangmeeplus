@@ -52,9 +52,10 @@ export class SupportRequestAdminUseCase {
     const [rows, openCount] = await Promise.all([
       this.prisma.client.lineSupportRequest.findMany({
         ...(status ? { where: { status } } : {}),
-        // OPEN first, newest first: `status` sorts OPEN < ANSWERED < CLOSED as declared in the enum,
-        // which is the order an operator works in.
-        orderBy: [{ status: 'asc' }, { requestedAt: 'desc' }],
+        // OPEN first, then the newest CUSTOMER message: `status` sorts OPEN < ANSWERED < CLOSED as
+        // declared in the enum, which is the order an operator works in. Ordering by `requestedAt`
+        // buried a request the customer had just written to under every newer ask (UAT 2026-09-06).
+        orderBy: [{ status: 'asc' }, { lastMessageAt: 'desc' }],
         take: QUEUE_LIMIT,
       }),
       this.prisma.client.lineSupportRequest.count({ where: { status: 'OPEN' } }),
@@ -97,6 +98,8 @@ export class SupportRequestAdminUseCase {
         ...(row.signupRequestId ? { signupRequestId: row.signupRequestId } : {}),
         requestedAt: row.requestedAt.toISOString(),
         ...(row.lastMessageText ? { lastMessageText: row.lastMessageText } : {}),
+        lastMessageAt: row.lastMessageAt.toISOString(),
+        reopenedCount: row.reopenedCount,
         lineNotifiedCount: row.lineNotifiedCount,
         emailSent: row.emailSent,
         notifyState: supportNotifyState(row),

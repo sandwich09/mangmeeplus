@@ -62,6 +62,9 @@ function makePrisma(opts: {
       $transaction: async (work: (tx: any) => Promise<unknown>) => work({
         outboxEvent: { create: async () => undefined, findMany: async () => [], findFirst: async () => null },
       }),
+      // Every media turn asks whether a human is waiting on this LINE user (UAT 2026-09-06). These
+      // fixtures are receipts, not support threads, so the answer is "nobody" and nothing is written.
+      lineSupportRequest: { findFirst: async () => null },
       lineWebhookEventLog: {
         findUnique: async () => null,
         // A bare number is only a company pick when the PREVIOUS turn was the picker; here it never was.

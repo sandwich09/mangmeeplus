@@ -56,7 +56,18 @@ export class SendPartnerLineMessageUseCase {
     });
     const body = shopMessageBodyTh(sender?.displayName ?? 'ทีมงาน', check.text);
 
-    const recipients = await ownerLineUserIds(this.prisma, cmd.companyId);
+    // "The shop" is its OWNERs — but the person waiting may be an employee, and until now the reply
+    // to a request THEY raised went to a chat they cannot see (and, in a shop whose owner has no
+    // LINE linked, to nobody at all). Their own LINE id is on the OPEN request this reply answers,
+    // so no new recipient is reachable that the operator was not already answering.
+    const requesters = await this.prisma.client.lineSupportRequest.findMany({
+      where: { companyId: cmd.companyId, status: 'OPEN' },
+      select: { lineUserId: true },
+    });
+    const recipients = [...new Set([
+      ...await ownerLineUserIds(this.prisma, cmd.companyId),
+      ...requesters.map((request) => request.lineUserId),
+    ])];
     let delivered = 0;
     for (const providerUserId of recipients) {
       if (await pushSystemLineMessage(token, providerUserId, body)) delivered += 1;

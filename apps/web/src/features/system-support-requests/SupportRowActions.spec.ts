@@ -17,6 +17,9 @@ function item(overrides: Partial<SupportRequestItemDto> = {}): SupportRequestIte
     askerRef: 'edface',
     companyId: 'co-1',
     requestedAt: '2026-09-05T03:00:00.000Z',
+    // Equal to `requestedAt` until the customer writes again, which is what the API sends.
+    lastMessageAt: '2026-09-05T03:00:00.000Z',
+    reopenedCount: 0,
     lineNotifiedCount: 0,
     emailSent: true,
     notifyState: 'notified',
@@ -135,6 +138,33 @@ describe('SupportInboxBody — error, empty and the message cell, rendered', () 
     assert.equal(classes.some((name) => /^(flex|grid|inline-block|table)$/.test(name)), false,
       'and so would any other display utility');
     assert.match(markup, /max-w-\[16rem\]/, 'the cell is bounded, so the clamp has a width to work in');
+  });
+
+  /**
+   * UAT 2026-09-06: a reopened request is OPEN like any other, so on the รอตอบ tab it was
+   * indistinguishable from a first ask — an operator would answer it as though the conversation
+   * had not already happened twice.
+   */
+  it('marks a request the customer wrote back to, and still offers "ตอบแล้ว" on it', () => {
+    const markup = renderBody({
+      items: [item({
+        status: 'OPEN',
+        answeredAt: '2026-09-05T03:30:00.000Z',
+        answeredByDisplayName: 'พี่แอดมิน',
+        reopenedCount: 1,
+        lastMessageAt: '2026-09-05T04:00:00.000Z',
+        lastMessageText: 'ยังไม่ได้เลยค่ะ',
+      })],
+    });
+
+    assert.match(markup, /ตอบแล้ว 1 ครั้ง · ลูกค้าตอบกลับ/);
+    assert.match(markup, /ยังไม่ได้เลยค่ะ/, 'and the message they wrote back is the one shown');
+    assert.match(markup, /รอมานาน/, 'the clock is running again, not "ใช้เวลา"');
+    assert.match(markup, /ตอบโดย พี่แอดมิน/, 'the previous answer stays as history');
+  });
+
+  it('carries no reopen chip on a request nobody has answered yet', () => {
+    assert.doesNotMatch(renderBody({ items: [item({ status: 'OPEN' })] }), /ลูกค้าตอบกลับ/);
   });
 
   it('bounds the asker column too, since an applicant label carries a shop name of any length', () => {

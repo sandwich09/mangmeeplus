@@ -20,6 +20,7 @@ import {
   supportAnswerHref,
   supportAnswerLabel,
   supportClosedReasonTh,
+  supportReopenedChip,
   supportStatusChip,
   waitedLabelTh,
   waitedForTh,
@@ -161,6 +162,9 @@ export function SupportInboxBody({ error, loading, items, busyId, onRetry, onAns
               </tr>
             ) : items.map((item) => {
               const closedReason = supportClosedReasonTh(item.closedReason);
+              // A request the customer wrote back to is OPEN like any other; without this it reads
+              // as a first ask, and the operator answers a conversation already in progress blind.
+              const reopened = supportReopenedChip(item);
               return (
                 <tr key={item.id} className="align-top hover:bg-gray-50">
                   {/* Bounded for the same reason the message cell is: the applicant label
@@ -173,6 +177,7 @@ export function SupportInboxBody({ error, loading, items, busyId, onRetry, onAns
                     <p className="mt-0.5 text-xs text-gray-400">รหัสผู้ขอ {item.askerRef}</p>
                     <div className="mt-1.5 flex flex-wrap gap-1.5">
                       <ChipBadge chip={supportStatusChip(item.status)} />
+                      {reopened && <ChipBadge chip={reopened} />}
                       {closedReason && <span className="text-xs text-gray-400">{closedReason}</span>}
                     </div>
                     {item.answeredByDisplayName && (
@@ -184,7 +189,10 @@ export function SupportInboxBody({ error, loading, items, busyId, onRetry, onAns
                         row that keeps counting reads as a customer still waiting. */}
                     <p className="text-gray-500">{waitedLabelTh(item)}</p>
                     <p className="font-medium text-gray-900">{waitedForTh(item)}</p>
-                    <p className="mt-0.5 text-gray-500">{formatThaiDateTime(item.requestedAt)}</p>
+                    {/* The stamp the duration above is measured from, so the two cannot disagree:
+                        the ask for a request nobody has written to since, and the newest customer
+                        message once they have. */}
+                    <p className="mt-0.5 text-gray-500">{formatThaiDateTime(item.lastMessageAt)}</p>
                   </td>
                   {/* 200 characters of Thai in an unconstrained cell pushed the action column off
                       a 390px screen. Bounded, clamped and breakable; the full text is on the title

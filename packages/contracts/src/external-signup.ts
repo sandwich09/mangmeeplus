@@ -333,7 +333,11 @@ export const PARTNER_LINE_MESSAGE_MAX_LENGTH = 500;
 export type PartnerLineMessageBody = { text: string };
 
 export type PartnerLineMessageResultDto = {
-  /** How many linked OWNER identities the message reached. 0 means nobody has LINE linked. */
+  /**
+   * How many LINE chats the message reached: the shop's linked OWNERs, plus whoever raised an OPEN
+   * support request against it (an employee's reply would otherwise go only to their owner).
+   * 0 means nobody in that set has LINE linked.
+   */
   delivered: number;
 };
 
@@ -365,6 +369,17 @@ export type SupportRequestItemDto = {
   requestedAt: string;
   /** ≤200 chars of what they last typed, when the assistant kept any. */
   lastMessageText?: string;
+  /**
+   * When that message arrived. The waiting clock counts from HERE, not from `requestedAt`: once a
+   * customer has written again, "how long since they last wrote" is the only honest reading of how
+   * long they have been ignored. Equal to `requestedAt` until they do.
+   */
+  lastMessageAt: string;
+  /**
+   * How many times this request was answered and then reopened by the customer writing back. `> 0`
+   * on an OPEN row is the "ตอบแล้ว N ครั้ง · ลูกค้าตอบกลับ" case — the conversation is still running.
+   */
+  reopenedCount: number;
   /**
    * Owner 2026-09-05: admins are not LINE-linked, so `0` is the expected reading and NOT an error.
    * This page is the primary channel; these two only say which extras also went out.

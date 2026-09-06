@@ -184,8 +184,8 @@ function harness(options: {
   memberships?: Array<{ companyId: string; roles: unknown[] }>;
   context?: { companyId: string; aiPausedUntil: Date | null } | null;
   contextUpdateCount?: number;
-  /** An OPEN `LineSupportRequest` for this LINE user, if one is already in the queue (§2.2.4). */
-  openSupportRequest?: { id: string } | null;
+  /** A live `LineSupportRequest` for this LINE user, if one is already in the queue (§2.2.4). */
+  openSupportRequest?: { id: string; status?: string; companyId?: string | null } | null;
   /** The last thing this customer typed, as `AiTurn` kept it. */
   lastTurn?: { userMessagePreview: string | null } | null;
   /** The amplification floor: `false` = this LINE account has spent its three asks for today. */
@@ -205,6 +205,8 @@ function harness(options: {
   const contextUpserts: any[] = [];
   const supportRequests: any[] = [];
   const supportClosures: any[] = [];
+  const supportLookups: any[] = [];
+  const supportUpdates: any[] = [];
   const supportSlots: string[] = [];
   const membershipQueries: any[] = [];
   const errors: any[] = [];
@@ -222,8 +224,11 @@ function harness(options: {
       },
       // §2.1: the request row IS the fact of the ask, written before anyone is notified.
       lineSupportRequest: {
-        findFirst: async () => options.openSupportRequest ?? null,
+        // The `where` IS the guard for the follow-up lookup (which statuses may be reopened), so
+        // the query is recorded: a fake that only returns a row cannot show what was asked for.
+        findFirst: async (args: any) => { supportLookups.push(args); return options.openSupportRequest ?? null; },
         create: async (args: any) => { supportRequests.push(args); return { id: 'sr-1' }; },
+        update: async (args: any) => { supportUpdates.push(args); return { id: args.where.id }; },
         updateMany: async (args: any) => { supportClosures.push(args); return { count: 1 }; },
       },
       aiTurn: { findFirst: async () => options.lastTurn ?? null },
@@ -293,7 +298,7 @@ function harness(options: {
   (useCase as any).logger = { error: (entry: any) => errors.push(entry), warn: () => {}, log: () => {} };
   return {
     useCase, replies, eventLog, audits, packageChanges, supportNotices, contextUpdates, contextUpserts,
-    supportRequests, supportClosures, supportSlots, membershipQueries, errors,
+    supportRequests, supportClosures, supportLookups, supportUpdates, supportSlots, membershipQueries, errors,
   };
 }
 
@@ -608,6 +613,169 @@ describe('P10-L contact-staff pause (§8), rewritten by line-support-request-spe
     assert.match(rendered(paused), /ทีมงานรับเรื่องแล้ว/);
     assert.equal(outcome(paused), 'support_paused');
     assert.deepEqual(paused.packageChanges, []);
+  });
+});
+
+/**
+ * UAT 2026-09-06: "เจ้าหน้าที่ตอบกลับแล้วคำขอหายไปเลย ทั้งที่ยังไม่จบ".
+ *
+ * "ตอบแล้ว" moved the row to ANSWERED, which is off the รอตอบ tab and out of the header badge —
+ * and NOTHING could put it back, because the pause gate answered every later customer message with
+ * a canned line and never touched `LineSupportRequest`. The customer kept typing into a thread no
+ * operator surface could see, while being told a human was reading it.
+ */
+describe('a customer who writes back is still in the queue (UAT 2026-09-06)', () => {
+  const linked = { userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } };
+  const pausedContext = { companyId: 'co-1', aiPausedUntil: new Date(Date.now() + 3_600_000) };
+  const mediaEvent = () => ({
+    webhookEventId: 'evt-photo', replyToken: 'reply-1', lineUserId: 'Uline-1',
+    lineMessageId: 'msg-1', messageType: 'image', messagingChannelId: 'msg-channel-1',
+  }) as any;
+
+  it('reopens an ANSWERED request and stops promising what it does not do', async () => {
+    const h = harness({
+      identity: linked,
+      context: pausedContext,
+      openSupportRequest: { id: 'sr-9', status: 'ANSWERED', companyId: 'co-1' },
+    });
+    await h.useCase.execute(event('ยังไม่ได้เลยค่ะ ลองแล้วไม่ขึ้น'));
+
+    const [update] = h.supportUpdates;
+    assert.ok(update, 'the message an operator has to read must land on the request');
+    assert.equal(update.where.id, 'sr-9');
+    assert.equal(update.data.status, 'OPEN', 'back onto the รอตอบ tab, and back into the badge');
+    assert.equal(update.data.lastMessageText, 'ยังไม่ได้เลยค่ะ ลองแล้วไม่ขึ้น');
+    assert.ok(update.data.lastMessageAt instanceof Date, 'the waiting clock restarts from this');
+    assert.deepEqual(update.data.reopenedCount, { increment: 1 });
+    // The answer is history, not a lie to erase: the inbox says "ตอบแล้ว 1 ครั้ง · ลูกค้าตอบกลับ".
+    assert.equal(update.data.answeredAt, undefined);
+    assert.equal(update.data.answeredByUserId, undefined);
+
+    assert.match(rendered(h), /ส่งข้อความถึงทีมงานแล้ว/);
+    assert.equal(rendered(h).includes('กำลังดูให้อยู่'), false, 'not the reply that swallowed it');
+    assert.equal(rendered(h).includes('+'), false, 'no plus sign anywhere a customer reads');
+    assert.equal(outcome(h), 'support_paused');
+  });
+
+  it('records the fact, never the words, and never the LINE id (§3)', async () => {
+    const h = harness({
+      identity: linked,
+      context: pausedContext,
+      openSupportRequest: { id: 'sr-9', status: 'ANSWERED', companyId: 'co-1' },
+    });
+    await h.useCase.execute(event('เลขบัญชี 1234567890 ค่ะ'));
+
+    const entry = h.audits.find((row: any) => row.action === 'signup.line.support_follow_up');
+    assert.ok(entry, 'somebody wrote to a waiting request, and that is an auditable fact');
+    assert.equal(entry.targetType, 'line_support_request');
+    assert.equal(entry.targetId, 'sr-9');
+    assert.equal(entry.companyId, 'co-1');
+    assert.equal(entry.result, 'SUCCESS');
+    assert.deepEqual(entry.metadataJson, { reopened: true, hasText: true });
+    const written = JSON.stringify(entry);
+    assert.equal(written.includes('Uline-1'), false, 'no LINE id in the audit rail');
+    assert.equal(written.includes('1234567890'), false, 'and never the message itself');
+  });
+
+  it('appends to a request that never left รอตอบ without counting a reopen', async () => {
+    const h = harness({
+      identity: linked, context: pausedContext,
+      openSupportRequest: { id: 'sr-9', status: 'OPEN', companyId: 'co-1' },
+    });
+    await h.useCase.execute(event('มีอัปเดตไหมคะ'));
+
+    const [update] = h.supportUpdates;
+    assert.equal(update.data.lastMessageText, 'มีอัปเดตไหมคะ');
+    assert.equal(update.data.status, undefined, 'it was never off the tab');
+    assert.equal(update.data.reopenedCount, undefined, 'and nobody answered it to reopen');
+    assert.equal(h.audits.find((row: any) => row.action === 'signup.line.support_follow_up').metadataJson.reopened, false);
+  });
+
+  // CLOSED is settled: a fresh "ติดต่อเจ้าหน้าที่" opens a new request (§2.2.4), and a stray
+  // message must not resurrect a matter both sides finished with.
+  it('asks only for a request that is still live, for this person in any shop', async () => {
+    const h = harness({
+      identity: linked, context: pausedContext,
+      openSupportRequest: { id: 'sr-9', status: 'OPEN', companyId: 'co-1' },
+    });
+    await h.useCase.execute(event('สวัสดีค่ะ'));
+
+    const lookup = h.supportLookups.at(-1);
+    assert.deepEqual(lookup.where.status, { in: ['OPEN', 'ANSWERED'] });
+    assert.equal(lookup.where.lineUserId, 'Uline-1');
+    assert.equal(lookup.where.companyId, undefined, 'one person, whatever shop the request names');
+  });
+
+  it('keeps the old reply when there is no request to append to', async () => {
+    const h = harness({ identity: linked, context: pausedContext, openSupportRequest: null });
+    await h.useCase.execute(event('ยอดขายวันนี้'));
+
+    assert.deepEqual(h.supportUpdates, [], 'nothing to write to');
+    assert.match(rendered(h), /กำลังดูให้อยู่/, 'and the customer keeps the answer they had');
+    assert.equal(outcome(h), 'support_paused');
+  });
+
+  // Bookkeeping beside the turn, never in front of it: the fallback is the old reply, not silence
+  // on an event that has already been claimed and so is never redelivered.
+  it('still answers the customer when the request cannot be written to', async () => {
+    const h = harness({
+      identity: linked, context: pausedContext,
+      openSupportRequest: { id: 'sr-9', status: 'OPEN', companyId: 'co-1' },
+    });
+    (h.useCase as any).prisma.client.lineSupportRequest.update = async () => { throw new Error('deadlock'); };
+
+    await h.useCase.execute(event('มีอัปเดตไหมคะ'));
+
+    assert.match(rendered(h), /กำลังดูให้อยู่/, 'the old reply, which promises nothing we did not do');
+    assert.equal(rendered(h).includes('ส่งข้อความถึงทีมงานแล้ว'), false, 'and never a promise we broke');
+    assert.equal(outcome(h), 'support_paused');
+  });
+
+  it('never loses a receipt turn because the support table could not be written', async () => {
+    const h = harness({
+      identity: linked, memberships: [],
+      openSupportRequest: { id: 'sr-9', status: 'OPEN', companyId: 'co-1' },
+    });
+    (h.useCase as any).prisma.client.lineSupportRequest.findFirst = async () => { throw new Error('down'); };
+
+    await h.useCase.executeReceiptUpload(mediaEvent());
+
+    // The media turn ran its own course (no company resolves here) rather than being swallowed by
+    // the outer catch, which would have answered "ประมวลผลรูปนี้ไม่สำเร็จ" and released the event.
+    assert.equal(outcome(h), 'unlinked');
+    assert.equal(rendered(h).includes('ประมวลผลรูปนี้ไม่สำเร็จ'), false);
+  });
+
+  /**
+   * The photo lane has no pause gate of its own, so a customer answering a human WITH A PICTURE was
+   * the one message that reached nobody at all — here it is refused as a receipt (no company
+   * resolves) and still lands on the request, because those are two different questions.
+   */
+  it('lands a photo on the waiting request without storing the photo', async () => {
+    const h = harness({
+      identity: linked, memberships: [],
+      openSupportRequest: { id: 'sr-9', status: 'ANSWERED', companyId: 'co-1' },
+    });
+    await h.useCase.executeReceiptUpload(mediaEvent());
+
+    const [update] = h.supportUpdates;
+    assert.ok(update, 'a photo is a message from a customer who is waiting');
+    assert.equal(update.data.status, 'OPEN');
+    assert.equal(update.data.lastMessageText, 'ลูกค้าส่งรูปภาพมา', 'the operator learns a photo arrived');
+    assert.equal(update.data.lastMessageText.includes('msg-1'), false, 'and nothing about the bytes');
+  });
+
+  // The same lane carries PDFs, and an operator deciding how to help somebody should not be told
+  // "photo" about a document.
+  it('names a document a document', async () => {
+    const h = harness({
+      identity: linked, memberships: [],
+      openSupportRequest: { id: 'sr-9', status: 'OPEN', companyId: 'co-1' },
+    });
+    await h.useCase.executeReceiptUpload({ ...mediaEvent(), messageType: 'file', fileName: 'bill.pdf' });
+
+    assert.equal(h.supportUpdates[0].data.lastMessageText, 'ลูกค้าส่งไฟล์มา');
+    assert.equal(h.supportUpdates[0].data.lastMessageText.includes('bill.pdf'), false, 'never the file name');
   });
 });
 

@@ -203,11 +203,23 @@ const ASSISTANT_RESUMED_REPLY = '💚 น้องมั่งมีกลับ
  *  help, and the requests they already opened are in the operator inbox either way. */
 const SUPPORT_DAILY_LIMIT_REPLY = '📮 รับเรื่องไว้แล้วค่ะ ทีมงานจะติดต่อกลับในเวลาทำการ '
   + '(จันทร์–เสาร์ 9:00–18:00) หากรีบ โทร 098-256-5628 ได้เลยค่ะ';
-/** Sent while a support pause is running, in place of every assistant answer (§8). */
+/** Sent while a support pause is running and there is no live request to write to (§8). */
 const SUPPORT_PAUSED_REPLY = '📮 ทีมงานรับเรื่องแล้วค่ะ กำลังดูให้อยู่ เดี๋ยวตอบในแชทนี้นะคะ '
+  + '· พิมพ์ "คุยกับ AI ต่อ" ถ้าต้องการให้น้องมั่งมีตอบต่อ';
+/**
+ * UAT 2026-09-06. The reply above was told to a customer whose message had just been dropped on the
+ * floor, which is the one thing it must never mean. This one is only ever sent once the message is
+ * ON the request an operator reads, so "ส่งถึงทีมงานแล้ว" is a fact rather than a comfort.
+ */
+const SUPPORT_FOLLOW_UP_REPLY = '📮 ส่งข้อความถึงทีมงานแล้วค่ะ ทีมงานจะตอบกลับในแชทนี้นะคะ '
   + '· พิมพ์ "คุยกับ AI ต่อ" ถ้าต้องการให้น้องมั่งมีตอบต่อ';
 /** §3 PDPA: one line of context for the operator, never a transcript. */
 const SUPPORT_LAST_MESSAGE_MAX_LENGTH = 200;
+/** §3 keeps the media out of the request row entirely, so the operator gets the fact and no bytes.
+ *  Two words rather than one: this lane carries PDFs as well, and an operator deciding how to help
+ *  somebody should not be told "photo" about a document. */
+const SUPPORT_PHOTO_PREVIEW = 'ลูกค้าส่งรูปภาพมา';
+const SUPPORT_FILE_PREVIEW = 'ลูกค้าส่งไฟล์มา';
 const PACKAGE_CHANGE_ACCEPTED_REPLY = '📦 รับคำขอแล้วค่ะ ทีมงานจะติดต่อกลับในเวลาทำการ (จันทร์–เสาร์ 9:00–18:00) นะคะ';
 const PACKAGE_CHANGE_NOT_OWNER_REPLY = '📦 การเปลี่ยนแพ็กเกจต้องให้เจ้าของร้านเป็นคนขอนะคะ รบกวนแจ้งเจ้าของร้านให้พิมพ์ '
   + '"ขอเปลี่ยนแพ็กเกจ" ในแชทนี้ได้เลยค่ะ';
@@ -1919,6 +1931,67 @@ export class ProcessLineWebhookUseCase {
   }
 
   /**
+   * The customer wrote again while a human was supposed to be handling the thread (UAT 2026-09-06).
+   *
+   * Until this existed, `lastMessageText` was written exactly once — at the tap — and "ตอบแล้ว" put
+   * the row on a tab nothing could bring it back from. So the conversation died silently: the
+   * customer kept typing, the pause kept answering "we are looking into it", and no operator
+   * surface changed. Their message now lands on the request itself, and an ANSWERED one returns to
+   * รอตอบ (and to the header badge, which counts OPEN).
+   *
+   * CLOSED is deliberately excluded: that matter is settled by somebody deciding, and a fresh
+   * "ติดต่อเจ้าหน้าที่" opens a new request — the behaviour §2.2.4 already describes. The lookup is
+   * per LINE user and NOT per company: a customer is one person whatever shop the row names.
+   *
+   * Returns false when there was nothing to append to — or when the append itself failed, and the
+   * caller then keeps the reply it had. Best effort on purpose: this is bookkeeping beside the
+   * turn, and a receipt must not be lost, nor a customer left with no answer at all, because the
+   * support table could not be written.
+   */
+  private async recordSupportFollowUp(
+    lineUserId: string,
+    preview: string,
+    requestId: string,
+  ): Promise<boolean> {
+    try {
+      const live = await this.prisma.client.lineSupportRequest.findFirst({
+        where: { lineUserId, status: { in: ['OPEN', 'ANSWERED'] } },
+        orderBy: { requestedAt: 'desc' },
+        select: { id: true, status: true, companyId: true },
+      });
+      if (!live) return false;
+      const reopened = live.status === 'ANSWERED';
+      const text = preview.trim().slice(0, SUPPORT_LAST_MESSAGE_MAX_LENGTH);
+      await this.prisma.client.lineSupportRequest.update({
+        where: { id: live.id },
+        data: {
+          lastMessageAt: new Date(),
+          ...(text ? { lastMessageText: text } : {}),
+          // `answeredAt`/`answeredByUserId` are KEPT: they are the history of the last answer, and
+          // the count is what lets the inbox say "ตอบแล้ว N ครั้ง · ลูกค้าตอบกลับ" rather than
+          // pretending nobody ever replied.
+          ...(reopened ? { status: 'OPEN' as const, reopenedCount: { increment: 1 } } : {}),
+        },
+      });
+      await this.audit.log({
+        action: 'signup.line.support_follow_up',
+        ...(live.companyId ? { companyId: live.companyId } : {}),
+        targetType: 'line_support_request',
+        targetId: live.id,
+        requestId,
+        result: 'SUCCESS',
+        riskLevel: 'LOW',
+        // §3: whether they wrote something, never what — and never the LINE id.
+        metadataJson: { reopened, hasText: Boolean(text) },
+      });
+      return true;
+    } catch (error) {
+      this.logger.warn({ msg: 'line_support_follow_up_not_recorded', error: (error as Error).message });
+      return false;
+    }
+  }
+
+  /**
    * §2.4. The customer's own way out. Works with no pause running and with no account at all — it
    * is a promise ("the assistant is back") that must never depend on state the customer cannot see.
    */
@@ -2588,7 +2661,10 @@ export class ProcessLineWebhookUseCase {
     // pause is for. (`ติดต่อเจ้าหน้าที่` is handled further up, before identity resolution, so it
     // stays reachable too and simply re-arms the pause.)
     if (await this.assistantPaused(event.lineUserId)) {
-      await this.deliverReply(event, SUPPORT_PAUSED_REPLY);
+      // Staying out of the thread is not the same as swallowing it (UAT 2026-09-06): what they just
+      // wrote goes onto the request the operator answers from, and only then may the reply say so.
+      const recorded = await this.recordSupportFollowUp(event.lineUserId, event.messageText, requestId);
+      await this.deliverReply(event, recorded ? SUPPORT_FOLLOW_UP_REPLY : SUPPORT_PAUSED_REPLY);
       await this.updateEventLog(event.webhookEventId, 'support_paused');
       return;
     }
@@ -4436,6 +4512,17 @@ export class ProcessLineWebhookUseCase {
   private async executeReceiptUploadInner(event: LineReceiptUploadEvent, captionText?: string): Promise<LineMediaTurnOutcome | undefined> {
     const requestId = randomUUID();
     if (!await this.claimWebhookEvent(event.webhookEventId, event.lineUserId)) return { outcome: 'done' };
+
+    // This lane has no pause gate of its own, so a customer answering a human WITH A PICTURE was
+    // the one message that reached nobody at all. Recorded before anything else can refuse the
+    // photo as a receipt: whether it is a valid receipt and whether a person is waiting for it are
+    // different questions. ponytail: one indexed lookup per media event — cheap enough not to gate
+    // it on the pause, which would miss an unlinked asker (who has no assistant to pause).
+    await this.recordSupportFollowUp(
+      event.lineUserId,
+      event.messageType === 'file' ? SUPPORT_FILE_PREVIEW : SUPPORT_PHOTO_PREVIEW,
+      requestId,
+    );
 
     const identity = await this.resolveLineIdentity(event);
     if (!identity || identity.user.status !== 'ACTIVE') {
