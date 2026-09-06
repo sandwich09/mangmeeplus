@@ -32,9 +32,10 @@ exchangeable for the rest of its ≤ 15-minute TTL (`LINE_HANDOFF_TOKEN_TTL_MS`)
 - Matched on `lineUserId` **AND** `userId`, both of which are on the row. Matching one column
   would either resurrect a previous holder's links after a relink or reach into the new holder's.
 - No exchange change. Its step-2 `status !== 'PENDING'` check already refuses a `REVOKED` row as
-  `token_not_pending` — the same generic 403 (`line_handoff_unavailable`) a used token gets,
-  refused before the claim, before any session, and before any surface side effect. Verified, not
-  assumed.
+  `token_not_pending` — the same generic 403 (`line_handoff_unavailable`) a used token gets, and it
+  refuses **before the claim**, therefore before the session and before the step-4b
+  `company_picker_open_web` context switch that PR #460 added. Verified against the merged code,
+  not assumed; the spec asserts it with a picker-surface row.
 - Audit reuses each path's existing row rather than adding an action: metadata gains
   `handoffTokensRevoked: <n>`.
 
@@ -67,7 +68,11 @@ None. No owner input pending.
   `auth/line-linking.spec.ts`, `auth/line-handoff.spec.ts`,
   `auth/application/use-cases/complete-employee-line-link.use-case.spec.ts`,
   `system-partner-management/application/use-cases/partner-member-console.use-cases.spec.ts`.
-- Docs: `docs/specs/line-web-deeplink-handoff-spec.md` §9 token lifecycle, dated 2026-09-06.
+- Docs: `docs/specs/line-web-deeplink-handoff-spec.md` §9 token lifecycle, dated 2026-09-06;
+  `docs/agent-memory/line-company-picker-open-web.md` residual struck through and marked CLOSED.
+- Branch cut from `origin/develop` at `5dabcf16`, then merged (never rebased) with `origin/develop`
+  at `0e205867`, which brought PR #460 in. That merge is what made the picker-surface assertion
+  real: `LineCompanyContext` upsert at exchange did not exist at cut time.
 
 ## Verification
 

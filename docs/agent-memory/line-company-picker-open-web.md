@@ -142,6 +142,14 @@ Reported, not fixed:
 - Write amplification: one บริษัทของฉัน tap now mints up to 11 `LineWebHandoffToken` rows and 11
   `AUTH_LINE_HANDOFF_ISSUE` (MEDIUM) audit rows, up from 0. Nothing anywhere deletes spent or expired
   handoff tokens — a pre-existing P12-3b gap this feature multiplies. Fine at current scale.
+- ~~Unlink does not revoke PENDING handoff tokens, so a severed LINE account keeps an exchangeable
+  link for up to 15 minutes — and a picker-surface one re-creates `LineCompanyContext` under a
+  `lineUserId` that may since have been relinked.~~ **CLOSED 2026-09-06** (Owner: "ยกเลิกผูก LINE
+  ไม่ได้เพิกถอน token handoff ที่ค้าง แก้ได้เลย") on `codex/line-unlink-revokes-handoff-tokens`.
+  All four severing paths now flip the identity's PENDING rows to `REVOKED`, matched on
+  `(lineUserId, userId)`; the exchange refuses them at step 2, before the claim and therefore before
+  the step-4b context switch. No migration — `REVOKED` was already in the enum. See
+  `docs/agent-memory/line-unlink-revokes-handoff-tokens.md`.
 - `infra/prod-ecs-express/deploy.sh` comments claiming the handoff "stays production-off" / "fails closed"
   were stale since the 2026-08-30 parity decision; corrected (comment-only).
 
