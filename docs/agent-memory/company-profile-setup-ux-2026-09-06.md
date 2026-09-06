@@ -115,10 +115,16 @@ proven to APPEAR, not only to disappear). Nothing outside the local docker datab
 
 - **`password/set` happy path unproven against a live database** — no credential-less ACTIVE member
   exists in the local seed, and inventing one is a data change this task did not call for.
-- **`readiness.identity.reasons` still lists `vat_status_unanswered` after a VAT answer is stored**
-  (row 5 above: VAT is `NOT_REGISTERED` v4 and the reason remains). It does not affect this page —
-  `profileChecklist` deliberately ignores that reason — but it is wrong somewhere in the readiness
-  computation. **Out of scope, not fixed.**
+- **`readiness.identity.reasons` still lists `vat_status_unanswered` after this page stores a VAT
+  answer** (row 5: VAT is `NOT_REGISTERED` v4 and the reason remains). Traced, not fixed:
+  `company-identity.use-case.ts:93` computes `promptResolved = prompt !== null` from a separate VAT
+  **prompt** record, and `PUT vat-registration` `UPSERT_FACT` — the only VAT write this page makes,
+  and the one §15.4 specifies — never creates one. So the page can never clear that reason, and
+  `readiness.identity.complete` stays false for a shop that has answered. It does not affect this
+  wave (`profileChecklist` deliberately ignores that reason, per §15.4's four items), but anything
+  gating on `readiness.identity.complete` will read a fully-filled shop as incomplete. **Out of
+  scope, not fixed — worth a decision from the Owner about whether the fact should resolve the
+  prompt.**
 - The spec's §15.4 contextual tax-id modal is still not built (unchanged from the previous round).
 - No E2E spec was added to `e2e/`; the browser pass was a throwaway file, deleted.
 
