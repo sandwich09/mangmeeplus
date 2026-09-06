@@ -860,11 +860,16 @@ describe('isTeachingRequest – deterministic teaching trigger (capability-help 
       'สอนฉันใช้งานเบื้องต้นแบบง่ายง่ายแบบมนุษย์แม่ป้าเข้าใจได้',
       'วิธีใช้ยังไงคะ', 'ใช้งานยังไง', 'ใช้ยังไง', 'เริ่มยังไงดี', 'เริ่มต้นใช้งานยังไง', 'มือใหม่ค่ะ ช่วยแนะนำการใช้หน่อย',
       'How do I use this?', 'how to start', 'Getting started please', 'Teach me the basics',
+      'สอน', 'สอนหน่อย', 'ช่วยสอนใช้งานหน่อยค่ะ', 'อยากให้สอนหน่อย', 'รบกวนสอนที',
     ]) assert.equal(isTeachingRequest(text), true, text);
   });
 
   it('leaves the ordinary capability question, business questions and small talk alone', () => {
-    for (const text of ['ทำอะไรได้บ้าง', 'ช่วยอะไรได้บ้าง', 'what can you do', 'ค่าใช้จ่ายเดือนนี้เท่าไหร่', 'สวัสดี', '']) {
+    for (const text of [
+      'ทำอะไรได้บ้าง', 'ช่วยอะไรได้บ้าง', 'what can you do', 'ค่าใช้จ่ายเดือนนี้เท่าไหร่', 'สวัสดี', '',
+      // Review 2026-09-06: สอน inside a business noun is not "teach me" — it is a fee, a tutor, a course.
+      'ค่าสอนพิเศษเดือนนี้เท่าไหร่', 'ค่าจ้างครูสอนเดือนนี้จ่ายไปเท่าไหร่', 'รายได้จากการสอนเดือนนี้',
+    ]) {
       assert.equal(isTeachingRequest(text), false, text);
     }
   });

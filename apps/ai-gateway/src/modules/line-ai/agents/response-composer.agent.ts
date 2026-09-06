@@ -207,13 +207,16 @@ const TEACHING_COPY = {
  *  answers it is a wording question the code settles. NFC, not NFKC, so the Thai literals keep their
  *  composed vowels. */
 const TEACHING_TRIGGERS = [
-  'สอน', 'วิธีใช้', 'ใช้งานยังไง', 'ใช้ยังไง', 'ใช้งานอย่างไร', 'เริ่มยังไง', 'เริ่มต้น', 'มือใหม่', 'แนะนำการใช้',
+  'วิธีใช้', 'ใช้งานยังไง', 'ใช้ยังไง', 'ใช้งานอย่างไร', 'เริ่มยังไง', 'เริ่มต้น', 'มือใหม่', 'แนะนำการใช้',
   'how do i use', 'how to use', 'how do i start', 'how to start', 'getting started', 'teach me',
 ];
+/** Bare สอน counts only as the verb "teach (me)": message-initial, after a space or ช่วย/รบกวน/อยากให้/ขอให้,
+ *  or followed by a teaching object — never inside a business noun (ค่าสอน, ครูสอน, การสอน; review 2026-09-06). */
+const TEACH_VERB = /(?:^|\s|ช่วย|รบกวน|อยากให้|ขอให้)สอน|สอน(?:ใช้|ฉัน|ผม|หนู|เรา|ให้|หน่อย|วิธี|การใช้|ที|ด้วย)/u;
 
 export function isTeachingRequest(messageText: string): boolean {
   const text = messageText.normalize('NFC').toLocaleLowerCase('en-US').replace(/\s+/gu, ' ');
-  return TEACHING_TRIGGERS.some((trigger) => text.includes(trigger));
+  return TEACH_VERB.test(text) || TEACHING_TRIGGERS.some((trigger) => text.includes(trigger));
 }
 
 /** The caller's own access, as the composer needs it. Undefined = legacy fail-open: describe
