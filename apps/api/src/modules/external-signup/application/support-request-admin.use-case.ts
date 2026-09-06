@@ -6,9 +6,9 @@ import type {
 import { Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { supportAskerLabelTh } from './line-signup-notify.service';
-
-export const SUPPORT_REQUEST_ANSWERED_ACTION = 'system.support_request.answered';
-export const SUPPORT_REQUEST_RESUME_ACTION = 'system.support_request.resume_ai';
+import {
+  SUPPORT_REQUEST_ANSWERED_ACTION, SUPPORT_REQUEST_RESUME_ACTION,
+} from '../domain/support-request.constants';
 
 /** Bounded like the signup queue (`take: 200`): an operator scrolls, a page never streams a table. */
 const QUEUE_LIMIT = 200;

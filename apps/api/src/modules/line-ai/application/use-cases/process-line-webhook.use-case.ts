@@ -1923,6 +1923,11 @@ export class ProcessLineWebhookUseCase {
    * for a multi-company user with a stale selection may NOT be the shop this request was filed
    * against — and that is fine here: the pause is keyed on `lineUserId`, so it silences the right
    * conversation either way, and the request row (not this one) is what names the shop.
+   *
+   * The ONLY creator of that row (review 2026-09-06 N2), which is why both call sites reach it
+   * through `resolveSupportAsker`: the `companyId` it writes has just been re-derived from a live
+   * ACTIVE membership. `recordSupportFollowUp` extends a running pause instead, because the id IT
+   * holds is whatever the request remembered and may name a shop the person has since left.
    */
   private async pauseAssistant(lineUserId: string, companyId: string): Promise<void> {
     const aiPausedUntil = new Date(Date.now() + SUPPORT_PAUSE_MS);
@@ -1959,10 +1964,10 @@ export class ProcessLineWebhookUseCase {
    * "ติดต่อเจ้าหน้าที่" opens a new request — the behaviour §2.2.4 already describes. The lookup is
    * per LINE user and NOT per company: a customer is one person whatever shop the row names.
    *
-   * `message` says what arrived, and the three shapes are deliberately different: text is the
-   * newest thing worth showing an operator; `media` is a marker only (§3 — a picture must not cost
-   * the thread the sentence it was answering); and an empty object is a tap on the button, which
-   * moves the clock and says nothing.
+   * `message` says what arrived, and the two shapes are deliberately different: text is the newest
+   * thing worth showing an operator; an empty object is a tap on the button, which moves the clock
+   * and says nothing. A PHOTO is neither — it goes through `stampSupportMedia`, because it is not
+   * the customer asking again (review 2026-09-06 N1).
    *
    * Returns false when there was nothing to append to, when somebody else moved the row first, or
    * when the append itself failed — and the caller then keeps the reply it had. Best effort on
@@ -1972,23 +1977,20 @@ export class ProcessLineWebhookUseCase {
   private async recordSupportFollowUp(
     lineUserId: string,
     requestId: string,
-    message: { text?: string; media?: true },
+    message: { text?: string },
   ): Promise<boolean> {
     try {
       const live = await this.findLiveSupportRequest(lineUserId);
       if (!live) return false;
       const reopened = live.status === 'ANSWERED';
       const text = message.text?.trim().slice(0, SUPPORT_LAST_MESSAGE_MAX_LENGTH);
-      const now = new Date();
       // Conditional on the status it just read, because reading and then writing is a race an
       // operator loses in public: "ตอบแล้ว" pressed in the gap left the row ANSWERED while the
       // customer was told their message had been delivered to a queue it was no longer in.
       const moved = await this.prisma.client.lineSupportRequest.updateMany({
         where: { id: live.id, status: live.status },
         data: {
-          lastMessageAt: now,
-          // §3: the fact a picture arrived, never the picture — and never in place of the words.
-          ...(message.media ? { lastMediaAt: now } : {}),
+          lastMessageAt: new Date(),
           ...(text ? { lastMessageText: text } : {}),
           // `answeredAt`/`answeredByUserId` are KEPT: they are the history of the last answer, and
           // the count is what lets the inbox say "ตอบแล้ว N ครั้ง · ลูกค้าตอบกลับ" rather than
@@ -2000,7 +2002,16 @@ export class ProcessLineWebhookUseCase {
       // The expiry sweep closes a request 24h after the customer last wrote, and the assistant must
       // stay out for exactly as long. Both clocks now run from the same message; before this, a
       // request reopened at hour 23 was swept an hour later with a fresh question on it.
-      if (live.companyId) await this.pauseAssistant(lineUserId, live.companyId);
+      //
+      // EXTEND ONLY, never create (review 2026-09-06 N2). `live.companyId` is whatever the row
+      // recorded when it was filed, checked against nobody since — and §2.5 DELETES this row on
+      // unlink, so an upsert here rebuilt an ex-member's context pointing at the shop they left.
+      // The tap's own `pauseAssistant`, which asks `resolveSupportAsker` for a live membership
+      // first, stays the only thing allowed to open a pause.
+      await this.prisma.client.lineCompanyContext.updateMany({
+        where: { lineUserId, aiPausedUntil: { not: null } },
+        data: { aiPausedUntil: new Date(Date.now() + SUPPORT_PAUSE_MS) },
+      });
       await this.audit.log({
         action: 'signup.line.support_follow_up',
         ...(live.companyId ? { companyId: live.companyId } : {}),
@@ -2016,6 +2027,32 @@ export class ProcessLineWebhookUseCase {
     } catch (error) {
       this.logger.warn({ msg: 'line_support_follow_up_not_recorded', error: (error as Error).message });
       return false;
+    }
+  }
+
+  /**
+   * A photo or a file on a live thread is a MARKER, and nothing else (review 2026-09-06, N1).
+   *
+   * It used to travel the full follow-up path, which reopened an ANSWERED request, moved
+   * `lastMessageAt` and re-armed the 24 h mute. But the commonest photo on a live thread is an
+   * ordinary receipt with nothing to do with the request — so a shop that uploads one a day kept
+   * its own assistant switched off and its inbox row alive for ever, on nothing but its bookkeeping.
+   *
+   * Only a TEXT follow-up under the pause, or a tap on "ติดต่อเจ้าหน้าที่", is the customer asking
+   * again. `lastMediaAt` alone: the inbox still says "📷 ส่งรูปมา" beside whatever tab the row is in,
+   * and §3 keeps the bytes out. Best effort, like the follow-up beside it — a receipt must never be
+   * lost because the support table could not be written.
+   */
+  private async stampSupportMedia(lineUserId: string): Promise<void> {
+    try {
+      const live = await this.findLiveSupportRequest(lineUserId);
+      if (!live) return;
+      await this.prisma.client.lineSupportRequest.updateMany({
+        where: { id: live.id, status: live.status },
+        data: { lastMediaAt: new Date() },
+      });
+    } catch (error) {
+      this.logger.warn({ msg: 'line_support_media_not_recorded', error: (error as Error).message });
     }
   }
 
@@ -4542,15 +4579,14 @@ export class ProcessLineWebhookUseCase {
     if (!await this.claimWebhookEvent(event.webhookEventId, event.lineUserId)) return { outcome: 'done' };
 
     // This lane has no pause gate of its own, so a customer answering a human WITH A PICTURE was
-    // the one message that reached nobody at all. Recorded before anything else can refuse the
+    // the one message that reached nobody at all. Stamped before anything else can refuse the
     // photo as a receipt: whether it is a valid receipt and whether a person is waiting for it are
     // different questions. ponytail: one indexed lookup per media event — cheap enough not to gate
     // it on the pause, which would miss an unlinked asker (who has no assistant to pause).
     //
-    // A MARKER only. The commonest photo on a live thread is an ordinary receipt with nothing to do
-    // with the request, and writing "ลูกค้าส่งรูปภาพมา" over `lastMessageText` destroyed the
-    // sentence the operator was answering.
-    await this.recordSupportFollowUp(event.lineUserId, requestId, { media: true });
+    // A MARKER only, and a marker is not a follow-up: it moves no clock, reopens nothing and
+    // re-arms no mute (N1). See `stampSupportMedia`.
+    await this.stampSupportMedia(event.lineUserId);
 
     const identity = await this.resolveLineIdentity(event);
     if (!identity || identity.user.status !== 'ACTIVE') {

@@ -1,9 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { NotFoundException } from '@nestjs/common';
+import { SupportRequestAdminUseCase } from './support-request-admin.use-case';
 import {
-  SUPPORT_REQUEST_ANSWERED_ACTION, SUPPORT_REQUEST_RESUME_ACTION, SupportRequestAdminUseCase,
-} from './support-request-admin.use-case';
+  SUPPORT_REQUEST_ANSWERED_ACTION, SUPPORT_REQUEST_RESUME_ACTION,
+} from '../domain/support-request.constants';
 
 const REQUEST_ID = 'req-1';
 const ADMIN = 'admin-1';

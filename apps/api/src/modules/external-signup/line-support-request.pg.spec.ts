@@ -662,4 +662,84 @@ describe('"ติดต่อเจ้าหน้าที่" on real PostgreS
       await client.$disconnect();
     }
   });
+
+  /**
+   * Review 2026-09-06 (N1, the reviewer's own probe). A photo used to travel the full follow-up
+   * path: it reopened an ANSWERED thread, moved `lastMessageAt`, and re-armed the 24 h mute. A shop
+   * that uploads one receipt a day therefore kept its assistant switched off and its inbox row
+   * alive for ever, on nothing but its ordinary bookkeeping. Two tables, so only real rows show it:
+   * the request must not move and the pause must still end when it was going to.
+   */
+  it('leaves an ANSWERED request and its mute exactly where they were when a photo arrives', async () => {
+    const client = connect();
+    const tag = `linesupport-${randomUUID().slice(0, 8)}`;
+    const lineUserId = `U${tag}`;
+    try {
+      const { userId } = await seed(client, tag, lineUserId);
+      const h = wire(client);
+      await h.webhook.execute(event(lineUserId, STAFF_CONTACT_COMMAND));
+      const id = h.notices[0]!;
+      await h.admin.markAnswered(id, userId, `${tag}-answered`);
+
+      // An hour of mute left — the state the probe describes, and the one the old code pushed out
+      // by another full day on every receipt.
+      const endsAt = new Date(Date.now() + 3_600_000);
+      await client.lineCompanyContext.update({ where: { lineUserId }, data: { aiPausedUntil: endsAt } });
+      const answered = await client.lineSupportRequest.findUniqueOrThrow({ where: { id } });
+
+      await h.webhook.executeReceiptUpload({
+        webhookEventId: `evt-${randomUUID()}`, replyToken: 'reply-1', lineUserId,
+        lineMessageId: `msg-${randomUUID()}`, messageType: 'image', messagingChannelId: CHANNEL,
+      } as any);
+
+      const row = await client.lineSupportRequest.findUniqueOrThrow({ where: { id } });
+      assert.equal(row.status, 'ANSWERED', 'a receipt is not the customer asking again');
+      assert.equal(row.reopenedCount, 0);
+      assert.ok(row.lastMediaAt, 'but the operator still learns a photo arrived');
+      assert.deepEqual(row.lastMessageAt, answered.lastMessageAt, 'the waiting clock did not move');
+      assert.equal(row.lastMessageText, answered.lastMessageText);
+
+      const context = await client.lineCompanyContext.findUniqueOrThrow({ where: { lineUserId } });
+      assert.deepEqual(context.aiPausedUntil, endsAt, 'and the mute still ends in an hour, not tomorrow');
+      assert.equal((await h.admin.list('OPEN')).items.some((entry) => entry.id === id), false,
+        'a settled thread stays settled: the row is not back on รอตอบ');
+    } finally {
+      await cleanup(client, tag, lineUserId);
+      await client.$disconnect();
+    }
+  });
+
+  /**
+   * Review 2026-09-06 (N2). §2.5 deletes the context row on unlink; the re-arm was an upsert keyed
+   * on the shop the REQUEST remembers, so a follow-up rebuilt it for a shop the person had left.
+   * Real rows are the point: the delete and the resurrection are the same table.
+   */
+  it('does not resurrect a context row the unlink deleted', async () => {
+    const client = connect();
+    const tag = `linesupport-${randomUUID().slice(0, 8)}`;
+    const lineUserId = `U${tag}`;
+    try {
+      const { userId, companyId } = await seed(client, tag, lineUserId);
+      const h = wire(client);
+      await h.webhook.execute(event(lineUserId, STAFF_CONTACT_COMMAND));
+      const id = h.notices[0]!;
+      assert.equal((await client.lineSupportRequest.findUniqueOrThrow({ where: { id } })).companyId, companyId,
+        'the live request still names the shop, which is the id the upsert used to trust');
+
+      // §2.5: the unlink takes the context row with it. The request outlives it, so the follow-up
+      // path is the one thing left holding a companyId nobody re-checked.
+      await h.unlink.execute({ userId, requestId: `${tag}-unlink` });
+      assert.equal(await client.lineCompanyContext.count({ where: { lineUserId } }), 0);
+
+      await h.webhook.execute(event(lineUserId, STAFF_CONTACT_COMMAND));
+
+      assert.equal(await client.lineCompanyContext.count({ where: { lineUserId } }), 0,
+        'a follow-up may extend a pause; it may not open one against a shop nobody re-checked');
+      const row = await client.lineSupportRequest.findUniqueOrThrow({ where: { id } });
+      assert.equal(row.status, 'OPEN', 'and the request itself is untouched by the missing row');
+    } finally {
+      await cleanup(client, tag, lineUserId);
+      await client.$disconnect();
+    }
+  });
 });

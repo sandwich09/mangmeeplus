@@ -5,9 +5,10 @@ import { AppConfigService } from '../../../../common/config/app-config.service';
 import { pushSystemLineMessage } from '../../../auth/infrastructure/system-line-push';
 import { checkShopMessage, shopMessageAllowedHosts } from '../../domain/logic/partner-line-message.logic';
 import { ownerLineUserIds } from './package-change-decision.use-case';
-// The constant only — the inbox owns the action name, and two spellings of it would split the
-// audit trail the /system page reads.
-import { SUPPORT_REQUEST_ANSWERED_ACTION } from '../../../external-signup/application/support-request-admin.use-case';
+// From the shared constants file, not from the inbox use case: two spellings of the action would
+// split the audit trail the /system page reads, and neither module should import the other's
+// `@Injectable()` files to avoid that.
+import { SUPPORT_REQUEST_ANSWERED_ACTION } from '../../../external-signup/domain/support-request.constants';
 
 export const PARTNER_LINE_MESSAGE_ACTION = 'system.partner.line_message_sent';
 

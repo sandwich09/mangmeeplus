@@ -391,6 +391,10 @@ export type SupportRequestItemDto = {
    * When a photo or document last arrived on this thread. §3 keeps the bytes out of the record
    * entirely, so this is all the inbox has to show ("📷 ส่งรูปมา") — and the words the customer
    * typed survive a picture that may just be an ordinary receipt.
+   *
+   * A MARKER, on whichever tab the row is already on: a photo is not the customer asking again, so
+   * it moves neither the status nor `lastMessageAt` (§2.2 delta รอบ 5). An ANSWERED thread that
+   * receives one stays ANSWERED with a camera beside it.
    */
   lastMediaAt?: string;
   /**

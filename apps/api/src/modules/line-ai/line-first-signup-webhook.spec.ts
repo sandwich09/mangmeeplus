@@ -231,10 +231,10 @@ function harness(options: {
         findFirst: async (args: any) => { supportLookups.push(args); return options.openSupportRequest ?? null; },
         create: async (args: any) => { supportRequests.push(args); return { id: 'sr-1' }; },
         // Two callers share this model. The resume/close path writes a terminal status; the
-        // follow-up path writes the newest customer message, and its `count` is load-bearing —
-        // 0 means "ตอบแล้ว" won the race and nothing was recorded.
+        // follow-up path writes the newest customer message (or, for a photo, the marker alone),
+        // and its `count` is load-bearing — 0 means "ตอบแล้ว" won the race and nothing was recorded.
         updateMany: async (args: any) => {
-          if (args.data?.lastMessageAt !== undefined) {
+          if (args.data?.lastMessageAt !== undefined || args.data?.lastMediaAt !== undefined) {
             supportUpdates.push(args);
             return { count: options.followUpUpdateCount ?? 1 };
           }
@@ -762,11 +762,13 @@ describe('a customer who writes back is still in the queue (UAT 2026-09-06)', ()
    * the one message that reached nobody at all — here it is refused as a receipt (no company
    * resolves) and still lands on the request, because those are two different questions.
    *
-   * Review 2026-09-06 (F3): it must land as a MARKER, not as text. A photo that overwrote
-   * `lastMessageText` destroyed the sentence an operator was about to answer — and the commonest
-   * photo of all is an ordinary receipt that has nothing to do with the request.
+   * Review 2026-09-06 (F3, then N1): it lands as a MARKER and nothing else. F3 stopped it
+   * overwriting `lastMessageText`; N1 stopped it counting as the customer asking again. The
+   * commonest photo on a live thread is an ordinary receipt with nothing to do with the request, so
+   * treating it as a follow-up reopened settled threads, restarted the waiting clock and re-armed
+   * the 24 h mute — a shop that uploads one receipt a day never got its assistant back.
    */
-  it('marks a photo on the waiting request without touching the words it carries', async () => {
+  it('marks a photo on an ANSWERED request without reopening it or moving its clocks', async () => {
     const h = harness({
       identity: linked, memberships: [],
       openSupportRequest: { id: 'sr-9', status: 'ANSWERED', companyId: 'co-1' },
@@ -774,25 +776,34 @@ describe('a customer who writes back is still in the queue (UAT 2026-09-06)', ()
     await h.useCase.executeReceiptUpload(mediaEvent());
 
     const [update] = h.supportUpdates;
-    assert.ok(update, 'a photo is a message from a customer who is waiting');
-    assert.equal(update.data.status, 'OPEN');
+    assert.ok(update, 'a photo is still a fact worth showing beside the thread');
+    assert.deepEqual(update.where, { id: 'sr-9', status: 'ANSWERED' });
     assert.ok(update.data.lastMediaAt instanceof Date, 'the operator learns a photo arrived');
-    assert.equal(update.data.lastMessageText, undefined, 'and the question they typed survives it');
+    assert.deepEqual(Object.keys(update.data), ['lastMediaAt'],
+      'and that is the WHOLE write: no reopen, no reopenedCount, no lastMessageAt, no words');
     assert.equal(JSON.stringify(update.data).includes('msg-1'), false, 'nothing about the bytes');
+    assert.equal(h.audits.some((row: any) => row.action === 'signup.line.support_follow_up'), false,
+      'nobody wrote a sentence, so nothing is audited as though they had');
+    assert.deepEqual(h.contextUpserts, [], 'and a receipt never re-arms the 24h mute');
+    assert.deepEqual(h.contextUpdates, []);
   });
 
   // The same lane carries PDFs. One marker covers both: the inbox says a picture arrived, and an
   // operator opening the chat sees which — spending a column on the distinction buys nothing.
-  it('marks a document the same way, and still never as text', async () => {
+  it('marks a document on a live OPEN request the same way, and moves nothing else', async () => {
     const h = harness({
       identity: linked, memberships: [],
       openSupportRequest: { id: 'sr-9', status: 'OPEN', companyId: 'co-1' },
     });
     await h.useCase.executeReceiptUpload({ ...mediaEvent(), messageType: 'file', fileName: 'bill.pdf' });
 
-    assert.ok(h.supportUpdates[0].data.lastMediaAt instanceof Date);
-    assert.equal(h.supportUpdates[0].data.lastMessageText, undefined);
-    assert.equal(JSON.stringify(h.supportUpdates[0].data).includes('bill.pdf'), false, 'never the file name');
+    const [update] = h.supportUpdates;
+    assert.deepEqual(update.where, { id: 'sr-9', status: 'OPEN' });
+    assert.ok(update.data.lastMediaAt instanceof Date);
+    assert.deepEqual(Object.keys(update.data), ['lastMediaAt'], 'the waiting clock is the customer\'s words');
+    assert.equal(JSON.stringify(update.data).includes('bill.pdf'), false, 'never the file name');
+    assert.deepEqual(h.contextUpserts, [], 'and the mute keeps whatever end it already had');
+    assert.deepEqual(h.contextUpdates, []);
   });
 
   /**
@@ -832,17 +843,18 @@ describe('a customer who writes back is still in the queue (UAT 2026-09-06)', ()
    * follow-up that did not move the pause left the assistant free to talk over a human — and the
    * row expired on a clock the customer had already reset. One rule, both places.
    */
-  it('re-arms the 24h pause from the message it just recorded', async () => {
+  it('re-arms the 24h pause from the message it just recorded, and only ever extends one', async () => {
     const h = harness({
       identity: linked, context: pausedContext,
       openSupportRequest: { id: 'sr-9', status: 'ANSWERED', companyId: 'co-1' },
     });
     await h.useCase.execute(event('ยังไม่ได้เลยค่ะ'));
 
-    const upsert = h.contextUpserts[0];
-    assert.ok(upsert, 'a customer who just wrote is not somebody the assistant may interrupt');
-    assert.equal(upsert.where.lineUserId, 'Uline-1');
-    const hours = (upsert.update.aiPausedUntil.getTime() - Date.now()) / 3_600_000;
+    assert.deepEqual(h.contextUpserts, [], 'a follow-up extends a pause; it never opens one');
+    const [update] = h.contextUpdates;
+    assert.ok(update, 'a customer who just wrote is not somebody the assistant may interrupt');
+    assert.deepEqual(update.where, { lineUserId: 'Uline-1', aiPausedUntil: { not: null } });
+    const hours = (update.data.aiPausedUntil.getTime() - Date.now()) / 3_600_000;
     assert.ok(hours > 23.9 && hours <= 24, `24h from the follow-up, got ${hours}`);
   });
 
@@ -855,6 +867,26 @@ describe('a customer who writes back is still in the queue (UAT 2026-09-06)', ()
 
     assert.deepEqual(h.contextUpserts, [], 'no shop, no context row to create out of nothing');
     assert.equal(h.supportUpdates.length, 1, 'their message is still recorded');
+  });
+
+  /**
+   * Review 2026-09-06 (N2). The re-arm was an `upsert` whose CREATE branch used the `companyId` the
+   * request happened to remember, with no identity or membership check anywhere near it — and §2.5
+   * DELETES `LineCompanyContext` on unlink. So an ex-member's follow-up rebuilt the row pointing at
+   * the shop they had left. Extend only; the tap's own `pauseAssistant`, which asks about
+   * membership first, stays the one thing allowed to create it.
+   */
+  it('never rebuilds a context row that an unlink deleted', async () => {
+    const h = harness({
+      identity: null, context: null,
+      openSupportRequest: { id: 'sr-9', status: 'OPEN', companyId: 'co-left' },
+    });
+    await h.useCase.execute(event(STAFF_CONTACT_COMMAND));
+
+    assert.deepEqual(h.contextUpserts, [], 'no membership, no row — not even the one the request names');
+    assert.equal(h.supportUpdates.length, 1, 'their tap still reaches the operator inbox');
+    assert.deepEqual(h.contextUpdates[0].where, { lineUserId: 'Uline-1', aiPausedUntil: { not: null } },
+      'the write can only ever touch a pause that is already running');
   });
 
   /**

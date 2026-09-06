@@ -542,7 +542,7 @@ export class PartnerController {
       + 'by an optional supportRequestId — which is marked answered with it (SEC-05)',
   })
   @ApiResponse({ status: 200, description: 'How many LINE chats it reached' })
-  @ApiResponse({ status: 404, description: 'No such shop, or a support request that is not this shop\'s and still live' })
+  @ApiResponse({ status: 404, description: 'No such shop, or a support request that is not this shop\'s or is already CLOSED' })
   @ApiResponse({ status: 422, description: 'Empty, too long, links outside our own domains, or no LINE channel' })
   sendLineMessage(
     @Param('partnerCompanyId') companyId: string,

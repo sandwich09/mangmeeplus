@@ -1,6 +1,6 @@
 # Agent Memory: support-request-continuity
 
-Status: DONE (round-2 review fixes applied, gates green, not deployed) — branch
+Status: DONE (round-3 review fixes applied, gates green, not deployed) — branch
 `codex/support-request-continuity` from `origin/develop` (178d3fb6); PR #446
 Owner: Owner (UAT report 2026-09-06)
 Scope: `LineSupportRequest` continuity — a customer who writes back after "ตอบแล้ว" must reach the inbox again.
@@ -30,8 +30,9 @@ the canned reply says "กำลังดูให้อยู่", and no opera
 ```
 OPEN ──(admin "ตอบแล้ว" | partner message delivered)──▶ ANSWERED
   ▲                                                        │
-  └──(customer text, photo OR a second tap, reopenedCount += 1)──┘
+  └──(customer TEXT under the pause OR a second tap, reopenedCount += 1)──┘
 OPEN/ANSWERED ──(customer resume | admin resume | sweep 24h after lastMessageAt)──▶ CLOSED
+OPEN/ANSWERED ──(customer photo/file)──▶ same status, lastMediaAt stamped, nothing else moves
 ```
 
 - `answeredAt` / `answeredByUserId` are kept as the history of the last answer.
@@ -40,6 +41,8 @@ OPEN/ANSWERED ──(customer resume | admin resume | sweep 24h after lastMessag
   sweep counts from it, and the assistant's pause is re-armed to it + 24 h — one stamp, three uses.
 - `requestText` is the question and never moves; `lastMessageText` is the newest TEXT; a photo
   stamps `lastMediaAt` and touches neither.
+- **Only two things count as the customer asking again** (round 3, N1): a TEXT follow-up under the
+  pause, and a tap on "ติดต่อเจ้าหน้าที่". A photo or a file stamps `lastMediaAt` and stops there.
 - CLOSED is terminal: a fresh "ติดต่อเจ้าหน้าที่" opens a new row (existing §2.2.4 behaviour).
 
 ## Decisions
@@ -61,7 +64,7 @@ Nine findings. All fixed red-first; the decisions are now spec §2.2 delta ร�
 
 | # | Defect | Rule now |
 |---|---|---|
-| F1 (HIGH) | the sweep expired a request 24 h after `requestedAt`, so a thread reopened at hour 23 was closed at hour 24 — right after "ทีมงานจะตอบกลับในแชทนี้นะคะ" | **The thread's life is measured from the LAST customer message.** `sweepExpiredSupportRequests` filters on `lastMessageAt`, and EVERY recorded follow-up re-arms `LineCompanyContext.aiPausedUntil` to that message + 24 h (`pauseAssistant`, the same upsert the tap uses). Two clocks, one stamp. No shop on the request = no pause row created: an unlinked asker has no assistant to silence (§2.1.2), and their sweep window is `lastMessageAt` alone. |
+| F1 (HIGH) | the sweep expired a request 24 h after `requestedAt`, so a thread reopened at hour 23 was closed at hour 24 — right after "ทีมงานจะตอบกลับในแชทนี้นะคะ" | **The thread's life is measured from the LAST customer message.** `sweepExpiredSupportRequests` filters on `lastMessageAt`, and a recorded follow-up re-arms `LineCompanyContext.aiPausedUntil` to that message + 24 h. Two clocks, one stamp. **Narrowed twice in round 3**: "follow-up" is a TEXT message or a tap, never a photo (N1), and the re-arm extends an existing pause without ever creating one (N2). An unlinked asker has no assistant to silence (§2.1.2), and their sweep window is `lastMessageAt` alone. |
 | F2 (MED) | `findFirst` → `update` is read-then-write: "ตอบแล้ว" landing in the gap left the row ANSWERED while the customer was told the message was delivered | conditional `updateMany({ where: { id, status: <the status just read> } })`; `count === 0` means NOT recorded, and the caller sends the old, promise-free reply |
 | F3 (MED) | `lastMessageText` was replaced, so a nudge or an unrelated receipt photo destroyed the question | new immutable `requestText` (backfilled from `lastMessageText`); `lastMessageText` = newest customer TEXT only; media stamps the new `lastMediaAt` and touches no words; the inbox shows the question, "ล่าสุด: …" when it has moved on, and "📷 ส่งรูปมา" beside them |
 | F4 (MED) | the partner box pushed to owner ∪ EVERY open requester — two strangers read each other's answer | union reverted. Recipients = OWNER LINE ids **+ the one requester named by an optional `supportRequestId`** on `POST /system/partners/:companyId/line-message` (must be this shop's, not CLOSED, else 404). The inbox link carries `?support=<id>&asker=<askerRef>`; the box shows "ตอบถึง: ผู้ขอ <askerRef>" and marks that request ANSWERED with the button's own audit (`system.support_request.answered`, `via: partner_line_message`) |
@@ -85,13 +88,28 @@ on every unlinked text event (a query on the hot path for the rarest case) or mo
 which is a different feature. Left as is, written down so the next reader is not surprised that a
 picture from a stranger reaches the inbox and their sentence does not.
 
+## Adversarial review of 24d92630 → round 3 (2026-09-06)
+
+All nine round-2 fixes confirmed. Three new findings, all fixed red-first; spec §2.2 delta รอบ 5.
+
+| # | Defect | Rule now |
+|---|---|---|
+| N1 (MED) | `recordSupportFollowUp` sat at the top of the media lane, and re-armed the pause inside itself — so an ordinary receipt photo on a live or ANSWERED thread reopened the request, moved the waiting clock and muted the customer's own assistant for another day. A shop that uploads one receipt a day kept the mute AND the inbox row alive for ever. | **A photo/file is a MARKER.** New `stampSupportMedia(lineUserId)`: stamp `lastMediaAt` on the live request (OPEN or ANSWERED, same tenant rules) and stop. No reopen, no `lastMessageAt`, no pause re-arm, no `signup.line.support_follow_up` audit. The inbox still shows "📷 ส่งรูปมา" in whichever tab the row is in. Only a TEXT follow-up under the pause and a tap on "ติดต่อเจ้าหน้าที่" reopen, stamp `lastMessageAt` and re-arm. `recordSupportFollowUp`'s `message` shrank to `{ text?: string }`. |
+| N2 (LOW) | the re-arm was an `upsert` whose CREATE branch used the request's stored `companyId` with no identity/membership re-check — and §2.5 DELETES `LineCompanyContext` on unlink, so an ex-member's follow-up rebuilt the row pointing at the shop they had left | the re-arm is `updateMany({ where: { lineUserId, aiPausedUntil: { not: null } }, data: { aiPausedUntil } })` — it may extend a running pause, it can never create one. The tap's own `pauseAssistant`, which asks `resolveSupportAsker` for a live membership first, stays the sole creator. |
+| N3 (nit) | `partner.controller.ts` OpenAPI said the 404 was "not this shop's **and** still live", which is the opposite of the code | "not this shop's **or is already CLOSED**". Behaviour untouched; both branches were already pinned by `partner-support-tools.spec.ts`. |
+
+Also, no behaviour change: `SUPPORT_REQUEST_ANSWERED_ACTION` / `SUPPORT_REQUEST_RESUME_ACTION` moved
+to `external-signup/domain/support-request.constants.ts`. `send-partner-line-message.use-case.ts`
+was importing the constant out of an `@Injectable()` use-case file in another module while
+`external-signup` reaches back the other way — a cycle waiting to happen for the sake of a string.
+
 ## Open questions / follow-ups (not in this change)
 
 - An UNLINKED prospect's follow-up text still hits the entry-door card, above the pause gate, so it
   is not appended (F8 above — recorded, unchanged, and asymmetric with the photo lane).
 - A receipt photo sent during a live support thread is still OCR'd and answered by the assistant —
-  the media lane has no pause gate. Out of scope here; since round 2 the photo can still reopen a
-  request, but it now leaves a `lastMediaAt` marker rather than overwriting what was typed.
+  the media lane has no pause gate. Out of scope here; since round 3 the photo leaves a
+  `lastMediaAt` marker and nothing else, so it neither reopens the request nor extends the mute.
 - The partner box WITHOUT a `supportRequestId` still marks every OPEN request of the shop ANSWERED
   (§2.3 as written since 2026-09-05). Answering the owner about billing therefore still clears an
   employee's unrelated request off the tab. Named sends no longer do this — they move only the
@@ -112,11 +130,16 @@ picture from a stranger reaches the inbox and their sentence does not.
   the only question they ever recorded. UNRELEASED, which is why round 2 extended this file rather
   than adding a second one.
 - API: `process-line-webhook.use-case.ts` — `SUPPORT_FOLLOW_UP_REPLY`, `findLiveSupportRequest()`,
-  `recordSupportFollowUp(lineUserId, requestId, { text? | media? })`, called from the pause gate
-  (text), the top of `executeReceiptUploadInner` (media marker) and `handleStaffContact` (the tap,
-  no text). Best-effort: it catches, warns `line_support_follow_up_not_recorded`, and returns false
-  — so does a `count` of 0 — so a receipt is never lost and the customer never gets silence; the
-  caller then sends the old, non-promising reply.
+  `recordSupportFollowUp(lineUserId, requestId, { text? })` called from the pause gate (text) and
+  `handleStaffContact` (the tap, no text), plus (round 3) `stampSupportMedia(lineUserId)` at the top
+  of `executeReceiptUploadInner` — `lastMediaAt` alone, no reopen, no clock, no pause, no audit.
+  Both are best-effort: they catch and warn (`line_support_follow_up_not_recorded` /
+  `line_support_media_not_recorded`), and the follow-up returns false — so does a `count` of 0 — so
+  a receipt is never lost and the customer never gets silence; the caller then sends the old,
+  non-promising reply.
+- API: `external-signup/domain/support-request.constants.ts` (round 3) — the two inbox audit
+  actions, imported by `support-request-admin.use-case.ts` and `send-partner-line-message.use-case.ts`
+  so the two modules no longer import each other's use cases in both directions.
 - API: `line-signup-notify.service.ts` — the expiry sweep filters on `lastMessageAt`.
 - API: `support-request-admin.use-case.ts` — `orderBy` now `[status asc, lastMessageAt desc]`; the
   DTO carries `requestText`, `lastMessageAt`, `lastMediaAt` and `reopenedCount`.
@@ -133,6 +156,29 @@ picture from a stranger reaches the inbox and their sentence does not.
   the newest message and the media marker. `app/system/partners/[companyId]/page.tsx` reads the two
   params; `PartnerDetailPage.tsx` shows "ตอบถึง: ผู้ขอ …" and sends `supportRequestId`.
 - Spec: `docs/specs/line-support-request-spec-th.md` §2.2 delta รอบ 3 and รอบ 4.
+
+## Verification (round 3, 2026-09-06, on the committed tree)
+
+| Gate | Result |
+|---|---|
+| `line-first-signup-webhook.spec.ts` | 56 pass / 0 fail — **4 red first** (52/4): the two media cases, the re-arm case and the new unlinked case |
+| `line-support-request.pg.spec.ts` (isolated `postgres:18.3-alpine`, 127.0.0.1:15481, `migrate deploy` + `sync-permissions`, container removed) | 16 pass / 0 fail — **2 red first** (14/2): the reviewer's mute probe failed `'OPEN' !== 'ANSWERED'`, the unlink probe failed `1 !== 0` context rows |
+| N1 mutation: media lane back to `recordSupportFollowUp` | both media cases go RED, green again on restore |
+| `line-intake-dispatch` + `process-line-webhook` use-case specs | 376 pass / 0 fail |
+| `support-request-admin` + `partner-support-tools` | 41 pass / 0 fail (the constants move) |
+| `line-signup-notify.service.spec.ts` + `spec-suite-coverage.spec.ts` | 36 pass / 0 fail (no package.json change: the constants file is not a spec) |
+| `pnpm --filter @watchdog-bms/api typecheck` / `web typecheck` | clean |
+| `node apps/api/scripts/check-di-metadata.mjs` | 795 files, 870 decorated classes, 820 with deps — all carry `design:paramtypes` |
+| `pnpm --filter @watchdog-bms/api test:boot` | Nest resolved every provider in 132 ms |
+| `pnpm --filter @watchdog-bms/api test` (full fixed list, under the heavy mutex) | exit 0, zero `✖`, 9606 dot-reporter marks |
+| `pnpm --filter @watchdog-bms/web test` | 1604 pass / 0 fail |
+
+N3 is documentation only: both 404 branches were already pinned by `partner-support-tools.spec.ts`
+("refuses a request belonging to another shop" and "refuses a request that is already CLOSED"), and
+the sentence was the only thing disagreeing with them. No new test — a decorator-metadata assertion
+would pin the prose, not the behaviour.
+
+Not run: `infra/docker/production-image-security.spec.sh` (out of scope), and no UAT deploy.
 
 ## Verification (round 2, 2026-09-06, all re-run on the committed tree)
 
@@ -171,5 +217,6 @@ Not run: `infra/docker/production-image-security.spec.sh` (out of scope), and no
   box must say "ตอบถึง: ผู้ขอ …"), answer from it, then reply from the customer's LINE — the row must
   return to รอตอบ with "ตอบแล้ว 1 ครั้ง · ลูกค้าตอบกลับ", the question must still be the first line of
   the message cell, and the header badge must count it again. Send a photo too: "📷 ส่งรูปมา" beside
-  the words, never instead of them.
+  the words, never instead of them — and, after round 3, a photo on an ANSWERED row must LEAVE it
+  ANSWERED: the camera appears on the ตอบแล้ว tab and the row does not come back to รอตอบ.
 - The follow-ups above are unfixed by design; none of them is the reported defect.
