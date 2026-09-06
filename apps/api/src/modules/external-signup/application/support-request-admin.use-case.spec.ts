@@ -1,9 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { NotFoundException } from '@nestjs/common';
+import { SupportRequestAdminUseCase } from './support-request-admin.use-case';
 import {
-  SUPPORT_REQUEST_ANSWERED_ACTION, SUPPORT_REQUEST_RESUME_ACTION, SupportRequestAdminUseCase,
-} from './support-request-admin.use-case';
+  SUPPORT_REQUEST_ANSWERED_ACTION, SUPPORT_REQUEST_RESUME_ACTION,
+} from '../domain/support-request.constants';
 
 const REQUEST_ID = 'req-1';
 const ADMIN = 'admin-1';
@@ -16,7 +17,11 @@ const row = (over: Record<string, unknown> = {}) => ({
   lineUserIdHash: 'feedfacefeedface',
   signupRequestId: null,
   requestedAt: new Date('2026-09-05T02:00:00.000Z'),
+  requestText: null,
   lastMessageText: null,
+  lastMessageAt: new Date('2026-09-05T02:00:00.000Z'),
+  lastMediaAt: null,
+  reopenedCount: 0,
   lineNotifiedCount: 0,
   emailSent: true,
   notifiedAt: new Date('2026-09-05T02:00:05.000Z'),
@@ -72,7 +77,9 @@ describe('the support inbox read (line-support-request-spec-th §2.3)', () => {
 
     assert.equal(result.openCount, 4, 'the badge count is the OPEN total, not the filtered list');
     assert.equal(h.queries[0].where.status, 'CLOSED');
-    assert.deepEqual(h.queries[0].orderBy, [{ status: 'asc' }, { requestedAt: 'desc' }]);
+    // Newest CUSTOMER message first, not oldest ask first: a request the customer wrote to two
+    // minutes ago showing "รอมานาน 3 วัน" at the bottom of the tab is how one gets missed twice.
+    assert.deepEqual(h.queries[0].orderBy, [{ status: 'asc' }, { lastMessageAt: 'desc' }]);
 
     const [item] = result.items;
     assert.equal(item!.askerLabel, 'ร้านนิด');
@@ -116,6 +123,57 @@ describe('the support inbox read (line-support-request-spec-th §2.3)', () => {
     assert.equal(result.items[0]!.signupRequestId, 'sr-signup-1');
     assert.equal(result.items[0]!.companyId, undefined);
     assert.equal(h.queries[0].where, undefined, 'no filter means every status');
+  });
+
+  // UAT 2026-09-06: an answered request the customer wrote back to is OPEN again, and the row has
+  // to carry enough for the operator to see that WITHOUT opening it.
+  it('carries the newest customer message and how often this one has been answered', async () => {
+    const h = harness({
+      rows: [row({
+        status: 'OPEN',
+        lastMessageText: 'ยังไม่ได้เลยค่ะ',
+        lastMessageAt: new Date('2026-09-06T04:00:00.000Z'),
+        answeredAt: new Date('2026-09-05T03:00:00.000Z'),
+        answeredByUserId: 'admin-1',
+        reopenedCount: 1,
+      })],
+      users: [{ id: 'admin-1', displayName: 'พี่แอดมิน' }],
+    });
+    const [item] = (await h.useCase.list('OPEN')).items;
+
+    assert.equal(item!.lastMessageAt, '2026-09-06T04:00:00.000Z');
+    assert.equal(item!.reopenedCount, 1);
+    assert.equal(item!.lastMessageText, 'ยังไม่ได้เลยค่ะ');
+    // The answer stays visible as history — the row is OPEN and answered, which is the whole point.
+    assert.equal(item!.answeredAt, '2026-09-05T03:00:00.000Z');
+    assert.equal(item!.answeredByDisplayName, 'พี่แอดมิน');
+    assert.equal(item!.status, 'OPEN');
+  });
+
+  /**
+   * Review 2026-09-06 (F3). One column held both "what they asked" and "what they last said", so a
+   * nudge or an unrelated receipt photo destroyed the question the operator was answering. Two
+   * columns, and a picture is a marker beside the words rather than a replacement for them.
+   */
+  it('carries the original question and the newest message as two separate things', async () => {
+    const h = harness({
+      rows: [row({
+        requestText: 'ส่งใบเสร็จแล้วไม่เห็นขึ้นเลยค่ะ',
+        lastMessageText: 'มีอัปเดตไหมคะ',
+        lastMediaAt: new Date('2026-09-06T05:00:00.000Z'),
+      })],
+    });
+    const [item] = (await h.useCase.list()).items;
+
+    assert.equal(item!.requestText, 'ส่งใบเสร็จแล้วไม่เห็นขึ้นเลยค่ะ', 'still the question, three messages later');
+    assert.equal(item!.lastMessageText, 'มีอัปเดตไหมคะ');
+    assert.equal(item!.lastMediaAt, '2026-09-06T05:00:00.000Z', 'and a photo arrived, which is all we keep of it');
+  });
+
+  it('says nothing about media on a thread that has none', async () => {
+    const [item] = (await harness({ rows: [row()] }).useCase.list()).items;
+    assert.equal(item!.lastMediaAt, undefined);
+    assert.equal(item!.requestText, undefined);
   });
 
   it('answers an empty inbox with the count rather than nothing', async () => {

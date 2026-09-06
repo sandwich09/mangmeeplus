@@ -184,8 +184,10 @@ function harness(options: {
   memberships?: Array<{ companyId: string; roles: unknown[] }>;
   context?: { companyId: string; aiPausedUntil: Date | null } | null;
   contextUpdateCount?: number;
-  /** An OPEN `LineSupportRequest` for this LINE user, if one is already in the queue (§2.2.4). */
-  openSupportRequest?: { id: string } | null;
+  /** A live `LineSupportRequest` for this LINE user, if one is already in the queue (§2.2.4). */
+  openSupportRequest?: { id: string; status?: string; companyId?: string | null } | null;
+  /** Rows the conditional follow-up write actually moved. `0` = somebody else got there first. */
+  followUpUpdateCount?: number;
   /** The last thing this customer typed, as `AiTurn` kept it. */
   lastTurn?: { userMessagePreview: string | null } | null;
   /** The amplification floor: `false` = this LINE account has spent its three asks for today. */
@@ -205,6 +207,8 @@ function harness(options: {
   const contextUpserts: any[] = [];
   const supportRequests: any[] = [];
   const supportClosures: any[] = [];
+  const supportLookups: any[] = [];
+  const supportUpdates: any[] = [];
   const supportSlots: string[] = [];
   const membershipQueries: any[] = [];
   const errors: any[] = [];
@@ -222,9 +226,21 @@ function harness(options: {
       },
       // §2.1: the request row IS the fact of the ask, written before anyone is notified.
       lineSupportRequest: {
-        findFirst: async () => options.openSupportRequest ?? null,
+        // The `where` IS the guard for the follow-up lookup (which statuses may be reopened), so
+        // the query is recorded: a fake that only returns a row cannot show what was asked for.
+        findFirst: async (args: any) => { supportLookups.push(args); return options.openSupportRequest ?? null; },
         create: async (args: any) => { supportRequests.push(args); return { id: 'sr-1' }; },
-        updateMany: async (args: any) => { supportClosures.push(args); return { count: 1 }; },
+        // Two callers share this model. The resume/close path writes a terminal status; the
+        // follow-up path writes the newest customer message (or, for a photo, the marker alone),
+        // and its `count` is load-bearing — 0 means "ตอบแล้ว" won the race and nothing was recorded.
+        updateMany: async (args: any) => {
+          if (args.data?.lastMessageAt !== undefined || args.data?.lastMediaAt !== undefined) {
+            supportUpdates.push(args);
+            return { count: options.followUpUpdateCount ?? 1 };
+          }
+          supportClosures.push(args);
+          return { count: 1 };
+        },
       },
       aiTurn: { findFirst: async () => options.lastTurn ?? null },
       externalIdentity: { findFirst: async () => options.identity ?? null },
@@ -293,7 +309,7 @@ function harness(options: {
   (useCase as any).logger = { error: (entry: any) => errors.push(entry), warn: () => {}, log: () => {} };
   return {
     useCase, replies, eventLog, audits, packageChanges, supportNotices, contextUpdates, contextUpserts,
-    supportRequests, supportClosures, supportSlots, membershipQueries, errors,
+    supportRequests, supportClosures, supportLookups, supportUpdates, supportSlots, membershipQueries, errors,
   };
 }
 
@@ -608,6 +624,343 @@ describe('P10-L contact-staff pause (§8), rewritten by line-support-request-spe
     assert.match(rendered(paused), /ทีมงานรับเรื่องแล้ว/);
     assert.equal(outcome(paused), 'support_paused');
     assert.deepEqual(paused.packageChanges, []);
+  });
+});
+
+/**
+ * UAT 2026-09-06: "เจ้าหน้าที่ตอบกลับแล้วคำขอหายไปเลย ทั้งที่ยังไม่จบ".
+ *
+ * "ตอบแล้ว" moved the row to ANSWERED, which is off the รอตอบ tab and out of the header badge —
+ * and NOTHING could put it back, because the pause gate answered every later customer message with
+ * a canned line and never touched `LineSupportRequest`. The customer kept typing into a thread no
+ * operator surface could see, while being told a human was reading it.
+ */
+describe('a customer who writes back is still in the queue (UAT 2026-09-06)', () => {
+  const linked = { userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } };
+  const pausedContext = { companyId: 'co-1', aiPausedUntil: new Date(Date.now() + 3_600_000) };
+  const mediaEvent = () => ({
+    webhookEventId: 'evt-photo', replyToken: 'reply-1', lineUserId: 'Uline-1',
+    lineMessageId: 'msg-1', messageType: 'image', messagingChannelId: 'msg-channel-1',
+  }) as any;
+
+  it('reopens an ANSWERED request and stops promising what it does not do', async () => {
+    const h = harness({
+      identity: linked,
+      context: pausedContext,
+      openSupportRequest: { id: 'sr-9', status: 'ANSWERED', companyId: 'co-1' },
+    });
+    await h.useCase.execute(event('ยังไม่ได้เลยค่ะ ลองแล้วไม่ขึ้น'));
+
+    const [update] = h.supportUpdates;
+    assert.ok(update, 'the message an operator has to read must land on the request');
+    assert.equal(update.where.id, 'sr-9');
+    assert.equal(update.data.status, 'OPEN', 'back onto the รอตอบ tab, and back into the badge');
+    assert.equal(update.data.lastMessageText, 'ยังไม่ได้เลยค่ะ ลองแล้วไม่ขึ้น');
+    assert.ok(update.data.lastMessageAt instanceof Date, 'the waiting clock restarts from this');
+    assert.deepEqual(update.data.reopenedCount, { increment: 1 });
+    // The answer is history, not a lie to erase: the inbox says "ตอบแล้ว 1 ครั้ง · ลูกค้าตอบกลับ".
+    assert.equal(update.data.answeredAt, undefined);
+    assert.equal(update.data.answeredByUserId, undefined);
+
+    assert.match(rendered(h), /ส่งข้อความถึงทีมงานแล้ว/);
+    assert.equal(rendered(h).includes('กำลังดูให้อยู่'), false, 'not the reply that swallowed it');
+    assert.equal(rendered(h).includes('+'), false, 'no plus sign anywhere a customer reads');
+    assert.equal(outcome(h), 'support_paused');
+  });
+
+  it('records the fact, never the words, and never the LINE id (§3)', async () => {
+    const h = harness({
+      identity: linked,
+      context: pausedContext,
+      openSupportRequest: { id: 'sr-9', status: 'ANSWERED', companyId: 'co-1' },
+    });
+    await h.useCase.execute(event('เลขบัญชี 1234567890 ค่ะ'));
+
+    const entry = h.audits.find((row: any) => row.action === 'signup.line.support_follow_up');
+    assert.ok(entry, 'somebody wrote to a waiting request, and that is an auditable fact');
+    assert.equal(entry.targetType, 'line_support_request');
+    assert.equal(entry.targetId, 'sr-9');
+    assert.equal(entry.companyId, 'co-1');
+    assert.equal(entry.result, 'SUCCESS');
+    assert.deepEqual(entry.metadataJson, { reopened: true, hasText: true });
+    const written = JSON.stringify(entry);
+    assert.equal(written.includes('Uline-1'), false, 'no LINE id in the audit rail');
+    assert.equal(written.includes('1234567890'), false, 'and never the message itself');
+  });
+
+  it('appends to a request that never left รอตอบ without counting a reopen', async () => {
+    const h = harness({
+      identity: linked, context: pausedContext,
+      openSupportRequest: { id: 'sr-9', status: 'OPEN', companyId: 'co-1' },
+    });
+    await h.useCase.execute(event('มีอัปเดตไหมคะ'));
+
+    const [update] = h.supportUpdates;
+    assert.equal(update.data.lastMessageText, 'มีอัปเดตไหมคะ');
+    assert.equal(update.data.status, undefined, 'it was never off the tab');
+    assert.equal(update.data.reopenedCount, undefined, 'and nobody answered it to reopen');
+    assert.equal(h.audits.find((row: any) => row.action === 'signup.line.support_follow_up').metadataJson.reopened, false);
+  });
+
+  // CLOSED is settled: a fresh "ติดต่อเจ้าหน้าที่" opens a new request (§2.2.4), and a stray
+  // message must not resurrect a matter both sides finished with.
+  it('asks only for a request that is still live, for this person in any shop', async () => {
+    const h = harness({
+      identity: linked, context: pausedContext,
+      openSupportRequest: { id: 'sr-9', status: 'OPEN', companyId: 'co-1' },
+    });
+    await h.useCase.execute(event('สวัสดีค่ะ'));
+
+    const lookup = h.supportLookups.at(-1);
+    assert.deepEqual(lookup.where.status, { in: ['OPEN', 'ANSWERED'] });
+    assert.equal(lookup.where.lineUserId, 'Uline-1');
+    assert.equal(lookup.where.companyId, undefined, 'one person, whatever shop the request names');
+  });
+
+  it('keeps the old reply when there is no request to append to', async () => {
+    const h = harness({ identity: linked, context: pausedContext, openSupportRequest: null });
+    await h.useCase.execute(event('ยอดขายวันนี้'));
+
+    assert.deepEqual(h.supportUpdates, [], 'nothing to write to');
+    assert.match(rendered(h), /กำลังดูให้อยู่/, 'and the customer keeps the answer they had');
+    assert.equal(outcome(h), 'support_paused');
+  });
+
+  // Bookkeeping beside the turn, never in front of it: the fallback is the old reply, not silence
+  // on an event that has already been claimed and so is never redelivered.
+  it('still answers the customer when the request cannot be written to', async () => {
+    const h = harness({
+      identity: linked, context: pausedContext,
+      openSupportRequest: { id: 'sr-9', status: 'OPEN', companyId: 'co-1' },
+    });
+    (h.useCase as any).prisma.client.lineSupportRequest.updateMany = async () => { throw new Error('deadlock'); };
+
+    await h.useCase.execute(event('มีอัปเดตไหมคะ'));
+
+    assert.match(rendered(h), /กำลังดูให้อยู่/, 'the old reply, which promises nothing we did not do');
+    assert.equal(rendered(h).includes('ส่งข้อความถึงทีมงานแล้ว'), false, 'and never a promise we broke');
+    assert.equal(outcome(h), 'support_paused');
+  });
+
+  it('never loses a receipt turn because the support table could not be written', async () => {
+    const h = harness({
+      identity: linked, memberships: [],
+      openSupportRequest: { id: 'sr-9', status: 'OPEN', companyId: 'co-1' },
+    });
+    (h.useCase as any).prisma.client.lineSupportRequest.findFirst = async () => { throw new Error('down'); };
+
+    await h.useCase.executeReceiptUpload(mediaEvent());
+
+    // The media turn ran its own course (no company resolves here) rather than being swallowed by
+    // the outer catch, which would have answered "ประมวลผลรูปนี้ไม่สำเร็จ" and released the event.
+    assert.equal(outcome(h), 'unlinked');
+    assert.equal(rendered(h).includes('ประมวลผลรูปนี้ไม่สำเร็จ'), false);
+  });
+
+  /**
+   * The photo lane has no pause gate of its own, so a customer answering a human WITH A PICTURE was
+   * the one message that reached nobody at all — here it is refused as a receipt (no company
+   * resolves) and still lands on the request, because those are two different questions.
+   *
+   * Review 2026-09-06 (F3, then N1): it lands as a MARKER and nothing else. F3 stopped it
+   * overwriting `lastMessageText`; N1 stopped it counting as the customer asking again. The
+   * commonest photo on a live thread is an ordinary receipt with nothing to do with the request, so
+   * treating it as a follow-up reopened settled threads, restarted the waiting clock and re-armed
+   * the 24 h mute — a shop that uploads one receipt a day never got its assistant back.
+   */
+  it('marks a photo on an ANSWERED request without reopening it or moving its clocks', async () => {
+    const h = harness({
+      identity: linked, memberships: [],
+      openSupportRequest: { id: 'sr-9', status: 'ANSWERED', companyId: 'co-1' },
+    });
+    await h.useCase.executeReceiptUpload(mediaEvent());
+
+    const [update] = h.supportUpdates;
+    assert.ok(update, 'a photo is still a fact worth showing beside the thread');
+    assert.deepEqual(update.where, { id: 'sr-9', status: 'ANSWERED' });
+    assert.ok(update.data.lastMediaAt instanceof Date, 'the operator learns a photo arrived');
+    assert.deepEqual(Object.keys(update.data), ['lastMediaAt'],
+      'and that is the WHOLE write: no reopen, no reopenedCount, no lastMessageAt, no words');
+    assert.equal(JSON.stringify(update.data).includes('msg-1'), false, 'nothing about the bytes');
+    assert.equal(h.audits.some((row: any) => row.action === 'signup.line.support_follow_up'), false,
+      'nobody wrote a sentence, so nothing is audited as though they had');
+    assert.deepEqual(h.contextUpserts, [], 'and a receipt never re-arms the 24h mute');
+    assert.deepEqual(h.contextUpdates, []);
+  });
+
+  // The same lane carries PDFs. One marker covers both: the inbox says a picture arrived, and an
+  // operator opening the chat sees which — spending a column on the distinction buys nothing.
+  it('marks a document on a live OPEN request the same way, and moves nothing else', async () => {
+    const h = harness({
+      identity: linked, memberships: [],
+      openSupportRequest: { id: 'sr-9', status: 'OPEN', companyId: 'co-1' },
+    });
+    await h.useCase.executeReceiptUpload({ ...mediaEvent(), messageType: 'file', fileName: 'bill.pdf' });
+
+    const [update] = h.supportUpdates;
+    assert.deepEqual(update.where, { id: 'sr-9', status: 'OPEN' });
+    assert.ok(update.data.lastMediaAt instanceof Date);
+    assert.deepEqual(Object.keys(update.data), ['lastMediaAt'], 'the waiting clock is the customer\'s words');
+    assert.equal(JSON.stringify(update.data).includes('bill.pdf'), false, 'never the file name');
+    assert.deepEqual(h.contextUpserts, [], 'and the mute keeps whatever end it already had');
+    assert.deepEqual(h.contextUpdates, []);
+  });
+
+  /**
+   * Review 2026-09-06 (F2). `findFirst` then `update` is read-then-write: an operator pressing
+   * "ตอบแล้ว" in the gap left the row ANSWERED while the customer was told their message had been
+   * delivered to a queue it was no longer in. The write now carries the status it read as its own
+   * precondition, and a `count` of 0 means nothing was recorded.
+   */
+  it('does not promise delivery when "ตอบแล้ว" won the race', async () => {
+    const h = harness({
+      identity: linked, context: pausedContext,
+      openSupportRequest: { id: 'sr-9', status: 'ANSWERED', companyId: 'co-1' },
+      followUpUpdateCount: 0,
+    });
+    await h.useCase.execute(event('ยังไม่ได้เลยค่ะ'));
+
+    assert.deepEqual(h.supportUpdates[0].where, { id: 'sr-9', status: 'ANSWERED' },
+      'the status it read is the precondition it writes under');
+    assert.match(rendered(h), /กำลังดูให้อยู่/, 'the old reply, which promises nothing we did not do');
+    assert.equal(rendered(h).includes('ส่งข้อความถึงทีมงานแล้ว'), false);
+    assert.equal(h.audits.some((row: any) => row.action === 'signup.line.support_follow_up'), false,
+      'and nothing was recorded, so nothing is audited as recorded');
+  });
+
+  it('guards the plain append with OPEN, so a close in the gap cannot be written over', async () => {
+    const h = harness({
+      identity: linked, context: pausedContext,
+      openSupportRequest: { id: 'sr-9', status: 'OPEN', companyId: 'co-1' },
+    });
+    await h.useCase.execute(event('มีอัปเดตไหมคะ'));
+
+    assert.deepEqual(h.supportUpdates[0].where, { id: 'sr-9', status: 'OPEN' });
+  });
+
+  /**
+   * Review 2026-09-06 (F1). The sweep closes a request 24 h after its last customer message, so a
+   * follow-up that did not move the pause left the assistant free to talk over a human — and the
+   * row expired on a clock the customer had already reset. One rule, both places.
+   */
+  it('re-arms the 24h pause from the message it just recorded, and only ever extends one', async () => {
+    const h = harness({
+      identity: linked, context: pausedContext,
+      openSupportRequest: { id: 'sr-9', status: 'ANSWERED', companyId: 'co-1' },
+    });
+    await h.useCase.execute(event('ยังไม่ได้เลยค่ะ'));
+
+    assert.deepEqual(h.contextUpserts, [], 'a follow-up extends a pause; it never opens one');
+    const [update] = h.contextUpdates;
+    assert.ok(update, 'a customer who just wrote is not somebody the assistant may interrupt');
+    assert.deepEqual(update.where, { lineUserId: 'Uline-1', aiPausedUntil: { not: null } });
+    const hours = (update.data.aiPausedUntil.getTime() - Date.now()) / 3_600_000;
+    assert.ok(hours > 23.9 && hours <= 24, `24h from the follow-up, got ${hours}`);
+  });
+
+  it('leaves an unlinked asker unpaused, because there is no assistant to silence (§2.1.2)', async () => {
+    const h = harness({
+      identity: linked, context: pausedContext,
+      openSupportRequest: { id: 'sr-9', status: 'OPEN', companyId: null },
+    });
+    await h.useCase.execute(event('มีอัปเดตไหมคะ'));
+
+    assert.deepEqual(h.contextUpserts, [], 'no shop, no context row to create out of nothing');
+    assert.equal(h.supportUpdates.length, 1, 'their message is still recorded');
+  });
+
+  /**
+   * Review 2026-09-06 (N2). The re-arm was an `upsert` whose CREATE branch used the `companyId` the
+   * request happened to remember, with no identity or membership check anywhere near it — and §2.5
+   * DELETES `LineCompanyContext` on unlink. So an ex-member's follow-up rebuilt the row pointing at
+   * the shop they had left. Extend only; the tap's own `pauseAssistant`, which asks about
+   * membership first, stays the one thing allowed to create it.
+   */
+  it('never rebuilds a context row that an unlink deleted', async () => {
+    const h = harness({
+      identity: null, context: null,
+      openSupportRequest: { id: 'sr-9', status: 'OPEN', companyId: 'co-left' },
+    });
+    await h.useCase.execute(event(STAFF_CONTACT_COMMAND));
+
+    assert.deepEqual(h.contextUpserts, [], 'no membership, no row — not even the one the request names');
+    assert.equal(h.supportUpdates.length, 1, 'their tap still reaches the operator inbox');
+    assert.deepEqual(h.contextUpdates[0].where, { lineUserId: 'Uline-1', aiPausedUntil: { not: null } },
+      'the write can only ever touch a pause that is already running');
+  });
+
+  /**
+   * §3 PDPA bounds the operator's line of context at 200 characters. Pinned as its own case
+   * because the bound is one `.slice` — removing it stores whatever LINE accepted (up to 5000)
+   * and quietly widens what a settled row keeps about a customer.
+   */
+  it('stores at most 200 characters of a long follow-up', async () => {
+    const h = harness({
+      identity: linked, context: pausedContext,
+      openSupportRequest: { id: 'sr-9', status: 'OPEN', companyId: 'co-1' },
+    });
+    await h.useCase.execute(event('ก'.repeat(400)));
+
+    assert.equal(h.supportUpdates[0].data.lastMessageText.length, 200);
+  });
+});
+
+/**
+ * Review 2026-09-06 (F3/F7). Two questions the row now answers separately: what they ASKED, which
+ * is the sentence an operator is answering, and what they last WROTE, which is where the thread
+ * has got to. Before this, one column held both and the newest message ate the question.
+ */
+describe('the original question outlives every follow-up (UAT 2026-09-06)', () => {
+  const linked = { userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } };
+
+  it('keeps the tap-time question in its own column', async () => {
+    const h = harness({
+      identity: linked,
+      memberships: [{ companyId: 'co-now', roles: [] }],
+      lastTurn: { userMessagePreview: 'ส่งใบเสร็จแล้วไม่เห็นขึ้นเลยค่ะ' },
+    });
+    await h.useCase.execute(event(STAFF_CONTACT_COMMAND));
+
+    const { data } = h.supportRequests[0];
+    assert.equal(data.requestText, 'ส่งใบเสร็จแล้วไม่เห็นขึ้นเลยค่ะ', 'the question, never rewritten');
+    assert.equal(data.lastMessageText, 'ส่งใบเสร็จแล้วไม่เห็นขึ้นเลยค่ะ', 'and also the newest message, so far');
+  });
+
+  /**
+   * F7. `handleStaffContact` deduped on OPEN only, so tapping the button while a request was
+   * ANSWERED opened a SECOND row — while typing the same thing reopened the first. One path: the
+   * tap is a message like any other, and a reopen is not a new request, so it spends no daily slot.
+   */
+  it('reopens an ANSWERED request on a tap instead of opening a second one', async () => {
+    const h = harness({
+      identity: linked,
+      memberships: [{ companyId: 'co-now', roles: [] }],
+      context: { companyId: 'co-now', aiPausedUntil: new Date(Date.now() + 3_600_000) },
+      openSupportRequest: { id: 'sr-answered', status: 'ANSWERED', companyId: 'co-now' },
+    });
+    await h.useCase.execute(event(STAFF_CONTACT_COMMAND));
+
+    assert.deepEqual(h.supportRequests, [], 'no second row for the same conversation');
+    assert.deepEqual(h.supportSlots, [], 'and a reopen never spends one of the three daily asks');
+    const [update] = h.supportUpdates;
+    assert.ok(update, 'the tap is what brings it back');
+    assert.equal(update.data.status, 'OPEN');
+    assert.deepEqual(update.data.reopenedCount, { increment: 1 });
+    assert.match(rendered(h), /ยังอยู่ในคิว/);
+    assert.equal(outcome(h), 'support_already_open');
+    assert.deepEqual(h.supportNotices, [], 'nobody is paged twice for one conversation');
+  });
+
+  it('asks for a live request of either status before opening a new one', async () => {
+    const h = harness({
+      identity: linked,
+      memberships: [{ companyId: 'co-now', roles: [] }],
+      openSupportRequest: null,
+    });
+    await h.useCase.execute(event(STAFF_CONTACT_COMMAND));
+
+    assert.deepEqual(h.supportLookups[0].where.status, { in: ['OPEN', 'ANSWERED'] });
+    assert.equal(h.supportRequests.length, 1, 'nothing live, so this really is a new request');
   });
 });
 

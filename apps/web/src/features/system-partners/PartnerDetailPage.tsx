@@ -1999,8 +1999,11 @@ function ShopTimelineSection({ companyId }: { companyId: string }) {
  * fences its links to our own domains, signs it with the operator's name and audits its text; the
  * confirm step here exists because a push cannot be unsent.
  */
-function ShopMessageSection({ companyId, showToast }: {
+function ShopMessageSection({ companyId, supportRequestId, supportAskerRef, showToast }: {
   companyId: string;
+  /** The support request this visit came to answer, from the inbox's "เปิดหน้าร้าน" link. */
+  supportRequestId?: string;
+  supportAskerRef?: string;
   showToast: (message: string, variant: 'success' | 'error') => void;
 }) {
   const { confirm, confirmDialog } = useConfirm();
@@ -2012,14 +2015,16 @@ function ShopMessageSection({ companyId, showToast }: {
     if (!message) return;
     const accepted = await confirm({
       title: 'ส่งข้อความถึงร้าน',
-      message: `ส่งข้อความนี้เข้าไลน์ของเจ้าของร้าน ใช่หรือไม่\n\n${message}`,
+      message: supportRequestId
+        ? `ส่งข้อความนี้เข้าไลน์ของเจ้าของร้านและผู้ที่เปิดคำขอ ใช่หรือไม่\n\n${message}`
+        : `ส่งข้อความนี้เข้าไลน์ของเจ้าของร้าน ใช่หรือไม่\n\n${message}`,
       confirmLabel: 'ส่งข้อความ',
       variant: 'primary',
     });
     if (!accepted) return;
     setSending(true);
     try {
-      const result = await sendPartnerLineMessage(companyId, { text: message });
+      const result = await sendPartnerLineMessage(companyId, { text: message, ...(supportRequestId ? { supportRequestId } : {}) });
       if (result.delivered === 0) {
         // Not an error the operator caused, but they must not walk away thinking they answered.
         showToast('ยังไม่ได้ส่ง เพราะเจ้าของร้านยังไม่ได้ผูก LINE', 'error');
@@ -2038,6 +2043,14 @@ function ShopMessageSection({ companyId, showToast }: {
     <SectionCard title="ส่งข้อความถึงร้าน">
       {confirmDialog}
       <div className="space-y-2">
+        {/* Which conversation this box is answering. §3 PDPA: the same hash fragment the inbox
+            prints under "รหัสผู้ขอ", so the two pages name one person without a LINE id or a LINE
+            display name ever reaching an operator screen. */}
+        {supportRequestId && (
+          <p className="rounded-lg bg-brand-50 px-3 py-2 text-xs text-brand-800">
+            ตอบถึง: ผู้ขอ {supportAskerRef ?? '—'} · ระบบจะทำเครื่องหมายว่าตอบแล้วให้อัตโนมัติ
+          </p>
+        )}
         <textarea
           aria-label="ข้อความถึงร้าน"
           rows={3}
@@ -2049,7 +2062,10 @@ function ShopMessageSection({ companyId, showToast }: {
           className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-brand-400 focus:outline-none disabled:bg-gray-50"
         />
         <p className="text-xs text-gray-500">
-          ส่งถึงเจ้าของร้านที่ผูก LINE ไว้ ระบบจะแนบชื่อผู้ส่งให้อัตโนมัติ ใส่ลิงก์ได้เฉพาะเว็บของเราและ LIFF
+          {supportRequestId
+            ? 'ส่งถึงเจ้าของร้านที่ผูก LINE ไว้ และผู้ที่เปิดคำขอนี้ '
+            : 'ส่งถึงเจ้าของร้านที่ผูก LINE ไว้ '}
+          ระบบจะแนบชื่อผู้ส่งให้อัตโนมัติ ใส่ลิงก์ได้เฉพาะเว็บของเราและ LIFF
           ({text.trim().length}/{PARTNER_LINE_MESSAGE_MAX_LENGTH})
         </p>
         <button type="button" className={btnPrimary} onClick={handleSend} disabled={sending || !text.trim()}>
@@ -2060,7 +2076,12 @@ function ShopMessageSection({ companyId, showToast }: {
   );
 }
 
-export default function PartnerDetailPage({ companyId }: { companyId: string }) {
+export default function PartnerDetailPage({ companyId, supportRequestId, supportAskerRef }: {
+  companyId: string;
+  /** From `?support=`/`?asker=` on the support inbox's "เปิดหน้าร้าน" link — see the route file. */
+  supportRequestId?: string;
+  supportAskerRef?: string;
+}) {
   const toast = useToast();
   const [detail, setDetail] = useState<PartnerCompanyDetailDto | null>(null);
   const [loading, setLoading] = useState(true);
@@ -2399,7 +2420,13 @@ export default function PartnerDetailPage({ companyId }: { companyId: string }) 
 
         {/* P10-L §8: what happened to this shop, and the one way to answer its owner. */}
         <ShopTimelineSection key={`timeline-${companyId}`} companyId={companyId} />
-        <ShopMessageSection key={`message-${companyId}`} companyId={companyId} showToast={showToast} />
+        <ShopMessageSection
+          key={`message-${companyId}`}
+          companyId={companyId}
+          supportRequestId={supportRequestId}
+          supportAskerRef={supportAskerRef}
+          showToast={showToast}
+        />
 
         {/* Plan limits & usage term (P29) */}
         <PlanTermSection

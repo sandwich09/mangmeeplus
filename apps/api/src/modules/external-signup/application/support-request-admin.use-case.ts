@@ -6,9 +6,9 @@ import type {
 import { Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { supportAskerLabelTh } from './line-signup-notify.service';
-
-export const SUPPORT_REQUEST_ANSWERED_ACTION = 'system.support_request.answered';
-export const SUPPORT_REQUEST_RESUME_ACTION = 'system.support_request.resume_ai';
+import {
+  SUPPORT_REQUEST_ANSWERED_ACTION, SUPPORT_REQUEST_RESUME_ACTION,
+} from '../domain/support-request.constants';
 
 /** Bounded like the signup queue (`take: 200`): an operator scrolls, a page never streams a table. */
 const QUEUE_LIMIT = 200;
@@ -52,9 +52,10 @@ export class SupportRequestAdminUseCase {
     const [rows, openCount] = await Promise.all([
       this.prisma.client.lineSupportRequest.findMany({
         ...(status ? { where: { status } } : {}),
-        // OPEN first, newest first: `status` sorts OPEN < ANSWERED < CLOSED as declared in the enum,
-        // which is the order an operator works in.
-        orderBy: [{ status: 'asc' }, { requestedAt: 'desc' }],
+        // OPEN first, then the newest CUSTOMER message: `status` sorts OPEN < ANSWERED < CLOSED as
+        // declared in the enum, which is the order an operator works in. Ordering by `requestedAt`
+        // buried a request the customer had just written to under every newer ask (UAT 2026-09-06).
+        orderBy: [{ status: 'asc' }, { lastMessageAt: 'desc' }],
         take: QUEUE_LIMIT,
       }),
       this.prisma.client.lineSupportRequest.count({ where: { status: 'OPEN' } }),
@@ -96,7 +97,13 @@ export class SupportRequestAdminUseCase {
         ...(row.companyId ? { companyId: row.companyId } : {}),
         ...(row.signupRequestId ? { signupRequestId: row.signupRequestId } : {}),
         requestedAt: row.requestedAt.toISOString(),
+        // Two different questions, and the inbox shows both: what they ASKED (immutable) and where
+        // the thread has got to. A photo is a marker beside them, never a replacement (§3).
+        ...(row.requestText ? { requestText: row.requestText } : {}),
         ...(row.lastMessageText ? { lastMessageText: row.lastMessageText } : {}),
+        lastMessageAt: row.lastMessageAt.toISOString(),
+        ...(row.lastMediaAt ? { lastMediaAt: row.lastMediaAt.toISOString() } : {}),
+        reopenedCount: row.reopenedCount,
         lineNotifiedCount: row.lineNotifiedCount,
         emailSent: row.emailSent,
         notifyState: supportNotifyState(row),

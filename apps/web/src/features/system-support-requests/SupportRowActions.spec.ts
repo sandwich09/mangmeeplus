@@ -17,6 +17,9 @@ function item(overrides: Partial<SupportRequestItemDto> = {}): SupportRequestIte
     askerRef: 'edface',
     companyId: 'co-1',
     requestedAt: '2026-09-05T03:00:00.000Z',
+    // Equal to `requestedAt` until the customer writes again, which is what the API sends.
+    lastMessageAt: '2026-09-05T03:00:00.000Z',
+    reopenedCount: 0,
     lineNotifiedCount: 0,
     emailSent: true,
     notifyState: 'notified',
@@ -46,7 +49,9 @@ describe('SupportRowActions — the inbox row, rendered', () => {
     const markup = render({ status: 'OPEN' });
     assert.match(markup, /ตอบแล้ว/);
     assert.match(markup, /ให้ AI ทำงานต่อ/);
-    assert.match(markup, /href="\/system\/partners\/co-1"/);
+    // The link names the request, so the message box on the other end can answer the PERSON who
+    // raised it rather than only the shop's owners (review 2026-09-06).
+    assert.match(markup, /href="\/system\/partners\/co-1\?support=sr-1&amp;asker=edface"/);
     assert.match(markup, /เปิดหน้าร้าน/);
   });
 
@@ -135,6 +140,73 @@ describe('SupportInboxBody — error, empty and the message cell, rendered', () 
     assert.equal(classes.some((name) => /^(flex|grid|inline-block|table)$/.test(name)), false,
       'and so would any other display utility');
     assert.match(markup, /max-w-\[16rem\]/, 'the cell is bounded, so the clamp has a width to work in');
+  });
+
+  /**
+   * UAT 2026-09-06: a reopened request is OPEN like any other, so on the รอตอบ tab it was
+   * indistinguishable from a first ask — an operator would answer it as though the conversation
+   * had not already happened twice.
+   */
+  it('marks a request the customer wrote back to, and still offers "ตอบแล้ว" on it', () => {
+    const markup = renderBody({
+      items: [item({
+        status: 'OPEN',
+        answeredAt: '2026-09-05T03:30:00.000Z',
+        answeredByDisplayName: 'พี่แอดมิน',
+        reopenedCount: 1,
+        lastMessageAt: '2026-09-05T04:00:00.000Z',
+        lastMessageText: 'ยังไม่ได้เลยค่ะ',
+      })],
+    });
+
+    assert.match(markup, /ตอบแล้ว 1 ครั้ง · ลูกค้าตอบกลับ/);
+    assert.match(markup, /ยังไม่ได้เลยค่ะ/, 'and the message they wrote back is the one shown');
+    assert.match(markup, /รอมานาน/, 'the clock is running again, not "ใช้เวลา"');
+    assert.match(markup, /ตอบโดย พี่แอดมิน/, 'the previous answer stays as history');
+  });
+
+  it('carries no reopen chip on a request nobody has answered yet', () => {
+    assert.doesNotMatch(renderBody({ items: [item({ status: 'OPEN' })] }), /ลูกค้าตอบกลับ/);
+  });
+
+  /**
+   * Review 2026-09-06 (F3). One column carried both the question and the newest message, so a nudge
+   * or an unrelated receipt photo left the operator reading "มีอัปเดตไหมคะ" with no idea what was
+   * being asked. Both, plainly labelled, and a photo as a marker beside them rather than instead.
+   */
+  it('shows the question the operator is answering as well as the newest message', () => {
+    const markup = renderBody({
+      items: [item({
+        requestText: 'ส่งใบเสร็จแล้วไม่เห็นขึ้นเลยค่ะ',
+        lastMessageText: 'มีอัปเดตไหมคะ',
+        lastMediaAt: '2026-09-06T05:00:00.000Z',
+      })],
+    });
+
+    assert.match(markup, /ส่งใบเสร็จแล้วไม่เห็นขึ้นเลยค่ะ/, 'the question survives every follow-up');
+    assert.match(markup, /ล่าสุด/);
+    assert.match(markup, /มีอัปเดตไหมคะ/);
+    assert.match(markup, /📷 ส่งรูปมา/, 'and a picture arrived, which is all §3 keeps of it');
+  });
+
+  it('does not print the same sentence twice on a request nobody has followed up', () => {
+    const markup = renderBody({
+      items: [item({ requestText: 'ช่วยด้วยค่ะ', lastMessageText: 'ช่วยด้วยค่ะ' })],
+    });
+    assert.equal((markup.match(/ช่วยด้วยค่ะ/g) ?? []).length, 2, 'once in the cell, once in its title');
+    assert.doesNotMatch(markup, /ล่าสุด/);
+    assert.doesNotMatch(markup, /ส่งรูปมา/, 'and no photo marker on a thread that has none');
+  });
+
+  it('still shows a follow-up from a request whose question was never captured', () => {
+    const markup = renderBody({ items: [item({ lastMessageText: 'ยังไม่ได้เลยค่ะ' })] });
+    assert.match(markup, /ยังไม่ได้เลยค่ะ/);
+    assert.doesNotMatch(markup, /ล่าสุด/, 'there is nothing for it to be later than');
+  });
+
+  it('says "—" for a request that carries no words at all', () => {
+    const markup = renderBody({ items: [item()] });
+    assert.match(markup, /—/);
   });
 
   it('bounds the asker column too, since an applicant label carries a shop name of any length', () => {

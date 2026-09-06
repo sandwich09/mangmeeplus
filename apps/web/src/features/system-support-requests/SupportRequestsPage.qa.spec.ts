@@ -81,6 +81,17 @@ test('the waiting clock stops, and the column renames itself when it does', () =
   assert.equal(/waitedForTh\(item\.requestedAt\)/.test(page), false);
 });
 
+// UAT 2026-09-06: a request the customer wrote back to returns to รอตอบ, where it looked exactly
+// like a first ask — and the stamp under the duration still read the original tap, so the row said
+// "รอมานาน 2 นาที · 5 กันยายน" at once. The chip itself is a RENDER assertion next door.
+test('a reopened request says so, and its stamp is the one the clock counts from', () => {
+  assert.match(page, /supportReopenedChip\(item\)/);
+  assert.match(page, /\{reopened && <ChipBadge chip=\{reopened\} \/>\}/);
+  assert.match(page, /formatThaiDateTime\(item\.lastMessageAt\)/);
+  assert.equal(/formatThaiDateTime\(item\.requestedAt\)/.test(page), false,
+    'the stamp beside a restarted clock may not be the original ask');
+});
+
 // The customer's chat changes the moment "ให้ AI ทำงานต่อ" lands.
 test('resuming the assistant asks first', () => {
   assert.match(page, /const ok = await confirm\(\{/);

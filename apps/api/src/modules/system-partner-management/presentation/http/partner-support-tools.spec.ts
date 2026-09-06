@@ -32,6 +32,9 @@ type Options = {
   planTerm?: any | null;
   ownerIdentities?: Array<{ providerUserId: string }>;
   ownerMemberships?: Array<{ userId: string }>;
+  /** The `LineSupportRequest` a `supportRequestId` resolves to. `companyId`/`status` default to
+   *  "this shop, still waiting", so a case only spells out the half it is about. */
+  supportRequest?: { companyId?: string; status?: string; lineUserId: string } | null;
   memberIdentity?: any | null;
   ocrUsage?: { usedCount: number } | null;
   aiUsage?: { costSatang: number } | null;
@@ -44,6 +47,7 @@ function harness(options: Options = {}) {
   const audits: any[] = [];
   const planTermUpdates: any[] = [];
   const supportAnswered: any[] = [];
+  const supportLookups: any[] = [];
   let planTerm = options.planTerm === undefined ? null : options.planTerm;
 
   const prisma = {
@@ -87,6 +91,13 @@ function harness(options: Options = {}) {
       // line-support-request-spec-th §2.3: answering the shop closes its OPEN request, so the
       // operator does not have to remember a second button.
       lineSupportRequest: {
+        findUnique: async (args: any) => {
+          supportLookups.push(args);
+          if (options.supportRequest === undefined || options.supportRequest === null) {
+            return options.supportRequest ?? null;
+          }
+          return { id: 'sr-9', companyId: 'co-1', status: 'OPEN', ...options.supportRequest };
+        },
         updateMany: async (args: any) => { supportAnswered.push(args); return { count: 1 }; },
       },
       $transaction: async (fn: any) => fn(prisma.client),
@@ -108,7 +119,7 @@ function harness(options: Options = {}) {
   controller.lineMessage = new SendPartnerLineMessageUseCase(prisma, config);
 
   return {
-    controller: controller as PartnerController, audits, planTermUpdates, supportAnswered,
+    controller: controller as PartnerController, audits, planTermUpdates, supportAnswered, supportLookups,
     planTerm: () => planTerm,
   };
 }
@@ -245,6 +256,123 @@ describe('POST /system/partners/:id/line-message — SEC-05', () => {
 
     assert.deepEqual(result, { delivered: 0 });
     assert.deepEqual(h.supportAnswered, [], 'a message nobody received has answered nobody');
+  });
+
+  /**
+   * Review 2026-09-06 (F4). Pushing to every open requester of the shop handed one customer's
+   * answer to every other customer waiting on it — two strangers reading each other's support
+   * conversation. Without a named request this box is what it always was: a message to the shop.
+   */
+  it('never broadcasts an answer to everyone else waiting on the shop', async () => {
+    const h = harness({ supportRequest: { lineUserId: 'Ustranger-1' } });
+    const result = await h.controller.sendLineMessage('co-1', { text: 'ได้รับเรื่องแล้วนะคะ' }, REQ);
+
+    assert.deepEqual(result, { delivered: 1 });
+    assert.deepEqual(pushes.map((push) => push.to), ['Uowner-1'], 'the shop, and nobody else');
+    assert.deepEqual(h.supportLookups, [], 'and no request is read at all when none was named');
+  });
+
+  /**
+   * The person waiting may be an EMPLOYEE, whose reply went to a chat they cannot see (and, in a
+   * shop with no LINE-linked owner, to nobody at all). The operator says WHICH request they are
+   * answering — the link from the inbox carries it — and that one person is added.
+   */
+  it('reaches the one requester the operator named, alongside the shop OWNERs', async () => {
+    const h = harness({ supportRequest: { lineUserId: 'Uemployee-1' } });
+    const result = await h.controller.sendLineMessage(
+      'co-1', { text: 'ได้รับเรื่องแล้วนะคะ', supportRequestId: 'sr-9' }, REQ,
+    );
+
+    assert.deepEqual(result, { delivered: 2 });
+    assert.deepEqual(pushes.map((push) => push.to), ['Uowner-1', 'Uemployee-1']);
+    assert.equal(h.supportLookups[0].where.id, 'sr-9');
+    // §3: the audit counts recipients, it does not name them.
+    const sent = h.audits.find((row: any) => row.action === 'system.partner.line_message_sent');
+    assert.equal(sent.metadataJson.recipients, 2);
+    assert.equal(JSON.stringify(h.audits).includes('Uemployee-1'), false);
+  });
+
+  it('sends one message, not two, when the OWNER is the person who asked', async () => {
+    const h = harness({ supportRequest: { lineUserId: 'Uowner-1' } });
+    const result = await h.controller.sendLineMessage(
+      'co-1', { text: 'ได้รับเรื่องแล้วนะคะ', supportRequestId: 'sr-9' }, REQ,
+    );
+
+    assert.deepEqual(result, { delivered: 1 });
+    assert.deepEqual(pushes.map((push) => push.to), ['Uowner-1']);
+  });
+
+  it('answers an employee-raised request even when no OWNER has LINE linked', async () => {
+    const h = harness({
+      ownerMemberships: [], ownerIdentities: [],
+      supportRequest: { lineUserId: 'Uemployee-1' },
+    });
+    const result = await h.controller.sendLineMessage(
+      'co-1', { text: 'ได้รับเรื่องแล้วนะคะ', supportRequestId: 'sr-9' }, REQ,
+    );
+
+    assert.deepEqual(result, { delivered: 1 }, 'the request would otherwise wait for ever');
+    assert.equal(h.audits[0].result, 'SUCCESS');
+  });
+
+  /**
+   * §2.3 says answering IS answering the request. Naming one makes that precise: only that request
+   * moves, and it moves with the same audit the "ตอบแล้ว" button writes, so the operator does not
+   * have to press it a second time and the two paths cannot tell different stories.
+   */
+  it('marks the named request answered, with the button\'s own audit', async () => {
+    const h = harness({ supportRequest: { lineUserId: 'Uemployee-1' } });
+    await h.controller.sendLineMessage(
+      'co-1', { text: 'ได้รับเรื่องแล้วนะคะ', supportRequestId: 'sr-9' }, REQ,
+    );
+
+    assert.deepEqual(h.supportAnswered[0].where, { id: 'sr-9', status: 'OPEN' },
+      'only the request this reply names, not every stranger on the same shop');
+    assert.equal(h.supportAnswered[0].data.answeredByUserId, 'admin-1');
+    const answered = h.audits.find((row: any) => row.action === 'system.support_request.answered');
+    assert.ok(answered, 'the inbox has to be able to say who answered, and when');
+    assert.equal(answered.targetType, 'line_support_request');
+    assert.equal(answered.targetId, 'sr-9');
+    assert.equal(answered.riskLevel, 'HIGH');
+    assert.equal(answered.metadataJson.previousStatus, 'OPEN');
+  });
+
+  it('is idempotent on a request that was already answered', async () => {
+    const h = harness({ supportRequest: { status: 'ANSWERED', lineUserId: 'Uemployee-1' } });
+    await h.controller.sendLineMessage(
+      'co-1', { text: 'อัปเดตให้ค่ะ', supportRequestId: 'sr-9' }, REQ,
+    );
+
+    assert.deepEqual(pushes.map((push) => push.to), ['Uowner-1', 'Uemployee-1'], 'a second reply still lands');
+    assert.deepEqual(h.supportAnswered[0].where, { id: 'sr-9', status: 'OPEN' },
+      'the guard is what makes it idempotent: nothing to move');
+  });
+
+  it('refuses a request belonging to another shop, rather than pushing across tenants', async () => {
+    const h = harness({ supportRequest: { companyId: 'co-2', lineUserId: 'Ustranger-1' } });
+    await assert.rejects(
+      () => h.controller.sendLineMessage('co-1', { text: 'สวัสดีค่ะ', supportRequestId: 'sr-9' }, REQ),
+      (error: Error) => error instanceof NotFoundException,
+    );
+    assert.deepEqual(pushes, []);
+    assert.deepEqual(h.audits, []);
+  });
+
+  it('refuses a request that is already CLOSED, which nobody is waiting on', async () => {
+    const h = harness({ supportRequest: { status: 'CLOSED', lineUserId: 'Uemployee-1' } });
+    await assert.rejects(
+      () => h.controller.sendLineMessage('co-1', { text: 'สวัสดีค่ะ', supportRequestId: 'sr-9' }, REQ),
+      (error: Error) => error instanceof NotFoundException,
+    );
+    assert.deepEqual(pushes, []);
+  });
+
+  it('refuses a request id that does not exist', async () => {
+    const h = harness({ supportRequest: null });
+    await assert.rejects(
+      () => h.controller.sendLineMessage('co-1', { text: 'สวัสดีค่ะ', supportRequestId: 'sr-gone' }, REQ),
+      (error: Error) => error instanceof NotFoundException,
+    );
   });
 
   it('refuses a message longer than the bound, before it reaches LINE', async () => {

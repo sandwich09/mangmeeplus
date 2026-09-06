@@ -188,6 +188,9 @@ function makePrisma(opts: {
       // P10-L: the unlinked path now answers with the door card, which first asks whether this
       // LINE account already has an application travelling. These fixtures have none.
       companySignupRequest: { findFirst: async () => null },
+      // Every media turn asks whether a human is waiting on this LINE user (UAT 2026-09-06); these
+      // fixtures have no support thread, so the answer is "nobody" and nothing is written.
+      lineSupportRequest: { findFirst: async () => null },
       lineWebhookEventLog: {
         // Only the §8.3 outcome write reads this with a `select`; every other caller wants the whole
         // row and must keep seeing "no previous event".
