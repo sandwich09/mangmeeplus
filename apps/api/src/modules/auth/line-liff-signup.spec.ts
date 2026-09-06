@@ -798,7 +798,7 @@ describe('ExchangeLiffSessionUseCase', () => {
     const result = await useCase.execute({ idToken: 'a.b.c' });
 
     assert.deepEqual(result, { handoffUrl: `${WEB_BASE}/l/RAWTOKEN` });
-    assert.equal(minted[0].targetPath, '/companies/co-1/expenses/upload');
+    assert.equal(minted[0].targetPath, '/companies/co-1/dashboard');
     assert.ok(minted[0].targetPath.startsWith('/companies/co-1/'), 'target stays inside the tenant root');
     assert.deepEqual(buckets, [LINE_USER], 'the per-account bucket is spent after verification');
     assert.equal(audited[0].action, 'auth.line.liff_session');
