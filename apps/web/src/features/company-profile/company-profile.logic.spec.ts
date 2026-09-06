@@ -6,10 +6,12 @@ import {
   addressChanged,
   addressErrorMessages,
   buildIdentityPatch,
+  buildShopSave,
   checklistIsComplete,
   companyProfileHref,
   clearChecklistCache,
   dismissChecklistFor,
+  emailSectionMode,
   identityChangeKind,
   isThaiMobileInput,
   isThaiTaxIdInput,
@@ -21,6 +23,9 @@ import {
   sectionIdFromHash,
   COMPANY_PROFILE_SECTION_IDS,
   INVALID_USERNAME_MESSAGE,
+  NO_CHANGES_MESSAGE,
+  PHONE_ERROR_MESSAGE,
+  PHONE_HINT,
   USERNAME_PATTERN,
   writeChecklistCache,
   CHECKLIST_CACHE_TTL_MS,
@@ -251,11 +256,16 @@ describe('checklist cache', () => {
     assert.equal(readChecklistCache(storage, 'c-1', 1_000 + CHECKLIST_CACHE_TTL_MS + 1), null, 'a stale entry must send the card back to the API');
   });
 
-  it('keeps a completed list hidden without refetching', () => {
+  // A completed list is served from the cache like any other, and every reader asks
+  // `checklistIsComplete` for itself — the old `'hidden'` sentinel was a second way of saying the
+  // same thing, and it could not carry the items the sidebar indicator needs.
+  it('serves a completed list from the cache instead of refetching it', () => {
     const storage = fakeStorage();
     const done = profileChecklist({ readiness: { identity: { complete: true, reasons: [] } }, emailVerified: true, hasPassword: true });
     writeChecklistCache(storage, 'c-1', done, 1_000);
-    assert.equal(readChecklistCache(storage, 'c-1', 1_000), 'hidden');
+    const cached = readChecklistCache(storage, 'c-1', 1_000);
+    assert.deepEqual(cached, done);
+    assert.equal(checklistIsComplete(cached!), true);
   });
 
   // L2: a 7-day answer stored in sessionStorage dies with the tab.
@@ -419,5 +429,184 @@ describe('the profile route is reachable and dynamic', () => {
       dashboard,
       /\{permissions\.includes\('company\.legal_identity\.manage'\) && <ProfileCompletenessCard companyId=\{companyId\} \/>\}/,
     );
+  });
+});
+
+// ─── UAT 2026-09-06 (spec §15.4.1) ───────────────────────────────────────────
+
+/**
+ * A. The VAT select used to write on change and then reload the page's data, so choosing
+ * "จดทะเบียน VAT แล้ว" wiped the ชื่อจดทะเบียน / เลขภาษี / ที่อยู่ the owner had just typed. One
+ * button now sends both halves, and this function is what it sends.
+ */
+describe('buildShopSave — one press, both halves, nothing lost', () => {
+  const CURRENT = { registeredName: null, taxId: null, addressJson: null };
+  const BLANK_FORM = { registeredName: '', taxId: '', address: BLANK_ADDRESS };
+
+  it('sends only the identity when the VAT answer is unchanged', () => {
+    const result = buildShopSave(
+      { ...OPEN, legalIdentityVersion: 3 },
+      CURRENT,
+      { ...BLANK_FORM, registeredName: 'บริษัท มั่งมี จำกัด' },
+      { current: 'REGISTERED', chosen: 'REGISTERED' },
+    );
+    assert.ok('identityPatch' in result);
+    assert.equal(result.vatStatus, null);
+    assert.equal((result.identityPatch as Record<string, unknown>)['registeredName'], 'บริษัท มั่งมี จำกัด');
+  });
+
+  it('sends only the VAT answer when nothing else was touched', () => {
+    const result = buildShopSave({ ...OPEN, legalIdentityVersion: 0 }, CURRENT, BLANK_FORM, { current: 'UNKNOWN', chosen: 'REGISTERED' });
+    assert.ok('identityPatch' in result);
+    assert.equal(result.identityPatch, null, 'an untouched identity must not travel');
+    assert.equal(result.vatStatus, 'REGISTERED');
+  });
+
+  // The exact case the Owner hit: pick the VAT status, type the tax id, press save once.
+  it('sends both when both changed', () => {
+    const result = buildShopSave(
+      { ...OPEN, legalIdentityVersion: 0 },
+      CURRENT,
+      { ...BLANK_FORM, taxId: '0105561000001' },
+      { current: 'UNKNOWN', chosen: 'REGISTERED' },
+    );
+    assert.ok('identityPatch' in result);
+    assert.equal((result.identityPatch as Record<string, unknown>)['taxId'], '0105561000001');
+    assert.equal(result.vatStatus, 'REGISTERED');
+  });
+
+  it('refuses an empty press, counting the VAT answer as a change', () => {
+    const nothing = buildShopSave({ ...OPEN, legalIdentityVersion: 0 }, CURRENT, BLANK_FORM, { current: 'UNKNOWN', chosen: 'UNKNOWN' });
+    assert.deepEqual(nothing, { error: NO_CHANGES_MESSAGE });
+    // …and the same press with only the VAT changed is NOT empty.
+    assert.ok('identityPatch' in buildShopSave({ ...OPEN, legalIdentityVersion: 0 }, CURRENT, BLANK_FORM, { current: 'UNKNOWN', chosen: 'NOT_REGISTERED' }));
+  });
+
+  it('reports a bad tax id instead of quietly saving half the form', () => {
+    const result = buildShopSave(
+      { ...OPEN, legalIdentityVersion: 0 },
+      CURRENT,
+      { ...BLANK_FORM, taxId: '123' },
+      { current: 'UNKNOWN', chosen: 'REGISTERED' },
+    );
+    assert.deepEqual(result, { error: 'เลขผู้เสียภาษีต้องเป็นตัวเลข 13 หลักค่ะ' });
+  });
+});
+
+/**
+ * B. "email ถูก verify แล้วแต่เปิดให้แก้ไขได้" — a verified address sat in an open box under a
+ * "ส่งลิงก์ยืนยันอีเมล" button whose only possible answer was the API's 409.
+ */
+describe('emailSectionMode', () => {
+  const BASE = { emailDeliveryEnabled: true, pendingEmail: null, emailVerified: false };
+
+  it('shows a verified address as a fact, not a form', () => {
+    assert.equal(emailSectionMode({ ...BASE, emailVerified: true }, false), 'verified');
+  });
+
+  it('opens the form only when the owner asks to change it', () => {
+    assert.equal(emailSectionMode({ ...BASE, emailVerified: true }, true), 'edit');
+  });
+
+  it('reports a request already in flight, whatever the stored address says', () => {
+    assert.equal(emailSectionMode({ ...BASE, pendingEmail: 'new@example.com' }, false), 'pending');
+    assert.equal(emailSectionMode({ ...BASE, emailVerified: true, pendingEmail: 'new@example.com' }, false), 'pending');
+  });
+
+  it('gives an account with no email the plain form', () => {
+    assert.equal(emailSectionMode(BASE, false), 'none');
+    assert.equal(emailSectionMode(null, false), 'none');
+  });
+
+  // C: with no mailer there is no action to offer, in any of the states above.
+  it('offers nothing at all when the environment cannot send mail', () => {
+    for (const account of [BASE, { ...BASE, emailVerified: true }, { ...BASE, pendingEmail: 'a@b.co' }]) {
+      assert.equal(emailSectionMode({ ...account, emailDeliveryEnabled: false }, true), 'unavailable');
+    }
+    // Only an explicit `false` counts: an older API that does not answer the field leaves the
+    // page working, and the use-case gate is still the backstop.
+    assert.equal(emailSectionMode({ ...BASE, emailDeliveryEnabled: undefined }, false), 'none');
+  });
+});
+
+/** C. An item that cannot be completed is not a checklist item, it is noise. */
+describe('profileChecklist and email delivery', () => {
+  const readiness = { identity: { complete: true, reasons: [] as string[] } };
+
+  it('drops the email item when the environment has no mailer', () => {
+    const items = profileChecklist({ readiness, emailVerified: false, hasPassword: true, emailDeliveryEnabled: false });
+    assert.deepEqual(items.map((item) => item.key), ['identity', 'address', 'password']);
+    assert.equal(checklistIsComplete(items), true, 'the list must be able to finish');
+  });
+
+  it('keeps it wherever mail can actually be sent', () => {
+    for (const emailDeliveryEnabled of [true, undefined]) {
+      const items = profileChecklist({ readiness, emailVerified: false, hasPassword: true, emailDeliveryEnabled });
+      assert.ok(items.some((item) => item.key === 'email'));
+      assert.equal(checklistIsComplete(items), false);
+    }
+  });
+});
+
+/**
+ * D. "ทำไมไม่ใส่บอกไปตรงๆเลยว่า ใส่เบอร์มือถือ 10 หลัก จะมาบอกว่าเว้น 0 ทำไม" — the old hint ended
+ * "เว้นว่างไว้ก็ได้ถ้าไม่อยากให้เก็บ", which reads as an instruction to leave the 0 out.
+ */
+describe('phone copy says the rule and nothing else', () => {
+  it('states the length and shows one', () => {
+    assert.equal(PHONE_HINT, 'ใส่เบอร์มือถือ 10 หลัก เช่น 0812345678');
+    assert.equal(PHONE_ERROR_MESSAGE, 'เบอร์มือถือต้องมี 10 หลัก เช่น 0812345678');
+  });
+
+  it('never tells the owner to leave anything blank or to skip the leading zero', () => {
+    for (const copy of [PHONE_HINT, PHONE_ERROR_MESSAGE]) {
+      assert.doesNotMatch(copy, /เว้น/, copy);
+      assert.doesNotMatch(copy, /ขึ้นต้นด้วย/, copy);
+    }
+  });
+
+  // The rule itself is unchanged; only the sentence describing it is.
+  it('still matches the validator it describes', () => {
+    assert.equal(isThaiMobileInput('0812345678'), true);
+    assert.equal(isThaiMobileInput('812345678'), false);
+  });
+});
+
+/** E. One checklist, three places that read it, one permission that gates all three. */
+describe('the attention indicator and the dashboard card share one read', () => {
+  const feature = (file: string) => readFileSync(new URL(`./${file}`, import.meta.url), 'utf8');
+
+  it('gives the card, the sidebar and the settings hub the same hook', () => {
+    for (const file of ['ProfileCompletenessCard.tsx', 'ProfileAttentionBadge.tsx']) {
+      assert.match(feature(file), /useProfileChecklist\(/, file);
+    }
+    const layout = readFileSync(new URL('../web-core-workspace/WorkspaceLayout.tsx', import.meta.url), 'utf8');
+    assert.match(layout, /useProfileChecklist\(/);
+  });
+
+  it('asks for nothing when the reader could not act on the answer', () => {
+    const layout = readFileSync(new URL('../web-core-workspace/WorkspaceLayout.tsx', import.meta.url), 'utf8');
+    assert.match(layout, /session\.permissions\.includes\('company\.legal_identity\.manage'\)/);
+    const hub = readFileSync(
+      new URL('../../../app/(workspace)/companies/[companyId]/settings/page.tsx', import.meta.url),
+      'utf8',
+    );
+    assert.match(hub, /permissions\?\.includes\('company\.legal_identity\.manage'\)/);
+    assert.match(hub, /<ProfileAttentionBadge companyId=\{companyId\} \/>/);
+  });
+
+  // "จนกว่าจะตั้งครบ": the 7-day snooze answers the dashboard card, not the indicators.
+  it('keeps the "ไว้ก่อน" dismissal out of the shared hook', () => {
+    const hook = feature('use-profile-checklist.ts');
+    assert.doesNotMatch(hook, /readChecklistDismissal\(|dismissChecklistFor\(/, 'a dismissed card must still leave the sidebar dot on');
+    assert.match(feature('ProfileCompletenessCard.tsx'), /readChecklistDismissal\(/);
+  });
+
+  it('marks the sidebar row and renders one dot for it', () => {
+    const layout = readFileSync(new URL('../web-core-workspace/WorkspaceLayout.tsx', import.meta.url), 'utf8');
+    assert.match(layout, /attention:/);
+    const sidebar = readFileSync(new URL('../../common/components/app-shell/AppSidebar.tsx', import.meta.url), 'utf8');
+    assert.match(sidebar, /nav\.attention/);
+    assert.match(sidebar, /ตั้งค่ายังไม่ครบ/);
   });
 });

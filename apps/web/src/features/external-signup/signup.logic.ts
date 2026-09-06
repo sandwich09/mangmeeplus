@@ -109,7 +109,8 @@ export function validateSignupForm(values: SignupFormValues): SignupFieldErrors 
   // Required on the form even though the contract allows it to be absent: when the approval email
   // bounces, this number is the only way anyone can reach the applicant (spec §4D).
   if (!phone) errors.phoneNumber = 'กรุณากรอกเบอร์โทรมือถือ';
-  else if (!isThaiMobile(phone)) errors.phoneNumber = 'เบอร์โทรมือถือต้องเป็นตัวเลข 10 หลัก ขึ้นต้นด้วย 0';
+  // One wording for one rule, shared with the profile page and the API's invalid_phone_number.
+  else if (!isThaiMobile(phone)) errors.phoneNumber = 'เบอร์มือถือต้องมี 10 หลัก เช่น 0812345678';
 
   const taxId = values.taxId.replace(/[^0-9]/g, '');
   if (values.vatRegistered && taxId && taxId.length !== 13) {

@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { GetAccountSecurityStateUseCase } from './get-account-security-state.use-case';
 
-function makeUseCase(lineIdentity: { linkedAt: Date } | null) {
+function makeUseCase(lineIdentity: { linkedAt: Date } | null, emailProvider?: 'disabled' | 'local-console' | 'ses') {
   const identityQueries: any[] = [];
   const prisma = {
     client: {
@@ -13,7 +13,8 @@ function makeUseCase(lineIdentity: { linkedAt: Date } | null) {
       },
     },
   } as any;
-  return { useCase: new GetAccountSecurityStateUseCase(prisma), identityQueries };
+  const config = emailProvider ? ({ emailProvider } as any) : null;
+  return { useCase: new GetAccountSecurityStateUseCase(prisma, config), identityQueries };
 }
 
 describe('GetAccountSecurityStateUseCase LINE link state', () => {
@@ -37,5 +38,34 @@ describe('GetAccountSecurityStateUseCase LINE link state', () => {
 
     assert.equal(state.lineLinked, false);
     assert.equal(state.lineLinkedAt, null);
+  });
+});
+
+/**
+ * UAT 2026-09-06 §15.4.1 C. Production runs `EMAIL_PROVIDER=disabled`, whose mailer adapter is a
+ * silent no-op, so the profile page said "ส่งลิงก์ยืนยันไปที่อีเมลแล้วค่ะ" over a letter that was
+ * never sent. The page cannot know that from anywhere else — this flag is what it reads.
+ */
+describe('GetAccountSecurityStateUseCase email delivery capability', () => {
+  it('reports delivery disabled when the environment has no mailer', async () => {
+    const { useCase } = makeUseCase(null, 'disabled');
+
+    assert.equal((await useCase.execute('user-1')).emailDeliveryEnabled, false);
+  });
+
+  it('reports delivery enabled for every provider that actually sends', async () => {
+    for (const provider of ['ses', 'local-console'] as const) {
+      const { useCase } = makeUseCase(null, provider);
+      assert.equal((await useCase.execute('user-1')).emailDeliveryEnabled, true, provider);
+    }
+  });
+
+  // The injection is @Optional() so the hand-constructed fakes across the auth specs keep working;
+  // with no config in the graph the page keeps its send button and the use-case gate stays the
+  // backstop, rather than a missing provider silently disabling a working feature.
+  it('treats an absent config as delivery enabled', async () => {
+    const { useCase } = makeUseCase(null);
+
+    assert.equal((await useCase.execute('user-1')).emailDeliveryEnabled, true);
   });
 });
