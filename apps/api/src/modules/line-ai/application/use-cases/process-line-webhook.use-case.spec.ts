@@ -211,6 +211,8 @@ function receiptClassification(amount: string) {
 // Builds a minimal prisma mock with controllable memberships + lineCompanyContext
 function makePrisma(opts: {
 	  identityUserId?: string | null;
+	  /** `User.status`. Anything but ACTIVE is treated as no account at all (§8.2, entry door). */
+	  identityStatus?: string;
 	  displayName?: string;
 	  /** Channel the stored identity was linked on; the lookup is channel-scoped first. */
 	  identityChannelId?: string;
@@ -241,7 +243,7 @@ function makePrisma(opts: {
 	   *  the request is still open — which is the thing under test, not a constant re-typed here. */
 	  openLineSignup?: { companyName: string; state: string } | null;
 	} = {}) {
-	  const { identityUserId = 'user-1', displayName = 'พิม', identityChannelId = 'msg-channel-1', aiAssistantOptOutAt = null, memberships = [{ companyId: 'company-1' }], lineCompanyContext = null, previousEventLog = null, recentTurns = [], entitlements = [], branches = [], branchFindManyFn, turnOutcomeUnavailable = false, turnOutcomeFailAfter, termExpiredMemberships = [], planTerm = null, receiptsUsed = 0, openLineSignup = null } = opts;
+	  const { identityUserId = 'user-1', identityStatus = 'ACTIVE', displayName = 'พิม', identityChannelId = 'msg-channel-1', aiAssistantOptOutAt = null, memberships = [{ companyId: 'company-1' }], lineCompanyContext = null, previousEventLog = null, recentTurns = [], entitlements = [], branches = [], branchFindManyFn, turnOutcomeUnavailable = false, turnOutcomeFailAfter, termExpiredMemberships = [], planTerm = null, receiptsUsed = 0, openLineSignup = null } = opts;
   let quotaNoticeSentMonthKey = planTerm?.quotaNoticeSentMonthKey ?? null;
   const termExpiredRows = termExpiredMemberships.map((row) => ({ roles: [{ role: { key: 'OWNER' } }], ...row }));
   const turnOutcomeWrites: any[] = [];
@@ -307,7 +309,7 @@ function makePrisma(opts: {
           if (!identityUserId) return null;
           const scopedTo = args?.where?.providerChannelId;
           if (scopedTo && scopedTo !== identityChannelId) return null;
-          return { userId: identityUserId, user: { status: 'ACTIVE', displayName, aiAssistantOptOutAt } };
+          return { userId: identityUserId, user: { status: identityStatus, displayName, aiAssistantOptOutAt } };
         },
       },
       companyMembership: {
@@ -629,6 +631,21 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(sentMessages[0]?.altText, CAPABILITY_CARD_ALT);
     assert.match(JSON.stringify(sentMessages[0]), /ยอดขายวันนี้/, 'the public card is unchanged');
     assert.equal(legalChecks.length, 0);
+    assert.equal(intakeRequests.length, 0);
+    assert.equal(getAiGatewayCalled(), false);
+    assert.equal((updates.at(-1) as any).data.status, 'staff_menu_capability');
+  });
+
+  // The guard is `!identity || status !== 'ACTIVE'`, and both halves carry the card: a suspended
+  // account has nothing to scope an answer to, so it gets the same public copy a stranger does —
+  // never the linked path, which would hand a disabled user an AI turn.
+  it('answers a linked-but-not-ACTIVE account with the same curated card', async () => {
+    const { prisma, updates } = makePrisma({ identityStatus: 'SUSPENDED' });
+    const { useCase, sentMessages, getAiGatewayCalled, intakeRequests } = makeUseCase(prisma, {});
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-capability-suspended', messageText: 'ทำอะไรได้บ้าง' });
+
+    assert.equal(sentMessages[0]?.altText, CAPABILITY_CARD_ALT);
     assert.equal(intakeRequests.length, 0);
     assert.equal(getAiGatewayCalled(), false);
     assert.equal((updates.at(-1) as any).data.status, 'staff_menu_capability');
