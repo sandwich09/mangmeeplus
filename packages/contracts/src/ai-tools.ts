@@ -176,6 +176,19 @@ export const LINE_CAPABILITY_GROUPS = [
 export type LineCapabilityGroupId = (typeof LINE_CAPABILITY_GROUPS)[number]['id'];
 
 /**
+ * Opening words of every capability self-description the gateway renders — the card and its teaching
+ * walkthrough (capability-help spec §8 / §8.1), Thai and English. The API recognises a "ยังไง"/"how"
+ * follow-up from the stored reply preview alone, so these openings are a contract between the two apps:
+ * the gateway spec pins its copy against this list and the API matches on it.
+ */
+export const LINE_CAPABILITY_REPLY_PREFIXES = [
+  'น้องมั่งมีช่วยค้นและสรุปข้อมูลงานตามสิทธิ์',
+  'Nong Mangmee can find and summarize work data',
+  'น้องมั่งมีสอนใช้งานเบื้องต้น',
+  'Nong Mangmee will walk you through the basics',
+] as const;
+
+/**
  * The receipt→expense-draft claim is NOT derived from a tool. `accounting.capture_receipt_evidence`
  * requires `expense.receipt.upload`, but the path that actually captures a LINE receipt accepts any
  * of the three below (process-line-webhook `canCaptureExpense`), and MANAGER/ACCOUNTANT/MARKETING

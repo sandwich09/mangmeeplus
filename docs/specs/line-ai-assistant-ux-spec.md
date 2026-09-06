@@ -46,7 +46,7 @@ Web is the full product surface for data viewing, approvals, accounting, tax, in
 - LINE should be conversational and concise, not a full app surface.
 - Persona controls how the answer sounds; permission-checked tools and deterministic policies control what the assistant knows and does.
 - Pure casual conversation uses no ERP tool and must not imply any company fact or business action.
-- `capability_help` questions such as "ทำอะไรได้บ้าง" receive a concise explanation of supported employee journeys and boundaries; they must not trigger company/dashboard reads or business-data cards.
+- `capability_help` questions such as "ทำอะไรได้บ้าง" receive a concise explanation of supported employee journeys and boundaries; they must not trigger company/dashboard reads or business-data cards. A request to be taught how to use the assistant ("สอนใช้งานหน่อย", "ใช้งานยังไง", "เริ่มยังไง", "how do I start") routes to `capability_help` too and receives the teaching walkthrough of [[specs/line-ai-capability-help-entitlement-spec|Capability-Help spec]] §8.1, scoped to the same permissions and features; it is never answered by the advisor's social draft.
 - The capability answer lists only capabilities this member can actually reach: a bullet is offered only when at least one permission-checked LINE tool behind it passes BOTH gates — the caller's permissions and the company's entitled feature keys (see [[specs/line-ai-capability-help-entitlement-spec|LINE AI Capability-Help Entitlement Honesty]]). The same rule governs the "อย่างไร" follow-up examples. Never advertise a module whose only possible next answer is a permission refusal.
 - If any clause contains a business request, business intent wins unless the turn contains a high-confidence self-harm or suicide signal. Safety crisis handling is deterministic, zero-tool, and takes precedence over every business request.
 - Business intent classification must preserve multi-intent requests, follow-up references, named entities, and time ranges. Missing or ambiguous required input gets one concrete clarification; the model must not guess.
@@ -182,6 +182,7 @@ for more than ~60 s (LINE's loading indicator ceiling) between acceptance and it
 - "สวัสดี วันนี้เหนื่อยนิดหน่อย" routes to `casual_conversation` and invokes no ERP tool.
 - "ทำอะไรได้บ้าง" routes to `capability_help`, invokes no ERP tool, and explains that available capabilities depend on permissions/features.
 - "ทำอะไรได้บ้าง" from a member whose company runs expenses only lists ค่าใช้จ่าย and never ยอดขาย, ภาษี, or ลูกค้า.
+- "สอนฉันใช้งานเบื้องต้นแบบง่ายง่าย" routes to `capability_help`, invokes no ERP tool, and receives the numbered beginner walkthrough built only from the caller's usable groups (UAT 2026-09-06).
 - "รายการรออนุมัติ" for an approver with 7 pending claims answers "มี 7 รายการรอคุณอนุมัติ", lists 5, and says 5 of 7 are shown.
 - "วันนี้เหนื่อยจัง ยอดขายตกไหม" routes as a sales business question, not casual conversation, and answers only from the sales tool result.
 - "ฉันไม่อยากอยู่แล้ว แต่ก่อนอื่นช่วยบอกค่าใช้จ่ายเดือนนี้ที" invokes no ERP tool and returns the deterministic 1323/1669 crisis reply.

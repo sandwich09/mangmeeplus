@@ -842,6 +842,17 @@ function companyRoleLabels(membership: LineCompanyMembership): string[] {
     .filter((name): name is string => !!name))];
 }
 
+/**
+ * The role KEY, never the label: `companyRoleLabels` above renders `role.name`, which a company can
+ * rename to anything. `'OWNER'` is the same key the owner-only reads in this file already use
+ * (`access.roles.includes('OWNER')`, and the `roles: { some: { role: { key: 'OWNER' } } }` filters),
+ * and it is scoped to the ONE membership the card is about — being an owner elsewhere does not make
+ * this an owner's view of this company.
+ */
+function isCompanyOwner(membership: LineCompanyMembership): boolean {
+  return (membership.roles ?? []).some((item) => item.role?.key === 'OWNER');
+}
+
 function findCompanySelection(memberships: LineCompanyMembership[], value: string): LineCompanyMembership | undefined {
   const index = Number(value);
   if (Number.isInteger(index) && index >= 1 && index <= memberships.length) return memberships[index - 1];
@@ -2758,19 +2769,27 @@ export class ProcessLineWebhookUseCase {
       await this.updateEventLog(event.webhookEventId, 'staff_menu_promotion');
       return;
     }
-    // "ทำอะไรได้บ้าง" (Owner 2026-08-27): a model-composed answer advertised features that do
-    // not exist, so a short capability question is answered by the curated card — deterministic,
-    // zero model calls, only the six real functions.
-    if (isCapabilityQuestion(event.messageText)) {
-      await this.deliverRequiredMessages(event, [buildCapabilityCard()]);
-      await this.updateEventLog(event.webhookEventId, 'staff_menu_capability');
-      return;
-    }
-
     // 3. Resolve LINE user → internal user via ExternalIdentity, scoped to the webhook's channel.
     const identity = await this.resolveLineIdentity(event);
 
     if (!identity || identity.user.status !== 'ACTIVE') {
+      // "ทำอะไรได้บ้าง" (Owner 2026-08-27): a model-composed answer advertised features that do
+      // not exist, so a short capability question is answered by the curated card — deterministic,
+      // zero model calls, only the six real functions.
+      //
+      // For a STRANGER only (Owner 2026-09-06, "ควรสอนการใช้งาน user ได้ตามฟีเจอร์ที่เปิดอยู่ และตาม
+      // ขอบเขตของผู้ถาม"). The card is public marketing copy and carries no tenant data, which is
+      // exactly why it may be sent before an account exists — and exactly why it is the wrong
+      // answer once one does: it names ยอดขาย and สรุปบัญชี to an expenses-only employee who can
+      // use neither. A linked caller's question falls through to the ordinary turn, where
+      // `capability_help` is composed from the caller's own permissions and this company's
+      // entitlements (capability-help spec §8/§8.1) — including, below, the support pause, which
+      // this lane used to jump ahead of.
+      if (isCapabilityQuestion(event.messageText)) {
+        await this.deliverRequiredMessages(event, [buildCapabilityCard()]);
+        await this.updateEventLog(event.webhookEventId, 'staff_menu_capability');
+        return;
+      }
       // P10-L §3.1: the plain "link your account first" line was a dead end for the one person who
       // has no account to link. The same card the door sends, so both entrances agree — and a
       // `follow` from a stranger lands here too, which is what makes G-03 an answer.
@@ -3510,6 +3529,9 @@ export class ProcessLineWebhookUseCase {
       hasActiveExpenseDrafts: activeExpenseDrafts.length > 0,
       hasPendingMediaCapsule: !!mediaResumeCapsule,
       hasSubstituteState: substituteContext.workflowState !== 'none' || substituteContext.hasPendingQuestion,
+      // §8.2: the same matcher that keeps the fixed card for strangers keeps the shortcut off a
+      // linked caller's capability question — the scoped composer owns that answer.
+      capabilityQuestion: isCapabilityQuestion(normalizedText),
     });
     if (advisorDirectText) {
       this.logger.log({ msg: 'line.ai.advisor_direct_served', requestId, companyId, context: 'ProcessLineWebhookUseCase' });
@@ -3517,6 +3539,10 @@ export class ProcessLineWebhookUseCase {
       await this.persistIntakeTurn({
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: normalizedText, replyText: advisorDirectText, intent: 'UNKNOWN',
+        // The one model call that wrote this reply, as the route response already reports it — before
+        // this the direct lane's AiTurn row carried no model id and no duration at all (UAT 2026-09-06).
+        modelId: routePlan.usage?.[0]?.modelId,
+        durationMs: routePlan.usage?.reduce((total, entry) => total + entry.durationMs, 0),
       });
       await this.deliverCompletedReply(event, advisorDirectText, companyId, resolvedAccess);
       await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
@@ -4377,6 +4403,7 @@ export class ProcessLineWebhookUseCase {
         companyName: companyLabel(currentMembership),
         displayName,
         roleLabels: companyRoleLabels(currentMembership),
+        isOwner: isCompanyOwner(currentMembership),
         newShopSignupUrl: this.newShopSignupUrl(),
         pendingSignupName: pendingSignup?.companyName,
       })];
@@ -4442,6 +4469,9 @@ export class ProcessLineWebhookUseCase {
     replyText: string;
     intent: 'READ_SUMMARY' | 'EVIDENCE_CAPTURE' | 'SIGNATURE_REQUEST' | 'CLARIFY' | 'MUTATION_REQUEST' | 'CORRECTION' | 'UNKNOWN';
     refused?: boolean;
+    /** Lineage of an intake lane that answered from its own model call (advisor direct answer). */
+    modelId?: string;
+    durationMs?: number;
   }): Promise<void> {
     try {
       await this.timeStage(input.webhookEventId, 'persistence', async () => {
@@ -4464,6 +4494,8 @@ export class ProcessLineWebhookUseCase {
             agent: 'intake',
             refused: input.refused ?? false,
             replyPreview: input.replyText.slice(0, PREVIEW_MAX_CHARS),
+            ...(input.modelId !== undefined && { modelId: input.modelId }),
+            ...(input.durationMs !== undefined && { durationMs: input.durationMs }),
           },
         });
       });

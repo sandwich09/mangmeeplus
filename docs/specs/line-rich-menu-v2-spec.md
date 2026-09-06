@@ -292,6 +292,9 @@ capability question ("ทำอะไรได้บ้าง" and bounded varia
 curated `buildCapabilityCard` listing ONLY the six real functions, because a model-composed answer
 advertised features that do not exist (Owner report 2026-08-27). Business questions that merely contain a
 stem keep the full AI route; the matcher requires the system as subject for the generic "ใช้ยังไง" stems.
+**Narrowed 2026-09-06 (Owner):** this card answers **unlinked callers only** — a linked caller's capability
+question takes the ordinary turn and is answered scoped to their permissions and their company's enabled
+features ([[specs/line-ai-capability-help-entitlement-spec|Capability-Help spec]] §8.2).
 
 Pending assets (Owner-supplied design exports, not yet committed):
 
