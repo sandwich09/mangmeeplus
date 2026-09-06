@@ -88,6 +88,17 @@ Open questions:
   `staff_menu_capability_entitlements` (delivered, via the existing `staff_menu_` prefix rule). Spec
   §8.2 + AC-17. STILL OPEN and untouched: the permission floor (`FORBIDDEN_REPLY` after one paid
   router call) and the legal / pause / opt-out gates.
+- **OWNER DECISION NEEDED (review 2026-09-06, adversarial, head ebb7460f): the Owner's own words do
+  not match the matcher.** `isCapabilityQuestion` fires on the `ทำอะไรได้`/`ช่วยอะไรได้`/`มีฟีเจอร์อะไร`
+  family and on `ใช้ยังไง`/`ใช้งานยังไง` **only with** a `มั่งมี`/`ระบบ`/`แอป`/`แอพ`/`ที่นี่`/`เมนู`
+  subject. Verified against the matcher: `สอนหน่อย`, `สอนวิธีใช้หน่อย` and `สอนวิธีใช้มั่งมีหน่อย`
+  all return **false** — so the literal phrasing in the Owner's rule ("ถ้าบอกให้**สอนวิธีใช้**") gets
+  the bare refusal, not the entitlement card. The AI-off branch is therefore correct for
+  "ทำอะไรได้บ้าง" and "มั่งมีใช้ยังไง" and silent for "สอนวิธีใช้". Not fixed here on purpose: the
+  matcher is shared by two other lanes — the unlinked stranger's public card (use-case ~L2811) and
+  `advisorDirectAnswerText`'s `capabilityQuestion` decline (~L3565) — so adding a `สอน…ใช้` stem
+  changes what a STRANGER is sent and what the advisor refuses, which is a product call, not a
+  review fix. If the Owner wants it: one stem in `line-staff-menu.logic.ts:317` covers all three.
 - F2 of the persona review (an approvals-only caller taught `ค่าใช้จ่ายเดือนนี้เท่าไหร่`) is
   untouched and still open; it is a property of the group derivation, not of this lane.
 Artifacts:

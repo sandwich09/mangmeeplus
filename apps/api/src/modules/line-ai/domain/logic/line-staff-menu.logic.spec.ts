@@ -632,6 +632,22 @@ describe('capability question (Owner 2026-08-27: only real features)', () => {
     assert.equal(isCapabilityQuestion(''), false);
   });
 
+  // Review 2026-09-06: since the AI-off gate now ATTACHES the entitlement card on a match
+  // (spec §8.2 / AC-17), a false positive costs an unasked-for card on an ordinary turn. These are
+  // the everyday shapes an AI-off shop actually sends — receipts, money, and the bare digit the
+  // company picker asks for. None may reach the card lane.
+  it('leaves ordinary business text, captions and number replies alone', () => {
+    for (const text of [
+      'ค่าอาหาร 250 บาท',
+      '1',
+      'ใบเสร็จค่าไฟฟ้าเดือนนี้',
+      'แก้ยอดเป็น 500 บาท',
+      'ระบบล่มหรือเปล่าครับ',
+      'ขอสรุปค่าใช้จ่ายเดือนนี้',
+      'เบิกค่าน้ำมันได้ไหม',
+    ]) assert.equal(isCapabilityQuestion(text), false, text);
+  });
+
   it('the curated card lists only the six real functions', () => {
     const card = JSON.stringify(buildCapabilityCard());
     for (const feature of ['ถ่ายใบเสร็จ', 'ยอดขายวันนี้', 'คุยกับน้องมั่งมี', 'บริษัทของฉัน', 'โปรโมชั่น', 'ติดต่อเรา']) {
